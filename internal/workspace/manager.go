@@ -1473,16 +1473,59 @@ func ContextGraphResolutionOnly(value string) bool {
 	}
 }
 
+var stringifiedJSONToolFieldNames = []string{
+	"edits",
+	"evidence",
+	"required_tests",
+	"required_edit_paths",
+	"forbidden_paths",
+	"source_satisfied_paths",
+	"declarations",
+	"moves",
+	"todos",
+	"items",
+	"plan_artifact",
+}
+
+var stringArrayToolFieldNames = []string{
+	"evidence",
+	"required_tests",
+	"required_edit_paths",
+	"source_satisfied_paths",
+	"forbidden_paths",
+	"declarations",
+}
+
+var singletonArrayToolFieldNames = []string{
+	"edits",
+	"moves",
+	"todos",
+	"items",
+}
+
+func stringifiedJSONToolFieldAllowedStarts(field string) string {
+	switch field {
+	case "plan_artifact":
+		return "{"
+	default:
+		if stringifiedJSONToolFieldIsArray(field) {
+			return "[{"
+		}
+		return ""
+	}
+}
+
+func stringifiedJSONToolFieldIsArray(field string) bool {
+	return slices.Contains(stringifiedJSONToolFieldNames, field) && field != "plan_artifact"
+}
+
 func stringifiedStructuredToolFields(payload []byte) map[string]string {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &obj); err != nil {
 		return nil
 	}
 	out := make(map[string]string)
-	for _, field := range []string{
-		"edits", "evidence", "required_tests", "required_edit_paths", "forbidden_paths",
-		"source_satisfied_paths", "declarations", "moves", "todos", "items", "plan_artifact",
-	} {
+	for _, field := range stringifiedJSONToolFieldNames {
 		raw, ok := obj[field]
 		if !ok {
 			continue
@@ -1499,37 +1542,39 @@ func toolRequestLostStringifiedStructuredField(req ToolRequest, fields map[strin
 	if len(fields) == 0 {
 		return false
 	}
-	if _, ok := fields["edits"]; ok && len(req.Edits) == 0 {
-		return !stringifiedStructuredFieldRepresentsEmptyValue("edits", fields["edits"])
-	}
-	if _, ok := fields["required_tests"]; ok && len(req.RequiredTests) == 0 {
-		return !stringifiedStructuredFieldRepresentsEmptyValue("required_tests", fields["required_tests"])
-	}
-	if _, ok := fields["required_edit_paths"]; ok && len(req.RequiredEditPaths) == 0 {
-		return !stringifiedStructuredFieldRepresentsEmptyValue("required_edit_paths", fields["required_edit_paths"])
-	}
-	if _, ok := fields["source_satisfied_paths"]; ok && len(req.SourceSatisfiedPaths) == 0 {
-		return !stringifiedStructuredFieldRepresentsEmptyValue("source_satisfied_paths", fields["source_satisfied_paths"])
-	}
-	if _, ok := fields["forbidden_paths"]; ok && len(req.ForbiddenPaths) == 0 {
-		return !stringifiedStructuredFieldRepresentsEmptyValue("forbidden_paths", fields["forbidden_paths"])
-	}
-	if _, ok := fields["declarations"]; ok && len(req.Declarations) == 0 {
-		return !stringifiedStructuredFieldRepresentsEmptyValue("declarations", fields["declarations"])
-	}
-	if _, ok := fields["moves"]; ok && len(req.Moves) == 0 {
-		return !stringifiedStructuredFieldRepresentsEmptyValue("moves", fields["moves"])
-	}
-	if _, ok := fields["todos"]; ok && len(req.Todos) == 0 {
-		return !stringifiedStructuredFieldRepresentsEmptyValue("todos", fields["todos"])
-	}
-	if _, ok := fields["items"]; ok && len(req.Items) == 0 {
-		return !stringifiedStructuredFieldRepresentsEmptyValue("items", fields["items"])
-	}
-	if _, ok := fields["plan_artifact"]; ok && req.PlanArtifact == nil {
-		return !stringifiedStructuredFieldRepresentsEmptyValue("plan_artifact", fields["plan_artifact"])
+	for field, value := range fields {
+		if decodedStructuredToolFieldEmpty(req, field) && !stringifiedStructuredFieldRepresentsEmptyValue(field, value) {
+			return true
+		}
 	}
 	return false
+}
+
+func decodedStructuredToolFieldEmpty(req ToolRequest, field string) bool {
+	switch field {
+	case "edits":
+		return len(req.Edits) == 0
+	case "required_tests":
+		return len(req.RequiredTests) == 0
+	case "required_edit_paths":
+		return len(req.RequiredEditPaths) == 0
+	case "source_satisfied_paths":
+		return len(req.SourceSatisfiedPaths) == 0
+	case "forbidden_paths":
+		return len(req.ForbiddenPaths) == 0
+	case "declarations":
+		return len(req.Declarations) == 0
+	case "moves":
+		return len(req.Moves) == 0
+	case "todos":
+		return len(req.Todos) == 0
+	case "items":
+		return len(req.Items) == 0
+	case "plan_artifact":
+		return req.PlanArtifact == nil
+	default:
+		return false
+	}
 }
 
 func stringifiedStructuredFieldRepresentsEmptyValue(field string, value string) bool {
@@ -1544,14 +1589,15 @@ func stringifiedStructuredFieldRepresentsEmptyValue(field string, value string) 
 			return false
 		}
 		return len(obj) == 0
-	case "edits", "evidence", "required_tests", "required_edit_paths", "source_satisfied_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
+	default:
+		if !stringifiedJSONToolFieldIsArray(field) {
+			return false
+		}
 		var arr []json.RawMessage
 		if err := json.Unmarshal([]byte(value), &arr); err != nil {
 			return false
 		}
 		return len(arr) == 0
-	default:
-		return false
 	}
 }
 
@@ -1674,10 +1720,7 @@ func repairStringifiedJSONToolFields(payload []byte) ([]byte, bool) {
 		return nil, false
 	}
 	repaired := false
-	for _, field := range []string{
-		"edits", "evidence", "required_tests", "required_edit_paths", "forbidden_paths",
-		"source_satisfied_paths", "declarations", "moves", "todos", "items", "plan_artifact",
-	} {
+	for _, field := range stringifiedJSONToolFieldNames {
 		raw, ok := obj[field]
 		if !ok {
 			continue
@@ -1877,14 +1920,11 @@ func stringifiedStructuredFieldHasTopLevelJSONStart(field string, value string) 
 	if value == "" {
 		return false
 	}
-	switch field {
-	case "plan_artifact":
-		return value[0] == '{'
-	case "edits", "evidence", "required_tests", "required_edit_paths", "source_satisfied_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
-		return value[0] == '[' || value[0] == '{'
-	default:
+	allowedStarts := stringifiedJSONToolFieldAllowedStarts(field)
+	if allowedStarts == "" {
 		return false
 	}
+	return strings.ContainsRune(allowedStarts, rune(value[0]))
 }
 
 func extractLeadingStringifiedJSONToolFieldValue(field string, value string) (json.RawMessage, bool) {
@@ -1892,13 +1932,8 @@ func extractLeadingStringifiedJSONToolFieldValue(field string, value string) (js
 	if value == "" {
 		return nil, false
 	}
-	allowedStarts := "{"
-	switch field {
-	case "plan_artifact":
-		allowedStarts = "{"
-	case "edits", "evidence", "required_tests", "required_edit_paths", "source_satisfied_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
-		allowedStarts = "[{"
-	default:
+	allowedStarts := stringifiedJSONToolFieldAllowedStarts(field)
+	if allowedStarts == "" {
 		return nil, false
 	}
 	if !strings.ContainsRune(allowedStarts, rune(value[0])) {
@@ -1926,14 +1961,11 @@ func safeTrailingStringifiedJSONText(tail string) bool {
 }
 
 func extractStringifiedJSONToolFieldValue(field string, value string) (json.RawMessage, bool) {
-	switch field {
-	case "plan_artifact":
-		return extractBalancedJSONToolValue(value, "{")
-	case "edits", "evidence", "required_tests", "required_edit_paths", "source_satisfied_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
-		return extractBalancedJSONToolValue(value, "[{")
-	default:
+	allowedStarts := stringifiedJSONToolFieldAllowedStarts(field)
+	if allowedStarts == "" {
 		return nil, false
 	}
+	return extractBalancedJSONToolValue(value, allowedStarts)
 }
 
 func extractBalancedJSONToolValue(value string, allowedStarts string) (json.RawMessage, bool) {
@@ -2069,7 +2101,7 @@ func repairSingletonArrayToolFields(payload []byte) ([]byte, bool) {
 		return nil, false
 	}
 	repaired := false
-	for _, field := range []string{"edits", "moves", "todos", "items"} {
+	for _, field := range singletonArrayToolFieldNames {
 		raw, ok := obj[field]
 		if !ok {
 			continue
@@ -2104,7 +2136,7 @@ func repairStringArrayToolFields(payload []byte) ([]byte, bool) {
 		return nil, false
 	}
 	repaired := false
-	for _, field := range []string{"evidence", "required_tests", "required_edit_paths", "source_satisfied_paths", "forbidden_paths", "declarations"} {
+	for _, field := range stringArrayToolFieldNames {
 		raw, ok := obj[field]
 		if !ok {
 			continue

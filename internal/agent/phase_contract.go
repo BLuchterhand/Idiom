@@ -369,7 +369,7 @@ func applyHistoryPending(contract *TurnPhaseContract, baseTools []string, state 
 	contract.AllowedTools = filterPhaseTools(baseTools, state.CallableTools...)
 	contract.RequiredNext = []string{"call " + planExecuteHistoryPendingToolListForPrompt() + " for the intended logic, Decision: source-satisfied with per-path current-state evidence when no edit is needed, or <<QUESTION>> with the exact blocker"}
 	contract.InvalidNext = []string{"submit_plan before required git history evidence", "per-edit write in planner phase", "verify/build/test in planner phase", "additional source reads after source-body evidence is satisfied"}
-	contract.TerminalOutcomes = []string{"Decision: source-satisfied", "<<QUESTION>>:"}
+	contract.TerminalOutcomes = planExecuteTerminalSourceSatisfiedOrQuestion()
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   append([]string(nil), state.AllowedActionClasses...),
 		InvalidActionClasses:   append([]string(nil), state.InvalidActionClasses...),
@@ -387,7 +387,7 @@ func applyRequiredSource(contract *TurnPhaseContract, baseTools []string, state 
 	contract.AllowedTools = filterPhaseTools(baseTools, state.CallableTools...)
 	contract.RequiredNext = []string{"bounded source-body read for the next unread required_edit_path, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
 	contract.InvalidNext = []string{"submit_plan before source-body evidence", "per-edit write in planner phase", "broad search instead of bounded required-path source read"}
-	contract.TerminalOutcomes = []string{"Decision: source-satisfied", "<<QUESTION>>:"}
+	contract.TerminalOutcomes = planExecuteTerminalSourceSatisfiedOrQuestion()
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   append([]string(nil), state.AllowedActionClasses...),
 		InvalidActionClasses:   append([]string(nil), state.InvalidActionClasses...),
@@ -405,7 +405,7 @@ func applyCandidateSource(contract *TurnPhaseContract, baseTools []string, state
 	contract.AllowedTools = filterPhaseTools(baseTools, state.CallableTools...)
 	contract.RequiredNext = []string{"current typed state: " + string(state.Mode) + "; valid terminal actions: Decision: source-satisfied with observed current-state evidence or <<QUESTION>> with the exact blocker; if no source-body evidence exists yet, use one bounded localization/read action"}
 	contract.InvalidNext = []string{"submit_plan before source-body evidence for each planned edit path", "per-edit write in planner phase", "verify/build/test in planner phase"}
-	contract.TerminalOutcomes = []string{"Decision: source-satisfied", "<<QUESTION>>:"}
+	contract.TerminalOutcomes = planExecuteTerminalSourceSatisfiedOrQuestion()
 	if slices.Contains(state.AllowedActionClasses, actionSubmitPlan) {
 		contract.RequiredNext = []string{"current typed state: " + string(state.Mode) + "; valid terminal actions: submit_plan, Decision: source-satisfied, or <<QUESTION>> with the exact blocker; textual submit_plan must be one visible JSON object with real rationale and executable edits, not placeholders; continue targeted source/test localization only for a named missing edit-safety fact"}
 		contract.InvalidNext = []string{"submit_plan edits without source-body evidence for each edited path", "per-edit write in planner phase", "verify/build/test in planner phase"}
@@ -427,7 +427,7 @@ func applyCandidateSource(contract *TurnPhaseContract, baseTools []string, state
 		contract.InvalidNext = []string{"read/search/source-refresh after terminal recovery", "non-parser-readable action", "per-edit write in planner phase", "verify/build/test in planner phase"}
 		contract.ActionPolicy.AllowedActionClasses = []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker}
 		contract.ActionPolicy.InvalidActionClasses = []string{actionRead, actionSearch, actionGenericProbe, actionPerEditWrite, actionVerify}
-		contract.ActionPolicy.TerminalResponseShapes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
+		contract.ActionPolicy.TerminalResponseShapes = planExecuteTerminalSubmitPlanSourceSatisfiedQuestion()
 		contract.ActionPolicy.CallableToolNames = []string{"submit_plan"}
 		contract.RuntimeCall.ExpressibleActionClasses = []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker}
 	}
@@ -450,11 +450,11 @@ func applySubmitReady(contract *TurnPhaseContract, input TurnPhaseContractInput,
 	contract.AllowedTools = filterPhaseTools(baseTools, state.ParserVisibleTools...)
 	contract.RequiredNext = []string{"submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
 	contract.InvalidNext = []string{"read/search/source-refresh after plan-execute submit_plan readiness", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
-	contract.TerminalOutcomes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
+	contract.TerminalOutcomes = planExecuteTerminalSubmitPlanSourceSatisfiedQuestion()
 	if state.Mode == PlanExecutePlanningModeSubmitCorrection {
 		contract.RequiredNext = []string{"corrected submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths"}
 		contract.InvalidNext = []string{"read/search/source-refresh after submit_plan correction is ready", "terminal Decision: source-satisfied after an incomplete submit_plan; use submit_plan.source_satisfied_paths for already-final paths instead", "<<QUESTION>> after source evidence is sufficient for correction", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
-		contract.TerminalOutcomes = []string{"submit_plan"}
+		contract.TerminalOutcomes = planExecuteTerminalSubmitPlanOnly()
 	}
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   append([]string(nil), state.AllowedActionClasses...),
@@ -473,7 +473,7 @@ func applySubmitReady(contract *TurnPhaseContract, input TurnPhaseContractInput,
 		contract.Phase = "submit_ready_native"
 		contract.RequiredNext = []string{"native submit_plan tool call"}
 		contract.InvalidNext = append(contract.InvalidNext, "non-tool prose while ToolChoice=required")
-		contract.TerminalOutcomes = []string{"submit_plan"}
+		contract.TerminalOutcomes = planExecuteTerminalSubmitPlanOnly()
 		contract.RuntimeCall.ToolTransportMode = firstPhaseString(contract.RuntimeCall.ToolTransportMode, "native")
 		contract.RuntimeCall.ToolChoice = "required"
 		contract.RuntimeCall.ParserContract = firstPhaseString(input.ParserContract, "native_submit_plan")
@@ -502,11 +502,11 @@ func applySourceSatisfiedTerminal(contract *TurnPhaseContract, state PlanExecute
 	contract.AllowedTools = nil
 	contract.RequiredNext = []string{"visible Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
 	contract.InvalidNext = []string{"submit_plan after source-satisfied/no-op submit_plan rejection", "read/search/source-refresh after source-satisfied terminal recovery", "per-edit write in planner phase", "verify in planner phase", "prose-only final answer without Decision or <<QUESTION>>"}
-	contract.TerminalOutcomes = []string{"Decision: source-satisfied", "<<QUESTION>>:"}
+	contract.TerminalOutcomes = planExecuteTerminalSourceSatisfiedOrQuestion()
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   []string{actionSourceSatisfied, actionBlocker},
 		InvalidActionClasses:   []string{actionSubmitPlan, actionRead, actionSearch, actionPerEditWrite, actionVerify, actionGenericProbe, actionProseFinal},
-		TerminalResponseShapes: []string{"Decision: source-satisfied", "<<QUESTION>>:"},
+		TerminalResponseShapes: planExecuteTerminalSourceSatisfiedOrQuestion(),
 		CallableToolNames:      nil,
 	}
 	if len(state.TerminalResponseShapes) > 0 {

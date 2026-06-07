@@ -55,13 +55,13 @@ func nonEmptyPlanExecuteRecoveryPromptParts(parts []string) []string {
 }
 
 func planThenExecuteLowValueActionRecoveryPlan(state PlanExecutePlanningState) PlanExecuteRecoveryPlan {
-	terminal := []string{"Decision: source-satisfied", "<<QUESTION>>:"}
+	terminal := planExecuteTerminalSourceSatisfiedOrQuestion()
 	shape := "Do not emit `submit_plan` until the planner has a concrete selected edit path."
 	selected := "no concrete selected edit path"
 	allowedTools := []string{}
 	if len(state.SelectedEditPaths) > 0 {
 		selected = strings.Join(state.SelectedEditPaths, ", ")
-		terminal = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
+		terminal = planExecuteTerminalSubmitPlanSourceSatisfiedQuestion()
 		allowedTools = []string{"submit_plan"}
 		shape = "For textual `submit_plan`, emit one visible JSON object with top-level `tool`, `rationale`, and an `edits` array. Each edit path must be one of the selected paths, and every edit body must contain real source text from the gathered evidence. Do not combine multiple paths into one field and do not copy placeholders, ellipses, or schema examples."
 	}
@@ -93,7 +93,7 @@ func planThenExecuteGroundingRequiredRecoveryPlan() PlanExecuteRecoveryPlan {
 			"read_file",
 			"code_navigate",
 		},
-		TerminalOptions: []string{"Decision: source-satisfied", "<<QUESTION>>:"},
+		TerminalOptions: planExecuteTerminalSourceSatisfiedOrQuestion(),
 		Summary:         "The previous `submit_plan` was rejected because this unscoped plan-execute atom has no grounded edit paths yet.",
 		Instructions: []string{
 			"Do not repeat `submit_plan`.",
@@ -117,7 +117,7 @@ func planThenExecuteUnscopedEmptySubmitPlanRecoveryPlan() PlanExecuteRecoveryPla
 			"code_navigate",
 			"submit_plan",
 		},
-		TerminalOptions: []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"},
+		TerminalOptions: planExecuteTerminalSubmitPlanSourceSatisfiedQuestion(),
 		Summary:         "The previous `submit_plan` was rejected before it became a valid plan artifact because it contained no executable edits.",
 		Instructions: []string{
 			"No required_edit_paths or allowed_edit_paths list is active, so the harness cannot invent coverage paths for this planner turn.",
@@ -147,7 +147,7 @@ func planThenExecuteSubmitPlanParseRecoveryPlan(stringifiedEdits bool, requiredP
 	return PlanExecuteRecoveryPlan{
 		Kind:            PlanExecuteRecoveryKindSubmitPlanParse,
 		AllowedTools:    []string{"submit_plan"},
-		TerminalOptions: []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"},
+		TerminalOptions: planExecuteTerminalSubmitPlanSourceSatisfiedQuestion(),
 		Summary:         summary,
 		Instructions:    instructions,
 	}

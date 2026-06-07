@@ -85,6 +85,10 @@ const (
 	ToolPlanExecuteComplete = "plan_execute_completed"
 )
 
+const (
+	EventProductSourceSatisfied = "idiom.feature_planner.product_source_satisfied"
+)
+
 type FeatureState struct {
 	SchemaVersion           string                    `json:"schema_version"`
 	FeatureID               string                    `json:"feature_id,omitempty"`

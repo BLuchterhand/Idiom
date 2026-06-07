@@ -238,41 +238,7 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 }
 
 func closeFeaturePlannerSourceSatisfied(req featurePlannerRequest, state featureplanner.FeatureState, brief featureplanner.ProductWorkflowBrief, stdout io.Writer) (featurePlannerResult, error) {
-	state.Status = featureplanner.FeatureStateSourceSatisfied
-	state.PlanningLoop.State = featureplanner.FeatureStateSourceSatisfied
-	state.Blockers = nil
-	state.OpenQuestions = nil
-	state.PlanningLoop.OpenQuestionIDs = nil
-	state.OpenRecoveryPackets = nil
-	activeRunDeltas := make([]featureplanner.ActiveRunDelta, 0, len(state.ActiveRuns))
-	for _, run := range state.ActiveRuns {
-		activeRunDeltas = append(activeRunDeltas, featureplanner.ActiveRunDelta{
-			Op:            "fold_terminal",
-			AtomID:        strings.TrimSpace(run.AtomID),
-			LaneSessionID: strings.TrimSpace(firstNonEmpty(run.LaneSessionID, run.RunID)),
-			BeforeState:   strings.TrimSpace(run.State),
-			AfterState:    featureplanner.FeatureStateSourceSatisfied,
-		})
-	}
-	state.ActiveRuns = nil
-	state.EffortRoot = strings.TrimSpace(brief.EffortRoot)
-	state.EffortID = firstNonEmpty(strings.TrimSpace(req.EffortID), strings.TrimSpace(brief.EffortID), strings.TrimSpace(state.EffortID))
-	message := fmt.Sprintf("product workflow effort %s is already closed/source-satisfied (%s/%s); dispatch skipped", strings.TrimSpace(brief.EffortID), strings.TrimSpace(brief.CurrentPhase), strings.TrimSpace(brief.CurrentState))
-	event := featureplanner.Event{
-		Type:            "idiom.feature_planner.product_source_satisfied",
-		SessionID:       state.SessionID,
-		Message:         message,
-		FeatureTo:       featureplanner.FeatureStateSourceSatisfied,
-		ActiveRunDeltas: activeRunDeltas,
-		Fields: map[string]any{
-			"effort_id":          strings.TrimSpace(brief.EffortID),
-			"effort_root":        strings.TrimSpace(brief.EffortRoot),
-			"status_bucket":      strings.TrimSpace(brief.StatusBucket),
-			"current_phase":      strings.TrimSpace(brief.CurrentPhase),
-			"current_state":      strings.TrimSpace(brief.CurrentState),
-			"next_valid_actions": append([]string(nil), brief.NextValidActions...),
-		},
-	}
+	state, event := featureplanner.ProductSourceSatisfiedCloseout(state, brief, req.EffortID)
 	if req.JSONEvents {
 		featureplanner.WriteEvents(stdout, []featureplanner.Event{event})
 	}

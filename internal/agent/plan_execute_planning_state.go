@@ -234,7 +234,7 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		state.CallableTools = []string{"read_file", "code_navigate"}
 		state.AllowedActionClasses = []string{actionRead, actionSourceSatisfied, actionBlocker}
 		state.InvalidActionClasses = []string{actionSubmitPlan, actionPerEditWrite, actionSearch}
-		state.TerminalResponseShapes = []string{"Decision: source-satisfied", "<<QUESTION>>:"}
+		state.TerminalResponseShapes = planExecuteTerminalSourceSatisfiedOrQuestion()
 	case PlanExecutePlanningModeAllowedCandidate, PlanExecutePlanningModeOpenCandidate:
 		state.PhaseID = turnPhaseCandidateSource
 		state.Phase = "candidate_source_pending"
@@ -251,7 +251,7 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		}
 		state.AllowedActionClasses = []string{actionRead, actionSearch, actionBlocker, actionSourceSatisfied}
 		state.InvalidActionClasses = []string{actionSubmitPlan, actionPerEditWrite, actionVerify, actionGenericProbe}
-		state.TerminalResponseShapes = []string{"Decision: source-satisfied", "<<QUESTION>>:"}
+		state.TerminalResponseShapes = planExecuteTerminalSourceSatisfiedOrQuestion()
 		if slices.Contains(state.TerminalOptions, "submit_plan") {
 			state.ParserVisibleTools = append(state.ParserVisibleTools, "submit_plan")
 			state.CallableTools = append(state.CallableTools, "submit_plan")
@@ -267,7 +267,7 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		state.CallableTools = planExecuteHistoryPendingToolNames()
 		state.AllowedActionClasses = []string{actionRead, actionSourceSatisfied, actionBlocker}
 		state.InvalidActionClasses = []string{actionSearch, actionVerify, actionPerEditWrite, actionGenericProbe}
-		state.TerminalResponseShapes = []string{"Decision: source-satisfied", "<<QUESTION>>:"}
+		state.TerminalResponseShapes = planExecuteTerminalSourceSatisfiedOrQuestion()
 	case PlanExecutePlanningModeAnchorRefresh:
 		state.PhaseID = turnPhaseStaleAnchorRefresh
 		state.Phase = "anchor_refresh"
@@ -289,17 +289,17 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		state.CallableTools = []string{"submit_plan"}
 		state.AllowedActionClasses = []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker}
 		state.InvalidActionClasses = []string{actionRead, actionSearch, actionVerify, actionPerEditWrite, actionGenericProbe, actionProseFinal}
-		state.TerminalResponseShapes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
+		state.TerminalResponseShapes = planExecuteTerminalSubmitPlanSourceSatisfiedQuestion()
 		if state.Mode == PlanExecutePlanningModeSubmitCorrection {
 			state.AllowedActionClasses = []string{actionSubmitPlan}
 			state.InvalidActionClasses = []string{actionRead, actionSearch, actionSourceSatisfied, actionBlocker, actionVerify, actionPerEditWrite, actionGenericProbe, actionProseFinal}
-			state.TerminalResponseShapes = []string{"submit_plan"}
+			state.TerminalResponseShapes = planExecuteTerminalSubmitPlanOnly()
 		}
 		if planExecuteSubmitReadyNativeRequired(transport) {
 			state.PhaseID = turnPhaseSubmitReadyNativeRequired
 			state.Phase = "submit_ready_native"
 			state.AllowedActionClasses = []string{actionSubmitPlan}
-			state.TerminalResponseShapes = []string{"submit_plan"}
+			state.TerminalResponseShapes = planExecuteTerminalSubmitPlanOnly()
 		}
 	}
 	state.ParserVisibleTools = uniquePhaseStrings(state.ParserVisibleTools)
