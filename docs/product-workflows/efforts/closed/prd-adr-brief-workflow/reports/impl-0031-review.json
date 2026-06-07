@@ -33,11 +33,11 @@
   },
   "reviewed_at": "2026-05-18T15:45:00Z",
   "commands_reviewed": [
-    "go test ./internal/productworkflow -run TestProductWorkflowMetrics -count=1",
-    "go test ./cmd/idiom -run TestProductWorkflowMetrics -count=1",
-    "go test ./cmd/idiom -run TestProductAuditMetrics -count=1",
-    "go test ./cmd/idiom -run TestProductStatusMetrics -count=1",
-    "go test ./internal/productworkflow ./cmd/idiom",
+    "go test ./internal/workflows/productworkflow -run TestProductWorkflowMetrics -count=1",
+    "go test ./internal/surfaces/cli/product -run TestProductWorkflowMetrics -count=1",
+    "go test ./internal/surfaces/cli/product -run TestProductAuditMetrics -count=1",
+    "go test ./internal/surfaces/cli/product -run TestProductStatusMetrics -count=1",
+    "go test ./internal/workflows/productworkflow ./cmd/idiom",
     "go test ./..."
   ],
   "residual_risk": "Metrics are read-only and bounded; future Obsidian parity enforcement remains a separate atom.",

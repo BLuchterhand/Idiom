@@ -146,9 +146,9 @@ notice, depending on the contract.
 | `cmd/harness/doctor.go` | Host readiness and doctor command |
 | `cmd/harness/backend.go` | Backend command surface |
 | `cmd/harness/queue.go` | Queue command surface |
-| `internal/backends` | Backend profiles, aliases, launcher, proxy |
-| `internal/autodetect` | Host/model/backend discovery |
-| `internal/runner` | Queue lease acquisition helpers |
+| `internal/runtime/backends` | Backend profiles, aliases, launcher, proxy |
+| `internal/platform/autodetect` | Host/model/backend discovery |
+| `internal/runtime/runner` | Queue lease acquisition helpers |
 
 ## Related Notes
 

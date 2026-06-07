@@ -20,10 +20,10 @@
   "reviewed_at": "2026-05-18T13:32:00Z",
   "commands_reviewed": [
     "idiom tool context_pack --input '{\"task\":\"review impl 0026 TDD obligation synthesis plan product workflow\",\"mode\":\"plan\",\"limit\":8}'",
-    "idiom tool context_zoom --input '{\"handle\":\"symbol://internal/productworkflow/tdd_obligation_plans.go#PlanTDDObligations\",\"resolution\":\"symbol\"}'",
+    "idiom tool context_zoom --input '{\"handle\":\"symbol://internal/workflows/productworkflow/tdd_obligation_plans.go#PlanTDDObligations\",\"resolution\":\"symbol\"}'",
     "idiom tool context_pack --input '{\"task\":\"re-review impl 0026 TDD obligation synthesis repair findings product workflow\",\"mode\":\"plan\",\"limit\":6}'",
-    "go test ./internal/productworkflow -run TestTDDObligationPlan -count=1",
-    "go test ./cmd/idiom -run TestProductTDDPlanObligations -count=1",
+    "go test ./internal/workflows/productworkflow -run TestTDDObligationPlan -count=1",
+    "go test ./internal/surfaces/cli/product -run TestProductTDDPlanObligations -count=1",
     "go run ./cmd/idiom product tdd --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --plan-obligations --json"
   ],
   "prior_findings_resolved": [

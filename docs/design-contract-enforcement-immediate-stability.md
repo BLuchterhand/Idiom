@@ -223,17 +223,17 @@ wrong, observe-only data should show that without breaking a lane.
 
 The work should be split into disjoint write scopes:
 
-- Slice A, domain model: `internal/autonomy/*`
+- Slice A, domain model: `internal/contracts/autonomy/*`
   - extend `ContractGateEvent` and normalization/validation tests;
   - add stable pack and enforcement-mode vocabulary;
   - reject unsafe observed facts and safe alternatives;
   - keep the model free of runner imports.
-- Slice B, runner emission: `internal/agent/*`
+- Slice B, runner emission: `internal/runtime/agent/*`
   - map existing gate decisions into complete `EventGateDecision` payloads;
   - include contract ID, invariant ID, reason code, facts, and alternatives;
   - preserve existing event names for compatibility.
-- Slice C, audit/reporting: `internal/autonomy/audit*` and
-  `internal/workspace/harness_audit*`
+- Slice C, audit/reporting: `internal/contracts/autonomy/audit*` and
+  `internal/capabilities/workspace/harness_audit*`
   - count gate decision coverage by gate, pack, enforcement mode, and safe
     alternative presence;
   - flag missing pack or mode on typed gate events;
@@ -249,9 +249,9 @@ follow-up doc with a clearer event-correlation design.
 Required focused checks:
 
 ```sh
-go test ./internal/autonomy
-go test ./internal/agent
-go test ./internal/rootcmd ./internal/lanecmd ./internal/planexecutecmd
+go test ./internal/contracts/autonomy
+go test ./internal/runtime/agent
+go test ./internal/surfaces/cli/root ./internal/lanecmd ./internal/surfaces/cli/planexecute
 ```
 
 If runner/audit behavior changes beyond envelope emission, run:
@@ -286,7 +286,7 @@ Initial reviewer bench completed on 2026-05-24:
 - Blocking correction: keep self-modification enforcement observe-only and avoid
   blanket protection for all `.idiom` generated state.
 - Scope correction: `harness_audit` implementation is under
-  `internal/workspace`; CLI plan-execute JSON event parity is follow-up unless
+  `internal/capabilities/workspace`; CLI plan-execute JSON event parity is follow-up unless
   explicitly included.
 
 Second reviewer pass completed on 2026-05-24:
@@ -296,7 +296,7 @@ Second reviewer pass completed on 2026-05-24:
 - Remaining blocking issues: none.
 - Non-blocking implementation notes: keep `observed_facts` tightly typed and
   validated; require or audit `safe_alternatives` mainly for reject/deny/stop
-  outcomes; keep historical logs readable; add `go test ./internal/workspace`
+  outcomes; keep historical logs readable; add `go test ./internal/capabilities/workspace`
   when harness audit changes land.
 
 Implementation update on 2026-05-25:

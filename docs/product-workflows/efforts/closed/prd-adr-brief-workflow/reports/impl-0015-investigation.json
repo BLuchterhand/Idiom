@@ -6,25 +6,25 @@
   "created_at": "2026-05-17T21:03:00Z",
   "scope": {
     "expected_files": [
-      "internal/productworkflow/transition.go",
-      "internal/productworkflow/transition_test.go",
+      "internal/workflows/productworkflow/transition.go",
+      "internal/workflows/productworkflow/transition_test.go",
       "durable effort bookkeeping and reports"
     ],
     "forbidden_patterns": [
       ".idiom/**",
-      "cmd/idiom/product_workflow.go",
-      "cmd/idiom/product_workflow_test.go",
-      "internal/productworkflow/validate.go",
-      "internal/productworkflow/validate_test.go",
-      "internal/app/**",
-      "internal/agent/**",
+      "internal/surfaces/cli/product/product_workflow.go",
+      "internal/surfaces/cli/product/product_workflow_test.go",
+      "internal/workflows/productworkflow/validate.go",
+      "internal/workflows/productworkflow/validate_test.go",
+      "internal/surfaces/tui/app/**",
+      "internal/runtime/agent/**",
       "prompts/**",
       "cmd/idiom/product_evidence*"
     ]
   },
   "tests": {
-    "focused": "go test ./internal/productworkflow",
-    "scope_closeout_gate": "go test ./internal/productworkflow -run Scope",
+    "focused": "go test ./internal/workflows/productworkflow",
+    "scope_closeout_gate": "go test ./internal/workflows/productworkflow -run Scope",
     "product_status": "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "product_audit": "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "product_lint": "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",

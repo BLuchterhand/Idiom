@@ -11,7 +11,7 @@ rewrite model output, no deterministic edit shortcuts racing the model.
 
 ### Phase 1 — listening fix
 
-- `internal/app/analysis_agents.go`: removed the pre-model
+- `internal/surfaces/tui/app/analysis_agents.go`: removed the pre-model
   `deterministicArchitectureAnswer` short-circuit. Every architecture prompt
   reaches the model before any fallback can fire.
 - `internal/frontier/explore.go`: added `PromptRequestsScopeLimitedAnswer`.
@@ -23,11 +23,11 @@ rewrite model output, no deterministic edit shortcuts racing the model.
   verification-only / debug-logs intents no longer trigger the implementation
   contract.
 - New test: `TestArchitectureFallbackSummaryHonorsScopeLimitedPrompts` in
-  `internal/app/write_guard_test.go`.
+  `internal/surfaces/tui/app/write_guard_test.go`.
 
 ### Phase 2 — unified dispatch + subagent cleanup
 
-- `internal/app/prompt_routing.go`: `runPromptPlan` no longer dispatches to
+- `internal/surfaces/tui/app/prompt_routing.go`: `runPromptPlan` no longer dispatches to
   lane-specific subagents. Every non-implement prompt goes through
   `runMainAgent`, which has the full workspace tool set via `agent.Runner`.
   Collapsed from ~120 lines to ~10.
@@ -44,13 +44,13 @@ rewrite model output, no deterministic edit shortcuts racing the model.
 
 ### Phase 3 — rails no longer rewrite
 
-- `internal/app/control_rails.go`: `applyControlRailsFinalAnswer` still
+- `internal/surfaces/tui/app/control_rails.go`: `applyControlRailsFinalAnswer` still
   computes the enforcement snapshot for telemetry but no longer calls
   `repairControlRailsAnswer`. The model's answer passes through verbatim.
 
 ### Phase 4 — model owns every edit
 
-- `internal/app/implementation.go`: deleted ~225 lines of dispatch plus the
+- `internal/surfaces/tui/app/implementation.go`: deleted ~225 lines of dispatch plus the
   function bodies of eight deterministic pre-model edit shortcuts:
   `tryDirectPromptEdit`, `tryExactSentenceAppend`,
   `tryDirectConfigFieldUpdate`, `tryDirectLocateRemoval`,
@@ -79,7 +79,7 @@ intent_verifier → rails → dispatch) is effectively advisory:
 
 ### OpenCode blank #1 — unified write-permission UX
 
-- `internal/app/lifecycle.go`: `runMainAgent` now uses `implementWriteGuard`
+- `internal/surfaces/tui/app/lifecycle.go`: `runMainAgent` now uses `implementWriteGuard`
   and the same approval-proposal flow as the implement lane. In guarded-write
   mode, a model that decides to edit produces an interactive approval
   proposal instead of a terse "switch lanes" refusal. In auto-write mode,

@@ -10,21 +10,21 @@
   "scope_statement": "Add deterministic execution feedback linking from explicit lane/progress/evidence references into privacy-safe workflow feedback summaries without dispatching lanes, mutating .idiom runtime state, or promoting ranker learning.",
   "code_changes": true,
   "changed_paths": [
-    "cmd/idiom/product_workflow.go",
-    "cmd/idiom/product_workflow_test.go",
-    "internal/productworkflow/execution_feedback.go",
-    "internal/productworkflow/execution_feedback_test.go",
-    "internal/productworkflow/types.go"
+    "internal/surfaces/cli/product/product_workflow.go",
+    "internal/surfaces/cli/product/product_workflow_test.go",
+    "internal/workflows/productworkflow/execution_feedback.go",
+    "internal/workflows/productworkflow/execution_feedback_test.go",
+    "internal/workflows/productworkflow/types.go"
   ],
   "verification": {
     "run_by_implementor": true,
     "commands": [
       "idiom tool context_pack --input {\"task\":\"phase 5 execution feedback loop link lane events product evidence release evidence workflow state PRD ADR TDD obligations\",\"mode\":\"plan\",\"limit\":12}",
       "idiom tool context_query --input {\"query\":\"lane events product evidence release evidence workflow state TDD obligations execution feedback linking product workflow\",\"resolution\":\"symbol\"}",
-      "go test ./internal/productworkflow -run TestExecutionFeedback -count=1",
-      "go test ./cmd/idiom -run TestProductFeedback -count=1",
-      "go test ./internal/productworkflow ./cmd/idiom",
-      "go run ./cmd/idiom product feedback --effort-root <temp effort> --lane-history-file references/lane_history.json --plan-progress-file references/plan_progress.json --verification-file references/verification.json --product-evidence-id pe-1 --product-evidence-path product_evidence/export-1.json --release-evidence-id re-1 --release-evidence-path release_evidence/bundle-1.json --brief-path briefs/test.md --changed-path cmd/idiom/product_workflow.go --tdd-obligation-ref TDD-IMPL-0029-001 --json",
+      "go test ./internal/workflows/productworkflow -run TestExecutionFeedback -count=1",
+      "go test ./internal/surfaces/cli/product -run TestProductFeedback -count=1",
+      "go test ./internal/workflows/productworkflow ./cmd/idiom",
+      "go run ./cmd/idiom product feedback --effort-root <temp effort> --lane-history-file references/lane_history.json --plan-progress-file references/plan_progress.json --verification-file references/verification.json --product-evidence-id pe-1 --product-evidence-path product_evidence/export-1.json --release-evidence-id re-1 --release-evidence-path release_evidence/bundle-1.json --brief-path briefs/test.md --changed-path internal/surfaces/cli/product/product_workflow.go --tdd-obligation-ref TDD-IMPL-0029-001 --json",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go test ./...",

@@ -19,7 +19,7 @@
   },
   "reviewed_at": "2026-05-18T14:25:00Z",
   "commands_reviewed": [
-    "go test ./cmd/idiom ./internal/productworkflow -run Brief|ProductBrief",
+    "go test ./internal/surfaces/cli/product ./internal/workflows/productworkflow -run Brief|ProductBrief",
     "reviewed current uncommitted Atom 28 patch after Idiom discovery-oriented localization"
   ],
   "prior_findings_resolved": [

@@ -49,8 +49,8 @@ use live source/language tools.
 
 ### 1. Add A Central Freshness Gate
 
-Create a shared internal API in `internal/comprehension`, not just
-`internal/workspace`:
+Create a shared internal API in `internal/repository/comprehension`, not just
+`internal/capabilities/workspace`:
 
 ```go
 type FreshnessPolicy string
@@ -214,8 +214,8 @@ Every context tool result should include a consistent `freshness` block:
     "policy": "read_through",
     "fresh_for_scope": true,
     "global_fresh": false,
-    "scope": "internal/comprehension",
-    "checked_paths": ["internal/comprehension/graph.go"],
+    "scope": "internal/repository/comprehension",
+    "checked_paths": ["internal/repository/comprehension/graph.go"],
     "stale_paths": [],
     "refresh": { "...": "existing RefreshReport" }
   }
@@ -257,7 +257,7 @@ source evidence rather than packet-ready graph context.
 
 ### Phase 1: Freshness Authority
 
-- Add `EnsureFresh` and the types above in `internal/comprehension`.
+- Add `EnsureFresh` and the types above in `internal/repository/comprehension`.
 - Move the core logic from workspace `contextAutoRefresh` and
   `contextStatusAutoRefresh` into this shared API.
 - Keep the existing workspace helper as a thin adapter during migration.

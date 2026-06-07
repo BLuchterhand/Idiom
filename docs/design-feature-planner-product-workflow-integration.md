@@ -7,8 +7,8 @@ Status: accepted design, drafted 2026-05-28
 ## Purpose
 
 This document defines the integration between the upstream product workflow
-pipeline (`internal/productworkflow/`) and the feature-planner orchestration
-(`internal/featureplanner/`). Currently these systems are islands with zero
+pipeline (`internal/workflows/productworkflow/`) and the feature-planner orchestration
+(`internal/workflows/featureplanner/`). Currently these systems are islands with zero
 bridge code. The feature-planner's `BuildPlannerPrompt` forces the model to
 produce SDD refs it cannot possibly know, because no effort context, artifact
 paths, or PRD/ADR/TDD IDs are injected into the prompt. The model hallucinates
@@ -131,18 +131,18 @@ criteria; plans with `v2` schema must use structured refs.
 ### Atom 1: ProductWorkflowBrief type and RunOptions integration
 
 **Scope**: Add `ProductWorkflowBrief`, `PRDRequirementBrief`, `TDDObligationBrief`
-types to `internal/featureplanner/product_context.go`. Add optional
+types to `internal/workflows/featureplanner/product_context.go`. Add optional
 `ProductWorkflowBrief` pointer to `RunOptions`. Thread it through `Run()` to
 `BuildPlannerPrompt()`.
 
 **Files**:
 
-- `internal/featureplanner/product_context.go` (new)
-- `internal/featureplanner/orchestrate.go` (RunOptions, Run signature)
+- `internal/workflows/featureplanner/product_context.go` (new)
+- `internal/workflows/featureplanner/orchestrate.go` (RunOptions, Run signature)
 
 **Tests**:
 
-- `internal/featureplanner/product_context_test.go` (new) — JSON round-trip for
+- `internal/workflows/featureplanner/product_context_test.go` (new) — JSON round-trip for
   ProductWorkflowBrief with minimal and full payloads
 
 ### Atom 2: BuildPlannerPrompt product context injection
@@ -163,7 +163,7 @@ use ask_planner_question to report the blocked gate."
 
 **Files**:
 
-- `internal/featureplanner/orchestrate.go` (BuildPlannerPrompt)
+- `internal/workflows/featureplanner/orchestrate.go` (BuildPlannerPrompt)
 
 **Tests**:
 
@@ -183,7 +183,7 @@ through `RunOptions`.
 
 **Files**:
 
-- `internal/featureplannercmd/feature_planner.go` (flags, loading logic)
+- `internal/surfaces/cli/featureplanner/feature_planner.go` (flags, loading logic)
 
 **Tests**:
 
@@ -200,9 +200,9 @@ Add migration path for legacy `refs` entries in `ValidateDurablePlan`.
 
 **Files**:
 
-- `internal/featureplanner/types.go` (SDDContract, TDDContract, FeaturePlan,
+- `internal/workflows/featureplanner/types.go` (SDDContract, TDDContract, FeaturePlan,
   new CoverageGateResult)
-- `internal/featureplanner/validate.go` (ValidateDurablePlan migration)
+- `internal/workflows/featureplanner/validate.go` (ValidateDurablePlan migration)
 
 **Tests**:
 
@@ -220,8 +220,8 @@ don't resolve.
 
 **Files**:
 
-- `internal/featureplanner/validate.go` (new validation function)
-- `internal/featureplannercmd/feature_planner.go` (call after validation)
+- `internal/workflows/featureplanner/validate.go` (new validation function)
+- `internal/surfaces/cli/featureplanner/feature_planner.go` (call after validation)
 
 **Tests**:
 
@@ -239,8 +239,8 @@ workflow ledger. Call it from the CLI layer.
 
 **Files**:
 
-- `internal/featureplanner/validate.go` (new validation function)
-- `internal/featureplannercmd/feature_planner.go` (call after validation)
+- `internal/workflows/featureplanner/validate.go` (new validation function)
+- `internal/surfaces/cli/featureplanner/feature_planner.go` (call after validation)
 
 **Tests**:
 
@@ -258,7 +258,7 @@ coverage gate never passed.
 
 **Files**:
 
-- `internal/featureplanner/validate.go` (ValidatePlan)
+- `internal/workflows/featureplanner/validate.go` (ValidatePlan)
 
 **Tests**:
 
@@ -276,7 +276,7 @@ passes SDD ref validation, and atom TDD obligations match the ledger.
 **Files**:
 
 - `testdata/feature-planner-pw-integration/` (fixture effort folder)
-- `internal/featureplannercmd/feature_planner_test.go` (integration test)
+- `internal/surfaces/cli/featureplanner/feature_planner_test.go` (integration test)
 
 **Tests**:
 
@@ -292,8 +292,8 @@ against the product workflow state that existed at planning time.
 
 **Files**:
 
-- `internal/featureplanner/types.go` (FeatureState)
-- `internal/featureplanner/store.go` (SaveState, LoadState)
+- `internal/workflows/featureplanner/types.go` (FeatureState)
+- `internal/workflows/featureplanner/store.go` (SaveState, LoadState)
 
 **Tests**:
 
@@ -314,7 +314,7 @@ against the product workflow state that existed at planning time.
 
 ## Verification
 
-- Default verification: `go test ./internal/featureplanner/... ./internal/featureplannercmd/...`
+- Default verification: `go test ./internal/workflows/featureplanner/... ./internal/surfaces/cli/featureplanner/...`
 - After Atom 8: `make build && make test`
 - Scripted contract tests: `make eval LOGS=testdata/scripted-contracts/generated-logs/scripted-feature-planner-*.jsonl`
 

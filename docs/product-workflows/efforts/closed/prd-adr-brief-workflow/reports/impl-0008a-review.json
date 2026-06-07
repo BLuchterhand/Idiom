@@ -25,7 +25,7 @@
   "reviewed_at": "2026-05-17T18:12:17Z",
   "commands_reviewed": [
     "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
-    "go test ./internal/productworkflow ./cmd/idiom",
+    "go test ./internal/workflows/productworkflow ./cmd/idiom",
     "go test ./...",
     "rg -n 'status: accepted_fixture|\"status\": \"accepted_fixture\"' docs/product-workflows/efforts/started/prd-adr-brief-workflow/prd.md docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs",
     "JSON/JSONL validation for durable workflow artifacts",

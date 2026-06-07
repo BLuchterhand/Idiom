@@ -7,12 +7,12 @@
   "scope": {
     "changed_paths_checked": true,
     "out_of_scope_changes": [],
-    "allowed_scope": "internal/productworkflow and durable Atom 2 workflow bookkeeping"
+    "allowed_scope": "internal/workflows/productworkflow and durable Atom 2 workflow bookkeeping"
   },
   "tests": {
     "commands": [
       {
-        "command": "go test ./internal/productworkflow",
+        "command": "go test ./internal/workflows/productworkflow",
         "status": "passed"
       },
       {

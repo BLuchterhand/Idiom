@@ -177,7 +177,7 @@ Confidence:
 Verified facts:
 
 - Current runner derives an autonomy contract from `WorkerRuntimeBrief`,
-  `RunPolicy`, and tool results inside `internal/agent`.
+  `RunPolicy`, and tool results inside `internal/runtime/agent`.
 - `WorkerRuntimeBrief` and `RunState` duplicate many contract-shaped fields.
 - Runner control rails rebuild allowed tools, permission profile, required
   evidence, readiness, verification, and stop conditions from brief/workspace
@@ -217,7 +217,7 @@ Non-causes:
 
 Fix recommendation:
 
-- Require a pure contract compiler outside `internal/agent` and concrete
+- Require a pure contract compiler outside `internal/runtime/agent` and concrete
   workspace adapters.
 - Make covered runner gates consume `PolicyDecision` and obligation-ledger
   outputs.
@@ -389,7 +389,7 @@ Verified facts:
 Inferences:
 
 - The direction is correct; ownership placement is the largest risk.
-- Leaving compilation in `internal/agent` or routing in `internal/workspace`
+- Leaving compilation in `internal/runtime/agent` or routing in `internal/capabilities/workspace`
   could preserve mixed responsibilities under cleaner names.
 - Import-boundary and event-schema tests should precede behavior changes.
 
@@ -416,7 +416,7 @@ Non-causes:
 Fix recommendation:
 
 - Approve direction, tighten before implementation.
-- Put contract domain in `internal/autonomy`.
+- Put contract domain in `internal/contracts/autonomy`.
 - Put contract compilation in a use-case/application package using plain input
   models.
 - Keep runner as a consumer of decisions.

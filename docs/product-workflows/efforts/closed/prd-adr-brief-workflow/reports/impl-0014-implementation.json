@@ -10,10 +10,10 @@
   "scope_statement": "Patch-shaped product status view atom: add read-only product status command/view without changing design docs or dispatch behavior.",
   "code_changes": true,
   "changed_paths": [
-    "cmd/idiom/product_workflow.go",
-    "cmd/idiom/product_workflow_test.go",
-    "internal/productworkflow/status.go",
-    "internal/productworkflow/status_test.go",
+    "internal/surfaces/cli/product/product_workflow.go",
+    "internal/surfaces/cli/product/product_workflow_test.go",
+    "internal/workflows/productworkflow/status.go",
+    "internal/workflows/productworkflow/status_test.go",
     "docs/product-workflows/efforts/index.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
@@ -28,7 +28,7 @@
     "run_by_implementor": false,
     "commands": [
       "gofmt on touched Go files",
-      "go test ./internal/productworkflow ./cmd/idiom",
+      "go test ./internal/workflows/productworkflow ./cmd/idiom",
       "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",

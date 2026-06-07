@@ -37,7 +37,7 @@ report keeps the metric fields parseable and emits failure reasons such as
 Validate the corpus with:
 
 ```sh
-go test ./internal/eval -count=1
+go test ./internal/evidence/eval -count=1
 go test ./cmd/idiom-eval -count=1
 go run ./cmd/idiom-eval -localization-corpus testdata/localization/recent-implementation-corpus.json
 ```

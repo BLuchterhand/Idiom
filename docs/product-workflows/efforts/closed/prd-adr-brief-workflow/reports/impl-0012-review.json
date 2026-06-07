@@ -27,7 +27,7 @@
   },
   "reviewed_at": "2026-05-17T20:19:00Z",
   "commands_reviewed": [
-    "go test ./internal/productworkflow ./cmd/idiom",
+    "go test ./internal/workflows/productworkflow ./cmd/idiom",
     "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "go test ./...",

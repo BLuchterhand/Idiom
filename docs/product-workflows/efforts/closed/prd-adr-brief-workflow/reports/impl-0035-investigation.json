@@ -7,10 +7,10 @@
   "completed_at": "2026-05-18T20:55:00Z",
   "scope": {
     "expected_paths": [
-      "internal/productworkflow/status.go",
-      "internal/productworkflow/status_test.go",
-      "cmd/idiom/product_workflow.go",
-      "cmd/idiom/product_workflow_test.go",
+      "internal/workflows/productworkflow/status.go",
+      "internal/workflows/productworkflow/status_test.go",
+      "internal/surfaces/cli/product/product_workflow.go",
+      "internal/surfaces/cli/product/product_workflow_test.go",
       "docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md",
       "docs/obsidian/22 - Product Workflow ROADMAP.md",
       "docs/product-workflows/efforts/index.json",
@@ -24,8 +24,8 @@
       "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0035-investigation.json"
     ],
     "forbidden_paths": [
-      "internal/app/**",
-      "internal/agent/**",
+      "internal/surfaces/tui/app/**",
+      "internal/runtime/agent/**",
       "prompts/**",
       ".idiom/**"
     ],
@@ -37,9 +37,9 @@
     "status": "passed",
     "commands": [
       "idiom tool context_pack --input '{\"task\":\"impl-0035-phase-6-operator-status-view-model\",\"mode\":\"plan\",\"limit\":8}'",
-      "go test ./internal/productworkflow -run TestProductOperatorStatusView -count=1",
-      "go test ./cmd/idiom -run 'TestProductStatus.*Operator|TestProductOperatorStatus' -count=1",
-      "go test ./internal/productworkflow ./cmd/idiom",
+      "go test ./internal/workflows/productworkflow -run TestProductOperatorStatusView -count=1",
+      "go test ./internal/surfaces/cli/product -run 'TestProductStatus.*Operator|TestProductOperatorStatus' -count=1",
+      "go test ./internal/workflows/productworkflow ./cmd/idiom",
       "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --operator-view --json",
       "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",

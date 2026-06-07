@@ -436,7 +436,7 @@ schema version: `harness.durable_plan.v1`.
       "confidence": "exact_tool_output"
     },
     {
-      "handle": "file://internal/architect/plan_audit.go",
+      "handle": "file://internal/workflows/architect/plan_audit.go",
       "role": "read_only_evidence",
       "fresh": true,
       "confidence": "syntax"
@@ -447,23 +447,23 @@ schema version: `harness.durable_plan.v1`.
       "id": "atom-1",
       "title": "Add durable plan schema parser",
       "intent": "Persist model-authored plan atoms and host-owned approval scope separately.",
-      "editable_targets": ["internal/architect/durable_plan.go"],
-      "allowed_new_destinations": ["internal/architect/durable_plan.go"],
+      "editable_targets": ["internal/workflows/architect/durable_plan.go"],
+      "allowed_new_destinations": ["internal/workflows/architect/durable_plan.go"],
       "read_only_evidence": [
-        "internal/architect/packet.go",
-        "internal/workspace/submit_plan.go"
+        "internal/workflows/architect/packet.go",
+        "internal/capabilities/workspace/submit_plan.go"
       ],
       "forbidden_paths": [".git", ".harness/comprehension/graph.sqlite"],
       "dependencies": [],
       "expected_change": "Add schema structs and validation helpers.",
       "anchors": [
         {
-          "path": "internal/architect/packet.go",
-          "handle": "symbol://internal/architect/packet.go#Packet"
+          "path": "internal/workflows/architect/packet.go",
+          "handle": "symbol://internal/workflows/architect/packet.go#Packet"
         }
       ],
       "risk_level": "medium",
-      "verification": ["go test ./internal/architect"],
+      "verification": ["go test ./internal/workflows/architect"],
       "completion_evidence": [
         "schema validates",
         "tests pass",
@@ -472,25 +472,25 @@ schema version: `harness.durable_plan.v1`.
     }
   ],
   "verification": {
-    "commands": ["go test ./internal/architect", "go test ./cmd/harness"],
-    "source_sanity_paths": ["internal/architect/durable_plan.go"],
+    "commands": ["go test ./internal/workflows/architect", "go test ./cmd/harness"],
+    "source_sanity_paths": ["internal/workflows/architect/durable_plan.go"],
     "expected_failures": [],
     "blocked_if_unavailable": true,
     "verification_owner": "executor"
   },
   "approval_scope": {
     "status": "awaiting_approval",
-    "editable_targets": ["internal/architect/durable_plan.go"],
+    "editable_targets": ["internal/workflows/architect/durable_plan.go"],
     "read_only_evidence": [
-      "internal/architect/packet.go",
-      "internal/workspace/submit_plan.go"
+      "internal/workflows/architect/packet.go",
+      "internal/capabilities/workspace/submit_plan.go"
     ],
-    "allowed_new_destinations": ["internal/architect/durable_plan.go"],
+    "allowed_new_destinations": ["internal/workflows/architect/durable_plan.go"],
     "analogy_paths": [],
     "forbidden_paths": [".git", ".harness/comprehension/graph.sqlite"],
     "allowed_tool_classes": ["read", "semantic_read", "edit", "verification"],
     "command_policy": {
-      "allow": ["go test ./internal/architect", "go test ./cmd/harness"],
+      "allow": ["go test ./internal/workflows/architect", "go test ./cmd/harness"],
       "ask": [],
       "deny": ["git push", "git reset --hard"]
     },
@@ -511,7 +511,7 @@ schema version: `harness.durable_plan.v1`.
   "handoff": {
     "target_lane": "plan-execute",
     "ready": false,
-    "required_edit_paths": ["internal/architect/durable_plan.go"],
+    "required_edit_paths": ["internal/workflows/architect/durable_plan.go"],
     "pack_id": "811c2a5c2d387cb1"
   }
 }
@@ -562,8 +562,8 @@ Audit output should remain a fact report:
     {
       "severity": "error",
       "kind": "role_widening",
-      "message": "read-only evidence path internal/workspace/submit_plan.go is proposed as editable",
-      "evidence": ["internal/workspace/submit_plan.go"],
+      "message": "read-only evidence path internal/capabilities/workspace/submit_plan.go is proposed as editable",
+      "evidence": ["internal/capabilities/workspace/submit_plan.go"],
       "suggested_resolution": "Remove it from editable targets or request explicit approval."
     }
   ]
@@ -611,8 +611,8 @@ execution fields:
     "audit_warnings": 1
   },
   "execution_compare": {
-    "planned_paths": ["internal/architect/durable_plan.go"],
-    "changed_paths": ["internal/architect/durable_plan.go"],
+    "planned_paths": ["internal/workflows/architect/durable_plan.go"],
+    "changed_paths": ["internal/workflows/architect/durable_plan.go"],
     "scope_drift": [],
     "verification": "passed"
   },
@@ -665,24 +665,24 @@ Proposed schema version: `harness.executor_handoff.v1`.
   "packet_id": "packet_...",
   "pack_id": "811c2a5c2d387cb1",
   "target_lane": "plan-execute",
-  "required_edit_paths": ["internal/architect/durable_plan.go"],
-  "allowed_new_destinations": ["internal/architect/durable_plan.go"],
-  "read_only_evidence": ["internal/workspace/submit_plan.go"],
+  "required_edit_paths": ["internal/workflows/architect/durable_plan.go"],
+  "allowed_new_destinations": ["internal/workflows/architect/durable_plan.go"],
+  "read_only_evidence": ["internal/capabilities/workspace/submit_plan.go"],
   "forbidden_paths": [".git", ".harness/comprehension/graph.sqlite"],
-  "validation_commands": ["go test ./internal/architect"],
+  "validation_commands": ["go test ./internal/workflows/architect"],
   "verification_owner": "executor",
   "atoms": [
     {
       "atom_id": "atom-1",
-      "editable_targets": ["internal/architect/durable_plan.go"],
-      "verification": ["go test ./internal/architect"]
+      "editable_targets": ["internal/workflows/architect/durable_plan.go"],
+      "verification": ["go test ./internal/workflows/architect"]
     }
   ],
   "fingerprints": {
     "git_head": "abc123",
     "dirty_fingerprint": "sha256:...",
     "target_files": {
-      "internal/architect/packet.go": "sha256:..."
+      "internal/workflows/architect/packet.go": "sha256:..."
     }
   }
 }

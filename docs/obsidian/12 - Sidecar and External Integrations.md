@@ -92,7 +92,7 @@ There are two MCP-related boundaries:
 - Inbound MCP server: `cmd/idiom mcp serve` exposes selected Idiom tools to
   external clients. Current inbound MCP requires stdio and is filtered toward
   discovery/context profile surfaces.
-- Outbound MCP client registry: `internal/mcp` owns clients and registry
+- Outbound MCP client registry: `internal/capabilities/mcp` owns clients and registry
   behavior for calling configured external MCP tools, surfaced as
   `mcp:<server>/<tool>` style tools.
 
@@ -180,10 +180,10 @@ When adding or changing an integration:
 | Source | Why it matters |
 | --- | --- |
 | `cmd/idiom/mcp.go` | Inbound MCP server command |
-| `internal/mcp/client.go` | Outbound MCP client behavior |
-| `internal/mcp/registry.go` | Outbound MCP registry |
-| `internal/workspace/tool_schema_export.go` | Tool schema export and MCP/profile filtering |
-| `internal/workspace/external_tool.go` | Project external tool definitions |
+| `internal/capabilities/mcp/client.go` | Outbound MCP client behavior |
+| `internal/capabilities/mcp/registry.go` | Outbound MCP registry |
+| `internal/capabilities/workspace/tool_schema_export.go` | Tool schema export and MCP/profile filtering |
+| `internal/capabilities/workspace/external_tool.go` | Project external tool definitions |
 
 ## Related Notes
 

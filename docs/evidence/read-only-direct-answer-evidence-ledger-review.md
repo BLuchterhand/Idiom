@@ -7,7 +7,7 @@
 - Run shape: 26 model calls, 23 tool results, 5 rejected actions.
 - Completion gate rejected the final answer twice; the second rejection still reported no objective-relevant evidence paths.
 - Initial context packet was advisory but weak for the user objective: `.idiom/comprehension/views/521a634b50481d7c.json` ranked harness/dispatch files and did not by itself establish TUI up/down message navigation behavior.
-- Later source reads reached objective-relevant UI files, including `internal/app/update_handlers.go` and `internal/app/rendering.go`, but final-answer readiness did not canonicalize those observed reads into answerable evidence.
+- Later source reads reached objective-relevant UI files, including `internal/surfaces/tui/app/update_handlers.go` and `internal/surfaces/tui/app/rendering.go`, but final-answer readiness did not canonicalize those observed reads into answerable evidence.
 
 ## Approved Design
 

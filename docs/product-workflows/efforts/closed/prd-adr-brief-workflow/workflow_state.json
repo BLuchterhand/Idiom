@@ -55,61 +55,61 @@
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
-      "internal/cmd/product/product_workflow.go",
-      "internal/cmd/product/product_workflow_test.go",
-      "internal/productworkflow/types.go",
-      "internal/productworkflow/status.go",
-      "internal/productworkflow/status_test.go",
-      "internal/productworkflow/transition.go",
-      "internal/productworkflow/transition_test.go",
-      "internal/productworkflow/metrics.go",
-      "internal/productworkflow/execution_feedback.go",
-      "internal/productworkflow/execution_feedback_test.go",
-      "internal/comprehension/ranker_learning.go",
-      "internal/comprehension/ranker_learning_test.go",
-      "internal/workspace/harness_audit.go",
+      "internal/surfaces/cli/product/product_workflow.go",
+      "internal/surfaces/cli/product/product_workflow_test.go",
+      "internal/workflows/productworkflow/types.go",
+      "internal/workflows/productworkflow/status.go",
+      "internal/workflows/productworkflow/status_test.go",
+      "internal/workflows/productworkflow/transition.go",
+      "internal/workflows/productworkflow/transition_test.go",
+      "internal/workflows/productworkflow/metrics.go",
+      "internal/workflows/productworkflow/execution_feedback.go",
+      "internal/workflows/productworkflow/execution_feedback_test.go",
+      "internal/repository/comprehension/ranker_learning.go",
+      "internal/repository/comprehension/ranker_learning_test.go",
+      "internal/capabilities/workspace/harness_audit.go",
       "docs/obsidian/20 - Product Workflow and Behavioral Coverage.md",
       "docs/obsidian/21 - Recovery and Decomposition.md",
       "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
       "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
-      "internal/productworkflow/efforts.go",
-      "internal/productworkflow/efforts_test.go",
+      "internal/workflows/productworkflow/efforts.go",
+      "internal/workflows/productworkflow/efforts_test.go",
       "docs/product-workflows/efforts/index.json",
-      "internal/productworkflow/migration.go",
-      "internal/productworkflow/migration_test.go",
-      "internal/productworkflow/migration_apply.go",
-      "internal/productworkflow/migration_apply_test.go"
+      "internal/workflows/productworkflow/migration.go",
+      "internal/workflows/productworkflow/migration_test.go",
+      "internal/workflows/productworkflow/migration_apply.go",
+      "internal/workflows/productworkflow/migration_apply_test.go"
     ],
     "unresolved_gaps": [
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack dd185841859a40b8 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to product workflow metrics planning scope."
+        "description": "Context pack dd185841859a40b8 reports stale runtime traces for internal/repository/comprehension/trace.go; the gap is unrelated to product workflow metrics planning scope."
       },
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack 7ba9bd95a3f2d29d reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to human-readable CLI coverage planning scope."
+        "description": "Context pack 7ba9bd95a3f2d29d reports stale runtime traces for internal/repository/comprehension/trace.go; the gap is unrelated to human-readable CLI coverage planning scope."
       },
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack b946625388f049d8 reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to human-readable product CLI coverage scope."
+        "description": "Context pack b946625388f049d8 reports stale runtime traces for internal/repository/comprehension/trace.go; the gap is unrelated to human-readable product CLI coverage scope."
       },
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack 512bb3db3ddfbe5d reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to ranker-learning evidence adapter planning scope."
+        "description": "Context pack 512bb3db3ddfbe5d reports stale runtime traces for internal/repository/comprehension/trace.go; the gap is unrelated to ranker-learning evidence adapter planning scope."
       },
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack 835deff0af50032a reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to Phase 6 operator status view-model planning scope."
+        "description": "Context pack 835deff0af50032a reports stale runtime traces for internal/repository/comprehension/trace.go; the gap is unrelated to Phase 6 operator status view-model planning scope."
       },
       {
         "kind": "stale_runtime_trace",
-        "description": "Context pack 5636955570c7b36d reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to status migration planning scope."
+        "description": "Context pack 5636955570c7b36d reports stale runtime traces for internal/repository/comprehension/trace.go; the gap is unrelated to status migration planning scope."
       }
     ],
     "refresh_policy": "on_demand",
     "path_aliases": {
-      "cmd/idiom/product_workflow.go": "internal/cmd/product/product_workflow.go",
-      "cmd/idiom/product_workflow_test.go": "internal/cmd/product/product_workflow_test.go"
+      "internal/surfaces/cli/product/product_workflow.go": "internal/surfaces/cli/product/product_workflow.go",
+      "internal/surfaces/cli/product/product_workflow_test.go": "internal/surfaces/cli/product/product_workflow_test.go"
     }
   },
   "coverage": {

@@ -70,8 +70,8 @@ success, or release GO.
 
 ```sh
 go test ./cmd/idiom -run 'TestP910|TestP46|TestP711|TestRunReleaseEvidence|TestRunProductEvidence' -count=1
-go test ./internal/eval -run 'Test.*Competitive|Test.*Localization|Test.*Benchmark' -count=1
-go test ./cmd/idiom ./internal/eval -count=1
+go test ./internal/evidence/eval -run 'Test.*Competitive|Test.*Localization|Test.*Benchmark' -count=1
+go test ./cmd/idiom ./internal/evidence/eval -count=1
 go test ./cmd/idiom -count=1
 
 jq empty testdata/localization/recent-implementation-corpus.json

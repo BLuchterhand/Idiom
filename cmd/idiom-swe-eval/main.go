@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	sweevalcmd "idiom/internal/cmd/sweeval"
+	sweevalcmd "idiom/internal/surfaces/cli/sweeval"
 )
 
 func main() {

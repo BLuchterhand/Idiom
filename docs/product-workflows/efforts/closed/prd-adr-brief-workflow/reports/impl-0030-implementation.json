@@ -10,21 +10,21 @@
   "scope_statement": "Added deterministic feedback reconciliation from passing idiom product feedback summaries into privacy-safe workflow-state and evidence-link output without dispatching lanes, mutating .idiom runtime state, writing evidence exports, or promoting ranker learning.",
   "code_changes": true,
   "changed_paths": [
-    "cmd/idiom/product_workflow.go",
-    "cmd/idiom/product_workflow_test.go",
+    "internal/surfaces/cli/product/product_workflow.go",
+    "internal/surfaces/cli/product/product_workflow_test.go",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/implementation_ledger.jsonl",
-    "internal/productworkflow/execution_feedback.go",
-    "internal/productworkflow/execution_feedback_test.go",
-    "internal/productworkflow/types.go"
+    "internal/workflows/productworkflow/execution_feedback.go",
+    "internal/workflows/productworkflow/execution_feedback_test.go",
+    "internal/workflows/productworkflow/types.go"
   ],
   "verification": {
     "run_by_implementor": false,
     "commands": [
       "idiom tool context_pack --input {\"task\":\"prd adr brief workflow atom 30 feedback reconciliation closeout\",\"mode\":\"plan\",\"limit\":8}",
-      "go test ./internal/productworkflow -run TestExecutionFeedbackReconciliation -count=1",
-      "go test ./cmd/idiom -run TestProductFeedbackReconcile -count=1",
-      "go test ./internal/productworkflow ./cmd/idiom",
-      "go test ./cmd/idiom -run TestProductBriefRenderPassesCurrentDurableEffortFixture -count=1",
+      "go test ./internal/workflows/productworkflow -run TestExecutionFeedbackReconciliation -count=1",
+      "go test ./internal/surfaces/cli/product -run TestProductFeedbackReconcile -count=1",
+      "go test ./internal/workflows/productworkflow ./cmd/idiom",
+      "go test ./internal/surfaces/cli/product -run TestProductBriefRenderPassesCurrentDurableEffortFixture -count=1",
       "go run ./cmd/idiom product feedback --effort-root <temp effort> --reconcile-summary references/feedback_summary.json --reconciled-state-output references/reconciled_workflow_state.json --json",
       "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",

@@ -26,7 +26,7 @@ Accepted staged risks:
 
 | Atom | State | Scope | Evidence | Tests |
 | --- | --- | --- | --- | --- |
-| `dynamic-validator-001` | implemented | Missing-description repair for in-scope required-path writes | `context_pack:cb7a08ab254200dc`, reviewer bench feedback, live log `logs/conversations/20260524-104058.895.jsonl` | `go test ./internal/agent -run 'DynamicValidator\|WriteDescription\|WriteReadyPacketRepeatedEmptyPathReadReturnsTypedBlocker' -count=1`, `make scripted-contract-suite`, `make scripted-contracts` |
+| `dynamic-validator-001` | implemented | Missing-description repair for in-scope required-path writes | `context_pack:cb7a08ab254200dc`, reviewer bench feedback, live log `logs/conversations/20260524-104058.895.jsonl` | `go test ./internal/runtime/agent -run 'DynamicValidator\|WriteDescription\|WriteReadyPacketRepeatedEmptyPathReadReturnsTypedBlocker' -count=1`, `make scripted-contract-suite`, `make scripted-contracts` |
 
 ## Implemented Contract
 
@@ -46,9 +46,9 @@ Accepted staged risks:
 
 Unit and runner coverage:
 
-- `internal/agent/dynamic_validator_test.go`
-- `internal/agent/write_description_guard_test.go`
-- `internal/agent/runner_test.go`
+- `internal/runtime/agent/dynamic_validator_test.go`
+- `internal/runtime/agent/write_description_guard_test.go`
+- `internal/runtime/agent/runner_test.go`
 
 Scripted/live coverage:
 
@@ -65,8 +65,8 @@ Docs refreshed:
 
 Completed on 2026-05-24:
 
-- `go test ./internal/agent -run 'DynamicValidator|WriteDescription|WriteReadyPacketRepeatedEmptyPathReadReturnsTypedBlocker' -count=1`
-- `go test ./internal/agent ./internal/app ./internal/planexecute ./cmd/idiom-swe-eval -count=1`
+- `go test ./internal/runtime/agent -run 'DynamicValidator|WriteDescription|WriteReadyPacketRepeatedEmptyPathReadReturnsTypedBlocker' -count=1`
+- `go test ./internal/runtime/agent ./internal/surfaces/tui/app ./internal/workflows/planexecute ./cmd/idiom-swe-eval -count=1`
 - `make scripted-contract-suite`
 - `make scripted-contracts`
 - `go test ./...`

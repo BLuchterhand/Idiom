@@ -31,12 +31,12 @@ fundamental architectural change.
 
 | Piece | Location | What it does |
 |---|---|---|
-| Plan tab | `internal/app/plan.go` | Right-pane tab rendering checkbox markdown |
-| Autodoc | `internal/app/plan_autodoc.go` | Records write success/failure, attaches writes to planned ledger items |
-| Task ledger | `internal/agent/runner_task_ledger.go` | Model-declared items with ID, Content, Status, Paths |
+| Plan tab | `internal/surfaces/tui/app/plan.go` | Right-pane tab rendering checkbox markdown |
+| Autodoc | `internal/surfaces/tui/app/plan_autodoc.go` | Records write success/failure, attaches writes to planned ledger items |
+| Task ledger | `internal/runtime/agent/runner_task_ledger.go` | Model-declared items with ID, Content, Status, Paths |
 | Planned items | `plan_autodoc.go:467-487` | `### Planned` section, populated from `task_ledger` results |
 | Unplanned writes | `plan_autodoc.go:279-304` | `### Unplanned` section, populated on write success |
-| Diff overlay | `internal/app/plan_overlay.go` | Enter on checked item shows colored diff |
+| Diff overlay | `internal/surfaces/tui/app/plan_overlay.go` | Enter on checked item shows colored diff |
 | Session headings | `plan_autodoc.go:330-364` | `## Session <id>` auto-appended per session |
 | Tab navigation | `plan.go:235-289` | j/k cursor, Enter opens diff, Esc drops focus |
 
@@ -188,13 +188,13 @@ item the agent is actively pursuing.
 
 | File | Change |
 |---|---|
-| `internal/app/plan_autodoc.go` | Add `recordSubmittedPlan()`; extend `planLineLabel()` with intent fallback; extend `attachWriteToPlannedItem()` to match `pid:` anchors; add `in_progress` line rewrite |
-| `internal/app/plan.go` | Add `planPanelAutoShowNeeded()`; update `renderPanelTabs()` for progress count; extend `renderPlanLine()` for `[~]` style |
-| `internal/app/lifecycle.go` | Call `recordSubmittedPlan()` from `onToolResult` when `req.Tool == "submit_plan"`; call auto-show helper on `planRefreshMsg` |
-| `internal/app/model_state.go` | Add `planSubmittedEdits map[string]workspace.PlanEdit` field |
-| `internal/app/styles.go` | Add `planInProgressStyle` for `[~]` items |
-| `internal/app/lifecycle.go` | Add `/todo` to slash-command dispatch |
-| `internal/app/plan_autodoc_test.go` | Tests for `recordSubmittedPlan`, `pid:` anchor matching, in-progress rewrite |
+| `internal/surfaces/tui/app/plan_autodoc.go` | Add `recordSubmittedPlan()`; extend `planLineLabel()` with intent fallback; extend `attachWriteToPlannedItem()` to match `pid:` anchors; add `in_progress` line rewrite |
+| `internal/surfaces/tui/app/plan.go` | Add `planPanelAutoShowNeeded()`; update `renderPanelTabs()` for progress count; extend `renderPlanLine()` for `[~]` style |
+| `internal/surfaces/tui/app/lifecycle.go` | Call `recordSubmittedPlan()` from `onToolResult` when `req.Tool == "submit_plan"`; call auto-show helper on `planRefreshMsg` |
+| `internal/surfaces/tui/app/model_state.go` | Add `planSubmittedEdits map[string]workspace.PlanEdit` field |
+| `internal/surfaces/tui/app/styles.go` | Add `planInProgressStyle` for `[~]` items |
+| `internal/surfaces/tui/app/lifecycle.go` | Add `/todo` to slash-command dispatch |
+| `internal/surfaces/tui/app/plan_autodoc_test.go` | Tests for `recordSubmittedPlan`, `pid:` anchor matching, in-progress rewrite |
 
 ## What This Does NOT Change
 

@@ -36,7 +36,7 @@
       "type": "acceptance",
       "behavior": "ProductWorkflowBrief type exists, JSON round-trips, threads through RunOptions",
       "owner": "implementor",
-      "command": "go test ./internal/featureplanner/... -run TestProductWorkflowBrief",
+      "command": "go test ./internal/workflows/featureplanner/... -run TestProductWorkflowBrief",
       "required_before": "implementation",
       "status": "open"
     },
@@ -45,7 +45,7 @@
       "type": "acceptance",
       "behavior": "Planner prompt injects product context when brief is non-nil, backward-compatible when nil",
       "owner": "implementor",
-      "command": "go test ./internal/featureplanner/... -run TestBuildPlannerPrompt",
+      "command": "go test ./internal/workflows/featureplanner/... -run TestBuildPlannerPrompt",
       "required_before": "implementation",
       "status": "open"
     },
@@ -54,7 +54,7 @@
       "type": "acceptance",
       "behavior": "CLI accepts --effort-root and --effort-id flags, loads product workflow brief from fixture",
       "owner": "implementor",
-      "command": "go test ./internal/featureplannercmd/... -run TestCLI_Effort",
+      "command": "go test ./internal/surfaces/cli/featureplanner/... -run TestCLI_Effort",
       "required_before": "implementation",
       "status": "open"
     },
@@ -63,7 +63,7 @@
       "type": "acceptance",
       "behavior": "SDDContract has structured refs, v2 schema round-trips, legacy refs migrate",
       "owner": "implementor",
-      "command": "go test ./internal/featureplanner/... -run \"TestSDDContract_V2|TestValidatePlan_AcceptsStructured|TestValidatePlan_MigratesLegacy\"",
+      "command": "go test ./internal/workflows/featureplanner/... -run \"TestSDDContract_V2|TestValidatePlan_AcceptsStructured|TestValidatePlan_MigratesLegacy\"",
       "required_before": "implementation",
       "status": "open"
     },
@@ -72,7 +72,7 @@
       "type": "acceptance",
       "behavior": "SDD refs validated against filesystem, missing files rejected, line suffixes stripped",
       "owner": "implementor",
-      "command": "go test ./internal/featureplanner/... -run TestValidatePlanSDDRefs",
+      "command": "go test ./internal/workflows/featureplanner/... -run TestValidatePlanSDDRefs",
       "required_before": "implementation",
       "status": "open"
     },
@@ -81,7 +81,7 @@
       "type": "acceptance",
       "behavior": "TDD obligation IDs cross-referenced against known ledger, unknown refs rejected",
       "owner": "implementor",
-      "command": "go test ./internal/featureplanner/... -run TestValidatePlanTDDObligations",
+      "command": "go test ./internal/workflows/featureplanner/... -run TestValidatePlanTDDObligations",
       "required_before": "implementation",
       "status": "open"
     },
@@ -90,7 +90,7 @@
       "type": "acceptance",
       "behavior": "Coverage gate result validated at intake, blocked gate rejects plan, nil gate accepted for standalone",
       "owner": "implementor",
-      "command": "go test ./internal/featureplanner/... -run TestValidatePlan.*CoverageGate",
+      "command": "go test ./internal/workflows/featureplanner/... -run TestValidatePlan.*CoverageGate",
       "required_before": "implementation",
       "status": "open"
     },
@@ -99,7 +99,7 @@
       "type": "acceptance",
       "behavior": "End-to-end test: fixture effort \u2192 planner prompt \u2192 valid plan \u2192 atom dispatch",
       "owner": "implementor",
-      "command": "go test ./internal/featureplannercmd/... -run TestFeaturePlanner_ProductWorkflowIntegration",
+      "command": "go test ./internal/surfaces/cli/featureplanner/... -run TestFeaturePlanner_ProductWorkflowIntegration",
       "required_before": "implementation",
       "status": "open"
     },
@@ -108,7 +108,7 @@
       "type": "acceptance",
       "behavior": "FeatureState effort identity persists across save/load, nil fields survive",
       "owner": "implementor",
-      "command": "go test ./internal/featureplanner/... -run TestFeatureState_EffortIdentity",
+      "command": "go test ./internal/workflows/featureplanner/... -run TestFeatureState_EffortIdentity",
       "required_before": "implementation",
       "status": "open"
     },
@@ -117,7 +117,7 @@
       "type": "acceptance",
       "behavior": "FeaturePlan v2 schema round-trips with CoverageGateResult, ValidateDurablePlan accepts both v1 and v2",
       "owner": "implementor",
-      "command": "go test ./internal/featureplanner/... -run \"TestFeaturePlan_V2_RoundTrip|TestValidatePlan_AcceptsV1AndV2\"",
+      "command": "go test ./internal/workflows/featureplanner/... -run \"TestFeaturePlan_V2_RoundTrip|TestValidatePlan_AcceptsV1AndV2\"",
       "required_before": "implementation",
       "status": "open"
     }

@@ -30,20 +30,20 @@ serve.
 
 | Package | Responsibility |
 | --- | --- |
-| `internal/agent` | Runner loop, autonomy contract, completion gate, task ledger, redirects, tool-use behavior |
-| `internal/app` | Interactive TUI and session lifecycle |
-| `internal/runner` | Process/runtime helpers around command execution |
-| `internal/promptstack` | Prompt assembly and layering |
+| `internal/runtime/agent` | Runner loop, autonomy contract, completion gate, task ledger, redirects, tool-use behavior |
+| `internal/surfaces/tui/app` | Interactive TUI and session lifecycle |
+| `internal/runtime/runner` | Process/runtime helpers around command execution |
+| `internal/runtime/promptstack` | Prompt assembly and layering |
 | `internal/runtime/workerruntime` | Worker runtime catalog, profiles, and capability surface |
-| `internal/autonomy` | Autonomy contract structures and sidecar-facing behavior |
+| `internal/contracts/autonomy` | Autonomy contract structures and sidecar-facing behavior |
 
 ## Workspace And Tools
 
 | Package | Responsibility |
 | --- | --- |
-| `internal/workspace` | Tool manager, dispatch, file operations, source sanity, context/audit tool entrypoints |
-| `internal/semantic` | Semantic/language-aware support |
-| `internal/discovery` | Discovery helpers and query orchestration |
+| `internal/capabilities/workspace` | Tool manager, dispatch, file operations, source sanity, context/audit tool entrypoints |
+| `internal/repository/semantic` | Semantic/language-aware support |
+| `internal/repository/discovery` | Discovery helpers and query orchestration |
 | `internal/runtime` | Runtime helper functionality |
 | `internal/runtime/pathparse` | Path parsing helpers |
 
@@ -51,36 +51,36 @@ serve.
 
 | Package | Responsibility |
 | --- | --- |
-| `internal/comprehension` | Context graph, context packs, views, freshness, cache, impact, trace packs |
-| `internal/discovery` | Discovery artifacts and higher-level codebase queries |
+| `internal/repository/comprehension` | Context graph, context packs, views, freshness, cache, impact, trace packs |
+| `internal/repository/discovery` | Discovery artifacts and higher-level codebase queries |
 
 ## Planning And Artifacts
 
 | Package | Responsibility |
 | --- | --- |
-| `internal/architect` | Architect packets and planning-related evidence |
-| `internal/projectartifacts` | Project artifact lifecycle and workflow state |
-| `internal/postflight` | Postflight checks and release/workflow evidence |
+| `internal/workflows/architect` | Architect packets and planning-related evidence |
+| `internal/workflows/projectartifacts` | Project artifact lifecycle and workflow state |
+| `internal/workflows/postflight` | Postflight checks and release/workflow evidence |
 
 ## Model And Operations
 
 | Package | Responsibility |
 | --- | --- |
-| `internal/backends` | Backend profiles, role aliases, launcher, status, and proxy management |
-| `internal/llama` | llama.cpp/local model integration |
-| `internal/config` | Project and runtime configuration |
+| `internal/runtime/backends` | Backend profiles, role aliases, launcher, status, and proxy management |
+| `internal/runtime/llama` | llama.cpp/local model integration |
+| `internal/platform/config` | Project and runtime configuration |
 | `internal/cmdutil` | Shared CLI utilities |
-| `internal/util` | Shared utility helpers: string, exec, IO, JSON, and generic pointer functions |
-| `internal/autodetect` | Host, model, backend, and toolchain discovery helpers |
+| `internal/platform/util` | Shared utility helpers: string, exec, IO, JSON, and generic pointer functions |
+| `internal/platform/autodetect` | Host, model, backend, and toolchain discovery helpers |
 
 ## Evidence And Diagnostics
 
 | Package | Responsibility |
 | --- | --- |
-| `internal/telemetry` | Structured runtime events and telemetry plumbing |
-| `internal/transcript` | Conversation transcript handling |
-| `internal/eval` | Eval scoring and behavior-pattern detection |
-| `internal/mcp` | Outbound MCP client and registry; inbound MCP server lives in `cmd/harness/mcp.go` |
+| `internal/evidence/telemetry` | Structured runtime events and telemetry plumbing |
+| `internal/evidence/transcript` | Conversation transcript handling |
+| `internal/evidence/eval` | Eval scoring and behavior-pattern detection |
+| `internal/capabilities/mcp` | Outbound MCP client and registry; inbound MCP server lives in `cmd/harness/mcp.go` |
 
 ## Operational Evidence Commands
 
@@ -108,26 +108,26 @@ serve.
 | Area | Files |
 | --- | --- |
 | Main CLI | `cmd/harness/main.go`, `cmd/harness/lane.go`, `cmd/harness/plan_execute.go` |
-| MCP and sidecar | `cmd/harness/mcp.go`, `internal/mcp/client.go`, `internal/mcp/registry.go`, `internal/workspace/tool_schema_export.go` |
-| Runner contracts | `internal/agent/runner.go`, `internal/agent/runner_autonomy.go`, `internal/agent/runner_task_ledger.go` |
-| Workspace tools | `internal/workspace/manager.go`, `internal/workspace/tool_schemas.go`, `internal/workspace/context_tools.go`, `internal/workspace/source_sanity.go` |
-| External project tools | `internal/workspace/external_tool.go`, `.harness/external_tools/<name>.json` |
-| Context memory | `internal/comprehension/graph.go`, `internal/comprehension/pack.go`, `internal/comprehension/views.go`, `internal/comprehension/freshness.go` |
-| Prompt stack | `internal/promptstack`, `prompts/`, `prompts/profiles/` |
-| Local operations | `cmd/harness/doctor.go`, `cmd/harness/backend.go`, `cmd/harness/queue.go`, `internal/backends`, `internal/autodetect` |
-| Audit/eval | `internal/eval`, `internal/telemetry`, `internal/workspace/harness_audit.go` |
+| MCP and sidecar | `cmd/harness/mcp.go`, `internal/capabilities/mcp/client.go`, `internal/capabilities/mcp/registry.go`, `internal/capabilities/workspace/tool_schema_export.go` |
+| Runner contracts | `internal/runtime/agent/runner.go`, `internal/runtime/agent/runner_autonomy.go`, `internal/runtime/agent/runner_task_ledger.go` |
+| Workspace tools | `internal/capabilities/workspace/manager.go`, `internal/capabilities/workspace/tool_schemas.go`, `internal/capabilities/workspace/context_tools.go`, `internal/capabilities/workspace/source_sanity.go` |
+| External project tools | `internal/capabilities/workspace/external_tool.go`, `.harness/external_tools/<name>.json` |
+| Context memory | `internal/repository/comprehension/graph.go`, `internal/repository/comprehension/pack.go`, `internal/repository/comprehension/views.go`, `internal/repository/comprehension/freshness.go` |
+| Prompt stack | `internal/runtime/promptstack`, `prompts/`, `prompts/profiles/` |
+| Local operations | `cmd/harness/doctor.go`, `cmd/harness/backend.go`, `cmd/harness/queue.go`, `internal/runtime/backends`, `internal/platform/autodetect` |
+| Audit/eval | `internal/evidence/eval`, `internal/evidence/telemetry`, `internal/capabilities/workspace/harness_audit.go` |
 
 ## Change Localization Examples
 
 | If changing... | Start with... |
 | --- | --- |
-| Completion readiness | `internal/agent`, runner tests, [[09 - Verification Readiness and Completion]] |
-| Tool schema or dispatch | `internal/workspace`, tool tests, [[06 - Workspace Tools and Capability Routing]] |
-| Context packet behavior | `internal/comprehension`, context tool tests, [[07 - Repository Memory and Context Graph]] |
+| Completion readiness | `internal/runtime/agent`, runner tests, [[09 - Verification Readiness and Completion]] |
+| Tool schema or dispatch | `internal/capabilities/workspace`, tool tests, [[06 - Workspace Tools and Capability Routing]] |
+| Context packet behavior | `internal/repository/comprehension`, context tool tests, [[07 - Repository Memory and Context Graph]] |
 | Plan-execute workflow | `cmd/harness/plan_execute.go`, lane tests, [[04 - Runtime Lanes]] |
-| Prompt behavior | `prompts/`, `internal/promptstack`, runner behavior tests |
-| Audit classification | `internal/eval`, `harness_audit`, telemetry fixtures |
-| Local backend readiness | `internal/backends`, `internal/autodetect`, `internal/llama`, local ops docs |
+| Prompt behavior | `prompts/`, `internal/runtime/promptstack`, runner behavior tests |
+| Audit classification | `internal/evidence/eval`, `harness_audit`, telemetry fixtures |
+| Local backend readiness | `internal/runtime/backends`, `internal/platform/autodetect`, `internal/runtime/llama`, local ops docs |
 
 ## Onboarding By System
 

@@ -137,7 +137,7 @@ obligations are synthesized.
 ### State Model
 
 The command tracks its phase in `workflow_state.json` using the existing
-state machine in `internal/productworkflow/transition.go`. The relevant
+state machine in `internal/workflows/productworkflow/transition.go`. The relevant
 states and transitions are:
 
 ```
@@ -158,7 +158,7 @@ existing `human_verification` state with a phase discriminator.
 The intake validator wraps the existing `validatePRD` and `validateADR`
 functions and returns structured failure classes the agent can target for
 repair. It follows the `TransitionBlocker` pattern already established in
-`internal/productworkflow/transition.go`.
+`internal/workflows/productworkflow/transition.go`.
 
 **Result shape:**
 
@@ -245,7 +245,7 @@ Each iteration lane is a loop within the interactive session:
 
 1. **PRD iteration lane:**
    - Agent writes every edit to `prd.md` immediately, loosely following the
-     PRD template (see `internal/productworkflow/prd_draft_prompts.go`)
+     PRD template (see `internal/workflows/productworkflow/prd_draft_prompts.go`)
    - Operator freely adds, edits, or removes requirements
    - Operator can ask the agent to show the current PRD summary at any time
    - When the operator is satisfied, they initiate approval
@@ -507,7 +507,7 @@ without additional setup:
    `priority`, `statement`, `owner_alignment`, `testability`, `metric`,
    at least one `evidence_ref`, at least one `tdd_obligation`, and
    `open_questions` present (see `validatePRD` in
-   `internal/productworkflow/validate.go`). The creation command's
+   `internal/workflows/productworkflow/validate.go`). The creation command's
    conversation (Step 2–3) is designed to elicit exactly these fields:
    "who is this for?" → owner_alignment, "how do you measure success?" →
    metric, "what does it need to be compatible with?" → evidence context.

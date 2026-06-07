@@ -11,9 +11,9 @@
   "scope_statement": "Create internal product workflow JSON-backed types, parse helpers, fail-closed validators, and focused tests for durable Phase 0/Phase 1 artifacts.",
   "code_changes": true,
   "changed_paths": [
-    "internal/productworkflow/types.go",
-    "internal/productworkflow/validate.go",
-    "internal/productworkflow/validate_test.go",
+    "internal/workflows/productworkflow/types.go",
+    "internal/workflows/productworkflow/validate.go",
+    "internal/workflows/productworkflow/validate_test.go",
     "docs/product-workflows/efforts/index.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/events.jsonl",
@@ -26,7 +26,7 @@
   "verification": {
     "run_by_implementor": false,
     "commands": [
-      "go test ./internal/productworkflow",
+      "go test ./internal/workflows/productworkflow",
       "python3 JSON/JSONL validation for durable effort artifacts",
       "privacy secret-pattern scan over durable effort artifacts",
       "git diff --check"
@@ -38,7 +38,7 @@
   "reviewer_id": "codex-gpt-review-impl-0002",
   "fallback_exception": {
     "recorded": true,
-    "reason": "OpenCode GLM attached-server run timed out after 240 seconds with only partial internal/productworkflow files.",
-    "allowed_scope": "C1 internal/productworkflow schema/validator package, focused tests, and durable Atom 2 workflow bookkeeping only"
+    "reason": "OpenCode GLM attached-server run timed out after 240 seconds with only partial internal/workflows/productworkflow files.",
+    "allowed_scope": "C1 internal/workflows/productworkflow schema/validator package, focused tests, and durable Atom 2 workflow bookkeeping only"
   }
 }

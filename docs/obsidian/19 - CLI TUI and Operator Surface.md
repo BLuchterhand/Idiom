@@ -72,7 +72,7 @@ compaction, and not replayed as model messages.
 flowchart TD
     User["User"]
     TUI["Bubble Tea TUI<br/>typed prompt or slash command"]
-    App["internal/app Model<br/>sendPromptAsync"]
+    App["internal/surfaces/tui/app Model<br/>sendPromptAsync"]
     Bookkeeping["RunPromptOnce<br/>message bookkeeping"]
     Route["Turn route and writer route<br/>task family, lane, writer mode"]
     Brief["Runtime brief<br/>model roles, required/candidate scope"]
@@ -261,15 +261,15 @@ default.
 | Source | Why it matters |
 | --- | --- |
 | `cmd/idiom/main.go` | Thin binary entrypoint |
-| `internal/rootcmd` | Main CLI routing and telemetry naming |
+| `internal/surfaces/cli/root` | Main CLI routing and telemetry naming |
 | `internal/lanecmd` | Lane command surface |
-| `internal/planexecutecmd` | Direct plan-execute orchestration and resume-state handling |
-| `internal/mcpcmd` | Inbound MCP command |
-| `internal/app/model_state.go` | Slash command handling |
-| `internal/app/implementation_dispatch.go` | TUI/prompt design-doc dispatch, atomization, source-satisfied closeout |
-| `internal/app/lifecycle.go` | TUI lifecycle, transcripts, debug logs |
-| `internal/planexecute/progress.go` | Durable plan-execute progress state schema |
-| `internal/transcript` | Transcript and debug log records |
+| `internal/surfaces/cli/planexecute` | Direct plan-execute orchestration and resume-state handling |
+| `internal/surfaces/cli/mcp` | Inbound MCP command |
+| `internal/surfaces/tui/app/model_state.go` | Slash command handling |
+| `internal/surfaces/tui/app/implementation_dispatch.go` | TUI/prompt design-doc dispatch, atomization, source-satisfied closeout |
+| `internal/surfaces/tui/app/lifecycle.go` | TUI lifecycle, transcripts, debug logs |
+| `internal/workflows/planexecute/progress.go` | Durable plan-execute progress state schema |
+| `internal/evidence/transcript` | Transcript and debug log records |
 
 ## Related Notes
 

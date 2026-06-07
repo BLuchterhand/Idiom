@@ -943,7 +943,7 @@
         "target-source-recovery"
       ],
       "env": {
-        "IDIOM_WORKSPACE_EXTRA_FILES_JSON": "[{\"path\":\"internal/app/app.go\",\"content\":\"package app\\n\\ntype Model struct{}\\n\"}]"
+        "IDIOM_WORKSPACE_EXTRA_FILES_JSON": "[{\"path\":\"internal/surfaces/tui/app/app.go\",\"content\":\"package app\\n\\ntype Model struct{}\\n\"}]"
       },
       "fixture": "fixtures/frozen-label-repo",
       "scenario": {
@@ -983,7 +983,7 @@
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
         "forbid_changed_files": [
-          "internal/app/app.go",
+          "internal/surfaces/tui/app/app.go",
           "internal/labels/labels_test.go"
         ],
         "max_errors": 0,
@@ -1006,7 +1006,7 @@
         "target-source-recovery"
       ],
       "env": {
-        "IDIOM_WORKSPACE_EXTRA_FILES_JSON": "[{\"path\":\"internal/app/app.go\",\"content\":\"package app\\n\\nconst AppLine1 = \\\"one\\\"\\nconst AppLine2 = \\\"two\\\"\\nconst AppLine3 = \\\"three\\\"\\nconst AppLine4 = \\\"four\\\"\\nconst AppLine5 = \\\"five\\\"\\nconst AppLine6 = \\\"six\\\"\\n\"}]"
+        "IDIOM_WORKSPACE_EXTRA_FILES_JSON": "[{\"path\":\"internal/surfaces/tui/app/app.go\",\"content\":\"package app\\n\\nconst AppLine1 = \\\"one\\\"\\nconst AppLine2 = \\\"two\\\"\\nconst AppLine3 = \\\"three\\\"\\nconst AppLine4 = \\\"four\\\"\\nconst AppLine5 = \\\"five\\\"\\nconst AppLine6 = \\\"six\\\"\\n\"}]"
       },
       "fixture": "fixtures/frozen-label-repo",
       "scenario": {
@@ -1046,7 +1046,7 @@
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
         "forbid_changed_files": [
-          "internal/app/app.go",
+          "internal/surfaces/tui/app/app.go",
           "internal/labels/labels_test.go"
         ],
         "max_errors": 0,
@@ -1069,7 +1069,7 @@
         "target-source-recovery"
       ],
       "env": {
-        "IDIOM_WORKSPACE_EXTRA_FILES_JSON": "[{\"path\":\"internal/app/sessions_panel.go\",\"content\":\"package app\\n\\nfunc sessionPaneOffset(cursor, height int) int {\\n\\tif cursor >= height {\\n\\t\\treturn 0\\n\\t}\\n\\treturn 0\\n}\\n\"},{\"path\":\"internal/app/sessions.go\",\"content\":\"package app\\n\\ntype sessionsModel struct {\\n\\tcursor int\\n\\tviewport int\\n}\\n\\nfunc (m sessionsModel) visibleCursor() int {\\n\\treturn m.cursor - m.viewport\\n}\\n\"}]"
+        "IDIOM_WORKSPACE_EXTRA_FILES_JSON": "[{\"path\":\"internal/surfaces/tui/app/sessions_panel.go\",\"content\":\"package app\\n\\nfunc sessionPaneOffset(cursor, height int) int {\\n\\tif cursor >= height {\\n\\t\\treturn 0\\n\\t}\\n\\treturn 0\\n}\\n\"},{\"path\":\"internal/surfaces/tui/app/sessions.go\",\"content\":\"package app\\n\\ntype sessionsModel struct {\\n\\tcursor int\\n\\tviewport int\\n}\\n\\nfunc (m sessionsModel) visibleCursor() int {\\n\\treturn m.cursor - m.viewport\\n}\\n\"}]"
       },
       "fixture": "fixtures/frozen-label-repo",
       "scenario": {
@@ -1079,7 +1079,7 @@
           "targeted search for related session model state"
         ],
         "require_changed_files": [
-          "internal/app/sessions_panel.go"
+          "internal/surfaces/tui/app/sessions_panel.go"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
@@ -1104,7 +1104,7 @@
       },
       "oracle": {
         "require_changed_files": [
-          "internal/app/sessions_panel.go"
+          "internal/surfaces/tui/app/sessions_panel.go"
         ],
         "require_no_approval": true,
         "require_clean_rollback": true,
@@ -1113,7 +1113,7 @@
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
         "forbid_changed_files": [
-          "internal/app/sessions.go",
+          "internal/surfaces/tui/app/sessions.go",
           "internal/redirect/large.go",
           "internal/labels/labels.go",
           "internal/labels/labels_test.go"
@@ -1178,8 +1178,8 @@
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
         "forbid_changed_files": [
-          "internal/app/sessions.go",
-          "internal/app/sessions_panel.go",
+          "internal/surfaces/tui/app/sessions.go",
+          "internal/surfaces/tui/app/sessions_panel.go",
           "internal/labels/labels.go",
           "internal/labels/labels_test.go"
         ],

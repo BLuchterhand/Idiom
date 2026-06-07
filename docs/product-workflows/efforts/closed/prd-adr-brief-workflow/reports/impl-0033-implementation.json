@@ -10,20 +10,20 @@
   "scope_statement": "Added actionable human-readable and JSON next-step guidance for product lint, audit, and status output while preserving exit codes, typed findings, metrics/section summaries, privacy-safe error output, and no-dispatch authority boundaries.",
   "code_changes": true,
   "changed_paths": [
-    "cmd/idiom/product_workflow.go",
-    "cmd/idiom/product_workflow_test.go",
-    "internal/productworkflow/status.go",
-    "internal/productworkflow/status_test.go"
+    "internal/surfaces/cli/product/product_workflow.go",
+    "internal/surfaces/cli/product/product_workflow_test.go",
+    "internal/workflows/productworkflow/status.go",
+    "internal/workflows/productworkflow/status_test.go"
   ],
   "verification": {
     "run_by_implementor": true,
     "commands": [
       "idiom tool context_pack --input '{\"task\":\"phase 5 human-readable CLI coverage operator-facing product commands actionable failure text next valid action JSON parity\",\"mode\":\"plan\",\"limit\":12}'",
       "idiom tool context_query --input '{\"query\":\"product workflow human-readable CLI output tests actionable failure text next valid action operator-facing product commands\",\"resolution\":\"symbol\"}'",
-      "go test ./cmd/idiom -run 'TestProduct(Lint|Audit|Status).*Actionable|TestProduct(Lint|Audit).*NextValidAction|TestProductStatusAuditFailTextIncludesNextAction|TestProductStatusErrorNextValidActionsParity' -count=1",
-      "go test ./internal/productworkflow -run TestLoadProductStatus -count=1",
-      "go test ./cmd/idiom -run TestProduct -count=1",
-      "go test ./internal/productworkflow ./cmd/idiom",
+      "go test ./internal/surfaces/cli/product -run 'TestProduct(Lint|Audit|Status).*Actionable|TestProduct(Lint|Audit).*NextValidAction|TestProductStatusAuditFailTextIncludesNextAction|TestProductStatusErrorNextValidActionsParity' -count=1",
+      "go test ./internal/workflows/productworkflow -run TestLoadProductStatus -count=1",
+      "go test ./internal/surfaces/cli/product -run TestProduct -count=1",
+      "go test ./internal/workflows/productworkflow ./cmd/idiom",
       "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow",
       "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow",

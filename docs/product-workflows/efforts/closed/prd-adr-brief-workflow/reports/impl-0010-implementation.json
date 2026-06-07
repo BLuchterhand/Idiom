@@ -10,8 +10,8 @@
   "scope_statement": "Patch-shaped product audit command atom: add deterministic product audit CLI sections derived from existing product workflow artifact validation.",
   "code_changes": true,
   "changed_paths": [
-    "cmd/idiom/product_workflow.go",
-    "cmd/idiom/product_workflow_test.go",
+    "internal/surfaces/cli/product/product_workflow.go",
+    "internal/surfaces/cli/product/product_workflow_test.go",
     "docs/product-workflows/efforts/index.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0010-implementation.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0010-review.json",
@@ -25,8 +25,8 @@
   "verification": {
     "run_by_implementor": true,
     "commands": [
-      "gofmt -l cmd/idiom/product_workflow.go cmd/idiom/product_workflow_test.go",
-      "go test ./cmd/idiom ./internal/productworkflow",
+      "gofmt -l internal/surfaces/cli/product/product_workflow.go internal/surfaces/cli/product/product_workflow_test.go",
+      "go test ./internal/surfaces/cli/product ./internal/workflows/productworkflow",
       "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go test ./...",

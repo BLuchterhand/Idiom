@@ -86,29 +86,29 @@ Verified source evidence:
   duplicate authority, prompt text parsed as authority, planner/executor tool
   confusion, overloaded required-path language, and missing final-state
   telemetry.
-- `internal/autonomy/contract.go` already defines `AutonomyContract` with scope,
+- `internal/contracts/autonomy/contract.go` already defines `AutonomyContract` with scope,
   authority sources, path roles, capabilities, tool policy, obligations, budget,
   verification, completion, readiness, policy decisions, and evidence refs.
-- `internal/autonomy/event.go` already defines lifecycle, policy, obligation,
+- `internal/contracts/autonomy/event.go` already defines lifecycle, policy, obligation,
   readiness, completion, and gate events under `idiom.autonomy.event.v1`.
-- `internal/agent/runner_autonomy.go` compiles contracts from
+- `internal/runtime/agent/runner_autonomy.go` compiles contracts from
   `WorkerRuntimeBrief`, `RunPolicy`, and prior tool results, then emits
   `contract_compiled`, obligation, readiness, gate, and completion events.
   Required edit path status is currently reported as `pending` or `changed`
   from observed changed-path tool results.
-- `internal/app/turn_planner.go` has deterministic routing for workflow
+- `internal/surfaces/tui/app/turn_planner.go` has deterministic routing for workflow
   contracts and explicit cases for `plan_then_execute_planner` and
   `plan_then_execute_review_repair`, proving the harness already distinguishes
   planner and review-repair actors.
-- `internal/app/implementation_dispatch.go` already routes referenced design
+- `internal/surfaces/tui/app/implementation_dispatch.go` already routes referenced design
   documents through plan-execute, extracts or materializes design-doc atoms,
   handles source-satisfied closeout, preserves design-doc test obligations, and
   distinguishes required paths from candidate scope in retry text.
-- `internal/app/turn_planner_test.go` covers design-doc dispatch, ambiguous or
+- `internal/surfaces/tui/app/turn_planner_test.go` covers design-doc dispatch, ambiguous or
   unlinted plan documents, reference-only design-doc dispatch without refine,
   source-satisfied atom short-circuiting, and candidate-scope treatment for
   design-doc file references.
-- `internal/autonomy/contract_test.go` proves the autonomy contract can build a
+- `internal/contracts/autonomy/contract_test.go` proves the autonomy contract can build a
   stable summary and round-trip sidecar read-only contracts without strategy
   fields such as `next_action` or `must_call_tool`.
 
@@ -126,7 +126,7 @@ Inference from the evidence:
 
 ## Decision
 
-Introduce a typed `TurnPhaseContract` projection in `internal/agent`.
+Introduce a typed `TurnPhaseContract` projection in `internal/runtime/agent`.
 
 `TurnPhaseContract` is a per-turn projection of the existing autonomy contract,
 not a sibling policy engine. It should carry the stable contract identity and
@@ -214,16 +214,16 @@ list.
 
 ## Authority Boundaries
 
-- `internal/frontier/workerruntime/catalog.go` remains the static source for
+- `internal/runtime/workerruntime/catalog.go` remains the static source for
   task-family defaults, permission profiles, readiness gates, search policy, and stop
   conditions.
-- `internal/agent` owns the live turn projection because live phase facts depend
+- `internal/runtime/agent` owns the live turn projection because live phase facts depend
   on runner state, prior tool results, dynamic tool surfaces, and recovery
   state.
 - `TurnPhaseContract` should reference the active autonomy `contract_id` and
   invariant IDs. It is the compact live phase view over that contract, not an
   unlinked second contract stream.
-- `internal/autonomy` and `harness_audit` consume projected contract snapshots
+- `internal/contracts/autonomy` and `harness_audit` consume projected contract snapshots
   for replay and drift detection. They should not become the live policy source.
 - Prompt text, examples, tool schemas, and context packets explain or localize
   the contract. They are not the source of hard obligations.
@@ -488,7 +488,7 @@ action class in the current `TurnPhaseContract`.
 
 Implementation status: complete.
 
-Add `internal/agent/phase_contract.go` with:
+Add `internal/runtime/agent/phase_contract.go` with:
 
 - `TurnPhaseContract`
 - `TurnPhaseContractInput`

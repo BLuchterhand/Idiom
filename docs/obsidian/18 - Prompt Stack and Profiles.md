@@ -111,7 +111,7 @@ changes.
 
 Prompt-stack changes should usually check:
 
-- `internal/promptstack` tests for composition, dedupe, required files, and
+- `internal/runtime/promptstack` tests for composition, dedupe, required files, and
   profile listing.
 - Runner behavior tests when prompt text changes expected agent behavior.
 - Eval fixtures when prompt behavior is meant to prevent a recurring failure.
@@ -121,10 +121,10 @@ Prompt-stack changes should usually check:
 
 | Source | Why it matters |
 | --- | --- |
-| `internal/promptstack` | Prompt composition and profile loading |
-| `internal/app/lifecycle.go` | TUI prompt stack loading and debug prompt source records |
-| `internal/frontier/workerruntime/runtime.go` | Runtime brief fields |
-| `internal/frontier/workerruntime/catalog.go` | Tool profiles and role contracts |
+| `internal/runtime/promptstack` | Prompt composition and profile loading |
+| `internal/surfaces/tui/app/lifecycle.go` | TUI prompt stack loading and debug prompt source records |
+| `internal/runtime/workerruntime/runtime.go` | Runtime brief fields |
+| `internal/runtime/workerruntime/catalog.go` | Tool profiles and role contracts |
 | `prompts/` | Baseline prompt files |
 | `prompts/profiles/` | Profile prompt files |
 

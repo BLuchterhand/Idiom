@@ -37,10 +37,10 @@ tool's PreExecute rejects when the target path is not in the set, with an
 error telling the model to read the file first.
 
 **Files.**
-- `internal/workspace/manager.go` — new `RecentlyObservedPaths` getter and
+- `internal/capabilities/workspace/manager.go` — new `RecentlyObservedPaths` getter and
   internal bookkeeping; `MarkPathObserved(path)` called from inside
   `Execute` after successful reads.
-- `internal/workspace/tool_policy.go` (or nearest equivalent) — new
+- `internal/capabilities/workspace/tool_policy.go` (or nearest equivalent) — new
   `RequireReadBeforeEdit` PreExecute helper.
 - Runner/implementation lane — wire the helper into `PreExecute`.
 
@@ -73,8 +73,8 @@ via `list_files` or glob searches during the session (cheap) plus an
 on-demand cheap filesystem walk scoped to the parent directory (bounded).
 
 **Files.**
-- `internal/workspace/paths.go` — new `NearestKnownPaths(target string, k int) []string`.
-- `internal/workspace/manager.go` — in the path-not-found branches of
+- `internal/capabilities/workspace/paths.go` — new `NearestKnownPaths(target string, k int) []string`.
+- `internal/capabilities/workspace/manager.go` — in the path-not-found branches of
   `read_file` and `edit_file`, call the helper and append
   `\n\nDid you mean: A, B, C?` to the error when candidates are non-empty.
 
@@ -107,7 +107,7 @@ model what was actually edited, and request a revised summary. One retry
 allowed, then fall through (never loop forever).
 
 **Files.**
-- `internal/app/implementation.go` — new helper
+- `internal/surfaces/tui/app/implementation.go` — new helper
   `groundFinalAnswerAgainstEvidence(reply, changedPaths, collectedResults)`
   called inside `finalizeImplementation` before
   `applyControlRailsFinalAnswer`.
@@ -115,7 +115,7 @@ allowed, then fall through (never loop forever).
   against an evidence set.
 
 **Acceptance.**
-- Unit test: extractor finds `entry.go`, `internal/app/app.go:42`,
+- Unit test: extractor finds `entry.go`, `internal/surfaces/tui/app/app.go:42`,
   skips bare words `run`, `edit`, etc.
 - Unit test: reconcile() returns "ungrounded" when reply names a path not
   in evidence and not negated.
@@ -144,8 +144,8 @@ dotfiles. Computed by the workspace manager via existing listing primitives.
 Truncated to a hard cap.
 
 **Files.**
-- `internal/workspace/overview.go` — new `OverviewSystemPrompt(root string) string`.
-- `internal/app/prompt_routing.go` — `runStandardPromptOnce` injects the
+- `internal/capabilities/workspace/overview.go` — new `OverviewSystemPrompt(root string) string`.
+- `internal/surfaces/tui/app/prompt_routing.go` — `runStandardPromptOnce` injects the
   overview into `requestMessages` once per session (gated by a
   `workspaceOverviewInjected` flag on the Model).
 
@@ -175,9 +175,9 @@ prompt: user goals, files read so far, edits applied, blockers, open
 questions. The digest replaces the old messages; the recent N stay verbatim.
 
 **Files.**
-- `internal/app/model_state.go` — `maybeCompactHistory(history)` called from
+- `internal/surfaces/tui/app/model_state.go` — `maybeCompactHistory(history)` called from
   `requestMessages`. Uses `m.client` with a fixed small prompt.
-- `internal/app/compaction.go` (new) — prompt template, regex-based fallback
+- `internal/surfaces/tui/app/compaction.go` (new) — prompt template, regex-based fallback
   if the model call fails.
 
 **Acceptance.**
@@ -217,10 +217,10 @@ rules default to auto-allow (preserves current behavior when the section is
 absent).
 
 **Files.**
-- `internal/config/config.go` — new `ToolRules map[string][]ToolRule`.
-- `internal/workspace/tool_rules.go` (new) — `MatchToolRule(tool, req)
+- `internal/platform/config/config.go` — new `ToolRules map[string][]ToolRule`.
+- `internal/capabilities/workspace/tool_rules.go` (new) — `MatchToolRule(tool, req)
   string` returning `allow | ask | deny | ""`.
-- `internal/workspace/write_policy.go` or the main/implement guard —
+- `internal/capabilities/workspace/write_policy.go` or the main/implement guard —
   consult the matcher ahead of the existing binary switch.
 
 **Acceptance.**
@@ -247,11 +247,11 @@ loop against the same model and returns its final answer as the tool
 result. Isolated context — child messages do not pollute the parent's.
 
 **Files.**
-- `internal/agent/task_tool.go` (new) — `SpawnSubagent(parent *Runner,
+- `internal/runtime/agent/task_tool.go` (new) — `SpawnSubagent(parent *Runner,
   req workspace.ToolRequest) (workspace.ToolResult, error)`.
-- `internal/agent/runner.go` — `task` tool dispatch at PreExecute time;
+- `internal/runtime/agent/runner.go` — `task` tool dispatch at PreExecute time;
   budget-inherit with a fractional cap.
-- `internal/workspace/tool_manifest.go` — schema refinement: required
+- `internal/capabilities/workspace/tool_manifest.go` — schema refinement: required
   fields `objective`, optional `files[]`, optional `max_steps`.
 
 **Acceptance.**
@@ -285,13 +285,13 @@ only (not resources or prompts), one-shot discovery (no dynamic refresh),
 synchronous calls (no notifications).
 
 **Files.**
-- `internal/mcp/client.go` (new) — JSON-RPC over stdio, `Initialize`,
+- `internal/capabilities/mcp/client.go` (new) — JSON-RPC over stdio, `Initialize`,
   `ListTools`, `CallTool`.
-- `internal/mcp/registry.go` (new) — spawns servers from config, tracks
+- `internal/capabilities/mcp/registry.go` (new) — spawns servers from config, tracks
   lifecycles.
-- `internal/config/config.go` — new `MCP []MCPServer { Name, Command,
+- `internal/platform/config/config.go` — new `MCP []MCPServer { Name, Command,
   Args, Env }`.
-- `internal/workspace/manager.go` — when executing a tool with an
+- `internal/capabilities/workspace/manager.go` — when executing a tool with an
   `mcp:` prefix, dispatch to the registry.
 
 **Acceptance.**

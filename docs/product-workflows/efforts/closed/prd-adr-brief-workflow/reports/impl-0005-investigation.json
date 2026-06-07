@@ -6,16 +6,16 @@
   "created_at": "2026-05-17T16:38:03Z",
   "scope": {
     "expected_files": [
-      "internal/productworkflow/types.go",
-      "internal/productworkflow/validate.go",
-      "internal/productworkflow/validate_test.go",
-      "cmd/idiom/product_workflow.go",
-      "cmd/idiom/product_workflow_test.go"
+      "internal/workflows/productworkflow/types.go",
+      "internal/workflows/productworkflow/validate.go",
+      "internal/workflows/productworkflow/validate_test.go",
+      "internal/surfaces/cli/product/product_workflow.go",
+      "internal/surfaces/cli/product/product_workflow_test.go"
     ],
-    "forbidden_patterns": [".idiom/**", "internal/app/**", "internal/agent/**", "prompts/**", "cmd/idiom/product_evidence*"]
+    "forbidden_patterns": [".idiom/**", "internal/surfaces/tui/app/**", "internal/runtime/agent/**", "prompts/**", "cmd/idiom/product_evidence*"]
   },
   "tests": {
-    "focused": "go test ./internal/productworkflow ./cmd/idiom",
+    "focused": "go test ./internal/workflows/productworkflow ./cmd/idiom",
     "full_suite": "go test ./...",
     "product_lint": "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "whitespace": "git diff --check"

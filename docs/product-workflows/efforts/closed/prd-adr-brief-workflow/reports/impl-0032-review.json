@@ -33,9 +33,9 @@
   },
   "reviewed_at": "2026-05-18T16:35:00Z",
   "commands_reviewed": [
-    "go test ./internal/productworkflow -run TestObsidianParity -count=1",
-    "go test ./cmd/idiom -run 'TestProductObsidianParity|TestProductStatusObsidianParity' -count=1",
-    "go test ./internal/productworkflow ./cmd/idiom",
+    "go test ./internal/workflows/productworkflow -run TestObsidianParity -count=1",
+    "go test ./internal/surfaces/cli/product -run 'TestProductObsidianParity|TestProductStatusObsidianParity' -count=1",
+    "go test ./internal/workflows/productworkflow ./cmd/idiom",
     "go test ./..."
   ],
   "residual_risk": "The parity rules are deterministic and intentionally narrow around explicit status/checklist drift; future Obsidian wording changes may require new explicit rules.",

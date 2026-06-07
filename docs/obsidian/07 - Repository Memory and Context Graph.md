@@ -87,7 +87,7 @@ flowchart TD
 
 ## Current Graph Shape
 
-The exact schema belongs in `internal/comprehension`, but the graph currently
+The exact schema belongs in `internal/repository/comprehension`, but the graph currently
 centers on these concepts:
 
 | Concept | Examples |
@@ -188,11 +188,11 @@ Changes to repository memory should include:
 
 | Source | Why it matters |
 | --- | --- |
-| `internal/comprehension/graph.go` | Graph data model and index storage |
-| `internal/comprehension/pack.go` | Context packet generation and ranker input |
-| `internal/comprehension/views.go` | `graph_views` cache/export behavior |
-| `internal/comprehension/freshness.go` | Freshness and read-through repair |
-| `internal/comprehension/trace.go` | Runtime trace attachment |
+| `internal/repository/comprehension/graph.go` | Graph data model and index storage |
+| `internal/repository/comprehension/pack.go` | Context packet generation and ranker input |
+| `internal/repository/comprehension/views.go` | `graph_views` cache/export behavior |
+| `internal/repository/comprehension/freshness.go` | Freshness and read-through repair |
+| `internal/repository/comprehension/trace.go` | Runtime trace attachment |
 | `.idiom/comprehension/graph.sqlite` | Local graph store |
 | `.idiom/ranker/weights.json` | Learned ranking weights |
 

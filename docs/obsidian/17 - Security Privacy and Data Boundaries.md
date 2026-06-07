@@ -138,8 +138,8 @@ When changing security, privacy, telemetry, audit, sidecar, or evidence export:
 - Check protected-path and forbidden-path behavior.
 - Verify unknown fields or raw-content fields are rejected where schemas require
   strictness.
-- Run relevant focused tests under `cmd/idiom`, `internal/autonomy`,
-  `internal/workspace`, and `internal/telemetry`.
+- Run relevant focused tests under `cmd/idiom`, `internal/contracts/autonomy`,
+  `internal/capabilities/workspace`, and `internal/evidence/telemetry`.
 - Run `git diff --check`.
 - Update this note if the durable evidence boundary changes.
 

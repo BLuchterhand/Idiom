@@ -249,10 +249,10 @@ only useful diagnostics to the model, not an internal scoring dump.
 Following the repository's architecture rules, capability contracts should sit
 at the application/workspace boundary, not inside the runner:
 
-- `internal/workspace` exposes capability tools and maps them to concrete
+- `internal/capabilities/workspace` exposes capability tools and maps them to concrete
   workspace operations.
-- `internal/comprehension` remains the graph/index/view owner.
-- `internal/agent` consumes the tool manifest, runtime brief, and normalized
+- `internal/repository/comprehension` remains the graph/index/view owner.
+- `internal/runtime/agent` consumes the tool manifest, runtime brief, and normalized
   results; it enforces run contracts but does not own language routing policy.
 - `cmd/harness` exposes CLI equivalents through `harness tool` and future
   `harness capability` commands.
@@ -289,14 +289,14 @@ facade for most read-only capabilities:
 {
   "capability": "find_references",
   "target": {
-    "path": "internal/workspace/tool_schemas.go",
+    "path": "internal/capabilities/workspace/tool_schemas.go",
     "symbol": "BuildToolDefinitions",
-    "handle": "symbol://internal/workspace/tool_schemas.go#BuildToolDefinitions",
+    "handle": "symbol://internal/capabilities/workspace/tool_schemas.go#BuildToolDefinitions",
     "start_line": 1,
     "end_line": 80
   },
   "scope": {
-    "path": "internal/workspace",
+    "path": "internal/capabilities/workspace",
     "language": "go"
   },
   "precision_min": "semantic",
@@ -376,12 +376,12 @@ https://modelcontextprotocol.io/specification/.
 {
   "capability": "find_references",
   "target": {
-    "path": "internal/workspace/tool_schemas.go",
+    "path": "internal/capabilities/workspace/tool_schemas.go",
     "symbol": "BuildToolDefinitions"
   },
   "resolved_target": {
-    "handle": "symbol://internal/workspace/tool_schemas.go#BuildToolDefinitions",
-    "path": "internal/workspace/tool_schemas.go",
+    "handle": "symbol://internal/capabilities/workspace/tool_schemas.go#BuildToolDefinitions",
+    "path": "internal/capabilities/workspace/tool_schemas.go",
     "range": { "start_line": 15, "end_line": 32 },
     "language": "go"
   },
@@ -406,9 +406,9 @@ https://modelcontextprotocol.io/specification/.
   "observations": [
     {
       "kind": "reference",
-      "path": "internal/agent/runner.go",
+      "path": "internal/runtime/agent/runner.go",
       "range": { "start_line": 100, "end_line": 103 },
-      "handle": "range://internal/agent/runner.go:100-103",
+      "handle": "range://internal/runtime/agent/runner.go:100-103",
       "confidence": "exact"
     }
   ],
@@ -524,7 +524,7 @@ Recovery should name the violated contract and safe capability choices:
 - "The previous result was text fallback, so it cannot prove absence. Either
   answer with that uncertainty, request `find_references` with a narrower
   symbol/path, or name a blocker."
-- "Source verification is required after editing `internal/workspace/*.go`.
+- "Source verification is required after editing `internal/capabilities/workspace/*.go`.
   Use `source_sanity` or a focused `go test` command, or report why source-aware
   verification is unavailable."
 - "You have enough evidence to answer. Continue only if you can name one exact
@@ -662,7 +662,7 @@ Acceptance:
 
 ### Phase 2: Build The Resolver Registry
 
-- Introduce a `CapabilityRegistry` and adapter registry in `internal/workspace`.
+- Introduce a `CapabilityRegistry` and adapter registry in `internal/capabilities/workspace`.
 - Route `code_navigate` through the registry instead of hand-coded language
   branching where practical.
 - Add adapter candidates for language tools, graph tools, ctags, structural

@@ -10,8 +10,8 @@
   "scope_statement": "Add deterministic PRD draft prompt rendering from the evidence ledger without executing models, writing prd.md, changing ADRs, accepting decisions, or mutating evidence.",
   "code_changes": true,
   "changed_paths": [
-    "cmd/idiom/product_workflow.go",
-    "cmd/idiom/product_workflow_test.go",
+    "internal/surfaces/cli/product/product_workflow.go",
+    "internal/surfaces/cli/product/product_workflow_test.go",
     "docs/product-workflows/efforts/index.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/events.jsonl",
@@ -21,18 +21,18 @@
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0023-review.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/tdd.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
-    "internal/productworkflow/prd_draft_prompts.go",
-    "internal/productworkflow/prd_draft_prompts_test.go",
-    "internal/productworkflow/types.go"
+    "internal/workflows/productworkflow/prd_draft_prompts.go",
+    "internal/workflows/productworkflow/prd_draft_prompts_test.go",
+    "internal/workflows/productworkflow/types.go"
   ],
   "verification": {
     "run_by_implementor": true,
     "commands": [
       "idiom tool context_pack --input '{\"task\":\"phase 3 prd draft prompt rendering from evidence ledger product workflow\",\"mode\":\"plan\",\"limit\":12}'",
       "idiom tool context_query --input '{\"query\":\"PRD document parse validate evidence ledger product workflow PRD command prompt renderer artifact no tools\",\"resolution\":\"symbol\"}'",
-      "go test ./internal/productworkflow -run TestPRDDraftPrompt",
-      "go test ./cmd/idiom -run TestProductPRDRenderPrompt",
-      "go test ./internal/productworkflow ./cmd/idiom",
+      "go test ./internal/workflows/productworkflow -run TestPRDDraftPrompt",
+      "go test ./internal/surfaces/cli/product -run TestProductPRDRenderPrompt",
+      "go test ./internal/workflows/productworkflow ./cmd/idiom",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "JSON/JSONL validation for durable impl-0023 artifacts",

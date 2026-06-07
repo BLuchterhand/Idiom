@@ -98,11 +98,11 @@ changes should also run `make build` or `go build ./cmd/idiom`.
 
 | System changed | Focused verification | Broader verification |
 | --- | --- | --- |
-| Runner/control rails | `go test ./internal/agent` | `go test ./...`, `harness_audit` when behavior logs matter |
-| Workspace tools | `go test ./internal/workspace` | Tool schema checks, sidecar smoke, `go test ./...` |
-| Context memory | `go test ./internal/comprehension` | `context_status`, representative `context_pack`, `go test ./...` |
-| Runtime lanes | `go test ./internal/lanecmd ./internal/planexecutecmd ./internal/implementcmd` with lane-focused tests | `go test ./internal/agent ./internal/workspace ./internal/lanecmd ./internal/planexecutecmd ./internal/implementcmd`, lane smoke where available |
-| Audit/eval | `go test ./internal/eval ./cmd/idiom-eval ./cmd/idiom-swe-eval` | Representative suite, `harness_audit` |
+| Runner/control rails | `go test ./internal/runtime/agent` | `go test ./...`, `harness_audit` when behavior logs matter |
+| Workspace tools | `go test ./internal/capabilities/workspace` | Tool schema checks, sidecar smoke, `go test ./...` |
+| Context memory | `go test ./internal/repository/comprehension` | `context_status`, representative `context_pack`, `go test ./...` |
+| Runtime lanes | `go test ./internal/lanecmd ./internal/surfaces/cli/planexecute ./internal/implementcmd` with lane-focused tests | `go test ./internal/runtime/agent ./internal/capabilities/workspace ./internal/lanecmd ./internal/surfaces/cli/planexecute ./internal/implementcmd`, lane smoke where available |
+| Audit/eval | `go test ./internal/evidence/eval ./cmd/idiom-eval ./cmd/idiom-swe-eval` | Representative suite, `harness_audit` |
 | CLI/build wiring | focused command tests | `make build` or `go build ./cmd/idiom` |
 | Docs-only | wiki-link/path checks, `git diff --check` | Broader tests only if docs accompany code behavior changes |
 

@@ -98,7 +98,7 @@ Do not treat an `all_clear` style summary as sufficient proof. Check:
 
 ## Eval System
 
-`internal/eval` and the CLI eval commands support regression checks for agent
+`internal/evidence/eval` and the CLI eval commands support regression checks for agent
 behavior. Evals should catch behavioral anti-patterns such as:
 
 - Completion gate reopening discovery.
@@ -128,11 +128,11 @@ flowchart TD
 
 | Failure shape | Likely owner |
 | --- | --- |
-| Tool schema invalid | `internal/workspace`, tool schema tests |
+| Tool schema invalid | `internal/capabilities/workspace`, tool schema tests |
 | Model sees wrong tools in phase | Lane orchestration, prompt profile, worker runtime catalog |
 | Final answer with open obligations | Runner readiness/completion gate |
 | Repeated low-value discovery | Runner redirects, eval detection, context tools |
-| Stale packet or bad context | `internal/comprehension`, discovery tools, freshness checks |
+| Stale packet or bad context | `internal/repository/comprehension`, discovery tools, freshness checks |
 | Behavior hidden in prose only | Typed contract, schema, gate, or telemetry |
 | Audit cannot diagnose issue | Telemetry event schema or harness audit coverage |
 

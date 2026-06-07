@@ -29,7 +29,7 @@ This effort is the durable implementation state for delivering
   fixes for validated workflow-state parsing, audit-failure exit behavior, and
   closeout-stable durable fixture tests. Codex review/verification passed.
 - Atom 15 workflow transition contract: all TDD obligations satisfied. GLM
-  implemented pure `internal/productworkflow` transition/next-action contract
+  implemented pure `internal/workflows/productworkflow` transition/next-action contract
   logic, then completed targeted reviewer fixes for deterministic action order,
   status/state consistency blockers, and removal of the `init`-built transition
   map. Codex review/verification passed.
@@ -324,9 +324,9 @@ Open blockers are:
     coverage-gate helpers, pure TDD synthesis helpers, or document-only parity
     updates, provided each worker has an explicit disjoint write set.
   - Do not run parallel implementors that both touch
-    `cmd/idiom/product_workflow.go`, `cmd/idiom/product_workflow_test.go`,
-    `internal/productworkflow/validate.go`,
-    `internal/productworkflow/validate_test.go`, parser/front-matter code,
+    `internal/surfaces/cli/product/product_workflow.go`, `internal/surfaces/cli/product/product_workflow_test.go`,
+    `internal/workflows/productworkflow/validate.go`,
+    `internal/workflows/productworkflow/validate_test.go`, parser/front-matter code,
     scope/commit coverage gates, or durable effort state.
   - For each parallel worker, record ownership, expected files, forbidden files,
     tests, and the integration order in the atom plan. Tell workers they are not

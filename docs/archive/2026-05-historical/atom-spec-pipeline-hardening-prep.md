@@ -25,10 +25,10 @@ vocabulary in profiles, prompts, and validators.
   and output-size risk.
 - `cmd/idiom/lane.go`: implement and plan-execute lanes already auto-preload a
   compact `context_pack` section unless disabled.
-- `cmd/idiom/plan_execute.go` and `internal/workspace/submit_plan.go`:
+- `cmd/idiom/plan_execute.go` and `internal/capabilities/workspace/submit_plan.go`:
   plan-execute owns typed `submit_plan`, required-path preflight, pack-id
   handoff, session-scoped plan artifacts, and executor-side atomic preflight.
-- `internal/agent/runner.go`: markdown deliverable auto-salvage is scoped to
+- `internal/runtime/agent/runner.go`: markdown deliverable auto-salvage is scoped to
   mutation lanes with exactly one required `.md` path. It is not an artifact
   command feature.
 - `idiom tool harness_audit --input '{"purpose":"behavior"}'`: recent logs still
@@ -295,7 +295,7 @@ Needed changes:
 1. Artifact telemetry and audit correlation.
    - Smallest slice, clarifies whether artifact is actually causing nested
      tool/queue behavior.
-   - Tests: `go test ./cmd/idiom ./internal/workspace`.
+   - Tests: `go test ./cmd/idiom ./internal/capabilities/workspace`.
 
 2. Profile-driven language/spec lint.
    - Move C++/Colony assumptions behind profile hooks.
@@ -304,7 +304,7 @@ Needed changes:
 
 3. Reference validator shared by brief lint and plan-audit.
    - Side-effect-free path/symbol/command checks.
-   - Tests: `go test ./cmd/idiom ./internal/architect ./internal/workspace`.
+   - Tests: `go test ./cmd/idiom ./internal/workflows/architect ./internal/capabilities/workspace`.
 
 4. Packet-first atom-spec command or recipe.
    - Wire the existing context/architect/artifact/plan-audit pieces into one

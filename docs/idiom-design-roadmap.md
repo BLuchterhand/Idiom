@@ -90,7 +90,7 @@ The executable implementation plan is
   validated artifacts can reach execution. This design deliberately separates
   the route classifier, artifact distiller, patch compiler, and executor so
   repair does not silently become mutation authority. The first deterministic
-  lifecycle is implemented through `internal/planintent`: exact
+  lifecycle is implemented through `internal/workflows/planintent`: exact
   `idiom.edit_intent.v1` artifacts validate against the active runtime brief,
   compile to candidate `workspace.PlanEdit` values, and still pass through
   normal `submit_plan` validation before executor handoff. The

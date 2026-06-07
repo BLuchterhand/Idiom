@@ -20,7 +20,7 @@
   },
   "reviewed_at": "2026-05-17T16:20:35Z",
   "commands_reviewed": [
-    "go test ./internal/productworkflow ./cmd/idiom",
+    "go test ./internal/workflows/productworkflow ./cmd/idiom",
     "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "python3 JSON/JSONL validation for durable effort artifacts",
     "privacy secret-pattern scan over durable effort artifacts",

@@ -10,9 +10,9 @@
   "scope_statement": "Patch-shaped enum-validation atom: add canonical artifact state enum validation for PRD, ADR index, and ADR markdown status fields; reject fixture-only or unknown statuses.",
   "code_changes": true,
   "changed_paths": [
-    "internal/productworkflow/validate.go",
-    "internal/productworkflow/validate_test.go",
-    "cmd/idiom/product_workflow_test.go",
+    "internal/workflows/productworkflow/validate.go",
+    "internal/workflows/productworkflow/validate_test.go",
+    "internal/surfaces/cli/product/product_workflow_test.go",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0008b-implementation.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0008b-investigation.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
@@ -24,7 +24,7 @@
     "run_by_implementor": true,
     "commands": [
       "gofmt on touched Go files",
-      "go test ./internal/productworkflow ./cmd/idiom",
+      "go test ./internal/workflows/productworkflow ./cmd/idiom",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "git diff --check"
     ],
@@ -32,7 +32,7 @@
   },
   "brief_shape": {
     "strategy": "patch_shaped",
-    "expected_diff": "Add ArtifactState constants and status validation in internal/productworkflow, focused tests, product lint invalid-status coverage, and Atom 8b durable bookkeeping.",
+    "expected_diff": "Add ArtifactState constants and status validation in internal/workflows/productworkflow, focused tests, product lint invalid-status coverage, and Atom 8b durable bookkeeping.",
     "stop_condition": "Stop after enum validation and verification; do not continue to later artifact state transitions or workflow orchestration."
   },
   "privacy_note": "Durable reports must not persist raw prompts, raw transcripts, file bodies, secrets, or customer-identifying data.",

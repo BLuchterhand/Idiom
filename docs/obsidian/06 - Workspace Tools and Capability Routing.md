@@ -16,7 +16,7 @@ emit telemetry.
 
 ## Tool Dispatch Shape
 
-`internal/workspace` owns the tool manager and dispatch surface. Tool requests
+`internal/capabilities/workspace` owns the tool manager and dispatch surface. Tool requests
 are schema-shaped and include the command name, arguments, and call identifier.
 Lane/profile/role context is mostly carried outside the request itself: in the
 runtime brief, CLI profile handling, manager configuration, MCP profile
@@ -85,7 +85,7 @@ precision, freshness, cost, permissions, and contract requirements.
 | `audit_behavior` | `harness_audit` | Diagnose agent behavior from logs/artifacts |
 
 `*` means this vocabulary includes design-target names. For the current implemented
-`read_only_capability` IDs, check `internal/workspace/capabilities.go` before
+`read_only_capability` IDs, check `internal/capabilities/workspace/capabilities.go` before
 documenting a capability as supported.
 
 ## Tool Catalog
@@ -198,10 +198,10 @@ text or ad hoc command parsing.
 
 | Source | Why it matters |
 | --- | --- |
-| `internal/workspace/manager.go` | `ToolRequest`, manager dispatch, external tool registry ownership |
-| `internal/workspace/tool_schemas.go` | Built-in tool schema definitions |
-| `internal/workspace/capabilities.go` | Current read-only capability registry and dispatch |
-| `internal/workspace/source_sanity.go` | Current source sanity implementation |
+| `internal/capabilities/workspace/manager.go` | `ToolRequest`, manager dispatch, external tool registry ownership |
+| `internal/capabilities/workspace/tool_schemas.go` | Built-in tool schema definitions |
+| `internal/capabilities/workspace/capabilities.go` | Current read-only capability registry and dispatch |
+| `internal/capabilities/workspace/source_sanity.go` | Current source sanity implementation |
 | `docs/design-capability-oriented-tooling.md` | Broader design target* |
 
 ## Related Notes

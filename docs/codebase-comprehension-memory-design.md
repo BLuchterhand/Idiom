@@ -119,7 +119,7 @@ Add a new codebase comprehension subsystem with four layers:
    Expose task-shaped tools and CLI commands that return bounded context views
    and can populate architect packets.
 
-The architecture should sit next to `internal/workspace` and `internal/architect`
+The architecture should sit next to `internal/capabilities/workspace` and `internal/workflows/architect`
 rather than inside the runner. The runner consumes views and packets; it should
 not own indexing policy.
 
@@ -666,7 +666,7 @@ Outputs must expose why an item was ranked:
 
 ```json
 {
-  "path": "internal/workspace/discovery_query.go",
+  "path": "internal/capabilities/workspace/discovery_query.go",
   "role": "read_only_evidence",
   "score": 0.82,
   "signals": ["symbol_match", "dependency_neighbor", "recent_query_artifact"],
@@ -885,7 +885,7 @@ Default interactive behavior should be `allow_stale` for orientation and
 Proposed packages:
 
 ```text
-internal/comprehension/
+internal/repository/comprehension/
   graph.go
   store.go
   indexer.go
@@ -899,12 +899,12 @@ internal/comprehension/
 
 Responsibilities:
 
-- `internal/comprehension` owns graph schema, storage, indexing, ranking, view
+- `internal/repository/comprehension` owns graph schema, storage, indexing, ranking, view
   construction, summary provenance, and packet-ready evidence.
-- `internal/workspace` exposes tools that call comprehension APIs.
-- `internal/architect` accepts context evidence but does not know how to index
+- `internal/capabilities/workspace` exposes tools that call comprehension APIs.
+- `internal/workflows/architect` accepts context evidence but does not know how to index
   repositories.
-- `internal/agent` consumes tools and packets. It should not own graph policy.
+- `internal/runtime/agent` consumes tools and packets. It should not own graph policy.
 - `cmd/idiom` exposes CLI commands for build/status/query/pack.
 
 This keeps durable repository comprehension separate from runner strategy.
@@ -966,7 +966,7 @@ Acceptance:
 Verification:
 
 ```bash
-go test ./internal/comprehension/... ./internal/workspace/...
+go test ./internal/repository/comprehension/... ./internal/capabilities/workspace/...
 go test ./...
 ```
 
@@ -987,7 +987,7 @@ Acceptance:
 Verification:
 
 ```bash
-go test ./internal/comprehension/... ./internal/architect/... ./cmd/idiom/...
+go test ./internal/repository/comprehension/... ./internal/workflows/architect/... ./cmd/idiom/...
 go test ./...
 ```
 
@@ -1082,7 +1082,7 @@ Success criteria should be practical:
 
 ## Development Checklist
 
-- [x] Create `internal/comprehension` package with schema, store, and graph
+- [x] Create `internal/repository/comprehension` package with schema, store, and graph
   types.
 - [x] Add bootstrap store/version handling for
   `.idiom/comprehension/graph.json`.
@@ -1120,7 +1120,7 @@ Success criteria should be practical:
   refresh, dependency refresh files, summary nodes, and normalized
   relationship edges.
 - [x] Add eval scenarios for token/tool-call reduction and grounding quality
-  (`internal/eval/comprehension_suite.go`).
+  (`internal/evidence/eval/comprehension_suite.go`).
 - [x] Materialize `graph_views` cache and key by content fingerprint, not
   generation timestamp. (Wired 2026-05-10. `Pack()` reads/writes
   `graph_views` keyed by `ViewKey`: `(index_id, task, mode, canonical query
@@ -1226,7 +1226,7 @@ their resolution:
 | Audit/perf telemetry shipped | `harness_audit` reports collector versions, refresh sets, summary nodes, normalized edges — but no cache metrics, so the eval section's "fewer broad reads / fewer repeated searches" success criteria were unmeasurable. | Added `graph_views` row count, hit/miss counters, stale ratio, bytes stored. |
 
 The audit also found one strict win that wasn't credited: summaries were
-materialized as graph nodes with proper provenance (`internal/comprehension/summaries.go`),
+materialized as graph nodes with proper provenance (`internal/repository/comprehension/summaries.go`),
 which is functionally equivalent to the documented `summaries/` directory
 and slightly better for invalidation. The audit normalized the design to
 the implementation's choice rather than the other way around.

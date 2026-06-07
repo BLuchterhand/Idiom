@@ -87,7 +87,7 @@
     "enable_writes": true,
     "allow_private_network": false
   },
-  "_mcp_comment": "Uncomment the `mcp` block below to enable Exa AI's hosted MCP endpoint. The single entry exposes two tools — mcp:exa/web_search_exa (search) and mcp:exa/web_fetch_exa (URL fetch as clean markdown). Both inherit per-Mode rules from internal/agent/modes.go (plan: allow, build/general: ask). Set EXA_API_KEY in your env for higher rate limits — auth is optional.",
+  "_mcp_comment": "Uncomment the `mcp` block below to enable Exa AI's hosted MCP endpoint. The single entry exposes two tools — mcp:exa/web_search_exa (search) and mcp:exa/web_fetch_exa (URL fetch as clean markdown). Both inherit per-Mode rules from internal/runtime/agent/modes.go (plan: allow, build/general: ask). Set EXA_API_KEY in your env for higher rate limits — auth is optional.",
   "_mcp": [
     {
       "name": "exa",

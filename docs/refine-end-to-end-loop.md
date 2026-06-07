@@ -433,7 +433,7 @@ The orchestrator added the section by hand (~30 seconds) and shipped, but the au
 
 1. **`brief-preflight.py` is mode-blind.** The python preflight script was written for anchored-edits briefs only. It checks for `## Files To Modify` and `### Edit N` blocks. When fed a markdown-deliverable brief (which has `## Deliverable` + `## Inline content` instead), it reports `0 file-allowlist rows` and passes vacuously — no allowlist to check, no edits to verify, lint OK. The lint has no markdown-deliverable code path.
 
-2. **`## Acceptance` is not required in either mode.** Grep `internal/cliassets/brief-preflight.py` for "Acceptance" returns zero matches. The lint never required this section, in any mode — including anchored-edits, where it's documented as required in `lanes/refine/draft.md`.
+2. **`## Acceptance` is not required in either mode.** Grep `internal/surfaces/cliassets/brief-preflight.py` for "Acceptance" returns zero matches. The lint never required this section, in any mode — including anchored-edits, where it's documented as required in `lanes/refine/draft.md`.
 
 3. **Refine's reviewer doesn't compare draft against the meta-draft template.** §2.3 says the reviewer runs `idiom brief lint` and treats BLOCKs as patch targets. When lint passes vacuously (Bug 1), the reviewer falls back to its own judgment — which checks shape consistency between sections but not "did the draft include every required section per the meta-draft's template." That's how iter-1 converged on `ship-as-is` despite a section the template explicitly requires being absent.
 
@@ -455,7 +455,7 @@ The orchestrator added the section by hand (~30 seconds) and shipped, but the au
 
 **Empirical context**: workflow validated end-to-end on the second attempt (`idiom-evolution-C-bundling-v2`, commit `18939960`). Refine → manual Acceptance add → lint OK → implement lane → 120-line markdown deliverable at `docs/research/idiom-evolution-postflight-migration-bundles.md`. The one orchestrator-normalize step (Acceptance section) is the only hand-edit standing between today's flow and the fully-automated end-state.
 
-**Fix shipped (idiom commit follows)**: `internal/cliassets/brief-preflight.py` is now mode-aware.
+**Fix shipped (idiom commit follows)**: `internal/surfaces/cliassets/brief-preflight.py` is now mode-aware.
 
 - New `detect_brief_mode(text)` identifies anchored-edits, markdown-deliverable, ambiguous (both), or unknown (neither) by section presence (ignoring fenced example content).
 - New `REQUIRED_SECTIONS_ANCHORED` and `REQUIRED_SECTIONS_MARKDOWN` lists the required headings per mode (each entry is a tuple of acceptable variants — e.g., `## Required Edits` OR `## Required Behavior`).

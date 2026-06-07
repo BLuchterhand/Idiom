@@ -9,7 +9,7 @@ operations, and the eval/audit learning loop.
 
 Implemented status:
 
-- The deterministic handoff slice is implemented in `internal/planintent`.
+- The deterministic handoff slice is implemented in `internal/workflows/planintent`.
   It defines `idiom.edit_intent.v1`, validation, typed error codes, and a
   deterministic compiler MVP for `replace_exact_text`,
   `insert_after_line_anchor`, and `add_new_file`.
@@ -104,14 +104,14 @@ local models.
 
 Idiom already has partial malformed-output handling:
 
-- `internal/agent/tool_request_normalizer.go` normalizes native tool calls,
+- `internal/runtime/agent/tool_request_normalizer.go` normalizes native tool calls,
   textual JSON, fenced JSON, key/value requests, function-call-shaped requests,
   nested `arguments`, missing read-tool aliases, and stringified
   `submit_plan.edits`.
 - Parser failures are classified into machine-readable classes such as
   `submit_plan_edits_string`, `malformed_json`, `schema_type_mismatch`,
   `missing_tool`, and `nested_tool_mismatch`.
-- `internal/llama/client.go` exposes `ResponseFormatJSON`, which requests a
+- `internal/runtime/llama/client.go` exposes `ResponseFormatJSON`, which requests a
   single JSON object for textual terminal turns when native tool transport is
   not reliable.
 - Plan-execute runtime policy logs parser contracts, response format, tool
@@ -548,8 +548,8 @@ fixtures pass. Live tests should assert:
 ### Slice 2: `edit_intent.v1`
 
 - Done. The schema and Go types live in a pure handoff package, not in
-  `internal/agent` and not as the primary domain model of `internal/workspace`.
-  `internal/planintent` is usable by agent
+  `internal/runtime/agent` and not as the primary domain model of `internal/capabilities/workspace`.
+  `internal/workflows/planintent` is usable by agent
   orchestration, CLI fixtures, compiler code, and tests without importing model
   runtime concerns.
 - Done. Deterministic validation covers scope, operation enum, evidence refs, and

@@ -619,10 +619,10 @@ Every command must work without starting an inference session.
 harness context build --path . --mode standard
 harness context status --json
 harness context query --query "what calls LoadView?" --resolution symbol --json
-harness context zoom --handle symbol://internal/comprehension/views.go#LoadView --resolution symbol --json
+harness context zoom --handle symbol://internal/repository/comprehension/views.go#LoadView --resolution symbol --json
 harness context pack --task-file /tmp/task.md --mode plan --output /tmp/context-view.json
-harness context impact --path internal/comprehension/views.go --json
-harness context trace-pack --command "go test ./internal/comprehension/..." --path . --json
+harness context impact --path internal/repository/comprehension/views.go --json
+harness context trace-pack --command "go test ./internal/repository/comprehension/..." --path . --json
 harness architect packet --task-file /tmp/task.md --schema planning_v2 --context-view /tmp/context-view.json --output /tmp/packet.json
 ```
 
@@ -632,9 +632,9 @@ LLM agents should be able to call the same functions through `harness tool`:
 
 ```bash
 harness tool context_pack --input '{"task":"localize graph view cache invalidation","mode":"plan","limit":8}'
-harness tool context_query --input '{"query":"tests for internal/comprehension/views.go","resolution":"symbol"}'
-harness tool context_zoom --input '{"handle":"file://internal/comprehension/views.go","resolution":"file"}'
-harness tool context_trace_pack --input '{"command":"go test ./internal/comprehension/...","path":"."}'
+harness tool context_query --input '{"query":"tests for internal/repository/comprehension/views.go","resolution":"symbol"}'
+harness tool context_zoom --input '{"handle":"file://internal/repository/comprehension/views.go","resolution":"file"}'
+harness tool context_trace_pack --input '{"command":"go test ./internal/repository/comprehension/...","path":"."}'
 harness tool harness_audit --input '{"purpose":"behavior"}'
 ```
 

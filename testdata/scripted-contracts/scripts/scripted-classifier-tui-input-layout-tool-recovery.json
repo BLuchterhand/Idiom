@@ -5,22 +5,22 @@
       "content": "{\"family\":\"implementation\",\"initial_lane\":\"implement\",\"reason\":\"classifier_directive\",\"contract\":\"implementation_result\"}"
     },
     {
-      "content": "{\"tool\":\"code_navigate\",\"request\":{\"capability\":\"find_references\",\"path\":\"internal/app\",\"symbol\":\"input\"},\"named_gap\":\"find prompt input layout references\",\"why_not_answering\":\"need to localize the edit target before writing\"}"
+      "content": "{\"tool\":\"code_navigate\",\"request\":{\"capability\":\"find_references\",\"path\":\"internal/surfaces/tui/app\",\"symbol\":\"input\"},\"named_gap\":\"find prompt input layout references\",\"why_not_answering\":\"need to localize the edit target before writing\"}"
     },
     {
-      "content": "{\"tool\":\"code_navigate\",\"capability\":\"file_outline\",\"path\":\"internal/app\",\"named_gap\":\"list candidate app files for the prompt input layout\",\"why_not_answering\":\"need a concrete file path before reading source\"}"
+      "content": "{\"tool\":\"code_navigate\",\"capability\":\"file_outline\",\"path\":\"internal/surfaces/tui/app\",\"named_gap\":\"list candidate app files for the prompt input layout\",\"why_not_answering\":\"need a concrete file path before reading source\"}"
     },
     {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/app/model_state.go\",\"start_line\":1,\"end_line\":80,\"named_gap\":\"current prompt input height calculation\",\"why_not_answering\":\"need exact source before editing\"}"
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/surfaces/tui/app/model_state.go\",\"start_line\":1,\"end_line\":80,\"named_gap\":\"current prompt input height calculation\",\"why_not_answering\":\"need exact source before editing\"}"
     },
     {
-      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/app/model_state.go\",\"old_text\":\"\\twidth := inputWidth\\n\",\"new_text\":\"\\twidth := max(1, inputWidth-len(prompt))\\n\",\"description\":\"account for prompt columns when computing wrapped input height\"}"
+      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/surfaces/tui/app/model_state.go\",\"old_text\":\"\\twidth := inputWidth\\n\",\"new_text\":\"\\twidth := max(1, inputWidth-len(prompt))\\n\",\"description\":\"account for prompt columns when computing wrapped input height\"}"
     },
     {
-      "content": "{\"tool\":\"source_sanity\",\"path\":\"internal/app/model_state.go\"}"
+      "content": "{\"tool\":\"source_sanity\",\"path\":\"internal/surfaces/tui/app/model_state.go\"}"
     },
     {
-      "content": "Updated the prompt input height calculation.\\n\\nChanged paths:\\n- internal/app/model_state.go\\n\\nVerification: Source sanity passed for internal/app/model_state.go."
+      "content": "Updated the prompt input height calculation.\\n\\nChanged paths:\\n- internal/surfaces/tui/app/model_state.go\\n\\nVerification: Source sanity passed for internal/surfaces/tui/app/model_state.go."
     }
   ]
 }

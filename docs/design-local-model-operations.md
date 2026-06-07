@@ -89,28 +89,28 @@ Verified from the current repo docs and code:
 
 - `README.md` documents three inference backend blocks:
   `llama_server`, `implementer`, and `route_classifier`.
-- `internal/config.Config` models those as `LlamaServer`, optional
+- `internal/platform/config.Config` models those as `LlamaServer`, optional
   `Implementer`, and `RouteClassifier`.
 - `.idiom/backends.json` declares role-aware backend profiles. The current
   self-hosted `qwen-pair` profile uses a Qwen 35B planner-classifier plus a
   Qwen3.6-27B executor, with a proxy on port `47680`.
-- `internal/backends` owns `.idiom/backends.json`, role alias resolution,
+- `internal/runtime/backends` owns `.idiom/backends.json`, role alias resolution,
   backend launch/stop/status, and an alias-routing proxy.
 - `cmd/idiom/backend.go` exposes `idiom backend start|stop|status|list|proxy`.
-- `cmd/idiom/queue.go` and `internal/runner` expose a per-user Unix-socket
+- `cmd/idiom/queue.go` and `internal/runtime/runner` expose a per-user Unix-socket
   queue daemon with named pools, leases, waiting positions, status, ping,
   cancel, and idle flags.
 - `runner.MaybeAcquire` is opportunistic: if the daemon is absent, lane entry
   points proceed ungated; if a daemon is reachable, they acquire the resolved
   pool.
-- `internal/app/turn_planner.go` uses the route classifier only after
+- `internal/surfaces/tui/app/turn_planner.go` uses the route classifier only after
   deterministic routing is not decisive. It falls back to host routing if the
   classifier is disabled, unhealthy, times out, or returns invalid JSON.
-- `internal/app/history.go` also uses the route-classifier client for history
+- `internal/surfaces/tui/app/history.go` also uses the route-classifier client for history
   summarization and can lazily launch the configured helper server.
 - `cmd/idiom/doctor.go` currently checks for backend binaries, model caches,
   project config, writable workspace, `python3`, and `git`.
-- `internal/telemetry` writes local JSONL process telemetry under
+- `internal/evidence/telemetry` writes local JSONL process telemetry under
   `logs/telemetry` by default and supports `IDIOM_TELEMETRY=0`.
 - Conversation debug logs and `harness_audit` provide the richer behavior trail.
 
@@ -283,7 +283,7 @@ assume these constraints and design for them directly.
 
 ```text
 .idiom/backends.json
-  -> internal/backends.File/Profile/Model/Proxy
+  -> internal/runtime/backends.File/Profile/Model/Proxy
   -> idiom backend start|stop|status|proxy
   -> role-specific base URLs
   -> app lifecycle / lane entry points
@@ -306,8 +306,8 @@ The design should preserve this split:
 - `.idiom/backends.json` describes local model stacks and role routing.
 - `idiom backend` manages backend processes.
 - `idiom queue` manages scarce local execution slots.
-- `internal/app` resolves role-specific clients for the active run.
-- `internal/agent` enforces runtime contracts and emits budget/stop telemetry.
+- `internal/surfaces/tui/app` resolves role-specific clients for the active run.
+- `internal/runtime/agent` enforces runtime contracts and emits budget/stop telemetry.
 
 ### Backend Profile Contract
 

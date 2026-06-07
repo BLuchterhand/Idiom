@@ -50,7 +50,7 @@ Consensus:
 Problem:
 
 The planner accepted and dispatched atoms with invented top-level `tui/...`
-paths even though the existing live TUI architecture is under `internal/app`.
+paths even though the existing live TUI architecture is under `internal/surfaces/tui/app`.
 The product workflow prompt contained accepted PRD/ADR/TDD summaries but no
 concrete existing TUI source paths or context packet.
 

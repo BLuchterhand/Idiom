@@ -178,15 +178,15 @@ only when the public contract becomes stable.
 | Domain contracts | `internal/contract` | Path roles, tool profiles, obligations, readiness states, artifact states | Filesystem or model clients |
 | Application use cases | `internal/usecase` | Lane orchestration, context packet building, verification coordination, audit export | CLI formatting or SQL |
 | Ports | `internal/port` | Interfaces for model, graph, telemetry, filesystem, clock, shell, language tools | Adapter implementation details |
-| Workspace tools | `internal/workspace` | Tool registry, schema export, dispatch, permissions, normalized tool results | Model strategy |
+| Workspace tools | `internal/capabilities/workspace` | Tool registry, schema export, dispatch, permissions, normalized tool results | Model strategy |
 | Repository memory | `internal/memory` | Graph indexing, packets, freshness, views, ranker evidence | Prompt assembly |
-| Runner | `internal/runner` | Model loop, tool-call parsing, redirects, readiness gate integration | Backend-specific SDK logic |
+| Runner | `internal/runtime/runner` | Model loop, tool-call parsing, redirects, readiness gate integration | Backend-specific SDK logic |
 | Lane adapters | `internal/lane` | `implement`, `plan-execute`, artifact intake, recovery integration | Domain state names duplicated from `contract` |
 | Session state | `internal/session` | Transcript state, resume handles, context compaction, task-state summaries | Replacing source evidence with summaries |
 | Telemetry and audit | `internal/evidence` | Redacted events, audit summaries, eval fixtures, product/release evidence | Raw private content export |
 | Model adapters | `internal/model` | Local and hosted backend clients behind the model port | Tool permissions or readiness rules |
 | CLI surface | `cmd/harness` | Flags, command wiring, output formatting, composition root | Business rules |
-| Integration adapters | `internal/sidecar`, `internal/mcp` | CLI tool envelope, MCP transport, profile filtering through shared tools | Separate tool implementation |
+| Integration adapters | `internal/sidecar`, `internal/capabilities/mcp` | CLI tool envelope, MCP transport, profile filtering through shared tools | Separate tool implementation |
 
 The exact names can change, but the ownership must not blur. If a package
 starts importing both terminal UI code and graph persistence, split the use case
@@ -1203,7 +1203,7 @@ Required local test targets:
 Add these when relevant:
 
 ```bash
-go test ./internal/agent ./internal/workspace ./internal/comprehension
+go test ./internal/runtime/agent ./internal/capabilities/workspace ./internal/repository/comprehension
 go test ./cmd/harness
 go build ./cmd/harness
 harness tool context_status --input '{"refresh":true,"limit":50}'

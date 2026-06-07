@@ -33,9 +33,9 @@
   "reviewed_at": "2026-05-18T15:20:00Z",
   "commands_reviewed": [
     "idiom tool context_pack --input {\"task\":\"prd adr brief workflow atom 30 feedback reconciliation closeout\",\"mode\":\"plan\",\"limit\":8}",
-    "go test ./internal/productworkflow -run TestExecutionFeedbackReconciliation -count=1",
-    "go test ./cmd/idiom -run TestProductFeedbackReconcile -count=1",
-    "go test ./internal/productworkflow ./cmd/idiom",
+    "go test ./internal/workflows/productworkflow -run TestExecutionFeedbackReconciliation -count=1",
+    "go test ./internal/surfaces/cli/product -run TestProductFeedbackReconcile -count=1",
+    "go test ./internal/workflows/productworkflow ./cmd/idiom",
     "go test ./...",
     "temp-effort product feedback reconciliation smoke"
   ],

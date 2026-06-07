@@ -10,23 +10,23 @@
   "scope_statement": "Add commit_hash field to implementation ledger records and per-atom coverage validation to prevent piggybacking",
   "code_changes": true,
   "changed_paths": [
-    "internal/productworkflow/types.go",
-    "internal/productworkflow/validate.go",
-    "internal/productworkflow/validate_test.go",
-    "internal/productworkflow/scope.go",
-    "internal/productworkflow/scope_test.go",
-    "cmd/idiom/product_workflow.go",
-    "cmd/idiom/product_workflow_test.go"
+    "internal/workflows/productworkflow/types.go",
+    "internal/workflows/productworkflow/validate.go",
+    "internal/workflows/productworkflow/validate_test.go",
+    "internal/workflows/productworkflow/scope.go",
+    "internal/workflows/productworkflow/scope_test.go",
+    "internal/surfaces/cli/product/product_workflow.go",
+    "internal/surfaces/cli/product/product_workflow_test.go"
   ],
   "verification": {
     "status": "passed_after_orchestrator_review",
     "commands": [
       "go build ./...",
-      "go test ./internal/productworkflow/...",
-      "go test ./cmd/idiom/... -run TestProductLintPerAtomCommitCoverage",
-      "go test ./internal/productworkflow/... -run TestCommitHash",
-      "go test ./internal/productworkflow/... -run TestValidatePerAtomCoverage",
-      "go test ./internal/productworkflow/... -run TestTransitionPurity"
+      "go test ./internal/workflows/productworkflow/...",
+      "go test ./internal/surfaces/cli/product/... -run TestProductLintPerAtomCommitCoverage",
+      "go test ./internal/workflows/productworkflow/... -run TestCommitHash",
+      "go test ./internal/workflows/productworkflow/... -run TestValidatePerAtomCoverage",
+      "go test ./internal/workflows/productworkflow/... -run TestTransitionPurity"
     ]
   },
   "privacy_note": "no raw prompts, transcripts, file bodies, secrets, or customer-identifying data stored",

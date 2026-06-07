@@ -357,7 +357,7 @@ Control rails and gates should emit enough evidence to debug authority leaks:
   "contract": "permission|protected_path|verification|completion|readiness|budget|freshness",
   "decision": "allow|nudge|block|repair|stop",
   "reason": "required_edit_paths_remaining",
-  "evidence_paths": ["internal/agent/readiness.go"],
+  "evidence_paths": ["internal/runtime/agent/readiness.go"],
   "missing_claim": "optional exact missing claim",
   "next_probe": "optional exact probe if one exists",
   "budget_remaining": 4
@@ -401,7 +401,7 @@ and append-only:
   "source": "eval|cli|verified_edit|harness_feedback|audit_watch",
   "action": "boost|penalize|no_op|reset",
   "score": 0.82,
-  "files": ["internal/workspace/harness_audit.go"],
+  "files": ["internal/capabilities/workspace/harness_audit.go"],
   "task_id": "swe-task-or-session-id",
   "evidence": ["logs/conversations/example.jsonl"],
   "reason": "groundedness_high",

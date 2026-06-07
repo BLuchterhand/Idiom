@@ -72,7 +72,7 @@ compaction, and not replayed as model messages.
 flowchart TD
     User["User"]
     TUI["Bubble Tea TUI<br/>typed prompt or slash command"]
-    App["internal/app Model<br/>sendPromptAsync"]
+    App["internal/surfaces/tui/app Model<br/>sendPromptAsync"]
     Bookkeeping["RunPromptOnce<br/>message bookkeeping"]
     Route["Turn route and writer route<br/>task family, lane, writer mode"]
     Brief["Runtime brief<br/>model roles, required/candidate scope"]
@@ -264,11 +264,11 @@ default.
 | `cmd/harness/lane.go` | Lane command surface |
 | `cmd/harness/plan_execute.go` | Direct plan-execute orchestration and resume-state handling |
 | `cmd/harness/mcp.go` | Inbound MCP command |
-| `internal/app/model_state.go` | Slash command handling |
-| `internal/app/implementation_dispatch.go` | TUI/prompt design-doc dispatch, atomization, source-satisfied closeout |
-| `internal/app/lifecycle.go` | TUI lifecycle, transcripts, debug logs |
-| `internal/planexecute/progress.go` | Durable plan-execute progress state schema |
-| `internal/transcript` | Transcript and debug log records |
+| `internal/surfaces/tui/app/model_state.go` | Slash command handling |
+| `internal/surfaces/tui/app/implementation_dispatch.go` | TUI/prompt design-doc dispatch, atomization, source-satisfied closeout |
+| `internal/surfaces/tui/app/lifecycle.go` | TUI lifecycle, transcripts, debug logs |
+| `internal/workflows/planexecute/progress.go` | Durable plan-execute progress state schema |
+| `internal/evidence/transcript` | Transcript and debug log records |
 
 ## Related Notes
 

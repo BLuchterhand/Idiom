@@ -28,9 +28,9 @@
   },
   "reviewed_at": "2026-05-18T14:50:00Z",
   "commands_reviewed": [
-    "go test ./internal/productworkflow -run TestExecutionFeedback -count=1",
-    "go test ./cmd/idiom -run TestProductFeedback -count=1",
-    "go test ./internal/productworkflow ./cmd/idiom",
+    "go test ./internal/workflows/productworkflow -run TestExecutionFeedback -count=1",
+    "go test ./internal/surfaces/cli/product -run TestProductFeedback -count=1",
+    "go test ./internal/workflows/productworkflow ./cmd/idiom",
     "go test ./..."
   ],
   "created_at": "2026-05-18T14:35:00Z",

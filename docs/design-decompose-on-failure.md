@@ -30,22 +30,22 @@ non-plan-execute adapters.
 
 Verified adjacent implementation:
 
-- `internal/app/implementation_dispatch.go` can pre-atomize design docs when
+- `internal/surfaces/tui/app/implementation_dispatch.go` can pre-atomize design docs when
   they have many atom candidates or when brief lint reports single-purpose
   decomposition blockers.
-- `internal/app/implementation_dispatch.go` can refine non-dispatchable plan
+- `internal/surfaces/tui/app/implementation_dispatch.go` can refine non-dispatchable plan
   documents before running `plan-execute`.
-- `internal/app/implementation_dispatch.go` can make a one-shot
+- `internal/surfaces/tui/app/implementation_dispatch.go` can make a one-shot
   planner-blocked recovery decision: retry once with an addendum or surface the
   blocker.
 - `cmd/idiom/plan_execute.go` records planner failures such as
   `planner_blocked`, `planner_failed`, and `plan_artifact_missing` into durable
   progress state.
-- `internal/recovery/record.go` classifies the documented plan-execute failure
+- `internal/workflows/recovery/record.go` classifies the documented plan-execute failure
   classes deterministically, including `scope_too_large` and
   `verification_failed`, from explicit failure kinds, review-repair reason
   classes, and bounded host evidence text.
-- `cmd/idiom/plan_execute.go` and `internal/planexecute/run.go` now write
+- `cmd/idiom/plan_execute.go` and `internal/workflows/planexecute/run.go` now write
   `.idiom/recovery/<failure-id>/failure.json` and
   `.idiom/recovery/<failure-id>/packet.json` automatically whenever a
   `plan-execute` progress state is saved with `status:"failed"`.
@@ -69,19 +69,19 @@ Verified adjacent implementation:
   and reject symlinked parents or symlinked packet files; status reconciliation
   discovery applies the same symlink boundary before loading sibling or default
   reconciliation artifacts.
-- `internal/workspace/recovery_tools.go` exposes `recovery_inspect` and
+- `internal/capabilities/workspace/recovery_tools.go` exposes `recovery_inspect` and
   `recovery_status` through `idiom tool --profile discovery` and MCP with the
   normal sidecar envelope for both plan-execute and lane-implement records.
   `recovery_decompose` is available only through the default tool profile
   because it writes `.idiom/recovery` artifacts.
-- `internal/productworkflow/status.go` projects `workflow_state.artifact_paths`
+- `internal/workflows/productworkflow/status.go` projects `workflow_state.artifact_paths`
   recovery packets into `idiom product status` and the shared operator status
   view. Open recovery packets block normal workflow dispatch and add a runnable
   recovery inspection action without making the packet itself dispatch
   authority. Valid reconciliation artifacts close the recovery blocker only when
   their packet digest, completed/remaining atom manifest, and passing
   required-test evidence match the current packet.
-- `internal/app/product_status.go` exposes `/product-status [--effort-root
+- `internal/surfaces/tui/app/product_status.go` exposes `/product-status [--effort-root
   <path>]` in the TUI. It renders the same shared operator status text as
   `idiom product status --operator-view` from the same lint, metrics, workflow
   state, and recovery inputs, including open recovery packet blockers and the
@@ -90,9 +90,9 @@ Verified adjacent implementation:
   transcript entry is harness/operator-authored and is filtered before
   compaction or request payload assembly, so it is not replayed as an assistant
   message in later model context.
-- `internal/app/recover_status.go` exposes `/recover-status [--packet
+- `internal/surfaces/tui/app/recover_status.go` exposes `/recover-status [--packet
   <path>|<path>]` in the TUI. It resolves relative packet paths from the
-  current workspace directory, renders the shared `internal/recoverstatus`
+  current workspace directory, renders the shared `internal/workflows/recoverstatus`
   presenter used by `idiom recover status`, rejects packet paths outside the
   workspace or through symlinks, and records only an operator transcript entry
   that is not replayed into later model context.
@@ -112,7 +112,7 @@ Verified adjacent implementation:
   is written. The event uses action `no_op`, records packet quality,
   localization-improvement, completed/remaining atom counts, and verification
   counts, and does not create or update `.idiom/ranker/weights.json`.
-- `internal/recovery/packet.go` enriches each residual-work record with
+- `internal/workflows/recovery/packet.go` enriches each residual-work record with
   scoped evidence refs for its required paths, changed paths, inherited failure
   evidence, and generated required-test commands. This keeps packet evidence
   bounded to metadata and command IDs while avoiding raw transcript, prompt, or
@@ -262,15 +262,15 @@ The first durable schema can be small and JSON-first:
   },
   "failure": {
     "class": "verification_failed",
-    "summary": "go test ./internal/app failed in TestX",
+    "summary": "go test ./internal/surfaces/tui/app failed in TestX",
     "evidence_refs": [
       {"kind": "test_output", "path": ".idiom/failures/fail-20260518-001/test.txt"},
-      {"kind": "changed_path", "path": "internal/app/foo.go"}
+      {"kind": "changed_path", "path": "internal/surfaces/tui/app/foo.go"}
     ]
   },
   "partial_state": {
     "dirty_status": "dirty_in_scope",
-    "changed_paths": ["internal/app/foo.go", "internal/app/foo_test.go"],
+    "changed_paths": ["internal/surfaces/tui/app/foo.go", "internal/surfaces/tui/app/foo_test.go"],
     "scope_status": "in_scope"
   },
   "product_links": {
@@ -282,12 +282,12 @@ The first durable schema can be small and JSON-first:
   "residual_work": [
     {
       "id": "residual-001",
-      "paths": ["internal/app/foo.go"],
+      "paths": ["internal/surfaces/tui/app/foo.go"],
       "reason": "verification_failed",
       "evidence_refs": [
-        {"kind": "required_path", "path": "internal/app/foo.go"},
-        {"kind": "changed_path", "path": "internal/app/foo.go"},
-        {"kind": "required_test", "id": "go test ./internal/app"}
+        {"kind": "required_path", "path": "internal/surfaces/tui/app/foo.go"},
+        {"kind": "changed_path", "path": "internal/surfaces/tui/app/foo.go"},
+        {"kind": "required_test", "id": "go test ./internal/surfaces/tui/app"}
       ]
     }
   ],
@@ -296,9 +296,9 @@ The first durable schema can be small and JSON-first:
       "id": "recovery-001",
       "title": "Repair parser branch after verification failure",
       "complexity": "C1",
-      "required_paths": ["internal/app/foo.go", "internal/app/foo_test.go"],
+      "required_paths": ["internal/surfaces/tui/app/foo.go", "internal/surfaces/tui/app/foo_test.go"],
       "forbidden_paths": [],
-      "required_tests": ["go test ./internal/app"],
+      "required_tests": ["go test ./internal/surfaces/tui/app"],
       "gates": ["workspace_state", "brief_lint", "atom_intake", "scope_gate", "required_tests"]
     }
   ],

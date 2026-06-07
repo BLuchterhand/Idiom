@@ -393,7 +393,7 @@ New planner-facing capability:
 {
   "ranked_scope": [
     {
-      "path": "internal/workspace/context_tools.go",
+      "path": "internal/capabilities/workspace/context_tools.go",
       "rank": 0.93,
       "signals": ["defines requested tool", "referenced by tests", "dirty file"],
       "confidence": "precise_backend"
@@ -401,7 +401,7 @@ New planner-facing capability:
   ],
   "candidate_tests": [
     {
-      "command": "go test ./internal/workspace",
+      "command": "go test ./internal/capabilities/workspace",
       "reason": "package owns changed context tool behavior"
     }
   ],
@@ -685,8 +685,8 @@ CLI shape.
 
 ```json
 {
-  "handle": "file://internal/workspace/context_tools.go",
-  "path": "internal/workspace/context_tools.go",
+  "handle": "file://internal/capabilities/workspace/context_tools.go",
+  "path": "internal/capabilities/workspace/context_tools.go",
   "kind": "file",
   "rank": 0.91,
   "signals": [
@@ -706,7 +706,7 @@ CLI shape.
   "severity": "warning",
   "kind": "validation_gap",
   "message": "Plan changes shared workspace behavior but lists only a build command.",
-  "evidence": ["packet://candidate_scope/internal/workspace"],
+  "evidence": ["packet://candidate_scope/internal/capabilities/workspace"],
   "suggested_resolution": "Add a package-level behavior test or name why existing tests cover this path."
 }
 ```
@@ -867,11 +867,11 @@ Implemented:
 
 Verification after recent completion-gate bug fixes:
 
-- `go test ./internal/architect ./internal/config ./internal/agent ./internal/app ./internal/frontier/workerruntime ./internal/rootcmd ./internal/lanecmd ./internal/planexecutecmd`
+- `go test ./internal/workflows/architect ./internal/platform/config ./internal/runtime/agent ./internal/surfaces/tui/app ./internal/runtime/workerruntime ./internal/surfaces/cli/root ./internal/lanecmd ./internal/surfaces/cli/planexecute`
   passed.
 - A CLI smoke test generated a `planning_packet.v2` packet with `brief` budget,
   linted it successfully, and audited a candidate plan successfully.
-- Recent completion-gate changes did not modify `internal/architect` or the
+- Recent completion-gate changes did not modify `internal/workflows/architect` or the
   plan-audit implementation; the only direct overlap is README-facing usage
   text.
 

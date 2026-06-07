@@ -7,12 +7,12 @@
   "completed_at": "2026-05-18T16:35:00Z",
   "scope": {
     "changed_paths": [
-      "cmd/idiom/product_workflow.go",
-      "cmd/idiom/product_workflow_test.go",
-      "internal/productworkflow/obsidian_parity.go",
-      "internal/productworkflow/obsidian_parity_test.go",
-      "internal/productworkflow/status.go",
-      "internal/productworkflow/status_test.go"
+      "internal/surfaces/cli/product/product_workflow.go",
+      "internal/surfaces/cli/product/product_workflow_test.go",
+      "internal/workflows/productworkflow/obsidian_parity.go",
+      "internal/workflows/productworkflow/obsidian_parity_test.go",
+      "internal/workflows/productworkflow/status.go",
+      "internal/workflows/productworkflow/status_test.go"
     ],
     "forbidden_paths_touched": [],
     "obsidian_parity_updated": true,
@@ -25,9 +25,9 @@
     "commands": [
       "idiom tool context_pack --input {\"task\":\"phase 5 Obsidian parity check product lint audit closeout reporting proposal roadmap stale status no-change rationale\",\"mode\":\"plan\",\"limit\":12}",
       "idiom tool context_query --input {\"query\":\"product lint audit Obsidian parity proposal roadmap closeout reports stale status no-change rationale\",\"resolution\":\"symbol\"}",
-      "go test ./internal/productworkflow -run TestObsidianParity -count=1",
-      "go test ./cmd/idiom -run 'TestProductObsidianParity|TestProductStatusObsidianParity' -count=1",
-      "go test ./internal/productworkflow ./cmd/idiom",
+      "go test ./internal/workflows/productworkflow -run TestObsidianParity -count=1",
+      "go test ./internal/surfaces/cli/product -run 'TestProductObsidianParity|TestProductStatusObsidianParity' -count=1",
+      "go test ./internal/workflows/productworkflow ./cmd/idiom",
       "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",

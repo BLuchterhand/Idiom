@@ -152,23 +152,23 @@ Reusable Agent Harness facts:
 - `docs/architect-packets.md` defines the active packet flow:
   `context impact`, `context pack`, `architect packet`, `lint`, `budget`,
   `plan`, `artifact`, and `plan-audit`.
-- `internal/architect/packet.go` defines packet schemas and profile rules,
+- `internal/workflows/architect/packet.go` defines packet schemas and profile rules,
   collectors, gates, roles, file refs, tests, anchors, evidence, risks, and
   unknowns.
-- `internal/architect/planning_v2.go` enriches planning packets with contracts,
+- `internal/workflows/architect/planning_v2.go` enriches planning packets with contracts,
   repository view, candidate scope, freshness, language capabilities, handoff,
   and context budget.
-- `internal/architect/prompts.go` can render plan, critique, and brief prompts
+- `internal/workflows/architect/prompts.go` can render plan, critique, and brief prompts
   from a packet and prior plan.
-- `internal/architect/plan_audit.go` checks plans and plan artifacts for packet
+- `internal/workflows/architect/plan_audit.go` checks plans and plan artifacts for packet
   identity mismatches, scope mismatches, missing files, unsupported handles,
   validation gaps, stale context, unresolved questions, approval handoff issues,
   and placeholders.
 - `cmd/harness/brief-preflight.py` enforces brief structure, no prompt-magic
   triggers, test-anchor preload, verified active state, exact-anchor
   specificity, file existence, and dispatch-safe brief wording.
-- `internal/eval/localization_corpus.go` and
-  `internal/eval/localization_benchmark.go` define the active structure for
+- `internal/evidence/eval/localization_corpus.go` and
+  `internal/evidence/eval/localization_benchmark.go` define the active structure for
   measuring context localization quality, broad-read counts, zero-hit searches,
   candidate path waste, and competitive baselines.
 - `cmd/harness/product_evidence.go` and `cmd/harness/release_evidence.go` define the

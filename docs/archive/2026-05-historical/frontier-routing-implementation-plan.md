@@ -561,7 +561,7 @@ Deliverables:
 Implementation status:
 
 - complete
-- `internal/eval` now records route-plan snapshots from `route_plan` messages
+- `internal/evidence/eval` now records route-plan snapshots from `route_plan` messages
 - `Scenario.require_route_plan` can assert lane, follow-up, reason, contract, and thoroughness
 - `BuildSuggestedScenario` captures the latest observed route plan
 - `idiom-eval` prints the latest route plan in human-readable metrics
@@ -690,7 +690,7 @@ Implementation status:
 - complete
 - implemented:
   - `verification_plan` debug-log messages with commands, reasons, full-suite flag, coverage, confidence, risk, expected failures, and repair policy
-  - `VerificationPlanSnapshot` metrics in `internal/eval`
+  - `VerificationPlanSnapshot` metrics in `internal/evidence/eval`
   - `Scenario.require_verification_plan` assertions
   - human-readable `idiom-eval` verification-plan output
   - suggested scenarios that capture the latest observed verification plan
@@ -795,7 +795,7 @@ Implementation status:
 
 - complete
 - implemented:
-  - `internal/eval` SWE suite loader, validator, evaluator, reports, and task oracle checks
+  - `internal/evidence/eval` SWE suite loader, validator, evaluator, reports, and task oracle checks
   - `Metrics.duration_millis` from timestamped JSONL records
   - `cmd/idiom-swe-eval` human-readable and JSON reporting
   - `testdata/swe/representative-suite.json` spanning common SWE task families
@@ -1069,7 +1069,7 @@ Implementation status:
 - complete
 - implemented:
   - `readiness_check` debug-log messages for explore, review, and architecture summaries
-  - readiness snapshot parsing in `internal/eval`
+  - readiness snapshot parsing in `internal/evidence/eval`
   - `require_readiness` scenario assertions
   - `required_readiness_actions` suite coverage
   - low-confidence grounded summaries now fail the analysis readiness gate and trigger retry/fallback

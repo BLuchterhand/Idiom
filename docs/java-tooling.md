@@ -2,9 +2,9 @@
 
 idiom's Java support follows the same Capability-keyed shape used by
 Go and C/C++: a per-language `LanguageSupport` entry in
-`internal/semantic/language/registry.go`, a tree-walking semantic
-index at `internal/semantic/java_index.go`, and a set of `java_*`
-tools implemented under `internal/semantic/languagetools` and exposed
+`internal/repository/semantic/language/registry.go`, a tree-walking semantic
+index at `internal/repository/semantic/java_index.go`, and a set of `java_*`
+tools implemented under `internal/repository/semantic/languagetools` and exposed
 through the workspace manager adapter.
 
 ## Capabilities
@@ -43,7 +43,7 @@ is true:
 Deep semantic operations (`java_definition`, `java_references`,
 `java_implementations`, `java_calls_from`, `java_calls_into`, the
 LSP-backed path of `java_workspace_symbol`) prefer jdtls when
-available. The client lives at `internal/semantic/languagetools/jdtls_lsp.go`
+available. The client lives at `internal/repository/semantic/languagetools/jdtls_lsp.go`
 and mirrors `clangd_lsp.go` — plain JSON-RPC over stdio with a
 longer initialize timeout (`jdtlsInitializeTimeout = 30s`) and a
 short post-initialize settle to account for project import.
@@ -58,7 +58,7 @@ short post-initialize settle to account for project import.
 
 `exec.LookPath("jdtls")` is consulted at request time; if jdtls is
 absent the LSP-backed tools fall back cleanly to the tree-sitter-free
-semantic index at `internal/semantic/java_index.go`. Tree-sitter-backed
+semantic index at `internal/repository/semantic/java_index.go`. Tree-sitter-backed
 tools (`java_file_outline`, `java_find_symbol`, `java_read_symbol`,
 `java_related_files`, `java_overview`, `java_entrypoints`, and the
 `java_calls_from/java_calls_into` semantic fallback) work without
@@ -68,7 +68,7 @@ jdtls.
 
 This drop does not use `github.com/smacker/go-tree-sitter` for Java.
 The semantic index is regex-based, matching the approach already used
-for C/C++ (`internal/semantic/cpp_index.go`). This keeps the Java
+for C/C++ (`internal/repository/semantic/cpp_index.go`). This keeps the Java
 build cgo-free and avoids adding another large transitive dep. The
 parser handles the subset needed for the 13 capabilities:
 
@@ -110,23 +110,23 @@ type lookup, inference — is the job of jdtls.
 
 ## Caching
 
-Per-language index caching lives on `internal/semantic/languagetools.Manager`
+Per-language index caching lives on `internal/repository/semantic/languagetools.Manager`
 and is invalidated by the same git HEAD/dirty-status token used by the
-other language caches. `internal/workspace` owns dispatch, request/response
+other language caches. `internal/capabilities/workspace` owns dispatch, request/response
 adaptation, and path/file host services, not language index state.
 
 ## Files
 
-- `internal/semantic/java_index.go` — index build + parsing
-- `internal/semantic/java_query.go` — symbol queries, call queries,
+- `internal/repository/semantic/java_index.go` — index build + parsing
+- `internal/repository/semantic/java_query.go` — symbol queries, call queries,
   implementations, dependency closures
-- `internal/semantic/java_index_test.go` — index unit tests
-- `internal/semantic/languagetools/java_tools.go` — `java_*` tool
+- `internal/repository/semantic/java_index_test.go` — index unit tests
+- `internal/repository/semantic/languagetools/java_tools.go` — `java_*` tool
   implementations and per-manager caching
-- `internal/semantic/languagetools/jdtls_lsp.go` — jdtls JSON-RPC client
-- `internal/workspace/language_tools_adapter.go` — workspace host adapter
+- `internal/repository/semantic/languagetools/jdtls_lsp.go` — jdtls JSON-RPC client
+- `internal/capabilities/workspace/language_tools_adapter.go` — workspace host adapter
   and compatibility dispatch facade
-- `internal/semantic/languagetools/java_tools_test.go` — workspace-facade
+- `internal/repository/semantic/languagetools/java_tools_test.go` — workspace-facade
   integration tests (LSP-gated tests skip via `t.Skip()` if jdtls is absent)
 
 ## Integration points

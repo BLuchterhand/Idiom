@@ -24,8 +24,8 @@
   },
   "reviewed_at": "2026-05-17T19:30:00Z",
   "commands_reviewed": [
-    "git diff -- cmd/idiom/product_workflow.go cmd/idiom/product_workflow_test.go",
-    "go test ./cmd/idiom ./internal/productworkflow",
+    "git diff -- internal/surfaces/cli/product/product_workflow.go internal/surfaces/cli/product/product_workflow_test.go",
+    "go test ./internal/surfaces/cli/product ./internal/workflows/productworkflow",
     "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "go test ./...",

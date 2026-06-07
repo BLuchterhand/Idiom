@@ -11,11 +11,11 @@
   "scope_statement": "Add PRD and ADR markdown/index validators, wire product lint to check PRD/ADR artifacts, update implementation guidelines to a 300 second cap and most-stable-model selection, and add focused tests.",
   "code_changes": true,
   "changed_paths": [
-    "internal/productworkflow/types.go",
-    "internal/productworkflow/validate.go",
-    "internal/productworkflow/validate_test.go",
-    "cmd/idiom/product_workflow.go",
-    "cmd/idiom/product_workflow_test.go",
+    "internal/workflows/productworkflow/types.go",
+    "internal/workflows/productworkflow/validate.go",
+    "internal/workflows/productworkflow/validate_test.go",
+    "internal/surfaces/cli/product/product_workflow.go",
+    "internal/surfaces/cli/product/product_workflow_test.go",
     "docs/product-workflows/efforts/index.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
@@ -29,7 +29,7 @@
   "verification": {
     "run_by_implementor": false,
     "commands": [
-      "go test ./internal/productworkflow ./cmd/idiom",
+      "go test ./internal/workflows/productworkflow ./cmd/idiom",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "python3 JSON/JSONL validation for durable effort artifacts",
       "privacy secret-pattern scan over durable effort artifacts",

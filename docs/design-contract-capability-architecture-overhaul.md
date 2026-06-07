@@ -47,11 +47,11 @@ Verified facts:
   contradictions, and 19 implementation-backed sessions missing lifecycle
   closeout.
 - File-size inspection shows high responsibility concentration in
-  `internal/agent/runner.go`, `internal/workspace/manager.go`,
-  `internal/app/implementation_dispatch.go`, and `cmd/idiom/plan_execute.go`.
+  `internal/runtime/agent/runner.go`, `internal/capabilities/workspace/manager.go`,
+  `internal/surfaces/tui/app/implementation_dispatch.go`, and `cmd/idiom/plan_execute.go`.
 - The 2026-06-02 implementation batch added prompt-scope parser consolidation
-  in `internal/plancontract`, shared planner tool metadata in
-  `internal/autonomy`, a typed report-only runtime readiness projection,
+  in `internal/contracts/plancontract`, shared planner tool metadata in
+  `internal/contracts/autonomy`, a typed report-only runtime readiness projection,
   a plan-execute planner recorder pilot that consumes compiled contract
   identity, and readiness/completion audit coverage.
 
@@ -90,8 +90,8 @@ Evidence gaps:
 
 Idiom currently has several partial sources of truth:
 
-- `internal/autonomy.AutonomyContract`
-- `internal/frontier/workerruntime.WorkerRuntimeBrief`
+- `internal/contracts/autonomy.AutonomyContract`
+- `internal/runtime/workerruntime.WorkerRuntimeBrief`
 - runner control rails and phase contracts
 - workspace tool manifests and profile policy
 - lane-specific CLI wrappers
@@ -301,17 +301,17 @@ The desired steady-state ownership is:
 
 | Area | Package | Responsibility |
 | --- | --- | --- |
-| Contract domain | `internal/autonomy` | contract schema, path roles, invariant ids, policy decisions, obligation ledger |
-| Contract compilation | `internal/contractcompile` | compile route, runtime brief, workspace config, tool rules, packet, runtime envelope, and run state into a contract from plain input models |
-| Runner loop | `internal/agent` | model loop, state transitions, policy calls, lifecycle events |
+| Contract domain | `internal/contracts/autonomy` | contract schema, path roles, invariant ids, policy decisions, obligation ledger |
+| Contract compilation | `internal/contracts/contractcompile` | compile route, runtime brief, workspace config, tool rules, packet, runtime envelope, and run state into a contract from plain input models |
+| Runner loop | `internal/runtime/agent` | model loop, state transitions, policy calls, lifecycle events |
 | Capability contracts | `internal/capabilities` | capability ids, request/result envelopes, precision/fallback vocabulary |
-| Capability adapters | `internal/workspace` initially | map capability requests to concrete graph/language/shell adapters while compatibility tools remain available |
-| Repository memory | `internal/comprehension` | graph, freshness, views, packets, traces |
-| Workspace adapters | `internal/workspace`, `internal/semantic`, `internal/mcp`, `internal/backends` | execute concrete tools and report normalized results |
-| Surfaces | `cmd/idiom`, `internal/app` | translate CLI/TUI/sidecar input into use-case requests and render outcomes |
-| Audit/eval | `internal/workspace/harness_audit.go`, `internal/eval`, later smaller packages | replay contract events and score invariants |
+| Capability adapters | `internal/capabilities/workspace` initially | map capability requests to concrete graph/language/shell adapters while compatibility tools remain available |
+| Repository memory | `internal/repository/comprehension` | graph, freshness, views, packets, traces |
+| Workspace adapters | `internal/capabilities/workspace`, `internal/repository/semantic`, `internal/capabilities/mcp`, `internal/runtime/backends` | execute concrete tools and report normalized results |
+| Surfaces | `cmd/idiom`, `internal/surfaces/tui/app` | translate CLI/TUI/sidecar input into use-case requests and render outcomes |
+| Audit/eval | `internal/capabilities/workspace/harness_audit.go`, `internal/evidence/eval`, later smaller packages | replay contract events and score invariants |
 
-The compiler must not live under `internal/agent` long term. The runner consumes
+The compiler must not live under `internal/runtime/agent` long term. The runner consumes
 contract decisions; it does not own compilation. A temporary anti-corruption
 mapper may translate `WorkerRuntimeBrief`, workspace manifest data, and current
 run state into compiler input models, but that mapper should be measurable and
@@ -322,8 +322,8 @@ when the new package hides a real decision: contract compilation, policy
 evaluation, capability routing, runtime-envelope normalization, or
 obligation/readiness state.
 
-Boundary tests should enforce that `internal/autonomy` and
-`internal/contractcompile` do not import `internal/agent`, `internal/app`,
+Boundary tests should enforce that `internal/contracts/autonomy` and
+`internal/contracts/contractcompile` do not import `internal/runtime/agent`, `internal/surfaces/tui/app`,
 `cmd/idiom`, concrete LSP packages, shell execution, MCP clients, or workspace
 manager internals.
 
@@ -366,11 +366,11 @@ Traceability matrix for each atom:
 
 | Design invariant | Contract event | Package owner | Test fixture | Audit metric | Product evidence |
 | --- | --- | --- | --- | --- | --- |
-| `contract.active_authority` | `contract_compiled`, `contract_decision` | `internal/autonomy`, `internal/contractcompile` | contract compiler golden | missing contract ids | atom report |
-| protocol parity | `contract_presented`, `tool_policy_decision` | `internal/agent` | protocol hash fixture | turn-phase contradictions | review report |
-| path-role authority | `path_role_decision` | `internal/autonomy` | path-role table | out-of-scope rejections | atom report |
-| runtime envelope | `runtime_contract_bound`, `model_call` | `internal/contractcompile`, `internal/agent` | runtime envelope fixture | degraded-mode grouping | investigation report |
-| lifecycle closeout | `contract_closed`, `session_summary` | `internal/agent` | closeout matrix | incomplete lifecycle count | audit report |
+| `contract.active_authority` | `contract_compiled`, `contract_decision` | `internal/contracts/autonomy`, `internal/contracts/contractcompile` | contract compiler golden | missing contract ids | atom report |
+| protocol parity | `contract_presented`, `tool_policy_decision` | `internal/runtime/agent` | protocol hash fixture | turn-phase contradictions | review report |
+| path-role authority | `path_role_decision` | `internal/contracts/autonomy` | path-role table | out-of-scope rejections | atom report |
+| runtime envelope | `runtime_contract_bound`, `model_call` | `internal/contracts/contractcompile`, `internal/runtime/agent` | runtime envelope fixture | degraded-mode grouping | investigation report |
+| lifecycle closeout | `contract_closed`, `session_summary` | `internal/runtime/agent` | closeout matrix | incomplete lifecycle count | audit report |
 
 ## Migration Sequence
 
@@ -453,7 +453,7 @@ Acceptance:
 
 ### Phase 4: Simplify Runner Responsibilities
 
-Goal: make `internal/agent` readable as a model execution loop, not the owner of
+Goal: make `internal/runtime/agent` readable as a model execution loop, not the owner of
 every policy.
 
 Work:

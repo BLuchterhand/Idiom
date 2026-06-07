@@ -6,13 +6,13 @@
   "created_at": "2026-05-17T21:35:00Z",
   "scope": {
     "expected_files": [
-      "cmd/idiom/product_workflow.go",
-      "cmd/idiom/product_workflow_test.go",
+      "internal/surfaces/cli/product/product_workflow.go",
+      "internal/surfaces/cli/product/product_workflow_test.go",
       "durable effort bookkeeping and reports"
     ],
     "changed_paths": [
-      "cmd/idiom/product_workflow.go",
-      "cmd/idiom/product_workflow_test.go",
+      "internal/surfaces/cli/product/product_workflow.go",
+      "internal/surfaces/cli/product/product_workflow_test.go",
       "docs/product-workflows/efforts/index.json",
       "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
       "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
@@ -25,19 +25,19 @@
     ],
     "forbidden_patterns": [
       ".idiom/**",
-      "internal/productworkflow/scope.go",
-      "internal/productworkflow/scope_test.go",
-      "internal/productworkflow/transition.go",
-      "internal/productworkflow/status.go",
-      "internal/productworkflow/validate.go",
-      "internal/app/**",
-      "internal/agent/**",
+      "internal/workflows/productworkflow/scope.go",
+      "internal/workflows/productworkflow/scope_test.go",
+      "internal/workflows/productworkflow/transition.go",
+      "internal/workflows/productworkflow/status.go",
+      "internal/workflows/productworkflow/validate.go",
+      "internal/surfaces/tui/app/**",
+      "internal/runtime/agent/**",
       "prompts/**"
     ],
     "scope_status": "passed"
   },
   "tests": {
-    "focused": "passed: go test ./cmd/idiom ./internal/productworkflow",
+    "focused": "passed: go test ./internal/surfaces/cli/product ./internal/workflows/productworkflow",
     "product_status": "passed: go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "product_audit": "passed: go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "product_lint": "passed: go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",

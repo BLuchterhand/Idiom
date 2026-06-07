@@ -23,8 +23,8 @@
   },
   "reviewed_at": "2026-05-17T18:59:48Z",
   "commands_reviewed": [
-    "git diff -- internal/productworkflow/types.go internal/productworkflow/validate.go internal/productworkflow/validate_test.go cmd/idiom/product_workflow.go cmd/idiom/product_workflow_test.go",
-    "go test ./internal/productworkflow ./cmd/idiom",
+    "git diff -- internal/workflows/productworkflow/types.go internal/workflows/productworkflow/validate.go internal/workflows/productworkflow/validate_test.go internal/surfaces/cli/product/product_workflow.go internal/surfaces/cli/product/product_workflow_test.go",
+    "go test ./internal/workflows/productworkflow ./cmd/idiom",
     "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "go test ./...",
     "JSON/JSONL validation for durable workflow artifacts",

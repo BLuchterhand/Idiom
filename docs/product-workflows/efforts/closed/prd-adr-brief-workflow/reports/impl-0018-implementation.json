@@ -10,16 +10,16 @@
   "scope_statement": "Add deterministic Phase 2 research profile storage/discovery and a read-only product research JSON surface without committing ignored .idiom state.",
   "code_changes": true,
   "changed_paths": [
-    "internal/productworkflow/research_profile_store.go",
-    "internal/productworkflow/research_profile_store_test.go",
-    "cmd/idiom/product_workflow.go",
-    "cmd/idiom/product_workflow_test.go"
+    "internal/workflows/productworkflow/research_profile_store.go",
+    "internal/workflows/productworkflow/research_profile_store_test.go",
+    "internal/surfaces/cli/product/product_workflow.go",
+    "internal/surfaces/cli/product/product_workflow_test.go"
   ],
   "verification": {
     "run_by_implementor": true,
     "commands": [
-      "go test ./internal/productworkflow -run TestDiscover -v -count=1",
-      "go test ./cmd/idiom -run TestProductResearch -v -count=1"
+      "go test ./internal/workflows/productworkflow -run TestDiscover -v -count=1",
+      "go test ./internal/surfaces/cli/product -run TestProductResearch -v -count=1"
     ],
     "status": "passed"
   },

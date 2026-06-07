@@ -21,8 +21,8 @@
   "reviewed_at": "2026-05-18T13:55:00Z",
   "commands_reviewed": [
     "idiom tool context_pack --input '{\"task\":\"re-review impl 0027 second follow-up coverage gate obligation scoping\",\"mode\":\"plan\",\"limit\":8}'",
-    "git diff --unified=80 -- cmd/idiom/product_workflow.go cmd/idiom/product_workflow_test.go internal/productworkflow/coverage_gate.go internal/productworkflow/coverage_gate_test.go internal/productworkflow/types.go",
-    "go test ./internal/productworkflow ./cmd/idiom"
+    "git diff --unified=80 -- internal/surfaces/cli/product/product_workflow.go internal/surfaces/cli/product/product_workflow_test.go internal/workflows/productworkflow/coverage_gate.go internal/workflows/productworkflow/coverage_gate_test.go internal/workflows/productworkflow/types.go",
+    "go test ./internal/workflows/productworkflow ./cmd/idiom"
   ],
   "prior_findings_resolved": [
     "coverage_gate_now_blocks_unknown_prd_or_adr_tdd_obligation_ids",

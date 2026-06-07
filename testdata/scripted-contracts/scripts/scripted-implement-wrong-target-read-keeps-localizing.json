@@ -2,7 +2,7 @@
   "model": "scripted-model",
   "responses": [
     {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/app/app.go\",\"start_line\":1,\"end_line\":40,\"named_gap\":\"inspect a generic app source file before selecting the label edit target\",\"why_not_answering\":\"need source-body evidence before changing an existing source file\"}"
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/surfaces/tui/app/app.go\",\"start_line\":1,\"end_line\":40,\"named_gap\":\"inspect a generic app source file before selecting the label edit target\",\"why_not_answering\":\"need source-body evidence before changing an existing source file\"}"
     },
     {
       "content": "{\"tool\":\"context_pack\",\"task\":\"find the implementation file for the shorter save label\",\"mode\":\"implement\",\"limit\":4}"

@@ -3,7 +3,7 @@
 P7.8 records three integration paths that consume the same sidecar profile,
 schema, freshness, audit, and contract fields. The records live in
 [`testdata/sidecar/integration-proofs.json`](../testdata/sidecar/integration-proofs.json)
-and are validated by `go test ./cmd/idiom -run TestP78IntegrationProofRecords`.
+and are validated by `go test ./internal/evidence/sidecarvalidation -run TestP78IntegrationProofRecords`.
 
 ## Proof Paths
 

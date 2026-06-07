@@ -108,7 +108,9 @@ fresh validation evidence is attached. Otherwise the reviewer should return
 ## Reproduction Commands
 
 ```sh
-go test ./cmd/idiom -run 'TestP76|TestP85|TestP89|TestP91|TestRunReleaseEvidence' -count=1
+go test ./internal/evidence/productevidence -run 'TestP91|TestRunReleaseEvidence' -count=1
+go test ./internal/evidence/sidecarvalidation -run TestP76 -count=1
+go test ./internal/surfaces/cli/mcp -run TestP85 -count=1
 go run ./cmd/idiom release evidence --project-root . --output .idiom/release/p9.4-smoke.json
 jq '.client_readiness | length' .idiom/release/p9.4-smoke.json
 jq -r '.client_readiness[] | "\(.classification)\t\(.status)\t\((.missing_evidence // []) | join(","))"' .idiom/release/p9.4-smoke.json

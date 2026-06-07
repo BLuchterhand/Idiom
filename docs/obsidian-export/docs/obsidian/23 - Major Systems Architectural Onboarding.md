@@ -40,17 +40,17 @@ flowchart LR
 | System | Owns | Does not own | First source anchors | Expected proof |
 | --- | --- | --- | --- | --- |
 | CLI and lanes | Repeatable command entry, lane routing, atom intake | Model-loop policy or tool semantics | `cmd/harness/main.go`, `cmd/harness/lane.go`, `cmd/harness/plan_execute.go` | `go test ./cmd/harness` |
-| TUI/session lifecycle | Interactive dispatch, session state, operator controls | Core runner contracts | `internal/app`, `cmd/harness/tui.go` | `go test ./internal/app` |
-| Runner and contracts | Model loop, tool-call protocol, readiness, recovery nudges | Tool implementation details | `internal/agent/runner.go`, `internal/agent/runner_autonomy.go` | `go test ./internal/agent` |
-| Workspace tools | Tool schemas, permission checks, source sanity, direct tool CLI | Lane policy or model strategy | `internal/workspace/manager.go`, `internal/workspace/tool_schemas.go` | `go test ./internal/workspace` |
-| Repository memory | Context graph, freshness, packs, trace packs, ranker inputs | Final-answer readiness | `internal/comprehension`, `internal/discovery` | `go test ./internal/comprehension ./internal/discovery` |
-| Planning and handoff | Plan artifacts, `submit_plan`, executor inheritance | Arbitrary edits outside accepted scope | `cmd/harness/plan_execute.go`, `internal/architect`, `internal/planexecute` | `go test ./cmd/harness ./internal/planexecute` |
-| Verification/readiness | Post-write evidence, changed-path proof, completion closure | Discovery ranking | `internal/workspace/source_sanity.go`, `internal/agent` | `go test ./internal/workspace ./internal/agent` |
-| Telemetry/audit/eval | Behavior evidence, audit interpretation, eval feedback | Live model steering by prose alone | `internal/telemetry`, `internal/eval`, `internal/workspace/harness_audit.go` | `go test ./internal/telemetry ./internal/eval ./internal/workspace` |
-| Local model operations | Backend profiles, queueing, doctor/readiness, degraded mode | Agent task semantics | `internal/backends`, `internal/llama`, `internal/autodetect` | `go test ./internal/backends ./internal/llama ./cmd/harness` |
-| Sidecar/integrations | External access to tools, schemas, MCP, envelopes | Private raw transcript export | `cmd/harness/mcp.go`, `internal/mcp`, `internal/workspace/tool_schema_export.go` | `go test ./internal/mcp ./internal/workspace ./cmd/harness` |
-| Product workflow | Research-to-brief artifacts, coverage gates, effort evidence | Low-level runner policy | `internal/productworkflow`, `cmd/harness/product_workflow.go` | `go test ./internal/productworkflow ./cmd/harness` |
-| Recovery | Failure classification, decomposition packets, follow-up atoms | Silent retries without evidence | `internal/recovery`, `cmd/harness/recover.go` | `go test ./internal/recovery ./cmd/harness` |
+| TUI/session lifecycle | Interactive dispatch, session state, operator controls | Core runner contracts | `internal/surfaces/tui/app`, `cmd/harness/tui.go` | `go test ./internal/surfaces/tui/app` |
+| Runner and contracts | Model loop, tool-call protocol, readiness, recovery nudges | Tool implementation details | `internal/runtime/agent/runner.go`, `internal/runtime/agent/runner_autonomy.go` | `go test ./internal/runtime/agent` |
+| Workspace tools | Tool schemas, permission checks, source sanity, direct tool CLI | Lane policy or model strategy | `internal/capabilities/workspace/manager.go`, `internal/capabilities/workspace/tool_schemas.go` | `go test ./internal/capabilities/workspace` |
+| Repository memory | Context graph, freshness, packs, trace packs, ranker inputs | Final-answer readiness | `internal/repository/comprehension`, `internal/repository/discovery` | `go test ./internal/repository/comprehension ./internal/repository/discovery` |
+| Planning and handoff | Plan artifacts, `submit_plan`, executor inheritance | Arbitrary edits outside accepted scope | `cmd/harness/plan_execute.go`, `internal/workflows/architect`, `internal/workflows/planexecute` | `go test ./cmd/harness ./internal/workflows/planexecute` |
+| Verification/readiness | Post-write evidence, changed-path proof, completion closure | Discovery ranking | `internal/capabilities/workspace/source_sanity.go`, `internal/runtime/agent` | `go test ./internal/capabilities/workspace ./internal/runtime/agent` |
+| Telemetry/audit/eval | Behavior evidence, audit interpretation, eval feedback | Live model steering by prose alone | `internal/evidence/telemetry`, `internal/evidence/eval`, `internal/capabilities/workspace/harness_audit.go` | `go test ./internal/evidence/telemetry ./internal/evidence/eval ./internal/capabilities/workspace` |
+| Local model operations | Backend profiles, queueing, doctor/readiness, degraded mode | Agent task semantics | `internal/runtime/backends`, `internal/runtime/llama`, `internal/platform/autodetect` | `go test ./internal/runtime/backends ./internal/runtime/llama ./cmd/harness` |
+| Sidecar/integrations | External access to tools, schemas, MCP, envelopes | Private raw transcript export | `cmd/harness/mcp.go`, `internal/capabilities/mcp`, `internal/capabilities/workspace/tool_schema_export.go` | `go test ./internal/capabilities/mcp ./internal/capabilities/workspace ./cmd/harness` |
+| Product workflow | Research-to-brief artifacts, coverage gates, effort evidence | Low-level runner policy | `internal/workflows/productworkflow`, `cmd/harness/product_workflow.go` | `go test ./internal/workflows/productworkflow ./cmd/harness` |
+| Recovery | Failure classification, decomposition packets, follow-up atoms | Silent retries without evidence | `internal/workflows/recovery`, `cmd/harness/recover.go` | `go test ./internal/workflows/recovery ./cmd/harness` |
 
 ## CLI And Lanes
 
@@ -62,7 +62,7 @@ The CLI owns repeatable entry points: `harness lane`, `harness plan-execute`,
 brief lint, lane postflight, product evidence, and release evidence. It should
 select the lane and attach the right contract, but it should not encode model
 behavior that belongs in the runner or tool behavior that belongs in
-`internal/workspace`.
+`internal/capabilities/workspace`.
 
 Onboarding checklist:
 
@@ -88,11 +88,11 @@ lane semantics inside UI event handlers.
 
 Onboarding checklist:
 
-- Start in `internal/app` and identify the model update path that handles the
+- Start in `internal/surfaces/tui/app` and identify the model update path that handles the
   operator action.
 - Follow the handoff into `RunPromptOnce`, lane dispatch, atom materialization,
   or artifact commands.
-- Verify UI state and dispatch behavior with `go test ./internal/app`.
+- Verify UI state and dispatch behavior with `go test ./internal/surfaces/tui/app`.
 
 Friction signals: hidden mutable state that bypasses durable session records,
 prompt text embedded in UI code, or UI-only behavior that direct CLI workflows
@@ -115,7 +115,7 @@ Onboarding checklist:
 - Locate the contract boundary: tool-call shape, readiness evidence, recovery
   redirect, task ledger, or prompt assembly.
 - Add a regression test for the absence of the bad behavior.
-- Verify with `go test ./internal/agent`; run broader tests when prompt or tool
+- Verify with `go test ./internal/runtime/agent`; run broader tests when prompt or tool
   contracts move.
 
 Friction signals: another reminder prompt for a recurring failure, repeated
@@ -134,10 +134,10 @@ deciding what the model's next strategic step must be.
 
 Onboarding checklist:
 
-- Start with `internal/workspace/manager.go` for dispatch and request parsing.
-- Check `internal/workspace/tool_schemas.go` before changing a tool contract.
+- Start with `internal/capabilities/workspace/manager.go` for dispatch and request parsing.
+- Check `internal/capabilities/workspace/tool_schemas.go` before changing a tool contract.
 - Keep source-body obligations distinct from path scope and artifact coverage.
-- Verify with `go test ./internal/workspace`.
+- Verify with `go test ./internal/capabilities/workspace`.
 
 Friction signals: permissive parsing that accepts malformed requests, tool
 results that prescribe next actions, or a source-sanity shortcut hidden in a
@@ -158,9 +158,9 @@ Onboarding checklist:
 
 - Use the project's context-pack tool as the first localization pass for change
   work.
-- Inspect `internal/comprehension` for graph, pack, freshness, and view logic.
-- Inspect `internal/discovery` for higher-level orchestration.
-- Verify with `go test ./internal/comprehension ./internal/discovery`.
+- Inspect `internal/repository/comprehension` for graph, pack, freshness, and view logic.
+- Inspect `internal/repository/discovery` for higher-level orchestration.
+- Verify with `go test ./internal/repository/comprehension ./internal/repository/discovery`.
 
 Friction signals: stale packs served as fresh, ranking output treated as a
 required edit list, or runtime traces used without freshness attribution.
@@ -178,11 +178,11 @@ accepted edits. The planner does not implement.
 Onboarding checklist:
 
 - Trace `cmd/harness/plan_execute.go` for command flow and session state.
-- Inspect `internal/architect` and `internal/planexecute` for artifact shape and
+- Inspect `internal/workflows/architect` and `internal/workflows/planexecute` for artifact shape and
   executor behavior.
 - Preserve path-role distinctions between required edit paths, evidence-only
   paths, and forbidden paths.
-- Verify with `go test ./cmd/harness ./internal/planexecute`.
+- Verify with `go test ./cmd/harness ./internal/workflows/planexecute`.
 
 Friction signals: accepted plans without valid edit entries, executor work that
 loses `pack_id`, or rejected `submit_plan` attempts counted as artifacts.
@@ -224,7 +224,7 @@ Onboarding checklist:
   coverage.
 - Redact raw prompts, transcript excerpts, file bodies, secrets, and customer
   identifiers from durable shared artifacts.
-- Verify with `go test ./internal/telemetry ./internal/eval ./internal/workspace`.
+- Verify with `go test ./internal/evidence/telemetry ./internal/evidence/eval ./internal/capabilities/workspace`.
 
 Friction signals: audit output used as a single boolean, eval fixtures weakened
 to match regressions, or telemetry that cannot correlate tool calls with
@@ -242,10 +242,10 @@ agent semantics.
 
 Onboarding checklist:
 
-- Inspect `internal/backends`, `internal/llama`, `internal/autodetect`, and the
+- Inspect `internal/runtime/backends`, `internal/runtime/llama`, `internal/platform/autodetect`, and the
   related backend/doctor/queue commands.
 - Check configuration and host-detection behavior before changing defaults.
-- Verify with `go test ./internal/backends ./internal/llama ./cmd/harness`.
+- Verify with `go test ./internal/runtime/backends ./internal/runtime/llama ./cmd/harness`.
 
 Friction signals: a model route hardcoded for one workflow, backend failures
 reported as agent contract failures, or degraded mode hiding missing capability.
@@ -262,10 +262,10 @@ session state.
 
 Onboarding checklist:
 
-- Start with `cmd/harness/mcp.go`, `internal/mcp`, and workspace schema export.
+- Start with `cmd/harness/mcp.go`, `internal/capabilities/mcp`, and workspace schema export.
 - Confirm the same contract is available through CLI and sidecar where parity
   is required.
-- Verify with `go test ./internal/mcp ./internal/workspace ./cmd/harness`.
+- Verify with `go test ./internal/capabilities/mcp ./internal/capabilities/workspace ./cmd/harness`.
 
 Friction signals: sidecar-only behavior, unredacted raw transcript access,
 schema drift between direct tool use and MCP, or integration logic embedded in a
@@ -284,9 +284,9 @@ contracts without bypassing lane readiness.
 
 Onboarding checklist:
 
-- Inspect `internal/productworkflow` and `cmd/harness/product_workflow.go`.
+- Inspect `internal/workflows/productworkflow` and `cmd/harness/product_workflow.go`.
 - Treat docs, fixtures, and generated effort artifacts as a contract surface.
-- Verify with `go test ./internal/productworkflow ./cmd/harness`.
+- Verify with `go test ./internal/workflows/productworkflow ./cmd/harness`.
 
 Friction signals: docs and fixtures out of parity, briefs that omit source
 obligations, or acceptance claims that cannot be traced to effort evidence.
@@ -303,12 +303,12 @@ or inventing a new plan without the failure shape.
 
 Onboarding checklist:
 
-- Start with `internal/recovery` and `cmd/harness/recover.go`.
+- Start with `internal/workflows/recovery` and `cmd/harness/recover.go`.
 - Verify that failure records retain enough structured evidence to reproduce the
   blocked contract.
 - Ensure follow-up atoms are scoped, dispatchable, and tied back to the source
   failure.
-- Verify with `go test ./internal/recovery ./cmd/harness`.
+- Verify with `go test ./internal/workflows/recovery ./cmd/harness`.
 
 Friction signals: recovery packets that lose the original blocker, duplicate
 atoms for the same failure, or retry loops that do not create durable evidence.
@@ -324,7 +324,7 @@ requirements in the same order the harness gates enforce them.
 
 Onboarding checklist:
 
-- Inspect `internal/promptstack`, `prompts/`, and `prompts/profiles/`.
+- Inspect `internal/runtime/promptstack`, `prompts/`, and `prompts/profiles/`.
 - Prefer removing conflicting affordances or tightening typed contracts over
   adding another reminder.
 - Pair prompt changes with runner, lane, or tool tests that demonstrate the

@@ -216,7 +216,7 @@ This is a contract taxonomy. Contract-first autonomy should preserve the catalog
 
 ### Control Rails Event
 
-`internal/agent/runner.go` builds `runnerControlRails` and emits a `control_rails` event. The event carries lane, follow-up lane, contract, agent mode, workflow kind and phase, task family, permission profile, target refs, required edit paths, evidence paths, required tools, allowed and forbidden tools, readiness gate, search policy, verification contract, stop conditions, final critic, dynamic instructions, and failure-to-eval state.
+`internal/runtime/agent/runner.go` builds `runnerControlRails` and emits a `control_rails` event. The event carries lane, follow-up lane, contract, agent mode, workflow kind and phase, task family, permission profile, target refs, required edit paths, evidence paths, required tools, allowed and forbidden tools, readiness gate, search policy, verification contract, stop conditions, final critic, dynamic instructions, and failure-to-eval state.
 
 The active event is exactly where contract-first autonomy can begin. It should evolve from "rails reconstructed for presentation" into "presentation view of the compiled contract."
 
@@ -224,10 +224,10 @@ The active event is exactly where contract-first autonomy can begin. It should e
 
 The runner should hide tools based on phase and contract state:
 
-- `workspaceAllowedTools` in `internal/app/turn_planner.go` starts from workspace `AllowedTools`.
-- `internal/workspace/manager.go` hides write tools in explore/read-only mode and appends external and MCP tool names deterministically.
-- `internal/workspace/manager.go` builds schemas for built-in tools, external tools, and MCP tools, and filters by allowed tool names.
-- `internal/agent/runner.go` hides implementation, prewrite, scoped-edit, and exact-anchor read tools in several states.
+- `workspaceAllowedTools` in `internal/surfaces/tui/app/turn_planner.go` starts from workspace `AllowedTools`.
+- `internal/capabilities/workspace/manager.go` hides write tools in explore/read-only mode and appends external and MCP tool names deterministically.
+- `internal/capabilities/workspace/manager.go` builds schemas for built-in tools, external tools, and MCP tools, and filters by allowed tool names.
+- `internal/runtime/agent/runner.go` hides implementation, prewrite, scoped-edit, and exact-anchor read tools in several states.
 - The scoped semantic discovery set prefers graph, semantic, structural, dependency, symbol, and diagnostics tools while excluding broad list/search/shell surfaces.
 
 This is strong evidence that Agent Harness should treat the tool list as a policy surface. Contract-first autonomy should replace scattered allow-list construction with a capability resolver backed by the active contract.
@@ -239,14 +239,14 @@ The runner should distinguish read contracts from write scopes:
 - A required edit path is treated as a write allowlist, not as proof that the model has read enough evidence.
 - Pre-write and scoped edit surfaces activate when mutation is required and required edit paths remain.
 - `requiredEditPathScopeRejection` rejects workspace writes outside required edit paths.
-- `internal/agent/runner_plan_then_execute_guard.go` hard-rejects per-edit write tools in planner phases and directs the model to `submit_plan`.
+- `internal/runtime/agent/runner_plan_then_execute_guard.go` hard-rejects per-edit write tools in planner phases and directs the model to `submit_plan`.
 - The same guard checks that submitted plans cover every required edit path and do not include outside paths.
 
 These checks are contract invariants . They need stable invariant IDs, contract IDs, and shared path-role resolution.
 
 ### Completion And Verification Gates
 
-`internal/agent/runner.go` should reject final answers when mutable work is incomplete:
+`internal/runtime/agent/runner.go` should reject final answers when mutable work is incomplete:
 
 - No successful write after an implementation request, except for plan-then-execute planning phases.
 - Claimed changed paths unsupported by observed writes.
@@ -254,13 +254,13 @@ These checks are contract invariants . They need stable invariant IDs, contract 
 - Pending verification after writes.
 - Source edits without source-aware verification.
 
-The eval code should include expectations such as required run events and route-plan snapshots (`internal/eval/eval.go`), and performance analysis detects anti-patterns like broad rediscovery after the completion gate (`internal/eval/perf.go`).
+The eval code should include expectations such as required run events and route-plan snapshots (`internal/evidence/eval/eval.go`), and performance analysis detects anti-patterns like broad rediscovery after the completion gate (`internal/evidence/eval/perf.go`).
 
 These gates should become contract obligations and contract completion decisions, not standalone runner checks.
 
 ### Tool Rules And Tool Manifests
 
-`internal/config/config.go` exposes workspace shell/write settings and `ToolRules`, with per-tool allow/ask/deny decisions. `internal/workspace/tool_rules.go` implements LLM-agent-style first-match rules with tool names, shell command patterns, path patterns, and MCP catch-all support. `internal/workspace/tool_manifest.go` defines workspace write tools and `IsWorkspaceWriteTool`.
+`internal/platform/config/config.go` exposes workspace shell/write settings and `ToolRules`, with per-tool allow/ask/deny decisions. `internal/capabilities/workspace/tool_rules.go` implements LLM-agent-style first-match rules with tool names, shell command patterns, path patterns, and MCP catch-all support. `internal/capabilities/workspace/tool_manifest.go` defines workspace write tools and `IsWorkspaceWriteTool`.
 
 This gives Agent Harness the low-level permission vocabulary needed for the contract compiler. The compiler should not remove these rules. It should normalize them into a per-phase policy decision graph.
 
@@ -316,10 +316,10 @@ The runtime flow should be:
 Use a layered boundary that matches the target package map:
 
 - `internal/runtime/workerruntime`: owns task-family defaults, runtime brief, and contract input vocabulary.
-- A new internal contract/policy package, such as `internal/agent/contract` or `internal/autonomy`, owns `AutonomyContract`, target roles, invariants, and policy decision types. This package should not depend on the runner's transcript mechanics.
-- `internal/agent`: compiles the contract for each model turn/phase, presents control rails, handles runner state transitions, and calls the policy engine before executing tools or accepting final answers.
-- `internal/workspace`: remains the adapter for actual tool execution, but receives normalized policy decisions and path-role checks. It should enforce workspace and path decisions as close to execution as possible.
-- `internal/eval` and `internal/workspace/harness_audit.go`: consume structured events and summarize coverage, drift, invariants, and regressions.
+- A new internal contract/policy package, such as `internal/runtime/agent/contract` or `internal/contracts/autonomy`, owns `AutonomyContract`, target roles, invariants, and policy decision types. This package should not depend on the runner's transcript mechanics.
+- `internal/runtime/agent`: compiles the contract for each model turn/phase, presents control rails, handles runner state transitions, and calls the policy engine before executing tools or accepting final answers.
+- `internal/capabilities/workspace`: remains the adapter for actual tool execution, but receives normalized policy decisions and path-role checks. It should enforce workspace and path decisions as close to execution as possible.
+- `internal/evidence/eval` and `internal/capabilities/workspace/harness_audit.go`: consume structured events and summarize coverage, drift, invariants, and regressions.
 
 This keeps the contract as a domain object rather than runner glue.
 

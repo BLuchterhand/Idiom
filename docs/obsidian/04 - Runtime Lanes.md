@@ -84,7 +84,7 @@ tools, then emits a structured `submit_plan` artifact. It should not call shell,
 git, task ledger, source sanity, or write tools.
 
 The contract-capability overhaul now has a report-only compiler foundation for
-this planner phase in `internal/contractcompile`. The compiler records required
+this planner phase in `internal/contracts/contractcompile`. The compiler records required
 edit paths as submit-plan coverage, keeps source-body obligations distinct,
 binds a runtime envelope, and projects the model-visible protocol without
 granting planner write authority. Runner enforcement still remains with the

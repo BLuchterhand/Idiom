@@ -107,7 +107,7 @@ current file ends the cpp block at line 399 with `case
 		return m.ExecuteRustTool(ctx, req)
 ```
 
-`ExecuteRustTool` is defined in `internal/workspace/rust_tools.go` and
+`ExecuteRustTool` is defined in `internal/capabilities/workspace/rust_tools.go` and
 handles every `rust_*` name — adding or removing a tool only edits that
 file, not this switch.
 
@@ -129,7 +129,7 @@ func (m *Manager) toolManifestTools(readOnly bool) []string {
 }
 ```
 
-`isRustWorkspace` is defined in `internal/workspace/rust_tools.go`.
+`isRustWorkspace` is defined in `internal/capabilities/workspace/rust_tools.go`.
 
 ## tool_schemas.go
 
@@ -269,7 +269,7 @@ Inside `ToolManifestTools`, append a new branch after the cpp block
 	}
 ```
 
-`RustToolNames()` is defined in `internal/workspace/rust_tools.go` so
+`RustToolNames()` is defined in `internal/capabilities/workspace/rust_tools.go` so
 the list lives next to the implementations.
 
 ### 3) Teach the model about the tools (manifest entries)

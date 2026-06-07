@@ -114,7 +114,8 @@ P9.9 can be reconsidered only after a fresh review verifies:
 ## Reproduction Commands
 
 ```sh
-go test ./cmd/idiom -run 'TestP99|TestP79|TestP84|TestP91|TestP93|TestP711|TestRunReleaseEvidence|TestRunProductEvidence' -count=1
+go test ./internal/evidence/productevidence -run 'TestP99|TestP91|TestP711|TestRunReleaseEvidence|TestRunProductEvidence' -count=1
+go test ./internal/evidence/sidecarvalidation -run TestP79 -count=1
 go test ./cmd/idiom -count=1
 
 jq empty docs/security-privacy-posture.matrix.json

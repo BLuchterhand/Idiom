@@ -10,11 +10,11 @@
   "scope_statement": "Strengthen traceability matrix validation: cross-artifact link checking against evidence card IDs, PRD requirement IDs, ADR IDs, TDD obligation IDs (current tdd.json plus historical satisfied IDs from implementation_ledger.jsonl), and existing brief/report file paths. Add TraceabilityLinkError type and ValidateTraceabilityCrossLinks function. Product lint uses broken_link finding code for cross-artifact failures distinct from parse_error. Preserve existing durable traceability_matrix.json fixture.",
   "code_changes": true,
   "changed_paths": [
-    "internal/productworkflow/types.go",
-    "internal/productworkflow/validate.go",
-    "internal/productworkflow/validate_test.go",
-    "cmd/idiom/product_workflow.go",
-    "cmd/idiom/product_workflow_test.go",
+    "internal/workflows/productworkflow/types.go",
+    "internal/workflows/productworkflow/validate.go",
+    "internal/workflows/productworkflow/validate_test.go",
+    "internal/surfaces/cli/product/product_workflow.go",
+    "internal/surfaces/cli/product/product_workflow_test.go",
     "docs/product-workflows/efforts/index.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
@@ -36,7 +36,7 @@
   "verification": {
     "run_by_implementor": false,
     "commands": [
-      "go test ./internal/productworkflow ./cmd/idiom",
+      "go test ./internal/workflows/productworkflow ./cmd/idiom",
       "go test ./...",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "JSON/JSONL validation for durable workflow artifacts",

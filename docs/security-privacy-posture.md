@@ -27,7 +27,7 @@ Idiom's posture is contract-first:
 
 | Control | Current evidence | MVP limitation |
 | --- | --- | --- |
-| Protected-path denial | `cmd/idiom/p7_9_security_privacy_posture_test.go`, `internal/autonomy/path_roles_test.go`, and P7.5 denial tests validate protected/forbidden path deny decisions and discovery-profile mutation denial. | CLI and shared resolver evidence are covered; MCP resource parity remains P8.4/P9.9 scope. |
+| Protected-path denial | `internal/evidence/sidecarvalidation/security_privacy_posture_test.go`, `internal/contracts/autonomy/path_roles_test.go`, and P7.5 denial tests validate protected/forbidden path deny decisions and discovery-profile mutation denial. | CLI and shared resolver evidence are covered; MCP resource parity remains P8.4/P9.9 scope. |
 | Redaction and no raw prompt/file body | P7.9 checks denial output and local product-evidence-shaped output for forbidden markers; P7.6 classification examples and telemetry tests reject raw prompt/file-body leakage. | Full debug or historical conversation logs can still be sensitive if explicitly enabled; P7.9 only supports summarized sidecar/local-ops/posture evidence. |
 | Retention and local artifact scope | P7.9 and local-ops quickstart checks record local artifact directory classes, cleanup status, artifact IDs/hashes, and no hosted dependency. | Exact global deletion windows for all logs and graph caches are not fully enforced until P7.11/P9.9. |
 | Telemetry minimization | Local-ops privacy evidence has `metadata_only:true`, raw prompt/file-body capture flags false, and hosted telemetry defaults false; telemetry argument redaction is tested. | Local diagnostic JSONL can be written when telemetry is enabled; it is not a hosted analytics pipeline or formal DLP system. |
@@ -58,8 +58,12 @@ CLI example command ID:
 Focused posture evidence:
 
 ```bash
-go test ./cmd/idiom -run 'TestP79|TestP75|TestP76|TestLocalOpsBenchmark'
-go test ./internal/autonomy ./internal/workspace ./internal/telemetry
+go test ./internal/evidence/sidecarvalidation -run 'TestP79|TestP76'
+go test ./internal/surfaces/cli/tool -run TestP75
+go test ./internal/surfaces/cli/localops -run TestLocalOpsBenchmark
+go test ./internal/surfaces/cli/root -run TestRunMainWritesTelemetryForRejectedDirectToolInput
+go test ./internal/surfaces/cli/mcp -run 'TestP86|TestP85'
+go test ./internal/contracts/autonomy ./internal/capabilities/workspace ./internal/evidence/telemetry
 ```
 
 Release-time posture review should cite the matrix check IDs and command

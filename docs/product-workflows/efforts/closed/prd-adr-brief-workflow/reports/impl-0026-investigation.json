@@ -12,9 +12,9 @@
     "plan_only_mutation_check": "cmd/idiom test asserts tdd.json, prd.md, and ADR markdown remain unchanged"
   },
   "tests": {
-    "focused_internal": "go test ./internal/productworkflow -run TestTDDObligationPlan",
-    "focused_cli": "go test ./cmd/idiom -run TestProductTDDPlanObligations",
-    "package_pair": "go test ./internal/productworkflow ./cmd/idiom",
+    "focused_internal": "go test ./internal/workflows/productworkflow -run TestTDDObligationPlan",
+    "focused_cli": "go test ./internal/surfaces/cli/product -run TestProductTDDPlanObligations",
+    "package_pair": "go test ./internal/workflows/productworkflow ./cmd/idiom",
     "full_suite": "go test ./...",
     "durable_command": "go run ./cmd/idiom product tdd --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --plan-obligations --json",
     "durable_gates": "product lint, product audit, JSON/JSONL parse validation, privacy secret-value scan, git diff --check"

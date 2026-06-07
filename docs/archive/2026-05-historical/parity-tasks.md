@@ -25,7 +25,7 @@ approval banner gives the user control.
 
 ### Fix
 
-**File**: `internal/agent/runner.go`
+**File**: `internal/runtime/agent/runner.go`
 
 Add a field to `Runner`:
 
@@ -45,7 +45,7 @@ In the doom-loop block, replace the unconditional `rejectTool()` pair with:
 - If `DoomLoopGate == nil` → existing hard-reject (no behavioral change for
   tests that don't wire the gate).
 
-**File**: `internal/app/lifecycle.go`, `runAgentTurn()`
+**File**: `internal/surfaces/tui/app/lifecycle.go`, `runAgentTurn()`
 
 Wire the gate using the existing `requestApproval` mechanism:
 
@@ -90,7 +90,7 @@ belong in tool descriptions or model training, not the system prompt.
 
 ### Fix
 
-**File**: `internal/app/lifecycle.go`
+**File**: `internal/surfaces/tui/app/lifecycle.go`
 
 Delete the `workspace.Instructions()` block from `systemPrompt()`.
 

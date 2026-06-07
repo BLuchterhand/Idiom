@@ -18,20 +18,20 @@
       "evidence": [
         {
           "kind": "go_test",
-          "command": "go test ./cmd/idiom -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
-          "path": "cmd/idiom/p7_9_security_privacy_posture_test.go",
+          "command": "go test ./internal/evidence/sidecarvalidation -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
+          "path": "internal/evidence/sidecarvalidation/security_privacy_posture_test.go",
           "check_id": "p79-protected-path-role-denial"
         },
         {
           "kind": "go_test",
-          "command": "go test ./internal/autonomy -run TestResolvePathRolesCoversRequiredEvidenceProtectedForbiddenAndSideEffect",
-          "path": "internal/autonomy/path_roles_test.go",
+          "command": "go test ./internal/contracts/autonomy -run TestResolvePathRolesCoversRequiredEvidenceProtectedForbiddenAndSideEffect",
+          "path": "internal/contracts/autonomy/path_roles_test.go",
           "check_id": "p14-path-role-resolver"
         },
         {
           "kind": "go_test",
-          "command": "go test ./cmd/idiom -run TestP75DiscoveryProfileDeniesPrivatePathMutationWithoutLeakingInput",
-          "path": "cmd/idiom/p7_5_containment_test.go",
+          "command": "go test ./internal/surfaces/cli/tool -run TestP75DiscoveryProfileDeniesPrivatePathMutationWithoutLeakingInput",
+          "path": "internal/surfaces/cli/tool/p7_5_containment_test.go",
           "check_id": "p75-private-path-mutation-denial"
         }
       ]
@@ -43,20 +43,20 @@
       "evidence": [
         {
           "kind": "go_test",
-          "command": "go test ./cmd/idiom -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
-          "path": "cmd/idiom/p7_9_security_privacy_posture_test.go",
+          "command": "go test ./internal/evidence/sidecarvalidation -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
+          "path": "internal/evidence/sidecarvalidation/security_privacy_posture_test.go",
           "check_id": "p79-no-raw-prompt-or-file-body"
         },
         {
           "kind": "go_test",
-          "command": "go test ./cmd/idiom -run TestP76CLIClassificationExamplesUseGenericPrimitives",
-          "path": "cmd/idiom/p7_6_classification_examples_test.go",
+          "command": "go test ./internal/evidence/sidecarvalidation -run TestP76CLIClassificationExamplesUseGenericPrimitives",
+          "path": "internal/evidence/sidecarvalidation/classification_examples_test.go",
           "check_id": "p76-forbidden-example-leakage"
         },
         {
           "kind": "go_test",
-          "command": "go test ./internal/telemetry -run TestRecorderWritesProcessTelemetryAndRedactsSensitiveArgs",
-          "path": "internal/telemetry/recorder_test.go",
+          "command": "go test ./internal/evidence/telemetry -run TestRecorderWritesProcessTelemetryAndRedactsSensitiveArgs",
+          "path": "internal/evidence/telemetry/recorder_test.go",
           "check_id": "telemetry-arg-redaction"
         }
       ]
@@ -68,14 +68,14 @@
       "evidence": [
         {
           "kind": "go_test",
-          "command": "go test ./cmd/idiom -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
-          "path": "cmd/idiom/p7_9_security_privacy_posture_test.go",
+          "command": "go test ./internal/evidence/sidecarvalidation -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
+          "path": "internal/evidence/sidecarvalidation/security_privacy_posture_test.go",
           "check_id": "p79-local-artifact-scope"
         },
         {
           "kind": "go_test",
-          "command": "go test ./cmd/idiom -run TestLocalOpsBenchmarkQuickstartSmokeRecordsP010ActivationEvidence",
-          "path": "cmd/idiom/local_ops_test.go",
+          "command": "go test ./internal/surfaces/cli/localops -run TestLocalOpsBenchmarkQuickstartSmokeRecordsP010ActivationEvidence",
+          "path": "internal/surfaces/cli/localops/local_ops_test.go",
           "check_id": "p010-quickstart-cleanup-evidence"
         }
       ]
@@ -87,20 +87,20 @@
       "evidence": [
         {
           "kind": "go_test",
-          "command": "go test ./cmd/idiom -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
-          "path": "cmd/idiom/p7_9_security_privacy_posture_test.go",
+          "command": "go test ./internal/evidence/sidecarvalidation -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
+          "path": "internal/evidence/sidecarvalidation/security_privacy_posture_test.go",
           "check_id": "p79-no-hosted-telemetry-default"
         },
         {
           "kind": "go_test",
-          "command": "go test ./cmd/idiom -run TestLocalOpsBenchmarkReportsSmokeCapacityReplayBlockers",
-          "path": "cmd/idiom/local_ops_test.go",
+          "command": "go test ./internal/surfaces/cli/localops -run TestLocalOpsBenchmarkReportsSmokeCapacityReplayBlockers",
+          "path": "internal/surfaces/cli/localops/local_ops_test.go",
           "check_id": "local-ops-metadata-only-privacy"
         },
         {
           "kind": "go_test",
-          "command": "go test ./cmd/idiom -run TestRunMainWritesTelemetryForRejectedDirectToolInput",
-          "path": "cmd/idiom/main_test.go",
+          "command": "go test ./internal/surfaces/cli/root -run TestRunMainWritesTelemetryForRejectedDirectToolInput",
+          "path": "internal/surfaces/cli/root/root_test.go",
           "check_id": "direct-tool-telemetry-redaction"
         }
       ]
@@ -112,20 +112,20 @@
       "evidence": [
         {
           "kind": "go_test",
-          "command": "go test ./cmd/idiom -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
-          "path": "cmd/idiom/p7_9_security_privacy_posture_test.go",
+          "command": "go test ./internal/evidence/sidecarvalidation -run TestP79SecurityPrivacyControlsExecuteGenericEvidence",
+          "path": "internal/evidence/sidecarvalidation/security_privacy_posture_test.go",
           "check_id": "p79-read-only-discovery-policy"
         },
         {
           "kind": "go_test",
-          "command": "go test ./internal/workspace -run TestToolAllowedForDiscoveryProfileDeniesMutationShellAndUnknownEffects",
-          "path": "internal/workspace/tool_profile_policy_test.go",
+          "command": "go test ./internal/capabilities/workspace -run TestToolAllowedForDiscoveryProfileDeniesMutationShellAndUnknownEffects",
+          "path": "internal/capabilities/workspace/tool_profile_policy_test.go",
           "check_id": "workspace-discovery-profile-denials"
         },
         {
           "kind": "go_test",
-          "command": "go test ./cmd/idiom -run TestP75DiscoveryProfileDeniesShellBeforeExternalSideEffect",
-          "path": "cmd/idiom/p7_5_containment_test.go",
+          "command": "go test ./internal/surfaces/cli/tool -run TestP75DiscoveryProfileDeniesShellBeforeExternalSideEffect",
+          "path": "internal/surfaces/cli/tool/p7_5_containment_test.go",
           "check_id": "p75-shell-side-effect-denial"
         }
       ]
@@ -137,14 +137,14 @@
       "evidence": [
         {
           "kind": "go_test",
-          "command": "go test ./cmd/idiom -run TestP86MCPStdioIntegrationProofReplay",
-          "path": "cmd/idiom/p8_6_mcp_integration_proof_test.go",
+          "command": "go test ./internal/surfaces/cli/mcp -run TestP86MCPStdioIntegrationProofReplay",
+          "path": "internal/surfaces/cli/mcp/p8_6_integration_proof_test.go",
           "check_id": "p86-mcp-stdio-resource-containment"
         },
         {
           "kind": "go_test",
-          "command": "go test ./cmd/idiom -run TestP85MCPClassificationParity",
-          "path": "cmd/idiom/p8_5_mcp_classification_parity_test.go",
+          "command": "go test ./internal/surfaces/cli/mcp -run TestP85MCPClassificationParity",
+          "path": "internal/surfaces/cli/mcp/p8_5_classification_parity_test.go",
           "check_id": "p85-mcp-classification-parity"
         }
       ]

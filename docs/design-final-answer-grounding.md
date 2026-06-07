@@ -176,8 +176,8 @@ AnswerClaim
 Claim classification should inspect full prose, not only markdown formatting.
 Examples:
 
-- `internal/agent/runner.go` alone can be a `path_reference`.
-- `internal/agent/runner.go:1619` is a `source_detail` line citation.
+- `internal/runtime/agent/runner.go` alone can be a `path_reference`.
+- `internal/runtime/agent/runner.go:1619` is a `source_detail` line citation.
 - "The root cause is in runner.go" is a `source_detail` or
   `symbol_reference` claim and needs source-body support.
 - "The log shows model_error" is a `log_claim` and needs log-window support.
@@ -296,11 +296,11 @@ answer_grounding_unmet
   unsupported_claims:
     - claim_id: claim_...
       kind: source_detail
-      span_summary: "internal/app/foo.go:42"
+      span_summary: "internal/surfaces/tui/app/foo.go:42"
       missing_evidence: source_body
       reason: cited line was not covered by any source-body receipt
   accepted_receipts:
-    - S1 internal/agent/runner.go:1600-1645
+    - S1 internal/runtime/agent/runner.go:1600-1645
     - L1 .idiom/logs/conversations/session.jsonl events 31-46
   valid_repair:
     - cite an accepted receipt
@@ -584,10 +584,10 @@ Review must verify:
 Validation must include:
 
 ```sh
-go test ./internal/agent
-go test ./internal/app
+go test ./internal/runtime/agent
+go test ./internal/surfaces/tui/app
 go test ./internal/cmd/sweeval
-go test ./internal/contractcompile
+go test ./internal/contracts/contractcompile
 go test ./...
 ```
 

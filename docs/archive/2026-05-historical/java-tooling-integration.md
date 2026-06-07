@@ -1,7 +1,7 @@
 # Java tooling — centralized-file integration
 
-The Java tooling (`internal/semantic/java_*`, `internal/workspace/java_tools.go`,
-`internal/workspace/jdtls_lsp.go`) is self-contained except for four
+The Java tooling (`internal/repository/semantic/java_*`, `internal/capabilities/workspace/java_tools.go`,
+`internal/capabilities/workspace/jdtls_lsp.go`) is self-contained except for four
 hooks into centralized files. Paste the snippets below into the named
 files. Each snippet quotes the existing anchor line that identifies
 where it goes.
@@ -357,6 +357,6 @@ the function so the Java-only case still produces output:
 ## Callers to update
 
 The four files above are the structural hooks. Callers that construct
-`ToolManifestToolOptions` (e.g. in `internal/agent/modes.go`) should
+`ToolManifestToolOptions` (e.g. in `internal/runtime/agent/modes.go`) should
 opt in by setting `IncludeJava: true` where appropriate; that's a
 trivial follow-up and not part of this task.

@@ -10,9 +10,9 @@
   "scope_statement": "Strengthen TDD ledger v2 validation: allowed coverage tiers from design docs (documentation, local_low, behavior_standard, contract_high, formal_optional, plus tolerate unit for current fixtures), allowed obligation types (15 types from design docs), coverage metadata counter invariants (non-negative, mapped/tested/enumerated cannot exceed totals), mutation score bounds (0..100, below min requires mutation in gates_blocked). Add focused tests. Product lint continues failing closed for invalid tdd.json.",
   "code_changes": true,
   "changed_paths": [
-    "internal/productworkflow/validate.go",
-    "internal/productworkflow/validate_test.go",
-    "cmd/idiom/product_workflow_test.go",
+    "internal/workflows/productworkflow/validate.go",
+    "internal/workflows/productworkflow/validate_test.go",
+    "internal/surfaces/cli/product/product_workflow_test.go",
     "docs/product-workflows/efforts/index.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
@@ -26,10 +26,10 @@
   "verification": {
     "run_by_implementor": true,
     "commands": [
-      "go test ./internal/productworkflow -v -count=1",
-      "go test ./cmd/idiom -v -run TestProductLint -count=1",
+      "go test ./internal/workflows/productworkflow -v -count=1",
+      "go test ./internal/surfaces/cli/product -v -run TestProductLint -count=1",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
-      "go test ./internal/productworkflow ./cmd/idiom -count=1",
+      "go test ./internal/workflows/productworkflow ./cmd/idiom -count=1",
       "go test ./...",
       "go build ./cmd/idiom",
       "git diff --check"

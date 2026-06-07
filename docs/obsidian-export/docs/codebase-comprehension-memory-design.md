@@ -120,7 +120,7 @@ Add a new codebase comprehension subsystem with four layers:
    Expose task-shaped tools and CLI commands that return bounded context views
    and can populate architect packets.
 
-The architecture should sit next to `internal/workspace` and `internal/architect`
+The architecture should sit next to `internal/capabilities/workspace` and `internal/workflows/architect`
 rather than inside the runner. The runner consumes views and packets; it should
 not own indexing policy.
 
@@ -667,7 +667,7 @@ Outputs must expose why an item was ranked:
 
 ```json
 {
-  "path": "internal/workspace/discovery_query.go",
+  "path": "internal/capabilities/workspace/discovery_query.go",
   "role": "read_only_evidence",
   "score": 0.82,
   "signals": ["symbol_match", "dependency_neighbor", "recent_query_artifact"],
@@ -886,7 +886,7 @@ Default interactive behavior should be `allow_stale` for orientation and
 Proposed packages:
 
 ```text
-internal/comprehension/
+internal/repository/comprehension/
   graph.go
   store.go
   indexer.go
@@ -900,12 +900,12 @@ internal/comprehension/
 
 Responsibilities:
 
-- `internal/comprehension` owns graph schema, storage, indexing, ranking, view
+- `internal/repository/comprehension` owns graph schema, storage, indexing, ranking, view
   construction, summary provenance, and packet-ready evidence.
-- `internal/workspace` exposes tools that call comprehension APIs.
-- `internal/architect` accepts context evidence but does not know how to index
+- `internal/capabilities/workspace` exposes tools that call comprehension APIs.
+- `internal/workflows/architect` accepts context evidence but does not know how to index
   repositories.
-- `internal/agent` consumes tools and packets. It should not own graph policy.
+- `internal/runtime/agent` consumes tools and packets. It should not own graph policy.
 - `cmd/harness` exposes CLI commands for build/status/query/pack.
 
 This keeps durable repository comprehension separate from runner strategy.
@@ -967,7 +967,7 @@ Acceptance:
 Verification:
 
 ```bash
-go test ./internal/comprehension/... ./internal/workspace/...
+go test ./internal/repository/comprehension/... ./internal/capabilities/workspace/...
 go test ./...
 ```
 
@@ -988,7 +988,7 @@ Acceptance:
 Verification:
 
 ```bash
-go test ./internal/comprehension/... ./internal/architect/... ./cmd/harness/...
+go test ./internal/repository/comprehension/... ./internal/workflows/architect/... ./cmd/harness/...
 go test ./...
 ```
 
@@ -1083,7 +1083,7 @@ Success criteria should be practical:
 
 ## Required Deliverables
 
-- `internal/comprehension` package with schema, store, graph types, bootstrap
+- `internal/repository/comprehension` package with schema, store, graph types, bootstrap
   versioning, and SQLite as the authoritative store.
 - JSON export for inspection only; exported files must never become the source
   of truth for freshness or cache validity.

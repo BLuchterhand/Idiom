@@ -12,26 +12,26 @@ is shipped without a test.
 
 | Acceptance criterion | Test |
 |---|---|
-| Manager records observed paths after a successful `read_file`; `HasObservedPath` returns true | [TestEditFileRequiresPriorObservationOfPath](internal/workspace/manager_test.go) |
-| `edit_file` against an un-observed path returns "first read_file this path" error | [TestEditFileRequiresPriorObservationOfPath](internal/workspace/manager_test.go) |
-| `edit_file` against an observed path passes through | [TestEditFileRequiresPriorObservationOfPath](internal/workspace/manager_test.go) |
+| Manager records observed paths after a successful `read_file`; `HasObservedPath` returns true | [TestEditFileRequiresPriorObservationOfPath](internal/capabilities/workspace/manager_test.go) |
+| `edit_file` against an un-observed path returns "first read_file this path" error | [TestEditFileRequiresPriorObservationOfPath](internal/capabilities/workspace/manager_test.go) |
+| `edit_file` against an observed path passes through | [TestEditFileRequiresPriorObservationOfPath](internal/capabilities/workspace/manager_test.go) |
 
-Run: `go test ./internal/workspace/ -run TestEditFileRequiresPriorObservationOfPath`
+Run: `go test ./internal/capabilities/workspace/ -run TestEditFileRequiresPriorObservationOfPath`
 
 ## Fix 2 — Fuzzy path suggestions
 
 | Acceptance criterion | Test |
 |---|---|
-| `edit_file` on a misspelled path returns `Did you mean:` with the nearest real path | [TestEditFileSuggestsNearestPathsWhenFileMissing](internal/workspace/manager_test.go) |
+| `edit_file` on a misspelled path returns `Did you mean:` with the nearest real path | [TestEditFileSuggestsNearestPathsWhenFileMissing](internal/capabilities/workspace/manager_test.go) |
 | Existing behavior for `read_file` unchanged | covered by preexisting `TestExecuteReadWriteAndExploreWriteRejection` |
 
-Run: `go test ./internal/workspace/ -run TestEditFileSuggestsNearestPathsWhenFileMissing`
+Run: `go test ./internal/capabilities/workspace/ -run TestEditFileSuggestsNearestPathsWhenFileMissing`
 
 ## Fix 3 — Fabrication detection
 
 | Acceptance criterion | Test |
 |---|---|
-| Path-token extractor finds `internal/app/app.go:42`, skips bare words | [TestExtractFinalAnswerPathTokensFindsGoAndMarkdownPaths](internal/frontier/grounding_test.go) |
+| Path-token extractor finds `internal/surfaces/tui/app/app.go:42`, skips bare words | [TestExtractFinalAnswerPathTokensFindsGoAndMarkdownPaths](internal/frontier/grounding_test.go) |
 | `Reconcile` flags a path named in reply but not in evidence | [TestReconcileFinalAnswerFlagsUngroundedPaths](internal/frontier/grounding_test.go) |
 | `Reconcile` accepts a reply whose only paths are in `changedPaths` | [TestReconcileFinalAnswerAcceptsGroundedPaths](internal/frontier/grounding_test.go) |
 | Reply with no path tokens passes | [TestReconcileFinalAnswerAcceptsAnswerWithNoPathTokens](internal/frontier/grounding_test.go) |
@@ -44,55 +44,55 @@ Run: `go test ./internal/frontier/ -run 'TestExtract|TestReconcile|TestBuildFina
 
 | Acceptance criterion | Test |
 |---|---|
-| `OverviewSystemPrompt` returns a bounded string naming top-level dirs | [TestOverviewSystemPromptListsTopLevelLayout](internal/workspace/overview_test.go) |
-| Skips `node_modules`, `vendor`, `.git`, etc. | [TestOverviewSystemPromptListsTopLevelLayout](internal/workspace/overview_test.go) |
-| Empty for missing/invalid dirs | [TestOverviewSystemPromptReturnsEmptyForMissingDirectory](internal/workspace/overview_test.go) |
-| Repeated calls to `requestMessages` inject the overview exactly once | [TestRequestMessagesInjectsWorkspaceOverviewExactlyOnce](internal/app/rendering_test.go) |
+| `OverviewSystemPrompt` returns a bounded string naming top-level dirs | [TestOverviewSystemPromptListsTopLevelLayout](internal/capabilities/workspace/overview_test.go) |
+| Skips `node_modules`, `vendor`, `.git`, etc. | [TestOverviewSystemPromptListsTopLevelLayout](internal/capabilities/workspace/overview_test.go) |
+| Empty for missing/invalid dirs | [TestOverviewSystemPromptReturnsEmptyForMissingDirectory](internal/capabilities/workspace/overview_test.go) |
+| Repeated calls to `requestMessages` inject the overview exactly once | [TestRequestMessagesInjectsWorkspaceOverviewExactlyOnce](internal/surfaces/tui/app/rendering_test.go) |
 
-Run: `go test ./internal/workspace/ -run TestOverviewSystemPrompt` and `go test ./internal/app/ -run TestRequestMessagesInjectsWorkspaceOverviewExactlyOnce`
+Run: `go test ./internal/capabilities/workspace/ -run TestOverviewSystemPrompt` and `go test ./internal/surfaces/tui/app/ -run TestRequestMessagesInjectsWorkspaceOverviewExactlyOnce`
 
 ## Fix 5 — Summarization-based context compaction
 
 | Acceptance criterion | Test |
 |---|---|
-| Below threshold: no-op | [TestMaybeCompactHistoryBelowThresholdIsNoop](internal/app/compaction_test.go) |
-| Above threshold: folds oldest into a `session_digest` system message; keeps recent N verbatim | [TestMaybeCompactHistoryFoldsOldMessagesIntoDigest](internal/app/compaction_test.go) |
-| Model-call failure falls back to deterministic digest preserving first user goal | [TestMaybeCompactHistoryFallsBackWhenModelCallFails](internal/app/compaction_test.go) |
-| Deterministic fallback isolated-unit test | [TestFallbackSessionDigestPreservesFirstUserGoal](internal/app/compaction_test.go) |
+| Below threshold: no-op | [TestMaybeCompactHistoryBelowThresholdIsNoop](internal/surfaces/tui/app/compaction_test.go) |
+| Above threshold: folds oldest into a `session_digest` system message; keeps recent N verbatim | [TestMaybeCompactHistoryFoldsOldMessagesIntoDigest](internal/surfaces/tui/app/compaction_test.go) |
+| Model-call failure falls back to deterministic digest preserving first user goal | [TestMaybeCompactHistoryFallsBackWhenModelCallFails](internal/surfaces/tui/app/compaction_test.go) |
+| Deterministic fallback isolated-unit test | [TestFallbackSessionDigestPreservesFirstUserGoal](internal/surfaces/tui/app/compaction_test.go) |
 
-Run: `go test ./internal/app/ -run 'TestMaybeCompactHistory|TestFallbackSessionDigest'`
+Run: `go test ./internal/surfaces/tui/app/ -run 'TestMaybeCompactHistory|TestFallbackSessionDigest'`
 
 ## Fix 6 — Per-tool permission granularity
 
 | Acceptance criterion | Test |
 |---|---|
-| Shell patterns: `rm *` → ask, `git *` → allow, `*` → allow | [TestMatchToolRuleShellPatterns](internal/workspace/tool_rules_test.go) |
-| Path patterns with `**`: `**/secrets/**` → deny, `**/*.md` → allow | [TestMatchToolRulePathPatternsWithRecursiveGlob](internal/workspace/tool_rules_test.go) |
-| Absent rules → none (legacy behavior preserved) | [TestMatchToolRuleAbsentRulesReturnsNone](internal/workspace/tool_rules_test.go) |
-| First-match-wins ordering | [TestMatchToolRuleFirstMatchWins](internal/workspace/tool_rules_test.go) |
-| Manager integration reads `config.Workspace.ToolRules` | [TestManagerEvaluateToolRuleIntegratesConfigRules](internal/workspace/tool_rules_test.go) |
+| Shell patterns: `rm *` → ask, `git *` → allow, `*` → allow | [TestMatchToolRuleShellPatterns](internal/capabilities/workspace/tool_rules_test.go) |
+| Path patterns with `**`: `**/secrets/**` → deny, `**/*.md` → allow | [TestMatchToolRulePathPatternsWithRecursiveGlob](internal/capabilities/workspace/tool_rules_test.go) |
+| Absent rules → none (legacy behavior preserved) | [TestMatchToolRuleAbsentRulesReturnsNone](internal/capabilities/workspace/tool_rules_test.go) |
+| First-match-wins ordering | [TestMatchToolRuleFirstMatchWins](internal/capabilities/workspace/tool_rules_test.go) |
+| Manager integration reads `config.Workspace.ToolRules` | [TestManagerEvaluateToolRuleIntegratesConfigRules](internal/capabilities/workspace/tool_rules_test.go) |
 
-Run: `go test ./internal/workspace/ -run 'TestMatchToolRule|TestManagerEvaluateToolRule'`
+Run: `go test ./internal/capabilities/workspace/ -run 'TestMatchToolRule|TestManagerEvaluateToolRule'`
 
 ## Fix 7 — Real subagent spawning via the task tool
 
 | Acceptance criterion | Test |
 |---|---|
-| Parent's `task` call launches an isolated child Runner; child runs its own model loop; parent sees only the result | [TestRunnerTaskToolSpawnsIsolatedReadOnlyChild](internal/agent/runner_test.go) |
-| Write-mode child is isolated via a workbranch, parent workspace not mutated | [TestRunnerExecutesWorkbranchWriteChildTaskWithoutMutatingParent](internal/agent/runner_test.go) (pre-existing, still passes) |
+| Parent's `task` call launches an isolated child Runner; child runs its own model loop; parent sees only the result | [TestRunnerTaskToolSpawnsIsolatedReadOnlyChild](internal/runtime/agent/runner_test.go) |
+| Write-mode child is isolated via a workbranch, parent workspace not mutated | [TestRunnerExecutesWorkbranchWriteChildTaskWithoutMutatingParent](internal/runtime/agent/runner_test.go) (pre-existing, still passes) |
 
-Run: `go test ./internal/agent/ -run 'TestRunnerTaskToolSpawnsIsolatedReadOnlyChild|TestRunnerExecutesWorkbranchWriteChildTaskWithoutMutatingParent'`
+Run: `go test ./internal/runtime/agent/ -run 'TestRunnerTaskToolSpawnsIsolatedReadOnlyChild|TestRunnerExecutesWorkbranchWriteChildTaskWithoutMutatingParent'`
 
 ## Fix 8 — Minimal MCP client
 
 | Acceptance criterion | Test |
 |---|---|
-| Initialize + ListTools + CallTool round-trip against a fake stdio server | [TestClientInitializeListCallRoundTrip](internal/mcp/client_test.go) |
-| Registry namespaces tools as `mcp:<server>/<tool>` and dispatches Call | [TestRegistryNamespaceAndDispatch](internal/mcp/client_test.go) |
-| Unknown qualified tool returns an error | [TestRegistryRejectsUnknownQualifiedTool](internal/mcp/client_test.go) |
-| `ParseQualifiedToolName` round-trip | [TestParseQualifiedToolName](internal/mcp/client_test.go) |
+| Initialize + ListTools + CallTool round-trip against a fake stdio server | [TestClientInitializeListCallRoundTrip](internal/capabilities/mcp/client_test.go) |
+| Registry namespaces tools as `mcp:<server>/<tool>` and dispatches Call | [TestRegistryNamespaceAndDispatch](internal/capabilities/mcp/client_test.go) |
+| Unknown qualified tool returns an error | [TestRegistryRejectsUnknownQualifiedTool](internal/capabilities/mcp/client_test.go) |
+| `ParseQualifiedToolName` round-trip | [TestParseQualifiedToolName](internal/capabilities/mcp/client_test.go) |
 
-Run: `go test ./internal/mcp/`
+Run: `go test ./internal/capabilities/mcp/`
 
 ## Out of scope (by design)
 

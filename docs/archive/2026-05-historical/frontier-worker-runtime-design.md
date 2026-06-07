@@ -67,7 +67,7 @@ Workers should receive one authoritative state packet that summarizes the curren
 
 ### Purpose
 
-Worker prompts should be compiled from lane contracts rather than assembled as bespoke strings in `internal/app`. Static instructions are still allowed, but their source must be frontier-owned.
+Worker prompts should be compiled from lane contracts rather than assembled as bespoke strings in `internal/surfaces/tui/app`. Static instructions are still allowed, but their source must be frontier-owned.
 
 ### Required Prompt Sections
 
@@ -175,7 +175,7 @@ Failure handling should be classified before it is rendered to the model. The ru
 
 ### Purpose
 
-Workers should see a canonical schema for the currently allowed tools. The source of truth lives in `internal/workspace/tool_manifest.go`; frontier runtime consumes that source when rendering runtime packets.
+Workers should see a canonical schema for the currently allowed tools. The source of truth lives in `internal/capabilities/workspace/tool_manifest.go`; frontier runtime consumes that source when rendering runtime packets.
 
 ### Required Behavior
 

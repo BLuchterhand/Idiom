@@ -23,9 +23,9 @@
     "context_pack_id": "",
     "freshness_state": "fresh",
     "referenced_paths": [
-      "internal/featureplanner/",
-      "internal/featureplannercmd/",
-      "internal/productworkflow/"
+      "internal/workflows/featureplanner/",
+      "internal/surfaces/cli/featureplanner/",
+      "internal/workflows/productworkflow/"
     ],
     "unresolved_gaps": [],
     "refresh_policy": "on_resume"

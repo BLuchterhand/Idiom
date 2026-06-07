@@ -88,12 +88,12 @@ Examples:
 
 | Layer | Packages | Ownership |
 | --- | --- | --- |
-| Surface | `cmd/idiom`, `internal/rootcmd`, `internal/app`, inbound MCP in `internal/mcpcmd` | User commands, TUI lifecycle, external protocol surfaces |
-| Orchestration | `internal/lanecmd`, `internal/planexecutecmd`, `internal/promptstack`, `internal/projectartifacts` | Lane setup, plan-execute orchestration, prompt assembly, artifact workflow |
-| Contract | `internal/autonomy`, `internal/contractcompile`, `internal/agent`, `internal/frontier/workerruntime` | Contract schema, report-only contract compilation, runtime contracts, role profiles, tool profile rules |
-| Execution | `internal/agent`, `internal/workspace`, `internal/runner` | Model loop, tool dispatch, process execution |
-| Evidence | `internal/comprehension`, `internal/discovery`, `internal/telemetry`, `internal/eval`, `internal/transcript` | Context graph, discovery, logs, audit, evaluation |
-| Adapters | `internal/backends`, `internal/autodetect`, `internal/llama`, `internal/semantic`, outbound MCP in `internal/mcp`, shell/git adapters in workspace | Local inference, host discovery, external clients, and environment-specific tool execution |
+| Surface | `cmd/idiom`, `internal/surfaces/cli/root`, `internal/surfaces/tui/app`, inbound MCP in `internal/surfaces/cli/mcp` | User commands, TUI lifecycle, external protocol surfaces |
+| Orchestration | `internal/lanecmd`, `internal/surfaces/cli/planexecute`, `internal/runtime/promptstack`, `internal/workflows/projectartifacts` | Lane setup, plan-execute orchestration, prompt assembly, artifact workflow |
+| Contract | `internal/contracts/autonomy`, `internal/contracts/contractcompile`, `internal/runtime/agent`, `internal/runtime/workerruntime` | Contract schema, report-only contract compilation, runtime contracts, role profiles, tool profile rules |
+| Execution | `internal/runtime/agent`, `internal/capabilities/workspace`, `internal/runtime/runner` | Model loop, tool dispatch, process execution |
+| Evidence | `internal/repository/comprehension`, `internal/repository/discovery`, `internal/evidence/telemetry`, `internal/evidence/eval`, `internal/evidence/transcript` | Context graph, discovery, logs, audit, evaluation |
+| Adapters | `internal/runtime/backends`, `internal/platform/autodetect`, `internal/runtime/llama`, `internal/repository/semantic`, outbound MCP in `internal/capabilities/mcp`, shell/git adapters in workspace | Local inference, host discovery, external clients, and environment-specific tool execution |
 
 ## Clean Boundary Expectations
 
@@ -126,7 +126,7 @@ authority from another subsystem:
 The architecture therefore keeps explicit ownership for evidence, strategy,
 contracts, and verification.
 
-Current contract consolidation starts with a pure `internal/contractcompile`
+Current contract consolidation starts with a pure `internal/contracts/contractcompile`
 package. It compiles plan-execute planner inputs into a passive
 `AutonomyContract`, runtime envelope, and model-facing protocol projection
 without importing runner, app, workspace, backend, or CLI packages. That keeps

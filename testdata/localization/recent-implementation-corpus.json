@@ -55,64 +55,64 @@
       "expected": {
         "files": [
           {
-            "path": "internal/comprehension/views.go",
+            "path": "internal/repository/comprehension/views.go",
             "rationale": "Owns graph_views cache keys, load/save, stale prevention, and cache metrics."
           },
           {
-            "path": "internal/comprehension/pack.go",
+            "path": "internal/repository/comprehension/pack.go",
             "rationale": "Builds context pack results that are cached and refreshed."
           },
           {
-            "path": "internal/comprehension/freshness.go",
+            "path": "internal/repository/comprehension/freshness.go",
             "rationale": "Computes freshness decisions used by context tools."
           },
           {
-            "path": "internal/workspace/discovery_tools.go",
+            "path": "internal/capabilities/workspace/discovery_tools.go",
             "rationale": "Exposes context_pack and context_status through workspace tools."
           }
         ],
         "symbols": [
           {
-            "path": "internal/comprehension/views.go",
+            "path": "internal/repository/comprehension/views.go",
             "name": "LoadView",
             "kind": "func"
           },
           {
-            "path": "internal/comprehension/views.go",
+            "path": "internal/repository/comprehension/views.go",
             "name": "SaveView",
             "kind": "func"
           },
           {
-            "path": "internal/comprehension/views.go",
+            "path": "internal/repository/comprehension/views.go",
             "name": "ReadViewStats",
             "kind": "func"
           },
           {
-            "path": "internal/comprehension/views.go",
+            "path": "internal/repository/comprehension/views.go",
             "name": "ComprehensionStateFingerprint",
             "kind": "func"
           },
           {
-            "path": "internal/comprehension/pack.go",
+            "path": "internal/repository/comprehension/pack.go",
             "name": "Pack",
             "kind": "func"
           }
         ],
         "tests": [
           {
-            "path": "internal/comprehension/views_test.go",
+            "path": "internal/repository/comprehension/views_test.go",
             "name": "TestPackExposesGraphViewContractCacheAndRankerReasons"
           },
           {
-            "path": "internal/comprehension/views_test.go",
+            "path": "internal/repository/comprehension/views_test.go",
             "name": "TestLoadViewByIDRefusesStaleReferencedPath"
           },
           {
-            "path": "internal/comprehension/freshness_test.go",
+            "path": "internal/repository/comprehension/freshness_test.go",
             "name": "TestFreshnessDetectsPostIndexAddedSourceFile"
           },
           {
-            "path": "internal/workspace/discovery_tools_test.go",
+            "path": "internal/capabilities/workspace/discovery_tools_test.go",
             "name": "TestHarnessAuditReportsContextCacheState"
           }
         ]
@@ -172,55 +172,55 @@
       "expected": {
         "files": [
           {
-            "path": "internal/workspace/capabilities.go",
+            "path": "internal/capabilities/workspace/capabilities.go",
             "rationale": "Defines registry, resolver, route status, and read_only_capability execution."
           },
           {
-            "path": "internal/workspace/language_registry.go",
+            "path": "internal/capabilities/workspace/language_registry.go",
             "rationale": "Defines stable language capability vocabulary and adapter mapping."
           },
           {
-            "path": "internal/workspace/context_telemetry.go",
+            "path": "internal/capabilities/workspace/context_telemetry.go",
             "rationale": "Extracts capability routing status into telemetry fields."
           },
           {
-            "path": "internal/workspace/tool_schema_export.go",
+            "path": "internal/capabilities/workspace/tool_schema_export.go",
             "rationale": "Exports side-effect and capability metadata used by audit coverage."
           }
         ],
         "symbols": [
           {
-            "path": "internal/workspace/capabilities.go",
+            "path": "internal/capabilities/workspace/capabilities.go",
             "name": "BuildReadOnlyCapabilityRegistry",
             "kind": "func"
           },
           {
-            "path": "internal/workspace/capabilities.go",
+            "path": "internal/capabilities/workspace/capabilities.go",
             "name": "ResolveReadOnlyCapability",
             "kind": "func"
           },
           {
-            "path": "internal/workspace/capabilities.go",
+            "path": "internal/capabilities/workspace/capabilities.go",
             "name": "readOnlyCapability",
             "kind": "func"
           },
           {
-            "path": "internal/workspace/context_telemetry.go",
+            "path": "internal/capabilities/workspace/context_telemetry.go",
             "name": "ReadOnlyCapabilityTelemetryFields",
             "kind": "func"
           }
         ],
         "tests": [
           {
-            "path": "internal/workspace/capabilities_test.go",
+            "path": "internal/capabilities/workspace/capabilities_test.go",
             "name": "TestReadOnlyCapabilityRegistryMapsStableVocabularyToAdapters"
           },
           {
-            "path": "internal/workspace/capabilities_test.go",
+            "path": "internal/capabilities/workspace/capabilities_test.go",
             "name": "TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters"
           },
           {
-            "path": "internal/workspace/capabilities_test.go",
+            "path": "internal/capabilities/workspace/capabilities_test.go",
             "name": "TestHarnessAuditReportsCapabilityRegistryMetrics"
           }
         ]
@@ -280,11 +280,11 @@
       "expected": {
         "files": [
           {
-            "path": "internal/frontier/workerruntime/runtime.go",
+            "path": "internal/runtime/workerruntime/runtime.go",
             "rationale": "Builds runtime step instructions, recovery plans, and readiness-aware next actions."
           },
           {
-            "path": "internal/frontier/workerruntime/catalog.go",
+            "path": "internal/runtime/workerruntime/catalog.go",
             "rationale": "Defines runtime contracts and capability profiles used by prompt shaping."
           },
           {
@@ -292,38 +292,38 @@
             "rationale": "Contains baseline prompt policy for harness feedback, runtime briefs, and context graph use."
           },
           {
-            "path": "internal/cliassets/lanes/rules/loop-protocol.md",
+            "path": "internal/surfaces/cliassets/lanes/rules/loop-protocol.md",
             "rationale": "Documents generic loop and recovery protocol text for lane prompts."
           }
         ],
         "symbols": [
           {
-            "path": "internal/frontier/workerruntime/runtime.go",
+            "path": "internal/runtime/workerruntime/runtime.go",
             "name": "BuildRecoveryPlan",
             "kind": "func"
           },
           {
-            "path": "internal/frontier/workerruntime/runtime.go",
+            "path": "internal/runtime/workerruntime/runtime.go",
             "name": "RenderStepInstruction",
             "kind": "func"
           },
           {
-            "path": "internal/frontier/workerruntime/catalog.go",
+            "path": "internal/runtime/workerruntime/catalog.go",
             "name": "ManifestToolsForCapabilityProfile",
             "kind": "func"
           }
         ],
         "tests": [
           {
-            "path": "internal/frontier/workerruntime/runtime_test.go",
+            "path": "internal/runtime/workerruntime/runtime_test.go",
             "name": "TestBuildRecoveryPlanPreservesClosureScopeOnRepeatedAction"
           },
           {
-            "path": "internal/frontier/workerruntime/runtime_test.go",
+            "path": "internal/runtime/workerruntime/runtime_test.go",
             "name": "TestRenderStepInstructionIncludesReadinessState"
           },
           {
-            "path": "internal/frontier/workerruntime/catalog_test.go",
+            "path": "internal/runtime/workerruntime/catalog_test.go",
             "name": "TestManifestToolsForCapabilityProfileExposeExpectedSurfaces"
           }
         ]
@@ -383,63 +383,63 @@
       "expected": {
         "files": [
           {
-            "path": "internal/workspace/harness_audit.go",
+            "path": "internal/capabilities/workspace/harness_audit.go",
             "rationale": "Builds tool surface, behavior, context cache, and contract coverage audit reports."
           },
           {
-            "path": "internal/telemetry/recorder.go",
+            "path": "internal/evidence/telemetry/recorder.go",
             "rationale": "Writes command telemetry and redacts sensitive argument values."
           },
           {
-            "path": "internal/workspace/context_telemetry.go",
+            "path": "internal/capabilities/workspace/context_telemetry.go",
             "rationale": "Extracts context and capability telemetry fields for reports."
           },
           {
-            "path": "internal/cmd/root/root.go",
+            "path": "internal/surfaces/cli/root/root.go",
             "rationale": "Starts command telemetry and routes direct tool commands from the binary boundary."
           },
           {
-            "path": "internal/cmd/tool/toolcmd.go",
+            "path": "internal/surfaces/cli/tool/toolcmd.go",
             "rationale": "Logs direct tool request/result records with sidecar attribution."
           }
         ],
         "symbols": [
           {
-            "path": "internal/workspace/harness_audit.go",
+            "path": "internal/capabilities/workspace/harness_audit.go",
             "name": "auditToolSurfaceFromSources",
             "kind": "func"
           },
           {
-            "path": "internal/workspace/harness_audit.go",
+            "path": "internal/capabilities/workspace/harness_audit.go",
             "name": "auditLogBehavior",
             "kind": "func"
           },
           {
-            "path": "internal/telemetry/recorder.go",
+            "path": "internal/evidence/telemetry/recorder.go",
             "name": "redactedValue",
             "kind": "func"
           },
           {
-            "path": "internal/cmd/tool/toolcmd.go",
+            "path": "internal/surfaces/cli/tool/toolcmd.go",
             "name": "LogDirectToolResult",
             "kind": "func"
           }
         ],
         "tests": [
           {
-            "path": "internal/workspace/discovery_tools_test.go",
+            "path": "internal/capabilities/workspace/discovery_tools_test.go",
             "name": "TestHarnessAuditBehaviorScansLogs"
           },
           {
-            "path": "internal/workspace/discovery_tools_test.go",
+            "path": "internal/capabilities/workspace/discovery_tools_test.go",
             "name": "TestHarnessAuditBehaviorRedactsWorstOffenderPrompts"
           },
           {
-            "path": "internal/telemetry/recorder_test.go",
+            "path": "internal/evidence/telemetry/recorder_test.go",
             "name": "TestRecorderWritesProcessTelemetryAndRedactsSensitiveArgs"
           },
           {
-            "path": "internal/cmd/root/root_test.go",
+            "path": "internal/surfaces/cli/root/root_test.go",
             "name": "TestRunMainWritesTelemetryForDirectTool"
           }
         ]
@@ -511,19 +511,19 @@
       "expected": {
         "files": [
           {
-            "path": "internal/cmd/planexecute/plan_execute.go",
+            "path": "internal/surfaces/cli/planexecute/plan_execute.go",
             "rationale": "Coordinates planner, executor, pack inheritance, preflight, and review repair."
           },
           {
-            "path": "internal/workspace/submit_plan.go",
+            "path": "internal/capabilities/workspace/submit_plan.go",
             "rationale": "Persists planner artifacts, validates edit shapes, and carries pack IDs."
           },
           {
-            "path": "internal/app/plan_autodoc.go",
+            "path": "internal/surfaces/tui/app/plan_autodoc.go",
             "rationale": "Records task ledger and write success evidence for plan tracking."
           },
           {
-            "path": "internal/app/plan_overlay.go",
+            "path": "internal/surfaces/tui/app/plan_overlay.go",
             "rationale": "Parses and renders plan diff entries from ledger state."
           },
           {
@@ -533,46 +533,46 @@
         ],
         "symbols": [
           {
-            "path": "internal/cmd/planexecute/plan_execute.go",
+            "path": "internal/surfaces/cli/planexecute/plan_execute.go",
             "name": "RunMainWithTelemetry",
             "kind": "func"
           },
           {
-            "path": "internal/cmd/planexecute/plan_execute.go",
+            "path": "internal/surfaces/cli/planexecute/plan_execute.go",
             "name": "findLatestPlanArtifact",
             "kind": "func"
           },
           {
-            "path": "internal/workspace/submit_plan.go",
+            "path": "internal/capabilities/workspace/submit_plan.go",
             "name": "submitPlan",
             "kind": "method"
           },
           {
-            "path": "internal/workspace/submit_plan.go",
+            "path": "internal/capabilities/workspace/submit_plan.go",
             "name": "LoadPlanArtifact",
             "kind": "func"
           },
           {
-            "path": "internal/app/plan_autodoc.go",
+            "path": "internal/surfaces/tui/app/plan_autodoc.go",
             "name": "recordTaskLedger",
             "kind": "method"
           }
         ],
         "tests": [
           {
-            "path": "internal/cmd/planexecute/plan_execute_test.go",
+            "path": "internal/surfaces/cli/planexecute/plan_execute_test.go",
             "name": "TestRunPlanExecuteMainUsesSharedExistingFilePlannerTokenBudget"
           },
           {
-            "path": "internal/cmd/planexecute/plan_execute_test.go",
+            "path": "internal/surfaces/cli/planexecute/plan_execute_test.go",
             "name": "TestFindLatestPlanArtifactReturnsMostRecent"
           },
           {
-            "path": "internal/workspace/submit_plan_test.go",
+            "path": "internal/capabilities/workspace/submit_plan_test.go",
             "name": "TestSubmitPlanPersistsPackIDForExecutorRehydration"
           },
           {
-            "path": "internal/app/plan_autodoc_ledger_test.go",
+            "path": "internal/surfaces/tui/app/plan_autodoc_ledger_test.go",
             "name": "TestRecordTaskLedgerAppendsPlannedItems"
           }
         ]

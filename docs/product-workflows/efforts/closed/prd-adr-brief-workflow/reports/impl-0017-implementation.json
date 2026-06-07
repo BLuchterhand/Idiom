@@ -10,8 +10,8 @@
   "scope_statement": "Product workflow lint/audit integration for implementation ledger changed-path scope gate findings.",
   "code_changes": true,
   "changed_paths": [
-    "cmd/idiom/product_workflow.go",
-    "cmd/idiom/product_workflow_test.go",
+    "internal/surfaces/cli/product/product_workflow.go",
+    "internal/surfaces/cli/product/product_workflow_test.go",
     "docs/product-workflows/efforts/index.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
@@ -25,8 +25,8 @@
   "verification": {
     "run_by_implementor": false,
     "commands": [
-      "gofmt -w cmd/idiom/product_workflow.go cmd/idiom/product_workflow_test.go",
-      "go test ./cmd/idiom ./internal/productworkflow",
+      "gofmt -w internal/surfaces/cli/product/product_workflow.go internal/surfaces/cli/product/product_workflow_test.go",
+      "go test ./internal/surfaces/cli/product ./internal/workflows/productworkflow",
       "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",

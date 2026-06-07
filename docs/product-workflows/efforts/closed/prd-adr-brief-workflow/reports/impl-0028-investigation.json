@@ -7,11 +7,11 @@
   "completed_at": "2026-05-18T14:25:00Z",
   "scope": {
     "changed_paths": [
-      "cmd/idiom/product_workflow.go",
-      "cmd/idiom/product_workflow_test.go",
-      "internal/productworkflow/brief_generation.go",
-      "internal/productworkflow/brief_generation_test.go",
-      "internal/productworkflow/types.go"
+      "internal/surfaces/cli/product/product_workflow.go",
+      "internal/surfaces/cli/product/product_workflow_test.go",
+      "internal/workflows/productworkflow/brief_generation.go",
+      "internal/workflows/productworkflow/brief_generation_test.go",
+      "internal/workflows/productworkflow/types.go"
     ],
     "forbidden_paths_touched": [],
     "generated_brief_body_stored_in_durable_reports": false,
@@ -21,10 +21,10 @@
     "status": "passed",
     "commands": [
       "idiom tool context_pack --input {\"task\":\"phase 4 brief generation from accepted PRD ADR TDD coverage gate product workflow\",\"mode\":\"plan\",\"limit\":8}",
-      "go test ./internal/productworkflow -run TestBriefGeneration -count=1",
-      "go test ./cmd/idiom -run TestProductBriefRender -count=1",
+      "go test ./internal/workflows/productworkflow -run TestBriefGeneration -count=1",
+      "go test ./internal/surfaces/cli/product -run TestProductBriefRender -count=1",
       "go run ./cmd/idiom product brief --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --render --json",
-      "go test ./internal/productworkflow ./cmd/idiom",
+      "go test ./internal/workflows/productworkflow ./cmd/idiom",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go test ./...",

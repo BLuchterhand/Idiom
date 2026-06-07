@@ -27,29 +27,29 @@ concentrated in a few change magnets:
 - `cmd` and `internal` contain 716 Go files.
 - Non-test Go code under `cmd` and `internal` is about 223k lines; tests are
   about 171k lines.
-- `internal/agent/runner.go` is about 22.8k lines. Its `Runner.Run` method is
+- `internal/runtime/agent/runner.go` is about 22.8k lines. Its `Runner.Run` method is
   over 3k lines.
-- `internal/agent/runner_test.go` and
-  `internal/agent/runner_plan_then_execute_guard_test.go` together exceed 34k
+- `internal/runtime/agent/runner_test.go` and
+  `internal/runtime/agent/runner_plan_then_execute_guard_test.go` together exceed 34k
   lines.
-- `internal/workspace/manager.go` is over 6k lines and still owns parsing,
+- `internal/capabilities/workspace/manager.go` is over 6k lines and still owns parsing,
   repair, dispatch, file IO, shell, semantic tools, recovery tools, product
   tools, and path suggestions.
-- `internal/app/implementation_dispatch.go` is over 5k lines and mixes prompt
+- `internal/surfaces/tui/app/implementation_dispatch.go` is over 5k lines and mixes prompt
   composition, plan-document materialization, dispatch, retries, and recovery.
-- The last 30 days of git history show `internal/agent/runner.go` alone with
-  roughly 54k changed lines. `internal/workspace/manager.go`,
-  `internal/app/implementation_dispatch.go`, `internal/planexecute/helpers.go`,
+- The last 30 days of git history show `internal/runtime/agent/runner.go` alone with
+  roughly 54k changed lines. `internal/capabilities/workspace/manager.go`,
+  `internal/surfaces/tui/app/implementation_dispatch.go`, `internal/workflows/planexecute/helpers.go`,
   and the runner tests are also high-churn.
 
 The strongest architecture smell is not simply file size. The smell is
 duplicated authority:
 
-- `internal/autonomy.AutonomyContract`
-- `internal/frontier/workerruntime.WorkerRuntimeBrief`
-- `internal/agent.TurnPhaseContract`
-- `internal/planexecute.PlanScopeContract`
-- `internal/app.routeContractProjection`
+- `internal/contracts/autonomy.AutonomyContract`
+- `internal/runtime/workerruntime.WorkerRuntimeBrief`
+- `internal/runtime/agent.TurnPhaseContract`
+- `internal/workflows/planexecute.PlanScopeContract`
+- `internal/surfaces/tui/app.routeContractProjection`
 - prompt files and embedded lane assets
 - runner gates and recovery nudges
 - workspace tool profiles and tool schemas
@@ -107,15 +107,15 @@ flowchart TD
 
 | Area | Target package | Owns | Must not own |
 | --- | --- | --- | --- |
-| Contract domain | `internal/autonomy` | contracts, path roles, obligations, action classes, policy decisions, evidence refs | model calls, IO, shell, CLI/TUI |
-| Contract compilation | `internal/contractcompile` | plain input to immutable contract, runtime envelope, protocol projection | runner loop, workspace execution |
+| Contract domain | `internal/contracts/autonomy` | contracts, path roles, obligations, action classes, policy decisions, evidence refs | model calls, IO, shell, CLI/TUI |
+| Contract compilation | `internal/contracts/contractcompile` | plain input to immutable contract, runtime envelope, protocol projection | runner loop, workspace execution |
 | Runtime loop | `internal/runtime` | model-turn lifecycle, action normalization, policy calls, event emission | lane semantics, path authority, prompt prose |
 | Workflow use cases | `internal/workflows` | implement, plan-execute, artifact, recovery, product workflow orchestration | TUI state, CLI flag parsing, raw tool adapters |
 | Capabilities | `internal/capabilities` | stable capability ids, request/result contracts, adapter selection | concrete language parsing or shell execution |
-| Workspace adapters | `internal/workspace`, `internal/semantic`, `internal/mcp`, `internal/backends` | concrete file, shell, graph, LSP, MCP, backend operations | lane semantics, completion policy |
+| Workspace adapters | `internal/capabilities/workspace`, `internal/repository/semantic`, `internal/capabilities/mcp`, `internal/runtime/backends` | concrete file, shell, graph, LSP, MCP, backend operations | lane semantics, completion policy |
 | Presenters | `internal/presenters` | prompt/runtime/recovery/final-answer views from contract projections | authority, validation, state transitions |
-| Surfaces | `internal/cmd/*`, `internal/app` | input translation and output rendering | workflow policy, prompt parsing as authority |
-| Audit/eval | `internal/autonomy`, `internal/eval`, later focused packages | replay and scoring from structured contract events | transcript-only reconstruction |
+| Surfaces | `internal/cmd/*`, `internal/surfaces/tui/app` | input translation and output rendering | workflow policy, prompt parsing as authority |
+| Audit/eval | `internal/contracts/autonomy`, `internal/evidence/eval`, later focused packages | replay and scoring from structured contract events | transcript-only reconstruction |
 
 These target packages are migration labels. Introduce one only when the same
 patch routes production callers through it and deletes or materially shrinks the
@@ -125,7 +125,7 @@ active old owner. Do not create pass-through packages.
 
 ### 1. Contract Authority
 
-Canonical owner: `internal/autonomy` plus `internal/contractcompile`.
+Canonical owner: `internal/contracts/autonomy` plus `internal/contracts/contractcompile`.
 
 Current overlapping surfaces must become contract inputs or projections:
 
@@ -143,7 +143,7 @@ protocol hash for a covered lane.
 
 ### 2. Obligation Ledger
 
-Canonical owner: `internal/autonomy`.
+Canonical owner: `internal/contracts/autonomy`.
 
 The ledger must track:
 
@@ -212,7 +212,7 @@ semantics, or format recovery prose directly.
 
 ### 5. Workspace Tool Surface
 
-Canonical owner: adapter registry under `internal/workspace`.
+Canonical owner: adapter registry under `internal/capabilities/workspace`.
 
 `workspace.Manager` should become a registry and compatibility facade. Tool
 request parsing, Qwen/legacy repair, dispatch, file IO, shell execution,
@@ -283,7 +283,7 @@ artifacts.
 
 Deliverables:
 
-- Shared path-role resolver in `internal/autonomy`.
+- Shared path-role resolver in `internal/contracts/autonomy`.
 - Required edit coverage and source-body evidence represented as obligations.
 - Canonical candidate-scope and blocker-state fields, not inferred from
   transcript text or generic obligation labels.
@@ -328,7 +328,7 @@ Deliverables:
 
 - `internal/runtime.TurnEngine` shadow-runs selected lanes and compares emitted
   decisions with the legacy runner.
-- Policy and ledger decisions move out of `internal/agent/runner.go`.
+- Policy and ledger decisions move out of `internal/runtime/agent/runner.go`.
 - Final-answer acceptance, recovery, and verification gates consume typed
   decisions instead of transcript-string heuristics.
 
@@ -346,7 +346,7 @@ Deliverables:
 
 - `internal/workflows/planexecute`, `internal/workflows/implement`,
   `internal/workflows/artifact`, and `internal/workflows/recovery`.
-- `internal/app/implementation_dispatch.go` becomes a presenter/controller or
+- `internal/surfaces/tui/app/implementation_dispatch.go` becomes a presenter/controller or
   is deleted.
 - CLI command packages contain parsing, config loading, and rendering only.
 
@@ -451,7 +451,7 @@ Do not edit runtime behavior.
 
 ### Effort B: Active Capability Consolidation
 
-Owner: current capability resolver files under `internal/workspace`; a new
+Owner: current capability resolver files under `internal/capabilities/workspace`; a new
 `internal/capabilities` package is allowed only if the same patch routes
 production callers through it and deletes/shrinks the old workspace owner.
 
@@ -467,7 +467,7 @@ Do not land a package that is only exercised by tests.
 
 ### Effort C: Active Obligation Ledger Migration
 
-Owner: `internal/autonomy`.
+Owner: `internal/contracts/autonomy`.
 
 Scope:
 
@@ -505,11 +505,11 @@ These reductions are active production changes, not proposed package shells:
 - Supplemental language compatibility tools now live in one active descriptor
   source used by manifest projection, language-tool detection, evidence
   capability metadata, and schema-policy classification.
-- `internal/workspace/tool_manifest.go`, `tool_class.go`, `manager.go`,
+- `internal/capabilities/workspace/tool_manifest.go`, `tool_class.go`, `manager.go`,
   `capabilities.go`, `tool_schema_export.go`, and
   `tool_profile_policy.go` no longer own parallel built-in tool fact tables for
   the migrated fields.
-- `internal/frontier/workerruntime/catalog.go` now composes shared
+- `internal/runtime/workerruntime/catalog.go` now composes shared
   source-inspection, context-discovery, history, and write groups instead of
   repeating the same names in every capability profile.
 - Speculative target-package shells were removed. Future target packages must
@@ -517,7 +517,7 @@ These reductions are active production changes, not proposed package shells:
 
 Remaining intentional duplicate surface:
 
-- `internal/workspace/tool_schemas.go` and the language manifest examples still
+- `internal/capabilities/workspace/tool_schemas.go` and the language manifest examples still
   hand-author descriptions and JSON schemas. They are guarded by manifest/schema
   drift tests and should be migrated only with a schema-descriptor generator
   that preserves the tuned per-tool wording.
@@ -533,11 +533,11 @@ characterization tests before rewiring.
 
 Current shape:
 
-- `internal/workspace/tool_manifest.go` owns built-in tool inventory and
+- `internal/capabilities/workspace/tool_manifest.go` owns built-in tool inventory and
   manifest option flags.
-- `internal/workspace/tool_profile_policy.go` owns profile admission and
+- `internal/capabilities/workspace/tool_profile_policy.go` owns profile admission and
   request-level side-effect restrictions.
-- `internal/frontier/workerruntime/catalog.go` owns task-family capability
+- `internal/runtime/workerruntime/catalog.go` owns task-family capability
   profiles and a second tool filtering layer.
 - CLI, MCP, runtime brief generation, unsupported-tool suggestions, and audit
   each consume overlapping projections of the same tool surface.
@@ -581,14 +581,14 @@ Acceptance:
 
 Current shape:
 
-- `internal/agent/completion_gate.go` registers ordered checks around
+- `internal/runtime/agent/completion_gate.go` registers ordered checks around
   `workspace.ToolResult`.
-- `internal/agent/final_answer_acceptance.go` independently evaluates
+- `internal/runtime/agent/final_answer_acceptance.go` independently evaluates
   acceptance, required paths, objective relevance, source grounding, and
   required evidence.
-- `internal/agent/final_answer_decorator.go` rewrites accepted answers into
+- `internal/runtime/agent/final_answer_decorator.go` rewrites accepted answers into
   blockers, composed evidence answers, or conversation fallbacks.
-- `internal/answergrounding` has a separate evidence/claim grounding model that
+- `internal/evidence/answergrounding` has a separate evidence/claim grounding model that
   overlaps with agent-local source-body and relevance logic.
 
 Problem:
@@ -611,7 +611,7 @@ Migration:
 2. Define `AnswerPolicyDecision`: accept/reject, blocker, required next action,
    evidence refs, user-facing answer, and audit facts.
 3. Move source grounding and objective relevance behind one evidence ledger
-   adapter, reusing `internal/answergrounding` rather than maintaining
+   adapter, reusing `internal/evidence/answergrounding` rather than maintaining
    agent-local variants.
 4. Convert completion gate checks into named policy rules that return typed
    reasons, not `workspace.ToolResult` as the primary domain object.
@@ -623,19 +623,19 @@ Acceptance:
 - The same evidence fact cannot be accepted by the gate and rejected by the
   decorator.
 - Tests cover rule ordering and presentation separately.
-- `internal/agent` no longer owns source-body relevance heuristics.
+- `internal/runtime/agent` no longer owns source-body relevance heuristics.
 
 ### Effort G: Source Evidence Ledger
 
 Current shape:
 
-- `internal/agent/source_evidence_state.go` tracks pending source-body
+- `internal/runtime/agent/source_evidence_state.go` tracks pending source-body
   redirects and allowed follow-ups.
-- `internal/agent/read_only_answerability.go` separately classifies answerable
+- `internal/runtime/agent/read_only_answerability.go` separately classifies answerable
   read-only evidence.
-- `internal/agent/read_only_evidence_packet.go` transports source-body paths
+- `internal/runtime/agent/read_only_evidence_packet.go` transports source-body paths
   from delegated packets.
-- `internal/answergrounding` models evidence kinds such as `source_body`,
+- `internal/evidence/answergrounding` models evidence kinds such as `source_body`,
   `symbol_body`, `path_seen`, and `packet`.
 - Plan-execute required-source logic has its own evidence levels and path
   coverage checks.
@@ -650,7 +650,7 @@ add another guard in agent code.
 Target owner:
 
 - current autonomy/grounding evidence models first, using
-  `internal/answergrounding` evidence kinds as the domain vocabulary;
+  `internal/evidence/answergrounding` evidence kinds as the domain vocabulary;
 - future `internal/evidenceledger` only if the same effort replaces active
   ledger/grounding ownership.
 
@@ -678,13 +678,13 @@ Acceptance:
 
 Current shape:
 
-- `internal/productworkflow.WorkflowState` carries product phase, state,
+- `internal/workflows/productworkflow.WorkflowState` carries product phase, state,
   coverage, obligations, blockers, context, privacy, and next actions.
-- `internal/featureplanner.FeatureState` carries planning/dispatch atom state
+- `internal/workflows/featureplanner.FeatureState` carries planning/dispatch atom state
   and derives its own next valid actions.
-- `internal/planexecute.ProgressState` carries plan-execute phase progress and
+- `internal/workflows/planexecute.ProgressState` carries plan-execute phase progress and
   review state.
-- `internal/app/feature_planner_product.go` orchestrates PRD, ADR, TDD,
+- `internal/surfaces/tui/app/feature_planner_product.go` orchestrates PRD, ADR, TDD,
   featureplanner, and persistence directly.
 
 Problem:
@@ -726,7 +726,7 @@ Acceptance:
 
 Current shape:
 
-- `internal/agent/runner.go` is the largest production file and still owns
+- `internal/runtime/agent/runner.go` is the largest production file and still owns
   request parsing, runtime calls, tool execution loop, completion handling,
   recovery, apply-patch preflight, and many lane-specific escape paths.
 - Several newer files already extract policies, but `Runner` still mediates
@@ -741,9 +741,10 @@ will keep reducing symptoms while churn returns to the same file.
 Target owner split:
 
 - current runner-owned turn/answer/recovery decisioning first;
-- future `internal/turnengine`, `internal/toolcalls`, `internal/recovery`,
-  `internal/answerpolicy`, and `internal/runneradapter` only if the same effort
-  replaces active runner-owned behavior.
+- future `internal/runtime/turnengine`, `internal/runtime/toolcalls`,
+  `internal/workflows/recovery`, `internal/runtime/answerpolicy`, and
+  `internal/runtime/runneradapter` only if the same effort replaces active
+  runner-owned behavior.
 
 Migration:
 
@@ -796,22 +797,22 @@ Rules:
 
 | ID | System | Current split and drift risk | Target owner | First implementation slice | Dependencies | Review and verification gate | Status |
 |----|--------|------------------------------|--------------|----------------------------|--------------|------------------------------|--------|
-| WS-00 | Contract active authority | The migration already requires every gate, tool execution, and final-answer decision to cite `contract.active_authority`, but that owner is implicit across the later rows. Drift appears when implementors migrate local gates without one immutable contract id/protocol hash to anchor them. | `internal/autonomy` plus `internal/contractcompile` own immutable contracts, policy vocabulary, path roles, obligations, action classes, evidence refs, and protocol projection inputs. | Add a characterization or helper around one active contractcompile/autonomy boundary proving the contract id/protocol projection is available to one runtime caller; do not create a pass-through package. | None. WS-03, WS-06, WS-07, WS-08, WS-14, and WS-15 consume this owner. | Focused autonomy/contractcompile tests plus affected caller tests; reviewer checks the patch removes or shrinks one local authority source instead of only adding labels. Shared runtime changes also require `go test ./...` or a recorded exception. | implemented/reviewed |
-| WS-01 | CLI and lanes | Plan-execute orchestration is split between `internal/cmd/planexecute`, `internal/planexecute`, lane commands, implement queueing, writer-route helpers, and app status parsing. Drift appears as duplicate queue admission, prose-parsed lane state, and terminal status vocabulary repeated across CLI, app, and docs. | `internal/planexecute` owns orchestration; CLI/lane packages become adapters over typed status and queue decisions. | Replace one prose or duplicate decision path with a typed plan-execute result consumed by one CLI or lane caller; delete the older local interpretation. | WS-06 for handoff vocabulary if the slice touches `submit_plan`; WS-03 if it changes runtime brief generation. | Focused tests for `internal/cmd/planexecute`, `internal/planexecute`, `internal/cmd/lane`, and affected queue package; reviewer must confirm old CLI semantics are preserved and one duplicate branch is removed. | implemented/reviewed |
-| WS-02 | TUI session and implementation dispatch | `internal/app` owns route policy, runtime contract text, product phase orchestration, feature-planner dispatch, plan-execute child status interpretation, and resume behavior. Drift appears as UI-local workflow state and prose-derived terminal status. | App calls application services; routing, implementation dispatch, and workflow reducers own decisions outside the TUI. | Extract one typed implementation-dispatch result or workflow transition behind an app-facing service, then convert one app path to consume it. | WS-01 for typed plan-execute terminal status; WS-11 for product handoff state. | TUI-facing tests or focused package tests proving the same user-visible state without prose parsing; reviewer checks UI code stopped mutating the extracted domain field directly. | cataloged |
+| WS-00 | Contract active authority | The migration already requires every gate, tool execution, and final-answer decision to cite `contract.active_authority`, but that owner is implicit across the later rows. Drift appears when implementors migrate local gates without one immutable contract id/protocol hash to anchor them. | `internal/contracts/autonomy` plus `internal/contracts/contractcompile` own immutable contracts, policy vocabulary, path roles, obligations, action classes, evidence refs, and protocol projection inputs. | Add a characterization or helper around one active contractcompile/autonomy boundary proving the contract id/protocol projection is available to one runtime caller; do not create a pass-through package. | None. WS-03, WS-06, WS-07, WS-08, WS-14, and WS-15 consume this owner. | Focused autonomy/contractcompile tests plus affected caller tests; reviewer checks the patch removes or shrinks one local authority source instead of only adding labels. Shared runtime changes also require `go test ./...` or a recorded exception. | implemented/reviewed |
+| WS-01 | CLI and lanes | Plan-execute orchestration is split between `internal/cmd/planexecute`, `internal/workflows/planexecute`, lane commands, implement queueing, writer-route helpers, and app status parsing. Drift appears as duplicate queue admission, prose-parsed lane state, and terminal status vocabulary repeated across CLI, app, and docs. | `internal/workflows/planexecute` owns orchestration; CLI/lane packages become adapters over typed status and queue decisions. | Replace one prose or duplicate decision path with a typed plan-execute result consumed by one CLI or lane caller; delete the older local interpretation. | WS-06 for handoff vocabulary if the slice touches `submit_plan`; WS-03 if it changes runtime brief generation. | Focused tests for `internal/cmd/planexecute`, `internal/workflows/planexecute`, `internal/cmd/lane`, and affected queue package; reviewer must confirm old CLI semantics are preserved and one duplicate branch is removed. | implemented/reviewed |
+| WS-02 | TUI session and implementation dispatch | `internal/surfaces/tui/app` owns route policy, runtime contract text, product phase orchestration, feature-planner dispatch, plan-execute child status interpretation, and resume behavior. Drift appears as UI-local workflow state and prose-derived terminal status. | App calls application services; routing, implementation dispatch, and workflow reducers own decisions outside the TUI. | Extract one typed implementation-dispatch result or workflow transition behind an app-facing service, then convert one app path to consume it. | WS-01 for typed plan-execute terminal status; WS-11 for product handoff state. | TUI-facing tests or focused package tests proving the same user-visible state without prose parsing; reviewer checks UI code stopped mutating the extracted domain field directly. | cataloged |
 | WS-03 | Runner turn contracts | Static prompts, `AutonomyContract`, `TurnPhaseContract`, `WorkerRuntimeBrief`, plan-execute planning state, hidden-tool policy, final-answer acceptance, recovery nudges, and telemetry all project overlapping turn protocol. Drift appears when the model sees one protocol while gates enforce another. | One per-call `TurnContractDecision` projects phase, terminal outcomes, tool visibility, chat options, readiness, final-answer criteria, recovery text, and telemetry facts from WS-00. | Introduce the decision shape at the current owner boundary and route one active model-call path through it without changing behavior; delete the corresponding duplicated projection. | WS-00 for active authority, WS-07 for completion criteria, WS-08 for telemetry event projection, WS-14 for obligation/evidence refs if included, and WS-15 for presenter output. | Unit tests comparing generated brief/tool visibility/gate expectations for at least one phase plus `go test ./...` unless the change is contractcompile-only; reviewer checks no new lane-specific prompt branch was added. | cataloged |
-| WS-04 | Workspace tool surface | Tool names, schemas, side effects, profiles, categories, suggestions, MCP export, stale-context metadata, language compatibility, and worker-runtime allowlists have been split across workspace, MCP, worker runtime, autonomy, and docs. Some descriptor consolidation is already implemented. | `internal/workspace` tool-surface registry descriptors own built-in tool facts and projections; consumers request views instead of carrying tables. | Finish one remaining descriptor-backed projection, such as schema/profile/error-class/export metadata, then delete the old table or hard-coded set. | None for descriptor work; WS-10 if the projection is MCP-facing. | Parity tests for registry projection against old behavior; reviewer confirms adding a tool would not require editing the deleted consumer table. | implemented/reviewed |
-| WS-05 | Repository memory and context graph | Language facts, freshness, pack/query/impact projections, graph-view cache keys, runtime traces, referenced-path invalidation, and path filtering are split across comprehension, semantic, discovery, workspace tools, docs, and cache validation. Drift appears as stale or inconsistent context authority. | `internal/comprehension` owns graph freshness, packs, queries, impact, cache, and runtime trace invalidation; `internal/semantic/language` owns language facts; discovery normalizes scope. | Move one workspace context tool projection to consume a comprehension-owned typed result instead of reconstructing ranking, freshness, or impact locally. | WS-07 if evidence receipts are needed by acceptance gates. | Focused context tool tests plus `harness_audit` or context freshness coverage when touched; reviewer checks workspace became an adapter rather than a second graph owner. | cataloged |
-| WS-06 | Planning and handoff contracts | Required edit path policy, source-satisfied handling, `submit_plan` semantics, pack id transfer, edit-entry vocabulary, and CLI/in-process plan-execute types are duplicated across `plancontract`, `planexecute`, `cmd/planexecute`, agent gates, lane orchestration, and architect audit. | `internal/plancontract` owns pure planning and handoff contracts; `internal/planexecute` is the use case; CLI and agent gates consume shared predicates. | Define or adopt one typed planning terminal outcome or pack reference and convert one CLI or gate path to it; remove prompt-string scraping or duplicate local structs. | WS-01 for CLI migration. | Tests for plan artifact parsing/gating plus affected CLI adapter; reviewer checks contract package does not import outer-layer packages. | implemented/reviewed |
+| WS-04 | Workspace tool surface | Tool names, schemas, side effects, profiles, categories, suggestions, MCP export, stale-context metadata, language compatibility, and worker-runtime allowlists have been split across workspace, MCP, worker runtime, autonomy, and docs. Some descriptor consolidation is already implemented. | `internal/capabilities/workspace` tool-surface registry descriptors own built-in tool facts and projections; consumers request views instead of carrying tables. | Finish one remaining descriptor-backed projection, such as schema/profile/error-class/export metadata, then delete the old table or hard-coded set. | None for descriptor work; WS-10 if the projection is MCP-facing. | Parity tests for registry projection against old behavior; reviewer confirms adding a tool would not require editing the deleted consumer table. | implemented/reviewed |
+| WS-05 | Repository memory and context graph | Language facts, freshness, pack/query/impact projections, graph-view cache keys, runtime traces, referenced-path invalidation, and path filtering are split across comprehension, semantic, discovery, workspace tools, docs, and cache validation. Drift appears as stale or inconsistent context authority. | `internal/repository/comprehension` owns graph freshness, packs, queries, impact, cache, and runtime trace invalidation; `internal/repository/semantic/language` owns language facts; discovery normalizes scope. | Move one workspace context tool projection to consume a comprehension-owned typed result instead of reconstructing ranking, freshness, or impact locally. | WS-07 if evidence receipts are needed by acceptance gates. | Focused context tool tests plus `harness_audit` or context freshness coverage when touched; reviewer checks workspace became an adapter rather than a second graph owner. | cataloged |
+| WS-06 | Planning and handoff contracts | Required edit path policy, source-satisfied handling, `submit_plan` semantics, pack id transfer, edit-entry vocabulary, and CLI/in-process plan-execute types are duplicated across `plancontract`, `planexecute`, `cmd/planexecute`, agent gates, lane orchestration, and architect audit. | `internal/contracts/plancontract` owns pure planning and handoff contracts; `internal/workflows/planexecute` is the use case; CLI and agent gates consume shared predicates. | Define or adopt one typed planning terminal outcome or pack reference and convert one CLI or gate path to it; remove prompt-string scraping or duplicate local structs. | WS-01 for CLI migration. | Tests for plan artifact parsing/gating plus affected CLI adapter; reviewer checks contract package does not import outer-layer packages. | implemented/reviewed |
 | WS-07 | Verification, readiness, and completion | Runtime launch readiness is separate from task completion readiness, while completion gates, final-answer acceptance, source sanity, read-only answerability, answer grounding, runner verification, and postflight each model proof obligations differently. Drift appears as one layer accepting evidence another layer rejects. | A task completion evaluator owns typed completion decisions; runtime readiness remains separate and named distinctly. Obligation and evidence refs come from WS-14. | Add a pure completion decision input/output around one existing final-answer or source-sanity path, then migrate that path to typed receipts. | WS-00 for contract input, WS-14 for obligation/evidence refs, WS-03 if the runner call path changes. | Rule-ordering tests and at least one regression proving generated context cannot satisfy source-body obligations, plus `go test ./...` for shared gate changes; reviewer checks runtime readiness terminology is not reused. | cataloged |
-| WS-08 | Telemetry, audit, eval, and learning | Telemetry events, autonomy event extraction, eval decoders, harness audit interpretation, feedback categories, ranker learning policy, tool-profile vocabulary, and lane history have separate record vocabularies. Drift appears as audit/eval disagreeing with runtime facts. | Current active owner: `internal/autonomy` event/audit types plus a focused extraction helper in the existing eval/audit consumer packages. A new `internal/observability` package is blocked until it replaces an active consumer in the same patch. | Extract shared event constants/decoder for one autonomy event family and migrate one producer plus one consumer; exclude tool-profile classification unless WS-04 is complete for that projection. | WS-00 if events include contract hashes; WS-04 only if events classify tool profiles. | Producer/consumer round-trip tests and one eval or audit fixture update, plus `go test ./...` for shared event schema changes; reviewer checks no consumer keeps a parallel string decoder. | cataloged |
-| WS-09 | Local model operations | Backend kind, provider policy, role aliases, endpoint readiness, degraded mode, queue health, model metadata, llama config, autodetect, and docs have parallel sources. Drift appears when CLI readiness and runtime routing disagree. | Current first-slice owner: `internal/backends.Profile` role-resolution methods. Future catalog/localmodel extraction is allowed only when a production caller moves and the old owner shrinks in the same patch. | Centralize role alias classification in the active backends profile owner and convert one CLI/localops path to use the typed result; delete the old alias table or wrapper branch. | None if scoped to backend catalog; may affect readiness tests. | Focused tests for alias resolution/readiness plus affected CLI command; reviewer checks transport-specific llama code stays adapter-only. | implemented/reviewed |
-| WS-10 | Sidecar and MCP integration | Inbound MCP protocol structs, outbound MCP client structs, command adapters, schema export, resource metadata, freshness reporting, privacy/redaction, sidecar error classes, tool profiles, and external tool manifests are split across `cmd/mcp`, `internal/mcp`, `cmd/tool`, workspace, telemetry, and docs. Drift appears at integration boundaries and schema/profile exports. | A workspace integration contract owns sidecar envelopes, protocol structs, schema/profile export, resource metadata, freshness report, privacy policy, telemetry attribution, and error classes; CLI/MCP are adapters. | Move one duplicated protocol or error-class definition into the shared integration contract and convert inbound plus outbound callers. | WS-04 for tool-surface projections; WS-08 for telemetry attribution. | MCP/schema export tests plus one adapter test and `go test ./...` unless the change is isolated to a non-shared presenter; reviewer checks no adapter imports a sibling adapter for domain behavior. | implemented/reviewed |
-| WS-11 | Product workflow | PRD/ADR/TDD/research handoff, coverage gates, write scope, next actions, TDD projection, featureplanner handoff, and TUI/lane status are duplicated between productworkflow, featureplanner, `cmd/featureplanner`, and app code. Drift appears when CLI and TUI dispatch different implementation atoms from the same product state. | `internal/productworkflow` owns product handoff, coverage, dispatch semantics, write-scope authority, and neutral DTOs; CLI/TUI/featureplanner call the same use case. | Introduce a neutral implementation handoff DTO from productworkflow and convert either CLI or TUI feature-planner intake to use it. | WS-02 if app orchestration changes. | Productworkflow and featureplanner tests proving CLI/TUI input parity; reviewer checks no regex/prose extraction remains in the converted path. | implemented/reviewed |
-| WS-12 | Recovery and decomposition | Recovery policy, packet lifecycle, promotion status, next valid actions, atom residual matching, answer blockers, live runner recovery cards, and CLI recovery status use overlapping names from separate packages. Drift appears as CLI recovery recommending actions the live runner cannot express. | `internal/recovery` owns typed failure classes, next actions, packet lifecycle, promotion status, status projection, and reconciliation effects; storage/presentation stay adapters. | Move one `next_valid_action` or promotion-status projection into core recovery and convert `recoverstatus` plus `cmd/recover` to consume it. | WS-08 if telemetry records are part of the slice; WS-03 if live runner recovery is renamed. | Recovery fixture tests plus CLI status test; reviewer checks live turn recovery and durable packet recovery are named distinctly. | implemented/reviewed |
-| WS-13 | Capability resolver | Capability ids, evidence capability tags, adapter selection, fallback behavior, language-prefixed compatibility, and result precision/freshness metadata are still partly active inside workspace, semantic language tools, prompts, and audit. Drift appears when the model-facing capability and the executed adapter report different guarantees. | Current active owner: workspace capability resolver files under `internal/workspace`. Future `internal/capabilities` is allowed only when that patch routes production callers through it and removes active workspace ownership. | Consolidate one capability id or evidence tag table into the active workspace resolver and convert one caller to request the shared projection. | WS-04 for descriptor-backed tool facts; WS-05 if context graph freshness participates. | Capability resolver tests plus the converted caller test; reviewer checks no new capability package is introduced without replacing active production callers. | implemented/reviewed |
-| WS-14 | Obligation and evidence ledger | Source-body obligations, required edit path coverage, candidate scope, edit-set obligations, write evidence, verification state, answer grounding, blockers, and loop/budget state are spread across runner booleans, plan-execute guards, answer grounding, postflight, and audit. Drift appears when a path seen or generated artifact is treated as proof by one layer and rejected by another. | `internal/autonomy` owns the obligation ledger vocabulary and lifecycle; evidence receipts use the autonomy/answer-grounding vocabulary until a future package replaces active callers. | Add or reuse one typed obligation/evidence receipt query and convert one existing runner or plan-execute guard from string/boolean inference to that query. | WS-00 for active authority; WS-07 consumes completion decisions from it. | Autonomy lifecycle tests plus the converted guard test and a regression that candidate-path evidence does not satisfy source-body evidence; reviewer checks old inferred booleans are deleted or made adapter-only. | implemented/reviewed |
-| WS-15 | Presenter and docs authority | Runtime briefs, control rails, recovery cards, prompt addenda, final-answer repair prompts, tool summaries, and docs can encode authority independently from the active contract. Drift appears when prompt prose says one thing and gates enforce another. | Current active presenters remain `internal/frontier/workerruntime`, prompt projection helpers, and agent recovery/final-answer presenters. Future `internal/presenters` is allowed only when one active presenter moves and old authority shrinks. | Convert one runtime brief or recovery/final-answer presenter to consume a contract/protocol projection instead of assembling authority text directly. | WS-00 for contract projection; WS-03 if the runner call path changes. | Golden/presenter tests plus affected runner/app tests; reviewer checks prompt assets remain explanatory and do not introduce new authority. | implemented/reviewed |
+| WS-08 | Telemetry, audit, eval, and learning | Telemetry events, autonomy event extraction, eval decoders, harness audit interpretation, feedback categories, ranker learning policy, tool-profile vocabulary, and lane history have separate record vocabularies. Drift appears as audit/eval disagreeing with runtime facts. | Current active owner: `internal/contracts/autonomy` event/audit types plus a focused extraction helper in the existing eval/audit consumer packages. A new `internal/observability` package is blocked until it replaces an active consumer in the same patch. | Extract shared event constants/decoder for one autonomy event family and migrate one producer plus one consumer; exclude tool-profile classification unless WS-04 is complete for that projection. | WS-00 if events include contract hashes; WS-04 only if events classify tool profiles. | Producer/consumer round-trip tests and one eval or audit fixture update, plus `go test ./...` for shared event schema changes; reviewer checks no consumer keeps a parallel string decoder. | cataloged |
+| WS-09 | Local model operations | Backend kind, provider policy, role aliases, endpoint readiness, degraded mode, queue health, model metadata, llama config, autodetect, and docs have parallel sources. Drift appears when CLI readiness and runtime routing disagree. | Current first-slice owner: `internal/runtime/backends.Profile` role-resolution methods. Future catalog/localmodel extraction is allowed only when a production caller moves and the old owner shrinks in the same patch. | Centralize role alias classification in the active backends profile owner and convert one CLI/localops path to use the typed result; delete the old alias table or wrapper branch. | None if scoped to backend catalog; may affect readiness tests. | Focused tests for alias resolution/readiness plus affected CLI command; reviewer checks transport-specific llama code stays adapter-only. | implemented/reviewed |
+| WS-10 | Sidecar and MCP integration | Inbound MCP protocol structs, outbound MCP client structs, command adapters, schema export, resource metadata, freshness reporting, privacy/redaction, sidecar error classes, tool profiles, and external tool manifests are split across `cmd/mcp`, `internal/capabilities/mcp`, `cmd/tool`, workspace, telemetry, and docs. Drift appears at integration boundaries and schema/profile exports. | A workspace integration contract owns sidecar envelopes, protocol structs, schema/profile export, resource metadata, freshness report, privacy policy, telemetry attribution, and error classes; CLI/MCP are adapters. | Move one duplicated protocol or error-class definition into the shared integration contract and convert inbound plus outbound callers. | WS-04 for tool-surface projections; WS-08 for telemetry attribution. | MCP/schema export tests plus one adapter test and `go test ./...` unless the change is isolated to a non-shared presenter; reviewer checks no adapter imports a sibling adapter for domain behavior. | implemented/reviewed |
+| WS-11 | Product workflow | PRD/ADR/TDD/research handoff, coverage gates, write scope, next actions, TDD projection, featureplanner handoff, and TUI/lane status are duplicated between productworkflow, featureplanner, `cmd/featureplanner`, and app code. Drift appears when CLI and TUI dispatch different implementation atoms from the same product state. | `internal/workflows/productworkflow` owns product handoff, coverage, dispatch semantics, write-scope authority, and neutral DTOs; CLI/TUI/featureplanner call the same use case. | Introduce a neutral implementation handoff DTO from productworkflow and convert either CLI or TUI feature-planner intake to use it. | WS-02 if app orchestration changes. | Productworkflow and featureplanner tests proving CLI/TUI input parity; reviewer checks no regex/prose extraction remains in the converted path. | implemented/reviewed |
+| WS-12 | Recovery and decomposition | Recovery policy, packet lifecycle, promotion status, next valid actions, atom residual matching, answer blockers, live runner recovery cards, and CLI recovery status use overlapping names from separate packages. Drift appears as CLI recovery recommending actions the live runner cannot express. | `internal/workflows/recovery` owns typed failure classes, next actions, packet lifecycle, promotion status, status projection, and reconciliation effects; storage/presentation stay adapters. | Move one `next_valid_action` or promotion-status projection into core recovery and convert `recoverstatus` plus `cmd/recover` to consume it. | WS-08 if telemetry records are part of the slice; WS-03 if live runner recovery is renamed. | Recovery fixture tests plus CLI status test; reviewer checks live turn recovery and durable packet recovery are named distinctly. | implemented/reviewed |
+| WS-13 | Capability resolver | Capability ids, evidence capability tags, adapter selection, fallback behavior, language-prefixed compatibility, and result precision/freshness metadata are still partly active inside workspace, semantic language tools, prompts, and audit. Drift appears when the model-facing capability and the executed adapter report different guarantees. | Current active owner: workspace capability resolver files under `internal/capabilities/workspace`. Future `internal/capabilities` is allowed only when that patch routes production callers through it and removes active workspace ownership. | Consolidate one capability id or evidence tag table into the active workspace resolver and convert one caller to request the shared projection. | WS-04 for descriptor-backed tool facts; WS-05 if context graph freshness participates. | Capability resolver tests plus the converted caller test; reviewer checks no new capability package is introduced without replacing active production callers. | implemented/reviewed |
+| WS-14 | Obligation and evidence ledger | Source-body obligations, required edit path coverage, candidate scope, edit-set obligations, write evidence, verification state, answer grounding, blockers, and loop/budget state are spread across runner booleans, plan-execute guards, answer grounding, postflight, and audit. Drift appears when a path seen or generated artifact is treated as proof by one layer and rejected by another. | `internal/contracts/autonomy` owns the obligation ledger vocabulary and lifecycle; evidence receipts use the autonomy/answer-grounding vocabulary until a future package replaces active callers. | Add or reuse one typed obligation/evidence receipt query and convert one existing runner or plan-execute guard from string/boolean inference to that query. | WS-00 for active authority; WS-07 consumes completion decisions from it. | Autonomy lifecycle tests plus the converted guard test and a regression that candidate-path evidence does not satisfy source-body evidence; reviewer checks old inferred booleans are deleted or made adapter-only. | implemented/reviewed |
+| WS-15 | Presenter and docs authority | Runtime briefs, control rails, recovery cards, prompt addenda, final-answer repair prompts, tool summaries, and docs can encode authority independently from the active contract. Drift appears when prompt prose says one thing and gates enforce another. | Current active presenters remain `internal/runtime/workerruntime`, prompt projection helpers, and agent recovery/final-answer presenters. Future `internal/presenters` is allowed only when one active presenter moves and old authority shrinks. | Convert one runtime brief or recovery/final-answer presenter to consume a contract/protocol projection instead of assembling authority text directly. | WS-00 for contract projection; WS-03 if the runner call path changes. | Golden/presenter tests plus affected runner/app tests; reviewer checks prompt assets remain explanatory and do not introduce new authority. | implemented/reviewed |
 
 ### Parallelization Plan
 
@@ -824,8 +825,8 @@ Wave 1 can run in parallel only with these scoped dispatch specs:
 - WS-09 local model operations catalog. Allowed scope: backend catalog, local
   model readiness, and one CLI/localops adapter. Excludes runner routing and
   telemetry.
-- WS-12 recovery status projection. Allowed scope: `internal/recovery`,
-  `internal/recoverstatus`, and `internal/cmd/recover`. Excludes live runner
+- WS-12 recovery status projection. Allowed scope: `internal/workflows/recovery`,
+  `internal/workflows/recoverstatus`, and `internal/cmd/recover`. Excludes live runner
   recovery and telemetry.
 - WS-04 workspace tool-surface registry projection only if the chosen slice
   excludes MCP/schema export and telemetry classification. Excludes WS-10 and
@@ -865,12 +866,12 @@ the row status can move to `ready` and implementation workers can start.
 - Implementor: `worker-ws09-a`.
 - Reviewer: `reviewer-ws09-a`.
 - Status: `verified`; implementation and post-fix review accepted.
-- Changed authority owner: `internal/backends.Profile` role-resolution methods
+- Changed authority owner: `internal/runtime/backends.Profile` role-resolution methods
   remain the active owner for this slice.
-- Allowed write scope: `internal/backends/backends.go`,
-  `internal/backends/*test.go`, one adapter under `internal/cmd/route`,
-  `internal/cmd/lane`, `internal/readiness`, `internal/cmd/backend`, or
-  `internal/localops`.
+- Allowed write scope: `internal/runtime/backends/backends.go`,
+  `internal/runtime/backends/*test.go`, one adapter under `internal/cmd/route`,
+  `internal/cmd/lane`, `internal/runtime/readiness`, `internal/cmd/backend`, or
+  `internal/runtime/localops`.
 - Explicit exclusions: no runner routing changes, no telemetry schema changes,
   no llama transport changes, and no queue admission changes.
 - First caller/table to migrate: replace the legacy executor-only
@@ -879,7 +880,7 @@ the row status can move to `ready` and implementation workers can start.
   around a typed role-resolution result.
 - Old authority to remove or shrink: duplicate legacy coder alias lookup that
   differs from `AliasForRole(RoleExecutor)`.
-- Tests: `go test ./internal/backends ./internal/cmd/backend ./internal/readiness`
+- Tests: `go test ./internal/runtime/backends ./internal/cmd/backend ./internal/runtime/readiness`
   plus any converted adapter package.
 - Residual compatibility code: `CoderAlias` may remain only as a wrapper for
   callers that still need the legacy no-lone-model behavior; the deletion
@@ -887,8 +888,8 @@ the row status can move to `ready` and implementation workers can start.
 - Implementation record:
   - Implementor: `worker-ws09-a`.
   - Reviewer: `reviewer-ws09-a` plus final consolidated review.
-  - Files changed: `internal/backends/backends.go`,
-    `internal/backends/backends_test.go`, `internal/backends/launcher_test.go`,
+  - Files changed: `internal/runtime/backends/backends.go`,
+    `internal/runtime/backends/backends_test.go`, `internal/runtime/backends/launcher_test.go`,
     `internal/cmd/backend/backend.go`, `internal/cmd/backend/backend_test.go`.
   - Authority moved: `Profile.ResolveRoleAlias` is the active typed role-alias
     resolver; `AliasForRole` delegates to it; `CoderAlias` is compatibility
@@ -896,8 +897,8 @@ the row status can move to `ready` and implementation workers can start.
   - Drift removed: production `backend list` no longer calls `CoderAlias`
     directly, but preserves the legacy `coder_alias="..."` output contract.
   - Review result: changes requested for CLI output compatibility, then fixed.
-  - Verification: `go test ./internal/backends ./internal/cmd/backend
-    ./internal/readiness -count=1`.
+  - Verification: `go test ./internal/runtime/backends ./internal/cmd/backend
+    ./internal/runtime/readiness -count=1`.
   - Residual compatibility: `CoderAlias` remains for old callers with
     no-lone-model behavior; delete when downstream compatibility is no longer
     required.
@@ -907,36 +908,36 @@ the row status can move to `ready` and implementation workers can start.
 - Implementor: `worker-ws12-a`.
 - Reviewer: `reviewer-ws12-a`.
 - Status: `verified`; implementation and post-fix review accepted.
-- Changed authority owner: `internal/recovery` status projection.
-- Allowed write scope: `internal/recovery`, `internal/recoverstatus`, and
+- Changed authority owner: `internal/workflows/recovery` status projection.
+- Allowed write scope: `internal/workflows/recovery`, `internal/workflows/recoverstatus`, and
   `internal/cmd/recover`.
 - Explicit exclusions: no live runner recovery cards, no telemetry event schema,
   no product workflow recovery, and no plan-execute executor behavior changes.
 - First caller/table to migrate: move `PacketStatus`, reconciliation-aware packet
-  status, and packet blocker derivation from `internal/recoverstatus/status.go`
-  into a typed recovery projection in `internal/recovery`; make
+  status, and packet blocker derivation from `internal/workflows/recoverstatus/status.go`
+  into a typed recovery projection in `internal/workflows/recovery`; make
   `recoverstatus` format that projection.
 - Old authority to remove or shrink: `recoverstatus` status/blocker decision
   functions become presenter helpers or disappear.
-- Tests: `go test ./internal/recovery ./internal/recoverstatus ./internal/cmd/recover`.
+- Tests: `go test ./internal/workflows/recovery ./internal/workflows/recoverstatus ./internal/cmd/recover`.
 - Residual compatibility code: text formatting can remain in `recoverstatus`;
   the deletion trigger is all status and blocker decisions coming from
-  `internal/recovery`.
+  `internal/workflows/recovery`.
 - Implementation record:
   - Implementor: `worker-ws12-a`.
   - Reviewer: `reviewer-ws12-a` plus final consolidated review.
-  - Files changed: `internal/recovery/status_projection.go`,
-    `internal/recovery/status_projection_test.go`,
-    `internal/recoverstatus/status.go`, `internal/recoverstatus/status_test.go`,
+  - Files changed: `internal/workflows/recovery/status_projection.go`,
+    `internal/workflows/recovery/status_projection_test.go`,
+    `internal/workflows/recoverstatus/status.go`, `internal/workflows/recoverstatus/status_test.go`,
     `internal/cmd/recover/packet.go`.
   - Authority moved: packet status, reconciliation-aware status, remaining
     atom/residual derivation, and blocker derivation now live in
-    `internal/recovery`.
+    `internal/workflows/recovery`.
   - Drift removed: `recoverstatus` formats a recovery projection instead of
     owning status/blocker decisions.
   - Review result: accepted with a caller-level invalid reconciliation test gap;
-    the gap was closed in `internal/recoverstatus/status_test.go`.
-  - Verification: `go test ./internal/recovery ./internal/recoverstatus
+    the gap was closed in `internal/workflows/recoverstatus/status_test.go`.
+  - Verification: `go test ./internal/workflows/recovery ./internal/workflows/recoverstatus
     ./internal/cmd/recover -count=1`.
   - Residual compatibility: `recoverstatus.Report` keeps text/JSON presentation
     fields; delete only when durable recovery consumers use the recovery
@@ -947,12 +948,12 @@ the row status can move to `ready` and implementation workers can start.
 - Implementor: `worker-ws04-a`.
 - Reviewer: `reviewer-ws04-a`.
 - Status: `verified`; implementation and post-fix review accepted.
-- Changed authority owner: `internal/workspace` tool-surface descriptor
+- Changed authority owner: `internal/capabilities/workspace` tool-surface descriptor
   metadata.
-- Allowed write scope: `internal/workspace/tool_surface_metadata.go`,
-  `internal/workspace/tool_profile_policy.go`, and their focused tests.
+- Allowed write scope: `internal/capabilities/workspace/tool_surface_metadata.go`,
+  `internal/capabilities/workspace/tool_profile_policy.go`, and their focused tests.
 - Explicit exclusions: no MCP command adapter changes, no telemetry event
-  changes, no schema export changes, no `internal/frontier/workerruntime`
+  changes, no schema export changes, no `internal/runtime/workerruntime`
   profile changes, and no semantic language adapter changes.
 - First caller/table to migrate: keep
   `discoveryProfileToolWritesLocalContextArtifacts` as a profile-policy query
@@ -960,15 +961,15 @@ the row status can move to `ready` and implementation workers can start.
   case.
 - Old authority to remove or shrink: any remaining local-artifact write
   classification outside the descriptor metadata.
-- Tests: `go test ./internal/workspace`.
+- Tests: `go test ./internal/capabilities/workspace`.
 - Residual compatibility code: profile-policy helper may remain as a named query
   for readability; the deletion trigger is no separate local-artifact table or
   hard-coded profile classification.
 - Implementation record:
   - Implementor: `worker-ws04-a`.
   - Reviewer: `reviewer-ws04-a` plus final consolidated review.
-  - Files changed: `internal/workspace/tool_surface_metadata.go`,
-    `internal/workspace/tool_profile_policy_test.go`.
+  - Files changed: `internal/capabilities/workspace/tool_surface_metadata.go`,
+    `internal/capabilities/workspace/tool_profile_policy_test.go`.
   - Authority moved: descriptor metadata is the single source for discovery
     local-artifact classification.
   - Drift removed: focused tests no longer carry a profile-local table for
@@ -976,7 +977,7 @@ the row status can move to `ready` and implementation workers can start.
   - Review result: changes requested for an independent oracle, then fixed with
     explicit `context_pack`, `context_impact`, and `discovery_query`
     characterization.
-  - Verification: `go test ./internal/workspace -count=1`.
+  - Verification: `go test ./internal/capabilities/workspace -count=1`.
   - Residual compatibility: `discoveryProfileToolWritesLocalContextArtifacts`
     remains as a readability query; delete only if profile policy no longer
     benefits from the named helper.
@@ -993,17 +994,17 @@ parallel.
 - Reviewer: `reviewer-ws00-a`.
 - Status: `implemented/reviewed`; Wave 2 re-review accepted the corrected
   implementation.
-- Changed authority owner: `internal/autonomy` plus `internal/contractcompile`.
-- Allowed write scope: `internal/contractcompile/types.go`,
-  `internal/contractcompile/compile.go`, focused
-  `internal/contractcompile/*test.go`, `internal/agent/runner_autonomy.go`,
-  `internal/agent/model_protocol_projection.go`, and focused
-  `internal/agent/runner_autonomy_test.go`.
-- Explicit exclusions: no `internal/agent/runner.go` loop rewrites, no
-  `internal/app/**`, no prompt asset edits, no workspace/tool-surface changes,
+- Changed authority owner: `internal/contracts/autonomy` plus `internal/contracts/contractcompile`.
+- Allowed write scope: `internal/contracts/contractcompile/types.go`,
+  `internal/contracts/contractcompile/compile.go`, focused
+  `internal/contracts/contractcompile/*test.go`, `internal/runtime/agent/runner_autonomy.go`,
+  `internal/runtime/agent/model_protocol_projection.go`, and focused
+  `internal/runtime/agent/runner_autonomy_test.go`.
+- Explicit exclusions: no `internal/runtime/agent/runner.go` loop rewrites, no
+  `internal/surfaces/tui/app/**`, no prompt asset edits, no workspace/tool-surface changes,
   no final-answer policy changes, and no new package shell.
 - First caller/table to migrate: `newRunnerAutonomyRecorder` /
-  `buildRunnerAutonomyContract` in `internal/agent/runner_autonomy.go`, using
+  `buildRunnerAutonomyContract` in `internal/runtime/agent/runner_autonomy.go`, using
   `contractcompile.CompileResult` as the first active dispatch-time authority
   value before model dispatch.
 - Slice: introduce a small active authority binding from
@@ -1013,8 +1014,8 @@ parallel.
   contract-presented, model-protocol, and gate events.
 - Old authority to remove or shrink: runner-local contract/protocol id
   selection for the covered plan-execute planner path.
-- Tests: `go test ./internal/contractcompile ./internal/autonomy
-  ./internal/agent -run
+- Tests: `go test ./internal/contracts/contractcompile ./internal/contracts/autonomy
+  ./internal/runtime/agent -run
   'TestCompilePlanExecutePlanner|TestRunnerAutonomy.*Contract|TestRunnerRunEmitsTurnPhaseContractBeforeModelCallAndPolicyEvents'
   -count=1`.
 - Residual compatibility code: legacy non-planner autonomy contract
@@ -1030,25 +1031,25 @@ parallel.
 - Status: `implemented/reviewed`; Wave 2 re-review accepted the corrected
   implementation.
 - Changed authority owner: active workspace capability resolver code under
-  `internal/workspace`.
-- Allowed write scope: `internal/workspace/capabilities.go`,
-  `internal/workspace/tool_surface_metadata.go`,
-  `internal/workspace/capabilities_test.go`, and focused manifest/schema tests
+  `internal/capabilities/workspace`.
+- Allowed write scope: `internal/capabilities/workspace/capabilities.go`,
+  `internal/capabilities/workspace/tool_surface_metadata.go`,
+  `internal/capabilities/workspace/capabilities_test.go`, and focused manifest/schema tests
   if expectations need exact updates.
 - Explicit exclusions: no new `internal/capabilities` package, no
-  `internal/frontier`, no `internal/agent`, no prompts/docs, no context graph
+  `internal/frontier`, no `internal/runtime/agent`, no prompts/docs, no context graph
   freshness work, no `workspace.Manager` dispatch rewiring, and no new
   capability request facade.
 - First caller/table to migrate: move `sharedReadOnlyEvidenceCapabilities` from
-  `internal/workspace/tool_surface_metadata.go` into resolver-owned capability
+  `internal/capabilities/workspace/tool_surface_metadata.go` into resolver-owned capability
   code, expose it as a small projection such as
   `ReadOnlyCapabilityEvidenceCapabilities`, and convert the `code_navigate` and
   `read_only_capability` tool-surface entries to request that projection.
 - Old authority to remove or shrink: shared read-only evidence capability table
   outside the resolver-owned capability code.
-- Tests: `go test ./internal/workspace -run
+- Tests: `go test ./internal/capabilities/workspace -run
   'Test(ReadOnlyCapability|ToolSchemaExport|DiscoveryManifestToolsHaveEvidenceCapabilitiesOrExplicitExclusion)'
-  -count=1`; run full `go test ./internal/workspace` if manifest behavior
+  -count=1`; run full `go test ./internal/capabilities/workspace` if manifest behavior
   changes beyond those entries.
 - Residual compatibility code: tool-surface descriptors still own tool facts;
   deletion trigger is no duplicate evidence capability table outside capability
@@ -1062,24 +1063,24 @@ parallel.
 - Reviewer: `reviewer-ws06-a`.
 - Status: `implemented/reviewed`; Wave 2 re-review accepted the corrected
   implementation.
-- Changed authority owner: `internal/plancontract` owns pure planning scope
+- Changed authority owner: `internal/contracts/plancontract` owns pure planning scope
   contracts, required coverage paths, allowed candidate paths, edit-set
   obligation kinds, normalization, and contract id calculation.
-- Allowed write scope: new focused files under `internal/plancontract`,
-  compatibility aliases/wrappers in `internal/planexecute/scope_contract.go`
-  and `internal/planexecute/edit_set_obligations.go`, and focused tests in
-  `internal/plancontract` / `internal/planexecute`.
+- Allowed write scope: new focused files under `internal/contracts/plancontract`,
+  compatibility aliases/wrappers in `internal/workflows/planexecute/scope_contract.go`
+  and `internal/workflows/planexecute/edit_set_obligations.go`, and focused tests in
+  `internal/contracts/plancontract` / `internal/workflows/planexecute`.
 - Explicit exclusions: no `internal/cmd/**` except compile-only import fixes if
-  aliases require it, no `internal/agent/**`, no `internal/app/**`, no
+  aliases require it, no `internal/runtime/agent/**`, no `internal/surfaces/tui/app/**`, no
   submit-plan artifact schema migration, and no prompt wording changes.
 - First table to migrate: `EditSetObligationKind`, `EditSetObligation`, and
-  `EditSetObligations` from `internal/planexecute/edit_set_obligations.go`,
-  then `PlanScopeContract` from `internal/planexecute/scope_contract.go`.
+  `EditSetObligations` from `internal/workflows/planexecute/edit_set_obligations.go`,
+  then `PlanScopeContract` from `internal/workflows/planexecute/scope_contract.go`.
 - First caller to convert: `planExecuteScopeContract`, preserving public
   `planexecute` aliases for existing callers.
 - Old authority to remove or shrink: planexecute-local ownership of pure
   planning scope and edit-set vocabulary.
-- Tests: `go test ./internal/plancontract ./internal/planexecute
+- Tests: `go test ./internal/contracts/plancontract ./internal/workflows/planexecute
   ./internal/cmd/planexecute -count=1`; preserve regressions that allowed paths
   do not become required paths and prompt prose does not create hidden edit-set
   obligations.
@@ -1095,23 +1096,23 @@ parallel.
 - Reviewer: `reviewer-ws10-a`.
 - Status: `implemented/reviewed`; Wave 2 re-review accepted the corrected
   implementation.
-- Changed authority owner: `internal/mcp` as the first shared MCP
+- Changed authority owner: `internal/capabilities/mcp` as the first shared MCP
   protocol/integration DTO owner; `internal/cmd/mcp` remains an adapter.
-- Allowed write scope: `internal/mcp/client.go` or a new small
-  `internal/mcp/protocol.go`, `internal/cmd/mcp/mcpcmd.go`, and focused tests
-  under `internal/mcp` and `internal/cmd/mcp`.
+- Allowed write scope: `internal/capabilities/mcp/client.go` or a new small
+  `internal/capabilities/mcp/protocol.go`, `internal/cmd/mcp/mcpcmd.go`, and focused tests
+  under `internal/capabilities/mcp` and `internal/cmd/mcp`.
 - Explicit exclusions: no runner, app, queue, telemetry schema, workspace
   descriptor, schema-export, or tool-profile policy rewiring. Do not touch
   `ResourcePathDenied`, redaction regexes, `BuildMCPDiscoveryToolSchemas`,
   sidecar envelope construction, or JSON-RPC request/response IDs.
 - First caller/table to migrate: move `mcpResourceReadParams`,
   `mcpResourceContent`, and `mcpResourceReadResult` from
-  `internal/cmd/mcp/mcpcmd.go` into `internal/mcp`; convert
+  `internal/cmd/mcp/mcpcmd.go` into `internal/capabilities/mcp`; convert
   `DiscoveryServer.readResource` to use the shared resource DTOs.
 - Old authority to remove or shrink: cmd-local MCP resource DTOs.
-- Tests: `go test ./internal/mcp ./internal/cmd/mcp -count=1` and
-  `go test ./internal/workspace -run 'MCP|BuildMCPDiscoveryToolSchemas'
-  -count=1`; optionally `go test ./internal/sidecarproof` if public payload
+- Tests: `go test ./internal/capabilities/mcp ./internal/cmd/mcp -count=1` and
+  `go test ./internal/capabilities/workspace -run 'MCP|BuildMCPDiscoveryToolSchemas'
+  -count=1`; optionally `go test ./internal/evidence/sidecarvalidation` if public payload
   fields change.
 - Residual compatibility code: JSON-RPC request/response envelopes stay local in
   `cmd/mcp`; deletion trigger is a later protocol-envelope slice.
@@ -1124,16 +1125,16 @@ parallel.
 - Reviewer: `reviewer-ws11-a`.
 - Status: `implemented/reviewed`; Wave 2 re-review accepted the corrected
   implementation.
-- Changed authority owner: `internal/productworkflow` owns a neutral
+- Changed authority owner: `internal/workflows/productworkflow` owns a neutral
   implementation-handoff DTO and product-derived dispatch semantics.
 - Allowed write scope: a new focused
-  `internal/productworkflow/implementation_handoff.go` or
-  `internal/productworkflow/types_reports.go`,
-  `internal/productworkflow/*_test.go`,
+  `internal/workflows/productworkflow/implementation_handoff.go` or
+  `internal/workflows/productworkflow/types_reports.go`,
+  `internal/workflows/productworkflow/*_test.go`,
   `internal/cmd/featureplanner/feature_planner.go`,
   `internal/cmd/featureplanner/feature_planner_test.go`, and optionally
-  `internal/featureplanner/product_context.go` only for a thin adapter.
-- Explicit exclusions: no `internal/app/**`, no TUI product continuation, no
+  `internal/workflows/featureplanner/product_context.go` only for a thin adapter.
+- Explicit exclusions: no `internal/surfaces/tui/app/**`, no TUI product continuation, no
   `implementation_dispatch.go`, no featureplanner dispatch state machine, no
   plan-execute behavior, and no product CLI `brief` command rewiring.
 - First caller/table to migrate:
@@ -1143,8 +1144,8 @@ parallel.
   and map it into the featureplanner DTO as an adapter.
 - Old authority to remove or shrink: copied product-to-featureplanner mapping
   logic in `cmd/featureplanner.loadProductWorkflowBrief`.
-- Tests: `go test ./internal/productworkflow ./internal/cmd/featureplanner
-  ./internal/featureplanner -count=1`; preserve coverage for claim blockers,
+- Tests: `go test ./internal/workflows/productworkflow ./internal/cmd/featureplanner
+  ./internal/workflows/featureplanner -count=1`; preserve coverage for claim blockers,
   files-to-modify, coverage, requirements, ADR IDs, TDD obligations, tests,
   constraints, and decisions.
 - Residual compatibility code: `featureplanner.ProductWorkflowBrief` remains the
@@ -1153,20 +1154,20 @@ parallel.
 - Dependencies: no blocking dependency for headless CLI intake; WS-02 is
   required before converting TUI app-local product brief construction.
 
-#### WS-01-A: Plan-Execute CLI Adapter Uses `internal/planexecute.Run`
+#### WS-01-A: Plan-Execute CLI Adapter Uses `internal/workflows/planexecute.Run`
 
 - Implementor: `worker-ws01-a`.
 - Reviewer: `reviewer-ws01-a`.
 - Status: `implemented/reviewed`; Wave 4 review accepted the corrected shared
   orchestration after deterministic clean-review was moved into the
-  `internal/planexecute` owner.
-- Changed authority owner: `internal/planexecute.Run` is the active
+  `internal/workflows/planexecute` owner.
+- Changed authority owner: `internal/workflows/planexecute.Run` is the active
   plan-execute orchestration use case; `internal/cmd/planexecute` becomes
   argument/config/model parsing plus rendering/exit adapter.
 - Allowed write scope: `internal/cmd/planexecute/plan_execute.go`,
   `internal/cmd/planexecute/plan_execute_test.go`, and narrowly needed adapter
-  glue in `internal/planexecute/types.go` or `internal/planexecute/run.go`.
-- Explicit exclusions: no `internal/app/**`, no `internal/agent/**`, no lane
+  glue in `internal/workflows/planexecute/types.go` or `internal/workflows/planexecute/run.go`.
+- Explicit exclusions: no `internal/surfaces/tui/app/**`, no `internal/runtime/agent/**`, no lane
   prompt assets, no runner gates, no workspace submit-plan schema, and no broad
   deletion of executor/review helper code unless proven unreferenced.
 - First caller to migrate: `RunMainWithTelemetry` in
@@ -1176,7 +1177,7 @@ parallel.
   source-satisfied, review-repair, and exit codes.
 - Old authority to remove or shrink: cmd-local duplicate plan-execute
   orchestration.
-- Tests: `go test ./internal/planexecute ./internal/cmd/planexecute
+- Tests: `go test ./internal/workflows/planexecute ./internal/cmd/planexecute
   ./internal/cmd/lane -count=1`; add or keep one CLI test proving planner
   `RunOptions` forwarding and one JSON-event parity test.
 - Residual compatibility code: lane continues invoking plan-execute through
@@ -1190,13 +1191,13 @@ parallel.
 - Implementor: `worker-ws14-a`.
 - Reviewer: `reviewer-ws14-a`.
 - Status: `implemented/reviewed`; Wave 3 review accepted this implementation.
-- Changed authority owner: `internal/autonomy` path-role and obligation
+- Changed authority owner: `internal/contracts/autonomy` path-role and obligation
   vocabulary.
-- Allowed write scope: `internal/autonomy/path_roles.go`, focused
-  `internal/autonomy/*test.go`, `internal/planexecute/scope_contract.go`,
-  `internal/planexecute/helpers.go` only for private preflight call adaptation,
-  and focused `internal/planexecute/*test.go`.
-- Explicit exclusions: no `internal/agent/**`, no `internal/app/**`, no
+- Allowed write scope: `internal/contracts/autonomy/path_roles.go`, focused
+  `internal/contracts/autonomy/*test.go`, `internal/workflows/planexecute/scope_contract.go`,
+  `internal/workflows/planexecute/helpers.go` only for private preflight call adaptation,
+  and focused `internal/workflows/planexecute/*test.go`.
+- Explicit exclusions: no `internal/runtime/agent/**`, no `internal/surfaces/tui/app/**`, no
   `internal/cmd/**`, no product workflow ledgers, no answer
   grounding/final-answer policy, no prompt files, and no durable storage/schema
   migration.
@@ -1211,7 +1212,7 @@ parallel.
 - Old authority to remove or shrink: planexecute-local required/allowed set
   construction inside preflight logic where it decides coverage from string
   slices.
-- Tests: `go test ./internal/autonomy ./internal/planexecute -run
+- Tests: `go test ./internal/contracts/autonomy ./internal/workflows/planexecute -run
   'TestResolvePathRoles|TestPlanScopeContract|TestRequiredEditPathsFromPromptIgnoresAllowedEditPaths|Test.*Allowed.*Required|Test.*Candidate.*Required|Test.*Preflight'
   -count=1`.
 - Residual compatibility code: `PlanScopeContract.RequiredCoveragePaths` and
@@ -1220,7 +1221,7 @@ parallel.
   contracts.
 - Dependencies: consumes WS-00 active authority for eventual runtime
   enforcement and must run after WS-06-A because both touch
-  `internal/planexecute/scope_contract.go`; must not attempt source-body
+  `internal/workflows/planexecute/scope_contract.go`; must not attempt source-body
   receipts.
 
 #### WS-15-A: Active Protocol Card Presenter
@@ -1228,24 +1229,24 @@ parallel.
 - Implementor: `worker-ws15-a`.
 - Reviewer: `reviewer-ws15-a`.
 - Status: `implemented/reviewed`; Wave 3 review accepted this implementation.
-- Changed authority owner: active presenter code in `internal/frontier/workerruntime`.
-- Allowed write scope: `internal/agent/model_protocol_projection.go`, a new or
-  existing focused file under `internal/frontier/workerruntime`,
-  `internal/agent/runner_autonomy_test.go`, and
-  `internal/frontier/workerruntime/runtime_test.go`.
-- Explicit exclusions: no `internal/app`, no `internal/agent/runner.go` loop
+- Changed authority owner: active presenter code in `internal/runtime/workerruntime`.
+- Allowed write scope: `internal/runtime/agent/model_protocol_projection.go`, a new or
+  existing focused file under `internal/runtime/workerruntime`,
+  `internal/runtime/agent/runner_autonomy_test.go`, and
+  `internal/runtime/workerruntime/runtime_test.go`.
+- Explicit exclusions: no `internal/surfaces/tui/app`, no `internal/runtime/agent/runner.go` loop
   changes, no recovery-card redesign, no final-answer decorator changes, no
   prompt asset edits, no docs archival/index work, and no new
   `internal/presenters` package.
 - First caller/table to migrate: `modelMessagesWithProtocolProjection` in
-  `internal/agent/model_protocol_projection.go`, moving the active protocol
-  card rendering into `internal/frontier/workerruntime` as a presenter function
+  `internal/runtime/agent/model_protocol_projection.go`, moving the active protocol
+  card rendering into `internal/runtime/workerruntime` as a presenter function
   that consumes `contractcompile.ModelProtocolProjection`.
 - Old authority to remove or shrink: agent-local `modelProtocolProjectionCard`,
   `modelProtocolList`, and `modelProtocolDisplayOrder` helpers.
-- Tests: `go test ./internal/frontier/workerruntime -run
+- Tests: `go test ./internal/runtime/workerruntime -run
   'TestRender|TestNormalizeRuntimeBrief' -count=1` and
-  `go test ./internal/agent -run
+  `go test ./internal/runtime/agent -run
   'TestRunnerAutonomy.*Protocol|TestPlanExecute.*ModelProtocol' -count=1`.
 - Residual compatibility code: prompt assets remain explanatory; deletion
   trigger is no agent-local active protocol card renderer.
@@ -1257,12 +1258,12 @@ parallel.
 - WS-00-A: Plan-Execute Planner Active Authority Binding.
   - Implementor: `worker-ws00-a`; reviewers: `reviewer-ws00-a`, then
     `reviewer-ws00-a-rereview`.
-  - Files changed: `internal/contractcompile/types.go`,
-    `internal/contractcompile/compile.go`,
-    `internal/contractcompile/compile_test.go`,
-    `internal/agent/runner.go`, `internal/agent/runner_autonomy.go`,
-    `internal/agent/model_protocol_projection.go`, and
-    `internal/agent/runner_autonomy_test.go`.
+  - Files changed: `internal/contracts/contractcompile/types.go`,
+    `internal/contracts/contractcompile/compile.go`,
+    `internal/contracts/contractcompile/compile_test.go`,
+    `internal/runtime/agent/runner.go`, `internal/runtime/agent/runner_autonomy.go`,
+    `internal/runtime/agent/model_protocol_projection.go`, and
+    `internal/runtime/agent/runner_autonomy_test.go`.
   - Old drift surface removed or shrunk: `ParentID` is correlation-only;
     active authority now uses the compiled contract id/runtime id/protocol hash,
     and planner runner projection no longer adopts stale phase/protocol ids while
@@ -1270,8 +1271,8 @@ parallel.
   - Review result: first review requested changes for parent id promotion,
     protocol hash drift, and runner-local active-id override. Corrected
     implementation re-review found no findings.
-  - Tests: `go test ./internal/contractcompile ./internal/autonomy
-    ./internal/agent -run
+  - Tests: `go test ./internal/contracts/contractcompile ./internal/contracts/autonomy
+    ./internal/runtime/agent -run
     'TestCompilePlanExecutePlanner|TestRunnerAutonomy.*Contract|TestRunnerRunEmitsTurnPhaseContractBeforeModelCallAndPolicyEvents|TestRunnerAutonomyPlannerAuthorityIgnoresStalePhaseContractID'
     -count=1`; included in `go test ./...`.
   - Residual compatibility code: legacy non-planner autonomy contract
@@ -1281,17 +1282,17 @@ parallel.
 - WS-13-A: Capability Vocabulary Projection.
   - Implementor: `worker-ws13-a`; reviewers: `reviewer-ws13-a`, then
     `reviewer-ws13-a-rereview`.
-  - Files changed: `internal/workspace/capabilities.go`,
-    `internal/workspace/tool_surface_metadata.go`,
-    `internal/workspace/harness_audit.go`, and
-    `internal/workspace/capabilities_test.go`.
+  - Files changed: `internal/capabilities/workspace/capabilities.go`,
+    `internal/capabilities/workspace/tool_surface_metadata.go`,
+    `internal/capabilities/workspace/harness_audit.go`, and
+    `internal/capabilities/workspace/capabilities_test.go`.
   - Old drift surface removed or shrunk: read-only evidence capability
     projection moved into resolver-owned capability code; harness audit now
     normalizes `read_only_capability` requests through that projection, so
     `symbol-lookup` maps to `find_symbol`.
   - Review result: first review requested changes for audit-local normalization
     drift. Corrected implementation re-review found no findings.
-  - Tests: `go test ./internal/workspace -run
+  - Tests: `go test ./internal/capabilities/workspace -run
     'Test(ReadOnlyCapability|ToolCapabilityMetadata|ToolSchemaExport|DiscoveryManifestToolsHaveEvidenceCapabilitiesOrExplicitExclusion)'
     -count=1`; included in `go test ./...`.
   - Residual compatibility code: tool-surface descriptors still own tool facts;
@@ -1301,21 +1302,21 @@ parallel.
 - WS-06-A: Plan Scope And Edit-Set Vocabulary.
   - Implementor: `worker-ws06-a`; reviewers: `reviewer-ws06-a`, then
     `reviewer-ws06-a-rereview`.
-  - Files changed: `internal/plancontract/edit_set_obligations.go`,
-    `internal/plancontract/edit_set_obligations_test.go`,
-    `internal/plancontract/scope_contract.go`,
-    `internal/plancontract/scope_contract_test.go`,
-    `internal/planexecute/edit_set_obligations.go`,
-    `internal/planexecute/scope_contract.go`,
-    `internal/planexecute/helpers.go`, and
-    `internal/planexecute/prompt_scope_wrapper_test.go`.
+  - Files changed: `internal/contracts/plancontract/edit_set_obligations.go`,
+    `internal/contracts/plancontract/edit_set_obligations_test.go`,
+    `internal/contracts/plancontract/scope_contract.go`,
+    `internal/contracts/plancontract/scope_contract_test.go`,
+    `internal/workflows/planexecute/edit_set_obligations.go`,
+    `internal/workflows/planexecute/scope_contract.go`,
+    `internal/workflows/planexecute/helpers.go`, and
+    `internal/workflows/planexecute/prompt_scope_wrapper_test.go`.
   - Old drift surface removed or shrunk: pure scope normalization and
     test/implementation path classification are owned by `plancontract`;
     `planexecute` keeps compatibility wrapper names that delegate inward.
   - Review result: first review requested changes for remaining
     `planexecute`-local normalization/classification. Corrected implementation
     re-review found no findings.
-  - Tests: `go test ./internal/plancontract ./internal/planexecute
+  - Tests: `go test ./internal/contracts/plancontract ./internal/workflows/planexecute
     ./internal/cmd/planexecute -count=1`; included in `go test ./...`.
   - Residual compatibility code: `planexecute.NewPlanScopeContract`,
     `planexecute.EditSetObligations`, constants, and private wrapper names remain
@@ -1325,15 +1326,15 @@ parallel.
 - WS-10-A: Shared MCP Resource DTOs.
   - Implementor: `worker-ws10-a`; reviewers: `reviewer-ws10-a`, then
     `reviewer-ws10-a-rereview`.
-  - Files changed: `internal/mcp/protocol.go`,
-    `internal/mcp/protocol_test.go`, `internal/mcp/client.go`, and
+  - Files changed: `internal/capabilities/mcp/protocol.go`,
+    `internal/capabilities/mcp/protocol_test.go`, `internal/capabilities/mcp/client.go`, and
     `internal/cmd/mcp/mcpcmd.go`.
   - Old drift surface removed or shrunk: MCP resource/read DTOs moved from
-    cmd-local definitions into `internal/mcp`; the cmd MCP server and MCP client
+    cmd-local definitions into `internal/capabilities/mcp`; the cmd MCP server and MCP client
     use the shared DTOs.
   - Review result: first review accepted with a non-blocking `Resource` JSON
     shape test gap. Corrected implementation re-review found no findings.
-  - Tests: `go test ./internal/mcp ./internal/cmd/mcp -count=1`; included in
+  - Tests: `go test ./internal/capabilities/mcp ./internal/cmd/mcp -count=1`; included in
     `go test ./...`.
   - Residual compatibility code: JSON-RPC request/response envelopes remain
     cmd-local; deletion trigger is a later protocol-envelope slice.
@@ -1341,9 +1342,9 @@ parallel.
 - WS-11-A: Product Workflow Implementation Handoff.
   - Implementor: `worker-ws11-a`; reviewers: `reviewer-ws11-a`, then
     `reviewer-ws11-a-rereview`.
-  - Files changed: `internal/productworkflow/implementation_handoff.go`,
-    `internal/productworkflow/implementation_handoff_test.go`,
-    `internal/productworkflow/brief_generation.go`,
+  - Files changed: `internal/workflows/productworkflow/implementation_handoff.go`,
+    `internal/workflows/productworkflow/implementation_handoff_test.go`,
+    `internal/workflows/productworkflow/brief_generation.go`,
     `internal/cmd/featureplanner/feature_planner.go`, and
     `internal/cmd/featureplanner/feature_planner_test.go`.
   - Old drift surface removed or shrunk: product-derived implementation handoff
@@ -1353,8 +1354,8 @@ parallel.
     and PRD testability/metric acceptance facts. Corrected implementation
     re-review found no findings and confirmed no CLI-local PRD/ADR parsing was
     reintroduced.
-  - Tests: `go test ./internal/productworkflow ./internal/cmd/featureplanner
-    ./internal/featureplanner -count=1`; included in `go test ./...`.
+  - Tests: `go test ./internal/workflows/productworkflow ./internal/cmd/featureplanner
+    ./internal/workflows/featureplanner -count=1`; included in `go test ./...`.
   - Residual compatibility code: `featureplanner.ProductWorkflowBrief` remains
     the featureplanner intake DTO; deletion trigger is featureplanner consuming
     `productworkflow.ImplementationHandoff` directly.
@@ -1366,10 +1367,10 @@ parallel.
 
 - WS-14-A: Plan Scope Path-Role Obligation Query.
   - Implementor: `worker-ws14-a`; reviewer: `reviewer-ws14-a`.
-  - Files changed: `internal/autonomy/path_roles.go`,
-    `internal/autonomy/path_roles_test.go`,
-    `internal/planexecute/scope_contract.go`,
-    `internal/planexecute/helpers.go`, `internal/planexecute/run_test.go`, and
+  - Files changed: `internal/contracts/autonomy/path_roles.go`,
+    `internal/contracts/autonomy/path_roles_test.go`,
+    `internal/workflows/planexecute/scope_contract.go`,
+    `internal/workflows/planexecute/helpers.go`, `internal/workflows/planexecute/run_test.go`, and
     focused planexecute compatibility tests.
   - Old drift surface removed or shrunk: required-edit and allowed-candidate
     coverage resolution now goes through autonomy-owned typed path-role
@@ -1378,19 +1379,19 @@ parallel.
   - Review result: accepted with no findings. Reviewer confirmed allowed
     candidate paths do not satisfy required coverage, invalid scope paths are
     normalized out, and missing/default cases reject instead of passing.
-  - Tests: `go test ./internal/autonomy ./internal/planexecute -run
+  - Tests: `go test ./internal/contracts/autonomy ./internal/workflows/planexecute -run
     'TestResolvePathRoles|TestPlanScopeContract|TestRequiredEditPathsFromPromptIgnoresAllowedEditPaths|Test.*Allowed.*Required|Test.*Candidate.*Required|Test.*Preflight'
-    -count=1`; `go test ./internal/autonomy ./internal/planexecute
-    ./internal/frontier/workerruntime ./internal/agent -count=1`.
+    -count=1`; `go test ./internal/contracts/autonomy ./internal/workflows/planexecute
+    ./internal/runtime/workerruntime ./internal/runtime/agent -count=1`.
   - Residual compatibility code: public `PlanScopeContract` path-list fields and
     planexecute wrapper names remain for existing callers; deletion trigger is
     WS-01/caller migration to `plancontract`/autonomy path-role coverage.
 
 - WS-15-A: Active Protocol Card Presenter.
   - Implementor: `worker-ws15-a`; reviewer: `reviewer-ws15-a`.
-  - Files changed: `internal/frontier/workerruntime/protocol_card.go`,
-    `internal/frontier/workerruntime/runtime_test.go`, and
-    `internal/agent/model_protocol_projection.go`.
+  - Files changed: `internal/runtime/workerruntime/protocol_card.go`,
+    `internal/runtime/workerruntime/runtime_test.go`, and
+    `internal/runtime/agent/model_protocol_projection.go`.
   - Old drift surface removed or shrunk: active protocol card rendering moved out
     of agent-local helpers into `workerruntime.RenderActiveProtocolCard`, which
     consumes `contractcompile.ModelProtocolProjection`; the agent retains only
@@ -1398,41 +1399,41 @@ parallel.
   - Review result: accepted with no findings. Reviewer confirmed prior card
     labels/order are preserved and no excluded app/runner-loop/prompt areas were
     touched.
-  - Tests: `go test ./internal/frontier/workerruntime -run
-    'TestRender|TestNormalizeRuntimeBrief' -count=1`; `go test ./internal/agent
+  - Tests: `go test ./internal/runtime/workerruntime -run
+    'TestRender|TestNormalizeRuntimeBrief' -count=1`; `go test ./internal/runtime/agent
     -run 'TestRunnerAutonomy.*Protocol|TestPlanExecute.*ModelProtocol'
-    -count=1`; extra `go test ./internal/agent -run
+    -count=1`; extra `go test ./internal/runtime/agent -run
     'TestRunnerInjectsPlanExecuteModelProtocolProjectionCard' -count=1`;
-    `go test ./internal/autonomy ./internal/planexecute
-    ./internal/frontier/workerruntime ./internal/agent -count=1`.
+    `go test ./internal/contracts/autonomy ./internal/workflows/planexecute
+    ./internal/runtime/workerruntime ./internal/runtime/agent -count=1`.
   - Residual compatibility code: `modelMessagesWithProtocolProjection` remains in
     the agent as the model-message insertion adapter; deletion trigger is a later
     WS-03 turn-contract call path that owns insertion placement.
 
 ### Wave 4 Implementation Records
 
-- WS-01-A: Plan-Execute CLI Adapter Uses `internal/planexecute.Run`.
+- WS-01-A: Plan-Execute CLI Adapter Uses `internal/workflows/planexecute.Run`.
   - Implementor: `worker-ws01-a`; reviewers: `reviewer-ws01-a` and final
     targeted WS-01 reviewer.
   - Files changed: `internal/cmd/planexecute/plan_execute.go`,
     `internal/cmd/planexecute/plan_execute_test.go`,
-    `internal/planexecute/run.go`, `internal/planexecute/run_test.go`,
-    `internal/planexecute/helpers.go`, and
-    `internal/planexecute/writer_route.go`.
+    `internal/workflows/planexecute/run.go`, `internal/workflows/planexecute/run_test.go`,
+    `internal/workflows/planexecute/helpers.go`, and
+    `internal/workflows/planexecute/writer_route.go`.
   - Old drift surface removed or shrunk: `RunMainWithTelemetry` now delegates
-    orchestration to `internal/planexecute.Run`; cmd-local review/resume wrappers
+    orchestration to `internal/workflows/planexecute.Run`; cmd-local review/resume wrappers
     delegate to shared planexecute APIs; backend role-alias writer-route
     decisions and deterministic clean-review behavior live in the shared owner.
   - Review result: initial review found lost backend role aliases and retained
     cmd-local review/resume authority; follow-up review found deterministic
     clean-review left behind in cmd. Both were fixed by moving role-resolution,
     review/resume orchestration, deterministic clean-review, and synthetic
-    zero-call summary emission into `internal/planexecute`.
-  - Tests: `go test ./internal/planexecute ./internal/cmd/planexecute
+    zero-call summary emission into `internal/workflows/planexecute`.
+  - Tests: `go test ./internal/workflows/planexecute ./internal/cmd/planexecute
     ./internal/cmd/lane -count=1`; final verification also runs `go test ./...`.
   - Residual compatibility code: cmd package still has adapter/conversion
     wrappers for legacy tests and package-private helper names; deletion trigger
-    is migrating remaining cmd-local tests to the shared `internal/planexecute`
+    is migrating remaining cmd-local tests to the shared `internal/workflows/planexecute`
     exported APIs.
 
 ### Implementation Record Template
@@ -1489,8 +1490,8 @@ Before accepting an effort:
 The migration is succeeding when:
 
 - new behavior lands behind contract/capability/workflow boundaries;
-- `internal/agent/runner.go`, `internal/workspace/manager.go`, and
-  `internal/app/implementation_dispatch.go` churn trends downward;
+- `internal/runtime/agent/runner.go`, `internal/capabilities/workspace/manager.go`, and
+  `internal/surfaces/tui/app/implementation_dispatch.go` churn trends downward;
 - architecture tests prevent core packages from importing outer layers;
 - broad rediscovery and turn-phase contradiction findings decline on the replay
   suite;

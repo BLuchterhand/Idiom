@@ -72,7 +72,7 @@ should feel like a harness affordance, not a chat feature. Several design
 choices follow from this:
 
 **Use contract language, not chat language.** Tool rows should say "read_file
-→ internal/agent/runner.go" rather than "Reading file..." or "Let me look at
+→ internal/runtime/agent/runner.go" rather than "Reading file..." or "Let me look at
 that." The harness reports facts; the model did the talking.
 
 **Foreground verification evidence.** When a turn ends with passing tests, the
@@ -117,10 +117,10 @@ Components:
 
 ```
 ▾ 4 tools · 2 reads, 1 edit, 1 verify · tests passed · 1.2k tokens
-  ✔ read_file   internal/agent/runner.go:45-120        2.1k chars
-  ✔ read_file   internal/agent/control.go:12-34          892 chars
-  ✔ edit_file   internal/agent/runner.go:45-120       applied
-  ✔ shell       go test ./internal/agent/...          passed
+  ✔ read_file   internal/runtime/agent/runner.go:45-120        2.1k chars
+  ✔ read_file   internal/runtime/agent/control.go:12-34          892 chars
+  ✔ edit_file   internal/runtime/agent/runner.go:45-120       applied
+  ✔ shell       go test ./internal/runtime/agent/...          passed
 ```
 
 Each tool row contains:
@@ -492,8 +492,8 @@ full viewport width minus 2 spaces of left margin:
 │  Sure. The change in runner.go...                     │
 │                                                       │
 │    ▾ 2 tools · 2 reads · 856 tokens                   │
-│      ✔ read   internal/agent/runner.go:45-120         │
-│      ✔ read   internal/agent/control.go:12-34         │
+│      ✔ read   internal/runtime/agent/runner.go:45-120         │
+│      ✔ read   internal/runtime/agent/control.go:12-34         │
 │                                                       │
 └──────────────────────────────────────────────────────┘
 ```
@@ -696,12 +696,12 @@ The implementation breaks into these atoms with disjoint write scopes:
 
 | Atom | Scope | Complexity | Description |
 |------|-------|-----------|-------------|
-| A1 | `internal/app/rendering.go`, `internal/app/styles.go` | C1 | Evidence container types, render functions (`renderCompletedContainer`, `renderActiveContainer`), summary line, row rendering, glyphs, bounded-height scrolling, thinking rows |
-| A2 | `internal/app/update_handlers.go` | C1 | Keyboard handling: expand/collapse toggle, scroll offset adjustment within expanded containers, auto-collapse timer |
-| A3 | `internal/app/model_state.go`, `internal/app/history.go` | C1 | Model struct additions (`turnEvidence`, `pastTurnContainers`), `beginAgentHistoryTurn` allocation, `recordToolTraceInHistory` side-effect population, `streamDoneMsg` finalization and append, `budgetLedgerMsg` handler |
-| A4 | `internal/app/rendering.go`, `internal/app/update_handlers.go` | C2 | Integration with existing message rendering loop, compact/detail mode boundary, viewport-height stability, config flag gating |
-| A5 | Tests across `internal/app/` | C1 | Rendering tests, expand/collapse/scroll tests, lifecycle tests, past-container interactivity tests, compact/detail mode boundary tests |
-| A6 | `config.example.json`, `internal/config/` | C0 | Config schema addition for `tui.evidence_panel` flag |
+| A1 | `internal/surfaces/tui/app/rendering.go`, `internal/surfaces/tui/app/styles.go` | C1 | Evidence container types, render functions (`renderCompletedContainer`, `renderActiveContainer`), summary line, row rendering, glyphs, bounded-height scrolling, thinking rows |
+| A2 | `internal/surfaces/tui/app/update_handlers.go` | C1 | Keyboard handling: expand/collapse toggle, scroll offset adjustment within expanded containers, auto-collapse timer |
+| A3 | `internal/surfaces/tui/app/model_state.go`, `internal/surfaces/tui/app/history.go` | C1 | Model struct additions (`turnEvidence`, `pastTurnContainers`), `beginAgentHistoryTurn` allocation, `recordToolTraceInHistory` side-effect population, `streamDoneMsg` finalization and append, `budgetLedgerMsg` handler |
+| A4 | `internal/surfaces/tui/app/rendering.go`, `internal/surfaces/tui/app/update_handlers.go` | C2 | Integration with existing message rendering loop, compact/detail mode boundary, viewport-height stability, config flag gating |
+| A5 | Tests across `internal/surfaces/tui/app/` | C1 | Rendering tests, expand/collapse/scroll tests, lifecycle tests, past-container interactivity tests, compact/detail mode boundary tests |
+| A6 | `config.example.json`, `internal/platform/config/` | C0 | Config schema addition for `tui.evidence_panel` flag |
 
 **Parallel safe:** A1 + A2 can proceed in parallel after A3. A4 depends on A1-A3. A5 runs after A4. A6 is independent.
 
@@ -726,7 +726,7 @@ The implementation breaks into these atoms with disjoint write scopes:
 - [ ] No new prompt text, model-visible contracts, or lane behavior changes are
   introduced.
 - [ ] Existing history panel continues to function identically.
-- [ ] `go test ./internal/app/...` passes.
+- [ ] `go test ./internal/surfaces/tui/app/...` passes.
 
 ## Iteration Log
 

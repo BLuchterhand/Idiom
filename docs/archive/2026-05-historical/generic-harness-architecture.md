@@ -25,9 +25,9 @@ Audited 2026-05-11 with `grep -rn 'qwen' --include='*.go' cmd/ internal/` filter
 | Layer | Site | Hardcoded value | Severity |
 |---|---|---|---|
 | Refine routing | `cmd/idiom/lane_refine.go:96-97` | `const refineDefaultPool = "qwen-35b"`, `const refineDefaultModel = "qwen3.6-35b"` | **High** — blocks non-Qwen adopters |
-| Pool→model heuristic | `internal/runner/gate.go:155-175` (`PoolForModelAlias`) | String-match: contains "coder"/"nothink"/"35b"/"planner" → fixed pool name | **High** — naming-based, fragile |
-| Bootstrap defaults | `cmd/idiom/init.go:123-155`, `internal/config/config.go:271` | `qwen3.6-35b` baked into generated config | **Low** — projects override |
-| Chat presets | `internal/config/config.go:854-902` | 5 presets named `qwen3-*` | **Low** — presets are reference impls |
+| Pool→model heuristic | `internal/runtime/runner/gate.go:155-175` (`PoolForModelAlias`) | String-match: contains "coder"/"nothink"/"35b"/"planner" → fixed pool name | **High** — naming-based, fragile |
+| Bootstrap defaults | `cmd/idiom/init.go:123-155`, `internal/platform/config/config.go:271` | `qwen3.6-35b` baked into generated config | **Low** — projects override |
+| Chat presets | `internal/platform/config/config.go:854-902` | 5 presets named `qwen3-*` | **Low** — presets are reference impls |
 
 Only the first two are real architectural leaks. The rest are sensible defaults projects override.
 

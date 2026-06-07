@@ -30,13 +30,13 @@ This revision is grounded in:
 
 - `context_pack` result `4bc4f5991a03a214`, which localized plan-execute
   planning state, progress state, product workflow coverage, and relevant tests.
-- `internal/planexecute/progress.go`, which persists phase/status, prompt hash,
+- `internal/workflows/planexecute/progress.go`, which persists phase/status, prompt hash,
   plan path/id, pack id, edit progress, executor evidence, review-repair state,
   failure kind/reason, and resume readiness.
-- `internal/agent/plan_execute_planning_state.go`, which derives loopable
+- `internal/runtime/agent/plan_execute_planning_state.go`, which derives loopable
   planner modes, terminal response shapes, runtime transport projection, and
   submit correction states.
-- `internal/productworkflow/types.go`, `coverage_gate.go`, and
+- `internal/workflows/productworkflow/types.go`, `coverage_gate.go`, and
   `brief_generation.go`, which define TDD obligations, coverage evaluation,
   implementation ledger records, required verification, report paths, and
   `verification_completed.tdd_obligations_satisfied`.

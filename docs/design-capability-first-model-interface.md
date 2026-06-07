@@ -54,8 +54,8 @@ tools. Prompt/runtime guidance should teach capability vocabulary, not adapter
 names, unless the session is debugging an adapter.
 
 Capability metadata belongs in the workspace tool manifest/schema export and
-runtime capability summary. Resolver behavior stays in `internal/workspace`;
-runtime profile/brief presentation stays in `internal/frontier/workerruntime`;
+runtime capability summary. Resolver behavior stays in `internal/capabilities/workspace`;
+runtime profile/brief presentation stays in `internal/runtime/workerruntime`;
 readiness, write, and verification gates stay outside the resolver.
 
 ## Initial Capability Set

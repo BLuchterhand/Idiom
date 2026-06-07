@@ -165,11 +165,11 @@ These tools are available both inside idiom agent sessions and via `idiom tool` 
 |------|-------------|--------------------|
 | `context_pack` | Get a ranked, cached packet of candidate files / symbols / tests for a task. **Default first call when localizing any change** — output is content-addressed and cached in `graph_views`, so identical task strings short-circuit re-discovery. | `idiom tool context_pack --input '{"task":"wire packet cache","mode":"plan","limit":8}'` |
 | `context_query` | Graph-shaped questions ("what calls X", "what tests cover Y") without raw file flooding. | `idiom tool context_query --input '{"query":"callers of LoadView","resolution":"symbol"}'` |
-| `context_zoom` | Drill from a packet handle (file/symbol/repo) to the next resolution level. | `idiom tool context_zoom --input '{"handle":"symbol://internal/comprehension/views.go#SaveView","resolution":"symbol"}'` |
+| `context_zoom` | Drill from a packet handle (file/symbol/repo) to the next resolution level. | `idiom tool context_zoom --input '{"handle":"symbol://internal/repository/comprehension/views.go#SaveView","resolution":"symbol"}'` |
 | `context_status` | Index freshness, stale-path counts plus capped samples, collector coverage, available backends. Use `refresh=true` for read-through repair; unscoped indexed stale-file refreshes honor a default budget unless `freshness_max_files` or `limit` overrides it, and report `budget_exceeded` when exceeded. Bounded `path` / `required_edit_paths`, missing-index rebuilds, and collector-version rebuilds remain distinct repair paths. | `idiom tool context_status --input '{"refresh":true,"limit":50}'` |
 | `context_index` | Build or refresh the comprehension index. Use scoped `--path <subset>` for incremental refresh. | `idiom tool context_index --input '{"path":".","language":"go","mode":"standard"}'` |
-| `context_impact` | Blast-radius and may-impact analysis using the context graph. | `idiom tool context_impact --input '{"path":"internal/comprehension/pack.go"}'` |
-| `context_trace_pack` | Attach runtime evidence (stack frames, test JSON, coverage) to a packet. | `idiom tool context_trace_pack --input '{"command":"go test ./internal/comprehension/...","path":"."}'` |
+| `context_impact` | Blast-radius and may-impact analysis using the context graph. | `idiom tool context_impact --input '{"path":"internal/repository/comprehension/pack.go"}'` |
+| `context_trace_pack` | Attach runtime evidence (stack frames, test JSON, coverage) to a packet. | `idiom tool context_trace_pack --input '{"command":"go test ./internal/repository/comprehension/...","path":"."}'` |
 | `discovery_query` | Broad impact, tracing, architecture, security, or history analysis. Orchestrates multiple sub-tools in one call; consults `context_pack` cache when fresh. | `idiom tool discovery_query --input '{"purpose":"impact_analysis","path":".","pattern":"funcName","language":"go"}'` |
 | `structural_search` | AST-aware code pattern search (requires `ast-grep`). | `idiom tool structural_search --input '{"pattern":"fn $NAME($$$ARGS) { $$$BODY }","path":"src/","language":"rust"}'` |
 | `dependency_graph` | Understand module/package dependency structure for Go, Rust, TypeScript, Python, or Java. | `idiom tool dependency_graph --input '{"path":".","language":"go"}'` |
@@ -249,9 +249,9 @@ forcing another broad packet.
 ## Key Areas
 
 - `cmd/idiom`: CLI entrypoint
-- `internal/app`: TUI/session lifecycle
-- `internal/agent`: runner, control rails, readiness, final answer shaping
-- `internal/workspace`: tool surface and language-aware workspace operations
+- `internal/surfaces/tui/app`: TUI/session lifecycle
+- `internal/runtime/agent`: runner, control rails, readiness, final answer shaping
+- `internal/capabilities/workspace`: tool surface and language-aware workspace operations
 - `internal/frontier`: discovery/runtime helpers
 - `prompts/`: baseline and mode/profile instructions
 - `docs/`: design intent, north star, remediation, and parity plans

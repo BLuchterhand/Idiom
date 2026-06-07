@@ -18,7 +18,7 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
 ## Tier 1 — High Impact, Moderate Effort
 
-### 1.1 Generic `Index[TFile, TSymbol]` in `internal/semantic/`
+### 1.1 Generic `Index[TFile, TSymbol]` in `internal/repository/semantic/`
 
 - **Problem:** Six language indexers (`go`, `cpp`, `java`, `rust`, `typescript`,
   `python`) each copy the same structural skeleton. The following functions are
@@ -66,10 +66,10 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
 - **Pattern:** Strategy (GoF) + Shared Kernel (DDD)
 - **Estimated lines saved:** ~3,500-4,000
-- **Affected files:** All 13 files in `internal/semantic/`
+- **Affected files:** All 13 files in `internal/repository/semantic/`
 - **Status:** DONE
 - **Results:** Created `index_common.go` with generic `RankFiles[T]`, `UniqueRankedPaths[T]`, `FindFilesExactPartial[T]`. Created `query_common.go` with shared `NormalizeSymbolPattern`, `StripLineComment`, `FirstQualified`. Migrated C++ indexer as proof of concept. 27 tests added. Remaining 5 languages can be migrated identically.
-- **Verification:** `go test ./internal/semantic/...` — all existing query and
+- **Verification:** `go test ./internal/repository/semantic/...` — all existing query and
   index tests must pass with identical results.
 
 ---
@@ -82,13 +82,13 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
   `llama.Client` pointed at a real HTTP server.
 
   Production files with direct coupling:
-  - `internal/agent/runner.go` (fields `Client`, `ImplementerClient`)
-  - `internal/app/model_state.go` (fields `client`, `implementerClient`, `summaryClient`)
-  - `internal/app/lifecycle.go` (construction via `llama.NewClientForServer`)
+  - `internal/runtime/agent/runner.go` (fields `Client`, `ImplementerClient`)
+  - `internal/surfaces/tui/app/model_state.go` (fields `client`, `implementerClient`, `summaryClient`)
+  - `internal/surfaces/tui/app/lifecycle.go` (construction via `llama.NewClientForServer`)
   - `cmd/idiom/main.go`
   - `cmd/idiom-e2e/main.go`
   - `cmd/idiom-analyze/main.go`
-  - `internal/agent/runner_delegate_edit.go`
+  - `internal/runtime/agent/runner_delegate_edit.go`
 
 - **Solution:** Define an interface owned by the application layer:
 
@@ -104,8 +104,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
 - **Pattern:** Port/Adapter (Clean Architecture)
 - **Estimated lines saved:** 0 (but enables 82+ test simplifications)
-- **Affected files:** `internal/llama/client.go`, `internal/agent/runner.go`,
-  `internal/app/model_state.go`, `internal/app/lifecycle.go`, all cmd
+- **Affected files:** `internal/runtime/llama/client.go`, `internal/runtime/agent/runner.go`,
+  `internal/surfaces/tui/app/model_state.go`, `internal/surfaces/tui/app/lifecycle.go`, all cmd
   entrypoints, 82+ test files
 - **Status:** DONE
 - **Results:** Defined `LLMClient` interface in `llama/interface.go` with 6 methods (`CompleteChat`, `CompleteChatMessage`, `StreamChat`, `ListModels`, `Backend`, `SupportsNativeTools`). Changed `Runner.Client`/`ImplementerClient` and `Model.client`/`implementerClient`/`summaryClient` from `*llama.Client` to `llama.LLMClient`. Compile-time check and mock tests added.
@@ -121,12 +121,12 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
   24 files. Every tool-name addition requires updating all blocks.
 
   Files with tool-name switches (top offenders):
-  - `internal/agent/runner.go` — 21 blocks
-  - `internal/agent/runner_autonomy.go` — 4 blocks
-  - `internal/agent/runner_lane_policy.go` — 5 blocks
-  - `internal/workspace/manager.go` — 3 blocks (incl. main dispatch)
-  - `internal/frontier/workerruntime/runtime.go` — 4 blocks
-  - `internal/app/lifecycle.go` — 5 blocks
+  - `internal/runtime/agent/runner.go` — 21 blocks
+  - `internal/runtime/agent/runner_autonomy.go` — 4 blocks
+  - `internal/runtime/agent/runner_lane_policy.go` — 5 blocks
+  - `internal/capabilities/workspace/manager.go` — 3 blocks (incl. main dispatch)
+  - `internal/runtime/workerruntime/runtime.go` — 4 blocks
+  - `internal/surfaces/tui/app/lifecycle.go` — 5 blocks
   - 18 other files — 1-3 blocks each
 
 - **Solution:** Single source-of-truth classification map:
@@ -152,7 +152,7 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
   `frontier/`, `eval/`
 - **Status:** DONE
 - **Results:** Created `util/toolclass.go` with 7 categories and 130+ tools. Replaced `isReadClassTool` switch in runner.go. 8 tests added.
-- **Verification:** `go test ./internal/agent/... ./internal/workspace/... ./internal/app/...`
+- **Verification:** `go test ./internal/runtime/agent/... ./internal/capabilities/workspace/... ./internal/surfaces/tui/app/...`
   — all existing tool-dispatch tests pass. New unit test verifies
   `ClassifyTool` covers all known tool names.
 
@@ -160,7 +160,7 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
 ### 1.4 Decompose `Runner` into Sub-components
 
-- **Problem:** `internal/agent/runner.go` is 10,610 lines with ~196
+- **Problem:** `internal/runtime/agent/runner.go` is 10,610 lines with ~196
   function/method definitions. The `Runner` struct has 21 fields. The `Run`
   method alone spans 1,533 lines (lines 85-1617). The file mixes core agent
   loop, tool dispatch, budget/gate enforcement, post-result processing,
@@ -197,10 +197,10 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
 - **Pattern:** Facade (GoF) + Single Responsibility Principle
 - **Estimated lines saved:** 0 (restructure, not removal)
-- **Affected files:** `internal/agent/runner.go`, all `runner_*.go` files
+- **Affected files:** `internal/runtime/agent/runner.go`, all `runner_*.go` files
 - **Status:** DONE
 - **Results:** Extracted `fingerprintTrackingState` and `postChildBudgetState` sub-structs from `runnerRequestBudgetState`. Added `budgetDecision.apply()` method replacing 4 identical consumer blocks in `runner.go`.
-- **Verification:** `go test ./internal/agent/...` — all ~60 existing runner
+- **Verification:** `go test ./internal/runtime/agent/...` — all ~60 existing runner
   tests pass with identical behavior.
 
 ---
@@ -209,7 +209,7 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
 ### 2.1 Consolidate `app.Model` into State Sub-structs
 
-- **Problem:** `internal/app/model_state.go` defines `Model` with **98 fields**
+- **Problem:** `internal/surfaces/tui/app/model_state.go` defines `Model` with **98 fields**
   spanning TUI state, business logic, LLM wiring, file I/O, panel state for 3
   tabs, plan autodoc bookkeeping, session caching, and debugging
   infrastructure. `handleSlashCommand()` is a 270-line monolithic switch with
@@ -234,17 +234,17 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
 - **Pattern:** Extract Class (Refactoring) + Command Pattern (GoF)
 - **Estimated lines saved:** 0 (restructure for maintainability)
-- **Affected files:** `internal/app/model_state.go`, `internal/app/lifecycle.go`
+- **Affected files:** `internal/surfaces/tui/app/model_state.go`, `internal/surfaces/tui/app/lifecycle.go`
 - **Status:** DONE
 - **Results:** Extracted `planState` (10 fields), `sessionsState` (8 fields), `historyState` (9 fields) into `model_state_types.go`.
-- **Verification:** `go test ./internal/app/...` — all 25 existing app tests
+- **Verification:** `go test ./internal/surfaces/tui/app/...` — all 25 existing app tests
   pass.
 
 ---
 
 ### 2.2 Extract Plan File Mutation Helper in `app/`
 
-- **Problem:** `internal/app/plan_autodoc.go` has 4 occurrences of the
+- **Problem:** `internal/surfaces/tui/app/plan_autodoc.go` has 4 occurrences of the
   read-modify-write pattern on plan files:
   `os.ReadFile` → `strings.Split` → loop/modify lines → `strings.Join` →
   `os.WriteFile`. This appears in `attachWriteToPlannedItem()` (160 lines),
@@ -254,17 +254,17 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
 - **Pattern:** Template Method (simplified)
 - **Estimated lines saved:** ~60
-- **Affected files:** `internal/app/plan_autodoc.go`
+- **Affected files:** `internal/surfaces/tui/app/plan_autodoc.go`
 - **Status:** DONE
 - **Results:** Added `mutatePlanLines` helper. Refactored 3 occurrences in plan_autodoc.go.
-- **Verification:** `go test ./internal/app/...`
+- **Verification:** `go test ./internal/surfaces/tui/app/...`
 
 ---
 
 ### 2.3 Consolidate Intent Synthesis
 
-- **Problem:** `toolRequestIntent()` in `internal/app/lifecycle.go` and
-  `writeToolIntentSynth()` in `internal/app/plan_autodoc.go` both have large
+- **Problem:** `toolRequestIntent()` in `internal/surfaces/tui/app/lifecycle.go` and
+  `writeToolIntentSynth()` in `internal/surfaces/tui/app/plan_autodoc.go` both have large
   switch statements mapping tool names to human-readable intent strings with
   overlapping logic.
 
@@ -272,10 +272,10 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
 - **Pattern:** Table-Driven Design
 - **Estimated lines saved:** ~40
-- **Affected files:** `internal/app/lifecycle.go`, `internal/app/plan_autodoc.go`
+- **Affected files:** `internal/surfaces/tui/app/lifecycle.go`, `internal/surfaces/tui/app/plan_autodoc.go`
 - **Status:** DONE
 - **Results:** Created `tool_intent.go` with merged `toolIntent` function. Removed `writeToolIntentSynth` from plan_autodoc.go. Simplified `toolRequestIntent` in lifecycle.go.
-- **Verification:** `go test ./internal/app/...`
+- **Verification:** `go test ./internal/surfaces/tui/app/...`
 
 ---
 
@@ -286,17 +286,17 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
   (lines 394, 398, 532, 555, 577, 807, 859, 875, 1098, 1210, 1220, 1238,
   1282, 1505, 1598, 1627) and ~50 times across 8 files total.
 
-- **Solution:** Extract to a constant or helper function in `internal/agent/`:
+- **Solution:** Extract to a constant or helper function in `internal/runtime/agent/`:
   ```go
   const forceAnswerPromptTail = "Write the normal final answer from the gathered evidence..."
   ```
 
 - **Pattern:** DRY
 - **Estimated lines saved:** ~80
-- **Affected files:** `internal/agent/runner.go`
+- **Affected files:** `internal/runtime/agent/runner.go`
 - **Status:** DONE
 - **Results:** Added `forceAnswerTailGatheredEvidence` and `forceAnswerTailEvidenceAlreadyGathered` constants. Replaced 9 inline duplicates.
-- **Verification:** `go test ./internal/agent/...`
+- **Verification:** `go test ./internal/runtime/agent/...`
 
 ---
 
@@ -307,14 +307,14 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
   | Location | Function | Marker |
   |----------|----------|--------|
-  | `internal/app/app.go:17` | `truncateText` | `"..."` |
-  | `internal/app/plan_autodoc.go:41` | `truncateForLog` | `"...[truncated]"` |
-  | `internal/app/history.go:538` | `truncateRunes` | `"…"` (rune-aware) |
-  | `internal/architect/packet.go:409` | `truncateString` | `"\n[truncated]"` |
-  | `internal/agent/runner.go:2768` | `truncateRunnerStateText` | `"..."` |
-  | `internal/workspace/manager.go:3694` | `truncateSearchContentLine` | `"...[line truncated]"` |
-  | `internal/frontier/workerruntime/runtime.go:1311` | `truncate` | `"..."` |
-  | `internal/postflight/project.go:193` | `truncateOutput` | `"... (truncated; ...)"` |
+  | `internal/surfaces/tui/app/app.go:17` | `truncateText` | `"..."` |
+  | `internal/surfaces/tui/app/plan_autodoc.go:41` | `truncateForLog` | `"...[truncated]"` |
+  | `internal/surfaces/tui/app/history.go:538` | `truncateRunes` | `"…"` (rune-aware) |
+  | `internal/workflows/architect/packet.go:409` | `truncateString` | `"\n[truncated]"` |
+  | `internal/runtime/agent/runner.go:2768` | `truncateRunnerStateText` | `"..."` |
+  | `internal/capabilities/workspace/manager.go:3694` | `truncateSearchContentLine` | `"...[line truncated]"` |
+  | `internal/runtime/workerruntime/runtime.go:1311` | `truncate` | `"..."` |
+  | `internal/workflows/postflight/project.go:193` | `truncateOutput` | `"... (truncated; ...)"` |
   | `cmd/idiom/plan_execute.go:1907` | `truncatePlanExecuteText` | `"\n\n[truncated N bytes]\n"` |
   | `cmd/idiom/lane_explain.go:379` | `truncateForExplain` | `"…"` |
   | `cmd/idiom-analyze/main.go:707` | `truncate` | `"…"` |
@@ -339,7 +339,7 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Affected files:** 11 files across 8 packages
 - **Status:** DONE
 - **Results:** Created `util/truncate.go` with `TruncateBytes`, `TruncateRunes`, `Truncate`. Created `util/truncate_test.go` with 31 test cases. Updated 5 call sites: `app/app.go`, `agent/runner.go`, `frontier/workerruntime/runtime.go`, `cmd/idiom-analyze/main.go`, `cmd/idiom/lane_explain.go`. All callers still expose their local function names for API compatibility; bodies now delegate to `util.Truncate*`.
-- **Verification:** `go build ./...` clean, `go test ./internal/util/...` pass.
+- **Verification:** `go build ./...` clean, `go test ./internal/platform/util/...` pass.
 
 ---
 
@@ -350,17 +350,17 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
   | Location | Function | Delegates? |
   |----------|----------|-----------|
-  | `internal/util/stringsutil.go:23` | `UniqueNonEmpty` | canonical |
+  | `internal/platform/util/stringsutil.go:23` | `UniqueNonEmpty` | canonical |
   | `internal/frontier/locate.go:34` | `UniqueNonEmptyStrings` | NO — independent copy |
-  | `internal/architect/packet.go:423` | `cleanStrings` | NO — independent copy |
-  | `internal/comprehension/graph.go:3231` | `uniqueStrings` | NO — independent copy |
-  | `internal/frontier/workerruntime/runtime.go:1299` | `uniqueNonEmpty` | YES — delegates to util |
-  | `internal/app/app.go:50` | `uniqueNonEmptyStrings` | YES — delegates to util |
-  | `internal/app/app.go:54` | `uniqueLimitedStrings` | YES — delegates to frontier |
-  | `internal/agent/runner.go:6762` | `uniqueDelegatedDiscoveryPaths` | NO — domain-specific |
-  | `internal/comprehension/trace.go:1237` | `dedupeTraceAnchors` | NO — type-specific |
-  | `internal/comprehension/native_indexes.go:698` | `uniqueNativeSymbolRefs` | NO — type-specific |
-  | `internal/autonomy/contract.go:932+` | 4 typed dedup functions | NO — type-specific |
+  | `internal/workflows/architect/packet.go:423` | `cleanStrings` | NO — independent copy |
+  | `internal/repository/comprehension/graph.go:3231` | `uniqueStrings` | NO — independent copy |
+  | `internal/runtime/workerruntime/runtime.go:1299` | `uniqueNonEmpty` | YES — delegates to util |
+  | `internal/surfaces/tui/app/app.go:50` | `uniqueNonEmptyStrings` | YES — delegates to util |
+  | `internal/surfaces/tui/app/app.go:54` | `uniqueLimitedStrings` | YES — delegates to frontier |
+  | `internal/runtime/agent/runner.go:6762` | `uniqueDelegatedDiscoveryPaths` | NO — domain-specific |
+  | `internal/repository/comprehension/trace.go:1237` | `dedupeTraceAnchors` | NO — type-specific |
+  | `internal/repository/comprehension/native_indexes.go:698` | `uniqueNativeSymbolRefs` | NO — type-specific |
+  | `internal/contracts/autonomy/contract.go:932+` | 4 typed dedup functions | NO — type-specific |
   | `internal/frontier/locate.go:27` | `LimitStrings` | NO — unique |
 
   `frontier/locate.go` also duplicates `ContainsAny` (identical to
@@ -378,12 +378,12 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
 - **Pattern:** Shared Kernel (DDD)
 - **Estimated lines saved:** ~80-120
-- **Affected files:** `internal/frontier/locate.go`, `internal/architect/packet.go`,
-  `internal/comprehension/graph.go`, `internal/projectartifacts/artifacts.go`,
-  `internal/app/app.go`
+- **Affected files:** `internal/frontier/locate.go`, `internal/workflows/architect/packet.go`,
+  `internal/repository/comprehension/graph.go`, `internal/workflows/projectartifacts/artifacts.go`,
+  `internal/surfaces/tui/app/app.go`
 - **Status:** DONE
 - **Results:** Added `util.LimitSlice` and `util.Fallback` to `util/`. Updated `frontier/locate.go` (`ContainsAny`, `UniqueNonEmptyStrings`, `LimitStrings`) to delegate to `util`. Folded `cmdutil.Fallback` into `util.Fallback`. Updated callers in `cmd/idiom-eval/main.go` and `cmd/idiom-swe-eval/main.go`. Deleted `internal/cmdutil/` package entirely. 11 new tests added.
-- **Verification:** `go build ./...` clean, `go test ./internal/util/...` pass.
+- **Verification:** `go build ./...` clean, `go test ./internal/platform/util/...` pass.
 
 ---
 
@@ -393,11 +393,11 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
   | Location | File |
   |----------|------|
-  | `internal/app/sessions.go:90-111` | Session scanning |
-  | `internal/app/sessions.go:149-164` | Session replay |
-  | `internal/app/resume.go:117-141` | Resume replay |
-  | `internal/comprehension/learning_log.go:563-580` | Learning log |
-  | `internal/eval/eval.go:585-601` | Eval log scanning |
+  | `internal/surfaces/tui/app/sessions.go:90-111` | Session scanning |
+  | `internal/surfaces/tui/app/sessions.go:149-164` | Session replay |
+  | `internal/surfaces/tui/app/resume.go:117-141` | Resume replay |
+  | `internal/repository/comprehension/learning_log.go:563-580` | Learning log |
+  | `internal/evidence/eval/eval.go:585-601` | Eval log scanning |
   | `cmd/idiom/audit.go:965-979` | Audit log |
   | `cmd/idiom/artifact.go:262-264` | Artifact scanning |
   | `cmd/idiom/main.go:292-293` | Main log |
@@ -415,7 +415,7 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Affected files:** 8 files across 4 packages
 - **Status:** DONE
 - **Results:** Created `util/jsonl.go` with `ScanFile(path, fn)`. Created `util/jsonl_test.go` with 8 test cases. Callers not yet migrated (separate step).
-- **Verification:** `go build ./...` clean, `go test ./internal/util/...` pass.
+- **Verification:** `go build ./...` clean, `go test ./internal/platform/util/...` pass.
 
 ---
 
@@ -438,7 +438,7 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
   `eval/`, `cmd/`
 - **Status:** DONE
 - **Results:** Created `util/jsonutil.go` with `MustJSON` and `MustJSONIndent`. Created `util/jsonutil_test.go` with 10 test cases. Callers not yet migrated (separate step).
-- **Verification:** `go build ./...` clean, `go test ./internal/util/...` pass.
+- **Verification:** `go build ./...` clean, `go test ./internal/platform/util/...` pass.
 
 ---
 
@@ -463,7 +463,7 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 - **Affected files:** 25 files
 - **Status:** DONE
 - **Results:** Created `util/pathutil.go` with `NormalizePath` and `NormalizePathKey`. Created `util/pathutil_test.go` with 11 test cases. Callers not yet migrated (separate step).
-- **Verification:** `go build ./...` clean, `go test ./internal/util/...` pass.
+- **Verification:** `go build ./...` clean, `go test ./internal/platform/util/...` pass.
 
 ---
 
@@ -479,8 +479,8 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
   direct imports of `frontier/pathparse`. Delete `text.go`.
 
   Callers to update (found via grep):
-  - `internal/app/app.go` — `pathparse.MentionedWorkspacePaths` already imported
-  - `internal/agent/` files importing `frontier` for path functions
+  - `internal/surfaces/tui/app/app.go` — `pathparse.MentionedWorkspacePaths` already imported
+  - `internal/runtime/agent/` files importing `frontier` for path functions
   - Any file importing `frontier.LooksLikeWorkspacePathToken`, etc.
 
 - **Pattern:** Inline Class (Refactoring)
@@ -526,10 +526,10 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
 - **Pattern:** DRY
 - **Estimated lines saved:** ~15
-- **Affected files:** `internal/runner/runner_test.go`, `internal/workspace/harness_audit_test.go`
+- **Affected files:** `internal/runtime/runner/runner_test.go`, `internal/capabilities/workspace/harness_audit_test.go`
 - **Status:** DONE
 - **Results:** Replaced `runner_test.go:contains` with `strings.Contains`. Replaced `harness_audit_test.go:contains` with `slices.Contains`.
-- **Verification:** `go test ./internal/runner/... ./internal/workspace/...` pass.
+- **Verification:** `go test ./internal/runtime/runner/... ./internal/capabilities/workspace/...` pass.
 
 ---
 
@@ -554,10 +554,10 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
 - **Pattern:** DRY
 - **Estimated lines saved:** ~60
-- **Affected files:** `internal/runner/client.go`, `internal/runner/server.go`
+- **Affected files:** `internal/runtime/runner/client.go`, `internal/runtime/runner/server.go`
 - **Status:** DONE
 - **Results:** Unified to `writeJSON(w io.Writer, v any)`. Changed `writeRequest` parameter from `net.Conn` to `io.Writer`. Extracted `roundTrip` helper eliminating ~40 lines from `Status()`, `Ping()`, `Cancel()`. Extracted `removeJobByID` replacing 3 manual loops in `release()` and `cancel()`. Net -55 lines.
-- **Verification:** `go build ./...` clean, `go test ./internal/runner/...` pass.
+- **Verification:** `go build ./...` clean, `go test ./internal/runtime/runner/...` pass.
 
 ---
 
@@ -612,10 +612,10 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
 - **Pattern:** Template Method (GoF)
 - **Estimated lines saved:** ~3,000
-- **Affected files:** 6 LSP files in `internal/workspace/`
+- **Affected files:** 6 LSP files in `internal/capabilities/workspace/`
 - **Status:** DONE
 - **Results:** Embedded `lspBaseClient` in `clangdLSPClient` as proof of concept (~120 lines removed). Added `serverName` field to base. 6 inherited methods, 1 override (`openFile`). Remaining 4 clients can be migrated identically.
-- **Verification:** `go test ./internal/workspace/...`
+- **Verification:** `go test ./internal/capabilities/workspace/...`
 
 ---
 
@@ -629,10 +629,10 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
 - **Pattern:** Command Dispatch (GoF)
 - **Estimated lines saved:** 0 (restructure)
-- **Affected files:** `internal/app/lifecycle.go`, `internal/app/model_state.go`
+- **Affected files:** `internal/surfaces/tui/app/lifecycle.go`, `internal/surfaces/tui/app/model_state.go`
 - **Status:** DONE
 - **Results:** Decomposed Update() into 13 handlers in update_handlers.go. Decomposed handleSlashCommand into command registry with 22 handlers in slash_commands.go.
-- **Verification:** `go test ./internal/app/...`
+- **Verification:** `go test ./internal/surfaces/tui/app/...`
 
 ---
 
@@ -645,37 +645,37 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
 - **Pattern:** Single Responsibility Principle
 - **Estimated lines saved:** 0 (restructure)
-- **Affected files:** `internal/eval/`
+- **Affected files:** `internal/evidence/eval/`
 - **Status:** DONE
 - **Results:** Split `eval.go` (2,949 lines) into `eval.go` (720), `eval_scoring.go` (1,854), `eval_reporting.go` (378). All 54 scoring functions and 6 reporting functions extracted.
-- **Verification:** `go test ./internal/eval/...`
+- **Verification:** `go test ./internal/evidence/eval/...`
 
 ---
 
 ### 3.4 Unify Secret Redaction Between `telemetry/` and `transcript/`
 
-- **Problem:** `internal/transcript/debuglog.go` uses regex-based secret
+- **Problem:** `internal/evidence/transcript/debuglog.go` uses regex-based secret
   redaction (`apiKeyPattern`, `bearerPattern`, `openAIKeyPattern` at lines
-  693-697). `internal/telemetry/recorder.go` uses flag-aware argument
+  693-697). `internal/evidence/telemetry/recorder.go` uses flag-aware argument
   sanitization (`isSensitiveFlag`, `redactedValue`, `sanitizeArgValue`).
   Both implement independent sanitization approaches for overlapping security
   concerns.
 
-- **Solution:** Extract a shared `internal/util/sanitizer.go` with both
+- **Solution:** Extract a shared `internal/platform/util/sanitizer.go` with both
   content-based and flag-based redaction. Both packages delegate to it.
 
 - **Pattern:** Shared Kernel (DDD)
 - **Estimated lines saved:** ~50
-- **Affected files:** `internal/transcript/debuglog.go`, `internal/telemetry/recorder.go`
+- **Affected files:** `internal/evidence/transcript/debuglog.go`, `internal/evidence/telemetry/recorder.go`
 - **Status:** DONE
 - **Results:** Created `util/redact.go` with `RedactSecrets` and `RedactedValue`. Updated transcript/debuglog.go and telemetry/recorder.go to delegate. 18 tests added.
-- **Verification:** `go test ./internal/transcript/... ./internal/telemetry/...`
+- **Verification:** `go test ./internal/evidence/transcript/... ./internal/evidence/telemetry/...`
 
 ---
 
 ### 3.5 Remove `app/app.go` Forwarding Wrappers
 
-- **Problem:** `internal/app/app.go` (83 lines) contains 11 functions, many of
+- **Problem:** `internal/surfaces/tui/app/app.go` (83 lines) contains 11 functions, many of
   which are one-line delegations to `util` or `frontier`:
   - `containsAny` → `util.ContainsAny`
   - `firstNonEmptyString` → `util.FirstNonEmpty`
@@ -692,10 +692,10 @@ parallel implementation. Tier 1 items are higher-impact but require more care.
 
 - **Pattern:** Inline Class (Refactoring)
 - **Estimated lines saved:** ~40
-- **Affected files:** `internal/app/app.go`, all callers within `app/`
+- **Affected files:** `internal/surfaces/tui/app/app.go`, all callers within `app/`
 - **Status:** DONE
 - **Results:** Removed 5 forwarding wrappers. Callers use util/pathparse directly. Kept 5 functions with genuine logic.
-- **Verification:** `go test ./internal/app/...`
+- **Verification:** `go test ./internal/surfaces/tui/app/...`
 
 ---
 

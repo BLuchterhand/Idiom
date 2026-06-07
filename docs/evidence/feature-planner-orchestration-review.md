@@ -18,13 +18,13 @@ The design defines a feature-level workflow for planning, repairing,
 dispatching, reviewing, recovering, replanning, continuing, and releasing
 multi-atom deliverables. The durability/TDD addendum specifically investigated:
 
-- durable progress and resume patterns in `internal/planexecute/progress.go`
+- durable progress and resume patterns in `internal/workflows/planexecute/progress.go`
 - loopable planner modes and transport projections in
-  `internal/agent/plan_execute_planning_state.go`
+  `internal/runtime/agent/plan_execute_planning_state.go`
 - TDD obligations, implementation ledger records, and report paths in
-  `internal/productworkflow/types.go`
-- coverage-gate behavior in `internal/productworkflow/coverage_gate.go`
-- dispatch brief blocking behavior in `internal/productworkflow/brief_generation.go`
+  `internal/workflows/productworkflow/types.go`
+- coverage-gate behavior in `internal/workflows/productworkflow/coverage_gate.go`
+- dispatch brief blocking behavior in `internal/workflows/productworkflow/brief_generation.go`
 - SDD/TDD target coverage in `docs/design-tdd-coverage.md`
 - spec-first workflow contracts in
   `docs/design-prd-adr-brief-research-workflow.md`

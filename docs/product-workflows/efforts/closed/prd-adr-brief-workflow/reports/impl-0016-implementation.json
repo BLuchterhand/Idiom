@@ -10,8 +10,8 @@
   "scope_statement": "Pure product workflow atom scope gate: compare actual changed paths with expected, allowed, and forbidden atom scope without git, filesystem, CLI, or durable-state dependencies.",
   "code_changes": true,
   "changed_paths": [
-    "internal/productworkflow/scope.go",
-    "internal/productworkflow/scope_test.go",
+    "internal/workflows/productworkflow/scope.go",
+    "internal/workflows/productworkflow/scope_test.go",
     "docs/product-workflows/efforts/index.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
@@ -26,7 +26,7 @@
     "run_by_implementor": false,
     "commands": [
       "gofmt on touched Go files",
-      "go test ./internal/productworkflow",
+      "go test ./internal/workflows/productworkflow",
       "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",

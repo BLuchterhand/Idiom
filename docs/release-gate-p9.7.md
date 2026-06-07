@@ -109,7 +109,8 @@ privacy-safe validation-record input and verifies:
 ## Reproduction Commands
 
 ```sh
-go test ./cmd/idiom -run 'TestP97|TestP711|TestRunReleaseEvidence|TestRunProductEvidence|TestP76|TestP710' -count=1
+go test ./internal/evidence/productevidence -run 'TestP97|TestP711|TestRunReleaseEvidence|TestRunProductEvidence' -count=1
+go test ./internal/evidence/sidecarvalidation -run 'TestP76|TestP710' -count=1
 go test ./cmd/idiom -count=1
 
 go run ./cmd/idiom product-evidence export --project-root . --output .idiom/product-evidence/p9.7-product-evidence.json

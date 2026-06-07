@@ -22,11 +22,11 @@
   "reviewed_at": "2026-05-18T12:40:00Z",
   "commands_reviewed": [
     "idiom tool context_pack --input '{\"task\":\"review impl 0024 adr draft prompt rendering from evidence ledger and prd\",\"mode\":\"plan\",\"limit\":12}'",
-    "git diff -- cmd/idiom/product_workflow.go internal/productworkflow/types.go internal/productworkflow/adr_draft_prompts.go",
-    "git diff -- cmd/idiom/product_workflow_test.go internal/productworkflow/adr_draft_prompts_test.go",
-    "go test ./internal/productworkflow -run TestADRDraftPrompt",
-    "go test ./cmd/idiom -run TestProductADRRenderPrompt",
-    "go test ./internal/productworkflow ./cmd/idiom",
+    "git diff -- internal/surfaces/cli/product/product_workflow.go internal/workflows/productworkflow/types.go internal/workflows/productworkflow/adr_draft_prompts.go",
+    "git diff -- internal/surfaces/cli/product/product_workflow_test.go internal/workflows/productworkflow/adr_draft_prompts_test.go",
+    "go test ./internal/workflows/productworkflow -run TestADRDraftPrompt",
+    "go test ./internal/surfaces/cli/product -run TestProductADRRenderPrompt",
+    "go test ./internal/workflows/productworkflow ./cmd/idiom",
     "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "git diff --check"

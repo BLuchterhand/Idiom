@@ -17,18 +17,18 @@ for that specific commit.
 
 ## Exact Changes
 
-### 1. `internal/productworkflow/types.go`
+### 1. `internal/workflows/productworkflow/types.go`
 Add field to `ImplementationLedgerRecord`:
 ```go
 CommitHash string `json:"commit_hash,omitempty"`
 ```
 
-### 2. `internal/productworkflow/validate.go`
+### 2. `internal/workflows/productworkflow/validate.go`
 In `validateImplementationLedger`, when `rec.CommitHash != ""`:
 - Validate it matches `^[0-9a-f]{40}$`
 - Only on `implementation_completed`, `fallback_completion`, `partial_implementation_recorded`
 
-### 3. `internal/productworkflow/scope.go`
+### 3. `internal/workflows/productworkflow/scope.go`
 Add new pure function:
 ```go
 type AtomCommitCoverage struct {
@@ -46,7 +46,7 @@ func ValidatePerAtomCoverage(atoms []AtomCommitCoverage, commitPaths map[string]
   - Emit `atom_under_reports_path` for each commit path not in atom.ChangedPaths
 - Skip atoms without CommitHash (backward compatible)
 
-### 4. `cmd/idiom/product_workflow.go`
+### 4. `internal/surfaces/cli/product/product_workflow.go`
 Add `gitCommitPaths` helper:
 - Takes a slice of commit hashes
 - Runs `git show --name-only --format="" <hash>` for each

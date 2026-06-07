@@ -45,8 +45,8 @@ Observed failure evidence from current and recent
 `testdata/live-contracts/generated-logs/product-workflow-coverage-gate-authority-reuse.jsonl`:
 
 - The planner read source-body evidence for
-  `internal/productworkflow/coverage_gate.go` and
-  `internal/productworkflow/validate.go`.
+  `internal/workflows/productworkflow/coverage_gate.go` and
+  `internal/workflows/productworkflow/validate.go`.
 - Earlier runs rejected additional reads with `Candidate source already ready`.
   Those runner rejections were real failures, but they are now best understood
   as a symptom of split authority rather than the current root cause.

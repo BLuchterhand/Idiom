@@ -1,0 +1,806 @@
+package productworkflow
+
+import (
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+)
+
+func TestScopeGatePassesWhenActualMatchesExpected(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles:     []string{"internal/workflows/productworkflow/scope.go"},
+		ForbiddenFiles:    []string{"internal/workflows/productworkflow/transition.go"},
+		ForbiddenPatterns: []string{"cmd/**"},
+		ActualChangedPaths: []string{
+			"internal/workflows/productworkflow/scope.go",
+		},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "pass" {
+		t.Fatalf("expected pass, got %q with blockers %+v", result.Status, result.Blockers)
+	}
+	if len(result.Blockers) != 0 {
+		t.Fatalf("expected zero blockers, got %d", len(result.Blockers))
+	}
+}
+
+func TestScopeGatePassesWithAllowedDurableBookkeepingPaths(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles: []string{"internal/workflows/productworkflow/scope.go"},
+		AllowedFiles:  []string{"reports/impl-0016-implementation.json"},
+		ForbiddenFiles: []string{
+			"internal/workflows/productworkflow/transition.go",
+			"cmd/idiom/product_workflow.go",
+		},
+		ForbiddenPatterns: []string{"docs/**"},
+		ActualChangedPaths: []string{
+			"internal/workflows/productworkflow/scope.go",
+			"reports/impl-0016-implementation.json",
+		},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "pass" {
+		t.Fatalf("expected pass, got %q with blockers %+v", result.Status, result.Blockers)
+	}
+	if len(result.MissingExpected) != 0 {
+		t.Fatalf("expected no missing, got %v", result.MissingExpected)
+	}
+	if len(result.UnexpectedPaths) != 0 {
+		t.Fatalf("expected no unexpected, got %v", result.UnexpectedPaths)
+	}
+}
+
+func TestScopeGateAllowedFilesBlockForbiddenSpillover(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles: []string{"internal/workflows/productworkflow/scope.go"},
+		AllowedFiles:  []string{"reports/impl-0016-implementation.json"},
+		ForbiddenFiles: []string{
+			"internal/workflows/productworkflow/transition.go",
+		},
+		ForbiddenPatterns: []string{"docs/**"},
+		ActualChangedPaths: []string{
+			"internal/workflows/productworkflow/scope.go",
+			"internal/workflows/productworkflow/transition.go",
+			"reports/impl-0016-implementation.json",
+		},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", result.Status)
+	}
+	found := false
+	for _, b := range result.Blockers {
+		if b.Code == "forbidden_path" && b.Path == "internal/workflows/productworkflow/transition.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected forbidden_path blocker for transition.go, got %+v", result.Blockers)
+	}
+}
+
+func TestScopeGateForbiddenExactPathProducesBlocker(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles: []string{"internal/workflows/productworkflow/scope.go"},
+		ForbiddenFiles: []string{
+			"internal/workflows/productworkflow/types.go",
+			"cmd/idiom/product_workflow.go",
+		},
+		ActualChangedPaths: []string{
+			"internal/workflows/productworkflow/scope.go",
+			"internal/workflows/productworkflow/types.go",
+		},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", result.Status)
+	}
+	if len(result.Blockers) == 0 {
+		t.Fatal("expected at least one blocker")
+	}
+	b := result.Blockers[0]
+	if b.Code != "forbidden_path" {
+		t.Fatalf("expected blocker code forbidden_path, got %q", b.Code)
+	}
+	if b.Path != "internal/workflows/productworkflow/types.go" {
+		t.Fatalf("expected blocker path internal/workflows/productworkflow/types.go, got %q", b.Path)
+	}
+}
+
+func TestScopeGateForbiddenPatternProducesBlocker(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles: []string{"internal/workflows/productworkflow/scope.go"},
+		ForbiddenFiles: []string{
+			"internal/workflows/productworkflow/transition.go",
+		},
+		ForbiddenPatterns: []string{"cmd/**", "docs/**/*.md"},
+		ActualChangedPaths: []string{
+			"internal/workflows/productworkflow/scope.go",
+			"cmd/idiom/main.go",
+		},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", result.Status)
+	}
+	found := false
+	for _, b := range result.Blockers {
+		if b.Code == "forbidden_pattern" {
+			found = true
+			if b.Path != "cmd/idiom/main.go" {
+				t.Fatalf("expected blocker path cmd/idiom/main.go, got %q", b.Path)
+			}
+			if b.Pattern != "cmd/**" {
+				t.Fatalf("expected blocker pattern cmd/**, got %q", b.Pattern)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected forbidden_pattern blocker, got %+v", result.Blockers)
+	}
+}
+
+func TestScopeGateUnexpectedPathProducesBlocker(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles: []string{"internal/workflows/productworkflow/scope.go"},
+		ForbiddenFiles: []string{
+			"internal/workflows/productworkflow/transition.go",
+		},
+		ActualChangedPaths: []string{
+			"internal/workflows/productworkflow/scope.go",
+			"internal/workflows/productworkflow/surprise.go",
+		},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", result.Status)
+	}
+	found := false
+	for _, b := range result.Blockers {
+		if b.Code == "unexpected_path" && b.Path == "internal/workflows/productworkflow/surprise.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected unexpected_path blocker for surprise.go, got %+v", result.Blockers)
+	}
+}
+
+func TestScopeGateMissingExpectedPathProducesBlocker(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles: []string{
+			"internal/workflows/productworkflow/scope.go",
+			"internal/workflows/productworkflow/scope_test.go",
+		},
+		ForbiddenFiles: []string{"internal/workflows/productworkflow/transition.go"},
+		ActualChangedPaths: []string{
+			"internal/workflows/productworkflow/scope.go",
+		},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", result.Status)
+	}
+	found := false
+	for _, b := range result.Blockers {
+		if b.Code == "missing_expected_path" && b.Path == "internal/workflows/productworkflow/scope_test.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected missing_expected_path blocker for scope_test.go, got %+v", result.Blockers)
+	}
+}
+
+func TestScopeGateNormalizedPathVariants(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles:  []string{"./internal/workflows/productworkflow/scope.go"},
+		ForbiddenFiles: []string{".\\internal\\workflows\\productworkflow\\types.go"},
+		ActualChangedPaths: []string{
+			"internal/workflows/productworkflow/./scope.go",
+			"internal/workflows/productworkflow/types.go",
+		},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", result.Status)
+	}
+	foundForbidden := false
+	for _, b := range result.Blockers {
+		if b.Code == "forbidden_path" {
+			foundForbidden = true
+			if b.Path != "internal/workflows/productworkflow/types.go" {
+				t.Fatalf("expected normalized path internal/workflows/productworkflow/types.go, got %q", b.Path)
+			}
+		}
+	}
+	if !foundForbidden {
+		t.Fatalf("expected forbidden_path blocker after normalization, got %+v", result.Blockers)
+	}
+	if len(result.MissingExpected) != 0 {
+		t.Fatalf("expected no missing expected after normalization, got %v", result.MissingExpected)
+	}
+}
+
+func TestScopeGateNormalizesMovedProductWorkflowPaths(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles: []string{
+			"internal/surfaces/cli/product/product_workflow.go",
+			"internal/workflows/productworkflow/scope.go",
+		},
+		ActualChangedPaths: []string{
+			"cmd/idiom/product_workflow.go",
+			"internal/productworkflow/scope.go",
+		},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "pass" || len(result.Blockers) != 0 {
+		t.Fatalf("expected moved product workflow paths to match, got %#v", result)
+	}
+}
+
+func TestPerAtomCoverageNormalizesMovedProductWorkflowPaths(t *testing.T) {
+	findings := ValidatePerAtomCoverage([]AtomCommitCoverage{{
+		TaskID:     "impl-move",
+		CommitHash: "abc123",
+		ChangedPaths: []string{
+			"internal/surfaces/cli/product/product_workflow.go",
+			"internal/workflows/productworkflow/scope.go",
+		},
+	}}, map[string][]string{
+		"abc123": {
+			"cmd/idiom/product_workflow.go",
+			"internal/productworkflow/scope.go",
+		},
+	})
+	if len(findings) != 0 {
+		t.Fatalf("expected moved product workflow paths to satisfy per-atom coverage, got %#v", findings)
+	}
+}
+
+func TestScopeGateBackslashNormalization(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles:      []string{"internal/workflows/productworkflow/scope.go"},
+		ForbiddenFiles:     []string{"internal/workflows/productworkflow/transition.go"},
+		ActualChangedPaths: []string{"internal\\workflows\\productworkflow\\scope.go"},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "pass" {
+		t.Fatalf("expected pass after backslash normalization, got %q with blockers %+v", result.Status, result.Blockers)
+	}
+}
+
+func TestScopeGateDuplicateSlashesNormalized(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles:      []string{"internal/workflows/productworkflow/scope.go"},
+		ForbiddenFiles:     []string{"internal/workflows/productworkflow/transition.go"},
+		ActualChangedPaths: []string{"internal//workflows//productworkflow///scope.go"},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "pass" {
+		t.Fatalf("expected pass after duplicate slash normalization, got %q with blockers %+v", result.Status, result.Blockers)
+	}
+}
+
+func TestScopeGateDotSegmentNormalization(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles:      []string{"internal/workflows/productworkflow/scope.go"},
+		ForbiddenFiles:     []string{"internal/workflows/productworkflow/transition.go"},
+		ActualChangedPaths: []string{"./internal/./workflows/productworkflow/scope.go"},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "pass" {
+		t.Fatalf("expected pass after dot segment normalization, got %q with blockers %+v", result.Status, result.Blockers)
+	}
+}
+
+func TestScopeGateEmptyPathsSkipped(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles:      []string{"internal/workflows/productworkflow/scope.go"},
+		ForbiddenFiles:     []string{"internal/workflows/productworkflow/transition.go"},
+		ActualChangedPaths: []string{"", "  ", "internal/workflows/productworkflow/scope.go"},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "pass" {
+		t.Fatalf("expected pass with empty paths skipped, got %q with blockers %+v", result.Status, result.Blockers)
+	}
+}
+
+func TestScopeGateResultSlicesStableSorted(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles: []string{"b.go", "a.go"},
+		ForbiddenFiles: []string{
+			"forbidden_b.go",
+			"forbidden_a.go",
+		},
+		ActualChangedPaths: []string{
+			"a.go",
+			"z1.go",
+			"z2.go",
+		},
+	}
+	result := EvaluateScopeGate(input)
+
+	if !slices.IsSorted(result.ExpectedFiles) {
+		t.Fatalf("ExpectedFiles not sorted: %v", result.ExpectedFiles)
+	}
+	if !slices.IsSorted(result.ActualChangedPaths) {
+		t.Fatalf("ActualChangedPaths not sorted: %v", result.ActualChangedPaths)
+	}
+	if !slices.IsSorted(result.MissingExpected) {
+		t.Fatalf("MissingExpected not sorted: %v", result.MissingExpected)
+	}
+	if !slices.IsSorted(result.UnexpectedPaths) {
+		t.Fatalf("UnexpectedPaths not sorted: %v", result.UnexpectedPaths)
+	}
+	if !slices.IsSorted(result.ForbiddenPaths) {
+		t.Fatalf("ForbiddenPaths not sorted: %v", result.ForbiddenPaths)
+	}
+
+	prevCode := ""
+	prevPath := ""
+	for _, b := range result.Blockers {
+		if b.Code < prevCode {
+			t.Fatalf("Blocker codes not sorted: %q < %q", b.Code, prevCode)
+		}
+		if b.Code == prevCode && b.Path < prevPath {
+			t.Fatalf("Blocker paths not sorted within code group: %q < %q", b.Path, prevPath)
+		}
+		prevCode = b.Code
+		prevPath = b.Path
+	}
+}
+
+func TestScopeGateBlockerCodesAreSorted(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles: []string{"a.go"},
+		ForbiddenFiles: []string{
+			"forbidden.go",
+		},
+		ForbiddenPatterns: []string{"pat/**"},
+		ActualChangedPaths: []string{
+			"forbidden.go",
+			"pat/sub.go",
+			"unexpected.go",
+		},
+	}
+	result := EvaluateScopeGate(input)
+
+	codes := make([]string, 0, len(result.Blockers))
+	for _, b := range result.Blockers {
+		codes = append(codes, b.Code)
+	}
+	if !slices.IsSorted(codes) {
+		t.Fatalf("Blocker codes not sorted: %v", codes)
+	}
+}
+
+func TestScopeGateMultipleBlockers(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles:     []string{"a.go", "b.go"},
+		ForbiddenFiles:    []string{"f1.go"},
+		ForbiddenPatterns: []string{"pat/**"},
+		ActualChangedPaths: []string{
+			"a.go",
+			"f1.go",
+			"pat/x.go",
+			"unexpected.go",
+		},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", result.Status)
+	}
+
+	codeSet := map[string]bool{}
+	for _, b := range result.Blockers {
+		codeSet[b.Code] = true
+	}
+	for _, want := range []string{"forbidden_path", "forbidden_pattern", "unexpected_path", "missing_expected_path"} {
+		if !codeSet[want] {
+			t.Fatalf("expected blocker code %q, got codes %v", want, codeSet)
+		}
+	}
+
+	if len(result.MissingExpected) != 1 || result.MissingExpected[0] != "b.go" {
+		t.Fatalf("expected missing [b.go], got %v", result.MissingExpected)
+	}
+	if len(result.UnexpectedPaths) != 1 || result.UnexpectedPaths[0] != "unexpected.go" {
+		t.Fatalf("expected unexpected [unexpected.go], got %v", result.UnexpectedPaths)
+	}
+	if len(result.ForbiddenPaths) != 2 {
+		t.Fatalf("expected 2 forbidden paths, got %v", result.ForbiddenPaths)
+	}
+}
+
+func TestScopeGatePatternMatchesDeepPath(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles:     []string{"a.go"},
+		ForbiddenPatterns: []string{"cmd/**"},
+		ActualChangedPaths: []string{
+			"a.go",
+			"cmd/idiom/sub/deep.go",
+		},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "blocked" {
+		t.Fatalf("expected blocked for deep forbidden pattern match, got %q", result.Status)
+	}
+	found := false
+	for _, b := range result.Blockers {
+		if b.Code == "forbidden_pattern" && b.Path == "cmd/idiom/sub/deep.go" && b.Pattern == "cmd/**" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected forbidden_pattern match for deep path, got %+v", result.Blockers)
+	}
+}
+
+func TestScopeGatePatternMatchesSingleSegment(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles:     []string{"a.go"},
+		ForbiddenPatterns: []string{"*.test.go"},
+		ActualChangedPaths: []string{
+			"a.go",
+			"foo.test.go",
+		},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "blocked" {
+		t.Fatalf("expected blocked for glob *.test.go, got %q", result.Status)
+	}
+	found := false
+	for _, b := range result.Blockers {
+		if b.Code == "forbidden_pattern" && b.Pattern == "*.test.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected forbidden_pattern for *.test.go, got %+v", result.Blockers)
+	}
+}
+
+func TestScopeGatePatternNoMatchPasses(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles:     []string{"a.go"},
+		ForbiddenPatterns: []string{"cmd/**"},
+		ActualChangedPaths: []string{
+			"a.go",
+		},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "pass" {
+		t.Fatalf("expected pass when no pattern matches, got %q", result.Status)
+	}
+}
+
+func TestScopeGateExpectedAsAllowed(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles:      []string{"a.go", "b.go"},
+		ForbiddenFiles:     []string{"f.go"},
+		ActualChangedPaths: []string{"a.go", "b.go"},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "pass" {
+		t.Fatalf("expected pass when all expected present, got %q with blockers %+v", result.Status, result.Blockers)
+	}
+}
+
+func TestScopeGateReportPathsAllowedAsExpected(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles: []string{
+			"internal/workflows/productworkflow/scope.go",
+			"reports/impl-0016-implementation.json",
+		},
+		ForbiddenFiles:    []string{"internal/workflows/productworkflow/transition.go"},
+		ForbiddenPatterns: []string{"docs/**"},
+		ActualChangedPaths: []string{
+			"internal/workflows/productworkflow/scope.go",
+			"reports/impl-0016-implementation.json",
+		},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "pass" {
+		t.Fatalf("expected pass with report path as expected, got %q with blockers %+v", result.Status, result.Blockers)
+	}
+}
+
+func TestScopeGateDurableBookkeepingAllowedBlocksForbiddenSpillover(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles:     []string{"internal/workflows/productworkflow/scope.go"},
+		AllowedFiles:      []string{"reports/impl.json", "tdd.json"},
+		ForbiddenFiles:    []string{"internal/workflows/productworkflow/types.go"},
+		ForbiddenPatterns: []string{"internal/runtime/agent/**"},
+		ActualChangedPaths: []string{
+			"internal/workflows/productworkflow/scope.go",
+			"reports/impl.json",
+			"tdd.json",
+			"internal/runtime/agent/runner.go",
+		},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", result.Status)
+	}
+	foundPattern := false
+	for _, b := range result.Blockers {
+		if b.Code == "forbidden_pattern" && b.Path == "internal/runtime/agent/runner.go" {
+			foundPattern = true
+		}
+	}
+	if !foundPattern {
+		t.Fatalf("expected forbidden_pattern for internal/runtime/agent/runner.go, got %+v", result.Blockers)
+	}
+}
+
+func TestScopeGateEmptyInputPasses(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles:      []string{},
+		ForbiddenFiles:     []string{},
+		ActualChangedPaths: []string{},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "pass" {
+		t.Fatalf("expected pass for empty input, got %q", result.Status)
+	}
+}
+
+func TestScopeGateForbiddenPatternMatchesExactPrefix(t *testing.T) {
+	input := ScopeGateInput{
+		ExpectedFiles:     []string{"a.go"},
+		ForbiddenPatterns: []string{"internal/runtime/agent/**"},
+		ActualChangedPaths: []string{
+			"a.go",
+			"internal/runtime/agent/session.go",
+		},
+	}
+	result := EvaluateScopeGate(input)
+	if result.Status != "blocked" {
+		t.Fatalf("expected blocked for agent path, got %q", result.Status)
+	}
+}
+
+func TestScopeGateSourceSanityPurity(t *testing.T) {
+	root := repoRoot(t)
+	source, err := os.ReadFile(filepath.Join(root, "internal/workflows/productworkflow/scope.go"))
+	if err != nil {
+		t.Fatalf("read scope.go: %v", err)
+	}
+	text := string(source)
+	for _, forbidden := range []string{
+		"os.",
+		"exec.",
+		"git",
+		"telemetry",
+		"flag.",
+		"command-line",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("scope.go contains forbidden string %q", forbidden)
+		}
+	}
+	for _, forbidden := range []string{
+		`"os"`,
+		`"os/"`,
+		`"exec"`,
+		`"flag"`,
+		`"runtime"`,
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("scope.go imports forbidden package %s", forbidden)
+		}
+	}
+}
+
+func TestValidateLedgerCoverageDetectsUnderReporting(t *testing.T) {
+	atoms := []AtomCoverageCheck{
+		{TaskID: "impl-001", ChangedPaths: []string{"cmd/foo.go", "internal/bar.go"}},
+	}
+	git := []string{"cmd/foo.go", "internal/bar.go", "docs/effort/baz.md"}
+	findings := ValidateLedgerCoverage(atoms, git, "docs/effort")
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d: %#v", len(findings), findings)
+	}
+	if findings[0].Code != "ledger_under_reports_path" {
+		t.Fatalf("expected ledger_under_reports_path, got %s", findings[0].Code)
+	}
+	if !strings.Contains(findings[0].Path, "docs/effort/baz.md") {
+		t.Fatalf("expected path docs/effort/baz.md, got %s", findings[0].Path)
+	}
+}
+
+func TestValidateLedgerCoveragePassesWhenComplete(t *testing.T) {
+	atoms := []AtomCoverageCheck{
+		{TaskID: "impl-001", ChangedPaths: []string{"cmd/foo.go", "internal/bar.go", "docs/effort/baz.md"}},
+	}
+	git := []string{"cmd/foo.go", "internal/bar.go", "docs/effort/baz.md"}
+	findings := ValidateLedgerCoverage(atoms, git, "docs/effort")
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings, got %d: %#v", len(findings), findings)
+	}
+}
+
+func TestValidateLedgerCoveragePassesWhenLedgerOverReports(t *testing.T) {
+	atoms := []AtomCoverageCheck{
+		{TaskID: "impl-001", ChangedPaths: []string{"cmd/foo.go", "internal/bar.go", "extra.go"}},
+	}
+	git := []string{"cmd/foo.go", "internal/bar.go"}
+	findings := ValidateLedgerCoverage(atoms, git, "docs/effort")
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings when ledger over-reports, got %d", len(findings))
+	}
+}
+
+func TestValidateLedgerCoverageEmptyGitReturnsEmpty(t *testing.T) {
+	atoms := []AtomCoverageCheck{
+		{TaskID: "impl-001", ChangedPaths: []string{"cmd/foo.go"}},
+	}
+	findings := ValidateLedgerCoverage(atoms, nil, "docs/effort")
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings with empty git paths, got %d", len(findings))
+	}
+}
+
+func TestValidateLedgerCoverageDetectsEmptyChangedPaths(t *testing.T) {
+	atoms := []AtomCoverageCheck{
+		{TaskID: "impl-001", ChangedPaths: nil},
+	}
+	findings := ValidateLedgerCoverage(atoms, nil, "docs/effort")
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d: %#v", len(findings), findings)
+	}
+	if findings[0].Code != "atom_empty_changed_paths" {
+		t.Fatalf("expected atom_empty_changed_paths, got %s", findings[0].Code)
+	}
+}
+
+func TestValidateLedgerCoverageIgnoresUnrelatedGitPaths(t *testing.T) {
+	atoms := []AtomCoverageCheck{
+		{TaskID: "impl-001", ChangedPaths: []string{"docs/effort/readme.md"}},
+	}
+	git := []string{"docs/effort/readme.md", "unrelated/package.go"}
+	findings := ValidateLedgerCoverage(atoms, git, "docs/effort")
+	var underReport []LedgerCoverageFinding
+	for _, f := range findings {
+		if f.Code == "ledger_under_reports_path" {
+			underReport = append(underReport, f)
+		}
+	}
+	if len(underReport) != 0 {
+		t.Fatalf("expected 0 under-report findings for unrelated path, got %d: %#v", len(underReport), underReport)
+	}
+}
+
+func TestValidateLedgerCoverageMultipleAtomsUnion(t *testing.T) {
+	atoms := []AtomCoverageCheck{
+		{TaskID: "impl-001", ChangedPaths: []string{"cmd/foo.go"}},
+		{TaskID: "impl-002", ChangedPaths: []string{"docs/effort/readme.md"}},
+	}
+	git := []string{"cmd/foo.go", "docs/effort/readme.md", "docs/effort/extra.md"}
+	findings := ValidateLedgerCoverage(atoms, git, "docs/effort")
+	var underReport []LedgerCoverageFinding
+	for _, f := range findings {
+		if f.Code == "ledger_under_reports_path" {
+			underReport = append(underReport, f)
+		}
+	}
+	if len(underReport) != 1 {
+		t.Fatalf("expected 1 under-report finding for extra.md, got %d: %#v", len(underReport), underReport)
+	}
+	if !strings.Contains(underReport[0].Path, "docs/effort/extra.md") {
+		t.Fatalf("expected finding for docs/effort/extra.md, got %s", underReport[0].Path)
+	}
+}
+
+func TestValidatePerAtomCoverageMatchingPathsNoFindings(t *testing.T) {
+	atoms := []AtomCommitCoverage{
+		{
+			TaskID:       "impl-001",
+			CommitHash:   "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+			ChangedPaths: []string{"cmd/foo.go", "internal/bar.go"},
+		},
+	}
+	commitPaths := map[string][]string{
+		"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2": {"cmd/foo.go", "internal/bar.go"},
+	}
+	findings := ValidatePerAtomCoverage(atoms, commitPaths)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings, got %d: %#v", len(findings), findings)
+	}
+}
+
+func TestValidatePerAtomCoverageUnderReportingDetectsMissingPath(t *testing.T) {
+	atoms := []AtomCommitCoverage{
+		{
+			TaskID:       "impl-001",
+			CommitHash:   "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+			ChangedPaths: []string{"cmd/foo.go"},
+		},
+	}
+	commitPaths := map[string][]string{
+		"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2": {"cmd/foo.go", "internal/bar.go"},
+	}
+	findings := ValidatePerAtomCoverage(atoms, commitPaths)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d: %#v", len(findings), findings)
+	}
+	if findings[0].Code != "atom_under_reports_path" {
+		t.Fatalf("expected atom_under_reports_path, got %s", findings[0].Code)
+	}
+	if !strings.Contains(findings[0].Message, "internal/bar.go") {
+		t.Fatalf("expected message to mention internal/bar.go, got %s", findings[0].Message)
+	}
+	if !strings.Contains(findings[0].Message, "impl-001") {
+		t.Fatalf("expected message to mention impl-001, got %s", findings[0].Message)
+	}
+}
+
+func TestValidatePerAtomCoverageMissingCommitHash(t *testing.T) {
+	atoms := []AtomCommitCoverage{
+		{
+			TaskID:       "impl-001",
+			CommitHash:   "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+			ChangedPaths: []string{"cmd/foo.go"},
+		},
+	}
+	commitPaths := map[string][]string{}
+	findings := ValidatePerAtomCoverage(atoms, commitPaths)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d: %#v", len(findings), findings)
+	}
+	if findings[0].Code != "commit_hash_not_found" {
+		t.Fatalf("expected commit_hash_not_found, got %s", findings[0].Code)
+	}
+	if !strings.Contains(findings[0].Message, "impl-001") {
+		t.Fatalf("expected message to mention impl-001, got %s", findings[0].Message)
+	}
+}
+
+func TestValidatePerAtomCoverageEmptyCommitHashRequired(t *testing.T) {
+	atoms := []AtomCommitCoverage{
+		{
+			TaskID:       "impl-001",
+			CommitHash:   "",
+			ChangedPaths: []string{"cmd/foo.go"},
+		},
+	}
+	commitPaths := map[string][]string{}
+	findings := ValidatePerAtomCoverage(atoms, commitPaths)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for empty commit hash, got %d: %#v", len(findings), findings)
+	}
+	if findings[0].Code != "commit_hash_missing" {
+		t.Fatalf("expected commit_hash_missing, got %q", findings[0].Code)
+	}
+}
+
+func TestValidatePerAtomCoverageMixedAtoms(t *testing.T) {
+	atoms := []AtomCommitCoverage{
+		{
+			TaskID:       "impl-001",
+			CommitHash:   "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+			ChangedPaths: []string{"cmd/foo.go"},
+		},
+		{
+			TaskID:       "impl-002",
+			CommitHash:   "",
+			ChangedPaths: []string{"internal/bar.go"},
+		},
+	}
+	commitPaths := map[string][]string{
+		"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2": {"cmd/foo.go"},
+	}
+	findings := ValidatePerAtomCoverage(atoms, commitPaths)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding (commit_hash_missing for impl-002), got %d: %#v", len(findings), findings)
+	}
+	if findings[0].Code != "commit_hash_missing" {
+		t.Fatalf("expected commit_hash_missing, got %q", findings[0].Code)
+	}
+	if findings[0].Message != "atom impl-002 has no commit_hash; commit_hash is required for implementation_completed, fallback_completion, and partial_implementation_recorded records" {
+		t.Fatalf("unexpected message: %q", findings[0].Message)
+	}
+}

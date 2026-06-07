@@ -98,11 +98,11 @@ changes should also run `make build` or `go build ./cmd/harness`.
 
 | System changed | Focused verification | Broader verification |
 | --- | --- | --- |
-| Runner/control rails | `go test ./internal/agent` | `go test ./...`, `harness_audit` when behavior logs matter |
-| Workspace tools | `go test ./internal/workspace` | Tool schema checks, sidecar smoke, `go test ./...` |
-| Context memory | `go test ./internal/comprehension` | `context_status`, representative `context_pack`, `go test ./...` |
-| Runtime lanes | `go test ./cmd/harness` with lane-focused tests | `go test ./internal/agent ./internal/workspace ./cmd/harness`, lane smoke where available |
-| Audit/eval | `go test ./internal/eval ./cmd/harness-eval ./cmd/harness-swe-eval` | Representative suite, `harness_audit` |
+| Runner/control rails | `go test ./internal/runtime/agent` | `go test ./...`, `harness_audit` when behavior logs matter |
+| Workspace tools | `go test ./internal/capabilities/workspace` | Tool schema checks, sidecar smoke, `go test ./...` |
+| Context memory | `go test ./internal/repository/comprehension` | `context_status`, representative `context_pack`, `go test ./...` |
+| Runtime lanes | `go test ./cmd/harness` with lane-focused tests | `go test ./internal/runtime/agent ./internal/capabilities/workspace ./cmd/harness`, lane smoke where available |
+| Audit/eval | `go test ./internal/evidence/eval ./cmd/harness-eval ./cmd/harness-swe-eval` | Representative suite, `harness_audit` |
 | CLI/build wiring | focused command tests | `make build` or `go build ./cmd/harness` |
 | Docs-only | wiki-link/path checks, `git diff --check` | Broader tests only if docs accompany code behavior changes |
 

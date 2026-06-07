@@ -40,7 +40,7 @@ Verification:
 ```
 
 Verification:
-- Decode one `llama-server` request (add temporary logging in `internal/llama/client.go`, or tcpdump the loopback socket). Confirm:
+- Decode one `llama-server` request (add temporary logging in `internal/runtime/llama/client.go`, or tcpdump the loopback socket). Confirm:
   - `tools` is present, length matches the tool manifest entries
   - `tool_choice` is `"auto"`
   - No system message contains the string `"\`\`\`tool"` or `"When you need a tool, respond with"`
@@ -69,7 +69,7 @@ Response shape from llama-server with jinja Qwen template:
 
 Verification:
 - One recorded request in `logs/conversations/*.jsonl` where the `tool_request` event's `payload.raw` corresponds to `choices[0].message.tool_calls[0].function.arguments` verbatim (after JSON parse).
-- `internal/agent/runner.go` no longer contains a `extractToolPayload` / fenced-block regex path in the request-ingestion code path. (Keeping it as a deprecation fallback is acceptable, but the primary path is `tool_calls`.)
+- `internal/runtime/agent/runner.go` no longer contains a `extractToolPayload` / fenced-block regex path in the request-ingestion code path. (Keeping it as a deprecation fallback is acceptable, but the primary path is `tool_calls`.)
 
 ## 4. Tool-result message shape
 
@@ -78,7 +78,7 @@ Verification:
 Verification:
 - In a recorded session, each tool-call round-trip shows an assistant message with `tool_calls[<id>]` followed by a `role:"tool"` message carrying the same `tool_call_id`.
 - No `role:"system"` message has content starting with `[workspace tool result]` — that formatting path is dead.
-- `internal/workspace/manager.go`'s `FormatToolResultForModel` is either deleted or only used for non-model-facing debug rendering.
+- `internal/capabilities/workspace/manager.go`'s `FormatToolResultForModel` is either deleted or only used for non-model-facing debug rendering.
 
 ## 5. System prompt shape
 
@@ -108,10 +108,10 @@ Verification:
 Mirrors OpenCode's `packages/opencode/src/session/instruction.ts`.
 
 Verification:
-- Create `internal/agent/AGENTS.md` with a test marker string.
-- Ask the agent to read `internal/agent/runner.go`.
-- Recorded log shows a `role:"system"` message with content containing the marker, attached **once** even if the model reads multiple files in `internal/agent/`.
-- If a second session reads `internal/app/model_state.go` and no `internal/app/AGENTS.md` exists, it walks up: finds `internal/agent/AGENTS.md`? No — it should find the nearest, climbing from `internal/app/` → `internal/` → repo root. If no `AGENTS.md` exists on the walk, nothing is attached.
+- Create `internal/runtime/agent/AGENTS.md` with a test marker string.
+- Ask the agent to read `internal/runtime/agent/runner.go`.
+- Recorded log shows a `role:"system"` message with content containing the marker, attached **once** even if the model reads multiple files in `internal/runtime/agent/`.
+- If a second session reads `internal/surfaces/tui/app/model_state.go` and no `internal/surfaces/tui/app/AGENTS.md` exists, it walks up: finds `internal/runtime/agent/AGENTS.md`? No — it should find the nearest, climbing from `internal/surfaces/tui/app/` → `internal/` → repo root. If no `AGENTS.md` exists on the walk, nothing is attached.
 
 ## 7. DOOM_LOOP guard
 

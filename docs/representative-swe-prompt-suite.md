@@ -2,7 +2,7 @@
 
 This suite defines the baseline task taxonomy that `idiom` should route correctly for general software engineering work.
 
-The executable source of truth is `TestRepresentativeSWEPromptSuiteRoutesTypicalTasks` in `internal/app/swe_prompt_suite_test.go`.
+The executable source of truth is `TestRepresentativeSWEPromptSuiteRoutesTypicalTasks` in `internal/surfaces/tui/app/swe_prompt_suite_test.go`.
 
 ### Covered Task Families
 
@@ -32,8 +32,8 @@ The executable source of truth is `TestRepresentativeSWEPromptSuiteRoutesTypical
 - `Analyze package boundaries and ownership in this codebase.`
 - `Which languages does this harness support, and how extensible is that architecture?`
 - `Analyze this codebase's structure, identify the best package boundary split, and then implement it.`
-- `Update the code in internal/app/app.go to improve the execution panel label.`
-- `Add regression tests in internal/app/write_guard_test.go for route plan rendering.`
+- `Update the code in internal/surfaces/tui/app/app.go to improve the execution panel label.`
+- `Add regression tests in internal/surfaces/tui/app/write_guard_test.go for route plan rendering.`
 - `Update config.example.json so max_tool_steps is 16.`
 - `Edit scripts/run-harness.sh to print the selected profile before launching.`
 - `Update README.md with a short troubleshooting note for debug logs.`

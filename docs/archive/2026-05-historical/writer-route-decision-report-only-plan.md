@@ -53,11 +53,11 @@ Emit a route decision when JSON/events are enabled for:
 - `idiom lane plan-execute --json ...`
 - direct `idiom implement --json ...`
 - direct `idiom plan-execute --json ...`
-- TUI prompt execution through `internal/app`
+- TUI prompt execution through `internal/surfaces/tui/app`
 
 ## Domain Type
 
-Add a small internal package, for example `internal/writerroute`, with no TUI
+Add a small internal package, for example `internal/contracts/writerroute`, with no TUI
 dependency and no runner transcript dependency.
 
 Suggested type:
@@ -153,21 +153,21 @@ events should use `route.local_model_default`,
 
 | File | Purpose |
 | --- | --- |
-| `internal/writerroute/decision.go` | Domain type, normalization, stable ID, event fields |
-| `internal/writerroute/decision_test.go` | Unit tests for normalization, stable ID, JSON/event fields |
+| `internal/contracts/writerroute/decision.go` | Domain type, normalization, stable ID, event fields |
+| `internal/contracts/writerroute/decision_test.go` | Unit tests for normalization, stable ID, JSON/event fields |
 | `cmd/idiom/lane.go` | Emit `idiom.lane.writer_route_decision` for lane wrapper runs |
 | `cmd/idiom/implement.go` | Emit `idiom.implement.writer_route_decision` for direct implement runs |
 | `cmd/idiom/plan_execute.go` | Emit `idiom.plan_execute.writer_route_decision` for direct plan-execute runs |
-| `internal/app/prompt_routing.go` or new `internal/app/writer_route.go` | Build and emit TUI route decision after `buildPromptExecutionPlan` |
-| `internal/app/implementation_dispatch.go` | If needed, pass or annotate dispatch route without changing behavior |
-| Relevant tests under `cmd/idiom` and `internal/app` | Event and route-shape coverage |
+| `internal/surfaces/tui/app/prompt_routing.go` or new `internal/surfaces/tui/app/writer_route.go` | Build and emit TUI route decision after `buildPromptExecutionPlan` |
+| `internal/surfaces/tui/app/implementation_dispatch.go` | If needed, pass or annotate dispatch route without changing behavior |
+| Relevant tests under `cmd/idiom` and `internal/surfaces/tui/app` | Event and route-shape coverage |
 
 If the current TUI integration has better route display hooks, use them. Do not
 move semantic checks into the TUI.
 
 ## Implementation Steps
 
-1. Add `internal/writerroute`.
+1. Add `internal/contracts/writerroute`.
 
    Include constructors or helper functions that accept explicit inputs. Do not
    make this package read `.idiom/backends.json` or inspect prompts.
@@ -195,7 +195,7 @@ move semantic checks into the TUI.
 
 5. Add TUI route decision construction.
 
-   In `internal/app`, compute a decision from `promptExecutionPlan`,
+   In `internal/surfaces/tui/app`, compute a decision from `promptExecutionPlan`,
    `turnRoutePlan`, `WorkerRuntimeBrief`, current mode, config, and role specs.
    Emit it through `emitJSONEvent` when a JSON event stream is configured and
    log it as a compact message for conversation/audit visibility.
@@ -213,7 +213,7 @@ move semantic checks into the TUI.
 
    Minimum tests:
 
-   - `internal/writerroute`: stable ID does not change when set-like slices are
+   - `internal/contracts/writerroute`: stable ID does not change when set-like slices are
      provided in different order; JSON includes expected schema and fields.
    - `cmd/idiom/lane_test.go`: `lane plan-execute --json` emits
      `idiom.lane.writer_route_decision` with `writer_mode=plan_submission`.
@@ -223,7 +223,7 @@ move semantic checks into the TUI.
      `idiom.implement.writer_route_decision`.
    - `cmd/idiom/plan_execute_test.go`: direct `plan-execute --json` emits
      `idiom.plan_execute.writer_route_decision`.
-   - `internal/app`: route decision for implementation dispatch to
+   - `internal/surfaces/tui/app`: route decision for implementation dispatch to
      plan-execute is `plan_submission`; direct implementation is
      `agentic_guarded`; read-only architecture/direct-answer route is
      `read_only`.
@@ -262,15 +262,15 @@ move semantic checks into the TUI.
 Run focused tests first:
 
 ```bash
-go test ./internal/writerroute
+go test ./internal/contracts/writerroute
 go test ./cmd/idiom -run 'Lane|Implement|PlanExecute' -count=1
-go test ./internal/app -run 'Route|Dispatch|ModelSwap|PromptRouting' -count=1
+go test ./internal/surfaces/tui/app -run 'Route|Dispatch|ModelSwap|PromptRouting' -count=1
 ```
 
 Then run broader checks if the touched files are shared:
 
 ```bash
-go test ./cmd/idiom ./internal/app ./internal/backends
+go test ./cmd/idiom ./internal/surfaces/tui/app ./internal/runtime/backends
 git diff --check
 ```
 

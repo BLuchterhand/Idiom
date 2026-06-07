@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: tbd
-Related: [internal/mcp/client.go](../internal/mcp/client.go), [internal/workspace/tool_manifest.go](../internal/workspace/tool_manifest.go), [archive/2026-05-historical/opencode-fixes-design.md](archive/2026-05-historical/opencode-fixes-design.md) §8
+Related: [internal/capabilities/mcp/client.go](../internal/capabilities/mcp/client.go), [internal/capabilities/workspace/tool_manifest.go](../internal/capabilities/workspace/tool_manifest.go), [archive/2026-05-historical/opencode-fixes-design.md](archive/2026-05-historical/opencode-fixes-design.md) §8
 
 ## Goals
 
@@ -22,19 +22,19 @@ Related: [internal/mcp/client.go](../internal/mcp/client.go), [internal/workspac
 
 ### What's already in the repo
 
-Idiom is already an MCP **client**: [internal/mcp/client.go](../internal/mcp/client.go) implements JSON-RPC 2.0 over stdio + HTTP, [registry.go](../internal/mcp/registry.go) namespaces remote tools as `mcp:<server>/<tool>`, and [internal/workspace/manager.go:1158](../internal/workspace/manager.go) dispatches calls when the prefix matches. Protocol revision negotiated is `2024-11-05` ([client.go:24](../internal/mcp/client.go)).
+Idiom is already an MCP **client**: [internal/capabilities/mcp/client.go](../internal/capabilities/mcp/client.go) implements JSON-RPC 2.0 over stdio + HTTP, [registry.go](../internal/capabilities/mcp/registry.go) namespaces remote tools as `mcp:<server>/<tool>`, and [internal/capabilities/workspace/manager.go:1158](../internal/capabilities/workspace/manager.go) dispatches calls when the prefix matches. Protocol revision negotiated is `2024-11-05` ([client.go:24](../internal/capabilities/mcp/client.go)).
 
 The tool surface is concentrated in two places:
 
-- [`workspace.Manager.Execute`](../internal/workspace/manager.go) — single dispatch entrypoint for ~130 tools across workspace ops, language-semantic discovery (Go/C++/Python/TS/Rust/Java), structural and dependency analysis, history/blame, security scanners, harness audit/feedback, and write/shell. All gating (`EnableShell`, `EnableWrites`, `ToolRules`) is already applied here.
-- [`workspace.BuildToolManifest`](../internal/workspace/tool_manifest.go) — hand-written manifest of every tool with example request JSON and a one-line purpose. This is the source of truth for prompt rendering and `idiom tool list` output.
+- [`workspace.Manager.Execute`](../internal/capabilities/workspace/manager.go) — single dispatch entrypoint for ~130 tools across workspace ops, language-semantic discovery (Go/C++/Python/TS/Rust/Java), structural and dependency analysis, history/blame, security scanners, harness audit/feedback, and write/shell. All gating (`EnableShell`, `EnableWrites`, `ToolRules`) is already applied here.
+- [`workspace.BuildToolManifest`](../internal/capabilities/workspace/tool_manifest.go) — hand-written manifest of every tool with example request JSON and a one-line purpose. This is the source of truth for prompt rendering and `idiom tool list` output.
 
 The closest existing analogue to an MCP `tools/call` is `idiom tool <name> --input '<json>'` ([internal/toolcmd/toolcmd.go](../internal/toolcmd/toolcmd.go), `RunWithTelemetry`). It loads workspace config, constructs a `ToolRequest`, runs `Manager.Execute`, serializes the `ToolResult` as JSON, and emits telemetry. The MCP server is essentially a long-running JSON-RPC frontend over the same path.
 
 ### What's missing
 
 - No long-running HTTP/RPC endpoint Idiom exposes itself (the llama server controller manages a *child* process; that's the only "server" pattern in tree).
-- No code path that speaks the JSON-RPC **server** half — `internal/mcp/client.go` only writes requests and reads responses.
+- No code path that speaks the JSON-RPC **server** half — `internal/capabilities/mcp/client.go` only writes requests and reads responses.
 - No mechanism to convert manifest entries' example JSON into JSON-Schema. MCP `tools/list` requires `inputSchema` per tool.
 - No explicit workspace path-containment check (paths are resolved relative to `workspace.Root`/`Cwd` but never validated as inside it). Acceptable for a local agent harness; **not acceptable** for an MCP server bound to `0.0.0.0`.
 
@@ -58,7 +58,7 @@ The closest existing analogue to an MCP `tools/call` is `idiom tool <name> --inp
 ### Package layout
 
 ```
-internal/mcp/
+internal/capabilities/mcp/
   client.go         (existing — unchanged)
   registry.go       (existing — unchanged)
   http.go, ssrf.go  (existing — unchanged)
@@ -76,7 +76,7 @@ cmd/idiom/
   mcp_serve.go      Subcommand: idiom mcp serve [--stdio|--http addr]
 ```
 
-The client side stays untouched. `internal/mcp/server/` is independent and has no import dependency back into `internal/mcp/client.go` — they share only the JSON-RPC envelope types, which we lift into a small `internal/mcp/protocol` package as part of this work.
+The client side stays untouched. `internal/capabilities/mcp/server/` is independent and has no import dependency back into `internal/capabilities/mcp/client.go` — they share only the JSON-RPC envelope types, which we lift into a small `internal/capabilities/mcp/protocol` package as part of this work.
 
 ### Request lifecycle
 
@@ -116,8 +116,8 @@ Each `ToolManifestEntry` has:
 
 Two-step generation:
 
-1. **Static codegen** (`go generate ./internal/mcp/server/...`): parse each manifest entry's example JSON, infer field names + Go-type-mapped JSON types, emit a base JSON-Schema document per tool with `additionalProperties: false`.
-2. **Hand-tuned overrides** (`internal/mcp/server/schema_overrides.go`): per-tool patches for fields the example can't capture — enums (`purpose: "impact_analysis"|"function_tracing"|...`), required vs optional, descriptions copied from existing prompt text, and write-tool guard flags.
+1. **Static codegen** (`go generate ./internal/capabilities/mcp/server/...`): parse each manifest entry's example JSON, infer field names + Go-type-mapped JSON types, emit a base JSON-Schema document per tool with `additionalProperties: false`.
+2. **Hand-tuned overrides** (`internal/capabilities/mcp/server/schema_overrides.go`): per-tool patches for fields the example can't capture — enums (`purpose: "impact_analysis"|"function_tracing"|...`), required vs optional, descriptions copied from existing prompt text, and write-tool guard flags.
 
 Generated schemas are checked into the repo so the runtime cost is just a `json.Unmarshal` per `tools/list`. Manifest changes that would alter schemas surface as a generated-file diff.
 
@@ -138,7 +138,7 @@ The default profile for stdio is `discovery`. The default for HTTP is `discovery
 ### Schema notes
 
 - `path` fields advertise `format: "uri-reference"` and a description that names the workspace root. Servers reject absolute paths outside the active root **at the server layer**, before `Manager.resolvePath` runs, because the manager's behavior is "resolve relative to root" not "reject if outside" — a difference that matters once the call is coming from a non-trusted client over HTTP.
-- The raw `Args json.RawMessage` field on `ToolRequest` ([manager.go:82](../internal/workspace/manager.go)) stays in place — it's the carrier for tool-specific args that don't appear as named struct fields. The server unmarshals MCP `arguments` into a `map[string]any`, then re-marshals into `ToolRequest` with `Args` set to the original bytes.
+- The raw `Args json.RawMessage` field on `ToolRequest` ([manager.go:82](../internal/capabilities/workspace/manager.go)) stays in place — it's the carrier for tool-specific args that don't appear as named struct fields. The server unmarshals MCP `arguments` into a `map[string]any`, then re-marshals into `ToolRequest` with `Args` set to the original bytes.
 
 ## Resources
 
@@ -175,7 +175,7 @@ The HTTP transport is the dangerous one. Defaults:
 - Per-token profile binding: `~/.idiom/mcp-tokens.json` maps tokens to `{profile, max_concurrent, rate_limit_qps}`. Allows handing one token to a CI runner (`discovery` profile, low rate) and another to a trusted local client (`full`, no limit).
 - IP allowlist (`--allow-cidr`) for defense in depth.
 - Path containment: the server validates every incoming path arg against `workspace.Root` *before* `Manager.Execute`. Symlinks resolved with `filepath.EvalSymlinks` and re-checked. Documented as the reason the existing implicit containment isn't sufficient at the MCP boundary.
-- SSRF guards from [internal/mcp/ssrf.go](../internal/mcp/ssrf.go) reused for any tool that performs outbound HTTP (semgrep registry fetches, future web tools).
+- SSRF guards from [internal/capabilities/mcp/ssrf.go](../internal/capabilities/mcp/ssrf.go) reused for any tool that performs outbound HTTP (semgrep registry fetches, future web tools).
 - Rate limiting per token, default 60 qps, burst 10.
 
 ### Roots
@@ -256,8 +256,8 @@ For HTTP transport we add a thin per-token counter that `harness_audit` can summ
 Phased so each step is independently shippable.
 
 **Phase 1 — protocol + stdio (1-2 weeks).**
-- Lift JSON-RPC envelope types into `internal/mcp/protocol`.
-- `internal/mcp/server/server.go` with initialize/tools/list/tools/call. Tool dispatch through `Manager.Execute`. No resources, no prompts, no logging. Profile filter implemented but only the `discovery` profile shipped.
+- Lift JSON-RPC envelope types into `internal/capabilities/mcp/protocol`.
+- `internal/capabilities/mcp/server/server.go` with initialize/tools/list/tools/call. Tool dispatch through `Manager.Execute`. No resources, no prompts, no logging. Profile filter implemented but only the `discovery` profile shipped.
 - Stdio transport.
 - `idiom mcp serve --stdio` CLI.
 - Schema codegen for the 30 most-used tools (read_file, search_files, search_content, list_files, file_stats, all `*_overview`/`*_find_symbol`/`*_read_symbol`/`*_references` per language, discovery_query, structural_search, dependency_graph, history_*, ctags_symbols, blame_range). Rest fall back to a permissive schema with `additionalProperties: true` until manually tuned.

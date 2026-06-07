@@ -12,8 +12,8 @@
   "code_changes": true,
   "changed_paths": [
     "cmd/idiom/main.go",
-    "cmd/idiom/product_workflow.go",
-    "cmd/idiom/product_workflow_test.go",
+    "internal/surfaces/cli/product/product_workflow.go",
+    "internal/surfaces/cli/product/product_workflow_test.go",
     "docs/product-workflows/efforts/index.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
     "docs/product-workflows/efforts/started/prd-adr-brief-workflow/events.jsonl",
@@ -26,7 +26,7 @@
   "verification": {
     "run_by_implementor": false,
     "commands": [
-      "go test ./cmd/idiom ./internal/productworkflow",
+      "go test ./internal/surfaces/cli/product ./internal/workflows/productworkflow",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "python3 JSON/JSONL validation for durable effort artifacts",
       "git diff --check"

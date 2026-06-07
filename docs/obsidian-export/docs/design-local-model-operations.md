@@ -87,28 +87,28 @@ Verified from the target ecosystem docs and code:
 
 - `README.md` documents three inference backend blocks:
   `llama_server`, `implementer`, and `route_classifier`.
-- `internal/config.Config` models those as `LlamaServer`, optional
+- `internal/platform/config.Config` models those as `LlamaServer`, optional
   `Implementer`, and `RouteClassifier`.
 - `.harness/backends.json` declares role-aware backend profiles. The active
   self-hosted profile uses a local model 35B/27B planner-classifier plus
   `coder-model` executor, with a proxy on port `47680`.
-- `internal/backends` owns `.harness/backends.json`, role alias resolution,
+- `internal/runtime/backends` owns `.harness/backends.json`, role alias resolution,
   backend launch/stop/status, and an alias-routing proxy.
 - `cmd/harness/backend.go` exposes `harness backend start|stop|status|list|proxy`.
-- `cmd/harness/queue.go` and `internal/runner` expose a per-user Unix-socket
+- `cmd/harness/queue.go` and `internal/runtime/runner` expose a per-user Unix-socket
   queue daemon with named pools, leases, waiting positions, status, ping,
   cancel, and idle flags.
 - `runner.MaybeAcquire` is opportunistic: if the daemon is absent, lane entry
   points proceed ungated; if a daemon is reachable, they acquire the resolved
   pool.
-- `internal/app/turn_planner.go` uses the route classifier only after
+- `internal/surfaces/tui/app/turn_planner.go` uses the route classifier only after
   deterministic routing is not decisive. It falls back to host routing if the
   classifier is disabled, unhealthy, times out, or returns invalid JSON.
-- `internal/app/history.go` also uses the route-classifier client for history
+- `internal/surfaces/tui/app/history.go` also uses the route-classifier client for history
   summarization and can lazily launch the configured helper server.
 - `cmd/harness/doctor.go` checks for backend binaries, model caches,
   project config, writable workspace, `python3`, and `git`.
-- `internal/telemetry` writes local JSONL process telemetry under
+- `internal/evidence/telemetry` writes local JSONL process telemetry under
   `logs/telemetry` by default and supports `HARNESS_TELEMETRY=0`.
 - Conversation debug logs and `harness_audit` provide the richer behavior trail.
 
@@ -273,7 +273,7 @@ assume these constraints and design for them directly.
 
 ```text
 .harness/backends.json
-  -> internal/backends.File/Profile/Model/Proxy
+  -> internal/runtime/backends.File/Profile/Model/Proxy
   -> harness backend start|stop|status|proxy
   -> role-specific base URLs
   -> app lifecycle / lane entry points
@@ -296,8 +296,8 @@ The design should preserve this split:
 - `.harness/backends.json` describes local model stacks and role routing.
 - `harness backend` manages backend processes.
 - `harness queue` manages scarce local execution slots.
-- `internal/app` resolves role-specific clients for the active run.
-- `internal/agent` enforces runtime contracts and emits budget/stop telemetry.
+- `internal/surfaces/tui/app` resolves role-specific clients for the active run.
+- `internal/runtime/agent` enforces runtime contracts and emits budget/stop telemetry.
 
 ### Backend Profile Contract
 

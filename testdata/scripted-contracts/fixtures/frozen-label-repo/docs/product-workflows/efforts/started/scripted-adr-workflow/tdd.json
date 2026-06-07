@@ -20,7 +20,7 @@
       "type": "contract",
       "behavior": "The product workflow can transition from human verification to implementation after operator approval.",
       "owner": "product_workflow",
-      "command": "go test ./internal/productworkflow",
+      "command": "go test ./internal/workflows/productworkflow",
       "required_before": "implementation",
       "status": "passed"
     }

@@ -1,6 +1,6 @@
 # Reusability Design — Lift the Plan-Execute Workflow into Idiom
 
-**Status:** Design draft, 2026-05-09 (Phases 1-5 + 4b + 4c + 5b + 6 + 6.5 + 7 shipped 2026-05-09 / 2026-05-10; Phase 3 rules-embed backfill shipped 2026-05-10 after the post-Phase-6 audit below; Phase 8 pending; plug-and-play Phase 9 partial ship 2026-05-10 — `idiom version`, goreleaser config, release workflow, install.sh, three-tier Docker install test (`make test-install-docker`: 14-subcommand surface + 3 static-functionality tests + stub-LLM lane test, all green), and the `internal/autodetect` library landed parallel to canonical Phase 7/8; Phase 11 partial ship — `idiom doctor` landed; remaining 9/10/11 deliverables and Phase 12 unscheduled)
+**Status:** Design draft, 2026-05-09 (Phases 1-5 + 4b + 4c + 5b + 6 + 6.5 + 7 shipped 2026-05-09 / 2026-05-10; Phase 3 rules-embed backfill shipped 2026-05-10 after the post-Phase-6 audit below; Phase 8 pending; plug-and-play Phase 9 partial ship 2026-05-10 — `idiom version`, goreleaser config, release workflow, install.sh, three-tier Docker install test (`make test-install-docker`: 14-subcommand surface + 3 static-functionality tests + stub-LLM lane test, all green), and the `internal/platform/autodetect` library landed parallel to canonical Phase 7/8; Phase 11 partial ship — `idiom doctor` landed; remaining 9/10/11 deliverables and Phase 12 unscheduled)
 **Author:** Idiom session log, Colony donkey-atom debugging
 **Related:** `docs/colony-extraction-plan.md` (raw inventory),
 `docs/planner-executor-delegation-design.md` (the lane shape this
@@ -79,7 +79,7 @@ auto-detected from filesystem markers (`go.mod`, `package.json`,
 matched language tool families to the model.
 
 Today this is already approximately true (`m.isGoWorkspace()` etc.
-in `internal/workspace/manager.go`). The change is making the
+in `internal/capabilities/workspace/manager.go`). The change is making the
 detection *exhaustive* (no opt-out, no per-project disable) and
 documenting it as guaranteed.
 
@@ -772,7 +772,7 @@ init must *discover*, not template. A fresh user runs `idiom init
 --auto` and the `.idiom/` directory comes out wired to whatever they
 actually have installed.
 
-**Status (2026-05-10):** the `internal/autodetect` library landed
+**Status (2026-05-10):** the `internal/platform/autodetect` library landed
 parallel to canonical Phase 7. It exposes `DetectBackends()` (scans
 `$PATH` for `mlx_lm.server`, `llama-server`, `ollama`) and
 `DetectModels()` (walks `~/.cache/huggingface/hub`, `~/models`,
@@ -791,7 +791,7 @@ Deliverables:
   coder ≥ 7B) and a default planner if a non-coder model is present.
   Surface the picks; user can override interactively.
 - **Auto-detect workspace** — `cwd` becomes `workspace.root`; the
-  language registry (`internal/workspace/language_registry.go`)
+  language registry (`internal/capabilities/workspace/language_registry.go`)
   already does the rest.
 - **Single config file** — collapse `.idiom/config.json` and
   `.idiom/backends.json` into `.idiom/idiom.toml` (TOML is easier for

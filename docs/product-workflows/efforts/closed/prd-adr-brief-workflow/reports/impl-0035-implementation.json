@@ -10,18 +10,18 @@
   "scope_statement": "Add a shared read-only operator status view model for CLI/TUI continuation over durable workflow state, context freshness, blockers, open obligations, artifact links, and typed next actions without dispatching lanes, executing models, mutating .idiom runtime state, migrating status folders, or adding broad TUI interaction behavior.",
   "code_changes": true,
   "changed_paths": [
-    "cmd/idiom/product_workflow.go",
-    "cmd/idiom/product_workflow_test.go",
-    "internal/productworkflow/status.go",
-    "internal/productworkflow/status_test.go"
+    "internal/surfaces/cli/product/product_workflow.go",
+    "internal/surfaces/cli/product/product_workflow_test.go",
+    "internal/workflows/productworkflow/status.go",
+    "internal/workflows/productworkflow/status_test.go"
   ],
   "verification": {
     "run_by_implementor": false,
     "commands": [
       "idiom tool context_pack --input '{\"task\":\"impl-0035-phase-6-operator-status-view-model\",\"mode\":\"plan\",\"limit\":8}'",
-      "go test ./internal/productworkflow -run TestProductOperatorStatusView -count=1",
-      "go test ./cmd/idiom -run 'TestProductStatus.*Operator|TestProductOperatorStatus' -count=1",
-      "go test ./internal/productworkflow ./cmd/idiom",
+      "go test ./internal/workflows/productworkflow -run TestProductOperatorStatusView -count=1",
+      "go test ./internal/surfaces/cli/product -run 'TestProductStatus.*Operator|TestProductOperatorStatus' -count=1",
+      "go test ./internal/workflows/productworkflow ./cmd/idiom",
       "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --operator-view --json",
       "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",

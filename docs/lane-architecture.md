@@ -126,7 +126,7 @@ for these at well-known paths.
 
 Project endpoint, workspace root, model alias, write enable,
 optional MCP server list, optional language hints. See
-`internal/config/config.go` for the schema.
+`internal/platform/config/config.go` for the schema.
 
 Minimum for a fresh project:
 
@@ -178,8 +178,8 @@ shell out to project-side scripts but appear to the model as
 first-class workspace tools.
 
 The on-disk JSON schema mirrors `config.ExternalToolDef`
-(`internal/config/config.go`); idiom maps it to `workspace.ExternalTool`
-at load time (`internal/workspace/external_tool.go`). The JSON field
+(`internal/platform/config/config.go`); idiom maps it to `workspace.ExternalTool`
+at load time (`internal/capabilities/workspace/external_tool.go`). The JSON field
 for the parameter schema is `input_schema`.
 
 Set both `read_only: true` and `discovery: true` for external tools
@@ -238,7 +238,7 @@ canonical-in-idiom (embedded), with project overlay at well-known
 paths. See the seam table at the end of this doc.
 
 Today the chat-side prompt stack is fully config-driven via two
-`chat`-section keys (`internal/config/config.go`):
+`chat`-section keys (`internal/platform/config/config.go`):
 
 - `chat.system_prompt_files` — ordered list of files concatenated
   into the system prompt at runtime. Resolved relative to the config
@@ -257,7 +257,7 @@ canonical base. Projects own the full text via
 Lane preambles/postambles are different. As of Phase 3 of the
 reusability migration, `idiom lane <mode>` wraps the brief with
 canonical-in-idiom mode-specific text loaded via `go:embed` from
-`internal/cliassets/lanes/<mode>/{preamble,postamble}.md`. A binary-only
+`internal/surfaces/cliassets/lanes/<mode>/{preamble,postamble}.md`. A binary-only
 deployment carries the canonical lane wrapper without needing a
 co-located prompts directory. Projects extend (never replace) that
 wrapper via `<repo>/.idiom/prompts/lanes/<mode>/{preamble,postamble}.md`,
@@ -265,7 +265,7 @@ inserted between the canonical text and the brief body.
 
 The lane wrapper also prepends a **canonical generic rules** block to
 every composed prompt, loaded via `go:embed` from
-`internal/cliassets/lanes/rules/{loop-protocol, brief-skeleton,
+`internal/surfaces/cliassets/lanes/rules/{loop-protocol, brief-skeleton,
 known-traps-generic}.md` (Phase 3 backfill, 2026-05-10). Project
 overrides at `<repo>/.idiom/prompts/rules/<name>.md` use same-name
 semantics: a project file matching a canonical name **replaces** that
@@ -371,7 +371,7 @@ Phases shipped
 
 - Phase 3 rules-embed backfill (2026-05-10) — canonical generic
   rules `loop-protocol.md`, `brief-skeleton.md`, and
-  `known-traps-generic.md` are embedded under `internal/cliassets/lanes/rules/`
+  `known-traps-generic.md` are embedded under `internal/surfaces/cliassets/lanes/rules/`
   and prepended to every composed lane prompt. Project overlay at
   `<repo>/.idiom/prompts/rules/<name>.md` uses same-name semantics:
   matching project files **replace** the canonical entry in place;
@@ -424,7 +424,7 @@ Every language tool family in idiom is loaded unconditionally:
 `cpp_*`, `go_*`, `python_*`, `ts_*`, `rust_*`, `java_*`. The
 workspace auto-detects which families are *active* for a given
 repo by walking the workspace root and matching against language-
-specific markers in `internal/semantic/language/registry.go`. The
+specific markers in `internal/repository/semantic/language/registry.go`. The
 exact rules differ per language; representative ones today:
 
 - Go — `go.mod` at any depth, or `*.go` source files
@@ -563,7 +563,7 @@ audience and content:
   model/tool calls, token totals, peak prompt size, duration, stop reason,
   and degradation classes without storing raw prompts or file bodies.
 - **Telemetry stream** (`<repo>/logs/telemetry/<ts>-<cmd>-<pid>.jsonl`)
-  — process-lifecycle records emitted by `internal/telemetry`:
+  — process-lifecycle records emitted by `internal/evidence/telemetry`:
   `session_start`, `process_start`, `process_exit`, `model_session`,
   `command_start`/`command_finished`, plus the per-tool wrapper
   records when invoking subcommands like `idiom tool`. **Per-event
@@ -593,7 +593,7 @@ Lane wrapper events:
 | `idiom.lane.degraded` | `kind`, `details`, `mode` | Post-analysis detected a regression class such as read-only routing or no edit attempt. |
 
 Runner-side events emitted to the conversation log (non-exhaustive
-— grep `internal/agent/runner.go` for `RunEvent{Role:` and
+— grep `internal/runtime/agent/runner.go` for `RunEvent{Role:` and
 `emitEvent` callers for the live set; the most useful for tracing a
 lane are listed):
 

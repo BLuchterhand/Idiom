@@ -6,7 +6,7 @@ classification. The machine-checkable transcript set lives in
 and is validated by:
 
 ```bash
-go test ./internal/sidecarproof -run TestP710ClientDemoTranscripts
+go test ./internal/evidence/sidecarvalidation -run TestP710ClientDemoTranscripts
 ```
 
 ## Demo Boundary

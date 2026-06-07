@@ -164,7 +164,7 @@
         "final_assistant_contains": [
           "redacted",
           "debug log",
-          "internal/transcript/debuglog.go",
+          "internal/evidence/transcript/debuglog.go",
           "secret",
           "path",
           "metadata"
@@ -231,8 +231,8 @@
         "final_assistant_contains": [
           "task",
           "subagent",
-          "internal/agent/runner.go",
-          "internal/agent/runner_child_tasks.go"
+          "internal/runtime/agent/runner.go",
+          "internal/runtime/agent/runner_child_tasks.go"
         ],
         "forbid_final_assistant_contains": [
           "Subagent Handoff Architecture",
@@ -290,8 +290,8 @@
           "action": "accept"
         },
         "require_evidence_paths": [
-          "internal/agent/runner.go",
-          "internal/agent/runner_child_tasks.go"
+          "internal/runtime/agent/runner.go",
+          "internal/runtime/agent/runner_child_tasks.go"
         ],
         "require_verification": "none",
         "require_approval": false
@@ -324,8 +324,8 @@
         "final_assistant_contains": [
           "discovery",
           "tool",
-          "internal/agent/answer_composer.go",
-          "internal/agent/runner.go"
+          "internal/runtime/agent/answer_composer.go",
+          "internal/runtime/agent/runner.go"
         ],
         "forbid_final_assistant_contains": [
           "Discovery Tool Improvements",
@@ -365,8 +365,8 @@
           "action": "accept"
         },
         "require_evidence_paths": [
-          "internal/agent/answer_composer.go",
-          "internal/agent/runner.go"
+          "internal/runtime/agent/answer_composer.go",
+          "internal/runtime/agent/runner.go"
         ],
         "require_verification": "none",
         "require_approval": false
@@ -625,7 +625,7 @@
           "Qwen is working"
         ],
         "require_evidence_paths": [
-          "internal/app/app.go"
+          "internal/surfaces/tui/app/app.go"
         ],
         "require_verification": "none"
       },
@@ -681,7 +681,7 @@
           "remove it"
         ],
         "require_changed_files": [
-          "internal/app/app.go"
+          "internal/surfaces/tui/app/app.go"
         ],
         "require_final_answer_critic": {
           "contract": "implementation_result",
@@ -692,7 +692,7 @@
       },
       "oracle": {
         "require_changed_files": [
-          "internal/app/app.go"
+          "internal/surfaces/tui/app/app.go"
         ],
         "forbid_changed_files": [
           "prompts/base.md",
@@ -725,7 +725,7 @@
           "docs/frontier-routing-implementation-plan.md"
         ],
         "forbid_changed_files": [
-          "internal/app/app.go"
+          "internal/surfaces/tui/app/app.go"
         ],
         "max_tool_requests": 35
       }
@@ -1036,7 +1036,7 @@
       "family": "architecture_then_implement",
       "prompt": "Prepare a one-file structural cleanup plan, then begin only if the implementation target has a concrete function or line anchor.",
       "turns": [
-        "Prepare a focused structural cleanup plan for internal/app/analysis_agents.go. Plan only; do not edit files.",
+        "Prepare a focused structural cleanup plan for internal/surfaces/tui/app/analysis_agents.go. Plan only; do not edit files.",
         "Begin the plan, but if the handoff only has a file-level target, stop before editing and ask for a concrete function or line anchor."
       ],
       "tags": [
@@ -1093,13 +1093,13 @@
         },
         "max_broad_tool_requests": 0,
         "require_changed_files": [
-          "internal/app/app.go"
+          "internal/surfaces/tui/app/app.go"
         ],
         "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
-          "internal/app/app.go"
+          "internal/surfaces/tui/app/app.go"
         ],
         "max_tool_requests": 30,
         "max_errors": 1
@@ -1178,7 +1178,7 @@
     {
       "id": "direct-code-edit",
       "family": "implementation",
-      "prompt": "Update the code in internal/app/app.go to improve the execution panel label.",
+      "prompt": "Update the code in internal/surfaces/tui/app/app.go to improve the execution panel label.",
       "tags": [
         "implement",
         "go"
@@ -1195,13 +1195,13 @@
           }
         ],
         "require_changed_files": [
-          "internal/app/app.go"
+          "internal/surfaces/tui/app/app.go"
         ],
         "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
-          "internal/app/app.go"
+          "internal/surfaces/tui/app/app.go"
         ],
         "forbid_changed_files": [
           "prompts/base.md"
@@ -1212,7 +1212,7 @@
     {
       "id": "add-regression-test",
       "family": "test_authoring",
-      "prompt": "Add regression tests in internal/app/write_guard_test.go for route plan rendering.",
+      "prompt": "Add regression tests in internal/surfaces/tui/app/write_guard_test.go for route plan rendering.",
       "tags": [
         "implement",
         "tests"
@@ -1223,13 +1223,13 @@
           "regression tests"
         ],
         "require_changed_files": [
-          "internal/app/write_guard_test.go"
+          "internal/surfaces/tui/app/write_guard_test.go"
         ],
         "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
-          "internal/app/write_guard_test.go"
+          "internal/surfaces/tui/app/write_guard_test.go"
         ],
         "max_tool_requests": 30
       }
@@ -1464,8 +1464,8 @@
       "family": "multi_turn_state",
       "prompt": "Carry a long debugging context forward, then summarize the latest concrete path without editing files.",
       "turns": [
-        "Remember that the initial target path is internal/app/app.go.",
-        "Also remember that the likely eval path is internal/eval/eval.go.",
+        "Remember that the initial target path is internal/surfaces/tui/app/app.go.",
+        "Also remember that the likely eval path is internal/evidence/eval/eval.go.",
         "Track that no edit should be made during this investigation.",
         "Keep the current focus on context compaction behavior.",
         "Note that task memory should pin important paths.",
@@ -1474,7 +1474,7 @@
         "Record that verification should not run unless code changes.",
         "Record that no approval should be requested.",
         "Record that pinned evidence should survive history trimming.",
-        "Record that the answer should mention internal/app/app.go.",
+        "Record that the answer should mention internal/surfaces/tui/app/app.go.",
         "Now summarize the carried context and the latest concrete path."
       ],
       "tags": [
@@ -1491,14 +1491,14 @@
         "require_context_compaction": {
           "min_dropped_messages": 1,
           "require_pinned_paths": [
-            "internal/app/app.go"
+            "internal/surfaces/tui/app/app.go"
           ],
           "strategy_contains": [
             "pinned"
           ]
         },
         "final_assistant_contains": [
-          "internal/app/app.go"
+          "internal/surfaces/tui/app/app.go"
         ],
         "require_verification": "none",
         "require_approval": false
@@ -1669,7 +1669,7 @@
     {
       "id": "plan-execute-clean-submit",
       "family": "plan_then_execute_planner",
-      "prompt": "Add the atom_spec lane to cmd/idiom/lane.go and the registry in internal/agent/runner_plan_then_execute_guard.go.",
+      "prompt": "Add the atom_spec lane to cmd/idiom/lane.go and the registry in internal/runtime/agent/runner_plan_then_execute_guard.go.",
       "tags": [
         "plan-execute",
         "planner",
@@ -1739,7 +1739,7 @@
     {
       "id": "plan-execute-readiness-nudge",
       "family": "plan_then_execute_planner",
-      "prompt": "Update the lane preamble for plan-execute mode in internal/cliassets/lanes/plan-execute/preamble.md and the matching postamble.md.",
+      "prompt": "Update the lane preamble for plan-execute mode in internal/surfaces/cliassets/lanes/plan-execute/preamble.md and the matching postamble.md.",
       "tags": [
         "plan-execute",
         "planner",

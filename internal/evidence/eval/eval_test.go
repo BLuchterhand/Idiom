@@ -1,0 +1,1781 @@
+package eval
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "please edit the banner"}},
+		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=locate followup=implement reason=locate_request contract=locate_targets mode=plan workflow=optimization_refactor phase=awaiting_approval thoroughness=medium"}},
+		{Type: "message", Data: map[string]any{"role": "replan_recommendation", "content": "review -> architecture: review produced structural evidence without a bounded finding"}},
+		{Type: "message", Data: map[string]any{"role": "explore_bootstrap", "content": "Repository profile:\nLanguage capability registry:\n- go tools: go_overview, go_find_symbol | signals: go.mod, internal/surfaces/tui/app/app.go\n- shell tools: search_content, read_file | signals: scripts/run.sh"}},
+		{Type: "message", Data: map[string]any{"role": "review_summary", "content": "initial summary rejected: failed lane-specific grounding or contract"}},
+		{Type: "message", Data: map[string]any{"role": "verification_plan", "content": `{"commands":["go build ./...","go test -vet=off ./internal/surfaces/tui/app"],"uses_full_suite":false,"coverage":"targeted package verification","confidence":"medium","risk_level":"high","expected_failures":["compile errors","routing or prompt assembly regressions"],"repair_policy":"repair targeted failures before widening scope"}`}},
+		{Type: "message", Data: map[string]any{"role": "readiness_check", "content": `{"lane":"review","ready":true,"confidence":"high","action":"answer","reason":"summary satisfies lane contract and evidence gate","evidence_paths":["internal/surfaces/tui/app/app.go"]}`}},
+		{Type: "message", Data: map[string]any{"role": "deepening_attempt", "content": `{"lane":"review","attempt":1,"attempted":true,"exhausted":false,"action":"retry_with_evidence","reason":"readiness gate failed; retry with wider candidate reads","evidence_paths":["internal/surfaces/tui/app/app.go","internal/capabilities/workspace/manager.go"]}`}},
+		{Type: "message", Data: map[string]any{"role": "final_answer_critic", "content": `{"contract":"implementation_result","passed":true,"action":"accept"}`}},
+		{Type: "message", Data: map[string]any{"role": "effort_policy", "content": `{"lane":"review","level":"thorough","max_tool_steps":12,"analysis_tool_budget":6,"implement_tool_budget":6,"deepening_passes":2,"time_budget_seconds":90,"max_output_tokens":2048,"reasoning_budget":-1,"confidence_floor":"high_or_exhausted_budget","budget_exhaustion_mode":"answer_with_explicit_uncertainty_or_fallback"}`}},
+		{Type: "message", Data: map[string]any{"role": "long_horizon_state", "content": `{"action":"persist","source_lane":"architecture","stage":1,"focus_path":"internal/surfaces/tui/app/app.go","changed":["internal/surfaces/tui/app/app.go"],"remaining":["internal/capabilities/workspace/manager.go"],"next_step":"Continue with the workspace manager extraction.","verification":"passed","resumable":true}`}},
+		{Type: "message", Data: map[string]any{"role": "workflow_state", "content": `{"action":"persist","kind":"optimization_refactor","phase":"awaiting_approval","source_lane":"architecture","target_refs":["internal/surfaces/tui/app/app.go"],"editable_targets":["internal/surfaces/tui/app/app.go"],"read_only_evidence":["internal/capabilities/workspace/manager.go"],"evidence_paths":["internal/surfaces/tui/app/app.go","internal/capabilities/workspace/manager.go"],"verification":["go test ./internal/surfaces/tui/app"],"next_actions":["wait for explicit approval before build-mode execution"],"resumable":true}`}},
+		{Type: "message", Data: map[string]any{"role": "budget_ledger", "content": `{"lane":"review","used_model_calls":3,"used_deepening_passes":2,"max_deepening_passes":2,"used_tool_results":4,"new_evidence_paths":1,"total_evidence_paths":2,"stop_reason":"fallback_after_exhausted_readiness_attempts","budget_exhausted":true,"user_visible_uncertainty":"state that bounded readiness budget was exhausted"}`}},
+		{Type: "message", Data: map[string]any{"role": "evidence_delta", "content": `{"lane":"review","attempt":1,"new_evidence_paths":["internal/surfaces/tui/app/app.go"],"total_paths":2,"tool_results":2,"successful_tools":2,"failed_tools":0,"marginal_value":"medium"}`}},
+		{Type: "message", Data: map[string]any{"role": "claim_confidence", "content": `{"lane":"review","confidence":"high","supported_claims":1,"evidence_paths":["internal/surfaces/tui/app/app.go"],"calibration_basis":"contract acceptance plus grounded evidence path coverage"}`}},
+		{Type: "message", Data: map[string]any{"role": "context_compaction", "content": `{"dropped_messages":4,"retained_messages":8,"max_history":8,"pinned_paths":["internal/surfaces/tui/app/app.go"],"pinned_memory_kind":"investigation","strategy":"retain_recent_history_with_pinned_task_memory_and_refactor_targets"}`}},
+		{Type: "message", Data: map[string]any{"role": "route_ambiguity", "content": `{"selected_lane":"review","reason":"review_request","signals":["review","implement"],"ambiguous":true,"tie_break":"ordered host route precedence selected review"}`}},
+		{Type: "message", Data: map[string]any{"role": "verification_feedback", "content": `{"confidence":"medium","commands":["go test ./internal/surfaces/tui/app"],"failed_commands":[],"learned_recommendation":"keep current verification plan"}`}},
+		{Type: "message", Data: map[string]any{"role": "tool_failure_confidence", "content": `{"lane":"review","tool":"read_file","confidence_impact":"degrade_until_alternate_evidence_covers_gap"}`}},
+		{Type: "message", Data: map[string]any{"role": "control_rails", "content": `{"lane":"review","followup_lane":"implement","contract":"review_findings","agent_mode":"plan","workflow_kind":"optimization_refactor","workflow_phase":"awaiting_approval","task_family":"review","permission_profile":"analysis_read_only_then_guarded_writes","target_refs":["internal/surfaces/tui/app/app.go"],"required_evidence":["candidate_path","bounded_finding_evidence","confidence"],"required_tools":["workspace_inspection","implementation_handoff"],"allowed_tools":["task","search_content","read_file"],"forbidden_tools":["edit_file","write_file","append_file","mkdir","mutating_shell"],"readiness_gate":["answer_contract_satisfied","required_evidence_present","forbidden_tools_absent","target_packet_or_changed_files_present","verification_contract_resolved","low_confidence_triggers_deepening"],"search_policy":["rank_candidates","read_top_candidate","deepen_if_no_bounded_finding"],"verification_contract":"tests_passed_or_failed_or_skipped_with_blocker","stop_conditions":["required_evidence_satisfied","blocked_by_missing_permission_or_information","budget_exhausted_with_uncertainty_declared","implementation_verified_or_failure_reported"],"final_critic":["answers_actual_user_request","required_evidence_cited","no_overconfident_claims","findings_first"],"failure_to_eval":false}`}},
+		{Type: "tool_request", Data: map[string]any{"tool": "edit_file", "path": "internal/surfaces/tui/app/app.go", "broad": false}},
+		{Type: "tool_result", Data: map[string]any{"agent": "implement_verify", "tool": "edit_file", "path": "internal/surfaces/tui/app/app.go", "summary": "Edited internal/surfaces/tui/app/app.go", "error": ""}},
+		{Type: "phase", Data: map[string]any{"lane": "implement", "phase": "verify", "state": "done", "detail": "Verification passed"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Done.\n\nChanged files:\n- internal/surfaces/tui/app/app.go\n\nVerification:\n- `go build ./...`: passed"}},
+	}
+
+	metrics := Analyze(records)
+	if metrics.LastUser != "please edit the banner" {
+		t.Fatalf("unexpected last user: %q", metrics.LastUser)
+	}
+	if metrics.Tools["edit_file"] != 1 {
+		t.Fatalf("expected edit_file tool count, got %#v", metrics.Tools)
+	}
+	if !metrics.VerificationPassed {
+		t.Fatal("expected verification to pass")
+	}
+	if len(metrics.ChangedFiles) != 1 || metrics.ChangedFiles[0] != "internal/surfaces/tui/app/app.go" {
+		t.Fatalf("unexpected changed files: %#v", metrics.ChangedFiles)
+	}
+	if len(metrics.RoutePlans) != 1 {
+		t.Fatalf("expected one route plan, got %#v", metrics.RoutePlans)
+	}
+	plan := metrics.RoutePlans[0]
+	if plan.InitialLane != "locate" || plan.FollowupLane != "implement" || plan.Reason != "locate_request" || plan.Contract != "locate_targets" || plan.AgentMode != "plan" || plan.WorkflowKind != "optimization_refactor" || plan.WorkflowPhase != "awaiting_approval" || plan.Thoroughness != "medium" {
+		t.Fatalf("unexpected route plan: %#v", plan)
+	}
+	if !containsStringFold(metrics.EvidencePaths, "internal/surfaces/tui/app/app.go") {
+		t.Fatalf("expected evidence path from tool result summary, got %#v", metrics.EvidencePaths)
+	}
+	if len(metrics.Replans) != 1 || metrics.Replans[0].FromLane != "review" || metrics.Replans[0].ToLane != "architecture" {
+		t.Fatalf("unexpected replan recommendation: %#v", metrics.Replans)
+	}
+	if !languageCapabilityMatches(metrics.LanguageCapabilities, LanguageCapabilityExpectation{Language: "go", Tool: "go_find_symbol", Signal: "go.mod"}) {
+		t.Fatalf("expected Go language capability, got %#v", metrics.LanguageCapabilities)
+	}
+	if !languageCapabilityMatches(metrics.LanguageCapabilities, LanguageCapabilityExpectation{Language: "shell", Tool: "read_file", Signal: "scripts/run.sh"}) {
+		t.Fatalf("expected shell language capability, got %#v", metrics.LanguageCapabilities)
+	}
+	if len(metrics.VerificationPlans) != 1 {
+		t.Fatalf("expected one verification plan, got %#v", metrics.VerificationPlans)
+	}
+	verifyPlan := metrics.VerificationPlans[0]
+	if verifyPlan.RiskLevel != "high" || verifyPlan.Confidence != "medium" || verifyPlan.Coverage != "targeted package verification" {
+		t.Fatalf("unexpected verification plan: %#v", verifyPlan)
+	}
+	if !containsStringFold(verifyPlan.Commands, "go test -vet=off ./internal/surfaces/tui/app") || !containsStringFold(verifyPlan.ExpectedFailures, "routing or prompt assembly regressions") {
+		t.Fatalf("expected verification command and failure mode, got %#v", verifyPlan)
+	}
+	if metrics.SummaryRejections != 1 || !containsStringFold(metrics.SummaryRejectionLanes, "review") {
+		t.Fatalf("expected review summary rejection metric, got count=%d lanes=%#v", metrics.SummaryRejections, metrics.SummaryRejectionLanes)
+	}
+	if len(metrics.ReadinessChecks) != 1 || !metrics.ReadinessChecks[0].Ready || metrics.ReadinessChecks[0].Confidence != "high" {
+		t.Fatalf("expected readiness check metric, got %#v", metrics.ReadinessChecks)
+	}
+	if len(metrics.DeepeningAttempts) != 1 || !metrics.DeepeningAttempts[0].Attempted || metrics.DeepeningAttempts[0].Action != "retry_with_evidence" {
+		t.Fatalf("expected deepening attempt metric, got %#v", metrics.DeepeningAttempts)
+	}
+	if len(metrics.FinalAnswerCritics) != 1 || !metrics.FinalAnswerCritics[0].Passed || metrics.FinalAnswerCritics[0].Action != "accept" {
+		t.Fatalf("expected final answer critic metric, got %#v", metrics.FinalAnswerCritics)
+	}
+	if len(metrics.EffortPolicies) != 1 || metrics.EffortPolicies[0].Level != "thorough" || metrics.EffortPolicies[0].DeepeningPasses != 2 {
+		t.Fatalf("expected effort policy metric, got %#v", metrics.EffortPolicies)
+	}
+	if len(metrics.LongHorizonStates) != 1 || metrics.LongHorizonStates[0].Action != "persist" || !metrics.LongHorizonStates[0].Resumable {
+		t.Fatalf("expected long-horizon state metric, got %#v", metrics.LongHorizonStates)
+	}
+	if len(metrics.WorkflowStates) != 1 || metrics.WorkflowStates[0].Phase != "awaiting_approval" || !metrics.WorkflowStates[0].Resumable {
+		t.Fatalf("expected workflow state metric, got %#v", metrics.WorkflowStates)
+	}
+	if !containsStringFold(metrics.WorkflowStates[0].EditableTargets, "internal/surfaces/tui/app/app.go") || !containsStringFold(metrics.WorkflowStates[0].Verification, "go test ./internal/surfaces/tui/app") {
+		t.Fatalf("expected workflow target and verification metrics, got %#v", metrics.WorkflowStates[0])
+	}
+	if len(metrics.BudgetLedgers) != 1 || !metrics.BudgetLedgers[0].BudgetExhausted {
+		t.Fatalf("expected budget ledger metric, got %#v", metrics.BudgetLedgers)
+	}
+	if len(metrics.EvidenceDeltas) != 1 || metrics.EvidenceDeltas[0].MarginalValue != "medium" {
+		t.Fatalf("expected evidence delta metric, got %#v", metrics.EvidenceDeltas)
+	}
+	if len(metrics.ClaimConfidences) != 1 || metrics.ClaimConfidences[0].Confidence != "high" {
+		t.Fatalf("expected claim confidence metric, got %#v", metrics.ClaimConfidences)
+	}
+	if len(metrics.ContextCompactions) != 1 || metrics.ContextCompactions[0].DroppedMessages != 4 || !containsStringFold(metrics.ContextCompactions[0].PinnedPaths, "internal/surfaces/tui/app/app.go") {
+		t.Fatalf("expected context compaction metric, got %#v", metrics.ContextCompactions)
+	}
+	if len(metrics.RouteAmbiguities) != 1 || !metrics.RouteAmbiguities[0].Ambiguous {
+		t.Fatalf("expected route ambiguity metric, got %#v", metrics.RouteAmbiguities)
+	}
+	if len(metrics.VerificationFeedback) != 1 || metrics.VerificationFeedback[0].LearnedRecommendation == "" {
+		t.Fatalf("expected verification feedback metric, got %#v", metrics.VerificationFeedback)
+	}
+	if len(metrics.ToolFailureConfidence) != 1 || metrics.ToolFailureConfidence[0].ConfidenceImpact == "" {
+		t.Fatalf("expected tool-failure confidence metric, got %#v", metrics.ToolFailureConfidence)
+	}
+	if len(metrics.ControlRails) != 1 || metrics.ControlRails[0].TaskFamily != "review" || metrics.ControlRails[0].PermissionProfile != "analysis_read_only_then_guarded_writes" {
+		t.Fatalf("expected control rails metric, got %#v", metrics.ControlRails)
+	}
+	if !containsStringFold(metrics.ControlRails[0].TargetRefs, "internal/surfaces/tui/app/app.go") {
+		t.Fatalf("expected control rails target refs, got %#v", metrics.ControlRails[0].TargetRefs)
+	}
+	if metrics.ControlRails[0].AgentMode != "plan" || metrics.ControlRails[0].WorkflowKind != "optimization_refactor" || metrics.ControlRails[0].WorkflowPhase != "awaiting_approval" || !containsStringFold(metrics.ControlRails[0].AllowedTools, "task") {
+		t.Fatalf("expected control rails mode and allowed tools, got %#v", metrics.ControlRails[0])
+	}
+}
+
+func TestAnalyzeIncludesLiveContractRollbackChangedFiles(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "shorten the label"}},
+		{Type: "idiom.live_contract.rollback", Data: map[string]any{
+			"status":               "clean",
+			"changed_before_reset": []any{"internal/labels/labels.go"},
+		}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Done."}},
+	}
+
+	metrics := Analyze(records)
+	if len(metrics.ChangedFiles) != 1 || metrics.ChangedFiles[0] != "internal/labels/labels.go" {
+		t.Fatalf("expected rollback changed-file evidence, got %#v", metrics.ChangedFiles)
+	}
+	if metrics.RecordTypes["idiom.live_contract.rollback"] != 1 {
+		t.Fatalf("expected rollback record type count, got %#v", metrics.RecordTypes)
+	}
+	if len(metrics.LiveContractRollbacks) != 1 || metrics.LiveContractRollbacks[0].Status != "clean" {
+		t.Fatalf("expected rollback snapshot, got %#v", metrics.LiveContractRollbacks)
+	}
+}
+
+func TestAnalyzeIncludesSuccessfulWriteResultChangedFiles(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "update the docs"}},
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "edit_file", "raw": `{"path":"README.md"}`}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "edit_file", "path": "README.md", "summary": "Edited README.md lines 10-12", "error": ""}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Done."}},
+	}
+
+	metrics := Analyze(records)
+	if len(metrics.ChangedFiles) != 1 || metrics.ChangedFiles[0] != "README.md" {
+		t.Fatalf("expected structured write result to count as changed-file evidence, got %#v", metrics.ChangedFiles)
+	}
+}
+
+func TestAnalyzeDoesNotTrustAssistantClaimedChangedFiles(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Changed files:\n- README.md"}},
+	}
+
+	metrics := Analyze(records)
+	if len(metrics.ChangedFiles) != 0 {
+		t.Fatalf("assistant-only changed-file claims must not count as mutation evidence, got %#v", metrics.ChangedFiles)
+	}
+}
+
+func TestAnalyzeRollbackEvidenceOverridesWriteResultClaims(t *testing.T) {
+	records := []Record{
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "write_file", "raw": `{"path":"README.md"}`}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "write_file", "summary": "Wrote README.md", "error": ""}},
+		{Type: "idiom.live_contract.rollback", Data: map[string]any{
+			"status":               "clean",
+			"changed_before_reset": []any{},
+		}},
+	}
+
+	metrics := Analyze(records)
+	if len(metrics.ChangedFiles) != 0 {
+		t.Fatalf("empty live rollback diff must override write-result claims, got %#v", metrics.ChangedFiles)
+	}
+}
+
+func TestAnalyzeIgnoresNoopWriteResultChangedFiles(t *testing.T) {
+	records := []Record{
+		{Type: "tool_result", Data: map[string]any{"tool": "edit_file", "path": "README.md", "summary": "No-op edit for README.md; file already matched", "error": ""}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "No changes were needed."}},
+	}
+
+	metrics := Analyze(records)
+	if len(metrics.ChangedFiles) != 0 {
+		t.Fatalf("no-op write result must not count as changed-file evidence, got %#v", metrics.ChangedFiles)
+	}
+}
+
+func TestAnalyzeRoutePlanFromPlanExecuteWriterRouteDecision(t *testing.T) {
+	records := []Record{
+		{Type: "idiom.plan_execute.writer_route_decision", Data: map[string]any{
+			"task_family":  "plan_then_execute_planner",
+			"writer_mode":  "plan_submission",
+			"reason_codes": []any{"route.multi_file_plan_execute"},
+		}},
+	}
+
+	metrics := Analyze(records)
+	if len(metrics.RoutePlans) != 1 {
+		t.Fatalf("expected route plan from writer route event, got %#v", metrics.RoutePlans)
+	}
+	plan := metrics.RoutePlans[0]
+	if plan.InitialLane != "plan_then_execute_planner" || plan.Reason != "plan_then_execute_request" || plan.Contract != "implementation_result" {
+		t.Fatalf("unexpected plan-execute route plan: %#v", plan)
+	}
+}
+
+func TestAnalyzeExtractsRunnerMetricsFromRunEvents(t *testing.T) {
+	records := []Record{
+		{Type: "run_event", Data: map[string]any{"role": "control_rails", "content": `{"task_family":"implementation","permission_profile":"guarded_workspace_write","allowed_tools":["read_file"]}`}},
+		{Type: "run_event", Data: map[string]any{"role": "budget_ledger", "content": `{"lane":"implement","used_model_calls":1,"budget_exhausted":false}`}},
+		{Type: "run_event", Data: map[string]any{"role": "context_compaction", "content": `{"dropped_messages":2,"retained_messages":4,"strategy":"retain_recent_history"}`}},
+	}
+
+	metrics := Analyze(records)
+
+	if got := metrics.MessageRoles["control_rails"]; got != 1 {
+		t.Fatalf("expected control_rails run_event role to be counted, got %d", got)
+	}
+	if len(metrics.ControlRails) != 1 || metrics.ControlRails[0].TaskFamily != "implementation" {
+		t.Fatalf("expected control rails from run_event, got %#v", metrics.ControlRails)
+	}
+	if len(metrics.BudgetLedgers) != 1 || metrics.BudgetLedgers[0].Lane != "implement" {
+		t.Fatalf("expected budget ledger from run_event, got %#v", metrics.BudgetLedgers)
+	}
+	if len(metrics.ContextCompactions) != 1 || metrics.ContextCompactions[0].DroppedMessages != 2 {
+		t.Fatalf("expected context compaction from run_event, got %#v", metrics.ContextCompactions)
+	}
+}
+
+func TestEvaluatePlanExecutionExpectationDetectsScopeDrift(t *testing.T) {
+	records := []Record{
+		{Type: "idiom.plan_execute.executor_handoff_packet", Data: map[string]any{
+			"plan_id":                       "plan-1",
+			"handoff_id":                    "handoff-1",
+			"approval_scope_id":             "scope-1",
+			"approval_status":               "partial",
+			"approval_execution_permission": "execute_approved_scope",
+			"packet_state":                  "missing",
+			"reason":                        "missing_packet_id",
+		}},
+		{Type: "idiom.plan_execute.plan_scope_drift", Data: map[string]any{
+			"path":              "b.txt",
+			"reason":            "plan edit path is still pending approval",
+			"handoff_id":        "handoff-1",
+			"approval_scope_id": "scope-1",
+			"packet_state":      "missing",
+		}},
+	}
+	report := Evaluate("", records, Scenario{
+		Name: "plan-execution-drift",
+		RequirePlanExecution: &PlanExecutionExpectation{
+			RequireHandoffID:            true,
+			RequireApprovalScopeID:      true,
+			RequireDrift:                true,
+			RequireDriftReasons:         []string{"plan edit path is still pending approval"},
+			RequirePacketStates:         []string{"missing"},
+			RequireExecutionPermissions: []string{"execute_approved_scope"},
+		},
+	})
+	if !report.Passed {
+		t.Fatalf("expected plan execution drift assertions to pass, got %#v", report.Findings)
+	}
+	noDrift := Evaluate("", records, Scenario{
+		Name: "plan-execution-no-drift",
+		RequirePlanExecution: &PlanExecutionExpectation{
+			RequireHandoffID:       true,
+			RequireApprovalScopeID: true,
+			RequireNoDrift:         true,
+		},
+	})
+	if noDrift.Passed {
+		t.Fatalf("expected no-drift assertion to fail when drift event is present")
+	}
+	if !strings.Contains(strings.Join(noDrift.Findings, "\n"), "plan execution drift was forbidden") {
+		t.Fatalf("expected no-drift finding, got %#v", noDrift.Findings)
+	}
+}
+
+func TestEvaluatePlanExecutionExpectationRequiresPacketFreshness(t *testing.T) {
+	records := []Record{
+		{Type: "idiom.plan_execute.executor_handoff_packet", Data: map[string]any{
+			"handoff_created":           true,
+			"handoff_id":                "handoff-1",
+			"packet_state":              "inherited",
+			"packet_present":            true,
+			"packet_freshness_state":    "fresh",
+			"pack_id":                   "feedfacecafebeef",
+			"packet_not_used_by_design": false,
+		}},
+	}
+	report := Evaluate("", records, Scenario{
+		Name: "plan-execution-fresh-packet",
+		RequirePlanExecution: &PlanExecutionExpectation{
+			RequireHandoffID:            true,
+			RequirePacketPresent:        true,
+			RequirePacketFresh:          true,
+			RequirePacketFreshnessState: []string{"fresh"},
+		},
+	})
+	if !report.Passed {
+		t.Fatalf("expected fresh packet assertions to pass, got %#v", report.Findings)
+	}
+
+	missing := Evaluate("", []Record{{Type: "idiom.plan_execute.executor_handoff_packet", Data: map[string]any{
+		"handoff_created":        true,
+		"packet_state":           "missing",
+		"packet_freshness_state": "missing",
+	}}}, Scenario{
+		Name: "plan-execution-missing-packet",
+		RequirePlanExecution: &PlanExecutionExpectation{
+			RequireHandoffID:     true,
+			RequirePacketPresent: true,
+			RequirePacketFresh:   true,
+		},
+	})
+	if missing.Passed {
+		t.Fatalf("expected missing packet assertions to fail")
+	}
+	joined := strings.Join(missing.Findings, "\n")
+	for _, want := range []string{"packet presence was required", "fresh packet was required"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected finding %q, got %q", want, joined)
+		}
+	}
+
+	createdOnly := Evaluate("", []Record{{Type: "idiom.plan_execute.executor_handoff_packet", Data: map[string]any{
+		"handoff_created": true,
+	}}}, Scenario{
+		Name: "plan-execution-handoff-created-without-id",
+		RequirePlanExecution: &PlanExecutionExpectation{
+			RequireHandoffID:      true,
+			RequireHandoffCreated: true,
+		},
+	})
+	if createdOnly.Passed {
+		t.Fatalf("handoff_created without handoff_id must not satisfy RequireHandoffID")
+	}
+	if !strings.Contains(strings.Join(createdOnly.Findings, "\n"), "handoff id was required but not observed") {
+		t.Fatalf("expected strict handoff id finding, got %#v", createdOnly.Findings)
+	}
+}
+
+func TestEvaluatePlanExecuteVerificationEventsSatisfyVerificationRequirement(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Use plan-execute to update internal/labels/labels.go, then run `go test ./...`."}},
+		{Type: "idiom.plan_execute.verification", Data: map[string]any{
+			"command": "go test ./...",
+			"status":  "ok",
+		}},
+		{Type: "idiom.plan_execute.executor_complete", Data: map[string]any{
+			"verification_checked": 1,
+			"verification_status":  "passed",
+		}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:                "plan-execute-verification",
+		RequireVerification: "passed",
+	})
+	if !report.Passed {
+		t.Fatalf("expected plan-execute verification events to satisfy verification requirement, got %#v", report.Findings)
+	}
+	if report.Metrics.VerificationChecks != 1 || !report.Metrics.VerificationPassed {
+		t.Fatalf("expected one passed verification check, got checks=%d passed=%t failed=%t", report.Metrics.VerificationChecks, report.Metrics.VerificationPassed, report.Metrics.VerificationFailed)
+	}
+}
+
+func TestEvaluatePlanExecuteVerificationFailureFailsPassedRequirement(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Use plan-execute to update internal/labels/labels.go, then run `go test ./...`."}},
+		{Type: "idiom.plan_execute.verification", Data: map[string]any{
+			"command": "go test ./...",
+			"status":  "failed",
+		}},
+		{Type: "idiom.plan_execute.executor_complete", Data: map[string]any{
+			"verification_checked": 1,
+			"verification_status":  "failed",
+		}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:                "plan-execute-verification",
+		RequireVerification: "passed",
+	})
+	if report.Passed {
+		t.Fatalf("expected failed plan-execute verification to fail passed requirement")
+	}
+	if !strings.Contains(strings.Join(report.Findings, "\n"), "verification did not pass") {
+		t.Fatalf("expected verification failure finding, got %#v", report.Findings)
+	}
+	if report.Metrics.VerificationChecks != 1 || !report.Metrics.VerificationFailed || report.Metrics.VerificationPassed {
+		t.Fatalf("expected one failed verification check, got checks=%d passed=%t failed=%t", report.Metrics.VerificationChecks, report.Metrics.VerificationPassed, report.Metrics.VerificationFailed)
+	}
+}
+
+func TestAnalyzeDoesNotTreatGenericSourceSanityFallbackAsPassedVerification(t *testing.T) {
+	records := []Record{{
+		Type: "tool_result",
+		Data: map[string]any{
+			"agent":   "implement_verify",
+			"tool":    "source_sanity",
+			"summary": "Source sanity passed for 1 file(s) (1 generic fallback)",
+			"output":  "internal/labels/labels.go: generic delimiter sanity passed via generic_source_sanity",
+			"error":   "",
+		},
+	}}
+
+	metrics := Analyze(records)
+	if metrics.VerificationChecks != 1 {
+		t.Fatalf("VerificationChecks = %d, want 1", metrics.VerificationChecks)
+	}
+	if metrics.VerificationPassed || metrics.VerificationFailed {
+		t.Fatalf("generic fallback should be insufficient, not passed/failed: passed=%t failed=%t", metrics.VerificationPassed, metrics.VerificationFailed)
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:                "generic-source-sanity-fallback",
+		RequireVerification: "passed",
+	})
+	if report.Passed {
+		t.Fatalf("generic fallback should not satisfy passed verification requirement")
+	}
+}
+
+func TestAnalyzeDoesNotTreatPatchHygienePhaseAsPassedVerification(t *testing.T) {
+	records := []Record{{
+		Type: "phase",
+		Data: map[string]any{
+			"lane":   "implement",
+			"phase":  "verify",
+			"state":  "hygiene",
+			"detail": "git diff --check passed; patch hygiene completed",
+		},
+	}}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:                "patch-hygiene-only",
+		RequireVerification: "passed",
+	})
+	if report.Metrics.VerificationPassed || report.Passed {
+		t.Fatalf("patch hygiene phase should not satisfy passed verification, passed=%t report=%t", report.Metrics.VerificationPassed, report.Passed)
+	}
+}
+
+func TestAnalyzeDoesNotTreatPatchHygieneToolResultAsPassedVerification(t *testing.T) {
+	records := []Record{{
+		Type: "tool_result",
+		Data: map[string]any{
+			"agent":   "implement_verify",
+			"tool":    "shell",
+			"summary": "Ran shell command",
+			"output":  "$ git diff --check -- internal/labels/labels.go\n",
+			"error":   "",
+		},
+	}}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:                "patch-hygiene-tool-result",
+		RequireVerification: "passed",
+	})
+	if report.Metrics.VerificationChecks != 1 {
+		t.Fatalf("VerificationChecks = %d, want 1", report.Metrics.VerificationChecks)
+	}
+	if report.Metrics.VerificationPassed || report.Metrics.VerificationFailed || report.Passed {
+		t.Fatalf("patch hygiene tool result should be insufficient, passed=%t failed=%t report=%t", report.Metrics.VerificationPassed, report.Metrics.VerificationFailed, report.Passed)
+	}
+}
+
+func TestAnalyzeUsesLaneSummaryAsAssistantFallback(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "prepare a plan"}},
+		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=architecture reason=architecture_request contract=architecture_assessment"}},
+		{Type: "message", Data: map[string]any{"role": "architecture_summary", "content": "Plan needs a concrete function anchor before editing."}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "begin the plan"}},
+		{Type: "message", Data: map[string]any{"role": "route_plan_final", "content": "initial=implement reason=direct_implementation contract=implementation_result"}},
+		{Type: "message", Data: map[string]any{"role": "architecture_summary", "content": "Need a concrete line anchor before editing."}},
+	}
+
+	metrics := Analyze(records)
+	if metrics.AssistantTurns != 2 {
+		t.Fatalf("expected lane summaries to count as assistant fallback turns, got %d", metrics.AssistantTurns)
+	}
+	if !strings.Contains(metrics.FinalAssistant, "concrete line anchor") {
+		t.Fatalf("expected final assistant fallback from latest lane summary, got %q", metrics.FinalAssistant)
+	}
+	if len(metrics.RoutePlans) != 2 || metrics.RoutePlans[1].InitialLane != "implement" {
+		t.Fatalf("expected route_plan_final to be evaluated, got %#v", metrics.RoutePlans)
+	}
+}
+
+func TestAnalyzeCountsLaneSummaryWhenLaterTurnHasAssistant(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "prepare a plan"}},
+		{Type: "message", Data: map[string]any{"role": "architecture_summary", "content": "Plan summary."}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "begin the plan"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Need a concrete anchor."}},
+	}
+
+	metrics := Analyze(records)
+	if metrics.AssistantTurns != 2 {
+		t.Fatalf("expected lane summary plus final assistant to cover both user turns, got %d", metrics.AssistantTurns)
+	}
+	if metrics.FinalAssistant != "Need a concrete anchor." {
+		t.Fatalf("expected real assistant to remain final assistant, got %q", metrics.FinalAssistant)
+	}
+}
+
+func TestEvaluateScenarioReportsFailures(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "please edit the banner"}},
+		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=explore reason=explore_request contract=grounded_explanation"}},
+		{Type: "message", Data: map[string]any{"role": "replan_recommendation", "content": "explore -> review: explore produced review-shaped evidence"}},
+		{Type: "message", Data: map[string]any{"role": "verification_plan", "content": `{"commands":["go build ./..."],"uses_full_suite":false,"coverage":"compile-only verification","confidence":"low","risk_level":"low","expected_failures":["unexpected integration regressions"]}`}},
+		{Type: "message", Data: map[string]any{"role": "architecture_summary", "content": "retry summary rejected: failed lane-specific grounding or contract"}},
+		{Type: "tool_request", Data: map[string]any{"tool": "list_files", "broad": true}},
+		{Type: "tool_result", Data: map[string]any{"summary": "Repeated dead-end action rejected", "error": "loop"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "I could not finish cleanly."}},
+	}
+	maxBroad := 0
+	maxDeadEnds := 0
+	maxSummaryRejections := 0
+	scenario := Scenario{
+		Name:                 "bounded implement",
+		PromptContains:       []string{"edit the banner"},
+		RequireTools:         []string{"edit_file"},
+		RequireRoutePlan:     &RoutePlanExpectation{InitialLane: "locate", FollowupLane: "implement", Reason: "locate_request", Contract: "locate_targets"},
+		RequireReplan:        &ReplanExpectation{FromLane: "review", ToLane: "architecture", Reason: "structural evidence"},
+		RequireEvidencePaths: []string{"internal/surfaces/tui/app/app.go"},
+		RequireVerificationPlan: &VerificationPlanExpectation{
+			Coverage:                "full-suite escalation",
+			Confidence:              "high",
+			RiskLevel:               "high",
+			RequireCommands:         []string{"go test -vet=off ./..."},
+			RequireExpectedFailures: []string{"routing or prompt assembly regressions"},
+		},
+		RequireReadiness: &ReadinessExpectation{
+			Lane:       "review",
+			Ready:      boolPtr(true),
+			Confidence: "high",
+			Action:     "answer",
+		},
+		RequireDeepening: &DeepeningExpectation{
+			Lane:      "review",
+			Attempted: boolPtr(true),
+			Action:    "retry_with_evidence",
+			Exhausted: boolPtr(false),
+		},
+		RequireFinalAnswerCritic: &FinalAnswerCriticExpectation{
+			Contract: "implementation_result",
+			Passed:   boolPtr(true),
+			Action:   "accept",
+		},
+		RequireEffortPolicy: &EffortPolicyExpectation{
+			Lane:                  "review",
+			Level:                 "thorough",
+			MinAnalysisToolBudget: intPtr(6),
+			MinDeepeningPasses:    intPtr(2),
+			MinMaxOutputTokens:    intPtr(2048),
+			ConfidenceFloor:       "high_or_exhausted_budget",
+		},
+		RequireLongHorizonState: &LongHorizonStateExpectation{
+			Action:     "persist",
+			SourceLane: "architecture",
+			Stage:      intPtr(1),
+			Resumable:  boolPtr(true),
+		},
+		RequireWorkflowState: &WorkflowStateExpectation{
+			Action:              "persist",
+			Kind:                "optimization_refactor",
+			Phase:               "awaiting_approval",
+			RequireEditable:     []string{"internal/surfaces/tui/app/app.go"},
+			RequireVerification: []string{"go test ./internal/surfaces/tui/app"},
+			Resumable:           boolPtr(true),
+		},
+		RequireBudgetLedger: &BudgetLedgerExpectation{
+			Lane:             "review",
+			StopReason:       "fallback",
+			MinModelCalls:    intPtr(2),
+			MinEvidencePaths: intPtr(1),
+			BudgetExhausted:  boolPtr(true),
+		},
+		RequireEvidenceDelta: &EvidenceDeltaExpectation{
+			Lane:           "review",
+			MinNewPaths:    intPtr(1),
+			MarginalValue:  "medium",
+			MinToolResults: intPtr(1),
+		},
+		RequireClaimConfidence: &ClaimConfidenceExpectation{
+			Lane:             "review",
+			Confidence:       "high",
+			MinEvidencePaths: intPtr(1),
+		},
+		RequireContextCompaction: &ContextCompactionExpectation{
+			MinDroppedMessages: intPtr(1),
+			RequirePinnedPaths: []string{"internal/surfaces/tui/app/app.go"},
+			PinnedMemoryKind:   "investigation",
+			StrategyContains:   []string{"pinned"},
+		},
+		RequireRouteAmbiguity: &RouteAmbiguityExpectation{
+			SelectedLane:   "review",
+			Ambiguous:      boolPtr(true),
+			RequireSignals: []string{"review", "implement"},
+		},
+		RequireVerificationFeedback: &VerificationFeedbackExpectation{
+			Confidence:             "high",
+			RecommendationContains: []string{"repair"},
+		},
+		RequireToolFailureConfidence: &ToolFailureConfidenceExpectation{
+			Lane:             "review",
+			Tool:             "read_file",
+			ConfidenceImpact: "degrade_until_alternate_evidence_covers_gap",
+		},
+		RequireControlRails: &ControlRailsExpectation{
+			Lane:                  "review",
+			Contract:              "review_findings",
+			TaskFamily:            "review",
+			PermissionProfile:     "analysis_read_only_then_guarded_writes",
+			RequireEvidence:       []string{"bounded_finding_evidence"},
+			RequireTools:          []string{"workspace_inspection"},
+			RequireForbiddenTools: []string{"edit_file"},
+			RequireReadinessGate:  []string{"required_evidence_present"},
+			RequireSearchPolicy:   []string{"deepen_if_no_bounded_finding"},
+			VerificationContract:  "tests_passed_or_failed_or_skipped_with_blocker",
+			RequireStopConditions: []string{"implementation_verified_or_failure_reported"},
+			RequireFinalCritic:    []string{"findings_first"},
+			FailureToEval:         boolPtr(false),
+		},
+		RequireLanguageCapabilities: []LanguageCapabilityExpectation{{
+			Language: "go",
+			Tool:     "go_find_symbol",
+			Signal:   "go.mod",
+		}},
+		MaxBroadToolRequests: &maxBroad,
+		MaxRepeatedDeadEnds:  &maxDeadEnds,
+		MaxSummaryRejections: &maxSummaryRejections,
+		RequireVerification:  "passed",
+	}
+
+	report := Evaluate("log.jsonl", records, scenario)
+	if report.Passed {
+		t.Fatalf("expected scenario to fail, got %#v", report)
+	}
+	joined := strings.Join(report.Findings, "\n")
+	for _, expected := range []string{"required tool", "route plan mismatch", "replan recommendation mismatch", "evidence paths do not include", "verification plan mismatch", "required readiness check", "required deepening attempt", "required final answer critic", "required effort policy", "required long-horizon state", "required workflow state", "required budget ledger", "required evidence delta", "required claim confidence", "required context compaction", "required route ambiguity", "required verification feedback", "required tool-failure confidence", "required control rails", "language capabilities do not include", "broad tool requests exceeded", "repeated dead-end requests exceeded", "summary rejections exceeded", "verification did not pass"} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("expected finding containing %q, got %q", expected, joined)
+		}
+	}
+}
+
+func TestAnalyzeCountsRejectedToolResultWithoutRequestAsAttempt(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "edit the label"}},
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "read_file", "path": "internal/labels/labels.go"}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "read_file", "summary": "Read internal/labels/labels.go", "error": ""}},
+		{
+			Type: "tool_result",
+			Data: map[string]any{
+				"step":    2,
+				"tool":    "code_navigate",
+				"summary": "Implementation target write-ready tool rejected",
+				"error":   "code_navigate is outside the target-write-ready surface",
+			},
+		},
+		{
+			Type: "tool_result",
+			Data: map[string]any{
+				"step":    3,
+				"tool":    "read_file",
+				"summary": "Implementation target write-ready tool rejected",
+				"error":   "read_file is outside the target-write-ready surface",
+			},
+		},
+	}
+
+	metrics := Analyze(records)
+	if metrics.ToolRequests != 3 {
+		t.Fatalf("expected rejected unrequested tool_result attempts to count as tool requests, got %d", metrics.ToolRequests)
+	}
+	if metrics.Tools["code_navigate"] != 1 {
+		t.Fatalf("expected rejected code_navigate attempt to count as tool usage, got %#v", metrics.Tools)
+	}
+	if metrics.DiscoveryTools["code_navigate"] != 1 || metrics.DiscoveryClasses["language_symbol"] != 1 {
+		t.Fatalf("expected rejected code_navigate attempt to count as discovery attempt, tools=%#v classes=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses)
+	}
+	if metrics.ErrorCount != 2 || len(metrics.Errors) != 2 {
+		t.Fatalf("expected two error events and two unique errors, count=%d errors=%#v", metrics.ErrorCount, metrics.Errors)
+	}
+}
+
+func TestAnalyzeUncountsRecoverablePostReadinessGapAttempt(t *testing.T) {
+	records := []Record{
+		{
+			Type: "tool_request",
+			Data: map[string]any{
+				"step":            1,
+				"tool":            "read_file",
+				"path":            "internal/labels/labels.go",
+				"discovery_class": "file_read",
+				"discovery_scope": "targeted",
+				"discovery_cost":  "low",
+			},
+		},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "read_file", "summary": "Read internal/labels/labels.go", "error": ""}},
+		{
+			Type: "tool_request",
+			Data: map[string]any{
+				"step":            2,
+				"tool":            "code_navigate",
+				"path":            "internal/labels/labels.go",
+				"discovery_class": "language_symbol",
+				"discovery_scope": "targeted",
+				"discovery_cost":  "low",
+			},
+		},
+		{
+			Type: "tool_result",
+			Data: map[string]any{
+				"step":            2,
+				"tool":            "code_navigate",
+				"summary":         "Post-readiness follow-up missing named gap",
+				"error":           "post-readiness exact source probes require a named_gap",
+				"discovery_class": "language_symbol",
+				"discovery_scope": "targeted",
+				"discovery_cost":  "low",
+			},
+		},
+	}
+
+	metrics := Analyze(records)
+	if metrics.ToolRequests != 1 {
+		t.Fatalf("expected recoverable post-readiness gap attempt to be uncounted, got %d", metrics.ToolRequests)
+	}
+	if metrics.Tools["code_navigate"] != 0 {
+		t.Fatalf("expected recoverable code_navigate attempt to be uncounted, got %#v", metrics.Tools)
+	}
+	if metrics.DiscoveryTools["code_navigate"] != 0 || metrics.DiscoveryClasses["language_symbol"] != 0 {
+		t.Fatalf("expected recoverable discovery metrics to be uncounted, tools=%#v classes=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses)
+	}
+	if metrics.ErrorCount != 0 || len(metrics.Errors) != 0 {
+		t.Fatalf("expected recoverable post-readiness gap not to count as an error, count=%d errors=%#v", metrics.ErrorCount, metrics.Errors)
+	}
+}
+
+func TestAnalyzeDoesNotCountCompletionGateAsToolRequest(t *testing.T) {
+	records := []Record{
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "read_file", "path": "internal/runtime/agent/runner.go"}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "read_file", "summary": "Read internal/runtime/agent/runner.go", "error": ""}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "tool": "completion_gate", "summary": "Textual tool-call markup rejected as final answer", "error": "the reply contains textual tool-call markup instead of prose"}},
+	}
+
+	metrics := Analyze(records)
+	if metrics.ToolRequests != 1 {
+		t.Fatalf("expected completion_gate feedback not to count as workspace tool request, got %d", metrics.ToolRequests)
+	}
+	if metrics.Tools["completion_gate"] != 0 {
+		t.Fatalf("expected completion_gate not to count as tool usage, got %#v", metrics.Tools)
+	}
+	if metrics.CompletionGateRejections != 1 {
+		t.Fatalf("expected completion gate rejection metric to remain, got %d", metrics.CompletionGateRejections)
+	}
+}
+
+func TestAnalyzeParsesVerificationPlanRunEvent(t *testing.T) {
+	records := []Record{{
+		Type: "run_event",
+		Data: map[string]any{
+			"role":    "verification_plan",
+			"content": `{"commands":["bash -n scripts/run-harness.sh"],"confidence":"low","expected_failures":["shell syntax errors"]}`,
+		},
+	}}
+
+	metrics := Analyze(records)
+	if len(metrics.VerificationPlans) != 1 {
+		t.Fatalf("expected verification plan from run_event, got %#v", metrics.VerificationPlans)
+	}
+	plan := metrics.VerificationPlans[0]
+	if plan.Confidence != "low" || !containsStringFold(plan.Commands, "bash -n scripts/run-harness.sh") || !containsStringFold(plan.ExpectedFailures, "shell syntax errors") {
+		t.Fatalf("unexpected verification plan: %#v", plan)
+	}
+}
+
+func TestAnalyzeDoesNotUncountPriorToolForUnrequestedRecoverableGap(t *testing.T) {
+	records := []Record{
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "code_navigate", "path": "internal/labels/labels.go"}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "code_navigate", "summary": "Read Label", "error": ""}},
+		{
+			Type: "tool_result",
+			Data: map[string]any{
+				"step":    2,
+				"tool":    "code_navigate",
+				"summary": "Post-readiness follow-up missing named gap",
+				"error":   "post-readiness exact source probes require a named_gap",
+			},
+		},
+	}
+
+	metrics := Analyze(records)
+	if metrics.ToolRequests != 1 || metrics.Tools["code_navigate"] != 1 {
+		t.Fatalf("expected unrequested recoverable gap not to decrement prior valid attempt, requests=%d tools=%#v", metrics.ToolRequests, metrics.Tools)
+	}
+	if metrics.ErrorCount != 0 {
+		t.Fatalf("expected unrequested recoverable gap not to count as an error, got %d", metrics.ErrorCount)
+	}
+}
+
+func TestAnalyzeKeepsRepeatedIdenticalErrorEventCount(t *testing.T) {
+	records := []Record{
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "read_file", "summary": "Implementation target write-ready tool rejected", "error": "duplicate rejection"}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "tool": "read_file", "summary": "Implementation target write-ready tool rejected", "error": "duplicate rejection"}},
+	}
+
+	metrics := Analyze(records)
+	if metrics.ErrorCount != 2 {
+		t.Fatalf("expected repeated identical errors to count as two events, got %d", metrics.ErrorCount)
+	}
+	if len(metrics.Errors) != 1 {
+		t.Fatalf("expected retained error messages to remain deduplicated, got %#v", metrics.Errors)
+	}
+}
+
+func TestAnalyzeDeduplicatesMirroredToolAndErrorRecordsByStep(t *testing.T) {
+	records := []Record{
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "read_file", "action": "read_file:a.go"}},
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "read_file", "action": "read_file:a.go"}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "tool": "code_navigate", "summary": "Implementation target write-ready tool rejected", "error": "same rejection"}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "tool": "code_navigate", "summary": "Implementation target write-ready tool rejected", "error": "same rejection"}},
+	}
+
+	metrics := Analyze(records)
+	if metrics.ToolRequests != 2 {
+		t.Fatalf("expected mirrored records to count as two logical attempts, got %d", metrics.ToolRequests)
+	}
+	if metrics.Tools["read_file"] != 1 || metrics.Tools["code_navigate"] != 1 {
+		t.Fatalf("expected logical tool counts, got %#v", metrics.Tools)
+	}
+	if metrics.ErrorCount != 1 {
+		t.Fatalf("expected duplicate rejected result records to count as one logical error event, got %d", metrics.ErrorCount)
+	}
+}
+
+func TestEvaluateScenarioPromptContainsChecksLastUserOnly(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "earlier request mentions first plan"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Question."}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "continue with second plan"}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:           "latest-turn-prompt",
+		PromptContains: []string{"first plan"},
+	})
+	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), `last user prompt does not contain "first plan"`) {
+		t.Fatalf("expected prompt_contains to check only the latest user turn, passed=%t findings=%#v", report.Passed, report.Findings)
+	}
+}
+
+func TestEvaluateScenarioPromptHistoryContainsChecksAnyUserTurn(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "earlier request mentions first plan"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Question."}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "continue with second plan"}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:                  "history-prompt",
+		PromptHistoryContains: []string{"first plan"},
+	})
+	if !report.Passed {
+		t.Fatalf("expected prompt_history_contains to check the full user prompt history, got %#v", report.Findings)
+	}
+}
+
+func TestEvaluateScenarioToolAssertionsIncludeRejectedAttempts(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "edit the label"}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "code_navigate", "summary": "Implementation target write-ready tool rejected", "error": "code_navigate rejected"}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:         "rejected attempt required",
+		RequireTools: []string{"code_navigate"},
+	})
+	if !report.Passed {
+		t.Fatalf("expected required tool assertion to include rejected attempts, got %#v", report.Findings)
+	}
+
+	report = Evaluate("log.jsonl", records, Scenario{
+		Name:        "rejected attempt forbidden",
+		ForbidTools: []string{"code_navigate"},
+	})
+	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), `forbidden tool "code_navigate" was used`) {
+		t.Fatalf("expected forbidden tool assertion to include rejected attempts, passed=%t findings=%#v", report.Passed, report.Findings)
+	}
+}
+
+func TestEvaluateScenarioRequiresRejectedTools(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "run verification"}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "shell", "summary": "Tool not available in current runtime contract", "error": "shell is not in the current allowed tool surface"}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:                 "shell-denial",
+		RequireRejectedTools: []string{"shell"},
+	})
+	if !report.Passed {
+		t.Fatalf("expected rejected shell tool assertion to pass, got %#v", report.Findings)
+	}
+
+	report = Evaluate("log.jsonl", records, Scenario{
+		Name:                 "missing-denial",
+		RequireRejectedTools: []string{"edit_file"},
+	})
+	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), `required rejected tool "edit_file" was not observed`) {
+		t.Fatalf("expected missing rejected tool assertion to fail, passed=%t findings=%#v", report.Passed, report.Findings)
+	}
+}
+
+func TestEvaluateScenarioRequiresAssistantForEachUserTurn(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Can you identify opportunities for us to refactor our repo for long-term maintainability"}},
+		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=architecture reason=architecture_request contract=architecture_assessment thoroughness=medium"}},
+		{Type: "message", Data: map[string]any{"role": "architecture_summary", "content": "Architecture summary: internal/capabilities/workspace/manager.go is a hotspot."}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Can you prepare a refactor plan for this file?"}},
+		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=architecture reason=architecture_request contract=architecture_assessment thoroughness=medium"}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:                        "conversation coherence",
+		RequireAssistantForEachUser: true,
+	})
+	if report.Passed {
+		t.Fatalf("expected missing assistant-turn coverage to fail, got %#v", report)
+	}
+	if !strings.Contains(strings.Join(report.Findings, "\n"), "assistant turns fewer than user turns") {
+		t.Fatalf("expected assistant-turn finding, got %#v", report.Findings)
+	}
+}
+
+func TestEvaluateScenarioAcceptsRequiredRoutePlan(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "analyze structure"}},
+		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=architecture followup=implement reason=architecture_request contract=architecture_assessment thoroughness=medium"}},
+		{Type: "message", Data: map[string]any{"role": "replan_recommendation", "content": "architecture -> review: architecture produced defect-shaped evidence"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Architecture summary"}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name: "architecture route",
+		RequireRoutePlan: &RoutePlanExpectation{
+			InitialLane:  "architecture",
+			FollowupLane: "implement",
+			Reason:       "architecture_request",
+			Contract:     "architecture_assessment",
+			Thoroughness: "medium",
+		},
+		RequireReplan: &ReplanExpectation{
+			FromLane: "architecture",
+			ToLane:   "review",
+			Reason:   "defect-shaped",
+		},
+	})
+	if !report.Passed {
+		t.Fatalf("expected scenario to pass, got %#v", report)
+	}
+}
+
+func TestEvaluateScenarioRequireRunEventsPassesWhenRolesPresent(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "rename the enum"}},
+		{Type: "message", Data: map[string]any{"role": "plan_then_execute_write_guard", "content": "plan-then-execute planner phase: write tool edit_file redirected to submit_plan"}},
+		{Type: "message", Data: map[string]any{"role": "plan_then_execute_short_circuit", "content": "submit_plan succeeded; synthesizing final answer from plan artifact instead of spending a second model turn"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Plan submitted with 3 edit(s); the executor phase will dispatch them."}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name: "plan-execute write guard fired",
+		RequireRunEvents: []string{
+			"plan_then_execute_write_guard",
+			"plan_then_execute_short_circuit",
+			"  ", // blank entries are tolerated and ignored
+		},
+	})
+	if !report.Passed {
+		t.Fatalf("expected scenario to pass when both required run events appear, got findings %v", report.Findings)
+	}
+	if got := report.Metrics.MessageRoles["plan_then_execute_write_guard"]; got != 1 {
+		t.Fatalf("expected MessageRoles to count plan_then_execute_write_guard once, got %d", got)
+	}
+}
+
+func TestEvaluateScenarioRequireRunEventsFailsWhenRoleMissing(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "rename the enum"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Plan submitted."}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:             "plan-execute write guard expected but absent",
+		RequireRunEvents: []string{"plan_then_execute_write_guard"},
+	})
+	if report.Passed {
+		t.Fatalf("expected scenario to fail when required run event is absent, got pass")
+	}
+	var sawFinding bool
+	for _, finding := range report.Findings {
+		if strings.Contains(finding, `required run event "plan_then_execute_write_guard" was not observed`) {
+			sawFinding = true
+		}
+	}
+	if !sawFinding {
+		t.Fatalf("expected finding pointing at the missing run event, got %v", report.Findings)
+	}
+}
+
+// TestEvaluateScenarioRequireRunEventsMatchesOrchestratorEventTypes covers the
+// second match source: orchestrator events emitted to stdout JSONL with the
+// event name as the top-level type (e.g. idiom.plan_execute.preflight_failed)
+// instead of role on a type:"message" record. RequireRunEvents must match
+// either source so a single field can cover runner gates and orchestrator
+// gates symmetrically.
+func TestEvaluateScenarioRequireRunEventsMatchesOrchestratorEventTypes(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "execute the plan"}},
+		{Type: "idiom.plan_execute.plan_artifact_loaded", Data: map[string]any{"path": ".idiom/plans/x.plan.json", "edits": 3}},
+		{Type: "idiom.plan_execute.preflight_failed", Data: map[string]any{"edit_index": 1, "path": "internal/foo.go", "reason": "old_text mismatch"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Preflight failed; aborted before any edit."}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name: "orchestrator preflight failure detected",
+		RequireRunEvents: []string{
+			"idiom.plan_execute.plan_artifact_loaded",
+			"idiom.plan_execute.preflight_failed",
+		},
+	})
+	if !report.Passed {
+		t.Fatalf("expected scenario to pass when orchestrator events appear as top-level record types, got findings %v", report.Findings)
+	}
+	if got := report.Metrics.RecordTypes["idiom.plan_execute.preflight_failed"]; got != 1 {
+		t.Fatalf("expected RecordTypes to count preflight_failed once, got %d", got)
+	}
+}
+
+func TestEvaluateScenarioRequireRunEventsMatchesNestedAutonomyEventTypes(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "read the denied file"}},
+		{
+			Type: "run_event",
+			Data: map[string]any{
+				"role":    "autonomy_event",
+				"content": `{"schema_version":"idiom.autonomy.event.v1","event_id":"event-1","type":"tool_policy_result","effect":"observe_only","occurred_at":"2026-05-25T14:00:00Z","sequence":1,"contract_id":"contract-1","correlation":{"lane":"main","task_family":"conversation","runtime_contract":"direct_answer","permission_profile":"read_only_workspace"},"policy":{"tool_name":"read_file","action_class":"read","action_key":"read:read_file:bounded_read:.idiom/deny-read-test.txt","transport":"textual_tool_call","capability":"bounded_read","side_effect":"read_only","arguments_digest":"sha256:0000000000000000000000000000000000000000000000000000000000000000","decision":"deny","reason_code":"permission_policy","result":"denied","error_class":"permission_policy","source":"runner_permission_policy"}}`,
+			},
+		},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "The read was denied."}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:             "autonomy tool policy result observed",
+		RequireRunEvents: []string{"tool_policy_result"},
+	})
+	if !report.Passed {
+		t.Fatalf("expected scenario to pass when autonomy event payload type appears, got findings %v", report.Findings)
+	}
+	if got := report.Metrics.RecordTypes["tool_policy_result"]; got != 1 {
+		t.Fatalf("expected RecordTypes to count nested tool_policy_result once, got %d", got)
+	}
+}
+
+func TestEvaluateScenarioAcceptsFrontierControllerTelemetry(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "review routing thoroughly"}},
+		{Type: "message", Data: map[string]any{"role": "budget_ledger", "content": `{"lane":"review","used_model_calls":3,"used_deepening_passes":2,"max_deepening_passes":2,"used_tool_results":4,"new_evidence_paths":1,"total_evidence_paths":2,"stop_reason":"fallback_after_exhausted_readiness_attempts","budget_exhausted":true,"user_visible_uncertainty":"state that bounded readiness budget was exhausted and identify unresolved gaps"}`}},
+		{Type: "message", Data: map[string]any{"role": "evidence_delta", "content": `{"lane":"review","attempt":2,"new_evidence_paths":["internal/evidence/eval/eval.go"],"total_paths":2,"tool_results":2,"successful_tools":1,"failed_tools":1,"marginal_value":"medium"}`}},
+		{Type: "message", Data: map[string]any{"role": "claim_confidence", "content": `{"lane":"review","confidence":"low","supported_claims":0,"evidence_paths":["internal/surfaces/tui/app/app.go","internal/evidence/eval/eval.go"],"unresolved_uncertainty":["summary does not satisfy lane contract"],"calibration_basis":"contract acceptance plus grounded evidence path coverage"}`}},
+		{Type: "message", Data: map[string]any{"role": "context_compaction", "content": `{"dropped_messages":6,"retained_messages":8,"max_history":8,"pinned_paths":["internal/surfaces/tui/app/app.go","internal/evidence/eval/eval.go"],"pinned_memory_kind":"investigation","strategy":"retain_recent_history_with_pinned_task_memory_and_refactor_targets"}`}},
+		{Type: "message", Data: map[string]any{"role": "route_ambiguity", "content": `{"selected_lane":"review","reason":"review_request","signals":["review","implement"],"ambiguous":true,"tie_break":"ordered host route precedence selected review"}`}},
+		{Type: "message", Data: map[string]any{"role": "verification_feedback", "content": `{"risk_level":"high","coverage":"targeted package verification","confidence":"medium","commands":["go test ./internal/surfaces/tui/app"],"failed_commands":["go test ./internal/surfaces/tui/app"],"learned_recommendation":"repair failing checks before widening scope"}`}},
+		{Type: "message", Data: map[string]any{"role": "tool_failure_confidence", "content": `{"lane":"review","tool":"read_file","action":"alternate_evidence_required","confidence_impact":"degrade_until_alternate_evidence_covers_gap","reason":"read_file failed during deepening"}`}},
+		{Type: "message", Data: map[string]any{"role": "control_rails", "content": `{"lane":"review","contract":"review_findings","task_family":"review","permission_profile":"read_only_workspace","required_evidence":["candidate_path","bounded_finding_evidence","confidence"],"required_tools":["workspace_inspection"],"forbidden_tools":["edit_file","write_file"],"readiness_gate":["answer_contract_satisfied","required_evidence_present","low_confidence_triggers_deepening"],"search_policy":["rank_candidates","read_top_candidate","deepen_if_no_bounded_finding"],"verification_contract":"not_required_for_read_only_lane","stop_conditions":["required_evidence_satisfied","budget_exhausted_with_uncertainty_declared"],"final_critic":["answers_actual_user_request","required_evidence_cited","findings_first"],"failure_to_eval":false}`}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "No bounded finding yet; uncertainty remains explicit."}},
+	}
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name: "frontier telemetry",
+		RequireBudgetLedger: &BudgetLedgerExpectation{
+			Lane:              "review",
+			StopReason:        "fallback",
+			MinModelCalls:     intPtr(3),
+			MinEvidencePaths:  intPtr(2),
+			BudgetExhausted:   boolPtr(true),
+			UncertaintyPolicy: "bounded readiness budget",
+		},
+		RequireEvidenceDelta: &EvidenceDeltaExpectation{
+			Lane:           "review",
+			MinNewPaths:    intPtr(1),
+			MarginalValue:  "medium",
+			MinToolResults: intPtr(2),
+			MaxFailedTools: intPtr(1),
+		},
+		RequireClaimConfidence: &ClaimConfidenceExpectation{
+			Lane:             "review",
+			Confidence:       "low",
+			MinEvidencePaths: intPtr(2),
+			MaxUnresolved:    intPtr(1),
+			CalibrationBasis: "grounded evidence",
+		},
+		RequireContextCompaction: &ContextCompactionExpectation{
+			MinDroppedMessages:  intPtr(6),
+			MinRetainedMessages: intPtr(8),
+			MaxHistory:          intPtr(8),
+			RequirePinnedPaths:  []string{"internal/surfaces/tui/app/app.go", "internal/evidence/eval/eval.go"},
+			PinnedMemoryKind:    "investigation",
+			StrategyContains:    []string{"pinned_task_memory"},
+		},
+		RequireRouteAmbiguity: &RouteAmbiguityExpectation{
+			SelectedLane:     "review",
+			Ambiguous:        boolPtr(true),
+			RequireSignals:   []string{"review", "implement"},
+			TieBreakContains: []string{"selected review"},
+		},
+		RequireVerificationFeedback: &VerificationFeedbackExpectation{
+			Confidence:             "medium",
+			RequireFailedCommands:  []string{"go test ./internal/surfaces/tui/app"},
+			RecommendationContains: []string{"repair failing checks"},
+		},
+		RequireToolFailureConfidence: &ToolFailureConfidenceExpectation{
+			Lane:             "review",
+			Tool:             "read_file",
+			ConfidenceImpact: "degrade_until_alternate_evidence_covers_gap",
+		},
+		RequireControlRails: &ControlRailsExpectation{
+			Lane:                  "review",
+			Contract:              "review_findings",
+			TaskFamily:            "review",
+			PermissionProfile:     "read_only_workspace",
+			RequireEvidence:       []string{"bounded_finding_evidence"},
+			RequireTools:          []string{"workspace_inspection"},
+			RequireForbiddenTools: []string{"edit_file"},
+			RequireReadinessGate:  []string{"low_confidence_triggers_deepening"},
+			RequireSearchPolicy:   []string{"deepen_if_no_bounded_finding"},
+			VerificationContract:  "not_required_for_read_only_lane",
+			RequireStopConditions: []string{"budget_exhausted_with_uncertainty_declared"},
+			RequireFinalCritic:    []string{"findings_first"},
+			FailureToEval:         boolPtr(false),
+		},
+	})
+	if !report.Passed {
+		t.Fatalf("expected frontier telemetry scenario to pass, got %#v", report)
+	}
+}
+
+func TestBuildSuggestedScenarioReflectsObservedMetrics(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "remove the banner text"}},
+		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=locate followup=implement reason=locate_request contract=locate_targets"}},
+		{Type: "message", Data: map[string]any{"role": "replan_recommendation", "content": "locate -> review: locate produced review-shaped evidence"}},
+		{Type: "message", Data: map[string]any{"role": "locate_bootstrap", "content": "Language capability registry:\n- go tools: go_overview, go_find_symbol | signals: go.mod, internal/surfaces/tui/app/app.go"}},
+		{Type: "message", Data: map[string]any{"role": "verification_plan", "content": `{"commands":["go build ./...","go test -vet=off ./..."],"uses_full_suite":true,"coverage":"full-suite escalation","confidence":"high","risk_level":"high","expected_failures":["compile errors","package test regressions"]}`}},
+		{Type: "message", Data: map[string]any{"role": "readiness_check", "content": `{"lane":"locate","ready":false,"confidence":"low","action":"retry","reason":"response explicitly reports insufficient evidence","evidence_paths":["internal/surfaces/tui/app/app.go"]}`}},
+		{Type: "message", Data: map[string]any{"role": "deepening_attempt", "content": `{"lane":"locate","attempt":1,"attempted":true,"exhausted":false,"action":"retry_with_evidence","reason":"readiness gate failed; retry with deeper evidence","evidence_paths":["internal/surfaces/tui/app/app.go"]}`}},
+		{Type: "message", Data: map[string]any{"role": "final_answer_critic", "content": `{"contract":"implementation_result","passed":false,"action":"repair","repaired":true,"findings":["missing verification section"]}`}},
+		{Type: "message", Data: map[string]any{"role": "effort_policy", "content": `{"lane":"locate","level":"medium","analysis_tool_budget":6,"implement_tool_budget":6,"confidence_floor":"medium","budget_exhaustion_mode":"answer_with_explicit_uncertainty_or_fallback"}`}},
+		{Type: "message", Data: map[string]any{"role": "long_horizon_state", "content": `{"action":"resume","source_lane":"architecture","stage":2,"focus_path":"internal/capabilities/workspace/manager.go","remaining":["internal/runtime/agent/runner.go"],"next_step":"Continue with runner extraction.","resumable":true}`}},
+		{Type: "message", Data: map[string]any{"role": "budget_ledger", "content": `{"lane":"locate","used_model_calls":2,"used_deepening_passes":1,"max_deepening_passes":2,"used_tool_results":1,"new_evidence_paths":1,"total_evidence_paths":1,"stop_reason":"fallback_after_exhausted_readiness_attempts","budget_exhausted":true,"user_visible_uncertainty":"state that bounded readiness budget was exhausted"}`}},
+		{Type: "message", Data: map[string]any{"role": "evidence_delta", "content": `{"lane":"locate","attempt":1,"new_evidence_paths":["internal/surfaces/tui/app/app.go"],"total_paths":1,"tool_results":1,"successful_tools":1,"failed_tools":0,"marginal_value":"medium"}`}},
+		{Type: "message", Data: map[string]any{"role": "claim_confidence", "content": `{"lane":"locate","confidence":"low","supported_claims":0,"evidence_paths":["internal/surfaces/tui/app/app.go"],"unresolved_uncertainty":["response explicitly reports insufficient evidence"],"calibration_basis":"contract acceptance plus grounded evidence path coverage"}`}},
+		{Type: "message", Data: map[string]any{"role": "context_compaction", "content": `{"dropped_messages":3,"retained_messages":5,"max_history":5,"pinned_paths":["internal/surfaces/tui/app/app.go"],"pinned_memory_kind":"partial_repair","strategy":"retain_recent_history_with_pinned_task_memory_and_refactor_targets"}`}},
+		{Type: "message", Data: map[string]any{"role": "route_ambiguity", "content": `{"selected_lane":"locate","reason":"locate_request","signals":["locate","implement"],"ambiguous":true,"tie_break":"ordered host route precedence selected locate"}`}},
+		{Type: "message", Data: map[string]any{"role": "verification_feedback", "content": `{"risk_level":"high","coverage":"full-suite escalation","confidence":"high","commands":["go test ./..."],"failed_commands":["go test ./..."],"failure_classes":["go_unused_variable"],"learned_recommendation":"record full-suite success for similar high-risk surfaces"}`}},
+		{Type: "message", Data: map[string]any{"role": "tool_failure_confidence", "content": `{"lane":"locate","tool":"read_file","action":"alternate_evidence_required","confidence_impact":"degrade_until_alternate_evidence_covers_gap","reason":"read_file failed during deepening"}`}},
+		{Type: "message", Data: map[string]any{"role": "control_rails", "content": `{"lane":"locate","followup_lane":"implement","contract":"locate_targets","task_family":"locate","permission_profile":"analysis_read_only_then_guarded_writes","required_evidence":["exact_workspace_path","line_or_snippet","target_match_reason"],"required_tools":["search_content","read_file","implementation_handoff"],"forbidden_tools":["edit_file","write_file","append_file","mkdir","mutating_shell"],"readiness_gate":["answer_contract_satisfied","required_evidence_present","target_packet_or_changed_files_present","verification_contract_resolved"],"search_policy":["literal_search_first","fallback_pattern_search","read_best_candidate"],"verification_contract":"tests_passed_or_failed_or_skipped_with_blocker","stop_conditions":["required_evidence_satisfied","implementation_verified_or_failure_reported"],"final_critic":["answers_actual_user_request","required_evidence_cited","exact_target_or_no_match"],"failure_to_eval":false}`}},
+		{Type: "message", Data: map[string]any{"role": "explore_summary", "content": "explore summary rejected: failed grounded explanation contract"}},
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "search_content", "broad": false}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "summary": "Found 1 matching line at internal/surfaces/tui/app/app.go:42", "error": ""}},
+		{Type: "tool_request", Data: map[string]any{"step": 2, "tool": "edit_file", "path": "internal/surfaces/tui/app/app.go", "broad": false}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "tool": "edit_file", "path": "internal/surfaces/tui/app/app.go", "summary": "Edited internal/surfaces/tui/app/app.go lines 42-43", "error": ""}},
+		{Type: "phase", Data: map[string]any{"lane": "locate", "phase": "complete", "state": "done"}},
+		{Type: "phase", Data: map[string]any{"lane": "implement", "phase": "verify", "state": "done"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Changed files:\n- internal/surfaces/tui/app/app.go"}},
+	}
+
+	scenario := BuildSuggestedScenario("banner-remove", records)
+	if scenario.Name != "banner-remove" {
+		t.Fatalf("unexpected scenario name: %q", scenario.Name)
+	}
+	if len(scenario.PromptContains) != 1 || scenario.PromptContains[0] != "remove the banner text" {
+		t.Fatalf("unexpected prompt matchers: %#v", scenario.PromptContains)
+	}
+	if scenario.RequireVerification != "passed" {
+		t.Fatalf("expected passed verification, got %q", scenario.RequireVerification)
+	}
+	if !containsStringFold(scenario.RequireTools, "search_content") {
+		t.Fatalf("expected successful narrowing tool in scenario: %#v", scenario.RequireTools)
+	}
+	if !containsStringFold(scenario.RequireChangedFiles, "internal/surfaces/tui/app/app.go") {
+		t.Fatalf("expected changed file in scenario: %#v", scenario.RequireChangedFiles)
+	}
+	if scenario.RequireRoutePlan == nil || scenario.RequireRoutePlan.InitialLane != "locate" || scenario.RequireRoutePlan.Contract != "locate_targets" {
+		t.Fatalf("expected suggested route plan in scenario, got %#v", scenario.RequireRoutePlan)
+	}
+	if scenario.RequireReplan == nil || scenario.RequireReplan.FromLane != "locate" || scenario.RequireReplan.ToLane != "review" {
+		t.Fatalf("expected suggested replan in scenario, got %#v", scenario.RequireReplan)
+	}
+	if !containsStringFold(scenario.RequireEvidencePaths, "internal/surfaces/tui/app/app.go") {
+		t.Fatalf("expected suggested evidence path in scenario, got %#v", scenario.RequireEvidencePaths)
+	}
+	if !containsLanguageCapabilityExpectation(scenario.RequireLanguageCapabilities, "go") {
+		t.Fatalf("expected suggested Go language capability, got %#v", scenario.RequireLanguageCapabilities)
+	}
+	if scenario.RequireVerificationPlan == nil || scenario.RequireVerificationPlan.RiskLevel != "high" || scenario.RequireVerificationPlan.UsesFullSuite == nil || !*scenario.RequireVerificationPlan.UsesFullSuite {
+		t.Fatalf("expected suggested verification plan, got %#v", scenario.RequireVerificationPlan)
+	}
+	if scenario.RequireReadiness == nil || scenario.RequireReadiness.Ready == nil || *scenario.RequireReadiness.Ready || scenario.RequireReadiness.Action != "retry" {
+		t.Fatalf("expected suggested readiness check, got %#v", scenario.RequireReadiness)
+	}
+	if scenario.RequireDeepening == nil || scenario.RequireDeepening.Attempted == nil || !*scenario.RequireDeepening.Attempted || scenario.RequireDeepening.Action != "retry_with_evidence" {
+		t.Fatalf("expected suggested deepening attempt, got %#v", scenario.RequireDeepening)
+	}
+	if scenario.RequireFinalAnswerCritic == nil || scenario.RequireFinalAnswerCritic.Repaired == nil || !*scenario.RequireFinalAnswerCritic.Repaired || scenario.RequireFinalAnswerCritic.Action != "repair" {
+		t.Fatalf("expected suggested final answer critic, got %#v", scenario.RequireFinalAnswerCritic)
+	}
+	if scenario.RequireEffortPolicy == nil || scenario.RequireEffortPolicy.Level != "medium" || scenario.RequireEffortPolicy.MinAnalysisToolBudget == nil || *scenario.RequireEffortPolicy.MinAnalysisToolBudget != 6 {
+		t.Fatalf("expected suggested effort policy, got %#v", scenario.RequireEffortPolicy)
+	}
+	if scenario.RequireLongHorizonState == nil || scenario.RequireLongHorizonState.Action != "resume" || scenario.RequireLongHorizonState.Stage == nil || *scenario.RequireLongHorizonState.Stage != 2 {
+		t.Fatalf("expected suggested long-horizon state, got %#v", scenario.RequireLongHorizonState)
+	}
+	if scenario.RequireBudgetLedger == nil || scenario.RequireBudgetLedger.BudgetExhausted == nil || !*scenario.RequireBudgetLedger.BudgetExhausted || scenario.RequireBudgetLedger.MinModelCalls == nil || *scenario.RequireBudgetLedger.MinModelCalls != 2 {
+		t.Fatalf("expected suggested budget ledger, got %#v", scenario.RequireBudgetLedger)
+	}
+	if scenario.RequireEvidenceDelta == nil || scenario.RequireEvidenceDelta.MinNewPaths == nil || *scenario.RequireEvidenceDelta.MinNewPaths != 1 || scenario.RequireEvidenceDelta.MaxFailedTools == nil || *scenario.RequireEvidenceDelta.MaxFailedTools != 0 {
+		t.Fatalf("expected suggested evidence delta, got %#v", scenario.RequireEvidenceDelta)
+	}
+	if scenario.RequireClaimConfidence == nil || scenario.RequireClaimConfidence.MaxUnresolved == nil || *scenario.RequireClaimConfidence.MaxUnresolved != 1 || scenario.RequireClaimConfidence.CalibrationBasis == "" {
+		t.Fatalf("expected suggested claim confidence, got %#v", scenario.RequireClaimConfidence)
+	}
+	if scenario.RequireContextCompaction == nil || scenario.RequireContextCompaction.MinDroppedMessages == nil || *scenario.RequireContextCompaction.MinDroppedMessages != 3 || !containsStringFold(scenario.RequireContextCompaction.RequirePinnedPaths, "internal/surfaces/tui/app/app.go") {
+		t.Fatalf("expected suggested context compaction, got %#v", scenario.RequireContextCompaction)
+	}
+	if scenario.RequireRouteAmbiguity == nil || scenario.RequireRouteAmbiguity.Ambiguous == nil || !*scenario.RequireRouteAmbiguity.Ambiguous || !containsStringFold(scenario.RequireRouteAmbiguity.RequireSignals, "implement") {
+		t.Fatalf("expected suggested route ambiguity, got %#v", scenario.RequireRouteAmbiguity)
+	}
+	if scenario.RequireVerificationFeedback == nil || scenario.RequireVerificationFeedback.Confidence != "high" || len(scenario.RequireVerificationFeedback.RecommendationContains) != 1 || !containsStringFold(scenario.RequireVerificationFeedback.RequireFailureClasses, "go_unused_variable") {
+		t.Fatalf("expected suggested verification feedback, got %#v", scenario.RequireVerificationFeedback)
+	}
+	if scenario.RequireToolFailureConfidence == nil || scenario.RequireToolFailureConfidence.Tool != "read_file" || scenario.RequireToolFailureConfidence.ConfidenceImpact == "" {
+		t.Fatalf("expected suggested tool-failure confidence, got %#v", scenario.RequireToolFailureConfidence)
+	}
+	if scenario.RequireControlRails == nil || scenario.RequireControlRails.TaskFamily != "locate" || scenario.RequireControlRails.VerificationContract != "tests_passed_or_failed_or_skipped_with_blocker" {
+		t.Fatalf("expected suggested control rails, got %#v", scenario.RequireControlRails)
+	}
+	if scenario.MaxSummaryRejections == nil || *scenario.MaxSummaryRejections != 1 {
+		t.Fatalf("expected suggested summary rejection budget, got %#v", scenario.MaxSummaryRejections)
+	}
+}
+
+func TestParseReplanRecommendation(t *testing.T) {
+	replan := parseReplanRecommendation("review -> architecture: review produced structural evidence")
+	if replan.FromLane != "review" || replan.ToLane != "architecture" || !strings.Contains(replan.Reason, "structural evidence") {
+		t.Fatalf("unexpected replan parse: %#v", replan)
+	}
+	if !replanMatches(replan, ReplanExpectation{FromLane: "review", ToLane: "architecture", Reason: "structural"}) {
+		t.Fatalf("expected replan matcher to accept %#v", replan)
+	}
+}
+
+func TestEvidencePathsFromTextExtractsPathLineReferences(t *testing.T) {
+	paths := evidencePathsFromText("Read f1 internal/surfaces/tui/app/app.go lines 1-120 and found internal/capabilities/workspace/manager.go:42.")
+	for _, want := range []string{"internal/surfaces/tui/app/app.go", "internal/capabilities/workspace/manager.go"} {
+		if !containsStringFold(paths, want) {
+			t.Fatalf("expected %q in evidence paths, got %#v", want, paths)
+		}
+	}
+}
+
+func TestParseLanguageCapabilities(t *testing.T) {
+	caps := parseLanguageCapabilities("Repository profile:\nLanguage capability registry:\n- go tools: go_overview, go_find_symbol | signals: go.mod, internal/surfaces/tui/app/app.go\n- c/c++ tools: cpp_find_symbol | signals: native/main.cpp")
+	if !languageCapabilityMatches(caps, LanguageCapabilityExpectation{Language: "go", Tool: "go_find_symbol", Signal: "internal/surfaces/tui/app/app.go"}) {
+		t.Fatalf("expected Go capability, got %#v", caps)
+	}
+	if !languageCapabilityMatches(caps, LanguageCapabilityExpectation{Language: "c/c++", Tool: "cpp_find_symbol", Signal: "native/main.cpp"}) {
+		t.Fatalf("expected C/C++ capability, got %#v", caps)
+	}
+}
+
+func TestParseVerificationPlan(t *testing.T) {
+	plan := parseVerificationPlan(`{"commands":["go build ./...","go test -vet=off ./..."],"uses_full_suite":true,"coverage":"full-suite escalation","confidence":"high","risk_level":"high","expected_failures":["compile errors"],"repair_policy":"repair all failing full-suite checks"}`)
+	if plan.Raw == "" {
+		t.Fatal("expected verification plan to parse")
+	}
+	if !verificationPlanMatches(plan, VerificationPlanExpectation{
+		Coverage:                "full-suite escalation",
+		Confidence:              "high",
+		RiskLevel:               "high",
+		UsesFullSuite:           boolPtr(true),
+		RequireCommands:         []string{"go test -vet=off ./..."},
+		RequireExpectedFailures: []string{"compile errors"},
+	}) {
+		t.Fatalf("expected verification plan matcher to accept %#v", plan)
+	}
+}
+
+func TestParseReadinessCheck(t *testing.T) {
+	readiness := parseReadinessCheck(`{"lane":"architecture","ready":false,"confidence":"low","action":"retry","reason":"response asks for more evidence before it is ready","evidence_paths":["internal/surfaces/tui/app/app.go","internal/capabilities/workspace/manager.go"]}`)
+	if readiness.Raw == "" {
+		t.Fatal("expected readiness check to parse")
+	}
+	if !readinessMatches(readiness, ReadinessExpectation{
+		Lane:             "architecture",
+		Ready:            boolPtr(false),
+		Confidence:       "low",
+		Action:           "retry",
+		MinEvidencePaths: intPtr(2),
+		ReasonContains:   []string{"more evidence"},
+	}) {
+		t.Fatalf("expected readiness matcher to accept %#v", readiness)
+	}
+}
+
+func TestParseDeepeningAttempt(t *testing.T) {
+	deepening := parseDeepeningAttempt(`{"lane":"review","attempt":2,"attempted":true,"exhausted":false,"action":"retry_with_evidence","reason":"readiness gate failed; retry with wider candidate reads","evidence_paths":["internal/surfaces/tui/app/app.go","internal/capabilities/workspace/manager.go"]}`)
+	if deepening.Raw == "" {
+		t.Fatal("expected deepening attempt to parse")
+	}
+	if !deepeningMatches(deepening, DeepeningExpectation{
+		Lane:             "review",
+		Attempted:        boolPtr(true),
+		Exhausted:        boolPtr(false),
+		Action:           "retry_with_evidence",
+		MinEvidencePaths: intPtr(2),
+		ReasonContains:   []string{"readiness gate"},
+	}) {
+		t.Fatalf("expected deepening matcher to accept %#v", deepening)
+	}
+}
+
+func TestParseFinalAnswerCritic(t *testing.T) {
+	critic := parseFinalAnswerCritic(`{"contract":"implementation_result","passed":false,"action":"repair","repaired":true,"findings":["missing verification section"]}`)
+	if critic.Raw == "" {
+		t.Fatal("expected final answer critic to parse")
+	}
+	if !finalAnswerCriticMatches(critic, FinalAnswerCriticExpectation{
+		Contract:        "implementation_result",
+		Passed:          boolPtr(false),
+		Action:          "repair",
+		Repaired:        boolPtr(true),
+		RequireFindings: []string{"verification"},
+	}) {
+		t.Fatalf("expected final answer critic matcher to accept %#v", critic)
+	}
+}
+
+func TestParseEffortPolicy(t *testing.T) {
+	policy := parseEffortPolicy(`{"lane":"review","level":"thorough","analysis_tool_budget":6,"implement_tool_budget":6,"deepening_passes":2,"max_output_tokens":2048,"reasoning_budget":-1,"confidence_floor":"high_or_exhausted_budget","budget_exhaustion_mode":"answer_with_explicit_uncertainty_or_fallback"}`)
+	if policy.Raw == "" {
+		t.Fatal("expected effort policy to parse")
+	}
+	if !effortPolicyMatches(policy, EffortPolicyExpectation{
+		Lane:                   "review",
+		Level:                  "thorough",
+		MinAnalysisToolBudget:  intPtr(6),
+		MinImplementToolBudget: intPtr(6),
+		MinDeepeningPasses:     intPtr(2),
+		MinMaxOutputTokens:     intPtr(2048),
+		ConfidenceFloor:        "high_or_exhausted_budget",
+		BudgetExhaustionMode:   "answer_with_explicit_uncertainty_or_fallback",
+	}) {
+		t.Fatalf("expected effort policy matcher to accept %#v", policy)
+	}
+}
+
+func TestParseLongHorizonState(t *testing.T) {
+	state := parseLongHorizonState(`{"action":"persist","source_lane":"architecture","stage":1,"focus_path":"internal/surfaces/tui/app/app.go","changed":["internal/surfaces/tui/app/app.go"],"remaining":["internal/capabilities/workspace/manager.go"],"next_step":"Continue with the workspace manager extraction.","resumable":true}`)
+	if state.Raw == "" {
+		t.Fatal("expected long-horizon state to parse")
+	}
+	if !longHorizonStateMatches(state, LongHorizonStateExpectation{
+		Action:           "persist",
+		SourceLane:       "architecture",
+		Stage:            intPtr(1),
+		FocusPath:        "internal/surfaces/tui/app/app.go",
+		RequireRemaining: []string{"internal/capabilities/workspace/manager.go"},
+		NextContains:     []string{"workspace manager"},
+		Resumable:        boolPtr(true),
+	}) {
+		t.Fatalf("expected long-horizon matcher to accept %#v", state)
+	}
+}
+
+func TestParseContextCompaction(t *testing.T) {
+	compaction := parseContextCompaction(`{"dropped_messages":3,"retained_messages":5,"max_history":5,"pinned_paths":["internal/surfaces/tui/app/app.go"],"pinned_memory_kind":"partial_repair","strategy":"retain_recent_history_with_pinned_task_memory_and_refactor_targets"}`)
+	if compaction.Raw == "" {
+		t.Fatal("expected context compaction to parse")
+	}
+	if !contextCompactionMatches(compaction, ContextCompactionExpectation{
+		MinDroppedMessages:  intPtr(3),
+		MinRetainedMessages: intPtr(5),
+		MaxHistory:          intPtr(5),
+		RequirePinnedPaths:  []string{"internal/surfaces/tui/app/app.go"},
+		PinnedMemoryKind:    "partial_repair",
+		StrategyContains:    []string{"pinned_task_memory"},
+	}) {
+		t.Fatalf("expected context compaction matcher to accept %#v", compaction)
+	}
+}
+
+func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
+	if budgetLedgerMatches(BudgetLedgerSnapshot{
+		Lane:               "review",
+		UsedModelCalls:     1,
+		TotalEvidencePaths: 0,
+		StopReason:         "ready_initial_answer",
+		BudgetExhausted:    false,
+	}, BudgetLedgerExpectation{
+		Lane:             "review",
+		StopReason:       "fallback",
+		MinModelCalls:    intPtr(2),
+		MinEvidencePaths: intPtr(1),
+		BudgetExhausted:  boolPtr(true),
+	}) {
+		t.Fatal("expected budget ledger mismatch to be rejected")
+	}
+	if !budgetLedgerMatches(BudgetLedgerSnapshot{
+		Lane:            "review",
+		UsedModelCalls:  2,
+		TotalTokens:     42,
+		StopReason:      "model_final",
+		BudgetExhausted: false,
+	}, BudgetLedgerExpectation{
+		Lane:           "review",
+		MinModelCalls:  intPtr(2),
+		MinTotalTokens: intPtr(40),
+		StopReason:     "model_final",
+	}) {
+		t.Fatal("expected budget ledger matcher to accept sufficient token usage")
+	}
+	if budgetLedgerMatches(BudgetLedgerSnapshot{
+		Lane:        "review",
+		TotalTokens: 10,
+	}, BudgetLedgerExpectation{
+		Lane:           "review",
+		MinTotalTokens: intPtr(40),
+	}) {
+		t.Fatal("expected budget ledger token mismatch to be rejected")
+	}
+	if evidenceDeltaMatches(EvidenceDeltaSnapshot{
+		Lane:             "review",
+		NewEvidencePaths: nil,
+		ToolResults:      1,
+		FailedTools:      1,
+		MarginalValue:    "blocked_by_tool_failures",
+	}, EvidenceDeltaExpectation{
+		Lane:           "review",
+		MinNewPaths:    intPtr(1),
+		MarginalValue:  "medium",
+		MinToolResults: intPtr(2),
+		MaxFailedTools: intPtr(0),
+	}) {
+		t.Fatal("expected evidence delta mismatch to be rejected")
+	}
+	if claimConfidenceMatches(ClaimConfidenceSnapshot{
+		Lane:                  "review",
+		Confidence:            "low",
+		EvidencePaths:         nil,
+		UnresolvedUncertainty: []string{"not enough evidence"},
+		CalibrationBasis:      "contract acceptance without explicit evidence paths",
+	}, ClaimConfidenceExpectation{
+		Lane:             "review",
+		Confidence:       "high",
+		MinEvidencePaths: intPtr(1),
+		MaxUnresolved:    intPtr(0),
+		CalibrationBasis: "grounded",
+	}) {
+		t.Fatal("expected claim confidence mismatch to be rejected")
+	}
+	if contextCompactionMatches(ContextCompactionSnapshot{
+		DroppedMessages:  1,
+		RetainedMessages: 2,
+		MaxHistory:       2,
+		PinnedPaths:      []string{"internal/surfaces/tui/app/app.go"},
+		PinnedMemoryKind: "investigation",
+		Strategy:         "retain_recent_history",
+	}, ContextCompactionExpectation{
+		MinDroppedMessages:  intPtr(3),
+		MinRetainedMessages: intPtr(5),
+		MaxHistory:          intPtr(5),
+		RequirePinnedPaths:  []string{"internal/evidence/eval/eval.go"},
+		PinnedMemoryKind:    "partial_repair",
+		StrategyContains:    []string{"pinned_task_memory"},
+	}) {
+		t.Fatal("expected context compaction mismatch to be rejected")
+	}
+	if routeAmbiguityMatches(RouteAmbiguitySnapshot{
+		SelectedLane: "architecture",
+		Signals:      []string{"architecture"},
+		Ambiguous:    false,
+		TieBreak:     "",
+	}, RouteAmbiguityExpectation{
+		SelectedLane:     "review",
+		Ambiguous:        boolPtr(true),
+		RequireSignals:   []string{"implement"},
+		TieBreakContains: []string{"selected review"},
+	}) {
+		t.Fatal("expected route ambiguity mismatch to be rejected")
+	}
+	if verificationFeedbackMatches(VerificationFeedbackSnapshot{
+		Confidence:            "low",
+		FailedCommands:        []string{"go test ./internal/surfaces/tui/app"},
+		FailureClasses:        []string{"go_unused_variable"},
+		LearnedRecommendation: "repair failing checks before widening scope",
+	}, VerificationFeedbackExpectation{
+		Confidence:             "high",
+		RequireFailedCommands:  []string{"go test ./..."},
+		RequireFailureClasses:  []string{"go_import_cycle"},
+		RecommendationContains: []string{"full-suite success"},
+	}) {
+		t.Fatal("expected verification feedback mismatch to be rejected")
+	}
+	if toolFailureConfidenceMatches(ToolFailureConfidenceSnapshot{
+		Lane:             "review",
+		Tool:             "read_file",
+		ConfidenceImpact: "degrade_until_alternate_evidence_covers_gap",
+	}, ToolFailureConfidenceExpectation{
+		Lane:             "explore",
+		Tool:             "search_content",
+		ConfidenceImpact: "ignore_failure",
+	}) {
+		t.Fatal("expected tool-failure confidence mismatch to be rejected")
+	}
+}
+
+func TestParseGeneralLongHorizonTaskMemory(t *testing.T) {
+	state := parseLongHorizonState(`{"action":"persist","memory_kind":"partial_repair","source_lane":"implement","open_gaps":["verification is failing"],"attempted_searches":["validated target internal/surfaces/tui/app/app.go"],"chosen_targets":["internal/surfaces/tui/app/app.go"],"verification_history":["go test ./internal/surfaces/tui/app -> failed: exit status 1"],"next_actions":["repair failing verification before widening implementation scope"],"resumable":true}`)
+	if state.Raw == "" {
+		t.Fatal("expected general long-horizon state to parse")
+	}
+	if !longHorizonStateMatches(state, LongHorizonStateExpectation{
+		Action:                     "persist",
+		MemoryKind:                 "partial_repair",
+		SourceLane:                 "implement",
+		RequireOpenGaps:            []string{"verification is failing"},
+		RequireAttemptedSearches:   []string{"validated target internal/surfaces/tui/app/app.go"},
+		RequireChosenTargets:       []string{"internal/surfaces/tui/app/app.go"},
+		RequireVerificationHistory: []string{"go test ./internal/surfaces/tui/app -> failed: exit status 1"},
+		RequireNextActions:         []string{"repair failing verification before widening implementation scope"},
+		Resumable:                  boolPtr(true),
+	}) {
+		t.Fatalf("expected general long-horizon matcher to accept %#v", state)
+	}
+}
+
+func TestBuildSuggestedScenarioSkipsBroadOrFailedTools(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "padding under banner"}},
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "list_files", "broad": true}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "error": ""}},
+		{Type: "tool_request", Data: map[string]any{"step": 2, "tool": "search_files", "broad": false}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "error": "no matches"}},
+	}
+
+	scenario := BuildSuggestedScenario("bad-run", records)
+	if len(scenario.RequireTools) != 0 {
+		t.Fatalf("expected no required tools from failed/broad run, got %#v", scenario.RequireTools)
+	}
+}
+
+func TestAnalyzeTracksDiscoveryBalanceMetadata(t *testing.T) {
+	records := []Record{
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "structural_search", "discovery_class": "ast_search", "discovery_scope": "targeted", "discovery_cost": "medium"}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "error": ""}},
+		{Type: "tool_request", Data: map[string]any{"step": 2, "tool": "discovery_query", "discovery_class": "composite_query", "discovery_scope": "targeted", "discovery_cost": "medium"}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "error": ""}},
+		{Type: "tool_request", Data: map[string]any{"step": 3, "tool": "semgrep_scan", "discovery_class": "security_scan", "discovery_scope": "broad", "discovery_cost": "high"}},
+		{Type: "tool_result", Data: map[string]any{"step": 3, "error": ""}},
+		{Type: "tool_request", Data: map[string]any{"step": 4, "tool": "dependency_graph"}},
+		{Type: "tool_result", Data: map[string]any{"step": 4, "error": ""}},
+		{Type: "tool_request", Data: map[string]any{"step": 5, "tool": "shell", "discovery_class": "shell", "discovery_scope": "targeted", "discovery_cost": "high"}},
+		{Type: "tool_result", Data: map[string]any{"step": 5, "error": ""}},
+	}
+
+	metrics := Analyze(records)
+	if metrics.DiscoveryTools["structural_search"] != 1 || metrics.DiscoveryTools["discovery_query"] != 1 || metrics.DiscoveryTools["semgrep_scan"] != 1 || metrics.DiscoveryTools["dependency_graph"] != 1 {
+		t.Fatalf("unexpected discovery tool counts: %#v", metrics.DiscoveryTools)
+	}
+	if metrics.DiscoveryClasses["ast_search"] != 1 || metrics.DiscoveryClasses["composite_query"] != 1 || metrics.DiscoveryClasses["security_scan"] != 1 || metrics.DiscoveryClasses["dependency_graph"] != 1 {
+		t.Fatalf("unexpected discovery class counts: %#v", metrics.DiscoveryClasses)
+	}
+	if metrics.DiscoveryScopes["targeted"] != 2 || metrics.DiscoveryScopes["broad"] != 2 {
+		t.Fatalf("unexpected discovery scope counts: %#v", metrics.DiscoveryScopes)
+	}
+	if metrics.DiscoveryCosts["high"] != 1 || metrics.DiscoveryCosts["medium"] != 3 || metrics.HeavyDiscoveryRequests != 1 {
+		t.Fatalf("unexpected discovery cost metrics: costs=%#v heavy=%d", metrics.DiscoveryCosts, metrics.HeavyDiscoveryRequests)
+	}
+}
+
+func TestAnalyzePromotesReadinessEvidencePaths(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "readiness_check", "content": `{"action":"answer","lane":"architecture","ready":true,"evidence_paths":["internal/runtime/agent/runner.go","internal/runtime/agent/runner_child_tasks.go"]}`}},
+	}
+
+	metrics := Analyze(records)
+	for _, want := range []string{"internal/runtime/agent/runner.go", "internal/runtime/agent/runner_child_tasks.go"} {
+		if !containsStringFold(metrics.EvidencePaths, want) {
+			t.Fatalf("expected readiness evidence path %q in metrics, got %#v", want, metrics.EvidencePaths)
+		}
+	}
+}
+
+func TestAnalyzePromotesRunEventSidecarRoles(t *testing.T) {
+	records := []Record{
+		{Type: "run_event", Data: map[string]any{"role": "readiness_check", "content": `{"action":"answer","lane":"architecture","ready":true,"evidence_paths":["internal/runtime/agent/runner.go","internal/runtime/agent/runner_child_tasks.go"]}`}},
+		{Type: "run_event", Data: map[string]any{"role": "final_answer_critic", "content": `{"contract":"architecture_assessment","passed":true,"action":"accept"}`}},
+		{Type: "run_event", Data: map[string]any{"role": "control_rails_enforcement", "content": `{"action":"accept","evidence_paths":["internal/runtime/agent/answer_composer.go"]}`}},
+	}
+
+	metrics := Analyze(records)
+	if len(metrics.ReadinessChecks) != 1 || len(metrics.FinalAnswerCritics) != 1 {
+		t.Fatalf("expected run_event sidecar roles to be analyzed, got readiness=%#v critic=%#v", metrics.ReadinessChecks, metrics.FinalAnswerCritics)
+	}
+	for _, want := range []string{"internal/runtime/agent/runner.go", "internal/runtime/agent/runner_child_tasks.go", "internal/runtime/agent/answer_composer.go"} {
+		if !containsStringFold(metrics.EvidencePaths, want) {
+			t.Fatalf("expected run_event readiness evidence path %q in metrics, got %#v", want, metrics.EvidencePaths)
+		}
+	}
+}
+
+func TestEvaluateDiscoveryBalanceAssertions(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "find insecure eval"}},
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "discovery_query", "discovery_class": "composite_query", "discovery_scope": "targeted", "discovery_cost": "medium"}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "error": ""}},
+		{Type: "tool_request", Data: map[string]any{"step": 2, "tool": "semgrep_scan", "discovery_class": "security_scan", "discovery_scope": "broad", "discovery_cost": "high"}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "error": ""}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "No bounded finding."}},
+	}
+	maxHeavy := 1
+	report := Evaluate("discovery.jsonl", records, Scenario{
+		Name:                      "discovery balance",
+		RequireDiscoveryTools:     []string{"discovery_query", "semgrep_scan"},
+		RequireDiscoveryClasses:   []string{"composite_query", "security_scan"},
+		MaxHeavyDiscoveryRequests: &maxHeavy,
+	})
+	if !report.Passed {
+		t.Fatalf("expected discovery balance scenario to pass, findings=%#v", report.Findings)
+	}
+
+	zeroHeavy := 0
+	report = Evaluate("discovery.jsonl", records, Scenario{
+		Name:                      "heavy budget",
+		MaxHeavyDiscoveryRequests: &zeroHeavy,
+	})
+	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), "heavy discovery requests exceeded") {
+		t.Fatalf("expected heavy discovery budget failure, got passed=%t findings=%#v", report.Passed, report.Findings)
+	}
+}
+
+func TestLoadRecordsReadsJSONL(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sample.jsonl")
+	const payload = "{\"type\":\"message\",\"role\":\"user\",\"content\":\"hi\"}\n{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"hello\"}\n"
+	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
+		t.Fatalf("write sample log: %v", err)
+	}
+	records, err := LoadRecords(path)
+	if err != nil {
+		t.Fatalf("LoadRecords: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(records))
+	}
+}
+
+func TestLoadRecordsNormalizesKindPayloadJSONL(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sample.jsonl")
+	const payload = "{\"kind\":\"tool_request\",\"payload\":{\"tool\":\"search_content\",\"raw\":\"{\\\"pattern\\\":\\\"Runner\\\"}\",\"action\":\"search_content:Runner\"}}\n"
+	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
+		t.Fatalf("write sample log: %v", err)
+	}
+	records, err := LoadRecords(path)
+	if err != nil {
+		t.Fatalf("LoadRecords: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(records))
+	}
+	if records[0].Type != "tool_request" {
+		t.Fatalf("record type: want tool_request, got %q", records[0].Type)
+	}
+	if got, _ := records[0].Data["tool"].(string); got != "search_content" {
+		t.Fatalf("normalized tool: want search_content, got %q", got)
+	}
+}
+
+func TestLoadRecordsHandlesLongJSONLLine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sample.jsonl")
+	payload := "{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"" + strings.Repeat("x", 128*1024) + "\"}\n"
+	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
+		t.Fatalf("write sample log: %v", err)
+	}
+	records, err := LoadRecords(path)
+	if err != nil {
+		t.Fatalf("LoadRecords: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(records))
+	}
+	if got, _ := records[0].Data["content"].(string); len(got) != 128*1024 {
+		t.Fatalf("long content length: want %d, got %d", 128*1024, len(got))
+	}
+}
+
+func TestAnalyzeLogSupportsE2EKindPayloadRecords(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "e2e.jsonl")
+	payload := strings.Join([]string{
+		`{"kind":"user_turn","payload":{"index":0,"prompt":"find Runner"}}`,
+		`{"kind":"tool_request","payload":{"turn":0,"step":1,"tool":"search_content","raw":"{\"pattern\":\"Runner\"}","action":"search_content:Runner"}}`,
+		`{"kind":"tool_result","payload":{"turn":0,"step":1,"tool":"search_content","summary":"Found 1 matches","error":""}}`,
+		`{"kind":"assistant_turn","payload":{"index":0,"chars":42}}`,
+		`{"kind":"summary","payload":{"elapsed_ms":99,"tool_requests":1,"tool_results":1,"answer_chars":42}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
+		t.Fatalf("write e2e log: %v", err)
+	}
+	report, err := AnalyzeLog(path)
+	if err != nil {
+		t.Fatalf("AnalyzeLog: %v", err)
+	}
+	if report.UserPrompt != "find Runner" {
+		t.Fatalf("user prompt: want find Runner, got %q", report.UserPrompt)
+	}
+	if report.Tools.SearchContent != 1 || report.Tools.Total != 1 {
+		t.Fatalf("tool counts not parsed: %+v", report.Tools)
+	}
+	if report.ToolResults != 1 || report.DurationMillis != 99 || report.FinalAnswerChars != 42 {
+		t.Fatalf("summary metrics not parsed: %+v", report)
+	}
+}
+
+func containsLanguageCapabilityExpectation(items []LanguageCapabilityExpectation, language string) bool {
+	for _, item := range items {
+		if strings.EqualFold(item.Language, language) {
+			return true
+		}
+	}
+	return false
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}
+
+func intPtr(value int) *int {
+	return &value
+}

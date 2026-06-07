@@ -10,20 +10,20 @@
   "scope_statement": "Add a deterministic coverage-gate evaluator over existing PRD, accepted ADR, TDD, and traceability artifacts without generating briefs, mutating artifacts, executing models, running validation commands on behalf of the user, or dispatching work.",
   "code_changes": true,
   "changed_paths": [
-    "cmd/idiom/product_workflow.go",
-    "cmd/idiom/product_workflow_test.go",
-    "internal/productworkflow/coverage_gate.go",
-    "internal/productworkflow/coverage_gate_test.go",
-    "internal/productworkflow/types.go"
+    "internal/surfaces/cli/product/product_workflow.go",
+    "internal/surfaces/cli/product/product_workflow_test.go",
+    "internal/workflows/productworkflow/coverage_gate.go",
+    "internal/workflows/productworkflow/coverage_gate_test.go",
+    "internal/workflows/productworkflow/types.go"
   ],
   "verification": {
     "run_by_implementor": true,
     "commands": [
       "idiom tool context_pack --input '{\"task\":\"phase 4 coverage gate deterministic checker product workflow PRD ADR TDD brief generation blocker\",\"mode\":\"plan\",\"limit\":12}'",
       "idiom tool context_query --input '{\"query\":\"coverage gate evaluated TDD coverage criteria evidence acceptance EARS BDD FMEA HAZOP mutation product workflow\",\"resolution\":\"symbol\"}'",
-      "go test ./internal/productworkflow -run 'TestCoverageGate|TestBuildKnownTDD'",
-      "go test ./cmd/idiom -run TestProductTDDCoverageGate",
-      "go test ./internal/productworkflow ./cmd/idiom",
+      "go test ./internal/workflows/productworkflow -run 'TestCoverageGate|TestBuildKnownTDD'",
+      "go test ./internal/surfaces/cli/product -run TestProductTDDCoverageGate",
+      "go test ./internal/workflows/productworkflow ./cmd/idiom",
       "go run ./cmd/idiom product tdd --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --evaluate-coverage --json",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",

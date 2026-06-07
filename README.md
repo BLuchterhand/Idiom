@@ -283,7 +283,7 @@ If you want the server without the TUI:
 Headless one-shot prompt with structured JSONL events on stdout:
 
 ```bash
-./idiom --prompt "summarize internal/agent/runner.go" --json
+./idiom --prompt "summarize internal/runtime/agent/runner.go" --json
 ```
 
 Generate a standalone artifact while keeping the event stream separate:
@@ -791,7 +791,7 @@ summaries but does not create or mutate `.idiom/ranker/weights.json`.
 For manual nudges, the `idiom ranker` CLI is the escape hatch:
 
 ```bash
-./idiom ranker boost    internal/agent/runner.go internal/eval/swe_suite.go
+./idiom ranker boost    internal/runtime/agent/runner.go internal/evidence/eval/swe_suite.go
 ./idiom ranker penalize --note "stale heuristic" docs/old.md
 ./idiom ranker show
 ./idiom ranker show --json

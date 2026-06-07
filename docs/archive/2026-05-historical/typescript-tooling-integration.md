@@ -78,7 +78,7 @@ The same toolset covers .js/.jsx/.mjs/.cjs — typescript-language-server handle
 	},
 ```
 
-`isTsExtension` is already defined in `internal/workspace/ts_tools.go`,
+`isTsExtension` is already defined in `internal/capabilities/workspace/ts_tools.go`,
 so the registry doesn't need a new helper.
 
 ---

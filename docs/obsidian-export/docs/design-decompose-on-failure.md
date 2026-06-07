@@ -189,15 +189,15 @@ The first durable schema can be small and JSON-first:
   },
   "failure": {
     "class": "verification_failed",
-    "summary": "go test ./internal/app failed in TestX",
+    "summary": "go test ./internal/surfaces/tui/app failed in TestX",
     "evidence_refs": [
       {"kind": "test_output", "path": ".harness/failures/fail-EXAMPLE-001/test.txt"},
-      {"kind": "changed_path", "path": "internal/app/foo.go"}
+      {"kind": "changed_path", "path": "internal/surfaces/tui/app/foo.go"}
     ]
   },
   "partial_state": {
     "dirty_status": "dirty_in_scope",
-    "changed_paths": ["internal/app/foo.go", "internal/app/foo_test.go"],
+    "changed_paths": ["internal/surfaces/tui/app/foo.go", "internal/surfaces/tui/app/foo_test.go"],
     "scope_status": "in_scope"
   },
   "product_links": {
@@ -209,12 +209,12 @@ The first durable schema can be small and JSON-first:
   "residual_work": [
     {
       "id": "residual-001",
-      "paths": ["internal/app/foo.go"],
+      "paths": ["internal/surfaces/tui/app/foo.go"],
       "reason": "verification_failed",
       "evidence_refs": [
-        {"kind": "required_path", "path": "internal/app/foo.go"},
-        {"kind": "changed_path", "path": "internal/app/foo.go"},
-        {"kind": "required_test", "id": "go test ./internal/app"}
+        {"kind": "required_path", "path": "internal/surfaces/tui/app/foo.go"},
+        {"kind": "changed_path", "path": "internal/surfaces/tui/app/foo.go"},
+        {"kind": "required_test", "id": "go test ./internal/surfaces/tui/app"}
       ]
     }
   ],
@@ -223,9 +223,9 @@ The first durable schema can be small and JSON-first:
       "id": "recovery-001",
       "title": "Repair parser branch after verification failure",
       "complexity": "C1",
-      "required_paths": ["internal/app/foo.go", "internal/app/foo_test.go"],
+      "required_paths": ["internal/surfaces/tui/app/foo.go", "internal/surfaces/tui/app/foo_test.go"],
       "forbidden_paths": [],
-      "required_tests": ["go test ./internal/app"],
+      "required_tests": ["go test ./internal/surfaces/tui/app"],
       "gates": ["workspace_state", "brief_lint", "atom_intake", "scope_gate", "required_tests"]
     }
   ],

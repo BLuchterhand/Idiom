@@ -55,7 +55,7 @@ Focused posture evidence:
 
 ```bash
 go test ./cmd/harness -run 'TestSecurity|TestPrivacy|TestProductEvidence|TestLocalOpsBenchmark'
-go test ./internal/autonomy ./internal/workspace ./internal/telemetry
+go test ./internal/contracts/autonomy ./internal/capabilities/workspace ./internal/evidence/telemetry
 ```
 
 Release-time posture review should cite the matrix check IDs and command

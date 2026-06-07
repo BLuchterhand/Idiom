@@ -12,7 +12,7 @@
   "tests": {
     "commands": [
       {
-        "command": "go test ./internal/productworkflow ./cmd/idiom",
+        "command": "go test ./internal/workflows/productworkflow ./cmd/idiom",
         "status": "passed"
       },
       {

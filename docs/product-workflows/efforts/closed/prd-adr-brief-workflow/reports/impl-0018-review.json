@@ -23,8 +23,8 @@
   },
   "reviewed_at": "2026-05-17T22:12:00Z",
   "commands_reviewed": [
-    "go test ./internal/productworkflow -run TestDiscover -v -count=1",
-    "go test ./cmd/idiom -run TestProductResearch -v -count=1",
+    "go test ./internal/workflows/productworkflow -run TestDiscover -v -count=1",
+    "go test ./internal/surfaces/cli/product -run TestProductResearch -v -count=1",
     "go test ./...",
     "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "git diff --check",

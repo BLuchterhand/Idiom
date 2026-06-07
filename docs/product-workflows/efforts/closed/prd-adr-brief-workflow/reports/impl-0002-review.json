@@ -20,7 +20,7 @@
   },
   "reviewed_at": "2026-05-17T15:45:10Z",
   "commands_reviewed": [
-    "go test ./internal/productworkflow",
+    "go test ./internal/workflows/productworkflow",
     "python3 JSON/JSONL validation for durable effort artifacts",
     "privacy secret-pattern scan over durable effort artifacts",
     "git diff --check"

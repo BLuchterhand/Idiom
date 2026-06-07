@@ -7,12 +7,12 @@
   "completed_at": "2026-05-18T21:55:00Z",
   "scope": {
     "expected_paths": [
-      "internal/productworkflow/migration.go",
-      "internal/productworkflow/migration_test.go",
-      "internal/productworkflow/efforts.go",
-      "internal/productworkflow/efforts_test.go",
-      "cmd/idiom/product_workflow.go",
-      "cmd/idiom/product_workflow_test.go",
+      "internal/workflows/productworkflow/migration.go",
+      "internal/workflows/productworkflow/migration_test.go",
+      "internal/workflows/productworkflow/efforts.go",
+      "internal/workflows/productworkflow/efforts_test.go",
+      "internal/surfaces/cli/product/product_workflow.go",
+      "internal/surfaces/cli/product/product_workflow_test.go",
       "docs/product-workflows/efforts/index.json",
       "docs/product-workflows/efforts/started/prd-adr-brief-workflow/README.md",
       "docs/product-workflows/efforts/started/prd-adr-brief-workflow/workflow_state.json",
@@ -24,8 +24,8 @@
       "docs/product-workflows/efforts/started/prd-adr-brief-workflow/reports/impl-0037-investigation.json"
     ],
     "forbidden_paths": [
-      "internal/app/**",
-      "internal/agent/**",
+      "internal/surfaces/tui/app/**",
+      "internal/runtime/agent/**",
       "prompts/**",
       ".idiom/**"
     ],
@@ -39,9 +39,9 @@
       "idiom tool context_pack --input '{\"task\":\"phase 6 status folder migration effort index stable effort id product workflow started closed unstarted deterministic no dispatch\",\"mode\":\"plan\",\"limit\":12}'",
       "idiom tool context_query --input '{\"query\":\"product workflow status migration effort index stable effort id folder_path prior_paths workflow_state status_bucket transition no dispatch\",\"resolution\":\"symbol\",\"limit\":12}'",
       "idiom tool context_pack --input '{\"task\":\"phase 6 status folder migration effort index stable effort id product workflow started closed unstarted deterministic no dispatch path safety absolute leak\",\"mode\":\"plan\",\"limit\":8}'",
-      "go test ./internal/productworkflow -run TestProductStatusMigration -count=1",
-      "go test ./cmd/idiom -run 'TestProduct.*StatusMigration|TestProductEfforts' -count=1",
-      "go test ./internal/productworkflow ./cmd/idiom",
+      "go test ./internal/workflows/productworkflow -run TestProductStatusMigration -count=1",
+      "go test ./internal/surfaces/cli/product -run 'TestProduct.*StatusMigration|TestProductEfforts' -count=1",
+      "go test ./internal/workflows/productworkflow ./cmd/idiom",
       "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
       "go run ./cmd/idiom product audit --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",

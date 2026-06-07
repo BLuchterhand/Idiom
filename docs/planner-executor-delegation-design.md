@@ -35,9 +35,9 @@ plan-execute followed because the user asked for the full menu.
 
 | Option | Status | Tests |
 |---|---|---|
-| A — Harness intercept on ✓ paths | shipped | `internal/agent/runner_verification_intercept_test.go` |
-| B — `delegate_edit` tool | shipped | `internal/agent/runner_delegate_edit_test.go` |
-| C — Plan-then-execute mode | shipped | `internal/workspace/submit_plan_test.go`, `internal/planexecutecmd/plan_execute_test.go` |
+| A — Harness intercept on ✓ paths | shipped | `internal/runtime/agent/runner_verification_intercept_test.go` |
+| B — `delegate_edit` tool | shipped | `internal/runtime/agent/runner_delegate_edit_test.go` |
+| C — Plan-then-execute mode | shipped | `internal/capabilities/workspace/submit_plan_test.go`, `internal/surfaces/cli/planexecute/plan_execute_test.go` |
 
 These three are not mutually exclusive: A applies to every implementation
 lane; B is an opt-in tool the planner can call when it wants cognitive

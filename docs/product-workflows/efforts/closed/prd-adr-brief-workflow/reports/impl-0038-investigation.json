@@ -7,14 +7,14 @@
   "completed_at": "2026-05-18T22:55:00Z",
   "scope": {
     "expected_paths": [
-      "internal/productworkflow/migration_apply.go",
-      "internal/productworkflow/migration_apply_test.go",
-      "cmd/idiom/product_workflow.go",
-      "cmd/idiom/product_workflow_test.go"
+      "internal/workflows/productworkflow/migration_apply.go",
+      "internal/workflows/productworkflow/migration_apply_test.go",
+      "internal/surfaces/cli/product/product_workflow.go",
+      "internal/surfaces/cli/product/product_workflow_test.go"
     ],
     "forbidden_paths": [
-      "internal/app/**",
-      "internal/agent/**",
+      "internal/surfaces/tui/app/**",
+      "internal/runtime/agent/**",
       "prompts/**",
       ".idiom/**"
     ],
@@ -27,10 +27,10 @@
     "commands": [
       "idiom tool context_pack --input {\"task\":\"impl-0038 phase 6 status migration apply cli repair failing tests\",\"mode\":\"plan\",\"limit\":8}",
       "idiom tool context_query --input {\"query\":\"product workflow apply status migration atomically move effort folder update workflow_state events effort index CLI no dispatch no model execution\",\"resolution\":\"symbol\",\"limit\":12}",
-      "go test ./internal/productworkflow -run TestProductStatusMigrationApply -count=1",
-      "go test ./cmd/idiom -run 'TestProductStatusMigrationApply|TestProductEfforts' -count=1",
-      "go test ./cmd/idiom -run 'TestProductStatusMigrationApply(JSONPlanIsReadOnly|JSONApplyMovesEffort|UsageErrorsAreTyped)$' -count=1",
-      "go test ./internal/productworkflow ./cmd/idiom",
+      "go test ./internal/workflows/productworkflow -run TestProductStatusMigrationApply -count=1",
+      "go test ./internal/surfaces/cli/product -run 'TestProductStatusMigrationApply|TestProductEfforts' -count=1",
+      "go test ./internal/surfaces/cli/product -run 'TestProductStatusMigrationApply(JSONPlanIsReadOnly|JSONApplyMovesEffort|UsageErrorsAreTyped)$' -count=1",
+      "go test ./internal/workflows/productworkflow ./cmd/idiom",
       "go run ./cmd/idiom product status-migration --effort-root <temp-started-effort> --target-status closed --apply --expected-revision 115 --json",
       "go run ./cmd/idiom product efforts --root docs/product-workflows/efforts --json",
       "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/closed/prd-adr-brief-workflow --json",

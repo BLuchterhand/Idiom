@@ -35,12 +35,12 @@ Accepted risk: the worktree already contained uncommitted/untracked related WIP 
     "reviewer_bench:full"
   ],
   "expected_files": [
-    "internal/autonomy/event.go",
-    "internal/autonomy/audit.go",
-    "internal/autonomy/*_test.go",
-    "internal/agent/runner_autonomy.go",
-    "internal/agent/runner_autonomy_test.go",
-    "internal/workspace/discovery_tools_test.go"
+    "internal/contracts/autonomy/event.go",
+    "internal/contracts/autonomy/audit.go",
+    "internal/contracts/autonomy/*_test.go",
+    "internal/runtime/agent/runner_autonomy.go",
+    "internal/runtime/agent/runner_autonomy_test.go",
+    "internal/capabilities/workspace/discovery_tools_test.go"
   ],
   "forbidden_files": [
     "prompts/**",
@@ -56,9 +56,9 @@ Accepted risk: the worktree already contained uncommitted/untracked related WIP 
     "harness_audit exposes guard-friction coverage"
   ],
   "required_tests": [
-    "go test ./internal/autonomy -run 'GuardFriction|TurnPhase|Audit' -count=1",
-    "go test ./internal/agent -run 'RunnerAutonomyRecorderRejectedCompletionEmitsGuardFriction|RunnerAutonomyRecorderRejectedWriteGateEmitsGuardFriction|RunnerAutonomyRecorderEmitsTurnPhaseContractPresentation|RunnerRunEmitsTurnPhaseContractBeforeModelCallAndPolicyEvents|ModelProtocol' -count=1",
-    "go test ./internal/workspace -run 'TestHarnessAuditBehaviorIncludesContractCoverage' -count=1"
+    "go test ./internal/contracts/autonomy -run 'GuardFriction|TurnPhase|Audit' -count=1",
+    "go test ./internal/runtime/agent -run 'RunnerAutonomyRecorderRejectedCompletionEmitsGuardFriction|RunnerAutonomyRecorderRejectedWriteGateEmitsGuardFriction|RunnerAutonomyRecorderEmitsTurnPhaseContractPresentation|RunnerRunEmitsTurnPhaseContractBeforeModelCallAndPolicyEvents|ModelProtocol' -count=1",
+    "go test ./internal/capabilities/workspace -run 'TestHarnessAuditBehaviorIncludesContractCoverage' -count=1"
   ],
   "audit_signal_expected_to_move": [
     "guard_friction_coverage.guards_fired",
@@ -71,9 +71,9 @@ Accepted risk: the worktree already contained uncommitted/untracked related WIP 
 
 ## Implementation Evidence
 
-- `internal/autonomy` now has a passive `guard_friction` autonomy event with validation, redaction checks, copy/normalize support, and audit grouping.
-- `internal/agent` now emits passive guard-decision `guard_friction` events for rejected/nudged/stopped gate decisions. Friction events use model-visible protocol fields only when a model protocol projection hash exists; internal turn-phase hashes remain gate/audit identity and are not treated as proof of model visibility.
-- `internal/workspace` harness-audit coverage now carries grouped guard-friction totals through `contract_coverage`.
+- `internal/contracts/autonomy` now has a passive `guard_friction` autonomy event with validation, redaction checks, copy/normalize support, and audit grouping.
+- `internal/runtime/agent` now emits passive guard-decision `guard_friction` events for rejected/nudged/stopped gate decisions. Friction events use model-visible protocol fields only when a model protocol projection hash exists; internal turn-phase hashes remain gate/audit identity and are not treated as proof of model visibility.
+- `internal/capabilities/workspace` harness-audit coverage now carries grouped guard-friction totals through `contract_coverage`.
 - No prompt, visible-tool, parser, permission, verification, or gate enforcement behavior was intentionally changed by this slice.
 - The active protocol projection now renders explicit visible and callable tool
   lists; guard friction cites that model-visible protocol hash only after the
@@ -104,11 +104,11 @@ Corrective change applied:
 Passed:
 
 ```sh
-go test ./internal/autonomy -run 'GuardFriction|TurnPhase|Audit' -count=1
-go test ./internal/agent -run 'RunnerAutonomyRecorderRejectedCompletionEmitsGuardFriction|RunnerAutonomyRecorderRejectedWriteGateEmitsGuardFriction|RunnerAutonomyRecorderEmitsGateEventsForExistingGates|ModelProtocol' -count=1
-go test ./internal/workspace -run 'TestHarnessAuditBehaviorIncludesContractCoverage' -count=1
-go test ./internal/autonomy ./internal/agent ./internal/workspace
-go test ./internal/contractcompile -count=1
+go test ./internal/contracts/autonomy -run 'GuardFriction|TurnPhase|Audit' -count=1
+go test ./internal/runtime/agent -run 'RunnerAutonomyRecorderRejectedCompletionEmitsGuardFriction|RunnerAutonomyRecorderRejectedWriteGateEmitsGuardFriction|RunnerAutonomyRecorderEmitsGateEventsForExistingGates|ModelProtocol' -count=1
+go test ./internal/capabilities/workspace -run 'TestHarnessAuditBehaviorIncludesContractCoverage' -count=1
+go test ./internal/contracts/autonomy ./internal/runtime/agent ./internal/capabilities/workspace
+go test ./internal/contracts/contractcompile -count=1
 git diff --check
 ```
 
@@ -116,9 +116,9 @@ Additional reviewer-driven verification completed after the protocol projection
 and reconciliation fixes:
 
 ```sh
-go test -count=1 ./internal/contractcompile ./internal/autonomy
-go test -count=1 ./internal/agent -run 'TestRunnerInjectsPlanExecuteModelProtocolProjectionCard|TestRunnerRunRepeatedCompletionRejectionEmitsRetryFriction|TestRunnerRunCompletionFrictionDoesNotClaimUnpresentedModelProtocol'
-go test -count=1 ./internal/autonomy ./internal/contractcompile ./internal/frontier/workerruntime ./internal/workspace ./internal/app ./internal/planexecute ./internal/agent
+go test -count=1 ./internal/contracts/contractcompile ./internal/contracts/autonomy
+go test -count=1 ./internal/runtime/agent -run 'TestRunnerInjectsPlanExecuteModelProtocolProjectionCard|TestRunnerRunRepeatedCompletionRejectionEmitsRetryFriction|TestRunnerRunCompletionFrictionDoesNotClaimUnpresentedModelProtocol'
+go test -count=1 ./internal/contracts/autonomy ./internal/contracts/contractcompile ./internal/runtime/workerruntime ./internal/capabilities/workspace ./internal/surfaces/tui/app ./internal/workflows/planexecute ./internal/runtime/agent
 go test ./cmd/idiom-swe-eval -run TestScriptedContractSuiteLintsClean -count=1
 go test ./...
 idiom tool harness_audit --input '{"purpose":"behavior"}'

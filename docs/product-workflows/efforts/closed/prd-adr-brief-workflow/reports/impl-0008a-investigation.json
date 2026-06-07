@@ -13,15 +13,15 @@
     ],
     "forbidden_patterns": [
       ".idiom/**",
-      "internal/app/**",
-      "internal/agent/**",
+      "internal/surfaces/tui/app/**",
+      "internal/runtime/agent/**",
       "prompts/**",
       "cmd/idiom/product_evidence*",
       "Go source files"
     ]
   },
   "tests": {
-    "focused": "go test ./internal/productworkflow ./cmd/idiom",
+    "focused": "go test ./internal/workflows/productworkflow ./cmd/idiom",
     "product_lint": "go run ./cmd/idiom product lint --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",
     "fixture_status_scan": "rg -n \"status: accepted_fixture|\\\"status\\\": \\\"accepted_fixture\\\"\" docs/product-workflows/efforts/started/prd-adr-brief-workflow/prd.md docs/product-workflows/efforts/started/prd-adr-brief-workflow/adrs",
     "json_jsonl": "JSON/JSONL validation for durable workflow artifacts",

@@ -14,19 +14,19 @@
     {
       "severity": "high",
       "status": "resolved",
-      "file": "internal/productworkflow/efforts.go",
+      "file": "internal/workflows/productworkflow/efforts.go",
       "summary": "Unknown current_state values were not treated as malformed workflow_state; fixed with semantic state validation and regression coverage."
     },
     {
       "severity": "medium",
       "status": "resolved",
-      "file": "cmd/idiom/product_workflow.go",
+      "file": "internal/surfaces/cli/product/product_workflow.go",
       "summary": "Stray positional arguments to idiom product efforts were accepted; fixed with usage rejection and CLI coverage."
     },
     {
       "severity": "medium",
       "status": "resolved",
-      "file": "cmd/idiom/product_workflow.go",
+      "file": "internal/surfaces/cli/product/product_workflow.go",
       "summary": "Human-readable effort output omitted title while JSON included it; fixed text output for JSON/text identity parity."
     }
   ],
@@ -41,9 +41,9 @@
   "commands_reviewed": [
     "idiom tool context_pack --input '{\"task\":\"phase 6 product workflow efforts browser CLI list search status bucket unstarted started closed read-only\",\"mode\":\"plan\",\"limit\":12}'",
     "idiom tool context_query --input '{\"query\":\"product workflow efforts index status bucket workflow_state list efforts CLI read only malformed state findings\",\"resolution\":\"symbol\",\"limit\":12}'",
-    "go test ./internal/productworkflow -run TestProductEffortsBrowser -count=1",
-    "go test ./cmd/idiom -run 'TestProductEfforts' -count=1",
-    "go test ./internal/productworkflow ./cmd/idiom",
+    "go test ./internal/workflows/productworkflow -run TestProductEffortsBrowser -count=1",
+    "go test ./internal/surfaces/cli/product -run 'TestProductEfforts' -count=1",
+    "go test ./internal/workflows/productworkflow ./cmd/idiom",
     "go run ./cmd/idiom product efforts --root docs/product-workflows/efforts --json",
     "go run ./cmd/idiom product efforts --root docs/product-workflows/efforts --status started",
     "go run ./cmd/idiom product status --effort-root docs/product-workflows/efforts/started/prd-adr-brief-workflow --json",

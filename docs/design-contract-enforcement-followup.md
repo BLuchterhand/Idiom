@@ -279,7 +279,7 @@ envelope, not the choice of evaluator.
   refactoring?
 - Which `.idiom` paths should be protected, observe-only, or explicitly
   operator-owned?
-- Should pack definitions live in `internal/autonomy`, `internal/agent`, or a
+- Should pack definitions live in `internal/contracts/autonomy`, `internal/runtime/agent`, or a
   new package such as `internal/contractpacks`?
 - What is the smallest trajectory fixture format that can replay gate decisions
   without invoking a model?

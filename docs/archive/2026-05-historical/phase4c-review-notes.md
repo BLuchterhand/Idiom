@@ -7,7 +7,7 @@ Scope: Uncommitted working-tree changes implementing the alias-routing HTTP prox
 
 Phase 4c implements `idiom backend proxy`, a Go reverse proxy that replaces Colony's `mlx_alias_proxy.py`. It listens on a single port, inspects each `/v1/*` request's `model` field to pick a backend, rewrites the model alias to an absolute filesystem path, merges multiple system messages into one (for Qwen template compatibility), and streams responses chunk-by-chunk.
 
-Files: `internal/backends/proxy.go` (466 lines), `internal/backends/proxy_test.go` (466 lines), plus changes to `cmd/idiom/backend.go`, `cmd/idiom/backend_test.go`, `internal/backends/backends.go`, `docs/lane-architecture.md`, `docs/reusability-design.md`.
+Files: `internal/runtime/backends/proxy.go` (466 lines), `internal/runtime/backends/proxy_test.go` (466 lines), plus changes to `cmd/idiom/backend.go`, `cmd/idiom/backend_test.go`, `internal/runtime/backends/backends.go`, `docs/lane-architecture.md`, `docs/reusability-design.md`.
 
 Build: clean. Full suite: one test panics (see BLOCKER below).
 
@@ -115,11 +115,11 @@ An alias like `a/b/c` becomes `b/c`, not `c`. This matches the comment ("mlx/qwe
 
 | File | Lines | Change |
 |------|-------|--------|
-| `internal/backends/proxy.go` | +466 | New: core proxy implementation |
-| `internal/backends/proxy_test.go` | +466 | New: comprehensive test coverage |
+| `internal/runtime/backends/proxy.go` | +466 | New: core proxy implementation |
+| `internal/runtime/backends/proxy_test.go` | +466 | New: comprehensive test coverage |
 | `cmd/idiom/backend.go` | +61 | New: `runBackendProxy`, `backendServeProxy` var, proxy case in dispatch, usage text |
 | `cmd/idiom/backend_test.go` | +164 | New: 5 proxy CLI tests + helpers |
-| `internal/backends/backends.go` | +22 | New: `Proxy` struct fields (Listen, DefaultAlias, DefaultCoder), doc updates |
+| `internal/runtime/backends/backends.go` | +22 | New: `Proxy` struct fields (Listen, DefaultAlias, DefaultCoder), doc updates |
 | `docs/lane-architecture.md` | ~8 | Updated: Phase 4c section |
 | `docs/reusability-design.md` | ~3 | Updated: status line, phase table |
 

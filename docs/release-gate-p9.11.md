@@ -29,7 +29,7 @@ as discovery-profile denials or equivalent bounded-denial evidence.
 | --- | --- | --- |
 | Transcript fixture | `testdata/sidecar/client-demo-transcripts.json` contains seven transcript rows for `finance`, `healthcare`, `public-sector`, `enterprise-saas`, `tooling-vendor`, `local-model`, and `open-source`. | Supplies P9.11 runnable demo rows. |
 | Transcript docs | `docs/client-demo-transcripts.md` points to the fixture and executable `TestP710ClientDemoTranscripts` validation. | Keeps human-readable demo boundaries aligned with the machine fixture. |
-| P7.10/P7.17 tests | `go test ./cmd/idiom -run 'TestP710|TestP717' -count=1` passes with strict schema and executable command checks. | Confirms existing demo transcript validation still passes. |
+| P7.10/P7.17 tests | `go test ./internal/evidence/sidecarvalidation -run 'TestP710|TestP717' -count=1` passes with strict schema and executable command checks. | Confirms existing demo transcript validation still passes. |
 | Product evidence export | `go run ./cmd/idiom product-evidence export --project-root .` reports P9.11 `evidence_present`. | Product evidence exposes machine-readable P9.11 status and counts. |
 | Release evidence bundle | `go run ./cmd/idiom release evidence --project-root . --output .idiom/release/p9.11-smoke.json` reports P9.11 `evidence_present` while the overall bundle remains `partial`. | Release evidence agrees with product evidence and preserves broader no-go status. |
 | P9.29 safe replay tests | Focused P9.11 tests cover command/argv mismatch, unsafe top-level subcommands, default-profile shell/write-capable commands, permitted current fixture commands, and discovery-profile denied side-effect replay without writing a marker file. | Closes the executable-replay safety gap without broadening model strategy control. |
@@ -130,7 +130,9 @@ still `partial` because adjacent gates remain incomplete:
 ## Reproduction Commands
 
 ```sh
-go test ./cmd/idiom -run 'TestP911|TestP710|TestP717|TestP85|TestP91|TestP94|TestP711|TestRunReleaseEvidence|TestRunProductEvidence' -count=1
+go test ./internal/evidence/productevidence -run 'TestP911|TestP91|TestP94|TestP711|TestRunReleaseEvidence|TestRunProductEvidence' -count=1
+go test ./internal/evidence/sidecarvalidation -run 'TestP710|TestP717' -count=1
+go test ./internal/surfaces/cli/mcp -run TestP85 -count=1
 go test ./cmd/idiom -count=1
 
 jq empty testdata/sidecar/client-demo-transcripts.json

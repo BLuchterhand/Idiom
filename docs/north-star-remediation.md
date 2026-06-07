@@ -85,11 +85,11 @@ This keeps the *what* and *why* without prescribing call-order.
 
 ---
 
-## 4. `internal/agent/runner.go:582-585` — "must narrow next" forced strategy
+## 4. `internal/runtime/agent/runner.go:582-585` — "must narrow next" forced strategy
 
 **Why:** North-star §Examples (bad): "Only tool X remains available when the model could still safely answer or use a narrow follow-up." This rejects a broad inspection and lists four specific tools the model "must" use.
 
-**File:** `internal/agent/runner.go:582-585`
+**File:** `internal/runtime/agent/runner.go:582-585`
 
 **Current:**
 ```go
@@ -108,11 +108,11 @@ Drop the explore-mode branch. Same rule applies to both modes; the difference wa
 
 ---
 
-## 5. `internal/agent/runner.go:551-557` — list_files hide + ranked alternatives
+## 5. `internal/runtime/agent/runner.go:551-557` — list_files hide + ranked alternatives
 
 **Why:** Hiding `list_files` after repeated chained calls is a legitimate loop-break contract. The wording prescribes three ranked alternatives, which is strategy.
 
-**File:** `internal/agent/runner.go:551-557`
+**File:** `internal/runtime/agent/runner.go:551-557`
 
 **Current:**
 ```go
@@ -128,11 +128,11 @@ Keep the loop-break (invariant), drop the ranked tool list (strategy).
 
 ---
 
-## 6. `internal/agent/runner.go:5607-5644` — "Pick ONE" recovery menu
+## 6. `internal/runtime/agent/runner.go:5607-5644` — "Pick ONE" recovery menu
 
 **Why:** North-star §Examples (good): "after readiness, ask the model to name one exact missing claim and one exact probe that would resolve it; do not hard-pick the probe for the model." The "Pick ONE of the concrete next steps below (you can copy-paste the JSON)" framing — and the embedded `Do not call pwd, ls, find, search_files, search_content, or read_file` lines — directly violate this.
 
-**File:** `internal/agent/runner.go:5607-5644`
+**File:** `internal/runtime/agent/runner.go:5607-5644`
 
 **Current (`buildLastChanceRecoveryNudge` opening):**
 ```go
@@ -177,11 +177,11 @@ b.WriteString("Do not switch back to source files, broad workspace discovery, or
 
 ---
 
-## 7. `internal/agent/runner_lane_policy.go:130-137` — `debug_logs_tail_answer_forced`
+## 7. `internal/runtime/agent/runner_lane_policy.go:130-137` — `debug_logs_tail_answer_forced`
 
 **Why:** Domain-keyed forced answer for one scenario (debug-log lane after a blind reread). North-star §Repo Policy: "do not hardcode strategy around one recurring scenario… if a rule is real, express it in generic evidence/contract terms." The underlying contract is "evidence sufficient — answer now"; the lane-specific name and prompt encode strategy in the wrong layer.
 
-**File:** `internal/agent/runner_lane_policy.go:130-137`
+**File:** `internal/runtime/agent/runner_lane_policy.go:130-137`
 
 **Current:**
 ```go
@@ -213,11 +213,11 @@ Generic reason key, generic prompt. The split is deliberate: the **trigger** can
 
 ---
 
-## 8. `internal/workspace/manager.go:1090-1091` — "Do NOT retry" directive in evidence payload
+## 8. `internal/capabilities/workspace/manager.go:1090-1091` — "Do NOT retry" directive in evidence payload
 
 **Why:** North-star: "evidence tools should describe findings, counts, paths, handles, and symbols without prescribing the next tool call." Telling the model not to retry is a control-flow rule that belongs in the runner's repeated-call detector, not in a `list_files` error string.
 
-**File:** `internal/workspace/manager.go:1090-1091`
+**File:** `internal/capabilities/workspace/manager.go:1090-1091`
 
 **Current:**
 ```go
@@ -237,11 +237,11 @@ The Did-you-mean suggestions are already attached as `result.Output` below — t
 
 ---
 
-## 9. `internal/workspace/manager.go:3171-3177` — read-before-edit recovery prescription
+## 9. `internal/capabilities/workspace/manager.go:3171-3177` — read-before-edit recovery prescription
 
 **Why:** Read-before-edit is a legitimate invariant. The recovery prescription ("Call read_file on this path or use search_content / search_files / list_files") is strategy in an evidence payload.
 
-**File:** `internal/workspace/manager.go:3171-3177`
+**File:** `internal/capabilities/workspace/manager.go:3171-3177`
 
 **Current:**
 ```go
@@ -270,11 +270,11 @@ State the contract; let the model choose how to satisfy it.
 
 ---
 
-## 10. `internal/workspace/manager.go:3279` — start_line invariant + recovery prescription
+## 10. `internal/capabilities/workspace/manager.go:3279` — start_line invariant + recovery prescription
 
 **Why:** The invariant (`start_line >= 1`) is correct. The "If you don't know the line number, read the file first or use old_text/new_text instead" tail prescribes recovery.
 
-**File:** `internal/workspace/manager.go:3279`
+**File:** `internal/capabilities/workspace/manager.go:3279`
 
 **Current:**
 ```go
@@ -290,11 +290,11 @@ The tool description for `edit_file` already documents `old_text/new_text` as an
 
 ---
 
-## 11. `internal/workspace/tool_schemas.go:84-89` — `task` description prescribes strategy
+## 11. `internal/capabilities/workspace/tool_schemas.go:84-89` — `task` description prescribes strategy
 
 **Why:** North-star: "evidence tools should describe findings… without prescribing the next tool call. Strategy guidance belongs in runtime briefs and control rails, not in evidence summaries or result payloads." The `task` tool description carries a strategy rule ("use a read_only explorer first") that belongs in a runtime brief.
 
-**File:** `internal/workspace/tool_schemas.go:84-89`
+**File:** `internal/capabilities/workspace/tool_schemas.go:84-89`
 
 **Current:**
 ```go
@@ -318,11 +318,11 @@ The "use a read_only explorer first" steering, if it is real policy, should live
 
 ---
 
-## 12. `internal/workspace/tool_manifest.go:368` — Python-specific shell fallback recipe
+## 12. `internal/capabilities/workspace/tool_manifest.go:368` — Python-specific shell fallback recipe
 
 **Why:** Domain-specific rule baked into a per-language semantic-tool brief. If "fall back to shell when language server is missing" is a real general rule, it should be expressed once across all languages, not as a hardcoded recipe for Python only.
 
-**File:** `internal/workspace/tool_manifest.go:368`
+**File:** `internal/capabilities/workspace/tool_manifest.go:368`
 
 **Current:**
 ```go
@@ -346,11 +346,11 @@ That is a **factual capability report** in an evidence payload, which is north-s
 
 ---
 
-## 13. `internal/agent/runner_request_budget.go:149,157,207,271,279` — "Do not" framing
+## 13. `internal/runtime/agent/runner_request_budget.go:149,157,207,271,279` — "Do not" framing
 
 **Why:** Several rejection messages stack "Do not X. Do not Y." prescriptions where the underlying contract is the same "answer now or one targeted probe for a named gap." The contract is correct; the phrasing leans force where nudge would carry the same weight.
 
-**File:** `internal/agent/runner_request_budget.go`
+**File:** `internal/runtime/agent/runner_request_budget.go`
 
 **Current (line 149, 157, 271, 279 — representative sample):**
 ```go
@@ -389,13 +389,13 @@ Pattern: drop "Do not X" prefixes; use the canonical "answer now or one exact pr
 
 ---
 
-## 14. `internal/agent/runner_task_ledger.go:90,100` — fallback menus after readiness *(lower priority)*
+## 14. `internal/runtime/agent/runner_task_ledger.go:90,100` — fallback menus after readiness *(lower priority)*
 
 **Severity note:** This is a *cleanup* item, not a fundamental misalignment. The completion gate is a legitimate contract surface, the menus are short and not topic-specific, and the cost of leaving them is much smaller than the cost of leaving items 6 and 7. Land items 6 and 7 first; fold this into a later phrasing pass once the higher-impact patterns have settled.
 
 **Why:** Three-option fallback menus at completion-gate violations. North-star §Examples (good): "after readiness, ask the model to name one exact missing claim and one exact probe that would resolve it; do not hard-pick the probe for the model… later recovery and failure prompts should stay closure-biased too."
 
-**File:** `internal/agent/runner_task_ledger.go:90,100`
+**File:** `internal/runtime/agent/runner_task_ledger.go:90,100`
 
 **Current (line 90):**
 ```go
@@ -463,7 +463,7 @@ prompt phrases to trigger a contract.
 - **`tool_manifest.go` "Prefer X over Y" lines** — explicitly endorsed style ("treat search policies and examples as ranked guidance").
 - **`prompts/base.md:10` ("Aim for ≤5 tool calls per sub-question")** — soft nudge, numeric threshold but not force; left for the user to tune separately.
 - **`prompts/plan-mode.md:7` ("Do not keep searching unless…")** — closure-biased, on the harsh side of the line; phrasing tweak only, not fundamental.
-- **`internal/agent/discovery_redirect.go`** — already matches the canonical good example ("Use the structured tool instead; if it returns nothing, retry the original request").
+- **`internal/runtime/agent/discovery_redirect.go`** — already matches the canonical good example ("Use the structured tool instead; if it returns nothing, retry the original request").
 - **`internal/frontier/`** — clean per audit; closure directive at `runtime.go:606-607` is the model the rest of the codebase should converge toward.
 
 ---

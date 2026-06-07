@@ -75,9 +75,9 @@ the conversation log.
 
 ### Files
 
-- `internal/agent/runner_verification_intercept.go`
-- `internal/agent/runner_verification_intercept_test.go`
-- Wired in `internal/agent/runner.go` before the apply_patch preflight.
+- `internal/runtime/agent/runner_verification_intercept.go`
+- `internal/runtime/agent/runner_verification_intercept_test.go`
+- Wired in `internal/runtime/agent/runner.go` before the apply_patch preflight.
 
 ---
 
@@ -210,14 +210,14 @@ planner would never see its delegated edits as done.
 
 ### Files
 
-- `internal/agent/runner_delegate_edit.go` — runner intercept,
+- `internal/runtime/agent/runner_delegate_edit.go` — runner intercept,
   prompt builder, reply parser, fallback path, wrap.
-- `internal/agent/runner_delegate_edit_test.go` — 14 tests covering
+- `internal/runtime/agent/runner_delegate_edit_test.go` — 14 tests covering
   validation, parsing, executor success path, fallback paths, and
   the changedPaths integration.
-- Tool manifest entry: `internal/workspace/tool_manifest.go`.
-- OpenAI schema: `internal/workspace/tool_schemas.go`.
-- Runner intercept wired in `internal/agent/runner.go` next to the
+- Tool manifest entry: `internal/capabilities/workspace/tool_manifest.go`.
+- OpenAI schema: `internal/capabilities/workspace/tool_schemas.go`.
+- Runner intercept wired in `internal/runtime/agent/runner.go` next to the
   `task` intercept.
 
 ### How to use
@@ -434,24 +434,24 @@ planner and does not reapply the executor edits.
 
 ### Files
 
-- `internal/workspace/submit_plan.go` — `submit_plan` workspace
+- `internal/capabilities/workspace/submit_plan.go` — `submit_plan` workspace
   tool, `PlanEdit` / `PlanArtifact` types, `LoadPlanArtifact`,
   validation, schema versioning.
-- `internal/workspace/submit_plan_test.go` — 5 tests.
-- `internal/planexecute/progress.go` — durable plan-execute progress
+- `internal/capabilities/workspace/submit_plan_test.go` — 5 tests.
+- `internal/workflows/planexecute/progress.go` — durable plan-execute progress
   state and review-repair resume contract.
-- `internal/planexecutecmd/plan_execute.go` — CLI subcommand, planner-phase
+- `internal/surfaces/cli/planexecute/plan_execute.go` — CLI subcommand, planner-phase
   system addendum, latest-artifact lookup, executor phase dispatch,
   post-write source sanity, and action-capable review-repair gate.
-- `internal/planexecutecmd/plan_execute_evidence.go` — phase evidence bundle for
+- `internal/surfaces/cli/planexecute/plan_execute_evidence.go` — phase evidence bundle for
   packet, diff, source-sanity, suggested-test, and open-obligation
   handoff into review-repair.
-- `internal/planexecutecmd/plan_execute_test.go` — focused plan-execute contract
+- `internal/surfaces/cli/planexecute/plan_execute_test.go` — focused plan-execute contract
   tests.
-- `internal/agent/runner_plan_then_execute_guard.go` — hard runtime
+- `internal/runtime/agent/runner_plan_then_execute_guard.go` — hard runtime
   enforcement of "no per-edit writes or planner-phase verification
   commands", plus source-satisfied closeout recognition.
-- `internal/agent/runner_plan_then_execute_guard_test.go` — focused
+- `internal/runtime/agent/runner_plan_then_execute_guard_test.go` — focused
   tests for planner-phase submit, source-satisfied, and tool guards.
 
 ---

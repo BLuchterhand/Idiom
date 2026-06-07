@@ -4,10 +4,10 @@ This file contains the exact text to add to the four centralized files
 that wire Python into the existing Go/C++ registry, dispatch, schema,
 and manifest layers. The files are:
 
-- `internal/workspace/language_registry.go`
-- `internal/workspace/manager.go`
-- `internal/workspace/tool_schemas.go`
-- `internal/workspace/tool_manifest.go`
+- `internal/capabilities/workspace/language_registry.go`
+- `internal/capabilities/workspace/manager.go`
+- `internal/capabilities/workspace/tool_schemas.go`
+- `internal/capabilities/workspace/tool_manifest.go`
 
 Each section shows the surrounding anchor line(s) so you know where to
 paste.
@@ -164,13 +164,13 @@ begin):
 
 No other changes to `manager.go` are required. In particular:
 
-- No new `Manager` fields are needed — `internal/workspace/python_tools.go`
+- No new `Manager` fields are needed — `internal/capabilities/workspace/python_tools.go`
   rebuilds the Python index on demand. (See the comment at
   `getPythonIndex` for rationale and a follow-up note about adding
   `pythonIndex` / `pythonIndexToken` fields if profiling ever shows the
   rebuild cost.)
-- No new imports — `internal/workspace/python_tools.go` and
-  `internal/workspace/pylsp_lsp.go` import `idiom/internal/semantic`
+- No new imports — `internal/capabilities/workspace/python_tools.go` and
+  `internal/capabilities/workspace/pylsp_lsp.go` import `idiom/internal/repository/semantic`
   themselves.
 
 ---
@@ -438,6 +438,6 @@ Then add a new block after the existing `hasCpp` block, before the final
 ---
 
 That's the full set. After pasting all four blocks, `go build ./...` and
-`go test ./internal/workspace/...` should both pass (assuming the
+`go test ./internal/capabilities/workspace/...` should both pass (assuming the
 unrelated pre-existing Rust/Java/TypeScript stubs in the workspace
 package are either completed or dropped).

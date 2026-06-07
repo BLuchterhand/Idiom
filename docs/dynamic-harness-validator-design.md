@@ -21,7 +21,7 @@ contract question the harness already owns:
 - When should the harness stop with a typed blocker?
 
 This design narrows the scattered validator/recovery surface already present in
-`internal/agent` into a typed, replayable contract-state evaluator.
+`internal/runtime/agent` into a typed, replayable contract-state evaluator.
 
 ## Reviewer Refinements
 
@@ -84,14 +84,14 @@ around a typed turn-state projection.
 
 ## Target Architecture
 
-Introduce a small policy package under `internal/agent` first. Extract it later
+Introduce a small policy package under `internal/runtime/agent` first. Extract it later
 only if package boundaries become clearer.
 
 Suggested files:
 
-- `internal/agent/dynamic_validator.go`
-- `internal/agent/dynamic_validator_test.go`
-- `internal/agent/dynamic_validator_card.go`
+- `internal/runtime/agent/dynamic_validator.go`
+- `internal/runtime/agent/dynamic_validator_test.go`
+- `internal/runtime/agent/dynamic_validator_card.go`
 
 The runner remains the orchestrator. The validator owns state evaluation and
 message construction.
@@ -221,11 +221,11 @@ changing write semantics.
 
 Implemented files:
 
-- `internal/agent/dynamic_validator.go`
-- `internal/agent/dynamic_validator_card.go`
-- `internal/agent/dynamic_validator_test.go`
-- `internal/agent/write_description_guard_test.go`
-- `internal/agent/runner.go`
+- `internal/runtime/agent/dynamic_validator.go`
+- `internal/runtime/agent/dynamic_validator_card.go`
+- `internal/runtime/agent/dynamic_validator_test.go`
+- `internal/runtime/agent/write_description_guard_test.go`
+- `internal/runtime/agent/runner.go`
 - `testdata/scripted-contracts/suite.json`
 - `testdata/scripted-contracts/scripts/scripted-implement-missing-description-repair.json`
 - `testdata/scripted-contracts/scripts/scripted-implement-missing-description-detour-blocker.json`
@@ -341,8 +341,8 @@ Scripted/live tests:
 
 Verification:
 
-- `go test ./internal/agent -run 'DynamicValidator|WriteDescription|WriteReadyPacket' -count=1`
-- `go test ./internal/agent ./internal/app ./internal/planexecute ./cmd/idiom-swe-eval -count=1`
+- `go test ./internal/runtime/agent -run 'DynamicValidator|WriteDescription|WriteReadyPacket' -count=1`
+- `go test ./internal/runtime/agent ./internal/surfaces/tui/app ./internal/workflows/planexecute ./cmd/idiom-swe-eval -count=1`
 - `make scripted-contract-suite`
 - `make scripted-contracts`
 
@@ -369,22 +369,22 @@ Implement the first atom from docs/dynamic-harness-validator-design.md.
 Scope: add a small dynamic harness validator for missing-description repair on in-scope required-path writes. Preserve existing write-description guard semantics. The validator should emit a typed decision/card for write_description_missing, force write-or-block recovery for that turn, reject non-write detours, allow the corrected write, and emit a stable dynamic_validator_decision event without raw edit payloads.
 
 Required edit paths:
-- internal/agent/dynamic_validator.go
-- internal/agent/dynamic_validator_card.go
-- internal/agent/dynamic_validator_test.go
-- internal/agent/write_description_guard_test.go
-- internal/agent/runner.go
+- internal/runtime/agent/dynamic_validator.go
+- internal/runtime/agent/dynamic_validator_card.go
+- internal/runtime/agent/dynamic_validator_test.go
+- internal/runtime/agent/write_description_guard_test.go
+- internal/runtime/agent/runner.go
 
 Acceptance:
 - focused tests for missing-description repair, corrected write success, non-write detour rejection, and repeated-detour typed blocker
 - existing write-description and scoped-read tests still pass
-- go test ./internal/agent -run 'DynamicValidator|WriteDescription|WriteReadyPacket' -count=1
-- go test ./internal/agent ./internal/app ./internal/planexecute ./cmd/idiom-swe-eval -count=1
+- go test ./internal/runtime/agent -run 'DynamicValidator|WriteDescription|WriteReadyPacket' -count=1
+- go test ./internal/runtime/agent ./internal/surfaces/tui/app ./internal/workflows/planexecute ./cmd/idiom-swe-eval -count=1
 ```
 
 ## Open Questions
 
-- Should the validator live permanently in `internal/agent`, or should it move
+- Should the validator live permanently in `internal/runtime/agent`, or should it move
   toward a smaller contract-policy package after the first two atoms?
 - Should `ValidationDecision` become the source of `TurnPhaseContract` valid and
   invalid action classes, or remain a post-phase projection initially?

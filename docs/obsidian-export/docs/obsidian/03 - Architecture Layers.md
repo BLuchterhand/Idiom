@@ -88,12 +88,12 @@ Examples:
 
 | Layer | Packages | Ownership |
 | --- | --- | --- |
-| Surface | `cmd/harness`, `internal/app`, inbound MCP in `cmd/harness/mcp.go` | User commands, TUI lifecycle, external protocol surfaces |
-| Orchestration | `cmd/harness/lane.go`, `cmd/harness/plan_execute.go`, `internal/promptstack`, `internal/projectartifacts` | Lane setup, plan-execute orchestration, prompt assembly, artifact workflow |
-| Contract | `internal/agent`, `internal/autonomy`, `internal/runtime/workerruntime` | Runtime contracts, role profiles, tool profile rules |
-| Execution | `internal/agent`, `internal/workspace`, `internal/runner` | Model loop, tool dispatch, process execution |
-| Evidence | `internal/comprehension`, `internal/discovery`, `internal/telemetry`, `internal/eval`, `internal/transcript` | Context graph, discovery, logs, audit, evaluation |
-| Adapters | `internal/backends`, `internal/autodetect`, `internal/llama`, `internal/semantic`, outbound MCP in `internal/mcp`, shell/git adapters in workspace | Local inference, host discovery, LLM-agent clients, and environment-specific tool execution |
+| Surface | `cmd/harness`, `internal/surfaces/tui/app`, inbound MCP in `cmd/harness/mcp.go` | User commands, TUI lifecycle, external protocol surfaces |
+| Orchestration | `cmd/harness/lane.go`, `cmd/harness/plan_execute.go`, `internal/runtime/promptstack`, `internal/workflows/projectartifacts` | Lane setup, plan-execute orchestration, prompt assembly, artifact workflow |
+| Contract | `internal/runtime/agent`, `internal/contracts/autonomy`, `internal/runtime/workerruntime` | Runtime contracts, role profiles, tool profile rules |
+| Execution | `internal/runtime/agent`, `internal/capabilities/workspace`, `internal/runtime/runner` | Model loop, tool dispatch, process execution |
+| Evidence | `internal/repository/comprehension`, `internal/repository/discovery`, `internal/evidence/telemetry`, `internal/evidence/eval`, `internal/evidence/transcript` | Context graph, discovery, logs, audit, evaluation |
+| Adapters | `internal/runtime/backends`, `internal/platform/autodetect`, `internal/runtime/llama`, `internal/repository/semantic`, outbound MCP in `internal/capabilities/mcp`, shell/git adapters in workspace | Local inference, host discovery, LLM-agent clients, and environment-specific tool execution |
 
 ## Clean Boundary Expectations
 

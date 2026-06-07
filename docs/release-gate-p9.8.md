@@ -63,7 +63,9 @@ superiority, activation readiness, retained use, or release GO.
 ## Reproduction Commands
 
 ```sh
-go test ./cmd/idiom -run 'TestP98|TestP86|TestP78|TestP711|TestRunReleaseEvidence|TestRunProductEvidence|TestMCP' -count=1
+go test ./internal/evidence/productevidence -run 'TestP98|TestP711|TestRunReleaseEvidence|TestRunProductEvidence' -count=1
+go test ./internal/evidence/sidecarvalidation -run TestP78 -count=1
+go test ./internal/surfaces/cli/mcp -run 'TestP86|TestMCP' -count=1
 
 jq empty testdata/sidecar/integration-proofs.json testdata/sidecar/mcp-stdio-integration-proof.json
 

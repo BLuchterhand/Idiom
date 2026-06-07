@@ -12,7 +12,7 @@ fix, and how regressions should prove the fix.
 ## Findings
 
 1. Planner readiness is too coarse for complex TDD.
-   - Location: `internal/agent/runner_plan_then_execute_guard.go`
+   - Location: `internal/runtime/agent/runner_plan_then_execute_guard.go`
    - Current failure: `code_navigate` `route_summary: Read ...` text could mark
      a required path source-ready even when the result contained no source body.
    - Fix: source readiness now requires real routed source-body output for
@@ -21,8 +21,8 @@ fix, and how regressions should prove the fix.
 
 2. Rejected `submit_plan` recovery is missing typed coverage details.
    - Locations:
-     - `internal/agent/runner_plan_then_execute_guard.go`
-     - `internal/agent/runner.go`
+     - `internal/runtime/agent/runner_plan_then_execute_guard.go`
+     - `internal/runtime/agent/runner.go`
    - Current failure: recovery inferred missing paths and invalid anchors from
      prose. This allowed invalid-anchor refreshes but initially blocked bounded
      reads for required paths omitted from a rejected plan.
@@ -31,7 +31,7 @@ fix, and how regressions should prove the fix.
      prose parsing only as legacy fallback.
 
 3. Placeholder edit bodies are not classified as first-class plan failures.
-   - Location: `internal/agent/runner_plan_then_execute_guard.go`
+   - Location: `internal/runtime/agent/runner_plan_then_execute_guard.go`
    - Current failure: placeholders such as `// ... existing code ...`, TODOs,
      pseudo-code, or schema examples could surface as invalid anchors or generic
      incomplete plan coverage.
@@ -39,7 +39,7 @@ fix, and how regressions should prove the fix.
      guard, reported per path, and included in typed diagnostics.
 
 4. Submit-plan synthesis must not disable local-model visible output.
-   - Location: `internal/agent/runner.go`
+   - Location: `internal/runtime/agent/runner.go`
    - Current failure: recovery states inherited or forced `EnableThinking=false`,
      which can cause local Qwen backends to return empty visible answers after
      readiness. That made the completion gate loop instead of receiving a
@@ -50,8 +50,8 @@ fix, and how regressions should prove the fix.
 
 5. Post-rejection read recovery needs a narrow allow-list.
    - Locations:
-     - `internal/agent/runner_plan_then_execute_guard.go`
-     - `internal/agent/runner.go`
+     - `internal/runtime/agent/runner_plan_then_execute_guard.go`
+     - `internal/runtime/agent/runner.go`
    - Current failure: after a partial plan, missing required paths need a narrow
      refocus route instead of repeatedly forcing the same corrected-plan error.
    - Fix: allow exactly one bounded source-body refresh for invalid-anchor paths
@@ -62,10 +62,10 @@ fix, and how regressions should prove the fix.
 
 6. TUI/fallback surfaces can amplify internal recovery text.
    - Locations:
-     - `internal/app/implementation_dispatch.go`
-     - `internal/app/model_state.go`
-     - `internal/app/prompt_routing.go`
-     - `internal/app/prompt_turn_test.go`
+     - `internal/surfaces/tui/app/implementation_dispatch.go`
+     - `internal/surfaces/tui/app/model_state.go`
+     - `internal/surfaces/tui/app/prompt_routing.go`
+     - `internal/surfaces/tui/app/prompt_turn_test.go`
    - Current failure: nested in-process plan-execute prompt runs logged their
      internal planner prompt and blocker answer as ordinary transcript messages,
      then the outer TUI surfaced a second sanitized blocker.
@@ -77,9 +77,9 @@ fix, and how regressions should prove the fix.
 7. Submit-plan failures still have broader typed-error gaps outside the
    plan-execute coverage guard.
    - Locations:
-     - `internal/workspace/submit_plan.go`
-     - `internal/workspace/plan_artifact_schema.go`
-     - `internal/workspace/tool_sidecar_envelope.go`
+     - `internal/capabilities/workspace/submit_plan.go`
+     - `internal/capabilities/workspace/plan_artifact_schema.go`
+     - `internal/capabilities/workspace/tool_sidecar_envelope.go`
      - `cmd/idiom/plan_execute.go`
    - Current failure: workspace validation, artifact schema validation, audit
      findings, executor preflight, and parse errors still collapse some typed
@@ -89,7 +89,7 @@ fix, and how regressions should prove the fix.
      should be extended to the workspace/tool-result envelope.
 
 8. Multi-file submit-plan synthesis can monopolize the TUI.
-   - Location: `internal/agent/runner.go`
+   - Location: `internal/runtime/agent/runner.go`
    - Current failure: a live TUI run reached readiness cleanly, then spent
      several minutes in the local model call because ordinary multi-file plans
      inherited a 16k token generation budget.
@@ -100,10 +100,10 @@ fix, and how regressions should prove the fix.
 
 9. Stringified `submit_plan.edits` repair was too brittle after rejection.
    - Locations:
-     - `internal/workspace/manager.go`
-     - `internal/workspace/tool_request_test.go`
-     - `internal/agent/runner_plan_then_execute_guard.go`
-     - `internal/agent/runner_plan_then_execute_guard_test.go`
+     - `internal/capabilities/workspace/manager.go`
+     - `internal/capabilities/workspace/tool_request_test.go`
+     - `internal/runtime/agent/runner_plan_then_execute_guard.go`
+     - `internal/runtime/agent/runner_plan_then_execute_guard_test.go`
    - Current failure: a live TUI run produced a first repaired-but-invalid plan,
      then recovery consumed the one permitted source refresh and hid read tools.
      The subsequent corrected plan attempts emitted `edits` as a quoted string;
@@ -117,7 +117,7 @@ fix, and how regressions should prove the fix.
      valid next action is corrected `submit_plan` / source-satisfied / blocker.
 
 10. Correction-only multi-file plan synthesis can still monopolize the TUI.
-    - Location: `internal/agent/runner.go`
+    - Location: `internal/runtime/agent/runner.go`
     - Current failure: after a rejected placeholder plan and the one permitted
       source refresh, the local planner entered a long submit-plan-only
       synthesis call. At that point no more discovery is allowed, so a long
@@ -131,8 +131,8 @@ fix, and how regressions should prove the fix.
 11. Budget and completion status can mislabel invalid-plan loops as source-read
     loops.
     - Locations:
-      - `internal/agent/runner.go`
-      - `internal/agent/runner_plan_then_execute_guard_test.go`
+      - `internal/runtime/agent/runner.go`
+      - `internal/runtime/agent/runner_plan_then_execute_guard_test.go`
     - Current failure: after every required path had source-body evidence, two
       rejected `submit_plan` attempts could still surface as
       `completion_gate_required_paths_remaining_repeated`. That made the live
@@ -161,11 +161,11 @@ but it is the wrong mandatory artifact for complex multi-file implementation.
 
 ## Regression Targets
 
-- `internal/agent`: readiness, recovery, placeholder detection, missing-path
+- `internal/runtime/agent`: readiness, recovery, placeholder detection, missing-path
   refresh, invalid-anchor refresh, thinking-option inheritance.
-- `internal/workspace`: submit_plan decoding and malformed/stringified edit
+- `internal/capabilities/workspace`: submit_plan decoding and malformed/stringified edit
   repair behavior.
-- `internal/app`: TUI-visible blocker/fallback rendering and duplicate
+- `internal/surfaces/tui/app`: TUI-visible blocker/fallback rendering and duplicate
   internal-message suppression.
 - `cmd/idiom`: plan-execute/route behavior for required edit paths and complex
   TDD dispatch.

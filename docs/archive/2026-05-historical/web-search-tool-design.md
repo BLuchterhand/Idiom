@@ -1,7 +1,7 @@
 # Web search via MCP — design and acceptance criteria
 
 Adds web search to the `idiom` harness by finishing the MCP wiring already
-scaffolded under [internal/mcp](internal/mcp/) and adding HTTP/SSE
+scaffolded under [internal/capabilities/mcp](internal/capabilities/mcp/) and adding HTTP/SSE
 transport so the existing registry can talk to hosted MCP servers like
 Exa's `https://mcp.exa.ai/mcp`. Web search then ships as **a config
 entry**, not new tool code.
@@ -14,11 +14,11 @@ endpoint becomes one line of JSON.
 Status: **landed — W1–W6 implemented as 10-step plan in §11**.
 
 Test surface: 5 mcp packages green —
-- `internal/mcp` (12 HTTPTransport + 18 SSRF/redaction tests + existing stdio)
-- `internal/config` (10 MCPServer/Workspace tests)
-- `internal/workspace` (10 fan-in + dispatch + permission-target tests)
-- `internal/agent` (5 parseToolCall + 3 mode-default + lane-classifier tests)
-- `internal/app` (4 setupMCPRegistry tests)
+- `internal/capabilities/mcp` (12 HTTPTransport + 18 SSRF/redaction tests + existing stdio)
+- `internal/platform/config` (10 MCPServer/Workspace tests)
+- `internal/capabilities/workspace` (10 fan-in + dispatch + permission-target tests)
+- `internal/runtime/agent` (5 parseToolCall + 3 mode-default + lane-classifier tests)
+- `internal/surfaces/tui/app` (4 setupMCPRegistry tests)
 
 To enable: copy the `mcp` block from `config.example.json` into your
 `config.json` (drop the leading underscore). No code changes required.
@@ -29,7 +29,7 @@ To enable: copy the `mcp` block from `config.example.json` into your
 
 1. **Web search.** Let the model search the public web via Exa AI's
    hosted MCP endpoint, the same backend OpenCode uses.
-2. **Finish the MCP integration.** [internal/mcp](internal/mcp/) was
+2. **Finish the MCP integration.** [internal/capabilities/mcp](internal/capabilities/mcp/) was
    landed as Fix 8 in [opencode-fixes-design.md](opencode-fixes-design.md)
    but is not actually wired into the runner. Any user MCP server
    configured in `config.json` today is silently ignored. This change
@@ -38,7 +38,7 @@ To enable: copy the `mcp` block from `config.example.json` into your
    philosophy (user picks Mode, Mode picks rule), same per-call
    permission model — extended to all MCP-discovered tools, not just
    web search.
-4. **Add hosted MCP support.** [internal/mcp/client.go:1-5](internal/mcp/client.go:1)
+4. **Add hosted MCP support.** [internal/capabilities/mcp/client.go:1-5](internal/capabilities/mcp/client.go:1)
    explicitly says "No SSE/HTTP transport". This change adds it. Once
    in, every future hosted MCP (GitHub's, Linear's, Sentry's, …) plugs
    in as a config entry.
@@ -119,36 +119,36 @@ current year for time-sensitive queries. We mirror this.
 
 ---
 
-## 4. Current state of `internal/mcp`
+## 4. Current state of `internal/capabilities/mcp`
 
 The package is complete enough to be useful, but unused.
 
 What exists:
 
 - `Transport` interface with `Send / Receive / Close`
-  ([client.go:60](internal/mcp/client.go:60)).
+  ([client.go:60](internal/capabilities/mcp/client.go:60)).
 - `Client` speaking JSON-RPC 2.0 with `Initialize / ListTools /
-  CallTool` ([client.go:68](internal/mcp/client.go:68)).
+  CallTool` ([client.go:68](internal/capabilities/mcp/client.go:68)).
 - `StdioTransport` for stdio servers
-  ([client.go:247](internal/mcp/client.go:247)).
+  ([client.go:247](internal/capabilities/mcp/client.go:247)).
 - `Registry` that spawns servers, namespaces tools as
   `mcp:<server>/<tool>`, dispatches `Call`
-  ([registry.go:22](internal/mcp/registry.go:22)).
+  ([registry.go:22](internal/capabilities/mcp/registry.go:22)).
 - `RegisterExisting` for non-stdio transports — the hook this design
-  uses ([registry.go:78](internal/mcp/registry.go:78)).
+  uses ([registry.go:78](internal/capabilities/mcp/registry.go:78)).
 
 What's missing:
 
 - **No HTTP/SSE transport.** `client.go:3` says so.
 - **No bridge to the model.** `Registry.Tools()` exists, but
-  [internal/workspace/tool_schemas.go:73](internal/workspace/tool_schemas.go:73)'s
+  [internal/capabilities/workspace/tool_schemas.go:73](internal/capabilities/workspace/tool_schemas.go:73)'s
   `baseToolDefinitions` is hand-rolled and ignorant of MCP.
-- **No bridge to dispatch.** [internal/workspace/manager.go:359](internal/workspace/manager.go:359)'s
+- **No bridge to dispatch.** [internal/capabilities/workspace/manager.go:359](internal/capabilities/workspace/manager.go:359)'s
   `Manager.Execute` switch has no case for `mcp:*` tool names.
 - **No boot wiring.** [cmd/idiom/main.go](cmd/idiom/main.go) does not
   construct a registry from `cfg.MCP` or hand it to the workspace.
-- **No permission integration.** [internal/agent/modes.go](internal/agent/modes.go)
-  has no rules for MCP tools; [internal/workspace/tool_rules.go:114](internal/workspace/tool_rules.go:114)'s
+- **No permission integration.** [internal/runtime/agent/modes.go](internal/runtime/agent/modes.go)
+  has no rules for MCP tools; [internal/capabilities/workspace/tool_rules.go:114](internal/capabilities/workspace/tool_rules.go:114)'s
   `extractToolRuleTarget` doesn't know how to extract a target from
   an MCP tool call's args.
 
@@ -160,23 +160,23 @@ Each of those is a small, additive edit.
 
 | Concern | File | Site |
 | --- | --- | --- |
-| HTTP/SSE transport | `internal/mcp/http.go` (new) | new file |
-| Server config schema | [internal/config/config.go:71](internal/config/config.go:71) | `MCPServer` struct |
+| HTTP/SSE transport | `internal/capabilities/mcp/http.go` (new) | new file |
+| Server config schema | [internal/platform/config/config.go:71](internal/platform/config/config.go:71) | `MCPServer` struct |
 | Registry → boot | [cmd/idiom/main.go](cmd/idiom/main.go) | spawn from `cfg.MCP`, hand to manager |
-| Registry → workspace | [internal/workspace/manager.go](internal/workspace/manager.go) | new `Manager.SetMCPRegistry` + dispatch case |
-| Tool list to model | [internal/workspace/tool_schemas.go:22](internal/workspace/tool_schemas.go:22) | extend `BuildToolDefinitions` |
-| Allow-list | [internal/workspace/tool_manifest.go:25](internal/workspace/tool_manifest.go:25) | extend `ToolManifestTools` |
-| Permission rules | [internal/agent/modes.go](internal/agent/modes.go) | per-Mode rules for `mcp:*` |
-| Rule target extraction | [internal/workspace/tool_rules.go:114](internal/workspace/tool_rules.go:114) | `extractToolRuleTarget` |
-| Lane policy | [internal/agent/runner_lane_policy.go:38](internal/agent/runner_lane_policy.go:38) | negative-list additions |
+| Registry → workspace | [internal/capabilities/workspace/manager.go](internal/capabilities/workspace/manager.go) | new `Manager.SetMCPRegistry` + dispatch case |
+| Tool list to model | [internal/capabilities/workspace/tool_schemas.go:22](internal/capabilities/workspace/tool_schemas.go:22) | extend `BuildToolDefinitions` |
+| Allow-list | [internal/capabilities/workspace/tool_manifest.go:25](internal/capabilities/workspace/tool_manifest.go:25) | extend `ToolManifestTools` |
+| Permission rules | [internal/runtime/agent/modes.go](internal/runtime/agent/modes.go) | per-Mode rules for `mcp:*` |
+| Rule target extraction | [internal/capabilities/workspace/tool_rules.go:114](internal/capabilities/workspace/tool_rules.go:114) | `extractToolRuleTarget` |
+| Lane policy | [internal/runtime/agent/runner_lane_policy.go:38](internal/runtime/agent/runner_lane_policy.go:38) | negative-list additions |
 
 ---
 
 ## 6. The fixes
 
-### Fix W1 — HTTP/SSE transport in `internal/mcp`
+### Fix W1 — HTTP/SSE transport in `internal/capabilities/mcp`
 
-**Problem.** [internal/mcp/client.go:1-5](internal/mcp/client.go:1)
+**Problem.** [internal/capabilities/mcp/client.go:1-5](internal/capabilities/mcp/client.go:1)
 explicitly carves out HTTP transport as out-of-scope. Hosted MCP servers
 (Exa, GitHub's, Linear's) all expose their endpoints over HTTP, not
 stdio. Without HTTP transport we can't talk to any of them.
@@ -196,7 +196,7 @@ does not use. We pin a tag on the package comment and revisit if a
 target server requires it.
 
 ```go
-// internal/mcp/http.go (sketch — not final)
+// internal/capabilities/mcp/http.go (sketch — not final)
 
 type HTTPTransport struct {
     url     string
@@ -232,7 +232,7 @@ func (t *HTTPTransport) Receive(ctx context.Context) ([]byte, error) {
 func (t *HTTPTransport) Close() error
 ```
 
-The `Client.call` loop in [client.go:128](internal/mcp/client.go:128)
+The `Client.call` loop in [client.go:128](internal/capabilities/mcp/client.go:128)
 is request/reply and demuxes by JSON-RPC `id`, so multiple concurrent
 Sends from one Client (rare for a tool call, but possible) are safe —
 frames may arrive in any order; the Client's `pending` map keyed by
@@ -240,12 +240,12 @@ frames may arrive in any order; the Client's `pending` map keyed by
 
 **Files.**
 
-- `internal/mcp/http.go` (new) — ~120 LOC: `HTTPTransport`, `StartHTTP`,
+- `internal/capabilities/mcp/http.go` (new) — ~120 LOC: `HTTPTransport`, `StartHTTP`,
   SSE-line scanner, header support for `Authorization` / custom auth.
-- `internal/mcp/http_test.go` (new) — `httptest.Server` returning
+- `internal/capabilities/mcp/http_test.go` (new) — `httptest.Server` returning
   scripted SSE bodies, asserts request shape, response decoding,
   timeout, malformed-body resilience (drop and continue).
-- [internal/mcp/client.go:1-5](internal/mcp/client.go:1) — update the
+- [internal/capabilities/mcp/client.go:1-5](internal/capabilities/mcp/client.go:1) — update the
   package doc comment to drop "No SSE/HTTP transport".
 
 **Acceptance.**
@@ -262,7 +262,7 @@ frames may arrive in any order; the Client's `pending` map keyed by
 - Server hangs past `cfg.TimeoutSeconds` — `Send` returns context
   deadline; `inbox` channel is closed cleanly.
 - Server returns malformed JSON in a `data:` line — frame is dropped
-  silently (matches stdio behavior in [client.go:107-111](internal/mcp/client.go:107)).
+  silently (matches stdio behavior in [client.go:107-111](internal/capabilities/mcp/client.go:107)).
 - SSRF guard: `StartHTTP` with `url=http://127.0.0.1/...` returns an
   error before any socket is opened (see W5).
 
@@ -275,7 +275,7 @@ same host.
 
 ### Fix W2 — Extend `MCPServer` config to support both transports
 
-**Problem.** [internal/config/config.go:71-77](internal/config/config.go:71)
+**Problem.** [internal/platform/config/config.go:71-77](internal/platform/config/config.go:71)
 defines `MCPServer` with `Command / Args / Env`. There's no field for a
 hosted endpoint URL.
 
@@ -285,7 +285,7 @@ transport; if empty, it uses stdio (existing behavior). One optional
 headers).
 
 ```go
-// internal/config/config.go (delta)
+// internal/platform/config/config.go (delta)
 
 type MCPServer struct {
     Name    string            `json:"name"`
@@ -302,8 +302,8 @@ both unset or both set is a config error reported at startup.
 
 **Files.**
 
-- [internal/config/config.go:71-77](internal/config/config.go:71) — add fields.
-- [internal/config/config_test.go](internal/config/config_test.go) —
+- [internal/platform/config/config.go:71-77](internal/platform/config/config.go:71) — add fields.
+- [internal/platform/config/config_test.go](internal/platform/config/config_test.go) —
   round-trip tests for both shapes; both-set and both-empty fail
   validation.
 
@@ -348,9 +348,9 @@ the agent should still work, the same forgiving stance the existing
 
 - [cmd/idiom/main.go](cmd/idiom/main.go) — new `setupMCPRegistry(ctx, cfg)`
   helper, called once per session.
-- [internal/workspace/manager.go](internal/workspace/manager.go) — new
+- [internal/capabilities/workspace/manager.go](internal/capabilities/workspace/manager.go) — new
   field `mcp *mcp.Registry`, new method `SetMCPRegistry(*mcp.Registry)`.
-- [internal/agent/runner.go:128](internal/agent/runner.go:128) — no
+- [internal/runtime/agent/runner.go:128](internal/runtime/agent/runner.go:128) — no
   change at the call site; the runner already pulls tool definitions
   from the workspace, which now includes MCP tools (W4).
 
@@ -378,7 +378,7 @@ tools and the workspace switch can't dispatch them.
 **Design.** Three small changes:
 
 1. **Tool definitions sent to the LLM** —
-   [internal/workspace/tool_schemas.go:22](internal/workspace/tool_schemas.go:22)'s
+   [internal/capabilities/workspace/tool_schemas.go:22](internal/capabilities/workspace/tool_schemas.go:22)'s
    `BuildToolDefinitions` becomes a method on `Manager` (or accepts an
    optional registry argument). After emitting `baseToolDefinitions()`
    it appends one `ToolDefinition` per registered MCP tool:
@@ -392,13 +392,13 @@ tools and the workspace switch can't dispatch them.
      through unchanged.
 
 2. **Allow-list** —
-   [internal/workspace/tool_manifest.go:25](internal/workspace/tool_manifest.go:25)'s
+   [internal/capabilities/workspace/tool_manifest.go:25](internal/capabilities/workspace/tool_manifest.go:25)'s
    `ToolManifestTools` adds every registered MCP tool name to the
    returned slice (when a registry is attached). This keeps the
    `BuildToolDefinitions` allow-list path consistent.
 
 3. **Dispatch** —
-   [internal/workspace/manager.go:366](internal/workspace/manager.go:366)
+   [internal/capabilities/workspace/manager.go:366](internal/capabilities/workspace/manager.go:366)
    adds a default branch that recognizes the `mcp:` prefix:
 
    ```go
@@ -428,24 +428,24 @@ arbitrary JSON-Schema arguments. Two paths:
 
 Recommend **A**. It's a single new field on `ToolRequest`, and it
 isolates the "MCP tools are different" knowledge in one place
-([internal/agent/tools.go](internal/agent/tools.go)'s `parseToolCall`).
+([internal/runtime/agent/tools.go](internal/runtime/agent/tools.go)'s `parseToolCall`).
 
 **Files.**
 
-- [internal/workspace/manager.go:69](internal/workspace/manager.go:69)
+- [internal/capabilities/workspace/manager.go:69](internal/capabilities/workspace/manager.go:69)
   (`ToolRequest`) — add `Args json.RawMessage`.
-- [internal/workspace/manager.go](internal/workspace/manager.go) — new
+- [internal/capabilities/workspace/manager.go](internal/capabilities/workspace/manager.go) — new
   `(*Manager).executeMCP` method (~30 LOC).
-- [internal/workspace/tool_schemas.go:22](internal/workspace/tool_schemas.go:22)
+- [internal/capabilities/workspace/tool_schemas.go:22](internal/capabilities/workspace/tool_schemas.go:22)
   — extend `BuildToolDefinitions` to fan in MCP tools, and convert it
   into a function that takes a registry (or accept it via a
   `Manager` method wrapping the existing function).
-- [internal/workspace/tool_manifest.go:25](internal/workspace/tool_manifest.go:25)
+- [internal/capabilities/workspace/tool_manifest.go:25](internal/capabilities/workspace/tool_manifest.go:25)
   — extend `ToolManifestTools` similarly.
-- [internal/agent/tools.go](internal/agent/tools.go) (`parseToolCall`)
+- [internal/runtime/agent/tools.go](internal/runtime/agent/tools.go) (`parseToolCall`)
   — when `tool_call.Function.Name` starts with `mcp:`, route the raw
   argument JSON into `req.Args`; do not attempt typed-field mapping.
-- [internal/agent/tools.go](internal/agent/tools.go)
+- [internal/runtime/agent/tools.go](internal/runtime/agent/tools.go)
   (`toolResultMessage` / `FormatToolResultForModel`) — confirm MCP
   outputs render the same way generic outputs do (they will — the
   formatter is by-result, not by-tool).
@@ -479,7 +479,7 @@ existing per-Mode permission rules unless we add specific entries.
 **Design.** Two layers:
 
 1. **Per-Mode rules** —
-   [internal/agent/modes.go](internal/agent/modes.go) — add an
+   [internal/runtime/agent/modes.go](internal/runtime/agent/modes.go) — add an
    `mcp:*` entry to each Mode:
    - **PlanMode**:
      `"mcp:*": [{Pattern: "*", Decision: ToolRuleAllow}]` — plan mode
@@ -503,14 +503,14 @@ existing per-Mode permission rules unless we add specific entries.
    ```
 
    This requires
-   [internal/workspace/tool_rules.go:94-112](internal/workspace/tool_rules.go:94)'s
+   [internal/capabilities/workspace/tool_rules.go:94-112](internal/capabilities/workspace/tool_rules.go:94)'s
    `MatchToolRule` to look up by exact tool name first, then fall back
    to a glob match against `mcp:*`. The existing `MatchToolRule`
    already does map-keyed first-match-wins, so the change is in the
    evaluator: try the literal tool name, then try `mcp:*`.
 
 2. **Rule target extraction** —
-   [internal/workspace/tool_rules.go:114-121](internal/workspace/tool_rules.go:114)
+   [internal/capabilities/workspace/tool_rules.go:114-121](internal/capabilities/workspace/tool_rules.go:114)
    currently extracts `req.Command` for shell tools and `req.Path`
    otherwise. For MCP tools, neither field is meaningful. Extend:
    ```go
@@ -537,17 +537,17 @@ existing per-Mode permission rules unless we add specific entries.
    string field from `req.Args` without unmarshaling the whole blob.
 
 3. **Lane policy** —
-   [internal/agent/runner_lane_policy.go:38](internal/agent/runner_lane_policy.go:38).
+   [internal/runtime/agent/runner_lane_policy.go:38](internal/runtime/agent/runner_lane_policy.go:38).
    The existing universal rejections (`conversation_only`,
    `read_only_verification_shell`) already cover MCP tools — they're
    not verification-class and not allowed in conversation-only.
    `IsNarrowingRequest` and `ShouldClearBroadInspectionLock` in
-   [internal/workspace/manager.go:913-988](internal/workspace/manager.go:913)
+   [internal/capabilities/workspace/manager.go:913-988](internal/capabilities/workspace/manager.go:913)
    should return `false` for any `mcp:*` tool — external retrieval is
    not workspace narrowing. One-line additions to both switches.
 4. **Post-readiness gap-naming.** Do not require `named_gap` /
    `why_not_answering` from MCP tool calls.
-   [internal/agent/tools.go:62](internal/agent/tools.go:62)'s
+   [internal/runtime/agent/tools.go:62](internal/runtime/agent/tools.go:62)'s
    `applyPostReadinessSchemaRequirements` short-circuits on
    `isPostReadinessGapTool` — leave that check returning `false` for
    `mcp:*`, which it does today (it's an explicit allow-list of
@@ -555,16 +555,16 @@ existing per-Mode permission rules unless we add specific entries.
 
 **Files.**
 
-- [internal/agent/modes.go](internal/agent/modes.go) — three Mode
+- [internal/runtime/agent/modes.go](internal/runtime/agent/modes.go) — three Mode
   constructors gain `mcp:*` rules.
-- [internal/workspace/tool_rules.go:94-121](internal/workspace/tool_rules.go:94)
+- [internal/capabilities/workspace/tool_rules.go:94-121](internal/capabilities/workspace/tool_rules.go:94)
   — extract for `mcp:*`, plus the tool-name → glob fallback in
   `MatchToolRule`.
-- [internal/workspace/manager.go:913-988](internal/workspace/manager.go:913)
+- [internal/capabilities/workspace/manager.go:913-988](internal/capabilities/workspace/manager.go:913)
   — extend the negative cases.
 - Tests in
-  [internal/workspace/tool_rules_test.go](internal/workspace/tool_rules_test.go)
-  and [internal/agent/runner_lane_policy.go](internal/agent/runner_lane_policy.go)
+  [internal/capabilities/workspace/tool_rules_test.go](internal/capabilities/workspace/tool_rules_test.go)
+  and [internal/runtime/agent/runner_lane_policy.go](internal/runtime/agent/runner_lane_policy.go)
   (or its test sibling) for the new behavior.
 
 **Acceptance.**
@@ -594,7 +594,7 @@ suggest a config edit, and a typo in a config file shouldn't let the
 agent hit cloud-metadata.
 
 **Design.** When `StartHTTP` opens its first connection, validate the
-URL through a small `internal/mcp/ssrf.go` helper:
+URL through a small `internal/capabilities/mcp/ssrf.go` helper:
 
 1. Scheme: `http` or `https` only.
 2. Host class: resolve once; reject loopback, link-local (`169.254.0.0/16`,
@@ -615,10 +615,10 @@ flip the override or — better — register that server via stdio.
 
 **Files.**
 
-- `internal/mcp/ssrf.go` (new, ~60 LOC).
-- `internal/mcp/ssrf_test.go` (new) — table-driven over the host
+- `internal/capabilities/mcp/ssrf.go` (new, ~60 LOC).
+- `internal/capabilities/mcp/ssrf_test.go` (new) — table-driven over the host
   classes.
-- [internal/config/config.go:150](internal/config/config.go:150)
+- [internal/platform/config/config.go:150](internal/platform/config/config.go:150)
   (`Workspace`) — new `AllowPrivateNetwork bool` (default false).
 
 **Acceptance.**
@@ -651,7 +651,7 @@ honors these; no extra code needed unless it doesn't work in practice.
 }
 ```
 
-The live smoke test (`IDIOM_LIVE_MCP=1 go test -tags=integration ./internal/app/`)
+The live smoke test (`IDIOM_LIVE_MCP=1 go test -tags=integration ./internal/surfaces/tui/app/`)
 confirms Exa's endpoint exposes **two** tools today:
 
 - `mcp:exa/web_search_exa` — search-the-web (the headline feature)
@@ -720,7 +720,7 @@ A one-paragraph seed for [prompts/base.md](prompts/base.md):
 
 ## 9. Logging
 
-[internal/app/event_stream.go:88-123](internal/app/event_stream.go:88)
+[internal/surfaces/tui/app/event_stream.go:88-123](internal/surfaces/tui/app/event_stream.go:88)
 already records `tool_request` and `tool_result` for every dispatched
 tool. MCP tools land in this same path because they go through
 `Manager.Execute`. Two specifics:
@@ -748,9 +748,9 @@ tool. MCP tools land in this same path because they go through
 | SSRF guard | Pure unit, table-driven over the host classes. |
 | Registry boot | Boot test with `httptest.Server` standing in as the MCP endpoint; assert `Tools()` contains the expected entries. |
 | Workspace dispatch | Inject a fake `mcp.Registry` into the manager via `SetMCPRegistry`; assert the dispatch case fires for `mcp:*`. |
-| Permission rules | Extend [internal/workspace/tool_rules_test.go](internal/workspace/tool_rules_test.go) with cases for `mcp:exa/...` matching, glob-fallback, and arg-target extraction. |
+| Permission rules | Extend [internal/capabilities/workspace/tool_rules_test.go](internal/capabilities/workspace/tool_rules_test.go) with cases for `mcp:exa/...` matching, glob-fallback, and arg-target extraction. |
 | Lane policy | Add `mcp:*` cases to the existing lane-policy tests. |
-| End-to-end | One `internal/eval/swe_suite.go` scenario: prompt asking for a recent fact, mocked Exa MCP returning a fixed result string, assert the runner calls the tool and incorporates the answer. |
+| End-to-end | One `internal/evidence/eval/swe_suite.go` scenario: prompt asking for a recent fact, mocked Exa MCP returning a fixed result string, assert the runner calls the tool and incorporates the answer. |
 | Live smoke | Optional, gated by `IDIOM_LIVE_MCP=1`; hits real `mcp.exa.ai/mcp` once with a benign query. Not in CI. |
 
 ---
@@ -760,9 +760,9 @@ tool. MCP tools land in this same path because they go through
 Each step is independently testable, shippable, and dark-launchable
 behind the absence of any `cfg.MCP` entry.
 
-1. **Step 1 — `internal/mcp/ssrf.go` + tests.**
+1. **Step 1 — `internal/capabilities/mcp/ssrf.go` + tests.**
    Pure helper, no integration. ~80 LOC.
-2. **Step 2 — `internal/mcp/http.go` + `HTTPTransport` tests.**
+2. **Step 2 — `internal/capabilities/mcp/http.go` + `HTTPTransport` tests.**
    ~150 LOC source + ~200 LOC tests. Verifies against `httptest`. The
    stdio path is unchanged.
 3. **Step 3 — `MCPServer` config extension** (`URL`, `Headers`) +
@@ -777,7 +777,7 @@ behind the absence of any `cfg.MCP` entry.
 6. **Step 6 — `BuildToolDefinitions` / `ToolManifestTools` fan-in.**
    With no MCP server registered, output is identical to today.
 7. **Step 7 — `Manager.Execute` `mcp:*` case** + permission rule
-   extensions in [tool_rules.go:114](internal/workspace/tool_rules.go:114).
+   extensions in [tool_rules.go:114](internal/capabilities/workspace/tool_rules.go:114).
    Still dark — nothing registers an MCP server.
 8. **Step 8 — Mode rules.** Add `mcp:*` entries to all three Modes.
    Still dark.
@@ -801,7 +801,7 @@ Estimated total: ~400 LOC source + ~500 LOC tests, spread across
 | Exa endpoint changes shape | Low | Single transport file, easy to update. SSE parser is generic. |
 | Goroutine leak in HTTP transport on error | Medium | Explicit `closed` channel + `goleak` test in CI. |
 | MCP server announces a tool whose name collides with a built-in | Low | Mandatory `mcp:` prefix on the tool name precludes this — `mcp:` is reserved. |
-| MCP server returns megabytes of content | Medium | Existing per-tool truncation in [internal/agent/tools.go](internal/agent/tools.go) `FormatToolResultForModel` already caps. Add a cap inside `executeMCP` matching `Workspace.MaxOutputBytes`. |
+| MCP server returns megabytes of content | Medium | Existing per-tool truncation in [internal/runtime/agent/tools.go](internal/runtime/agent/tools.go) `FormatToolResultForModel` already caps. Add a cap inside `executeMCP` matching `Workspace.MaxOutputBytes`. |
 | Prompt injection via fetched MCP content | Medium | Tool result is wrapped in the same `<tool_output>` framing as every other tool. Optional: prepend `[untrusted: external]` to MCP outputs. |
 | Cost surprise from Exa | Medium | "ask" default in BuildMode; per-turn ceiling proposal in W7. |
 | User pastes API key into `config.json` and commits it | Low | Document `${env:NAME}` interpolation as the supported pattern (W8). `config.json` is already in `.gitignore`. |
@@ -911,11 +911,11 @@ Track separately, do not bundle:
 - OpenCode permission evaluator: `packages/opencode/src/permission/evaluate.ts`
 - OpenCode public docs: `packages/web/src/content/docs/tools.mdx:255-285`
 - OpenCode env flag: `packages/core/src/flag/flag.ts:67`
-- idiom MCP scaffolding: [internal/mcp/client.go](internal/mcp/client.go), [internal/mcp/registry.go](internal/mcp/registry.go)
-- idiom tool schemas: [internal/workspace/tool_schemas.go:22](internal/workspace/tool_schemas.go:22)
-- idiom dispatch: [internal/workspace/manager.go:359](internal/workspace/manager.go:359)
-- idiom Mode rules: [internal/agent/modes.go](internal/agent/modes.go)
-- idiom tool-rule evaluator: [internal/workspace/tool_rules.go](internal/workspace/tool_rules.go)
-- idiom lane policy: [internal/agent/runner_lane_policy.go](internal/agent/runner_lane_policy.go)
+- idiom MCP scaffolding: [internal/capabilities/mcp/client.go](internal/capabilities/mcp/client.go), [internal/capabilities/mcp/registry.go](internal/capabilities/mcp/registry.go)
+- idiom tool schemas: [internal/capabilities/workspace/tool_schemas.go:22](internal/capabilities/workspace/tool_schemas.go:22)
+- idiom dispatch: [internal/capabilities/workspace/manager.go:359](internal/capabilities/workspace/manager.go:359)
+- idiom Mode rules: [internal/runtime/agent/modes.go](internal/runtime/agent/modes.go)
+- idiom tool-rule evaluator: [internal/capabilities/workspace/tool_rules.go](internal/capabilities/workspace/tool_rules.go)
+- idiom lane policy: [internal/runtime/agent/runner_lane_policy.go](internal/runtime/agent/runner_lane_policy.go)
 - Precedent design-doc style: [opencode-fixes-design.md](opencode-fixes-design.md)
 - Original Fix 8 (the MCP scaffold this completes): [opencode-fixes-design.md](opencode-fixes-design.md) §8

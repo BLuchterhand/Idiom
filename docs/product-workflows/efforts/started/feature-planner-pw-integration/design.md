@@ -5,8 +5,8 @@ their context, decisions, or outputs. Idiom sells the missing substrate: repo
 memory, freshness, contracts, audit, and evals.**
 
 This document is the tracked implementation plan for connecting the product
-workflow pipeline (`internal/productworkflow/`) to the feature-planner
-(`internal/featureplanner/`).
+workflow pipeline (`internal/workflows/productworkflow/`) to the feature-planner
+(`internal/workflows/featureplanner/`).
 
 ## Design Authority
 
@@ -39,10 +39,10 @@ complete before the next dispatches.
 | Status | planned |
 | SDD refs | `docs/design-feature-planner-product-workflow-integration.md` |
 | TDD obligations | TDD-1 |
-| Required edit paths | `internal/featureplanner/product_context.go` (new), `internal/featureplanner/orchestrate.go` |
-| Allowed edit paths | `internal/featureplanner/product_context.go`, `internal/featureplanner/orchestrate.go`, `internal/featureplanner/product_context_test.go` |
-| Required tests | `go test ./internal/featureplanner/... -run TestProductWorkflowBrief` |
-| Test-first commands | `go test ./internal/featureplanner/... -run TestProductWorkflowBrief -count=1` |
+| Required edit paths | `internal/workflows/featureplanner/product_context.go` (new), `internal/workflows/featureplanner/orchestrate.go` |
+| Allowed edit paths | `internal/workflows/featureplanner/product_context.go`, `internal/workflows/featureplanner/orchestrate.go`, `internal/workflows/featureplanner/product_context_test.go` |
+| Required tests | `go test ./internal/workflows/featureplanner/... -run TestProductWorkflowBrief` |
+| Test-first commands | `go test ./internal/workflows/featureplanner/... -run TestProductWorkflowBrief -count=1` |
 
 **Deliverable**: `ProductWorkflowBrief`, `PRDRequirementBrief`, `TDDObligationBrief`
 types in new file `product_context.go`. Optional `ProductWorkflowBrief` pointer
@@ -51,7 +51,7 @@ JSON round-trip test with minimal and full payloads.
 
 **Verification**:
 
-- [ ] `go test ./internal/featureplanner/... -run TestProductWorkflowBrief`
+- [ ] `go test ./internal/workflows/featureplanner/... -run TestProductWorkflowBrief`
 - [ ] JSON round-trip: marshal full brief, unmarshal, assert field equality
 
 ---
@@ -65,10 +65,10 @@ JSON round-trip test with minimal and full payloads.
 | Dependencies | impl-0001, impl-0004 |
 | SDD refs | `docs/design-feature-planner-product-workflow-integration.md` |
 | TDD obligations | TDD-2 |
-| Required edit paths | `internal/featureplanner/orchestrate.go` |
-| Allowed edit paths | `internal/featureplanner/orchestrate.go`, `internal/featureplanner/orchestrate_test.go` |
-| Required tests | `go test ./internal/featureplanner/... -run TestBuildPlannerPrompt` |
-| Test-first commands | `go test ./internal/featureplanner/... -run TestBuildPlannerPrompt -count=1` |
+| Required edit paths | `internal/workflows/featureplanner/orchestrate.go` |
+| Allowed edit paths | `internal/workflows/featureplanner/orchestrate.go`, `internal/workflows/featureplanner/orchestrate_test.go` |
+| Required tests | `go test ./internal/workflows/featureplanner/... -run TestBuildPlannerPrompt` |
+| Test-first commands | `go test ./internal/workflows/featureplanner/... -run TestBuildPlannerPrompt -count=1` |
 
 **Deliverable**: When `ProductWorkflowBrief != nil`, inject a "Product Workflow
 Context" section into the planner prompt listing real PRD requirement IDs, ADR
@@ -99,10 +99,10 @@ use ask_planner_question to report the blocked gate."
 | Dependencies | impl-0001 |
 | SDD refs | `docs/design-feature-planner-product-workflow-integration.md` |
 | TDD obligations | TDD-3 |
-| Required edit paths | `internal/featureplannercmd/feature_planner.go` |
-| Allowed edit paths | `internal/featureplannercmd/feature_planner.go`, `internal/featureplannercmd/feature_planner_test.go` |
-| Required tests | `go test ./internal/featureplannercmd/... -run TestCLI_Effort` |
-| Test-first commands | `go test ./internal/featureplannercmd/... -run TestCLI_Effort -count=1` |
+| Required edit paths | `internal/surfaces/cli/featureplanner/feature_planner.go` |
+| Allowed edit paths | `internal/surfaces/cli/featureplanner/feature_planner.go`, `internal/surfaces/cli/featureplanner/feature_planner_test.go` |
+| Required tests | `go test ./internal/surfaces/cli/featureplanner/... -run TestCLI_Effort` |
+| Test-first commands | `go test ./internal/surfaces/cli/featureplanner/... -run TestCLI_Effort -count=1` |
 
 **Deliverable**: `--effort-root` and `--effort-id` flags. Loading logic in
 `defaultHeadlessFeaturePlanner`: resolve effort root, load
@@ -136,10 +136,10 @@ intentional — the CLI adapter layer may import both leaf packages.
 | Dependencies | impl-0001 |
 | SDD refs | `docs/design-feature-planner-product-workflow-integration.md` |
 | TDD obligations | TDD-4, TDD-10 |
-| Required edit paths | `internal/featureplanner/types.go`, `internal/featureplanner/validate.go` |
-| Allowed edit paths | `internal/featureplanner/types.go`, `internal/featureplanner/validate.go`, `internal/featureplanner/validate_test.go` |
-| Required tests | `go test ./internal/featureplanner/... -run "TestSDDContract_V2\|TestValidatePlan_AcceptsStructured\|TestValidatePlan_MigratesLegacy\|TestFeaturePlan_V2_RoundTrip\|TestValidatePlan_AcceptsV1AndV2"` |
-| Test-first commands | `go test ./internal/featureplanner/... -run TestSDDContract_V2 -count=1` |
+| Required edit paths | `internal/workflows/featureplanner/types.go`, `internal/workflows/featureplanner/validate.go` |
+| Allowed edit paths | `internal/workflows/featureplanner/types.go`, `internal/workflows/featureplanner/validate.go`, `internal/workflows/featureplanner/validate_test.go` |
+| Required tests | `go test ./internal/workflows/featureplanner/... -run "TestSDDContract_V2\|TestValidatePlan_AcceptsStructured\|TestValidatePlan_MigratesLegacy\|TestFeaturePlan_V2_RoundTrip\|TestValidatePlan_AcceptsV1AndV2"` |
+| Test-first commands | `go test ./internal/workflows/featureplanner/... -run TestSDDContract_V2 -count=1` |
 
 **Deliverable**: Add `prd_requirement_refs` and `adr_refs` to `SDDContract`.
 Add `coverage_gate_event_id` to `TDDContract`. Add `coverage_gate_result` to
@@ -163,10 +163,10 @@ Legacy `refs` entries treated as acceptance criteria in `ValidateDurablePlan`.
 | Dependencies | impl-0004 |
 | SDD refs | `docs/design-feature-planner-product-workflow-integration.md` |
 | TDD obligations | TDD-5 |
-| Required edit paths | `internal/featureplanner/validate.go`, `internal/featureplannercmd/feature_planner.go` |
-| Allowed edit paths | `internal/featureplanner/validate.go`, `internal/featureplannercmd/feature_planner.go`, `internal/featureplanner/validate_test.go` |
-| Required tests | `go test ./internal/featureplanner/... -run TestValidatePlanSDDRefs` |
-| Test-first commands | `go test ./internal/featureplanner/... -run TestValidatePlanSDDRefs -count=1` |
+| Required edit paths | `internal/workflows/featureplanner/validate.go`, `internal/surfaces/cli/featureplanner/feature_planner.go` |
+| Allowed edit paths | `internal/workflows/featureplanner/validate.go`, `internal/surfaces/cli/featureplanner/feature_planner.go`, `internal/workflows/featureplanner/validate_test.go` |
+| Required tests | `go test ./internal/workflows/featureplanner/... -run TestValidatePlanSDDRefs` |
+| Test-first commands | `go test ./internal/workflows/featureplanner/... -run TestValidatePlanSDDRefs -count=1` |
 
 **Deliverable**: `ValidatePlanSDDRefs(plan FeaturePlan, artifactRoot string) error`
 that resolves SDD refs against artifact root and checks file existence. Called
@@ -190,10 +190,10 @@ resolve. Strips `:line` suffix.
 | Dependencies | impl-0004 |
 | SDD refs | `docs/design-feature-planner-product-workflow-integration.md` |
 | TDD obligations | TDD-6 |
-| Required edit paths | `internal/featureplanner/validate.go`, `internal/featureplannercmd/feature_planner.go` |
-| Allowed edit paths | `internal/featureplanner/validate.go`, `internal/featureplannercmd/feature_planner.go`, `internal/featureplanner/validate_test.go` |
-| Required tests | `go test ./internal/featureplanner/... -run TestValidatePlanTDDObligations` |
-| Test-first commands | `go test ./internal/featureplanner/... -run TestValidatePlanTDDObligations -count=1` |
+| Required edit paths | `internal/workflows/featureplanner/validate.go`, `internal/surfaces/cli/featureplanner/feature_planner.go` |
+| Allowed edit paths | `internal/workflows/featureplanner/validate.go`, `internal/surfaces/cli/featureplanner/feature_planner.go`, `internal/workflows/featureplanner/validate_test.go` |
+| Required tests | `go test ./internal/workflows/featureplanner/... -run TestValidatePlanTDDObligations` |
+| Test-first commands | `go test ./internal/workflows/featureplanner/... -run TestValidatePlanTDDObligations -count=1` |
 
 **Deliverable**: `ValidatePlanTDDObligations(plan FeaturePlan, knownIDs map[string]bool) error`
 that verifies every TDD obligation ID and atom `TestFirst.ObligationRefs`
@@ -216,10 +216,10 @@ references a known obligation from the product workflow ledger.
 | Dependencies | impl-0004 |
 | SDD refs | `docs/design-feature-planner-product-workflow-integration.md` |
 | TDD obligations | TDD-7 |
-| Required edit paths | `internal/featureplanner/validate.go` |
-| Allowed edit paths | `internal/featureplanner/validate.go`, `internal/featureplanner/validate_test.go` |
-| Required tests | `go test ./internal/featureplanner/... -run TestValidatePlan.*CoverageGate` |
-| Test-first commands | `go test ./internal/featureplanner/... -run TestValidatePlan.*CoverageGate -count=1` |
+| Required edit paths | `internal/workflows/featureplanner/validate.go` |
+| Allowed edit paths | `internal/workflows/featureplanner/validate.go`, `internal/workflows/featureplanner/validate_test.go` |
+| Required tests | `go test ./internal/workflows/featureplanner/... -run TestValidatePlan.*CoverageGate` |
+| Test-first commands | `go test ./internal/workflows/featureplanner/... -run TestValidatePlan.*CoverageGate -count=1` |
 
 **Deliverable**: Validation in `ValidatePlan` that blocks when
 `CoverageGateResult != nil && Status != "pass"`. Enforces the authority
@@ -243,9 +243,9 @@ gate never passed.
 | Dependencies | impl-0001, impl-0002, impl-0003, impl-0004, impl-0005, impl-0006, impl-0007 |
 | SDD refs | `docs/design-feature-planner-product-workflow-integration.md` |
 | TDD obligations | TDD-8 |
-| Required edit paths | `testdata/feature-planner-pw-integration/` (new fixture), `internal/featureplannercmd/feature_planner_test.go` |
-| Allowed edit paths | `testdata/feature-planner-pw-integration/`, `internal/featureplannercmd/feature_planner_test.go` |
-| Required tests | `go test ./internal/featureplannercmd/... -run TestFeaturePlanner_ProductWorkflowIntegration` |
+| Required edit paths | `testdata/feature-planner-pw-integration/` (new fixture), `internal/surfaces/cli/featureplanner/feature_planner_test.go` |
+| Allowed edit paths | `testdata/feature-planner-pw-integration/`, `internal/surfaces/cli/featureplanner/feature_planner_test.go` |
+| Required tests | `go test ./internal/surfaces/cli/featureplanner/... -run TestFeaturePlanner_ProductWorkflowIntegration` |
 | Test-first commands | N/A (integration test — fixture first, then test) |
 
 **Deliverable**: Fixture effort folder with `workflow_state.json`, `prd.md`,
@@ -268,10 +268,10 @@ ref validation, atom TDD obligations match ledger.
 | Dependencies | impl-0001, impl-0004 |
 | SDD refs | `docs/design-feature-planner-product-workflow-integration.md` |
 | TDD obligations | TDD-9 |
-| Required edit paths | `internal/featureplanner/types.go`, `internal/featureplanner/store.go` |
-| Allowed edit paths | `internal/featureplanner/types.go`, `internal/featureplanner/store.go`, `internal/featureplanner/store_test.go` |
-| Required tests | `go test ./internal/featureplanner/... -run TestFeatureState_EffortIdentity` |
-| Test-first commands | `go test ./internal/featureplanner/... -run TestFeatureState_EffortIdentity -count=1` |
+| Required edit paths | `internal/workflows/featureplanner/types.go`, `internal/workflows/featureplanner/store.go` |
+| Allowed edit paths | `internal/workflows/featureplanner/types.go`, `internal/workflows/featureplanner/store.go`, `internal/workflows/featureplanner/store_test.go` |
+| Required tests | `go test ./internal/workflows/featureplanner/... -run TestFeatureState_EffortIdentity` |
+| Test-first commands | `go test ./internal/workflows/featureplanner/... -run TestFeatureState_EffortIdentity -count=1` |
 
 **Deliverable**: Add `effort_id` and `effort_root` to `FeatureState`. Persist
 in `SaveBundle` and `LoadBundle` (FeatureState is serialized inside the Bundle). Include in feature plan JSON output.
@@ -287,16 +287,16 @@ in `SaveBundle` and `LoadBundle` (FeatureState is serialized inside the Bundle).
 
 | ID | Behavior | Command | Required before |
 |---|---|---|---|
-| TDD-1 | ProductWorkflowBrief type exists, JSON round-trips, threads through RunOptions | `go test ./internal/featureplanner/... -run TestProductWorkflowBrief` | implementation |
-| TDD-2 | Planner prompt injects product context when brief is non-nil, backward-compatible when nil | `go test ./internal/featureplanner/... -run TestBuildPlannerPrompt` | implementation |
-| TDD-3 | CLI accepts --effort-root and --effort-id flags, loads product workflow brief from fixture | `go test ./internal/featureplannercmd/... -run TestCLI_Effort` | implementation |
-| TDD-4 | SDDContract has structured refs, v2 schema round-trips, legacy refs migrate | `go test ./internal/featureplanner/... -run TestSDDContract_V2\|TestValidatePlan_AcceptsStructured\|TestValidatePlan_MigratesLegacy` | implementation |
-| TDD-5 | SDD refs validated against filesystem, missing files rejected, line suffixes stripped | `go test ./internal/featureplanner/... -run TestValidatePlanSDDRefs` | implementation |
-| TDD-6 | TDD obligation IDs cross-referenced against known ledger, unknown refs rejected | `go test ./internal/featureplanner/... -run TestValidatePlanTDDObligations` | implementation |
-| TDD-7 | Coverage gate result validated at intake, blocked gate rejects plan, nil gate accepted | `go test ./internal/featureplanner/... -run TestValidatePlan.*CoverageGate` | implementation |
-| TDD-8 | End-to-end test: fixture effort → planner prompt → valid plan → atom dispatch | `go test ./internal/featureplannercmd/... -run TestFeaturePlanner_ProductWorkflowIntegration` | implementation |
-| TDD-9 | FeatureState effort identity persists across save/load, nil fields survive | `go test ./internal/featureplanner/... -run TestFeatureState_EffortIdentity` | implementation |
-| TDD-10 | FeaturePlan v2 round-trips with CoverageGateResult, ValidateDurablePlan accepts both v1 and v2 | `go test ./internal/featureplanner/... -run "TestFeaturePlan_V2_RoundTrip\|TestValidatePlan_AcceptsV1AndV2"` | implementation |
+| TDD-1 | ProductWorkflowBrief type exists, JSON round-trips, threads through RunOptions | `go test ./internal/workflows/featureplanner/... -run TestProductWorkflowBrief` | implementation |
+| TDD-2 | Planner prompt injects product context when brief is non-nil, backward-compatible when nil | `go test ./internal/workflows/featureplanner/... -run TestBuildPlannerPrompt` | implementation |
+| TDD-3 | CLI accepts --effort-root and --effort-id flags, loads product workflow brief from fixture | `go test ./internal/surfaces/cli/featureplanner/... -run TestCLI_Effort` | implementation |
+| TDD-4 | SDDContract has structured refs, v2 schema round-trips, legacy refs migrate | `go test ./internal/workflows/featureplanner/... -run TestSDDContract_V2\|TestValidatePlan_AcceptsStructured\|TestValidatePlan_MigratesLegacy` | implementation |
+| TDD-5 | SDD refs validated against filesystem, missing files rejected, line suffixes stripped | `go test ./internal/workflows/featureplanner/... -run TestValidatePlanSDDRefs` | implementation |
+| TDD-6 | TDD obligation IDs cross-referenced against known ledger, unknown refs rejected | `go test ./internal/workflows/featureplanner/... -run TestValidatePlanTDDObligations` | implementation |
+| TDD-7 | Coverage gate result validated at intake, blocked gate rejects plan, nil gate accepted | `go test ./internal/workflows/featureplanner/... -run TestValidatePlan.*CoverageGate` | implementation |
+| TDD-8 | End-to-end test: fixture effort → planner prompt → valid plan → atom dispatch | `go test ./internal/surfaces/cli/featureplanner/... -run TestFeaturePlanner_ProductWorkflowIntegration` | implementation |
+| TDD-9 | FeatureState effort identity persists across save/load, nil fields survive | `go test ./internal/workflows/featureplanner/... -run TestFeatureState_EffortIdentity` | implementation |
+| TDD-10 | FeaturePlan v2 round-trips with CoverageGateResult, ValidateDurablePlan accepts both v1 and v2 | `go test ./internal/workflows/featureplanner/... -run "TestFeaturePlan_V2_RoundTrip\|TestValidatePlan_AcceptsV1AndV2"` | implementation |
 
 ## Non-Goals
 
@@ -328,7 +328,7 @@ in `SaveBundle` and `LoadBundle` (FeatureState is serialized inside the Bundle).
   `featureplannercmd` and share validation/state, so parallel implementation
   would conflict.
 - Before claiming an atom complete: focused tests pass, no regression in
-  `go test ./internal/featureplanner/...`, `git diff --check` clean.
+  `go test ./internal/workflows/featureplanner/...`, `git diff --check` clean.
 - After Atom 8: run `make build && make test`.
 - After Atom 9: run scripted feature-planner contract tests:
   `make eval LOGS=testdata/scripted-contracts/generated-logs/scripted-feature-planner-*.jsonl`.

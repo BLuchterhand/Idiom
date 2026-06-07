@@ -16,11 +16,11 @@
   "findings": [],
   "commands_reviewed": [
     "go build ./...",
-    "go test ./internal/productworkflow/...",
-    "go test ./cmd/idiom/... -run TestProductLintPerAtomCommitCoverage",
-    "go test ./internal/productworkflow/... -run TestCommitHash",
-    "go test ./internal/productworkflow/... -run TestValidatePerAtomCoverage",
-    "go test ./internal/productworkflow/... -run TestTransitionPurity"
+    "go test ./internal/workflows/productworkflow/...",
+    "go test ./internal/surfaces/cli/product/... -run TestProductLintPerAtomCommitCoverage",
+    "go test ./internal/workflows/productworkflow/... -run TestCommitHash",
+    "go test ./internal/workflows/productworkflow/... -run TestValidatePerAtomCoverage",
+    "go test ./internal/workflows/productworkflow/... -run TestTransitionPurity"
   ],
   "checks": {
     "types_commit_hash_field": "CommitHash string with omitempty correctly placed after ChangedPaths",

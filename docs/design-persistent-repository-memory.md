@@ -621,10 +621,10 @@ Every command must work without starting an inference session.
 idiom context build --path . --mode standard
 idiom context status --json
 idiom context query --query "what calls LoadView?" --resolution symbol --json
-idiom context zoom --handle symbol://internal/comprehension/views.go#LoadView --resolution symbol --json
+idiom context zoom --handle symbol://internal/repository/comprehension/views.go#LoadView --resolution symbol --json
 idiom context pack --task-file /tmp/task.md --mode plan --output /tmp/context-view.json
-idiom context impact --path internal/comprehension/views.go --json
-idiom context trace-pack --command "go test ./internal/comprehension/..." --path . --json
+idiom context impact --path internal/repository/comprehension/views.go --json
+idiom context trace-pack --command "go test ./internal/repository/comprehension/..." --path . --json
 idiom architect packet --task-file /tmp/task.md --schema planning_v2 --context-view /tmp/context-view.json --output /tmp/packet.json
 ```
 
@@ -634,9 +634,9 @@ External agents should be able to call the same functions through `idiom tool`:
 
 ```bash
 idiom tool context_pack --input '{"task":"localize graph view cache invalidation","mode":"plan","limit":8}'
-idiom tool context_query --input '{"query":"tests for internal/comprehension/views.go","resolution":"symbol"}'
-idiom tool context_zoom --input '{"handle":"file://internal/comprehension/views.go","resolution":"file"}'
-idiom tool context_trace_pack --input '{"command":"go test ./internal/comprehension/...","path":"."}'
+idiom tool context_query --input '{"query":"tests for internal/repository/comprehension/views.go","resolution":"symbol"}'
+idiom tool context_zoom --input '{"handle":"file://internal/repository/comprehension/views.go","resolution":"file"}'
+idiom tool context_trace_pack --input '{"command":"go test ./internal/repository/comprehension/...","path":"."}'
 idiom tool harness_audit --input '{"purpose":"behavior"}'
 ```
 

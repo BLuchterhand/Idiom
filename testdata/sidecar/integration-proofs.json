@@ -127,7 +127,7 @@
       ],
       "phase8_work_package": "P8.6",
       "replay_fixture": "testdata/sidecar/mcp-stdio-integration-proof.json",
-      "replay_test": "go test ./cmd/idiom -run TestP86MCPStdioIntegrationProofReplay -count=1",
+      "replay_test": "go test ./internal/surfaces/cli/mcp -run TestP86MCPStdioIntegrationProofReplay -count=1",
       "product_evidence_export_parity": true,
       "client_classifications": [
         "finance",

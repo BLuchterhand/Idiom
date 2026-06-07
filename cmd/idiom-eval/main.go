@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	evalcmd "idiom/internal/cmd/eval"
+	evalcmd "idiom/internal/surfaces/cli/eval"
 )
 
 func main() {
