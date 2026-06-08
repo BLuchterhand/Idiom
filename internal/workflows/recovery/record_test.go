@@ -35,6 +35,62 @@ func TestBuildPlanExecuteFailureRecordClassifiesPlannerBlocked(t *testing.T) {
 	}
 }
 
+func TestBuildPlanExecuteFailureRecordCarriesLockedContractAndInvariantFailures(t *testing.T) {
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:         "session-contract-context",
+		FailureKind:       "plan_artifact_invalid",
+		FailureReason:     "submit_plan violated a contract invariant",
+		RequiredEditPaths: []string{"pkg/feature.go"},
+		AllowedEditPaths:  []string{"pkg/feature_test.go"},
+		LockedContract: &ContractSnapshot{
+			ContractID:           "contract_plan_execute_123",
+			ContractHash:         "sha256:contract",
+			SnapshotID:           "snapshot-123",
+			SnapshotPath:         ".idiom/contracts/snapshot.json",
+			RuntimeContractID:    "runtime-123",
+			ProtocolHash:         "sha256:protocol",
+			WriteAllowedPaths:    []string{"pkg/feature.go"},
+			WriteAllowedExplicit: true,
+		},
+		InvariantFailures: []InvariantFailure{{
+			InvariantID:            "contract.required_edit_coverage",
+			FieldPath:              "submit_plan.edits[0].path",
+			Path:                   "pkg/feature.go",
+			Expected:               "path inside locked required_edit_paths",
+			Actual:                 "path omitted from submitted edits",
+			RequiredRepairEvidence: []string{"source-body evidence for pkg/feature.go", "raw_prompt: hidden"},
+		}},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	if record.LockedContract == nil {
+		t.Fatalf("expected locked contract snapshot")
+	}
+	if record.LockedContract.ContractID != "contract_plan_execute_123" ||
+		record.LockedContract.ContractHash != "sha256:contract" ||
+		record.LockedContract.SnapshotID != "snapshot-123" ||
+		record.LockedContract.SnapshotPath != ".idiom/contracts/snapshot.json" {
+		t.Fatalf("locked contract not preserved: %#v", record.LockedContract)
+	}
+	if !stringSlicesEqual(record.LockedContract.RequiredEditPaths, []string{"pkg/feature.go"}) ||
+		!stringSlicesEqual(record.LockedContract.AllowedEditPaths, []string{"pkg/feature_test.go"}) ||
+		!stringSlicesEqual(record.LockedContract.WriteAllowedPaths, []string{"pkg/feature.go"}) ||
+		!record.LockedContract.WriteAllowedExplicit {
+		t.Fatalf("locked contract scope not populated from source run: %#v", record.LockedContract)
+	}
+	if len(record.Failure.InvariantFailures) != 1 {
+		t.Fatalf("invariant failures=%#v", record.Failure.InvariantFailures)
+	}
+	failure := record.Failure.InvariantFailures[0]
+	if failure.InvariantID != "contract.required_edit_coverage" ||
+		failure.FieldPath != "submit_plan.edits[0].path" ||
+		failure.Path != "pkg/feature.go" ||
+		!strings.Contains(failure.RequiredRepairEvidence[1], "redacted") {
+		t.Fatalf("invariant failure not normalized/redacted: %#v", failure)
+	}
+}
+
 func TestWritePlanExecuteFailureRecordPreservesCreatedAt(t *testing.T) {
 	root := t.TempDir()
 	input := PlanExecuteFailureInput{
@@ -237,6 +293,16 @@ func TestClassifyPlanExecuteFailureRecognizesBudgetExhaustion(t *testing.T) {
 
 func TestClassifyPlanExecuteFailureRecognizesMissingPathAuthorization(t *testing.T) {
 	got := ClassifyPlanExecuteFailure("missing_edit_path_without_new_file_authorization", "plan would create missing edit path without new-file authorization", "")
+	if got != FailureClassPlanInvalid {
+		t.Fatalf("class=%q", got)
+	}
+	if action := nextActionForFailureClass(got); action != NextActionReviewDecomposition {
+		t.Fatalf("next action=%q", action)
+	}
+}
+
+func TestClassifyPlanExecuteFailureRecognizesTerminalContractFailure(t *testing.T) {
+	got := ClassifyPlanExecuteFailure("terminal_completion_contract_failed", "terminal completion success rejected: changed_path_outside_write_envelope:pkg/feature.go", "")
 	if got != FailureClassPlanInvalid {
 		t.Fatalf("class=%q", got)
 	}

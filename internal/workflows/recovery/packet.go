@@ -26,19 +26,20 @@ type DecompositionOptions struct {
 }
 
 type DecompositionPacket struct {
-	SchemaVersion  string          `json:"schema_version"`
-	PacketID       string          `json:"packet_id"`
-	FailureID      string          `json:"failure_id"`
-	CreatedAt      string          `json:"created_at"`
-	UpdatedAt      string          `json:"updated_at"`
-	SourceRun      SourceRun       `json:"source_run"`
-	Failure        Failure         `json:"failure"`
-	PartialState   PartialState    `json:"partial_state"`
-	ProductLinks   ProductLinks    `json:"product_links,omitempty"`
-	ResidualWork   []ResidualWork  `json:"residual_work,omitempty"`
-	CandidateAtoms []CandidateAtom `json:"candidate_atoms,omitempty"`
-	EvidenceRefs   []EvidenceRef   `json:"evidence_refs,omitempty"`
-	NextAction     string          `json:"next_valid_action"`
+	SchemaVersion  string            `json:"schema_version"`
+	PacketID       string            `json:"packet_id"`
+	FailureID      string            `json:"failure_id"`
+	CreatedAt      string            `json:"created_at"`
+	UpdatedAt      string            `json:"updated_at"`
+	SourceRun      SourceRun         `json:"source_run"`
+	LockedContract *ContractSnapshot `json:"locked_contract,omitempty"`
+	Failure        Failure           `json:"failure"`
+	PartialState   PartialState      `json:"partial_state"`
+	ProductLinks   ProductLinks      `json:"product_links,omitempty"`
+	ResidualWork   []ResidualWork    `json:"residual_work,omitempty"`
+	CandidateAtoms []CandidateAtom   `json:"candidate_atoms,omitempty"`
+	EvidenceRefs   []EvidenceRef     `json:"evidence_refs,omitempty"`
+	NextAction     string            `json:"next_valid_action"`
 }
 
 type ProductLinks struct {
@@ -49,11 +50,12 @@ type ProductLinks struct {
 }
 
 type ResidualWork struct {
-	ID           string        `json:"id"`
-	Title        string        `json:"title"`
-	Reason       string        `json:"reason"`
-	Paths        []string      `json:"paths,omitempty"`
-	EvidenceRefs []EvidenceRef `json:"evidence_refs,omitempty"`
+	ID                string             `json:"id"`
+	Title             string             `json:"title"`
+	Reason            string             `json:"reason"`
+	Paths             []string           `json:"paths,omitempty"`
+	EvidenceRefs      []EvidenceRef      `json:"evidence_refs,omitempty"`
+	InvariantFailures []InvariantFailure `json:"invariant_failures,omitempty"`
 }
 
 type CandidateAtom struct {
@@ -65,6 +67,7 @@ type CandidateAtom struct {
 	RequiredTests   []string `json:"required_tests,omitempty"`
 	Gates           []string `json:"gates,omitempty"`
 	ResidualWorkIDs []string `json:"residual_work_ids,omitempty"`
+	InvariantIDs    []string `json:"invariant_ids,omitempty"`
 }
 
 func BuildDecompositionPacket(record FailureRecord, opts DecompositionOptions) (DecompositionPacket, error) {
@@ -82,22 +85,28 @@ func BuildDecompositionPacket(record FailureRecord, opts DecompositionOptions) (
 	stamp := now.UTC().Format(time.RFC3339Nano)
 	action := NextActionForPartialState(record, partial)
 	packet := DecompositionPacket{
-		SchemaVersion: DecompositionPacketSchemaVersion,
-		PacketID:      "packet-" + record.FailureID,
-		FailureID:     record.FailureID,
-		CreatedAt:     stamp,
-		UpdatedAt:     stamp,
-		SourceRun:     record.SourceRun,
-		Failure:       record.Failure,
-		PartialState:  partial,
-		ProductLinks:  productLinksForRecord(record, partial),
-		EvidenceRefs:  record.Failure.EvidenceRefs,
-		NextAction:    action,
+		SchemaVersion:  DecompositionPacketSchemaVersion,
+		PacketID:       "packet-" + record.FailureID,
+		FailureID:      record.FailureID,
+		CreatedAt:      stamp,
+		UpdatedAt:      stamp,
+		SourceRun:      record.SourceRun,
+		LockedContract: cleanContractSnapshot(record.LockedContract, record.SourceRun),
+		Failure:        record.Failure,
+		PartialState:   partial,
+		ProductLinks:   productLinksForRecord(record, partial),
+		EvidenceRefs:   record.Failure.EvidenceRefs,
+		NextAction:     action,
 	}
 	if action != NextActionReviewDecomposition {
 		return packet, nil
 	}
-	paths := residualCandidatePaths(record, partial)
+	invariantFailures := cleanInvariantFailures(record.Failure.InvariantFailures)
+	packet.Failure.InvariantFailures = invariantFailures
+	paths := residualCandidatePathsForInvariantFailures(invariantFailures)
+	if len(paths) == 0 {
+		paths = residualCandidatePaths(record, partial)
+	}
 	if len(paths) == 0 {
 		packet.NextAction = NextActionInspectFailure
 		return packet, nil
@@ -106,14 +115,16 @@ func BuildDecompositionPacket(record FailureRecord, opts DecompositionOptions) (
 	for i, group := range groups {
 		residualID := fmt.Sprintf("residual-%03d", i+1)
 		atomID := fmt.Sprintf("recovery-%03d", i+1)
-		title := residualTitle(record, group)
+		groupInvariantFailures := invariantFailuresForResidualGroup(invariantFailures, group)
+		title := residualTitle(record, group, groupInvariantFailures)
 		requiredTests := requiredTestsForPaths(group)
 		packet.ResidualWork = append(packet.ResidualWork, ResidualWork{
-			ID:           residualID,
-			Title:        title,
-			Reason:       record.Failure.Class,
-			Paths:        group,
-			EvidenceRefs: residualEvidenceRefs(record, partial, group, requiredTests),
+			ID:                residualID,
+			Title:             title,
+			Reason:            residualReason(record, groupInvariantFailures),
+			Paths:             group,
+			EvidenceRefs:      residualEvidenceRefs(record, partial, group, requiredTests, groupInvariantFailures),
+			InvariantFailures: groupInvariantFailures,
 		})
 		packet.CandidateAtoms = append(packet.CandidateAtoms, CandidateAtom{
 			ID:              atomID,
@@ -123,6 +134,7 @@ func BuildDecompositionPacket(record FailureRecord, opts DecompositionOptions) (
 			RequiredTests:   requiredTests,
 			Gates:           []string{GateWorkspaceState, GateBriefLint, GateAtomIntake, GateScope, GateRequiredTests},
 			ResidualWorkIDs: []string{residualID},
+			InvariantIDs:    invariantIDsForFailures(groupInvariantFailures),
 		})
 	}
 	return packet, nil
@@ -233,14 +245,20 @@ func RenderRecoveryBrief(root string, packet DecompositionPacket, atom Candidate
 	fmt.Fprintf(&b, "Status: ready-for-dispatch\n")
 	fmt.Fprintf(&b, "Recovery Packet: `%s`\n", packet.PacketID)
 	fmt.Fprintf(&b, "Failure ID: `%s`\n\n", packet.FailureID)
+	if packet.LockedContract != nil {
+		fmt.Fprintf(&b, "## Locked Contract\n\n")
+		writeBriefContractSnapshot(&b, packet.LockedContract)
+		fmt.Fprintf(&b, "\n")
+	}
 	fmt.Fprintf(&b, "## Files to Modify (EXHAUSTIVE allowlist)\n\n")
 	fmt.Fprintf(&b, "| File | Change |\n")
 	fmt.Fprintf(&b, "| --- | --- |\n")
 	for _, path := range atom.RequiredPaths {
+		change := recoveryBriefChangeForPath(packet, atom, path)
 		if fileExists(root, path) {
-			fmt.Fprintf(&b, "| `%s` | MODIFY `%s:1` with the smallest recovery repair for `%s`. |\n", path, path, packet.Failure.Class)
+			fmt.Fprintf(&b, "| `%s` | MODIFY `%s:1` to repair %s. |\n", path, path, change)
 		} else {
-			fmt.Fprintf(&b, "| `%s` | CREATE the recovery artifact required for `%s`. |\n", path, packet.Failure.Class)
+			fmt.Fprintf(&b, "| `%s` | CREATE the recovery artifact required to repair %s. |\n", path, change)
 		}
 	}
 	fmt.Fprintf(&b, "\n## Verified Current State\n\n")
@@ -251,8 +269,22 @@ func RenderRecoveryBrief(root string, packet DecompositionPacket, atom Candidate
 			fmt.Fprintf(&b, "- `%s`: file is absent in the current workspace and is treated as a create target.\n", path)
 		}
 	}
+	if failures := invariantFailuresForAtom(packet, atom); len(failures) > 0 {
+		fmt.Fprintf(&b, "\n## Invariant Failures\n\n")
+		fmt.Fprintf(&b, "| Invariant | Field/Path | Expected | Actual | Required Repair Evidence |\n")
+		fmt.Fprintf(&b, "| --- | --- | --- | --- | --- |\n")
+		for _, failure := range failures {
+			fmt.Fprintf(&b, "| `%s` | `%s` | %s | %s | %s |\n",
+				failure.InvariantID,
+				briefInvariantFieldPath(failure),
+				briefTableCell(failure.Expected),
+				briefTableCell(failure.Actual),
+				briefRepairEvidenceCell(failure.RequiredRepairEvidence),
+			)
+		}
+	}
 	fmt.Fprintf(&b, "\n## Required Edits\n\n")
-	fmt.Fprintf(&b, "Apply only the residual recovery repair for candidate `%s`; preserve the failure packet's required path allowlist.\n", atom.ID)
+	fmt.Fprintf(&b, "Apply only the residual recovery repair for candidate `%s`; preserve the locked contract and do not broaden scope without a typed authority delta.\n", atom.ID)
 	if packet.Failure.Summary != "" {
 		fmt.Fprintf(&b, "\nFailure summary: %s\n", packet.Failure.Summary)
 	}
@@ -283,11 +315,54 @@ func writeBriefProductLinks(b *strings.Builder, label string, paths []string) {
 	}
 }
 
+func writeBriefContractSnapshot(b *strings.Builder, snapshot *ContractSnapshot) {
+	if snapshot == nil {
+		return
+	}
+	for _, item := range []struct {
+		label string
+		value string
+	}{
+		{label: "Contract ID", value: snapshot.ContractID},
+		{label: "Contract Hash", value: snapshot.ContractHash},
+		{label: "Snapshot ID", value: snapshot.SnapshotID},
+		{label: "Snapshot Path", value: snapshot.SnapshotPath},
+		{label: "Runtime Contract", value: snapshot.RuntimeContractID},
+		{label: "Protocol Hash", value: snapshot.ProtocolHash},
+	} {
+		if item.value != "" {
+			fmt.Fprintf(b, "- %s: `%s`\n", item.label, item.value)
+		}
+	}
+	if len(snapshot.RequiredEditPaths) > 0 {
+		fmt.Fprintf(b, "- Required Edit Paths: `%s`\n", strings.Join(snapshot.RequiredEditPaths, "`, `"))
+	}
+	if len(snapshot.AllowedEditPaths) > 0 {
+		fmt.Fprintf(b, "- Allowed Edit Paths: `%s`\n", strings.Join(snapshot.AllowedEditPaths, "`, `"))
+	}
+	if len(snapshot.WriteAllowedPaths) > 0 {
+		fmt.Fprintf(b, "- Write Allowed Paths: `%s`\n", strings.Join(snapshot.WriteAllowedPaths, "`, `"))
+	}
+	if snapshot.WriteAllowedExplicit {
+		b.WriteString("- Write Allowed Explicit: `true`\n")
+	}
+}
+
 func residualCandidatePaths(record FailureRecord, partial PartialState) []string {
 	return cleanPathList(append(append([]string{}, record.SourceRun.RequiredEditPaths...), partial.ChangedPaths...))
 }
 
-func residualEvidenceRefs(record FailureRecord, partial PartialState, paths []string, requiredTests []string) []EvidenceRef {
+func residualCandidatePathsForInvariantFailures(failures []InvariantFailure) []string {
+	var paths []string
+	for _, failure := range failures {
+		if path := cleanRelPath(failure.Path); path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return cleanPathList(paths)
+}
+
+func residualEvidenceRefs(record FailureRecord, partial PartialState, paths []string, requiredTests []string, failures []InvariantFailure) []EvidenceRef {
 	requiredPaths := pathSet(record.SourceRun.RequiredEditPaths)
 	changedPaths := pathSet(partial.ChangedPaths)
 	groupPaths := pathSet(paths)
@@ -309,6 +384,9 @@ func residualEvidenceRefs(record FailureRecord, partial PartialState, paths []st
 		if test = strings.TrimSpace(test); test != "" {
 			refs = appendUniqueEvidenceRef(refs, EvidenceRef{Kind: "required_test", ID: test})
 		}
+	}
+	for _, failure := range failures {
+		refs = appendUniqueEvidenceRef(refs, EvidenceRef{Kind: "invariant_failure", ID: failure.InvariantID, Path: failure.Path})
 	}
 	return refs
 }
@@ -387,7 +465,13 @@ func groupResidualPaths(paths []string) [][]string {
 	return groups
 }
 
-func residualTitle(record FailureRecord, paths []string) string {
+func residualTitle(record FailureRecord, paths []string, failures []InvariantFailure) string {
+	if len(failures) == 1 {
+		if path := cleanRelPath(failures[0].Path); path != "" {
+			return fmt.Sprintf("Repair %s invariant on %s", failures[0].InvariantID, filepath.Base(path))
+		}
+		return fmt.Sprintf("Repair %s invariant", failures[0].InvariantID)
+	}
 	if len(paths) == 1 {
 		return fmt.Sprintf("Recover %s after %s", filepath.Base(paths[0]), record.Failure.Class)
 	}
@@ -396,6 +480,101 @@ func residualTitle(record FailureRecord, paths []string) string {
 		return fmt.Sprintf("Recover %s paths after %s", dir, record.Failure.Class)
 	}
 	return fmt.Sprintf("Recover residual paths after %s", record.Failure.Class)
+}
+
+func residualReason(record FailureRecord, failures []InvariantFailure) string {
+	ids := invariantIDsForFailures(failures)
+	if len(ids) > 0 {
+		return strings.Join(ids, ", ")
+	}
+	return record.Failure.Class
+}
+
+func invariantFailuresForResidualGroup(failures []InvariantFailure, paths []string) []InvariantFailure {
+	groupPaths := pathSet(paths)
+	var out []InvariantFailure
+	for _, failure := range failures {
+		if path := cleanRelPath(failure.Path); path != "" && groupPaths[path] {
+			out = append(out, failure)
+		}
+	}
+	return out
+}
+
+func invariantIDsForFailures(failures []InvariantFailure) []string {
+	seen := map[string]bool{}
+	var ids []string
+	for _, failure := range failures {
+		id := strings.TrimSpace(failure.InvariantID)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func invariantFailuresForAtom(packet DecompositionPacket, atom CandidateAtom) []InvariantFailure {
+	neededResiduals := map[string]bool{}
+	for _, id := range atom.ResidualWorkIDs {
+		if id = strings.TrimSpace(id); id != "" {
+			neededResiduals[id] = true
+		}
+	}
+	var failures []InvariantFailure
+	for _, residual := range packet.ResidualWork {
+		if neededResiduals[residual.ID] {
+			failures = append(failures, residual.InvariantFailures...)
+		}
+	}
+	if len(failures) > 0 {
+		return cleanInvariantFailures(failures)
+	}
+	return cleanInvariantFailures(packet.Failure.InvariantFailures)
+}
+
+func recoveryBriefChangeForPath(packet DecompositionPacket, atom CandidateAtom, path string) string {
+	failures := invariantFailuresForAtom(packet, atom)
+	var ids []string
+	for _, failure := range failures {
+		if cleanRelPath(failure.Path) == cleanRelPath(path) {
+			ids = append(ids, failure.InvariantID)
+		}
+	}
+	ids = cleanRecoveryTextList(ids, 120)
+	if len(ids) > 0 {
+		return "invariant " + strings.Join(ids, ", ")
+	}
+	return "`" + packet.Failure.Class + "`"
+}
+
+func briefInvariantFieldPath(failure InvariantFailure) string {
+	if failure.FieldPath != "" && failure.Path != "" {
+		return failure.FieldPath + " / " + failure.Path
+	}
+	if failure.FieldPath != "" {
+		return failure.FieldPath
+	}
+	return failure.Path
+}
+
+func briefTableCell(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = strings.ReplaceAll(value, "|", "\\|")
+	value = strings.ReplaceAll(value, "\n", " ")
+	return value
+}
+
+func briefRepairEvidenceCell(values []string) string {
+	var cleaned []string
+	for _, value := range cleanRecoveryTextList(values, 200) {
+		cleaned = append(cleaned, briefTableCell(value))
+	}
+	return strings.Join(cleaned, "; ")
 }
 
 func complexityForPaths(paths []string) string {

@@ -117,6 +117,7 @@ type FeatureState struct {
 	Plan                    FeaturePlan               `json:"plan,omitempty"`
 	Atoms                   []FeatureAtomState        `json:"atoms,omitempty"`
 	TDDPreExecutionEvidence []TDDPreExecutionEvidence `json:"tdd_pre_execution_evidence,omitempty"`
+	AuthorityDeltas         []PlanAuthorityDelta      `json:"authority_deltas,omitempty"`
 	OpenQuestions           []PlannerQuestion         `json:"open_questions,omitempty"`
 	ActiveRuns              []ActiveRun               `json:"active_runs,omitempty"`
 	Leases                  []Lease                   `json:"leases,omitempty"`
@@ -388,6 +389,18 @@ type TDDPreExecutionEvidence struct {
 	CreatedAt                  string   `json:"created_at,omitempty"`
 }
 
+type PlanAuthorityDelta struct {
+	QuestionID     string   `json:"question_id"`
+	AuthorityKind  string   `json:"authority_kind"`
+	EvidenceRefs   []string `json:"evidence_refs"`
+	AffectedPaths  []string `json:"affected_paths,omitempty"`
+	AffectedFields []string `json:"affected_fields,omitempty"`
+	Expected       string   `json:"expected,omitempty"`
+	Actual         string   `json:"actual,omitempty"`
+	Revision       int      `json:"revision"`
+	CreatedAt      string   `json:"created_at"`
+}
+
 type RuntimeEnvelope struct {
 	ContractID       string   `json:"contract_id,omitempty"`
 	ProtocolHash     string   `json:"protocol_hash,omitempty"`
@@ -427,6 +440,7 @@ type PlannerQuestion struct {
 	RawQuestionRef      string   `json:"raw_question_ref,omitempty"`
 	BlockingContractIDs []string `json:"blocking_contract_ids,omitempty"`
 	AffectedPaths       []string `json:"affected_paths,omitempty"`
+	AffectedFields      []string `json:"affected_fields,omitempty"`
 	EvidenceRefs        []string `json:"evidence_refs,omitempty"`
 	AskedAt             string   `json:"asked_at,omitempty"`
 	RequiredBefore      string   `json:"required_before,omitempty"`

@@ -1,6 +1,7 @@
 package planexecute
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -33,6 +34,7 @@ const (
 	RunFailureSourceSatisfiedUnsupportedEvidence = "source_satisfied_unsupported_evidence"
 	RunFailureVerificationRequired               = "verification_failed"
 	RunFailureMissingEditPathWithoutNewFileAuth  = "missing_edit_path_without_new_file_authorization"
+	RunFailureTerminalCompletionContractFailed   = "terminal_completion_contract_failed"
 )
 
 func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) RunResult {
@@ -87,6 +89,10 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	writeAllowedPaths := scopeContract.WriteAllowedPaths
 	writeAllowedExplicit := scopeContract.WriteAllowedExplicit
 	editSetObligations := scopeContract.EditSetObligations
+	authorizedNewFiles := mergePlanExecutePaths(append(
+		append([]string(nil), opts.AuthorizedNewFiles...),
+		planExecuteCompileLegacyAuthorizedNewFiles(prompt, append(append([]string(nil), requiredEditPaths...), allowedEditPaths...))...,
+	))
 	verificationPlan := PlanVerification(VerificationPlannerInput{
 		WorkspaceRoot: cfg.Workspace.Root,
 		Prompt:        prompt,
@@ -94,6 +100,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	verificationCommands := verificationPlan.CommandStrings()
 	opts.ScopeContract = scopeContract
 	opts.EditSetObligations = editSetObligations
+	opts.AuthorizedNewFiles = authorizedNewFiles
 	promptRequiredEditPaths := RequiredEditPathsFromPrompt(prompt)
 	explicitRequiredEditPaths := planExecuteUniqueRequiredPaths([]string(opts.RequiredEditPaths))
 	logCLIPhase(rec, "plan_execute_required_edit_paths", map[string]any{
@@ -124,6 +131,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 
 	progress := NewProgressState(sessionID, prompt, opts.PromptFile, requiredEditPaths, allowedEditPaths, time.Now().UTC())
 	progress.SetWriteAllowedEnvelope(writeAllowedPaths, writeAllowedExplicit)
+	progress.SetScopeContractID(scopeContract.ContractID)
 	progress.EditSetObligations = editSetObligations
 	progressPath, err := saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 	if err != nil {
@@ -203,7 +211,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			fmt.Fprintln(stdout, "--- plan-then-execute summary ---")
 			fmt.Fprintln(stdout, "source-satisfied: executor skipped because every exact edit already matched the current workspace.")
 		}
-		return finalizePlanExecuteRunResult(cfg.Workspace.Root, progress, progressPath, opts.JSONEvents, stdout, planExecuteRunResultInput{ExitCode: 0, SourceSatisfied: true, SourceSatisfiedEvidencePaths: autoExact.AppliedPaths})
+		return finalizePlanExecuteRunResult(cfg.Workspace.Root, progress, progressPath, opts.JSONEvents, stdout, planExecuteRunResultInput{ExitCode: 0, SourceSatisfied: true, SourceSatisfiedEvidencePaths: autoExact.AppliedPaths, SourceSatisfiedEvidence: planExecuteHarnessObservedSourceEvidence(autoExact.AppliedPaths)})
 	}
 	if autoExact.Submitted {
 		answer = autoExact.Result.Summary
@@ -439,7 +447,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	if emitPhase != nil {
 		emitPhase("planning", fmt.Sprintf("Plan created with %d edit(s)", len(plan.Edits)))
 	}
-	if mismatch := preflightPlanMissingPathAuthorization(cfg.Workspace.Root, prompt, plan); mismatch != nil {
+	if mismatch := preflightPlanMissingPathAuthorization(cfg.Workspace.Root, authorizedNewFiles, plan); mismatch != nil {
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "planner_plan_rejected", map[string]any{
 			"path":   planPath,
 			"reason": mismatch.Reason,
@@ -478,7 +486,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			opts.OnEditProgress(step, total, path, succeeded)
 		}
 	}
-	report, runErr := RunExecutorPhaseScopedWithVerificationPlanAndWriteScope(cfg, plan, executorRequiredEditPaths, allowedEditPaths, writeAllowedPaths, writeAllowedExplicit, verificationPlan, opts.JSONEvents, stdout, progressCallback)
+	report, runErr := RunExecutorPhaseScopedWithVerificationPlanAndWriteScopeAuthorizedNewFiles(cfg, plan, executorRequiredEditPaths, allowedEditPaths, writeAllowedPaths, writeAllowedExplicit, authorizedNewFiles, verificationPlan, opts.JSONEvents, stdout, progressCallback)
 	if runErr == nil && progressSaveErr != nil {
 		runErr = progressSaveErr
 	}
@@ -527,10 +535,25 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		progress.MarkReviewComplete(reviewReport, reviewErr)
 		if (sourceSanityRepairRequired || verificationRepairRequired) && reviewErr == nil {
 			if ReviewRepairResolvedVerificationFailure(reviewReport) {
-				if verificationRepairRequired {
+				sourceMgr := workspace.NewManager(cfg.Workspace)
+				_, sourceEvidence, sourceErr := runPlanExecuteSourceSanity(context.Background(), sourceMgr, cfg.Workspace.Root, planChangedPaths(plan), opts.JSONEvents, stdout)
+				report.SourceSanity = sourceEvidence
+				progress.Executor.SourceSanity = append([]PhaseEvidenceCheck(nil), sourceEvidence...)
+				if sourceErr != nil {
+					runErr = sourceErr
+					progress.Status = ProgressStatusFailed
+					progress.FailureKind = RunFailureSourceSanityFailed
+					progress.FailureReason = sanitizeProgressReason(sourceErr.Error())
+				} else {
 					_, verificationEvidence, verificationErr := runPlanExecuteVerificationPlan(cfg.Workspace.Root, verificationPlan, opts.JSONEvents, stdout)
 					report.Verification = verificationEvidence
 					progress.Executor.Verification = append([]PhaseEvidenceCheck(nil), verificationEvidence...)
+					report.VerificationCommands = append([]VerificationCommand(nil), verificationPlan.Commands...)
+					report.VerificationSkips = append([]VerificationSkip(nil), verificationPlan.Skips...)
+					report.VerificationRejects = append([]VerificationReject(nil), verificationPlan.Rejects...)
+					progress.Executor.VerificationCommands = append([]VerificationCommand(nil), verificationPlan.Commands...)
+					progress.Executor.VerificationSkips = append([]VerificationSkip(nil), verificationPlan.Skips...)
+					progress.Executor.VerificationRejects = append([]VerificationReject(nil), verificationPlan.Rejects...)
 					if verificationErr != nil {
 						runErr = verificationErr
 						progress.Status = ProgressStatusFailed
@@ -539,11 +562,12 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 					} else {
 						runErr = nil
 						verificationRepairRequired = false
+						sourceSanityRepairRequired = false
+						progress.Status = ProgressStatusCompleted
+						progress.FailureKind = ""
+						progress.FailureReason = ""
 					}
-				} else {
-					runErr = nil
 				}
-				sourceSanityRepairRequired = false
 			} else {
 				progress.Status = ProgressStatusFailed
 				if verificationRepairRequired {
@@ -619,6 +643,9 @@ func runResumeReviewRepair(cfg config.Config, opts Options, prompt string, state
 		state.EditSetObligations = planExecuteEditSetObligations(opts, prompt)
 	}
 	state.EditSetObligations = state.EditSetObligations.Normalized()
+	if strings.TrimSpace(state.ScopeContractID) == "" {
+		state.SetScopeContractID(NewPlanScopeContract(requiredEditPaths, allowedEditPaths, state.EditSetObligations).ContractID)
+	}
 	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "resume_state_loaded", ProgressStateEventFields(state, statePath))
 	if opts.OnPhase != nil {
 		opts.OnPhase("reviewing", "Resuming review-repair from executor progress state...")
@@ -647,19 +674,43 @@ func runResumeReviewRepair(cfg config.Config, opts Options, prompt string, state
 	reviewBaseline := state.ReviewBaseline
 	reviewReport, reviewErr := RunReviewRepairPhase(cfg, prompt, plan, requiredEditPaths, &reviewBaseline, report, reviewOpts, stdout, promptRun, rec)
 	state.MarkReviewComplete(reviewReport, reviewErr)
-	if reviewErr == nil && ExecutorVerificationFailed(report, fmt.Errorf("verification failed")) && ReviewRepairResolvedVerificationFailure(reviewReport) {
+	sourceSanityResumeRepairRequired := ExecutorSourceSanityFailed(report, fmt.Errorf("source_sanity failed"))
+	verificationResumeRepairRequired := ExecutorVerificationFailed(report, fmt.Errorf("verification failed"))
+	if reviewErr == nil && (sourceSanityResumeRepairRequired || verificationResumeRepairRequired) && ReviewRepairResolvedVerificationFailure(reviewReport) {
 		verificationPlan := PlanVerification(VerificationPlannerInput{
 			WorkspaceRoot: cfg.Workspace.Root,
 			Prompt:        prompt,
 			ChangedPaths:  planChangedPaths(plan),
 		})
-		_, verificationEvidence, verificationErr := runPlanExecuteVerificationPlan(cfg.Workspace.Root, verificationPlan, opts.JSONEvents, stdout)
-		state.Executor.Verification = append([]PhaseEvidenceCheck(nil), verificationEvidence...)
-		if verificationErr != nil {
-			reviewErr = verificationErr
+		sourceMgr := workspace.NewManager(cfg.Workspace)
+		_, sourceEvidence, sourceErr := runPlanExecuteSourceSanity(context.Background(), sourceMgr, cfg.Workspace.Root, planChangedPaths(plan), opts.JSONEvents, stdout)
+		state.Executor.SourceSanity = append([]PhaseEvidenceCheck(nil), sourceEvidence...)
+		if sourceErr != nil {
+			reviewErr = sourceErr
+			state.Status = ProgressStatusFailed
+			state.FailureKind = RunFailureSourceSanityFailed
+			state.FailureReason = sanitizeProgressReason(sourceErr.Error())
+		} else {
+			_, verificationEvidence, verificationErr := runPlanExecuteVerificationPlan(cfg.Workspace.Root, verificationPlan, opts.JSONEvents, stdout)
+			state.Executor.Verification = append([]PhaseEvidenceCheck(nil), verificationEvidence...)
+			state.Executor.VerificationCommands = append([]VerificationCommand(nil), verificationPlan.Commands...)
+			state.Executor.VerificationSkips = append([]VerificationSkip(nil), verificationPlan.Skips...)
+			state.Executor.VerificationRejects = append([]VerificationReject(nil), verificationPlan.Rejects...)
+			if verificationErr != nil {
+				reviewErr = verificationErr
+				state.Status = ProgressStatusFailed
+				state.FailureKind = RunFailureVerificationRequired
+				state.FailureReason = sanitizeProgressReason(verificationErr.Error())
+			} else {
+				state.Status = ProgressStatusCompleted
+				state.FailureKind = ""
+				state.FailureReason = ""
+			}
+		}
+		if reviewErr != nil && state.FailureKind == "" {
 			state.Status = ProgressStatusFailed
 			state.FailureKind = RunFailureVerificationRequired
-			state.FailureReason = sanitizeProgressReason(verificationErr.Error())
+			state.FailureReason = sanitizeProgressReason(reviewErr.Error())
 		}
 	}
 	progressPath, err := saveRunProgressState(cfg.Workspace.Root, &state, opts.JSONEvents, stdout, "resume_state_saved")
@@ -755,6 +806,7 @@ type planExecuteRunResultInput struct {
 	PlannerAnswer                string
 	SourceSatisfied              bool
 	SourceSatisfiedEvidencePaths []string
+	SourceSatisfiedEvidence      []plancontract.SourceSatisfiedEvidenceRef
 }
 
 func finalizePlanExecuteRunResult(root string, state ProgressState, progressPath string, jsonEvents bool, stdout io.Writer, input planExecuteRunResultInput) RunResult {
@@ -767,6 +819,7 @@ func finalizePlanExecuteRunResult(root string, state ProgressState, progressPath
 		ExitCode:                     input.ExitCode,
 		SourceSatisfied:              input.SourceSatisfied,
 		SourceSatisfiedEvidencePaths: input.SourceSatisfiedEvidencePaths,
+		SourceSatisfiedEvidence:      input.SourceSatisfiedEvidence,
 		FailureID:                    recoveryInput.failureID,
 		RecordPath:                   recoveryInput.recordPath,
 		PacketPath:                   recoveryInput.packetPath,
@@ -780,6 +833,38 @@ func finalizePlanExecuteRunResult(root string, state ProgressState, progressPath
 		record.FailureReason = input.FailureReason
 	}
 	record = NormalizePlanExecuteTerminalCompletionRecord(record)
+	if record.TerminalClass == PlanExecuteTerminalClassSuccess && len(record.ValidationFailures) > 0 {
+		validationFailures := append([]string(nil), record.ValidationFailures...)
+		input.ExitCode = 1
+		input.FailureKind = RunFailureTerminalCompletionContractFailed
+		input.FailureReason = sanitizeProgressReason("terminal completion success rejected: " + strings.Join(validationFailures, "; "))
+		record.ExitCode = input.ExitCode
+		record.FailureKind = input.FailureKind
+		record.FailureReason = input.FailureReason
+		record.TerminalClass = PlanExecuteTerminalClassFailed
+		record.Outcome = PlanExecuteTerminalOutcomeFailed
+		record.FailureInvariants = planExecuteTerminalFailureInvariants(record)
+		record.ValidationFailures = validationFailures
+		state.Status = ProgressStatusFailed
+		state.FailureKind = input.FailureKind
+		state.FailureReason = input.FailureReason
+		if savedPath, saveErr := SaveProgressState(root, &state); saveErr == nil && savedPath != "" {
+			progressPath = savedPath
+		}
+		recoveryRecord, recordPath, recoveryErr := recovery.WritePlanExecuteFailureRecord(root, RecoveryInputFromProgressWithInvariants(state, progressPath, planExecuteRecoveryInvariantFailures(record)), time.Now().UTC())
+		if recoveryErr == nil {
+			recoveryInput.failureID = recoveryRecord.FailureID
+			recoveryInput.recordPath = recordPath
+			recoveryInput.nextAction = recoveryRecord.NextAction
+			if _, packetPath, packetErr := recovery.WriteDecompositionPacketForFailureRecord(root, recoveryRecord, time.Now().UTC()); packetErr == nil {
+				recoveryInput.packetPath = packetPath
+			}
+			record.FailureID = recoveryInput.failureID
+			record.RecordPath = recoveryInput.recordPath
+			record.PacketPath = recoveryInput.packetPath
+			record.NextAction = recoveryInput.nextAction
+		}
+	}
 	completionPath, err := SavePlanExecuteTerminalCompletionRecord(root, record)
 	if err != nil {
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "terminal_completion_save_failed", map[string]any{
@@ -838,6 +923,13 @@ func planExecuteTerminalRecoveryInput(root string, sessionID string) planExecute
 
 // RecoveryInputFromProgress maps plan-execute progress into the recovery failure input contract.
 func RecoveryInputFromProgress(state ProgressState, statePath string) recovery.PlanExecuteFailureInput {
+	return RecoveryInputFromProgressWithInvariants(state, statePath, nil)
+}
+
+func RecoveryInputFromProgressWithInvariants(state ProgressState, statePath string, invariantFailures []recovery.InvariantFailure) recovery.PlanExecuteFailureInput {
+	if len(invariantFailures) == 0 {
+		invariantFailures = progressInvariantFailures(state)
+	}
 	return recovery.PlanExecuteFailureInput{
 		SessionID:         state.SessionID,
 		ProgressStatePath: statePath,
@@ -850,6 +942,7 @@ func RecoveryInputFromProgress(state ProgressState, statePath string) recovery.P
 		PlanPath:          state.PlanPath,
 		PlanID:            state.PlanID,
 		PackID:            state.PackID,
+		LockedContract:    progressLockedContractSnapshot(state),
 		RequiredEditPaths: state.RequiredEditPaths,
 		AllowedEditPaths:  state.AllowedEditPaths,
 		ChangedPaths:      state.ChangedPaths,
@@ -859,5 +952,100 @@ func RecoveryInputFromProgress(state ProgressState, statePath string) recovery.P
 		ReviewStatus:      state.Review.Status,
 		ReviewReasonClass: state.Review.ReasonClass,
 		ReviewError:       state.Review.Error,
+		InvariantFailures: invariantFailures,
 	}
+}
+
+func progressLockedContractSnapshot(state ProgressState) *recovery.ContractSnapshot {
+	if strings.TrimSpace(state.ScopeContractID) == "" && strings.TrimSpace(state.ScopeContractHash) == "" && len(state.RequiredEditPaths) == 0 && len(state.AllowedEditPaths) == 0 && len(state.WriteAllowedPaths) == 0 && !state.WriteAllowedExplicit {
+		return nil
+	}
+	return &recovery.ContractSnapshot{
+		ContractID:           state.ScopeContractID,
+		ContractHash:         state.ScopeContractHash,
+		RuntimeContractID:    state.ScopeContractID,
+		ProtocolHash:         state.ScopeContractHash,
+		RequiredEditPaths:    append([]string(nil), state.RequiredEditPaths...),
+		AllowedEditPaths:     append([]string(nil), state.AllowedEditPaths...),
+		WriteAllowedPaths:    append([]string(nil), state.WriteAllowedPaths...),
+		WriteAllowedExplicit: state.WriteAllowedExplicit,
+	}
+}
+
+func progressInvariantFailures(state ProgressState) []recovery.InvariantFailure {
+	kind := strings.TrimSpace(state.FailureKind)
+	reason := strings.TrimSpace(state.FailureReason)
+	if kind == "" && reason == "" {
+		return nil
+	}
+	return []recovery.InvariantFailure{{
+		InvariantID:            firstProgressNonEmptyString(kind, "plan_execute_failed"),
+		FieldPath:              "progress.failure",
+		Expected:               "terminal_success_contract_satisfied",
+		Actual:                 sanitizeProgressReason(firstProgressNonEmptyString(reason, kind)),
+		RequiredRepairEvidence: []string{"passing_terminal_completion"},
+	}}
+}
+
+func planExecuteRecoveryInvariantFailures(record PlanExecuteTerminalCompletionRecord) []recovery.InvariantFailure {
+	var failures []recovery.InvariantFailure
+	for _, invariant := range record.FailureInvariants {
+		if strings.TrimSpace(invariant.Status) != "failed" {
+			continue
+		}
+		failures = append(failures, recovery.InvariantFailure{
+			InvariantID:            invariant.Code,
+			FieldPath:              "terminal_completion." + invariant.Code,
+			Path:                   planExecuteInvariantFailurePath(invariant.Code),
+			Expected:               "passed",
+			Actual:                 firstProgressNonEmptyString(invariant.Reason, invariant.Status),
+			RequiredRepairEvidence: []string{"passing_terminal_completion"},
+		})
+	}
+	for _, validationFailure := range record.ValidationFailures {
+		validationFailure = strings.TrimSpace(validationFailure)
+		if validationFailure == "" {
+			continue
+		}
+		failures = append(failures, recovery.InvariantFailure{
+			InvariantID:            validationFailure,
+			FieldPath:              "terminal_completion.validation_failures." + validationFailure,
+			Path:                   planExecuteInvariantFailurePath(validationFailure),
+			Expected:               "absent",
+			Actual:                 validationFailure,
+			RequiredRepairEvidence: []string{"passing_terminal_completion"},
+		})
+	}
+	return failures
+}
+
+func planExecuteInvariantFailurePath(code string) string {
+	prefix, suffix, ok := strings.Cut(strings.TrimSpace(code), ":")
+	if !ok {
+		return ""
+	}
+	switch prefix {
+	case "changed_path_outside_write_envelope",
+		"required_path_missing",
+		"required_path_covered",
+		"source_sanity_failed",
+		"source_sanity_missing",
+		"missing_required_scope",
+		"outside_required_scope",
+		"pending_approval",
+		"outside_approved_scope",
+		"missing_current_state_evidence",
+		"source_satisfied_missing_required_scope",
+		"source_satisfied_outside_required_scope",
+		"source_satisfied_pending_approval",
+		"source_satisfied_outside_approved_scope",
+		"source_satisfied_missing_current_state_evidence":
+	default:
+		return ""
+	}
+	suffix = strings.TrimSpace(suffix)
+	if suffix == "" || suffix == "(unknown)" || strings.ContainsAny(suffix, " \t\r\n") {
+		return ""
+	}
+	return plancontract.NormalizeScopePath(suffix)
 }

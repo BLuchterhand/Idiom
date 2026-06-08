@@ -48,6 +48,8 @@ type ProgressState struct {
 	AllowedEditPaths     []string             `json:"allowed_edit_paths,omitempty"`
 	WriteAllowedPaths    []string             `json:"write_allowed_paths,omitempty"`
 	WriteAllowedExplicit bool                 `json:"write_allowed_explicit,omitempty"`
+	ScopeContractID      string               `json:"scope_contract_id,omitempty"`
+	ScopeContractHash    string               `json:"scope_contract_hash,omitempty"`
 	EditSetObligations   EditSetObligations   `json:"edit_set_obligations,omitempty"`
 	ChangedPaths         []string             `json:"changed_paths,omitempty"`
 	TotalEdits           int                  `json:"total_edits,omitempty"`
@@ -66,14 +68,17 @@ type ProgressEdit struct {
 }
 
 type ProgressExecutor struct {
-	Status       string                `json:"status,omitempty"`
-	Total        int                   `json:"total,omitempty"`
-	Succeeded    int                   `json:"succeeded,omitempty"`
-	Failed       int                   `json:"failed,omitempty"`
-	Failures     []string              `json:"failures,omitempty"`
-	SourceSanity []PhaseEvidenceCheck  `json:"source_sanity,omitempty"`
-	Verification []PhaseEvidenceCheck  `json:"verification,omitempty"`
-	Handoff      ExecutorHandoffPacket `json:"handoff,omitempty"`
+	Status               string                `json:"status,omitempty"`
+	Total                int                   `json:"total,omitempty"`
+	Succeeded            int                   `json:"succeeded,omitempty"`
+	Failed               int                   `json:"failed,omitempty"`
+	Failures             []string              `json:"failures,omitempty"`
+	SourceSanity         []PhaseEvidenceCheck  `json:"source_sanity,omitempty"`
+	Verification         []PhaseEvidenceCheck  `json:"verification,omitempty"`
+	VerificationCommands []VerificationCommand `json:"verification_commands,omitempty"`
+	VerificationSkips    []VerificationSkip    `json:"verification_skips,omitempty"`
+	VerificationRejects  []VerificationReject  `json:"verification_rejects,omitempty"`
+	Handoff              ExecutorHandoffPacket `json:"handoff,omitempty"`
 }
 
 type ProgressReviewRepair struct {
@@ -122,6 +127,16 @@ func (s *ProgressState) SetWriteAllowedEnvelope(paths []string, explicit bool) {
 	}
 	s.WriteAllowedPaths = mergePlanExecutePaths(paths)
 	s.WriteAllowedExplicit = explicit
+	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+}
+
+func (s *ProgressState) SetScopeContractID(contractID string) {
+	if s == nil {
+		return
+	}
+	contractID = strings.TrimSpace(contractID)
+	s.ScopeContractID = contractID
+	s.ScopeContractHash = contractID
 	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 }
 
@@ -265,14 +280,17 @@ func (s *ProgressState) MarkEditProgress(step int, total int, path string, succe
 func (s *ProgressState) MarkExecutorComplete(report ExecutorPhaseReport, runErr error) {
 	s.Phase = ProgressPhaseExecutor
 	s.Executor = ProgressExecutor{
-		Status:       ProgressStatusCompleted,
-		Total:        report.Total,
-		Succeeded:    report.Succeeded,
-		Failed:       report.Failed,
-		Failures:     sanitizeProgressReasons(report.Failures),
-		SourceSanity: append([]PhaseEvidenceCheck(nil), report.SourceSanity...),
-		Verification: append([]PhaseEvidenceCheck(nil), report.Verification...),
-		Handoff:      report.Handoff,
+		Status:               ProgressStatusCompleted,
+		Total:                report.Total,
+		Succeeded:            report.Succeeded,
+		Failed:               report.Failed,
+		Failures:             sanitizeProgressReasons(report.Failures),
+		SourceSanity:         append([]PhaseEvidenceCheck(nil), report.SourceSanity...),
+		Verification:         append([]PhaseEvidenceCheck(nil), report.Verification...),
+		VerificationCommands: append([]VerificationCommand(nil), report.VerificationCommands...),
+		VerificationSkips:    append([]VerificationSkip(nil), report.VerificationSkips...),
+		VerificationRejects:  append([]VerificationReject(nil), report.VerificationRejects...),
+		Handoff:              report.Handoff,
 	}
 	if runErr != nil {
 		s.Status = ProgressStatusFailed
@@ -387,13 +405,16 @@ func (s ProgressState) ReviewResumeReady() bool {
 
 func (s ProgressState) ExecutorPhaseReport() ExecutorPhaseReport {
 	return ExecutorPhaseReport{
-		Total:        s.Executor.Total,
-		Succeeded:    s.Executor.Succeeded,
-		Failed:       s.Executor.Failed,
-		Failures:     append([]string(nil), s.Executor.Failures...),
-		SourceSanity: append([]PhaseEvidenceCheck(nil), s.Executor.SourceSanity...),
-		Verification: append([]PhaseEvidenceCheck(nil), s.Executor.Verification...),
-		Handoff:      s.Executor.Handoff,
+		Total:                s.Executor.Total,
+		Succeeded:            s.Executor.Succeeded,
+		Failed:               s.Executor.Failed,
+		Failures:             append([]string(nil), s.Executor.Failures...),
+		SourceSanity:         append([]PhaseEvidenceCheck(nil), s.Executor.SourceSanity...),
+		Verification:         append([]PhaseEvidenceCheck(nil), s.Executor.Verification...),
+		VerificationCommands: append([]VerificationCommand(nil), s.Executor.VerificationCommands...),
+		VerificationSkips:    append([]VerificationSkip(nil), s.Executor.VerificationSkips...),
+		VerificationRejects:  append([]VerificationReject(nil), s.Executor.VerificationRejects...),
+		Handoff:              s.Executor.Handoff,
 	}
 }
 
@@ -432,6 +453,12 @@ func ProgressStateEventFields(state ProgressState, statePath string) map[string]
 	}
 	if state.WriteAllowedExplicit {
 		fields["write_allowed_explicit"] = true
+	}
+	if state.ScopeContractID != "" {
+		fields["scope_contract_id"] = state.ScopeContractID
+	}
+	if state.ScopeContractHash != "" {
+		fields["scope_contract_hash"] = state.ScopeContractHash
 	}
 	if len(state.ChangedPaths) > 0 {
 		fields["changed_paths"] = append([]string(nil), state.ChangedPaths...)
@@ -512,6 +539,8 @@ func sanitizeProgressState(state *ProgressState) {
 	state.RequiredEditPaths = mergePlanExecutePaths(state.RequiredEditPaths)
 	state.AllowedEditPaths = mergePlanExecutePaths(state.AllowedEditPaths)
 	state.WriteAllowedPaths = mergePlanExecutePaths(state.WriteAllowedPaths)
+	state.ScopeContractID = strings.TrimSpace(state.ScopeContractID)
+	state.ScopeContractHash = strings.TrimSpace(state.ScopeContractHash)
 	state.ChangedPaths = mergePlanExecutePaths(state.ChangedPaths)
 	state.EditSetObligations = state.EditSetObligations.Normalized()
 	state.Executor.Failures = sanitizeProgressReasons(state.Executor.Failures)
@@ -519,6 +548,10 @@ func sanitizeProgressState(state *ProgressState) {
 	for i := range state.Executor.SourceSanity {
 		state.Executor.SourceSanity[i].Summary = sanitizeProgressReason(state.Executor.SourceSanity[i].Summary)
 		state.Executor.SourceSanity[i].Error = sanitizeProgressReason(state.Executor.SourceSanity[i].Error)
+	}
+	for i := range state.Executor.Verification {
+		state.Executor.Verification[i].Summary = sanitizeProgressReason(state.Executor.Verification[i].Summary)
+		state.Executor.Verification[i].Error = sanitizeProgressReason(state.Executor.Verification[i].Error)
 	}
 }
 

@@ -6,6 +6,9 @@ func TestNewFileAuthorizedForPathIsPathAware(t *testing.T) {
 	if !NewFileAuthorizedForPath("Create the new helper with the following content.", "pkg/helper.go") {
 		t.Fatal("explicit create/full-body language should authorize a new implementation file")
 	}
+	if !NewFileAuthorizedForPath("I explicitly authorize creating these NEW repo-relative files.", "pkg/helper.go") {
+		t.Fatal("operator authorization to create new repo-relative files should authorize missing paths")
+	}
 	if !NewFileAuthorizedForPath("Plan and deliver a tiny source package plus test.", "internal/greeting/greeting.go") {
 		t.Fatal("source-package language should authorize a missing implementation path")
 	}

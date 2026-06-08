@@ -168,7 +168,13 @@ func RenderPromptContextPackSectionWithOptions(result workspace.ToolResult, opts
 	if err := json.Unmarshal([]byte(result.Output), &packResult); err != nil {
 		return "", fmt.Errorf("decode context_pack output: %w", err)
 	}
-	projection := comprehension.NewCompactPackProjection(packResult)
+	// Reuse the pre-computed CompactProjection from Pack() when
+	// available; fall back to building a fresh projection for
+	// pre-Atom-5 cached packs that lack the field.
+	projection := packResult.CompactProjection
+	if projection.PackID == "" {
+		projection = comprehension.NewCompactPackProjection(packResult)
+	}
 	budgetTokens := opts.BudgetTokens
 	if budgetTokens <= 0 {
 		budgetTokens = 1200

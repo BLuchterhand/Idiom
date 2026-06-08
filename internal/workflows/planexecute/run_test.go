@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -477,7 +478,7 @@ func TestRunAutoExactPlanSourceSatisfiedSkipsPlanner(t *testing.T) {
 	}
 }
 
-func TestRunAcceptsSourceSatisfiedAnswerWithInferredEvidencePaths(t *testing.T) {
+func TestRunRejectsSourceSatisfiedAnswerWithOnlyProseEvidencePaths(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default()
 	cfg.Workspace.Root = root
@@ -496,8 +497,8 @@ func TestRunAcceptsSourceSatisfiedAnswerWithInferredEvidencePaths(t *testing.T) 
 		return "Decision: source-satisfied\n- internal/workflows/productworkflow/migration_apply.go: no changes needed.\n- internal/workflows/productworkflow/migration_apply_test.go: no changes needed.", nil
 	}, nil, &stdout, &stderr)
 
-	if result.ExitCode != 0 {
-		t.Fatalf("source-satisfied answer with path evidence should pass, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
+	if result.ExitCode != 1 || result.FailureKind != RunFailureTerminalCompletionContractFailed {
+		t.Fatalf("source-satisfied answer with only prose evidence should fail terminal contract, got code=%d kind=%s stdout=%s stderr=%s", result.ExitCode, result.FailureKind, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stdout.String(), `"type":"idiom.plan_execute.source_satisfied"`) {
 		t.Fatalf("source-satisfied event missing from stdout=%s", stdout.String())
@@ -510,9 +511,13 @@ func TestRunAcceptsSourceSatisfiedAnswerWithInferredEvidencePaths(t *testing.T) 
 	if got, _ := event["source_satisfied_evidence_paths"].([]any); len(got) != 2 {
 		t.Fatalf("expected source-satisfied evidence paths in telemetry, got %#v", event)
 	}
+	terminal, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.terminal_completion")
+	if !ok || terminal["failure_kind"] != RunFailureTerminalCompletionContractFailed {
+		t.Fatalf("expected terminal completion contract failure, got %#v", terminal)
+	}
 }
 
-func TestRunAcceptsSourceSatisfiedAnswerWithBenignUnsupportedWordOutsideEvidence(t *testing.T) {
+func TestRunRejectsSourceSatisfiedAnswerWithBenignUnsupportedWordButOnlyProseEvidence(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default()
 	cfg.Workspace.Root = root
@@ -536,8 +541,8 @@ func TestRunAcceptsSourceSatisfiedAnswerWithBenignUnsupportedWordOutsideEvidence
 		}, "\n"), nil
 	}, nil, &stdout, &stderr)
 
-	if result.ExitCode != 0 {
-		t.Fatalf("source-satisfied answer with benign non-evidence marker word should pass, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
+	if result.ExitCode != 1 || result.FailureKind != RunFailureTerminalCompletionContractFailed {
+		t.Fatalf("source-satisfied answer with only prose evidence should fail terminal contract, got code=%d kind=%s stdout=%s stderr=%s", result.ExitCode, result.FailureKind, stdout.String(), stderr.String())
 	}
 	if strings.Contains(stdout.String(), `"type":"idiom.plan_execute.source_satisfied_rejected"`) {
 		t.Fatalf("benign non-evidence marker should not reject source-satisfied answer, stdout=%s", stdout.String())
@@ -1347,6 +1352,39 @@ func TestRunRejectsMissingEditPathWithoutNewFileAuthorizationBeforeWrites(t *tes
 	}
 	if event["reason"] != "plan would create missing edit path without new-file authorization" {
 		t.Fatalf("unexpected rejection event: %#v", event)
+	}
+}
+
+func TestPreflightAcceptsTypedAuthorizedNewFileWithoutPromptProse(t *testing.T) {
+	root := t.TempDir()
+	newPath := "project/scripts/economy/score_breakdown.gd"
+	plan := workspace.PlanArtifact{
+		Edits: []workspace.PlanEdit{{
+			Path:       newPath,
+			OldText:    "",
+			NewText:    "extends RefCounted\n",
+			ReplaceAll: true,
+			Purpose:    "create typed-authorized helper path",
+		}},
+	}
+
+	if mismatch := preflightPlanMissingPathAuthorization(root, []string{newPath}, plan); mismatch != nil {
+		t.Fatalf("typed authorized new file should pass preflight without prompt prose, got %#v", mismatch)
+	}
+}
+
+func TestParseOptionsAcceptsAuthorizedNewFileFlag(t *testing.T) {
+	var stderr bytes.Buffer
+	opts, err := ParseOptions([]string{
+		"-prompt", "implement",
+		"-authorized-new-file", "pkg/new_helper.go",
+		"-authorized-new-file", "pkg/new_helper_test.go",
+	}, &stderr)
+	if err != nil {
+		t.Fatalf("ParseOptions returned error: %v stderr=%s", err, stderr.String())
+	}
+	if !slices.Equal(opts.AuthorizedNewFiles, []string{"pkg/new_helper.go", "pkg/new_helper_test.go"}) {
+		t.Fatalf("authorized new files = %#v", opts.AuthorizedNewFiles)
 	}
 }
 

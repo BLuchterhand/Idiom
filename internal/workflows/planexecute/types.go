@@ -61,6 +61,7 @@ type Options struct {
 	WriteAllowedPathsExplicit bool
 	EditSetObligations        EditSetObligations
 	ScopeContract             PlanScopeContract
+	AuthorizedNewFiles        []string
 	PlannerOwnedVerification  bool
 	AllowBuildTests           bool
 	SkipReviewRepair          bool
@@ -112,13 +113,16 @@ type ExecutorHandoffPacket struct {
 }
 
 type ExecutorPhaseReport struct {
-	Total        int
-	Succeeded    int
-	Failed       int
-	Failures     []string
-	SourceSanity []PhaseEvidenceCheck
-	Verification []PhaseEvidenceCheck
-	Handoff      ExecutorHandoffPacket
+	Total                int
+	Succeeded            int
+	Failed               int
+	Failures             []string
+	SourceSanity         []PhaseEvidenceCheck
+	Verification         []PhaseEvidenceCheck
+	VerificationCommands []VerificationCommand
+	VerificationSkips    []VerificationSkip
+	VerificationRejects  []VerificationReject
+	Handoff              ExecutorHandoffPacket
 }
 
 func ExecutorSourceSanityFailed(report ExecutorPhaseReport, err error) bool {
@@ -186,13 +190,18 @@ type PhaseEvidenceCheck struct {
 }
 
 type ReviewRepairPhaseReport struct {
-	Skipped        bool
-	Status         string
-	Repairs        int
-	AutoRepairs    int
-	ReviewPlan     string
-	ChecklistFound bool
-	ReasonClass    string
+	Skipped              bool
+	Status               string
+	Repairs              int
+	AutoRepairs          int
+	ReviewPlan           string
+	ChecklistFound       bool
+	ReasonClass          string
+	SourceSanity         []PhaseEvidenceCheck
+	Verification         []PhaseEvidenceCheck
+	VerificationCommands []VerificationCommand
+	VerificationSkips    []VerificationSkip
+	VerificationRejects  []VerificationReject
 }
 
 func (r ReviewRepairPhaseReport) String() string {
@@ -249,38 +258,38 @@ type PhaseEvidenceBundle struct {
 }
 
 type PhaseEvidencePacket struct {
-	PackID           string                         `json:"pack_id,omitempty"`
-	Status           string                         `json:"status"`
-	Error            string                         `json:"error,omitempty"`
-	IndexID          string                         `json:"index_id,omitempty"`
-	Fresh            bool                           `json:"fresh,omitempty"`
-	Confidence       string                         `json:"confidence,omitempty"`
+	PackID           string                           `json:"pack_id,omitempty"`
+	Status           string                           `json:"status"`
+	Error            string                           `json:"error,omitempty"`
+	IndexID          string                           `json:"index_id,omitempty"`
+	Fresh            bool                             `json:"fresh,omitempty"`
+	Confidence       string                           `json:"confidence,omitempty"`
 	Quality          comprehension.CompactPackQuality `json:"quality"`
-	StoreKind        string                         `json:"store_kind,omitempty"`
-	CandidateFiles   []PhaseEvidenceFile            `json:"candidate_files,omitempty"`
-	CandidateSymbols []PhaseEvidenceSymbol          `json:"candidate_symbols,omitempty"`
-	SuggestedTests   []PhaseEvidenceTest            `json:"suggested_tests,omitempty"`
-	UnresolvedGaps   []string                       `json:"unresolved_gaps,omitempty"`
+	StoreKind        string                           `json:"store_kind,omitempty"`
+	CandidateFiles   []PhaseEvidenceFile              `json:"candidate_files,omitempty"`
+	CandidateSymbols []PhaseEvidenceSymbol            `json:"candidate_symbols,omitempty"`
+	SuggestedTests   []PhaseEvidenceTest              `json:"suggested_tests,omitempty"`
+	UnresolvedGaps   []string                         `json:"unresolved_gaps,omitempty"`
 }
 
 type phaseEvidenceHandoff struct {
-	PacketState      string                         `json:"packet_state"`
-	Reason           string                         `json:"reason,omitempty"`
-	HandoffCreated   bool                           `json:"handoff_created,omitempty"`
-	PacketPresent    bool                           `json:"packet_present,omitempty"`
-	PacketNotUsed    bool                           `json:"packet_not_used_by_design,omitempty"`
-	PacketFreshness  string                         `json:"packet_freshness_state,omitempty"`
-	PlanID           string                         `json:"plan_id,omitempty"`
-	HandoffID        string                         `json:"handoff_id,omitempty"`
-	HandoffStatus    string                         `json:"handoff_status,omitempty"`
-	PackID           string                         `json:"pack_id,omitempty"`
-	DeclaredPackID   string                         `json:"declared_pack_id,omitempty"`
-	IndexID          string                         `json:"index_id,omitempty"`
-	Fresh            bool                           `json:"fresh,omitempty"`
+	PacketState      string                           `json:"packet_state"`
+	Reason           string                           `json:"reason,omitempty"`
+	HandoffCreated   bool                             `json:"handoff_created,omitempty"`
+	PacketPresent    bool                             `json:"packet_present,omitempty"`
+	PacketNotUsed    bool                             `json:"packet_not_used_by_design,omitempty"`
+	PacketFreshness  string                           `json:"packet_freshness_state,omitempty"`
+	PlanID           string                           `json:"plan_id,omitempty"`
+	HandoffID        string                           `json:"handoff_id,omitempty"`
+	HandoffStatus    string                           `json:"handoff_status,omitempty"`
+	PackID           string                           `json:"pack_id,omitempty"`
+	DeclaredPackID   string                           `json:"declared_pack_id,omitempty"`
+	IndexID          string                           `json:"index_id,omitempty"`
+	Fresh            bool                             `json:"fresh,omitempty"`
 	Quality          comprehension.CompactPackQuality `json:"quality"`
-	CandidateFiles   int                            `json:"candidate_files,omitempty"`
-	CandidateSymbols int                            `json:"candidate_symbols,omitempty"`
-	Tests            int                            `json:"tests,omitempty"`
+	CandidateFiles   int                              `json:"candidate_files,omitempty"`
+	CandidateSymbols int                              `json:"candidate_symbols,omitempty"`
+	Tests            int                              `json:"tests,omitempty"`
 }
 
 type PhaseEvidenceFile struct {

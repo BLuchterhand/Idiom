@@ -115,6 +115,10 @@ func sourceSatisfiedEvidenceKindProvesCurrentState(kind string) bool {
 	}
 }
 
+func SourceSatisfiedEvidenceKindProvesCurrentState(kind string) bool {
+	return sourceSatisfiedEvidenceKindProvesCurrentState(kind)
+}
+
 func scopePathSet(paths []string) map[string]struct{} {
 	out := make(map[string]struct{}, len(paths))
 	for _, path := range UniqueScopePaths(paths) {

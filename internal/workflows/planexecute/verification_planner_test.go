@@ -24,8 +24,28 @@ func TestVerificationPlannerDedupeExplicitAndInferredCommands(t *testing.T) {
 	if got := plan.Commands[0]; got.Command != "go test ./pkg/feature" || got.WorkingDir != "" || got.Source != VerificationCommandSourcePrompt {
 		t.Fatalf("unexpected command = %#v", got)
 	}
+	if got := plan.Commands[0].Argv; len(got) != 3 || got[0] != "go" || got[1] != "test" || got[2] != "./pkg/feature" {
+		t.Fatalf("unexpected argv = %#v", got)
+	}
 	if len(plan.Skips) != 0 || len(plan.Rejects) != 0 {
 		t.Fatalf("unexpected skips/rejects: skips=%#v rejects=%#v", plan.Skips, plan.Rejects)
+	}
+}
+
+func TestVerificationPlannerRejectsUnsafePromptCommand(t *testing.T) {
+	root := t.TempDir()
+	writeVerificationPlannerFile(t, root, "go.mod", "module example.com/root\n\ngo 1.22\n")
+
+	plan := PlanVerification(VerificationPlannerInput{
+		WorkspaceRoot: root,
+		Prompt:        "Required verification: run `go test ./pkg; rm -rf /`.",
+	})
+
+	if len(plan.Commands) != 0 {
+		t.Fatalf("unsafe prompt command must not be executable: %#v", plan.Commands)
+	}
+	if len(plan.Rejects) != 1 || plan.Rejects[0].Reason != VerificationRejectUnsupportedCmd {
+		t.Fatalf("unsafe prompt command should be a structured reject, got %#v", plan.Rejects)
 	}
 }
 

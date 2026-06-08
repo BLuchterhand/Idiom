@@ -1,6 +1,7 @@
 package featureplanner
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -30,6 +31,10 @@ func Replay(initial FeatureState, events []Event) (ReplayBundle, error) {
 			state.Revision = event.FeatureRevisionAfter
 		}
 		switch event.Type {
+		case "idiom.feature_planner.planner_question_answered":
+			if delta, ok := replayPlanAuthorityDelta(event); ok {
+				replayUpsertPlanAuthorityDelta(&state, delta)
+			}
 		case "idiom.feature_planner.planner_question_opened", "idiom.feature_planner.implementor_question_opened":
 			state.Status = FeatureStatePlanningQuestion
 			state.PlanningLoop.State = FeatureStatePlanningQuestion
@@ -93,6 +98,42 @@ func replayTDDEvidence(event Event) TDDPreExecutionEvidence {
 		SnapshotDigest:             replayStringField(fields["snapshot_digest"]),
 		CreatedAt:                  event.CreatedAt,
 	}
+}
+
+func replayPlanAuthorityDelta(event Event) (PlanAuthorityDelta, bool) {
+	if event.Fields == nil {
+		return PlanAuthorityDelta{}, false
+	}
+	value, ok := event.Fields["authority_delta"]
+	if !ok || value == nil {
+		return PlanAuthorityDelta{}, false
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return PlanAuthorityDelta{}, false
+	}
+	var delta PlanAuthorityDelta
+	if err := json.Unmarshal(body, &delta); err != nil {
+		return PlanAuthorityDelta{}, false
+	}
+	return delta, true
+}
+
+func replayUpsertPlanAuthorityDelta(state *FeatureState, delta PlanAuthorityDelta) {
+	if state == nil {
+		return
+	}
+	if strings.TrimSpace(delta.QuestionID) == "" {
+		state.AuthorityDeltas = append(state.AuthorityDeltas, delta)
+		return
+	}
+	for i := range state.AuthorityDeltas {
+		if state.AuthorityDeltas[i].QuestionID == delta.QuestionID && state.AuthorityDeltas[i].Revision == delta.Revision {
+			state.AuthorityDeltas[i] = delta
+			return
+		}
+	}
+	state.AuthorityDeltas = append(state.AuthorityDeltas, delta)
 }
 
 func replayStringField(value any) string {

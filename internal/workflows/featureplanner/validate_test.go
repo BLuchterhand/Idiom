@@ -243,9 +243,9 @@ func TestRunProductPlanUsesWorkspaceRootForPackageGrounding(t *testing.T) {
 		Prompt:               "build feature",
 		ProductWorkflowBrief: &brief,
 		WorkspaceRoot:        root,
-	}, func(_ string, taskFamily string) (string, error) {
+	}, func(prompt string, taskFamily string) (string, error) {
 		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
-			return testPlanExecuteCompletedJSON(), nil
+			return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 		}
 		return mustPlanJSON(t, plan), nil
 	})
@@ -623,7 +623,7 @@ func TestRunPreservesSourceSatisfiedGateInDispatchedAtomPrompt(t *testing.T) {
 	}, func(prompt string, taskFamily string) (string, error) {
 		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
 			implementorPrompt = prompt
-			return `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"source-satisfied","phase":"complete","progress_path":".idiom/plan-execute/session/state.json"}`, nil
+			return testPlanExecuteSourceSatisfiedJSONForPrompt(prompt), nil
 		}
 		return mustPlanJSON(t, plan), nil
 	})
@@ -668,7 +668,6 @@ func TestValidatePlanStandaloneWorkspaceContextRejectsMissingInventedPaths(t *te
 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
 		WorkspaceRoot: root,
-		Prompt:        "Add score breakdown to the existing tooltip.",
 	})
 	if err == nil {
 		t.Fatal("expected missing standalone path validation error")
@@ -690,12 +689,23 @@ func TestValidatePlanStandaloneWorkspaceContextAllowsExplicitNewFileAndTestCreat
 	plan.Atoms[0].RequiredEditPaths = []string{"pkg/new_helper.go"}
 	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"pkg/new_helper_test.go"}
 	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"pkg/new_helper_test.go"}
+	contract := CompilePlanAuthorityContract(plan, []PlanAuthorityDelta{{
+		QuestionID:     "q-new-files",
+		AuthorityKind:  "new_file_authorization",
+		EvidenceRefs:   []string{"operator:q-new-files"},
+		AffectedPaths:  []string{"pkg/new_helper.go", "pkg/new_helper_test.go"},
+		AffectedFields: []string{"new_file_authorization"},
+		Expected:       "new files require explicit typed authority",
+		Actual:         "operator authorized the new helper and test files",
+		Revision:       1,
+		CreatedAt:      time.Unix(2, 0).UTC().Format(time.RFC3339Nano),
+	}})
 
 	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
 		WorkspaceRoot: root,
-		Prompt:        "Create a new helper with the following content and add regression tests.",
+		Contract:      contract,
 	}); err != nil {
-		t.Fatalf("explicit new-file/test prompt should be allowed, got %v", err)
+		t.Fatalf("typed new-file/test authority should be allowed, got %v", err)
 	}
 }
 
@@ -710,7 +720,6 @@ func TestValidatePlanStandaloneWorkspaceContextDoesNotExistenceGateTDDMetadata(t
 
 	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
 		WorkspaceRoot: root,
-		Prompt:        "Plan the remaining TDD expansion atom. Do not edit files.",
 	}); err != nil {
 		t.Fatalf("standalone validation should not require TDD artifact metadata to exist in target workspace: %v", err)
 	}
@@ -866,6 +875,29 @@ func TestBuildImplementorPromptRejectsUnsupportedEditTestClaims(t *testing.T) {
 	}
 }
 
+func TestBuildImplementorPromptCarriesTypedPlanNewFileAuthority(t *testing.T) {
+	plan := validPlan()
+	contract := CompilePlanAuthorityContract(plan, []PlanAuthorityDelta{{
+		QuestionID:     "q-new-file",
+		AuthorityKind:  "new_file_authorization",
+		EvidenceRefs:   []string{"operator:q-new-file"},
+		AffectedPaths:  []string{"pkg/new_helper.go"},
+		AffectedFields: []string{"new_file_authorization"},
+		Expected:       "new helper requires explicit typed authority",
+		Actual:         "operator authorized the helper",
+		Revision:       1,
+		CreatedAt:      time.Unix(2, 0).UTC().Format(time.RFC3339Nano),
+	}})
+	prompt := BuildImplementorPromptFromContract(FeatureAtomState{FeatureAtomPlan: plan.Atoms[0]}, plan, contract)
+
+	if !strings.Contains(prompt, "Typed plan execution contract:") {
+		t.Fatalf("implementor prompt missing typed plan execution contract:\n%s", prompt)
+	}
+	if got := PlanExecuteAuthorizedNewFilesFromImplementorPrompt(prompt); !slices.Equal(got, []string{"pkg/new_helper.go"}) {
+		t.Fatalf("authorized new files = %#v", got)
+	}
+}
+
 func TestApplyPlannerOutputAcceptsPlanAndQueuesAtoms(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	parsed := ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}
@@ -895,7 +927,7 @@ func TestRunDispatchesAtomAfterAcceptedTDDPlan(t *testing.T) {
 		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
 			return mustPlanJSON(t, validPlan()), nil
 		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
-			return testPlanExecuteCompletedJSON(), nil
+			return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 		default:
 			t.Fatalf("unexpected task family %q", taskFamily)
 		}
@@ -932,7 +964,20 @@ func TestRunUsesAnsweredPlannerQuestionForStandaloneNewFileAuthorization(t *test
 		QuestionSummary:   "Authorize new files",
 		AuthorityRequired: "operator_approval",
 		AnswerSourceKind:  "operator_approval",
+		AffectedPaths:     []string{"pkg/new_helper.go", "pkg/new_helper_test.go"},
+		AffectedFields:    []string{"new_file_authorization"},
 		Answer:            "I explicitly authorize creating new file pkg/new_helper.go and new file pkg/new_helper_test.go.",
+	}}
+	state.AuthorityDeltas = []PlanAuthorityDelta{{
+		QuestionID:     "q-001",
+		AuthorityKind:  "operator_approval",
+		EvidenceRefs:   []string{"planner_question:q-001"},
+		AffectedPaths:  []string{"pkg/new_helper.go", "pkg/new_helper_test.go"},
+		AffectedFields: []string{"new_file_authorization"},
+		Expected:       "new files require typed authorization",
+		Actual:         "operator authorized creating new helper and test files",
+		Revision:       1,
+		CreatedAt:      time.Unix(2, 0).UTC().Format(time.RFC3339Nano),
 	}}
 
 	calls := 0
@@ -940,13 +985,13 @@ func TestRunUsesAnsweredPlannerQuestionForStandaloneNewFileAuthorization(t *test
 		Prompt:                "Implement scoped atom from the approved spec.",
 		WorkspaceRoot:         root,
 		MaxPlanningIterations: 3,
-	}, func(_ string, taskFamily string) (string, error) {
+	}, func(prompt string, taskFamily string) (string, error) {
 		calls++
 		switch taskFamily {
 		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
 			return mustPlanJSON(t, plan), nil
 		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
-			return testPlanExecuteCompletedJSON(), nil
+			return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 		default:
 			t.Fatalf("unexpected task family %q", taskFamily)
 		}
@@ -970,11 +1015,11 @@ func TestDispatchRecordsPlanExecuteLaneFamily(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
-	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
+	events := DispatchReadyAtoms(&state, 1, func(prompt string, taskFamily string) (string, error) {
 		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
 			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
 		}
-		return `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed","summary":"go test ./internal/workflows/featureplanner passed"}`, nil
+		return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 	})
 
 	if len(events) != 2 {
@@ -1005,7 +1050,7 @@ func TestDispatchUsesPlanExecuteSafeRunIDForUnsafeAtomID(t *testing.T) {
 
 	events := DispatchReadyAtoms(&state, 1, func(gotPrompt string, _ string) (string, error) {
 		prompt = gotPrompt
-		return `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed","summary":"done"}`, nil
+		return testPlanExecuteCompletedJSONForPrompt(gotPrompt), nil
 	})
 
 	if len(events) != 2 {
@@ -1191,9 +1236,9 @@ func TestDispatchStopsAfterPreDispatchTDDBlocker(t *testing.T) {
 	state.TDDPreExecutionEvidence = nil
 
 	var implementorCalls int
-	events := DispatchReadyAtoms(&state, 5, func(_ string, _ string) (string, error) {
+	events := DispatchReadyAtoms(&state, 5, func(prompt string, _ string) (string, error) {
 		implementorCalls++
-		return `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed","summary":"go test ./internal/workflows/featureplanner passed"}`, nil
+		return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 	})
 
 	if implementorCalls != 0 {
@@ -1308,7 +1353,7 @@ func TestDispatchWaitsForAtomDependencies(t *testing.T) {
 	var prompts []string
 	events := DispatchReadyAtoms(&state, 1, func(prompt string, taskFamily string) (string, error) {
 		prompts = append(prompts, prompt)
-		return testPlanExecuteCompletedJSON(), nil
+		return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 	})
 
 	if len(prompts) != 1 || !strings.Contains(prompts[0], `"id": "atom-base"`) {
@@ -1469,7 +1514,7 @@ func TestApplyImplementorOutputAcceptsObservedPlanExecuteCompletion(t *testing.T
 		State:         "running",
 	}}
 
-	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed","phase":"complete","review_status":"skipped","review_repair_skipped":true,"progress_path":".idiom/plan-execute/session/state.json","summary":"Edited files and go test ./internal/workflows/featureplanner passed"}`)
+	events := ApplyImplementorOutput(&state, atom, testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom))
 
 	if atom.State != AtomStateComplete {
 		t.Fatalf("atom state = %q, want complete; blockers=%+v", atom.State, atom.Blockers)
@@ -1494,7 +1539,7 @@ func TestApplyImplementorOutputAcceptsObservedPlanExecuteCompletion(t *testing.T
 func TestApplyImplementorOutputAcceptsNestedPlanExecuteCompletionStatus(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
 
-	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","plan_execute":{"lane_family":"plan-execute","status":"completed","phase":"review_repair","review_status":"completed","progress_path":".idiom/plan-execute/session/state.json"}}`)
+	events := ApplyImplementorOutput(&state, atom, testNestedPlanExecuteCompletedJSONForAtom(*atom))
 
 	if atom.State != AtomStateComplete {
 		t.Fatalf("atom state = %q, want complete; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
@@ -1524,7 +1569,7 @@ func TestApplyImplementorOutputUsesNestedPlanExecuteTerminalClass(t *testing.T) 
 func TestApplyImplementorOutputPreservesPlanExecuteSourceSatisfiedAtomState(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
 
-	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"source-satisfied","phase":"complete","progress_path":".idiom/plan-execute/session/state.json"}`)
+	events := ApplyImplementorOutput(&state, atom, testPlanExecuteSourceSatisfiedJSONForAtom(*atom))
 
 	if atom.State != AtomStateSourceSatisfied {
 		t.Fatalf("atom state = %q, want source-satisfied; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
@@ -1543,10 +1588,74 @@ func TestApplyImplementorOutputPreservesPlanExecuteSourceSatisfiedAtomState(t *t
 	}
 }
 
+func TestApplyImplementorOutputRejectsPathOnlyPlanExecuteSourceSatisfied(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+	_ = json.Unmarshal([]byte(testPlanExecuteSourceSatisfiedJSONForAtom(*atom)), &payload)
+	delete(payload, "source_satisfied_evidence")
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "source-satisfied completion missing typed source_satisfied_evidence refs")
+}
+
+func TestApplyImplementorOutputRejectsSourceSatisfiedWithChangedPaths(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+	_ = json.Unmarshal([]byte(testPlanExecuteSourceSatisfiedJSONForAtom(*atom)), &payload)
+	payload["changed_paths"] = atom.RequiredEditPaths
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "source-satisfied completion must not include changed_paths")
+}
+
+func TestApplyImplementorOutputRejectsOutOfScopeSourceSatisfiedPath(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+	_ = json.Unmarshal([]byte(testPlanExecuteSourceSatisfiedJSONForAtom(*atom)), &payload)
+	payload["source_satisfied_evidence_paths"] = append([]string{"pkg/out_of_scope.go"}, atom.RequiredEditPaths...)
+	payload["source_satisfied_evidence"] = testPlanExecuteSourceSatisfiedEvidenceRefs([]string{"pkg/out_of_scope.go"})
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "source-satisfied completion includes paths outside required edit scope")
+}
+
+func TestApplyImplementorOutputRejectsSourceSatisfiedWithoutRequiredScope(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	state.Plan.Atoms[0].RequiredEditPaths = nil
+	state.Plan.Atoms[0].AllowedEditPaths = []string{"pkg/allowed.go"}
+	state.Plan.Atoms[0].TestFirst.TestArtifactPaths = nil
+	state.Plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = nil
+	StampPlanAuthorityContract(&state.Plan, state.AuthorityDeltas)
+	atom.FeatureAtomPlan = state.Plan.Atoms[0]
+	payload := map[string]any{}
+	_ = json.Unmarshal([]byte(testPlanExecuteSourceSatisfiedJSONForAtom(*atom)), &payload)
+	payload["source_satisfied_evidence_paths"] = []string{"pkg/allowed.go"}
+	payload["source_satisfied_evidence"] = testPlanExecuteSourceSatisfiedEvidenceRefs([]string{"pkg/allowed.go"})
+	payload["required_edit_paths"] = []string{}
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "source-satisfied completion missing required edit scope")
+}
+
+func TestApplyImplementorOutputRejectsUnsupportedSourceSatisfiedEvidenceKind(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+	_ = json.Unmarshal([]byte(testPlanExecuteSourceSatisfiedJSONForAtom(*atom)), &payload)
+	payload["source_satisfied_evidence"] = []map[string]string{{"path": atom.RequiredEditPaths[0], "kind": "path_name_only"}}
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "source-satisfied completion missing typed source_satisfied_evidence refs")
+}
+
 func TestApplyImplementorOutputAcceptsOutcomeOnlySourceSatisfiedCompletion(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
 
-	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","outcome":"source_satisfied","phase":"complete","progress_path":".idiom/plan-execute/session/state.json"}`)
+	events := ApplyImplementorOutput(&state, atom, testPlanExecuteOutcomeOnlySourceSatisfiedJSONForAtom(*atom))
 
 	if atom.State != AtomStateSourceSatisfied {
 		t.Fatalf("atom state = %q, want source-satisfied; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
@@ -1724,11 +1833,11 @@ func TestRunResumesDispatchingStateWithoutReplacingPlan(t *testing.T) {
 	}
 	state.Atoms[0].State = AtomStateQueued
 
-	result, err := Run(state, RunOptions{Prompt: "resume", MaxPlanningIterations: 3}, func(_ string, taskFamily string) (string, error) {
+	result, err := Run(state, RunOptions{Prompt: "resume", MaxPlanningIterations: 3}, func(prompt string, taskFamily string) (string, error) {
 		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerPlanner) {
 			t.Fatal("resume from dispatching must not ask planner for a fresh plan")
 		}
-		return testPlanExecuteCompletedJSON(), nil
+		return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 	})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
@@ -1787,12 +1896,12 @@ func TestRunAcceptsTypedAnswerForRequiredAuthority(t *testing.T) {
 	}}
 	typedAnswer := `{"answer":"Use docs/feature.md acceptance criteria.","answer_source_kind":"accepted_source","evidence_refs":["docs/feature.md#acceptance"]}`
 
-	result, err := Run(state, RunOptions{Prompt: "continue", ResumeAnswer: typedAnswer}, func(_ string, taskFamily string) (string, error) {
+	result, err := Run(state, RunOptions{Prompt: "continue", ResumeAnswer: typedAnswer}, func(prompt string, taskFamily string) (string, error) {
 		switch taskFamily {
 		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
 			return mustPlanJSON(t, validPlan()), nil
 		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
-			return testPlanExecuteCompletedJSON(), nil
+			return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 		default:
 			t.Fatalf("unexpected task family %q", taskFamily)
 		}
@@ -1873,8 +1982,141 @@ func mustPlanJSON(t *testing.T, plan FeaturePlan) string {
 	return string(body)
 }
 
-func testPlanExecuteCompletedJSON() string {
-	return `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed","phase":"complete","review_status":"completed","completion_source":"test"}`
+func testPlanExecuteCompletedJSONForPrompt(prompt string) string {
+	contractID, snapshotHash, paths := testPlanExecuteContractFromPrompt(prompt)
+	return mustJSONMap(map[string]any{
+		"tool":                "plan_execute_completed",
+		"lane_family":         "plan-execute",
+		"status":              "completed",
+		"phase":               "complete",
+		"review_status":       "completed",
+		"completion_source":   "test",
+		"contract_id":         contractID,
+		"snapshot_hash":       snapshotHash,
+		"changed_paths":       paths,
+		"required_edit_paths": paths,
+	})
+}
+
+func testPlanExecuteSourceSatisfiedJSONForPrompt(prompt string) string {
+	contractID, snapshotHash, paths := testPlanExecuteContractFromPrompt(prompt)
+	return mustJSONMap(map[string]any{
+		"tool":                            "plan_execute_completed",
+		"lane_family":                     "plan-execute",
+		"status":                          "source-satisfied",
+		"phase":                           "complete",
+		"contract_id":                     contractID,
+		"snapshot_hash":                   snapshotHash,
+		"source_satisfied_evidence_paths": paths,
+		"source_satisfied_evidence":       testPlanExecuteSourceSatisfiedEvidenceRefs(paths),
+		"required_edit_paths":             paths,
+	})
+}
+
+func testPlanExecuteCompletedJSONForAtom(atom FeatureAtomState) string {
+	return mustJSONMap(map[string]any{
+		"tool":                "plan_execute_completed",
+		"lane_family":         "plan-execute",
+		"status":              "completed",
+		"phase":               "complete",
+		"review_status":       "completed",
+		"completion_source":   "test",
+		"contract_id":         atom.RuntimeEnvelope.ContractID,
+		"snapshot_hash":       atom.RuntimeEnvelope.ProtocolHash,
+		"changed_paths":       atom.RequiredEditPaths,
+		"required_edit_paths": atom.RequiredEditPaths,
+	})
+}
+
+func testPlanExecuteCompletedJSONForAtomWithReviewSkipped(atom FeatureAtomState) string {
+	payload := map[string]any{}
+	_ = json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtom(atom)), &payload)
+	payload["review_status"] = "skipped"
+	payload["review_repair_skipped"] = true
+	payload["progress_path"] = ".idiom/plan-execute/session/state.json"
+	payload["summary"] = "Edited files and ran required verification"
+	return mustJSONMap(payload)
+}
+
+func testNestedPlanExecuteCompletedJSONForAtom(atom FeatureAtomState) string {
+	return mustJSONMap(map[string]any{
+		"tool": "plan_execute_completed",
+		"plan_execute": map[string]any{
+			"lane_family":         "plan-execute",
+			"status":              "completed",
+			"phase":               "review_repair",
+			"review_status":       "completed",
+			"progress_path":       ".idiom/plan-execute/session/state.json",
+			"contract_id":         atom.RuntimeEnvelope.ContractID,
+			"snapshot_hash":       atom.RuntimeEnvelope.ProtocolHash,
+			"changed_paths":       atom.RequiredEditPaths,
+			"required_edit_paths": atom.RequiredEditPaths,
+		},
+	})
+}
+
+func testPlanExecuteSourceSatisfiedJSONForAtom(atom FeatureAtomState) string {
+	return mustJSONMap(map[string]any{
+		"tool":                            "plan_execute_completed",
+		"lane_family":                     "plan-execute",
+		"status":                          "source-satisfied",
+		"phase":                           "complete",
+		"progress_path":                   ".idiom/plan-execute/session/state.json",
+		"contract_id":                     atom.RuntimeEnvelope.ContractID,
+		"snapshot_hash":                   atom.RuntimeEnvelope.ProtocolHash,
+		"source_satisfied_evidence_paths": atom.RequiredEditPaths,
+		"source_satisfied_evidence":       testPlanExecuteSourceSatisfiedEvidenceRefs(atom.RequiredEditPaths),
+		"required_edit_paths":             atom.RequiredEditPaths,
+	})
+}
+
+func testPlanExecuteSourceSatisfiedEvidenceRefs(paths []string) []map[string]string {
+	refs := make([]map[string]string, 0, len(paths))
+	for _, path := range paths {
+		refs = append(refs, map[string]string{"path": path, "kind": "harness_observed_source"})
+	}
+	return refs
+}
+
+func testPlanExecuteOutcomeOnlySourceSatisfiedJSONForAtom(atom FeatureAtomState) string {
+	payload := map[string]any{}
+	_ = json.Unmarshal([]byte(testPlanExecuteSourceSatisfiedJSONForAtom(atom)), &payload)
+	delete(payload, "status")
+	payload["outcome"] = "source_satisfied"
+	return mustJSONMap(payload)
+}
+
+func testPlanExecuteContractFromPrompt(prompt string) (string, string, []string) {
+	var contractID string
+	var snapshotHash string
+	var paths []string
+	inRequired := false
+	for _, rawLine := range strings.Split(prompt, "\n") {
+		line := strings.TrimSpace(rawLine)
+		switch {
+		case strings.HasPrefix(line, "Active plan contract id:"):
+			contractID = strings.TrimSpace(strings.TrimPrefix(line, "Active plan contract id:"))
+		case strings.HasPrefix(line, "Active plan contract snapshot hash:"):
+			snapshotHash = strings.TrimSpace(strings.TrimPrefix(line, "Active plan contract snapshot hash:"))
+		case line == "required_edit_paths:":
+			inRequired = true
+		case inRequired && strings.HasPrefix(line, "- "):
+			paths = append(paths, strings.TrimSpace(strings.TrimPrefix(line, "- ")))
+		case inRequired && line == "":
+			inRequired = false
+		case inRequired && strings.HasSuffix(line, ":"):
+			inRequired = false
+		}
+	}
+	return contractID, snapshotHash, normalizedStringList(paths)
+}
+
+func mustJSONMap(payload map[string]any) string {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		panic(err)
+	}
+	return string(body)
 }
 
 func mkdirAndWriteFile(t *testing.T, path string, content string) {

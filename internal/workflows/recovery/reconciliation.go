@@ -28,21 +28,24 @@ type ReconciliationOptions struct {
 	Now              time.Time
 	CompletedAtomIDs []string
 	Verification     ReconciliationVerification
+	AuthorityDeltas  []ScopeAuthorityDelta
 }
 
 type Reconciliation struct {
-	SchemaVersion  string                     `json:"schema_version"`
-	FailureID      string                     `json:"failure_id"`
-	PacketID       string                     `json:"packet_id"`
-	PacketDigest   string                     `json:"packet_digest"`
-	CreatedAt      string                     `json:"created_at"`
-	UpdatedAt      string                     `json:"updated_at"`
-	Status         string                     `json:"status"`
-	CompletedAtoms []ReconciledAtom           `json:"completed_atoms,omitempty"`
-	RemainingAtoms []string                   `json:"remaining_atoms,omitempty"`
-	Blockers       []string                   `json:"blockers,omitempty"`
-	Verification   ReconciliationVerification `json:"verification"`
-	NextAction     string                     `json:"next_valid_action"`
+	SchemaVersion   string                     `json:"schema_version"`
+	FailureID       string                     `json:"failure_id"`
+	PacketID        string                     `json:"packet_id"`
+	PacketDigest    string                     `json:"packet_digest"`
+	CreatedAt       string                     `json:"created_at"`
+	UpdatedAt       string                     `json:"updated_at"`
+	LockedContract  *ContractSnapshot          `json:"locked_contract,omitempty"`
+	AuthorityDeltas []ScopeAuthorityDelta      `json:"authority_deltas,omitempty"`
+	Status          string                     `json:"status"`
+	CompletedAtoms  []ReconciledAtom           `json:"completed_atoms,omitempty"`
+	RemainingAtoms  []string                   `json:"remaining_atoms,omitempty"`
+	Blockers        []string                   `json:"blockers,omitempty"`
+	Verification    ReconciliationVerification `json:"verification"`
+	NextAction      string                     `json:"next_valid_action"`
 }
 
 type ReconciledAtom struct {
@@ -51,6 +54,16 @@ type ReconciledAtom struct {
 	ResidualWorkIDs []string `json:"residual_work_ids,omitempty"`
 	RequiredPaths   []string `json:"required_paths,omitempty"`
 	RequiredTests   []string `json:"required_tests,omitempty"`
+	InvariantIDs    []string `json:"invariant_ids,omitempty"`
+}
+
+type ScopeAuthorityDelta struct {
+	DeltaID           string   `json:"delta_id"`
+	ContractID        string   `json:"contract_id,omitempty"`
+	ContractHash      string   `json:"contract_hash,omitempty"`
+	Reason            string   `json:"reason,omitempty"`
+	RequiredEditPaths []string `json:"required_edit_paths,omitempty"`
+	AllowedEditPaths  []string `json:"allowed_edit_paths,omitempty"`
 }
 
 type ReconciliationVerification struct {
@@ -94,14 +107,16 @@ func BuildReconciliation(packet DecompositionPacket, opts ReconciliationOptions)
 		completedSet[id] = true
 	}
 	reconciliation := Reconciliation{
-		SchemaVersion: ReconciliationSchemaVersion,
-		FailureID:     packet.FailureID,
-		PacketID:      packet.PacketID,
-		PacketDigest:  PacketDigest(packet),
-		CreatedAt:     stamp,
-		UpdatedAt:     stamp,
-		Status:        ReconciliationStatusRecovered,
-		NextAction:    NextActionNone,
+		SchemaVersion:   ReconciliationSchemaVersion,
+		FailureID:       packet.FailureID,
+		PacketID:        packet.PacketID,
+		PacketDigest:    PacketDigest(packet),
+		CreatedAt:       stamp,
+		UpdatedAt:       stamp,
+		LockedContract:  cleanContractSnapshot(packet.LockedContract, packet.SourceRun),
+		AuthorityDeltas: cleanScopeAuthorityDeltas(opts.AuthorityDeltas),
+		Status:          ReconciliationStatusRecovered,
+		NextAction:      NextActionNone,
 	}
 	for _, atom := range packet.CandidateAtoms {
 		if completedSet[atom.ID] {
@@ -111,6 +126,7 @@ func BuildReconciliation(packet DecompositionPacket, opts ReconciliationOptions)
 				ResidualWorkIDs: append([]string{}, atom.ResidualWorkIDs...),
 				RequiredPaths:   append([]string{}, atom.RequiredPaths...),
 				RequiredTests:   append([]string{}, atom.RequiredTests...),
+				InvariantIDs:    append([]string{}, atom.InvariantIDs...),
 			})
 			delete(completedSet, atom.ID)
 			continue
@@ -156,6 +172,9 @@ func ValidateReconciliation(packet DecompositionPacket, reconciliation Reconcili
 	} else if want := PacketDigest(packet); reconciliation.PacketDigest != want {
 		add("recovery_reconciliation_packet_digest_mismatch", "recovery reconciliation packet_digest does not match the current packet")
 	}
+	if !contractSnapshotsEqual(reconciliation.LockedContract, packet.LockedContract) && !authorityDeltasAuthorizeContractChange(packet.LockedContract, reconciliation.LockedContract, reconciliation.AuthorityDeltas) {
+		add("recovery_reconciliation_contract_mismatch", "recovery reconciliation locked contract does not match packet locked contract")
+	}
 	switch reconciliation.Status {
 	case ReconciliationStatusPartial:
 		if reconciliation.NextAction != NextActionReviewDecomposition {
@@ -194,7 +213,7 @@ func ValidateReconciliation(packet DecompositionPacket, reconciliation Reconcili
 			add("recovery_reconciliation_unknown_completed_atom", "completed atom %q is not present in the packet", atom.ID)
 			continue
 		}
-		if !reconciledAtomMatchesPacket(atom, packetAtom) {
+		if !reconciledAtomMatchesPacket(atom, packetAtom, packet.LockedContract, reconciliation.AuthorityDeltas) {
 			add("recovery_reconciliation_completed_atom_mismatch", "completed atom %q does not match the packet candidate atom", atom.ID)
 		}
 	}
@@ -226,23 +245,25 @@ func ValidateReconciliation(packet DecompositionPacket, reconciliation Reconcili
 
 func PacketDigest(packet DecompositionPacket) string {
 	input := struct {
-		SchemaVersion  string          `json:"schema_version"`
-		PacketID       string          `json:"packet_id"`
-		FailureID      string          `json:"failure_id"`
-		SourceRun      SourceRun       `json:"source_run"`
-		Failure        Failure         `json:"failure"`
-		PartialState   PartialState    `json:"partial_state"`
-		ProductLinks   ProductLinks    `json:"product_links,omitempty"`
-		ResidualWork   []ResidualWork  `json:"residual_work,omitempty"`
-		CandidateAtoms []CandidateAtom `json:"candidate_atoms,omitempty"`
-		EvidenceRefs   []EvidenceRef   `json:"evidence_refs,omitempty"`
-		NextAction     string          `json:"next_valid_action"`
+		SchemaVersion  string            `json:"schema_version"`
+		PacketID       string            `json:"packet_id"`
+		FailureID      string            `json:"failure_id"`
+		SourceRun      SourceRun         `json:"source_run"`
+		Failure        Failure           `json:"failure"`
+		LockedContract *ContractSnapshot `json:"locked_contract,omitempty"`
+		PartialState   PartialState      `json:"partial_state"`
+		ProductLinks   ProductLinks      `json:"product_links,omitempty"`
+		ResidualWork   []ResidualWork    `json:"residual_work,omitempty"`
+		CandidateAtoms []CandidateAtom   `json:"candidate_atoms,omitempty"`
+		EvidenceRefs   []EvidenceRef     `json:"evidence_refs,omitempty"`
+		NextAction     string            `json:"next_valid_action"`
 	}{
 		SchemaVersion:  packet.SchemaVersion,
 		PacketID:       packet.PacketID,
 		FailureID:      packet.FailureID,
 		SourceRun:      packet.SourceRun,
 		Failure:        packet.Failure,
+		LockedContract: packet.LockedContract,
 		PartialState:   packet.PartialState,
 		ProductLinks:   packet.ProductLinks,
 		ResidualWork:   packet.ResidualWork,
@@ -404,11 +425,117 @@ func cleanRecoveryAtomIDs(ids []string) []string {
 	return out
 }
 
-func reconciledAtomMatchesPacket(atom ReconciledAtom, packetAtom CandidateAtom) bool {
+func reconciledAtomMatchesPacket(atom ReconciledAtom, packetAtom CandidateAtom, lockedContract *ContractSnapshot, deltas []ScopeAuthorityDelta) bool {
+	scopeMatches := reconciliationStringSlicesEqual(cleanPathList(atom.RequiredPaths), cleanPathList(packetAtom.RequiredPaths))
+	if !scopeMatches && scopeWideningAuthorized(packetAtom.RequiredPaths, atom.RequiredPaths, lockedContract, deltas) {
+		scopeMatches = true
+	}
 	return atom.Title == packetAtom.Title &&
 		reconciliationStringSlicesEqual(cleanRecoveryAtomIDs(atom.ResidualWorkIDs), cleanRecoveryAtomIDs(packetAtom.ResidualWorkIDs)) &&
-		reconciliationStringSlicesEqual(cleanPathList(atom.RequiredPaths), cleanPathList(packetAtom.RequiredPaths)) &&
-		reconciliationStringSlicesEqual(cleanRecoveryCommandList(atom.RequiredTests), cleanRecoveryCommandList(packetAtom.RequiredTests))
+		scopeMatches &&
+		reconciliationStringSlicesEqual(cleanRecoveryCommandList(atom.RequiredTests), cleanRecoveryCommandList(packetAtom.RequiredTests)) &&
+		reconciliationStringSlicesEqual(cleanRecoveryCommandList(atom.InvariantIDs), cleanRecoveryCommandList(packetAtom.InvariantIDs))
+}
+
+func cleanScopeAuthorityDeltas(deltas []ScopeAuthorityDelta) []ScopeAuthorityDelta {
+	seen := map[string]bool{}
+	var out []ScopeAuthorityDelta
+	for _, delta := range deltas {
+		clean := ScopeAuthorityDelta{
+			DeltaID:           strings.TrimSpace(delta.DeltaID),
+			ContractID:        strings.TrimSpace(delta.ContractID),
+			ContractHash:      strings.TrimSpace(delta.ContractHash),
+			Reason:            sanitizeAndTruncate(delta.Reason, 500),
+			RequiredEditPaths: cleanPathList(delta.RequiredEditPaths),
+			AllowedEditPaths:  cleanPathList(delta.AllowedEditPaths),
+		}
+		if clean.DeltaID == "" {
+			continue
+		}
+		key := strings.Join([]string{clean.DeltaID, clean.ContractID, clean.ContractHash, strings.Join(clean.RequiredEditPaths, "\x00"), strings.Join(clean.AllowedEditPaths, "\x00")}, "\x00")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, clean)
+	}
+	return out
+}
+
+func authorityDeltasAuthorizeContractChange(before *ContractSnapshot, after *ContractSnapshot, deltas []ScopeAuthorityDelta) bool {
+	if after == nil || len(deltas) == 0 {
+		return false
+	}
+	var added []string
+	if before == nil {
+		added = cleanPathList(append(after.RequiredEditPaths, after.AllowedEditPaths...))
+	} else {
+		added = append(added, pathsAddedBeyond(before.RequiredEditPaths, after.RequiredEditPaths)...)
+		added = append(added, pathsAddedBeyond(append(before.AllowedEditPaths, before.RequiredEditPaths...), append(after.AllowedEditPaths, after.RequiredEditPaths...))...)
+		added = cleanPathList(added)
+	}
+	if len(added) == 0 {
+		return false
+	}
+	for _, delta := range cleanScopeAuthorityDeltas(deltas) {
+		if !authorityDeltaMatchesContract(delta, before) {
+			continue
+		}
+		if pathsCoveredByAuthorityDelta(added, delta) {
+			return true
+		}
+	}
+	return false
+}
+
+func scopeWideningAuthorized(original []string, updated []string, lockedContract *ContractSnapshot, deltas []ScopeAuthorityDelta) bool {
+	if reconciliationStringSlicesEqual(cleanPathList(original), cleanPathList(updated)) {
+		return true
+	}
+	extra := pathsAddedBeyond(original, updated)
+	if len(extra) == 0 {
+		return false
+	}
+	for _, delta := range cleanScopeAuthorityDeltas(deltas) {
+		if authorityDeltaMatchesContract(delta, lockedContract) && pathsCoveredByAuthorityDelta(extra, delta) {
+			return true
+		}
+	}
+	return false
+}
+
+func authorityDeltaMatchesContract(delta ScopeAuthorityDelta, snapshot *ContractSnapshot) bool {
+	if snapshot == nil {
+		return true
+	}
+	if delta.ContractID != "" && snapshot.ContractID != "" && delta.ContractID != snapshot.ContractID {
+		return false
+	}
+	if delta.ContractHash != "" && snapshot.ContractHash != "" && delta.ContractHash != snapshot.ContractHash {
+		return false
+	}
+	return delta.ContractID != "" || delta.ContractHash != ""
+}
+
+func pathsCoveredByAuthorityDelta(paths []string, delta ScopeAuthorityDelta) bool {
+	authorized := pathSet(append(delta.RequiredEditPaths, delta.AllowedEditPaths...))
+	for _, path := range cleanPathList(paths) {
+		if !authorized[path] {
+			return false
+		}
+	}
+	return true
+}
+
+func pathsAddedBeyond(original []string, updated []string) []string {
+	originalSet := pathSet(original)
+	var extra []string
+	for _, path := range cleanPathList(updated) {
+		if !originalSet[path] {
+			extra = append(extra, path)
+		}
+	}
+	return extra
 }
 
 func cleanRecoveryCommandList(values []string) []string {

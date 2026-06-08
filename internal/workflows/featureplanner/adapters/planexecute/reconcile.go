@@ -50,7 +50,7 @@ func findTerminalCompletionForActiveRun(root string, run featureplanner.ActiveRu
 	for _, sessionID := range progressSessionCandidates(run) {
 		record, completionPath, found, err := coreplanexecute.TryLoadPlanExecuteTerminalCompletionRecord(root, sessionID)
 		if err == nil && found && terminalCompletionForActiveRun(record, run, atom) {
-			return encodeTerminalCompletion(record, completionPath), true
+			return encodeTerminalCompletion(record, completionPath, run), true
 		}
 		state, relPath, found, err := coreplanexecute.TryLoadProgressState(root, sessionID)
 		if err == nil && found && terminalProgressForActiveRun(state, run, atom) {
@@ -134,11 +134,12 @@ func parseTime(value string) time.Time {
 	return parsed
 }
 
-func encodeTerminalCompletion(record coreplanexecute.PlanExecuteTerminalCompletionRecord, completionPath string) string {
+func encodeTerminalCompletion(record coreplanexecute.PlanExecuteTerminalCompletionRecord, completionPath string, run featureplanner.ActiveRun) string {
 	fields := coreplanexecute.PlanExecuteTerminalCompletionEventFields(record, completionPath)
 	if fields == nil {
 		fields = map[string]any{}
 	}
+	addRunContractEvidence(fields, run)
 	fields["tool"] = featureplanner.ToolPlanExecuteComplete
 	fields["lane_family"] = "plan-execute"
 	fields["completion_source"] = "durable_plan_execute_terminal_completion"
@@ -177,6 +178,15 @@ func encodePlanExecuteCompletionFields(fields map[string]any, progressPath strin
 	}
 	body, _ := json.Marshal(fields)
 	return string(body)
+}
+
+func addRunContractEvidence(fields map[string]any, run featureplanner.ActiveRun) {
+	if strings.TrimSpace(featureplanner.CompletionFieldString(fields, "contract_id")) == "" && strings.TrimSpace(run.InvocationContractID) != "" {
+		fields["contract_id"] = strings.TrimSpace(run.InvocationContractID)
+	}
+	if strings.TrimSpace(featureplanner.CompletionFieldString(fields, "snapshot_hash")) == "" && strings.TrimSpace(run.RuntimeEnvelopeID) != "" {
+		fields["snapshot_hash"] = strings.TrimSpace(run.RuntimeEnvelopeID)
+	}
 }
 
 func stringSetsOverlap(left []string, right []string) bool {

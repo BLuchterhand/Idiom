@@ -93,6 +93,36 @@ func TestReplayErrorClassifiesReplayInvariantViolations(t *testing.T) {
 	}
 }
 
+func TestReplayPreservesMalformedAuthorityDeltaForDurableValidation(t *testing.T) {
+	state := durableState()
+	bundle, err := Replay(state, []Event{{
+		SchemaVersion:         FeatureEventSchemaVersion,
+		EventID:               "evt-authority",
+		IdempotencyKey:        "feature-one/rev-0/authority",
+		Type:                  "idiom.feature_planner.planner_question_answered",
+		SessionID:             "session",
+		FeatureID:             "feature-one",
+		FeatureRevisionBefore: 0,
+		FeatureRevisionAfter:  1,
+		Fields: map[string]any{
+			"authority_delta": map[string]any{
+				"authority_kind": "new_file_authorization",
+				"affected_paths": []string{"pkg/new_file.go"},
+			},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("replay should preserve malformed authority delta for validation, got %v", err)
+	}
+	if len(bundle.State.AuthorityDeltas) != 1 {
+		t.Fatalf("authority deltas were dropped: %#v", bundle.State.AuthorityDeltas)
+	}
+	err = ValidateDurableState(bundle.State)
+	if err == nil || !strings.Contains(err.Error(), "authority delta 0 missing question_id") {
+		t.Fatalf("expected durable authority delta validation error, got %v", err)
+	}
+}
+
 func TestReplayAppliesDurableDispatchEvent(t *testing.T) {
 	state := durableState()
 	state.Atoms = []FeatureAtomState{{

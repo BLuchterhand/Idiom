@@ -115,7 +115,7 @@ func planExecuteGoTestCommandsFromPlainText(text string) []string {
 		}
 		rest := strings.TrimSpace(text[idx:])
 		command := planExecuteTrimVerificationCommand(rest)
-		if planExecuteVerificationCommandAllowed(command) {
+		if strings.TrimSpace(command) != "" {
 			commands = append(commands, command)
 		}
 		if idx+len("go test") >= len(text) {
@@ -207,13 +207,52 @@ func planExecuteVerificationCommandAllowed(command string) bool {
 
 func VerificationCommandArgs(command string) ([]string, bool) {
 	args, ok := planExecuteVerificationCommandArgs(command)
-	if !ok || len(args) < 2 {
-		return nil, false
-	}
-	if args[0] != "go" || args[1] != "test" {
+	if !ok || !VerificationArgvAllowed(args) {
 		return nil, false
 	}
 	return args, true
+}
+
+func VerificationArgvAllowed(args []string) bool {
+	args = normalizeVerificationArgv(args)
+	if len(args) == 0 {
+		return false
+	}
+	for _, prefix := range verificationCommandAllowedPrefixes() {
+		if len(args) < len(prefix) {
+			continue
+		}
+		matches := true
+		for i := range prefix {
+			if args[i] != prefix[i] {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeVerificationArgv(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		arg = strings.TrimSpace(arg)
+		if arg == "" || strings.ContainsAny(arg, "\x00\n\r") {
+			return nil
+		}
+		if strings.Contains(arg, ";") || strings.Contains(arg, "&&") || strings.Contains(arg, "||") || strings.ContainsAny(arg, "`><") {
+			return nil
+		}
+		out = append(out, arg)
+	}
+	return out
+}
+
+func verificationCommandAllowedPrefixes() [][]string {
+	return [][]string{{"go", "test"}}
 }
 
 func planExecuteVerificationCommandArgs(command string) ([]string, bool) {

@@ -52,6 +52,7 @@ func ParseOptions(args []string, stderr io.Writer) (Options, error) {
 	fs.Var(&opts.AllowedEditPaths, "allowed-edit-path", "workspace-relative candidate edit path for this plan-execute run; repeatable and augments prompt extraction without requiring coverage")
 	fs.Var(&opts.WriteAllowedPaths, "write-allowed-path", "workspace-relative write envelope path for this plan-execute run; repeatable and limits writes without adding coverage")
 	fs.BoolVar(&opts.WriteAllowedPathsExplicit, "write-allowed-paths-explicit", false, "treat write-allowed-path as an explicit write envelope even when empty")
+	fs.Var((*MultiFlag)(&opts.AuthorizedNewFiles), "authorized-new-file", "workspace-relative new file path authorized by an upstream typed plan contract; repeatable")
 	if err := fs.Parse(args); err != nil {
 		return Options{}, err
 	}
@@ -1144,11 +1145,16 @@ func RunReviewRepairPhase(
 		"changed_paths": allowedRepairPaths,
 	})
 	return ReviewRepairPhaseReport{
-		Status:         "repaired",
-		Repairs:        repairReport.Succeeded,
-		AutoRepairs:    autoRepair.Lines,
-		ReviewPlan:     planPath,
-		ChecklistFound: true,
+		Status:               "repaired",
+		Repairs:              repairReport.Succeeded,
+		AutoRepairs:          autoRepair.Lines,
+		ReviewPlan:           planPath,
+		ChecklistFound:       true,
+		SourceSanity:         append([]PhaseEvidenceCheck(nil), repairReport.SourceSanity...),
+		Verification:         append([]PhaseEvidenceCheck(nil), repairReport.Verification...),
+		VerificationCommands: append([]VerificationCommand(nil), repairReport.VerificationCommands...),
+		VerificationSkips:    append([]VerificationSkip(nil), repairReport.VerificationSkips...),
+		VerificationRejects:  append([]VerificationReject(nil), repairReport.VerificationRejects...),
 	}, nil
 }
 
@@ -1842,21 +1848,29 @@ func RunExecutorPhaseScopedWithVerification(cfg config.Config, plan workspace.Pl
 		ExplicitCommands: verificationCommands,
 		ChangedPaths:     planChangedPaths(plan),
 	})
-	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, nil, false, verificationPlan, jsonEvents, stdout, progress...)
+	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, nil, false, nil, verificationPlan, jsonEvents, stdout, progress...)
 }
 
 func RunExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, verificationPlan VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
 	plan = workspace.NormalizeLoadedPlanArtifact(plan)
-	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, nil, false, verificationPlan, jsonEvents, stdout, progress...)
+	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, nil, false, nil, verificationPlan, jsonEvents, stdout, progress...)
 }
 
 func RunExecutorPhaseScopedWithVerificationPlanAndWriteScope(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, writeAllowedPaths []string, writeAllowedExplicit bool, verificationPlan VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
 	plan = workspace.NormalizeLoadedPlanArtifact(plan)
-	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, writeAllowedPaths, writeAllowedExplicit, verificationPlan, jsonEvents, stdout, progress...)
+	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, writeAllowedPaths, writeAllowedExplicit, nil, verificationPlan, jsonEvents, stdout, progress...)
 }
 
-func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, writeAllowedPaths []string, writeAllowedExplicit bool, verificationPlan VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
+func RunExecutorPhaseScopedWithVerificationPlanAndWriteScopeAuthorizedNewFiles(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, writeAllowedPaths []string, writeAllowedExplicit bool, authorizedNewFiles []string, verificationPlan VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
+	plan = workspace.NormalizeLoadedPlanArtifact(plan)
+	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, writeAllowedPaths, writeAllowedExplicit, authorizedNewFiles, verificationPlan, jsonEvents, stdout, progress...)
+}
+
+func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, writeAllowedPaths []string, writeAllowedExplicit bool, authorizedNewFiles []string, verificationPlan VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
 	report := ExecutorPhaseReport{Total: len(plan.Edits)}
+	report.VerificationCommands = append([]VerificationCommand(nil), verificationPlan.Commands...)
+	report.VerificationSkips = append([]VerificationSkip(nil), verificationPlan.Skips...)
+	report.VerificationRejects = append([]VerificationReject(nil), verificationPlan.Rejects...)
 	if len(plan.Edits) == 0 {
 		return report, fmt.Errorf("plan has no edits")
 	}
@@ -2138,14 +2152,22 @@ func runPlanExecuteVerificationPlan(root string, plan VerificationPlan, jsonEven
 
 func runPlanExecuteVerificationCommand(root string, command VerificationCommand) PhaseEvidenceCheck {
 	command.Command = strings.TrimSpace(command.Command)
+	args := normalizeVerificationArgv(command.Argv)
+	if len(args) == 0 {
+		parsed, ok := VerificationCommandArgs(command.Command)
+		if !ok {
+			args = nil
+		} else {
+			args = parsed
+		}
+	}
 	check := PhaseEvidenceCheck{
 		Kind:       "verification",
 		Command:    command.Command,
 		WorkingDir: command.WorkingDir,
 		Status:     "failed",
 	}
-	args, ok := VerificationCommandArgs(command.Command)
-	if !ok {
+	if len(args) == 0 || !VerificationArgvAllowed(args) {
 		check.Error = "unsupported verification command"
 		return check
 	}
@@ -2155,7 +2177,12 @@ func runPlanExecuteVerificationCommand(root string, command VerificationCommand)
 		cmd.Dir = "."
 	}
 	if command.WorkingDir != "" {
-		cmd.Dir = filepath.Join(cmd.Dir, filepath.FromSlash(command.WorkingDir))
+		workingDir, ok := cleanVerificationWorkingDir(command.WorkingDir)
+		if !ok {
+			check.Error = "unsafe verification working_dir"
+			return check
+		}
+		cmd.Dir = filepath.Join(cmd.Dir, filepath.FromSlash(workingDir))
 	}
 	out, err := cmd.CombinedOutput()
 	output := truncatePlanExecuteText(strings.TrimSpace(string(out)), 12000)
@@ -2484,13 +2511,17 @@ func preflightPlanRequiredEditPaths(required []string, plan workspace.PlanArtifa
 	return nil
 }
 
-func preflightPlanMissingPathAuthorization(root string, prompt string, plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
+func preflightPlanMissingPathAuthorization(root string, authorizedNewFiles []string, plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
+	authorized := map[string]struct{}{}
+	for _, path := range mergePlanExecutePaths(authorizedNewFiles) {
+		authorized[path] = struct{}{}
+	}
 	for i, edit := range plan.Edits {
 		path := normalizePlanExecutePath(edit.Path)
 		if path == "" {
 			continue
 		}
-		if planExecuteNewFileAuthorizedForPath(prompt, path) {
+		if _, ok := authorized[path]; ok {
 			continue
 		}
 		abs := filepath.Join(root, filepath.FromSlash(path))

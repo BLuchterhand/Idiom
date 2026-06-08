@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/platform/util"
 	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/platform/util"
 )
 
 type ParsedPlannerOutput struct {
@@ -368,7 +368,7 @@ func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowB
 
 type StandaloneWorkspaceContext struct {
 	WorkspaceRoot string
-	Prompt        string
+	Contract      plancontract.PlanExecutionContract
 }
 
 func ValidatePlanStandaloneWorkspaceContext(plan FeaturePlan, context StandaloneWorkspaceContext) error {
@@ -384,7 +384,7 @@ func ValidatePlanStandaloneWorkspaceContext(plan FeaturePlan, context Standalone
 				errs = append(errs, fmt.Errorf("atom %d edit path %q is not a valid repo-relative workspace path; use ask_planner_question for localization repair", i, scopedPath))
 				continue
 			}
-			if err := validateStandaloneWorkspacePath(root, context.Prompt, path); err != nil {
+			if err := validateStandaloneWorkspacePath(root, context.Contract, path); err != nil {
 				errs = append(errs, fmt.Errorf("atom %d edit path %q %w", i, path, err))
 			}
 		}
@@ -406,18 +406,408 @@ func standaloneAtomTestArtifactPaths(atom FeatureAtomPlan) []string {
 	return append(append([]string(nil), atom.TestFirst.TestArtifactPaths...), atom.PlannedTDDSnapshot.TestArtifactPaths...)
 }
 
-func validateStandaloneWorkspacePath(root string, prompt string, path string) error {
-	if plancontract.NewFileAuthorizedForPath(prompt, path) {
-		return nil
-	}
+func validateStandaloneWorkspacePath(root string, contract plancontract.PlanExecutionContract, path string) error {
 	abs := filepath.Join(root, filepath.FromSlash(path))
 	if _, err := os.Stat(abs); err != nil {
 		if os.IsNotExist(err) {
+			if planAuthorityContractNewFileAuthorized(contract, path) {
+				return nil
+			}
 			return errors.New("is missing from the workspace and is not authorized as a new file; use ask_planner_question or source-satisfied evidence with existing paths instead of inventing paths")
 		}
 		return fmt.Errorf("could not be statted before dispatch: %w", err)
 	}
 	return nil
+}
+
+func CompilePlanAuthorityContract(plan FeaturePlan, deltas []PlanAuthorityDelta) plancontract.PlanExecutionContract {
+	contract := plancontract.PlanExecutionContract{
+		PlanID:             plan.FeatureID,
+		AuthorizedNewFiles: newFileAuthorizationsFromDeltas(deltas),
+		AuthorityDeltas:    planContractAuthorityDeltas(deltas),
+	}
+	for _, atom := range plan.Atoms {
+		atomContract := compileAtomAuthorityContract(plan, atom)
+		contract.Atoms = append(contract.Atoms, atomContract)
+	}
+	return contract.Normalized()
+}
+
+func compileAtomAuthorityContract(plan FeaturePlan, atom FeatureAtomPlan) plancontract.AtomExecutionContract {
+	required := normalizeEditScopeList(atom.RequiredEditPaths)
+	required = normalizeEditScopeList(append(required, requiredTDDTestArtifactPaths(atom)...))
+	allowed := featurePlannerAllowedScopeExcludingRequired(normalizeEditScopeList(atom.AllowedEditPaths), required)
+	obligations := atomEditSetObligations(atom, required)
+	scope := plancontract.NewPlanScopeContract(required, allowed, obligations)
+	scope = scope.WithWriteAllowedPaths(append(append([]string(nil), required...), allowed...))
+	contract := plancontract.AtomExecutionContract{
+		AtomID:    strings.TrimSpace(atom.ID),
+		AtomTitle: strings.TrimSpace(atom.Title),
+		Scope:     scope,
+	}
+	for _, command := range normalizedStringList(append(atom.RequiredTests, atom.TestFirst.Commands...)) {
+		contract.RequiredTests = append(contract.RequiredTests, plancontract.RequiredTest{Command: command, Source: "featureplanner"})
+	}
+	for _, command := range normalizedStringList(atom.TestFirst.Commands) {
+		contract.TDDObligations = append(contract.TDDObligations, plancontract.TDDObligation{
+			ID:                firstNonEmptyStringSlice(atom.TestFirst.ObligationRefs),
+			Command:           command,
+			TestArtifactPaths: normalizeEditScopeList(append(atom.TestFirst.TestArtifactPaths, atom.PlannedTDDSnapshot.TestArtifactPaths...)),
+			Source:            "featureplanner.test_first",
+		})
+	}
+	for _, acceptance := range normalizedStringList(append(append(append([]string(nil), plan.SDDContract.Refs...), plan.SDDContract.Acceptance...), atom.SDDRefs...)) {
+		contract.AcceptanceObligations = append(contract.AcceptanceObligations, plancontract.AcceptanceEvidenceRequired{Description: acceptance, Required: true, Source: "featureplanner.sdd"})
+	}
+	for _, path := range normalizeEditScopeList(atom.EvidencePaths) {
+		contract.SourceEvidenceObligations = append(contract.SourceEvidenceObligations, plancontract.SourceEvidenceObligation{Path: path, Kind: "featureplanner_evidence", Required: true, Source: "featureplanner"})
+	}
+	return contract.Normalized()
+}
+
+func atomEditSetObligations(atom FeatureAtomPlan, required []string) plancontract.EditSetObligations {
+	var obligations plancontract.EditSetObligations
+	for _, raw := range atom.EditSetObligations {
+		switch plancontract.EditSetObligationKind(strings.TrimSpace(raw)) {
+		case plancontract.EditSetObligationKindTestEdit:
+			obligations = obligations.With(plancontract.EditSetObligationKindTestEdit, "featureplanner.atom_contract")
+		case plancontract.EditSetObligationKindImplementationEdit:
+			obligations = obligations.With(plancontract.EditSetObligationKindImplementationEdit, "featureplanner.atom_contract")
+		}
+	}
+	if len(atom.TestFirst.Commands) > 0 || len(atom.TestFirst.ObligationRefs) > 0 {
+		obligations = obligations.With(plancontract.EditSetObligationKindTestEdit, "featureplanner.tdd_contract")
+	}
+	for _, path := range required {
+		if plancontract.PathLooksLikeImplementation(path) {
+			obligations = obligations.With(plancontract.EditSetObligationKindImplementationEdit, "featureplanner.required_edit_paths")
+			break
+		}
+	}
+	return obligations.Normalized()
+}
+
+func atomStopConditions(atom FeatureAtomPlan) []string {
+	var out []string
+	if !atom.ImplementationRequired {
+		out = append(out, "implementation_required_after_characterization=false")
+	}
+	return out
+}
+
+func StampPlanAuthorityContract(plan *FeaturePlan, deltas []PlanAuthorityDelta) plancontract.PlanExecutionContract {
+	if plan == nil {
+		return plancontract.PlanExecutionContract{}
+	}
+	contract := CompilePlanAuthorityContract(*plan, deltas)
+	byAtom := map[string]plancontract.AtomExecutionContract{}
+	for _, atomContract := range contract.Atoms {
+		byAtom[atomContract.AtomID] = atomContract
+	}
+	for i := range plan.Atoms {
+		atomID := plancontract.NormalizeStableContractIDPart(plan.Atoms[i].ID)
+		atomContract, ok := byAtom[atomID]
+		if !ok {
+			continue
+		}
+		plan.Atoms[i].RuntimeEnvelope.ContractID = atomContract.Scope.ContractID
+		plan.Atoms[i].RuntimeEnvelope.ProtocolHash = contract.ContractHash
+	}
+	return contract
+}
+
+func planAuthorityContractAtom(contract plancontract.PlanExecutionContract, atomID string) (plancontract.AtomExecutionContract, bool) {
+	atomID = plancontract.NormalizeStableContractIDPart(atomID)
+	for _, atom := range contract.Atoms {
+		if atom.AtomID == atomID {
+			return atom, true
+		}
+	}
+	return plancontract.AtomExecutionContract{}, false
+}
+
+func planAuthorityContractNewFileAuthorized(contract plancontract.PlanExecutionContract, path string) bool {
+	path = plancontract.NormalizeScopePath(path)
+	if path == "" {
+		return false
+	}
+	for _, candidate := range contract.AuthorizedNewFiles {
+		if plancontract.NormalizeScopePath(candidate.Path) == path {
+			return true
+		}
+	}
+	for _, root := range contract.AuthorizedNewRoots {
+		normalizedRoot := plancontract.NormalizeScopePath(root.Root)
+		if normalizedRoot != "" && (path == normalizedRoot || strings.HasPrefix(path, normalizedRoot+"/")) {
+			return true
+		}
+	}
+	return false
+}
+
+func newFileAuthorizationsFromDeltas(deltas []PlanAuthorityDelta) []plancontract.AuthorizedNewFile {
+	var files []plancontract.AuthorizedNewFile
+	for _, delta := range normalizePlanAuthorityDeltas(deltas) {
+		if !deltaAuthorizesNewFile(delta) {
+			continue
+		}
+		for _, path := range delta.AffectedPaths {
+			files = append(files, plancontract.AuthorizedNewFile{
+				Path:   path,
+				Reason: firstNonEmpty(delta.Actual, delta.Expected),
+				Source: delta.AuthorityKind,
+				Metadata: plancontract.NewFileAuthorizationMetadata{
+					Compiler: "featureplanner.typed_authority_delta",
+					Rule:     delta.QuestionID,
+				},
+			})
+		}
+	}
+	return files
+}
+
+func deltaAuthorizesNewFile(delta PlanAuthorityDelta) bool {
+	switch delta.AuthorityKind {
+	case "new_file_authorization", "operator_approval":
+	default:
+		return false
+	}
+	return len(delta.AffectedPaths) > 0 &&
+		(len(delta.AffectedFields) == 0 ||
+			deltaAllowsField(delta, "new_file_authorization") ||
+			deltaAllowsField(delta, "required_edit_paths"))
+}
+
+func planContractAuthorityDeltas(deltas []PlanAuthorityDelta) []plancontract.AuthorityDelta {
+	var out []plancontract.AuthorityDelta
+	for _, delta := range normalizePlanAuthorityDeltas(deltas) {
+		kind := planContractAuthorityDeltaKind(delta)
+		for _, path := range append([]string(nil), delta.AffectedPaths...) {
+			out = append(out, plancontract.AuthorityDelta{
+				Kind:     kind,
+				Path:     path,
+				From:     delta.Expected,
+				To:       delta.Actual,
+				Reason:   strings.Join(delta.EvidenceRefs, ", "),
+				Source:   delta.AuthorityKind,
+				Approved: true,
+			})
+		}
+		if len(delta.AffectedPaths) == 0 {
+			out = append(out, plancontract.AuthorityDelta{
+				Kind:     kind,
+				From:     delta.Expected,
+				To:       delta.Actual,
+				Reason:   strings.Join(delta.EvidenceRefs, ", "),
+				Source:   delta.AuthorityKind,
+				Approved: true,
+			})
+		}
+	}
+	return out
+}
+
+func planContractAuthorityDeltaKind(delta PlanAuthorityDelta) plancontract.AuthorityDeltaKind {
+	if deltaAuthorizesNewFile(delta) {
+		return plancontract.AuthorityDeltaKindAddNewFile
+	}
+	for _, field := range delta.AffectedFields {
+		switch field {
+		case "required_edit_paths":
+			return plancontract.AuthorityDeltaKindPromoteRequiredPath
+		case "write_allowed_paths":
+			return plancontract.AuthorityDeltaKindExpandWriteEnvelope
+		}
+	}
+	return plancontract.AuthorityDeltaKindExpandWriteEnvelope
+}
+
+func firstNonEmptyStringSlice(values []string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func atomRequiredTestCommands(atom plancontract.AtomExecutionContract) []string {
+	var out []string
+	for _, test := range atom.RequiredTests {
+		out = append(out, test.Command)
+	}
+	return normalizedStringList(out)
+}
+
+func atomTDDArtifactPaths(atom plancontract.AtomExecutionContract) []string {
+	var out []string
+	for _, obligation := range atom.TDDObligations {
+		out = append(out, obligation.TestArtifactPaths...)
+	}
+	return normalizeEditScopeList(out)
+}
+
+func atomAcceptanceRefs(atom plancontract.AtomExecutionContract) []string {
+	var out []string
+	for _, obligation := range atom.AcceptanceObligations {
+		out = append(out, firstNonEmpty(obligation.ID, obligation.Description))
+	}
+	return normalizedStringList(out)
+}
+
+func atomSourceEvidenceRefs(atom plancontract.AtomExecutionContract) []string {
+	var out []string
+	for _, obligation := range atom.SourceEvidenceObligations {
+		out = append(out, firstNonEmpty(obligation.ID, obligation.Path))
+	}
+	return normalizedStringList(out)
+}
+
+func ValidateSubmittedPlanAgainstLockedContract(previous FeaturePlan, submitted FeaturePlan, deltas []PlanAuthorityDelta) error {
+	if len(previous.Atoms) == 0 {
+		return nil
+	}
+	locked := CompilePlanAuthorityContract(previous, nil)
+	next := CompilePlanAuthorityContract(submitted, deltas)
+	authority := planAuthorityDeltaIndex(deltas)
+	var errs []error
+	nextAtoms := map[string]plancontract.AtomExecutionContract{}
+	for _, atom := range next.Atoms {
+		nextAtoms[atom.AtomID] = atom
+	}
+	for _, atom := range locked.Atoms {
+		candidate, ok := nextAtoms[atom.AtomID]
+		if !ok {
+			if !authority.authorizesField(atom.AtomID, "atom_identity", "") {
+				errs = append(errs, fmt.Errorf("locked atom %q is missing from submitted plan without typed authority delta", atom.AtomID))
+			}
+			continue
+		}
+		errs = append(errs, validateLockedStrings(atom.AtomID, "required_edit_paths", atom.Scope.RequiredEditPaths(), candidate.Scope.RequiredEditPaths(), authority)...)
+		errs = append(errs, validateLockedStrings(atom.AtomID, "allowed_edit_paths", atom.Scope.AllowedEditPaths(), candidate.Scope.AllowedEditPaths(), authority)...)
+		errs = append(errs, validateLockedStrings(atom.AtomID, "required_tests", atomRequiredTestCommands(atom), atomRequiredTestCommands(candidate), authority)...)
+		errs = append(errs, validateLockedStrings(atom.AtomID, "test_artifact_paths", atomTDDArtifactPaths(atom), atomTDDArtifactPaths(candidate), authority)...)
+		errs = append(errs, validateLockedStrings(atom.AtomID, "acceptance_refs", atomAcceptanceRefs(atom), atomAcceptanceRefs(candidate), authority)...)
+		errs = append(errs, validateLockedStrings(atom.AtomID, "source_evidence_refs", atomSourceEvidenceRefs(atom), atomSourceEvidenceRefs(candidate), authority)...)
+	}
+	lockedIDs := map[string]bool{}
+	for _, atom := range locked.Atoms {
+		lockedIDs[atom.AtomID] = true
+	}
+	for _, atom := range next.Atoms {
+		if !lockedIDs[atom.AtomID] && !authority.authorizesField(atom.AtomID, "atom_identity", "") {
+			errs = append(errs, fmt.Errorf("submitted plan adds atom %q without typed authority delta", atom.AtomID))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func validateLockedStrings(atomID string, field string, locked []string, submitted []string, authority planAuthorityDeltaIndex) []error {
+	var errs []error
+	submittedSet := normalizedStringSet(submitted)
+	for _, value := range normalizedStringList(locked) {
+		if submittedSet[value] {
+			continue
+		}
+		if authority.authorizesField(atomID, field, value) {
+			continue
+		}
+		errs = append(errs, fmt.Errorf("locked atom %q %s value %q was rewritten or demoted without typed authority delta", atomID, field, value))
+	}
+	lockedSet := normalizedStringSet(locked)
+	for _, value := range normalizedStringList(submitted) {
+		if lockedSet[value] {
+			continue
+		}
+		if authority.authorizesField(atomID, field, value) {
+			continue
+		}
+		errs = append(errs, fmt.Errorf("locked atom %q %s value %q was added without typed authority delta", atomID, field, value))
+	}
+	return errs
+}
+
+type planAuthorityDeltaIndex []PlanAuthorityDelta
+
+func (index planAuthorityDeltaIndex) authorizesField(atomID string, field string, value string) bool {
+	field = strings.TrimSpace(field)
+	value = strings.TrimSpace(value)
+	for _, delta := range index {
+		if !deltaAppliesToAtom(delta, atomID) {
+			continue
+		}
+		if len(delta.AffectedFields) > 0 && !deltaAllowsField(delta, field) {
+			continue
+		}
+		if value != "" && len(delta.AffectedPaths) > 0 && !containsString(delta.AffectedPaths, value) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func deltaAppliesToAtom(delta PlanAuthorityDelta, atomID string) bool {
+	if strings.TrimSpace(atomID) == "" {
+		return true
+	}
+	for _, field := range delta.AffectedFields {
+		if strings.TrimSpace(field) == "atom:"+atomID {
+			return true
+		}
+	}
+	return len(delta.AffectedFields) == 0
+}
+
+func deltaAllowsField(delta PlanAuthorityDelta, field string) bool {
+	for _, candidate := range delta.AffectedFields {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "*" || candidate == field {
+			return true
+		}
+		if strings.HasPrefix(candidate, "atom:") {
+			continue
+		}
+	}
+	return false
+}
+
+func normalizePlanAuthorityDeltas(deltas []PlanAuthorityDelta) []PlanAuthorityDelta {
+	out := make([]PlanAuthorityDelta, 0, len(deltas))
+	for _, delta := range deltas {
+		delta.QuestionID = strings.TrimSpace(delta.QuestionID)
+		delta.AuthorityKind = strings.TrimSpace(delta.AuthorityKind)
+		delta.EvidenceRefs = normalizedStringList(delta.EvidenceRefs)
+		delta.AffectedPaths = normalizeEditScopeList(delta.AffectedPaths)
+		delta.AffectedFields = normalizedStringList(delta.AffectedFields)
+		delta.Expected = strings.TrimSpace(delta.Expected)
+		delta.Actual = strings.TrimSpace(delta.Actual)
+		delta.CreatedAt = strings.TrimSpace(delta.CreatedAt)
+		if delta.QuestionID == "" || delta.AuthorityKind == "" || len(delta.EvidenceRefs) == 0 || delta.Revision <= 0 || delta.CreatedAt == "" {
+			continue
+		}
+		out = append(out, delta)
+	}
+	return out
+}
+
+func newFileAuthorizedPathsFromDeltas(deltas []PlanAuthorityDelta) []string {
+	var paths []string
+	for _, delta := range normalizePlanAuthorityDeltas(deltas) {
+		switch delta.AuthorityKind {
+		case "new_file_authorization", "operator_approval":
+		default:
+			continue
+		}
+		if len(delta.AffectedPaths) == 0 {
+			continue
+		}
+		if len(delta.AffectedFields) > 0 && !deltaAllowsField(delta, "new_file_authorization") && !deltaAllowsField(delta, "required_edit_paths") {
+			continue
+		}
+		paths = append(paths, delta.AffectedPaths...)
+	}
+	return normalizeEditScopeList(paths)
 }
 
 func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowBrief, workspaceRoot string) FeaturePlan {
@@ -826,6 +1216,26 @@ func ValidateDurableState(state FeatureState) error {
 			errs = append(errs, fmt.Errorf("tdd pre-execution evidence %d missing snapshot_digest", i))
 		}
 	}
+	for i, delta := range state.AuthorityDeltas {
+		if strings.TrimSpace(delta.QuestionID) == "" {
+			errs = append(errs, fmt.Errorf("authority delta %d missing question_id", i))
+		}
+		if strings.TrimSpace(delta.AuthorityKind) == "" {
+			errs = append(errs, fmt.Errorf("authority delta %d missing authority_kind", i))
+		}
+		if len(normalizedStringList(delta.EvidenceRefs)) == 0 {
+			errs = append(errs, fmt.Errorf("authority delta %d missing evidence_refs", i))
+		}
+		if len(delta.AffectedPaths) > 0 && len(normalizeEditScopeList(delta.AffectedPaths)) != len(delta.AffectedPaths) {
+			errs = append(errs, fmt.Errorf("authority delta %d has invalid affected_paths", i))
+		}
+		if delta.Revision <= 0 {
+			errs = append(errs, fmt.Errorf("authority delta %d missing revision", i))
+		}
+		if strings.TrimSpace(delta.CreatedAt) == "" {
+			errs = append(errs, fmt.Errorf("authority delta %d missing created_at", i))
+		}
+	}
 	return errors.Join(errs...)
 }
 
@@ -880,6 +1290,7 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 		return []Event{{Type: EventPlannerSourceSatisfied, SessionID: state.SessionID, FeatureTo: FeatureStateSourceSatisfied, Message: closeout.Summary, Fields: fields}}
 	case ToolSubmitFeaturePlan:
 		hydrateDurablePlanDefaults(&parsed.Plan, state, now)
+		StampPlanAuthorityContract(&parsed.Plan, state.AuthorityDeltas)
 		if err := ValidateDurablePlan(parsed.Plan); err != nil {
 			state.Plan = parsed.Plan
 			state.Status = FeatureStatePlanningRepair

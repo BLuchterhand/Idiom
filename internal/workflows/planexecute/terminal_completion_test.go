@@ -1,6 +1,7 @@
 package planexecute
 
 import (
+	"io"
 	"path/filepath"
 	"testing"
 	"time"
@@ -164,6 +165,139 @@ func TestPlanExecuteTerminalCompletionRecordFromProgressStateRequiresTerminalSta
 	if record.ProgressPath != "progress.json" || record.TerminalClass != PlanExecuteTerminalClassSuccess {
 		t.Fatalf("record = %#v, want terminal success with progress path", record)
 	}
+}
+
+func TestTerminalCompletionRecordIncludesMechanicalEvidence(t *testing.T) {
+	state := progressStateForTerminalCompletionTest(func(state *ProgressState) {
+		state.MarkSkippedReview()
+		state.RequiredEditPaths = []string{"pkg/feature.go"}
+		state.ScopeContractID = "scope-123"
+		state.ScopeContractHash = "scope-123"
+		state.Executor.SourceSanity = []PhaseEvidenceCheck{{
+			Kind:   "source_sanity",
+			Path:   "pkg/feature.go",
+			Status: "ok",
+		}}
+		state.Executor.VerificationCommands = []VerificationCommand{{
+			Command: "go test ./pkg",
+			Argv:    []string{"go", "test", "./pkg"},
+			Source:  VerificationCommandSourceInferred,
+		}}
+		state.Executor.Verification = []PhaseEvidenceCheck{{
+			Kind:    "verification",
+			Command: "go test ./pkg",
+			Status:  "ok",
+		}}
+		state.Executor.VerificationSkips = []VerificationSkip{{Path: "README.md", Reason: VerificationSkipNonGoPath}}
+		state.Executor.VerificationRejects = []VerificationReject{{Command: "go test ./pkg; rm -rf /", Reason: VerificationRejectUnsupportedCmd}}
+	})
+
+	record := NewPlanExecuteTerminalCompletionRecord(state, PlanExecuteTerminalCompletionInput{})
+
+	if record.ScopeContractID != "scope-123" || record.ScopeContractHash != "scope-123" {
+		t.Fatalf("scope contract metadata missing: %#v", record)
+	}
+	if len(record.SourceSanity) != 1 || len(record.Verification) != 1 || len(record.VerificationCommands) != 1 {
+		t.Fatalf("mechanical evidence missing: source=%#v commands=%#v verification=%#v", record.SourceSanity, record.VerificationCommands, record.Verification)
+	}
+	if len(record.VerificationSkips) != 1 || len(record.VerificationRejects) != 1 {
+		t.Fatalf("verification skips/rejects missing: skips=%#v rejects=%#v", record.VerificationSkips, record.VerificationRejects)
+	}
+	if len(record.RequiredPathCoverage) != 1 || record.RequiredPathCoverage[0].Status != "changed" {
+		t.Fatalf("required path coverage missing: %#v", record.RequiredPathCoverage)
+	}
+	if len(record.FailureInvariants) == 0 {
+		t.Fatalf("failure invariants must be recorded")
+	}
+	if !planExecuteTerminalStringSliceContains(record.ValidationFailures, "verification_rejected:go test ./pkg; rm -rf /") {
+		t.Fatalf("verification reject must prevent success, got %#v", record.ValidationFailures)
+	}
+}
+
+func TestTerminalCompletionUsesChangedPathsAsLegacyEnvelopeOnlyWithoutDeclaredScope(t *testing.T) {
+	record := NormalizePlanExecuteTerminalCompletionRecord(PlanExecuteTerminalCompletionRecord{
+		Status:              ProgressStatusCompleted,
+		Phase:               ProgressPhaseComplete,
+		ReviewStatus:        ProgressStatusSkipped,
+		ChangedPaths:        []string{"pkg/feature.go"},
+		SourceSanity:        []PhaseEvidenceCheck{{Kind: "source_sanity", Path: "pkg/feature.go", Status: "ok"}},
+		Verification:        []PhaseEvidenceCheck{{Kind: "verification", Command: "go test ./pkg", Status: "ok"}},
+		ReviewRepairSkipped: true,
+	})
+
+	if planExecuteTerminalStringSliceContains(record.ValidationFailures, "changed_path_outside_write_envelope:pkg/feature.go") {
+		t.Fatalf("legacy no-scope completion should use changed paths as runtime envelope, got %#v", record.ValidationFailures)
+	}
+
+	scoped := NormalizePlanExecuteTerminalCompletionRecord(PlanExecuteTerminalCompletionRecord{
+		Status:              ProgressStatusCompleted,
+		Phase:               ProgressPhaseComplete,
+		ReviewStatus:        ProgressStatusSkipped,
+		RequiredEditPaths:   []string{"pkg/expected.go"},
+		ChangedPaths:        []string{"pkg/feature.go"},
+		SourceSanity:        []PhaseEvidenceCheck{{Kind: "source_sanity", Path: "pkg/feature.go", Status: "ok"}},
+		ReviewRepairSkipped: true,
+	})
+
+	if !planExecuteTerminalStringSliceContains(scoped.ValidationFailures, "changed_path_outside_write_envelope:pkg/feature.go") {
+		t.Fatalf("declared scope should still reject out-of-envelope changed path, got %#v", scoped.ValidationFailures)
+	}
+}
+
+func TestFinalizeTerminalCompletionRejectsStatusOnlySuccess(t *testing.T) {
+	root := t.TempDir()
+	state := NewProgressState("status_only_success", "prompt", "", nil, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))
+	state.Phase = ProgressPhaseComplete
+	state.Status = ProgressStatusCompleted
+
+	result := finalizePlanExecuteRunResult(root, state, ".idiom/plan-execute/sessions/status_only_success.json", false, io.Discard, planExecuteRunResultInput{ExitCode: 0})
+
+	if result.ExitCode != 1 {
+		t.Fatalf("ExitCode = %d, want terminal contract failure", result.ExitCode)
+	}
+	if result.FailureKind != RunFailureTerminalCompletionContractFailed {
+		t.Fatalf("FailureKind = %q, want %q", result.FailureKind, RunFailureTerminalCompletionContractFailed)
+	}
+	if result.Completion == nil || result.Completion.TerminalClass != PlanExecuteTerminalClassFailed {
+		t.Fatalf("completion was not downgraded to failed: %#v", result.Completion)
+	}
+	if !planExecuteTerminalStringSliceContains(result.Completion.ValidationFailures, "changed_paths_missing") {
+		t.Fatalf("validation failures missing changed_paths_missing: %#v", result.Completion.ValidationFailures)
+	}
+}
+
+func TestRecoveryInvariantFailuresIncludeValidationFailurePaths(t *testing.T) {
+	failures := planExecuteRecoveryInvariantFailures(PlanExecuteTerminalCompletionRecord{
+		FailureInvariants: []PlanExecuteTerminalInvariant{{
+			Code:   "required_path_covered:pkg/feature.go",
+			Status: "failed",
+			Reason: "missing",
+		}},
+		ValidationFailures: []string{
+			"changed_path_outside_write_envelope:pkg/feature.go",
+			"verification_failed:go test ./pkg",
+			"source_sanity_failed:(unknown)",
+		},
+	})
+
+	if len(failures) != 4 {
+		t.Fatalf("failures=%#v", failures)
+	}
+	if failures[0].Path != "pkg/feature.go" || failures[1].Path != "pkg/feature.go" {
+		t.Fatalf("expected path-qualified invariant failures, got %#v", failures)
+	}
+	if failures[2].Path != "" || failures[3].Path != "" {
+		t.Fatalf("non-path invariant suffixes must not become recovery paths: %#v", failures)
+	}
+}
+
+func planExecuteTerminalStringSliceContains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func TestNormalizePlanExecuteTerminalCompletionRecordKeepsDegradedOutcomeIdempotent(t *testing.T) {

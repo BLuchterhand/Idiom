@@ -61,6 +61,7 @@ type PlanExecuteFailureInput struct {
 	PlanPath          string
 	PlanID            string
 	PackID            string
+	LockedContract    *ContractSnapshot
 	RequiredEditPaths []string
 	AllowedEditPaths  []string
 	ChangedPaths      []string
@@ -70,29 +71,33 @@ type PlanExecuteFailureInput struct {
 	ReviewStatus      string
 	ReviewReasonClass string
 	ReviewError       string
+	InvariantFailures []InvariantFailure
 }
 
 type FailureRecordInput struct {
-	FailureID      string
-	SourceRun      SourceRun
-	FailureClass   string
-	FailureKind    string
-	FailurePhase   string
-	FailureSummary string
-	EvidenceRefs   []EvidenceRef
-	PartialState   PartialState
-	NextAction     string
+	FailureID         string
+	SourceRun         SourceRun
+	LockedContract    *ContractSnapshot
+	FailureClass      string
+	FailureKind       string
+	FailurePhase      string
+	FailureSummary    string
+	EvidenceRefs      []EvidenceRef
+	InvariantFailures []InvariantFailure
+	PartialState      PartialState
+	NextAction        string
 }
 
 type FailureRecord struct {
-	SchemaVersion string       `json:"schema_version"`
-	FailureID     string       `json:"failure_id"`
-	CreatedAt     string       `json:"created_at"`
-	UpdatedAt     string       `json:"updated_at"`
-	SourceRun     SourceRun    `json:"source_run"`
-	Failure       Failure      `json:"failure"`
-	PartialState  PartialState `json:"partial_state"`
-	NextAction    string       `json:"next_valid_action"`
+	SchemaVersion  string            `json:"schema_version"`
+	FailureID      string            `json:"failure_id"`
+	CreatedAt      string            `json:"created_at"`
+	UpdatedAt      string            `json:"updated_at"`
+	SourceRun      SourceRun         `json:"source_run"`
+	LockedContract *ContractSnapshot `json:"locked_contract,omitempty"`
+	Failure        Failure           `json:"failure"`
+	PartialState   PartialState      `json:"partial_state"`
+	NextAction     string            `json:"next_valid_action"`
 }
 
 type SourceRun struct {
@@ -109,11 +114,12 @@ type SourceRun struct {
 }
 
 type Failure struct {
-	Class        string        `json:"class"`
-	Kind         string        `json:"kind,omitempty"`
-	Phase        string        `json:"phase,omitempty"`
-	Summary      string        `json:"summary"`
-	EvidenceRefs []EvidenceRef `json:"evidence_refs,omitempty"`
+	Class             string             `json:"class"`
+	Kind              string             `json:"kind,omitempty"`
+	Phase             string             `json:"phase,omitempty"`
+	Summary           string             `json:"summary"`
+	EvidenceRefs      []EvidenceRef      `json:"evidence_refs,omitempty"`
+	InvariantFailures []InvariantFailure `json:"invariant_failures,omitempty"`
 }
 
 type EvidenceRef struct {
@@ -121,6 +127,28 @@ type EvidenceRef struct {
 	Path    string `json:"path,omitempty"`
 	ID      string `json:"id,omitempty"`
 	Summary string `json:"summary,omitempty"`
+}
+
+type ContractSnapshot struct {
+	ContractID           string   `json:"contract_id,omitempty"`
+	ContractHash         string   `json:"contract_hash,omitempty"`
+	SnapshotID           string   `json:"snapshot_id,omitempty"`
+	SnapshotPath         string   `json:"snapshot_path,omitempty"`
+	RuntimeContractID    string   `json:"runtime_contract_id,omitempty"`
+	ProtocolHash         string   `json:"protocol_hash,omitempty"`
+	RequiredEditPaths    []string `json:"required_edit_paths,omitempty"`
+	AllowedEditPaths     []string `json:"allowed_edit_paths,omitempty"`
+	WriteAllowedPaths    []string `json:"write_allowed_paths,omitempty"`
+	WriteAllowedExplicit bool     `json:"write_allowed_explicit,omitempty"`
+}
+
+type InvariantFailure struct {
+	InvariantID            string   `json:"invariant_id"`
+	FieldPath              string   `json:"field_path,omitempty"`
+	Path                   string   `json:"path,omitempty"`
+	Expected               string   `json:"expected,omitempty"`
+	Actual                 string   `json:"actual,omitempty"`
+	RequiredRepairEvidence []string `json:"required_repair_evidence,omitempty"`
 }
 
 type PartialState struct {
@@ -173,17 +201,19 @@ func BuildFailureRecord(input FailureRecordInput, now time.Time) (FailureRecord,
 		summary = strings.TrimSpace(source.Lane) + " failed"
 	}
 	return FailureRecord{
-		SchemaVersion: FailureRecordSchemaVersion,
-		FailureID:     failureID,
-		CreatedAt:     stamp,
-		UpdatedAt:     stamp,
-		SourceRun:     source,
+		SchemaVersion:  FailureRecordSchemaVersion,
+		FailureID:      failureID,
+		CreatedAt:      stamp,
+		UpdatedAt:      stamp,
+		SourceRun:      source,
+		LockedContract: cleanContractSnapshot(input.LockedContract, source),
 		Failure: Failure{
-			Class:        failureClass,
-			Kind:         strings.TrimSpace(input.FailureKind),
-			Phase:        strings.TrimSpace(input.FailurePhase),
-			Summary:      summary,
-			EvidenceRefs: cleanEvidenceRefs(input.EvidenceRefs),
+			Class:             failureClass,
+			Kind:              strings.TrimSpace(input.FailureKind),
+			Phase:             strings.TrimSpace(input.FailurePhase),
+			Summary:           summary,
+			EvidenceRefs:      cleanEvidenceRefs(input.EvidenceRefs),
+			InvariantFailures: cleanInvariantFailures(input.InvariantFailures),
 		},
 		PartialState: partial,
 		NextAction:   nextAction,
@@ -210,11 +240,13 @@ func BuildPlanExecuteFailureRecord(input PlanExecuteFailureInput, now time.Time)
 			RequiredEditPaths: cleanPathList(input.RequiredEditPaths),
 			AllowedEditPaths:  cleanPathList(input.AllowedEditPaths),
 		},
-		FailureClass:   failureClass,
-		FailureKind:    input.FailureKind,
-		FailurePhase:   input.Phase,
-		FailureSummary: failureSummary(input),
-		EvidenceRefs:   planExecuteEvidenceRefs(input),
+		LockedContract:    input.LockedContract,
+		FailureClass:      failureClass,
+		FailureKind:       input.FailureKind,
+		FailurePhase:      input.Phase,
+		FailureSummary:    failureSummary(input),
+		EvidenceRefs:      planExecuteEvidenceRefs(input),
+		InvariantFailures: input.InvariantFailures,
 		PartialState: PartialState{
 			DirtyStatus:  DirtyStatusNotChecked,
 			ChangedPaths: cleanPathList(input.ChangedPaths),
@@ -287,6 +319,8 @@ func ClassifyPlanExecuteFailure(kind string, reason string, reviewReasonClass st
 		return FailureClassVerification
 	case "source_sanity_failed":
 		return FailureClassVerification
+	case "terminal_completion_contract_failed":
+		return FailureClassPlanInvalid
 	case "executor_failed":
 		if looksStaleContext(reasonLower) {
 			return FailureClassStaleContext
@@ -484,6 +518,116 @@ func cleanEvidenceRefs(refs []EvidenceRef) []EvidenceRef {
 		out = append(out, clean)
 	}
 	return out
+}
+
+func cleanContractSnapshot(snapshot *ContractSnapshot, source SourceRun) *ContractSnapshot {
+	if snapshot == nil {
+		return nil
+	}
+	clean := ContractSnapshot{
+		ContractID:           strings.TrimSpace(snapshot.ContractID),
+		ContractHash:         strings.TrimSpace(snapshot.ContractHash),
+		SnapshotID:           strings.TrimSpace(snapshot.SnapshotID),
+		SnapshotPath:         cleanRelPath(snapshot.SnapshotPath),
+		RuntimeContractID:    strings.TrimSpace(snapshot.RuntimeContractID),
+		ProtocolHash:         strings.TrimSpace(snapshot.ProtocolHash),
+		RequiredEditPaths:    cleanPathList(snapshot.RequiredEditPaths),
+		AllowedEditPaths:     cleanPathList(snapshot.AllowedEditPaths),
+		WriteAllowedPaths:    cleanPathList(snapshot.WriteAllowedPaths),
+		WriteAllowedExplicit: snapshot.WriteAllowedExplicit,
+	}
+	if len(clean.RequiredEditPaths) == 0 {
+		clean.RequiredEditPaths = append([]string(nil), source.RequiredEditPaths...)
+	}
+	if len(clean.AllowedEditPaths) == 0 {
+		clean.AllowedEditPaths = append([]string(nil), source.AllowedEditPaths...)
+	}
+	if contractSnapshotIsEmpty(clean) {
+		return nil
+	}
+	return &clean
+}
+
+func contractSnapshotIsEmpty(snapshot ContractSnapshot) bool {
+	return snapshot.ContractID == "" &&
+		snapshot.ContractHash == "" &&
+		snapshot.SnapshotID == "" &&
+		snapshot.SnapshotPath == "" &&
+		snapshot.RuntimeContractID == "" &&
+		snapshot.ProtocolHash == "" &&
+		len(snapshot.RequiredEditPaths) == 0 &&
+		len(snapshot.AllowedEditPaths) == 0 &&
+		len(snapshot.WriteAllowedPaths) == 0 &&
+		!snapshot.WriteAllowedExplicit
+}
+
+func contractSnapshotsEqual(a *ContractSnapshot, b *ContractSnapshot) bool {
+	left := cleanContractSnapshot(a, SourceRun{})
+	right := cleanContractSnapshot(b, SourceRun{})
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.ContractID == right.ContractID &&
+		left.ContractHash == right.ContractHash &&
+		left.SnapshotID == right.SnapshotID &&
+		left.SnapshotPath == right.SnapshotPath &&
+		left.RuntimeContractID == right.RuntimeContractID &&
+		left.ProtocolHash == right.ProtocolHash &&
+		stringSlicesSameOrder(left.RequiredEditPaths, right.RequiredEditPaths) &&
+		stringSlicesSameOrder(left.AllowedEditPaths, right.AllowedEditPaths) &&
+		stringSlicesSameOrder(left.WriteAllowedPaths, right.WriteAllowedPaths) &&
+		left.WriteAllowedExplicit == right.WriteAllowedExplicit
+}
+
+func cleanInvariantFailures(failures []InvariantFailure) []InvariantFailure {
+	seen := map[string]bool{}
+	var out []InvariantFailure
+	for _, failure := range failures {
+		clean := InvariantFailure{
+			InvariantID:            strings.TrimSpace(failure.InvariantID),
+			FieldPath:              strings.TrimSpace(failure.FieldPath),
+			Path:                   cleanRelPath(failure.Path),
+			Expected:               sanitizeAndTruncate(failure.Expected, 500),
+			Actual:                 sanitizeAndTruncate(failure.Actual, 500),
+			RequiredRepairEvidence: cleanRecoveryTextList(failure.RequiredRepairEvidence, 500),
+		}
+		if clean.InvariantID == "" {
+			continue
+		}
+		key := strings.Join([]string{clean.InvariantID, clean.FieldPath, clean.Path, clean.Expected, clean.Actual, strings.Join(clean.RequiredRepairEvidence, "\x00")}, "\x00")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, clean)
+	}
+	return out
+}
+
+func cleanRecoveryTextList(values []string, limit int) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = sanitizeAndTruncate(value, limit)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func stringSlicesSameOrder(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func validFailureClass(value string) bool {

@@ -372,6 +372,35 @@ func TestDefaultFeaturePlannerPlanExecutePassesProductWriteEnvelope(t *testing.T
 	}
 }
 
+func TestDefaultFeaturePlannerPlanExecutePassesTypedAuthorizedNewFiles(t *testing.T) {
+	var gotArgs []string
+	req := featurePlannerRequest{
+		ConfigPath: "config.json",
+		SessionID:  "feature-session",
+		Deps: Dependencies{
+			RunPlanExecute: func(args []string, stdout io.Writer, _ io.Writer) int {
+				gotArgs = append([]string(nil), args...)
+				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete"}` + "\n"))
+				return 0
+			},
+		},
+	}
+	prompt := strings.Join([]string{
+		"Implement one feature atom.",
+		"Typed plan execution contract:",
+		`{"revision":"plan_execution_contract.v1","authorized_new_files":[{"path":"pkg/new_helper.go","source":"test"}],"atoms":[{"atom_id":"atom-1","scope":{"required_coverage_paths":["pkg/new_helper.go"]}}]}`,
+		"Typed plan authority projection:",
+		`{"atom_id":"atom-1"}`,
+	}, "\n")
+
+	if _, err := defaultFeaturePlannerPlanExecute(context.Background(), req, prompt, io.Discard); err != nil {
+		t.Fatalf("defaultFeaturePlannerPlanExecute returned error: %v", err)
+	}
+	if !featurePlannerArgsContainPair(gotArgs, "-authorized-new-file", "pkg/new_helper.go") {
+		t.Fatalf("typed authorized new file missing from args %#v", gotArgs)
+	}
+}
+
 func TestDefaultFeaturePlannerPlanExecutePassesExplicitEmptyProductWriteEnvelope(t *testing.T) {
 	var gotArgs []string
 	req := featurePlannerRequest{

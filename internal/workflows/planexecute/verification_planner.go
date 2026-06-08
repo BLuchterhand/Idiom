@@ -43,11 +43,12 @@ type VerificationPlan struct {
 }
 
 type VerificationCommand struct {
-	Command    string `json:"command"`
-	WorkingDir string `json:"working_dir,omitempty"`
-	Source     string `json:"source,omitempty"`
-	Path       string `json:"path,omitempty"`
-	Reason     string `json:"reason,omitempty"`
+	Command    string   `json:"command"`
+	Argv       []string `json:"argv,omitempty"`
+	WorkingDir string   `json:"working_dir,omitempty"`
+	Source     string   `json:"source,omitempty"`
+	Path       string   `json:"path,omitempty"`
+	Reason     string   `json:"reason,omitempty"`
 }
 
 type VerificationSkip struct {
@@ -104,7 +105,8 @@ func (p *VerificationPlan) addExplicitCommand(command string, source string, see
 	if command == "" {
 		return
 	}
-	if !planExecuteVerificationCommandAllowed(command) {
+	args, ok := VerificationCommandArgs(command)
+	if !ok {
 		p.Rejects = append(p.Rejects, VerificationReject{
 			Command: command,
 			Source:  source,
@@ -114,6 +116,7 @@ func (p *VerificationPlan) addExplicitCommand(command string, source string, see
 	}
 	p.addCommand(VerificationCommand{
 		Command: command,
+		Argv:    args,
 		Source:  source,
 		Reason:  "requested verification command",
 	}, seen)
@@ -121,7 +124,33 @@ func (p *VerificationPlan) addExplicitCommand(command string, source string, see
 
 func (p *VerificationPlan) addCommand(command VerificationCommand, seen map[string]struct{}) {
 	command.Command = strings.TrimSpace(command.Command)
-	command.WorkingDir = cleanVerificationWorkingDir(command.WorkingDir)
+	command.Argv = normalizeVerificationArgv(command.Argv)
+	if len(command.Argv) == 0 {
+		if args, ok := VerificationCommandArgs(command.Command); ok {
+			command.Argv = args
+		}
+	}
+	if len(command.Argv) == 0 || !VerificationArgvAllowed(command.Argv) {
+		p.Rejects = append(p.Rejects, VerificationReject{
+			Command: command.Command,
+			Source:  command.Source,
+			Reason:  VerificationRejectUnsupportedCmd,
+		})
+		return
+	}
+	if command.Command == "" {
+		command.Command = strings.Join(command.Argv, " ")
+	}
+	workingDir, ok := cleanVerificationWorkingDir(command.WorkingDir)
+	if !ok {
+		p.Rejects = append(p.Rejects, VerificationReject{
+			Command: command.Command,
+			Source:  command.Source,
+			Reason:  "unsafe_working_dir",
+		})
+		return
+	}
+	command.WorkingDir = workingDir
 	command.Path = filepath.ToSlash(strings.TrimSpace(command.Path))
 	if command.Command == "" {
 		return
@@ -176,7 +205,7 @@ func (p VerificationPlanner) inferTouchedPathCommand(rawPath string) (Verificati
 	}
 	rootAbs := cleanAbsPath(p.root)
 	moduleRel, _ := filepath.Rel(rootAbs, moduleRoot)
-	moduleRel = cleanVerificationWorkingDir(moduleRel)
+	moduleRel, _ = cleanVerificationWorkingDir(moduleRel)
 	pkgDirAbs := filepath.Dir(filepath.Join(rootAbs, filepath.FromSlash(cleaned)))
 	pkgRel, err := filepath.Rel(moduleRoot, pkgDirAbs)
 	if err != nil {
@@ -188,6 +217,7 @@ func (p VerificationPlanner) inferTouchedPathCommand(rawPath string) (Verificati
 	}
 	return VerificationCommand{
 		Command:    "go test " + packageArg,
+		Argv:       []string{"go", "test", packageArg},
 		WorkingDir: moduleRel,
 		Source:     VerificationCommandSourceInferred,
 		Path:       cleaned,
@@ -282,12 +312,27 @@ func samePath(a, b string) bool {
 	return filepath.Clean(a) == filepath.Clean(b)
 }
 
-func cleanVerificationWorkingDir(dir string) string {
+func cleanVerificationWorkingDir(dir string) (string, bool) {
 	dir = strings.TrimSpace(filepath.ToSlash(dir))
 	if dir == "" || dir == "." {
-		return ""
+		return "", true
 	}
-	return strings.TrimPrefix(path.Clean(dir), "./")
+	if filepath.IsAbs(dir) || strings.ContainsRune(dir, 0) {
+		return "", false
+	}
+	cleaned := strings.TrimPrefix(path.Clean(dir), "./")
+	if cleaned == "" || cleaned == "." {
+		return "", true
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", false
+	}
+	for _, part := range strings.Split(cleaned, "/") {
+		if part == "" || part == "." || part == ".." {
+			return "", false
+		}
+	}
+	return cleaned, true
 }
 
 func verificationPathHasSegment(path string, segment string) bool {

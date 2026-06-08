@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/workflows/featureplanner"
 	coreplanexecute "idiom/internal/workflows/planexecute"
 )
@@ -14,6 +15,13 @@ func TestReconcileActiveRunsFoldsBoundTerminalCompletion(t *testing.T) {
 	progress := coreplanexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
 	progress.Phase = coreplanexecute.ProgressPhaseComplete
 	progress.Status = coreplanexecute.ProgressStatusCompleted
+	progress.ChangedPaths = []string{"pkg/feature.go"}
+	progress.Review.Status = coreplanexecute.ProgressStatusCompleted
+	progress.Executor.SourceSanity = []coreplanexecute.PhaseEvidenceCheck{{
+		Kind:   "source_sanity",
+		Path:   "pkg/feature.go",
+		Status: "ok",
+	}}
 	record := coreplanexecute.NewPlanExecuteTerminalCompletionRecord(progress, coreplanexecute.PlanExecuteTerminalCompletionInput{
 		ProgressPath: ".idiom/plan-execute/sessions/atom-1-run-1.json",
 		CompletedAt:  time.Now().UTC(),
@@ -96,24 +104,42 @@ func TestStringSetsOverlapUsesScopePathNormalization(t *testing.T) {
 
 func featureStateWithActivePlanExecuteRunForTest(runID string) featureplanner.FeatureState {
 	started := time.Now().Add(-time.Second).UTC().Format(time.RFC3339Nano)
+	plan := featureplanner.FeaturePlan{
+		FeatureID: "feature-session",
+		Atoms: []featureplanner.FeatureAtomPlan{{
+			ID:                "atom-1",
+			RequiredEditPaths: []string{"pkg/feature.go"},
+		}},
+	}
+	contract := featureplanner.StampPlanAuthorityContract(&plan, nil)
+	atomContract, _ := contractAtomForTest(contract, "atom-1")
 	return featureplanner.FeatureState{
 		SessionID: "feature-session",
 		Status:    featureplanner.FeatureStateDispatching,
+		Plan:      plan,
 		Atoms: []featureplanner.FeatureAtomState{{
-			FeatureAtomPlan: featureplanner.FeatureAtomPlan{
-				ID:                "atom-1",
-				RequiredEditPaths: []string{"pkg/feature.go"},
-			},
-			State:     featureplanner.AtomStateImplementing,
-			LastRunID: runID,
+			FeatureAtomPlan: plan.Atoms[0],
+			State:           featureplanner.AtomStateImplementing,
+			LastRunID:       runID,
 		}},
 		ActiveRuns: []featureplanner.ActiveRun{{
-			RunID:         runID,
-			AtomID:        "atom-1",
-			LaneSessionID: runID,
-			LaneFamily:    "plan-execute",
-			State:         "running",
-			StartedAt:     started,
+			RunID:                runID,
+			AtomID:               "atom-1",
+			LaneSessionID:        runID,
+			LaneFamily:           "plan-execute",
+			InvocationContractID: atomContract.Scope.ContractID,
+			RuntimeEnvelopeID:    contract.ContractHash,
+			State:                "running",
+			StartedAt:            started,
 		}},
 	}
+}
+
+func contractAtomForTest(contract plancontract.PlanExecutionContract, atomID string) (plancontract.AtomExecutionContract, bool) {
+	for _, atom := range contract.Atoms {
+		if atom.AtomID == atomID {
+			return atom, true
+		}
+	}
+	return plancontract.AtomExecutionContract{}, false
 }

@@ -365,6 +365,9 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 	for _, path := range featurePlannerWriteEnvelopeFlags(req.ProductWriteEnvelope) {
 		args = append(args, "-write-allowed-path", path)
 	}
+	for _, path := range featureplanner.PlanExecuteAuthorizedNewFilesFromImplementorPrompt(prompt) {
+		args = append(args, "-authorized-new-file", path)
+	}
 	if req.ProductWriteEnvelopeExplicit {
 		args = append(args, "-write-allowed-paths-explicit")
 	}

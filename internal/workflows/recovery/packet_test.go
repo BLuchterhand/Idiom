@@ -47,6 +47,83 @@ func TestBuildDecompositionPacketCreatesCandidateAtom(t *testing.T) {
 	}
 }
 
+func TestBuildDecompositionPacketUsesInvariantFailuresBeforeBroadPathInference(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatalf("mkdir pkg: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "feature.go"), []byte("package pkg\n"), 0o600); err != nil {
+		t.Fatalf("write feature: %v", err)
+	}
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:         "session-invariant-packet",
+		FailureKind:       "plan_artifact_invalid",
+		FailureReason:     "submit_plan did not satisfy locked coverage",
+		RequiredEditPaths: []string{"pkg/feature.go", "pkg/feature_test.go"},
+		ChangedPaths:      []string{"pkg/feature_test.go"},
+		LockedContract: &ContractSnapshot{
+			ContractID:   "contract_plan_execute_456",
+			ContractHash: "sha256:locked",
+			SnapshotID:   "snapshot-456",
+			SnapshotPath: ".idiom/contracts/contract_plan_execute_456.json",
+		},
+		InvariantFailures: []InvariantFailure{{
+			InvariantID:            "contract.required_edit_coverage",
+			FieldPath:              "submit_plan.edits[0].path",
+			Path:                   "pkg/feature.go",
+			Expected:               "one valid edit for each locked required path",
+			Actual:                 "missing edit for pkg/feature.go",
+			RequiredRepairEvidence: []string{"read current source body before repairing"},
+		}},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	packet, err := BuildDecompositionPacket(record, DecompositionOptions{
+		Now:          time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC),
+		PartialState: PartialStateForDirtyPaths(nil, record.PartialState.ChangedPaths, record.SourceRun.RequiredEditPaths, nil, 1),
+	})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+	if packet.LockedContract == nil || packet.LockedContract.ContractID != "contract_plan_execute_456" {
+		t.Fatalf("packet did not carry locked contract: %#v", packet.LockedContract)
+	}
+	if len(packet.ResidualWork) != 1 {
+		t.Fatalf("residual work=%#v", packet.ResidualWork)
+	}
+	residual := packet.ResidualWork[0]
+	if !stringSlicesEqual(residual.Paths, []string{"pkg/feature.go"}) {
+		t.Fatalf("expected invariant path to scope residual before required+changed inference, got %#v", residual.Paths)
+	}
+	if len(residual.InvariantFailures) != 1 || residual.InvariantFailures[0].InvariantID != "contract.required_edit_coverage" {
+		t.Fatalf("residual invariant failures=%#v", residual.InvariantFailures)
+	}
+	if !evidenceRefsContain(residual.EvidenceRefs, EvidenceRef{Kind: "invariant_failure", Path: "pkg/feature.go", ID: "contract.required_edit_coverage"}) {
+		t.Fatalf("expected invariant evidence ref in %#v", residual.EvidenceRefs)
+	}
+	if len(packet.CandidateAtoms) != 1 ||
+		!stringSlicesEqual(packet.CandidateAtoms[0].RequiredPaths, []string{"pkg/feature.go"}) ||
+		!stringSlicesEqual(packet.CandidateAtoms[0].InvariantIDs, []string{"contract.required_edit_coverage"}) {
+		t.Fatalf("candidate atom not scoped by invariant failure: %#v", packet.CandidateAtoms)
+	}
+	brief := RenderRecoveryBrief(root, packet, packet.CandidateAtoms[0])
+	for _, want := range []string{
+		"Contract ID: `contract_plan_execute_456`",
+		"Contract Hash: `sha256:locked`",
+		"`contract.required_edit_coverage`",
+		"read current source body before repairing",
+		"do not broaden scope without a typed authority delta",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("brief missing %q:\n%s", want, brief)
+		}
+	}
+	if strings.Contains(brief, "`pkg/feature_test.go` |") {
+		t.Fatalf("brief should not promote broad changed path when invariant path is available:\n%s", brief)
+	}
+}
+
 func TestBuildDecompositionPacketUsesDeepestGoPackageForRequiredTests(t *testing.T) {
 	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
 		SessionID:         "session-nested",
@@ -345,6 +422,89 @@ func TestBuildWriteAndLoadReconciliation(t *testing.T) {
 	}
 	if loaded.Status != ReconciliationStatusRecovered || loaded.CompletedAtoms[0].ID != "recovery-001" {
 		t.Fatalf("loaded reconciliation mismatch: %#v", loaded)
+	}
+}
+
+func TestReconciliationPreservesLockedContractAndBlocksScopeWideningWithoutDelta(t *testing.T) {
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:         "session-reconcile-contract",
+		FailureKind:       "executor_failed",
+		RequiredEditPaths: []string{"pkg/feature.go"},
+		LockedContract: &ContractSnapshot{
+			ContractID:        "contract_plan_execute_789",
+			ContractHash:      "sha256:locked-reconcile",
+			SnapshotID:        "snapshot-789",
+			RuntimeContractID: "runtime-789",
+			RequiredEditPaths: []string{"pkg/feature.go"},
+		},
+		InvariantFailures: []InvariantFailure{{
+			InvariantID:            "contract.scope",
+			FieldPath:              "submit_plan.edits[0].path",
+			Path:                   "pkg/feature.go",
+			Expected:               "path inside locked contract",
+			Actual:                 "path drift observed during retry",
+			RequiredRepairEvidence: []string{"contract snapshot plus source evidence"},
+		}},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	packet, err := BuildDecompositionPacket(record, DecompositionOptions{Now: time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+	reconciliation, err := BuildReconciliation(packet, ReconciliationOptions{
+		CompletedAtomIDs: []string{"recovery-001"},
+		Verification:     reconciliationVerificationForPacket(packet, "recovery-001"),
+	})
+	if err != nil {
+		t.Fatalf("BuildReconciliation: %v", err)
+	}
+	if reconciliation.LockedContract == nil || reconciliation.LockedContract.ContractHash != "sha256:locked-reconcile" {
+		t.Fatalf("reconciliation did not preserve locked contract: %#v", reconciliation.LockedContract)
+	}
+	if len(reconciliation.CompletedAtoms) != 1 ||
+		!stringSlicesEqual(reconciliation.CompletedAtoms[0].InvariantIDs, []string{"contract.scope"}) {
+		t.Fatalf("reconciliation did not preserve invariant ids: %#v", reconciliation.CompletedAtoms)
+	}
+	if findings := ValidateReconciliation(packet, reconciliation); len(findings) != 0 {
+		t.Fatalf("expected valid reconciliation, got %#v", findings)
+	}
+
+	reconciliation.LockedContract.ContractHash = "sha256:changed"
+	findings := ValidateReconciliation(packet, reconciliation)
+	if !reconciliationFindingsContain(findings, "recovery_reconciliation_contract_mismatch") {
+		t.Fatalf("expected contract mismatch finding, got %#v", findings)
+	}
+
+	reconciliation.LockedContract.ContractHash = "sha256:locked-reconcile"
+	reconciliation.CompletedAtoms[0].RequiredPaths = []string{"pkg/feature.go", "pkg/extra.go"}
+	findings = ValidateReconciliation(packet, reconciliation)
+	if !reconciliationFindingsContain(findings, "recovery_reconciliation_completed_atom_mismatch") {
+		t.Fatalf("expected scope widening finding, got %#v", findings)
+	}
+
+	reconciliation.AuthorityDeltas = []ScopeAuthorityDelta{{
+		DeltaID:          "delta-path-only",
+		AllowedEditPaths: []string{"pkg/extra.go"},
+		Reason:           "path without locked contract identity is not enough",
+	}}
+	findings = ValidateReconciliation(packet, reconciliation)
+	if !reconciliationFindingsContain(findings, "recovery_reconciliation_completed_atom_mismatch") {
+		t.Fatalf("path-only authority delta should not widen a locked contract, got %#v", findings)
+	}
+
+	reconciliation.AuthorityDeltas = []ScopeAuthorityDelta{{
+		DeltaID:          "delta-add-extra",
+		ContractID:       "contract_plan_execute_789",
+		ContractHash:     "sha256:locked-reconcile",
+		AllowedEditPaths: []string{"pkg/extra.go"},
+		Reason:           "operator-authorized retry scope update",
+	}}
+	findings = ValidateReconciliation(packet, reconciliation)
+	if reconciliationFindingsContain(findings, "recovery_reconciliation_completed_atom_mismatch") ||
+		reconciliationFindingsContain(findings, "recovery_reconciliation_contract_mismatch") {
+		t.Fatalf("authority delta should cover explicit scope widening, got %#v", findings)
 	}
 }
 
