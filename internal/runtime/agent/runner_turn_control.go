@@ -80,22 +80,6 @@ func (c *runnerTurnController) rejectTool(step int, activeToolCall *llama.ToolCa
 	return "", nil, false
 }
 
-func (c *runnerTurnController) recordHostCloseoutRejectionFeedback(step int, activeToolCall *llama.ToolCall, req workspace.ToolRequest, summary string, errorText string) {
-	if c == nil || c.recorder == nil {
-		return
-	}
-	result := workspace.ToolResult{
-		Tool:    req.Tool,
-		Summary: summary,
-		Error:   errorText,
-	}
-	c.recorder.activeToolCall = activeToolCall
-	c.recorder.recordWithOptions(step, req, result, "tool_rejected", runnerRecordOptions{
-		CountRejected:  false,
-		SetLastToolKey: true,
-	})
-}
-
 func (c *runnerTurnController) rejectCompletion(step int, activeToolCall *llama.ToolCall, reply llama.ChatMessage, result workspace.ToolResult) {
 	if c == nil || c.recorder == nil {
 		return
@@ -134,8 +118,8 @@ func completionGateRejectedHistoryMessage(r *Runner, reply llama.ChatMessage, re
 	message.Content = fmt.Sprintf(
 		"[omitted rejected final answer: %d chars. The completion gate rejected it before required workspace changes were recorded: %s. Next action must satisfy the gate with an allowed tool call or a concrete blocker. Preview: %s]",
 		len(content),
-		truncateRunnerStateText(result.Error, 240),
-		truncateRunnerStateText(content, 500),
+		util.Truncate(strings.TrimSpace(result.Error), 240),
+		util.Truncate(strings.TrimSpace(content), 500),
 	)
 	message.ReasoningContent = ""
 	return message

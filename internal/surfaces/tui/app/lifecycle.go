@@ -150,7 +150,7 @@ func explicitAliasCanOverrideRole(model backends.Model, role string) bool {
 		return true
 	}
 	for _, r := range model.Roles {
-		if strings.EqualFold(strings.TrimSpace(r), backends.RoleExecutor) {
+		if util.EqualTrimFold(r, backends.RoleExecutor) {
 			return true
 		}
 	}

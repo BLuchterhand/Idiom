@@ -103,6 +103,153 @@ func TestClassifyExecutorHandoffTreatsScopedFreshPacketAsFresh(t *testing.T) {
 	}
 }
 
+func TestApplyExecutorHandoffViewPopulatesQuality(t *testing.T) {
+	view := comprehension.PackResult{
+		PackID: "abc123def456abc1",
+		Fresh:  true,
+		Quality: comprehension.PackQuality{
+			LocalizationConfidence: "high",
+			SourceOwnerFound:       true,
+			EvidencePaths:          []string{"pkg/target.go"},
+			Reasons:                []string{"matched task terms", "strong signal"},
+		},
+		CandidateFiles:   []comprehension.PackFile{{Path: "pkg/target.go", Role: "editable"}},
+		CandidateSymbols: []comprehension.PackSymbol{{QualifiedName: "Target", Path: "pkg/target.go", Kind: "func"}},
+		Tests:            []comprehension.PackTest{{Command: "go test ./...", Path: "pkg/target_test.go"}},
+	}
+	handoff := applyExecutorHandoffView(ExecutorHandoffPacket{}, view)
+
+	if handoff.Quality.LocalizationConfidence != "high" {
+		t.Fatalf("Quality.LocalizationConfidence = %q, want high", handoff.Quality.LocalizationConfidence)
+	}
+	if !handoff.Quality.SourceOwnerFound {
+		t.Fatal("Quality.SourceOwnerFound should be true")
+	}
+	if len(handoff.Quality.EvidencePaths) != 1 || handoff.Quality.EvidencePaths[0] != "pkg/target.go" {
+		t.Fatalf("Quality.EvidencePaths = %#v, want [pkg/target.go]", handoff.Quality.EvidencePaths)
+	}
+	if len(handoff.Quality.Reasons) != 2 {
+		t.Fatalf("Quality.Reasons = %#v, want 2 reasons", handoff.Quality.Reasons)
+	}
+	if handoff.CandidateFiles != 1 {
+		t.Fatalf("CandidateFiles = %d, want 1", handoff.CandidateFiles)
+	}
+}
+
+func TestPhaseEvidencePacketFromViewPopulatesQuality(t *testing.T) {
+	view := comprehension.PackResult{
+		PackID: "abc123def456abc1",
+		Fresh:  true,
+		Quality: comprehension.PackQuality{
+			LocalizationConfidence: "medium",
+			SourceOwnerFound:       false,
+			EvidencePaths:          []string{"pkg/target.go", "pkg/helper.go"},
+			Reasons:                []string{"partial match"},
+		},
+		CandidateFiles:   []comprehension.PackFile{{Path: "pkg/target.go", Role: "editable", Reason: "matched terms"}},
+		CandidateSymbols: []comprehension.PackSymbol{{QualifiedName: "Helper", Path: "pkg/helper.go", Kind: "func", Reason: "called by target"}},
+		Tests:            []comprehension.PackTest{{Command: "go test ./pkg/...", Path: "pkg/target_test.go", Reason: "covers target"}},
+	}
+	packet := PhaseEvidencePacketFromView(view)
+
+	if packet.Quality.LocalizationConfidence != "medium" {
+		t.Fatalf("Quality.LocalizationConfidence = %q, want medium", packet.Quality.LocalizationConfidence)
+	}
+	if packet.Quality.SourceOwnerFound {
+		t.Fatal("Quality.SourceOwnerFound should be false")
+	}
+	if len(packet.Quality.EvidencePaths) != 2 {
+		t.Fatalf("Quality.EvidencePaths = %#v, want 2 paths", packet.Quality.EvidencePaths)
+	}
+	if len(packet.Quality.Reasons) != 1 || packet.Quality.Reasons[0] != "partial match" {
+		t.Fatalf("Quality.Reasons = %#v, want [partial match]", packet.Quality.Reasons)
+	}
+	// Verify existing fields unchanged.
+	if packet.PackID != "abc123def456abc1" {
+		t.Fatalf("PackID = %q", packet.PackID)
+	}
+	if packet.Status != "available" {
+		t.Fatalf("Status = %q", packet.Status)
+	}
+}
+
+func TestExecutorHandoffPacketEventFieldsIncludesQuality(t *testing.T) {
+	handoff := ExecutorHandoffPacket{
+		State:                ExecutorHandoffStateInherited,
+		Reason:               "fresh_graph_view",
+		PackID:               "abc123def456abc1",
+		Fresh:                true,
+		PacketFreshnessState: ExecutorPacketFreshnessFresh,
+		CandidateFiles:       2,
+		CandidateSymbols:     3,
+		Tests:                1,
+		Quality: comprehension.CompactPackQuality{
+			LocalizationConfidence: "high",
+			SourceOwnerFound:       true,
+			EvidencePaths:          []string{"pkg/feature.go"},
+			Reasons:                []string{"strong signal"},
+		},
+	}
+	fields := executorHandoffPacketEventFields(handoff)
+
+	quality, ok := fields["quality"].(map[string]any)
+	if !ok {
+		t.Fatalf("fields[\"quality\"] missing or wrong type, fields=%#v", fields)
+	}
+	if quality["localization_confidence"] != "high" {
+		t.Fatalf("quality[localization_confidence] = %v", quality["localization_confidence"])
+	}
+	if quality["source_owner_found"] != true {
+		t.Fatalf("quality[source_owner_found] = %v", quality["source_owner_found"])
+	}
+	paths, _ := quality["evidence_paths"].([]string)
+	if len(paths) != 1 || paths[0] != "pkg/feature.go" {
+		t.Fatalf("quality[evidence_paths] = %#v", paths)
+	}
+	reasons, _ := quality["reasons"].([]string)
+	if len(reasons) != 1 || reasons[0] != "strong signal" {
+		t.Fatalf("quality[reasons] = %#v", reasons)
+	}
+}
+
+func TestExecutorHandoffPacketEventFieldsOmitsQualityWhenUnset(t *testing.T) {
+	handoff := ExecutorHandoffPacket{
+		State: ExecutorHandoffStateMissing,
+	}
+	fields := executorHandoffPacketEventFields(handoff)
+	if _, ok := fields["quality"]; ok {
+		t.Fatal("fields[\"quality\"] should be absent for unset quality")
+	}
+}
+
+func TestPhaseEvidenceHandoffFromExecutorCopiesQuality(t *testing.T) {
+	handoff := ExecutorHandoffPacket{
+		State:                ExecutorHandoffStateInherited,
+		Reason:               "fresh_graph_view",
+		PackID:               "abc123def456abc1",
+		Fresh:                true,
+		PacketFreshnessState: ExecutorPacketFreshnessFresh,
+		CandidateFiles:       2,
+		Quality: comprehension.CompactPackQuality{
+			LocalizationConfidence: "high",
+			SourceOwnerFound:       true,
+			EvidencePaths:          []string{"pkg/feature.go"},
+			Reasons:                []string{"strong signal"},
+		},
+	}
+	peh := phaseEvidenceHandoffFromExecutor(handoff)
+
+	if peh.Quality.LocalizationConfidence != "high" {
+		t.Fatalf("Quality.LocalizationConfidence = %q, want high", peh.Quality.LocalizationConfidence)
+	}
+	if !peh.Quality.SourceOwnerFound {
+		t.Fatal("Quality.SourceOwnerFound should be true")
+	}
+	if len(peh.Quality.EvidencePaths) != 1 || peh.Quality.EvidencePaths[0] != "pkg/feature.go" {
+		t.Fatalf("Quality.EvidencePaths = %#v", peh.Quality.EvidencePaths)
+	}
+}
+
 func TestPreflightPlanEditsRejectsEscapingPathBeforeRead(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(filepath.Dir(root), "outside.txt")

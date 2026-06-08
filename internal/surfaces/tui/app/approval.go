@@ -27,7 +27,7 @@ func (p *pendingApproval) summary() string {
 	req := p.request
 	switch strings.TrimSpace(req.Tool) {
 	case "shell", "bash":
-		return fmt.Sprintf("%s: %s", req.Tool, truncateText(req.Command, 120))
+		return fmt.Sprintf("%s: %s", req.Tool, util.Truncate(strings.TrimSpace(req.Command), 120))
 	case "edit_file", "write_file", "append_file":
 		return fmt.Sprintf("%s: %s", req.Tool, req.Path)
 	case "apply_patch":
@@ -37,7 +37,7 @@ func (p *pendingApproval) summary() string {
 		if target == "" {
 			return req.Tool
 		}
-		return fmt.Sprintf("%s: %s", req.Tool, truncateText(target, 120))
+		return fmt.Sprintf("%s: %s", req.Tool, util.Truncate(strings.TrimSpace(target), 120))
 	}
 }
 

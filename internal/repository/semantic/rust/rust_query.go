@@ -203,7 +203,7 @@ func (idx *RustIndex) TraitImplementers(traitName string, limit int) []RustSymbo
 			if len(parts) != 2 {
 				continue
 			}
-			if !strings.EqualFold(strings.TrimSpace(parts[0]), traitName) {
+			if !util.EqualTrimFold(parts[0], traitName) {
 				// Allow fuzzy match on the leading segment (e.g.
 				// `MyTrait<'a>` should match `MyTrait`).
 				if !strings.HasPrefix(strings.TrimSpace(parts[0]), traitName) {

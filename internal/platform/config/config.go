@@ -167,7 +167,7 @@ type LlamaServer struct {
 // IsMLX reports whether this backend is an MLX-based server (mlx_lm.server or
 // equivalent) rather than llama.cpp. Empty Kind defaults to llama.
 func (l LlamaServer) IsMLX() bool {
-	return strings.EqualFold(strings.TrimSpace(l.Kind), BackendMLX)
+	return util.EqualTrimFold(l.Kind, BackendMLX)
 }
 
 func (l LlamaServer) IsOpenAIResponses() bool {
@@ -180,15 +180,15 @@ func (l LlamaServer) IsOpenAIResponses() bool {
 }
 
 func (l LlamaServer) IsZAI() bool {
-	return strings.EqualFold(strings.TrimSpace(l.Kind), BackendZAI)
+	return util.EqualTrimFold(l.Kind, BackendZAI)
 }
 
 func (l LlamaServer) IsMiniMax() bool {
-	return strings.EqualFold(strings.TrimSpace(l.Kind), BackendMiniMax)
+	return util.EqualTrimFold(l.Kind, BackendMiniMax)
 }
 
 func (l LlamaServer) IsDeepSeek() bool {
-	return strings.EqualFold(strings.TrimSpace(l.Kind), BackendDeepSeek)
+	return util.EqualTrimFold(l.Kind, BackendDeepSeek)
 }
 
 func (l LlamaServer) IsHosted() bool {

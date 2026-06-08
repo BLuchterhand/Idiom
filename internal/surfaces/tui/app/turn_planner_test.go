@@ -1305,6 +1305,224 @@ func TestImplementationDispatchContextPackTestPathsUsesCandidateTests(t *testing
 	}
 }
 
+func TestImplementationDispatchContextPackScopeUsesCandidateFiles_CompactFormat(t *testing.T) {
+	// New compact projection format: candidate_files: header, plain paths with "path: role" format.
+	prompt := strings.Join([]string{
+		"## Context Pack",
+		"",
+		"Source: idiom `context_pack` automatic preload.",
+		"",
+		"- Summary: 3 files, 0 symbols, 1 test",
+		"",
+		"context_pack_summary:",
+		"pack_id: abc123",
+		"fresh: true",
+		"packet_quality:",
+		"- localization_confidence: high",
+		"- source_owner_found: true",
+		"",
+		"candidate_files:",
+		"- internal/workflows/productworkflow/migration_apply.go: editable, matched task terms",
+		"- docs/product-status.md: read_only_evidence, related docs",
+		"- internal/workflows/productworkflow/migration_apply_test.go: test, inferred from Go candidate file",
+		"",
+		"candidate_symbols:",
+		"- ignored.go: editable",
+	}, "\n")
+
+	paths := implementationDispatchAllowedPathsFromContextPack(prompt, 8)
+
+	want := []string{
+		"internal/workflows/productworkflow/migration_apply.go",
+		"internal/workflows/productworkflow/migration_apply_test.go",
+	}
+	if !slices.Equal(paths, want) {
+		t.Fatalf("context-pack scope (compact format) = %#v, want %#v", paths, want)
+	}
+}
+
+func TestImplementationDispatchContextPackTestPathsUsesCandidateTests_CompactFormat(t *testing.T) {
+	// New compact projection format: tests: header, plain paths with "path: detail" format.
+	prompt := strings.Join([]string{
+		"## Context Pack",
+		"",
+		"Source: idiom `context_pack` automatic preload.",
+		"",
+		"- Summary: 2 tests",
+		"",
+		"context_pack_summary:",
+		"fresh: true",
+		"packet_quality:",
+		"- localization_confidence: high",
+		"- source_owner_found: true",
+		"",
+		"tests:",
+		"- internal/workflows/productworkflow/migration_apply_test.go: go test ./internal/workflows/productworkflow",
+		"- internal/workflows/productworkflow/efforts_test.go: go test ./internal/workflows/productworkflow",
+		"",
+		"context_gaps:",
+		"- ignored",
+	}, "\n")
+
+	paths := implementationDispatchTestPathsFromContextPack(prompt, 8)
+
+	want := []string{
+		"internal/workflows/productworkflow/migration_apply_test.go",
+		"internal/workflows/productworkflow/efforts_test.go",
+	}
+	if !slices.Equal(paths, want) {
+		t.Fatalf("context-pack test paths (compact format) = %#v, want %#v", paths, want)
+	}
+}
+
+func TestImplementationDispatchPreloadedContextPackBecomesInitialAllowedScope_CompactFormat(t *testing.T) {
+	root := t.TempDir()
+	testPath := filepath.Join(root, "internal", "workflows", "productworkflow", "migration_apply_test.go")
+	if err := os.MkdirAll(filepath.Dir(testPath), 0o755); err != nil {
+		t.Fatalf("mkdir test dir: %v", err)
+	}
+	if err := os.WriteFile(testPath, []byte("package productworkflow\n"), 0o644); err != nil {
+		t.Fatalf("write sibling test: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	model := New(cfg)
+	defer model.Close()
+
+	// New compact projection format.
+	contextPack := strings.Join([]string{
+		"## Context Pack",
+		"",
+		"Source: idiom `context_pack` automatic preload.",
+		"",
+		"- Summary: 2 files, 1 test",
+		"",
+		"context_pack_summary:",
+		"fresh: true",
+		"packet_quality:",
+		"- localization_confidence: high",
+		"- source_owner_found: true",
+		"",
+		"candidate_files:",
+		"- internal/workflows/productworkflow/migration_apply.go: editable, matched task terms",
+		"",
+		"tests:",
+		"- internal/workflows/productworkflow/migration_apply_test.go: go test ./internal/workflows/productworkflow",
+	}, "\n")
+
+	paths := model.implementationDispatchAllowedPathsFromPreloadedContextPack(
+		"status migration apply must reject temp symlinks and add regression tests proving no partial mutation",
+		contextPack,
+	)
+	want := []string{
+		"internal/workflows/productworkflow/migration_apply.go",
+		"internal/workflows/productworkflow/migration_apply_test.go",
+	}
+	if !slices.Equal(paths, want) {
+		t.Fatalf("preloaded context-pack scope (compact format) = %#v, want %#v", paths, want)
+	}
+}
+
+func TestImplementationDispatchPreloadedContextPackRejectsIrrelevantCandidateScope_CompactFormat(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.Root = t.TempDir()
+	cfg.Workspace.CWD = cfg.Workspace.Root
+	model := New(cfg)
+	defer model.Close()
+
+	// New compact projection format with irrelevant paths.
+	contextPack := strings.Join([]string{
+		"## Context Pack",
+		"",
+		"Source: idiom `context_pack` automatic preload.",
+		"",
+		"- Summary: 3 files, 1 test",
+		"",
+		"context_pack_summary:",
+		"fresh: true",
+		"packet_quality:",
+		"- localization_confidence: medium",
+		"- source_owner_found: false",
+		"",
+		"candidate_files:",
+		"- internal/surfaces/cli/product/product_workflow_test.go: editable, matched task terms",
+		"- internal/capabilities/workspace/capabilities_test.go: test, matched task terms",
+		"- internal/surfaces/tui/app/prompt_runtime_test.go: test, matched task terms",
+		"",
+		"tests:",
+		"- internal/surfaces/cli/product/product_workflow_test.go: go test ./internal/surfaces/cli/product",
+	}, "\n")
+
+	paths := model.implementationDispatchAllowedPathsFromPreloadedContextPack(
+		"status migration apply must harden predictable temp-path writes against pre-existing symlinks and add regression tests",
+		contextPack,
+	)
+	if len(paths) != 0 {
+		t.Fatalf("irrelevant preloaded context-pack scope (compact format) should be ignored, got %#v", paths)
+	}
+}
+
+func TestImplementationDispatchAllowedPathsFromBuildContextPackSection_Integration(t *testing.T) {
+	// Create a minimal Go workspace so BuildPromptContextPackSection can produce
+	// a real compact-projection output, then verify the TUI parsers extract the
+	// expected paths from it.
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/ctxpack\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	editPath := filepath.Join(root, "pkg", "target.go")
+	if err := os.WriteFile(editPath, []byte("package pkg\n\nfunc Target() string { return \"target\" }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "noise.go"), []byte("package pkg\n\nfunc Noise() string { return \"noise\" }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	brief := "# Plan-execute atom\n\n## Task\n\nPlan a change to Target.\n\n## Files To Modify\n\n- pkg/target.go\n"
+	var stderr bytes.Buffer
+	section := planexecute.BuildPromptContextPackSection(config.Config{Workspace: config.Workspace{Root: root, CWD: root}}, planexecute.PromptContextPackOptions{
+		Mode:              "plan",
+		Title:             "Plan-execute atom",
+		Brief:             brief,
+		ProjectRoot:       root,
+		RequiredEditPaths: []string{"pkg/target.go"},
+	}, &stderr)
+
+	if strings.TrimSpace(section) == "" {
+		t.Fatalf("BuildPromptContextPackSection returned empty; stderr=%s", stderr.String())
+	}
+
+	// Verify the section uses the new compact format markers.
+	if !strings.Contains(section, "candidate_files:") {
+		t.Fatalf("expected candidate_files: header in section, got:\n%s\nstderr=%s", section, stderr.String())
+	}
+
+	// Parse via the same path used in production: AllowedPathsFromContextPack + TestPaths.
+	paths := implementationDispatchAllowedPathsFromContextPack(section, 8)
+	testPaths := implementationDispatchTestPathsFromContextPack(section, 8)
+	allPaths := append(paths, testPaths...)
+
+	if len(allPaths) == 0 {
+		t.Fatalf("parsers returned zero paths from real BuildPromptContextPackSection output; section:\n%s\nstderr=%s", section, stderr.String())
+	}
+
+	// At minimum, pkg/target.go should be found since it was a required edit path.
+	foundTarget := false
+	for _, p := range allPaths {
+		if strings.Contains(p, "pkg/target.go") {
+			foundTarget = true
+			break
+		}
+	}
+	if !foundTarget {
+		t.Fatalf("expected pkg/target.go in parsed paths, got %v; section:\n%s\nstderr=%s", allPaths, section, stderr.String())
+	}
+}
+
 func TestImplementationDispatchPreloadedContextPackBecomesInitialAllowedScope(t *testing.T) {
 	root := t.TempDir()
 	testPath := filepath.Join(root, "internal", "workflows", "productworkflow", "migration_apply_test.go")

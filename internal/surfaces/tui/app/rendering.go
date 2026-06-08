@@ -116,7 +116,7 @@ func (m *Model) operatorStatusText(width int) string {
 	if hint != "" && available >= 72 {
 		status = status + " · " + hint
 	}
-	return truncateText(status, available)
+	return util.Truncate(strings.TrimSpace(status), available)
 }
 
 func (m *Model) operatorHintText() string {

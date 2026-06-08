@@ -26,6 +26,8 @@ import (
 	"idiom/internal/capabilities/mcp"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/failures"
+	"idiom/internal/platform/util"
+	"idiom/internal/repository/comprehension"
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic/languagetools"
 )
@@ -2229,195 +2231,51 @@ func formatToolResultOutputForModel(result ToolResult) string {
 	return output
 }
 
-type compactContextPackView struct {
-	PackID           string                     `json:"pack_id"`
-	ContextArtifact  string                     `json:"context_artifact_path"`
-	ArtifactPath     string                     `json:"artifact_path"`
-	Quality          compactContextPackQuality  `json:"quality"`
-	CandidateFiles   []compactContextPackFile   `json:"candidate_files"`
-	CandidateSymbols []compactContextPackSymbol `json:"candidate_symbols"`
-	Tests            []compactContextPackTest   `json:"tests"`
-}
-
-type compactContextPackQuality struct {
-	LocalizationConfidence string   `json:"localization_confidence"`
-	SourceOwnerFound       bool     `json:"source_owner_found"`
-	EvidencePaths          []string `json:"evidence_paths"`
-	Reasons                []string `json:"reasons"`
-}
-
-type compactContextPackFile struct {
-	Path    string `json:"path"`
-	Role    string `json:"role"`
-	Reason  string `json:"reason"`
-	Summary string `json:"summary"`
-}
-
-type compactContextPackSymbol struct {
-	Name          string `json:"name"`
-	QualifiedName string `json:"qualified_name"`
-	Symbol        string `json:"symbol"`
-	Path          string `json:"path"`
-	Kind          string `json:"kind"`
-	Signature     string `json:"signature"`
-	StartLine     int    `json:"start_line"`
-	EndLine       int    `json:"end_line"`
-}
-
-type compactContextPackTest struct {
-	Command string `json:"command"`
-	Path    string `json:"path"`
-	Reason  string `json:"reason"`
-	Summary string `json:"summary"`
-}
-
+// compactContextPackOutputForModel renders a PackResult JSON output as
+// model-facing compact text using the shared CompactPackProjection and
+// RenderCompactPackProjection from the comprehension package.
 func compactContextPackOutputForModel(output string) string {
-	var view compactContextPackView
-	if err := json.Unmarshal([]byte(output), &view); err != nil {
+	var result comprehension.PackResult
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
 		return ""
 	}
-	if len(view.CandidateFiles) == 0 && len(view.CandidateSymbols) == 0 && len(view.Tests) == 0 {
+	if len(result.CandidateFiles) == 0 && len(result.CandidateSymbols) == 0 && len(result.Tests) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString("context_pack_summary:\n")
-	if strings.TrimSpace(view.PackID) != "" {
-		b.WriteString("pack_id: " + strings.TrimSpace(view.PackID) + "\n")
+	projection := comprehension.NewCompactPackProjection(result)
+	rendered, _ := comprehension.RenderCompactPackProjection(projection, result.BudgetTokens)
+
+	// Preserve artifact_path from the full PackResult for operator
+	// convenience. It is inserted after the pack_id line so it stays
+	// close to the identity header.
+	if artifact := strings.TrimSpace(result.ArtifactPath); artifact != "" {
+		rendered = insertArtifactPathAfterPackID(rendered, artifact)
 	}
-	artifact := strings.TrimSpace(view.ArtifactPath)
-	if artifact == "" {
-		artifact = strings.TrimSpace(view.ContextArtifact)
-	}
-	if artifact != "" {
-		b.WriteString("artifact_path: " + artifact + "\n")
-	}
-	writeCompactContextPackQuality(&b, view.Quality)
-	writeCompactContextPackFileList(&b, "candidate_files", view.CandidateFiles, 10)
-	writeCompactContextPackSymbolList(&b, view.CandidateSymbols, 12)
-	writeCompactContextPackTestList(&b, view.Tests, 8)
-	b.WriteString("evidence_note: context_pack is localization evidence, not source-body evidence.\n")
-	return strings.TrimSpace(b.String())
+
+	return rendered
 }
 
-func writeCompactContextPackQuality(b *strings.Builder, quality compactContextPackQuality) {
-	if strings.TrimSpace(quality.LocalizationConfidence) == "" && len(quality.EvidencePaths) == 0 && len(quality.Reasons) == 0 {
-		return
-	}
-	b.WriteString("packet_quality:\n")
-	if confidence := strings.TrimSpace(quality.LocalizationConfidence); confidence != "" {
-		b.WriteString("- localization_confidence: " + confidence + "\n")
-	}
-	b.WriteString(fmt.Sprintf("- source_owner_found: %t\n", quality.SourceOwnerFound))
-	if len(quality.EvidencePaths) > 0 {
-		b.WriteString("- strongest_evidence_paths:\n")
-		for _, path := range quality.EvidencePaths {
-			path = strings.TrimSpace(path)
-			if path == "" {
-				continue
-			}
-			b.WriteString("  - " + path + "\n")
+// insertArtifactPathAfterPackID inserts an artifact_path line after the
+// pack_id line in a rendered compact projection. If no pack_id line is
+// found, the artifact path is prepended as a simple note.
+func insertArtifactPathAfterPackID(rendered string, artifactPath string) string {
+	const packIDPrefix = "pack_id: "
+	idx := strings.Index(rendered, packIDPrefix)
+	if idx < 0 {
+		// No pack_id line; prepend as a note after the summary header.
+		headerEnd := strings.Index(rendered, "\n")
+		if headerEnd < 0 {
+			return "artifact_path: " + artifactPath + "\n" + rendered
 		}
+		return rendered[:headerEnd+1] + "artifact_path: " + artifactPath + "\n" + rendered[headerEnd+1:]
 	}
-	if len(quality.Reasons) > 0 {
-		b.WriteString("- reasons: " + truncateWorkspaceModelLine(strings.Join(quality.Reasons, ", "), 180) + "\n")
+	// Find end of the pack_id line.
+	endIdx := strings.Index(rendered[idx:], "\n")
+	if endIdx < 0 {
+		return rendered + "\nartifact_path: " + artifactPath
 	}
-}
-
-func writeCompactContextPackFileList(b *strings.Builder, label string, files []compactContextPackFile, max int) {
-	if len(files) == 0 {
-		return
-	}
-	b.WriteString(label + ":\n")
-	for i, file := range files {
-		if i >= max {
-			fmt.Fprintf(b, "- ... %d more\n", len(files)-max)
-			return
-		}
-		path := strings.TrimSpace(file.Path)
-		if path == "" {
-			continue
-		}
-		detail := firstNonEmptyWorkspaceString(file.Role, file.Reason, file.Summary)
-		if detail != "" {
-			fmt.Fprintf(b, "- %s: %s\n", path, truncateWorkspaceModelLine(detail, 180))
-		} else {
-			fmt.Fprintf(b, "- %s\n", path)
-		}
-	}
-}
-
-func writeCompactContextPackSymbolList(b *strings.Builder, symbols []compactContextPackSymbol, max int) {
-	if len(symbols) == 0 {
-		return
-	}
-	b.WriteString("candidate_symbols:\n")
-	for i, symbol := range symbols {
-		if i >= max {
-			fmt.Fprintf(b, "- ... %d more\n", len(symbols)-max)
-			return
-		}
-		path := strings.TrimSpace(symbol.Path)
-		name := firstNonEmptyWorkspaceString(symbol.Name, symbol.QualifiedName, symbol.Symbol, symbol.Signature, symbol.Kind)
-		if path == "" && name == "" {
-			continue
-		}
-		lineSuffix := ""
-		if symbol.StartLine > 0 {
-			if symbol.EndLine >= symbol.StartLine {
-				lineSuffix = fmt.Sprintf(" lines %d-%d", symbol.StartLine, symbol.EndLine)
-			} else {
-				lineSuffix = fmt.Sprintf(" line %d", symbol.StartLine)
-			}
-		}
-		if name != "" {
-			fmt.Fprintf(b, "- %s in %s%s\n", truncateWorkspaceModelLine(name, 120), path, lineSuffix)
-		} else {
-			fmt.Fprintf(b, "- %s%s\n", path, lineSuffix)
-		}
-	}
-}
-
-func writeCompactContextPackTestList(b *strings.Builder, tests []compactContextPackTest, max int) {
-	if len(tests) == 0 {
-		return
-	}
-	b.WriteString("tests:\n")
-	for i, test := range tests {
-		if i >= max {
-			fmt.Fprintf(b, "- ... %d more\n", len(tests)-max)
-			return
-		}
-		path := strings.TrimSpace(test.Path)
-		if path == "" {
-			continue
-		}
-		detail := firstNonEmptyWorkspaceString(test.Command, test.Reason, test.Summary)
-		if detail != "" {
-			fmt.Fprintf(b, "- %s: %s\n", path, truncateWorkspaceModelLine(detail, 180))
-		} else {
-			fmt.Fprintf(b, "- %s\n", path)
-		}
-	}
-}
-
-func firstNonEmptyWorkspaceString(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
-}
-
-func truncateWorkspaceModelLine(value string, max int) string {
-	value = strings.Join(strings.Fields(value), " ")
-	if max <= 0 || len(value) <= max {
-		return value
-	}
-	if max <= 3 {
-		return value[:max]
-	}
-	return value[:max-3] + "..."
+	insertPos := idx + endIdx + 1
+	return rendered[:insertPos] + "artifact_path: " + artifactPath + "\n" + rendered[insertPos:]
 }
 
 func FormatToolTrace(result ToolResult) string {
@@ -4087,7 +3945,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 	for i := start - 1; i < end && i < len(lines); i++ {
 		line := lines[i]
 		if logLike {
-			line = truncateSearchContentLine(line, defaultLogLineCharCap)
+			line = util.TruncateBytes(strings.TrimRight(line, "\r\n"), defaultLogLineCharCap, "...[line truncated]")
 		}
 		fmt.Fprintf(&b, "%d:%s\n", i+1, line)
 	}
@@ -4129,7 +3987,7 @@ func (m *Manager) readLogTail(path string, description string, lineCap int) (Too
 	}
 	var b strings.Builder
 	for i, line := range lines {
-		line = truncateSearchContentLine(line, defaultLogLineCharCap)
+		line = util.TruncateBytes(strings.TrimRight(line, "\r\n"), defaultLogLineCharCap, "...[line truncated]")
 		fmt.Fprintf(&b, "%d:%s\n", start+i, line)
 	}
 	m.MarkPathObserved(m.displayPath(path))
@@ -4581,7 +4439,7 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 
 	matchCount := strings.Count(current, req.OldText)
 	if matchCount == 0 {
-		if containsCaseFoldedSubstring(current, req.OldText) {
+		if util.ContainsFold(current, req.OldText) {
 			return withToolFailure(ToolResult{
 				Tool:    "edit_file",
 				Summary: "Edit request rejected",
@@ -4756,47 +4614,15 @@ func lineRangeReplacementDuplicatesPrecedingContext(current string, spans []line
 		contextStartLine = 1
 	}
 	context := current[spans[contextStartLine-1].start:spans[startLine-2].end]
-	contextLines := normalizedNonEmptyLines(context)
-	replacementLines := normalizedNonEmptyLines(replacement)
+	contextLines := util.NonEmptyTrimmedLines(context)
+	replacementLines := util.NonEmptyTrimmedLines(replacement)
 	maxCompare := min(len(contextLines), len(replacementLines), 6)
 	for n := maxCompare; n >= 3; n-- {
-		if equalStringSlices(contextLines[len(contextLines)-n:], replacementLines[:n]) {
+		if util.EqualSlice(contextLines[len(contextLines)-n:], replacementLines[:n]) {
 			return true
 		}
 	}
 	return false
-}
-
-func normalizedNonEmptyLines(text string) []string {
-	rawLines := strings.Split(text, "\n")
-	lines := make([]string, 0, len(rawLines))
-	for _, line := range rawLines {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			lines = append(lines, line)
-		}
-	}
-	return lines
-}
-
-func equalStringSlices(a []string, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func containsCaseFoldedSubstring(content string, oldText string) bool {
-	oldText = strings.TrimSpace(oldText)
-	if oldText == "" {
-		return false
-	}
-	return strings.Contains(strings.ToLower(content), strings.ToLower(oldText))
 }
 
 func (m *Manager) rejectInvalidPlannedWrite(toolName string, summary string, path string, contents []byte) *ToolResult {
@@ -5157,7 +4983,7 @@ func plannedWriteLineContext(contents []byte, line int, radius int) string {
 		if i == line {
 			marker = ">"
 		}
-		fmt.Fprintf(&b, "%s %d:%s\n", marker, i, truncateSearchContentLine(lines[i-1], searchContentLineCap))
+		fmt.Fprintf(&b, "%s %d:%s\n", marker, i, util.TruncateBytes(strings.TrimRight(lines[i-1], "\r\n"), searchContentLineCap, "...[line truncated]"))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

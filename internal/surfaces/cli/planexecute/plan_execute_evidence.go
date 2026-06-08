@@ -36,32 +36,34 @@ type phaseEvidenceBundle struct {
 }
 
 type phaseEvidencePacket struct {
-	PackID           string                `json:"pack_id,omitempty"`
-	Status           string                `json:"status"`
-	Error            string                `json:"error,omitempty"`
-	IndexID          string                `json:"index_id,omitempty"`
-	Fresh            bool                  `json:"fresh,omitempty"`
-	Confidence       string                `json:"confidence,omitempty"`
-	StoreKind        string                `json:"store_kind,omitempty"`
-	CandidateFiles   []phaseEvidenceFile   `json:"candidate_files,omitempty"`
-	CandidateSymbols []phaseEvidenceSymbol `json:"candidate_symbols,omitempty"`
-	SuggestedTests   []phaseEvidenceTest   `json:"suggested_tests,omitempty"`
-	UnresolvedGaps   []string              `json:"unresolved_gaps,omitempty"`
+	PackID           string                         `json:"pack_id,omitempty"`
+	Status           string                         `json:"status"`
+	Error            string                         `json:"error,omitempty"`
+	IndexID          string                         `json:"index_id,omitempty"`
+	Fresh            bool                           `json:"fresh,omitempty"`
+	Confidence       string                         `json:"confidence,omitempty"`
+	Quality          comprehension.CompactPackQuality `json:"quality"`
+	StoreKind        string                         `json:"store_kind,omitempty"`
+	CandidateFiles   []phaseEvidenceFile            `json:"candidate_files,omitempty"`
+	CandidateSymbols []phaseEvidenceSymbol          `json:"candidate_symbols,omitempty"`
+	SuggestedTests   []phaseEvidenceTest            `json:"suggested_tests,omitempty"`
+	UnresolvedGaps   []string                       `json:"unresolved_gaps,omitempty"`
 }
 
 type phaseEvidenceHandoff struct {
-	PacketState      string `json:"packet_state"`
-	Reason           string `json:"reason,omitempty"`
-	PlanID           string `json:"plan_id,omitempty"`
-	HandoffID        string `json:"handoff_id,omitempty"`
-	HandoffStatus    string `json:"handoff_status,omitempty"`
-	PackID           string `json:"pack_id,omitempty"`
-	DeclaredPackID   string `json:"declared_pack_id,omitempty"`
-	IndexID          string `json:"index_id,omitempty"`
-	Fresh            bool   `json:"fresh,omitempty"`
-	CandidateFiles   int    `json:"candidate_files,omitempty"`
-	CandidateSymbols int    `json:"candidate_symbols,omitempty"`
-	Tests            int    `json:"tests,omitempty"`
+	PacketState      string                         `json:"packet_state"`
+	Reason           string                         `json:"reason,omitempty"`
+	PlanID           string                         `json:"plan_id,omitempty"`
+	HandoffID        string                         `json:"handoff_id,omitempty"`
+	HandoffStatus    string                         `json:"handoff_status,omitempty"`
+	PackID           string                         `json:"pack_id,omitempty"`
+	DeclaredPackID   string                         `json:"declared_pack_id,omitempty"`
+	IndexID          string                         `json:"index_id,omitempty"`
+	Fresh            bool                           `json:"fresh,omitempty"`
+	Quality          comprehension.CompactPackQuality `json:"quality"`
+	CandidateFiles   int                            `json:"candidate_files,omitempty"`
+	CandidateSymbols int                            `json:"candidate_symbols,omitempty"`
+	Tests            int                            `json:"tests,omitempty"`
 }
 
 type phaseEvidenceFile struct {
@@ -149,6 +151,7 @@ func phaseEvidenceHandoffFromExecutor(handoff executorHandoffPacket) phaseEviden
 		DeclaredPackID:   strings.TrimSpace(handoff.DeclaredPackID),
 		IndexID:          strings.TrimSpace(handoff.IndexID),
 		Fresh:            handoff.Fresh,
+		Quality:          handoff.Quality,
 		CandidateFiles:   handoff.CandidateFiles,
 		CandidateSymbols: handoff.CandidateSymbols,
 		Tests:            handoff.Tests,
@@ -294,12 +297,14 @@ func loadPlanExecutePacketArtifact(root string, packID string) (comprehension.Pa
 }
 
 func phaseEvidencePacketFromView(view comprehension.PackResult) phaseEvidencePacket {
+	proj := comprehension.NewCompactPackProjection(view)
 	packet := phaseEvidencePacket{
 		PackID:           strings.TrimSpace(view.PackID),
 		Status:           "available",
 		IndexID:          strings.TrimSpace(view.IndexID),
 		Fresh:            view.Fresh,
 		Confidence:       strings.TrimSpace(view.Confidence.Level),
+		Quality:          proj.Quality,
 		StoreKind:        firstNonEmptyString(strings.TrimSpace(view.StoreKind), strings.TrimSpace(view.Provenance.StoreKind)),
 		CandidateFiles:   phaseEvidenceFiles(view.CandidateFiles, 8),
 		CandidateSymbols: phaseEvidenceSymbols(view.CandidateSymbols, 8),

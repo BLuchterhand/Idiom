@@ -1471,7 +1471,7 @@ func mapCountFold(values map[string]int, target string) int {
 		return 0
 	}
 	for key, count := range values {
-		if strings.EqualFold(strings.TrimSpace(key), target) {
+		if util.EqualTrimFold(key, target) {
 			return count
 		}
 	}
@@ -1484,7 +1484,7 @@ func contractReplayHasViolation(violations []ContractReplayViolation, id string)
 		return false
 	}
 	for _, violation := range violations {
-		if strings.EqualFold(strings.TrimSpace(violation.ID), id) {
+		if util.EqualTrimFold(violation.ID, id) {
 			return true
 		}
 	}

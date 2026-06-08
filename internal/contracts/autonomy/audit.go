@@ -1407,7 +1407,7 @@ func gateAuditExtendedFields(gate *ContractGateEvent) gateAuditFieldSnapshot {
 }
 
 func gateDecisionNeedsSafeAlternatives(decision ToolPolicyDecision, enforcementMode string) bool {
-	if !strings.EqualFold(strings.TrimSpace(enforcementMode), "enforce") {
+	if !util.EqualTrimFold(enforcementMode, "enforce") {
 		return false
 	}
 	switch decision {
@@ -1500,9 +1500,9 @@ func turnPhaseEvidenceOpen(state PhaseEvidenceStateEvent) bool {
 	return len(state.TDDObligationRefs) > 0 ||
 		len(state.ResidualBlockers) > 0 ||
 		len(state.RecoveryPacketRefs) > 0 ||
-		strings.EqualFold(strings.TrimSpace(state.ProductWorkflowState), "recovery_open") ||
-		strings.EqualFold(strings.TrimSpace(state.ProductWorkflowState), "incomplete") ||
-		strings.EqualFold(strings.TrimSpace(state.ProductWorkflowState), "skipped") ||
+		util.EqualTrimFold(state.ProductWorkflowState, "recovery_open") ||
+		util.EqualTrimFold(state.ProductWorkflowState, "incomplete") ||
+		util.EqualTrimFold(state.ProductWorkflowState, "skipped") ||
 		verificationStatus == "missing" ||
 		verificationStatus == "failed" ||
 		verificationStatus == "pre_write"

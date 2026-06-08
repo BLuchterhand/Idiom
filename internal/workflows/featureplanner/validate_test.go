@@ -918,6 +918,54 @@ func TestRunDispatchesAtomAfterAcceptedTDDPlan(t *testing.T) {
 	}
 }
 
+func TestRunUsesAnsweredPlannerQuestionForStandaloneNewFileAuthorization(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"pkg/new_helper.go", "pkg/new_helper_test.go"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"pkg/new_helper_test.go"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"pkg/new_helper_test.go"}
+
+	state := NewState("session", "implement scoped atom", "", 3, time.Unix(1, 0).UTC())
+	state.OpenQuestions = []PlannerQuestion{{
+		ID:                "q-001",
+		Status:            "answered",
+		QuestionSummary:   "Authorize new files",
+		AuthorityRequired: "operator_approval",
+		AnswerSourceKind:  "operator_approval",
+		Answer:            "I explicitly authorize creating new file pkg/new_helper.go and new file pkg/new_helper_test.go.",
+	}}
+
+	calls := 0
+	result, err := Run(state, RunOptions{
+		Prompt:                "Implement scoped atom from the approved spec.",
+		WorkspaceRoot:         root,
+		MaxPlanningIterations: 3,
+	}, func(_ string, taskFamily string) (string, error) {
+		calls++
+		switch taskFamily {
+		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
+			return mustPlanJSON(t, plan), nil
+		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
+			return testPlanExecuteCompletedJSON(), nil
+		default:
+			t.Fatalf("unexpected task family %q", taskFamily)
+		}
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want planner + implementor", calls)
+	}
+	if result.State.Status == FeatureStatePlanningRepair {
+		t.Fatalf("answered operator authorization should satisfy missing new-file validation, blockers=%+v", result.State.Blockers)
+	}
+	if result.State.Status != FeatureStateComplete {
+		t.Fatalf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+}
+
 func TestDispatchRecordsPlanExecuteLaneFamily(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())

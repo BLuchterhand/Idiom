@@ -921,7 +921,7 @@ func genericGuardedMutationNeedsTargetContract(state RunState) bool {
 	if planThenExecutePlannerState(state) {
 		return false
 	}
-	if strings.EqualFold(strings.TrimSpace(state.TaskFamily), "delegated_isolated_implementation") {
+	if util.EqualTrimFold(state.TaskFamily, "delegated_isolated_implementation") {
 		return false
 	}
 	if len(state.RequiredEditPaths) > 0 || len(state.ChangedPaths) > 0 {
@@ -1035,7 +1035,7 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	brief.Lane = strings.TrimSpace(brief.Lane)
 	brief.TaskFamily = strings.TrimSpace(brief.TaskFamily)
 	brief.Contract = strings.TrimSpace(brief.Contract)
-	brief.Objective = truncate(strings.TrimSpace(brief.Objective), 500)
+	brief.Objective = util.Truncate(strings.TrimSpace(brief.Objective), 500)
 	brief.RequestedOutcome = strings.TrimSpace(brief.RequestedOutcome)
 	brief.WriteIntent = strings.TrimSpace(brief.WriteIntent)
 	brief.EvidenceIntent = strings.TrimSpace(brief.EvidenceIntent)
@@ -1239,7 +1239,7 @@ func toolAllowedInBrief(tools []string, want string) bool {
 		return false
 	}
 	for _, tool := range tools {
-		if strings.EqualFold(strings.TrimSpace(tool), want) {
+		if util.EqualTrimFold(tool, want) {
 			return true
 		}
 	}
@@ -1385,10 +1385,10 @@ func recoveryStateSummary(reason string, tool string, target string, result work
 		}
 	}
 	if summary := strings.TrimSpace(result.Summary); summary != "" {
-		parts = append(parts, "summary: "+truncate(summary, 180))
+		parts = append(parts, "summary: "+util.Truncate(summary, 180))
 	}
 	if errText := strings.TrimSpace(result.Error); errText != "" {
-		parts = append(parts, "error: "+truncate(errText, 220))
+		parts = append(parts, "error: "+util.Truncate(errText, 220))
 	}
 	if len(evidencePaths) > 0 {
 		parts = append(parts, "evidence: "+strings.Join(uniqueNonEmpty(evidencePaths), ", "))
@@ -1407,7 +1407,7 @@ func ToolRequestTarget(req workspace.ToolRequest) string {
 		strings.TrimSpace(req.Agent),
 		strings.TrimSpace(req.Command),
 	)
-	return truncate(target, 180)
+	return util.Truncate(target, 180)
 }
 
 func combinedLower(parts ...string) string {
@@ -1493,6 +1493,3 @@ func firstNonEmpty(values ...string) string {
 	return util.FirstNonEmpty(values...)
 }
 
-func truncate(value string, max int) string {
-	return util.Truncate(strings.TrimSpace(value), max)
-}

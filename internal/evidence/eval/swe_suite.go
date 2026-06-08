@@ -1090,10 +1090,10 @@ func evaluateExpectedRecoveries(metrics Metrics, expected []SWEExpectedRecovery)
 }
 
 func expectedRecoveryMatchesEvent(expected SWEExpectedRecovery, event ErrorEventSnapshot) bool {
-	if expected.EventType != "" && !strings.EqualFold(strings.TrimSpace(event.EventType), strings.TrimSpace(expected.EventType)) {
+	if expected.EventType != "" && !util.EqualTrimFold(event.EventType, expected.EventType) {
 		return false
 	}
-	if expected.Tool != "" && !strings.EqualFold(strings.TrimSpace(event.Tool), strings.TrimSpace(expected.Tool)) {
+	if expected.Tool != "" && !util.EqualTrimFold(event.Tool, expected.Tool) {
 		return false
 	}
 	for _, required := range expected.ErrorContains {
@@ -1141,7 +1141,7 @@ func containsFold(haystack string, needle string) bool {
 }
 
 func cleanRollbackFinding(rollback LiveContractRollbackSnapshot) string {
-	if !strings.EqualFold(strings.TrimSpace(rollback.Status), "clean") {
+	if !util.EqualTrimFold(rollback.Status, "clean") {
 		return fmt.Sprintf("rollback status was not clean: %q", rollback.Status)
 	}
 	if len(rollback.ChangedAfterReset) > 0 {
@@ -1955,7 +1955,7 @@ func taskStartsInLane(task SWETask, lane string) bool {
 	if task.Scenario.RequireRoutePlan == nil {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(task.Scenario.RequireRoutePlan.InitialLane), strings.TrimSpace(lane))
+	return util.EqualTrimFold(task.Scenario.RequireRoutePlan.InitialLane, lane)
 }
 
 // VerificationStatus returns a short string describing the verification outcome.

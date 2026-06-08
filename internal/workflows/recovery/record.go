@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"idiom/internal/platform/util"
 )
 
 const FailureRecordSchemaVersion = "idiom.recovery.failure_record.v1"
@@ -692,16 +694,8 @@ func cleanRelPath(path string) string {
 	return filepath.ToSlash(filepath.Clean(path))
 }
 
-func truncate(value string, limit int) string {
-	value = strings.TrimSpace(value)
-	if limit <= 0 || len(value) <= limit {
-		return value
-	}
-	return strings.TrimSpace(value[:limit]) + "..."
-}
-
 func sanitizeAndTruncate(value string, limit int) string {
-	return truncate(RedactRecoveryText(value), limit)
+	return util.Truncate(strings.TrimSpace(RedactRecoveryText(value)), limit)
 }
 
 func RedactRecoveryText(value string) string {

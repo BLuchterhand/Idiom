@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"idiom/internal/platform/util"
 	"idiom/internal/workflows/recovery"
 )
 
@@ -888,7 +889,7 @@ func productOperatorActionMessage(action string, dispatchable bool, blockerCodes
 
 func productOperatorRequestsImplementationDispatch(actions []string) bool {
 	for _, action := range actions {
-		if strings.EqualFold(strings.TrimSpace(action), "start_implementation") {
+		if util.EqualTrimFold(action, "start_implementation") {
 			return true
 		}
 	}

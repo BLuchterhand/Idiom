@@ -1446,11 +1446,5 @@ func applyMaxTokensOverride(opts llama.ChatOptions, maxTokens int) llama.ChatOpt
 }
 
 func clampPositiveMin(current, limit int) int {
-	if limit <= 0 {
-		return current
-	}
-	if current <= 0 || current < limit {
-		return limit
-	}
-	return current
+	return max(current, limit)
 }

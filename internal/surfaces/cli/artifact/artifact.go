@@ -19,6 +19,7 @@ import (
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/workerruntime"
+	toolcmd "idiom/internal/surfaces/cli/tool"
 	"idiom/internal/workflows/productworkflow"
 )
 
@@ -421,11 +422,5 @@ func runArtifactValidator(command string, artifactPath string, stderr io.Writer)
 }
 
 func logArtifactPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	if rec == nil {
-		return
-	}
-	if fields == nil {
-		fields = map[string]any{}
-	}
-	_ = rec.Log(eventType, fields)
+	toolcmd.LogCLIPhase(rec, eventType, fields)
 }

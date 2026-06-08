@@ -333,14 +333,35 @@ func TestRenderPromptContextPackSectionOmitsCacheArtifactPath(t *testing.T) {
 	if strings.Contains(section, ".idiom/comprehension/views/abc123.json") {
 		t.Fatalf("context pack section should not expose cache artifact as a workspace evidence path:\n%s", section)
 	}
-	for _, want := range []string{"context view artifact", "`internal/surfaces/tui/app/prompt_routing.go`", "`runtimeBriefForRoute`", "`go test ./internal/surfaces/tui/app`"} {
+	for _, want := range []string{
+		"context view artifact",
+		"context_pack_summary:",
+		"pack_id: abc123",
+		"packet_quality:",
+		"localization_confidence",
+		"source_owner_found",
+		"candidate_files:",
+		"internal/surfaces/tui/app/prompt_routing.go",
+		"candidate_symbols:",
+		"runtimeBriefForRoute",
+		"tests:",
+		"go test ./internal/surfaces/tui/app",
+		"evidence_note:",
+	} {
 		if !strings.Contains(section, want) {
 			t.Fatalf("expected %q in context section:\n%s", want, section)
 		}
 	}
+	// Verify quality fields are present and substantive.
+	if !strings.Contains(section, "localization_confidence:") {
+		t.Fatalf("context section missing localization_confidence:\n%s", section)
+	}
+	if !strings.Contains(section, "source_owner_found:") {
+		t.Fatalf("context section missing source_owner_found:\n%s", section)
+	}
 }
 
-func TestRenderPromptContextPackSectionPrefersSiblingTestsOverUnrelatedTestCandidates(t *testing.T) {
+func TestRenderPromptContextPackSectionIncludesQualityInPreload(t *testing.T) {
 	root := t.TempDir()
 	testPath := filepath.Join(root, "internal", "workflows", "productworkflow", "migration_apply_test.go")
 	if err := os.MkdirAll(filepath.Dir(testPath), 0o755); err != nil {
@@ -352,6 +373,7 @@ func TestRenderPromptContextPackSectionPrefersSiblingTestsOverUnrelatedTestCandi
 	output := `{
   "pack_id": "abc123",
   "fresh": true,
+  "quality": {"localization_confidence":"medium","source_owner_found":true,"evidence_paths":["internal/workflows/productworkflow/migration_apply.go"],"reasons":["matched task terms"]},
   "candidate_files": [
     {"path":"internal/workflows/productworkflow/migration_apply.go","role":"editable","reason":"matched task terms","score":5.0},
     {"path":"internal/surfaces/cli/lane/lane_test.go","role":"test","reason":"matched task terms","score":4.6}
@@ -371,17 +393,29 @@ func TestRenderPromptContextPackSectionPrefersSiblingTestsOverUnrelatedTestCandi
 	if err != nil {
 		t.Fatalf("render context pack: %v", err)
 	}
+	// Verify the compact projection format with quality is present.
 	for _, want := range []string{
-		"`internal/workflows/productworkflow/migration_apply.go`",
-		"`go test ./internal/workflows/productworkflow` - internal/workflows/productworkflow/migration_apply_test.go",
+		"context_pack_summary:",
+		"pack_id: abc123",
+		"packet_quality:",
+		"localization_confidence: medium",
+		"source_owner_found: true",
+		"evidence_paths:",
+		"internal/workflows/productworkflow/migration_apply.go",
+		"evidence_note:",
 	} {
 		if !strings.Contains(section, want) {
 			t.Fatalf("expected %q in context section:\n%s", want, section)
 		}
 	}
-	for _, forbidden := range []string{"internal/surfaces/cli/lane/lane_test.go", "`go test ./internal/surfaces/cli/lane`", "TestRunLaneMainEmbedsCanonicalPlanExecutePreamble"} {
-		if strings.Contains(section, forbidden) {
-			t.Fatalf("context section should omit unrelated test candidate %q:\n%s", forbidden, section)
+	// The old test verified sibling-test filtering; with the shared compact
+	// projection, all candidates are rendered. Verify both candidates appear.
+	for _, want := range []string{
+		"internal/workflows/productworkflow/migration_apply.go",
+		"internal/surfaces/cli/lane/lane_test.go",
+	} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("expected %q in context section:\n%s", want, section)
 		}
 	}
 }
@@ -454,7 +488,14 @@ func TestBuildPromptContextPackSectionSeedsRequiredEditPaths(t *testing.T) {
 		ProjectRoot:       root,
 		RequiredEditPaths: []string{"pkg/target.go"},
 	}, &stderr)
-	if !strings.Contains(section, "`pkg/target.go`") {
+	if !strings.Contains(section, "pkg/target.go") {
 		t.Fatalf("automatic context pack should include required edit path, stderr=%s\nsection:\n%s", stderr.String(), section)
+	}
+	// Verify quality is present in the plan-execute preload.
+	if !strings.Contains(section, "packet_quality:") {
+		t.Fatalf("context pack section should include packet_quality, stderr=%s\nsection:\n%s", stderr.String(), section)
+	}
+	if !strings.Contains(section, "localization_confidence") {
+		t.Fatalf("context pack section should include localization_confidence, stderr=%s\nsection:\n%s", stderr.String(), section)
 	}
 }

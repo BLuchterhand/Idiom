@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/platform/util"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -119,7 +120,7 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 	}
 	// Shell has its own handler because some replacements (sed -n → read_file)
 	// aren't language-specific — they don't fit the LanguageSupport pipeline.
-	if strings.EqualFold(strings.TrimSpace(req.Tool), "shell") {
+	if util.EqualTrimFold(req.Tool, "shell") {
 		return d.considerShell(req, ws)
 	}
 	lang, cap, ok := matchRedirectRule(req, ws)
@@ -445,7 +446,7 @@ func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.T
 	if !conversationDiscoveryRedirectApplies(brief) {
 		return RedirectDecision{}
 	}
-	if !strings.EqualFold(strings.TrimSpace(req.Tool), "read_file") {
+	if !util.EqualTrimFold(req.Tool, "read_file") {
 		return RedirectDecision{}
 	}
 	path := normalizeRunnerPath(req.Path)

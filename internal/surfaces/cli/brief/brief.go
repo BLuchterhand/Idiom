@@ -15,6 +15,7 @@ import (
 
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/surfaces/cliassets"
+	toolcmd "idiom/internal/surfaces/cli/tool"
 )
 
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -563,11 +564,5 @@ func writeEmbeddedBriefPreflight() (path string, cleanup func(), err error) {
 }
 
 func logBriefPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	if rec == nil {
-		return
-	}
-	if fields == nil {
-		fields = map[string]any{}
-	}
-	_ = rec.Log(eventType, fields)
+	toolcmd.LogCLIPhase(rec, eventType, fields)
 }

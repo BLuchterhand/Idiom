@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"idiom/internal/platform/util"
 )
 
 type ImplementationHandoff struct {
@@ -121,7 +123,7 @@ func BuildImplementationHandoff(input BriefGenerationInput) ImplementationHandof
 		CurrentState:         strings.TrimSpace(input.WorkflowState.CurrentState),
 		NextValidActions:     append([]string{}, input.WorkflowState.NextValidActions...),
 		CoverageTier:         coverageTier,
-		CoverageGatePassed:   strings.EqualFold(strings.TrimSpace(input.CoverageEvaluation.Status), "pass"),
+		CoverageGatePassed:   util.EqualTrimFold(input.CoverageEvaluation.Status, "pass"),
 		CoverageBlockers:     coverageBlockerMessages(input.CoverageEvaluation),
 		CoverageBlockerKinds: coverageBlockerKinds(input.CoverageEvaluation),
 		FilesToModify:        append([]string{}, generated.FilesToModify...),

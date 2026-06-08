@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"idiom/internal/platform/failures"
+	"idiom/internal/platform/util"
 )
 
 type lspBaseClient struct {
@@ -227,7 +228,7 @@ func (c *lspBaseClient) readMessage() ([]byte, error) {
 		if len(parts) != 2 {
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(parts[0]), "Content-Length") {
+		if util.EqualTrimFold(parts[0], "Content-Length") {
 			n, err := strconv.Atoi(strings.TrimSpace(parts[1]))
 			if err != nil {
 				return nil, err

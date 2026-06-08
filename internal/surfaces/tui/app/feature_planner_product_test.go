@@ -12,6 +12,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/util"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/featureplanner"
 	"idiom/internal/workflows/planexecute"
@@ -1327,13 +1328,13 @@ func TestFirstNonEmpty(t *testing.T) {
 }
 
 func TestTruncate(t *testing.T) {
-	if got := truncate("hello", 10); got != "hello" {
+	if got := util.Truncate("hello", 10); got != "hello" {
 		t.Errorf("expected hello, got %s", got)
 	}
-	if got := truncate("hello world", 5); got != "hello..." {
-		t.Errorf("expected hello..., got %s", got)
+	if got := util.Truncate("hello world", 5); got != "he..." {
+		t.Errorf("expected he..., got %s", got)
 	}
-	if got := truncate("hello world", 11); got != "hello world" {
+	if got := util.Truncate("hello world", 11); got != "hello world" {
 		t.Errorf("expected hello world, got %s", got)
 	}
 }

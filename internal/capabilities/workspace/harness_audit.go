@@ -1327,7 +1327,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 	for _, log := range logs {
 		facts := log.facts
 		displayPath := log.displayPath
-		if facts.HasProcessStart && strings.EqualFold(strings.TrimSpace(facts.Command), "implement") {
+		if facts.HasProcessStart && util.EqualTrimFold(facts.Command, "implement") {
 			if !facts.HasProcessExit && processIDAppearsRunning(facts.PID) {
 				session := harnessAuditInProgressSession{
 					TelemetryLog: displayPath,

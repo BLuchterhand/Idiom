@@ -23,6 +23,7 @@ import (
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/surfaces/tui/app"
+	toolcmd "idiom/internal/surfaces/cli/tool"
 	"idiom/internal/workflows/planexecute"
 )
 
@@ -403,11 +404,5 @@ func RunServerOnlyWithTelemetry(cfg config.Config, opts RunOptions) error {
 }
 
 func logPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	if rec == nil {
-		return
-	}
-	if fields == nil {
-		fields = map[string]any{}
-	}
-	_ = rec.Log(eventType, fields)
+	toolcmd.LogCLIPhase(rec, eventType, fields)
 }

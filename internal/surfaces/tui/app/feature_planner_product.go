@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/featureplanner"
@@ -1527,14 +1528,14 @@ func adrSectionExcerpt(markdown string, section string) string {
 			if inSection {
 				break
 			}
-			inSection = strings.EqualFold(strings.TrimSpace(strings.TrimPrefix(trimmed, "## ")), section)
+			inSection = util.EqualTrimFold(strings.TrimPrefix(trimmed, "## "), section)
 			continue
 		}
 		if inSection && trimmed != "" {
 			parts = append(parts, trimmed)
 		}
 	}
-	return truncate(strings.Join(parts, " "), 220)
+	return util.Truncate(strings.Join(parts, " "), 220)
 }
 
 func normalizedOpenQuestions(text string) string {
@@ -1632,14 +1633,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-// truncate truncates a string to maxLen characters, adding "..." if truncated.
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }
 
 // mustReadFile reads a file and returns its content, or nil on error.

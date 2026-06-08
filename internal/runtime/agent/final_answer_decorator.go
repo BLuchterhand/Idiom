@@ -265,13 +265,6 @@ func ensureTrailingPeriod(s string) string {
 	return s + "."
 }
 
-func runnerWorkspaceRoot(r *Runner) string {
-	if r == nil || r.Workspace == nil {
-		return ""
-	}
-	return strings.TrimSpace(r.Workspace.Root())
-}
-
 func canonicalMutationBlockerFinalAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) (string, bool) {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
 	if !runnerBriefRequiresMutation(brief) {
@@ -530,11 +523,6 @@ func presentableGroundedAnswerFromRenderedPacket(answer string) (string, bool) {
 		return "", false
 	}
 	return grounded, true
-}
-
-func presentableReadOnlyClosureUncertainty(brief workerruntime.WorkerRuntimeBrief, closure readOnlyClosureDecision) string {
-	_ = brief
-	return closure.UserFacingUncertainty()
 }
 
 func presentableReadFileSourceAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
@@ -1172,23 +1160,6 @@ func presentableSourceBodyObjectivePrefix(objective string, lines []string) stri
 		}
 	}
 	return ""
-}
-
-func normalizeSourceEvidenceLines(output string) string {
-	var normalized []string
-	for _, line := range strings.Split(output, "\n") {
-		trimmed := stripSourceEvidenceLinePrefix(strings.TrimSpace(line))
-		if trimmed == "" {
-			continue
-		}
-		if idx := strings.Index(trimmed, "func "); idx >= 0 {
-			trimmed = trimmed[idx:]
-		} else if idx := strings.Index(trimmed, "return "); idx >= 0 {
-			trimmed = trimmed[idx:]
-		}
-		normalized = append(normalized, trimmed)
-	}
-	return strings.Join(normalized, "\n")
 }
 
 func sourceEvidenceAnswerLinesForObjective(output string, objective string, maxLines int) []string {
@@ -2199,10 +2170,6 @@ func isDeterministicFallbackAnswer(answer string) bool {
 // produces misleading code-fragment answers.
 func synthesizeBriefConversationFallback(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
 	return readOnlyClosureDecisionForResults(brief, results).ConversationFallback()
-}
-
-func synthesizeBriefConversationUncertaintyFallback(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
-	return readOnlyClosureDecisionForResults(brief, results).ConversationUncertaintyFallback()
 }
 
 func conversationFallbackEvidenceAnchor(result workspace.ToolResult) string {

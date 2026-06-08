@@ -27,8 +27,6 @@ const (
 	readOnlyClosureReasonNoRelevantSourceEvidence ReadOnlyCloseoutReason = "no_relevant_source_or_diagnostic_evidence"
 )
 
-type readOnlyClosureState = ReadOnlyCloseoutState
-type readOnlyClosureReason = ReadOnlyCloseoutReason
 type readOnlyClosureDecision = ReadOnlyCloseout
 
 type ReadOnlyCloseout struct {
@@ -311,10 +309,7 @@ func answerAddressesObjective(answer string, objective string, ledger readOnlyAn
 			objectiveLineMatches++
 		}
 	}
-	if objectiveLineMatches >= 2 {
-		return true
-	}
-	return false
+	return objectiveLineMatches >= 2
 }
 
 func answerMentionsInspectedCodeSymbol(answer string, results []workspace.ToolResult) bool {

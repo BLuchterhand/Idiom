@@ -256,16 +256,8 @@ func (r *Runner) prepareReadOnlyChildPrompt(prompt string) string {
 	return r.augmentReadOnlyChildPrompt(prompt)
 }
 
-func readOnlyChildPromptHasNamedScope(prompt string) bool {
-	return newDelegatedDiscoveryPlan(prompt).hasNamedScope
-}
-
 func readOnlyChildPromptHasPrimaryNamedScope(prompt string) bool {
 	return newDelegatedDiscoveryPlan(prompt).hasPrimaryScope
-}
-
-func readOnlyChildPromptNamedScopes(prompt string) []string {
-	return newDelegatedDiscoveryPlan(prompt).namedScopes
 }
 
 func normalizeReadOnlyChildLead(line string) string {
@@ -354,10 +346,6 @@ func trimReadOnlyChildLeadAtBroadMarker(line string) string {
 
 func readOnlyChildKeyTerms(prompt string) []string {
 	return newDelegatedDiscoveryPlan(prompt).promptKeyTerms
-}
-
-func readOnlyChildKeyTermStopWord(lower string) bool {
-	return delegatedDiscoveryStopWord(lower, delegatedDiscoveryStopWordPromptKeyTerm)
 }
 
 func isWriteChildMode(mode string) bool {

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/platform/util"
 )
 
 // ToolRequestTokenizer converts raw model output into a tool name and
@@ -76,7 +77,7 @@ func (keyValueToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizatio
 			continue
 		}
 		key, _, ok := strings.Cut(line, ":")
-		if ok && strings.EqualFold(strings.TrimSpace(key), "tool") {
+		if ok && util.EqualTrimFold(key, "tool") {
 			toolLineIdx = i
 			break
 		}

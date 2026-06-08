@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/platform/util"
 	plancontract "idiom/internal/contracts/plan"
 )
 
@@ -473,7 +474,7 @@ func requiredTDDTestArtifactPaths(atom FeatureAtomPlan) []string {
 	if atom.TestFirst.BaselineRequired ||
 		len(atom.TestFirst.ObligationRefs) > 0 ||
 		len(atom.TDDObligations) > 0 ||
-		strings.EqualFold(strings.TrimSpace(atom.TestFirst.ExpectedPreExecutionResult), "red-confirmed") {
+		util.EqualTrimFold(atom.TestFirst.ExpectedPreExecutionResult, "red-confirmed") {
 		paths = append(paths, atom.TestFirst.TestArtifactPaths...)
 	}
 	if len(atom.PlannedTDDSnapshot.ObligationIDs) > 0 ||

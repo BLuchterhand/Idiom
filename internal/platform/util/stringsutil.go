@@ -69,3 +69,12 @@ func TrimHeadingQualifier(heading string) string {
 	}
 	return heading
 }
+
+// ContainsFold reports whether substr is within haystack under Unicode case-folding.
+// An empty substr returns false (consistent with strings.Contains semantics).
+func ContainsFold(haystack, substr string) bool {
+	if strings.TrimSpace(substr) == "" {
+		return false
+	}
+	return strings.Contains(strings.ToLower(haystack), strings.ToLower(strings.TrimSpace(substr)))
+}

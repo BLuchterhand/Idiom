@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -111,7 +112,7 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 	case mgr != nil && mgr.ShouldClearBroadInspectionLock(req, result):
 		s.needsNarrowingAfterBroad = false
 	}
-	if strings.EqualFold(strings.TrimSpace(req.Tool), "list_files") {
+	if util.EqualTrimFold(req.Tool, "list_files") {
 		s.consecutiveListFiles++
 	} else if isContentInspectionTool(req.Tool) {
 		s.consecutiveListFiles = 0
@@ -241,10 +242,6 @@ func successfulSearchDiscoveryResult(req workspace.ToolRequest, result workspace
 	default:
 		return false
 	}
-}
-
-func successfulDiscoveryConsumptionResult(req workspace.ToolRequest, result workspace.ToolResult) bool {
-	return discoveryConsumptionResultStrength(req, result) == discoveryConsumptionSourceOwner
 }
 
 func discoveryConsumptionResultStrength(req workspace.ToolRequest, result workspace.ToolResult) discoveryConsumptionStrength {

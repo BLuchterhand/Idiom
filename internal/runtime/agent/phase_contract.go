@@ -7,6 +7,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/platform/util"
 	"idiom/internal/runtime/agent/stringset"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -1269,7 +1270,7 @@ func expectedVisibleOutput(input TurnPhaseContractInput) string {
 	switch {
 	case input.SupportsNativeTools && !input.TextualToolParser:
 		return "native_tool_call"
-	case input.TextualToolParser || strings.EqualFold(strings.TrimSpace(input.ToolTransportMode), "textual"):
+	case input.TextualToolParser || util.EqualTrimFold(input.ToolTransportMode, "textual"):
 		return "visible_text_tool_request"
 	default:
 		return ""
@@ -1277,7 +1278,7 @@ func expectedVisibleOutput(input TurnPhaseContractInput) string {
 }
 
 func phaseContractTextualOnly(input TurnPhaseContractInput, contract TurnPhaseContract) bool {
-	if !input.TextualToolParser && !strings.EqualFold(strings.TrimSpace(input.ToolTransportMode), "textual") {
+	if !input.TextualToolParser && !util.EqualTrimFold(input.ToolTransportMode, "textual") {
 		return false
 	}
 	if phaseContractKeepsTextualCallableTools(input, contract) {
@@ -1312,9 +1313,9 @@ func phaseEvidenceHasOpenObligation(state PhaseEvidenceState) bool {
 	return len(state.TDDObligationRefs) > 0 ||
 		len(state.ResidualBlockers) > 0 ||
 		len(state.RecoveryPacketRefs) > 0 ||
-		strings.EqualFold(strings.TrimSpace(state.ProductWorkflowState), "recovery_open") ||
-		strings.EqualFold(strings.TrimSpace(state.ProductWorkflowState), "incomplete") ||
-		strings.EqualFold(strings.TrimSpace(state.ProductWorkflowState), "skipped") ||
+		util.EqualTrimFold(state.ProductWorkflowState, "recovery_open") ||
+		util.EqualTrimFold(state.ProductWorkflowState, "incomplete") ||
+		util.EqualTrimFold(state.ProductWorkflowState, "skipped") ||
 		verificationStatus == "missing" ||
 		verificationStatus == "failed" ||
 		verificationStatus == "pre_write"

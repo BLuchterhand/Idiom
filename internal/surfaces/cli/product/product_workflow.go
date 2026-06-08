@@ -14,6 +14,7 @@ import (
 
 	"idiom/internal/evidence/telemetry"
 	briefcmd "idiom/internal/surfaces/cli/brief"
+	toolcmd "idiom/internal/surfaces/cli/tool"
 	"idiom/internal/workflows/productworkflow"
 )
 
@@ -2281,6 +2282,8 @@ func findProductFeedbackPrivacyMarker(value string) string {
 	return ""
 }
 
+// multiValueFlag is intentionally separate from util.MultiFlag:
+// it trims whitespace and rejects empty values, which util.MultiFlag does not.
 type multiValueFlag struct {
 	values []string
 }
@@ -2950,11 +2953,5 @@ func writeEvidenceCardsJSONL(path string, cards []productworkflow.EvidenceCard) 
 }
 
 func logProductPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	if rec == nil {
-		return
-	}
-	if fields == nil {
-		fields = map[string]any{}
-	}
-	_ = rec.Log(eventType, fields)
+	toolcmd.LogCLIPhase(rec, eventType, fields)
 }

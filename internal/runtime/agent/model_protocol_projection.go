@@ -43,11 +43,11 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 	allowedTools := modelProtocolProjectionTools(phase.AllowedTools, phase.ActionPolicy.CallableToolNames)
 	if phaseSpecified && (len(visibleTools) == 0 || len(callableTools) == 0) {
 		state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{
-			TextualToolParser: strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ToolTransportMode), "textual") ||
-				strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ParserContract), "source_refresh"),
-			SupportsNativeTools: strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ToolTransportMode), "native"),
-			ForceNativeTools:    strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ToolTransportMode), "native") && strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ToolChoice), "required"),
-			ResponseFormatJSON:  strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ResponseFormat), "json"),
+			TextualToolParser: util.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "textual") ||
+				util.EqualTrimFold(phase.RuntimeCall.ParserContract, "source_refresh"),
+			SupportsNativeTools: util.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native"),
+			ForceNativeTools:    util.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native") && util.EqualTrimFold(phase.RuntimeCall.ToolChoice, "required"),
+			ResponseFormatJSON:  util.EqualTrimFold(phase.RuntimeCall.ResponseFormat, "json"),
 			EffectiveMaxTokens:  phase.RuntimeCall.MaxTokens,
 		})
 		if len(visibleTools) == 0 {
@@ -112,7 +112,7 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 			ParserContract:      phase.RuntimeCall.ParserContract,
 			NativeToolPolicy:    modelProtocolNativeToolPolicy(phase, supportsNativeTools),
 			SupportsNativeTools: supportsNativeTools,
-			ForceNativeTools:    strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ToolTransportMode), "native") && strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ToolChoice), "required"),
+			ForceNativeTools:    util.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native") && util.EqualTrimFold(phase.RuntimeCall.ToolChoice, "required"),
 			ToolChoice:          modelProtocolToolChoice(phase.RuntimeCall.ToolChoice),
 			ResponseFormat:      phase.RuntimeCall.ResponseFormat,
 			ThinkingPolicy:      phase.RuntimeCall.ThinkingPolicy,
@@ -270,10 +270,10 @@ func modelProtocolRecoveryBudget(phase TurnPhaseContract) int {
 }
 
 func modelProtocolParserTransportMode(phase TurnPhaseContract) string {
-	if strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ToolTransportMode), "native") {
+	if util.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native") {
 		return "native_tools"
 	}
-	if strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ResponseFormat), "json") {
+	if util.EqualTrimFold(phase.RuntimeCall.ResponseFormat, "json") {
 		return "textual_json_terminal"
 	}
 	return "textual_tools"
@@ -287,7 +287,7 @@ func modelProtocolToolTransportMode(phase TurnPhaseContract) string {
 }
 
 func modelProtocolNativeToolPolicy(phase TurnPhaseContract, supportsNativeTools bool) string {
-	if strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ToolTransportMode), "native") {
+	if util.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native") {
 		return "native_required"
 	}
 	if supportsNativeTools {

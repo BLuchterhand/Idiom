@@ -1174,10 +1174,7 @@ func planThenExecuteRejectedPlanSourceRefreshAllowedForScope(req workspace.ToolR
 		return false
 	}
 	invalidAnchorPaths := submitPlanInvalidAnchorPaths(rejected)
-	if submitPlanInvalidAnchorPathsAllowsRead(invalidAnchorPaths, target) {
-		return true
-	}
-	return false
+	return submitPlanInvalidAnchorPathsAllowsRead(invalidAnchorPaths, target)
 }
 
 func submitPlanRejectionHasInvalidAnchor(result workspace.ToolResult) bool {
@@ -1364,19 +1361,6 @@ func successfulSourceEvidencePathAfter(results []workspace.ToolResult, index int
 	return false
 }
 
-func successfulAnchorReadySourceEvidencePathAfter(results []workspace.ToolResult, index int, path string) bool {
-	path = normalizeRunnerPath(path)
-	if path == "" {
-		return false
-	}
-	for i := index + 1; i < len(results); i++ {
-		if planThenExecuteToolResultSourceEvidence(results[i], path).Level == planThenExecuteEvidenceAnchorReady {
-			return true
-		}
-	}
-	return false
-}
-
 func successfulInvalidAnchorCorrectionEvidencePathAfter(results []workspace.ToolResult, index int, path string) bool {
 	path = normalizeRunnerPath(path)
 	if path == "" {
@@ -1415,22 +1399,6 @@ func invalidAnchorCorrectionEvidenceResult(result workspace.ToolResult, path str
 		return true
 	}
 	return hasRange
-}
-
-func successfulSourceBodyReadPathBefore(results []workspace.ToolResult, index int, path string) bool {
-	path = normalizeRunnerPath(path)
-	if path == "" {
-		return false
-	}
-	if index > len(results) {
-		index = len(results)
-	}
-	for i := 0; i < index; i++ {
-		if planThenExecuteToolResultSourceEvidence(results[i], path).Level == planThenExecuteEvidenceAnchorReady {
-			return true
-		}
-	}
-	return false
 }
 
 func lastRejectedSubmitPlanCoverageResult(results []workspace.ToolResult) (workspace.ToolResult, int, bool) {
@@ -2297,7 +2265,7 @@ func normalizeReviewRepairPassCloseout(text string) string {
 	lines := strings.Split(strings.TrimSpace(text), "\n")
 	kept := make([]string, 0, len(lines))
 	for _, line := range lines {
-		if strings.EqualFold(strings.TrimSpace(line), "Decision: pass") {
+		if util.EqualTrimFold(line, "Decision: pass") {
 			continue
 		}
 		kept = append(kept, line)

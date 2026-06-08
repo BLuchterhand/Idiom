@@ -8,6 +8,7 @@ import (
 
 	"github.com/muesli/reflow/wordwrap"
 
+	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
 )
 
@@ -421,7 +422,7 @@ func localFallbackSummary(entry *historyEntry) string {
 
 func historyAuditSummary(events []historyAuditEvent) string {
 	for _, event := range events {
-		if strings.EqualFold(strings.TrimSpace(event.kind), "privacy") {
+		if util.EqualTrimFold(event.kind, "privacy") {
 			continue
 		}
 		label := strings.TrimSpace(event.label)

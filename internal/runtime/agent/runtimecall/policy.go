@@ -3,6 +3,7 @@ package runtimecall
 import (
 	"strings"
 
+	"idiom/internal/platform/util"
 	"idiom/internal/runtime/agent/stringset"
 )
 
@@ -67,7 +68,7 @@ type Policy struct {
 }
 
 func Derive(input PolicyInput) Policy {
-	responseFormatJSON := input.ResponseFormatJSON || strings.EqualFold(strings.TrimSpace(input.ResponseFormat), "json")
+	responseFormatJSON := input.ResponseFormatJSON || util.EqualTrimFold(input.ResponseFormat, "json")
 	textualParser := input.TextualToolParser || responseFormatJSON || (!input.SupportsNativeTools && !input.ForceNativeTools)
 	policy := Policy{
 		SupportsNativeTools:      input.SupportsNativeTools,
@@ -82,7 +83,7 @@ func Derive(input PolicyInput) Policy {
 		PresencePenalty:          input.PresencePenalty,
 		RepetitionPenalty:        input.RepetitionPenalty,
 		ToolChoice:               strings.TrimSpace(input.ToolChoice),
-		ToolChoiceRequired:       strings.EqualFold(strings.TrimSpace(input.ToolChoice), "required"),
+		ToolChoiceRequired:       util.EqualTrimFold(input.ToolChoice, "required"),
 		ParserContract:           strings.TrimSpace(input.ParserContract),
 		ResponseFormat:           strings.TrimSpace(input.ResponseFormat),
 		ThinkingPolicy:           strings.TrimSpace(input.ThinkingPolicy),

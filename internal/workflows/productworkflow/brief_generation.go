@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"idiom/internal/platform/util"
 )
 
 func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResult {
@@ -115,7 +117,7 @@ func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResu
 		if obID == "" {
 			continue
 		}
-		if !strings.EqualFold(strings.TrimSpace(obligation.Status), "passed") {
+		if !util.EqualTrimFold(obligation.Status, "passed") {
 			if strings.TrimSpace(obligation.Behavior) != "" {
 				out.RequiredBehavior = append(out.RequiredBehavior, fmt.Sprintf("%s: %s", obID, strings.TrimSpace(obligation.Behavior)))
 			}
@@ -390,7 +392,7 @@ func markdownSectionExcerpt(markdown string, section string) string {
 			if inSection {
 				break
 			}
-			inSection = strings.EqualFold(strings.TrimSpace(strings.TrimPrefix(trimmed, "## ")), section)
+			inSection = util.EqualTrimFold(strings.TrimPrefix(trimmed, "## "), section)
 			continue
 		}
 		if inSection && trimmed != "" {

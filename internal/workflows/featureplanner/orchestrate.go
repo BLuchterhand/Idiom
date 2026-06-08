@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"idiom/internal/contracts/autonomy"
+	"idiom/internal/platform/util"
 )
 
 type PromptRunner func(prompt string, taskFamily string) (string, error)
@@ -106,7 +107,7 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 		PreserveSourceSatisfiedGate(&parsed.Plan, opts.Prompt)
 		if err := ValidatePlanStandaloneWorkspaceContext(parsed.Plan, StandaloneWorkspaceContext{
 			WorkspaceRoot: opts.WorkspaceRoot,
-			Prompt:        opts.Prompt,
+			Prompt:        standaloneWorkspaceAuthorizationContext(opts.Prompt, state),
 		}); err != nil {
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
@@ -135,6 +136,23 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 	dispatchEvents := DispatchReadyAtoms(&state, opts.MaxAtoms, runner)
 	events = append(events, dispatchEvents...)
 	return RunResult{State: state, Events: events}, nil
+}
+
+func standaloneWorkspaceAuthorizationContext(prompt string, state FeatureState) string {
+	var b strings.Builder
+	if strings.TrimSpace(prompt) != "" {
+		b.WriteString(strings.TrimSpace(prompt))
+	}
+	for _, question := range state.OpenQuestions {
+		if question.Status != "answered" || strings.TrimSpace(question.Answer) == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "Planner question answered with %s authority: %s", firstNonEmpty(question.AnswerSourceKind, "operator_approval"), question.Answer)
+	}
+	return b.String()
 }
 
 func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWorkflowBrief) string {
@@ -863,8 +881,8 @@ func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, co
 }
 
 func planExecuteCompletionSourceSatisfied(completion planExecuteCompletion) bool {
-	return strings.EqualFold(strings.TrimSpace(completion.Outcome), "source_satisfied") ||
-		strings.EqualFold(strings.TrimSpace(completion.Status), "source-satisfied")
+	return util.EqualTrimFold(completion.Outcome, "source_satisfied") ||
+		util.EqualTrimFold(completion.Status, "source-satisfied")
 }
 
 func rejectPlanExecuteCompletion(state *FeatureState, atom *FeatureAtomState, completion planExecuteCompletion, reason string) []Event {

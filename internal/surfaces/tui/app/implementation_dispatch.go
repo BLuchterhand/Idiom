@@ -17,6 +17,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/util"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
@@ -650,7 +651,7 @@ func implementationDispatchBriefLintBlockers(cmd implementationDispatchPreflight
 	}
 	var blockers []string
 	for _, finding := range report.Findings {
-		if strings.EqualFold(strings.TrimSpace(finding.Severity), "WARN") || strings.EqualFold(strings.TrimSpace(finding.Severity), "INFO") {
+		if util.EqualTrimFold(finding.Severity, "WARN") || util.EqualTrimFold(finding.Severity, "INFO") {
 			continue
 		}
 		message := strings.TrimSpace(finding.Message)
@@ -675,7 +676,7 @@ func implementationDispatchBriefLintWarnings(cmd implementationDispatchPreflight
 	}
 	var warnings []string
 	for _, finding := range report.Findings {
-		if !strings.EqualFold(strings.TrimSpace(finding.Severity), "WARN") {
+		if !util.EqualTrimFold(finding.Severity, "WARN") {
 			continue
 		}
 		message := strings.TrimSpace(finding.Message)
@@ -1810,7 +1811,7 @@ func implementationDispatchAtomDocumentStatus(content string) (string, bool) {
 		}
 		line = strings.Trim(line, "* ")
 		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 || !strings.EqualFold(strings.TrimSpace(parts[0]), "status") {
+		if len(parts) != 2 || !util.EqualTrimFold(parts[0], "status") {
 			continue
 		}
 		status := strings.Trim(strings.TrimSpace(parts[1]), "* ")
@@ -2522,7 +2523,7 @@ func implementationDispatchSetAtomStatusLine(content string, status string) stri
 	for i, line := range lines {
 		trimmed := strings.Trim(strings.TrimSpace(line), "* ")
 		parts := strings.SplitN(trimmed, ":", 2)
-		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[0]), "status") {
+		if len(parts) == 2 && util.EqualTrimFold(parts[0], "status") {
 			lines[i] = statusLine
 			return strings.Join(lines, "\n")
 		}
@@ -3967,7 +3968,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		}), true, nil
 	}
 	m.logMessage("dispatch_recovery", fmt.Sprintf("planner_blocked decision=%s reason=%s", strings.TrimSpace(decision.Decision), truncateImplementationDispatchText(strings.TrimSpace(decision.Reason), 240)))
-	if strings.EqualFold(strings.TrimSpace(decision.Decision), "retry") {
+	if util.EqualTrimFold(decision.Decision, "retry") {
 		retryPrompt := appendPlanExecutePlannerRecoveryAddendum(failure.Brief, failure, decision, raw)
 		retryOptions := failure.Options
 		retryOptions.Prompt = retryPrompt
@@ -4390,9 +4391,11 @@ func implementationDispatchAllowedPathsFromContextPack(prompt string, max int) [
 	for _, line := range strings.Split(prompt, "\n") {
 		trimmed := strings.TrimSpace(line)
 		switch {
-		case strings.HasPrefix(trimmed, "### Candidate Files"):
+		case strings.HasPrefix(trimmed, "### Candidate Files") || trimmed == "candidate_files:":
 			inCandidateFiles = true
 			continue
+		case inCandidateFiles && isImplementationDispatchContextPackSectionBoundary(trimmed):
+			inCandidateFiles = false
 		case inCandidateFiles && strings.HasPrefix(trimmed, "### "):
 			inCandidateFiles = false
 		case inCandidateFiles && strings.HasPrefix(trimmed, "## "):
@@ -4429,9 +4432,11 @@ func implementationDispatchTestPathsFromContextPack(prompt string, max int) []st
 	for _, line := range strings.Split(prompt, "\n") {
 		trimmed := strings.TrimSpace(line)
 		switch {
-		case strings.HasPrefix(trimmed, "### Candidate Tests"):
+		case strings.HasPrefix(trimmed, "### Candidate Tests") || trimmed == "tests:":
 			inCandidateTests = true
 			continue
+		case inCandidateTests && isImplementationDispatchContextPackSectionBoundary(trimmed):
+			inCandidateTests = false
 		case inCandidateTests && strings.HasPrefix(trimmed, "### "):
 			inCandidateTests = false
 		case inCandidateTests && strings.HasPrefix(trimmed, "## "):
@@ -4457,13 +4462,25 @@ func implementationDispatchContextPackTestLinePath(line string) (string, bool) {
 	if line == "" {
 		return "", false
 	}
-	if idx := strings.LastIndex(line, " - "); idx >= 0 {
-		line = strings.TrimSpace(line[idx+3:])
+
+	// Support old backtick-quoted format: `command` - path
+	if idx := strings.Index(line, "`"); idx >= 0 {
+		if idx2 := strings.LastIndex(line, " - "); idx2 >= 0 {
+			line = strings.TrimSpace(line[idx2+3:])
+		}
+		if fields := strings.Fields(line); len(fields) > 0 {
+			line = fields[len(fields)-1]
+		}
+		path := filepath.ToSlash(strings.Trim(strings.TrimSpace(line), "`"))
+		if path == "" || strings.Contains(path, " ") {
+			return "", false
+		}
+		return path, true
 	}
-	if fields := strings.Fields(line); len(fields) > 0 {
-		line = fields[len(fields)-1]
-	}
-	path := filepath.ToSlash(strings.Trim(strings.TrimSpace(line), "`"))
+
+	// New compact format: "path: detail" or "path"
+	parts := strings.SplitN(line, ": ", 2)
+	path := filepath.ToSlash(strings.TrimSpace(parts[0]))
 	if path == "" || strings.Contains(path, " ") {
 		return "", false
 	}
@@ -4471,30 +4488,84 @@ func implementationDispatchContextPackTestLinePath(line string) (string, bool) {
 }
 
 func implementationDispatchContextPackCandidateLine(line string) (string, string, bool) {
-	firstTick := strings.Index(line, "`")
-	if firstTick < 0 {
+	line = strings.TrimPrefix(strings.TrimSpace(line), "- ")
+	if line == "" {
 		return "", "", false
 	}
-	rest := line[firstTick+1:]
-	secondTick := strings.Index(rest, "`")
-	if secondTick < 0 {
-		return "", "", false
+
+	// Support old backtick-quoted format: `path` (role, reason)
+	if firstTick := strings.Index(line, "`"); firstTick >= 0 {
+		rest := line[firstTick+1:]
+		secondTick := strings.Index(rest, "`")
+		if secondTick < 0 {
+			return "", "", false
+		}
+		path := filepath.ToSlash(strings.TrimSpace(rest[:secondTick]))
+		if path == "" {
+			return "", "", false
+		}
+		afterPath := rest[secondTick+1:]
+		open := strings.Index(afterPath, "(")
+		close := strings.Index(afterPath, ")")
+		if open < 0 || close < 0 || close <= open {
+			return path, "", true
+		}
+		role := strings.TrimSpace(afterPath[open+1 : close])
+		if comma := strings.Index(role, ","); comma >= 0 {
+			role = strings.TrimSpace(role[:comma])
+		}
+		return path, role, true
 	}
-	path := filepath.ToSlash(strings.TrimSpace(rest[:secondTick]))
+
+	// New compact format: "path: role" or "path: role (reason)" or "path"
+	parts := strings.SplitN(line, ": ", 2)
+	path := filepath.ToSlash(strings.TrimSpace(parts[0]))
 	if path == "" {
 		return "", "", false
 	}
-	afterPath := rest[secondTick+1:]
-	open := strings.Index(afterPath, "(")
-	close := strings.Index(afterPath, ")")
-	if open < 0 || close < 0 || close <= open {
+	if len(parts) < 2 {
 		return path, "", true
 	}
-	role := strings.TrimSpace(afterPath[open+1 : close])
+	detail := strings.TrimSpace(parts[1])
+	// Extract role from "role" or "role (reason)"
+	role := detail
+	if open := strings.Index(detail, "("); open >= 0 {
+		if close := strings.Index(detail[open:], ")"); close >= 0 {
+			role = strings.TrimSpace(detail[:open])
+		}
+	}
+	if role == "" {
+		role = detail
+	}
+	// Take first comma-separated token as role (like old behavior)
 	if comma := strings.Index(role, ","); comma >= 0 {
 		role = strings.TrimSpace(role[:comma])
 	}
 	return path, role, true
+}
+
+// isImplementationDispatchContextPackSectionBoundary returns true when line is a
+// compact-projection section header (like "candidate_symbols:", "tests:",
+// "context_gaps:", "omitted:", or "evidence_note:"). These mark the end of the
+// current candidate section. Also matches old-format "### " and "## " headings.
+// Line must not be prefixed with "- ".
+func isImplementationDispatchContextPackSectionBoundary(line string) bool {
+	if strings.HasPrefix(line, "- ") {
+		return false
+	}
+	if strings.HasPrefix(line, "### ") || strings.HasPrefix(line, "## ") {
+		return true
+	}
+	// Known section headers in the compact projection format.
+	switch line {
+	case "candidate_symbols:", "tests:", "context_gaps:", "omitted:":
+		return true
+	}
+	// evidence_note: may have trailing content.
+	if strings.HasPrefix(line, "evidence_note:") {
+		return true
+	}
+	return false
 }
 
 func (m *Model) implementationDispatchAllowedPathsFromPreloadedContextPack(prompt string, contextPackSection string) []string {

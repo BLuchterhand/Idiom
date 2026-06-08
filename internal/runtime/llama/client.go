@@ -525,7 +525,7 @@ func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream b
 	if opts.ToolChoice != "" && BackendSupportsNativeTools(backend) {
 		payload.ToolChoice = opts.ToolChoice
 	}
-	if strings.EqualFold(strings.TrimSpace(backend), config.BackendZAI) && opts.EnableThinking != nil {
+	if util.EqualTrimFold(backend, config.BackendZAI) && opts.EnableThinking != nil {
 		mode := "disabled"
 		if *opts.EnableThinking {
 			mode = "enabled"

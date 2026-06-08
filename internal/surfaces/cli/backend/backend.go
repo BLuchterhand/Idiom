@@ -15,6 +15,7 @@ import (
 
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/runtime/backends"
+	toolcmd "idiom/internal/surfaces/cli/tool"
 )
 
 // Test-friendly indirections. Phase 4b's launcher functions take
@@ -64,13 +65,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 }
 
 func logBackendPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	if rec == nil {
-		return
-	}
-	if fields == nil {
-		fields = map[string]any{}
-	}
-	_ = rec.Log(eventType, fields)
+	toolcmd.LogCLIPhase(rec, eventType, fields)
 }
 
 // resolveProjectRoot returns the project root the operator named

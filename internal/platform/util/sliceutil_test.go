@@ -91,3 +91,138 @@ func TestLimitSliceEmpty(t *testing.T) {
 		t.Errorf("LimitSlice([]) len = %d, want 0", len(result))
 	}
 }
+
+func TestEqualSlice(t *testing.T) {
+	if !EqualSlice([]string{"a", "b"}, []string{"a", "b"}) {
+		t.Error("expected equal")
+	}
+	if EqualSlice([]string{"a", "b"}, []string{"a"}) {
+		t.Error("expected not equal (different lengths)")
+	}
+	if EqualSlice([]string{"a", "b"}, []string{"a", "c"}) {
+		t.Error("expected not equal (different elements)")
+	}
+}
+
+func TestUnique(t *testing.T) {
+	result := Unique([]string{"a", "  b  ", "a", "", "b", "c"})
+	if len(result) != 3 {
+		t.Fatalf("Unique len = %d, want 3: %v", len(result), result)
+	}
+	if result[0] != "a" || result[1] != "b" || result[2] != "c" {
+		t.Errorf("Unique = %v, want [a b c]", result)
+	}
+	if len(Unique(nil)) != 0 {
+		t.Error("Unique(nil) should return nil")
+	}
+	if Unique([]string{}) != nil {
+		t.Error("Unique([]) should return nil")
+	}
+}
+
+func TestMerge(t *testing.T) {
+	result := Merge([]string{"a", "b"}, []string{"b", "c"}, nil)
+	if len(result) != 3 {
+		t.Fatalf("Merge len = %d, want 3: %v", len(result), result)
+	}
+	if result[0] != "a" || result[1] != "b" || result[2] != "c" {
+		t.Errorf("Merge = %v, want [a b c]", result)
+	}
+	if Merge() != nil {
+		t.Error("Merge() should return nil")
+	}
+}
+
+func TestSorted(t *testing.T) {
+	result := Sorted([]string{"c", "a", "b", "a", ""})
+	if len(result) != 3 {
+		t.Fatalf("Sorted len = %d, want 3: %v", len(result), result)
+	}
+	if result[0] != "a" || result[1] != "b" || result[2] != "c" {
+		t.Errorf("Sorted = %v, want [a b c]", result)
+	}
+}
+
+func TestRemove(t *testing.T) {
+	result := Remove([]string{"a", "b", "c", "d"}, []string{"b", "d"})
+	if len(result) != 2 || result[0] != "a" || result[1] != "c" {
+		t.Errorf("Remove = %v, want [a c]", result)
+	}
+}
+
+func TestRemoveEmptyRemove(t *testing.T) {
+	result := Remove([]string{"a", "b"}, nil)
+	if len(result) != 2 || result[0] != "a" || result[1] != "b" {
+		t.Errorf("Remove with empty remove = %v, want [a b]", result)
+	}
+}
+
+func TestRemoveEmptyValues(t *testing.T) {
+	result := Remove(nil, []string{"a"})
+	if len(result) != 0 {
+		t.Errorf("Remove nil values = %v, want empty", result)
+	}
+}
+
+func TestUniqueLimit(t *testing.T) {
+	result := UniqueLimit([]string{"a", "b", "a", "c"}, 2)
+	if len(result) != 2 {
+		t.Fatalf("UniqueLimit len = %d, want 2: %v", len(result), result)
+	}
+	if result[0] != "a" || result[1] != "b" {
+		t.Errorf("UniqueLimit = %v, want [a b]", result)
+	}
+}
+
+func TestUniqueLimitBelowMax(t *testing.T) {
+	original := []string{"a", "b"}
+	result := UniqueLimit(original, 10)
+	if len(result) != 2 {
+		t.Fatalf("UniqueLimit len = %d, want 2", len(result))
+	}
+}
+
+func TestUniqueLimitZeroMax(t *testing.T) {
+	result := UniqueLimit([]string{"a", "b"}, 0)
+	if len(result) != 2 {
+		t.Fatalf("UniqueLimit with max=0 len = %d, want 2", len(result))
+	}
+}
+
+func TestPrefix(t *testing.T) {
+	original := []string{"a", "b", "c", "d", "e"}
+	result := Prefix(original, 3)
+	if len(result) != 3 || result[0] != "a" || result[1] != "b" || result[2] != "c" {
+		t.Errorf("Prefix = %v, want [a b c]", result)
+	}
+	if &result[0] != &original[0] {
+		t.Error("Prefix should return original backing array")
+	}
+}
+
+func TestPrefixBelowMax(t *testing.T) {
+	original := []string{"a", "b"}
+	result := Prefix(original, 10)
+	if len(result) != 2 {
+		t.Fatalf("Prefix below max len = %d, want 2", len(result))
+	}
+	if &result[0] != &original[0] {
+		t.Error("Prefix should return original slice when below max")
+	}
+}
+
+func TestPrefixZeroMax(t *testing.T) {
+	original := []string{"a", "b"}
+	result := Prefix(original, 0)
+	if len(result) != 2 {
+		t.Fatalf("Prefix with max=0 len = %d, want 2", len(result))
+	}
+}
+
+func TestPrefixNegativeMax(t *testing.T) {
+	original := []string{"a", "b"}
+	result := Prefix(original, -1)
+	if len(result) != 2 {
+		t.Fatalf("Prefix with max=-1 len = %d, want 2", len(result))
+	}
+}

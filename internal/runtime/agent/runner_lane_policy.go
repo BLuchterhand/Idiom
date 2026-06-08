@@ -1303,17 +1303,6 @@ func (r *Runner) delegatedReadOnlyDiscoveryQueryRepairRequest(results []workspac
 	return plan.repairDiscoveryQuery(req)
 }
 
-func (r *Runner) delegatedReadOnlyDiscoveryConsumptionRequest(results []workspace.ToolResult) (workspace.ToolRequest, bool) {
-	if r == nil {
-		return workspace.ToolRequest{}, false
-	}
-	return newDelegatedDiscoveryPlan(r.RuntimeBrief.Objective).candidateConsumptionRequest(results, r.RuntimeBrief.AllowedTools)
-}
-
-func validDelegatedDiscoveryPurpose(purpose string) bool {
-	return delegatedDiscoveryPurposeValid(purpose)
-}
-
 func delegatedDiscoveryPurposeValid(purpose string) bool {
 	switch strings.TrimSpace(purpose) {
 	case "impact_analysis", "function_tracing", "architecture_boundary", "security_review", "history_context":
@@ -1321,10 +1310,6 @@ func delegatedDiscoveryPurposeValid(purpose string) bool {
 	default:
 		return false
 	}
-}
-
-func delegatedDiscoveryPurposeSupportedByObjective(purpose string, objective string) bool {
-	return newDelegatedDiscoveryPlan(objective).purposeSupportedByObjective(purpose)
 }
 
 func (r *Runner) delegatedReadOnlyBootstrapRequest(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
@@ -1483,14 +1468,6 @@ func delegatedReadOnlyBootstrapScope(objective string) string {
 	return newDelegatedDiscoveryPlan(objective).primaryScope
 }
 
-func delegatedReadOnlyDiscoveryPathOutsideDetailedScope(path string, objective string) bool {
-	return newDelegatedDiscoveryPlan(objective).pathOutsideDetailedScope(path)
-}
-
-func delegatedReadOnlyDetailedNamedScopes(objective string) []string {
-	return newDelegatedDiscoveryPlan(objective).detailedScopes
-}
-
 func delegatedReadOnlyBroadNamedScope(scope string) bool {
 	switch normalizeRunnerPath(scope) {
 	case "internal", "pkg", "src", "cmd", "prompts", "docs":
@@ -1502,10 +1479,6 @@ func delegatedReadOnlyBroadNamedScope(scope string) bool {
 
 func delegatedReadOnlyBootstrapPattern(objective string) string {
 	return newDelegatedDiscoveryPlan(objective).searchPattern
-}
-
-func delegatedReadOnlyQuestionText(objective string) string {
-	return newDelegatedDiscoveryPlan(objective).questionText
 }
 
 func delegatedReadOnlyBootstrapSymbolPattern(objective string) string {

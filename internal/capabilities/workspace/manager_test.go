@@ -1087,6 +1087,8 @@ func TestFormatToolResultForModelCompactsContextPackOutput(t *testing.T) {
 	for _, want := range []string{
 		"context_pack_summary:",
 		"pack_id: abc",
+		"artifact_path: .idiom/comprehension/views/abc.json",
+		"fresh: false",
 		"packet_quality:",
 		"localization_confidence: low",
 		"source_owner_found: false",
@@ -1103,8 +1105,80 @@ func TestFormatToolResultForModelCompactsContextPackOutput(t *testing.T) {
 			t.Fatalf("compacted context_pack result missing %q:\n%s", want, rendered)
 		}
 	}
-	if strings.Contains(rendered, largeBody) || len(rendered) > 3000 {
-		t.Fatalf("context_pack output was not compacted enough, len=%d", len(rendered))
+	// Without budget_tokens, all candidates are rendered (unbounded path).
+	// The full largeBody must not leak as raw JSON, but individual entries
+	// are present.
+	if strings.Contains(rendered, largeBody) {
+		t.Fatalf("context_pack raw JSON leaked into compact output, len=%d", len(rendered))
+	}
+}
+
+func TestFormatToolResultForModelContextPackBudgetEnforcement(t *testing.T) {
+	// Build a result with many more files than budget allows, so the
+	// renderer must truncate and report omitted counts.
+	largeBody := strings.Repeat(`{"path":"pkg/extra.go","reason":"extra candidate"},`, 200)
+	result := ToolResult{
+		Tool:    "context_pack",
+		Summary: "Context pack with budget",
+		Output: `{
+			"pack_id":"budget-test",
+			"artifact_path":".idiom/comprehension/views/budget.json",
+			"budget_tokens":200,
+			"quality":{"localization_confidence":"high","source_owner_found":true,"evidence_paths":["pkg/main.go"],"reasons":["found_source_owner"]},
+			"candidate_files":[
+				{"path":"pkg/core.go","role":"editable","reason":"core logic"},
+				` + largeBody + `
+				{"path":"pkg/last.go","reason":"last"}
+			],
+			"candidate_symbols":[
+				{"qualified_name":"Handle","path":"pkg/core.go","start_line":10}
+			],
+			"tests":[
+				{"command":"go test ./pkg/...","path":"pkg/core_test.go","reason":"unit tests"}
+			]
+		}`,
+	}
+
+	rendered := FormatToolResultForModel(result)
+
+	// Mandatory content must always be present regardless of budget.
+	for _, want := range []string{
+		"context_pack_summary:",
+		"pack_id: budget-test",
+		"fresh: false",
+		"packet_quality:",
+		"localization_confidence: high",
+		"source_owner_found: true",
+		"evidence_note: context_pack is localization evidence, not source-body evidence.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("budget-compacted result missing %q:\n%s", want, rendered)
+		}
+	}
+
+	// Quality evidence paths must be present.
+	if !strings.Contains(rendered, "pkg/main.go") {
+		t.Fatalf("budget-compacted result missing quality evidence path:\n%s", rendered)
+	}
+
+	// Budget enforcement: omitted counts must appear.
+	if !strings.Contains(rendered, "omitted:") {
+		t.Fatalf("budget-compacted result missing omitted section:\n%s", rendered)
+	}
+
+	// The raw JSON must never spill into compact output.
+	if strings.Contains(rendered, largeBody) {
+		t.Fatalf("raw largeBody leaked into budget-compacted output")
+	}
+
+	// With budget=200, most files should be omitted.
+	if !strings.Contains(rendered, "omitted (rendered ") {
+		t.Fatalf("budget-compacted output missing omitted detail:\n%s", rendered)
+	}
+
+	// Total output should be well under a generous bound for budget=200.
+	if len(rendered) > 2000 {
+		t.Fatalf("budget-compacted output too large for budget=200, len=%d:\n%s", len(rendered), rendered)
 	}
 }
 

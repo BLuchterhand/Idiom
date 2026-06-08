@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/platform/util"
 	coreplanexecute "idiom/internal/workflows/planexecute"
 )
 
@@ -547,9 +548,9 @@ func completionFieldBool(fields map[string]any, key string) bool {
 	case bool:
 		return typed
 	case string:
-		return strings.EqualFold(strings.TrimSpace(typed), "true")
+		return util.EqualTrimFold(typed, "true")
 	default:
-		return strings.EqualFold(strings.TrimSpace(fmt.Sprint(value)), "true")
+		return util.EqualTrimFold(fmt.Sprint(value), "true")
 	}
 }
 

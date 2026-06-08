@@ -3,6 +3,7 @@ package agent
 import (
 	"strings"
 
+	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
 )
 
@@ -59,7 +60,7 @@ type PlanExecuteRuntimeCallPolicy struct {
 }
 
 func DerivePlanExecuteRuntimeCallPolicy(input PlanExecuteRuntimeCallPolicyInput) PlanExecuteRuntimeCallPolicy {
-	terminalOnly := input.TerminalOnly || strings.EqualFold(strings.TrimSpace(input.ParserContract), "submit_plan_json")
+	terminalOnly := input.TerminalOnly || util.EqualTrimFold(input.ParserContract, "submit_plan_json")
 	runtimePolicy := DeriveRuntimeCallPolicy(RuntimeCallPolicyInput{
 		SupportsNativeTools:      input.SupportsNativeTools,
 		ForceNativeTools:         input.ForceNativeTools,
@@ -141,7 +142,7 @@ func planExecuteRuntimeCallPolicyFromPhaseInput(input TurnPhaseContractInput) Pl
 		SupportsNativeTools: input.SupportsNativeTools,
 		TextualToolParser:   input.TextualToolParser,
 		TerminalOnly:        false,
-		ResponseFormatJSON:  strings.EqualFold(strings.TrimSpace(input.ResponseFormat), "json"),
+		ResponseFormatJSON:  util.EqualTrimFold(input.ResponseFormat, "json"),
 		Temperature:         input.Temperature,
 		TopP:                input.TopP,
 		TopK:                input.TopK,

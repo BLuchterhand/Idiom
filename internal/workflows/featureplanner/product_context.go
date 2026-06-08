@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"idiom/internal/contracts/plan"
+	"idiom/internal/platform/util"
 )
 
 // ProductWorkflowBrief carries the product-workflow evidence the planner
@@ -83,8 +84,8 @@ func (brief ProductWorkflowBrief) AllowsFeaturePlanDispatch() bool {
 }
 
 func (brief ProductWorkflowBrief) IsClosedSourceSatisfied() bool {
-	return strings.EqualFold(strings.TrimSpace(brief.StatusBucket), "closed") &&
-		(strings.EqualFold(strings.TrimSpace(brief.CurrentState), "closed") ||
+	return util.EqualTrimFold(brief.StatusBucket, "closed") &&
+		(util.EqualTrimFold(brief.CurrentState, "closed") ||
 			strings.Contains(strings.ToLower(strings.TrimSpace(brief.CurrentPhase)), "source-satisfied"))
 }
 

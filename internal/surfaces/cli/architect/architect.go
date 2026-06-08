@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"idiom/internal/evidence/telemetry"
+	"idiom/internal/platform/util"
 	"idiom/internal/workflows/architect"
+	toolcmd "idiom/internal/surfaces/cli/tool"
 )
 
 type architectOptions struct {
@@ -28,29 +30,16 @@ type architectOptions struct {
 	MaxRuleBytes   int
 	MaxOutputBytes int
 
-	Constraints  multiFlag
-	Files        multiFlag
-	Tests        multiFlag
-	Anchors      multiFlag
-	Risks        multiFlag
-	Unknowns     multiFlag
-	ContextViews multiFlag
-	Metadata     multiFlag
+	Constraints  util.MultiFlag
+	Files        util.MultiFlag
+	Tests        util.MultiFlag
+	Anchors      util.MultiFlag
+	Risks        util.MultiFlag
+	Unknowns     util.MultiFlag
+	ContextViews util.MultiFlag
+	Metadata     util.MultiFlag
 }
 
-type multiFlag []string
-
-func (m *multiFlag) String() string {
-	if m == nil {
-		return ""
-	}
-	return strings.Join(*m, ",")
-}
-
-func (m *multiFlag) Set(value string) error {
-	*m = append(*m, value)
-	return nil
-}
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	return RunWithTelemetry(args, stdout, stderr, nil)
@@ -93,13 +82,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 }
 
 func logArchitectPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	if rec == nil {
-		return
-	}
-	if fields == nil {
-		fields = map[string]any{}
-	}
-	_ = rec.Log(eventType, fields)
+	toolcmd.LogCLIPhase(rec, eventType, fields)
 }
 
 func withPromptKind(kind string, args []string) []string {

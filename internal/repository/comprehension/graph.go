@@ -1539,25 +1539,11 @@ func loadJSONGraph(root string) (Graph, error) {
 }
 
 func saveGraph(root string, graph Graph) error {
-	if err := os.MkdirAll(filepath.Dir(graphPath(root)), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(graph, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(graphPath(root), append(data, '\n'), 0o644)
+	return util.WriteJSON(graphPath(root), graph)
 }
 
 func saveManifest(root string, manifest Manifest) error {
-	if err := os.MkdirAll(filepath.Dir(manifestPath(root)), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(manifestPath(root), append(data, '\n'), 0o644)
+	return util.WriteJSON(manifestPath(root), manifest)
 }
 
 func readManifest(root string) (Manifest, error) {

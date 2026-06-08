@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"idiom/internal/platform/util"
 )
 
 func EvaluateCoverageGate(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, ledger TDDLedger, traceability TraceabilityMatrix, knownTDDIDs ...map[string]bool) CoverageGateEvaluation {
@@ -206,7 +208,7 @@ func BuildSatisfiedTDDObligationIDs(ledger TDDLedger, records []ImplementationLe
 }
 
 func CoverageGateHasBlockers(eval CoverageGateEvaluation) bool {
-	return strings.EqualFold(strings.TrimSpace(eval.Status), "blocked") || len(eval.Blockers) > 0
+	return util.EqualTrimFold(eval.Status, "blocked") || len(eval.Blockers) > 0
 }
 
 func CoverageGateHasOnlyTDDEvidenceBlockers(eval CoverageGateEvaluation) bool {
@@ -493,7 +495,7 @@ func gatePasses(name string, passed []string, blocked []string) bool {
 
 func hasGateName(name string, values []string) bool {
 	for _, v := range values {
-		if strings.EqualFold(strings.TrimSpace(v), name) {
+		if util.EqualTrimFold(v, name) {
 			return true
 		}
 	}

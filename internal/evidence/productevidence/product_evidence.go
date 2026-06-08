@@ -16,6 +16,7 @@ import (
 
 	idiomeval "idiom/internal/evidence/eval"
 	"idiom/internal/evidence/telemetry"
+	"idiom/internal/platform/util"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/runtime/localops"
 )
@@ -754,7 +755,7 @@ func loadP711IntegrationProofs(root string) (p711IntegrationProofSet, productEvi
 	path := filepath.Join(root, "testdata", "sidecar", "integration-proofs.json")
 	ref := p711FileRef("p7.8_integration_proofs", "integration_proofs", path)
 	var out p711IntegrationProofSet
-	if p711ReadJSON(path, &out) != nil {
+	if util.ReadJSON(path, &out) != nil {
 		return out, ref
 	}
 	ref.Status = "present"
@@ -765,7 +766,7 @@ func loadP711SecurityPosture(root string) (p711SecurityPosture, productEvidenceS
 	path := filepath.Join(root, "docs", "security-privacy-posture.matrix.json")
 	ref := p711FileRef("p7.9_security_privacy_posture", "security_privacy", path)
 	var out p711SecurityPosture
-	if p711ReadJSON(path, &out) != nil {
+	if util.ReadJSON(path, &out) != nil {
 		return out, ref
 	}
 	ref.Status = "present"
@@ -4158,14 +4159,6 @@ func p711ExportStatus(completeness productEvidenceSignalCompleteness) string {
 	default:
 		return "partial"
 	}
-}
-
-func p711ReadJSON(path string, target any) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, target)
 }
 
 func p711FileRef(id string, kind string, path string) productEvidenceSourceReference {

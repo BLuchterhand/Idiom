@@ -4,13 +4,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-
-	"idiom/internal/platform/util"
 )
-
-func truncateText(text string, limit int) string {
-	return util.Truncate(strings.TrimSpace(text), limit)
-}
 
 func joinOrNone(values []string) string {
 	if len(values) == 0 {

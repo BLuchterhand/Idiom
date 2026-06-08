@@ -73,12 +73,6 @@ type Manager struct {
 	goplsPath     string
 	goplsChecked  bool
 
-	tsIndex   *semantic.TsIndex
-	tsToken   string
-	rustIndex *semantic.RustIndex
-	rustToken string
-	javaIndex *semantic.JavaIndex
-	javaToken string
 }
 
 func NewManager(host Host) *Manager {

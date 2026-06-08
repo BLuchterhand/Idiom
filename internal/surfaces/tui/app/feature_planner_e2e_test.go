@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/workflows/productworkflow"
 )
@@ -491,7 +492,7 @@ created_at: 2026-01-01T00:00:00Z
 	if err != nil {
 		t.Fatalf("approve PRD: %v", err)
 	}
-	t.Logf("result: %s", truncate(result, 200))
+	t.Logf("result: %s", util.Truncate(result, 200))
 	// Auto-repair updates PRD on disk, user must re-approve.
 	if !strings.Contains(result, "auto-repaired") {
 		t.Error("expected auto-repair message")

@@ -13,6 +13,7 @@ import (
 	"idiom/internal/runtime/localops"
 	"idiom/internal/runtime/readiness"
 	"idiom/internal/surfaces/cli/config"
+	toolcmd "idiom/internal/surfaces/cli/tool"
 )
 
 type BenchmarkOptions struct {
@@ -197,11 +198,5 @@ func resolveDependencies(overrides ...Dependencies) Dependencies {
 }
 
 func logLocalOpsPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	if rec == nil {
-		return
-	}
-	if fields == nil {
-		fields = map[string]any{}
-	}
-	_ = rec.Log(eventType, fields)
+	toolcmd.LogCLIPhase(rec, eventType, fields)
 }

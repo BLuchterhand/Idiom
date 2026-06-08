@@ -1024,8 +1024,8 @@ func (a *runnerAutonomyRecorder) resolvedAndOpenObligationsForGate(input runnerA
 	case autonomy.GateCompletion:
 		return a.completionGateResolvedAndOpenObligations(input, obligationRefs)
 	case autonomy.GateVerification:
-		if strings.EqualFold(strings.TrimSpace(input.VerificationStatus), "passed") ||
-			strings.EqualFold(strings.TrimSpace(input.VerificationStatus), "observed") {
+		if util.EqualTrimFold(input.VerificationStatus, "passed") ||
+			util.EqualTrimFold(input.VerificationStatus, "observed") {
 			return a.openObligationIDsForRefs(obligationRefs), nil
 		}
 		return nil, a.openObligationIDsForRefs(obligationRefs)
@@ -1090,7 +1090,7 @@ func (a *runnerAutonomyRecorder) completionGateResolvedAndOpenObligations(input 
 			open = append(open, ref)
 			continue
 		}
-		if ref == "obl-verify-post-write" && !strings.EqualFold(strings.TrimSpace(input.VerificationStatus), "passed") {
+		if ref == "obl-verify-post-write" && !util.EqualTrimFold(input.VerificationStatus, "passed") {
 			open = append(open, ref)
 			continue
 		}

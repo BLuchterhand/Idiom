@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"maps"
 	"strings"
 	"time"
 
@@ -69,9 +68,6 @@ func parsePlanExecuteOptions(args []string, stderr io.Writer) (planExecuteOption
 	return planexecute.ParseOptions(args, stderr)
 }
 
-func planExecutePrompt(opts planExecuteOptions) (string, error) {
-	return planexecute.PlanExecutePrompt(opts)
-}
 
 func planExecuteRequiredEditPaths(opts planExecuteOptions, prompt string) []string {
 	return planexecute.PlanExecuteRequiredEditPaths(opts, prompt)
@@ -97,9 +93,6 @@ func isPlanExecutePackID(value string) bool {
 	return planexecute.IsPlanExecutePackID(value)
 }
 
-func patchPlanArtifactPackID(path string, packID string) error {
-	return planexecute.PatchPlanArtifactPackID(path, packID)
-}
 
 // planExecutePlannerSystemAddendum is prepended to the brief in the
 // planner phase. Kept tight by design: local text-tool backends need
@@ -110,13 +103,7 @@ func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPat
 	return planexecute.PlanExecutePlannerSystemAddendumWithObligations(requiredEditPaths, allowedEditPaths, nil)
 }
 
-func planExecutePlannerSystemAddendumWithObligations(requiredEditPaths []string, allowedEditPaths []string, obligations planexecute.EditSetObligations) string {
-	return planexecute.PlanExecutePlannerSystemAddendumWithObligations(requiredEditPaths, allowedEditPaths, obligations)
-}
 
-func planExecutePlannerMaxTokens(root string, prompt string, requiredEditPaths []string, allowedEditPaths []string) int {
-	return 16384
-}
 
 func planExecutePathLooksLikeTest(path string) bool {
 	return planexecute.PlanExecutePathLooksLikeTest(path)
@@ -146,9 +133,6 @@ func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []st
 	return planexecute.PlanExecuteExactPlanEditsForWorkspace(prompt, requiredEditPaths, workspaceRoot)
 }
 
-func planExecuteUniqueRequiredPaths(requiredEditPaths []string) []string {
-	return planexecute.PlanExecuteUniqueRequiredPaths(requiredEditPaths)
-}
 
 // newPlanExecuteSessionID returns a fresh, unguessable session
 // identifier for this plan-execute run. Used by the executor phase
@@ -209,7 +193,6 @@ type reviewRepairEvidence struct {
 
 type reviewRepairBaseline = planexecute.ReviewRepairBaseline
 
-type reviewRepairFileSnapshot = planexecute.ReviewRepairFileSnapshot
 
 func runReviewRepairPhase(
 	cfg config.Config,
@@ -268,9 +251,6 @@ func fromSharedReviewRepairEvidence(evidence planexecute.ReviewRepairEvidence) r
 	return out
 }
 
-func planExecuteReviewRepairRejectedPassRetryPrompt(basePrompt string, reason string) string {
-	return planexecute.PlanExecuteReviewRepairRejectedPassRetryPrompt(basePrompt, reason)
-}
 
 func collectReviewRepairEvidence(root string, paths []string, baseline *reviewRepairBaseline) reviewRepairEvidence {
 	return fromSharedReviewRepairEvidence(planexecute.CollectReviewRepairEvidence(root, paths, baseline))
@@ -289,25 +269,11 @@ func captureReviewRepairBaseline(root string, paths []string) reviewRepairBaseli
 	return planexecute.CaptureReviewRepairBaseline(root, paths)
 }
 
-func planChangedPaths(plan workspace.PlanArtifact) []string {
-	return planexecute.PlanChangedPaths(plan)
-}
 
 func mergePlanExecutePaths(groups ...[]string) []string {
 	return planexecute.MergePlanExecutePaths(groups...)
 }
 
-func reviewAnswerDeclaresBlocker(answer string) bool {
-	return planexecute.ReviewAnswerDeclaresBlocker(answer)
-}
-
-func planExecuteAnswerDeclaresBlocker(answer string) bool {
-	return planexecute.PlanExecuteAnswerDeclaresBlocker(answer)
-}
-
-func planExecuteBlockerSummary(answer string) string {
-	return planexecute.PlanExecuteBlockerSummary(answer)
-}
 
 func reviewAnswerPassContradictionReason(answer string) string {
 	return planexecute.ReviewAnswerPassContradictionReason(answer)
@@ -336,15 +302,7 @@ func runExecutorPhaseScopedWithVerification(cfg config.Config, plan workspace.Pl
 	return shared, err
 }
 
-func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, verificationPlan planexecute.VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...planexecute.EditProgressFunc) (executorPhaseReport, error) {
-	shared, err := planexecute.RunExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, verificationPlan, jsonEvents, stdout, progress...)
-	return shared, err
-}
 
-func runPlanExecuteVerificationPlan(root string, plan planexecute.VerificationPlan, jsonEvents bool, stdout io.Writer) (int, []phaseEvidenceCheck, error) {
-	checked, evidence, err := planexecute.RunVerificationPlan(root, plan, jsonEvents, stdout)
-	return checked, evidence, err
-}
 
 // planEditPreflightMismatch describes the first edit whose old_text
 // does not appear in its target file. Used by preflightPlanEdits to
@@ -395,33 +353,6 @@ func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *plan
 	return planEditPreflightMismatchFromPackage(planexecute.PreflightPlanEdits(workspaceRoot, plan))
 }
 
-// emitPlanExecuteJSONEvent writes one JSONL line to stdout when the
-// orchestrator is running with --json. Each event carries an
-// idiom.plan_execute.* type so downstream log parsers can recognize
-// orchestrator-emitted events distinct from the runner's JSON stream
-// (which closes when the planner phase exits).
-//
-// All events include an ISO-8601 timestamp so reviewers can stitch
-// them into the planner-phase events using ts ordering.
-func emitPlanExecuteJSONEvent(stdout io.Writer, jsonEvents bool, eventType string, fields map[string]any) {
-	if !jsonEvents {
-		return
-	}
-	payload := map[string]any{
-		"type": "idiom.plan_execute." + eventType,
-		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
-	}
-	maps.Copy(payload, fields)
-	body, err := json.Marshal(payload)
-	if err != nil {
-		// json.Marshal on a map[string]any with primitive values
-		// shouldn't fail; if it does, swallow rather than crash the
-		// orchestrator — the executor phase has already done the
-		// real work and a missing telemetry event isn't a blocker.
-		return
-	}
-	fmt.Fprintln(stdout, string(body))
-}
 
 func firstNonEmptyString(values ...string) string {
 	return planexecute.FirstNonEmptyString(values...)

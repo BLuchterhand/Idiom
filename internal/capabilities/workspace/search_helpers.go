@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"idiom/internal/platform/util"
 	"idiom/internal/repository/discovery"
 )
 
@@ -124,7 +125,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 		display := m.displayPath(absPath)
 		lineNumber, _ := strconv.Atoi(parts[1])
 		matches = append(matches, searchContentMatch{
-			formatted: fmt.Sprintf("%s %s:%s:%s", handle, display, parts[1], truncateSearchContentLine(parts[2], searchContentLineCap)),
+			formatted: fmt.Sprintf("%s %s:%s:%s", handle, display, parts[1], util.TruncateBytes(strings.TrimRight(parts[2], "\r\n"), searchContentLineCap, "...[line truncated]")),
 			display:   display,
 			line:      lineNumber,
 			termScore: searchContentTermScore(display, parts[2], rankingTerms),
@@ -323,13 +324,6 @@ func searchPathTargetsSkippedDir(path string) bool {
 	return discovery.RelTargetsNoisyDir(cleaned) || discovery.ShouldSkipRelFile(cleaned)
 }
 
-func truncateSearchContentLine(line string, max int) string {
-	line = strings.TrimRight(line, "\r\n")
-	if max <= 0 || len(line) <= max {
-		return line
-	}
-	return line[:max] + "...[line truncated]"
-}
 
 func (m *Manager) searchContextSnippet(path string, lineNumber int, radius int) string {
 	content, err := os.ReadFile(path)
@@ -353,7 +347,7 @@ func (m *Manager) searchContextSnippet(path string, lineNumber int, radius int) 
 	for i := startLine; i <= endLine; i++ {
 		segment := string(content[spans[i-1].start:spans[i-1].end])
 		segment = strings.TrimRight(segment, "\n")
-		segment = truncateSearchContentLine(segment, searchContentLineCap)
+		segment = util.TruncateBytes(segment, searchContentLineCap, "...[line truncated]")
 		b.WriteString(fmt.Sprintf("%d:%s\n", i, segment))
 	}
 	return strings.TrimSpace(b.String())

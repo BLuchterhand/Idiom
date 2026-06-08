@@ -334,7 +334,7 @@ func parseIdiomCLIToolRequestSyntax(text string) (workspace.ToolRequest, string,
 	if strings.TrimSpace(req.Tool) == "" {
 		req.Tool = parts[2]
 	}
-	if !strings.EqualFold(strings.TrimSpace(req.Tool), parts[2]) {
+	if !util.EqualTrimFold(req.Tool, parts[2]) {
 		return workspace.ToolRequest{}, "", false, true
 	}
 	return req, object, true, false

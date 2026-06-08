@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"idiom/internal/platform/util"
 )
 
 const CodeNavigateToolName = "code_navigate"
@@ -545,7 +547,7 @@ func CodeNavigateCapabilityName(capability Capability) string {
 func CodeNavigateCapabilityPredicate(capability Capability) func(string) bool {
 	want := CodeNavigateCapabilityName(capability)
 	return func(candidate string) bool {
-		return strings.EqualFold(strings.TrimSpace(candidate), want)
+		return util.EqualTrimFold(candidate, want)
 	}
 }
 

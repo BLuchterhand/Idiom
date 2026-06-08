@@ -497,7 +497,7 @@ func clusterByShape(calls []toolCall) []shapeCluster {
 		cl.Count++
 		cl.Sessions[c.Session]++
 		if len(cl.Examples) < 12 {
-			cl.Examples = append(cl.Examples, truncate(c.Raw, 180))
+			cl.Examples = append(cl.Examples, util.TruncateBytes(strings.ReplaceAll(c.Raw, "\n", " "), 180, "…"))
 		}
 	}
 	var out []shapeCluster
@@ -713,10 +713,6 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
-}
-
-func truncate(s string, n int) string {
-	return util.TruncateBytes(strings.ReplaceAll(s, "\n", " "), n, "…")
 }
 
 // llmReview sends one request to the local llama-server with a compressed

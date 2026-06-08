@@ -85,6 +85,25 @@ func TestFallbackBothEmpty(t *testing.T) {
 	}
 }
 
+func TestContainsFold(t *testing.T) {
+	tests := []struct {
+		haystack, needle string
+		want             bool
+	}{
+		{"Hello World", "hello", true},
+		{"Hello World", "WORLD", true},
+		{"Hello World", "foo", false},
+		{"Hello World", "", false},
+		{"Hello World", "   ", false},
+	}
+	for _, tt := range tests {
+		got := ContainsFold(tt.haystack, tt.needle)
+		if got != tt.want {
+			t.Errorf("ContainsFold(%q, %q) = %v, want %v", tt.haystack, tt.needle, got, tt.want)
+		}
+	}
+}
+
 func TestTrimHeadingQualifier(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"Hello (world)", "Hello"},

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"idiom/internal/platform/util"
 )
 
 // parseAndValidate unmarshals JSON data into T and validates the result.
@@ -221,7 +223,7 @@ func TrySplitAndParseADRs(output string, prd PRDDocument) ([]ADRDocument, []ADRI
 		if err != nil {
 			failures = append(failures, ADRParseFailure{
 				ChunkIndex: i,
-				RawChunk:   truncateStr(chunk, 200),
+				RawChunk:   util.Truncate(chunk, 200),
 				Error:      err.Error(),
 			})
 			continue
@@ -265,12 +267,7 @@ func firstNonEmptyStr(values ...string) string {
 	return ""
 }
 
-func truncateStr(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}
+
 
 func ParsePRDMarkdown(data []byte) (PRDDocument, error) {
 	fields, body, err := parseFrontMatterRaw(data)

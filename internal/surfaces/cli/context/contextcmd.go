@@ -15,6 +15,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/util"
 )
 
 type ConfigLoader func(path string) (config.Config, error)
@@ -51,24 +52,11 @@ type options struct {
 	IncludeSource     bool
 	IncludeFiles      bool
 	Refresh           bool
-	RequiredTests     multiFlag
-	RequiredEditPaths multiFlag
-	ForbiddenPaths    multiFlag
+	RequiredTests     util.MultiFlag
+	RequiredEditPaths util.MultiFlag
+	ForbiddenPaths    util.MultiFlag
 }
 
-type multiFlag []string
-
-func (m *multiFlag) String() string {
-	if m == nil {
-		return ""
-	}
-	return strings.Join(*m, ",")
-}
-
-func (m *multiFlag) Set(value string) error {
-	*m = append(*m, value)
-	return nil
-}
 
 func Run(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, deps Deps) int {
 	deps = deps.withDefaults()

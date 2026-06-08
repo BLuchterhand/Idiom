@@ -18,6 +18,7 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
+	toolcmd "idiom/internal/surfaces/cli/tool"
 	"idiom/internal/workflows/featureplanner"
 	planexecuteadapter "idiom/internal/workflows/featureplanner/adapters/planexecute"
 	"idiom/internal/workflows/featureplannerproduct"
@@ -598,11 +599,5 @@ func defaultFeaturePlannerSessionID() string {
 }
 
 func logFeaturePlannerPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	if rec == nil {
-		return
-	}
-	if fields == nil {
-		fields = map[string]any{}
-	}
-	_ = rec.Log(eventType, fields)
+	toolcmd.LogCLIPhase(rec, eventType, fields)
 }

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"idiom/internal/contracts/autonomy"
+	"idiom/internal/platform/util"
 )
 
 type RoleName string
@@ -266,15 +267,15 @@ func finalCriticStrings(values []FinalCriticID) []string {
 }
 
 func PermissionProfileMatches(value string, profile PermissionProfileID) bool {
-	return strings.EqualFold(strings.TrimSpace(value), string(profile))
+	return util.EqualTrimFold(value, string(profile))
 }
 
 func TaskFamilyMatches(value string, family TaskFamilyID) bool {
-	return strings.EqualFold(strings.TrimSpace(value), string(family))
+	return util.EqualTrimFold(value, string(family))
 }
 
 func RuntimeContractMatches(value string, contract RuntimeContractID) bool {
-	return strings.EqualFold(strings.TrimSpace(value), string(contract))
+	return util.EqualTrimFold(value, string(contract))
 }
 
 func TaskFamilyIsConversation(value string) bool {

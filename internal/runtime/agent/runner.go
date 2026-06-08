@@ -38,8 +38,6 @@ var (
 	goFuncDeclPattern                      = regexp.MustCompile(`(?m)^func\s+(?:\([^)]+\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
 	codeShapedTokenPattern                 = regexp.MustCompile(`\b[A-Za-z][a-z]+(?:[A-Z][a-z0-9]+){1,}\b`)
 	codeShapedSnakeCasePattern             = regexp.MustCompile(`\b[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}\b`)
-	shortPostReadinessSearchLiteralPattern = regexp.MustCompile(`^[A-Za-z0-9_]{2,3}$`)
-	codeShapedLineRangePattern             = regexp.MustCompile(`(?i)\blines?\s+\d+(?:\s*[-–]\s*\d+)?\b`)
 	readFileSummaryLineWindowPattern       = regexp.MustCompile(`\blines\s+(\d+)-(\d+)\b`)
 	readFileSummaryTotalLinesPattern       = regexp.MustCompile(`\b(?:file has\s+(\d+)\s+lines\s+total|total\s+lines:\s+(\d+))\b`)
 	fileOutlineDeclarationPattern          = regexp.MustCompile(`(?m)^-\s+([A-Za-z_][A-Za-z0-9_\.]*)\s+lines\s+(\d+)-(\d+)\b`)
@@ -422,7 +420,6 @@ func (r *Runner) Run(
 	completionStatusEmitted := false
 	completionStatusLastStatus := ""
 	completionStatusLastBlockerKind := ""
-	verificationTelemetryEmitted := false
 	completionGateRejections := 0
 	emitCompletionStatus := func(status, reason, blockerKind string, results []workspace.ToolResult, userVisibleBlocker bool) {
 		completionStatusEmitted = true
@@ -2494,7 +2491,7 @@ func (r *Runner) Run(
 			}
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(req.Tool), "list_files") && executionState.consecutiveListFiles >= 2 {
+		if util.EqualTrimFold(req.Tool, "list_files") && executionState.consecutiveListFiles >= 2 {
 			// Hide list_files from the manifest for the rest of the turn
 			// — at this point we've told the model "stop walking dirs"
 			// once already, and keeping list_files in the tool list just
@@ -3229,9 +3226,7 @@ func (r *Runner) Run(
 			len(changedPathsFromToolResults(collectedResults)) > 0 &&
 			!hasPendingVerificationAfterWrites(collectedResults, r.RuntimeBrief) &&
 			!sourceEditsNeedSemanticVerification(r.RuntimeBrief, collectedResults) {
-			if !verificationTelemetryEmitted {
-				verificationTelemetryEmitted = r.emitPostWriteVerificationTelemetry(req, result)
-			}
+			_ = r.emitPostWriteVerificationTelemetry(req, result)
 			answer, err := controller.completeWithoutMoreToolsWithReason("The requested implementation has a recorded workspace write and successful source-aware verification. Tools are now disabled. Write the implementation result now: changed paths and verification status.")
 			return finish(answer, err, "source_edit_closeout_after_verification", false)
 		}
@@ -4316,7 +4311,7 @@ func (r *Runner) emitThinkingTrace(step int, reason string, message llama.ChatMe
 		PreservedInHistory: preservedInHistory && strings.TrimSpace(message.ReasoningContent) != "",
 	}
 	if strings.TrimSpace(reason) == "completion_gate_reply_preserved" {
-		trace.ContentPreview = truncateRunnerStateText(strings.TrimSpace(message.Content), 500)
+		trace.ContentPreview = util.Truncate(strings.TrimSpace(message.Content), 500)
 	}
 	data, err := json.Marshal(trace)
 	if err != nil {
@@ -5424,8 +5419,8 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 		Reason:            strings.TrimSpace(reason),
 		LastTool:          tool,
 		LastTarget:        workerruntime.ToolRequestTarget(req),
-		ResultSummary:     truncateRunnerStateText(result.Summary, 220),
-		ResultError:       truncateRunnerStateText(result.Error, 260),
+		ResultSummary:     util.Truncate(strings.TrimSpace(result.Summary), 220),
+		ResultError:       util.Truncate(strings.TrimSpace(result.Error), 260),
 		ResultOutputChars: len(result.Output),
 		EvidencePaths:     runnerEvidencePathsForBrief(brief, results, 6),
 	}
@@ -5799,7 +5794,7 @@ func runnerStateSummary(state runnerNextActionState) string {
 	} else if state.ResultSummary != "" {
 		parts = append(parts, state.ResultSummary)
 	}
-	return truncateRunnerStateText(strings.Join(parts, " | "), 320)
+	return util.Truncate(strings.TrimSpace(strings.Join(parts, " | ")), 320)
 }
 
 func prependRunnerStateStrings(preferred []string, existing []string) []string {
@@ -5941,10 +5936,6 @@ func closureSynthesisAfterIgnoredNudgePrompt(agent string, brief workerruntime.W
 	// identical or broad probes, but it must not convert its readiness estimate
 	// into a no-tools final-answer requirement.
 	return "", false
-}
-
-func truncateRunnerStateText(value string, max int) string {
-	return util.Truncate(strings.TrimSpace(value), max)
 }
 
 func (r *Runner) emitBudgetLedger(policy RunPolicy, metrics runnerMetrics, stopReason string, exhausted bool) {
@@ -6341,7 +6332,7 @@ func (r *Runner) runnerCompactionSummary(policy RunPolicy, ledger *taskLedgerSta
 		}
 		if detail := strings.TrimSpace(failed.Error); detail != "" {
 			b.WriteString("- error: ")
-			b.WriteString(truncateRunnerStateText(detail, 500))
+			b.WriteString(util.Truncate(strings.TrimSpace(detail), 500))
 			b.WriteString("\n")
 		}
 		b.WriteString("- required next: repair the failing changed/required path, gather one exact edit-safety fact, rerun verification after repair, or answer <<QUESTION>> only for an external blocker.\n")
@@ -6517,7 +6508,7 @@ func latestUserObjective(messages []llama.ChatMessage) string {
 			if scoped := strings.TrimSpace(pathparse.ScopeToBriefBody(content)); scoped != "" {
 				content = scoped
 			}
-			return truncateRunnerStateText(content, 500)
+			return util.Truncate(strings.TrimSpace(content), 500)
 		}
 	}
 	return ""
@@ -7636,7 +7627,7 @@ func syntheticLegacyToolCall(step int, req workspace.ToolRequest, raw string) ll
 func syntheticLegacyParseToolCall(step int, raw string) llama.ToolCall {
 	args := "{}"
 	if trimmed := strings.TrimSpace(raw); trimmed != "" {
-		if data, err := json.Marshal(map[string]string{"raw": truncateRunnerStateText(trimmed, 1000)}); err == nil {
+		if data, err := json.Marshal(map[string]string{"raw": util.Truncate(strings.TrimSpace(trimmed), 1000)}); err == nil {
 			args = string(data)
 		}
 	}
@@ -8480,14 +8471,14 @@ func planThenExecuteRejectedSubmitPlanDraftEvidence(req workspace.ToolRequest, r
 		}
 		if purpose := strings.TrimSpace(edit.Purpose); purpose != "" {
 			b.WriteString(" purpose=")
-			b.WriteString(truncateRunnerStateText(purpose, 180))
+			b.WriteString(util.Truncate(strings.TrimSpace(purpose), 180))
 		}
 		b.WriteString("\n")
 		if planThenExecuteShouldIncludeRejectedDraftBody(edit, invalidPaths) {
 			body := rejectedDraftEditBody(edit)
 			if body != "" {
 				b.WriteString("  rejected_body_excerpt_not_source_evidence:\n")
-				for _, line := range strings.Split(truncateRunnerStateText(body, 2200), "\n") {
+				for _, line := range strings.Split(util.Truncate(strings.TrimSpace(body), 2200), "\n") {
 					b.WriteString("    ")
 					b.WriteString(line)
 					b.WriteString("\n")
@@ -9838,7 +9829,7 @@ func postWriteVerificationFailedRecoveryPrompt(result workspace.ToolResult, plan
 		detail = strings.TrimSpace(result.Output)
 	}
 	if detail != "" {
-		detail = truncateRunnerStateText(detail, 320)
+		detail = util.Truncate(strings.TrimSpace(detail), 320)
 	}
 	var b strings.Builder
 	if plannerOwned {
@@ -9892,7 +9883,7 @@ func (r *Runner) recoverContextPackFreshness(ctx context.Context, req workspace.
 	}
 	refreshResult := r.Workspace.Execute(ctx, refresh)
 	if summary := strings.TrimSpace(util.FirstNonEmpty(refreshResult.Summary, refreshResult.Error)); summary != "" {
-		r.emitEvent(RunEvent{Role: "context_pack_freshness_recovery", Content: "context_status refresh result: " + truncateRunnerStateText(summary, 260)})
+		r.emitEvent(RunEvent{Role: "context_pack_freshness_recovery", Content: "context_status refresh result: " + util.Truncate(strings.TrimSpace(summary), 260)})
 	}
 	retry := r.Workspace.Execute(ctx, req)
 	if strings.TrimSpace(retry.Error) == "" || strings.TrimSpace(refreshResult.Error) == "" {
@@ -10824,7 +10815,7 @@ func parseVisibleLineToolRequest(text string) (workspace.ToolRequest, string, bo
 			continue
 		}
 		key, _, ok := strings.Cut(line, ":")
-		if ok && strings.EqualFold(strings.TrimSpace(key), "tool") {
+		if ok && util.EqualTrimFold(key, "tool") {
 			toolLineIdx = i
 			break
 		}
@@ -13228,7 +13219,7 @@ func completionGateRecoveryChatOptionsForBackend(opts llama.ChatOptions, brief w
 			// tool calls be salvaged.
 			opts.PreserveThinking = false
 			limit = 1024
-		} else if len(brief.RequiredEditPaths) == 0 && strings.EqualFold(strings.TrimSpace(opts.ToolChoice), "required") {
+		} else if len(brief.RequiredEditPaths) == 0 && util.EqualTrimFold(opts.ToolChoice, "required") {
 			opts.ToolChoice = "auto"
 		}
 	}
@@ -13930,7 +13921,7 @@ func forceVisibleActionChatOptions(opts llama.ChatOptions) llama.ChatOptions {
 }
 
 func planThenExecuteTerminalAwareToolChoice(current string) string {
-	if strings.TrimSpace(current) == "" || strings.EqualFold(strings.TrimSpace(current), "required") {
+	if strings.TrimSpace(current) == "" || util.EqualTrimFold(current, "required") {
 		return "auto"
 	}
 	return current
@@ -14157,12 +14148,6 @@ func (r *Runner) hostOwnedReadOnlyCloseoutAnswer(results []workspace.ToolResult)
 	return readOnlyClosureDecisionForResults(r.RuntimeBrief, results).HostOwnedAnswer(r.agentName())
 }
 
-func readOnlyHostCloseoutHasObjectiveRelevantEvidence(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, evidence readOnlyAnswerabilityLedger) bool {
-	closeout := readOnlyClosureDecisionForResults(brief, results)
-	closeout.Evidence = evidence
-	return closeout.HasObjectiveRelevantEvidence()
-}
-
 func textSharesObjectiveTerm(text string, objective string) bool {
 	text = strings.ToLower(strings.TrimSpace(text))
 	objective = strings.ToLower(strings.TrimSpace(objective))
@@ -14211,10 +14196,6 @@ func mentionedEvidencePathsFromToolResultsForObjective(results []workspace.ToolR
 		}
 	}
 	return closurePromptEvidencePaths(paths, max)
-}
-
-func acceptedMentionedEvidenceResult(result workspace.ToolResult) bool {
-	return acceptedMentionedEvidenceResultForObjective(result, "")
 }
 
 func acceptedMentionedEvidenceResultForObjective(result workspace.ToolResult, objective string) bool {
@@ -16151,7 +16132,7 @@ func scratchpadDeliverableFailedEvidenceStatus(brief workerruntime.WorkerRuntime
 	if tool == "" {
 		tool = "read/discovery tool"
 	}
-	return fmt.Sprintf("closed_negative_evidence: optional %s evidence for %s failed (%s); record this as an evidence gap in the non-source deliverable if the exact source fact remains unavailable", tool, target, truncateRunnerStateText(reason, 220))
+	return fmt.Sprintf("closed_negative_evidence: optional %s evidence for %s failed (%s); record this as an evidence gap in the non-source deliverable if the exact source fact remains unavailable", tool, target, util.Truncate(strings.TrimSpace(reason), 220))
 }
 
 func (r *Runner) scopedReadClassTool(req workspace.ToolRequest) bool {
@@ -19659,7 +19640,7 @@ func prefersEarlyReadOnlyDelegation(brief workerruntime.WorkerRuntimeBrief) bool
 		return false
 	}
 	for _, policy := range brief.SearchPolicy {
-		if strings.EqualFold(strings.TrimSpace(policy), "delegate_broad_discovery_when_needed") {
+		if util.EqualTrimFold(policy, "delegate_broad_discovery_when_needed") {
 			return true
 		}
 	}
@@ -21004,7 +20985,7 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 		rails.FinalCritic = []string{"answers_actual_user_request", "required_evidence_cited"}
 		return rails
 	}
-	if strings.EqualFold(strings.TrimSpace(rails.TaskFamily), "debug_logs") {
+	if util.EqualTrimFold(rails.TaskFamily, "debug_logs") {
 		rails.FailureToEval = true
 		rails.ReadinessGate = defaultRunnerStateSlice(rails.ReadinessGate, []string{"latest_log_selected", "failure_cause_supported_by_log", "low_confidence_triggers_deepening"})
 		if len(rails.FinalCritic) == 0 {
@@ -21048,7 +21029,7 @@ func runnerUsesSoftReadOnlyShapingOnly(brief workerruntime.WorkerRuntimeBrief, r
 	if runnerBriefRequiresMutation(brief) {
 		return false
 	}
-	if strings.EqualFold(strings.TrimSpace(rails.TaskFamily), "debug_logs") {
+	if util.EqualTrimFold(rails.TaskFamily, "debug_logs") {
 		return false
 	}
 	switch strings.TrimSpace(rails.Contract) {
@@ -21534,10 +21515,6 @@ func fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName string, brief w
 		return false
 	}
 	return readOnlyDirectAnswerLane(brief) && !runnerBriefRequiresMutation(brief)
-}
-
-func deterministicNoToolsNonAnswerReplacement(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
-	return readOnlyClosureDecisionForResults(brief, results).NonAnswerReplacement()
 }
 
 func shouldPreferModelBudgetSynthesis(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {

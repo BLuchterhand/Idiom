@@ -29,6 +29,7 @@ import (
 	"idiom/internal/platform/util"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/runtime/workerruntime"
+	toolcmd "idiom/internal/surfaces/cli/tool"
 )
 
 func ParseOptions(args []string, stderr io.Writer) (Options, error) {
@@ -651,7 +652,7 @@ func classifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) Exe
 	handoff.PackID = effectivePackID
 	handoff.DeclaredPackID = declaredPackID
 	if effectivePackID == "" {
-		if strings.EqualFold(strings.TrimSpace(plan.Packet.Status), "not_used") {
+		if util.EqualTrimFold(plan.Packet.Status, "not_used") {
 			handoff.PacketNotUsedByDesign = true
 			handoff.PacketFreshnessState = ExecutorPacketFreshnessNotUsedByDesign
 			handoff.Reason = "packet_not_used_by_design"
@@ -743,6 +744,8 @@ func applyExecutorHandoffView(handoff ExecutorHandoffPacket, view comprehension.
 	handoff.CandidateFiles = len(view.CandidateFiles)
 	handoff.CandidateSymbols = len(view.CandidateSymbols)
 	handoff.Tests = len(view.Tests)
+	proj := comprehension.NewCompactPackProjection(view)
+	handoff.Quality = proj.Quality
 	return handoff
 }
 
@@ -808,6 +811,31 @@ func executorHandoffPacketEventFields(handoff ExecutorHandoffPacket) map[string]
 	}
 	if handoff.Tests > 0 {
 		fields["tests"] = handoff.Tests
+	}
+	quality := executorHandoffQualityFields(handoff.Quality)
+	if len(quality) > 0 {
+		fields["quality"] = quality
+	}
+	return fields
+}
+
+// executorHandoffQualityFields converts CompactPackQuality into a
+// bounded map for JSON event emission. Returns nil when the quality
+// has no localization confidence (unset zero value).
+func executorHandoffQualityFields(q comprehension.CompactPackQuality) map[string]any {
+	confidence := strings.TrimSpace(q.LocalizationConfidence)
+	if confidence == "" {
+		return nil
+	}
+	fields := map[string]any{
+		"localization_confidence": confidence,
+		"source_owner_found":      q.SourceOwnerFound,
+	}
+	if len(q.EvidencePaths) > 0 {
+		fields["evidence_paths"] = q.EvidencePaths
+	}
+	if len(q.Reasons) > 0 {
+		fields["reasons"] = q.Reasons
 	}
 	return fields
 }
@@ -1174,7 +1202,7 @@ func phaseEvidencePassRejectionReason(bundle PhaseEvidenceBundle) string {
 }
 
 func planExecuteDeterministicCleanReviewEnabled() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("IDIOM_PLAN_EXECUTE_DETERMINISTIC_CLEAN_REVIEW")), "true")
+	return util.EqualTrimFold(os.Getenv("IDIOM_PLAN_EXECUTE_DETERMINISTIC_CLEAN_REVIEW"), "true")
 }
 
 func findOptionalReviewPlanArtifact(root string, notBefore time.Time, sessionID string) (string, bool, error) {
@@ -2053,7 +2081,8 @@ func RunVerificationPlan(root string, plan VerificationPlan, jsonEvents bool, st
 
 func runPlanExecuteVerificationPlan(root string, plan VerificationPlan, jsonEvents bool, stdout io.Writer) (int, []PhaseEvidenceCheck, error) {
 	evidence := make([]PhaseEvidenceCheck, 0, len(plan.Commands)+len(plan.Rejects))
-	for _, reject := range plan.Rejects {
+	if len(plan.Rejects) > 0 {
+		reject := plan.Rejects[0]
 		check := PhaseEvidenceCheck{
 			Kind:    "verification",
 			Command: strings.TrimSpace(reject.Command),
@@ -2845,13 +2874,7 @@ func LogCLIPhase(rec *telemetry.Recorder, eventType string, fields map[string]an
 }
 
 func logCLIPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	if rec == nil {
-		return
-	}
-	if fields == nil {
-		fields = map[string]any{}
-	}
-	_ = rec.Log(eventType, fields)
+	toolcmd.LogCLIPhase(rec, eventType, fields)
 }
 
 func collectPlanExecutePhaseEvidence(root string, phase string, plan workspace.PlanArtifact, changedPaths []string, requiredPaths []string, allowedPaths []string, reviewEvidence ReviewRepairEvidence, executorReport ExecutorPhaseReport) PhaseEvidenceBundle {
@@ -2909,6 +2932,7 @@ func phaseEvidenceHandoffFromExecutor(handoff ExecutorHandoffPacket) phaseEviden
 		DeclaredPackID:   strings.TrimSpace(handoff.DeclaredPackID),
 		IndexID:          strings.TrimSpace(handoff.IndexID),
 		Fresh:            handoff.Fresh,
+		Quality:          handoff.Quality,
 		CandidateFiles:   handoff.CandidateFiles,
 		CandidateSymbols: handoff.CandidateSymbols,
 		Tests:            handoff.Tests,
@@ -3054,12 +3078,14 @@ func loadPlanExecutePacketArtifact(root string, packID string) (comprehension.Pa
 }
 
 func PhaseEvidencePacketFromView(view comprehension.PackResult) PhaseEvidencePacket {
+	proj := comprehension.NewCompactPackProjection(view)
 	packet := PhaseEvidencePacket{
 		PackID:           strings.TrimSpace(view.PackID),
 		Status:           "available",
 		IndexID:          strings.TrimSpace(view.IndexID),
 		Fresh:            view.Fresh,
 		Confidence:       strings.TrimSpace(view.Confidence.Level),
+		Quality:          proj.Quality,
 		StoreKind:        firstNonEmptyString(strings.TrimSpace(view.StoreKind), strings.TrimSpace(view.Provenance.StoreKind)),
 		CandidateFiles:   PhaseEvidenceFiles(view.CandidateFiles, 8),
 		CandidateSymbols: PhaseEvidenceSymbols(view.CandidateSymbols, 8),
@@ -3240,6 +3266,11 @@ func renderPlanExecutePhaseEvidence(bundle PhaseEvidenceBundle) string {
 		fmt.Fprintf(&b, " summary=%s", summary)
 	}
 	b.WriteString("\n")
+	if bundle.Packet.Quality.LocalizationConfidence != "" {
+		fmt.Fprintf(&b, "packet_quality: localization_confidence=%s source_owner_found=%t\n",
+			bundle.Packet.Quality.LocalizationConfidence,
+			bundle.Packet.Quality.SourceOwnerFound)
+	}
 	fmt.Fprintf(&b, "executor_handoff_packet: state=%s reason=%s handoff_created=%t packet_present=%t packet_not_used_by_design=%t packet_freshness_state=%s",
 		bundle.ExecutorHandoff.PacketState,
 		bundle.ExecutorHandoff.Reason,
@@ -3255,6 +3286,11 @@ func renderPlanExecutePhaseEvidence(bundle PhaseEvidenceBundle) string {
 		fmt.Fprintf(&b, " index_id=%s fresh=%t", bundle.ExecutorHandoff.IndexID, bundle.ExecutorHandoff.Fresh)
 	}
 	b.WriteString("\n")
+	if bundle.ExecutorHandoff.Quality.LocalizationConfidence != "" {
+		fmt.Fprintf(&b, "executor_handoff_quality: localization_confidence=%s source_owner_found=%t\n",
+			bundle.ExecutorHandoff.Quality.LocalizationConfidence,
+			bundle.ExecutorHandoff.Quality.SourceOwnerFound)
+	}
 	if len(bundle.Packet.CandidateFiles) > 0 {
 		b.WriteString("candidate_files:\n")
 		for _, file := range bundle.Packet.CandidateFiles {

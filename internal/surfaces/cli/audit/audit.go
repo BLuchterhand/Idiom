@@ -22,6 +22,7 @@ import (
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	"idiom/internal/surfaces/cli/config"
+	toolcmd "idiom/internal/surfaces/cli/tool"
 )
 
 const auditWatchPacketSchemaVersion = "idiom.audit_watch_packet.v1"
@@ -1638,11 +1639,5 @@ func auditWatchHelpRequested(args []string) bool {
 }
 
 func logAuditPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	if rec == nil {
-		return
-	}
-	if fields == nil {
-		fields = map[string]any{}
-	}
-	_ = rec.Log(eventType, fields)
+	toolcmd.LogCLIPhase(rec, eventType, fields)
 }

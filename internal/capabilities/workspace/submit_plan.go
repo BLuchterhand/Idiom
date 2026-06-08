@@ -12,6 +12,7 @@ import (
 
 	"idiom/internal/contracts/plan"
 	"idiom/internal/platform/failures"
+	"idiom/internal/platform/util"
 )
 
 const (
@@ -863,7 +864,7 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 	current := string(body)
 	matchCount := strings.Count(current, oldText)
 	if matchCount == 0 {
-		if containsCaseFoldedSubstring(current, oldText) {
+		if util.ContainsFold(current, oldText) {
 			return fmt.Errorf("old_text did not appear in %s, but a case-insensitive match exists; preserve exact casing from the file or use start_line/end_line+content", edit.Path)
 		}
 		if planEditReplacementAlreadyPresent(current, edit) {
@@ -970,8 +971,8 @@ func validateSourceLineRangePlanEdit(path string, current string, edit PlanEdit)
 	if lineRangeReplacementDuplicatesPrecedingContext(current, spans, edit.StartLine, edit.Content) {
 		return fmt.Errorf("line-range replacement for %s lines %d-%d appears to duplicate context immediately before the selected range; use old_text/new_text with a unique current-source anchor for insertions", filepath.ToSlash(path), edit.StartLine, edit.EndLine)
 	}
-	selectedLines := normalizedNonEmptyLines(selected)
-	replacementLines := normalizedNonEmptyLines(edit.Content)
+	selectedLines := util.NonEmptyTrimmedLines(selected)
+	replacementLines := util.NonEmptyTrimmedLines(edit.Content)
 	if len(selectedLines) == 0 || len(replacementLines) <= len(selectedLines) {
 		return nil
 	}
@@ -987,7 +988,7 @@ func validateSourceLineRangePlanEdit(path string, current string, edit PlanEdit)
 
 func sourceEditContentDuplicatesExistingBlock(current string, edit PlanEdit) bool {
 	content := strings.TrimSpace(edit.Content)
-	if content == "" || len(normalizedNonEmptyLines(content)) < 2 {
+	if content == "" || len(util.NonEmptyTrimmedLines(content)) < 2 {
 		return false
 	}
 	search := current

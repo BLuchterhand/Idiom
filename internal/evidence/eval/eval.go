@@ -735,7 +735,7 @@ func WriteScenario(path string, scenario Scenario) error {
 func containsStringFold(items []string, target string) bool {
 	target = strings.TrimSpace(target)
 	for _, item := range items {
-		if strings.EqualFold(strings.TrimSpace(item), target) {
+		if util.EqualTrimFold(item, target) {
 			return true
 		}
 	}

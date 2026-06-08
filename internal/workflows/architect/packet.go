@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"idiom/internal/platform/util"
 )
 
 const (
@@ -298,7 +300,7 @@ func readRuleEvidence(root string, rules []RuleSource, defaultMaxBytes int) []Ev
 		if limit <= 0 {
 			limit = defaultMaxBytes
 		}
-		ev.Content = truncateString(string(data), limit)
+		ev.Content = util.TruncateBytes(string(data), limit, "\n[truncated]")
 		out = append(out, ev)
 	}
 	return out
@@ -322,7 +324,7 @@ func readContextViewEvidence(root string, paths []string, defaultMaxBytes int) [
 			out = append(out, ev)
 			continue
 		}
-		ev.Content = truncateString(string(data), defaultMaxBytes)
+		ev.Content = util.TruncateBytes(string(data), defaultMaxBytes, "\n[truncated]")
 		out = append(out, ev)
 	}
 	return out
@@ -362,7 +364,7 @@ func runCollectorEvidence(ctx context.Context, root string, collectors []Collect
 		if limit <= 0 {
 			limit = defaultMaxBytes
 		}
-		ev.Content = truncateString(stripANSI(string(outBytes)), limit)
+		ev.Content = util.TruncateBytes(stripANSI(string(outBytes)), limit, "\n[truncated]")
 		if err != nil {
 			if runCtx.Err() == context.DeadlineExceeded {
 				ev.Error = fmt.Sprintf("collector timed out after %s", timeout)
@@ -406,15 +408,7 @@ func renderCommand(command string, args []string) string {
 	return strings.Join(cleaned, " ")
 }
 
-func truncateString(s string, maxBytes int) string {
-	if maxBytes <= 0 || len(s) <= maxBytes {
-		return s
-	}
-	if maxBytes < 32 {
-		return s[:maxBytes]
-	}
-	return s[:maxBytes] + "\n[truncated]"
-}
+
 
 func mergeStrings(a []string, b []string) []string {
 	return cleanStrings(append(append([]string(nil), a...), b...))

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"idiom/internal/platform/util"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,10 +43,10 @@ func LoadBundle(dir string) (Bundle, error) {
 		return Bundle{}, fmt.Errorf("feature planner bundle dir is empty")
 	}
 	var bundle Bundle
-	if err := readJSON(filepath.Join(dir, DefaultFeatureStateName), &bundle.State); err != nil {
+	if err := util.ReadJSON(filepath.Join(dir, DefaultFeatureStateName), &bundle.State); err != nil {
 		return Bundle{}, err
 	}
-	if err := readJSON(filepath.Join(dir, DefaultFeaturePlanName), &bundle.Plan); err != nil {
+	if err := util.ReadJSON(filepath.Join(dir, DefaultFeaturePlanName), &bundle.Plan); err != nil {
 		return Bundle{}, err
 	}
 	events, err := readEvents(filepath.Join(dir, DefaultEventLogName))
@@ -138,17 +139,6 @@ func writeFileAtomic(path string, body []byte) error {
 	if err := os.Rename(tmpPath, path); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("replace %s: %w", filepath.Base(path), err)
-	}
-	return nil
-}
-
-func readJSON(path string, value any) error {
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", filepath.Base(path), err)
-	}
-	if err := json.Unmarshal(body, value); err != nil {
-		return fmt.Errorf("decode %s: %w", filepath.Base(path), err)
 	}
 	return nil
 }
