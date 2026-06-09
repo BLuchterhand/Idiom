@@ -1,6 +1,7 @@
 package comprehension
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,12 @@ func TestApplyVerifiedRankerLearningAcceptsVerifiedEvidence(t *testing.T) {
 			Kind:     "swe_groundedness_oracle",
 			Verified: true,
 			Metrics:  map[string]float64{"boost_at": 0.75},
+		},
+		VerificationEvidence: &VerificationEvidence{
+			EditPaths:           []string{"internal/runtime/agent/runner.go"},
+			VerificationCommand: "go test ./...",
+			VerificationPassed:  true,
+			VerificationOutput:  "ok",
 		},
 	})
 	if err != nil {
@@ -100,6 +107,12 @@ func TestApplyVerifiedRankerLearningLogIsPrivacySafe(t *testing.T) {
 			Kind:     "secret_prompt",
 			Verified: true,
 			Metrics:  map[string]float64{"file_body": 1, "boost_at": 0.75},
+		},
+		VerificationEvidence: &VerificationEvidence{
+			EditPaths:           []string{"pkg/safe.go"},
+			VerificationCommand: "go test ./...",
+			VerificationPassed:  true,
+			VerificationOutput:  "ok",
 		},
 	})
 	if err != nil {
@@ -261,10 +274,10 @@ func TestAppendLearningLogStrictlyBoundsTokenLikeFields(t *testing.T) {
 	evidenceFileInputs = append(evidenceFileInputs, blockedPathValues...)
 	evidenceFileInputs = append(evidenceFileInputs, "internal/runtime/agent/runner.go", "cmd/idiom/ranker.go")
 	beforeWeights := map[string]float64{
-		"pkg/safe.go":                            1.2,
+		"pkg/safe.go": 1.2,
 		"internal/repository/comprehension/learning_log.go": 1.25,
-		rawValues[0]:                             1.3,
-		rawValues[1]:                             1.4,
+		rawValues[0]: 1.3,
+		rawValues[1]: 1.4,
 	}
 	afterWeights := map[string]float64{
 		"pkg/safe.go":         1.5,
@@ -398,7 +411,7 @@ func TestAppendLearningLogStrictlyBoundsTokenLikeFields(t *testing.T) {
 	}
 	assertLearningLogWeights("before weights", *entry.BeforeWeights, map[string]float64{
 		"internal/repository/comprehension/learning_log.go": 1.25,
-		"pkg/safe.go":                            1.2,
+		"pkg/safe.go": 1.2,
 	})
 	assertLearningLogWeights("after weights", *entry.AfterWeights, map[string]float64{
 		"cmd/idiom/ranker.go": 1.55,
@@ -442,6 +455,11 @@ func TestApplyVerifiedRankerLearningHonorsDisableEnv(t *testing.T) {
 		Files:    []string{"internal/runtime/agent/runner.go"},
 		Score:    0.95,
 		Verified: true,
+		VerificationEvidence: &VerificationEvidence{
+			EditPaths:           []string{"internal/runtime/agent/runner.go"},
+			VerificationCommand: "go test ./...",
+			VerificationPassed:  true,
+		},
 	})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
@@ -524,6 +542,11 @@ func TestRestoreLearnedWeightsFromLearningLog(t *testing.T) {
 		Files:    []string{"internal/runtime/agent/runner.go"},
 		Score:    0.9,
 		Verified: true,
+		VerificationEvidence: &VerificationEvidence{
+			EditPaths:           []string{"internal/runtime/agent/runner.go"},
+			VerificationCommand: "go test ./...",
+			VerificationPassed:  true,
+		},
 	})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
@@ -545,5 +568,456 @@ func TestRestoreLearnedWeightsFromLearningLog(t *testing.T) {
 	summary := SummarizeLearningLog(entries)
 	if summary.RestoreCount != 1 || summary.AcceptedReasonCounts[LearningReasonRollbackRestore] != 1 {
 		t.Fatalf("summary missing restore metrics: %#v", summary)
+	}
+}
+
+func TestApplyVerifiedRankerLearningRejectsMissingVerificationEvidence(t *testing.T) {
+	root := t.TempDir()
+	event, weights, err := ApplyVerifiedRankerLearning(root, VerifiedRankerLearningRequest{
+		Source:   "eval",
+		Action:   "boost",
+		Files:    []string{"internal/runtime/agent/runner.go"},
+		Score:    0.9,
+		Verified: true,
+		// VerificationEvidence intentionally nil
+	})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if event.State != LearningStateRejected || event.Reason != LearningReasonVerificationEvidenceMissing {
+		t.Fatalf("event state/reason = %q/%q, want rejected/verification_evidence_missing", event.State, event.Reason)
+	}
+	if len(weights) != 0 {
+		t.Fatalf("missing verification evidence must not update weights: %v", weights)
+	}
+}
+
+func TestApplyVerifiedRankerLearningRejectsEmptyEditPaths(t *testing.T) {
+	root := t.TempDir()
+	event, weights, err := ApplyVerifiedRankerLearning(root, VerifiedRankerLearningRequest{
+		Source:   "eval",
+		Action:   "boost",
+		Files:    []string{"internal/runtime/agent/runner.go"},
+		Score:    0.9,
+		Verified: true,
+		VerificationEvidence: &VerificationEvidence{
+			EditPaths:           []string{},
+			VerificationCommand: "go test ./...",
+			VerificationPassed:  true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if event.State != LearningStateRejected || event.Reason != LearningReasonNoEditPaths {
+		t.Fatalf("event state/reason = %q/%q, want rejected/no_edit_paths", event.State, event.Reason)
+	}
+	if len(weights) != 0 {
+		t.Fatalf("empty edit paths must not update weights: %v", weights)
+	}
+}
+
+func TestApplyVerifiedRankerLearningRejectsVerificationNotPassed(t *testing.T) {
+	root := t.TempDir()
+	event, weights, err := ApplyVerifiedRankerLearning(root, VerifiedRankerLearningRequest{
+		Source:   "eval",
+		Action:   "boost",
+		Files:    []string{"internal/runtime/agent/runner.go"},
+		Score:    0.9,
+		Verified: true,
+		VerificationEvidence: &VerificationEvidence{
+			EditPaths:           []string{"internal/runtime/agent/runner.go"},
+			VerificationCommand: "go test ./...",
+			VerificationPassed:  false,
+			VerificationOutput:  "FAIL",
+		},
+	})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if event.State != LearningStateRejected || event.Reason != LearningReasonVerificationNotPassed {
+		t.Fatalf("event state/reason = %q/%q, want rejected/verification_not_passed", event.State, event.Reason)
+	}
+	if len(weights) != 0 {
+		t.Fatalf("failed verification must not update weights: %v", weights)
+	}
+}
+
+func TestApplyVerifiedRankerLearningRejectsProtectedEditPaths(t *testing.T) {
+	root := t.TempDir()
+	event, weights, err := ApplyVerifiedRankerLearning(root, VerifiedRankerLearningRequest{
+		Source:   "eval",
+		Action:   "boost",
+		Files:    []string{".idiom/ranker/weights.json"},
+		Score:    0.9,
+		Verified: true,
+		VerificationEvidence: &VerificationEvidence{
+			EditPaths:           []string{".idiom/ranker/weights.json"},
+			VerificationCommand: "go test ./...",
+			VerificationPassed:  true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if event.State != LearningStateRejected || event.Reason != LearningReasonProtectedPathInEdits {
+		t.Fatalf("event state/reason = %q/%q, want rejected/protected_path_in_edits", event.State, event.Reason)
+	}
+	if len(weights) != 0 {
+		t.Fatalf("protected edit paths must not update weights: %v", weights)
+	}
+}
+
+func TestApplyVerifiedRankerLearningRejectsEditPathMismatch(t *testing.T) {
+	root := t.TempDir()
+	event, weights, err := ApplyVerifiedRankerLearning(root, VerifiedRankerLearningRequest{
+		Source:   "eval",
+		Action:   "boost",
+		Files:    []string{"pkg/other.go"},
+		Score:    0.9,
+		Verified: true,
+		VerificationEvidence: &VerificationEvidence{
+			EditPaths:           []string{"internal/runtime/agent/runner.go"},
+			VerificationCommand: "go test ./...",
+			VerificationPassed:  true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if event.State != LearningStateRejected || event.Reason != LearningReasonEditPathMismatch {
+		t.Fatalf("event state/reason = %q/%q, want rejected/edit_path_mismatch", event.State, event.Reason)
+	}
+	if len(weights) != 0 {
+		t.Fatalf("mismatched edit paths must not update weights: %v", weights)
+	}
+}
+
+func TestRecordVerifiedRankerEvidenceUnaffectedByVerificationGate(t *testing.T) {
+	root := t.TempDir()
+	// RecordVerifiedRankerEvidence does NOT require VerificationEvidence.
+	event, err := RecordVerifiedRankerEvidence(root, VerifiedRankerLearningRequest{
+		Source:   LearningSourceRecoveryReconciliation,
+		Action:   "no_op",
+		Files:    []string{"internal/workflows/recovery/packet.go"},
+		Score:    1,
+		TaskID:   "failure-123",
+		CorpusID: "packet-123",
+		ResultID: "reconciliation-123",
+		Reason:   LearningReasonVerifiedRecovery,
+		Verified: true,
+		Evidence: LearningEvidenceRef{
+			Kind:     LearningEvidenceKindRecoveryReconciliation,
+			Verified: true,
+		},
+		// No VerificationEvidence — recovery reconciliation bypasses the gate.
+	})
+	if err != nil {
+		t.Fatalf("record evidence: %v", err)
+	}
+	if event.State != LearningStateAccepted || event.Reason != LearningReasonVerifiedRecovery {
+		t.Fatalf("recovery evidence should be accepted without verification gate, got state=%q reason=%q", event.State, event.Reason)
+	}
+}
+
+// TestHasProtectedEditPath covers protected-path gate edge cases including the
+// R1 (false positive on .idiom prefix substring) and R2 (./ bypass) fixes.
+func TestHasProtectedEditPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		paths    []string
+		expected bool
+	}{
+		// Core protected cases (must remain protected)
+		{
+			name:     ".idiom/ directory",
+			paths:    []string{".idiom/ranker/weights.json"},
+			expected: true,
+		},
+		{
+			name:     "bare .idiom",
+			paths:    []string{".idiom"},
+			expected: true,
+		},
+		{
+			name:     "deep .idiom/ path",
+			paths:    []string{".idiom/ranker/learning_log.jsonl"},
+			expected: true,
+		},
+		// R1 regression: .idiom prefix substring must NOT be protected
+		{
+			name:     "R1: .idiom_backup is not .idiom",
+			paths:    []string{".idiom_backup/foo.go"},
+			expected: false,
+		},
+		{
+			name:     "R1: .idiom_config is not .idiom",
+			paths:    []string{".idiom_config/config.json"},
+			expected: false,
+		},
+		{
+			name:     "R1: .idiom-temp is not .idiom",
+			paths:    []string{".idiom-temp/data.txt"},
+			expected: false,
+		},
+		// R2 regression: ./ prefixed .idiom paths MUST be caught
+		{
+			name:     "R2: ./.idiom/ bypass via ./ prefix",
+			paths:    []string{"./.idiom/ranker/weights.json"},
+			expected: true,
+		},
+		{
+			name:     "R2: ./.idiom bare bypass via ./ prefix",
+			paths:    []string{"./.idiom"},
+			expected: true,
+		},
+		{
+			name:     "R2: ./.idiom/ deep path via ./ prefix",
+			paths:    []string{"./.idiom/comprehension/graph.sqlite"},
+			expected: true,
+		},
+		// Normal paths (must not be protected)
+		{
+			name:     "normal Go source",
+			paths:    []string{"internal/runtime/agent/runner.go"},
+			expected: false,
+		},
+		{
+			name:     "multiple normal paths",
+			paths:    []string{"pkg/safe.go", "cmd/idiom/main.go"},
+			expected: false,
+		},
+		// Escape / absolute paths (must be protected — normalization rejects them)
+		{
+			name:     "../ escape",
+			paths:    []string{"../escape.go"},
+			expected: true,
+		},
+		{
+			name:     "absolute path",
+			paths:    []string{"/etc/passwd"},
+			expected: true,
+		},
+		// Edge: empty or whitespace-only (skipped by loop, not protected)
+		{
+			name:     "empty string (skipped)",
+			paths:    []string{""},
+			expected: false,
+		},
+		{
+			name:     "whitespace-only (skipped)",
+			paths:    []string{"   "},
+			expected: false,
+		},
+		// Mixed: normal path alongside a protected path → protected
+		{
+			name:     "mixed normal + protected .idiom/",
+			paths:    []string{"pkg/safe.go", ".idiom/ranker/weights.json"},
+			expected: true,
+		},
+		// Mixed: normal path alongside R1 false-positive path → NOT protected
+		{
+			name:     "mixed normal + .idiom_backup (R1)",
+			paths:    []string{"pkg/safe.go", ".idiom_backup/foo.go"},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := hasProtectedEditPath(tt.paths)
+			if got != tt.expected {
+				t.Errorf("hasProtectedEditPath(%v) = %v, want %v", tt.paths, got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestApplyVerifiedRankerLearningStoresVerificationEvidenceInLog verifies that
+// the VerificationEvidence gate predicates (EditPaths, VerificationCommand,
+// VerificationPassed) are persisted in the learning log entry so gate decisions
+// are reconstructable from the audit trail. VerificationOutput is intentionally
+// excluded from the log for privacy.
+func TestApplyVerifiedRankerLearningStoresVerificationEvidenceInLog(t *testing.T) {
+	root := t.TempDir()
+	_ = os.Setenv(RankerLearningEnv, "1")
+	defer os.Unsetenv(RankerLearningEnv)
+
+	editPaths := []string{"pkg/target.go", "pkg/target_test.go"}
+	entry, _, err := ApplyVerifiedRankerLearning(root, VerifiedRankerLearningRequest{
+		Source:   "eval",
+		Action:   "boost",
+		Files:    editPaths,
+		Score:    0.85,
+		TaskID:   "task-verify-log",
+		CorpusID: "corpus-verify-log",
+		Verified: true,
+		Reason:   LearningReasonVerifiedFeedback,
+		VerificationEvidence: &VerificationEvidence{
+			EditPaths:           editPaths,
+			VerificationCommand: "go test ./...",
+			VerificationPassed:  true,
+			VerificationOutput:  "ok  pkg  (cached)", // should be excluded from log
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyVerifiedRankerLearning: %v", err)
+	}
+	if entry.State != LearningStateAccepted {
+		t.Fatalf("expected accepted, got %q", entry.State)
+	}
+	// Verification evidence must be present in the log entry.
+	if entry.Verification == nil {
+		t.Fatal("entry.Verification should not be nil")
+	}
+	if !entry.Verification.VerificationPassed {
+		t.Error("entry.Verification.VerificationPassed should be true")
+	}
+	if entry.Verification.VerificationCommand != "go test ./..." {
+		t.Errorf("entry.Verification.VerificationCommand = %q, want %q", entry.Verification.VerificationCommand, "go test ./...")
+	}
+	if len(entry.Verification.EditPaths) != 2 {
+		t.Errorf("entry.Verification.EditPaths = %v, want 2 paths", entry.Verification.EditPaths)
+	}
+
+	// Read back from the learning log and verify the persisted entry.
+	entries, err := ReadLearningLog(root)
+	if err != nil {
+		t.Fatalf("ReadLearningLog: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("learning log should have at least one entry")
+	}
+	persisted := entries[0]
+	if persisted.Verification == nil {
+		t.Fatal("persisted entry.Verification should not be nil")
+	}
+	if !persisted.Verification.VerificationPassed {
+		t.Error("persisted VerificationPassed should be true")
+	}
+	if len(persisted.Verification.EditPaths) != 2 {
+		t.Errorf("persisted EditPaths = %v, want 2 paths", persisted.Verification.EditPaths)
+	}
+	if persisted.Verification.VerificationCommand != "go test ./..." {
+		t.Errorf("persisted VerificationCommand = %q", persisted.Verification.VerificationCommand)
+	}
+}
+
+// TestApplyVerifiedRankerLearningLogExcludesVerificationOutput verifies that
+// VerificationOutput is NOT stored in the learning log's verification evidence.
+// The log carries structured gate predicates only; raw command output stays out.
+func TestApplyVerifiedRankerLearningLogExcludesVerificationOutput(t *testing.T) {
+	root := t.TempDir()
+	_ = os.Setenv(RankerLearningEnv, "1")
+	defer os.Unsetenv(RankerLearningEnv)
+
+	_, _, err := ApplyVerifiedRankerLearning(root, VerifiedRankerLearningRequest{
+		Source:   "eval",
+		Action:   "boost",
+		Files:    []string{"pkg/target.go"},
+		Score:    0.85,
+		TaskID:   "task-no-output",
+		CorpusID: "corpus-no-output",
+		Verified: true,
+		Reason:   LearningReasonVerifiedFeedback,
+		VerificationEvidence: &VerificationEvidence{
+			EditPaths:           []string{"pkg/target.go"},
+			VerificationCommand: "go test ./...",
+			VerificationPassed:  true,
+			VerificationOutput:  "some raw command output that should NOT appear in the log",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyVerifiedRankerLearning: %v", err)
+	}
+	// Read back from the log.
+	entries, err := ReadLearningLog(root)
+	if err != nil {
+		t.Fatalf("ReadLearningLog: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("learning log should have at least one entry")
+	}
+	persisted := entries[0]
+	if persisted.Verification == nil {
+		t.Fatal("persisted entry.Verification should not be nil")
+	}
+	// The LearningLogVerificationEvidence type has no VerificationOutput field,
+	// so this is a structural guarantee. The raw output must not leak into any
+	// persisted field.
+	raw, err := json.Marshal(persisted)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "some raw command output") {
+		t.Error("raw VerificationOutput should not appear in persisted learning log entry")
+	}
+	if strings.Contains(string(raw), "verification_output") {
+		t.Error("verification_output field should not appear in persisted learning log entry")
+	}
+}
+
+// TestApplyVerifiedRankerLearningRejectedStoresVerificationEvidence verifies that
+// even when the gate rejects a request, the verification evidence is still
+// persisted so the rejection reason can be correlated with the evidence that
+// triggered it.
+func TestApplyVerifiedRankerLearningRejectedStoresVerificationEvidence(t *testing.T) {
+	root := t.TempDir()
+	_ = os.Setenv(RankerLearningEnv, "1")
+	defer os.Unsetenv(RankerLearningEnv)
+
+	// A request where verification did NOT pass — should be rejected.
+	entry, _, err := ApplyVerifiedRankerLearning(root, VerifiedRankerLearningRequest{
+		Source:   "eval",
+		Action:   "boost",
+		Files:    []string{"pkg/target.go"},
+		Score:    0.85,
+		TaskID:   "task-rejected",
+		Verified: true,
+		Reason:   LearningReasonVerifiedFeedback,
+		VerificationEvidence: &VerificationEvidence{
+			EditPaths:           []string{"pkg/target.go"},
+			VerificationCommand: "go test ./...",
+			VerificationPassed:  false, // verification failed
+			VerificationOutput:  "FAIL",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyVerifiedRankerLearning: %v", err)
+	}
+	if entry.State != LearningStateRejected {
+		t.Fatalf("expected rejected, got %q", entry.State)
+	}
+	if entry.Reason != LearningReasonVerificationNotPassed {
+		t.Fatalf("expected reason verification_not_passed, got %q", entry.Reason)
+	}
+	// Verification evidence must still be logged so the audit trail shows what failed.
+	if entry.Verification == nil {
+		t.Fatal("entry.Verification should not be nil for rejected entries")
+	}
+	if entry.Verification.VerificationPassed {
+		t.Error("entry.Verification.VerificationPassed should be false")
+	}
+	if len(entry.Verification.EditPaths) != 1 {
+		t.Errorf("entry.Verification.EditPaths = %v, want 1 path", entry.Verification.EditPaths)
+	}
+
+	// Verify from persisted log.
+	entries, err := ReadLearningLog(root)
+	if err != nil {
+		t.Fatalf("ReadLearningLog: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("learning log should have at least one entry")
+	}
+	persisted := entries[0]
+	if persisted.Verification == nil {
+		t.Fatal("persisted entry.Verification should not be nil for rejected entries")
+	}
+	if persisted.Verification.VerificationPassed {
+		t.Error("persisted VerificationPassed should be false")
+	}
+	if persisted.Verification.VerificationCommand != "go test ./..." {
+		t.Errorf("persisted VerificationCommand = %q", persisted.Verification.VerificationCommand)
 	}
 }

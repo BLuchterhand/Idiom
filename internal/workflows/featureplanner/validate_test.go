@@ -13,6 +13,11 @@ import (
 	"idiom/internal/contracts/autonomy"
 )
 
+const (
+	validTDDSnapshotDigest    = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	validTDDSnapshotDigestTwo = "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+)
+
 func TestValidatePlanRequiresTDDBeforeImplementation(t *testing.T) {
 	plan := validPlan()
 	plan.Atoms[0].TestFirst.Commands = nil
@@ -392,6 +397,16 @@ func TestBuildPlannerPromptProductExampleUsesNonAuthoritativePlaceholders(t *tes
 	if strings.Contains(schemaExample, "go test ./...") {
 		t.Fatalf("product prompt schema example must not contain language-specific test command placeholders:\n%s", prompt)
 	}
+	for _, forbidden := range []string{
+		`"snapshot_id":"snap-tdd-`,
+		`"snapshot_id":"placeholder`,
+		`"snapshot_digest":"sha256:..."`,
+		`"snapshot_digest":"sha256:placeholder`,
+	} {
+		if strings.Contains(schemaExample, forbidden) {
+			t.Fatalf("product prompt schema example contains validator-rejected TDD snapshot placeholder %q:\n%s", forbidden, prompt)
+		}
+	}
 }
 
 func TestBuildPlannerPromptStandaloneUsesLanguageNeutralPlaceholders(t *testing.T) {
@@ -414,6 +429,16 @@ func TestBuildPlannerPromptStandaloneUsesLanguageNeutralPlaceholders(t *testing.
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("standalone prompt missing schema invariant %q:\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{
+		`"snapshot_id":"snap-tdd-`,
+		`"snapshot_id":"placeholder`,
+		`"snapshot_digest":"sha256:..."`,
+		`"snapshot_digest":"sha256:placeholder`,
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("standalone prompt schema example contains validator-rejected TDD snapshot placeholder %q:\n%s", forbidden, prompt)
 		}
 	}
 }
@@ -1011,6 +1036,82 @@ func TestRunUsesAnsweredPlannerQuestionForStandaloneNewFileAuthorization(t *test
 	}
 }
 
+func TestRunUsesExplicitOperatorPromptForStandaloneNewFileAuthorization(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"internal/greeting/greeting.go", "internal/greeting/greeting_test.go"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"internal/greeting/greeting_test.go"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"internal/greeting/greeting_test.go"}
+
+	state := NewState("session", "add greeting package", "", 3, time.Unix(1, 0).UTC())
+	var implementorPrompt string
+	result, err := Run(state, RunOptions{
+		Prompt:                "Add an internal/greeting package with Hello function.",
+		WorkspaceRoot:         root,
+		MaxPlanningIterations: 3,
+		Now:                   time.Unix(2, 0).UTC(),
+	}, func(prompt string, taskFamily string) (string, error) {
+		switch taskFamily {
+		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
+			return mustPlanJSON(t, plan), nil
+		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
+			implementorPrompt = prompt
+			return testPlanExecuteCompletedJSONForPrompt(prompt), nil
+		default:
+			t.Fatalf("unexpected task family %q", taskFamily)
+		}
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.State.Status != FeatureStateComplete {
+		t.Fatalf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if len(result.State.AuthorityDeltas) != 1 || result.State.AuthorityDeltas[0].QuestionID != "operator-prompt-new-files" {
+		t.Fatalf("expected prompt-derived authority delta, got %+v", result.State.AuthorityDeltas)
+	}
+	want := []string{"internal/greeting/greeting.go", "internal/greeting/greeting_test.go"}
+	if got := PlanExecuteAuthorizedNewFilesFromImplementorPrompt(implementorPrompt); !slices.Equal(got, want) {
+		t.Fatalf("authorized new files = %#v, want %#v", got, want)
+	}
+}
+
+func TestRunRejectsGenericAddPromptForStandaloneImplementationNewFile(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"project/scripts/economy/score_breakdown.gd"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"project/scripts/economy/score_breakdown_test.gd"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"project/scripts/economy/score_breakdown_test.gd"}
+
+	state := NewState("session", "add score breakdown", "", 3, time.Unix(1, 0).UTC())
+	result, err := Run(state, RunOptions{
+		Prompt:                "Add score breakdown to the existing tooltip.",
+		WorkspaceRoot:         root,
+		MaxPlanningIterations: 3,
+	}, func(prompt string, taskFamily string) (string, error) {
+		switch taskFamily {
+		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
+			return mustPlanJSON(t, plan), nil
+		default:
+			t.Fatalf("unexpected task family %q", taskFamily)
+		}
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.State.Status != FeatureStatePlanningRepair {
+		t.Fatalf("state.Status = %q, want planning_repair", result.State.Status)
+	}
+	if !strings.Contains(strings.Join(result.State.Blockers, "\n"), "not authorized as a new file") {
+		t.Fatalf("expected new-file authorization blocker, got %+v", result.State.Blockers)
+	}
+	if len(result.State.AuthorityDeltas) != 0 {
+		t.Fatalf("generic add prompt must not mint new-file authority, got %+v", result.State.AuthorityDeltas)
+	}
+}
+
 func TestDispatchRecordsPlanExecuteLaneFamily(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
@@ -1185,8 +1286,8 @@ func TestDispatchStopsAfterBlockedAtomWithoutSyntheticSiblingRuns(t *testing.T) 
 	second.RequiredEditPaths = []string{"internal/labels/labels2.go", "internal/labels/labels_test.go"}
 	second.TestFirst.PreExecutionEventIDs = []string{"evt-tdd-2"}
 	second.TestFirst.CoverageGateEventID = "evt-tdd-2"
-	second.PlannedTDDSnapshot.SnapshotID = "snap-tdd-2"
-	second.PlannedTDDSnapshot.SnapshotDigest = "sha256:test2"
+	second.PlannedTDDSnapshot.SnapshotID = "snapshot-evidence-0002"
+	second.PlannedTDDSnapshot.SnapshotDigest = validTDDSnapshotDigestTwo
 	second.PlannedTDDSnapshot.CreatedBeforeDispatchEventID = "evt-tdd-2"
 	plan.Atoms = append(plan.Atoms, second)
 
@@ -1226,8 +1327,8 @@ func TestDispatchStopsAfterPreDispatchTDDBlocker(t *testing.T) {
 	second.RequiredEditPaths = []string{"internal/labels/labels2.go", "internal/labels/labels_test.go"}
 	second.TestFirst.PreExecutionEventIDs = []string{"evt-tdd-2"}
 	second.TestFirst.CoverageGateEventID = "evt-tdd-2"
-	second.PlannedTDDSnapshot.SnapshotID = "snap-tdd-2"
-	second.PlannedTDDSnapshot.SnapshotDigest = "sha256:test2"
+	second.PlannedTDDSnapshot.SnapshotID = "snapshot-evidence-0002"
+	second.PlannedTDDSnapshot.SnapshotDigest = validTDDSnapshotDigestTwo
 	second.PlannedTDDSnapshot.CreatedBeforeDispatchEventID = "evt-tdd-2"
 	plan.Atoms = append(plan.Atoms, second)
 
@@ -1335,16 +1436,16 @@ func TestDispatchWaitsForAtomDependencies(t *testing.T) {
 	dependent.Dependencies = []string{"atom-base"}
 	dependent.TestFirst.PreExecutionEventIDs = []string{"evt-dependent"}
 	dependent.TestFirst.CoverageGateEventID = "evt-dependent"
-	dependent.PlannedTDDSnapshot.SnapshotID = "snap-dependent"
-	dependent.PlannedTDDSnapshot.SnapshotDigest = "sha256:dependent"
+	dependent.PlannedTDDSnapshot.SnapshotID = "snapshot-dependent-0001"
+	dependent.PlannedTDDSnapshot.SnapshotDigest = validTDDSnapshotDigest
 	dependent.PlannedTDDSnapshot.CreatedBeforeDispatchEventID = "evt-dependent"
 	base := plan.Atoms[0]
 	base.ID = "atom-base"
 	base.AtomID = "atom-base"
 	base.TestFirst.PreExecutionEventIDs = []string{"evt-base"}
 	base.TestFirst.CoverageGateEventID = "evt-base"
-	base.PlannedTDDSnapshot.SnapshotID = "snap-base"
-	base.PlannedTDDSnapshot.SnapshotDigest = "sha256:base"
+	base.PlannedTDDSnapshot.SnapshotID = "snapshot-base-0001"
+	base.PlannedTDDSnapshot.SnapshotDigest = validTDDSnapshotDigestTwo
 	base.PlannedTDDSnapshot.CreatedBeforeDispatchEventID = "evt-base"
 	plan.Atoms = []FeatureAtomPlan{dependent, base}
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
@@ -1385,8 +1486,8 @@ func TestValidateDurablePlanRejectsInvalidDependencies(t *testing.T) {
 		second.AtomID = "atom-2"
 		second.TestFirst.PreExecutionEventIDs = []string{"evt-tdd-2"}
 		second.TestFirst.CoverageGateEventID = "evt-tdd-2"
-		second.PlannedTDDSnapshot.SnapshotID = "snap-tdd-2"
-		second.PlannedTDDSnapshot.SnapshotDigest = "sha256:test2"
+		second.PlannedTDDSnapshot.SnapshotID = "snapshot-evidence-0002"
+		second.PlannedTDDSnapshot.SnapshotDigest = validTDDSnapshotDigestTwo
 		second.PlannedTDDSnapshot.CreatedBeforeDispatchEventID = "evt-tdd-2"
 		plan.Atoms[0].Dependencies = []string{"atom-2"}
 		second.Dependencies = []string{"atom-1"}
@@ -1397,6 +1498,105 @@ func TestValidateDurablePlanRejectsInvalidDependencies(t *testing.T) {
 			t.Fatalf("expected dependency cycle error, got %v", err)
 		}
 	})
+}
+
+func TestValidateDurablePlanAcceptsFullSHA256TDDSnapshotDigest(t *testing.T) {
+	plan := validPlan()
+	plan.Atoms[0].PlannedTDDSnapshot.SnapshotDigest = "sha256:" + strings.Repeat("a", 64)
+
+	if err := ValidateDurablePlan(plan); err != nil {
+		t.Fatalf("valid lowercase SHA-256 TDD snapshot digest should validate: %v", err)
+	}
+}
+
+func TestValidateDurablePlanRejectsPlaceholderTDDSnapshotValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		snapshot PlannedTDDSnapshot
+		want     []string
+	}{
+		{
+			name: "ellipsis digest",
+			snapshot: PlannedTDDSnapshot{
+				SnapshotID:     "snapshot-evidence-0001",
+				SnapshotDigest: "sha256:...",
+			},
+			want: []string{"planned_tdd_snapshot.snapshot_digest", "ellipsis placeholder"},
+		},
+		{
+			name: "placeholder digest",
+			snapshot: PlannedTDDSnapshot{
+				SnapshotID:     "snapshot-evidence-0001",
+				SnapshotDigest: "sha256:placeholder0000000000000000000000000000000000000000000000000",
+			},
+			want: []string{"planned_tdd_snapshot.snapshot_digest", "placeholder token \"placeholder\""},
+		},
+		{
+			name: "short digest",
+			snapshot: PlannedTDDSnapshot{
+				SnapshotID:     "snapshot-evidence-0001",
+				SnapshotDigest: "sha256:abc123",
+			},
+			want: []string{"planned_tdd_snapshot.snapshot_digest", "got 6 characters after sha256:"},
+		},
+		{
+			name: "non hex digest",
+			snapshot: PlannedTDDSnapshot{
+				SnapshotID:     "snapshot-evidence-0001",
+				SnapshotDigest: "sha256:" + strings.Repeat("0", 63) + "g",
+			},
+			want: []string{"planned_tdd_snapshot.snapshot_digest", "non-lowercase-hex"},
+		},
+		{
+			name: "fake snapshot id",
+			snapshot: PlannedTDDSnapshot{
+				SnapshotID:     "snap-tdd-1",
+				SnapshotDigest: validTDDSnapshotDigest,
+			},
+			want: []string{"planned_tdd_snapshot.snapshot_id", "snap-tdd-*"},
+		},
+		{
+			name: "ellipsis snapshot id",
+			snapshot: PlannedTDDSnapshot{
+				SnapshotID:     "snapshot-...",
+				SnapshotDigest: validTDDSnapshotDigest,
+			},
+			want: []string{"planned_tdd_snapshot.snapshot_id", "ellipsis placeholder"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := validPlan()
+			plan.Atoms[0].PlannedTDDSnapshot.SnapshotID = tt.snapshot.SnapshotID
+			plan.Atoms[0].PlannedTDDSnapshot.SnapshotDigest = tt.snapshot.SnapshotDigest
+
+			err := ValidateDurablePlan(plan)
+			if err == nil {
+				t.Fatal("expected placeholder TDD snapshot validation error")
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("validation error missing %q: %v", want, err)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateDurablePlanRejectsMismatchedTDDSnapshotEventID(t *testing.T) {
+	plan := validPlan()
+	plan.Atoms[0].PlannedTDDSnapshot.CreatedBeforeDispatchEventID = "evt-tdd-missing"
+
+	err := ValidateDurablePlan(plan)
+	if err == nil {
+		t.Fatal("expected mismatched TDD snapshot event validation error")
+	}
+	for _, want := range []string{"mismatched durable pre-dispatch TDD fields", "planned_tdd_snapshot.created_before_dispatch_event_id"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("validation error missing %q: %v", want, err)
+		}
+	}
 }
 
 func TestRunKeepsImplementorQuestionAsPlannerRepairState(t *testing.T) {
@@ -1536,6 +1736,105 @@ func TestApplyImplementorOutputAcceptsObservedPlanExecuteCompletion(t *testing.T
 	}
 }
 
+func TestApplyImplementorOutputBindsActiveAuthorityForScopeOnlyPlanExecuteCompletion(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+	if err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	payload["scope_contract_id"] = "child-local-scope"
+	payload["scope_contract_hash"] = "child-local-scope-hash"
+	delete(payload, "contract_id")
+	delete(payload, "contract_hash")
+	delete(payload, "snapshot_hash")
+	trustPlanExecuteCompletionForTest(payload)
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+
+	if atom.State != AtomStateComplete {
+		t.Fatalf("atom state = %q, want complete; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
+	}
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_completed" {
+		t.Fatalf("unexpected events: %+v", events)
+	}
+	if got := fmt.Sprint(events[0].Fields["contract_id"]); got != atom.RuntimeEnvelope.ContractID {
+		t.Fatalf("contract_id = %q, want active atom contract %q; fields=%+v", got, atom.RuntimeEnvelope.ContractID, events[0].Fields)
+	}
+	if got := fmt.Sprint(events[0].Fields["snapshot_hash"]); got != atom.RuntimeEnvelope.ProtocolHash {
+		t.Fatalf("snapshot_hash = %q, want active snapshot %q; fields=%+v", got, atom.RuntimeEnvelope.ProtocolHash, events[0].Fields)
+	}
+	if got := fmt.Sprint(events[0].Fields["scope_contract_id"]); got != "child-local-scope" {
+		t.Fatalf("scope_contract_id = %q, want preserved child scope; fields=%+v", got, events[0].Fields)
+	}
+}
+
+func TestApplyImplementorOutputRejectsConflictingParentPlanExecuteIdentity(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+	if err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	payload["contract_id"] = "wrong-parent-contract"
+	payload["snapshot_hash"] = atom.RuntimeEnvelope.ProtocolHash
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "plan-execute terminal completion conflicts with the active plan contract snapshot")
+}
+
+func TestApplyImplementorOutputRejectsSkippedReviewCompletionMissingSourceSanity(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+	if err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	delete(payload, "source_sanity")
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute terminal validation failed")
+	if !strings.Contains(events[0].Message, "source_sanity_missing:internal/labels/labels.go") {
+		t.Fatalf("rejection did not name missing source_sanity: %+v", events[0])
+	}
+}
+
+func TestApplyImplementorOutputAcceptsLegacyContractHashAsSnapshotAlias(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+	if err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	delete(payload, "snapshot_hash")
+	payload["contract_hash"] = atom.RuntimeEnvelope.ProtocolHash
+	trustPlanExecuteCompletionForTest(payload)
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+
+	if atom.State != AtomStateComplete {
+		t.Fatalf("atom state = %q, want complete; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
+	}
+	if got := fmt.Sprint(events[0].Fields["snapshot_hash"]); got != atom.RuntimeEnvelope.ProtocolHash {
+		t.Fatalf("snapshot_hash = %q, want legacy contract_hash normalized to active snapshot; fields=%+v", got, events[0].Fields)
+	}
+	if _, ok := events[0].Fields["contract_hash"]; ok {
+		t.Fatalf("contract_hash should not remain a parallel authority field; fields=%+v", events[0].Fields)
+	}
+}
+
+func TestApplyImplementorOutputRejectsConflictingLegacyContractHashAlias(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+	if err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	payload["snapshot_hash"] = atom.RuntimeEnvelope.ProtocolHash
+	payload["contract_hash"] = "wrong-legacy-snapshot"
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "plan-execute terminal completion conflicts with the active plan contract snapshot")
+}
+
 func TestApplyImplementorOutputAcceptsNestedPlanExecuteCompletionStatus(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
 
@@ -1553,6 +1852,31 @@ func TestApplyImplementorOutputAcceptsNestedPlanExecuteCompletionStatus(t *testi
 	if got := fmt.Sprint(events[0].Fields["nested_phase"]); got != "review_repair" {
 		t.Fatalf("nested phase = %q, want review_repair; fields=%+v", got, events[0].Fields)
 	}
+}
+
+func TestApplyImplementorOutputRejectsMissingAcceptanceEvidenceIDs(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+	_ = json.Unmarshal([]byte(testNestedPlanExecuteCompletedJSONForAtom(*atom)), &payload)
+	nested := payload["plan_execute"].(map[string]any)
+	delete(nested, "acceptance_evidence_ids")
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "missing acceptance_evidence_ids")
+}
+
+func TestApplyImplementorOutputRejectsUntrustedAcceptanceEvidenceIDs(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+	_ = json.Unmarshal([]byte(testNestedPlanExecuteCompletedJSONForAtom(*atom)), &payload)
+	nested := payload["plan_execute"].(map[string]any)
+	nested["completion_source"] = "headless_plan_execute_returned"
+	nested["acceptance_evidence_trusted"] = true
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "acceptance_evidence_ids are not backed by trusted plan-execute terminal evidence")
 }
 
 func TestApplyImplementorOutputUsesNestedPlanExecuteTerminalClass(t *testing.T) {
@@ -1961,8 +2285,8 @@ func validPlan() FeaturePlan {
 				CoverageGateEventID:        "evt-tdd-1",
 			},
 			PlannedTDDSnapshot: PlannedTDDSnapshot{
-				SnapshotID:                   "snap-tdd-1",
-				SnapshotDigest:               "sha256:test",
+				SnapshotID:                   "snapshot-evidence-0001",
+				SnapshotDigest:               validTDDSnapshotDigest,
 				ObligationIDs:                []string{"TDD-1"},
 				TestCommands:                 []string{"go test ./..."},
 				TestArtifactPaths:            []string{"internal/labels/labels_test.go"},
@@ -1984,23 +2308,28 @@ func mustPlanJSON(t *testing.T, plan FeaturePlan) string {
 
 func testPlanExecuteCompletedJSONForPrompt(prompt string) string {
 	contractID, snapshotHash, paths := testPlanExecuteContractFromPrompt(prompt)
-	return mustJSONMap(map[string]any{
-		"tool":                "plan_execute_completed",
-		"lane_family":         "plan-execute",
-		"status":              "completed",
-		"phase":               "complete",
-		"review_status":       "completed",
-		"completion_source":   "test",
-		"contract_id":         contractID,
-		"snapshot_hash":       snapshotHash,
-		"changed_paths":       paths,
-		"required_edit_paths": paths,
-	})
+	sourceSanity := testSourceSanityEvidenceForPaths(paths)
+	payload := map[string]any{
+		"tool":                        "plan_execute_completed",
+		"lane_family":                 "plan-execute",
+		"status":                      "completed",
+		"phase":                       "complete",
+		"review_status":               "completed",
+		"completion_source":           "durable_plan_execute_terminal_completion",
+		"contract_id":                 contractID,
+		"snapshot_hash":               snapshotHash,
+		"changed_paths":               paths,
+		"required_edit_paths":         paths,
+		"source_sanity":               sourceSanity,
+		"acceptance_evidence_ids":     []string{"req-1", "adr-1"},
+		"acceptance_evidence_trusted": true,
+	}
+	return mustJSONMap(trustPlanExecuteCompletionForTest(payload))
 }
 
 func testPlanExecuteSourceSatisfiedJSONForPrompt(prompt string) string {
 	contractID, snapshotHash, paths := testPlanExecuteContractFromPrompt(prompt)
-	return mustJSONMap(map[string]any{
+	payload := map[string]any{
 		"tool":                            "plan_execute_completed",
 		"lane_family":                     "plan-execute",
 		"status":                          "source-satisfied",
@@ -2010,22 +2339,31 @@ func testPlanExecuteSourceSatisfiedJSONForPrompt(prompt string) string {
 		"source_satisfied_evidence_paths": paths,
 		"source_satisfied_evidence":       testPlanExecuteSourceSatisfiedEvidenceRefs(paths),
 		"required_edit_paths":             paths,
-	})
+		"acceptance_evidence_ids":         []string{"req-1", "adr-1"},
+		"acceptance_evidence_trusted":     true,
+		"completion_source":               "durable_plan_execute_terminal_completion",
+	}
+	return mustJSONMap(trustPlanExecuteCompletionForTest(payload))
 }
 
 func testPlanExecuteCompletedJSONForAtom(atom FeatureAtomState) string {
-	return mustJSONMap(map[string]any{
-		"tool":                "plan_execute_completed",
-		"lane_family":         "plan-execute",
-		"status":              "completed",
-		"phase":               "complete",
-		"review_status":       "completed",
-		"completion_source":   "test",
-		"contract_id":         atom.RuntimeEnvelope.ContractID,
-		"snapshot_hash":       atom.RuntimeEnvelope.ProtocolHash,
-		"changed_paths":       atom.RequiredEditPaths,
-		"required_edit_paths": atom.RequiredEditPaths,
-	})
+	sourceSanity := testSourceSanityEvidenceForPaths(atom.RequiredEditPaths)
+	payload := map[string]any{
+		"tool":                        "plan_execute_completed",
+		"lane_family":                 "plan-execute",
+		"status":                      "completed",
+		"phase":                       "complete",
+		"review_status":               "completed",
+		"completion_source":           "durable_plan_execute_terminal_completion",
+		"contract_id":                 atom.RuntimeEnvelope.ContractID,
+		"snapshot_hash":               atom.RuntimeEnvelope.ProtocolHash,
+		"changed_paths":               atom.RequiredEditPaths,
+		"required_edit_paths":         atom.RequiredEditPaths,
+		"source_sanity":               sourceSanity,
+		"acceptance_evidence_ids":     []string{"req-1", "adr-1"},
+		"acceptance_evidence_trusted": true,
+	}
+	return mustJSONMap(trustPlanExecuteCompletionForTest(payload))
 }
 
 func testPlanExecuteCompletedJSONForAtomWithReviewSkipped(atom FeatureAtomState) string {
@@ -2035,28 +2373,44 @@ func testPlanExecuteCompletedJSONForAtomWithReviewSkipped(atom FeatureAtomState)
 	payload["review_repair_skipped"] = true
 	payload["progress_path"] = ".idiom/plan-execute/session/state.json"
 	payload["summary"] = "Edited files and ran required verification"
-	return mustJSONMap(payload)
+	return mustJSONMap(trustPlanExecuteCompletionForTest(payload))
 }
 
 func testNestedPlanExecuteCompletedJSONForAtom(atom FeatureAtomState) string {
+	sourceSanity := testSourceSanityEvidenceForPaths(atom.RequiredEditPaths)
+	nested := trustPlanExecuteCompletionForTest(map[string]any{
+		"lane_family":                 "plan-execute",
+		"status":                      "completed",
+		"phase":                       "review_repair",
+		"review_status":               "completed",
+		"progress_path":               ".idiom/plan-execute/session/state.json",
+		"contract_id":                 atom.RuntimeEnvelope.ContractID,
+		"snapshot_hash":               atom.RuntimeEnvelope.ProtocolHash,
+		"changed_paths":               atom.RequiredEditPaths,
+		"required_edit_paths":         atom.RequiredEditPaths,
+		"source_sanity":               sourceSanity,
+		"acceptance_evidence_ids":     []string{"req-1", "adr-1"},
+		"acceptance_evidence_trusted": true,
+		"completion_source":           "durable_plan_execute_terminal_completion",
+	})
 	return mustJSONMap(map[string]any{
-		"tool": "plan_execute_completed",
-		"plan_execute": map[string]any{
-			"lane_family":         "plan-execute",
-			"status":              "completed",
-			"phase":               "review_repair",
-			"review_status":       "completed",
-			"progress_path":       ".idiom/plan-execute/session/state.json",
-			"contract_id":         atom.RuntimeEnvelope.ContractID,
-			"snapshot_hash":       atom.RuntimeEnvelope.ProtocolHash,
-			"changed_paths":       atom.RequiredEditPaths,
-			"required_edit_paths": atom.RequiredEditPaths,
-		},
+		"tool":         "plan_execute_completed",
+		"plan_execute": nested,
 	})
 }
 
+func testSourceSanityEvidenceForPaths(paths []string) []map[string]string {
+	sourceSanity := make([]map[string]string, 0, len(paths))
+	for _, path := range paths {
+		if strings.HasSuffix(path, ".go") {
+			sourceSanity = append(sourceSanity, map[string]string{"kind": "source_sanity", "path": path, "status": "ok"})
+		}
+	}
+	return sourceSanity
+}
+
 func testPlanExecuteSourceSatisfiedJSONForAtom(atom FeatureAtomState) string {
-	return mustJSONMap(map[string]any{
+	payload := map[string]any{
 		"tool":                            "plan_execute_completed",
 		"lane_family":                     "plan-execute",
 		"status":                          "source-satisfied",
@@ -2067,7 +2421,16 @@ func testPlanExecuteSourceSatisfiedJSONForAtom(atom FeatureAtomState) string {
 		"source_satisfied_evidence_paths": atom.RequiredEditPaths,
 		"source_satisfied_evidence":       testPlanExecuteSourceSatisfiedEvidenceRefs(atom.RequiredEditPaths),
 		"required_edit_paths":             atom.RequiredEditPaths,
-	})
+		"acceptance_evidence_ids":         []string{"req-1", "adr-1"},
+		"acceptance_evidence_trusted":     true,
+		"completion_source":               "durable_plan_execute_terminal_completion",
+	}
+	return mustJSONMap(trustPlanExecuteCompletionForTest(payload))
+}
+
+func trustPlanExecuteCompletionForTest(fields map[string]any) map[string]any {
+	TrustPlanExecuteCompletionFields(fields)
+	return fields
 }
 
 func testPlanExecuteSourceSatisfiedEvidenceRefs(paths []string) []map[string]string {

@@ -1031,27 +1031,42 @@ func TestFeaturePlannerReconcilesStaleActiveRunFromTerminalPlanExecuteProgress(t
 func TestFeaturePlannerReconcilesSkippedReviewProgressAsComplete(t *testing.T) {
 	root := t.TempDir()
 	startedAt := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
-	state := featureplanner.NewState("feature-session", "prompt", "", 3, startedAt)
-	state.Status = featureplanner.FeatureStateDispatching
-	state.Atoms = []featureplanner.FeatureAtomState{{
-		FeatureAtomPlan: featureplanner.FeatureAtomPlan{
+	plan := featureplanner.FeaturePlan{
+		SchemaVersion: featureplanner.FeaturePlanSchemaVersion,
+		FeatureID:     "feature-session",
+		Atoms: []featureplanner.FeatureAtomPlan{{
 			ID:                "atom-1",
 			RequiredEditPaths: []string{"pkg/feature.go"},
-		},
-		State:     featureplanner.AtomStateImplementing,
-		LastRunID: "atom-1-run-1",
+		}},
+	}
+	contract := featureplanner.StampPlanAuthorityContract(&plan, nil)
+	state := featureplanner.NewState("feature-session", "prompt", "", 3, startedAt)
+	state.Status = featureplanner.FeatureStateDispatching
+	state.Plan = plan
+	state.Atoms = []featureplanner.FeatureAtomState{{
+		FeatureAtomPlan: plan.Atoms[0],
+		State:           featureplanner.AtomStateImplementing,
+		LastRunID:       "atom-1-run-1",
 	}}
 	state.ActiveRuns = []featureplanner.ActiveRun{{
-		RunID:         "atom-1-run-1",
-		AtomID:        "atom-1",
-		LaneSessionID: "atom-1-run-1",
-		LaneFamily:    "plan-execute",
-		State:         "running",
-		StartedAt:     startedAt.Format(time.RFC3339Nano),
+		RunID:                "atom-1-run-1",
+		AtomID:               "atom-1",
+		LaneSessionID:        "atom-1-run-1",
+		LaneFamily:           "plan-execute",
+		InvocationContractID: plan.Atoms[0].RuntimeEnvelope.ContractID,
+		RuntimeEnvelopeID:    contract.ContractHash,
+		State:                "running",
+		StartedAt:            startedAt.Format(time.RFC3339Nano),
 	}}
 	progress := planexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, startedAt.Add(time.Minute))
 	progress.Phase = planexecute.ProgressPhaseComplete
 	progress.Status = planexecute.ProgressStatusCompleted
+	progress.ChangedPaths = []string{"pkg/feature.go"}
+	progress.Executor.SourceSanity = []planexecute.PhaseEvidenceCheck{{
+		Kind:   "source_sanity",
+		Path:   "pkg/feature.go",
+		Status: "ok",
+	}}
 	progress.Review.Status = planexecute.ProgressStatusSkipped
 	progressPath, err := planexecute.SaveProgressState(root, &progress)
 	if err != nil {

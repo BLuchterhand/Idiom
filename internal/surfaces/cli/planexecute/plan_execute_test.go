@@ -765,8 +765,8 @@ func TestRunPlanExecuteMainTreatsSourceSatisfiedPlannerAnswerAsCleanNoop(t *test
 		},
 	)
 
-	if code != 0 {
-		t.Fatalf("source-satisfied planner answer should exit 0, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	if code != 1 {
+		t.Fatalf("source-satisfied planner answer without typed current-state evidence should exit 1, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	if strings.Contains(stderr.String(), "plan artifact") {
 		t.Fatalf("source-satisfied closeout should not report missing plan artifact, stderr=%s", stderr.String())
@@ -790,8 +790,8 @@ func TestRunPlanExecuteMainTreatsUnscopedSourceSatisfiedPlannerAnswerAsCleanNoop
 		},
 	)
 
-	if code != 0 {
-		t.Fatalf("unscoped source-satisfied planner answer should exit 0, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	if code != 1 {
+		t.Fatalf("unscoped source-satisfied planner answer without typed current-state evidence should exit 1, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	if strings.Contains(stderr.String(), "plan artifact") {
 		t.Fatalf("source-satisfied closeout should not report missing plan artifact, stderr=%s", stderr.String())
@@ -831,8 +831,8 @@ func TestRunPlanExecuteMainDoesNotInferImplementationObligationFromPrompt(t *tes
 		},
 	)
 
-	if code != 0 {
-		t.Fatalf("prompt prose should not create a hidden implementation obligation, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	if code != 1 {
+		t.Fatalf("prompt prose should not create a hidden implementation obligation, but source-satisfied still needs typed evidence; got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	events := planExecuteJSONEvents(t, stdout.String())
 	if _, ok := planExecuteEventByType(events, "idiom.plan_execute.source_satisfied_rejected"); ok {

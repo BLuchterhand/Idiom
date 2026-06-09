@@ -167,6 +167,14 @@ func (m *Manager) sourceSanityOne(ctx context.Context, absPath string, workdir s
 				Error:  err.Error(),
 			}
 		}
+		if sourceSanityRequiresConcreteDiagnosticsForPath(rel) {
+			return sourceSanityOutcome{
+				Path:   rel,
+				Method: "generic_source_sanity",
+				Detail: fmt.Sprintf("%s; %s", diagnosticsUnavailableDetail(result), fallback),
+				Error:  "concrete C/C++ diagnostics are unavailable; generic delimiter sanity is advisory and insufficient for terminal source_sanity",
+			}
+		}
 		return sourceSanityOutcome{
 			Path:   rel,
 			Method: "generic_source_sanity",
@@ -196,6 +204,11 @@ func sourceSanityDiagnosticToolForPath(path string) string {
 		return ""
 	}
 	return lang.Tool(CapDiagnostics)
+}
+
+func sourceSanityRequiresConcreteDiagnosticsForPath(path string) bool {
+	lang, ok := LanguageForFile(path)
+	return ok && strings.EqualFold(strings.TrimSpace(lang.Name), "cpp")
 }
 
 func sourceSanityCoversPath(path string) bool {

@@ -370,6 +370,51 @@ func TestPackHitsCacheOnIdenticalSecondCall(t *testing.T) {
 	}
 }
 
+// TestPackCacheHitRecordsRediscoveryAvoidance verifies that a
+// graph_views cache hit increments estimatedRediscoveryTokensAvoided
+// (Atom 6).
+func TestPackCacheHitRecordsRediscoveryAvoidance(t *testing.T) {
+	ResetViewCacheCounters()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/rediscovery\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "x.go"), "package pkg\n\nfunc X() string { return \"x\" }\n")
+	writeFile(t, filepath.Join(root, "pkg", "y.go"), "package pkg\n\nfunc Y() int { return 1 }\n")
+	if _, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	opts := PackOptions{
+		Root:          root,
+		Task:          "exercise the rediscovery counter",
+		Mode:          "plan",
+		RequiredTests: []string{"go test ./..."},
+	}
+	// First Pack: cache miss → write.
+	_, err := Pack(opts)
+	if err != nil {
+		t.Fatalf("first Pack: %v", err)
+	}
+	// Second Pack: cache hit.
+	_, err = Pack(opts)
+	if err != nil {
+		t.Fatalf("second Pack: %v", err)
+	}
+
+	_, rediscoveryAvoided := TokenSavingsCounters()
+	if rediscoveryAvoided <= 0 {
+		t.Errorf("expected estimatedRediscoveryTokensAvoided > 0 after cache hit, got %d", rediscoveryAvoided)
+	}
+	t.Logf("estimatedRediscoveryTokensAvoided=%d from cache hit", rediscoveryAvoided)
+
+	// Verify cache counters are consistent.
+	hits, misses, _ := ViewCacheCounters()
+	if hits == 0 {
+		t.Error("expected at least one cache hit")
+	}
+	if misses == 0 {
+		t.Log("note: no cache misses recorded (expected on fresh workspace)")
+	}
+}
+
 func TestPackExposesGraphViewContractCacheAndRankerReasons(t *testing.T) {
 	ResetViewCacheCounters()
 	root := t.TempDir()

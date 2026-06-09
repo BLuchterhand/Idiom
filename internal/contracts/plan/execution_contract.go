@@ -48,6 +48,7 @@ type RequiredTest struct {
 type TDDObligation struct {
 	ID                string   `json:"id,omitempty"`
 	Command           string   `json:"command"`
+	Behavior          string   `json:"behavior,omitempty"`
 	TestArtifactPaths []string `json:"test_artifact_paths,omitempty"`
 	Source            string   `json:"source,omitempty"`
 }
@@ -618,12 +619,13 @@ func normalizeTDDObligations(obligations []TDDObligation) []TDDObligation {
 	for _, obligation := range obligations {
 		obligation.ID = NormalizeStableContractIDPart(obligation.ID)
 		obligation.Command = normalizeCommand(obligation.Command)
+		obligation.Behavior = strings.TrimSpace(obligation.Behavior)
 		obligation.Source = strings.TrimSpace(obligation.Source)
 		obligation.TestArtifactPaths = uniqueSortedScopePaths(obligation.TestArtifactPaths)
-		key := obligation.ID + "\x00" + obligation.Command
-		if key == "\x00" {
+		if obligation.ID == "" && obligation.Command == "" && obligation.Behavior == "" {
 			continue
 		}
+		key := obligation.ID + "\x00" + obligation.Command + "\x00" + obligation.Behavior
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -643,6 +645,9 @@ func normalizeAcceptanceObligations(obligations []AcceptanceEvidenceRequired) []
 		obligation.ID = NormalizeStableContractIDPart(obligation.ID)
 		obligation.Description = strings.TrimSpace(obligation.Description)
 		obligation.Source = strings.TrimSpace(obligation.Source)
+		if obligation.ID == "" {
+			obligation.ID = stableAcceptanceEvidenceID(obligation)
+		}
 		if obligation.ID == "" && obligation.Description == "" {
 			continue
 		}
@@ -660,6 +665,21 @@ func normalizeAcceptanceObligations(obligations []AcceptanceEvidenceRequired) []
 		return out[i].ID+"\x00"+out[i].Description < out[j].ID+"\x00"+out[j].Description
 	})
 	return out
+}
+
+func stableAcceptanceEvidenceID(obligation AcceptanceEvidenceRequired) string {
+	seed := strings.TrimSpace(obligation.Description)
+	if seed == "" {
+		return ""
+	}
+	if normalized := NormalizeStableContractIDPart(seed); normalized != "" && len(normalized) <= 48 {
+		return normalized
+	}
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		strings.TrimSpace(obligation.Source),
+		seed,
+	}, "\x00")))
+	return "acceptance-" + hex.EncodeToString(sum[:])[:12]
 }
 
 func normalizeSourceEvidenceObligations(obligations []SourceEvidenceObligation) []SourceEvidenceObligation {

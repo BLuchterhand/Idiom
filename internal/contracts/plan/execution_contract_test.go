@@ -66,6 +66,54 @@ func TestPlanExecutionContractNormalizesStableIDAndHash(t *testing.T) {
 	}
 }
 
+func TestAcceptanceObligationWithoutIDGetsEnforcedStableID(t *testing.T) {
+	atom := AtomExecutionContract{
+		AtomID: "atom-1",
+		Scope: NewPlanScopeContract([]string{"pkg/feature.go"}, nil, nil).
+			WithWriteAllowedPaths([]string{"pkg/feature.go"}),
+		AcceptanceObligations: []AcceptanceEvidenceRequired{{
+			Description: "Connected cistern water is consumed and water hauling is skipped.",
+			Required:    true,
+			Source:      "featureplanner.sdd",
+		}},
+		TerminalEvidence: StrictTerminalEvidenceRequirements(),
+	}.Normalized()
+	if len(atom.AcceptanceObligations) != 1 || atom.AcceptanceObligations[0].ID == "" {
+		t.Fatalf("acceptance obligation should get stable ID: %#v", atom.AcceptanceObligations)
+	}
+
+	missing := ValidateAtomTerminalEvidenceInput(atom, TerminalEvidenceInput{
+		TerminalStatus:            "success",
+		ChangedPaths:              []string{"pkg/feature.go"},
+		RequiredPathCoveragePaths: []string{"pkg/feature.go"},
+		SourceEvidence:            []SourceSatisfiedEvidenceRef{{Path: "pkg/feature.go", Kind: "harness_observed_source"}},
+		SourceSanityPassed:        true,
+		VerificationPassed:        true,
+		ReviewPassed:              true,
+		RequiredTestResults:       nil,
+		TDDCommandResults:         nil,
+		TestArtifacts:             nil,
+		AcceptanceEvidenceIDs:     nil,
+	})
+	if !hasViolationCode(missing, "acceptance_evidence_missing") {
+		t.Fatalf("missing generated acceptance ID should be enforced, got %#v", missing)
+	}
+
+	accepted := ValidateAtomTerminalEvidenceInput(atom, TerminalEvidenceInput{
+		TerminalStatus:            "success",
+		ChangedPaths:              []string{"pkg/feature.go"},
+		RequiredPathCoveragePaths: []string{"pkg/feature.go"},
+		SourceEvidence:            []SourceSatisfiedEvidenceRef{{Path: "pkg/feature.go", Kind: "harness_observed_source"}},
+		SourceSanityPassed:        true,
+		VerificationPassed:        true,
+		ReviewPassed:              true,
+		AcceptanceEvidenceIDs:     []string{atom.AcceptanceObligations[0].ID},
+	})
+	if hasViolationCode(accepted, "acceptance_evidence_missing") {
+		t.Fatalf("matching generated acceptance ID should satisfy obligation, got %#v", accepted)
+	}
+}
+
 func TestPlanExecutionContractValidatesStructuredAuthorizedNewFiles(t *testing.T) {
 	atom := AtomExecutionContract{
 		AtomID: "new-file",

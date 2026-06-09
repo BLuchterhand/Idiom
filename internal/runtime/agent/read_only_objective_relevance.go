@@ -36,6 +36,12 @@ func sourceEvidenceObjectiveLineTerms(objective string) []string {
 	if _, ok := words["history"]; ok {
 		add("history")
 	}
+	if _, ok := words["subagent"]; ok {
+		add("child", "task", "delegate", "delegated", "delegation")
+	}
+	if _, ok := words["subagents"]; ok {
+		add("child", "task", "delegate", "delegated", "delegation")
+	}
 	if _, ok := words["user"]; ok {
 		add("user")
 	}

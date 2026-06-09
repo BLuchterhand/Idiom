@@ -547,8 +547,8 @@ func durablePlan() FeaturePlan {
 				CoverageGateEventID:        "evt-tdd-coverage",
 			},
 			PlannedTDDSnapshot: PlannedTDDSnapshot{
-				SnapshotID:                   "snap-1",
-				SnapshotDigest:               "sha256:abc",
+				SnapshotID:                   "snapshot-durable-0001",
+				SnapshotDigest:               "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 				ObligationIDs:                []string{"TDD-1"},
 				TestCommands:                 []string{"go test ./internal/workflows/featureplanner"},
 				TestArtifactPaths:            []string{"internal/workflows/featureplanner/durable_test.go"},

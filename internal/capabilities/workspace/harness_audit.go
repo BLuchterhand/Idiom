@@ -87,6 +87,9 @@ type harnessAuditContextCache struct {
 	HitRate                               float64        `json:"hit_rate,omitempty"`
 	StaleRatio                            float64        `json:"stale_ratio,omitempty"`
 	CurrentStaleRatio                     float64        `json:"current_stale_ratio,omitempty"`
+	// Token/cost savings metrics (Atom 6).
+	EstimatedFullTokensSaved          int64 `json:"estimated_full_tokens_saved"`
+	EstimatedRediscoveryTokensAvoided int64 `json:"estimated_rediscovery_tokens_avoided"`
 }
 
 type harnessAuditFreshnessHealth struct {
@@ -2902,6 +2905,9 @@ func harnessAuditSummary(report harnessAuditReport) string {
 		learning := report.RankerLearning.LearningSummary
 		parts = append(parts, fmt.Sprintf("ranker_learning_events=%d accepted=%d rejected=%d reasons=%d", learning.TotalEvents, learning.AcceptedCount, learning.RejectedCount, len(learning.ReasonCounts)))
 	}
+	if report.ContextCache != nil {
+		parts = append(parts, fmt.Sprintf("context_cache_rows=%d hits=%d hit_rate=%.0f%% tokens_saved=%d rediscovery_avoided=%d", report.ContextCache.Rows, report.ContextCache.SessionHits, report.ContextCache.HitRate*100, report.ContextCache.EstimatedFullTokensSaved, report.ContextCache.EstimatedRediscoveryTokensAvoided))
+	}
 	if len(report.Findings) > 0 {
 		parts = append(parts, fmt.Sprintf("findings=%d", len(report.Findings)))
 	}
@@ -3397,6 +3403,8 @@ func buildContextCacheAudit(root string) *harnessAuditContextCache {
 		FreshnessHits:                         stats.FreshnessHits,
 		StalePreventions:                      stats.StalePreventions,
 		StaleRowMisses:                        stats.StaleRowMisses,
+		EstimatedFullTokensSaved:              stats.EstimatedFullTokensSaved,
+		EstimatedRediscoveryTokensAvoided:     stats.EstimatedRediscoveryTokensAvoided,
 	}
 	if total := stats.Hits + stats.Misses; total > 0 {
 		cache.HitRate = float64(stats.Hits) / float64(total)
@@ -3591,6 +3599,30 @@ func contextCacheFindings(cache *harnessAuditContextCache) []harnessAuditFinding
 			Severity:       "info",
 			Evidence:       fmt.Sprintf("%d hits / %d misses (%.0f%% hit rate) this session", cache.SessionHits, cache.SessionMisses, cache.HitRate*100),
 			Recommendation: fmt.Sprintf("reason=context_cache_low_hit_rate hit_rate=%.2f cache_key_includes=task", cache.HitRate),
+		})
+	}
+	// Surface accumulated token/cost savings from compact projection and
+	// cache-hit rediscovery avoidance. These counters are per-session
+	// aggregates; the finding reports them so operators can observe whether
+	// the caching and projection efficiency mechanisms are producing value.
+	if cache.EstimatedFullTokensSaved > 0 || cache.EstimatedRediscoveryTokensAvoided > 0 {
+		evidence := ""
+		rec := ""
+		if cache.EstimatedFullTokensSaved > 0 && cache.EstimatedRediscoveryTokensAvoided > 0 {
+			evidence = fmt.Sprintf("compact projection saved ~%d tokens; cache hits avoided ~%d tokens of rediscovery", cache.EstimatedFullTokensSaved, cache.EstimatedRediscoveryTokensAvoided)
+			rec = fmt.Sprintf("reason=context_cache_savings tokens_saved=%d rediscovery_avoided=%d hit_rate=%.2f", cache.EstimatedFullTokensSaved, cache.EstimatedRediscoveryTokensAvoided, cache.HitRate)
+		} else if cache.EstimatedFullTokensSaved > 0 {
+			evidence = fmt.Sprintf("compact projection saved ~%d tokens vs full JSON marshalling", cache.EstimatedFullTokensSaved)
+			rec = fmt.Sprintf("reason=context_cache_savings tokens_saved=%d", cache.EstimatedFullTokensSaved)
+		} else {
+			evidence = fmt.Sprintf("cache hits avoided ~%d tokens of rediscovery", cache.EstimatedRediscoveryTokensAvoided)
+			rec = fmt.Sprintf("reason=context_cache_savings rediscovery_avoided=%d hit_rate=%.2f", cache.EstimatedRediscoveryTokensAvoided, cache.HitRate)
+		}
+		findings = append(findings, harnessAuditFinding{
+			ID:             "context_cache_savings",
+			Severity:       "info",
+			Evidence:       evidence,
+			Recommendation: rec,
 		})
 	}
 	return findings

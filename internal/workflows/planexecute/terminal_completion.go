@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -42,6 +43,7 @@ type PlanExecuteTerminalCompletionInput struct {
 	SourceSatisfied              bool
 	SourceSatisfiedEvidencePaths []string
 	SourceSatisfiedEvidence      []plancontract.SourceSatisfiedEvidenceRef
+	AcceptanceEvidenceIDs        []string
 	FailureID                    string
 	RecordPath                   string
 	PacketPath                   string
@@ -50,40 +52,45 @@ type PlanExecuteTerminalCompletionInput struct {
 }
 
 type PlanExecuteTerminalCompletionRecord struct {
-	SchemaVersion                string                                  `json:"schema_version"`
-	Type                         string                                  `json:"type"`
-	TS                           string                                  `json:"ts,omitempty"`
-	ProgressPath                 string                                  `json:"progress_path,omitempty"`
-	SessionID                    string                                  `json:"session_id,omitempty"`
-	Phase                        string                                  `json:"phase,omitempty"`
-	Status                       string                                  `json:"status,omitempty"`
-	ReviewStatus                 string                                  `json:"review_status,omitempty"`
-	TerminalClass                PlanExecuteTerminalClass                `json:"terminal_class"`
-	Outcome                      PlanExecuteTerminalOutcome              `json:"outcome"`
-	ExitCode                     int                                     `json:"exit_code"`
-	ReviewRepairSkipped          bool                                    `json:"review_repair_skipped,omitempty"`
-	FailureKind                  string                                  `json:"failure_kind,omitempty"`
-	FailureReason                string                                  `json:"failure_reason,omitempty"`
-	FailureID                    string                                  `json:"failure_id,omitempty"`
-	RecordPath                   string                                  `json:"record_path,omitempty"`
-	PacketPath                   string                                  `json:"packet_path,omitempty"`
-	NextAction                   string                                  `json:"next_valid_action,omitempty"`
-	RequiredEditPaths            []string                                `json:"required_edit_paths,omitempty"`
-	AllowedEditPaths             []string                                `json:"allowed_edit_paths,omitempty"`
-	WriteAllowedPaths            []string                                `json:"write_allowed_paths,omitempty"`
-	ScopeContractID              string                                  `json:"scope_contract_id,omitempty"`
-	ScopeContractHash            string                                  `json:"scope_contract_hash,omitempty"`
-	SourceSatisfiedEvidencePaths []string                                `json:"source_satisfied_evidence_paths,omitempty"`
-	SourceSatisfiedEvidence      []PlanExecuteSourceSatisfiedEvidenceRef `json:"source_satisfied_evidence,omitempty"`
-	ChangedPaths                 []string                                `json:"changed_paths,omitempty"`
-	RequiredPathCoverage         []PlanExecuteRequiredPathCoverage       `json:"required_path_coverage,omitempty"`
-	SourceSanity                 []PhaseEvidenceCheck                    `json:"source_sanity,omitempty"`
-	VerificationCommands         []VerificationCommand                   `json:"verification_commands,omitempty"`
-	Verification                 []PhaseEvidenceCheck                    `json:"verification,omitempty"`
-	VerificationSkips            []VerificationSkip                      `json:"verification_skips,omitempty"`
-	VerificationRejects          []VerificationReject                    `json:"verification_rejects,omitempty"`
-	FailureInvariants            []PlanExecuteTerminalInvariant          `json:"failure_invariants,omitempty"`
-	ValidationFailures           []string                                `json:"validation_failures,omitempty"`
+	SchemaVersion                 string                                  `json:"schema_version"`
+	Type                          string                                  `json:"type"`
+	TS                            string                                  `json:"ts,omitempty"`
+	ProgressPath                  string                                  `json:"progress_path,omitempty"`
+	SessionID                     string                                  `json:"session_id,omitempty"`
+	Phase                         string                                  `json:"phase,omitempty"`
+	Status                        string                                  `json:"status,omitempty"`
+	ReviewStatus                  string                                  `json:"review_status,omitempty"`
+	TerminalClass                 PlanExecuteTerminalClass                `json:"terminal_class"`
+	Outcome                       PlanExecuteTerminalOutcome              `json:"outcome"`
+	ExitCode                      int                                     `json:"exit_code"`
+	ReviewRepairSkipped           bool                                    `json:"review_repair_skipped,omitempty"`
+	FailureKind                   string                                  `json:"failure_kind,omitempty"`
+	FailureReason                 string                                  `json:"failure_reason,omitempty"`
+	FailureID                     string                                  `json:"failure_id,omitempty"`
+	RecordPath                    string                                  `json:"record_path,omitempty"`
+	PacketPath                    string                                  `json:"packet_path,omitempty"`
+	NextAction                    string                                  `json:"next_valid_action,omitempty"`
+	ContractID                    string                                  `json:"contract_id,omitempty"`
+	SnapshotHash                  string                                  `json:"snapshot_hash,omitempty"`
+	ContractHash                  string                                  `json:"contract_hash,omitempty"`
+	RequiredEditPaths             []string                                `json:"required_edit_paths,omitempty"`
+	AllowedEditPaths              []string                                `json:"allowed_edit_paths,omitempty"`
+	WriteAllowedPaths             []string                                `json:"write_allowed_paths,omitempty"`
+	ScopeContractID               string                                  `json:"scope_contract_id,omitempty"`
+	ScopeContractHash             string                                  `json:"scope_contract_hash,omitempty"`
+	SourceSatisfiedEvidencePaths  []string                                `json:"source_satisfied_evidence_paths,omitempty"`
+	SourceSatisfiedEvidence       []PlanExecuteSourceSatisfiedEvidenceRef `json:"source_satisfied_evidence,omitempty"`
+	ChangedPaths                  []string                                `json:"changed_paths,omitempty"`
+	RequiredPathCoverage          []PlanExecuteRequiredPathCoverage       `json:"required_path_coverage,omitempty"`
+	SourceSanity                  []PhaseEvidenceCheck                    `json:"source_sanity,omitempty"`
+	VerificationCommands          []VerificationCommand                   `json:"verification_commands,omitempty"`
+	Verification                  []PhaseEvidenceCheck                    `json:"verification,omitempty"`
+	VerificationSkips             []VerificationSkip                      `json:"verification_skips,omitempty"`
+	VerificationRejects           []VerificationReject                    `json:"verification_rejects,omitempty"`
+	RequiredAcceptanceEvidenceIDs []string                                `json:"required_acceptance_evidence_ids,omitempty"`
+	AcceptanceEvidenceIDs         []string                                `json:"acceptance_evidence_ids,omitempty"`
+	FailureInvariants             []PlanExecuteTerminalInvariant          `json:"failure_invariants,omitempty"`
+	ValidationFailures            []string                                `json:"validation_failures,omitempty"`
 }
 
 type PlanExecuteSourceSatisfiedEvidenceRef struct {
@@ -104,35 +111,41 @@ type PlanExecuteTerminalInvariant struct {
 }
 
 func NewPlanExecuteTerminalCompletionRecord(state ProgressState, input PlanExecuteTerminalCompletionInput) PlanExecuteTerminalCompletionRecord {
+	acceptanceEvidenceIDs := input.AcceptanceEvidenceIDs
+	if len(acceptanceEvidenceIDs) == 0 {
+		acceptanceEvidenceIDs = state.AcceptanceEvidenceIDs
+	}
 	record := PlanExecuteTerminalCompletionRecord{
-		SchemaVersion:                PlanExecuteTerminalCompletionSchemaVersion,
-		Type:                         PlanExecuteTerminalCompletionRecordType,
-		ProgressPath:                 input.ProgressPath,
-		SessionID:                    state.SessionID,
-		Phase:                        state.Phase,
-		Status:                       state.Status,
-		ReviewStatus:                 state.Review.Status,
-		ExitCode:                     input.ExitCode,
-		ReviewRepairSkipped:          state.Review.Status == ProgressStatusSkipped,
-		FailureKind:                  state.FailureKind,
-		FailureReason:                state.FailureReason,
-		FailureID:                    input.FailureID,
-		RecordPath:                   input.RecordPath,
-		PacketPath:                   input.PacketPath,
-		NextAction:                   input.NextAction,
-		RequiredEditPaths:            append([]string(nil), state.RequiredEditPaths...),
-		AllowedEditPaths:             append([]string(nil), state.AllowedEditPaths...),
-		WriteAllowedPaths:            append([]string(nil), state.WriteAllowedPaths...),
-		ScopeContractID:              state.ScopeContractID,
-		ScopeContractHash:            state.ScopeContractHash,
-		SourceSatisfiedEvidencePaths: append([]string(nil), input.SourceSatisfiedEvidencePaths...),
-		SourceSatisfiedEvidence:      planExecuteTerminalSourceSatisfiedEvidenceRefs(input.SourceSatisfiedEvidence, input.SourceSatisfiedEvidencePaths),
-		ChangedPaths:                 append([]string(nil), state.ChangedPaths...),
-		SourceSanity:                 append([]PhaseEvidenceCheck(nil), state.Executor.SourceSanity...),
-		VerificationCommands:         append([]VerificationCommand(nil), state.Executor.VerificationCommands...),
-		Verification:                 append([]PhaseEvidenceCheck(nil), state.Executor.Verification...),
-		VerificationSkips:            append([]VerificationSkip(nil), state.Executor.VerificationSkips...),
-		VerificationRejects:          append([]VerificationReject(nil), state.Executor.VerificationRejects...),
+		SchemaVersion:                 PlanExecuteTerminalCompletionSchemaVersion,
+		Type:                          PlanExecuteTerminalCompletionRecordType,
+		ProgressPath:                  input.ProgressPath,
+		SessionID:                     state.SessionID,
+		Phase:                         state.Phase,
+		Status:                        state.Status,
+		ReviewStatus:                  state.Review.Status,
+		ExitCode:                      input.ExitCode,
+		ReviewRepairSkipped:           state.Review.Status == ProgressStatusSkipped,
+		FailureKind:                   state.FailureKind,
+		FailureReason:                 state.FailureReason,
+		FailureID:                     input.FailureID,
+		RecordPath:                    input.RecordPath,
+		PacketPath:                    input.PacketPath,
+		NextAction:                    input.NextAction,
+		RequiredEditPaths:             append([]string(nil), state.RequiredEditPaths...),
+		AllowedEditPaths:              append([]string(nil), state.AllowedEditPaths...),
+		WriteAllowedPaths:             append([]string(nil), state.WriteAllowedPaths...),
+		ScopeContractID:               state.ScopeContractID,
+		ScopeContractHash:             state.ScopeContractHash,
+		SourceSatisfiedEvidencePaths:  append([]string(nil), input.SourceSatisfiedEvidencePaths...),
+		SourceSatisfiedEvidence:       planExecuteTerminalSourceSatisfiedEvidenceRefs(input.SourceSatisfiedEvidence, input.SourceSatisfiedEvidencePaths),
+		ChangedPaths:                  append([]string(nil), state.ChangedPaths...),
+		SourceSanity:                  append([]PhaseEvidenceCheck(nil), state.Executor.SourceSanity...),
+		VerificationCommands:          append([]VerificationCommand(nil), state.Executor.VerificationCommands...),
+		Verification:                  append([]PhaseEvidenceCheck(nil), state.Executor.Verification...),
+		VerificationSkips:             append([]VerificationSkip(nil), state.Executor.VerificationSkips...),
+		VerificationRejects:           append([]VerificationReject(nil), state.Executor.VerificationRejects...),
+		RequiredAcceptanceEvidenceIDs: append([]string(nil), state.RequiredAcceptanceEvidenceIDs...),
+		AcceptanceEvidenceIDs:         append([]string(nil), acceptanceEvidenceIDs...),
 	}
 	if !input.CompletedAt.IsZero() {
 		record.TS = input.CompletedAt.UTC().Format(time.RFC3339Nano)
@@ -160,6 +173,9 @@ func NormalizePlanExecuteTerminalCompletionRecord(record PlanExecuteTerminalComp
 	record.RecordPath = strings.TrimSpace(record.RecordPath)
 	record.PacketPath = strings.TrimSpace(record.PacketPath)
 	record.NextAction = strings.TrimSpace(record.NextAction)
+	record.ContractID = strings.TrimSpace(record.ContractID)
+	record.SnapshotHash = strings.TrimSpace(record.SnapshotHash)
+	record.ContractHash = strings.TrimSpace(record.ContractHash)
 	record.RequiredEditPaths = normalizePlanExecuteTerminalPaths(record.RequiredEditPaths)
 	record.AllowedEditPaths = normalizePlanExecuteTerminalPaths(record.AllowedEditPaths)
 	record.WriteAllowedPaths = normalizePlanExecuteTerminalPaths(record.WriteAllowedPaths)
@@ -174,6 +190,8 @@ func NormalizePlanExecuteTerminalCompletionRecord(record PlanExecuteTerminalComp
 	record.Verification = normalizePlanExecuteTerminalChecks(record.Verification)
 	record.VerificationSkips = normalizePlanExecuteTerminalVerificationSkips(record.VerificationSkips)
 	record.VerificationRejects = normalizePlanExecuteTerminalVerificationRejects(record.VerificationRejects)
+	record.RequiredAcceptanceEvidenceIDs = normalizePlanExecuteTerminalStableIDs(record.RequiredAcceptanceEvidenceIDs)
+	record.AcceptanceEvidenceIDs = normalizePlanExecuteTerminalStableIDs(record.AcceptanceEvidenceIDs)
 	record.TerminalClass, record.Outcome = ClassifyPlanExecuteTerminalCompletion(record)
 	record.FailureInvariants = planExecuteTerminalFailureInvariants(record)
 	record.ValidationFailures = PlanExecuteTerminalCompletionValidationFailures(record)
@@ -288,6 +306,13 @@ func planExecuteTerminalAtomContract(record PlanExecuteTerminalCompletionRecord)
 			RequireNoChangedPaths:       true,
 		},
 	}
+	for _, id := range record.RequiredAcceptanceEvidenceIDs {
+		atom.AcceptanceObligations = append(atom.AcceptanceObligations, plancontract.AcceptanceEvidenceRequired{
+			ID:       id,
+			Required: true,
+			Source:   "planexecute.terminal_completion",
+		})
+	}
 	for _, command := range record.VerificationCommands {
 		if strings.TrimSpace(command.Command) != "" {
 			atom.RequiredTests = append(atom.RequiredTests, plancontract.RequiredTest{Command: command.Command, Source: command.Source})
@@ -320,6 +345,7 @@ func planExecuteTerminalEvidenceInput(record PlanExecuteTerminalCompletionRecord
 		VerificationPassed:        len(planExecuteTerminalVerificationValidationFailures(record)) == 0,
 		ReviewPassed:              planExecuteTerminalReviewValidationFailure(record) == "",
 		RequiredTestResults:       requiredTests,
+		AcceptanceEvidenceIDs:     record.AcceptanceEvidenceIDs,
 	}
 }
 
@@ -374,6 +400,10 @@ func planExecuteTerminalSourceSanityValidationFailures(record PlanExecuteTermina
 			failures := []string{"source_sanity_failed:" + firstPlanExecuteTerminalString(path, "(unknown)")}
 			return failures
 		}
+		if planExecuteTerminalSourceSanityCheckIsDegraded(path, check) {
+			failures := []string{"source_sanity_degraded:" + firstPlanExecuteTerminalString(path, "(unknown)")}
+			return failures
+		}
 	}
 	var failures []string
 	for _, path := range record.ChangedPaths {
@@ -385,6 +415,28 @@ func planExecuteTerminalSourceSanityValidationFailures(record PlanExecuteTermina
 		}
 	}
 	return failures
+}
+
+func planExecuteTerminalSourceSanityCheckIsDegraded(path string, check PhaseEvidenceCheck) bool {
+	if !workspace.SourceSanityCoversPath(path) || !planExecuteTerminalPathLooksCpp(path) {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(check.Summary + "\n" + check.Error))
+	if text == "" {
+		return false
+	}
+	return strings.Contains(text, "generic_source_sanity") ||
+		strings.Contains(text, "generic fallback") ||
+		strings.Contains(text, "generic delimiter sanity")
+}
+
+func planExecuteTerminalPathLooksCpp(path string) bool {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
+	case ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ipp", ".inl", ".tpp":
+		return true
+	default:
+		return false
+	}
 }
 
 func planExecuteTerminalVerificationValidationFailures(record PlanExecuteTerminalCompletionRecord) []string {
@@ -581,6 +633,24 @@ func canonicalPlanExecuteTerminalClassToken(value PlanExecuteTerminalClass) stri
 
 func normalizePlanExecuteTerminalPaths(values []string) []string {
 	return plancontract.UniqueScopePaths(values)
+}
+
+func normalizePlanExecuteTerminalStableIDs(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = plancontract.NormalizeStableContractIDPart(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func firstPlanExecuteTerminalString(value string, fallback string) string {

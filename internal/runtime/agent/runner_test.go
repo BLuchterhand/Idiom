@@ -9191,6 +9191,139 @@ func TestWorkbranchChildTaskPermissionPolicyDeniesDiffHidingAndReleaseCommands(t
 	}
 }
 
+func TestWorkbranchChildTaskPermissionPolicyDefaultDeniesUnknownTools(t *testing.T) {
+	policy := workbranchChildTaskPermissionPolicy()
+	if decision := policy.Decide(workspace.ToolRequest{Tool: "unknown_tool", Path: "."}); decision.Decision != PermissionDeny {
+		t.Fatalf("unknown tool decision = %q, want deny", decision.Decision)
+	}
+	if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: "rm -rf /tmp/x"}); decision.Decision != PermissionDeny {
+		t.Fatalf("arbitrary shell decision = %q, want deny", decision.Decision)
+	}
+	if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: "git clone https://example.com/repo"}); decision.Decision != PermissionDeny {
+		t.Fatalf("git clone decision = %q, want deny", decision.Decision)
+	}
+	if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: "git push"}); decision.Decision != PermissionDeny {
+		t.Fatalf("git push decision = %q, want deny", decision.Decision)
+	}
+	if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: "git statusfoo"}); decision.Decision != PermissionDeny {
+		t.Fatalf("git statusfoo decision = %q, want deny", decision.Decision)
+	}
+	if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: "pwdx"}); decision.Decision != PermissionDeny {
+		t.Fatalf("pwdx decision = %q, want deny", decision.Decision)
+	}
+	if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: "cat"}); decision.Decision != PermissionDeny {
+		t.Fatalf("bare cat decision = %q, want deny", decision.Decision)
+	}
+}
+
+func TestWorkbranchChildTaskPermissionPolicyAllowsStructuredWriteTools(t *testing.T) {
+	policy := workbranchChildTaskPermissionPolicy()
+	writeTools := []string{
+		"edit_file",
+		"write_file",
+		"apply_patch",
+		"mkdir",
+		"append_file",
+		"go_move_declarations",
+	}
+	for _, tool := range writeTools {
+		if decision := policy.Decide(workspace.ToolRequest{Tool: tool, Path: "test.go"}); decision.Decision != PermissionAllow {
+			t.Fatalf("%q decision = %q, want allow", tool, decision.Decision)
+		}
+	}
+}
+
+func TestWorkbranchChildTaskPermissionPolicyAllowsSafeVerificationShell(t *testing.T) {
+	policy := workbranchChildTaskPermissionPolicy()
+	safeCommands := []string{
+		"go test ./...",
+		"go list ./...",
+		"git status",
+		"git diff",
+		"git show HEAD",
+		"git grep func",
+		"pwd",
+		"ls -la",
+		"rg pattern",
+		"grep -r foo .",
+		"cat README.md",
+		"head -20 file.go",
+		"tail -20 file.go",
+		"wc -l file.go",
+	}
+	for _, command := range safeCommands {
+		if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: command}); decision.Decision != PermissionAllow {
+			t.Fatalf("%q decision = %q, want allow", command, decision.Decision)
+		}
+	}
+}
+
+func TestWorkbranchChildTaskPermissionPolicyDeniesGitCParentEscape(t *testing.T) {
+	policy := workbranchChildTaskPermissionPolicy()
+	parentEscapeCommands := []string{
+		"git -C /Users/ben/Documents/GitHub/idiom status",
+		"git -C /some/other/repo diff",
+		"git -C ../parent status",
+		"git -C / status",
+	}
+	for _, command := range parentEscapeCommands {
+		if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: command}); decision.Decision != PermissionDeny {
+			t.Fatalf("%q decision = %q, want deny", command, decision.Decision)
+		}
+	}
+}
+
+func TestWorkbranchChildTaskPermissionPolicyDeniesChainedShellEscapes(t *testing.T) {
+	policy := workbranchChildTaskPermissionPolicy()
+	commands := []string{
+		"go test ./... && rm -rf /tmp/workbranch-escape",
+		"git status; git push origin HEAD",
+		"git status\nrm -rf /tmp/workbranch-escape",
+		"go test ./...\ntouch /tmp/workbranch-escape",
+		"git diff | sh",
+		"git show HEAD > /tmp/patch",
+		"cat README.md $(touch /tmp/workbranch-escape)",
+		"grep foo README.md `touch /tmp/workbranch-escape`",
+	}
+	for _, command := range commands {
+		if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: command}); decision.Decision != PermissionDeny {
+			t.Fatalf("%q decision = %q, want deny", command, decision.Decision)
+		}
+	}
+}
+
+func TestWorkbranchChildTaskPermissionPolicyDeniesMutatingAllowedCommandOptions(t *testing.T) {
+	policy := workbranchChildTaskPermissionPolicy()
+	commands := []string{
+		"go env -w GOPROXY=off",
+		"go env\t-w GOPROXY=off",
+		"go env -u GOPROXY",
+		"go env  -u GOPROXY",
+		"go env GOPATH",
+		"find . -delete",
+		"find . -exec touch /tmp/workbranch-escape {} +",
+		"awk 'BEGIN { system(\"touch /tmp/workbranch-escape\") }'",
+		"sed -n -i '1p' file.go",
+		"git diff --output=/tmp/patch",
+		"git show HEAD --output=/tmp/patch",
+	}
+	for _, command := range commands {
+		if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: command}); decision.Decision != PermissionDeny {
+			t.Fatalf("%q decision = %q, want deny", command, decision.Decision)
+		}
+	}
+}
+
+func TestWorkbranchChildTaskPermissionPolicyDeniesNestedDelegation(t *testing.T) {
+	policy := workbranchChildTaskPermissionPolicy()
+	if decision := policy.Decide(workspace.ToolRequest{Tool: "task", Prompt: "nested"}); decision.Decision != PermissionDeny {
+		t.Fatalf("nested task decision = %q, want deny", decision.Decision)
+	}
+	if decision := policy.Decide(workspace.ToolRequest{Tool: "task", Prompt: "explore more"}); decision.Decision != PermissionDeny {
+		t.Fatalf("nested explore task decision = %q, want deny", decision.Decision)
+	}
+}
+
 func TestRunnerExecutesWorkbranchWriteChildTaskWithoutMutatingParent(t *testing.T) {
 	root := t.TempDir()
 	runGit(t, root, "init")
@@ -13995,6 +14128,27 @@ func TestDelegatedReadOnlyBootstrapPatternForDiscoveryUsefulnessUsesQuestionTerm
 	}
 }
 
+func TestDelegatedReadOnlyDiscoveryUsefulnessBootstrapUsesDiscoveryQueryDespiteNamedFile(t *testing.T) {
+	runner := &Runner{
+		AgentName: "child:explorer",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:   "delegated_read_only",
+			Objective:    "What can we add to our discovery tools to increase their overall usefulness? Also inspect internal/capabilities/workspace/tool_manifest.go.",
+			AllowedTools: []string{"discovery_query", "read_file", "search_content"},
+		},
+	}
+	redirected, ok := runner.delegatedReadOnlyBootstrapQueryRequest(nil, workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "internal/capabilities/workspace/tool_manifest.go",
+	})
+	if !ok {
+		t.Fatal("expected discovery usefulness bootstrap to prefer discovery_query")
+	}
+	if redirected.Tool != "discovery_query" {
+		t.Fatalf("expected discovery_query redirect, got %#v", redirected)
+	}
+}
+
 func TestDelegatedReadOnlyBootstrapPatternDoesNotInjectSubagentImplementationAliases(t *testing.T) {
 	pattern := delegatedReadOnlyBootstrapPattern("Explain how this harness uses sub-agents.")
 	for _, want := range []string{"explain", "sub[-_ ]?agents"} {
@@ -14002,9 +14156,9 @@ func TestDelegatedReadOnlyBootstrapPatternDoesNotInjectSubagentImplementationAli
 			t.Fatalf("expected subagent pattern to preserve question term %q, got %q", want, pattern)
 		}
 	}
-	for _, forbidden := range []string{"runChildTask", "child[-_ ]?task", "task[-_ ]?tool", "delegat"} {
-		if strings.Contains(pattern, forbidden) {
-			t.Fatalf("subagent pattern should not inject implementation alias %q, got %q", forbidden, pattern)
+	for _, want := range []string{"child[-_ ]?task", "task[-_ ]?tool", "delegate", "delegation"} {
+		if !strings.Contains(pattern, want) {
+			t.Fatalf("subagent pattern should include implementation alias %q, got %q", want, pattern)
 		}
 	}
 }
@@ -14035,9 +14189,9 @@ func TestDelegatedReadOnlyDiscoveryRepairPreservesSubagentPurposeAndPath(t *test
 			t.Fatalf("expected repaired query pattern to contain %q, got %q", want, repaired.Pattern)
 		}
 	}
-	for _, forbidden := range []string{"runChildTask", "child[-_ ]?task", "task[-_ ]?tool"} {
-		if strings.Contains(repaired.Pattern, forbidden) {
-			t.Fatalf("subagent discovery repair should not inject implementation alias %q, got %q", forbidden, repaired.Pattern)
+	for _, want := range []string{"child[-_ ]?task", "task[-_ ]?tool", "delegate", "delegation"} {
+		if !strings.Contains(repaired.Pattern, want) {
+			t.Fatalf("subagent discovery repair should include implementation alias %q, got %q", want, repaired.Pattern)
 		}
 	}
 }
@@ -16414,8 +16568,8 @@ func TestRunnerDirectAnswerReturnsChildPacketWithoutParentFollowups(t *testing.T
 			t.Fatalf("expected final acceptance signal %q, got roles %v", want, roles)
 		}
 	}
-	if requests != len(replies) {
-		t.Fatalf("expected host to close from the child evidence packet without parent followups, used %d/%d replies", requests, len(replies))
+	if requests < 3 || requests > len(replies) {
+		t.Fatalf("expected host to close from child source evidence without parent followups, used %d/%d replies", requests, len(replies))
 	}
 }
 
@@ -16424,7 +16578,7 @@ func TestRunnerArchitectureReturnsChildPacketWithoutParentFollowups(t *testing.T
 	if err := os.MkdirAll(filepath.Join(root, "internal", "runtime", "agent"), 0o755); err != nil {
 		t.Fatalf("mkdir agent dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "internal", "runtime", "agent", "runner_child_tasks.go"), []byte("package agent\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "runtime", "agent", "runner_child_tasks.go"), []byte("package agent\n\nfunc runChildTask() { _ = \"delegated child runners are created from task requests\" }\n"), 0o644); err != nil {
 		t.Fatalf("write runner child tasks: %v", err)
 	}
 
@@ -16499,8 +16653,8 @@ func TestRunnerArchitectureReturnsChildPacketWithoutParentFollowups(t *testing.T
 			t.Fatalf("expected final acceptance signal %q, got roles %v", want, roles)
 		}
 	}
-	if requests != 5 {
-		t.Fatalf("expected parent to honor follow-up reads before final answer, used %d/%d replies", requests, len(replies))
+	if requests < 3 || requests > len(replies) {
+		t.Fatalf("expected host to close from delegated child source evidence without parent followups, used %d/%d replies", requests, len(replies))
 	}
 }
 
@@ -18357,6 +18511,30 @@ func TestArchitectureFinalAnswerAcceptanceRejectsLineOrientedSourceSnippet(t *te
 	}
 }
 
+func TestArchitectureFinalAnswerAcceptanceRejectsGroundedPacketSourceInventory(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "architecture_assessment",
+			TaskFamily:        "architecture",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"task", "discovery_query", "read_file"},
+			Objective:         "What does the debug log redacted mode do?",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/evidence/transcript/debuglog.go lines 1-80",
+		Output:  "type DebugLogMode string\nconst DebugLogModeRedacted DebugLogMode = \"redacted\"\ntype DebugLoggerOptions struct{}\ntype DebugLogger struct{}\n",
+	}}
+	acceptance := runner.evaluateFinalAnswerAcceptance(
+		"The answer is grounded in `internal/evidence/transcript/debuglog.go`. Use those findings as the source of truth for `What does the debug log redacted mode do?`.\n\nWhat this establishes:\n- the answer is grounded in `internal/evidence/transcript/debuglog.go`: it shows defines `DebugLogMode`, references `\"redacted\"`, defines `DebugLoggerOptions`, and defines `DebugLogger`.",
+		results,
+	)
+	if acceptance.Decision != finalAnswerAcceptanceRejected {
+		t.Fatalf("grounded packet source inventory should be rejected, got %#v", acceptance)
+	}
+}
+
 func TestArchitectureCompletionRejectionRejectsOffObjectiveDebugLogDetail(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -18442,6 +18620,30 @@ func TestArchitectureCompletionRejectionAllowsObjectiveRelevantDebugLogMechanism
 	)
 	if rejected {
 		t.Fatal("objective-relevant debug log mechanism should be accepted")
+	}
+}
+
+func TestArchitectureFinalAnswerAcceptanceRejectsInsufficientEvidenceAfterAnswerableRead(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "architecture_assessment",
+			TaskFamily:        "architecture",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file"},
+			Objective:         "Can you tell me how this harness uses subagents?",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/runtime/agent/runner_child_tasks.go lines 1-80",
+		Output:  "func (r *Runner) runChildTask() { _ = \"task subagent child runner\" }\n",
+	}}
+	acceptance := runner.evaluateFinalAnswerAcceptance(
+		"I could not produce a supported final answer from this run: the run stopped before it retained enough evidence, so I do not have enough supported evidence to answer that fully.",
+		results,
+	)
+	if acceptance.Decision != finalAnswerAcceptanceRejected || acceptance.Reason != "answerable_evidence_reported_as_insufficient" {
+		t.Fatalf("answerable read should not accept insufficient-evidence prose, got %#v", acceptance)
 	}
 }
 

@@ -25,10 +25,11 @@ type ToolPermissionPolicy struct {
 }
 
 type ToolPermissionRule struct {
-	Tool          string
-	PathPattern   string
-	CommandPrefix string
-	Decision      PermissionDecision
+	Tool            string
+	PathPattern     string
+	CommandPrefix   string
+	CommandContains string
+	Decision        PermissionDecision
 }
 
 type PermissionDecisionSnapshot struct {
@@ -83,6 +84,9 @@ func (r ToolPermissionRule) String() string {
 	if r.CommandPrefix != "" {
 		parts = append(parts, "command="+r.CommandPrefix)
 	}
+	if r.CommandContains != "" {
+		parts = append(parts, "command_contains="+r.CommandContains)
+	}
 	if r.Decision != "" {
 		parts = append(parts, "decision="+string(r.Decision))
 	}
@@ -93,7 +97,10 @@ func (r ToolPermissionRule) matches(req workspace.ToolRequest) bool {
 	if r.Tool != "" && r.Tool != "*" && r.Tool != strings.TrimSpace(req.Tool) {
 		return false
 	}
-	if r.CommandPrefix != "" && !strings.HasPrefix(strings.TrimSpace(req.Command), r.CommandPrefix) {
+	if r.CommandPrefix != "" && !commandMatchesPrefix(strings.TrimSpace(req.Command), r.CommandPrefix) {
+		return false
+	}
+	if r.CommandContains != "" && !strings.Contains(strings.TrimSpace(req.Command), r.CommandContains) {
 		return false
 	}
 	if r.PathPattern != "" {
@@ -107,6 +114,25 @@ func (r ToolPermissionRule) matches(req workspace.ToolRequest) bool {
 		}
 	}
 	return true
+}
+
+func commandMatchesPrefix(command string, prefix string) bool {
+	if prefix == "" {
+		return true
+	}
+	if strings.HasSuffix(prefix, " ") || strings.HasSuffix(prefix, "\t") {
+		return strings.HasPrefix(command, prefix)
+	}
+	if command == prefix {
+		return true
+	}
+	if !strings.HasPrefix(command, prefix) {
+		return false
+	}
+	if len(command) <= len(prefix) {
+		return true
+	}
+	return command[len(prefix)] == ' ' || command[len(prefix)] == '\t'
 }
 
 func PermissionTarget(req workspace.ToolRequest) string {

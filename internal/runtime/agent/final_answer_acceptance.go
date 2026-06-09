@@ -70,6 +70,11 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 		}
 		return reject("user_visible_blocker", "user_visible_blocker")
 	}
+	if r != nil && !readOnlyDirectAnswerLane(r.RuntimeBrief) &&
+		readOnlyAnswerReportsInsufficientEvidence(answer) &&
+		readOnlyClosureDecisionForResults(r.RuntimeBrief, results).Answerable() {
+		return reject("non_answer_prose", "answerable_evidence_reported_as_insufficient")
+	}
 	if looksLikeNonAnswerProse(answer) && !finalAnswerAcceptanceAllowsSourceInventory(acceptance, answer, r, results) {
 		return reject("non_answer_prose", "non_answer_prose")
 	}

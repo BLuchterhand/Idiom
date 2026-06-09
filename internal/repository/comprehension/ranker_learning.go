@@ -21,15 +21,20 @@ const (
 	LearningStateAccepted = "accepted"
 	LearningStateRejected = "rejected"
 
-	LearningReasonVerifiedFeedback = "verified_feedback"
-	LearningReasonVerifiedRecovery = "verified_recovery"
-	LearningReasonDisabled         = "learning_disabled"
-	LearningReasonUnverified       = "unverified_evidence"
-	LearningReasonNoValidFiles     = "no_valid_files"
-	LearningReasonUnsupported      = "unsupported_action"
-	LearningReasonNoOpBand         = "score_noop_band"
-	LearningReasonUpdateFailed     = "update_failed"
-	LearningReasonRollbackRestore  = "rollback_restored"
+	LearningReasonVerifiedFeedback            = "verified_feedback"
+	LearningReasonVerifiedRecovery            = "verified_recovery"
+	LearningReasonDisabled                    = "learning_disabled"
+	LearningReasonUnverified                  = "unverified_evidence"
+	LearningReasonNoValidFiles                = "no_valid_files"
+	LearningReasonUnsupported                 = "unsupported_action"
+	LearningReasonNoOpBand                    = "score_noop_band"
+	LearningReasonUpdateFailed                = "update_failed"
+	LearningReasonRollbackRestore             = "rollback_restored"
+	LearningReasonVerificationEvidenceMissing = "verification_evidence_missing"
+	LearningReasonNoEditPaths                 = "no_edit_paths"
+	LearningReasonVerificationNotPassed       = "verification_not_passed"
+	LearningReasonProtectedPathInEdits        = "protected_path_in_edits"
+	LearningReasonEditPathMismatch            = "edit_path_mismatch"
 
 	LearningEvidenceKindRecoveryReconciliation = "recovery_reconciliation"
 )
@@ -53,17 +58,22 @@ var (
 		LearningSourceRecoveryReconciliation: {},
 	}
 	learningLogAllowedReasons = map[string]struct{}{
-		LearningReasonVerifiedFeedback: {},
-		LearningReasonVerifiedRecovery: {},
-		LearningReasonDisabled:         {},
-		LearningReasonUnverified:       {},
-		LearningReasonNoValidFiles:     {},
-		LearningReasonUnsupported:      {},
-		LearningReasonNoOpBand:         {},
-		LearningReasonUpdateFailed:     {},
-		LearningReasonRollbackRestore:  {},
-		"swe_groundedness_oracle":      {},
-		"unknown":                      {},
+		LearningReasonVerifiedFeedback:            {},
+		LearningReasonVerifiedRecovery:            {},
+		LearningReasonDisabled:                    {},
+		LearningReasonUnverified:                  {},
+		LearningReasonNoValidFiles:                {},
+		LearningReasonUnsupported:                 {},
+		LearningReasonNoOpBand:                    {},
+		LearningReasonUpdateFailed:                {},
+		LearningReasonRollbackRestore:             {},
+		LearningReasonVerificationEvidenceMissing: {},
+		LearningReasonNoEditPaths:                 {},
+		LearningReasonVerificationNotPassed:       {},
+		LearningReasonProtectedPathInEdits:        {},
+		LearningReasonEditPathMismatch:            {},
+		"swe_groundedness_oracle":                 {},
+		"unknown":                                 {},
 	}
 	learningLogAllowedEvidenceKinds = map[string]struct{}{
 		LearningReasonVerifiedFeedback:             {},
@@ -180,16 +190,33 @@ var (
 // learning path. Callers must supply deterministic, already-verified evidence;
 // unverified input is logged as rejected and never mutates weights.
 type VerifiedRankerLearningRequest struct {
-	Source   string
-	Action   string
-	Files    []string
-	Score    float64
-	TaskID   string
-	CorpusID string
-	ResultID string
-	Reason   string
-	Verified bool
-	Evidence LearningEvidenceRef
+	Source               string
+	Action               string
+	Files                []string
+	Score                float64
+	TaskID               string
+	CorpusID             string
+	ResultID             string
+	Reason               string
+	Verified             bool
+	Evidence             LearningEvidenceRef
+	VerificationEvidence *VerificationEvidence
+}
+
+// VerificationEvidence carries deterministic proof that edits were applied and
+// verified before ranker learning is permitted to mutate weights. It is
+// required by the post-write verification gate in ApplyVerifiedRankerLearning.
+// Recovery reconciliation uses RecordVerifiedRankerEvidence (no weight
+// mutation) and does not require this gate.
+type VerificationEvidence struct {
+	// EditPaths are the file paths that were edited and verified.
+	EditPaths []string `json:"edit_paths"`
+	// VerificationCommand is the command run to verify the edits (e.g. "go test ./...").
+	VerificationCommand string `json:"verification_command"`
+	// VerificationPassed is true when the verification command succeeded.
+	VerificationPassed bool `json:"verification_passed"`
+	// VerificationOutput is a bounded sanitized summary of the command output.
+	VerificationOutput string `json:"verification_output,omitempty"`
 }
 
 // ApplyVerifiedRankerLearning is the single automated weight-mutation gate for
@@ -233,6 +260,7 @@ func ApplyVerifiedRankerLearning(root string, req VerifiedRankerLearningRequest)
 	entry.BeforeWeights = &beforeCopy
 	entry.AfterWeights = &afterCopy
 	entry.Rollback = &LearningRollbackData{Weights: cloneWeights(before)}
+	entry.Verification = learningLogVerificationEvidence(req.VerificationEvidence)
 
 	verified := req.Verified || (entry.Evidence != nil && entry.Evidence.Verified)
 	switch {
@@ -240,6 +268,16 @@ func ApplyVerifiedRankerLearning(root string, req VerifiedRankerLearningRequest)
 		entry.Reason = LearningReasonDisabled
 	case !verified:
 		entry.Reason = LearningReasonUnverified
+	case req.VerificationEvidence == nil:
+		entry.Reason = LearningReasonVerificationEvidenceMissing
+	case len(req.VerificationEvidence.EditPaths) == 0:
+		entry.Reason = LearningReasonNoEditPaths
+	case !req.VerificationEvidence.VerificationPassed:
+		entry.Reason = LearningReasonVerificationNotPassed
+	case hasProtectedEditPath(req.VerificationEvidence.EditPaths):
+		entry.Reason = LearningReasonProtectedPathInEdits
+	case !hasEditPathFileOverlap(req.VerificationEvidence.EditPaths, files):
+		entry.Reason = LearningReasonEditPathMismatch
 	case action == "":
 		entry.Action = "no_op"
 		entry.Reason = LearningReasonUnsupported
@@ -564,4 +602,65 @@ func firstNonEmptyStrings(primary []string, fallback []string) []string {
 		return primary
 	}
 	return fallback
+}
+
+// hasProtectedEditPath returns true when any edit path is in a protected or
+// generated directory (e.g. .idiom/) or fails path normalization, indicating
+// it should not be used as verification evidence for ranker learning.
+func hasProtectedEditPath(editPaths []string) bool {
+	for _, p := range editPaths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		// Normalize the path first (strips ./, normalises \ to /, rejects
+		// absolute paths, ../ escapes, and segment . or .. tokens).
+		normalized := normalizeWeightKey(p)
+		if normalized == "" {
+			return true
+		}
+		// Reject paths within or exactly equal to the harness state directory.
+		// Normalization has already stripped any ./ prefix so bypasses such as
+		// ./.idiom/ranker/weights.json are caught here.
+		if strings.HasPrefix(normalized, ".idiom/") || normalized == ".idiom" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasEditPathFileOverlap returns true when at least one normalized edit path
+// matches a sanitized file entry. Both sets are normalized via the standard
+// weight-key pipeline so comparison is stable.
+func hasEditPathFileOverlap(editPaths []string, files []string) bool {
+	fileSet := make(map[string]struct{}, len(files))
+	for _, f := range files {
+		fileSet[f] = struct{}{}
+	}
+	for _, p := range editPaths {
+		key := normalizeWeightKey(strings.TrimSpace(p))
+		if key == "" {
+			continue
+		}
+		if _, ok := fileSet[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// learningLogVerificationEvidence converts a VerificationEvidence pointer into
+// a privacy-safe LearningLogVerificationEvidence for audit log persistence.
+// A nil input produces nil output (no verification evidence to log).
+// VerificationOutput is intentionally excluded — only structured gate
+// predicates are persisted.
+func learningLogVerificationEvidence(ve *VerificationEvidence) *LearningLogVerificationEvidence {
+	if ve == nil {
+		return nil
+	}
+	return &LearningLogVerificationEvidence{
+		EditPaths:           append([]string(nil), ve.EditPaths...),
+		VerificationCommand: ve.VerificationCommand,
+		VerificationPassed:  ve.VerificationPassed,
+	}
 }

@@ -64,7 +64,6 @@ func sourceInventoryClaimLooksSynthesized(normalized string) bool {
 	return containsAny(normalized,
 		" because ",
 		" this means ",
-		" the answer is ",
 		" the likely cause is ",
 		" the root cause is ",
 		" the smallest fix ",
@@ -129,9 +128,6 @@ func looksLikeLowValueSourceInventoryFallback(answer string) bool {
 
 func looksLikeDiscoveryEvidenceInventoryNonAnswer(answer string) bool {
 	normalized := normalizeSourceInventoryClaim(answer)
-	if sourceInventoryClaimLooksSynthesized(normalized) {
-		return false
-	}
 	markers := 0
 	for _, marker := range []string{
 		" related files:",
@@ -152,7 +148,13 @@ func looksLikeDiscoveryEvidenceInventoryNonAnswer(answer string) bool {
 	if strings.Contains(normalized, " this is grounded in `") && markers > 0 {
 		markers++
 	}
-	return markers >= 2
+	if markers >= 2 {
+		return true
+	}
+	if sourceInventoryClaimLooksSynthesized(normalized) {
+		return false
+	}
+	return false
 }
 
 func looksLikeLowValueSourceInventoryNonAnswer(answer string) bool {

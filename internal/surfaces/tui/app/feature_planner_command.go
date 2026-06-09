@@ -283,6 +283,7 @@ func (m *Model) encodeFeaturePlannerPlanExecuteCompletion(summary string) (strin
 		fields["completion_source"] = "tui_plan_execute_returned"
 	}
 	fields["summary"] = featurePlannerPlanExecuteCompletionSummary(fields)
+	featureplanner.TrustObservedPlanExecuteCompletionFields(fields)
 	body, err := json.Marshal(fields)
 	if err != nil {
 		return "", err
@@ -420,7 +421,7 @@ func overlayFeaturePlannerRecoverySidecarFields(fields map[string]any, root stri
 
 func overlayFeaturePlannerPlanExecuteProgressFields(fields map[string]any, progressFields map[string]any) {
 	featureplanner.OverlayPlanExecuteCompletionFields(fields, progressFields)
-	for _, key := range []string{"required_edit_paths", "allowed_edit_paths", "changed_paths"} {
+	for _, key := range []string{"required_edit_paths", "allowed_edit_paths", "changed_paths", "source_sanity"} {
 		if value, ok := progressFields[key]; ok {
 			fields[key] = value
 		}
@@ -429,7 +430,7 @@ func overlayFeaturePlannerPlanExecuteProgressFields(fields map[string]any, progr
 
 func overlayFeaturePlannerPlanExecuteTerminalFields(fields map[string]any, terminalFields map[string]any) {
 	featureplanner.OverlayPlanExecuteCompletionFields(fields, terminalFields)
-	for _, key := range []string{"required_edit_paths", "allowed_edit_paths", "write_allowed_paths", "changed_paths", "source_satisfied_evidence_paths", "completion_path"} {
+	for _, key := range []string{"required_edit_paths", "allowed_edit_paths", "write_allowed_paths", "changed_paths", "source_sanity", "source_satisfied_evidence_paths", "source_satisfied_evidence", "contract_hash", "completion_path"} {
 		if value, ok := terminalFields[key]; ok {
 			fields[key] = value
 		}

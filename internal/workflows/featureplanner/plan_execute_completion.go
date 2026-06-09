@@ -1,15 +1,23 @@
 package featureplanner
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"idiom/internal/contracts/plan"
 	"idiom/internal/platform/util"
 	coreplanexecute "idiom/internal/workflows/planexecute"
 )
+
+var planExecuteAcceptanceEvidenceTrustRegistry = struct {
+	sync.Mutex
+	fingerprints map[string]struct{}
+}{fingerprints: map[string]struct{}{}}
 
 // PlanExecuteCompletionFields extracts the nested plan-execute terminal
 // contract from JSONL output. Both TUI and headless feature-planner adapters
@@ -35,6 +43,73 @@ func PlanExecuteCompletionFields(output string) map[string]any {
 		summary = MergePlanExecuteCompletionSummaries(summary, recordSummary)
 	}
 	return summary.Fields()
+}
+
+func TrustPlanExecuteCompletionFields(fields map[string]any) {
+	if fields == nil {
+		return
+	}
+	if len(completionFieldStableIDSlice(fields, "acceptance_evidence_ids")) == 0 {
+		delete(fields, "acceptance_evidence_trusted")
+		return
+	}
+	if fields["acceptance_evidence_trusted"] != true {
+		return
+	}
+	registerPlanExecuteAcceptanceEvidenceTrust(fields)
+}
+
+func TrustObservedPlanExecuteCompletionFields(fields map[string]any) {
+	if fields == nil {
+		return
+	}
+	if len(completionFieldStableIDSlice(fields, "acceptance_evidence_ids")) == 0 {
+		delete(fields, "acceptance_evidence_trusted")
+		return
+	}
+	if PlanExecuteCompletionTerminalClass(fields) != PlanExecuteTerminalCompleted {
+		delete(fields, "acceptance_evidence_trusted")
+		return
+	}
+	fields["acceptance_evidence_trusted"] = true
+	registerPlanExecuteAcceptanceEvidenceTrust(fields)
+}
+
+func planExecuteAcceptanceEvidenceTrustRegistered(fields map[string]any) bool {
+	fingerprint := planExecuteAcceptanceEvidenceTrustFingerprint(fields)
+	if fingerprint == "" {
+		return false
+	}
+	planExecuteAcceptanceEvidenceTrustRegistry.Lock()
+	defer planExecuteAcceptanceEvidenceTrustRegistry.Unlock()
+	if _, ok := planExecuteAcceptanceEvidenceTrustRegistry.fingerprints[fingerprint]; !ok {
+		return false
+	}
+	delete(planExecuteAcceptanceEvidenceTrustRegistry.fingerprints, fingerprint)
+	return true
+}
+
+func registerPlanExecuteAcceptanceEvidenceTrust(fields map[string]any) {
+	fingerprint := planExecuteAcceptanceEvidenceTrustFingerprint(fields)
+	if fingerprint == "" {
+		return
+	}
+	planExecuteAcceptanceEvidenceTrustRegistry.Lock()
+	defer planExecuteAcceptanceEvidenceTrustRegistry.Unlock()
+	planExecuteAcceptanceEvidenceTrustRegistry.fingerprints[fingerprint] = struct{}{}
+}
+
+func planExecuteAcceptanceEvidenceTrustFingerprint(fields map[string]any) string {
+	summary := PlanExecuteCompletionSummaryFromFields(fields)
+	if len(summary.AcceptanceEvidenceIDs) == 0 || !summary.AcceptanceEvidenceTrusted {
+		return ""
+	}
+	body, err := json.Marshal(summary.Fields())
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
 }
 
 type planExecuteCompletionRecord struct {
@@ -69,6 +144,9 @@ type planExecuteCompletionRecord struct {
 	SourceSatisfiedEvidencePaths []string                                `json:"source_satisfied_evidence_paths"`
 	SourceSatisfiedEvidence      []PlanExecuteSourceSatisfiedEvidenceRef `json:"source_satisfied_evidence"`
 	ChangedPaths                 []string                                `json:"changed_paths"`
+	SourceSanity                 []coreplanexecute.PhaseEvidenceCheck    `json:"source_sanity"`
+	AcceptanceEvidenceIDs        []string                                `json:"acceptance_evidence_ids"`
+	AcceptanceEvidenceTrusted    bool                                    `json:"acceptance_evidence_trusted"`
 }
 
 type PlanExecuteSourceSatisfiedEvidenceRef struct {
@@ -95,12 +173,17 @@ type PlanExecuteCompletionSummary struct {
 	ReviewRepairSkipped          bool
 	ContractID                   string
 	ContractHash                 string
+	ScopeContractID              string
+	ScopeContractHash            string
 	SnapshotHash                 string
 	RequiredEditPaths            []string
 	AllowedEditPaths             []string
 	SourceSatisfiedEvidencePaths []string
 	SourceSatisfiedEvidence      []PlanExecuteSourceSatisfiedEvidenceRef
 	ChangedPaths                 []string
+	SourceSanity                 []coreplanexecute.PhaseEvidenceCheck
+	AcceptanceEvidenceIDs        []string
+	AcceptanceEvidenceTrusted    bool
 	ValidationFailures           []string
 
 	timestamp    time.Time
@@ -129,14 +212,19 @@ func PlanExecuteCompletionSummaryFromFields(fields map[string]any) PlanExecuteCo
 		NextAction:                   CompletionFieldString(fields, "next_valid_action"),
 		CompletionSource:             CompletionFieldString(fields, "completion_source"),
 		ReviewRepairSkipped:          completionFieldBool(fields, "review_repair_skipped"),
-		ContractID:                   FirstNonEmptyString(CompletionFieldString(fields, "contract_id"), CompletionFieldString(fields, "scope_contract_id"), CompletionFieldString(fields, "active_contract_id")),
-		ContractHash:                 FirstNonEmptyString(CompletionFieldString(fields, "contract_hash"), CompletionFieldString(fields, "scope_contract_hash"), CompletionFieldString(fields, "active_contract_hash")),
+		ContractID:                   FirstNonEmptyString(CompletionFieldString(fields, "contract_id"), CompletionFieldString(fields, "active_contract_id")),
+		ContractHash:                 FirstNonEmptyString(CompletionFieldString(fields, "contract_hash"), CompletionFieldString(fields, "active_contract_hash")),
+		ScopeContractID:              CompletionFieldString(fields, "scope_contract_id"),
+		ScopeContractHash:            CompletionFieldString(fields, "scope_contract_hash"),
 		SnapshotHash:                 FirstNonEmptyString(CompletionFieldString(fields, "snapshot_hash"), CompletionFieldString(fields, "contract_snapshot_hash")),
 		RequiredEditPaths:            completionFieldStringSlice(fields, "required_edit_paths"),
 		AllowedEditPaths:             completionFieldStringSlice(fields, "allowed_edit_paths"),
 		SourceSatisfiedEvidencePaths: completionFieldStringSlice(fields, "source_satisfied_evidence_paths"),
 		SourceSatisfiedEvidence:      completionFieldSourceSatisfiedEvidenceRefs(fields, "source_satisfied_evidence"),
 		ChangedPaths:                 completionFieldStringSlice(fields, "changed_paths"),
+		SourceSanity:                 completionFieldPhaseEvidenceChecks(fields, "source_sanity"),
+		AcceptanceEvidenceIDs:        completionFieldStableIDSlice(fields, "acceptance_evidence_ids"),
+		AcceptanceEvidenceTrusted:    completionFieldBool(fields, "acceptance_evidence_trusted"),
 		ValidationFailures:           completionFieldStringSlice(fields, "validation_failures"),
 	}
 	if ts := CompletionFieldString(fields, "ts"); ts != "" {
@@ -212,11 +300,16 @@ func OverlayPlanExecuteCompletionFields(fields map[string]any, candidateFields m
 		"completion_source",
 		"contract_id",
 		"contract_hash",
+		"scope_contract_id",
+		"scope_contract_hash",
 		"snapshot_hash",
 		"required_edit_paths",
 		"allowed_edit_paths",
 		"source_satisfied_evidence_paths",
 		"source_satisfied_evidence",
+		"source_sanity",
+		"acceptance_evidence_ids",
+		"acceptance_evidence_trusted",
 		"validation_failures",
 	} {
 		delete(fields, key)
@@ -280,8 +373,11 @@ func (summary PlanExecuteCompletionSummary) Fields() map[string]any {
 	if summary.ContractID != "" {
 		fields["contract_id"] = summary.ContractID
 	}
-	if summary.ContractHash != "" {
-		fields["contract_hash"] = summary.ContractHash
+	if summary.ScopeContractID != "" {
+		fields["scope_contract_id"] = summary.ScopeContractID
+	}
+	if summary.ScopeContractHash != "" {
+		fields["scope_contract_hash"] = summary.ScopeContractHash
 	}
 	if summary.SnapshotHash != "" {
 		fields["snapshot_hash"] = summary.SnapshotHash
@@ -300,6 +396,15 @@ func (summary PlanExecuteCompletionSummary) Fields() map[string]any {
 	}
 	if len(summary.ChangedPaths) > 0 {
 		fields["changed_paths"] = append([]string(nil), summary.ChangedPaths...)
+	}
+	if len(summary.SourceSanity) > 0 {
+		fields["source_sanity"] = append([]coreplanexecute.PhaseEvidenceCheck(nil), summary.SourceSanity...)
+	}
+	if len(summary.AcceptanceEvidenceIDs) > 0 {
+		fields["acceptance_evidence_ids"] = append([]string(nil), summary.AcceptanceEvidenceIDs...)
+	}
+	if summary.AcceptanceEvidenceTrusted {
+		fields["acceptance_evidence_trusted"] = true
 	}
 	if len(summary.ValidationFailures) > 0 {
 		fields["validation_failures"] = append([]string(nil), summary.ValidationFailures...)
@@ -322,14 +427,19 @@ func planExecuteCompletionSummaryFromRecord(record planExecuteCompletionRecord) 
 		RecordPath:                   record.RecordPath,
 		PacketPath:                   record.PacketPath,
 		NextAction:                   record.NextAction,
-		ContractID:                   FirstNonEmptyString(record.ContractID, record.ScopeContractID),
-		ContractHash:                 FirstNonEmptyString(record.ContractHash, record.ScopeContractHash),
+		ContractID:                   record.ContractID,
+		ContractHash:                 record.ContractHash,
+		ScopeContractID:              record.ScopeContractID,
+		ScopeContractHash:            record.ScopeContractHash,
 		SnapshotHash:                 record.SnapshotHash,
 		RequiredEditPaths:            record.RequiredEditPaths,
 		AllowedEditPaths:             record.AllowedEditPaths,
 		SourceSatisfiedEvidencePaths: record.SourceSatisfiedEvidencePaths,
 		SourceSatisfiedEvidence:      append([]PlanExecuteSourceSatisfiedEvidenceRef(nil), record.SourceSatisfiedEvidence...),
 		ChangedPaths:                 append([]string(nil), record.ChangedPaths...),
+		SourceSanity:                 append([]coreplanexecute.PhaseEvidenceCheck(nil), record.SourceSanity...),
+		AcceptanceEvidenceIDs:        append([]string(nil), record.AcceptanceEvidenceIDs...),
+		AcceptanceEvidenceTrusted:    len(record.AcceptanceEvidenceIDs) > 0 && planExecuteCompletionRecordTrustsAcceptanceEvidence(record.Type),
 		ValidationFailures:           append([]string(nil), record.ValidationFailures...),
 	}
 	if ts := strings.TrimSpace(record.TS); ts != "" {
@@ -380,11 +490,21 @@ func (summary PlanExecuteCompletionSummary) normalized() PlanExecuteCompletionSu
 	summary.ContractID = strings.TrimSpace(summary.ContractID)
 	summary.ContractHash = strings.TrimSpace(summary.ContractHash)
 	summary.SnapshotHash = strings.TrimSpace(summary.SnapshotHash)
+	if summary.SnapshotHash == "" {
+		summary.SnapshotHash = summary.ContractHash
+	}
+	summary.ScopeContractID = strings.TrimSpace(summary.ScopeContractID)
+	summary.ScopeContractHash = strings.TrimSpace(summary.ScopeContractHash)
 	summary.RequiredEditPaths = normalizeCompletionStringList(summary.RequiredEditPaths)
 	summary.AllowedEditPaths = normalizeCompletionStringList(summary.AllowedEditPaths)
 	summary.SourceSatisfiedEvidencePaths = normalizeCompletionStringList(summary.SourceSatisfiedEvidencePaths)
 	summary.SourceSatisfiedEvidence = normalizePlanExecuteSourceSatisfiedEvidenceRefs(summary.SourceSatisfiedEvidence)
 	summary.ChangedPaths = normalizeCompletionStringList(summary.ChangedPaths)
+	summary.SourceSanity = normalizeCompletionPhaseEvidenceChecks(summary.SourceSanity)
+	summary.AcceptanceEvidenceIDs = normalizeCompletionStableIDList(summary.AcceptanceEvidenceIDs)
+	if len(summary.AcceptanceEvidenceIDs) == 0 {
+		summary.AcceptanceEvidenceTrusted = false
+	}
 	summary.ValidationFailures = normalizeCompletionStringList(summary.ValidationFailures)
 	return summary
 }
@@ -443,6 +563,12 @@ func (summary PlanExecuteCompletionSummary) withInheritedContext(other PlanExecu
 	if summary.ContractHash == "" {
 		summary.ContractHash = other.ContractHash
 	}
+	if summary.ScopeContractID == "" {
+		summary.ScopeContractID = other.ScopeContractID
+	}
+	if summary.ScopeContractHash == "" {
+		summary.ScopeContractHash = other.ScopeContractHash
+	}
 	if summary.SnapshotHash == "" {
 		summary.SnapshotHash = other.SnapshotHash
 	}
@@ -460,6 +586,9 @@ func (summary PlanExecuteCompletionSummary) withInheritedContext(other PlanExecu
 	}
 	if len(summary.ChangedPaths) == 0 {
 		summary.ChangedPaths = append([]string(nil), other.ChangedPaths...)
+	}
+	if len(summary.SourceSanity) == 0 {
+		summary.SourceSanity = append([]coreplanexecute.PhaseEvidenceCheck(nil), other.SourceSanity...)
 	}
 	if len(summary.ValidationFailures) == 0 {
 		summary.ValidationFailures = append([]string(nil), other.ValidationFailures...)
@@ -486,12 +615,17 @@ func (summary PlanExecuteCompletionSummary) hasConcreteCompletionState() bool {
 		summary.ReviewRepairSkipped ||
 		summary.ContractID != "" ||
 		summary.ContractHash != "" ||
+		summary.ScopeContractID != "" ||
+		summary.ScopeContractHash != "" ||
 		summary.SnapshotHash != "" ||
 		len(summary.RequiredEditPaths) > 0 ||
 		len(summary.AllowedEditPaths) > 0 ||
 		len(summary.SourceSatisfiedEvidencePaths) > 0 ||
 		len(summary.SourceSatisfiedEvidence) > 0 ||
 		len(summary.ChangedPaths) > 0 ||
+		len(summary.SourceSanity) > 0 ||
+		len(summary.AcceptanceEvidenceIDs) > 0 ||
+		summary.AcceptanceEvidenceTrusted ||
 		len(summary.ValidationFailures) > 0
 }
 
@@ -529,7 +663,10 @@ func (summary PlanExecuteCompletionSummary) completionSpecificityScore() int {
 	if len(summary.ChangedPaths) > 0 {
 		score += 3
 	}
-	if summary.ContractID != "" || summary.ContractHash != "" || summary.SnapshotHash != "" {
+	if len(summary.SourceSanity) > 0 {
+		score += 3
+	}
+	if summary.ContractID != "" || summary.ContractHash != "" || summary.ScopeContractID != "" || summary.ScopeContractHash != "" || summary.SnapshotHash != "" {
 		score += 3
 	}
 	if summary.ReviewStatus != "" {
@@ -712,6 +849,45 @@ func completionFieldSourceSatisfiedEvidenceRefs(fields map[string]any, key strin
 	return normalizePlanExecuteSourceSatisfiedEvidenceRefs(refs)
 }
 
+func completionFieldPhaseEvidenceChecks(fields map[string]any, key string) []coreplanexecute.PhaseEvidenceCheck {
+	value, ok := fields[key]
+	if !ok || value == nil {
+		return nil
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	var checks []coreplanexecute.PhaseEvidenceCheck
+	if err := json.Unmarshal(body, &checks); err != nil {
+		return nil
+	}
+	return normalizeCompletionPhaseEvidenceChecks(checks)
+}
+
+func normalizeCompletionPhaseEvidenceChecks(checks []coreplanexecute.PhaseEvidenceCheck) []coreplanexecute.PhaseEvidenceCheck {
+	out := make([]coreplanexecute.PhaseEvidenceCheck, 0, len(checks))
+	seen := map[string]bool{}
+	for _, check := range checks {
+		check.Kind = strings.TrimSpace(check.Kind)
+		check.Path = plancontract.NormalizeScopePath(check.Path)
+		check.Status = strings.TrimSpace(check.Status)
+		check.Summary = strings.TrimSpace(check.Summary)
+		check.Error = strings.TrimSpace(check.Error)
+		check.Command = strings.TrimSpace(check.Command)
+		if check.Kind == "" && check.Path == "" && check.Status == "" && check.Command == "" {
+			continue
+		}
+		key := strings.Join([]string{check.Kind, check.Path, check.Command, check.Status}, "\x00")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, check)
+	}
+	return out
+}
+
 func normalizePlanExecuteSourceSatisfiedEvidenceRefs(refs []PlanExecuteSourceSatisfiedEvidenceRef) []PlanExecuteSourceSatisfiedEvidenceRef {
 	out := make([]PlanExecuteSourceSatisfiedEvidenceRef, 0, len(refs))
 	seen := map[string]bool{}
@@ -745,6 +921,24 @@ func normalizeCompletionStringList(values []string) []string {
 	return out
 }
 
+func completionFieldStableIDSlice(fields map[string]any, key string) []string {
+	return normalizeCompletionStableIDList(completionFieldStringSlice(fields, key))
+}
+
+func normalizeCompletionStableIDList(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = plancontract.NormalizeStableContractIDPart(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
 func planExecuteCompletionRecordRelevant(recordType string, role string, content string, stopReason string) bool {
 	recordType = strings.TrimSpace(recordType)
 	if strings.HasPrefix(recordType, "idiom.plan_execute.") {
@@ -754,6 +948,10 @@ func planExecuteCompletionRecordRelevant(recordType string, role string, content
 		return true
 	}
 	return planExecuteCompletionModelError(stopReason, content)
+}
+
+func planExecuteCompletionRecordTrustsAcceptanceEvidence(recordType string) bool {
+	return strings.TrimSpace(recordType) == coreplanexecute.PlanExecuteTerminalCompletionRecordType
 }
 
 func planExecuteCompletionModelError(stopReason string, content string) bool {

@@ -246,7 +246,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "source_sanity",
-			Description: "Run source-aware sanity for edited source files. Routes to the file language's diagnostics when available; otherwise falls back to a generic source syntax sanity check.",
+			Description: "Run source-aware sanity for edited source files. Routes to the file language's diagnostics when available; generic fallback is advisory and does not satisfy C/C++ terminal source_sanity when concrete diagnostics are unavailable.",
 			ParametersJSON: schemaObj(
 				[]string{"path"},
 				`"path":`+strProp("source file or narrow source directory")+`,"limit":`+intProp("max files to check when path is a directory; default 24"),

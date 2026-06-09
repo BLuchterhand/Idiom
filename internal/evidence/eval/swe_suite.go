@@ -1236,6 +1236,12 @@ func applyEvalLearnedWeights(workspaceRoot string, oracle SWEGroundednessOracle,
 				"min_score":  oracle.MinScore,
 			},
 		},
+		VerificationEvidence: &comprehension.VerificationEvidence{
+			EditPaths:           files,
+			VerificationCommand: "swe_groundedness_oracle",
+			VerificationPassed:  true,
+			VerificationOutput:  fmt.Sprintf("groundedness_score=%.3f min_score=%.3f", score, oracle.MinScore),
+		},
 	})
 	rec.EventID = event.EventID
 	rec.State = event.State

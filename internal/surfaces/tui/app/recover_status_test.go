@@ -394,6 +394,12 @@ func TestFeaturePlannerTUIPlanExecuteCompletionUsesDurableSkippedReviewState(t *
 	state := planexecute.NewProgressState("nested_review_skipped", "prompt", "", nil, nil, time.Now().UTC())
 	state.Phase = planexecute.ProgressPhaseComplete
 	state.Status = planexecute.ProgressStatusCompleted
+	state.ChangedPaths = []string{"pkg/feature.go"}
+	state.Executor.SourceSanity = []planexecute.PhaseEvidenceCheck{{
+		Kind:   "source_sanity",
+		Path:   "pkg/feature.go",
+		Status: "ok",
+	}}
 	state.Review.Status = planexecute.ProgressStatusSkipped
 	statePath, err := planexecute.SaveProgressState(root, &state)
 	if err != nil {
@@ -431,6 +437,57 @@ func TestFeaturePlannerTUIPlanExecuteCompletionUsesDurableSkippedReviewState(t *
 	}
 	if got := featureplanner.PlanExecuteCompletionTerminalClass(fields); got != featureplanner.PlanExecuteTerminalCompleted {
 		t.Fatalf("terminal class = %q, want completed; fields=%+v", got, fields)
+	}
+}
+
+func TestFeaturePlannerTUIPlanExecuteCompletionPreservesTerminalParentAuthority(t *testing.T) {
+	root := t.TempDir()
+	state := planexecute.NewProgressState("nested_wrong_parent", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
+	state.Phase = planexecute.ProgressPhaseComplete
+	state.Status = planexecute.ProgressStatusCompleted
+	state.ChangedPaths = []string{"pkg/feature.go"}
+	state.Executor.SourceSanity = []planexecute.PhaseEvidenceCheck{{
+		Kind:   "source_sanity",
+		Path:   "pkg/feature.go",
+		Status: "ok",
+	}}
+	state.Review.Status = planexecute.ProgressStatusSkipped
+	record := planexecute.NewPlanExecuteTerminalCompletionRecord(state, planexecute.PlanExecuteTerminalCompletionInput{
+		ProgressPath: ".idiom/plan-execute/sessions/nested_wrong_parent.json",
+		CompletedAt:  time.Now().UTC(),
+	})
+	record.ContractID = "wrong-parent-contract"
+	record.SnapshotHash = "active-snapshot"
+	record.ContractHash = "wrong-legacy-snapshot"
+	completionPath, err := planexecute.SavePlanExecuteTerminalCompletionRecord(root, record)
+	if err != nil {
+		t.Fatalf("SavePlanExecuteTerminalCompletionRecord: %v", err)
+	}
+	model := &Model{
+		cfg: config.Config{Workspace: config.Workspace{Root: root}},
+		lastPlanExecuteRunResult: &planexecute.RunResult{
+			ExitCode:       0,
+			SessionID:      state.SessionID,
+			CompletionPath: completionPath,
+		},
+	}
+
+	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion("plan-execute returned without terminal JSONL")
+	if err != nil {
+		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(payload), &fields); err != nil {
+		t.Fatalf("decode completion payload: %v", err)
+	}
+	if got := fmt.Sprint(fields["contract_id"]); got != "wrong-parent-contract" {
+		t.Fatalf("contract_id = %q, want explicit terminal sidecar authority preserved in payload %s", got, payload)
+	}
+	if got := fmt.Sprint(fields["snapshot_hash"]); got != "active-snapshot" {
+		t.Fatalf("snapshot_hash = %q, want explicit terminal sidecar authority preserved in payload %s", got, payload)
+	}
+	if got := fmt.Sprint(fields["contract_hash"]); got != "wrong-legacy-snapshot" {
+		t.Fatalf("contract_hash = %q, want legacy terminal sidecar authority preserved for conflict validation in payload %s", got, payload)
 	}
 }
 

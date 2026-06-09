@@ -792,8 +792,8 @@ func featurePlannerPlanExecuteDispatchPlanJSON() string {
         "coverage_gate_event_id": "evt-plan-execute-dispatch"
       },
       "planned_tdd_snapshot": {
-        "snapshot_id": "snap-plan-execute-dispatch",
-        "snapshot_digest": "sha256:plan-execute-dispatch",
+        "snapshot_id": "snapshot-plan-execute-dispatch",
+        "snapshot_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "obligation_ids": ["TDD-PlanExecuteDispatch"],
         "test_commands": ["go test ./cmd/idiom -run TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute"],
         "test_artifact_paths": ["cmd/idiom/feature_planner_test.go"],
@@ -1119,8 +1119,8 @@ func featurePlannerResumeProductPlanJSON(effortID string) string {
         "coverage_gate_event_id": "evt-resume-context"
       },
       "planned_tdd_snapshot": {
-        "snapshot_id": "snap-resume-context",
-        "snapshot_digest": "sha256:resume-context",
+        "snapshot_id": "snapshot-resume-context",
+        "snapshot_digest": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "obligation_ids": ["TDD-RESUME"],
         "test_commands": ["go test ./internal/cmd/featureplanner"],
         "test_artifact_paths": ["internal/cmd/featureplanner/feature_planner_test.go"],

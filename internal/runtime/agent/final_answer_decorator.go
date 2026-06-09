@@ -49,6 +49,11 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 			return present(blocker)
 		}
 	}
+	if looksLikeUnexecutedToolRequestAnswer(answer) || looksLikeTextualToolCall(answer) {
+		if presentable, ok := presentableNoToolsFallbackAnswer(input.Brief, input.Results, answer); ok {
+			return present(presentable)
+		}
+	}
 	if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) || looksLikeLineOrientedSourceSnippetAnswer(answer) {
 		if composed, ok := r.composedFinalAnswerFromEvidence(input); ok {
 			return present(composed)
@@ -398,6 +403,17 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 		return answer, true
 	}
 	closure := readOnlyClosureDecisionForResults(brief, results)
+	if looksLikeUnexecutedToolRequestAnswer(internalAnswer) || looksLikeTextualToolCall(internalAnswer) {
+		if exact, ok := presentableExactProbeAnswer(brief, results); ok {
+			return exact, true
+		}
+		if sourceBody, ok := presentableReadFileSourceAnswer(brief, results); ok {
+			return sourceBody, true
+		}
+		if prose, ok := presentableProseEvidenceAnswer(brief, results); ok {
+			return prose, true
+		}
+	}
 	if readOnlyFallbackNeedsAnswerableEvidence(brief, internalAnswer) && !closure.Answerable() {
 		return closure.UserFacingUncertainty(), true
 	}
@@ -539,35 +555,17 @@ func presentableReadFileSourceAnswer(brief workerruntime.WorkerRuntimeBrief, res
 	}
 	bestAnswer := ""
 	bestScore := -1
-	for i := len(results) - 1; i >= 0; i-- {
-		result := results[i]
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-		if strings.TrimSpace(result.Tool) != "read_file" {
-			continue
-		}
-		if !readFileResultHasConcreteSourceBody(result) {
-			continue
-		}
-		paths := readPathsFromToolResult(result)
-		if len(paths) == 0 {
-			continue
-		}
-		if isNonSourceEvidenceArtifactPath(paths[0]) {
-			continue
-		}
-		output := strings.TrimSpace(result.Output)
-		if answer, ok := presentableSourceBodyFactsAnswer(brief.Objective, paths[0], output); ok {
+	for _, body := range combinedReadFileSourceBodies(results) {
+		if answer, ok := presentableSourceBodyFactsAnswer(brief.Objective, body.path, body.output); ok {
 			if ownerPathSet != nil {
-				if _, ok := ownerPathSet[normalizeRunnerPath(paths[0])]; !ok {
+				if _, ok := ownerPathSet[normalizeRunnerPath(body.path)]; !ok {
 					continue
 				}
 			}
-			if implementationShape, ok := presentableImplementationShapeAnswerFromClaim(brief.Objective, paths[0], "", stripPresentableSourceObjectiveEcho(answer)); ok {
+			if implementationShape, ok := presentableImplementationShapeAnswerFromClaim(brief.Objective, body.path, "", stripPresentableSourceObjectiveEcho(answer)); ok {
 				return implementationShape, true
 			}
-			score := presentableSourceAnswerObjectiveScore(answer, brief.Objective)
+			score := presentableSourceAnswerObjectiveScore(answer, brief.Objective, body.path)
 			if looksLikeSourceEchoOnlyAnswer(answer) && looksLikeLowValueSourceInventoryFallback(answer) {
 				continue
 			}
@@ -580,10 +578,72 @@ func presentableReadFileSourceAnswer(brief workerruntime.WorkerRuntimeBrief, res
 	return bestAnswer, strings.TrimSpace(bestAnswer) != ""
 }
 
-func presentableSourceAnswerObjectiveScore(answer string, objective string) int {
+type readFileSourceBody struct {
+	path   string
+	output string
+}
+
+func combinedReadFileSourceBodies(results []workspace.ToolResult) []readFileSourceBody {
+	type aggregate struct {
+		path      string
+		outputs   []string
+		lastIndex int
+	}
+	byPath := make(map[string]*aggregate)
+	order := make([]string, 0, len(results))
+	for i, result := range results {
+		if strings.TrimSpace(result.Error) != "" ||
+			strings.TrimSpace(result.Tool) != "read_file" ||
+			!readFileResultHasConcreteSourceBody(result) {
+			continue
+		}
+		paths := readPathsFromToolResult(result)
+		if len(paths) == 0 || isNonSourceEvidenceArtifactPath(paths[0]) {
+			continue
+		}
+		path := normalizeRunnerPath(paths[0])
+		if path == "" {
+			continue
+		}
+		agg := byPath[path]
+		if agg == nil {
+			agg = &aggregate{path: path}
+			byPath[path] = agg
+			order = append(order, path)
+		}
+		agg.outputs = append(agg.outputs, strings.TrimSpace(result.Output))
+		agg.lastIndex = i
+	}
+	bodies := make([]readFileSourceBody, 0, len(order))
+	for _, path := range order {
+		agg := byPath[path]
+		if agg == nil {
+			continue
+		}
+		bodies = append(bodies, readFileSourceBody{
+			path:   agg.path,
+			output: strings.Join(agg.outputs, "\n"),
+		})
+	}
+	slices.SortFunc(bodies, func(a, b readFileSourceBody) int {
+		return byPath[b.path].lastIndex - byPath[a.path].lastIndex
+	})
+	return bodies
+}
+
+func presentableSourceAnswerObjectiveScore(answer string, objective string, path string) int {
 	claim := stripPresentableSourceObjectiveEcho(answer)
 	score := sourceEvidenceLineObjectiveScore(claim, sourceEvidenceObjectiveLineTerms(objective))
 	score += len(answerObjectiveTerms(claim, objective)) * 2
+	score += sourceEvidenceLineObjectiveScore(path, sourceEvidenceObjectiveLineTerms(objective)) * 3
+	lowerClaim := strings.ToLower(claim)
+	lowerObjective := strings.ToLower(objective)
+	if containsAny(lowerObjective, "redact", "secret", "debug log") && strings.Contains(lowerClaim, "metadata") {
+		score += 3
+	}
+	if containsAny(lowerObjective, "redact", "secret", "debug log") && strings.Contains(lowerClaim, "path") {
+		score += 2
+	}
 	if strings.Contains(strings.ToLower(claim), "defines `") {
 		score--
 	}
@@ -862,41 +922,57 @@ func sourceBodySemanticFacts(lines []string, objective string, max int) []string
 	if max <= 0 {
 		max = 3
 	}
-	facts := make([]string, 0, max)
-	add := func(fact string) {
+	var behaviorFacts []string
+	var definitionFacts []string
+	addTo := func(dst *[]string, fact string) {
 		fact = strings.TrimSpace(fact)
-		if fact == "" || slices.Contains(facts, fact) {
+		if fact == "" || slices.Contains(*dst, fact) {
 			return
 		}
-		facts = append(facts, fact)
+		*dst = append(*dst, fact)
 	}
 	currentFunction := ""
 	for _, line := range lines {
 		functionLine := false
 		if name := sourceBodyFunctionName(line); name != "" {
 			currentFunction = name
-			add("defines `" + name + "`")
+			addTo(&definitionFacts, "defines `"+name+"`")
 			functionLine = true
 		}
 		if fact := sourceBodyObjectiveLiteralFact(currentFunction, line, objective); fact != "" {
-			add(fact)
+			addTo(&behaviorFacts, fact)
 		}
 		if !functionLine {
 			if fact := sourceBodyReturnFact(currentFunction, line); fact != "" {
-				add(fact)
+				addTo(&behaviorFacts, fact)
 			} else if fact := sourceBodyDefinitionFact(line); fact != "" {
-				add(fact)
+				addTo(&definitionFacts, fact)
 			} else if fact := sourceBodyCaseFact(currentFunction, line); fact != "" {
-				add(fact)
+				addTo(&behaviorFacts, fact)
+			} else if fact := sourceBodyRecordAssignmentFact(line); fact != "" {
+				addTo(&behaviorFacts, fact)
+			} else if fact := sourceBodyStructFieldFact(line); fact != "" {
+				addTo(&behaviorFacts, fact)
 			} else if fact := exactProbeAssignmentObservation(line); fact != "" {
-				add(fact)
+				addTo(&behaviorFacts, fact)
 			} else if fact := sourceBodyCallFact(currentFunction, line); fact != "" {
-				add(fact)
+				addTo(&behaviorFacts, fact)
 			}
 		}
-		if len(facts) >= max {
-			return facts
+	}
+	facts := make([]string, 0, max)
+	add := func(fact string) {
+		fact = strings.TrimSpace(fact)
+		if fact == "" || slices.Contains(facts, fact) || len(facts) >= max {
+			return
 		}
+		facts = append(facts, fact)
+	}
+	for _, fact := range behaviorFacts {
+		add(fact)
+	}
+	for _, fact := range definitionFacts {
+		add(fact)
 	}
 	if len(facts) > 1 && currentFunction != "" && facts[0] == "defines `"+currentFunction+"`" {
 		return facts[1:]
@@ -908,6 +984,12 @@ func sourceBodyObjectiveLiteralFact(functionName string, line string, objective 
 	literals := sourceBodyObjectiveStringLiterals(line, objective, 2)
 	if len(literals) == 0 {
 		return ""
+	}
+	if len(literals) == 1 && strings.EqualFold(strings.Trim(literals[0], "`\""), "redacted") {
+		if functionName != "" {
+			return "`" + functionName + "` references secret-safe redaction value " + literals[0]
+		}
+		return "references secret-safe redaction value " + literals[0]
 	}
 	if functionName != "" {
 		return "`" + functionName + "` references " + joinFallbackFacts(literals)
@@ -999,6 +1081,79 @@ func sourceBodyCaseFact(functionName string, line string) string {
 		return "`" + functionName + "` handles " + joinFallbackFacts(cases)
 	}
 	return "handles " + joinFallbackFacts(cases)
+}
+
+func sourceBodyRecordAssignmentFact(line string) string {
+	line = strings.TrimSpace(line)
+	for _, op := range []string{":=", "="} {
+		lhs, rhs, ok := strings.Cut(line, op)
+		if !ok {
+			continue
+		}
+		key := sourceBodyMapStringKey(lhs)
+		value := exactProbeTrimExpression(rhs)
+		if key == "" || value == "" {
+			continue
+		}
+		kind := "metadata field"
+		lowerKey := strings.ToLower(key)
+		lowerValue := strings.ToLower(value)
+		if containsAny(lowerKey, "path", "source", "root", "cwd") {
+			kind = "path metadata field"
+		}
+		if containsAny(lowerKey, "prompt", "digest", "redact", "secret") ||
+			containsAny(lowerValue, "sanitize", "digest", "redact", "secret") {
+			kind = "secret-safe " + kind
+		}
+		if op == ":=" {
+			return "assigns " + kind + " `" + key + "` from `" + value + "`"
+		}
+		return "sets " + kind + " `" + key + "` from `" + value + "`"
+	}
+	return ""
+}
+
+func sourceBodyMapStringKey(lhs string) string {
+	lhs = strings.TrimSpace(lhs)
+	open := strings.IndexByte(lhs, '[')
+	close := strings.LastIndexByte(lhs, ']')
+	if open < 0 || close <= open {
+		return ""
+	}
+	key := strings.TrimSpace(lhs[open+1 : close])
+	if len(key) < 2 || key[0] != '"' || key[len(key)-1] != '"' {
+		return ""
+	}
+	key = strings.TrimSpace(key[1 : len(key)-1])
+	if key == "" || strings.ContainsAny(key, "\n\r\t") {
+		return ""
+	}
+	return key
+}
+
+func sourceBodyStructFieldFact(line string) string {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.ContainsAny(line, "(){}=") {
+		return ""
+	}
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return ""
+	}
+	name := strings.TrimSpace(fields[0])
+	typ := strings.TrimLeft(strings.TrimSpace(fields[1]), "*[]")
+	if name == "" || typ == "" || name[0] < 'A' || name[0] > 'Z' {
+		return ""
+	}
+	if !codeShapedTokenPattern.MatchString(name) || !codeShapedTokenPattern.MatchString(typ) {
+		return ""
+	}
+	lower := strings.ToLower(name)
+	kind := "field"
+	if containsAny(lower, "path", "source", "root", "cwd") {
+		kind = "path metadata field"
+	}
+	return "defines " + kind + " `" + name + "`"
 }
 
 func sourceBodyCallFact(functionName string, line string) string {
@@ -1200,10 +1355,47 @@ func sourceEvidenceAnswerLinesForObjective(output string, objective string, maxL
 			return selected
 		}
 	}
+	if len(selected) > 0 {
+		for _, line := range all {
+			if !sourceEvidenceLineCarriesAnswerContext(line, terms) {
+				continue
+			}
+			add(line)
+			if len(selected) >= maxLines {
+				return selected
+			}
+		}
+	}
 	if len(selected) == 0 {
 		return limitStrings(all, maxLines)
 	}
 	return selected
+}
+
+func sourceEvidenceLineCarriesAnswerContext(line string, terms []string) bool {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	if lower == "" {
+		return false
+	}
+	if sourceEvidenceLineObjectiveScore(line, terms) > 0 {
+		return true
+	}
+	return containsAny(lower,
+		"record[",
+		"sanitize",
+		"digest",
+		"metadata",
+		"redact",
+		"prompt",
+		"path",
+		"permission",
+		"policy",
+		"delegate",
+		"child",
+		"task",
+		"compose",
+		"answer",
+	)
 }
 
 func sourceEvidenceAnswerLines(output string, maxLines int) []string {

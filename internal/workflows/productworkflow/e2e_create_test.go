@@ -320,8 +320,8 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 					"coverage_gate_event_id":        "evt-cov-1",
 				},
 				"planned_tdd_snapshot": map[string]any{
-					"snapshot_id":                      "snap-tdd-1",
-					"snapshot_digest":                  "sha256:abc123",
+					"snapshot_id":                      "tdd-snapshot-evidence-1",
+					"snapshot_digest":                  "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 					"obligation_ids":                   []string{"TDD-001"},
 					"test_commands":                    []string{"go test ./auth/..."},
 					"test_artifact_paths":              []string{"internal/auth/login_test.go"},

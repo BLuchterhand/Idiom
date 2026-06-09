@@ -145,6 +145,26 @@ func TestPlanExecuteTerminalCompletionRecordFromFieldsNormalizesStatePath(t *tes
 	}
 }
 
+func TestPlanExecuteTerminalCompletionRecordFromFieldsPreservesParentAuthority(t *testing.T) {
+	record := PlanExecuteTerminalCompletionRecordFromFields(map[string]any{
+		"status":        "completed",
+		"phase":         "complete",
+		"contract_id":   "parent-contract",
+		"snapshot_hash": "parent-snapshot",
+		"contract_hash": "legacy-snapshot",
+	})
+
+	if record.ContractID != "parent-contract" {
+		t.Fatalf("ContractID = %q, want parent-contract", record.ContractID)
+	}
+	if record.SnapshotHash != "parent-snapshot" {
+		t.Fatalf("SnapshotHash = %q, want parent-snapshot", record.SnapshotHash)
+	}
+	if record.ContractHash != "legacy-snapshot" {
+		t.Fatalf("ContractHash = %q, want legacy-snapshot diagnostic preserved", record.ContractHash)
+	}
+}
+
 func TestPlanExecuteTerminalCompletionRecordFromProgressStateRequiresTerminalState(t *testing.T) {
 	running := progressStateForTerminalCompletionTest(func(state *ProgressState) {
 		state.Status = ProgressStatusRunning
@@ -266,6 +286,164 @@ func TestFinalizeTerminalCompletionRejectsStatusOnlySuccess(t *testing.T) {
 	}
 }
 
+func TestFinalizeTerminalCompletionRejectsMissingSourceSanityForSourceChange(t *testing.T) {
+	root := t.TempDir()
+	state := NewProgressState("missing_source_sanity", "prompt", "", []string{"pkg/feature.go"}, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))
+	state.Phase = ProgressPhaseComplete
+	state.Status = ProgressStatusCompleted
+	state.ChangedPaths = []string{"pkg/feature.go"}
+	state.RequiredAcceptanceEvidenceIDs = []string{"req-1"}
+	state.Review.Status = ProgressStatusSkipped
+
+	result := finalizePlanExecuteRunResult(root, state, ".idiom/plan-execute/sessions/missing_source_sanity.json", false, io.Discard, planExecuteRunResultInput{ExitCode: 0})
+
+	if result.ExitCode != 1 {
+		t.Fatalf("ExitCode = %d, want terminal contract failure", result.ExitCode)
+	}
+	if result.FailureKind != RunFailureTerminalCompletionContractFailed {
+		t.Fatalf("FailureKind = %q, want %q", result.FailureKind, RunFailureTerminalCompletionContractFailed)
+	}
+	if result.Completion == nil || result.Completion.TerminalClass != PlanExecuteTerminalClassFailed {
+		t.Fatalf("completion was not downgraded to failed: %#v", result.Completion)
+	}
+	if !planExecuteTerminalStringSliceContains(result.Completion.ValidationFailures, "source_sanity_missing:pkg/feature.go") {
+		t.Fatalf("validation failures missing source_sanity_missing: %#v", result.Completion.ValidationFailures)
+	}
+	if len(result.Completion.AcceptanceEvidenceIDs) > 0 {
+		t.Fatalf("downgraded terminal completion should not retain acceptance IDs: %#v", result.Completion.AcceptanceEvidenceIDs)
+	}
+}
+
+func TestFinalizeTerminalCompletionCarriesAcceptanceEvidenceIDs(t *testing.T) {
+	root := t.TempDir()
+	state := NewProgressState("acceptance_ids", "prompt", "", []string{"pkg/feature.go"}, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))
+	state.Phase = ProgressPhaseComplete
+	state.Status = ProgressStatusCompleted
+	state.ChangedPaths = []string{"pkg/feature.go"}
+	state.RequiredAcceptanceEvidenceIDs = []string{"req-1", "adr-1"}
+	state.AcceptanceEvidenceIDs = []string{"req-1", "Req-1", "adr-1"}
+	state.Review.Status = ProgressStatusSkipped
+	state.Executor.SourceSanity = []PhaseEvidenceCheck{{Kind: "source_sanity", Path: "pkg/feature.go", Status: "ok"}}
+
+	result := finalizePlanExecuteRunResult(root, state, ".idiom/plan-execute/sessions/acceptance_ids.json", false, io.Discard, planExecuteRunResultInput{ExitCode: 0})
+
+	if result.ExitCode != 0 {
+		t.Fatalf("ExitCode = %d, want success; completion=%#v", result.ExitCode, result.Completion)
+	}
+	if result.Completion == nil {
+		t.Fatalf("completion missing")
+	}
+	want := []string{"adr-1", "req-1"}
+	if !planExecuteTerminalStringSlicesEqual(result.Completion.AcceptanceEvidenceIDs, want) {
+		t.Fatalf("AcceptanceEvidenceIDs = %#v, want %#v", result.Completion.AcceptanceEvidenceIDs, want)
+	}
+	if !planExecuteTerminalStringSlicesEqual(result.Completion.RequiredAcceptanceEvidenceIDs, want) {
+		t.Fatalf("RequiredAcceptanceEvidenceIDs = %#v, want %#v", result.Completion.RequiredAcceptanceEvidenceIDs, want)
+	}
+}
+
+func TestFinalizeTerminalCompletionRejectsMissingRequiredAcceptanceIDs(t *testing.T) {
+	root := t.TempDir()
+	state := NewProgressState("required_acceptance_ids", "prompt", "", []string{"pkg/feature.go"}, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))
+	state.Phase = ProgressPhaseComplete
+	state.Status = ProgressStatusCompleted
+	state.ChangedPaths = []string{"pkg/feature.go"}
+	state.RequiredAcceptanceEvidenceIDs = []string{"req-1", "adr-1"}
+	state.Review.Status = ProgressStatusSkipped
+	state.Executor.SourceSanity = []PhaseEvidenceCheck{{Kind: "source_sanity", Path: "pkg/feature.go", Status: "ok"}}
+
+	result := finalizePlanExecuteRunResult(root, state, ".idiom/plan-execute/sessions/required_acceptance_ids.json", false, io.Discard, planExecuteRunResultInput{ExitCode: 0})
+
+	if result.ExitCode != 1 {
+		t.Fatalf("ExitCode = %d, want terminal contract failure; completion=%#v", result.ExitCode, result.Completion)
+	}
+	if result.Completion == nil {
+		t.Fatalf("completion missing")
+	}
+	if result.Completion.TerminalClass != PlanExecuteTerminalClassFailed {
+		t.Fatalf("TerminalClass = %q, want failed", result.Completion.TerminalClass)
+	}
+	if !planExecuteTerminalStringSliceContains(result.Completion.ValidationFailures, "acceptance_evidence_missing") {
+		t.Fatalf("validation failures missing acceptance_evidence_missing: %#v", result.Completion.ValidationFailures)
+	}
+	if len(result.Completion.AcceptanceEvidenceIDs) > 0 {
+		t.Fatalf("RequiredAcceptanceEvidenceIDs alone must not populate AcceptanceEvidenceIDs: got %#v", result.Completion.AcceptanceEvidenceIDs)
+	}
+	loaded, _, err := LoadProgressState(root, state.SessionID)
+	if err != nil {
+		t.Fatalf("LoadProgressState: %v", err)
+	}
+	if len(loaded.AcceptanceEvidenceIDs) > 0 {
+		t.Fatalf("downgraded progress state should not retain acceptance evidence: %#v", loaded.AcceptanceEvidenceIDs)
+	}
+}
+
+func TestFinalizeTerminalCompletionDoesNotMapAcceptanceIDsWithoutEvidence(t *testing.T) {
+	root := t.TempDir()
+	state := NewProgressState("required_acceptance_without_evidence", "prompt", "", nil, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))
+	state.Phase = ProgressPhaseComplete
+	state.Status = ProgressStatusCompleted
+	state.RequiredAcceptanceEvidenceIDs = []string{"req-1"}
+
+	result := finalizePlanExecuteRunResult(root, state, ".idiom/plan-execute/sessions/required_acceptance_without_evidence.json", false, io.Discard, planExecuteRunResultInput{ExitCode: 0})
+
+	if result.Completion != nil && len(result.Completion.AcceptanceEvidenceIDs) > 0 {
+		t.Fatalf("status-only completion should not map acceptance IDs: %#v", result.Completion.AcceptanceEvidenceIDs)
+	}
+}
+
+func TestFinalizeTerminalCompletionClearsAcceptanceIDsOnDirectFailure(t *testing.T) {
+	root := t.TempDir()
+	state := NewProgressState("direct_failure_acceptance_ids", "prompt", "", []string{"pkg/feature.go"}, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))
+	state.Phase = ProgressPhaseComplete
+	state.Status = ProgressStatusCompleted
+	state.ChangedPaths = []string{"pkg/feature.go"}
+	state.RequiredAcceptanceEvidenceIDs = []string{"req-1"}
+	state.AcceptanceEvidenceIDs = []string{"req-1"}
+	state.Review.Status = ProgressStatusSkipped
+	state.Executor.SourceSanity = []PhaseEvidenceCheck{{Kind: "source_sanity", Path: "pkg/feature.go", Status: "ok"}}
+
+	result := finalizePlanExecuteRunResult(root, state, ".idiom/plan-execute/sessions/direct_failure_acceptance_ids.json", false, io.Discard, planExecuteRunResultInput{ExitCode: 2, FailureKind: "executor_failed", FailureReason: "command failed"})
+
+	if result.ExitCode != 2 {
+		t.Fatalf("ExitCode = %d, want direct failure exit", result.ExitCode)
+	}
+	if result.Completion == nil || result.Completion.TerminalClass != PlanExecuteTerminalClassFailed {
+		t.Fatalf("completion was not failed: %#v", result.Completion)
+	}
+	if len(result.Completion.AcceptanceEvidenceIDs) > 0 {
+		t.Fatalf("failed terminal completion should not retain acceptance IDs: %#v", result.Completion.AcceptanceEvidenceIDs)
+	}
+	loaded, _, err := LoadProgressState(root, state.SessionID)
+	if err != nil {
+		t.Fatalf("LoadProgressState: %v", err)
+	}
+	if len(loaded.AcceptanceEvidenceIDs) > 0 {
+		t.Fatalf("failed progress state should not retain acceptance evidence: %#v", loaded.AcceptanceEvidenceIDs)
+	}
+	if loaded.Status != ProgressStatusFailed {
+		t.Fatalf("failed progress state status = %q, want failed", loaded.Status)
+	}
+	if loaded.FailureKind != "executor_failed" {
+		t.Fatalf("failed progress state failure kind = %q, want executor_failed", loaded.FailureKind)
+	}
+}
+
+func TestTerminalCompletionRejectsDegradedCppSourceSanity(t *testing.T) {
+	record := NormalizePlanExecuteTerminalCompletionRecord(PlanExecuteTerminalCompletionRecord{
+		Status:              ProgressStatusCompleted,
+		Phase:               ProgressPhaseComplete,
+		ReviewStatus:        ProgressStatusSkipped,
+		ChangedPaths:        []string{"native/src/machine.cpp"},
+		SourceSanity:        []PhaseEvidenceCheck{{Kind: "source_sanity", Path: "native/src/machine.cpp", Status: "ok", Summary: "Source sanity passed for 1 file(s) (1 generic fallback)"}},
+		ReviewRepairSkipped: true,
+	})
+
+	if !planExecuteTerminalStringSliceContains(record.ValidationFailures, "source_sanity_degraded:native/src/machine.cpp") {
+		t.Fatalf("degraded C++ source_sanity should reject terminal success, got %#v", record.ValidationFailures)
+	}
+}
+
 func TestRecoveryInvariantFailuresIncludeValidationFailurePaths(t *testing.T) {
 	failures := planExecuteRecoveryInvariantFailures(PlanExecuteTerminalCompletionRecord{
 		FailureInvariants: []PlanExecuteTerminalInvariant{{
@@ -298,6 +476,18 @@ func planExecuteTerminalStringSliceContains(values []string, target string) bool
 		}
 	}
 	return false
+}
+
+func planExecuteTerminalStringSlicesEqual(left []string, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestNormalizePlanExecuteTerminalCompletionRecordKeepsDegradedOutcomeIdempotent(t *testing.T) {

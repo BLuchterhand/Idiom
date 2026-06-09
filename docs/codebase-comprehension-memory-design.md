@@ -520,6 +520,22 @@ local models:
    tests and risks, and names unresolved gaps. It should remain the first
    consumer of stricter freshness policies.
 
+   **Compact projection and token efficiency.** The context_pack output is
+   projected into a model-facing compact form via a shared
+   `CompactPackProjection` type and budget-enforced renderer (see
+   [design-context-token-efficiency.md](design-context-token-efficiency.md)).
+   Full `PackResult` artifacts are always retained in `graph_views` and
+   `views/<pack_id>.json`; the compact projection is localization evidence
+   only, never source-body authority. The shared projection includes quality
+   metadata (`localization_confidence`, `source_owner_found`) across all
+   surfaces (plan-execute preloads, executor handoff, phase evidence, recovery,
+   sidecar, telemetry, and audit). Budget enforcement caps rendered token
+   count via progressive truncation with omitted-item counts. Cache-savings
+   metrics (`estimated_full_tokens_saved`, `estimated_rediscovery_tokens_avoided`)
+   are surfaced in `harness_audit`. The design was reviewed by a seven-role
+   bench and implemented incrementally as Atoms 1–8 of the harness optimization
+   program.
+
 7. **Runtime and history overlays.**
    `context_trace_pack`, blame/history collectors, and coverage data should add
    separate runtime/history nodes and edges. Static, runtime, and history facts

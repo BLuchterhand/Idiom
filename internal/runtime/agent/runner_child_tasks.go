@@ -45,7 +45,7 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 		agentName = "child"
 	}
 	prompt = r.prepareReadOnlyChildPrompt(prompt)
-	childPolicy := RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3, MaxModelCalls: 6, MaxDuration: 90 * time.Second}
+	childPolicy := RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3, MaxModelCalls: 5, MaxDuration: 75 * time.Second}
 	if workerruntime.RuntimeContractIsDirectAnswer(r.RuntimeBrief.Contract) {
 		childPolicy.MaxToolSteps = 4
 		childPolicy.MaxModelCalls = 6
@@ -527,20 +527,60 @@ func readOnlyChildTaskPermissionPolicy() ToolPermissionPolicy {
 }
 
 func workbranchChildTaskPermissionPolicy() ToolPermissionPolicy {
+	allowTool := func(tool string) ToolPermissionRule {
+		return ToolPermissionRule{Tool: tool, Decision: PermissionAllow}
+	}
+	allowShellPrefix := func(prefix string) ToolPermissionRule {
+		return ToolPermissionRule{Tool: "shell", CommandPrefix: prefix, Decision: PermissionAllow}
+	}
 	deny := func(tool string) ToolPermissionRule {
 		return ToolPermissionRule{Tool: tool, Decision: PermissionDeny}
 	}
 	denyShellPrefix := func(prefix string) ToolPermissionRule {
 		return ToolPermissionRule{Tool: "shell", CommandPrefix: prefix, Decision: PermissionDeny}
 	}
-	rules := []ToolPermissionRule{deny("task")}
-	for _, prefix := range workbranchDeniedShellPrefixes(workerruntime.RoleSpecFor("child_write")) {
+	denyShellContains := func(value string) ToolPermissionRule {
+		return ToolPermissionRule{Tool: "shell", CommandContains: value, Decision: PermissionDeny}
+	}
+	spec := workerruntime.RoleSpecFor("child_write")
+	workbranchAllowPrefixes := workbranchAllowedShellPrefixes()
+	rules := make([]ToolPermissionRule, 0, len(spec.AllowedTools)+len(workbranchAllowPrefixes)+len(workbranchDeniedShellPrefixes(spec))+2)
+	for _, tool := range spec.AllowedTools {
+		tool = strings.TrimSpace(tool)
+		if tool == "" || tool == "task" || tool == "shell" {
+			continue
+		}
+		rules = append(rules, allowTool(tool))
+	}
+	for _, prefix := range workbranchAllowPrefixes {
+		rules = append(rules, allowShellPrefix(prefix))
+	}
+	rules = append(rules, deny("task"))
+	for _, prefix := range workbranchDeniedShellPrefixes(spec) {
 		rules = append(rules, denyShellPrefix(prefix))
 	}
+	rules = append(rules, denyShellPrefix("git -C"))
+	for _, value := range workbranchDeniedShellFragments() {
+		rules = append(rules, denyShellContains(value))
+	}
 	return ToolPermissionPolicy{
-		Default: PermissionAllow,
+		Default: PermissionDeny,
 		Rules:   rules,
 	}
+}
+
+func workbranchAllowedShellPrefixes() []string {
+	return []string{
+		"go test", "go list",
+		"git status", "git diff", "git log", "git show", "git grep",
+		"pwd", "ls ",
+		"rg ", "grep ",
+		"cat ", "head ", "tail ", "wc ",
+	}
+}
+
+func workbranchDeniedShellFragments() []string {
+	return []string{"\n", "\r", "&&", "||", ";", "|", ">", "<", "$(", "`", "go env -w", "go env -u", "--output="}
 }
 
 func childAllowedTools() []string {

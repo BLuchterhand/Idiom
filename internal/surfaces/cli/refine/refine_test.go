@@ -13,7 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	briefcmd "idiom/internal/platform/util"
+	"idiom/internal/platform/util"
+	briefcmd "idiom/internal/surfaces/cli/brief"
 	"idiom/internal/surfaces/tui/app"
 )
 

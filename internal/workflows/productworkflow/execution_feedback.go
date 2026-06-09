@@ -69,16 +69,27 @@ type RankerLearningEvidenceSummary struct {
 }
 
 type RankerLearningEvidenceRequest struct {
-	Source   string                    `json:"source"`
-	Action   string                    `json:"action"`
-	Files    []string                  `json:"files"`
-	Score    float64                   `json:"score"`
-	TaskID   string                    `json:"task_id"`
-	CorpusID string                    `json:"corpus_id"`
-	ResultID string                    `json:"result_id"`
-	Reason   string                    `json:"reason"`
-	Verified bool                      `json:"verified"`
-	Evidence RankerLearningEvidenceRef `json:"evidence"`
+	Source               string                         `json:"source"`
+	Action               string                         `json:"action"`
+	Files                []string                       `json:"files"`
+	Score                float64                        `json:"score"`
+	TaskID               string                         `json:"task_id"`
+	CorpusID             string                         `json:"corpus_id"`
+	ResultID             string                         `json:"result_id"`
+	Reason               string                         `json:"reason"`
+	Verified             bool                           `json:"verified"`
+	Evidence             RankerLearningEvidenceRef      `json:"evidence"`
+	VerificationEvidence *RankerLearningVerificationEvidence `json:"verification_evidence,omitempty"`
+}
+
+// RankerLearningVerificationEvidence carries proof that edits were applied and
+// verified. It mirrors comprehension.VerificationEvidence in the product
+// workflow package so the review-only output includes the gate predicates.
+type RankerLearningVerificationEvidence struct {
+	EditPaths           []string `json:"edit_paths"`
+	VerificationCommand string   `json:"verification_command"`
+	VerificationPassed  bool     `json:"verification_passed"`
+	VerificationOutput  string   `json:"verification_output,omitempty"`
 }
 
 type RankerLearningEvidenceRef struct {
@@ -1087,6 +1098,12 @@ func AdaptExecutionFeedbackToRankerLearning(input RankerLearningEvidenceInput) R
 				"verification_command_count": float64(result.Summary.VerificationCommandCount),
 				"tdd_obligation_count":       float64(result.Summary.TDDObligationCount),
 			},
+		},
+		VerificationEvidence: &RankerLearningVerificationEvidence{
+			EditPaths:           append([]string(nil), result.Summary.ChangedPaths...),
+			VerificationCommand: strings.Join(result.Summary.VerificationCommands, "; "),
+			VerificationPassed:  executionFeedbackPassingStatus(summary.Verification.Status),
+			VerificationOutput:  summary.Verification.Status,
 		},
 	}
 	result.NextValidAction = "review bounded ranker-learning evidence with the existing gate; no ranker promotion was applied"

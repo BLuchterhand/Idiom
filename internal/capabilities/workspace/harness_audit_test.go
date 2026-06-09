@@ -547,6 +547,143 @@ func TestBuildContextCacheAuditReportsNonCurrentRows(t *testing.T) {
 	}
 }
 
+// TestContextCacheAuditIncludesSavingsFields verifies that the
+// harness audit context cache report includes the Atom 6 token/cost
+// savings fields.
+func TestContextCacheAuditIncludesSavingsFields(t *testing.T) {
+	// buildContextCacheAudit reads from ReadViewStats which uses
+	// the process-local atomic counters. The counters are populated
+	// by RenderCompactPackProjection (full tokens saved) and
+	// LoadView/LoadViewByIDStatus (rediscovery avoided).
+	// Verify the fields are present with expected types even when
+	// the SQLite store is absent (zero values).
+	root := t.TempDir()
+	cache := buildContextCacheAudit(root)
+	if cache == nil {
+		t.Skip("no SQLite store available; savings counters reported as zero via ReadViewStats")
+	}
+	// Fields must be present (zero when no activity).
+	if cache.EstimatedFullTokensSaved < 0 {
+		t.Errorf("EstimatedFullTokensSaved must be >= 0, got %d", cache.EstimatedFullTokensSaved)
+	}
+	if cache.EstimatedRediscoveryTokensAvoided < 0 {
+		t.Errorf("EstimatedRediscoveryTokensAvoided must be >= 0, got %d", cache.EstimatedRediscoveryTokensAvoided)
+	}
+	t.Logf("savings fields: full_tokens_saved=%d, rediscovery_avoided=%d",
+		cache.EstimatedFullTokensSaved, cache.EstimatedRediscoveryTokensAvoided)
+}
+
+// TestHarnessAuditSummaryIncludesContextCacheMetrics verifies that
+// the audit summary string includes context cache metrics with the
+// new savings fields (Atom 6).
+func TestHarnessAuditSummaryIncludesContextCacheMetrics(t *testing.T) {
+	summary := harnessAuditSummary(harnessAuditReport{
+		Purpose: "behavior",
+		ContextCache: &harnessAuditContextCache{
+			Rows:                          5,
+			SessionHits:                   3,
+			HitRate:                       0.6,
+			EstimatedFullTokensSaved:      1234,
+			EstimatedRediscoveryTokensAvoided: 5678,
+		},
+	})
+	for _, want := range []string{
+		"context_cache_rows=5",
+		"hits=3",
+		"hit_rate=60%",
+		"tokens_saved=1234",
+		"rediscovery_avoided=5678",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("audit summary missing %q: %s", want, summary)
+		}
+	}
+}
+
+// TestContextCacheSavingsFinding verifies that the context_cache_savings
+// finding is emitted when savings metrics are non-zero, and that the
+// finding ID, severity, and evidence fields are correctly structured.
+func TestContextCacheSavingsFinding(t *testing.T) {
+	tests := []struct {
+		name                         string
+		cache                        harnessAuditContextCache
+		expectSavingsFinding         bool
+		expectContains               []string
+	}{
+		{
+			name: "both savings counters non-zero",
+			cache: harnessAuditContextCache{
+				Rows:                            5,
+				SessionHits:                     3,
+				SessionMisses:                   2,
+				EstimatedFullTokensSaved:        1000,
+				EstimatedRediscoveryTokensAvoided: 2000,
+				CurrentRows:                     5,
+			},
+			expectSavingsFinding: true,
+			expectContains:       []string{"tokens_saved=1000", "rediscovery_avoided=2000"},
+		},
+		{
+			name: "only token savings non-zero",
+			cache: harnessAuditContextCache{
+				Rows:                      5,
+				SessionHits:               3,
+				SessionMisses:             2,
+				EstimatedFullTokensSaved:  1000,
+				CurrentRows:               5,
+			},
+			expectSavingsFinding: true,
+			expectContains:       []string{"tokens_saved=1000"},
+		},
+		{
+			name: "only rediscovery savings non-zero",
+			cache: harnessAuditContextCache{
+				Rows:                                5,
+				SessionHits:                         3,
+				SessionMisses:                       2,
+				EstimatedRediscoveryTokensAvoided:   2000,
+				CurrentRows:                         5,
+			},
+			expectSavingsFinding: true,
+			expectContains:       []string{"rediscovery_avoided=2000"},
+		},
+		{
+			name: "zero savings — no finding",
+			cache: harnessAuditContextCache{
+				Rows:           5,
+				SessionHits:    2,
+				SessionMisses:  3,
+				CurrentRows:    5,
+			},
+			expectSavingsFinding: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			findings := contextCacheFindings(&tt.cache)
+			savingsFinding := harnessAuditFindingByID(findings, "context_cache_savings")
+
+			if tt.expectSavingsFinding && savingsFinding == nil {
+				t.Fatal("expected context_cache_savings finding")
+			}
+			if !tt.expectSavingsFinding && savingsFinding != nil {
+				t.Fatalf("unexpected context_cache_savings finding: %+v", savingsFinding)
+			}
+			if savingsFinding != nil {
+				if savingsFinding.Severity != "info" {
+					t.Errorf("savings finding severity = %q, want info", savingsFinding.Severity)
+				}
+				for _, want := range tt.expectContains {
+					if !strings.Contains(savingsFinding.Recommendation, want) {
+						t.Errorf("savings recommendation missing %q: %s", want, savingsFinding.Recommendation)
+					}
+				}
+			}
+		})
+	}
+}
+
 func harnessAuditFindingByID(findings []harnessAuditFinding, id string) *harnessAuditFinding {
 	for i := range findings {
 		if findings[i].ID == id {

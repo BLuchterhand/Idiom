@@ -31,32 +31,34 @@ const (
 )
 
 type ProgressState struct {
-	SchemaVersion        string               `json:"schema_version"`
-	SessionID            string               `json:"session_id"`
-	CreatedAt            string               `json:"created_at"`
-	UpdatedAt            string               `json:"updated_at"`
-	PromptSHA256         string               `json:"prompt_sha256,omitempty"`
-	PromptFile           string               `json:"prompt_file,omitempty"`
-	Phase                string               `json:"phase"`
-	Status               string               `json:"status"`
-	FailureKind          string               `json:"failure_kind,omitempty"`
-	FailureReason        string               `json:"failure_reason,omitempty"`
-	PlanPath             string               `json:"plan_path,omitempty"`
-	PlanID               string               `json:"plan_id,omitempty"`
-	PackID               string               `json:"pack_id,omitempty"`
-	RequiredEditPaths    []string             `json:"required_edit_paths,omitempty"`
-	AllowedEditPaths     []string             `json:"allowed_edit_paths,omitempty"`
-	WriteAllowedPaths    []string             `json:"write_allowed_paths,omitempty"`
-	WriteAllowedExplicit bool                 `json:"write_allowed_explicit,omitempty"`
-	ScopeContractID      string               `json:"scope_contract_id,omitempty"`
-	ScopeContractHash    string               `json:"scope_contract_hash,omitempty"`
-	EditSetObligations   EditSetObligations   `json:"edit_set_obligations,omitempty"`
-	ChangedPaths         []string             `json:"changed_paths,omitempty"`
-	TotalEdits           int                  `json:"total_edits,omitempty"`
-	Edits                []ProgressEdit       `json:"edits,omitempty"`
-	Executor             ProgressExecutor     `json:"executor,omitempty"`
-	Review               ProgressReviewRepair `json:"review_repair,omitempty"`
-	ReviewBaseline       ReviewRepairBaseline `json:"review_baseline,omitempty"`
+	SchemaVersion                 string               `json:"schema_version"`
+	SessionID                     string               `json:"session_id"`
+	CreatedAt                     string               `json:"created_at"`
+	UpdatedAt                     string               `json:"updated_at"`
+	PromptSHA256                  string               `json:"prompt_sha256,omitempty"`
+	PromptFile                    string               `json:"prompt_file,omitempty"`
+	Phase                         string               `json:"phase"`
+	Status                        string               `json:"status"`
+	FailureKind                   string               `json:"failure_kind,omitempty"`
+	FailureReason                 string               `json:"failure_reason,omitempty"`
+	PlanPath                      string               `json:"plan_path,omitempty"`
+	PlanID                        string               `json:"plan_id,omitempty"`
+	PackID                        string               `json:"pack_id,omitempty"`
+	RequiredEditPaths             []string             `json:"required_edit_paths,omitempty"`
+	AllowedEditPaths              []string             `json:"allowed_edit_paths,omitempty"`
+	WriteAllowedPaths             []string             `json:"write_allowed_paths,omitempty"`
+	WriteAllowedExplicit          bool                 `json:"write_allowed_explicit,omitempty"`
+	ScopeContractID               string               `json:"scope_contract_id,omitempty"`
+	ScopeContractHash             string               `json:"scope_contract_hash,omitempty"`
+	RequiredAcceptanceEvidenceIDs []string             `json:"required_acceptance_evidence_ids,omitempty"`
+	AcceptanceEvidenceIDs         []string             `json:"acceptance_evidence_ids,omitempty"`
+	EditSetObligations            EditSetObligations   `json:"edit_set_obligations,omitempty"`
+	ChangedPaths                  []string             `json:"changed_paths,omitempty"`
+	TotalEdits                    int                  `json:"total_edits,omitempty"`
+	Edits                         []ProgressEdit       `json:"edits,omitempty"`
+	Executor                      ProgressExecutor     `json:"executor,omitempty"`
+	Review                        ProgressReviewRepair `json:"review_repair,omitempty"`
+	ReviewBaseline                ReviewRepairBaseline `json:"review_baseline,omitempty"`
 }
 
 type ProgressEdit struct {
@@ -460,6 +462,9 @@ func ProgressStateEventFields(state ProgressState, statePath string) map[string]
 	if state.ScopeContractHash != "" {
 		fields["scope_contract_hash"] = state.ScopeContractHash
 	}
+	if len(state.AcceptanceEvidenceIDs) > 0 {
+		fields["acceptance_evidence_ids"] = append([]string(nil), state.AcceptanceEvidenceIDs...)
+	}
 	if len(state.ChangedPaths) > 0 {
 		fields["changed_paths"] = append([]string(nil), state.ChangedPaths...)
 	}
@@ -541,6 +546,8 @@ func sanitizeProgressState(state *ProgressState) {
 	state.WriteAllowedPaths = mergePlanExecutePaths(state.WriteAllowedPaths)
 	state.ScopeContractID = strings.TrimSpace(state.ScopeContractID)
 	state.ScopeContractHash = strings.TrimSpace(state.ScopeContractHash)
+	state.RequiredAcceptanceEvidenceIDs = normalizePlanExecuteTerminalStableIDs(state.RequiredAcceptanceEvidenceIDs)
+	state.AcceptanceEvidenceIDs = normalizePlanExecuteTerminalStableIDs(state.AcceptanceEvidenceIDs)
 	state.ChangedPaths = mergePlanExecutePaths(state.ChangedPaths)
 	state.EditSetObligations = state.EditSetObligations.Normalized()
 	state.Executor.Failures = sanitizeProgressReasons(state.Executor.Failures)

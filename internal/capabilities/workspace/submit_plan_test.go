@@ -184,6 +184,27 @@ func TestSubmitPlanRejectsUnsupportedProofClaimsAtIntake(t *testing.T) {
 	}
 }
 
+func TestSubmitPlanRejectsSetupOnlyTestEditsAtIntake(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "native/tests/test_fluid_brewery_cascade.cpp", "TEST_CASE(\"FET-3\") {\n    CHECK(true);\n}\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "add a real behavior test",
+		Edits: []PlanEdit{{
+			Path:    "native/tests/test_fluid_brewery_cascade.cpp",
+			OldText: "TEST_CASE(\"FET-3\") {\n    CHECK(true);\n}\n",
+			NewText: "TEST_CASE(\"FET-3\") {\n    // Setup-only: verify preconditions before behavior is implemented.\n    CHECK(cistern_exists);\n}\n",
+			Purpose: "add coverage",
+		}},
+	})
+	if !strings.Contains(result.Error, "unsupported proof claim") || !strings.Contains(result.Error, "verify precondition") {
+		t.Fatalf("submit_plan should reject setup-only/precondition-only test edits, got %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("rejected submit_plan should not persist last.plan.json; stat err=%v", err)
+	}
+}
+
 func TestSubmitPlanUnsupportedProofClaimsIgnoreProseFiles(t *testing.T) {
 	mgr, root := newSubmitPlanTestManager(t)
 	writeSubmitPlanFixture(t, root, "docs/review.md", "before\n")
@@ -469,8 +490,8 @@ func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
 	if !strings.HasPrefix(provenance.FileSHA256, "sha256:") || !strings.HasPrefix(provenance.AnchorSHA256, "sha256:") {
 		t.Fatalf("anchor provenance should include file and old_text digests: %#v", provenance)
 	}
-	if artifact.Edits[1].AnchorProvenance != nil {
-		t.Fatalf("line-range edit should not carry substring anchor provenance: %#v", artifact.Edits[1].AnchorProvenance)
+	if artifact.Edits[1].AnchorProvenance == nil {
+		t.Fatalf("line-range edit should persist harness-owned anchor provenance")
 	}
 	if artifact.Rationale == "" {
 		t.Fatalf("rationale should be persisted")
@@ -527,6 +548,29 @@ func TestValidatePlanEditAnchorProvenanceRejectsStaleFileState(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "anchor provenance stale") || !strings.Contains(err.Error(), "file fingerprint changed") {
 		t.Fatalf("expected stale file fingerprint error, got %v", err)
+	}
+}
+
+func TestValidatePlanEditAnchorProvenanceCoversRangeAndInsertAnchors(t *testing.T) {
+	root := t.TempDir()
+	writeSubmitPlanFixture(t, root, "a.txt", "one\ntwo\nthree\n")
+	edits, err := AttachPlanEditAnchorProvenance(root, []PlanEdit{
+		{Path: "a.txt", StartLine: 2, EndLine: 2, Content: "TWO\n"},
+		{Path: "a.txt", InsertAfterLine: 3, Content: "four\n"},
+	})
+	if err != nil {
+		t.Fatalf("attach anchor provenance: %v", err)
+	}
+	if edits[0].AnchorProvenance == nil || edits[1].AnchorProvenance == nil {
+		t.Fatalf("range and insert edits should carry provenance: %#v", edits)
+	}
+	writeSubmitPlanFixture(t, root, "a.txt", "one\nTWO\nthree\n")
+	if err := ValidatePlanEditAnchorProvenance(root, edits[0]); err == nil {
+		t.Fatalf("expected stale range provenance rejection")
+	}
+	writeSubmitPlanFixture(t, root, "a.txt", "one\ntwo\nTHREE\n")
+	if err := ValidatePlanEditAnchorProvenance(root, edits[1]); err == nil {
+		t.Fatalf("expected stale insert provenance rejection")
 	}
 }
 

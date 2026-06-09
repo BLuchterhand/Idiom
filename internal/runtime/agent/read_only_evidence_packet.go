@@ -37,6 +37,7 @@ func buildReadOnlyEvidencePacket(objective string, answer string, results []work
 	if readOnlyToolControlGuidanceText(answer) {
 		answer = ""
 	}
+	answer = sanitizeReadOnlyEvidencePacketAnswer(answer)
 	sourceBodyPaths := readOnlyEvidencePacketSourceBodyPaths(results)
 	candidatePaths := readOnlyEvidencePacketCandidatePaths(results)
 	inspectedPaths := readOnlyEvidencePacketInspectedPaths(sourceBodyPaths, candidatePaths, answer)
@@ -54,6 +55,26 @@ func buildReadOnlyEvidencePacket(objective string, answer string, results []work
 	}
 	packet = normalizeReadOnlyEvidencePacket(packet)
 	return packet, readOnlyEvidencePacketHasContent(packet)
+}
+
+func sanitizeReadOnlyEvidencePacketAnswer(answer string) string {
+	if !readOnlyEvidencePacketPartialNonAnswer(answer) {
+		return answer
+	}
+	var kept []string
+	for _, raw := range strings.Split(answer, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || readOnlyEvidencePacketTransportLine(line) {
+			continue
+		}
+		kept = append(kept, raw)
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
+}
+
+func readOnlyEvidencePacketPartialNonAnswer(answer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(answer))
+	return strings.HasPrefix(lower, "partial findings from this turn")
 }
 
 func readOnlyEvidencePacketToolResult(result workspace.ToolResult, packet ReadOnlyEvidencePacket) workspace.ToolResult {

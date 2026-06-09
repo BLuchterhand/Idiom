@@ -2242,7 +2242,13 @@ func compactContextPackOutputForModel(output string) string {
 	if len(result.CandidateFiles) == 0 && len(result.CandidateSymbols) == 0 && len(result.Tests) == 0 {
 		return ""
 	}
-	projection := comprehension.NewCompactPackProjection(result)
+	// Use the pre-computed CompactProjection from Pack() when available;
+	// fall back to building a fresh projection for pre-Atom-5 cached
+	// packs that lack the field.
+	projection := result.CompactProjection
+	if projection.PackID == "" {
+		projection = comprehension.NewCompactPackProjection(result)
+	}
 	rendered, _ := comprehension.RenderCompactPackProjection(projection, result.BudgetTokens)
 
 	// Preserve artifact_path from the full PackResult for operator

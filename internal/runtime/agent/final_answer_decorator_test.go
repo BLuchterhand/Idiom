@@ -1605,3 +1605,49 @@ func TestDeterministicNoToolsAnswerUsesSourceBodyWhenObjectiveIsConcrete(t *test
 		t.Fatalf("concrete objective and source body should not collapse to blocker:\n%s", got)
 	}
 }
+
+func TestDeterministicNoToolsAnswerCombinesReadFileFactsForRedactedMetadata(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "What does the debug log redacted mode do?",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/evidence/transcript/debuglog.go lines 1-50",
+		Output: strings.Join([]string{
+			"1:type DebugLogMode string",
+			"2:const DebugLogModeRedacted DebugLogMode = \"redacted\"",
+			"3:type PromptSource struct {",
+			"4:\tPath string",
+			"5:}",
+		}, "\n"),
+	}, {
+		Tool:    "read_file",
+		Summary: "Read f1 internal/evidence/transcript/debuglog.go lines 218-240",
+		Output: strings.Join([]string{
+			"218:func (l *DebugLogger) LogSessionStart(opts DebugLoggerOptions) {",
+			"219:\trecord := map[string]any{}",
+			"220:\trecord[\"mode\"] = string(l.mode)",
+			"221:\trecord[\"prompt_sources\"] = l.sanitizePromptSources(opts.PromptSources)",
+			"222:\trecord[\"workspace_root\"] = l.sanitizeText(opts.WorkspaceRoot)",
+			"223:\tif l.mode == DebugLogModeFull {",
+			"224:\t\trecord[\"system_prompt\"] = opts.SystemPrompt",
+			"225:\t} else if digest := promptDigest(opts.SystemPrompt); digest != \"\" {",
+			"226:\t\trecord[\"system_prompt_digest\"] = digest",
+			"227:\t}",
+			"228:}",
+		}, "\n"),
+	}}
+
+	got, ok := deterministicNoToolsAnswer("main", brief, results)
+	if !ok {
+		t.Fatal("expected deterministic source-body answer")
+	}
+	for _, want := range []string{"redacted", "debug log", "internal/evidence/transcript/debuglog.go", "secret", "path", "metadata"} {
+		if !strings.Contains(strings.ToLower(got), strings.ToLower(want)) {
+			t.Fatalf("deterministic answer missing %q:\n%s", want, got)
+		}
+	}
+}

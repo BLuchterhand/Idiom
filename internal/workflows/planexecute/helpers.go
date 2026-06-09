@@ -2662,7 +2662,7 @@ func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *Plan
 	cache := make(map[string][]byte)
 	for i, edit := range plan.Edits {
 		oldText := strings.TrimSpace(edit.OldText)
-		if oldText == "" {
+		if !workspace.PlanEditNeedsAnchorProvenance(edit) {
 			continue
 		}
 		rawPath := strings.TrimSpace(edit.Path)
@@ -2688,9 +2688,11 @@ func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *Plan
 			cache[abs] = body
 		}
 		current := string(body)
-		if plan.SchemaVersion == workspace.PlanArtifactSchemaVersion && edit.AnchorProvenance == nil {
-			if anchored, err := workspace.AttachPlanEditAnchorProvenance(workspaceRoot, []workspace.PlanEdit{edit}); err == nil && len(anchored) == 1 {
-				edit = anchored[0]
+		if workspace.PlanArtifactRequiresSubmitPlanAnchorProvenance(plan) && edit.AnchorProvenance == nil {
+			return &PlanEditPreflightMismatch{
+				Index:  i,
+				Path:   path,
+				Reason: "current-schema plan edit is missing submit_plan anchor provenance",
 			}
 		}
 		if err := workspace.ValidatePlanEditAnchorProvenance(workspaceRoot, edit); err != nil {
@@ -2699,6 +2701,9 @@ func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *Plan
 				Path:   path,
 				Reason: err.Error(),
 			}
+		}
+		if oldText == "" {
+			continue
 		}
 		matchCount := strings.Count(current, edit.OldText)
 		if matchCount == 0 {

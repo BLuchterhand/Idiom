@@ -11,6 +11,7 @@ import (
 	"idiom/internal/contracts/autonomy"
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/util"
+	coreplanexecute "idiom/internal/workflows/planexecute"
 )
 
 type PromptRunner func(prompt string, taskFamily string) (string, error)
@@ -124,6 +125,9 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 				State:  state,
 				Events: []Event{{Type: "idiom.feature_planner.plan_contract_blocked", SessionID: state.SessionID, Message: err.Error()}},
 			}, nil
+		}
+		for _, delta := range StandalonePromptNewFileAuthorityDeltas(parsed.Plan, opts.Prompt, opts.WorkspaceRoot, opts.Now) {
+			upsertPlanAuthorityDelta(&state, delta)
 		}
 		contract := StampPlanAuthorityContract(&parsed.Plan, state.AuthorityDeltas)
 		if err := ValidatePlanStandaloneWorkspaceContext(parsed.Plan, StandaloneWorkspaceContext{
@@ -243,6 +247,7 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 			}
 			b.WriteString("Set tdd_contract.obligations[].required_before to the exact scalar string \"implementation\". Do not use an array for required_before.\n")
 			b.WriteString("For each atom, planned_tdd_snapshot.obligation_ids must exactly match test_first.obligation_refs, planned_tdd_snapshot.test_commands must exactly match test_first.commands, and planned_tdd_snapshot.test_artifact_paths must exactly match test_first.test_artifact_paths.\n")
+			b.WriteString("planned_tdd_snapshot.snapshot_id and snapshot_digest are harness evidence identities; do not copy placeholder/example values or invent fake digests.\n")
 			b.WriteString("Repo grounding is required: required_edit_paths and allowed_edit_paths must come from Files to modify, sibling files inside those existing package roots, or authorized new package roots.\n")
 			b.WriteString("Every path listed under Files to modify is required implementation scope: cover each one in atom.required_edit_paths across the submitted plan. For a one-atom dispatch, put every Files to modify path in that atom.required_edit_paths. Do not demote Files to modify into allowed_edit_paths.\n")
 			b.WriteString("When test_first.baseline_required is true or a TDD obligation is required before implementation, include every grounded test_first.test_artifact_paths entry in required_edit_paths; these tests are required coverage, not optional allowed scope.\n")
@@ -262,6 +267,7 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 		b.WriteString(standaloneSubmitFeaturePlanShape())
 		b.WriteString("Set tdd_contract.obligations[].required_before to the scalar string \"implementation\". Do not use an array for required_before.\n")
 		b.WriteString("For each atom, planned_tdd_snapshot.obligation_ids must exactly match test_first.obligation_refs, planned_tdd_snapshot.test_commands must exactly match test_first.commands, and planned_tdd_snapshot.test_artifact_paths must exactly match test_first.test_artifact_paths.\n")
+		b.WriteString("planned_tdd_snapshot.snapshot_id and snapshot_digest are harness evidence identities; do not copy placeholder/example values or invent fake digests.\n")
 		b.WriteString("When test_first.baseline_required is true or a TDD obligation is required before implementation, include every test_first.test_artifact_paths entry in required_edit_paths; these tests are required coverage, not optional allowed scope.\n")
 		b.WriteString("No upstream design docs are available. Use acceptance criteria strings in sdd_contract.acceptance instead of file paths.\n")
 		b.WriteString("Do NOT invent file paths like docs/path.md — acceptance criteria strings are valid and preferred when no docs exist.\n")
@@ -606,9 +612,13 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 		if err := json.Unmarshal([]byte(trimmed), &envelope); err != nil {
 			return rejectUnverifiedCompletion(state, atom, "implementor returned malformed JSON completion envelope: "+err.Error())
 		}
+		var envelopeFields map[string]any
+		_ = json.Unmarshal([]byte(trimmed), &envelopeFields)
+		applyRegisteredAcceptanceEvidenceTrust(&envelope, envelopeFields)
 		tool := strings.TrimSpace(envelope.Tool)
 		if tool == ToolPlanExecuteComplete {
 			completion := planExecuteCompletionFromEnvelope(envelope)
+			completion = bindPlanExecuteCompletionToActiveAuthority(completion, *state, *atom)
 			if ok, reason := planExecuteCompletionIsSuccess(completion, *state, *atom); !ok {
 				return rejectPlanExecuteCompletion(state, atom, completion, reason)
 			}
@@ -677,6 +687,19 @@ func openImplementorPlannerQuestion(state *FeatureState, atom *FeatureAtomState,
 	}}
 }
 
+func applyRegisteredAcceptanceEvidenceTrust(envelope *implementorOutputEnvelope, fields map[string]any) {
+	if envelope == nil {
+		return
+	}
+	envelope.AcceptanceEvidenceTrusted = planExecuteAcceptanceEvidenceTrustRegistered(fields)
+	if nestedFields, ok := fields["plan_execute"].(map[string]any); ok && envelope.PlanExecute != nil {
+		envelope.PlanExecute.AcceptanceEvidenceTrusted = planExecuteAcceptanceEvidenceTrustRegistered(nestedFields)
+	}
+	if nestedFields, ok := fields["nested"].(map[string]any); ok && envelope.Nested != nil {
+		envelope.Nested.AcceptanceEvidenceTrusted = planExecuteAcceptanceEvidenceTrustRegistered(nestedFields)
+	}
+}
+
 type implementorOutputEnvelope struct {
 	Tool                         string                                  `json:"tool"`
 	LaneFamily                   string                                  `json:"lane_family"`
@@ -698,6 +721,8 @@ type implementorOutputEnvelope struct {
 	ContractID                   string                                  `json:"contract_id"`
 	ContractHash                 string                                  `json:"contract_hash"`
 	SnapshotHash                 string                                  `json:"snapshot_hash"`
+	ScopeContractID              string                                  `json:"scope_contract_id"`
+	ScopeContractHash            string                                  `json:"scope_contract_hash"`
 	ActiveContractID             string                                  `json:"active_contract_id"`
 	ActiveContractHash           string                                  `json:"active_contract_hash"`
 	ContractSnapshotHash         string                                  `json:"contract_snapshot_hash"`
@@ -706,6 +731,9 @@ type implementorOutputEnvelope struct {
 	SourceSatisfiedEvidencePaths []string                                `json:"source_satisfied_evidence_paths"`
 	SourceSatisfiedEvidence      []PlanExecuteSourceSatisfiedEvidenceRef `json:"source_satisfied_evidence"`
 	ChangedPaths                 []string                                `json:"changed_paths"`
+	SourceSanity                 []coreplanexecute.PhaseEvidenceCheck    `json:"source_sanity"`
+	AcceptanceEvidenceIDs        []string                                `json:"acceptance_evidence_ids"`
+	AcceptanceEvidenceTrusted    bool                                    `json:"acceptance_evidence_trusted"`
 	ValidationFailures           []string                                `json:"validation_failures"`
 	PlanExecute                  *nestedPlanExecuteCompletion            `json:"plan_execute,omitempty"`
 	Nested                       *nestedPlanExecuteCompletion            `json:"nested,omitempty"`
@@ -733,6 +761,8 @@ type nestedPlanExecuteCompletion struct {
 	ContractID                   string                                  `json:"contract_id"`
 	ContractHash                 string                                  `json:"contract_hash"`
 	SnapshotHash                 string                                  `json:"snapshot_hash"`
+	ScopeContractID              string                                  `json:"scope_contract_id"`
+	ScopeContractHash            string                                  `json:"scope_contract_hash"`
 	ActiveContractID             string                                  `json:"active_contract_id"`
 	ActiveContractHash           string                                  `json:"active_contract_hash"`
 	ContractSnapshotHash         string                                  `json:"contract_snapshot_hash"`
@@ -741,6 +771,9 @@ type nestedPlanExecuteCompletion struct {
 	SourceSatisfiedEvidencePaths []string                                `json:"source_satisfied_evidence_paths"`
 	SourceSatisfiedEvidence      []PlanExecuteSourceSatisfiedEvidenceRef `json:"source_satisfied_evidence"`
 	ChangedPaths                 []string                                `json:"changed_paths"`
+	SourceSanity                 []coreplanexecute.PhaseEvidenceCheck    `json:"source_sanity"`
+	AcceptanceEvidenceIDs        []string                                `json:"acceptance_evidence_ids"`
+	AcceptanceEvidenceTrusted    bool                                    `json:"acceptance_evidence_trusted"`
 	ValidationFailures           []string                                `json:"validation_failures"`
 }
 
@@ -764,11 +797,16 @@ type planExecuteCompletion struct {
 	ContractID                   string
 	ContractHash                 string
 	SnapshotHash                 string
+	ScopeContractID              string
+	ScopeContractHash            string
 	RequiredEditPaths            []string
 	AllowedEditPaths             []string
 	SourceSatisfiedEvidencePaths []string
 	SourceSatisfiedEvidence      []PlanExecuteSourceSatisfiedEvidenceRef
 	ChangedPaths                 []string
+	SourceSanity                 []coreplanexecute.PhaseEvidenceCheck
+	AcceptanceEvidenceIDs        []string
+	AcceptanceEvidenceTrusted    bool
 	ValidationFailures           []string
 }
 
@@ -781,6 +819,35 @@ func planExecuteCompletionFromEnvelope(envelope implementorOutputEnvelope) planE
 		completion.overlay(*envelope.Nested)
 	}
 	return completion.normalized()
+}
+
+func bindPlanExecuteCompletionToActiveAuthority(completion planExecuteCompletion, state FeatureState, atom FeatureAtomState) planExecuteCompletion {
+	completion = completion.normalized()
+	if completion.ContractID == "" {
+		completion.ContractID = firstActiveRunAuthorityString(state, atom.ID,
+			func(run ActiveRun) string { return run.InvocationContractID },
+			atom.RuntimeEnvelope.ContractID,
+		)
+	}
+	if completion.SnapshotHash == "" {
+		completion.SnapshotHash = firstActiveRunAuthorityString(state, atom.ID,
+			func(run ActiveRun) string { return run.RuntimeEnvelopeID },
+			atom.RuntimeEnvelope.ProtocolHash,
+		)
+	}
+	return completion.normalized()
+}
+
+func firstActiveRunAuthorityString(state FeatureState, atomID string, selector func(ActiveRun) string, fallback string) string {
+	for _, run := range state.ActiveRuns {
+		if strings.TrimSpace(run.AtomID) != strings.TrimSpace(atomID) {
+			continue
+		}
+		if value := strings.TrimSpace(selector(run)); value != "" {
+			return value
+		}
+	}
+	return strings.TrimSpace(fallback)
 }
 
 func (completion *planExecuteCompletion) overlay(nested nestedPlanExecuteCompletion) {
@@ -806,11 +873,16 @@ func (completion *planExecuteCompletion) overlay(nested nestedPlanExecuteComplet
 			ContractID:                   FirstNonEmptyString(nested.ContractID, nested.ActiveContractID),
 			ContractHash:                 FirstNonEmptyString(nested.ContractHash, nested.ActiveContractHash),
 			SnapshotHash:                 FirstNonEmptyString(nested.SnapshotHash, nested.ContractSnapshotHash),
+			ScopeContractID:              nested.ScopeContractID,
+			ScopeContractHash:            nested.ScopeContractHash,
 			RequiredEditPaths:            nested.RequiredEditPaths,
 			AllowedEditPaths:             nested.AllowedEditPaths,
 			SourceSatisfiedEvidencePaths: nested.SourceSatisfiedEvidencePaths,
 			SourceSatisfiedEvidence:      nested.SourceSatisfiedEvidence,
 			ChangedPaths:                 nested.ChangedPaths,
+			SourceSanity:                 nested.SourceSanity,
+			AcceptanceEvidenceIDs:        nested.AcceptanceEvidenceIDs,
+			AcceptanceEvidenceTrusted:    nested.AcceptanceEvidenceTrusted,
 			ValidationFailures:           nested.ValidationFailures,
 		},
 	)
@@ -845,11 +917,21 @@ func (completion planExecuteCompletion) normalized() planExecuteCompletion {
 	completion.ContractID = strings.TrimSpace(completion.ContractID)
 	completion.ContractHash = strings.TrimSpace(completion.ContractHash)
 	completion.SnapshotHash = strings.TrimSpace(completion.SnapshotHash)
+	if completion.SnapshotHash == "" {
+		completion.SnapshotHash = completion.ContractHash
+	}
+	completion.ScopeContractID = strings.TrimSpace(completion.ScopeContractID)
+	completion.ScopeContractHash = strings.TrimSpace(completion.ScopeContractHash)
 	completion.RequiredEditPaths = normalizeCompletionStringList(completion.RequiredEditPaths)
 	completion.AllowedEditPaths = normalizeCompletionStringList(completion.AllowedEditPaths)
 	completion.SourceSatisfiedEvidencePaths = normalizeCompletionStringList(completion.SourceSatisfiedEvidencePaths)
 	completion.SourceSatisfiedEvidence = normalizePlanExecuteSourceSatisfiedEvidenceRefs(completion.SourceSatisfiedEvidence)
 	completion.ChangedPaths = normalizeCompletionStringList(completion.ChangedPaths)
+	completion.SourceSanity = normalizeCompletionPhaseEvidenceChecks(completion.SourceSanity)
+	completion.AcceptanceEvidenceIDs = normalizeCompletionStableIDList(completion.AcceptanceEvidenceIDs)
+	if len(completion.AcceptanceEvidenceIDs) == 0 || !planExecuteCompletionSourceTrustsAcceptanceEvidence(completion.CompletionSource) {
+		completion.AcceptanceEvidenceTrusted = false
+	}
 	completion.ValidationFailures = normalizeCompletionStringList(completion.ValidationFailures)
 	return completion
 }
@@ -875,11 +957,16 @@ func planExecuteCompletionSummaryFromEnvelope(envelope implementorOutputEnvelope
 		ContractID:                   FirstNonEmptyString(envelope.ContractID, envelope.ActiveContractID),
 		ContractHash:                 FirstNonEmptyString(envelope.ContractHash, envelope.ActiveContractHash),
 		SnapshotHash:                 FirstNonEmptyString(envelope.SnapshotHash, envelope.ContractSnapshotHash),
+		ScopeContractID:              envelope.ScopeContractID,
+		ScopeContractHash:            envelope.ScopeContractHash,
 		RequiredEditPaths:            envelope.RequiredEditPaths,
 		AllowedEditPaths:             envelope.AllowedEditPaths,
 		SourceSatisfiedEvidencePaths: envelope.SourceSatisfiedEvidencePaths,
 		SourceSatisfiedEvidence:      envelope.SourceSatisfiedEvidence,
 		ChangedPaths:                 envelope.ChangedPaths,
+		SourceSanity:                 envelope.SourceSanity,
+		AcceptanceEvidenceIDs:        envelope.AcceptanceEvidenceIDs,
+		AcceptanceEvidenceTrusted:    envelope.AcceptanceEvidenceTrusted,
 		ValidationFailures:           envelope.ValidationFailures,
 	}
 }
@@ -905,11 +992,16 @@ func (completion planExecuteCompletion) summary() PlanExecuteCompletionSummary {
 		ContractID:                   completion.ContractID,
 		ContractHash:                 completion.ContractHash,
 		SnapshotHash:                 completion.SnapshotHash,
+		ScopeContractID:              completion.ScopeContractID,
+		ScopeContractHash:            completion.ScopeContractHash,
 		RequiredEditPaths:            completion.RequiredEditPaths,
 		AllowedEditPaths:             completion.AllowedEditPaths,
 		SourceSatisfiedEvidencePaths: completion.SourceSatisfiedEvidencePaths,
 		SourceSatisfiedEvidence:      completion.SourceSatisfiedEvidence,
 		ChangedPaths:                 completion.ChangedPaths,
+		SourceSanity:                 completion.SourceSanity,
+		AcceptanceEvidenceIDs:        completion.AcceptanceEvidenceIDs,
+		AcceptanceEvidenceTrusted:    completion.AcceptanceEvidenceTrusted,
 		ValidationFailures:           completion.ValidationFailures,
 	}
 }
@@ -935,11 +1027,16 @@ func planExecuteCompletionFromSummary(summary PlanExecuteCompletionSummary) plan
 		ContractID:                   summary.ContractID,
 		ContractHash:                 summary.ContractHash,
 		SnapshotHash:                 summary.SnapshotHash,
+		ScopeContractID:              summary.ScopeContractID,
+		ScopeContractHash:            summary.ScopeContractHash,
 		RequiredEditPaths:            summary.RequiredEditPaths,
 		AllowedEditPaths:             summary.AllowedEditPaths,
 		SourceSatisfiedEvidencePaths: summary.SourceSatisfiedEvidencePaths,
 		SourceSatisfiedEvidence:      summary.SourceSatisfiedEvidence,
 		ChangedPaths:                 summary.ChangedPaths,
+		SourceSanity:                 summary.SourceSanity,
+		AcceptanceEvidenceIDs:        summary.AcceptanceEvidenceIDs,
+		AcceptanceEvidenceTrusted:    summary.AcceptanceEvidenceTrusted,
 		ValidationFailures:           summary.ValidationFailures,
 	}.normalized()
 }
@@ -970,6 +1067,9 @@ func validateCompletionAgainstActiveContract(completion planExecuteCompletion, s
 	expectedSnapshot := strings.TrimSpace(atom.RuntimeEnvelope.ProtocolHash)
 	if expectedContractID == "" || expectedSnapshot == "" {
 		return "active atom is missing typed plan contract snapshot"
+	}
+	if explicitParentIdentityConflict(completion, expectedContractID, expectedSnapshot) {
+		return "plan-execute terminal completion conflicts with the active plan contract snapshot"
 	}
 	if !completionMatchesActiveContract(completion, expectedContractID, expectedSnapshot) {
 		return "plan-execute terminal completion is not correlated to the active plan contract snapshot"
@@ -1002,6 +1102,12 @@ func validateCompletionAgainstActiveContract(completion planExecuteCompletion, s
 		if missing := missingRequiredCompletionPaths(required, sourceSatisfied); len(missing) > 0 {
 			return "source-satisfied completion does not cover required edit paths: " + strings.Join(missing, ", ")
 		}
+		if reason := untrustedAcceptanceEvidenceReason(atomContract, completion, "source-satisfied completion"); reason != "" {
+			return reason
+		}
+		if missing := missingAcceptanceEvidenceIDs(atomContract, trustedAcceptanceEvidenceIDs(completion)); len(missing) > 0 {
+			return "source-satisfied completion missing acceptance_evidence_ids: " + strings.Join(missing, ", ")
+		}
 		return ""
 	}
 	if len(changed) == 0 {
@@ -1015,20 +1121,95 @@ func validateCompletionAgainstActiveContract(completion planExecuteCompletion, s
 	if len(scope) > 0 && !completionPathsWithinScope(changed, scope) {
 		return "completed plan-execute terminal completion changed paths outside active contract scope"
 	}
+	if failures := planExecuteTerminalValidationFailures(completion); len(failures) > 0 {
+		return "nested plan-execute terminal validation failed: " + strings.Join(failures, "; ")
+	}
+	if reason := untrustedAcceptanceEvidenceReason(atomContract, completion, "completed plan-execute terminal completion"); reason != "" {
+		return reason
+	}
+	if missing := missingAcceptanceEvidenceIDs(atomContract, trustedAcceptanceEvidenceIDs(completion)); len(missing) > 0 {
+		return "completed plan-execute terminal completion missing acceptance_evidence_ids: " + strings.Join(missing, ", ")
+	}
 	if reason := atomContract.Scope.EditSetObligations.RejectionReason(changed); reason != "" {
 		return plancontract.EditSetObligationFailureMessage(reason)
 	}
 	return ""
 }
 
-func completionMatchesActiveContract(completion planExecuteCompletion, expectedContractID string, expectedSnapshot string) bool {
-	for _, candidate := range []string{completion.ContractID, completion.ContractHash, completion.SnapshotHash} {
-		candidate = strings.TrimSpace(candidate)
-		if candidate != "" && (candidate == expectedContractID || candidate == expectedSnapshot) {
-			return true
+func untrustedAcceptanceEvidenceReason(atom plancontract.AtomExecutionContract, completion planExecuteCompletion, prefix string) string {
+	if completion.AcceptanceEvidenceTrusted || len(completion.AcceptanceEvidenceIDs) == 0 || len(requiredAcceptanceEvidenceIDs(atom)) == 0 {
+		return ""
+	}
+	return prefix + " acceptance_evidence_ids are not backed by trusted plan-execute terminal evidence"
+}
+
+func trustedAcceptanceEvidenceIDs(completion planExecuteCompletion) []string {
+	if !completion.AcceptanceEvidenceTrusted {
+		return nil
+	}
+	return completion.AcceptanceEvidenceIDs
+}
+
+func missingAcceptanceEvidenceIDs(atom plancontract.AtomExecutionContract, provided []string) []string {
+	providedSet := map[string]bool{}
+	for _, id := range normalizeCompletionStableIDList(provided) {
+		providedSet[id] = true
+	}
+	var missing []string
+	for _, obligation := range atom.AcceptanceObligations {
+		if !obligation.Required {
+			continue
+		}
+		id := plancontract.NormalizeStableContractIDPart(obligation.ID)
+		if id == "" {
+			continue
+		}
+		if !providedSet[id] {
+			missing = append(missing, id)
 		}
 	}
-	return false
+	return normalizeCompletionStableIDList(missing)
+}
+
+func requiredAcceptanceEvidenceIDs(atom plancontract.AtomExecutionContract) []string {
+	var ids []string
+	for _, obligation := range atom.AcceptanceObligations {
+		if obligation.Required && strings.TrimSpace(obligation.ID) != "" {
+			ids = append(ids, obligation.ID)
+		}
+	}
+	return normalizeCompletionStableIDList(ids)
+}
+
+func planExecuteTerminalValidationFailures(completion planExecuteCompletion) []string {
+	fields := completion.summary().Fields()
+	record := coreplanexecute.PlanExecuteTerminalCompletionRecordFromFields(fields)
+	return normalizeCompletionStringList(record.ValidationFailures)
+}
+
+func explicitParentIdentityConflict(completion planExecuteCompletion, expectedContractID string, expectedSnapshot string) bool {
+	if candidate := strings.TrimSpace(completion.ContractID); candidate != "" && candidate != expectedContractID {
+		return true
+	}
+	if candidate := strings.TrimSpace(completion.SnapshotHash); candidate != "" && candidate != expectedSnapshot {
+		return true
+	}
+	return strings.TrimSpace(completion.ContractHash) != "" && strings.TrimSpace(completion.ContractHash) != expectedSnapshot
+}
+
+func completionMatchesActiveContract(completion planExecuteCompletion, expectedContractID string, expectedSnapshot string) bool {
+	if strings.TrimSpace(completion.ContractID) != "" && strings.TrimSpace(completion.ContractID) != expectedContractID {
+		return false
+	}
+	if strings.TrimSpace(completion.SnapshotHash) != "" && strings.TrimSpace(completion.SnapshotHash) != expectedSnapshot {
+		return false
+	}
+	if strings.TrimSpace(completion.ContractHash) != "" && strings.TrimSpace(completion.ContractHash) != expectedSnapshot {
+		return false
+	}
+	return strings.TrimSpace(completion.ContractID) == expectedContractID ||
+		strings.TrimSpace(completion.SnapshotHash) == expectedSnapshot ||
+		strings.TrimSpace(completion.ContractHash) == expectedSnapshot
 }
 
 func missingRequiredCompletionPaths(required []string, covered []string) []string {
@@ -1122,6 +1303,18 @@ func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, co
 func planExecuteCompletionSourceSatisfied(completion planExecuteCompletion) bool {
 	return util.EqualTrimFold(completion.Outcome, "source_satisfied") ||
 		util.EqualTrimFold(completion.Status, "source-satisfied")
+}
+
+func planExecuteCompletionSourceTrustsAcceptanceEvidence(source string) bool {
+	switch strings.TrimSpace(source) {
+	case "headless_plan_execute_returned",
+		"tui_plan_execute_returned",
+		"durable_plan_execute_terminal_completion",
+		"durable_plan_execute_progress":
+		return true
+	default:
+		return false
+	}
 }
 
 func rejectPlanExecuteCompletion(state *FeatureState, atom *FeatureAtomState, completion planExecuteCompletion, reason string) []Event {
@@ -1230,11 +1423,14 @@ func addPlanExecuteCompletionEvidenceFields(fields map[string]any, completion pl
 	if completion.ContractID != "" {
 		fields["contract_id"] = completion.ContractID
 	}
-	if completion.ContractHash != "" {
-		fields["contract_hash"] = completion.ContractHash
-	}
 	if completion.SnapshotHash != "" {
 		fields["snapshot_hash"] = completion.SnapshotHash
+	}
+	if completion.ScopeContractID != "" {
+		fields["scope_contract_id"] = completion.ScopeContractID
+	}
+	if completion.ScopeContractHash != "" {
+		fields["scope_contract_hash"] = completion.ScopeContractHash
 	}
 	if len(completion.RequiredEditPaths) > 0 {
 		fields["required_edit_paths"] = append([]string(nil), completion.RequiredEditPaths...)
@@ -1250,6 +1446,15 @@ func addPlanExecuteCompletionEvidenceFields(fields map[string]any, completion pl
 	}
 	if len(completion.ChangedPaths) > 0 {
 		fields["changed_paths"] = append([]string(nil), completion.ChangedPaths...)
+	}
+	if len(completion.SourceSanity) > 0 {
+		fields["source_sanity"] = append([]coreplanexecute.PhaseEvidenceCheck(nil), completion.SourceSanity...)
+	}
+	if len(completion.AcceptanceEvidenceIDs) > 0 {
+		fields["acceptance_evidence_ids"] = append([]string(nil), completion.AcceptanceEvidenceIDs...)
+	}
+	if completion.AcceptanceEvidenceTrusted {
+		fields["acceptance_evidence_trusted"] = true
 	}
 }
 

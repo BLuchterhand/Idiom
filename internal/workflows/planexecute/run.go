@@ -46,6 +46,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		fmt.Fprintln(stderr, err)
 		return RunResult{ExitCode: 1}
 	}
+	requiredAcceptanceEvidenceIDs := planExecuteRequiredAcceptanceEvidenceIDsFromPrompt(prompt)
 	var resumeState *ProgressState
 	resumeStatePath := ""
 	if strings.TrimSpace(opts.Resume) != "" {
@@ -59,6 +60,9 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			return RunResult{ExitCode: 1, ResumeStatePath: statePath}
 		}
 		if found {
+			if len(state.RequiredAcceptanceEvidenceIDs) == 0 {
+				state.RequiredAcceptanceEvidenceIDs = requiredAcceptanceEvidenceIDs
+			}
 			resumeState = &state
 			resumeStatePath = statePath
 		}
@@ -130,6 +134,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	}
 
 	progress := NewProgressState(sessionID, prompt, opts.PromptFile, requiredEditPaths, allowedEditPaths, time.Now().UTC())
+	progress.RequiredAcceptanceEvidenceIDs = requiredAcceptanceEvidenceIDs
 	progress.SetWriteAllowedEnvelope(writeAllowedPaths, writeAllowedExplicit)
 	progress.SetScopeContractID(scopeContract.ContractID)
 	progress.EditSetObligations = editSetObligations
@@ -211,7 +216,13 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			fmt.Fprintln(stdout, "--- plan-then-execute summary ---")
 			fmt.Fprintln(stdout, "source-satisfied: executor skipped because every exact edit already matched the current workspace.")
 		}
-		return finalizePlanExecuteRunResult(cfg.Workspace.Root, progress, progressPath, opts.JSONEvents, stdout, planExecuteRunResultInput{ExitCode: 0, SourceSatisfied: true, SourceSatisfiedEvidencePaths: autoExact.AppliedPaths, SourceSatisfiedEvidence: planExecuteHarnessObservedSourceEvidence(autoExact.AppliedPaths)})
+		return finalizePlanExecuteRunResult(cfg.Workspace.Root, progress, progressPath, opts.JSONEvents, stdout, planExecuteRunResultInput{
+			ExitCode:                     0,
+			SourceSatisfied:              true,
+			SourceSatisfiedEvidencePaths: autoExact.AppliedPaths,
+			SourceSatisfiedEvidence:      planExecuteHarnessObservedSourceEvidence(autoExact.AppliedPaths),
+			AcceptanceEvidenceIDs:        planExecuteHarnessAcceptanceEvidenceIDs(progress),
+		})
 	}
 	if autoExact.Submitted {
 		answer = autoExact.Result.Summary
@@ -345,7 +356,12 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 				fmt.Fprintln(stdout, "--- plan-then-execute summary ---")
 				fmt.Fprintln(stdout, "source-satisfied: executor skipped because the planner reported the requested final state already present in every required path.")
 			}
-			return finalizePlanExecuteRunResult(cfg.Workspace.Root, progress, progressPath, opts.JSONEvents, stdout, planExecuteRunResultInput{ExitCode: 0, SourceSatisfied: true, SourceSatisfiedEvidencePaths: sourceSatisfiedPaths})
+			return finalizePlanExecuteRunResult(cfg.Workspace.Root, progress, progressPath, opts.JSONEvents, stdout, planExecuteRunResultInput{
+				ExitCode:                     0,
+				SourceSatisfied:              true,
+				SourceSatisfiedEvidencePaths: sourceSatisfiedPaths,
+				AcceptanceEvidenceIDs:        planExecuteHarnessAcceptanceEvidenceIDs(progress),
+			})
 		}
 		if planExecuteAnswerDeclaresBlocker(answer) {
 			progress.MarkPlanningFailed(RunFailurePlannerBlocked, planExecuteBlockerSummary(answer))
@@ -613,7 +629,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	if progress.Status == ProgressStatusDegraded {
 		exitCode = 1
 	}
-	return finalizePlanExecuteRunResult(cfg.Workspace.Root, progress, progressPath, opts.JSONEvents, stdout, planExecuteRunResultInput{ExitCode: exitCode, FailureKind: progress.FailureKind, FailureReason: progress.FailureReason})
+	return finalizePlanExecuteRunResult(cfg.Workspace.Root, progress, progressPath, opts.JSONEvents, stdout, planExecuteRunResultInput{ExitCode: exitCode, FailureKind: progress.FailureKind, FailureReason: progress.FailureReason, AcceptanceEvidenceIDs: planExecuteHarnessAcceptanceEvidenceIDs(progress)})
 }
 
 func runResumeReviewRepair(cfg config.Config, opts Options, prompt string, state ProgressState, statePath string, promptRun PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) RunResult {
@@ -737,7 +753,14 @@ func runResumeReviewRepair(cfg config.Config, opts Options, prompt string, state
 	if state.Status == ProgressStatusDegraded {
 		resumeExitCode = 1
 	}
-	return finalizePlanExecuteRunResult(cfg.Workspace.Root, state, progressPath, opts.JSONEvents, stdout, planExecuteRunResultInput{ExitCode: resumeExitCode, FailureKind: state.FailureKind, FailureReason: state.FailureReason})
+	return finalizePlanExecuteRunResult(cfg.Workspace.Root, state, progressPath, opts.JSONEvents, stdout, planExecuteRunResultInput{ExitCode: resumeExitCode, FailureKind: state.FailureKind, FailureReason: state.FailureReason, AcceptanceEvidenceIDs: planExecuteHarnessAcceptanceEvidenceIDs(state)})
+}
+
+func planExecuteHarnessAcceptanceEvidenceIDs(state ProgressState) []string {
+	if state.Status != ProgressStatusCompleted {
+		return nil
+	}
+	return append([]string(nil), state.RequiredAcceptanceEvidenceIDs...)
 }
 
 func saveRunProgressState(root string, state *ProgressState, jsonEvents bool, stdout io.Writer, eventType string, suppressRecovery ...bool) (string, error) {
@@ -807,12 +830,19 @@ type planExecuteRunResultInput struct {
 	SourceSatisfied              bool
 	SourceSatisfiedEvidencePaths []string
 	SourceSatisfiedEvidence      []plancontract.SourceSatisfiedEvidenceRef
+	AcceptanceEvidenceIDs        []string
 }
 
 func finalizePlanExecuteRunResult(root string, state ProgressState, progressPath string, jsonEvents bool, stdout io.Writer, input planExecuteRunResultInput) RunResult {
 	state.SessionID = strings.TrimSpace(state.SessionID)
 	input.FailureKind = firstProgressNonEmptyString(input.FailureKind, state.FailureKind)
 	input.FailureReason = firstProgressNonEmptyString(input.FailureReason, state.FailureReason)
+	if len(input.AcceptanceEvidenceIDs) == 0 {
+		input.AcceptanceEvidenceIDs = state.AcceptanceEvidenceIDs
+	}
+	if len(input.AcceptanceEvidenceIDs) > 0 && len(state.AcceptanceEvidenceIDs) == 0 {
+		state.AcceptanceEvidenceIDs = input.AcceptanceEvidenceIDs
+	}
 	recoveryInput := planExecuteTerminalRecoveryInput(root, state.SessionID)
 	record := NewPlanExecuteTerminalCompletionRecord(state, PlanExecuteTerminalCompletionInput{
 		ProgressPath:                 progressPath,
@@ -820,6 +850,7 @@ func finalizePlanExecuteRunResult(root string, state ProgressState, progressPath
 		SourceSatisfied:              input.SourceSatisfied,
 		SourceSatisfiedEvidencePaths: input.SourceSatisfiedEvidencePaths,
 		SourceSatisfiedEvidence:      input.SourceSatisfiedEvidence,
+		AcceptanceEvidenceIDs:        input.AcceptanceEvidenceIDs,
 		FailureID:                    recoveryInput.failureID,
 		RecordPath:                   recoveryInput.recordPath,
 		PacketPath:                   recoveryInput.packetPath,
@@ -833,6 +864,19 @@ func finalizePlanExecuteRunResult(root string, state ProgressState, progressPath
 		record.FailureReason = input.FailureReason
 	}
 	record = NormalizePlanExecuteTerminalCompletionRecord(record)
+	if record.TerminalClass != PlanExecuteTerminalClassSuccess {
+		record.AcceptanceEvidenceIDs = nil
+		state.AcceptanceEvidenceIDs = nil
+		if record.TerminalClass == PlanExecuteTerminalClassFailed {
+			state.Status = ProgressStatusFailed
+			state.FailureKind = firstProgressNonEmptyString(input.FailureKind, record.FailureKind)
+			state.FailureReason = firstProgressNonEmptyString(input.FailureReason, record.FailureReason)
+		}
+		record = NormalizePlanExecuteTerminalCompletionRecord(record)
+		if savedPath, saveErr := SaveProgressState(root, &state); saveErr == nil && savedPath != "" {
+			progressPath = savedPath
+		}
+	}
 	if record.TerminalClass == PlanExecuteTerminalClassSuccess && len(record.ValidationFailures) > 0 {
 		validationFailures := append([]string(nil), record.ValidationFailures...)
 		input.ExitCode = 1
@@ -841,6 +885,7 @@ func finalizePlanExecuteRunResult(root string, state ProgressState, progressPath
 		record.ExitCode = input.ExitCode
 		record.FailureKind = input.FailureKind
 		record.FailureReason = input.FailureReason
+		record.AcceptanceEvidenceIDs = nil
 		record.TerminalClass = PlanExecuteTerminalClassFailed
 		record.Outcome = PlanExecuteTerminalOutcomeFailed
 		record.FailureInvariants = planExecuteTerminalFailureInvariants(record)
@@ -848,6 +893,7 @@ func finalizePlanExecuteRunResult(root string, state ProgressState, progressPath
 		state.Status = ProgressStatusFailed
 		state.FailureKind = input.FailureKind
 		state.FailureReason = input.FailureReason
+		state.AcceptanceEvidenceIDs = nil
 		if savedPath, saveErr := SaveProgressState(root, &state); saveErr == nil && savedPath != "" {
 			progressPath = savedPath
 		}

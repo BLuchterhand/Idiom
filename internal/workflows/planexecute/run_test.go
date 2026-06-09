@@ -300,6 +300,31 @@ func TestPreflightPlanEditsRejectsStaleAnchorProvenance(t *testing.T) {
 	}
 }
 
+func TestPreflightPlanEditsRejectsCurrentSchemaMissingAnchorProvenance(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Created:       "2026-06-08T20:00:00Z",
+		Handoff: workspace.PlanArtifactHandoff{
+			From: "planner",
+			To:   "plan_execute_executor",
+		},
+		Edits: []workspace.PlanEdit{{
+			Path:    "a.txt",
+			OldText: "alpha",
+			NewText: "ALPHA",
+		}},
+	}
+
+	got := preflightPlanEdits(root, plan)
+	if got == nil || !strings.Contains(got.Reason, "missing submit_plan anchor provenance") {
+		t.Fatalf("expected missing anchor provenance mismatch, got %#v", got)
+	}
+}
+
 func TestPreflightPlanRequiredEditPathsAcceptsSourceSatisfiedCoverage(t *testing.T) {
 	plan := workspace.PlanArtifact{
 		SchemaVersion: workspace.PlanArtifactSchemaVersion,

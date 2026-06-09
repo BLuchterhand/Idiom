@@ -56,6 +56,30 @@ func TestSourceSanityFallsBackWhenLanguageDiagnosticsUnavailable(t *testing.T) {
 	}
 }
 
+func TestSourceSanityRejectsCppGenericFallbackAsTerminalEvidence(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "native", "src", "machine.cpp")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("int value() {\n    return 1;\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root, CommandTimeoutSeconds: 30})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "source_sanity", Path: "native/src/machine.cpp"})
+
+	if result.Error == "" {
+		t.Fatalf("C++ generic fallback should be insufficient terminal evidence, got %#v", result)
+	}
+	if !strings.Contains(result.Output, "cpp_diagnostics unavailable") || !strings.Contains(result.Output, "generic delimiter sanity passed") {
+		t.Fatalf("expected diagnostics-unavailable note and advisory generic fallback, got:\n%s", result.Output)
+	}
+	if !strings.Contains(result.Error, "generic delimiter sanity is advisory") {
+		t.Fatalf("expected insufficient C++ diagnostics error, got %q", result.Error)
+	}
+}
+
 func TestGoDefinitionNoMatchIsEmptyEvidence(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/nomatch\n\ngo 1.22\n"), 0o644); err != nil {

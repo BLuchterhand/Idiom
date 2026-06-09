@@ -100,6 +100,17 @@ var (
 	viewCacheFreshnessHits    atomic.Int64
 	viewCacheStalePreventions atomic.Int64
 	viewCacheStaleRowMisses   atomic.Int64
+
+	// Token/cost savings counters (Atom 6).
+	// estimatedFullTokensSaved is incremented each time
+	// RenderCompactPackProjection produces budget-enforced output
+	// that omits items; it approximates tokens not sent to the model
+	// because of compact projection.
+	estimatedFullTokensSaved atomic.Int64
+	// estimatedRediscoveryTokensAvoided is incremented on every
+	// graph_views cache hit; it estimates the token cost of a
+	// full Pack() recomputation that was avoided.
+	estimatedRediscoveryTokensAvoided atomic.Int64
 )
 
 const viewFreshnessMaxFiles = 200
@@ -143,6 +154,25 @@ func ViewFreshnessCounters() (freshnessHits, stalePreventions, staleRowMisses in
 	return viewCacheFreshnessHits.Load(), viewCacheStalePreventions.Load(), viewCacheStaleRowMisses.Load()
 }
 
+// TokenSavingsCounters returns the current process-local estimated token
+// savings counters. Used by harness_audit to surface cache-savings metrics.
+func TokenSavingsCounters() (fullTokensSaved, rediscoveryTokensAvoided int64) {
+	return estimatedFullTokensSaved.Load(), estimatedRediscoveryTokensAvoided.Load()
+}
+
+// recordRediscoveryTokensAvoided estimates the token cost of a Pack()
+// recomputation that was avoided by a cache hit, and atomically adds
+// it to the process-local counter. The estimate uses the full unbounded
+// rendering of the cached PackResult as a proxy for recomputation cost.
+func recordRediscoveryTokensAvoided(result PackResult) {
+	proj := NewCompactPackProjection(result)
+	fullOut, _ := RenderCompactPackProjection(proj, 0)
+	avoided := estimateTokens(fullOut)
+	if avoided > 0 {
+		estimatedRediscoveryTokensAvoided.Add(int64(avoided))
+	}
+}
+
 // ResetViewCacheCounters zeroes the counters. Test-only helper.
 func ResetViewCacheCounters() {
 	viewCacheHits.Store(0)
@@ -151,6 +181,8 @@ func ResetViewCacheCounters() {
 	viewCacheFreshnessHits.Store(0)
 	viewCacheStalePreventions.Store(0)
 	viewCacheStaleRowMisses.Store(0)
+	estimatedFullTokensSaved.Store(0)
+	estimatedRediscoveryTokensAvoided.Store(0)
 }
 
 // LoadView returns the cached PackResult for the given key, or
@@ -197,6 +229,7 @@ func LoadView(root string, key ViewKey) (PackResult, bool, error) {
 	}
 	viewCacheFreshnessHits.Add(1)
 	viewCacheHits.Add(1)
+	recordRediscoveryTokensAvoided(result)
 	result.Cache = GraphViewCacheStateForKey(key, util.FirstNonEmpty(result.StoreKind, result.Provenance.StoreKind), "hit", "fresh_cached_row")
 	AttachPackResultContract(&result)
 	return result, true, nil
@@ -284,6 +317,7 @@ func LoadViewByIDStatus(root string, packID string) (PackResult, ViewLoadStatus,
 	}
 	viewCacheFreshnessHits.Add(1)
 	viewCacheHits.Add(1)
+	recordRediscoveryTokensAvoided(result)
 	key := cachedViewKeyFromRow(row, packID)
 	result.Cache = GraphViewCacheStateForKey(key, util.FirstNonEmpty(result.StoreKind, result.Provenance.StoreKind), "hit", "fresh_cached_row")
 	result.Cache.CacheKey = packID
@@ -901,6 +935,8 @@ type ViewStats struct {
 	FreshnessHits                         int64          `json:"freshness_hits"`
 	StalePreventions                      int64          `json:"stale_preventions"`
 	StaleRowMisses                        int64          `json:"stale_row_misses"`
+	EstimatedFullTokensSaved              int64          `json:"estimated_full_tokens_saved"`
+	EstimatedRediscoveryTokensAvoided     int64          `json:"estimated_rediscovery_tokens_avoided"`
 }
 
 // ReadViewStats returns aggregate counters over the graph_views table
@@ -909,13 +945,16 @@ type ViewStats struct {
 func ReadViewStats(root string) (ViewStats, error) {
 	hits, misses, writes := ViewCacheCounters()
 	freshnessHits, stalePreventions, staleRowMisses := ViewFreshnessCounters()
+	fullTokensSaved, rediscoveryTokensAvoided := TokenSavingsCounters()
 	stats := ViewStats{
-		Hits:             hits,
-		Misses:           misses,
-		Writes:           writes,
-		FreshnessHits:    freshnessHits,
-		StalePreventions: stalePreventions,
-		StaleRowMisses:   staleRowMisses,
+		Hits:                             hits,
+		Misses:                           misses,
+		Writes:                           writes,
+		FreshnessHits:                    freshnessHits,
+		StalePreventions:                 stalePreventions,
+		StaleRowMisses:                   staleRowMisses,
+		EstimatedFullTokensSaved:         fullTokensSaved,
+		EstimatedRediscoveryTokensAvoided: rediscoveryTokensAvoided,
 	}
 	sqlitePath := sqliteGraphPath(root)
 	if _, err := os.Stat(sqlitePath); err != nil {

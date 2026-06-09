@@ -23,6 +23,11 @@ func TestRunRankerRollbackRestoresWeightsFromLearningEvent(t *testing.T) {
 		Files:    []string{"internal/runtime/agent/runner.go"},
 		Score:    0.9,
 		Verified: true,
+		VerificationEvidence: &comprehension.VerificationEvidence{
+			EditPaths:           []string{"internal/runtime/agent/runner.go"},
+			VerificationCommand: "go test ./...",
+			VerificationPassed:  true,
+		},
 	})
 	if err != nil {
 		t.Fatalf("apply learning: %v", err)

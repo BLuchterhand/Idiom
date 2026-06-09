@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	coreplanexecute "idiom/internal/workflows/planexecute"
 )
 
 func TestPlanExecuteCompletionTerminalClass(t *testing.T) {
@@ -210,6 +212,221 @@ func TestPlanExecuteCompletionFieldsKeepsNestedSourceSatisfiedTerminal(t *testin
 	}
 	if got := PlanExecuteCompletionTerminalClass(fields); got != PlanExecuteTerminalCompleted {
 		t.Fatalf("terminal class = %q, want completed; fields=%+v", got, fields)
+	}
+}
+
+func TestPlanExecuteCompletionFieldsPreservesScopeContractWithoutGenericAlias(t *testing.T) {
+	output := `{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","scope_contract_id":"scope-123","scope_contract_hash":"scope-hash-123"}`
+
+	fields := PlanExecuteCompletionFields(output)
+
+	for key, want := range map[string]string{
+		"scope_contract_id":   "scope-123",
+		"scope_contract_hash": "scope-hash-123",
+	} {
+		if got := CompletionFieldString(fields, key); got != want {
+			t.Fatalf("%s = %q, want %q; fields=%+v", key, got, want, fields)
+		}
+	}
+	if got := CompletionFieldString(fields, "contract_id"); got != "" {
+		t.Fatalf("contract_id = %q, want empty generic contract id for scope-only record; fields=%+v", got, fields)
+	}
+	if got := CompletionFieldString(fields, "contract_hash"); got != "" {
+		t.Fatalf("contract_hash = %q, want empty generic contract hash for scope-only record; fields=%+v", got, fields)
+	}
+
+	fromFields := PlanExecuteCompletionSummaryFromFields(map[string]any{
+		"status":              "completed",
+		"scope_contract_id":   "scope-fields",
+		"scope_contract_hash": "scope-fields-hash",
+	}).Fields()
+	if got := CompletionFieldString(fromFields, "contract_id"); got != "" {
+		t.Fatalf("contract_id = %q, want empty generic contract id for scope-only fields; fields=%+v", got, fromFields)
+	}
+	if got := CompletionFieldString(fromFields, "contract_hash"); got != "" {
+		t.Fatalf("contract_hash = %q, want empty generic contract hash for scope-only fields; fields=%+v", got, fromFields)
+	}
+	if got := CompletionFieldString(fromFields, "scope_contract_id"); got != "scope-fields" {
+		t.Fatalf("scope_contract_id = %q, want scope-fields; fields=%+v", got, fromFields)
+	}
+	if got := CompletionFieldString(fromFields, "scope_contract_hash"); got != "scope-fields-hash" {
+		t.Fatalf("scope_contract_hash = %q, want scope-fields-hash; fields=%+v", got, fromFields)
+	}
+}
+
+func TestPlanExecuteCompletionFieldsNormalizesLegacyContractHashToSnapshot(t *testing.T) {
+	fields := PlanExecuteCompletionFields(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","contract_id":"parent-contract","contract_hash":"snapshot-hash-1"}`)
+
+	if got := CompletionFieldString(fields, "contract_id"); got != "parent-contract" {
+		t.Fatalf("contract_id = %q, want parent-contract; fields=%+v", got, fields)
+	}
+	if got := CompletionFieldString(fields, "snapshot_hash"); got != "snapshot-hash-1" {
+		t.Fatalf("snapshot_hash = %q, want legacy contract_hash normalized; fields=%+v", got, fields)
+	}
+	if got := CompletionFieldString(fields, "contract_hash"); got != "" {
+		t.Fatalf("contract_hash = %q, want no parallel contract_hash authority; fields=%+v", got, fields)
+	}
+}
+
+func TestPlanExecuteCompletionMergeAndOverlayPreserveScopeContractFields(t *testing.T) {
+	merged := MergePlanExecuteCompletionSummaries(
+		PlanExecuteCompletionSummary{
+			Status:            "running",
+			ScopeContractID:   "scope-123",
+			ScopeContractHash: "scope-hash-123",
+		},
+		PlanExecuteCompletionSummary{
+			Status: "completed",
+			Phase:  "complete",
+		},
+	).Fields()
+
+	for key, want := range map[string]string{
+		"scope_contract_id":   "scope-123",
+		"scope_contract_hash": "scope-hash-123",
+	} {
+		if got := CompletionFieldString(merged, key); got != want {
+			t.Fatalf("merged %s = %q, want %q; fields=%+v", key, got, want, merged)
+		}
+	}
+	if got := CompletionFieldString(merged, "contract_id"); got != "" {
+		t.Fatalf("merged contract_id = %q, want empty generic contract id; fields=%+v", got, merged)
+	}
+	if got := CompletionFieldString(merged, "contract_hash"); got != "" {
+		t.Fatalf("merged contract_hash = %q, want empty generic contract hash; fields=%+v", got, merged)
+	}
+
+	fields := map[string]any{
+		"status": "completed",
+		"phase":  "complete",
+	}
+	OverlayPlanExecuteCompletionFields(fields, map[string]any{
+		"scope_contract_id":   "scope-overlay",
+		"scope_contract_hash": "scope-overlay-hash",
+	})
+	if got := CompletionFieldString(fields, "scope_contract_id"); got != "scope-overlay" {
+		t.Fatalf("overlaid scope_contract_id = %q, want scope-overlay; fields=%+v", got, fields)
+	}
+	if got := CompletionFieldString(fields, "scope_contract_hash"); got != "scope-overlay-hash" {
+		t.Fatalf("overlaid scope_contract_hash = %q, want scope-overlay-hash; fields=%+v", got, fields)
+	}
+	if got := CompletionFieldString(fields, "contract_id"); got != "" {
+		t.Fatalf("overlaid contract_id = %q, want empty generic contract id; fields=%+v", got, fields)
+	}
+	if got := CompletionFieldString(fields, "contract_hash"); got != "" {
+		t.Fatalf("overlaid contract_hash = %q, want empty generic contract hash; fields=%+v", got, fields)
+	}
+}
+
+func TestPlanExecuteCompletionFieldsTrustsTerminalAcceptanceEvidence(t *testing.T) {
+	fields := PlanExecuteCompletionFields(`{"type":"idiom.plan_execute.terminal_completion","status":"completed","phase":"complete","acceptance_evidence_ids":["req-1"]}`)
+
+	if got := fields["acceptance_evidence_trusted"]; got != true {
+		t.Fatalf("acceptance_evidence_trusted = %#v, want true; fields=%+v", got, fields)
+	}
+}
+
+func TestTrustPlanExecuteCompletionFieldsDoesNotMintTrustForHarnessReturnSource(t *testing.T) {
+	fields := map[string]any{
+		"status":                  "completed",
+		"terminal_class":          "completed",
+		"completion_source":       "tui_plan_execute_returned",
+		"acceptance_evidence_ids": []string{"req-1"},
+	}
+
+	TrustPlanExecuteCompletionFields(fields)
+
+	if got := fields["acceptance_evidence_trusted"]; got == true {
+		t.Fatalf("consumer-side trust should not be minted from completion_source alone; fields=%+v", fields)
+	}
+	if planExecuteAcceptanceEvidenceTrustRegistered(fields) {
+		t.Fatalf("completion_source-only trust should not be registered; fields=%+v", fields)
+	}
+}
+
+func TestTrustObservedPlanExecuteCompletionFieldsRegistersProducerTrust(t *testing.T) {
+	fields := map[string]any{
+		"status":                  "completed",
+		"terminal_class":          "completed",
+		"completion_source":       "tui_plan_execute_returned",
+		"acceptance_evidence_ids": []string{"req-1"},
+	}
+
+	TrustObservedPlanExecuteCompletionFields(fields)
+
+	if got := fields["acceptance_evidence_trusted"]; got != true {
+		t.Fatalf("observed terminal completion should trust acceptance evidence; fields=%+v", fields)
+	}
+	if !planExecuteAcceptanceEvidenceTrustRegistered(fields) {
+		t.Fatalf("observed terminal completion was not registered; fields=%+v", fields)
+	}
+}
+
+func TestTrustObservedPlanExecuteCompletionFieldsDoesNotRegisterFailedTerminal(t *testing.T) {
+	fields := map[string]any{
+		"status":                  "failed",
+		"terminal_class":          "failed",
+		"acceptance_evidence_ids": []string{"req-1"},
+	}
+
+	TrustObservedPlanExecuteCompletionFields(fields)
+
+	if got := fields["acceptance_evidence_trusted"]; got == true {
+		t.Fatalf("failed terminal completion should not trust acceptance evidence; fields=%+v", fields)
+	}
+	if planExecuteAcceptanceEvidenceTrustRegistered(fields) {
+		t.Fatalf("failed terminal completion should not be registered; fields=%+v", fields)
+	}
+}
+
+func TestPlanExecuteCompletionFieldsDoesNotTrustLegacyAcceptanceEvidence(t *testing.T) {
+	fields := PlanExecuteCompletionFields(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","acceptance_evidence_ids":["req-1"]}`)
+
+	if got := fields["acceptance_evidence_trusted"]; got == true {
+		t.Fatalf("legacy completion should not trust acceptance evidence; fields=%+v", fields)
+	}
+}
+
+func TestOverlayPlanExecuteCompletionFieldsReplacesSourceSanityEvidence(t *testing.T) {
+	fields := map[string]any{
+		"status": "running",
+		"source_sanity": []any{
+			map[string]any{"kind": "source_sanity", "path": "pkg/stale.go", "status": "ok"},
+		},
+	}
+
+	OverlayPlanExecuteCompletionFields(fields, map[string]any{
+		"status":        "completed",
+		"phase":         "complete",
+		"changed_paths": []any{"pkg/feature.go"},
+		"source_sanity": []any{
+			map[string]any{"kind": "source_sanity", "path": "pkg/feature.go", "status": "ok"},
+		},
+	})
+
+	checks, ok := fields["source_sanity"].([]coreplanexecute.PhaseEvidenceCheck)
+	if !ok || len(checks) != 1 || checks[0].Path != "pkg/feature.go" {
+		t.Fatalf("source_sanity overlay = %#v, want only current terminal evidence; fields=%+v", fields["source_sanity"], fields)
+	}
+}
+
+func TestOverlayPlanExecuteCompletionFieldsReplacesAcceptanceEvidence(t *testing.T) {
+	fields := map[string]any{
+		"status":                      "running",
+		"acceptance_evidence_ids":     []any{"stale-acceptance"},
+		"acceptance_evidence_trusted": true,
+	}
+
+	OverlayPlanExecuteCompletionFields(fields, map[string]any{
+		"status": "completed",
+		"phase":  "complete",
+	})
+
+	if _, ok := fields["acceptance_evidence_ids"]; ok {
+		t.Fatalf("stale acceptance_evidence_ids survived overlay: fields=%+v", fields)
+	}
+	if _, ok := fields["acceptance_evidence_trusted"]; ok {
+		t.Fatalf("stale acceptance_evidence_trusted survived overlay: fields=%+v", fields)
 	}
 }
 

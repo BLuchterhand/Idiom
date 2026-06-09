@@ -75,6 +75,12 @@ type PackResult struct {
 	Unknowns             []string                `json:"unknowns,omitempty"`
 	UnresolvedGaps       []string                `json:"unresolved_gaps,omitempty"`
 	UnresolvedGapDetails []GraphUnresolvedGap    `json:"unresolved_gap_details,omitempty"`
+	// CompactProjection is the budget-enforced model-facing projection
+	// produced by RenderCompactPackProjection. It carries omitted-item
+	// counts reflecting the budget cap applied at pack creation time.
+	// Zero-value when budget is unbounded or when the pack was created
+	// before Atom 5 budget enforcement wiring.
+	CompactProjection CompactPackProjection `json:"compact_projection,omitempty"`
 }
 
 type PackQuality struct {
@@ -140,6 +146,14 @@ func Pack(opts PackOptions) (PackResult, error) {
 
 	candidates := collectPackCandidates(ctx)
 	result := buildPackResult(ctx, candidates)
+	// Compute the budget-enforced compact projection while the full
+	// PackResult is still in hand. Store it on the result so all
+	// downstream consumers — direct tool output, plan-execute preload,
+	// executor handoff, phase evidence, sidecar, telemetry, and audit —
+	// share one canonical projection with consistent omitted-item counts.
+	proj := NewCompactPackProjection(result)
+	_, compactProj := RenderCompactPackProjection(proj, result.BudgetTokens)
+	result.CompactProjection = compactProj
 	addPackResultGaps(ctx, candidates, &result)
 	addPackResultEvidence(&result)
 
@@ -263,6 +277,13 @@ func loadCachedPack(ctx *packContext) (PackResult, bool) {
 	} else if hit {
 		cached.Cache = GraphViewCacheStateForKey(ctx.cacheKey, util.FirstNonEmpty(cached.StoreKind, ctx.graph.StoreKind), "hit", "fresh_cached_row")
 		cached.Provenance.Operation = "context_pack"
+		// Recompute the compact projection if the cached pack was
+		// created before Atom 5 budget enforcement wiring.
+		if cached.CompactProjection.PackID == "" {
+			cp := NewCompactPackProjection(cached)
+			_, compactProj := RenderCompactPackProjection(cp, cached.BudgetTokens)
+			cached.CompactProjection = compactProj
+		}
 		AttachPackResultContract(&cached)
 		_ = savePack(ctx.root, cached)
 		return cached, true

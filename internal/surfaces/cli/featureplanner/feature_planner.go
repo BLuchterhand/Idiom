@@ -388,6 +388,7 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 			featureplanner.CompletionFieldString(completion, "failure_reason"),
 			strings.TrimSpace(fmt.Sprintf("plan-execute atom dispatch failed with exit %d: %s", code, strings.TrimSpace(planStderr.String()))),
 		)
+		featureplanner.TrustObservedPlanExecuteCompletionFields(completion)
 		return encodeHeadlessPlanExecuteCompletion(req, stdout, completion)
 	}
 	if featureplanner.CompletionFieldString(completion, "status") == "" {
@@ -395,6 +396,7 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 		completion["failure_kind"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(completion, "failure_kind"), "missing_nested_plan_execute_status")
 		completion["failure_reason"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(completion, "failure_reason"), "nested plan-execute returned without typed completion status")
 	}
+	featureplanner.TrustObservedPlanExecuteCompletionFields(completion)
 	return encodeHeadlessPlanExecuteCompletion(req, stdout, completion)
 }
 

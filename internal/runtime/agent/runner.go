@@ -24,24 +24,24 @@ import (
 )
 
 var (
-	stableHandlePathLinePattern            = regexp.MustCompile(`(?m)^f\d+\s+(.+)$`)
-	stableHandleInlinePattern              = regexp.MustCompile(`\bf\d+\s+((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+)\b`)
-	delegatedPacketPathLinePattern         = regexp.MustCompile(`((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|tscn|tres|py|pyi|ts|tsx|js|jsx|mjs|cjs|rs|java|kt|kts|sh|bash|zsh|fish|ps1|md|mdx|json|jsonl|yaml|yml|toml|xml|ini|cfg|conf|env|txt|csv|tsv)):\d+(?:-\d+)?(?:[:][^\s` + "`" + `"'(),.;:]+)?`)
-	delegatedPacketPathQuotePattern        = regexp.MustCompile("((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|tscn|tres|py|pyi|ts|tsx|js|jsx|mjs|cjs|rs|java|kt|kts|sh|bash|zsh|fish|ps1|md|mdx|json|jsonl|yaml|yml|toml|xml|ini|cfg|conf|env|txt|csv|tsv))[`'\"]{2,}")
-	closurePathLineSymbolPattern           = regexp.MustCompile(`(?m)(?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|py|pyi|ts|tsx|js|jsx|rs|java|kt|kts|sh|md|json|yaml|yml|toml|txt):\d+(?::\d+)?[: ]+([A-Za-z_][A-Za-z0-9_]{3,})\b`)
-	closurePathScopedSymbolPattern         = regexp.MustCompile(`(?m)((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|py|pyi|ts|tsx|js|jsx|rs|java|kt|kts|sh|md|json|yaml|yml|toml|txt)):\d+(?::\d+)?[: ]+([A-Za-z_][A-Za-z0-9_]{3,})\b`)
-	closurePathCallPattern                 = regexp.MustCompile(`(?m)((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|py|pyi|ts|tsx|js|jsx|rs|java|kt|kts|sh|md|json|yaml|yml|toml|txt)):\d+(?::\d+)?:[^\n]*?\b([A-Za-z_][A-Za-z0-9_]{3,})\s*\(`)
-	callLikeIdentifierPattern              = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]{3,})\s*\(`)
-	qualifiedIdentifierPattern             = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]{1,}\.[A-Za-z_][A-Za-z0-9_]{3,})\b`)
-	backtickedTokenPattern                 = regexp.MustCompile("`([^`]+)`")
-	toolLocalSearchHandlePattern           = regexp.MustCompile(`\bf\d+\s+(?:[[:alnum:]_.-]+/)+[[:alnum:]_.-]+\.[[:alnum:]]+:\d+:`)
-	goFuncDeclPattern                      = regexp.MustCompile(`(?m)^func\s+(?:\([^)]+\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
-	codeShapedTokenPattern                 = regexp.MustCompile(`\b[A-Za-z][a-z]+(?:[A-Z][a-z0-9]+){1,}\b`)
-	codeShapedSnakeCasePattern             = regexp.MustCompile(`\b[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}\b`)
-	readFileSummaryLineWindowPattern       = regexp.MustCompile(`\blines\s+(\d+)-(\d+)\b`)
-	readFileSummaryTotalLinesPattern       = regexp.MustCompile(`\b(?:file has\s+(\d+)\s+lines\s+total|total\s+lines:\s+(\d+))\b`)
-	fileOutlineDeclarationPattern          = regexp.MustCompile(`(?m)^-\s+([A-Za-z_][A-Za-z0-9_\.]*)\s+lines\s+(\d+)-(\d+)\b`)
-	fileOutlinePreviewPattern              = regexp.MustCompile(`preview declarations:\s*\[([^\]]*)\]`)
+	stableHandlePathLinePattern      = regexp.MustCompile(`(?m)^f\d+\s+(.+)$`)
+	stableHandleInlinePattern        = regexp.MustCompile(`\bf\d+\s+((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+)\b`)
+	delegatedPacketPathLinePattern   = regexp.MustCompile(`((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|tscn|tres|py|pyi|ts|tsx|js|jsx|mjs|cjs|rs|java|kt|kts|sh|bash|zsh|fish|ps1|md|mdx|json|jsonl|yaml|yml|toml|xml|ini|cfg|conf|env|txt|csv|tsv)):\d+(?:-\d+)?(?:[:][^\s` + "`" + `"'(),.;:]+)?`)
+	delegatedPacketPathQuotePattern  = regexp.MustCompile("((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|tscn|tres|py|pyi|ts|tsx|js|jsx|mjs|cjs|rs|java|kt|kts|sh|bash|zsh|fish|ps1|md|mdx|json|jsonl|yaml|yml|toml|xml|ini|cfg|conf|env|txt|csv|tsv))[`'\"]{2,}")
+	closurePathLineSymbolPattern     = regexp.MustCompile(`(?m)(?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|py|pyi|ts|tsx|js|jsx|rs|java|kt|kts|sh|md|json|yaml|yml|toml|txt):\d+(?::\d+)?[: ]+([A-Za-z_][A-Za-z0-9_]{3,})\b`)
+	closurePathScopedSymbolPattern   = regexp.MustCompile(`(?m)((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|py|pyi|ts|tsx|js|jsx|rs|java|kt|kts|sh|md|json|yaml|yml|toml|txt)):\d+(?::\d+)?[: ]+([A-Za-z_][A-Za-z0-9_]{3,})\b`)
+	closurePathCallPattern           = regexp.MustCompile(`(?m)((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|py|pyi|ts|tsx|js|jsx|rs|java|kt|kts|sh|md|json|yaml|yml|toml|txt)):\d+(?::\d+)?:[^\n]*?\b([A-Za-z_][A-Za-z0-9_]{3,})\s*\(`)
+	callLikeIdentifierPattern        = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]{3,})\s*\(`)
+	qualifiedIdentifierPattern       = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]{1,}\.[A-Za-z_][A-Za-z0-9_]{3,})\b`)
+	backtickedTokenPattern           = regexp.MustCompile("`([^`]+)`")
+	toolLocalSearchHandlePattern     = regexp.MustCompile(`\bf\d+\s+(?:[[:alnum:]_.-]+/)+[[:alnum:]_.-]+\.[[:alnum:]]+:\d+:`)
+	goFuncDeclPattern                = regexp.MustCompile(`(?m)^func\s+(?:\([^)]+\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+	codeShapedTokenPattern           = regexp.MustCompile(`\b[A-Za-z][a-z]+(?:[A-Z][a-z0-9]+){1,}\b`)
+	codeShapedSnakeCasePattern       = regexp.MustCompile(`\b[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}\b`)
+	readFileSummaryLineWindowPattern = regexp.MustCompile(`\blines\s+(\d+)-(\d+)\b`)
+	readFileSummaryTotalLinesPattern = regexp.MustCompile(`\b(?:file has\s+(\d+)\s+lines\s+total|total\s+lines:\s+(\d+))\b`)
+	fileOutlineDeclarationPattern    = regexp.MustCompile(`(?m)^-\s+([A-Za-z_][A-Za-z0-9_\.]*)\s+lines\s+(\d+)-(\d+)\b`)
+	fileOutlinePreviewPattern        = regexp.MustCompile(`preview declarations:\s*\[([^\]]*)\]`)
 )
 
 // delegatedReadOnlyProbeBudget is the soft cap disclosed to post-readiness
@@ -922,6 +922,13 @@ func (r *Runner) Run(
 					if retryRejectedFinalAnswer(stepNumber, activeToolCall, assistantMessage, acceptance, blockerResult) {
 						continue
 					}
+					if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+						return finish(answer, nil, "host_owned_final_answer_recovery", false)
+					}
+					if answer, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok &&
+						!readOnlyAnswerReportsInsufficientEvidence(answer) {
+						return finish(answer, nil, "deterministic_final_answer_recovery", false)
+					}
 					return finish(answerContent, nil, blockerKind, true)
 				}
 				return finish(answerContent, nil, "model_answer_tool", false)
@@ -1084,6 +1091,13 @@ func (r *Runner) Run(
 					}
 					if retryRejectedFinalAnswer(stepNumber, activeToolCall, assistantMessage, acceptance, blockerResult) {
 						continue
+					}
+					if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+						return finish(answer, nil, "host_owned_final_answer_recovery", false)
+					}
+					if answer, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok &&
+						!readOnlyAnswerReportsInsufficientEvidence(answer) {
+						return finish(answer, nil, "deterministic_final_answer_recovery", false)
 					}
 					return finish(answer, err, blockerKind, true)
 				}
@@ -2715,6 +2729,11 @@ func (r *Runner) Run(
 				}
 			}
 			recorder.record(stepNumber, req, result, "child_task_result", true, true)
+			if !runnerBriefRequiresMutation(r.RuntimeBrief) && !runnerVerificationRequired(r.RuntimeBrief) {
+				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+					return finish(answer, nil, "post_child_host_closeout", false)
+				}
+			}
 			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
 				if shouldPreferModelBudgetSynthesis(r.agentName(), r.RuntimeBrief, collectedResults) {
 					continue
@@ -3015,6 +3034,16 @@ func (r *Runner) Run(
 			SetLastToolKey: true,
 		})
 		r.markConcreteSourceEvidenceObserved(result)
+		if readOnlyArchitectureToolBudgetCloseoutApplies(r.RuntimeBrief, collectedResults, 4) {
+			if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+				return finish(answer, nil, "read_only_architecture_tool_budget_closeout", false)
+			}
+			if answer, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+				return finish(answer, nil, "read_only_architecture_tool_budget_closeout", false)
+			}
+			answer, err := controller.completeWithoutMoreToolsWithReason("The read-only architecture evidence budget is complete. Tools are now disabled. Answer from the gathered evidence and carry forward the inspected implementation paths.")
+			return finish(answer, err, "read_only_architecture_tool_budget_closeout", true)
+		}
 		if !recoveryReadAllowanceGrantedThisRequest && implementationTargetSourceReadEstablishedWriteReady(r.RuntimeBrief, req, result, collectedResults) {
 			r.emitEvent(RunEvent{
 				Role:    "implementation_target_write_ready_source_refresh_allowed",
@@ -3467,6 +3496,13 @@ func (r *Runner) Run(
 					return finish(answer, nil, "delegated_read_only_host_closeout", false)
 				}
 			}
+			if !strings.HasPrefix(r.agentName(), "child:") &&
+				becameReadyFromAnalysis &&
+				postReadinessToolContractForBrief(r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive).AnswerOnly {
+				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+					return finish(answer, nil, "read_only_analysis_host_closeout", false)
+				}
+			}
 		}
 		if r.readOnlyNoMatchCloseoutApplies(req, result, collectedResults) {
 			if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
@@ -3524,15 +3560,19 @@ func (r *Runner) Run(
 		}
 		if postChildPacketActive && strings.TrimSpace(req.Tool) != "task" && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
 			postChildFollowupReads++
-			// Same removal: keep the soft nudge, drop the hard budget
-			// force-finish. The previous mutation-parent exemption is
-			// subsumed since no force-finish fires anymore.
 			if postChildFollowupReads > postChildDiminishingNudgeStage {
 				if nudge := postChildDiminishingReturnsNudge(r.RuntimeBrief.Objective, collectedResults, postChildFollowupReads); nudge != "" {
 					postChildDiminishingNudgeStage = postChildFollowupReads
 					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 					r.emitEvent(RunEvent{Role: "child_packet_diminishing_returns_nudge", Content: nudge})
 				}
+			}
+			if postChildReadBudget >= 0 && postChildFollowupReads >= postChildReadBudget {
+				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+					return finish(answer, nil, "post_child_packet_followup_budget_closeout", false)
+				}
+				answer, err := controller.completeWithoutMoreToolsWithReason("The child packet plus the allowed follow-up read budget are complete. Tools are now disabled. Answer from the gathered evidence and carry forward the inspected implementation paths.")
+				return finish(answer, err, "post_child_packet_followup_budget_closeout", true)
 			}
 		}
 		if strings.TrimSpace(result.Error) != "" {
@@ -6784,6 +6824,37 @@ func postReadinessReadOnlyAnswerOnlyContractApplies(brief workerruntime.WorkerRu
 		return false
 	}
 	return readOnlyAnalysisHasObjectiveRelevantSourceBody(brief, closure.Evidence)
+}
+
+func readOnlyArchitectureToolBudgetCloseoutApplies(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, maxTools int) bool {
+	if maxTools <= 0 || len(results) < maxTools {
+		return false
+	}
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
+		return false
+	}
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) ||
+		!workerruntime.RuntimeContractIsArchitectureOrReview(brief.Contract) {
+		return false
+	}
+	if len(readOnlyPresentationEvidencePathsForBrief(brief, results, 2)) == 0 {
+		return false
+	}
+	if objectiveAsksBehaviorSummary(brief.Objective) && !postChildReadOnlyPacketAvailable(brief, results) {
+		terms := sourceEvidenceObjectiveLineTerms(brief.Objective)
+		hasOwnerPath := false
+		for _, path := range readOnlyPresentationEvidencePathsForBrief(brief, results, 8) {
+			if sourceEvidenceLineObjectiveScore(path, terms) > 0 && !strings.Contains(strings.ToLower(path), "config") {
+				hasOwnerPath = true
+				break
+			}
+		}
+		if !hasOwnerPath {
+			return false
+		}
+	}
+	return true
 }
 
 func postReadinessGap(req workspace.ToolRequest) string {

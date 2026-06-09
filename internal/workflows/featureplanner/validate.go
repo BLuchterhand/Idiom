@@ -275,6 +275,9 @@ func ValidateDurablePlan(plan FeaturePlan) error {
 		if mismatches := MismatchedStrictPreDispatchTDD(atom); len(mismatches) > 0 {
 			errs = append(errs, fmt.Errorf("%s mismatched durable pre-dispatch TDD fields: %s", prefix, strings.Join(mismatches, ", ")))
 		}
+		for _, invalid := range InvalidStrictPreDispatchTDD(atom) {
+			errs = append(errs, fmt.Errorf("%s invalid durable pre-dispatch TDD field: %s", prefix, invalid))
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -438,6 +441,7 @@ func compileAtomAuthorityContract(plan FeaturePlan, atom FeatureAtomPlan) planco
 	required = normalizeEditScopeList(append(required, requiredTDDTestArtifactPaths(atom)...))
 	allowed := featurePlannerAllowedScopeExcludingRequired(normalizeEditScopeList(atom.AllowedEditPaths), required)
 	obligations := atomEditSetObligations(atom, required)
+	tddByID := featurePlannerTDDObligationsByID(plan.TDDContract.Obligations)
 	scope := plancontract.NewPlanScopeContract(required, allowed, obligations)
 	scope = scope.WithWriteAllowedPaths(append(append([]string(nil), required...), allowed...))
 	contract := plancontract.AtomExecutionContract{
@@ -449,9 +453,12 @@ func compileAtomAuthorityContract(plan FeaturePlan, atom FeatureAtomPlan) planco
 		contract.RequiredTests = append(contract.RequiredTests, plancontract.RequiredTest{Command: command, Source: "featureplanner"})
 	}
 	for _, command := range normalizedStringList(atom.TestFirst.Commands) {
+		tddID := firstNonEmptyStringSlice(atom.TestFirst.ObligationRefs)
+		tdd := tddByID[strings.TrimSpace(tddID)]
 		contract.TDDObligations = append(contract.TDDObligations, plancontract.TDDObligation{
-			ID:                firstNonEmptyStringSlice(atom.TestFirst.ObligationRefs),
+			ID:                tddID,
 			Command:           command,
+			Behavior:          strings.TrimSpace(tdd.Behavior),
 			TestArtifactPaths: normalizeEditScopeList(append(atom.TestFirst.TestArtifactPaths, atom.PlannedTDDSnapshot.TestArtifactPaths...)),
 			Source:            "featureplanner.test_first",
 		})
@@ -463,6 +470,16 @@ func compileAtomAuthorityContract(plan FeaturePlan, atom FeatureAtomPlan) planco
 		contract.SourceEvidenceObligations = append(contract.SourceEvidenceObligations, plancontract.SourceEvidenceObligation{Path: path, Kind: "featureplanner_evidence", Required: true, Source: "featureplanner"})
 	}
 	return contract.Normalized()
+}
+
+func featurePlannerTDDObligationsByID(obligations []TDDObligation) map[string]TDDObligation {
+	out := map[string]TDDObligation{}
+	for _, obligation := range obligations {
+		if id := strings.TrimSpace(obligation.ID); id != "" {
+			out[id] = obligation
+		}
+	}
+	return out
 }
 
 func atomEditSetObligations(atom FeatureAtomPlan, required []string) plancontract.EditSetObligations {
@@ -564,6 +581,54 @@ func newFileAuthorizationsFromDeltas(deltas []PlanAuthorityDelta) []plancontract
 		}
 	}
 	return files
+}
+
+func StandalonePromptNewFileAuthorityDeltas(plan FeaturePlan, prompt string, workspaceRoot string, now time.Time) []PlanAuthorityDelta {
+	paths := standalonePromptAuthorizedNewFilePaths(plan, prompt, workspaceRoot)
+	if len(paths) == 0 {
+		return nil
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	return []PlanAuthorityDelta{{
+		QuestionID:     "operator-prompt-new-files",
+		AuthorityKind:  "operator_approval",
+		EvidenceRefs:   []string{"operator_prompt"},
+		AffectedPaths:  paths,
+		AffectedFields: []string{"new_file_authorization"},
+		Expected:       "missing new files require explicit operator authorization",
+		Actual:         "operator prompt explicitly authorized new-file or package creation work",
+		Revision:       1,
+		CreatedAt:      now.UTC().Format(time.RFC3339Nano),
+	}}
+}
+
+func standalonePromptAuthorizedNewFilePaths(plan FeaturePlan, prompt string, workspaceRoot string) []string {
+	var paths []string
+	seen := map[string]bool{}
+	for _, atom := range plan.Atoms {
+		for _, scopedPath := range append(standaloneAtomWorkspaceScopePaths(atom), standaloneAtomTestArtifactPaths(atom)...) {
+			path := plancontract.NormalizeScopePath(scopedPath)
+			if path == "" || seen[path] || !plancontract.NewFileAuthorizedForPath(prompt, path) {
+				continue
+			}
+			if workspaceRoot != "" && standaloneWorkspacePathExists(workspaceRoot, path) {
+				continue
+			}
+			paths = append(paths, path)
+			seen[path] = true
+		}
+	}
+	return normalizeEditScopeList(paths)
+}
+
+func standaloneWorkspacePathExists(root string, path string) bool {
+	abs := filepath.Join(root, filepath.FromSlash(path))
+	if _, err := os.Stat(abs); err == nil {
+		return true
+	}
+	return false
 }
 
 func deltaAuthorizesNewFile(delta PlanAuthorityDelta) bool {
@@ -1530,6 +1595,68 @@ func MismatchedStrictPreDispatchTDD(atom FeatureAtomPlan) []string {
 		mismatches = append(mismatches, "planned_tdd_snapshot.created_before_dispatch_event_id")
 	}
 	return mismatches
+}
+
+func InvalidStrictPreDispatchTDD(atom FeatureAtomPlan) []string {
+	var invalid []string
+	if reason := invalidPlannedTDDSnapshotIDReason(atom.PlannedTDDSnapshot.SnapshotID); reason != "" {
+		invalid = append(invalid, "planned_tdd_snapshot.snapshot_id "+reason)
+	}
+	if reason := invalidPlannedTDDSnapshotDigestReason(atom.PlannedTDDSnapshot.SnapshotDigest); reason != "" {
+		invalid = append(invalid, "planned_tdd_snapshot.snapshot_digest "+reason)
+	}
+	return invalid
+}
+
+func invalidPlannedTDDSnapshotIDReason(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	lower := strings.ToLower(value)
+	if strings.Contains(value, "...") {
+		return "contains an ellipsis placeholder; use the snapshot_id from harness TDD evidence"
+	}
+	for _, token := range []string{"placeholder", "fake"} {
+		if strings.Contains(lower, token) {
+			return fmt.Sprintf("contains placeholder token %q; use the snapshot_id from harness TDD evidence", token)
+		}
+	}
+	if strings.HasPrefix(lower, "snap-tdd-") {
+		return "uses the fake snap-tdd-* placeholder pattern; use the snapshot_id from harness TDD evidence"
+	}
+	return ""
+}
+
+func invalidPlannedTDDSnapshotDigestReason(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	lower := strings.ToLower(value)
+	if strings.Contains(value, "...") {
+		return "contains an ellipsis placeholder; must be sha256:<64 lowercase hex> from harness TDD evidence"
+	}
+	for _, token := range []string{"placeholder", "fake", "test", "todo", "tbd", "example"} {
+		if strings.Contains(lower, token) {
+			return fmt.Sprintf("contains placeholder token %q; must be sha256:<64 lowercase hex> from harness TDD evidence", token)
+		}
+	}
+	const prefix = "sha256:"
+	if !strings.HasPrefix(value, prefix) {
+		return "must be sha256:<64 lowercase hex> from harness TDD evidence"
+	}
+	hexPart := strings.TrimPrefix(value, prefix)
+	if len(hexPart) != 64 {
+		return fmt.Sprintf("must be sha256:<64 lowercase hex>; got %d characters after sha256:", len(hexPart))
+	}
+	for _, r := range hexPart {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			continue
+		}
+		return "must be sha256:<64 lowercase hex>; digest contains non-lowercase-hex characters"
+	}
+	return ""
 }
 
 func ValidatePlannerQuestion(question PlannerQuestion) error {

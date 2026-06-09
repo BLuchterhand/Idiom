@@ -34,8 +34,9 @@ type LearningLogEntry struct {
 	Evidence      *LearningEvidenceRef  `json:"evidence,omitempty"`
 	BeforeWeights *map[string]float64   `json:"before_weights,omitempty"`
 	AfterWeights  *map[string]float64   `json:"after_weights,omitempty"`
-	Rollback      *LearningRollbackData `json:"rollback,omitempty"`
-	Note          string                `json:"note,omitempty"`
+	Rollback      *LearningRollbackData               `json:"rollback,omitempty"`
+	Verification  *LearningLogVerificationEvidence     `json:"verification,omitempty"`
+	Note          string                                `json:"note,omitempty"`
 }
 
 // LearningEvidenceRef records sanitized identifiers and numeric metrics that
@@ -56,6 +57,21 @@ type LearningEvidenceRef struct {
 // pre-event value without consulting raw task inputs.
 type LearningRollbackData struct {
 	Weights map[string]float64 `json:"weights"`
+}
+
+// LearningLogVerificationEvidence is a privacy-safe subset of VerificationEvidence
+// persisted in the learning log audit trail. It excludes VerificationOutput (which
+// may contain raw command output) and keeps only the structured gate predicates:
+// which paths were edited, what command verified them, and whether it passed.
+// This makes gate decisions reconstructable from the audit log without exposing
+// unredacted tool output, file bodies, or secrets.
+type LearningLogVerificationEvidence struct {
+	// EditPaths are the file paths that were edited and verified.
+	EditPaths []string `json:"edit_paths"`
+	// VerificationCommand is the command run to verify the edits.
+	VerificationCommand string `json:"verification_command"`
+	// VerificationPassed is true when the verification command succeeded.
+	VerificationPassed bool `json:"verification_passed"`
 }
 
 const (
@@ -171,6 +187,10 @@ func sanitizeLearningLogEntry(entry LearningLogEntry) LearningLogEntry {
 	if entry.Rollback != nil {
 		entry.Rollback = &LearningRollbackData{Weights: sanitizeLearningLogWeights(entry.Rollback.Weights)}
 	}
+	if entry.Verification != nil {
+		v := sanitizeLearningLogVerificationEvidence(*entry.Verification)
+		entry.Verification = &v
+	}
 	entry.EventID = sanitizeLearningEventID(suppliedEventID, entry)
 	return entry
 }
@@ -224,6 +244,34 @@ func sanitizeLearningEvidenceRef(evidence LearningEvidenceRef) LearningEvidenceR
 		evidence.InvalidPathCount = 0
 	}
 	return evidence
+}
+
+// sanitizeLearningLogVerificationEvidence produces a privacy-safe log copy of
+// verification evidence. EditPaths are sanitized through the standard path
+// pipeline. VerificationCommand is bounded to 256 characters and stripped of
+// control characters. VerificationOutput is intentionally excluded.
+func sanitizeLearningLogVerificationEvidence(ve LearningLogVerificationEvidence) LearningLogVerificationEvidence {
+	ve.EditPaths = sanitizeLearningLogPathList(ve.EditPaths)
+	ve.VerificationCommand = sanitizeLearningLogVerificationCommand(ve.VerificationCommand)
+	return ve
+}
+
+func sanitizeLearningLogVerificationCommand(cmd string) string {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return ""
+	}
+	// Strip control characters; keep printable ASCII and common UTF-8.
+	cmd = strings.Map(func(r rune) rune {
+		if r < ' ' || r == 0x7f {
+			return -1
+		}
+		return r
+	}, cmd)
+	if len(cmd) > 256 {
+		cmd = cmd[:256]
+	}
+	return cmd
 }
 
 func sanitizeLearningLogPathList(paths []string) []string {

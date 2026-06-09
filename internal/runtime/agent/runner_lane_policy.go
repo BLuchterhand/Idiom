@@ -1355,9 +1355,11 @@ func (r *Runner) delegatedReadOnlyBootstrapQueryRequest(results []workspace.Tool
 	if delegatedReadOnlyBootstrapHasExactStructuredProbe(r.RuntimeBrief.Objective, r.RuntimeBrief.AllowedTools) {
 		return workspace.ToolRequest{}, false
 	}
-	for _, path := range pathparse.MentionedWorkspacePaths(r.RuntimeBrief.Objective) {
-		if pathparse.HasWorkspaceFileExtension(path) && !delegatedReadOnlySecondaryEvidencePath(path) {
-			return workspace.ToolRequest{}, false
+	if !delegatedReadOnlyObjectiveRequiresDiscoveryQuery(r.RuntimeBrief.Objective) {
+		for _, path := range pathparse.MentionedWorkspacePaths(r.RuntimeBrief.Objective) {
+			if pathparse.HasWorkspaceFileExtension(path) && !delegatedReadOnlySecondaryEvidencePath(path) {
+				return workspace.ToolRequest{}, false
+			}
 		}
 	}
 	pattern := delegatedReadOnlyBootstrapPattern(r.RuntimeBrief.Objective)
@@ -1371,6 +1373,11 @@ func (r *Runner) delegatedReadOnlyBootstrapQueryRequest(results []workspace.Tool
 		Pattern:  pattern,
 		MaxDepth: 2,
 	}, true
+}
+
+func delegatedReadOnlyObjectiveRequiresDiscoveryQuery(objective string) bool {
+	lower := strings.ToLower(strings.Join(strings.Fields(objective), " "))
+	return containsAny(lower, "discovery tool", "discovery tools", "tool usefulness", "increase their usefulness", "overall usefulness")
 }
 
 func delegatedReadOnlyDiscoveryPurpose(objective string) string {
@@ -1635,6 +1642,9 @@ func delegatedReadOnlyNamedPrimaryPathRedirect(objective string, blockedPath str
 func delegatedReadOnlyImplementationPattern(objective string, targetPath string) string {
 	terms := make([]string, 0, 8)
 	for _, part := range strings.Split(delegatedReadOnlyBootstrapPattern(objective), "|") {
+		if delegatedReadOnlyImplementationAliasPattern(part) {
+			continue
+		}
 		terms = util.AppendUnique(terms, part)
 	}
 	base := strings.TrimSuffix(filepath.Base(targetPath), filepath.Ext(targetPath))
@@ -1646,12 +1656,17 @@ func delegatedReadOnlyImplementationPattern(objective string, targetPath string)
 			terms = util.AppendUnique(terms, term)
 		}
 	}
-	for _, term := range delegatedReadOnlyMechanismTerms(objective) {
-		if normalized, ok := delegatedReadOnlySearchTerm(term); ok {
-			terms = util.AppendUnique(terms, normalized)
-		}
-	}
 	return strings.Join(terms, "|")
+}
+
+func delegatedReadOnlyImplementationAliasPattern(part string) bool {
+	part = strings.ToLower(strings.TrimSpace(part))
+	switch part {
+	case "child[-_ ]?task", "task[-_ ]?tool", "delegate", "delegation":
+		return true
+	default:
+		return false
+	}
 }
 
 func delegatedReadOnlyMechanismTerms(objective string) []string {
@@ -1659,6 +1674,11 @@ func delegatedReadOnlyMechanismTerms(objective string) []string {
 	terms := make([]string, 0, 6)
 	if containsAny(lower, "invoke", "invoked", "execute", "executed", "run", "runner", "workflow", "wired") {
 		for _, term := range []string{"invoke", "execute"} {
+			terms = util.AppendUnique(terms, term)
+		}
+	}
+	if containsAny(lower, "subagent", "sub-agent", "sub agent") {
+		for _, term := range []string{"child task", "task tool", "delegate", "delegation"} {
 			terms = util.AppendUnique(terms, term)
 		}
 	}
