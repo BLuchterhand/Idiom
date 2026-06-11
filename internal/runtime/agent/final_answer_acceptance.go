@@ -36,6 +36,15 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 	if r != nil {
 		acceptance.EvidencePaths = acceptedAnswerEvidencePaths(answer, results, r.RuntimeBrief)
 	}
+	var directAnswerRelevance readOnlyDirectAnswerRelevance
+	if r != nil {
+		directAnswerRelevance = r.readOnlyDirectAnswerRelevance(answer, results)
+		if directAnswerRelevance.Status != "" {
+			acceptance.ObjectiveRelevanceStatus = directAnswerRelevance.Status
+			acceptance.RelevantSourceBodyPaths = directAnswerRelevance.RelevantSourceBodyPaths
+			acceptance.AnswerObjectiveTerms = directAnswerRelevance.AnswerObjectiveTerms
+		}
+	}
 	reject := func(kind string, reason string) finalAnswerAcceptance {
 		acceptance.Decision = finalAnswerAcceptanceRejected
 		acceptance.BlockerKind = kind
@@ -80,17 +89,13 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 	}
 	if r != nil {
 		if reason := r.sourceGroundingRejectionReason(answer, results); reason != "" {
+			if len(acceptance.EvidencePaths) == 0 {
+				acceptance.EvidencePaths = closurePromptEvidencePaths(directAnswerRelevance.RelevantSourceBodyPaths, 8)
+			}
 			return reject("source_grounding_unmet", reason)
 		}
-		if relevance := r.readOnlyDirectAnswerRelevance(answer, results); relevance.BlockerKind != "" {
-			acceptance.ObjectiveRelevanceStatus = relevance.Status
-			acceptance.RelevantSourceBodyPaths = relevance.RelevantSourceBodyPaths
-			acceptance.AnswerObjectiveTerms = relevance.AnswerObjectiveTerms
-			return reject(relevance.BlockerKind, relevance.Reason)
-		} else if relevance.Status != "" {
-			acceptance.ObjectiveRelevanceStatus = relevance.Status
-			acceptance.RelevantSourceBodyPaths = relevance.RelevantSourceBodyPaths
-			acceptance.AnswerObjectiveTerms = relevance.AnswerObjectiveTerms
+		if directAnswerRelevance.BlockerKind != "" {
+			return reject(directAnswerRelevance.BlockerKind, directAnswerRelevance.Reason)
 		}
 	}
 	if r != nil {
@@ -122,7 +127,7 @@ func (r *Runner) readOnlyDirectAnswerRelevance(answer string, results []workspac
 	if r == nil {
 		return readOnlyDirectAnswerRelevance{}
 	}
-	return readOnlyClosureDecisionForResults(r.RuntimeBrief, results).DirectAnswerRelevance(answer)
+	return readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(r.RuntimeBrief), results).DirectAnswerRelevance(answer)
 }
 
 func readOnlyDirectAnswerAcceptanceApplies(brief workerruntime.WorkerRuntimeBrief) bool {
@@ -176,7 +181,12 @@ func acceptedReadOnlyDirectAnswerEvidencePaths(answer string, brief workerruntim
 	if !readOnlyDirectAnswerAcceptanceApplies(brief) {
 		return nil
 	}
-	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+	decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).
+		FinalAnswerDecision(answer)
+	return append([]string(nil), decision.AcceptedEvidencePaths...)
+}
+
+func readOnlyAcceptedDirectAnswerEvidencePaths(answer string, ledger readOnlyAnswerabilityLedger, results []workspace.ToolResult) []string {
 	mentioned := readOnlySourceLikePaths(sourceGroundingMentionedPaths(answer), 16)
 	relevant := ledger.RelevantSourceBodyPaths
 	objectivePaths := ledger.SourceBodyObjectivePaths
