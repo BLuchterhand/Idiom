@@ -724,6 +724,10 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		decision.Request = redirected
 		decision.Raw = marshalToolRequestRaw(redirected)
 	}
+	if redirected, ok := r.delegatedReadOnlyPostDiscoverySearchRedirect(input.Results, decision.Request); ok {
+		decision.Request = redirected
+		decision.Raw = marshalToolRequestRaw(redirected)
+	}
 	if redirected, ok := r.delegatedReadOnlyBootstrapQueryRequest(input.Results, decision.Request); ok {
 		decision.Request = redirected
 		decision.Raw = marshalToolRequestRaw(redirected)
@@ -1304,11 +1308,37 @@ func (r *Runner) delegatedReadOnlyDiscoveryQueryRepairRequest(results []workspac
 		return redirected, true
 	}
 	repaired, changed := plan.repairDiscoveryQuery(req)
-	if r.delegatedReadOnlyDiscoveryPathMissing(repaired.Path) && plan.primaryScope != "" && plan.primaryScope != "." {
-		repaired.Path = plan.primaryScope
-		changed = true
+	if r.delegatedReadOnlyDiscoveryPathMissing(repaired.Path) {
+		if replacement := r.delegatedReadOnlyFirstExistingDetailedScope(plan); replacement != "" {
+			repaired.Path = replacement
+			changed = true
+		} else if plan.primaryScope != "" && plan.primaryScope != "." {
+			repaired.Path = plan.primaryScope
+			changed = true
+		}
 	}
 	return repaired, changed
+}
+
+func (r *Runner) delegatedReadOnlyPostDiscoverySearchRedirect(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
+	if r == nil || !strings.HasPrefix(r.agentName(), "child:") || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != "delegated_read_only" {
+		return workspace.ToolRequest{}, false
+	}
+	if strings.TrimSpace(req.Tool) != "search_files" || len(results) == 0 {
+		return workspace.ToolRequest{}, false
+	}
+	plan := newDelegatedDiscoveryPlan(r.RuntimeBrief.Objective)
+	return plan.candidateConsumptionRequest(results, r.RuntimeBrief.AllowedTools)
+}
+
+func (r *Runner) delegatedReadOnlyFirstExistingDetailedScope(plan delegatedDiscoveryPlan) string {
+	for _, scope := range plan.detailedScopes {
+		if scope == "" || r.delegatedReadOnlyDiscoveryPathMissing(scope) {
+			continue
+		}
+		return scope
+	}
+	return ""
 }
 
 func (r *Runner) delegatedReadOnlyDiscoveryPathMissing(path string) bool {

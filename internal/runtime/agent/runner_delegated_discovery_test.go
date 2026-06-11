@@ -211,6 +211,76 @@ func TestDelegatedReadOnlyDiscoveryRepairReplacesMissingNamedScope(t *testing.T)
 	}
 }
 
+func TestDelegatedReadOnlyDiscoveryRepairUsesFirstExistingDetailedScope(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "capabilities", "workspace"), 0o755); err != nil {
+		t.Fatalf("mkdir workspace scope: %v", err)
+	}
+	runner := &Runner{
+		AgentName: "child:explorer",
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:   "delegated_read_only",
+			AllowedTools: []string{"discovery_query", "search_content", "read_file"},
+			Objective: strings.Join([]string{
+				"Inventory discovery tools and identify usefulness gaps.",
+				"Named workspace scope: internal/frontier, internal/capabilities/workspace, internal",
+				"Key terms: discovery tools, usefulness",
+			}, "\n"),
+		},
+	}
+
+	repaired, ok := runner.delegatedReadOnlyDiscoveryQueryRepairRequest(nil, workspace.ToolRequest{
+		Tool:    "discovery_query",
+		Purpose: "architecture_boundary",
+		Path:    "internal/frontier",
+		Pattern: "discovery|tools",
+	})
+	if !ok {
+		t.Fatal("expected missing first scope to be repaired")
+	}
+	if repaired.Path != "internal/capabilities/workspace" {
+		t.Fatalf("expected repair to use first existing detailed scope, got %#v", repaired)
+	}
+}
+
+func TestDelegatedReadOnlyPostDiscoverySearchConsumesCandidateSource(t *testing.T) {
+	runner := &Runner{
+		AgentName: "child:explorer",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:   "delegated_read_only",
+			AllowedTools: []string{"discovery_query", "search_content", "search_files", "read_file"},
+			Objective: strings.Join([]string{
+				"What can we add to our discovery tools in an effort at increasing their overall usefulness?",
+				"Named workspace scope: internal/frontier, internal/capabilities/workspace, internal",
+				"Key terms: discovery tools, usefulness, final answer",
+			}, "\n"),
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "discovery_query",
+		Summary: "Ran architecture_boundary discovery query",
+		Output: `{"purpose":"architecture_boundary","artifact_path":".idiom/discovery/queries/query.json","evidence":[` +
+			`{"name":"text_anchor_search","summary":"Found discovery tool implementation paths.","output_excerpt":"internal/runtime/agent/answer_composer.go:18: func (AnswerComposer) Compose(input AnswerComposerInput) (string, bool)\ninternal/capabilities/workspace/discovery_query.go:338: func (r *discoveryQueryRunner) run(ctx context.Context) {}"}` +
+			`]}`,
+	}}
+
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Results: results,
+		Request: workspace.ToolRequest{Tool: "search_files", Pattern: "internal/frontier"},
+	})
+	if decision.Request.Tool != "read_file" {
+		t.Fatalf("expected post-discovery search to consume source candidate, got %#v", decision.Request)
+	}
+	if decision.Request.Path != "internal/capabilities/workspace/discovery_query.go" &&
+		decision.Request.Path != "internal/runtime/agent/answer_composer.go" {
+		t.Fatalf("expected discovered source candidate read, got %#v", decision.Request)
+	}
+}
+
 func TestDelegatedReadOnlyCandidateConsumptionPrefersDiscoveredMechanismEvidenceOverInventory(t *testing.T) {
 	plan := newDelegatedDiscoveryPlan(strings.Join([]string{
 		"What can we add to our discovery tools in an effort at increasing their overall usefulness?",
