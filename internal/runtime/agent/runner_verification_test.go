@@ -320,6 +320,49 @@ func TestPostWriteSourceSanityRedirectsNormalImplementationReadOfChangedSource(t
 	}
 }
 
+func TestPostWriteSourceSanityRedirectsNormalImplementationDiscoveryDrift(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/labels/labels.go"},
+	}
+
+	redirected, ok := postWriteSourceSanityRedirect(
+		workspace.ToolRequest{Tool: workspace.ToolNameContextQuery, Query: "callers of ShortLabel", Resolution: "symbol"},
+		brief,
+		results,
+		[]string{workspace.ToolNameSourceSanity, workspace.ToolNameShell},
+	)
+	if !ok {
+		t.Fatal("expected post-write discovery drift to redirect to source_sanity")
+	}
+	if redirected.Tool != workspace.ToolNameSourceSanity || redirected.Path != "internal/labels/labels.go" {
+		t.Fatalf("unexpected redirect: %#v", redirected)
+	}
+}
+
+func TestPostWriteSourceSanityRedirectsDiscoveryDriftRequiresSingleChangedSource(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/labels/labels.go"},
+		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/labels/other.go"},
+	}
+
+	if _, ok := postWriteSourceSanityRedirect(
+		workspace.ToolRequest{Tool: workspace.ToolNameContextQuery, Query: "callers of ShortLabel", Resolution: "symbol"},
+		brief,
+		results,
+		[]string{workspace.ToolNameSourceSanity, workspace.ToolNameShell},
+	); ok {
+		t.Fatal("must not choose between multiple changed source paths for broad discovery drift")
+	}
+}
+
 func TestPostWriteSourceSanityRedirectRecoversNormalImplementationAfterInvalidVerificationTool(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",
