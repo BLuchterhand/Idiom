@@ -5,15 +5,21 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/runtime/workerruntime"
 )
 
 type PlanExecuteRecoveryKind string
 
 const (
-	PlanExecuteRecoveryKindLowValueCandidateAction PlanExecuteRecoveryKind = "low_value_candidate_action"
-	PlanExecuteRecoveryKindGroundingRequired       PlanExecuteRecoveryKind = "grounding_required"
-	PlanExecuteRecoveryKindEmptySubmitPlan         PlanExecuteRecoveryKind = "empty_submit_plan"
-	PlanExecuteRecoveryKindSubmitPlanParse         PlanExecuteRecoveryKind = "submit_plan_parse"
+	PlanExecuteRecoveryKindLowValueCandidateAction  PlanExecuteRecoveryKind = "low_value_candidate_action"
+	PlanExecuteRecoveryKindGroundingRequired        PlanExecuteRecoveryKind = "grounding_required"
+	PlanExecuteRecoveryKindEmptySubmitPlan          PlanExecuteRecoveryKind = "empty_submit_plan"
+	PlanExecuteRecoveryKindSubmitPlanParse          PlanExecuteRecoveryKind = "submit_plan_parse"
+	PlanExecuteRecoveryKindSubmitCorrection         PlanExecuteRecoveryKind = "submit_correction"
+	PlanExecuteRecoveryKindNativeSubmitCorrection   PlanExecuteRecoveryKind = "native_submit_correction"
+	PlanExecuteRecoveryKindAnchorRefresh            PlanExecuteRecoveryKind = "anchor_refresh"
+	PlanExecuteRecoveryKindRepeatedCorrection       PlanExecuteRecoveryKind = "repeated_correction"
+	PlanExecuteRecoveryKindNativeNoCallFallback     PlanExecuteRecoveryKind = "native_no_call_fallback"
 )
 
 type PlanExecuteRecoveryPlan struct {
@@ -149,6 +155,148 @@ func planThenExecuteSubmitPlanParseRecoveryPlan(stringifiedEdits bool, requiredP
 		AllowedTools:    []string{"submit_plan"},
 		TerminalOptions: planExecuteTerminalSubmitPlanSourceSatisfiedQuestion(),
 		Summary:         summary,
+		Instructions:    instructions,
+	}
+}
+
+
+// planThenExecuteSubmitCorrectionRecoveryPlan returns a recovery plan for the generic
+// submit-plan correction path after a rejected submit_plan.
+func planThenExecuteSubmitCorrectionRecoveryPlan(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult, refreshNote string) PlanExecuteRecoveryPlan {
+	required := nonEmptyRunnerStrings(brief.RequiredEditPaths, 12)
+	terminal := planExecuteTerminalSubmitPlanSourceSatisfiedQuestion()
+	summary := "The previous `submit_plan` was rejected before it became a valid plan artifact."
+	if brief := lastSubmitPlanCorrectionRejectionBrief(result); brief != "" {
+		summary += " " + brief
+	}
+	instructions := []string{
+		"The next visible action must be a corrected parser-readable `submit_plan` request.",
+		planThenExecuteSubmitPlanCoverageSentence(),
+		"Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not call read/search/discovery in submit-correction mode.",
+		planThenExecuteSubmitPlanCorrectionInstructionForBrief(brief, result),
+	}
+	if refreshNote != "" {
+		instructions = append(instructions, refreshNote)
+	}
+	if len(required) > 0 {
+		instructions = append(instructions, "Required edit paths: "+strings.Join(required, ", ")+".")
+	}
+	return PlanExecuteRecoveryPlan{
+		Kind:            PlanExecuteRecoveryKindSubmitCorrection,
+		AllowedTools:    []string{"submit_plan"},
+		TerminalOptions: terminal,
+		Summary:         summary,
+		Instructions:    instructions,
+	}
+}
+
+// planThenExecuteNativeSubmitPlanCorrectionRecoveryPlan returns a recovery plan
+// for the native submit_plan tool path after a rejection.
+func planThenExecuteNativeSubmitPlanCorrectionRecoveryPlan(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult) PlanExecuteRecoveryPlan {
+	required := nonEmptyRunnerStrings(brief.RequiredEditPaths, 12)
+	summary := "The previous native `submit_plan` tool call was rejected before it became a valid plan artifact."
+	if brief := lastSubmitPlanCorrectionRejectionBrief(result); brief != "" {
+		summary += " " + brief
+	}
+	instructions := []string{
+		"Call native `submit_plan` again now.",
+		"The next tool call must be a corrected `submit_plan`.",
+		planThenExecuteSubmitPlanCoverageSentence(),
+		"Do not answer in prose, and do not call read/search/discovery, shell, verification, or per-edit write tools.",
+	}
+	if details := planThenExecuteNativeSubmitPlanCorrectionDetails(brief, result); details != "" {
+		instructions = append(instructions, details)
+	}
+	if len(required) > 0 {
+		instructions = append(instructions, "Required edit paths: "+strings.Join(required, ", ")+".")
+	}
+	return PlanExecuteRecoveryPlan{
+		Kind:            PlanExecuteRecoveryKindNativeSubmitCorrection,
+		AllowedTools:    []string{"submit_plan"},
+		TerminalOptions: planExecuteTerminalSubmitPlanOnly(),
+		Summary:         summary,
+		Instructions:    instructions,
+	}
+}
+
+// planThenExecuteAnchorRefreshRecoveryPlan returns a recovery plan for the anchor-refresh
+// phase after a rejected submit_plan when source evidence needs refreshing.
+func planThenExecuteAnchorRefreshRecoveryPlan(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, rejected workspace.ToolResult, rejectedAt int) PlanExecuteRecoveryPlan {
+	refreshPaths := planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt)
+	target := "the stale or missing required edit path named by the submit_plan rejection"
+	if len(refreshPaths) > 0 {
+		target = strings.Join(refreshPaths, ", ")
+	}
+	summary := "The previous `submit_plan` was rejected before it became a valid plan artifact."
+	if brief := lastSubmitPlanRejectionBrief(rejected); brief != "" {
+		summary += " " + brief
+	}
+	instructions := []string{
+		"This is an anchor-refresh phase, not a submit-plan phase. The corrected plan cannot be valid until source evidence is refreshed for: " + target + ".",
+		"Your next visible message must be exactly one parser-readable bounded source-body request for one of those paths.",
+		"For large Go/source files, raw `read_file` windows are refresh evidence but are not enough to close an invalid-anchor correction; prefer the symbol/body route for the declaration you intend to edit.",
+		"Do not call `submit_plan` again, answer `Decision: source-satisfied`, answer `<<QUESTION>>:`, or reply in prose until the bounded refresh returns.",
+	}
+	return PlanExecuteRecoveryPlan{
+		Kind:            PlanExecuteRecoveryKindAnchorRefresh,
+		AllowedTools:    []string{workspace.CodeNavigateToolName, "read_file", "code_navigate"},
+		TerminalOptions: []string{"bounded read/refresh"},
+		Summary:         summary,
+		Instructions:    instructions,
+	}
+}
+
+// planThenExecuteRepeatedSubmitCorrectionRecoveryPlan for repeated invalid submit_plan.
+func planThenExecuteRepeatedSubmitCorrectionRecoveryPlan(lastResult workspace.ToolResult) PlanExecuteRecoveryPlan {
+	summary := "The last request repeated the same invalid `submit_plan`; it was not executed again."
+	if brief := lastSubmitPlanCorrectionRejectionBrief(lastResult); brief != "" {
+		summary += " " + brief
+	}
+	instructions := []string{
+		"Submit a corrected parser-readable `submit_plan` now.",
+		planThenExecuteSubmitPlanCoverageSentence(),
+		"Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not read/search/discovery again, and do not reply in prose.",
+		planThenExecuteSubmitPlanCorrectionInstructionForBrief(workerruntime.WorkerRuntimeBrief{}, lastResult),
+	}
+	return PlanExecuteRecoveryPlan{
+		Kind:            PlanExecuteRecoveryKindRepeatedCorrection,
+		AllowedTools:    []string{"submit_plan"},
+		TerminalOptions: planExecuteTerminalSubmitPlanOnly(),
+		Summary:         summary,
+		Instructions:    instructions,
+	}
+}
+
+// planThenExecuteRepeatedCorrectionExhaustedRejection returns summary and error text.
+func planThenExecuteRepeatedCorrectionExhaustedRejection(lastResult workspace.ToolResult) (string, string) {
+	reason := ""
+	if result := lastSubmitPlanCorrectionRejectionBrief(lastResult); result != "" {
+		reason = result
+	}
+	return "Repeated invalid submit_plan rejected",
+		"this exact invalid `submit_plan` was repeated after submit-correction prompts. " + reason + "The only valid next action is a corrected parser-readable `submit_plan`. " + planThenExecuteSubmitPlanCoverageSentence() + " Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not call read/search/discovery, and do not choose a different tool."
+}
+
+// planThenExecuteCorrectionHiddenOnlyRecoveryPrompt modifies prompt for hidden-only output.
+func planThenExecuteCorrectionHiddenOnlyRecoveryPrompt(base string) string {
+	return "The previous retry produced hidden-only output with no parser-readable action. Hidden thinking is disabled for this retry; produce exactly one visible parser-readable `submit_plan` request now. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not call read/search/discovery.\n\n" + base
+}
+
+// planThenExecuteNativeNoCallFallbackRecoveryPlan returns a recovery plan for when
+// the native submit_plan tool-call transport failed before producing a call.
+func planThenExecuteNativeNoCallFallbackRecoveryPlan(requiredPaths []string) PlanExecuteRecoveryPlan {
+	instructions := []string{
+		"Emit exactly one visible JSON object for `submit_plan` now. Do not write prose before or after it.",
+		planThenExecuteSubmitPlanCoverageSentence(),
+	}
+	if len(requiredPaths) > 0 {
+		instructions = append(instructions, "Required edit paths: "+strings.Join(requiredPaths, ", ")+".")
+	}
+	return PlanExecuteRecoveryPlan{
+		Kind:            PlanExecuteRecoveryKindNativeNoCallFallback,
+		AllowedTools:    []string{"submit_plan"},
+		TerminalOptions: planExecuteTerminalSubmitPlanOnly(),
+		Summary:         "Native submit_plan tool-call transport failed before the model produced a tool call. For this one recovery retry, native tools are disabled and the textual tool parser is active.",
 		Instructions:    instructions,
 	}
 }

@@ -218,5 +218,17 @@ func LanePolicyForBrief(brief workerruntime.WorkerRuntimeBrief) LanePolicy {
 	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDelegatedReadOnly) {
 		return DelegatedReadOnlyLanePolicy{}
 	}
+	// Read-only investigation lanes (architecture, review, locate, etc.)
+	// that do not require mutation should use the conversation policy so
+	// the model owns readiness and is not force-completed after incidental
+	// tool rejections. Without this, the LLM route classifier's
+	// non-determinism (temp 0.1) causes similar evidence-based questions to
+	// land in different lane policies with inconsistent force-answer
+	// behavior, violating the north-star principle of preferring nudges and
+	// bounded recovery over hard-picking the model's next step.
+	if workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) &&
+		!runnerBriefRequiresMutation(brief) {
+		return ConversationLanePolicy{}
+	}
 	return DefaultLanePolicy{}
 }

@@ -584,6 +584,15 @@ func (r *Runner) Run(
 			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 			r.emitEvent(RunEvent{Role: "completion_gate_recovery", Content: prompt})
 		}
+		// Consolidated: un-hide source-body read tools on ANY retryable
+		// read-only gate rejection. The model needs read_file and
+		// code_navigate to repair the evidence gap that caused the
+		// rejection; leaving them hidden makes retries futile.
+		// Covers source_grounding_unmet, answer_objective_unmet,
+		// read_only_protocol_blocker, and any future retryable kind.
+		delete(turnHiddenTools, "code_navigate")
+		delete(turnHiddenTools, "read_file")
+		rebuildTools()
 		return true
 	}
 

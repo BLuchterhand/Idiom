@@ -235,6 +235,15 @@ func (d ReadOnlyCloseout) DirectAnswerRelevance(answer string) readOnlyDirectAns
 		}
 		return relevance
 	}
+	// Follow-up conversation turn with carried-over evidence: accept
+	// substantive answers even when objective-term matching is weak or
+	// answerability is marginal for short confirmation follow-ups.
+	// This single guard replaces bespoke patches in three sub-gates below.
+	if ledger.directAnswerConversation() &&
+		(len(d.Brief.EvidencePaths) > 0 || len(ledger.SourceBodyPaths) > 0) &&
+		!answerLacksObjectiveSourceEvidence(answer, ledger) {
+		return relevance
+	}
 	if plainNamedFileContentRequest(objective) && answerCitesNamedObjectiveSource(answer, ledger, d.Results) {
 		return relevance
 	}

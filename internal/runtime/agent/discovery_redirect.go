@@ -456,6 +456,14 @@ func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.T
 	if isDiagnosticLogArtifactPath(path) {
 		return RedirectDecision{}
 	}
+	// Don't redirect to code_navigate if it's been hidden by turn-level
+	// tool hiding (e.g., same-path fixation). Redirecting to a hidden tool
+	// creates a dead end — the model follows the redirect only to get a
+	// hidden-tool rejection, wasting a step and confusing the investigation.
+	codeNavigateVisible := len(d.allowedTools) == 0 || redirectToolAllowed(d.allowedTools, workspace.CodeNavigateToolName)
+	if !codeNavigateVisible {
+		return RedirectDecision{}
+	}
 	// Only redirect after the model has already read this file at
 	// least twice this turn. First read is legitimate exploration.
 	fp := "read_file|" + path + "|conversation"

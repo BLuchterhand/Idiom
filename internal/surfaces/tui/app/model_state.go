@@ -205,6 +205,10 @@ type Model struct {
 	maxTokensOverride                int
 	disableThinkingOverride          bool
 	forcedReadinessOpenObligations   []string
+	// lastTurnSourceResults carries source-body tool results from the
+	// previous conversation turn so the next turn's source grounding gate
+	// can verify evidence paths without re-reading files.
+	lastTurnSourceResults            []workspace.ToolResult
 	planExecuteActive                bool
 	planExecuteScopeContract         planexecute.PlanScopeContract
 	planExecuteWriteEnvelope         []string
@@ -1489,6 +1493,32 @@ func (m *Model) SetDisableThinkingOverride(disabled bool) {
 
 func (m *Model) SetForcedReadinessOpenObligations(obligations []string) {
 	m.forcedReadinessOpenObligations = append([]string(nil), obligations...)
+}
+
+// SetLastTurnSourceResults stores source-body tool results from the completed
+// agent turn so they can seed the next turn's evidence grounding.
+func (m *Model) SetLastTurnSourceResults(results []workspace.ToolResult) {
+	cap := 32
+	if len(results) > cap {
+		results = results[len(results)-cap:]
+	}
+	m.lastTurnSourceResults = append([]workspace.ToolResult(nil), results...)
+}
+
+// LastTurnSourceResults returns the source-body tool results from the previous
+// conversation turn, for use as SeedResults in the next Runner.Run() call.
+func (m *Model) LastTurnSourceResults() []workspace.ToolResult {
+	if len(m.lastTurnSourceResults) == 0 {
+		return nil
+	}
+	out := make([]workspace.ToolResult, len(m.lastTurnSourceResults))
+	copy(out, m.lastTurnSourceResults)
+	return out
+}
+
+// ClearLastTurnSourceResults resets the cross-turn seed results.
+func (m *Model) ClearLastTurnSourceResults() {
+	m.lastTurnSourceResults = nil
 }
 
 func (m *Model) SetPlanExecuteScopeContract(contract planexecute.PlanScopeContract) {

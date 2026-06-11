@@ -896,6 +896,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		MaxToolSteps:        steps,
 		Policy:              policy,
 		AgentName:           "main",
+		SeedResults:         m.LastTurnSourceResults(),
 		RuntimeBrief:        plan.runtimeBrief,
 		InstructionAttacher: m.instructionAttacher,
 		ContextSize:         m.cfg.LlamaServer.CtxSize,
@@ -909,6 +910,25 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 			return m.requestApproval(req, mode.Name)
 		},
 	}
+	// Collect source-body tool results from this turn to seed the next.
+	var turnSourceResults []workspace.ToolResult
+	collectSourceResult := func(result workspace.ToolResult) {
+		if strings.TrimSpace(result.Error) != "" {
+			return
+		}
+		tool := strings.TrimSpace(result.Tool)
+		switch tool {
+		case "read_file", "code_navigate", "read_only_capability", "context_zoom":
+			if strings.TrimSpace(result.Output) != "" || strings.TrimSpace(result.Summary) != "" {
+				turnSourceResults = append(turnSourceResults, result)
+			}
+		default:
+			if strings.HasSuffix(tool, "_read_symbol") || strings.HasSuffix(tool, "_extract_body") {
+				turnSourceResults = append(turnSourceResults, result)
+			}
+		}
+	}
+	_ = collectSourceResult // used in the onToolResult callback below
 	answer, err := runner.Run(
 		ctx,
 		history,
@@ -936,6 +956,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 			m.recordWriteSuccess(event.Step, event.Request, event.Result)
 			m.recordTaskLedger(event.Request, event.Result)
 			m.recordSubmittedPlan(event.Request, event.Result)
+			collectSourceResult(event.Result)
 			if workspace.IsWorkspaceWriteTool(event.Request.Tool) && strings.TrimSpace(event.Result.Error) == "" {
 				if err := m.reloadPromptStack(); err != nil {
 					m.setContextError("Prompt context failed: " + err.Error())
@@ -959,6 +980,14 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		return "", err
 	}
 	m.lastAssistantReasoningContent = strings.TrimSpace(runner.LastAssistantMessage.ReasoningContent)
+	// Store source-body results for follow-up turns only in conversation
+	// and direct-answer lanes — these are the routes where the user may
+	// ask a follow-up question without re-reading source files.
+	if plan.route.Family == "conversation" || plan.route.Family == "direct_answer" || plan.route.Contract == "direct_answer" {
+		m.SetLastTurnSourceResults(turnSourceResults)
+	} else {
+		m.ClearLastTurnSourceResults()
+	}
 	return answer, err
 }
 

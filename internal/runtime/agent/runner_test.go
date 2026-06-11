@@ -7027,6 +7027,87 @@ func TestExplorationDelegationNudgeUsesReadLoopState(t *testing.T) {
 	}
 }
 
+func TestArchitectureToolBudgetCountsOnlySuccessfulResults(t *testing.T) {
+	tests := []struct {
+		name     string
+		results  []workspace.ToolResult
+		maxTools int
+		want     bool
+	}{
+		{
+			name:     "4 successful source reads triggers budget",
+			maxTools: 4,
+			results: []workspace.ToolResult{
+				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 1-80 (total lines: 21636)", Output: "package main"},
+				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 81-160 (total lines: 21636)", Output: "func main()"},
+				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 161-240 (total lines: 21636)", Output: "var x int"},
+				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 241-320 (total lines: 21636)", Output: "func helper()"},
+			},
+			want: true,
+		},
+		{
+			name:     "3 successful + 1 rejected does NOT trigger budget at 4",
+			maxTools: 4,
+			results: []workspace.ToolResult{
+				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 1-80 (total lines: 21636)", Output: "package main"},
+				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 81-160 (total lines: 21636)", Output: "func main()"},
+				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 161-240 (total lines: 21636)", Output: "var x int"},
+				{Tool: "read_file", Error: "file not found", Summary: "Read rejected"},
+			},
+			want: false,
+		},
+		{
+			name:     "3 successful + 2 rejected needs more successful calls",
+			maxTools: 4,
+			results: []workspace.ToolResult{
+				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 1-80 (total lines: 21636)", Output: "package main"},
+				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 81-160 (total lines: 21636)", Output: "func main()"},
+				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 161-240 (total lines: 21636)", Output: "var x int"},
+				{Tool: "read_file", Error: "file not found", Summary: "Read rejected"},
+				{Tool: "code_navigate", Error: "symbol not found", Summary: "Symbol not found"},
+			},
+			want: false,
+		},
+		{
+			name:     "5 results with 4 successful triggers budget",
+			maxTools: 4,
+			results: []workspace.ToolResult{
+				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 1-80 (total lines: 21636)", Output: "package main"},
+				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 81-160 (total lines: 21636)", Output: "func main()"},
+				{Tool: "read_file", Error: "file not found", Summary: "Read rejected"},
+				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 161-240 (total lines: 21636)", Output: "var x int"},
+				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 241-320 (total lines: 21636)", Output: "func helper()"},
+			},
+			want: true,
+		},
+		{
+			name:     "fewer results than maxTools does not trigger",
+			maxTools: 4,
+			results: []workspace.ToolResult{
+				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 1-80 (total lines: 21636)", Output: "package main"},
+				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 81-160 (total lines: 21636)", Output: "func main()"},
+			},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := readOnlyArchitectureToolBudgetCloseoutApplies(
+				workerruntime.WorkerRuntimeBrief{
+					PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+					Contract:          string(workerruntime.ContractArchitecture),
+					Objective:         "How does subagent work?",
+				},
+				tt.results,
+				tt.maxTools,
+			)
+			if got != tt.want {
+				t.Fatalf("readOnlyArchitectureToolBudgetCloseoutApplies = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPostChildReadBudgetForDirectAnswerIsZero(t *testing.T) {
 	if got := postChildReadBudgetForBrief(workerruntime.WorkerRuntimeBrief{Contract: "direct_answer"}); got != 0 {
 		t.Fatalf("direct-answer post-child budget = %d, want 0", got)

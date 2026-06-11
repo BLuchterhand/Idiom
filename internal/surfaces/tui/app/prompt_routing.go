@@ -473,7 +473,10 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode agent.Mode, p
 	if useTypedPlanExecuteScope && workerruntime.TaskFamilyIsPlanThenExecutePlanner(route.Family) {
 		brief = runtimeBriefWithPlanExecuteEditSetObligations(brief, scopeContract.EditSetObligations)
 	}
-	if len(m.forcedReadinessOpenObligations) > 0 {
+	// Forced readiness obligations from implementation dispatch must not
+	// leak into conversation follow-up turns. Conversation routes handle
+	// their own readiness state from the runtime brief and tool results.
+	if len(m.forcedReadinessOpenObligations) > 0 && !workerruntime.TaskFamilyIsConversation(route.Family) && !workerruntime.RuntimeContractIsDirectAnswer(route.Contract) {
 		if brief.Readiness == nil {
 			brief.Readiness = &workerruntime.ReadinessState{}
 		}

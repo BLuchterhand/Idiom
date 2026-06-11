@@ -789,7 +789,8 @@ func BuildStepInstruction(state RunState) StepInstruction {
 	}
 }
 
-func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
+func BuildInitialStepInstruction(brief WorkerRuntimeBrief, isFollowUp ...bool) StepInstruction {
+	skipConversationDirective := len(isFollowUp) > 0 && isFollowUp[0]
 	state := MergeRuntimeBriefIntoState(brief, RunState{Phase: "start", Step: 1})
 	state.EvidenceContract = initialEvidenceContract(state)
 	directive := "Use this session-state packet when choosing the next action. The system prompt already lists the available tools and how to call them. Treat the search policy and examples as guidance, not a fixed script."
@@ -799,7 +800,7 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 	if len(state.EvidenceContract) > 0 {
 		directive += " Evidence contract / exit criteria are summarized in current_state.evidence_contract; use them before contract fulfillment while you judge whether inspected evidence directly resolves the user's request."
 	}
-	if TaskFamilyIsConversation(state.TaskFamily) && RuntimeContractIsDirectAnswer(state.Contract) {
+	if TaskFamilyIsConversation(state.TaskFamily) && RuntimeContractIsDirectAnswer(state.Contract) && !skipConversationDirective {
 		directive += " Conversation lane: every response must either (a) contain tool calls that investigate the codebase, or (b) deliver a final prose answer to the user. Answer the user's actual specific question — do not begin new investigation on neighboring topics once you have the evidence to answer. For factual or yes/no questions, answer directly from the evidence gathered; for explanatory questions, investigate until you can support the answer with file:line evidence from at least one inspected source location. Prefer answering after 5-15 targeted tool calls over exhaustive exploration. Use context_pack to localize, context_query for graph questions, code_navigate for symbol bodies, read_file for bounded source reads, search_content for literal text. Use the note tool to capture key findings (file paths, function names, mechanism descriptions) as you discover them — notes persist across context compactions and help you build your answer scaffold. When ready, name the evidence paths and file:line citations you inspected. Do not return raw tool summaries, function signatures, or JSON envelopes."
 	}
 	if readOnlyWorkspaceEvidencePendingState(state) {
@@ -1169,13 +1170,13 @@ func RenderRunState(state RunState) string {
 	return RenderStepInstruction(BuildStepInstruction(state))
 }
 
-func RenderInitialRuntimeBrief(brief WorkerRuntimeBrief) string {
+func RenderInitialRuntimeBrief(brief WorkerRuntimeBrief, isFollowUp ...bool) string {
 	brief = NormalizeRuntimeBrief(brief)
 	brief = withDeterministicDiscoveryExamples(brief)
 	if !RuntimeBriefHasContent(brief) {
 		return ""
 	}
-	return RenderStepInstruction(BuildInitialStepInstruction(brief))
+	return RenderStepInstruction(BuildInitialStepInstruction(brief, isFollowUp...))
 }
 
 func withDeterministicDiscoveryExamples(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
