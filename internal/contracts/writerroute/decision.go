@@ -69,6 +69,27 @@ type DecisionParams struct {
 	TaskFamily         string
 }
 
+// EffectiveModelForMode selects the model that owns generation for a writer
+// mode after role aliases and runtime config have already been resolved.
+func EffectiveModelForMode(mode WriterMode, plannerModel, executorModel, classifierModel string) string {
+	switch mode {
+	case ModeAgenticGuarded, ModeDeterministicArtifactApply, ModeHostMaterializedArtifact:
+		return strings.TrimSpace(executorModel)
+	case ModePlanSubmission:
+		return strings.TrimSpace(plannerModel)
+	case ModeReadOnly:
+		if model := strings.TrimSpace(classifierModel); model != "" {
+			return model
+		}
+		return strings.TrimSpace(plannerModel)
+	default:
+		if model := strings.TrimSpace(executorModel); model != "" {
+			return model
+		}
+		return strings.TrimSpace(plannerModel)
+	}
+}
+
 // NewDecisionFromParams creates a normalized report-only writer route decision.
 func NewDecisionFromParams(params DecisionParams) Decision {
 	normalizedRequiredEditPaths := normalizeAndSort(params.RequiredEditPaths)

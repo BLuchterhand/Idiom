@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"idiom/internal/runtime/llama"
@@ -36,6 +37,32 @@ func TestRunnerMetricsAggregatesProviderCacheUsage(t *testing.T) {
 		!metrics.PromptCacheAccountingKnown ||
 		metrics.ReasoningTokens != 3 {
 		t.Fatalf("unexpected metrics: %#v", metrics)
+	}
+}
+
+func TestRetryableModelTransportErrorIsNarrow(t *testing.T) {
+	retryable := []error{
+		errors.New("EOF"),
+		errors.New("post http://127.0.0.1:8080/v1/chat/completions: EOF"),
+		errors.New("chat request transport failed: connection reset by peer"),
+		errors.New("chat request transport failed: i/o timeout"),
+		errors.New("dial tcp: lookup api.deepseek.com: no such host"),
+	}
+	for _, err := range retryable {
+		if !retryableModelTransportError(err) {
+			t.Fatalf("expected retryable transport error for %q", err)
+		}
+	}
+	nonRetryable := []error{
+		nil,
+		errors.New("decode chat response: EOF while reading JSON body"),
+		errors.New("model returned invalid tool arguments at end of file"),
+		errors.New("chat request failed: 400 insufficient tool messages"),
+	}
+	for _, err := range nonRetryable {
+		if retryableModelTransportError(err) {
+			t.Fatalf("expected non-retryable error for %v", err)
+		}
 	}
 }
 

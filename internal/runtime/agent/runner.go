@@ -699,7 +699,7 @@ func (r *Runner) Run(
 			}
 		}
 
-		metrics.ModelCalls++
+		modelCallNumber := metrics.ModelCalls + 1
 		phaseHint := ""
 		if implementationWriteOnlyRecoveryActive && strings.TrimSpace(r.RuntimeBrief.TaskFamily) == PlanThenExecuteReviewRepairTaskFamily {
 			phaseHint = turnPhaseReviewRepairTerminal
@@ -710,7 +710,7 @@ func (r *Runner) Run(
 		}
 		phaseContract := r.deriveCurrentTurnPhaseContract(runnerTurnPhaseContractInput{
 			ContractID:          contractID,
-			ModelCallNumber:     metrics.ModelCalls,
+			ModelCallNumber:     modelCallNumber,
 			Step:                stepNumber,
 			PhaseHint:           phaseHint,
 			Brief:               r.RuntimeBrief,
@@ -737,14 +737,13 @@ func (r *Runner) Run(
 		requestMessages = chatMessagesForOptions(requestMessages, modelCallOpts)
 		assistantMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, modelCallOpts)
 		if err != nil {
-			errStr := strings.ToLower(err.Error())
-			if transportRetries < 1 && (strings.Contains(errStr, "transport failed") || strings.Contains(errStr, "eof") || strings.Contains(errStr, "connection reset")) {
+			if transportRetries < 1 && retryableModelTransportError(err) {
 				transportRetries++
 				turnMessages = append(turnMessages, llama.ChatMessage{
 					Role:    "system",
 					Content: "The previous model request was interrupted by a temporary connection issue. Continue from where you left off, repeating any incomplete tool call or thought.",
 				})
-				r.emitEvent(RunEvent{Role: "transport_retry", Content: fmt.Sprintf("transport error, retry %d/1: %s", transportRetries, errStr)})
+				r.emitEvent(RunEvent{Role: "transport_retry", Content: fmt.Sprintf("transport error, retry %d/1: %s", transportRetries, strings.ToLower(err.Error()))})
 				continue
 			}
 			if prompt, ok := r.planThenExecuteNativeSubmitPlanNoCallFallbackPrompt(err, opts, collectedResults, planThenExecuteNativeSubmitPlanNoCallFallbacks); ok {
@@ -771,6 +770,7 @@ func (r *Runner) Run(
 			}
 			return finish("", err, "model_error", false)
 		}
+		metrics.ModelCalls++
 		metrics.addUsage(assistantMessage.Usage)
 		r.emitModelCallTraceWithOptions(stepNumber, "main_loop", requestMessages, assistantMessage, time.Since(modelStart).Milliseconds(), modelCallOpts, terminalSubmitPlanNativeTools(), collectedResults)
 		reply := assistantMessage.Content
@@ -6011,6 +6011,33 @@ func closureSynthesisAfterIgnoredNudgePrompt(agent string, brief workerruntime.W
 	// identical or broad probes, but it must not convert its readiness estimate
 	// into a no-tools final-answer requirement.
 	return "", false
+}
+
+func retryableModelTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	if text == "" {
+		return false
+	}
+	if text == "eof" || strings.HasSuffix(text, ": eof") {
+		return true
+	}
+	for _, pattern := range []string{
+		"transport failed",
+		"connection reset",
+		"connection refused",
+		"deadline exceeded",
+		"i/o timeout",
+		"network is unreachable",
+		"no such host",
+	} {
+		if strings.Contains(text, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Runner) emitBudgetLedger(policy RunPolicy, metrics runnerMetrics, stopReason string, exhausted bool) {

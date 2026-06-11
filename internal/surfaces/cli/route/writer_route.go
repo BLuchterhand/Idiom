@@ -60,22 +60,7 @@ func BuildDecision(cfg config.Config, opts Options) writerroute.Decision {
 }
 
 func EffectiveModelForDecision(mode writerroute.WriterMode, plannerModel, executorModel, classifierModel string) string {
-	switch mode {
-	case writerroute.ModeAgenticGuarded, writerroute.ModeDeterministicArtifactApply, writerroute.ModeHostMaterializedArtifact:
-		return strings.TrimSpace(executorModel)
-	case writerroute.ModePlanSubmission:
-		return strings.TrimSpace(plannerModel)
-	case writerroute.ModeReadOnly:
-		if model := strings.TrimSpace(classifierModel); model != "" {
-			return model
-		}
-		return strings.TrimSpace(plannerModel)
-	default:
-		if model := strings.TrimSpace(executorModel); model != "" {
-			return model
-		}
-		return strings.TrimSpace(plannerModel)
-	}
+	return writerroute.EffectiveModelForMode(mode, plannerModel, executorModel, classifierModel)
 }
 
 func RoleAliases(projectRoot string, profileName string) map[string]string {

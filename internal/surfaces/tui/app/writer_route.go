@@ -59,32 +59,13 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 		ExecutorModel:     executorModel,
 		ReviewerModel:     executorModel,
 		ClassifierModel:   classifierModel,
-		EffectiveModel:    appEffectiveModelForWriterRoute(mode, plannerModel, executorModel, classifierModel),
+		EffectiveModel:    writerroute.EffectiveModelForMode(mode, plannerModel, executorModel, classifierModel),
 		RoleAliases:       aliases,
 		VerificationOwner: verificationOwner,
 		RequiredEditPaths: plan.runtimeBrief.RequiredEditPaths,
 		ReasonCodes:       reasonCodes,
 		TaskFamily:        taskFamily,
 	})
-}
-
-func appEffectiveModelForWriterRoute(mode writerroute.WriterMode, plannerModel, executorModel, classifierModel string) string {
-	switch mode {
-	case writerroute.ModeAgenticGuarded, writerroute.ModeDeterministicArtifactApply, writerroute.ModeHostMaterializedArtifact:
-		return strings.TrimSpace(executorModel)
-	case writerroute.ModePlanSubmission:
-		return strings.TrimSpace(plannerModel)
-	case writerroute.ModeReadOnly:
-		if model := strings.TrimSpace(classifierModel); model != "" {
-			return model
-		}
-		return strings.TrimSpace(plannerModel)
-	default:
-		if model := strings.TrimSpace(executorModel); model != "" {
-			return model
-		}
-		return strings.TrimSpace(plannerModel)
-	}
 }
 
 func (m *Model) emitWriterRouteDecision(decision writerroute.Decision) {
