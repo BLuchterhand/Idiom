@@ -724,7 +724,7 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		decision.Request = redirected
 		decision.Raw = marshalToolRequestRaw(redirected)
 	}
-	if redirected, ok := r.delegatedReadOnlyPostDiscoverySearchRedirect(input.Results, decision.Request); ok {
+	if redirected, ok := r.delegatedReadOnlyPostDiscoveryInventoryRedirect(input.Results, decision.Request); ok {
 		decision.Request = redirected
 		decision.Raw = marshalToolRequestRaw(redirected)
 	}
@@ -1320,15 +1320,24 @@ func (r *Runner) delegatedReadOnlyDiscoveryQueryRepairRequest(results []workspac
 	return repaired, changed
 }
 
-func (r *Runner) delegatedReadOnlyPostDiscoverySearchRedirect(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
+func (r *Runner) delegatedReadOnlyPostDiscoveryInventoryRedirect(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
 	if r == nil || !strings.HasPrefix(r.agentName(), "child:") || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != "delegated_read_only" {
 		return workspace.ToolRequest{}, false
 	}
-	if strings.TrimSpace(req.Tool) != "search_files" || len(results) == 0 {
+	if !delegatedReadOnlyPostDiscoveryInventoryTool(req.Tool) || len(results) == 0 {
 		return workspace.ToolRequest{}, false
 	}
 	plan := newDelegatedDiscoveryPlan(r.RuntimeBrief.Objective)
 	return plan.candidateConsumptionRequest(results, r.RuntimeBrief.AllowedTools)
+}
+
+func delegatedReadOnlyPostDiscoveryInventoryTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case workspace.ToolNameFileStats, workspace.ToolNameListFiles, workspace.ToolNameSearchFiles:
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *Runner) delegatedReadOnlyFirstExistingDetailedScope(plan delegatedDiscoveryPlan) string {

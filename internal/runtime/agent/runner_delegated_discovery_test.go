@@ -247,7 +247,7 @@ func TestDelegatedReadOnlyDiscoveryRepairUsesFirstExistingDetailedScope(t *testi
 	}
 }
 
-func TestDelegatedReadOnlyPostDiscoverySearchConsumesCandidateSource(t *testing.T) {
+func TestDelegatedReadOnlyPostDiscoveryInventoryConsumesCandidateSource(t *testing.T) {
 	runner := &Runner{
 		AgentName: "child:explorer",
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -278,6 +278,14 @@ func TestDelegatedReadOnlyPostDiscoverySearchConsumesCandidateSource(t *testing.
 	if decision.Request.Path != "internal/capabilities/workspace/discovery_query.go" &&
 		decision.Request.Path != "internal/runtime/agent/answer_composer.go" {
 		t.Fatalf("expected discovered source candidate read, got %#v", decision.Request)
+	}
+
+	decision = runner.applyLanePreflight(runnerLanePreflightInput{
+		Results: results,
+		Request: workspace.ToolRequest{Tool: workspace.ToolNameFileStats, Path: ".", Recursive: true},
+	})
+	if decision.Request.Tool != workspace.ToolNameReadFile {
+		t.Fatalf("expected post-discovery file_stats to consume source candidate, got %#v", decision.Request)
 	}
 }
 
