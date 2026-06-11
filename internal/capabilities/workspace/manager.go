@@ -36,11 +36,11 @@ import (
 // The descriptions are used in the rejection message shown to the model.
 var exploreBlockedToolNames = map[string]string{
 	ToolNameGoMoveDeclarations: "moving declarations",
-	ToolNameMkdir:                "creating directories",
-	ToolNameEditFile:            "editing files",
-	ToolNameWriteFile:           "writing files",
-	ToolNameAppendFile:          "appending files",
-	ToolNameApplyPatch:          "applying patches",
+	ToolNameMkdir:              "creating directories",
+	ToolNameEditFile:           "editing files",
+	ToolNameWriteFile:          "writing files",
+	ToolNameAppendFile:         "appending files",
+	ToolNameApplyPatch:         "applying patches",
 }
 
 func exploreModeWriteBlocked(tool string, mode Mode) (string, bool) {

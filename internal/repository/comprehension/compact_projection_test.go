@@ -7,8 +7,8 @@ import (
 
 func TestNewCompactPackProjection_FromPackResult(t *testing.T) {
 	result := PackResult{
-		PackID: "test-pack-123",
-		Fresh:  true,
+		PackID:       "test-pack-123",
+		Fresh:        true,
 		BudgetTokens: 500,
 		Quality: PackQuality{
 			LocalizationConfidence: "high",
@@ -180,8 +180,8 @@ func TestRenderCompactPackProjection_BudgetTruncation(t *testing.T) {
 	files := make([]PackFile, 20)
 	for i := range files {
 		files[i] = PackFile{
-			Path: "pkg/file_" + strings.Repeat("x", 40) + ".go",
-			Role: "source",
+			Path:   "pkg/file_" + strings.Repeat("x", 40) + ".go",
+			Role:   "source",
 			Reason: "relevant to task",
 		}
 	}
@@ -189,18 +189,18 @@ func TestRenderCompactPackProjection_BudgetTruncation(t *testing.T) {
 	for i := range symbols {
 		symbols[i] = PackSymbol{
 			QualifiedName: "Func_" + strings.Repeat("x", 30),
-			Path: "pkg/file.go",
-			Kind: "func",
-			StartLine: i * 10,
-			Reason: "symbol match",
+			Path:          "pkg/file.go",
+			Kind:          "func",
+			StartLine:     i * 10,
+			Reason:        "symbol match",
 		}
 	}
 	tests := make([]PackTest, 5)
 	for i := range tests {
 		tests[i] = PackTest{
 			Command: "go test ./pkg/...",
-			Path: "pkg/file_test.go",
-			Symbol: "TestFunc",
+			Path:    "pkg/file_test.go",
+			Symbol:  "TestFunc",
 		}
 	}
 
@@ -304,15 +304,15 @@ func TestRenderCompactPackProjection_BudgetTokensZeroNoTruncation(t *testing.T) 
 }
 
 func TestEstimateTokens(t *testing.T) {
-	tests := []struct{
-		text string
+	tests := []struct {
+		text    string
 		wantMin int
 		wantMax int
 	}{
 		{"", 0, 0},
 		{"hello", 1, 2},
 		{"hello world this is a test of the token estimator", 10, 15},
-		{strings.Repeat("a", 350), 99, 101}, // 350 / 3.5 = 100
+		{strings.Repeat("a", 350), 99, 101},    // 350 / 3.5 = 100
 		{strings.Repeat("x", 3500), 999, 1001}, // 3500 / 3.5 = 1000
 	}
 
@@ -326,8 +326,8 @@ func TestEstimateTokens(t *testing.T) {
 
 func TestRenderCompactPackProjection_EmptyQuality(t *testing.T) {
 	result := PackResult{
-		PackID: "pack-empty-quality",
-		Fresh:  true,
+		PackID:  "pack-empty-quality",
+		Fresh:   true,
 		Quality: PackQuality{}, // all zero values
 		CandidateFiles: []PackFile{
 			{Path: "pkg/x.go", Role: "source", Reason: "only match"},
@@ -425,7 +425,7 @@ func TestRenderCompactPackProjection_SmallBudget(t *testing.T) {
 		PackID: "small-budget",
 		Quality: PackQuality{
 			LocalizationConfidence: "high",
-			SourceOwnerFound: true,
+			SourceOwnerFound:       true,
 		},
 		CandidateFiles: []PackFile{
 			{Path: "a.go", Role: "source", Reason: "x"},
@@ -557,8 +557,8 @@ func TestRenderCompactPackProjection_Budget100(t *testing.T) {
 	files := make([]PackFile, 20)
 	for i := range files {
 		files[i] = PackFile{
-			Path: "pkg/f" + strings.Repeat("x", 30) + ".go",
-			Role: "source",
+			Path:   "pkg/f" + strings.Repeat("x", 30) + ".go",
+			Role:   "source",
 			Reason: "relevant to task",
 		}
 	}
@@ -566,10 +566,10 @@ func TestRenderCompactPackProjection_Budget100(t *testing.T) {
 	for i := range symbols {
 		symbols[i] = PackSymbol{
 			QualifiedName: "S" + strings.Repeat("y", 25),
-			Path: "pkg/f.go",
-			Kind: "func",
-			StartLine: i * 5,
-			Reason: "match",
+			Path:          "pkg/f.go",
+			Kind:          "func",
+			StartLine:     i * 5,
+			Reason:        "match",
 		}
 	}
 
@@ -606,8 +606,8 @@ func TestRenderCompactPackProjection_Budget100(t *testing.T) {
 // on a PackResult, matching the logic added to Pack() in Atom 5.
 func TestPackResultCompactProjectionPopulated(t *testing.T) {
 	result := PackResult{
-		PackID: "wired-pack-1",
-		Fresh:  true,
+		PackID:       "wired-pack-1",
+		Fresh:        true,
 		BudgetTokens: 80, // small enough to force omission with 10 items
 		Quality: PackQuality{
 			LocalizationConfidence: "high",
@@ -676,9 +676,9 @@ func TestPackResultCompactProjectionUnbounded(t *testing.T) {
 		files[i] = PackFile{Path: "pkg/f.go", Role: "source", Reason: "match"}
 	}
 	result := PackResult{
-		PackID:  "wired-pack-unbounded",
-		Fresh:   true,
-		Quality: PackQuality{LocalizationConfidence: "medium"},
+		PackID:           "wired-pack-unbounded",
+		Fresh:            true,
+		Quality:          PackQuality{LocalizationConfidence: "medium"},
 		CandidateFiles:   files,
 		CandidateSymbols: []PackSymbol{{QualifiedName: "F", Path: "pkg/f.go", Kind: "func"}},
 	}
@@ -715,12 +715,12 @@ func TestPackResultCompactProjectionUnbounded(t *testing.T) {
 func TestLoadCachedPackCompactProjectionFallback(t *testing.T) {
 	// Simulate a pre-Atom-5 cached pack: CompactProjection is zero-value.
 	result := PackResult{
-		PackID: "legacy-pack",
-		Fresh:  true,
+		PackID:       "legacy-pack",
+		Fresh:        true,
 		BudgetTokens: 100,
 		Quality: PackQuality{
 			LocalizationConfidence: "high",
-			SourceOwnerFound: true,
+			SourceOwnerFound:       true,
 		},
 		CandidateFiles: []PackFile{
 			{Path: "pkg/x.go", Role: "source", Reason: "match"},
@@ -773,9 +773,9 @@ func TestEstimatedFullTokensSaved_BudgetEnforcement(t *testing.T) {
 		files[i] = PackFile{Path: "pkg/f" + strings.Repeat("x", 30) + ".go", Role: "source", Reason: "relevant to task"}
 	}
 	result := PackResult{
-		PackID: "savings-test",
-		Fresh:  true,
-		Quality: PackQuality{LocalizationConfidence: "high", SourceOwnerFound: true},
+		PackID:         "savings-test",
+		Fresh:          true,
+		Quality:        PackQuality{LocalizationConfidence: "high", SourceOwnerFound: true},
 		CandidateFiles: files,
 		BudgetTokens:   200,
 	}
@@ -802,8 +802,8 @@ func TestEstimatedFullTokensSaved_UnboundedNoSavings(t *testing.T) {
 	ResetViewCacheCounters()
 
 	result := PackResult{
-		PackID: "unbounded-savings-test",
-		Fresh:  true,
+		PackID:  "unbounded-savings-test",
+		Fresh:   true,
 		Quality: PackQuality{LocalizationConfidence: "medium"},
 		CandidateFiles: []PackFile{
 			{Path: "pkg/a.go", Role: "source", Reason: "match"},

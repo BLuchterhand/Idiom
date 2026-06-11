@@ -153,7 +153,7 @@ func TestRunnerTruncatedPrefetchCanAnswerWithoutReadFileFollowup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !strings.Contains(answer, "Source: large.md") {
+	if !strings.Contains(answer, "prefetch excerpts") || !strings.Contains(answer, "large.md") {
 		t.Fatalf("expected grounded answer from prefetched excerpt, got %q", answer)
 	}
 	if prefetchEvent == nil || !prefetchEvent.Eligible || prefetchEvent.TruncatedFiles != 1 {
@@ -162,8 +162,73 @@ func TestRunnerTruncatedPrefetchCanAnswerWithoutReadFileFollowup(t *testing.T) {
 	if readFileResults != 0 {
 		t.Fatalf("expected no model-initiated read_file follow-up, got %d", readFileResults)
 	}
-	if requests != 1 {
-		t.Fatalf("expected one model request, got %d", requests)
+	if requests != 0 {
+		t.Fatalf("expected prefetch closeout before model request, got %d requests", requests)
+	}
+}
+
+func TestRunnerPrefetchHostCloseoutSkipsModelToolRetry(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "labels"), 0o755); err != nil {
+		t.Fatalf("mkdir fixture: %v", err)
+	}
+	source := "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"
+	if err := os.WriteFile(filepath.Join(root, "internal", "labels", "labels.go"), []byte(source), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{
+					"content": `{"tool":"code_navigate","capability":"find_references","path":"internal/labels/labels.go","pattern":"ShortLabel"}`,
+				},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, 2*time.Second),
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		Policy:    RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyArchitecture),
+			Contract:          string(workerruntime.ContractArchitecture),
+			Objective:         "Can we shorten the save label in internal/labels/labels.go? Answer the question from the codebase. Do not edit files.",
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content"},
+		},
+	}
+
+	var events []RunEvent
+	runner.OnEvent = func(event RunEvent) {
+		events = append(events, event)
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: runner.RuntimeBrief.Objective}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("expected prefetch closeout before model call, got %d requests", requests)
+	}
+	if !strings.Contains(answer, "Save changes") || !strings.Contains(answer, "internal/labels/labels.go") {
+		t.Fatalf("expected grounded prefetch closeout answer, got:\n%s", answer)
+	}
+	for _, event := range events {
+		if event.Role == "tool_result" && strings.Contains(event.Content, "code_navigate") {
+			t.Fatalf("prefetch closeout should not execute model retry, saw event %#v", event)
+		}
 	}
 }
 

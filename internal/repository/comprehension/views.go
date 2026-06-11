@@ -947,13 +947,13 @@ func ReadViewStats(root string) (ViewStats, error) {
 	freshnessHits, stalePreventions, staleRowMisses := ViewFreshnessCounters()
 	fullTokensSaved, rediscoveryTokensAvoided := TokenSavingsCounters()
 	stats := ViewStats{
-		Hits:                             hits,
-		Misses:                           misses,
-		Writes:                           writes,
-		FreshnessHits:                    freshnessHits,
-		StalePreventions:                 stalePreventions,
-		StaleRowMisses:                   staleRowMisses,
-		EstimatedFullTokensSaved:         fullTokensSaved,
+		Hits:                              hits,
+		Misses:                            misses,
+		Writes:                            writes,
+		FreshnessHits:                     freshnessHits,
+		StalePreventions:                  stalePreventions,
+		StaleRowMisses:                    staleRowMisses,
+		EstimatedFullTokensSaved:          fullTokensSaved,
 		EstimatedRediscoveryTokensAvoided: rediscoveryTokensAvoided,
 	}
 	sqlitePath := sqliteGraphPath(root)

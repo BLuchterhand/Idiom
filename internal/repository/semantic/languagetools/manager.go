@@ -72,7 +72,6 @@ type Manager struct {
 	cppIndexToken string
 	goplsPath     string
 	goplsChecked  bool
-
 }
 
 func NewManager(host Host) *Manager {

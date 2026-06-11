@@ -75,11 +75,11 @@ func TestExtractPinnablePathFromSummaryCoversCommonShapes(t *testing.T) {
 	cases := map[string]string{
 		"Read f5 internal/surfaces/tui/app/app.go lines 1-120": "internal/surfaces/tui/app/app.go",
 		"Read internal/surfaces/tui/app/app.go lines 1-80":     "internal/surfaces/tui/app/app.go",
-		"Edited internal/frontier/control.go":     "internal/frontier/control.go",
-		"Wrote docs/note.md":                      "docs/note.md",
-		"Outlined f3 internal/runtime/agent/runner.go":    "internal/runtime/agent/runner.go",
-		"something unrelated":                     "",
-		"":                                        "",
+		"Edited internal/frontier/control.go":                  "internal/frontier/control.go",
+		"Wrote docs/note.md":                                   "docs/note.md",
+		"Outlined f3 internal/runtime/agent/runner.go":         "internal/runtime/agent/runner.go",
+		"something unrelated":                                  "",
+		"":                                                     "",
 	}
 	for input, want := range cases {
 		if got := extractPinnablePathFromSummary(input); got != want {

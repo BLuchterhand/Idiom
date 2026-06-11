@@ -57,16 +57,16 @@ const (
 	ToolNameGoMoveDeclarations = "go_move_declarations"
 
 	// Supplemental language tools registered via language_tool_catalog.go.
-	ToolNameGoFindFunction   = "go_find_function"
-	ToolNameGoFindType       = "go_find_type"
-	ToolNameGoFindConst      = "go_find_const"
-	ToolNameGoFindPackage    = "go_find_package"
-	ToolNameGoImporters      = "go_importers"
-	ToolNameCppDeclaration   = "cpp_declaration"
-	ToolNameCppIncludes      = "cpp_includes"
-	ToolNameCppWhoIncludes   = "cpp_who_includes"
-	ToolNameCppBlastRadius   = "cpp_blast_radius"
-	ToolNameCppDeadSymbol    = "cpp_dead_symbol"
+	ToolNameGoFindFunction = "go_find_function"
+	ToolNameGoFindType     = "go_find_type"
+	ToolNameGoFindConst    = "go_find_const"
+	ToolNameGoFindPackage  = "go_find_package"
+	ToolNameGoImporters    = "go_importers"
+	ToolNameCppDeclaration = "cpp_declaration"
+	ToolNameCppIncludes    = "cpp_includes"
+	ToolNameCppWhoIncludes = "cpp_who_includes"
+	ToolNameCppBlastRadius = "cpp_blast_radius"
+	ToolNameCppDeadSymbol  = "cpp_dead_symbol"
 
 	// Language diagnostic tools (planner metadata only).
 	ToolNameGoDiagnostics     = "go_diagnostics"

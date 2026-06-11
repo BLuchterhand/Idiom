@@ -408,8 +408,6 @@ func renderCommand(command string, args []string) string {
 	return strings.Join(cleaned, " ")
 }
 
-
-
 func mergeStrings(a []string, b []string) []string {
 	return cleanStrings(append(append([]string(nil), a...), b...))
 }

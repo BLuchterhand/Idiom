@@ -147,11 +147,11 @@ func TestFinishRecoveryEvidenceStatus(t *testing.T) {
 
 	t.Run("partial when open packets present", func(t *testing.T) {
 		s := &productEvidenceRecovery{
-			FailureRecordCount:  1,
-			OpenPacketCount:     1,
-			RemainingAtomCount:  3,
-			FailureClasses:      map[string]int{"executor_edit_failed": 1},
-			NextActions:         map[string]int{"review_decomposition": 1},
+			FailureRecordCount: 1,
+			OpenPacketCount:    1,
+			RemainingAtomCount: 3,
+			FailureClasses:     map[string]int{"executor_edit_failed": 1},
+			NextActions:        map[string]int{"review_decomposition": 1},
 		}
 		s.finishRecoveryEvidenceStatus()
 		if s.Status != "partial" {
@@ -164,11 +164,11 @@ func TestFinishRecoveryEvidenceStatus(t *testing.T) {
 
 	t.Run("partial when partial reconciliation packets", func(t *testing.T) {
 		s := &productEvidenceRecovery{
-			FailureRecordCount:  1,
-			PartialPacketCount:  1,
-			RemainingAtomCount:  2,
-			FailureClasses:      map[string]int{"executor_edit_failed": 1},
-			NextActions:         map[string]int{"review_decomposition": 1},
+			FailureRecordCount: 1,
+			PartialPacketCount: 1,
+			RemainingAtomCount: 2,
+			FailureClasses:     map[string]int{"executor_edit_failed": 1},
+			NextActions:        map[string]int{"review_decomposition": 1},
 		}
 		s.finishRecoveryEvidenceStatus()
 		if s.Status != "partial" {
@@ -178,13 +178,13 @@ func TestFinishRecoveryEvidenceStatus(t *testing.T) {
 
 	t.Run("pass when all reconciled", func(t *testing.T) {
 		s := &productEvidenceRecovery{
-			FailureRecordCount:    1,
+			FailureRecordCount:       1,
 			DecompositionPacketCount: 1,
-			ReconciliationCount:   1,
-			RecoveredPacketCount:  1,
-			CompletedAtomCount:    2,
-			FailureClasses:        map[string]int{"executor_edit_failed": 1},
-			NextActions:           map[string]int{"none": 1},
+			ReconciliationCount:      1,
+			RecoveredPacketCount:     1,
+			CompletedAtomCount:       2,
+			FailureClasses:           map[string]int{"executor_edit_failed": 1},
+			NextActions:              map[string]int{"none": 1},
 		}
 		s.finishRecoveryEvidenceStatus()
 		if s.Status != "pass" {

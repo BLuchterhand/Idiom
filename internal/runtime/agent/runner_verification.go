@@ -75,6 +75,32 @@ func rewriteVerificationShellReadToSourceSanity(req workspace.ToolRequest, brief
 	return workspace.ToolRequest{}, false
 }
 
+func fillSourceSanityPathFromSingleChangedSource(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
+	if strings.TrimSpace(req.Tool) != "source_sanity" || strings.TrimSpace(req.Path) != "" {
+		return workspace.ToolRequest{}, false
+	}
+	if !containsRunnerTool(allowedTools, "source_sanity") || !sourceEditsNeedSemanticVerification(brief, results) {
+		return workspace.ToolRequest{}, false
+	}
+	var target string
+	for _, path := range changedSourcePaths(results) {
+		normalized := normalizeRunnerPath(path)
+		if normalized == "" || !workspace.SourceSanityCoversPath(normalized) {
+			continue
+		}
+		if target != "" && target != normalized {
+			return workspace.ToolRequest{}, false
+		}
+		target = normalized
+	}
+	if target == "" {
+		return workspace.ToolRequest{}, false
+	}
+	redirected := req
+	redirected.Path = target
+	return redirected, true
+}
+
 func postWriteSourceSanityRedirect(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
 	if !containsRunnerTool(allowedTools, "source_sanity") || !sourceEditsNeedSemanticVerification(brief, results) {
 		return workspace.ToolRequest{}, false

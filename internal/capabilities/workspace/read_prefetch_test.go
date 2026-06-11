@@ -157,6 +157,84 @@ func TestPrefetchReadFilesAllowsReadFileFollowupAfterTruncatedExcerpt(t *testing
 	}
 }
 
+func TestPrefetchReadFilesReportsBudgetSkips(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"one.md", "two.md", "three.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name+"\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	t.Run("max files", func(t *testing.T) {
+		report := mgr.PrefetchReadFiles([]string{"one.md", "two.md", "three.md"}, PrefetchReadOptions{
+			MaxFiles:        1,
+			MaxBytes:        128,
+			MaxBytesPerFile: 128,
+			MaxExcerptBytes: 128,
+		})
+		if len(report.Results) != 1 {
+			t.Fatalf("results = %d, want 1: %#v", len(report.Results), report)
+		}
+		if got := skippedReasons(report); got["max_files_exceeded"] != 2 {
+			t.Fatalf("skip reasons = %#v, want two max_files_exceeded", got)
+		}
+	})
+
+	t.Run("max bytes", func(t *testing.T) {
+		report := mgr.PrefetchReadFiles([]string{"one.md", "two.md"}, PrefetchReadOptions{
+			MaxFiles:        2,
+			MaxBytes:        len("one.md\n"),
+			MaxBytesPerFile: 128,
+			MaxExcerptBytes: 128,
+		})
+		if len(report.Results) != 1 {
+			t.Fatalf("results = %d, want 1: %#v", len(report.Results), report)
+		}
+		if got := skippedReasons(report); got["max_bytes_exceeded"] != 1 {
+			t.Fatalf("skip reasons = %#v, want one max_bytes_exceeded", got)
+		}
+	})
+}
+
+func TestPrefetchReadFilesNormalizesCrossConstrainedBudgets(t *testing.T) {
+	root := t.TempDir()
+	body := strings.Repeat("x", 100)
+	if err := os.WriteFile(filepath.Join(root, "large.md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write large: %v", err)
+	}
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	report := mgr.PrefetchReadFiles([]string{"large.md"}, PrefetchReadOptions{
+		MaxFiles:        1,
+		MaxBytes:        20,
+		MaxBytesPerFile: 50,
+		MaxExcerptBytes: 40,
+	})
+	if len(report.Results) != 1 {
+		t.Fatalf("expected one result, got %#v", report)
+	}
+	if report.Bytes != 20 {
+		t.Fatalf("bytes = %d, want clamp to MaxBytes=20", report.Bytes)
+	}
+	if !strings.Contains(report.Results[0].Summary, "bytes: 20/100") {
+		t.Fatalf("summary did not reflect clamped excerpt budget: %q", report.Results[0].Summary)
+	}
+	if !strings.Contains(report.Results[0].Output, "[prefetch excerpt truncated: omitted content after line 1; full file not included in prefetch]") {
+		t.Fatalf("output missing truncation footer:\n%s", report.Results[0].Output)
+	}
+}
+
+func TestPrefetchReadFilesUnavailableWorkspaceReportsEveryRequestedPath(t *testing.T) {
+	report := (*Manager)(nil).PrefetchReadFiles([]string{"one.md", "two.md"}, PrefetchReadOptions{})
+	if len(report.Results) != 0 {
+		t.Fatalf("nil manager should not return results: %#v", report.Results)
+	}
+	if got := skippedReasons(report); got["workspace_unavailable"] != 2 {
+		t.Fatalf("skip reasons = %#v, want every path marked workspace_unavailable", got)
+	}
+}
+
 func TestPrefetchReadFilesHandlesExcerptEdges(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "empty.md"), nil, 0o644); err != nil {
@@ -198,4 +276,12 @@ func TestPrefetchReadFilesHandlesExcerptEdges(t *testing.T) {
 	if len(report.SkippedPaths) != 1 || report.SkippedPaths[0].Reason != "binary" {
 		t.Fatalf("binary should be rejected before excerpt construction, got %#v", report.SkippedPaths)
 	}
+}
+
+func skippedReasons(report PrefetchReadReport) map[string]int {
+	reasons := make(map[string]int, len(report.SkippedPaths))
+	for _, skipped := range report.SkippedPaths {
+		reasons[skipped.Reason]++
+	}
+	return reasons
 }

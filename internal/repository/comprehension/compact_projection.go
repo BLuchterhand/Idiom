@@ -266,6 +266,7 @@ func RenderCompactPackProjection(p CompactPackProjection, budgetTokens int) (str
 	recordEstimatedFullTokensSaved(out, fullOut)
 	return out, p
 }
+
 // checking. Returns the number of files actually rendered.
 func renderFileSection(b *strings.Builder, files []CompactPackFile, budgetTokens int) int {
 	if len(files) == 0 {

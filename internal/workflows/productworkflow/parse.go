@@ -267,8 +267,6 @@ func firstNonEmptyStr(values ...string) string {
 	return ""
 }
 
-
-
 func ParsePRDMarkdown(data []byte) (PRDDocument, error) {
 	fields, body, err := parseFrontMatterRaw(data)
 	if err != nil {

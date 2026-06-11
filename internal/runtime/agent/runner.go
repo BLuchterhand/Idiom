@@ -418,7 +418,13 @@ func (r *Runner) Run(
 		metrics:                   &metrics,
 		declarationMovesForbidden: declarationMovesForbidden,
 	}
+	prefetchResultCount := len(collectedResults)
 	collectedResults = r.maybeApplyReadOnlyNamedPathPrefetch(recorder, collectedResults)
+	if len(collectedResults) > prefetchResultCount {
+		if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+			return finish(answer, nil, "read_only_prefetch_host_closeout", false)
+		}
+	}
 
 	// currentFingerprint is the fingerprint of the in-flight tool call,
 	// set at the top of each loop iteration. The turn controller reads it
@@ -1886,6 +1892,28 @@ func (r *Runner) Run(
 				"original_raw":   strings.TrimSpace(raw),
 				"rewritten_raw":  strings.TrimSpace(redirectedRaw),
 				"reason":         "source_edit_verification_requires_source_sanity",
+				"source_sanity":  true,
+				"changed_source": true,
+			}))
+			turnMessages = append(turnMessages, llama.ChatMessage{
+				Role:    "system",
+				Content: rewriteVisibilityNote(req.Tool, redirected.Tool),
+			})
+			req = redirected
+			raw = redirectedRaw
+			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
+		}
+		if redirected, ok := fillSourceSanityPathFromSingleChangedSource(req, r.RuntimeBrief, collectedResults, currentAllowedTools); ok {
+			redirectedRaw := marshalToolRequestRaw(redirected)
+			r.emitEvent(marshalRunEvent("tool_request_normalizer", map[string]any{
+				"outcome":        "normalized",
+				"transport":      "source_sanity_path_repair",
+				"tool":           strings.TrimSpace(redirected.Tool),
+				"path":           strings.TrimSpace(redirected.Path),
+				"original_tool":  strings.TrimSpace(req.Tool),
+				"original_raw":   strings.TrimSpace(raw),
+				"rewritten_raw":  strings.TrimSpace(redirectedRaw),
+				"reason":         "source_edit_verification_requires_changed_source_path",
 				"source_sanity":  true,
 				"changed_source": true,
 			}))

@@ -24,8 +24,8 @@ func TestLanePolicyForBrief_ReadOnlyInvestigationLanes(t *testing.T) {
 		{
 			name: "conversation gets conversation policy",
 			brief: workerruntime.WorkerRuntimeBrief{
-				TaskFamily:       "conversation",
-				Contract:         "direct_answer",
+				TaskFamily:        "conversation",
+				Contract:          "direct_answer",
 				PermissionProfile: "read_only_workspace",
 			},
 			wantFn: func(p LanePolicy) bool { _, ok := p.(ConversationLanePolicy); return ok },
@@ -33,8 +33,8 @@ func TestLanePolicyForBrief_ReadOnlyInvestigationLanes(t *testing.T) {
 		{
 			name: "direct_answer + read_only gets conversation policy",
 			brief: workerruntime.WorkerRuntimeBrief{
-				TaskFamily:       "direct_answer",
-				Contract:         "direct_answer",
+				TaskFamily:        "direct_answer",
+				Contract:          "direct_answer",
 				PermissionProfile: "read_only_workspace",
 			},
 			wantFn: func(p LanePolicy) bool { _, ok := p.(ConversationLanePolicy); return ok },
@@ -42,8 +42,8 @@ func TestLanePolicyForBrief_ReadOnlyInvestigationLanes(t *testing.T) {
 		{
 			name: "architecture + read_only gets conversation policy",
 			brief: workerruntime.WorkerRuntimeBrief{
-				TaskFamily:       "architecture",
-				Contract:         "architecture_assessment",
+				TaskFamily:        "architecture",
+				Contract:          "architecture_assessment",
 				PermissionProfile: "read_only_workspace",
 			},
 			wantFn: func(p LanePolicy) bool { _, ok := p.(ConversationLanePolicy); return ok },
@@ -51,8 +51,8 @@ func TestLanePolicyForBrief_ReadOnlyInvestigationLanes(t *testing.T) {
 		{
 			name: "review + read_only gets conversation policy",
 			brief: workerruntime.WorkerRuntimeBrief{
-				TaskFamily:       "security_review",
-				Contract:         "review_findings",
+				TaskFamily:        "security_review",
+				Contract:          "review_findings",
 				PermissionProfile: "read_only_workspace",
 			},
 			wantFn: func(p LanePolicy) bool { _, ok := p.(ConversationLanePolicy); return ok },
@@ -60,8 +60,8 @@ func TestLanePolicyForBrief_ReadOnlyInvestigationLanes(t *testing.T) {
 		{
 			name: "locate + read_only gets conversation policy",
 			brief: workerruntime.WorkerRuntimeBrief{
-				TaskFamily:       "locate",
-				Contract:         "locate_targets",
+				TaskFamily:        "locate",
+				Contract:          "locate_targets",
 				PermissionProfile: "read_only_workspace",
 			},
 			wantFn: func(p LanePolicy) bool { _, ok := p.(ConversationLanePolicy); return ok },
@@ -69,8 +69,8 @@ func TestLanePolicyForBrief_ReadOnlyInvestigationLanes(t *testing.T) {
 		{
 			name: "implementation gets default policy",
 			brief: workerruntime.WorkerRuntimeBrief{
-				TaskFamily:       "implementation",
-				Contract:         "implementation_result",
+				TaskFamily:        "implementation",
+				Contract:          "implementation_result",
 				PermissionProfile: "guarded_workspace_write",
 			},
 			wantFn: func(p LanePolicy) bool { _, ok := p.(DefaultLanePolicy); return ok },
@@ -78,8 +78,8 @@ func TestLanePolicyForBrief_ReadOnlyInvestigationLanes(t *testing.T) {
 		{
 			name: "plan-execute planner gets default policy",
 			brief: workerruntime.WorkerRuntimeBrief{
-				TaskFamily:       "plan_execute_planner",
-				Contract:         "implementation_result",
+				TaskFamily:        "plan_execute_planner",
+				Contract:          "implementation_result",
 				PermissionProfile: "guarded_workspace_write",
 			},
 			wantFn: func(p LanePolicy) bool { _, ok := p.(DefaultLanePolicy); return ok },
@@ -87,8 +87,8 @@ func TestLanePolicyForBrief_ReadOnlyInvestigationLanes(t *testing.T) {
 		{
 			name: "delegated read-only gets delegated policy",
 			brief: workerruntime.WorkerRuntimeBrief{
-				TaskFamily:       "delegated_read_only",
-				Contract:         "grounded_evidence_summary",
+				TaskFamily:        "delegated_read_only",
+				Contract:          "grounded_evidence_summary",
 				PermissionProfile: "read_only_workspace",
 			},
 			wantFn: func(p LanePolicy) bool { _, ok := p.(DelegatedReadOnlyLanePolicy); return ok },
