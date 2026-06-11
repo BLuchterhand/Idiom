@@ -64,6 +64,10 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 		return m.finishPromptOnceReply(mutationRouteConfirmationQuestion(plan)), nil
 	}
 	plan = m.recoverDirectImplementationContext(prompt, plan)
+	if m.greenfieldCreationRequiresConfirmation(prompt, plan) {
+		m.recordPromptRouteWithoutExecution(prompt, plan)
+		return m.finishPromptOnceReply(greenfieldCreationConfirmationQuestion(plan)), nil
+	}
 	restoreRoute := m.applyDirectImplementationPromptRoute(ctx, prompt, plan)
 	defer restoreRoute()
 	chatOpts := tuneChatOptionsForPlan(m.chatOptions(), plan)
@@ -1450,4 +1454,75 @@ func applyMaxTokensOverride(opts llama.ChatOptions, maxTokens int) llama.ChatOpt
 
 func clampPositiveMin(current, limit int) int {
 	return max(current, limit)
+}
+
+func (m *Model) greenfieldCreationRequiresConfirmation(prompt string, plan promptExecutionPlan) bool {
+	if m == nil || m.workspace == nil {
+		return false
+	}
+	// Only applies when the classifier chose read-only conversation.
+	route := plan.route
+	if route.WriteIntent == "yes" || isImplementationLikeFamily(route.Family) {
+		return false
+	}
+	// Check if the prompt asks to create or generate files.
+	if !plannerWordsContainAny(plannerWordText(prompt), creationIntentWords()...) {
+		return false
+	}
+	// Check workspace is greenfield (no source files found).
+	return !hasWorkspaceSourceFiles(m.workspace.Root())
+}
+
+func creationIntentWords() []string {
+	return []string{
+		"create", "scaffold", "scaffolding", "generate", "generation",
+		"bootstrap", "initialize", "init",
+		"write a", "write an", "write the", "write some",
+		"make a", "make an", "make the", "make some",
+		"build a", "build an", "build the", "build some",
+		"new project", "new file", "new module",
+		"set up", "stand up", "start a",
+	}
+}
+
+func hasWorkspaceSourceFiles(root string) bool {
+	// Lightweight check: look for any Go, Python, TypeScript, JS, Rust, Java
+	// source files in the workspace root (not recursive — just the root level).
+	// A greenfield project has none of these; an existing project has at least one.
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		switch ext {
+		case ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java",
+			".c", ".cc", ".cpp", ".h", ".hpp", ".kt", ".kts",
+			".gd", ".sh", ".bash", ".zsh",
+			".mod", ".sum", "mod", "toml":
+			return true
+		}
+		// Also check for well-known root files without extensions.
+		name := strings.ToLower(entry.Name())
+		switch name {
+		case "go.mod", "go.sum", "makefile", "dockerfile", "cargo.toml",
+			"pyproject.toml", "package.json", "package-lock.json",
+			"pom.xml", "build.gradle", "build.gradle.kts":
+			return true
+		}
+	}
+	return false
+}
+
+func greenfieldCreationConfirmationQuestion(plan promptExecutionPlan) string {
+	command := "/implement"
+	lane := "implement"
+	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(plan.route.Family) {
+		command = "/plan-execute"
+		lane = "plan-execute"
+	}
+	return fmt.Sprintf("This looks like a scaffolding or creation request in an empty project, and I am currently in read-only mode. Do you want me to switch to the write-capable %s lane and generate the files? Reply with `%s <objective>` to confirm, or ask your question in another way to keep this read-only.", lane, command)
 }
