@@ -8,7 +8,7 @@ index d0e5e75f..2eece026 100644
  // against its expected minimum version before engaging prefetch.
 -const DirectAnswerSurfaceVersion = "2026-06-11"
 +const DirectAnswerSurfaceVersion = "2026-06-12"
- 
+
  // DirectAnswerSurfaceCapReadOnlyInvestigation indicates the surface supports
  // non-trivial read-only investigation (search followed by bounded source read).
 @@ -131,8 +131,7 @@ func surfaceSupportsCapability(surface DirectAnswerSurface, cap string) bool {
@@ -20,7 +20,7 @@ index d0e5e75f..2eece026 100644
 +		DirectAnswerSurfaceCapSourceBodyPrefetch,
  	}
  }
- 
+
 diff --git a/internal/runtime/agent/direct_answer_surface_test.go b/internal/runtime/agent/direct_answer_surface_test.go
 index 5cf02fd4..3a2f6549 100644
 --- a/internal/runtime/agent/direct_answer_surface_test.go
@@ -28,21 +28,21 @@ index 5cf02fd4..3a2f6549 100644
 @@ -174,14 +174,13 @@ func TestEmitDirectAnswerSurfaceEvent(t *testing.T) {
  	}
  }
- 
+
 -func TestRunnerDirectAnswerSurfaceKeepsPrefetchDisabled(t *testing.T) {
 +func TestRunnerDirectAnswerSurfacePrefetchesNamedPath(t *testing.T) {
  	root := t.TempDir()
  	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("Idiom is a local coding-agent harness.\n"), 0o644); err != nil {
  		t.Fatalf("write README fixture: %v", err)
  	}
- 
+
  	replies := []string{
 -		`{"tool":"read_file","path":"README.md","start_line":1,"end_line":1}`,
  		"Idiom is a local coding-agent harness. Source: README.md.",
  	}
  	requests := 0
 @@ -212,6 +211,7 @@ func TestRunnerDirectAnswerSurfaceKeepsPrefetchDisabled(t *testing.T) {
- 
+
  	var surfaceEvent RunEvent
  	var prefetchEvents []RunEvent
 +	var readFileResults int
@@ -85,7 +85,7 @@ index 5cf02fd4..3a2f6549 100644
  		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
  	}
  }
- 
+
 +func TestRunnerNamedPathPrefetchDoesNotRunForWriteBrief(t *testing.T) {
 +	root := t.TempDir()
 +	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("Idiom is a local coding-agent harness.\n"), 0o644); err != nil {
@@ -195,7 +195,7 @@ index e3c842a7..b0c7211e 100644
  						Summary: strings.TrimSpace(result.Summary),
  					})
 @@ -271,12 +275,21 @@ func delegatedTaskOutputHasFindingEvidence(output string) bool {
- 
+
  func (l *readOnlyAnswerabilityLedger) addItem(item readOnlyEvidenceItem) {
  	item.Tool = strings.TrimSpace(item.Tool)
 +	item.Source = strings.TrimSpace(item.Source)
@@ -204,7 +204,7 @@ index e3c842a7..b0c7211e 100644
  	item.Summary = strings.TrimSpace(item.Summary)
  	l.Items = append(l.Items, item)
  }
- 
+
 +func readOnlyEvidenceItemSource(tool string) string {
 +	tool = strings.TrimSpace(tool)
 +	if tool == workspace.ToolNamePrefetch {
@@ -279,7 +279,7 @@ index bcb06caa..c37dce28 100644
  		declarationMovesForbidden: declarationMovesForbidden,
  	}
 +	collectedResults = r.maybeApplyReadOnlyNamedPathPrefetch(recorder, collectedResults)
- 
+
  	// currentFingerprint is the fingerprint of the in-flight tool call,
  	// set at the top of each loop iteration. The turn controller reads it
 @@ -737,6 +738,10 @@ func (r *Runner) Run(
@@ -385,7 +385,7 @@ index bcb06caa..c37dce28 100644
  	}
  	return false
  }
- 
+
 +func objectiveRequestsSourceFeatureInspection(words string) bool {
 +	if strings.TrimSpace(words) == "" {
 +		return false
@@ -481,11 +481,11 @@ index 75f3febd..b6696cb1 100644
 +	}
  	return planThenExecuteSourceSatisfiedResultsCoverPaths(missing, results)
  }
- 
+
 @@ -2707,6 +2726,37 @@ func planThenExecuteSourceSatisfiedResultsCoverPaths(requiredPaths []string, res
  	return true
  }
- 
+
 +// requiredPathsHaveSourceBodyEvidence is the evidence-ledger check for the
 +// source-satisfied terminal outcome. It verifies that every required path has
 +// a source-body read receipt in the provided results, preventing stale-evidence

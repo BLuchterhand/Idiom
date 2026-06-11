@@ -81,10 +81,10 @@ Let me verify one more important detail — how the runner uses the allowed tool
 
 ## A6 审查报告：轻量级直接回答表面清单
 
-**审查者：** A6 审查者  
-**审核内容：** `internal/runtime/agent/direct_answer_surface.go`、`internal/runtime/agent/direct_answer_surface_test.go`、`internal/runtime/agent/runner.go` 中的 A6 钩子  
-**设计依据：** `docs/design-direct-answer-efficiency.md`（第 0 节 + 第 3 节）  
-**台账：** `docs/evidence/idiom-efficiency-optimization/ledger.md`  
+**审查者：** A6 审查者
+**审核内容：** `internal/runtime/agent/direct_answer_surface.go`、`internal/runtime/agent/direct_answer_surface_test.go`、`internal/runtime/agent/runner.go` 中的 A6 钩子
+**设计依据：** `docs/design-direct-answer-efficiency.md`（第 0 节 + 第 3 节）
+**台账：** `docs/evidence/idiom-efficiency-optimization/ledger.md`
 **脏范围被保留：** 是 — `runner_plan_then_execute_guard.go`、`prompts/assets.go`、`lane_policy_test.go`、`runner_runstate.go` 未被 A6 触及，且传递的脏数据已被保留。
 
 ---

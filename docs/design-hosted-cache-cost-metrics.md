@@ -1,8 +1,8 @@
 # Hosted Cache and Cost Metrics
 
-Status: draft for review  
-Date: 2026-06-11  
-Related effort: `idiom-efficiency-optimization` A5  
+Status: draft for review
+Date: 2026-06-11
+Related effort: `idiom-efficiency-optimization` A5
 Context pack: `13e63a3732f08436`
 
 ## Problem

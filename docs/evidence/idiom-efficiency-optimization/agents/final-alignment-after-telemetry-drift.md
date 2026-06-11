@@ -90,8 +90,8 @@ Now let me run the verification tests.
 
 # Final Alignment Review — Verdict: **PASS**
 
-**Retained atoms:** A3 (DeepSeek reasoning protocol), A4 (effective model telemetry), A6 (lightweight direct-answer surface)  
-**Telemetry drift fix:** writer_route_decision effective_model prefers explicit runtime config/specs over role aliases, with role_aliases kept visible  
+**Retained atoms:** A3 (DeepSeek reasoning protocol), A4 (effective model telemetry), A6 (lightweight direct-answer surface)
+**Telemetry drift fix:** writer_route_decision effective_model prefers explicit runtime config/specs over role aliases, with role_aliases kept visible
 **Evidence:** Three prior reviews (final-drift-review → PASS_WITH_RISKS, final-alignment-after-risk-closeout → PASS_WITH_RISKS, ledger telemetry-drift closeout) all folded into the current state
 
 ---

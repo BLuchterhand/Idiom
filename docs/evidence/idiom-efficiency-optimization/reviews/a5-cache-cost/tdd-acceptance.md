@@ -2,7 +2,7 @@
   · 16900 tok · in 16819 (16768 cached / 51 new) · out 81 (27 reasoning) · ¥0.0005
   -> read_file {"path": "docs/design-hosted-cache-cost-metrics.md"}
 [2m  ▎ thinking[0m
-**Review: docs/design-hosted-cache-cost-metrics.md** — Role: TDD / Acceptance Reviewer  
+**Review: docs/design-hosted-cache-cost-metrics.md** — Role: TDD / Acceptance Reviewer
 **Result: PASS_WITH_RISKS**
 
 ---

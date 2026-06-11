@@ -1,12 +1,12 @@
 {
-  "_comment": "Self-hosted dispatch config for idiom-on-idiom development. Adapted from the root config.json with auto_start_server flipped off (we use `idiom backend start --profile qwen-pair` against .idiom/backends.json instead) and workspace.root pinned so tools resolve correctly when invoked from any cwd.",
+  "_comment": "Self-hosted dispatch config for idiom-on-idiom development. Adapted from config.example.json with auto_start_server flipped off (use `idiom backend start --profile qwen-pair` against .idiom/backends.json when launching local backends). Copy this file locally before adding machine-specific paths.",
   "app_name": "Idiom (ds4)",
   "llama_server": {
     "kind": "llama",
-    "binary": "/Users/ben/models/ds4/ds4-server",
+    "binary": "llama-server",
     "host": "127.0.0.1",
     "port": 47786,
-    "model": "ds4flash",
+    "model": "models/ds4/DeepSeek-V4-Flash.gguf",
     "ctx_size": 100000,
     "log_file": "logs/ds4-server.log"
   },
@@ -49,8 +49,8 @@
     "enabled": false
   },
   "workspace": {
-    "root": "/Users/ben/Documents/GitHub/idiom",
-    "cwd": "/Users/ben/Documents/GitHub/idiom",
+    "root": "",
+    "cwd": "",
     "shell": "/bin/zsh",
     "command_timeout_seconds": 120,
     "max_output_bytes": 65536,
@@ -74,10 +74,10 @@
   },
   "implementer": {
     "kind": "llama",
-    "binary": "/Users/ben/models/ds4/ds4-server",
+    "binary": "llama-server",
     "host": "127.0.0.1",
     "port": 47787,
-    "model": "ds4flash",
+    "model": "models/ds4/DeepSeek-V4-Flash.gguf",
     "ctx_size": 100000,
     "log_file": "logs/ds4-implementer.log"
   }

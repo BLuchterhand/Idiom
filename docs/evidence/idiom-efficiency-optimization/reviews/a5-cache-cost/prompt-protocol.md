@@ -4,8 +4,8 @@
 [2m  ▎ thinking[0m
 ## Review: `docs/design-hosted-cache-cost-metrics.md`
 
-**Role:** Prompt / Protocol reviewer  
-**Focus:** provider protocol facts vs harness policy, JSONL event contracts, prompt/route/behavior drift  
+**Role:** Prompt / Protocol reviewer
+**Focus:** provider protocol facts vs harness policy, JSONL event contracts, prompt/route/behavior drift
 **Verdict:** **PASS_WITH_RISKS**
 
 ---

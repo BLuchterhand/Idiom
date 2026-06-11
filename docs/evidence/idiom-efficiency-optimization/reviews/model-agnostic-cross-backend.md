@@ -88,9 +88,9 @@ Now I have sufficient evidence across all six atoms. Here is my review.
 
 ## Model-Agnostic / Cross-Backend Reviewer
 
-**Design doc:** `docs/design-direct-answer-efficiency.md`  
-**Ledger:** `docs/evidence/idiom-efficiency-optimization/ledger.md`  
-**Benchmark:** `.idiom/benchmark/20260611-122151/`  
+**Design doc:** `docs/design-direct-answer-efficiency.md`
+**Ledger:** `docs/evidence/idiom-efficiency-optimization/ledger.md`
+**Benchmark:** `.idiom/benchmark/20260611-122151/`
 **Source inspected:** `internal/runtime/llama/client.go`, `internal/runtime/agent/final_answer_acceptance.go`, `internal/runtime/agent/runner.go`, `internal/surfaces/tui/app/writer_route.go`
 
 ---
@@ -146,23 +146,23 @@ The shared transport layer (`client.go:598-608`) applies a backend-hostile polic
 
 **Fix recommendation (cross-backend constraints):**
 
-1. **A3 (Hosted DeepSeek reasoning protocol) — Conditionally preserve `ReasoningContent` instead of unconditionally stripping it.**  
-   The current approach (`client.go:598-608`) zeroes `ReasoningContent` for all hosted backends. Change to:  
-   - Preserve `ReasoningContent` in the history message when the backend is DeepSeek and the previous response included it.  
-   - Still strip it for backends that don't use it (local llama.cpp, MLX).  
-   - The shared `hostedChatMessages()` function must *not* inspect model identity — instead, the fix should pass a policy flag (e.g., `preserveReasoning bool`) from the caller, sourced from the `Policy` or `ChatOptions` layer.  
+1. **A3 (Hosted DeepSeek reasoning protocol) — Conditionally preserve `ReasoningContent` instead of unconditionally stripping it.**
+   The current approach (`client.go:598-608`) zeroes `ReasoningContent` for all hosted backends. Change to:
+   - Preserve `ReasoningContent` in the history message when the backend is DeepSeek and the previous response included it.
+   - Still strip it for backends that don't use it (local llama.cpp, MLX).
+   - The shared `hostedChatMessages()` function must *not* inspect model identity — instead, the fix should pass a policy flag (e.g., `preserveReasoning bool`) from the caller, sourced from the `Policy` or `ChatOptions` layer.
    - TDD obligation "non-DeepSeek hosted/local behavior remains unchanged" must be enforced by unit tests that exercise both paths. The existing test in `client.go` area should get two new cases: DeepSeek-with-reasoning preserves it, llama.cpp-without-reasoning still strips it.
 
-2. **A4 (Effective-model telemetry) — Add `effective_model` alongside `model_alias` in model-call traces, and ensure `session_summary` carries it.**  
-   The route decision (`writer_route.go`) should either:  
-   - Add an `effective_executor_model` / `effective_planner_model` field alongside the existing alias-based fields; or  
-   - Rename the current `executor_model` to `executor_alias` and add a new `executor_model` with the resolved API model name. Either way, both values must be present in the same event.  
+2. **A4 (Effective-model telemetry) — Add `effective_model` alongside `model_alias` in model-call traces, and ensure `session_summary` carries it.**
+   The route decision (`writer_route.go`) should either:
+   - Add an `effective_executor_model` / `effective_planner_model` field alongside the existing alias-based fields; or
+   - Rename the current `executor_model` to `executor_alias` and add a new `executor_model` with the resolved API model name. Either way, both values must be present in the same event.
    Cross-backend constraint: this must work for every backend — local (alias == effective), hosted (alias may differ), and override (alias differs by definition).
 
-3. **A5 (Hosted cache/cost metrics) — Parse optional usage fields from the API response, add to existing telemetry.**  
+3. **A5 (Hosted cache/cost metrics) — Parse optional usage fields from the API response, add to existing telemetry.**
    The current `chatResponse` struct (`client.go:173-188`) captures `usage` fields. Extend the usage parsing to extract optional fields like `cache_creation_input_tokens`, `cache_read_input_tokens`, provider-specific cost. Aggregate into `session_summary`. Cross-backend constraint: missing fields must be zero/omitted, not an error. The existing test suite must confirm that a mock response without these fields produces the same session summary structure it does today.
 
-4. **A1 (Exact-path prefetch) and A2 (Citation classifier) and A6 (Lightweight surface) — No cross-backend concerns identified.**  
+4. **A1 (Exact-path prefetch) and A2 (Citation classifier) and A6 (Lightweight surface) — No cross-backend concerns identified.**
    A1 is entirely pre-model-call host-owned logic. A2 is text processing in `final_answer_acceptance.go` — it runs after the model responds and does not vary by backend. A6 is a compiled protocol projection; must be verified for both native-tool and textual-tool backends during implementation but contains no backend-specific assumptions in the design.
 
 ---
@@ -186,8 +186,8 @@ The shared transport layer (`client.go:598-608`) applies a backend-hostile polic
 
 **Confidence:**
 
-**High** for the factual findings (benchmark telemetry, reasoning_content handling, missing cache/cost parsing).  
-**Moderate** for the inference that zeroing `ReasoningContent` is the exact cause of the protocol error — I cannot reproduce the error from the available evidence, but the error message ("must be passed back") combined with the code's unconditional stripping makes this the most probable cause.  
+**High** for the factual findings (benchmark telemetry, reasoning_content handling, missing cache/cost parsing).
+**Moderate** for the inference that zeroing `ReasoningContent` is the exact cause of the protocol error — I cannot reproduce the error from the available evidence, but the error message ("must be passed back") combined with the code's unconditional stripping makes this the most probable cause.
 
 ---
 

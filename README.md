@@ -262,8 +262,9 @@ Other useful subcommands:
 
 - `.idiom/config.json`: self-hosted lane/doctor config for this repo
 - `config.example.json`: portable llama.cpp starter config for new environments
-- `config.json`: root direct-run config for this checkout; do not treat it as
-  the portable template
+- `config.json`: optional ignored root direct-run config for this checkout; copy
+  it from `config.example.json` when needed and keep machine-local paths out of
+  version control
 - `prompts/`: baseline prompts and behavior profiles
 - `logs/`: server output, per-session JSONL debug logs, and telemetry
 - `transcripts/`: saved chats

@@ -125,9 +125,9 @@ All evidence gathered. Here is my final drift review.
 
 # Final Drift Review Verdict: PASS_WITH_RISKS
 
-**Effort:** `idiom-efficiency-optimization`  
-**Reviewer:** Reasonix final drift reviewer  
-**Date:** 2026-06-11  
+**Effort:** `idiom-efficiency-optimization`
+**Reviewer:** Reasonix final drift reviewer
+**Date:** 2026-06-11
 
 ---
 

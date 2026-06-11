@@ -57,8 +57,8 @@
       "models": [
         {
           "alias": "ds4flash",
-          "binary": "/Users/ben/models/ds4/ds4-server",
-          "model_path": "/Users/ben/models/ds4/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix.gguf",
+          "binary": "llama-server",
+          "model_path": "models/ds4/DeepSeek-V4-Flash.gguf",
           "port": 47786,
           "host": "127.0.0.1",
           "kind": "llama",
@@ -119,8 +119,8 @@
       "models": [
         {
           "alias": "qwen3.6-35b",
-          "binary": "/Users/ben/scripts/vmlx-idiom-launch.sh",
-          "model_path": "/Users/ben/models/qwen3.6-35b-a3b-jang-6m",
+          "binary": "vmlx",
+          "model_path": "models/qwen3.6-35b-a3b",
           "port": 47780,
           "cache_size": 4,
           "cache_bytes": 12884901888,
@@ -168,8 +168,8 @@
       "models": [
         {
           "alias": "qwen3.6-27b",
-          "binary": "/Users/ben/scripts/vmlx-idiom-launch.sh",
-          "model_path": "/Users/ben/models/qwen3.6-27b-mlx-6bit",
+          "binary": "vmlx",
+          "model_path": "models/qwen3.6-27b-mlx",
           "port": 47783,
           "cache_size": 4,
           "cache_bytes": 12884901888,
@@ -192,8 +192,8 @@
         },
         {
           "alias": "qwen3-coder-30b",
-          "binary": "/Users/ben/scripts/vmlx-idiom-launch.sh",
-          "model_path": "/Users/ben/models/qwen3-coder-30b-a3b-mlx-4bit-dwq",
+          "binary": "vmlx",
+          "model_path": "models/qwen3-coder-30b-a3b-mlx",
           "port": 47781,
           "cache_size": 4,
           "cache_bytes": 12884901888,
@@ -227,8 +227,8 @@
       "models": [
         {
           "alias": "qwen3.6-35b",
-          "binary": "/Users/ben/scripts/vmlx-idiom-launch.sh",
-          "model_path": "/Users/ben/models/qwen3.6-35b-a3b-jang-6m",
+          "binary": "vmlx",
+          "model_path": "models/qwen3.6-35b-a3b",
           "port": 47780,
           "cache_size": 4,
           "cache_bytes": 12884901888,
@@ -259,8 +259,8 @@
         },
         {
           "alias": "qwen3.6-27b",
-          "binary": "/Users/ben/scripts/vmlx-idiom-launch.sh",
-          "model_path": "/Users/ben/models/qwen3.6-27b-mlx-6bit",
+          "binary": "vmlx",
+          "model_path": "models/qwen3.6-27b-mlx",
           "port": 47783,
           "cache_size": 4,
           "cache_bytes": 12884901888,

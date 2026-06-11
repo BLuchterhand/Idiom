@@ -48,6 +48,7 @@ Thumbs.db
 # Local config (use config.example.json as the template)
 config.json
 config.*.backup.json
+reasonix.toml
 .env
 .env.local
 .env.*.local

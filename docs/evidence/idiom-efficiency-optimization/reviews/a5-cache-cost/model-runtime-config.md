@@ -90,20 +90,20 @@
 
 ### ⚠️ Risks
 
-**R1 — Streaming path loses all usage data (undocumented).**  
-`CompleteChat` (`client.go:739`) is the streaming variant; it returns only `(string, error)` with no usage at all. The TUI uses this path in `feature_planner_product.go`, `turn_planner.go`, and `compaction.go` for summarization, classification, and planning calls. These calls will never surface cache metrics.  
-*Impact:* Non-runner model calls (planner, compactor) are invisible to cache tracking. The doc should note this limitation. The runner itself only uses `CompleteChatMessage` (non-streaming), so benchmark artifacts won't be affected.  
+**R1 — Streaming path loses all usage data (undocumented).**
+`CompleteChat` (`client.go:739`) is the streaming variant; it returns only `(string, error)` with no usage at all. The TUI uses this path in `feature_planner_product.go`, `turn_planner.go`, and `compaction.go` for summarization, classification, and planning calls. These calls will never surface cache metrics.
+*Impact:* Non-runner model calls (planner, compactor) are invisible to cache tracking. The doc should note this limitation. The runner itself only uses `CompleteChatMessage` (non-streaming), so benchmark artifacts won't be affected.
 *Fix:* Add a "Non-goals" or "Known limitations" subsection stating that streaming paths don't surface usage and are out of scope for this change.
 
-**R2 — `prompt_cache_accounting_known` detection heuristic is underspecified.**  
-The doc says `cache_adjusted_prompt_tokens` should equal `hit + miss` "when cache fields are known" and `prompt_tokens` otherwise. But the trigger "known" is ambiguous: DeepSeek may return `0` for both hit and miss on a cold cache. Does zero indicate "unknown" or "known zero"? The `prompt_cache_accounting_known` diagnostic field is mentioned in the risks section but not defined in the JSON Field Contract table.  
+**R2 — `prompt_cache_accounting_known` detection heuristic is underspecified.**
+The doc says `cache_adjusted_prompt_tokens` should equal `hit + miss` "when cache fields are known" and `prompt_tokens` otherwise. But the trigger "known" is ambiguous: DeepSeek may return `0` for both hit and miss on a cold cache. Does zero indicate "unknown" or "known zero"? The `prompt_cache_accounting_known` diagnostic field is mentioned in the risks section but not defined in the JSON Field Contract table.
 *Fix:* Define the predicate explicitly — e.g. "`accounting_known = true` when the API response included any of `prompt_cache_hit_tokens` or `prompt_cache_miss_tokens` as non-omitted JSON fields." This requires either a separate boolean tracking field in `Usage` or using `*int` with nil vs zero.
 
-**R3 — ZAI and MiniMax cache behavior is unmentioned.**  
-These backends share the same `chatResponse` struct and `Usage` type. The doc says "OpenAI Responses parsing remains compatible" but doesn't address whether ZAI/MiniMax also emit cache fields. If they start to, these fields will be captured automatically (good), but the pricing estimate logic in the benchmark layer would need per-provider rates. Currently the doc only names DeepSeek.  
+**R3 — ZAI and MiniMax cache behavior is unmentioned.**
+These backends share the same `chatResponse` struct and `Usage` type. The doc says "OpenAI Responses parsing remains compatible" but doesn't address whether ZAI/MiniMax also emit cache fields. If they start to, these fields will be captured automatically (good), but the pricing estimate logic in the benchmark layer would need per-provider rates. Currently the doc only names DeepSeek.
 *Fix:* Add a one-liner in the "Provider Usage Contract" section: "ZAI and MiniMax use the same parsing path; cache fields default to zero unless those providers add equivalent fields."
 
-**R4 — `completion_tokens_details` is a nested object, not a flat field.**  
+**R4 — `completion_tokens_details` is a nested object, not a flat field.**
 The doc's JSON Field Contract table lists `reasoning_tokens` at the top level, but DeepSeek actually returns it as `usage.completion_tokens_details.reasoning_tokens`. The Go struct needs a nested `CompletionTokensDetails` type:
 
 ```go

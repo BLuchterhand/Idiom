@@ -33,10 +33,10 @@ All evidence collected. Here is my independent final alignment verdict.
 
 # Final Alignment Review — Verdict: **PASS_WITH_RISKS**
 
-**Effort:** `idiom-efficiency-optimization`  
-**Date:** 2026-06-11  
-**Design doc:** `docs/design-direct-answer-efficiency.md`  
-**Ledger:** `docs/evidence/idiom-efficiency-optimization/ledger.md`  
+**Effort:** `idiom-efficiency-optimization`
+**Date:** 2026-06-11
+**Design doc:** `docs/design-direct-answer-efficiency.md`
+**Ledger:** `docs/evidence/idiom-efficiency-optimization/ledger.md`
 **Retained atoms:** A3 (DeepSeek reasoning protocol), A4 (effective model telemetry), A6 (lightweight direct-answer surface)
 
 ---

@@ -32,16 +32,16 @@ The cost estimation formula is explicit and the pricing-snapshot contract (provi
 
 ### Remaining Risks (why not a clean PASS)
 
-**1. A5.2 test scope underspecified for the known-zero case**  
+**1. A5.2 test scope underspecified for the known-zero case**
 The runner-level test acceptance says "feeds a DeepSeek-shaped response … asserts cache fields survive." It should also assert a second variant: a response with `prompt_cache_hit_tokens=0` and `prompt_cache_miss_tokens=0` *where the provider explicitly sent those fields* sets `prompt_cache_accounting_known=true`. The design makes this distinction critical (lines 91-94, 115), but the acceptance in A5.2 doesn't force both test paths.
 
-**2. No backward-compatible parsing test for downstream readers**  
+**2. No backward-compatible parsing test for downstream readers**
 Line 174 states *"Existing readers must not fail on added fields"* and A5.3 tests for explain/post-analyze, but there is no explicit test that feeds an old-format JSONL (without cache fields) through the updated parsers and asserts zero/nil defaults. Without this, a future parser change that accidentally requires the new fields won't be caught until a user runs an old log through the new binary. A cheap fixture-based test in A5.3 would close this.
 
-**3. A5.4 fixture strategy is ambiguous**  
+**3. A5.4 fixture strategy is ambiguous**
 The acceptance says *"Use captured JSONL fixtures or rerun the DeepSeek Flash benchmark after A5.1-A5.3 pass."* An integration test should pick one: "Use captured JSONL fixtures" is deterministic and CI-safe; "rerun the benchmark" is live and manual. The design should commit to fixtures for the automated acceptance and treat the live rerun as a separate validation step (which the Verification Plan step 4 already covers). Right now a reviewer could argue the benchmark acceptance is not automated.
 
-**4. No cross-atom integration test**  
+**4. No cross-atom integration test**
 The four atoms each have focused tests, and the combined `go test -run` in Verification step 2 runs them in the same invocation — but that's four separate test binaries, not one test that walks the full chain (provider response → parse → runner aggregate → event → TUI aggregation → transcript). A single integration test spanning packages would catch type-mismatch or field-name skew between layers. The current plan only catches those at build time or live-run time.
 
 ---
