@@ -257,11 +257,8 @@ func TestRunnerDirectAnswerSurfacePrefetchesNamedPath(t *testing.T) {
 	if readFileResults != 0 {
 		t.Fatalf("prefetch should avoid model-initiated read_file before final answer, got %d", readFileResults)
 	}
-	// Accept 0 or 1 model requests: prefetch source evidence may close
-	// the answer through the host-owned closeout path (zero requests)
-	// or the model may be called once for final answer formatting.
-	if requests != len(replies) && requests != 0 {
-		t.Fatalf("expected 0 or %d model requests, got %d", len(replies), requests)
+	if requests != len(replies) {
+		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
 	}
 }
 
@@ -341,7 +338,7 @@ func TestRunnerNamedPathPrefetchRunsForReadOnlyArchitectureBrief(t *testing.T) {
 	}
 
 	replies := []string{
-		"Idiom uses session summaries to carry cache metrics through the reporting flow in this fixture. Source: README.md.",
+		"README.md shows that Idiom carries cache metrics through session summaries and uses that reporting flow in this fixture. Source: README.md.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -419,10 +416,8 @@ func TestRunnerNamedPathPrefetchRunsForReadOnlyArchitectureBrief(t *testing.T) {
 	if readFileResults != 0 {
 		t.Fatalf("prefetch should avoid model-initiated read_file before final answer, got %d", readFileResults)
 	}
-	// Accept 0 or 1 model requests: prefetch source evidence may close
-	// the answer through the host-owned closeout path.
-	if requests != len(replies) && requests != 0 {
-		t.Fatalf("expected 0 or %d model requests, got %d", len(replies), requests)
+	if requests != len(replies) {
+		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
 	}
 }
 

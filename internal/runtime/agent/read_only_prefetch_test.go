@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -162,12 +163,12 @@ func TestRunnerTruncatedPrefetchCanAnswerWithoutReadFileFollowup(t *testing.T) {
 	if readFileResults != 0 {
 		t.Fatalf("expected no model-initiated read_file follow-up, got %d", readFileResults)
 	}
-	if requests != 0 {
-		t.Fatalf("expected prefetch closeout before model request, got %d requests", requests)
+	if requests != 1 {
+		t.Fatalf("expected one model request using prefetched evidence, got %d requests", requests)
 	}
 }
 
-func TestRunnerPrefetchHostCloseoutSkipsModelToolRetry(t *testing.T) {
+func TestRunnerPrefetchSendsEvidenceToModelBeforeFollowup(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "labels"), 0o755); err != nil {
 		t.Fatalf("mkdir fixture: %v", err)
@@ -178,12 +179,21 @@ func TestRunnerPrefetchHostCloseoutSkipsModelToolRetry(t *testing.T) {
 	}
 
 	requests := 0
+	sawPrefetchEvidence := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		if strings.Contains(string(body), "internal/labels/labels.go") &&
+			strings.Contains(string(body), "Save changes") {
+			sawPrefetchEvidence = true
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{
-					"content": `{"tool":"code_navigate","capability":"find_references","path":"internal/labels/labels.go","pattern":"ShortLabel"}`,
+					"content": "Yes. `internal/labels/labels.go` defines `ShortLabel`, and its current label is \"Save changes\". Source: internal/labels/labels.go.",
 				},
 			}},
 		})
@@ -195,8 +205,8 @@ func TestRunnerPrefetchHostCloseoutSkipsModelToolRetry(t *testing.T) {
 		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
 		Policy:    RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3},
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyArchitecture),
-			Contract:          string(workerruntime.ContractArchitecture),
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
 			Objective:         "Can we shorten the save label in internal/labels/labels.go? Answer the question from the codebase. Do not edit files.",
 			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
 			AllowedTools:      []string{"read_file", "code_navigate", "search_content"},
@@ -219,15 +229,18 @@ func TestRunnerPrefetchHostCloseoutSkipsModelToolRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if requests != 0 {
-		t.Fatalf("expected prefetch closeout before model call, got %d requests", requests)
+	if requests == 0 {
+		t.Fatal("expected model call with prefetched evidence")
+	}
+	if !sawPrefetchEvidence {
+		t.Fatal("expected at least one model request to include prefetched source evidence")
 	}
 	if !strings.Contains(answer, "Save changes") || !strings.Contains(answer, "internal/labels/labels.go") {
-		t.Fatalf("expected grounded prefetch closeout answer, got:\n%s", answer)
+		t.Fatalf("expected grounded prefetch-backed answer, got:\n%s", answer)
 	}
 	for _, event := range events {
 		if event.Role == "tool_result" && strings.Contains(event.Content, "code_navigate") {
-			t.Fatalf("prefetch closeout should not execute model retry, saw event %#v", event)
+			t.Fatalf("prefetch-backed answer should not execute model retry, saw event %#v", event)
 		}
 	}
 }

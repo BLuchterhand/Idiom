@@ -418,13 +418,7 @@ func (r *Runner) Run(
 		metrics:                   &metrics,
 		declarationMovesForbidden: declarationMovesForbidden,
 	}
-	prefetchResultCount := len(collectedResults)
 	collectedResults = r.maybeApplyReadOnlyNamedPathPrefetch(recorder, collectedResults)
-	if len(collectedResults) > prefetchResultCount {
-		if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-			return finish(answer, nil, "read_only_prefetch_host_closeout", false)
-		}
-	}
 
 	// currentFingerprint is the fingerprint of the in-flight tool call,
 	// set at the top of each loop iteration. The turn controller reads it
