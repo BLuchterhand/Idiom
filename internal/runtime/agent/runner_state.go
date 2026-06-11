@@ -26,8 +26,9 @@ type RunPolicy struct {
 }
 
 type TaskLedgerPolicy struct {
-	Disabled bool
-	Required bool
+	Disabled        bool
+	Required        bool
+	RequireEvidence bool
 }
 
 type CompletionGate func(CompletionGateInput) CompletionGateResult

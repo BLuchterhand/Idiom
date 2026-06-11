@@ -21,9 +21,14 @@ type ToolPermissionRule = agentsafety.ToolPermissionRule
 type PermissionDecisionSnapshot = agentsafety.PermissionDecisionSnapshot
 type CheckpointPolicy = agentsafety.CheckpointPolicy
 type GitCheckpoint = agentsafety.GitCheckpoint
+type PreimageCheckpointStore = agentsafety.PreimageCheckpointStore
 
 func CaptureGitCheckpoint(ctx context.Context, root string) (GitCheckpoint, error) {
 	return agentsafety.CaptureGitCheckpoint(ctx, root)
+}
+
+func NewPreimageCheckpointStore(root string) *PreimageCheckpointStore {
+	return agentsafety.NewPreimageCheckpointStore(root)
 }
 
 func permissionTarget(req workspace.ToolRequest) string {

@@ -153,10 +153,10 @@ func baseToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
 			Name:        "task_ledger",
-			Description: "Track complex multi-step work. Keep at most one item in_progress. When an item will touch files, list them in `paths` so the plan panel attaches the completed write to this item instead of adding a duplicate line.",
+			Description: "Track complex multi-step work. Keep at most one item in_progress. When an item will touch files, list them in `paths` so the plan panel attaches the completed write to this item instead of adding a duplicate line. When marking mutation work completed, cite host-backed evidence refs such as `write:path`, `read:path`, `verify:command`, or `artifact:id`.",
 			ParametersJSON: schemaObj(
 				[]string{"todos"},
-				`"todos":{"type":"array","items":{"type":"object","properties":{"id":`+strProp("stable id")+`,"content":`+strProp("what needs doing")+`,"status":{"type":"string","enum":["pending","in_progress","completed","blocked","cancelled"]},"paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative files this item will touch"}},"required":["id","content","status"]}}`,
+				`"todos":{"type":"array","items":{"type":"object","properties":{"id":`+strProp("stable id")+`,"content":`+strProp("what needs doing")+`,"status":{"type":"string","enum":["pending","in_progress","completed","blocked","cancelled"]},"evidence":`+strProp("for completed mutation items, refs backed by prior tool results, e.g. write:README.md; verify:go test ./...")+`,"paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative files this item will touch"}},"required":["id","content","status"]}}`,
 			),
 		},
 		{

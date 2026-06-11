@@ -499,7 +499,15 @@ func (r *Runner) Run(
 	rejectionRecoveryNudgeUsed := false
 	consecutiveNoProgress := 0
 	discoveryRedirect := NewDiscoveryRedirect()
-	taskLedger := newTaskLedgerState(r.TaskLedger)
+	var preimageStore *PreimageCheckpointStore
+	if r.Workspace != nil {
+		preimageStore = NewPreimageCheckpointStore(r.Workspace.Root())
+	}
+	taskLedgerPolicy := r.TaskLedger
+	if runnerBriefRequiresMutation(r.RuntimeBrief) {
+		taskLedgerPolicy.RequireEvidence = true
+	}
+	taskLedger := newTaskLedgerState(taskLedgerPolicy)
 	r.RuntimeBrief = r.runtimeBriefWithLiveState(policy, turnMessages, collectedResults)
 	if r.Workspace != nil {
 		rebuildTools()
@@ -2747,7 +2755,7 @@ func (r *Runner) Run(
 			continue
 		}
 		if strings.TrimSpace(req.Tool) == "task_ledger" {
-			result := taskLedger.apply(req)
+			result := taskLedger.apply(req, collectedResults)
 			recorder.activeToolCall = activeToolCall
 			recorder.record(stepNumber, req, result, "task_ledger_result", true, true)
 			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
@@ -3018,9 +3026,9 @@ func (r *Runner) Run(
 					Content: fmt.Sprintf("dropped %d redundant section(s) from apply_patch envelope before workspace dispatch: %s", len(precheck.SkippedPaths), strings.Join(precheck.SkippedPaths, ", ")),
 				})
 				req = precheck.Request
-				result = r.Workspace.Execute(ctx, req)
+				result = r.executeWorkspaceWithPreimage(ctx, preimageStore, req)
 			default:
-				result = r.Workspace.Execute(ctx, req)
+				result = r.executeWorkspaceWithPreimage(ctx, preimageStore, req)
 			}
 			// Convert "file not found" probes on required_edit_paths
 			// into an actionable nudge that points the planner at the
@@ -6098,6 +6106,9 @@ func (r *Runner) emitModelCallTraceWithOptions(step int, label string, prompt []
 	payload["backend_capability_request_timeout_telemetry"] = backendCaps.RequestTimeoutTelemetry
 	payload["model_alias"] = safeModelAliasForTelemetry(opts.Model)
 	payload["parser_contract"] = parserContract
+	for key, value := range modelCallPrefixDiagnostics(prompt, opts, parserContract) {
+		payload[key] = value
+	}
 	if finish := strings.TrimSpace(reply.FinishReason); finish != "" {
 		payload["finish_reason"] = finish
 	}

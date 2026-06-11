@@ -17,7 +17,7 @@ func newTaskLedgerState(policy TaskLedgerPolicy) *taskLedgerState {
 	return &taskLedgerState{policy: policy}
 }
 
-func (s *taskLedgerState) apply(req workspace.ToolRequest) workspace.ToolResult {
+func (s *taskLedgerState) apply(req workspace.ToolRequest, receiptBatches ...[]workspace.ToolResult) workspace.ToolResult {
 	if s == nil || s.policy.Disabled {
 		return workspace.ToolResult{
 			Tool:    "task_ledger",
@@ -57,6 +57,11 @@ func (s *taskLedgerState) apply(req workspace.ToolRequest) workspace.ToolResult 
 				Error:   fmt.Sprintf("todo %s has unsupported status %q; use pending, in_progress, completed, blocked, or cancelled", item.ID, item.Status),
 			}
 		}
+		if item.Status == "completed" && item.Evidence == "" {
+			if previous, ok := s.previousItem(item.ID); ok && normalizeTaskLedgerStatus(previous.Status) == "completed" {
+				item.Evidence = strings.TrimSpace(previous.Evidence)
+			}
+		}
 		if item.Status == "in_progress" {
 			active++
 		}
@@ -69,6 +74,16 @@ func (s *taskLedgerState) apply(req workspace.ToolRequest) workspace.ToolResult 
 			Error:   "only one task ledger item may be in_progress at a time",
 		}
 	}
+	receipts := flattenTaskLedgerReceiptBatches(receiptBatches)
+	if s.policy.RequireEvidence {
+		if err := s.validateCompletedEvidence(normalized, receipts); err != "" {
+			return workspace.ToolResult{
+				Tool:    "task_ledger",
+				Summary: "Task ledger rejected",
+				Error:   err,
+			}
+		}
+	}
 
 	s.created = true
 	s.items = normalized
@@ -77,6 +92,146 @@ func (s *taskLedgerState) apply(req workspace.ToolRequest) workspace.ToolResult 
 		Summary: "Task ledger updated: " + s.statusSummary(),
 		Output:  s.render(),
 	}
+}
+
+func flattenTaskLedgerReceiptBatches(batches [][]workspace.ToolResult) []workspace.ToolResult {
+	var receipts []workspace.ToolResult
+	for _, batch := range batches {
+		receipts = append(receipts, batch...)
+	}
+	return receipts
+}
+
+func (s *taskLedgerState) validateCompletedEvidence(items []workspace.TaskLedgerItem, receipts []workspace.ToolResult) string {
+	for _, item := range items {
+		if item.Status != "completed" || !s.itemNewlyCompleted(item) {
+			continue
+		}
+		if strings.TrimSpace(item.Evidence) == "" {
+			return fmt.Sprintf("todo %s is marked completed but has no evidence; use evidence refs such as write:path, read:path, verify:command, or artifact:id backed by prior tool results", item.ID)
+		}
+		for _, ref := range parseTaskLedgerEvidenceRefs(item.Evidence) {
+			if !taskLedgerEvidenceRefSatisfied(ref, receipts) {
+				return fmt.Sprintf("todo %s evidence %q is not backed by prior successful tool results", item.ID, ref)
+			}
+		}
+	}
+	return ""
+}
+
+func (s *taskLedgerState) itemNewlyCompleted(next workspace.TaskLedgerItem) bool {
+	if s == nil {
+		return true
+	}
+	if previous, ok := s.previousItem(next.ID); ok {
+		return normalizeTaskLedgerStatus(previous.Status) != "completed"
+	}
+	return true
+}
+
+func (s *taskLedgerState) previousItem(id string) (workspace.TaskLedgerItem, bool) {
+	if s == nil {
+		return workspace.TaskLedgerItem{}, false
+	}
+	id = strings.TrimSpace(id)
+	for _, previous := range s.items {
+		if strings.TrimSpace(previous.ID) == id {
+			return previous, true
+		}
+	}
+	return workspace.TaskLedgerItem{}, false
+}
+
+func parseTaskLedgerEvidenceRefs(evidence string) []string {
+	fields := strings.FieldsFunc(evidence, func(r rune) bool {
+		switch r {
+		case ',', ';', '\n', '\r', '\t':
+			return true
+		default:
+			return false
+		}
+	})
+	refs := make([]string, 0, len(fields))
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field != "" {
+			refs = append(refs, field)
+		}
+	}
+	return refs
+}
+
+func taskLedgerEvidenceRefSatisfied(ref string, receipts []workspace.ToolResult) bool {
+	kind, value, ok := strings.Cut(strings.TrimSpace(ref), ":")
+	if !ok || strings.TrimSpace(value) == "" {
+		return false
+	}
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	value = strings.TrimSpace(value)
+	switch kind {
+	case "write":
+		return taskLedgerWriteEvidenceSatisfied(value, receipts)
+	case "read":
+		return taskLedgerToolEvidenceSatisfied(value, receipts, taskLedgerReadTool)
+	case "verify":
+		return taskLedgerToolEvidenceSatisfied(value, receipts, taskLedgerVerificationTool)
+	case "artifact":
+		return taskLedgerToolEvidenceSatisfied(value, receipts, taskLedgerAnySuccessfulTool)
+	default:
+		return false
+	}
+}
+
+func taskLedgerWriteEvidenceSatisfied(path string, receipts []workspace.ToolResult) bool {
+	want := normalizeRunnerPath(path)
+	if want == "" {
+		return false
+	}
+	for got := range changedPathsFromToolResults(receipts) {
+		got = normalizeRunnerPath(got)
+		if got == want || strings.HasPrefix(got, want+"/") || strings.HasPrefix(want, got+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func taskLedgerToolEvidenceSatisfied(value string, receipts []workspace.ToolResult, predicate func(workspace.ToolResult) bool) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return false
+	}
+	for _, receipt := range receipts {
+		if strings.TrimSpace(receipt.Error) != "" || !predicate(receipt) {
+			continue
+		}
+		text := strings.ToLower(strings.Join([]string{receipt.Tool, receipt.Code, receipt.Summary, receipt.Output, string(receipt.Payload)}, "\n"))
+		if strings.Contains(text, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func taskLedgerReadTool(result workspace.ToolResult) bool {
+	switch strings.TrimSpace(result.Tool) {
+	case "read_file", "code_navigate", "context_zoom", "context_pack", "context_query", "discovery_query", "search_content", "go_read_symbol", "go_extract_body", "go_file_outline", "python_read_symbol", "python_file_outline":
+		return true
+	default:
+		return false
+	}
+}
+
+func taskLedgerVerificationTool(result workspace.ToolResult) bool {
+	tool := strings.TrimSpace(result.Tool)
+	if tool == "shell" || tool == "source_sanity" || tool == "affected_suites" || tool == "context_trace_pack" {
+		return true
+	}
+	return resultCountsAsSuccessfulVerification(result)
+}
+
+func taskLedgerAnySuccessfulTool(result workspace.ToolResult) bool {
+	return strings.TrimSpace(result.Error) == ""
 }
 
 func (s *taskLedgerState) completionRejection(reply string) (workspace.ToolResult, bool) {
