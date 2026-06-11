@@ -363,6 +363,31 @@ func TestPostWriteSourceSanityRedirectsDiscoveryDriftRequiresSingleChangedSource
 	}
 }
 
+func TestPostWriteSourceSanityRedirectPreservesBoundaryControlTools(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/labels/labels.go"},
+	}
+
+	for _, tool := range []string{
+		workspace.ToolNameHarnessFeedback,
+		workspace.ToolNameIdiomFeedback,
+		workspace.ToolNameTaskLedger,
+	} {
+		if _, ok := postWriteSourceSanityRedirect(
+			workspace.ToolRequest{Tool: tool},
+			brief,
+			results,
+			[]string{workspace.ToolNameSourceSanity, workspace.ToolNameShell},
+		); ok {
+			t.Fatalf("%s must remain available as a boundary/control tool", tool)
+		}
+	}
+}
+
 func TestPostWriteSourceSanityRedirectRecoversNormalImplementationAfterInvalidVerificationTool(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",

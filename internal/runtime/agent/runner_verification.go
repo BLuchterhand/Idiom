@@ -98,6 +98,9 @@ func postWriteSourceSanityRedirect(req workspace.ToolRequest, brief workerruntim
 	if isVerificationRequest(req) || strings.TrimSpace(req.Tool) == workspace.ToolNameSourceSanity {
 		return workspace.ToolRequest{}, false
 	}
+	if sourceVerificationBoundaryAllowsTool(req.Tool) {
+		return workspace.ToolRequest{}, false
+	}
 	if postWriteVerificationReadOfChangedSource(req, results) ||
 		postWriteVerificationWriteOfChangedSource(req, results) {
 		return workspace.ToolRequest{Tool: workspace.ToolNameSourceSanity, Path: normalizeRunnerPath(req.Path)}, true
@@ -108,7 +111,7 @@ func postWriteSourceSanityRedirect(req workspace.ToolRequest, brief workerruntim
 		}
 		return workspace.ToolRequest{Tool: workspace.ToolNameSourceSanity, Path: requested}, true
 	}
-	if !postWriteVerificationInspectionDrift(req) {
+	if !workspace.IsRuntimeInspectionRequest(req) {
 		return workspace.ToolRequest{}, false
 	}
 	target, ok := singleChangedSourceSanityPath(results)
@@ -144,27 +147,6 @@ func changedSourcePathsContain(results []workspace.ToolResult, path string) bool
 		}
 	}
 	return false
-}
-
-func postWriteVerificationInspectionDrift(req workspace.ToolRequest) bool {
-	if workspace.IsBroadInspectionRequest(req) || workspace.IsNarrowingRequest(req) {
-		return true
-	}
-	switch strings.TrimSpace(req.Tool) {
-	case workspace.ToolNameContextPack,
-		workspace.ToolNameContextQuery,
-		workspace.ToolNameContextZoom,
-		workspace.ToolNameCodeNavigate,
-		workspace.ToolNameReadFile,
-		workspace.ToolNameSearchContent,
-		workspace.ToolNameSearchFiles,
-		workspace.ToolNameFileStats,
-		workspace.ToolNameStructuralSearch,
-		workspace.ToolNameTask:
-		return true
-	default:
-		return false
-	}
 }
 
 func postWriteVerificationReadOfChangedSource(req workspace.ToolRequest, results []workspace.ToolResult) bool {
