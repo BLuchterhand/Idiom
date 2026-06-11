@@ -55,6 +55,10 @@ config.*.backup.json
 REVIEW_*.md
 NOTES_*.md
 SCRATCH_*.md
+docs/evidence/**/*.pid
+docs/evidence/**/*.exit
+docs/evidence/**/*.stderr.log
+docs/evidence/**/*.tmp
 
 # Internal working docs (bugs, feature requests)
 BUG_*.md
