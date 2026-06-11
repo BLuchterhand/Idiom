@@ -150,11 +150,11 @@ func (r *discoveryQueryRunner) run(req ToolRequest, targetAbs string) {
 	} else if contextBacked && purpose != "security_review" {
 		r.packet.Gaps = append(r.packet.Gaps, "fresh context graph supplied target orientation; skipped live target listing")
 	} else {
-		r.addLayer("target_listing", ToolRequest{Tool: "list_files", Path: path, Recursive: true, MaxDepth: 2})
+		r.addLayer("target_listing", ToolRequest{Tool: ToolNameListFiles, Path: path, Recursive: true, MaxDepth: 2})
 	}
 
 	if pattern != "" {
-		r.addLayer("text_anchor_search", ToolRequest{Tool: "search_content", Path: path, Pattern: pattern, Glob: globForDiscoveryLanguage(language)})
+		r.addLayer("text_anchor_search", ToolRequest{Tool: ToolNameSearchContent, Path: path, Pattern: pattern, Glob: globForDiscoveryLanguage(language)})
 	}
 
 	switch purpose {
@@ -174,10 +174,10 @@ func (r *discoveryQueryRunner) run(req ToolRequest, targetAbs string) {
 		r.addCtagsFallback(path, pattern)
 	case "security_review":
 		r.addDependency(path, language)
-		r.addLayer("security_text_sweep", ToolRequest{Tool: "search_content", Path: path, Pattern: `eval\(|exec\(|password|secret|token|unsafe|panic\(`})
+		r.addLayer("security_text_sweep", ToolRequest{Tool: ToolNameSearchContent, Path: path, Pattern: `eval\(|exec\(|password|secret|token|unsafe|panic\(`})
 		r.addStructuralLayer(path, req)
-		r.addLayer("semgrep_scan", ToolRequest{Tool: "semgrep_scan", Path: path, Pattern: defaultString(pattern, "auto")})
-		r.addLayer("joern_scan", ToolRequest{Tool: "joern_scan", Path: path})
+		r.addLayer("semgrep_scan", ToolRequest{Tool: ToolNameSemgrepScan, Path: path, Pattern: defaultString(pattern, "auto")})
+		r.addLayer("joern_scan", ToolRequest{Tool: ToolNameJoernScan, Path: path})
 	case "history_context":
 		r.addHistoryLayers(path, pattern, req)
 		r.addRelatedFileLayer(path, pattern, language)
@@ -328,11 +328,11 @@ func (r *discoveryQueryRunner) addFileOrientation(path string, language string) 
 		r.addLayer("file_outline", ToolRequest{Tool: prefix + "_file_outline", Path: path})
 		return
 	}
-	r.addLayer("file_read", ToolRequest{Tool: "read_file", Path: path, StartLine: 1, EndLine: 160})
+	r.addLayer("file_read", ToolRequest{Tool: ToolNameReadFile, Path: path, StartLine: 1, EndLine: 160})
 }
 
 func (r *discoveryQueryRunner) addDependency(path string, language string) {
-	r.addLayer("dependency_graph", ToolRequest{Tool: "dependency_graph", Path: path, Language: language})
+	r.addLayer("dependency_graph", ToolRequest{Tool: ToolNameDependencyGraph, Path: path, Language: language})
 }
 
 func (r *discoveryQueryRunner) addLanguageRelationshipLayers(path string, pattern string, language string, includeCalls bool) {
