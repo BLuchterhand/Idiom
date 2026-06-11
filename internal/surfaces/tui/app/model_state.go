@@ -205,6 +205,7 @@ type Model struct {
 	maxTokensOverride                int
 	disableThinkingOverride          bool
 	forcedReadinessOpenObligations   []string
+	suppressGreenfieldConfirmation  bool
 	// lastTurnSourceResults carries source-body tool results from the
 	// previous conversation turn so the next turn's source grounding gate
 	// can verify evidence paths without re-reading files.

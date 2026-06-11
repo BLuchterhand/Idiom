@@ -1457,7 +1457,7 @@ func clampPositiveMin(current, limit int) int {
 }
 
 func (m *Model) greenfieldCreationRequiresConfirmation(plan promptExecutionPlan) bool {
-	if m == nil || m.workspace == nil {
+	if m == nil || m.workspace == nil || m.suppressGreenfieldConfirmation {
 		return false
 	}
 	// Only applies when the classifier chose read-only conversation.

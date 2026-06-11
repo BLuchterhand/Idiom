@@ -3069,15 +3069,18 @@ func (m *Model) newPlanExecutePromptRunner(ctx context.Context) planexecute.Prom
 		priorReasoning := m.lastAssistantReasoningContent
 		priorPinnedFiles := m.pinnedFiles
 		priorSuppressPromptTranscript := m.suppressPromptTranscript
+		priorSuppressGreenfield := m.suppressGreenfieldConfirmation
 		m.messages = nil
 		m.lastAssistantReasoningContent = ""
 		m.pinnedFiles = nil
 		m.suppressPromptTranscript = true
+		m.suppressGreenfieldConfirmation = true
 		defer func() {
 			m.messages = priorMessages
 			m.lastAssistantReasoningContent = priorReasoning
 			m.pinnedFiles = priorPinnedFiles
 			m.suppressPromptTranscript = priorSuppressPromptTranscript
+			m.suppressGreenfieldConfirmation = priorSuppressGreenfield
 			restore()
 			restoreRoute()
 		}()
