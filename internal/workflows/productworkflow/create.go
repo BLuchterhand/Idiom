@@ -56,7 +56,7 @@ type CreateResult struct {
 func InitializeEffort(opts CreateEffortOptions) (CreateResult, error) {
 	absRoot, err := filepath.Abs(opts.EffortRoot)
 	if err != nil {
-		return CreateResult{Status: "error", EffortRoot: opts.EffortRoot}, fmt.Errorf("resolve effort root: %w", err)
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: opts.EffortRoot}, fmt.Errorf("resolve effort root: %w", err)
 	}
 
 	if existing, ok := loadExistingCreatePhase(absRoot); ok {
@@ -81,7 +81,7 @@ func InitializeEffort(opts CreateEffortOptions) (CreateResult, error) {
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {
-			return CreateResult{Status: "error", EffortRoot: absRoot}, fmt.Errorf("create directory %s: %w", d, err)
+			return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("create directory %s: %w", d, err)
 		}
 	}
 
@@ -95,9 +95,9 @@ func InitializeEffort(opts CreateEffortOptions) (CreateResult, error) {
 		UpdatedAt:     now,
 		StateRevision: 0,
 		LastEventID:   "evt-create-init-" + now,
-		StatusBucket:  "started",
+		StatusBucket:  WorkflowStatusBucketStarted,
 		CurrentPhase:  PhasePRDDrafting,
-		CurrentState:  "planned",
+		CurrentState:  WorkflowStatePlanned,
 		ArtifactPaths: map[string]string{
 			"prd": "prd.md",
 		},
@@ -117,11 +117,11 @@ func InitializeEffort(opts CreateEffortOptions) (CreateResult, error) {
 	}
 
 	if err := atomicWriteWorkflowState(absRoot, ws); err != nil {
-		return CreateResult{Status: "error", EffortRoot: absRoot}, fmt.Errorf("write workflow_state.json: %w", err)
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("write %s: %w", WorkflowStateFileName, err)
 	}
 
 	return CreateResult{
-		Status:          "ok",
+		Status:          ProductWorkflowStatusOK,
 		EffortRoot:      absRoot,
 		EffortID:        effortID,
 		CurrentPhase:    PhasePRDDrafting,
@@ -134,12 +134,12 @@ func InitializeEffort(opts CreateEffortOptions) (CreateResult, error) {
 func AdvanceCreatePhase(absRoot string, nextPhase string) (CreateResult, error) {
 	ws, err := LoadWorkflowState(absRoot)
 	if err != nil {
-		return CreateResult{Status: "error", EffortRoot: absRoot}, fmt.Errorf("load workflow state: %w", err)
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("load workflow state: %w", err)
 	}
 
 	allowed, ok := validNextCreationPhases[ws.CurrentPhase]
 	if !ok {
-		return CreateResult{Status: "error", EffortRoot: absRoot},
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot},
 			fmt.Errorf("cannot advance from terminal phase %q", ws.CurrentPhase)
 	}
 	found := false
@@ -151,7 +151,7 @@ func AdvanceCreatePhase(absRoot string, nextPhase string) (CreateResult, error) 
 	}
 	if !found {
 		return CreateResult{
-			Status: "blocked", EffortRoot: absRoot, EffortID: ws.EffortID,
+			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
 			CurrentPhase: ws.CurrentPhase,
 			Blockers:     []string{"cannot transition from " + ws.CurrentPhase + " to " + nextPhase},
 		}, nil
@@ -165,32 +165,32 @@ func AdvanceCreatePhase(absRoot string, nextPhase string) (CreateResult, error) 
 
 	switch nextPhase {
 	case PhasePRDDrafting:
-		ws.CurrentState = "planned"
+		ws.CurrentState = WorkflowStatePlanned
 		ws.NextValidActions = []string{"approve_prd", "edit_requirements"}
 	case PhasePRDReview:
-		ws.CurrentState = "human_verification"
+		ws.CurrentState = WorkflowStateHumanVerification
 		ws.NextValidActions = []string{"approve_prd", "request_prd_changes"}
 	case PhaseADRDrafting:
-		ws.CurrentState = "planned"
+		ws.CurrentState = WorkflowStatePlanned
 		ws.NextValidActions = []string{"approve_adrs", "edit_adrs"}
 	case PhaseADRReview:
-		ws.CurrentState = "human_verification"
+		ws.CurrentState = WorkflowStateHumanVerification
 		ws.NextValidActions = []string{"approve_adrs", "request_adr_changes"}
 	case PhaseTDDSynthesis:
-		ws.CurrentState = "planned"
+		ws.CurrentState = WorkflowStatePlanned
 		ws.NextValidActions = []string{"finalize"}
 	case PhaseComplete:
-		ws.StatusBucket = "closed"
-		ws.CurrentState = "closed"
+		ws.StatusBucket = WorkflowStatusBucketClosed
+		ws.CurrentState = WorkflowStateClosed
 		ws.NextValidActions = []string{"view_status"}
 	}
 
 	if err := atomicWriteWorkflowState(absRoot, ws); err != nil {
-		return CreateResult{Status: "error", EffortRoot: absRoot}, fmt.Errorf("write workflow_state.json: %w", err)
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("write %s: %w", WorkflowStateFileName, err)
 	}
 
 	return CreateResult{
-		Status:          "ok",
+		Status:          ProductWorkflowStatusOK,
 		EffortRoot:      absRoot,
 		EffortID:        ws.EffortID,
 		CurrentPhase:    ws.CurrentPhase,
@@ -202,11 +202,11 @@ func AdvanceCreatePhase(absRoot string, nextPhase string) (CreateResult, error) 
 func ApprovePRDGate(absRoot string) (CreateResult, IntakeResult, error) {
 	ws, err := LoadWorkflowState(absRoot)
 	if err != nil {
-		return CreateResult{Status: "error", EffortRoot: absRoot}, IntakeResult{}, fmt.Errorf("load workflow state: %w", err)
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, IntakeResult{}, fmt.Errorf("load workflow state: %w", err)
 	}
 	if ws.CurrentPhase != PhasePRDReview {
 		return CreateResult{
-			Status: "blocked", EffortRoot: absRoot, EffortID: ws.EffortID,
+			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
 			CurrentPhase: ws.CurrentPhase,
 			Blockers:     []string{"current phase " + ws.CurrentPhase + " is not prd_review"},
 		}, IntakeResult{}, nil
@@ -217,17 +217,17 @@ func ApprovePRDGate(absRoot string) (CreateResult, IntakeResult, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			return CreateResult{
-				Status: "blocked", EffortRoot: absRoot, EffortID: ws.EffortID,
+				Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
 				CurrentPhase: ws.CurrentPhase, Blockers: []string{"prd.md not found"},
 			}, IntakeResult{}, nil
 		}
-		return CreateResult{Status: "error", EffortRoot: absRoot}, IntakeResult{}, fmt.Errorf("read prd.md: %w", err)
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, IntakeResult{}, fmt.Errorf("read prd.md: %w", err)
 	}
 
 	prd, err := ParsePRDMarkdown(data)
 	if err != nil {
 		return CreateResult{
-			Status: "blocked", EffortRoot: absRoot, EffortID: ws.EffortID,
+			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
 			CurrentPhase: ws.CurrentPhase, Blockers: []string{"prd.md parse error: " + err.Error()},
 		}, IntakeResult{}, nil
 	}
@@ -239,7 +239,7 @@ func ApprovePRDGate(absRoot string) (CreateResult, IntakeResult, error) {
 			blockers = append(blockers, f.Code+": "+f.Message)
 		}
 		return CreateResult{
-			Status: "blocked", EffortRoot: absRoot, EffortID: ws.EffortID,
+			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
 			CurrentPhase: ws.CurrentPhase, Blockers: blockers,
 		}, intake, nil
 	}
@@ -250,7 +250,7 @@ func ApprovePRDGate(absRoot string) (CreateResult, IntakeResult, error) {
 	prd.FrontMatter.AcceptedBy = "operator"
 	prd.FrontMatter.AcceptanceProfile = "product_workflow_create"
 	if err := WritePRDMarkdown(absRoot, prd); err != nil {
-		return CreateResult{Status: "error", EffortRoot: absRoot}, intake, fmt.Errorf("write accepted prd.md: %w", err)
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, intake, fmt.Errorf("write accepted prd.md: %w", err)
 	}
 
 	result, err := AdvanceCreatePhase(absRoot, PhaseADRDrafting)
@@ -263,11 +263,11 @@ func ApprovePRDGate(absRoot string) (CreateResult, IntakeResult, error) {
 func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 	ws, err := LoadWorkflowState(absRoot)
 	if err != nil {
-		return CreateResult{Status: "error", EffortRoot: absRoot}, nil, fmt.Errorf("load workflow state: %w", err)
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, nil, fmt.Errorf("load workflow state: %w", err)
 	}
 	if ws.CurrentPhase != PhaseADRReview {
 		return CreateResult{
-			Status: "blocked", EffortRoot: absRoot, EffortID: ws.EffortID,
+			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
 			CurrentPhase: ws.CurrentPhase,
 			Blockers:     []string{"current phase " + ws.CurrentPhase + " is not adr_review"},
 		}, nil, nil
@@ -281,16 +281,16 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			return CreateResult{
-				Status: "blocked", EffortRoot: absRoot, EffortID: ws.EffortID,
+				Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
 				CurrentPhase: ws.CurrentPhase, Blockers: []string{"adrs/index.json not found"},
 			}, nil, nil
 		}
-		return CreateResult{Status: "error", EffortRoot: absRoot}, nil, fmt.Errorf("read adrs/index.json: %w", err)
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, nil, fmt.Errorf("read adrs/index.json: %w", err)
 	}
 	idx, err := ParseADRIndexJSON(idxData)
 	if err != nil {
 		return CreateResult{
-			Status: "blocked", EffortRoot: absRoot, EffortID: ws.EffortID,
+			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
 			CurrentPhase: ws.CurrentPhase, Blockers: []string{"adrs/index.json parse error: " + err.Error()},
 		}, nil, nil
 	}
@@ -299,7 +299,7 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 	if !idxIntake.Passed {
 		blockers := intakeFailureBlockers(idxIntake)
 		return CreateResult{
-			Status: "blocked", EffortRoot: absRoot, EffortID: ws.EffortID,
+			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
 			CurrentPhase: ws.CurrentPhase, Blockers: blockers,
 		}, allIntakes, nil
 	}
@@ -349,7 +349,7 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 
 	if len(adrBlockers) > 0 {
 		return CreateResult{
-			Status: "blocked", EffortRoot: absRoot, EffortID: ws.EffortID,
+			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
 			CurrentPhase: ws.CurrentPhase, Blockers: adrBlockers,
 		}, allIntakes, nil
 	}
@@ -362,7 +362,7 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 		ar.doc.FrontMatter.AcceptedBy = "operator"
 		ar.doc.FrontMatter.AcceptanceProfile = "product_workflow_create"
 		if writeErr := WriteADRMarkdown(absRoot, ar.entry.Path, ar.doc); writeErr != nil {
-			return CreateResult{Status: "error", EffortRoot: absRoot}, allIntakes,
+			return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, allIntakes,
 				fmt.Errorf("write %s: %w", ar.entry.Path, writeErr)
 		}
 	}
@@ -372,7 +372,7 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 		idx.ADRs[i].Status = string(ArtifactStateAccepted)
 	}
 	if err := WriteADRIndexJSON(absRoot, idx); err != nil {
-		return CreateResult{Status: "error", EffortRoot: absRoot}, allIntakes,
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, allIntakes,
 			fmt.Errorf("write adrs/index.json: %w", err)
 	}
 
@@ -384,11 +384,11 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 func CompleteEffort(absRoot string) (CreateResult, error) {
 	ws, err := LoadWorkflowState(absRoot)
 	if err != nil {
-		return CreateResult{Status: "error", EffortRoot: absRoot}, fmt.Errorf("load workflow state: %w", err)
+		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("load workflow state: %w", err)
 	}
 	if ws.CurrentPhase != PhaseTDDSynthesis {
 		return CreateResult{
-			Status: "blocked", EffortRoot: absRoot, EffortID: ws.EffortID,
+			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
 			CurrentPhase: ws.CurrentPhase,
 			Blockers:     []string{"cannot complete from phase " + ws.CurrentPhase},
 		}, nil
@@ -544,7 +544,7 @@ func RenderADRMarkdown(doc ADRDocument) string {
 }
 
 func loadExistingCreatePhase(absRoot string) (CreateResult, bool) {
-	wsPath := filepath.Join(absRoot, "workflow_state.json")
+	wsPath := filepath.Join(absRoot, WorkflowStateFileName)
 	data, err := os.ReadFile(wsPath)
 	if err != nil {
 		return CreateResult{}, false
@@ -570,10 +570,10 @@ func loadExistingCreatePhase(absRoot string) (CreateResult, bool) {
 // atomicWriteWorkflowState writes workflow_state.json using a staging file
 // and atomic rename, matching the pattern in transition_apply.go.
 func atomicWriteWorkflowState(absRoot string, ws WorkflowState) error {
-	workflowPath := filepath.Join(absRoot, "workflow_state.json")
+	workflowPath := filepath.Join(absRoot, WorkflowStateFileName)
 	data, err := json.MarshalIndent(ws, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode workflow_state.json: %w", err)
+		return fmt.Errorf("encode %s: %w", WorkflowStateFileName, err)
 	}
 	data = append(data, '\n')
 
@@ -584,12 +584,12 @@ func atomicWriteWorkflowState(absRoot string, ws WorkflowState) error {
 
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("stage workflow_state.json: %w", err)
+		return fmt.Errorf("stage %s: %w", WorkflowStateFileName, err)
 	}
 
 	if err := os.Rename(tmpPath, workflowPath); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("replace workflow_state.json: %w", err)
+		return fmt.Errorf("replace %s: %w", WorkflowStateFileName, err)
 	}
 	return nil
 }

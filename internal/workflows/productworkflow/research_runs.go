@@ -29,7 +29,7 @@ func PlanResearchRuns(profiles []ResearchProfile, selector, researchOutputDir st
 			Kind:     "invalid_research_output_dir",
 			Message:  fmt.Sprintf("research output directory %q must be effort-relative and must not contain path traversal", researchOutputDir),
 			File:     researchOutputDir,
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 		})
 		return plan
 	}
@@ -39,7 +39,7 @@ func PlanResearchRuns(profiles []ResearchProfile, selector, researchOutputDir st
 			Kind:     "invalid_research_profile_id",
 			Message:  fmt.Sprintf("selected profile_id %q is not path-safe", plan.SelectedProfileID),
 			File:     ".idiom/research/profiles",
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 		})
 		return plan
 	}
@@ -53,7 +53,7 @@ func PlanResearchRuns(profiles []ResearchProfile, selector, researchOutputDir st
 				Kind:     "invalid_researcher_id",
 				Message:  fmt.Sprintf("researcher id %q is not path-safe", researcherID),
 				File:     ".idiom/research/profiles",
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 			})
 			continue
 		}
@@ -95,7 +95,7 @@ func SelectResearchProfile(profiles []ResearchProfile, selector string) (*Resear
 				Kind:     "ambiguous_research_profile",
 				Message:  "multiple research profiles are available; pass --profile with a profile_id or name for deterministic profile selection",
 				File:     ".idiom/research/profiles",
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 			}}
 		}
 		return nil, nil
@@ -112,7 +112,7 @@ func SelectResearchProfile(profiles []ResearchProfile, selector string) (*Resear
 			Kind:     "unknown_research_profile",
 			Message:  fmt.Sprintf("research profile %q was not found by profile_id or name", selector),
 			File:     ".idiom/research/profiles",
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 		}}
 	case 1:
 		return &profiles[matches[0]], nil
@@ -121,7 +121,7 @@ func SelectResearchProfile(profiles []ResearchProfile, selector string) (*Resear
 			Kind:     "ambiguous_research_profile",
 			Message:  fmt.Sprintf("research profile selector %q matched multiple profiles", selector),
 			File:     ".idiom/research/profiles",
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 		}}
 	}
 }

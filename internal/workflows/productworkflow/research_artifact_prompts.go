@@ -27,7 +27,7 @@ func PlanResearchArtifactPrompts(runPlan ResearchRunPlan, researchPromptDir stri
 			Kind:     "invalid_research_prompt_dir",
 			Message:  fmt.Sprintf("research prompt directory %q must be effort-relative and must not contain path traversal", researchPromptDir),
 			File:     researchPromptDir,
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 		})
 		sortProfileFindings(plan.Findings)
 		return plan
@@ -62,7 +62,7 @@ func PlanResearchArtifactPrompts(runPlan ResearchRunPlan, researchPromptDir stri
 
 func hasErrorFinding(findings []ProfileFinding) bool {
 	for _, finding := range findings {
-		if finding.Severity == "error" {
+		if finding.Severity == ProductWorkflowSeverityError {
 			return true
 		}
 	}
@@ -106,14 +106,14 @@ func ValidateResearchPromptPathBoundary(effortRoot, promptPath, relPath string) 
 			Kind:     "research_prompt_symlink",
 			Message:  fmt.Sprintf("research prompt file %q must not be a symlink", relPath),
 			File:     relPath,
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 		}, true
 	} else if err != nil && !os.IsNotExist(err) {
 		return ProfileFinding{
 			Kind:     "read_error",
 			Message:  fmt.Sprintf("failed to inspect research prompt file %q: %v", relPath, err),
 			File:     relPath,
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 		}, true
 	}
 	return researchPromptBoundaryFinding(effortRoot, promptPath, relPath, "research_prompt_path_outside_effort", "research prompt path")
@@ -126,7 +126,7 @@ func researchPromptBoundaryFinding(effortRoot, absPath, relPath, outsideKind, la
 			Kind:     "read_error",
 			Message:  fmt.Sprintf("failed to resolve effort root %q: %v", effortRoot, err),
 			File:     ".",
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 		}, true
 	}
 	existing := absPath
@@ -144,7 +144,7 @@ func researchPromptBoundaryFinding(effortRoot, absPath, relPath, outsideKind, la
 					Kind:     outsideKind,
 					Message:  fmt.Sprintf("%s %q resolves outside the effort root", label, relPath),
 					File:     relPath,
-					Severity: "error",
+					Severity: ProductWorkflowSeverityError,
 				}, true
 			}
 			return ProfileFinding{}, false
@@ -154,7 +154,7 @@ func researchPromptBoundaryFinding(effortRoot, absPath, relPath, outsideKind, la
 				Kind:     "read_error",
 				Message:  fmt.Sprintf("failed to resolve %s %q: %v", label, relPath, evalErr),
 				File:     relPath,
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 			}, true
 		}
 		parent := filepath.Dir(existing)
@@ -163,7 +163,7 @@ func researchPromptBoundaryFinding(effortRoot, absPath, relPath, outsideKind, la
 				Kind:     "read_error",
 				Message:  fmt.Sprintf("failed to resolve %s %q: no existing ancestor", label, relPath),
 				File:     relPath,
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 			}, true
 		}
 		existing = parent

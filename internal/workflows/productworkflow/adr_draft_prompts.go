@@ -32,12 +32,12 @@ func PlanADRDraftPrompt(effortRoot, promptPath, adrOutputPath string, evidence [
 	if cleanPrompt, ok := cleanResearchOutputDir(plan.PromptPath); ok {
 		plan.PromptPath = filepath.ToSlash(cleanPrompt)
 	} else {
-		plan.Findings = append(plan.Findings, ProfileFinding{Kind: "invalid_adr_prompt_path", Message: fmt.Sprintf("ADR prompt path %q must be effort-relative and must not contain path traversal", plan.PromptPath), File: plan.PromptPath, Severity: "error"})
+		plan.Findings = append(plan.Findings, ProfileFinding{Kind: "invalid_adr_prompt_path", Message: fmt.Sprintf("ADR prompt path %q must be effort-relative and must not contain path traversal", plan.PromptPath), File: plan.PromptPath, Severity: ProductWorkflowSeverityError})
 	}
 	if cleanOutput, ok := cleanResearchOutputDir(plan.ADROutputPath); ok {
 		plan.ADROutputPath = filepath.ToSlash(cleanOutput)
 	} else {
-		plan.Findings = append(plan.Findings, ProfileFinding{Kind: "invalid_adr_output_path", Message: fmt.Sprintf("ADR output path %q must be effort-relative and must not contain path traversal", plan.ADROutputPath), File: plan.ADROutputPath, Severity: "error"})
+		plan.Findings = append(plan.Findings, ProfileFinding{Kind: "invalid_adr_output_path", Message: fmt.Sprintf("ADR output path %q must be effort-relative and must not contain path traversal", plan.ADROutputPath), File: plan.ADROutputPath, Severity: ProductWorkflowSeverityError})
 	}
 
 	if !hasErrorFinding(plan.Findings) {

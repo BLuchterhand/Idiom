@@ -46,13 +46,13 @@ func (e ProductWorkflowMetricsError) Reason() failures.Reason {
 }
 
 func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error) {
-	wsData, err := readMetricsArtifact(absRoot, "workflow_state.json")
+	wsData, err := readMetricsArtifact(absRoot, WorkflowStateFileName)
 	if err != nil {
 		return ProductWorkflowMetrics{}, err
 	}
 	ws, err := ParseWorkflowStateJSON(wsData)
 	if err != nil {
-		return ProductWorkflowMetrics{}, metricsArtifactError("parse", "workflow_state.json", err)
+		return ProductWorkflowMetrics{}, metricsArtifactError("parse", WorkflowStateFileName, err)
 	}
 
 	tddData, err := readMetricsArtifact(absRoot, "tdd.json")
@@ -112,7 +112,7 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 	gateStatusCounts := map[string]int{}
 	for _, gate := range ws.Coverage.GateResults {
 		if err := countBoundedMetricValue(gateStatusCounts, "coverage.gate_results.status", gate.Status, allowedMetricGateStatuses); err != nil {
-			return ProductWorkflowMetrics{}, metricsArtifactError("validate", "workflow_state.json", err)
+			return ProductWorkflowMetrics{}, metricsArtifactError("validate", WorkflowStateFileName, err)
 		}
 	}
 
@@ -317,25 +317,25 @@ func countBoundedMetricValue(counts map[string]int, field, value string, allowed
 }
 
 var allowedMetricGateStatuses = map[string]bool{
-	"pass":    true,
-	"passed":  true,
-	"fail":    true,
-	"failed":  true,
-	"pending": true,
-	"planned": true,
-	"blocked": true,
-	"error":   true,
+	ProductWorkflowStatusPass:    true,
+	ProductWorkflowStatusPassed:  true,
+	ProductWorkflowStatusFail:    true,
+	ProductWorkflowStatusFailed:  true,
+	ProductWorkflowStatusPending: true,
+	ProductWorkflowStatusPlanned: true,
+	ProductWorkflowStatusBlocked: true,
+	ProductWorkflowStatusError:   true,
 }
 
 var allowedMetricTDDStatuses = map[string]bool{
-	"pending":  true,
-	"planned":  true,
-	"passed":   true,
-	"pass":     true,
-	"done":     true,
-	"complete": true,
-	"failed":   true,
-	"blocked":  true,
+	ProductWorkflowStatusPending:  true,
+	ProductWorkflowStatusPlanned:  true,
+	ProductWorkflowStatusPassed:   true,
+	ProductWorkflowStatusPass:     true,
+	"done":                        true,
+	ProductWorkflowStatusComplete: true,
+	ProductWorkflowStatusFailed:   true,
+	ProductWorkflowStatusBlocked:  true,
 }
 
 var allowedMetricTDDTypes = map[string]bool{
@@ -370,23 +370,23 @@ var allowedMetricLedgerRecordTypes = map[string]bool{
 }
 
 var allowedMetricReviewStatuses = map[string]bool{
-	"pending":           true,
-	"pass":              true,
-	"passed":            true,
-	"pass_after_repair": true,
-	"fail":              true,
-	"failed":            true,
-	"blocked":           true,
-	"complete":          true,
+	ProductWorkflowStatusPending:  true,
+	ProductWorkflowStatusPass:     true,
+	ProductWorkflowStatusPassed:   true,
+	"pass_after_repair":           true,
+	ProductWorkflowStatusFail:     true,
+	ProductWorkflowStatusFailed:   true,
+	ProductWorkflowStatusBlocked:  true,
+	ProductWorkflowStatusComplete: true,
 }
 
 var allowedMetricInvestigationStatuses = map[string]bool{
-	"planned":  true,
-	"pending":  true,
-	"complete": true,
-	"blocked":  true,
-	"pass":     true,
-	"passed":   true,
-	"fail":     true,
-	"failed":   true,
+	ProductWorkflowStatusPlanned:  true,
+	ProductWorkflowStatusPending:  true,
+	ProductWorkflowStatusComplete: true,
+	ProductWorkflowStatusBlocked:  true,
+	ProductWorkflowStatusPass:     true,
+	ProductWorkflowStatusPassed:   true,
+	ProductWorkflowStatusFail:     true,
+	ProductWorkflowStatusFailed:   true,
 }

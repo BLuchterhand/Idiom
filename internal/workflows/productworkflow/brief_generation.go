@@ -15,7 +15,7 @@ func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResu
 		taskID = strings.TrimSpace(input.WorkflowState.TaskID)
 	}
 	out := BriefGenerationResult{
-		Status:               "blocked",
+		Status:               ProductWorkflowStatusBlocked,
 		FilesToModify:        []string{},
 		FileActions:          map[string]string{},
 		FilesToReadFirst:     []string{},
@@ -50,7 +50,7 @@ func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResu
 	out.FilesToReadFirst = briefUniqueSortedStrings(append([]string{
 		"docs/design-prd-adr-brief-research-workflow.md",
 		briefArtifactPath(input.ArtifactRootPath, "README.md"),
-		briefArtifactPath(input.ArtifactRootPath, "workflow_state.json"),
+		briefArtifactPath(input.ArtifactRootPath, WorkflowStateFileName),
 		briefArtifactPath(input.ArtifactRootPath, "prd.md"),
 		briefArtifactPath(input.ArtifactRootPath, "adrs/index.json"),
 		briefArtifactPath(input.ArtifactRootPath, "tdd.json"),
@@ -117,7 +117,7 @@ func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResu
 		if obID == "" {
 			continue
 		}
-		if !util.EqualTrimFold(obligation.Status, "passed") {
+		if !util.EqualTrimFold(obligation.Status, ProductWorkflowStatusPassed) {
 			if strings.TrimSpace(obligation.Behavior) != "" {
 				out.RequiredBehavior = append(out.RequiredBehavior, fmt.Sprintf("%s: %s", obID, strings.TrimSpace(obligation.Behavior)))
 			}
@@ -142,7 +142,7 @@ func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResu
 	out.Decisions = briefUniqueSortedStrings(out.Decisions)
 	out.Blockers = briefUniqueSortedStrings(out.Blockers)
 	if len(out.Blockers) == 0 {
-		out.Status = "pass"
+		out.Status = ProductWorkflowStatusPass
 	}
 	out.RenderedBrief = renderImplementationBriefMarkdown(out)
 	return out
@@ -269,7 +269,7 @@ func ImplementationAffectingClaimFindings(prd PRDDocument, adrs []ParsedADR) []P
 			findings = append(findings, ProfileFinding{
 				Kind:     "ungrounded_implementation_claim",
 				File:     "prd.md",
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 				Message:  fmt.Sprintf("implementation-affecting claim in PRD requirement %s is classified as open_question/advisory and cannot authorize dispatch", id),
 			})
 			continue
@@ -278,7 +278,7 @@ func ImplementationAffectingClaimFindings(prd PRDDocument, adrs []ParsedADR) []P
 			findings = append(findings, ProfileFinding{
 				Kind:     "ungrounded_implementation_claim",
 				File:     "prd.md",
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 				Message:  fmt.Sprintf("implementation-affecting claim in PRD requirement %s lacks evidence_refs and cannot authorize dispatch", id),
 			})
 		}
@@ -303,7 +303,7 @@ func ImplementationAffectingClaimFindings(prd PRDDocument, adrs []ParsedADR) []P
 			findings = append(findings, ProfileFinding{
 				Kind:     "ungrounded_implementation_claim",
 				File:     path,
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 				Message:  fmt.Sprintf("implementation-affecting claim in accepted ADR %s is classified as open_question/advisory and cannot authorize dispatch", id),
 			})
 			continue
@@ -314,7 +314,7 @@ func ImplementationAffectingClaimFindings(prd PRDDocument, adrs []ParsedADR) []P
 		findings = append(findings, ProfileFinding{
 			Kind:     "ungrounded_implementation_claim",
 			File:     path,
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 			Message:  fmt.Sprintf("implementation-affecting claim in accepted ADR %s lacks evidence_refs and cannot authorize dispatch", id),
 		})
 	}
@@ -420,7 +420,7 @@ func ImplementationAffectingClaimEvidenceFindings(prd PRDDocument, adrs []Parsed
 			findings = append(findings, ProfileFinding{
 				Kind:     "ungrounded_implementation_claim",
 				File:     "prd.md",
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 				Message:  fmt.Sprintf("implementation-affecting claim in PRD requirement %s references unresolved evidence %q and cannot authorize dispatch", id, ref),
 			})
 		}
@@ -449,7 +449,7 @@ func ImplementationAffectingClaimEvidenceFindings(prd PRDDocument, adrs []Parsed
 			findings = append(findings, ProfileFinding{
 				Kind:     "ungrounded_implementation_claim",
 				File:     path,
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 				Message:  fmt.Sprintf("implementation-affecting claim in accepted ADR %s references unresolved evidence %q and cannot authorize dispatch", id, ref),
 			})
 		}

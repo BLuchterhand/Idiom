@@ -1,5 +1,42 @@
 package productworkflow
 
+const (
+	WorkflowStateFileName = "workflow_state.json"
+
+	WorkflowStatusBucketUnstarted = "unstarted"
+	WorkflowStatusBucketStarted   = "started"
+	WorkflowStatusBucketClosed    = "closed"
+
+	WorkflowStatePlanned           = "planned"
+	WorkflowStateHumanVerification = "human_verification"
+	WorkflowStateImplementing      = "implementing"
+	WorkflowStateVerifying         = "verifying"
+	WorkflowStateReviewing         = "reviewing"
+	WorkflowStateInvestigating     = "investigating"
+	WorkflowStateBlocked           = "blocked"
+	WorkflowStateClosed            = "closed"
+
+	ProductWorkflowStatusApplied         = "applied"
+	ProductWorkflowStatusBlocked         = "blocked"
+	ProductWorkflowStatusClosed          = "closed"
+	ProductWorkflowStatusComplete        = "complete"
+	ProductWorkflowStatusError           = "error"
+	ProductWorkflowStatusFail            = "fail"
+	ProductWorkflowStatusFailed          = "failed"
+	ProductWorkflowStatusNeedsInspection = "needs_inspection"
+	ProductWorkflowStatusOK              = "ok"
+	ProductWorkflowStatusPartial         = "partial"
+	ProductWorkflowStatusPass            = "pass"
+	ProductWorkflowStatusPassed          = "passed"
+	ProductWorkflowStatusPending         = "pending"
+	ProductWorkflowStatusPlanned         = "planned"
+	ProductWorkflowStatusReady           = "ready"
+
+	ProductWorkflowSeverityError = "error"
+
+	productStatusMigrationTempSuffix = ".status-migration.tmp"
+)
+
 type EffortIndex struct {
 	SchemaVersion string             `json:"schema_version"`
 	UpdatedAt     string             `json:"updated_at"`

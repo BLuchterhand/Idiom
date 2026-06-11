@@ -13,7 +13,7 @@ func EvaluateCoverageGate(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, 
 		EffortID:     strings.TrimSpace(ledger.EffortID),
 		TaskID:       strings.TrimSpace(ledger.TaskID),
 		CoverageTier: strings.TrimSpace(ledger.CoverageTier),
-		Status:       "pass",
+		Status:       ProductWorkflowStatusPass,
 		Criteria:     []CoverageGateCriterion{},
 		Findings:     []CoverageGateFinding{},
 		Blockers:     []CoverageGateBlocker{},
@@ -23,19 +23,19 @@ func EvaluateCoverageGate(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, 
 	}
 
 	record := func(key string, required bool, pass bool, detail string, file string, findingKind string) {
-		status := "pass"
+		status := ProductWorkflowStatusPass
 		if !required {
 			status = "not_applicable"
 		}
 		if required && !pass {
-			status = "blocked"
-			out.Status = "blocked"
+			status = ProductWorkflowStatusBlocked
+			out.Status = ProductWorkflowStatusBlocked
 			out.Findings = append(out.Findings, CoverageGateFinding{
 				Kind:      findingKind,
 				Criterion: key,
 				Message:   detail,
 				File:      file,
-				Severity:  "error",
+				Severity:  ProductWorkflowSeverityError,
 			})
 			out.Blockers = append(out.Blockers, CoverageGateBlocker{
 				Kind:      findingKind,
@@ -208,7 +208,7 @@ func BuildSatisfiedTDDObligationIDs(ledger TDDLedger, records []ImplementationLe
 }
 
 func CoverageGateHasBlockers(eval CoverageGateEvaluation) bool {
-	return util.EqualTrimFold(eval.Status, "blocked") || len(eval.Blockers) > 0
+	return util.EqualTrimFold(eval.Status, ProductWorkflowStatusBlocked) || len(eval.Blockers) > 0
 }
 
 func CoverageGateHasOnlyTDDEvidenceBlockers(eval CoverageGateEvaluation) bool {
@@ -242,7 +242,7 @@ func BuildCoverageGateEvaluatedEvent(eval CoverageGateEvaluation, ledger TDDLedg
 	}
 	gateResult := strings.TrimSpace(eval.Status)
 	if gateResult == "" {
-		gateResult = "blocked"
+		gateResult = ProductWorkflowStatusBlocked
 	}
 	return CoverageGateEvaluatedEvent{
 		Event:    "coverage_gate_evaluated",
@@ -300,10 +300,10 @@ func coverageGateBlockedReasons(blockers []CoverageGateBlocker) []string {
 
 func ApplyCoverageGateAuthorityPreflight(eval CoverageGateEvaluation, lintFindings []LintSummaryFinding) CoverageGateEvaluation {
 	authorityFindings := coverageGateAuthorityFindings(lintFindings)
-	status := "pass"
+	status := ProductWorkflowStatusPass
 	if len(authorityFindings) > 0 {
-		status = "blocked"
-		eval.Status = "blocked"
+		status = ProductWorkflowStatusBlocked
+		eval.Status = ProductWorkflowStatusBlocked
 	}
 	eval.Criteria = append(eval.Criteria, CoverageGateCriterion{
 		Key:      "authority_preflight",
@@ -324,7 +324,7 @@ func ApplyCoverageGateAuthorityPreflight(eval CoverageGateEvaluation, lintFindin
 			Criterion: "authority_preflight",
 			Message:   message,
 			File:      strings.TrimSpace(finding.Path),
-			Severity:  "error",
+			Severity:  ProductWorkflowSeverityError,
 		})
 		eval.Blockers = append(eval.Blockers, CoverageGateBlocker{
 			Kind:      strings.TrimSpace(finding.Code),
@@ -408,7 +408,7 @@ func appendPRDTDDObligationLinkBlockers(out *CoverageGateEvaluation, errs []PRDT
 	if out == nil || len(errs) == 0 {
 		return
 	}
-	out.Status = "blocked"
+	out.Status = ProductWorkflowStatusBlocked
 	for _, linkErr := range errs {
 		reqID := strings.TrimSpace(linkErr.RequirementID)
 		tddID := strings.TrimSpace(linkErr.TDDObligation)
@@ -421,7 +421,7 @@ func appendPRDTDDObligationLinkBlockers(out *CoverageGateEvaluation, errs []PRDT
 			Criterion: "evidence_acceptance",
 			Message:   message,
 			File:      "prd.md",
-			Severity:  "error",
+			Severity:  ProductWorkflowSeverityError,
 		})
 		out.Blockers = append(out.Blockers, CoverageGateBlocker{
 			Kind:      "coverage_prd_tdd_obligation_unknown",
@@ -436,7 +436,7 @@ func appendADRTDDObligationLinkBlockers(out *CoverageGateEvaluation, errs []ADRC
 	if out == nil || len(errs) == 0 {
 		return
 	}
-	out.Status = "blocked"
+	out.Status = ProductWorkflowStatusBlocked
 	for _, linkErr := range errs {
 		if strings.TrimSpace(linkErr.Field) != "tdd_obligations" {
 			continue
@@ -450,7 +450,7 @@ func appendADRTDDObligationLinkBlockers(out *CoverageGateEvaluation, errs []ADRC
 			Criterion: "evidence_acceptance",
 			Message:   message,
 			File:      strings.TrimSpace(linkErr.ADRPath),
-			Severity:  "error",
+			Severity:  ProductWorkflowSeverityError,
 		})
 		out.Blockers = append(out.Blockers, CoverageGateBlocker{
 			Kind:      "coverage_adr_tdd_obligation_unknown",

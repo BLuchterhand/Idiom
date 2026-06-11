@@ -1153,14 +1153,14 @@ func runProductPRD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 				Kind:     "missing_evidence_ledger",
 				Message:  "required evidence/evidence.jsonl not found",
 				File:     "evidence/evidence.jsonl",
-				Severity: "error",
+				Severity: productworkflow.ProductWorkflowSeverityError,
 			})
 		} else {
 			findings = append(findings, productworkflow.ProfileFinding{
 				Kind:     "read_error",
 				Message:  fmt.Sprintf("failed to read evidence/evidence.jsonl: %v", err),
 				File:     "evidence/evidence.jsonl",
-				Severity: "error",
+				Severity: productworkflow.ProductWorkflowSeverityError,
 			})
 		}
 	} else {
@@ -1170,7 +1170,7 @@ func runProductPRD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 				Kind:     "validation_error",
 				Message:  fmt.Sprintf("existing evidence ledger failed validation: %v", err),
 				File:     "evidence/evidence.jsonl",
-				Severity: "error",
+				Severity: productworkflow.ProductWorkflowSeverityError,
 			})
 		}
 	}
@@ -1182,14 +1182,14 @@ func runProductPRD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 				Kind:     "missing_tdd_ledger",
 				Message:  "required tdd.json not found",
 				File:     "tdd.json",
-				Severity: "error",
+				Severity: productworkflow.ProductWorkflowSeverityError,
 			})
 		} else {
 			findings = append(findings, productworkflow.ProfileFinding{
 				Kind:     "read_error",
 				Message:  fmt.Sprintf("failed to read tdd.json: %v", err),
 				File:     "tdd.json",
-				Severity: "error",
+				Severity: productworkflow.ProductWorkflowSeverityError,
 			})
 		}
 	} else {
@@ -1199,7 +1199,7 @@ func runProductPRD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 				Kind:     "validation_error",
 				Message:  fmt.Sprintf("existing tdd.json failed validation: %v", err),
 				File:     "tdd.json",
-				Severity: "error",
+				Severity: productworkflow.ProductWorkflowSeverityError,
 			})
 		}
 	}
@@ -1307,14 +1307,14 @@ func runProductADR(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 	evidenceData, err := os.ReadFile(evidencePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			findings = append(findings, productworkflow.ProfileFinding{Kind: "missing_evidence_ledger", Message: "required evidence/evidence.jsonl not found", File: "evidence/evidence.jsonl", Severity: "error"})
+			findings = append(findings, productworkflow.ProfileFinding{Kind: "missing_evidence_ledger", Message: "required evidence/evidence.jsonl not found", File: "evidence/evidence.jsonl", Severity: productworkflow.ProductWorkflowSeverityError})
 		} else {
-			findings = append(findings, productworkflow.ProfileFinding{Kind: "read_error", Message: fmt.Sprintf("failed to read evidence/evidence.jsonl: %v", err), File: "evidence/evidence.jsonl", Severity: "error"})
+			findings = append(findings, productworkflow.ProfileFinding{Kind: "read_error", Message: fmt.Sprintf("failed to read evidence/evidence.jsonl: %v", err), File: "evidence/evidence.jsonl", Severity: productworkflow.ProductWorkflowSeverityError})
 		}
 	} else {
 		evidenceCards, err = productworkflow.ParseEvidenceCardsJSONL(evidenceData)
 		if err != nil {
-			findings = append(findings, productworkflow.ProfileFinding{Kind: "validation_error", Message: fmt.Sprintf("existing evidence ledger failed validation: %v", err), File: "evidence/evidence.jsonl", Severity: "error"})
+			findings = append(findings, productworkflow.ProfileFinding{Kind: "validation_error", Message: fmt.Sprintf("existing evidence ledger failed validation: %v", err), File: "evidence/evidence.jsonl", Severity: productworkflow.ProductWorkflowSeverityError})
 		}
 	}
 
@@ -1322,14 +1322,14 @@ func runProductADR(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 	prdData, err := os.ReadFile(prdPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			findings = append(findings, productworkflow.ProfileFinding{Kind: "missing_prd", Message: "required prd.md not found", File: "prd.md", Severity: "error"})
+			findings = append(findings, productworkflow.ProfileFinding{Kind: "missing_prd", Message: "required prd.md not found", File: "prd.md", Severity: productworkflow.ProductWorkflowSeverityError})
 		} else {
-			findings = append(findings, productworkflow.ProfileFinding{Kind: "read_error", Message: fmt.Sprintf("failed to read prd.md: %v", err), File: "prd.md", Severity: "error"})
+			findings = append(findings, productworkflow.ProfileFinding{Kind: "read_error", Message: fmt.Sprintf("failed to read prd.md: %v", err), File: "prd.md", Severity: productworkflow.ProductWorkflowSeverityError})
 		}
 	} else {
 		prdDoc, err = productworkflow.ParsePRDMarkdown(prdData)
 		if err != nil {
-			findings = append(findings, productworkflow.ProfileFinding{Kind: "validation_error", Message: fmt.Sprintf("existing prd.md failed validation: %v", err), File: "prd.md", Severity: "error"})
+			findings = append(findings, productworkflow.ProfileFinding{Kind: "validation_error", Message: fmt.Sprintf("existing prd.md failed validation: %v", err), File: "prd.md", Severity: productworkflow.ProductWorkflowSeverityError})
 		}
 	}
 
@@ -1479,7 +1479,7 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 			Kind:     kind,
 			Message:  message,
 			File:     file,
-			Severity: "error",
+			Severity: productworkflow.ProductWorkflowSeverityError,
 		})
 	}
 	readFile := func(relPath string) ([]byte, bool) {
@@ -2694,7 +2694,7 @@ func runProductResearchRenderPrompts(profiles *productworkflow.ProfileStoreResul
 			Kind:     "missing_research_profile",
 			Message:  "no valid research profile is available for prompt rendering",
 			File:     ".idiom/research/profiles",
-			Severity: "error",
+			Severity: productworkflow.ProductWorkflowSeverityError,
 		})
 	}
 	runPlan := productworkflow.PlanResearchRuns(profiles.Profiles, researchProfile, researchOutputDir)
@@ -2799,7 +2799,7 @@ func runProductResearchMergeEvidence(profiles *productworkflow.ProfileStoreResul
 			Kind:     "missing_research_profile",
 			Message:  "no valid research profile is available for evidence merge",
 			File:     ".idiom/research/profiles",
-			Severity: "error",
+			Severity: productworkflow.ProductWorkflowSeverityError,
 		})
 	}
 	selectedProfile, profileFindings := productworkflow.SelectResearchProfile(profiles.Profiles, researchProfile)
@@ -2813,7 +2813,7 @@ func runProductResearchMergeEvidence(profiles *productworkflow.ProfileStoreResul
 				Kind:     "validation_error",
 				Message:  fmt.Sprintf("existing evidence ledger failed validation: %v", parseErr),
 				File:     "evidence/evidence.jsonl",
-				Severity: "error",
+				Severity: productworkflow.ProductWorkflowSeverityError,
 			})
 		} else {
 			existing = parsed
@@ -2823,14 +2823,14 @@ func runProductResearchMergeEvidence(profiles *productworkflow.ProfileStoreResul
 			Kind:     "missing_evidence_ledger",
 			Message:  "required evidence/evidence.jsonl not found",
 			File:     "evidence/evidence.jsonl",
-			Severity: "error",
+			Severity: productworkflow.ProductWorkflowSeverityError,
 		})
 	} else {
 		findings = append(findings, productworkflow.ProfileFinding{
 			Kind:     "read_error",
 			Message:  fmt.Sprintf("failed to read evidence/evidence.jsonl: %v", readErr),
 			File:     "evidence/evidence.jsonl",
-			Severity: "error",
+			Severity: productworkflow.ProductWorkflowSeverityError,
 		})
 	}
 	docs, docFindings, discoverErr := productworkflow.DiscoverResearchCardDocuments(absRoot, researchOutputDir)

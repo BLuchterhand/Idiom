@@ -58,7 +58,7 @@ func LintEffortFolder(root string) LintSummaryResult {
 		}
 	}
 
-	checkFile("workflow_state.json", func(data []byte) error {
+	checkFile(WorkflowStateFileName, func(data []byte) error {
 		ws, err := ParseWorkflowStateJSON(data)
 		if err == nil {
 			parsedWorkflowState = &ws
@@ -478,12 +478,12 @@ func LintEffortFolder(root string) LintSummaryResult {
 	}
 
 	if len(result.Findings) == 0 {
-		result.Status = "pass"
+		result.Status = ProductWorkflowStatusPass
 	} else {
-		result.Status = "fail"
+		result.Status = ProductWorkflowStatusFail
 	}
 
-	wsData, wsErr := os.ReadFile(filepath.Join(root, "workflow_state.json"))
+	wsData, wsErr := os.ReadFile(filepath.Join(root, WorkflowStateFileName))
 	if wsErr == nil {
 		var ws struct {
 			ArtifactPaths map[string]string `json:"artifact_paths"`
@@ -497,9 +497,9 @@ func LintEffortFolder(root string) LintSummaryResult {
 			}
 		}
 		if len(result.Findings) == 0 {
-			result.Status = "pass"
+			result.Status = ProductWorkflowStatusPass
 		} else {
-			result.Status = "fail"
+			result.Status = ProductWorkflowStatusFail
 		}
 	}
 

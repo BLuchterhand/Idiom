@@ -36,7 +36,7 @@ func PlanPRDDraftPrompt(effortRoot, promptPath, prdOutputPath string, evidence [
 			Kind:     "invalid_prd_prompt_path",
 			Message:  fmt.Sprintf("PRD prompt path %q must be effort-relative and must not contain path traversal", plan.PromptPath),
 			File:     plan.PromptPath,
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 		})
 	}
 	if cleanOutput, ok := cleanResearchOutputDir(plan.PRDOutputPath); ok {
@@ -46,7 +46,7 @@ func PlanPRDDraftPrompt(effortRoot, promptPath, prdOutputPath string, evidence [
 			Kind:     "invalid_prd_output_path",
 			Message:  fmt.Sprintf("PRD output path %q must be effort-relative and must not contain path traversal", plan.PRDOutputPath),
 			File:     plan.PRDOutputPath,
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 		})
 	}
 

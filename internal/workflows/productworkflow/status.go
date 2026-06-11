@@ -125,7 +125,7 @@ type ProductRecoveryBlock struct {
 }
 
 func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductStatusView, error) {
-	wsPath := filepath.Join(absRoot, "workflow_state.json")
+	wsPath := filepath.Join(absRoot, WorkflowStateFileName)
 	data, err := os.ReadFile(wsPath)
 	if err != nil {
 		blocker := StatusBlocker{
@@ -133,7 +133,7 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 			Message: "workflow_state.json not found",
 		}
 		view := ProductStatusView{
-			AuditStatus:      "error",
+			AuditStatus:      ProductWorkflowStatusError,
 			EffortRoot:       absRoot,
 			Blockers:         []StatusBlocker{blocker},
 			Findings:         []StatusBlocker{blocker},
@@ -151,7 +151,7 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 			Message: fmt.Sprintf("workflow_state.json invalid: %v", parseErr),
 		}
 		view := ProductStatusView{
-			AuditStatus:      "error",
+			AuditStatus:      ProductWorkflowStatusError,
 			EffortRoot:       absRoot,
 			Blockers:         []StatusBlocker{blocker},
 			Findings:         []StatusBlocker{blocker},
@@ -163,7 +163,7 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 	}
 
 	view := ProductStatusView{
-		AuditStatus:      "pass",
+		AuditStatus:      ProductWorkflowStatusPass,
 		EffortRoot:       absRoot,
 		EffortID:         ws.EffortID,
 		TaskID:           ws.TaskID,
@@ -196,13 +196,13 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 		view.AuditStatus = lintResult.Status
 
 		sectionMap := map[string]*StatusSection{
-			"prd":          {Name: "prd", Status: "pass"},
-			"adr":          {Name: "adr", Status: "pass"},
-			"tdd":          {Name: "tdd", Status: "pass"},
-			"traceability": {Name: "traceability", Status: "pass"},
-			"reports":      {Name: "reports", Status: "pass"},
-			"obsidian":     {Name: "obsidian", Status: "pass"},
-			"metrics":      {Name: "metrics", Status: "pass"},
+			"prd":          {Name: "prd", Status: ProductWorkflowStatusPass},
+			"adr":          {Name: "adr", Status: ProductWorkflowStatusPass},
+			"tdd":          {Name: "tdd", Status: ProductWorkflowStatusPass},
+			"traceability": {Name: "traceability", Status: ProductWorkflowStatusPass},
+			"reports":      {Name: "reports", Status: ProductWorkflowStatusPass},
+			"obsidian":     {Name: "obsidian", Status: ProductWorkflowStatusPass},
+			"metrics":      {Name: "metrics", Status: ProductWorkflowStatusPass},
 		}
 		for _, f := range lintResult.Findings {
 			sec := ClassifySection(f.Path)
@@ -210,7 +210,7 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 				continue
 			}
 			if s, ok := sectionMap[sec]; ok {
-				s.Status = "fail"
+				s.Status = ProductWorkflowStatusFail
 				s.FindingCount++
 			}
 		}
@@ -227,20 +227,20 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 	}
 
 	if view.AuditStatus == "" {
-		view.AuditStatus = "pass"
+		view.AuditStatus = ProductWorkflowStatusPass
 	}
 	return view, nil
 }
 
 // LoadWorkflowState reads and validates workflow_state.json from an effort root.
 func LoadWorkflowState(absRoot string) (WorkflowState, error) {
-	data, err := os.ReadFile(filepath.Join(absRoot, "workflow_state.json"))
+	data, err := os.ReadFile(filepath.Join(absRoot, WorkflowStateFileName))
 	if err != nil {
-		return WorkflowState{}, fmt.Errorf("workflow_state.json: %w", err)
+		return WorkflowState{}, fmt.Errorf("%s: %w", WorkflowStateFileName, err)
 	}
 	ws, err := ParseWorkflowStateJSON(data)
 	if err != nil {
-		return WorkflowState{}, fmt.Errorf("workflow_state.json: %w", err)
+		return WorkflowState{}, fmt.Errorf("%s: %w", WorkflowStateFileName, err)
 	}
 	return ws, nil
 }
@@ -258,7 +258,7 @@ func LoadCheckedProductStatus(absRoot string) (ProductStatusView, *WorkflowState
 	}
 	metrics, metricsErr := BuildProductWorkflowMetrics(absRoot)
 	if metricsErr != nil {
-		view.AuditStatus = "fail"
+		view.AuditStatus = ProductWorkflowStatusFail
 		view.Findings = append(view.Findings, StatusBlocker{
 			Code:    "metrics_error",
 			Message: metricsErr.Error(),
@@ -346,7 +346,7 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 		})
 	}
 
-	if status.AuditStatus != "" && status.AuditStatus != "pass" {
+	if status.AuditStatus != "" && status.AuditStatus != ProductWorkflowStatusPass {
 		view.Blockers = append(view.Blockers, ProductOperatorBlocker{
 			Code:    "audit_not_passing",
 			Message: fmt.Sprintf("product status audit_status %q blocks continuation dispatch", status.AuditStatus),
@@ -369,7 +369,7 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 		})
 	}
 	if status.Recovery != nil {
-		if status.Recovery.Status != "closed" {
+		if status.Recovery.Status != ProductWorkflowStatusClosed {
 			view.Blockers = append(view.Blockers, ProductOperatorBlocker{
 				Code:    "recovery_packet_open",
 				Message: "review recovery packet before continuing workflow dispatch",
@@ -459,7 +459,7 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 			Blockers:     append([]ProductOperatorBlocker{}, blockingReasons...),
 		})
 	}
-	if status.Recovery != nil && status.Recovery.Status != "closed" {
+	if status.Recovery != nil && status.Recovery.Status != ProductWorkflowStatusClosed {
 		view.NextValidActions = append(view.NextValidActions, productRecoveryOperatorAction(*status.Recovery, blockerCodes, blockingReasons))
 	}
 
@@ -469,14 +469,14 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 func markStatusSectionFailure(view *ProductStatusView, name string) {
 	for i := range view.Sections {
 		if view.Sections[i].Name == name {
-			view.Sections[i].Status = "fail"
+			view.Sections[i].Status = ProductWorkflowStatusFail
 			view.Sections[i].FindingCount++
 			return
 		}
 	}
 	view.Sections = append(view.Sections, StatusSection{
 		Name:         name,
-		Status:       "fail",
+		Status:       ProductWorkflowStatusFail,
 		FindingCount: 1,
 	})
 }
@@ -489,7 +489,7 @@ func loadProductRecoveryStatus(absRoot string, artifactPaths map[string]string) 
 		return nil
 	}
 	status := &ProductRecoveryStatus{
-		Status:             "blocked",
+		Status:             ProductWorkflowStatusBlocked,
 		PacketPath:         productRecoveryArtifactDisplayPath(absRoot, packetPath),
 		FailureRecordPath:  productRecoveryArtifactDisplayPath(absRoot, failurePath),
 		ReconciliationPath: productRecoveryArtifactDisplayPath(absRoot, reconciliationPath),
@@ -539,7 +539,7 @@ func loadProductRecoveryStatus(absRoot string, artifactPaths map[string]string) 
 	status.Gates = productRecoveryPacketGates(packet)
 	status.RequiredTests = productRecoveryPacketRequiredTests(packet)
 	status.ProductLinks = productRecoveryLinks(packet.ProductLinks)
-	if status.Status == "blocked" {
+	if status.Status == ProductWorkflowStatusBlocked {
 		status.Blockers = append(status.Blockers, ProductRecoveryBlock{
 			Code:    "recovery_requires_human_action",
 			Message: fmt.Sprintf("recovery next_valid_action is %q", packet.NextAction),
@@ -595,17 +595,17 @@ func productRecoveryPacketStatus(packet recovery.DecompositionPacket) string {
 	switch packet.NextAction {
 	case recovery.NextActionReviewDecomposition:
 		if len(packet.CandidateAtoms) > 0 {
-			return "ready"
+			return ProductWorkflowStatusReady
 		}
-		return "needs_inspection"
+		return ProductWorkflowStatusNeedsInspection
 	case recovery.NextActionInspectFailure:
-		return "needs_inspection"
+		return ProductWorkflowStatusNeedsInspection
 	case recovery.NextActionNone:
-		return "closed"
+		return ProductWorkflowStatusClosed
 	case recovery.NextActionAnswerBlocker, recovery.NextActionHumanIntervention:
-		return "blocked"
+		return ProductWorkflowStatusBlocked
 	default:
-		return "pending"
+		return ProductWorkflowStatusPending
 	}
 }
 
@@ -720,10 +720,10 @@ func applyProductRecoveryReconciliation(status *ProductRecoveryStatus, packet re
 	status.NextValidAction = reconciliation.NextAction
 	switch reconciliation.Status {
 	case recovery.ReconciliationStatusRecovered:
-		status.Status = "closed"
+		status.Status = ProductWorkflowStatusClosed
 		status.NextValidAction = recovery.NextActionNone
 	case recovery.ReconciliationStatusPartial:
-		status.Status = "partial"
+		status.Status = ProductWorkflowStatusPartial
 		status.NextValidAction = recovery.NextActionReviewDecomposition
 		if status.RemainingAtomCount == 0 {
 			status.RemainingAtomCount = len(productRecoveryRemainingAtomIDs(packet, reconciliation))
@@ -810,7 +810,7 @@ func productRecoveryOperatorMessage(recoveryStatus ProductRecoveryStatus) string
 	if recoveryStatus.CandidateAtomCount > 0 {
 		return fmt.Sprintf("review %d recovery candidate atom(s) before continuing", recoveryStatus.CandidateAtomCount)
 	}
-	if recoveryStatus.Status == "blocked" {
+	if recoveryStatus.Status == ProductWorkflowStatusBlocked {
 		return "resolve recovery blockers before continuing"
 	}
 	return "inspect recovery packet before continuing"
