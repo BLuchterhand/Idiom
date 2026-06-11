@@ -287,6 +287,37 @@ func TestDelegatedReadOnlyPostDiscoveryInventoryConsumesCandidateSource(t *testi
 	if decision.Request.Tool != workspace.ToolNameReadFile {
 		t.Fatalf("expected post-discovery file_stats to consume source candidate, got %#v", decision.Request)
 	}
+
+	decision = runner.applyLanePreflight(runnerLanePreflightInput{
+		Results: results,
+		Request: workspace.ToolRequest{Tool: workspace.ToolNameCodeNavigate, Capability: "file_outline", Path: "internal/capabilities/workspace/discovery_query.go"},
+	})
+	if decision.Request.Tool != workspace.ToolNameReadFile || decision.Request.Path != "internal/capabilities/workspace/discovery_query.go" {
+		t.Fatalf("expected post-discovery outline to become source-body read, got %#v", decision.Request)
+	}
+}
+
+func TestMainReadOnlyBroadSearchBootstrapsContextPack(t *testing.T) {
+	runner := &Runner{
+		AgentName: "main",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+			AllowedTools:      []string{workspace.ToolNameContextPack, workspace.ToolNameSearchContent, workspace.ToolNameReadFile},
+			Objective:         "What does the debug log redacted mode do?",
+		},
+	}
+
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: workspace.ToolRequest{Tool: workspace.ToolNameSearchContent, Path: ".", Pattern: "redacted"},
+	})
+	if decision.Request.Tool != workspace.ToolNameContextPack {
+		t.Fatalf("expected broad first-pass search to become context_pack, got %#v", decision.Request)
+	}
+	if decision.Request.Task != runner.RuntimeBrief.Objective || decision.Request.Mode != "plan" {
+		t.Fatalf("expected context_pack to carry objective and plan mode, got %#v", decision.Request)
+	}
 }
 
 func TestDelegatedReadOnlyCandidateConsumptionPrefersDiscoveredMechanismEvidenceOverInventory(t *testing.T) {

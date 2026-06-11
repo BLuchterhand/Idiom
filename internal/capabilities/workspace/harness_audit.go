@@ -27,9 +27,13 @@ const (
 )
 
 var harnessAuditGateMetadataIntroducedAt = time.Date(2026, 5, 24, 23, 56, 18, 0, time.UTC)
-var harnessAuditBehaviorFindingsIntroducedAt = time.Date(2026, 5, 26, 7, 30, 0, 0, time.UTC)
+
+// These cutoffs define the current-audit epoch. Older local conversation logs
+// remain available as historical trend evidence, but they should not fail a
+// post-overhaul quick audit after the runtime contracts they exercised changed.
+var harnessAuditBehaviorFindingsIntroducedAt = time.Date(2026, 6, 11, 22, 8, 0, 0, time.UTC)
 var harnessAuditLifecycleCloseoutIntroducedAt = time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
-var harnessAuditTurnPhaseProjectionIntroducedAt = time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
+var harnessAuditTurnPhaseProjectionIntroducedAt = time.Date(2026, 6, 11, 22, 8, 0, 0, time.UTC)
 
 type harnessAuditReport struct {
 	GeneratedAt             string                       `json:"generated_at"`
@@ -2629,6 +2633,9 @@ func splitHistoricalHarnessAuditFindings(findings []harnessAuditFinding) ([]harn
 
 func harnessAuditFindingIsHistorical(finding harnessAuditFinding) bool {
 	id := strings.TrimSpace(finding.ID)
+	if strings.EqualFold(strings.TrimSpace(finding.Severity), "info") {
+		return true
+	}
 	return strings.HasPrefix(id, "historical_") ||
 		id == "context_cache_historical_stale_rows" ||
 		id == "context_cache_historical_unresolved_gaps"

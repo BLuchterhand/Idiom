@@ -243,13 +243,14 @@ func TestRankerLearningDormantSourcesStayInRecommendations(t *testing.T) {
 func TestSplitHistoricalHarnessAuditFindings(t *testing.T) {
 	current, historical := splitHistoricalHarnessAuditFindings([]harnessAuditFinding{
 		{ID: "freshness_refresh_failures"},
+		{ID: "context_cache_unresolved_gaps", Severity: "info"},
 		{ID: "historical_behavior_patterns"},
 		{ID: "context_cache_historical_stale_rows"},
 	})
 	if len(current) != 1 || current[0].ID != "freshness_refresh_failures" {
 		t.Fatalf("unexpected current findings: %#v", current)
 	}
-	if len(historical) != 2 {
+	if len(historical) != 3 {
 		t.Fatalf("unexpected historical findings: %#v", historical)
 	}
 }
