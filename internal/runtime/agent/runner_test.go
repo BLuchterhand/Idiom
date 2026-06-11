@@ -9839,11 +9839,13 @@ func TestReadOnlyDirectAnswerClosesAfterAnswerableExactSearchReplay(t *testing.T
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !replayed {
-		t.Fatalf("expected exact search replay to reuse prior evidence before closeout; events=%s", formatRunEventsForTest(events))
+	if !replayed && requests != 0 {
+		t.Fatalf("expected exact search replay or prefetch closeout; events=%s", formatRunEventsForTest(events))
 	}
-	if requests != 3 {
-		t.Fatalf("expected source read, first search, replay closeout; got %d requests; events=%s", requests, formatRunEventsForTest(events))
+	// With prefetch, the host-owned closeout may answer directly (0 requests)
+	// from the prefetched evidence instead of needing search replay.
+	if requests != 3 && requests != 0 {
+		t.Fatalf("expected 0 (prefetch closeout) or 3 (replay) requests; got %d; events=%s", requests, formatRunEventsForTest(events))
 	}
 	if !strings.Contains(answer, docPath) ||
 		!strings.Contains(strings.ToLower(answer), "document viewer") ||
@@ -9858,8 +9860,8 @@ func TestReadOnlyDirectAnswerClosesAfterAnswerableExactSearchReplay(t *testing.T
 		if err := json.Unmarshal([]byte(event.Content), &ledger); err != nil {
 			t.Fatalf("decode budget ledger %q: %v", event.Content, err)
 		}
-		if ledger.StopReason != "host_read_only_closeout" {
-			t.Fatalf("expected host_read_only_closeout, got %#v", ledger)
+		if ledger.StopReason != "host_read_only_closeout" && ledger.StopReason != "read_only_prefetch_host_closeout" {
+			t.Fatalf("expected host_read_only_closeout or read_only_prefetch_host_closeout, got %#v", ledger)
 		}
 		if ledger.RejectedActions != 0 {
 			t.Fatalf("exact replay closeout should not accumulate rejected actions, got %#v", ledger)

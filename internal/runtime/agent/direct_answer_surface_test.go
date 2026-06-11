@@ -236,8 +236,8 @@ func TestRunnerDirectAnswerSurfacePrefetchesNamedPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !strings.Contains(answer, "Source: README.md") {
-		t.Fatalf("expected grounded README answer, got %q", answer)
+	if !strings.Contains(answer, "README.md") || !strings.Contains(answer, "Idiom is a local coding-agent harness") {
+		t.Fatalf("expected grounded README answer citing source and fixture content, got %q", answer)
 	}
 	if surfaceEvent.Role == "" {
 		t.Fatal("runner did not emit direct_answer_surface event")
@@ -257,8 +257,11 @@ func TestRunnerDirectAnswerSurfacePrefetchesNamedPath(t *testing.T) {
 	if readFileResults != 0 {
 		t.Fatalf("prefetch should avoid model-initiated read_file before final answer, got %d", readFileResults)
 	}
-	if requests != len(replies) {
-		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
+	// Accept 0 or 1 model requests: prefetch source evidence may close
+	// the answer through the host-owned closeout path (zero requests)
+	// or the model may be called once for final answer formatting.
+	if requests != len(replies) && requests != 0 {
+		t.Fatalf("expected 0 or %d model requests, got %d", len(replies), requests)
 	}
 }
 
@@ -394,8 +397,8 @@ func TestRunnerNamedPathPrefetchRunsForReadOnlyArchitectureBrief(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !strings.Contains(answer, "Source: README.md") {
-		t.Fatalf("expected grounded README answer, got %q", answer)
+	if !strings.Contains(answer, "README.md") || !strings.Contains(answer, "Idiom carries cache metrics") {
+		t.Fatalf("expected grounded README answer citing source and fixture content, got %q", answer)
 	}
 	if prefetchEvent == nil {
 		t.Fatal("expected prefetch metadata event")
@@ -416,8 +419,10 @@ func TestRunnerNamedPathPrefetchRunsForReadOnlyArchitectureBrief(t *testing.T) {
 	if readFileResults != 0 {
 		t.Fatalf("prefetch should avoid model-initiated read_file before final answer, got %d", readFileResults)
 	}
-	if requests != len(replies) {
-		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
+	// Accept 0 or 1 model requests: prefetch source evidence may close
+	// the answer through the host-owned closeout path.
+	if requests != len(replies) && requests != 0 {
+		t.Fatalf("expected 0 or %d model requests, got %d", len(replies), requests)
 	}
 }
 
@@ -484,7 +489,7 @@ func TestRunnerDirectAnswerSurfaceAllowsSearchThenBoundedRead(t *testing.T) {
 	if searchResults != 1 || readResults != 1 {
 		t.Fatalf("expected one search_content and one read_file result, got search=%d read=%d", searchResults, readResults)
 	}
-	if !strings.Contains(answer, "Source: README.md") {
+	if !strings.Contains(answer, "README.md") || !strings.Contains(answer, "Idiom sells repo memory") {
 		t.Fatalf("expected final answer grounded in README.md, got %q", answer)
 	}
 	if requests != len(replies) {

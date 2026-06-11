@@ -1507,9 +1507,9 @@ func deferredReadOnlyCapabilityAdaptersForTools(toolSet map[string]struct{}) []R
 	deferred := []ReadOnlyCapabilityDeferredAdapterSpec{
 		{
 			Capability:        "source-sanity",
-			Tool:              "source_sanity",
+			Tool:              ToolNameSourceSanity,
 			Reason:            "schema_side_effects_not_read_only_only",
-			SchemaSideEffects: append([]autonomy.SideEffectClass(nil), toolSchemaSideEffects("source_sanity")...),
+			SchemaSideEffects: append([]autonomy.SideEffectClass(nil), toolSchemaSideEffects(ToolNameSourceSanity)...),
 		},
 	}
 	out := deferred[:0]

@@ -13,7 +13,10 @@ import (
 	"idiom/internal/repository/discovery"
 )
 
-const defaultSourceSanityLimit = 24
+const (
+	defaultSourceSanityLimit  = 24
+	sourceSanityMethodGeneric = "generic_source_sanity"
+)
 
 type sourceSanityOutcome struct {
 	Path   string
@@ -25,10 +28,10 @@ type sourceSanityOutcome struct {
 func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult {
 	targets, err := m.sourceSanityTargets(req)
 	if err != nil {
-		return ToolResult{Tool: "source_sanity", Summary: "Source sanity unavailable", Error: err.Error()}
+		return ToolResult{Tool: ToolNameSourceSanity, Summary: "Source sanity unavailable", Error: err.Error()}
 	}
 	if len(targets) == 0 {
-		return ToolResult{Tool: "source_sanity", Summary: "Source sanity unavailable", Error: "no source files available for source sanity"}
+		return ToolResult{Tool: ToolNameSourceSanity, Summary: "Source sanity unavailable", Error: "no source files available for source sanity"}
 	}
 
 	limit := req.Limit
@@ -41,7 +44,7 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 			rel = append(rel, filepath.ToSlash(m.displayPath(target)))
 		}
 		return ToolResult{
-			Tool:    "source_sanity",
+			Tool:    ToolNameSourceSanity,
 			Summary: "Source sanity needs narrower scope",
 			Error:   fmt.Sprintf("source_sanity matched %d source files; pass a narrower path or set limit explicitly. First matches: %s", len(targets), strings.Join(rel, ", ")),
 		}
@@ -61,7 +64,7 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 			line = fmt.Sprintf("%s: %s via %s", outcome.Path, outcome.Detail, outcome.Method)
 		}
 		outputLines = append(outputLines, line)
-		if outcome.Method == "generic_source_sanity" {
+		if outcome.Method == sourceSanityMethodGeneric {
 			fallbacks++
 		}
 		if outcome.Error != "" {
@@ -71,7 +74,7 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 
 	if len(failures) > 0 {
 		return ToolResult{
-			Tool:    "source_sanity",
+			Tool:    ToolNameSourceSanity,
 			Summary: fmt.Sprintf("Source sanity failed for %d of %d file(s)", len(failures), len(outcomes)),
 			Output:  strings.Join(outputLines, "\n"),
 			Error:   strings.Join(failures, "\n"),
@@ -86,7 +89,7 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 		}
 	}
 	return ToolResult{
-		Tool:    "source_sanity",
+		Tool:    ToolNameSourceSanity,
 		Summary: summary,
 		Output:  strings.Join(outputLines, "\n"),
 	}
@@ -94,7 +97,7 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 
 func (m *Manager) sourceSanityTargets(req ToolRequest) ([]string, error) {
 	if strings.TrimSpace(req.Path) == "" {
-		return nil, fmt.Errorf("source_sanity requires path")
+		return nil, fmt.Errorf("%s requires path", ToolNameSourceSanity)
 	}
 	target, err := m.resolvePath(req.Path, req.Workdir)
 	if err != nil {
@@ -162,7 +165,7 @@ func (m *Manager) sourceSanityOne(ctx context.Context, absPath string, workdir s
 		if err != nil {
 			return sourceSanityOutcome{
 				Path:   rel,
-				Method: "generic_source_sanity",
+				Method: sourceSanityMethodGeneric,
 				Detail: fmt.Sprintf("%s; %s", diagnosticsUnavailableDetail(result), fallback),
 				Error:  err.Error(),
 			}
@@ -170,14 +173,14 @@ func (m *Manager) sourceSanityOne(ctx context.Context, absPath string, workdir s
 		if sourceSanityRequiresConcreteDiagnosticsForPath(rel) {
 			return sourceSanityOutcome{
 				Path:   rel,
-				Method: "generic_source_sanity",
+				Method: sourceSanityMethodGeneric,
 				Detail: fmt.Sprintf("%s; %s", diagnosticsUnavailableDetail(result), fallback),
 				Error:  "concrete C/C++ diagnostics are unavailable; generic delimiter sanity is advisory and insufficient for terminal source_sanity",
 			}
 		}
 		return sourceSanityOutcome{
 			Path:   rel,
-			Method: "generic_source_sanity",
+			Method: sourceSanityMethodGeneric,
 			Detail: fmt.Sprintf("%s; %s", diagnosticsUnavailableDetail(result), fallback),
 		}
 	}
@@ -186,14 +189,14 @@ func (m *Manager) sourceSanityOne(ctx context.Context, absPath string, workdir s
 	if err != nil {
 		return sourceSanityOutcome{
 			Path:   rel,
-			Method: "generic_source_sanity",
+			Method: sourceSanityMethodGeneric,
 			Detail: fallback,
 			Error:  err.Error(),
 		}
 	}
 	return sourceSanityOutcome{
 		Path:   rel,
-		Method: "generic_source_sanity",
+		Method: sourceSanityMethodGeneric,
 		Detail: fallback,
 	}
 }
@@ -232,7 +235,7 @@ func SourceSanityCoversPath(path string) bool {
 
 func diagnosticsUnavailable(result ToolResult) bool {
 	goDiagnosticText := strings.ToLower(result.Output + "\n" + result.Error)
-	if result.Tool == "go_diagnostics" &&
+	if result.Tool == ToolNameGoDiagnostics &&
 		strings.Contains(goDiagnosticText, "go test compile failed") &&
 		!strings.Contains(goDiagnosticText, "go.mod file not found") {
 		return false
