@@ -274,10 +274,10 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		state.DerivationReason = "rejected_submit_plan_needs_source_refresh"
 		state.ParserVisibleTools = planThenExecuteAnchorRefreshToolNames()
 		state.CallableTools = planThenExecuteAnchorRefreshToolNames()
-		state.AllowedActionClasses = []string{actionRead}
-		state.InvalidActionClasses = []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker, actionSearch, actionPerEditWrite, actionProseFinal}
-		state.TerminalOptions = nil
-		state.TerminalResponseShapes = nil
+		state.AllowedActionClasses = []string{actionRead, actionSourceSatisfied, actionBlocker}
+		state.InvalidActionClasses = []string{actionSubmitPlan, actionSearch, actionPerEditWrite, actionProseFinal}
+		state.TerminalOptions = []string{"source_satisfied", "blocker"}
+		state.TerminalResponseShapes = planExecuteTerminalSourceSatisfiedOrQuestion()
 	case PlanExecutePlanningModeSubmitReady, PlanExecutePlanningModeSubmitCorrection:
 		state.PhaseID = turnPhaseSubmitReadyTextual
 		state.Phase = "submit_ready_textual"

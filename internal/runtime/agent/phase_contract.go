@@ -536,7 +536,7 @@ func applyStaleAnchorRefresh(contract *TurnPhaseContract, input TurnPhaseContrac
 	if len(state.RefreshPaths) > 0 {
 		contract.RequiredNext = []string{"bounded source-body refresh for: " + strings.Join(nonEmptyRunnerStrings(state.RefreshPaths, 4), ", ") + "; do not submit_plan until that refresh returns"}
 	}
-	contract.InvalidNext = []string{"submit_plan before bounded anchor refresh", "Decision: source-satisfied or <<QUESTION>> before bounded anchor refresh", "broad search", "per-edit write in planner phase"}
+	contract.InvalidNext = []string{"submit_plan before bounded anchor refresh", "broad search", "per-edit write in planner phase"}
 	contract.StopConditions = []string{"bounded_source_refresh_returned"}
 	contract.TerminalOutcomes = append([]string(nil), state.TerminalResponseShapes...)
 	contract.ActionPolicy = TurnActionClassPolicy{

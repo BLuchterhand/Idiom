@@ -429,18 +429,11 @@ func TestDeriveTurnPhaseContractStaleAnchorRefresh(t *testing.T) {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseStaleAnchorRefresh)
 	}
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
-	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSourceSatisfied)
-	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionBlocker)
-	if slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied) ||
-		slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionBlocker) ||
-		slices.Contains(contract.TerminalOutcomes, "Decision: source-satisfied") ||
-		slices.Contains(contract.StopConditions, "source_satisfied_reported") ||
-		slices.Contains(contract.StopConditions, "path_specific_blocker_reported") ||
-		slices.Contains(contract.ActionPolicy.TerminalResponseShapes, "Decision: source-satisfied") ||
-		slices.Contains(contract.RuntimeCall.ExpressibleActionClasses, actionSourceSatisfied) {
-		t.Fatalf("anchor refresh must be read-only, contract=%#v", contract)
-	}
+	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionSourceSatisfied)
+	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionBlocker)
 	assertEqualSet(t, contract.StopConditions, []string{"bounded_source_refresh_returned"})
 	assertEqualSet(t, contract.AllowedTools, []string{"read_file", "code_navigate"})
 }
@@ -563,7 +556,7 @@ func TestPlanExecuteRecoverySurfaceAnchorRefreshWinsOverSourceSatisfiedTerminal(
 		t.Fatalf("surface kind = %q, want anchor_refresh; state=%#v", surface.Kind, surface.State)
 	}
 	assertEqualSet(t, surface.State.CallableTools, []string{"read_file", "code_navigate"})
-	assertNotContains(t, surface.State.TerminalResponseShapes, "Decision: source-satisfied")
+	assertContains(t, surface.State.TerminalResponseShapes, "Decision: source-satisfied")
 
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief:             brief,
@@ -574,8 +567,8 @@ func TestPlanExecuteRecoverySurfaceAnchorRefreshWinsOverSourceSatisfiedTerminal(
 	if contract.PhaseID != turnPhaseStaleAnchorRefresh {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseStaleAnchorRefresh)
 	}
-	assertNotContains(t, contract.ActionPolicy.TerminalResponseShapes, "Decision: source-satisfied")
-	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSourceSatisfied)
+	assertContains(t, contract.ActionPolicy.TerminalResponseShapes, "Decision: source-satisfied")
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionSubmitPlan)
 }

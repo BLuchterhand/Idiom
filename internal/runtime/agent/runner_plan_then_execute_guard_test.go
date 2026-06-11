@@ -1553,10 +1553,12 @@ func TestPlanThenExecutePlanningStateTransitionsFromAnchorRefreshToSubmitCorrect
 	if !slices.Contains(state.CallableTools, "read_file") || !slices.Contains(state.CallableTools, "code_navigate") || slices.Contains(state.CallableTools, "submit_plan") {
 		t.Fatalf("anchor refresh callable tools should be read-only refresh tools, got %#v", state.CallableTools)
 	}
-	if !slices.Equal(state.AllowedActionClasses, []string{actionRead}) ||
-		slices.Contains(state.TerminalResponseShapes, "Decision: source-satisfied") ||
-		slices.Contains(state.TerminalResponseShapes, "<<QUESTION>>:") {
-		t.Fatalf("anchor refresh should advertise read-only action classes, actions=%#v terminal=%#v", state.AllowedActionClasses, state.TerminalResponseShapes)
+	if !slices.Contains(state.AllowedActionClasses, actionRead) ||
+		!slices.Contains(state.AllowedActionClasses, actionSourceSatisfied) ||
+		!slices.Contains(state.AllowedActionClasses, actionBlocker) ||
+		!slices.Contains(state.TerminalResponseShapes, "Decision: source-satisfied") ||
+		!slices.Contains(state.TerminalResponseShapes, "<<QUESTION>>:") {
+		t.Fatalf("anchor refresh should advertise read + source-satisfied + blocker action classes, actions=%#v terminal=%#v", state.AllowedActionClasses, state.TerminalResponseShapes)
 	}
 	if slices.Contains(state.TerminalOptions, "submit_plan") || planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
 		t.Fatalf("anchor refresh must not allow terminal submit_plan, terminal=%#v", state.TerminalOptions)
@@ -1570,8 +1572,10 @@ func TestPlanThenExecutePlanningStateTransitionsFromAnchorRefreshToSubmitCorrect
 	})
 	if contract.PhaseID != turnPhaseStaleAnchorRefresh ||
 		!slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionRead) ||
+		!slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied) ||
+		!slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionBlocker) ||
 		slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionSubmitPlan) {
-		t.Fatalf("contract should advertise anchor-refresh read actions only, phase=%q actions=%#v", contract.PhaseID, contract.ActionPolicy.AllowedActionClasses)
+		t.Fatalf("contract should advertise anchor-refresh read + source-satisfied + blocker actions, phase=%q actions=%#v", contract.PhaseID, contract.ActionPolicy.AllowedActionClasses)
 	}
 
 	withRefresh := append(append([]workspace.ToolResult(nil), results...), workspace.ToolResult{
@@ -10722,8 +10726,8 @@ func TestPlanExecuteSourceSatisfiedRejectionAfterInvalidAnchorKeepsAnchorRefresh
 		TextualToolParser: true,
 		ToolTransportMode: "textual",
 	})
-	if contract.PhaseID != turnPhaseStaleAnchorRefresh || slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied) {
-		t.Fatalf("phase contract should stay anchor-refresh/read-only, phase=%q actions=%#v", contract.PhaseID, contract.ActionPolicy.AllowedActionClasses)
+	if contract.PhaseID != turnPhaseStaleAnchorRefresh || !slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied) {
+		t.Fatalf("phase contract should stay anchor-refresh with source-satisfied and blocker, phase=%q actions=%#v", contract.PhaseID, contract.ActionPolicy.AllowedActionClasses)
 	}
 
 	messages := []llama.ChatMessage{
