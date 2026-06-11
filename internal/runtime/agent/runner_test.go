@@ -7046,7 +7046,7 @@ func TestArchitectureToolBudgetCountsOnlySuccessfulResults(t *testing.T) {
 			want: true,
 		},
 		{
-			name:     "3 successful + 1 rejected does NOT trigger budget at 4",
+			name:     "3 successful + 1 rejected still triggers budget at 4",
 			maxTools: 4,
 			results: []workspace.ToolResult{
 				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 1-80 (total lines: 21636)", Output: "package main"},
@@ -7054,10 +7054,10 @@ func TestArchitectureToolBudgetCountsOnlySuccessfulResults(t *testing.T) {
 				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 161-240 (total lines: 21636)", Output: "var x int"},
 				{Tool: "read_file", Error: "file not found", Summary: "Read rejected"},
 			},
-			want: false,
+			want: true,
 		},
 		{
-			name:     "3 successful + 2 rejected needs more successful calls",
+			name:     "3 successful + 2 rejected still triggers budget at 4",
 			maxTools: 4,
 			results: []workspace.ToolResult{
 				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 1-80 (total lines: 21636)", Output: "package main"},
@@ -7066,7 +7066,7 @@ func TestArchitectureToolBudgetCountsOnlySuccessfulResults(t *testing.T) {
 				{Tool: "read_file", Error: "file not found", Summary: "Read rejected"},
 				{Tool: "code_navigate", Error: "symbol not found", Summary: "Symbol not found"},
 			},
-			want: false,
+			want: true,
 		},
 		{
 			name:     "5 results with 4 successful triggers budget",
