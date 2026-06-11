@@ -1363,14 +1363,16 @@ func TestStructuredNarrowingUsesSharedRegistryPredicate(t *testing.T) {
 		}
 	}
 
-	for _, spec := range supplementalLanguageToolSpecs {
-		tool := spec.Tool
-		req := ToolRequest{Tool: tool}
-		if !IsNarrowingRequest(req) {
-			t.Fatalf("legacy language helper %s should be narrowing", tool)
-		}
-		if !mgr.ShouldClearBroadInspectionLock(req, ToolResult{Tool: tool, Summary: "ok"}) {
-			t.Fatalf("legacy language helper %s should clear broad inspection lock", tool)
+	for _, specs := range supplementalLanguageToolSpecs {
+		for _, spec := range specs {
+			tool := spec.Tool
+			req := ToolRequest{Tool: tool}
+			if !IsNarrowingRequest(req) {
+				t.Fatalf("legacy language helper %s should be narrowing", tool)
+			}
+			if !mgr.ShouldClearBroadInspectionLock(req, ToolResult{Tool: tool, Summary: "ok"}) {
+				t.Fatalf("legacy language helper %s should clear broad inspection lock", tool)
+			}
 		}
 	}
 

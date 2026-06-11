@@ -24,7 +24,6 @@ type languageToolCatalogEntry struct {
 }
 
 type supplementalLanguageToolSpec struct {
-	Language             string
 	Tool                 string
 	Description          string
 	ParametersJSON       string
@@ -33,96 +32,90 @@ type supplementalLanguageToolSpec struct {
 	EvidenceCapabilities []string
 }
 
-var supplementalLanguageToolSpecs = []supplementalLanguageToolSpec{
-	{
-		Language:             "go",
-		Tool:                 "go_find_function",
-		Description:          "Find Go functions matching a pattern.",
-		ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("function name or regex")),
-		ManifestRequest:      `{"tool":"go_find_function","pattern":"FuncName"}`,
-		ManifestPurpose:      "find Go functions",
-		EvidenceCapabilities: []string{"find_symbol"},
+var supplementalLanguageToolSpecs = map[string][]supplementalLanguageToolSpec{
+	"go": {
+		{
+			Tool:                 "go_find_function",
+			Description:          "Find Go functions matching a pattern.",
+			ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("function name or regex")),
+			ManifestRequest:      `{"tool":"go_find_function","pattern":"FuncName"}`,
+			ManifestPurpose:      "find Go functions",
+			EvidenceCapabilities: []string{"find_symbol"},
+		},
+		{
+			Tool:                 "go_find_type",
+			Description:          "Find Go types matching a pattern.",
+			ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("type name or regex")),
+			ManifestRequest:      `{"tool":"go_find_type","pattern":"TypeName"}`,
+			ManifestPurpose:      "find Go types",
+			EvidenceCapabilities: []string{"find_symbol"},
+		},
+		{
+			Tool:                 "go_find_const",
+			Description:          "Find Go constants matching a pattern.",
+			ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("constant name or regex")),
+			ManifestRequest:      `{"tool":"go_find_const","pattern":"ConstName"}`,
+			ManifestPurpose:      "find Go constants",
+			EvidenceCapabilities: []string{"find_symbol"},
+		},
+		{
+			Tool:                 "go_find_package",
+			Description:          "Find Go packages matching a pattern.",
+			ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("package import path or regex")),
+			ManifestRequest:      `{"tool":"go_find_package","pattern":"internal/surfaces/tui/app"}`,
+			ManifestPurpose:      "find Go packages",
+			EvidenceCapabilities: []string{"related_files"},
+		},
+		{
+			Tool:                 "go_importers",
+			Description:          "Find packages that import a given Go package.",
+			ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("package path")),
+			ManifestRequest:      `{"tool":"go_importers","pattern":"internal/surfaces/tui/app"}`,
+			ManifestPurpose:      "find Go importer packages",
+			EvidenceCapabilities: []string{"related_files"},
+		},
 	},
-	{
-		Language:             "go",
-		Tool:                 "go_find_type",
-		Description:          "Find Go types matching a pattern.",
-		ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("type name or regex")),
-		ManifestRequest:      `{"tool":"go_find_type","pattern":"TypeName"}`,
-		ManifestPurpose:      "find Go types",
-		EvidenceCapabilities: []string{"find_symbol"},
-	},
-	{
-		Language:             "go",
-		Tool:                 "go_find_const",
-		Description:          "Find Go constants matching a pattern.",
-		ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("constant name or regex")),
-		ManifestRequest:      `{"tool":"go_find_const","pattern":"ConstName"}`,
-		ManifestPurpose:      "find Go constants",
-		EvidenceCapabilities: []string{"find_symbol"},
-	},
-	{
-		Language:             "go",
-		Tool:                 "go_find_package",
-		Description:          "Find Go packages matching a pattern.",
-		ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("package import path or regex")),
-		ManifestRequest:      `{"tool":"go_find_package","pattern":"internal/surfaces/tui/app"}`,
-		ManifestPurpose:      "find Go packages",
-		EvidenceCapabilities: []string{"related_files"},
-	},
-	{
-		Language:             "go",
-		Tool:                 "go_importers",
-		Description:          "Find packages that import a given Go package.",
-		ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("package path")),
-		ManifestRequest:      `{"tool":"go_importers","pattern":"internal/surfaces/tui/app"}`,
-		ManifestPurpose:      "find Go importer packages",
-		EvidenceCapabilities: []string{"related_files"},
-	},
-	{
-		Language:             "cpp",
-		Tool:                 "cpp_declaration",
-		Description:          "Find a C/C++ symbol declaration.",
-		ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("symbol")+`,"path":`+strProp("optional file or directory scope")),
-		ManifestRequest:      `{"tool":"cpp_declaration","pattern":"Name","path":"."}`,
-		ManifestPurpose:      "find C/C++ declarations",
-		EvidenceCapabilities: []string{"find_definition"},
-	},
-	{
-		Language:             "cpp",
-		Tool:                 "cpp_includes",
-		Description:          "Find direct and transitive C/C++ include dependencies for a file or include pattern.",
-		ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("file path, header name, or include pattern")+`,"path":`+strProp("optional file or directory scope")),
-		ManifestRequest:      `{"tool":"cpp_includes","path":"src/file.cpp"}`,
-		ManifestPurpose:      "inspect includes",
-		EvidenceCapabilities: []string{"related_files"},
-	},
-	{
-		Language:             "cpp",
-		Tool:                 "cpp_who_includes",
-		Description:          "Find C/C++ files that directly or transitively include a file or include pattern.",
-		ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("file path, header name, or include pattern")+`,"path":`+strProp("optional file or directory scope")),
-		ManifestRequest:      `{"tool":"cpp_who_includes","path":"include/file.h"}`,
-		ManifestPurpose:      "find include users",
-		EvidenceCapabilities: []string{"related_files"},
-	},
-	{
-		Language:             "cpp",
-		Tool:                 "cpp_blast_radius",
-		Description:          "Estimate C/C++ translation units affected by a file or include pattern.",
-		ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("file path, header name, symbol, or include pattern")+`,"path":`+strProp("optional file or directory scope")),
-		ManifestRequest:      `{"tool":"cpp_blast_radius","pattern":"Name"}`,
-		ManifestPurpose:      "estimate C/C++ blast radius",
-		EvidenceCapabilities: []string{"related_files"},
-	},
-	{
-		Language:             "cpp",
-		Tool:                 "cpp_dead_symbol",
-		Description:          "Check whether a C/C++ symbol appears unused.",
-		ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("symbol name")+`,"path":`+strProp("optional file or directory scope")),
-		ManifestRequest:      `{"tool":"cpp_dead_symbol","pattern":"Name","path":"."}`,
-		ManifestPurpose:      "check for dead C/C++ symbols",
-		EvidenceCapabilities: []string{"find_references"},
+	"cpp": {
+		{
+			Tool:                 "cpp_declaration",
+			Description:          "Find a C/C++ symbol declaration.",
+			ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("symbol")+`,"path":`+strProp("optional file or directory scope")),
+			ManifestRequest:      `{"tool":"cpp_declaration","pattern":"Name","path":"."}`,
+			ManifestPurpose:      "find C/C++ declarations",
+			EvidenceCapabilities: []string{"find_definition"},
+		},
+		{
+			Tool:                 "cpp_includes",
+			Description:          "Find direct and transitive C/C++ include dependencies for a file or include pattern.",
+			ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("file path, header name, or include pattern")+`,"path":`+strProp("optional file or directory scope")),
+			ManifestRequest:      `{"tool":"cpp_includes","path":"src/file.cpp"}`,
+			ManifestPurpose:      "inspect includes",
+			EvidenceCapabilities: []string{"related_files"},
+		},
+		{
+			Tool:                 "cpp_who_includes",
+			Description:          "Find C/C++ files that directly or transitively include a file or include pattern.",
+			ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("file path, header name, or include pattern")+`,"path":`+strProp("optional file or directory scope")),
+			ManifestRequest:      `{"tool":"cpp_who_includes","path":"include/file.h"}`,
+			ManifestPurpose:      "find include users",
+			EvidenceCapabilities: []string{"related_files"},
+		},
+		{
+			Tool:                 "cpp_blast_radius",
+			Description:          "Estimate C/C++ translation units affected by a file or include pattern.",
+			ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("file path, header name, symbol, or include pattern")+`,"path":`+strProp("optional file or directory scope")),
+			ManifestRequest:      `{"tool":"cpp_blast_radius","pattern":"Name"}`,
+			ManifestPurpose:      "estimate C/C++ blast radius",
+			EvidenceCapabilities: []string{"related_files"},
+		},
+		{
+			Tool:                 "cpp_dead_symbol",
+			Description:          "Check whether a C/C++ symbol appears unused.",
+			ParametersJSON:       schemaObj([]string{"pattern"}, `"pattern":`+strProp("symbol name")+`,"path":`+strProp("optional file or directory scope")),
+			ManifestRequest:      `{"tool":"cpp_dead_symbol","pattern":"Name","path":"."}`,
+			ManifestPurpose:      "check for dead C/C++ symbols",
+			EvidenceCapabilities: []string{"find_references"},
+		},
 	},
 }
 
@@ -266,7 +259,7 @@ func languageToolCatalog() []languageToolCatalogEntry {
 			case token.Supplemental != "":
 				if spec, ok := supplementalLanguageToolSpecFor(lang.Name, token.Supplemental); ok {
 					out = append(out, languageToolCatalogEntry{
-						Language:             spec.Language,
+						Language:             lang.Name,
 						Tool:                 spec.Tool,
 						Supplemental:         true,
 						Description:          spec.Description,
@@ -306,8 +299,12 @@ func languageToolEntryForCapability(languageName, tool string, capability Capabi
 func supplementalLanguageToolSpecFor(languageName, tool string) (supplementalLanguageToolSpec, bool) {
 	languageName = strings.ToLower(strings.TrimSpace(languageName))
 	tool = strings.TrimSpace(tool)
-	for _, spec := range supplementalLanguageToolSpecs {
-		if spec.Language == languageName && spec.Tool == tool {
+	specs, ok := supplementalLanguageToolSpecs[languageName]
+	if !ok {
+		return supplementalLanguageToolSpec{}, false
+	}
+	for _, spec := range specs {
+		if spec.Tool == tool {
 			return spec, true
 		}
 	}

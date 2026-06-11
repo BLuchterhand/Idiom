@@ -3,6 +3,7 @@ package workspace
 import (
 	"slices"
 	"strings"
+	"time"
 
 	"idiom/internal/contracts/autonomy"
 )
@@ -24,6 +25,9 @@ type builtInToolSurfaceSpec struct {
 	RuntimeSourceInspection  bool
 	RuntimeContextDiscovery  bool
 	RuntimeHistoryInspection bool
+	Timeout                  time.Duration
+	PlannerAllowed           bool
+	ActionClass              string
 }
 
 var (
@@ -48,57 +52,76 @@ var (
 )
 
 var builtInToolSurfaceSpecs = []builtInToolSurfaceSpec{
-	{Tool: "pwd", Category: CategoryRead, DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly},
-	{Tool: "list_files", Category: CategoryRead, DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly},
-	{Tool: "search_files", Category: CategorySearch, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"find_references"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policyLiteralSearch, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true},
-	{Tool: "search_content", Category: CategorySearch, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"find_references"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policyLiteralSearch, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true},
-	{Tool: "rg", Category: CategorySearch, Narrowing: true},
-	{Tool: "grep", Category: CategorySearch},
-	{Tool: "read_file", Category: CategoryRead, DefaultManifest: true, EvidenceCapabilities: []string{"inspect_file"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true},
-	{Tool: "file_stats", Category: CategoryRead, DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true},
-	{Tool: "code_navigate", Category: CategoryRead, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: CodeNavigationEvidenceCapabilities(), CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true},
-	{Tool: readOnlyCapabilityToolName, Category: CategoryRead, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: ReadOnlyCapabilityEvidenceCapabilities(), CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly},
-	{Tool: "source_sanity", Category: CategoryRead, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"source_diagnostics", "verify_edit"}, CapabilityClassification: CapabilityClassDeferred, PolicyCapabilities: policyShellVerification, SideEffects: sideEffectReadOnlyUnknown, RuntimeSourceInspection: true},
-	{Tool: "harness_audit", Category: CategoryRead, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"audit_behavior"}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly},
-	{Tool: "harness_feedback", Category: CategoryVerification, DefaultManifest: true, Narrowing: true, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectAdditive},
-	{Tool: "idiom_feedback", Category: CategoryVerification, Narrowing: true},
-	{Tool: "recovery_inspect", Category: CategoryRead, DefaultManifest: true, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, MCPDiscoveryProfile: true},
-	{Tool: "recovery_status", Category: CategoryRead, DefaultManifest: true, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, MCPDiscoveryProfile: true},
-	{Tool: "recovery_decompose", Category: CategoryVerification, DefaultManifest: true, CapabilityClassification: CapabilityClassWriteSideEffect, PolicyCapabilities: policyExternalWrite, SideEffects: sideEffectAdditive},
-	{Tool: "product_efforts", Category: CategoryRead, DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly, MCPDiscoveryReadModel: true},
-	{Tool: "product_status", Category: CategoryRead, DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly, MCPDiscoveryReadModel: true},
-	{Tool: "context_index", Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectAdditive, StaleContextErrors: true},
-	{Tool: "context_status", Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"localize_change", "query_context"}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, MCPDiscoveryProfile: true, StaleContextErrors: true, RuntimeContextDiscovery: true},
-	{Tool: "context_query", Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"localize_change", "query_context"}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, MCPDiscoveryProfile: true, StaleContextErrors: true, RuntimeContextDiscovery: true},
-	{Tool: "context_zoom", Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"localize_change", "query_context"}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, MCPDiscoveryProfile: true, StaleContextErrors: true, RuntimeContextDiscovery: true},
-	{Tool: "context_pack", Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"localize_change"}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, DiscoveryLocalArtifacts: true, StaleContextErrors: true, RuntimeContextDiscovery: true},
-	{Tool: "context_impact", Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"localize_change"}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, DiscoveryLocalArtifacts: true, StaleContextErrors: true, RuntimeContextDiscovery: true},
-	{Tool: "context_trace_pack", Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"verify_edit"}, CapabilityClassification: CapabilityClassDeferred, PolicyCapabilities: policyShellVerification, SideEffects: sideEffectUnknown, StaleContextErrors: true},
-	{Tool: "discovery_query", Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"localize_change"}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, DiscoveryLocalArtifacts: true, StaleContextErrors: true, RuntimeContextDiscovery: true},
-	{Tool: "structural_search", Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"find_references"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, StaleContextErrors: true, RuntimeContextDiscovery: true},
-	{Tool: "dependency_graph", Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"related_files"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, StaleContextErrors: true},
-	{Tool: "history_range", Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"history_context"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, RuntimeHistoryInspection: true},
-	{Tool: "history_symbol", Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"history_context"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, RuntimeHistoryInspection: true},
-	{Tool: "blame_range", Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"history_context"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, RuntimeHistoryInspection: true},
-	{Tool: "ctags_symbols", Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"find_references", "inspect_symbol"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly},
-	{Tool: "semgrep_scan", Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"security_scan"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly},
-	{Tool: "joern_scan", Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"security_scan"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly},
-	{Tool: "git_status", Category: CategoryShell, DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly},
-	{Tool: "git_diff", Category: CategoryShell, DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly},
-	{Tool: "shell", Category: CategoryShell, DefaultManifest: true, EvidenceCapabilities: []string{"verify_edit"}, CapabilityClassification: CapabilityClassDeferred, PolicyCapabilities: policyMutatingShell, SideEffects: sideEffectUnknown},
-	{Tool: "task_ledger", PolicyCapabilities: policyExternalWrite, SideEffects: sideEffectAdditive},
-	{Tool: "task", PolicyCapabilities: policyDelegation, SideEffects: sideEffectReadOnlyAdditive},
-	{Tool: "edit_file", Category: CategoryWrite, PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive},
-	{Tool: "write_file", Category: CategoryWrite, PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive},
-	{Tool: "append_file", Category: CategoryWrite, PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive},
-	{Tool: "apply_patch", Category: CategoryWrite, PolicyCapabilities: policyApplyPatch, SideEffects: sideEffectAdditiveDestructive},
-	{Tool: "mkdir", Category: CategoryWrite, PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive},
-	{Tool: "delegate_edit", Category: CategoryWrite, PolicyCapabilities: policyDelegatingEdit, SideEffects: sideEffectAdditive},
-	{Tool: "go_move_declarations", Language: "go", Category: CategoryWrite, PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive},
-	{Tool: "submit_plan", Category: CategoryVerification, CapabilityClassification: CapabilityClassWriteSideEffect, PolicyCapabilities: policyPlanSubmission, SideEffects: sideEffectAdditive},
+	{Tool: ToolNamePwd, Category: CategoryRead, DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly, ActionClass: "read"},
+	{Tool: ToolNameListFiles, Category: CategoryRead, DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly, ActionClass: "search"},
+	{Tool: ToolNameSearchFiles, Category: CategorySearch, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"find_references"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policyLiteralSearch, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true, PlannerAllowed: true, ActionClass: "search"},
+	{Tool: ToolNameSearchContent, Category: CategorySearch, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"find_references"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policyLiteralSearch, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true, PlannerAllowed: true, ActionClass: "search"},
+	{Tool: ToolNameRg, Category: CategorySearch, Narrowing: true, ActionClass: "search"},
+	{Tool: ToolNameGrep, Category: CategorySearch, ActionClass: "search"},
+	{Tool: ToolNameReadFile, Category: CategoryRead, DefaultManifest: true, EvidenceCapabilities: []string{"inspect_file"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true, PlannerAllowed: true, ActionClass: "read"},
+	{Tool: ToolNameFileStats, Category: CategoryRead, DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true, PlannerAllowed: true, ActionClass: "read"},
+	{Tool: ToolNameCodeNavigate, Category: CategoryRead, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: CodeNavigationEvidenceCapabilities(), CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true, PlannerAllowed: true, ActionClass: "read"},
+	{Tool: readOnlyCapabilityToolName, Category: CategoryRead, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: ReadOnlyCapabilityEvidenceCapabilities(), CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, ActionClass: "read"},
+	{Tool: ToolNameSourceSanity, Category: CategoryRead, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"source_diagnostics", "verify_edit"}, CapabilityClassification: CapabilityClassDeferred, PolicyCapabilities: policyShellVerification, SideEffects: sideEffectReadOnlyUnknown, RuntimeSourceInspection: true, ActionClass: "verify"},
+	{Tool: ToolNameHarnessAudit, Category: CategoryRead, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"audit_behavior"}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly},
+	{Tool: ToolNameHarnessFeedback, Category: CategoryVerification, DefaultManifest: true, Narrowing: true, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectAdditive, PlannerAllowed: true},
+	{Tool: ToolNameIdiomFeedback, Category: CategoryVerification, Narrowing: true},
+	{Tool: ToolNameRecoveryInspect, Category: CategoryRead, DefaultManifest: true, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, MCPDiscoveryProfile: true, PlannerAllowed: true},
+	{Tool: ToolNameRecoveryStatus, Category: CategoryRead, DefaultManifest: true, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, MCPDiscoveryProfile: true, PlannerAllowed: true},
+	{Tool: ToolNameRecoveryDecompose, Category: CategoryVerification, DefaultManifest: true, CapabilityClassification: CapabilityClassWriteSideEffect, PolicyCapabilities: policyExternalWrite, SideEffects: sideEffectAdditive},
+	{Tool: ToolNameProductEfforts, Category: CategoryRead, DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly, MCPDiscoveryReadModel: true, PlannerAllowed: true},
+	{Tool: ToolNameProductStatus, Category: CategoryRead, DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly, MCPDiscoveryReadModel: true, PlannerAllowed: true},
+	{Tool: ToolNameContextIndex, Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectAdditive, StaleContextErrors: true, Timeout: 5 * time.Minute},
+	{Tool: ToolNameContextStatus, Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"localize_change", "query_context"}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, MCPDiscoveryProfile: true, StaleContextErrors: true, RuntimeContextDiscovery: true, PlannerAllowed: true, ActionClass: "search"},
+	{Tool: ToolNameContextQuery, Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"localize_change", "query_context"}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, MCPDiscoveryProfile: true, StaleContextErrors: true, RuntimeContextDiscovery: true, PlannerAllowed: true, ActionClass: "search"},
+	{Tool: ToolNameContextZoom, Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"localize_change", "query_context"}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, MCPDiscoveryProfile: true, StaleContextErrors: true, RuntimeContextDiscovery: true, PlannerAllowed: true, ActionClass: "search"},
+	{Tool: ToolNameContextPack, Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"localize_change"}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, DiscoveryLocalArtifacts: true, StaleContextErrors: true, RuntimeContextDiscovery: true, PlannerAllowed: true, ActionClass: "search"},
+	{Tool: ToolNameContextImpact, Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"localize_change"}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, DiscoveryLocalArtifacts: true, StaleContextErrors: true, RuntimeContextDiscovery: true, PlannerAllowed: true, ActionClass: "search"},
+	{Tool: ToolNameContextTracePack, Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"verify_edit"}, CapabilityClassification: CapabilityClassDeferred, PolicyCapabilities: policyShellVerification, SideEffects: sideEffectUnknown, StaleContextErrors: true, Timeout: 5 * time.Minute, ActionClass: "verify"},
+	{Tool: ToolNameDiscoveryQuery, Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"localize_change"}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, DiscoveryLocalArtifacts: true, StaleContextErrors: true, RuntimeContextDiscovery: true, PlannerAllowed: true, ActionClass: "search"},
+	{Tool: ToolNameStructuralSearch, Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"find_references"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, StaleContextErrors: true, RuntimeContextDiscovery: true, PlannerAllowed: true, ActionClass: "search"},
+	{Tool: ToolNameDependencyGraph, Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"related_files"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, StaleContextErrors: true},
+	{Tool: ToolNameHistoryRange, Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"history_context"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, RuntimeHistoryInspection: true, PlannerAllowed: true, ActionClass: "read"},
+	{Tool: ToolNameHistorySymbol, Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"history_context"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, RuntimeHistoryInspection: true, PlannerAllowed: true, ActionClass: "read"},
+	{Tool: ToolNameBlameRange, Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"history_context"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, RuntimeHistoryInspection: true, PlannerAllowed: true, ActionClass: "search"},
+	{Tool: ToolNameCtagsSymbols, Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"find_references", "inspect_symbol"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, Timeout: 90 * time.Second},
+	{Tool: ToolNameSemgrepScan, Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"security_scan"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, Timeout: 5 * time.Minute},
+	{Tool: ToolNameJoernScan, Category: CategoryDiscovery, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"security_scan"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, Timeout: 5 * time.Minute},
+	{Tool: ToolNameGitStatus, Category: CategoryShell, DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly, ActionClass: "verify"},
+	{Tool: ToolNameGitDiff, Category: CategoryShell, DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly, ActionClass: "verify"},
+	{Tool: ToolNameShell, Category: CategoryShell, DefaultManifest: true, EvidenceCapabilities: []string{"verify_edit"}, CapabilityClassification: CapabilityClassDeferred, PolicyCapabilities: policyMutatingShell, SideEffects: sideEffectUnknown, ActionClass: "verify"},
+	{Tool: ToolNameTaskLedger, PolicyCapabilities: policyExternalWrite, SideEffects: sideEffectAdditive},
+	{Tool: ToolNameTask, PolicyCapabilities: policyDelegation, SideEffects: sideEffectReadOnlyAdditive, ActionClass: "generic_probe"},
+	{Tool: ToolNameEditFile, Category: CategoryWrite, PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive, ActionClass: "per_edit_write"},
+	{Tool: ToolNameWriteFile, Category: CategoryWrite, PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive, ActionClass: "per_edit_write"},
+	{Tool: ToolNameAppendFile, Category: CategoryWrite, PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive, ActionClass: "per_edit_write"},
+	{Tool: ToolNameApplyPatch, Category: CategoryWrite, PolicyCapabilities: policyApplyPatch, SideEffects: sideEffectAdditiveDestructive, ActionClass: "per_edit_write"},
+	{Tool: ToolNameMkdir, Category: CategoryWrite, PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive, ActionClass: "per_edit_write"},
+	{Tool: ToolNameDelegateEdit, Category: CategoryWrite, PolicyCapabilities: policyDelegatingEdit, SideEffects: sideEffectAdditive, ActionClass: "per_edit_write"},
+	{Tool: ToolNameGoMoveDeclarations, Language: "go", Category: CategoryWrite, PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive, ActionClass: "per_edit_write"},
+	{Tool: ToolNameSubmitPlan, Category: CategoryVerification, CapabilityClassification: CapabilityClassWriteSideEffect, PolicyCapabilities: policyPlanSubmission, SideEffects: sideEffectAdditive, PlannerAllowed: true, ActionClass: "submit_plan"},
+	{Tool: ToolNameGoDiagnostics, Category: CategoryRead, DefaultManifest: false, PolicyCapabilities: policyShellVerification, SideEffects: sideEffectUnknown, ActionClass: "verify"},
+	{Tool: ToolNameCppDiagnostics, Category: CategoryRead, DefaultManifest: false, PolicyCapabilities: policyShellVerification, SideEffects: sideEffectUnknown, ActionClass: "verify"},
+	{Tool: ToolNamePythonDiagnostics, Category: CategoryRead, DefaultManifest: false, PolicyCapabilities: policyShellVerification, SideEffects: sideEffectUnknown, ActionClass: "verify"},
+	{Tool: ToolNameRustDiagnostics, Category: CategoryRead, DefaultManifest: false, PolicyCapabilities: policyShellVerification, SideEffects: sideEffectUnknown, ActionClass: "verify"},
+	{Tool: ToolNameJavaDiagnostics, Category: CategoryRead, DefaultManifest: false, PolicyCapabilities: policyShellVerification, SideEffects: sideEffectUnknown, ActionClass: "verify"},
+	{Tool: ToolNameTsDiagnostics, Category: CategoryRead, DefaultManifest: false, PolicyCapabilities: policyShellVerification, SideEffects: sideEffectUnknown, ActionClass: "verify"},
 }
 
 func builtInToolSurfaceMetadata(tool string) (builtInToolSurfaceSpec, bool) {
+	return BuiltInToolSurfaceMetadata(tool)
+}
+
+// ToolActionClass returns the action class for a tool, or empty string if unknown.
+func ToolActionClass(tool string) string {
+	spec, ok := BuiltInToolSurfaceMetadata(tool)
+	if !ok || spec.ActionClass == "" {
+		return ""
+	}
+	return spec.ActionClass
+}
+
+func BuiltInToolSurfaceMetadata(tool string) (builtInToolSurfaceSpec, bool) {
 	tool = strings.TrimSpace(tool)
 	for _, spec := range builtInToolSurfaceSpecs {
 		if spec.Tool == tool {

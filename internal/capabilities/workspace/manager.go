@@ -32,13 +32,26 @@ import (
 	"idiom/internal/repository/semantic/languagetools"
 )
 
-var exploreBlockedTools = map[string]string{
-	"go_move_declarations": "moving declarations",
-	"mkdir":                "creating directories",
-	"edit_file":            "editing files",
-	"write_file":           "writing files",
-	"append_file":          "appending files",
-	"apply_patch":          "applying patches",
+// exploreBlockedToolNames are write tools blocked in explore mode.
+// The descriptions are used in the rejection message shown to the model.
+var exploreBlockedToolNames = map[string]string{
+	ToolNameGoMoveDeclarations: "moving declarations",
+	ToolNameMkdir:                "creating directories",
+	ToolNameEditFile:            "editing files",
+	ToolNameWriteFile:           "writing files",
+	ToolNameAppendFile:          "appending files",
+	ToolNameApplyPatch:          "applying patches",
+}
+
+func exploreModeWriteBlocked(tool string, mode Mode) (string, bool) {
+	if mode != ModeExplore {
+		return "", false
+	}
+	desc, ok := exploreBlockedToolNames[tool]
+	if !ok {
+		return "", false
+	}
+	return "explore mode is read-only; leave explore mode before " + desc, true
 }
 
 // Manager coordinates workspace tool dispatch. It is intentionally being
@@ -625,26 +638,17 @@ func toolTimeoutForRequest(req ToolRequest) time.Duration {
 }
 
 func toolTimeoutFor(tool string) time.Duration {
-	switch tool {
-	// Indexing/build paths can legitimately take a couple of minutes on
-	// a cold repo or after a major refactor.
-	case "context_index":
-		return 5 * time.Minute
-	// Security scans are heavy by design.
-	case "semgrep_scan", "joern_scan":
-		return 5 * time.Minute
-	// Trace runs execute a user-supplied command — the caller is
-	// expected to keep that bounded but we still allow generous time.
-	case "context_trace_pack":
-		return 5 * time.Minute
-	// Universal Ctags + LSP-backed queries can be slow on big files.
-	case "ctags_symbols":
-		return 90 * time.Second
-	// Shell commands are user-bounded; the workspace already enforces
-	// CommandTimeoutSeconds inside the shell handler. Skip the outer
-	// timeout to avoid double-bounding.
-	case "shell":
+	spec, ok := builtInToolSurfaceMetadata(tool)
+	if !ok {
+		return 30 * time.Second
+	}
+	// shell has no outer timeout — the shell handler enforces its own
+	// CommandTimeoutSeconds. Skip the outer timeout to avoid double-bounding.
+	if tool == "shell" {
 		return 0
+	}
+	if spec.Timeout > 0 {
+		return spec.Timeout
 	}
 	return 30 * time.Second
 }
@@ -656,111 +660,111 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 		return m.executeLanguageTool(ctx, req)
 	}
 	switch tool {
-	case "pwd":
+	case ToolNamePwd:
 		return ToolResult{
 			Tool:    tool,
 			Summary: "Printed current working directory",
 			Output:  m.cfg.CWD,
 		}
-	case "list_files":
+	case ToolNameListFiles:
 		return m.listFiles(req)
-	case "search_files":
+	case ToolNameSearchFiles:
 		return m.searchFiles(req)
-	case "search_content", "rg":
+	case "search_content", ToolNameRg:
 		return m.searchContent(ctx, req, tool)
-	case "read_file":
+	case ToolNameReadFile:
 		return m.readFile(req)
-	case "file_stats":
+	case ToolNameFileStats:
 		return m.fileStats(req)
-	case "code_navigate":
+	case ToolNameCodeNavigate:
 		return m.executeLanguageTool(ctx, req)
 	case "read_only_capability":
 		return m.readOnlyCapability(ctx, req)
-	case "source_sanity":
+	case ToolNameSourceSanity:
 		return m.sourceSanity(ctx, req)
-	case "harness_audit":
+	case ToolNameHarnessAudit:
 		return m.harnessAudit(req)
-	case "harness_feedback", "idiom_feedback":
+	case "harness_feedback", ToolNameIdiomFeedback:
 		return m.harnessFeedback(req)
-	case "recovery_inspect":
+	case ToolNameRecoveryInspect:
 		return m.recoveryInspect(ctx, req)
-	case "recovery_status":
+	case ToolNameRecoveryStatus:
 		return m.recoveryStatus(ctx, req)
-	case "recovery_decompose":
+	case ToolNameRecoveryDecompose:
 		return m.recoveryDecompose(ctx, req)
-	case "product_efforts":
+	case ToolNameProductEfforts:
 		return m.productEfforts(req)
-	case "product_status":
+	case ToolNameProductStatus:
 		return m.productStatus(req)
-	case "submit_plan":
+	case ToolNameSubmitPlan:
 		return m.submitPlan(req)
-	case "context_index":
+	case ToolNameContextIndex:
 		return m.contextIndex(ctx, req)
-	case "context_status":
+	case ToolNameContextStatus:
 		return m.contextStatus(ctx, req)
-	case "context_query":
+	case ToolNameContextQuery:
 		return m.contextQuery(ctx, req)
-	case "context_zoom":
+	case ToolNameContextZoom:
 		return m.contextZoom(ctx, req)
-	case "context_pack":
+	case ToolNameContextPack:
 		return m.contextPack(ctx, req)
-	case "context_impact":
+	case ToolNameContextImpact:
 		return m.contextImpact(ctx, req)
-	case "context_trace_pack":
+	case ToolNameContextTracePack:
 		return m.contextTracePack(ctx, req)
-	case "discovery_query":
+	case ToolNameDiscoveryQuery:
 		return m.discoveryQuery(ctx, req)
-	case "structural_search":
+	case ToolNameStructuralSearch:
 		return m.structuralSearch(ctx, req)
-	case "dependency_graph":
+	case ToolNameDependencyGraph:
 		return m.dependencyGraph(ctx, req)
-	case "history_range":
+	case ToolNameHistoryRange:
 		return m.historyRange(ctx, req)
-	case "history_symbol":
+	case ToolNameHistorySymbol:
 		return m.historySymbol(ctx, req)
-	case "blame_range":
+	case ToolNameBlameRange:
 		return m.blameRange(ctx, req)
-	case "ctags_symbols":
+	case ToolNameCtagsSymbols:
 		return m.ctagsSymbols(ctx, req)
-	case "semgrep_scan":
+	case ToolNameSemgrepScan:
 		return m.semgrepScan(ctx, req)
-	case "joern_scan":
+	case ToolNameJoernScan:
 		return m.joernScan(ctx, req)
-	case "go_move_declarations":
-		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
-			return toolPermissionPolicyResult(req.Tool, "Tool request rejected", "explore mode is read-only; leave explore mode before "+blocked)
+	case ToolNameGoMoveDeclarations:
+		if reason, ok := exploreModeWriteBlocked(tool, mode); ok {
+			return toolPermissionPolicyResult(tool, "Tool request rejected", reason)
 		}
 		return m.executeLanguageTool(ctx, req)
-	case "mkdir":
-		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
-			return toolPermissionPolicyResult(req.Tool, "Tool request rejected", "explore mode is read-only; leave explore mode before "+blocked)
+	case ToolNameMkdir:
+		if reason, ok := exploreModeWriteBlocked(tool, mode); ok {
+			return toolPermissionPolicyResult(tool, "Tool request rejected", reason)
 		}
 		return m.makeDir(req)
-	case "edit_file":
-		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
-			return toolPermissionPolicyResult(req.Tool, "Tool request rejected", "explore mode is read-only; leave explore mode before "+blocked)
+	case ToolNameEditFile:
+		if reason, ok := exploreModeWriteBlocked(tool, mode); ok {
+			return toolPermissionPolicyResult(tool, "Tool request rejected", reason)
 		}
 		return m.editFile(req)
-	case "write_file":
-		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
-			return toolPermissionPolicyResult(req.Tool, "Tool request rejected", "explore mode is read-only; leave explore mode before "+blocked)
+	case ToolNameWriteFile:
+		if reason, ok := exploreModeWriteBlocked(tool, mode); ok {
+			return toolPermissionPolicyResult(tool, "Tool request rejected", reason)
 		}
 		return m.writeFile(req, false)
-	case "append_file":
-		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
-			return toolPermissionPolicyResult(req.Tool, "Tool request rejected", "explore mode is read-only; leave explore mode before "+blocked)
+	case ToolNameAppendFile:
+		if reason, ok := exploreModeWriteBlocked(tool, mode); ok {
+			return toolPermissionPolicyResult(tool, "Tool request rejected", reason)
 		}
 		return m.writeFile(req, true)
-	case "apply_patch":
-		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
-			return toolPermissionPolicyResult(req.Tool, "Tool request rejected", "explore mode is read-only; leave explore mode before "+blocked)
+	case ToolNameApplyPatch:
+		if reason, ok := exploreModeWriteBlocked(tool, mode); ok {
+			return toolPermissionPolicyResult(tool, "Tool request rejected", reason)
 		}
 		return m.applyPatch(req)
-	case "shell":
+	case ToolNameShell:
 		return m.runShell(ctx, req)
-	case "git_status":
+	case ToolNameGitStatus:
 		return m.gitStatus(ctx, req)
-	case "git_diff":
+	case ToolNameGitDiff:
 		return m.gitDiff(ctx, req)
 	default:
 		if strings.HasPrefix(tool, "mcp:") {
@@ -2018,7 +2022,7 @@ func toolRequestUsesCapabilityAlias(tool string) bool {
 
 func toolRequestUsesPatternAlias(tool string) bool {
 	switch strings.TrimSpace(tool) {
-	case "search_content", "rg", "grep", "search_files":
+	case "search_content", "rg", "grep", ToolNameSearchFiles:
 		return true
 	default:
 		return false
@@ -3134,9 +3138,9 @@ func extractFirstJSONObject(text string) (string, bool) {
 
 func IsBroadInspectionRequest(req ToolRequest) bool {
 	switch strings.TrimSpace(req.Tool) {
-	case "list_files":
+	case ToolNameListFiles:
 		return !IsScopedInspectionRequest(req)
-	case "shell":
+	case ToolNameShell:
 		return isBroadInspectionShell(req.Command)
 	default:
 		return false
@@ -3153,19 +3157,24 @@ func IsScopedInspectionRequest(req ToolRequest) bool {
 
 func isStructuredNarrowingTool(tool string) bool {
 	tool = strings.TrimSpace(tool)
+	// Language tools (e.g. go_diagnostics) are always narrowing
+	// regardless of whether they also have a built-in surface spec entry.
+	if isLanguageToolName(tool) {
+		return true
+	}
 	if metadata, ok := builtInToolSurfaceMetadata(tool); ok {
 		return metadata.Narrowing
 	}
-	return isLanguageToolName(tool)
+	return false
 }
 
 func IsNarrowingRequest(req ToolRequest) bool {
 	switch strings.TrimSpace(req.Tool) {
-	case "list_files":
+	case ToolNameListFiles:
 		return IsScopedInspectionRequest(req)
-	case "read_file":
+	case ToolNameReadFile:
 		return true
-	case "shell":
+	case ToolNameShell:
 		return isNarrowingShell(req.Command)
 	default:
 		return isStructuredNarrowingTool(req.Tool)
@@ -3178,15 +3187,15 @@ func (m *Manager) ShouldClearBroadInspectionLock(req ToolRequest, result ToolRes
 	}
 
 	switch strings.TrimSpace(req.Tool) {
-	case "list_files":
+	case ToolNameListFiles:
 		return IsScopedInspectionRequest(req)
-	case "read_file":
+	case ToolNameReadFile:
 		path, _, err := m.resolveReadTarget(req)
 		if err != nil {
 			return false
 		}
 		return m.isRelevantExplorationPath(path)
-	case "shell":
+	case ToolNameShell:
 		return isNarrowingShell(req.Command)
 	default:
 		return isStructuredNarrowingTool(req.Tool)

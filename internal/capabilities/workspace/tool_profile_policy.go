@@ -3,6 +3,7 @@ package workspace
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/platform/failures"
@@ -12,6 +13,11 @@ import (
 const ToolProfileDefault = "default"
 const ToolProfileDiscovery = "discovery"
 const ToolProfileMCPDiscovery = "mcp_discovery"
+
+var (
+	builtInToolNameSetOnce sync.Once
+	builtInToolNameSet     map[string]struct{}
+)
 
 type ToolProfileDecision struct {
 	Allowed bool
@@ -142,10 +148,16 @@ func IsBuiltInToolName(tool string) bool {
 	if tool == "" {
 		return false
 	}
-	for _, entry := range BuildToolManifest(nil) {
-		if entry.Tool == tool {
-			return true
+	builtInToolNameSetOnce.Do(func() {
+		set := make(map[string]struct{})
+		for _, entry := range BuildToolManifest(nil) {
+			t := strings.TrimSpace(entry.Tool)
+			if t != "" {
+				set[t] = struct{}{}
+			}
 		}
-	}
-	return false
+		builtInToolNameSet = set
+	})
+	_, ok := builtInToolNameSet[tool]
+	return ok
 }

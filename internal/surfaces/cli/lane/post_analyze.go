@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"idiom/internal/capabilities/workspace"
 )
 
 // teeBuffer wraps an io.Writer so the lane wrapper can both stream
@@ -61,11 +63,11 @@ var readOnlyMarkers = []string{
 // implementation contract. Mirrors the grep alternation in
 // run_idiom_impl.sh exactly so behavior parity is provable.
 var editToolNames = []string{
-	"edit_file",
-	"write_file",
-	"append_file",
-	"apply_patch",
-	"submit_plan",
+	workspace.ToolNameEditFile,
+	workspace.ToolNameWriteFile,
+	workspace.ToolNameAppendFile,
+	workspace.ToolNameApplyPatch,
+	workspace.ToolNameSubmitPlan,
 }
 
 // analyzeLaneOutput scans captured stdout for the three failure

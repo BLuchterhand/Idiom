@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -24,29 +25,23 @@ type gitHistoryNotApplicableOutput struct {
 }
 
 func gitHistoryLookupToolNames() []string {
-	return []string{"history_range", "history_symbol", "blame_range"}
+	return workspace.RuntimeHistoryInspectionToolNames()
 }
 
 func gitHistoryLookupTool(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case "history_range", "history_symbol", "blame_range":
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(gitHistoryLookupToolNames(), strings.TrimSpace(tool))
 }
 
 func gitHistoryEvidenceTool(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case "history_range", "history_symbol":
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(gitHistoryEvidenceToolNames(), strings.TrimSpace(tool))
+}
+
+func gitHistoryEvidenceToolNames() []string {
+	return []string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}
 }
 
 func planExecuteHistoryPendingToolNames() []string {
-	return []string{"history_range", "history_symbol"}
+	return gitHistoryEvidenceToolNames()
 }
 
 func planExecuteHistoryPendingToolListForPrompt() string {
@@ -124,7 +119,7 @@ func gitHistoryNotApplicableForPath(path string, result workspace.ToolResult) bo
 func gitHistoryResultPath(result workspace.ToolResult) string {
 	summary := strings.TrimSpace(result.Summary)
 	switch strings.TrimSpace(result.Tool) {
-	case "history_range":
+	case workspace.ToolNameHistoryRange:
 		const prefix = "Read git history for "
 		if !strings.HasPrefix(summary, prefix) {
 			return ""
@@ -133,7 +128,7 @@ func gitHistoryResultPath(result workspace.ToolResult) string {
 		if idx := strings.Index(tail, " lines "); idx >= 0 {
 			return strings.TrimSpace(tail[:idx])
 		}
-	case "history_symbol":
+	case workspace.ToolNameHistorySymbol:
 		const marker = " in "
 		if idx := strings.LastIndex(summary, marker); idx >= 0 {
 			return strings.TrimSpace(summary[idx+len(marker):])
@@ -187,7 +182,7 @@ func (r *Runner) submitPlanPathsMissingGitHistory(req workspace.ToolRequest, res
 }
 
 func (r *Runner) submitPlanBeforeGitHistoryEvidenceRedirect(req workspace.ToolRequest, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, string, bool) {
-	if r == nil || !r.planThenExecutePlanSubmissionPhase() || strings.TrimSpace(req.Tool) != "submit_plan" || !mutationHistoryEvidenceRequired(r.RuntimeBrief) {
+	if r == nil || !r.planThenExecutePlanSubmissionPhase() || strings.TrimSpace(req.Tool) != workspace.ToolNameSubmitPlan || !mutationHistoryEvidenceRequired(r.RuntimeBrief) {
 		return workspace.ToolRequest{}, "", false
 	}
 	if len(planThenExecuteRequiredCoveragePaths(r.RuntimeBrief.RequiredEditPaths, "")) > 0 &&
@@ -266,7 +261,7 @@ func planThenExecuteSubmitPlanHasRequiredPathCoverageProblem(requiredPaths []str
 }
 
 func gitHistoryEvidenceRedirectRequest(paths []string, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, string, bool) {
-	if len(paths) == 0 || !runnerAllowsTool(allowedTools, "history_range") {
+	if len(paths) == 0 || !runnerAllowsTool(allowedTools, workspace.ToolNameHistoryRange) {
 		return workspace.ToolRequest{}, "", false
 	}
 	path := normalizeRunnerPath(paths[0])
@@ -275,7 +270,7 @@ func gitHistoryEvidenceRedirectRequest(paths []string, results []workspace.ToolR
 	}
 	start, end := gitHistoryRedirectRange(path, results)
 	req := workspace.ToolRequest{
-		Tool:            "history_range",
+		Tool:            workspace.ToolNameHistoryRange,
 		Path:            path,
 		StartLine:       start,
 		EndLine:         end,
@@ -372,7 +367,7 @@ func gitHistoryEvidenceRequiredMessage(paths []string) string {
 }
 
 func (r *Runner) preflightPlanThenExecuteSubmitPlanHistoryGuard(req workspace.ToolRequest, results []workspace.ToolResult) verificationInterceptResult {
-	if r == nil || !r.planThenExecutePlanSubmissionPhase() || strings.TrimSpace(req.Tool) != "submit_plan" {
+	if r == nil || !r.planThenExecutePlanSubmissionPhase() || strings.TrimSpace(req.Tool) != workspace.ToolNameSubmitPlan {
 		return verificationInterceptResult{}
 	}
 	if !mutationHistoryEvidenceRequired(r.RuntimeBrief) {
@@ -385,7 +380,7 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanHistoryGuard(req workspace.To
 	return verificationInterceptResult{
 		Intercepted: true,
 		Result: workspace.ToolResult{
-			Tool:    "submit_plan",
+			Tool:    workspace.ToolNameSubmitPlan,
 			Summary: "submit_plan rejected: edit paths lack git history evidence",
 			Error: "submit_plan edits must be backed by git history rationale before executor handoff; missing `history_range`/`history_symbol` commit-description evidence for " + quotedRunnerStrings(missing) + ". " +
 				"Read the history for the intended logic, use the commit descriptions to decide why and when the current behavior exists, then submit a corrected plan only if the proposed change is safe. If not safe, answer `<<QUESTION>>:` with the path-specific blocker.",

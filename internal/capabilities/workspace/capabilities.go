@@ -1356,7 +1356,7 @@ func readOnlyCapability(id ReadOnlyCapabilityID, description string, adapters []
 }
 
 func codeNavigateCapabilityAdapter(cap Capability) ReadOnlyCapabilityAdapterSpec {
-	return readOnlyAdapter("code_navigate", string(cap), "", "capability_router")
+	return readOnlyAdapter(CodeNavigateToolName, string(cap), "", "capability_router")
 }
 
 func languageCapabilityAdapters(cap Capability) []ReadOnlyCapabilityAdapterSpec {

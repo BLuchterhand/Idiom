@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// PlanExecutePlannerToolMetadata describes planner-facing capabilities
+// for a tool. Metadata is derived from the built-in tool surface spec.
 type PlanExecutePlannerToolMetadata struct {
 	Tool           string
 	Capabilities   []Capability

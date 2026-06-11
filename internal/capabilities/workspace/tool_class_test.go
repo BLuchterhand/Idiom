@@ -16,10 +16,12 @@ func TestClassifyToolUsesLanguageRegistryForReadTools(t *testing.T) {
 }
 
 func TestClassifyToolKeepsLegacyLanguageHelpers(t *testing.T) {
-	for _, spec := range supplementalLanguageToolSpecs {
-		tool := spec.Tool
-		if got := ClassifyTool(tool); got != CategoryRead {
-			t.Fatalf("legacy language helper %s category = %v, want %v", tool, got, CategoryRead)
+	for _, specs := range supplementalLanguageToolSpecs {
+		for _, spec := range specs {
+			tool := spec.Tool
+			if got := ClassifyTool(tool); got != CategoryRead {
+				t.Fatalf("legacy language helper %s category = %v, want %v", tool, got, CategoryRead)
+			}
 		}
 	}
 }

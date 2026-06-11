@@ -114,9 +114,11 @@ func TestToolManifestToolsDerivesLanguageMembershipFromRegistry(t *testing.T) {
 			}
 		}
 	}
-	for _, spec := range supplementalLanguageToolSpecs {
-		if seen[spec.Tool] != 1 {
-			t.Fatalf("supplemental language tool %s manifest count = %d, want 1", spec.Tool, seen[spec.Tool])
+	for _, specs := range supplementalLanguageToolSpecs {
+		for _, spec := range specs {
+			if seen[spec.Tool] != 1 {
+				t.Fatalf("supplemental language tool %s manifest count = %d, want 1", spec.Tool, seen[spec.Tool])
+			}
 		}
 	}
 }
