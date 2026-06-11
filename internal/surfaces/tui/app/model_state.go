@@ -36,25 +36,33 @@ import (
 // re-parsing the JSONL log. Updated on the UI goroutine via logRunEvent
 // and logToolResult, both of which run sequentially per turn.
 type sessionAggregate struct {
-	turns            int
-	modelCalls       int
-	toolCalls        int
-	promptTokens     int
-	completionTokens int
-	totalTokens      int
-	peakPromptTokens int
-	compactions      int
-	toolOutputBytes  map[string]int
-	toolCallCounts   map[string]int
-	discoveryClasses map[string]int
-	discoveryCosts   map[string]int
+	turns                      int
+	modelCalls                 int
+	toolCalls                  int
+	promptTokens               int
+	completionTokens           int
+	totalTokens                int
+	promptCacheHitTokens       int
+	promptCacheMissTokens      int
+	promptCacheAccountingKnown bool
+	reasoningTokens            int
+	peakPromptTokens           int
+	compactions                int
+	toolOutputBytes            map[string]int
+	toolCallCounts             map[string]int
+	discoveryClasses           map[string]int
+	discoveryCosts             map[string]int
 }
 
-func (a *sessionAggregate) recordModelCall(promptTokens, completionTokens, totalTokens int) {
+func (a *sessionAggregate) recordModelCall(promptTokens, completionTokens, totalTokens, promptCacheHitTokens, promptCacheMissTokens int, promptCacheAccountingKnown bool, reasoningTokens int) {
 	a.modelCalls++
 	a.promptTokens += promptTokens
 	a.completionTokens += completionTokens
 	a.totalTokens += totalTokens
+	a.promptCacheHitTokens += promptCacheHitTokens
+	a.promptCacheMissTokens += promptCacheMissTokens
+	a.promptCacheAccountingKnown = a.promptCacheAccountingKnown || promptCacheAccountingKnown
+	a.reasoningTokens += reasoningTokens
 	if promptTokens > a.peakPromptTokens {
 		a.peakPromptTokens = promptTokens
 	}
@@ -171,41 +179,41 @@ type Model struct {
 	inputHistoryIndex int
 	inputHistoryDraft string
 
-	messages                         []llama.ChatMessage
-	promptStack                      promptstack.Stack
-	composedPrompt                   string
-	composedPromptSources            []promptstack.Source
-	composedPromptCacheKey           string
-	activeProfiles                   []string
-	streaming                        bool
-	turnEvidence                     *turnEvidence
-	pastTurnContainers               []completedEvidence
-	lastBudget                       *budgetData
-	bootingServer                    bool
-	serverUp                         bool
-	managedServer                    bool
-	modelID                          string
-	modelDisplayID                   string
-	status                           string
-	contextError                     string
-	runtimeError                     string
-	workingFrame                     int
-	debugLogger                      *transcript.DebugLogger
-	debugLogPath                     string
-	sessionStartedAt                 time.Time
-	sessionAgg                       sessionAggregate
-	sessionSummaryWritten            bool
-	eventStream                      *jsonEventStream
-	lastAssistantReasoningContent    string
-	agentModeName                    string
-	forcedTaskFamily                 string
-	suppressPromptTranscript         bool
-	plannerOwnedVerification         bool
-	lastPlanExecuteRunResult         *planexecute.RunResult
-	maxTokensOverride                int
-	disableThinkingOverride          bool
-	forcedReadinessOpenObligations   []string
-	suppressGreenfieldConfirmation  bool
+	messages                       []llama.ChatMessage
+	promptStack                    promptstack.Stack
+	composedPrompt                 string
+	composedPromptSources          []promptstack.Source
+	composedPromptCacheKey         string
+	activeProfiles                 []string
+	streaming                      bool
+	turnEvidence                   *turnEvidence
+	pastTurnContainers             []completedEvidence
+	lastBudget                     *budgetData
+	bootingServer                  bool
+	serverUp                       bool
+	managedServer                  bool
+	modelID                        string
+	modelDisplayID                 string
+	status                         string
+	contextError                   string
+	runtimeError                   string
+	workingFrame                   int
+	debugLogger                    *transcript.DebugLogger
+	debugLogPath                   string
+	sessionStartedAt               time.Time
+	sessionAgg                     sessionAggregate
+	sessionSummaryWritten          bool
+	eventStream                    *jsonEventStream
+	lastAssistantReasoningContent  string
+	agentModeName                  string
+	forcedTaskFamily               string
+	suppressPromptTranscript       bool
+	plannerOwnedVerification       bool
+	lastPlanExecuteRunResult       *planexecute.RunResult
+	maxTokensOverride              int
+	disableThinkingOverride        bool
+	forcedReadinessOpenObligations []string
+	suppressGreenfieldConfirmation bool
 	// lastTurnSourceResults carries source-body tool results from the
 	// previous conversation turn so the next turn's source grounding gate
 	// can verify evidence paths without re-reading files.
@@ -1171,32 +1179,40 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 	switch event.Role {
 	case "model_call":
 		var payload struct {
-			Step             int            `json:"step"`
-			Label            string         `json:"label"`
-			Agent            string         `json:"agent"`
-			PromptTokens     int            `json:"prompt_tokens"`
-			CompletionTokens int            `json:"completion_tokens"`
-			TotalTokens      int            `json:"total_tokens"`
-			CtxSize          int            `json:"ctx_size"`
-			MessageCount     int            `json:"message_count"`
-			RoleChars        map[string]int `json:"role_chars"`
-			ChosenTool       string         `json:"chosen_tool"`
-			DurationMillis   int64          `json:"duration_ms"`
+			Step                       int            `json:"step"`
+			Label                      string         `json:"label"`
+			Agent                      string         `json:"agent"`
+			PromptTokens               int            `json:"prompt_tokens"`
+			CompletionTokens           int            `json:"completion_tokens"`
+			TotalTokens                int            `json:"total_tokens"`
+			PromptCacheHitTokens       int            `json:"prompt_cache_hit_tokens"`
+			PromptCacheMissTokens      int            `json:"prompt_cache_miss_tokens"`
+			PromptCacheAccountingKnown bool           `json:"prompt_cache_accounting_known"`
+			ReasoningTokens            int            `json:"reasoning_tokens"`
+			CtxSize                    int            `json:"ctx_size"`
+			MessageCount               int            `json:"message_count"`
+			RoleChars                  map[string]int `json:"role_chars"`
+			ChosenTool                 string         `json:"chosen_tool"`
+			DurationMillis             int64          `json:"duration_ms"`
 		}
 		if err := json.Unmarshal([]byte(event.Content), &payload); err == nil {
-			m.sessionAgg.recordModelCall(payload.PromptTokens, payload.CompletionTokens, payload.TotalTokens)
+			m.sessionAgg.recordModelCall(payload.PromptTokens, payload.CompletionTokens, payload.TotalTokens, payload.PromptCacheHitTokens, payload.PromptCacheMissTokens, payload.PromptCacheAccountingKnown, payload.ReasoningTokens)
 			if m.debugLogger != nil {
 				_ = m.debugLogger.LogModelCall(transcript.ModelCall{
-					Step:             payload.Step,
-					Agent:            util.FirstNonEmpty(payload.Agent, payload.Label),
-					PromptTokens:     payload.PromptTokens,
-					CompletionTokens: payload.CompletionTokens,
-					TotalTokens:      payload.TotalTokens,
-					CtxSize:          payload.CtxSize,
-					MessageCount:     payload.MessageCount,
-					RoleChars:        payload.RoleChars,
-					ChosenTool:       payload.ChosenTool,
-					DurationMillis:   payload.DurationMillis,
+					Step:                       payload.Step,
+					Agent:                      util.FirstNonEmpty(payload.Agent, payload.Label),
+					PromptTokens:               payload.PromptTokens,
+					CompletionTokens:           payload.CompletionTokens,
+					TotalTokens:                payload.TotalTokens,
+					PromptCacheHitTokens:       payload.PromptCacheHitTokens,
+					PromptCacheMissTokens:      payload.PromptCacheMissTokens,
+					PromptCacheAccountingKnown: payload.PromptCacheAccountingKnown,
+					ReasoningTokens:            payload.ReasoningTokens,
+					CtxSize:                    payload.CtxSize,
+					MessageCount:               payload.MessageCount,
+					RoleChars:                  payload.RoleChars,
+					ChosenTool:                 payload.ChosenTool,
+					DurationMillis:             payload.DurationMillis,
 				})
 			}
 		}
@@ -1214,42 +1230,50 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 		return
 	case "budget_ledger":
 		var payload struct {
-			Lane                     string `json:"lane"`
-			UsedModelCalls           int    `json:"used_model_calls"`
-			MaxModelCalls            int    `json:"max_model_calls"`
-			UsedToolResults          int    `json:"used_tool_results"`
-			MaxToolSteps             int    `json:"max_tool_steps"`
-			PromptTokens             int    `json:"prompt_tokens"`
-			CompletionTokens         int    `json:"completion_tokens"`
-			TotalTokens              int    `json:"total_tokens"`
-			ProgressTurns            int    `json:"progress_turns"`
-			RejectedActions          int    `json:"rejected_actions"`
-			CompletionGateRejections int    `json:"completion_gate_rejections"`
-			ContextCompactions       int    `json:"context_compactions"`
-			DurationMillis           int64  `json:"duration_millis"`
-			StopReason               string `json:"stop_reason"`
-			BudgetExhausted          bool   `json:"budget_exhausted"`
+			Lane                       string `json:"lane"`
+			UsedModelCalls             int    `json:"used_model_calls"`
+			MaxModelCalls              int    `json:"max_model_calls"`
+			UsedToolResults            int    `json:"used_tool_results"`
+			MaxToolSteps               int    `json:"max_tool_steps"`
+			PromptTokens               int    `json:"prompt_tokens"`
+			CompletionTokens           int    `json:"completion_tokens"`
+			TotalTokens                int    `json:"total_tokens"`
+			PromptCacheHitTokens       int    `json:"prompt_cache_hit_tokens"`
+			PromptCacheMissTokens      int    `json:"prompt_cache_miss_tokens"`
+			PromptCacheAccountingKnown bool   `json:"prompt_cache_accounting_known"`
+			ReasoningTokens            int    `json:"reasoning_tokens"`
+			ProgressTurns              int    `json:"progress_turns"`
+			RejectedActions            int    `json:"rejected_actions"`
+			CompletionGateRejections   int    `json:"completion_gate_rejections"`
+			ContextCompactions         int    `json:"context_compactions"`
+			DurationMillis             int64  `json:"duration_millis"`
+			StopReason                 string `json:"stop_reason"`
+			BudgetExhausted            bool   `json:"budget_exhausted"`
 		}
 		if err := json.Unmarshal([]byte(event.Content), &payload); err == nil {
 			m.sessionAgg.turns++
 			m.sessionAgg.compactions += payload.ContextCompactions
 			if m.debugLogger != nil {
 				_ = m.debugLogger.LogTurnSummary(transcript.TurnSummary{
-					Lane:                     payload.Lane,
-					UsedModelCalls:           payload.UsedModelCalls,
-					MaxModelCalls:            payload.MaxModelCalls,
-					UsedToolResults:          payload.UsedToolResults,
-					MaxToolSteps:             payload.MaxToolSteps,
-					PromptTokens:             payload.PromptTokens,
-					CompletionTokens:         payload.CompletionTokens,
-					TotalTokens:              payload.TotalTokens,
-					ProgressTurns:            payload.ProgressTurns,
-					RejectedActions:          payload.RejectedActions,
-					CompletionGateRejections: payload.CompletionGateRejections,
-					ContextCompactions:       payload.ContextCompactions,
-					DurationMillis:           payload.DurationMillis,
-					StopReason:               payload.StopReason,
-					BudgetExhausted:          payload.BudgetExhausted,
+					Lane:                       payload.Lane,
+					UsedModelCalls:             payload.UsedModelCalls,
+					MaxModelCalls:              payload.MaxModelCalls,
+					UsedToolResults:            payload.UsedToolResults,
+					MaxToolSteps:               payload.MaxToolSteps,
+					PromptTokens:               payload.PromptTokens,
+					CompletionTokens:           payload.CompletionTokens,
+					TotalTokens:                payload.TotalTokens,
+					PromptCacheHitTokens:       payload.PromptCacheHitTokens,
+					PromptCacheMissTokens:      payload.PromptCacheMissTokens,
+					PromptCacheAccountingKnown: payload.PromptCacheAccountingKnown,
+					ReasoningTokens:            payload.ReasoningTokens,
+					ProgressTurns:              payload.ProgressTurns,
+					RejectedActions:            payload.RejectedActions,
+					CompletionGateRejections:   payload.CompletionGateRejections,
+					ContextCompactions:         payload.ContextCompactions,
+					DurationMillis:             payload.DurationMillis,
+					StopReason:                 payload.StopReason,
+					BudgetExhausted:            payload.BudgetExhausted,
 				})
 			}
 
@@ -1388,42 +1412,64 @@ func (m *Model) writeSessionSummary() {
 	if !m.sessionStartedAt.IsZero() {
 		duration = time.Since(m.sessionStartedAt).Milliseconds()
 	}
+	promptCacheHitRate := 0.0
+	if m.sessionAgg.promptCacheAccountingKnown {
+		totalCachePrompt := m.sessionAgg.promptCacheHitTokens + m.sessionAgg.promptCacheMissTokens
+		if totalCachePrompt > 0 {
+			promptCacheHitRate = float64(m.sessionAgg.promptCacheHitTokens) / float64(totalCachePrompt)
+		}
+	}
 	if m.debugLogger != nil {
 		_ = m.debugLogger.LogSessionSummary(transcript.SessionSummary{
-			Turns:            m.sessionAgg.turns,
-			ModelCalls:       m.sessionAgg.modelCalls,
-			ToolCalls:        m.sessionAgg.toolCalls,
-			PromptTokens:     m.sessionAgg.promptTokens,
-			CompletionTokens: m.sessionAgg.completionTokens,
-			TotalTokens:      m.sessionAgg.totalTokens,
-			PeakPromptTokens: m.sessionAgg.peakPromptTokens,
-			CtxSize:          ctxSize,
-			PeakCtxPct:       peakPct,
-			Compactions:      m.sessionAgg.compactions,
-			TopToolsByOutput: m.sessionAgg.topToolsByOutput(10),
-			DiscoveryByClass: discoveryAggregates(m.sessionAgg.discoveryClasses),
-			DiscoveryByCost:  discoveryAggregates(m.sessionAgg.discoveryCosts),
-			DurationMillis:   duration,
+			Turns:                      m.sessionAgg.turns,
+			ModelCalls:                 m.sessionAgg.modelCalls,
+			ToolCalls:                  m.sessionAgg.toolCalls,
+			PromptTokens:               m.sessionAgg.promptTokens,
+			CompletionTokens:           m.sessionAgg.completionTokens,
+			TotalTokens:                m.sessionAgg.totalTokens,
+			PromptCacheHitTokens:       m.sessionAgg.promptCacheHitTokens,
+			PromptCacheMissTokens:      m.sessionAgg.promptCacheMissTokens,
+			PromptCacheAccountingKnown: m.sessionAgg.promptCacheAccountingKnown,
+			PromptCacheHitRate:         promptCacheHitRate,
+			ReasoningTokens:            m.sessionAgg.reasoningTokens,
+			PeakPromptTokens:           m.sessionAgg.peakPromptTokens,
+			CtxSize:                    ctxSize,
+			PeakCtxPct:                 peakPct,
+			Compactions:                m.sessionAgg.compactions,
+			TopToolsByOutput:           m.sessionAgg.topToolsByOutput(10),
+			DiscoveryByClass:           discoveryAggregates(m.sessionAgg.discoveryClasses),
+			DiscoveryByCost:            discoveryAggregates(m.sessionAgg.discoveryCosts),
+			DurationMillis:             duration,
 		})
 	}
 	// Mirror to the stdout JSON event stream so wrappers (idiom lane,
 	// queue, etc.) can correlate aggregate token usage with the
 	// dispatch they spawned. Only fires when --json is on; debug-log
 	// path above is the always-on persistence layer.
-	m.emitJSONEvent(map[string]any{
-		"type":               "session_summary",
-		"turns":              m.sessionAgg.turns,
-		"model_calls":        m.sessionAgg.modelCalls,
-		"tool_calls":         m.sessionAgg.toolCalls,
-		"prompt_tokens":      m.sessionAgg.promptTokens,
-		"completion_tokens":  m.sessionAgg.completionTokens,
-		"total_tokens":       m.sessionAgg.totalTokens,
-		"peak_prompt_tokens": m.sessionAgg.peakPromptTokens,
-		"ctx_size":           ctxSize,
-		"peak_ctx_pct":       peakPct,
-		"compactions":        m.sessionAgg.compactions,
-		"duration_ms":        duration,
-	})
+	summary := map[string]any{
+		"type":                          "session_summary",
+		"turns":                         m.sessionAgg.turns,
+		"model_calls":                   m.sessionAgg.modelCalls,
+		"tool_calls":                    m.sessionAgg.toolCalls,
+		"prompt_tokens":                 m.sessionAgg.promptTokens,
+		"completion_tokens":             m.sessionAgg.completionTokens,
+		"total_tokens":                  m.sessionAgg.totalTokens,
+		"prompt_cache_hit_tokens":       m.sessionAgg.promptCacheHitTokens,
+		"prompt_cache_miss_tokens":      m.sessionAgg.promptCacheMissTokens,
+		"prompt_cache_accounting_known": m.sessionAgg.promptCacheAccountingKnown,
+		"reasoning_tokens":              m.sessionAgg.reasoningTokens,
+		"peak_prompt_tokens":            m.sessionAgg.peakPromptTokens,
+		"ctx_size":                      ctxSize,
+		"peak_ctx_pct":                  peakPct,
+		"compactions":                   m.sessionAgg.compactions,
+		"duration_ms":                   duration,
+	}
+	if m.sessionAgg.promptCacheAccountingKnown {
+		if m.sessionAgg.promptCacheHitTokens+m.sessionAgg.promptCacheMissTokens > 0 {
+			summary["prompt_cache_hit_rate"] = promptCacheHitRate
+		}
+	}
+	m.emitJSONEvent(summary)
 }
 
 func (m *Model) logError(kind, message string) {

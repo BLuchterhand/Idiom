@@ -20,6 +20,21 @@ func TestParseSessionSummaryExtractsTokens(t *testing.T) {
 	}
 }
 
+func TestParseSessionSummaryExtractsProviderCacheUsage(t *testing.T) {
+	out := []byte(`{"type":"session_summary","prompt_tokens":13,"completion_tokens":3,"total_tokens":16,"prompt_cache_hit_tokens":8,"prompt_cache_miss_tokens":5,"prompt_cache_accounting_known":true,"reasoning_tokens":2}
+`)
+	summary, ok := parseSessionSummary(out)
+	if !ok {
+		t.Fatal("expected session_summary to be parsed")
+	}
+	if !summary.PromptCacheAccountingKnown ||
+		summary.PromptCacheHitTokens != 8 ||
+		summary.PromptCacheMissTokens != 5 ||
+		summary.ReasoningTokens != 2 {
+		t.Fatalf("missing cache usage: %#v", summary)
+	}
+}
+
 func TestParseSessionSummaryReturnsFalseWhenAbsent(t *testing.T) {
 	out := []byte(`{"type":"start"}
 some human-readable output

@@ -108,55 +108,69 @@ type ToolRequestDetail struct {
 
 // ModelCall records one CompleteChatMessage round-trip.
 type ModelCall struct {
-	Step             int
-	Agent            string
-	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
-	CtxSize          int
-	MessageCount     int
-	RoleChars        map[string]int
-	ChosenTool       string // tool the model picked, or "<answer>" / "<parse_error>"
-	DurationMillis   int64
+	Step                       int
+	Agent                      string
+	PromptTokens               int
+	CompletionTokens           int
+	TotalTokens                int
+	PromptCacheHitTokens       int
+	PromptCacheMissTokens      int
+	PromptCacheAccountingKnown bool
+	ReasoningTokens            int
+	CtxSize                    int
+	MessageCount               int
+	RoleChars                  map[string]int
+	ChosenTool                 string // tool the model picked, or "<answer>" / "<parse_error>"
+	DurationMillis             int64
 }
 
 // TurnSummary mirrors the existing budget_ledger payload but is written
 // to its own type=turn_summary record so analysis tools can pick it out
 // without parsing through message records.
 type TurnSummary struct {
-	Lane                     string
-	UsedModelCalls           int
-	MaxModelCalls            int
-	UsedToolResults          int
-	MaxToolSteps             int
-	PromptTokens             int
-	CompletionTokens         int
-	TotalTokens              int
-	ProgressTurns            int
-	RejectedActions          int
-	CompletionGateRejections int
-	ContextCompactions       int
-	DurationMillis           int64
-	StopReason               string
-	BudgetExhausted          bool
+	Lane                       string
+	UsedModelCalls             int
+	MaxModelCalls              int
+	UsedToolResults            int
+	MaxToolSteps               int
+	PromptTokens               int
+	CompletionTokens           int
+	TotalTokens                int
+	PromptCacheHitTokens       int
+	PromptCacheMissTokens      int
+	PromptCacheAccountingKnown bool
+	PromptCacheHitRate         float64
+	ReasoningTokens            int
+	ProgressTurns              int
+	RejectedActions            int
+	CompletionGateRejections   int
+	ContextCompactions         int
+	DurationMillis             int64
+	StopReason                 string
+	BudgetExhausted            bool
 }
 
 // SessionSummary is the end-of-session aggregate written on shutdown.
 type SessionSummary struct {
-	Turns            int
-	ModelCalls       int
-	ToolCalls        int
-	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
-	PeakPromptTokens int
-	CtxSize          int
-	PeakCtxPct       float64
-	Compactions      int
-	TopToolsByOutput []ToolOutputAggregate
-	DiscoveryByClass []DiscoveryAggregate
-	DiscoveryByCost  []DiscoveryAggregate
-	DurationMillis   int64
+	Turns                      int
+	ModelCalls                 int
+	ToolCalls                  int
+	PromptTokens               int
+	CompletionTokens           int
+	TotalTokens                int
+	PromptCacheHitTokens       int
+	PromptCacheMissTokens      int
+	PromptCacheAccountingKnown bool
+	PromptCacheHitRate         float64
+	ReasoningTokens            int
+	PeakPromptTokens           int
+	CtxSize                    int
+	PeakCtxPct                 float64
+	Compactions                int
+	TopToolsByOutput           []ToolOutputAggregate
+	DiscoveryByClass           []DiscoveryAggregate
+	DiscoveryByCost            []DiscoveryAggregate
+	DurationMillis             int64
 }
 
 type ToolOutputAggregate struct {
@@ -418,6 +432,14 @@ func (l *DebugLogger) LogModelCall(c ModelCall) error {
 	if c.TotalTokens > 0 {
 		record["total_tokens"] = c.TotalTokens
 	}
+	if c.PromptCacheAccountingKnown {
+		record["prompt_cache_hit_tokens"] = c.PromptCacheHitTokens
+		record["prompt_cache_miss_tokens"] = c.PromptCacheMissTokens
+		record["prompt_cache_accounting_known"] = true
+	}
+	if c.ReasoningTokens > 0 {
+		record["reasoning_tokens"] = c.ReasoningTokens
+	}
 	if c.CtxSize > 0 {
 		record["ctx_size"] = c.CtxSize
 		if c.PromptTokens > 0 {
@@ -438,21 +460,25 @@ func (l *DebugLogger) LogModelCall(c ModelCall) error {
 
 func (l *DebugLogger) LogTurnSummary(s TurnSummary) error {
 	record := map[string]any{
-		"ts":                         time.Now().Format(time.RFC3339Nano),
-		"type":                       "turn_summary",
-		"lane":                       s.Lane,
-		"used_model_calls":           s.UsedModelCalls,
-		"used_tool_results":          s.UsedToolResults,
-		"prompt_tokens":              s.PromptTokens,
-		"completion_tokens":          s.CompletionTokens,
-		"total_tokens":               s.TotalTokens,
-		"progress_turns":             s.ProgressTurns,
-		"rejected_actions":           s.RejectedActions,
-		"completion_gate_rejections": s.CompletionGateRejections,
-		"context_compactions":        s.ContextCompactions,
-		"duration_ms":                s.DurationMillis,
-		"stop_reason":                s.StopReason,
-		"budget_exhausted":           s.BudgetExhausted,
+		"ts":                            time.Now().Format(time.RFC3339Nano),
+		"type":                          "turn_summary",
+		"lane":                          s.Lane,
+		"used_model_calls":              s.UsedModelCalls,
+		"used_tool_results":             s.UsedToolResults,
+		"prompt_tokens":                 s.PromptTokens,
+		"completion_tokens":             s.CompletionTokens,
+		"total_tokens":                  s.TotalTokens,
+		"prompt_cache_hit_tokens":       s.PromptCacheHitTokens,
+		"prompt_cache_miss_tokens":      s.PromptCacheMissTokens,
+		"prompt_cache_accounting_known": s.PromptCacheAccountingKnown,
+		"reasoning_tokens":              s.ReasoningTokens,
+		"progress_turns":                s.ProgressTurns,
+		"rejected_actions":              s.RejectedActions,
+		"completion_gate_rejections":    s.CompletionGateRejections,
+		"context_compactions":           s.ContextCompactions,
+		"duration_ms":                   s.DurationMillis,
+		"stop_reason":                   s.StopReason,
+		"budget_exhausted":              s.BudgetExhausted,
 	}
 	if s.MaxModelCalls > 0 {
 		record["max_model_calls"] = s.MaxModelCalls
@@ -465,21 +491,28 @@ func (l *DebugLogger) LogTurnSummary(s TurnSummary) error {
 
 func (l *DebugLogger) LogSessionSummary(s SessionSummary) error {
 	record := map[string]any{
-		"ts":                 time.Now().Format(time.RFC3339Nano),
-		"type":               "session_summary",
-		"turns":              s.Turns,
-		"model_calls":        s.ModelCalls,
-		"tool_calls":         s.ToolCalls,
-		"prompt_tokens":      s.PromptTokens,
-		"completion_tokens":  s.CompletionTokens,
-		"total_tokens":       s.TotalTokens,
-		"peak_prompt_tokens": s.PeakPromptTokens,
-		"compactions":        s.Compactions,
-		"duration_ms":        s.DurationMillis,
+		"ts":                            time.Now().Format(time.RFC3339Nano),
+		"type":                          "session_summary",
+		"turns":                         s.Turns,
+		"model_calls":                   s.ModelCalls,
+		"tool_calls":                    s.ToolCalls,
+		"prompt_tokens":                 s.PromptTokens,
+		"completion_tokens":             s.CompletionTokens,
+		"total_tokens":                  s.TotalTokens,
+		"prompt_cache_hit_tokens":       s.PromptCacheHitTokens,
+		"prompt_cache_miss_tokens":      s.PromptCacheMissTokens,
+		"prompt_cache_accounting_known": s.PromptCacheAccountingKnown,
+		"reasoning_tokens":              s.ReasoningTokens,
+		"peak_prompt_tokens":            s.PeakPromptTokens,
+		"compactions":                   s.Compactions,
+		"duration_ms":                   s.DurationMillis,
 	}
 	if s.CtxSize > 0 {
 		record["ctx_size"] = s.CtxSize
 		record["peak_ctx_pct"] = roundPct(s.PeakCtxPct)
+	}
+	if s.PromptCacheAccountingKnown && s.PromptCacheHitTokens+s.PromptCacheMissTokens > 0 {
+		record["prompt_cache_hit_rate"] = roundPct(s.PromptCacheHitRate)
 	}
 	if len(s.TopToolsByOutput) > 0 {
 		record["top_tools_by_output"] = s.TopToolsByOutput

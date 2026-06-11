@@ -109,9 +109,38 @@ type ChatOptions struct {
 }
 
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens,omitempty"`
-	CompletionTokens int `json:"completion_tokens,omitempty"`
-	TotalTokens      int `json:"total_tokens,omitempty"`
+	PromptTokens               int  `json:"prompt_tokens,omitempty"`
+	CompletionTokens           int  `json:"completion_tokens,omitempty"`
+	TotalTokens                int  `json:"total_tokens,omitempty"`
+	PromptCacheHitTokens       int  `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptCacheMissTokens      int  `json:"prompt_cache_miss_tokens,omitempty"`
+	PromptCacheAccountingKnown bool `json:"prompt_cache_accounting_known,omitempty"`
+	ReasoningTokens            int  `json:"reasoning_tokens,omitempty"`
+}
+
+func (u *Usage) UnmarshalJSON(data []byte) error {
+	type usageFields Usage
+	var parsed struct {
+		usageFields
+		CompletionTokensDetails struct {
+			ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+		} `json:"completion_tokens_details,omitempty"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	*u = Usage(parsed.usageFields)
+	if parsed.CompletionTokensDetails.ReasoningTokens > 0 {
+		u.ReasoningTokens = parsed.CompletionTokensDetails.ReasoningTokens
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	_, hasHit := raw["prompt_cache_hit_tokens"]
+	_, hasMiss := raw["prompt_cache_miss_tokens"]
+	u.PromptCacheAccountingKnown = hasHit && hasMiss
+	return nil
 }
 
 type ModelInfo struct {
@@ -502,7 +531,7 @@ func normalizeHostedTools(tools []Tool) ([]Tool, map[string]string) {
 func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream bool, backend string) any {
 	payload := hostedChatPayload{
 		Model:    opts.Model,
-		Messages: hostedChatMessages(repairMessageToolPairing(messages)),
+		Messages: hostedChatMessages(repairMessageToolPairing(messages), backend),
 		Stream:   stream,
 	}
 	if opts.MaxTokens > 0 {
@@ -595,13 +624,25 @@ func repairMessageToolPairing(messages []ChatMessage) []ChatMessage {
 	return repaired
 }
 
-func hostedChatMessages(messages []ChatMessage) []ChatMessage {
+// hostedChatMessages prepares messages for a hosted chat backend. For most
+// hosted backends it strips reasoning_content from history to avoid
+// re-sending model-internal reasoning as context. For DeepSeek specifically,
+// assistant reasoning_content must be preserved because the hosted API
+// rejects follow-up requests when prior thinking-mode reasoning is missing
+// from history.
+func hostedChatMessages(messages []ChatMessage, backend string) []ChatMessage {
 	if len(messages) == 0 {
 		return nil
 	}
+	// DeepSeek hosted-chat requires reasoning_content continuity in history
+	// when the prior response was in thinking mode. Preserve the field on
+	// assistant messages; other roles should not carry it.
+	preserveReasoning := util.EqualTrimFold(backend, config.BackendDeepSeek)
 	out := make([]ChatMessage, len(messages))
 	for i, msg := range messages {
-		msg.ReasoningContent = ""
+		if !preserveReasoning || msg.Role != "assistant" {
+			msg.ReasoningContent = ""
+		}
 		out[i] = msg
 	}
 	return out

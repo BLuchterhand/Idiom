@@ -284,16 +284,20 @@ func hasBlockedCompletionEvent(out []byte) bool {
 // invoked with --json (the wrapper forwards user-supplied --json
 // today; #87's token tracking is opt-in by that flag).
 type laneSessionSummary struct {
-	SessionID        string
-	ModelCalls       int
-	ToolCalls        int
-	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
-	PeakPromptTokens int
-	ContextSize      int
-	DurationMS       int
-	StopReason       string
+	SessionID                  string
+	ModelCalls                 int
+	ToolCalls                  int
+	PromptTokens               int
+	CompletionTokens           int
+	TotalTokens                int
+	PromptCacheHitTokens       int
+	PromptCacheMissTokens      int
+	PromptCacheAccountingKnown bool
+	ReasoningTokens            int
+	PeakPromptTokens           int
+	ContextSize                int
+	DurationMS                 int
+	StopReason                 string
 }
 
 // parseSessionSummary scans the JSONL output stream for the last
@@ -318,16 +322,20 @@ func parseSessionSummary(out []byte) (laneSessionSummary, bool) {
 			continue
 		}
 		result = laneSessionSummary{
-			SessionID:        jsonString(ev["session_id"]),
-			ModelCalls:       jsonInt(ev["model_calls"]),
-			ToolCalls:        jsonInt(ev["tool_calls"]),
-			PromptTokens:     jsonInt(ev["prompt_tokens"]),
-			CompletionTokens: jsonInt(ev["completion_tokens"]),
-			TotalTokens:      jsonInt(ev["total_tokens"]),
-			PeakPromptTokens: jsonInt(ev["peak_prompt_tokens"]),
-			ContextSize:      jsonInt(ev["ctx_size"]),
-			DurationMS:       jsonInt(ev["duration_ms"]),
-			StopReason:       jsonString(ev["stop_reason"]),
+			SessionID:                  jsonString(ev["session_id"]),
+			ModelCalls:                 jsonInt(ev["model_calls"]),
+			ToolCalls:                  jsonInt(ev["tool_calls"]),
+			PromptTokens:               jsonInt(ev["prompt_tokens"]),
+			CompletionTokens:           jsonInt(ev["completion_tokens"]),
+			TotalTokens:                jsonInt(ev["total_tokens"]),
+			PromptCacheHitTokens:       jsonInt(ev["prompt_cache_hit_tokens"]),
+			PromptCacheMissTokens:      jsonInt(ev["prompt_cache_miss_tokens"]),
+			PromptCacheAccountingKnown: jsonBool(ev["prompt_cache_accounting_known"]),
+			ReasoningTokens:            jsonInt(ev["reasoning_tokens"]),
+			PeakPromptTokens:           jsonInt(ev["peak_prompt_tokens"]),
+			ContextSize:                jsonInt(ev["ctx_size"]),
+			DurationMS:                 jsonInt(ev["duration_ms"]),
+			StopReason:                 jsonString(ev["stop_reason"]),
 		}
 		found = true
 	}

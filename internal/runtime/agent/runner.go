@@ -223,6 +223,7 @@ func (r *Runner) Run(
 	setCurrentAllowedTools := func(tools []string) {
 		r.currentAllowedTools = append(r.currentAllowedTools[:0], tools...)
 	}
+	var directAnswerSurfaceEmitted bool
 	if r.Workspace != nil {
 		priorPlanThenExecuteMode := r.Workspace.PlanThenExecutePlannerMode()
 		switch strings.TrimSpace(r.RuntimeBrief.TaskFamily) {
@@ -314,6 +315,18 @@ func (r *Runner) Run(
 			contract.PhaseID == turnPhaseImplementationVerifyReady ||
 			contract.PhaseID == turnPhaseImplementationWriteReady {
 			allowed = append([]string(nil), contract.AllowedTools...)
+		}
+		// Direct-answer surface inventory overrides the allowed tool list
+		// for direct-answer lanes. This ensures the typed surface is the
+		// single authority for tool visibility in direct-answer mode.
+		if surfaceTools := DirectAnswerSurfaceForBriefTools(r.RuntimeBrief); surfaceTools != nil {
+			allowed = append([]string(nil), surfaceTools...)
+			if !directAnswerSurfaceEmitted {
+				if surface, ok := DirectAnswerSurfaceForBrief(r.RuntimeBrief); ok {
+					EmitDirectAnswerSurfaceEvent(r.emitEvent, surface)
+					directAnswerSurfaceEmitted = true
+				}
+			}
 		}
 		if len(turnHiddenTools) > 0 {
 			filtered := make([]string, 0, len(allowed))
@@ -495,6 +508,7 @@ func (r *Runner) Run(
 	declarationMovesForbidden := declarationMovesForbiddenByMessages(turnMessages)
 	rejectedActions := make(map[string]int)
 	consecutiveRejectedActions := 0
+	transportRetries := 0
 	reviewRepairTerminalRequiredRejects := 0
 	rejectionRecoveryNudgeUsed := false
 	consecutiveNoProgress := 0
@@ -723,6 +737,16 @@ func (r *Runner) Run(
 		requestMessages = chatMessagesForOptions(requestMessages, modelCallOpts)
 		assistantMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, modelCallOpts)
 		if err != nil {
+			errStr := strings.ToLower(err.Error())
+			if transportRetries < 1 && (strings.Contains(errStr, "transport failed") || strings.Contains(errStr, "eof") || strings.Contains(errStr, "connection reset")) {
+				transportRetries++
+				turnMessages = append(turnMessages, llama.ChatMessage{
+					Role:    "system",
+					Content: "The previous model request was interrupted by a temporary connection issue. Continue from where you left off, repeating any incomplete tool call or thought.",
+				})
+				r.emitEvent(RunEvent{Role: "transport_retry", Content: fmt.Sprintf("transport error, retry %d/1: %s", transportRetries, errStr)})
+				continue
+			}
 			if prompt, ok := r.planThenExecuteNativeSubmitPlanNoCallFallbackPrompt(err, opts, collectedResults, planThenExecuteNativeSubmitPlanNoCallFallbacks); ok {
 				planThenExecuteNativeSubmitPlanNoCallFallbacks++
 				planThenExecuteNativeSubmitPlanDisabled = true
@@ -5994,21 +6018,25 @@ func (r *Runner) emitBudgetLedger(policy RunPolicy, metrics runnerMetrics, stopR
 		return
 	}
 	ledger := runnerBudgetLedger{
-		Lane:                     r.agentName(),
-		UsedModelCalls:           metrics.ModelCalls,
-		MaxModelCalls:            policy.MaxModelCalls,
-		UsedToolResults:          metrics.ToolCalls,
-		PromptTokens:             metrics.PromptTokens,
-		CompletionTokens:         metrics.CompletionTokens,
-		TotalTokens:              metrics.TotalTokens,
-		ProgressTurns:            metrics.ProgressTurns,
-		RejectedActions:          metrics.RejectedActions,
-		CompletionGateRejections: metrics.CompletionGateRejections,
-		ContextCompactions:       metrics.Compactions,
-		ReadClassCalls:           metrics.ReadClassCalls,
-		DurationMillis:           time.Since(metrics.startedAt).Milliseconds(),
-		StopReason:               strings.TrimSpace(stopReason),
-		BudgetExhausted:          exhausted,
+		Lane:                       r.agentName(),
+		UsedModelCalls:             metrics.ModelCalls,
+		MaxModelCalls:              policy.MaxModelCalls,
+		UsedToolResults:            metrics.ToolCalls,
+		PromptTokens:               metrics.PromptTokens,
+		CompletionTokens:           metrics.CompletionTokens,
+		TotalTokens:                metrics.TotalTokens,
+		PromptCacheHitTokens:       metrics.PromptCacheHitTokens,
+		PromptCacheMissTokens:      metrics.PromptCacheMissTokens,
+		PromptCacheAccountingKnown: metrics.PromptCacheAccountingKnown,
+		ReasoningTokens:            metrics.ReasoningTokens,
+		ProgressTurns:              metrics.ProgressTurns,
+		RejectedActions:            metrics.RejectedActions,
+		CompletionGateRejections:   metrics.CompletionGateRejections,
+		ContextCompactions:         metrics.Compactions,
+		ReadClassCalls:             metrics.ReadClassCalls,
+		DurationMillis:             time.Since(metrics.startedAt).Milliseconds(),
+		StopReason:                 strings.TrimSpace(stopReason),
+		BudgetExhausted:            exhausted,
 	}
 	if policy.MaxToolSteps > 0 {
 		ledger.MaxToolSteps = policy.MaxToolSteps
@@ -6085,6 +6113,14 @@ func (r *Runner) emitModelCallTraceWithOptions(step int, label string, prompt []
 	payload["prompt_tokens"] = reply.Usage.PromptTokens
 	payload["completion_tokens"] = reply.Usage.CompletionTokens
 	payload["total_tokens"] = reply.Usage.TotalTokens
+	if reply.Usage.PromptCacheAccountingKnown {
+		payload["prompt_cache_hit_tokens"] = reply.Usage.PromptCacheHitTokens
+		payload["prompt_cache_miss_tokens"] = reply.Usage.PromptCacheMissTokens
+		payload["prompt_cache_accounting_known"] = true
+	}
+	if reply.Usage.ReasoningTokens > 0 {
+		payload["reasoning_tokens"] = reply.Usage.ReasoningTokens
+	}
 	payload["ctx_size"] = r.ContextSize
 	payload["message_count"] = len(prompt)
 	payload["role_chars"] = roleChars

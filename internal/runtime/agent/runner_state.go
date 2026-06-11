@@ -203,38 +203,46 @@ func (p RunPolicy) shouldStopForDuration(startedAt time.Time) bool {
 }
 
 type runnerMetrics struct {
-	startedAt                time.Time
-	ModelCalls               int `json:"used_model_calls"`
-	ToolCalls                int `json:"used_tool_results"`
-	PromptTokens             int `json:"prompt_tokens,omitempty"`
-	CompletionTokens         int `json:"completion_tokens,omitempty"`
-	TotalTokens              int `json:"total_tokens,omitempty"`
-	ProgressTurns            int `json:"progress_turns"`
-	RejectedActions          int `json:"rejected_actions"`
-	CompletionGateRejections int `json:"completion_gate_rejections"`
-	Compactions              int `json:"context_compactions"`
-	ReadClassCalls           int `json:"read_class_calls"`
+	startedAt                  time.Time
+	ModelCalls                 int  `json:"used_model_calls"`
+	ToolCalls                  int  `json:"used_tool_results"`
+	PromptTokens               int  `json:"prompt_tokens,omitempty"`
+	CompletionTokens           int  `json:"completion_tokens,omitempty"`
+	TotalTokens                int  `json:"total_tokens,omitempty"`
+	PromptCacheHitTokens       int  `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptCacheMissTokens      int  `json:"prompt_cache_miss_tokens,omitempty"`
+	PromptCacheAccountingKnown bool `json:"prompt_cache_accounting_known,omitempty"`
+	ReasoningTokens            int  `json:"reasoning_tokens,omitempty"`
+	ProgressTurns              int  `json:"progress_turns"`
+	RejectedActions            int  `json:"rejected_actions"`
+	CompletionGateRejections   int  `json:"completion_gate_rejections"`
+	Compactions                int  `json:"context_compactions"`
+	ReadClassCalls             int  `json:"read_class_calls"`
 }
 
 type runnerBudgetLedger struct {
-	Lane                     string   `json:"lane"`
-	UsedModelCalls           int      `json:"used_model_calls"`
-	MaxModelCalls            int      `json:"max_model_calls,omitempty"`
-	UsedToolResults          int      `json:"used_tool_results"`
-	MaxToolSteps             int      `json:"max_tool_steps,omitempty"`
-	PromptTokens             int      `json:"prompt_tokens,omitempty"`
-	CompletionTokens         int      `json:"completion_tokens,omitempty"`
-	TotalTokens              int      `json:"total_tokens,omitempty"`
-	ProgressTurns            int      `json:"progress_turns"`
-	RejectedActions          int      `json:"rejected_actions"`
-	CompletionGateRejections int      `json:"completion_gate_rejections"`
-	ContextCompactions       int      `json:"context_compactions"`
-	ReadClassCalls           int      `json:"read_class_calls,omitempty"`
-	DurationMillis           int64    `json:"duration_millis"`
-	StopReason               string   `json:"stop_reason"`
-	BudgetExhausted          bool     `json:"budget_exhausted"`
-	NextAllowedActions       []string `json:"next_allowed_actions,omitempty"`
-	UserVisibleUncertainty   string   `json:"user_visible_uncertainty,omitempty"`
+	Lane                       string   `json:"lane"`
+	UsedModelCalls             int      `json:"used_model_calls"`
+	MaxModelCalls              int      `json:"max_model_calls,omitempty"`
+	UsedToolResults            int      `json:"used_tool_results"`
+	MaxToolSteps               int      `json:"max_tool_steps,omitempty"`
+	PromptTokens               int      `json:"prompt_tokens,omitempty"`
+	CompletionTokens           int      `json:"completion_tokens,omitempty"`
+	TotalTokens                int      `json:"total_tokens,omitempty"`
+	PromptCacheHitTokens       int      `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptCacheMissTokens      int      `json:"prompt_cache_miss_tokens,omitempty"`
+	PromptCacheAccountingKnown bool     `json:"prompt_cache_accounting_known,omitempty"`
+	ReasoningTokens            int      `json:"reasoning_tokens,omitempty"`
+	ProgressTurns              int      `json:"progress_turns"`
+	RejectedActions            int      `json:"rejected_actions"`
+	CompletionGateRejections   int      `json:"completion_gate_rejections"`
+	ContextCompactions         int      `json:"context_compactions"`
+	ReadClassCalls             int      `json:"read_class_calls,omitempty"`
+	DurationMillis             int64    `json:"duration_millis"`
+	StopReason                 string   `json:"stop_reason"`
+	BudgetExhausted            bool     `json:"budget_exhausted"`
+	NextAllowedActions         []string `json:"next_allowed_actions,omitempty"`
+	UserVisibleUncertainty     string   `json:"user_visible_uncertainty,omitempty"`
 }
 
 type runnerCompletionStatus struct {
@@ -256,6 +264,10 @@ func (m *runnerMetrics) addUsage(usage llama.Usage) {
 	}
 	m.PromptTokens += nonNegativeInt(usage.PromptTokens)
 	m.CompletionTokens += nonNegativeInt(usage.CompletionTokens)
+	m.PromptCacheHitTokens += nonNegativeInt(usage.PromptCacheHitTokens)
+	m.PromptCacheMissTokens += nonNegativeInt(usage.PromptCacheMissTokens)
+	m.PromptCacheAccountingKnown = m.PromptCacheAccountingKnown || usage.PromptCacheAccountingKnown
+	m.ReasoningTokens += nonNegativeInt(usage.ReasoningTokens)
 	total := usage.TotalTokens
 	if total <= 0 {
 		total = usage.PromptTokens + usage.CompletionTokens
