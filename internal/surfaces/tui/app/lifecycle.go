@@ -734,7 +734,7 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 
 	target := truncateRunes(collapseWhitespace(toolRequestTraceTarget(req)), 96)
 	switch strings.TrimSpace(req.Tool) {
-	case "context_pack":
+	case workspace.ToolNameContextPack:
 		if target == "" {
 			target = strings.TrimSpace(req.Task)
 		}
@@ -742,12 +742,12 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 			return "build a ranked context packet before choosing exact reads"
 		}
 		return "build a ranked context packet for " + truncateRunes(collapseWhitespace(target), 96)
-	case "context_query", "context_zoom", "context_impact", "dependency_graph":
+	case workspace.ToolNameContextQuery, workspace.ToolNameContextZoom, workspace.ToolNameContextImpact, workspace.ToolNameDependencyGraph:
 		if target == "" {
 			return "trace code relationships without broad file reads"
 		}
 		return "trace code relationships around " + target
-	case "discovery_query":
+	case workspace.ToolNameDiscoveryQuery:
 		purpose := strings.TrimSpace(req.Purpose)
 		if purpose == "" {
 			purpose = "repository discovery"
@@ -756,22 +756,22 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 			return "run structured " + purpose + " discovery"
 		}
 		return "run structured " + purpose + " discovery around " + target
-	case "list_files":
+	case workspace.ToolNameListFiles:
 		if target == "" {
 			target = "the current workspace"
 		}
 		return "map " + target + " before choosing what to inspect"
-	case "search_files":
+	case workspace.ToolNameSearchFiles:
 		if target == "" {
 			return "find candidate files for the next inspection step"
 		}
 		return "find candidate files matching " + target
-	case "search_content":
+	case workspace.ToolNameSearchContent:
 		if target == "" {
 			return "locate references before opening files"
 		}
 		return "locate references to " + target
-	case "read_file":
+	case workspace.ToolNameReadFile:
 		if target == "" {
 			return "inspect source context needed for this turn"
 		}
@@ -786,14 +786,14 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 			return "read the exact declaration instead of a broad file slice"
 		}
 		return "read the exact declaration around " + target
-	case "edit_file", "write_file", "append_file", "apply_patch":
+	case workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameApplyPatch:
 		if target == "" {
 			return "apply the planned code change"
 		}
 		return "apply the planned change in " + target
-	case "task_ledger":
+	case workspace.ToolNameTaskLedger:
 		return "keep the visible plan synchronized with the work"
-	case "shell":
+	case workspace.ToolNameShell:
 		if target == "" {
 			return "inspect or verify state with a command"
 		}
@@ -918,7 +918,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		}
 		tool := strings.TrimSpace(result.Tool)
 		switch tool {
-		case "read_file", "code_navigate", "read_only_capability", "context_zoom":
+		case workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate, workspace.ToolNameReadOnlyCapability, workspace.ToolNameContextZoom:
 			if strings.TrimSpace(result.Output) != "" || strings.TrimSpace(result.Summary) != "" {
 				turnSourceResults = append(turnSourceResults, result)
 			}
@@ -971,7 +971,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 					auditEvents: historyAuditEventsForToolResult(event),
 				}
 			}
-			if workspace.IsWorkspaceWriteTool(event.Request.Tool) || event.Request.Tool == "task_ledger" || strings.TrimSpace(event.Result.Tool) == "submit_plan" {
+			if workspace.IsWorkspaceWriteTool(event.Request.Tool) || event.Request.Tool == workspace.ToolNameTaskLedger || strings.TrimSpace(event.Result.Tool) == workspace.ToolNameSubmitPlan {
 				m.events <- planRefreshMsg{}
 			}
 		},
@@ -1032,7 +1032,7 @@ func (m *Model) pinPathsFromToolResult(result workspace.ToolResult) {
 		return
 	}
 	switch strings.TrimSpace(result.Tool) {
-	case "read_file", "edit_file", "write_file", "append_file",
+	case workspace.ToolNameReadFile, workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile,
 		"go_read_symbol", "go_extract_body", "go_file_outline":
 		if path := extractPinnablePathFromSummary(result.Summary); path != "" {
 			registry.Pin(path)

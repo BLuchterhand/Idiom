@@ -9,7 +9,7 @@ import (
 	"idiom/internal/platform/util"
 )
 
-const CodeNavigateToolName = "code_navigate"
+const CodeNavigateToolName = ToolNameCodeNavigate
 
 type languageToolCatalogEntry struct {
 	Language             string

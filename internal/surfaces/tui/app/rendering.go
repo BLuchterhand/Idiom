@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
 )
@@ -243,29 +244,29 @@ func evidenceDisplayName(rawTool string) string {
 	}
 	// Generic tools.
 	switch tool {
-	case "read_file":
+	case workspace.ToolNameReadFile:
 		return "read"
-	case "edit_file", "write_file", "append_file", "apply_patch":
+	case workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameApplyPatch:
 		return "edit"
-	case "search_content", "search_files":
+	case workspace.ToolNameSearchContent, workspace.ToolNameSearchFiles:
 		return "search"
-	case "list_files":
+	case workspace.ToolNameListFiles:
 		return "list"
-	case "shell":
+	case workspace.ToolNameShell:
 		return "run"
-	case "context_pack":
+	case workspace.ToolNameContextPack:
 		return "context"
-	case "discovery_query":
+	case workspace.ToolNameDiscoveryQuery:
 		return "discover"
-	case "dependency_graph":
+	case workspace.ToolNameDependencyGraph:
 		return "deps"
-	case "task_ledger":
+	case workspace.ToolNameTaskLedger:
 		return "plan"
 	case "child_task":
 		return "delegate"
-	case "submit_plan":
+	case workspace.ToolNameSubmitPlan:
 		return "submit"
-	case "source_sanity":
+	case workspace.ToolNameSourceSanity:
 		return "verify"
 	default:
 		return strings.ToLower(tool)

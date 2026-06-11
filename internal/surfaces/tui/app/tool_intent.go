@@ -1,25 +1,29 @@
 package app
 
-import "strings"
+import (
+	"strings"
+
+	"idiom/internal/capabilities/workspace"
+)
 
 func toolIntent(toolName, target string) string {
 	switch strings.TrimSpace(toolName) {
-	case "list_files":
+	case workspace.ToolNameListFiles:
 		if target == "" {
 			target = "the current workspace"
 		}
 		return "map " + target + " before choosing what to inspect"
-	case "search_files":
+	case workspace.ToolNameSearchFiles:
 		if target == "" {
 			return "find candidate files for the next inspection step"
 		}
 		return "find candidate files matching " + target
-	case "search_content":
+	case workspace.ToolNameSearchContent:
 		if target == "" {
 			return "locate references before opening files"
 		}
 		return "locate references to " + target
-	case "read_file":
+	case workspace.ToolNameReadFile:
 		if target == "" {
 			return "inspect source context before deciding the next step"
 		}
@@ -34,39 +38,39 @@ func toolIntent(toolName, target string) string {
 			return "read the exact declaration instead of a broad file slice"
 		}
 		return "read the exact declaration around " + target
-	case "edit_file":
+	case workspace.ToolNameEditFile:
 		if target == "" {
 			return "apply the planned code change"
 		}
 		return "apply the planned change in " + target
-	case "write_file":
+	case workspace.ToolNameWriteFile:
 		if target == "" {
 			return "create or replace a file"
 		}
 		return "create or replace " + target
-	case "append_file":
+	case workspace.ToolNameAppendFile:
 		if target == "" {
 			return "append content to a file"
 		}
 		return "append content to " + target
-	case "apply_patch":
+	case workspace.ToolNameApplyPatch:
 		if target == "" {
 			return "apply a patch"
 		}
 		return "apply a patch to " + target
-	case "mkdir":
+	case workspace.ToolNameMkdir:
 		if target == "" {
 			return "create a directory"
 		}
 		return "create directory " + target
-	case "go_move_declarations":
+	case workspace.ToolNameGoMoveDeclarations:
 		if target == "" {
 			return "move declarations"
 		}
 		return "move declarations in " + target
-	case "task_ledger":
+	case workspace.ToolNameTaskLedger:
 		return "keep the visible plan synchronized with the work"
-	case "shell":
+	case workspace.ToolNameShell:
 		if target == "" {
 			return "inspect or verify state with a command"
 		}

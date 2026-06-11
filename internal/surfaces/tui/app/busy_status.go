@@ -32,41 +32,41 @@ func busyStatusForToolRequest(event agent.ToolRequestEvent, fallback string) str
 	}
 
 	switch tool {
-	case "context_pack", "discovery_query":
+	case workspace.ToolNameContextPack, workspace.ToolNameDiscoveryQuery:
 		if topic == "" {
 			return "Qwen is mapping the relevant code"
 		}
 		return "Qwen is mapping code related to " + topic
-	case "context_query", "context_zoom", "context_impact", "dependency_graph":
+	case workspace.ToolNameContextQuery, workspace.ToolNameContextZoom, workspace.ToolNameContextImpact, workspace.ToolNameDependencyGraph:
 		if topic == "" {
 			return "Qwen is finding code relationships"
 		}
 		return "Qwen is tracing code relationships for " + topic
-	case "list_files", "search_files", "search_content", "structural_search", "ctags_symbols":
+	case workspace.ToolNameListFiles, workspace.ToolNameSearchFiles, workspace.ToolNameSearchContent, workspace.ToolNameStructuralSearch, workspace.ToolNameCtagsSymbols:
 		if topic == "" {
 			return "Qwen is searching the workspace"
 		}
 		return "Qwen is searching for code related to " + topic
-	case "read_file", "file_stats", "go_file_outline", "rust_file_outline", "ts_file_outline", "python_file_outline", "java_file_outline", "cpp_file_outline":
+	case workspace.ToolNameReadFile, workspace.ToolNameFileStats, "go_file_outline", "rust_file_outline", "ts_file_outline", "python_file_outline", "java_file_outline", "cpp_file_outline":
 		if topic == "" {
 			return "Qwen is reading the relevant code"
 		}
 		return "Qwen is reading code related to " + topic
-	case "code_navigate", "go_read_symbol", "rust_read_symbol", "ts_read_symbol", "python_read_symbol", "java_read_symbol", "cpp_read_symbol":
+	case workspace.ToolNameCodeNavigate, "go_read_symbol", "rust_read_symbol", "ts_read_symbol", "python_read_symbol", "java_read_symbol", "cpp_read_symbol":
 		if topic == "" {
 			return "Qwen is inspecting a source symbol"
 		}
 		return "Qwen is inspecting " + topic
-	case "task", "child_task":
+	case workspace.ToolNameTask, "child_task":
 		if topic == "" {
 			return "Qwen is delegating a focused check"
 		}
 		return "Qwen is delegating a focused check on " + topic
-	case "task_ledger":
+	case workspace.ToolNameTaskLedger:
 		return "Qwen is updating the work plan"
-	case "shell":
+	case workspace.ToolNameShell:
 		return busyStatusForCommand(req.Command)
-	case "submit_plan":
+	case workspace.ToolNameSubmitPlan:
 		return "Qwen is preparing an implementation plan"
 	}
 
