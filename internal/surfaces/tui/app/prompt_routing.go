@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1465,43 +1466,166 @@ func (m *Model) greenfieldCreationRequiresConfirmation(plan promptExecutionPlan)
 	if route.WriteIntent == "yes" || isImplementationLikeFamily(route.Family) {
 		return false
 	}
-	// Check workspace is greenfield (no source files found).
+	// Check workspace is greenfield (no readable project files found).
 	// Any prompt in an empty project under a read-only route is likely a
-	// creation or scaffolding request — the workspace has nothing to read
+	// creation or scaffolding request: the workspace has nothing to read
 	// or discuss. Signal, not scenario template: evidence-based, generic.
-	return !hasWorkspaceSourceFiles(m.workspace.Root())
+	return !hasReadableWorkspaceFiles(m.workspace.Root())
 }
 
-func hasWorkspaceSourceFiles(root string) bool {
-	// Lightweight check: look for any Go, Python, TypeScript, JS, Rust, Java
-	// source files in the workspace root (not recursive — just the root level).
-	// A greenfield project has none of these; an existing project has at least one.
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return false
+const (
+	workspacePresenceProbeMaxEntries = 2000
+	workspacePresenceProbeMaxDepth   = 6
+)
+
+var (
+	errStopWorkspacePresenceProbe = errors.New("stop workspace presence probe")
+
+	workspacePresenceIgnoredDirs = map[string]struct{}{
+		".cache":       {},
+		".codex":       {},
+		".direnv":      {},
+		".git":         {},
+		".idiom":       {},
+		"build":        {},
+		"dist":         {},
+		"logs":         {},
+		"node_modules": {},
+		"target":       {},
+		"transcripts":  {},
+		"vendor":       {},
 	}
-	for _, entry := range entries {
+
+	workspacePresenceFileExtensions = map[string]struct{}{
+		".adoc":    {},
+		".bash":    {},
+		".c":       {},
+		".cc":      {},
+		".cpp":     {},
+		".css":     {},
+		".gd":      {},
+		".go":      {},
+		".graphql": {},
+		".h":       {},
+		".hpp":     {},
+		".html":    {},
+		".java":    {},
+		".js":      {},
+		".json":    {},
+		".jsx":     {},
+		".kt":      {},
+		".kts":     {},
+		".lock":    {},
+		".md":      {},
+		".mdx":     {},
+		".mod":     {},
+		".proto":   {},
+		".py":      {},
+		".rs":      {},
+		".rst":     {},
+		".sh":      {},
+		".sql":     {},
+		".sum":     {},
+		".toml":    {},
+		".ts":      {},
+		".tsx":     {},
+		".txt":     {},
+		".xml":     {},
+		".yaml":    {},
+		".yml":     {},
+		".zsh":     {},
+	}
+
+	workspacePresenceBasenames = map[string]struct{}{
+		".dockerignore":     {},
+		".editorconfig":     {},
+		".env.example":      {},
+		".gitignore":        {},
+		"agents.md":         {},
+		"build.gradle":      {},
+		"build.gradle.kts":  {},
+		"cargo.lock":        {},
+		"cargo.toml":        {},
+		"dockerfile":        {},
+		"go.mod":            {},
+		"go.sum":            {},
+		"makefile":          {},
+		"package-lock.json": {},
+		"package.json":      {},
+		"pom.xml":           {},
+		"pyproject.toml":    {},
+		"readme":            {},
+		"readme.md":         {},
+		"requirements.txt":  {},
+	}
+)
+
+func hasReadableWorkspaceFiles(root string) bool {
+	root = filepath.Clean(root)
+	found := false
+	inspectedFiles := 0
+	budgetExceeded := false
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if path == root {
+				return walkErr
+			}
+			if entry != nil && entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if path == root {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil
+		}
+		depth := workspacePresencePathDepth(rel)
 		if entry.IsDir() {
-			continue
+			if workspacePresenceIgnoredDir(entry.Name()) || depth >= workspacePresenceProbeMaxDepth {
+				return filepath.SkipDir
+			}
+			return nil
 		}
-		ext := strings.ToLower(filepath.Ext(entry.Name()))
-		switch ext {
-		case ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java",
-			".c", ".cc", ".cpp", ".h", ".hpp", ".kt", ".kts",
-			".gd", ".sh", ".bash", ".zsh",
-			".mod", ".sum", "mod", "toml":
-			return true
+		inspectedFiles++
+		if inspectedFiles > workspacePresenceProbeMaxEntries {
+			budgetExceeded = true
+			return errStopWorkspacePresenceProbe
 		}
-		// Also check for well-known root files without extensions.
-		name := strings.ToLower(entry.Name())
-		switch name {
-		case "go.mod", "go.sum", "makefile", "dockerfile", "cargo.toml",
-			"pyproject.toml", "package.json", "package-lock.json",
-			"pom.xml", "build.gradle", "build.gradle.kts":
-			return true
+		if workspacePresenceReadableFile(entry.Name()) {
+			found = true
+			return errStopWorkspacePresenceProbe
 		}
+		return nil
+	})
+	if found || budgetExceeded {
+		return true
 	}
-	return false
+	return err == errStopWorkspacePresenceProbe
+}
+
+func workspacePresencePathDepth(rel string) int {
+	rel = strings.Trim(filepath.ToSlash(rel), "/")
+	if rel == "" || rel == "." {
+		return 0
+	}
+	return strings.Count(rel, "/") + 1
+}
+
+func workspacePresenceIgnoredDir(name string) bool {
+	_, ignored := workspacePresenceIgnoredDirs[strings.ToLower(name)]
+	return ignored
+}
+
+func workspacePresenceReadableFile(name string) bool {
+	name = strings.ToLower(name)
+	if _, ok := workspacePresenceBasenames[name]; ok {
+		return true
+	}
+	_, ok := workspacePresenceFileExtensions[filepath.Ext(name)]
+	return ok
 }
 
 func greenfieldCreationConfirmationQuestion(plan promptExecutionPlan) string {
@@ -1511,5 +1635,5 @@ func greenfieldCreationConfirmationQuestion(plan promptExecutionPlan) string {
 		command = "/plan-execute"
 		lane = "plan-execute"
 	}
-	return fmt.Sprintf("This project appears to be empty and I am currently in read-only mode — there are no source files to read or discuss. If you want me to generate files, reply with `%s <objective>` to switch to the write-capable %s lane. Otherwise, ask your question as-is and I will answer in read-only mode.", lane, command)
+	return fmt.Sprintf("This project appears to be empty and I am currently in read-only mode; there are no project files to read or discuss. If you want me to generate files, reply with `%s <objective>` to switch to the write-capable %s lane. Otherwise, ask your question as-is and I will answer in read-only mode.", lane, command)
 }

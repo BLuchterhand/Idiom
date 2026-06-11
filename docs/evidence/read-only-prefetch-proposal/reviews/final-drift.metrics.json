@@ -1,0 +1,19 @@
+{
+  "prompt_tokens": 97702,
+  "completion_tokens": 5694,
+  "cache_hit_tokens": 71808,
+  "cache_miss_tokens": 25894,
+  "steps": 3,
+  "cost": 0.03871816,
+  "currency": "¥",
+  "compactions": 0,
+  "readiness_checks": 0,
+  "readiness_allowed": 0,
+  "readiness_blocks": 0,
+  "readiness_recoveries": 0,
+  "readiness_errors": 0,
+  "readiness_missing_project_checks": 0,
+  "readiness_missing_complete_steps": 0,
+  "readiness_incomplete_todos": 0,
+  "readiness_command_mismatches": 0
+}

@@ -1,0 +1,22 @@
+[2m  ▎ thinking[0m
+  · 17118 tok · in 16920 (16640 cached / 280 new) · out 198 (55 reasoning) · ¥0.0010
+  -> read_file {"path": "docs/evidence/idiom-efficiency-optimization/reviews/harness-go.md"}
+  -> read_file {"path": "docs/design-direct-answer-efficiency.md"}
+  -> read_file {"path": "docs/evidence/idiom-efficiency-optimization/ledger.md"}
+[2m  ▎ thinking[0m
+Let me gather the necessary source evidence from the key boundaries mentioned in the design — runner gates, final-answer acceptance, writer route telemetry, and the LLM client — to substantiate the review claims.
+  · 27019 tok · in 26426 (13312 cached / 13114 new) · out 593 (279 reasoning) · ¥0.0146 · cache prefix changed: tools
+  -> mcp__codegraph__context {"task": "How does the Idiom harness manage final-answer acceptance, source-grounding gates, route telemetry, and hosted...
+  -> read_file {"path": "internal/runtime/agent/final_answer_acceptance.go"}
+  -> read_file {"path": "internal/runtime/llama/client.go", "offset": 0, "limit": 80}
+[2m  ▎ thinking[0m
+  · 32724 tok · in 32516 (27008 cached / 5508 new) · out 208 (31 reasoning) · ¥0.0065
+  -> read_file {"offset": 80, "path": "internal/runtime/llama/client.go"}
+  -> read_file {"path": "internal/surfaces/tui/app/writer_route.go"}
+  -> grep {"pattern": "sourceGroundingRejectionReason|sourceGroundingMentionedPaths|acceptedAnswerEvidencePaths", "path": "interna...
+  · tool output truncated: 7766 of 40534 bytes elided
+[2m  ▎ thinking[0m
+  · 45397 tok · in 45131 (32640 cached / 12491 new) · out 266 (56 reasoning) · ¥0.0137
+  -> read_file {"offset": 8635, "path": "internal/runtime/agent/runner.go", "limit": 160}
+  -> grep {"path": "internal/contracts/writerroute", "pattern": "Decision|EventFields|RoleAliases|Model"}
+  -> grep {"path": "internal/runtime/llama", "pattern": "reasoning_content|reasoningContent|PreserveThinking|hostedChat"}

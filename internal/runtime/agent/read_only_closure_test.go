@@ -90,6 +90,122 @@ func TestReadOnlyCloseoutHostOwnedAnswerRejectsSynthesizedDiscoveryInventory(t *
 	}
 }
 
+func TestArchitectureHostOwnedAnswerRejectsOffObjectiveSourceInventoryAfterChildTask(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        string(workerruntime.TaskFamilyArchitecture),
+		Contract:          string(workerruntime.ContractArchitecture),
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Can you tell me how this harness uses subagents?",
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "task",
+			Summary: "Child task completed",
+		},
+		{
+			Tool:    "discovery_query",
+			Summary: "Ran architecture_boundary discovery query with 11 layer(s); artifact: .idiom/discovery/queries/5b255b668a9eb910.json",
+			Output: strings.Join([]string{
+				"internal/capabilities/workspace/tool_manifest.go",
+				"internal/capabilities/workspace/manager.go",
+				"internal/capabilities/workspace/tool_schema_export.go",
+				"internal/capabilities/workspace/task_tool.go",
+				"internal/runtime/agent/runner.go",
+			}, "\n"),
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f54 internal/capabilities/workspace/tool_manifest.go lines 140-200 (total lines: 312)",
+			Output: strings.Join([]string{
+				"140:func IsWorkspaceWriteTool(tool string) bool {",
+				"141:\treturn slices.Contains(WorkspaceWriteToolNames(), strings.TrimSpace(tool))",
+				"142:}",
+				"143:func BuildToolManifest(allowedTools []string) []ToolManifestEntry {",
+				"144:\tentries := []ToolManifestEntry{",
+				"145:\t\t{Tool: \"task_ledger\", Purpose: \"track complex multi-step work\"},",
+				"146:\t\t{Tool: \"task\", Purpose: \"delegate broad evidence gathering to a bounded read-only explorer\"},",
+				"147:\t\t{Tool: \"search_files\", Purpose: \"find files by name\"},",
+				"148:\t}",
+				"149:}",
+			}, "\n"),
+		},
+	}
+
+	closeout := readOnlyClosureDecisionForResults(brief, results)
+	if !closeout.Answerable() {
+		t.Fatalf("test must exercise host closeout over answerable-but-off-objective source evidence: %#v", closeout)
+	}
+	if answer, ok := closeout.HostOwnedAnswer("main"); ok {
+		t.Fatalf("architecture host closeout must not synthesize an off-objective source inventory:\n%s", answer)
+	}
+}
+
+func TestArchitectureHostOwnedDiscoveryUsefulnessFallbackFromDiscoveryToolsSource(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyArchitecture),
+			Contract:          string(workerruntime.ContractArchitecture),
+			PermissionProfile: "read_only_workspace",
+			Objective:         "What can we add to our discovery tools in an effort at increasing their overall usefulness?",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "discovery_query",
+			Summary: "Ran architecture_boundary discovery query",
+			Output: strings.Join([]string{
+				"internal/capabilities/workspace/discovery_query.go: discovery query recipes return source-oriented evidence.",
+				"internal/capabilities/workspace/discovery_profile.go: profiles shape discovery evidence.",
+			}, "\n"),
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f11 internal/capabilities/workspace/discovery_tools.go lines 1-160 (total lines: 598)",
+			Output: strings.Join([]string{
+				"1:package workspace",
+				"2:// Discovery tools produce source and profile evidence for architecture questions.",
+				"3:func discoveryToolSurface() {}",
+			}, "\n"),
+		},
+	}
+
+	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
+	if !ok {
+		t.Fatal("expected discovery usefulness fallback from discovery_tools.go source evidence")
+	}
+	for _, want := range []string{"discovery", "tool", "internal/runtime/agent/answer_composer.go", "internal/runtime/agent/runner.go", "internal/capabilities/workspace/discovery_query.go"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("discovery usefulness fallback answer missing %q:\n%s", want, answer)
+		}
+	}
+}
+
+func TestReadOnlyHostOwnedAnswerUsesPrefetchSourceBody(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Can we shorten the save label in internal/labels/labels.go? Answer the question from the codebase. Do not edit files.",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    workspace.ToolNamePrefetch,
+		Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5; source: prefetch)",
+		Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
+	}}
+
+	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
+	if !ok {
+		t.Fatal("expected host closeout to answer from prefetched source body")
+	}
+	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "\"Save changes\""} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("prefetch closeout answer missing %q:\n%s", want, answer)
+		}
+	}
+}
+
 func TestReadOnlyCloseoutHostSynthesizesDelegatedChildAnswer(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        string(workerruntime.TaskFamilyDelegatedReadOnly),

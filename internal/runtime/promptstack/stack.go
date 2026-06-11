@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"idiom/internal/platform/config"
+	canonicalprompts "idiom/prompts"
 )
 
 var autoProjectPromptCandidates = []string{
@@ -189,6 +190,18 @@ func (b *stackBuilder) addFile(kind, name, path string, required bool, warnMissi
 
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			if body, sourcePath, ok := embeddedCanonicalPrompt(kind, name, path); ok {
+				b.seen[path] = struct{}{}
+				b.sources = append(b.sources, Source{
+					Kind:        kind,
+					DisplayName: name,
+					Path:        sourcePath,
+				})
+				b.sections = append(b.sections, renderSection(kind, name, body))
+				return nil
+			}
+		}
 		if !required && os.IsNotExist(err) {
 			if warnMissing {
 				b.warnings = append(b.warnings, fmt.Sprintf("skipped missing %s prompt %q", kind, path))
@@ -217,6 +230,57 @@ func (b *stackBuilder) addFile(kind, name, path string, required bool, warnMissi
 	})
 	b.sections = append(b.sections, renderSection(kind, name, body))
 	return nil
+}
+
+func embeddedCanonicalPrompt(kind, name, path string) (string, string, bool) {
+	slashPath := filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
+	switch kind {
+	case "baseline":
+		if canonicalBaselinePromptPath(slashPath) {
+			return canonicalprompts.BasePrompt(), "embedded:prompts/base.md", true
+		}
+	case "profile":
+		if profileName, ok := canonicalProfilePromptName(slashPath); ok {
+			body, err := canonicalprompts.Profile(profileName + ".md")
+			if err == nil {
+				display := strings.TrimPrefix(strings.TrimSpace(name), "profile:")
+				if display == "" {
+					display = profileName
+				}
+				return body, "embedded:prompts/profiles/" + display + ".md", true
+			}
+		}
+	}
+	return "", "", false
+}
+
+func canonicalBaselinePromptPath(path string) bool {
+	path = strings.TrimPrefix(path, "./")
+	return path == "prompts/base.md" ||
+		path == ".idiom/prompts/base.md" ||
+		strings.HasSuffix(path, "/prompts/base.md") ||
+		strings.HasSuffix(path, "/.idiom/prompts/base.md")
+}
+
+func canonicalProfilePromptName(path string) (string, bool) {
+	path = strings.TrimPrefix(path, "./")
+	for _, prefix := range []string{"prompts/profiles/", ".idiom/prompts/profiles/"} {
+		if strings.HasPrefix(path, prefix) && strings.HasSuffix(path, ".md") {
+			name := strings.TrimSuffix(strings.TrimPrefix(path, prefix), ".md")
+			if name != "" && !strings.Contains(name, "/") {
+				return name, true
+			}
+		}
+	}
+	for _, marker := range []string{"/prompts/profiles/", "/.idiom/prompts/profiles/"} {
+		if idx := strings.LastIndex(path, marker); idx >= 0 && strings.HasSuffix(path, ".md") {
+			name := strings.TrimSuffix(path[idx+len(marker):], ".md")
+			if name != "" && !strings.Contains(name, "/") {
+				return name, true
+			}
+		}
+	}
+	return "", false
 }
 
 func renderSection(kind, name, body string) string {

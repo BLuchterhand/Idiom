@@ -1550,3 +1550,40 @@ func TestAcceptedAnswerEvidencePathsAliasIgnoresUnrelatedCandidateBody(t *testin
 		t.Fatalf("alias evidence paths should not report unrelated candidate source body, got %v", paths)
 	}
 }
+
+func TestReadOnlyPrefetchEvidenceDedupsWithModelReadAndKeepsSource(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Read README.md and explain what Idiom is.")
+	results := []workspace.ToolResult{
+		{
+			Tool:    workspace.ToolNamePrefetch,
+			Summary: "Read f1 README.md lines 1-1 (total lines: 1; source: prefetch)",
+			Output:  "1:Idiom is a local coding-agent harness.\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 README.md lines 1-1 (total lines: 1)",
+			Output:  "1:Idiom is a local coding-agent harness.\n",
+		},
+	}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if got := ledger.SourceBodyPaths; !slices.Equal(got, []string{"README.md"}) {
+		t.Fatalf("expected deduped source body paths, got %#v", got)
+	}
+	var prefetchItems int
+	var readItems int
+	for _, item := range ledger.Items {
+		if item.Kind != readOnlyEvidenceSourceBody || item.Path != "README.md" {
+			continue
+		}
+		switch item.Source {
+		case "prefetch":
+			prefetchItems++
+		case "read_file":
+			readItems++
+		}
+	}
+	if prefetchItems != 1 || readItems != 1 {
+		t.Fatalf("expected distinct source attribution for prefetch/read_file, got prefetch=%d read=%d items=%#v", prefetchItems, readItems, ledger.Items)
+	}
+}

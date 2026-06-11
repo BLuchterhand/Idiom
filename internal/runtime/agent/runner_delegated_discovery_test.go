@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/platform/config"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -105,6 +108,106 @@ func TestDelegatedReadOnlyPurposeIgnoresToolInventoryTerms(t *testing.T) {
 
 	if plan.defaultPurpose != "architecture_boundary" {
 		t.Fatalf("tool inventory metadata must not force history_context purpose, got %q", plan.defaultPurpose)
+	}
+}
+
+func TestDelegatedDiscoveryPlanTreatsCodexAgentsAsSecondaryForSubagentMechanism(t *testing.T) {
+	objective := strings.Join([]string{
+		"Investigate how this harness (the idiom project) uses subagents.",
+		"Named workspace scope: .codex/agents, internal/runtime/agent, internal/capabilities/workspace, internal/frontier, prompts",
+		"Key terms: subagent, task tool, delegate, explorer, worker, reviewer, investigate, idiom",
+	}, "\n")
+	plan := newDelegatedDiscoveryPlan(objective)
+	if plan.primaryScope != "internal/runtime/agent" {
+		t.Fatalf("expected implementation scope to outrank .codex/agents, got %q", plan.primaryScope)
+	}
+	for _, scope := range plan.detailedScopes {
+		if scope == ".codex/agents" {
+			t.Fatalf(".codex/agents should be secondary evidence, not detailed source scope: %#v", plan.detailedScopes)
+		}
+	}
+
+	runner := &Runner{
+		AgentName: "child:explorer",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:   "delegated_read_only",
+			AllowedTools: []string{"discovery_query", "search_content", "read_file"},
+			Objective:    objective,
+		},
+	}
+	repaired, ok := runner.delegatedReadOnlyDiscoveryQueryRepairRequest(nil, workspace.ToolRequest{
+		Tool:    "discovery_query",
+		Purpose: "architecture_boundary",
+		Path:    ".codex/agents",
+		Pattern: "subagent|task|delegate",
+	})
+	if !ok {
+		t.Fatal("expected child discovery query against .codex/agents to be repaired")
+	}
+	if repaired.Path != "internal/runtime/agent" {
+		t.Fatalf("expected repaired discovery path to use implementation scope, got %#v", repaired)
+	}
+}
+
+func TestDelegatedReadOnlyDiscoveryRepairReplacesBroadNamedScope(t *testing.T) {
+	runner := &Runner{
+		AgentName: "child:explorer",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:   "delegated_read_only",
+			AllowedTools: []string{"discovery_query", "search_content", "read_file"},
+			Objective: strings.Join([]string{
+				"Investigate how this harness uses subagents.",
+				"Named workspace scope: internal/runtime/agent, internal/capabilities/workspace, internal",
+				"Key terms: subagent, child task, task tool",
+			}, "\n"),
+		},
+	}
+	repaired, ok := runner.delegatedReadOnlyDiscoveryQueryRepairRequest(nil, workspace.ToolRequest{
+		Tool:    "discovery_query",
+		Purpose: "architecture_boundary",
+		Path:    "internal",
+		Pattern: "subagent|child",
+	})
+	if !ok {
+		t.Fatal("expected broad internal scope to be repaired")
+	}
+	if repaired.Path != "internal/runtime/agent" {
+		t.Fatalf("expected broad internal scope to redirect to primary implementation scope, got %#v", repaired)
+	}
+}
+
+func TestDelegatedReadOnlyDiscoveryRepairReplacesMissingNamedScope(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "capabilities", "workspace"), 0o755); err != nil {
+		t.Fatalf("mkdir workspace scope: %v", err)
+	}
+	runner := &Runner{
+		AgentName: "child:explorer",
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:   "delegated_read_only",
+			AllowedTools: []string{"discovery_query", "search_content", "read_file"},
+			Objective: strings.Join([]string{
+				"Inventory discovery tools and identify usefulness gaps.",
+				"Named workspace scope: internal/capabilities/workspace, internal/frontier, internal",
+				"Key terms: discovery tools, usefulness",
+			}, "\n"),
+		},
+	}
+	repaired, ok := runner.delegatedReadOnlyDiscoveryQueryRepairRequest(nil, workspace.ToolRequest{
+		Tool:    "discovery_query",
+		Purpose: "architecture_boundary",
+		Path:    "internal/frontier",
+		Pattern: "discovery|tools",
+	})
+	if !ok {
+		t.Fatal("expected missing named scope to be repaired")
+	}
+	if repaired.Path != "internal/capabilities/workspace" {
+		t.Fatalf("expected missing scope to redirect to existing primary implementation scope, got %#v", repaired)
 	}
 }
 

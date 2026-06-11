@@ -25,6 +25,7 @@ const readOnlyHighCardinalitySearchThreshold = 50
 type readOnlyEvidenceItem struct {
 	Kind           readOnlyEvidenceKind
 	Tool           string
+	Source         string
 	Path           string
 	CandidatePaths []string
 	HitCount       int
@@ -109,6 +110,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 				ledger.addItem(readOnlyEvidenceItem{
 					Kind:    readOnlyEvidenceSourceBody,
 					Tool:    tool,
+					Source:  readOnlyEvidenceItemSource(tool),
 					Path:    path,
 					Summary: strings.TrimSpace(result.Summary),
 				})
@@ -132,6 +134,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 						ledger.addItem(readOnlyEvidenceItem{
 							Kind:    readOnlyEvidenceSourceBody,
 							Tool:    tool,
+							Source:  readOnlyEvidenceItemSource(tool),
 							Path:    path,
 							Summary: strings.TrimSpace(result.Summary),
 						})
@@ -160,6 +163,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 					ledger.addItem(readOnlyEvidenceItem{
 						Kind:    readOnlyEvidenceSourceBody,
 						Tool:    tool,
+						Source:  readOnlyEvidenceItemSource(tool),
 						Path:    path,
 						Summary: strings.TrimSpace(result.Summary),
 					})
@@ -271,10 +275,19 @@ func delegatedTaskOutputHasFindingEvidence(output string) bool {
 
 func (l *readOnlyAnswerabilityLedger) addItem(item readOnlyEvidenceItem) {
 	item.Tool = strings.TrimSpace(item.Tool)
+	item.Source = strings.TrimSpace(item.Source)
 	item.Path = normalizeRunnerPath(item.Path)
 	item.CandidatePaths = readOnlySourceLikePaths(item.CandidatePaths, 128)
 	item.Summary = strings.TrimSpace(item.Summary)
 	l.Items = append(l.Items, item)
+}
+
+func readOnlyEvidenceItemSource(tool string) string {
+	tool = strings.TrimSpace(tool)
+	if tool == workspace.ToolNamePrefetch {
+		return "prefetch"
+	}
+	return tool
 }
 
 func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveSupport(path string, body string) {

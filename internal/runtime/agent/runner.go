@@ -216,14 +216,50 @@ func (r *Runner) Run(
 	exactAnchorWriteOnlyActive := exactAnchorPreWriteSurfaceActive(r.RuntimeBrief, collectedResults)
 	exactAnchorWriteFailures := 0
 	currentAllowedTools := []string(nil)
+	runState := &runnerRunState{
+		ctx:                                     ctx,
+		opts:                                    opts,
+		collectedResults:                        collectedResults,
+		turnMessages:                            turnMessages,
+		turnHiddenTools:                         turnHiddenTools,
+		executionState:                          &executionState,
+		implementationScopedHiddenTools:         implementationScopedHiddenTools,
+		delegatedReadOnlyAnswerReady:            delegatedReadOnlyAnswerReady,
+		postChildPacketActive:                   postChildPacketActive,
+		implementationWriteOnlyRecoveryActive:   implementationWriteOnlyRecoveryActive,
+		requiredPathCompletionRecoveryActive:    requiredPathCompletionRecoveryActive,
+		exactAnchorWriteOnlyActive:              exactAnchorWriteOnlyActive,
+		planThenExecuteNativeSubmitPlanDisabled: planThenExecuteNativeSubmitPlanDisabled,
+	}
+	syncRunState := func() {
+		runState.opts = opts
+		runState.collectedResults = collectedResults
+		runState.turnMessages = turnMessages
+		runState.turnHiddenTools = turnHiddenTools
+		runState.currentAllowedTools = append(runState.currentAllowedTools[:0], currentAllowedTools...)
+		runState.executionState = &executionState
+		runState.implementationScopedHiddenTools = implementationScopedHiddenTools
+		runState.delegatedReadOnlyAnswerReady = delegatedReadOnlyAnswerReady
+		runState.postChildPacketActive = postChildPacketActive
+		runState.implementationWriteOnlyRecoveryActive = implementationWriteOnlyRecoveryActive
+		runState.requiredPathCompletionRecoveryActive = requiredPathCompletionRecoveryActive
+		runState.exactAnchorWriteOnlyActive = exactAnchorWriteOnlyActive
+		runState.planThenExecuteNativeSubmitPlanDisabled = planThenExecuteNativeSubmitPlanDisabled
+	}
+	applyRunState := func() {
+		opts = runState.opts
+		collectedResults = runState.collectedResults
+		turnMessages = runState.turnMessages
+		currentAllowedTools = runState.currentAllowedTools
+		planThenExecuteNativeSubmitPlanDisabled = runState.planThenExecuteNativeSubmitPlanDisabled
+	}
 	defer func() {
 		r.currentAllowedTools = nil
 		r.activeAutonomy = nil
 	}()
 	setCurrentAllowedTools := func(tools []string) {
-		r.currentAllowedTools = append(r.currentAllowedTools[:0], tools...)
+		r.setCurrentAllowedTools(runState, tools)
 	}
-	var directAnswerSurfaceEmitted bool
 	if r.Workspace != nil {
 		priorPlanThenExecuteMode := r.Workspace.PlanThenExecutePlannerMode()
 		switch strings.TrimSpace(r.RuntimeBrief.TaskFamily) {
@@ -238,181 +274,33 @@ func (r *Runner) Run(
 		defer restoreWorkspacePlanThenExecuteMode()
 	}
 	syncCurrentAllowedToolsFromOptions := func() {
-		currentAllowedTools = currentAllowedTools[:0]
-		for _, tool := range opts.Tools {
-			name := strings.TrimSpace(tool.Function.Name)
-			if name != "" {
-				currentAllowedTools = append(currentAllowedTools, name)
-			}
-		}
-		setCurrentAllowedTools(currentAllowedTools)
+		syncRunState()
+		r.syncCurrentAllowedToolsFromOptions(runState)
+		applyRunState()
 	}
 	rebuildTools := func() {
-		if r.Workspace == nil {
-			return
-		}
-		allowed := r.advertisedAllowedTools(r.Workspace.AllowedTools())
-		writeOnlySurface := implementationWriteOnlyRecoveryActive ||
-			requiredPathCompletionRecoveryActive ||
-			implementationPreWriteToolSurfaceActive(r.RuntimeBrief, collectedResults)
-		scopedEditSurface := !writeOnlySurface && implementationScopedEditSurfaceActive(r.RuntimeBrief, collectedResults)
-		if scopedEditSurface {
-			hideImplementationScopedToolsForTurn(turnHiddenTools, implementationScopedHiddenTools, r.Workspace)
-		} else {
-			releaseHiddenTools(turnHiddenTools, implementationScopedHiddenTools)
-		}
-		if workerruntime.PermissionProfileIsReadOnlyVerificationShell(r.RuntimeBrief.PermissionProfile) && !executionState.verificationAttempted {
-			filtered := make([]string, 0, 1)
-			for _, t := range allowed {
-				if t == "shell" {
-					filtered = append(filtered, t)
-				}
-			}
-			allowed = filtered
-		}
-		// Broad discovery/planning/implementation lanes inherit
-		// project-defined external tools because those are host-owned
-		// context affordances. Bounded review and verification contracts
-		// keep the exact runtime allow-list; otherwise opaque externals
-		// can widen the phase after the contract layer already narrowed it.
-		if runnerBriefAllowsExternalToolAppend(r.RuntimeBrief) && !writeOnlySurface && !scopedEditSurface {
-			if extReg := r.Workspace.ExternalToolsRegistry(); extReg != nil {
-				seen := make(map[string]struct{}, len(allowed))
-				for _, name := range allowed {
-					seen[name] = struct{}{}
-				}
-				for _, name := range r.Workspace.AvailableExternalToolNames() {
-					if _, ok := seen[name]; !ok {
-						allowed = append(allowed, name)
-						seen[name] = struct{}{}
-					}
-				}
-			}
-		}
-		if writeOnlySurface {
-			allowed = implementationPreWriteAllowedTools(allowed)
-		} else if scopedEditSurface {
-			contract := deriveTurnPhaseContract(TurnPhaseContractInput{
-				Brief:            r.RuntimeBrief,
-				Results:          collectedResults,
-				BaseAllowedTools: allowed,
-			})
-			allowed = append([]string(nil), contract.AllowedTools...)
-			// applyImplementationWriteReady uses a nil external registry.
-			// External read-only discovery tools bypass that narrow.
-			if extReg := r.Workspace.ExternalToolsRegistry(); extReg != nil {
-				for _, name := range r.Workspace.AvailableExternalToolNames() {
-					if extReg.IsReadOnlyDiscovery(name) && !containsRunnerTool(allowed, name) {
-						allowed = append(allowed, name)
-					}
-				}
-			}
-		} else if contract := deriveTurnPhaseContract(TurnPhaseContractInput{
-			Brief:            r.RuntimeBrief,
-			Results:          collectedResults,
-			BaseAllowedTools: allowed,
-		}); contract.PhaseID == turnPhaseImplementationTargetSource ||
-			contract.PhaseID == turnPhaseImplementationVerifyReady ||
-			contract.PhaseID == turnPhaseImplementationWriteReady {
-			allowed = append([]string(nil), contract.AllowedTools...)
-		}
-		// Direct-answer surface inventory overrides the allowed tool list
-		// for direct-answer lanes. This ensures the typed surface is the
-		// single authority for tool visibility in direct-answer mode.
-		if surfaceTools := DirectAnswerSurfaceForBriefTools(r.RuntimeBrief); surfaceTools != nil {
-			allowed = append([]string(nil), surfaceTools...)
-			if !directAnswerSurfaceEmitted {
-				if surface, ok := DirectAnswerSurfaceForBrief(r.RuntimeBrief); ok {
-					EmitDirectAnswerSurfaceEvent(r.emitEvent, surface)
-					directAnswerSurfaceEmitted = true
-				}
-			}
-		}
-		if len(turnHiddenTools) > 0 {
-			filtered := make([]string, 0, len(allowed))
-			for _, t := range allowed {
-				if !turnHiddenTools[t] {
-					filtered = append(filtered, t)
-				}
-			}
-			allowed = filtered
-		}
-		var tools []llama.Tool
-		if len(allowed) > 0 || !workerruntime.PermissionProfileIsConversationOnly(r.RuntimeBrief.PermissionProfile) {
-			tools = buildLlamaTools(r.Workspace.BuildToolDefinitions(allowed))
-			// Conversation and read-only lanes may expose a harness-owned note
-			// tool. It writes only scratch metadata under .idiom/notes and is
-			// synchronized from the final schema into currentAllowedTools below.
-			if !workerruntime.RuntimeContractIsDirectAnswer(r.RuntimeBrief.Contract) &&
-				r.lanePolicy().ShouldHaveNoteTool(r.RuntimeBrief.Contract) {
-				tools = append(tools, noteToolDefinition())
-				if !slices.Contains(r.RuntimeBrief.AllowedTools, noteToolName) {
-					r.RuntimeBrief.AllowedTools = append(r.RuntimeBrief.AllowedTools, noteToolName)
-				}
-			}
-		}
-		// One selector owns post-readiness tool contraction so schema
-		// narrowing and runtime recovery cannot drift apart.
-		if contract := postReadinessToolContractForBrief(r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive); contract.AnswerOnly {
-			tools = nil
-		} else if contract.RequireSourceRefreshContract {
-			tools = stripPostReadinessBroadTools(tools)
-			tools = applyPostReadinessSchemaRequirements(tools)
-		}
-		opts.Tools = tools
-		syncCurrentAllowedToolsFromOptions()
-		if len(opts.Tools) == 0 {
-			opts.ToolChoice = ""
-		} else if strings.TrimSpace(opts.ToolChoice) == "" {
-			opts.ToolChoice = "auto"
-		}
+		syncRunState()
+		r.rebuildRunTools(runState)
+		applyRunState()
 	}
 	terminalSubmitPlanNativeTools := func() bool {
-		return !planThenExecuteNativeSubmitPlanDisabled && r.supportsTerminalSubmitPlanNativeTools(collectedResults)
+		syncRunState()
+		return r.terminalSubmitPlanNativeTools(runState)
 	}
 	syncPlanThenExecuteRecoveryAllowedTools := func() {
-		syncCurrentAllowedToolsFromOptions()
-		if !opts.ForceNativeTools &&
-			r.planThenExecutePlannerPhase() &&
-			len(opts.Tools) == 0 {
-			surface := DerivePlanExecuteRecoverySurface(r.RuntimeBrief, collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
-			switch surface.Kind {
-			case PlanExecuteRecoverySurfaceAnchorRefresh:
-				currentAllowedTools = append(currentAllowedTools[:0], surface.State.CallableTools...)
-			case PlanExecuteRecoverySurfaceHistoryPending:
-				currentAllowedTools = append(currentAllowedTools[:0], surface.State.CallableTools...)
-			case PlanExecuteRecoverySurfaceSubmitReady, PlanExecuteRecoverySurfaceSubmitCorrection:
-				currentAllowedTools = append(currentAllowedTools[:0], "submit_plan")
-			}
-			setCurrentAllowedTools(currentAllowedTools)
-		}
+		syncRunState()
+		r.syncPlanThenExecuteRecoveryAllowedTools(runState)
+		applyRunState()
 	}
 	refreshPlanThenExecuteTerminalSurface := func(reason string) {
-		surface := DerivePlanExecuteRecoverySurface(r.RuntimeBrief, collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
-		switch surface.Kind {
-		case PlanExecuteRecoverySurfaceAnchorRefresh:
-			r.refreshPlanThenExecuteAnchorRefreshSurface(&turnMessages, collectedResults, reason)
-			return
-		case PlanExecuteRecoverySurfaceSourceSatisfiedTerminal:
-			r.refreshPlanThenExecuteTerminalOutcomeSurface(&turnMessages, collectedResults, reason)
-			return
-		case PlanExecuteRecoverySurfaceSubmitReady, PlanExecuteRecoverySurfaceSubmitCorrection:
-		default:
-			r.prunePlanThenExecuteTerminalSurfaceHistory(&turnMessages, reason)
-			return
-		}
-		if planThenExecuteNativeSubmitPlanDisabled {
-			r.refreshPlanThenExecuteTerminalTextualFallbackSurface(&turnMessages, collectedResults, reason)
-			return
-		}
-		r.refreshPlanThenExecuteTerminalToolSurface(&turnMessages, collectedResults, reason)
+		syncRunState()
+		r.refreshPlanThenExecuteTerminalSurface(runState, reason)
+		applyRunState()
 	}
 	forcePlanThenExecuteTerminalSurface := func(reason string) {
-		if planThenExecuteNativeSubmitPlanDisabled {
-			r.refreshPlanThenExecuteTerminalTextualFallbackSurface(&turnMessages, collectedResults, reason)
-			return
-		}
-		r.refreshPlanThenExecuteTerminalToolSurface(&turnMessages, collectedResults, reason)
+		syncRunState()
+		r.forcePlanThenExecuteTerminalSurface(runState, reason)
+		applyRunState()
 	}
 	if r.Workspace != nil {
 		if exactAnchorWriteOnlyActive {
@@ -447,54 +335,26 @@ func (r *Runner) Run(
 		}
 		r.emitBudgetLedger(policy, metrics, stopReason, budgetExhausted)
 	}()
-	emitTerminalAnswerSignalsOnce := func(decision terminalAnswerDecision) {
-		if acceptedAnswerSignalsEmitted || strings.TrimSpace(decision.RawAnswer) == "" {
-			return
-		}
-		switch decision.Outcome {
-		case terminalAnswerAccepted:
-			if autonomyRecorder != nil {
-				reasonCode := "final_answer_accepted"
-				if r.planThenExecutePlannerPhase() && planThenExecuteSourceSatisfiedAnswerIntent(decision.RawAnswer) {
-					reasonCode = "plan_source_satisfied_short_circuit"
-				}
-				autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyAllow, reasonCode, collectedResults, completionGateRejections)
-			}
-			r.emitFinalAnswerTelemetry(decision.RawAnswer, collectedResults, decision.Acceptance)
-		case terminalAnswerBlocked, terminalAnswerTransportBlocked:
-			blockerKind := util.FirstNonEmpty(strings.TrimSpace(decision.Acceptance.BlockerKind), strings.TrimSpace(decision.StopReason))
-			if autonomyRecorder != nil {
-				autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, blockerKind, collectedResults, completionGateRejections)
-			}
-			r.emitFinalAnswerTelemetry(decision.RawAnswer, collectedResults, decision.Acceptance)
-			if terminalBlockedStatusShouldEmit(completionStatusEmitted, completionStatusLastStatus, completionStatusLastBlockerKind, blockerKind) {
-				emitCompletionStatus("blocked", decision.Acceptance.Reason, blockerKind, collectedResults, true)
-			}
-		}
-		acceptedAnswerSignalsEmitted = true
-	}
 	finish := func(value string, finishErr error, reason string, exhausted bool) (string, error) {
-		if strings.TrimSpace(reason) != "" {
-			stopReason = reason
-		}
-		budgetExhausted = exhausted
-		if finishErr == nil {
-			decision := r.classifyTerminalAnswer(value, stopReason, collectedResults)
-			presentedBeforeDecoration := decision.PresentedAnswer
-			decision.PresentedAnswer = r.decorateTerminalAnswerDecision(decision, collectedResults)
-			if strings.TrimSpace(decision.PresentedAnswer) != strings.TrimSpace(presentedBeforeDecoration) {
-				r.emitFinalAnswerDecorationEvent(decision.StopReason, presentedBeforeDecoration, decision.PresentedAnswer)
-				if strings.TrimSpace(r.LastAssistantMessage.Role) != "" || strings.TrimSpace(r.LastAssistantMessage.Content) != "" {
-					r.LastAssistantMessage.Content = decision.PresentedAnswer
-				}
-			}
-			value = decision.PresentedAnswer
-			stopReason = decision.StopReason
-			if decision.OverrideSource != "" {
-				r.emitFinalAnswerBlockerOverride(decision.Acceptance, decision.StopReason, decision.OverrideSource)
-			}
-			emitTerminalAnswerSignalsOnce(decision)
-		}
+		syncRunState()
+		runState.policy = policy
+		runState.metrics = metrics
+		runState.stopReason = stopReason
+		runState.budgetExhausted = budgetExhausted
+		runState.autonomyRecorder = autonomyRecorder
+		runState.completionGateRejections = completionGateRejections
+		runState.completionStatusEmitted = completionStatusEmitted
+		runState.completionStatusLastStatus = completionStatusLastStatus
+		runState.completionStatusLastBlockerKind = completionStatusLastBlockerKind
+		runState.acceptedAnswerSignalsEmitted = acceptedAnswerSignalsEmitted
+		value, finishErr = r.finish(runState, value, finishErr, reason, exhausted)
+		applyRunState()
+		stopReason = runState.stopReason
+		budgetExhausted = runState.budgetExhausted
+		acceptedAnswerSignalsEmitted = runState.acceptedAnswerSignalsEmitted
+		completionStatusEmitted = runState.completionStatusEmitted
+		completionStatusLastStatus = runState.completionStatusLastStatus
+		completionStatusLastBlockerKind = runState.completionStatusLastBlockerKind
 		return value, finishErr
 	}
 	var lastToolKey string
@@ -518,7 +378,7 @@ func (r *Runner) Run(
 		preimageStore = NewPreimageCheckpointStore(r.Workspace.Root())
 	}
 	taskLedgerPolicy := r.TaskLedger
-	if runnerBriefRequiresMutation(r.RuntimeBrief) {
+	if runnerBriefRequiresMutation(r.RuntimeBrief) && !strings.HasPrefix(r.agentName(), "child_write:") {
 		taskLedgerPolicy.RequireEvidence = true
 	}
 	taskLedger := newTaskLedgerState(taskLedgerPolicy)
@@ -558,6 +418,7 @@ func (r *Runner) Run(
 		metrics:                   &metrics,
 		declarationMovesForbidden: declarationMovesForbidden,
 	}
+	collectedResults = r.maybeApplyReadOnlyNamedPathPrefetch(recorder, collectedResults)
 
 	// currentFingerprint is the fingerprint of the in-flight tool call,
 	// set at the top of each loop iteration. The turn controller reads it
@@ -737,6 +598,10 @@ func (r *Runner) Run(
 		requestMessages = chatMessagesForOptions(requestMessages, modelCallOpts)
 		assistantMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, modelCallOpts)
 		if err != nil {
+			if answer, ok := r.modelErrorAfterPartialEditBlockerAnswer(err, collectedResults); ok {
+				emitCompletionStatus("blocked", "model_error_after_partial_edit", "model_error_after_partial_edit", collectedResults, true)
+				return finish(answer, nil, "model_error_after_partial_edit", false)
+			}
 			if transportRetries < 1 && retryableModelTransportError(err) {
 				transportRetries++
 				turnMessages = append(turnMessages, llama.ChatMessage{
@@ -756,10 +621,6 @@ func (r *Runner) Run(
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 				r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: prompt})
 				continue
-			}
-			if answer, ok := r.modelErrorAfterPartialEditBlockerAnswer(err, collectedResults); ok {
-				emitCompletionStatus("blocked", "model_error_after_partial_edit", "model_error_after_partial_edit", collectedResults, true)
-				return finish(answer, nil, "model_error_after_partial_edit", false)
 			}
 			if answer, ok := r.modelErrorAfterReadOnlyEvidenceAnswer(err, collectedResults); ok {
 				r.emitEvent(RunEvent{Role: "model_error_after_grounded_evidence", Content: "model transport failed after grounded read-only evidence was collected; returning deterministic evidence fallback"})
@@ -1020,19 +881,11 @@ func (r *Runner) Run(
 			}
 			if rejected {
 				priorGateRejections := completionGateRejections
-				// Escalate the gate's directive with each retry so the
-				// model gets progressively-clearer guidance instead of
-				// the same message N times. Generic — independent of
-				// task family or project.
 				result.Error = escalateCompletionGateMessage(result.Error, priorGateRejections)
 				if autonomyRecorder != nil {
 					autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, runnerAutonomyReasonCode(result.Summary), collectedResults, priorGateRejections)
 				}
 				controller.rejectCompletion(stepNumber, activeToolCall, assistantMessage, result)
-				// When the gate rejects XML tool-call markup, clear
-				// the persisted assistant message so the raw XML does
-				// not appear in the conversation log as a user-visible
-				// artifact.
 				if looksLikeTextualToolCall(reply) {
 					r.LastAssistantMessage.Content = "[XML tool-call markup detected and sanitized — the model emitted its native XML format instead of a proper tool call or prose. The harness recovery path will retry with a corrected prompt.]"
 				}
@@ -4087,7 +3940,7 @@ func readOnlyReplayedEvidenceCloseoutApplies(agent string, brief workerruntime.W
 		return false
 	}
 	directAnswerExactSearchReplay := readOnlyDirectAnswerExactSearchReplayCloseoutCandidate(brief, req)
-	if LanePolicyForBrief(brief).ShouldSkipRecoveryNudge() && !directAnswerExactSearchReplay {
+	if LanePolicyForBrief(brief).ShouldSkipRecoveryNudge() && !directAnswerExactSearchReplay && readOnlyDirectAnswerLane(brief) {
 		return false
 	}
 	if !readOnlyExplanationGateApplies(brief) && !directAnswerExactSearchReplay {
@@ -13227,7 +13080,7 @@ func concreteSourceEvidenceResult(result workspace.ToolResult) bool {
 	}
 	tool := strings.TrimSpace(result.Tool)
 	switch {
-	case tool == "read_file":
+	case readStyleSourceBodyTool(tool):
 		return readFileResultHasConcreteSourceBody(result)
 	case tool == "context_zoom":
 		return contextZoomResultHasConcreteSourceBody(result)
@@ -13235,6 +13088,15 @@ func concreteSourceEvidenceResult(result workspace.ToolResult) bool {
 		return routedSourceReadOutputHasBody(result.Output) && toolResultHasNonArtifactReadPath(result)
 	case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
 		return toolResultHasNonArtifactReadPath(result)
+	default:
+		return false
+	}
+}
+
+func readStyleSourceBodyTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "read_file", workspace.ToolNamePrefetch:
+		return true
 	default:
 		return false
 	}
@@ -20405,24 +20267,107 @@ func objectiveRequestsDiagnosticLogInspection(objective string) bool {
 	if strings.TrimSpace(words) == "" {
 		return false
 	}
-	hasArtifact := strings.Contains(words, " log") ||
-		strings.Contains(words, "logs") ||
-		strings.Contains(words, "telemetry") ||
-		strings.Contains(words, "conversation") ||
-		strings.Contains(words, "session")
-	if !hasArtifact {
+
+	if strings.Contains(words, " read these files") || strings.Contains(words, " read the files") {
 		return false
 	}
-	for _, marker := range []string{
-		"latest", "recent", "newest", "previous", "prior", "last",
-		"failure", "failed", "error", "attempt", "session", "run",
-		"what happened", "why did", "why the", "hit some",
+	if objectiveRequestsSourceFeatureInspection(words) && !objectiveNamesConcreteDiagnosticLogArtifact(words) {
+		return false
+	}
+
+	hasDiagnosticArtifact := false
+	for _, artifact := range []string{
+		" log", "logs", "telemetry log", "telemetry/", "conversation log", "conversations/",
+		"conversation/log", "session log", "debug log", "debuglog", ".jsonl", ".log",
 	} {
-		if strings.Contains(words, marker) {
+		if strings.Contains(words, artifact) {
+			hasDiagnosticArtifact = true
+			break
+		}
+	}
+	if !hasDiagnosticArtifact {
+		return false
+	}
+
+	for _, intent := range []string{
+		" inspect ", " investigate ", " review ", " analyze ", " analyse ", " check ",
+		" identify ", " diagnose ", " look at ", " open ", " read ", " tail ", " scan ", " audit ",
+		" actual conversation logs", " newest log", " recent log", " latest log",
+		" previous log", " prior log", " conversation logs", " telemetry logs",
+	} {
+		if strings.Contains(words, intent) {
+			return true
+		}
+	}
+
+	hasIncidentQuestion := strings.Contains(words, " why did ") ||
+		strings.Contains(words, " why was ") ||
+		strings.Contains(words, " what happened") ||
+		strings.Contains(words, " did it actually") ||
+		strings.Contains(words, " hit objective")
+	if !hasIncidentQuestion {
+		return false
+	}
+	for _, failureMarker := range []string{" failure", " failed", " error", " reject", " rejected", " blocker", " unmet", " overreach", " bad answer"} {
+		if strings.Contains(words, failureMarker) {
 			return true
 		}
 	}
 	return false
+}
+
+func objectiveRequestsSourceFeatureInspection(words string) bool {
+	if strings.TrimSpace(words) == "" {
+		return false
+	}
+	return containsAny(words,
+		" codebase",
+		" source ",
+		" source-code",
+		" go file",
+		" go files",
+		" config",
+		" configuration",
+		" flag ",
+		" flag controls",
+		" defined",
+		" definition",
+		" implementation",
+		" logic",
+		" mode ",
+		" when enabled",
+		" field",
+		" fields",
+		" value",
+		" values",
+		" type",
+		" types",
+		" struct",
+		" structs",
+	)
+}
+
+func objectiveNamesConcreteDiagnosticLogArtifact(words string) bool {
+	if strings.TrimSpace(words) == "" {
+		return false
+	}
+	return containsAny(words,
+		" actual conversation logs",
+		" newest log",
+		" recent log",
+		" latest log",
+		" previous log",
+		" prior log",
+		" conversation logs",
+		" telemetry logs",
+		" log file",
+		" log artifact",
+		" logs/",
+		" telemetry/",
+		" conversations/",
+		" .jsonl",
+		" .log",
+	)
 }
 
 func currentDebugLogSessionID(mgr *workspace.Manager) string {

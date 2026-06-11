@@ -1,0 +1,1 @@
+Review docs/design-hosted-cache-cost-metrics.md as Prompt / Protocol reviewer. Focus on provider protocol facts vs harness policy, JSONL event contracts, and avoiding prompt/route behavior drift. Return PASS, PASS_WITH_RISKS, or FAIL with concise findings and exact references.

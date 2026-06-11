@@ -1,0 +1,2 @@
+
+error: paused after 4 tool-call rounds (agent.max_steps) — the work so far is saved; send another message to continue, or set max_steps higher or to 0 for no limit

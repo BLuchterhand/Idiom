@@ -174,14 +174,13 @@ func TestEmitDirectAnswerSurfaceEvent(t *testing.T) {
 	}
 }
 
-func TestRunnerDirectAnswerSurfaceKeepsPrefetchDisabled(t *testing.T) {
+func TestRunnerDirectAnswerSurfacePrefetchesNamedPath(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("Idiom is a local coding-agent harness.\n"), 0o644); err != nil {
 		t.Fatalf("write README fixture: %v", err)
 	}
 
 	replies := []string{
-		`{"tool":"read_file","path":"README.md","start_line":1,"end_line":1}`,
 		"Idiom is a local coding-agent harness. Source: README.md.",
 	}
 	requests := 0
@@ -212,6 +211,7 @@ func TestRunnerDirectAnswerSurfaceKeepsPrefetchDisabled(t *testing.T) {
 
 	var surfaceEvent RunEvent
 	var prefetchEvents []RunEvent
+	var readFileResults int
 	runner.OnEvent = func(event RunEvent) {
 		if event.Role == "direct_answer_surface" {
 			surfaceEvent = event
@@ -227,7 +227,11 @@ func TestRunnerDirectAnswerSurfaceKeepsPrefetchDisabled(t *testing.T) {
 		llama.ChatOptions{},
 		nil,
 		nil,
-		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Tool == "read_file" {
+				readFileResults++
+			}
+		},
 	)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -244,13 +248,173 @@ func TestRunnerDirectAnswerSurfaceKeepsPrefetchDisabled(t *testing.T) {
 	if err := json.Unmarshal([]byte(surfaceEvent.Content), &payload); err != nil {
 		t.Fatalf("unmarshal direct-answer surface event: %v", err)
 	}
-	for _, cap := range payload.Capabilities {
-		if cap == DirectAnswerSurfaceCapSourceBodyPrefetch {
-			t.Fatalf("runner surface must not advertise source_body_prefetch before A1 activation: %#v", payload.Capabilities)
+	if !slicesContainsString(payload.Capabilities, DirectAnswerSurfaceCapSourceBodyPrefetch) {
+		t.Fatalf("runner surface did not advertise source_body_prefetch: %#v", payload.Capabilities)
+	}
+	if len(prefetchEvents) != 1 {
+		t.Fatalf("expected one prefetch event, got %#v", prefetchEvents)
+	}
+	if readFileResults != 0 {
+		t.Fatalf("prefetch should avoid model-initiated read_file before final answer, got %d", readFileResults)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
+	}
+}
+
+func TestRunnerNamedPathPrefetchDoesNotRunForWriteBrief(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("Idiom is a local coding-agent harness.\n"), 0o644); err != nil {
+		t.Fatalf("write README fixture: %v", err)
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": "Done."}}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, 2*time.Second),
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true}),
+		Policy:    RunPolicy{MaxToolSteps: 1, MaxNoProgressTurns: 1},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyImplementation),
+			Contract:          string(workerruntime.ContractImplementationResult),
+			Objective:         "Read README.md and update it.",
+			PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
+			AllowedTools:      []string{"read_file", "edit_file", "write_file"},
+		},
+	}
+
+	var prefetchResults int
+	var prefetchEvent *RunEvent
+	runner.OnEvent = func(event RunEvent) {
+		if event.Role == readOnlyPrefetchEventRole {
+			copy := event
+			prefetchEvent = &copy
 		}
 	}
-	if len(prefetchEvents) != 0 {
-		t.Fatalf("runner emitted prefetch events before A1 activation: %#v", prefetchEvents)
+	_, _ = runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: runner.RuntimeBrief.Objective}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Tool == workspace.ToolNamePrefetch {
+				prefetchResults++
+			}
+		},
+	)
+	if prefetchResults != 0 {
+		t.Fatalf("write brief must not receive prefetch result, got %d", prefetchResults)
+	}
+	if prefetchEvent == nil {
+		t.Fatal("expected metadata prefetch event")
+	}
+	var payload struct {
+		Eligible   bool   `json:"eligible"`
+		MissReason string `json:"miss_reason"`
+	}
+	if err := json.Unmarshal([]byte(prefetchEvent.Content), &payload); err != nil {
+		t.Fatalf("unmarshal prefetch event: %v", err)
+	}
+	if payload.Eligible || payload.MissReason != "not_read_only_workspace" {
+		t.Fatalf("unexpected prefetch metadata: %#v", payload)
+	}
+	if requests == 0 {
+		t.Fatal("expected the runner to reach the model")
+	}
+}
+
+func TestRunnerNamedPathPrefetchRunsForReadOnlyArchitectureBrief(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("Idiom carries cache metrics through session summaries.\n"), 0o644); err != nil {
+		t.Fatalf("write README fixture: %v", err)
+	}
+
+	replies := []string{
+		"Idiom uses session summaries to carry cache metrics through the reporting flow in this fixture. Source: README.md.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request #%d", requests)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, 2*time.Second),
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		Policy:    RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyArchitecture),
+			Contract:          string(workerruntime.ContractArchitecture),
+			Objective:         "Read README.md and explain how cache metrics flow.",
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+			AllowedTools:      []string{"read_file", "search_content"},
+		},
+	}
+
+	var prefetchEvent *RunEvent
+	var prefetchResults int
+	var readFileResults int
+	runner.OnEvent = func(event RunEvent) {
+		if event.Role == readOnlyPrefetchEventRole {
+			copy := event
+			prefetchEvent = &copy
+		}
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: runner.RuntimeBrief.Objective}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			switch event.Result.Tool {
+			case workspace.ToolNamePrefetch:
+				prefetchResults++
+			case "read_file":
+				readFileResults++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(answer, "Source: README.md") {
+		t.Fatalf("expected grounded README answer, got %q", answer)
+	}
+	if prefetchEvent == nil {
+		t.Fatal("expected prefetch metadata event")
+	}
+	var payload struct {
+		Eligible      bool     `json:"eligible"`
+		SelectedPaths []string `json:"selected_paths"`
+	}
+	if err := json.Unmarshal([]byte(prefetchEvent.Content), &payload); err != nil {
+		t.Fatalf("unmarshal prefetch event: %v", err)
+	}
+	if !payload.Eligible || !slicesContainsString(payload.SelectedPaths, "README.md") {
+		t.Fatalf("unexpected prefetch metadata: %#v", payload)
+	}
+	if prefetchResults != 1 {
+		t.Fatalf("expected one prefetch result, got %d", prefetchResults)
+	}
+	if readFileResults != 0 {
+		t.Fatalf("prefetch should avoid model-initiated read_file before final answer, got %d", readFileResults)
 	}
 	if requests != len(replies) {
 		t.Fatalf("expected %d model requests, got %d", len(replies), requests)

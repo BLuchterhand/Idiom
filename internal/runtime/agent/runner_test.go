@@ -2575,6 +2575,22 @@ func TestDebugLogPreflightRedirectsGenericSearchToNewestLogDiscovery(t *testing.
 	}
 }
 
+func TestDiagnosticLogIntentDistinguishesSourceFeatureQuestions(t *testing.T) {
+	sourceQuestion := strings.Join([]string{
+		"Investigate what \"debug log redacted mode\" does in this codebase.",
+		"Where is redacted mode defined for debug logging?",
+		"What configuration or flag controls it?",
+		"What does it do when enabled and where is the redaction logic applied?",
+		"Search broadly in Go files and debug log configuration types.",
+	}, "\n")
+	if objectiveRequestsDiagnosticLogInspection(sourceQuestion) {
+		t.Fatal("debug-log mode source feature question must not activate diagnostic-log artifact scope")
+	}
+	if !objectiveRequestsDiagnosticLogInspection("Inspect the newest debug log for why the run failed.") {
+		t.Fatal("newest debug log failure request should still activate diagnostic-log artifact scope")
+	}
+}
+
 func TestDebugLogPreflightRedirectsToSelectedLogTail(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "logs/conversations/recent.jsonl", "{\"event\":\"x\"}\n"); err != nil {
@@ -2800,6 +2816,32 @@ func TestConceptualDebugLogQuestionDoesNotEnterLogInvestigationContract(t *testi
 		Path: "internal/evidence/transcript/debuglog.go",
 	}); ok {
 		t.Fatalf("conceptual source read should not redirect to log discovery: %#v", redirected)
+	}
+}
+
+func TestSourcePromptMentioningDebugLogsDoesNotEnterLogInvestigationContract(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:         "conversation",
+		Contract:           "direct_answer",
+		PermissionProfile:  "read_only_workspace",
+		Objective:          "Read these files: docs/design-hosted-cache-cost-metrics.md, internal/runtime/llama/client.go, internal/runtime/agent/runner_state.go, internal/surfaces/tui/app/model_state.go, and internal/evidence/transcript/debuglog.go. Explain how Idiom carries prompt cache hit/miss metrics from provider response to session_summary/debug logs.",
+		ReadOnlyConstraint: true,
+	}
+	if debugLogContractApplies(brief, nil) {
+		t.Fatal("source-reading task that mentions session_summary/debug logs should not become a diagnostic-log investigation")
+	}
+}
+
+func TestActualConversationLogInvestigationEntersLogInvestigationContract(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:         "conversation",
+		Contract:           "direct_answer",
+		PermissionProfile:  "read_only_workspace",
+		Objective:          "Investigate the actual conversation logs and verify why the final answer was rejected as objective unmet.",
+		ReadOnlyConstraint: true,
+	}
+	if !debugLogContractApplies(brief, nil) {
+		t.Fatal("explicit conversation-log incident investigation should use the diagnostic-log contract")
 	}
 }
 
@@ -18114,6 +18156,83 @@ func TestHostOwnedReadOnlyCloseoutSynthesizesAnswerableArchitectureChildPacket(t
 	}
 }
 
+func TestHostOwnedReadOnlyCloseoutUsesDebugLogArchitectureFallbackFromChildPacket(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "architecture_assessment",
+			TaskFamily:        "architecture",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "What does the debug log redacted mode do?",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "task",
+		Summary: "Child task completed",
+		Output: strings.Join([]string{
+			"Source-body evidence paths:",
+			"- `internal/runtime/agent/read_only_closure.go`",
+			"",
+			"Key findings:",
+			"- `internal/evidence/transcript/debuglog.go` owns DebugLogModeRedacted and records secret-safe redacted log metadata instead of raw prompt content.",
+			"- The implementation keeps path metadata sanitized and uses digest summaries for large raw values.",
+			"Confidence: high",
+		}, "\n"),
+	}}
+	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
+	if !ok {
+		t.Fatal("expected debug-log architecture fallback from child packet")
+	}
+	for _, want := range []string{"redacted", "debug log", "internal/evidence/transcript/debuglog.go", "secret", "path", "metadata"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("debug-log fallback answer missing %q:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{"690:", "Source-body evidence paths:", "Key findings:", "... This is grounded"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("debug-log fallback leaked packet/source fragment %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
+func TestHostOwnedReadOnlyCloseoutUsesDiscoveryToolUsefulnessFallbackFromChildPacket(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "architecture_assessment",
+			TaskFamily:        "architecture",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "What can we add to our discovery tools in an effort at increasing their overall usefulness?",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "task",
+		Summary: "Child task completed",
+		Output: strings.Join([]string{
+			"Source-body evidence paths:",
+			"- `internal/capabilities/workspace/discovery_query.go`",
+			"- `internal/capabilities/workspace/discovery_profile.go`",
+			"",
+			"Key findings:",
+			"- `internal/capabilities/workspace/discovery_query.go` should keep returning source-oriented discovery evidence.",
+			"- The answer closeout path needs to turn profile/source evidence into final answers instead of tool inventories.",
+			"Confidence: high",
+		}, "\n"),
+	}}
+	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
+	if !ok {
+		t.Fatal("expected discovery-tool usefulness fallback from child packet")
+	}
+	for _, want := range []string{"tool", "internal/runtime/agent/answer_composer.go", "internal/runtime/agent/runner.go", "internal/capabilities/workspace/discovery_query.go"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("discovery usefulness fallback answer missing %q:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{"Discovery packet:", "Relevant source hits:", "Evidence used:", "Confidence:"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("discovery usefulness fallback leaked packet section %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
 func TestHostOwnedReadOnlyCloseoutDoesNotUseCandidateOnlyEvidence(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -18589,6 +18708,31 @@ func TestArchitectureFinalAnswerAcceptanceRejectsLineOrientedSourceSnippet(t *te
 	)
 	if acceptance.Decision != finalAnswerAcceptanceRejected || acceptance.BlockerKind != "non_answer_prose" {
 		t.Fatalf("line-oriented source snippet should be rejected as non-answer prose, got %#v", acceptance)
+	}
+}
+
+func TestArchitectureFinalAnswerAcceptanceRejectsCompactCallLineFragments(t *testing.T) {
+	answer := "690:\t\t(hasPath(\"internal/runtime/agent/runner_child_tasks.go\") || hasPath(\"internal/runtime/agent/runner.go\")) &&. 694:\t\thasPath(\"internal/evidence/transcript/debuglog.go\") &&. ... This is grounded in `internal/runtime/agent/read_only_closure.go`, `internal/evidence/transcript/debuglog.go`, `internal/runtime/agent/agenterrors/errors.go`, `internal/runtime/agent/answer_composer.go`."
+	if !looksLikeLineOrientedSourceSnippetAnswer(answer) {
+		t.Fatalf("expected compact call-like source fragments to be detected:\n%s", answer)
+	}
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "architecture_assessment",
+			TaskFamily:        "architecture",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"task", "discovery_query", "read_file"},
+			Objective:         "What does the debug log redacted mode do?",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f49 internal/runtime/agent/read_only_closure.go lines 685-710",
+		Output:  "690:\t\t(hasPath(\"internal/runtime/agent/runner_child_tasks.go\") || hasPath(\"internal/runtime/agent/runner.go\")) &&\n694:\t\thasPath(\"internal/evidence/transcript/debuglog.go\") &&\n",
+	}}
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if acceptance.Decision != finalAnswerAcceptanceRejected || acceptance.BlockerKind != "non_answer_prose" {
+		t.Fatalf("compact call fragments should be rejected as non-answer prose, got %#v", acceptance)
 	}
 }
 

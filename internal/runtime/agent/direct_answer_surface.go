@@ -2,10 +2,8 @@
 // lightweight direct-answer surface. It is the single authority for which
 // tools, capabilities, and terminal states are visible in direct-answer mode.
 //
-// Other atoms (A1 exact-path prefetch, A2 citation classifier) consume this
-// surface through DirectAnswerSurfaceForBrief and
-// DirectAnswerSurfacePrefetchEligibility before engaging direct-answer-specific
-// behavior. A1 must not run against an unknown, stale, or missing surface.
+// Other direct-answer atoms consume this surface through
+// DirectAnswerSurfaceForBrief before engaging direct-answer-specific behavior.
 //
 // Design doc: docs/design-direct-answer-efficiency.md, atom A6.
 package agent
@@ -24,15 +22,16 @@ const DirectAnswerSurfaceSchemaVersion = "idiom.direct_answer_surface.v1"
 // DirectAnswerSurfaceVersion identifies the current surface inventory version.
 // Bump when tools, capabilities, or terminal states change. A1 compares this
 // against its expected minimum version before engaging prefetch.
-const DirectAnswerSurfaceVersion = "2026-06-11"
+const DirectAnswerSurfaceVersion = "2026-06-12"
 
 // DirectAnswerSurfaceCapReadOnlyInvestigation indicates the surface supports
 // non-trivial read-only investigation (search followed by bounded source read).
 const DirectAnswerSurfaceCapReadOnlyInvestigation = "read_only_investigation"
 
-// DirectAnswerSurfaceCapSourceBodyPrefetch is the future capability that A1
-// exact-path prefetch checks before engaging. Not yet advertised — A6
-// surface must advertise it before A1 can activate.
+// DirectAnswerSurfaceCapSourceBodyPrefetch indicates the direct-answer surface
+// can receive source-body evidence that was prefetched before the first model
+// turn. The prefetch gate itself is owned by the read-only named-path evidence
+// boundary, not by this direct-answer inventory.
 const DirectAnswerSurfaceCapSourceBodyPrefetch = "source_body_prefetch"
 
 // DirectAnswerSurfaceTerminalUncertaintyProse is the terminal state for
@@ -84,10 +83,9 @@ func DirectAnswerSurfaceForBrief(brief workerruntime.WorkerRuntimeBrief) (Direct
 	}, true
 }
 
-// DirectAnswerSurfacePrefetchEligibility checks whether this surface supports
-// source-body prefetch. A1 implementations must call this before attempting
-// exact-path prefetch. Returns (eligible, missReason) where missReason is
-// non-empty when not eligible.
+// DirectAnswerSurfacePrefetchEligibility checks whether this direct-answer
+// surface supports source-body prefetch telemetry. Returns (eligible,
+// missReason) where missReason is non-empty when not eligible.
 //
 // Eligibility requires:
 //  1. A non-zero surface (not the zero value).
@@ -131,8 +129,7 @@ func surfaceSupportsCapability(surface DirectAnswerSurface, cap string) bool {
 func directAnswerSurfaceCapabilities() []string {
 	return []string{
 		DirectAnswerSurfaceCapReadOnlyInvestigation,
-		// source_body_prefetch is not yet advertised — A1 must remain
-		// disabled until it is added here and the version is bumped.
+		DirectAnswerSurfaceCapSourceBodyPrefetch,
 	}
 }
 

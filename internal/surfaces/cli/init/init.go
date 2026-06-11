@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"idiom/internal/surfaces/cliassets"
+	canonicalprompts "idiom/prompts"
 )
 
 // initSeedCodingProfile / initSeedClaudeQwenWorkerProfile are the
@@ -18,6 +19,8 @@ import (
 var initSeedCodingProfile = cliassets.MustProfile("coding.md")
 
 var initSeedClaudeQwenWorkerProfile = cliassets.MustProfile("claude-qwen-worker.md")
+
+var initSeedBasePrompt = canonicalprompts.BasePrompt()
 
 // runInitMain creates the .idiom/ skeleton in the target directory
 // with template config files and README placeholders. Phase 7.1 of
@@ -102,6 +105,7 @@ var initSeedFiles = []initSeedFile{
 	{relPath: "backends.json", body: initSeedBackendsJSON},
 	{relPath: "external_tools/README.md", body: initSeedExternalToolsReadme},
 	{relPath: "postflight/checks/README.md", body: initSeedPostflightChecksReadme},
+	{relPath: "prompts/base.md", body: initSeedBasePrompt},
 	{relPath: "prompts/lanes/README.md", body: initSeedPromptsLanesReadme},
 	{relPath: "prompts/rules/README.md", body: initSeedPromptsRulesReadme},
 	{relPath: "prompts/profiles/coding.md", body: initSeedCodingProfile},

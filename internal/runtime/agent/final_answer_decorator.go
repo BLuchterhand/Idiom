@@ -593,7 +593,7 @@ func combinedReadFileSourceBodies(results []workspace.ToolResult) []readFileSour
 	order := make([]string, 0, len(results))
 	for i, result := range results {
 		if strings.TrimSpace(result.Error) != "" ||
-			strings.TrimSpace(result.Tool) != "read_file" ||
+			!readStyleSourceBodyTool(result.Tool) ||
 			!readFileResultHasConcreteSourceBody(result) {
 			continue
 		}
@@ -676,7 +676,7 @@ func presentableProseEvidenceAnswer(brief workerruntime.WorkerRuntimeBrief, resu
 		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
 			continue
 		}
-		if strings.TrimSpace(result.Tool) != "read_file" {
+		if !readStyleSourceBodyTool(result.Tool) {
 			continue
 		}
 		paths := readPathsFromToolResult(result)
@@ -2381,8 +2381,8 @@ func conversationFallbackEvidenceAnchor(result workspace.ToolResult) string {
 			return "Search hits included " + formatInlinePathList(paths, 6)
 		}
 		return summary
-	case "context_pack", "context_query", "context_zoom", "code_navigate", "read_file", "search_files":
-		if strings.TrimSpace(result.Tool) == "read_file" {
+	case "context_pack", "context_query", "context_zoom", "code_navigate", "read_file", workspace.ToolNamePrefetch, "search_files":
+		if readStyleSourceBodyTool(result.Tool) {
 			paths := readPathsFromToolResult(result)
 			if len(paths) > 0 && len(nonArtifactEvidencePaths(paths)) == 0 {
 				return ""

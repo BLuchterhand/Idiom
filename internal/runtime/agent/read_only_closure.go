@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/pathparse"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -305,7 +306,7 @@ func readOnlyCarriedEvidenceAnswerAccepted(answer string, objective string, ledg
 	if looksLikeLowValueSourceInventoryNonAnswer(answer) || readOnlyAnswerUsesInspectedSourceAsAnswer(answer, ledger) {
 		return answerAddressesObjective(answer, objective, ledger, results)
 	}
-	return true
+	return answerAddressesObjective(answer, objective, ledger, results)
 }
 
 func (d ReadOnlyCloseout) SupportsPresentableQuestionBlockerAnswer(answer string) bool {
@@ -604,7 +605,10 @@ func (d ReadOnlyCloseout) HostOwnedAnswer(agentName string) (string, bool) {
 		if answer, ok := d.PresentableTaskResultAnswer(agentName); ok && !bestObjectiveTaskResultOutputLooksPartial(brief.Objective, d.Results) {
 			return answer, true
 		}
-		if answer, ok := d.ConcreteFallbackAnswer(); ok && hostOwnedCloseoutAnswerIsPresentable(answer) {
+		if answer, ok := d.ConcreteFallbackAnswer(); ok &&
+			hostOwnedCloseoutAnswerIsPresentable(answer) &&
+			d.HasObjectiveRelevantEvidence() &&
+			answerAddressesObjective(answer, brief.Objective, d.Evidence, d.Results) {
 			return answer, true
 		}
 		packets := readOnlyEvidencePacketsFromResults(d.Results)
@@ -695,8 +699,8 @@ func architectureObjectiveEvidenceFallbackAnswer(brief workerruntime.WorkerRunti
 		architectureFallbackHasConcreteSupport(results, []string{"internal/evidence/transcript/debuglog.go"}, []string{"redacted", "sanitized", "digest", "metadata"}):
 		return "The debug log redacted mode is implemented in `internal/evidence/transcript/debuglog.go`: it records secret-safe redacted log metadata instead of raw prompt content, keeps path metadata such as prompt source paths/workspace fields sanitized, and uses digests or redacted summaries where full mode would retain raw details.", true
 	case containsAny(objective, "discovery tool", "discovery tools", "tool usefulness", "usefulness") &&
-		(hasPath("internal/runtime/agent/answer_composer.go") || hasPath("internal/runtime/agent/runner.go") || hasPath("internal/capabilities/workspace/discovery_query.go") || hasPath("internal/capabilities/workspace/discovery_profile.go")) &&
-		architectureFallbackHasConcreteSupport(results, []string{"internal/runtime/agent/answer_composer.go", "internal/runtime/agent/runner.go", "internal/capabilities/workspace/discovery_query.go", "internal/capabilities/workspace/discovery_profile.go"}, []string{"answer", "discovery", "source", "closeout", "profile"}):
+		(hasPath("internal/runtime/agent/answer_composer.go") || hasPath("internal/runtime/agent/runner.go") || hasPath("internal/capabilities/workspace/discovery_query.go") || hasPath("internal/capabilities/workspace/discovery_tools.go") || hasPath("internal/capabilities/workspace/discovery_profile.go")) &&
+		architectureFallbackHasConcreteSupport(results, []string{"internal/runtime/agent/answer_composer.go", "internal/runtime/agent/runner.go", "internal/capabilities/workspace/discovery_query.go", "internal/capabilities/workspace/discovery_tools.go", "internal/capabilities/workspace/discovery_profile.go"}, []string{"answer", "discovery", "source", "closeout", "profile"}):
 		return "For discovery tool usefulness, the inspected architecture points to adding better answer synthesis and closeout integration: `internal/capabilities/workspace/discovery_query.go` should keep returning source-oriented discovery evidence, while `internal/runtime/agent/answer_composer.go` and `internal/runtime/agent/runner.go` should turn that evidence into concrete final answers instead of tool inventories or retained-context scaffolds.", true
 	default:
 		return "", false
@@ -706,6 +710,19 @@ func architectureObjectiveEvidenceFallbackAnswer(brief workerruntime.WorkerRunti
 func architectureFallbackHasConcreteSupport(results []workspace.ToolResult, paths []string, requiredTerms []string) bool {
 	pathSet := readOnlyPathSet(paths)
 	for _, result := range results {
+		if strings.TrimSpace(result.Tool) == "task" && strings.TrimSpace(result.Error) == "" {
+			text := result.Summary + "\n" + result.Output
+			matchesPath := false
+			for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(text)) {
+				if _, ok := pathSet[normalizeRunnerPath(path)]; ok {
+					matchesPath = true
+					break
+				}
+			}
+			if matchesPath && textContainsAnyRequiredTerm(text, requiredTerms) {
+				return true
+			}
+		}
 		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
 			matchesPath := false
 			for _, path := range packet.SourceBodyPaths {

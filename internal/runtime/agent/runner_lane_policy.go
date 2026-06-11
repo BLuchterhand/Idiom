@@ -418,6 +418,9 @@ func (p delegatedDiscoveryPlan) shouldReplacePath(path string) bool {
 	if path == "." && p.primaryScope != "" && p.primaryScope != "." && p.hasNamedScope {
 		return true
 	}
+	if delegatedReadOnlyBroadNamedScope(path) && p.primaryScope != "" && p.primaryScope != "." && normalizeRunnerPath(path) != normalizeRunnerPath(p.primaryScope) {
+		return true
+	}
 	return p.pathOutsideDetailedScope(path) && p.primaryScope != "" && p.primaryScope != "."
 }
 
@@ -499,7 +502,7 @@ func (p delegatedDiscoveryPlan) computeDetailedNamedScopes() []string {
 	var scopes []string
 	for _, candidate := range p.namedScopes {
 		candidate = normalizeRunnerPath(strings.Trim(strings.TrimSpace(candidate), "`'\""))
-		if candidate == "" || candidate == "." || delegatedReadOnlyBroadNamedScope(candidate) {
+		if candidate == "" || candidate == "." || delegatedReadOnlyBroadNamedScope(candidate) || delegatedReadOnlySecondaryEvidencePath(candidate) {
 			continue
 		}
 		scopes = mergeRunnerStateStrings(scopes, []string{candidate})
@@ -1300,7 +1303,27 @@ func (r *Runner) delegatedReadOnlyDiscoveryQueryRepairRequest(results []workspac
 	if redirected, ok := plan.candidateConsumptionRequest(results, r.RuntimeBrief.AllowedTools); ok {
 		return redirected, true
 	}
-	return plan.repairDiscoveryQuery(req)
+	repaired, changed := plan.repairDiscoveryQuery(req)
+	if r.delegatedReadOnlyDiscoveryPathMissing(repaired.Path) && plan.primaryScope != "" && plan.primaryScope != "." {
+		repaired.Path = plan.primaryScope
+		changed = true
+	}
+	return repaired, changed
+}
+
+func (r *Runner) delegatedReadOnlyDiscoveryPathMissing(path string) bool {
+	path = normalizeRunnerPath(path)
+	if r == nil || r.Workspace == nil || path == "" || path == "." {
+		return false
+	}
+	root := strings.TrimSpace(r.Workspace.Root())
+	if root == "" {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+		return true
+	}
+	return false
 }
 
 func delegatedDiscoveryPurposeValid(purpose string) bool {
@@ -1616,6 +1639,9 @@ func delegatedReadOnlySecondaryEvidencePath(path string) bool {
 		return false
 	}
 	lower := strings.ToLower(path)
+	if lower == ".codex/agents" || strings.HasPrefix(lower, ".codex/agents/") {
+		return true
+	}
 	if strings.HasSuffix(lower, "_test.go") || strings.HasPrefix(lower, "docs/") || strings.Contains(lower, "/docs/") {
 		return true
 	}
