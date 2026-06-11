@@ -21806,8 +21806,8 @@ func TestTargetWriteReadyStagedNudgeSurfacesBasePrompt(t *testing.T) {
 	if !strings.Contains(msg, "model_popup.go") {
 		t.Fatalf("early nudge should surface basePrompt paths, got: %s", msg)
 	}
-	if !strings.Contains(msg, "Nudge 3 of 12") {
-		t.Fatalf("early nudge should include countdown, got: %s", msg)
+	if !strings.Contains(msg, "Nudge 3") {
+		t.Fatalf("early nudge should include nudge number, got: %s", msg)
 	}
 
 	// Late stage (nudgeCount > 6)

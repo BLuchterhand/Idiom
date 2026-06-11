@@ -64,7 +64,7 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 		return m.finishPromptOnceReply(mutationRouteConfirmationQuestion(plan)), nil
 	}
 	plan = m.recoverDirectImplementationContext(prompt, plan)
-	if m.greenfieldCreationRequiresConfirmation(prompt, plan) {
+	if m.greenfieldCreationRequiresConfirmation(plan) {
 		m.recordPromptRouteWithoutExecution(prompt, plan)
 		return m.finishPromptOnceReply(greenfieldCreationConfirmationQuestion(plan)), nil
 	}
@@ -1456,7 +1456,7 @@ func clampPositiveMin(current, limit int) int {
 	return max(current, limit)
 }
 
-func (m *Model) greenfieldCreationRequiresConfirmation(prompt string, plan promptExecutionPlan) bool {
+func (m *Model) greenfieldCreationRequiresConfirmation(plan promptExecutionPlan) bool {
 	if m == nil || m.workspace == nil {
 		return false
 	}
@@ -1465,24 +1465,11 @@ func (m *Model) greenfieldCreationRequiresConfirmation(prompt string, plan promp
 	if route.WriteIntent == "yes" || isImplementationLikeFamily(route.Family) {
 		return false
 	}
-	// Check if the prompt asks to create or generate files.
-	if !plannerWordsContainAny(plannerWordText(prompt), creationIntentWords()...) {
-		return false
-	}
 	// Check workspace is greenfield (no source files found).
+	// Any prompt in an empty project under a read-only route is likely a
+	// creation or scaffolding request — the workspace has nothing to read
+	// or discuss. Signal, not scenario template: evidence-based, generic.
 	return !hasWorkspaceSourceFiles(m.workspace.Root())
-}
-
-func creationIntentWords() []string {
-	return []string{
-		"create", "scaffold", "scaffolding", "generate", "generation",
-		"bootstrap", "initialize", "init",
-		"write a", "write an", "write the", "write some",
-		"make a", "make an", "make the", "make some",
-		"build a", "build an", "build the", "build some",
-		"new project", "new file", "new module",
-		"set up", "stand up", "start a",
-	}
 }
 
 func hasWorkspaceSourceFiles(root string) bool {
@@ -1524,5 +1511,5 @@ func greenfieldCreationConfirmationQuestion(plan promptExecutionPlan) string {
 		command = "/plan-execute"
 		lane = "plan-execute"
 	}
-	return fmt.Sprintf("This looks like a scaffolding or creation request in an empty project, and I am currently in read-only mode. Do you want me to switch to the write-capable %s lane and generate the files? Reply with `%s <objective>` to confirm, or ask your question in another way to keep this read-only.", lane, command)
+	return fmt.Sprintf("This project appears to be empty and I am currently in read-only mode — there are no source files to read or discuss. If you want me to generate files, reply with `%s <objective>` to switch to the write-capable %s lane. Otherwise, ask your question as-is and I will answer in read-only mode.", lane, command)
 }

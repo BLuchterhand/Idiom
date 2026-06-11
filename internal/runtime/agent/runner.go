@@ -1405,19 +1405,13 @@ func (r *Runner) Run(
 		if r.implementationTargetWriteReadySourceReadAllowed(req, collectedResults, implementationTargetWriteReadySourceRefreshes) {
 			recoveryReadAllowanceGrantedThisRequest = true
 			implementationTargetWriteReadySourceRefreshes++
-			implementationTargetWriteReadyNonWriteRejections = 0
+			implementationTargetWriteReadyNonWriteRejections++
 			r.emitEvent(RunEvent{
 				Role:    "implementation_target_write_ready_source_refresh_allowed",
 				Content: fmt.Sprintf("allowed write-ready %s source expansion on target path %q", strings.TrimSpace(req.Tool), normalizeRunnerPath(req.Path)),
 			})
 		} else if _, _, prompt, reject := r.implementationTargetWriteReadyNonWriteRecovery(req, collectedResults); reject {
 			implementationTargetWriteReadyNonWriteRejections++
-			if implementationTargetWriteReadyNonWriteRejections >= 12 {
-				blockerKind := "implementation_target_write_ready_non_write_repeated"
-				emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
-				answer := fmt.Sprintf("<<QUESTION>>: after %d nudges toward writing, no workspace edit was recorded. Source evidence is available. Report the exact edit blocker or no-op evidence.", implementationTargetWriteReadyNonWriteRejections)
-				return finish(answer, nil, blockerKind, true)
-			}
 			requestBudget.writeReadyNudgeActive = true
 			nudgeMsg := targetWriteReadyStagedNudge(prompt, req, implementationTargetWriteReadyNonWriteRejections)
 			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudgeMsg})
@@ -15208,7 +15202,7 @@ func targetWriteReadyStagedNudge(basePrompt string, req workspace.ToolRequest, n
 	if tool == "" {
 		tool = "requested tool"
 	}
-	suffix := fmt.Sprintf("\n\nYour %s request will execute. Nudge %d of 12.", tool, nudgeCount)
+	suffix := fmt.Sprintf("\n\nYour %s request will execute. Nudge %d.", tool, nudgeCount)
 
 	evidencePrefix := strings.TrimSpace(basePrompt)
 	if evidencePrefix == "" {
