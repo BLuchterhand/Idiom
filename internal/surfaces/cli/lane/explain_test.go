@@ -16,7 +16,7 @@ func TestBuildLaneExplainSummaryParsesSyntheticLog(t *testing.T) {
 		`{"type":"tool_result","tool":"completion_gate","error":"required paths remain unchanged","ts":"2026-05-11T10:00:10Z"}`,
 		`{"type":"completion_status","status":"blocked","blocker_kind":"required_paths_remaining"}`,
 		`{"type":"turn_summary","stop_reason":"completion_gate_required_paths_remaining_repeated","budget_exhausted":true}`,
-		`{"type":"session_summary","model_calls":3,"tool_calls":3,"turns":1,"prompt_tokens":1000,"completion_tokens":500,"total_tokens":1500,"peak_prompt_tokens":800,"ctx_size":8192,"duration_ms":10000,"ts":"2026-05-11T10:00:10Z"}`,
+		`{"type":"session_summary","model_calls":3,"tool_calls":3,"turns":1,"prompt_tokens":1000,"completion_tokens":500,"total_tokens":1500,"prompt_cache_hit_tokens":700,"prompt_cache_miss_tokens":300,"prompt_cache_accounting_known":true,"reasoning_tokens":25,"peak_prompt_tokens":800,"ctx_size":8192,"duration_ms":10000,"ts":"2026-05-11T10:00:10Z"}`,
 		`{"type":"final","content":"<<QUESTION>>: missing exact anchor"}`,
 	}, "\n")
 
@@ -33,6 +33,9 @@ func TestBuildLaneExplainSummaryParsesSyntheticLog(t *testing.T) {
 	}
 	if s.CtxSize != 8192 || s.PeakPromptTokens != 800 {
 		t.Errorf("ctx/peak = %d/%d, want 8192/800", s.CtxSize, s.PeakPromptTokens)
+	}
+	if !s.PromptCacheAccountingKnown || s.PromptCacheHitTokens != 700 || s.PromptCacheMissTokens != 300 || s.ReasoningTokens != 25 {
+		t.Errorf("cache usage = known:%v hit:%d miss:%d reasoning:%d", s.PromptCacheAccountingKnown, s.PromptCacheHitTokens, s.PromptCacheMissTokens, s.ReasoningTokens)
 	}
 	if s.StopReason != "completion_gate_required_paths_remaining_repeated" || !s.BudgetExhausted {
 		t.Errorf("stop_reason=%q budget_exhausted=%v", s.StopReason, s.BudgetExhausted)

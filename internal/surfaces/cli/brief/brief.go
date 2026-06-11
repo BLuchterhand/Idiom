@@ -14,8 +14,8 @@ import (
 	"strings"
 
 	"idiom/internal/evidence/telemetry"
-	"idiom/internal/surfaces/cliassets"
 	toolcmd "idiom/internal/surfaces/cli/tool"
+	"idiom/internal/surfaces/cliassets"
 )
 
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {

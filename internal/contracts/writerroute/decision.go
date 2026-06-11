@@ -33,6 +33,7 @@ type Decision struct {
 	ExecutorModel      string            `json:"executor_model,omitempty"`
 	ReviewerModel      string            `json:"reviewer_model,omitempty"`
 	ClassifierModel    string            `json:"classifier_model,omitempty"`
+	EffectiveModel     string            `json:"effective_model,omitempty"`
 	RoleAliases        map[string]string `json:"role_aliases,omitempty"`
 	RiskTier           string            `json:"risk_tier,omitempty"`
 	CostTier           string            `json:"cost_tier,omitempty"`
@@ -53,6 +54,7 @@ type DecisionParams struct {
 	ExecutorModel      string
 	ReviewerModel      string
 	ClassifierModel    string
+	EffectiveModel     string
 	RoleAliases        map[string]string
 	RiskTier           string
 	CostTier           string
@@ -65,6 +67,27 @@ type DecisionParams struct {
 	EscalationTriggers []string
 	UserOverride       bool
 	TaskFamily         string
+}
+
+// EffectiveModelForMode selects the model that owns generation for a writer
+// mode after role aliases and runtime config have already been resolved.
+func EffectiveModelForMode(mode WriterMode, plannerModel, executorModel, classifierModel string) string {
+	switch mode {
+	case ModeAgenticGuarded, ModeDeterministicArtifactApply, ModeHostMaterializedArtifact:
+		return strings.TrimSpace(executorModel)
+	case ModePlanSubmission:
+		return strings.TrimSpace(plannerModel)
+	case ModeReadOnly:
+		if model := strings.TrimSpace(classifierModel); model != "" {
+			return model
+		}
+		return strings.TrimSpace(plannerModel)
+	default:
+		if model := strings.TrimSpace(executorModel); model != "" {
+			return model
+		}
+		return strings.TrimSpace(plannerModel)
+	}
 }
 
 // NewDecisionFromParams creates a normalized report-only writer route decision.
@@ -90,6 +113,7 @@ func NewDecisionFromParams(params DecisionParams) Decision {
 		ExecutorModel:      strings.TrimSpace(params.ExecutorModel),
 		ReviewerModel:      strings.TrimSpace(params.ReviewerModel),
 		ClassifierModel:    strings.TrimSpace(params.ClassifierModel),
+		EffectiveModel:     strings.TrimSpace(params.EffectiveModel),
 		RoleAliases:        normalizeStringMap(params.RoleAliases),
 		RiskTier:           strings.TrimSpace(params.RiskTier),
 		CostTier:           costTier,
@@ -168,6 +192,7 @@ func (d *Decision) EventFields() map[string]interface{} {
 		"executor_model":      d.ExecutorModel,
 		"reviewer_model":      d.ReviewerModel,
 		"classifier_model":    d.ClassifierModel,
+		"effective_model":     d.EffectiveModel,
 		"role_aliases":        d.RoleAliases,
 		"risk_tier":           d.RiskTier,
 		"cost_tier":           d.CostTier,

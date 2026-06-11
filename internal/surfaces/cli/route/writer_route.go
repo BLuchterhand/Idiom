@@ -50,12 +50,17 @@ func BuildDecision(cfg config.Config, opts Options) writerroute.Decision {
 		ExecutorModel:     executorModel,
 		ReviewerModel:     reviewerModel,
 		ClassifierModel:   classifierModel,
+		EffectiveModel:    EffectiveModelForDecision(opts.Mode, plannerModel, executorModel, classifierModel),
 		RoleAliases:       aliases,
 		VerificationOwner: strings.TrimSpace(opts.VerificationOwner),
 		RequiredEditPaths: opts.RequiredEditPaths,
 		ReasonCodes:       opts.ReasonCodes,
 		TaskFamily:        opts.TaskFamily,
 	})
+}
+
+func EffectiveModelForDecision(mode writerroute.WriterMode, plannerModel, executorModel, classifierModel string) string {
+	return writerroute.EffectiveModelForMode(mode, plannerModel, executorModel, classifierModel)
 }
 
 func RoleAliases(projectRoot string, profileName string) map[string]string {
@@ -80,21 +85,28 @@ func RoleAliases(projectRoot string, profileName string) map[string]string {
 }
 
 func ModelForRole(cfg config.Config, aliases map[string]string, role string) string {
-	if alias := strings.TrimSpace(aliases[role]); alias != "" {
-		return alias
-	}
 	switch role {
 	case backends.RoleExecutor:
 		if cfg.Implementer != nil && strings.TrimSpace(cfg.Implementer.Model) != "" {
 			return strings.TrimSpace(cfg.Implementer.Model)
 		}
-		return strings.TrimSpace(cfg.LlamaServer.Model)
+		if model := strings.TrimSpace(cfg.LlamaServer.Model); model != "" {
+			return model
+		}
 	case backends.RoleClassifier:
 		if strings.TrimSpace(cfg.RouteClassifier.Model) != "" {
 			return strings.TrimSpace(cfg.RouteClassifier.Model)
 		}
-		return strings.TrimSpace(cfg.LlamaServer.Model)
+		if model := strings.TrimSpace(cfg.LlamaServer.Model); model != "" {
+			return model
+		}
 	default:
-		return strings.TrimSpace(cfg.LlamaServer.Model)
+		if model := strings.TrimSpace(cfg.LlamaServer.Model); model != "" {
+			return model
+		}
 	}
+	if alias := strings.TrimSpace(aliases[role]); alias != "" {
+		return alias
+	}
+	return ""
 }

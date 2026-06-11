@@ -59,6 +59,71 @@ func TestCompleteChatSendsOptionsAndParsesResponse(t *testing.T) {
 	}
 }
 
+func TestCompleteChatParsesHostedCacheUsageAndReasoningTokens(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":13,"prompt_cache_hit_tokens":8,"prompt_cache_miss_tokens":5,"completion_tokens":3,"completion_tokens_details":{"reasoning_tokens":2},"total_tokens":16}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second).WithBackend(config.BackendDeepSeek)
+	reply, err := client.CompleteChatMessage(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, ChatOptions{
+		Model: "deepseek-v4-flash",
+	})
+	if err != nil {
+		t.Fatalf("CompleteChatMessage: %v", err)
+	}
+	if reply.Usage.PromptTokens != 13 ||
+		reply.Usage.PromptCacheHitTokens != 8 ||
+		reply.Usage.PromptCacheMissTokens != 5 ||
+		!reply.Usage.PromptCacheAccountingKnown ||
+		reply.Usage.CompletionTokens != 3 ||
+		reply.Usage.ReasoningTokens != 2 ||
+		reply.Usage.TotalTokens != 16 {
+		t.Fatalf("unexpected usage: %#v", reply.Usage)
+	}
+}
+
+func TestCompleteChatPreservesKnownZeroCacheUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":0,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":0,"completion_tokens":1,"total_tokens":1}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second).WithBackend(config.BackendDeepSeek)
+	reply, err := client.CompleteChatMessage(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, ChatOptions{
+		Model: "deepseek-v4-flash",
+	})
+	if err != nil {
+		t.Fatalf("CompleteChatMessage: %v", err)
+	}
+	if !reply.Usage.PromptCacheAccountingKnown ||
+		reply.Usage.PromptCacheHitTokens != 0 ||
+		reply.Usage.PromptCacheMissTokens != 0 {
+		t.Fatalf("expected known zero cache usage, got %#v", reply.Usage)
+	}
+}
+
+func TestCompleteChatLeavesCacheUsageUnknownWhenOmitted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":7,"completion_tokens":2,"total_tokens":9}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second).WithBackend(config.BackendDeepSeek)
+	reply, err := client.CompleteChatMessage(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, ChatOptions{
+		Model: "deepseek-v4-flash",
+	})
+	if err != nil {
+		t.Fatalf("CompleteChatMessage: %v", err)
+	}
+	if reply.Usage.PromptCacheAccountingKnown ||
+		reply.Usage.PromptCacheHitTokens != 0 ||
+		reply.Usage.PromptCacheMissTokens != 0 ||
+		reply.Usage.ReasoningTokens != 0 {
+		t.Fatalf("expected omitted cache usage to remain unknown, got %#v", reply.Usage)
+	}
+}
+
 func TestCompleteChatReportsHTTPAndEmptyChoiceErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)

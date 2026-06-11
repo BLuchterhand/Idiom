@@ -174,6 +174,57 @@ func TestRewriteVerificationShellReadDoesNotPickSourceSanityForNormalImplementat
 	}
 }
 
+func TestFillSourceSanityPathFromSingleChangedSource(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+	}
+
+	redirected, ok := fillSourceSanityPathFromSingleChangedSource(
+		workspace.ToolRequest{Tool: "source_sanity"},
+		brief,
+		results,
+		[]string{"source_sanity", "shell"},
+	)
+	if !ok {
+		t.Fatal("expected pathless source_sanity to inherit the single changed source path")
+	}
+	if redirected.Tool != "source_sanity" || redirected.Path != "internal/labels/labels.go" {
+		t.Fatalf("unexpected source_sanity repair: %#v", redirected)
+	}
+}
+
+func TestFillSourceSanityPathFromSingleChangedSourceRequiresUnambiguousTarget(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+		{Tool: "edit_file", Summary: "Edited internal/labels/other.go"},
+	}
+
+	if _, ok := fillSourceSanityPathFromSingleChangedSource(
+		workspace.ToolRequest{Tool: "source_sanity"},
+		brief,
+		results,
+		[]string{"source_sanity", "shell"},
+	); ok {
+		t.Fatal("must not choose between multiple changed source paths")
+	}
+	if _, ok := fillSourceSanityPathFromSingleChangedSource(
+		workspace.ToolRequest{Tool: "source_sanity"},
+		brief,
+		results[:1],
+		[]string{"shell"},
+	); ok {
+		t.Fatal("must not repair when source_sanity is unavailable")
+	}
+}
+
 func TestPostWriteSourceSanityRedirectsPlannerOwnedReadOfChangedSource(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",
@@ -266,6 +317,74 @@ func TestPostWriteSourceSanityRedirectsNormalImplementationReadOfChangedSource(t
 		[]string{"source_sanity", "shell"},
 	); ok {
 		t.Fatal("must not redirect normal implementation reads for unchanged source paths")
+	}
+}
+
+func TestPostWriteSourceSanityRedirectsNormalImplementationDiscoveryDrift(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/labels/labels.go"},
+	}
+
+	redirected, ok := postWriteSourceSanityRedirect(
+		workspace.ToolRequest{Tool: workspace.ToolNameContextQuery, Query: "callers of ShortLabel", Resolution: "symbol"},
+		brief,
+		results,
+		[]string{workspace.ToolNameSourceSanity, workspace.ToolNameShell},
+	)
+	if !ok {
+		t.Fatal("expected post-write discovery drift to redirect to source_sanity")
+	}
+	if redirected.Tool != workspace.ToolNameSourceSanity || redirected.Path != "internal/labels/labels.go" {
+		t.Fatalf("unexpected redirect: %#v", redirected)
+	}
+}
+
+func TestPostWriteSourceSanityRedirectsDiscoveryDriftRequiresSingleChangedSource(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/labels/labels.go"},
+		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/labels/other.go"},
+	}
+
+	if _, ok := postWriteSourceSanityRedirect(
+		workspace.ToolRequest{Tool: workspace.ToolNameContextQuery, Query: "callers of ShortLabel", Resolution: "symbol"},
+		brief,
+		results,
+		[]string{workspace.ToolNameSourceSanity, workspace.ToolNameShell},
+	); ok {
+		t.Fatal("must not choose between multiple changed source paths for broad discovery drift")
+	}
+}
+
+func TestPostWriteSourceSanityRedirectPreservesBoundaryControlTools(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/labels/labels.go"},
+	}
+
+	for _, tool := range []string{
+		workspace.ToolNameHarnessFeedback,
+		workspace.ToolNameIdiomFeedback,
+		workspace.ToolNameTaskLedger,
+	} {
+		if _, ok := postWriteSourceSanityRedirect(
+			workspace.ToolRequest{Tool: tool},
+			brief,
+			results,
+			[]string{workspace.ToolNameSourceSanity, workspace.ToolNameShell},
+		); ok {
+			t.Fatalf("%s must remain available as a boundary/control tool", tool)
+		}
 	}
 }
 

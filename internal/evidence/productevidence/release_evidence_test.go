@@ -1256,13 +1256,13 @@ func TestReleaseActivationDocsGapExplicit(t *testing.T) {
 
 	t.Run("recorded status with all fields", func(t *testing.T) {
 		gap := localops.ActivationDocsGap{
-			Status:          "recorded",
-			GapRecorded:     true,
-			DocPath:         "docs/gap.md",
-			CommandLabel:    "test",
-			ExpectedOutput:  "output",
-			ActualOutput:    "actual",
-			Severity:        "low",
+			Status:            "recorded",
+			GapRecorded:       true,
+			DocPath:           "docs/gap.md",
+			CommandLabel:      "test",
+			ExpectedOutput:    "output",
+			ActualOutput:      "actual",
+			Severity:          "low",
 			BlockedActivation: false,
 		}
 		if !releaseActivationDocsGapExplicit(gap) {
@@ -1272,13 +1272,13 @@ func TestReleaseActivationDocsGapExplicit(t *testing.T) {
 
 	t.Run("recorded status with blocked activation is invalid", func(t *testing.T) {
 		gap := localops.ActivationDocsGap{
-			Status:           "recorded",
-			GapRecorded:      true,
-			DocPath:          "docs/gap.md",
-			CommandLabel:     "test",
-			ExpectedOutput:   "output",
-			ActualOutput:     "actual",
-			Severity:         "low",
+			Status:            "recorded",
+			GapRecorded:       true,
+			DocPath:           "docs/gap.md",
+			CommandLabel:      "test",
+			ExpectedOutput:    "output",
+			ActualOutput:      "actual",
+			Severity:          "low",
 			BlockedActivation: true,
 		}
 		if releaseActivationDocsGapExplicit(gap) {
@@ -1627,9 +1627,9 @@ func TestReleaseP96GateLinkage(t *testing.T) {
 func TestReleaseP912GateLinkage(t *testing.T) {
 	t.Run("already evidence_present with matching release status stays", func(t *testing.T) {
 		row := productEvidenceReleaseGateLinkage{
-			Gate:    "P9.12",
-			Status:  "evidence_present",
-			Counts:  map[string]int{},
+			Gate:     "P9.12",
+			Status:   "evidence_present",
+			Counts:   map[string]int{},
 			Blockers: nil,
 		}
 		result := releaseP912GateLinkage(row, "evidence_present")
@@ -1640,9 +1640,9 @@ func TestReleaseP912GateLinkage(t *testing.T) {
 
 	t.Run("evidence_present with needs_evidence release downgrades", func(t *testing.T) {
 		row := productEvidenceReleaseGateLinkage{
-			Gate:    "P9.12",
-			Status:  "evidence_present",
-			Counts:  map[string]int{},
+			Gate:     "P9.12",
+			Status:   "evidence_present",
+			Counts:   map[string]int{},
 			Blockers: nil,
 		}
 		result := releaseP912GateLinkage(row, "needs_evidence")

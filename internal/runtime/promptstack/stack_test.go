@@ -86,6 +86,80 @@ func TestBuildIncludesNorthStarPromptGuidance(t *testing.T) {
 	}
 }
 
+func TestBuildFallsBackToEmbeddedCanonicalPromptsWhenInstallFilesAreMissing(t *testing.T) {
+	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "no-user-config"))
+	stack, err := Build(config.Chat{
+		SystemPromptFiles: []string{"prompts/base.md"},
+		ProfilesDir:       "prompts/profiles",
+	}, []string{"coding"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, want := range []string{
+		"[baseline behavior: base.md]",
+		"Runtime briefs and control rails are the authoritative contract",
+		"[behavior profile: profile:coding]",
+		"When the session is about code",
+	} {
+		if !strings.Contains(stack.Text, want) {
+			t.Fatalf("expected embedded fallback stack to include %q, got:\n%s", want, stack.Text)
+		}
+	}
+	if countSource(stack.Sources, "embedded:prompts/base.md") != 1 {
+		t.Fatalf("expected embedded base prompt source, got %#v", stack.Sources)
+	}
+	if countSource(stack.Sources, "embedded:prompts/profiles/coding.md") != 1 {
+		t.Fatalf("expected embedded coding profile source, got %#v", stack.Sources)
+	}
+}
+
+func TestBuildFallsBackToEmbeddedProjectInstallPromptsWhenMissing(t *testing.T) {
+	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "no-user-config"))
+	stack, err := Build(config.Chat{
+		SystemPromptFiles: []string{".idiom/prompts/base.md"},
+		ProfilesDir:       ".idiom/prompts/profiles",
+	}, []string{"coding"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if countSource(stack.Sources, "embedded:prompts/base.md") != 1 {
+		t.Fatalf("expected embedded base prompt source, got %#v", stack.Sources)
+	}
+	if countSource(stack.Sources, "embedded:prompts/profiles/coding.md") != 1 {
+		t.Fatalf("expected embedded coding profile source, got %#v", stack.Sources)
+	}
+}
+
+func TestBuildFallsBackToEmbeddedPromptsForNestedCanonicalPaths(t *testing.T) {
+	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "no-user-config"))
+	stack, err := Build(config.Chat{
+		SystemPromptFiles: []string{filepath.Join(".idiom", "benchmark", "prompts", "base.md")},
+		ProfilesDir:       filepath.Join(".idiom", "benchmark", "prompts", "profiles"),
+	}, []string{"coding"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if countSource(stack.Sources, "embedded:prompts/base.md") != 1 {
+		t.Fatalf("expected embedded base prompt source, got %#v", stack.Sources)
+	}
+	if countSource(stack.Sources, "embedded:prompts/profiles/coding.md") != 1 {
+		t.Fatalf("expected embedded coding profile source, got %#v", stack.Sources)
+	}
+}
+
+func TestBuildStillFailsForMissingCustomRequiredPrompt(t *testing.T) {
+	t.Setenv("IDIOM_CONFIG_DIR", filepath.Join(t.TempDir(), "no-user-config"))
+	_, err := Build(config.Chat{
+		SystemPromptFiles: []string{"custom/missing-base.md"},
+	}, nil)
+	if err == nil {
+		t.Fatal("expected missing custom required prompt to fail")
+	}
+	if !strings.Contains(err.Error(), "custom/missing-base.md") {
+		t.Fatalf("expected custom path in error, got %v", err)
+	}
+}
+
 func testRepoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

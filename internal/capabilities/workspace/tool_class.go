@@ -1,5 +1,11 @@
 package workspace
 
+import (
+	"strings"
+
+	"idiom/internal/contracts/autonomy"
+)
+
 // ToolCategory classifies workspace tools into broad capability groups
 // for gating, recovery-card rendering, and autonomy recording.
 type ToolCategory int
@@ -33,4 +39,41 @@ func ClassifyTool(name string) ToolCategory {
 func IsReadTool(name string) bool {
 	c := ClassifyTool(name)
 	return c == CategoryRead || c == CategorySearch || c == CategoryDiscovery
+}
+
+// IsRuntimeInspectionRequest reports whether a request gathers or narrows
+// workspace evidence rather than verifying, mutating, or updating harness state.
+func IsRuntimeInspectionRequest(req ToolRequest) bool {
+	if IsBroadInspectionRequest(req) {
+		return true
+	}
+	tool := strings.TrimSpace(req.Tool)
+	if tool == ToolNameShell || tool == ToolNameListFiles {
+		return IsNarrowingRequest(req)
+	}
+	metadata, ok := builtInToolSurfaceMetadata(tool)
+	if !ok {
+		return isLanguageToolName(tool)
+	}
+	actionClass := autonomy.CanonicalActionClass(autonomy.ActionClass(metadata.ActionClass))
+	if metadata.Category == CategoryWrite ||
+		metadata.Category == CategoryVerification ||
+		actionClass == autonomy.ActionClassVerify ||
+		actionClass == autonomy.ActionClassPerEditWrite ||
+		actionClass == autonomy.ActionClassSubmitPlan {
+		return false
+	}
+	if metadata.RuntimeSourceInspection ||
+		metadata.RuntimeContextDiscovery ||
+		metadata.RuntimeHistoryInspection {
+		return true
+	}
+	switch actionClass {
+	case autonomy.ActionClassRead,
+		autonomy.ActionClassSearch,
+		autonomy.ActionClassGenericProbe:
+		return true
+	default:
+		return false
+	}
 }

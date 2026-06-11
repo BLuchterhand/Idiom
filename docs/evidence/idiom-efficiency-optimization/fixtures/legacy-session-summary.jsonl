@@ -1,0 +1,1 @@
+{"compactions":0,"completion_tokens":93,"ctx_size":1000000,"duration_ms":3740,"model_calls":2,"peak_ctx_pct":0.02506,"peak_prompt_tokens":25060,"prompt_tokens":34981,"session_id":"20260611-142413.738","tool_calls":1,"total_tokens":35074,"ts":"2026-06-11T14:24:17.47946-04:00","turns":1,"type":"session_summary"}

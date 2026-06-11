@@ -56,7 +56,7 @@ type ImplementationHandoffTDDObligation struct {
 func LoadImplementationHandoff(effortRoot string) (ImplementationHandoff, error) {
 	root := filepath.Clean(effortRoot)
 
-	stateData, err := os.ReadFile(filepath.Join(root, "workflow_state.json"))
+	stateData, err := os.ReadFile(filepath.Join(root, WorkflowStateFileName))
 	if err != nil {
 		return ImplementationHandoff{}, fmt.Errorf("load workflow state: %w", err)
 	}
@@ -123,7 +123,7 @@ func BuildImplementationHandoff(input BriefGenerationInput) ImplementationHandof
 		CurrentState:         strings.TrimSpace(input.WorkflowState.CurrentState),
 		NextValidActions:     append([]string{}, input.WorkflowState.NextValidActions...),
 		CoverageTier:         coverageTier,
-		CoverageGatePassed:   util.EqualTrimFold(input.CoverageEvaluation.Status, "pass"),
+		CoverageGatePassed:   util.EqualTrimFold(input.CoverageEvaluation.Status, ProductWorkflowStatusPass),
 		CoverageBlockers:     coverageBlockerMessages(input.CoverageEvaluation),
 		CoverageBlockerKinds: coverageBlockerKinds(input.CoverageEvaluation),
 		FilesToModify:        append([]string{}, generated.FilesToModify...),

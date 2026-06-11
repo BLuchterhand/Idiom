@@ -17,26 +17,30 @@ import (
 // Fields stay zero/empty when the source log lacks the record;
 // printers must tolerate partial data.
 type laneExplainSummary struct {
-	SessionID        string
-	SessionLogPath   string
-	StartedAt        string
-	EndedAt          string
-	DurationMS       int64
-	ModelCalls       int
-	ToolCalls        int
-	Turns            int
-	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
-	PeakPromptTokens int
-	CtxSize          int
-	StopReason       string
-	BudgetExhausted  bool
-	ToolsByCount     []toolCount
-	ToolRejections   []string
-	Errors           []string
-	Question         string
-	CompletionStatus map[string]any
+	SessionID                  string
+	SessionLogPath             string
+	StartedAt                  string
+	EndedAt                    string
+	DurationMS                 int64
+	ModelCalls                 int
+	ToolCalls                  int
+	Turns                      int
+	PromptTokens               int
+	CompletionTokens           int
+	TotalTokens                int
+	PromptCacheHitTokens       int
+	PromptCacheMissTokens      int
+	PromptCacheAccountingKnown bool
+	ReasoningTokens            int
+	PeakPromptTokens           int
+	CtxSize                    int
+	StopReason                 string
+	BudgetExhausted            bool
+	ToolsByCount               []toolCount
+	ToolRejections             []string
+	Errors                     []string
+	Question                   string
+	CompletionStatus           map[string]any
 }
 
 type toolCount struct {
@@ -258,6 +262,10 @@ func buildLaneExplainSummary(body []byte) laneExplainSummary {
 			out.PromptTokens = jsonInt(ev["prompt_tokens"])
 			out.CompletionTokens = jsonInt(ev["completion_tokens"])
 			out.TotalTokens = jsonInt(ev["total_tokens"])
+			out.PromptCacheHitTokens = jsonInt(ev["prompt_cache_hit_tokens"])
+			out.PromptCacheMissTokens = jsonInt(ev["prompt_cache_miss_tokens"])
+			out.PromptCacheAccountingKnown = jsonBool(ev["prompt_cache_accounting_known"])
+			out.ReasoningTokens = jsonInt(ev["reasoning_tokens"])
 			out.PeakPromptTokens = jsonInt(ev["peak_prompt_tokens"])
 			out.CtxSize = jsonInt(ev["ctx_size"])
 		case "tool_result":
@@ -335,6 +343,17 @@ func renderLaneExplain(s laneExplainSummary, w io.Writer) {
 		}
 		fmt.Fprintf(w, "  tokens: prompt=%d completion=%d total=%d peak_prompt=%d (%.1f%% of ctx=%d)\n",
 			s.PromptTokens, s.CompletionTokens, s.TotalTokens, s.PeakPromptTokens, pct, s.CtxSize)
+	}
+	if s.PromptCacheAccountingKnown {
+		fmt.Fprintf(w, "  cache: hit=%d miss=%d", s.PromptCacheHitTokens, s.PromptCacheMissTokens)
+		totalCachePrompt := s.PromptCacheHitTokens + s.PromptCacheMissTokens
+		if totalCachePrompt > 0 {
+			fmt.Fprintf(w, " hit_rate=%.1f%%", 100.0*float64(s.PromptCacheHitTokens)/float64(totalCachePrompt))
+		}
+		if s.ReasoningTokens > 0 {
+			fmt.Fprintf(w, " reasoning=%d", s.ReasoningTokens)
+		}
+		fmt.Fprintln(w)
 	}
 	if len(s.ToolsByCount) > 0 {
 		fmt.Fprintln(w, "tools called:")

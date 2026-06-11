@@ -40,7 +40,7 @@ var productStatusMigrationSyncDir = syncProductStatusMigrationDir
 
 func PlanProductStatusMigrationFromEffortRoot(options ProductStatusMigrationApplyOptions) ProductStatusMigrationPlan {
 	plan := ProductStatusMigrationPlan{
-		Status:             "blocked",
+		Status:             ProductWorkflowStatusBlocked,
 		TargetStatusBucket: strings.ToLower(strings.TrimSpace(options.TargetStatusBucket)),
 		Blockers:           []ProductStatusMigrationBlocker{},
 		NextValidAction:    "resolve status migration blockers before applying a migration",
@@ -65,7 +65,7 @@ func PlanProductStatusMigrationFromEffortRoot(options ProductStatusMigrationAppl
 
 func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) ProductStatusMigrationPlan {
 	plan := ProductStatusMigrationPlan{
-		Status:             "blocked",
+		Status:             ProductWorkflowStatusBlocked,
 		TargetStatusBucket: strings.ToLower(strings.TrimSpace(options.TargetStatusBucket)),
 		Blockers:           []ProductStatusMigrationBlocker{},
 		NextValidAction:    "resolve status migration blockers before applying a migration",
@@ -102,14 +102,14 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 	if options.ExpectedStateRevision >= 0 && state.workflowState.StateRevision != options.ExpectedStateRevision {
 		plan.addBlocker(
 			"stale_workflow_state_revision",
-			"workflow_state.json",
+			WorkflowStateFileName,
 			fmt.Sprintf("workflow state revision %d does not match expected revision %d", state.workflowState.StateRevision, options.ExpectedStateRevision),
 		)
 	}
 	if expectedBucket := strings.TrimSpace(options.ExpectedSourceStatusBucket); expectedBucket != "" && state.workflowState.StatusBucket != expectedBucket {
 		plan.addBlocker(
 			"stale_source_status_bucket",
-			"workflow_state.json",
+			WorkflowStateFileName,
 			fmt.Sprintf("workflow status_bucket %q does not match expected source status_bucket %q", state.workflowState.StatusBucket, expectedBucket),
 		)
 	}
@@ -139,13 +139,13 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 		plan.addBlocker("malformed_events_jsonl", state.eventsPath, err.Error())
 	}
 	if len(plan.Blockers) > 0 {
-		plan.Status = "blocked"
+		plan.Status = ProductWorkflowStatusBlocked
 		return plan
 	}
 
 	updatedWorkflowBytes, err := marshalIndentedJSON(plan.UpdatedWorkflowState)
 	if err != nil {
-		plan.addBlocker("workflow_state_encode_error", "workflow_state.json", err.Error())
+		plan.addBlocker("workflow_state_encode_error", WorkflowStateFileName, err.Error())
 		return plan
 	}
 	updatedIndexBytes, err := marshalIndentedJSON(plan.UpdatedEffortIndex)
@@ -159,29 +159,29 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 		return plan
 	}
 
-	workflowTemp := filepath.Join(state.absEffortRoot, "workflow_state.json.status-migration.tmp")
-	eventsTemp := filepath.Join(state.absEffortRoot, filepath.FromSlash(state.eventsPath)+".status-migration.tmp")
+	workflowTemp := filepath.Join(state.absEffortRoot, WorkflowStateFileName+productStatusMigrationTempSuffix)
+	eventsTemp := filepath.Join(state.absEffortRoot, filepath.FromSlash(state.eventsPath)+productStatusMigrationTempSuffix)
 	indexPath := filepath.Join(state.absEffortsRoot, "index.json")
-	indexTemp := indexPath + ".status-migration.tmp"
+	indexTemp := indexPath + productStatusMigrationTempSuffix
 
 	if err := rejectProductStatusMigrationTempSymlink(workflowTemp); err != nil {
-		plan.addBlocker("unsafe_workflow_state_temp_symlink", "workflow_state.json", err.Error())
-		plan.Status = "blocked"
+		plan.addBlocker("unsafe_workflow_state_temp_symlink", WorkflowStateFileName, err.Error())
+		plan.Status = ProductWorkflowStatusBlocked
 		return plan
 	}
 	if err := rejectProductStatusMigrationTempSymlink(eventsTemp); err != nil {
 		plan.addBlocker("unsafe_events_temp_symlink", state.eventsPath, err.Error())
-		plan.Status = "blocked"
+		plan.Status = ProductWorkflowStatusBlocked
 		return plan
 	}
 	if err := rejectProductStatusMigrationTempSymlink(indexTemp); err != nil {
 		plan.addBlocker("unsafe_effort_index_temp_symlink", "efforts/index.json", err.Error())
-		plan.Status = "blocked"
+		plan.Status = ProductWorkflowStatusBlocked
 		return plan
 	}
 
 	if err := writeMigrationTempFile(workflowTemp, updatedWorkflowBytes); err != nil {
-		plan.addBlocker("workflow_state_stage_error", "workflow_state.json", err.Error())
+		plan.addBlocker("workflow_state_stage_error", WorkflowStateFileName, err.Error())
 		return plan
 	}
 	if err := writeMigrationTempFile(eventsTemp, updatedEventsBytes); err != nil {
@@ -201,9 +201,9 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 	eventsReplaced := false
 	indexReplaced := false
 	cleanupTemps := func(root string) {
-		_ = os.Remove(filepath.Join(root, "workflow_state.json.status-migration.tmp"))
-		_ = os.Remove(filepath.Join(root, filepath.FromSlash(state.eventsPath)+".status-migration.tmp"))
-		_ = os.Remove(filepath.Join(state.absEffortsRoot, "index.json.status-migration.tmp"))
+		_ = os.Remove(filepath.Join(root, WorkflowStateFileName+productStatusMigrationTempSuffix))
+		_ = os.Remove(filepath.Join(root, filepath.FromSlash(state.eventsPath)+productStatusMigrationTempSuffix))
+		_ = os.Remove(filepath.Join(state.absEffortsRoot, "index.json"+productStatusMigrationTempSuffix))
 	}
 	rollback := func(applyErr error) ProductStatusMigrationPlan {
 		rollbackErr := rollbackProductStatusMigrationFiles(productStatusMigrationRollback{
@@ -223,7 +223,7 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 		})
 		cleanupTemps(state.absEffortRoot)
 		cleanupTemps(targetRoot)
-		plan.Status = "blocked"
+		plan.Status = ProductWorkflowStatusBlocked
 		if rollbackErr != nil {
 			plan.addBlocker("status_migration_rollback_failed", "", fmt.Sprintf("%v (rollback error: %v)", applyErr, rollbackErr))
 		} else {
@@ -254,13 +254,13 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 		}
 	}
 
-	targetWorkflowTemp := filepath.Join(targetRoot, "workflow_state.json.status-migration.tmp")
-	targetEventsTemp := filepath.Join(targetRoot, filepath.FromSlash(state.eventsPath)+".status-migration.tmp")
-	if err := os.Rename(targetWorkflowTemp, filepath.Join(targetRoot, "workflow_state.json")); err != nil {
+	targetWorkflowTemp := filepath.Join(targetRoot, WorkflowStateFileName+productStatusMigrationTempSuffix)
+	targetEventsTemp := filepath.Join(targetRoot, filepath.FromSlash(state.eventsPath)+productStatusMigrationTempSuffix)
+	if err := os.Rename(targetWorkflowTemp, filepath.Join(targetRoot, WorkflowStateFileName)); err != nil {
 		return rollback(err)
 	}
 	workflowReplaced = true
-	if err := syncFileBestEffort(filepath.Join(targetRoot, "workflow_state.json")); err != nil {
+	if err := syncFileBestEffort(filepath.Join(targetRoot, WorkflowStateFileName)); err != nil {
 		return rollback(err)
 	}
 	if err := syncDirBestEffort(targetRoot); err != nil {
@@ -281,7 +281,7 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 		return rollback(err)
 	}
 
-	plan.Status = "applied"
+	plan.Status = ProductWorkflowStatusApplied
 	plan.NextValidAction = fmt.Sprintf("inspect migrated effort under %s and rerun `idiom product status --effort-root <path>`", plan.TargetFolderPath)
 	return plan
 }
@@ -318,8 +318,8 @@ func rollbackProductStatusMigrationFiles(input productStatusMigrationRollback) e
 		}
 	}
 	if input.workflowReplaced {
-		if err := atomicWriteFile(filepath.Join(input.sourceRoot, "workflow_state.json"), input.originalWorkflow, 0o644); err != nil {
-			return fmt.Errorf("restore workflow_state.json: %w", err)
+		if err := atomicWriteFile(filepath.Join(input.sourceRoot, WorkflowStateFileName), input.originalWorkflow, 0o644); err != nil {
+			return fmt.Errorf("restore %s: %w", WorkflowStateFileName, err)
 		}
 	}
 	if input.eventsReplaced {
@@ -437,24 +437,24 @@ func loadProductStatusMigrationDiskState(options ProductStatusMigrationApplyOpti
 		}
 	}
 
-	workflowPath := filepath.Join(absEffortRoot, "workflow_state.json")
+	workflowPath := filepath.Join(absEffortRoot, WorkflowStateFileName)
 	if err := rejectProductStatusMigrationSymlinks(absEffortRoot, workflowPath); err != nil {
-		plan.addBlocker("unsafe_workflow_state_symlink", "workflow_state.json", err.Error())
+		plan.addBlocker("unsafe_workflow_state_symlink", WorkflowStateFileName, err.Error())
 		return state, false
 	}
 	workflowBytes, workflowErr := os.ReadFile(workflowPath)
 	if workflowErr != nil {
 		if os.IsNotExist(workflowErr) {
-			plan.addBlocker("missing_workflow_state", "workflow_state.json", "workflow_state.json not found")
+			plan.addBlocker("missing_workflow_state", WorkflowStateFileName, WorkflowStateFileName+" not found")
 		} else {
-			plan.addBlocker("read_workflow_state_error", "workflow_state.json", workflowErr.Error())
+			plan.addBlocker("read_workflow_state_error", WorkflowStateFileName, workflowErr.Error())
 		}
 		return state, false
 	}
 	state.workflowBytes = workflowBytes
 	workflowState, parseErr := ParseWorkflowStateJSON(workflowBytes)
 	if parseErr != nil {
-		plan.addBlocker("malformed_workflow_state", "workflow_state.json", parseErr.Error())
+		plan.addBlocker("malformed_workflow_state", WorkflowStateFileName, parseErr.Error())
 		return state, false
 	}
 	state.workflowState = workflowState
@@ -463,9 +463,9 @@ func loadProductStatusMigrationDiskState(options ProductStatusMigrationApplyOpti
 
 	eventsPath, eventsPathOK := normalizedSafeEffortPath(workflowState.ArtifactPaths["events"])
 	if strings.TrimSpace(workflowState.ArtifactPaths["events"]) == "" {
-		plan.addBlocker("missing_events_artifact_path", "workflow_state.json", "workflow_state artifact_paths.events is required for status migration")
+		plan.addBlocker("missing_events_artifact_path", WorkflowStateFileName, "workflow_state artifact_paths.events is required for status migration")
 	} else if !eventsPathOK {
-		plan.addBlocker("unsafe_events_artifact_path", "workflow_state.json", "workflow_state artifact_paths.events must be a safe relative path")
+		plan.addBlocker("unsafe_events_artifact_path", WorkflowStateFileName, "workflow_state artifact_paths.events must be a safe relative path")
 	} else {
 		state.eventsPath = eventsPath
 		eventsFullPath := filepath.Join(absEffortRoot, filepath.FromSlash(eventsPath))

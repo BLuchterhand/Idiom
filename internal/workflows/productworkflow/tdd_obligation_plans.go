@@ -31,7 +31,7 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 			Kind:     "unaccepted_prd",
 			Message:  fmt.Sprintf("prd status %q is not accepted; obligation automation unavailable", prd.FrontMatter.Status),
 			File:     "prd.md",
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 		})
 	}
 	acceptedADRs := make([]ParsedADR, 0, len(adrs))
@@ -45,7 +45,7 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 			Kind:     "no_accepted_adrs",
 			Message:  "no accepted ADRs available; obligation automation unavailable",
 			File:     "adrs/index.json",
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 		})
 	}
 
@@ -80,7 +80,7 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 				Kind:     "missing_accepted_adr_for_prd_requirement",
 				Message:  fmt.Sprintf("PRD requirement %q is not referenced by an accepted ADR; obligation automation unavailable", req.ID),
 				File:     "prd.md",
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 			})
 			continue
 		}
@@ -118,7 +118,7 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 					Kind:     "missing_tdd_obligation_reference",
 					Message:  message,
 					File:     "prd.md",
-					Severity: "error",
+					Severity: ProductWorkflowSeverityError,
 				})
 				continue
 			}

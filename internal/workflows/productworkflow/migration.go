@@ -81,7 +81,7 @@ func PlanProductStatusMigration(workflowState WorkflowState, effortIndex EffortI
 	}
 
 	plan := ProductStatusMigrationPlan{
-		Status:             "blocked",
+		Status:             ProductWorkflowStatusBlocked,
 		EffortID:           strings.TrimSpace(workflowState.EffortID),
 		SourceStatusBucket: strings.TrimSpace(workflowState.StatusBucket),
 		TargetStatusBucket: targetBucket,
@@ -91,7 +91,7 @@ func PlanProductStatusMigration(workflowState WorkflowState, effortIndex EffortI
 	}
 
 	if strings.TrimSpace(workflowState.EffortID) == "" {
-		plan.addBlocker("missing_effort_id", "workflow_state.json", "workflow_state missing effort_id")
+		plan.addBlocker("missing_effort_id", WorkflowStateFileName, "workflow_state missing effort_id")
 	}
 	if strings.TrimSpace(options.UpdatedAt) == "" {
 		plan.addBlocker("missing_migration_timestamp", "updated_at", "status migration plan requires an updated_at timestamp")
@@ -106,7 +106,7 @@ func PlanProductStatusMigration(workflowState WorkflowState, effortIndex EffortI
 		plan.addBlocker("unsafe_efforts_root", "efforts_root", "efforts root must be a safe relative path")
 	}
 	if !validStatusBuckets[workflowState.StatusBucket] {
-		plan.addBlocker("invalid_source_status_bucket", "workflow_state.json", fmt.Sprintf("source status_bucket %q is not valid", workflowState.StatusBucket))
+		plan.addBlocker("invalid_source_status_bucket", WorkflowStateFileName, fmt.Sprintf("source status_bucket %q is not valid", workflowState.StatusBucket))
 	}
 	if !validStatusBuckets[targetBucket] {
 		plan.addBlocker("invalid_target_status_bucket", "target_status_bucket", fmt.Sprintf("target status_bucket %q is not valid", targetBucket))
@@ -118,10 +118,10 @@ func PlanProductStatusMigration(workflowState WorkflowState, effortIndex EffortI
 		plan.addBlocker("invalid_status_migration", "target_status_bucket", fmt.Sprintf("status migration from %q to %q is not allowed", workflowState.StatusBucket, targetBucket))
 	}
 	if _, ok := validStates[workflowState.CurrentState]; !ok && workflowState.CurrentState != "" {
-		plan.addBlocker("invalid_current_state", "workflow_state.json", fmt.Sprintf("current_state %q is not valid", workflowState.CurrentState))
+		plan.addBlocker("invalid_current_state", WorkflowStateFileName, fmt.Sprintf("current_state %q is not valid", workflowState.CurrentState))
 	}
 	if consistency := validateStateBucketConsistency(workflowState.StatusBucket, workflowState.CurrentState); consistency != nil {
-		plan.addBlocker(consistency.Code, "workflow_state.json", consistency.Message)
+		plan.addBlocker(consistency.Code, WorkflowStateFileName, consistency.Message)
 	}
 	if targetState == "" {
 		targetState = defaultMigrationTargetState(targetBucket, workflowState.CurrentState)
@@ -139,16 +139,16 @@ func PlanProductStatusMigration(workflowState WorkflowState, effortIndex EffortI
 		var workflowFolderPathSafe bool
 		workflowFolderPath, workflowFolderPathSafe = normalizedSafeEffortPath(workflowState.FolderPath)
 		if !workflowFolderPathSafe {
-			plan.addBlocker("unsafe_workflow_folder_path", "workflow_state.json", fmt.Sprintf("workflow folder_path %q is not a safe relative path", publicEffortPath(workflowState.FolderPath)))
+			plan.addBlocker("unsafe_workflow_folder_path", WorkflowStateFileName, fmt.Sprintf("workflow folder_path %q is not a safe relative path", publicEffortPath(workflowState.FolderPath)))
 		}
 	}
 	for _, priorPath := range workflowState.PriorFolderPaths {
 		if _, ok := normalizedSafeEffortPath(priorPath); !ok {
-			plan.addBlocker("unsafe_workflow_prior_folder_path", "workflow_state.json", fmt.Sprintf("workflow prior_folder_paths contains %q, which is not a safe relative path", publicEffortPath(priorPath)))
+			plan.addBlocker("unsafe_workflow_prior_folder_path", WorkflowStateFileName, fmt.Sprintf("workflow prior_folder_paths contains %q, which is not a safe relative path", publicEffortPath(priorPath)))
 		}
 	}
 	if sourceFolder != "" && workflowFolderPath != "" && !folderPathMatchesRelative(workflowFolderPath, sourceFolder) {
-		plan.addBlocker("workflow_folder_path_mismatch", "workflow_state.json", fmt.Sprintf("workflow folder_path %q does not match source folder %q", publicEffortPath(workflowState.FolderPath), sourceFolder))
+		plan.addBlocker("workflow_folder_path_mismatch", WorkflowStateFileName, fmt.Sprintf("workflow folder_path %q does not match source folder %q", publicEffortPath(workflowState.FolderPath), sourceFolder))
 	}
 	if sourceFolder != "" && workflowState.EffortID != "" && path.Base(sourceFolder) != workflowState.EffortID {
 		plan.addBlocker("effort_id_folder_mismatch", "source_folder_path", fmt.Sprintf("source folder basename %q does not match effort_id %q", path.Base(sourceFolder), workflowState.EffortID))
@@ -213,7 +213,7 @@ func PlanProductStatusMigration(workflowState WorkflowState, effortIndex EffortI
 	updatedIndexEntry.PriorPaths = appendUniqueStrings(compactSafeEffortPaths(updatedIndexEntry.PriorPaths), sourceFolder)
 	updatedIndex := updatedEffortIndex(effortIndex, workflowState.EffortID, updatedIndexEntry, strings.TrimSpace(options.UpdatedAt))
 
-	plan.Status = "planned"
+	plan.Status = ProductWorkflowStatusPlanned
 	plan.TargetFolderPath = targetFolder
 	plan.PriorFolderPaths = append([]string{}, updatedWorkflow.PriorFolderPaths...)
 	plan.PriorIndexPaths = append([]string{}, updatedIndexEntry.PriorPaths...)
@@ -245,7 +245,7 @@ func PlanProductStatusMigrationContract(input ProductStatusMigrationContractInpu
 	idx, idxErr := ParseEffortIndexJSON(input.EffortIndexJSON)
 	if idxErr != nil {
 		return ProductStatusMigrationPlan{
-			Status: "blocked",
+			Status: ProductWorkflowStatusBlocked,
 			Blockers: []ProductStatusMigrationBlocker{
 				{
 					Code:    "malformed_effort_index",
@@ -260,11 +260,11 @@ func PlanProductStatusMigrationContract(input ProductStatusMigrationContractInpu
 	ws, wsErr := ParseWorkflowStateJSON(input.WorkflowStateJSON)
 	if wsErr != nil {
 		return ProductStatusMigrationPlan{
-			Status: "blocked",
+			Status: ProductWorkflowStatusBlocked,
 			Blockers: []ProductStatusMigrationBlocker{
 				{
 					Code:    "malformed_workflow_state",
-					Path:    "workflow_state.json",
+					Path:    WorkflowStateFileName,
 					Message: wsErr.Error(),
 				},
 			},
@@ -283,13 +283,13 @@ func PlanProductStatusMigrationContract(input ProductStatusMigrationContractInpu
 
 func defaultMigrationTargetState(targetBucket, currentState string) string {
 	switch targetBucket {
-	case "unstarted":
-		return "planned"
-	case "closed":
-		return "closed"
-	case "started":
-		if currentState == "" || currentState == "closed" {
-			return "planned"
+	case WorkflowStatusBucketUnstarted:
+		return WorkflowStatePlanned
+	case WorkflowStatusBucketClosed:
+		return WorkflowStateClosed
+	case WorkflowStatusBucketStarted:
+		if currentState == "" || currentState == WorkflowStateClosed {
+			return WorkflowStatePlanned
 		}
 		return currentState
 	default:
@@ -299,10 +299,10 @@ func defaultMigrationTargetState(targetBucket, currentState string) string {
 
 func allowedStatusMigration(sourceBucket, targetBucket string) bool {
 	switch sourceBucket {
-	case "unstarted":
-		return targetBucket == "started" || targetBucket == "closed"
-	case "started":
-		return targetBucket == "closed"
+	case WorkflowStatusBucketUnstarted:
+		return targetBucket == WorkflowStatusBucketStarted || targetBucket == WorkflowStatusBucketClosed
+	case WorkflowStatusBucketStarted:
+		return targetBucket == WorkflowStatusBucketClosed
 	default:
 		return false
 	}
@@ -364,7 +364,7 @@ func migrationNextValidActions(statusBucket, currentState string) ([]string, []T
 	if len(blockers) > 0 {
 		return nil, blockers
 	}
-	if statusBucket == "closed" && len(actions) == 0 {
+	if statusBucket == WorkflowStatusBucketClosed && len(actions) == 0 {
 		return []string{"inspect_closed_effort"}, nil
 	}
 	return transitionActionNames(actions), nil

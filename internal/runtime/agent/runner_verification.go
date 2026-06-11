@@ -75,18 +75,78 @@ func rewriteVerificationShellReadToSourceSanity(req workspace.ToolRequest, brief
 	return workspace.ToolRequest{}, false
 }
 
+func fillSourceSanityPathFromSingleChangedSource(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
+	if strings.TrimSpace(req.Tool) != workspace.ToolNameSourceSanity || strings.TrimSpace(req.Path) != "" {
+		return workspace.ToolRequest{}, false
+	}
+	if !containsRunnerTool(allowedTools, workspace.ToolNameSourceSanity) || !sourceEditsNeedSemanticVerification(brief, results) {
+		return workspace.ToolRequest{}, false
+	}
+	target, ok := singleChangedSourceSanityPath(results)
+	if !ok {
+		return workspace.ToolRequest{}, false
+	}
+	redirected := req
+	redirected.Path = target
+	return redirected, true
+}
+
 func postWriteSourceSanityRedirect(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
-	if !containsRunnerTool(allowedTools, "source_sanity") || !sourceEditsNeedSemanticVerification(brief, results) {
+	if !containsRunnerTool(allowedTools, workspace.ToolNameSourceSanity) || !sourceEditsNeedSemanticVerification(brief, results) {
 		return workspace.ToolRequest{}, false
 	}
-	if !postWriteVerificationReadOfChangedSource(req, results) &&
-		!postWriteVerificationWriteOfChangedSource(req, results) {
+	if isVerificationRequest(req) || strings.TrimSpace(req.Tool) == workspace.ToolNameSourceSanity {
 		return workspace.ToolRequest{}, false
 	}
-	if isVerificationRequest(req) || strings.TrimSpace(req.Tool) == "source_sanity" {
+	if sourceVerificationBoundaryAllowsTool(req.Tool) {
 		return workspace.ToolRequest{}, false
 	}
-	return workspace.ToolRequest{Tool: "source_sanity", Path: normalizeRunnerPath(req.Path)}, true
+	if postWriteVerificationReadOfChangedSource(req, results) ||
+		postWriteVerificationWriteOfChangedSource(req, results) {
+		return workspace.ToolRequest{Tool: workspace.ToolNameSourceSanity, Path: normalizeRunnerPath(req.Path)}, true
+	}
+	if requested := normalizeRunnerPath(req.Path); requested != "" && requested != "." {
+		if !changedSourcePathsContain(results, requested) {
+			return workspace.ToolRequest{}, false
+		}
+		return workspace.ToolRequest{Tool: workspace.ToolNameSourceSanity, Path: requested}, true
+	}
+	if !workspace.IsRuntimeInspectionRequest(req) {
+		return workspace.ToolRequest{}, false
+	}
+	target, ok := singleChangedSourceSanityPath(results)
+	if !ok {
+		return workspace.ToolRequest{}, false
+	}
+	return workspace.ToolRequest{Tool: workspace.ToolNameSourceSanity, Path: target}, true
+}
+
+func singleChangedSourceSanityPath(results []workspace.ToolResult) (string, bool) {
+	var target string
+	for _, path := range changedSourcePaths(results) {
+		normalized := normalizeRunnerPath(path)
+		if normalized == "" || !workspace.SourceSanityCoversPath(normalized) {
+			continue
+		}
+		if target != "" && target != normalized {
+			return "", false
+		}
+		target = normalized
+	}
+	return target, target != ""
+}
+
+func changedSourcePathsContain(results []workspace.ToolResult, path string) bool {
+	normalizedPath := normalizeRunnerPath(path)
+	if normalizedPath == "" {
+		return false
+	}
+	for _, changed := range changedSourcePaths(results) {
+		if normalizeRunnerPath(changed) == normalizedPath {
+			return true
+		}
+	}
+	return false
 }
 
 func postWriteVerificationReadOfChangedSource(req workspace.ToolRequest, results []workspace.ToolResult) bool {

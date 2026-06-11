@@ -11,15 +11,15 @@ import (
 type PlanExecuteRecoveryKind string
 
 const (
-	PlanExecuteRecoveryKindLowValueCandidateAction  PlanExecuteRecoveryKind = "low_value_candidate_action"
-	PlanExecuteRecoveryKindGroundingRequired        PlanExecuteRecoveryKind = "grounding_required"
-	PlanExecuteRecoveryKindEmptySubmitPlan          PlanExecuteRecoveryKind = "empty_submit_plan"
-	PlanExecuteRecoveryKindSubmitPlanParse          PlanExecuteRecoveryKind = "submit_plan_parse"
-	PlanExecuteRecoveryKindSubmitCorrection         PlanExecuteRecoveryKind = "submit_correction"
-	PlanExecuteRecoveryKindNativeSubmitCorrection   PlanExecuteRecoveryKind = "native_submit_correction"
-	PlanExecuteRecoveryKindAnchorRefresh            PlanExecuteRecoveryKind = "anchor_refresh"
-	PlanExecuteRecoveryKindRepeatedCorrection       PlanExecuteRecoveryKind = "repeated_correction"
-	PlanExecuteRecoveryKindNativeNoCallFallback     PlanExecuteRecoveryKind = "native_no_call_fallback"
+	PlanExecuteRecoveryKindLowValueCandidateAction PlanExecuteRecoveryKind = "low_value_candidate_action"
+	PlanExecuteRecoveryKindGroundingRequired       PlanExecuteRecoveryKind = "grounding_required"
+	PlanExecuteRecoveryKindEmptySubmitPlan         PlanExecuteRecoveryKind = "empty_submit_plan"
+	PlanExecuteRecoveryKindSubmitPlanParse         PlanExecuteRecoveryKind = "submit_plan_parse"
+	PlanExecuteRecoveryKindSubmitCorrection        PlanExecuteRecoveryKind = "submit_correction"
+	PlanExecuteRecoveryKindNativeSubmitCorrection  PlanExecuteRecoveryKind = "native_submit_correction"
+	PlanExecuteRecoveryKindAnchorRefresh           PlanExecuteRecoveryKind = "anchor_refresh"
+	PlanExecuteRecoveryKindRepeatedCorrection      PlanExecuteRecoveryKind = "repeated_correction"
+	PlanExecuteRecoveryKindNativeNoCallFallback    PlanExecuteRecoveryKind = "native_no_call_fallback"
 )
 
 type PlanExecuteRecoveryPlan struct {
@@ -158,7 +158,6 @@ func planThenExecuteSubmitPlanParseRecoveryPlan(stringifiedEdits bool, requiredP
 		Instructions:    instructions,
 	}
 }
-
 
 // planThenExecuteSubmitCorrectionRecoveryPlan returns a recovery plan for the generic
 // submit-plan correction path after a rejected submit_plan.

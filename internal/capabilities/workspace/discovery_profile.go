@@ -18,59 +18,59 @@ type ToolDiscoveryProfile struct {
 func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 	tool := strings.TrimSpace(req.Tool)
 	switch tool {
-	case "pwd":
+	case ToolNamePwd:
 		return discoveryProfile("workspace_context", "targeted", "low", false)
-	case "list_files":
+	case ToolNameListFiles:
 		return discoveryProfile("workspace_listing", scopeFromPath(req.Path), "low", false)
-	case "search_files":
+	case ToolNameSearchFiles:
 		return discoveryProfile("file_search", "targeted", "low", false)
-	case "search_content", "rg":
+	case ToolNameSearchContent, ToolNameRg:
 		return discoveryProfile("text_search", "targeted", "low", false)
-	case "read_file":
+	case ToolNameReadFile:
 		return discoveryProfile("file_read", "targeted", "low", false)
-	case "code_navigate":
+	case ToolNameCodeNavigate:
 		return codeNavigationDiscoveryProfile(req)
-	case "read_only_capability":
+	case ToolNameReadOnlyCapability:
 		return readOnlyCapabilityDiscoveryProfile(req)
-	case "source_sanity":
+	case ToolNameSourceSanity:
 		return discoveryProfile("diagnostics", "targeted", "medium", false)
-	case "harness_audit":
+	case ToolNameHarnessAudit:
 		return discoveryProfile("harness_audit", scopeFromPath(req.Path), "medium", true)
-	case "harness_feedback", "idiom_feedback":
+	case ToolNameHarnessFeedback, ToolNameIdiomFeedback:
 		return discoveryProfile("harness_feedback", "targeted", "low", true)
-	case "context_index":
+	case ToolNameContextIndex:
 		return discoveryProfile("context_index", scopeFromPath(req.Path), "medium", true)
-	case "context_status":
+	case ToolNameContextStatus:
 		return discoveryProfile("context_status", "targeted", "low", true)
-	case "context_query":
+	case ToolNameContextQuery:
 		return discoveryProfile("context_query", scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), "low", true)
-	case "context_zoom":
+	case ToolNameContextZoom:
 		return discoveryProfile("context_zoom", "targeted", "low", true)
-	case "context_pack":
+	case ToolNameContextPack:
 		return discoveryProfile("context_pack", scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Task, req.Query, req.Pattern)), "medium", true)
-	case "context_impact":
+	case ToolNameContextImpact:
 		return discoveryProfile("context_impact", scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Task, req.Query, req.Pattern)), "medium", true)
-	case "context_trace_pack":
+	case ToolNameContextTracePack:
 		return discoveryProfile("runtime_trace", scopeFromPathAndPattern(req.Path, req.Command), "medium", true)
-	case "discovery_query":
+	case ToolNameDiscoveryQuery:
 		cost := "medium"
 		if normalizeDiscoveryQueryPurpose(req.Purpose) == "security_review" {
 			cost = "high"
 		}
 		return discoveryProfile("composite_query", scopeFromPathAndPattern(req.Path, req.Pattern), cost, true)
-	case "structural_search":
+	case ToolNameStructuralSearch:
 		return discoveryProfile("ast_search", "targeted", "medium", true)
-	case "dependency_graph":
+	case ToolNameDependencyGraph:
 		return discoveryProfile("dependency_graph", scopeFromPath(req.Path), "medium", true)
-	case "history_range", "history_symbol", "blame_range":
+	case ToolNameHistoryRange, ToolNameHistorySymbol, ToolNameBlameRange:
 		return discoveryProfile("history", "targeted", "medium", true)
-	case "ctags_symbols":
+	case ToolNameCtagsSymbols:
 		return discoveryProfile("symbol_index", scopeFromPathAndPattern(req.Path, req.Pattern), "medium", true)
-	case "semgrep_scan", "joern_scan":
+	case ToolNameSemgrepScan, ToolNameJoernScan:
 		return discoveryProfile("security_scan", scopeFromPath(req.Path), "high", true)
-	case "task":
+	case ToolNameTask:
 		return discoveryProfile("delegated_discovery", "broad", "high", false)
-	case "shell":
+	case ToolNameShell:
 		return shellDiscoveryProfile(req.Command)
 	default:
 		return languageDiscoveryProfile(tool)
@@ -79,7 +79,7 @@ func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 
 func readOnlyCapabilityDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
 	routed := req
-	routed.Tool = "code_navigate"
+	routed.Tool = ToolNameCodeNavigate
 	switch normalizeReadOnlyCapabilityID(req.Capability) {
 	case string(ReadOnlyCapabilityFileOutline):
 		routed.Capability = string(CapFileOutline)

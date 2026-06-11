@@ -49,13 +49,17 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 		}
 	}
 	aliases := appWriterRouteRoleAliases(m.projectRoot())
+	plannerModel := m.writerRouteModelForRole(aliases, backends.RolePlanner)
+	executorModel := m.writerRouteModelForRole(aliases, backends.RoleExecutor)
+	classifierModel := m.writerRouteModelForRole(aliases, backends.RoleClassifier)
 	return writerroute.NewDecisionFromParams(writerroute.DecisionParams{
 		Mode:              mode,
 		Lane:              lane,
-		PlannerModel:      m.writerRouteModelForRole(aliases, backends.RolePlanner),
-		ExecutorModel:     m.writerRouteModelForRole(aliases, backends.RoleExecutor),
-		ReviewerModel:     m.writerRouteModelForRole(aliases, backends.RoleExecutor),
-		ClassifierModel:   m.writerRouteModelForRole(aliases, backends.RoleClassifier),
+		PlannerModel:      plannerModel,
+		ExecutorModel:     executorModel,
+		ReviewerModel:     executorModel,
+		ClassifierModel:   classifierModel,
+		EffectiveModel:    writerroute.EffectiveModelForMode(mode, plannerModel, executorModel, classifierModel),
 		RoleAliases:       aliases,
 		VerificationOwner: verificationOwner,
 		RequiredEditPaths: plan.runtimeBrief.RequiredEditPaths,
@@ -95,9 +99,6 @@ func appWriterRouteRoleAliases(projectRoot string) map[string]string {
 }
 
 func (m *Model) writerRouteModelForRole(aliases map[string]string, role string) string {
-	if alias := strings.TrimSpace(aliases[role]); alias != "" {
-		return alias
-	}
 	switch role {
 	case backends.RoleExecutor:
 		if model := strings.TrimSpace(m.executorSpec.Model); model != "" {
@@ -115,5 +116,11 @@ func (m *Model) writerRouteModelForRole(aliases map[string]string, role string) 
 			return model
 		}
 	}
-	return strings.TrimSpace(m.cfg.LlamaServer.Model)
+	if model := strings.TrimSpace(m.cfg.LlamaServer.Model); model != "" {
+		return model
+	}
+	if alias := strings.TrimSpace(aliases[role]); alias != "" {
+		return alias
+	}
+	return ""
 }

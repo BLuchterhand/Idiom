@@ -68,7 +68,6 @@ func parsePlanExecuteOptions(args []string, stderr io.Writer) (planExecuteOption
 	return planexecute.ParseOptions(args, stderr)
 }
 
-
 func planExecuteRequiredEditPaths(opts planExecuteOptions, prompt string) []string {
 	return planexecute.PlanExecuteRequiredEditPaths(opts, prompt)
 }
@@ -93,7 +92,6 @@ func isPlanExecutePackID(value string) bool {
 	return planexecute.IsPlanExecutePackID(value)
 }
 
-
 // planExecutePlannerSystemAddendum is prepended to the brief in the
 // planner phase. Kept tight by design: local text-tool backends need
 // enough visible output budget to emit a parser-readable submit_plan.
@@ -102,8 +100,6 @@ func isPlanExecutePackID(value string) bool {
 func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPaths []string) string {
 	return planexecute.PlanExecutePlannerSystemAddendumWithObligations(requiredEditPaths, allowedEditPaths, nil)
 }
-
-
 
 func planExecutePathLooksLikeTest(path string) bool {
 	return planexecute.PlanExecutePathLooksLikeTest(path)
@@ -132,7 +128,6 @@ func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]wor
 func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
 	return planexecute.PlanExecuteExactPlanEditsForWorkspace(prompt, requiredEditPaths, workspaceRoot)
 }
-
 
 // newPlanExecuteSessionID returns a fresh, unguessable session
 // identifier for this plan-execute run. Used by the executor phase
@@ -193,7 +188,6 @@ type reviewRepairEvidence struct {
 
 type reviewRepairBaseline = planexecute.ReviewRepairBaseline
 
-
 func runReviewRepairPhase(
 	cfg config.Config,
 	originalPrompt string,
@@ -251,7 +245,6 @@ func fromSharedReviewRepairEvidence(evidence planexecute.ReviewRepairEvidence) r
 	return out
 }
 
-
 func collectReviewRepairEvidence(root string, paths []string, baseline *reviewRepairBaseline) reviewRepairEvidence {
 	return fromSharedReviewRepairEvidence(planexecute.CollectReviewRepairEvidence(root, paths, baseline))
 }
@@ -269,11 +262,9 @@ func captureReviewRepairBaseline(root string, paths []string) reviewRepairBaseli
 	return planexecute.CaptureReviewRepairBaseline(root, paths)
 }
 
-
 func mergePlanExecutePaths(groups ...[]string) []string {
 	return planexecute.MergePlanExecutePaths(groups...)
 }
-
 
 func reviewAnswerPassContradictionReason(answer string) string {
 	return planexecute.ReviewAnswerPassContradictionReason(answer)
@@ -301,8 +292,6 @@ func runExecutorPhaseScopedWithVerification(cfg config.Config, plan workspace.Pl
 	shared, err := planexecute.RunExecutorPhaseScopedWithVerification(cfg, plan, requiredEditPaths, allowedEditPaths, verificationCommands, jsonEvents, stdout, progress...)
 	return shared, err
 }
-
-
 
 // planEditPreflightMismatch describes the first edit whose old_text
 // does not appear in its target file. Used by preflightPlanEdits to
@@ -352,7 +341,6 @@ func normalizePlanExecutePath(path string) string {
 func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *planEditPreflightMismatch {
 	return planEditPreflightMismatchFromPackage(planexecute.PreflightPlanEdits(workspaceRoot, plan))
 }
-
 
 func firstNonEmptyString(values ...string) string {
 	return planexecute.FirstNonEmptyString(values...)

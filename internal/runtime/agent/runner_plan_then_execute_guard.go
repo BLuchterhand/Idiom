@@ -1760,7 +1760,7 @@ func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path s
 	evidence.Source = tool
 	evidence.Detail = "source body"
 	switch {
-	case tool == "read_file":
+	case readStyleSourceBodyTool(tool):
 		evidence.Level, evidence.Detail = planThenExecuteReadFileEvidenceLevel(result, path)
 	case tool == "code_navigate" || tool == "read_only_capability":
 		if !routedSourceReadOutputHasBody(result.Output) {
@@ -2685,6 +2685,25 @@ func (r *Runner) planThenExecuteSourceSatisfiedAnswerCovers(reply string, result
 	if r.planThenExecuteRequiredEditSnippetsSourceSatisfied() {
 		return true
 	}
+	// Evidence-ledger check: every required path the model claims as
+	// source-satisfied must have a source-body read receipt in the
+	// collected results. This prevents stale-evidence claims where
+	// source-satisfied is asserted for a path whose content may have
+	// changed since the last read.
+	//
+	// During the anchor-refresh phase, refresh-state paths must have
+	// evidence from the current turn (results after SeedResults) to
+	// prevent stale seed evidence from satisfying the check.
+	if len(missing) > 0 {
+		state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+		refreshCutoff := len(r.SeedResults)
+		if state.Mode != PlanExecutePlanningModeAnchorRefresh || len(state.RefreshPaths) == 0 {
+			refreshCutoff = 0
+		}
+		if !requiredPathsHaveSourceBodyEvidence(missing, results, state.RefreshPaths, refreshCutoff) {
+			return false
+		}
+	}
 	return planThenExecuteSourceSatisfiedResultsCoverPaths(missing, results)
 }
 
@@ -2701,6 +2720,37 @@ func planThenExecuteSourceSatisfiedResultsCoverPaths(requiredPaths []string, res
 	}
 	for _, path := range requiredPaths {
 		if planThenExecuteRequiredSourceEvidenceForPath(workerruntime.WorkerRuntimeBrief{}, results, path).Level != planThenExecuteEvidenceAnchorReady {
+			return false
+		}
+	}
+	return true
+}
+
+// requiredPathsHaveSourceBodyEvidence is the evidence-ledger check for the
+// source-satisfied terminal outcome. It verifies that every required path has
+// a source-body read receipt in the provided results, preventing stale-evidence
+// claims where the model asserts source-satisfied for a path whose content may
+// have changed since the last read.
+//
+// For freshness-sensitive contexts (anchor-refresh phase), pass a non-empty
+// refreshPaths list with a resultCutoff index. Paths in refreshPaths must have
+// evidence in results from index resultCutoff onward (i.e., produced during or
+// after the refresh). A nil or empty refreshPaths list checks all results.
+func requiredPathsHaveSourceBodyEvidence(requiredPaths []string, results []workspace.ToolResult, refreshPaths []string, resultCutoff int) bool {
+	if len(requiredPaths) == 0 {
+		return false
+	}
+	refreshSet := make(map[string]struct{}, len(refreshPaths))
+	for _, p := range refreshPaths {
+		refreshSet[normalizeRunnerPath(p)] = struct{}{}
+	}
+	for _, path := range requiredPaths {
+		normPath := normalizeRunnerPath(path)
+		scoped := results
+		if _, needsFresh := refreshSet[normPath]; needsFresh && resultCutoff > 0 && resultCutoff < len(results) {
+			scoped = results[resultCutoff:]
+		}
+		if planThenExecuteRequiredSourceEvidenceForPath(workerruntime.WorkerRuntimeBrief{}, scoped, normPath).Level != planThenExecuteEvidenceAnchorReady {
 			return false
 		}
 	}

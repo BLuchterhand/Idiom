@@ -1,0 +1,12 @@
+{
+  "provider": "DeepSeek",
+  "model": "deepseek-v4-flash",
+  "pricing_snapshot_date": "2026-06-11",
+  "rates": {
+    "input_miss_rate": 0.00000014,
+    "input_hit_rate": 0.0000000028,
+    "output_rate": 0.00000028
+  },
+  "currency": "USD",
+  "notes": "Example pricing fixture for benchmark illustration, expressed as per-token rates. Public pricing reports on 2026-06-11 list V4 Flash at $0.14/M cache-miss input, $0.0028/M cache-hit input, and $0.28/M output. Verify current official DeepSeek pricing before using for billing."
+}

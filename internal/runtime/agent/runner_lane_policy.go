@@ -418,6 +418,9 @@ func (p delegatedDiscoveryPlan) shouldReplacePath(path string) bool {
 	if path == "." && p.primaryScope != "" && p.primaryScope != "." && p.hasNamedScope {
 		return true
 	}
+	if delegatedReadOnlyBroadNamedScope(path) && p.primaryScope != "" && p.primaryScope != "." && normalizeRunnerPath(path) != normalizeRunnerPath(p.primaryScope) {
+		return true
+	}
 	return p.pathOutsideDetailedScope(path) && p.primaryScope != "" && p.primaryScope != "."
 }
 
@@ -499,7 +502,7 @@ func (p delegatedDiscoveryPlan) computeDetailedNamedScopes() []string {
 	var scopes []string
 	for _, candidate := range p.namedScopes {
 		candidate = normalizeRunnerPath(strings.Trim(strings.TrimSpace(candidate), "`'\""))
-		if candidate == "" || candidate == "." || delegatedReadOnlyBroadNamedScope(candidate) {
+		if candidate == "" || candidate == "." || delegatedReadOnlyBroadNamedScope(candidate) || delegatedReadOnlySecondaryEvidencePath(candidate) {
 			continue
 		}
 		scopes = mergeRunnerStateStrings(scopes, []string{candidate})
@@ -717,7 +720,15 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		decision.Request = redirected
 		decision.Raw = marshalToolRequestRaw(redirected)
 	}
+	if redirected, ok := r.mainReadOnlyBroadSearchContextPackRequest(input.Results, decision.Request); ok {
+		decision.Request = redirected
+		decision.Raw = marshalToolRequestRaw(redirected)
+	}
 	if redirected, ok := r.delegatedReadOnlyDiscoveryQueryRepairRequest(input.Results, decision.Request); ok {
+		decision.Request = redirected
+		decision.Raw = marshalToolRequestRaw(redirected)
+	}
+	if redirected, ok := r.delegatedReadOnlyPostDiscoveryInventoryRedirect(input.Results, decision.Request); ok {
 		decision.Request = redirected
 		decision.Raw = marshalToolRequestRaw(redirected)
 	}
@@ -1220,16 +1231,46 @@ func mainReadOnlyDelegationBootstrapEvidenceSeen(results []workspace.ToolResult)
 	return false
 }
 
+func (r *Runner) mainReadOnlyBroadSearchContextPackRequest(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
+	if r == nil || strings.HasPrefix(r.agentName(), "child:") || strings.HasPrefix(r.agentName(), "child_write:") {
+		return workspace.ToolRequest{}, false
+	}
+	if len(results) > 0 || runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
+		return workspace.ToolRequest{}, false
+	}
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile) &&
+		!workerruntime.RuntimeContractIsDirectAnswer(r.RuntimeBrief.Contract) &&
+		!workerruntime.RuntimeContractIsArchitecture(r.RuntimeBrief.Contract) {
+		return workspace.ToolRequest{}, false
+	}
+	if strings.TrimSpace(req.Tool) != workspace.ToolNameSearchContent || !containsRunnerTool(r.RuntimeBrief.AllowedTools, workspace.ToolNameContextPack) {
+		return workspace.ToolRequest{}, false
+	}
+	path := normalizeRunnerPath(req.Path)
+	if path != "" && path != "." {
+		return workspace.ToolRequest{}, false
+	}
+	pattern := strings.TrimSpace(util.FirstNonEmpty(req.Pattern, req.Query))
+	if pattern == "" {
+		return workspace.ToolRequest{}, false
+	}
+	task := strings.TrimSpace(r.RuntimeBrief.Objective)
+	if task == "" {
+		task = pattern
+	}
+	return workspace.ToolRequest{Tool: workspace.ToolNameContextPack, Task: task, Mode: "plan", Limit: 8}, true
+}
+
 func shouldDelegateMainReadOnlyBootstrapRequest(req workspace.ToolRequest) bool {
 	switch strings.TrimSpace(req.Tool) {
-	case "context_pack", "context_query", "context_status", "discovery_query", "harness_audit":
+	case workspace.ToolNameContextPack, workspace.ToolNameContextQuery, workspace.ToolNameContextStatus, workspace.ToolNameDiscoveryQuery, workspace.ToolNameHarnessAudit:
 		return true
-	case "list_files":
+	case workspace.ToolNameListFiles:
 		return true
-	case "search_files":
+	case workspace.ToolNameSearchFiles:
 		pattern := strings.TrimSpace(req.Pattern)
 		return pattern == "" || pattern == "*" || pattern == "*.go" || strings.HasPrefix(pattern, "*")
-	case "search_content":
+	case workspace.ToolNameSearchContent:
 		path := strings.TrimSpace(req.Path)
 		return path == "" || path == "." || !pathparse.HasWorkspaceFileExtension(path)
 	default:
@@ -1300,7 +1341,86 @@ func (r *Runner) delegatedReadOnlyDiscoveryQueryRepairRequest(results []workspac
 	if redirected, ok := plan.candidateConsumptionRequest(results, r.RuntimeBrief.AllowedTools); ok {
 		return redirected, true
 	}
-	return plan.repairDiscoveryQuery(req)
+	repaired, changed := plan.repairDiscoveryQuery(req)
+	if r.delegatedReadOnlyDiscoveryPathMissing(repaired.Path) {
+		if replacement := r.delegatedReadOnlyFirstExistingDetailedScope(plan); replacement != "" {
+			repaired.Path = replacement
+			changed = true
+		} else if plan.primaryScope != "" && plan.primaryScope != "." {
+			repaired.Path = plan.primaryScope
+			changed = true
+		}
+	}
+	return repaired, changed
+}
+
+func (r *Runner) delegatedReadOnlyPostDiscoveryInventoryRedirect(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
+	if r == nil || !strings.HasPrefix(r.agentName(), "child:") || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != "delegated_read_only" {
+		return workspace.ToolRequest{}, false
+	}
+	if redirected, ok := delegatedReadOnlyPostDiscoveryOutlineReadRedirect(results, req); ok {
+		return redirected, true
+	}
+	if !delegatedReadOnlyPostDiscoveryInventoryTool(req.Tool) || len(results) == 0 {
+		return workspace.ToolRequest{}, false
+	}
+	plan := newDelegatedDiscoveryPlan(r.RuntimeBrief.Objective)
+	return plan.candidateConsumptionRequest(results, r.RuntimeBrief.AllowedTools)
+}
+
+func delegatedReadOnlyPostDiscoveryOutlineReadRedirect(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
+	if len(results) == 0 || len(delegatedReadOnlySourceBodyEvidencePaths(results)) > 0 {
+		return workspace.ToolRequest{}, false
+	}
+	if strings.TrimSpace(req.Tool) != workspace.ToolNameCodeNavigate || strings.TrimSpace(req.Capability) != "file_outline" {
+		return workspace.ToolRequest{}, false
+	}
+	path := normalizeRunnerPath(req.Path)
+	if path == "" || !delegatedDiscoveryConsumableSourcePath(path) || concreteSourceEvidenceReadForPath(path, results) {
+		return workspace.ToolRequest{}, false
+	}
+	return workspace.ToolRequest{
+		Tool:            workspace.ToolNameReadFile,
+		Path:            path,
+		StartLine:       1,
+		EndLine:         160,
+		NamedGap:        "source-body evidence for delegated read-only synthesis",
+		WhyNotAnswering: "the prior discovery query returned source candidates but not source-body evidence",
+	}, true
+}
+
+func delegatedReadOnlyPostDiscoveryInventoryTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case workspace.ToolNameFileStats, workspace.ToolNameListFiles, workspace.ToolNameSearchFiles:
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *Runner) delegatedReadOnlyFirstExistingDetailedScope(plan delegatedDiscoveryPlan) string {
+	for _, scope := range plan.detailedScopes {
+		if scope == "" || r.delegatedReadOnlyDiscoveryPathMissing(scope) {
+			continue
+		}
+		return scope
+	}
+	return ""
+}
+
+func (r *Runner) delegatedReadOnlyDiscoveryPathMissing(path string) bool {
+	path = normalizeRunnerPath(path)
+	if r == nil || r.Workspace == nil || path == "" || path == "." {
+		return false
+	}
+	root := strings.TrimSpace(r.Workspace.Root())
+	if root == "" {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+		return true
+	}
+	return false
 }
 
 func delegatedDiscoveryPurposeValid(purpose string) bool {
@@ -1616,6 +1736,9 @@ func delegatedReadOnlySecondaryEvidencePath(path string) bool {
 		return false
 	}
 	lower := strings.ToLower(path)
+	if lower == ".codex/agents" || strings.HasPrefix(lower, ".codex/agents/") {
+		return true
+	}
 	if strings.HasSuffix(lower, "_test.go") || strings.HasPrefix(lower, "docs/") || strings.Contains(lower, "/docs/") {
 		return true
 	}

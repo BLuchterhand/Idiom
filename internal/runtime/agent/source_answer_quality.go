@@ -240,6 +240,11 @@ func lineOrientedSourceTokenLooksLikeCode(token string) bool {
 		return false
 	}
 	lower := strings.ToLower(token)
+	if strings.Contains(token, "(") ||
+		strings.Contains(token, "&&") ||
+		strings.Contains(token, "||") {
+		return true
+	}
 	if strings.HasPrefix(lower, "\"") || strings.HasPrefix(lower, "'") {
 		return true
 	}

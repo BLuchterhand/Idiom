@@ -1399,6 +1399,33 @@ func TestScopedListFilesIsNarrowingNotBroadInspection(t *testing.T) {
 	}
 }
 
+func TestRuntimeInspectionRequestUsesToolSurfaceMetadata(t *testing.T) {
+	for _, req := range []ToolRequest{
+		{Tool: ToolNameContextQuery, Query: "callers of Run"},
+		{Tool: ToolNameFileStats, Path: "internal"},
+		{Tool: ToolNameTask, Agent: "explorer", Mode: "read_only"},
+		{Tool: ToolNameSearchContent, Pattern: "Run", Path: "internal"},
+		{Tool: ToolNameShell, Command: "rg Run internal"},
+	} {
+		if !IsRuntimeInspectionRequest(req) {
+			t.Fatalf("%s should be runtime inspection", req.Tool)
+		}
+	}
+
+	for _, req := range []ToolRequest{
+		{Tool: ToolNameSourceSanity, Path: "internal/runtime/agent/runner.go"},
+		{Tool: ToolNameHarnessFeedback},
+		{Tool: ToolNameIdiomFeedback},
+		{Tool: ToolNameEditFile, Path: "internal/runtime/agent/runner.go"},
+		{Tool: ToolNameSubmitPlan},
+		{Tool: ToolNameGitDiff},
+	} {
+		if IsRuntimeInspectionRequest(req) {
+			t.Fatalf("%s should not be runtime inspection", req.Tool)
+		}
+	}
+}
+
 func TestParseToolRequestAcceptsCallingToolEnvelope(t *testing.T) {
 	// Exact format emitted by Qwen 3.6b-35b in session 20260530-052348.879
 	text := `[Calling tool: search_content({"glob":"*.go","pattern":"type.*Evidence","named_gap":"exact definition of Evidence type/struct/interface","path":".","tool":"search_content","why_not_answering":"Without the Evidence type definition, I cannot describe how evidence is structured in the idiom harness."})]`

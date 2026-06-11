@@ -1975,7 +1975,7 @@ func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspac
 		} else if edit.InsertAfterLine > 0 {
 			updated, err := projectedInsertAfterLineContent(cfg.Workspace.Root, edit)
 			if err != nil {
-				result := workspace.ToolResult{Tool: "submit_plan", Summary: "Executor insert preflight failed", Error: err.Error()}
+				result := workspace.ToolResult{Tool: workspace.ToolNameSubmitPlan, Summary: "Executor insert preflight failed", Error: err.Error()}
 				status := "failed"
 				emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_edit", map[string]any{
 					"step":   i + 1,
@@ -2224,7 +2224,7 @@ func runPlanExecuteSourceSanity(ctx context.Context, mgr *workspace.Manager, roo
 			continue
 		}
 		checked++
-		result := mgr.Execute(ctx, workspace.ToolRequest{Tool: "source_sanity", Path: path})
+		result := mgr.Execute(ctx, workspace.ToolRequest{Tool: workspace.ToolNameSourceSanity, Path: path})
 		status := "ok"
 		errText := strings.TrimSpace(result.Error)
 		if errText != "" {

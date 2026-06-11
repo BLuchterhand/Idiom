@@ -56,7 +56,7 @@ type ProductWorkflowTransitionEventDetail struct {
 
 func ApplyProductWorkflowTransition(options ProductWorkflowTransitionApplyOptions) ProductWorkflowTransitionApplyResult {
 	result := ProductWorkflowTransitionApplyResult{
-		Status:          "blocked",
+		Status:          ProductWorkflowStatusBlocked,
 		EffortRoot:      strings.TrimSpace(options.EffortRoot),
 		Action:          strings.TrimSpace(options.Action),
 		Blockers:        []ProductWorkflowTransitionBlocker{},
@@ -79,11 +79,11 @@ func ApplyProductWorkflowTransition(options ProductWorkflowTransitionApplyOption
 
 	statusView, workflowState, statusErr := LoadCheckedProductStatus(result.EffortRoot)
 	if statusErr != nil {
-		result.addBlocker("product_status_error", "workflow_state.json", statusErr.Error())
+		result.addBlocker("product_status_error", WorkflowStateFileName, statusErr.Error())
 		return result
 	}
 	if workflowState == nil {
-		result.addBlocker("missing_workflow_state", "workflow_state.json", "workflow_state.json not loaded")
+		result.addBlocker("missing_workflow_state", WorkflowStateFileName, WorkflowStateFileName+" not loaded")
 		return result
 	}
 	result.FromState = workflowState.CurrentState
@@ -118,7 +118,7 @@ func ApplyProductWorkflowTransition(options ProductWorkflowTransitionApplyOption
 		return result
 	}
 	if options.ExpectedStateRevision > 0 && workflowState.StateRevision != options.ExpectedStateRevision {
-		result.addBlocker("stale_workflow_state_revision", "workflow_state.json", fmt.Sprintf("workflow state revision %d does not match expected revision %d", workflowState.StateRevision, options.ExpectedStateRevision))
+		result.addBlocker("stale_workflow_state_revision", WorkflowStateFileName, fmt.Sprintf("workflow state revision %d does not match expected revision %d", workflowState.StateRevision, options.ExpectedStateRevision))
 		return result
 	}
 
@@ -154,10 +154,10 @@ func ApplyProductWorkflowTransition(options ProductWorkflowTransitionApplyOption
 		},
 	}
 	if err := writeProductWorkflowTransition(result.EffortRoot, updated, event); err != nil {
-		result.addBlocker("transition_write_error", "workflow_state.json", err.Error())
+		result.addBlocker("transition_write_error", WorkflowStateFileName, err.Error())
 		return result
 	}
-	result.Status = "applied"
+	result.Status = ProductWorkflowStatusApplied
 	result.ToState = updated.CurrentState
 	result.UpdatedWorkflowState = updated
 	result.Event = event
@@ -175,9 +175,9 @@ func (r *ProductWorkflowTransitionApplyResult) addBlocker(code, path, message st
 
 func productWorkflowTransitionPhase(currentPhase, toState string) string {
 	switch strings.TrimSpace(toState) {
-	case "human_verification":
+	case WorkflowStateHumanVerification:
 		return "phase-human-verification"
-	case "implementing":
+	case WorkflowStateImplementing:
 		return "phase-implementation"
 	default:
 		if strings.TrimSpace(currentPhase) != "" {
@@ -207,17 +207,17 @@ func stringSliceContains(values []string, want string) bool {
 }
 
 func writeProductWorkflowTransition(absRoot string, state WorkflowState, event ProductWorkflowTransitionEvent) error {
-	workflowPath := filepath.Join(absRoot, "workflow_state.json")
+	workflowPath := filepath.Join(absRoot, WorkflowStateFileName)
 	originalWorkflowBytes, err := os.ReadFile(workflowPath)
 	if err != nil {
-		return fmt.Errorf("read workflow_state.json: %w", err)
+		return fmt.Errorf("read %s: %w", WorkflowStateFileName, err)
 	}
 	if err := rejectTransitionSymlink(workflowPath); err != nil {
 		return err
 	}
 	workflowBytes, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode workflow_state.json: %w", err)
+		return fmt.Errorf("encode %s: %w", WorkflowStateFileName, err)
 	}
 	workflowBytes = append(workflowBytes, '\n')
 
@@ -263,7 +263,7 @@ func writeProductWorkflowTransition(absRoot string, state WorkflowState, event P
 		return err
 	}
 	if err := os.WriteFile(workflowTemp, workflowBytes, 0o644); err != nil {
-		return fmt.Errorf("stage workflow_state.json: %w", err)
+		return fmt.Errorf("stage %s: %w", WorkflowStateFileName, err)
 	}
 	var eventsTemp string
 	if eventsPath != "" {
@@ -280,7 +280,7 @@ func writeProductWorkflowTransition(absRoot string, state WorkflowState, event P
 	if err := os.Rename(workflowTemp, workflowPath); err != nil {
 		_ = os.Remove(workflowTemp)
 		_ = os.Remove(eventsTemp)
-		return fmt.Errorf("replace workflow_state.json: %w", err)
+		return fmt.Errorf("replace %s: %w", WorkflowStateFileName, err)
 	}
 	if eventsTemp != "" {
 		if err := os.Rename(eventsTemp, eventsPath); err != nil {
@@ -336,7 +336,7 @@ func rejectTransitionSymlinkParent(absRoot, targetPath string) error {
 func rollbackProductWorkflowTransition(workflowPath string, workflowBytes []byte, eventsPath string, eventsBytes []byte, eventsExisted bool) error {
 	var errs []string
 	if err := os.WriteFile(workflowPath, workflowBytes, 0o644); err != nil {
-		errs = append(errs, fmt.Sprintf("restore workflow_state.json: %v", err))
+		errs = append(errs, fmt.Sprintf("restore %s: %v", WorkflowStateFileName, err))
 	}
 	if eventsPath != "" {
 		if eventsExisted {

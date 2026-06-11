@@ -61,7 +61,11 @@ type ProductEffortsCounts struct {
 	Closed       int `json:"closed"`
 }
 
-var productEffortStatusOrder = []string{"unstarted", "started", "closed"}
+var productEffortStatusOrder = []string{
+	WorkflowStatusBucketUnstarted,
+	WorkflowStatusBucketStarted,
+	WorkflowStatusBucketClosed,
+}
 
 func BrowseProductEfforts(options ProductEffortsOptions) (ProductEffortsResult, error) {
 	statusFilter := strings.ToLower(strings.TrimSpace(options.Status))
@@ -75,7 +79,7 @@ func BrowseProductEfforts(options ProductEffortsOptions) (ProductEffortsResult, 
 	}
 
 	result := ProductEffortsResult{
-		Status:       "pass",
+		Status:       ProductWorkflowStatusPass,
 		StatusFilter: statusFilter,
 		Query:        strings.TrimSpace(options.Query),
 		Efforts:      []ProductEffortSummary{},
@@ -84,7 +88,7 @@ func BrowseProductEfforts(options ProductEffortsOptions) (ProductEffortsResult, 
 
 	buckets, err := productEffortBucketsForFilter(statusFilter)
 	if err != nil {
-		result.Status = "fail"
+		result.Status = ProductWorkflowStatusFail
 		result.NextValidAction = "rerun with --status unstarted, started, closed, or all"
 		result.addFinding("invalid_status_filter", "", "", err.Error())
 		result.refreshCounts()
@@ -93,7 +97,7 @@ func BrowseProductEfforts(options ProductEffortsOptions) (ProductEffortsResult, 
 
 	absRoot, err := resolveProductEffortsRoot(root)
 	if err != nil {
-		result.Status = "fail"
+		result.Status = ProductWorkflowStatusFail
 		result.NextValidAction = "rerun with a safe existing efforts root"
 		result.addFinding("unsafe_efforts_root", "", root, err.Error())
 		result.refreshCounts()
@@ -118,22 +122,22 @@ func BrowseProductEfforts(options ProductEffortsOptions) (ProductEffortsResult, 
 			}
 			effortPath := filepath.Join(bucketPath, entry.Name())
 			relPath := productEffortRelPath(absRoot, effortPath)
-			wsPath := filepath.Join(effortPath, "workflow_state.json")
+			wsPath := filepath.Join(effortPath, WorkflowStateFileName)
 			data, err := os.ReadFile(wsPath)
 			if err != nil {
 				code := "read_workflow_state_error"
 				message := err.Error()
 				if os.IsNotExist(err) {
 					code = "missing_workflow_state"
-					message = "workflow_state.json not found"
+					message = WorkflowStateFileName + " not found"
 				}
-				result.addFinding(code, bucket, filepath.ToSlash(filepath.Join(relPath, "workflow_state.json")), message)
+				result.addFinding(code, bucket, filepath.ToSlash(filepath.Join(relPath, WorkflowStateFileName)), message)
 				continue
 			}
 
 			summary, err := productEffortSummaryFromState(data, bucket, relPath)
 			if err != nil {
-				result.addFinding("invalid_workflow_state", bucket, filepath.ToSlash(filepath.Join(relPath, "workflow_state.json")), err.Error())
+				result.addFinding("invalid_workflow_state", bucket, filepath.ToSlash(filepath.Join(relPath, WorkflowStateFileName)), err.Error())
 				continue
 			}
 			if query != "" && !productEffortSummaryMatches(summary, query) {
@@ -147,7 +151,7 @@ func BrowseProductEfforts(options ProductEffortsOptions) (ProductEffortsResult, 
 	sortProductEffortFindings(result.Findings)
 	result.refreshCounts()
 	if len(result.Findings) > 0 {
-		result.Status = "fail"
+		result.Status = ProductWorkflowStatusFail
 		result.NextValidAction = "fix product effort workflow_state findings before relying on the effort browser"
 	} else if len(result.Efforts) == 0 {
 		result.NextValidAction = "adjust --status or --query to select an existing effort"
@@ -161,7 +165,7 @@ func productEffortBucketsForFilter(statusFilter string) ([]string, error) {
 	switch statusFilter {
 	case "all":
 		return append([]string{}, productEffortStatusOrder...), nil
-	case "unstarted", "started", "closed":
+	case WorkflowStatusBucketUnstarted, WorkflowStatusBucketStarted, WorkflowStatusBucketClosed:
 		return []string{statusFilter}, nil
 	default:
 		return nil, fmt.Errorf("unknown status filter %q", statusFilter)
@@ -364,11 +368,11 @@ func (result *ProductEffortsResult) refreshCounts() {
 	}
 	for _, effort := range result.Efforts {
 		switch effort.StatusBucket {
-		case "unstarted":
+		case WorkflowStatusBucketUnstarted:
 			counts.Unstarted++
-		case "started":
+		case WorkflowStatusBucketStarted:
 			counts.Started++
-		case "closed":
+		case WorkflowStatusBucketClosed:
 			counts.Closed++
 		}
 	}

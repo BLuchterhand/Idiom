@@ -27,36 +27,36 @@ type TransitionBlocker struct {
 }
 
 var validStates = map[string]string{
-	"planned":            "started",
-	"human_verification": "started",
-	"implementing":       "started",
-	"verifying":          "started",
-	"reviewing":          "started",
-	"investigating":      "started",
-	"blocked":            "started",
-	"closed":             "closed",
+	WorkflowStatePlanned:           WorkflowStatusBucketStarted,
+	WorkflowStateHumanVerification: WorkflowStatusBucketStarted,
+	WorkflowStateImplementing:      WorkflowStatusBucketStarted,
+	WorkflowStateVerifying:         WorkflowStatusBucketStarted,
+	WorkflowStateReviewing:         WorkflowStatusBucketStarted,
+	WorkflowStateInvestigating:     WorkflowStatusBucketStarted,
+	WorkflowStateBlocked:           WorkflowStatusBucketStarted,
+	WorkflowStateClosed:            WorkflowStatusBucketClosed,
 }
 
 var validStatusBuckets = map[string]bool{
-	"unstarted": true,
-	"started":   true,
-	"closed":    true,
+	WorkflowStatusBucketUnstarted: true,
+	WorkflowStatusBucketStarted:   true,
+	WorkflowStatusBucketClosed:    true,
 }
 
 func validateStateBucketConsistency(statusBucket, currentState string) *TransitionBlocker {
-	if statusBucket == "closed" && currentState != "closed" {
+	if statusBucket == WorkflowStatusBucketClosed && currentState != WorkflowStateClosed {
 		return &TransitionBlocker{
 			Code:    "invalid_state_bucket",
 			Message: "status bucket closed requires current_state closed, got " + currentState,
 		}
 	}
-	if statusBucket == "started" && currentState == "closed" {
+	if statusBucket == WorkflowStatusBucketStarted && currentState == WorkflowStateClosed {
 		return &TransitionBlocker{
 			Code:    "invalid_state_bucket",
 			Message: "status bucket started is incompatible with current_state closed",
 		}
 	}
-	if statusBucket == "unstarted" && currentState != "" && currentState != "planned" {
+	if statusBucket == WorkflowStatusBucketUnstarted && currentState != "" && currentState != WorkflowStatePlanned {
 		return &TransitionBlocker{
 			Code:    "invalid_state_bucket",
 			Message: "status bucket unstarted requires empty or planned current_state, got " + currentState,
@@ -82,57 +82,57 @@ type orderedStateEntry struct {
 
 var orderedTransitionTable = []orderedStateEntry{
 	{
-		State: "planned",
+		State: WorkflowStatePlanned,
 		Actions: []orderedAction{
-			{Action: "submit_for_human_verification", Rule: transitionRule{ToState: "human_verification", Owner: "planner"}},
-			{Action: "start_investigation", Rule: transitionRule{ToState: "investigating", Owner: "investigator"}},
+			{Action: "submit_for_human_verification", Rule: transitionRule{ToState: WorkflowStateHumanVerification, Owner: "planner"}},
+			{Action: "start_investigation", Rule: transitionRule{ToState: WorkflowStateInvestigating, Owner: "investigator"}},
 		},
 	},
 	{
-		State: "human_verification",
+		State: WorkflowStateHumanVerification,
 		Actions: []orderedAction{
-			{Action: "approve_for_implementation", Rule: transitionRule{ToState: "implementing", Owner: "operator"}},
-			{Action: "request_changes", Rule: transitionRule{ToState: "planned", Owner: "operator"}},
-			{Action: "request_investigation", Rule: transitionRule{ToState: "investigating", Owner: "operator"}},
+			{Action: "approve_for_implementation", Rule: transitionRule{ToState: WorkflowStateImplementing, Owner: "operator"}},
+			{Action: "request_changes", Rule: transitionRule{ToState: WorkflowStatePlanned, Owner: "operator"}},
+			{Action: "request_investigation", Rule: transitionRule{ToState: WorkflowStateInvestigating, Owner: "operator"}},
 		},
 	},
 	{
-		State: "implementing",
+		State: WorkflowStateImplementing,
 		Actions: []orderedAction{
-			{Action: "submit_for_verification", Rule: transitionRule{ToState: "verifying", Owner: "implementor"}},
-			{Action: "mark_blocked", Rule: transitionRule{ToState: "blocked", Owner: "orchestrator"}},
+			{Action: "submit_for_verification", Rule: transitionRule{ToState: WorkflowStateVerifying, Owner: "implementor"}},
+			{Action: "mark_blocked", Rule: transitionRule{ToState: WorkflowStateBlocked, Owner: "orchestrator"}},
 		},
 	},
 	{
-		State: "verifying",
+		State: WorkflowStateVerifying,
 		Actions: []orderedAction{
-			{Action: "submit_for_review", Rule: transitionRule{ToState: "reviewing", Owner: "reviewer"}},
-			{Action: "mark_blocked", Rule: transitionRule{ToState: "blocked", Owner: "orchestrator"}},
+			{Action: "submit_for_review", Rule: transitionRule{ToState: WorkflowStateReviewing, Owner: "reviewer"}},
+			{Action: "mark_blocked", Rule: transitionRule{ToState: WorkflowStateBlocked, Owner: "orchestrator"}},
 		},
 	},
 	{
-		State: "reviewing",
+		State: WorkflowStateReviewing,
 		Actions: []orderedAction{
-			{Action: "approve", Rule: transitionRule{ToState: "closed", Owner: "reviewer"}},
-			{Action: "request_changes", Rule: transitionRule{ToState: "implementing", Owner: "reviewer"}},
-			{Action: "request_investigation", Rule: transitionRule{ToState: "investigating", Owner: "orchestrator"}},
+			{Action: "approve", Rule: transitionRule{ToState: WorkflowStateClosed, Owner: "reviewer"}},
+			{Action: "request_changes", Rule: transitionRule{ToState: WorkflowStateImplementing, Owner: "reviewer"}},
+			{Action: "request_investigation", Rule: transitionRule{ToState: WorkflowStateInvestigating, Owner: "orchestrator"}},
 		},
 	},
 	{
-		State: "investigating",
+		State: WorkflowStateInvestigating,
 		Actions: []orderedAction{
-			{Action: "complete_investigation", Rule: transitionRule{ToState: "reviewing", Owner: "investigator"}},
-			{Action: "mark_blocked", Rule: transitionRule{ToState: "blocked", Owner: "orchestrator"}},
+			{Action: "complete_investigation", Rule: transitionRule{ToState: WorkflowStateReviewing, Owner: "investigator"}},
+			{Action: "mark_blocked", Rule: transitionRule{ToState: WorkflowStateBlocked, Owner: "orchestrator"}},
 		},
 	},
 	{
-		State: "blocked",
+		State: WorkflowStateBlocked,
 		Actions: []orderedAction{
-			{Action: "resolve_blocker", Rule: transitionRule{ToState: "planned", Owner: "orchestrator"}},
+			{Action: "resolve_blocker", Rule: transitionRule{ToState: WorkflowStatePlanned, Owner: "orchestrator"}},
 		},
 	},
 	{
-		State:   "closed",
+		State:   WorkflowStateClosed,
 		Actions: nil,
 	},
 }
@@ -194,11 +194,11 @@ func EvaluateTransition(input TransitionInput) TransitionResult {
 		}
 	}
 
-	if input.StatusBucket == "unstarted" {
+	if input.StatusBucket == WorkflowStatusBucketUnstarted {
 		if input.RequestedAction == "start" {
 			return TransitionResult{
 				FromState:        input.CurrentState,
-				ToState:          "planned",
+				ToState:          WorkflowStatePlanned,
 				NextValidActions: unstartedActions,
 			}
 		}
@@ -212,7 +212,7 @@ func EvaluateTransition(input TransitionInput) TransitionResult {
 		}
 	}
 
-	if input.StatusBucket == "closed" {
+	if input.StatusBucket == WorkflowStatusBucketClosed {
 		blockers = append(blockers, TransitionBlocker{
 			Code:    "terminal_status_bucket",
 			Message: "no transitions allowed from closed status bucket",
@@ -249,7 +249,7 @@ func EvaluateTransition(input TransitionInput) TransitionResult {
 		}
 	}
 
-	if rule.ToState == "closed" {
+	if rule.ToState == WorkflowStateClosed {
 		closeBlockers := checkClosePreconditions(input.OpenBlockers, input.OpenObligations, input.GateResults)
 		if len(closeBlockers) > 0 {
 			nextActions := nextActionsFor(input.CurrentState, input.GateResults)
@@ -285,11 +285,11 @@ func NextActionsForState(statusBucket, currentState string) ([]TransitionAction,
 		return nil, []TransitionBlocker{*consistencyBlocker}
 	}
 
-	if statusBucket == "unstarted" {
+	if statusBucket == WorkflowStatusBucketUnstarted {
 		return unstartedActions, nil
 	}
 
-	if statusBucket == "closed" {
+	if statusBucket == WorkflowStatusBucketClosed {
 		return nil, nil
 	}
 
@@ -318,7 +318,7 @@ func nextActionsFor(state string, gateResults []GateResult) []TransitionAction {
 	}
 	actions := make([]TransitionAction, 0, len(entry.Actions))
 	for _, a := range entry.Actions {
-		if a.Action == "approve" && state == "reviewing" {
+		if a.Action == "approve" && state == WorkflowStateReviewing {
 			if !closePreconditionsMet(nil, nil, gateResults) {
 				continue
 			}
@@ -353,7 +353,7 @@ func checkClosePreconditions(openBlockers, openObligations []string, gateResults
 				Code:    "missing_gate",
 				Message: "close requires " + gate + " gate result",
 			})
-		} else if status != "passed" {
+		} else if status != ProductWorkflowStatusPassed {
 			blockers = append(blockers, TransitionBlocker{
 				Code:    "gate_not_passed",
 				Message: "close requires " + gate + " gate passed, got " + status,

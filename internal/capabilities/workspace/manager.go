@@ -36,11 +36,11 @@ import (
 // The descriptions are used in the rejection message shown to the model.
 var exploreBlockedToolNames = map[string]string{
 	ToolNameGoMoveDeclarations: "moving declarations",
-	ToolNameMkdir:                "creating directories",
-	ToolNameEditFile:            "editing files",
-	ToolNameWriteFile:           "writing files",
-	ToolNameAppendFile:          "appending files",
-	ToolNameApplyPatch:          "applying patches",
+	ToolNameMkdir:              "creating directories",
+	ToolNameEditFile:           "editing files",
+	ToolNameWriteFile:          "writing files",
+	ToolNameAppendFile:         "appending files",
+	ToolNameApplyPatch:         "applying patches",
 }
 
 func exploreModeWriteBlocked(tool string, mode Mode) (string, bool) {
@@ -670,7 +670,7 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 		return m.listFiles(req)
 	case ToolNameSearchFiles:
 		return m.searchFiles(req)
-	case "search_content", ToolNameRg:
+	case ToolNameSearchContent, ToolNameRg:
 		return m.searchContent(ctx, req, tool)
 	case ToolNameReadFile:
 		return m.readFile(req)
@@ -678,13 +678,13 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 		return m.fileStats(req)
 	case ToolNameCodeNavigate:
 		return m.executeLanguageTool(ctx, req)
-	case "read_only_capability":
+	case ToolNameReadOnlyCapability:
 		return m.readOnlyCapability(ctx, req)
 	case ToolNameSourceSanity:
 		return m.sourceSanity(ctx, req)
 	case ToolNameHarnessAudit:
 		return m.harnessAudit(req)
-	case "harness_feedback", ToolNameIdiomFeedback:
+	case ToolNameHarnessFeedback, ToolNameIdiomFeedback:
 		return m.harnessFeedback(req)
 	case ToolNameRecoveryInspect:
 		return m.recoveryInspect(ctx, req)
@@ -2013,7 +2013,7 @@ func normalizeToolRequestAliases(req *ToolRequest) {
 
 func toolRequestUsesCapabilityAlias(tool string) bool {
 	switch strings.TrimSpace(tool) {
-	case "code_navigate", "read_only_capability":
+	case ToolNameCodeNavigate, ToolNameReadOnlyCapability:
 		return true
 	default:
 		return false
@@ -2022,7 +2022,7 @@ func toolRequestUsesCapabilityAlias(tool string) bool {
 
 func toolRequestUsesPatternAlias(tool string) bool {
 	switch strings.TrimSpace(tool) {
-	case "search_content", "rg", "grep", ToolNameSearchFiles:
+	case ToolNameSearchContent, ToolNameRg, ToolNameGrep, ToolNameSearchFiles:
 		return true
 	default:
 		return false
@@ -3852,7 +3852,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 				}
 			}
 		}
-		result := ToolResult{Tool: "read_file", Summary: "Failed to resolve file target", Error: errMsg}
+		result := ToolResult{Tool: ToolNameReadFile, Summary: "Failed to resolve file target", Error: errMsg}
 		if strings.TrimSpace(req.Path) != "" {
 			result.Output = formatPathSuggestions(m.findPathSuggestions(req.Path, 5))
 		}
@@ -3877,7 +3877,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 			}
 		}
 		result := ToolResult{
-			Tool:    "read_file",
+			Tool:    ToolNameReadFile,
 			Summary: "Failed to read file",
 			Error:   errMsg,
 		}
@@ -3932,14 +3932,14 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 	if len(lines) == 0 {
 		m.MarkPathObserved(m.displayPath(path))
 		return ToolResult{
-			Tool:    "read_file",
+			Tool:    ToolNameReadFile,
 			Summary: fmt.Sprintf("Read %s lines 0-0 (total lines: 0)", description),
 			Output:  "",
 		}
 	}
 	start, end, clampedToFileBounds := clampRequestedLineRange(len(lines), start, end, requestedStart, requestedEnd)
 	if start > end {
-		return ToolResult{Tool: "read_file", Summary: "Invalid line range", Error: "start_line must be <= end_line"}
+		return ToolResult{Tool: ToolNameReadFile, Summary: "Invalid line range", Error: "start_line must be <= end_line"}
 	}
 
 	truncated := false

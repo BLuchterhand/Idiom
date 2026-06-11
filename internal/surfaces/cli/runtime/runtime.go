@@ -22,8 +22,8 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
-	"idiom/internal/surfaces/tui/app"
 	toolcmd "idiom/internal/surfaces/cli/tool"
+	"idiom/internal/surfaces/tui/app"
 	"idiom/internal/workflows/planexecute"
 )
 

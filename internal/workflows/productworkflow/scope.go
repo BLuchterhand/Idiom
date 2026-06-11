@@ -321,9 +321,9 @@ func EvaluateScopeGate(input ScopeGateInput) ScopeGateResult {
 	slices.Sort(unexpectedPaths)
 	slices.Sort(missingExpected)
 
-	status := "pass"
+	status := ProductWorkflowStatusPass
 	if len(blockers) > 0 {
-		status = "blocked"
+		status = ProductWorkflowStatusBlocked
 	}
 
 	return ScopeGateResult{

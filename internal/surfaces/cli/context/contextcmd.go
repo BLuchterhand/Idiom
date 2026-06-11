@@ -57,7 +57,6 @@ type options struct {
 	ForbiddenPaths    util.MultiFlag
 }
 
-
 func Run(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, deps Deps) int {
 	deps = deps.withDefaults()
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {

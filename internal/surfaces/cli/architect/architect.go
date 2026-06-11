@@ -13,8 +13,8 @@ import (
 
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/util"
-	"idiom/internal/workflows/architect"
 	toolcmd "idiom/internal/surfaces/cli/tool"
+	"idiom/internal/workflows/architect"
 )
 
 type architectOptions struct {
@@ -39,7 +39,6 @@ type architectOptions struct {
 	ContextViews util.MultiFlag
 	Metadata     util.MultiFlag
 }
-
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	return RunWithTelemetry(args, stdout, stderr, nil)

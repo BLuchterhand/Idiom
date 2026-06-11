@@ -578,7 +578,7 @@ func validateImplementationReport(r ImplementationReport) error {
 	if r.OpenBlockers == nil {
 		errs = append(errs, errors.New("implementation report missing open_blockers (must be present, may be empty)"))
 	}
-	if r.Verification.Status != "" && r.Verification.Status != "pending" {
+	if r.Verification.Status != "" && r.Verification.Status != ProductWorkflowStatusPending {
 		if len(r.Verification.Commands) == 0 {
 			errs = append(errs, fmt.Errorf("implementation report verification.status %q requires verification.commands", r.Verification.Status))
 		}
@@ -601,7 +601,7 @@ func validateReviewReport(r ReviewReport) error {
 	require(&errs, r.Reviewer.Model, "review report missing reviewer.model")
 	require(&errs, r.Reviewer.ReasoningEffort, "review report missing reviewer.reasoning_effort")
 	require(&errs, r.Status, "review report missing status")
-	if r.Status != "" && r.Status != "pending" {
+	if r.Status != "" && r.Status != ProductWorkflowStatusPending {
 		require(&errs, r.ReviewedAt, "review report missing reviewed_at (required when status is not pending)")
 		if len(r.CommandsReviewed) == 0 {
 			errs = append(errs, errors.New("review report missing commands_reviewed (required when status is not pending)"))

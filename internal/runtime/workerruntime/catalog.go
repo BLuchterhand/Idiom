@@ -56,7 +56,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			Contract:             ContractArtifactFinalAnswer,
 			PermissionProfile:    PermissionConversationOnly,
 			ToolProfile:          CapabilityConversationReadOnly,
-			ForbiddenTools:       append(append(workspace.WorkspaceWriteToolNames(), "task", "shell"), readOnlyDiscoveryToolNames()...),
+			ForbiddenTools:       append(append(workspace.WorkspaceWriteToolNames(), workspace.ToolNameTask, workspace.ToolNameShell), readOnlyDiscoveryToolNames()...),
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceArtifactBodyOrTypedBlocker},
 			VerificationContract: VerificationNotRequiredArtifactFinal,
 			StopConditions:       []StopConditionID{StopArtifactBodyReturned, StopBlockedByMissingInformation},
@@ -68,7 +68,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			Contract:             ContractEditIntentDistill,
 			PermissionProfile:    PermissionConversationOnly,
 			ToolProfile:          CapabilityArtifactDistiller,
-			ForbiddenTools:       append(append(workspace.WorkspaceWriteToolNames(), "task", "task_ledger", "shell", "submit_plan"), readOnlyDiscoveryToolNames()...),
+			ForbiddenTools:       append(append(workspace.WorkspaceWriteToolNames(), workspace.ToolNameTask, workspace.ToolNameTaskLedger, workspace.ToolNameShell, workspace.ToolNameSubmitPlan), readOnlyDiscoveryToolNames()...),
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceRawOutputParserFailure, RequiredEvidenceActiveMutationContract, RequiredEvidenceRequiredEditScope},
 			VerificationContract: VerificationNotRequiredNonExecutable,
 			StopConditions:       []StopConditionID{StopEditIntentOrTypedBlocker},
@@ -107,9 +107,9 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			Contract:             ContractDirectAnswer,
 			PermissionProfile:    PermissionReadOnlyVerificationShell,
 			ToolProfile:          CapabilityVerificationOnly,
-			ForbiddenTools:       append(append([]string(nil), workspace.WorkspaceWriteToolNames()...), "task"),
+			ForbiddenTools:       append(append([]string(nil), workspace.WorkspaceWriteToolNames()...), workspace.ToolNameTask),
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceVerificationCommand, RequiredEvidencePassFailStatus},
-			RequiredTools:        []string{"shell"},
+			RequiredTools:        []string{workspace.ToolNameShell},
 			ReadinessGate:        []ReadinessGateID{ReadinessVerificationStatusReported},
 			SearchPolicy:         []SearchPolicyID{"run_requested_check", "capture_failure_output", "do_not_edit"},
 			VerificationContract: VerificationNotRequiredReadOnlyLane,
@@ -179,7 +179,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			Contract:             ContractFeaturePlan,
 			PermissionProfile:    PermissionConversationOnly,
 			ToolProfile:          CapabilityConversationReadOnly,
-			ForbiddenTools:       append(append(workspace.WorkspaceWriteToolNames(), "task", "shell", "submit_plan"), readOnlyDiscoveryToolNames()...),
+			ForbiddenTools:       append(append(workspace.WorkspaceWriteToolNames(), workspace.ToolNameTask, workspace.ToolNameShell, workspace.ToolNameSubmitPlan), readOnlyDiscoveryToolNames()...),
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceFeaturePlanOrPlannerQuestion},
 			ReadinessGate:        []ReadinessGateID{ReadinessFeaturePlanOrPlannerQuestion},
 			VerificationContract: VerificationNotRequiredNonExecutable,
@@ -215,7 +215,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			PermissionProfile:    PermissionGuardedWorkspaceWrite,
 			ToolProfile:          CapabilityPlanSubmissionPlanner,
 			RequiredEvidence:     []EvidenceRequirementID{requiredEvidenceGitHistoryRationale, RequiredEvidencePlanSubmittedOrSourceSatisfied},
-			RequiredTools:        []string{requiredToolGitHistoryLookup, "submit_plan"},
+			RequiredTools:        []string{requiredToolGitHistoryLookup, workspace.ToolNameSubmitPlan},
 			ReadinessGate:        []ReadinessGateID{ReadinessSubmitPlanOrSourceSatisfiedOrBlocker},
 			SearchPolicy:         []SearchPolicyID{"consume_target_packet_first", "trust_preloaded_current_state_anchors_for_scope_not_source_body", "required_existing_paths_need_source_body_before_submit_plan", "history_required_before_submit_plan", "read_commit_descriptions_for_intended_logic_before_submit_plan", "submit_plan_when_edit_set_is_supported", "submit_plan_requires_executable_final_edits", "source_satisfied_when_current_state_already_matches", "do_not_call_per_edit_writes"},
 			VerificationContract: VerificationNotRequiredTextMutation,
@@ -310,7 +310,7 @@ func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools
 		// submit_plan even though the runner will enable it before execution.
 		// Keep the contract-required tool in the brief allow-list so later
 		// live-surface filtering does not remove the only valid planner write.
-		brief.AllowedTools = mergeStrings(brief.AllowedTools, []string{"submit_plan"})
+		brief.AllowedTools = mergeStrings(brief.AllowedTools, []string{workspace.ToolNameSubmitPlan})
 	}
 	if spec.PermissionProfile == PermissionConversationOnly {
 		// Conversation mode is intentionally tool-free. Codebase questions
@@ -346,11 +346,11 @@ func AllowedToolsForCapabilityProfile(available []string, profile ToolCapability
 	case CapabilityArtifactDistiller:
 		return nil
 	case CapabilityDebugLogInvestigator:
-		return filterAllowedTools(available, profile, "search_files", "search_content", "read_file")
+		return filterAllowedTools(available, profile, workspace.ToolNameSearchFiles, workspace.ToolNameSearchContent, workspace.ToolNameReadFile)
 	case CapabilityVerificationOnly:
-		return filterAllowedTools(available, profile, "source_sanity", "shell", "read_file", "search_files", "search_content")
+		return filterAllowedTools(available, profile, workspace.ToolNameSourceSanity, workspace.ToolNameShell, workspace.ToolNameReadFile, workspace.ToolNameSearchFiles, workspace.ToolNameSearchContent)
 	case CapabilityLocateOnly:
-		return filterAllowedTools(available, profile, "pwd", "search_files", "search_content", "read_file", "code_navigate", "context_query", "context_zoom")
+		return filterAllowedTools(available, profile, workspace.ToolNamePwd, workspace.ToolNameSearchFiles, workspace.ToolNameSearchContent, workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate, workspace.ToolNameContextQuery, workspace.ToolNameContextZoom)
 	case CapabilityGuardedWrite, CapabilityIsolatedWrite:
 		return filterAllowedTools(available, profile, guardedWriteToolNames()...)
 	case CapabilityPlanSubmissionPlanner:
@@ -398,16 +398,16 @@ func toolManifestOptionsForProfile(profile ToolCapabilityProfile) workspace.Tool
 }
 
 func readOnlyDiscoveryToolNames() []string {
-	names := mergeStrings(workspace.RuntimeSourceInspectionToolNames(), []string{"read_only_capability", "harness_audit"})
+	names := mergeStrings(workspace.RuntimeSourceInspectionToolNames(), []string{workspace.ToolNameReadOnlyCapability, workspace.ToolNameHarnessAudit})
 	names = mergeStrings(names, workspace.RuntimeContextDiscoveryToolNames())
-	return mergeStrings(names, []string{"task", "note"})
+	return mergeStrings(names, []string{workspace.ToolNameTask, "note"})
 }
 
 func planSubmissionReviewToolNames() []string {
-	names := mergeStrings([]string{"read_file", "file_stats", "code_navigate", "source_sanity"}, []string{"harness_audit", "harness_feedback"})
+	names := mergeStrings([]string{workspace.ToolNameReadFile, workspace.ToolNameFileStats, workspace.ToolNameCodeNavigate, workspace.ToolNameSourceSanity}, []string{workspace.ToolNameHarnessAudit, workspace.ToolNameHarnessFeedback})
 	names = mergeStrings(names, workspace.RuntimeContextDiscoveryToolNames())
 	names = mergeStrings(names, workspace.RuntimeHistoryInspectionToolNames())
-	return mergeStrings(names, []string{"submit_plan"})
+	return mergeStrings(names, []string{workspace.ToolNameSubmitPlan})
 }
 
 func planSubmissionPlannerToolNames() []string {
@@ -415,23 +415,23 @@ func planSubmissionPlannerToolNames() []string {
 }
 
 func guardedWriteToolNames() []string {
-	names := []string{"task_ledger", "task", "pwd"}
+	names := []string{workspace.ToolNameTaskLedger, workspace.ToolNameTask, workspace.ToolNamePwd}
 	names = mergeStrings(names, workspace.RuntimeSourceInspectionToolNames())
 	names = mergeStrings(names, workspace.RuntimeContextDiscoveryToolNames())
-	names = mergeStrings(names, []string{"git_status", "git_diff"})
+	names = mergeStrings(names, []string{workspace.ToolNameGitStatus, workspace.ToolNameGitDiff})
 	names = mergeStrings(names, workspace.RuntimeHistoryInspectionToolNames())
-	names = mergeStrings(names, []string{"shell"})
+	names = mergeStrings(names, []string{workspace.ToolNameShell})
 	names = mergeStrings(names, workspace.WorkspaceWriteToolNames())
-	return mergeStrings(names, []string{"submit_plan"})
+	return mergeStrings(names, []string{workspace.ToolNameSubmitPlan})
 }
 
 func implementationScopedEditToolNames() []string {
 	names := append([]string{}, workspace.WorkspaceWriteToolNames()...)
-	names = mergeStrings(names, []string{"read_file", "code_navigate", "submit_plan"})
+	names = mergeStrings(names, []string{workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate, workspace.ToolNameSubmitPlan})
 	names = mergeStrings(names, workspace.RuntimeContextDiscoveryToolNames())
-	names = mergeStrings(names, []string{"dependency_graph", "ctags_symbols"})
+	names = mergeStrings(names, []string{workspace.ToolNameDependencyGraph, workspace.ToolNameCtagsSymbols})
 	names = mergeStrings(names, workspace.RuntimeHistoryInspectionToolNames())
-	names = mergeStrings(names, []string{"source_sanity"})
+	names = mergeStrings(names, []string{workspace.ToolNameSourceSanity})
 	return names
 }
 

@@ -235,7 +235,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	if strings.Contains(statusCombined, "broad inspection") {
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "additional_broad_workspace_inspection")
 	}
-	if strings.Contains(statusCombined, "bootstrap already inspected") && tool == "read_file" {
+	if strings.Contains(statusCombined, "bootstrap already inspected") && tool == workspace.ToolNameReadFile {
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "duplicate_read_file_on_bootstrapped_target")
 	}
 	if containsAny(statusCombined, "completion gate", "final answer rejected") {
@@ -344,7 +344,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "ignore the outline's go_move_declarations suggestion unless the objective is actually a refactor")
 				}
 			}
-		case "read_file", "code_navigate", "go_extract_body", "go_read_symbol":
+		case workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate, "go_extract_body", "go_read_symbol":
 			if strings.TrimSpace(input.Result.Error) == "" {
 				if writeReadyPacket {
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "required-path edit from the packet and inspected evidence")
@@ -362,7 +362,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "one narrow range read or exact-text search only if a specific anchor is still missing")
 				}
 			}
-		case "search_files", "search_content", "rg", "go_find_symbol", "go_find_type", "go_find_const", "go_references", "go_definition":
+		case workspace.ToolNameSearchFiles, workspace.ToolNameSearchContent, workspace.ToolNameRg, "go_find_symbol", "go_find_type", "go_find_const", "go_references", "go_definition":
 			if strings.TrimSpace(input.Result.Error) == "" {
 				if IsZeroHitSearchResult(input.Result) {
 					// The default "read the highest-confidence hit" nudge is
@@ -381,12 +381,12 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 					}
 				}
 			}
-		case "edit_file", "write_file", "append_file", "go_move_declarations":
+		case workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameGoMoveDeclarations:
 			if strings.TrimSpace(input.Result.Error) == "" {
 				guidance.ValidNext = appendUnique(guidance.ValidNext, "targeted verification evidence")
 				guidance.ValidNext = appendUnique(guidance.ValidNext, "required ledger state or answer with the change summary")
 			}
-		case "task_ledger":
+		case workspace.ToolNameTaskLedger:
 			if writeReadyPacket || requiredPathsRemaining {
 				guidance.ValidNext = appendUnique(guidance.ValidNext, "task_ledger does not satisfy the required-path write contract")
 				guidance.ValidNext = appendUnique(guidance.ValidNext, "required-path write capability")
@@ -474,7 +474,7 @@ func exactAnchorHiddenPrewriteTool(constraints []string, tool string, statusComb
 	if !slices.Contains(constraints, "exact_anchor_implementation") {
 		return false
 	}
-	if workspace.IsWorkspaceWriteTool(tool) || strings.TrimSpace(tool) == "task_ledger" || strings.TrimSpace(tool) == "harness_feedback" {
+	if workspace.IsWorkspaceWriteTool(tool) || strings.TrimSpace(tool) == workspace.ToolNameTaskLedger || strings.TrimSpace(tool) == workspace.ToolNameHarnessFeedback {
 		return false
 	}
 	return containsAny(statusCombined,
@@ -562,7 +562,7 @@ func filterClosureGuidanceNext(values []string, scope string) []string {
 // (already returned what relational queries want).
 func isDiscoveryTool(tool string) bool {
 	switch strings.TrimSpace(tool) {
-	case "list_files", "search_content", "search_files", "read_file", "rg", "grep":
+	case workspace.ToolNameListFiles, workspace.ToolNameSearchContent, workspace.ToolNameSearchFiles, workspace.ToolNameReadFile, workspace.ToolNameRg, workspace.ToolNameGrep:
 		return true
 	}
 	return false
@@ -710,9 +710,9 @@ func verificationToolFailure(tool string, combined string, result workspace.Tool
 		tool = strings.TrimSpace(result.Tool)
 	}
 	switch tool {
-	case "source_sanity", "go_diagnostics", "cpp_diagnostics":
+	case workspace.ToolNameSourceSanity, workspace.ToolNameGoDiagnostics, workspace.ToolNameCppDiagnostics:
 		return true
-	case "shell":
+	case workspace.ToolNameShell:
 		return isActualVerificationRecoverySignal(combined) ||
 			containsAny(strings.ToLower(combined), "test failed", "tests failed", "build failed")
 	default:
@@ -729,7 +729,7 @@ func ClassifyPhase(req workspace.ToolRequest, result workspace.ToolResult) strin
 		return "verification"
 	}
 	switch tool {
-	case "task_ledger":
+	case workspace.ToolNameTaskLedger:
 		return "planning"
 	default:
 		return "evidence"
@@ -1189,12 +1189,12 @@ func withDeterministicDiscoveryExamples(brief WorkerRuntimeBrief) WorkerRuntimeB
 	brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
 		`For broad architecture, impact, tracing, security, or history questions, the bounded discovery-packet capability is available before ad hoc list/search/read; choose purpose from the tool schema and follow with targeted reads only for named gaps.`,
 	))
-	if toolAllowedInBrief(brief.AllowedTools, "context_pack") && !discoveryExamplesWouldCompeteWithWriteReadyPacket(brief) {
+	if toolAllowedInBrief(brief.AllowedTools, workspace.ToolNameContextPack) && !discoveryExamplesWouldCompeteWithWriteReadyPacket(brief) {
 		brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
 			`For repo-localization questions, call context_pack with the task string first to get a ranked cached packet of candidate files, symbols, and tests.`,
 		))
 	}
-	if toolAllowedInBrief(brief.AllowedTools, "context_query") {
+	if toolAllowedInBrief(brief.AllowedTools, workspace.ToolNameContextQuery) {
 		brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
 			`For graph-shaped questions (what calls X? what tests cover Y? what depends on Z?), use context_query — it answers structured questions without dumping raw files. Prefer context_query over search_content for codebase questions.`,
 		))
@@ -1202,11 +1202,11 @@ func withDeterministicDiscoveryExamples(brief WorkerRuntimeBrief) WorkerRuntimeB
 
 	// Universal tool-ordering hierarchy: structured tools before text search.
 	// The ordering text adapts to which tools the lane actually has.
-	if toolAllowedInBrief(brief.AllowedTools, "context_pack") {
+	if toolAllowedInBrief(brief.AllowedTools, workspace.ToolNameContextPack) {
 		brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
 			`For workspace investigation prefer this order: context_pack to localize, context_query for graph questions, code_navigate for symbol bodies, read_file for bounded reads, search_content as last resort for literal text.`,
 		))
-	} else if toolAllowedInBrief(brief.AllowedTools, "context_query") {
+	} else if toolAllowedInBrief(brief.AllowedTools, workspace.ToolNameContextQuery) {
 		brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
 			`For workspace investigation prefer this order: context_query for graph and symbol questions, code_navigate for symbol bodies, read_file for bounded reads, search_content as last resort for literal text.`,
 		))
@@ -1427,7 +1427,7 @@ func IsZeroHitSearchResult(result workspace.ToolResult) bool {
 		return true
 	}
 	switch strings.TrimSpace(result.Tool) {
-	case "code_navigate", "read_only_capability":
+	case workspace.ToolNameCodeNavigate, workspace.ToolNameReadOnlyCapability:
 		for _, line := range strings.Split(result.Output, "\n") {
 			line = strings.ToLower(strings.TrimSpace(line))
 			if !strings.HasPrefix(line, "route_summary:") {
@@ -1493,4 +1493,3 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 func firstNonEmpty(values ...string) string {
 	return util.FirstNonEmpty(values...)
 }
-

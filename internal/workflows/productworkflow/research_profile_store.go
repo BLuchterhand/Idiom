@@ -46,7 +46,7 @@ func DiscoverProfiles(projectRoot string) (*ProfileStoreResult, error) {
 				Kind:     "profile_symlink",
 				Message:  fmt.Sprintf("profile file %q must not be a symlink", name),
 				File:     name,
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 			})
 			continue
 		}
@@ -57,7 +57,7 @@ func DiscoverProfiles(projectRoot string) (*ProfileStoreResult, error) {
 				Kind:     "path_traversal",
 				Message:  fmt.Sprintf("filename %q contains path traversal sequence", name),
 				File:     name,
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 			})
 			continue
 		}
@@ -76,7 +76,7 @@ func DiscoverProfiles(projectRoot string) (*ProfileStoreResult, error) {
 				Kind:     "read_error",
 				Message:  fmt.Sprintf("failed to read %q: %v", name, readErr),
 				File:     name,
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 			})
 			continue
 		}
@@ -86,7 +86,7 @@ func DiscoverProfiles(projectRoot string) (*ProfileStoreResult, error) {
 				Kind:     "validation_error",
 				Message:  fmt.Sprintf("profile %q failed validation: %v", name, parseErr),
 				File:     name,
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 			})
 			continue
 		}

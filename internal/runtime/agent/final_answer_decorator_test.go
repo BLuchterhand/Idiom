@@ -828,6 +828,24 @@ func TestDecorateFinalAnswerPreservesExternalQuestionBlockerEvidenceTerms(t *tes
 	}
 }
 
+func TestCombinedReadFileSourceBodiesIncludesPrefetchEvidence(t *testing.T) {
+	results := []workspace.ToolResult{
+		{
+			Tool:    workspace.ToolNamePrefetch,
+			Summary: "Read f1 README.md lines 1-1 (total lines: 1; source: prefetch)",
+			Output:  "1:Idiom is a local coding-agent harness.\n",
+		},
+	}
+
+	bodies := combinedReadFileSourceBodies(results)
+	if len(bodies) != 1 {
+		t.Fatalf("expected one source body from prefetch, got %#v", bodies)
+	}
+	if bodies[0].path != "README.md" || !strings.Contains(bodies[0].output, "local coding-agent harness") {
+		t.Fatalf("unexpected prefetch source body: %#v", bodies[0])
+	}
+}
+
 func TestDecorateFinalAnswerSanitizesInternalReadOnlyRemediationQuestionBlocker(t *testing.T) {
 	runner := &Runner{}
 	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{

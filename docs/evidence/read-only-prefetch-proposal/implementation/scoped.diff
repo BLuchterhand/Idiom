@@ -1,0 +1,522 @@
+diff --git a/internal/runtime/agent/direct_answer_surface.go b/internal/runtime/agent/direct_answer_surface.go
+index d0e5e75f..2eece026 100644
+--- a/internal/runtime/agent/direct_answer_surface.go
++++ b/internal/runtime/agent/direct_answer_surface.go
+@@ -24,7 +24,7 @@ const DirectAnswerSurfaceSchemaVersion = "idiom.direct_answer_surface.v1"
+ // DirectAnswerSurfaceVersion identifies the current surface inventory version.
+ // Bump when tools, capabilities, or terminal states change. A1 compares this
+ // against its expected minimum version before engaging prefetch.
+-const DirectAnswerSurfaceVersion = "2026-06-11"
++const DirectAnswerSurfaceVersion = "2026-06-12"
+ 
+ // DirectAnswerSurfaceCapReadOnlyInvestigation indicates the surface supports
+ // non-trivial read-only investigation (search followed by bounded source read).
+@@ -131,8 +131,7 @@ func surfaceSupportsCapability(surface DirectAnswerSurface, cap string) bool {
+ func directAnswerSurfaceCapabilities() []string {
+ 	return []string{
+ 		DirectAnswerSurfaceCapReadOnlyInvestigation,
+-		// source_body_prefetch is not yet advertised — A1 must remain
+-		// disabled until it is added here and the version is bumped.
++		DirectAnswerSurfaceCapSourceBodyPrefetch,
+ 	}
+ }
+ 
+diff --git a/internal/runtime/agent/direct_answer_surface_test.go b/internal/runtime/agent/direct_answer_surface_test.go
+index 5cf02fd4..3a2f6549 100644
+--- a/internal/runtime/agent/direct_answer_surface_test.go
++++ b/internal/runtime/agent/direct_answer_surface_test.go
+@@ -174,14 +174,13 @@ func TestEmitDirectAnswerSurfaceEvent(t *testing.T) {
+ 	}
+ }
+ 
+-func TestRunnerDirectAnswerSurfaceKeepsPrefetchDisabled(t *testing.T) {
++func TestRunnerDirectAnswerSurfacePrefetchesNamedPath(t *testing.T) {
+ 	root := t.TempDir()
+ 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("Idiom is a local coding-agent harness.\n"), 0o644); err != nil {
+ 		t.Fatalf("write README fixture: %v", err)
+ 	}
+ 
+ 	replies := []string{
+-		`{"tool":"read_file","path":"README.md","start_line":1,"end_line":1}`,
+ 		"Idiom is a local coding-agent harness. Source: README.md.",
+ 	}
+ 	requests := 0
+@@ -212,6 +211,7 @@ func TestRunnerDirectAnswerSurfaceKeepsPrefetchDisabled(t *testing.T) {
+ 
+ 	var surfaceEvent RunEvent
+ 	var prefetchEvents []RunEvent
++	var readFileResults int
+ 	runner.OnEvent = func(event RunEvent) {
+ 		if event.Role == "direct_answer_surface" {
+ 			surfaceEvent = event
+@@ -227,7 +227,11 @@ func TestRunnerDirectAnswerSurfaceKeepsPrefetchDisabled(t *testing.T) {
+ 		llama.ChatOptions{},
+ 		nil,
+ 		nil,
+-		nil,
++		func(event ToolResultEvent) {
++			if event.Result.Tool == "read_file" {
++				readFileResults++
++			}
++		},
+ 	)
+ 	if err != nil {
+ 		t.Fatalf("Run: %v", err)
+@@ -244,19 +248,89 @@ func TestRunnerDirectAnswerSurfaceKeepsPrefetchDisabled(t *testing.T) {
+ 	if err := json.Unmarshal([]byte(surfaceEvent.Content), &payload); err != nil {
+ 		t.Fatalf("unmarshal direct-answer surface event: %v", err)
+ 	}
+-	for _, cap := range payload.Capabilities {
+-		if cap == DirectAnswerSurfaceCapSourceBodyPrefetch {
+-			t.Fatalf("runner surface must not advertise source_body_prefetch before A1 activation: %#v", payload.Capabilities)
+-		}
++	if !slicesContainsString(payload.Capabilities, DirectAnswerSurfaceCapSourceBodyPrefetch) {
++		t.Fatalf("runner surface did not advertise source_body_prefetch: %#v", payload.Capabilities)
+ 	}
+-	if len(prefetchEvents) != 0 {
+-		t.Fatalf("runner emitted prefetch events before A1 activation: %#v", prefetchEvents)
++	if len(prefetchEvents) != 1 {
++		t.Fatalf("expected one prefetch event, got %#v", prefetchEvents)
++	}
++	if readFileResults != 0 {
++		t.Fatalf("prefetch should avoid model-initiated read_file before final answer, got %d", readFileResults)
+ 	}
+ 	if requests != len(replies) {
+ 		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
+ 	}
+ }
+ 
++func TestRunnerNamedPathPrefetchDoesNotRunForWriteBrief(t *testing.T) {
++	root := t.TempDir()
++	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("Idiom is a local coding-agent harness.\n"), 0o644); err != nil {
++		t.Fatalf("write README fixture: %v", err)
++	}
++
++	requests := 0
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		requests++
++		_ = json.NewEncoder(w).Encode(map[string]any{
++			"choices": []map[string]any{{"message": map[string]string{"content": "Done."}}},
++		})
++	}))
++	defer server.Close()
++
++	runner := &Runner{
++		Client:    llama.NewClient(server.URL, 2*time.Second),
++		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true}),
++		Policy:    RunPolicy{MaxToolSteps: 1, MaxNoProgressTurns: 1},
++		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
++			TaskFamily:        string(workerruntime.TaskFamilyImplementation),
++			Contract:          string(workerruntime.ContractImplementationResult),
++			Objective:         "Read README.md and update it.",
++			PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
++			AllowedTools:      []string{"read_file", "edit_file", "write_file"},
++		},
++	}
++
++	var prefetchResults int
++	var prefetchEvent *RunEvent
++	runner.OnEvent = func(event RunEvent) {
++		if event.Role == readOnlyPrefetchEventRole {
++			copy := event
++			prefetchEvent = &copy
++		}
++	}
++	_, _ = runner.Run(
++		context.Background(),
++		[]llama.ChatMessage{{Role: "user", Content: runner.RuntimeBrief.Objective}},
++		llama.ChatOptions{},
++		nil,
++		nil,
++		func(event ToolResultEvent) {
++			if event.Result.Tool == workspace.ToolNamePrefetch {
++				prefetchResults++
++			}
++		},
++	)
++	if prefetchResults != 0 {
++		t.Fatalf("write brief must not receive prefetch result, got %d", prefetchResults)
++	}
++	if prefetchEvent == nil {
++		t.Fatal("expected metadata prefetch event")
++	}
++	var payload struct {
++		Eligible   bool   `json:"eligible"`
++		MissReason string `json:"miss_reason"`
++	}
++	if err := json.Unmarshal([]byte(prefetchEvent.Content), &payload); err != nil {
++		t.Fatalf("unmarshal prefetch event: %v", err)
++	}
++	if payload.Eligible || payload.MissReason != "not_read_only_direct_answer" {
++		t.Fatalf("unexpected prefetch metadata: %#v", payload)
++	}
++	if requests == 0 {
++		t.Fatal("expected the runner to reach the model")
++	}
++}
++
+ func TestRunnerDirectAnswerSurfaceAllowsSearchThenBoundedRead(t *testing.T) {
+ 	root := t.TempDir()
+ 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("Idiom sells repo memory, freshness, contracts, audit, and evals.\n"), 0o644); err != nil {
+diff --git a/internal/runtime/agent/read_only_answerability.go b/internal/runtime/agent/read_only_answerability.go
+index e3c842a7..b0c7211e 100644
+--- a/internal/runtime/agent/read_only_answerability.go
++++ b/internal/runtime/agent/read_only_answerability.go
+@@ -25,6 +25,7 @@ const readOnlyHighCardinalitySearchThreshold = 50
+ type readOnlyEvidenceItem struct {
+ 	Kind           readOnlyEvidenceKind
+ 	Tool           string
++	Source         string
+ 	Path           string
+ 	CandidatePaths []string
+ 	HitCount       int
+@@ -109,6 +110,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
+ 				ledger.addItem(readOnlyEvidenceItem{
+ 					Kind:    readOnlyEvidenceSourceBody,
+ 					Tool:    tool,
++					Source:  readOnlyEvidenceItemSource(tool),
+ 					Path:    path,
+ 					Summary: strings.TrimSpace(result.Summary),
+ 				})
+@@ -132,6 +134,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
+ 						ledger.addItem(readOnlyEvidenceItem{
+ 							Kind:    readOnlyEvidenceSourceBody,
+ 							Tool:    tool,
++							Source:  readOnlyEvidenceItemSource(tool),
+ 							Path:    path,
+ 							Summary: strings.TrimSpace(result.Summary),
+ 						})
+@@ -160,6 +163,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
+ 					ledger.addItem(readOnlyEvidenceItem{
+ 						Kind:    readOnlyEvidenceSourceBody,
+ 						Tool:    tool,
++						Source:  readOnlyEvidenceItemSource(tool),
+ 						Path:    path,
+ 						Summary: strings.TrimSpace(result.Summary),
+ 					})
+@@ -271,12 +275,21 @@ func delegatedTaskOutputHasFindingEvidence(output string) bool {
+ 
+ func (l *readOnlyAnswerabilityLedger) addItem(item readOnlyEvidenceItem) {
+ 	item.Tool = strings.TrimSpace(item.Tool)
++	item.Source = strings.TrimSpace(item.Source)
+ 	item.Path = normalizeRunnerPath(item.Path)
+ 	item.CandidatePaths = readOnlySourceLikePaths(item.CandidatePaths, 128)
+ 	item.Summary = strings.TrimSpace(item.Summary)
+ 	l.Items = append(l.Items, item)
+ }
+ 
++func readOnlyEvidenceItemSource(tool string) string {
++	tool = strings.TrimSpace(tool)
++	if tool == workspace.ToolNamePrefetch {
++		return "prefetch"
++	}
++	return tool
++}
++
+ func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveSupport(path string, body string) {
+ 	path = normalizeRunnerPath(path)
+ 	if path == "" || isNonSourceEvidenceArtifactPath(path) || !pathparse.HasWorkspaceFileExtension(path) {
+diff --git a/internal/runtime/agent/read_only_answerability_test.go b/internal/runtime/agent/read_only_answerability_test.go
+index fcfec3b9..d12dcc16 100644
+--- a/internal/runtime/agent/read_only_answerability_test.go
++++ b/internal/runtime/agent/read_only_answerability_test.go
+@@ -1550,3 +1550,40 @@ func TestAcceptedAnswerEvidencePathsAliasIgnoresUnrelatedCandidateBody(t *testin
+ 		t.Fatalf("alias evidence paths should not report unrelated candidate source body, got %v", paths)
+ 	}
+ }
++
++func TestReadOnlyPrefetchEvidenceDedupsWithModelReadAndKeepsSource(t *testing.T) {
++	brief := readOnlyConversationBriefForTest("Read README.md and explain what Idiom is.")
++	results := []workspace.ToolResult{
++		{
++			Tool:    workspace.ToolNamePrefetch,
++			Summary: "Read f1 README.md lines 1-1 (total lines: 1; source: prefetch)",
++			Output:  "1:Idiom is a local coding-agent harness.\n",
++		},
++		{
++			Tool:    "read_file",
++			Summary: "Read f1 README.md lines 1-1 (total lines: 1)",
++			Output:  "1:Idiom is a local coding-agent harness.\n",
++		},
++	}
++
++	ledger := readOnlyAnswerabilityForResults(brief, results)
++	if got := ledger.SourceBodyPaths; !slices.Equal(got, []string{"README.md"}) {
++		t.Fatalf("expected deduped source body paths, got %#v", got)
++	}
++	var prefetchItems int
++	var readItems int
++	for _, item := range ledger.Items {
++		if item.Kind != readOnlyEvidenceSourceBody || item.Path != "README.md" {
++			continue
++		}
++		switch item.Source {
++		case "prefetch":
++			prefetchItems++
++		case "read_file":
++			readItems++
++		}
++	}
++	if prefetchItems != 1 || readItems != 1 {
++		t.Fatalf("expected distinct source attribution for prefetch/read_file, got prefetch=%d read=%d items=%#v", prefetchItems, readItems, ledger.Items)
++	}
++}
+diff --git a/internal/runtime/agent/runner.go b/internal/runtime/agent/runner.go
+index bcb06caa..c37dce28 100644
+--- a/internal/runtime/agent/runner.go
++++ b/internal/runtime/agent/runner.go
+@@ -518,7 +518,7 @@ func (r *Runner) Run(
+ 		preimageStore = NewPreimageCheckpointStore(r.Workspace.Root())
+ 	}
+ 	taskLedgerPolicy := r.TaskLedger
+-	if runnerBriefRequiresMutation(r.RuntimeBrief) {
++	if runnerBriefRequiresMutation(r.RuntimeBrief) && !strings.HasPrefix(r.agentName(), "child_write:") {
+ 		taskLedgerPolicy.RequireEvidence = true
+ 	}
+ 	taskLedger := newTaskLedgerState(taskLedgerPolicy)
+@@ -558,6 +558,7 @@ func (r *Runner) Run(
+ 		metrics:                   &metrics,
+ 		declarationMovesForbidden: declarationMovesForbidden,
+ 	}
++	collectedResults = r.maybeApplyReadOnlyNamedPathPrefetch(recorder, collectedResults)
+ 
+ 	// currentFingerprint is the fingerprint of the in-flight tool call,
+ 	// set at the top of each loop iteration. The turn controller reads it
+@@ -737,6 +738,10 @@ func (r *Runner) Run(
+ 		requestMessages = chatMessagesForOptions(requestMessages, modelCallOpts)
+ 		assistantMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, modelCallOpts)
+ 		if err != nil {
++			if answer, ok := r.modelErrorAfterPartialEditBlockerAnswer(err, collectedResults); ok {
++				emitCompletionStatus("blocked", "model_error_after_partial_edit", "model_error_after_partial_edit", collectedResults, true)
++				return finish(answer, nil, "model_error_after_partial_edit", false)
++			}
+ 			if transportRetries < 1 && retryableModelTransportError(err) {
+ 				transportRetries++
+ 				turnMessages = append(turnMessages, llama.ChatMessage{
+@@ -757,10 +762,6 @@ func (r *Runner) Run(
+ 				r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: prompt})
+ 				continue
+ 			}
+-			if answer, ok := r.modelErrorAfterPartialEditBlockerAnswer(err, collectedResults); ok {
+-				emitCompletionStatus("blocked", "model_error_after_partial_edit", "model_error_after_partial_edit", collectedResults, true)
+-				return finish(answer, nil, "model_error_after_partial_edit", false)
+-			}
+ 			if answer, ok := r.modelErrorAfterReadOnlyEvidenceAnswer(err, collectedResults); ok {
+ 				r.emitEvent(RunEvent{Role: "model_error_after_grounded_evidence", Content: "model transport failed after grounded read-only evidence was collected; returning deterministic evidence fallback"})
+ 				if closeout, closeoutOK := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); closeoutOK {
+@@ -4087,7 +4088,7 @@ func readOnlyReplayedEvidenceCloseoutApplies(agent string, brief workerruntime.W
+ 		return false
+ 	}
+ 	directAnswerExactSearchReplay := readOnlyDirectAnswerExactSearchReplayCloseoutCandidate(brief, req)
+-	if LanePolicyForBrief(brief).ShouldSkipRecoveryNudge() && !directAnswerExactSearchReplay {
++	if LanePolicyForBrief(brief).ShouldSkipRecoveryNudge() && !directAnswerExactSearchReplay && readOnlyDirectAnswerLane(brief) {
+ 		return false
+ 	}
+ 	if !readOnlyExplanationGateApplies(brief) && !directAnswerExactSearchReplay {
+@@ -13227,7 +13228,7 @@ func concreteSourceEvidenceResult(result workspace.ToolResult) bool {
+ 	}
+ 	tool := strings.TrimSpace(result.Tool)
+ 	switch {
+-	case tool == "read_file":
++	case tool == "read_file", tool == workspace.ToolNamePrefetch:
+ 		return readFileResultHasConcreteSourceBody(result)
+ 	case tool == "context_zoom":
+ 		return contextZoomResultHasConcreteSourceBody(result)
+@@ -20405,26 +20406,109 @@ func objectiveRequestsDiagnosticLogInspection(objective string) bool {
+ 	if strings.TrimSpace(words) == "" {
+ 		return false
+ 	}
+-	hasArtifact := strings.Contains(words, " log") ||
+-		strings.Contains(words, "logs") ||
+-		strings.Contains(words, "telemetry") ||
+-		strings.Contains(words, "conversation") ||
+-		strings.Contains(words, "session")
+-	if !hasArtifact {
++
++	if strings.Contains(words, " read these files") || strings.Contains(words, " read the files") {
+ 		return false
+ 	}
+-	for _, marker := range []string{
+-		"latest", "recent", "newest", "previous", "prior", "last",
+-		"failure", "failed", "error", "attempt", "session", "run",
+-		"what happened", "why did", "why the", "hit some",
++	if objectiveRequestsSourceFeatureInspection(words) && !objectiveNamesConcreteDiagnosticLogArtifact(words) {
++		return false
++	}
++
++	hasDiagnosticArtifact := false
++	for _, artifact := range []string{
++		" log", "logs", "telemetry log", "telemetry/", "conversation log", "conversations/",
++		"conversation/log", "session log", "debug log", "debuglog", ".jsonl", ".log",
++	} {
++		if strings.Contains(words, artifact) {
++			hasDiagnosticArtifact = true
++			break
++		}
++	}
++	if !hasDiagnosticArtifact {
++		return false
++	}
++
++	for _, intent := range []string{
++		" inspect ", " investigate ", " review ", " analyze ", " analyse ", " check ",
++		" identify ", " diagnose ", " look at ", " open ", " read ", " tail ", " scan ", " audit ",
++		" actual conversation logs", " newest log", " recent log", " latest log",
++		" previous log", " prior log", " conversation logs", " telemetry logs",
+ 	} {
+-		if strings.Contains(words, marker) {
++		if strings.Contains(words, intent) {
++			return true
++		}
++	}
++
++	hasIncidentQuestion := strings.Contains(words, " why did ") ||
++		strings.Contains(words, " why was ") ||
++		strings.Contains(words, " what happened") ||
++		strings.Contains(words, " did it actually") ||
++		strings.Contains(words, " hit objective")
++	if !hasIncidentQuestion {
++		return false
++	}
++	for _, failureMarker := range []string{" failure", " failed", " error", " reject", " rejected", " blocker", " unmet", " overreach", " bad answer"} {
++		if strings.Contains(words, failureMarker) {
+ 			return true
+ 		}
+ 	}
+ 	return false
+ }
+ 
++func objectiveRequestsSourceFeatureInspection(words string) bool {
++	if strings.TrimSpace(words) == "" {
++		return false
++	}
++	return containsAny(words,
++		" codebase",
++		" source ",
++		" source-code",
++		" go file",
++		" go files",
++		" config",
++		" configuration",
++		" flag ",
++		" flag controls",
++		" defined",
++		" definition",
++		" implementation",
++		" logic",
++		" mode ",
++		" when enabled",
++		" field",
++		" fields",
++		" value",
++		" values",
++		" type",
++		" types",
++		" struct",
++		" structs",
++	)
++}
++
++func objectiveNamesConcreteDiagnosticLogArtifact(words string) bool {
++	if strings.TrimSpace(words) == "" {
++		return false
++	}
++	return containsAny(words,
++		" actual conversation logs",
++		" newest log",
++		" recent log",
++		" latest log",
++		" previous log",
++		" prior log",
++		" conversation logs",
++		" telemetry logs",
++		" log file",
++		" log artifact",
++		" logs/",
++		" telemetry/",
++		" conversations/",
++		" .jsonl",
++		" .log",
++	)
++}
++
+ func currentDebugLogSessionID(mgr *workspace.Manager) string {
+ 	if mgr == nil {
+ 		return ""
+diff --git a/internal/runtime/agent/runner_plan_then_execute_guard.go b/internal/runtime/agent/runner_plan_then_execute_guard.go
+index 75f3febd..b6696cb1 100644
+--- a/internal/runtime/agent/runner_plan_then_execute_guard.go
++++ b/internal/runtime/agent/runner_plan_then_execute_guard.go
+@@ -1760,7 +1760,7 @@ func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path s
+ 	evidence.Source = tool
+ 	evidence.Detail = "source body"
+ 	switch {
+-	case tool == "read_file":
++	case tool == "read_file", tool == workspace.ToolNamePrefetch:
+ 		evidence.Level, evidence.Detail = planThenExecuteReadFileEvidenceLevel(result, path)
+ 	case tool == "code_navigate" || tool == "read_only_capability":
+ 		if !routedSourceReadOutputHasBody(result.Output) {
+@@ -2685,6 +2685,25 @@ func (r *Runner) planThenExecuteSourceSatisfiedAnswerCovers(reply string, result
+ 	if r.planThenExecuteRequiredEditSnippetsSourceSatisfied() {
+ 		return true
+ 	}
++	// Evidence-ledger check: every required path the model claims as
++	// source-satisfied must have a source-body read receipt in the
++	// collected results. This prevents stale-evidence claims where
++	// source-satisfied is asserted for a path whose content may have
++	// changed since the last read.
++	//
++	// During the anchor-refresh phase, refresh-state paths must have
++	// evidence from the current turn (results after SeedResults) to
++	// prevent stale seed evidence from satisfying the check.
++	if len(missing) > 0 {
++		state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
++		refreshCutoff := len(r.SeedResults)
++		if state.Mode != PlanExecutePlanningModeAnchorRefresh || len(state.RefreshPaths) == 0 {
++			refreshCutoff = 0
++		}
++		if !requiredPathsHaveSourceBodyEvidence(missing, results, state.RefreshPaths, refreshCutoff) {
++			return false
++		}
++	}
+ 	return planThenExecuteSourceSatisfiedResultsCoverPaths(missing, results)
+ }
+ 
+@@ -2707,6 +2726,37 @@ func planThenExecuteSourceSatisfiedResultsCoverPaths(requiredPaths []string, res
+ 	return true
+ }
+ 
++// requiredPathsHaveSourceBodyEvidence is the evidence-ledger check for the
++// source-satisfied terminal outcome. It verifies that every required path has
++// a source-body read receipt in the provided results, preventing stale-evidence
++// claims where the model asserts source-satisfied for a path whose content may
++// have changed since the last read.
++//
++// For freshness-sensitive contexts (anchor-refresh phase), pass a non-empty
++// refreshPaths list with a resultCutoff index. Paths in refreshPaths must have
++// evidence in results from index resultCutoff onward (i.e., produced during or
++// after the refresh). A nil or empty refreshPaths list checks all results.
++func requiredPathsHaveSourceBodyEvidence(requiredPaths []string, results []workspace.ToolResult, refreshPaths []string, resultCutoff int) bool {
++	if len(requiredPaths) == 0 {
++		return false
++	}
++	refreshSet := make(map[string]struct{}, len(refreshPaths))
++	for _, p := range refreshPaths {
++		refreshSet[normalizeRunnerPath(p)] = struct{}{}
++	}
++	for _, path := range requiredPaths {
++		normPath := normalizeRunnerPath(path)
++		scoped := results
++		if _, needsFresh := refreshSet[normPath]; needsFresh && resultCutoff > 0 && resultCutoff < len(results) {
++			scoped = results[resultCutoff:]
++		}
++		if planThenExecuteRequiredSourceEvidenceForPath(workerruntime.WorkerRuntimeBrief{}, scoped, normPath).Level != planThenExecuteEvidenceAnchorReady {
++			return false
++		}
++	}
++	return true
++}
++
+ func (r *Runner) planThenExecuteRequiredEditSnippetsSourceSatisfied() bool {
+ 	if r == nil || r.Workspace == nil {
+ 		return false

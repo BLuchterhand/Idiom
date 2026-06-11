@@ -22,6 +22,28 @@ This repository builds `idiom`, a local coding-agent harness around Qwen, `llama
 - Evidence tools and summaries should report findings, paths, symbols, counts, and uncertainty. They should not prescribe the next tool call.
 - All work and answers must be grounded in factual analysis from the codebase, tool output, tests, logs, or cited docs. Distinguish verified facts from inference, and do not present guesses as findings.
 
+## Engineering Quality Baseline
+
+For code changes, reviews, refactors, and tests, apply the local
+`unified-software-engineering` rule set as a binding repo baseline even when
+external rulebook files are not loaded. Use specialized rulebooks as reference
+material when they materially change a task, but do not rely on them as the only
+source of quality policy.
+
+- Optimize for code a senior team can maintain for years: clear names, cohesive
+  functions, shallow control flow, explicit behavior, and actionable errors.
+- Keep business logic, infrastructure, persistence, API, and presentation
+  concerns separated unless the existing architecture intentionally combines
+  them.
+- Prefer local, boring, explicit code over clever compression or premature
+  abstraction.
+- Duplicate once when the abstraction is unclear; abstract when the third use
+  proves the shared concept.
+- Tests should specify behavior, cover meaningful edge and failure cases, and
+  avoid brittle implementation coupling.
+- Before presenting code, self-review the diff for naming, complexity,
+  duplication, edge cases, boundary leaks, dead code, and missing verification.
+
 ## Working Style In This Repo
 
 - Do not guess paths. Discover them first.
@@ -43,6 +65,18 @@ This repository builds `idiom`, a local coding-agent harness around Qwen, `llama
   only a bounded log tail plus blocker artifacts needed to decide the next
   orchestration step. Keep research, implementation, and review inside the
   delegated harness when the user requested that actor boundary.
+- When the user explicitly asks Codex to use subagents or parallel agents in
+  this repo, choose from `.codex/agents/*.toml` by task risk: `idiom-explorer`
+  for low-effort read-only exploration, localization, log triage, and evidence
+  summaries; `idiom-worker` for medium-effort localized implementation,
+  documentation updates, and focused refactors; `idiom-reviewer` for
+  high-effort correctness, contract, regression, security, architecture, and
+  test-gap review; `idiom-root-cause` for high-effort behavior debugging across
+  prompts, control rails, readiness, recovery, telemetry, and evals; and
+  `idiom-strategist` for rare xhigh-effort cross-cutting design, migration, or
+  incident-analysis decisions. Effort follows contract risk, not task size:
+  small prompt, gate, runtime, or readiness changes usually deserve high effort,
+  while large mechanical scans usually deserve low or medium effort.
 - If the issue is in idiom itself, keep the research and fix inside idiom unless
   that bug blocks idiom from proceeding. When idiom is blocked, record the
   session/failure id and blocker, then use the smallest external fallback needed

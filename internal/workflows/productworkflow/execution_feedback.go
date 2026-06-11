@@ -69,16 +69,16 @@ type RankerLearningEvidenceSummary struct {
 }
 
 type RankerLearningEvidenceRequest struct {
-	Source               string                         `json:"source"`
-	Action               string                         `json:"action"`
-	Files                []string                       `json:"files"`
-	Score                float64                        `json:"score"`
-	TaskID               string                         `json:"task_id"`
-	CorpusID             string                         `json:"corpus_id"`
-	ResultID             string                         `json:"result_id"`
-	Reason               string                         `json:"reason"`
-	Verified             bool                           `json:"verified"`
-	Evidence             RankerLearningEvidenceRef      `json:"evidence"`
+	Source               string                              `json:"source"`
+	Action               string                              `json:"action"`
+	Files                []string                            `json:"files"`
+	Score                float64                             `json:"score"`
+	TaskID               string                              `json:"task_id"`
+	CorpusID             string                              `json:"corpus_id"`
+	ResultID             string                              `json:"result_id"`
+	Reason               string                              `json:"reason"`
+	Verified             bool                                `json:"verified"`
+	Evidence             RankerLearningEvidenceRef           `json:"evidence"`
 	VerificationEvidence *RankerLearningVerificationEvidence `json:"verification_evidence,omitempty"`
 }
 
@@ -123,7 +123,7 @@ func SummarizeExecutionFeedback(input ExecutionFeedbackInput) ExecutionFeedbackS
 	}
 
 	out := ExecutionFeedbackSummary{
-		Status:          "pass",
+		Status:          ProductWorkflowStatusPass,
 		EffortID:        strings.TrimSpace(input.WorkflowState.EffortID),
 		TaskID:          strings.TrimSpace(input.WorkflowState.TaskID),
 		StateRevision:   input.WorkflowState.StateRevision,
@@ -272,7 +272,7 @@ func SummarizeExecutionFeedback(input ExecutionFeedbackInput) ExecutionFeedbackS
 	})
 
 	if len(out.Blockers) > 0 {
-		out.Status = "blocked"
+		out.Status = ProductWorkflowStatusBlocked
 		out.NextValidAction = out.Blockers[0].NextValid
 	} else {
 		out.NextValidAction = "publish execution feedback summary as deterministic closeout evidence"
@@ -291,7 +291,7 @@ func SummarizeExecutionFeedback(input ExecutionFeedbackInput) ExecutionFeedbackS
 
 func executionFeedbackPassingStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "pass", "passed", "complete", "completed", "success", "source-satisfied":
+	case ProductWorkflowStatusPass, ProductWorkflowStatusPassed, ProductWorkflowStatusComplete, "completed", "success", "source-satisfied":
 		return true
 	default:
 		return false
@@ -427,7 +427,7 @@ func ReconcileExecutionFeedback(input ExecutionFeedbackReconciliationInput) Exec
 		knownObligations[id] = true
 	}
 	result := ExecutionFeedbackReconciliationResult{
-		Status:        "pass",
+		Status:        ProductWorkflowStatusPass,
 		WorkflowState: state,
 		EvidenceLinks: ExecutionFeedbackEvidenceLinkSummary{
 			ProductEvidenceID:        strings.TrimSpace(summary.ProductEvidence.ID),
@@ -615,7 +615,7 @@ func ReconcileExecutionFeedback(input ExecutionFeedbackReconciliationInput) Exec
 	}
 
 	if len(result.Blockers) > 0 {
-		result.Status = "blocked"
+		result.Status = ProductWorkflowStatusBlocked
 		result.WorkflowState.ReconciliationMismatch = true
 		sort.Slice(result.Blockers, func(i, j int) bool {
 			if result.Blockers[i].Kind == result.Blockers[j].Kind {
@@ -648,7 +648,7 @@ func ReconcileExecutionFeedback(input ExecutionFeedbackReconciliationInput) Exec
 	}
 	gateResults = append(gateResults, GateResult{
 		Gate:      "execution_feedback_reconciliation",
-		Status:    "pass",
+		Status:    ProductWorkflowStatusPass,
 		CheckedAt: strings.TrimSpace(input.ReconciledAt),
 	})
 	sort.Slice(gateResults, func(i, j int) bool {
@@ -734,7 +734,7 @@ func AdaptExecutionFeedbackToRankerLearning(input RankerLearningEvidenceInput) R
 		}
 	}
 	result := RankerLearningEvidenceResult{
-		Status:               "pass",
+		Status:               ProductWorkflowStatusPass,
 		SummaryReferencePath: strings.TrimSpace(input.SummaryReferencePath),
 		Summary: RankerLearningEvidenceSummary{
 			Kind:                     "verified_product_workflow_feedback",
@@ -1069,7 +1069,7 @@ func AdaptExecutionFeedbackToRankerLearning(input RankerLearningEvidenceInput) R
 	})
 
 	if len(result.Blockers) > 0 {
-		result.Status = "blocked"
+		result.Status = ProductWorkflowStatusBlocked
 		result.NextValidAction = result.Blockers[0].NextValid
 		result.Request = nil
 		return result

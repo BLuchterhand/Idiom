@@ -243,13 +243,14 @@ func TestRankerLearningDormantSourcesStayInRecommendations(t *testing.T) {
 func TestSplitHistoricalHarnessAuditFindings(t *testing.T) {
 	current, historical := splitHistoricalHarnessAuditFindings([]harnessAuditFinding{
 		{ID: "freshness_refresh_failures"},
+		{ID: "context_cache_unresolved_gaps", Severity: "info"},
 		{ID: "historical_behavior_patterns"},
 		{ID: "context_cache_historical_stale_rows"},
 	})
 	if len(current) != 1 || current[0].ID != "freshness_refresh_failures" {
 		t.Fatalf("unexpected current findings: %#v", current)
 	}
-	if len(historical) != 2 {
+	if len(historical) != 3 {
 		t.Fatalf("unexpected historical findings: %#v", historical)
 	}
 }
@@ -580,10 +581,10 @@ func TestHarnessAuditSummaryIncludesContextCacheMetrics(t *testing.T) {
 	summary := harnessAuditSummary(harnessAuditReport{
 		Purpose: "behavior",
 		ContextCache: &harnessAuditContextCache{
-			Rows:                          5,
-			SessionHits:                   3,
-			HitRate:                       0.6,
-			EstimatedFullTokensSaved:      1234,
+			Rows:                              5,
+			SessionHits:                       3,
+			HitRate:                           0.6,
+			EstimatedFullTokensSaved:          1234,
 			EstimatedRediscoveryTokensAvoided: 5678,
 		},
 	})
@@ -605,20 +606,20 @@ func TestHarnessAuditSummaryIncludesContextCacheMetrics(t *testing.T) {
 // finding ID, severity, and evidence fields are correctly structured.
 func TestContextCacheSavingsFinding(t *testing.T) {
 	tests := []struct {
-		name                         string
-		cache                        harnessAuditContextCache
-		expectSavingsFinding         bool
-		expectContains               []string
+		name                 string
+		cache                harnessAuditContextCache
+		expectSavingsFinding bool
+		expectContains       []string
 	}{
 		{
 			name: "both savings counters non-zero",
 			cache: harnessAuditContextCache{
-				Rows:                            5,
-				SessionHits:                     3,
-				SessionMisses:                   2,
-				EstimatedFullTokensSaved:        1000,
+				Rows:                              5,
+				SessionHits:                       3,
+				SessionMisses:                     2,
+				EstimatedFullTokensSaved:          1000,
 				EstimatedRediscoveryTokensAvoided: 2000,
-				CurrentRows:                     5,
+				CurrentRows:                       5,
 			},
 			expectSavingsFinding: true,
 			expectContains:       []string{"tokens_saved=1000", "rediscovery_avoided=2000"},
@@ -626,11 +627,11 @@ func TestContextCacheSavingsFinding(t *testing.T) {
 		{
 			name: "only token savings non-zero",
 			cache: harnessAuditContextCache{
-				Rows:                      5,
-				SessionHits:               3,
-				SessionMisses:             2,
-				EstimatedFullTokensSaved:  1000,
-				CurrentRows:               5,
+				Rows:                     5,
+				SessionHits:              3,
+				SessionMisses:            2,
+				EstimatedFullTokensSaved: 1000,
+				CurrentRows:              5,
 			},
 			expectSavingsFinding: true,
 			expectContains:       []string{"tokens_saved=1000"},
@@ -638,11 +639,11 @@ func TestContextCacheSavingsFinding(t *testing.T) {
 		{
 			name: "only rediscovery savings non-zero",
 			cache: harnessAuditContextCache{
-				Rows:                                5,
-				SessionHits:                         3,
-				SessionMisses:                       2,
-				EstimatedRediscoveryTokensAvoided:   2000,
-				CurrentRows:                         5,
+				Rows:                              5,
+				SessionHits:                       3,
+				SessionMisses:                     2,
+				EstimatedRediscoveryTokensAvoided: 2000,
+				CurrentRows:                       5,
 			},
 			expectSavingsFinding: true,
 			expectContains:       []string{"rediscovery_avoided=2000"},
@@ -650,10 +651,10 @@ func TestContextCacheSavingsFinding(t *testing.T) {
 		{
 			name: "zero savings — no finding",
 			cache: harnessAuditContextCache{
-				Rows:           5,
-				SessionHits:    2,
-				SessionMisses:  3,
-				CurrentRows:    5,
+				Rows:          5,
+				SessionHits:   2,
+				SessionMisses: 3,
+				CurrentRows:   5,
 			},
 			expectSavingsFinding: false,
 		},

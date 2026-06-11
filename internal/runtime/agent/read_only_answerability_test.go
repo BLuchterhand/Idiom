@@ -761,12 +761,38 @@ func TestFinalAnswerAcceptanceRejectsSessionsPanelAsChatRecallOwner(t *testing.T
 	answer := "It would take changing `Model.handleSessionsPanelKey` in `internal/surfaces/tui/app/sessions_panel.go`. The inspected source shows it already handles `tea.KeyUp` and `tea.KeyDown`, so the work is to route those cases through chat-history state."
 	runner := &Runner{RuntimeBrief: brief}
 
+	decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).
+		FinalAnswerDecision(answer)
+	if decision.BlockerKind != "answer_objective_unmet" {
+		t.Fatalf("shared final-answer decision got blocker kind=%q", decision.BlockerKind)
+	}
+	if slices.Contains(decision.AcceptedEvidencePaths, "internal/surfaces/tui/app/sessions_panel.go") {
+		t.Fatalf("shared final-answer decision promoted conflicting navigation owner, got %#v", decision.AcceptedEvidencePaths)
+	}
+	aliasBrief := brief
+	aliasBrief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+	aliasDecision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(aliasBrief), results).
+		FinalAnswerDecision(answer)
+	if aliasDecision.BlockerKind != "answer_objective_unmet" {
+		t.Fatalf("direct_answer alias shared decision got blocker kind=%q", aliasDecision.BlockerKind)
+	}
+	if slices.Contains(aliasDecision.AcceptedEvidencePaths, "internal/surfaces/tui/app/sessions_panel.go") {
+		t.Fatalf("direct_answer alias promoted conflicting navigation owner, got %#v", aliasDecision.AcceptedEvidencePaths)
+	}
+
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
 	if kind != "answer_objective_unmet" {
 		t.Fatalf("sessions-panel-owned final answer got blocker kind=%q reason=%q", kind, reason)
 	}
 	if paths := acceptedAnswerEvidencePaths(answer, results, brief); slices.Contains(paths, "internal/surfaces/tui/app/sessions_panel.go") {
 		t.Fatalf("accepted evidence paths must not promote conflicting navigation owner, got %#v", paths)
+	}
+	aliasRunner := &Runner{RuntimeBrief: aliasBrief}
+	if kind, reason := aliasRunner.finalAnswerBlockerKind(answer, results); kind != "answer_objective_unmet" {
+		t.Fatalf("direct_answer alias final answer got blocker kind=%q reason=%q", kind, reason)
+	}
+	if paths := acceptedAnswerEvidencePaths(answer, results, aliasBrief); slices.Contains(paths, "internal/surfaces/tui/app/sessions_panel.go") {
+		t.Fatalf("direct_answer alias accepted evidence paths promoted conflicting navigation owner, got %#v", paths)
 	}
 }
 
@@ -1049,6 +1075,18 @@ func TestReadOnlyAnswerabilityAcceptsExplicitDiagnosticEvidence(t *testing.T) {
 	if !slices.Contains(ledger.DiagnosticPaths, "internal/runtime/agent/runner.go") {
 		t.Fatalf("expected diagnostic source path, got %#v", ledger.DiagnosticPaths)
 	}
+	answer := "Diagnostics fail in `internal/runtime/agent/runner.go` because source_sanity reports `undefined: Foo`."
+	decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).
+		FinalAnswerDecision(answer)
+	if decision.BlockerKind != "" {
+		t.Fatalf("diagnostic final-answer decision rejected relevant evidence: %#v", decision)
+	}
+	if !slices.Contains(decision.AcceptedEvidencePaths, "internal/runtime/agent/runner.go") {
+		t.Fatalf("diagnostic final-answer decision missed accepted diagnostic path: %#v", decision.AcceptedEvidencePaths)
+	}
+	if paths := acceptedAnswerEvidencePaths(answer, results, brief); !slices.Contains(paths, "internal/runtime/agent/runner.go") {
+		t.Fatalf("accepted evidence paths missed relevant diagnostic path: %#v", paths)
+	}
 }
 
 func TestReadOnlyAnswerabilityRejectsUnrelatedDiagnosticEvidence(t *testing.T) {
@@ -1068,6 +1106,15 @@ func TestReadOnlyAnswerabilityRejectsUnrelatedDiagnosticEvidence(t *testing.T) {
 	}
 	if !slices.Contains(ledger.DiagnosticPaths, "internal/platform/config/config.go") {
 		t.Fatalf("expected diagnostic source path to be recorded, got %#v", ledger.DiagnosticPaths)
+	}
+	answer := "The runner build failed because `internal/platform/config/config.go` has `undefined: ConfigValue`."
+	decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).
+		FinalAnswerDecision(answer)
+	if len(decision.AcceptedEvidencePaths) > 0 {
+		t.Fatalf("unrelated diagnostic evidence must not become accepted evidence: %#v", decision.AcceptedEvidencePaths)
+	}
+	if paths := acceptedAnswerEvidencePaths(answer, results, brief); len(paths) > 0 {
+		t.Fatalf("accepted evidence paths promoted unrelated diagnostic evidence: %#v", paths)
 	}
 }
 
@@ -1501,5 +1548,42 @@ func TestAcceptedAnswerEvidencePathsAliasIgnoresUnrelatedCandidateBody(t *testin
 	paths := acceptedAnswerEvidencePaths(answer, results, brief)
 	if len(paths) != 0 {
 		t.Fatalf("alias evidence paths should not report unrelated candidate source body, got %v", paths)
+	}
+}
+
+func TestReadOnlyPrefetchEvidenceDedupsWithModelReadAndKeepsSource(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Read README.md and explain what Idiom is.")
+	results := []workspace.ToolResult{
+		{
+			Tool:    workspace.ToolNamePrefetch,
+			Summary: "Read f1 README.md lines 1-1 (total lines: 1; source: prefetch)",
+			Output:  "1:Idiom is a local coding-agent harness.\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 README.md lines 1-1 (total lines: 1)",
+			Output:  "1:Idiom is a local coding-agent harness.\n",
+		},
+	}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if got := ledger.SourceBodyPaths; !slices.Equal(got, []string{"README.md"}) {
+		t.Fatalf("expected deduped source body paths, got %#v", got)
+	}
+	var prefetchItems int
+	var readItems int
+	for _, item := range ledger.Items {
+		if item.Kind != readOnlyEvidenceSourceBody || item.Path != "README.md" {
+			continue
+		}
+		switch item.Source {
+		case "prefetch":
+			prefetchItems++
+		case "read_file":
+			readItems++
+		}
+	}
+	if prefetchItems != 1 || readItems != 1 {
+		t.Fatalf("expected distinct source attribution for prefetch/read_file, got prefetch=%d read=%d items=%#v", prefetchItems, readItems, ledger.Items)
 	}
 }

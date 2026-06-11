@@ -367,44 +367,57 @@ func TestDebugLoggerLogsContextFillTelemetry(t *testing.T) {
 		t.Fatalf("LogToolResultDetail: %v", err)
 	}
 	if err := logger.LogModelCall(ModelCall{
-		Step:             3,
-		Agent:            "main",
-		PromptTokens:     12000,
-		CompletionTokens: 350,
-		TotalTokens:      12350,
-		CtxSize:          196608,
-		MessageCount:     14,
-		RoleChars:        map[string]int{"system": 4500, "user": 800, "assistant": 1200, "tool": 9000},
-		ChosenTool:       "edit_file",
-		DurationMillis:   2400,
+		Step:                       3,
+		Agent:                      "main",
+		PromptTokens:               12000,
+		CompletionTokens:           350,
+		TotalTokens:                12350,
+		PromptCacheHitTokens:       9000,
+		PromptCacheMissTokens:      3000,
+		PromptCacheAccountingKnown: true,
+		ReasoningTokens:            40,
+		CtxSize:                    196608,
+		MessageCount:               14,
+		RoleChars:                  map[string]int{"system": 4500, "user": 800, "assistant": 1200, "tool": 9000},
+		ChosenTool:                 "edit_file",
+		DurationMillis:             2400,
 	}); err != nil {
 		t.Fatalf("LogModelCall: %v", err)
 	}
 	if err := logger.LogTurnSummary(TurnSummary{
-		Lane:             "main",
-		UsedModelCalls:   3,
-		UsedToolResults:  6,
-		PromptTokens:     20000,
-		CompletionTokens: 600,
-		TotalTokens:      20600,
-		DurationMillis:   8000,
-		StopReason:       "completed",
+		Lane:                       "main",
+		UsedModelCalls:             3,
+		UsedToolResults:            6,
+		PromptTokens:               20000,
+		CompletionTokens:           600,
+		TotalTokens:                20600,
+		PromptCacheHitTokens:       15000,
+		PromptCacheMissTokens:      5000,
+		PromptCacheAccountingKnown: true,
+		ReasoningTokens:            70,
+		DurationMillis:             8000,
+		StopReason:                 "completed",
 	}); err != nil {
 		t.Fatalf("LogTurnSummary: %v", err)
 	}
 	if err := logger.LogSessionSummary(SessionSummary{
-		Turns:            2,
-		ModelCalls:       6,
-		ToolCalls:        12,
-		PromptTokens:     40000,
-		CompletionTokens: 1200,
-		TotalTokens:      41200,
-		PeakPromptTokens: 22000,
-		CtxSize:          196608,
-		PeakCtxPct:       float64(22000) / float64(196608),
-		Compactions:      1,
-		TopToolsByOutput: []ToolOutputAggregate{{Tool: "read_file", Calls: 8, OutputChars: 60000}},
-		DurationMillis:   30000,
+		Turns:                      2,
+		ModelCalls:                 6,
+		ToolCalls:                  12,
+		PromptTokens:               40000,
+		CompletionTokens:           1200,
+		TotalTokens:                41200,
+		PromptCacheHitTokens:       30000,
+		PromptCacheMissTokens:      10000,
+		PromptCacheAccountingKnown: true,
+		PromptCacheHitRate:         0.75,
+		ReasoningTokens:            120,
+		PeakPromptTokens:           22000,
+		CtxSize:                    196608,
+		PeakCtxPct:                 float64(22000) / float64(196608),
+		Compactions:                1,
+		TopToolsByOutput:           []ToolOutputAggregate{{Tool: "read_file", Calls: 8, OutputChars: 60000}},
+		DurationMillis:             30000,
 	}); err != nil {
 		t.Fatalf("LogSessionSummary: %v", err)
 	}
@@ -444,13 +457,32 @@ func TestDebugLoggerLogsContextFillTelemetry(t *testing.T) {
 	if mc["chosen_tool"] != "edit_file" {
 		t.Fatalf("model_call.chosen_tool = %v", mc["chosen_tool"])
 	}
+	if mc["prompt_cache_accounting_known"] != true ||
+		mc["prompt_cache_hit_tokens"] != float64(9000) ||
+		mc["prompt_cache_miss_tokens"] != float64(3000) ||
+		mc["reasoning_tokens"] != float64(40) {
+		t.Fatalf("model_call missing cache usage: %#v", mc)
+	}
 	ts := byType["turn_summary"]
 	if ts == nil || ts["used_model_calls"] == nil {
 		t.Fatalf("turn_summary missing: %#v", ts)
 	}
+	if ts["prompt_cache_accounting_known"] != true ||
+		ts["prompt_cache_hit_tokens"] != float64(15000) ||
+		ts["prompt_cache_miss_tokens"] != float64(5000) ||
+		ts["reasoning_tokens"] != float64(70) {
+		t.Fatalf("turn_summary missing cache usage: %#v", ts)
+	}
 	ss := byType["session_summary"]
 	if ss == nil || ss["peak_ctx_pct"] == nil || ss["top_tools_by_output"] == nil {
 		t.Fatalf("session_summary missing fields: %#v", ss)
+	}
+	if ss["prompt_cache_accounting_known"] != true ||
+		ss["prompt_cache_hit_tokens"] != float64(30000) ||
+		ss["prompt_cache_miss_tokens"] != float64(10000) ||
+		ss["prompt_cache_hit_rate"] != float64(0.75) ||
+		ss["reasoning_tokens"] != float64(120) {
+		t.Fatalf("session_summary missing cache usage: %#v", ss)
 	}
 }
 

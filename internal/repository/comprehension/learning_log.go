@@ -20,23 +20,23 @@ import (
 // The log lets every trigger site (eval oracle, CLI, future verified-edit
 // hook) leave an auditable trail without coupling them to each other.
 type LearningLogEntry struct {
-	EventID       string                `json:"event_id,omitempty"`
-	Timestamp     string                `json:"timestamp"`
-	Source        string                `json:"source"`
-	Action        string                `json:"action"` // boost | penalize | reset | restore | no_op
-	State         string                `json:"state,omitempty"`
-	Reason        string                `json:"reason,omitempty"`
-	Score         float64               `json:"score,omitempty"`
-	Files         []string              `json:"files,omitempty"`
-	TaskID        string                `json:"task_id,omitempty"`
-	CorpusID      string                `json:"corpus_id,omitempty"`
-	ResultID      string                `json:"result_id,omitempty"`
-	Evidence      *LearningEvidenceRef  `json:"evidence,omitempty"`
-	BeforeWeights *map[string]float64   `json:"before_weights,omitempty"`
-	AfterWeights  *map[string]float64   `json:"after_weights,omitempty"`
-	Rollback      *LearningRollbackData               `json:"rollback,omitempty"`
-	Verification  *LearningLogVerificationEvidence     `json:"verification,omitempty"`
-	Note          string                                `json:"note,omitempty"`
+	EventID       string                           `json:"event_id,omitempty"`
+	Timestamp     string                           `json:"timestamp"`
+	Source        string                           `json:"source"`
+	Action        string                           `json:"action"` // boost | penalize | reset | restore | no_op
+	State         string                           `json:"state,omitempty"`
+	Reason        string                           `json:"reason,omitempty"`
+	Score         float64                          `json:"score,omitempty"`
+	Files         []string                         `json:"files,omitempty"`
+	TaskID        string                           `json:"task_id,omitempty"`
+	CorpusID      string                           `json:"corpus_id,omitempty"`
+	ResultID      string                           `json:"result_id,omitempty"`
+	Evidence      *LearningEvidenceRef             `json:"evidence,omitempty"`
+	BeforeWeights *map[string]float64              `json:"before_weights,omitempty"`
+	AfterWeights  *map[string]float64              `json:"after_weights,omitempty"`
+	Rollback      *LearningRollbackData            `json:"rollback,omitempty"`
+	Verification  *LearningLogVerificationEvidence `json:"verification,omitempty"`
+	Note          string                           `json:"note,omitempty"`
 }
 
 // LearningEvidenceRef records sanitized identifiers and numeric metrics that

@@ -17,7 +17,7 @@ func DiscoverResearchCardDocuments(effortRoot, relDir string) ([]ResearchCardsDo
 			Kind:     "invalid_research_output_dir",
 			Message:  fmt.Sprintf("research output directory %q must be effort-relative and must not contain path traversal", relDir),
 			File:     relDir,
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 		}}, nil
 	}
 	dir := filepath.Join(effortRoot, cleanRelDir)
@@ -31,7 +31,7 @@ func DiscoverResearchCardDocuments(effortRoot, relDir string) ([]ResearchCardsDo
 				Kind:     "missing_research_output_dir",
 				Message:  fmt.Sprintf("research output directory %q not found", cleanRelDir),
 				File:     cleanRelDir,
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 			}}, nil
 		}
 		return nil, nil, fmt.Errorf("read research output directory: %w", err)
@@ -52,7 +52,7 @@ func DiscoverResearchCardDocuments(effortRoot, relDir string) ([]ResearchCardsDo
 				Kind:     "research_output_symlink",
 				Message:  fmt.Sprintf("research output file %q must not be a symlink", relPath),
 				File:     relPath,
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 			})
 			continue
 		}
@@ -71,7 +71,7 @@ func DiscoverResearchCardDocuments(effortRoot, relDir string) ([]ResearchCardsDo
 				Kind:     "read_error",
 				Message:  fmt.Sprintf("failed to read %q: %v", relPath, readErr),
 				File:     relPath,
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 			})
 			continue
 		}
@@ -81,7 +81,7 @@ func DiscoverResearchCardDocuments(effortRoot, relDir string) ([]ResearchCardsDo
 				Kind:     "validation_error",
 				Message:  fmt.Sprintf("research output %q failed validation: %v", relPath, parseErr),
 				File:     relPath,
-				Severity: "error",
+				Severity: ProductWorkflowSeverityError,
 			})
 			continue
 		}
@@ -160,7 +160,7 @@ func researchEvidenceFindings(cards []EvidenceCard, policy MergePolicy) []Profil
 				Kind:     "unsupported_claim",
 				Message:  fmt.Sprintf("evidence card %q is marked unsupported", card.CardID),
 				File:     card.CardID,
-				Severity: severityFromMergePolicy(policy.UnsupportedClaims, "error"),
+				Severity: severityFromMergePolicy(policy.UnsupportedClaims, ProductWorkflowSeverityError),
 			})
 		}
 	}
@@ -193,7 +193,7 @@ func researchOutputDirBoundaryFinding(effortRoot, dir, relDir string) (ProfileFi
 			Kind:     "read_error",
 			Message:  fmt.Sprintf("failed to resolve effort root %q: %v", effortRoot, err),
 			File:     ".",
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 		}, true
 	}
 	dirEval, err := filepath.EvalSymlinks(dir)
@@ -205,7 +205,7 @@ func researchOutputDirBoundaryFinding(effortRoot, dir, relDir string) (ProfileFi
 			Kind:     "read_error",
 			Message:  fmt.Sprintf("failed to resolve research output directory %q: %v", relDir, err),
 			File:     relDir,
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 		}, true
 	}
 	rootEval = filepath.Clean(rootEval)
@@ -219,7 +219,7 @@ func researchOutputDirBoundaryFinding(effortRoot, dir, relDir string) (ProfileFi
 			Kind:     "research_output_dir_outside_effort",
 			Message:  fmt.Sprintf("research output directory %q resolves outside the effort root", relDir),
 			File:     relDir,
-			Severity: "error",
+			Severity: ProductWorkflowSeverityError,
 		}, true
 	}
 	return ProfileFinding{}, false
@@ -239,7 +239,7 @@ func severityFromMergePolicy(policyValue, defaultSeverity string) string {
 	case strings.Contains(normalized, "warn"):
 		return "warning"
 	case strings.Contains(normalized, "block"):
-		return "error"
+		return ProductWorkflowSeverityError
 	default:
 		return defaultSeverity
 	}

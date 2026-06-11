@@ -324,7 +324,6 @@ func searchPathTargetsSkippedDir(path string) bool {
 	return discovery.RelTargetsNoisyDir(cleaned) || discovery.ShouldSkipRelFile(cleaned)
 }
 
-
 func (m *Manager) searchContextSnippet(path string, lineNumber int, radius int) string {
 	content, err := os.ReadFile(path)
 	if err != nil {

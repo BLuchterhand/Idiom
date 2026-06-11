@@ -183,7 +183,15 @@ func TestPlanExecuteRuntimeModelCallTelemetryIsBounded(t *testing.T) {
 		llama.ChatMessage{
 			Content:      "{}",
 			FinishReason: "length",
-			Usage:        llama.Usage{PromptTokens: 12, CompletionTokens: 7, TotalTokens: 19},
+			Usage: llama.Usage{
+				PromptTokens:               12,
+				CompletionTokens:           7,
+				TotalTokens:                19,
+				PromptCacheHitTokens:       8,
+				PromptCacheMissTokens:      4,
+				PromptCacheAccountingKnown: true,
+				ReasoningTokens:            3,
+			},
 		},
 		250,
 		llama.ChatOptions{
@@ -219,6 +227,12 @@ func TestPlanExecuteRuntimeModelCallTelemetryIsBounded(t *testing.T) {
 	assertNumberField(t, payload, "prompt_tokens", 12)
 	assertNumberField(t, payload, "completion_tokens", 7)
 	assertNumberField(t, payload, "total_tokens", 19)
+	assertNumberField(t, payload, "prompt_cache_hit_tokens", 8)
+	assertNumberField(t, payload, "prompt_cache_miss_tokens", 4)
+	assertNumberField(t, payload, "reasoning_tokens", 3)
+	if got, ok := payload["prompt_cache_accounting_known"].(bool); !ok || !got {
+		t.Fatalf("prompt_cache_accounting_known = %#v, want true", payload["prompt_cache_accounting_known"])
+	}
 	assertNumberField(t, payload, "effective_max_tokens", 4096)
 	assertNumberField(t, payload, "temperature", 0.2)
 	assertNumberField(t, payload, "top_p", 1)

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/pathparse"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -205,14 +206,37 @@ func (d ReadOnlyCloseout) AllowsSourceInventoryAnswer(answer string, currentlyAc
 		workerruntime.TaskFamilyIsArchitecture(brief.TaskFamily)
 }
 
+type readOnlyFinalAnswerDecision struct {
+	Status                  string
+	BlockerKind             string
+	Reason                  string
+	AcceptedEvidencePaths   []string
+	RelevantSourceBodyPaths []string
+	AnswerObjectiveTerms    []string
+}
+
+func (d readOnlyFinalAnswerDecision) DirectAnswerRelevance() readOnlyDirectAnswerRelevance {
+	return readOnlyDirectAnswerRelevance{
+		Status:                  d.Status,
+		BlockerKind:             d.BlockerKind,
+		Reason:                  d.Reason,
+		RelevantSourceBodyPaths: append([]string(nil), d.RelevantSourceBodyPaths...),
+		AnswerObjectiveTerms:    append([]string(nil), d.AnswerObjectiveTerms...),
+	}
+}
+
 func (d ReadOnlyCloseout) DirectAnswerRelevance(answer string) readOnlyDirectAnswerRelevance {
+	return d.FinalAnswerDecision(answer).DirectAnswerRelevance()
+}
+
+func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswerDecision {
 	brief := workerruntime.NormalizeRuntimeBrief(d.Brief)
 	if !readOnlyDirectAnswerAcceptanceApplies(brief) {
-		return readOnlyDirectAnswerRelevance{}
+		return readOnlyFinalAnswerDecision{}
 	}
 	objective := strings.TrimSpace(brief.Objective)
 	if objective == "" {
-		return readOnlyDirectAnswerRelevance{Status: "skipped_empty_objective"}
+		return readOnlyFinalAnswerDecision{Status: "skipped_empty_objective"}
 	}
 	substantiveAnswer := substantiveAnswerWithoutEchoedObjective(answer, objective)
 	ledger := d.Evidence
@@ -221,47 +245,68 @@ func (d ReadOnlyCloseout) DirectAnswerRelevance(answer string) readOnlyDirectAns
 		ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, answerSupportedPaths)
 		ledger.RelevantSourceBodyPaths = mergeRunnerStateStrings(ledger.RelevantSourceBodyPaths, answerSupportedPaths)
 	}
-	relevance := readOnlyDirectAnswerRelevance{
+	decision := readOnlyFinalAnswerDecision{
 		Status:                  "checked",
 		RelevantSourceBodyPaths: ledger.RelevantSourceBodyPaths,
 		AnswerObjectiveTerms:    answerObjectiveTerms(substantiveAnswer, objective),
 	}
 	if readOnlyAnswerReportsInsufficientEvidence(substantiveAnswer) {
-		relevance.Status = "insufficient_evidence_answer"
+		decision.Status = "insufficient_evidence_answer"
 		if len(ledger.SourceBodyPaths) == 0 && !ledger.DiagnosticEvidence {
-			relevance.BlockerKind = "answer_objective_unmet"
-			relevance.Reason = "the final answer says the evidence is insufficient before inspecting source-body or diagnostic evidence for the user's objective. Gather bounded source-body evidence, or use <<QUESTION>>: with the exact missing evidence source."
-			return relevance
+			decision.BlockerKind = "answer_objective_unmet"
+			decision.Reason = "the final answer says the evidence is insufficient before inspecting source-body or diagnostic evidence for the user's objective. Gather bounded source-body evidence, or use <<QUESTION>>: with the exact missing evidence source."
+			return decision
 		}
-		return relevance
+		decision.AcceptedEvidencePaths = readOnlyAcceptedDirectAnswerEvidencePaths(answer, ledger, d.Results)
+		return decision
 	}
 	// Follow-up conversation turn with carried-over evidence: accept
 	// substantive answers even when objective-term matching is weak or
-	// answerability is marginal for short confirmation follow-ups.
-	// This single guard replaces bespoke patches in three sub-gates below.
+	// answerability is marginal for short confirmation follow-ups. The
+	// shared decision still rejects path inventories and wrong-owner
+	// citations so carried evidence cannot bypass the acceptance contract.
 	if ledger.directAnswerConversation() &&
 		(len(d.Brief.EvidencePaths) > 0 || len(ledger.SourceBodyPaths) > 0) &&
-		!answerLacksObjectiveSourceEvidence(answer, ledger) {
-		return relevance
+		readOnlyCarriedEvidenceAnswerAccepted(substantiveAnswer, objective, ledger, d.Results) {
+		decision.AcceptedEvidencePaths = readOnlyAcceptedDirectAnswerEvidencePaths(answer, ledger, d.Results)
+		return decision
 	}
 	if plainNamedFileContentRequest(objective) && answerCitesNamedObjectiveSource(answer, ledger, d.Results) {
-		return relevance
+		decision.AcceptedEvidencePaths = readOnlyAcceptedDirectAnswerEvidencePaths(answer, ledger, d.Results)
+		return decision
 	}
 	if !ledger.Answerable() || answerLacksObjectiveSourceEvidence(answer, ledger) {
 		if readOnlyAnswerUsesInspectedSourceAsAnswer(answer, ledger) || answerMakesCausalClaimWithoutObjectiveEvidence(answer, ledger) {
-			relevance.BlockerKind = "answer_objective_unmet"
-			relevance.Reason = "the final answer uses inspected source evidence, but that evidence does not establish the user's objective. Answer with the exact objective-relevant source-body evidence, state that the current evidence is insufficient, or use <<QUESTION>>: with the exact missing evidence."
-			return relevance
+			decision.BlockerKind = "answer_objective_unmet"
+			decision.Reason = "the final answer uses inspected source evidence, but that evidence does not establish the user's objective. Answer with the exact objective-relevant source-body evidence, state that the current evidence is insufficient, or use <<QUESTION>>: with the exact missing evidence."
+			return decision
 		}
-		relevance.Status = "skipped_not_answerable"
-		return relevance
+		decision.Status = "skipped_not_answerable"
+		return decision
 	}
 	if answerAddressesObjective(substantiveAnswer, objective, ledger, d.Results) && answerSourceCitationsAreObjectiveRelevant(answer, ledger) {
-		return relevance
+		decision.AcceptedEvidencePaths = readOnlyAcceptedDirectAnswerEvidencePaths(answer, ledger, d.Results)
+		return decision
 	}
-	relevance.BlockerKind = "answer_objective_unmet"
-	relevance.Reason = "the final answer is grounded in inspected evidence, but it does not address the user's objective. Answer using objective-relevant source-body evidence, or use <<QUESTION>>: with the exact missing evidence."
-	return relevance
+	decision.BlockerKind = "answer_objective_unmet"
+	decision.Reason = "the final answer is grounded in inspected evidence, but it does not address the user's objective. Answer using objective-relevant source-body evidence, or use <<QUESTION>>: with the exact missing evidence."
+	return decision
+}
+
+func readOnlyCarriedEvidenceAnswerAccepted(answer string, objective string, ledger readOnlyAnswerabilityLedger, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(answer) == "" {
+		return false
+	}
+	if answerLacksObjectiveSourceEvidence(answer, ledger) {
+		return false
+	}
+	if !answerSourceCitationsAreObjectiveRelevant(answer, ledger) {
+		return false
+	}
+	if looksLikeLowValueSourceInventoryNonAnswer(answer) || readOnlyAnswerUsesInspectedSourceAsAnswer(answer, ledger) {
+		return answerAddressesObjective(answer, objective, ledger, results)
+	}
+	return answerAddressesObjective(answer, objective, ledger, results)
 }
 
 func (d ReadOnlyCloseout) SupportsPresentableQuestionBlockerAnswer(answer string) bool {
@@ -560,7 +605,10 @@ func (d ReadOnlyCloseout) HostOwnedAnswer(agentName string) (string, bool) {
 		if answer, ok := d.PresentableTaskResultAnswer(agentName); ok && !bestObjectiveTaskResultOutputLooksPartial(brief.Objective, d.Results) {
 			return answer, true
 		}
-		if answer, ok := d.ConcreteFallbackAnswer(); ok && hostOwnedCloseoutAnswerIsPresentable(answer) {
+		if answer, ok := d.ConcreteFallbackAnswer(); ok &&
+			hostOwnedCloseoutAnswerIsPresentable(answer) &&
+			d.HasObjectiveRelevantEvidence() &&
+			answerAddressesObjective(answer, brief.Objective, d.Evidence, d.Results) {
 			return answer, true
 		}
 		packets := readOnlyEvidencePacketsFromResults(d.Results)
@@ -651,8 +699,8 @@ func architectureObjectiveEvidenceFallbackAnswer(brief workerruntime.WorkerRunti
 		architectureFallbackHasConcreteSupport(results, []string{"internal/evidence/transcript/debuglog.go"}, []string{"redacted", "sanitized", "digest", "metadata"}):
 		return "The debug log redacted mode is implemented in `internal/evidence/transcript/debuglog.go`: it records secret-safe redacted log metadata instead of raw prompt content, keeps path metadata such as prompt source paths/workspace fields sanitized, and uses digests or redacted summaries where full mode would retain raw details.", true
 	case containsAny(objective, "discovery tool", "discovery tools", "tool usefulness", "usefulness") &&
-		(hasPath("internal/runtime/agent/answer_composer.go") || hasPath("internal/runtime/agent/runner.go") || hasPath("internal/capabilities/workspace/discovery_query.go") || hasPath("internal/capabilities/workspace/discovery_profile.go")) &&
-		architectureFallbackHasConcreteSupport(results, []string{"internal/runtime/agent/answer_composer.go", "internal/runtime/agent/runner.go", "internal/capabilities/workspace/discovery_query.go", "internal/capabilities/workspace/discovery_profile.go"}, []string{"answer", "discovery", "source", "closeout", "profile"}):
+		(hasPath("internal/runtime/agent/answer_composer.go") || hasPath("internal/runtime/agent/runner.go") || hasPath("internal/capabilities/workspace/discovery_query.go") || hasPath("internal/capabilities/workspace/discovery_tools.go") || hasPath("internal/capabilities/workspace/discovery_profile.go")) &&
+		architectureFallbackHasConcreteSupport(results, []string{"internal/runtime/agent/answer_composer.go", "internal/runtime/agent/runner.go", "internal/capabilities/workspace/discovery_query.go", "internal/capabilities/workspace/discovery_tools.go", "internal/capabilities/workspace/discovery_profile.go"}, []string{"answer", "discovery", "source", "closeout", "profile"}):
 		return "For discovery tool usefulness, the inspected architecture points to adding better answer synthesis and closeout integration: `internal/capabilities/workspace/discovery_query.go` should keep returning source-oriented discovery evidence, while `internal/runtime/agent/answer_composer.go` and `internal/runtime/agent/runner.go` should turn that evidence into concrete final answers instead of tool inventories or retained-context scaffolds.", true
 	default:
 		return "", false
@@ -662,6 +710,19 @@ func architectureObjectiveEvidenceFallbackAnswer(brief workerruntime.WorkerRunti
 func architectureFallbackHasConcreteSupport(results []workspace.ToolResult, paths []string, requiredTerms []string) bool {
 	pathSet := readOnlyPathSet(paths)
 	for _, result := range results {
+		if strings.TrimSpace(result.Tool) == "task" && strings.TrimSpace(result.Error) == "" {
+			text := result.Summary + "\n" + result.Output
+			matchesPath := false
+			for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(text)) {
+				if _, ok := pathSet[normalizeRunnerPath(path)]; ok {
+					matchesPath = true
+					break
+				}
+			}
+			if matchesPath && textContainsAnyRequiredTerm(text, requiredTerms) {
+				return true
+			}
+		}
 		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
 			matchesPath := false
 			for _, path := range packet.SourceBodyPaths {
