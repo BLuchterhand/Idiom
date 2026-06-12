@@ -58,6 +58,11 @@ func (m *Model) ResumeSession(id string) error {
 		return fmt.Errorf("session log %q contained no user/assistant messages", path)
 	}
 
+	inputHistory, err := inputHistoryFromSessionLog(path, maxInputHistoryEntries)
+	if err != nil {
+		return fmt.Errorf("restore input history: %w", err)
+	}
+
 	// Swap the debug logger to append into the resumed file. Close the
 	// previous one first so we don't leak a file handle on the empty
 	// new-session log that initDebugLogger just created.
@@ -103,6 +108,8 @@ func (m *Model) ResumeSession(id string) error {
 	// wholesale rather than append — on /resume mid-session, leftover
 	// messages from the current session would confuse the model.
 	m.messages = replayed.messages
+	m.inputHistory = inputHistory
+	m.resetInputHistoryNavigation()
 	m.history.entries = replayed.history
 
 	if len(m.history.entries) > 0 {

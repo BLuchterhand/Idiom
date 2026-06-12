@@ -59,7 +59,7 @@ func TestReadOnlyCloseoutRejectsLowValueSourceInventoryAcrossConsumers(t *testin
 	}
 }
 
-func TestReadOnlyCloseoutHostAcceptanceRequiresContractProducedAnswer(t *testing.T) {
+func TestReadOnlyCloseoutDoesNotProduceHostAnswerFromLocalizationEvidence(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
 		Contract:          string(workerruntime.ContractDirectAnswer),
@@ -71,23 +71,8 @@ func TestReadOnlyCloseoutHostAcceptanceRequiresContractProducedAnswer(t *testing
 		Summary: "Found 1 matching line(s).",
 		Output:  "logs/conversations/20260604-195321.801.jsonl:20: completion_gate_repeated_rejection",
 	}}
-	runner := &Runner{RuntimeBrief: brief}
-	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
-
-	if !ok {
-		t.Fatal("expected host-owned closeout to produce a bounded uncertainty answer")
-	}
-
-	accepted := runner.classifyTerminalAnswer(answer, "host_read_only_closeout", results)
-	if accepted.Outcome != terminalAnswerAccepted || accepted.StopReason != "host_read_only_closeout" {
-		t.Fatalf("contract-produced host closeout should be accepted, got %#v", accepted)
-	}
-
-	mutated := answer + " The root cause was definitely in the runner."
-	rejected := runner.classifyTerminalAnswer(mutated, "host_read_only_closeout", results)
-
-	if rejected.Outcome == terminalAnswerAccepted && rejected.StopReason == "host_read_only_closeout" {
-		t.Fatalf("host closeout acceptance must not accept answers not produced by the closeout contract:\n%s", mutated)
+	if answer, ok := (&Runner{RuntimeBrief: brief}).hostOwnedReadOnlyCloseoutAnswer(results); ok {
+		t.Fatalf("read-only localization evidence must not produce a host-authored answer:\n%s", answer)
 	}
 }
 
@@ -95,6 +80,34 @@ func TestReadOnlyCloseoutHostOwnedAnswerRejectsSynthesizedDiscoveryInventory(t *
 	answer := "Symbol index: Indexed symbols under internal/runtime/agent with ctags. This is grounded in `internal/runtime/agent/runner.go`, `internal/runtime/agent/runner_child_tasks.go`."
 	if hostOwnedCloseoutAnswerIsPresentable(answer) {
 		t.Fatalf("host-owned closeout must reject synthesized discovery inventory:\n%s", answer)
+	}
+}
+
+func TestReadOnlyDirectAnswerHostCloseoutDoesNotUseInventoryWhenAnswerable(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+		Contract:          string(workerruntime.ContractDirectAnswer),
+		PermissionProfile: "read_only_workspace",
+		Objective:         "What is the role of evidence in the harness?",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/runtime/agent/source_evidence_state.go lines 1-9",
+		Output: strings.Join([]string{
+			"1:package agent",
+			"2:// Evidence records inspected paths and source-body support for harness readiness.",
+			"3:type SourceEvidenceState struct { SourceBodyPaths []string }",
+			"4:func evidenceReadiness() {}",
+		}, "\n"),
+	}}
+
+	closeout := readOnlyClosureDecisionForResults(brief, results)
+	if !closeout.Answerable() {
+		t.Fatalf("test must exercise answerable direct-answer evidence: %#v", closeout)
+	}
+
+	if answer, ok := closeout.HostOwnedAnswer("main"); ok {
+		t.Fatalf("direct-answer host closeout must not turn answerable evidence into an inventory fallback:\n%s", answer)
 	}
 }
 
@@ -149,7 +162,7 @@ func TestArchitectureHostOwnedAnswerRejectsOffObjectiveSourceInventoryAfterChild
 	}
 }
 
-func TestArchitectureHostOwnedDiscoveryUsefulnessFallbackFromDiscoveryToolsSource(t *testing.T) {
+func TestArchitectureHostOwnedDiscoveryUsefulnessRejectsSourceInventoryFallback(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        string(workerruntime.TaskFamilyArchitecture),
@@ -179,25 +192,17 @@ func TestArchitectureHostOwnedDiscoveryUsefulnessFallbackFromDiscoveryToolsSourc
 	}
 
 	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
-	if !ok {
-		t.Fatal("expected discovery usefulness fallback from discovery_tools.go source evidence")
-	}
-
-	for _, want := range []string{"discovery", "tool", "internal/runtime/agent/answer_composer.go", "internal/runtime/agent/runner.go", "internal/capabilities/workspace/discovery_query.go"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("discovery usefulness fallback answer missing %q:\n%s", want, answer)
-		}
+	if ok {
+		t.Fatalf("host closeout must not convert one weak source-body read into source inventory:\n%s", answer)
 	}
 }
 
-func TestReadOnlyHostOwnedAnswerUsesPrefetchSourceBody(t *testing.T) {
-	runner := &Runner{
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
-			Contract:          string(workerruntime.ContractDirectAnswer),
-			PermissionProfile: "read_only_workspace",
-			Objective:         "Can we shorten the save label in internal/labels/labels.go? Answer the question from the codebase. Do not edit files.",
-		},
+func TestReadOnlyPrefetchSourceBodyMakesEvidenceAnswerableWithoutHostAnswer(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+		Contract:          string(workerruntime.ContractDirectAnswer),
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Can we shorten the save label in internal/labels/labels.go? Answer the question from the codebase. Do not edit files.",
 	}
 	results := []workspace.ToolResult{{
 		Tool:    workspace.ToolNamePrefetch,
@@ -205,19 +210,17 @@ func TestReadOnlyHostOwnedAnswerUsesPrefetchSourceBody(t *testing.T) {
 		Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
 	}}
 
-	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
-	if !ok {
-		t.Fatal("expected host closeout to answer from prefetched source body")
+	closeout := readOnlyClosureDecisionForResults(brief, results)
+	if !closeout.Answerable() {
+		t.Fatalf("prefetch source body should make the model's answer valid, got %#v", closeout)
 	}
 
-	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "\"Save changes\""} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("prefetch closeout answer missing %q:\n%s", want, answer)
-		}
+	if answer, ok := (&Runner{RuntimeBrief: brief}).hostOwnedReadOnlyCloseoutAnswer(results); ok {
+		t.Fatalf("prefetch source body must not produce a host-authored answer:\n%s", answer)
 	}
 }
 
-func TestReadOnlyCloseoutHostSynthesizesDelegatedChildAnswer(t *testing.T) {
+func TestReadOnlyCloseoutDoesNotHostSynthesizeDelegatedChildAnswer(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        string(workerruntime.TaskFamilyDelegatedReadOnly),
 		Contract:          string(workerruntime.ContractGroundedEvidence),
@@ -256,19 +259,11 @@ func TestReadOnlyCloseoutHostSynthesizesDelegatedChildAnswer(t *testing.T) {
 	}
 
 	closeout := readOnlyClosureDecisionForResults(brief, results)
-	answer, ok := closeout.HostOwnedAnswer("child:explorer")
-
-	if !ok {
-		t.Fatalf("expected delegated child host closeout from answerable evidence: %#v", closeout)
+	if !closeout.Answerable() {
+		t.Fatalf("delegated child source evidence should be answerable for the model, got %#v", closeout)
 	}
 
-	for _, want := range []string{"task", "subagent", "internal/runtime/agent/runner.go", "internal/runtime/agent/runner_child_tasks.go"} {
-		if !strings.Contains(strings.ToLower(answer), strings.ToLower(want)) {
-			t.Fatalf("expected delegated host answer to contain %q, got:\n%s", want, answer)
-		}
-	}
-
-	if _, ok := closeout.HostOwnedAnswer("main"); ok {
-		t.Fatal("delegated child host closeout must stay child-only")
+	if answer, ok := closeout.HostOwnedAnswer("child:explorer"); ok {
+		t.Fatalf("delegated child evidence must not produce a host-authored answer:\n%s", answer)
 	}
 }

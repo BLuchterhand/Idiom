@@ -912,7 +912,7 @@ func TestReadOnlyDirectAnswerClosesAfterAnswerableExactSearchReplay(t *testing.T
 		fmt.Sprintf(`{"tool":"read_file","path":%q}`, docPath),
 		`{"tool":"search_files","pattern":"*document*viewer*"}`,
 		`{"tool":"search_files","pattern":"*document*viewer*"}`,
-		`{"tool":"search_files","pattern":"*document*viewer*"}`,
+		"The file `internal/documentviewer/document-viewer.go` says the document viewer renders approved design documents. Confidence: high.",
 	}
 
 	var requests int
@@ -974,21 +974,19 @@ func TestReadOnlyDirectAnswerClosesAfterAnswerableExactSearchReplay(t *testing.T
 		t.Fatalf("Run: %v", err)
 	}
 
-	if !replayed && requests != 0 {
-		t.Fatalf("expected exact search replay or prefetch closeout; events=%s", formatRunEventsForTest(events))
+	if !replayed {
+		t.Fatalf("expected exact search replay before model-owned final answer; events=%s", formatRunEventsForTest(events))
 	}
 
-	// With prefetch, the host-owned closeout may answer directly (0 requests)
-	// from the prefetched evidence instead of needing search replay.
-	if requests != 3 && requests != 0 {
-		t.Fatalf("expected 0 (prefetch closeout) or 3 (replay) requests; got %d; events=%s", requests, formatRunEventsForTest(events))
+	if requests != len(replies) {
+		t.Fatalf("expected model-owned final answer after replayed evidence, used %d/%d requests; events=%s", requests, len(replies), formatRunEventsForTest(events))
 	}
 
 	if !strings.Contains(answer, docPath) ||
 		!strings.Contains(strings.ToLower(answer), "document viewer") ||
 		!strings.Contains(answer, "approved design documents") {
 
-		t.Fatalf("host closeout answer should preserve the inspected document evidence, got:\n%s", answer)
+		t.Fatalf("model-owned answer should preserve the inspected document evidence, got:\n%s", answer)
 	}
 
 	for _, event := range events {
@@ -1002,12 +1000,144 @@ func TestReadOnlyDirectAnswerClosesAfterAnswerableExactSearchReplay(t *testing.T
 			t.Fatalf("decode budget ledger %q: %v", event.Content, err)
 		}
 
-		if ledger.StopReason != "host_read_only_closeout" && ledger.StopReason != "read_only_prefetch_host_closeout" {
-			t.Fatalf("expected host_read_only_closeout or read_only_prefetch_host_closeout, got %#v", ledger)
+		if ledger.StopReason == "host_read_only_closeout" || ledger.StopReason == "read_only_prefetch_host_closeout" || ledger.StopReason == "read_only_replayed_evidence_closeout" {
+			t.Fatalf("read-only replay must not use host/forced closeout, got %#v", ledger)
 		}
 
 		if ledger.RejectedActions != 0 {
-			t.Fatalf("exact replay closeout should not accumulate rejected actions, got %#v", ledger)
+			t.Fatalf("single replay before model final answer should not accumulate rejected actions, got %#v", ledger)
+		}
+
+		return
+	}
+
+	t.Fatalf("expected budget ledger; events=%s", formatRunEventsForTest(events))
+}
+
+func TestReadOnlyNoMatchProbeDoesNotForceCloseoutAfterSourceEvidence(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := "internal/evidence/transcript/debuglog.go"
+
+	if err := writeTestFile(root, sourcePath, strings.Join([]string{
+		"package transcript",
+		"",
+		"const DebugLogModeRedacted = \"redacted\"",
+		"const DebugLogModeFull = \"full\"",
+	}, "\n")); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		fmt.Sprintf(`{"tool":"read_file","path":%q}`, sourcePath),
+		`{"tool":"code_navigate","capability":"read_symbol","path":"internal/evidence/transcript/debuglog.go","pattern":"MissingDebugLogSymbol"}`,
+		"The debug log source defines `DebugLogModeRedacted` and `DebugLogModeFull` in `internal/evidence/transcript/debuglog.go`; the follow-up symbol probe found no `MissingDebugLogSymbol`, so that missing symbol is not supported by the inspected code. Confidence: high.",
+	}
+
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+
+		reply := replies[requests]
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var (
+		events    []RunEvent
+		noMatch   bool
+		readCount int
+	)
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "What does the debug log source say about redacted mode, and is MissingDebugLogSymbol present?",
+			AllowedTools:      []string{"read_file", "code_navigate"},
+		},
+		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
+			if req.Tool != workspace.ToolNameCodeNavigate {
+				return nil
+			}
+
+			noMatch = true
+
+			return &workspace.ToolResult{
+				Tool:    workspace.ToolNameCodeNavigate,
+				Summary: "No generic code navigation matches for read_symbol",
+				Output:  "capability: read_symbol\nroute_summary: no matches",
+			}
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "What does the debug log source say about redacted mode, and is MissingDebugLogSymbol present?"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Tool == workspace.ToolNameReadFile {
+				readCount++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !noMatch {
+		t.Fatalf("expected no-match code_navigate probe; events=%s", formatRunEventsForTest(events))
+	}
+
+	if readCount != 1 {
+		t.Fatalf("expected one executed source read, got %d", readCount)
+	}
+
+	if requests != len(replies) {
+		t.Fatalf("expected model-owned final answer after no-match probe, used %d/%d requests; events=%s", requests, len(replies), formatRunEventsForTest(events))
+	}
+
+	if !strings.Contains(answer, "DebugLogModeRedacted") ||
+		!strings.Contains(answer, "MissingDebugLogSymbol") ||
+		!strings.Contains(answer, sourcePath) {
+
+		t.Fatalf("model-owned answer should preserve source and no-match evidence, got:\n%s", answer)
+	}
+
+	for _, event := range events {
+		if event.Role != "budget_ledger" {
+			continue
+		}
+
+		var ledger runnerBudgetLedger
+		if err := json.Unmarshal([]byte(event.Content), &ledger); err != nil {
+			t.Fatalf("decode budget ledger %q: %v", event.Content, err)
+		}
+
+		if ledger.StopReason == "read_only_no_match_closeout" ||
+			ledger.StopReason == "host_read_only_closeout" ||
+			ledger.StopReason == "read_only_prefetch_host_closeout" {
+
+			t.Fatalf("read-only no-match must not use host/forced closeout, got %#v", ledger)
 		}
 
 		return

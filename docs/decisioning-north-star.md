@@ -23,6 +23,35 @@ In practice:
 - The model chooses which tool to call next, whether to answer now, whether a narrow follow-up is worth it, and how to synthesize the evidence.
 - The harness enforces permissions, safety boundaries, protocol correctness, verification requirements, completion contracts, and loop/stall fuses.
 
+## Read-Only Strategy Lanes
+
+Read-only conversation, direct-answer, architecture, and review lanes are
+strategy lanes. In these lanes, final-answer acceptance is a validator, not a
+license for the harness to take over synthesis.
+
+The harness must not force a final answer, force a no-tools turn, hide useful
+read/search tools, or end the turn merely because it computed that evidence is
+"probably enough." If the model asks for a relevant read, search, navigation
+query, child task, or diagnostic source, the default action is to provide it.
+The harness may reject only with a typed invariant: permission boundary,
+protected path, unavailable tool, invalid schema, off-contract side effect,
+repeated identical/low-value loop after warning, exhausted concrete deliverable
+budget, or a final-answer acceptance failure.
+
+When evidence is already strong, the harness may nudge: summarize accepted
+evidence, name open obligations, point out repeated probes, or say that a final
+answer is available. It must not convert that nudge into strategy ownership.
+The valid model choices remain: answer, inspect a concrete missing claim,
+search a bounded target, delegate bounded discovery, or report an exact
+blocker.
+
+If a read-only run stops with "not enough evidence," diagnose the harness
+first. Check whether useful evidence was hidden, unregistered, misclassified as
+candidate-only, excluded from accepted evidence paths, or stranded in prefetch,
+context packets, child packets, telemetry, or recovery state. Do not repair
+that failure by forcing synthesis. Repair the evidence registration,
+tool-surface projection, or final-answer acceptance contract.
+
 ## Preferred Behavior
 
 When the model is making a normal execution choice, the harness should steer before it commands.
@@ -164,7 +193,10 @@ Hard enforcement is still required for invariants. These are not strategy sugges
 - Forbidden tools and protected paths.
 - Native tool-call protocol correctness.
 - Verification requirements after writes.
-- Final-answer readiness and evidence contracts.
+- Final-answer acceptance and evidence-integrity contracts: the harness may
+  reject unsupported, off-objective, uncited, protocol-leaking, or garbage final
+  answers. It may not decide that the model must answer now in a read-only
+  strategy lane.
 - Repeated identical-call loop breaks after warnings (doom-loop guard).
 - Mutation-lane budget limits: writes must complete within a bounded
   window to avoid unbounded resource consumption on concrete deliverables.

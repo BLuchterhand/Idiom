@@ -109,8 +109,10 @@ func (r *Runner) syncPlanThenExecuteRecoveryAllowedTools(state *runnerRunState) 
 			state.currentAllowedTools = append(state.currentAllowedTools[:0], surface.State.CallableTools...)
 		case PlanExecuteRecoverySurfaceHistoryPending:
 			state.currentAllowedTools = append(state.currentAllowedTools[:0], surface.State.CallableTools...)
-		case PlanExecuteRecoverySurfaceSubmitReady, PlanExecuteRecoverySurfaceSubmitCorrection:
+		case PlanExecuteRecoverySurfaceSubmitReady:
 			state.currentAllowedTools = append(state.currentAllowedTools[:0], "submit_plan")
+		case PlanExecuteRecoverySurfaceSubmitCorrection:
+			state.currentAllowedTools = append(state.currentAllowedTools[:0], "submit_plan", workspace.ToolNameReadFile)
 		}
 
 		r.setCurrentAllowedTools(state, state.currentAllowedTools)
@@ -231,9 +233,7 @@ func (r *Runner) rebuildRunTools(state *runnerRunState) {
 		}
 	}
 
-	if contract := postReadinessToolContractForBrief(r.RuntimeBrief, state.collectedResults, state.delegatedReadOnlyAnswerReady, state.postChildPacketActive); contract.AnswerOnly {
-		tools = nil
-	} else if contract.RequireSourceRefreshContract {
+	if contract := postReadinessToolContractForBrief(r.RuntimeBrief, state.collectedResults, state.delegatedReadOnlyAnswerReady, state.postChildPacketActive); contract.RequireSourceRefreshContract {
 		tools = stripPostReadinessBroadTools(tools)
 		tools = applyPostReadinessSchemaRequirements(tools)
 	}

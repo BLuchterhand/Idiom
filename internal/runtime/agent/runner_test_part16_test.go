@@ -122,6 +122,47 @@ func TestDelegatedTaskAnswerStrippedSectionsDoNotContributeEvidencePaths(t *test
 	}
 }
 
+func TestReadOnlyCompletionGateRepeatedBlockerPreservesReasonWithoutStrategy(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+			Objective:         "Review normalizeDelegatedDiscoveryEvidencePath for Unicode panics.",
+		},
+	}
+
+	answer := runner.completionGateRepeatedBlockerAnswer(workspace.ToolResult{
+		Tool:  "completion_gate",
+		Error: "Architecture completion gate rejected unsupported detail(s): indexFold, utf8.ValidString.",
+	}, []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/runtime/agent/runner_delegated_synthesis.go lines 1-120",
+		Output:  "1:package agent\n2:func normalizeDelegatedDiscoveryEvidencePath(path string) string { return path }\n",
+	}})
+
+	for _, want := range []string{
+		"Architecture completion gate rejected unsupported detail(s): indexFold, utf8.ValidString.",
+		"Evidence paths observed before rejection:",
+		"internal/runtime/agent/runner_delegated_synthesis.go",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected repeated blocker to contain %q, got:\n%s", want, answer)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"Required next evidence",
+		"state the supported concrete finding",
+		"one bounded probe",
+		"not enough supported evidence",
+	} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("read-only repeated blocker should not prescribe strategy %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
 func TestAnswerComposerDoesNotLeakTelemetrySections(t *testing.T) {
 	answer, ok := AnswerComposer{}.Compose(AnswerComposerInput{
 		Question:      "Can you tell me how this harness uses subagents?",
@@ -561,8 +602,8 @@ func TestFinalAnswerDecoratorUsesExactProbeEvidenceOverRetainedScopeSummary(t *t
 	}
 
 	runner.RuntimeBrief = brief
-	if kind, reason := runner.finalAnswerBlockerKind(answer, results); kind != "" || reason != "" {
-		t.Fatalf("architecture exact-probe fallback should pass final-answer guard, got (%q, %q):\n%s", kind, reason, answer)
+	if kind, _ := runner.finalAnswerBlockerKind(answer, results); kind != "non_answer_prose" {
+		t.Fatalf("architecture exact-probe source inventory should be rejected as non-answer prose, got %q:\n%s", kind, answer)
 	}
 }
 
@@ -600,13 +641,13 @@ func TestChildPacketBoundaryNudgeNamesEvidencePaths(t *testing.T) {
 		"internal/capabilities/workspace/discovery_query.go",
 	}, 2)
 	for _, want := range []string{
-		"Why answer now is valid:",
+		"Why a final answer is now valid:",
 		"Packet-named paths:",
 		"`internal/runtime/agent/discovery_redirect.go`",
 		"normal tool policy",
-		"packet-named path or symbol",
+		"named path, symbol, discovered handle, branch, body, or narrow line-range",
 		"at most 2 targeted probes",
-		"Answer now from the packet",
+		"If you answer now, answer from the packet",
 	} {
 		if !strings.Contains(nudge, want) {
 			t.Fatalf("expected child packet nudge to contain %q, got:\n%s", want, nudge)
@@ -669,8 +710,8 @@ func TestDelegatedReadOnlyAnswerReadyNudgeIncludesClosureJustification(t *testin
 	nudge := delegatedReadOnlyAnswerReadyNudge("Explain how this harness uses subagents.", results, 2)
 
 	for _, want := range []string{
-		"Answer now from the evidence above. The delegated read-only evidence is sufficient for this question.",
-		"Why answer now is valid:",
+		"The delegated read-only evidence is sufficient for a grounded answer to this question.",
+		"Why a final answer is now valid:",
 		"Core evidence paths:",
 		"Carry forward the inspected paths above",
 		"normal tool policy",
@@ -868,8 +909,13 @@ func TestBuildRunnerNextActionStatePrefersClosureAfterDelegatedReadiness(t *test
 		t.Fatalf("closure-biased state should not block answering on a fabricated gate, got %#v", state)
 	}
 
-	if len(state.NextValidActions) < 1 || state.NextValidActions[0] != "answer directly from the evidence already gathered" {
-		t.Fatalf("expected answer-first closure bias, got %#v", state.NextValidActions)
+	joinedNext := strings.Join(state.NextValidActions, "\n")
+	if !strings.Contains(joinedNext, "final answer from the evidence already gathered is available") {
+		t.Fatalf("expected answer availability guidance, got %#v", state.NextValidActions)
+	}
+
+	if !strings.Contains(joinedNext, "one exact missing claim") {
+		t.Fatalf("expected exact-probe option to remain visible, got %#v", state.NextValidActions)
 	}
 
 	for _, want := range []string{
@@ -897,12 +943,22 @@ func TestBuildRunnerNextActionStatePrefersClosureAfterChildPacket(t *testing.T) 
 		t.Fatalf("expected child-packet closure bias, got %#v", state)
 	}
 
-	if len(state.NextValidActions) == 0 || state.NextValidActions[0] != "answer directly from the child packet if it already resolves the question" {
-		t.Fatalf("expected child packet answer-first guidance, got %#v", state.NextValidActions)
+	joinedNext := strings.Join(state.NextValidActions, "\n")
+	if !strings.Contains(joinedNext, "final answer from the child packet evidence is available") {
+		t.Fatalf("expected child packet answer availability guidance, got %#v", state.NextValidActions)
 	}
 
-	if !slices.Contains(state.InvalidNextActions, "broad rediscovery outside packet-named paths or symbols after the child packet") {
-		t.Fatalf("expected anti-drift invalid action, got %#v", state.InvalidNextActions)
+	if !strings.Contains(joinedNext, "one exact missing claim") {
+		t.Fatalf("expected child packet exact-probe guidance, got %#v", state.NextValidActions)
+	}
+
+	for _, forbidden := range []string{
+		"broad rediscovery outside packet-named paths or symbols after the child packet",
+		"README/docs or repo-wide search outside packet-named paths or symbols after the child packet",
+	} {
+		if slices.Contains(state.InvalidNextActions, forbidden) {
+			t.Fatalf("child packet must not become an invalid-action allowlist %q: %#v", forbidden, state.InvalidNextActions)
+		}
 	}
 }
 
@@ -933,8 +989,13 @@ func TestBuildRunnerNextActionStatePrefersClosureAfterTypedChildPacket(t *testin
 		t.Fatalf("expected typed child-packet closure bias, got %#v", state)
 	}
 
-	if len(state.NextValidActions) == 0 || state.NextValidActions[0] != "answer directly from the child packet if it already resolves the question" {
-		t.Fatalf("expected typed packet answer-first guidance, got %#v", state.NextValidActions)
+	joinedNext := strings.Join(state.NextValidActions, "\n")
+	if !strings.Contains(joinedNext, "final answer from the child packet evidence is available") {
+		t.Fatalf("expected typed packet answer availability guidance, got %#v", state.NextValidActions)
+	}
+
+	if !strings.Contains(joinedNext, "one exact missing claim") {
+		t.Fatalf("expected typed packet exact-probe guidance, got %#v", state.NextValidActions)
 	}
 
 	for _, want := range []string{"internal/runtime/agent/runner.go", "internal/runtime/agent/runner_child_tasks.go"} {
@@ -1067,49 +1128,5 @@ func TestReadOnlyAnalysisExactProbeCountIncludesCodeNavigateSourceBody(t *testin
 	}
 	if got := readOnlyAnalysisExactProbeCount(results); got != 1 {
 		t.Fatalf("exact probe count = %d, want 1", got)
-	}
-}
-
-func TestReadOnlyNoMatchCloseoutAppliesAfterExactEvidence(t *testing.T) {
-	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-		Contract:          "architecture_assessment",
-		TaskFamily:        "architecture",
-		PermissionProfile: "read_only_workspace",
-		Objective:         "What does the debug log redacted mode do?",
-	}}
-	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed file_outline via go_file_outline",
-			Output:  "capability: file_outline\nroute_summary: Outlined internal/evidence/transcript/debuglog.go",
-		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "capability: read_symbol\nroute_summary: Read DebugLogger.SetMode in internal/evidence/transcript/debuglog.go lines 52-61\n\n52:func (d *DebugLogger) SetMode(mode DebugLogMode) {}",
-		},
-		{
-			Tool:    "code_navigate",
-			Summary: "No generic code navigation matches for read_symbol",
-			Output:  "capability: read_symbol\nroute_summary: no matches",
-		},
-	}
-
-	if !runner.readOnlyNoMatchCloseoutApplies(
-		workspace.ToolRequest{Tool: "code_navigate", Capability: "read_symbol", Pattern: "redactedBlob"},
-		results[2],
-		results,
-	) {
-
-		t.Fatal("expected no-match symbol probe after exact source evidence to close out")
-	}
-
-	if runner.readOnlyNoMatchCloseoutApplies(
-		workspace.ToolRequest{Tool: "code_navigate", Capability: "read_symbol", Pattern: "redactedBlob"},
-		results[2],
-		results[:1],
-	) {
-
-		t.Fatal("outline-only evidence must not trigger no-match closeout")
 	}
 }

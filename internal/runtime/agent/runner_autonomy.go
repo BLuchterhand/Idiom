@@ -1033,7 +1033,9 @@ func runnerAutonomyGateObservedFacts(input runnerAutonomyGateDecision, gate auto
 		addGateFactCount(&facts, "budget_max_tool_steps", gate.Budget.MaxToolSteps)
 		addGateFactCount(&facts, "budget_used_model_calls", gate.Budget.UsedModelCalls)
 		addGateFactCount(&facts, "budget_max_model_calls", gate.Budget.MaxModelCalls)
-		addGateFactValue(&facts, autonomy.ObservedFactReasonCode, "budget_exhaustion_reason", runnerAutonomyReasonCode(gate.Budget.ExhaustionReason))
+		if gate.Budget.Exhausted {
+			addGateFactValue(&facts, autonomy.ObservedFactReasonCode, "budget_exhaustion_reason", runnerAutonomyReasonCode(gate.Budget.ExhaustionReason))
+		}
 	}
 
 	return facts

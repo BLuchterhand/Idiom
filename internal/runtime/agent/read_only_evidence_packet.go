@@ -565,6 +565,10 @@ func readOnlyEvidencePacketFindings(answer string, results []workspace.ToolResul
 			return
 		}
 
+		if source == workspace.ToolNameReadFile && lineHasLeadingSourceLineNumber(text) {
+			return
+		}
+
 		if !delegatedReadOnlyFindingLineIsUseful(text) {
 			return
 		}

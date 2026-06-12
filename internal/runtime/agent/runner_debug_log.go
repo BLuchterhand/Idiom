@@ -45,13 +45,20 @@ func debugLogEvidenceSatisfied(brief workerruntime.WorkerRuntimeBrief, results [
 	return hasDebugLogReadWindowForHit(results, hit)
 }
 
-func debugLogPhaseScopeRejection(req workspace.ToolRequest, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) (string, string, bool) {
+func debugLogPhaseScopeRejection(req workspace.ToolRequest, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief, sessionID string) (string, string, bool) {
 	if !debugLogContractApplies(brief, results) || debugLogEvidenceSatisfied(brief, results) {
 		return "", "", false
 	}
 
 	selection, ok := latestDebugLogSelection(results)
 	if !ok || !hasDebugLogReadForSelection(results, selection) {
+		return "", "", false
+	}
+
+	if path, ok := concreteDebugLogArtifactPathForRequest(req, results); ok &&
+		!debugLogSelectionMatchesPath(selection, path) &&
+		!currentSessionDebugLogPath(path, sessionID) {
+
 		return "", "", false
 	}
 
@@ -69,8 +76,12 @@ func debugLogPhaseScopeRejection(req workspace.ToolRequest, results []workspace.
 		return "", "", false
 	}
 
+	if debugLogReadRequestAddsWindow(req, results, selection) {
+		return "", "", false
+	}
+
 	return "Blind log reread rejected",
-		"you already have the newest tail of the selected log. Answer from that tail if it is sufficient, or search within the selected log for one concrete marker.",
+		"you already have the newest tail of the selected log. A final answer is available if that tail supports it; otherwise search within the selected log for one concrete marker.",
 		true
 }
 
@@ -284,6 +295,10 @@ func debugLogContractApplies(brief workerruntime.WorkerRuntimeBrief, results []w
 		return false
 	}
 
+	if objectiveTreatsDiagnosticLogsAsOptionalEvidence(brief.Objective) {
+		return false
+	}
+
 	return true
 }
 
@@ -344,6 +359,22 @@ func objectiveRequestsDiagnosticLogInspection(objective string) bool {
 	}
 
 	return false
+}
+
+func objectiveTreatsDiagnosticLogsAsOptionalEvidence(objective string) bool {
+	words := " " + strings.ToLower(strings.Join(strings.Fields(objective), " ")) + " "
+	if strings.TrimSpace(words) == "" {
+		return false
+	}
+
+	if !containsAny(words, " if available", " if present", " when available", " where available") {
+		return false
+	}
+
+	return containsAny(words,
+		" source ", " source files ", " code ", " bug ", " behavior bug ", " rca ",
+		" tests ", " fix shape ", " owning boundary ", " implementation ",
+	)
 }
 
 func objectiveRequestsSourceFeatureInspection(words string) bool {
@@ -488,7 +519,7 @@ func debugLogTailRequest(selection debugLogFileSelection) workspace.ToolRequest 
 func debugLogRequestTargetsSelection(req workspace.ToolRequest, selection debugLogFileSelection) bool {
 	switch strings.TrimSpace(req.Tool) {
 	case workspace.ToolNameReadFile:
-		if selection.Handle != "" && strings.TrimSpace(req.ID) == selection.Handle {
+		if selection.Handle != "" && debugLogRequestHandle(req) == selection.Handle {
 			return true
 		}
 
@@ -502,6 +533,107 @@ func debugLogRequestTargetsSelection(req workspace.ToolRequest, selection debugL
 	default:
 		return false
 	}
+}
+
+func debugLogRequestHandle(req workspace.ToolRequest) string {
+	return util.FirstNonEmpty(strings.TrimSpace(req.ID), strings.TrimSpace(req.Handle))
+}
+
+func debugLogSelectionMatchesPath(selection debugLogFileSelection, path string) bool {
+	return normalizeRunnerPath(selection.Path) == normalizeRunnerPath(path)
+}
+
+func concreteDebugLogArtifactPathForRequest(req workspace.ToolRequest, results []workspace.ToolResult) (string, bool) {
+	for _, value := range []string{req.Path, req.Glob} {
+		if isStrictDebugLogArtifactPath(value) {
+			return strings.TrimSpace(value), true
+		}
+	}
+
+	handle := debugLogRequestHandle(req)
+	if handle == "" {
+		return "", false
+	}
+
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+
+		if window, ok := parseDebugLogReadWindow(result); ok && window.Handle == handle && isStrictDebugLogArtifactPath(window.Path) {
+			return window.Path, true
+		}
+
+		if hit, ok := parseDebugLogSearchHit(result); ok && hit.Handle == handle && isStrictDebugLogArtifactPath(hit.Path) {
+			return hit.Path, true
+		}
+
+		for _, selection := range parseDebugLogFileSelections(result) {
+			if selection.Handle == handle && isStrictDebugLogArtifactPath(selection.Path) {
+				return selection.Path, true
+			}
+		}
+	}
+
+	return "", false
+}
+
+func debugLogReadRequestAddsWindow(req workspace.ToolRequest, results []workspace.ToolResult, selection debugLogFileSelection) bool {
+	if strings.TrimSpace(req.Tool) != workspace.ToolNameReadFile || !debugLogRequestTargetsSelection(req, selection) {
+		return false
+	}
+
+	if req.StartLine <= 0 && req.EndLine <= 0 {
+		return false
+	}
+
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+
+		if strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+
+		window, ok := parseDebugLogReadWindow(result)
+		if !ok {
+			continue
+		}
+
+		if selection.Handle != "" && window.Handle != selection.Handle {
+			continue
+		}
+
+		if selection.Path != "" && normalizeRunnerPath(window.Path) != normalizeRunnerPath(selection.Path) {
+			continue
+		}
+
+		return !debugLogRequestWindowCovered(req, window)
+	}
+
+	return true
+}
+
+func debugLogRequestWindowCovered(req workspace.ToolRequest, window debugLogReadWindow) bool {
+	start := req.StartLine
+	end := req.EndLine
+
+	if start <= 0 {
+		start = 1
+	}
+
+	if end <= 0 {
+		return false
+	}
+
+	return window.Start <= start && window.End >= end
+}
+
+func debugLogRequestTargetsCurrentSession(req workspace.ToolRequest, sessionID string) bool {
+	for _, value := range []string{req.Path, req.Glob} {
+		if currentSessionDebugLogPath(value, sessionID) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func debugLogRequestMatchesDiscovery(req workspace.ToolRequest, discovery workspace.ToolRequest) bool {
@@ -526,6 +658,10 @@ func isConcreteDebugLogArtifactRequest(req workspace.ToolRequest) bool {
 
 func debugLogScopedSearchRedirect(req workspace.ToolRequest, selection debugLogFileSelection) (workspace.ToolRequest, bool) {
 	if strings.TrimSpace(req.Tool) != workspace.ToolNameSearchContent || debugLogRequestTargetsSelection(req, selection) {
+		return workspace.ToolRequest{}, false
+	}
+
+	if exactDebugLogFilePath(req.Path) || exactDebugLogFilePath(req.Glob) {
 		return workspace.ToolRequest{}, false
 	}
 
@@ -561,6 +697,18 @@ func mentionsConcreteDebugLogSelector(value string) bool {
 
 func isStrictDebugLogArtifactPath(path string) bool {
 	return mentionsConcreteDebugLogSelector(path)
+}
+
+func exactDebugLogFilePath(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if lower == "" || strings.ContainsAny(lower, "*?[") {
+		return false
+	}
+
+	return strings.HasSuffix(lower, ".log") ||
+		strings.HasSuffix(lower, ".jsonl") ||
+		strings.HasSuffix(lower, ".ndjson") ||
+		strings.HasSuffix(lower, ".trace")
 }
 
 func isDiagnosticLogArtifactPath(path string) bool {

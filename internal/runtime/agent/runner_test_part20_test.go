@@ -212,6 +212,44 @@ func TestReadOnlyExplanationCompletionRejectionRejectsUnsupportedExtraDetail(t *
 	}
 }
 
+func TestReadOnlyExplanationCompletionRejectionRejectsContradictoryBinaryVerdict(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "review_findings",
+			TaskFamily:        "security_review",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Review whether Unicode before a file extension can panic.",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output: strings.Join([]string{
+			"capability: read_symbol",
+			"route_summary: Read normalizeDelegatedDiscoveryEvidencePath in internal/runtime/agent/runner_delegated_synthesis.go lines 1305-1331",
+			"1305:func normalizeDelegatedDiscoveryEvidencePath(path string) string {",
+			"1315:\t\tif idx := indexFold(path, ext); idx >= 0 {",
+			"1331:}",
+		}, "\n"),
+	}}
+
+	result, rejected := runner.completionGateRejection(strings.Join([]string{
+		"**Finding: Yes, Unicode before a file extension can cause a panic via `indexFold`.**",
+		"",
+		"**Verdict: No panic.** Go string slicing at arbitrary byte offsets does not panic.",
+	}, "\n"), results, 1, nil, false)
+	if !rejected {
+		t.Fatal("expected contradictory binary verdict to be rejected")
+	}
+	if !strings.Contains(result.Error, "contradictory yes/no conclusions") {
+		t.Fatalf("expected contradiction error, got %#v", result)
+	}
+
+	if _, rejected := runner.completionGateRejection("**Finding: No.** The inspected source can corrupt Unicode boundaries, but Go string slicing does not panic.", results, 1, nil, false); rejected {
+		t.Fatal("consistent binary finding should not be rejected")
+	}
+}
+
 func TestReadOnlyExplanationCompletionRejectionAcceptsComplexSourceBackedDetail(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{

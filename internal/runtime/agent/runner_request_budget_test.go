@@ -67,8 +67,8 @@ func TestRunnerRequestBudgetSamePathFixationNudgesOnVariedRanges(t *testing.T) {
 	req = workspace.ToolRequest{Tool: "read_file", Path: "internal/surfaces/tui/app/app.go", StartLine: 251, EndLine: 300}
 	decision = state.samePathFixationDecision(req, true)
 
-	if !decision.Handled || decision.HideTool != "read_file" || decision.EventRole != "same_path_fixation_tool_hidden" {
-		t.Fatalf("ignored same-path nudge should hide the repeated tool, got %#v", decision)
+	if decision.Handled || decision.HideTool != "" {
+		t.Fatalf("ignored same-path nudge must not hide read tools, got %#v", decision)
 	}
 }
 
@@ -203,7 +203,6 @@ func TestRecoverablePostReadinessRejectionSummaryUsesContractNamespace(t *testin
 	}
 
 	for _, summary := range []string{
-		"Post-child broad inspection blocked",
 		"Repeated dead-end action rejected",
 		"Post-readiness named-gap contract is exhausted. Tools are now disabled.",
 	} {
@@ -328,7 +327,7 @@ func TestRunnerRequestBudgetNudgesAndBlocksZeroHitSearchFamily(t *testing.T) {
 	}
 }
 
-func TestRunnerRequestBudgetBlocksUnrelatedPostChildDiscovery(t *testing.T) {
+func TestRunnerRequestBudgetAllowsUnrelatedPostChildDiscovery(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
 
 	state.readOnlyChildTaskSatisfied = true
@@ -339,58 +338,37 @@ func TestRunnerRequestBudgetBlocksUnrelatedPostChildDiscovery(t *testing.T) {
 		workspace.ToolRequest{Tool: "search_files", Pattern: "*harness*", Path: "."},
 		nil,
 	)
-	if !decision.Handled || decision.RejectSummary != "Post-child unrelated discovery blocked" {
-		t.Fatalf("expected unrelated post-child search to be blocked, got %#v", decision)
-	}
-
-	if !strings.Contains(decision.RejectError, "discovery_redirect.go") {
-		t.Fatalf("expected rejection to mention packet evidence paths, got %#v", decision)
+	if decision.Handled {
+		t.Fatalf("post-child child packet must not hard-wall unrelated read-only search, got %#v", decision)
 	}
 }
 
-// TestRunnerRequestBudgetMutationParentSuppressesPostChildBlocks
-// locks in the same #101 mutation-parent rule for the post-child
-// broad-inspection and unrelated-discovery rejections: when the
-// parent's deliverable is a WRITE (not an answer), the child's
-// evidence packet is a hint, not a hard wall. The parent may need
-// to broaden or search outside the packet's evidence paths to find
-// callsites or related symbols for its RequiredEditPaths. The
-// completion gate owns mutation closure; doom_loop_guard +
-// MaxToolSteps own the runaway-exploration ceiling.
-func TestRunnerRequestBudgetMutationParentSuppressesPostChildBlocks(t *testing.T) {
+// TestRunnerRequestBudgetPostChildPacketDoesNotHardWallParentDiscovery
+// locks the north-star rule for post-child read/search: a child evidence
+// packet is a hint, not a hard contract. The parent may broaden or search
+// outside the packet's paths when the model decides more evidence is needed.
+// The completion gate owns closure; doom_loop_guard + MaxToolSteps own the
+// runaway-exploration ceiling.
+func TestRunnerRequestBudgetPostChildPacketDoesNotHardWallParentDiscovery(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
 
 	state.readOnlyChildTaskSatisfied = true
 	state.noteReadOnlyChildPacket([]string{"internal/runtime/agent/discovery_redirect.go"})
 
-	// Mutation parent doing a broad inspection after child packet — allowed.
-	decision := state.explorationDecision(
-		mutationRunner(),
-		workspace.ToolRequest{Tool: "list_files", Path: "."},
-		nil,
-	)
-	if decision.Handled {
-		t.Fatalf("mutation parent post-child broad inspection should be allowed, got %#v", decision)
-	}
-
-	// Mutation parent doing an unrelated discovery search after child packet — allowed.
-	decision = state.explorationDecision(
-		mutationRunner(),
-		workspace.ToolRequest{Tool: "search_files", Pattern: "*harness*", Path: "."},
-		nil,
-	)
-	if decision.Handled {
-		t.Fatalf("mutation parent post-child unrelated discovery should be allowed, got %#v", decision)
-	}
-
-	// Read-only parent — both blocks still fire (regression guard).
-	decision = state.explorationDecision(
-		&Runner{},
-		workspace.ToolRequest{Tool: "search_files", Pattern: "*harness*", Path: "."},
-		nil,
-	)
-	if !decision.Handled || decision.RejectSummary != "Post-child unrelated discovery blocked" {
-		t.Fatalf("read-only parent should still block unrelated post-child search, got %#v", decision)
+	for _, tc := range []struct {
+		name   string
+		runner *Runner
+		req    workspace.ToolRequest
+	}{
+		{name: "read-only broad inspection", runner: &Runner{}, req: workspace.ToolRequest{Tool: "list_files", Path: "."}},
+		{name: "read-only unrelated search", runner: &Runner{}, req: workspace.ToolRequest{Tool: "search_files", Pattern: "*harness*", Path: "."}},
+		{name: "mutation broad inspection", runner: mutationRunner(), req: workspace.ToolRequest{Tool: "list_files", Path: "."}},
+		{name: "mutation unrelated search", runner: mutationRunner(), req: workspace.ToolRequest{Tool: "search_files", Pattern: "*harness*", Path: "."}},
+	} {
+		decision := state.explorationDecision(tc.runner, tc.req, nil)
+		if decision.Handled {
+			t.Fatalf("%s should not be blocked by post-child packet, got %#v", tc.name, decision)
+		}
 	}
 }
 

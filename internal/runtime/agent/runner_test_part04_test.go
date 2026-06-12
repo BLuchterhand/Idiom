@@ -165,8 +165,8 @@ func TestForcedCompletionRepairsToolRequestBeforeDeterministicEvidenceFallback(t
 		t.Fatalf("Run: %v", err)
 	}
 
-	if !strings.Contains(answer, "internal/runtime/agent/runner_child_tasks.go") || !strings.Contains(strings.ToLower(answer), "child") {
-		t.Fatalf("expected deterministic fallback to preserve the child-task finding and relevant implementation surface, got:\n%s", answer)
+	if !strings.Contains(strings.ToLower(answer), "sub-agent") && !strings.Contains(strings.ToLower(answer), "subagent") {
+		t.Fatalf("expected fallback/model synthesis to preserve the child-task finding, got:\n%s", answer)
 	}
 
 	for _, forbidden := range []string{"The strongest implementation evidence is in", "What this establishes:", "Source: delegated read-only evidence packet", "Primary files:"} {
@@ -175,14 +175,12 @@ func TestForcedCompletionRepairsToolRequestBeforeDeterministicEvidenceFallback(t
 		}
 	}
 
-	if requests > 2 {
+	if requests > 3 {
 		t.Fatalf("expected deterministic fallback to avoid invalid-final retry, got %d requests", requests)
 	}
 
-	for _, event := range modelCallEvents {
-		if strings.Contains(event, `"label":"invalid_final_answer_retry"`) {
-			t.Fatalf("did not expect invalid_final_answer_retry when deterministic child-packet fallback is available, got %#v", modelCallEvents)
-		}
+	if len(modelCallEvents) == 0 {
+		t.Fatal("expected model call telemetry for bounded fallback recovery")
 	}
 }
 
@@ -276,7 +274,7 @@ func TestForcedCompletionRepairsRepeatedToolRequestsWithFinalSynthesis(t *testin
 	}
 }
 
-func TestForcedCompletionRepairsReadOnlyFallbackAnswer(t *testing.T) {
+func TestForcedCompletionModelOwnedAnswerForReadOnlyArchitecture(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "internal/runtime/agent/runner_child_tasks.go", "package agent\n\nfunc seed() {}\n"); err != nil {
 		t.Fatalf("write seed file: %v", err)
@@ -284,8 +282,6 @@ func TestForcedCompletionRepairsReadOnlyFallbackAnswer(t *testing.T) {
 
 	repaired := "The harness uses sub-agents through `Runner.runChildTask` in `internal/runtime/agent/runner_child_tasks.go`. That path normalizes the delegated prompt, creates a child `Runner` with a bounded read-only policy and child-scoped permissions, runs the child task, and then returns the child answer/results to the parent as grounded evidence for the final response."
 	replies := []string{
-		`{"tool":"go_read_symbol","path":"internal/runtime/agent/runner_child_tasks.go","pattern":"Runner.runWorkbranchChildTask","named_gap":"need the write-enabled variant before answering","why_not_answering":"need one more child-mode comparison"}`,
-		`{"tool":"read_file","path":"internal/runtime/agent/runner_child_tasks.go","start_line":326,"end_line":420,"named_gap":"need the write-enabled variant before answering","why_not_answering":"need one more child-mode comparison"}`,
 		repaired,
 	}
 	requests := 0
@@ -355,8 +351,8 @@ func TestForcedCompletionRepairsReadOnlyFallbackAnswer(t *testing.T) {
 	for _, want := range []string{
 		"`Runner.runChildTask`",
 		"`internal/runtime/agent/runner_child_tasks.go`",
-		"sets `prompt` to `normalizeReadOnlyChildPrompt(prompt)`",
-		"assigns `child` from `&Runner{`",
+		"normalizes the delegated prompt",
+		"child `Runner`",
 	} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected source-backed synthesis to contain %q, got:\n%s", want, answer)
@@ -373,12 +369,12 @@ func TestForcedCompletionRepairsReadOnlyFallbackAnswer(t *testing.T) {
 		t.Fatalf("did not expect fallback_final_answer_retry for acceptable generic evidence synthesis, got %#v", modelCallEvents)
 	}
 
-	if requests != 0 {
-		t.Fatalf("expected source-backed deterministic synthesis without another model request, used %d replies", requests)
+	if requests == 0 {
+		t.Fatalf("expected model-owned forced completion, not deterministic host fallback")
 	}
 }
 
-func TestDeterministicNoToolsAnswerKeepsGroundedReadOnlyAnswer(t *testing.T) {
+func TestDeterministicNoToolsAnswerDoesNotKeepGroundedReadOnlyAnswer(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",
 		Contract:          "direct_answer",
@@ -398,22 +394,8 @@ func TestDeterministicNoToolsAnswerKeepsGroundedReadOnlyAnswer(t *testing.T) {
 	}}
 	answer, ok := deterministicNoToolsAnswer("main", brief, results)
 
-	if !ok {
-		t.Fatal("expected grounded deterministic fallback answer")
-	}
-
-	for _, want := range []string{
-		"internal/labels/labels.go",
-		"ShortLabel",
-		"Save changes",
-	} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("grounded fallback missing %q:\n%s", want, answer)
-		}
-	}
-
-	if strings.HasPrefix(answer, "<<QUESTION>>") || strings.Contains(answer, "concrete user-facing finding") {
-		t.Fatalf("answerable source evidence should not be downgraded to blocker:\n%s", answer)
+	if ok {
+		t.Fatalf("grounded read-only evidence must remain model-owned, got host answer:\n%s", answer)
 	}
 }
 
@@ -498,22 +480,12 @@ func TestForcedCompletionFallsBackWhenReadOnlyRetryStillViolatesCompletionGate(t
 		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
 	}
 
-	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "\"Save changes\""} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("expected deterministic read-only fallback to include %q, got:\n%s", want, answer)
-		}
-	}
-
-	if answer == "." {
-		t.Fatalf("non-substantive retry answer should not be accepted")
-	}
-
-	if strings.Contains(answer, `"tool"`) || strings.Contains(answer, "I need one more probe") {
+	if answer == replies[1] || strings.Contains(answer, `"tool"`) || strings.Contains(answer, "I need one more probe") {
 		t.Fatalf("retry answer with an unexecuted tool request should not be accepted:\n%s", answer)
 	}
 
-	if requests != 1 {
-		t.Fatalf("expected deterministic read-only fallback without additional retry, used %d/%d replies", requests, len(replies))
+	if requests != len(replies) {
+		t.Fatalf("expected forced-completion retry before fallback, used %d/%d replies", requests, len(replies))
 	}
 }
 
@@ -586,12 +558,12 @@ func TestForcedCompletionFallsBackWhenReadOnlyRetryReturnsSourceInventory(t *tes
 		t.Fatalf("deterministic fallback reintroduced helper-function inventory:\n%s", answer)
 	}
 
-	if !strings.Contains(answer, "internal/surfaces/tui/app/app.go") {
-		t.Fatalf("fallback should retain inspected evidence path, got:\n%s", answer)
+	if strings.Contains(answer, "internal/surfaces/tui/app/app.go") && strings.Contains(answer, "normalizeHistoryRole") {
+		t.Fatalf("forced-completion fallback should not synthesize source inventory, got:\n%s", answer)
 	}
 
-	if requests > 1 {
-		t.Fatalf("expected at most one forced-completion model call, got %d", requests)
+	if requests != 1 {
+		t.Fatalf("expected one forced-completion model call, not deterministic host fallback; got %d", requests)
 	}
 }
 
@@ -660,12 +632,12 @@ func TestForcedCompletionFallsBackWhenReadOnlyRetryReturnsInspectedBodyInventory
 		t.Fatalf("inspected-body inventory retry answer escaped forced completion:\n%s", answer)
 	}
 
-	if !strings.Contains(answer, "internal/surfaces/tui/app/update_handlers.go") {
-		t.Fatalf("fallback should retain inspected evidence path, got:\n%s", answer)
+	if strings.Contains(answer, "internal/surfaces/tui/app/update_handlers.go") && strings.Contains(answer, "appendHistoryMessage") {
+		t.Fatalf("forced-completion fallback should not synthesize source inventory, got:\n%s", answer)
 	}
 
-	if requests > 1 {
-		t.Fatalf("expected at most one forced-completion model call, got %d", requests)
+	if requests != 1 {
+		t.Fatalf("expected one forced-completion model call, not deterministic host fallback; got %d", requests)
 	}
 }
 
@@ -777,35 +749,8 @@ func TestDeterministicNoToolsAnswerRejectsCodeNavigateInventoryFallback(t *testi
 	}}
 
 	answer, ok := deterministicNoToolsAnswer("main", brief, results)
-	if !ok {
-		t.Fatal("expected deterministic closeout to produce presentable uncertainty from inspected evidence")
-	}
-
-	for _, forbidden := range []string{
-		"clearest inspected implementation anchor",
-		"inspected body shows",
-		"returns `fmt.Errorf",
-		"sets `path`",
-		"calls `replaySessionLog`",
-	} {
-		if strings.Contains(answer, forbidden) {
-			t.Fatalf("source-inventory fallback escaped deterministic closeout (%q):\n%s", forbidden, answer)
-		}
-	}
-
-	if !strings.Contains(answer, "internal/surfaces/tui/app/sessions.go") {
-		t.Fatalf("fallback should retain inspected evidence path, got:\n%s", answer)
-	}
-
-	for _, want := range []string{"do not have enough supported evidence", "internal/surfaces/tui/app/sessions.go"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("expected presentable uncertainty to contain %q, got:\n%s", want, answer)
-		}
-	}
-
-	runner := &Runner{RuntimeBrief: brief}
-	if kind, reason := runner.finalAnswerBlockerKind(answer, results); kind != "" || reason != "" {
-		t.Fatalf("deterministic fallback should satisfy final-answer guard, got (%q, %q):\n%s", kind, reason, answer)
+	if ok {
+		t.Fatalf("code-navigation read-only evidence must not produce deterministic host answer:\n%s", answer)
 	}
 }
 
@@ -1095,8 +1040,8 @@ func TestBudgetClosureRunEmitsAcceptanceSignals(t *testing.T) {
 		}),
 		Policy: RunPolicy{MaxToolSteps: 1, MaxNoProgressTurns: 2},
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        "architecture",
-			Contract:          "architecture_assessment",
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
 			Objective:         "What is in README.md?",
 			PermissionProfile: "read_only_workspace",
 		},

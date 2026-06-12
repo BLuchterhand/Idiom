@@ -173,7 +173,7 @@ func (r *Runner) readOnlyNonSubstantiveCompletionRejection(reply string, results
 	return workspace.ToolResult{
 		Tool:    "completion_gate",
 		Summary: "Read-only completion gate rejected non-substantive final answer",
-		Error:   "read-only workspace evidence has been gathered, but the reply is not a substantive user-facing answer. Answer directly from the gathered evidence, carrying forward the inspected path and the concrete value or fact needed by the question.",
+		Error:   "read-only workspace evidence has been gathered, but the reply is not a substantive user-facing answer. A substantive final answer should carry forward the inspected path and the concrete value or fact needed by the question.",
 	}, true
 }
 

@@ -1311,9 +1311,8 @@ func normalizeDelegatedDiscoveryEvidencePath(path string) string {
 		return ""
 	}
 
-	lower := strings.ToLower(path)
 	for _, ext := range []string{".go", ".md", ".json", ".yaml", ".yml", ".toml", ".txt"} {
-		if idx := strings.Index(lower, ext); idx >= 0 {
+		if idx := indexFold(path, ext); idx >= 0 {
 			end := idx + len(ext)
 			suffix := path[end:]
 
@@ -1329,6 +1328,20 @@ func normalizeDelegatedDiscoveryEvidencePath(path string) string {
 	}
 
 	return path
+}
+
+func indexFold(value string, needle string) int {
+	if needle == "" || len(value) < len(needle) {
+		return -1
+	}
+
+	for i := 0; i+len(needle) <= len(value); i++ {
+		if strings.EqualFold(value[i:i+len(needle)], needle) {
+			return i
+		}
+	}
+
+	return -1
 }
 
 func normalizeWorkspacePathScanText(text string) string {

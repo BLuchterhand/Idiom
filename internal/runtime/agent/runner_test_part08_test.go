@@ -98,123 +98,72 @@ func TestExplorationDelegationNudgeUsesReadLoopState(t *testing.T) {
 	}
 }
 
-func TestArchitectureToolBudgetCountsOnlySuccessfulResults(t *testing.T) {
-	tests := []struct {
-		name     string
-		results  []workspace.ToolResult
-		maxTools int
-		want     bool
-	}{
-		{
-			name:     "4 successful source reads triggers budget",
-			maxTools: 4,
-			results: []workspace.ToolResult{
-				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 1-80 (total lines: 21636)", Output: "package main"},
-				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 81-160 (total lines: 21636)", Output: "func main()"},
-				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 161-240 (total lines: 21636)", Output: "var x int"},
-				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 241-320 (total lines: 21636)", Output: "func helper()"},
-			},
-			want: true,
-		},
-		{
-			name:     "3 successful + 1 rejected still triggers budget at 4",
-			maxTools: 4,
-			results: []workspace.ToolResult{
-				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 1-80 (total lines: 21636)", Output: "package main"},
-				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 81-160 (total lines: 21636)", Output: "func main()"},
-				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 161-240 (total lines: 21636)", Output: "var x int"},
-				{Tool: "read_file", Error: "file not found", Summary: "Read rejected"},
-			},
-			want: true,
-		},
-		{
-			name:     "3 successful + 2 rejected still triggers budget at 4",
-			maxTools: 4,
-			results: []workspace.ToolResult{
-				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 1-80 (total lines: 21636)", Output: "package main"},
-				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 81-160 (total lines: 21636)", Output: "func main()"},
-				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 161-240 (total lines: 21636)", Output: "var x int"},
-				{Tool: "read_file", Error: "file not found", Summary: "Read rejected"},
-				{Tool: "code_navigate", Error: "symbol not found", Summary: "Symbol not found"},
-			},
-			want: true,
-		},
-		{
-			name:     "5 results with 4 successful triggers budget",
-			maxTools: 4,
-			results: []workspace.ToolResult{
-				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 1-80 (total lines: 21636)", Output: "package main"},
-				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 81-160 (total lines: 21636)", Output: "func main()"},
-				{Tool: "read_file", Error: "file not found", Summary: "Read rejected"},
-				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 161-240 (total lines: 21636)", Output: "var x int"},
-				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 241-320 (total lines: 21636)", Output: "func helper()"},
-			},
-			want: true,
-		},
-		{
-			name:     "fewer results than maxTools does not trigger",
-			maxTools: 4,
-			results: []workspace.ToolResult{
-				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 1-80 (total lines: 21636)", Output: "package main"},
-				{Tool: "read_file", Summary: "Read internal/runtime/agent/runner.go lines 81-160 (total lines: 21636)", Output: "func main()"},
-			},
-			want: false,
-		},
+func TestArchitectureToolBudgetDoesNotHostCloseoutAnswerableEvidence(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/runtime/agent/runner_child_tasks.go", strings.Join([]string{
+		"package agent",
+		"func runChildTask() {",
+		"\t// task tool delegates to child runner and returns a child evidence packet",
+		"}",
+		"func childEvidencePacket() {}",
+	}, "\n")); err != nil {
+		t.Fatalf("write source: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := readOnlyArchitectureToolBudgetCloseoutApplies(
-				workerruntime.WorkerRuntimeBrief{
-					PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
-					Contract:          string(workerruntime.ContractArchitecture),
-					Objective:         "How does subagent work?",
-				},
-				tt.results,
-				tt.maxTools,
-			)
-			if got != tt.want {
-				t.Fatalf("readOnlyArchitectureToolBudgetCloseoutApplies = %v, want %v", got, tt.want)
-			}
+
+	replies := []string{
+		`{"tool":"read_file","path":"internal/runtime/agent/runner_child_tasks.go","start_line":1,"end_line":1}`,
+		`{"tool":"read_file","path":"internal/runtime/agent/runner_child_tasks.go","start_line":2,"end_line":2}`,
+		`{"tool":"read_file","path":"internal/runtime/agent/runner_child_tasks.go","start_line":3,"end_line":3}`,
+		`{"tool":"read_file","path":"internal/runtime/agent/runner_child_tasks.go","start_line":4,"end_line":5}`,
+		"The harness uses subagents through the task tool child runner in internal/runtime/agent/runner_child_tasks.go, which returns a child evidence packet. Confidence: high.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra request #%d", requests)
+		}
+
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
 		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, 2*time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 6},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+			Contract:          string(workerruntime.ContractArchitecture),
+			TaskFamily:        string(workerruntime.TaskFamilyArchitecture),
+			Objective:         "Can you tell me how this harness uses subagents?",
+			AllowedTools:      []string{"read_file"},
+		},
+	}
+
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "Can you tell me how this harness uses subagents?"}}, llama.ChatOptions{}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if requests != len(replies) {
+		t.Fatalf("expected model-owned final synthesis after four reads, used %d/%d replies", requests, len(replies))
+	}
+
+	if !strings.Contains(answer, "task tool child runner") {
+		t.Fatalf("unexpected answer: %q", answer)
 	}
 }
 
-func TestReadOnlyDirectAnswerReplayCloseoutAppliesForSourceProbe(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{
-		Contract:          string(workerruntime.ContractDirectAnswer),
-		TaskFamily:        string(workerruntime.TaskFamilyConversation),
-		PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
-		Objective:         "Can we shorten the save label in internal/labels/labels.go?",
-	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/labels/labels.go lines 1-5",
-		Output: strings.Join([]string{
-			"package labels",
-			"",
-			"func ShortLabel() string {",
-			"\treturn \"Save changes\"",
-			"}",
-		}, "\n"),
-	}}
-	req := workspace.ToolRequest{
-		Tool:       workspace.ToolNameCodeNavigate,
-		Capability: "find_references",
-		Path:       "internal/labels/labels.go",
-		Symbol:     "ShortLabel",
-	}
-	replayed := workspace.ToolResult{
-		Tool:    workspace.ToolNameCodeNavigate,
-		Summary: "Code navigation routed references via go_references (replayed prior evidence)",
-		Output:  "internal/labels/labels.go:4: ShortLabel",
-	}
-
-	if !readOnlyReplayedEvidenceCloseoutApplies("main", brief, results, req, replayed) {
-		t.Fatal("expected direct-answer source probe replay to close out from host-owned evidence")
-	}
-}
-
-func TestUnsupportedReadOnlyCloseoutAnswerOnlyMatchesSentinelLead(t *testing.T) {
+func TestUnsupportedReadOnlyCloseoutMatchesSentinelLead(t *testing.T) {
 	if !unsupportedReadOnlyCloseoutAnswer(presentableUnsupportedFinalAnswerLead() + " Source-body evidence is still missing.") {
 		t.Fatal("expected unsupported closeout sentinel to be recognized")
 	}

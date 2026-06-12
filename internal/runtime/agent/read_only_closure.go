@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/pathparse"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -212,29 +211,7 @@ func (d ReadOnlyCloseout) ConcreteFallbackAnswer() (string, bool) {
 }
 
 func (d ReadOnlyCloseout) AllowsSourceInventoryAnswer(answer string, currentlyAccepted bool) bool {
-	if !currentlyAccepted || !looksLikeLowValueSourceInventoryNonAnswer(answer) {
-		return false
-	}
-
-	if looksLikeLineOrientedSourceSnippetAnswer(answer) {
-		return false
-	}
-
-	if looksLikeDiscoveryEvidenceInventoryNonAnswer(answer) {
-		return false
-	}
-
-	brief := workerruntime.NormalizeRuntimeBrief(d.Brief)
-	if readOnlyDirectAnswerLane(brief) {
-		return false
-	}
-
-	if objectiveAsksBehaviorSummary(brief.Objective) {
-		return false
-	}
-
-	return workerruntime.RuntimeContractIsArchitecture(brief.Contract) ||
-		workerruntime.TaskFamilyIsArchitecture(brief.TaskFamily)
+	return false
 }
 
 type readOnlyFinalAnswerDecision struct {
@@ -287,6 +264,13 @@ func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswer
 	}
 	if readOnlyAnswerReportsInsufficientEvidence(substantiveAnswer) {
 		decision.Status = "insufficient_evidence_answer"
+		if ledger.Answerable() {
+			decision.BlockerKind = "answer_objective_unmet"
+			decision.Reason = "the final answer says the evidence is insufficient even though the gathered source evidence is answerable for the user's objective. Answer with the concrete objective-relevant finding, or name the exact missing claim and one bounded probe."
+
+			return decision
+		}
+
 		if len(ledger.SourceBodyPaths) == 0 && !ledger.DiagnosticEvidence {
 			decision.BlockerKind = "answer_objective_unmet"
 			decision.Reason = "the final answer says the evidence is insufficient before inspecting source-body or diagnostic evidence for the user's objective. Gather bounded source-body evidence, or use <<QUESTION>>: with the exact missing evidence source."
@@ -684,91 +668,6 @@ func answerMakesCausalClaimWithoutObjectiveEvidence(answer string, ledger readOn
 }
 
 func (d ReadOnlyCloseout) HostOwnedAnswer(agentName string) (string, bool) {
-	if runnerBriefRequiresMutation(d.Brief) || runnerVerificationRequired(d.Brief) || len(d.Results) == 0 {
-		return "", false
-	}
-
-	brief := workerruntime.NormalizeRuntimeBrief(d.Brief)
-	if delegatedChildReadOnlyHostCloseoutApplies(brief, agentName, d) {
-		if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, d.Results); ok {
-			answer = strings.TrimSpace(answer)
-			if hostOwnedCloseoutAnswerIsPresentable(answer) && delegatedSourceFactAddressesObjective(answer, brief.Objective) {
-				return answer, true
-			}
-		}
-
-		return "", false
-	}
-
-	if workerruntime.RuntimeContractIsArchitecture(brief.Contract) {
-		if answer, ok := architectureObjectiveEvidenceFallbackAnswer(brief, d.Results); ok {
-			return answer, true
-		}
-
-		if postChildReadOnlyPacketAvailable(brief, d.Results) && !bestObjectiveTaskResultOutputLooksPartial(brief.Objective, d.Results) {
-			if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, d.Results); ok {
-				answer = strings.TrimSpace(answer)
-				if hostOwnedCloseoutAnswerIsPresentable(answer) && delegatedSourceFactAddressesObjective(answer, brief.Objective) {
-					return answer, true
-				}
-			}
-		}
-
-		if answer, ok := d.PresentableTaskResultAnswer(agentName); ok && !bestObjectiveTaskResultOutputLooksPartial(brief.Objective, d.Results) {
-			return answer, true
-		}
-
-		if answer, ok := d.ConcreteFallbackAnswer(); ok &&
-			hostOwnedCloseoutAnswerIsPresentable(answer) &&
-			d.HasObjectiveRelevantEvidence() &&
-			answerAddressesObjective(answer, brief.Objective, d.Evidence, d.Results) {
-
-			return answer, true
-		}
-
-		packets := readOnlyEvidencePacketsFromResults(d.Results)
-		if len(packets) == 0 {
-			return "", false
-		}
-
-		if answer, ok := synthesizeReadOnlyEvidencePacketAnswer(brief.Objective, packets); ok {
-			answer = strings.TrimSpace(answer)
-			if hostOwnedCloseoutAnswerIsPresentable(answer) {
-				return answer, true
-			}
-		}
-
-		if answer, ok := synthesizeReadOnlyEvidencePacketAnswer("", architectureObjectiveRelatedPackets(brief.Objective, packets)); ok {
-			answer = strings.TrimSpace(answer)
-			if hostOwnedCloseoutAnswerIsPresentable(answer) {
-				return answer, true
-			}
-		}
-
-		return "", false
-	}
-
-	if !readOnlyDirectAnswerLane(brief) {
-		return "", false
-	}
-
-	if postChildReadOnlyPacketAvailable(brief, d.Results) {
-		if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, d.Results); ok {
-			answer = strings.TrimSpace(answer)
-			if hostOwnedCloseoutAnswerIsPresentable(answer) && delegatedSourceFactAddressesObjective(answer, brief.Objective) {
-				return answer, true
-			}
-		}
-
-		if answer, ok := d.PresentableTaskResultAnswer(agentName); ok {
-			return answer, true
-		}
-	}
-
-	if answer, ok := d.PresentableFallbackCandidate(agentName, d.ConversationFallback()); ok {
-		return answer, true
-	}
-
 	return "", false
 }
 
@@ -799,129 +698,48 @@ func (d ReadOnlyCloseout) PresentableTaskResultAnswer(agentName string) (string,
 
 func hostOwnedCloseoutAnswerIsPresentable(answer string) bool {
 	answer = strings.TrimSpace(answer)
-	return answer != "" && !strings.HasPrefix(answer, "<<QUESTION>>") && !looksLikeNonAnswerProse(answer)
+	return answer != "" &&
+		!strings.HasPrefix(answer, "<<QUESTION>>") &&
+		!looksLikeNonAnswerProse(answer)
 }
 
-func architectureObjectiveEvidenceFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
-	objective := strings.ToLower(strings.TrimSpace(brief.Objective))
-	if objective == "" {
+func (d ReadOnlyCloseout) PresentableObjectiveAnswerCandidate(agentName string, answer string) (string, bool) {
+	answer, ok := d.PresentableFallbackCandidate(agentName, answer)
+	if !ok || !d.presentableHostObjectiveAnswer(answer) {
 		return "", false
 	}
 
-	paths := readOnlyPresentationEvidencePathsForBrief(brief, results, 12)
-	hasPath := func(path string) bool {
-		for _, candidate := range paths {
-			if normalizeRunnerPath(candidate) == path {
-				return true
-			}
-		}
+	return answer, true
+}
 
+func (d ReadOnlyCloseout) presentableHostObjectiveAnswer(answer string) bool {
+	answer = strings.TrimSpace(answer)
+	if looksLikeHostCloseoutSourceInventoryNonAnswer(answer) {
 		return false
 	}
 
-	switch {
-	case containsAny(objective, "subagent", "sub-agent", "sub agent") &&
-		(hasPath("internal/runtime/agent/runner_child_tasks.go") || hasPath("internal/runtime/agent/runner.go")) &&
-		architectureFallbackHasConcreteSupport(results, []string{"internal/runtime/agent/runner_child_tasks.go", "internal/runtime/agent/runner.go"}, []string{"task tool", "child runner", "child-scoped", "delegated prompt", "child evidence packet", "child task completed", "disabletasktool", "permissionpolicy", "read-only delegated child task"}):
-		return "The harness uses subagents through the `task` tool path: `internal/runtime/agent/runner.go` dispatches the task request, and `internal/runtime/agent/runner_child_tasks.go` creates the bounded child runner, applies child-scoped permissions, runs the delegated prompt, and returns the child evidence packet to the parent.", true
-	case containsAny(objective, "debug log", "redacted mode", "redacted") &&
-		hasPath("internal/evidence/transcript/debuglog.go") &&
-		architectureFallbackHasConcreteSupport(results, []string{"internal/evidence/transcript/debuglog.go"}, []string{"redacted", "sanitized", "digest", "metadata"}):
-		return "The debug log redacted mode is implemented in `internal/evidence/transcript/debuglog.go`: it records secret-safe redacted log metadata instead of raw prompt content, keeps path metadata such as prompt source paths/workspace fields sanitized, and uses digests or redacted summaries where full mode would retain raw details.", true
-	case containsAny(objective, "discovery tool", "discovery tools", "tool usefulness", "usefulness") &&
-		(hasPath("internal/runtime/agent/answer_composer.go") || hasPath("internal/runtime/agent/runner.go") || hasPath("internal/capabilities/workspace/discovery_query.go") || hasPath("internal/capabilities/workspace/discovery_tools.go") || hasPath("internal/capabilities/workspace/discovery_profile.go")) &&
-		architectureFallbackHasConcreteSupport(results, []string{"internal/runtime/agent/answer_composer.go", "internal/runtime/agent/runner.go", "internal/capabilities/workspace/discovery_query.go", "internal/capabilities/workspace/discovery_tools.go", "internal/capabilities/workspace/discovery_profile.go"}, []string{"answer", "discovery", "source", "closeout", "profile"}):
-		return "For discovery tool usefulness, the inspected architecture points to adding better answer synthesis and closeout integration: `internal/capabilities/workspace/discovery_query.go` should keep returning source-oriented discovery evidence, while `internal/runtime/agent/answer_composer.go` and `internal/runtime/agent/runner.go` should turn that evidence into concrete final answers instead of tool inventories or retained-context scaffolds.", true
-	default:
-		return "", false
-	}
+	return hostOwnedCloseoutAnswerIsPresentable(answer) && d.hostOwnedAnswerAddressesObjective(answer)
 }
 
-func architectureFallbackHasConcreteSupport(results []workspace.ToolResult, paths []string, requiredTerms []string) bool {
-	pathSet := readOnlyPathSet(paths)
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Tool) == "task" && strings.TrimSpace(result.Error) == "" {
-			text := result.Summary + "\n" + result.Output
-			matchesPath := false
-
-			for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(text)) {
-				if _, ok := pathSet[normalizeRunnerPath(path)]; ok {
-					matchesPath = true
-					break
-				}
-			}
-
-			if matchesPath && textContainsAnyRequiredTerm(text, requiredTerms) {
-				return true
-			}
-		}
-
-		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
-			matchesPath := false
-
-			for _, path := range packet.SourceBodyPaths {
-				if _, ok := pathSet[normalizeRunnerPath(path)]; ok {
-					matchesPath = true
-					break
-				}
-			}
-
-			packetTerms := append([]string(nil), requiredTerms...)
-
-			packetTerms = append(packetTerms, "runchildtask")
-
-			if matchesPath && textContainsAnyRequiredTerm(readOnlyEvidencePacketSupportText(packet, result), packetTerms) {
-				return true
-			}
-		}
-
-		if !concreteSourceEvidenceResult(result) {
-			continue
-		}
-
-		matchesPath := false
-
-		for _, path := range readPathsFromToolResult(result) {
-			if _, ok := pathSet[normalizeRunnerPath(path)]; ok {
-				matchesPath = true
-				break
-			}
-		}
-
-		if !matchesPath {
-			continue
-		}
-
-		if textContainsAnyRequiredTerm(result.Summary+"\n"+result.Output, requiredTerms) {
-			return true
-		}
+func (d ReadOnlyCloseout) hostOwnedAnswerAddressesObjective(answer string) bool {
+	brief := workerruntime.NormalizeRuntimeBrief(d.Brief)
+	objective := strings.TrimSpace(brief.Objective)
+	if objective == "" {
+		return true
 	}
 
-	return false
-}
-
-func readOnlyEvidencePacketSupportText(packet ReadOnlyEvidencePacket, result workspace.ToolResult) string {
-	var parts []string
-
-	parts = append(parts, result.Summary, result.Output, packet.Objective, packet.Question)
-
-	for _, finding := range packet.Findings {
-		parts = append(parts, finding.Text, finding.Source, finding.Path)
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
+		return true
 	}
 
-	return strings.Join(parts, "\n")
-}
+	if !workerruntime.RuntimeContractIsArchitectureOrReview(brief.Contract) &&
+		!workerruntime.RuntimeContractMatches(brief.Contract, workerruntime.ContractGroundedEvidence) {
 
-func textContainsAnyRequiredTerm(text string, requiredTerms []string) bool {
-	text = strings.ToLower(text)
-	for _, term := range requiredTerms {
-		if strings.Contains(text, strings.ToLower(term)) {
-			return true
-		}
+		return true
 	}
 
-	return false
+	return answerAddressesObjective(answer, objective, d.Evidence, d.Results) &&
+		answerSourceCitationsAreObjectiveRelevant(answer, d.Evidence)
 }
 
 func delegatedChildReadOnlyHostCloseoutApplies(brief workerruntime.WorkerRuntimeBrief, agentName string, closeout ReadOnlyCloseout) bool {
@@ -998,7 +816,31 @@ func (d ReadOnlyCloseout) PresentableFallbackCandidate(agentName string, answer 
 		return "", false
 	}
 
-	return answer, answer != ""
+	if !readOnlyFallbackCandidateAllowsRawPassthrough(d.Brief) {
+		return "", false
+	}
+
+	return answer, true
+}
+
+func readOnlyFallbackCandidateAllowsRawPassthrough(brief workerruntime.WorkerRuntimeBrief) bool {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
+		return true
+	}
+
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
+		return true
+	}
+
+	if readOnlyDirectAnswerLane(brief) ||
+		workerruntime.RuntimeContractIsArchitectureOrReview(brief.Contract) ||
+		workerruntime.RuntimeContractMatches(brief.Contract, workerruntime.ContractGroundedEvidence) {
+
+		return false
+	}
+
+	return true
 }
 
 func (d ReadOnlyCloseout) PresentableOrReadOnlyNonAnswerReplacement(agentName string, answer string) (string, bool) {

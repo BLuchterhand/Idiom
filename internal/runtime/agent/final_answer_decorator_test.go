@@ -685,25 +685,45 @@ func TestPresentableExactProbeAnswerRejectsRoutedNonBodyEvidence(t *testing.T) {
 }
 
 func TestExactEvidenceSymbolSetAcceptsRoutedCodeNavigateSourceBody(t *testing.T) {
-	results := []workspace.ToolResult{{
-		Tool:    "code_navigate",
-		Summary: "Code navigation routed read_symbol via go_read_symbol",
-		Output: strings.Join([]string{
-			"capability: read_symbol",
-			"route_summary: Read Model.renderMessages in internal/surfaces/tui/app/rendering.go lines 459-520",
-			"459:func (m *Model) renderMessages() {",
-			"460:\tm.messagesViewport.SetContent(rendered)",
-			"461:}",
-		}, "\n"),
-	}}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"capability: read_symbol",
+				"route_summary: Read Model.renderMessages in internal/surfaces/tui/app/rendering.go lines 459-520",
+				"459:func (m *Model) renderMessages() {",
+				"460:\tm.messagesViewport.SetContent(rendered)",
+				"461:}",
+			}, "\n"),
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed extract_body via go_extract_body",
+			Output: strings.Join([]string{
+				"capability: extract_body",
+				"language: go",
+				"routed_tool: go_extract_body",
+				"route_summary: Extracted indexFold from internal/runtime/agent/runner_delegated_synthesis.go lines 1333-1345",
+				"",
+				"1333:func indexFold(value string, needle string) int {",
+				"1339:\t\tif strings.EqualFold(value[i:i+len(needle)], needle) {",
+				"1345:}",
+			}, "\n"),
+		},
+	}
 
 	symbols := exactEvidenceSymbolSet(results)
 
-	for _, want := range []string{"Model.renderMessages", "SetContent"} {
+	for _, want := range []string{"Model.renderMessages", "SetContent", "indexFold", "strings.EqualFold"} {
 		key := normalizedAnswerSymbol(want)
 		if _, ok := symbols[key]; !ok {
 			t.Fatalf("exact evidence symbol set missing %q (%q): %#v", want, key, symbols)
 		}
+	}
+
+	if key := normalizedAnswerSymbol("0xb1"); key != "" {
+		t.Fatalf("numeric literals must not be treated as exact source symbols, got %q", key)
 	}
 }
 
@@ -781,14 +801,52 @@ func TestDecorateFinalAnswerSanitizesReadOnlyQuestionBlocker(t *testing.T) {
 		t.Fatalf("user-facing decorator leaked internal blocker protocol:\n%s", got)
 	}
 
-	for _, want := range []string{"not have enough supported evidence", "internal/surfaces/tui/app/rendering.go"} {
+	for _, want := range []string{"final answer was rejected", "does not establish the user's objective", "internal/surfaces/tui/app/rendering.go"} {
 		if !strings.Contains(strings.ToLower(got), strings.ToLower(want)) {
 			t.Fatalf("decorated blocker missing %q:\n%s", want, got)
 		}
 	}
 
-	for _, forbidden := range []string{"<<question>>", "completion gate", "missing completion evidence", "answer with the exact", "required next evidence"} {
+	for _, forbidden := range []string{"<<question>>", "completion gate", "missing completion evidence", "answer with the exact", "required next evidence", "not enough supported evidence"} {
 		if strings.Contains(strings.ToLower(got), forbidden) {
+			t.Fatalf("decorated blocker leaked internal phrase %q:\n%s", forbidden, got)
+		}
+	}
+}
+
+func TestDecorateFinalAnswerPreservesCompletionGateUnsupportedDetail(t *testing.T) {
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer: "<<QUESTION>>: Completion gate rejected the final answer repeatedly before the required completion evidence was produced.\n\n" +
+			"Missing completion evidence: [gate retry 3/3] the answer names additional implementation detail `indexFold`, `strings.EqualFold` without an exact inspected probe or explicit uncertainty. Either anchor that detail with one exact read, or qualify it as unverified.\n\n" +
+			"Evidence paths observed before rejection:\n- internal/runtime/agent/runner_delegated_synthesis.go",
+		StopReason: "completion_gate_repeated_rejection",
+		Brief: workerruntime.WorkerRuntimeBrief{
+			Contract:          string(workerruntime.ContractReviewFindings),
+			TaskFamily:        string(workerruntime.TaskFamilySecurityReview),
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+			Objective:         "Review normalizeDelegatedDiscoveryEvidencePath for Unicode panics.",
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read internal/runtime/agent/runner_delegated_synthesis.go lines 1-120",
+			Output:  "1:package agent\n2:func normalizeDelegatedDiscoveryEvidencePath(path string) string { return path }\n",
+		}},
+		UserFacing: true,
+	})
+
+	for _, want := range []string{
+		"final answer was rejected",
+		"`indexFold`, `strings.EqualFold`",
+		"internal/runtime/agent/runner_delegated_synthesis.go",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("decorated blocker missing %q:\n%s", want, got)
+		}
+	}
+
+	for _, forbidden := range []string{"<<QUESTION>>", "Completion gate", "Missing completion evidence", "Either anchor", "not enough supported evidence"} {
+		if strings.Contains(got, forbidden) {
 			t.Fatalf("decorated blocker leaked internal phrase %q:\n%s", forbidden, got)
 		}
 	}
@@ -1651,7 +1709,7 @@ func TestPresentableNoToolsFallbackSkipsSourceBodyAnswerForConversation(t *testi
 	}
 }
 
-func TestDeterministicNoToolsAnswerSkipsSourceBodyForReadOnlyConversation(t *testing.T) {
+func TestDeterministicNoToolsAnswerDisabledForReadOnlyConversation(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",
 		PermissionProfile: "read_only_workspace",
@@ -1661,22 +1719,12 @@ func TestDeterministicNoToolsAnswerSkipsSourceBodyForReadOnlyConversation(t *tes
 	}
 	got, ok := deterministicNoToolsAnswer("main", brief, results)
 
-	if !ok {
-		t.Fatal("expected deterministic answer")
-	}
-
-	for _, forbidden := range []string{"No files were changed", "func ShortLabel"} {
-		if strings.Contains(got, forbidden) {
-			t.Errorf("deterministic answer leaked %q into conversation answer: %q", forbidden, got)
-		}
-	}
-
-	if !strings.Contains(got, "internal/labels/labels.go") {
-		t.Errorf("fallback should retain inspected path context: %q", got)
+	if ok {
+		t.Fatalf("read-only conversation evidence must not produce deterministic host answer: %q", got)
 	}
 }
 
-func TestDeterministicNoToolsAnswerUsesSourceBodyWhenObjectiveIsConcrete(t *testing.T) {
+func TestDeterministicNoToolsAnswerDoesNotUseReadOnlySourceBodyWhenObjectiveIsConcrete(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",
 		Contract:          "direct_answer",
@@ -1696,22 +1744,12 @@ func TestDeterministicNoToolsAnswerUsesSourceBodyWhenObjectiveIsConcrete(t *test
 	}}
 
 	got, ok := deterministicNoToolsAnswer("main", brief, results)
-	if !ok {
-		t.Fatal("expected deterministic source-body answer")
-	}
-
-	for _, want := range []string{"debug log redacted mode", "internal/evidence/transcript/debuglog.go", "DebugLogModeRedacted", "DebugLogModeFull"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("deterministic answer missing %q:\n%s", want, got)
-		}
-	}
-
-	if strings.HasPrefix(got, "<<QUESTION>>") || strings.Contains(got, "did not retain a concrete user-facing finding") {
-		t.Fatalf("concrete objective and source body should not collapse to blocker:\n%s", got)
+	if ok {
+		t.Fatalf("concrete read-only source evidence must stay model-owned, got host answer:\n%s", got)
 	}
 }
 
-func TestDeterministicNoToolsAnswerCombinesReadFileFactsForRedactedMetadata(t *testing.T) {
+func TestDeterministicNoToolsAnswerDoesNotCombineReadOnlyReadFileFacts(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",
 		Contract:          "direct_answer",
@@ -1747,13 +1785,7 @@ func TestDeterministicNoToolsAnswerCombinesReadFileFactsForRedactedMetadata(t *t
 	}}
 
 	got, ok := deterministicNoToolsAnswer("main", brief, results)
-	if !ok {
-		t.Fatal("expected deterministic source-body answer")
-	}
-
-	for _, want := range []string{"redacted", "debug log", "internal/evidence/transcript/debuglog.go", "secret", "path", "metadata"} {
-		if !strings.Contains(strings.ToLower(got), strings.ToLower(want)) {
-			t.Fatalf("deterministic answer missing %q:\n%s", want, got)
-		}
+	if ok {
+		t.Fatalf("read-only source facts must not be combined into a host answer:\n%s", got)
 	}
 }

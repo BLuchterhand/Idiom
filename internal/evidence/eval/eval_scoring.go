@@ -861,7 +861,6 @@ func toolResultCountsAsRejectedAttempt(data map[string]any) bool {
 	return strings.Contains(summary, "rejected") ||
 		strings.Contains(summary, "retry blocked") ||
 		strings.Contains(summary, "preempted") ||
-		(strings.Contains(summary, "follow-up missing named gap") && strings.Contains(errText, "answer readiness has already been reached")) ||
 		strings.Contains(summary, "not available in current runtime contract") ||
 		strings.Contains(errText, "not in the current allowed tool surface")
 }

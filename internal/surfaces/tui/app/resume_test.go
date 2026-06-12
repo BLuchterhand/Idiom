@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
@@ -225,5 +227,37 @@ func TestResumeSessionRestoresHistoryPanelGovernance(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("resumed history missing %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestResumeSessionRestoresSubmittedInputHistory(t *testing.T) {
+	root := t.TempDir()
+	logDir := filepath.Join(root, "logs", "conversations")
+	writeSessionLog(t, logDir, "resumed.jsonl", []string{
+		`{"type":"input_submission","content":"/plan-execute fix the up arrow history"}`,
+		`{"type":"message","role":"user","content":"fix the up arrow history"}`,
+		`{"type":"message","role":"assistant","content":"done"}`,
+	})
+
+	m := snapshotModel(t, root)
+	m.cfg = config.Config{Chat: config.Chat{DebugLogDir: logDir, DebugLogMode: "redacted"}}
+	m.events = make(chan tea.Msg, 4)
+	m.input = textarea.New()
+
+	if err := m.ResumeSession("resumed"); err != nil {
+		t.Fatalf("ResumeSession: %v", err)
+	}
+
+	want := "/plan-execute fix the up arrow history"
+	if got := strings.Join(m.inputHistory, "|"); got != want {
+		t.Fatalf("input history = %q, want %q", got, want)
+	}
+
+	if _, handled := m.handleKeyPress(tea.KeyMsg{Type: tea.KeyUp}); !handled {
+		t.Fatal("up arrow should navigate restored input history")
+	}
+
+	if got := m.input.Value(); got != want {
+		t.Fatalf("up arrow recalled %q, want %q", got, want)
 	}
 }

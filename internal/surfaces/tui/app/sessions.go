@@ -174,8 +174,14 @@ func (m *Model) LoadHistoryFromSession(path string) error {
 		return fmt.Errorf("session log %q contained no user/assistant messages", path)
 	}
 
+	inputHistory, err := inputHistoryFromSessionLog(path, maxInputHistoryEntries)
+	if err != nil {
+		return err
+	}
+
 	m.messages = append(m.messages, replay.messages...)
-	m.loadInputHistoryFromSessionMessages(replay.messages)
+	m.inputHistory = inputHistory
+	m.resetInputHistoryNavigation()
 
 	m.history.entries = append(m.history.entries, replay.history...)
 	if len(m.history.entries) > 0 {

@@ -326,7 +326,7 @@ func closureGuidanceScope(constraints []string, statusCombined string) string {
 	):
 		return "child_packet_available"
 	case containsAny(statusCombined,
-		"answer readiness has already been reached",
+		"answer_readiness_reached",
 		"post-readiness follow-up missing named gap",
 		"answer_readiness_reached",
 	):
@@ -391,16 +391,16 @@ func scopeSpecificClosureLabel(scope string) string {
 func closureGuidanceNext(subject string) []string {
 	if strings.TrimSpace(subject) == "child packet" {
 		return []string{
-			"answer now from the child packet evidence",
-			"if one exact missing claim remains, choose one exact packet-named path, symbol, discovered handle, or narrow range that would resolve it",
-			"state what would be materially wrong or missing if you answered now",
+			"final answer from the child packet evidence is available",
+			"if one exact missing claim remains, choose one exact named path, symbol, discovered handle, or narrow range that would resolve it",
+			"<<QUESTION>> with the exact blocker if neither answer nor bounded probe is possible",
 		}
 	}
 
 	return []string{
-		"answer now from the evidence already gathered",
+		"final answer from the evidence already gathered is available",
 		"if one exact missing claim remains, choose one exact symbol, discovered handle, or narrow range that would resolve it",
-		"state what would be materially wrong or missing if you answered now",
+		"<<QUESTION>> with the exact blocker if neither answer nor bounded probe is possible",
 	}
 }
 

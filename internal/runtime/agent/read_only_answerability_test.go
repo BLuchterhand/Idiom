@@ -1412,22 +1412,26 @@ func TestFinalAnswerAcceptanceRejectsAliasInsufficientEvidenceWithoutSourceBody(
 	}
 }
 
-func TestFinalAnswerAcceptanceAllowsAliasInsufficientEvidenceAfterSourceBody(t *testing.T) {
-	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+func TestFinalAnswerAcceptanceRejectsAliasInsufficientEvidenceWhenSourceBodyIsAnswerable(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("What is the role of evidence in the harness?")
 
 	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
 
 	results := []workspace.ToolResult{{
 		Tool:    "read_file",
-		Summary: "Read internal/surfaces/tui/app/rendering.go lines 1-9",
-		Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		Summary: "Read internal/runtime/agent/source_evidence_state.go lines 1-9",
+		Output:  "1:package agent\n2:\n3:// Evidence records inspected paths and source-body support for harness readiness.\n4:type SourceEvidenceState struct { SourceBodyPaths []string }\n5:func evidenceReadiness() {}\n",
 	}}
-	answer := "I cannot determine from the available evidence why the TUI chat input first wraps to a newline."
+	answer := "I cannot determine from the available evidence what role evidence has in the harness."
 	runner := &Runner{RuntimeBrief: brief}
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "" || reason != "" {
-		t.Fatalf("source-backed insufficient-evidence alias answer blocked: kind=%q reason=%q", kind, reason)
+	if kind != "answer_objective_unmet" {
+		t.Fatalf("answerable source-backed insufficient-evidence answer got (%q, %q), want answer_objective_unmet", kind, reason)
+	}
+
+	if !strings.Contains(reason, "evidence is answerable") {
+		t.Fatalf("expected answerable evidence reason, got %q", reason)
 	}
 }
 

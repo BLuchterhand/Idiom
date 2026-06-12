@@ -247,12 +247,12 @@ func TestConversationSamePathFixationNudgesOnVariedRanges(t *testing.T) {
 		t.Fatalf("expected one same_path_fixation_nudge, got %d; events=%s", got, formatRunEventsForTest(events))
 	}
 
-	if got := countEventsByRole(events, "same_path_fixation_tool_hidden"); got != 1 {
-		t.Fatalf("expected one same_path_fixation_tool_hidden, got %d; events=%s", got, formatRunEventsForTest(events))
+	if got := countEventsByRole(events, "same_path_fixation_tool_hidden"); got != 0 {
+		t.Fatalf("same-path varied ranges must not hide read_file, got %d hidden events; events=%s", got, formatRunEventsForTest(events))
 	}
 
-	if got := countEventsByRole(events, "tool_hidden"); got != 1 {
-		t.Fatalf("expected read_file to be hidden after ignored same-path nudge, got %d; events=%s", got, formatRunEventsForTest(events))
+	if got := countEventsByRole(events, "tool_hidden"); got != 0 {
+		t.Fatalf("same-path varied ranges must not hide tools, got %d; events=%s", got, formatRunEventsForTest(events))
 	}
 
 	if got := countEventsByRole(events, "doom_loop_guard"); got != 0 {

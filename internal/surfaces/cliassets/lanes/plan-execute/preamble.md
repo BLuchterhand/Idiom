@@ -117,7 +117,10 @@ descriptions, or invented symbols in `old_text`, `new_text`, or `content`.
 generated blocks. Line-range `content` is the complete replacement for the
 inclusive range and may include unchanged anchor lines plus inserted content;
 `old_text` must be exact current text copied from source-body evidence;
-whole-file/new-file `new_text` is the complete file body. The executor phase
+whole-file/new-file `new_text` is the complete file body. After replacement,
+the resulting file must be syntactically valid: do not leave control flow
+statements (`if`, `for`, `switch`, `return`) at package scope outside any
+function or method body. The executor phase
 will dispatch them in the order you list. Builds/tests listed
 in Acceptance are planner-owned and idiom enforces that contract; do not run
 build, test, shell, git, or source-sanity commands from the brief. Do not

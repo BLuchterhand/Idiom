@@ -18,41 +18,6 @@ import (
 	"idiom/internal/runtime/workerruntime"
 )
 
-func TestReadOnlyNoMatchCloseoutRequiresSourceBodyEvidence(t *testing.T) {
-	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-		Contract:          "architecture_assessment",
-		TaskFamily:        "architecture",
-		PermissionProfile: "read_only_workspace",
-		Objective:         "Explain how this harness uses subagents.",
-	}}
-	results := []workspace.ToolResult{
-		{
-			Tool:    "discovery_query",
-			Summary: "Ran architecture_boundary discovery query",
-			Output:  "internal/runtime/agent/runner.go:574: result := r.runChildTask(ctx, req, opts)\ninternal/runtime/agent/runner_child_tasks.go:16: func (r *Runner) runChildTask(...)",
-		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed file_outline via go_file_outline",
-			Output:  "capability: file_outline\nroute_summary: Outlined internal/runtime/agent/runner_child_tasks.go",
-		},
-		{
-			Tool:    "code_navigate",
-			Summary: "No generic code navigation matches for read_symbol",
-			Output:  "capability: read_symbol\nroute_summary: no matches",
-		},
-	}
-
-	if runner.readOnlyNoMatchCloseoutApplies(
-		workspace.ToolRequest{Tool: "code_navigate", Capability: "read_symbol", Pattern: "Runner.runChildTask"},
-		results[2],
-		results,
-	) {
-
-		t.Fatal("discovery and outline evidence without source body must not trigger no-match closeout")
-	}
-}
-
 func TestPathlessReadSymbolAfterOutlineInheritsOutlinePath(t *testing.T) {
 	results := []workspace.ToolResult{{
 		Tool:    "code_navigate",
@@ -521,6 +486,7 @@ func TestRunnerRequiresChildTaskForBroadEvidenceReads(t *testing.T) {
 		`{"tool":"task","agent":"explorer","mode":"read_only","prompt":"Inspect internal/runtime/agent/runner.go for performance evidence and report paths."}`,
 		`{"tool":"read_file","path":"internal/runtime/agent/runner.go","start_line":1,"end_line":3}`,
 		"No performance risk stands out in internal/runtime/agent/runner.go from the delegated evidence. Confidence: medium.",
+		"No performance risk stands out in internal/runtime/agent/runner.go from the delegated evidence. Confidence: medium.",
 	}
 	requests := 0
 
@@ -619,6 +585,7 @@ func TestRunnerReturnsChildPacketBeforeBroadRediscovery(t *testing.T) {
 		`{"tool":"task","agent":"explorer","mode":"read_only","prompt":"Inspect performance evidence in internal/runtime/agent/runner.go and report paths."}`,
 		`{"tool":"read_file","path":"internal/runtime/agent/runner.go","start_line":1,"end_line":3}`,
 		"No performance risk stands out in internal/runtime/agent/runner.go from the delegated evidence. Confidence: medium.",
+		"No performance risk stands out in internal/runtime/agent/runner.go from the delegated evidence. Confidence: medium.",
 	}
 	requests := 0
 
@@ -704,6 +671,7 @@ func TestRunnerReturnsFirstReadOnlyChildPacketWithoutSecondDelegation(t *testing
 		`{"tool":"task","agent":"explorer","mode":"read_only","prompt":"Inspect internal/runtime/agent/runner.go and summarize."}`,
 		`{"tool":"read_file","path":"internal/runtime/agent/runner.go","start_line":1,"end_line":3}`,
 		"internal/runtime/agent/runner.go is the inspected path and the delegated child packet did not surface a deeper issue. Confidence: medium.",
+		"internal/runtime/agent/runner.go is the inspected path and the delegated child packet did not surface a deeper issue. Confidence: medium.",
 	}
 	requests := 0
 
@@ -774,7 +742,7 @@ func TestRunnerReturnsFirstReadOnlyChildPacketWithoutSecondDelegation(t *testing
 	}
 }
 
-func TestRunnerDirectAnswerReturnsChildPacketWithoutParentFollowups(t *testing.T) {
+func TestRunnerDirectAnswerReturnsChildPacketForParentSynthesis(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "capabilities", "workspace"), 0o755); err != nil {
 		t.Fatalf("mkdir workspace: %v", err)
@@ -789,6 +757,7 @@ func TestRunnerDirectAnswerReturnsChildPacketWithoutParentFollowups(t *testing.T
 		`{"tool":"search_files","pattern":"*tool_manifest*"}`,
 		`{"tool":"read_file","path":"internal/capabilities/workspace/tool_manifest.go","start_line":1,"end_line":20}`,
 		"Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- Read internal/capabilities/workspace/tool_manifest.go lines 1-20\n- Found task tool manifest entries for delegated child work\n",
+		"Subagents are wired through task tool manifest entries for delegated child work in internal/capabilities/workspace/tool_manifest.go. Confidence: medium.",
 	}
 	requests := 0
 
@@ -875,12 +844,12 @@ func TestRunnerDirectAnswerReturnsChildPacketWithoutParentFollowups(t *testing.T
 		}
 	}
 
-	if requests < 3 || requests > len(replies) {
-		t.Fatalf("expected host to close from child source evidence without parent followups, used %d/%d replies", requests, len(replies))
+	if requests < 4 || requests > len(replies) {
+		t.Fatalf("expected parent model synthesis from child source evidence, used %d/%d replies", requests, len(replies))
 	}
 }
 
-func TestRunnerArchitectureReturnsChildPacketWithoutParentFollowups(t *testing.T) {
+func TestRunnerArchitectureReturnsChildPacketForParentSynthesis(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "runtime", "agent"), 0o755); err != nil {
 		t.Fatalf("mkdir agent dir: %v", err)
@@ -974,8 +943,8 @@ func TestRunnerArchitectureReturnsChildPacketWithoutParentFollowups(t *testing.T
 		}
 	}
 
-	if requests < 3 || requests > len(replies) {
-		t.Fatalf("expected host to close from delegated child source evidence without parent followups, used %d/%d replies", requests, len(replies))
+	if requests < 4 || requests > len(replies) {
+		t.Fatalf("expected parent model synthesis from delegated child source evidence, used %d/%d replies", requests, len(replies))
 	}
 }
 
@@ -1058,12 +1027,12 @@ func TestRunnerChildDiscoveryPacketLetsChildDecideFollowupAfterDiscovery(t *test
 
 	for _, want := range []string{"subagents", "internal/runtime/agent/runner_child_tasks.go", "internal/runtime/agent/runner.go"} {
 		if !strings.Contains(answer, want) {
-			t.Fatalf("expected host-owned read-only closeout to contain %q, got %q", want, answer)
+			t.Fatalf("expected model-directed read-only answer to contain %q, got %q", want, answer)
 		}
 	}
 
 	if strings.HasPrefix(answer, "<<QUESTION>>") {
-		t.Fatalf("expected host-owned read-only closeout answer, got blocker %q", answer)
+		t.Fatalf("expected model-directed read-only answer, got blocker %q", answer)
 	}
 
 	if strings.Contains(answer, "task tool") && !strings.Contains(answer, "internal/runtime/agent/runner.go") {
@@ -1077,6 +1046,10 @@ func TestRunnerChildDiscoveryPacketLetsChildDecideFollowupAfterDiscovery(t *test
 	}
 
 	_ = roles
+
+	if requests < 4 {
+		t.Fatalf("expected parent to honor model follow-up after child packet, used only %d request(s)", requests)
+	}
 
 	if requests > len(replies) {
 		t.Fatalf("parent used too many replies, used %d/%d", requests, len(replies))

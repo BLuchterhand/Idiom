@@ -23,6 +23,12 @@ func (m *Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Cmd, bool) {
 }
 
 func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
+	if m.inputHistoryIndex >= 0 && inputHistoryNavigationKey(msg) {
+		if cmd, handled := m.handleInputHistoryNavigation(msg); handled {
+			return cmd, true
+		}
+	}
+
 	// Slash-command suggestion navigation takes priority when the popup is visible.
 	if m.slashSuggestions.visible {
 		switch msg.Type {
@@ -238,7 +244,7 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 }
 
 func (m *Model) handleInputHistoryNavigation(msg tea.KeyMsg) (tea.Cmd, bool) {
-	if m == nil || m.streaming || m.slashSuggestions.visible || m.history.focused {
+	if m == nil || (m.slashSuggestions.visible && m.inputHistoryIndex < 0) || (m.history.panelOpen && m.history.focused) {
 		return nil, false
 	}
 
@@ -255,8 +261,7 @@ func (m *Model) handleInputHistoryNavigation(msg tea.KeyMsg) (tea.Cmd, bool) {
 			m.inputHistoryIndex--
 		}
 
-		m.input.SetValue(m.inputHistory[m.inputHistoryIndex])
-		m.input.CursorEnd()
+		m.setInputHistoryNavigationValue(m.inputHistory[m.inputHistoryIndex])
 
 		return m.waitForEventCmd(), true
 	case tea.KeyDown:
@@ -267,18 +272,31 @@ func (m *Model) handleInputHistoryNavigation(msg tea.KeyMsg) (tea.Cmd, bool) {
 		m.inputHistoryIndex++
 		if m.inputHistoryIndex >= len(m.inputHistory) {
 			m.inputHistoryIndex = -1
-			m.input.SetValue(m.inputHistoryDraft)
+			m.setInputHistoryNavigationValue(m.inputHistoryDraft)
 
 			m.inputHistoryDraft = ""
 		} else {
-			m.input.SetValue(m.inputHistory[m.inputHistoryIndex])
+			m.setInputHistoryNavigationValue(m.inputHistory[m.inputHistoryIndex])
 		}
-
-		m.input.CursorEnd()
 
 		return m.waitForEventCmd(), true
 	default:
 		return nil, false
+	}
+}
+
+func inputHistoryNavigationKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyUp || msg.Type == tea.KeyDown
+}
+
+func (m *Model) setInputHistoryNavigationValue(value string) {
+	m.input.SetValue(value)
+	m.input.CursorEnd()
+	m.updateSlashSuggestions()
+
+	oldInputHeight := m.input.Height()
+	if m.ready && m.syncInputHeight() != oldInputHeight {
+		m.resize()
 	}
 }
 

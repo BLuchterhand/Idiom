@@ -97,6 +97,14 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 		return reject("non_answer_prose", "answerable_evidence_reported_as_insufficient")
 	}
 
+	if r != nil &&
+		workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile) &&
+		workerruntime.RuntimeContractIsArchitectureOrReview(r.RuntimeBrief.Contract) &&
+		unsupportedReadOnlyCloseoutAnswer(answer) {
+
+		return reject("non_answer_prose", "insufficient_evidence_answer")
+	}
+
 	if looksLikeNonAnswerProse(answer) && !finalAnswerAcceptanceAllowsSourceInventory(acceptance, answer, r, results) {
 		return reject("non_answer_prose", "non_answer_prose")
 	}

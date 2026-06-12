@@ -199,7 +199,7 @@ func TestReadOnlyEvidenceRejectionDoesNotAskToRereadAlreadyInspectedNamedPath(t 
 	}
 }
 
-func TestHostOwnedReadOnlyCloseoutSynthesizesAnswerableArchitectureChildPacket(t *testing.T) {
+func TestHostOwnedReadOnlyCloseoutDoesNotSynthesizeAnswerableArchitectureChildPacket(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "architecture_assessment",
@@ -216,7 +216,7 @@ func TestHostOwnedReadOnlyCloseoutSynthesizesAnswerableArchitectureChildPacket(t
 			InspectedPaths:  []string{"internal/runtime/agent/runner.go", "internal/runtime/agent/runner_child_tasks.go"},
 			Findings: []ReadOnlyEvidenceFinding{{
 				Path: "internal/runtime/agent/runner_child_tasks.go",
-				Text: "The subagent flow uses the task tool: the parent runner invokes child task execution and receives the result.",
+				Text: "The harness uses subagents through the task tool: the parent runner invokes child task execution and receives the child evidence packet.",
 			}},
 			Confidence: "high",
 		}),
@@ -228,14 +228,8 @@ func TestHostOwnedReadOnlyCloseoutSynthesizesAnswerableArchitectureChildPacket(t
 	}
 	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
 
-	if !ok {
-		t.Fatal("expected host-owned architecture closeout from answerable child packet")
-	}
-
-	for _, want := range []string{"internal/runtime/agent/runner.go", "internal/runtime/agent/runner_child_tasks.go"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("architecture child-packet closeout missing %q:\n%s", want, answer)
-		}
+	if ok {
+		t.Fatalf("answerable child packet must remain model-owned, got host answer:\n%s", answer)
 	}
 }
 
@@ -256,31 +250,19 @@ func TestHostOwnedReadOnlyCloseoutUsesDebugLogArchitectureFallbackFromChildPacke
 			"- `internal/runtime/agent/read_only_closure.go`",
 			"",
 			"Key findings:",
-			"- `internal/evidence/transcript/debuglog.go` owns DebugLogModeRedacted and records secret-safe redacted log metadata instead of raw prompt content.",
+			"- `internal/evidence/transcript/debuglog.go` owns debug log redacted mode and records secret-safe redacted log metadata instead of raw prompt content.",
 			"- The implementation keeps path metadata sanitized and uses digest summaries for large raw values.",
 			"Confidence: high",
 		}, "\n"),
 	}}
 	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
 
-	if !ok {
-		t.Fatal("expected debug-log architecture fallback from child packet")
-	}
-
-	for _, want := range []string{"redacted", "debug log", "internal/evidence/transcript/debuglog.go", "secret", "path", "metadata"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("debug-log fallback answer missing %q:\n%s", want, answer)
-		}
-	}
-
-	for _, forbidden := range []string{"690:", "Source-body evidence paths:", "Key findings:", "... This is grounded"} {
-		if strings.Contains(answer, forbidden) {
-			t.Fatalf("debug-log fallback leaked packet/source fragment %q:\n%s", forbidden, answer)
-		}
+	if ok {
+		t.Fatalf("debug-log child packet must remain model-owned, got host answer:\n%s", answer)
 	}
 }
 
-func TestHostOwnedReadOnlyCloseoutUsesDiscoveryToolUsefulnessFallbackFromChildPacket(t *testing.T) {
+func TestHostOwnedReadOnlyCloseoutDoesNotSynthesizeDiscoveryToolRecommendationFromChildPacket(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "architecture_assessment",
@@ -298,27 +280,15 @@ func TestHostOwnedReadOnlyCloseoutUsesDiscoveryToolUsefulnessFallbackFromChildPa
 			"- `internal/capabilities/workspace/discovery_profile.go`",
 			"",
 			"Key findings:",
-			"- `internal/capabilities/workspace/discovery_query.go` should keep returning source-oriented discovery evidence.",
-			"- The answer closeout path needs to turn profile/source evidence into final answers instead of tool inventories.",
+			"- `internal/capabilities/workspace/discovery_query.go` should increase discovery tool usefulness by returning source-oriented discovery evidence.",
+			"- Discovery tools can increase overall usefulness when the closeout path turns profile/source evidence into final answers instead of tool inventories.",
 			"Confidence: high",
 		}, "\n"),
 	}}
 	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
 
-	if !ok {
-		t.Fatal("expected discovery-tool usefulness fallback from child packet")
-	}
-
-	for _, want := range []string{"tool", "internal/runtime/agent/answer_composer.go", "internal/runtime/agent/runner.go", "internal/capabilities/workspace/discovery_query.go"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("discovery usefulness fallback answer missing %q:\n%s", want, answer)
-		}
-	}
-
-	for _, forbidden := range []string{"Discovery packet:", "Relevant source hits:", "Evidence used:", "Confidence:"} {
-		if strings.Contains(answer, forbidden) {
-			t.Fatalf("discovery usefulness fallback leaked packet section %q:\n%s", forbidden, answer)
-		}
+	if ok {
+		t.Fatalf("recommendation-oriented architecture packet should remain model-synthesis evidence, not host-authored answer:\n%s", answer)
 	}
 }
 
@@ -864,6 +834,33 @@ func TestArchitectureFinalAnswerAcceptanceRejectsCompactCallLineFragments(t *tes
 	}
 }
 
+func TestArchitectureFinalAnswerAcceptanceRejectsLeadingEllipsisLineFragments(t *testing.T) {
+	answer := "... 4:\treceipts   []EvidenceReceipt. 5:\tnormalizer TargetNormalizer. f3 internal/evidence/answergrounding/evidence_ledger.go. This is grounded in `internal/evidence/answergrounding/evidence_ledger.go`, `internal/capabilities/workspace/harness_audit.go`."
+	if !looksLikeLineOrientedSourceSnippetAnswer(answer) {
+		t.Fatalf("expected leading-ellipsis source fragments to be detected:\n%s", answer)
+	}
+
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "architecture_assessment",
+			TaskFamily:        "architecture",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"task", "read_file"},
+			Objective:         "What is the role of evidence in this harness?",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/evidence/answergrounding/evidence_ledger.go lines 1-20",
+		Output:  "1:package answergrounding\n4:\treceipts   []EvidenceReceipt\n5:\tnormalizer TargetNormalizer\n",
+	}}
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+
+	if acceptance.Decision != finalAnswerAcceptanceRejected || acceptance.BlockerKind != "non_answer_prose" {
+		t.Fatalf("leading-ellipsis source fragments should be rejected as non-answer prose, got %#v", acceptance)
+	}
+}
+
 func TestArchitectureFinalAnswerAcceptanceRejectsGroundedPacketSourceInventory(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -1005,6 +1002,42 @@ func TestArchitectureFinalAnswerAcceptanceRejectsInsufficientEvidenceAfterAnswer
 
 	if acceptance.Decision != finalAnswerAcceptanceRejected || acceptance.Reason != "answerable_evidence_reported_as_insufficient" {
 		t.Fatalf("answerable read should not accept insufficient-evidence prose, got %#v", acceptance)
+	}
+}
+
+func TestArchitectureFinalAnswerAcceptanceRejectsUnsupportedCloseoutWithoutAnswerability(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "architecture_assessment",
+			TaskFamily:        "architecture",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"task", "context_pack", "context_query", "read_file"},
+			Objective:         "What is the role of evidence in this harness? Where is it from, how is it used?",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "task",
+			Summary: "Child task completed",
+			Output: strings.Join([]string{
+				"Partial findings from this turn:",
+				"Inspected evidence:",
+				"- `internal/runtime/localops/quickstart.go`",
+			}, "\n"),
+		},
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote .idiom/comprehension/views/pack.json with candidate files",
+			Output:  `{"candidate_files":[{"path":"internal/contracts/plan/source_satisfied.go"}]}`,
+		},
+	}
+	acceptance := runner.evaluateFinalAnswerAcceptance(
+		"I could not produce a supported final answer from this run: the run stopped before it retained enough evidence, so I do not have enough supported evidence to answer that fully. The current read-only answer has relevant evidence in `internal/runtime/agent/git_history_requirement.go`, but no concrete user-facing finding was retained.",
+		results,
+	)
+
+	if acceptance.Decision != finalAnswerAcceptanceRejected || acceptance.Reason != "insufficient_evidence_answer" {
+		t.Fatalf("unsupported architecture closeout must not be accepted as ready, got %#v", acceptance)
 	}
 }
 

@@ -1013,6 +1013,10 @@ func (m *Model) setHistoryPanelOpen(open bool) {
 	defer m.logUISlowPath("ui.toggle_panel", start, fmt.Sprintf("open=%t tab=%d", open, m.panelTab))
 
 	if m.history.panelOpen == open && m.ready {
+		if !open {
+			m.history.focused = false
+		}
+
 		if open {
 			m.rerenderActivePanel()
 		}

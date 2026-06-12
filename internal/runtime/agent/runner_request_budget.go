@@ -201,23 +201,14 @@ func (s *runnerRequestBudgetState) samePathFixationDecision(req workspace.ToolRe
 
 	path := cleanToolRequestPathDisplay(req.Path)
 	if s.fingerprint.samePathNudged[fp] {
-		return runnerRequestBudgetDecision{
-			Handled:  true,
-			HideTool: strings.TrimSpace(req.Tool),
-			Nudge: fmt.Sprintf(
-				"You asked to keep reading %s after the same-path warning. `%s` is hidden for the rest of this turn. Use structured navigation for a named symbol/body, switch to a different evidence source through the remaining tools, or answer from the evidence already gathered.",
-				path,
-				req.Tool,
-			),
-			EventRole: "same_path_fixation_tool_hidden",
-		}
+		return runnerRequestBudgetDecision{}
 	}
 
 	s.fingerprint.samePathNudged[fp] = true
 
-	action := "switch to a materially different evidence path, use one structured source-body probe for a named missing claim, or answer with the evidence already gathered"
+	action := "switch to a materially different evidence path, use one structured source-body probe for a named missing claim, or provide the final answer if the gathered evidence supports it"
 	if evidenceAvailable {
-		action = "answer from the evidence already gathered, or use one structured source-body probe only if you can name the exact missing claim it will resolve"
+		action = "a final answer is available if the gathered evidence supports it; otherwise use one structured source-body probe only if you can name the exact missing claim it will resolve"
 	}
 
 	return runnerRequestBudgetDecision{
@@ -638,14 +629,6 @@ func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.
 	}
 
 	mutationParent := runnerExplorationParentIsMutation(r)
-	if s.postChildActive() && workspace.IsBroadInspectionRequest(req) && !mutationParent {
-		return runnerRequestBudgetDecision{
-			Handled:          true,
-			RejectSummary:    "Post-child broad inspection blocked",
-			RejectError:      "the read_only child task returned the broad evidence packet. Continue from that packet with one targeted read or search for a named gap, make the required change, or answer with the current evidence.",
-			RejectStopReason: "post_child_broad_inspection_blocked",
-		}
-	}
 
 	if s.readOnlyChildTaskSatisfied && strings.TrimSpace(req.Tool) == "task" && !isWriteChildMode(req.Mode) {
 		return runnerRequestBudgetDecision{
@@ -756,15 +739,6 @@ func (s *runnerRequestBudgetState) noteReadOnlyChildPacket(paths []string) {
 }
 
 func (s *runnerRequestBudgetState) postChildGuidanceDecision(req workspace.ToolRequest, mutationParent bool) runnerRequestBudgetDecision {
-	if !mutationParent && postChildUnrelatedDiscovery(req, s.postChild.evidencePaths) {
-		return runnerRequestBudgetDecision{
-			Handled:          true,
-			RejectSummary:    "Post-child unrelated discovery blocked",
-			RejectError:      fmt.Sprintf("the delegated read_only child already named the relevant evidence paths (%s). Answer now, or inspect one of those paths directly for a named gap.", summarizePostChildEvidencePaths(s.postChild.evidencePaths, 3)),
-			RejectStopReason: "post_child_unrelated_discovery_blocked",
-		}
-	}
-
 	family := postChildRequestFamilyKey(req)
 	if family == "" {
 		return runnerRequestBudgetDecision{}
@@ -792,43 +766,6 @@ func (s *runnerRequestBudgetState) postChildGuidanceDecision(req workspace.ToolR
 	}
 
 	return runnerRequestBudgetDecision{}
-}
-
-func postChildUnrelatedDiscovery(req workspace.ToolRequest, evidencePaths []string) bool {
-	switch strings.TrimSpace(req.Tool) {
-	case "search_files", "search_content", "rg", "grep":
-		return len(evidencePaths) > 0 && !requestAnchoredToEvidencePaths(req, evidencePaths)
-	default:
-		return false
-	}
-}
-
-func requestAnchoredToEvidencePaths(req workspace.ToolRequest, evidencePaths []string) bool {
-	reqPath := normalizePostChildPath(req.Path)
-	queryText := strings.ToLower(strings.Join([]string{
-		req.Path,
-		req.Pattern,
-		req.Query,
-		req.Command,
-	}, "\n"))
-
-	for _, evidencePath := range evidencePaths {
-		if evidencePath == "" {
-			continue
-		}
-
-		if reqPath != "" && postChildPathsOverlap(reqPath, evidencePath) {
-			return true
-		}
-
-		for _, token := range evidenceAnchorTokens(evidencePath) {
-			if token != "" && strings.Contains(queryText, token) {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 func postChildRequestFamilyKey(req workspace.ToolRequest) string {
@@ -925,43 +862,4 @@ func postChildPathsOverlap(reqPath string, evidencePath string) bool {
 	}
 
 	return filepath.ToSlash(filepath.Dir(evidencePath)) == reqPath
-}
-
-func evidenceAnchorTokens(path string) []string {
-	seen := make(map[string]struct{})
-	add := func(tokens []string, token string) []string {
-		token = strings.ToLower(strings.TrimSpace(token))
-		if len(token) < 4 {
-			return tokens
-		}
-
-		switch token {
-		case "internal", "scripts", "script", "tests", "docs", "vendor":
-			return tokens
-		}
-
-		if _, ok := seen[token]; ok {
-			return tokens
-		}
-
-		seen[token] = struct{}{}
-
-		return append(tokens, token)
-	}
-
-	var tokens []string
-
-	base := filepath.Base(path)
-	stem := strings.TrimSuffix(base, filepath.Ext(base))
-
-	for _, candidate := range []string{base, stem} {
-		tokens = add(tokens, candidate)
-	}
-
-	replacer := strings.NewReplacer("/", " ", "_", " ", "-", " ", ".", " ")
-	for _, part := range strings.Fields(replacer.Replace(path)) {
-		tokens = add(tokens, part)
-	}
-
-	return tokens
 }

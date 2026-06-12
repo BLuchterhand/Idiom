@@ -251,6 +251,28 @@ func TestBuildReadOnlyEvidencePacketDropsLineOrientedSourceFindings(t *testing.T
 	}
 }
 
+func TestBuildReadOnlyEvidencePacketDropsCompactedLineSourceFindings(t *testing.T) {
+	answer := "Grounded findings:\n- ... 4:\treceipts   []EvidenceReceipt. 5:\tnormalizer TargetNormalizer. f3 internal/evidence/answergrounding/evidence_ledger.go."
+	childResults := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/evidence/answergrounding/evidence_ledger.go lines 1-20",
+		Output:  "1:package answergrounding\n4:\treceipts   []EvidenceReceipt\n5:\tnormalizer TargetNormalizer\n",
+	}}
+
+	packet, ok := buildReadOnlyEvidencePacket("What is the role of evidence in this harness?", answer, childResults)
+	if !ok {
+		t.Fatal("expected packet to retain source-body path context")
+	}
+
+	if readOnlyEvidencePacketAnswerable(packet) {
+		t.Fatalf("compacted source snippets must not become answerable findings: %#v", packet)
+	}
+
+	if len(packet.Findings) != 0 {
+		t.Fatalf("compacted source snippets leaked into packet findings: %#v", packet.Findings)
+	}
+}
+
 func TestReadOnlyEvidencePacketAnswerableForObjectiveAcceptsSubagentWorkPacket(t *testing.T) {
 	packet := ReadOnlyEvidencePacket{
 		Objective:       "Explain how subagents work.",

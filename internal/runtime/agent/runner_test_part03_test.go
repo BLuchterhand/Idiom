@@ -642,6 +642,15 @@ func TestDiagnosticLogIntentDistinguishesSourceFeatureQuestions(t *testing.T) {
 	if !objectiveRequestsDiagnosticLogInspection("Inspect the newest debug log for why the run failed.") {
 		t.Fatal("newest debug log failure request should still activate diagnostic-log artifact scope")
 	}
+
+	optionalLogsQuestion := "Read-only RCA request: investigate the reported TUI behavior bug where pressing up/down arrow keys no longer updates the input. Use repository evidence and newest relevant logs if available. Do not edit files."
+	if !objectiveRequestsDiagnosticLogInspection(optionalLogsQuestion) {
+		t.Fatal("optional logs source-RCA question should still be recognized as mentioning diagnostic logs")
+	}
+
+	if !objectiveTreatsDiagnosticLogsAsOptionalEvidence(optionalLogsQuestion) {
+		t.Fatal("optional logs source-RCA question should mark logs as supporting evidence, not exclusive scope")
+	}
 }
 
 func TestDebugLogPreflightRedirectsToSelectedLogTail(t *testing.T) {
@@ -747,6 +756,156 @@ func TestConversationLogInvestigationPreflightSkipsCurrentSessionLog(t *testing.
 	}
 }
 
+func TestConversationLogInvestigationPreservesExactNamedLogAfterSelection(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "logs/conversations/20260607-132011.621.jsonl", strings.Repeat("{\"event\":\"prior\"}\n", 20)); err != nil {
+		t.Fatalf("write prior log file: %v", err)
+	}
+
+	if err := writeTestFile(root, "logs/conversations/20260607-132703.112.jsonl", strings.Repeat("{\"event\":\"newer\"}\n", 20)); err != nil {
+		t.Fatalf("write newer log file: %v", err)
+	}
+
+	mgr := workspace.NewManager(config.Workspace{
+		Root:                root,
+		CWD:                 root,
+		MaxDirectoryEntries: 64,
+		MaxFileBytes:        1 << 20,
+	})
+	search := mgr.Execute(context.Background(), workspace.ToolRequest{
+		Tool:    "search_files",
+		Pattern: "logs/**/*",
+		Path:    ".",
+	})
+
+	if search.Error != "" {
+		t.Fatalf("search_files failed: %#v", search)
+	}
+
+	selection, ok := parseDebugLogFileSelection(search)
+	if !ok {
+		t.Fatalf("expected search result to expose a log selection: %#v", search)
+	}
+
+	read := mgr.Execute(context.Background(), debugLogTailRequest(selection))
+	if read.Error != "" {
+		t.Fatalf("read_file failed: %#v", read)
+	}
+
+	results := []workspace.ToolResult{search, read}
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:         "conversation",
+		Contract:           "direct_answer",
+		PermissionProfile:  "read_only_workspace",
+		Objective:          "Investigate logs/conversations/20260607-132011.621.jsonl.",
+		ReadOnlyConstraint: true,
+	}
+	req := workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "logs/conversations/20260607-132011.621.jsonl",
+	}
+	runner := &Runner{Workspace: mgr, RuntimeBrief: brief}
+
+	if redirected, ok := runner.debugLogPreflightRequest(results, req); ok {
+		t.Fatalf("exact named log read must not be redirected to selected newest log: %#v", redirected)
+	}
+
+	if _, _, reject := debugLogPhaseScopeRejection(req, results, brief, mgr.SessionID()); reject {
+		t.Fatal("selected-log scope must not reject an exact named prior log read")
+	}
+
+	selections := parseDebugLogFileSelections(search)
+	var prior debugLogFileSelection
+	for _, candidate := range selections {
+		if candidate.Path == "logs/conversations/20260607-132011.621.jsonl" {
+			prior = candidate
+			break
+		}
+	}
+	if prior.Handle == "" {
+		t.Fatalf("expected search result to expose a handle for prior log: %#v", selections)
+	}
+
+	handleReq := workspace.ToolRequest{
+		Tool: "read_file",
+		ID:   prior.Handle,
+	}
+	if redirected, ok := runner.debugLogPreflightRequest(results, handleReq); ok {
+		t.Fatalf("exact named log handle read must not be redirected to selected newest log: %#v", redirected)
+	}
+
+	if _, _, reject := debugLogPhaseScopeRejection(handleReq, results, brief, mgr.SessionID()); reject {
+		t.Fatal("selected-log scope must not reject an exact named prior log read by discovered handle")
+	}
+
+	searchReq := workspace.ToolRequest{
+		Tool:    "search_content",
+		Pattern: "event",
+		Path:    "logs/conversations/20260607-132011.621.jsonl",
+	}
+	if redirected, ok := runner.debugLogPreflightRequest(results, searchReq); ok {
+		t.Fatalf("exact named log search must not be redirected to selected newest log: %#v", redirected)
+	}
+
+	if _, _, reject := debugLogPhaseScopeRejection(searchReq, results, brief, mgr.SessionID()); reject {
+		t.Fatal("selected-log scope must not reject an exact named prior log search")
+	}
+}
+
+func TestConversationLogInvestigationRejectsExactCurrentSessionAfterSelection(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "logs/conversations/20260607-132011.621.jsonl", strings.Repeat("{\"event\":\"prior\"}\n", 20)); err != nil {
+		t.Fatalf("write prior log file: %v", err)
+	}
+
+	if err := writeTestFile(root, "logs/conversations/20260607-132703.112.jsonl", strings.Repeat("{\"event\":\"active\"}\n", 20)); err != nil {
+		t.Fatalf("write active log file: %v", err)
+	}
+
+	mgr := workspace.NewManager(config.Workspace{
+		Root:                root,
+		CWD:                 root,
+		MaxDirectoryEntries: 64,
+		MaxFileBytes:        1 << 20,
+		SessionID:           "20260607-132703.112",
+	})
+	search := mgr.Execute(context.Background(), workspace.ToolRequest{
+		Tool:    "search_files",
+		Pattern: "logs/**/*",
+		Path:    ".",
+	})
+
+	if search.Error != "" {
+		t.Fatalf("search_files failed: %#v", search)
+	}
+
+	selection, ok := latestStableDebugLogSelection([]workspace.ToolResult{search}, mgr.SessionID())
+	if !ok {
+		t.Fatalf("expected stable prior selection: %#v", search)
+	}
+
+	read := mgr.Execute(context.Background(), debugLogTailRequest(selection))
+	if read.Error != "" {
+		t.Fatalf("read_file failed: %#v", read)
+	}
+
+	results := []workspace.ToolResult{search, read}
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:         "conversation",
+		Contract:           "direct_answer",
+		PermissionProfile:  "read_only_workspace",
+		Objective:          "Investigate logs/conversations/20260607-132703.112.jsonl.",
+		ReadOnlyConstraint: true,
+	}
+
+	if _, _, reject := debugLogPhaseScopeRejection(workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "logs/conversations/20260607-132703.112.jsonl",
+	}, results, brief, mgr.SessionID()); !reject {
+		t.Fatal("selected-log scope must still reject exact current-session log reads")
+	}
+}
+
 func TestDebugLogPhaseScopeRejectsSourceDriftAfterTail(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "logs/conversations/recent.jsonl", strings.Repeat("{\"event\":\"x\"}\n", 20)); err != nil {
@@ -788,14 +947,14 @@ func TestDebugLogPhaseScopeRejectsSourceDriftAfterTail(t *testing.T) {
 		Tool:    "search_content",
 		Pattern: "chosen_tool",
 		Glob:    "*.go",
-	}, results, brief); !reject {
+	}, results, brief, ""); !reject {
 		t.Fatal("expected source drift to be rejected after selected-log tail read")
 	}
 
 	if _, _, reject := debugLogPhaseScopeRejection(workspace.ToolRequest{
 		Tool: "read_file",
 		ID:   selection.Handle,
-	}, results, brief); !reject {
+	}, results, brief, ""); !reject {
 		t.Fatal("expected blind reread of selected log to be rejected")
 	}
 
@@ -805,8 +964,72 @@ func TestDebugLogPhaseScopeRejectsSourceDriftAfterTail(t *testing.T) {
 		Path:      selection.Path,
 		StartLine: 5,
 		EndLine:   20,
-	}, results, brief); !reject {
+	}, results, brief, ""); !reject {
 		t.Fatal("expected second selected-log read without a concrete hit to be rejected")
+	}
+}
+
+func TestDebugLogPhaseScopeAllowsSameLogFollowupWindow(t *testing.T) {
+	results := []workspace.ToolResult{
+		{
+			Tool:    "search_files",
+			Summary: "Found 1 matching log-like file(s), newest first.",
+			Output:  "f1 logs/conversations/recent.jsonl (modified 2026-04-24T10:00:00-04:00; size 2.1 KB)\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 logs/conversations/recent.jsonl lines 93-172 (file has 172 lines total; defaulted to recent log tail)",
+			Output:  "{\"type\":\"turn_summary\"}\n",
+		},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:         "conversation",
+		Contract:           "direct_answer",
+		PermissionProfile:  "read_only_workspace",
+		Objective:          "Investigate logs/conversations/recent.jsonl.",
+		ReadOnlyConstraint: true,
+	}
+
+	if _, _, reject := debugLogPhaseScopeRejection(workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "logs/conversations/recent.jsonl",
+		StartLine: 1,
+		EndLine:   92,
+	}, results, brief, ""); reject {
+		t.Fatal("selected-log scope must allow a bounded same-log read for a different window")
+	}
+}
+
+func TestOptionalLogSourceRCAAllowsSourceSearchAfterLogTail(t *testing.T) {
+	results := []workspace.ToolResult{
+		{
+			Tool:    "search_files",
+			Summary: "Found 1 matching log-like file(s), newest first.",
+			Output:  "f1 logs/conversations/recent.jsonl (modified 2026-04-24T10:00:00-04:00; size 2.1 KB)\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 logs/conversations/recent.jsonl lines 1-80",
+			Output:  "{\"type\":\"turn_summary\"}\n",
+		},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:         "conversation",
+		Contract:           "direct_answer",
+		PermissionProfile:  "read_only_workspace",
+		Objective:          "Read-only RCA request: investigate the reported TUI behavior bug where pressing up/down arrow keys no longer updates the input. Use repository evidence and newest relevant logs if available. Do not edit files.",
+		ReadOnlyConstraint: true,
+	}
+
+	if debugLogContractApplies(brief, results) {
+		t.Fatal("optional diagnostic logs must not activate selected-log exclusivity for source-code RCA")
+	}
+
+	if _, _, reject := debugLogPhaseScopeRejection(workspace.ToolRequest{
+		Tool: "search_files",
+		Path: "internal/surfaces/tui",
+	}, results, brief, ""); reject {
+		t.Fatal("optional log evidence must not reject source search for the actual RCA objective")
 	}
 }
 
@@ -859,14 +1082,14 @@ func TestConversationLogInvestigationReusesDebugLogScopeGate(t *testing.T) {
 		Tool:    "search_content",
 		Pattern: "chosen_tool",
 		Glob:    "*.go",
-	}, results, brief); !reject {
+	}, results, brief, ""); !reject {
 		t.Fatal("expected conversation log investigation to reject source drift after selected-log tail")
 	}
 
 	if _, _, reject := debugLogPhaseScopeRejection(workspace.ToolRequest{
 		Tool: "read_file",
 		ID:   selection.Handle,
-	}, results, brief); !reject {
+	}, results, brief, ""); !reject {
 		t.Fatal("expected conversation log investigation to reject blind selected-log reread")
 	}
 }

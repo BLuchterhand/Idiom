@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -61,62 +59,6 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 	}
 
 	return "", false
-}
-
-func (r *Runner) modelErrorAfterReadOnlyEvidenceAnswer(err error, results []workspace.ToolResult) (string, bool) {
-	if r == nil || runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
-		return "", false
-	}
-
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return "", false
-	}
-
-	if !modelErrorFallbackHasGroundedReadOnlyEvidence(r.RuntimeBrief, results) {
-		return "", false
-	}
-
-	if conversationFallbackShouldAvoidSourceBody(r.RuntimeBrief) {
-		if answer, ok := presentableBriefConversationFallbackCandidate(r.agentName(), r.RuntimeBrief, results); ok {
-			return answer, true
-		}
-
-		return deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, results)
-	}
-
-	return deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, results)
-}
-
-func modelErrorFallbackHasGroundedReadOnlyEvidence(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	if len(results) == 0 {
-		return false
-	}
-
-	if genericReadOnlyAnswerEvidenceReady(brief, results) {
-		return true
-	}
-
-	useful := 0
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		if concreteSourceEvidenceResult(result) {
-			return true
-		}
-
-		if isResultUsefulForFallback(normalizeFallbackResult(result)) {
-			useful++
-		}
-
-		if useful >= 2 {
-			return true
-		}
-	}
-
-	return false
 }
 
 func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
@@ -715,9 +657,7 @@ func isHarnessRejectionSummary(summary string) bool {
 	}
 
 	switch summary {
-	case "Post-child broad inspection blocked",
-		"Post-child unrelated discovery blocked",
-		"Post-child reread blocked",
+	case "Post-child reread blocked",
 		"Broad exploration after delegation nudge blocked",
 		"Additional read_only child task blocked",
 		"Broad inspection request rejected",
@@ -744,7 +684,6 @@ func isHarnessRejectionErrorText(text string) bool {
 		"include `named_gap`",
 		"include named_gap",
 		"already contains sufficient evidence to bias toward answering",
-		"answer readiness has already been reached",
 		"file-level raw read is too broad",
 		"file-level outline is broad orientation",
 		"do not restart broad discovery",

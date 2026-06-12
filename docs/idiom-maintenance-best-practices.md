@@ -168,6 +168,18 @@ live/scripted contracts are covered by a better boundary.
   protected path, configured tool rule, verification state, or loop invariant
   forbids it. Do not require generic `named_gap` / `why_not_answering` fields or
   synthesize host-owned closeout merely because readiness was observed.
+- Do not convert read-only readiness into a forced no-tools/model-answer turn.
+  If the model asks for more source, data, or diagnostics, the harness should
+  satisfy that request unless a concrete invariant rejects it. A repeated,
+  off-objective, unavailable, or forbidden request may be rejected, but the
+  rejection must explain that invariant and leave the model a valid strategy
+  choice: a different bounded probe, an answer from accepted evidence, or a
+  precise blocker.
+- If the model appears to have useful prefetch, context-pack, child-packet,
+  telemetry, or recovery-state information but the run reports "not enough
+  evidence," treat that as an evidence-registration bug first. Repair how the
+  harness classifies and projects that evidence; do not force synthesis as a
+  shortcut around missing registration.
 - If a phase only needs to generate one bounded scratchpad artifact, prefer an
   artifact-owned path (`idiom artifact --no-tools --output ...`) over asking an
   implementation lane to call `write_file`. Record output/report paths and a

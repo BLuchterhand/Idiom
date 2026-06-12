@@ -830,7 +830,7 @@ func (r *Runner) explorationDelegationNudge(readCallsSinceWrite int, results []w
 		return ""
 	}
 
-	return fmt.Sprintf("You have already used %d read/search steps in the main loop without a write. Answer now if the current evidence already supports a concrete answer. Only if one broad missing claim genuinely remains and a bounded read_only child would close it faster than more local probing, you may delegate one bounded read_only task with the task tool.", readCallsSinceWrite)
+	return fmt.Sprintf("You have already used %d read/search steps in the main loop without a write. A final answer is available if the current evidence already supports a concrete answer. Only if one broad missing claim genuinely remains and a bounded read_only child would close it faster than more local probing, you may delegate one bounded read_only task with the task tool.", readCallsSinceWrite)
 }
 
 func prefersEarlyReadOnlyDelegation(brief workerruntime.WorkerRuntimeBrief) bool {

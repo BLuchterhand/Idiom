@@ -9,8 +9,8 @@ import (
 
 // TestPostReadinessGapScopeForBriefSeparatesParentContracts covers the core
 // discovery invariant: mutation readiness keeps its explicit source-refresh
-// surface, while answerable read-only evidence contracts to the final-answer
-// surface instead of reopening discovery.
+// surface, while answerable read-only evidence remains advisory instead of
+// forcing a final-answer-only surface.
 func TestPostReadinessToolContractForBriefSeparatesParentContracts(t *testing.T) {
 	mutationBrief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "implementation",
@@ -35,8 +35,8 @@ func TestPostReadinessToolContractForBriefSeparatesParentContracts(t *testing.T)
 		t.Fatalf("mutation source-refresh contract should be explicit, got %#v", contract)
 	}
 
-	if contract := postReadinessToolContractForBrief(readOnlyBrief, readOnlyResults, true, false); contract.RequireSourceRefreshContract || !contract.AnswerOnly {
-		t.Fatalf("answerable read-only parent readiness should select final-answer surface, got %#v", contract)
+	if contract := postReadinessToolContractForBrief(readOnlyBrief, readOnlyResults, true, false); contract.RequireSourceRefreshContract || !contract.ReadinessAdvisory {
+		t.Fatalf("answerable read-only parent readiness should remain advisory, got %#v", contract)
 	}
 
 	if contract := postReadinessToolContractForBrief(mutationBrief, nil, false, true); !contract.RequireSourceRefreshContract {
@@ -50,11 +50,11 @@ func TestPostReadinessToolContractForBriefSeparatesParentContracts(t *testing.T)
 		InspectedPaths:  []string{"internal/evidence/transcript/debuglog.go"},
 		Confidence:      "high",
 		Findings: []ReadOnlyEvidenceFinding{
-			{Path: "internal/evidence/transcript/debuglog.go", Text: "`DebugLogger.sanitizeText` returns text unchanged in full mode and redacts through `redactedBlob` otherwise."},
+			{Path: "internal/evidence/transcript/debuglog.go", Text: "The debug log redacted mode returns text unchanged in full mode and redacts through `redactedBlob` otherwise."},
 		},
 	})
-	if contract := postReadinessToolContractForBrief(readOnlyBrief, []workspace.ToolResult{childPacket}, false, true); contract.RequireSourceRefreshContract || !contract.AnswerOnly {
-		t.Fatalf("answerable read-only child packet should select final-answer surface, got %#v", contract)
+	if contract := postReadinessToolContractForBrief(readOnlyBrief, []workspace.ToolResult{childPacket}, false, true); contract.RequireSourceRefreshContract || !contract.ReadinessAdvisory {
+		t.Fatalf("answerable read-only child packet should remain advisory, got %#v", contract)
 	}
 
 	// Write-class requests do not change the selected post-readiness contract.

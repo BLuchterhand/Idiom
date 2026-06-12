@@ -53,7 +53,7 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 
 	prompt = r.prepareReadOnlyChildPrompt(prompt)
 
-	childPolicy := RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3, MaxModelCalls: 5, MaxDuration: 75 * time.Second}
+	childPolicy := RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3, MaxModelCalls: 6, MaxDuration: 75 * time.Second}
 
 	if workerruntime.RuntimeContractIsDirectAnswer(r.RuntimeBrief.Contract) {
 		childPolicy.MaxToolSteps = 4
@@ -112,7 +112,7 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 					"For broad architecture, impact, tracing, security, or history questions, a layered discovery evidence packet satisfies orientation only; read at least one relevant source body before answering.",
 					"After one sufficient source-body probe, answer unless one exact missing claim would materially change the answer.",
 					"Prefer the minimal implementation surface needed to answer the question. Do not expand into side-path comparison, mode-by-mode breakdowns, or policy tables unless the question explicitly requires that detail.",
-					"After readiness, either answer or take one exact follow-up inside packet-named files or symbols. Do not switch to README, docs, or repo-wide search for completeness.",
+					"After readiness, treat packet-named files or symbols as evidence, not an allowlist. Either answer or take one exact follow-up that resolves a named missing claim.",
 					"Prefer structured symbol/body tools, discovered handles, or narrow line ranges over raw path-wide rereads.",
 					"Do not edit files, create files, install packages, push, publish, deploy, or spawn more tasks.",
 					"Use repository-relative paths and cite the files you inspected.",

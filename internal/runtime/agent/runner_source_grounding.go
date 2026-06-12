@@ -32,6 +32,14 @@ func (r *Runner) readOnlyExplanationCompletionRejection(reply string, results []
 		}, true
 	}
 
+	if reason := readOnlyBinaryVerdictContradictionReason(reply, r.RuntimeBrief.Objective); reason != "" {
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Read-only explanation gate rejected contradictory verdict",
+			Error:   reason,
+		}, true
+	}
+
 	if unsupported := architectureUnsupportedExactDetail(reply, results); len(unsupported) > 0 {
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
@@ -49,6 +57,90 @@ func (r *Runner) readOnlyExplanationCompletionRejection(reply string, results []
 	}
 
 	return workspace.ToolResult{}, false
+}
+
+func readOnlyBinaryVerdictContradictionReason(answer string, objective string) string {
+	if !readOnlyObjectiveLooksBinaryQuestion(objective) {
+		return ""
+	}
+
+	polarities := map[string]struct{}{}
+	for _, line := range strings.Split(answer, "\n") {
+		if polarity := readOnlyLabeledVerdictPolarity(line); polarity != "" {
+			polarities[polarity] = struct{}{}
+		}
+	}
+
+	if _, hasYes := polarities["yes"]; !hasYes {
+		return ""
+	}
+
+	if _, hasNo := polarities["no"]; !hasNo {
+		return ""
+	}
+
+	return "the final answer gives contradictory yes/no conclusions for the requested question. Reconcile the conclusion against the inspected evidence, qualify the uncertainty, or state the exact blocker."
+}
+
+func readOnlyObjectiveLooksBinaryQuestion(objective string) bool {
+	lower := strings.ToLower(strings.Join(strings.Fields(objective), " "))
+	if lower == "" {
+		return false
+	}
+
+	for _, marker := range []string{
+		" whether ",
+		" can ",
+		" could ",
+		" does ",
+		" do ",
+		" is ",
+		" are ",
+		" was ",
+		" were ",
+		" did ",
+	} {
+		if strings.Contains(" "+lower+" ", marker) {
+			return true
+		}
+	}
+
+	return strings.HasPrefix(lower, "can ") ||
+		strings.HasPrefix(lower, "could ") ||
+		strings.HasPrefix(lower, "does ") ||
+		strings.HasPrefix(lower, "do ") ||
+		strings.HasPrefix(lower, "is ") ||
+		strings.HasPrefix(lower, "are ")
+}
+
+func readOnlyLabeledVerdictPolarity(line string) string {
+	line = strings.ToLower(strings.TrimSpace(line))
+	line = strings.Trim(line, "*_#` \t")
+	if line == "" {
+		return ""
+	}
+
+	label := ""
+	for _, candidate := range []string{"finding:", "verdict:", "conclusion:", "answer:"} {
+		if idx := strings.Index(line, candidate); idx >= 0 {
+			label = strings.TrimSpace(line[idx+len(candidate):])
+			break
+		}
+	}
+
+	if label == "" {
+		return ""
+	}
+
+	label = strings.Trim(label, "*_` \t")
+	switch {
+	case strings.HasPrefix(label, "yes") || strings.HasPrefix(label, "it can") || strings.HasPrefix(label, "can "):
+		return "yes"
+	case strings.HasPrefix(label, "no") || strings.HasPrefix(label, "it cannot") || strings.HasPrefix(label, "it can't") || strings.HasPrefix(label, "cannot"):
+		return "no"
+	default:
+		return ""
+	}
 }
 
 func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspace.ToolResult) string {

@@ -31,7 +31,7 @@ func hideBroadDiscoveryTools(hidden map[string]bool) {
 
 func (r *Runner) augmentReadOnlyChildPrompt(prompt string) string {
 	guidance := []string{
-		"Answer the delegated question directly once the evidence is sufficient. After readiness, answer immediately — do not continue reading for completeness.",
+		"A final answer is available once the evidence is sufficient. After readiness, take another read only for an exact material missing claim; do not continue reading for completeness.",
 		"Treat inherited instructions to explore directories, entrypoints, or patterns as background only unless the delegated question explicitly requires them.",
 		"Use repository-relative workspace paths in the answer. Do not rely on transient file handles such as f23 or tool-local aliases.",
 		"Prefer targeted symbol tools and bounded file reads over workspace-wide overviews.",
@@ -514,15 +514,15 @@ func shouldPreferDeterministicNoToolsAnswer(agentName string, brief workerruntim
 		return false
 	}
 
-	if strings.HasPrefix(agentName, "child:") {
-		return true
-	}
-
-	return workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) &&
-		readOnlyClosureDecisionForResults(brief, results).Answerable()
+	return false
 }
 
 func deterministicNoToolsAnswer(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if !runnerBriefRequiresMutation(brief) && workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
+		return "", false
+	}
+
 	answer, ok := synthesizeNoToolsFallbackAnswer(agentName, brief, results)
 	if !ok {
 		return "", false

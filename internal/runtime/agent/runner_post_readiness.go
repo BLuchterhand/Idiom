@@ -15,11 +15,11 @@ func childPacketBoundaryNudge(objective string, results []workspace.ToolResult, 
 
 	validity, _ := closureDecisionRationale(objective, results, evidencePaths)
 	lines := []string{
-		"The delegated read_only child result is now your evidence packet.",
+		"The delegated read_only child result is now available as an evidence packet.",
 	}
 
 	if validity != "" {
-		lines = append(lines, "Why answer now is valid: "+validity)
+		lines = append(lines, "Why a final answer is now valid: "+validity)
 	}
 
 	if len(evidencePaths) > 0 {
@@ -33,7 +33,7 @@ func childPacketBoundaryNudge(objective string, results []workspace.ToolResult, 
 	lines = append(lines, postReadinessContinuationContract("child_packet_available", probeBudget))
 	lines = append(lines,
 		"Ignore packet artifacts (the `.idiom/discovery/queries/` JSON files) — they are not source paths.",
-		"Answer now from the packet.",
+		"If you answer now, answer from the packet and inspected source evidence.",
 	)
 
 	return strings.Join(lines, "\n")
@@ -42,7 +42,6 @@ func childPacketBoundaryNudge(objective string, results []workspace.ToolResult, 
 type postReadinessToolContract struct {
 	RequireSourceRefreshContract bool
 	ReadinessAdvisory            bool
-	AnswerOnly                   bool
 	Reason                       string
 }
 
@@ -55,13 +54,6 @@ func postReadinessToolContractForBrief(brief workerruntime.WorkerRuntimeBrief, r
 	}
 
 	if delegatedReadOnlyAnswerReady || postChildPacketActive {
-		if postReadinessReadOnlyAnswerOnlyContractApplies(brief, results, postChildPacketActive) {
-			return postReadinessToolContract{
-				AnswerOnly: true,
-				Reason:     "read_only_answerable_evidence_contract",
-			}
-		}
-
 		return postReadinessToolContract{
 			ReadinessAdvisory: true,
 			Reason:            "read_only_readiness_advisory",
@@ -69,83 +61,6 @@ func postReadinessToolContractForBrief(brief workerruntime.WorkerRuntimeBrief, r
 	}
 
 	return postReadinessToolContract{Reason: "none"}
-}
-
-func postReadinessReadOnlyAnswerOnlyContractApplies(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, postChildPacketActive bool) bool {
-	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
-		return false
-	}
-
-	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
-		return false
-	}
-
-	if postChildPacketActive && postChildPacketClosureReadyWithBrief(brief, results) {
-		return true
-	}
-
-	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDelegatedReadOnly) &&
-		workerruntime.RuntimeContractMatches(brief.Contract, workerruntime.ContractGroundedEvidence) {
-
-		closure := readOnlyClosureDecisionForResults(brief, results)
-		if !closure.Answerable() {
-			return false
-		}
-
-		_, ok := closure.HostOwnedAnswer("child:delegated-read-only")
-
-		return ok
-	}
-
-	if !workerruntime.RuntimeContractIsArchitectureOrReview(brief.Contract) {
-		return false
-	}
-
-	closure := readOnlyClosureDecisionForResults(brief, results)
-	if !closure.Answerable() {
-		return false
-	}
-
-	return readOnlyAnalysisHasObjectiveRelevantSourceBody(brief, closure.Evidence)
-}
-
-func readOnlyArchitectureToolBudgetCloseoutApplies(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, maxTools int) bool {
-	if maxTools <= 0 || len(results) < maxTools {
-		return false
-	}
-
-	brief = workerruntime.NormalizeRuntimeBrief(brief)
-	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
-		return false
-	}
-
-	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) ||
-		!workerruntime.RuntimeContractIsArchitectureOrReview(brief.Contract) {
-
-		return false
-	}
-
-	if len(readOnlyPresentationEvidencePathsForBrief(brief, results, 2)) == 0 {
-		return false
-	}
-
-	if objectiveAsksBehaviorSummary(brief.Objective) && !postChildReadOnlyPacketAvailable(brief, results) {
-		terms := sourceEvidenceObjectiveLineTerms(brief.Objective)
-		hasOwnerPath := false
-
-		for _, path := range readOnlyPresentationEvidencePathsForBrief(brief, results, 8) {
-			if sourceEvidenceLineObjectiveScore(path, terms) > 0 && !strings.Contains(strings.ToLower(path), "config") {
-				hasOwnerPath = true
-				break
-			}
-		}
-
-		if !hasOwnerPath {
-			return false
-		}
-	}
-
-	return true
 }
 
 func postReadinessGap(req workspace.ToolRequest) string {
@@ -156,11 +71,11 @@ func delegatedReadOnlyAnswerReadyNudge(objective string, results []workspace.Too
 	paths := closurePromptEvidencePaths(delegatedClosureEvidencePaths(objective, results, 4), 4)
 	validity, _ := closureDecisionRationale(objective, results, paths)
 	lines := []string{
-		"Answer now from the evidence above. The delegated read-only evidence is sufficient for this question.",
+		"The delegated read-only evidence is sufficient for a grounded answer to this question.",
 	}
 
 	if validity != "" {
-		lines = append(lines, "Why answer now is valid: "+validity)
+		lines = append(lines, "Why a final answer is now valid: "+validity)
 	}
 
 	if len(paths) > 0 {
@@ -180,11 +95,11 @@ func readOnlyAnswerReadyNudge(brief workerruntime.WorkerRuntimeBrief, results []
 	paths := closurePromptEvidencePaths(readOnlyPresentationEvidencePathsForBrief(brief, results, 4), 4)
 	validity, _ := closureDecisionRationale(objective, results, paths)
 	lines := []string{
-		"Answer now from the evidence above. The read-only evidence is sufficient for this question.",
+		"The read-only evidence is sufficient for a grounded answer to this question.",
 	}
 
 	if validity != "" {
-		lines = append(lines, "Why answer now is valid: "+validity)
+		lines = append(lines, "Why a final answer is now valid: "+validity)
 	}
 
 	if len(paths) > 0 {
@@ -214,7 +129,7 @@ func postReadinessProbeBudgetForBrief(brief workerruntime.WorkerRuntimeBrief) in
 func postReadinessContinuationContract(scope string, budget int) string {
 	anchor := "prefer a symbol, branch, body, or narrow line-range probe over file-level raw reads"
 	if strings.TrimSpace(scope) == "child_packet_available" {
-		anchor = "anchor to a packet-named path or symbol with a symbol, branch, body, or narrow line-range probe"
+		anchor = "anchor to a named path, symbol, discovered handle, branch, body, or narrow line-range probe"
 	} else if strings.TrimSpace(scope) == "answer_readiness_reached" {
 		anchor = "target a symbol, call/reference, branch, body, or narrow line-range probe tied to inspected paths"
 	}
@@ -230,7 +145,7 @@ func postReadinessContinuationContract(scope string, budget int) string {
 	}
 
 	lines := []string{
-		"Answer now unless one exact unresolved claim remains.",
+		"A final answer is available unless one exact unresolved claim remains.",
 		"If one more source read would materially change the answer, take a bounded follow-up through the normal tool policy; " + anchor + "; " + probeBudgetLine + " before answering.",
 		"The follow-up should target a code-shaped token (symbol name, file path, or narrow line range) and should not paraphrase the original question.",
 	}
@@ -247,7 +162,7 @@ func delegatedReadOnlyDiminishingReturnsNudge(objective string, results []worksp
 	// Repeating that prose burns context for no behavior change. Emit a
 	// factual probe-budget note instead and let the model decide.
 	paths := closurePromptEvidencePaths(delegatedClosureEvidencePaths(objective, results, 4), 3)
-	line := fmt.Sprintf("Post-readiness probes used: %d. You have already used the post-readiness follow-up budget disclosed for this lane. Answer now from the evidence above; do not spend another tool call for completeness.", followups)
+	line := fmt.Sprintf("Post-readiness probes used: %d. You have already used the post-readiness follow-up budget disclosed for this lane. A final answer is available from the evidence above; take another tool call only for an exact material missing claim.", followups)
 
 	if len(paths) > 0 {
 		line += " Inspected paths: " + summarizePostChildEvidencePaths(paths, 3) + "."
@@ -449,7 +364,7 @@ func postChildDiminishingReturnsNudge(objective string, results []workspace.Tool
 	// contract; this is a factual probe-budget note, not another prose
 	// block telling the model what was already said.
 	paths := postChildClosureEvidencePaths(objective, results, 3)
-	line := fmt.Sprintf("Post-child probes used: %d. You have already used the post-child follow-up budget disclosed for this lane. Answer now from the packet above; do not spend another tool call for completeness.", followups)
+	line := fmt.Sprintf("Post-child probes used: %d. You have already used the post-child follow-up budget disclosed for this lane. A final answer is available from the packet above; take another tool call only for an exact material missing claim.", followups)
 
 	if len(paths) > 0 {
 		line += " Packet paths: " + summarizePostChildEvidencePaths(paths, 3) + "."
@@ -512,10 +427,6 @@ func applyClosurePromptRefinement(state runnerNextActionState) runnerNextActionS
 		case strings.Contains(lower, workspace.ToolNameSearchFiles),
 			strings.Contains(lower, "todo|fixme"),
 			strings.Contains(lower, "panic\\("),
-			strings.Contains(lower, "exact text search"),
-			strings.Contains(lower, "narrow to one exact term or scope"),
-			strings.Contains(lower, "continue from the latest evidence with a targeted tool"),
-			strings.Contains(lower, "choose a materially different tool or target"),
 			strings.Contains(lower, "use a targeted read-only shell search"),
 			strings.Contains(lower, "produce the missing evidence or edit required by the gate"),
 			strings.Contains(lower, "update task_ledger"),
@@ -525,12 +436,7 @@ func applyClosurePromptRefinement(state runnerNextActionState) runnerNextActionS
 			strings.Contains(lower, "changed file"),
 			strings.Contains(lower, "target-scope update"),
 			strings.Contains(lower, workspace.ToolNameGoMoveDeclarations),
-			strings.Contains(lower, workspace.ToolNameReadFile),
-			strings.Contains(lower, workspace.ToolNameSearchContent),
-			strings.Contains(lower, workspace.ToolNameListFiles),
-			strings.Contains(lower, "inspect"),
-			strings.Contains(lower, "outline"),
-			strings.Contains(lower, "workspace_symbol"):
+			strings.Contains(lower, workspace.ToolNameListFiles):
 			return true
 		default:
 			return false
@@ -545,11 +451,13 @@ func closurePromptNextActions(scope string) []string {
 	switch strings.TrimSpace(scope) {
 	case "child_packet_available":
 		return []string{
-			"answer directly from the child packet if it already resolves the question",
+			"final answer from the child packet evidence is available",
+			"if one exact missing claim remains, use one bounded probe against a named path, symbol, discovered handle, or narrow range",
 		}
 	default:
 		return []string{
-			"answer directly from the evidence already gathered",
+			"final answer from the evidence already gathered is available",
+			"if one exact missing claim remains, use one bounded probe against a named path, symbol, discovered handle, or narrow range",
 		}
 	}
 }
@@ -557,10 +465,7 @@ func closurePromptNextActions(scope string) []string {
 func closurePromptInvalidActions(scope string) []string {
 	switch strings.TrimSpace(scope) {
 	case "child_packet_available":
-		return []string{
-			"broad rediscovery outside packet-named paths or symbols after the child packet",
-			"README/docs or repo-wide search outside packet-named paths or symbols after the child packet",
-		}
+		return nil
 	default:
 		return []string{
 			"broad rediscovery after answer readiness without one exact missing claim and one exact probe",

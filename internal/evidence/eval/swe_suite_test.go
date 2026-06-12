@@ -869,7 +869,7 @@ func TestEvaluateSWETaskCountsExplicitCompletionGateRejectAfterPostReadinessGap(
 		{Type: "tool_result", Data: map[string]any{
 			"tool":    "code_navigate",
 			"summary": "Post-readiness follow-up missing named gap",
-			"error":   "answer readiness has already been reached for this read-only lane",
+			"error":   "post-readiness exact source probes require a named_gap",
 		}},
 		{Type: "run_event", Data: map[string]any{
 			"role":    "failure_feedback",
@@ -1196,7 +1196,7 @@ func TestEvaluateSWETaskExpectedRecoveryCanAccountForRunnerRejection(t *testing.
 				EventType:                  "tool_result",
 				Tool:                       "code_navigate",
 				SummaryContains:            []string{"Post-readiness follow-up missing named gap"},
-				ErrorContains:              []string{"answer readiness has already been reached"},
+				ErrorContains:              []string{"post-readiness exact source probes require a named_gap"},
 				AccountsForRunnerRejection: true,
 				MaxCount:                   intPtr(1),
 			}},
@@ -1206,7 +1206,7 @@ func TestEvaluateSWETaskExpectedRecoveryCanAccountForRunnerRejection(t *testing.
 		{Type: "tool_result", Data: map[string]any{
 			"tool":    "code_navigate",
 			"summary": "Post-readiness follow-up missing named gap",
-			"error":   "answer readiness has already been reached for this read-only lane",
+			"error":   "post-readiness exact source probes require a named_gap",
 		}},
 		{Type: "turn_summary", Data: map[string]any{"rejected_actions": 1, "completion_gate_rejections": 0}},
 	}
@@ -1248,7 +1248,7 @@ func TestEvaluateSWETaskExpectedRecoveryDoesNotAccountForNonRejectionEvent(t *te
 				EventType:                  "tool_result",
 				Tool:                       "code_navigate",
 				SummaryContains:            []string{"Post-readiness follow-up missing named gap"},
-				ErrorContains:              []string{"answer readiness has already been reached"},
+				ErrorContains:              []string{"post-readiness exact source probes require a named_gap"},
 				AccountsForRunnerRejection: true,
 				MaxCount:                   intPtr(1),
 			}},
@@ -1258,7 +1258,7 @@ func TestEvaluateSWETaskExpectedRecoveryDoesNotAccountForNonRejectionEvent(t *te
 		{Type: "tool_result", Data: map[string]any{
 			"tool":            "code_navigate",
 			"summary":         "Post-readiness follow-up missing named gap",
-			"error":           "answer readiness has already been reached for this read-only lane",
+			"error":           "post-readiness exact source probes require a named_gap",
 			"runner_rejected": false,
 		}},
 		{Type: "turn_summary", Data: map[string]any{"rejected_actions": 1, "completion_gate_rejections": 0}},
@@ -1289,7 +1289,7 @@ func TestEvaluateSWETaskExpectedRecoveryDoesNotDoubleAccountOverlappingMatcher(t
 					EventType:                  "tool_result",
 					Tool:                       "code_navigate",
 					SummaryContains:            []string{"Post-readiness follow-up missing named gap"},
-					ErrorContains:              []string{"answer readiness has already been reached"},
+					ErrorContains:              []string{"post-readiness exact source probes require a named_gap"},
 					AccountsForRunnerRejection: true,
 					MaxCount:                   intPtr(1),
 				},
@@ -1297,7 +1297,7 @@ func TestEvaluateSWETaskExpectedRecoveryDoesNotDoubleAccountOverlappingMatcher(t
 					Kind:                       "broad_named_gap_recovery",
 					EventType:                  "tool_result",
 					Tool:                       "code_navigate",
-					ErrorContains:              []string{"answer readiness has already been reached"},
+					ErrorContains:              []string{"post-readiness exact source probes require a named_gap"},
 					AccountsForRunnerRejection: true,
 					MaxCount:                   intPtr(1),
 				},
@@ -1308,7 +1308,7 @@ func TestEvaluateSWETaskExpectedRecoveryDoesNotDoubleAccountOverlappingMatcher(t
 		{Type: "tool_result", Data: map[string]any{
 			"tool":    "code_navigate",
 			"summary": "Post-readiness follow-up missing named gap",
-			"error":   "answer readiness has already been reached for this read-only lane",
+			"error":   "post-readiness exact source probes require a named_gap",
 		}},
 		{Type: "turn_summary", Data: map[string]any{"rejected_actions": 2, "completion_gate_rejections": 0}},
 	}
@@ -1337,7 +1337,7 @@ func TestEvaluateSWETaskExpectedRecoveryCanBoundGuardFamilyAcrossTools(t *testin
 				Kind:                       "post_readiness_named_gap_recovery",
 				EventType:                  "tool_result",
 				SummaryContains:            []string{"Post-readiness follow-up missing named gap"},
-				ErrorContains:              []string{"answer readiness has already been reached"},
+				ErrorContains:              []string{"post-readiness exact source probes require a named_gap"},
 				AccountsForRunnerRejection: true,
 				MaxCount:                   intPtr(3),
 			}},
@@ -1347,17 +1347,17 @@ func TestEvaluateSWETaskExpectedRecoveryCanBoundGuardFamilyAcrossTools(t *testin
 		{Type: "tool_result", Data: map[string]any{
 			"tool":    "read_file",
 			"summary": "Post-readiness follow-up missing named gap",
-			"error":   "answer readiness has already been reached for this read-only lane",
+			"error":   "post-readiness exact source probes require a named_gap",
 		}},
 		{Type: "tool_result", Data: map[string]any{
 			"tool":    "code_navigate",
 			"summary": "Post-readiness follow-up missing named gap",
-			"error":   "answer readiness has already been reached for this read-only lane",
+			"error":   "post-readiness exact source probes require a named_gap",
 		}},
 		{Type: "tool_result", Data: map[string]any{
 			"tool":    "search_content",
 			"summary": "Post-readiness follow-up missing named gap",
-			"error":   "answer readiness has already been reached for this read-only lane",
+			"error":   "post-readiness exact source probes require a named_gap",
 		}},
 		{Type: "turn_summary", Data: map[string]any{"rejected_actions": 3, "completion_gate_rejections": 0}},
 	}
@@ -1372,7 +1372,7 @@ func TestEvaluateSWETaskExpectedRecoveryCanBoundGuardFamilyAcrossTools(t *testin
 	tooMany = append(tooMany[:len(tooMany)-1], Record{Type: "tool_result", Data: map[string]any{
 		"tool":    "search_content",
 		"summary": "Post-readiness follow-up missing named gap",
-		"error":   "answer readiness has already been reached for this read-only lane",
+		"error":   "post-readiness exact source probes require a named_gap",
 	}}, tooMany[len(tooMany)-1])
 	tooMany[len(tooMany)-1] = Record{Type: "turn_summary", Data: map[string]any{"rejected_actions": 4, "completion_gate_rejections": 0}}
 

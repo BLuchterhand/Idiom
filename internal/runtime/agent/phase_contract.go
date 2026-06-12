@@ -807,18 +807,16 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 	}
 
 	if genericReadOnlyEvidenceReady(brief, results) {
-		evidenceTools := genericReadOnlyEvidenceTools(contract.AllowedTools)
-
 		contract.Phase = "read_only_evidence_available"
 		contract.DerivationReason = "read_only_workspace_evidence_available"
-		contract.AllowedTools = evidenceTools
+		contract.AllowedTools = append([]string(nil), contract.AllowedTools...)
 		contract.RequiredNext = []string{"final answer from the gathered evidence, one bounded proof read for an exact unsupported claim, or <<QUESTION>> with the exact blocker"}
 		contract.InvalidNext = []string{"workspace write", "shell/mutating command", "repeated broad or identical read/search", "broad rediscovery after evidence is sufficient"}
 		contract.ActionPolicy = TurnActionClassPolicy{
-			AllowedActionClasses:   uniquePhaseStrings(append([]string{actionFinalAnswer, actionBlocker}, genericAllowedActionClasses(evidenceTools)...)),
+			AllowedActionClasses:   uniquePhaseStrings(append([]string{actionFinalAnswer, actionBlocker}, genericAllowedActionClasses(contract.AllowedTools)...)),
 			InvalidActionClasses:   []string{actionPerEditWrite, actionVerify},
 			TerminalResponseShapes: []string{"final answer", "<<QUESTION>>:"},
-			CallableToolNames:      evidenceTools,
+			CallableToolNames:      contract.AllowedTools,
 		}
 		contract.RuntimeCall.ExpressibleActionClasses = append([]string(nil), contract.ActionPolicy.AllowedActionClasses...)
 

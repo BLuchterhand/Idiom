@@ -4295,7 +4295,7 @@ func extractReadPathAndRangeFromSummary(summary string) (string, planThenExecute
 	}
 
 	fields := strings.Fields(summary)
-	if len(fields) < 4 || fields[0] != "Read" {
+	if len(fields) < 4 || (fields[0] != "Read" && fields[0] != "Extracted") {
 		return "", planThenExecuteReadRange{}, false
 	}
 
@@ -4313,7 +4313,7 @@ func extractReadPathAndRangeFromSummary(summary string) (string, planThenExecute
 	}
 
 	pathIndex := -1
-	if lineIndex >= 2 && fields[lineIndex-2] == "in" {
+	if lineIndex >= 2 && (fields[lineIndex-2] == "in" || fields[lineIndex-2] == "from") {
 		pathIndex = lineIndex - 1
 	} else if lineIndex >= 2 && planThenExecuteReadFileHandleField(fields[1]) {
 		pathIndex = 2

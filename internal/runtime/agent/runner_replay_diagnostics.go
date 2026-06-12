@@ -1,9 +1,7 @@
 package agent
 
 import (
-	"fmt"
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/runtime/workerruntime"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,62 +27,6 @@ func replayRepeatedToolRequest(req workspace.ToolRequest, source workspace.ToolR
 		Output:  source.Output,
 		Error:   source.Error,
 	}
-}
-
-func readOnlyReplayedEvidenceCloseoutApplies(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, req workspace.ToolRequest, replayed workspace.ToolResult) bool {
-	if strings.HasPrefix(strings.TrimSpace(agent), "child:") ||
-		strings.HasPrefix(strings.TrimSpace(agent), "child_write:") ||
-		runnerBriefRequiresMutation(brief) ||
-		runnerVerificationRequired(brief) ||
-		!workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) ||
-		!isReadClassTool(req) ||
-		strings.TrimSpace(replayed.Error) != "" {
-
-		return false
-	}
-
-	directAnswerExactSearchReplay := readOnlyDirectAnswerExactSearchReplayCloseoutCandidate(brief, req)
-	closure := readOnlyClosureDecisionForResults(brief, results)
-	if readOnlyDirectAnswerLane(brief) && !directAnswerExactSearchReplay && readOnlyDirectAnswerSourceNavigationReplay(req) {
-		_, ok := closure.HostOwnedAnswer(agent)
-		return ok
-	}
-
-	if LanePolicyForBrief(brief).ShouldSkipRecoveryNudge() && !directAnswerExactSearchReplay && readOnlyDirectAnswerLane(brief) {
-		return false
-	}
-
-	if !readOnlyExplanationGateApplies(brief) && !directAnswerExactSearchReplay {
-		return false
-	}
-
-	if directAnswerExactSearchReplay {
-		_, ok := closure.HostOwnedAnswer(agent)
-		return ok
-	}
-
-	return closure.Answerable()
-}
-
-func readOnlyDirectAnswerExactSearchReplayCloseoutCandidate(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest) bool {
-	return readOnlyDirectAnswerLane(brief) && shouldRejectExactReplayBeforeLoopGate(req)
-}
-
-func readOnlyDirectAnswerSourceNavigationReplay(req workspace.ToolRequest) bool {
-	return strings.TrimSpace(req.Tool) == workspace.ToolNameCodeNavigate
-}
-
-func readOnlyReplayedEvidenceCloseoutPrompt(brief workerruntime.WorkerRuntimeBrief) string {
-	label := "read-only analysis"
-
-	switch {
-	case workerruntime.RuntimeContractIsReviewFindings(brief.Contract):
-		label = "read-only review"
-	case workerruntime.RuntimeContractIsArchitecture(brief.Contract):
-		label = "read-only architecture analysis"
-	}
-
-	return fmt.Sprintf("The latest %s source probe replayed evidence that was already gathered after the evidence gate was satisfied. Tools are now disabled. Synthesize the final answer from the inspected evidence: state the bounded finding or no-finding, cite exact files or symbols, include confidence and uncertainty, and do not request more tools.", label)
 }
 
 func repeatedDiagnosticLogReadFileBackfill(req workspace.ToolRequest, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {

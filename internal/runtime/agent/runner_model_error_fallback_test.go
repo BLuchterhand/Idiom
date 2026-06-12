@@ -35,7 +35,7 @@ func (c modelErrorFallbackTestClient) Backend() string { return "test" }
 
 func (c modelErrorFallbackTestClient) SupportsNativeTools() bool { return false }
 
-func TestModelErrorAfterReadOnlyEvidenceReturnsDeterministicFallback(t *testing.T) {
+func TestModelErrorAfterReadOnlyEvidenceDoesNotSynthesizeDeterministicFallback(t *testing.T) {
 	runner := &Runner{
 		Client: modelErrorFallbackTestClient{err: errors.New("chat request transport failed: unexpected EOF")},
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -60,25 +60,16 @@ func TestModelErrorAfterReadOnlyEvidenceReturnsDeterministicFallback(t *testing.
 	}
 
 	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "debug the resize issue and present findings"}}, llama.ChatOptions{}, nil, nil, nil)
-	if err != nil {
-		t.Fatalf("expected deterministic fallback instead of transport error, got %v", err)
+	if err == nil {
+		t.Fatalf("model transport error must not be masked by host synthesis:\n%s", answer)
 	}
 
-	for _, want := range []string{
-		"not have enough supported evidence",
-		"internal/surfaces/tui/app/rendering.go",
-	} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("fallback answer missing %q:\n%s", want, answer)
-		}
-	}
-
-	if strings.Contains(answer, "<<QUESTION>>") || strings.Contains(answer, "Chat failed") || strings.Contains(answer, "budget was reached") {
-		t.Fatalf("fallback leaked failure UI or budget framing:\n%s", answer)
+	if strings.TrimSpace(answer) != "" {
+		t.Fatalf("model transport error should not produce a host-authored answer: %q", answer)
 	}
 }
 
-func TestModelErrorAfterReadOnlyMarkdownEvidenceSynthesizesAnswer(t *testing.T) {
+func TestModelErrorAfterReadOnlyMarkdownEvidenceDoesNotSynthesizeAnswer(t *testing.T) {
 	runner := &Runner{
 		Client: modelErrorFallbackTestClient{err: errors.New("chat request transport failed: unexpected EOF")},
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -102,24 +93,12 @@ func TestModelErrorAfterReadOnlyMarkdownEvidenceSynthesizesAnswer(t *testing.T) 
 	}
 
 	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: runner.RuntimeBrief.Objective}}, llama.ChatOptions{}, nil, nil, nil)
-	if err != nil {
-		t.Fatalf("expected host-owned answer instead of transport error, got %v", err)
+	if err == nil {
+		t.Fatalf("model transport error must not be masked by host synthesis:\n%s", answer)
 	}
 
-	if strings.HasPrefix(answer, "<<QUESTION>>") {
-		t.Fatalf("answerable evidence must not regress to a blocker:\n%s", answer)
-	}
-
-	for _, forbidden := range []string{"did not retain a concrete user-facing finding", "budget was reached", "Chat failed"} {
-		if strings.Contains(answer, forbidden) {
-			t.Fatalf("model-error answer leaked forbidden fallback text %q:\n%s", forbidden, answer)
-		}
-	}
-
-	for _, want := range []string{"docs/idiom-strategic-thesis.md", "evidence-first", "contracts", "runtime brief"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("model-error answer missing %q:\n%s", want, answer)
-		}
+	if strings.TrimSpace(answer) != "" {
+		t.Fatalf("answerable evidence should remain evidence for the model, not host-authored prose: %q", answer)
 	}
 }
 

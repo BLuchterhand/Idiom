@@ -111,12 +111,6 @@ func (r *Runner) completionGateRepeatedBlockerAnswer(result workspace.ToolResult
 		reason = "the final answer did not satisfy the active completion gate"
 	}
 
-	if r != nil && !runnerBriefRequiresMutation(r.RuntimeBrief) && strings.TrimSpace(result.Summary) != "Final answer rejected by blocker check" {
-		if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(results); ok {
-			return answer
-		}
-	}
-
 	changedPaths := mapKeys(changedPathsFromToolResults(results))
 
 	var b strings.Builder
@@ -163,7 +157,14 @@ func (r *Runner) completionGateRepeatedBlockerAnswer(result workspace.ToolResult
 	b.WriteString(reason)
 
 	if !runnerBriefRequiresMutation(r.RuntimeBrief) {
-		b.WriteString("\n\nRequired next evidence: state the supported concrete finding from the gathered source evidence, or name the exact missing claim and the one bounded probe that would resolve it.")
+		if paths := promptEvidencePathsFromToolResults(results, 8); len(paths) > 0 {
+			b.WriteString("\n\nEvidence paths observed before rejection:\n")
+			for _, path := range paths {
+				b.WriteString("- ")
+				b.WriteString(path)
+				b.WriteString("\n")
+			}
+		}
 	}
 
 	if plannerOwnsVerification(r.RuntimeBrief) && hasPendingVerificationAfterWrites(results, r.RuntimeBrief) {
@@ -223,11 +224,7 @@ func planThenExecuteSubmitCorrectionHiddenOnlyVisiblePrompt(base string) string 
 }
 
 func (r *Runner) hostOwnedReadOnlyCloseoutAnswer(results []workspace.ToolResult) (string, bool) {
-	if r == nil || runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
-		return "", false
-	}
-
-	return readOnlyClosureDecisionForResults(r.RuntimeBrief, results).HostOwnedAnswer(r.agentName())
+	return "", false
 }
 
 func textSharesObjectiveTerm(text string, objective string) bool {

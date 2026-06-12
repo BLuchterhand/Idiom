@@ -16,7 +16,8 @@ This repository builds `idiom`, a local coding-agent harness around Qwen, `llama
 ## North-Star Rules
 
 - Prefer nudges, redirects, and bounded recovery over hard-picking the model's next step.
-- Force only real invariants: permissions, protected paths, protocol correctness, verification, completion/readiness contracts, repeated-loop breaks, and exhausted budgets.
+- Force only real invariants: permissions, protected paths, protocol correctness, verification after writes, final-answer acceptance, repeated-loop breaks, and exhausted budgets in lanes with concrete deliverables.
+- In read-only strategy lanes, do not force answer synthesis, no-tools closure, or answer-only surfaces merely because the harness thinks evidence is sufficient. If the model asks for a relevant read/search/data source, honor it unless a real invariant rejects it, and make any rejection name the invariant and the exact unsupported/repeated/prohibited action.
 - After the evidence is sufficient, answer or act. Continue only if you can name one exact missing claim and one exact probe that would resolve it.
 - Keep prompts, recovery text, and answer-shaping generic and evidence-based. Do not hardcode one recurring scenario or topic template into reusable instructions.
 - Evidence tools and summaries should report findings, paths, symbols, counts, and uncertainty. They should not prescribe the next tool call.
@@ -29,12 +30,14 @@ final-answer shaping, classify the fix using this checklist:
 
 1. **Harness-owned invariant:** Is the harness enforcing permissions,
    protected paths, tool/protocol shape, evidence freshness, source-body
-   support, readiness/completion, verification, loop bounds, or budget
-   exhaustion? If not, the proposed fix is probably model-strategy steering.
+   support, final-answer acceptance, verification, loop bounds, or bounded
+   deliverable budget exhaustion? If not, the proposed fix is probably
+   model-strategy steering. Read-only "readiness" is observable evidence state,
+   not authority to force an answer.
 2. **Model-owned strategy:** Does the change hard-pick the next probe, answer
-   outline, file path, or synthesis for a topic when multiple valid strategies
-   remain? If yes, redesign it as a typed contract, evidence predicate, or
-   advisory nudge, or remove it.
+   outline, file path, answer timing, no-tools mode, or synthesis for a topic
+   when multiple valid strategies remain? If yes, redesign it as a typed
+   contract, evidence predicate, or advisory nudge, or remove it.
 3. **Exact anchors vs composite scope:** If the model or user has an exact
    source file/symbol/body anchor, preserve that narrow path by default.
    Redirect to broad/composite discovery only when the question is inherently

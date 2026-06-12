@@ -676,7 +676,7 @@ func (r *Runner) completionGateRetryLimit(results []workspace.ToolResult) int {
 }
 
 func (r *Runner) retryableFinalAnswerAcceptanceRejection(acceptance finalAnswerAcceptance, results []workspace.ToolResult, priorGateRejections int, allowedTools []string) bool {
-	if r == nil || !retryableReadOnlyFinalAnswerBlockerKind(acceptance.BlockerKind) {
+	if r == nil {
 		return false
 	}
 
@@ -685,17 +685,33 @@ func (r *Runner) retryableFinalAnswerAcceptanceRejection(acceptance finalAnswerA
 	}
 
 	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
-	if !workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) ||
-		!workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) ||
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) ||
 		len(brief.RequiredEditPaths) > 0 ||
 		runnerBriefRequiresMutation(brief) {
 
 		return false
 	}
 
+	if !retryableReadOnlyFinalAnswerRejectionForBrief(brief, acceptance) {
+		return false
+	}
+
 	tools := uniquePhaseStrings(append(append([]string(nil), brief.AllowedTools...), allowedTools...))
 
 	return len(genericReadOnlyEvidenceTools(tools)) > 0
+}
+
+func retryableReadOnlyFinalAnswerRejectionForBrief(brief workerruntime.WorkerRuntimeBrief, acceptance finalAnswerAcceptance) bool {
+	if workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
+		return retryableReadOnlyFinalAnswerBlockerKind(acceptance.BlockerKind)
+	}
+
+	if !workerruntime.RuntimeContractIsArchitectureOrReview(brief.Contract) {
+		return false
+	}
+
+	return strings.TrimSpace(acceptance.BlockerKind) == "non_answer_prose" &&
+		containsAny(acceptance.Reason, "insufficient_evidence_answer", "answerable_evidence_reported_as_insufficient")
 }
 
 func retryableReadOnlyFinalAnswerBlockerKind(kind string) bool {

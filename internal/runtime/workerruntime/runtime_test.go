@@ -479,9 +479,9 @@ func TestBuildActionGuidancePrefersClosureAfterPostChildGapBlocker(t *testing.T)
 
 	joined := strings.Join(guidance.ValidNext, "\n")
 	for _, want := range []string{
-		"answer now from the child packet evidence",
-		"one exact packet-named path, symbol, discovered handle, or narrow range",
-		"materially wrong or missing if you answered now",
+		"final answer from the child packet evidence is available",
+		"one exact named path, symbol, discovered handle, or narrow range",
+		"<<QUESTION>> with the exact blocker",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected closure-biased valid action %q, got %#v", want, guidance.ValidNext)
@@ -509,9 +509,9 @@ func TestBuildRecoveryPlanPreservesClosureScopeOnRepeatedAction(t *testing.T) {
 	joined := strings.Join(append(append([]string{}, plan.RequiredNext...), plan.ValidNext...), "\n")
 
 	for _, want := range []string{
-		"answer now from the evidence already gathered",
+		"final answer from the evidence already gathered is available",
 		"one exact symbol, discovered handle, or narrow range",
-		"materially wrong or missing if you answered now",
+		"<<QUESTION>> with the exact blocker",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected closure-preserving recovery guidance %q, got %#v", want, plan)
@@ -627,7 +627,7 @@ func TestBuildActionGuidanceClosureOmitsTextSearchFallbackAfterReadSuccess(t *te
 		}
 	}
 
-	for _, want := range []string{"answer now from the child packet evidence", "one exact packet-named path, symbol, discovered handle, or narrow range"} {
+	for _, want := range []string{"final answer from the child packet evidence is available", "one exact named path, symbol, discovered handle, or narrow range"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected closure guidance to keep %q, got %#v", want, guidance.ValidNext)
 		}
@@ -659,8 +659,8 @@ func TestBuildActionGuidanceClosureOmitsOutlineFollowupMenu(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"answer now from the child packet evidence",
-		"one exact packet-named path, symbol, discovered handle, or narrow range",
+		"final answer from the child packet evidence is available",
+		"one exact named path, symbol, discovered handle, or narrow range",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected closure guidance to keep %q, got %#v", want, guidance.ValidNext)
@@ -877,20 +877,20 @@ func TestBuildStepInstructionUsesClosureDirective(t *testing.T) {
 		Phase:       "evidence",
 		Step:        3,
 		Constraints: []string{"child_packet_available"},
-		NextActions: []string{"answer directly from the child packet if it already resolves the question"},
+		NextActions: []string{"final answer from the child packet evidence is available"},
 		InvalidActions: []string{
 			"open-ended discovery after a child packet without naming a concrete gap",
 		},
 	})
-	if !strings.Contains(instruction.Directive, "Prefer answering now") {
-		t.Fatalf("expected closure-biased directive, got %q", instruction.Directive)
+	if !strings.Contains(instruction.Directive, "A final answer is available if the evidence supports it") {
+		t.Fatalf("expected closure-biased answer availability directive, got %q", instruction.Directive)
 	}
 
 	if !strings.Contains(instruction.Directive, "one exact missing claim") || !strings.Contains(instruction.Directive, "one exact probe") {
 		t.Fatalf("expected exact-claim/exact-probe language, got %q", instruction.Directive)
 	}
 
-	if !strings.Contains(instruction.Directive, "ranked options, not mandatory commands") {
+	if !strings.Contains(instruction.Directive, "options, not mandatory commands") {
 		t.Fatalf("expected closure directive to clarify option-vs-command, got %q", instruction.Directive)
 	}
 }

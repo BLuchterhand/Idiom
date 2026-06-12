@@ -142,6 +142,7 @@ func presentableNonMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrie
 	reason = strings.TrimPrefix(reason, "<<QUESTION>>")
 	reason = strings.TrimLeft(strings.TrimSpace(reason), ": ")
 
+	gateReason := presentableCompletionGateQuestionBlockerReason(reason)
 	internalReason := questionBlockerReasonLooksInternal(reason)
 
 	reason = presentableQuestionBlockerReason(reason)
@@ -157,6 +158,22 @@ func presentableNonMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrie
 	evidenceLabel, paths := questionBlockerContextPaths(brief, results, 4)
 
 	var b strings.Builder
+
+	if gateReason != "" {
+		b.WriteString("I could not produce a supported final answer: ")
+		b.WriteString(lowercaseFirstSentence(gateReason))
+		if !strings.HasSuffix(strings.TrimSpace(b.String()), ".") {
+			b.WriteString(".")
+		}
+		if len(paths) > 0 {
+			b.WriteString(" ")
+			b.WriteString(evidenceLabel)
+			b.WriteString(": ")
+			b.WriteString(formatInlinePathList(paths, 4))
+			b.WriteString(".")
+		}
+		return strings.TrimSpace(b.String()), true
+	}
 
 	b.WriteString(presentableUnsupportedFinalAnswerLead())
 
@@ -237,6 +254,10 @@ func questionBlockerContextPaths(brief workerruntime.WorkerRuntimeBrief, results
 
 func presentableQuestionBlockerReason(reason string) string {
 	reason = strings.TrimSpace(reason)
+	if gateReason := presentableCompletionGateQuestionBlockerReason(reason); gateReason != "" {
+		return gateReason
+	}
+
 	if questionBlockerReasonLooksInternal(reason) {
 		if malformed := extractMalformedWriteBlockerReason(reason); malformed != "" {
 			return malformed
@@ -259,6 +280,69 @@ func presentableQuestionBlockerReason(reason string) string {
 	}
 
 	return strings.TrimSpace(reason)
+}
+
+func presentableCompletionGateQuestionBlockerReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	lower := strings.ToLower(reason)
+	if reason == "" || !strings.Contains(lower, "completion gate") {
+		return ""
+	}
+
+	detail := reason
+	if idx := strings.Index(strings.ToLower(detail), "missing completion evidence:"); idx >= 0 {
+		detail = strings.TrimSpace(detail[idx+len("missing completion evidence:"):])
+	} else if idx := strings.Index(detail, ":"); idx >= 0 {
+		detail = strings.TrimSpace(detail[idx+1:])
+	}
+
+	detail = stripGateRetryPrefix(detail)
+	detail = firstSentenceBeforeAny(detail,
+		" — repeated rejections indicate",
+		" Either anchor that detail",
+		" Either issue ONE concrete tool call",
+		" Answer with the exact",
+		" state that the current evidence",
+		" or use a blocker",
+		" or use <<QUESTION>>",
+		"\n\nEvidence paths observed before rejection:",
+	)
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return ""
+	}
+
+	return "the final answer was rejected because " + lowercaseFirstSentence(detail)
+}
+
+func stripGateRetryPrefix(text string) string {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "[gate retry") {
+		return text
+	}
+
+	if idx := strings.Index(text, "]"); idx >= 0 {
+		return strings.TrimSpace(text[idx+1:])
+	}
+
+	return text
+}
+
+func firstSentenceBeforeAny(text string, markers ...string) string {
+	end := len(text)
+	lower := strings.ToLower(text)
+	for _, marker := range markers {
+		marker = strings.ToLower(marker)
+		if marker == "" {
+			continue
+		}
+
+		if idx := strings.Index(lower, marker); idx >= 0 && idx < end {
+			end = idx
+		}
+	}
+
+	return strings.TrimSpace(text[:end])
 }
 
 func questionBlockerReasonLooksInternal(reason string) bool {
@@ -2099,12 +2183,19 @@ func extractExactProbeAnchor(result workspace.ToolResult) (string, string) {
 }
 
 func extractReadExactProbeAnchor(summary string) (string, string) {
-	if rest, ok := strings.CutPrefix(strings.TrimSpace(summary), "Read "); ok {
+	summary = strings.TrimSpace(summary)
+	if rest, ok := strings.CutPrefix(summary, "Read "); ok {
 		if symbol, remainder, found := strings.Cut(rest, " in "); found {
 			return extractExactProbePath(remainder), strings.TrimSpace(symbol)
 		}
 
 		return extractExactProbePath(rest), ""
+	}
+
+	if rest, ok := strings.CutPrefix(summary, "Extracted "); ok {
+		if symbol, remainder, found := strings.Cut(rest, " from "); found {
+			return extractExactProbePath(remainder), strings.TrimSpace(symbol)
+		}
 	}
 
 	return "", ""

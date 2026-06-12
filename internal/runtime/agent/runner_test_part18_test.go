@@ -19,7 +19,7 @@ import (
 	"idiom/internal/runtime/workerruntime"
 )
 
-func TestDelegatedReadOnlyChildHostClosesAfterAnswerReadyEvidence(t *testing.T) {
+func TestDelegatedReadOnlyChildModelAnswersAfterAnswerReadyEvidence(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "runtime", "agent"), 0o755); err != nil {
 		t.Fatalf("mkdir internal/runtime/agent: %v", err)
@@ -48,7 +48,7 @@ func TestDelegatedReadOnlyChildHostClosesAfterAnswerReadyEvidence(t *testing.T) 
 	replies := []string{
 		`{"tool":"search_files","pattern":"runner_child_tasks","path":"internal/runtime/agent"}`,
 		`{"tool":"read_file","path":"internal/runtime/agent/runner_child_tasks.go","start_line":1,"end_line":20}`,
-		"SHOULD NOT BE USED",
+		"The task tool launches a subagent child runner for delegated read-only evidence in internal/runtime/agent/runner_child_tasks.go. Confidence: high.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -102,8 +102,8 @@ func TestDelegatedReadOnlyChildHostClosesAfterAnswerReadyEvidence(t *testing.T) 
 		t.Fatalf("Run: %v", err)
 	}
 
-	if requests != 2 {
-		t.Fatalf("expected child host closeout without an extra model turn, used %d requests; roles=%v answer=%q", requests, roles, answer)
+	if requests != 3 {
+		t.Fatalf("expected child model synthesis after readiness, used %d requests; roles=%v answer=%q", requests, roles, answer)
 	}
 
 	for _, want := range []string{"task", "subagent", "internal/runtime/agent/runner_child_tasks.go"} {
@@ -976,7 +976,7 @@ func TestDirectAnswerQuestionProtocolIsRetryableNotUserVisibleBlocker(t *testing
 	}
 }
 
-func TestHostReadOnlyCloseoutDoesNotTerminalizeAsBlocked(t *testing.T) {
+func TestHostReadOnlyCloseoutIsDisabledForReadOnlyEvidence(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
@@ -990,19 +990,8 @@ func TestHostReadOnlyCloseoutDoesNotTerminalizeAsBlocked(t *testing.T) {
 		Summary: "Found 1 matching line(s).",
 		Output:  "logs/conversations/20260604-195321.801.jsonl:20: completion_gate_repeated_rejection",
 	}}
-	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
-
-	if !ok {
-		t.Fatal("expected host-owned read-only closeout answer")
-	}
-
-	if strings.Contains(answer, "<<QUESTION>>") || strings.Contains(strings.ToLower(answer), "did not change any files") {
-		t.Fatalf("host closeout must be normal read-only prose, got:\n%s", answer)
-	}
-
-	decision := runner.classifyTerminalAnswer(answer, "host_read_only_closeout", results)
-	if decision.Outcome != terminalAnswerAccepted || decision.StopReason != "host_read_only_closeout" {
-		t.Fatalf("host closeout should not terminalize as blocked, got %#v\nanswer:\n%s", decision, answer)
+	if answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results); ok {
+		t.Fatalf("read-only evidence must not produce a host-authored closeout:\n%s", answer)
 	}
 }
 
@@ -1032,6 +1021,28 @@ func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T
 
 	if readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "source_grounding_unmet"}, nil, 2, nil) {
 		t.Fatal("source_grounding_unmet must become terminal once the retry budget is exhausted")
+	}
+
+	architectureRunner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyArchitecture),
+			Contract:          string(workerruntime.ContractArchitecture),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "context_query"},
+		},
+	}
+	if !architectureRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{
+		BlockerKind: "non_answer_prose",
+		Reason:      "insufficient_evidence_answer",
+	}, nil, 0, nil) {
+		t.Fatal("read-only architecture insufficient-evidence non-answer should get a recovery turn")
+	}
+
+	if architectureRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{
+		BlockerKind: "non_answer_prose",
+		Reason:      "generic_non_answer",
+	}, nil, 0, nil) {
+		t.Fatal("generic architecture non-answer prose should remain terminal")
 	}
 
 	malformedRequiredPathRunner := &Runner{

@@ -10,7 +10,10 @@ var lineOrientedSourceSnippetPattern = regexp.MustCompile(`(?:^|[\s,;])(\d{1,5})
 type sourceInventoryStats struct {
 	MarkerCount int
 	Assigns     int
+	Contains    int
+	Declares    int
 	Definitions int
+	References  int
 	Returns     int
 	Sets        int
 	Calls       int
@@ -31,7 +34,10 @@ func sourceInventoryStatsForClaim(claim string) sourceInventoryStats {
 	normalized := normalizeSourceInventoryClaim(claim)
 	stats := sourceInventoryStats{
 		Assigns:     sourceInventoryMarkerCount(normalized, "assigns"),
+		Contains:    sourceInventoryMarkerCount(normalized, "contains"),
+		Declares:    sourceInventoryMarkerCount(normalized, "declares"),
 		Definitions: sourceInventoryMarkerCount(normalized, "defines"),
+		References:  sourceInventoryMarkerCount(normalized, "references"),
 		Returns:     sourceInventoryMarkerCount(normalized, "returns"),
 		Sets:        sourceInventoryMarkerCount(normalized, "sets"),
 		Calls:       sourceInventoryMarkerCount(normalized, "calls"),
@@ -40,11 +46,8 @@ func sourceInventoryStatsForClaim(claim string) sourceInventoryStats {
 		Synthesized: sourceInventoryClaimLooksSynthesized(normalized),
 	}
 
-	stats.MarkerCount = stats.Assigns + stats.Definitions + stats.Returns + stats.Sets + stats.Calls + stats.Handles
-
-	for _, marker := range []string{" contains ", " declares ", " uses "} {
-		stats.MarkerCount += strings.Count(normalized, marker)
-	}
+	stats.MarkerCount = stats.Assigns + stats.Definitions + stats.References + stats.Returns + stats.Sets + stats.Calls + stats.Handles
+	stats.MarkerCount += stats.Contains + stats.Declares
 
 	return stats
 }
@@ -138,7 +141,9 @@ func looksLikeLowValueSourceInventoryFallback(answer string) bool {
 	return stats.Returns >= 2 ||
 		stats.Assigns >= 2 ||
 		stats.Sets >= 2 ||
+		stats.References >= 2 ||
 		stats.Assigns+stats.Calls+stats.Returns >= 3 ||
+		stats.Definitions+stats.References >= 3 ||
 		(stats.Definitions >= 2 && stats.Returns >= 1) ||
 		(stats.Definitions >= 1 && stats.Calls+stats.Sets >= 2)
 }
@@ -205,10 +210,38 @@ func looksLikeLowValueSourceInventoryNonAnswer(answer string) bool {
 		looksLikeLowValueSourceInventoryFallback(trimmed)
 }
 
+func looksLikeHostCloseoutSourceInventoryNonAnswer(answer string) bool {
+	if looksLikeLowValueSourceInventoryNonAnswer(answer) {
+		return true
+	}
+
+	stats := sourceInventoryStatsForClaim(stripPresentableSourceObjectiveEcho(answer))
+	if stats.Synthesized {
+		return false
+	}
+
+	normalized := normalizeSourceInventoryClaim(answer)
+	if stats.MarkerCount >= 1 &&
+		(strings.Contains(normalized, " the answer is grounded in `") ||
+			strings.Contains(normalized, " this is grounded in `")) {
+
+		return stats.Definitions+stats.References+stats.Assigns+stats.Returns+
+			stats.Sets+stats.Calls+stats.Handles+stats.Contains+stats.Declares > 0
+	}
+
+	return (stats.Definitions >= 2 && stats.MarkerCount == stats.Definitions) ||
+		(stats.References >= 2 && stats.MarkerCount == stats.References) ||
+		(stats.Definitions+stats.References >= 3 && stats.MarkerCount == stats.Definitions+stats.References)
+}
+
 func looksLikeLineOrientedSourceSnippetAnswer(answer string) bool {
 	trimmed := strings.TrimSpace(answer)
 	if trimmed == "" {
 		return false
+	}
+
+	if looksLikeCompactedLineOrientedSourceSnippet(trimmed) {
+		return true
 	}
 
 	fragments, sourceMarkers := lineOrientedSourceSnippetCounts(trimmed)
@@ -225,10 +258,26 @@ func looksLikeLineOrientedSourceSnippetAnswer(answer string) bool {
 
 func looksLikeLineOrientedSourceSnippetLine(line string) bool {
 	line = strings.TrimSpace(strings.TrimPrefix(line, "- "))
+	line = strings.TrimSpace(strings.TrimPrefix(line, "..."))
+	line = strings.TrimSpace(strings.TrimPrefix(line, "…"))
 	if line == "" {
 		return false
 	}
 
+	if !lineHasLeadingSourceLineNumber(line) {
+		return false
+	}
+
+	colon := strings.IndexByte(line, ':')
+	rest := strings.TrimSpace(line[colon+1:])
+	if rest == "" || rest == "." || rest == ")" || rest == "}" || rest == "{" {
+		return true
+	}
+
+	return lineOrientedSourceTokenLooksLikeCode(rest)
+}
+
+func lineHasLeadingSourceLineNumber(line string) bool {
 	colon := strings.IndexByte(line, ':')
 	if colon <= 0 || colon > 5 {
 		return false
@@ -240,12 +289,31 @@ func looksLikeLineOrientedSourceSnippetLine(line string) bool {
 		}
 	}
 
-	rest := strings.TrimSpace(line[colon+1:])
-	if rest == "" || rest == "." || rest == ")" || rest == "}" || rest == "{" {
-		return true
+	return true
+}
+
+func looksLikeCompactedLineOrientedSourceSnippet(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" || !(strings.HasPrefix(trimmed, "...") || strings.HasPrefix(trimmed, "…")) {
+		return false
 	}
 
-	return lineOrientedSourceTokenLooksLikeCode(rest)
+	if !lineOrientedSourceSnippetPattern.MatchString(trimmed) {
+		return false
+	}
+
+	lower := strings.ToLower(trimmed)
+	return containsAny(lower,
+		"\t",
+		"[]",
+		"{}",
+		"func ",
+		"type ",
+		"const ",
+		"var ",
+		"package ",
+		"return ",
+	)
 }
 
 func lineOrientedSourceSnippetCounts(answer string) (int, int) {
@@ -284,6 +352,7 @@ func lineOrientedSourceTokenLooksLikeCode(token string) bool {
 
 	lower := strings.ToLower(token)
 	if strings.Contains(token, "(") ||
+		strings.Contains(token, "[]") ||
 		strings.Contains(token, "&&") ||
 		strings.Contains(token, "||") {
 

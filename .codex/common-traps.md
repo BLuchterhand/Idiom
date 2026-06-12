@@ -232,8 +232,15 @@ For `<<QUESTION>>` specifically:
   the normal lane/tool permission policy unless an explicit lane contract,
   protected path, configured tool rule, verification state, or loop invariant
   forbids it. A read request after readiness usually means the prior evidence
-  was not sufficient for synthesis; do not force host closeout or require
-  `named_gap` / `why_not_answering` fields as a generic read gate.
+  was not sufficient for synthesis; do not force host closeout, force a
+  no-tools answer turn, hide useful read/search tools, or require `named_gap` /
+  `why_not_answering` fields as a generic read gate.
+- **Unregistered evidence reported as missing evidence**: if the model saw a
+  context pack, prefetch excerpt, child packet, telemetry fact, or recovery
+  state but the final path says "not enough evidence," first suspect evidence
+  registration/projection drift. Fix the ledger, packet promotion, accepted
+  evidence paths, or final-answer validator. Do not paper over the gap by
+  forcing synthesis or adding a topic-specific fallback answer.
 - **Tool results that prescribe strategy**: evidence tools should report facts,
   paths, symbols, counts, uncertainty, and provenance. Strategy guidance belongs
   in the runtime contract or a deterministic rejection message.

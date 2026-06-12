@@ -6,7 +6,6 @@ import (
 
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/util"
-	"idiom/internal/runtime/llama"
 )
 
 const maxInputHistoryEntries = 50
@@ -46,20 +45,22 @@ func (m *Model) loadInputHistoryFromLogs() error {
 	return nil
 }
 
-func (m *Model) loadInputHistoryFromSessionMessages(messages []llama.ChatMessage) {
-	if m == nil {
-		return
+func inputHistoryFromSessionLog(path string, limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
 	}
 
-	for _, msg := range messages {
-		if strings.TrimSpace(msg.Role) != "user" {
-			continue
-		}
-
-		m.inputHistory = appendInputHistoryValue(m.inputHistory, msg.Content, maxInputHistoryEntries)
+	values, err := inputHistoryValuesFromSessionLog(path, true)
+	if err != nil {
+		return nil, err
 	}
 
-	m.resetInputHistoryNavigation()
+	var history []string
+	for _, value := range values {
+		history = appendInputHistoryValue(history, value, limit)
+	}
+
+	return history, nil
 }
 
 func appendInputHistoryValue(history []string, text string, limit int) []string {
@@ -102,7 +103,7 @@ func inputHistoryFromRecordedSessions(cfg config.Config, limit int) ([]string, e
 	var history []string
 
 	for i := len(sessions) - 1; i >= 0; i-- {
-		messages, err := inputHistoryValuesFromSessionLog(sessions[i].Path)
+		messages, err := inputHistoryValuesFromSessionLog(sessions[i].Path, false)
 		if err != nil {
 			continue
 		}
@@ -115,7 +116,7 @@ func inputHistoryFromRecordedSessions(cfg config.Config, limit int) ([]string, e
 	return history, nil
 }
 
-func inputHistoryValuesFromSessionLog(path string) ([]string, error) {
+func inputHistoryValuesFromSessionLog(path string, includeMessageFallback bool) ([]string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil, nil
@@ -156,7 +157,7 @@ func inputHistoryValuesFromSessionLog(path string) ([]string, error) {
 		return nil, err
 	}
 
-	if len(submissions) > 0 {
+	if len(submissions) > 0 || !includeMessageFallback {
 		return submissions, nil
 	}
 

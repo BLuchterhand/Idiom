@@ -55,6 +55,128 @@ func TestInputHistoryNavigationUsesSubmittedPrompts(t *testing.T) {
 	}
 }
 
+func TestInputHistoryNavigationUpdatesRenderedInputThroughModelUpdate(t *testing.T) {
+	m := &Model{
+		events:       make(chan tea.Msg, 4),
+		input:        textarea.New(),
+		inputHistory: []string{"first prompt", "second prompt"},
+		streaming:    true,
+	}
+	m.inputHistoryIndex = -1
+	m.input.SetValue("draft prompt")
+	m.width = 80
+	m.height = 24
+	m.resize()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	got, ok := updated.(*Model)
+	if !ok {
+		t.Fatalf("Update returned %T, want *Model", updated)
+	}
+
+	if value := got.input.Value(); value != "second prompt" {
+		t.Fatalf("up arrow should set input value while streaming, got %q", value)
+	}
+
+	if view := got.View(); !strings.Contains(view, "second prompt") {
+		t.Fatalf("rendered view should include recalled prompt, got:\n%s", view)
+	}
+}
+
+func TestInputHistoryNavigationResizesRenderedInput(t *testing.T) {
+	wrappedPrompt := strings.Repeat("wrapped ", 12)
+	m := &Model{
+		events:       make(chan tea.Msg, 4),
+		input:        textarea.New(),
+		inputHistory: []string{wrappedPrompt},
+	}
+	m.inputHistoryIndex = -1
+	m.width = 32
+	m.height = 18
+	m.resize()
+
+	if got := m.input.Height(); got != 1 {
+		t.Fatalf("initial input height = %d, want 1", got)
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	got, ok := updated.(*Model)
+	if !ok {
+		t.Fatalf("Update returned %T, want *Model", updated)
+	}
+
+	if got.input.Height() <= 1 {
+		t.Fatalf("history recall should resize wrapped input, height=%d", got.input.Height())
+	}
+
+	if view := got.View(); !strings.Contains(view, "wrapped") {
+		t.Fatalf("rendered view should include wrapped recalled prompt, got:\n%s", view)
+	}
+}
+
+func TestInputHistoryNavigationContinuesPastSlashSuggestions(t *testing.T) {
+	m := &Model{
+		events:       make(chan tea.Msg, 4),
+		input:        textarea.New(),
+		inputHistory: []string{"older prompt", "/pla"},
+	}
+	m.inputHistoryIndex = -1
+	m.width = 80
+	m.height = 24
+	m.resize()
+
+	if _, handled := m.handleKeyPress(tea.KeyMsg{Type: tea.KeyUp}); !handled {
+		t.Fatal("first up should recall slash-like history entry")
+	}
+
+	if got := m.input.Value(); got != "/pla" {
+		t.Fatalf("first up recalled %q, want /pla", got)
+	}
+
+	if !m.slashSuggestions.visible {
+		t.Fatal("slash suggestions should update for recalled slash-like entry")
+	}
+
+	if _, handled := m.handleKeyPress(tea.KeyMsg{Type: tea.KeyUp}); !handled {
+		t.Fatal("second up should continue input history navigation")
+	}
+
+	if got := m.input.Value(); got != "older prompt" {
+		t.Fatalf("second up recalled %q, want older prompt", got)
+	}
+}
+
+func TestClosedPanelFocusDoesNotBlockInputHistoryNavigation(t *testing.T) {
+	m := &Model{
+		events:            make(chan tea.Msg, 4),
+		input:             textarea.New(),
+		inputHistory:      []string{"prior prompt"},
+		inputHistoryIndex: -1,
+	}
+	m.history.focused = true
+	m.history.panelOpen = false
+
+	if _, handled := m.handleKeyPress(tea.KeyMsg{Type: tea.KeyUp}); !handled {
+		t.Fatal("closed panel focus should not block input history navigation")
+	}
+
+	if got := m.input.Value(); got != "prior prompt" {
+		t.Fatalf("input history should update the input, got %q", got)
+	}
+}
+
+func TestClosingAlreadyClosedPanelClearsStaleFocus(t *testing.T) {
+	m := &Model{ready: true}
+	m.history.focused = true
+	m.history.panelOpen = false
+
+	m.setHistoryPanelOpen(false)
+
+	if m.history.focused {
+		t.Fatal("closed panel must not retain focus")
+	}
+}
+
 func TestInputHistoryDoesNotOverrideFocusedPanelsOrSlashSuggestions(t *testing.T) {
 	m := &Model{
 		events:            make(chan tea.Msg, 4),
@@ -156,13 +278,13 @@ func TestInputHistoryLoadsFromRecordedSessionsOldestToNewestDeduped(t *testing.T
 	dir := t.TempDir()
 	cfg := config.Config{Chat: config.Chat{DebugLogDir: dir}}
 	writeSessionLog(t, dir, "20260418-055543.504.jsonl", []string{
-		`{"type":"message","role":"user","content":"older prompt"}`,
+		`{"type":"input_submission","content":"older prompt"}`,
 		`{"type":"message","role":"assistant","content":"ignored"}`,
-		`{"type":"message","role":"user","content":"repeat me"}`,
+		`{"type":"input_submission","content":"repeat me"}`,
 	})
 	writeSessionLog(t, dir, "20260419-100000.000.jsonl", []string{
-		`{"type":"message","role":"user","content":"newer prompt"}`,
-		`{"type":"message","role":"user","content":"repeat me"}`,
+		`{"type":"input_submission","content":"newer prompt"}`,
+		`{"type":"input_submission","content":"repeat me"}`,
 	})
 	writeSessionLog(t, dir, "notes.txt", []string{
 		`{"type":"message","role":"user","content":"not a session"}`,
@@ -174,6 +296,32 @@ func TestInputHistoryLoadsFromRecordedSessionsOldestToNewestDeduped(t *testing.T
 	}
 
 	want := []string{"older prompt", "newer prompt", "repeat me"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("history = %#v, want %#v", got, want)
+	}
+}
+
+func TestInputHistoryFromRecordedSessionsIgnoresMessageOnlyLogs(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{Chat: config.Chat{DebugLogDir: dir}}
+
+	writeSessionLog(t, dir, "20200101-000000.000.jsonl", []string{
+		`{"type":"message","role":"user","content":"ancient synthetic prompt"}`,
+	})
+	writeSessionLog(t, dir, "20260612-100000.000.jsonl", []string{
+		`{"type":"input_submission","content":"recent submitted prompt"}`,
+		`{"type":"message","role":"user","content":"normalized dispatch prompt"}`,
+	})
+	writeSessionLog(t, dir, "zz-test-process.jsonl", []string{
+		`{"type":"message","role":"user","content":"lexically newest synthetic prompt"}`,
+	})
+
+	got, err := inputHistoryFromRecordedSessions(cfg, maxInputHistoryEntries)
+	if err != nil {
+		t.Fatalf("inputHistoryFromRecordedSessions: %v", err)
+	}
+
+	want := []string{"recent submitted prompt"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("history = %#v, want %#v", got, want)
 	}
@@ -194,6 +342,25 @@ func TestLoadHistoryFromSessionSeedsInputHistory(t *testing.T) {
 
 	if got := strings.Join(model.inputHistory, "|"); got != "first prompt|second prompt" {
 		t.Fatalf("input history = %q", got)
+	}
+}
+
+func TestLoadHistoryFromSessionPrefersSubmittedInputHistory(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSessionLog(t, dir, "session.jsonl", []string{
+		`{"type":"input_submission","content":"/plan-execute fix the up arrow history"}`,
+		`{"type":"message","role":"user","content":"fix the up arrow history"}`,
+		`{"type":"message","role":"assistant","content":"done"}`,
+	})
+
+	model := &Model{}
+	if err := model.LoadHistoryFromSession(path); err != nil {
+		t.Fatalf("LoadHistoryFromSession: %v", err)
+	}
+
+	want := "/plan-execute fix the up arrow history"
+	if got := strings.Join(model.inputHistory, "|"); got != want {
+		t.Fatalf("input history = %q, want %q", got, want)
 	}
 }
 

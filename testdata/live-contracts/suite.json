@@ -97,7 +97,7 @@
               "Post-readiness follow-up missing named gap"
             ],
             "error_contains": [
-              "answer readiness has already been reached"
+              "post-readiness exact source probes require a named_gap"
             ],
             "accounts_for_runner_rejection": true,
             "min_count": 0,

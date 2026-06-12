@@ -957,14 +957,10 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		decision.Raw = marshalToolRequestRaw(redirected)
 	}
 
-	if summary, errorText, reject := debugLogPhaseScopeRejection(decision.Request, input.Results, r.RuntimeBrief); reject {
+	if summary, errorText, reject := debugLogPhaseScopeRejection(decision.Request, input.Results, r.RuntimeBrief, currentDebugLogSessionID(r.Workspace)); reject {
 		if summary == "Blind log reread rejected" {
 			decision.RejectSummary = summary
 			decision.RejectError = errorText
-			decision.ForceAnswer = &runnerForcedAnswer{
-				Reason: "evidence_sufficient_after_blind_reread",
-				Prompt: "Evidence is sufficient. Answer from what you already have: state the observation, the inferred cause if any, and the remaining uncertainty. If a specific probe would still materially change the answer, name the exact missing claim instead of calling another tool.",
-			}
 
 			return decision
 		}
@@ -983,7 +979,7 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 
 	if debugLogEvidenceSatisfied(r.RuntimeBrief, input.Results) && isReadClassTool(decision.Request) {
 		decision.RejectSummary = "Debug-log contract rejected extra exploration after evidence was satisfied"
-		decision.RejectError = "you already have a concrete failure hit from the selected log and a nearby read window. Answer from that evidence now unless you can name a specific missing datum."
+		decision.RejectError = "you already have a concrete failure hit from the selected log and a nearby read window. A final answer is available if that evidence supports it; otherwise name the specific missing datum before another probe."
 		decision.RejectStopReason = "debug_logs_post_evidence_drift"
 
 		return decision
@@ -2018,6 +2014,14 @@ func delegatedReadOnlyLiteralSymbolCandidate(raw string) (string, bool) {
 		return "", false
 	}
 
+	for i, r := range value {
+		if i == 0 && !unicode.IsLetter(r) && r != '_' {
+			return "", false
+		}
+
+		break
+	}
+
 	hasLetter := false
 
 	for _, r := range value {
@@ -2459,30 +2463,6 @@ func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
 	}
 
 	return count
-}
-
-func (r *Runner) readOnlyNoMatchCloseoutApplies(req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult) bool {
-	if r == nil || runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
-		return false
-	}
-
-	if strings.TrimSpace(req.Tool) != "code_navigate" || strings.TrimSpace(result.Error) != "" {
-		return false
-	}
-
-	summary := strings.ToLower(strings.TrimSpace(result.Summary))
-	if !strings.Contains(summary, "no generic code navigation matches") {
-		return false
-	}
-
-	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile) &&
-		!workerruntime.RuntimeContractIsArchitecture(r.RuntimeBrief.Contract) &&
-		!workerruntime.RuntimeContractIsDirectAnswer(r.RuntimeBrief.Contract) {
-
-		return false
-	}
-
-	return len(concreteSourceEvidencePaths(results)) >= 1 && len(promptEvidencePathsFromToolResults(results, 6)) >= 1
 }
 
 func toolResultReadSpan(result workspace.ToolResult) int {

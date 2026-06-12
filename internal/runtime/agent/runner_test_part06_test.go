@@ -646,24 +646,40 @@ func TestRunnerReadOnlyReviewClosesAfterReplayedSourceEvidence(t *testing.T) {
 	}
 
 	if strings.TrimSpace(answer) == "" {
-		t.Fatal("expected forced review closeout to return an answer")
+		t.Fatal("expected model-owned review answer after replayed evidence")
 	}
 
 	if executed != 2 {
 		t.Fatalf("replayed request should not execute a third code_navigate call, executed=%d", executed)
 	}
 
-	if requests < 3 || requests > 4 {
-		t.Fatalf("expected three tool-decision calls and at most one no-tools synthesis call, got %d", requests)
+	if requests != 4 {
+		t.Fatalf("expected three tool-decision calls and one model final answer call, got %d", requests)
 	}
 
 	for _, event := range events {
-		if event.Role == "budget_ledger" && strings.Contains(event.Content, `"stop_reason":"read_only_replayed_evidence_closeout"`) {
+		if event.Role != "budget_ledger" {
+			continue
+		}
+
+		var ledger runnerBudgetLedger
+		if err := json.Unmarshal([]byte(event.Content), &ledger); err != nil {
+			t.Fatalf("decode budget ledger %q: %v", event.Content, err)
+		}
+
+		if ledger.StopReason == "read_only_replayed_evidence_closeout" ||
+			ledger.StopReason == "host_read_only_closeout" ||
+			ledger.StopReason == "read_only_prefetch_host_closeout" {
+
+			t.Fatalf("replayed evidence must not use read-only closeout stop reason: %#v", ledger)
+		}
+
+		if ledger.StopReason != "" {
 			return
 		}
 	}
 
-	t.Fatalf("expected read_only_replayed_evidence_closeout budget ledger; events=%s", formatRunEventsForTest(events))
+	t.Fatalf("expected budget ledger after replayed evidence; events=%s", formatRunEventsForTest(events))
 }
 
 func TestRunnerAnswersAfterRepeatedPostReadinessNoGapFollowupsWhenEvidenceSufficient(t *testing.T) {
@@ -1073,7 +1089,7 @@ func TestApplyLanePreflightRedirectsVerificationOnlyToBootstrapCommand(t *testin
 	}
 }
 
-func TestApplyLanePreflightForcesAnswerAfterBlindDebugLogReread(t *testing.T) {
+func TestApplyLanePreflightRejectsBlindDebugLogRereadWithoutForcedAnswer(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: "debug_logs"}
 	results := []workspace.ToolResult{
 		{
@@ -1099,12 +1115,14 @@ func TestApplyLanePreflightForcesAnswerAfterBlindDebugLogReread(t *testing.T) {
 		t.Fatalf("expected blind-reread rejection, got %#v", decision)
 	}
 
-	if decision.ForceAnswer == nil || decision.ForceAnswer.Reason != "evidence_sufficient_after_blind_reread" {
-		t.Fatalf("expected forced-answer handoff after blind reread, got %#v", decision)
+	if decision.ForceAnswer != nil {
+		t.Fatalf("blind reread must not force answer strategy, got %#v", decision.ForceAnswer)
 	}
 
-	if !strings.Contains(decision.ForceAnswer.Prompt, "Evidence is sufficient") {
-		t.Fatalf("expected generic evidence-sufficient forced-answer prompt, got %#v", decision.ForceAnswer)
+	if !strings.Contains(decision.RejectError, "already have") ||
+		!strings.Contains(decision.RejectError, "A final answer is available if") {
+
+		t.Fatalf("expected blind-reread rejection to explain repeated evidence, got %#v", decision)
 	}
 }
 

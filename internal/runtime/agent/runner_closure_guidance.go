@@ -38,7 +38,8 @@ func applyDelegatedReadOnlyClosureBias(state runnerNextActionState, agent string
 		return strings.Contains(lower, "gate") || strings.Contains(lower, "gather or edit the missing evidence")
 	})
 	state.NextValidActions = prependRunnerStateStrings([]string{
-		"answer directly from the evidence already gathered",
+		"final answer from the evidence already gathered is available",
+		"if one exact missing claim remains, use one bounded probe against a named path, symbol, discovered handle, or narrow range",
 	}, state.NextValidActions)
 	state.InvalidNextActions = mergeRunnerStateStrings(state.InvalidNextActions, []string{
 		"open-ended discovery after answer readiness without naming a concrete gap",
@@ -70,7 +71,8 @@ func applyPostChildClosureBias(state runnerNextActionState, agent string, brief 
 
 	state.Constraints = mergeRunnerStateStrings(state.Constraints, []string{"child_packet_available"})
 	state.NextValidActions = prependRunnerStateStrings([]string{
-		"answer directly from the child packet if it already resolves the question",
+		"final answer from the child packet evidence is available",
+		"if one exact missing claim remains, use one bounded probe against a named path, symbol, discovered handle, or narrow range",
 	}, state.NextValidActions)
 	state.InvalidNextActions = mergeRunnerStateStrings(state.InvalidNextActions, []string{
 		"open-ended discovery after a child packet without naming a concrete gap",

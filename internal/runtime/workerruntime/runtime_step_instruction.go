@@ -48,9 +48,9 @@ func BuildStepInstruction(state RunState) StepInstruction {
 	} else if state.Readiness != nil && state.Readiness.ReadyToWrite {
 		directive = "Use this current-state packet for the next action. The readiness state says writing is supported by the current packet/evidence; the contract outcome is an edit or <<QUESTION>> with the exact edit blocker. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	} else if state.Readiness != nil && state.Readiness.ReadyToAnswer {
-		directive = "Use this current-state packet for the next action. The readiness state says answering is supported; only continue if you can name one exact missing claim, one exact probe, and what would be materially incomplete if you answered now. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
+		directive = "Use this current-state packet for the next action. The readiness state says a final answer is available if the evidence supports it; continue only for one exact missing claim and one exact probe. Treat next_actions as options, not mandatory commands. Do not repeat invalid actions."
 	} else if slices.Contains(state.Constraints, "answer_readiness_reached") || slices.Contains(state.Constraints, "child_packet_available") {
-		directive = "Use this current-state packet for the next action. Prefer answering now; only continue if you can name one exact missing claim, one exact probe, and what would be materially incomplete if you answered now. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
+		directive = "Use this current-state packet for the next action. A final answer is available if the evidence supports it; continue only for one exact missing claim and one exact probe. Treat next_actions as options, not mandatory commands. Do not repeat invalid actions."
 	}
 
 	return StepInstruction{
@@ -112,7 +112,7 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief, isFollowUp ...bool) S
 		!TaskFamilyIsConversation(state.TaskFamily) &&
 		!RuntimeContractIsDirectAnswer(state.Contract) {
 
-		directive += " The readiness state says answering is supported; continue only for one exact missing claim and one exact probe."
+		directive += " The readiness state says a final answer is available if the evidence supports it; continue only for one exact missing claim and one exact probe."
 	}
 
 	return StepInstruction{
