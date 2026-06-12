@@ -211,7 +211,9 @@ func (s *ServerController) buildLlamaArgs() []string {
 		args = append(args, "--reasoning-format", s.cfg.ReasoningFormat)
 	}
 
-	args = append(args, "--reasoning-budget", strconv.Itoa(s.cfg.ReasoningBudget))
+	if s.cfg.ReasoningBudget > 0 {
+		args = append(args, "--reasoning-budget", strconv.Itoa(s.cfg.ReasoningBudget))
+	}
 	args = append(args, s.cfg.ExtraArgs...)
 
 	return args

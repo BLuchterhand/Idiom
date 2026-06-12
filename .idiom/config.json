@@ -3,15 +3,24 @@
   "app_name": "Idiom (ds4)",
   "llama_server": {
     "kind": "llama",
-    "binary": "llama-server",
+    "binary": "/Users/ben/models/ds4/ds4-server",
     "host": "127.0.0.1",
     "port": 47786,
-    "model": "models/ds4/DeepSeek-V4-Flash.gguf",
+    "model": "/Users/ben/models/ds4/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix.gguf",
     "ctx_size": 100000,
-    "log_file": "logs/ds4-server.log"
+    "jinja": false,
+    "flash_attention": false,
+    "reasoning": "",
+    "reasoning_format": "",
+    "reasoning_budget": 0,
+    "log_file": "logs/ds4-server.log",
+    "extra_args": [
+      "--chdir",
+      "/Users/ben/models/ds4"
+    ]
   },
   "chat": {
-    "auto_start_server": false,
+    "auto_start_server": true,
     "save_dir": "transcripts",
     "debug_log_dir": "logs/conversations",
     "debug_log_mode": "redacted",
@@ -74,11 +83,20 @@
   },
   "implementer": {
     "kind": "llama",
-    "binary": "llama-server",
+    "binary": "/Users/ben/models/ds4/ds4-server",
     "host": "127.0.0.1",
     "port": 47787,
-    "model": "models/ds4/DeepSeek-V4-Flash.gguf",
+    "model": "/Users/ben/models/ds4/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix.gguf",
     "ctx_size": 100000,
-    "log_file": "logs/ds4-implementer.log"
+    "jinja": false,
+    "flash_attention": false,
+    "reasoning": "",
+    "reasoning_format": "",
+    "reasoning_budget": 0,
+    "log_file": "logs/ds4-implementer.log",
+    "extra_args": [
+      "--chdir",
+      "/Users/ben/models/ds4"
+    ]
   }
 }

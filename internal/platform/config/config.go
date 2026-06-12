@@ -1241,24 +1241,18 @@ func applyBackendRuntimeDefaults(b *LlamaServer, parent *LlamaServer, defaultLog
 	if b.Reasoning == "" {
 		if parent != nil && parent.Reasoning != "" {
 			b.Reasoning = parent.Reasoning
-		} else {
-			b.Reasoning = "auto"
 		}
 	}
 
 	if b.ReasoningFormat == "" {
 		if parent != nil && parent.ReasoningFormat != "" {
 			b.ReasoningFormat = parent.ReasoningFormat
-		} else {
-			b.ReasoningFormat = "deepseek"
 		}
 	}
 
 	if b.ReasoningBudget == 0 {
 		if parent != nil {
 			b.ReasoningBudget = parent.ReasoningBudget
-		} else {
-			b.ReasoningBudget = -1
 		}
 	}
 }
