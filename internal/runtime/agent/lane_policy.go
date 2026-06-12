@@ -172,6 +172,67 @@ func (p ConversationLanePolicy) ClosureReadyRecoveryNudge(_ workerruntime.Worker
 	return "" // model owns readiness
 }
 
+// --- ReadOnlyInvestigationLanePolicy ---
+//
+// Used for architecture, review, locate, and similar read-only investigation
+// lanes. Per the north star, read-only strategy lanes must not be force-
+// completed merely because the harness thinks evidence is sufficient —
+// the model owns its own stop decision. This policy therefore skips hard
+// budget limits (duration, model-call count) that would produce garbage
+// forced answers.
+//
+// However, the north star explicitly allows "repeated-loop breaks" as a
+// real invariant. This policy keeps loop detection (fingerprint hard block,
+// same-path fixation) and advisory nudges (synthesis nudge, call-count
+// milestones) so a stuck model has lightweight recovery paths without a
+// hard force-complete. Force-answer-after-rejection is also suppressed:
+// incidental tool gate rejections should nudge, not terminate.
+
+type ReadOnlyInvestigationLanePolicy struct{}
+
+func (p ReadOnlyInvestigationLanePolicy) Name() string                          { return "read_only_investigation" }
+func (p ReadOnlyInvestigationLanePolicy) SkipDurationBudget() bool              { return true }
+func (p ReadOnlyInvestigationLanePolicy) SkipModelCallBudget() bool             { return true }
+func (p ReadOnlyInvestigationLanePolicy) SkipFingerprintHardBlock() bool        { return false }
+func (p ReadOnlyInvestigationLanePolicy) SkipSynthesisNudge() bool              { return false }
+func (p ReadOnlyInvestigationLanePolicy) SkipExplorationDelegationNudge() bool  { return false }
+func (p ReadOnlyInvestigationLanePolicy) ShouldForceAnswerAfterRejection() bool { return false }
+func (p ReadOnlyInvestigationLanePolicy) AutoCaptureFindings() bool             { return true }
+func (p ReadOnlyInvestigationLanePolicy) ShouldHaveNoteTool(_ string) bool      { return true }
+func (p ReadOnlyInvestigationLanePolicy) ConfidenceCap() string                 { return "medium" }
+
+func (p ReadOnlyInvestigationLanePolicy) CallCountMilestones(ctxSize int) (int, int) {
+	// Investigation lanes need earlier nudges than conversation lanes: local
+	// models (Qwen 35b) lack the metacognition to self-regulate exploration
+	// and may read indefinitely without answering. A first milestone of 10
+	// tool calls (~2-3 minutes of wall-clock time for local models) gives a
+	// timely "consider answering" nudge, with repeats every 10 calls.
+	// Context-window scaling is unnecessary — investigation answers are
+	// typically concise and should not require hundreds of tool calls.
+	return 10, 10
+}
+
+func (p ReadOnlyInvestigationLanePolicy) EvidenceSufficientForObjective(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	return false
+}
+
+func (p ReadOnlyInvestigationLanePolicy) NamedEvidencePaths(brief workerruntime.WorkerRuntimeBrief) []string {
+	return nil
+}
+
+func (p ReadOnlyInvestigationLanePolicy) EvidenceSatisfiedForceAnswerReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	return false
+}
+
+func (p ReadOnlyInvestigationLanePolicy) ShouldSkipRecoveryNudge() bool { return false }
+func (p ReadOnlyInvestigationLanePolicy) RejectionRecoveryNudge(_ workerruntime.WorkerRuntimeBrief, _ workspace.ToolRequest, _ []workspace.ToolResult) string {
+	return ""
+}
+
+func (p ReadOnlyInvestigationLanePolicy) ClosureReadyRecoveryNudge(_ workerruntime.WorkerRuntimeBrief) string {
+	return ""
+}
+
 // --- DelegatedReadOnlyLanePolicy ---
 
 type DelegatedReadOnlyLanePolicy struct{}
@@ -221,9 +282,11 @@ func LanePolicyForBrief(brief workerruntime.WorkerRuntimeBrief) LanePolicy {
 	}
 
 	// Read-only investigation lanes (architecture, review, locate, etc.)
-	// that do not require mutation should use the conversation policy so
-	// the model owns readiness and is not force-completed after incidental
-	// tool rejections. Without this, the LLM route classifier's
+	// that do not require mutation use ReadOnlyInvestigationLanePolicy so
+	// budget enforcement and loop detection remain active (the model cannot
+	// read forever) while force-answer-after-rejection is suppressed.
+	//
+	// Without this explicit routing, the LLM route classifier's
 	// non-determinism (temp 0.1) causes similar evidence-based questions to
 	// land in different lane policies with inconsistent force-answer
 	// behavior, violating the north-star principle of preferring nudges and
@@ -231,7 +294,7 @@ func LanePolicyForBrief(brief workerruntime.WorkerRuntimeBrief) LanePolicy {
 	if workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) &&
 		!runnerBriefRequiresMutation(brief) {
 
-		return ConversationLanePolicy{}
+		return ReadOnlyInvestigationLanePolicy{}
 	}
 
 	return DefaultLanePolicy{}

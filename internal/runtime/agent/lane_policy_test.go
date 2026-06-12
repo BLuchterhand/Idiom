@@ -8,13 +8,10 @@ import (
 
 // TestLanePolicyForBrief_ReadOnlyInvestigationLanes verifies that ALL
 // read-only workspace lanes that do not require mutation receive
-// ConversationLanePolicy, so the model owns readiness and is not
-// force-completed after incidental tool rejections. Previously only
-// conversation/direct_answer lanes got this treatment; architecture,
-// review, and locate lanes fell through to DefaultLanePolicy, causing
-// the LLM classifier's non-determinism (temp 0.1) to produce
-// inconsistent force-answer behavior for similar evidence-based
-// questions.
+// ReadOnlyInvestigationLanePolicy, so budget enforcement and loop detection
+// remain active (the model cannot read forever) while force-answer-after-
+// rejection is suppressed. Conversation and direct_answer lanes still get
+// ConversationLanePolicy (full north-star trust model).
 func TestLanePolicyForBrief_ReadOnlyInvestigationLanes(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -40,31 +37,31 @@ func TestLanePolicyForBrief_ReadOnlyInvestigationLanes(t *testing.T) {
 			wantFn: func(p LanePolicy) bool { _, ok := p.(ConversationLanePolicy); return ok },
 		},
 		{
-			name: "architecture + read_only gets conversation policy",
+			name: "architecture + read_only gets read-only investigation policy",
 			brief: workerruntime.WorkerRuntimeBrief{
 				TaskFamily:        "architecture",
 				Contract:          "architecture_assessment",
 				PermissionProfile: "read_only_workspace",
 			},
-			wantFn: func(p LanePolicy) bool { _, ok := p.(ConversationLanePolicy); return ok },
+			wantFn: func(p LanePolicy) bool { _, ok := p.(ReadOnlyInvestigationLanePolicy); return ok },
 		},
 		{
-			name: "review + read_only gets conversation policy",
+			name: "review + read_only gets read-only investigation policy",
 			brief: workerruntime.WorkerRuntimeBrief{
 				TaskFamily:        "security_review",
 				Contract:          "review_findings",
 				PermissionProfile: "read_only_workspace",
 			},
-			wantFn: func(p LanePolicy) bool { _, ok := p.(ConversationLanePolicy); return ok },
+			wantFn: func(p LanePolicy) bool { _, ok := p.(ReadOnlyInvestigationLanePolicy); return ok },
 		},
 		{
-			name: "locate + read_only gets conversation policy",
+			name: "locate + read_only gets read-only investigation policy",
 			brief: workerruntime.WorkerRuntimeBrief{
 				TaskFamily:        "locate",
 				Contract:          "locate_targets",
 				PermissionProfile: "read_only_workspace",
 			},
-			wantFn: func(p LanePolicy) bool { _, ok := p.(ConversationLanePolicy); return ok },
+			wantFn: func(p LanePolicy) bool { _, ok := p.(ReadOnlyInvestigationLanePolicy); return ok },
 		},
 		{
 			name: "implementation gets default policy",

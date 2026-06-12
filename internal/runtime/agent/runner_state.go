@@ -122,6 +122,14 @@ func (r *Runner) effectivePolicy() RunPolicy {
 		policy.MaxModelCalls = briefLimit
 	}
 
+	// Default synthesis nudge: fire at 10 tool calls for any lane that
+	// doesn't explicitly skip it. The TUI already sets this via ModePolicy;
+	// this ensures CLI mode gets the same advisory nudge so the model is
+	// prompted to pause and answer rather than exploring indefinitely.
+	if policy.SynthesisNudgeAt <= 0 && !r.lanePolicy().SkipSynthesisNudge() {
+		policy.SynthesisNudgeAt = 10
+	}
+
 	return policy
 }
 
