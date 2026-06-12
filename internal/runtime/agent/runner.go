@@ -347,6 +347,9 @@ func (r *Runner) Run(
 	rejectionRecoveryNudgeUsed := false
 	consecutiveNoProgress := 0
 	discoveryRedirect := NewDiscoveryRedirect()
+	consecutiveNarrowToolCalls := 0
+	lastNarrowToolFamily := ""
+	narrowToolFamilyNudgeFired := false
 
 	var preimageStore *PreimageCheckpointStore
 
@@ -587,16 +590,6 @@ func (r *Runner) Run(
 				r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: prompt})
 
 				continue
-			}
-
-			if answer, ok := r.modelErrorAfterReadOnlyEvidenceAnswer(err, collectedResults); ok {
-				r.emitEvent(RunEvent{Role: "model_error_after_grounded_evidence", Content: "model transport failed after grounded read-only evidence was collected; returning deterministic evidence fallback"})
-
-				if closeout, closeoutOK := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); closeoutOK {
-					answer = closeout
-				}
-
-				return finish(answer, nil, "model_error_after_grounded_evidence", false)
 			}
 
 			return finish("", err, "model_error", false)
@@ -849,10 +842,6 @@ func (r *Runner) Run(
 						continue
 					}
 
-					if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-						return finish(answer, nil, "host_owned_final_answer_recovery", false)
-					}
-
 					if answer, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok &&
 						!readOnlyAnswerReportsInsufficientEvidence(answer) {
 
@@ -999,10 +988,6 @@ func (r *Runner) Run(
 				}
 
 				if priorGateRejections >= r.completionGateRetryLimit(collectedResults) {
-					if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-						return finish(answer, nil, "host_read_only_closeout", true)
-					}
-
 					answer := r.completionGateRepeatedBlockerAnswer(result, collectedResults)
 					blockerKind := r.completionGateRepeatedBlockerKind(collectedResults)
 					emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
@@ -1069,10 +1054,6 @@ func (r *Runner) Run(
 						rebuildTools:             rebuildTools,
 					}) {
 						continue
-					}
-
-					if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-						return finish(answer, nil, "host_owned_final_answer_recovery", false)
 					}
 
 					if answer, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok &&
@@ -1651,11 +1632,6 @@ func (r *Runner) Run(
 			hiddenSummary := "Tool hidden by active contract"
 			hiddenError := fmt.Sprintf("%s is hidden for the rest of this turn by the active runtime contract. Use an available tool, or answer with a concrete blocker if the contract prevents completion.", strings.TrimSpace(req.Tool))
 
-			if strings.TrimSpace(req.Tool) == workspace.ToolNameTask && postChildPacketClosureReadyWithBrief(r.RuntimeBrief, collectedResults) {
-				answer, err := controller.completeWithoutMoreToolsWithReason("The delegated read-only child packet is already available and answerable. Do not start another child task. Answer directly from the child packet and inspected evidence; qualify only material uncertainty.")
-				return finish(answer, err, "post_child_answerable_task_retry", true)
-			}
-
 			if strings.TrimSpace(req.Tool) == workspace.ToolNameTask && requestBudget.readOnlyChildTaskSatisfied && !isWriteChildMode(req.Mode) {
 				result := workspace.ToolResult{
 					Tool:    req.Tool,
@@ -1820,16 +1796,6 @@ func (r *Runner) Run(
 		historyRedirectAllowedTools := append(append([]string(nil), surfaceAllowedTools...), workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol)
 
 		if summary, errorText, reject := currentToolSurfaceRejection(req, surfaceAllowedTools); reject && !recoveryReadAllowanceGrantedThisRequest {
-			if postReadinessToolContractForBrief(r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive).AnswerOnly {
-				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-					return finish(answer, nil, "read_only_answer_only_host_closeout", false)
-				}
-
-				answer, err := controller.completeWithoutMoreToolsWithReason("The gathered read-only evidence is answerable and the current phase exposes no more tools. Answer directly from the inspected evidence; qualify only material uncertainty.")
-
-				return finish(answer, err, "read_only_answer_only_tool_attempt", true)
-			}
-
 			redirected := false
 
 			if planThenExecuteUnscopedEmptySubmitPlanAttempt(r.RuntimeBrief, req) {
@@ -2065,6 +2031,40 @@ func (r *Runner) Run(
 			}
 		}
 
+		// Narrow-tool repetition nudge: if the model repeatedly calls the
+		// same tool family (code_navigate, read_file, search_*) without
+		// trying a broader discovery tool, suggest a strategy shift.
+		// This catches patterns like 50 consecutive code_navigate
+		// read_symbol calls — each targeting a different symbol, so
+		// same-path fixation and fingerprint hard block never fire.
+		if narrowFamily := narrowToolFamily(req.Tool); narrowFamily != "" {
+			if narrowFamily == lastNarrowToolFamily {
+				consecutiveNarrowToolCalls++
+			} else {
+				consecutiveNarrowToolCalls = 1
+				lastNarrowToolFamily = narrowFamily
+			}
+
+			// Only nudge if the model has been doing the same narrow
+			// family for a while and hasn't used a broad discovery tool
+			// recently (tracked via discovery tool reset below).
+			if consecutiveNarrowToolCalls >= narrowToolFamilyNudgeAt && !narrowToolFamilyNudgeFired {
+				narrowToolFamilyNudgeFired = true
+				prompt := fmt.Sprintf(
+					"You have called %s %d times consecutively. If you still lack the evidence to answer, switch strategy: use `context_query` for a graph-shaped question, `discovery_query` for a bundled layered probe, `harness_audit` for harness self-inspection, or re-read the initial context pack. Repeated narrow symbol lookups rarely uncover the high-level answer faster than one broader probe.",
+					narrowFamily, consecutiveNarrowToolCalls,
+				)
+				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				r.emitEvent(RunEvent{Role: "narrow_tool_repetition_nudge", Content: prompt})
+			}
+		} else {
+			// Reset on any broad/non-narrow tool — the model tried
+			// something different, so clear the repetition tracking.
+			consecutiveNarrowToolCalls = 0
+			lastNarrowToolFamily = ""
+			narrowToolFamilyNudgeFired = false
+		}
+
 		actionClass := toolActionClass(req)
 		discoveryProfile := workspace.DiscoveryProfileForRequest(req)
 
@@ -2289,10 +2289,6 @@ func (r *Runner) Run(
 						return finish(answer, nil, reason, exhausted)
 					}
 
-					if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-						return finish(answer, nil, "host_read_only_closeout", true)
-					}
-
 					// User denied — feed a blocker result, then force a
 					// no-tools closeout from gathered evidence. Returning the
 					// raw rejectTool result can produce an empty final answer
@@ -2326,10 +2322,6 @@ func (r *Runner) Run(
 				)
 				if !done {
 					answer, err = controller.completeWithoutMoreToolsWithReason(doomLoopForcedCloseoutPrompt(req, identicalCallRun))
-				}
-
-				if closeout, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-					return finish(closeout, nil, "host_read_only_closeout", true)
 				}
 
 				return finish(answer, err, "doom_loop_guard", true)
@@ -2719,18 +2711,6 @@ func (r *Runner) Run(
 						SetLastToolKey:      false,
 					})
 
-					if readOnlyReplayedEvidenceCloseoutApplies(r.agentName(), r.RuntimeBrief, collectedResults, req, replayed) {
-						if readOnlyDirectAnswerLane(r.RuntimeBrief) {
-							if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok && !unsupportedReadOnlyCloseoutAnswer(answer) {
-								return finish(answer, nil, "host_read_only_closeout", true)
-							}
-						}
-
-						answer, err := controller.completeWithoutMoreToolsWithReason(readOnlyReplayedEvidenceCloseoutPrompt(r.RuntimeBrief))
-
-						return finish(answer, err, "read_only_replayed_evidence_closeout", true)
-					}
-
 					if policy.shouldStopForNoProgress(consecutiveNoProgress) {
 						answer, err := controller.completeWithoutMoreToolsWithReason("Repeated tool request reused prior evidence, but the no-progress budget is exhausted. Tools are now disabled. Write the normal final answer from the evidence already gathered. If the repeated request leaves one exact claim unsupported, state that uncertainty after the supported answer.")
 						return finish(answer, err, "no_progress_budget_exhausted", true)
@@ -2883,12 +2863,6 @@ func (r *Runner) Run(
 				TrackProgress: true,
 				ResetRejected: true,
 			})
-
-			if !runnerBriefRequiresMutation(r.RuntimeBrief) && !runnerVerificationRequired(r.RuntimeBrief) {
-				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-					return finish(answer, nil, "post_child_host_closeout", false)
-				}
-			}
 
 			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
 				if shouldPreferModelBudgetSynthesis(r.agentName(), r.RuntimeBrief, collectedResults) {
@@ -3242,20 +3216,6 @@ func (r *Runner) Run(
 			SetLastToolKey: true,
 		})
 		r.markConcreteSourceEvidenceObserved(result)
-
-		if readOnlyArchitectureToolBudgetCloseoutApplies(r.RuntimeBrief, collectedResults, 4) {
-			if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok && !unsupportedReadOnlyCloseoutAnswer(answer) {
-				return finish(answer, nil, "read_only_architecture_tool_budget_closeout", false)
-			}
-
-			if answer, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
-				return finish(answer, nil, "read_only_architecture_tool_budget_closeout", false)
-			}
-
-			answer, err := controller.completeWithoutMoreToolsWithReason("The read-only architecture evidence budget is complete. Tools are now disabled. Answer from the gathered evidence and carry forward the inspected implementation paths.")
-
-			return finish(answer, err, "read_only_architecture_tool_budget_closeout", true)
-		}
 
 		if !recoveryReadAllowanceGrantedThisRequest && implementationTargetSourceReadEstablishedWriteReady(r.RuntimeBrief, req, result, collectedResults) {
 			r.emitEvent(RunEvent{
@@ -3847,32 +3807,6 @@ func (r *Runner) Run(
 				rebuildTools()
 			}
 
-			if strings.HasPrefix(r.agentName(), "child:") &&
-				postReadinessToolContractForBrief(r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive).AnswerOnly {
-
-				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-					return finish(answer, nil, "delegated_read_only_host_closeout", false)
-				}
-			}
-
-			if !strings.HasPrefix(r.agentName(), "child:") &&
-				becameReadyFromAnalysis &&
-				postReadinessToolContractForBrief(r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive).AnswerOnly {
-
-				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-					return finish(answer, nil, "read_only_analysis_host_closeout", false)
-				}
-			}
-		}
-
-		if r.readOnlyNoMatchCloseoutApplies(req, result, collectedResults) {
-			if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-				return finish(answer, nil, "read_only_no_match_closeout", false)
-			}
-
-			answer, err := controller.completeWithoutMoreToolsWithReason("The latest symbol probe returned no matches after source evidence was already gathered. Tools are now disabled. Answer from the gathered evidence and name any remaining uncertainty after the supported answer.")
-
-			return finish(answer, err, "read_only_no_match_closeout", true)
 		}
 
 		// Conversation lane: once source evidence is available, the
@@ -3942,15 +3876,6 @@ func (r *Runner) Run(
 				}
 			}
 
-			if postChildReadBudget >= 0 && postChildFollowupReads >= postChildReadBudget {
-				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-					return finish(answer, nil, "post_child_packet_followup_budget_closeout", false)
-				}
-
-				answer, err := controller.completeWithoutMoreToolsWithReason("The child packet plus the allowed follow-up read budget are complete. Tools are now disabled. Answer from the gathered evidence and carry forward the inspected implementation paths.")
-
-				return finish(answer, err, "post_child_packet_followup_budget_closeout", true)
-			}
 		}
 
 		if strings.TrimSpace(result.Error) != "" {

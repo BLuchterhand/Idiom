@@ -600,6 +600,32 @@ func isReadClassTool(req workspace.ToolRequest) bool {
 	return workspace.IsReadTool(strings.TrimSpace(req.Tool))
 }
 
+const narrowToolFamilyNudgeAt = 10
+
+// narrowToolFamily returns a stable family name for narrow/specific tools
+// that the model might over-use in a loop. Returns "" for broad tools
+// (discovery_query, context_query, harness_audit, etc.) so the repetition
+// nudge resets when the model tries a broader approach.
+func narrowToolFamily(tool string) string {
+	tool = strings.TrimSpace(tool)
+	switch tool {
+	case workspace.ToolNameCodeNavigate,
+		"go_find_symbol", "go_find_type", "go_find_const", "go_file_outline", "go_read_symbol",
+		"go_find_package", "go_related_files", "go_workspace_symbol",
+		"go_definition", "go_references", "go_implementations",
+		"go_calls_from", "go_calls_into", "go_extract_body", "go_importers", "go_diagnostics":
+		return "code_navigate"
+	case workspace.ToolNameReadFile:
+		return "read_file"
+	case workspace.ToolNameSearchFiles, workspace.ToolNameSearchContent, workspace.ToolNameRg:
+		return "search"
+	case workspace.ToolNameShell:
+		return "shell"
+	default:
+		return "" // broad/discovery tools reset the counter
+	}
+}
+
 func toolActionClass(req workspace.ToolRequest) string {
 	tool := strings.TrimSpace(req.Tool)
 	switch tool {
