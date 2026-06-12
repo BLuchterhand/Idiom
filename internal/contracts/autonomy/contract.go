@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 )
@@ -479,54 +478,54 @@ func (c *AutonomyContract) Normalize() {
 }
 
 func (c AutonomyContract) Validate() error {
-	var problems []string
+	var problems validationProblems
 
 	if c.SchemaVersion != SchemaVersion {
-		problems = append(problems, "schema_version must be "+SchemaVersion)
+		problems.Add("schema_version must be " + SchemaVersion)
 	}
 
 	if !validInvocationKind(c.Scope.InvocationKind) {
-		problems = append(problems, "scope.invocation_kind is required and must be lane, phase, or sidecar_call")
+		problems.Add("scope.invocation_kind is required and must be lane, phase, or sidecar_call")
 	}
 
 	switch c.Scope.InvocationKind {
 	case InvocationLane:
 		if c.Scope.Lane == "" {
-			problems = append(problems, "scope.lane is required for lane contracts")
+			problems.Add("scope.lane is required for lane contracts")
 		}
 	case InvocationPhase:
 		if c.Scope.Lane == "" || c.Scope.Phase == "" {
-			problems = append(problems, "scope.lane and scope.phase are required for phase contracts")
+			problems.Add("scope.lane and scope.phase are required for phase contracts")
 		}
 	case InvocationSidecarCall:
 		if c.Scope.Sidecar == nil {
-			problems = append(problems, "scope.sidecar is required for sidecar_call contracts")
+			problems.Add("scope.sidecar is required for sidecar_call contracts")
 		} else if c.Scope.Sidecar.Tool == "" {
-			problems = append(problems, "scope.sidecar.tool is required for sidecar_call contracts")
+			problems.Add("scope.sidecar.tool is required for sidecar_call contracts")
 		}
 	}
 
 	if c.Scope.ToolCall != nil && c.Scope.ToolCall.SideEffect != "" && !validSideEffect(c.Scope.ToolCall.SideEffect) {
-		problems = append(problems, "scope.tool_call.side_effect is invalid")
+		problems.Add("scope.tool_call.side_effect is invalid")
 	}
 
 	for i, source := range c.Authority {
 		if source.Freshness != "" && !validFreshness(source.Freshness) {
-			problems = append(problems, fmt.Sprintf("authority_sources[%d].freshness is invalid", i))
+			problems.Addf("authority_sources[%d].freshness is invalid", i)
 		}
 	}
 
 	for i, role := range c.PathRoles {
 		if !validPathRole(role.Role) {
-			problems = append(problems, fmt.Sprintf("path_roles[%d].role is invalid", i))
+			problems.Addf("path_roles[%d].role is invalid", i)
 		}
 
 		if role.PathPattern == "" && role.SymbolHandle == "" && role.PacketID == "" {
-			problems = append(problems, fmt.Sprintf("path_roles[%d] must identify a path_pattern, symbol_handle, or packet_id", i))
+			problems.Addf("path_roles[%d] must identify a path_pattern, symbol_handle, or packet_id", i)
 		}
 
 		if role.Freshness != "" && !validFreshness(role.Freshness) {
-			problems = append(problems, fmt.Sprintf("path_roles[%d].freshness is invalid", i))
+			problems.Addf("path_roles[%d].freshness is invalid", i)
 		}
 	}
 
@@ -534,29 +533,29 @@ func (c AutonomyContract) Validate() error {
 
 	for i, rule := range c.ToolPolicy {
 		if rule.Decision != "" && !validDecision(rule.Decision) {
-			problems = append(problems, fmt.Sprintf("tool_policy[%d].decision is invalid", i))
+			problems.Addf("tool_policy[%d].decision is invalid", i)
 		}
 
 		if rule.SideEffect != "" && !validSideEffect(rule.SideEffect) {
-			problems = append(problems, fmt.Sprintf("tool_policy[%d].side_effect is invalid", i))
+			problems.Addf("tool_policy[%d].side_effect is invalid", i)
 		}
 	}
 
 	for i, obligation := range c.Obligations {
 		if obligation.ObligationID == "" {
-			problems = append(problems, fmt.Sprintf("obligations[%d].obligation_id is required", i))
+			problems.Addf("obligations[%d].obligation_id is required", i)
 		}
 
 		if !validObligationKind(obligation.Kind) {
-			problems = append(problems, fmt.Sprintf("obligations[%d].kind is invalid", i))
+			problems.Addf("obligations[%d].kind is invalid", i)
 		}
 
 		if !validObligationStatus(obligation.Status) {
-			problems = append(problems, fmt.Sprintf("obligations[%d].status is invalid", i))
+			problems.Addf("obligations[%d].status is invalid", i)
 		}
 
 		if obligation.Owner != "" && !validObligationOwner(obligation.Owner) {
-			problems = append(problems, fmt.Sprintf("obligations[%d].owner is invalid", i))
+			problems.Addf("obligations[%d].owner is invalid", i)
 		}
 	}
 
@@ -564,50 +563,50 @@ func (c AutonomyContract) Validate() error {
 
 	for i, effect := range c.Capabilities.AllowedEffects {
 		if !validSideEffect(effect) {
-			problems = append(problems, fmt.Sprintf("capabilities.allowed_effects[%d] is invalid", i))
+			problems.Addf("capabilities.allowed_effects[%d] is invalid", i)
 		}
 	}
 
 	for i, effect := range c.Capabilities.ForbiddenEffects {
 		if !validSideEffect(effect) {
-			problems = append(problems, fmt.Sprintf("capabilities.forbidden_effects[%d] is invalid", i))
+			problems.Addf("capabilities.forbidden_effects[%d] is invalid", i)
 		}
 	}
 
 	for i, decision := range c.PolicyDecisions {
 		if !validDecision(decision.Decision) {
-			problems = append(problems, fmt.Sprintf("policy_decisions[%d].decision is invalid", i))
+			problems.Addf("policy_decisions[%d].decision is invalid", i)
 		}
 
 		if decision.SideEffect != "" && !validSideEffect(decision.SideEffect) {
-			problems = append(problems, fmt.Sprintf("policy_decisions[%d].side_effect is invalid", i))
+			problems.Addf("policy_decisions[%d].side_effect is invalid", i)
 		}
 	}
 
 	for i, evidence := range c.Evidence {
 		if evidence.EvidenceID == "" {
-			problems = append(problems, fmt.Sprintf("evidence_refs[%d].evidence_id is required", i))
+			problems.Addf("evidence_refs[%d].evidence_id is required", i)
 		}
 
 		if evidence.Freshness != "" && !validFreshness(evidence.Freshness) {
-			problems = append(problems, fmt.Sprintf("evidence_refs[%d].freshness is invalid", i))
+			problems.Addf("evidence_refs[%d].freshness is invalid", i)
 		}
 	}
 
 	for i, client := range c.Metadata.ClientClassifications {
 		if !validClientClassification(client) {
-			problems = append(problems, fmt.Sprintf("metadata.client_classifications[%d] is invalid", i))
+			problems.Addf("metadata.client_classifications[%d] is invalid", i)
 		}
 	}
 
 	for i, signal := range c.Metadata.ProductSignals {
 		if !validProductSignal(signal) {
-			problems = append(problems, fmt.Sprintf("metadata.product_signals[%d] is invalid", i))
+			problems.Addf("metadata.product_signals[%d] is invalid", i)
 		}
 	}
 
-	if len(problems) > 0 {
-		return ValidationError{Problems: problems}
+	if problems.Any() {
+		return ValidationError{Problems: problems.Messages()}
 	}
 
 	return nil
@@ -894,15 +893,15 @@ func copyMetadata(in ContractMetadata) ContractMetadata {
 	}
 }
 
-func validateCapabilityPolicy(policy CapabilityPolicy, problems *[]string) {
+func validateCapabilityPolicy(policy CapabilityPolicy, problems *validationProblems) {
 	for i, capability := range append(append([]Capability(nil), policy.Allowed...), policy.Forbidden...) {
 		if strings.TrimSpace(string(capability)) == "" {
-			*problems = append(*problems, fmt.Sprintf("capabilities entry %d is empty", i))
+			problems.Addf("capabilities entry %d is empty", i)
 		}
 	}
 }
 
-func validateBudget(b BudgetState, problems *[]string) {
+func validateBudget(b BudgetState, problems *validationProblems) {
 	values := map[string]int{
 		"budget.max_tool_steps":       b.MaxToolSteps,
 		"budget.used_tool_steps":      b.UsedToolSteps,
@@ -913,7 +912,7 @@ func validateBudget(b BudgetState, problems *[]string) {
 	}
 	for field, value := range values {
 		if value < 0 {
-			*problems = append(*problems, field+" cannot be negative")
+			problems.Add(field + " cannot be negative")
 		}
 	}
 }

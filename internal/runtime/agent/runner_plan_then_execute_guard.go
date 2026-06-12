@@ -889,20 +889,7 @@ func (r *Runner) planThenExecuteAttachSubmitPlanSourceSatisfiedEvidence(req work
 }
 
 func planThenExecuteObservedSourceEvidenceForPath(results []workspace.ToolResult, path string) planThenExecuteSourceEvidence {
-	path = normalizeRunnerPath(path)
-	if path == "" {
-		return planThenExecuteSourceEvidence{}
-	}
-
-	best := planThenExecuteSourceEvidence{Path: path}
-	for _, result := range results {
-		evidence := planThenExecuteToolResultSourceEvidence(result, path)
-		if planThenExecuteEvidenceRank(evidence.Level) > planThenExecuteEvidenceRank(best.Level) {
-			best = evidence
-		}
-	}
-
-	return best
+	return newToolResultEvidenceView(results).SourceEvidenceForPath(path)
 }
 
 func readPlanProjectionBase(root string, path string) string {
@@ -4012,18 +3999,7 @@ func planThenExecuteAnchorReadyPaths(brief workerruntime.WorkerRuntimeBrief, res
 // *_file_outline / *_read_symbol, etc.). Used by the planner readiness
 // nudge to check whether every required path has been touched.
 func readPathsFromResults(results []workspace.ToolResult) map[string]struct{} {
-	paths := make(map[string]struct{}, len(results))
-	for _, r := range results {
-		if strings.TrimSpace(r.Error) != "" {
-			continue
-		}
-
-		for _, path := range readPathsFromToolResult(r) {
-			paths[normalizeRunnerPath(path)] = struct{}{}
-		}
-	}
-
-	return paths
+	return newToolResultEvidenceView(results).ReadPaths()
 }
 
 func readPathsFromToolResult(r workspace.ToolResult) []string {

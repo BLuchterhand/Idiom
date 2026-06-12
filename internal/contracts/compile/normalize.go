@@ -13,74 +13,66 @@ import (
 )
 
 func normalizePlanExecutePlannerInput(input PlanExecutePlannerInput) PlanExecutePlannerInput {
-	input.ParentID = strings.TrimSpace(input.ParentID)
+	trimStrings(
+		&input.ParentID,
+		&input.LaneRunID,
+		&input.PhaseRunID,
+		&input.RuntimeContract,
+		&input.PermissionProfile,
+		&input.VerificationContract,
+	)
 	input.Lane = firstNonEmpty(input.Lane, DefaultPlanExecuteLane)
-	input.LaneRunID = strings.TrimSpace(input.LaneRunID)
 	input.Phase = firstNonEmpty(input.Phase, DefaultPlannerPhase)
-	input.PhaseRunID = strings.TrimSpace(input.PhaseRunID)
 	input.TaskFamily = firstNonEmpty(input.TaskFamily, InvocationPlanExecutePlanner)
-	input.RuntimeContract = strings.TrimSpace(input.RuntimeContract)
-	input.PermissionProfile = strings.TrimSpace(input.PermissionProfile)
-	input.TargetRefs = uniqueStrings(input.TargetRefs)
-	input.RequiredEditPaths = uniquePaths(input.RequiredEditPaths)
-	input.AllowedEditPaths = uniquePaths(input.AllowedEditPaths)
-	input.EvidencePaths = uniquePaths(input.EvidencePaths)
-	input.ChangedPaths = uniquePaths(input.ChangedPaths)
-	input.UserBoundaries = uniqueStrings(input.UserBoundaries)
-	input.AllowedTools = uniqueStrings(input.AllowedTools)
-	input.ForbiddenTools = uniqueStrings(input.ForbiddenTools)
-	input.RequiredEvidence = uniqueStrings(input.RequiredEvidence)
-	input.RequiredTools = uniqueStrings(input.RequiredTools)
-	input.ReadinessGate = uniqueStrings(input.ReadinessGate)
-	input.VerificationContract = strings.TrimSpace(input.VerificationContract)
-	input.VerificationPlan = uniqueStrings(input.VerificationPlan)
-	input.StopConditions = uniqueStrings(input.StopConditions)
-	input.FinalCritic = uniqueStrings(input.FinalCritic)
-	input.TargetPacket = uniqueStrings(input.TargetPacket)
-	input.Constraints = uniqueStrings(input.Constraints)
-	input.RequiredNext = uniqueStrings(input.RequiredNext)
-	input.InvalidActions = uniqueStrings(input.InvalidActions)
+	normalizeStringSets(
+		&input.TargetRefs,
+		&input.UserBoundaries,
+		&input.AllowedTools,
+		&input.ForbiddenTools,
+		&input.RequiredEvidence,
+		&input.RequiredTools,
+		&input.ReadinessGate,
+		&input.VerificationPlan,
+		&input.StopConditions,
+		&input.FinalCritic,
+		&input.TargetPacket,
+		&input.Constraints,
+		&input.RequiredNext,
+		&input.InvalidActions,
+		&input.MetadataTags,
+	)
+	normalizePathSets(&input.RequiredEditPaths, &input.AllowedEditPaths, &input.EvidencePaths, &input.ChangedPaths)
 	normalizeReadinessInput(&input.Readiness)
 	normalizeRuntimeInput(&input.Runtime)
 	normalizeProtocolInput(&input.Protocol)
-
-	input.MetadataTags = uniqueStrings(input.MetadataTags)
 
 	return input
 }
 
 func normalizeReadinessInput(readiness *ReadinessInput) {
-	readiness.ClosedClaims = uniqueStrings(readiness.ClosedClaims)
-	readiness.OpenObligations = uniqueStrings(readiness.OpenObligations)
-	readiness.EvidenceSources = uniqueStrings(readiness.EvidenceSources)
-	readiness.FurtherReadsRequire = strings.TrimSpace(readiness.FurtherReadsRequire)
+	normalizeStringSets(&readiness.ClosedClaims, &readiness.OpenObligations, &readiness.EvidenceSources)
+	trimStrings(&readiness.FurtherReadsRequire)
 }
 
 func normalizeRuntimeInput(runtime *RuntimeEnvelopeInput) {
-	runtime.BackendKind = strings.TrimSpace(runtime.BackendKind)
-	runtime.ModelAlias = strings.TrimSpace(runtime.ModelAlias)
-	runtime.ModelRole = strings.TrimSpace(runtime.ModelRole)
-	runtime.ParserTransportMode = strings.TrimSpace(runtime.ParserTransportMode)
-	runtime.ToolTransportMode = strings.TrimSpace(runtime.ToolTransportMode)
-	runtime.ParserContract = strings.TrimSpace(runtime.ParserContract)
-	runtime.NativeToolPolicy = strings.TrimSpace(runtime.NativeToolPolicy)
-	runtime.ToolChoice = strings.TrimSpace(runtime.ToolChoice)
-	runtime.ResponseFormat = strings.TrimSpace(runtime.ResponseFormat)
-	runtime.ThinkingPolicy = strings.TrimSpace(runtime.ThinkingPolicy)
-
-	if runtime.ThinkingBudget < 0 {
-		runtime.ThinkingBudget = 0
-	}
-
-	if runtime.EffectiveMaxTokens < 0 {
-		runtime.EffectiveMaxTokens = 0
-	}
+	trimStrings(
+		&runtime.BackendKind,
+		&runtime.ModelAlias,
+		&runtime.ModelRole,
+		&runtime.ParserTransportMode,
+		&runtime.ToolTransportMode,
+		&runtime.ParserContract,
+		&runtime.NativeToolPolicy,
+		&runtime.ToolChoice,
+		&runtime.ResponseFormat,
+		&runtime.ThinkingPolicy,
+		&runtime.ReadinessProfile,
+		&runtime.EnforcementMode,
+	)
+	clampNonNegative(&runtime.ThinkingBudget, &runtime.EffectiveMaxTokens)
 
 	runtime.ContextBudget = normalizeContextBudget(runtime.ContextBudget)
 	normalizeQueueState(&runtime.QueueState)
-
-	runtime.ReadinessProfile = strings.TrimSpace(runtime.ReadinessProfile)
-	runtime.EnforcementMode = strings.TrimSpace(runtime.EnforcementMode)
 
 	degradedInvariants := append([]string(nil), runtime.DegradedInvariants...)
 	authorizedFallbacks := append([]string(nil), runtime.AuthorizedFallback...)
@@ -91,30 +83,25 @@ func normalizeRuntimeInput(runtime *RuntimeEnvelopeInput) {
 }
 
 func normalizeRuntimeEnvelope(runtime *RuntimeEnvelope) {
-	runtime.RuntimeContractID = strings.TrimSpace(runtime.RuntimeContractID)
-	runtime.BackendKind = strings.TrimSpace(runtime.BackendKind)
-	runtime.ModelAlias = strings.TrimSpace(runtime.ModelAlias)
-	runtime.ModelRole = strings.TrimSpace(runtime.ModelRole)
-	runtime.ParserTransportMode = strings.TrimSpace(runtime.ParserTransportMode)
-	runtime.ToolTransportMode = strings.TrimSpace(runtime.ToolTransportMode)
-	runtime.ParserContract = strings.TrimSpace(runtime.ParserContract)
-	runtime.NativeToolPolicy = strings.TrimSpace(runtime.NativeToolPolicy)
-	runtime.ToolChoice = strings.TrimSpace(runtime.ToolChoice)
-	runtime.ResponseFormat = strings.TrimSpace(runtime.ResponseFormat)
-	runtime.ThinkingPolicy = strings.TrimSpace(runtime.ThinkingPolicy)
-
-	if runtime.ThinkingBudget < 0 {
-		runtime.ThinkingBudget = 0
-	}
-
-	if runtime.EffectiveMaxTokens < 0 {
-		runtime.EffectiveMaxTokens = 0
-	}
+	trimStrings(
+		&runtime.RuntimeContractID,
+		&runtime.BackendKind,
+		&runtime.ModelAlias,
+		&runtime.ModelRole,
+		&runtime.ParserTransportMode,
+		&runtime.ToolTransportMode,
+		&runtime.ParserContract,
+		&runtime.NativeToolPolicy,
+		&runtime.ToolChoice,
+		&runtime.ResponseFormat,
+		&runtime.ThinkingPolicy,
+		&runtime.ReadinessProfile,
+	)
+	clampNonNegative(&runtime.ThinkingBudget, &runtime.EffectiveMaxTokens)
 
 	runtime.ContextBudget = normalizeContextBudget(runtime.ContextBudget)
 	normalizeQueueState(&runtime.QueueState)
 
-	runtime.ReadinessProfile = strings.TrimSpace(runtime.ReadinessProfile)
 	runtime.EnforcementMode = firstNonEmpty(runtime.EnforcementMode, "report_only")
 	runtime.DegradationDecisions = normalizeDegradationDecisions(runtime.DegradationDecisions, nil, nil)
 	runtime.ActiveInvariantID = firstNonEmpty(runtime.ActiveInvariantID, InvariantActiveAuthority)
@@ -249,29 +236,24 @@ func mergeDegradationDecisions(decisions []DegradationDecision) []DegradationDec
 }
 
 func normalizeContextBudget(budget ContextBudget) ContextBudget {
-	if budget.MaxContextMessages < 0 {
-		budget.MaxContextMessages = 0
-	}
-
-	if budget.MaxContextChars < 0 {
-		budget.MaxContextChars = 0
-	}
+	clampNonNegative(&budget.MaxContextMessages, &budget.MaxContextChars)
 
 	return budget
 }
 
 func normalizeQueueState(queue *QueueState) {
-	queue.Pool = strings.TrimSpace(queue.Pool)
-	queue.LeaseID = strings.TrimSpace(queue.LeaseID)
-	queue.State = strings.TrimSpace(queue.State)
-	queue.Reason = strings.TrimSpace(queue.Reason)
+	trimStrings(&queue.Pool, &queue.LeaseID, &queue.State, &queue.Reason)
 }
 
 func normalizeProtocolInput(protocol *ProtocolInput) {
-	protocol.PhaseID = strings.TrimSpace(protocol.PhaseID)
-	protocol.ParserMode = strings.TrimSpace(protocol.ParserMode)
-	protocol.ExpectedVisibleOutput = strings.TrimSpace(protocol.ExpectedVisibleOutput)
-	protocol.VisibleTools = uniqueStrings(protocol.VisibleTools)
+	trimStrings(
+		&protocol.PhaseID,
+		&protocol.ParserMode,
+		&protocol.ExpectedVisibleOutput,
+		&protocol.MalformedOutputPolicy,
+		&protocol.StaleAnchorPolicy,
+	)
+	normalizeStringSets(&protocol.VisibleTools)
 
 	if protocol.CallableTools != nil {
 		protocol.CallableToolsSpecified = true
@@ -285,65 +267,59 @@ func normalizeProtocolInput(protocol *ProtocolInput) {
 
 	protocol.CallableActionClasses = canonicalActionClassStrings(protocol.CallableActionClasses)
 	protocol.InvalidActionClasses = canonicalActionClassStrings(protocol.InvalidActionClasses)
-	protocol.TerminalResponseShapes = uniqueStrings(protocol.TerminalResponseShapes)
-	protocol.StructuredSchemaNames = uniqueStrings(protocol.StructuredSchemaNames)
-	protocol.MalformedOutputPolicy = strings.TrimSpace(protocol.MalformedOutputPolicy)
-	protocol.StaleAnchorPolicy = strings.TrimSpace(protocol.StaleAnchorPolicy)
-	protocol.SourceBodyObligations = uniqueStrings(protocol.SourceBodyObligations)
-
-	if protocol.RecoveryBudget < 0 {
-		protocol.RecoveryBudget = 0
-	}
+	normalizeStringSets(&protocol.TerminalResponseShapes, &protocol.StructuredSchemaNames, &protocol.SourceBodyObligations)
+	clampNonNegative(&protocol.RecoveryBudget)
 }
 
 func normalizeProtocolProjection(protocol *ModelProtocolProjection) {
-	protocol.ContractID = strings.TrimSpace(protocol.ContractID)
-	protocol.ContractVersion = strings.TrimSpace(protocol.ContractVersion)
-	protocol.ProtocolHash = strings.TrimSpace(protocol.ProtocolHash)
-	protocol.SchemaNames = uniqueStrings(protocol.SchemaNames)
-	protocol.PhaseID = strings.TrimSpace(protocol.PhaseID)
-	protocol.ParserMode = strings.TrimSpace(protocol.ParserMode)
-	protocol.ToolTransportMode = strings.TrimSpace(protocol.ToolTransportMode)
-	protocol.ParserTransportMode = strings.TrimSpace(protocol.ParserTransportMode)
-	protocol.ParserContract = strings.TrimSpace(protocol.ParserContract)
-	protocol.NativeToolPolicy = strings.TrimSpace(protocol.NativeToolPolicy)
-	protocol.ToolChoice = strings.TrimSpace(protocol.ToolChoice)
-	protocol.ResponseFormat = strings.TrimSpace(protocol.ResponseFormat)
-	protocol.ExpectedVisibleOutput = strings.TrimSpace(protocol.ExpectedVisibleOutput)
-	protocol.VisibleTools = uniqueStrings(protocol.VisibleTools)
-	protocol.CallableTools = uniqueStrings(protocol.CallableTools)
+	trimStrings(
+		&protocol.ContractID,
+		&protocol.ContractVersion,
+		&protocol.ProtocolHash,
+		&protocol.PhaseID,
+		&protocol.ParserMode,
+		&protocol.ToolTransportMode,
+		&protocol.ParserTransportMode,
+		&protocol.ParserContract,
+		&protocol.NativeToolPolicy,
+		&protocol.ToolChoice,
+		&protocol.ResponseFormat,
+		&protocol.ExpectedVisibleOutput,
+		&protocol.MalformedOutputPolicy,
+		&protocol.StaleAnchorPolicy,
+	)
+	normalizeStringSets(&protocol.SchemaNames, &protocol.VisibleTools, &protocol.CallableTools)
 	protocol.CallableActionClasses = canonicalActionClassStrings(protocol.CallableActionClasses)
 	protocol.InvalidActionClasses = canonicalActionClassStrings(protocol.InvalidActionClasses)
-	protocol.TerminalResponseShapes = uniqueStrings(protocol.TerminalResponseShapes)
-	protocol.StructuredSchemaNames = uniqueStrings(protocol.StructuredSchemaNames)
-	protocol.MalformedOutputPolicy = strings.TrimSpace(protocol.MalformedOutputPolicy)
-	protocol.StaleAnchorPolicy = strings.TrimSpace(protocol.StaleAnchorPolicy)
-	protocol.SourceBodyObligations = uniqueStrings(protocol.SourceBodyObligations)
-	protocol.RequiredEditCoverage = uniquePaths(protocol.RequiredEditCoverage)
-	protocol.PathRoleSummary = uniqueStrings(protocol.PathRoleSummary)
-	protocol.VerificationObligations = uniqueStrings(protocol.VerificationObligations)
-	protocol.SafeAlternatives = uniqueStrings(protocol.SafeAlternatives)
-	protocol.RequiredTools = uniqueStrings(protocol.RequiredTools)
-	protocol.ReadinessGate = uniqueStrings(protocol.ReadinessGate)
-	protocol.Constraints = uniqueStrings(protocol.Constraints)
-	protocol.InvalidActions = uniqueStrings(protocol.InvalidActions)
+	normalizeStringSets(
+		&protocol.TerminalResponseShapes,
+		&protocol.StructuredSchemaNames,
+		&protocol.SourceBodyObligations,
+		&protocol.PathRoleSummary,
+		&protocol.VerificationObligations,
+		&protocol.SafeAlternatives,
+		&protocol.RequiredTools,
+		&protocol.ReadinessGate,
+		&protocol.Constraints,
+		&protocol.InvalidActions,
+	)
+	normalizePathSets(&protocol.RequiredEditCoverage)
 	protocol.ActiveInvariantID = firstNonEmpty(protocol.ActiveInvariantID, InvariantActiveAuthority)
 	normalizeCompactPacketProjection(&protocol.CompactPacket)
 }
 
 func normalizeCompactPacketProjection(packet *autonomy.ContextPacket) {
-	packet.SchemaVersion = strings.TrimSpace(packet.SchemaVersion)
-	packet.PacketID = strings.TrimSpace(packet.PacketID)
-	packet.ContractID = strings.TrimSpace(packet.ContractID)
-	packet.ProtocolHash = strings.TrimSpace(packet.ProtocolHash)
-	packet.SummaryRefs = uniqueStrings(packet.SummaryRefs)
-	packet.TargetRefs = uniqueStrings(packet.TargetRefs)
-	packet.PathRefs = uniquePaths(packet.PathRefs)
-	packet.SymbolRefs = uniqueStrings(packet.SymbolRefs)
-	packet.EvidenceRefs = uniqueStrings(packet.EvidenceRefs)
-	packet.ObligationRefs = uniqueStrings(packet.ObligationRefs)
-	packet.SchemaNames = uniqueStrings(packet.SchemaNames)
-	packet.RedactionMarkers = uniqueStrings(packet.RedactionMarkers)
+	trimStrings(&packet.SchemaVersion, &packet.PacketID, &packet.ContractID, &packet.ProtocolHash)
+	normalizeStringSets(
+		&packet.SummaryRefs,
+		&packet.TargetRefs,
+		&packet.SymbolRefs,
+		&packet.EvidenceRefs,
+		&packet.ObligationRefs,
+		&packet.SchemaNames,
+		&packet.RedactionMarkers,
+	)
+	normalizePathSets(&packet.PathRefs)
 }
 
 func canonicalActionClassStrings(values []string) []string {
@@ -429,6 +405,32 @@ func obligationIDs(obligations []autonomy.Obligation) []string {
 	}
 
 	return uniqueStrings(ids)
+}
+
+func trimStrings(fields ...*string) {
+	for _, field := range fields {
+		*field = strings.TrimSpace(*field)
+	}
+}
+
+func normalizeStringSets(fields ...*[]string) {
+	for _, field := range fields {
+		*field = uniqueStrings(*field)
+	}
+}
+
+func normalizePathSets(fields ...*[]string) {
+	for _, field := range fields {
+		*field = uniquePaths(*field)
+	}
+}
+
+func clampNonNegative(fields ...*int) {
+	for _, field := range fields {
+		if *field < 0 {
+			*field = 0
+		}
+	}
 }
 
 func uniquePaths(values []string) []string {
