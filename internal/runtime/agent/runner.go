@@ -283,24 +283,6 @@ func (r *Runner) Run(
 	completionStatusLastStatus := ""
 	completionStatusLastBlockerKind := ""
 	completionGateRejections := 0
-	// rewriteToolRequest records a tool-request rewrite and returns the
-	// redirected request/raw pair so each call site keeps loop-state mutation
-	// explicit.
-	rewriteToolRequest := func(original workspace.ToolRequest, originalRaw string, redirected workspace.ToolRequest, redirectedRaw string, reason string) (workspace.ToolRequest, string) {
-		r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
-			"agent":          r.agentName(),
-			"original_tool":  strings.TrimSpace(original.Tool),
-			"rewritten_tool": strings.TrimSpace(redirected.Tool),
-			"original_raw":   strings.TrimSpace(originalRaw),
-			"rewritten_raw":  strings.TrimSpace(redirectedRaw),
-			"reason":         reason,
-		}))
-		turnMessages = append(turnMessages, llama.ChatMessage{
-			Role:    "system",
-			Content: rewriteVisibilityNote(original.Tool, redirected.Tool),
-		})
-		return redirected, redirectedRaw
-	}
 	emitCompletionStatus := func(status, reason, blockerKind string, results []workspace.ToolResult, userVisibleBlocker bool) {
 		completionStatusEmitted = true
 		completionStatusLastStatus = strings.TrimSpace(status)
@@ -459,87 +441,16 @@ func (r *Runner) Run(
 		consecutiveNoProgress:      &consecutiveNoProgress,
 		currentFingerprint:         &currentFingerprint,
 	}
-	retryRejectedFinalAnswer := func(stepNumber int, activeToolCall *llama.ToolCall, assistantMessage llama.ChatMessage, acceptance finalAnswerAcceptance, result workspace.ToolResult) bool {
-		if !r.retryableFinalAnswerAcceptanceRejection(acceptance, collectedResults, completionGateRejections, currentAllowedTools) {
-			return false
-		}
-
-		priorGateRejections := completionGateRejections
-
-		result.Error = escalateCompletionGateMessage(result.Error, priorGateRejections)
-
-		if autonomyRecorder != nil {
-			autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, runnerAutonomyReasonCode(result.Summary), collectedResults, priorGateRejections)
-		}
-
-		controller.rejectCompletion(stepNumber, activeToolCall, assistantMessage, result)
-
-		completionGateRejections = priorGateRejections + 1
-
-		if prompt, _, ok := r.completionGateRecoveryPrompt(collectedResults); ok {
-			if card := r.renderRecoveryCardForRejectedAction(workspace.ToolRequest{Tool: "completion_gate"}, result, collectedResults, currentAllowedTools); card != "" {
-				prompt = appendRecoveryCardToMessage(prompt, card)
-			}
-
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
-			r.emitEvent(RunEvent{Role: "completion_gate_recovery", Content: prompt})
-		}
-
-		// Consolidated: un-hide source-body read tools on ANY retryable
-		// read-only gate rejection. The model needs read_file and
-		// code_navigate to repair the evidence gap that caused the
-		// rejection; leaving them hidden makes retries futile.
-		// Covers source_grounding_unmet, answer_objective_unmet,
-		// read_only_protocol_blocker, and any future retryable kind.
-		delete(turnHiddenTools, workspace.ToolNameCodeNavigate)
-		delete(turnHiddenTools, workspace.ToolNameReadFile)
-		rebuildTools()
-
-		return true
-	}
-
-	if req, ok := r.verificationBootstrapRequest(); ok && r.Workspace != nil && len(collectedResults) == 0 {
-		raw := marshalToolRequestRaw(req)
-		metrics.ToolCalls++
-
-		if onToolRequest != nil {
-			profile := workspace.DiscoveryProfileForRequest(req)
-			onToolRequest(ToolRequestEvent{
-				Step:           1,
-				Agent:          r.agentName(),
-				Raw:            raw,
-				Request:        req,
-				Mode:           r.Workspace.Mode(),
-				Broad:          workspace.IsBroadInspectionRequest(req),
-				Narrowing:      workspace.IsNarrowingRequest(req),
-				Action:         toolActionClass(req),
-				DiscoveryClass: profile.Class,
-				DiscoveryScope: profile.Scope,
-				DiscoveryCost:  profile.Cost,
-			})
-		}
-
-		result := r.Workspace.Execute(ctx, req)
-		recorder.recordWithOptions(1, req, result, "verification_auto_bootstrap", runnerRecordOptions{
-			TrackProgress:  true,
-			ResetRejected:  true,
-			SetLastToolKey: true,
-		})
-
-		update := executionState.applyResult(req, result, toolRequestKey(req), r.Workspace, &requestBudget)
-		r.emitVerificationPhaseEvent(update.VerificationState, update.VerificationDetail)
-
-		if autonomyRecorder != nil && update.VerificationState != "" {
-			decision := autonomy.PolicyAllow
-			if update.VerificationState == "failed" {
-				decision = autonomy.PolicyReject
-			}
-
-			autonomyRecorder.emitVerificationGate(req, decision, "verification_result_"+update.VerificationState, update.VerificationState)
-		}
-
-		answer := synthesizeVerificationOnlyAnswer(req, result)
-
+	if answer, ok := r.runVerificationBootstrap(runnerVerificationBootstrapInput{
+		ctx:              ctx,
+		collectedResults: collectedResults,
+		metrics:          &metrics,
+		recorder:         &recorder,
+		executionState:   &executionState,
+		requestBudget:    &requestBudget,
+		autonomyRecorder: autonomyRecorder,
+		onToolRequest:    onToolRequest,
+	}); ok {
 		return finish(answer, nil, "verification_auto_answered", false)
 	}
 
@@ -918,7 +829,21 @@ func (r *Runner) Run(
 						Error:   r.finalAnswerBlockerErrorText(blockerKind, reason, answerContent, collectedResults),
 					}
 
-					if retryRejectedFinalAnswer(stepNumber, activeToolCall, assistantMessage, acceptance, blockerResult) {
+					if r.retryRejectedFinalAnswerForRun(runnerFinalAnswerRetryInput{
+						stepNumber:               stepNumber,
+						activeToolCall:           activeToolCall,
+						assistantMessage:         assistantMessage,
+						acceptance:               acceptance,
+						result:                   blockerResult,
+						collectedResults:         collectedResults,
+						currentAllowedTools:      currentAllowedTools,
+						completionGateRejections: &completionGateRejections,
+						turnMessages:             &turnMessages,
+						turnHiddenTools:          turnHiddenTools,
+						controller:               &controller,
+						autonomyRecorder:         autonomyRecorder,
+						rebuildTools:             rebuildTools,
+					}) {
 						continue
 					}
 
@@ -1126,7 +1051,21 @@ func (r *Runner) Run(
 						Summary: "Final answer rejected by blocker check",
 						Error:   r.finalAnswerBlockerErrorText(blockerKind, reason, answer, collectedResults),
 					}
-					if retryRejectedFinalAnswer(stepNumber, activeToolCall, assistantMessage, acceptance, blockerResult) {
+					if r.retryRejectedFinalAnswerForRun(runnerFinalAnswerRetryInput{
+						stepNumber:               stepNumber,
+						activeToolCall:           activeToolCall,
+						assistantMessage:         assistantMessage,
+						acceptance:               acceptance,
+						result:                   blockerResult,
+						collectedResults:         collectedResults,
+						currentAllowedTools:      currentAllowedTools,
+						completionGateRejections: &completionGateRejections,
+						turnMessages:             &turnMessages,
+						turnHiddenTools:          turnHiddenTools,
+						controller:               &controller,
+						autonomyRecorder:         autonomyRecorder,
+						rebuildTools:             rebuildTools,
+					}) {
 						continue
 					}
 
@@ -1208,7 +1147,7 @@ func (r *Runner) Run(
 		}
 
 		if redirected, redirectedRaw, ok := repeatedDiagnosticLogReadFileBackfill(req, collectedResults); ok {
-			req, raw = rewriteToolRequest(req, raw, redirected, redirectedRaw, "repeated_diagnostic_log_read_previous_window")
+			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "repeated_diagnostic_log_read_previous_window")
 		}
 
 		if summary, errorText, reject := diagnosticLogUnboundedReadCoverageRejection(req, collectedResults); reject {
@@ -1233,22 +1172,22 @@ func (r *Runner) Run(
 		}
 
 		if redirected, redirectedRaw, reason, ok := structuredSourceReadRewriteRequest(req, r.Workspace, currentAllowedTools, r.RuntimeBrief); ok {
-			req, raw = rewriteToolRequest(req, raw, redirected, redirectedRaw, reason)
+			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, reason)
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
 		if redirected, redirectedRaw, reason, ok := pathlessReadSymbolAfterOutlineRewriteRequest(req, collectedResults); ok {
-			req, raw = rewriteToolRequest(req, raw, redirected, redirectedRaw, reason)
+			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, reason)
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
 		if redirected, redirectedRaw, reason, ok := repeatedFileOutlineToReadSymbolRewriteRequest(req, collectedResults, r.RuntimeBrief); ok {
-			req, raw = rewriteToolRequest(req, raw, redirected, redirectedRaw, reason)
+			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, reason)
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
 		if redirected, redirectedRaw, reason, ok := readOnlyDefinitionToReadSymbolRewriteRequest(req, r.RuntimeBrief); ok {
-			req, raw = rewriteToolRequest(req, raw, redirected, redirectedRaw, reason)
+			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, reason)
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
@@ -1262,11 +1201,11 @@ func (r *Runner) Run(
 		}
 
 		if redirected, redirectedRaw, ok := r.repeatedRangeLessReadFileRedirect(req, collectedResults, currentAllowedTools); ok {
-			req, raw = rewriteToolRequest(req, raw, redirected, redirectedRaw, "repeated_rangeless_read_file_bounded_source")
+			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "repeated_rangeless_read_file_bounded_source")
 		}
 
 		if repaired, repairedRaw, ok := r.writeDescriptionRepairSynthesizedRequest(req, writeDescriptionRepairActive); ok {
-			req, raw = rewriteToolRequest(req, raw, repaired, repairedRaw, "write_description_repair_synthesized")
+			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, repaired, repairedRaw, "write_description_repair_synthesized")
 			r.emitWriteDescriptionValidatorDecision(stepNumber, repaired, "repair", "description_synthesized", "write_description_repair")
 			r.emitEvent(RunEvent{Role: "write_description_repair_synthesized", Content: fmt.Sprintf("synthesized missing write description for %s on %q", strings.TrimSpace(repaired.Tool), normalizeRunnerPath(repaired.Path))})
 		}
@@ -1537,7 +1476,7 @@ func (r *Runner) Run(
 				Content: fmt.Sprintf("allowed bounded %s source refresh %d/%d for required path %q after rejected submit_plan showed a stale or missing anchor", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, normalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
 			})
 		} else if redirected, redirectedRaw, ok := r.planThenExecuteRejectedPlanRefreshReadRedirect(req, collectedResults); ok {
-			req, raw = rewriteToolRequest(req, raw, redirected, redirectedRaw, "plan_execute_rejected_plan_source_refresh_region")
+			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_rejected_plan_source_refresh_region")
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 			recoveryReadAllowanceGrantedThisRequest = true
 			planThenExecuteReadySourceRefreshes++
@@ -1746,7 +1685,7 @@ func (r *Runner) Run(
 		}
 
 		if redirected, redirectedRaw, ok := r.planThenExecuteMissingTargetReadRedirect(req, collectedResults); ok {
-			req, raw = rewriteToolRequest(req, raw, redirected, redirectedRaw, "plan_execute_missing_target_read_ranked_candidate")
+			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_missing_target_read_ranked_candidate")
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
@@ -1876,16 +1815,16 @@ func (r *Runner) Run(
 
 				deferredGitHistorySubmitPlan = &submitReq
 				deferredGitHistorySubmitPlanRaw = raw
-				req, raw = rewriteToolRequest(req, raw, redirectedReq, redirectedRaw, "plan_execute_submit_plan_before_history")
+				req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirectedReq, redirectedRaw, "plan_execute_submit_plan_before_history")
 				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 				redirected = true
 			} else if redirectedReq, redirectedRaw, ok := r.sourceReadBeforeGitHistoryEvidenceRedirect(req, collectedResults, historyRedirectAllowedTools); ok {
-				req, raw = rewriteToolRequest(req, raw, redirectedReq, redirectedRaw, "plan_execute_source_read_before_history")
+				req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirectedReq, redirectedRaw, "plan_execute_source_read_before_history")
 				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 				redirected = true
 			} else if redirectedReq, ok := postWriteSourceSanityRedirect(req, r.RuntimeBrief, collectedResults, surfaceAllowedTools); ok {
 				redirectedRaw := marshalToolRequestRaw(redirectedReq)
-				req, raw = rewriteToolRequest(req, raw, redirectedReq, redirectedRaw, "post_write_lane_sanity_requires_source_sanity")
+				req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirectedReq, redirectedRaw, "post_write_lane_sanity_requires_source_sanity")
 				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 				redirected = true
 			} else if newFileSummary, newFileError, ok := unavailableRequiredNewFileProbeNudge(req, r.RuntimeBrief, r.Workspace); ok {
@@ -1930,14 +1869,14 @@ func (r *Runner) Run(
 
 			deferredGitHistorySubmitPlan = &submitReq
 			deferredGitHistorySubmitPlanRaw = raw
-			req, raw = rewriteToolRequest(req, raw, redirectedReq, redirectedRaw, "plan_execute_submit_plan_before_history")
+			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirectedReq, redirectedRaw, "plan_execute_submit_plan_before_history")
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
 		if redirected, redirectedRaw, ok := r.implementationTargetSourceWriteBeforeEvidenceRedirect(req, collectedResults, currentAllowedTools); ok {
 			originalReq := req
 			originalRaw := raw
-			req, raw = rewriteToolRequest(req, raw, redirected, redirectedRaw, "implementation_write_before_evidence_bounded_read")
+			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "implementation_write_before_evidence_bounded_read")
 			deferredSourceEvidenceWrite = newImplementationDeferredSourceEvidenceWrite(originalReq, originalRaw, redirected.Path)
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
@@ -1955,7 +1894,7 @@ func (r *Runner) Run(
 		if redirected, redirectedRaw, ok := r.writeBeforeGitHistoryEvidenceRedirect(req, collectedResults, implementationHistoryRedirectAllowedTools); ok {
 			originalReq := req
 			originalRaw := raw
-			req, raw = rewriteToolRequest(req, raw, redirected, redirectedRaw, "write_before_git_history_bounded_history")
+			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "write_before_git_history_bounded_history")
 			deferredSourceEvidenceWrite = newImplementationDeferredSourceEvidenceWrite(originalReq, originalRaw, redirected.Path)
 
 			if deferredSourceEvidenceWrite != nil {
@@ -1975,12 +1914,12 @@ func (r *Runner) Run(
 		}
 
 		if redirected, redirectedRaw, ok := r.planThenExecuteCandidateRangeLessReadRedirect(req, collectedResults); ok {
-			req, raw = rewriteToolRequest(req, raw, redirected, redirectedRaw, "plan_execute_candidate_rangeless_read_bounded")
+			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_candidate_rangeless_read_bounded")
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
 		if redirected, redirectedRaw, ok := r.planThenExecuteMalformedSymbolReadRedirect(req, collectedResults, currentAllowedTools); ok {
-			req, raw = rewriteToolRequest(req, raw, redirected, redirectedRaw, "plan_execute_malformed_symbol_read_bounded")
+			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_malformed_symbol_read_bounded")
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
@@ -2153,7 +2092,7 @@ func (r *Runner) Run(
 		}
 
 		if redirected, redirectedRaw, ok := r.planThenExecuteRepeatedSymbolReadFallbackRedirect(req, collectedResults, currentAllowedTools); ok {
-			req, raw = rewriteToolRequest(req, raw, redirected, redirectedRaw, "plan_execute_symbol_read_after_miss_bounded")
+			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_symbol_read_after_miss_bounded")
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
@@ -2583,7 +2522,7 @@ func (r *Runner) Run(
 
 		if actionClass != "" && rejectedActions[actionClass] > 0 {
 			if redirected, redirectedRaw, ok := r.planThenExecuteRepeatedSymbolReadFallbackRedirect(req, collectedResults, currentAllowedTools); ok {
-				req, raw = rewriteToolRequest(req, raw, redirected, redirectedRaw, "plan_execute_symbol_read_after_read_failure_bounded")
+				req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_symbol_read_after_read_failure_bounded")
 				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 				repeatedDeadEndRecovered = true
 			}
