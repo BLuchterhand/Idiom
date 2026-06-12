@@ -52,24 +52,28 @@ type RunEvent struct {
 }
 
 type ToolRequestEvent struct {
-	Step           int
-	Agent          string
-	Raw            string
-	Request        workspace.ToolRequest
-	Mode           workspace.Mode
-	Broad          bool
-	Narrowing      bool
-	Action         string
-	DiscoveryClass string
-	DiscoveryScope string
-	DiscoveryCost  string
+	Step              int
+	Agent             string
+	ChildInvocationID string
+	ChildContractID   string
+	Raw               string
+	Request           workspace.ToolRequest
+	Mode              workspace.Mode
+	Broad             bool
+	Narrowing         bool
+	Action            string
+	DiscoveryClass    string
+	DiscoveryScope    string
+	DiscoveryCost     string
 }
 
 type ToolResultEvent struct {
-	Step    int
-	Agent   string
-	Request workspace.ToolRequest
-	Result  workspace.ToolResult
+	Step              int
+	Agent             string
+	ChildInvocationID string
+	ChildContractID   string
+	Request           workspace.ToolRequest
+	Result            workspace.ToolResult
 }
 
 type runnerFailureFeedbackPacket struct {

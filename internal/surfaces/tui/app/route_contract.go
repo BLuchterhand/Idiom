@@ -18,9 +18,8 @@ const (
 type routeMutationAuthority string
 
 const (
-	routeMutationAuthorityNone                 routeMutationAuthority = "none"
-	routeMutationAuthorityExplicit             routeMutationAuthority = "explicit"
-	routeMutationAuthorityConfirmationRequired routeMutationAuthority = "confirmation_required"
+	routeMutationAuthorityNone     routeMutationAuthority = "none"
+	routeMutationAuthorityExplicit routeMutationAuthority = "explicit"
 )
 
 type routeContractProjection struct {
@@ -44,12 +43,7 @@ func projectRouteContract(plan turnRoutePlan, mode agent.Mode) routeContractProj
 	authority := routeMutationAuthorityNone
 
 	if isImplementationLikeFamily(plan.Family) {
-		switch source {
-		case routeSourceTypedCommand:
-			authority = routeMutationAuthorityExplicit
-		case routeSourceClassifier:
-			authority = routeMutationAuthorityConfirmationRequired
-		}
+		authority = routeMutationAuthorityExplicit
 	}
 
 	return routeContractProjection{
@@ -65,11 +59,6 @@ func projectRouteContract(plan turnRoutePlan, mode agent.Mode) routeContractProj
 		EvidenceIntent:     strings.TrimSpace(plan.EvidenceIntent),
 		ContinuationTarget: strings.TrimSpace(plan.ContinuationTarget),
 	}
-}
-
-func routeRequiresMutationConfirmation(plan promptExecutionPlan) bool {
-	contract := projectRouteContract(plan.route, plan.mode)
-	return contract.MutationAuthority == routeMutationAuthorityConfirmationRequired
 }
 
 func normalizeRouteSource(source routeSource) routeSource {

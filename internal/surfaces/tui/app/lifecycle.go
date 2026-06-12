@@ -363,7 +363,7 @@ func New(cfg config.Config) *Model {
 	}
 
 	mode := agent.ModeOrDefault(m.agentModeName)
-	m.workspace.SetPermissionRules(mode.PermissionRules)
+	m.applyModePermissions(mode)
 
 	mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	registry, mcpFailures := setupMCPRegistry(mcpCtx, cfg.MCP, cfg.Workspace.AllowPrivateNetwork)
@@ -1167,8 +1167,8 @@ func (m *Model) preExecuteToolRequest(step int, req workspace.ToolRequest, mode 
 
 		return &workspace.ToolResult{
 			Tool:    req.Tool,
-			Summary: "Tool request denied by user",
-			Error:   fmt.Sprintf("user denied %s under agent mode %q", req.Tool, mode.Name),
+			Summary: "Write approval required",
+			Error:   fmt.Sprintf("write approval required before running %s under agent mode %q; request was not approved", req.Tool, mode.Name),
 		}
 	}
 

@@ -1137,3 +1137,12 @@ func (d ReadOnlyCloseout) PrioritizedCandidatePaths() []string {
 func presentableUnsupportedFinalAnswerLead() string {
 	return "I could not produce a supported final answer from this run: the run stopped before it retained enough evidence, so I do not have enough supported evidence to answer that fully."
 }
+
+func unsupportedReadOnlyCloseoutAnswer(answer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(answer))
+	if lower == "" {
+		return false
+	}
+
+	return strings.HasPrefix(lower, strings.ToLower(presentableUnsupportedFinalAnswerLead()))
+}

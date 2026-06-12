@@ -1687,17 +1687,12 @@
           "reason": "plan_then_execute_request",
           "contract": "implementation_result"
         },
-        "require_run_events": [
-          "plan_then_execute_short_circuit"
-        ],
-        "require_verification": "none",
+        "require_verification": "any",
         "require_approval": false
       },
       "oracle": {
-        "require_no_changed_files": true,
         "require_no_approval": true,
-        "require_no_summary_rejections": true,
-        "max_tool_requests": 4
+        "allow_no_write": true
       }
     },
     {

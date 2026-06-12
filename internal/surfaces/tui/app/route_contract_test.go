@@ -36,7 +36,7 @@ func TestRouteContractClassifierUnavailableNaturalLanguageFallsBackToConversatio
 	}
 }
 
-func TestRouteContractClassifierImplementationRequiresMutationConfirmation(t *testing.T) {
+func TestRouteContractClassifierImplementationActivatesGuardedMutationAuthority(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
@@ -64,8 +64,8 @@ func TestRouteContractClassifierImplementationRequiresMutationConfirmation(t *te
 		t.Fatalf("projection lost route fields: %#v", contract)
 	}
 
-	if contract.MutationAuthority != routeMutationAuthorityConfirmationRequired || contract.MutationCapable {
-		t.Fatalf("classifier implementation route should require explicit confirmation: %#v", contract)
+	if contract.MutationAuthority != routeMutationAuthorityExplicit || !contract.MutationCapable {
+		t.Fatalf("classifier implementation route should activate guarded mutation authority: %#v", contract)
 	}
 }
 
@@ -160,8 +160,8 @@ func TestRouteContractOutcomeCorrectsPostCompletionDefectReportToImplementation(
 		t.Fatalf("outcome metadata was not preserved: %#v", contract)
 	}
 
-	if contract.MutationAuthority != routeMutationAuthorityConfirmationRequired || contract.MutationCapable {
-		t.Fatalf("corrected classifier route should require explicit confirmation: %#v", contract)
+	if contract.MutationAuthority != routeMutationAuthorityExplicit || !contract.MutationCapable {
+		t.Fatalf("corrected classifier route should activate guarded mutation authority: %#v", contract)
 	}
 }
 

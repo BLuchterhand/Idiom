@@ -541,6 +541,10 @@ func (p delegatedDiscoveryPlan) computeHasPrimaryNamedScope() bool {
 }
 
 func (p delegatedDiscoveryPlan) computePrimaryScope() string {
+	if delegatedReadOnlyChildMechanismQuestion(p.objective) && !delegatedObjectiveNeedsEntrypointScope(p.objective) {
+		return "internal/runtime/agent"
+	}
+
 	firstCandidate := ""
 
 	for _, candidate := range p.namedScopes {
@@ -1743,12 +1747,14 @@ func (r *Runner) delegatedReadOnlyBootstrapQueryRequest(results []workspace.Tool
 		return workspace.ToolRequest{}, false
 	}
 
+	if delegatedReadOnlyObjectiveHasExactPrimarySourceAnchor(r.RuntimeBrief.Objective) &&
+		!delegatedReadOnlyCompositeQuestionOverridesExactSourceAnchor(r.RuntimeBrief.Objective) {
+
+		return workspace.ToolRequest{}, false
+	}
+
 	if !delegatedReadOnlyObjectiveRequiresDiscoveryQuery(r.RuntimeBrief.Objective) {
-		for _, path := range pathparse.MentionedWorkspacePaths(r.RuntimeBrief.Objective) {
-			if pathparse.HasWorkspaceFileExtension(path) && !delegatedReadOnlySecondaryEvidencePath(path) {
-				return workspace.ToolRequest{}, false
-			}
-		}
+		return workspace.ToolRequest{}, false
 	}
 
 	pattern := delegatedReadOnlyBootstrapPattern(r.RuntimeBrief.Objective)
@@ -1767,7 +1773,72 @@ func (r *Runner) delegatedReadOnlyBootstrapQueryRequest(results []workspace.Tool
 
 func delegatedReadOnlyObjectiveRequiresDiscoveryQuery(objective string) bool {
 	lower := strings.ToLower(strings.Join(strings.Fields(objective), " "))
+	// This classifier only identifies broad child-runner mechanism questions
+	// that need composite discovery. Exact source anchors are preserved by
+	// delegatedReadOnlyBootstrapQueryRequest before this predicate is consulted.
+	return containsAny(lower,
+		"discovery tool",
+		"discovery tools",
+		"tool usefulness",
+		"increase their usefulness",
+		"overall usefulness",
+		"subagent",
+		"sub-agent",
+		"sub agent",
+		"child-agent",
+		"child agent",
+		"child task",
+		"task tool",
+		"delegation",
+	)
+}
+
+func delegatedReadOnlyObjectiveHasExactPrimarySourceAnchor(objective string) bool {
+	for _, path := range pathparse.MentionedWorkspacePaths(objective) {
+		path = normalizeRunnerPath(path)
+		if path == "" || delegatedReadOnlySecondaryEvidencePath(path) || delegatedReadOnlyMentionedPathIsPattern(path) {
+			continue
+		}
+
+		if pathparse.HasWorkspaceFileExtension(path) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func delegatedReadOnlyCompositeQuestionOverridesExactSourceAnchor(objective string) bool {
+	lower := strings.ToLower(strings.Join(strings.Fields(objective), " "))
 	return containsAny(lower, "discovery tool", "discovery tools", "tool usefulness", "increase their usefulness", "overall usefulness")
+}
+
+func delegatedReadOnlyMentionedPathIsPattern(path string) bool {
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	if path == "" {
+		return false
+	}
+
+	base := filepath.Base(path)
+	if strings.ContainsAny(base, "*?[]") {
+		return true
+	}
+
+	return strings.HasPrefix(path, ".") && !strings.Contains(strings.TrimPrefix(path, "."), "/")
+}
+
+func delegatedReadOnlyChildMechanismQuestion(objective string) bool {
+	lower := strings.ToLower(strings.Join(strings.Fields(delegatedDisplayQuestion(objective)), " "))
+	return containsAny(lower,
+		"subagent",
+		"sub-agent",
+		"sub agent",
+		"child-agent",
+		"child agent",
+		"child task",
+		"task tool",
+		"delegation",
+	)
 }
 
 func delegatedReadOnlyDiscoveryPurpose(objective string) string {

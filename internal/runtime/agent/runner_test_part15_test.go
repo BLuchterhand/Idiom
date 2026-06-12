@@ -48,8 +48,8 @@ func TestDelegatedReadOnlyBootstrapRedirectsBroadInitialSearch(t *testing.T) {
 		t.Fatalf("expected bootstrap redirect to architecture discovery_query, got %#v", decision.Request)
 	}
 
-	if decision.Request.Path != "internal" {
-		t.Fatalf("expected bootstrap redirect to scope internal, got %#v", decision.Request)
+	if decision.Request.Path != "internal/runtime/agent" {
+		t.Fatalf("expected bootstrap redirect to runtime agent implementation scope, got %#v", decision.Request)
 	}
 
 	for _, want := range []string{"sub[-_ ]?agent", "subagent"} {

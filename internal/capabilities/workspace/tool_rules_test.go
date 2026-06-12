@@ -42,6 +42,44 @@ func TestManagerEvaluateToolRuleConfiguredDenyOverridesModeAllow(t *testing.T) {
 	}
 }
 
+func TestManagerProtectedWritePathsRequireApprovalInWriteMode(t *testing.T) {
+	mgr := NewManager(config.Workspace{Root: t.TempDir()})
+	mgr.SetProtectedWritePaths([]string{"prompts/base.md"})
+	mgr.SetPermissionRules(map[string][]ToolRule{
+		"edit_file": {{Pattern: "**", Decision: ToolRuleAllow}},
+	})
+
+	if got := mgr.EvaluateToolRule(ToolRequest{Tool: "edit_file", Path: "prompts/base.md"}); got != ToolRuleAsk {
+		t.Fatalf("protected edit_file decision = %s, want ask", got)
+	}
+
+	if got := mgr.EvaluateToolRule(ToolRequest{Tool: "edit_file", Path: "README.md"}); got != ToolRuleAllow {
+		t.Fatalf("unprotected edit_file decision = %s, want allow", got)
+	}
+}
+
+func TestManagerProtectedWritePathsDoNotOverrideModeDeny(t *testing.T) {
+	mgr := NewManager(config.Workspace{Root: t.TempDir()})
+	mgr.SetProtectedWritePaths([]string{"prompts/base.md"})
+	mgr.SetPermissionRules(map[string][]ToolRule{
+		"edit_file": {{Pattern: "**", Decision: ToolRuleDeny}},
+	})
+
+	if got := mgr.EvaluateToolRule(ToolRequest{Tool: "edit_file", Path: "prompts/base.md"}); got != ToolRuleDeny {
+		t.Fatalf("protected edit_file under deny mode = %s, want deny", got)
+	}
+}
+
+func TestManagerProtectedWritePathsCoverApplyPatchTargets(t *testing.T) {
+	mgr := NewManager(config.Workspace{Root: t.TempDir()})
+	mgr.SetProtectedWritePaths([]string{"prompts/base.md"})
+
+	patch := "*** Begin Patch\n*** Update File: prompts/base.md\n@@\n-old\n+new\n*** End Patch\n"
+	if got := mgr.EvaluateToolRule(ToolRequest{Tool: "apply_patch", Content: patch}); got != ToolRuleAsk {
+		t.Fatalf("protected apply_patch decision = %s, want ask", got)
+	}
+}
+
 func TestManagerExecuteDeniesConfiguredReadFileRule(t *testing.T) {
 	dir := t.TempDir()
 	secret := "SECRET_SENTINEL_DO_NOT_LEAK"

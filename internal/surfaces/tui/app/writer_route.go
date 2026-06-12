@@ -26,10 +26,7 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 	reasonCodes := []string{"route.read_only_question"}
 	verificationOwner := ""
 
-	if routeRequiresMutationConfirmation(plan) {
-		lane = "main"
-		reasonCodes = []string{"route.mutation_confirmation_required"}
-	} else if workerruntime.TaskFamilyIsPlanThenExecutePlanner(taskFamily) {
+	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(taskFamily) {
 		mode = writerroute.ModePlanSubmission
 		lane = "plan-execute"
 		reasonCodes = []string{"route.plan_execute_planner"}

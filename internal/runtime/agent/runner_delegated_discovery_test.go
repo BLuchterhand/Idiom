@@ -154,6 +154,110 @@ func TestDelegatedDiscoveryPlanTreatsCodexAgentsAsSecondaryForSubagentMechanism(
 	if repaired.Path != "internal/runtime/agent" {
 		t.Fatalf("expected repaired discovery path to use implementation scope, got %#v", repaired)
 	}
+
+	bootstrap, ok := runner.delegatedReadOnlyBootstrapQueryRequest(nil, workspace.ToolRequest{
+		Tool: workspace.ToolNameContextPack,
+		Task: "how the idiom harness uses subagents/child-agents",
+		Path: ".codex/agents",
+		Mode: "brief",
+	})
+	if !ok {
+		t.Fatal("expected subagent context_pack bootstrap to be rewritten")
+	}
+
+	if bootstrap.Tool != workspace.ToolNameDiscoveryQuery || bootstrap.Purpose != "architecture_boundary" || bootstrap.Path != "internal/runtime/agent" {
+		t.Fatalf("expected subagent bootstrap to use architecture discovery under implementation scope, got %#v", bootstrap)
+	}
+}
+
+func TestDelegatedReadOnlyBootstrapQueryPreservesExactSourceFileForSubagentPrompt(t *testing.T) {
+	runner := &Runner{
+		AgentName: "child:explorer",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:   "delegated_read_only",
+			AllowedTools: []string{"discovery_query", "search_files", "read_file"},
+			Objective:    "Inspect internal/capabilities/workspace/tool_manifest.go and explain how subagents are wired.",
+		},
+	}
+
+	if redirected, ok := runner.delegatedReadOnlyBootstrapQueryRequest(nil, workspace.ToolRequest{
+		Tool:    workspace.ToolNameSearchFiles,
+		Pattern: "*tool_manifest*",
+	}); ok {
+		t.Fatalf("exact source-file prompt should not be forced into broad discovery query, got %#v", redirected)
+	}
+}
+
+func TestDelegatedReadOnlyBootstrapQueryScopesSubagentMechanismAwayFromEntrypoint(t *testing.T) {
+	runner := &Runner{
+		AgentName: "child:explorer",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:   "delegated_read_only",
+			AllowedTools: []string{"discovery_query", "context_pack", "read_file"},
+			Objective:    "Investigate how the idiom harness uses subagents, child-agents, and subagent mechanisms.",
+		},
+	}
+
+	redirected, ok := runner.delegatedReadOnlyBootstrapQueryRequest(nil, workspace.ToolRequest{
+		Tool: workspace.ToolNameContextPack,
+		Task: "how the idiom harness uses subagents, child-agents, subagent mechanisms",
+		Path: "internal/frontier",
+		Mode: "brief",
+	})
+	if !ok {
+		t.Fatal("expected broad subagent mechanism bootstrap to be rewritten to composite discovery")
+	}
+
+	if redirected.Path != "internal/runtime/agent" {
+		t.Fatalf("subagent mechanism discovery must stay on runtime agent source, got %#v", redirected)
+	}
+}
+
+func TestDelegatedReadOnlyBootstrapQueryIgnoresConfigPatternForSubagentMechanism(t *testing.T) {
+	objective := strings.Join([]string{
+		"Investigate how the idiom harness uses subagents. I need to understand:",
+		"1. What subagent/child-agent mechanisms exist (e.g., task tool, subagent delegation, lane-based subagents, parallel agents)",
+		"2. Where subagents are defined/configured (look for .toml files, agent definitions, subagent configs)",
+		"3. How the harness launches and communicates with subagents (look for subagent runners, dispatchers, supervisor loops)",
+		"Search broadly:",
+		"- Search for files matching *.toml in .codex/agents/ or similar agent config directories",
+		"- Search for \"subagent\", \"child\", \"delegate\", \"worker\", \"explorer\", \"reviewer\" in Go source files",
+		"- Look at the task tool implementation",
+	}, "\n")
+	runner := &Runner{
+		AgentName: "child:explorer",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:   "delegated_read_only",
+			AllowedTools: []string{"discovery_query", "search_files", "read_file"},
+			Objective:    objective,
+		},
+	}
+
+	redirected, ok := runner.delegatedReadOnlyBootstrapQueryRequest(nil, workspace.ToolRequest{
+		Tool:    workspace.ToolNameSearchFiles,
+		Pattern: ".toml",
+		Path:    ".",
+	})
+	if !ok {
+		t.Fatal("expected config-pattern bootstrap to be rewritten to composite discovery")
+	}
+
+	if redirected.Tool != workspace.ToolNameDiscoveryQuery || redirected.Path != "internal/runtime/agent" {
+		t.Fatalf("expected subagent mechanism bootstrap to use runtime implementation discovery, got %#v", redirected)
+	}
+}
+
+func TestDelegatedDiscoveryPlanIgnoresIncidentalSlashPhraseForSubagentMechanism(t *testing.T) {
+	objective := strings.Join([]string{
+		"Investigate how the idiom harness uses subagents.",
+		"Look at any subagent/child-agent/worker/explorer/reviewer patterns.",
+		"Report back with specific file paths and function names.",
+	}, "\n")
+	plan := newDelegatedDiscoveryPlan(objective)
+
+	if plan.primaryScope != "internal/runtime/agent" {
+		t.Fatalf("expected subagent mechanism scope to outrank incidental slash phrase, got %q", plan.primaryScope)
+	}
 }
 
 func TestDelegatedReadOnlyDiscoveryRepairReplacesBroadNamedScope(t *testing.T) {

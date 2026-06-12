@@ -14,6 +14,7 @@ import (
 
 const ToolSidecarEnvelopeVersion = "idiom.tool.v1"
 const ToolSidecarInspectionReportVersion = "idiom.tool.inspection_report.v1"
+const ToolSidecarChildContextVersion = "idiom.sidecar_child_context.v1"
 const ToolSidecarInspectionNoSideEffects = "none"
 const maxToolSidecarErrorMessageBytes = 500
 
@@ -28,12 +29,14 @@ type ToolSidecarEnvelope struct {
 	AuditEventIDs    []string                  `json:"audit_event_ids"`
 	StructuredOutput any                       `json:"structured_output"`
 	Error            *ToolSidecarError         `json:"error"`
+	ChildContext     *ToolSidecarChildContext  `json:"child_context,omitempty"`
 	Metadata         autonomy.ContractMetadata `json:"metadata,omitempty"`
 }
 
 type ToolSidecarOptions struct {
-	Caller    ToolSidecarCaller
-	Transport string
+	Caller       ToolSidecarCaller
+	Transport    string
+	ChildContext *ToolSidecarChildContext
 }
 
 type ToolSidecarCaller struct {
@@ -52,6 +55,20 @@ type ToolSidecarContract struct {
 	DecisionAuthority string                    `json:"decision_authority,omitempty"`
 	Policy            ToolSchemaPolicyExport    `json:"policy,omitempty"`
 	Metadata          autonomy.ContractMetadata `json:"metadata,omitempty"`
+}
+
+type ToolSidecarChildContext struct {
+	SchemaVersion    string `json:"schema_version"`
+	ParentContractID string `json:"parent_contract_id,omitempty"`
+	ChildContractID  string `json:"child_contract_id,omitempty"`
+	InvocationID     string `json:"invocation_id,omitempty"`
+	TerminalID       string `json:"terminal_id,omitempty"`
+	AcceptanceID     string `json:"acceptance_id,omitempty"`
+	Role             string `json:"role,omitempty"`
+	Lane             string `json:"lane,omitempty"`
+	Phase            string `json:"phase,omitempty"`
+	WorkspaceMode    string `json:"workspace_mode,omitempty"`
+	PackID           string `json:"pack_id,omitempty"`
 }
 
 type ToolSidecarWarning struct {
@@ -290,6 +307,7 @@ func BuildToolSidecarEnvelopeWithOptions(req ToolRequest, result ToolResult, pro
 	outputObject := toolSidecarOutputObject(structuredOutput)
 	metadata := autonomy.DefaultContractMetadata("p7.1", "tool_sidecar_envelope")
 	transport := normalizeToolSidecarTransport(opts.Transport)
+	childContext := normalizeToolSidecarChildContext(opts.ChildContext)
 
 	return ToolSidecarEnvelope{
 		SchemaVersion:    ToolSidecarEnvelopeVersion,
@@ -302,8 +320,66 @@ func BuildToolSidecarEnvelopeWithOptions(req ToolRequest, result ToolResult, pro
 		AuditEventIDs:    toolSidecarAuditEventIDs(outputObject),
 		StructuredOutput: structuredOutput,
 		Error:            toolSidecarError(result),
+		ChildContext:     childContext,
 		Metadata:         metadata,
 	}
+}
+
+func normalizeToolSidecarChildContext(input *ToolSidecarChildContext) *ToolSidecarChildContext {
+	if input == nil {
+		return nil
+	}
+
+	context := *input
+	context.SchemaVersion = ToolSidecarChildContextVersion
+
+	var err error
+	if context.ParentContractID, err = normalizeSidecarCallerField("child_context.parent_contract_id", context.ParentContractID); err != nil {
+		return nil
+	}
+	if context.ChildContractID, err = normalizeSidecarCallerField("child_context.child_contract_id", context.ChildContractID); err != nil {
+		return nil
+	}
+	if context.InvocationID, err = normalizeSidecarCallerField("child_context.invocation_id", context.InvocationID); err != nil {
+		return nil
+	}
+	if context.TerminalID, err = normalizeSidecarCallerField("child_context.terminal_id", context.TerminalID); err != nil {
+		return nil
+	}
+	if context.AcceptanceID, err = normalizeSidecarCallerField("child_context.acceptance_id", context.AcceptanceID); err != nil {
+		return nil
+	}
+	if context.Role, err = normalizeSidecarCallerField("child_context.role", context.Role); err != nil {
+		return nil
+	}
+	if context.Lane, err = normalizeSidecarCallerField("child_context.lane", context.Lane); err != nil {
+		return nil
+	}
+	if context.Phase, err = normalizeSidecarCallerField("child_context.phase", context.Phase); err != nil {
+		return nil
+	}
+	if context.WorkspaceMode, err = normalizeSidecarCallerField("child_context.workspace_mode", context.WorkspaceMode); err != nil {
+		return nil
+	}
+	if context.PackID, err = normalizeSidecarCallerField("child_context.pack_id", context.PackID); err != nil {
+		return nil
+	}
+
+	if context.ParentContractID == "" &&
+		context.ChildContractID == "" &&
+		context.InvocationID == "" &&
+		context.TerminalID == "" &&
+		context.AcceptanceID == "" &&
+		context.Role == "" &&
+		context.Lane == "" &&
+		context.Phase == "" &&
+		context.WorkspaceMode == "" &&
+		context.PackID == "" {
+
+		return nil
+	}
+
+	return &context
 }
 
 func NewToolSidecarCaller(callerID string, requestID string, traceID string) (ToolSidecarCaller, error) {

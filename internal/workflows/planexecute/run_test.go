@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/config"
 	"idiom/internal/repository/comprehension"
@@ -1735,6 +1736,28 @@ func TestVerificationPlanRejectsFailExecutorVerification(t *testing.T) {
 	if !strings.Contains(stdout.String(), `"type":"idiom.plan_execute.verification"`) {
 		t.Fatalf("expected verification event, got %s", stdout.String())
 	}
+
+	events := planExecuteJSONEventsForRunTest(t, stdout.String())
+	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.verification_acceptance")
+	if !ok {
+		t.Fatalf("expected verification_acceptance event, got %s", stdout.String())
+	}
+
+	body, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("marshal verification acceptance event: %v", err)
+	}
+
+	var record autonomy.VerificationAcceptanceRecord
+	if err := json.Unmarshal(body, &record); err != nil {
+		t.Fatalf("decode verification acceptance event: %v", err)
+	}
+	if err := record.Validate(); err != nil {
+		t.Fatalf("verification acceptance should validate: %v\nrecord=%#v", err, record)
+	}
+	if record.Decision != autonomy.VerificationAcceptanceRejected || record.ExitStatus != 1 {
+		t.Fatalf("unexpected verification acceptance decision: %#v", record)
+	}
 }
 
 func TestRunReviewRepairPhaseRejectsPassWhenRequestedTestEditMissing(t *testing.T) {
@@ -1856,6 +1879,62 @@ func TestRunReviewRepairPhaseForcesVisibleTerminalContract(t *testing.T) {
 
 	if !gotOpts.DisableThinking {
 		t.Fatal("review-repair must force visible no-thinking output for its terminal contract")
+	}
+}
+
+func TestRunReviewRepairPhaseEmitsChildLifecycleRecords(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("good\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "bad", NewText: "good", Purpose: "seed changed path"},
+		},
+	}
+
+	var stdout bytes.Buffer
+	_, err := RunReviewRepairPhase(
+		cfg,
+		"Review behavior.",
+		plan,
+		[]string{"a.txt"},
+		nil,
+		ExecutorPhaseReport{},
+		Options{
+			JSONEvents:    true,
+			ScopeContract: NewPlanScopeContract([]string{"a.txt"}, []string{"a.txt"}, nil),
+		},
+		&stdout,
+		func(_ config.Config, _ string, _ RunOptions, _ io.Writer) (string, error) {
+			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: good is present.\n- Scope safety: no corrective edit needed.", nil
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("review-repair pass should be accepted: %v", err)
+	}
+
+	events := planExecuteJSONEventsForRunTest(t, stdout.String())
+	invocation := mustPlanExecuteAutonomyEvent[autonomy.ParentChildInvocationRecord](t, events, "idiom.plan_execute.parent_child_invocation")
+	terminal := mustPlanExecuteAutonomyEvent[autonomy.ChildTerminalRecord](t, events, "idiom.plan_execute.child_terminal")
+	acceptance := mustPlanExecuteAutonomyEvent[autonomy.ChildAcceptanceRecord](t, events, "idiom.plan_execute.child_acceptance")
+
+	if invocation.Role != "review_repair" || invocation.WorkspaceMode != autonomy.ChildWorkspaceNoWrite {
+		t.Fatalf("unexpected review invocation: %#v", invocation)
+	}
+	if terminal.InvocationID != invocation.InvocationID || terminal.Status != autonomy.ChildTerminalCompleted {
+		t.Fatalf("unexpected review terminal: %#v", terminal)
+	}
+	if acceptance.TerminalID != terminal.TerminalID || acceptance.Decision != autonomy.ChildAcceptanceAccepted {
+		t.Fatalf("unexpected review acceptance: %#v", acceptance)
 	}
 }
 
@@ -2512,4 +2591,30 @@ func planExecuteEventByTypeForRunTest(events []map[string]any, eventType string)
 	}
 
 	return nil, false
+}
+
+func mustPlanExecuteAutonomyEvent[T interface {
+	Validate() error
+}](t *testing.T, events []map[string]any, eventType string) T {
+	t.Helper()
+
+	event, ok := planExecuteEventByTypeForRunTest(events, eventType)
+	if !ok {
+		t.Fatalf("missing event %s in %#v", eventType, events)
+	}
+
+	body, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("marshal event %s: %v", eventType, err)
+	}
+
+	var record T
+	if err := json.Unmarshal(body, &record); err != nil {
+		t.Fatalf("decode event %s: %v", eventType, err)
+	}
+	if err := record.Validate(); err != nil {
+		t.Fatalf("validate event %s: %v\n%#v", eventType, err, record)
+	}
+
+	return record
 }

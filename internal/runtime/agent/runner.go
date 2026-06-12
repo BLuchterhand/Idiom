@@ -111,6 +111,8 @@ func (r *Runner) Run(
 	executionState := newRunnerExecutionState(r.InitialNeedsNarrowing, r.InitialBroadInspects)
 	delegatedReadOnlyAnswerReadyNudged := false
 	planThenExecuteReadinessNudged := false
+	planThenExecuteSubmitOnlyReadinessNudged := false
+	planThenExecuteCandidateReadinessNonSubmitTools := 0
 	conversationEvidenceNudged := false
 	convFirstMilestone, convNudgeInterval := lp.CallCountMilestones(r.ContextSize)
 
@@ -1342,6 +1344,49 @@ func (r *Runner) Run(
 			r.emitEvent(RunEvent{Role: "scratchpad_deliverable_source_discovery_recovery", Content: prompt})
 
 			continue
+		}
+
+		if redirected, redirectedRaw, ok := r.planThenExecuteMissingTargetReadRedirect(req, collectedResults); ok {
+			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_missing_target_read_ranked_candidate")
+			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
+		}
+
+		if summary, errorText, prompt, reject := planThenExecuteReadinessNudgedNonSubmitRejection(req, r.RuntimeBrief, collectedResults, planThenExecuteSubmitOnlyReadinessNudged); reject {
+			result := workspace.ToolResult{
+				Tool:    req.Tool,
+				Summary: summary,
+				Error:   errorText,
+			}
+			controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
+			refreshPlanThenExecuteTerminalSurface("readiness_non_submit_rejection")
+
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+
+			rebuildTools()
+
+			opts = planThenExecuteReadyToSubmitChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+
+			syncPlanThenExecuteRecoveryAllowedTools()
+			r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: prompt})
+
+			continue
+		}
+
+		if planThenExecuteReadinessNudged &&
+			!planThenExecuteSubmitOnlyReadinessNudged &&
+			r.planThenExecutePlannerPhase() &&
+			strings.TrimSpace(req.Tool) != workspace.ToolNameSubmitPlan &&
+			successfulSubmitPlanResultCount(collectedResults) == 0 {
+
+			planThenExecuteCandidateReadinessNonSubmitTools++
+			if planThenExecuteCandidateReadinessNonSubmitTools >= 12 {
+				blockerKind := "plan_execute_candidate_readiness_tool_budget_exhausted"
+				emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
+
+				answer := "<<QUESTION>>: plan-execute gathered candidate source evidence and made `submit_plan` available, but the planner kept requesting additional tools instead of producing a terminal plan artifact, source-satisfied decision, or exact blocker. Rerun with a narrower objective or exact edit anchor if a plan artifact is still required."
+
+				return finish(answer, nil, blockerKind, true)
+			}
 		}
 
 		if r.implementationTargetWriteReadySourceReadAllowed(req, collectedResults, implementationTargetWriteReadySourceRefreshes) {
@@ -2675,8 +2720,8 @@ func (r *Runner) Run(
 					})
 
 					if readOnlyReplayedEvidenceCloseoutApplies(r.agentName(), r.RuntimeBrief, collectedResults, req, replayed) {
-						if readOnlyDirectAnswerExactSearchReplayCloseoutCandidate(r.RuntimeBrief, req) {
-							if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+						if readOnlyDirectAnswerLane(r.RuntimeBrief) {
+							if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok && !unsupportedReadOnlyCloseoutAnswer(answer) {
 								return finish(answer, nil, "host_read_only_closeout", true)
 							}
 						}
@@ -3199,7 +3244,7 @@ func (r *Runner) Run(
 		r.markConcreteSourceEvidenceObserved(result)
 
 		if readOnlyArchitectureToolBudgetCloseoutApplies(r.RuntimeBrief, collectedResults, 4) {
-			if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+			if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok && !unsupportedReadOnlyCloseoutAnswer(answer) {
 				return finish(answer, nil, "read_only_architecture_tool_budget_closeout", false)
 			}
 
@@ -3667,7 +3712,7 @@ func (r *Runner) Run(
 			continue
 		}
 
-		if !planThenExecuteReadinessNudged {
+		if !planThenExecuteReadinessNudged || !planThenExecuteSubmitOnlyReadinessNudged {
 			if nudge := planThenExecuteUnreadRequiredSourceNudge(r.RuntimeBrief, collectedResults); nudge != "" {
 				nextUnread := firstPlanThenExecuteUnreadRequiredPath(r.requiredEditCoveragePaths(), planThenExecuteUnreadRequiredPaths(r.RuntimeBrief, collectedResults))
 				if nextUnread != "" && nextUnread != planThenExecuteUnreadSourceNudgedFor {
@@ -3682,22 +3727,33 @@ func (r *Runner) Run(
 			}
 
 			if nudge := planThenExecuteReadyToSubmitNudge(r.RuntimeBrief, collectedResults); nudge != "" {
-				planThenExecuteReadinessNudged = true
+				submitOnlyReadiness := planThenExecuteTerminalSubmitPlanSurfaceReady(r.RuntimeBrief, collectedResults)
+				if submitOnlyReadiness || !planThenExecuteReadinessNudged {
+					planThenExecuteReadinessNudged = true
 
-				refreshPlanThenExecuteTerminalSurface("readiness")
+					if submitOnlyReadiness {
+						planThenExecuteSubmitOnlyReadinessNudged = true
+						refreshPlanThenExecuteTerminalSurface("readiness")
 
-				if terminalSubmitPlanNativeTools() {
-					nudge = planThenExecuteNativeSubmitPlanNudge(r.RuntimeBrief)
+						if terminalSubmitPlanNativeTools() {
+							nudge = planThenExecuteNativeSubmitPlanNudge(r.RuntimeBrief)
+						}
+
+						turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+
+						rebuildTools()
+
+						opts = planThenExecuteReadyToSubmitChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+
+						syncPlanThenExecuteRecoveryAllowedTools()
+						r.emitEvent(RunEvent{Role: "plan_then_execute_readiness_nudge", Content: nudge})
+					} else {
+						turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+						opts = forceVisibleActionChatOptions(opts)
+						syncCurrentAllowedToolsFromOptions()
+						r.emitEvent(RunEvent{Role: "plan_then_execute_candidate_readiness_nudge", Content: nudge})
+					}
 				}
-
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
-
-				rebuildTools()
-
-				opts = planThenExecuteReadyToSubmitChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
-
-				syncPlanThenExecuteRecoveryAllowedTools()
-				r.emitEvent(RunEvent{Role: "plan_then_execute_readiness_nudge", Content: nudge})
 			}
 		}
 

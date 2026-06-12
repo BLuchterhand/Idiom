@@ -18,6 +18,7 @@ type InvocationKind string
 const (
 	InvocationLane        InvocationKind = "lane"
 	InvocationPhase       InvocationKind = "phase"
+	InvocationChild       InvocationKind = "child"
 	InvocationSidecarCall InvocationKind = "sidecar_call"
 )
 
@@ -485,7 +486,7 @@ func (c AutonomyContract) Validate() error {
 	}
 
 	if !validInvocationKind(c.Scope.InvocationKind) {
-		problems.Add("scope.invocation_kind is required and must be lane, phase, or sidecar_call")
+		problems.Add("scope.invocation_kind is required and must be lane, phase, child, or sidecar_call")
 	}
 
 	switch c.Scope.InvocationKind {
@@ -496,6 +497,14 @@ func (c AutonomyContract) Validate() error {
 	case InvocationPhase:
 		if c.Scope.Lane == "" || c.Scope.Phase == "" {
 			problems.Add("scope.lane and scope.phase are required for phase contracts")
+		}
+	case InvocationChild:
+		if c.ParentID == "" {
+			problems.Add("parent_id is required for child contracts")
+		}
+
+		if c.Scope.Lane == "" || c.Scope.Phase == "" {
+			problems.Add("scope.lane and scope.phase are required for child contracts")
 		}
 	case InvocationSidecarCall:
 		if c.Scope.Sidecar == nil {
@@ -919,7 +928,7 @@ func validateBudget(b BudgetState, problems *validationProblems) {
 
 func validInvocationKind(kind InvocationKind) bool {
 	switch kind {
-	case InvocationLane, InvocationPhase, InvocationSidecarCall:
+	case InvocationLane, InvocationPhase, InvocationChild, InvocationSidecarCall:
 		return true
 	default:
 		return false

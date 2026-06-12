@@ -489,16 +489,16 @@ func planThenExecuteSubmitReadyParseFailureIndex(brief workerruntime.WorkerRunti
 }
 
 func (r *Runner) planThenExecuteSubmitPlanOnlySurfaceRejection(req workspace.ToolRequest, results []workspace.ToolResult, allowedTools []string) (string, string, string, bool) {
-	if r == nil || !planThenExecuteSubmitPlanOnlyReady(r.RuntimeBrief, results) {
+	if r == nil || !planThenExecuteTerminalSubmitPlanSurfaceReady(r.RuntimeBrief, results) {
 		return "", "", "", false
 	}
 
 	tool := strings.TrimSpace(req.Tool)
-	if tool == "" || tool == workspace.ToolNameSubmitPlan || runnerAllowsTool(allowedTools, tool) {
+	if tool == "" || tool == workspace.ToolNameSubmitPlan {
 		return "", "", "", false
 	}
 
-	if len(allowedTools) != 1 || !runnerAllowsTool(allowedTools, workspace.ToolNameSubmitPlan) {
+	if len(allowedTools) > 0 && !runnerAllowsTool(allowedTools, workspace.ToolNameSubmitPlan) {
 		return "", "", "", false
 	}
 
@@ -520,6 +520,42 @@ func (r *Runner) planThenExecuteSubmitPlanOnlySurfaceRejection(req workspace.Too
 	}, "\n")
 
 	return "Plan-execute submit_plan required", fmt.Sprintf("%s is not available because the plan-execute planner is source-ready and exposes only `submit_plan`. Emit a parser-readable `submit_plan` JSON object now. %s Use `Decision: source-satisfied` or `<<QUESTION>>:` only for a true terminal exception; do not request another source read.", tool, planThenExecuteSubmitPlanCoverageSentence()), prompt, true
+}
+
+func planThenExecuteReadinessNudgedNonSubmitRejection(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, readinessNudged bool) (string, string, string, bool) {
+	if !readinessNudged ||
+		!planThenExecutePlannerBrief(brief) ||
+		successfulSubmitPlanResultCount(results) > 0 ||
+		strings.TrimSpace(req.Tool) == "" ||
+		strings.TrimSpace(req.Tool) == workspace.ToolNameSubmitPlan {
+
+		return "", "", "", false
+	}
+
+	if _, _, rejected := lastRejectedSubmitPlanCoverageResult(results); rejected {
+		return "", "", "", false
+	}
+
+	tool := strings.TrimSpace(req.Tool)
+	prompt := strings.Join([]string{
+		"Plan-execute planner readiness was already reached before this request. The first terminal planner action is now required, so discovery, search, source refresh, verification, and per-edit write tools are closed until a `submit_plan` is attempted.",
+		"The next visible action must be a parser-readable `submit_plan` JSON object. " + planThenExecuteSubmitPlanCoverageSentence() + " " + planThenExecuteSubmitPlanVisibleJSONInstruction(),
+		"Only use `Decision: source-satisfied` if the current source evidence proves every selected path already satisfies the requested final state. Only use `<<QUESTION>>:` if one exact path-specific blocker prevents drafting any plan edit.",
+	}, "\n")
+
+	return "Plan-execute submit_plan required",
+		fmt.Sprintf("%s is not available after plan-execute readiness. The planner must attempt `submit_plan` before any more tool calls; use a terminal source-satisfied decision or exact blocker only if no executable edit can be drafted.", tool),
+		prompt,
+		true
+}
+
+func planThenExecuteTerminalSubmitPlanSurfaceReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if planThenExecuteSubmitPlanOnlyReady(brief, results) {
+		return true
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	return state.Mode == PlanExecutePlanningModeSubmitReady || state.Mode == PlanExecutePlanningModeSubmitCorrection
 }
 
 func planThenExecuteRequiredSourceRequestAdvances(req workspace.ToolRequest, path string, evidence planThenExecuteSourceEvidence, results []workspace.ToolResult) bool {

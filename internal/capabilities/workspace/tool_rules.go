@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"path/filepath"
 	"strings"
 
 	"idiom/internal/capabilities/workspace/toolpolicy"
@@ -58,6 +59,33 @@ func (m *Manager) SetPermissionRules(rules map[string][]ToolRule) {
 	m.permissionRules = copied
 }
 
+// SetProtectedWritePaths installs authority-bearing paths that require
+// operator approval before mutation even in write-capable modes. It is used
+// for active prompt sources: the model may propose changes, but the harness
+// owns permission for mutating the instructions that shape future turns.
+func (m *Manager) SetProtectedWritePaths(paths []string) {
+	if m == nil {
+		return
+	}
+
+	protected := make(map[string]struct{})
+	for _, p := range paths {
+		for _, key := range m.protectedPathKeys(p) {
+			protected[key] = struct{}{}
+		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(protected) == 0 {
+		m.protectedWritePaths = nil
+		return
+	}
+
+	m.protectedWritePaths = protected
+}
+
 // EvaluateConfiguredToolRule applies only the static
 // config.Workspace.ToolRules layer. Callers use this for host-enforced
 // absolute denies so no active Mode can override a project rule.
@@ -92,8 +120,16 @@ func (m *Manager) EvaluateToolRule(req ToolRequest) ToolRuleDecision {
 
 	if len(modeRules) > 0 {
 		if decision := MatchToolRule(tool, req, modeRules); decision != ToolRuleNone {
+			if decision != ToolRuleDeny && m.protectedWritePathMatched(req) {
+				return ToolRuleAsk
+			}
+
 			return decision
 		}
+	}
+
+	if m.protectedWritePathMatched(req) {
+		return ToolRuleAsk
 	}
 
 	if configDecision != ToolRuleNone {
@@ -101,6 +137,93 @@ func (m *Manager) EvaluateToolRule(req ToolRequest) ToolRuleDecision {
 	}
 
 	return ToolRuleNone
+}
+
+func (m *Manager) protectedWritePathMatched(req ToolRequest) bool {
+	if m == nil || !IsWorkspaceWriteTool(req.Tool) {
+		return false
+	}
+
+	m.mu.Lock()
+	protected := m.protectedWritePaths
+	m.mu.Unlock()
+
+	if len(protected) == 0 {
+		return false
+	}
+
+	for _, path := range protectedWriteRequestPaths(req) {
+		for _, key := range m.protectedPathKeys(path) {
+			if _, ok := protected[key]; ok {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func protectedWriteRequestPaths(req ToolRequest) []string {
+	tool := strings.TrimSpace(req.Tool)
+	switch tool {
+	case ToolNameApplyPatch:
+		ops, err := ParsePatch(req.Content)
+		if err != nil {
+			return nil
+		}
+
+		paths := PatchOpPaths(ops)
+		for _, op := range ops {
+			if strings.TrimSpace(op.MoveTo) != "" {
+				paths = append(paths, op.MoveTo)
+			}
+		}
+
+		return paths
+	default:
+		if strings.TrimSpace(req.Path) == "" {
+			return nil
+		}
+
+		return []string{req.Path}
+	}
+}
+
+func (m *Manager) protectedPathKeys(path string) []string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+
+	cleaned := filepath.Clean(path)
+	keys := []string{normalizePathKey(cleaned)}
+
+	if filepath.IsAbs(cleaned) {
+		if root := strings.TrimSpace(m.Root()); root != "" {
+			if rel, err := filepath.Rel(root, cleaned); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				keys = append(keys, normalizePathKey(rel))
+			}
+		}
+	} else if root := strings.TrimSpace(m.Root()); root != "" {
+		keys = append(keys, normalizePathKey(filepath.Join(root, cleaned)))
+	}
+
+	out := make([]string, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+
+	return out
 }
 
 func convertConfiguredToolRules(configRules map[string][]config.ToolRule) map[string][]ToolRule {

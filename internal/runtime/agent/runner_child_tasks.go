@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/util"
@@ -65,6 +66,8 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 		childPolicy.MaxContextChars = effective.MaxContextChars
 	}
 
+	lifecycle := r.beginReadOnlyChildLifecycle(agentName, opts, childPolicy)
+
 	childBrief := workerruntime.RuntimeBriefForRole("child_read_only", "child:"+agentName, prompt)
 	if len(pathparse.MentionedWorkspacePaths(prompt)) > 0 {
 		childBrief.AllowedTools = filterOutRunnerTools(childBrief.AllowedTools,
@@ -120,19 +123,25 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 		opts,
 		nil,
 		func(event ToolRequestEvent) {
+			event.ChildInvocationID = lifecycle.InvocationID
+			event.ChildContractID = lifecycle.ChildContractID
 			r.emitEvent(marshalRunEvent("child_tool_request", event))
 		},
 		func(event ToolResultEvent) {
 			childResults = append(childResults, event.Result)
+			event.ChildInvocationID = lifecycle.InvocationID
+			event.ChildContractID = lifecycle.ChildContractID
 			r.emitEvent(marshalRunEvent("child_tool_result", event))
 		},
 	)
 	if err != nil {
-		return workspace.ToolResult{
+		result := workspace.ToolResult{
 			Tool:    "task",
 			Summary: "Child task failed",
 			Error:   err.Error(),
 		}
+		r.emitReadOnlyChildTerminal(lifecycle, result, childResults, autonomy.ChildTerminalFailed)
+		return result
 	}
 
 	fallbackSourceReads := 0
@@ -143,22 +152,26 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 			step := len(childResults) + 1
 			profile := workspace.DiscoveryProfileForRequest(req)
 			r.emitEvent(marshalRunEvent("child_tool_request", ToolRequestEvent{
-				Step:           step,
-				Agent:          child.agentName(),
-				Raw:            marshalToolRequestRaw(req),
-				Request:        req,
-				Mode:           r.Workspace.Mode(),
-				Broad:          workspace.IsBroadInspectionRequest(req),
-				Narrowing:      workspace.IsNarrowingRequest(req),
-				Action:         toolActionClass(req),
-				DiscoveryClass: profile.Class,
-				DiscoveryScope: profile.Scope,
-				DiscoveryCost:  profile.Cost,
+				Step:              step,
+				Agent:             child.agentName(),
+				ChildInvocationID: lifecycle.InvocationID,
+				ChildContractID:   lifecycle.ChildContractID,
+				Raw:               marshalToolRequestRaw(req),
+				Request:           req,
+				Mode:              r.Workspace.Mode(),
+				Broad:             workspace.IsBroadInspectionRequest(req),
+				Narrowing:         workspace.IsNarrowingRequest(req),
+				Action:            toolActionClass(req),
+				DiscoveryClass:    profile.Class,
+				DiscoveryScope:    profile.Scope,
+				DiscoveryCost:     profile.Cost,
 			}))
 			r.emitEvent(marshalRunEvent("child_tool_result", ToolResultEvent{
-				Step:   step,
-				Agent:  child.agentName(),
-				Result: result,
+				Step:              step,
+				Agent:             child.agentName(),
+				ChildInvocationID: lifecycle.InvocationID,
+				ChildContractID:   lifecycle.ChildContractID,
+				Result:            result,
 			}))
 
 			childResults = append(childResults, result)
@@ -195,6 +208,8 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 		result.Output = renderReadOnlyEvidencePacketForToolOutput(packet, answer)
 		result = readOnlyEvidencePacketToolResult(result, packet)
 	}
+
+	r.emitReadOnlyChildTerminal(lifecycle, result, childResults, autonomy.ChildTerminalCompleted)
 
 	return result
 }
@@ -462,6 +477,7 @@ func (r *Runner) runWorkbranchChildTask(ctx context.Context, req workspace.ToolR
 	if r.ImplementerClient != nil {
 		childClient = r.ImplementerClient
 	}
+	lifecycle := r.beginWorkbranchChildLifecycle(agentName, opts, childPolicy, childClient)
 
 	child := &Runner{
 		Client:           childClient,
@@ -499,27 +515,37 @@ func (r *Runner) runWorkbranchChildTask(ctx context.Context, req workspace.ToolR
 		opts,
 		nil,
 		func(event ToolRequestEvent) {
+			event.ChildInvocationID = lifecycle.InvocationID
+			event.ChildContractID = lifecycle.ChildContractID
 			r.emitEvent(marshalRunEvent("child_tool_request", event))
 		},
 		func(event ToolResultEvent) {
+			event.ChildInvocationID = lifecycle.InvocationID
+			event.ChildContractID = lifecycle.ChildContractID
 			r.emitEvent(marshalRunEvent("child_tool_result", event))
 		},
 	)
 	diff, diffErr := manager.Diff(ctx, checkout)
 
 	if runErr != nil {
-		return workspace.ToolResult{Tool: "task", Summary: "Workbranch child task failed", Error: runErr.Error(), Output: renderWorkbranchChildOutput(checkout, diff, answer)}
+		result := workspace.ToolResult{Tool: "task", Summary: "Workbranch child task failed", Error: runErr.Error(), Output: renderWorkbranchChildOutput(checkout, diff, answer)}
+		r.emitWorkbranchChildTerminal(lifecycle, checkout, result, diff, autonomy.ChildTerminalFailed)
+		return result
 	}
 
 	if diffErr != nil {
-		return workspace.ToolResult{Tool: "task", Summary: "Workbranch child diff failed", Error: diffErr.Error(), Output: strings.TrimSpace(answer)}
+		result := workspace.ToolResult{Tool: "task", Summary: "Workbranch child diff failed", Error: diffErr.Error(), Output: strings.TrimSpace(answer)}
+		r.emitWorkbranchChildTerminal(lifecycle, checkout, result, diff, autonomy.ChildTerminalFailed)
+		return result
 	}
 
-	return workspace.ToolResult{
+	result := workspace.ToolResult{
 		Tool:    "task",
 		Summary: fmt.Sprintf("Workbranch child task completed with %d changed path(s)", len(diff.ChangedPaths)),
 		Output:  renderWorkbranchChildOutput(checkout, diff, answer),
 	}
+	r.emitWorkbranchChildTerminal(lifecycle, checkout, result, diff, autonomy.ChildTerminalCompleted)
+	return result
 }
 
 func renderWorkbranchChildOutput(checkout WorkbranchCheckout, diff WorkbranchDiff, answer string) string {

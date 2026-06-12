@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
 	"idiom/internal/runtime/llama"
 )
 
@@ -46,17 +47,20 @@ func (r *Runner) runDelegateEdit(ctx context.Context, req workspace.ToolRequest)
 	}
 
 	systemPrompt, userPrompt := delegateEditPrompts(req)
+	executorOpts := llama.ChatOptions{
+		Temperature: 0.2,
+		TopP:        0.95,
+		MaxTokens:   2048,
+	}
+	lifecycle := r.beginDelegateEditLifecycle(req, executorOpts, false, executor)
 
 	reply, err := executor.CompleteChatMessage(ctx, []llama.ChatMessage{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
-	}, llama.ChatOptions{
-		Temperature: 0.2,
-		TopP:        0.95,
-		MaxTokens:   2048,
-	})
+	}, executorOpts)
 	if err != nil {
 		r.emitEvent(RunEvent{Role: "delegate_edit_executor_error", Content: err.Error()})
+		r.emitDelegateEditExecutorFailureLifecycle(lifecycle, err)
 
 		return r.dispatchDelegatedEditDirectly(ctx, req, "executor error: "+err.Error())
 	}
@@ -64,6 +68,7 @@ func (r *Runner) runDelegateEdit(ctx context.Context, req workspace.ToolRequest)
 	childReq, parseErr := parseDelegateEditReply(reply.Content, req)
 	if parseErr != nil {
 		r.emitEvent(RunEvent{Role: "delegate_edit_parse_error", Content: parseErr.Error()})
+		r.emitDelegateEditParseFailureLifecycle(lifecycle, req, parseErr)
 
 		return r.dispatchDelegatedEditDirectly(ctx, req, "executor reply unparseable: "+parseErr.Error())
 	}
@@ -75,7 +80,9 @@ func (r *Runner) runDelegateEdit(ctx context.Context, req workspace.ToolRequest)
 
 	result := r.Workspace.Execute(ctx, childReq)
 
-	return wrapDelegateEditResult(result, "executor: "+childReq.Tool)
+	wrapped := wrapDelegateEditResult(result, "executor: "+childReq.Tool)
+	r.emitDelegateEditLifecycle(lifecycle, req, wrapped, autonomy.ChildRouteParentExecutor, "executor_route")
+	return wrapped
 }
 
 // validateDelegateEditRequest rejects malformed delegate_edit calls
@@ -228,6 +235,7 @@ func (r *Runner) dispatchDelegatedEditDirectly(ctx context.Context, req workspac
 		Role:    "delegate_edit_direct_dispatch",
 		Content: fmt.Sprintf("dispatching planner spec directly (%s)", reason),
 	})
+	lifecycle := r.beginDelegateEditLifecycle(req, llama.ChatOptions{}, true, nil)
 
 	// edit_file's contract requires Description (the autodoc reads it
 	// for the plan-panel autodoc). Forward whichever of the planner's
@@ -255,7 +263,9 @@ func (r *Runner) dispatchDelegatedEditDirectly(ctx context.Context, req workspac
 	}
 	result := r.Workspace.Execute(ctx, direct)
 
-	return wrapDelegateEditResult(result, "direct: "+reason)
+	wrapped := wrapDelegateEditResult(result, "direct: "+reason)
+	r.emitDelegateEditLifecycle(lifecycle, req, wrapped, autonomy.ChildRouteDeterministicDirect, "direct_dispatch")
+	return wrapped
 }
 
 // wrapDelegateEditResult re-labels the underlying edit's ToolResult so

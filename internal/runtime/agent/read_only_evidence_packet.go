@@ -346,6 +346,10 @@ func readOnlyEvidencePacketAnswerableForObjective(packet ReadOnlyEvidencePacket,
 		return true
 	}
 
+	if objectiveAsksImplementationShape(objective) {
+		return len(readOnlyEvidencePacketObjectiveSourceOwnerEvidence(packet, objective)) > 0
+	}
+
 	var findingText []string
 
 	for _, finding := range packet.Findings {

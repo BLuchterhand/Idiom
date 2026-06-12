@@ -250,6 +250,7 @@ func RunPromptOnce(cfg config.Config, prompt string, opts RunOptions, stdout io.
 	model.SetMaxTokensOverride(opts.MaxTokensOverride)
 	model.SetDisableThinkingOverride(opts.DisableThinking)
 	model.SetForcedReadinessOpenObligations(opts.ReviewRepairOpenObligations)
+	model.SetNonInteractive(true)
 
 	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(opts.TaskFamily) {
 		model.SetPlanExecuteScopeContract(opts.ScopeContract)
@@ -292,6 +293,7 @@ func RunPromptsOnce(cfg config.Config, prompts []string, opts RunOptions, stdout
 	model.SetMaxTokensOverride(opts.MaxTokensOverride)
 	model.SetDisableThinkingOverride(opts.DisableThinking)
 	model.SetForcedReadinessOpenObligations(opts.ReviewRepairOpenObligations)
+	model.SetNonInteractive(true)
 	LogModelSessionLink(opts.Telemetry, "turns_file", model.DebugLogPath())
 
 	if opts.Resume != "" {

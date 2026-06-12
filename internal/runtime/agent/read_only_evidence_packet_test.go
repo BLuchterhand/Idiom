@@ -317,6 +317,23 @@ func TestReadOnlyEvidencePacketRejectsPathPrefixWithoutObjectiveSupport(t *testi
 	}
 }
 
+func TestReadOnlyEvidencePacketRejectsOffObjectiveSubagentImplementationPacket(t *testing.T) {
+	packet := ReadOnlyEvidencePacket{
+		Objective:       "Can you tell me how this harness uses subagents?",
+		Question:        "Can you tell me how this harness uses subagents?",
+		SourceBodyPaths: []string{"cmd/idiom/main.go"},
+		Findings: []ReadOnlyEvidenceFinding{{
+			Path: "cmd/idiom/main.go",
+			Text: "The entrypoint imports rootcmd, calls RunMain, and defines version metadata.",
+		}},
+		Confidence: "medium",
+	}
+
+	if readOnlyEvidencePacketAnswerableForObjective(packet, "Can you tell me how this harness uses subagents?") {
+		t.Fatalf("entrypoint-only packet must not satisfy subagent implementation-shape objective: %#v", packet)
+	}
+}
+
 func TestReadOnlyTaskResultAnswerableForObjectiveUsesTypedPacketAsAuthority(t *testing.T) {
 	result := workspace.ToolResult{
 		Tool:    "task",

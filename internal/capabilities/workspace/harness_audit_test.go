@@ -1,6 +1,8 @@
 package workspace
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,6 +12,7 @@ import (
 
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/evidence/eval"
+	"idiom/internal/platform/config"
 	"idiom/internal/repository/comprehension"
 )
 
@@ -755,6 +758,412 @@ func TestContextCacheSavingsFinding(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHarnessAuditReportsChildLifecycleIntegrity(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "child_lifecycle.jsonl")
+	invocation := harnessAuditTestChildInvocation("inv-a")
+	terminal := harnessAuditTestChildTerminal("term-a", invocation.InvocationID, autonomy.ChildResultEvidencePacket)
+
+	lines := []string{
+		mustHarnessAuditChildLifecycleLine(t, "parent_child_invocation", invocation),
+		mustHarnessAuditChildLifecycleLine(t, "child_terminal", terminal),
+	}
+	writeWorkspaceFile(t, logPath, strings.Join(lines, "\n")+"\n")
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/telemetry", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.LogBehavior == nil || report.LogBehavior.ChildLifecycle == nil {
+		t.Fatalf("expected child lifecycle report, got %#v", report.LogBehavior)
+	}
+	if report.LogBehavior.ChildLifecycle.Invocations != 1 || report.LogBehavior.ChildLifecycle.Terminals != 1 {
+		t.Fatalf("unexpected lifecycle counts: %#v", report.LogBehavior.ChildLifecycle)
+	}
+	if harnessAuditFindingByID(report.Findings, "child_lifecycle_terminal_without_acceptance") == nil {
+		t.Fatalf("expected missing acceptance finding, got %#v", report.Findings)
+	}
+	if !strings.Contains(result.Summary, "child_lifecycle=2 records/1 invocations/1 terminals/0 acceptances") {
+		t.Fatalf("expected child lifecycle summary, got %q", result.Summary)
+	}
+}
+
+func TestAuditChildLifecycleLogsAcceptsLinkedChain(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "child_lifecycle.jsonl")
+	invocation := harnessAuditTestChildInvocation("inv-linked")
+	terminal := harnessAuditTestChildTerminal("term-linked", invocation.InvocationID, autonomy.ChildResultEvidencePacket)
+	acceptance := harnessAuditTestChildAcceptance("accept-linked", invocation, terminal, autonomy.ChildAcceptanceAccepted)
+
+	lines := []string{
+		mustHarnessAuditChildLifecycleLine(t, "parent_child_invocation", invocation),
+		mustHarnessAuditChildLifecycleLine(t, "child_terminal", terminal),
+		mustHarnessAuditChildLifecycleLine(t, "child_acceptance", acceptance),
+	}
+	writeWorkspaceFile(t, logPath, strings.Join(lines, "\n")+"\n")
+
+	report := auditChildLifecycleLogs([]string{logPath}, func(path string) string { return path })
+	if report == nil {
+		t.Fatal("expected child lifecycle report")
+	}
+	if report.Invocations != 1 || report.Terminals != 1 || report.Acceptances != 1 {
+		t.Fatalf("unexpected counts: %#v", report)
+	}
+	if findings := childLifecycleFindings(report); len(findings) != 0 {
+		t.Fatalf("expected no child lifecycle findings, got %#v", findings)
+	}
+}
+
+func TestAuditChildLifecycleLogsFindsMissingPatchArtifactAndOrphanAcceptance(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "child_lifecycle.jsonl")
+	invocation := harnessAuditTestChildInvocation("inv-patch")
+	terminal := harnessAuditTestChildTerminal("term-patch", invocation.InvocationID, autonomy.ChildResultCandidatePatch)
+	terminal.ArtifactRefs = []string{"patch:missing"}
+	orphanAcceptance := harnessAuditTestChildAcceptance("accept-orphan", invocation, terminal, autonomy.ChildAcceptanceRecordedOnly)
+	orphanAcceptance.TerminalID = "term-missing"
+
+	lines := []string{
+		mustHarnessAuditChildLifecycleLine(t, "parent_child_invocation", invocation),
+		mustHarnessAuditChildLifecycleLine(t, "child_terminal", terminal),
+		mustHarnessAuditChildLifecycleLine(t, "child_acceptance", orphanAcceptance),
+	}
+	writeWorkspaceFile(t, logPath, strings.Join(lines, "\n")+"\n")
+
+	report := auditChildLifecycleLogs([]string{logPath}, func(path string) string { return path })
+	if report == nil {
+		t.Fatal("expected child lifecycle report")
+	}
+	if len(report.MissingPatchArtifacts) != 1 {
+		t.Fatalf("expected missing patch artifact, got %#v", report.MissingPatchArtifacts)
+	}
+	if len(report.AcceptancesWithoutTerminal) != 1 {
+		t.Fatalf("expected orphan acceptance terminal, got %#v", report.AcceptancesWithoutTerminal)
+	}
+
+	findings := childLifecycleFindings(report)
+	for _, id := range []string{"child_lifecycle_missing_patch_artifact", "child_lifecycle_acceptance_without_source"} {
+		if harnessAuditFindingByID(findings, id) == nil {
+			t.Fatalf("expected finding %s, got %#v", id, findings)
+		}
+	}
+}
+
+func TestAuditChildLifecycleLogsFindsMismatchedPatchArtifactOwner(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "child_lifecycle.jsonl")
+	invocation := harnessAuditTestChildInvocation("inv-patch-owner")
+	terminal := harnessAuditTestChildTerminal("term-patch-owner", invocation.InvocationID, autonomy.ChildResultCandidatePatch)
+	terminal.ArtifactRefs = []string{"patch:patch-other"}
+	artifact := autonomy.CandidatePatchArtifact{
+		PatchID:         "patch-other",
+		InvocationID:    "other-invocation",
+		ChildContractID: "other-child",
+		BaseSHA:         "base",
+		ChangedPaths:    []string{"internal/runtime/agent/example.go"},
+		DiffStat:        autonomy.PatchDiffStat{Files: 1},
+		PatchPath:       "workbranch://patch",
+		PatchDigest:     "sha256:patch",
+		CreatedAt:       time.Now().UTC(),
+	}
+
+	lines := []string{
+		mustHarnessAuditChildLifecycleLine(t, "parent_child_invocation", invocation),
+		mustHarnessAuditChildLifecycleLine(t, "candidate_patch_artifact", artifact),
+		mustHarnessAuditChildLifecycleLine(t, "child_terminal", terminal),
+		mustHarnessAuditChildLifecycleLine(t, "child_acceptance", harnessAuditTestChildAcceptance("accept-patch-owner", invocation, terminal, autonomy.ChildAcceptanceRecordedOnly)),
+	}
+	writeWorkspaceFile(t, logPath, strings.Join(lines, "\n")+"\n")
+
+	report := auditChildLifecycleLogs([]string{logPath}, func(path string) string { return path })
+	if report == nil {
+		t.Fatal("expected child lifecycle report")
+	}
+	if len(report.MismatchedLinks) == 0 {
+		t.Fatalf("expected mismatched patch artifact link, got %#v", report)
+	}
+	if finding := harnessAuditFindingByID(childLifecycleFindings(report), "child_lifecycle_mismatched_link"); finding == nil {
+		t.Fatalf("expected mismatched link finding")
+	}
+}
+
+func TestAuditChildLifecycleLogsFindsMismatchedAcceptanceLinks(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "child_lifecycle.jsonl")
+	invocation := harnessAuditTestChildInvocation("inv-mismatch")
+	terminal := harnessAuditTestChildTerminal("term-mismatch", invocation.InvocationID, autonomy.ChildResultEvidencePacket)
+	acceptance := harnessAuditTestChildAcceptance("accept-mismatch", invocation, terminal, autonomy.ChildAcceptanceAccepted)
+	acceptance.ChildContractID = "child-other"
+
+	lines := []string{
+		mustHarnessAuditChildLifecycleLine(t, "parent_child_invocation", invocation),
+		mustHarnessAuditChildLifecycleLine(t, "child_terminal", terminal),
+		mustHarnessAuditChildLifecycleLine(t, "child_acceptance", acceptance),
+	}
+	writeWorkspaceFile(t, logPath, strings.Join(lines, "\n")+"\n")
+
+	report := auditChildLifecycleLogs([]string{logPath}, func(path string) string { return path })
+	if report == nil {
+		t.Fatal("expected child lifecycle report")
+	}
+	if len(report.MismatchedLinks) == 0 {
+		t.Fatalf("expected mismatched lifecycle link, got %#v", report)
+	}
+	if finding := harnessAuditFindingByID(childLifecycleFindings(report), "child_lifecycle_mismatched_link"); finding == nil {
+		t.Fatalf("expected mismatched link finding")
+	}
+}
+
+func TestAuditChildLifecycleLogsFindsInvalidPlanExecuteLifecycleEvent(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "child_lifecycle.jsonl")
+	line, err := json.Marshal(map[string]any{
+		"type":  "idiom.plan_execute.child_terminal_invalid",
+		"error": "invalid child terminal record",
+	})
+	if err != nil {
+		t.Fatalf("marshal invalid event: %v", err)
+	}
+	writeWorkspaceFile(t, logPath, string(line)+"\n")
+
+	report := auditChildLifecycleLogs([]string{logPath}, func(path string) string { return path })
+	if report == nil {
+		t.Fatal("expected child lifecycle report")
+	}
+	if len(report.InvalidRecords) != 1 {
+		t.Fatalf("expected invalid record, got %#v", report)
+	}
+	if finding := harnessAuditFindingByID(childLifecycleFindings(report), "child_lifecycle_invalid_record"); finding == nil {
+		t.Fatalf("expected invalid record finding")
+	}
+}
+
+func TestAuditChildLifecycleLogsFindsInvalidVerificationAcceptance(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "child_lifecycle.jsonl")
+	record := autonomy.VerificationAcceptanceRecord{
+		VerificationAcceptanceID: "verify-a",
+		ParentContractID:         "parent-a",
+		ObligationRefs:           []string{"obligation:post_write_verification"},
+		CommandRef:               "command:go_test",
+		CommandFingerprint:       "sha256:abc",
+		WorkspaceRef:             "workspace:root",
+		BaseSHA:                  "base",
+		HeadSHA:                  "head",
+		ExitStatus:               1,
+		ResultRef:                "result:go_test",
+		Decision:                 autonomy.VerificationAcceptanceAccepted,
+		ReasonCode:               "exit_zero_required",
+	}
+
+	writeWorkspaceFile(t, logPath, mustHarnessAuditChildLifecycleLine(t, "verification_acceptance", record)+"\n")
+
+	report := auditChildLifecycleLogs([]string{logPath}, func(path string) string { return path })
+	if report == nil {
+		t.Fatal("expected child lifecycle report")
+	}
+	if len(report.VerificationAcceptanceViolations) != 1 {
+		t.Fatalf("expected verification violation, got %#v", report)
+	}
+	if finding := harnessAuditFindingByID(childLifecycleFindings(report), "verification_acceptance_invalid"); finding == nil {
+		t.Fatalf("expected verification acceptance finding")
+	}
+}
+
+func TestAuditChildLifecycleLogsFindsVerificationAcceptanceWithoutResult(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "child_lifecycle.jsonl")
+	record := autonomy.VerificationAcceptanceRecord{
+		VerificationAcceptanceID: "verify-missing-result",
+		ParentContractID:         "parent-a",
+		ObligationRefs:           []string{"obligation:planner_owned_verification"},
+		CommandRef:               "command:missing",
+		CommandFingerprint:       "sha256:missing",
+		WorkspaceRef:             "workspace:root",
+		BaseSHA:                  "base",
+		HeadSHA:                  "head",
+		ExitStatus:               0,
+		ResultRef:                "verification_result:missing",
+		Decision:                 autonomy.VerificationAcceptanceAccepted,
+		ReasonCode:               "verification_passed",
+	}
+
+	writeWorkspaceFile(t, logPath, mustHarnessAuditChildLifecycleLine(t, "verification_acceptance", record)+"\n")
+
+	report := auditChildLifecycleLogs([]string{logPath}, func(path string) string { return path })
+	if report == nil {
+		t.Fatal("expected child lifecycle report")
+	}
+	if len(report.VerificationAcceptancesWithoutResult) != 1 {
+		t.Fatalf("expected missing verification result, got %#v", report)
+	}
+	if finding := harnessAuditFindingByID(childLifecycleFindings(report), "verification_acceptance_without_result"); finding == nil {
+		t.Fatalf("expected missing verification result finding")
+	}
+}
+
+func TestAuditChildLifecycleLogsAcceptsVerificationAcceptanceWithResult(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "child_lifecycle.jsonl")
+	command := "go test ./pkg"
+	resultText := strings.Join([]string{"verification", command, "", "passed", "", ""}, "\x00")
+	record := autonomy.VerificationAcceptanceRecord{
+		VerificationAcceptanceID: "verify-with-result",
+		ParentContractID:         "parent-a",
+		ObligationRefs:           []string{"obligation:planner_owned_verification"},
+		CommandRef:               "command:" + harnessAuditShortHash(command),
+		CommandFingerprint:       "sha256:" + harnessAuditShortHash(command),
+		WorkspaceRef:             "workspace:root",
+		BaseSHA:                  "base",
+		HeadSHA:                  "head",
+		ExitStatus:               0,
+		ResultRef:                "verification_result:" + harnessAuditShortHash(resultText),
+		Decision:                 autonomy.VerificationAcceptanceAccepted,
+		ReasonCode:               "verification_passed",
+	}
+	verificationEvent, err := json.Marshal(map[string]any{
+		"type":    "idiom.plan_execute.verification",
+		"command": command,
+		"status":  "passed",
+		"summary": "",
+		"error":   "",
+	})
+	if err != nil {
+		t.Fatalf("marshal verification event: %v", err)
+	}
+
+	lines := []string{
+		string(verificationEvent),
+		mustHarnessAuditChildLifecycleLine(t, "verification_acceptance", record),
+	}
+	writeWorkspaceFile(t, logPath, strings.Join(lines, "\n")+"\n")
+
+	report := auditChildLifecycleLogs([]string{logPath}, func(path string) string { return path })
+	if report == nil {
+		t.Fatal("expected child lifecycle report")
+	}
+	if len(report.VerificationAcceptancesWithoutResult) != 0 {
+		t.Fatalf("did not expect missing verification result, got %#v", report.VerificationAcceptancesWithoutResult)
+	}
+}
+
+func harnessAuditTestChildInvocation(id string) autonomy.ParentChildInvocationRecord {
+	return autonomy.ParentChildInvocationRecord{
+		InvocationID:     id,
+		ParentContractID: "parent-" + id,
+		ChildContractID:  "child-" + id,
+		Role:             "child_read_only:explorer",
+		Lane:             "implement",
+		Phase:            "child_read_only",
+		WorkspaceMode:    autonomy.ChildWorkspaceNoWrite,
+		ContractSummary: autonomy.ChildContractSummary{
+			PathRoleDigest:   "sha256:path",
+			ToolPolicyDigest: "sha256:tool",
+			ObligationDigest: "sha256:obligation",
+		},
+		RuntimeEnvelope: autonomy.ChildRuntimeEnvelope{
+			BackendKind: "llm_client",
+			ModelAlias:  "qwen-flash",
+			ModelRole:   "child_read_only:explorer",
+			RoleResolution: autonomy.ChildRoleResolution{
+				RequestedRole: "child_read_only:explorer",
+				ResolvedRole:  "child_read_only:explorer",
+				Alias:         "qwen-flash",
+				Source:        autonomy.RoleResolutionSourceRoleTag,
+				OK:            true,
+			},
+			CapacityAdmission: autonomy.ChildCapacityAdmission{
+				State:       autonomy.CapacityAdmissionAcquired,
+				Enforcement: autonomy.CapacityAdmissionOpportunistic,
+			},
+			ToolTransportMode:   autonomy.ChildTransportTextual,
+			ParserTransportMode: autonomy.ChildTransportTextual,
+		},
+		CreatedAt: time.Now().UTC(),
+	}
+}
+
+func harnessAuditTestChildTerminal(id string, invocationID string, resultKind autonomy.ChildResultKind) autonomy.ChildTerminalRecord {
+	record := autonomy.ChildTerminalRecord{
+		TerminalID:         id,
+		InvocationID:       invocationID,
+		ChildContractID:    "child-" + invocationID,
+		ResultKind:         resultKind,
+		Status:             autonomy.ChildTerminalCompleted,
+		EvidenceRefs:       []string{"tool_result:context_pack:1"},
+		ObjectiveAlignment: autonomy.ChildObjectiveAccepted,
+	}
+	if resultKind == autonomy.ChildResultCandidatePatch {
+		record.EvidenceRefs = nil
+		record.ChangedPaths = []string{"internal/runtime/agent/example.go"}
+	}
+	return record
+}
+
+func harnessAuditTestChildAcceptance(id string, invocation autonomy.ParentChildInvocationRecord, terminal autonomy.ChildTerminalRecord, decision autonomy.ChildAcceptanceDecision) autonomy.ChildAcceptanceRecord {
+	return autonomy.ChildAcceptanceRecord{
+		AcceptanceID:         id,
+		ParentContractID:     invocation.ParentContractID,
+		ChildContractID:      invocation.ChildContractID,
+		InvocationID:         invocation.InvocationID,
+		TerminalID:           terminal.TerminalID,
+		ResultKind:           terminal.ResultKind,
+		Decision:             decision,
+		AcceptedEvidenceRefs: []string{"tool_result:context_pack:1"},
+		AlignmentBasis: autonomy.ChildAlignmentBasis{
+			DelegatedObjectiveRef:  "objective:task",
+			EffectiveScopeRefs:     []string{"scope:repo"},
+			AcceptedSourceBodyRefs: []string{"source_body:target"},
+			Evaluator:              autonomy.AlignmentEvaluatorHostContract,
+		},
+		ReasonCode: "objective_aligned",
+	}
+}
+
+func mustHarnessAuditChildLifecycleLine(t *testing.T, role string, record any) string {
+	t.Helper()
+
+	switch typed := record.(type) {
+	case autonomy.ParentChildInvocationRecord:
+		typed.Normalize()
+		record = typed
+	case autonomy.ChildTerminalRecord:
+		typed.Normalize()
+		record = typed
+	case autonomy.ChildAcceptanceRecord:
+		typed.Normalize()
+		record = typed
+	case autonomy.CandidatePatchArtifact:
+		typed.Normalize()
+		record = typed
+	case autonomy.VerificationAcceptanceRecord:
+		typed.Normalize()
+		record = typed
+	}
+
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatalf("marshal child lifecycle record: %v", err)
+	}
+
+	wrapped, err := json.Marshal(map[string]string{
+		"type":    "message",
+		"role":    role,
+		"content": string(data),
+	})
+	if err != nil {
+		t.Fatalf("marshal wrapped child lifecycle record: %v", err)
+	}
+
+	return string(wrapped)
 }
 
 func harnessAuditFindingByID(findings []harnessAuditFinding, id string) *harnessAuditFinding {

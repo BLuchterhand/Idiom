@@ -994,6 +994,89 @@ func TestPlanThenExecuteCandidatePostReadinessRejectsNonBodyNavigationOnReadyPat
 	}
 }
 
+func TestPlanThenExecuteCandidatePostReadinessRejectsDirectorySearchContainingReadyPath(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       PlanThenExecutePlannerTaskFamily,
+		AllowedEditPaths: []string{"internal/surfaces/cli/lane/lane.go", "internal/runtime/agent/runner_plan_then_execute_guard.go"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/surfaces/cli/lane/lane.go lines 1-1563 (total lines: 1563)",
+		Output:  "1:package lane\n",
+	}}
+
+	summary, errorText, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool:    workspace.ToolNameSearchContent,
+		Path:    "internal/surfaces/cli/lane",
+		Pattern: "atom_spec",
+	}, brief, results)
+	if !reject {
+		t.Fatal("directory search under an already sourced candidate should be rejected after readiness")
+	}
+
+	if summary != "Plan-execute read outside allowed candidate scope" {
+		t.Fatalf("unexpected summary %q", summary)
+	}
+
+	for _, want := range []string{"not an explicit allowed candidate path", "internal/surfaces/cli/lane/lane.go", "submit_plan"} {
+		if !strings.Contains(errorText, want) {
+			t.Fatalf("rejection missing %q:\n%s", want, errorText)
+		}
+	}
+}
+
+func TestPlanThenExecuteCandidateScopeDoesNotFireBeforeAnchorReadyEvidence(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       PlanThenExecutePlannerTaskFamily,
+		AllowedEditPaths: []string{"internal/surfaces/cli/lane/lane.go", "internal/runtime/agent/runner_plan_then_execute_guard.go"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/runtime/agent/runner_plan_then_execute_guard.go lines 1-180 (total lines: 4337)",
+		Output:  "1:package agent\n",
+	}}
+
+	_, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool:    workspace.ToolNameSearchContent,
+		Path:    "internal/surfaces/cli/lane",
+		Pattern: "atom_spec",
+	}, brief, results)
+	if reject {
+		t.Fatal("allowed candidate scope should not hard-reject before anchor-ready evidence exists")
+	}
+}
+
+func TestPlanThenExecuteCandidatePostReadinessRejectsSiblingTopicSearchOutsideAllowedScope(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       PlanThenExecutePlannerTaskFamily,
+		AllowedEditPaths: []string{"internal/surfaces/cli/lane/lane.go", "internal/runtime/agent/runner_plan_then_execute_guard.go"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/surfaces/cli/lane/lane.go lines 1-1563 (total lines: 1563)",
+		Output:  "1:package lane\n",
+	}}
+
+	summary, errorText, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool:    workspace.ToolNameSearchContent,
+		Path:    "internal/surfaces/cli/atom",
+		Pattern: "atom_spec",
+	}, brief, results)
+	if !reject {
+		t.Fatal("sibling topic search outside allowed candidates should be rejected after readiness")
+	}
+
+	if summary != "Plan-execute read outside allowed candidate scope" {
+		t.Fatalf("unexpected summary %q", summary)
+	}
+
+	for _, want := range []string{"internal/surfaces/cli/atom", "not an explicit allowed candidate path", "internal/runtime/agent/runner_plan_then_execute_guard.go"} {
+		if !strings.Contains(errorText, want) {
+			t.Fatalf("rejection missing %q:\n%s", want, errorText)
+		}
+	}
+}
+
 func TestPlanExecuteSubmitOnlySurfaceDoesNotReopenHiddenNavigation(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:   PlanThenExecutePlannerTaskFamily,

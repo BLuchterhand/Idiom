@@ -854,6 +854,54 @@ func TestPlanExecuteSubmitPlanOnlySurfaceRejection(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteSubmitPlanOnlySurfaceRejectsEvenWhenToolListDriftsOpen(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go"},
+	}}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-20 (total lines: 20)", Output: "1:package a\n"},
+	}
+
+	_, _, _, reject := runner.planThenExecuteSubmitPlanOnlySurfaceRejection(
+		workspace.ToolRequest{Tool: "search_content", Path: ".", Pattern: "anything"},
+		results,
+		[]string{"read_file", "search_content", "submit_plan"},
+	)
+	if !reject {
+		t.Fatal("derived submit-ready state must reject read/search even if the mutable tool list has drifted open")
+	}
+}
+
+func TestPlanExecuteSubmitPlanOnlySurfaceRejectsAfterCandidateReadyRejection(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedEditPaths:  []string{"pkg/feature.go"},
+	}}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 pkg/feature.go lines 1-20 (total lines: 20)", Output: "1:package pkg\n"},
+		{
+			Tool:    "search_content",
+			Summary: "Plan-execute candidate source already ready",
+			Error:   "pkg/feature.go already has source-body evidence for this planner turn.",
+			Code:    planThenExecuteResultCandidateSourceReady,
+		},
+	}
+
+	_, _, _, reject := runner.planThenExecuteSubmitPlanOnlySurfaceRejection(
+		workspace.ToolRequest{Tool: "read_file", Path: "pkg/feature.go", StartLine: 1, EndLine: 20},
+		results,
+		[]string{"read_file", "search_content", "submit_plan"},
+	)
+	if !reject {
+		t.Fatal("candidate-ready rejection must close the read/search surface and require submit_plan")
+	}
+}
+
 func TestPlanExecuteSubmitCorrectionSubmitPlanOnlySurfaceRejectsStaleExits(t *testing.T) {
 	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
@@ -1064,5 +1112,62 @@ func TestPlanExecuteTextualAllowedToolsTerminalAfterCandidateReadyRejection(t *t
 	}})
 	if !slices.Equal(allowed, []string{"submit_plan"}) {
 		t.Fatalf("candidate-ready terminal state should narrow textual surface to submit_plan, got %#v", allowed)
+	}
+}
+
+func TestPlanExecuteReadinessNudgedRejectsNonSubmitBeforeFirstPlan(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+		Contract:   "implementation_result",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read f1 internal/surfaces/cli/lane/lane.go lines 1-1563 (total lines: 1563)",
+		Output:  "1:package lane\n",
+	}}
+
+	summary, errorText, prompt, reject := planThenExecuteReadinessNudgedNonSubmitRejection(workspace.ToolRequest{
+		Tool:    workspace.ToolNameSearchContent,
+		Path:    "internal/surfaces/cli/lane",
+		Pattern: "atom_spec",
+	}, brief, results, true)
+	if !reject {
+		t.Fatal("non-submit tool should be rejected after planner readiness nudge")
+	}
+
+	if summary != "Plan-execute submit_plan required" {
+		t.Fatalf("unexpected summary %q", summary)
+	}
+
+	for _, want := range []string{"readiness", "submit_plan", "before any more tool calls"} {
+		if !strings.Contains(errorText, want) && !strings.Contains(prompt, want) {
+			t.Fatalf("readiness rejection missing %q:\nerror=%s\nprompt=%s", want, errorText, prompt)
+		}
+	}
+}
+
+func TestPlanExecuteReadinessNudgedAllowsRefreshAfterRejectedPlan(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+		Contract:   "implementation_result",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read f1 internal/surfaces/cli/lane/lane.go lines 1-1563 (total lines: 1563)",
+		Output:  "1:package lane\n",
+	}, {
+		Tool:    workspace.ToolNameSubmitPlan,
+		Summary: "submit_plan rejected",
+		Error:   "edits[0]: failed_precondition[3002]: plan submission rejected: preflight syntax validation failed for internal/surfaces/cli/lane/lane.go at line 164",
+	}}
+
+	_, _, _, reject := planThenExecuteReadinessNudgedNonSubmitRejection(workspace.ToolRequest{
+		Tool:      workspace.ToolNameReadFile,
+		Path:      "internal/surfaces/cli/lane/lane.go",
+		StartLine: 150,
+		EndLine:   175,
+	}, brief, results, true)
+	if reject {
+		t.Fatal("source refresh after a rejected submit_plan should remain available to anchor-refresh recovery")
 	}
 }
