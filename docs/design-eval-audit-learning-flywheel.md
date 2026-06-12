@@ -308,7 +308,7 @@ New or revised events should use this shared envelope where practical:
 {
   "schema": "idiom.event.v1",
   "timestamp": "2026-05-12T00:00:00Z",
-  "workspace_root": "/Users/ben/Documents/GitHub/idiom",
+  "workspace_root": "<repo-root>",
   "session_id": "local-session-id",
   "task_id": "optional-suite-or-regression-id",
   "run_id": "optional-live-run-id",
@@ -533,7 +533,7 @@ Target packet fields:
 {
   "schema": "idiom.audit_watch_packet.v1",
   "generated_at": "2026-05-12T00:00:00Z",
-  "workspace_root": "/Users/ben/Documents/GitHub/idiom",
+  "workspace_root": "<repo-root>",
   "trigger_files": ["logs/telemetry/implement.jsonl"],
   "trigger_reasons": ["completion_gate", "harness_feedback"],
   "sessions": ["session-id"],

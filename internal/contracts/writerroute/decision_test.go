@@ -29,13 +29,16 @@ func TestWriterRouteDecision_NormalizationAndStableID(t *testing.T) {
 	if d1.RouteID == "" {
 		t.Fatal("RouteID must be computed")
 	}
+
 	if d1.RouteID != d2.RouteID {
 		t.Fatalf("RouteID should be stable across set-like slice order: got %q vs %q", d1.RouteID, d2.RouteID)
 	}
+
 	wantPaths := []string{"internal/contracts/writerroute/decision.go", "internal/contracts/writerroute/decision_test.go"}
 	if !reflect.DeepEqual(d1.RequiredEditPaths, wantPaths) {
 		t.Fatalf("RequiredEditPaths normalized = %#v, want %#v", d1.RequiredEditPaths, wantPaths)
 	}
+
 	wantReasons := []string{"route.local_model_default", "route.single_file_guarded_write"}
 	if !reflect.DeepEqual(d1.ReasonCodes, wantReasons) {
 		t.Fatalf("ReasonCodes normalized = %#v, want %#v", d1.ReasonCodes, wantReasons)
@@ -92,6 +95,7 @@ func TestWriterRouteDecision_EventFields(t *testing.T) {
 		"escalation_triggers": []string{"hosted_review"},
 		"user_override":       true,
 	}
+
 	for key, want := range expected {
 		if got, ok := fields[key]; !ok {
 			t.Fatalf("EventFields missing key %q", key)
@@ -111,15 +115,19 @@ func TestWriterRouteDecision_Defaults(t *testing.T) {
 	if d.SchemaVersion != SchemaVersion {
 		t.Fatalf("SchemaVersion = %q, want %q", d.SchemaVersion, SchemaVersion)
 	}
+
 	if d.CostTier != "local_first" {
 		t.Fatalf("CostTier = %q, want local_first", d.CostTier)
 	}
+
 	if d.ReviewPolicy != "local_first" {
 		t.Fatalf("ReviewPolicy = %q, want local_first", d.ReviewPolicy)
 	}
+
 	if d.ScopeTier != "single_atom" {
 		t.Fatalf("ScopeTier = %q, want single_atom when required edit paths exist", d.ScopeTier)
 	}
+
 	if d.RouteID == "" {
 		t.Fatal("RouteID must be computed")
 	}
@@ -163,7 +171,9 @@ func TestWriterRouteDecision_JSONEventFieldMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal failed: %v", err)
 	}
+
 	var jsonMap map[string]interface{}
+
 	if err := json.Unmarshal(data, &jsonMap); err != nil {
 		t.Fatalf("json.Unmarshal failed: %v", err)
 	}
@@ -174,10 +184,12 @@ func TestWriterRouteDecision_JSONEventFieldMapping(t *testing.T) {
 			t.Errorf("EventFields missing key %q that is present in JSON", key)
 		}
 	}
+
 	for key, val := range fields {
 		if isEmptyEventField(val) {
 			continue
 		}
+
 		if _, ok := jsonMap[key]; !ok {
 			t.Errorf("non-empty EventFields key %q not found in JSON", key)
 		}

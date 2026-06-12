@@ -15,44 +15,54 @@ func contractGateEventHasExtendedAuditFields() bool {
 			return false
 		}
 	}
+
 	return true
 }
 
 func withGateAuditFields(t *testing.T, gate ContractGateEvent, packID, enforcementMode string, observedFacts, safeAlternatives []string) ContractGateEvent {
 	t.Helper()
+
 	value := reflect.ValueOf(&gate).Elem()
 	setGateStringField(t, value, "PackID", packID)
 	setGateStringField(t, value, "EnforcementMode", enforcementMode)
 	setGateStringSliceField(t, value, "ObservedFacts", observedFacts)
 	setGateStringSliceField(t, value, "SafeAlternatives", safeAlternatives)
+
 	return gate
 }
 
 func setGateStringField(t *testing.T, value reflect.Value, name, fieldValue string) {
 	t.Helper()
+
 	field := value.FieldByName(name)
 	if !field.IsValid() {
 		return
 	}
+
 	if field.Kind() != reflect.String || !field.CanSet() {
 		t.Fatalf("ContractGateEvent.%s is not a settable string field", name)
 	}
+
 	field.SetString(fieldValue)
 }
 
 func setGateStringSliceField(t *testing.T, value reflect.Value, name string, fieldValue []string) {
 	t.Helper()
+
 	field := value.FieldByName(name)
 	if !field.IsValid() {
 		return
 	}
+
 	if field.Kind() != reflect.Slice || field.Type().Elem().Kind() != reflect.String || !field.CanSet() {
 		t.Fatalf("ContractGateEvent.%s is not a settable []string field", name)
 	}
+
 	slice := reflect.MakeSlice(field.Type(), len(fieldValue), len(fieldValue))
 	for i, value := range fieldValue {
 		slice.Index(i).SetString(value)
 	}
+
 	field.Set(slice)
 }
 
@@ -66,15 +76,19 @@ func TestAuditEventsReportsLifecycleOnlyCoverage(t *testing.T) {
 	if report.SchemaVersion != AuditReportSchemaVersion || report.TotalEvents != 1 {
 		t.Fatalf("unexpected report identity: %#v", report)
 	}
+
 	if report.LifecycleCoverage.Compiled != 1 || report.LifecycleCoverage.Total != 1 {
 		t.Fatalf("expected lifecycle coverage, got %#v", report.LifecycleCoverage)
 	}
+
 	if report.PolicyCoverage.Total != 0 || report.ObligationCoverage.Total != 0 {
 		t.Fatalf("lifecycle-only audit should not synthesize policy/obligation coverage: policy=%#v obligation=%#v", report.PolicyCoverage, report.ObligationCoverage)
 	}
+
 	if len(report.LifecycleCoverage.LifecycleOnlyContracts) != 1 || report.LifecycleCoverage.LifecycleOnlyContracts[0] != contract.ContractID {
 		t.Fatalf("expected lifecycle-only contract %q, got %#v", contract.ContractID, report.LifecycleCoverage.LifecycleOnlyContracts)
 	}
+
 	if len(report.Findings) != 0 {
 		t.Fatalf("lifecycle-only coverage should not report reference findings, got %#v", report.Findings)
 	}
@@ -114,12 +128,15 @@ func TestAuditEventsJoinsPolicyAndObligationCoverage(t *testing.T) {
 	if report.PolicyCoverage.DecisionEvents != 1 || report.PolicyCoverage.DecisionCounts[string(PolicyAllow)] != 1 || report.PolicyCoverage.ToolCounts["apply_patch"] != 1 {
 		t.Fatalf("expected joined policy coverage, got %#v", report.PolicyCoverage)
 	}
+
 	if report.ObligationCoverage.Opened != 1 || report.ObligationCoverage.Resolved != 1 || len(report.ObligationCoverage.UnresolvedObligations) != 0 {
 		t.Fatalf("expected resolved obligation coverage, got %#v", report.ObligationCoverage)
 	}
+
 	if len(report.Contracts) != 1 || report.Contracts[0].PolicyTools["apply_patch"] != 1 || report.Contracts[0].ObligationStatusCounts[string(ObligationResolved)] != 1 {
 		t.Fatalf("expected per-contract joined coverage, got %#v", report.Contracts)
 	}
+
 	if !report.AllClear || len(report.Findings) != 0 {
 		t.Fatalf("expected all-clear joined coverage, all_clear=%v findings=%#v", report.AllClear, report.Findings)
 	}
@@ -172,19 +189,24 @@ func TestAuditEventsReportsGateCoverageAndUnresolvedObligations(t *testing.T) {
 		report.GateCoverage.KindCounts[string(GateWrite)] != 1 ||
 		report.GateCoverage.KindCounts[string(GateVerification)] != 1 ||
 		report.GateCoverage.DecisionCounts[string(PolicyReject)] != 2 {
+
 		t.Fatalf("expected gate decision coverage, got %#v", report.GateCoverage)
 	}
+
 	for _, want := range []string{"obl-write-runner", "obl-verify"} {
 		if !slices.Contains(report.GateCoverage.OpenObligationRefs, want) {
 			t.Fatalf("gate coverage missing open obligation %q: %#v", want, report.GateCoverage.OpenObligationRefs)
 		}
 	}
+
 	if len(report.ObligationCoverage.UnresolvedObligations) != 2 || report.AllClear {
 		t.Fatalf("expected unresolved obligations to be explicit and all_clear=false, got all_clear=%v obligation=%#v", report.AllClear, report.ObligationCoverage)
 	}
+
 	if len(report.LifecycleCoverage.LifecycleOnlyContracts) != 0 {
 		t.Fatalf("gate-bearing contract should not be lifecycle-only: %#v", report.LifecycleCoverage.LifecycleOnlyContracts)
 	}
+
 	if len(report.Contracts) != 1 || report.Contracts[0].GateKindCounts[string(GateWrite)] != 1 {
 		t.Fatalf("expected per-contract gate coverage, got %#v", report.Contracts)
 	}
@@ -222,11 +244,14 @@ func TestAuditEventsCountsReadinessAndCompletionCoverage(t *testing.T) {
 		report.ReadinessCoverage.EventsWithOpenObligations != 1 ||
 		report.ReadinessCoverage.EventsWithEvidenceRefs != 1 ||
 		report.ReadinessCoverage.EventsWithFurtherReadCriteria != 1 {
+
 		t.Fatalf("expected readiness coverage counts, got %#v", report.ReadinessCoverage)
 	}
+
 	if !slices.Contains(report.ReadinessCoverage.ContractsWithReadiness, contract.ContractID) {
 		t.Fatalf("expected contract readiness coverage for %q, got %#v", contract.ContractID, report.ReadinessCoverage.ContractsWithReadiness)
 	}
+
 	if report.CompletionCoverage.Total != 1 ||
 		report.CompletionCoverage.DecisionEvents != 1 ||
 		report.CompletionCoverage.DecisionCounts[string(PolicyAllow)] != 1 ||
@@ -235,11 +260,14 @@ func TestAuditEventsCountsReadinessAndCompletionCoverage(t *testing.T) {
 		report.CompletionCoverage.EventsMissingProtocolHash != 0 ||
 		report.CompletionCoverage.EventsWithChangedPaths != 1 ||
 		report.CompletionCoverage.EventsWithRequiredPathStatus != 1 {
+
 		t.Fatalf("expected completion coverage counts, got %#v", report.CompletionCoverage)
 	}
+
 	if !slices.Contains(report.CompletionCoverage.ContractsWithCompletion, contract.ContractID) {
 		t.Fatalf("expected contract completion coverage for %q, got %#v", contract.ContractID, report.CompletionCoverage.ContractsWithCompletion)
 	}
+
 	if len(report.Contracts) != 1 ||
 		report.Contracts[0].ReadinessEvents[string(EventReadinessStateUpdated)] != 1 ||
 		report.Contracts[0].ReadinessSignalCounts["ready_to_answer"] != 1 ||
@@ -251,11 +279,14 @@ func TestAuditEventsCountsReadinessAndCompletionCoverage(t *testing.T) {
 		report.Contracts[0].CompletionSignals["protocol_hash_present"] != 1 ||
 		report.Contracts[0].CompletionSignals["changed_paths"] != 1 ||
 		report.Contracts[0].CompletionSignals["required_path_status"] != 1 {
+
 		t.Fatalf("expected per-contract readiness/completion coverage, got %#v", report.Contracts)
 	}
+
 	if len(report.LifecycleCoverage.LifecycleOnlyContracts) != 0 {
 		t.Fatalf("readiness/completion-bearing contract should not be lifecycle-only: %#v", report.LifecycleCoverage.LifecycleOnlyContracts)
 	}
+
 	if !report.AllClear || len(report.Findings) != 0 {
 		t.Fatalf("expected all-clear readiness/completion coverage, all_clear=%v findings=%#v", report.AllClear, report.Findings)
 	}
@@ -286,22 +317,30 @@ func TestAuditEventsFlagsCompletionAllowWithRemainingObligationsButOnlyCountsMis
 		report.CompletionCoverage.EventsWithRemainingObligations != 1 ||
 		report.CompletionCoverage.EventsWithProtocolHash != 1 ||
 		report.CompletionCoverage.EventsMissingProtocolHash != 1 {
+
 		t.Fatalf("expected completion coverage counts, got %#v", report.CompletionCoverage)
 	}
+
 	if len(report.CompletionCoverage.AllowWithRemainingObligationsRefs) != 1 ||
 		report.CompletionCoverage.AllowWithRemainingObligationsRefs[0].EventID != allowWithRemaining.EventID {
+
 		t.Fatalf("expected allow-with-remaining-obligations ref, got %#v", report.CompletionCoverage.AllowWithRemainingObligationsRefs)
 	}
+
 	if len(report.CompletionCoverage.MissingProtocolHashRefs) != 1 ||
 		report.CompletionCoverage.MissingProtocolHashRefs[0].EventID != missingProtocolHash.EventID {
+
 		t.Fatalf("expected missing protocol hash ref, got %#v", report.CompletionCoverage.MissingProtocolHashRefs)
 	}
+
 	if !hasEventAuditFinding(report, "contract_event_completion_allow_with_remaining_obligations") {
 		t.Fatalf("expected completion allow finding, got %#v", report.Findings)
 	}
+
 	if hasEventAuditFinding(report, "contract_event_completion_missing_protocol_hash") {
 		t.Fatalf("missing completion protocol hash should remain coverage-only, got %#v", report.Findings)
 	}
+
 	if report.AllClear {
 		t.Fatalf("completion allow with remaining obligations should not be all-clear")
 	}
@@ -311,6 +350,7 @@ func TestAuditEventsCountsExtendedGateDecisionFieldsWhenPresent(t *testing.T) {
 	if !contractGateEventHasExtendedAuditFields() {
 		t.Skip("ContractGateEvent extended audit fields are not present in this checkout")
 	}
+
 	contract := newEventTestPhaseContract(t)
 	occurredAt := time.Date(2026, 5, 13, 18, 47, 0, 0, time.UTC)
 	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
@@ -334,14 +374,18 @@ func TestAuditEventsCountsExtendedGateDecisionFieldsWhenPresent(t *testing.T) {
 	if report.GateCoverage.DecisionCountsByPackID[string(ContractPackCompletionReadiness)] != 2 ||
 		report.GateCoverage.DecisionCountsByEnforcementMode["enforce"] != 1 ||
 		report.GateCoverage.DecisionCountsByEnforcementMode["observe_only"] != 1 {
+
 		t.Fatalf("expected gate decisions counted by pack and enforcement mode, got %#v", report.GateCoverage)
 	}
+
 	if report.GateCoverage.EventsWithObservedFacts != 1 || report.GateCoverage.EventsWithSafeAlternatives != 1 {
 		t.Fatalf("expected observed_fact and safe_alternative event counts, got %#v", report.GateCoverage)
 	}
+
 	if len(report.GateCoverage.MissingPackIDRefs) != 0 ||
 		len(report.GateCoverage.MissingEnforcementModeRefs) != 0 ||
 		len(report.GateCoverage.MissingSafeAlternativesRefs) != 0 {
+
 		t.Fatalf("complete extended fields should not be flagged: %#v", report.GateCoverage)
 	}
 }
@@ -350,6 +394,7 @@ func TestAuditEventsFlagsMissingExtendedGateFieldsWhenPresent(t *testing.T) {
 	if !contractGateEventHasExtendedAuditFields() {
 		t.Skip("ContractGateEvent extended audit fields are not present in this checkout")
 	}
+
 	contract := newEventTestPhaseContract(t)
 	occurredAt := time.Date(2026, 5, 13, 18, 48, 0, 0, time.UTC)
 	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
@@ -372,16 +417,22 @@ func TestAuditEventsFlagsMissingExtendedGateFieldsWhenPresent(t *testing.T) {
 
 	if len(report.GateCoverage.MissingPackIDRefs) != 1 ||
 		report.GateCoverage.MissingPackIDRefs[0].Reference != "pack_id" {
+
 		t.Fatalf("expected missing pack_id ref, got %#v", report.GateCoverage.MissingPackIDRefs)
 	}
+
 	if len(report.GateCoverage.MissingEnforcementModeRefs) != 1 ||
 		report.GateCoverage.MissingEnforcementModeRefs[0].Reference != "enforcement_mode" {
+
 		t.Fatalf("expected missing enforcement_mode ref, got %#v", report.GateCoverage.MissingEnforcementModeRefs)
 	}
+
 	if len(report.GateCoverage.MissingSafeAlternativesRefs) != 1 ||
 		report.GateCoverage.MissingSafeAlternativesRefs[0].Reference != "safe_alternatives" {
+
 		t.Fatalf("expected missing safe_alternatives ref, got %#v", report.GateCoverage.MissingSafeAlternativesRefs)
 	}
+
 	for _, want := range []string{
 		"contract_event_gate_missing_pack_id",
 		"contract_event_gate_missing_enforcement_mode",
@@ -428,13 +479,17 @@ func TestAuditEventsFlagsGateOpenObligationRefsNotOpenAtGateSequence(t *testing.
 	if len(report.ObligationCoverage.UnresolvedObligations) != 0 {
 		t.Fatalf("obligation should be resolved before the gate, got %#v", report.ObligationCoverage)
 	}
+
 	if len(report.GateCoverage.InconsistentOpenObligationRefs) != 1 ||
 		report.GateCoverage.InconsistentOpenObligationRefs[0].Reference != "obl-evidence" {
+
 		t.Fatalf("expected inconsistent gate open-obligation ref, got %#v", report.GateCoverage.InconsistentOpenObligationRefs)
 	}
+
 	if !hasEventAuditFinding(report, "contract_event_gate_open_obligation_inconsistent") {
 		t.Fatalf("expected gate inconsistency finding, got %#v", report.Findings)
 	}
+
 	if report.AllClear {
 		t.Fatalf("inconsistent gate open-obligation refs should not be all-clear")
 	}
@@ -489,34 +544,45 @@ func TestAuditEventsGroupsGuardFrictionWithoutFailingAllClear(t *testing.T) {
 	if coverage.Total != 2 || coverage.AvoidableFriction != 1 || coverage.UnclassifiedFriction != 1 {
 		t.Fatalf("expected guard friction totals, got %#v", coverage)
 	}
+
 	if coverage.LaneCounts["implement"] != 2 || coverage.PhaseCounts["planner.submit_ready"] != 2 {
 		t.Fatalf("expected lane/phase friction grouping, got %#v", coverage)
 	}
+
 	if coverage.AvoidabilityCounts[string(GuardFrictionAvoidabilityUnknown)] != 1 ||
 		coverage.AvoidabilityCounts[string(GuardFrictionAvoidabilityToolSurfaceGap)] != 1 {
+
 		t.Fatalf("expected avoidability grouping, got %#v", coverage.AvoidabilityCounts)
 	}
+
 	if coverage.FirstInvalidActionCounts["search_content"] != 1 ||
 		coverage.RetryOutcomeCounts[string(GuardFrictionRetrySuccess)] != 1 ||
 		coverage.GuardSurfaceCounts[string(GuardFrictionSurfaceCompletionGate)] != 1 {
+
 		t.Fatalf("expected action/retry/surface grouping, got %#v", coverage)
 	}
+
 	if coverage.SafeAlternativeCoverage.EventsWithSafeAlternatives != 1 ||
 		coverage.SafeAlternativeCoverage.EventsMissingSafeAlternatives != 1 ||
 		coverage.SafeAlternativeCoverage.SafeAlternativeCounts["submit_plan"] != 1 ||
 		coverage.SafeAlternativeCoverage.VisibleActionClassCounts["source_satisfied"] != 2 ||
 		coverage.SafeAlternativeCoverage.VisibleToolCounts["submit_plan"] != 1 {
+
 		t.Fatalf("expected safe alternative coverage, got %#v", coverage.SafeAlternativeCoverage)
 	}
+
 	if len(coverage.TopContracts) != 1 ||
 		coverage.TopContracts[0].ContractID != contract.ContractID ||
 		coverage.TopContracts[0].AvoidableFriction != 1 ||
 		coverage.TopContracts[0].UnclassifiedFriction != 1 {
+
 		t.Fatalf("expected top contract friction grouping, got %#v", coverage.TopContracts)
 	}
+
 	if len(coverage.UnclassifiedRefs) != 1 || coverage.UnclassifiedRefs[0].EventID != first.EventID {
 		t.Fatalf("expected unclassified friction ref for unknown avoidability, got %#v", coverage.UnclassifiedRefs)
 	}
+
 	if !report.AllClear || len(report.Findings) != 0 {
 		t.Fatalf("guard friction activity should not fail all_clear, all_clear=%v findings=%#v", report.AllClear, report.Findings)
 	}
@@ -573,20 +639,26 @@ func TestAuditEventsReportsModelExchangeRollbackCoverage(t *testing.T) {
 		coverage.RollbackControlEvents != 1 ||
 		!coverage.RollbackActive ||
 		!report.RollbackActive {
+
 		t.Fatalf("expected model-exchange rollback coverage, got %#v", coverage)
 	}
+
 	if coverage.KindCounts["trace_store_policy"] != 1 ||
 		coverage.KindCounts["rollback_control"] != 1 ||
 		coverage.PayloadCounts["trace_store_policy"] != 1 ||
 		coverage.PayloadCounts["rollback_control"] != 1 {
+
 		t.Fatalf("expected model-exchange kind/payload counts, got %#v", coverage)
 	}
+
 	if len(coverage.RollbackRefs) != 1 || coverage.RollbackRefs[0].Reference != "model_exchange_disabled" {
 		t.Fatalf("expected rollback ref, got %#v", coverage.RollbackRefs)
 	}
+
 	if coverage.RedactionStatusCounts["pass"] != 1 || report.PrivacyChecks.RedactionStatusCounts["pass"] != 1 {
 		t.Fatalf("expected redaction status coverage, audit=%#v privacy=%#v", coverage.RedactionStatusCounts, report.PrivacyChecks.RedactionStatusCounts)
 	}
+
 	if len(report.Contracts) != 1 || report.Contracts[0].ModelExchangeCounts[string(EventModelExchange)] != 2 {
 		t.Fatalf("expected per-contract model-exchange counts, got %#v", report.Contracts)
 	}
@@ -645,9 +717,11 @@ func TestAuditEventsOrdersRepeatedContractRunsByOccurrenceBeforeSequence(t *test
 	if len(report.GateCoverage.InconsistentOpenObligationRefs) != 0 {
 		t.Fatalf("restarted sequence numbers from a later run should not make open refs inconsistent: %#v", report.GateCoverage.InconsistentOpenObligationRefs)
 	}
+
 	if len(report.ObligationCoverage.UnmatchedObligations) != 0 {
 		t.Fatalf("restarted sequence numbers from a later run should not make resolutions unmatched: %#v", report.ObligationCoverage.UnmatchedObligations)
 	}
+
 	if len(report.ObligationCoverage.UnresolvedObligations) != 0 || !report.AllClear {
 		t.Fatalf("expected all-clear repeated-run audit, all_clear=%v obligations=%#v findings=%#v", report.AllClear, report.ObligationCoverage, report.Findings)
 	}
@@ -673,9 +747,11 @@ func TestAuditEventsReportsMissingContractID(t *testing.T) {
 	if len(report.ReferenceCoverage.MissingContractIDEvents) != 1 {
 		t.Fatalf("expected one missing contract id event, got %#v", report.ReferenceCoverage)
 	}
+
 	if !hasEventAuditFinding(report, "contract_event_missing_contract_id") {
 		t.Fatalf("expected missing-contract finding, got %#v", report.Findings)
 	}
+
 	if report.AllClear {
 		t.Fatalf("missing contract id should not be all clear")
 	}
@@ -718,9 +794,11 @@ func TestAuditEventsReportsStaleAndUnmatchedContractReferences(t *testing.T) {
 	if len(report.ReferenceCoverage.StaleContractReferences) != 1 || report.ReferenceCoverage.StaleContractReferences[0].EventID != "event-after-stop" {
 		t.Fatalf("expected stale contract reference, got %#v", report.ReferenceCoverage.StaleContractReferences)
 	}
+
 	if len(report.ReferenceCoverage.UnmatchedContractReferences) != 1 || report.ReferenceCoverage.UnmatchedContractReferences[0].Reference != "contract_unknown" {
 		t.Fatalf("expected unmatched contract reference, got %#v", report.ReferenceCoverage.UnmatchedContractReferences)
 	}
+
 	for _, want := range []string{"contract_event_stale_contract_reference", "contract_event_unmatched_contract_reference"} {
 		if !hasEventAuditFinding(report, want) {
 			t.Fatalf("expected finding %q, got %#v", want, report.Findings)
@@ -733,8 +811,10 @@ func TestAuditEventsReportsUnmatchedSidecarToolCallCorrelation(t *testing.T) {
 	occurredAt := time.Date(2026, 5, 13, 20, 0, 0, 0, time.UTC)
 	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
 	correlation := CorrelationFromContract(contract)
+
 	correlation.ToolCallID = "tool-001"
 	correlation.ToolName = "apply_patch"
+
 	badPolicy := Event{
 		SchemaVersion: EventSchemaVersion,
 		EventID:       "event-sidecar-tool-mismatch",
@@ -756,10 +836,13 @@ func TestAuditEventsReportsUnmatchedSidecarToolCallCorrelation(t *testing.T) {
 	if report.SidecarToolCorrelation.SidecarEventCount == 0 || report.SidecarToolCorrelation.ToolCallEventCount == 0 {
 		t.Fatalf("expected sidecar and tool-call coverage, got %#v", report.SidecarToolCorrelation)
 	}
+
 	if len(report.SidecarToolCorrelation.UnmatchedCorrelations) != 1 ||
 		!strings.Contains(report.SidecarToolCorrelation.UnmatchedCorrelations[0].Reason, "sidecar_tool") {
+
 		t.Fatalf("expected sidecar/tool mismatch, got %#v", report.SidecarToolCorrelation.UnmatchedCorrelations)
 	}
+
 	if !hasEventAuditFinding(report, "contract_event_sidecar_tool_correlation_mismatch") {
 		t.Fatalf("expected sidecar correlation finding, got %#v", report.Findings)
 	}
@@ -801,11 +884,14 @@ func TestAuditEventsFlagsTurnPhaseContradictoryToolAction(t *testing.T) {
 	if report.TurnPhaseCoverage.Total != 1 || report.TurnPhaseCoverage.PhaseCounts["plan_execute.submit_ready.textual"] != 1 {
 		t.Fatalf("expected turn phase coverage, got %#v", report.TurnPhaseCoverage)
 	}
+
 	if len(report.TurnPhaseCoverage.Contradictions) != 1 ||
 		report.TurnPhaseCoverage.Contradictions[0].ToolName != "read_file" ||
 		report.TurnPhaseCoverage.Contradictions[0].ActionClass != "read" {
+
 		t.Fatalf("expected read action contradiction, got %#v", report.TurnPhaseCoverage.Contradictions)
 	}
+
 	if !hasEventAuditFinding(report, "turn_phase_contract_contradiction") || report.AllClear {
 		t.Fatalf("expected contradiction finding and all_clear=false, all_clear=%v findings=%#v", report.AllClear, report.Findings)
 	}
@@ -839,6 +925,7 @@ func TestAuditEventsAllowsTextualPhaseCallableToolsWhenActionIsExpressible(t *te
 	if len(report.TurnPhaseCoverage.Contradictions) != 0 {
 		t.Fatalf("textual callable tools should reconcile when their action class is expressible, got %#v", report.TurnPhaseCoverage.Contradictions)
 	}
+
 	if hasEventAuditFinding(report, "turn_phase_contract_contradiction") {
 		t.Fatalf("unexpected contradiction finding for textual callable tools: %#v", report.Findings)
 	}
@@ -874,6 +961,7 @@ func TestAuditEventsAllowsTextualReadToolWhenReadActionIsExpressible(t *testing.
 	if len(report.TurnPhaseCoverage.Contradictions) != 0 {
 		t.Fatalf("textual read tool should reconcile through its action class, got %#v", report.TurnPhaseCoverage.Contradictions)
 	}
+
 	if hasEventAuditFinding(report, "turn_phase_contract_contradiction") {
 		t.Fatalf("unexpected contradiction finding for textual read tool: %#v", report.Findings)
 	}
@@ -910,6 +998,7 @@ func TestAuditEventsUsesCallableToolsForTextualManifestVisibility(t *testing.T) 
 	if len(report.TurnPhaseCoverage.Contradictions) != 0 {
 		t.Fatalf("hidden/base-only task should not be audited as manifest-visible, got %#v", report.TurnPhaseCoverage.Contradictions)
 	}
+
 	if hasEventAuditFinding(report, "turn_phase_contract_contradiction") {
 		t.Fatalf("unexpected contradiction finding for hidden/base-only task: %#v", report.Findings)
 	}
@@ -931,6 +1020,7 @@ func TestTurnPhaseActionClassForToolCoversProjectionTools(t *testing.T) {
 		if got := TurnPhaseActionClassForTool(tool); got != want {
 			t.Fatalf("TurnPhaseActionClassForTool(%q) = %q, want %q", tool, got, want)
 		}
+
 		if got := ActionClassToken(TurnPhaseActionClassForToolClass(tool)); got != want {
 			t.Fatalf("TurnPhaseActionClassForToolClass(%q) = %q, want %q", tool, got, want)
 		}
@@ -967,6 +1057,7 @@ func TestAuditEventsFlagsToolWhenNoManifestToolsAreAllowed(t *testing.T) {
 
 	if len(report.TurnPhaseCoverage.Contradictions) != 1 ||
 		report.TurnPhaseCoverage.Contradictions[0].ToolName != "read_file" {
+
 		t.Fatalf("expected no-manifest tool contradiction, got %#v", report.TurnPhaseCoverage.Contradictions)
 	}
 }
@@ -1020,21 +1111,27 @@ func TestAuditEventsReconcilesTurnPhaseSurfaceSummary(t *testing.T) {
 	if report.TurnPhaseCoverage.SurfaceCounts["next_action_state"] != 1 {
 		t.Fatalf("expected next_action_state surface coverage, got %#v", report.TurnPhaseCoverage.SurfaceCounts)
 	}
+
 	if len(report.TurnPhaseCoverage.Contradictions) == 0 {
 		t.Fatalf("expected surface contradictions, got none")
 	}
+
 	var sawInvalidRead bool
+
 	for _, issue := range report.TurnPhaseCoverage.Contradictions {
 		if issue.SurfacePair != "turn_phase_contract,next_action_state" || issue.SurfaceID != "next_action_state" {
 			t.Fatalf("expected surface-pair attribution, got %#v", issue)
 		}
+
 		if issue.InvariantID == "turn_phase.action.invalid_advertised" && issue.ActionClass == "read" {
 			sawInvalidRead = true
 		}
 	}
+
 	if !sawInvalidRead {
 		t.Fatalf("expected invalid read contradiction, got %#v", report.TurnPhaseCoverage.Contradictions)
 	}
+
 	if !hasEventAuditFinding(report, "turn_phase_contract_contradiction") || report.AllClear {
 		t.Fatalf("expected contradiction finding and all_clear=false, all_clear=%v findings=%#v", report.AllClear, report.Findings)
 	}
@@ -1086,13 +1183,16 @@ func TestAuditEventsReconcilesModelProtocolSurface(t *testing.T) {
 	if report.TurnPhaseCoverage.SurfaceCounts["model_protocol"] != 1 {
 		t.Fatalf("expected model_protocol surface coverage, got %#v", report.TurnPhaseCoverage.SurfaceCounts)
 	}
+
 	if len(report.TurnPhaseCoverage.Contradictions) != 1 {
 		t.Fatalf("expected one model-protocol contradiction, got %#v", report.TurnPhaseCoverage.Contradictions)
 	}
+
 	issue := report.TurnPhaseCoverage.Contradictions[0]
 	if issue.SurfacePair != "turn_phase_contract,model_protocol" ||
 		issue.InvariantID != "turn_phase.action.invalid_advertised" ||
 		issue.ActionClass != "read" {
+
 		t.Fatalf("expected invalid read model-protocol contradiction, got %#v", report.TurnPhaseCoverage.Contradictions)
 	}
 }
@@ -1164,27 +1264,37 @@ func TestReconcileTurnPhaseSurfaceFlagsProtocolHashParity(t *testing.T) {
 		TerminalResponseShapes:  []string{"submit_plan"},
 		RuntimeCall:             phase.RuntimeCall,
 	}
+
 	if issues := ReconcileTurnPhaseSurface(phase, baseSurface); len(issues) != 0 {
 		t.Fatalf("matching protocol hash should be clean, got %#v", issues)
 	}
 
 	missingSurface := baseSurface
+
 	missingSurface.ProtocolHash = ""
+
 	missingIssues := ReconcileTurnPhaseSurface(phase, missingSurface)
+
 	if !hasTurnPhaseInvariant(missingIssues, "turn_phase.identity.protocol_hash", "missing protocol_hash") {
 		t.Fatalf("expected missing protocol hash issue, got %#v", missingIssues)
 	}
 
 	mismatchedSurface := baseSurface
+
 	mismatchedSurface.ProtocolHash = "sha256:other"
+
 	mismatchIssues := ReconcileTurnPhaseSurface(phase, mismatchedSurface)
+
 	if !hasTurnPhaseInvariant(mismatchIssues, "turn_phase.identity.protocol_hash", "differs") {
 		t.Fatalf("expected mismatched protocol hash issue, got %#v", mismatchIssues)
 	}
 
 	mismatchedContract := baseSurface
+
 	mismatchedContract.ContractID = "contract-other"
+
 	contractIssues := ReconcileTurnPhaseSurface(phase, mismatchedContract)
+
 	if !hasTurnPhaseInvariant(contractIssues, "turn_phase.identity.contract_id", "differs") {
 		t.Fatalf("expected mismatched contract id issue, got %#v", contractIssues)
 	}
@@ -1278,18 +1388,23 @@ func TestAuditEventsFlagsCompletionGateProtocolHashParity(t *testing.T) {
 	}, string(ContractPackCompletionReadiness), string(EnforcementModeObserveOnly), []string{"completion_gate_mismatched_hash"}, nil), occurredAt.Add(3*time.Second), 4))
 
 	report := AuditEvents([]Event{compiled, presented, missing, mismatch}, EventAuditOptions{})
+
 	var missingHash, mismatchedHash bool
+
 	for _, issue := range report.TurnPhaseCoverage.Contradictions {
 		if issue.SurfaceID != "completion_gate" || issue.InvariantID != "turn_phase.identity.protocol_hash" {
 			continue
 		}
+
 		if strings.Contains(issue.Reason, "missing") {
 			missingHash = true
 		}
+
 		if strings.Contains(issue.Reason, "differs") {
 			mismatchedHash = true
 		}
 	}
+
 	if missingHash || !mismatchedHash {
 		t.Fatalf("expected only mismatched completion-gate protocol hash issue, got %#v", report.TurnPhaseCoverage.Contradictions)
 	}
@@ -1327,12 +1442,15 @@ func TestReconcileTurnPhaseSurfaceBlocksReviewPassWithFailedObligations(t *testi
 	}
 
 	issues := ReconcileTurnPhaseSurface(phase, surface)
+
 	var sawReviewPass bool
+
 	for _, issue := range issues {
 		if issue.InvariantID == "turn_phase.action.invalid_advertised" && issue.ActionClass == "review_pass" {
 			sawReviewPass = true
 		}
 	}
+
 	if !sawReviewPass {
 		t.Fatalf("expected invalid review_pass contradiction, got %#v", issues)
 	}
@@ -1372,11 +1490,13 @@ func TestAuditEventsAllClearCoverageCarriesClassificationAndProductSignals(t *te
 	if !report.AllClear || len(report.Findings) != 0 {
 		t.Fatalf("expected all-clear coverage, all_clear=%v findings=%#v", report.AllClear, report.Findings)
 	}
+
 	for _, want := range allClientClassifications() {
 		if report.MetadataCoverage.ClientClassificationCounts[string(want)] == 0 {
 			t.Fatalf("audit report missing client classification %q in %#v", want, report.MetadataCoverage.ClientClassificationCounts)
 		}
 	}
+
 	for _, want := range allProductSignals() {
 		if report.MetadataCoverage.ProductSignalCounts[string(want)] == 0 {
 			t.Fatalf("audit report missing product signal %q in %#v", want, report.MetadataCoverage.ProductSignalCounts)
@@ -1416,15 +1536,20 @@ func TestAuditEventsReportsReplayIntentMissingPayloadsAndPrivacy(t *testing.T) {
 
 	if report.ReplayMetrics.MissingRequiredPayloadCounts["gate"] != 1 ||
 		report.ReplayClassification.MissingRequiredPayloadEvents != 1 {
+
 		t.Fatalf("expected missing gate payload count, classification=%#v metrics=%#v", report.ReplayClassification, report.ReplayMetrics)
 	}
+
 	if report.PrivacyChecks.ForbiddenFieldCount == 0 ||
 		report.PrivacyChecks.FieldCounts["policy.arguments_summary"] == 0 {
+
 		t.Fatalf("expected privacy forbidden-field detection, got %#v", report.PrivacyChecks)
 	}
+
 	if !hasEventAuditFinding(report, "contract_event_privacy_forbidden_raw_content") {
 		t.Fatalf("expected privacy finding, got %#v", report.Findings)
 	}
+
 	if report.ReplayClassification.Classification != ReplayClassificationNonReplayable {
 		t.Fatalf("privacy markers should make replay non-replayable, got %#v", report.ReplayClassification)
 	}
@@ -1434,6 +1559,7 @@ func mustAutonomyEvent(event Event, err error) Event {
 	if err != nil {
 		panic(err)
 	}
+
 	return event
 }
 
@@ -1443,6 +1569,7 @@ func hasEventAuditFinding(report EventAuditReport, id string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1452,5 +1579,6 @@ func hasTurnPhaseInvariant(issues []TurnPhaseContradiction, invariantID string, 
 			return true
 		}
 	}
+
 	return false
 }

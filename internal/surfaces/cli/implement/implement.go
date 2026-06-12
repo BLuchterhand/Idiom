@@ -53,17 +53,21 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 	opts, err := parseImplementOptions(args, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 2
 	}
 
 	cfg, err := config.Load(opts.ConfigPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	if strings.TrimSpace(opts.Model) != "" {
 		cfg.LlamaServer.Model = opts.Model
 	}
+
 	// Stamp a session UUID so concurrent `idiom implement` runs in the
 	// same workspace produce attributable conversation logs and (if
 	// they ever submit a plan) attributable plan artifacts. Mirrors
@@ -75,6 +79,7 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 		"session_id":  cfg.Workspace.SessionID,
 		"local_ops":   cmdtelemetry.LocalOpsFields(cfg, "implement"),
 	})
+
 	decision := cmdroute.BuildDecision(cfg, cmdroute.Options{
 		Mode:              writerroute.ModeAgenticGuarded,
 		Lane:              "implement",
@@ -94,8 +99,10 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 	prompt, err := implementPrompt(opts)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	answer, err := promptRun(cfg, prompt, runOptions{
 		JSONEvents:               opts.JSONEvents,
 		Resume:                   opts.Resume,
@@ -107,11 +114,14 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 	}, stdout)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	if !opts.JSONEvents {
 		fmt.Fprintln(stdout, answer)
 	}
+
 	return 0
 }
 
@@ -119,6 +129,7 @@ func implementWriterRouteVerificationOwner(opts implementOptions) string {
 	if opts.PlannerOwnedVerification && !opts.AllowBuildTests {
 		return "planner_owned"
 	}
+
 	return "executor"
 }
 
@@ -127,6 +138,7 @@ func implementWriterRouteVerificationOwner(opts implementOptions) string {
 func implementAcquireQueueSlot(cfg config.Config, sessionID string, stdout io.Writer, stderr io.Writer, jsonEvents bool, rec *telemetry.Recorder) func() {
 	label := "implement:" + sessionID
 	client := fmt.Sprintf("idiom-implement/%d", os.Getpid())
+
 	return queueadmission.Acquire(cfg, queueadmission.Options{
 		Command:        "implement",
 		EventPrefix:    "idiom.implement",
@@ -141,6 +153,7 @@ func emitImplementJSONEvent(stdout io.Writer, jsonEvents bool, eventType string,
 	if !jsonEvents {
 		return
 	}
+
 	payload := map[string]any{
 		"type": "idiom.implement." + eventType,
 		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
@@ -148,15 +161,18 @@ func emitImplementJSONEvent(stdout io.Writer, jsonEvents bool, eventType string,
 	for key, value := range fields {
 		payload[key] = value
 	}
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}
+
 	fmt.Fprintln(stdout, string(body))
 }
 
 func parseImplementOptions(args []string, stderr io.Writer) (implementOptions, error) {
 	var opts implementOptions
+
 	fs := flag.NewFlagSet("idiom implement", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&opts.ConfigPath, "config", "config.json", "path to config file")
@@ -169,40 +185,51 @@ func parseImplementOptions(args []string, stderr io.Writer) (implementOptions, e
 	fs.BoolVar(&opts.AllowBuildTests, "allow-build-tests", false, "compatibility flag: keep build/test shell commands available inside the implementation lane")
 	fs.BoolVar(&opts.DisableThinking, "no-thinking", false, "force request-level Qwen thinking off for this run")
 	fs.IntVar(&opts.MaxTokens, "max-tokens", 0, "override chat max_tokens for this implementation run; 0 uses backend default (8192)")
+
 	if err := fs.Parse(args); err != nil {
 		return implementOptions{}, err
 	}
+
 	if fs.NArg() > 0 {
 		if strings.TrimSpace(opts.Prompt) != "" || strings.TrimSpace(opts.PromptFile) != "" {
 			return implementOptions{}, fmt.Errorf("positional prompt cannot be combined with --prompt or --prompt-file")
 		}
+
 		opts.Prompt = strings.Join(fs.Args(), " ")
 	}
+
 	if strings.TrimSpace(opts.Prompt) == "" && strings.TrimSpace(opts.PromptFile) == "" {
 		return implementOptions{}, fmt.Errorf("provide --prompt, --prompt-file, or a positional prompt")
 	}
+
 	return opts, nil
 }
 
 func implementPrompt(opts implementOptions) (string, error) {
 	hasPrompt := strings.TrimSpace(opts.Prompt) != ""
 	hasFile := strings.TrimSpace(opts.PromptFile) != ""
+
 	if hasPrompt && hasFile {
 		return "", fmt.Errorf("--prompt and --prompt-file are mutually exclusive")
 	}
+
 	if !hasPrompt && !hasFile {
 		return "", fmt.Errorf("provide --prompt, --prompt-file, or a positional prompt")
 	}
+
 	if hasPrompt {
 		return opts.Prompt, nil
 	}
+
 	data, err := os.ReadFile(opts.PromptFile)
 	if err != nil {
 		return "", fmt.Errorf("read prompt file: %w", err)
 	}
+
 	prompt := strings.TrimSpace(string(data))
 	if prompt == "" {
 		return "", fmt.Errorf("prompt file %q is empty", opts.PromptFile)
 	}
+
 	return prompt, nil
 }

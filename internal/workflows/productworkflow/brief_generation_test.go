@@ -9,6 +9,7 @@ func TestLooksLikeWorkspaceFileNormalizesBackslashesAndRejectsTraversal(t *testi
 	if !looksLikeWorkspaceFile(`internal\productworkflow\status.go`) {
 		t.Fatal("expected backslash workspace path to be recognized")
 	}
+
 	if looksLikeWorkspaceFile(`..\secret.go`) || looksLikeWorkspaceFile(`internal\..\secret.go`) {
 		t.Fatal("expected backslash traversal paths to be rejected")
 	}
@@ -47,15 +48,19 @@ func TestBriefGenerationDeterministicAndPassesWhenInputsAccepted(t *testing.T) {
 	}
 	a := GenerateImplementationBrief(input)
 	b := GenerateImplementationBrief(input)
+
 	if a.Status != "pass" {
 		t.Fatalf("expected pass status, got %q blockers=%v", a.Status, a.Blockers)
 	}
+
 	if a.RenderedBrief != b.RenderedBrief {
 		t.Fatal("brief generation must be deterministic")
 	}
+
 	if strings.Index(a.RenderedBrief, "`a.go`") > strings.Index(a.RenderedBrief, "`b.go`") {
 		t.Fatalf("files should be sorted in rendered brief:\n%s", a.RenderedBrief)
 	}
+
 	for _, unexpected := range []string{
 		"Do not dispatch work",
 		"- npm test\n",
@@ -64,6 +69,7 @@ func TestBriefGenerationDeterministicAndPassesWhenInputsAccepted(t *testing.T) {
 			t.Fatalf("brief contains unexpected text %q:\n%s", unexpected, a.RenderedBrief)
 		}
 	}
+
 	for _, expected := range []string{
 		"`greeting.test.js`",
 		"## Implementation Shape",
@@ -77,6 +83,7 @@ func TestBriefGenerationDeterministicAndPassesWhenInputsAccepted(t *testing.T) {
 			t.Fatalf("brief missing expected text %q:\n%s", expected, a.RenderedBrief)
 		}
 	}
+
 	for _, section := range []string{
 		"## Files To Modify",
 		"## Files to Read First",
@@ -121,6 +128,7 @@ func TestBriefGenerationUsesPathAliasesForMovedImplementationFiles(t *testing.T)
 	if out.Status != "pass" {
 		t.Fatalf("expected path alias to avoid new-file blocker, got %q blockers=%v", out.Status, out.Blockers)
 	}
+
 	if len(out.FilesToModify) != 1 || out.FilesToModify[0] != "internal/productcmd/product_workflow.go" {
 		t.Fatalf("expected aliased file to modify, got %#v", out.FilesToModify)
 	}
@@ -152,6 +160,7 @@ func TestBriefGenerationBlocksNewFileDispatchWithUnlabeledADRCodeBlock(t *testin
 	if out.Status != "blocked" {
 		t.Fatalf("expected unlabeled implementation shape to block new-file dispatch, got %q", out.Status)
 	}
+
 	if len(out.ImplementationShape) != 0 {
 		t.Fatalf("expected unlabeled code block to be ignored, got %#v", out.ImplementationShape)
 	}
@@ -165,6 +174,7 @@ func TestBriefGenerationBlocksWhenCoverageOrAcceptedInputsMissing(t *testing.T) 
 	if out.Status != "blocked" {
 		t.Fatalf("expected blocked status, got %q", out.Status)
 	}
+
 	if len(out.Blockers) == 0 {
 		t.Fatal("expected blockers")
 	}
@@ -202,6 +212,7 @@ func TestBriefGenerationAllowsPendingTDDEvidenceImplementationDispatch(t *testin
 	if out.Status != "pass" {
 		t.Fatalf("expected pending TDD evidence to allow implementation dispatch, got %q blockers=%v", out.Status, out.Blockers)
 	}
+
 	if strings.Contains(strings.Join(out.Blockers, "\n"), "coverage gate is blocked") {
 		t.Fatalf("pending TDD evidence should not emit generic coverage blocker: %#v", out.Blockers)
 	}
@@ -235,6 +246,7 @@ func TestBriefGenerationDoesNotTreatHumanOwnerAsReadPath(t *testing.T) {
 			t.Fatalf("human owner should not be treated as a read path: %#v", out.FilesToReadFirst)
 		}
 	}
+
 	if !strings.Contains(out.RenderedBrief, "`make test` passes.") {
 		t.Fatalf("make command should be rendered as a passing command:\n%s", out.RenderedBrief)
 	}
@@ -262,12 +274,15 @@ func TestBriefGenerationBlocksNewFileDispatchWithoutADRCodeBlocks(t *testing.T) 
 	if out.Status != "blocked" {
 		t.Fatalf("expected missing implementation shape to block new-file dispatch, got %q", out.Status)
 	}
+
 	found := false
+
 	for _, blocker := range out.Blockers {
 		if strings.Contains(blocker, "implementation code block") {
 			found = true
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected implementation-shape blocker, got %#v", out.Blockers)
 	}
@@ -302,12 +317,15 @@ func TestBriefGenerationBlocksUngroundedImplementationAffectingClaims(t *testing
 	if out.Status != "blocked" {
 		t.Fatalf("expected ungrounded implementation-affecting claim to block dispatch, got %q", out.Status)
 	}
+
 	found := false
+
 	for _, blocker := range out.Blockers {
 		if strings.Contains(blocker, "implementation-affecting claim") && strings.Contains(blocker, "ADR-1") {
 			found = true
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected implementation-affecting claim blocker, got %#v", out.Blockers)
 	}
@@ -355,6 +373,7 @@ func TestImplementationAffectingClaimsRequireResolvedEvidence(t *testing.T) {
 
 	findings := ImplementationAffectingClaimEvidenceFindings(prd, adrs, map[string]bool{"EV-1": true})
 	joined := strings.Join(profileFindingMessages(findings), "\n")
+
 	for _, want := range []string{
 		`PRD requirement REQ-EVIDENCE references unresolved evidence "EV-MISSING"`,
 		`accepted ADR ADR-EVIDENCE references unresolved evidence "EV-MISSING"`,
@@ -363,6 +382,7 @@ func TestImplementationAffectingClaimsRequireResolvedEvidence(t *testing.T) {
 			t.Fatalf("expected unresolved evidence blocker %q, got %#v", want, findings)
 		}
 	}
+
 	if strings.Contains(joined, "EV-1") {
 		t.Fatalf("resolved evidence should not block dispatch, got %#v", findings)
 	}
@@ -373,5 +393,6 @@ func profileFindingMessages(findings []ProfileFinding) []string {
 	for _, finding := range findings {
 		out = append(out, finding.Message)
 	}
+
 	return out
 }

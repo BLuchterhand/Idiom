@@ -10,6 +10,7 @@ func TestNormalizeSymbolPattern_ExactMatch(t *testing.T) {
 		regexp.MustCompile(`^func\s+([A-Za-z_]\w*)`),
 	}
 	result := NormalizeSymbolPattern("func Hello", extractors)
+
 	if result != "Hello" {
 		t.Errorf("expected Hello, got %s", result)
 	}
@@ -20,6 +21,7 @@ func TestNormalizeSymbolPattern_NoMatch(t *testing.T) {
 		regexp.MustCompile(`^func\s+([A-Za-z_]\w*)`),
 	}
 	result := NormalizeSymbolPattern("Hello", extractors)
+
 	if result != "Hello" {
 		t.Errorf("expected Hello, got %s", result)
 	}
@@ -38,6 +40,7 @@ func TestNormalizeSymbolPattern_MultipleExtractors(t *testing.T) {
 		regexp.MustCompile(`^struct\s+([A-Za-z_]\w*)`),
 	}
 	result := NormalizeSymbolPattern("struct Foo", extractors)
+
 	if result != "Foo" {
 		t.Errorf("expected Foo, got %s", result)
 	}

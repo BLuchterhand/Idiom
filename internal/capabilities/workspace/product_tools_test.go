@@ -14,9 +14,11 @@ import (
 func TestProductEffortsToolBrowsesReadOnlyEfforts(t *testing.T) {
 	root := t.TempDir()
 	effortDir := filepath.Join(root, "docs", "product-workflows", "efforts", "started", "sample-effort")
+
 	if err := os.MkdirAll(effortDir, 0o755); err != nil {
 		t.Fatalf("mkdir effort: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(effortDir, "workflow_state.json"), []byte(productToolWorkflowState("sample-effort", "started", "sample-effort")), 0o644); err != nil {
 		t.Fatalf("write workflow_state: %v", err)
 	}
@@ -27,9 +29,11 @@ func TestProductEffortsToolBrowsesReadOnlyEfforts(t *testing.T) {
 		Root:   "docs/product-workflows/efforts",
 		Status: "started",
 	})
+
 	if result.Error != "" {
 		t.Fatalf("product_efforts error = %s output=%s", result.Error, result.Output)
 	}
+
 	if !strings.Contains(result.Output, `"effort_id": "sample-effort"`) || !strings.Contains(result.Output, `"status_filter": "started"`) {
 		t.Fatalf("unexpected product_efforts output:\n%s", result.Output)
 	}
@@ -43,16 +47,20 @@ func TestProductStatusToolReadsOperatorView(t *testing.T) {
 		EffortRoot:   "docs/product-workflows/efforts/closed/prd-adr-brief-workflow",
 		OperatorView: true,
 	})
+
 	if result.Error != "" {
 		t.Fatalf("product_status error = %s output=%s", result.Error, result.Output)
 	}
+
 	var payload struct {
 		SchemaVersion string `json:"schema_version"`
 		EffortID      string `json:"effort_id"`
 	}
+
 	if err := json.Unmarshal([]byte(result.Output), &payload); err != nil {
 		t.Fatalf("decode product_status output: %v\n%s", err, result.Output)
 	}
+
 	if payload.SchemaVersion != "idiom.product_operator_status.v1" || payload.EffortID == "" {
 		t.Fatalf("unexpected product_status operator payload: %#v", payload)
 	}
@@ -63,9 +71,11 @@ func TestProductWorkflowToolsAreReadOnlyDiscoveryTools(t *testing.T) {
 		if !IsBuiltInToolName(tool) {
 			t.Fatalf("%s should be a built-in tool", tool)
 		}
+
 		if decision := ToolAllowedForProfile(tool, ToolProfileDiscovery); !decision.Allowed {
 			t.Fatalf("%s should be allowed by discovery profile: %#v", tool, decision)
 		}
+
 		if len(BuildToolDefinitions([]string{tool})) != 1 {
 			t.Fatalf("%s should have a schema definition", tool)
 		}
@@ -97,18 +107,22 @@ func productToolWorkflowState(effortID, bucket, folderName string) string {
 
 func workspaceTestRepoRoot(t *testing.T) string {
 	t.Helper()
+
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
+
 	for {
 		if _, err := os.Stat(filepath.Join(wd, "go.mod")); err == nil {
 			return wd
 		}
+
 		parent := filepath.Dir(wd)
 		if parent == wd {
 			t.Fatalf("could not find repo root from %s", wd)
 		}
+
 		wd = parent
 	}
 }

@@ -17,29 +17,39 @@ import (
 // when the test ends.
 func startDaemonForCLI(t *testing.T, cfg runner.Config) string {
 	t.Helper()
+
 	if cfg.Pools == nil {
 		cfg = runner.DefaultConfig()
 	}
+
 	dir, err := os.MkdirTemp("/tmp", "idr-cli-")
 	if err != nil {
 		t.Fatalf("mkdir tmp: %v", err)
 	}
+
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
 	sock := filepath.Join(dir, "s")
 	srv := runner.NewServer(cfg, sock)
+
 	if err := srv.Start(); err != nil {
 		t.Fatalf("start daemon: %v", err)
 	}
+
 	t.Cleanup(srv.Stop)
+
 	return sock
 }
 
 func TestQueueUsageOnNoSubcommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := runQueueMain([]string{}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("usage exit code = %d, want 0", code)
 	}
+
 	if !strings.Contains(stderr.String(), "subcommands:") {
 		t.Fatalf("usage missing subcommands: %s", stderr.String())
 	}
@@ -47,11 +57,15 @@ func TestQueueUsageOnNoSubcommand(t *testing.T) {
 
 func TestQueuePingHitsLiveDaemon(t *testing.T) {
 	sock := startDaemonForCLI(t, runner.DefaultConfig())
+
 	var stdout, stderr bytes.Buffer
+
 	code := runQueueMain([]string{"ping", "--socket", sock}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("ping exit=%d stderr=%s", code, stderr.String())
 	}
+
 	if !strings.Contains(stdout.String(), "ok (uptime") {
 		t.Fatalf("expected 'ok (uptime ...)' in stdout, got %q", stdout.String())
 	}
@@ -62,10 +76,15 @@ func TestQueuePingFailsWithoutDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
 	missing := filepath.Join(dir, "missing.sock")
+
 	var stdout, stderr bytes.Buffer
+
 	code := runQueueMain([]string{"ping", "--socket", missing}, &stdout, &stderr)
+
 	if code == 0 {
 		t.Fatalf("expected nonzero exit, got 0; stderr=%s", stderr.String())
 	}
@@ -78,11 +97,15 @@ func TestQueueStatusJSONShape(t *testing.T) {
 			"qwen-coder": {MaxInFlight: 2},
 		},
 	})
+
 	var stdout, stderr bytes.Buffer
+
 	code := runQueueMain([]string{"status", "--socket", sock, "--json"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("status exit=%d stderr=%s", code, stderr.String())
 	}
+
 	out := stdout.String()
 	for _, want := range []string{`"pools"`, `"qwen-35b"`, `"qwen-coder"`, `"max_in_flight": 2`} {
 		if !strings.Contains(out, want) {
@@ -93,14 +116,19 @@ func TestQueueStatusJSONShape(t *testing.T) {
 
 func TestQueueStatusTableShape(t *testing.T) {
 	sock := startDaemonForCLI(t, runner.DefaultConfig())
+
 	var stdout, stderr bytes.Buffer
+
 	code := runQueueMain([]string{"status", "--socket", sock}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("status exit=%d stderr=%s", code, stderr.String())
 	}
+
 	if !strings.Contains(stdout.String(), "POOL") {
 		t.Fatalf("table header missing: %s", stdout.String())
 	}
+
 	if !strings.Contains(stdout.String(), "default") {
 		t.Fatalf("default pool row missing: %s", stdout.String())
 	}
@@ -108,11 +136,15 @@ func TestQueueStatusTableShape(t *testing.T) {
 
 func TestQueueRunRequiresCommand(t *testing.T) {
 	sock := startDaemonForCLI(t, runner.DefaultConfig())
+
 	var stdout, stderr bytes.Buffer
+
 	code := runQueueMain([]string{"run", "--socket", sock}, &stdout, &stderr)
+
 	if code != 2 {
 		t.Fatalf("expected exit 2 for missing command, got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "command required") {
 		t.Fatalf("error message wrong: %s", stderr.String())
 	}
@@ -120,7 +152,9 @@ func TestQueueRunRequiresCommand(t *testing.T) {
 
 func TestQueueRunExecutesUnderSlot(t *testing.T) {
 	sock := startDaemonForCLI(t, runner.DefaultConfig())
+
 	var stdout, stderr bytes.Buffer
+
 	// `true` exits 0; success means we acquired a slot and ran the
 	// command. The granted-slot side effect is observable via status,
 	// but a clean exit code already proves the path: dial → enqueue
@@ -136,11 +170,14 @@ func TestQueueRunExecutesUnderSlot(t *testing.T) {
 
 func TestQueueRunPropagatesExitCode(t *testing.T) {
 	sock := startDaemonForCLI(t, runner.DefaultConfig())
+
 	var stdout, stderr bytes.Buffer
+
 	code := runQueueMain([]string{
 		"run", "--socket", sock, "--quiet",
 		"--", "/usr/bin/false",
 	}, &stdout, &stderr)
+
 	if code == 0 {
 		t.Fatalf("expected nonzero exit from /usr/bin/false, got 0")
 	}
@@ -155,13 +192,16 @@ func TestQueueRunReleasesSlotAfterExit(t *testing.T) {
 	// max_in_flight=1.
 	for i := range 2 {
 		var stdout, stderr bytes.Buffer
+
 		done := make(chan int, 1)
+
 		go func() {
 			done <- runQueueMain([]string{
 				"run", "--socket", sock, "--quiet",
 				"--", "/usr/bin/true",
 			}, &stdout, &stderr)
 		}()
+
 		select {
 		case code := <-done:
 			if code != 0 {
@@ -171,11 +211,13 @@ func TestQueueRunReleasesSlotAfterExit(t *testing.T) {
 			t.Fatalf("iter %d timed out — slot likely not released", i)
 		}
 	}
+
 	// Final state: clean queue.
 	snap, err := runner.Status(sock)
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
+
 	if len(snap.InFlight)+len(snap.Waiting) != 0 {
 		t.Fatalf("expected empty queue after both runs, got %+v", snap)
 	}
@@ -183,11 +225,15 @@ func TestQueueRunReleasesSlotAfterExit(t *testing.T) {
 
 func TestQueueCancelOnUnknownIDFails(t *testing.T) {
 	sock := startDaemonForCLI(t, runner.DefaultConfig())
+
 	var stdout, stderr bytes.Buffer
+
 	code := runQueueMain([]string{"cancel", "--socket", sock, "j-does-not-exist"}, &stdout, &stderr)
+
 	if code == 0 {
 		t.Fatalf("expected nonzero exit, got 0")
 	}
+
 	if !strings.Contains(stderr.String(), "unknown job_id") {
 		t.Fatalf("error should mention unknown job_id: %s", stderr.String())
 	}
@@ -209,15 +255,20 @@ func TestQueueRunExportsHeldPoolsEnvForChildren(t *testing.T) {
 		"--label", "parent",
 		"--", "/bin/sh", "-c", `printenv IDIOM_QUEUE_HELD_POOLS > "$0"`, outPath,
 	}
+
 	var stdout, stderr bytes.Buffer
+
 	code := runQueueMain(args, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("queue run exit=%d stderr=%s", code, stderr.String())
 	}
+
 	body, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("read child output: %v", err)
 	}
+
 	got := strings.TrimSpace(string(body))
 	if got != "qwen-coder" {
 		t.Fatalf("child saw IDIOM_QUEUE_HELD_POOLS=%q, want %q", got, "qwen-coder")
@@ -234,21 +285,27 @@ func TestQueueRunAppendsHeldPoolForNestedAncestor(t *testing.T) {
 		Pools: map[string]runner.PoolConfig{"qwen-coder": {MaxInFlight: 1}},
 	})
 	t.Setenv(runner.HeldPoolsEnv, "qwen-35b")
+
 	outPath := filepath.Join(t.TempDir(), "held.txt")
 	args := []string{
 		"run", "--socket", sock, "--pool", "qwen-coder", "--quiet",
 		"--label", "nested",
 		"--", "/bin/sh", "-c", `printenv IDIOM_QUEUE_HELD_POOLS > "$0"`, outPath,
 	}
+
 	var stdout, stderr bytes.Buffer
+
 	code := runQueueMain(args, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("queue run exit=%d stderr=%s", code, stderr.String())
 	}
+
 	body, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("read child output: %v", err)
 	}
+
 	got := strings.TrimSpace(string(body))
 	if got != "qwen-35b:qwen-coder" {
 		t.Fatalf("child saw IDIOM_QUEUE_HELD_POOLS=%q, want qwen-35b:qwen-coder", got)
@@ -265,21 +322,27 @@ func TestQueueRunSkipsDuplicateHeldPool(t *testing.T) {
 		Pools: map[string]runner.PoolConfig{"qwen-coder": {MaxInFlight: 1}},
 	})
 	t.Setenv(runner.HeldPoolsEnv, "qwen-coder")
+
 	outPath := filepath.Join(t.TempDir(), "held.txt")
 	args := []string{
 		"run", "--socket", sock, "--pool", "qwen-coder", "--quiet",
 		"--label", "dup",
 		"--", "/bin/sh", "-c", `printenv IDIOM_QUEUE_HELD_POOLS > "$0"`, outPath,
 	}
+
 	var stdout, stderr bytes.Buffer
+
 	code := runQueueMain(args, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("queue run exit=%d stderr=%s", code, stderr.String())
 	}
+
 	body, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("read child output: %v", err)
 	}
+
 	got := strings.TrimSpace(string(body))
 	if got != "qwen-coder" {
 		t.Fatalf("child saw IDIOM_QUEUE_HELD_POOLS=%q, want qwen-coder (no dup)", got)

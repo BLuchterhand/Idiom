@@ -1,15 +1,16 @@
-# Agent Harness Obsidian Vault
+# Idiom Obsidian Vault
 
-This directory is an Obsidian-ready documentation base for Agent Harness.
+This directory is an Obsidian-ready documentation base for the Idiom repo.
 
 Open `docs/obsidian` as a vault in Obsidian, then start with [[00 - Home]].
 The notes use wiki links and Mermaid diagrams, but they remain plain Markdown
 and can be read directly in any editor.
 
-## Guidance Scope
+## Roadmap Marker
 
-Across this vault, `*` marks target guidance in
-tables, diagrams, command lists, and prose. Treat every note as guidance until the consuming project creates its own evidence.
+Across this vault, `*` marks roadmapped or not-yet-implemented behavior in
+tables, diagrams, command lists, and prose. Unmarked items should still be
+checked against source or command output before being treated as release claims.
 
 ## Reading Order
 
@@ -25,7 +26,7 @@ tables, diagrams, command lists, and prose. Treat every note as guidance until t
 10. [[09 - Verification Readiness and Completion]]
 11. [[10 - Telemetry Audit Eval and Learning]]
 12. [[11 - Local Model Operations]]
-13. [[12 - Sidecar and LLM Agent Integrations]]
+13. [[12 - Sidecar and External Integrations]]
 14. [[13 - Package Guide]]
 15. [[14 - Maintenance Playbooks]]
 16. [[15 - Glossary]]
@@ -39,18 +40,20 @@ tables, diagrams, command lists, and prose. Treat every note as guidance until t
 24. [[23 - Major Systems Architectural Onboarding]]
 
 Use [[23 - Major Systems Architectural Onboarding]] as the per-system entry
-point when assigning or reviewing work. It links each major target system to
-its ownership boundary, source anchors, expected verification, and common
-failure signals.
+point when assigning or reviewing work. It links each major system to its
+ownership boundary, source anchors, expected verification, and common failure
+signals.
 
 ## Source Documents
 
-This vault summarizes and connects the canonical design documents:
+This vault summarizes and connects the repository's canonical documents:
 
-- [docs/harness-strategic-thesis.md](../harness-strategic-thesis.md)
-- [docs/harness-design-map.md](../harness-design-map.md)
+- [README.md](../../README.md)
+- [docs/idiom-strategic-thesis.md](../idiom-strategic-thesis.md)
+- [docs/idiom-design-roadmap.md](../idiom-design-roadmap.md)
+- [docs/idiom-implementation-plan.md](../idiom-implementation-plan.md)
 - [docs/decisioning-north-star.md](../decisioning-north-star.md)
-- [docs/harness-maintenance-best-practices.md](../harness-maintenance-best-practices.md)
+- [docs/idiom-maintenance-best-practices.md](../idiom-maintenance-best-practices.md)
 - [docs/lane-architecture.md](../lane-architecture.md)
 - [docs/codebase-comprehension-memory-design.md](../codebase-comprehension-memory-design.md)
 - [docs/design-capability-oriented-tooling.md](../design-capability-oriented-tooling.md)
@@ -62,6 +65,5 @@ This vault summarizes and connects the canonical design documents:
 - [docs/design-decompose-on-failure.md](../design-decompose-on-failure.md)
 - [docs/security-privacy-posture.md](../security-privacy-posture.md)
 - [docs/product-evidence-export.md](../product-evidence-export.md)
-
-Local working-context files are deliberately not included in this export
-bundle.
+- [.codex/project-context.md](../../.codex/project-context.md)
+- [.codex/common-traps.md](../../.codex/common-traps.md)

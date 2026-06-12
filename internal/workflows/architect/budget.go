@@ -51,14 +51,18 @@ func BuildContextBudget(packet Packet, opts ContextBudgetOptions) *ContextBudget
 	builder.addJSON("handoff", packet.Handoff)
 	builder.addStrings("unknowns", packet.Unknowns)
 	builder.addStrings("risks", risksToStrings(packet.Risks))
+
 	for _, ev := range packet.Evidence {
 		category := "evidence_" + strings.TrimSpace(ev.Kind)
 		if category == "evidence_" {
 			category = "evidence"
 		}
+
 		builder.add(category, ev.Content+ev.Error+ev.Path+ev.Command, 1)
 	}
+
 	builder.add("packet_overhead", packet.SchemaVersion+packet.Profile.Name+packet.Workspace.Root, 1)
+
 	report := &ContextBudgetReport{
 		BudgetTier:           spec.Name,
 		TokenLimit:           spec.TokenLimit,
@@ -68,8 +72,10 @@ func BuildContextBudget(packet Packet, opts ContextBudgetOptions) *ContextBudget
 	for _, allocation := range report.Allocations {
 		report.EstimatedTokens += allocation.EstimatedTokens
 	}
+
 	report.Warnings = budgetWarnings(packet, report)
 	report.Risk = budgetRisk(report.EstimatedTokens+report.ReservedOutputTokens, spec.TokenLimit)
+
 	return report
 }
 
@@ -83,15 +89,18 @@ func (b *contextBudgetBuilder) add(category string, content string, items int) {
 	if content == "" && items == 0 {
 		return
 	}
+
 	if b.categories == nil {
 		b.categories = map[string]*ContextBudgetCategory{}
 	}
+
 	item := b.categories[category]
 	if item == nil {
 		item = &ContextBudgetCategory{Category: category}
 		b.categories[category] = item
 		b.order = append(b.order, category)
 	}
+
 	item.Bytes += len(content)
 	item.EstimatedTokens += estimateTokens(content)
 	item.Items += items
@@ -125,10 +134,12 @@ func (b *contextBudgetBuilder) addJSON(category string, value any) {
 	if value == nil {
 		return
 	}
+
 	data, err := json.Marshal(value)
 	if err != nil || len(data) == 0 || string(data) == "null" || string(data) == "[]" || string(data) == "{}" {
 		return
 	}
+
 	b.add(category, string(data), 1)
 }
 
@@ -139,6 +150,7 @@ func (b *contextBudgetBuilder) allocations() []ContextBudgetCategory {
 			out = append(out, *item)
 		}
 	}
+
 	return out
 }
 
@@ -161,6 +173,7 @@ func budgetRisk(tokens int, limit int) string {
 	if limit <= 0 {
 		return "unknown"
 	}
+
 	switch {
 	case tokens >= limit:
 		return "critical"
@@ -177,9 +190,11 @@ func budgetWarnings(packet Packet, report *ContextBudgetReport) []string {
 	warnings := make([]string, 0)
 	seenLocations := map[string]string{}
 	seenContent := map[string]string{}
+
 	for _, ev := range packet.Evidence {
 		name := evidenceName(ev)
 		location := firstNonEmpty(ev.Path, ev.Command)
+
 		if location != "" {
 			if prior := seenLocations[location]; prior != "" {
 				warnings = append(warnings, fmt.Sprintf("duplicate evidence location %q appears in %q and %q", location, prior, name))
@@ -187,29 +202,36 @@ func budgetWarnings(packet Packet, report *ContextBudgetReport) []string {
 				seenLocations[location] = name
 			}
 		}
+
 		content := strings.TrimSpace(ev.Content)
 		if content != "" {
 			sum := sha256.Sum256([]byte(content))
 			key := hex.EncodeToString(sum[:8])
+
 			if prior := seenContent[key]; prior != "" {
 				warnings = append(warnings, fmt.Sprintf("duplicate evidence content appears in %q and %q", prior, name))
 			} else {
 				seenContent[key] = name
 			}
 		}
+
 		if strings.Contains(content, "[truncated]") {
 			warnings = append(warnings, fmt.Sprintf("evidence %q was truncated before budgeting", name))
 		}
+
 		if ev.Error != "" {
 			warnings = append(warnings, fmt.Sprintf("evidence %q has an error: %s", name, ev.Error))
 		}
 	}
+
 	if packet.Freshness != nil && packet.Freshness.Fresh != nil && !*packet.Freshness.Fresh {
 		warnings = append(warnings, "one or more context views are stale")
 	}
+
 	if report.EstimatedTokens+report.ReservedOutputTokens > report.TokenLimit {
 		warnings = append(warnings, "estimated packet plus reserved output exceeds selected budget tier")
 	}
+
 	return cleanStrings(warnings)
 }
 
@@ -218,6 +240,7 @@ func estimateTokens(content string) int {
 	if content == "" {
 		return 0
 	}
+
 	return (len(content) + 3) / 4
 }
 
@@ -226,5 +249,6 @@ func risksToStrings(risks []Risk) []string {
 	for _, risk := range risks {
 		out = append(out, risk.Name+" "+risk.Mitigation)
 	}
+
 	return out
 }

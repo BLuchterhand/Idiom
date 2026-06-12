@@ -1,6 +1,6 @@
 ---
 tags:
-  - harness
+  - idiom
   - verification
   - readiness
   - completion
@@ -16,7 +16,7 @@ answer" and "the harness can support the claim that the work is done."
 Verification must match the risk of the artifact.
 
 `git diff --check` proves patch hygiene. It does not prove source correctness.
-For source edits, Agent Harness expects source-aware verification such as focused tests,
+For source edits, Idiom expects source-aware verification such as focused tests,
 builds, `source_sanity`, or a clear blocker explaining why verification could
 not run.
 
@@ -92,7 +92,7 @@ stateDiagram-v2
 | Eval/audit | Focused eval/audit fixture tests | Telemetry schemas or behavior classification changes |
 
 Default repo verification for code changes is `go test ./...`; build wiring
-changes should also run `make build` or `go build ./cmd/harness`.
+changes should also run `make build` or `go build ./cmd/idiom`.
 
 ## System To Verification Matrix
 
@@ -101,9 +101,9 @@ changes should also run `make build` or `go build ./cmd/harness`.
 | Runner/control rails | `go test ./internal/runtime/agent` | `go test ./...`, `harness_audit` when behavior logs matter |
 | Workspace tools | `go test ./internal/capabilities/workspace` | Tool schema checks, sidecar smoke, `go test ./...` |
 | Context memory | `go test ./internal/repository/comprehension` | `context_status`, representative `context_pack`, `go test ./...` |
-| Runtime lanes | `go test ./cmd/harness` with lane-focused tests | `go test ./internal/runtime/agent ./internal/capabilities/workspace ./cmd/harness`, lane smoke where available |
-| Audit/eval | `go test ./internal/evidence/eval ./cmd/harness-eval ./cmd/harness-swe-eval` | Representative suite, `harness_audit` |
-| CLI/build wiring | focused command tests | `make build` or `go build ./cmd/harness` |
+| Runtime lanes | `go test ./internal/lanecmd ./internal/surfaces/cli/planexecute ./internal/implementcmd` with lane-focused tests | `go test ./internal/runtime/agent ./internal/capabilities/workspace ./internal/lanecmd ./internal/surfaces/cli/planexecute ./internal/implementcmd`, lane smoke where available |
+| Audit/eval | `go test ./internal/evidence/eval ./cmd/idiom-eval ./cmd/idiom-swe-eval` | Representative suite, `harness_audit` |
+| CLI/build wiring | focused command tests | `make build` or `go build ./cmd/idiom` |
 | Docs-only | wiki-link/path checks, `git diff --check` | Broader tests only if docs accompany code behavior changes |
 
 ## Source Sanity
@@ -115,7 +115,7 @@ changes should also run `make build` or `go build ./cmd/harness`.
 - Whether the result is proof, warning, or blocker.
 - What remains unverified.
 
-Target `source_sanity` should be understood as diagnostics or syntax sanity,
+Current `source_sanity` should be understood as diagnostics or syntax sanity,
 with generic checks as fallback. Focused tests and builds remain separate
 verification evidence.
 
@@ -144,13 +144,13 @@ An atom can be marked `completed` only when:
 - Required verification commands are proven successful.
 - Required design-doc test obligations have matching source or test evidence.
 
-An atom can be marked `source-satisfied - do not dispatch` only when active
-source satisfies the target path and required test evidence is present.
+An atom can be marked `source-satisfied - do not dispatch` only when current
+source already satisfies the target path and required test evidence is present.
 The harness should not create whitespace or placeholder edits merely to satisfy
 a write-shaped contract.
 
 If verification commands remain unproven, the closeout should be a typed
-`<<QUESTION>>` naming the optional commands. The atom doc should remain optional
+`<<QUESTION>>` naming the pending commands. The atom doc should remain pending
 so a later rerun can continue from the correct state.
 
 ## Documentation And Diagrams As Verification Aids

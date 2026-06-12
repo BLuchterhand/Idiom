@@ -19,7 +19,9 @@ func ValidateADRCrossLinks(
 	evidenceCardIDs map[string]bool,
 	tddObligationIDs map[string]bool,
 ) []ADRCrossLinkError {
+
 	var errs []ADRCrossLinkError
+
 	for _, a := range adrs {
 		adrRef := adrCrossLinkReference(a)
 		for _, ref := range a.Doc.FrontMatter.PRDRefs {
@@ -32,6 +34,7 @@ func ValidateADRCrossLinks(
 				})
 			}
 		}
+
 		for _, ref := range a.Doc.FrontMatter.EvidenceRefs {
 			if evidenceCardIDs != nil && !evidenceCardIDs[ref] {
 				errs = append(errs, ADRCrossLinkError{
@@ -42,6 +45,7 @@ func ValidateADRCrossLinks(
 				})
 			}
 		}
+
 		for _, ref := range a.Doc.FrontMatter.TDDObligations {
 			if tddObligationIDs != nil && !tddObligationIDs[ref] {
 				errs = append(errs, ADRCrossLinkError{
@@ -53,6 +57,7 @@ func ValidateADRCrossLinks(
 			}
 		}
 	}
+
 	return errs
 }
 
@@ -60,9 +65,11 @@ func adrCrossLinkReference(adr ParsedADR) string {
 	if ref := strings.TrimSpace(adr.RelPath); ref != "" {
 		return ref
 	}
+
 	if ref := strings.TrimSpace(adr.Doc.FrontMatter.ADRID); ref != "" {
 		return ref
 	}
+
 	return "(unknown)"
 }
 
@@ -76,11 +83,14 @@ func ValidatePRDTDDObligationCrossLinks(
 	requirements []PRDRequirement,
 	tddObligationIDs map[string]bool,
 ) []PRDTDDObligationLinkError {
+
 	var errs []PRDTDDObligationLinkError
+
 	for _, req := range requirements {
 		if strings.ToLower(req.Priority) != "must" {
 			continue
 		}
+
 		for _, tddID := range req.TDDObligations {
 			if tddObligationIDs != nil && !tddObligationIDs[tddID] {
 				errs = append(errs, PRDTDDObligationLinkError{
@@ -94,6 +104,7 @@ func ValidatePRDTDDObligationCrossLinks(
 			}
 		}
 	}
+
 	return errs
 }
 
@@ -114,10 +125,13 @@ type ADRSupersessionLinkError struct {
 
 func ValidateADRSupersessionLinks(adrs []ParsedADR) []ADRSupersessionLinkError {
 	var errs []ADRSupersessionLinkError
+
 	byID := make(map[string]ParsedADR, len(adrs))
+
 	for _, a := range adrs {
 		byID[a.Doc.FrontMatter.ADRID] = a
 	}
+
 	for _, a := range adrs {
 		id := a.Doc.FrontMatter.ADRID
 		checkList := func(field string, refs []string) {
@@ -132,8 +146,10 @@ func ValidateADRSupersessionLinks(adrs []ParsedADR) []ADRSupersessionLinkError {
 						Ref:     ref,
 						Message: fmt.Sprintf("ADR %s has duplicate %s reference %q", id, field, ref),
 					})
+
 					continue
 				}
+
 				seen[ref] = true
 				if ref == id {
 					errs = append(errs, ADRSupersessionLinkError{
@@ -144,8 +160,10 @@ func ValidateADRSupersessionLinks(adrs []ParsedADR) []ADRSupersessionLinkError {
 						Ref:     ref,
 						Message: fmt.Sprintf("ADR %s has self-reference in %s", id, field),
 					})
+
 					continue
 				}
+
 				peer, ok := byID[ref]
 				if !ok {
 					errs = append(errs, ADRSupersessionLinkError{
@@ -156,8 +174,10 @@ func ValidateADRSupersessionLinks(adrs []ParsedADR) []ADRSupersessionLinkError {
 						Ref:     ref,
 						Message: fmt.Sprintf("ADR %s references missing ADR %q in %s", id, ref, field),
 					})
+
 					continue
 				}
+
 				if field == "supersedes" && !containsString(peer.Doc.FrontMatter.SupersededBy, id) {
 					errs = append(errs, ADRSupersessionLinkError{
 						Code:    "adr_supersession_non_reciprocal",
@@ -168,6 +188,7 @@ func ValidateADRSupersessionLinks(adrs []ParsedADR) []ADRSupersessionLinkError {
 						Message: fmt.Sprintf("ADR %s supersedes %s but %s does not list %s in superseded_by", id, ref, ref, id),
 					})
 				}
+
 				if field == "superseded_by" && !containsString(peer.Doc.FrontMatter.Supersedes, id) {
 					errs = append(errs, ADRSupersessionLinkError{
 						Code:    "adr_supersession_non_reciprocal",
@@ -183,15 +204,19 @@ func ValidateADRSupersessionLinks(adrs []ParsedADR) []ADRSupersessionLinkError {
 		checkList("supersedes", a.Doc.FrontMatter.Supersedes)
 		checkList("superseded_by", a.Doc.FrontMatter.SupersededBy)
 	}
+
 	return errs
 }
 
 func ValidateADRIndexSupersessionLinks(idx ADRIndex) []ADRSupersessionLinkError {
 	var errs []ADRSupersessionLinkError
+
 	byID := make(map[string]ADRIndexEntry, len(idx.ADRs))
+
 	for _, entry := range idx.ADRs {
 		byID[entry.ADRID] = entry
 	}
+
 	for _, entry := range idx.ADRs {
 		id := entry.ADRID
 		checkList := func(field string, refs []string) {
@@ -206,8 +231,10 @@ func ValidateADRIndexSupersessionLinks(idx ADRIndex) []ADRSupersessionLinkError 
 						Ref:     ref,
 						Message: fmt.Sprintf("ADR index entry %s has duplicate %s reference %q", id, field, ref),
 					})
+
 					continue
 				}
+
 				seen[ref] = true
 				if ref == id {
 					errs = append(errs, ADRSupersessionLinkError{
@@ -218,8 +245,10 @@ func ValidateADRIndexSupersessionLinks(idx ADRIndex) []ADRSupersessionLinkError 
 						Ref:     ref,
 						Message: fmt.Sprintf("ADR index entry %s has self-reference in %s", id, field),
 					})
+
 					continue
 				}
+
 				peer, ok := byID[ref]
 				if !ok {
 					errs = append(errs, ADRSupersessionLinkError{
@@ -230,8 +259,10 @@ func ValidateADRIndexSupersessionLinks(idx ADRIndex) []ADRSupersessionLinkError 
 						Ref:     ref,
 						Message: fmt.Sprintf("ADR index entry %s references missing ADR %q in %s", id, ref, field),
 					})
+
 					continue
 				}
+
 				if field == "supersedes" && !containsString(peer.SupersededBy, id) {
 					errs = append(errs, ADRSupersessionLinkError{
 						Code:    "adr_supersession_non_reciprocal",
@@ -242,6 +273,7 @@ func ValidateADRIndexSupersessionLinks(idx ADRIndex) []ADRSupersessionLinkError 
 						Message: fmt.Sprintf("ADR index entry %s supersedes %s but %s does not list %s in superseded_by", id, ref, ref, id),
 					})
 				}
+
 				if field == "superseded_by" && !containsString(peer.Supersedes, id) {
 					errs = append(errs, ADRSupersessionLinkError{
 						Code:    "adr_supersession_non_reciprocal",
@@ -257,6 +289,7 @@ func ValidateADRIndexSupersessionLinks(idx ADRIndex) []ADRSupersessionLinkError 
 		checkList("supersedes", entry.Supersedes)
 		checkList("superseded_by", entry.SupersededBy)
 	}
+
 	return errs
 }
 
@@ -270,19 +303,24 @@ type ADRIndexFrontMatterConsistencyError struct {
 
 func ValidateADRIndexFrontMatterConsistency(idx ADRIndex, adrs []ParsedADR) []ADRIndexFrontMatterConsistencyError {
 	var errs []ADRIndexFrontMatterConsistencyError
+
 	byPath := make(map[string]ParsedADR, len(adrs))
+
 	for _, adr := range adrs {
 		relPath := filepath.ToSlash(strings.TrimSpace(adr.RelPath))
 		if relPath != "" {
 			byPath[relPath] = adr
 		}
 	}
+
 	for _, entry := range idx.ADRs {
 		entryPath := filepath.ToSlash(filepath.Join("adrs", strings.TrimSpace(entry.Path)))
 		adr, ok := byPath[entryPath]
+
 		if !ok {
 			continue
 		}
+
 		appendMismatch := func(field, indexValue, markdownValue string) {
 			errs = append(errs, ADRIndexFrontMatterConsistencyError{
 				Code:    "adr_index_frontmatter_mismatch",
@@ -295,6 +333,7 @@ func ValidateADRIndexFrontMatterConsistency(idx ADRIndex, adrs []ParsedADR) []AD
 		compareString := func(field, indexValue, markdownValue string) {
 			indexValue = strings.TrimSpace(indexValue)
 			markdownValue = strings.TrimSpace(markdownValue)
+
 			if indexValue != markdownValue {
 				appendMismatch(field, indexValue, markdownValue)
 			}
@@ -302,10 +341,12 @@ func ValidateADRIndexFrontMatterConsistency(idx ADRIndex, adrs []ParsedADR) []AD
 		compareList := func(field string, indexValues, markdownValues []string) {
 			indexCanonical := canonicalStringSet(indexValues)
 			markdownCanonical := canonicalStringSet(markdownValues)
+
 			if strings.Join(indexCanonical, "\x00") != strings.Join(markdownCanonical, "\x00") {
 				appendMismatch(field, strings.Join(indexCanonical, ","), strings.Join(markdownCanonical, ","))
 			}
 		}
+
 		compareString("adr_id", entry.ADRID, adr.Doc.FrontMatter.ADRID)
 		compareString("status", entry.Status, adr.Doc.FrontMatter.Status)
 		compareString("coverage_tier", entry.CoverageTier, adr.Doc.FrontMatter.CoverageTier)
@@ -313,6 +354,7 @@ func ValidateADRIndexFrontMatterConsistency(idx ADRIndex, adrs []ParsedADR) []AD
 		compareList("supersedes", entry.Supersedes, adr.Doc.FrontMatter.Supersedes)
 		compareList("superseded_by", entry.SupersededBy, adr.Doc.FrontMatter.SupersededBy)
 	}
+
 	return errs
 }
 
@@ -332,7 +374,9 @@ func ValidateTraceabilityCrossLinks(
 	briefPaths map[string]bool,
 	reportPaths map[string]bool,
 ) []TraceabilityLinkError {
+
 	var errs []TraceabilityLinkError
+
 	for i, row := range matrix.Matrix {
 		if evidenceCardIDs != nil && !evidenceCardIDs[row.EvidenceCard] {
 			errs = append(errs, TraceabilityLinkError{
@@ -342,6 +386,7 @@ func ValidateTraceabilityCrossLinks(
 				Message:  fmt.Sprintf("traceability row %d: evidence_card %q not found in evidence cards", i, row.EvidenceCard),
 			})
 		}
+
 		if prdRequirementIDs != nil && !prdRequirementIDs[row.PRDRequirement] {
 			errs = append(errs, TraceabilityLinkError{
 				RowIndex: i,
@@ -350,6 +395,7 @@ func ValidateTraceabilityCrossLinks(
 				Message:  fmt.Sprintf("traceability row %d: prd_requirement %q not found in PRD requirements", i, row.PRDRequirement),
 			})
 		}
+
 		if adrIDs != nil && !adrIDs[row.ADR] {
 			errs = append(errs, TraceabilityLinkError{
 				RowIndex: i,
@@ -358,6 +404,7 @@ func ValidateTraceabilityCrossLinks(
 				Message:  fmt.Sprintf("traceability row %d: adr %q not found in ADR index", i, row.ADR),
 			})
 		}
+
 		if tddObligationIDs != nil && !tddObligationIDs[row.TDDObligation] {
 			errs = append(errs, TraceabilityLinkError{
 				RowIndex: i,
@@ -366,6 +413,7 @@ func ValidateTraceabilityCrossLinks(
 				Message:  fmt.Sprintf("traceability row %d: tdd_obligation %q not found in current or historical TDD obligations", i, row.TDDObligation),
 			})
 		}
+
 		if briefPaths != nil && !briefPaths[row.Brief] {
 			errs = append(errs, TraceabilityLinkError{
 				RowIndex: i,
@@ -374,6 +422,7 @@ func ValidateTraceabilityCrossLinks(
 				Message:  fmt.Sprintf("traceability row %d: brief %q not found in briefs directory", i, row.Brief),
 			})
 		}
+
 		if reportPaths != nil && !reportPaths[row.Report] {
 			errs = append(errs, TraceabilityLinkError{
 				RowIndex: i,
@@ -383,5 +432,6 @@ func ValidateTraceabilityCrossLinks(
 			})
 		}
 	}
+
 	return errs
 }

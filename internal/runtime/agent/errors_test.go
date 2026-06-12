@@ -43,6 +43,7 @@ func TestSentinelFailuresPreserveErrorsIsAndCanonicalCodes(t *testing.T) {
 			if !errors.Is(wrapped, tt.err) {
 				t.Fatalf("errors.Is(wrapped, sentinel) = false")
 			}
+
 			if got := failures.CodeOf(wrapped); got != tt.code {
 				t.Fatalf("failures.CodeOf(wrapped) = %v, want %v", got, tt.code)
 			}

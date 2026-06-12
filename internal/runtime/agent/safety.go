@@ -44,5 +44,6 @@ func marshalRunEvent(role string, value any) RunEvent {
 	if err != nil {
 		return RunEvent{}
 	}
+
 	return RunEvent{Role: role, Content: string(data)}
 }

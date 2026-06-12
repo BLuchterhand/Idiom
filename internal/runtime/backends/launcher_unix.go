@@ -19,15 +19,19 @@ func realSpawn(spec LaunchSpec, logPath string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("backends: open log %q: %w", logPath, err)
 	}
+
 	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...)
+
 	cmd.Stdin = nil
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
 		return 0, fmt.Errorf("backends: spawn %s: %w", spec.Alias, err)
 	}
+
 	// Detach the file handle from this process: the child still
 	// owns it via fork+exec, so closing here doesn't affect the
 	// child's writes. Keeping it open would tie idiom's lifetime
@@ -44,9 +48,12 @@ func realSpawn(spec LaunchSpec, logPath string) (int, error) {
 	// detail used to nuke the whole login session from a passing test.
 	if cmd.Process != nil {
 		pid := cmd.Process.Pid
+
 		_ = cmd.Process.Release()
+
 		return pid, nil
 	}
+
 	return 0, fmt.Errorf("backends: spawn %s: no process state after Start", spec.Alias)
 }
 
@@ -61,6 +68,7 @@ func realStopSignal(pid int, sig Signal) error {
 		// call rather than risk a session nuke.
 		return fmt.Errorf("backends: refusing to signal pid %d (must be > 0)", pid)
 	}
+
 	return syscall.Kill(pid, syscall.Signal(sig))
 }
 
@@ -72,6 +80,7 @@ func realIsAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
+
 	return syscall.Kill(pid, syscall.Signal(0)) == nil
 }
 
@@ -84,11 +93,13 @@ func realPIDForPort(port int) (int, error) {
 	if !errors.Is(err, errLsofUnavailable) {
 		return pid, err
 	}
+
 	pid, procErr := pidForPortViaProc(port)
 	if errors.Is(procErr, errProcUnavailable) {
 		// Both strategies failed; surface the original lsof
 		// "not found" so the operator knows what to install.
 		return 0, errLsofUnavailable
 	}
+
 	return pid, procErr
 }

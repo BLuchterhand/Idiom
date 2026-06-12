@@ -20,12 +20,14 @@ func TestRequestApprovalAutoDeniesInHeadlessMode(t *testing.T) {
 	model := &Model{}
 
 	var buf bytes.Buffer
+
 	model.SetJSONEventStream(&buf, "test-session")
 
 	done := make(chan bool, 1)
 	go func() {
 		done <- model.requestApproval(workspace.ToolRequest{Tool: "edit_file", Path: "a.txt"}, "implement")
 	}()
+
 	select {
 	case got := <-done:
 		if got {
@@ -39,6 +41,7 @@ func TestRequestApprovalAutoDeniesInHeadlessMode(t *testing.T) {
 	if !strings.Contains(emitted, "approval_auto_denied") {
 		t.Fatalf("expected approval_auto_denied event in JSON stream, got: %s", emitted)
 	}
+
 	if !strings.Contains(emitted, `"tool":"edit_file"`) {
 		t.Fatalf("event should name the tool, got: %s", emitted)
 	}
@@ -67,12 +70,15 @@ func TestPreExecuteToolRequestConfigDenyOverridesModeAllow(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected TUI pre-execute hook to block configured deny")
 	}
+
 	if result.Output != "" {
 		t.Fatalf("deny result must not include file output, got %q", result.Output)
 	}
+
 	if !strings.Contains(result.Summary, "permission rules") {
 		t.Fatalf("unexpected deny summary %q", result.Summary)
 	}
+
 	if !strings.Contains(result.Error, "deny read_file") {
 		t.Fatalf("unexpected deny error %q", result.Error)
 	}

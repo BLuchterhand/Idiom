@@ -13,6 +13,7 @@ import (
 
 func (r *Runner) deriveCurrentTurnPhaseContract(input runnerTurnPhaseContractInput) TurnPhaseContract {
 	brief := workerruntime.NormalizeRuntimeBrief(input.Brief)
+
 	return deriveTurnPhaseContract(TurnPhaseContractInput{
 		ContractID:               strings.TrimSpace(input.ContractID),
 		PhaseEpoch:               input.ModelCallNumber,
@@ -50,12 +51,15 @@ func applyTurnPhaseContractToNextActionState(state runnerNextActionState, contra
 	if contract.PhaseID == "" {
 		return state
 	}
+
 	if contract.PhaseID == turnPhaseGeneric && strings.TrimSpace(contract.Phase) == "generic" {
 		return state
 	}
+
 	if strings.TrimSpace(contract.Phase) != "" {
 		state.Phase = contract.Phase
 	}
+
 	if len(contract.RequiredNext) > 0 {
 		state.NextValidActions = append([]string(nil), contract.RequiredNext...)
 	} else if turnPhaseContractTerminalOutcomesDriveNextActions(contract) {
@@ -64,11 +68,14 @@ func applyTurnPhaseContractToNextActionState(state runnerNextActionState, contra
 			state.NextValidActions = []string{"submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
 		}
 	}
+
 	if len(contract.InvalidNext) > 0 {
 		state.InvalidNextActions = append([]string(nil), contract.InvalidNext...)
 	}
+
 	state.Constraints = mergeRunnerStateStrings(state.Constraints, contract.Constraints)
 	state.StateSummary = runnerStateSummary(state)
+
 	return state
 }
 
@@ -76,7 +83,9 @@ func turnPhaseSurfaceSummaryFromNextActionState(state runnerNextActionState, con
 	payload := contract.autonomyEventPayload()
 	advertisedClasses := turnPhaseSurfaceActionClassesFromText(state.NextValidActions)
 	invalidClasses := turnPhaseSurfaceInvalidActionClassesFromText(state.InvalidNextActions)
+
 	invalidClasses = removeAllowedTurnPhaseInvalidActionClasses(invalidClasses, contract.ActionPolicy.AllowedActionClasses)
+
 	return autonomy.TurnPhaseSurfaceSummaryEvent{
 		SchemaVersion:           autonomy.TurnPhaseSurfaceSummarySchemaVersion,
 		SurfaceID:               "next_action_state",
@@ -92,39 +101,50 @@ func turnPhaseSurfaceSummaryFromNextActionState(state runnerNextActionState, con
 
 func turnPhaseSurfaceActionClassesFromText(values []string) []string {
 	var classes []string
+
 	for _, value := range values {
 		lower := strings.ToLower(strings.TrimSpace(value))
 		if lower == "" {
 			continue
 		}
+
 		if strings.Contains(lower, "submit_plan") {
 			classes = append(classes, actionSubmitPlan)
 		}
+
 		if strings.Contains(lower, "source-satisfied") {
 			classes = append(classes, actionSourceSatisfied)
 		}
+
 		if strings.Contains(lower, "<<question>>") || strings.Contains(lower, "blocker") {
 			classes = append(classes, actionBlocker)
 		}
+
 		if strings.Contains(lower, "decision: pass") {
 			classes = append(classes, actionReviewPass)
 		}
+
 		if strings.Contains(lower, "final answer") || strings.Contains(lower, "answer directly") || strings.Contains(lower, "answer from") {
 			classes = append(classes, actionFinalAnswer)
 		}
+
 		if phaseActionTextHasTerm(lower, "read") || phaseActionTextHasTerm(lower, "inspect") {
 			classes = append(classes, actionRead)
 		}
+
 		if phaseActionTextHasTerm(lower, "search") || phaseActionTextHasTerm(lower, "discovery") || phaseActionTextHasTerm(lower, "context") {
 			classes = append(classes, actionSearch)
 		}
+
 		if !strings.Contains(lower, "submit_plan") && (strings.Contains(lower, "write") || strings.Contains(lower, "edit") || strings.Contains(lower, "patch")) {
 			classes = append(classes, actionPerEditWrite)
 		}
+
 		if phaseActionTextHasTerm(lower, "verify") || phaseActionTextHasTerm(lower, "test") || phaseActionTextHasTerm(lower, "command") {
 			classes = append(classes, actionVerify)
 		}
 	}
+
 	return uniquePhaseStrings(classes)
 }
 
@@ -132,6 +152,7 @@ func phaseActionTextHasTerm(value string, term string) bool {
 	if value == "" || term == "" {
 		return false
 	}
+
 	fields := strings.FieldsFunc(value, func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_')
 	})
@@ -140,6 +161,7 @@ func phaseActionTextHasTerm(value string, term string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -147,7 +169,9 @@ func turnPhaseContractTerminalOutcomesDriveNextActions(contract TurnPhaseContrac
 	if len(contract.TerminalOutcomes) == 0 {
 		return false
 	}
+
 	phaseID := strings.TrimSpace(contract.PhaseID)
+
 	return strings.Contains(phaseID, "submit_ready") ||
 		strings.Contains(phaseID, "source_satisfied_terminal") ||
 		strings.Contains(phaseID, "review_repair") ||
@@ -156,9 +180,11 @@ func turnPhaseContractTerminalOutcomesDriveNextActions(contract TurnPhaseContrac
 
 func turnPhaseSurfaceInvalidActionClassesFromText(values []string) []string {
 	var classes []string
+
 	for _, value := range values {
 		classes = append(classes, turnPhaseSurfaceActionClassesFromText([]string{turnPhaseSurfaceInvalidActionLeadClause(value)})...)
 	}
+
 	out := classes[:0]
 	for _, actionClass := range classes {
 		switch actionClass {
@@ -168,6 +194,7 @@ func turnPhaseSurfaceInvalidActionClassesFromText(values []string) []string {
 			out = append(out, actionClass)
 		}
 	}
+
 	return out
 }
 
@@ -175,13 +202,16 @@ func removeAllowedTurnPhaseInvalidActionClasses(invalidClasses []string, allowed
 	if len(invalidClasses) == 0 || len(allowedClasses) == 0 {
 		return invalidClasses
 	}
+
 	out := invalidClasses[:0]
 	for _, actionClass := range invalidClasses {
 		if containsPhaseString(allowedClasses, actionClass) {
 			continue
 		}
+
 		out = append(out, actionClass)
 	}
+
 	return out
 }
 
@@ -190,6 +220,7 @@ func turnPhaseSurfaceInvalidActionLeadClause(value string) string {
 	if lower == "" {
 		return ""
 	}
+
 	for _, marker := range []string{
 		" before ",
 		" after ",
@@ -203,6 +234,7 @@ func turnPhaseSurfaceInvalidActionLeadClause(value string) string {
 			return before
 		}
 	}
+
 	return lower
 }
 
@@ -224,6 +256,7 @@ func runnerTurnPhaseModelCallID(contractID string, modelCallNumber int) string {
 	if contractID == "" {
 		return fmt.Sprintf("model_call_%d", modelCallNumber)
 	}
+
 	return fmt.Sprintf("%s:model_call_%d", contractID, modelCallNumber)
 }
 
@@ -231,16 +264,20 @@ func runnerTurnPhaseHiddenTools(hidden map[string]bool) []string {
 	if len(hidden) == 0 {
 		return nil
 	}
+
 	out := make([]string, 0, len(hidden))
 	for tool, isHidden := range hidden {
 		if !isHidden {
 			continue
 		}
+
 		if trimmed := strings.TrimSpace(tool); trimmed != "" {
 			out = append(out, trimmed)
 		}
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -248,6 +285,7 @@ func runnerTurnPhaseBackendKind(r *Runner) string {
 	if r == nil || r.Client == nil {
 		return ""
 	}
+
 	return r.Client.Backend()
 }
 
@@ -260,12 +298,15 @@ func runnerTurnPhaseParserContract(opts llama.ChatOptions, brief workerruntime.W
 	if state.Mode == PlanExecutePlanningModeAnchorRefresh {
 		return "source_refresh"
 	}
+
 	if opts.ResponseFormatJSON {
 		return "submit_plan_json"
 	}
+
 	if len(opts.Tools) == 1 && strings.TrimSpace(opts.Tools[0].Function.Name) == "submit_plan" && supportsNativeTools {
 		return "native_submit_plan"
 	}
+
 	return ""
 }
 
@@ -273,6 +314,7 @@ func runnerTurnPhaseResponseFormat(opts llama.ChatOptions) string {
 	if opts.ResponseFormatJSON {
 		return "json"
 	}
+
 	return ""
 }
 
@@ -281,6 +323,7 @@ func runnerTurnPhaseThinkingPolicy(opts llama.ChatOptions) string {
 	if opts.PreserveThinking {
 		return policy + "_preserve"
 	}
+
 	return policy + "_visible"
 }
 
@@ -290,30 +333,37 @@ func runnerTurnPhaseTextualParser(opts llama.ChatOptions, supportsNativeTools bo
 
 func runnerVerificationEvidenceRefs(results []workspace.ToolResult) []string {
 	var refs []string
+
 	for _, result := range results {
 		if !resultCountsAsSuccessfulVerification(result) {
 			continue
 		}
+
 		summary := strings.TrimSpace(result.Summary)
 		if summary == "" {
 			summary = strings.TrimSpace(result.Tool)
 		}
+
 		if summary != "" {
 			refs = append(refs, summary)
 		}
 	}
+
 	return uniquePhaseStrings(refs)
 }
 
 func runnerTurnPhaseResidualBlockers(results []workspace.ToolResult) []string {
 	var blockers []string
+
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) == "" {
 			continue
 		}
+
 		if strings.TrimSpace(result.Tool) == "completion_gate" || strings.Contains(strings.ToLower(result.Summary), "blocked") {
 			blockers = append(blockers, result.Summary)
 		}
 	}
+
 	return uniquePhaseStrings(blockers)
 }

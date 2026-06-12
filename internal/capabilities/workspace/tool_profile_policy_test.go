@@ -20,6 +20,7 @@ func TestToolRequestAllowedForDiscoveryProfileDeniesRefreshCapableContextStatus(
 	if decision.Allowed {
 		t.Fatal("context_status refresh request should be denied for discovery profile")
 	}
+
 	if decision.Code != "profile_denied" || !strings.Contains(decision.Reason, "refresh") {
 		t.Fatalf("unexpected refresh denial: %#v", decision)
 	}
@@ -43,6 +44,7 @@ func TestToolRequestAllowedForDiscoveryProfileRequiresReportOnlyGraphReads(t *te
 	if denied.Allowed {
 		t.Fatal("context_query default read-through request should be denied for discovery profile")
 	}
+
 	if denied.Code != "profile_denied" || !strings.Contains(denied.Reason, "freshness_policy") {
 		t.Fatalf("unexpected context_query denial: %#v", denied)
 	}
@@ -59,15 +61,18 @@ func TestToolAllowedForDiscoveryProfileDeniesDescriptorLocalArtifactTools(t *tes
 			t.Fatalf("%s must remain descriptor-declared as a local artifact writer", tool)
 		}
 	}
+
 	localArtifactTools := builtInToolSurfaceDiscoveryLocalArtifactTools()
 	if len(localArtifactTools) == 0 {
 		t.Fatal("test setup expected at least one descriptor-declared local artifact tool")
 	}
+
 	for _, tool := range localArtifactTools {
 		decision := ToolAllowedForProfile(tool, ToolProfileDiscovery)
 		if decision.Allowed {
 			t.Fatalf("%s should be denied for discovery profile because descriptor metadata says it writes local artifacts", tool)
 		}
+
 		if decision.Code != "profile_denied" || !strings.Contains(decision.Reason, "context artifacts") {
 			t.Fatalf("%s denial should name local artifact writes, got %#v", tool, decision)
 		}
@@ -87,6 +92,7 @@ func TestToolAllowedForMCPDiscoveryProfileAllowsDescriptorLocalArtifactTools(t *
 	if len(localArtifactTools) == 0 {
 		t.Fatal("test setup expected at least one descriptor-declared local artifact tool")
 	}
+
 	for _, tool := range localArtifactTools {
 		decision := ToolAllowedForProfile(tool, ToolProfileMCPDiscovery)
 		if !decision.Allowed {
@@ -101,6 +107,7 @@ func TestToolAllowedForMCPDiscoveryProfileDeniesMutationShellAndUnknownEffects(t
 		if decision.Allowed {
 			t.Fatalf("%s should be denied for mcp_discovery profile", tool)
 		}
+
 		if decision.Code != "profile_denied" || decision.Reason == "" {
 			t.Fatalf("%s denial should be structured, got %#v", tool, decision)
 		}
@@ -128,6 +135,7 @@ func TestToolAllowedForDiscoveryProfileDeniesMutationShellAndUnknownEffects(t *t
 		if decision.Allowed {
 			t.Fatalf("%s should be denied for discovery profile", tool)
 		}
+
 		if decision.Code != "profile_denied" || decision.Reason == "" {
 			t.Fatalf("%s denial should be structured, got %#v", tool, decision)
 		}
@@ -135,13 +143,14 @@ func TestToolAllowedForDiscoveryProfileDeniesMutationShellAndUnknownEffects(t *t
 }
 
 func TestToolProfileDeniedResultIsStableAndDoesNotEchoRequestValues(t *testing.T) {
-	privatePath := "/Users/example/.ssh/id_ed25519"
+	privatePath := "/home/example/.ssh/id_ed25519"
 	secretSentinel := "P75_POLICY_SECRET_SENTINEL_DO_NOT_LEAK"
 	decision := ToolRequestAllowedForProfile(ToolRequest{
 		Tool:    "write_file",
 		Path:    privatePath,
 		Content: secretSentinel,
 	}, ToolProfileDiscovery)
+
 	if decision.Allowed {
 		t.Fatal("write_file should be denied for discovery profile")
 	}
@@ -150,11 +159,13 @@ func TestToolProfileDeniedResultIsStableAndDoesNotEchoRequestValues(t *testing.T
 	if result.Tool != "write_file" || result.Summary != "Tool request denied by discovery profile" {
 		t.Fatalf("unexpected denial result identity: %#v", result)
 	}
+
 	for _, want := range []string{"profile_denied", "read_only_profile"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("denial result should contain stable %q marker: %#v", want, result)
 		}
 	}
+
 	for _, forbidden := range []string{privatePath, secretSentinel} {
 		if strings.Contains(result.Summary, forbidden) || strings.Contains(result.Error, forbidden) || strings.Contains(result.Output, forbidden) {
 			t.Fatalf("denial result leaked request value %q: %#v", forbidden, result)

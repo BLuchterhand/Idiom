@@ -137,22 +137,29 @@ func NormalizeLocalizationTopK(values []int) []int {
 	if len(values) == 0 {
 		return DefaultLocalizationTopK()
 	}
+
 	seen := make(map[int]struct{}, len(values))
 	normalized := make([]int, 0, len(values))
+
 	for _, value := range values {
 		if value <= 0 {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		normalized = append(normalized, value)
 	}
+
 	if len(normalized) == 0 {
 		return DefaultLocalizationTopK()
 	}
+
 	slices.Sort(normalized)
+
 	return normalized
 }
 
@@ -163,9 +170,11 @@ func AnalyzeLocalizationBenchmark(corpus LocalizationCorpus, options Localizatio
 		ManualCorpusReviewRequired: true,
 		Definitions:                localizationMetricDefinitions(),
 	}
+
 	for _, k := range topK {
 		report.TopKEditPathCoverage = append(report.TopKEditPathCoverage, localizationTopKCoverage(corpus, k))
 	}
+
 	report.BroadReadCount = localizationTrajectoryCount(corpus, func(trajectory *LocalizationTrajectoryEvidence) *int {
 		return trajectory.BroadReadCount
 	})
@@ -175,6 +184,7 @@ func AnalyzeLocalizationBenchmark(corpus LocalizationCorpus, options Localizatio
 	report.CandidatePathWaste = localizationCandidatePathWaste(corpus)
 	report.CompetitiveConditions = localizationCompetitiveConditionMetrics(corpus, topK)
 	report.MissingInputs = localizationBenchmarkMissingInputs(report)
+
 	return report
 }
 
@@ -185,37 +195,49 @@ func localizationTopKCoverage(corpus LocalizationCorpus, k int) LocalizationTopK
 	}
 	fileCandidateTasks := 0
 	missingFileCandidates := 0
+
 	for _, task := range corpus.Tasks {
 		expectedFiles := localizationExpectedFileSet(task)
+
 		metric.Denominator += len(expectedFiles)
+
 		if len(expectedFiles) == 0 {
 			continue
 		}
+
 		candidates := localizationCandidateFilePaths(task)
 		if len(candidates) == 0 {
 			missingFileCandidates++
 			continue
 		}
+
 		fileCandidateTasks++
+
 		covered := make(map[string]struct{}, len(expectedFiles))
+
 		for _, candidate := range firstLocalizationCandidates(candidates, k) {
 			if _, ok := expectedFiles[candidate]; ok {
 				covered[candidate] = struct{}{}
 			}
 		}
+
 		metric.Numerator += len(covered)
 	}
+
 	metric.TasksWithInput = fileCandidateTasks
 	metric.Rate = localizationRate(metric.Numerator, metric.Denominator)
 	metric.Available = metric.Denominator > 0 && fileCandidateTasks > 0
+
 	if metric.Denominator == 0 {
 		metric.FailureReasons = append(metric.FailureReasons, localizationFailureNoExpectedEditPaths)
 	}
+
 	if fileCandidateTasks == 0 {
 		metric.FailureReasons = append(metric.FailureReasons, localizationFailureContextPacketFileCandidates)
 	} else if missingFileCandidates > 0 {
 		metric.FailureReasons = append(metric.FailureReasons, localizationFailurePartialContextPacket)
 	}
+
 	return metric
 }
 
@@ -227,19 +249,23 @@ func localizationTrajectoryCount(corpus LocalizationCorpus, value func(*Localiza
 		if task.Benchmark == nil || task.Benchmark.Trajectory == nil {
 			continue
 		}
+
 		count := value(task.Benchmark.Trajectory)
 		if count == nil {
 			continue
 		}
+
 		metric.Numerator += *count
 		metric.Denominator++
 	}
+
 	metric.Available = metric.Denominator > 0
 	if metric.Denominator == 0 {
 		metric.FailureReasons = append(metric.FailureReasons, localizationFailureTrajectoryInput)
 	} else if metric.Denominator < metric.TotalTasks {
 		metric.FailureReasons = append(metric.FailureReasons, localizationFailurePartialTrajectoryInput)
 	}
+
 	return metric
 }
 
@@ -252,25 +278,32 @@ func localizationCandidatePathWaste(corpus LocalizationCorpus) LocalizationCandi
 		if contextPacket == nil {
 			continue
 		}
+
 		metric.TasksWithContextPacketInput++
+
 		expectedFiles := localizationExpectedFileSet(task)
 		expectedSymbols := localizationExpectedSymbolSet(task)
 		expectedTestExact, expectedTestPaths := localizationExpectedTestSets(task)
 
 		for _, candidate := range localizationUniqueCandidateFiles(contextPacket.Files) {
 			metric.PathWasteDenominator++
+
 			metric.CandidateWasteDenominator++
+
 			if _, ok := expectedFiles[candidate]; !ok {
 				metric.PathWasteNumerator++
+
 				metric.CandidateWasteNumerator++
 			}
 		}
+
 		for _, candidate := range localizationUniqueCandidateSymbols(contextPacket.Symbols) {
 			metric.CandidateWasteDenominator++
 			if _, ok := expectedSymbols[candidate]; !ok {
 				metric.CandidateWasteNumerator++
 			}
 		}
+
 		for _, candidate := range localizationUniqueCandidateTests(contextPacket.Tests) {
 			metric.CandidateWasteDenominator++
 			if !localizationExpectedTestContains(expectedTestExact, expectedTestPaths, candidate) {
@@ -278,14 +311,17 @@ func localizationCandidatePathWaste(corpus LocalizationCorpus) LocalizationCandi
 			}
 		}
 	}
+
 	metric.CandidateWasteRate = localizationRate(metric.CandidateWasteNumerator, metric.CandidateWasteDenominator)
 	metric.PathWasteRate = localizationRate(metric.PathWasteNumerator, metric.PathWasteDenominator)
 	metric.Available = metric.CandidateWasteDenominator > 0 || metric.PathWasteDenominator > 0
+
 	if metric.TasksWithContextPacketInput == 0 {
 		metric.FailureReasons = append(metric.FailureReasons, localizationFailureContextPacketCandidates)
 	} else if metric.TasksWithContextPacketInput < metric.TotalTasks {
 		metric.FailureReasons = append(metric.FailureReasons, localizationFailurePartialContextPacket)
 	}
+
 	return metric
 }
 
@@ -308,21 +344,26 @@ func localizationCompetitiveConditionMetrics(corpus LocalizationCorpus, topK []i
 				metric.MissingTasks++
 				continue
 			}
+
 			switch normalizeLocalizationCompetitiveStatus(condition.Status) {
 			case localizationCompetitiveStatusMeasured:
 				metric.MeasuredTasks++
 				if localizationCompetitiveConditionHasBudget(condition) {
 					metric.BudgetedTasks++
 				}
+
 				if localizationCompetitiveConditionHasReproducibility(condition) {
 					metric.ReproducibleTasks++
 				}
+
 				if strings.TrimSpace(condition.CommandID) != "" {
 					metric.CommandedTasks++
 				}
+
 				if strings.TrimSpace(condition.ArtifactPath) != "" {
 					metric.ArtifactedTasks++
 				}
+
 				if localizationCompetitiveConditionHasVerificationMethod(condition) {
 					metric.VerifiedTasks++
 				}
@@ -331,48 +372,62 @@ func localizationCompetitiveConditionMetrics(corpus LocalizationCorpus, topK []i
 				if localizationCompetitiveConditionHasReproducibility(condition) {
 					metric.ReproducibleTasks++
 				}
+
 				if strings.TrimSpace(condition.CommandID) != "" {
 					metric.CommandedTasks++
 				}
+
 				if strings.TrimSpace(condition.ArtifactPath) != "" {
 					metric.ArtifactedTasks++
 				}
+
 				if localizationCompetitiveConditionHasVerificationMethod(condition) {
 					metric.VerifiedTasks++
 				}
+
 				if reason := normalizedLocalizationKey(condition.InfeasibilityReason); reason != "" {
 					metric.InfeasibilityReasons[reason]++
 				}
+
 				if impact := normalizedLocalizationKey(condition.ClaimImpact); impact != "" {
 					metric.ClaimImpacts[impact]++
 				}
 			default:
 				metric.MissingTasks++
 			}
+
 			for _, classification := range condition.ClientClassifications {
 				if normalized := normalizeClientClassification(classification); normalized != "" {
 					metric.ClientCoverage[normalized]++
 					continue
 				}
+
 				metric.InvalidClientClasses++
 			}
 		}
+
 		for _, k := range topK {
 			metric.TopKEditPathCoverage = append(metric.TopKEditPathCoverage, localizationCompetitiveTopKCoverage(corpus, definition.ID, k))
 		}
+
 		metric.Status = localizationCompetitiveConditionStatus(metric)
 		metric.FailureReasons = localizationCompetitiveConditionFailureReasons(metric)
+
 		if len(metric.ClientCoverage) == 0 {
 			metric.ClientCoverage = nil
 		}
+
 		if len(metric.InfeasibilityReasons) == 0 {
 			metric.InfeasibilityReasons = nil
 		}
+
 		if len(metric.ClaimImpacts) == 0 {
 			metric.ClaimImpacts = nil
 		}
+
 		metrics = append(metrics, metric)
 	}
+
 	return metrics
 }
 
@@ -382,32 +437,43 @@ func localizationCompetitiveTopKCoverage(corpus LocalizationCorpus, baseline str
 		TotalTasks: len(corpus.Tasks),
 	}
 	missingCandidateTasks := 0
+
 	for _, task := range corpus.Tasks {
 		condition, ok := localizationCompetitiveCondition(task, baseline)
 		if !ok || normalizeLocalizationCompetitiveStatus(condition.Status) != localizationCompetitiveStatusMeasured {
 			continue
 		}
+
 		expectedFiles := localizationExpectedFileSet(task)
+
 		metric.Denominator += len(expectedFiles)
+
 		if len(expectedFiles) == 0 {
 			continue
 		}
+
 		candidates := localizationUniqueCandidateFiles(condition.CandidateFiles)
 		if len(candidates) == 0 {
 			missingCandidateTasks++
 			continue
 		}
+
 		metric.TasksWithInput++
+
 		covered := make(map[string]struct{}, len(expectedFiles))
+
 		for _, candidate := range firstLocalizationCandidates(candidates, k) {
 			if _, ok := expectedFiles[candidate]; ok {
 				covered[candidate] = struct{}{}
 			}
 		}
+
 		metric.Numerator += len(covered)
 	}
+
 	metric.Rate = localizationRate(metric.Numerator, metric.Denominator)
 	metric.Available = metric.Denominator > 0 && metric.TasksWithInput > 0
+
 	if metric.Denominator == 0 {
 		metric.FailureReasons = append(metric.FailureReasons, localizationFailureCompetitiveCandidates)
 	} else if metric.TasksWithInput == 0 {
@@ -415,6 +481,7 @@ func localizationCompetitiveTopKCoverage(corpus LocalizationCorpus, baseline str
 	} else if missingCandidateTasks > 0 {
 		metric.FailureReasons = append(metric.FailureReasons, localizationFailurePartialCompetitiveCandidates)
 	}
+
 	return metric
 }
 
@@ -423,18 +490,23 @@ func localizationCompetitiveConditionStatus(metric LocalizationCompetitiveCondit
 	if metric.TotalTasks == 0 || covered == 0 {
 		return "not_available"
 	}
+
 	if metric.MissingTasks > 0 {
 		return "partial"
 	}
+
 	if metric.InvalidClientClasses > 0 {
 		return "partial"
 	}
+
 	if metric.MeasuredTasks > 0 && metric.InfeasibleTasks == 0 {
 		return localizationCompetitiveStatusMeasured
 	}
+
 	if metric.MeasuredTasks == 0 && metric.InfeasibleTasks > 0 {
 		return "documented_infeasible"
 	}
+
 	return "mixed_measured_infeasible"
 }
 
@@ -445,25 +517,32 @@ func localizationCompetitiveConditionFailureReasons(metric LocalizationCompetiti
 	} else if metric.MissingTasks > 0 {
 		reasons = append(reasons, localizationFailurePartialCompetitiveCondition)
 	}
+
 	if metric.MeasuredTasks > 0 && metric.BudgetedTasks < metric.MeasuredTasks {
 		reasons = append(reasons, localizationFailureCompetitiveBudget)
 	}
+
 	coveredTasks := metric.MeasuredTasks + metric.InfeasibleTasks
 	if coveredTasks > 0 && metric.ReproducibleTasks < coveredTasks {
 		reasons = append(reasons, localizationFailureCompetitiveReproducibility)
 	}
+
 	if coveredTasks > 0 && metric.CommandedTasks < coveredTasks {
 		reasons = append(reasons, localizationFailureCompetitiveCommand)
 	}
+
 	if coveredTasks > 0 && metric.ArtifactedTasks < coveredTasks {
 		reasons = append(reasons, localizationFailureCompetitiveArtifact)
 	}
+
 	if coveredTasks > 0 && metric.VerifiedTasks < coveredTasks {
 		reasons = append(reasons, localizationFailureCompetitiveVerification)
 	}
+
 	if metric.InvalidClientClasses > 0 {
 		reasons = append(reasons, localizationFailureCompetitiveClientClasses)
 	}
+
 	if metric.MeasuredTasks > 0 {
 		for _, coverage := range metric.TopKEditPathCoverage {
 			for _, reason := range coverage.FailureReasons {
@@ -474,6 +553,7 @@ func localizationCompetitiveConditionFailureReasons(metric LocalizationCompetiti
 			}
 		}
 	}
+
 	return util.UniqueNonEmpty(reasons)
 }
 
@@ -481,11 +561,13 @@ func localizationCompetitiveCondition(task LocalizationCorpusTask, baseline stri
 	if task.Benchmark == nil {
 		return LocalizationCompetitiveConditionInput{}, false
 	}
+
 	for _, condition := range task.Benchmark.CompetitiveConditions {
 		if normalizeLocalizationCompetitiveBaseline(condition.Baseline) == baseline {
 			return condition, true
 		}
 	}
+
 	return LocalizationCompetitiveConditionInput{}, false
 }
 
@@ -528,6 +610,7 @@ func localizationCompetitiveBaselineKnown(value string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -544,6 +627,7 @@ func localizationCompetitiveConditionHasBudget(condition LocalizationCompetitive
 	if condition.Budget == nil {
 		return false
 	}
+
 	return condition.Budget.TokenBudget > 0 || condition.Budget.ToolCallBudget > 0 || condition.Budget.WallClockBudgetMS > 0
 }
 
@@ -557,11 +641,13 @@ func localizationCompetitiveConditionHasVerificationMethod(condition Localizatio
 
 func RequiredLocalizationExternalCompetitiveBaselineIDs() []string {
 	var out []string
+
 	for _, definition := range localizationCompetitiveBaselineDefinitions {
 		if definition.External {
 			out = append(out, definition.ID)
 		}
 	}
+
 	return out
 }
 
@@ -570,6 +656,7 @@ func LocalizationCompetitiveBaselineIDs() []string {
 	for _, definition := range localizationCompetitiveBaselineDefinitions {
 		out = append(out, definition.ID)
 	}
+
 	return out
 }
 
@@ -577,13 +664,16 @@ func localizationContextPacket(task LocalizationCorpusTask) *LocalizationContext
 	if task.Benchmark == nil {
 		return nil
 	}
+
 	if task.Benchmark.ContextPacket == nil {
 		return nil
 	}
+
 	contextPacket := task.Benchmark.ContextPacket
 	if len(contextPacket.Files) == 0 && len(contextPacket.Symbols) == 0 && len(contextPacket.Tests) == 0 {
 		return nil
 	}
+
 	return contextPacket
 }
 
@@ -594,6 +684,7 @@ func localizationExpectedFileSet(task LocalizationCorpusTask) map[string]struct{
 			files[path] = struct{}{}
 		}
 	}
+
 	return files
 }
 
@@ -604,23 +695,28 @@ func localizationExpectedSymbolSet(task LocalizationCorpusTask) map[string]struc
 			symbols[key] = struct{}{}
 		}
 	}
+
 	return symbols
 }
 
 func localizationExpectedTestSets(task LocalizationCorpusTask) (map[string]struct{}, map[string]struct{}) {
 	exact := make(map[string]struct{}, len(task.Expected.Tests))
 	paths := make(map[string]struct{}, len(task.Expected.Tests))
+
 	for _, test := range task.Expected.Tests {
 		path := localizationAnchorPath(test.Path)
 		if path == "" {
 			continue
 		}
+
 		if strings.TrimSpace(test.Name) == "" {
 			paths[path] = struct{}{}
 			continue
 		}
+
 		exact[localizationNamedAnchorKey(test.Path, test.Name)] = struct{}{}
 	}
+
 	return exact, paths
 }
 
@@ -628,8 +724,10 @@ func localizationExpectedTestContains(exact map[string]struct{}, paths map[strin
 	if _, ok := exact[candidate]; ok {
 		return true
 	}
+
 	path, _, _ := strings.Cut(candidate, "#")
 	_, ok := paths[path]
+
 	return ok
 }
 
@@ -638,57 +736,70 @@ func localizationCandidateFilePaths(task LocalizationCorpusTask) []string {
 	if contextPacket == nil {
 		return nil
 	}
+
 	return localizationUniqueCandidateFiles(contextPacket.Files)
 }
 
 func localizationUniqueCandidateFiles(files []LocalizationCandidateFile) []string {
 	seen := make(map[string]struct{}, len(files))
 	paths := make([]string, 0, len(files))
+
 	for _, file := range files {
 		path := localizationAnchorPath(file.Path)
 		if path == "" {
 			continue
 		}
+
 		if _, ok := seen[path]; ok {
 			continue
 		}
+
 		seen[path] = struct{}{}
 		paths = append(paths, path)
 	}
+
 	return paths
 }
 
 func localizationUniqueCandidateSymbols(symbols []LocalizationCandidateSymbol) []string {
 	seen := make(map[string]struct{}, len(symbols))
 	keys := make([]string, 0, len(symbols))
+
 	for _, symbol := range symbols {
 		key := localizationNamedAnchorKey(symbol.Path, symbol.Name)
 		if key == "" {
 			continue
 		}
+
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
 		keys = append(keys, key)
 	}
+
 	return keys
 }
 
 func localizationUniqueCandidateTests(tests []LocalizationCandidateTest) []string {
 	seen := make(map[string]struct{}, len(tests))
 	keys := make([]string, 0, len(tests))
+
 	for _, test := range tests {
 		key := localizationTestAnchorKey(test.Path, test.Name)
 		if key == "" {
 			continue
 		}
+
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
 		keys = append(keys, key)
 	}
+
 	return keys
 }
 
@@ -696,15 +807,18 @@ func firstLocalizationCandidates(candidates []string, k int) []string {
 	if k >= len(candidates) {
 		return candidates
 	}
+
 	return candidates[:k]
 }
 
 func localizationNamedAnchorKey(path string, name string) string {
 	path = localizationAnchorPath(path)
 	name = strings.TrimSpace(name)
+
 	if path == "" || name == "" {
 		return ""
 	}
+
 	return path + "#" + name
 }
 
@@ -713,10 +827,12 @@ func localizationTestAnchorKey(path string, name string) string {
 	if path == "" {
 		return ""
 	}
+
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return path
 	}
+
 	return path + "#" + name
 }
 
@@ -725,6 +841,7 @@ func localizationAnchorPath(path string) string {
 	if path == "" {
 		return ""
 	}
+
 	return filepath.ToSlash(filepath.Clean(path))
 }
 
@@ -732,6 +849,7 @@ func localizationRate(numerator int, denominator int) float64 {
 	if denominator <= 0 {
 		return 0
 	}
+
 	return float64(numerator) / float64(denominator)
 }
 
@@ -741,11 +859,14 @@ func localizationBenchmarkMissingInputs(report LocalizationBenchmarkReport) []st
 		if strings.TrimSpace(value) == "" {
 			return
 		}
+
 		if _, ok := seen[value]; ok {
 			return
 		}
+
 		seen[value] = struct{}{}
 	}
+
 	for _, metric := range report.TopKEditPathCoverage {
 		for _, reason := range metric.FailureReasons {
 			switch reason {
@@ -754,24 +875,28 @@ func localizationBenchmarkMissingInputs(report LocalizationBenchmarkReport) []st
 			}
 		}
 	}
+
 	for _, reason := range report.CandidatePathWaste.FailureReasons {
 		switch reason {
 		case localizationFailureContextPacketCandidates, localizationFailurePartialContextPacket:
 			add("context_packet_candidates")
 		}
 	}
+
 	for _, reason := range report.BroadReadCount.FailureReasons {
 		switch reason {
 		case localizationFailureTrajectoryInput, localizationFailurePartialTrajectoryInput:
 			add("trajectory_broad_read_count")
 		}
 	}
+
 	for _, reason := range report.ZeroHitSearchCount.FailureReasons {
 		switch reason {
 		case localizationFailureTrajectoryInput, localizationFailurePartialTrajectoryInput:
 			add("trajectory_zero_hit_search_count")
 		}
 	}
+
 	for _, condition := range report.CompetitiveConditions {
 		for _, reason := range condition.FailureReasons {
 			switch reason {
@@ -786,11 +911,14 @@ func localizationBenchmarkMissingInputs(report LocalizationBenchmarkReport) []st
 			}
 		}
 	}
+
 	inputs := make([]string, 0, len(seen))
 	for input := range seen {
 		inputs = append(inputs, input)
 	}
+
 	slices.Sort(inputs)
+
 	return inputs
 }
 

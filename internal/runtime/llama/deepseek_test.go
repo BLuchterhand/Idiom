@@ -65,12 +65,15 @@ func TestDeepSeekReasoningContentPreservedInHistory(t *testing.T) {
 	for _, tc := range fixtures {
 		t.Run(tc.name, func(t *testing.T) {
 			var gotRequest map[string]any
+
 			callCount := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				callCount++
+
 				if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
 					t.Fatalf("decode request: %v", err)
 				}
+
 				// First call returns the fixture response (with reasoning_content)
 				// Second call simulates a follow-up so we can inspect history
 				if callCount == 1 {
@@ -79,9 +82,11 @@ func TestDeepSeekReasoningContentPreservedInHistory(t *testing.T) {
 					_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"follow-up"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
 				}
 			}))
+
 			defer server.Close()
 
 			client := NewClient(server.URL, time.Second).WithBackend(config.BackendDeepSeek)
+
 			reply, err := client.CompleteChatMessage(context.Background(), []ChatMessage{
 				{Role: "user", Content: "hi"},
 			}, ChatOptions{
@@ -126,14 +131,18 @@ func TestDeepSeekReasoningContentPreservedInHistory(t *testing.T) {
 
 			// Find the assistant message in the follow-up request history
 			var foundAsst bool
+
 			for _, raw := range messages {
 				msg, ok := raw.(map[string]any)
 				if !ok {
 					continue
 				}
+
 				if msg["role"] == "assistant" {
 					foundAsst = true
+
 					gotRC, hasRC := msg["reasoning_content"]
+
 					if tc.history == "" {
 						// When there's no reasoning_content, DeepSeek may still
 						// include the field as empty string; that's acceptable
@@ -144,13 +153,16 @@ func TestDeepSeekReasoningContentPreservedInHistory(t *testing.T) {
 						if !hasRC {
 							t.Fatal("expected reasoning_content in follow-up assistant message, but field is missing")
 						}
+
 						if gotRC != tc.history {
 							t.Fatalf("reasoning_content in history: got %q, want %q", gotRC, tc.history)
 						}
 					}
+
 					break
 				}
 			}
+
 			if !foundAsst {
 				t.Fatal("no assistant message found in follow-up request messages")
 			}
@@ -181,23 +193,30 @@ func TestDeepSeekReasoningContentStreamed(t *testing.T) {
 	for _, tc := range fixtures {
 		t.Run(tc.name, func(t *testing.T) {
 			var gotRequest map[string]any
+
 			callCount := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				callCount++
+
 				if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
 					t.Fatalf("decode request: %v", err)
 				}
+
 				if callCount == 1 {
 					w.Header().Set("Content-Type", "text/event-stream")
+
 					_, _ = w.Write([]byte(tc.response))
 				} else {
 					_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"follow-up"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
 				}
 			}))
+
 			defer server.Close()
 
 			client := NewClient(server.URL, time.Second).WithBackend(config.BackendDeepSeek)
+
 			var streamedContent strings.Builder
+
 			err := client.StreamChat(context.Background(), []ChatMessage{
 				{Role: "user", Content: "hi"},
 			}, ChatOptions{
@@ -206,6 +225,7 @@ func TestDeepSeekReasoningContentStreamed(t *testing.T) {
 				MaxTokens:      32,
 			}, func(delta string) error {
 				streamedContent.WriteString(delta)
+
 				return nil
 			})
 			if err != nil {
@@ -231,12 +251,15 @@ func TestDeepSeekReasoningContentStreamed(t *testing.T) {
 			if !ok {
 				t.Fatalf("expected messages in follow-up request")
 			}
+
 			var foundAsst bool
+
 			for _, raw := range messages {
 				msg, ok := raw.(map[string]any)
 				if !ok {
 					continue
 				}
+
 				if msg["role"] == "assistant" {
 					foundAsst = true
 					// Streaming doesn't produce reasoning_content on the response,
@@ -244,9 +267,11 @@ func TestDeepSeekReasoningContentStreamed(t *testing.T) {
 					if rc, hasRC := msg["reasoning_content"]; hasRC && rc != "" {
 						t.Fatalf("streamed assistant message should not have reasoning_content, got %q", rc)
 					}
+
 					break
 				}
 			}
+
 			if !foundAsst {
 				t.Fatal("no assistant message in follow-up request messages")
 			}
@@ -259,16 +284,21 @@ func TestDeepSeekStripsReasoningOnNonAssistant(t *testing.T) {
 	// reasoning_content stripped even for DeepSeek backend. Only assistant
 	// messages should preserve it.
 	enableThinking := true
+
 	var gotRequest map[string]any
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
+
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
 	}))
+
 	defer server.Close()
 
 	client := NewClient(server.URL, time.Second).WithBackend(config.BackendDeepSeek)
+
 	_, err := client.CompleteChatMessage(context.Background(), []ChatMessage{
 		{Role: "system", Content: "be concise", ReasoningContent: "should be stripped"},
 		{Role: "user", Content: "hello", ReasoningContent: "should be stripped too"},
@@ -301,6 +331,7 @@ func TestDeepSeekStripsReasoningOnNonAssistant(t *testing.T) {
 		if msg["role"] != tt.role {
 			t.Fatalf("msg[%d]: expected role %q, got %q", tt.index, tt.role, msg["role"])
 		}
+
 		gotRC, _ := msg["reasoning_content"].(string)
 		if gotRC != tt.want {
 			t.Fatalf("msg[%d] role=%s reasoning_content: got %q, want %q", tt.index, tt.role, gotRC, tt.want)
@@ -329,15 +360,19 @@ func TestNonDeepSeekBackendsStripReasoningContent(t *testing.T) {
 	for _, bc := range backends {
 		t.Run(bc.name, func(t *testing.T) {
 			var gotRequest map[string]any
+
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
 					t.Fatalf("decode request: %v", err)
 				}
+
 				_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
 			}))
+
 			defer server.Close()
 
 			client := NewClient(server.URL, time.Second).WithBackend(bc.backend)
+
 			_, err := client.CompleteChatMessage(context.Background(), []ChatMessage{
 				{Role: "user", Content: "hi", ReasoningContent: "should be stripped"},
 				{Role: "assistant", Content: "prior", ReasoningContent: "should also be stripped"},
@@ -361,6 +396,7 @@ func TestNonDeepSeekBackendsStripReasoningContent(t *testing.T) {
 				if !ok {
 					continue
 				}
+
 				if rc, hasRC := msg["reasoning_content"]; hasRC && rc != "" {
 					t.Fatalf("non-DeepSeek hosted backend %s should strip reasoning_content, got %q on role=%s",
 						bc.name, rc, msg["role"])
@@ -374,16 +410,21 @@ func TestDeepSeekPreservesReasoningOnToolCallAssistant(t *testing.T) {
 	// Assistant messages with tool_calls and reasoning_content should
 	// preserve reasoning_content for DeepSeek
 	enableThinking := true
+
 	var gotRequest map[string]any
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
+
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
 	}))
+
 	defer server.Close()
 
 	client := NewClient(server.URL, time.Second).WithBackend(config.BackendDeepSeek)
+
 	_, err := client.CompleteChatMessage(context.Background(), []ChatMessage{
 		{Role: "user", Content: "hi"},
 		{
@@ -414,10 +455,12 @@ func TestDeepSeekPreservesReasoningOnToolCallAssistant(t *testing.T) {
 	if asstMsg["role"] != "assistant" {
 		t.Fatalf("expected role assistant at index 1, got %q", asstMsg["role"])
 	}
+
 	rc, hasRC := asstMsg["reasoning_content"]
 	if !hasRC {
 		t.Fatal("assistant with tool_calls should preserve reasoning_content for DeepSeek, but field is missing")
 	}
+
 	if rc != "I should call read_file" {
 		t.Fatalf("reasoning_content on tool-call assistant: got %q, want %q", rc, "I should call read_file")
 	}
@@ -436,15 +479,19 @@ func TestLocalBackendsPreserveReasoningContentUnchanged(t *testing.T) {
 	} {
 		t.Run(bc.name, func(t *testing.T) {
 			var gotRequest map[string]any
+
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
 					t.Fatalf("decode request: %v", err)
 				}
+
 				_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
 			}))
+
 			defer server.Close()
 
 			client := NewClient(server.URL, time.Second).WithBackend(bc.backend)
+
 			_, err := client.CompleteChatMessage(context.Background(), []ChatMessage{
 				{Role: "user", Content: "hi", ReasoningContent: "preserved"},
 				{Role: "assistant", Content: "prior", ReasoningContent: "also preserved"},
@@ -467,12 +514,15 @@ func TestLocalBackendsPreserveReasoningContentUnchanged(t *testing.T) {
 				if !ok {
 					continue
 				}
+
 				role, _ := msg["role"].(string)
 				rc, hasRC := msg["reasoning_content"]
+
 				if !hasRC {
 					t.Fatalf("local backend %s should preserve reasoning_content on role=%s, but field is missing",
 						bc.name, role)
 				}
+
 				if rc == "" {
 					t.Fatalf("local backend %s should preserve reasoning_content on role=%s, got empty",
 						bc.name, role)

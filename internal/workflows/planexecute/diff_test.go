@@ -21,6 +21,7 @@ func TestUnifiedDiffHeadersIncludePath(t *testing.T) {
 	if !strings.Contains(got, "--- a/pkg/foo.go") {
 		t.Errorf("missing --- header: %q", got)
 	}
+
 	if !strings.Contains(got, "+++ b/pkg/foo.go") {
 		t.Errorf("missing +++ header: %q", got)
 	}
@@ -29,6 +30,7 @@ func TestUnifiedDiffHeadersIncludePath(t *testing.T) {
 func TestUnifiedDiffSimpleReplace(t *testing.T) {
 	got := UnifiedDiff("x", "one\ntwo\nthree\n", "one\nTWO\nthree\n")
 	want := "--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n one\n-two\n+TWO\n three\n"
+
 	if got != want {
 		t.Fatalf("diff mismatch\n got:\n%s\nwant:\n%s", got, want)
 	}
@@ -39,9 +41,11 @@ func TestUnifiedDiffPureAddition(t *testing.T) {
 	if !strings.Contains(got, "+hello") {
 		t.Errorf("should include added line: %q", got)
 	}
+
 	if strings.Contains(got, "-") && !strings.Contains(got, "--- a/x") {
 		t.Errorf("should not emit removal lines for pure add: %q", got)
 	}
+
 	// Before side has zero lines; header should encode that as "0,0".
 	if !strings.Contains(got, "@@ -0,0 +1,1 @@") {
 		t.Errorf("pure-add header malformed: %q", got)
@@ -53,6 +57,7 @@ func TestUnifiedDiffPureDeletion(t *testing.T) {
 	if !strings.Contains(got, "-hello") {
 		t.Errorf("should emit removal: %q", got)
 	}
+
 	if !strings.Contains(got, "@@ -1,1 +0,0 @@") {
 		t.Errorf("pure-del header malformed: %q", got)
 	}
@@ -70,6 +75,7 @@ func TestUnifiedDiffMissingTrailingNewline(t *testing.T) {
 	if !strings.Contains(got, "\\ No newline at end of file") {
 		t.Errorf("missing trailing-newline marker: %q", got)
 	}
+
 	if !strings.Contains(got, "-two") || !strings.Contains(got, "+TWO") {
 		t.Errorf("expected both removal and addition lines: %q", got)
 	}
@@ -83,6 +89,7 @@ func TestUnifiedDiffCoalescesNearbyEdits(t *testing.T) {
 	after := "a\nB\nc\nd\ne\nf\ng\nH\ni\n"
 	got := UnifiedDiff("x", before, after)
 	hunks := strings.Count(got, "@@ ")
+
 	if hunks != 1 {
 		t.Errorf("expected edits within 2*ctx to merge into 1 hunk, got %d hunks:\n%s", hunks, got)
 	}
@@ -96,6 +103,7 @@ func TestUnifiedDiffSplitsFarApartEdits(t *testing.T) {
 	after := "A\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\nP\n"
 	got := UnifiedDiff("x", before, after)
 	hunks := strings.Count(got, "@@ ")
+
 	if hunks != 2 {
 		t.Errorf("expected 2 hunks for far-apart edits, got %d:\n%s", hunks, got)
 	}

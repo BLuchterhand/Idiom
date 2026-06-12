@@ -215,9 +215,11 @@ func LanePolicyForBrief(brief workerruntime.WorkerRuntimeBrief) LanePolicy {
 	if workerruntime.TaskFamilyIsConversation(brief.TaskFamily) || readOnlyDirectAnswerLane(brief) {
 		return ConversationLanePolicy{}
 	}
+
 	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDelegatedReadOnly) {
 		return DelegatedReadOnlyLanePolicy{}
 	}
+
 	// Read-only investigation lanes (architecture, review, locate, etc.)
 	// that do not require mutation should use the conversation policy so
 	// the model owns readiness and is not force-completed after incidental
@@ -228,7 +230,9 @@ func LanePolicyForBrief(brief workerruntime.WorkerRuntimeBrief) LanePolicy {
 	// bounded recovery over hard-picking the model's next step.
 	if workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) &&
 		!runnerBriefRequiresMutation(brief) {
+
 		return ConversationLanePolicy{}
 	}
+
 	return DefaultLanePolicy{}
 }

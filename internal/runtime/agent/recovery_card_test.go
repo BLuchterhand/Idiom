@@ -51,6 +51,7 @@ func TestRecoveryCardRendersZeroHit(t *testing.T) {
 		"exact blocker shape: <<QUESTION>>: State the exact blocker and cite the concrete evidence source, path, command, or capability that is unavailable or failed.",
 	)
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
+
 	if strings.Count(got, "tool_result:search_content:step_3") != 1 {
 		t.Fatalf("expected duplicate evidence refs to be collapsed, got:\n%s", got)
 	}
@@ -138,6 +139,7 @@ func TestRecoveryCardDoesNotAdvertiseCompletionGateAsCallableTool(t *testing.T) 
 		"rejected action: action_class=final_answer reason=\"unsupported detail\"",
 		"currently callable tools: read_file, code_navigate",
 	)
+
 	if strings.Contains(got, "tool=completion_gate") {
 		t.Fatalf("model-facing recovery card must not advertise internal completion_gate as a tool:\n%s", got)
 	}
@@ -167,22 +169,27 @@ func TestBuildRecoveryCardDerivesCallableSurfaceFromPhaseContract(t *testing.T) 
 			Error:   "post-write verification is unresolved",
 		},
 	})
+
 	if contract.PhaseID != turnPhaseImplementationVerifyReady {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseImplementationVerifyReady)
 	}
+
 	for _, class := range contract.RuntimeCall.ExpressibleActionClasses {
 		if !slices.Contains(card.CallableActionClasses, class) {
 			t.Fatalf("recovery card callable action classes %#v missing contract class %q", card.CallableActionClasses, class)
 		}
 	}
+
 	if slices.Contains(card.CallableTools, "read_file") || slices.Contains(card.CallableTools, "apply_patch") {
 		t.Fatalf("verification recovery card should use current phase callable tools, got %#v", card.CallableTools)
 	}
+
 	for _, want := range []string{"source_sanity", "shell"} {
 		if !slices.Contains(card.CallableTools, want) {
 			t.Fatalf("verification recovery card missing callable tool %q: %#v", want, card.CallableTools)
 		}
 	}
+
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, RenderRecoveryCard(card))
 }
 
@@ -226,9 +233,11 @@ func TestBuildRecoveryCardDoesNotAdvertiseBlockerWhenSubmitCorrectionRequiresPla
 		"deterministic safe next action: Emit one parser-readable planner outcome: corrected submit_plan",
 		"exact blocker shape: none available",
 	)
+
 	if strings.Contains(got, "supported terminal blocker") ||
 		strings.Contains(got, "stale blocker escape hatch") ||
 		strings.Contains(got, "currently callable action classes: submit_plan, blocker") {
+
 		t.Fatalf("submit-correction recovery card advertised blocker despite submit_plan-only contract:\n%s", got)
 	}
 }
@@ -253,6 +262,7 @@ func TestRecoveryCardForTextualReadOnlyEvidencePendingKeepsReadTools(t *testing.
 	if contract.Phase != "read_only_evidence_pending" {
 		t.Fatalf("Phase = %q, want read_only_evidence_pending", contract.Phase)
 	}
+
 	card := BuildRecoveryCard(RecoveryCardInput{
 		PhaseContract:       contract,
 		CurrentAllowedTools: []string{"read_file", "search_content", "code_navigate"},
@@ -270,9 +280,11 @@ func TestRecoveryCardForTextualReadOnlyEvidencePendingKeepsReadTools(t *testing.
 		"read",
 		"search",
 	)
+
 	if strings.Contains(got, "currently callable tools: none") {
 		t.Fatalf("read-only pending recovery card must not close the textual tool surface:\n%s", got)
 	}
+
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
 }
 
@@ -305,6 +317,7 @@ func TestRecoveryCardOmitsHiddenToolsFromCallableSurface(t *testing.T) {
 	if slices.Contains(card.CallableTools, "task") {
 		t.Fatalf("hidden task must not be advertised as callable: %#v", card.CallableTools)
 	}
+
 	for _, want := range []string{"read_file", "code_navigate"} {
 		if !slices.Contains(card.CallableTools, want) {
 			t.Fatalf("expected callable tool %q to remain: %#v", want, card.CallableTools)
@@ -346,9 +359,11 @@ func TestRecoveryCardDerivesWriteReadySafeNextFromSourcedEvidence(t *testing.T) 
 		"currently callable action classes: per_edit_write, blocker",
 		"deterministic safe next action: Emit one parser-readable write to the already-sourced path(s): internal/surfaces/tui/app/sessions_panel.go. For textual write transport, use one visible JSON object or apply_patch envelope, not key/value edit-body notes; or answer <<QUESTION>> with the exact edit blocker/no-op evidence.",
 	)
+
 	if strings.Contains(got, "deterministic safe next action: none available") {
 		t.Fatalf("write-ready recovery card should not advertise no safe action, got:\n%s", got)
 	}
+
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
 }
 
@@ -381,9 +396,11 @@ func TestBuildRecoveryCardDerivesSafeNextForClosedPlannerPhase(t *testing.T) {
 		"currently callable tools: submit_plan",
 		"deterministic safe next action: Emit one parser-readable planner outcome: parser-readable submit_plan using edits[] for changed paths and top-level source_satisfied_paths for already-final paths, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker",
 	)
+
 	if strings.Contains(got, "deterministic safe next action: none available") {
 		t.Fatalf("closed planner recovery card should not advertise no safe action, got:\n%s", got)
 	}
+
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
 }
 
@@ -417,8 +434,10 @@ func TestRecoveryCardDoesNotAdvertiseUnavailablePendingRedirect(t *testing.T) {
 		"currently callable action classes: per_edit_write, blocker",
 		"deterministic safe next action: Follow the active write-ready requirement: parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence",
 	)
+
 	if strings.Contains(got, "Resolve the exact pending redirected source-body obligation") ||
 		strings.Contains(got, "via code_navigate") {
+
 		t.Fatalf("recovery card must not advertise unavailable pending read follow-up, got:\n%s", got)
 	}
 }
@@ -503,6 +522,7 @@ func TestRecoveryCardScopesPendingRedirectsToActiveBrief(t *testing.T) {
 	assertRecoveryCardContains(t, got,
 		"deterministic safe next action: Resolve the exact pending redirected source-body obligation (internal/surfaces/tui/app/sessions.go via code_navigate capability=read_symbol with pattern/symbol, or one file_outline first when the symbol is unknown), then emit one parser-readable write to a sourced target path. For textual write transport, use one visible JSON object or apply_patch envelope, not key/value edit-body notes; or answer <<QUESTION>> with the exact edit blocker/no-op evidence.",
 	)
+
 	if strings.Contains(got, "implementation_dispatch.go via code_navigate") {
 		t.Fatalf("recovery card must not reintroduce stale scoped-out pending redirect, got:\n%s", got)
 	}
@@ -539,9 +559,11 @@ func TestBuildRecoveryCardDerivesSafeNextForVerificationReadyPhase(t *testing.T)
 		"currently callable action classes: verify, blocker",
 		"deterministic safe next action: Run one focused verification action from the active verification requirement: one focused language-appropriate verification command/tool for changed source files, compiler-backed diagnostics, or <<QUESTION>> with the exact verification blocker",
 	)
+
 	if strings.Contains(got, "deterministic safe next action: none available") {
 		t.Fatalf("verification-ready recovery card should not advertise no safe action, got:\n%s", got)
 	}
+
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
 }
 
@@ -574,9 +596,11 @@ func TestBuildRecoveryCardDoesNotDeriveVerifyOnlySafeNextForVerificationRepair(t
 		"currently callable action classes: per_edit_write, read, verify, blocker",
 		"deterministic safe next action: none available",
 	)
+
 	if strings.Contains(got, "Run one focused verification action") {
 		t.Fatalf("verification-repair recovery card must not imply verification before repair, got:\n%s", got)
 	}
+
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
 }
 
@@ -600,9 +624,11 @@ func TestBuildRecoveryCardDoesNotAdvertiseToolsForFinalOnlyPhase(t *testing.T) {
 			Summary: "Conversation contract rejected extra exploration after bounded evidence",
 		},
 	})
+
 	if len(card.CallableTools) != 0 {
 		t.Fatalf("final-only recovery card should not advertise stale tools: %#v", card.CallableTools)
 	}
+
 	for _, forbidden := range []string{actionRead, actionVerify, actionGenericProbe} {
 		if slices.Contains(card.CallableActionClasses, forbidden) {
 			t.Fatalf("final-only recovery card advertised %q: %#v", forbidden, card.CallableActionClasses)
@@ -634,6 +660,7 @@ func TestRecoveryCardDoesNotSayNoneAvailableWhenFinalAnswerAllowed(t *testing.T)
 	if strings.Contains(got, "deterministic safe next action: none available") {
 		t.Fatalf("read-only final-answer recovery must not claim no safe action remains:\n%s", got)
 	}
+
 	assertRecoveryCardContains(t, got,
 		"currently callable action classes: final_answer, blocker",
 		"deterministic safe next action: Let the model choose strategy: answer from gathered evidence now, or state uncertainty with the exact unsupported claim and evidence source.",
@@ -669,6 +696,7 @@ func TestRecoveryCardEvidencePendingDoesNotSayNoneAvailableWhenFinalAnswerAllowe
 	if strings.Contains(got, "deterministic safe next action: none available") {
 		t.Fatalf("read-only pending recovery must not claim no safe action remains:\n%s", got)
 	}
+
 	assertRecoveryCardContains(t, got,
 		"currently callable action classes: read, search, blocker, final_answer",
 		"deterministic safe next action: Let the model choose strategy: answer from gathered evidence now, or state uncertainty with the exact unsupported claim and evidence source.",
@@ -723,15 +751,19 @@ func TestCompletionGateRecoveryCardUsesGuardedMutationTargetSourcePhase(t *testi
 		"per_edit_write",
 		"exact blocker shape:",
 	)
+
 	if strings.Contains(got, "currently callable action classes: final_answer") ||
 		strings.Contains(got, " final_answer") {
+
 		t.Fatalf("guarded no-write recovery card should not advertise final_answer, got:\n%s", got)
 	}
+
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
 }
 
 func assertRecoveryCardContains(t *testing.T, got string, wants ...string) {
 	t.Helper()
+
 	for _, want := range wants {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected recovery card to contain %q, got:\n%s", want, got)
@@ -741,6 +773,7 @@ func assertRecoveryCardContains(t *testing.T, got string, wants ...string) {
 
 func assertRecoveryCardOmitsProjectWorkflowTerms(t *testing.T, got string) {
 	t.Helper()
+
 	for _, forbidden := range []string{"PRD", "ADR", "brief", "product workflow"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("recovery card should stay generic; found %q in:\n%s", forbidden, got)

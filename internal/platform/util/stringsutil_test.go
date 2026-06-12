@@ -6,9 +6,11 @@ func TestFirstNonEmpty(t *testing.T) {
 	if got := FirstNonEmpty("", "  ", "hello", "world"); got != "hello" {
 		t.Errorf("FirstNonEmpty = %q, want %q", got, "hello")
 	}
+
 	if got := FirstNonEmpty("", "  "); got != "" {
 		t.Errorf("FirstNonEmpty all empty = %q, want empty", got)
 	}
+
 	if got := FirstNonEmpty("first", "second"); got != "first" {
 		t.Errorf("FirstNonEmpty = %q, want %q", got, "first")
 	}
@@ -18,9 +20,11 @@ func TestContainsAny(t *testing.T) {
 	if !ContainsAny("hello world", "world", "foo") {
 		t.Error("ContainsAny should find 'world'")
 	}
+
 	if ContainsAny("hello", "world", "foo") {
 		t.Error("ContainsAny should not find any needle")
 	}
+
 	if !ContainsAny("hello", "") {
 		t.Error("ContainsAny with empty needle should match")
 	}
@@ -31,9 +35,11 @@ func TestUniqueNonEmpty(t *testing.T) {
 	if len(result) != 3 {
 		t.Fatalf("UniqueNonEmpty len = %d, want 3: %v", len(result), result)
 	}
+
 	if result[0] != "a" || result[1] != "b" || result[2] != "c" {
 		t.Errorf("UniqueNonEmpty = %v, want [a b c]", result)
 	}
+
 	if len(UniqueNonEmpty(nil)) != 0 {
 		t.Error("UniqueNonEmpty(nil) should return empty")
 	}
@@ -43,6 +49,7 @@ func TestEqualTrimFold(t *testing.T) {
 	if !EqualTrimFold("  Hello  ", "hello") {
 		t.Error("EqualTrimFold should match case-insensitive trimmed")
 	}
+
 	if EqualTrimFold("hello", "world") {
 		t.Error("EqualTrimFold should not match different strings")
 	}
@@ -53,9 +60,11 @@ func TestNonEmptyTrimmedLines(t *testing.T) {
 	if len(result) != 3 {
 		t.Fatalf("NonEmptyTrimmedLines len = %d, want 3", len(result))
 	}
+
 	if result[0] != "a" || result[1] != "b" || result[2] != "c" {
 		t.Errorf("NonEmptyTrimmedLines = %v", result)
 	}
+
 	if len(NonEmptyTrimmedLines("")) != 0 {
 		t.Error("NonEmptyTrimmedLines empty should return empty")
 	}

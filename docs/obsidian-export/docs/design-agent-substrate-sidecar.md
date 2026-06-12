@@ -1,11 +1,11 @@
-# Agent Harness As LLM Agent Substrate
+# Idiom As Agent Substrate And Sidecar
 
-Status: design guidance
+Status: design draft, 2026-05-12
 
 Related docs:
 
-- [harness-design-map.md](harness-design-map.md)
-- [harness-strategic-thesis.md](harness-strategic-thesis.md)
+- [idiom-design-roadmap.md](idiom-design-roadmap.md)
+- [idiom-strategic-thesis.md](idiom-strategic-thesis.md)
 - [decisioning-north-star.md](decisioning-north-star.md)
 - [design-contract-first-local-autonomy.md](design-contract-first-local-autonomy.md)
 - [design-persistent-repository-memory.md](design-persistent-repository-memory.md)
@@ -14,41 +14,44 @@ Related docs:
 - [design-local-model-operations.md](design-local-model-operations.md)
 - [design-eval-audit-learning-flywheel.md](design-eval-audit-learning-flywheel.md)
 - [lane-architecture.md](lane-architecture.md)
-- [portability-bootstrap-design.md](portability-bootstrap-design.md)
-- MCP support design
+- [archive/2026-05-historical/reusability-design.md](archive/2026-05-historical/reusability-design.md)
+- [mcp-server-support.md](mcp-server-support.md)
 - [codebase-comprehension-memory-design.md](codebase-comprehension-memory-design.md)
 - [architect-packets.md](architect-packets.md)
-- Autonomy tracker
+- [agent-autonomy-tracker.md](agent-autonomy-tracker.md)
 
 ## Executive Thesis
 
-Agent Harness should become the reusable substrate that makes LLM agents more
-reliable without trying to replace their chat, planning, or editing surfaces.
-LLM agents, scripts, CI jobs, and IDE agents should be able to call Agent
-Harness for repository facts, scoped context packets, semantic navigation,
-verification evidence, audit packets, and policy-shaped workspace operations
-through stable CLI and MCP transports.
+Idiom should become the local agent substrate and sidecar that makes external
+coding agents more reliable without trying to replace their chat surfaces.
+Codex, Claude Code, OpenCode, Aider, scripts, CI jobs, and future IDE agents
+should be able to call Idiom for repository facts, scoped context packets,
+semantic navigation, verification evidence, audit packets, and policy-shaped
+workspace operations through `idiom tool` today and MCP tomorrow.
 
 The product boundary stays the same as the project thesis:
 
-- The LLM agent owns strategy.
+- The model owns strategy.
 - The harness owns contracts.
 
-As a substrate, Agent Harness does not tell an LLM agent which next step to take.
+As a sidecar, Idiom does not tell an external model which next step to take.
 It answers capability-oriented questions with evidence: findings, paths,
 symbols, counts, freshness, diagnostics, verification output, uncertainty, and
-contract state. The LLM agent decides whether to inspect more, edit, run a
-test, ask the user, or stop. Agent Harness decides whether the requested action is
+contract state. The external agent decides whether to inspect more, edit, run a
+test, ask the user, or stop. Idiom decides whether the requested action is
 inside the declared permission, freshness, path, protocol, verification, and
 budget contracts.
 
-This is differentiated from building another terminal pair programmer. LLM
-agents already cover the mature terminal-editing shape: repository maps, chat
-modes, scripting, lint/test repair, permissions, subagents, hooks, MCP,
-non-interactive modes, and many model backends. Agent Harness's sharper role is
-below those visible surfaces: persistent repository memory,
-capability-oriented tools, contract-first autonomy, and an
-eval/audit/learning flywheel that any LLM agent can reuse.
+This is differentiated from building another terminal pair programmer. Aider
+already covers the mature terminal-editing shape, including repo maps, chat
+modes, scripting, lint/test repair, and many model backends
+(https://aider.chat/, https://aider.chat/docs/repomap.html,
+https://aider.chat/docs/scripting.html). Codex, Claude Code, and OpenCode
+already expose rich primary agent loops with permissions, subagents, hooks, MCP,
+and non-interactive modes in their current product documentation. Idiom's
+sharper role is below those visible surfaces: persistent repository memory,
+capability-oriented tools, contract-first local autonomy, and an
+eval/audit/learning flywheel that any agent can reuse.
 
 ## Why This Is Differentiated
 
@@ -57,7 +60,7 @@ shell, and a small amount of repository context. That makes them useful, but it
 also means every agent has to rediscover the same repository facts and rebuild
 the same safety discipline in its own prompt and tool loop.
 
-Agent Harness should instead be the reusable substrate under multiple agents:
+Idiom should instead be the reusable substrate under multiple agents:
 
 - Repository memory: persistent graph facts, summaries, runtime traces, ranker
   weights, cache rows, and evidence packets survive across sessions and
@@ -71,8 +74,9 @@ Agent Harness should instead be the reusable substrate under multiple agents:
 - Audit and replay: tool calls, cache hits, stale rows, backend availability,
   verification, permission failures, and loop behavior can be summarized by
   `harness_audit` and turned into improvements.
-- LLM-agent neutrality: LLM agents and shell scripts can call the same substrate
-  without adopting Agent Harness's TUI or runner.
+- External-agent neutrality: Codex, Claude Code, OpenCode, Aider, and shell
+  scripts can call the same sidecar without adopting Idiom's TUI or local model
+  runner.
 
 The research direction supports this boundary. SWE-agent's 2024 arXiv preprint
 argues that agent-computer interface design changes software-agent performance,
@@ -94,45 +98,45 @@ only partial survival of agent-produced code into commits
 
 ## Target Users And Workflows
 
-The first target user is a developer or platform team that wants LLM agents to
-share a stronger substrate than raw grep, shell, and repeated context
-explanation. They should be able to install Agent Harness once per workspace,
-index the repository, and give any approved LLM agent a small set of
-high-value commands or MCP tools.
+The first target user is a developer who already uses Codex, Claude Code,
+OpenCode, Aider, or a custom script but wants a stronger local substrate than
+raw grep, shell, and repeated context explanation. They should be able to install
+Idiom once per machine or repo, index the workspace, and give any external agent
+a small set of high-value commands or MCP tools.
 
 Primary workflows:
 
-- "Before editing, localize the task": an LLM agent calls
+- "Before editing, localize the task": an external agent calls
   `context_pack`, `context_query`, `context_zoom`, or `context_impact` to get a
   scoped evidence packet instead of wandering through files.
-- "Use semantic tools from any LLM agent": an LLM agent can call Agent Harness
+- "Use semantic tools from another agent": Codex or Claude Code can call Idiom
   as a tool server for Go, C/C++, Python, TypeScript, Rust, Java, generic ctags,
   structural search, dependency graphs, history, blame, Semgrep, and Joern.
-- "Attach proof to a plan": a planner calls Agent Harness to produce a context packet,
+- "Attach proof to a plan": a planner calls Idiom to produce a context packet,
   freshness report, candidate scope, verification command list, and handoff
   contract before asking any model to edit.
-- "Run safe automation": CI or local scripts call `harness tool` with explicit JSON
+- "Run safe automation": CI or local scripts call `idiom tool` with explicit JSON
   and check exit codes, without opening a chat session or local LLM.
 - "Audit the agent substrate": after a run, a human or agent calls
   `harness_audit` to see tool-surface drift, backend gaps, cache state, stale
   traces, and behavior findings.
-- "Use Agent Harness without Agent Harness's model loop": an LLM agent keeps its own strategy
-  loop while Agent Harness supplies repository memory and deterministic contracts.
+- "Use Idiom without Idiom's model": a frontier agent keeps its own strategy
+  loop while Idiom supplies repository memory and deterministic contracts.
 
 Secondary users include platform engineers who want a local policy and evidence
-service for multiple LLM agents, teams evaluating agents on shared repos, and
+service for multiple agents, teams evaluating coding agents on shared repos, and
 agent authors who want repository graph tools over a stable CLI or MCP boundary.
 
-## Sidecar Surface
+## Current Sidecar Surface
 
-The sidecar surface should expose `harness tool <tool-name> --input '<json>'`
-plus stdin JSON for CLI callers, and an MCP server for clients that prefer tool
-discovery and JSON-RPC lifecycle negotiation. `harness_audit` should verify the
-manifest/schema/tool-surface relationship, and `context_status` should report
-index freshness, language coverage, graph size, stale paths, and backend
-availability without leaking raw source.
+Today the sidecar exists as `idiom tool <tool-name> --input '<json>'`, plus stdin
+for JSON input. A 2026-05-12 `harness_audit` for `tool_surface` reported 129
+manifest tools, 129 schema tools, and 0 manifest/schema drift. `context_status`
+reported a fresh SQLite graph for this repo with 349 indexed files, 7012
+symbols, 38309 edges, active Go tooling, generic shell indexing, and a Python
+syntax fallback with the Python LSP unavailable.
 
-The active tool families are:
+The current tool families are:
 
 - State and filesystem: `task_ledger`, `task`, `pwd`, `list_files`,
   `search_files`, `search_content`, `read_file`, `file_stats`.
@@ -150,10 +154,10 @@ The active tool families are:
   `delegate_edit`.
 
 The important sidecar claim is not the raw number of tools. It is that these
-tools can be called outside an Agent Harness inference session and still reuse the same
+tools can be called outside an Idiom inference session and still reuse the same
 workspace manager, manifest, schemas, telemetry, cache, and permission gates
 documented in [lane-architecture.md](lane-architecture.md) and
-the MCP support design.
+[mcp-server-support.md](mcp-server-support.md).
 
 ### Tool Result Discipline
 
@@ -164,7 +168,7 @@ Every evidence tool should keep a narrow role:
 - Distinguish exact facts from fallbacks and inferred relationships.
 - Avoid prescribing the caller's next tool call.
 
-This preserves the north-star split. An LLM agent can ask "what calls this"
+This preserves the north-star split. An external agent can ask "what calls this"
 or "what tests cover this" and receive evidence. It should not receive "now run
 tool X" unless a hard contract is being enforced or a command failed because a
 specific typed precondition was missing.
@@ -180,7 +184,7 @@ All sidecar transports should support this conceptual request:
 
 ```json
 {
-  "api_version": "harness.tool.v1",
+  "api_version": "idiom.tool.v1",
   "tool": "context_pack",
   "arguments": {
     "task": "localize auth retry handling",
@@ -198,8 +202,8 @@ All sidecar transports should support this conceptual request:
     "required_freshness": "read_through"
   },
   "trace": {
-    "caller": "llm-agent",
-    "session_id": "optional-agent-session-id",
+    "caller": "codex",
+    "session_id": "optional-external-id",
     "correlation_id": "optional-call-id"
   }
 }
@@ -208,7 +212,7 @@ All sidecar transports should support this conceptual request:
 The CLI can continue to accept the compact form:
 
 ```bash
-harness tool context_pack --input '{"task":"localize auth retry handling","mode":"plan","limit":8}'
+idiom tool context_pack --input '{"task":"localize auth retry handling","mode":"plan","limit":8}'
 ```
 
 The stable internal interpretation should be:
@@ -222,17 +226,17 @@ The stable internal interpretation should be:
 
 ### Response Contract
 
-The active CLI prints a JSON object with `Tool`, `Summary`, `Output`, and
+The current CLI prints a JSON object with `Tool`, `Summary`, `Output`, and
 `Error`. That can remain as the compatibility envelope. The next stable
 contract should add a structured v1 envelope that preserves machine-readable
 fields without requiring callers to parse `Output` strings:
 
 ```json
 {
-  "api_version": "harness.tool.v1",
+  "api_version": "idiom.tool.v1",
   "tool": "context_pack",
   "ok": true,
-  "summary": "Context pack wrote .harness/comprehension/views/abc.json",
+  "summary": "Context pack wrote .idiom/comprehension/views/abc.json",
   "output": {
     "pack_id": "abc",
     "fresh": true,
@@ -273,19 +277,19 @@ not exposed."
 
 ## JSON Schema And Versioning Plan
 
-Agent Harness should publish schemas for both the tool envelope and every tool's
+Idiom should publish schemas for both the tool envelope and every tool's
 arguments.
 
 Versioning rules:
 
-- Use `harness.tool.v1` for the stable sidecar envelope.
-- Use non-public schema IDs such as `urn:harness:schema:tools:context_pack.v1`;
+- Use `idiom.tool.v1` for the stable sidecar envelope.
+- Use non-public schema IDs such as `urn:idiom:schema:tools:context_pack.v1`;
   do not publish placeholder `https://` URLs that look externally resolvable.
 - Backward-compatible additions are allowed only for optional fields.
 - Removing fields, changing field meaning, tightening required fields, or
   changing output type requires a new major version.
 - Tool names are stable. If a tool is superseded, keep an alias with a
-  deprecation field until the replacement has a documented migration window.
+  deprecation field until at least one release after the replacement ships.
 - Every response includes `api_version`, `tool`, `ok`, `summary`, and either
   `output` or `error`.
 - Every schema declares `additionalProperties: false` unless the tool explicitly
@@ -295,35 +299,36 @@ Versioning rules:
   containment before dispatch.
 
 The source of truth should converge on the existing manifest/schema/audit path.
-`harness_audit` detects manifest/schema drift. The design map should
-graduate that into generated schemas checked into the project, a `harness tool
+`harness_audit` already detects manifest/schema drift. The roadmap should
+graduate that into generated schemas checked into the repo, a `idiom tool
 schema <name>` command, and an MCP `tools/list` implementation using the same
 schema documents.
 
 ## MCP Server Options
 
-MCP is the natural second transport because LLM agents,
-editors, and custom clients understand MCP-style tool discovery. The
-MCP specification defines JSON-RPC 2.0, lifecycle negotiation, and server
+MCP is the natural second transport because Codex, Claude Code, OpenCode,
+editors, and custom clients already understand MCP-style tool discovery. The
+MCP 2025-11-25 specification, the latest version shown by the MCP site when
+checked on 2026-05-13, defines JSON-RPC 2.0, lifecycle negotiation, and server
 features such as tools, resources, and prompts
-(https://modelcontextprotocol.io/specification/). Its
+(https://modelcontextprotocol.io/specification/2025-11-25/basic/index). Its
 standard transports are stdio and Streamable HTTP
-(https://modelcontextprotocol.io/specification/).
+(https://modelcontextprotocol.io/specification/2025-11-25/basic/transports).
 
-Agent Harness should define both options in the MCP support design:
+Idiom should ship both options, matching [mcp-server-support.md](mcp-server-support.md):
 
-- `harness mcp serve --stdio --profile discovery`: default local client mode.
-  The client launches Agent Harness as a subprocess. This mirrors the trust model of
-  `harness tool`.
-- `harness mcp serve --http 127.0.0.1:8765 --profile discovery`: local daemon mode
+- `idiom mcp serve --stdio --profile discovery`: default local client mode.
+  The client launches Idiom as a subprocess. This mirrors the trust model of
+  `idiom tool`.
+- `idiom mcp serve --http 127.0.0.1:8765 --profile discovery`: local daemon mode
   for clients that prefer Streamable HTTP or need a shared process.
-- `harness mcp serve --http 127.0.0.1:8765 --profile full`: opt-in trusted local
+- `idiom mcp serve --http 127.0.0.1:8765 --profile full`: opt-in trusted local
   mode only, with write/shell gates still enforced by workspace config.
 
 MCP feature mapping:
 
-- Tools: expose profile-filtered Agent Harness tools from the same manifest and schemas
-  as `harness tool`.
+- Tools: expose profile-filtered Idiom tools from the same manifest and schemas
+  as `idiom tool`.
 - Resources: expose read-only URIs for context packs, audit reports, ranker
   state, selected logs, and discovery artifacts.
 - Prompts: expose reusable prompt templates only when they are generic and
@@ -333,28 +338,30 @@ MCP feature mapping:
 
 For Streamable HTTP, the MCP spec warns servers to validate `Origin`, bind local
 servers to localhost, and use authentication to reduce DNS rebinding and local
-server abuse (https://modelcontextprotocol.io/specification/).
+server abuse (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports).
 Those requirements should be first-class acceptance criteria, not follow-up
 hardening.
 
-## LLM Agent Integration Examples
+## External Agent Integration Examples
 
-### Configured LLM Agents
+### Codex
 
-Many LLM agents support project and user configuration, MCP server entries,
-approval policies, sandbox modes, permission profiles, and non-interactive
-execution for scripts or CI. Agent Harness should integrate with those surfaces
-through stable files, CLI envelopes, MCP tools, and least-privilege profiles
-rather than through model-specific prompt conventions.
+Codex supports project and user config in `config.toml`, MCP server entries,
+approval policies, sandbox modes, permission profiles, and subagent thread
+configuration in its official config reference
+(https://developers.openai.com/codex/config-reference). It also supports
+non-interactive `codex exec` for scripts and CI, including `--json`,
+`--output-schema`, `--sandbox`, `--ignore-user-config`, and required MCP server
+failure behavior (https://developers.openai.com/codex/cli/reference#codex-exec).
 
 Direct CLI sidecar use:
 
 ```bash
-harness tool context_pack --input '{"task":"find the auth retry code","mode":"plan","limit":8}' \
-  > /tmp/harness-context.json
+idiom tool context_pack --input '{"task":"find the auth retry code","mode":"plan","limit":8}' \
+  > /tmp/idiom-context.json
 
-agent exec --sandbox workspace-write --json - <<'PROMPT'
-Use /tmp/harness-context.json as repository evidence.
+codex exec --sandbox workspace-write --json - <<'PROMPT'
+Use /tmp/idiom-context.json as repository evidence.
 Implement the minimal auth retry fix. Do not rediscover broadly unless the
 packet names a specific gap that blocks the edit.
 PROMPT
@@ -363,8 +370,8 @@ PROMPT
 Future MCP config sketch:
 
 ```toml
-[mcp_servers.harness]
-command = "harness"
+[mcp_servers.idiom]
+command = "idiom"
 args = ["mcp", "serve", "--stdio", "--profile", "discovery"]
 cwd = "/path/to/repo"
 required = true
@@ -372,20 +379,22 @@ enabled_tools = ["context_pack", "context_query", "context_zoom", "context_impac
 tool_timeout_sec = 60
 ```
 
-LLM-agent security guidance is compatible with Agent Harness's sidecar model:
-agent runs should keep sandbox and approval controls active, use
-least-privilege profiles, and reserve broad filesystem authority for controlled
-environments. Agent Harness should not ask users to bypass those controls. It
-should work under read-only and workspace-write profiles and report permission
-denials clearly.
+Codex security guidance is compatible with Idiom's sidecar model: Codex local
+runs default to sandbox and approval controls, with workspace-write/on-request
+as the common local automation preset and danger-full-access reserved for
+controlled environments (https://developers.openai.com/codex/agent-approvals-security).
+Idiom should not ask Codex users to bypass those controls. It should work under
+read-only and workspace-write profiles and report permission denials clearly.
 
-### Hook-Based LLM Agents
+### Claude Code
 
-Hook-based LLM agents can carry tool restrictions, model settings, MCP
-servers, hooks, isolation, memory, and permission-mode fields. Their hooks
-often include lifecycle points such as `PreToolUse`, `PostToolUse`,
+Claude Code subagents can carry tool restrictions, model settings, MCP servers,
+hooks, isolation, memory, and permission mode fields, and a subagent's system
+prompt replaces the default system prompt while project memory still loads
+through normal message flow (https://code.claude.com/docs/en/sub-agents).
+Claude Code hooks include lifecycle points such as `PreToolUse`, `PostToolUse`,
 `SubagentStart`, `SubagentStop`, `Stop`, `PreCompact`, `PostCompact`, and MCP
-elicitation events.
+elicitation events (https://code.claude.com/docs/en/hooks).
 
 Direct hook sidecar use:
 
@@ -397,7 +406,7 @@ Direct hook sidecar use:
         "hooks": [
           {
             "type": "command",
-            "command": "harness tool context_pack --input \"{\\\"task\\\":\\\"$PROMPT\\\",\\\"mode\\\":\\\"plan\\\",\\\"limit\\\":8}\""
+            "command": "idiom tool context_pack --input \"{\\\"task\\\":\\\"$PROMPT\\\",\\\"mode\\\":\\\"plan\\\",\\\"limit\\\":8}\""
           }
         ]
       }
@@ -408,7 +417,7 @@ Direct hook sidecar use:
         "hooks": [
           {
             "type": "command",
-            "command": "harness tool source_sanity --input '{\"path\":\".\"}'"
+            "command": "idiom tool source_sanity --input '{\"path\":\".\"}'"
           }
         ]
       }
@@ -418,25 +427,27 @@ Direct hook sidecar use:
 ```
 
 The production version should avoid fragile shell interpolation and use a small
-wrapper script that reads an LLM agent's hook JSON from stdin. The design principle is
-still useful: the LLM agent owns delegation and planning; Agent Harness supplies context and
+wrapper script that reads Claude's hook JSON from stdin. The design principle is
+still useful: Claude owns delegation and planning; Idiom supplies context and
 verification evidence at hook boundaries.
 
-Future MCP use should expose Agent Harness tools as `mcp__harness__context_pack`,
-`mcp__harness__context_query`, and similar names. Hook matchers can use the
-client's MCP tool naming convention when the LLM agent exposes one.
+Future MCP use should expose Idiom tools as `mcp__idiom__context_pack`,
+`mcp__idiom__context_query`, and similar names. Claude hooks can match MCP tools
+by their `mcp__<server>__<tool>` naming pattern, according to the hooks docs
+(https://code.claude.com/docs/en/hooks).
 
-### Profile-Based LLM Agents
+### OpenCode
 
-Profile-based LLM agents can specify prompts, models, step limits,
-disabled agents, and permissions. Permission values should map cleanly to
-`ask`, `allow`, and `deny`; permission keys gate actions such as read, edit,
-shell, task delegation, web search, LSP, and external-directory access.
+OpenCode agents can specify prompts, models, step limits, disabled agents, and
+permissions. Its permission values are `ask`, `allow`, and `deny`; permission
+keys gate actions such as read, edit, bash, task, web search, LSP, and external
+directory access (https://opencode.ai/docs/agents/).
 
 Recommended pattern:
 
 ```json
 {
+  "$schema": "https://opencode.ai/config.json",
   "agent": {
     "planner": {
       "prompt": "{file:./prompts/planner.txt}",
@@ -452,43 +463,42 @@ Recommended pattern:
 }
 ```
 
-The planner prompt can direct an LLM agent to call:
+The planner prompt can direct OpenCode to call:
 
 ```bash
-harness tool context_pack --input '{"task":"<task>","mode":"plan","limit":8}'
-harness tool context_impact --input '{"path":"<path>"}'
-harness tool harness_audit --input '{"purpose":"tool_surface"}'
+idiom tool context_pack --input '{"task":"<task>","mode":"plan","limit":8}'
+idiom tool context_impact --input '{"path":"<path>"}'
+idiom tool harness_audit --input '{"purpose":"tool_surface"}'
 ```
 
 The durable integration should be MCP with a discovery profile for planning and
 a separate full profile only for trusted edit agents.
 
-### Repo-Map LLM Agents
+### Aider
 
-An LLM agent's repo map sends symbols and key definitions to the model and
-ranks the most relevant portions into the token budget. Scriptable agents may
-also accept a task message, apply edits, and exit.
+Aider's repo map sends symbols and key definitions to the model and ranks the
+most relevant portions into the token budget
+(https://aider.chat/docs/repomap.html). Aider can also be scripted with
+`--message`, applying edits and exiting (https://aider.chat/docs/scripting.html).
 
-Agent Harness should not try to replace an LLM agent's pair-programming loop.
-The sidecar use is to provide fresher repository memory, safer contracts,
-verification evidence, and audit output that the agent can consume.
-One useful sidecar pattern is precomputed, auditable context:
+Idiom should not try to replace Aider's pair-programming loop. The sidecar use
+case is precomputed, auditable context:
 
 ```bash
-harness tool context_pack --input '{"task":"add JSON export for invoice totals","mode":"plan","limit":10}' \
-  > /tmp/harness-pack.json
+idiom tool context_pack --input '{"task":"add JSON export for invoice totals","mode":"plan","limit":10}' \
+  > /tmp/idiom-pack.json
 
-llm-agent-cli --message "Use /tmp/harness-pack.json as sidecar evidence. Make the minimal change and run the listed verification." \
+aider --message "Use /tmp/idiom-pack.json as external evidence. Make the minimal change and run the listed verification." \
   path/to/invoice.py path/to/tests.py
 ```
 
-Longer term, if an LLM agent or an LLM-agent wrapper consumes MCP tools, Agent Harness's
+Longer term, if Aider or an Aider wrapper consumes MCP tools, Idiom's
 `context_pack` and `context_query` should complement the repo map with
 persistent cache state, freshness, audit, and graph-backed query endpoints.
 
 ### Manual Scripts And CI
 
-`harness tool` should remain the lowest-friction integration:
+`idiom tool` should remain the lowest-friction integration:
 
 ```bash
 set -euo pipefail
@@ -496,10 +506,10 @@ set -euo pipefail
 TASK_FILE="${1:?task file required}"
 TASK="$(cat "$TASK_FILE")"
 
-PACK="$(harness tool context_pack --input "{\"task\":$(jq -Rs . <<<"$TASK"),\"mode\":\"plan\",\"limit\":8}")"
-echo "$PACK" > .harness/tmp/context-pack.json
+PACK="$(idiom tool context_pack --input "{\"task\":$(jq -Rs . <<<"$TASK"),\"mode\":\"plan\",\"limit\":8}")"
+echo "$PACK" > .idiom/tmp/context-pack.json
 
-harness tool harness_audit --input '{"purpose":"tool_surface"}' > .harness/tmp/audit.json
+idiom tool harness_audit --input '{"purpose":"tool_surface"}' > .idiom/tmp/audit.json
 ```
 
 This path is important for CI, local evaluation, and agents that cannot or
@@ -508,8 +518,8 @@ should not run an MCP client.
 ## Security And Permissions Model
 
 The sidecar boundary increases the need for explicit permissions because
-multiple agents may call the same binary. Agent Harness should use one permission model
-across `harness tool`, MCP stdio, MCP HTTP, local lanes, and future SDKs.
+multiple agents may call the same binary. Idiom should use one permission model
+across `idiom tool`, MCP stdio, MCP HTTP, local lanes, and future SDKs.
 
 Profiles:
 
@@ -537,21 +547,21 @@ Invariants:
 - Profile filters narrow the surface but never grant authority that workspace
   config denies.
 - Writes carry changed path evidence.
-- Verification evidence must occur after relevant writes if a caller asks Agent Harness
+- Verification evidence must occur after relevant writes if a caller asks Idiom
   to judge completion.
 
-This mirrors the LLM-agent security posture instead of fighting it: sandbox mode and
+This mirrors the Codex security posture instead of fighting it: sandbox mode and
 approval policy define technical boundaries for model-generated commands, while
-Agent Harness profiles define which sidecar capabilities are visible and callable.
+Idiom profiles define which sidecar capabilities are visible and callable
+(https://developers.openai.com/codex/agent-approvals-security).
 
 ## Observability And Audit
 
 Every sidecar call should be attributable:
 
 - caller kind: `cli`, `mcp_stdio`, `mcp_http`, `lane`, `script`.
-- caller name: a configured identifier such as `llm-agent-cli`,
-  `hooked-agent`, `profile-agent`, `script`, `manual`, or a caller-supplied
-  value.
+- caller name: `codex`, `claude-code`, `opencode`, `aider`, `manual`, or
+  caller-supplied value.
 - workspace root and git HEAD.
 - tool name, schema version, profile, duration, success/failure, error class.
 - paths read, paths written, commands run, backend used, fallback used.
@@ -567,20 +577,20 @@ The first consumer is `harness_audit`. It should summarize:
 - repeated zero-result searches and low-value loops when visible in logs.
 - permission denials and their profile/path causes.
 - write/verify ordering failures.
-- LLM-agent caller mix and high-volume tools.
+- external caller mix and high-volume tools.
 
 The goal is not surveillance for its own sake. It is the eval/audit/learning
-flywheel from [harness-strategic-thesis.md](harness-strategic-thesis.md): run an
+flywheel from [idiom-strategic-thesis.md](idiom-strategic-thesis.md): run an
 agent, capture typed evidence, score failures, improve ranking or contracts,
 and replay the scenario.
 
 ## Cache And Freshness Interaction
 
-The sidecar is valuable only if callers can trust freshness. Agent Harness's
-`context_pack` persists graph views in `.harness/comprehension/graph.sqlite`
-and human-readable exports under `.harness/comprehension/views/`. The cache key is
+The sidecar is valuable only if callers can trust freshness. Idiom's
+`context_pack` already persists graph views in `.idiom/comprehension/graph.sqlite`
+and human-readable exports under `.idiom/comprehension/views/`. The cache key is
 content-addressed over graph index ID plus task, mode, path, scope, limit,
-budget, tests, forbidden paths, and intent, as documented in the project
+budget, tests, forbidden paths, and intent, as documented in the repo's
 AGENTS.md. `context_status` reports the active index, collector version,
 languages, storage backends, and freshness state.
 
@@ -590,7 +600,7 @@ Sidecar freshness contract:
 - `read_through`: refresh the relevant scope before answering when possible.
 - `require_fresh`: fail with `freshness_blocked` if fresh evidence cannot be
   produced.
-- `no_refresh`: use the active graph only, useful for deterministic replay.
+- `no_refresh`: use the current graph only, useful for deterministic replay.
 
 Every graph-backed response should include:
 
@@ -602,23 +612,23 @@ Every graph-backed response should include:
 - `stale_paths`
 - `fallbacks_used`
 
-Known cache limitations must stay visible to LLM-agent callers: full rebuilds can
+Known cache limitations must stay visible to external callers: full rebuilds can
 mint a new `index_id`, ranker weight changes and new runtime traces may require
 an index refresh to reshape outputs, and stale working trees should bypass or
 refresh cache rows rather than silently serving old context.
 
 ## Compatibility Matrix
 
-| Caller | CLI Transport | MCP Transport | Best default profile | Main workflow | Notes |
+| Caller | Today via `idiom tool` | Future via MCP | Best default profile | Main workflow | Notes |
 | --- | --- | --- | --- | --- | --- |
-| CLI-first LLM agent | Yes, shell command from interactive or non-interactive execution | Yes, if the agent supports configured MCP servers and tool allow/deny lists | `discovery` for planning, `verify` for checks | Preload context packets, query graph, audit after edits | Keep LLM-agent sandbox/approval controls enabled; mark Agent Harness as required only when missing evidence should fail the run. |
-| Hook-capable LLM agent | Yes, hook wrapper scripts | Yes, when hook matchers can target MCP tool names | `discovery` or `verify` | Hook-time context injection, post-edit source sanity, subagent context | Use wrapper scripts for hook JSON; avoid brittle prompt interpolation. |
-| Profile-based LLM agent | Yes, shell tools or project scripts | Depends on the active caller environment | `discovery` | Planner agents call context and audit tools under ask/allow permissions | Align LLM-agent permission keys with Agent Harness profile gates. |
-| Repo-map LLM agent | Yes, shell pre-step or wrapper around a task message | Wrapper-dependent | `discovery` | Precompute context packet before the edit session | Complements repo maps; does not replace an LLM agent's editing loop. |
+| Codex CLI | Yes, shell command from interactive or `codex exec` | Yes, `mcp_servers.<id>` config supports stdio/HTTP-style entries and tool allow/deny lists in Codex config | `discovery` for planning, `verify` for checks | Preload context packets, query graph, audit after edits | Keep Codex sandbox/approval controls enabled; use `required = true` only when missing Idiom should fail the run. |
+| Claude Code | Yes, Bash commands or hook wrapper scripts | Yes, MCP tools and hooks can target `mcp__server__tool` names | `discovery` or `verify` | Hook-time context injection, post-edit source sanity, subagent context | Use wrapper scripts for hook JSON; avoid brittle prompt interpolation. |
+| OpenCode | Yes, bash tools or project scripts | Likely, depending on active MCP config support in the caller environment | `discovery` | Planner agents call context and audit tools under ask/allow permissions | Align OpenCode permission keys with Idiom profile gates. |
+| Aider | Yes, shell pre-step or wrapper around `--message` | Future wrapper-dependent | `discovery` | Precompute context packet before Aider edit session | Complements repo map; does not replace Aider's editing loop. |
 | Manual scripts | Yes, primary interface | Optional | `discovery`, `verify`, or `write` | CI preflight, context exports, audit snapshots | Must remain stable even if MCP is not installed. |
-| Agent Harness lanes | Native internal dispatch | Not needed | lane-owned | Local model autonomy | Lanes remain a first-party consumer of the same substrate. |
+| Idiom lanes | Native internal dispatch | Not needed | lane-owned | Local model autonomy | Lanes remain a first-party consumer of the same substrate. |
 
-## Implementation Design Map
+## Implementation Roadmap
 
 ### Phase 0: Document And Freeze The Contract
 
@@ -626,16 +636,16 @@ Acceptance criteria:
 
 - This document is linked from the strategic thesis, MCP server design, and
   reusability docs.
-- `harness tool help`, `harness tool list`, and docs agree on the sidecar purpose.
-- The active CLI envelope is documented as compatibility behavior.
-- A new `harness.tool.v1` envelope is designed but not required by callers.
+- `idiom tool help`, `idiom tool list`, and docs agree on the sidecar purpose.
+- The current CLI envelope is documented as compatibility behavior.
+- A new `idiom.tool.v1` envelope is designed but not yet required by callers.
 
 ### Phase 1: Schema Export For Existing CLI
 
 Acceptance criteria:
 
-- `harness tool schema <tool>` prints the tool argument JSON Schema.
-- `harness tool schema --all` exports a deterministic schema bundle.
+- `idiom tool schema <tool>` prints the tool argument JSON Schema.
+- `idiom tool schema --all` exports a deterministic schema bundle.
 - `harness_audit` fails or warns on manifest/schema drift with file-level
   evidence.
 - At least `context_pack`, `context_query`, `context_zoom`, `context_status`,
@@ -646,7 +656,7 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- `harness tool <name> --format v1` emits the v1 response envelope.
+- `idiom tool <name> --format v1` emits the v1 response envelope.
 - Existing `Tool`/`Summary`/`Output`/`Error` output remains default for one
   release.
 - Error classes are stable and covered by tests.
@@ -658,12 +668,12 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- `harness mcp serve --stdio --profile discovery` implements initialize,
+- `idiom mcp serve --stdio --profile discovery` implements initialize,
   `tools/list`, and `tools/call`.
 - Tool list is generated from the same manifest/schema source as the CLI.
-- Calls dispatch through the same workspace manager as `harness tool`.
+- Calls dispatch through the same workspace manager as `idiom tool`.
 - No write or shell tools are exposed in `discovery`.
-- LLM agents can list and call `context_pack` in local smoke tests.
+- Codex and Claude Code can list and call `context_pack` in local smoke tests.
 
 ### Phase 4: MCP Resources And Audit
 
@@ -678,8 +688,8 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- `harness mcp serve --http 127.0.0.1:8765 --profile discovery` implements
-  Streamable HTTP according to MCP transport requirements.
+- `idiom mcp serve --http 127.0.0.1:8765 --profile discovery` implements
+  Streamable HTTP according to the 2025-11-25 MCP transport requirements.
 - HTTP validates `Origin`, requires bearer-token auth, binds localhost by
   default, and rejects public bind without an explicit danger flag.
 - Per-token profile, rate limit, and max concurrency settings exist.
@@ -696,13 +706,13 @@ Acceptance criteria:
   evidence.
 - Audit reports write/verify ordering and changed paths.
 
-### Phase 7: LLM Agent Recipes
+### Phase 7: External Agent Recipes
 
 Acceptance criteria:
 
-- Docs include working LLM-agent and shell examples.
+- Docs include working Codex, Claude Code, OpenCode, Aider, and shell examples.
 - Examples use least-privilege profiles.
-- A smoke script validates `harness tool` examples without requiring external
+- A smoke script validates `idiom tool` examples without requiring external
   agent credentials.
 - MCP examples are tested where local clients are available and clearly marked
   otherwise.
@@ -711,20 +721,21 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- `harness_feedback` accepts LLM-agent caller metadata.
+- `harness_feedback` accepts external caller metadata.
 - Cache misses, stale packets, and repeated failed lookups can affect ranker or
   audit recommendations through an explicit, reviewable path.
-- Evals can replay sidecar traces without requiring the original LLM agent.
+- Evals can replay sidecar traces without requiring the original external
+  agent.
 - Audit output distinguishes model strategy failure from substrate contract
   failure.
 
 ## Non-Goals
 
 - Do not build another general terminal pair programmer.
-- Do not replace LLM agents chat loops.
+- Do not replace Codex, Claude Code, OpenCode, or Aider chat loops.
 - Do not make prompt text the integration API.
-- Do not expose every internal lane or runner control as an integration tool.
-- Do not proxy arbitrary MCP servers through Agent Harness before Agent Harness's own server
+- Do not expose every internal lane or runner control as an external tool.
+- Do not proxy arbitrary MCP servers through Idiom before Idiom's own server
   surface is stable.
 - Do not grant write or shell authority through MCP by default.
 - Do not hide stale evidence behind friendly summaries.
@@ -734,7 +745,7 @@ Acceptance criteria:
 
 - Contract drift: CLI, MCP, internal lanes, and docs may diverge unless schema
   generation and `harness_audit` remain authoritative.
-- Tool sprawl: exposing many tools can recreate the same confusion Agent Harness is
+- Tool sprawl: exposing many tools can recreate the same confusion Idiom is
   trying to solve. Profiles and capability docs must keep the first surface
   small.
 - Security expansion: HTTP MCP with write/shell profiles can become a local
@@ -742,33 +753,33 @@ Acceptance criteria:
   and conservative defaults are mandatory.
 - Stale confidence: persistent memory can become worse than grep if freshness is
   unclear. Every response needs freshness and fallback metadata.
-- Caller mismatch: each LLM agent has its own permission semantics. Agent Harness
+- Caller mismatch: each external agent has its own permission semantics. Idiom
   must narrow its own surface rather than assuming the caller's sandbox is
   sufficient.
 - Audit volume: high-volume sidecar use can produce noisy telemetry. Redaction,
   retention, sampling, and summaries must be designed early.
 - Strategy leakage: tool results may accidentally prescribe next actions. This
-  would violate the model/harness split and make Agent Harness harder to reuse.
+  would violate the model/harness split and make Idiom harder to reuse.
 
 ## Open Questions
 
-- Should `harness.tool.v1` replace the active CLI envelope by default after one
+- Should `idiom.tool.v1` replace the current CLI envelope by default after one
   release, or remain opt-in indefinitely for compatibility?
 - Should `source_sanity` be the canonical verification abstraction for external
   agents, or should `verify` become a separate sidecar family with explicit
   command allowlists?
-- How should path scopes be represented across CLI, MCP roots, LLM agent
-  permissions, LLM agent hooks, and LLM agent permissions without inventing separate
+- How should path scopes be represented across CLI, MCP roots, Codex
+  permissions, Claude hooks, and OpenCode permissions without inventing separate
   policy languages?
 - Which resources are safe to expose by default over MCP: context packs only,
   or also redacted conversation logs and ranker state?
-- Should ranker learning consume LLM-agent traces automatically, or only
+- Should ranker learning consume external-agent traces automatically, or only
   after `harness_feedback` marks them as trusted?
-- How should sidecar traces be retained when multiple LLM agents work in
+- How should sidecar traces be retained when multiple external agents work in
   the same dirty worktree?
 - What is the minimum stable discovery profile for first release: seven context
   tools only, or the full read-only semantic matrix?
-- Should Agent Harness support a small SDK after MCP, or is CLI plus MCP sufficient?
+- Should Idiom support a small SDK after MCP, or is CLI plus MCP sufficient?
 
 ## Cross-Link Expectations
 
@@ -787,7 +798,7 @@ This document should become the sidecar/substrate pillar and cross-link to:
   separate from host contracts.
 - Auditable planning and handoff in
   [design-auditable-planning-handoff.md](design-auditable-planning-handoff.md):
-  LLM-agent plans should carry packet IDs, path roles, and verification
+  external plans should carry packet IDs, path roles, and verification
   obligations when they cross into execution.
 - Local-model operations in
   [design-local-model-operations.md](design-local-model-operations.md): sidecar
@@ -795,12 +806,13 @@ This document should become the sidecar/substrate pillar and cross-link to:
 - Eval/audit/learning flywheel in
   [design-eval-audit-learning-flywheel.md](design-eval-audit-learning-flywheel.md):
   sidecar traces must be replayable evidence, not unstructured logs.
-- Reusable lane/project seams in [portability-bootstrap-design.md](portability-bootstrap-design.md):
-  project-specific tooling stays project-specific while Agent Harness owns the generic
+- Reusable lane/project seams in
+  [archive/2026-05-historical/reusability-design.md](archive/2026-05-historical/reusability-design.md):
+  project-specific tooling stays project-specific while Idiom owns the generic
   sidecar contract.
-- MCP server mechanics in the MCP support design: MCP is
+- MCP server mechanics in [mcp-server-support.md](mcp-server-support.md): MCP is
   a transport over the same workspace manager, manifest, schemas, permissions,
   telemetry, and audit.
 
-The north-star sentence for every future edit is: LLM agents bring
-strategy; Agent Harness supplies local repository evidence and enforces typed contracts.
+The north-star sentence for every future edit is: external agents bring
+strategy; Idiom supplies local repository evidence and enforces typed contracts.

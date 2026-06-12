@@ -24,17 +24,21 @@ func modelCallPrefixDiagnostics(prompt []llama.ChatMessage, opts llama.ChatOptio
 		"prefix_cache_signal_present":  false,
 		"prefix_cache_signal_provider": "",
 	}
+
 	return payload
 }
 
 func leadingSystemPromptPrefix(prompt []llama.ChatMessage) []llama.ChatMessage {
 	var prefix []llama.ChatMessage
+
 	for _, msg := range prompt {
 		if msg.Role != "system" {
 			break
 		}
+
 		prefix = append(prefix, llama.ChatMessage{Role: msg.Role, Content: msg.Content})
 	}
+
 	return prefix
 }
 
@@ -43,6 +47,8 @@ func stableHash(value any) string {
 	if err != nil {
 		data = []byte("{}")
 	}
+
 	sum := sha256.Sum256(data)
+
 	return hex.EncodeToString(sum[:])
 }

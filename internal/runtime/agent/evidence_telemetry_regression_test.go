@@ -11,8 +11,10 @@ import (
 )
 
 func TestFailedReadFileMissingPathIsNotAcceptedEvidence(t *testing.T) {
-	const missingPath = "internal/runtime/agent/missing.go"
-	const inspectedPath = "internal/runtime/agent/runner.go"
+	const (
+		missingPath   = "internal/runtime/agent/missing.go"
+		inspectedPath = "internal/runtime/agent/runner.go"
+	)
 
 	results := []workspace.ToolResult{
 		{
@@ -40,9 +42,11 @@ func TestFailedReadFileMissingPathIsNotAcceptedEvidence(t *testing.T) {
 		if slices.Contains(paths, missingPath) {
 			t.Fatalf("%s promoted missing read_file path as accepted evidence: %#v", name, paths)
 		}
+
 		if slices.Contains(paths, "internal/runtime/agent/zero_hit.go") {
 			t.Fatalf("%s promoted zero-hit search path as accepted evidence: %#v", name, paths)
 		}
+
 		if !slices.Contains(paths, inspectedPath) {
 			t.Fatalf("%s should preserve successful read_file evidence path %q, got %#v", name, inspectedPath, paths)
 		}
@@ -51,6 +55,7 @@ func TestFailedReadFileMissingPathIsNotAcceptedEvidence(t *testing.T) {
 
 func TestModelCallTelemetryDistinguishesParsedTextualTool(t *testing.T) {
 	var event RunEvent
+
 	runner := &Runner{
 		OnEvent: func(got RunEvent) {
 			event = got
@@ -74,19 +79,25 @@ func TestModelCallTelemetryDistinguishesParsedTextualTool(t *testing.T) {
 	if event.Role != "model_call" {
 		t.Fatalf("expected model_call event, got %#v", event)
 	}
+
 	var payload map[string]any
+
 	if err := json.Unmarshal([]byte(event.Content), &payload); err != nil {
 		t.Fatalf("decode model_call payload: %v", err)
 	}
+
 	if payload["chosen_tool"] != "<answer>" {
 		t.Fatalf("textual tool request must not masquerade as native chosen_tool, got %#v", payload)
 	}
+
 	if payload["parsed_textual_tool"] != "read_file" {
 		t.Fatalf("model_call telemetry missing parsed textual tool identity: %#v", payload)
 	}
+
 	if payload["parsed_tool_transport"] != "textual" {
 		t.Fatalf("model_call telemetry missing textual transport: %#v", payload)
 	}
+
 	if payload["parsed_tool_request_valid"] != true {
 		t.Fatalf("model_call telemetry should mark parsed textual request valid: %#v", payload)
 	}
@@ -94,6 +105,7 @@ func TestModelCallTelemetryDistinguishesParsedTextualTool(t *testing.T) {
 
 func TestModelCallTelemetryReportsParsedKeyValueWriteWithoutRawEditText(t *testing.T) {
 	var event RunEvent
+
 	runner := &Runner{
 		OnEvent: func(got RunEvent) {
 			event = got
@@ -117,16 +129,21 @@ func TestModelCallTelemetryReportsParsedKeyValueWriteWithoutRawEditText(t *testi
 	if event.Role != "model_call" {
 		t.Fatalf("expected model_call event, got %#v", event)
 	}
+
 	var payload map[string]any
+
 	if err := json.Unmarshal([]byte(event.Content), &payload); err != nil {
 		t.Fatalf("decode model_call payload: %v", err)
 	}
+
 	if payload["chosen_tool"] != "<answer>" {
 		t.Fatalf("textual write request must not masquerade as native chosen_tool, got %#v", payload)
 	}
+
 	if payload["parsed_textual_tool"] != "edit_file" || payload["parsed_tool_transport"] != toolRequestNormalizerTransportKeyValue || payload["parsed_tool_request_valid"] != true {
 		t.Fatalf("model_call telemetry should report parsed key-value write shape without treating it as native: %#v", payload)
 	}
+
 	for _, forbidden := range []string{"executed_textual_tool", "textual_tool_transport", "old_text", "new_text"} {
 		if _, ok := payload[forbidden]; ok {
 			t.Fatalf("textual write telemetry must not emit raw edit field %q: %#v", forbidden, payload)
@@ -136,6 +153,7 @@ func TestModelCallTelemetryReportsParsedKeyValueWriteWithoutRawEditText(t *testi
 
 func TestToolRequestNormalizerTelemetryExposesParsedTextualTool(t *testing.T) {
 	var event RunEvent
+
 	runner := &Runner{
 		OnEvent: func(got RunEvent) {
 			event = got
@@ -153,19 +171,25 @@ func TestToolRequestNormalizerTelemetryExposesParsedTextualTool(t *testing.T) {
 	if event.Role != "tool_request_normalizer" {
 		t.Fatalf("expected tool_request_normalizer event, got %#v", event)
 	}
+
 	var payload map[string]any
+
 	if err := json.Unmarshal([]byte(event.Content), &payload); err != nil {
 		t.Fatalf("decode tool_request_normalizer payload: %v", err)
 	}
+
 	if payload["tool"] != "read_file" {
 		t.Fatalf("existing tool field should remain compatible, got %#v", payload)
 	}
+
 	if payload["parsed_textual_tool"] != "read_file" {
 		t.Fatalf("normalizer telemetry missing parsed textual tool identity: %#v", payload)
 	}
+
 	if _, ok := payload["executed_textual_tool"]; ok {
 		t.Fatalf("normalizer telemetry is pre-dispatch and must not claim execution: %#v", payload)
 	}
+
 	if payload["textual_tool_transport"] != "textual" {
 		t.Fatalf("normalizer telemetry missing textual transport: %#v", payload)
 	}
@@ -173,6 +197,7 @@ func TestToolRequestNormalizerTelemetryExposesParsedTextualTool(t *testing.T) {
 
 func TestToolRequestNormalizerTelemetryDoesNotTreatDeterministicRecoveryAsTextualTool(t *testing.T) {
 	var event RunEvent
+
 	runner := &Runner{
 		OnEvent: func(got RunEvent) {
 			event = got
@@ -190,13 +215,17 @@ func TestToolRequestNormalizerTelemetryDoesNotTreatDeterministicRecoveryAsTextua
 	if event.Role != "tool_request_normalizer" {
 		t.Fatalf("expected tool_request_normalizer event, got %#v", event)
 	}
+
 	var payload map[string]any
+
 	if err := json.Unmarshal([]byte(event.Content), &payload); err != nil {
 		t.Fatalf("decode tool_request_normalizer payload: %v", err)
 	}
+
 	if payload["tool"] != "read_file" {
 		t.Fatalf("existing tool field should remain compatible, got %#v", payload)
 	}
+
 	for _, forbidden := range []string{"parsed_textual_tool", "executed_textual_tool", "textual_tool_transport"} {
 		if _, ok := payload[forbidden]; ok {
 			t.Fatalf("deterministic recovery must not be labeled as model textual tool telemetry via %q: %#v", forbidden, payload)
@@ -206,6 +235,7 @@ func TestToolRequestNormalizerTelemetryDoesNotTreatDeterministicRecoveryAsTextua
 
 func TestBlockedReadOnlyDirectAnswerTelemetryKeepsAcceptedEvidenceEmpty(t *testing.T) {
 	var events []RunEvent
+
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "conversation",
@@ -235,14 +265,18 @@ func TestBlockedReadOnlyDirectAnswerTelemetryKeepsAcceptedEvidenceEmpty(t *testi
 	if len(events) != 3 {
 		t.Fatalf("expected three blocked telemetry events, got %#v", events)
 	}
+
 	for _, event := range events {
 		var payload map[string]any
+
 		if err := json.Unmarshal([]byte(event.Content), &payload); err != nil {
 			t.Fatalf("decode %s payload: %v", event.Role, err)
 		}
+
 		if pathsLen(payload["evidence_paths"]) != 0 {
 			t.Fatalf("%s must keep rejected accepted evidence empty, got %#v", event.Role, payload)
 		}
+
 		if got := stringSliceFromJSON(payload["presentation_evidence_paths"]); !slices.Contains(got, "internal/runtime/agent/runner.go") {
 			t.Fatalf("%s should expose presentation evidence separately, got %#v", event.Role, payload)
 		}
@@ -251,6 +285,7 @@ func TestBlockedReadOnlyDirectAnswerTelemetryKeepsAcceptedEvidenceEmpty(t *testi
 
 func TestAcceptedReadOnlyDirectAnswerTelemetryKeepsAcceptedEvidenceSeparateFromPresentation(t *testing.T) {
 	var events []RunEvent
+
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "conversation",
@@ -278,14 +313,18 @@ func TestAcceptedReadOnlyDirectAnswerTelemetryKeepsAcceptedEvidenceSeparateFromP
 	if len(events) != 3 {
 		t.Fatalf("expected three accepted telemetry events, got %#v", events)
 	}
+
 	for _, event := range events {
 		var payload map[string]any
+
 		if err := json.Unmarshal([]byte(event.Content), &payload); err != nil {
 			t.Fatalf("decode %s payload: %v", event.Role, err)
 		}
+
 		if pathsLen(payload["evidence_paths"]) != 0 {
 			t.Fatalf("%s must keep accepted evidence empty when acceptance has none, got %#v", event.Role, payload)
 		}
+
 		if got := stringSliceFromJSON(payload["presentation_evidence_paths"]); !slices.Contains(got, "internal/runtime/agent/runner.go") {
 			t.Fatalf("%s should expose presentation evidence separately, got %#v", event.Role, payload)
 		}
@@ -294,6 +333,7 @@ func TestAcceptedReadOnlyDirectAnswerTelemetryKeepsAcceptedEvidenceSeparateFromP
 
 func TestAcceptedFinalAnswerTelemetryPreservesAcceptedEvidencePaths(t *testing.T) {
 	var events []RunEvent
+
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "conversation",
@@ -321,11 +361,14 @@ func TestAcceptedFinalAnswerTelemetryPreservesAcceptedEvidencePaths(t *testing.T
 	if len(events) != 3 {
 		t.Fatalf("expected three accepted telemetry events, got %#v", events)
 	}
+
 	for _, event := range events {
 		var payload map[string]any
+
 		if err := json.Unmarshal([]byte(event.Content), &payload); err != nil {
 			t.Fatalf("decode %s payload: %v", event.Role, err)
 		}
+
 		got := stringSliceFromJSON(payload["evidence_paths"])
 		if !slices.Contains(got, "internal/runtime/agent/accepted.go") || slices.Contains(got, "internal/runtime/agent/presentation_only.go") {
 			t.Fatalf("%s should preserve accepted evidence paths without presentation replacement, got %#v", event.Role, payload)
@@ -349,11 +392,13 @@ func stringSliceFromJSON(value any) []string {
 	if !ok {
 		return nil
 	}
+
 	out := make([]string, 0, len(values))
 	for _, value := range values {
 		if text, ok := value.(string); ok {
 			out = append(out, text)
 		}
 	}
+
 	return out
 }

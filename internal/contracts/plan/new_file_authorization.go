@@ -6,7 +6,9 @@ func NewFileAuthorizedForPath(contextText string, path string) bool {
 	if ExplicitNewFileBodyContext(contextText) {
 		return true
 	}
+
 	lower := strings.ToLower(contextText)
+
 	return PathLooksLikeTest(path) &&
 		strings.Contains(lower, "add") &&
 		strings.Contains(lower, "test")
@@ -14,6 +16,7 @@ func NewFileAuthorizedForPath(contextText string, path string) bool {
 
 func ExplicitNewFileBodyContext(contextText string) bool {
 	lower := strings.ToLower(contextText)
+
 	return strings.Contains(lower, "create ") ||
 		strings.Contains(lower, "creating ") ||
 		(strings.Contains(lower, "add ") && strings.Contains(lower, " package")) ||

@@ -14,40 +14,53 @@ func TestBuildImplementationHandoffUsesGeneratedDispatchSemantics(t *testing.T) 
 	if handoff.EffortID != "effort-handoff" || handoff.TaskID != "impl-handoff" {
 		t.Fatalf("unexpected identity: %#v", handoff)
 	}
+
 	if !handoff.CoverageGatePassed || handoff.CoverageTier != "unit" {
 		t.Fatalf("unexpected coverage fields: passed=%t tier=%q blockers=%#v", handoff.CoverageGatePassed, handoff.CoverageTier, handoff.CoverageBlockers)
 	}
+
 	if !handoffTestStringSliceContains(handoff.FilesToModify, "internal/workflows/productworkflow/implementation_handoff.go") {
 		t.Fatalf("handoff files_to_modify should come from generated brief scope, got %#v", handoff.FilesToModify)
 	}
+
 	if !handoffTestStringSliceContains(handoff.Tests, "go test ./internal/workflows/productworkflow") || !handoffTestStringSliceContains(handoff.Tests, "go test ./internal/cmd/featureplanner") {
 		t.Fatalf("handoff tests should include TDD and planned verification, got %#v", handoff.Tests)
 	}
+
 	if !handoffTestStringSliceContains(handoff.RequiredBehavior, "REQ-HANDOFF: Carry product workflow implementation handoff context") {
 		t.Fatalf("handoff required behavior should come from generated brief, got %#v", handoff.RequiredBehavior)
 	}
+
 	if !handoffTestStringSliceContains(handoff.Decisions, "ADR-HANDOFF is accepted and must be preserved unless superseded by a new accepted ADR.") {
 		t.Fatalf("handoff decisions should come from generated brief, got %#v", handoff.Decisions)
 	}
+
 	if !handoffTestStringSliceContains(handoff.Decisions, "ADR-HANDOFF decision: Keep source path authority in productworkflow.") {
 		t.Fatalf("handoff decisions should preserve ADR decision body, got %#v", handoff.Decisions)
 	}
+
 	if !handoffTestStringSliceContains(handoff.Acceptance, "REQ-HANDOFF testability: go test ./internal/workflows/productworkflow") ||
 		!handoffTestStringSliceContains(handoff.Acceptance, "REQ-HANDOFF metric: featureplanner context contains product artifacts") {
+
 		t.Fatalf("handoff acceptance should preserve PRD testability and metric, got %#v", handoff.Acceptance)
 	}
+
 	if len(handoff.PRDRequirements) != 1 || handoff.PRDRequirements[0].Testability != "go test ./internal/workflows/productworkflow" {
 		t.Fatalf("handoff should preserve PRD requirement facts, got %#v", handoff.PRDRequirements)
 	}
+
 	if len(handoff.TDDObligations) != 1 || handoff.TDDObligations[0].RequiredBefore != "implementation" {
 		t.Fatalf("handoff should preserve TDD obligation facts, got %#v", handoff.TDDObligations)
 	}
+
 	if len(handoff.AcceptedADRIDs) != 1 || handoff.AcceptedADRIDs[0] != "ADR-HANDOFF" {
 		t.Fatalf("handoff should preserve accepted ADR IDs, got %#v", handoff.AcceptedADRIDs)
 	}
+
 	if len(handoff.AcceptedADRPaths) != 1 || handoff.AcceptedADRPaths[0] != "adrs/001-handoff.md" {
 		t.Fatalf("handoff should preserve accepted ADR paths, got %#v", handoff.AcceptedADRPaths)
 	}
+
 	if !handoffTestStringSliceContains(handoff.Constraints, "Do not edit files outside the Files To Modify allowlist.") {
 		t.Fatalf("handoff constraints should come from generated brief, got %#v", handoff.Constraints)
 	}
@@ -55,6 +68,7 @@ func TestBuildImplementationHandoffUsesGeneratedDispatchSemantics(t *testing.T) 
 
 func TestBuildImplementationHandoffCarriesCoverageBlockers(t *testing.T) {
 	input := implementationHandoffInput(t.TempDir())
+
 	input.CoverageEvaluation = CoverageGateEvaluation{
 		Status:       "blocked",
 		CoverageTier: "unit",
@@ -68,6 +82,7 @@ func TestBuildImplementationHandoffCarriesCoverageBlockers(t *testing.T) {
 	if handoff.CoverageGatePassed {
 		t.Fatal("blocked coverage gate must not be marked passed")
 	}
+
 	if !handoffTestStringSliceContains(handoff.CoverageBlockers, "coverage evidence is missing") {
 		t.Fatalf("expected coverage blocker in handoff, got %#v", handoff.CoverageBlockers)
 	}
@@ -75,6 +90,7 @@ func TestBuildImplementationHandoffCarriesCoverageBlockers(t *testing.T) {
 
 func TestBuildImplementationHandoffAllowsPendingTDDEvidenceFeaturePlannerDispatch(t *testing.T) {
 	input := implementationHandoffInput(t.TempDir())
+
 	input.ImplementationRecords = input.ImplementationRecords[:1]
 	input.CoverageEvaluation = CoverageGateEvaluation{
 		Status:       "blocked",
@@ -91,9 +107,11 @@ func TestBuildImplementationHandoffAllowsPendingTDDEvidenceFeaturePlannerDispatc
 	if handoff.CoverageGatePassed {
 		t.Fatal("missing TDD evidence should keep the coverage gate status blocked")
 	}
+
 	if !handoffTestStringSliceContains(handoff.CoverageBlockerKinds, "coverage_tdd_evidence_missing") {
 		t.Fatalf("expected typed coverage blocker kind in handoff, got %#v", handoff.CoverageBlockerKinds)
 	}
+
 	if handoffTestStringSliceContains(handoff.Blockers, "coverage gate is blocked; run `idiom product tdd --effort-root <path> --evaluate-coverage --json` and resolve blockers") {
 		t.Fatalf("TDD-only pending evidence must not become a generic product blocker: %#v", handoff.Blockers)
 	}
@@ -111,15 +129,19 @@ func TestLoadImplementationHandoffReadsEffortArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadImplementationHandoff: %v", err)
 	}
+
 	if handoff.EffortRoot != root || handoff.ArtifactRootPath != root {
 		t.Fatalf("unexpected roots: effort=%q artifact=%q", handoff.EffortRoot, handoff.ArtifactRootPath)
 	}
+
 	if !handoff.CoverageGatePassed {
 		t.Fatalf("expected coverage gate pass, blockers=%#v brief blockers=%#v", handoff.CoverageBlockers, handoff.Blockers)
 	}
+
 	if !handoffTestStringSliceContains(handoff.ContextEvidencePaths, "internal/workflows/productworkflow/brief_generation.go") {
 		t.Fatalf("expected workflow referenced path, got %#v", handoff.ContextEvidencePaths)
 	}
+
 	if !handoffTestStringSliceContains(handoff.FilesToModify, "internal/workflows/productworkflow/implementation_handoff.go") {
 		t.Fatalf("expected implementation ledger scope file, got %#v", handoff.FilesToModify)
 	}
@@ -280,32 +302,44 @@ func implementationHandoffInput(root string) BriefGenerationInput {
 
 func writeImplementationHandoffEffort(t *testing.T, root string) {
 	t.Helper()
+
 	input := implementationHandoffInput(root)
 	writeImplementationHandoffJSON(t, filepath.Join(root, "workflow_state.json"), input.WorkflowState)
+
 	if err := os.WriteFile(filepath.Join(root, "prd.md"), []byte(RenderPRDMarkdown(input.PRD)), 0o644); err != nil {
 		t.Fatalf("write prd.md: %v", err)
 	}
+
 	writeImplementationHandoffJSON(t, filepath.Join(root, "tdd.json"), input.TDD)
+
 	if err := os.MkdirAll(filepath.Join(root, "adrs"), 0o755); err != nil {
 		t.Fatalf("mkdir adrs: %v", err)
 	}
+
 	writeImplementationHandoffJSON(t, filepath.Join(root, "adrs", "index.json"), input.ADRIndex)
+
 	if err := os.WriteFile(filepath.Join(root, "adrs", "001-handoff.md"), []byte(RenderADRMarkdown(input.ADRs[0].Doc)), 0o644); err != nil {
 		t.Fatalf("write adr: %v", err)
 	}
+
 	if err := os.MkdirAll(filepath.Join(root, "evidence"), 0o755); err != nil {
 		t.Fatalf("mkdir evidence: %v", err)
 	}
+
 	writeImplementationHandoffJSON(t, filepath.Join(root, "evidence", "traceability_matrix.json"), input.Traceability)
+
 	var ledgerLines []byte
+
 	for _, record := range input.ImplementationRecords {
 		recordData, err := json.Marshal(record)
 		if err != nil {
 			t.Fatalf("marshal implementation ledger: %v", err)
 		}
+
 		ledgerLines = append(ledgerLines, recordData...)
 		ledgerLines = append(ledgerLines, '\n')
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "implementation_ledger.jsonl"), ledgerLines, 0o644); err != nil {
 		t.Fatalf("write implementation ledger: %v", err)
 	}
@@ -313,10 +347,12 @@ func writeImplementationHandoffEffort(t *testing.T, root string) {
 
 func writeImplementationHandoffJSON(t *testing.T, path string, value any) {
 	t.Helper()
+
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal %s: %v", path, err)
 	}
+
 	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
@@ -328,5 +364,6 @@ func handoffTestStringSliceContains(values []string, want string) bool {
 			return true
 		}
 	}
+
 	return false
 }

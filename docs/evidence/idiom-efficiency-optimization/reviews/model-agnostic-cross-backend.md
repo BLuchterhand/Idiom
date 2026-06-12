@@ -29,45 +29,45 @@ Let me check the final answer acceptance and the source grounding logic in more 
 [2m  ▎ thinking[0m
   · 36378 tok · in 36065 (34560 cached / 1505 new) · out 313 (34 reasoning) · ¥0.0028
   -> read_file {"limit": 150, "offset": 100, "path": "internal/runtime/agent/final_answer_acceptance.go"}
-  -> explore {"task": "In the Idiom repo at /Users/ben/Documents/GitHub/idiom, find and show me:\n1. The method `sourceGroundingRejec...
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner.go"}
-  -> grep {"pattern": "acceptedAnswerEvidencePaths", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "reasoning_content", "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/client.go"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner.go", "pattern": "func.*sourceGroundingRejectio...
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner.go", "pattern": "func.*emitModelCallTraceWithO...
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner.go", "offset": 19572, "limit": 80}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/client.go", "offset": 150, "limit": 100}
-  -> read_file {"offset": 8645, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner.go", "limit": 80}
-  -> read_file {"offset": 6074, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner.go", "limit": 120}
-  -> read_file {"offset": 1, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/final_answer_acceptance.go", "limit": 80...
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/client.go", "pattern": "func.*parseChatResponse|func....
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/client.go", "pattern": "type ChatMessage struct"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner.go", "pattern": "func safeModelAliasForTelemet...
-  -> read_file {"limit": 30, "offset": 30, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/client.go"}
-  -> read_file {"limit": 60, "offset": 1040, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/client.go"}
-  -> read_file {"limit": 25, "offset": 6195, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner.go"}
-  -> read_file {"limit": 30, "offset": 590, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/client.go"}
+  -> explore {"task": "In the Idiom repo at /workspace/idiom, find and show me:\n1. The method `sourceGroundingRejec...
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/runner.go"}
+  -> grep {"pattern": "acceptedAnswerEvidencePaths", "path": "/workspace/idiom"}
+  -> grep {"pattern": "reasoning_content", "path": "/workspace/idiom/internal/runtime/llama/client.go"}
+  -> grep {"path": "/workspace/idiom/internal/runtime/agent/runner.go", "pattern": "func.*sourceGroundingRejectio...
+  -> grep {"path": "/workspace/idiom/internal/runtime/agent/runner.go", "pattern": "func.*emitModelCallTraceWithO...
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/runner.go", "offset": 19572, "limit": 80}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/llama/client.go", "offset": 150, "limit": 100}
+  -> read_file {"offset": 8645, "path": "/workspace/idiom/internal/runtime/agent/runner.go", "limit": 80}
+  -> read_file {"offset": 6074, "path": "/workspace/idiom/internal/runtime/agent/runner.go", "limit": 120}
+  -> read_file {"offset": 1, "path": "/workspace/idiom/internal/runtime/agent/final_answer_acceptance.go", "limit": 80...
+  -> grep {"path": "/workspace/idiom/internal/runtime/llama/client.go", "pattern": "func.*parseChatResponse|func....
+  -> grep {"path": "/workspace/idiom/internal/runtime/llama/client.go", "pattern": "type ChatMessage struct"}
+  -> grep {"path": "/workspace/idiom/internal/runtime/agent/runner.go", "pattern": "func safeModelAliasForTelemet...
+  -> read_file {"limit": 30, "offset": 30, "path": "/workspace/idiom/internal/runtime/llama/client.go"}
+  -> read_file {"limit": 60, "offset": 1040, "path": "/workspace/idiom/internal/runtime/llama/client.go"}
+  -> read_file {"limit": 25, "offset": 6195, "path": "/workspace/idiom/internal/runtime/agent/runner.go"}
+  -> read_file {"limit": 30, "offset": 590, "path": "/workspace/idiom/internal/runtime/llama/client.go"}
 [2m  ▎ thinking[0m
   · 40191 tok · in 39261 (36352 cached / 2909 new) · out 930 (781 reasoning) · ¥0.0055
-  -> explore {"task": "In the Idiom repo at /Users/ben/Documents/GitHub/idiom, find how the writer_route_decision event gets its mode...
+  -> explore {"task": "In the Idiom repo at /workspace/idiom, find how the writer_route_decision event gets its mode...
   -> mcp__codegraph__search {"query": "writer_route_decision", "kind": "variable"}
-  -> grep {"pattern": "writer_route_decision", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/workflows/planexecute/run.go", "offset": 115, "limit": 30}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/cli/lane/lane.go", "offset": 285, "limit": 30}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/cli/implement/implement.go", "offset": 70, "limit": 30}
+  -> grep {"pattern": "writer_route_decision", "path": "/workspace/idiom"}
+  -> read_file {"path": "/workspace/idiom/internal/workflows/planexecute/run.go", "offset": 115, "limit": 30}
+  -> read_file {"path": "/workspace/idiom/internal/surfaces/cli/lane/lane.go", "offset": 285, "limit": 30}
+  -> read_file {"path": "/workspace/idiom/internal/surfaces/cli/implement/implement.go", "offset": 70, "limit": 30}
   -> mcp__codegraph__search {"query": "planExecuteWriterRouteDecision"}
   -> mcp__codegraph__search {"query": "buildLaneWriterRouteDecision"}
   -> mcp__codegraph__search {"query": "BuildDecision"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/workflows/planexecute/writer_route.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/cli/lane/lane.go", "offset": 1260, "limit": 40}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/cli/route/writer_route.go"}
+  -> read_file {"path": "/workspace/idiom/internal/workflows/planexecute/writer_route.go"}
+  -> read_file {"path": "/workspace/idiom/internal/surfaces/cli/lane/lane.go", "offset": 1260, "limit": 40}
+  -> read_file {"path": "/workspace/idiom/internal/surfaces/cli/route/writer_route.go"}
   -> mcp__codegraph__search {"kind": "type", "query": "writerroute.Decision"}
   -> mcp__codegraph__search {"kind": "function", "query": "NewDecisionFromParams"}
   -> mcp__codegraph__search {"kind": "method", "query": "EventFields", "limit": 10}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/contracts/writerroute/decision.go"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/cli/lane", "pattern": "func cliWriterRouteRoleAliases"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/cli/lane", "pattern": "func buildCLIWriterRouteDecision"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/cli/lane/adapters.go"}
+  -> read_file {"path": "/workspace/idiom/internal/contracts/writerroute/decision.go"}
+  -> grep {"path": "/workspace/idiom/internal/surfaces/cli/lane", "pattern": "func cliWriterRouteRoleAliases"}
+  -> grep {"path": "/workspace/idiom/internal/surfaces/cli/lane", "pattern": "func buildCLIWriterRouteDecision"}
+  -> read_file {"path": "/workspace/idiom/internal/surfaces/cli/lane/adapters.go"}
   ⊘ explore sub-agent: paused after 8 tool-call rounds (agent.max_steps) — the work so far is saved; send another message to continue, or set max_steps higher or to 0 for no limit
 [2m  ▎ thinking[0m
   · 40335 tok · in 40250 (40064 cached / 186 new) · out 85 (21 reasoning) · ¥0.0012

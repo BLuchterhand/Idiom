@@ -56,13 +56,17 @@ type sessionAggregate struct {
 
 func (a *sessionAggregate) recordModelCall(promptTokens, completionTokens, totalTokens, promptCacheHitTokens, promptCacheMissTokens int, promptCacheAccountingKnown bool, reasoningTokens int) {
 	a.modelCalls++
+
 	a.promptTokens += promptTokens
 	a.completionTokens += completionTokens
 	a.totalTokens += totalTokens
 	a.promptCacheHitTokens += promptCacheHitTokens
 	a.promptCacheMissTokens += promptCacheMissTokens
+
 	a.promptCacheAccountingKnown = a.promptCacheAccountingKnown || promptCacheAccountingKnown
+
 	a.reasoningTokens += reasoningTokens
+
 	if promptTokens > a.peakPromptTokens {
 		a.peakPromptTokens = promptTokens
 	}
@@ -70,17 +74,23 @@ func (a *sessionAggregate) recordModelCall(promptTokens, completionTokens, total
 
 func (a *sessionAggregate) recordToolResult(tool string, outputChars int) {
 	a.toolCalls++
+
 	tool = strings.TrimSpace(tool)
+
 	if tool == "" {
 		tool = "<unknown>"
 	}
+
 	if a.toolOutputBytes == nil {
 		a.toolOutputBytes = make(map[string]int)
 	}
+
 	if a.toolCallCounts == nil {
 		a.toolCallCounts = make(map[string]int)
 	}
+
 	a.toolCallCounts[tool]++
+
 	a.toolOutputBytes[tool] += outputChars
 }
 
@@ -88,15 +98,19 @@ func (a *sessionAggregate) recordToolRequest(profile workspace.ToolDiscoveryProf
 	if !profile.Discovery {
 		return
 	}
+
 	if a.discoveryClasses == nil {
 		a.discoveryClasses = make(map[string]int)
 	}
+
 	if a.discoveryCosts == nil {
 		a.discoveryCosts = make(map[string]int)
 	}
+
 	if class := strings.TrimSpace(profile.Class); class != "" {
 		a.discoveryClasses[class]++
 	}
+
 	if cost := strings.TrimSpace(profile.Cost); cost != "" {
 		a.discoveryCosts[cost]++
 	}
@@ -106,6 +120,7 @@ func (a *sessionAggregate) topToolsByOutput(n int) []transcript.ToolOutputAggreg
 	if len(a.toolOutputBytes) == 0 {
 		return nil
 	}
+
 	out := make([]transcript.ToolOutputAggregate, 0, len(a.toolOutputBytes))
 	for tool, bytes := range a.toolOutputBytes {
 		out = append(out, transcript.ToolOutputAggregate{
@@ -114,12 +129,15 @@ func (a *sessionAggregate) topToolsByOutput(n int) []transcript.ToolOutputAggreg
 			OutputChars: bytes,
 		})
 	}
+
 	slices.SortFunc(out, func(a, b transcript.ToolOutputAggregate) int {
 		return -cmp.Compare(a.OutputChars, b.OutputChars)
 	})
+
 	if len(out) > n {
 		out = out[:n]
 	}
+
 	return out
 }
 
@@ -127,15 +145,19 @@ func discoveryAggregates(counts map[string]int) []transcript.DiscoveryAggregate 
 	if len(counts) == 0 {
 		return nil
 	}
+
 	names := make([]string, 0, len(counts))
 	for name := range counts {
 		names = append(names, name)
 	}
+
 	slices.Sort(names)
+
 	out := make([]transcript.DiscoveryAggregate, 0, len(names))
 	for _, name := range names {
 		out = append(out, transcript.DiscoveryAggregate{Name: name, Calls: counts[name]})
 	}
+
 	return out
 }
 
@@ -291,9 +313,11 @@ func (m *Model) pinnedFilesRegistry() *PinnedFileRegistry {
 	if m == nil {
 		return nil
 	}
+
 	if m.pinnedFiles == nil {
 		m.pinnedFiles = newPinnedFileRegistry()
 	}
+
 	return m.pinnedFiles
 }
 
@@ -382,6 +406,7 @@ type evidenceRow struct {
 
 func formatPlanPhaseText(phase, detail string) string {
 	label := ""
+
 	switch strings.TrimSpace(phase) {
 	case "planning":
 		label = "Planning"
@@ -392,10 +417,12 @@ func formatPlanPhaseText(phase, detail string) string {
 	default:
 		label = titleDisplay(phase)
 	}
+
 	detail = strings.TrimSpace(detail)
 	if detail == "" {
 		return label + "..."
 	}
+
 	return label + ": " + detail
 }
 
@@ -408,24 +435,32 @@ const (
 
 func (m *Model) Close() {
 	m.writeSessionSummary()
+
 	if m.debugLogger != nil {
 		_ = m.debugLogger.Close()
 	}
+
 	if m.mcpRegistry != nil {
 		_ = m.mcpRegistry.Close()
 		m.mcpRegistry = nil
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+
 	defer cancel()
+
 	if m.summaryController != nil {
 		_ = m.summaryController.Stop(ctx)
 	}
+
 	if m.implementerController != nil {
 		_ = m.implementerController.Stop(ctx)
 	}
+
 	if !m.managedServer {
 		return
 	}
+
 	if m.controller != nil {
 		_ = m.controller.Stop(ctx)
 	}
@@ -435,15 +470,19 @@ func (m *Model) chatOptions() llama.ChatOptions {
 	enableThinking := util.ClonePtr(m.cfg.Chat.EnableThinking)
 	preserveThinking := m.cfg.Chat.PreserveThinking
 	chatTemplateKwargs := false
+
 	if enableThinking != nil && !*enableThinking {
 		chatTemplateKwargs = true
 	}
+
 	if m.disableThinkingOverride {
 		thinkingOff := false
+
 		enableThinking = &thinkingOff
 		preserveThinking = false
 		chatTemplateKwargs = true
 	}
+
 	return llama.ChatOptions{
 		Model:              m.modelID,
 		Temperature:        m.cfg.Chat.Temperature,
@@ -466,6 +505,7 @@ func (m *Model) samplingSummary() string {
 
 func samplingSummaryForOptions(opts llama.ChatOptions) string {
 	thinking := "auto"
+
 	if opts.EnableThinking != nil {
 		if *opts.EnableThinking {
 			thinking = "on"
@@ -473,6 +513,7 @@ func samplingSummaryForOptions(opts llama.ChatOptions) string {
 			thinking = "off"
 		}
 	}
+
 	return fmt.Sprintf(
 		"temp=%.2f top_p=%.2f top_k=%d min_p=%.2f presence=%.2f repeat=%.2f thinking=%s preserve=%t max_tokens=%d",
 		opts.Temperature,
@@ -499,11 +540,13 @@ func resolveModelID(spec config.LlamaServer, reported string) string {
 			return name
 		}
 	}
+
 	if spec.IsMLX() {
 		if name := strings.TrimSpace(spec.Model); name != "" {
 			return name
 		}
 	}
+
 	return reported
 }
 
@@ -511,6 +554,7 @@ func resolveModelDisplayID(spec config.LlamaServer, reported string) string {
 	if name := strings.TrimSpace(spec.DisplayName); name != "" {
 		return name
 	}
+
 	return resolveModelID(spec, reported)
 }
 
@@ -518,6 +562,7 @@ func (m *Model) activeModelDisplayID() string {
 	if m == nil {
 		return ""
 	}
+
 	return util.Fallback(strings.TrimSpace(m.modelDisplayID), strings.TrimSpace(m.modelID))
 }
 
@@ -536,6 +581,7 @@ func (m *Model) bootstrap() {
 	if m.plannerSpec.IsHosted() {
 		modelID := resolveModelID(m.plannerSpec, m.plannerSpec.Model)
 		m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, m.plannerSpec.Model)}
+
 		return
 	}
 
@@ -543,11 +589,13 @@ func (m *Model) bootstrap() {
 	if err == nil && len(models) > 0 {
 		modelID := resolveModelID(m.plannerSpec, models[0].ID)
 		m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, models[0].ID)}
+
 		return
 	}
 
 	if m.cfg.Chat.AutoStartServer && m.controller != nil {
 		m.startServerAsync()
+
 		return
 	}
 
@@ -566,22 +614,30 @@ func (m *Model) startImplementerAsync() {
 		m.events <- infoMsg{text: "Implementer ready: " + resolveModelDisplayID(m.executorSpec, models[0].ID)}
 		return
 	}
+
 	if !m.cfg.Chat.AutoStartServer {
 		return
 	}
+
 	if err := m.implementerController.Start(ctx); err != nil {
 		m.logError("implementer", "start failed: "+err.Error())
+
 		return
 	}
+
 	if err := m.implementerController.WaitUntilReady(ctx); err != nil {
 		m.logError("implementer", "ready wait failed: "+err.Error())
+
 		return
 	}
+
 	models, err := m.implementerClient.ListModels(context.Background())
 	id := "local-model"
+
 	if err == nil && len(models) > 0 {
 		id = models[0].ID
 	}
+
 	m.events <- infoMsg{text: "Implementer ready: " + resolveModelDisplayID(m.executorSpec, id)}
 }
 
@@ -596,6 +652,7 @@ func (m *Model) handleSlashCommand(raw string) bool {
 		m.status = "Unknown command. Use /help."
 		return false
 	}
+
 	return handler(m, raw, fields)
 }
 
@@ -604,9 +661,11 @@ func (m *Model) startServerAsync() {
 		m.status = fmt.Sprintf("Backend %s is hosted at %s; local server controls are unavailable.", m.plannerSpec.Kind, m.plannerSpec.EndpointBaseURL())
 		return
 	}
+
 	if m.bootingServer {
 		return
 	}
+
 	m.bootingServer = true
 	m.status = "Starting llama-server."
 
@@ -618,6 +677,7 @@ func (m *Model) startServerAsync() {
 			m.events <- serverStatusMsg{err: err}
 			return
 		}
+
 		if err := m.controller.WaitUntilReady(ctx); err != nil {
 			m.events <- serverStatusMsg{err: err}
 			return
@@ -627,6 +687,7 @@ func (m *Model) startServerAsync() {
 		if err != nil || len(models) == 0 {
 			modelID := resolveModelID(m.plannerSpec, "local-model")
 			m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, "local-model"), owned: true}
+
 			return
 		}
 
@@ -640,6 +701,7 @@ func (m *Model) stopServerAsync() {
 		m.status = fmt.Sprintf("Backend %s is hosted at %s; local server controls are unavailable.", m.plannerSpec.Kind, m.plannerSpec.EndpointBaseURL())
 		return
 	}
+
 	m.status = "Stopping llama-server."
 
 	go func() {
@@ -656,6 +718,7 @@ func (m *Model) restartServerAsync() {
 		m.status = fmt.Sprintf("Backend %s is hosted at %s; local server controls are unavailable.", m.plannerSpec.Kind, m.plannerSpec.EndpointBaseURL())
 		return
 	}
+
 	m.bootingServer = true
 	m.status = "Restarting llama-server."
 
@@ -667,6 +730,7 @@ func (m *Model) restartServerAsync() {
 			m.events <- serverStatusMsg{err: err}
 			return
 		}
+
 		if err := m.controller.WaitUntilReady(ctx); err != nil {
 			m.events <- serverStatusMsg{err: err}
 			return
@@ -676,8 +740,10 @@ func (m *Model) restartServerAsync() {
 		if err != nil || len(models) == 0 {
 			modelID := resolveModelID(m.plannerSpec, "local-model")
 			m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, "local-model"), owned: true}
+
 			return
 		}
+
 		modelID := resolveModelID(m.plannerSpec, models[0].ID)
 		m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, models[0].ID), owned: true}
 	}()
@@ -689,9 +755,11 @@ func (m *Model) renderHistoryPanelContent() {
 	if !m.history.panelOpen {
 		return
 	}
+
 	w := max(8, m.history.viewport.Width)
 
 	var b strings.Builder
+
 	b.WriteString(panelTitleStyle.Width(w).Render("◈ History"))
 	b.WriteString("\n")
 
@@ -710,10 +778,12 @@ func (m *Model) renderHistoryPanelContent() {
 		if entry.sender == "agent" {
 			who = "Agent"
 		}
+
 		head := fmt.Sprintf("%s%d %s · ", prefix, i+1, who)
 		indent := strings.Repeat(" ", len([]rune(head)))
 
 		var style lipgloss.Style
+
 		switch {
 		case selected && m.history.focused:
 			style = panelFocusedStyle
@@ -722,11 +792,13 @@ func (m *Model) renderHistoryPanelContent() {
 		default:
 			style = panelEntryStyle
 		}
+
 		for j, wl := range wrapLines(entry.summary, max(1, w-len([]rune(head)))) {
 			row := indent + wl
 			if j == 0 {
 				row = head + wl
 			}
+
 			b.WriteString(style.Width(w).Render(row))
 			b.WriteString("\n")
 		}
@@ -738,31 +810,39 @@ func (m *Model) renderHistoryPanelContent() {
 					b.WriteString("\n")
 				}
 			}
+
 			for _, line := range historyAuditDigestLines(entry) {
 				renderHistoryDetailLine(&b, w, "- ", line)
 			}
+
 			if m.traceMode == traceDisplayDetail {
 				renderHistoryDetailLine(&b, w, "", "Details:")
+
 				for _, event := range entry.auditEvents {
 					if line := event.auditLine(); line != "" {
 						renderHistoryDetailLine(&b, w, "- ", line)
 					}
 				}
+
 				for _, tc := range entry.toolCalls {
 					prefix := "▶ "
 					if tc.running {
 						prefix = "… "
 					}
+
 					renderHistoryDetailLine(&b, w, prefix, tc.line)
+
 					meta := joinNonEmpty(" · ", keyValue("type", tc.kind), keyValue("outcome", tc.outcome))
 					if meta != "" {
 						renderHistoryDetailLine(&b, w, "  ", meta)
 					}
+
 					if strings.TrimSpace(tc.intent) != "" {
 						renderHistoryDetailLine(&b, w, "  ", "reason: "+tc.intent)
 					}
 				}
 			}
+
 			b.WriteString("\n")
 		}
 	}
@@ -783,11 +863,13 @@ func renderHistoryDetailLine(b *strings.Builder, width int, prefix string, line 
 	if line == "" {
 		return
 	}
+
 	for j, wl := range wrapLines(line, max(1, width-4)) {
 		rowPrefix := prefix
 		if j > 0 {
 			rowPrefix = strings.Repeat(" ", len([]rune(prefix)))
 		}
+
 		b.WriteString(panelDetailStyle.Width(width).Render(rowPrefix + wl))
 		b.WriteString("\n")
 	}
@@ -799,12 +881,15 @@ func (m *Model) resize() {
 
 	headerHeight := 1
 	dividerCount := 2 // one after header, one before input
+
 	m.input.SetWidth(m.width)
+
 	inputHeight := m.syncInputHeight()
 	footerHeight := m.footerLineCount()
 	contentHeight := max(m.height-headerHeight-dividerCount-inputHeight-footerHeight, 5)
 
 	var mainWidth, panelWidth int
+
 	if m.history.panelOpen {
 		panelWidth = m.width / 3
 		mainWidth = max(24, m.width-panelWidth-1) // 1 for the │ divider
@@ -816,13 +901,16 @@ func (m *Model) resize() {
 		m.viewport = viewport.New(mainWidth, contentHeight)
 		m.ready = true
 	}
+
 	mainWidthChanged := m.viewport.Width != mainWidth
+
 	m.viewport.Width = mainWidth
 	m.viewport.Height = contentHeight
 
 	if m.history.panelOpen {
 		// Reserve 1 row for the tab header strip above the active viewport.
 		panelContentHeight := max(3, contentHeight-1)
+
 		m.history.viewport.Width = panelWidth
 		m.history.viewport.Height = panelContentHeight
 		m.planViewport.Width = panelWidth
@@ -834,10 +922,13 @@ func (m *Model) resize() {
 	}
 
 	m.ensureMarkdownRenderer(max(20, mainWidth-2))
+
 	if mainWidthChanged {
 		m.invalidateMessageRenderCache()
 	}
+
 	m.renderMessages(false)
+
 	if m.history.panelOpen {
 		m.rerenderActivePanel()
 	}
@@ -846,24 +937,29 @@ func (m *Model) resize() {
 func (m *Model) syncInputHeight() int {
 	height := m.desiredInputHeight()
 	m.input.SetHeight(height)
+
 	return height
 }
 
 func (m *Model) desiredInputHeight() int {
 	const maxInputHeight = 8
+
 	width := max(1, m.input.Width()-lipgloss.Width(m.input.Prompt))
 	value := m.input.Value()
 	rows := 1
+
 	if value != "" {
 		rows = 0
 		for _, line := range strings.Split(value, "\n") {
 			rows += max(1, len(wrapLines(line, width)))
 		}
 	}
+
 	limit := maxInputHeight
 	if m.height > 0 {
 		limit = min(limit, max(1, m.height/3))
 	}
+
 	return min(max(1, rows), limit)
 }
 
@@ -872,12 +968,15 @@ func (m *Model) footerLineCount() int {
 	if m.operatorStatusText(m.width) != "" {
 		count++
 	}
+
 	if m.currentApproval() != nil {
 		count++
 	}
+
 	if m.errorBanner() != "" {
 		count++
 	}
+
 	return count
 }
 
@@ -885,9 +984,11 @@ func (m *Model) ensureMarkdownRenderer(wrapWidth int) {
 	if wrapWidth < 20 {
 		wrapWidth = 20
 	}
+
 	if m.mdRenderer != nil && m.mdRendererWrapWidth == wrapWidth {
 		return
 	}
+
 	m.mdRenderer, _ = glamour.NewTermRenderer(
 		glamour.WithStyles(mochaStyleConfig),
 		glamour.WithWordWrap(wrapWidth),
@@ -914,20 +1015,26 @@ func (m *Model) setHistoryPanelOpen(open bool) {
 		if open {
 			m.rerenderActivePanel()
 		}
+
 		return
 	}
+
 	m.history.panelOpen = open
 	m.history.focused = false
+
 	if !open {
 		m.history.renderPending = false
 		m.history.renderScrollBottom = false
 	}
+
 	if open && len(m.history.entries) > 0 {
 		m.history.selected = len(m.history.entries) - 1
 	}
+
 	if open && m.panelTab == panelTabSessions {
 		m.refreshSessionsList()
 	}
+
 	m.resize()
 }
 
@@ -935,14 +1042,17 @@ func (m *Model) logUISlowPath(name string, start time.Time, detail string) {
 	if m == nil {
 		return
 	}
+
 	duration := time.Since(start)
 	if duration < 50*time.Millisecond {
 		return
 	}
+
 	content := fmt.Sprintf("%s duration_ms=%d", name, duration.Milliseconds())
 	if strings.TrimSpace(detail) != "" {
 		content += " " + strings.TrimSpace(detail)
 	}
+
 	m.logMessage("ui_trace", content)
 }
 
@@ -960,6 +1070,7 @@ func (m *Model) contextSummary() string {
 	for _, source := range sources {
 		parts = append(parts, source.DisplayName)
 	}
+
 	return strings.Join(parts, ", ")
 }
 
@@ -971,9 +1082,11 @@ func (m *Model) displayPath(path string) string {
 
 	clean := filepath.Clean(path)
 	root := ""
+
 	if m.workspace != nil {
 		root = strings.TrimSpace(m.workspace.Root())
 	}
+
 	if root != "" {
 		root = filepath.Clean(root)
 		if filepath.IsAbs(clean) {
@@ -981,6 +1094,7 @@ func (m *Model) displayPath(path string) string {
 				if rel == "." {
 					return "."
 				}
+
 				return "./" + filepath.ToSlash(rel)
 			}
 		}
@@ -989,13 +1103,16 @@ func (m *Model) displayPath(path string) string {
 	if filepath.IsAbs(clean) {
 		return clean
 	}
+
 	if clean == "." {
 		return "."
 	}
+
 	clean = filepath.ToSlash(clean)
 	if strings.HasPrefix(clean, "./") || strings.HasPrefix(clean, "../") {
 		return clean
 	}
+
 	return "./" + clean
 }
 
@@ -1003,6 +1120,7 @@ func (m *Model) workspaceSummary() string {
 	if m.workspace == nil || !m.workspace.Enabled() {
 		return "disabled"
 	}
+
 	return fmt.Sprintf("root=%s cwd=%s", m.displayPath(m.workspace.Root()), m.displayPath(m.workspace.CWD()))
 }
 
@@ -1022,6 +1140,7 @@ func (m *Model) applyModePermissions(mode agent.Mode) {
 	if m == nil || m.workspace == nil {
 		return
 	}
+
 	m.workspace.SetPermissionRules(mode.PermissionRules)
 }
 
@@ -1030,9 +1149,11 @@ func firstToolTraceLine(text string) string {
 	if text == "" {
 		return ""
 	}
+
 	if idx := strings.IndexByte(text, '\n'); idx >= 0 {
 		text = text[:idx]
 	}
+
 	return strings.TrimSpace(text)
 }
 
@@ -1042,6 +1163,7 @@ func (m *Model) pendingAssistantIndex() int {
 			return i
 		}
 	}
+
 	return -1
 }
 
@@ -1051,6 +1173,7 @@ func (m *Model) insertBeforePendingAssistant(message llama.ChatMessage) {
 		m.messages = append(m.messages, message)
 		return
 	}
+
 	m.messages = append(m.messages[:idx], append([]llama.ChatMessage{message}, m.messages[idx:]...)...)
 }
 
@@ -1064,6 +1187,7 @@ func (m *Model) contextSourceNames() []string {
 	for _, source := range sources {
 		names = append(names, source.DisplayName)
 	}
+
 	return names
 }
 
@@ -1071,46 +1195,61 @@ func (m *Model) logMessage(role, content string) {
 	if m != nil && m.suppressPromptTranscript {
 		if m.debugLogger != nil {
 			redacted := content
+
 			switch strings.TrimSpace(role) {
 			case "user", "assistant":
 				redacted = fmt.Sprintf("suppressed nested %s message (%d chars)", strings.TrimSpace(role), len(content))
 			}
+
 			_ = m.debugLogger.LogRunEvent("internal_"+strings.TrimSpace(role), redacted)
 		}
+
 		return
 	}
+
 	m.emitJSONMessage(role, content)
+
 	if m.debugLogger == nil {
 		return
 	}
+
 	_ = m.debugLogger.LogMessage(role, content)
 }
 
 func (m *Model) takeLastAssistantReasoningContent() string {
 	reasoning := strings.TrimSpace(m.lastAssistantReasoningContent)
+
 	m.lastAssistantReasoningContent = ""
+
 	return reasoning
 }
 
 func (m *Model) logToolRequest(event agent.ToolRequestEvent) {
 	m.emitJSONToolRequest(event)
+
 	profile := workspace.DiscoveryProfileForRequest(event.Request)
 	if event.DiscoveryClass != "" {
 		profile.Class = event.DiscoveryClass
 	}
+
 	if event.DiscoveryScope != "" {
 		profile.Scope = event.DiscoveryScope
 	}
+
 	if event.DiscoveryCost != "" {
 		profile.Cost = event.DiscoveryCost
 	}
+
 	if !profile.Discovery {
 		profile = workspace.ToolDiscoveryProfile{}
 	}
+
 	m.sessionAgg.recordToolRequest(profile)
+
 	if m.debugLogger == nil {
 		return
 	}
+
 	_ = m.debugLogger.LogToolRequestDetail(transcript.ToolRequestDetail{
 		Step:           event.Step,
 		Agent:          event.Agent,
@@ -1128,20 +1267,26 @@ func (m *Model) logToolRequest(event agent.ToolRequestEvent) {
 
 func (m *Model) logToolResult(event agent.ToolResultEvent) {
 	m.emitJSONToolResult(event)
+
 	output := event.Result.Output
 	chars := len(output)
 	lines := 0
+
 	if chars > 0 {
 		lines = strings.Count(output, "\n")
 		if !strings.HasSuffix(output, "\n") {
 			lines++
 		}
 	}
+
 	m.sessionAgg.recordToolResult(event.Result.Tool, chars)
+
 	if m.debugLogger == nil {
 		return
 	}
+
 	profile := profileForToolResult(event)
+
 	_ = m.debugLogger.LogToolResultDetail(transcript.ToolResultDetail{
 		Step:           event.Step,
 		Agent:          event.Agent,
@@ -1165,10 +1310,12 @@ func profileForToolResult(event agent.ToolResultEvent) workspace.ToolDiscoveryPr
 	if strings.TrimSpace(req.Tool) == "" {
 		req.Tool = event.Result.Tool
 	}
+
 	profile := workspace.DiscoveryProfileForRequest(req)
 	if !profile.Discovery {
 		return workspace.ToolDiscoveryProfile{}
 	}
+
 	return profile
 }
 
@@ -1176,6 +1323,7 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 	if audit, ok := historyAuditEventFromRunEvent(event); ok {
 		m.enqueueHistoryAuditEvent(audit)
 	}
+
 	switch event.Role {
 	case "model_call":
 		var payload struct {
@@ -1195,8 +1343,10 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 			ChosenTool                 string         `json:"chosen_tool"`
 			DurationMillis             int64          `json:"duration_ms"`
 		}
+
 		if err := json.Unmarshal([]byte(event.Content), &payload); err == nil {
 			m.sessionAgg.recordModelCall(payload.PromptTokens, payload.CompletionTokens, payload.TotalTokens, payload.PromptCacheHitTokens, payload.PromptCacheMissTokens, payload.PromptCacheAccountingKnown, payload.ReasoningTokens)
+
 			if m.debugLogger != nil {
 				_ = m.debugLogger.LogModelCall(transcript.ModelCall{
 					Step:                       payload.Step,
@@ -1216,17 +1366,21 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 				})
 			}
 		}
+
 		// Skip the legacy LogMessage path; the typed record replaces it.
 		return
 	case "completion_status":
 		var payload map[string]any
+
 		if err := json.Unmarshal([]byte(event.Content), &payload); err == nil {
 			payload["type"] = "completion_status"
 			m.emitJSONEvent(payload)
 		}
+
 		if m.debugLogger != nil {
 			_ = m.debugLogger.LogMessage(event.Role, event.Content)
 		}
+
 		return
 	case "budget_ledger":
 		var payload struct {
@@ -1250,9 +1404,12 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 			StopReason                 string `json:"stop_reason"`
 			BudgetExhausted            bool   `json:"budget_exhausted"`
 		}
+
 		if err := json.Unmarshal([]byte(event.Content), &payload); err == nil {
 			m.sessionAgg.turns++
+
 			m.sessionAgg.compactions += payload.ContextCompactions
+
 			if m.debugLogger != nil {
 				_ = m.debugLogger.LogTurnSummary(transcript.TurnSummary{
 					Lane:                       payload.Lane,
@@ -1288,6 +1445,7 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 				lane:            payload.Lane,
 			}
 		}
+
 		return
 	case "phase":
 		var payload struct {
@@ -1296,11 +1454,13 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 			State  string `json:"state"`
 			Detail string `json:"detail"`
 		}
+
 		if err := json.Unmarshal([]byte(event.Content), &payload); err == nil {
 			if m.debugLogger != nil {
 				_ = m.debugLogger.LogPhase(payload.Lane, payload.Phase, payload.State, payload.Detail)
 			}
 		}
+
 		return
 	case "child_tool_request":
 		if m.logNestedToolRequest(event.Content) {
@@ -1311,12 +1471,15 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 			return
 		}
 	}
+
 	if shouldLogRunnerEventAsRunEvent(event.Role) {
 		if m.debugLogger != nil {
 			_ = m.debugLogger.LogRunEvent(event.Role, event.Content)
 		}
+
 		return
 	}
+
 	m.logMessage(event.Role, event.Content)
 }
 
@@ -1326,23 +1489,30 @@ func shouldLogRunnerEventAsRunEvent(role string) bool {
 
 func (m *Model) logNestedToolRequest(content string) bool {
 	var payload agent.ToolRequestEvent
+
 	if err := json.Unmarshal([]byte(content), &payload); err != nil {
 		return false
 	}
+
 	profile := workspace.DiscoveryProfileForRequest(payload.Request)
 	if payload.DiscoveryClass != "" {
 		profile.Class = payload.DiscoveryClass
 	}
+
 	if payload.DiscoveryScope != "" {
 		profile.Scope = payload.DiscoveryScope
 	}
+
 	if payload.DiscoveryCost != "" {
 		profile.Cost = payload.DiscoveryCost
 	}
+
 	if !profile.Discovery {
 		profile = workspace.ToolDiscoveryProfile{}
 	}
+
 	m.sessionAgg.recordToolRequest(profile)
+
 	if m.debugLogger != nil {
 		_ = m.debugLogger.LogToolRequestDetail(transcript.ToolRequestDetail{
 			Step:           payload.Step,
@@ -1358,26 +1528,33 @@ func (m *Model) logNestedToolRequest(content string) bool {
 			DiscoveryCost:  profile.Cost,
 		})
 	}
+
 	return true
 }
 
 func (m *Model) logNestedToolResult(content string) bool {
 	var payload agent.ToolResultEvent
+
 	if err := json.Unmarshal([]byte(content), &payload); err != nil {
 		return false
 	}
+
 	output := payload.Result.Output
 	chars := len(output)
 	lines := 0
+
 	if chars > 0 {
 		lines = strings.Count(output, "\n")
 		if !strings.HasSuffix(output, "\n") {
 			lines++
 		}
 	}
+
 	m.sessionAgg.recordToolResult(payload.Result.Tool, chars)
+
 	if m.debugLogger != nil {
 		profile := profileForToolResult(payload)
+
 		_ = m.debugLogger.LogToolResultDetail(transcript.ToolResultDetail{
 			Step:           payload.Step,
 			Agent:          payload.Agent,
@@ -1395,6 +1572,7 @@ func (m *Model) logNestedToolResult(content string) bool {
 			ExtraFields:    workspace.ToolTelemetryFields(payload.Result.Tool, payload.Result.Output),
 		})
 	}
+
 	return true
 }
 
@@ -1402,23 +1580,30 @@ func (m *Model) writeSessionSummary() {
 	if m.sessionSummaryWritten {
 		return
 	}
+
 	m.sessionSummaryWritten = true
+
 	ctxSize := m.cfg.LlamaServer.CtxSize
 	peakPct := 0.0
+
 	if ctxSize > 0 && m.sessionAgg.peakPromptTokens > 0 {
 		peakPct = float64(m.sessionAgg.peakPromptTokens) / float64(ctxSize)
 	}
+
 	duration := int64(0)
 	if !m.sessionStartedAt.IsZero() {
 		duration = time.Since(m.sessionStartedAt).Milliseconds()
 	}
+
 	promptCacheHitRate := 0.0
+
 	if m.sessionAgg.promptCacheAccountingKnown {
 		totalCachePrompt := m.sessionAgg.promptCacheHitTokens + m.sessionAgg.promptCacheMissTokens
 		if totalCachePrompt > 0 {
 			promptCacheHitRate = float64(m.sessionAgg.promptCacheHitTokens) / float64(totalCachePrompt)
 		}
 	}
+
 	if m.debugLogger != nil {
 		_ = m.debugLogger.LogSessionSummary(transcript.SessionSummary{
 			Turns:                      m.sessionAgg.turns,
@@ -1442,6 +1627,7 @@ func (m *Model) writeSessionSummary() {
 			DurationMillis:             duration,
 		})
 	}
+
 	// Mirror to the stdout JSON event stream so wrappers (idiom lane,
 	// queue, etc.) can correlate aggregate token usage with the
 	// dispatch they spawned. Only fires when --json is on; debug-log
@@ -1469,14 +1655,17 @@ func (m *Model) writeSessionSummary() {
 			summary["prompt_cache_hit_rate"] = promptCacheHitRate
 		}
 	}
+
 	m.emitJSONEvent(summary)
 }
 
 func (m *Model) logError(kind, message string) {
 	m.emitJSONError(kind, message)
+
 	if m.debugLogger == nil {
 		return
 	}
+
 	_ = m.debugLogger.LogError(kind, message)
 }
 
@@ -1489,6 +1678,7 @@ func (m *Model) logServerEvent(msg serverStatusMsg) {
 	if msg.err != nil {
 		errText = msg.err.Error()
 	}
+
 	_ = m.debugLogger.LogServer(msg.running, msg.modelID, msg.owned, errText)
 }
 
@@ -1496,6 +1686,7 @@ func (m *Model) logArtifact(kind, path string) {
 	if m.debugLogger == nil {
 		return
 	}
+
 	_ = m.debugLogger.LogArtifact(kind, path)
 }
 
@@ -1531,6 +1722,7 @@ func (m *Model) SetMaxTokensOverride(maxTokens int) {
 		m.maxTokensOverride = maxTokens
 		return
 	}
+
 	m.maxTokensOverride = 0
 }
 
@@ -1549,6 +1741,7 @@ func (m *Model) SetLastTurnSourceResults(results []workspace.ToolResult) {
 	if len(results) > cap {
 		results = results[len(results)-cap:]
 	}
+
 	m.lastTurnSourceResults = append([]workspace.ToolResult(nil), results...)
 }
 
@@ -1558,8 +1751,10 @@ func (m *Model) LastTurnSourceResults() []workspace.ToolResult {
 	if len(m.lastTurnSourceResults) == 0 {
 		return nil
 	}
+
 	out := make([]workspace.ToolResult, len(m.lastTurnSourceResults))
 	copy(out, m.lastTurnSourceResults)
+
 	return out
 }
 

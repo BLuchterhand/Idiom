@@ -37,16 +37,20 @@ func RenderPlanExecuteRecoveryPlan(plan PlanExecuteRecoveryPlan) string {
 	if strings.TrimSpace(plan.Summary) != "" {
 		parts = append(parts, strings.TrimSpace(plan.Summary))
 	}
+
 	if len(plan.AllowedTools) > 0 {
 		parts = append(parts, "Allowed tools now: "+strings.Join(plan.AllowedTools, ", ")+".")
 	}
+
 	if len(plan.TerminalOptions) > 0 {
 		parts = append(parts, "Valid terminal actions now: "+strings.Join(plan.TerminalOptions, ", ")+".")
 	}
+
 	parts = append(parts, plan.Instructions...)
 	if strings.TrimSpace(plan.SubmitPlanShape) != "" {
 		parts = append(parts, strings.TrimSpace(plan.SubmitPlanShape))
 	}
+
 	return strings.Join(nonEmptyPlanExecuteRecoveryPromptParts(parts), "\n\n")
 }
 
@@ -57,6 +61,7 @@ func nonEmptyPlanExecuteRecoveryPromptParts(parts []string) []string {
 			out = append(out, trimmed)
 		}
 	}
+
 	return out
 }
 
@@ -65,16 +70,19 @@ func planThenExecuteLowValueActionRecoveryPlan(state PlanExecutePlanningState) P
 	shape := "Do not emit `submit_plan` until the planner has a concrete selected edit path."
 	selected := "no concrete selected edit path"
 	allowedTools := []string{}
+
 	if len(state.SelectedEditPaths) > 0 {
 		selected = strings.Join(state.SelectedEditPaths, ", ")
 		terminal = planExecuteTerminalSubmitPlanSourceSatisfiedQuestion()
 		allowedTools = []string{"submit_plan"}
 		shape = "For textual `submit_plan`, emit one visible JSON object with top-level `tool`, `rationale`, and an `edits` array. Each edit path must be one of the selected paths, and every edit body must contain real source text from the gathered evidence. Do not combine multiple paths into one field and do not copy placeholders, ellipses, or schema examples."
 	}
+
 	instruction := "This read/search is low-value because source evidence is already sufficient for a terminal planner outcome over selected edit paths: " + selected + ". Continue exploration only with one exact missing edit-safety fact and a bounded unread path/range."
 	if slices.Contains(state.LowValueActions, "candidate_read_missing_target") {
 		instruction = "This source-read request is missing a concrete `path`/handle. Use the selected evidence to produce a terminal planner outcome, or make one bounded read on an explicit unread candidate path only if a named edit-safety fact is still missing."
 	}
+
 	return PlanExecuteRecoveryPlan{
 		Kind:            PlanExecuteRecoveryKindLowValueCandidateAction,
 		AllowedTools:    allowedTools,
@@ -140,6 +148,7 @@ func planThenExecuteSubmitPlanParseRecoveryPlan(stringifiedEdits bool, requiredP
 	if stringifiedEdits {
 		summary = "SUBMIT_PLAN PARSE RECOVERY: the previous `submit_plan` did not count because `edits` was emitted as a quoted JSON string."
 	}
+
 	instructions := []string{
 		"Do not call read/search/discovery for this correction. The required source-body obligations are already satisfied.",
 		"Next visible action MUST be exactly one of:",
@@ -150,6 +159,7 @@ func planThenExecuteSubmitPlanParseRecoveryPlan(stringifiedEdits bool, requiredP
 	if len(requiredPaths) > 0 {
 		instructions = append(instructions, "Required edit paths: "+strings.Join(requiredPaths, ", ")+".")
 	}
+
 	return PlanExecuteRecoveryPlan{
 		Kind:            PlanExecuteRecoveryKindSubmitPlanParse,
 		AllowedTools:    []string{"submit_plan"},
@@ -165,9 +175,11 @@ func planThenExecuteSubmitCorrectionRecoveryPlan(brief workerruntime.WorkerRunti
 	required := nonEmptyRunnerStrings(brief.RequiredEditPaths, 12)
 	terminal := planExecuteTerminalSubmitPlanSourceSatisfiedQuestion()
 	summary := "The previous `submit_plan` was rejected before it became a valid plan artifact."
+
 	if brief := lastSubmitPlanCorrectionRejectionBrief(result); brief != "" {
 		summary += " " + brief
 	}
+
 	instructions := []string{
 		"The next visible action must be a corrected parser-readable `submit_plan` request.",
 		planThenExecuteSubmitPlanCoverageSentence(),
@@ -177,9 +189,11 @@ func planThenExecuteSubmitCorrectionRecoveryPlan(brief workerruntime.WorkerRunti
 	if refreshNote != "" {
 		instructions = append(instructions, refreshNote)
 	}
+
 	if len(required) > 0 {
 		instructions = append(instructions, "Required edit paths: "+strings.Join(required, ", ")+".")
 	}
+
 	return PlanExecuteRecoveryPlan{
 		Kind:            PlanExecuteRecoveryKindSubmitCorrection,
 		AllowedTools:    []string{"submit_plan"},
@@ -194,9 +208,11 @@ func planThenExecuteSubmitCorrectionRecoveryPlan(brief workerruntime.WorkerRunti
 func planThenExecuteNativeSubmitPlanCorrectionRecoveryPlan(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult) PlanExecuteRecoveryPlan {
 	required := nonEmptyRunnerStrings(brief.RequiredEditPaths, 12)
 	summary := "The previous native `submit_plan` tool call was rejected before it became a valid plan artifact."
+
 	if brief := lastSubmitPlanCorrectionRejectionBrief(result); brief != "" {
 		summary += " " + brief
 	}
+
 	instructions := []string{
 		"Call native `submit_plan` again now.",
 		"The next tool call must be a corrected `submit_plan`.",
@@ -206,9 +222,11 @@ func planThenExecuteNativeSubmitPlanCorrectionRecoveryPlan(brief workerruntime.W
 	if details := planThenExecuteNativeSubmitPlanCorrectionDetails(brief, result); details != "" {
 		instructions = append(instructions, details)
 	}
+
 	if len(required) > 0 {
 		instructions = append(instructions, "Required edit paths: "+strings.Join(required, ", ")+".")
 	}
+
 	return PlanExecuteRecoveryPlan{
 		Kind:            PlanExecuteRecoveryKindNativeSubmitCorrection,
 		AllowedTools:    []string{"submit_plan"},
@@ -223,19 +241,23 @@ func planThenExecuteNativeSubmitPlanCorrectionRecoveryPlan(brief workerruntime.W
 func planThenExecuteAnchorRefreshRecoveryPlan(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, rejected workspace.ToolResult, rejectedAt int) PlanExecuteRecoveryPlan {
 	refreshPaths := planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt)
 	target := "the stale or missing required edit path named by the submit_plan rejection"
+
 	if len(refreshPaths) > 0 {
 		target = strings.Join(refreshPaths, ", ")
 	}
+
 	summary := "The previous `submit_plan` was rejected before it became a valid plan artifact."
 	if brief := lastSubmitPlanRejectionBrief(rejected); brief != "" {
 		summary += " " + brief
 	}
+
 	instructions := []string{
 		"This is an anchor-refresh phase, not a submit-plan phase. The corrected plan cannot be valid until source evidence is refreshed for: " + target + ".",
 		"Your next visible message must be exactly one parser-readable bounded source-body request for one of those paths.",
 		"For large Go/source files, raw `read_file` windows are refresh evidence but are not enough to close an invalid-anchor correction; prefer the symbol/body route for the declaration you intend to edit.",
 		"Do not call `submit_plan` again, answer `Decision: source-satisfied`, answer `<<QUESTION>>:`, or reply in prose until the bounded refresh returns.",
 	}
+
 	return PlanExecuteRecoveryPlan{
 		Kind:            PlanExecuteRecoveryKindAnchorRefresh,
 		AllowedTools:    []string{workspace.CodeNavigateToolName, "read_file", "code_navigate"},
@@ -251,12 +273,14 @@ func planThenExecuteRepeatedSubmitCorrectionRecoveryPlan(lastResult workspace.To
 	if brief := lastSubmitPlanCorrectionRejectionBrief(lastResult); brief != "" {
 		summary += " " + brief
 	}
+
 	instructions := []string{
 		"Submit a corrected parser-readable `submit_plan` now.",
 		planThenExecuteSubmitPlanCoverageSentence(),
 		"Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not read/search/discovery again, and do not reply in prose.",
 		planThenExecuteSubmitPlanCorrectionInstructionForBrief(workerruntime.WorkerRuntimeBrief{}, lastResult),
 	}
+
 	return PlanExecuteRecoveryPlan{
 		Kind:            PlanExecuteRecoveryKindRepeatedCorrection,
 		AllowedTools:    []string{"submit_plan"},
@@ -272,6 +296,7 @@ func planThenExecuteRepeatedCorrectionExhaustedRejection(lastResult workspace.To
 	if result := lastSubmitPlanCorrectionRejectionBrief(lastResult); result != "" {
 		reason = result
 	}
+
 	return "Repeated invalid submit_plan rejected",
 		"this exact invalid `submit_plan` was repeated after submit-correction prompts. " + reason + "The only valid next action is a corrected parser-readable `submit_plan`. " + planThenExecuteSubmitPlanCoverageSentence() + " Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not call read/search/discovery, and do not choose a different tool."
 }
@@ -291,6 +316,7 @@ func planThenExecuteNativeNoCallFallbackRecoveryPlan(requiredPaths []string) Pla
 	if len(requiredPaths) > 0 {
 		instructions = append(instructions, "Required edit paths: "+strings.Join(requiredPaths, ", ")+".")
 	}
+
 	return PlanExecuteRecoveryPlan{
 		Kind:            PlanExecuteRecoveryKindNativeNoCallFallback,
 		AllowedTools:    []string{"submit_plan"},

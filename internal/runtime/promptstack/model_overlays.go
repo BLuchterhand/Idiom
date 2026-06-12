@@ -27,6 +27,7 @@ func ModelCompatibilityOverlays(modelFamily string, modelIDs ...string) []Overla
 	if family != "qwen" {
 		return nil
 	}
+
 	return []Overlay{{
 		Kind:        "model_overlay",
 		DisplayName: "model:qwen",
@@ -39,12 +40,15 @@ func AppendOverlays(stack Stack, overlays []Overlay) Stack {
 		body := strings.TrimSpace(overlay.Body)
 		name := strings.TrimSpace(overlay.DisplayName)
 		kind := strings.TrimSpace(overlay.Kind)
+
 		if body == "" || name == "" {
 			continue
 		}
+
 		if kind == "" {
 			kind = "overlay"
 		}
+
 		stack.Sources = append(stack.Sources, Source{
 			Kind:        kind,
 			DisplayName: name,
@@ -57,6 +61,7 @@ func AppendOverlays(stack Stack, overlays []Overlay) Stack {
 			}
 		}
 	}
+
 	return stack
 }
 
@@ -69,6 +74,7 @@ func normalizeModelFamily(modelFamily string, modelIDs ...string) string {
 				return "qwen"
 			}
 		}
+
 		return ""
 	case "none", "generic", "default":
 		return ""

@@ -267,16 +267,20 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 	if err != nil {
 		return BuildReport{}, err
 	}
+
 	unlock, err := lockGraphBuild(ctx, root)
 	if err != nil {
 		return BuildReport{}, err
 	}
 	defer unlock()
+
 	statusBefore, _ := Status(root)
 	now := opts.Now
+
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+
 	gitHead, gitDirty := gitState(ctx, root)
 
 	scope := cleanScope(opts.Path)
@@ -284,19 +288,27 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 	fullRebuildReason := ""
 	partialRefreshReason := ""
 	language := normalizeLanguage(opts.Language)
+
 	if language == "" {
 		language = "auto"
 	}
+
 	var goIndex *semantic.GoIndex
+
 	repoProps := map[string]any{}
+
 	var previousGraph Graph
+
 	previousGraphLoaded := false
 	incremental := false
 	expandedScope := ""
 	preserveCollectorMismatch := false
+
 	var dependencyRefreshFiles []string
+
 	activeKind := activeGraphStoreKind(root, "")
 	patchActiveStore := opts.PatchActiveStore && scopedBuild && statusBefore.Indexed && activeKind == sqliteStoreKind
+
 	if patchActiveStore && statusBefore.Indexed && !opts.ExactScope {
 		if statusBefore.CollectorVersionMismatch {
 			patchActiveStore = false
@@ -305,6 +317,7 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 			if nextScope := commonRefreshScope(scope, dependencyRefreshFiles); nextScope != scope {
 				scope = nextScope
 				expandedScope = nextScope
+
 				if scope == "." {
 					scopedBuild = false
 					patchActiveStore = false
@@ -315,14 +328,17 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 			patchActiveStore = false
 		}
 	}
+
 	if statusBefore.Indexed && !patchActiveStore {
 		if graph, err := LoadGraph(root); err == nil {
 			previousGraph = graph
 			previousGraphLoaded = true
 		}
 	}
+
 	if scopedBuild && previousGraphLoaded {
 		incremental = true
+
 		if opts.ExactScope {
 			partialRefreshReason = "exact_scope_refresh"
 		} else if statusBefore.CollectorVersionMismatch {
@@ -333,6 +349,7 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 			if nextScope := commonRefreshScope(scope, dependencyRefreshFiles); nextScope != scope {
 				scope = nextScope
 				expandedScope = nextScope
+
 				if scope == "." {
 					incremental = false
 					fullRebuildReason = "dependency_scope_expanded_to_root"
@@ -340,45 +357,58 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 			}
 		}
 	}
+
 	if err := checkBuildContext(ctx); err != nil {
 		return BuildReport{}, err
 	}
+
 	indexOpts := semantic.IndexOptions{Scope: scope, MaxFiles: opts.MaxFiles, Context: ctx}
 	if shouldUseGoCollector(language) {
 		goIndex, err = semantic.BuildGoIndexWithOptions(root, indexOpts)
 		if err != nil {
 			return BuildReport{}, fmt.Errorf("build go index: %w", err)
 		}
+
 		if goIndex != nil && goIndex.Module != "" {
 			repoProps["module"] = goIndex.Module
 		}
+
 		if language == "go" && goIndex == nil && (!patchActiveStore || !scopePathMissing(root, scope)) {
 			return BuildReport{}, fmt.Errorf("no Go files found under %s", root)
 		}
 	}
+
 	if err := checkBuildContext(ctx); err != nil {
 		return BuildReport{}, err
 	}
+
 	var cppIndex *semantic.CppIndex
+
 	if shouldUseCppCollector(language) {
 		cppIndex, err = semantic.BuildCppIndexWithOptions(root, indexOpts)
 		if err != nil {
 			return BuildReport{}, fmt.Errorf("build C++ index: %w", err)
 		}
+
 		if language == "cpp" && cppIndex == nil && (!patchActiveStore || !scopePathMissing(root, scope)) {
 			return BuildReport{}, fmt.Errorf("no C/C++ files found under %s", root)
 		}
 	}
+
 	if err := checkBuildContext(ctx); err != nil {
 		return BuildReport{}, err
 	}
+
 	allowMissingPatchScope := patchActiveStore && scopePathMissing(root, scope)
+
 	nativeIndexes, err := buildNativeLanguageIndexes(ctx, root, language, scope, opts.MaxFiles, allowMissingPatchScope)
 	if err != nil {
 		return BuildReport{}, err
 	}
+
 	collectorVersion := currentCollectorVersion()
 	collectorVersions := currentCollectorVersionMap()
+
 	if preserveCollectorMismatch {
 		collectorVersion = previousGraph.CollectorVersion
 		collectorVersions = previousGraph.CollectorVersions
@@ -419,96 +449,123 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 		"file_fingerprint": {},
 		"git_state":        {},
 	}
+
 	if goIndex != nil {
 		addedFiles, addedSymbols := builder.addGoIndex(root, repoID, scope, goIndex, opts.MaxFiles, indexedFiles)
+
 		filesIndexed += addedFiles
 		symbolsIndexed += addedSymbols
+
 		if addedFiles > 0 {
 			languagesSeen["go"] = struct{}{}
 			collectors["go_index"] = struct{}{}
 		}
 	}
+
 	if cppIndex != nil && (opts.MaxFiles <= 0 || filesIndexed < opts.MaxFiles) {
 		remaining := 0
 		if opts.MaxFiles > 0 {
 			remaining = opts.MaxFiles - filesIndexed
 		}
+
 		addedFiles, addedSymbols := builder.addCppIndex(root, repoID, scope, cppIndex, remaining, indexedFiles)
+
 		filesIndexed += addedFiles
 		symbolsIndexed += addedSymbols
+
 		if addedFiles > 0 {
 			languagesSeen["cpp"] = struct{}{}
 			collectors["cpp_index"] = struct{}{}
 		}
 	}
+
 	if opts.MaxFiles <= 0 || filesIndexed < opts.MaxFiles {
 		remaining := 0
 		if opts.MaxFiles > 0 {
 			remaining = opts.MaxFiles - filesIndexed
 		}
+
 		addedFiles, addedSymbols, addedLanguages, addedCollectors := nativeIndexes.addToGraph(root, repoID, scope, &builder, remaining, indexedFiles)
+
 		filesIndexed += addedFiles
 		symbolsIndexed += addedSymbols
+
 		for _, language := range addedLanguages {
 			languagesSeen[language] = struct{}{}
 		}
+
 		for _, collector := range addedCollectors {
 			collectors[collector] = struct{}{}
 		}
 	}
+
 	if shouldUseGDScriptCollector(language) && (opts.MaxFiles <= 0 || filesIndexed < opts.MaxFiles) {
 		if err := checkBuildContext(ctx); err != nil {
 			return BuildReport{}, err
 		}
+
 		remaining := 0
 		if opts.MaxFiles > 0 {
 			remaining = opts.MaxFiles - filesIndexed
 		}
+
 		addedFiles, addedSymbols, err := builder.addGDScriptIndex(ctx, root, repoID, scope, remaining, indexedFiles)
 		if err != nil {
 			return BuildReport{}, err
 		}
+
 		filesIndexed += addedFiles
 		symbolsIndexed += addedSymbols
+
 		if addedFiles > 0 {
 			languagesSeen["gdscript"] = struct{}{}
 			collectors["gdscript_index"] = struct{}{}
 		}
+
 		if language == "gdscript" && addedFiles == 0 && (!patchActiveStore || !scopePathMissing(root, scope)) {
 			return BuildReport{}, fmt.Errorf("no GDScript files found under %s", root)
 		}
 	}
+
 	if shouldUseGenericCollector(language) && (opts.MaxFiles <= 0 || filesIndexed < opts.MaxFiles) {
 		if err := checkBuildContext(ctx); err != nil {
 			return BuildReport{}, err
 		}
+
 		remaining := 0
 		if opts.MaxFiles > 0 {
 			remaining = opts.MaxFiles - filesIndexed
 		}
+
 		addedFiles, addedSymbols, addedLanguages, err := builder.addGenericSourceIndex(ctx, root, repoID, scope, language, remaining, indexedFiles)
 		if err != nil {
 			return BuildReport{}, err
 		}
+
 		filesIndexed += addedFiles
 		symbolsIndexed += addedSymbols
+
 		if addedFiles > 0 {
 			collectors["generic_source_index"] = struct{}{}
 		}
+
 		for _, language := range addedLanguages {
 			languagesSeen[language] = struct{}{}
 		}
 	}
+
 	reusedIndexedFiles := 0
 	if incremental {
 		reusedIndexedFiles = builder.mergePreviousGraph(previousGraph, scope)
 		for _, language := range builderLanguageSet(builder.nodes) {
 			languagesSeen[language] = struct{}{}
 		}
+
 		for _, collector := range builderCollectorSet(builder.nodes, builder.edges) {
 			collectors[collector] = struct{}{}
 		}
 	}
+
 	if filesIndexed == 0 && countNodesFromMap(builder.nodes, "file") == 0 && (!patchActiveStore || !scopePathMissing(root, scope)) {
 		return BuildReport{}, fmt.Errorf("no source files found under %s for language %q", root, language)
 	}
@@ -517,10 +574,13 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 	if len(languages) == 0 {
 		languages = sortedStringSet(languagesSeen)
 	}
+
 	coverage := sortedStringSet(collectors)
+
 	graph.Languages = languages
 	graph.Nodes = sortedNodes(builder.nodes)
 	graph.Edges = sortedEdges(builder.edges)
+
 	if patchActiveStore {
 		if partialRefreshReason == "" {
 			if opts.ExactScope {
@@ -529,17 +589,22 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 				partialRefreshReason = "sqlite_scope_patch"
 			}
 		}
+
 		graph.StoreKind = sqliteStoreKind
 		graph.ID = util.FirstNonEmpty(statusBefore.IndexID, graphID(graph))
 		graph.CollectorReports = collectorReportsExcept(statusBefore.CollectorReports, "summary_index")
+
 		counts, err := patchSQLiteGraphScope(root, graph, scope, statusBefore)
 		if err != nil {
 			return BuildReport{}, err
 		}
+
 		// Scoped SQLite patches delete derived summary nodes instead of
 		// leaving stale package/repository summaries behind.
 		_, _ = MarkAllViewsStale(root)
+
 		backends := storageBackends(root, sqliteStoreKind)
+
 		if err := saveManifest(root, Manifest{
 			SchemaVersion:     SchemaVersion,
 			Root:              root,
@@ -560,7 +625,9 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 		}); err != nil {
 			return BuildReport{}, err
 		}
+
 		_ = ensureIgnored(root)
+
 		return BuildReport{
 			IndexID:                counts.IndexID,
 			ArtifactPath:           filepath.ToSlash(filepath.Join(".idiom", "comprehension", "graph.sqlite")),
@@ -587,27 +654,33 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 			CollectorReports:       graph.CollectorReports,
 		}, nil
 	}
+
 	if err := checkBuildContext(ctx); err != nil {
 		return BuildReport{}, err
 	}
+
 	enrichmentReports, err := applyGraphEnrichers(ctx, opts, graph, repoID, &builder, coverage)
 	if err != nil {
 		return BuildReport{}, err
 	}
+
 	collectorReports := append([]CollectorReport(nil), enrichmentReports...)
 	for _, report := range enrichmentReports {
 		if strings.TrimSpace(report.Name) != "" {
 			coverage = append(coverage, report.Name)
 		}
 	}
+
 	summaryReport := builder.addSummaryIndex(repoID, languages)
 	if summaryReport.NodesAdded > 0 {
 		collectorReports = append(collectorReports, summaryReport)
 		coverage = append(coverage, summaryReport.Name)
 	}
+
 	if len(collectorReports) > 0 {
 		graph.CollectorReports = collectorReports
 	}
+
 	coverage = uniqueSortedStrings(coverage)
 	graph.Nodes = sortedNodes(builder.nodes)
 	graph.Edges = sortedEdges(builder.edges)
@@ -616,19 +689,25 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 	symbolsIndexed = countSymbolNodes(graph.Nodes)
 
 	jsonGraph := graph
+
 	jsonGraph.StoreKind = storeKind
+
 	if err := checkBuildContext(ctx); err != nil {
 		return BuildReport{}, err
 	}
+
 	if err := saveGraph(root, jsonGraph); err != nil {
 		return BuildReport{}, err
 	}
+
 	if err := checkBuildContext(ctx); err != nil {
 		return BuildReport{}, err
 	}
+
 	if err := saveSQLiteGraph(root, graph); err != nil {
 		return BuildReport{}, err
 	}
+
 	// graph_views invalidation runs after the new graph is in place. Full
 	// rebuilds blanket-stale the cache; scoped refresh marks only the
 	// rows whose referenced paths changed, so the cache survives partial
@@ -646,13 +725,16 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 	} else {
 		_, _ = MarkAllViewsStale(root)
 	}
+
 	backends := storageBackends(root, sqliteStoreKind)
 	refreshedStaleFiles := statusBefore.StaleFiles
 	refreshedStaleSymbols := statusBefore.StaleSymbols
+
 	if scopedBuild {
 		refreshedStaleFiles = filterPathsInScope(statusBefore.StaleFiles, scope)
 		refreshedStaleSymbols = countSymbolsForPaths(previousGraph.Nodes, refreshedStaleFiles)
 	}
+
 	if err := saveManifest(root, Manifest{
 		SchemaVersion:     SchemaVersion,
 		Root:              root,
@@ -673,6 +755,7 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 	}); err != nil {
 		return BuildReport{}, err
 	}
+
 	_ = ensureIgnored(root)
 
 	return BuildReport{
@@ -707,9 +790,11 @@ func checkBuildContext(ctx context.Context) error {
 	if ctx == nil {
 		return nil
 	}
+
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context index build canceled: %w", err)
 	}
+
 	return nil
 }
 
@@ -722,6 +807,7 @@ func collectorReportsExcept(reports []CollectorReport, names ...string) []Collec
 	if len(reports) == 0 {
 		return nil
 	}
+
 	omit := make(map[string]struct{}, len(names))
 	for _, name := range names {
 		name = strings.TrimSpace(name)
@@ -729,13 +815,16 @@ func collectorReportsExcept(reports []CollectorReport, names ...string) []Collec
 			omit[name] = struct{}{}
 		}
 	}
+
 	out := make([]CollectorReport, 0, len(reports))
 	for _, report := range reports {
 		if _, skip := omit[strings.TrimSpace(report.Name)]; skip {
 			continue
 		}
+
 		out = append(out, report)
 	}
+
 	return out
 }
 
@@ -752,55 +841,70 @@ func status(root string, scope string) (StatusReport, error) {
 	if err != nil {
 		return StatusReport{}, err
 	}
+
 	activeKind := activeGraphStoreKind(root, "")
 	if activeKind == sqliteStoreKind {
 		status, ok, err := statusFromSQLite(root, activeKind, scope)
 		if ok || err == nil {
 			return status, err
 		}
+
 		if !os.IsNotExist(err) {
 			gitHead, gitDirty := gitState(context.Background(), root)
 			return StatusReportWithMetadata(StatusReport{Indexed: false, Root: root, GitHead: gitHead, GitDirty: gitDirty, CurrentCollectorVersion: currentCollectorVersion(), StorageBackends: storageBackends(root, activeKind), Fresh: false}, "context_status", nil), nil
 		}
 	}
+
 	graph, err := loadGraphForStatus(root)
 	if err != nil {
 		if os.IsNotExist(err) || activeKind != "" {
 			gitHead, gitDirty := gitState(context.Background(), root)
 			return StatusReportWithMetadata(StatusReport{Indexed: false, Root: root, GitHead: gitHead, GitDirty: gitDirty, CurrentCollectorVersion: currentCollectorVersion(), StorageBackends: storageBackends(root, activeKind), Fresh: false}, "context_status", nil), nil
 		}
+
 		return StatusReport{}, err
 	}
+
 	if activeKind == "" {
 		activeKind = graph.StoreKind
 	}
+
 	currentVersion := currentCollectorVersion()
 	collectorMismatch := strings.TrimSpace(graph.CollectorVersion) == "" || graph.CollectorVersion != currentVersion
 	staleFiles, missingFiles := staleFilePaths(root, graph)
+
 	if scope != "" && scope != "." {
 		staleFiles = filterPathsInScope(staleFiles, scope)
 		missingFiles = filterPathsInScope(missingFiles, scope)
 	}
+
 	staleSet := make(map[string]struct{}, len(staleFiles)+len(missingFiles))
 	for _, path := range staleFiles {
 		staleSet[path] = struct{}{}
 	}
+
 	for _, path := range missingFiles {
 		staleSet[path] = struct{}{}
 	}
+
 	staleSymbols := 0
+
 	var staleSymbolSamples []Node
+
 	for _, node := range graph.Nodes {
 		if isSymbolKind(node.Kind) {
 			if _, ok := staleSet[node.Path]; ok {
 				staleSymbols++
+
 				if len(staleSymbolSamples) < 12 {
 					staleSymbolSamples = append(staleSymbolSamples, node)
 				}
 			}
 		}
 	}
+
 	gitHead, gitDirty := gitState(context.Background(), root)
+
 	return StatusReportWithMetadata(StatusReport{
 		Indexed:                  true,
 		IndexID:                  graph.ID,
@@ -831,23 +935,29 @@ func Query(opts QueryOptions) (QueryResult, error) {
 	if err != nil {
 		return QueryResult{}, err
 	}
+
 	graph, err := LoadGraph(root)
 	if err != nil {
 		return QueryResult{}, err
 	}
+
 	status, _ := Status(root)
 	limit := opts.Limit
+
 	if limit <= 0 {
 		limit = 12
 	}
+
 	resolution := strings.TrimSpace(opts.Resolution)
 	if resolution == "" {
 		resolution = "symbol"
 	}
+
 	terms := queryTerms(opts)
 	if len(terms) == 0 {
 		terms = []string{"."}
 	}
+
 	matched := matchNodes(graph.Nodes, terms, opts.Path, resolution, limit)
 	result := QueryResult{
 		IndexID:       graph.ID,
@@ -860,20 +970,26 @@ func Query(opts QueryOptions) (QueryResult, error) {
 		StaleEvidence: StaleEvidenceSafetyForStatus(status, nil),
 		Nodes:         summarizeNodes(matched, status),
 	}
+
 	if len(matched) == 0 {
 		result.UnresolvedGaps = append(result.UnresolvedGaps, "no graph nodes matched the query")
 		return result, nil
 	}
+
 	ids := make(map[string]struct{}, len(matched))
 	for _, node := range matched {
 		ids[node.ID] = struct{}{}
 		result.Claims = append(result.Claims, claimForNode(node))
 	}
+
 	edges := relatedEdges(graph.Edges, ids, limit*2)
+
 	result.Edges = summarizeEdges(edges, opts.IncludeEvidence)
+
 	if gap := GraphGapForStatus(status); gap != "" {
 		result.UnresolvedGaps = append(result.UnresolvedGaps, gap)
 	}
+
 	return result, nil
 }
 
@@ -882,19 +998,24 @@ func Zoom(opts ZoomOptions) (ZoomResult, error) {
 	if err != nil {
 		return ZoomResult{}, err
 	}
+
 	graph, err := LoadGraph(root)
 	if err != nil {
 		return ZoomResult{}, err
 	}
+
 	status, _ := Status(root)
 	limit := opts.Limit
+
 	if limit <= 0 {
 		limit = 20
 	}
+
 	handle := strings.TrimSpace(opts.Handle)
 	if handle == "" {
 		return ZoomResult{}, fmt.Errorf("handle is required")
 	}
+
 	node, ok := findNode(graph.Nodes, handle)
 	if !ok {
 		return ZoomResult{
@@ -909,26 +1030,32 @@ func Zoom(opts ZoomOptions) (ZoomResult, error) {
 			UnresolvedGaps: []string{"handle was not found in the context index"},
 		}, nil
 	}
+
 	ids := map[string]struct{}{node.ID: {}}
 	edges := relatedEdges(graph.Edges, ids, limit)
 	relatedIDs := make(map[string]struct{})
+
 	for _, edge := range edges {
 		if edge.SourceID != node.ID {
 			relatedIDs[edge.SourceID] = struct{}{}
 		}
+
 		if edge.TargetID != node.ID {
 			relatedIDs[edge.TargetID] = struct{}{}
 		}
 	}
+
 	related := make([]Node, 0, len(relatedIDs))
 	for _, candidate := range graph.Nodes {
 		if _, ok := relatedIDs[candidate.ID]; ok {
 			related = append(related, candidate)
 		}
+
 		if len(related) >= limit {
 			break
 		}
 	}
+
 	summary := summarizeNodes([]Node{node}, status)
 	result := ZoomResult{
 		IndexID:       graph.ID,
@@ -942,12 +1069,15 @@ func Zoom(opts ZoomOptions) (ZoomResult, error) {
 		RelatedNodes:  summarizeNodes(related, status),
 		Edges:         summarizeEdges(edges, true),
 	}
+
 	if len(summary) > 0 {
 		result.Node = &summary[0]
 	}
+
 	if gap := GraphGapForStatus(status); gap != "" {
 		result.UnresolvedGaps = append(result.UnresolvedGaps, gap)
 	}
+
 	return result, nil
 }
 
@@ -963,12 +1093,15 @@ func (b *graphBuilder) addNode(node Node) {
 	node.CreatedAt = defaultString(node.CreatedAt, b.now)
 	node.UpdatedAt = defaultString(node.UpdatedAt, b.now)
 	node.GitHead = defaultString(node.GitHead, b.gitHead)
+
 	if node.Collector == "" {
 		node.Collector = "context_index"
 	}
+
 	if node.Confidence == "" {
 		node.Confidence = "unknown"
 	}
+
 	b.nodes[node.ID] = node
 }
 
@@ -976,6 +1109,7 @@ func (b *graphBuilder) addEdge(kind, sourceID, targetID, collector, confidence s
 	if sourceID == "" || targetID == "" {
 		return
 	}
+
 	edge := Edge{
 		ID:         edgeID(kind, sourceID, targetID, evidence),
 		SourceID:   sourceID,
@@ -988,19 +1122,23 @@ func (b *graphBuilder) addEdge(kind, sourceID, targetID, collector, confidence s
 		CreatedAt:  b.now,
 		UpdatedAt:  b.now,
 	}
+
 	b.edges[edge.ID] = edge
 }
 
 func (b *graphBuilder) addGoIndex(root string, repoID string, scope string, goIndex *semantic.GoIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int) {
 	filesIndexed := 0
 	symbolsIndexed := 0
+
 	for _, file := range goIndex.Files {
 		if !pathInScope(file.Path, scope) {
 			continue
 		}
+
 		if maxFiles > 0 && filesIndexed >= maxFiles {
 			break
 		}
+
 		fileAbs := filepath.Join(root, filepath.FromSlash(file.Path))
 		fingerprint, _ := fileFingerprint(fileAbs)
 		importAliases := goImportAliases(fileAbs)
@@ -1039,6 +1177,7 @@ func (b *graphBuilder) addGoIndex(root string, repoID string, scope string, goIn
 			},
 		})
 		b.addEdge("contains", packageID, fileID, "go_index", "syntax", map[string]any{"path": file.Path}, nil)
+
 		symbolIDsByName := goSymbolIDsByName(goIndex, file.PathDir())
 		for _, imp := range file.Imports {
 			depID := externalDependencyNodeID(imp)
@@ -1052,11 +1191,13 @@ func (b *graphBuilder) addGoIndex(root string, repoID string, scope string, goIn
 			})
 			b.addEdge("imports", fileID, depID, "go_index", "syntax", map[string]any{"path": file.Path}, nil)
 		}
+
 		for _, symbol := range file.Symbols {
 			kind := symbol.Kind
 			if file.IsTest && (kind == "func" || kind == "method") && isGoTestSymbol(symbol.Name) {
 				kind = "test"
 			}
+
 			qualified := qualifiedGoSymbolName(symbol)
 			symbolID := symbolNodeID(file.Path, qualified)
 			b.addNode(Node{
@@ -1078,27 +1219,35 @@ func (b *graphBuilder) addGoIndex(root string, repoID string, scope string, goIn
 				},
 			})
 			b.addEdge("defines", fileID, symbolID, "go_index", "syntax", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
+
 			if kind == "test" {
 				b.addEdge("tests", symbolID, packageID, "go_index", "heuristic", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
+
 				if targetID := goTestTargetID(symbol.Name, symbolIDsByName); targetID != "" {
 					b.addEdge("tests", symbolID, targetID, "go_index", "heuristic", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
 				}
 			}
+
 			for _, call := range symbol.Calls {
 				targetID, externalNode := goCallTargetID(goIndex, call, scope, file.PathDir(), importAliases)
 				if externalNode != nil {
 					b.addNode(*externalNode)
 				}
+
 				if targetID == "" {
 					continue
 				}
+
 				b.addEdge("calls", symbolID, targetID, "go_index", "heuristic", map[string]any{"path": file.Path, "line": call.Line}, map[string]any{"call": qualifiedCallName(call)})
 			}
+
 			symbolsIndexed++
 		}
+
 		indexedFiles[file.Path] = struct{}{}
 		filesIndexed++
 	}
+
 	return filesIndexed, symbolsIndexed
 }
 
@@ -1106,13 +1255,16 @@ func (b *graphBuilder) addCppIndex(root string, repoID string, scope string, cpp
 	filesIndexed := 0
 	symbolsIndexed := 0
 	callTargets := newCppCallTargetResolver(cppIndex, scope)
+
 	for _, file := range cppIndex.Files {
 		if !pathInScope(file.Path, scope) {
 			continue
 		}
+
 		if maxFiles > 0 && filesIndexed >= maxFiles {
 			break
 		}
+
 		fileAbs := filepath.Join(root, filepath.FromSlash(file.Path))
 		fingerprint, _ := fileFingerprint(fileAbs)
 		fileID := fileNodeID(file.Path)
@@ -1151,6 +1303,7 @@ func (b *graphBuilder) addCppIndex(root string, repoID string, scope string, cpp
 			},
 		})
 		b.addEdge("contains", packageID, fileID, "cpp_index", "syntax", map[string]any{"path": file.Path}, nil)
+
 		for _, include := range file.Includes {
 			targetID := cppIncludeTargetID(cppIndex, include)
 			if strings.HasPrefix(targetID, "external://") {
@@ -1163,8 +1316,10 @@ func (b *graphBuilder) addCppIndex(root string, repoID string, scope string, cpp
 					Confidence:    "syntax",
 				})
 			}
+
 			b.addEdge("imports", fileID, targetID, "cpp_index", "syntax", map[string]any{"path": file.Path, "include": include}, nil)
 		}
+
 		for _, symbol := range file.Symbols {
 			qualified := qualifiedCppSymbolName(symbol)
 			kind := cppSymbolKind(symbol.Kind)
@@ -1189,21 +1344,27 @@ func (b *graphBuilder) addCppIndex(root string, repoID string, scope string, cpp
 				},
 			})
 			b.addEdge("defines", fileID, symbolID, "cpp_index", "syntax", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
+
 			if file.IsTest && (kind == "func" || kind == "method") {
 				b.addEdge("tests", symbolID, packageID, "cpp_index", "heuristic", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
 			}
+
 			for _, call := range symbol.Calls {
 				targetID := callTargets.targetID(call)
 				if targetID == "" {
 					continue
 				}
+
 				b.addEdge("calls", symbolID, targetID, "cpp_index", "heuristic", map[string]any{"path": file.Path, "line": call.Line}, map[string]any{"call": call.Name})
 			}
+
 			symbolsIndexed++
 		}
+
 		indexedFiles[file.Path] = struct{}{}
 		filesIndexed++
 	}
+
 	return filesIndexed, symbolsIndexed
 }
 
@@ -1244,24 +1405,32 @@ func (b *graphBuilder) addGenericSourceIndex(ctx context.Context, root string, r
 	if err != nil {
 		return 0, 0, nil, err
 	}
+
 	facts := make([]genericIndexedFile, 0, len(files))
 	existingFiles := make(map[string]struct{}, len(files))
+
 	for _, file := range files {
 		existingFiles[file.Path] = struct{}{}
 	}
+
 	symbolIDsByName := make(map[string][]string)
+
 	for _, file := range files {
 		if err := checkBuildContext(ctx); err != nil {
 			return 0, 0, nil, err
 		}
+
 		fileAbs := filepath.Join(root, filepath.FromSlash(file.Path))
 		fingerprint, _ := fileFingerprint(fileAbs)
 		content, _ := os.ReadFile(fileAbs)
 		symbols := genericSymbols(file.Path, file.Language, string(content))
+
 		for _, symbol := range symbols {
 			key := strings.ToLower(symbol.Name)
+
 			symbolIDsByName[key] = append(symbolIDsByName[key], symbolNodeID(file.Path, symbol.Name))
 		}
+
 		facts = append(facts, genericIndexedFile{
 			genericSourceFile: file,
 			Fingerprint:       fingerprint,
@@ -1269,14 +1438,17 @@ func (b *graphBuilder) addGenericSourceIndex(ctx context.Context, root string, r
 			Deps:              genericDependencies(file.Language, string(content)),
 		})
 	}
+
 	filesIndexed := 0
 	symbolsIndexed := 0
 	languagesSeen := make(map[string]struct{})
+
 	for _, fact := range facts {
 		file := fact.genericSourceFile
 		fileID := fileNodeID(file.Path)
 		dir := pathDir(file.Path)
 		packageID := packageNodeID(dir)
+
 		languagesSeen[file.Language] = struct{}{}
 		b.addNode(Node{
 			ID:          packageID,
@@ -1311,15 +1483,19 @@ func (b *graphBuilder) addGenericSourceIndex(ctx context.Context, root string, r
 			},
 		})
 		b.addEdge("contains", packageID, fileID, "generic_source_index", "heuristic", map[string]any{"path": file.Path}, nil)
+
 		importedFileIDs := make(map[string]struct{})
+
 		for _, dep := range fact.Deps {
 			depID := genericDependencyTargetID(file.Path, file.Language, dep.Name, existingFiles)
 			if depID == "" {
 				depID = externalDependencyNodeID(file.Language + ":" + dep.Name)
 			}
+
 			if strings.HasPrefix(depID, "file://") {
 				importedFileIDs[depID] = struct{}{}
 			}
+
 			if strings.HasPrefix(depID, "external://") {
 				b.addNode(Node{
 					ID:            depID,
@@ -1330,28 +1506,35 @@ func (b *graphBuilder) addGenericSourceIndex(ctx context.Context, root string, r
 					Confidence:    "heuristic",
 				})
 			}
+
 			b.addEdge("imports", fileID, depID, "generic_source_index", "heuristic", map[string]any{"path": file.Path, "line": dep.Line}, nil)
 		}
+
 		for _, symbol := range fact.Symbols {
 			kind := symbol.Kind
 			if isGenericTestPath(file.Path, file.Language) && isGenericTestSymbol(file.Language, symbol.Name) {
 				kind = "test"
 			}
+
 			symbolID := symbolNodeID(file.Path, symbol.Name)
 			properties := map[string]any{
 				"name":    symbol.Name,
 				"generic": true,
 			}
+
 			if symbol.Parent != "" {
 				properties["parent"] = symbol.Parent
 			}
+
 			for key, value := range symbol.Extra {
 				properties[key] = value
 			}
+
 			endLine := symbol.End
 			if endLine == 0 {
 				endLine = symbol.Line
 			}
+
 			b.addNode(Node{
 				ID:            symbolID,
 				Kind:          kind,
@@ -1367,27 +1550,34 @@ func (b *graphBuilder) addGenericSourceIndex(ctx context.Context, root string, r
 				Properties:    properties,
 			})
 			b.addEdge("defines", fileID, symbolID, "generic_source_index", "heuristic", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
+
 			if symbol.Parent != "" {
 				parentID := symbolNodeID(file.Path, symbol.Parent)
 				if parentID != symbolID {
 					b.addEdge("contains", parentID, symbolID, "generic_source_index", "heuristic", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
 				}
 			}
+
 			if kind == "test" {
 				b.addEdge("tests", symbolID, packageID, "generic_source_index", "heuristic", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
 			}
+
 			for _, call := range symbol.Calls {
 				targetID := genericCallTargetID(file.Path, call.Name, symbolIDsByName, importedFileIDs)
 				if targetID == "" || targetID == symbolID {
 					continue
 				}
+
 				b.addEdge("calls", symbolID, targetID, "generic_source_index", "heuristic", map[string]any{"path": file.Path, "line": call.Line}, map[string]any{"call": call.Name})
 			}
+
 			symbolsIndexed++
 		}
+
 		indexedFiles[file.Path] = struct{}{}
 		filesIndexed++
 	}
+
 	return filesIndexed, symbolsIndexed, sortedStringSet(languagesSeen), nil
 }
 
@@ -1396,16 +1586,20 @@ func (b *graphBuilder) addGDScriptIndex(ctx context.Context, root string, repoID
 	if err != nil {
 		return 0, 0, err
 	}
+
 	existing := make(map[string]struct{}, len(files))
 	for _, file := range files {
 		existing[file.Path] = struct{}{}
 	}
+
 	filesIndexed := 0
 	symbolsIndexed := 0
+
 	for _, file := range files {
 		if err := checkBuildContext(ctx); err != nil {
 			return 0, 0, err
 		}
+
 		fileAbs := filepath.Join(root, filepath.FromSlash(file.Path))
 		contentBytes, _ := os.ReadFile(fileAbs)
 		content := string(contentBytes)
@@ -1445,6 +1639,7 @@ func (b *graphBuilder) addGDScriptIndex(ctx context.Context, root string, repoID
 			},
 		})
 		b.addEdge("contains", packageID, fileID, "gdscript_index", "syntax", map[string]any{"path": file.Path}, nil)
+
 		for _, dep := range deps {
 			targetID := dep.Name
 			if _, ok := existing[targetID]; ok {
@@ -1460,14 +1655,18 @@ func (b *graphBuilder) addGDScriptIndex(ctx context.Context, root string, repoID
 					Confidence:    "heuristic",
 				})
 			}
+
 			b.addEdge("imports", fileID, targetID, "gdscript_index", "heuristic", map[string]any{"path": file.Path, "line": dep.Line}, nil)
 		}
+
 		for _, symbol := range symbols {
 			symbolID := symbolNodeID(file.Path, symbol.Name)
 			properties := map[string]any{"name": symbol.Name}
+
 			for key, value := range symbol.Extra {
 				properties[key] = value
 			}
+
 			b.addNode(Node{
 				ID:            symbolID,
 				Kind:          symbol.Kind,
@@ -1483,11 +1682,14 @@ func (b *graphBuilder) addGDScriptIndex(ctx context.Context, root string, repoID
 				Properties:    properties,
 			})
 			b.addEdge("defines", fileID, symbolID, "gdscript_index", "syntax", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
+
 			symbolsIndexed++
 		}
+
 		indexedFiles[file.Path] = struct{}{}
 		filesIndexed++
 	}
+
 	return filesIndexed, symbolsIndexed, nil
 }
 
@@ -1504,25 +1706,30 @@ func loadGraph(root string, allowExportFallback bool) (Graph, error) {
 	if err != nil {
 		return Graph{}, err
 	}
+
 	manifest, manifestErr := readManifest(root)
 	if manifestErr == nil && manifest.StoreKind == sqliteStoreKind {
 		graph, err := loadSQLiteGraph(root)
 		if err == nil {
 			return graph, nil
 		}
+
 		if allowExportFallback {
 			if fallback, fallbackErr := loadJSONGraph(root); fallbackErr == nil {
 				return fallback, nil
 			}
 		}
+
 		return Graph{}, err
 	}
+
 	if manifestErr != nil && os.IsNotExist(manifestErr) {
 		graph, err := loadSQLiteGraph(root)
 		if err == nil {
 			return graph, nil
 		}
 	}
+
 	return loadJSONGraph(root)
 }
 
@@ -1531,10 +1738,13 @@ func loadJSONGraph(root string) (Graph, error) {
 	if err != nil {
 		return Graph{}, err
 	}
+
 	var graph Graph
+
 	if err := json.Unmarshal(data, &graph); err != nil {
 		return Graph{}, fmt.Errorf("decode context graph: %w", err)
 	}
+
 	return graph, nil
 }
 
@@ -1551,10 +1761,13 @@ func readManifest(root string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
+
 	var manifest Manifest
+
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return Manifest{}, fmt.Errorf("decode context graph manifest: %w", err)
 	}
+
 	return manifest, nil
 }
 
@@ -1563,6 +1776,7 @@ func activeGraphStoreKind(root string, fallback string) string {
 	if err == nil && manifest.StoreKind != "" {
 		return manifest.StoreKind
 	}
+
 	return fallback
 }
 
@@ -1578,22 +1792,27 @@ func normalizeRoot(root string) (string, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		var err error
+
 		root, err = os.Getwd()
 		if err != nil {
 			return "", err
 		}
 	}
+
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return "", err
 	}
+
 	info, err := os.Stat(abs)
 	if err != nil {
 		return "", err
 	}
+
 	if !info.IsDir() {
 		return "", fmt.Errorf("%s is not a directory", abs)
 	}
+
 	return filepath.Clean(abs), nil
 }
 
@@ -1602,6 +1821,7 @@ func cleanScope(path string) string {
 	if path == "" {
 		return "."
 	}
+
 	return path
 }
 
@@ -1610,10 +1830,12 @@ func cleanScopePath(path string) string {
 	if normalized == "" || filepath.IsAbs(path) || strings.HasPrefix(normalized, "/") || looksLikeWindowsAbsPath(normalized) {
 		return ""
 	}
+
 	path = filepath.ToSlash(filepath.Clean(normalized))
 	if path == "." || path == ".." || strings.HasPrefix(path, "../") {
 		return ""
 	}
+
 	return strings.TrimSuffix(path, "/")
 }
 
@@ -1622,10 +1844,12 @@ func pathInScope(path string, scope string) bool {
 	if scope == "." {
 		return true
 	}
+
 	path = cleanScopePath(path)
 	if path == "" {
 		return false
 	}
+
 	return path == scope || strings.HasPrefix(path, scope+"/")
 }
 
@@ -1634,14 +1858,17 @@ func shouldVisitScopeDir(root string, path string, scope string) bool {
 	if scope == "." {
 		return true
 	}
+
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
 		return true
 	}
+
 	rel = filepath.ToSlash(filepath.Clean(rel))
 	if rel == "." {
 		return true
 	}
+
 	return pathInScope(rel, scope) || strings.HasPrefix(scope, rel+"/")
 }
 
@@ -1652,49 +1879,64 @@ func collectGenericSourceFiles(ctx context.Context, root string, scope string, l
 		if err := checkBuildContext(ctx); err != nil {
 			return err
 		}
+
 		if walkErr != nil {
 			return walkErr
 		}
+
 		if d.IsDir() {
 			if !shouldVisitScopeDir(root, path, scope) {
 				return filepath.SkipDir
 			}
+
 			if discovery.ShouldSkipDirName(d.Name()) && path != root {
 				return filepath.SkipDir
 			}
+
 			return nil
 		}
+
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return nil
 		}
+
 		rel = filepath.ToSlash(filepath.Clean(rel))
 		if discovery.ShouldSkipRelFile(rel) {
 			return nil
 		}
+
 		if !pathInScope(rel, scope) {
 			return nil
 		}
+
 		if _, ok := indexedFiles[rel]; ok {
 			return nil
 		}
+
 		fileLanguage := sourceLanguageForPath(rel)
 		if fileLanguage == "" || !languageMatches(language, fileLanguage) {
 			return nil
 		}
+
 		files = append(files, genericSourceFile{Path: rel, Language: fileLanguage})
 		if maxFiles > 0 && len(files) >= maxFiles {
 			return errStop
 		}
+
 		return nil
 	})
+
 	if err == errStop {
 		err = nil
 	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	slices.SortFunc(files, func(a, b genericSourceFile) int { return cmp.Compare(a.Path, b.Path) })
+
 	return files, nil
 }
 
@@ -1705,45 +1947,59 @@ func collectGDScriptProjectFiles(ctx context.Context, root string, scope string,
 		if err := checkBuildContext(ctx); err != nil {
 			return err
 		}
+
 		if walkErr != nil {
 			return walkErr
 		}
+
 		if d.IsDir() {
 			if !shouldVisitScopeDir(root, path, scope) {
 				return filepath.SkipDir
 			}
+
 			if discovery.ShouldSkipDirName(d.Name()) && path != root {
 				return filepath.SkipDir
 			}
+
 			return nil
 		}
+
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return nil
 		}
+
 		rel = filepath.ToSlash(filepath.Clean(rel))
 		if discovery.ShouldSkipRelFile(rel) || !pathInScope(rel, scope) {
 			return nil
 		}
+
 		if _, ok := indexedFiles[rel]; ok {
 			return nil
 		}
+
 		if !isGDScriptProjectPath(rel) {
 			return nil
 		}
+
 		files = append(files, genericSourceFile{Path: rel, Language: "gdscript"})
 		if maxFiles > 0 && len(files) >= maxFiles {
 			return errStop
 		}
+
 		return nil
 	})
+
 	if err == errStop {
 		err = nil
 	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	slices.SortFunc(files, func(a, b genericSourceFile) int { return cmp.Compare(a.Path, b.Path) })
+
 	return files, nil
 }
 
@@ -1768,6 +2024,7 @@ func gdscriptFileRole(path string) string {
 		if filepath.Base(path) == "project.godot" {
 			return "project_settings"
 		}
+
 		return "file"
 	}
 }
@@ -1816,12 +2073,15 @@ func sourceLanguageForPath(path string) string {
 func languageMatches(requested string, actual string) bool {
 	requested = normalizeLanguage(requested)
 	actual = normalizeLanguage(actual)
+
 	if requested == "" || requested == "auto" {
 		return true
 	}
+
 	if requested == "typescript" {
 		return actual == "typescript" || actual == "javascript"
 	}
+
 	return requested == actual
 }
 
@@ -1830,7 +2090,9 @@ func fileFingerprint(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	sum := sha256.Sum256(data)
+
 	return hex.EncodeToString(sum[:]), nil
 }
 
@@ -1842,12 +2104,14 @@ func rootFingerprint(root string) string {
 func packageFingerprint(path string, pkg semantic.GoPackage) string {
 	payload := fmt.Sprintf("%s:%s:%d:%d:%d:%d", path, pkg.Name, pkg.Files, pkg.Funcs, pkg.Methods, pkg.Types)
 	sum := sha256.Sum256([]byte(payload))
+
 	return hex.EncodeToString(sum[:])
 }
 
 func genericPackageFingerprint(path string, language string) string {
 	payload := fmt.Sprintf("%s:%s", path, language)
 	sum := sha256.Sum256([]byte(payload))
+
 	return hex.EncodeToString(sum[:])
 }
 
@@ -1868,28 +2132,38 @@ func graphID(graph Graph) string {
 		path        string
 		fingerprint string
 	}
+
 	type collectorPair struct {
 		name    string
 		version string
 	}
+
 	files := make([]filePair, 0, len(graph.Nodes))
+
 	for _, node := range graph.Nodes {
 		if node.Kind != "file" || node.Path == "" {
 			continue
 		}
+
 		files = append(files, filePair{path: node.Path, fingerprint: node.Fingerprint})
 	}
+
 	slices.SortFunc(files, func(a, b filePair) int { return cmp.Compare(a.path, b.path) })
+
 	collectors := make([]collectorPair, 0, len(graph.CollectorVersions))
 	for name, version := range graph.CollectorVersions {
 		name = strings.TrimSpace(name)
 		version = strings.TrimSpace(version)
+
 		if name == "" || version == "" {
 			continue
 		}
+
 		collectors = append(collectors, collectorPair{name: name, version: version})
 	}
+
 	slices.SortFunc(collectors, func(a, b collectorPair) int { return cmp.Compare(a.name, b.name) })
+
 	h := sha256.New()
 	h.Write([]byte(graph.Root))
 	h.Write([]byte("\x00"))
@@ -1897,21 +2171,26 @@ func graphID(graph Graph) string {
 	h.Write([]byte("\x00"))
 	h.Write([]byte(strings.TrimSpace(graph.CollectorVersion)))
 	h.Write([]byte("\x00"))
+
 	for _, collector := range collectors {
 		h.Write([]byte(collector.name))
 		h.Write([]byte("\x00"))
 		h.Write([]byte(collector.version))
 		h.Write([]byte("\x00"))
 	}
+
 	h.Write([]byte(strconv.Itoa(len(graph.Edges))))
 	h.Write([]byte("\x00"))
+
 	for _, f := range files {
 		h.Write([]byte(f.path))
 		h.Write([]byte("\x00"))
 		h.Write([]byte(f.fingerprint))
 		h.Write([]byte("\x00"))
 	}
+
 	sum := h.Sum(nil)
+
 	return hex.EncodeToString(sum[:8])
 }
 
@@ -1940,6 +2219,7 @@ func pathDir(path string) string {
 	if dir == "." {
 		return "."
 	}
+
 	return dir
 }
 
@@ -1947,6 +2227,7 @@ func packageNameForDir(dir string) string {
 	if dir == "." || dir == "" {
 		return "."
 	}
+
 	return filepath.Base(filepath.FromSlash(dir))
 }
 
@@ -1954,12 +2235,14 @@ func defaultInt(value int, fallback int) int {
 	if value == 0 {
 		return fallback
 	}
+
 	return value
 }
 
 func edgeID(kind, sourceID, targetID string, evidence map[string]any) string {
 	data, _ := json.Marshal(evidence)
 	sum := sha256.Sum256([]byte(kind + "\x00" + sourceID + "\x00" + targetID + "\x00" + string(data)))
+
 	return "edge://" + hex.EncodeToString(sum[:8])
 }
 
@@ -1967,6 +2250,7 @@ func qualifiedGoSymbolName(symbol semantic.GoSymbol) string {
 	if strings.TrimSpace(symbol.Receiver) == "" {
 		return symbol.Name
 	}
+
 	return symbol.Receiver + "." + symbol.Name
 }
 
@@ -1974,29 +2258,35 @@ func qualifiedCallName(call semantic.GoCall) string {
 	if strings.TrimSpace(call.Qualifier) == "" {
 		return call.Name
 	}
+
 	return call.Qualifier + "." + call.Name
 }
 
 func goImportAliases(path string) map[string]string {
 	out := make(map[string]string)
+
 	file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
 	if err != nil {
 		return out
 	}
+
 	for _, imp := range file.Imports {
 		importPath := strings.Trim(imp.Path.Value, `"`)
 		if importPath == "" {
 			continue
 		}
+
 		if imp.Name != nil && imp.Name.Name != "" && imp.Name.Name != "_" && imp.Name.Name != "." {
 			out[imp.Name.Name] = importPath
 			continue
 		}
+
 		base := filepath.Base(importPath)
 		if base != "." && base != "" {
 			out[base] = importPath
 		}
 	}
+
 	return out
 }
 
@@ -2005,17 +2295,21 @@ func goSymbolIDsByName(index *semantic.GoIndex, packageDir string) map[string]st
 	if index == nil {
 		return out
 	}
+
 	for _, file := range index.Files {
 		if file.PathDir() != packageDir {
 			continue
 		}
+
 		for _, symbol := range file.Symbols {
 			if symbol.Kind != "func" && symbol.Kind != "method" && symbol.Kind != "type" {
 				continue
 			}
+
 			out[symbol.Name] = symbolNodeID(file.Path, qualifiedGoSymbolName(symbol))
 		}
 	}
+
 	return out
 }
 
@@ -2032,6 +2326,7 @@ func goTestTargetID(testName string, symbolIDsByName map[string]string) string {
 			}
 		}
 	}
+
 	return ""
 }
 
@@ -2039,17 +2334,22 @@ func goCallTargetID(index *semantic.GoIndex, call semantic.GoCall, scope string,
 	if index == nil || strings.TrimSpace(call.Name) == "" {
 		return "", nil
 	}
+
 	if strings.TrimSpace(call.Qualifier) == "" {
 		return goPackageSymbolTargetID(index, packageDir, call.Name, "", scope), nil
 	}
+
 	if importPath := importAliases[call.Qualifier]; importPath != "" {
 		if targetID := goLocalImportTargetID(index, importPath, call.Name, scope); targetID != "" {
 			return targetID, nil
 		}
+
 		id := externalSymbolNodeID("go", importPath+"."+call.Name)
 		node := goExternalCallNode(id, call, importPath)
+
 		return id, &node
 	}
+
 	return goPackageSymbolTargetID(index, packageDir, call.Name, qualifiedCallName(call), scope), nil
 }
 
@@ -2058,6 +2358,7 @@ func goLocalImportTargetID(index *semantic.GoIndex, importPath string, name stri
 	if dir == "" {
 		return ""
 	}
+
 	return goPackageSymbolTargetID(index, dir, name, "", scope)
 }
 
@@ -2065,8 +2366,11 @@ func goLocalImportDir(index *semantic.GoIndex, importPath string) string {
 	if index == nil || strings.TrimSpace(index.Module) == "" || strings.TrimSpace(importPath) == "" {
 		return ""
 	}
+
 	module := strings.TrimSuffix(index.Module, "/")
+
 	importPath = strings.TrimSuffix(importPath, "/")
+
 	switch {
 	case importPath == module:
 		return "."
@@ -2080,29 +2384,36 @@ func goLocalImportDir(index *semantic.GoIndex, importPath string) string {
 func goPackageSymbolTargetID(index *semantic.GoIndex, packageDir string, name string, qualified string, scope string) string {
 	name = strings.ToLower(strings.TrimSpace(name))
 	qualified = strings.ToLower(strings.TrimSpace(qualified))
+
 	if name == "" {
 		return ""
 	}
+
 	for _, file := range index.Files {
 		if file.PathDir() != packageDir || !pathInScope(file.Path, scope) {
 			continue
 		}
+
 		for _, symbol := range file.Symbols {
 			if symbol.Kind != "func" && symbol.Kind != "method" {
 				continue
 			}
+
 			full := strings.ToLower(qualifiedGoSymbolName(symbol))
 			if qualified != "" {
 				if full == qualified {
 					return symbolNodeID(file.Path, qualifiedGoSymbolName(symbol))
 				}
+
 				continue
 			}
+
 			if strings.ToLower(symbol.Name) == name {
 				return symbolNodeID(file.Path, qualifiedGoSymbolName(symbol))
 			}
 		}
 	}
+
 	return ""
 }
 
@@ -2126,9 +2437,11 @@ func qualifiedCppSymbolName(symbol semantic.CppSymbol) string {
 	if strings.TrimSpace(symbol.Qualified) != "" {
 		return symbol.Qualified
 	}
+
 	if strings.TrimSpace(symbol.Scope) != "" {
 		return symbol.Scope + "::" + symbol.Name
 	}
+
 	return symbol.Name
 }
 
@@ -2148,9 +2461,11 @@ func cppIncludeTargetID(index *semantic.CppIndex, include string) string {
 	if include == "" {
 		return ""
 	}
+
 	if index != nil && index.FileByPath(include) != nil {
 		return fileNodeID(include)
 	}
+
 	return externalDependencyNodeID("cpp:" + include)
 }
 
@@ -2168,14 +2483,17 @@ func newCppCallTargetResolver(index *semantic.CppIndex, scope string) cppCallTar
 	if index == nil {
 		return resolver
 	}
+
 	for _, file := range index.Files {
 		if !pathInScope(file.Path, scope) {
 			continue
 		}
+
 		for _, symbol := range file.Symbols {
 			if symbol.Kind != "func" && symbol.Kind != "method" {
 				continue
 			}
+
 			name := strings.ToLower(symbol.Name)
 			qualified := strings.ToLower(qualifiedCppSymbolName(symbol))
 			id := symbolNodeID(file.Path, qualifiedCppSymbolName(symbol))
@@ -2183,6 +2501,7 @@ func newCppCallTargetResolver(index *semantic.CppIndex, scope string) cppCallTar
 			resolver.add(name, id, cppCallTargetScore(symbol, 30))
 		}
 	}
+
 	return resolver
 }
 
@@ -2191,6 +2510,7 @@ func (r cppCallTargetResolver) targetID(call semantic.CppCall) string {
 	if callName == "" || len(r.byName) == 0 {
 		return ""
 	}
+
 	return r.byName[callName].id
 }
 
@@ -2199,9 +2519,11 @@ func (r cppCallTargetResolver) add(name string, id string, score int) {
 	if name == "" || id == "" {
 		return
 	}
+
 	if current, ok := r.byName[name]; ok && current.score >= score {
 		return
 	}
+
 	r.byName[name] = cppCallTarget{id: id, score: score}
 }
 
@@ -2210,9 +2532,11 @@ func cppCallTargetScore(symbol semantic.CppSymbol, base int) int {
 	if symbol.HasBody {
 		score += 20
 	}
+
 	if symbol.Kind == "method" {
 		score += 4
 	}
+
 	return score
 }
 
@@ -2261,8 +2585,10 @@ func genericSymbols(path string, language string, content string) []genericSymbo
 func genericFlatSymbols(path string, language string, content string) []genericSymbol {
 	lines := strings.Split(content, "\n")
 	symbols := make([]genericSymbol, 0)
+
 	for i, line := range lines {
 		lineNo := i + 1
+
 		switch normalizeLanguage(language) {
 		case "rust":
 			if match := rustSymbolRe.FindStringSubmatch(line); len(match) == 3 {
@@ -2273,55 +2599,69 @@ func genericFlatSymbols(path string, language string, content string) []genericS
 				symbols = append(symbols, genericSymbol{Name: match[2], Kind: genericKind(match[1]), Line: lineNo})
 				continue
 			}
+
 			if match := functionLikeSymbolRe.FindStringSubmatch(line); len(match) == 2 {
 				symbols = append(symbols, genericSymbol{Name: match[1], Kind: "func", Line: lineNo})
 			}
 		}
 	}
+
 	for i := range symbols {
 		end := len(lines)
 		if i+1 < len(symbols) {
 			end = symbols[i+1].Line - 1
 		}
+
 		if symbols[i].End == 0 || symbols[i].End > end {
 			symbols[i].End = end
 		}
+
 		if genericSymbolCanHaveCalls(symbols[i].Kind) {
 			symbols[i].Calls = genericCallsInRange(lines, symbols[i].Line, symbols[i].End)
 		}
 	}
+
 	return symbols
 }
 
 func genericPythonSymbols(content string) []genericSymbol {
 	lines := strings.Split(content, "\n")
 	symbols := make([]genericSymbol, 0)
+
 	type pythonScope struct {
 		name   string
 		indent int
 	}
+
 	var scopes []pythonScope
+
 	for i, line := range lines {
 		lineNo := i + 1
 		match := pythonSymbolRe.FindStringSubmatch(line)
+
 		if len(match) != 3 {
 			continue
 		}
+
 		indent := leadingWhitespaceColumns(line)
 		for len(scopes) > 0 && indent <= scopes[len(scopes)-1].indent {
 			scopes = scopes[:len(scopes)-1]
 		}
+
 		kind := genericKind(match[1])
 		symbol := genericSymbol{Name: match[2], Kind: kind, Line: lineNo}
+
 		if kind == "func" && len(scopes) > 0 {
 			symbol.Kind = "method"
 			symbol.Parent = scopes[len(scopes)-1].name
 		}
+
 		symbols = append(symbols, symbol)
 		if kind == "type" {
 			scopes = append(scopes, pythonScope{name: match[2], indent: indent})
 		}
 	}
+
 	return finalizeGenericSymbols(symbols, lines)
 }
 
@@ -2333,14 +2673,19 @@ type braceScope struct {
 func genericBraceLanguageSymbols(content string, language string) []genericSymbol {
 	lines := strings.Split(content, "\n")
 	symbols := make([]genericSymbol, 0)
+
 	var scopes []braceScope
+
 	depth := 0
+
 	for i, line := range lines {
 		lineNo := i + 1
 		clean := stripGenericComment(line)
+
 		for len(scopes) > 0 && depth < scopes[len(scopes)-1].depth {
 			scopes = scopes[:len(scopes)-1]
 		}
+
 		if symbol, ok := genericBraceSymbol(clean, language, scopes, lineNo); ok {
 			symbols = append(symbols, symbol)
 			if isTypeLikeSymbolKind(symbol.Kind) {
@@ -2350,14 +2695,17 @@ func genericBraceLanguageSymbols(content string, language string) []genericSymbo
 				}
 			}
 		}
+
 		depth += braceDelta(clean)
 		if depth < 0 {
 			depth = 0
 		}
+
 		for len(scopes) > 0 && depth < scopes[len(scopes)-1].depth {
 			scopes = scopes[:len(scopes)-1]
 		}
 	}
+
 	return finalizeGenericSymbols(symbols, lines)
 }
 
@@ -2367,12 +2715,15 @@ func genericBraceSymbol(line string, language string, scopes []braceScope, lineN
 		if match := tsFunctionRe.FindStringSubmatch(line); len(match) == 2 {
 			return genericSymbol{Name: match[1], Kind: "func", Line: lineNo}, true
 		}
+
 		if match := tsArrowFunctionRe.FindStringSubmatch(line); len(match) == 2 {
 			return genericSymbol{Name: match[1], Kind: "func", Line: lineNo}, true
 		}
+
 		if match := tsDeclarationRe.FindStringSubmatch(line); len(match) == 3 {
 			return genericSymbol{Name: match[2], Kind: genericKind(match[1]), Line: lineNo}, true
 		}
+
 		if len(scopes) > 0 {
 			if match := tsMethodRe.FindStringSubmatch(line); len(match) == 2 && !isGenericCallKeyword(match[1]) {
 				return genericSymbol{Name: match[1], Kind: "method", Line: lineNo, Parent: scopes[len(scopes)-1].name}, true
@@ -2382,12 +2733,14 @@ func genericBraceSymbol(line string, language string, scopes []braceScope, lineN
 		if match := classLikeSymbolRe.FindStringSubmatch(line); len(match) == 3 {
 			return genericSymbol{Name: match[2], Kind: genericKind(match[1]), Line: lineNo}, true
 		}
+
 		if len(scopes) > 0 && strings.Contains(line, "{") {
 			if match := javaMethodRe.FindStringSubmatch(line); len(match) == 2 && !isGenericCallKeyword(match[1]) {
 				return genericSymbol{Name: match[1], Kind: "method", Line: lineNo, Parent: scopes[len(scopes)-1].name}, true
 			}
 		}
 	}
+
 	return genericSymbol{}, false
 }
 
@@ -2397,13 +2750,16 @@ func finalizeGenericSymbols(symbols []genericSymbol, lines []string) []genericSy
 		if i+1 < len(symbols) {
 			end = symbols[i+1].Line - 1
 		}
+
 		if symbols[i].End == 0 || symbols[i].End > end {
 			symbols[i].End = end
 		}
+
 		if genericSymbolCanHaveCalls(symbols[i].Kind) {
 			symbols[i].Calls = genericCallsInRange(lines, symbols[i].Line, symbols[i].End)
 		}
 	}
+
 	return symbols
 }
 
@@ -2418,6 +2774,7 @@ func isTypeLikeSymbolKind(kind string) bool {
 
 func leadingWhitespaceColumns(line string) int {
 	columns := 0
+
 	for _, r := range line {
 		switch r {
 		case ' ':
@@ -2428,6 +2785,7 @@ func leadingWhitespaceColumns(line string) int {
 			return columns
 		}
 	}
+
 	return columns
 }
 
@@ -2435,21 +2793,26 @@ func braceDelta(line string) int {
 	delta := 0
 	inString := rune(0)
 	escaped := false
+
 	for _, r := range line {
 		if inString != 0 {
 			if escaped {
 				escaped = false
 				continue
 			}
+
 			if r == '\\' {
 				escaped = true
 				continue
 			}
+
 			if r == inString {
 				inString = 0
 			}
+
 			continue
 		}
+
 		switch r {
 		case '\'', '"', '`':
 			inString = r
@@ -2459,6 +2822,7 @@ func braceDelta(line string) int {
 			delta--
 		}
 	}
+
 	return delta
 }
 
@@ -2490,8 +2854,11 @@ func genericCallsInRange(lines []string, startLine int, endLine int) []genericCa
 	if startLine <= 0 || endLine < startLine {
 		return nil
 	}
+
 	seen := make(map[string]struct{})
+
 	var calls []genericCall
+
 	for lineNo := startLine; lineNo <= endLine && lineNo <= len(lines); lineNo++ {
 		line := stripGenericComment(lines[lineNo-1])
 		for _, match := range genericCallRe.FindAllStringSubmatch(line, -1) {
@@ -2499,14 +2866,18 @@ func genericCallsInRange(lines []string, startLine int, endLine int) []genericCa
 			if isGenericCallKeyword(name) {
 				continue
 			}
+
 			key := fmt.Sprintf("%s:%d", name, lineNo)
 			if _, ok := seen[key]; ok {
 				continue
 			}
+
 			seen[key] = struct{}{}
+
 			calls = append(calls, genericCall{Name: name, Line: lineNo})
 		}
 	}
+
 	return calls
 }
 
@@ -2517,6 +2888,7 @@ func stripGenericComment(line string) string {
 			cut = idx
 		}
 	}
+
 	return line[:cut]
 }
 
@@ -2538,14 +2910,18 @@ func genericDependencies(language string, content string) []genericDependency {
 		if name == "" {
 			return
 		}
+
 		if _, ok := seen[name]; ok {
 			return
 		}
+
 		seen[name] = struct{}{}
 		deps = append(deps, genericDependency{Name: name, Line: line})
 	}
+
 	for i, line := range lines {
 		lineNo := i + 1
+
 		switch normalizeLanguage(language) {
 		case "python":
 			if match := pythonImportRe.FindStringSubmatch(line); len(match) == 3 {
@@ -2555,6 +2931,7 @@ func genericDependencies(language string, content string) []genericDependency {
 			if match := tsImportFromRe.FindStringSubmatch(line); len(match) == 2 {
 				add(match[1], lineNo)
 			}
+
 			if match := tsRequireRe.FindStringSubmatch(line); len(match) == 2 {
 				add(match[1], lineNo)
 			}
@@ -2572,11 +2949,13 @@ func genericDependencies(language string, content string) []genericDependency {
 			}
 		}
 	}
+
 	return deps
 }
 
 func genericDependencyTargetID(sourcePath string, language string, dep string, existingFiles map[string]struct{}) string {
 	dep = strings.TrimSpace(dep)
+
 	switch normalizeLanguage(language) {
 	case "typescript", "javascript":
 		if strings.HasPrefix(dep, ".") {
@@ -2586,7 +2965,9 @@ func genericDependencyTargetID(sourcePath string, language string, dep string, e
 		if strings.HasPrefix(dep, ".") {
 			return localFileNodeID(genericRelativeCandidates(sourcePath, strings.TrimLeft(dep, "."), []string{".py"}), existingFiles)
 		}
+
 		modulePath := strings.ReplaceAll(dep, ".", "/")
+
 		return localFileNodeID([]string{modulePath + ".py", modulePath + "/__init__.py", filepath.ToSlash(filepath.Join(pathDir(sourcePath), modulePath+".py"))}, existingFiles)
 	case "rust":
 		module := rustUseModule(dep)
@@ -2598,21 +2979,27 @@ func genericDependencyTargetID(sourcePath string, language string, dep string, e
 		if id := localFileNodeID([]string{"src/main/java/" + javaPath, "src/test/java/" + javaPath, javaPath}, existingFiles); id != "" {
 			return id
 		}
+
 		if id := localFileNodeIDBySuffix(filepath.Base(javaPath), existingFiles); id != "" {
 			return id
 		}
 	}
+
 	return ""
 }
 
 func genericRelativeCandidates(sourcePath string, dep string, extensions []string) []string {
 	base := filepath.ToSlash(filepath.Join(pathDir(sourcePath), filepath.FromSlash(dep)))
+
 	var candidates []string
+
 	candidates = append(candidates, base)
+
 	for _, ext := range extensions {
 		candidates = append(candidates, base+ext)
 		candidates = append(candidates, filepath.ToSlash(filepath.Join(base, "index"+ext)))
 	}
+
 	return candidates
 }
 
@@ -2623,19 +3010,23 @@ func localFileNodeID(candidates []string, existingFiles map[string]struct{}) str
 			return fileNodeID(candidate)
 		}
 	}
+
 	return ""
 }
 
 func localFileNodeIDBySuffix(base string, existingFiles map[string]struct{}) string {
 	var matches []string
+
 	for path := range existingFiles {
 		if filepath.Base(path) == base {
 			matches = append(matches, path)
 		}
 	}
+
 	if len(matches) != 1 {
 		return ""
 	}
+
 	return fileNodeID(matches[0])
 }
 
@@ -2645,14 +3036,18 @@ func rustUseModule(dep string) string {
 	dep = strings.TrimPrefix(dep, "self::")
 	dep = strings.TrimPrefix(dep, "super::")
 	dep = strings.Trim(dep, "{}")
+
 	parts := strings.Split(dep, "::")
+
 	if len(parts) == 0 {
 		return ""
 	}
+
 	part := strings.Trim(parts[0], "{} ")
 	if part == "" || part == "*" {
 		return ""
 	}
+
 	return part
 }
 
@@ -2661,36 +3056,43 @@ func genericCallTargetID(sourcePath string, callName string, symbolIDsByName map
 	if len(matches) == 0 {
 		return ""
 	}
+
 	sourcePrefix := "symbol://" + filepath.ToSlash(sourcePath) + "#"
 	for _, id := range matches {
 		if strings.HasPrefix(id, sourcePrefix) {
 			return id
 		}
 	}
+
 	sourceDirPrefix := "symbol://" + pathDir(sourcePath) + "/"
 	for _, id := range matches {
 		if strings.HasPrefix(id, sourceDirPrefix) {
 			return id
 		}
 	}
+
 	for _, id := range matches {
 		symbolFile, _, ok := strings.Cut(id, "#")
 		if !ok {
 			continue
 		}
+
 		fileID := "file://" + strings.TrimPrefix(symbolFile, "symbol://")
 		if _, imported := importedFileIDs[fileID]; imported {
 			return id
 		}
 	}
+
 	if len(matches) == 1 {
 		return matches[0]
 	}
+
 	return ""
 }
 
 func isGenericTestPath(path string, language string) bool {
 	lower := strings.ToLower(filepath.ToSlash(path))
+
 	switch normalizeLanguage(language) {
 	case "python":
 		base := filepath.Base(lower)
@@ -2708,6 +3110,7 @@ func isGenericTestPath(path string, language string) bool {
 
 func isGenericTestSymbol(language string, name string) bool {
 	lower := strings.ToLower(strings.TrimSpace(name))
+
 	switch normalizeLanguage(language) {
 	case "python":
 		return strings.HasPrefix(lower, "test_")
@@ -2736,39 +3139,50 @@ func gdscriptFileFacts(path string, content string, existing map[string]struct{}
 func gdscriptSymbols(path string, content string) []genericSymbol {
 	lines := strings.Split(content, "\n")
 	symbols := make([]genericSymbol, 0)
+
 	for i, line := range lines {
 		lineNo := i + 1
+
 		switch {
 		case gdClassNameRe.MatchString(line):
 			match := gdClassNameRe.FindStringSubmatch(line)
+
 			symbols = append(symbols, genericSymbol{Name: match[1], Kind: "type", Line: lineNo, Extra: map[string]any{"declaration": "class_name"}})
 		case gdFunctionRe.MatchString(line):
 			match := gdFunctionRe.FindStringSubmatch(line)
 			kind := "func"
+
 			if strings.Contains(strings.TrimSpace(line), "static func") {
 				kind = "method"
 			}
+
 			symbols = append(symbols, genericSymbol{Name: match[1], Kind: kind, Line: lineNo})
 		case gdSignalRe.MatchString(line):
 			match := gdSignalRe.FindStringSubmatch(line)
+
 			symbols = append(symbols, genericSymbol{Name: match[1], Kind: "signal", Line: lineNo})
 		case gdInnerClassRe.MatchString(line):
 			match := gdInnerClassRe.FindStringSubmatch(line)
+
 			symbols = append(symbols, genericSymbol{Name: match[1], Kind: "type", Line: lineNo, Extra: map[string]any{"declaration": "class"}})
 		case gdEnumRe.MatchString(line):
 			match := gdEnumRe.FindStringSubmatch(line)
+
 			symbols = append(symbols, genericSymbol{Name: match[1], Kind: "type", Line: lineNo, Extra: map[string]any{"declaration": "enum"}})
 		case gdVarRe.MatchString(line):
 			match := gdVarRe.FindStringSubmatch(line)
+
 			symbols = append(symbols, genericSymbol{Name: match[1], Kind: "var", Line: lineNo})
 		case gdExtendsRe.MatchString(line):
 			match := gdExtendsRe.FindStringSubmatch(line)
 			base := strings.Trim(strings.TrimSpace(match[1]), `"'`)
+
 			if base != "" {
 				symbols = append(symbols, genericSymbol{Name: "extends:" + base, Kind: "extends", Line: lineNo, Extra: map[string]any{"target": base}})
 			}
 		}
 	}
+
 	return symbols
 }
 
@@ -2776,19 +3190,23 @@ func gdscriptAutoloadSymbols(content string) []genericSymbol {
 	lines := strings.Split(content, "\n")
 	symbols := make([]genericSymbol, 0)
 	inAutoload := false
+
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
 			inAutoload = trimmed == "[autoload]"
 			continue
 		}
+
 		if !inAutoload {
 			continue
 		}
+
 		if match := gdAutoloadRe.FindStringSubmatch(line); len(match) == 3 {
 			symbols = append(symbols, genericSymbol{Name: match[1], Kind: "autoload", Line: i + 1, Extra: map[string]any{"target": strings.TrimPrefix(match[2], "res://")}})
 		}
 	}
+
 	return symbols
 }
 
@@ -2801,23 +3219,29 @@ func gdscriptDependencies(path string, content string, existing map[string]struc
 		if target == "" {
 			target = strings.TrimSpace(raw)
 		}
+
 		if target == "" {
 			return
 		}
+
 		if _, ok := seen[target]; ok {
 			return
 		}
+
 		seen[target] = struct{}{}
 		deps = append(deps, genericDependency{Name: target, Line: line})
 	}
+
 	for i, line := range lines {
 		for _, match := range gdResourcePathRe.FindAllStringSubmatch(line, -1) {
 			if len(match) != 3 {
 				continue
 			}
+
 			add(util.FirstNonEmpty(match[1], match[2]), i+1)
 		}
 	}
+
 	return deps
 }
 
@@ -2825,22 +3249,27 @@ func gdscriptSceneDependencies(path string, content string, existing map[string]
 	lines := strings.Split(content, "\n")
 	deps := make([]genericDependency, 0)
 	seen := make(map[string]struct{})
+
 	for i, line := range lines {
 		for _, match := range gdSceneResourcePathRe.FindAllStringSubmatch(line, -1) {
 			if len(match) != 2 {
 				continue
 			}
+
 			target := normalizeGDScriptResource(path, match[1], existing)
 			if target == "" {
 				continue
 			}
+
 			if _, ok := seen[target]; ok {
 				continue
 			}
+
 			seen[target] = struct{}{}
 			deps = append(deps, genericDependency{Name: target, Line: i + 1})
 		}
 	}
+
 	return deps
 }
 
@@ -2849,27 +3278,33 @@ func gdscriptProjectDependencies(path string, content string, existing map[strin
 	deps := make([]genericDependency, 0)
 	seen := make(map[string]struct{})
 	inAutoload := false
+
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
 			inAutoload = trimmed == "[autoload]"
 			continue
 		}
+
 		if !inAutoload {
 			continue
 		}
+
 		if match := gdAutoloadRe.FindStringSubmatch(line); len(match) == 3 {
 			target := normalizeGDScriptResource(path, match[2], existing)
 			if target == "" {
 				continue
 			}
+
 			if _, ok := seen[target]; ok {
 				continue
 			}
+
 			seen[target] = struct{}{}
 			deps = append(deps, genericDependency{Name: target, Line: i + 1})
 		}
 	}
+
 	return deps
 }
 
@@ -2878,7 +3313,9 @@ func normalizeGDScriptResource(sourcePath string, raw string, existing map[strin
 	if raw == "" {
 		return ""
 	}
+
 	candidate := ""
+
 	switch {
 	case strings.HasPrefix(raw, "res://"):
 		candidate = strings.TrimPrefix(raw, "res://")
@@ -2887,10 +3324,12 @@ func normalizeGDScriptResource(sourcePath string, raw string, existing map[strin
 	default:
 		candidate = raw
 	}
+
 	candidate = filepath.ToSlash(filepath.Clean(candidate))
 	if _, ok := existing[candidate]; ok {
 		return candidate
 	}
+
 	return raw
 }
 
@@ -2899,6 +3338,7 @@ func dependencyNames(deps []genericDependency) []string {
 	for _, dep := range deps {
 		names = append(names, dep.Name)
 	}
+
 	return names
 }
 
@@ -2907,7 +3347,9 @@ func sortedNodes(nodes map[string]Node) []Node {
 	for _, node := range nodes {
 		out = append(out, node)
 	}
+
 	slices.SortFunc(out, func(a, b Node) int { return cmp.Compare(a.ID, b.ID) })
+
 	return out
 }
 
@@ -2916,32 +3358,45 @@ func sortedEdges(edges map[string]Edge) []Edge {
 	for _, edge := range edges {
 		out = append(out, edge)
 	}
+
 	slices.SortFunc(out, func(a, b Edge) int { return cmp.Compare(a.ID, b.ID) })
+
 	return out
 }
 
 func staleFilePaths(root string, graph Graph) ([]string, []string) {
-	var stale []string
-	var missing []string
+	var (
+		stale   []string
+		missing []string
+	)
+
 	indexedFiles := make(map[string]struct{})
+
 	for _, node := range graph.Nodes {
 		if node.Kind != "file" || node.Path == "" {
 			continue
 		}
+
 		indexedFiles[node.Path] = struct{}{}
+
 		current, err := fileFingerprint(filepath.Join(root, filepath.FromSlash(node.Path)))
+
 		if os.IsNotExist(err) {
 			missing = append(missing, node.Path)
 			continue
 		}
+
 		if err != nil {
 			continue
 		}
+
 		if current != node.Fingerprint {
 			stale = append(stale, node.Path)
 		}
 	}
+
 	stale = append(stale, unindexedSourceFilePaths(root, ".", graph.Languages, indexedFiles)...)
+
 	return uniqueSortedStrings(stale), uniqueSortedStrings(missing)
 }
 
@@ -2950,12 +3405,15 @@ func unindexedSourceFilePaths(root string, scope string, indexedLanguages []stri
 	if err != nil {
 		return nil
 	}
+
 	var paths []string
+
 	for _, file := range files {
 		if indexedLanguageIncludesSource(indexedLanguages, file.Language) {
 			paths = append(paths, file.Path)
 		}
 	}
+
 	return uniqueSortedStrings(paths)
 }
 
@@ -2964,37 +3422,46 @@ func indexedLanguageIncludesSource(indexedLanguages []string, sourceLanguage str
 	if sourceLanguage == "" {
 		return false
 	}
+
 	seenIndexedLanguage := false
+
 	for _, indexedLanguage := range indexedLanguages {
 		indexedLanguage = normalizeLanguage(indexedLanguage)
 		if indexedLanguage == "" {
 			continue
 		}
+
 		seenIndexedLanguage = true
+
 		if languageMatches(indexedLanguage, sourceLanguage) {
 			return true
 		}
 	}
+
 	return !seenIndexedLanguage
 }
 
 func countNodes(nodes []Node, kind string) int {
 	count := 0
+
 	for _, node := range nodes {
 		if node.Kind == kind {
 			count++
 		}
 	}
+
 	return count
 }
 
 func countSymbolNodes(nodes []Node) int {
 	count := 0
+
 	for _, node := range nodes {
 		if isSymbolKind(node.Kind) {
 			count++
 		}
 	}
+
 	return count
 }
 
@@ -3009,6 +3476,7 @@ func isSymbolKind(kind string) bool {
 
 func queryTerms(opts QueryOptions) []string {
 	var terms []string
+
 	for _, value := range []string{opts.Symbol, opts.Query, opts.Path, opts.Scope} {
 		for _, field := range strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
 			return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '/' || r == '.')
@@ -3017,12 +3485,14 @@ func queryTerms(opts QueryOptions) []string {
 			if isQueryStopword(field) {
 				continue
 			}
+
 			if field != "" {
 				terms = append(terms, field)
 				terms = append(terms, queryTermVariants(field)...)
 			}
 		}
 	}
+
 	return uniqueStrings(terms)
 }
 
@@ -3039,64 +3509,82 @@ func singularQueryTerm(value string) string {
 	if strings.HasSuffix(value, "ies") && len(value) > 3 {
 		return strings.TrimSuffix(value, "ies") + "y"
 	}
+
 	if strings.HasSuffix(value, "ses") && len(value) > 3 {
 		return strings.TrimSuffix(value, "s")
 	}
+
 	if strings.HasSuffix(value, "s") && len(value) > 3 {
 		return strings.TrimSuffix(value, "s")
 	}
+
 	return value
 }
 
 func queryTermVariants(value string) []string {
 	var terms []string
+
 	if singular := singularQueryTerm(value); singular != "" && singular != value {
 		terms = append(terms, singular)
 	}
+
 	if strings.HasSuffix(value, "ing") && len(value) > 5 {
 		stem := strings.TrimSuffix(value, "ing")
 		if len(stem) >= 2 && stem[len(stem)-1] == stem[len(stem)-2] {
 			stem = stem[:len(stem)-1]
 		}
+
 		if stem != "" && stem != value {
 			terms = append(terms, stem)
 		}
+
 		if withE := stem + "e"; withE != value {
 			terms = append(terms, withE)
 		}
 	}
+
 	return terms
 }
 
 func matchNodes(nodes []Node, terms []string, path string, resolution string, limit int) []Node {
 	var matches []Node
+
 	path = strings.TrimSpace(filepath.ToSlash(path))
+
 	for _, node := range nodes {
 		if path != "" && node.Path != "" && !strings.Contains(strings.ToLower(node.Path), strings.ToLower(path)) {
 			continue
 		}
+
 		if resolution != "" && !nodeMatchesResolution(node, resolution) {
 			continue
 		}
+
 		score := nodeMatchScore(node, terms)
 		if score <= 0 {
 			continue
 		}
+
 		node.Properties = cloneProperties(node.Properties)
 		node.Properties["match_score"] = score
 		matches = append(matches, node)
 	}
+
 	sort.Slice(matches, func(i, j int) bool {
 		left, _ := matches[i].Properties["match_score"].(int)
 		right, _ := matches[j].Properties["match_score"].(int)
+
 		if left != right {
 			return left > right
 		}
+
 		return matches[i].ID < matches[j].ID
 	})
+
 	if limit > 0 && len(matches) > limit {
 		matches = diversifyNodeMatchesByQueryTerms(matches, terms, limit)
 	}
+
 	return matches
 }
 
@@ -3109,99 +3597,126 @@ func diversifyNodeMatchesByQueryTerms(matches []Node, terms []string, limit int)
 	if limit <= 0 || len(matches) <= limit {
 		return matches
 	}
+
 	coverage := nodeTermCoverageList(matches, terms)
 	if len(coverage) == 0 {
 		return matches[:limit]
 	}
+
 	sort.Slice(coverage, func(i, j int) bool {
 		if coverage[i].count != coverage[j].count {
 			return coverage[i].count < coverage[j].count
 		}
+
 		return coverage[i].term < coverage[j].term
 	})
+
 	coverageSlots := limit / 4
 	if coverageSlots < 4 {
 		coverageSlots = 4
 	}
+
 	if coverageSlots > limit {
 		coverageSlots = limit
 	}
+
 	if coverageSlots > len(coverage) {
 		coverageSlots = len(coverage)
 	}
+
 	selected := make(map[string]struct{}, limit)
 	selectedPaths := make(map[string]struct{}, limit)
 	out := make([]Node, 0, limit)
+
 	for _, candidate := range coverage[:coverageSlots] {
 		node, ok := bestNodeForQueryTerm(matches, candidate.term, selected, selectedPaths)
 		if !ok {
 			continue
 		}
+
 		selected[node.ID] = struct{}{}
 		if node.Path != "" {
 			selectedPaths[node.Path] = struct{}{}
 		}
+
 		out = append(out, node)
 	}
+
 	for _, node := range matches {
 		if len(out) >= limit {
 			break
 		}
+
 		if _, ok := selected[node.ID]; ok {
 			continue
 		}
+
 		selected[node.ID] = struct{}{}
 		out = append(out, node)
 	}
+
 	return out
 }
 
 func nodeTermCoverageList(matches []Node, terms []string) []nodeTermCoverage {
 	var coverage []nodeTermCoverage
+
 	for _, term := range terms {
 		if len(term) < 3 || term == "." {
 			continue
 		}
+
 		count := 0
+
 		for _, node := range matches {
 			if nodeTermMatchScore(node, term) > 0 {
 				count++
 			}
 		}
+
 		if count > 0 {
 			coverage = append(coverage, nodeTermCoverage{term: term, count: count})
 		}
 	}
+
 	return coverage
 }
 
 func bestNodeForQueryTerm(matches []Node, term string, selected map[string]struct{}, selectedPaths map[string]struct{}) (Node, bool) {
 	var best Node
+
 	bestScore := -1
 	bestTotal := -1
 	bestKind := -1
 	bestHasNewPath := false
+
 	for _, node := range matches {
 		if _, ok := selected[node.ID]; ok {
 			continue
 		}
+
 		score := nodeTermMatchScore(node, term)
 		if score <= 0 {
 			continue
 		}
+
 		total, _ := node.Properties["match_score"].(int)
 		kindScore := queryMatchKindScore(node.Kind)
 		hasNewPath := node.Path == ""
+
 		if node.Path != "" {
 			_, alreadyCovered := selectedPaths[node.Path]
+
 			hasNewPath = !alreadyCovered
 		}
+
 		if bestScore < 0 ||
 			(hasNewPath && !bestHasNewPath) ||
 			(hasNewPath == bestHasNewPath && score > bestScore) ||
 			(hasNewPath == bestHasNewPath && score == bestScore && kindScore > bestKind) ||
 			(hasNewPath == bestHasNewPath && score == bestScore && kindScore == bestKind && total > bestTotal) ||
 			(hasNewPath == bestHasNewPath && score == bestScore && kindScore == bestKind && total == bestTotal && node.ID < best.ID) {
+
 			best = node
 			bestScore = score
 			bestTotal = total
@@ -3209,6 +3724,7 @@ func bestNodeForQueryTerm(matches []Node, term string, selected map[string]struc
 			bestHasNewPath = hasNewPath
 		}
 	}
+
 	return best, bestScore >= 0
 }
 
@@ -3216,6 +3732,7 @@ func queryMatchKindScore(kind string) int {
 	if isSymbolKind(kind) {
 		return 4
 	}
+
 	switch kind {
 	case "file":
 		return 3
@@ -3252,18 +3769,23 @@ func nodeMatchScore(node Node, terms []string) int {
 		if node.Kind == "repo" {
 			return 100
 		}
+
 		if node.Kind == "summary" {
 			return 30
 		}
+
 		if node.Kind == "package" || node.Kind == "file" {
 			return 20
 		}
+
 		return 0
 	}
+
 	score := 0
 	for _, term := range terms {
 		score += nodeTermMatchScore(node, term)
 	}
+
 	return score
 }
 
@@ -3271,10 +3793,12 @@ func nodeTermMatchScore(node Node, term string) int {
 	if term == "" {
 		return 0
 	}
+
 	score := 0
 	path := strings.ToLower(node.Path)
 	name := strings.ToLower(node.QualifiedName)
 	kind := strings.ToLower(node.Kind)
+
 	switch {
 	case name == term:
 		score += 80
@@ -3285,9 +3809,11 @@ func nodeTermMatchScore(node Node, term string) int {
 	case strings.Contains(kind, term):
 		score += 10
 	}
+
 	if value, ok := node.Properties["name"].(string); ok && strings.Contains(strings.ToLower(value), term) {
 		score += 30
 	}
+
 	return score
 }
 
@@ -3296,12 +3822,15 @@ func summarizeNodes(nodes []Node, status StatusReport) []NodeSummary {
 	for _, path := range status.StaleFiles {
 		stale[path] = struct{}{}
 	}
+
 	for _, path := range status.MissingFiles {
 		stale[path] = struct{}{}
 	}
+
 	out := make([]NodeSummary, 0, len(nodes))
 	for _, node := range nodes {
 		_, isStale := stale[node.Path]
+
 		out = append(out, NodeSummary{
 			ID:            node.ID,
 			Kind:          node.Kind,
@@ -3315,6 +3844,7 @@ func summarizeNodes(nodes []Node, status StatusReport) []NodeSummary {
 			Properties:    node.Properties,
 		})
 	}
+
 	return out
 }
 
@@ -3331,24 +3861,30 @@ func summarizeEdges(edges []Edge, includeEvidence bool) []EdgeSummary {
 		if includeEvidence {
 			item.Evidence = edge.Evidence
 		}
+
 		out = append(out, item)
 	}
+
 	return out
 }
 
 func relatedEdges(edges []Edge, ids map[string]struct{}, limit int) []Edge {
 	out := make([]Edge, 0)
+
 	for _, edge := range edges {
 		_, source := ids[edge.SourceID]
 		_, target := ids[edge.TargetID]
+
 		if !source && !target {
 			continue
 		}
+
 		out = append(out, edge)
 		if limit > 0 && len(out) >= limit {
 			break
 		}
 	}
+
 	return out
 }
 
@@ -3358,6 +3894,7 @@ func findNode(nodes []Node, handle string) (Node, bool) {
 			return node, true
 		}
 	}
+
 	return Node{}, false
 }
 
@@ -3366,12 +3903,15 @@ func claimForNode(node Node) string {
 	if node.QualifiedName != "" {
 		label = node.QualifiedName
 	}
+
 	if node.Path != "" && node.StartLine > 0 {
 		return fmt.Sprintf("%s %q is in %s lines %d-%d (%s confidence)", node.Kind, label, node.Path, node.StartLine, node.EndLine, node.Confidence)
 	}
+
 	if node.Path != "" {
 		return fmt.Sprintf("%s %q maps to %s (%s confidence)", node.Kind, label, node.Path, node.Confidence)
 	}
+
 	return fmt.Sprintf("%s %q is present in the context index (%s confidence)", node.Kind, label, node.Confidence)
 }
 
@@ -3380,19 +3920,23 @@ func cloneProperties(in map[string]any) map[string]any {
 	for key, value := range in {
 		out[key] = value
 	}
+
 	return out
 }
 
 func uniqueStrings(values []string) []string {
 	seen := make(map[string]struct{}, len(values))
 	out := make([]string, 0, len(values))
+
 	for _, value := range values {
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
+
 	return out
 }
 
@@ -3403,19 +3947,23 @@ func sortedStringSet(values map[string]struct{}) []string {
 			out = append(out, value)
 		}
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
 func uniqueSortedStrings(values []string) []string {
 	out := util.UniqueNonEmpty(values)
 	slices.Sort(out)
+
 	return out
 }
 
 func normalizeLanguage(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.TrimPrefix(value, ".")
+
 	switch value {
 	case "", "auto", "all", "*":
 		return "auto"
@@ -3465,51 +4013,65 @@ func shouldUseGenericCollector(language string) bool {
 func gitState(ctx context.Context, root string) (string, bool) {
 	head := strings.TrimSpace(execOutput(ctx, root, "git", "-C", root, "rev-parse", "HEAD"))
 	status := strings.TrimSpace(execOutput(ctx, root, "git", "-C", root, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all"))
+
 	return head, status != ""
 }
 
 func execOutput(ctx context.Context, dir string, name string, args ...string) string {
 	cmd := exec.CommandContext(ctx, name, args...)
+
 	cmd.Dir = dir
+
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
+
 	return string(out)
 }
 
 func ensureIgnored(root string) error {
 	exclude := execOutput(context.Background(), root, "git", "-C", root, "rev-parse", "--git-path", "info/exclude")
+
 	exclude = strings.TrimSpace(exclude)
+
 	if exclude == "" {
 		return nil
 	}
+
 	if !filepath.IsAbs(exclude) {
 		exclude = filepath.Join(root, exclude)
 	}
+
 	data, err := os.ReadFile(exclude)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
+
 	for _, line := range strings.Split(string(data), "\n") {
 		switch strings.TrimSpace(line) {
 		case ".idiom/", "/.idiom/":
 			return nil
 		}
 	}
+
 	if err := os.MkdirAll(filepath.Dir(exclude), 0o755); err != nil {
 		return err
 	}
+
 	addition := "# Idiom generated artifacts\n.idiom/\n"
 	if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
 		addition = "\n" + addition
 	}
+
 	file, err := os.OpenFile(exclude, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
+
 	_, err = file.WriteString(addition)
+
 	return err
 }
 
@@ -3517,5 +4079,6 @@ func defaultString(value string, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback
 	}
+
 	return value
 }

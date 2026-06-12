@@ -15,6 +15,7 @@ func busyStatusForPrompt(prompt string) string {
 	if topic := genericBusyTopic(prompt); topic != "" {
 		return "Qwen is orienting around your request"
 	}
+
 	return "Qwen is considering its options"
 }
 
@@ -22,9 +23,11 @@ func busyStatusForToolRequest(event agent.ToolRequestEvent, fallback string) str
 	req := event.Request
 	tool := strings.TrimSpace(req.Tool)
 	topic := busyTopicFromRequest(req)
+
 	if topic == "" {
 		topic = genericBusyTopic(fallback)
 	}
+
 	if isRelationshipBusyTool(tool) {
 		if left, right, ok := genericBusyTopicPair(relationshipTopicSource(req)); ok {
 			return "Qwen is finding intersections between " + left + " and " + right
@@ -36,31 +39,37 @@ func busyStatusForToolRequest(event agent.ToolRequestEvent, fallback string) str
 		if topic == "" {
 			return "Qwen is mapping the relevant code"
 		}
+
 		return "Qwen is mapping code related to " + topic
 	case workspace.ToolNameContextQuery, workspace.ToolNameContextZoom, workspace.ToolNameContextImpact, workspace.ToolNameDependencyGraph:
 		if topic == "" {
 			return "Qwen is finding code relationships"
 		}
+
 		return "Qwen is tracing code relationships for " + topic
 	case workspace.ToolNameListFiles, workspace.ToolNameSearchFiles, workspace.ToolNameSearchContent, workspace.ToolNameStructuralSearch, workspace.ToolNameCtagsSymbols:
 		if topic == "" {
 			return "Qwen is searching the workspace"
 		}
+
 		return "Qwen is searching for code related to " + topic
 	case workspace.ToolNameReadFile, workspace.ToolNameFileStats, "go_file_outline", "rust_file_outline", "ts_file_outline", "python_file_outline", "java_file_outline", "cpp_file_outline":
 		if topic == "" {
 			return "Qwen is reading the relevant code"
 		}
+
 		return "Qwen is reading code related to " + topic
 	case workspace.ToolNameCodeNavigate, "go_read_symbol", "rust_read_symbol", "ts_read_symbol", "python_read_symbol", "java_read_symbol", "cpp_read_symbol":
 		if topic == "" {
 			return "Qwen is inspecting a source symbol"
 		}
+
 		return "Qwen is inspecting " + topic
 	case workspace.ToolNameTask, "child_task":
 		if topic == "" {
 			return "Qwen is delegating a focused check"
 		}
+
 		return "Qwen is delegating a focused check on " + topic
 	case workspace.ToolNameTaskLedger:
 		return "Qwen is updating the work plan"
@@ -74,14 +83,18 @@ func busyStatusForToolRequest(event agent.ToolRequestEvent, fallback string) str
 		if topic == "" {
 			return "Qwen is applying the planned change"
 		}
+
 		return "Qwen is applying a change related to " + topic
 	}
+
 	if action := genericBusyTopic(event.Action); action != "" {
 		return "Qwen is working through " + action
 	}
+
 	if topic != "" {
 		return "Qwen is gathering context on " + topic
 	}
+
 	return "Qwen is preparing the next step"
 }
 
@@ -91,14 +104,18 @@ func busyStatusAfterToolResult(event agent.ToolResultEvent) string {
 		if strings.TrimSpace(event.Result.Error) != "" {
 			return "Qwen is reviewing the failed change"
 		}
+
 		return "Qwen is reviewing the change"
 	}
+
 	if tool == "submit_plan" {
 		return "Qwen is reviewing the plan"
 	}
+
 	if tool == "shell" {
 		return "Qwen is reviewing the command output"
 	}
+
 	return defaultBusyStatus
 }
 
@@ -119,6 +136,7 @@ func busyStatusForCommand(command string) string {
 		if topic := genericBusyTopic(command); topic != "" {
 			return "Qwen is searching for code related to " + topic
 		}
+
 		return "Qwen is searching the workspace"
 	default:
 		return "Qwen is checking the requested command"
@@ -171,6 +189,7 @@ func relationshipTopicSource(req workspace.ToolRequest) string {
 			return candidate
 		}
 	}
+
 	return ""
 }
 
@@ -179,12 +198,16 @@ func pathTopic(path string) string {
 	if path == "" {
 		return ""
 	}
+
 	base := filepath.Base(path)
+
 	base = strings.TrimSuffix(base, filepath.Ext(base))
 	base = strings.Trim(base, ".*")
+
 	if base == "" || base == "." || base == string(filepath.Separator) {
 		return path
 	}
+
 	return base
 }
 
@@ -193,6 +216,7 @@ func genericBusyTopic(raw string) string {
 	if len(words) == 0 {
 		return ""
 	}
+
 	return strings.Join(words, " ")
 }
 
@@ -201,18 +225,22 @@ func genericBusyTopicPair(raw string) (string, string, bool) {
 	if raw == "" {
 		return "", "", false
 	}
+
 	lower := strings.ToLower(raw)
 	for _, sep := range []string{" and ", " with ", " vs ", " versus "} {
 		idx := strings.Index(lower, sep)
 		if idx <= 0 || idx+len(sep) >= len(raw) {
 			continue
 		}
+
 		left := strings.Join(genericTopicWords(raw[:idx], 4), " ")
 		right := strings.Join(genericTopicWords(raw[idx+len(sep):], 4), " ")
+
 		if left != "" && right != "" {
 			return left, right, true
 		}
 	}
+
 	return "", "", false
 }
 
@@ -227,31 +255,39 @@ func genericTopicWords(raw string, limit int) []string {
 	raw = strings.ReplaceAll(raw, "/", " ")
 	raw = strings.ReplaceAll(raw, ".", " ")
 
-	var b strings.Builder
-	var last rune
+	var (
+		b    strings.Builder
+		last rune
+	)
+
 	for _, r := range raw {
 		if unicode.IsUpper(r) && unicode.IsLower(last) {
 			b.WriteRune(' ')
 		}
+
 		switch {
 		case unicode.IsLetter(r) || unicode.IsDigit(r):
 			b.WriteRune(unicode.ToLower(r))
 		default:
 			b.WriteRune(' ')
 		}
+
 		last = r
 	}
 
 	out := make([]string, 0, limit)
+
 	for _, word := range strings.Fields(b.String()) {
 		if shouldSkipBusyTopicWord(word) {
 			continue
 		}
+
 		out = append(out, word)
 		if len(out) >= limit {
 			break
 		}
 	}
+
 	return out
 }
 
@@ -259,6 +295,7 @@ func shouldSkipBusyTopicWord(word string) bool {
 	if len(word) <= 2 {
 		return true
 	}
+
 	switch word {
 	case "the", "and", "for", "with", "from", "into", "onto", "about", "around", "related",
 		"this", "that", "these", "those", "your", "you", "can", "could", "would", "should",

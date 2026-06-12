@@ -20,7 +20,9 @@ type RecorderOptions struct {
 
 func OpenRecorder(args []string, opts RecorderOptions) *telemetry.Recorder {
 	wd, _ := os.Getwd()
+
 	wd = config.CanonicalizeExistingPath(wd)
+
 	rec, err := telemetry.Open(telemetry.Options{
 		Dir:           opts.Dir,
 		Command:       CommandName(args),
@@ -31,6 +33,7 @@ func OpenRecorder(args []string, opts RecorderOptions) *telemetry.Recorder {
 	if err != nil {
 		return nil
 	}
+
 	return rec
 }
 
@@ -38,14 +41,19 @@ func InstallSignalHandler(rec *telemetry.Recorder) func() {
 	if rec == nil {
 		return func() {}
 	}
+
 	signals := make(chan os.Signal, 1)
 	done := make(chan struct{})
+
 	var stopOnce sync.Once
+
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+
 	go func() {
 		select {
 		case sig := <-signals:
 			exitCode := SignalExitCode(sig)
+
 			_ = rec.CloseWithFields(exitCode, map[string]any{
 				"reason": "signal",
 				"signal": sig.String(),
@@ -55,6 +63,7 @@ func InstallSignalHandler(rec *telemetry.Recorder) func() {
 			return
 		}
 	}()
+
 	return func() {
 		stopOnce.Do(func() {
 			signal.Stop(signals)
@@ -78,12 +87,15 @@ func CommandArgs(args []string) []string {
 	if len(args) >= 2 && args[0] == "local-ops" && args[1] == "benchmark" {
 		return sanitizeLocalOpsBenchmarkArgs(args)
 	}
+
 	if len(args) >= 2 && args[0] == "product-evidence" && args[1] == "export" {
 		return productevidence.SanitizeProductEvidenceTelemetryArgs(args)
 	}
+
 	if len(args) >= 2 && args[0] == "release" && args[1] == "evidence" {
 		return productevidence.SanitizeReleaseEvidenceTelemetryArgs(args)
 	}
+
 	return args
 }
 
@@ -96,16 +108,20 @@ func sanitizeLocalOpsBenchmarkArgs(args []string) []string {
 			case "--replay-log", "--replay-glob":
 				out[i] = flag + "=" + redactedLocalOpsReplayArg(value)
 			}
+
 			continue
 		}
+
 		switch arg {
 		case "--replay-log", "--replay-glob":
 			if i+1 < len(out) {
 				i++
+
 				out[i] = redactedLocalOpsReplayArg(out[i])
 			}
 		}
 	}
+
 	return out
 }
 
@@ -114,5 +130,6 @@ func redactedLocalOpsReplayArg(value string) string {
 	if value == "" {
 		return "<empty>"
 	}
+
 	return "<redacted_replay_log id=" + localops.StableID(value) + ">"
 }

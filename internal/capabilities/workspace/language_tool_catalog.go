@@ -247,6 +247,7 @@ var languageManifestToolOrders = map[string][]languageManifestToolToken{
 
 func languageToolCatalog() []languageToolCatalogEntry {
 	var out []languageToolCatalogEntry
+
 	for _, lang := range LanguageRegistry() {
 		for _, token := range languageToolOrderFor(lang.Name) {
 			switch {
@@ -255,6 +256,7 @@ func languageToolCatalog() []languageToolCatalogEntry {
 				if tool == "" {
 					continue
 				}
+
 				out = append(out, languageToolEntryForCapability(lang.Name, tool, token.Capability))
 			case token.Supplemental != "":
 				if spec, ok := supplementalLanguageToolSpecFor(lang.Name, token.Supplemental); ok {
@@ -272,6 +274,7 @@ func languageToolCatalog() []languageToolCatalogEntry {
 			}
 		}
 	}
+
 	return out
 }
 
@@ -280,6 +283,7 @@ func languageToolOrderFor(languageName string) []languageManifestToolToken {
 	if order := languageManifestToolOrders[languageName]; len(order) > 0 {
 		return order
 	}
+
 	return defaultLanguageManifestToolOrder
 }
 
@@ -299,15 +303,19 @@ func languageToolEntryForCapability(languageName, tool string, capability Capabi
 func supplementalLanguageToolSpecFor(languageName, tool string) (supplementalLanguageToolSpec, bool) {
 	languageName = strings.ToLower(strings.TrimSpace(languageName))
 	tool = strings.TrimSpace(tool)
+
 	specs, ok := supplementalLanguageToolSpecs[languageName]
+
 	if !ok {
 		return supplementalLanguageToolSpec{}, false
 	}
+
 	for _, spec := range specs {
 		if spec.Tool == tool {
 			return spec, true
 		}
 	}
+
 	return supplementalLanguageToolSpec{}, false
 }
 
@@ -316,17 +324,20 @@ func languageToolCatalogEntryForTool(tool string) (languageToolCatalogEntry, boo
 	if tool == "" {
 		return languageToolCatalogEntry{}, false
 	}
+
 	for _, entry := range languageToolCatalog() {
 		if strings.EqualFold(entry.Tool, tool) {
 			return entry, true
 		}
 	}
+
 	return languageToolCatalogEntry{}, false
 }
 
 func languageToolDefinitions() []ToolDefinition {
 	catalog := languageToolCatalog()
 	defs := make([]ToolDefinition, 0, len(catalog))
+
 	for _, entry := range catalog {
 		defs = append(defs, ToolDefinition{
 			Name:           entry.Tool,
@@ -334,12 +345,14 @@ func languageToolDefinitions() []ToolDefinition {
 			ParametersJSON: entry.ParametersJSON,
 		})
 	}
+
 	return defs
 }
 
 func languageToolManifestEntries() []ToolManifestEntry {
 	catalog := languageToolCatalog()
 	entries := make([]ToolManifestEntry, 0, len(catalog))
+
 	for _, entry := range catalog {
 		entries = append(entries, attachToolManifestCapabilityMetadata(ToolManifestEntry{
 			Tool:    entry.Tool,
@@ -347,15 +360,18 @@ func languageToolManifestEntries() []ToolManifestEntry {
 			Purpose: entry.ManifestPurpose,
 		}))
 	}
+
 	return entries
 }
 
 func languageToolCatalogToolNames() []string {
 	catalog := languageToolCatalog()
 	out := make([]string, 0, len(catalog))
+
 	for _, entry := range catalog {
 		out = append(out, entry.Tool)
 	}
+
 	return out
 }
 
@@ -363,6 +379,7 @@ func languageToolEvidenceCapabilities(tool string) []string {
 	if entry, ok := languageToolCatalogEntryForTool(tool); ok {
 		return append([]string(nil), entry.EvidenceCapabilities...)
 	}
+
 	return nil
 }
 
@@ -375,11 +392,13 @@ func languageCapabilityEvidenceCapabilities(capability Capability) []string {
 	if id := evidenceCapabilityForLanguageCapability(capability); id != "" {
 		return []string{id}
 	}
+
 	return nil
 }
 
 func languageToolDescription(languageName string, capability Capability) string {
 	label := languageDisplayName(languageName)
+
 	switch capability {
 	case CapOverview:
 		return fmt.Sprintf("Summarize the %s workspace structure.", label)
@@ -419,6 +438,7 @@ func languageToolParametersJSON(languageName string, capability Capability) stri
 	if capability == CapFileOutline || capability == CapExtractBody {
 		pathDesc = "file path"
 	}
+
 	switch capability {
 	case CapOverview:
 		return `{"type":"object","properties":{}}`
@@ -461,6 +481,7 @@ func languageToolManifestRequest(tool, languageName string, capability Capabilit
 
 func languageToolManifestPurpose(languageName string, capability Capability) string {
 	label := languageDisplayName(languageName)
+
 	switch capability {
 	case CapOverview:
 		return fmt.Sprintf("summarize %s workspace", label)
@@ -543,6 +564,7 @@ func CodeNavigateCapabilityName(capability Capability) string {
 
 func CodeNavigateCapabilityPredicate(capability Capability) func(string) bool {
 	want := CodeNavigateCapabilityName(capability)
+
 	return func(candidate string) bool {
 		return util.EqualTrimFold(candidate, want)
 	}
@@ -558,9 +580,11 @@ func CodeNavigateSourceBodyCapabilityNames() []string {
 func CodeNavigateSourceBodyCapabilityPhrase() string {
 	names := CodeNavigateSourceBodyCapabilityNames()
 	parts := make([]string, 0, len(names))
+
 	for _, name := range names {
 		parts = append(parts, fmt.Sprintf("`capability:\"%s\"`", name))
 	}
+
 	return strings.Join(parts, " / ")
 }
 
@@ -572,15 +596,18 @@ func CodeNavigateRequestExample(capability Capability, path, pattern string) str
 	if strings.TrimSpace(pattern) == "" {
 		pattern = "<symbol name>"
 	}
+
 	request := map[string]string{
 		"tool":       CodeNavigateToolName,
 		"capability": CodeNavigateCapabilityName(capability),
 		"path":       path,
 		"pattern":    pattern,
 	}
+
 	encoded, err := json.Marshal(request)
 	if err != nil {
 		return ""
 	}
+
 	return string(encoded)
 }

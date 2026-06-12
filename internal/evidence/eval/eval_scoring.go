@@ -65,6 +65,7 @@ func legacyLanguageDiscoveryProfile(tool string) (class string, scope string, co
 			}
 		}
 	}
+
 	return "other", "", ""
 }
 
@@ -92,22 +93,30 @@ func Analyze(records []Record) Metrics {
 	countedToolEventKeys := make(map[string]struct{})
 	countedErrorEventKeys := make(map[string]struct{})
 	uncountedRecoverableToolEventKeys := make(map[string]struct{})
-	var firstTS time.Time
-	var lastTS time.Time
+
+	var (
+		firstTS time.Time
+		lastTS  time.Time
+	)
+
 	for _, record := range records {
 		if ts := timestampField(record.Data, "ts"); !ts.IsZero() {
 			if firstTS.IsZero() || ts.Before(firstTS) {
 				firstTS = ts
 			}
+
 			if lastTS.IsZero() || ts.After(lastTS) {
 				lastTS = ts
 			}
 		}
+
 		countMetricsRecordType(&metrics, record.Type)
+
 		if event, ok := autonomyEventFromRecord(record); ok {
 			autonomyEvents = append(autonomyEvents, event)
 			countMetricsRecordType(&metrics, string(event.Type))
 		}
+
 		switch record.Type {
 		case "session_start":
 			if root := strings.TrimSpace(stringField(record.Data, "workspace_root")); root != "" {
@@ -116,16 +125,20 @@ func Analyze(records []Record) Metrics {
 		case "message":
 			role := stringField(record.Data, "role")
 			content := stringField(record.Data, "content")
+
 			countMetricsRole(&metrics, role)
+
 			if role == "assistant" {
 				recordTerminalOutcomeSignals(&metrics, content)
 			}
+
 			if strings.Contains(strings.ToLower(content), "summary rejected") {
 				metrics.SummaryRejections++
 				if lane := summaryRejectionLane(role); lane != "" {
 					metrics.SummaryRejectionLanes = append(metrics.SummaryRejectionLanes, lane)
 				}
 			}
+
 			switch role {
 			case "user":
 				metrics.LastUser = content
@@ -210,25 +223,32 @@ func Analyze(records []Record) Metrics {
 					metrics.ControlRails = append(metrics.ControlRails, rails)
 				}
 			}
+
 			if caps := parseLanguageCapabilities(content); len(caps) > 0 {
 				metrics.LanguageCapabilities = mergeLanguageCapabilities(metrics.LanguageCapabilities, caps)
 			}
+
 			metrics.EvidencePaths = append(metrics.EvidencePaths, evidencePathsFromJSONContent(content)...)
 		case "run_event":
 			role := stringField(record.Data, "role")
 			content := stringField(record.Data, "content")
+
 			countMetricsRole(&metrics, role)
+
 			if role == "plan_then_execute_low_value_action" {
 				metrics.LowValueActions++
 			}
+
 			if runnerRejected, completionGateRejected := runnerRejectionSignalsFromRunEvent(role, content); runnerRejected || completionGateRejected {
 				if runnerRejected && metrics.RejectedActions < 1 {
 					metrics.RejectedActions = 1
 				}
+
 				if completionGateRejected && metrics.CompletionGateRejections < 1 {
 					metrics.CompletionGateRejections = 1
 				}
 			}
+
 			switch role {
 			case "verification_plan":
 				if plan := parseVerificationPlan(content); plan.Raw != "" {
@@ -289,9 +309,11 @@ func Analyze(records []Record) Metrics {
 					metrics.ControlRails = append(metrics.ControlRails, rails)
 				}
 			}
+
 			if caps := parseLanguageCapabilities(content); len(caps) > 0 {
 				metrics.LanguageCapabilities = mergeLanguageCapabilities(metrics.LanguageCapabilities, caps)
 			}
+
 			metrics.EvidencePaths = append(metrics.EvidencePaths, evidencePathsFromJSONContent(content)...)
 		case "tool_request":
 			if key := toolAttemptEventKey(record.Data); key != "" {
@@ -299,18 +321,24 @@ func Analyze(records []Record) Metrics {
 				if path := writePathFromToolRequest(record.Data); path != "" {
 					requestedWritePaths[key] = path
 				}
+
 				if _, ok := countedToolEventKeys[key]; ok {
 					continue
 				}
+
 				countedToolEventKeys[key] = struct{}{}
 			}
+
 			recordToolAttemptMetrics(&metrics, record.Data)
 		case "tool_result":
 			summary := strings.ToLower(stringField(record.Data, "summary"))
 			tool := strings.TrimSpace(stringField(record.Data, "tool"))
 			errText := strings.TrimSpace(stringField(record.Data, "error"))
+
 			metrics.EvidencePaths = append(metrics.EvidencePaths, evidencePathsFromText(stringField(record.Data, "summary"))...)
+
 			recoverablePostReadinessGap := recoverablePostReadinessGapToolResult(record.Data)
+
 			if recoverablePostReadinessGap {
 				if key := toolAttemptEventKey(record.Data); key != "" {
 					if _, ok := uncountedRecoverableToolEventKeys[key]; !ok {
@@ -321,25 +349,31 @@ func Analyze(records []Record) Metrics {
 					}
 				}
 			}
+
 			if tool != "" && errText == "" {
 				metrics.SuccessfulTools[tool]++
 			}
+
 			if path := changedPathFromSuccessfulWriteResult(record.Data, requestedWritePaths); path != "" {
 				writeChangedFiles = append(writeChangedFiles, path)
 			}
+
 			if tool == "completion_gate" && strings.TrimSpace(stringField(record.Data, "error")) != "" {
 				if metrics.CompletionGateRejections < 1 {
 					metrics.CompletionGateRejections = 1
 				}
 			}
+
 			if toolResultCountsAsRejectedAttempt(record.Data) {
 				if tool != "" {
 					metrics.RejectedTools[tool]++
 				}
+
 				if metrics.RejectedActions < 1 {
 					metrics.RejectedActions = 1
 				}
 			}
+
 			if errText != "" && !recoverablePostReadinessGap && !toolResultAttemptWasRequested(record.Data, requestedToolEventKeys, metrics.Tools) {
 				if key := toolAttemptEventKey(record.Data); key != "" {
 					if _, ok := countedToolEventKeys[key]; ok {
@@ -347,35 +381,45 @@ func Analyze(records []Record) Metrics {
 						// inflate logical tool-attempt counts.
 					} else {
 						countedToolEventKeys[key] = struct{}{}
+
 						recordToolAttemptMetrics(&metrics, record.Data)
 					}
 				} else {
 					recordToolAttemptMetrics(&metrics, record.Data)
 				}
 			}
+
 			if strings.Contains(summary, "repeated dead-end action rejected") {
 				metrics.RepeatedDeadEndRejections++
 			}
+
 			if strings.Contains(summary, "repeated tool request rejected") {
 				metrics.RepeatedToolRejections++
 			}
+
 			if errText != "" && recoverablePostReadinessGapToolResult(record.Data) {
 				metrics.ErrorEvents = append(metrics.ErrorEvents, errorEventSnapshot(record))
 			}
+
 			if errText != "" && !recoverablePostReadinessGapToolResult(record.Data) {
 				if key := toolErrorEventKey(record.Data); key == "" {
 					metrics.ErrorCount++
+
 					metrics.ErrorEvents = append(metrics.ErrorEvents, errorEventSnapshot(record))
 				} else if _, ok := countedErrorEventKeys[key]; !ok {
 					countedErrorEventKeys[key] = struct{}{}
 					metrics.ErrorCount++
+
 					metrics.ErrorEvents = append(metrics.ErrorEvents, errorEventSnapshot(record))
 				}
+
 				metrics.Errors = append(metrics.Errors, errText)
 			}
+
 			if stringField(record.Data, "agent") == "implement_verify" {
 				verifyAgentSeen = true
 				metrics.VerificationChecks++
+
 				switch verificationToolResultState(record.Data) {
 				case "failed":
 					verifyHasFailure = true
@@ -435,12 +479,14 @@ func Analyze(records []Record) Metrics {
 			if checked := intField(record.Data, "verification_checked"); checked > metrics.VerificationChecks {
 				metrics.VerificationChecks = checked
 			}
+
 			if metrics.VerificationChecks > 0 {
 				recordVerificationStatus(&metrics, stringField(record.Data, "verification_status"))
 			}
 		case "error":
 			if message := strings.TrimSpace(stringField(record.Data, "message")); message != "" {
 				metrics.ErrorCount++
+
 				metrics.Errors = append(metrics.Errors, message)
 				metrics.ErrorEvents = append(metrics.ErrorEvents, errorEventSnapshot(record))
 			}
@@ -450,6 +496,7 @@ func Analyze(records []Record) Metrics {
 				if rejected := intField(record.Data, "rejected_actions"); rejected > metrics.RejectedActions {
 					metrics.RejectedActions = rejected
 				}
+
 				if rejected := intField(record.Data, "completion_gate_rejections"); rejected > metrics.CompletionGateRejections {
 					metrics.CompletionGateRejections = rejected
 				}
@@ -462,8 +509,10 @@ func Analyze(records []Record) Metrics {
 				ChangedBeforeReset: stringSliceField(record.Data, "changed_before_reset"),
 				ChangedAfterReset:  stringSliceField(record.Data, "changed_after_reset"),
 			}
+
 			metrics.LiveContractRollbacks = append(metrics.LiveContractRollbacks, rollback)
 			rollbackEvidenceSeen = true
+
 			rollbackChangedFiles = append(rollbackChangedFiles, rollback.ChangedBeforeReset...)
 		case "idiom.live_contract.file_snapshot":
 			metrics.LiveContractFileSnapshots = append(metrics.LiveContractFileSnapshots, LiveContractFileSnapshot{
@@ -477,40 +526,50 @@ func Analyze(records []Record) Metrics {
 
 		if strings.Contains(strings.ToLower(stringField(record.Data, "summary")), "write approval required") ||
 			strings.Contains(strings.ToLower(stringField(record.Data, "error")), "write approval required") {
+
 			metrics.ApprovalRequired = true
 		}
 	}
+
 	if metrics.AssistantTurns == 0 && lastLaneSummary != "" {
 		metrics.FinalAssistant = lastLaneSummary
 		metrics.AssistantTurns = laneSummaryTurns
 	} else if metrics.AssistantTurns < metrics.UserTurns && laneSummaryTurns > 0 {
 		metrics.AssistantTurns = min(metrics.UserTurns, metrics.AssistantTurns+laneSummaryTurns)
 	}
+
 	if hasPhaseState(metrics.Phases, "implement", "verify", "done") {
 		metrics.VerificationPassed = true
 	}
+
 	if hasPhaseState(metrics.Phases, "implement", "verify", "failed") {
 		metrics.VerificationFailed = true
 	}
+
 	if !metrics.VerificationPassed && !metrics.VerificationFailed && verifyAgentSeen {
 		metrics.VerificationFailed = verifyHasFailure
 		metrics.VerificationPassed = !verifyHasFailure && !verifyHasInsufficient && metrics.VerificationChecks > 0
 	}
+
 	if rollbackEvidenceSeen {
 		metrics.ChangedFiles = util.UniqueNonEmpty(rollbackChangedFiles)
 	} else {
 		metrics.ChangedFiles = util.UniqueNonEmpty(writeChangedFiles)
 	}
+
 	if !firstTS.IsZero() && !lastTS.IsZero() && !lastTS.Before(firstTS) {
 		metrics.DurationMillis = lastTS.Sub(firstTS).Milliseconds()
 	}
+
 	metrics.Errors = util.UniqueNonEmpty(metrics.Errors)
 	metrics.EvidencePaths = util.UniqueNonEmpty(metrics.EvidencePaths)
 	metrics.SummaryRejectionLanes = util.UniqueNonEmpty(metrics.SummaryRejectionLanes)
 	metrics.LanguageCapabilities = mergeLanguageCapabilities(nil, metrics.LanguageCapabilities)
+
 	if len(autonomyEvents) > 0 {
 		metrics.ContractReplay = replayAutonomyEvents(autonomyEvents)
 	}
+
 	return metrics
 }
 
@@ -518,27 +577,35 @@ func changedPathFromSuccessfulWriteResult(data map[string]any, requestedWritePat
 	if strings.TrimSpace(stringField(data, "error")) != "" {
 		return ""
 	}
+
 	tool := strings.TrimSpace(stringField(data, "tool"))
 	path := strings.TrimSpace(stringField(data, "path"))
+
 	if path == "" {
 		if key := toolAttemptEventKey(data); key != "" {
 			path = strings.TrimSpace(requestedWritePaths[key])
 		}
 	}
+
 	if tool == "" && path != "" {
 		tool = writeToolFromSummary(stringField(data, "summary"))
 	}
+
 	if path == "" || !writeToolCanChangeFile(tool) {
 		return ""
 	}
+
 	summary := strings.TrimSpace(stringField(data, "summary"))
 	lowerSummary := strings.ToLower(summary)
+
 	if strings.Contains(lowerSummary, "no-op") ||
 		strings.Contains(lowerSummary, "no changes") ||
 		strings.Contains(lowerSummary, "unchanged") ||
 		strings.Contains(lowerSummary, "rejected") {
+
 		return ""
 	}
+
 	return path
 }
 
@@ -547,10 +614,12 @@ func errorEventSnapshot(record Record) ErrorEventSnapshot {
 	if errText == "" {
 		errText = strings.TrimSpace(stringField(record.Data, "message"))
 	}
+
 	runnerRejected := record.Type == "tool_result" && (toolResultCountsAsRejectedAttempt(record.Data) || recoverablePostReadinessGapToolResult(record.Data))
 	if _, ok := record.Data["runner_rejected"]; ok {
 		runnerRejected = boolField(record.Data, "runner_rejected")
 	}
+
 	return ErrorEventSnapshot{
 		EventType:              strings.TrimSpace(record.Type),
 		Tool:                   strings.TrimSpace(stringField(record.Data, "tool")),
@@ -567,16 +636,20 @@ func writePathFromToolRequest(data map[string]any) string {
 	if !writeToolCanChangeFile(tool) {
 		return ""
 	}
+
 	if path := strings.TrimSpace(stringField(data, "path")); path != "" {
 		return path
 	}
+
 	if path := pathFromRawToolRequest(stringField(data, "raw")); path != "" {
 		return path
 	}
+
 	action := strings.TrimSpace(stringField(data, "action"))
 	if _, path, ok := strings.Cut(action, ":"); ok {
 		return strings.TrimSpace(path)
 	}
+
 	return ""
 }
 
@@ -585,12 +658,15 @@ func pathFromRawToolRequest(raw string) string {
 	if raw == "" {
 		return ""
 	}
+
 	var payload struct {
 		Path string `json:"path"`
 	}
+
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return ""
 	}
+
 	return strings.TrimSpace(payload.Path)
 }
 
@@ -623,11 +699,13 @@ func autonomyEventFromRecord(record Record) (autonomy.Event, bool) {
 		if strings.TrimSpace(stringField(record.Data, "role")) != "autonomy_event" {
 			return autonomy.Event{}, false
 		}
+
 		return autonomyEventFromContent(stringField(record.Data, "content"))
 	case "autonomy_event":
 		if content := strings.TrimSpace(stringField(record.Data, "content")); content != "" {
 			return autonomyEventFromContent(content)
 		}
+
 		return autonomyEventFromData(record.Data)
 	default:
 		return autonomy.Event{}, false
@@ -638,38 +716,49 @@ func recordToolAttemptMetrics(metrics *Metrics, data map[string]any) {
 	if metrics == nil {
 		return
 	}
+
 	tool := strings.TrimSpace(stringField(data, "tool"))
 	if tool == "completion_gate" {
 		return
 	}
+
 	metrics.ToolRequests++
 	if tool != "" {
 		metrics.Tools[tool]++
 	}
+
 	class := strings.TrimSpace(stringField(data, "discovery_class"))
 	scope := strings.TrimSpace(stringField(data, "discovery_scope"))
 	cost := strings.TrimSpace(stringField(data, "discovery_cost"))
+
 	if class == "shell" {
 		class, scope, cost = "other", "", ""
 	}
+
 	if class == "" || scope == "" || cost == "" {
 		fallbackClass, fallbackScope, fallbackCost := legacyDiscoveryProfile(tool)
 		if class == "" {
 			class = fallbackClass
 		}
+
 		if scope == "" {
 			scope = fallbackScope
 		}
+
 		if cost == "" {
 			cost = fallbackCost
 		}
 	}
+
 	if class != "" && class != "other" {
 		metrics.DiscoveryTools[tool]++
+
 		metrics.DiscoveryClasses[class]++
+
 		if scope != "" {
 			metrics.DiscoveryScopes[scope]++
 		}
+
 		if cost != "" {
 			metrics.DiscoveryCosts[cost]++
 			if cost == "high" {
@@ -677,6 +766,7 @@ func recordToolAttemptMetrics(metrics *Metrics, data map[string]any) {
 			}
 		}
 	}
+
 	if boolField(data, "broad") {
 		metrics.BroadToolRequests++
 	}
@@ -686,9 +776,11 @@ func unrecordToolAttemptMetrics(metrics *Metrics, data map[string]any) {
 	if metrics == nil {
 		return
 	}
+
 	if metrics.ToolRequests > 0 {
 		metrics.ToolRequests--
 	}
+
 	tool := strings.TrimSpace(stringField(data, "tool"))
 	if tool != "" && metrics.Tools[tool] > 0 {
 		metrics.Tools[tool]--
@@ -696,37 +788,47 @@ func unrecordToolAttemptMetrics(metrics *Metrics, data map[string]any) {
 			delete(metrics.Tools, tool)
 		}
 	}
+
 	class := strings.TrimSpace(stringField(data, "discovery_class"))
 	scope := strings.TrimSpace(stringField(data, "discovery_scope"))
 	cost := strings.TrimSpace(stringField(data, "discovery_cost"))
+
 	if class == "shell" {
 		class, scope, cost = "other", "", ""
 	}
+
 	if class == "" || scope == "" || cost == "" {
 		fallbackClass, fallbackScope, fallbackCost := legacyDiscoveryProfile(tool)
 		if class == "" {
 			class = fallbackClass
 		}
+
 		if scope == "" {
 			scope = fallbackScope
 		}
+
 		if cost == "" {
 			cost = fallbackCost
 		}
 	}
+
 	if class != "" && class != "other" {
 		decrementMetricMap(metrics.DiscoveryTools, tool)
 		decrementMetricMap(metrics.DiscoveryClasses, class)
+
 		if scope != "" {
 			decrementMetricMap(metrics.DiscoveryScopes, scope)
 		}
+
 		if cost != "" {
 			decrementMetricMap(metrics.DiscoveryCosts, cost)
+
 			if cost == "high" && metrics.HeavyDiscoveryRequests > 0 {
 				metrics.HeavyDiscoveryRequests--
 			}
 		}
 	}
+
 	if boolField(data, "broad") && metrics.BroadToolRequests > 0 {
 		metrics.BroadToolRequests--
 	}
@@ -737,6 +839,7 @@ func decrementMetricMap(values map[string]int, key string) {
 	if key == "" || values == nil || values[key] <= 0 {
 		return
 	}
+
 	values[key]--
 	if values[key] == 0 {
 		delete(values, key)
@@ -748,10 +851,13 @@ func toolResultCountsAsRejectedAttempt(data map[string]any) bool {
 	if errText == "" {
 		return false
 	}
+
 	if recoverablePostReadinessGapToolResult(data) {
 		return false
 	}
+
 	summary := strings.ToLower(stringField(data, "summary"))
+
 	return strings.Contains(summary, "rejected") ||
 		strings.Contains(summary, "retry blocked") ||
 		strings.Contains(summary, "preempted") ||
@@ -785,7 +891,9 @@ func toolResultAttemptWasRequested(data map[string]any, requestedKeys map[string
 		_, ok := requestedKeys[key]
 		return ok
 	}
+
 	tool := strings.TrimSpace(stringField(data, "tool"))
+
 	return tool != "" && tools[tool] > 0
 }
 
@@ -794,33 +902,42 @@ func toolAttemptEventKey(data map[string]any) string {
 	if tool == "" {
 		return ""
 	}
+
 	if step := intField(data, "step"); step > 0 {
 		return fmt.Sprintf("step:%d:%s", step, tool)
 	}
+
 	if action := strings.TrimSpace(stringField(data, "action")); action != "" {
 		return "action:" + tool + ":" + action
 	}
+
 	if raw := strings.TrimSpace(stringField(data, "raw")); raw != "" {
 		return "raw:" + tool + ":" + raw
 	}
+
 	return ""
 }
 
 func toolErrorEventKey(data map[string]any) string {
 	tool := strings.TrimSpace(stringField(data, "tool"))
 	errText := strings.TrimSpace(stringField(data, "error"))
+
 	if tool == "" || errText == "" {
 		return ""
 	}
+
 	if step := intField(data, "step"); step > 0 {
 		return fmt.Sprintf("step:%d:%s:%s", step, tool, errText)
 	}
+
 	if action := strings.TrimSpace(stringField(data, "action")); action != "" {
 		return "action:" + tool + ":" + action + ":" + errText
 	}
+
 	if raw := strings.TrimSpace(stringField(data, "raw")); raw != "" {
 		return "raw:" + tool + ":" + raw + ":" + errText
 	}
+
 	return ""
 }
 
@@ -829,10 +946,13 @@ func autonomyEventFromContent(content string) (autonomy.Event, bool) {
 	if content == "" {
 		return autonomy.Event{}, false
 	}
+
 	var event autonomy.Event
+
 	if err := json.Unmarshal([]byte(content), &event); err != nil {
 		return autonomy.Event{}, false
 	}
+
 	return normalizedAutonomyEvent(event)
 }
 
@@ -840,22 +960,28 @@ func autonomyEventFromData(data map[string]any) (autonomy.Event, bool) {
 	if data == nil {
 		return autonomy.Event{}, false
 	}
+
 	encoded, err := json.Marshal(data)
 	if err != nil {
 		return autonomy.Event{}, false
 	}
+
 	var event autonomy.Event
+
 	if err := json.Unmarshal(encoded, &event); err != nil {
 		return autonomy.Event{}, false
 	}
+
 	return normalizedAutonomyEvent(event)
 }
 
 func normalizedAutonomyEvent(event autonomy.Event) (autonomy.Event, bool) {
 	event.Normalize()
+
 	if strings.TrimSpace(string(event.Type)) == "" {
 		return autonomy.Event{}, false
 	}
+
 	return event, true
 }
 
@@ -873,21 +999,27 @@ func replayAutonomyEvents(events []autonomy.Event) *ContractReplayReport {
 		Replay:           replay,
 		Audit:            audit,
 	}
+
 	if len(audit.TurnPhaseCoverage.EnforcementModeCounts) > 0 {
 		report.EnforcementModes = mergeStringIntMaps(report.EnforcementModes, audit.TurnPhaseCoverage.EnforcementModeCounts)
 	}
+
 	if len(report.Packs) == 0 {
 		report.Packs = nil
 	}
+
 	if len(report.EnforcementModes) == 0 {
 		report.EnforcementModes = nil
 	}
+
 	if len(report.Atoms) == 0 {
 		report.Atoms = nil
 	}
+
 	if len(report.Violations) == 0 {
 		report.Violations = nil
 	}
+
 	return report
 }
 
@@ -902,6 +1034,7 @@ func contractReplayViolations(replay autonomy.ReplayReport, audit autonomy.Event
 			ContractIDs: util.UniqueNonEmpty([]string{violation.ContractID}),
 		})
 	}
+
 	for _, finding := range audit.Findings {
 		violations = append(violations, ContractReplayViolation{
 			ID:          finding.ID,
@@ -911,6 +1044,7 @@ func contractReplayViolations(replay autonomy.ReplayReport, audit autonomy.Event
 			ContractIDs: append([]string(nil), finding.ContractIDs...),
 		})
 	}
+
 	for _, obligation := range audit.ObligationCoverage.UnresolvedObligations {
 		violations = append(violations, ContractReplayViolation{
 			ID:          "contract_event_unresolved_obligation",
@@ -920,6 +1054,7 @@ func contractReplayViolations(replay autonomy.ReplayReport, audit autonomy.Event
 			ContractIDs: util.UniqueNonEmpty([]string{obligation.ContractID}),
 		})
 	}
+
 	return violations
 }
 
@@ -927,20 +1062,24 @@ func copyStringIntMap(in map[string]int) map[string]int {
 	if len(in) == 0 {
 		return nil
 	}
+
 	out := make(map[string]int, len(in))
 	for key, value := range in {
 		if key = strings.TrimSpace(key); key != "" && value > 0 {
 			out[key] = value
 		}
 	}
+
 	if len(out) == 0 {
 		return nil
 	}
+
 	return out
 }
 
 func mergeStringIntMaps(maps ...map[string]int) map[string]int {
 	out := make(map[string]int)
+
 	for _, in := range maps {
 		for key, value := range in {
 			if key = strings.TrimSpace(key); key != "" && value > 0 {
@@ -948,9 +1087,11 @@ func mergeStringIntMaps(maps ...map[string]int) map[string]int {
 			}
 		}
 	}
+
 	if len(out) == 0 {
 		return nil
 	}
+
 	return out
 }
 
@@ -958,8 +1099,10 @@ func recordTerminalOutcomeSignals(metrics *Metrics, content string) {
 	if metrics == nil {
 		return
 	}
+
 	trimmed := strings.TrimSpace(content)
 	lower := strings.ToLower(trimmed)
+
 	switch {
 	case strings.HasPrefix(trimmed, "<<QUESTION>>"), strings.HasPrefix(lower, "decision: block"), strings.HasPrefix(lower, "decision: blocked"):
 		metrics.TypedBlockers++
@@ -984,6 +1127,7 @@ func verificationToolResultState(data map[string]any) string {
 	if strings.TrimSpace(stringField(data, "error")) != "" {
 		return "failed"
 	}
+
 	text := strings.ToLower(strings.TrimSpace(strings.Join([]string{
 		stringField(data, "tool"),
 		stringField(data, "summary"),
@@ -994,55 +1138,72 @@ func verificationToolResultState(data map[string]any) string {
 			strings.Contains(text, "generic_source_sanity") ||
 			strings.Contains(text, "generic delimiter") ||
 			strings.Contains(text, "generic source sanity")) {
+
 		return "insufficient"
 	}
+
 	if strings.Contains(text, "git diff --check") {
 		return "insufficient"
 	}
+
 	return "passed"
 }
 
 func runnerRejectionSignalsFromRunEvent(role string, content string) (runnerRejected bool, completionGateRejected bool) {
 	role = strings.TrimSpace(role)
 	content = strings.TrimSpace(content)
+
 	if content == "" {
 		return false, false
 	}
+
 	if role == "next_action_state" || role == "failure_feedback" {
 		var payload map[string]any
+
 		if err := json.Unmarshal([]byte(content), &payload); err == nil {
 			if recoverablePostReadinessGapSummary(stringField(payload, "result_summary")) ||
 				recoverablePostReadinessGapSummary(stringField(payload, "summary")) {
+
 				return false, false
 			}
+
 			reason := strings.ToLower(strings.TrimSpace(stringField(payload, "reason")))
 			failureClass := strings.ToLower(strings.TrimSpace(stringField(payload, "failure_class")))
 			lastTool := strings.ToLower(strings.TrimSpace(stringField(payload, "last_tool")))
 			failedTool := strings.ToLower(strings.TrimSpace(stringField(payload, "failed_tool")))
+
 			if strings.Contains(reason, "rejected") || strings.Contains(failureClass, "completion_gate") || lastTool == "completion_gate" || failedTool == "completion_gate" {
 				return true, lastTool == "completion_gate" || failedTool == "completion_gate" || strings.Contains(failureClass, "completion_gate")
 			}
 		}
 	}
+
 	if role != "autonomy_event" {
 		return false, false
 	}
+
 	var payload map[string]any
+
 	if err := json.Unmarshal([]byte(content), &payload); err != nil {
 		return false, false
 	}
+
 	if strings.ToLower(strings.TrimSpace(stringField(payload, "type"))) != "gate_decision" &&
 		strings.ToLower(strings.TrimSpace(stringField(payload, "type"))) != "completion_gate_decision" {
+
 		return false, false
 	}
+
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return false, false
 	}
+
 	lower := strings.ToLower(string(encoded))
 	if !strings.Contains(lower, `"decision":"reject"`) {
 		return false, false
 	}
+
 	return true, strings.Contains(lower, `"completion_gate"`)
 }
 
@@ -1050,13 +1211,16 @@ func countMetricsRole(metrics *Metrics, role string) {
 	if metrics == nil {
 		return
 	}
+
 	trimmedRole := strings.TrimSpace(role)
 	if trimmedRole == "" {
 		return
 	}
+
 	if metrics.MessageRoles == nil {
 		metrics.MessageRoles = map[string]int{}
 	}
+
 	metrics.MessageRoles[trimmedRole]++
 }
 
@@ -1064,13 +1228,16 @@ func countMetricsRecordType(metrics *Metrics, recordType string) {
 	if metrics == nil {
 		return
 	}
+
 	trimmedType := strings.TrimSpace(recordType)
 	if trimmedType == "" {
 		return
 	}
+
 	if metrics.RecordTypes == nil {
 		metrics.RecordTypes = map[string]int{}
 	}
+
 	metrics.RecordTypes[trimmedType]++
 }
 
@@ -1093,63 +1260,76 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			addFinding("last user prompt does not contain %q", required)
 		}
 	}
+
 	promptHistoryCorpus := strings.Join(metrics.UserPrompts, "\n")
 	if strings.TrimSpace(promptHistoryCorpus) == "" {
 		promptHistoryCorpus = metrics.LastUser
 	}
+
 	promptHistoryLower := strings.ToLower(promptHistoryCorpus)
 	for _, required := range scenario.PromptHistoryContains {
 		if !strings.Contains(promptHistoryLower, strings.ToLower(strings.TrimSpace(required))) {
 			addFinding("user prompt history does not contain %q", required)
 		}
 	}
+
 	finalAssistantLower := strings.ToLower(metrics.FinalAssistant)
 	for _, required := range scenario.FinalAssistantContains {
 		if !strings.Contains(finalAssistantLower, strings.ToLower(strings.TrimSpace(required))) {
 			addFinding("final assistant response does not contain %q", required)
 		}
 	}
+
 	for _, forbidden := range scenario.ForbidFinalAssistantContains {
 		if strings.Contains(finalAssistantLower, strings.ToLower(strings.TrimSpace(forbidden))) {
 			addFinding("final assistant response unexpectedly contains %q", forbidden)
 		}
 	}
+
 	if scenario.RequireAssistantForEachUser && metrics.AssistantTurns < metrics.UserTurns {
 		addFinding("assistant turns fewer than user turns: got %d assistant for %d user", metrics.AssistantTurns, metrics.UserTurns)
 	}
+
 	for _, tool := range scenario.RequireTools {
 		if metrics.Tools[strings.TrimSpace(tool)] == 0 {
 			addFinding("required tool %q was not used", tool)
 		}
 	}
+
 	for _, tool := range scenario.RequireRejectedTools {
 		if metrics.RejectedTools[strings.TrimSpace(tool)] == 0 {
 			addFinding("required rejected tool %q was not observed", tool)
 		}
 	}
+
 	for _, tool := range scenario.ForbidTools {
 		if metrics.Tools[strings.TrimSpace(tool)] > 0 {
 			addFinding("forbidden tool %q was used", tool)
 		}
 	}
+
 	for _, tool := range scenario.RequireDiscoveryTools {
 		if metrics.DiscoveryTools[strings.TrimSpace(tool)] == 0 {
 			addFinding("required discovery tool %q was not used", tool)
 		}
 	}
+
 	for _, class := range scenario.RequireDiscoveryClasses {
 		if metrics.DiscoveryClasses[strings.TrimSpace(class)] == 0 {
 			addFinding("required discovery class %q was not used", class)
 		}
 	}
+
 	if scenario.MaxHeavyDiscoveryRequests != nil && metrics.HeavyDiscoveryRequests > *scenario.MaxHeavyDiscoveryRequests {
 		addFinding("heavy discovery requests exceeded limit: got %d want <= %d", metrics.HeavyDiscoveryRequests, *scenario.MaxHeavyDiscoveryRequests)
 	}
+
 	for _, phase := range scenario.RequirePhases {
 		if !containsPhase(metrics.Phases, phase) {
 			addFinding("required phase was not observed: lane=%q phase=%q state=%q", phase.Lane, phase.Phase, phase.State)
 		}
 	}
+
 	if scenario.RequireRoutePlan != nil {
 		if len(metrics.RoutePlans) == 0 {
 			addFinding("required route plan was not observed")
@@ -1164,11 +1344,13 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			)
 		}
 	}
+
 	for _, role := range scenario.RequireRunEvents {
 		trimmed := strings.TrimSpace(role)
 		if trimmed == "" {
 			continue
 		}
+
 		// Match either a type:"message" role (runner-emitted RunEvents) or a
 		// top-level record type (orchestrator-emitted events such as
 		// idiom.plan_execute.preflight_failed). One field, two valid sources.
@@ -1176,6 +1358,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			addFinding("required run event %q was not observed in log", trimmed)
 		}
 	}
+
 	if scenario.RequireReplan != nil {
 		if len(metrics.Replans) == 0 {
 			addFinding("required replan recommendation was not observed")
@@ -1184,16 +1367,20 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			addFinding("replan recommendation mismatch: got from=%q to=%q reason=%q", latest.FromLane, latest.ToLane, latest.Reason)
 		}
 	}
+
 	if scenario.MaxBroadToolRequests != nil && metrics.BroadToolRequests > *scenario.MaxBroadToolRequests {
 		addFinding("broad tool requests exceeded limit: got %d want <= %d", metrics.BroadToolRequests, *scenario.MaxBroadToolRequests)
 	}
+
 	totalDeadEnds := metrics.RepeatedDeadEndRejections + metrics.RepeatedToolRejections
 	if scenario.MaxRepeatedDeadEnds != nil && totalDeadEnds > *scenario.MaxRepeatedDeadEnds {
 		addFinding("repeated dead-end requests exceeded limit: got %d want <= %d", totalDeadEnds, *scenario.MaxRepeatedDeadEnds)
 	}
+
 	if scenario.MaxSummaryRejections != nil && metrics.SummaryRejections > *scenario.MaxSummaryRejections {
 		addFinding("summary rejections exceeded limit: got %d want <= %d", metrics.SummaryRejections, *scenario.MaxSummaryRejections)
 	}
+
 	switch strings.ToLower(strings.TrimSpace(scenario.RequireVerification)) {
 	case "", "any":
 	case "passed":
@@ -1211,6 +1398,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 	default:
 		addFinding("unsupported require_verification value %q", scenario.RequireVerification)
 	}
+
 	if scenario.RequireVerificationPlan != nil {
 		if len(metrics.VerificationPlans) == 0 {
 			addFinding("required verification plan was not observed")
@@ -1226,6 +1414,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			)
 		}
 	}
+
 	if scenario.RequireReadiness != nil {
 		if len(metrics.ReadinessChecks) == 0 {
 			addFinding("required readiness check was not observed")
@@ -1241,6 +1430,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			)
 		}
 	}
+
 	if scenario.RequireDeepening != nil {
 		if len(metrics.DeepeningAttempts) == 0 {
 			addFinding("required deepening attempt was not observed")
@@ -1256,6 +1446,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			)
 		}
 	}
+
 	if scenario.RequireFinalAnswerCritic != nil {
 		if len(metrics.FinalAnswerCritics) == 0 {
 			addFinding("required final answer critic was not observed")
@@ -1270,6 +1461,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			)
 		}
 	}
+
 	if scenario.RequireEffortPolicy != nil {
 		if len(metrics.EffortPolicies) == 0 {
 			addFinding("required effort policy was not observed")
@@ -1286,6 +1478,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			)
 		}
 	}
+
 	if scenario.RequireLongHorizonState != nil {
 		if len(metrics.LongHorizonStates) == 0 {
 			addFinding("required long-horizon state was not observed")
@@ -1304,6 +1497,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			)
 		}
 	}
+
 	if scenario.RequireWorkflowState != nil {
 		if len(metrics.WorkflowStates) == 0 {
 			addFinding("required workflow state was not observed")
@@ -1322,6 +1516,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			)
 		}
 	}
+
 	if scenario.RequireBudgetLedger != nil {
 		if len(metrics.BudgetLedgers) == 0 {
 			addFinding("required budget ledger was not observed")
@@ -1331,6 +1526,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 				latest.Lane, latest.StopReason, latest.UsedModelCalls, latest.TotalEvidencePaths, latest.BudgetExhausted)
 		}
 	}
+
 	if scenario.RequireEvidenceDelta != nil {
 		if len(metrics.EvidenceDeltas) == 0 {
 			addFinding("required evidence delta was not observed")
@@ -1340,6 +1536,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 				latest.Lane, len(latest.NewEvidencePaths), latest.MarginalValue, latest.ToolResults, latest.FailedTools)
 		}
 	}
+
 	if scenario.RequireClaimConfidence != nil {
 		if len(metrics.ClaimConfidences) == 0 {
 			addFinding("required claim confidence was not observed")
@@ -1349,6 +1546,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 				latest.Lane, latest.Confidence, len(latest.EvidencePaths), len(latest.UnresolvedUncertainty), latest.CalibrationBasis)
 		}
 	}
+
 	if scenario.RequireContextCompaction != nil {
 		if len(metrics.ContextCompactions) == 0 {
 			addFinding("required context compaction was not observed")
@@ -1364,6 +1562,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			)
 		}
 	}
+
 	if scenario.RequireRouteAmbiguity != nil {
 		if len(metrics.RouteAmbiguities) == 0 {
 			addFinding("required route ambiguity was not observed")
@@ -1373,6 +1572,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 				latest.SelectedLane, latest.Ambiguous, latest.Signals, latest.TieBreak)
 		}
 	}
+
 	if scenario.RequireVerificationFeedback != nil {
 		if len(metrics.VerificationFeedback) == 0 {
 			addFinding("required verification feedback was not observed")
@@ -1382,6 +1582,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 				latest.Confidence, latest.FailedCommands, latest.LearnedRecommendation)
 		}
 	}
+
 	if scenario.RequireToolFailureConfidence != nil {
 		if len(metrics.ToolFailureConfidence) == 0 {
 			addFinding("required tool-failure confidence was not observed")
@@ -1391,6 +1592,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 				latest.Lane, latest.Tool, latest.ConfidenceImpact)
 		}
 	}
+
 	if scenario.RequireControlRails != nil {
 		if len(metrics.ControlRails) == 0 {
 			addFinding("required control rails were not observed")
@@ -1410,6 +1612,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			)
 		}
 	}
+
 	if scenario.RequireContractReplay != nil {
 		if metrics.ContractReplay == nil {
 			addFinding("required contract replay was not observed")
@@ -1419,19 +1622,23 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 					addFinding("contract replay pack %q was not observed", pack)
 				}
 			}
+
 			for _, mode := range scenario.RequireContractReplay.RequireEnforcementModes {
 				if mapCountFold(metrics.ContractReplay.EnforcementModes, mode) == 0 {
 					addFinding("contract replay enforcement mode %q was not observed", mode)
 				}
 			}
+
 			for _, atom := range scenario.RequireContractReplay.RequireAtoms {
 				if mapCountFold(metrics.ContractReplay.Atoms, atom) == 0 {
 					addFinding("contract replay atom %q was not observed", atom)
 				}
 			}
+
 			if scenario.RequireContractReplay.MaxViolations != nil && len(metrics.ContractReplay.Replay.Violations) > *scenario.RequireContractReplay.MaxViolations {
 				addFinding("contract replay violations exceeded limit: got %d want <= %d", len(metrics.ContractReplay.Replay.Violations), *scenario.RequireContractReplay.MaxViolations)
 			}
+
 			for _, id := range scenario.RequireContractReplay.ForbidViolationIDs {
 				if contractReplayHasViolation(metrics.ContractReplay.Violations, id) {
 					addFinding("contract replay violation %q was forbidden", id)
@@ -1439,29 +1646,35 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			}
 		}
 	}
+
 	for _, required := range scenario.RequireChangedFiles {
 		if !containsStringFold(metrics.ChangedFiles, required) {
 			addFinding("changed files do not include %q", required)
 		}
 	}
+
 	for _, required := range scenario.RequireEvidencePaths {
 		if !containsStringFold(metrics.EvidencePaths, required) {
 			addFinding("evidence paths do not include %q", required)
 		}
 	}
+
 	for _, required := range scenario.RequireLanguageCapabilities {
 		if !languageCapabilityMatches(metrics.LanguageCapabilities, required) {
 			addFinding("language capabilities do not include language=%q tool=%q signal=%q", required.Language, required.Tool, required.Signal)
 		}
 	}
+
 	if scenario.RequireApproval != nil && metrics.ApprovalRequired != *scenario.RequireApproval {
 		addFinding("approval requirement mismatch: got %t want %t", metrics.ApprovalRequired, *scenario.RequireApproval)
 	}
+
 	if scenario.RequirePlanExecution != nil {
 		for _, finding := range evaluatePlanExecutionExpectation(metrics, *scenario.RequirePlanExecution) {
 			addFinding("%s", finding)
 		}
 	}
+
 	return report
 }
 
@@ -1470,11 +1683,13 @@ func mapCountFold(values map[string]int, target string) int {
 	if target == "" {
 		return 0
 	}
+
 	for key, count := range values {
 		if util.EqualTrimFold(key, target) {
 			return count
 		}
 	}
+
 	return 0
 }
 
@@ -1483,76 +1698,95 @@ func contractReplayHasViolation(violations []ContractReplayViolation, id string)
 	if id == "" {
 		return false
 	}
+
 	for _, violation := range violations {
 		if util.EqualTrimFold(violation.ID, id) {
 			return true
 		}
 	}
+
 	return false
 }
 
 func evaluatePlanExecutionExpectation(metrics Metrics, expected PlanExecutionExpectation) []string {
 	var findings []string
+
 	if expected.RequireHandoffID && !planExecutionHasHandoffID(metrics.PlanExecutionHandoffs) {
 		findings = append(findings, "plan execution handoff id was required but not observed")
 	}
+
 	if expected.RequireHandoffCreated && !planExecutionHasHandoffCreated(metrics.PlanExecutionHandoffs) {
 		findings = append(findings, "plan execution handoff creation was required but not observed")
 	}
+
 	if expected.RequireApprovalScopeID && !planExecutionHasApprovalScopeID(metrics.PlanExecutionHandoffs) {
 		findings = append(findings, "plan execution approval scope id was required but not observed")
 	}
+
 	if expected.RequirePacketPresent && !planExecutionHasPacketPresent(metrics.PlanExecutionHandoffs) {
 		findings = append(findings, "plan execution packet presence was required but not observed")
 	}
+
 	if expected.RequirePacketFresh && !planExecutionHasPacketFresh(metrics.PlanExecutionHandoffs) {
 		findings = append(findings, "plan execution fresh packet was required but not observed")
 	}
+
 	if expected.RequirePacketNotUsed && !planExecutionHasPacketNotUsed(metrics.PlanExecutionHandoffs) {
 		findings = append(findings, "plan execution packet non-use by design was required but not observed")
 	}
+
 	if expected.RequireNoDrift && len(metrics.PlanExecutionDrift) > 0 {
 		findings = append(findings, fmt.Sprintf("plan execution drift was forbidden but observed %d drift event(s)", len(metrics.PlanExecutionDrift)))
 	}
+
 	if expected.RequireDrift && len(metrics.PlanExecutionDrift) == 0 {
 		findings = append(findings, "plan execution drift was required but not observed")
 	}
+
 	for _, reason := range expected.RequireDriftReasons {
 		reason = normalizedCoverageKey(reason)
 		if reason == "" {
 			continue
 		}
+
 		if !planExecutionHasDriftReason(metrics.PlanExecutionDrift, reason) {
 			findings = append(findings, fmt.Sprintf("plan execution drift reason %q was not observed", reason))
 		}
 	}
+
 	for _, state := range expected.RequirePacketStates {
 		state = normalizedCoverageKey(state)
 		if state == "" {
 			continue
 		}
+
 		if !planExecutionHasPacketState(metrics.PlanExecutionHandoffs, state) {
 			findings = append(findings, fmt.Sprintf("plan execution packet state %q was not observed", state))
 		}
 	}
+
 	for _, state := range expected.RequirePacketFreshnessState {
 		state = normalizedCoverageKey(state)
 		if state == "" {
 			continue
 		}
+
 		if !planExecutionHasPacketFreshness(metrics.PlanExecutionHandoffs, state) {
 			findings = append(findings, fmt.Sprintf("plan execution packet freshness state %q was not observed", state))
 		}
 	}
+
 	for _, permission := range expected.RequireExecutionPermissions {
 		permission = normalizedCoverageKey(permission)
 		if permission == "" {
 			continue
 		}
+
 		if !planExecutionHasPermission(metrics.PlanExecutionHandoffs, permission) {
 			findings = append(findings, fmt.Sprintf("plan execution permission %q was not observed", permission))
 		}
 	}
+
 	return findings
 }
 
@@ -1562,6 +1796,7 @@ func planExecutionHasHandoffID(handoffs []PlanExecutionHandoffSnapshot) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1571,6 +1806,7 @@ func planExecutionHasHandoffCreated(handoffs []PlanExecutionHandoffSnapshot) boo
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1580,6 +1816,7 @@ func planExecutionHasApprovalScopeID(handoffs []PlanExecutionHandoffSnapshot) bo
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1589,6 +1826,7 @@ func planExecutionHasDriftReason(drifts []PlanExecutionDriftSnapshot, reason str
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1598,6 +1836,7 @@ func planExecutionHasPacketState(handoffs []PlanExecutionHandoffSnapshot, state 
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1607,6 +1846,7 @@ func planExecutionHasPacketPresent(handoffs []PlanExecutionHandoffSnapshot) bool
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1616,6 +1856,7 @@ func planExecutionHasPacketFresh(handoffs []PlanExecutionHandoffSnapshot) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1625,6 +1866,7 @@ func planExecutionHasPacketNotUsed(handoffs []PlanExecutionHandoffSnapshot) bool
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1634,6 +1876,7 @@ func planExecutionHasPacketFreshness(handoffs []PlanExecutionHandoffSnapshot, st
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1652,6 +1895,7 @@ func planExecutionHasPermission(handoffs []PlanExecutionHandoffSnapshot, permiss
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1660,14 +1904,18 @@ func containsPhase(phases []PhaseSnapshot, expected PhaseExpectation) bool {
 		if expected.Lane != "" && !strings.EqualFold(phase.Lane, expected.Lane) {
 			continue
 		}
+
 		if expected.Phase != "" && !strings.EqualFold(phase.Phase, expected.Phase) {
 			continue
 		}
+
 		if expected.State != "" && !strings.EqualFold(phase.State, expected.State) {
 			continue
 		}
+
 		return true
 	}
+
 	return false
 }
 
@@ -1675,11 +1923,13 @@ func runEventObserved(metrics Metrics, required string) bool {
 	if metrics.MessageRoles[required] > 0 || metrics.RecordTypes[required] > 0 {
 		return true
 	}
+
 	for _, alias := range runEventAliases(required) {
 		if metrics.MessageRoles[alias] > 0 || metrics.RecordTypes[alias] > 0 {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1694,15 +1944,19 @@ func runEventAliases(required string) []string {
 
 func parseRoutePlan(content string) RoutePlanSnapshot {
 	content = strings.TrimSpace(content)
+
 	plan := RoutePlanSnapshot{Raw: content}
+
 	if content == "" {
 		return RoutePlanSnapshot{}
 	}
+
 	for _, field := range strings.Fields(content) {
 		key, value, ok := strings.Cut(field, "=")
 		if !ok {
 			continue
 		}
+
 		value = strings.TrimSpace(value)
 		switch strings.TrimSpace(key) {
 		case "initial":
@@ -1723,6 +1977,7 @@ func parseRoutePlan(content string) RoutePlanSnapshot {
 			plan.Thoroughness = value
 		}
 	}
+
 	return plan
 }
 
@@ -1731,6 +1986,7 @@ func routePlanFromWriterRouteDecision(data map[string]any) RoutePlanSnapshot {
 	if taskFamily == "" {
 		return RoutePlanSnapshot{}
 	}
+
 	plan := RoutePlanSnapshot{
 		Raw:         "writer_route_decision:" + taskFamily,
 		InitialLane: taskFamily,
@@ -1748,12 +2004,14 @@ func routePlanFromWriterRouteDecision(data map[string]any) RoutePlanSnapshot {
 			plan.Reason = routePlanReasonFromWriterRouteReason(reasonCodes[0])
 		}
 	}
+
 	return plan
 }
 
 func routePlanReasonFromWriterRouteReason(reason string) string {
 	reason = strings.TrimSpace(reason)
 	reason = strings.TrimPrefix(reason, "route.")
+
 	return strings.ReplaceAll(reason, "-", "_")
 }
 
@@ -1761,47 +2019,60 @@ func routePlanMatches(actual RoutePlanSnapshot, expected RoutePlanExpectation) b
 	if expected.InitialLane != "" && !strings.EqualFold(actual.InitialLane, expected.InitialLane) {
 		return false
 	}
+
 	if expected.FollowupLane != "" && !strings.EqualFold(actual.FollowupLane, expected.FollowupLane) {
 		return false
 	}
+
 	if expected.Reason != "" && !strings.EqualFold(actual.Reason, expected.Reason) {
 		return false
 	}
+
 	if expected.Contract != "" && !strings.EqualFold(actual.Contract, expected.Contract) {
 		return false
 	}
+
 	if expected.AgentMode != "" && !strings.EqualFold(actual.AgentMode, expected.AgentMode) {
 		return false
 	}
+
 	if expected.WorkflowKind != "" && !strings.EqualFold(actual.WorkflowKind, expected.WorkflowKind) {
 		return false
 	}
+
 	if expected.WorkflowPhase != "" && !strings.EqualFold(actual.WorkflowPhase, expected.WorkflowPhase) {
 		return false
 	}
+
 	if expected.Thoroughness != "" && !strings.EqualFold(actual.Thoroughness, expected.Thoroughness) {
 		return false
 	}
+
 	return true
 }
 
 func parseReplanRecommendation(content string) ReplanSnapshot {
 	content = strings.TrimSpace(content)
+
 	replan := ReplanSnapshot{Raw: content}
+
 	if content == "" {
 		return ReplanSnapshot{}
 	}
+
 	head, reason, hasReason := strings.Cut(content, ":")
 	if hasReason {
 		replan.Reason = strings.TrimSpace(reason)
 	} else {
 		head = content
 	}
+
 	from, to, ok := strings.Cut(strings.TrimSpace(head), "->")
 	if ok {
 		replan.FromLane = strings.TrimSpace(from)
 		replan.ToLane = strings.TrimSpace(to)
 	}
+
 	return replan
 }
 
@@ -1809,12 +2080,15 @@ func replanMatches(actual ReplanSnapshot, expected ReplanExpectation) bool {
 	if expected.FromLane != "" && !strings.EqualFold(actual.FromLane, expected.FromLane) {
 		return false
 	}
+
 	if expected.ToLane != "" && !strings.EqualFold(actual.ToLane, expected.ToLane) {
 		return false
 	}
+
 	if expected.Reason != "" && !strings.Contains(strings.ToLower(actual.Reason), strings.ToLower(strings.TrimSpace(expected.Reason))) {
 		return false
 	}
+
 	return true
 }
 
@@ -1823,10 +2097,13 @@ func parseVerificationPlan(content string) VerificationPlanSnapshot {
 	if content == "" {
 		return VerificationPlanSnapshot{}
 	}
+
 	var plan VerificationPlanSnapshot
+
 	if err := json.Unmarshal([]byte(content), &plan); err != nil {
 		return VerificationPlanSnapshot{}
 	}
+
 	plan.Raw = content
 	plan.Commands = util.UniqueNonEmpty(plan.Commands)
 	plan.Reasons = util.UniqueNonEmpty(plan.Reasons)
@@ -1835,6 +2112,7 @@ func parseVerificationPlan(content string) VerificationPlanSnapshot {
 	plan.Confidence = strings.TrimSpace(plan.Confidence)
 	plan.RiskLevel = strings.TrimSpace(plan.RiskLevel)
 	plan.RepairPolicy = strings.TrimSpace(plan.RepairPolicy)
+
 	return plan
 }
 
@@ -1842,25 +2120,31 @@ func verificationPlanMatches(actual VerificationPlanSnapshot, expected Verificat
 	if expected.Coverage != "" && !strings.EqualFold(actual.Coverage, expected.Coverage) {
 		return false
 	}
+
 	if expected.Confidence != "" && !strings.EqualFold(actual.Confidence, expected.Confidence) {
 		return false
 	}
+
 	if expected.RiskLevel != "" && !strings.EqualFold(actual.RiskLevel, expected.RiskLevel) {
 		return false
 	}
+
 	if expected.UsesFullSuite != nil && actual.UsesFullSuite != *expected.UsesFullSuite {
 		return false
 	}
+
 	for _, command := range expected.RequireCommands {
 		if !containsStringFold(actual.Commands, command) {
 			return false
 		}
 	}
+
 	for _, failure := range expected.RequireExpectedFailures {
 		if !containsStringFold(actual.ExpectedFailures, failure) {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -1869,16 +2153,20 @@ func parseReadinessCheck(content string) ReadinessSnapshot {
 	if content == "" {
 		return ReadinessSnapshot{}
 	}
+
 	var readiness ReadinessSnapshot
+
 	if err := json.Unmarshal([]byte(content), &readiness); err != nil {
 		return ReadinessSnapshot{}
 	}
+
 	readiness.Raw = content
 	readiness.Lane = strings.TrimSpace(readiness.Lane)
 	readiness.Confidence = strings.TrimSpace(readiness.Confidence)
 	readiness.Action = strings.TrimSpace(readiness.Action)
 	readiness.Reason = strings.TrimSpace(readiness.Reason)
 	readiness.EvidencePaths = util.UniqueNonEmpty(readiness.EvidencePaths)
+
 	return readiness
 }
 
@@ -1886,18 +2174,23 @@ func readinessMatches(actual ReadinessSnapshot, expected ReadinessExpectation) b
 	if expected.Lane != "" && !strings.EqualFold(actual.Lane, expected.Lane) {
 		return false
 	}
+
 	if expected.Ready != nil && actual.Ready != *expected.Ready {
 		return false
 	}
+
 	if expected.Confidence != "" && !strings.EqualFold(actual.Confidence, expected.Confidence) {
 		return false
 	}
+
 	if expected.Action != "" && !strings.EqualFold(actual.Action, expected.Action) {
 		return false
 	}
+
 	if expected.MinEvidencePaths != nil && len(actual.EvidencePaths) < *expected.MinEvidencePaths {
 		return false
 	}
+
 	reason := strings.ToLower(actual.Reason)
 	for _, required := range expected.ReasonContains {
 		required = strings.ToLower(strings.TrimSpace(required))
@@ -1905,6 +2198,7 @@ func readinessMatches(actual ReadinessSnapshot, expected ReadinessExpectation) b
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -1913,15 +2207,19 @@ func parseDeepeningAttempt(content string) DeepeningSnapshot {
 	if content == "" {
 		return DeepeningSnapshot{}
 	}
+
 	var deepening DeepeningSnapshot
+
 	if err := json.Unmarshal([]byte(content), &deepening); err != nil {
 		return DeepeningSnapshot{}
 	}
+
 	deepening.Raw = content
 	deepening.Lane = strings.TrimSpace(deepening.Lane)
 	deepening.Action = strings.TrimSpace(deepening.Action)
 	deepening.Reason = strings.TrimSpace(deepening.Reason)
 	deepening.EvidencePaths = util.UniqueNonEmpty(deepening.EvidencePaths)
+
 	return deepening
 }
 
@@ -1929,18 +2227,23 @@ func deepeningMatches(actual DeepeningSnapshot, expected DeepeningExpectation) b
 	if expected.Lane != "" && !strings.EqualFold(actual.Lane, expected.Lane) {
 		return false
 	}
+
 	if expected.Attempted != nil && actual.Attempted != *expected.Attempted {
 		return false
 	}
+
 	if expected.Exhausted != nil && actual.Exhausted != *expected.Exhausted {
 		return false
 	}
+
 	if expected.Action != "" && !strings.EqualFold(actual.Action, expected.Action) {
 		return false
 	}
+
 	if expected.MinEvidencePaths != nil && len(actual.EvidencePaths) < *expected.MinEvidencePaths {
 		return false
 	}
+
 	reason := strings.ToLower(actual.Reason)
 	for _, required := range expected.ReasonContains {
 		required = strings.ToLower(strings.TrimSpace(required))
@@ -1948,6 +2251,7 @@ func deepeningMatches(actual DeepeningSnapshot, expected DeepeningExpectation) b
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -1956,15 +2260,19 @@ func parseFinalAnswerCritic(content string) FinalAnswerCriticSnapshot {
 	if content == "" {
 		return FinalAnswerCriticSnapshot{}
 	}
+
 	var critic FinalAnswerCriticSnapshot
+
 	if err := json.Unmarshal([]byte(content), &critic); err != nil {
 		return FinalAnswerCriticSnapshot{}
 	}
+
 	critic.Raw = content
 	critic.Contract = strings.TrimSpace(critic.Contract)
 	critic.Action = strings.TrimSpace(critic.Action)
 	critic.Findings = util.UniqueNonEmpty(critic.Findings)
 	critic.EvidencePaths = util.UniqueNonEmpty(critic.EvidencePaths)
+
 	return critic
 }
 
@@ -1972,15 +2280,19 @@ func finalAnswerCriticMatches(actual FinalAnswerCriticSnapshot, expected FinalAn
 	if expected.Contract != "" && !strings.EqualFold(actual.Contract, expected.Contract) {
 		return false
 	}
+
 	if expected.Passed != nil && actual.Passed != *expected.Passed {
 		return false
 	}
+
 	if expected.Action != "" && !strings.EqualFold(actual.Action, expected.Action) {
 		return false
 	}
+
 	if expected.Repaired != nil && actual.Repaired != *expected.Repaired {
 		return false
 	}
+
 	findings := strings.ToLower(strings.Join(actual.Findings, "\n"))
 	for _, required := range expected.RequireFindings {
 		required = strings.ToLower(strings.TrimSpace(required))
@@ -1988,6 +2300,7 @@ func finalAnswerCriticMatches(actual FinalAnswerCriticSnapshot, expected FinalAn
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -1996,15 +2309,19 @@ func parseEffortPolicy(content string) EffortPolicySnapshot {
 	if content == "" {
 		return EffortPolicySnapshot{}
 	}
+
 	var policy EffortPolicySnapshot
+
 	if err := json.Unmarshal([]byte(content), &policy); err != nil {
 		return EffortPolicySnapshot{}
 	}
+
 	policy.Raw = content
 	policy.Lane = strings.TrimSpace(policy.Lane)
 	policy.Level = strings.TrimSpace(policy.Level)
 	policy.ConfidenceFloor = strings.TrimSpace(policy.ConfidenceFloor)
 	policy.BudgetExhaustionMode = strings.TrimSpace(policy.BudgetExhaustionMode)
+
 	return policy
 }
 
@@ -2012,27 +2329,35 @@ func effortPolicyMatches(actual EffortPolicySnapshot, expected EffortPolicyExpec
 	if expected.Lane != "" && !strings.EqualFold(actual.Lane, expected.Lane) {
 		return false
 	}
+
 	if expected.Level != "" && !strings.EqualFold(actual.Level, expected.Level) {
 		return false
 	}
+
 	if expected.MinAnalysisToolBudget != nil && actual.AnalysisToolBudget < *expected.MinAnalysisToolBudget {
 		return false
 	}
+
 	if expected.MinImplementToolBudget != nil && actual.ImplementToolBudget < *expected.MinImplementToolBudget {
 		return false
 	}
+
 	if expected.MinDeepeningPasses != nil && actual.DeepeningPasses < *expected.MinDeepeningPasses {
 		return false
 	}
+
 	if expected.MinMaxOutputTokens != nil && actual.MaxOutputTokens < *expected.MinMaxOutputTokens {
 		return false
 	}
+
 	if expected.ConfidenceFloor != "" && !strings.EqualFold(actual.ConfidenceFloor, expected.ConfidenceFloor) {
 		return false
 	}
+
 	if expected.BudgetExhaustionMode != "" && !strings.EqualFold(actual.BudgetExhaustionMode, expected.BudgetExhaustionMode) {
 		return false
 	}
+
 	return true
 }
 
@@ -2041,10 +2366,13 @@ func parseLongHorizonState(content string) LongHorizonStateSnapshot {
 	if content == "" {
 		return LongHorizonStateSnapshot{}
 	}
+
 	var state LongHorizonStateSnapshot
+
 	if err := json.Unmarshal([]byte(content), &state); err != nil {
 		return LongHorizonStateSnapshot{}
 	}
+
 	state.Raw = content
 	state.Action = strings.TrimSpace(state.Action)
 	state.MemoryKind = strings.TrimSpace(state.MemoryKind)
@@ -2060,6 +2388,7 @@ func parseLongHorizonState(content string) LongHorizonStateSnapshot {
 	state.NextStep = strings.TrimSpace(state.NextStep)
 	state.Verification = strings.TrimSpace(state.Verification)
 	state.Reason = strings.TrimSpace(state.Reason)
+
 	return state
 }
 
@@ -2067,61 +2396,75 @@ func longHorizonStateMatches(actual LongHorizonStateSnapshot, expected LongHoriz
 	if expected.Action != "" && !strings.EqualFold(actual.Action, expected.Action) {
 		return false
 	}
+
 	if expected.MemoryKind != "" && !strings.EqualFold(actual.MemoryKind, expected.MemoryKind) {
 		return false
 	}
+
 	if expected.SourceLane != "" && !strings.EqualFold(actual.SourceLane, expected.SourceLane) {
 		return false
 	}
+
 	if expected.Stage != nil && actual.Stage != *expected.Stage {
 		return false
 	}
+
 	if expected.FocusPath != "" && !strings.EqualFold(actual.FocusPath, expected.FocusPath) {
 		return false
 	}
+
 	for _, required := range expected.RequireRemaining {
 		if !containsStringFold(actual.Remaining, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireOpenGaps {
 		if !containsStringFold(actual.OpenGaps, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireAttemptedSearches {
 		if !containsStringFold(actual.AttemptedSearches, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireChosenTargets {
 		if !containsStringFold(actual.ChosenTargets, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireVerificationHistory {
 		if !containsStringFold(actual.VerificationHistory, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireNextActions {
 		if !containsStringFold(actual.NextActions, required) {
 			return false
 		}
 	}
+
 	next := strings.ToLower(actual.NextStep)
 	if next == "" {
 		next = strings.ToLower(strings.Join(actual.NextActions, "\n"))
 	}
+
 	for _, required := range expected.NextContains {
 		required = strings.ToLower(strings.TrimSpace(required))
 		if required != "" && !strings.Contains(next, required) {
 			return false
 		}
 	}
+
 	if expected.Resumable != nil && actual.Resumable != *expected.Resumable {
 		return false
 	}
+
 	return true
 }
 
@@ -2130,10 +2473,13 @@ func parseWorkflowState(content string) WorkflowStateSnapshot {
 	if content == "" {
 		return WorkflowStateSnapshot{}
 	}
+
 	var state WorkflowStateSnapshot
+
 	if err := json.Unmarshal([]byte(content), &state); err != nil {
 		return WorkflowStateSnapshot{}
 	}
+
 	state.Raw = content
 	state.Action = strings.TrimSpace(state.Action)
 	state.Kind = strings.TrimSpace(state.Kind)
@@ -2148,6 +2494,7 @@ func parseWorkflowState(content string) WorkflowStateSnapshot {
 	state.Verification = util.UniqueNonEmpty(state.Verification)
 	state.NextActions = util.UniqueNonEmpty(state.NextActions)
 	state.Reason = strings.TrimSpace(state.Reason)
+
 	return state
 }
 
@@ -2155,53 +2502,65 @@ func workflowStateMatches(actual WorkflowStateSnapshot, expected WorkflowStateEx
 	if expected.Action != "" && !strings.EqualFold(actual.Action, expected.Action) {
 		return false
 	}
+
 	if expected.Kind != "" && !strings.EqualFold(actual.Kind, expected.Kind) {
 		return false
 	}
+
 	if expected.Phase != "" && !strings.EqualFold(actual.Phase, expected.Phase) {
 		return false
 	}
+
 	if expected.SourceLane != "" && !strings.EqualFold(actual.SourceLane, expected.SourceLane) {
 		return false
 	}
+
 	for _, required := range expected.RequireTargetRefs {
 		if !containsStringFold(actual.TargetRefs, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireEditable {
 		if !containsStringFold(actual.EditableTargets, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireEvidence {
 		if !containsStringFold(actual.EvidencePaths, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireReadOnly {
 		if !containsStringFold(actual.ReadOnlyEvidence, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireDestinations {
 		if !containsStringFold(actual.AllowedDestinations, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireVerification {
 		if !containsStringFold(actual.Verification, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireNextActions {
 		if !containsStringFold(actual.NextActions, required) {
 			return false
 		}
 	}
+
 	if expected.Resumable != nil && actual.Resumable != *expected.Resumable {
 		return false
 	}
+
 	return true
 }
 
@@ -2210,10 +2569,13 @@ func parseBudgetLedger(content string) BudgetLedgerSnapshot {
 	if content == "" {
 		return BudgetLedgerSnapshot{}
 	}
+
 	var ledger BudgetLedgerSnapshot
+
 	if err := json.Unmarshal([]byte(content), &ledger); err != nil {
 		return BudgetLedgerSnapshot{}
 	}
+
 	ledger.Raw = content
 	ledger.Lane = strings.TrimSpace(ledger.Lane)
 	ledger.Level = strings.TrimSpace(ledger.Level)
@@ -2221,6 +2583,7 @@ func parseBudgetLedger(content string) BudgetLedgerSnapshot {
 	ledger.NextAllowedActions = util.UniqueNonEmpty(ledger.NextAllowedActions)
 	ledger.MarginalEvidencePolicy = strings.TrimSpace(ledger.MarginalEvidencePolicy)
 	ledger.UserVisibleUncertainty = strings.TrimSpace(ledger.UserVisibleUncertainty)
+
 	return ledger
 }
 
@@ -2228,24 +2591,31 @@ func budgetLedgerMatches(actual BudgetLedgerSnapshot, expected BudgetLedgerExpec
 	if expected.Lane != "" && !strings.EqualFold(actual.Lane, expected.Lane) {
 		return false
 	}
+
 	if expected.StopReason != "" && !strings.Contains(strings.ToLower(actual.StopReason), strings.ToLower(strings.TrimSpace(expected.StopReason))) {
 		return false
 	}
+
 	if expected.MinModelCalls != nil && actual.UsedModelCalls < *expected.MinModelCalls {
 		return false
 	}
+
 	if expected.MinTotalTokens != nil && actual.TotalTokens < *expected.MinTotalTokens {
 		return false
 	}
+
 	if expected.MinEvidencePaths != nil && actual.TotalEvidencePaths < *expected.MinEvidencePaths {
 		return false
 	}
+
 	if expected.BudgetExhausted != nil && actual.BudgetExhausted != *expected.BudgetExhausted {
 		return false
 	}
+
 	if expected.UncertaintyPolicy != "" && !strings.Contains(strings.ToLower(actual.UserVisibleUncertainty), strings.ToLower(strings.TrimSpace(expected.UncertaintyPolicy))) {
 		return false
 	}
+
 	return true
 }
 
@@ -2254,14 +2624,18 @@ func parseEvidenceDelta(content string) EvidenceDeltaSnapshot {
 	if content == "" {
 		return EvidenceDeltaSnapshot{}
 	}
+
 	var delta EvidenceDeltaSnapshot
+
 	if err := json.Unmarshal([]byte(content), &delta); err != nil {
 		return EvidenceDeltaSnapshot{}
 	}
+
 	delta.Raw = content
 	delta.Lane = strings.TrimSpace(delta.Lane)
 	delta.NewEvidencePaths = util.UniqueNonEmpty(delta.NewEvidencePaths)
 	delta.MarginalValue = strings.TrimSpace(delta.MarginalValue)
+
 	return delta
 }
 
@@ -2269,18 +2643,23 @@ func evidenceDeltaMatches(actual EvidenceDeltaSnapshot, expected EvidenceDeltaEx
 	if expected.Lane != "" && !strings.EqualFold(actual.Lane, expected.Lane) {
 		return false
 	}
+
 	if expected.MinNewPaths != nil && len(actual.NewEvidencePaths) < *expected.MinNewPaths {
 		return false
 	}
+
 	if expected.MarginalValue != "" && !strings.EqualFold(actual.MarginalValue, expected.MarginalValue) {
 		return false
 	}
+
 	if expected.MinToolResults != nil && actual.ToolResults < *expected.MinToolResults {
 		return false
 	}
+
 	if expected.MaxFailedTools != nil && actual.FailedTools > *expected.MaxFailedTools {
 		return false
 	}
+
 	return true
 }
 
@@ -2289,10 +2668,13 @@ func parseClaimConfidence(content string) ClaimConfidenceSnapshot {
 	if content == "" {
 		return ClaimConfidenceSnapshot{}
 	}
+
 	var confidence ClaimConfidenceSnapshot
+
 	if err := json.Unmarshal([]byte(content), &confidence); err != nil {
 		return ClaimConfidenceSnapshot{}
 	}
+
 	confidence.Raw = content
 	confidence.Lane = strings.TrimSpace(confidence.Lane)
 	confidence.Confidence = strings.TrimSpace(confidence.Confidence)
@@ -2300,6 +2682,7 @@ func parseClaimConfidence(content string) ClaimConfidenceSnapshot {
 	confidence.UnresolvedUncertainty = util.UniqueNonEmpty(confidence.UnresolvedUncertainty)
 	confidence.Contradictions = util.UniqueNonEmpty(confidence.Contradictions)
 	confidence.CalibrationBasis = strings.TrimSpace(confidence.CalibrationBasis)
+
 	return confidence
 }
 
@@ -2307,18 +2690,23 @@ func claimConfidenceMatches(actual ClaimConfidenceSnapshot, expected ClaimConfid
 	if expected.Lane != "" && !strings.EqualFold(actual.Lane, expected.Lane) {
 		return false
 	}
+
 	if expected.Confidence != "" && !strings.EqualFold(actual.Confidence, expected.Confidence) {
 		return false
 	}
+
 	if expected.MinEvidencePaths != nil && len(actual.EvidencePaths) < *expected.MinEvidencePaths {
 		return false
 	}
+
 	if expected.MaxUnresolved != nil && len(actual.UnresolvedUncertainty) > *expected.MaxUnresolved {
 		return false
 	}
+
 	if expected.CalibrationBasis != "" && !strings.Contains(strings.ToLower(actual.CalibrationBasis), strings.ToLower(strings.TrimSpace(expected.CalibrationBasis))) {
 		return false
 	}
+
 	return true
 }
 
@@ -2327,14 +2715,18 @@ func parseContextCompaction(content string) ContextCompactionSnapshot {
 	if content == "" {
 		return ContextCompactionSnapshot{}
 	}
+
 	var compaction ContextCompactionSnapshot
+
 	if err := json.Unmarshal([]byte(content), &compaction); err != nil {
 		return ContextCompactionSnapshot{}
 	}
+
 	compaction.Raw = content
 	compaction.PinnedPaths = util.UniqueNonEmpty(compaction.PinnedPaths)
 	compaction.PinnedMemoryKind = strings.TrimSpace(compaction.PinnedMemoryKind)
 	compaction.Strategy = strings.TrimSpace(compaction.Strategy)
+
 	return compaction
 }
 
@@ -2342,20 +2734,25 @@ func contextCompactionMatches(actual ContextCompactionSnapshot, expected Context
 	if expected.MinDroppedMessages != nil && actual.DroppedMessages < *expected.MinDroppedMessages {
 		return false
 	}
+
 	if expected.MinRetainedMessages != nil && actual.RetainedMessages < *expected.MinRetainedMessages {
 		return false
 	}
+
 	if expected.MaxHistory != nil && actual.MaxHistory != *expected.MaxHistory {
 		return false
 	}
+
 	for _, path := range expected.RequirePinnedPaths {
 		if !containsStringFold(actual.PinnedPaths, path) {
 			return false
 		}
 	}
+
 	if expected.PinnedMemoryKind != "" && !strings.EqualFold(actual.PinnedMemoryKind, expected.PinnedMemoryKind) {
 		return false
 	}
+
 	strategy := strings.ToLower(actual.Strategy)
 	for _, required := range expected.StrategyContains {
 		required = strings.ToLower(strings.TrimSpace(required))
@@ -2363,6 +2760,7 @@ func contextCompactionMatches(actual ContextCompactionSnapshot, expected Context
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -2371,15 +2769,19 @@ func parseRouteAmbiguity(content string) RouteAmbiguitySnapshot {
 	if content == "" {
 		return RouteAmbiguitySnapshot{}
 	}
+
 	var ambiguity RouteAmbiguitySnapshot
+
 	if err := json.Unmarshal([]byte(content), &ambiguity); err != nil {
 		return RouteAmbiguitySnapshot{}
 	}
+
 	ambiguity.Raw = content
 	ambiguity.SelectedLane = strings.TrimSpace(ambiguity.SelectedLane)
 	ambiguity.Reason = strings.TrimSpace(ambiguity.Reason)
 	ambiguity.Signals = util.UniqueNonEmpty(ambiguity.Signals)
 	ambiguity.TieBreak = strings.TrimSpace(ambiguity.TieBreak)
+
 	return ambiguity
 }
 
@@ -2387,14 +2789,17 @@ func routeAmbiguityMatches(actual RouteAmbiguitySnapshot, expected RouteAmbiguit
 	if expected.SelectedLane != "" && !strings.EqualFold(actual.SelectedLane, expected.SelectedLane) {
 		return false
 	}
+
 	if expected.Ambiguous != nil && actual.Ambiguous != *expected.Ambiguous {
 		return false
 	}
+
 	for _, signal := range expected.RequireSignals {
 		if !containsStringFold(actual.Signals, signal) {
 			return false
 		}
 	}
+
 	tieBreak := strings.ToLower(actual.TieBreak)
 	for _, required := range expected.TieBreakContains {
 		required = strings.ToLower(strings.TrimSpace(required))
@@ -2402,6 +2807,7 @@ func routeAmbiguityMatches(actual RouteAmbiguitySnapshot, expected RouteAmbiguit
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -2410,10 +2816,13 @@ func parseVerificationFeedback(content string) VerificationFeedbackSnapshot {
 	if content == "" {
 		return VerificationFeedbackSnapshot{}
 	}
+
 	var feedback VerificationFeedbackSnapshot
+
 	if err := json.Unmarshal([]byte(content), &feedback); err != nil {
 		return VerificationFeedbackSnapshot{}
 	}
+
 	feedback.Raw = content
 	feedback.RiskLevel = strings.TrimSpace(feedback.RiskLevel)
 	feedback.Coverage = strings.TrimSpace(feedback.Coverage)
@@ -2422,6 +2831,7 @@ func parseVerificationFeedback(content string) VerificationFeedbackSnapshot {
 	feedback.FailedCommands = util.UniqueNonEmpty(feedback.FailedCommands)
 	feedback.FailureClasses = util.UniqueNonEmpty(feedback.FailureClasses)
 	feedback.LearnedRecommendation = strings.TrimSpace(feedback.LearnedRecommendation)
+
 	return feedback
 }
 
@@ -2429,16 +2839,19 @@ func verificationFeedbackMatches(actual VerificationFeedbackSnapshot, expected V
 	if expected.Confidence != "" && !strings.EqualFold(actual.Confidence, expected.Confidence) {
 		return false
 	}
+
 	for _, command := range expected.RequireFailedCommands {
 		if !containsStringFold(actual.FailedCommands, command) {
 			return false
 		}
 	}
+
 	for _, class := range expected.RequireFailureClasses {
 		if !containsStringFold(actual.FailureClasses, class) {
 			return false
 		}
 	}
+
 	recommendation := strings.ToLower(actual.LearnedRecommendation)
 	for _, required := range expected.RecommendationContains {
 		required = strings.ToLower(strings.TrimSpace(required))
@@ -2446,6 +2859,7 @@ func verificationFeedbackMatches(actual VerificationFeedbackSnapshot, expected V
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -2454,16 +2868,20 @@ func parseToolFailureConfidence(content string) ToolFailureConfidenceSnapshot {
 	if content == "" {
 		return ToolFailureConfidenceSnapshot{}
 	}
+
 	var failure ToolFailureConfidenceSnapshot
+
 	if err := json.Unmarshal([]byte(content), &failure); err != nil {
 		return ToolFailureConfidenceSnapshot{}
 	}
+
 	failure.Raw = content
 	failure.Lane = strings.TrimSpace(failure.Lane)
 	failure.Tool = strings.TrimSpace(failure.Tool)
 	failure.Action = strings.TrimSpace(failure.Action)
 	failure.ConfidenceImpact = strings.TrimSpace(failure.ConfidenceImpact)
 	failure.Reason = strings.TrimSpace(failure.Reason)
+
 	return failure
 }
 
@@ -2471,12 +2889,15 @@ func toolFailureConfidenceMatches(actual ToolFailureConfidenceSnapshot, expected
 	if expected.Lane != "" && !strings.EqualFold(actual.Lane, expected.Lane) {
 		return false
 	}
+
 	if expected.Tool != "" && !strings.EqualFold(actual.Tool, expected.Tool) {
 		return false
 	}
+
 	if expected.ConfidenceImpact != "" && !strings.EqualFold(actual.ConfidenceImpact, expected.ConfidenceImpact) {
 		return false
 	}
+
 	return true
 }
 
@@ -2485,10 +2906,13 @@ func parseControlRails(content string) ControlRailsSnapshot {
 	if content == "" {
 		return ControlRailsSnapshot{}
 	}
+
 	var rails ControlRailsSnapshot
+
 	if err := json.Unmarshal([]byte(content), &rails); err != nil {
 		return ControlRailsSnapshot{}
 	}
+
 	rails.Raw = content
 	rails.Lane = strings.TrimSpace(rails.Lane)
 	rails.FollowupLane = strings.TrimSpace(rails.FollowupLane)
@@ -2509,6 +2933,7 @@ func parseControlRails(content string) ControlRailsSnapshot {
 	rails.VerificationContract = strings.TrimSpace(rails.VerificationContract)
 	rails.StopConditions = util.UniqueNonEmpty(rails.StopConditions)
 	rails.FinalCritic = util.UniqueNonEmpty(rails.FinalCritic)
+
 	return rails
 }
 
@@ -2516,86 +2941,107 @@ func controlRailsMatches(actual ControlRailsSnapshot, expected ControlRailsExpec
 	if expected.Lane != "" && !strings.EqualFold(actual.Lane, expected.Lane) {
 		return false
 	}
+
 	if expected.FollowupLane != "" && !strings.EqualFold(actual.FollowupLane, expected.FollowupLane) {
 		return false
 	}
+
 	if expected.Contract != "" && !strings.EqualFold(actual.Contract, expected.Contract) {
 		return false
 	}
+
 	if expected.AgentMode != "" && !strings.EqualFold(actual.AgentMode, expected.AgentMode) {
 		return false
 	}
+
 	if expected.WorkflowKind != "" && !strings.EqualFold(actual.WorkflowKind, expected.WorkflowKind) {
 		return false
 	}
+
 	if expected.WorkflowPhase != "" && !strings.EqualFold(actual.WorkflowPhase, expected.WorkflowPhase) {
 		return false
 	}
+
 	if expected.TaskFamily != "" && !strings.EqualFold(actual.TaskFamily, expected.TaskFamily) {
 		return false
 	}
+
 	if expected.PermissionProfile != "" && !strings.EqualFold(actual.PermissionProfile, expected.PermissionProfile) {
 		return false
 	}
+
 	for _, required := range expected.RequireTargetRefs {
 		if !containsStringFold(actual.TargetRefs, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireEditPaths {
 		if !containsStringFold(actual.RequiredEditPaths, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireEvidence {
 		if !containsStringFold(actual.RequiredEvidence, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireTools {
 		if !containsStringFold(actual.RequiredTools, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireAllowedTools {
 		if !containsStringFold(actual.AllowedTools, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireForbiddenTools {
 		if !containsStringFold(actual.ForbiddenTools, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireReadinessGate {
 		if !containsStringFold(actual.ReadinessGate, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireSearchPolicy {
 		if !containsStringFold(actual.SearchPolicy, required) {
 			return false
 		}
 	}
+
 	if expected.VerificationContract != "" && !strings.EqualFold(actual.VerificationContract, expected.VerificationContract) {
 		return false
 	}
+
 	for _, required := range expected.RequireStopConditions {
 		if !containsStringFold(actual.StopConditions, required) {
 			return false
 		}
 	}
+
 	for _, required := range expected.RequireFinalCritic {
 		if !containsStringFold(actual.FinalCritic, required) {
 			return false
 		}
 	}
+
 	if expected.DynamicInstructions != nil && actual.DynamicInstructions != *expected.DynamicInstructions {
 		return false
 	}
+
 	if expected.FailureToEval != nil && actual.FailureToEval != *expected.FailureToEval {
 		return false
 	}
+
 	return true
 }
 
@@ -2620,54 +3066,68 @@ func parseLanguageCapabilities(content string) []LanguageCapabilitySnapshot {
 	if !ok {
 		return nil
 	}
+
 	caps := make([]LanguageCapabilitySnapshot, 0, 4)
+
 	for _, line := range strings.Split(tail, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "- ") {
 			continue
 		}
+
 		line = strings.TrimSpace(strings.TrimPrefix(line, "- "))
 		if line == "" {
 			continue
 		}
+
 		left := line
 		signalsPart := ""
+
 		if before, after, ok := strings.Cut(line, "|"); ok {
 			left = strings.TrimSpace(before)
 			signalsPart = strings.TrimSpace(after)
 		}
+
 		language := strings.TrimSpace(left)
 		tools := []string(nil)
+
 		if before, after, ok := strings.Cut(left, " tools:"); ok {
 			language = strings.TrimSpace(before)
 			tools = splitCommaList(after)
 		}
+
 		signals := []string(nil)
 		if _, after, ok := strings.Cut(signalsPart, "signals:"); ok {
 			signals = splitCommaList(after)
 		}
+
 		if language == "" {
 			continue
 		}
+
 		caps = append(caps, LanguageCapabilitySnapshot{
 			Language: language,
 			Tools:    util.UniqueNonEmpty(tools),
 			Signals:  util.UniqueNonEmpty(signals),
 		})
 	}
+
 	return caps
 }
 
 func splitCommaList(text string) []string {
 	parts := strings.Split(text, ",")
 	out := make([]string, 0, len(parts))
+
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
+
 		out = append(out, part)
 	}
+
 	return out
 }
 
@@ -2679,31 +3139,42 @@ func mergeLanguageCapabilities(existing []LanguageCapabilitySnapshot, incoming [
 		if language == "" {
 			return
 		}
+
 		key := strings.ToLower(language)
 		current, ok := byLanguage[key]
+
 		if !ok {
 			order = append(order, key)
+
 			copy := LanguageCapabilitySnapshot{Language: language}
+
 			byLanguage[key] = &copy
 			current = &copy
 		}
+
 		current.Tools = util.UniqueNonEmpty(append(current.Tools, cap.Tools...))
 		current.Signals = util.UniqueNonEmpty(append(current.Signals, cap.Signals...))
 	}
+
 	for _, cap := range existing {
 		add(cap)
 	}
+
 	for _, cap := range incoming {
 		add(cap)
 	}
+
 	slices.Sort(order)
+
 	out := make([]LanguageCapabilitySnapshot, 0, len(order))
 	for _, key := range order {
 		cap := byLanguage[key]
 		slices.Sort(cap.Tools)
 		slices.Sort(cap.Signals)
+
 		out = append(out, *cap)
 	}
+
 	return out
 }
 
@@ -2711,18 +3182,23 @@ func languageCapabilityMatches(caps []LanguageCapabilitySnapshot, expected Langu
 	language := strings.TrimSpace(expected.Language)
 	tool := strings.TrimSpace(expected.Tool)
 	signal := strings.TrimSpace(expected.Signal)
+
 	for _, cap := range caps {
 		if language != "" && !strings.EqualFold(cap.Language, language) {
 			continue
 		}
+
 		if tool != "" && !containsStringFold(cap.Tools, tool) {
 			continue
 		}
+
 		if signal != "" && !containsStringFold(cap.Signals, signal) {
 			continue
 		}
+
 		return true
 	}
+
 	return false
 }
 
@@ -2733,31 +3209,40 @@ func hasPhaseState(phases []PhaseSnapshot, lane string, phase string, state stri
 func evidencePathsFromText(text string) []string {
 	paths := make([]string, 0, 4)
 	seen := make(map[string]struct{})
+
 	for _, field := range strings.Fields(text) {
 		candidate := strings.Trim(field, "`'\"()[]{}<>,:;!?")
+
 		candidate = strings.TrimSuffix(candidate, ".")
+
 		if idx := strings.LastIndex(candidate, ":"); idx > 0 {
 			suffix := candidate[idx+1:]
 			allDigits := suffix != ""
+
 			for _, r := range suffix {
 				if r < '0' || r > '9' {
 					allDigits = false
 					break
 				}
 			}
+
 			if allDigits {
 				candidate = candidate[:idx]
 			}
 		}
+
 		if !looksLikeEvidencePath(candidate) {
 			continue
 		}
+
 		if _, ok := seen[candidate]; ok {
 			continue
 		}
+
 		seen[candidate] = struct{}{}
 		paths = append(paths, candidate)
 	}
+
 	return paths
 }
 
@@ -2766,12 +3251,15 @@ func evidencePathsFromJSONContent(content string) []string {
 	if content == "" || !strings.HasPrefix(content, "{") {
 		return nil
 	}
+
 	var payload struct {
 		EvidencePaths []string `json:"evidence_paths"`
 	}
+
 	if err := json.Unmarshal([]byte(content), &payload); err != nil {
 		return nil
 	}
+
 	return util.UniqueNonEmpty(payload.EvidencePaths)
 }
 
@@ -2780,11 +3268,14 @@ func looksLikeEvidencePath(path string) bool {
 	if path == "" || strings.Contains(path, "://") {
 		return false
 	}
+
 	if strings.HasSuffix(path, "/") {
 		return false
 	}
+
 	if strings.Contains(path, "/") {
 		return true
 	}
+
 	return strings.Contains(path, ".")
 }

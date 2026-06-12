@@ -10,15 +10,19 @@ func ToolTelemetryFields(tool string, output string) map[string]any {
 	for key, value := range ContextTelemetryFields(tool, output) {
 		fields[key] = value
 	}
+
 	for key, value := range HarnessFeedbackTelemetryFields(tool, output) {
 		fields[key] = value
 	}
+
 	for key, value := range ReadOnlyCapabilityTelemetryFields(tool, output) {
 		fields[key] = value
 	}
+
 	if len(fields) == 0 {
 		return nil
 	}
+
 	return fields
 }
 
@@ -27,10 +31,13 @@ func ContextTelemetryFields(tool string, output string) map[string]any {
 	if (tool != "discovery_query" && !strings.HasPrefix(tool, "context_")) || strings.TrimSpace(output) == "" {
 		return nil
 	}
+
 	var payload map[string]any
+
 	if err := json.Unmarshal([]byte(output), &payload); err != nil {
 		return nil
 	}
+
 	fields := make(map[string]any)
 	copyTelemetryString(payload, fields, "index_id", "context_index_id")
 	copyTelemetryString(payload, fields, "store_kind", "context_store_kind")
@@ -83,9 +90,11 @@ func ContextTelemetryFields(tool string, output string) map[string]any {
 	addContextConfidenceTelemetry(payload, fields)
 	addContextProvenanceTelemetry(payload, fields)
 	addContextNodeKindTelemetry(payload, fields)
+
 	if len(fields) == 0 {
 		return nil
 	}
+
 	return fields
 }
 
@@ -94,13 +103,17 @@ func HarnessFeedbackTelemetryFields(tool string, output string) map[string]any {
 	if tool != "harness_feedback" && tool != "idiom_feedback" {
 		return nil
 	}
+
 	if strings.TrimSpace(output) == "" {
 		return nil
 	}
+
 	var payload map[string]any
+
 	if err := json.Unmarshal([]byte(output), &payload); err != nil {
 		return nil
 	}
+
 	fields := make(map[string]any)
 	copyTelemetryString(payload, fields, "feedback_id", "feedback_id")
 	copyTelemetryString(payload, fields, "category", "feedback_category")
@@ -115,9 +128,11 @@ func HarnessFeedbackTelemetryFields(tool string, output string) map[string]any {
 	copyTelemetryStringLimited(payload, fields, "impact", "feedback_impact", 500)
 	copyTelemetryStringLimited(payload, fields, "suggested_fix", "feedback_suggested_fix", 500)
 	copyTelemetryArrayLen(payload, fields, "evidence", "feedback_evidence_count")
+
 	if len(fields) == 0 {
 		return nil
 	}
+
 	return fields
 }
 
@@ -126,10 +141,13 @@ func ReadOnlyCapabilityTelemetryFields(tool string, output string) map[string]an
 	if tool != readOnlyCapabilityToolName || strings.TrimSpace(output) == "" {
 		return nil
 	}
+
 	var payload map[string]any
+
 	if err := json.Unmarshal([]byte(output), &payload); err != nil {
 		return nil
 	}
+
 	fields := make(map[string]any)
 	copyTelemetryString(payload, fields, "schema_version", "capability_schema_version")
 	copyTelemetryString(payload, fields, "requested_capability", "capability_requested")
@@ -141,24 +159,30 @@ func ReadOnlyCapabilityTelemetryFields(tool string, output string) map[string]an
 	copyTelemetryBool(payload, fields, "direct_tool_fallback", "capability_direct_tool_fallback")
 	copyTelemetryArrayLen(payload, fields, "available_adapters", "capability_available_adapters")
 	copyTelemetryArrayLen(payload, fields, "unavailable_adapters", "capability_unavailable_adapters")
+
 	status, ok := payload["status"].(map[string]any)
 	if ok {
 		addReadOnlyCapabilityStatusTelemetry(status, fields)
 	} else {
 		addReadOnlyCapabilityDerivedStatusTelemetry(payload, fields)
 	}
+
 	if fields["capability_fallback_reason"] == "capability_unmapped" {
 		fields["capability_unmapped"] = true
 	}
+
 	if fields["capability_fallback_reason"] == "capability_deferred" {
 		fields["capability_deferred"] = true
 	}
+
 	if fields["capability_fallback_state"] != nil && fields["capability_fallback_state"] != "none" {
 		fields["capability_fallback"] = true
 	}
+
 	if len(fields) == 0 {
 		return nil
 	}
+
 	return fields
 }
 
@@ -167,6 +191,7 @@ func addReadOnlyCapabilityStatusTelemetry(status map[string]any, fields map[stri
 	copyTelemetryString(status, fields, "precision_tier", "capability_precision_tier")
 	copyTelemetryString(status, fields, "confidence", "capability_confidence")
 	copyTelemetryArrayLen(status, fields, "unresolved_gaps", "capability_unresolved_gaps")
+
 	if selected, ok := status["selected_adapter"].(map[string]any); ok {
 		copyTelemetryString(selected, fields, "tool", "capability_selected_adapter")
 		copyTelemetryString(selected, fields, "capability", "capability_selected_adapter_capability")
@@ -174,11 +199,13 @@ func addReadOnlyCapabilityStatusTelemetry(status map[string]any, fields map[stri
 		copyTelemetryString(selected, fields, "source", "capability_selected_adapter_source")
 		copyTelemetryString(selected, fields, "provenance", "capability_selected_adapter_provenance")
 	}
+
 	if fallback, ok := status["fallback"].(map[string]any); ok {
 		copyTelemetryString(fallback, fields, "state", "capability_fallback_state")
 		copyTelemetryString(fallback, fields, "reason", "capability_fallback_reason")
 		copyTelemetryString(fallback, fields, "source_reason", "capability_fallback_source_reason")
 	}
+
 	if absence, ok := status["absence_confidence"].(map[string]any); ok {
 		copyTelemetryString(absence, fields, "level", "capability_absence_confidence")
 		copyTelemetryString(absence, fields, "reason", "capability_absence_reason")
@@ -192,58 +219,75 @@ func addReadOnlyCapabilityDerivedStatusTelemetry(payload map[string]any, fields 
 	if err != nil {
 		return
 	}
+
 	var decoded ReadOnlyCapabilityExecutionResult
+
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return
 	}
+
 	underlying := readOnlyCapabilityUnderlyingAsToolResult(decoded.UnderlyingResult)
 	fallback := readOnlyCapabilityFallbackStatusFor(decoded.FallbackReason)
 	absence := readOnlyCapabilityAbsenceConfidenceFor(underlying)
 	precisionTier := readOnlyCapabilityStatusPrecisionTier(underlying, decoded.UnderlyingResult)
 	statusState := readOnlyCapabilityStatusState(decoded.Routed, fallback, absence)
+
 	if statusState != "" {
 		fields["capability_status_state"] = statusState
 	}
+
 	if precisionTier != "" {
 		fields["capability_precision_tier"] = precisionTier
 	}
+
 	if confidence := readOnlyCapabilityRouteConfidence(precisionTier, fallback, absence, underlying); confidence != "" {
 		fields["capability_confidence"] = confidence
 	}
+
 	if selected := readOnlyCapabilitySelectedAdapterStatus(decoded.RoutedAdapter); selected != nil {
 		fields["capability_selected_adapter"] = selected.Tool
 		if selected.Capability != "" {
 			fields["capability_selected_adapter_capability"] = selected.Capability
 		}
+
 		if selected.Language != "" {
 			fields["capability_selected_adapter_language"] = selected.Language
 		}
+
 		if selected.Source != "" {
 			fields["capability_selected_adapter_source"] = selected.Source
 		}
+
 		if selected.Provenance != "" {
 			fields["capability_selected_adapter_provenance"] = selected.Provenance
 		}
 	}
+
 	if fallback.State != "" {
 		fields["capability_fallback_state"] = fallback.State
 	}
+
 	if fallback.Reason != "" {
 		fields["capability_fallback_reason"] = fallback.Reason
 	}
+
 	if fallback.SourceReason != "" {
 		fields["capability_fallback_source_reason"] = fallback.SourceReason
 	}
+
 	if absence != nil {
 		fields["capability_absence_confidence"] = absence.Level
 		fields["capability_absence_reason"] = absence.Reason
+
 		if absence.PrecisionTier != "" {
 			fields["capability_absence_precision_tier"] = absence.PrecisionTier
 		}
+
 		if absence.Source != "" {
 			fields["capability_absence_source"] = absence.Source
 		}
 	}
+
 	fields["capability_unresolved_gaps"] = len(readOnlyCapabilityStatusGaps(decoded, fallback, absence))
 }
 
@@ -251,6 +295,7 @@ func readOnlyCapabilityUnderlyingAsToolResult(underlying *ReadOnlyCapabilityUnde
 	if underlying == nil {
 		return nil
 	}
+
 	return &ToolResult{
 		Tool:          underlying.Tool,
 		Summary:       underlying.Summary,
@@ -266,6 +311,7 @@ func addContextAutoRefreshTelemetry(payload map[string]any, fields map[string]an
 	if !ok {
 		return
 	}
+
 	copyTelemetryBool(value, fields, "attempted", "context_auto_refresh_attempted")
 	copyTelemetryString(value, fields, "scope", "context_auto_refresh_scope")
 	copyTelemetryString(value, fields, "language", "context_auto_refresh_language")
@@ -286,9 +332,11 @@ func addContextFreshnessTelemetry(payload map[string]any, fields map[string]any)
 	if !ok {
 		value, ok = payload["context_freshness"].(map[string]any)
 	}
+
 	if !ok {
 		return
 	}
+
 	copyTelemetryString(value, fields, "policy", "context_freshness_policy")
 	copyTelemetryString(value, fields, "operation", "context_freshness_operation")
 	copyTelemetryString(value, fields, "index_id", "context_freshness_index_id")
@@ -306,17 +354,21 @@ func addContextFreshnessTelemetry(payload map[string]any, fields map[string]any)
 	copyTelemetryArrayLen(value, fields, "checked_paths", "context_freshness_checked_paths")
 	copyTelemetryArrayLen(value, fields, "stale_paths", "context_freshness_stale_paths")
 	copyTelemetryArrayLen(value, fields, "missing_paths", "context_freshness_missing_paths")
+
 	state := contextFreshnessState(value)
 	if state != "" {
 		fields["context_freshness_state"] = state
 	}
+
 	if state == "blocked" {
 		fields["context_freshness_blocked"] = true
 	}
+
 	refresh, ok := value["refresh"].(map[string]any)
 	if !ok {
 		return
 	}
+
 	copyTelemetryBool(refresh, fields, "attempted", "context_freshness_refresh_attempted")
 	copyTelemetryString(refresh, fields, "scope", "context_freshness_refresh_scope")
 	copyTelemetryString(refresh, fields, "reason", "context_freshness_refresh_reason")
@@ -332,9 +384,11 @@ func addContextStaleEvidenceTelemetry(payload map[string]any, fields map[string]
 	if !ok {
 		value, ok = payload["context_stale_evidence"].(map[string]any)
 	}
+
 	if !ok {
 		return
 	}
+
 	copyTelemetryString(value, fields, "state", "context_stale_evidence_state")
 	copyTelemetryString(value, fields, "policy", "context_stale_evidence_policy")
 	copyTelemetryString(value, fields, "reason", "context_stale_evidence_reason")
@@ -342,6 +396,7 @@ func addContextStaleEvidenceTelemetry(payload map[string]any, fields map[string]
 	copyTelemetryBool(value, fields, "global_fresh", "context_stale_evidence_global_fresh")
 	copyTelemetryNumber(value, fields, "stale_path_count", "context_stale_evidence_stale_path_count")
 	copyTelemetryNumber(value, fields, "missing_path_count", "context_stale_evidence_missing_path_count")
+
 	state, _ := value["state"].(string)
 	switch strings.TrimSpace(state) {
 	case "blocked":
@@ -350,14 +405,17 @@ func addContextStaleEvidenceTelemetry(payload map[string]any, fields map[string]
 	case "reported":
 		fields["context_freshness_state"] = "reported"
 		delete(fields, "context_freshness_blocked")
+
 		fields["context_stale_use_reported"] = true
 	case "allowed_stale":
 		fields["context_freshness_state"] = "allowed_stale"
 		delete(fields, "context_freshness_blocked")
+
 		fields["context_stale_use_allowed"] = true
 	case "fresh":
 		fields["context_freshness_state"] = "fresh"
 		delete(fields, "context_freshness_blocked")
+
 		fields["context_stale_use_fresh"] = true
 	}
 }
@@ -370,9 +428,11 @@ func addContextCacheTelemetry(payload map[string]any, fields map[string]any) {
 			value, ok = contract["cache"].(map[string]any)
 		}
 	}
+
 	if !ok {
 		return
 	}
+
 	copyTelemetryString(value, fields, "state", "context_cache_state")
 	copyTelemetryString(value, fields, "source", "context_cache_source")
 	copyTelemetryString(value, fields, "reason", "context_cache_reason")
@@ -384,10 +444,12 @@ func addContextCacheTelemetry(payload map[string]any, fields map[string]any) {
 	copyTelemetryString(value, fields, "freshness_policy", "context_cache_freshness_policy")
 	copyTelemetryBool(value, fields, "read_through_refresh", "context_cache_read_through_refresh")
 	copyTelemetryBool(value, fields, "fallback", "context_cache_fallback")
+
 	invalidation, ok := value["invalidation"].(map[string]any)
 	if !ok {
 		return
 	}
+
 	copyTelemetryString(invalidation, fields, "policy", "context_cache_invalidation_policy")
 	copyTelemetryString(invalidation, fields, "state", "context_cache_invalidation_state")
 	copyTelemetryString(invalidation, fields, "stale_result", "context_cache_stale_result")
@@ -399,9 +461,11 @@ func contextFreshnessState(freshness map[string]any) string {
 	if !ok {
 		return ""
 	}
+
 	if fresh {
 		return "fresh"
 	}
+
 	policy, _ := freshness["policy"].(string)
 	switch strings.TrimSpace(policy) {
 	case "report_only":
@@ -418,9 +482,11 @@ func addContextConfidenceTelemetry(payload map[string]any, fields map[string]any
 	if !ok {
 		value, ok = payload["context_confidence"].(map[string]any)
 	}
+
 	if !ok {
 		return
 	}
+
 	copyTelemetryString(value, fields, "level", "context_confidence_level")
 	copyTelemetryString(value, fields, "source", "context_confidence_source")
 	copyTelemetryString(value, fields, "reason", "context_confidence_reason")
@@ -431,9 +497,11 @@ func addContextProvenanceTelemetry(payload map[string]any, fields map[string]any
 	if !ok {
 		value, ok = payload["context_provenance"].(map[string]any)
 	}
+
 	if !ok {
 		return
 	}
+
 	copyTelemetryString(value, fields, "source", "context_provenance_source")
 	copyTelemetryString(value, fields, "operation", "context_provenance_operation")
 	copyTelemetryString(value, fields, "store_kind", "context_provenance_store_kind")
@@ -449,25 +517,33 @@ func addContextNodeKindTelemetry(payload map[string]any, fields map[string]any) 
 	if !ok {
 		return
 	}
+
 	summaries := 0
 	modelAuthored := 0
+
 	for _, item := range nodes {
 		node, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		if kind, _ := node["kind"].(string); kind != "summary" {
 			continue
 		}
+
 		summaries++
+
 		properties, _ := node["properties"].(map[string]any)
+
 		if authored, _ := properties["model_authored"].(bool); authored {
 			modelAuthored++
 		}
 	}
+
 	if summaries > 0 {
 		fields["context_summary_nodes"] = summaries
 	}
+
 	if modelAuthored > 0 {
 		fields["context_model_summary_nodes"] = modelAuthored
 	}
@@ -485,13 +561,16 @@ func copyTelemetryStringLimited(source map[string]any, target map[string]any, so
 	if !ok {
 		return
 	}
+
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return
 	}
+
 	if limit > 0 && len(value) > limit {
 		value = value[:limit]
 	}
+
 	target[targetKey] = value
 }
 
@@ -523,21 +602,27 @@ func addStorageBackendTelemetry(source map[string]any, target map[string]any) {
 	if !ok {
 		return
 	}
+
 	statuses := make([]string, 0, len(values))
 	incompatible := 0
+
 	for _, value := range values {
 		backend, ok := value.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		kind, _ := backend["kind"].(string)
 		status, _ := backend["status"].(string)
+
 		if kind != "" && status != "" {
 			statuses = append(statuses, kind+":"+status)
 		}
+
 		if compatible, ok := backend["compatible"].(bool); ok && !compatible {
 			incompatible++
 		}
+
 		if active, ok := backend["active"].(bool); ok && active && kind != "" {
 			target["context_active_backend"] = kind
 			if status != "" {
@@ -545,9 +630,11 @@ func addStorageBackendTelemetry(source map[string]any, target map[string]any) {
 			}
 		}
 	}
+
 	if len(statuses) > 0 {
 		target["context_storage_backends"] = statuses
 	}
+
 	target["context_incompatible_backends"] = incompatible
 }
 
@@ -556,32 +643,39 @@ func addCollectorReportTelemetry(source map[string]any, target map[string]any) {
 	if !ok {
 		return
 	}
+
 	names := make([]string, 0, len(values))
 	unavailable := 0
 	warnings := 0
 	diagnostics := 0
 	normalizedRelationshipEdges := 0
+
 	for _, value := range values {
 		report, ok := value.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		name, _ := report["name"].(string)
 		if name != "" {
 			names = append(names, name)
 		}
+
 		if available, ok := report["available"].(bool); ok && !available {
 			unavailable++
 		}
+
 		if rawWarnings, ok := report["warnings"].([]any); ok {
 			warnings += len(rawWarnings)
 		}
+
 		switch value := report["diagnostics"].(type) {
 		case float64:
 			diagnostics += int(value)
 		case int:
 			diagnostics += value
 		}
+
 		if properties, ok := report["properties"].(map[string]any); ok {
 			switch value := properties["normalized_relationship_edges"].(type) {
 			case float64:
@@ -591,9 +685,11 @@ func addCollectorReportTelemetry(source map[string]any, target map[string]any) {
 			}
 		}
 	}
+
 	if len(names) > 0 {
 		target["context_collector_report_names"] = names
 	}
+
 	target["context_collector_unavailable"] = unavailable
 	target["context_collector_warnings"] = warnings
 	target["context_enrichment_diagnostics"] = diagnostics
@@ -605,6 +701,7 @@ func addCollectorCoverageTelemetry(source map[string]any, target map[string]any)
 	if !ok {
 		return
 	}
+
 	names := make([]string, 0, len(values))
 	for _, value := range values {
 		name, ok := value.(string)
@@ -612,6 +709,7 @@ func addCollectorCoverageTelemetry(source map[string]any, target map[string]any)
 			names = append(names, name)
 		}
 	}
+
 	if len(names) > 0 {
 		target["context_collector_coverage_names"] = names
 	}

@@ -32,15 +32,19 @@ func TestExecutionFeedbackPassesWithDeterministicOrdering(t *testing.T) {
 	if out.Status != "pass" {
 		t.Fatalf("expected pass, got %q", out.Status)
 	}
+
 	if len(out.Blockers) != 0 {
 		t.Fatalf("expected no blockers, got %#v", out.Blockers)
 	}
+
 	if len(out.ChangedPaths) != 2 || out.ChangedPaths[0] != "a.go" || out.ChangedPaths[1] != "b.go" {
 		t.Fatalf("expected sorted unique changed paths, got %#v", out.ChangedPaths)
 	}
+
 	if len(out.TDDObligations) != 2 || out.TDDObligations[0] != "TDD-001" || out.TDDObligations[1] != "TDD-002" {
 		t.Fatalf("expected sorted unique TDD refs, got %#v", out.TDDObligations)
 	}
+
 	if len(out.LaneHistory) != 1 || out.LaneHistory[0].Lane != "implement" {
 		t.Fatalf("expected lane history in summary, got %#v", out.LaneHistory)
 	}
@@ -57,6 +61,7 @@ func TestExecutionFeedbackBlocksOnVerificationProgressAndUnknownObligations(t *t
 	if out.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", out.Status)
 	}
+
 	if len(out.Blockers) < 3 {
 		t.Fatalf("expected multiple blockers, got %#v", out.Blockers)
 	}
@@ -77,16 +82,20 @@ func TestExecutionFeedbackBlocksUnsafeEvidenceRefs(t *testing.T) {
 	if out.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", out.Status)
 	}
+
 	foundProduct := false
 	foundRelease := false
+
 	for _, blocker := range out.Blockers {
 		if blocker.Kind == "unsafe_product_evidence_path" {
 			foundProduct = true
 		}
+
 		if blocker.Kind == "unsafe_release_evidence_path" {
 			foundRelease = true
 		}
 	}
+
 	if !foundProduct || !foundRelease {
 		t.Fatalf("expected unsafe evidence path blockers, got %#v", out.Blockers)
 	}
@@ -105,13 +114,16 @@ func TestExecutionFeedbackBlocksWhenObligationRefUnknown(t *testing.T) {
 	if out.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", out.Status)
 	}
+
 	found := false
+
 	for _, blocker := range out.Blockers {
 		if blocker.Kind == "unknown_tdd_obligation" {
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected unknown_tdd_obligation blocker, got %#v", out.Blockers)
 	}
@@ -136,13 +148,16 @@ func TestExecutionFeedbackBlocksMixedLaneHistoryWithFailure(t *testing.T) {
 	if out.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", out.Status)
 	}
+
 	found := false
+
 	for _, blocker := range out.Blockers {
 		if blocker.Kind == "lane_history_not_pass" {
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected lane_history_not_pass blocker, got %#v", out.Blockers)
 	}
@@ -165,13 +180,16 @@ func TestExecutionFeedbackBlocksOnPrivacyMarkers(t *testing.T) {
 	if out.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", out.Status)
 	}
+
 	found := false
+
 	for _, blocker := range out.Blockers {
 		if blocker.Kind == "privacy_marker_detected" {
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected privacy_marker_detected blocker, got %#v", out.Blockers)
 	}
@@ -218,27 +236,35 @@ func TestExecutionFeedbackReconciliationPassesAndLinksState(t *testing.T) {
 	if out.Status != "pass" {
 		t.Fatalf("expected pass, got %#v", out)
 	}
+
 	if out.WorkflowState.ReconciliationMismatch {
 		t.Fatalf("expected reconciliation mismatch false")
 	}
+
 	if out.WorkflowState.ArtifactPaths["execution_feedback_summary"] != "reports/execution_feedback_summary.json" {
 		t.Fatalf("expected summary path link, got %#v", out.WorkflowState.ArtifactPaths)
 	}
+
 	if out.WorkflowState.ArtifactPaths["product_evidence"] != "product_evidence/export-1.json" {
 		t.Fatalf("expected product evidence link, got %#v", out.WorkflowState.ArtifactPaths)
 	}
+
 	if out.EvidenceLinks.LinkedArtifactPathCount != 4 {
 		t.Fatalf("expected linked path count 4, got %#v", out.EvidenceLinks)
 	}
+
 	if out.NextValidAction != "review reconciled workflow-state output and persist only after operator approval" {
 		t.Fatalf("expected review-first next action, got %q", out.NextValidAction)
 	}
+
 	foundGate := false
+
 	for _, gate := range out.WorkflowState.Coverage.GateResults {
 		if gate.Gate == "execution_feedback_reconciliation" && gate.Status == "pass" {
 			foundGate = true
 		}
 	}
+
 	if !foundGate {
 		t.Fatalf("expected reconciliation gate result, got %#v", out.WorkflowState.Coverage.GateResults)
 	}
@@ -264,10 +290,12 @@ func TestExecutionFeedbackReconciliationRejectsMalformedPassSummary(t *testing.T
 	if out.Status != "blocked" {
 		t.Fatalf("expected blocked malformed pass summary, got %#v", out)
 	}
+
 	kinds := map[string]bool{}
 	for _, blocker := range out.Blockers {
 		kinds[blocker.Kind] = true
 	}
+
 	for _, want := range []string{"missing_lane_history", "plan_progress_not_pass", "plan_progress_phase_mismatch", "verification_not_pass", "missing_changed_paths", "missing_tdd_obligations"} {
 		if !kinds[want] {
 			t.Fatalf("expected blocker %s, got %#v", want, out.Blockers)
@@ -303,12 +331,15 @@ func TestExecutionFeedbackReconciliationRejectsMissingStateRevision(t *testing.T
 	if out.Status != "blocked" {
 		t.Fatalf("expected blocked missing state revision, got %#v", out)
 	}
+
 	found := false
+
 	for _, blocker := range out.Blockers {
 		if blocker.Kind == "missing_state_revision" {
 			found = true
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected missing_state_revision blocker, got %#v", out.Blockers)
 	}
@@ -343,10 +374,12 @@ func TestExecutionFeedbackReconciliationRejectsWrongPhaseState(t *testing.T) {
 	if out.Status != "blocked" {
 		t.Fatalf("expected blocked wrong phase/state, got %#v", out)
 	}
+
 	kinds := map[string]bool{}
 	for _, blocker := range out.Blockers {
 		kinds[blocker.Kind] = true
 	}
+
 	for _, want := range []string{"workflow_phase_mismatch", "plan_progress_phase_mismatch"} {
 		if !kinds[want] {
 			t.Fatalf("expected blocker %s, got %#v", want, out.Blockers)
@@ -378,9 +411,11 @@ func TestExecutionFeedbackReconciliationFailsClosed(t *testing.T) {
 	if out.Status != "blocked" {
 		t.Fatalf("expected blocked, got %#v", out)
 	}
+
 	if !out.WorkflowState.ReconciliationMismatch {
 		t.Fatalf("expected reconciliation mismatch true")
 	}
+
 	if len(out.Blockers) == 0 {
 		t.Fatalf("expected blockers")
 	}
@@ -486,24 +521,31 @@ func TestRankerLearningEvidenceAdapterPassesWithVerifiedExecutionFeedback(t *tes
 	if out.Status != "pass" {
 		t.Fatalf("expected pass, got %#v", out)
 	}
+
 	if out.Request == nil {
 		t.Fatalf("expected request, got %#v", out)
 	}
+
 	if out.Request.Source != "harness_feedback" || out.Request.Action != "boost" || !out.Request.Verified {
 		t.Fatalf("expected review request shape, got %#v", out.Request)
 	}
+
 	if out.Request.TaskID != "task-1" || out.Request.CorpusID != "pack-1" || out.Request.ResultID != "feedback_r5" {
 		t.Fatalf("expected deterministic request ids, got %#v", out.Request)
 	}
+
 	if len(out.Request.Files) != 1 || out.Request.Files[0] != "cmd/idiom/product_workflow.go" {
 		t.Fatalf("expected changed path files, got %#v", out.Request.Files)
 	}
+
 	if out.Request.Evidence.Kind != "verified_feedback" || !out.Request.Evidence.Verified {
 		t.Fatalf("expected verified feedback evidence, got %#v", out.Request.Evidence)
 	}
+
 	if out.Summary.ContextPackID != "pack-1" || out.Summary.VerificationStatus != "pass" {
 		t.Fatalf("expected privacy-safe summary fields, got %#v", out.Summary)
 	}
+
 	if !strings.Contains(out.NextValidAction, "no ranker promotion was applied") {
 		t.Fatalf("expected bounded next action, got %q", out.NextValidAction)
 	}
@@ -543,13 +585,16 @@ func TestRankerLearningEvidenceAdapterFailsClosed(t *testing.T) {
 	if out.Status != "blocked" {
 		t.Fatalf("expected blocked, got %#v", out)
 	}
+
 	if out.Request != nil {
 		t.Fatalf("blocked adapter must not return a request, got %#v", out.Request)
 	}
+
 	kinds := map[string]bool{}
 	for _, blocker := range out.Blockers {
 		kinds[blocker.Kind] = true
 	}
+
 	for _, want := range []string{
 		"feedback_not_pass",
 		"feedback_contains_blockers",
@@ -566,6 +611,7 @@ func TestRankerLearningEvidenceAdapterFailsClosed(t *testing.T) {
 			t.Fatalf("expected blocker %s, got %#v", want, out.Blockers)
 		}
 	}
+
 	if strings.Contains(strings.ToLower(out.NextValidAction), "promot") {
 		t.Fatalf("blocked adapter next action must not imply promotion, got %q", out.NextValidAction)
 	}
@@ -609,13 +655,16 @@ func TestRankerLearningEvidenceAdapterRejectsRankerStatePaths(t *testing.T) {
 	if out.Status != "blocked" {
 		t.Fatalf("expected blocked, got %#v", out)
 	}
+
 	if out.Request != nil {
 		t.Fatalf("ranker state paths must not be emitted in a request, got %#v", out.Request)
 	}
+
 	for _, blocker := range out.Blockers {
 		if blocker.Kind == "unsupported_authority_reference" && strings.Contains(blocker.Message, ".idiom/ranker") {
 			return
 		}
 	}
+
 	t.Fatalf("expected ranker state path blocker, got %#v", out.Blockers)
 }

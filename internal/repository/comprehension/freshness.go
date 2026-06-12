@@ -99,10 +99,13 @@ func StaleEvidenceSafetyForFreshness(decision FreshnessDecision) StaleEvidenceSa
 	if reason == "" {
 		reason = strings.TrimSpace(decision.Blocker)
 	}
+
 	if reason == "" && !decision.FreshForScope {
 		reason = "freshness_blocker"
 	}
+
 	state := "fresh"
+
 	if !decision.FreshForScope {
 		switch decision.Policy {
 		case FreshnessReportOnly:
@@ -113,6 +116,7 @@ func StaleEvidenceSafetyForFreshness(decision FreshnessDecision) StaleEvidenceSa
 			state = "blocked"
 		}
 	}
+
 	return StaleEvidenceSafety{
 		State:            state,
 		Policy:           decision.Policy,
@@ -128,6 +132,7 @@ func StaleEvidenceSafetyForStatus(report StatusReport, freshness *FreshnessDecis
 	if freshness != nil {
 		return StaleEvidenceSafetyForFreshness(*freshness)
 	}
+
 	if report.Fresh {
 		return StaleEvidenceSafety{
 			State:         "fresh",
@@ -135,12 +140,14 @@ func StaleEvidenceSafetyForStatus(report StatusReport, freshness *FreshnessDecis
 			GlobalFresh:   true,
 		}
 	}
+
 	reason := FreshnessReasonStaleGraph
 	if !report.Indexed {
 		reason = FreshnessReasonMissingIndex
 	} else if report.CollectorVersionMismatch {
 		reason = FreshnessReasonCollectorVersionMismatch
 	}
+
 	return StaleEvidenceSafety{
 		State:            "reported",
 		Policy:           FreshnessReportOnly,
@@ -156,6 +163,7 @@ func StaleEvidenceBlocksUse(decision FreshnessDecision) bool {
 	if decision.FreshForScope {
 		return false
 	}
+
 	switch decision.Policy {
 	case FreshnessReportOnly, FreshnessAllowStale:
 		return false
@@ -177,10 +185,12 @@ var (
 func FreshnessHealthStats() FreshnessStats {
 	freshnessStatsMu.Lock()
 	defer freshnessStatsMu.Unlock()
+
 	blockersByReason := make(map[string]int64, len(freshnessBlockersByReason))
 	for reason, count := range freshnessBlockersByReason {
 		blockersByReason[reason] = count
 	}
+
 	return FreshnessStats{
 		ReadThroughAttempts:   freshnessReadThroughAttempts.Load(),
 		AllowStaleInvocations: freshnessAllowStaleInvocations.Load(),
@@ -195,38 +205,46 @@ func EnsureFresh(ctx context.Context, req FreshnessRequest) (decision FreshnessD
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
 	root, err := normalizeRoot(req.Root)
 	if err != nil {
 		return FreshnessDecision{}, err
 	}
+
 	policy := req.Policy
 	if policy == "" {
 		policy = FreshnessReadThrough
 	}
+
 	operation := strings.TrimSpace(req.Operation)
 	scope := inferFreshnessScope(root, req)
 	language := freshnessLanguage(req.Language)
 	mode := freshnessIndexMode(req.Mode)
+
 	decision = FreshnessDecision{
 		Policy:    policy,
 		Operation: operation,
 		Scope:     scope,
 	}
 	recordFreshnessPolicy(policy)
+
 	defer func() {
 		recordFreshnessOutcome(decision)
 	}()
 
 	var status StatusReport
+
 	if req.Status != nil {
 		status = *req.Status
 	} else {
 		var err error
+
 		status, err = statusBeforeFreshnessRefresh(root, scope)
 		if err != nil {
 			return decision, err
 		}
 	}
+
 	decision.GlobalFresh = status.Fresh
 	decision.CheckedPaths = freshnessCheckedPaths(req, scope)
 	decision.StalePaths = freshnessRelevantPaths(status.StaleFiles, scope, decision.CheckedPaths)
@@ -234,6 +252,7 @@ func EnsureFresh(ctx context.Context, req FreshnessRequest) (decision FreshnessD
 	decision.FreshForScope = freshnessScopeFresh(status, scope, decision.CheckedPaths)
 	decision.Reason = freshnessReason(root, status, scope, decision.CheckedPaths)
 	applyFreshnessStatusMetadata(&decision, status)
+
 	if decision.Reason == "" {
 		decision.FreshForScope = true
 		return decision, nil
@@ -251,29 +270,36 @@ func EnsureFresh(ctx context.Context, req FreshnessRequest) (decision FreshnessD
 	}
 
 	refreshCtx := ctx
+
 	var cancel context.CancelFunc
+
 	if req.MaxDuration > 0 {
 		refreshCtx, cancel = context.WithTimeout(ctx, req.MaxDuration)
 		defer cancel()
 	}
+
 	refresh, err := runFreshnessRefresh(refreshCtx, root, req, status, decision, language, mode)
 	if err != nil {
 		return decision, err
 	}
+
 	decision.Refresh = refresh
 	if refresh != nil {
 		if refresh.Reason == FreshnessReasonBudgetExceeded {
 			decision.Reason = refresh.Reason
 		}
+
 		if refresh.SkippedReason != "" {
 			decision.Blocker = refresh.SkippedReason
 		} else if refresh.Error != "" {
 			decision.Blocker = FreshnessReasonRefreshFailed
 		}
+
 		if refresh.Reason == FreshnessReasonBudgetExceeded || refresh.SkippedReason == FreshnessReasonBudgetExceeded || strings.Contains(strings.ToLower(refresh.SkippedReason), "budget") || strings.Contains(strings.ToLower(refresh.SkippedReason), "cap") {
 			decision.BudgetExceeded = true
 		}
 	}
+
 	if refresh == nil || !refresh.Attempted || refresh.Error != "" {
 		return decision, nil
 	}
@@ -282,25 +308,31 @@ func EnsureFresh(ctx context.Context, req FreshnessRequest) (decision FreshnessD
 	if refresh.Scope == "." {
 		afterScope = ""
 	}
+
 	after, err := statusAfterFreshnessRefresh(root, afterScope, req.Operation, status)
 	if err != nil {
 		if refresh != nil {
 			refresh.Error = err.Error()
 		}
+
 		return decision, nil
 	}
+
 	decision.GlobalFresh = after.Fresh
 	decision.StalePaths = freshnessRelevantPaths(after.StaleFiles, scope, decision.CheckedPaths)
 	decision.MissingPaths = freshnessRelevantPaths(after.MissingFiles, scope, decision.CheckedPaths)
 	decision.FreshForScope = freshnessScopeFresh(after, scope, decision.CheckedPaths)
 	applyFreshnessStatusMetadata(&decision, after)
+
 	if !decision.FreshForScope && decision.Blocker == "" {
 		decision.Blocker = freshnessBlocker(decision.Reason, scope, len(decision.StalePaths)+len(decision.MissingPaths), req.MaxFiles)
 	}
+
 	if decision.Blocker == FreshnessReasonBudgetExceeded {
 		decision.Reason = FreshnessReasonBudgetExceeded
 		decision.BudgetExceeded = true
 	}
+
 	return decision, nil
 }
 
@@ -313,45 +345,60 @@ func runFreshnessRefresh(ctx context.Context, root string, req FreshnessRequest,
 		if freshnessOperationCanRebuildRoot(req.Operation) {
 			return refreshFreshnessRoot(ctx, root, req, FreshnessReasonCollectorVersionMismatch, language, mode), nil
 		}
+
 		return skippedFreshnessRefresh(decision, language, FreshnessReasonCollectorVersionMismatch), nil
 	}
+
 	if decision.Scope != "" {
 		return refreshFreshnessScope(ctx, root, req, decision.Scope, decision.Reason, language, mode), nil
 	}
+
 	if !status.Indexed {
 		if freshnessOperationCanRebuildRoot(req.Operation) {
 			return refreshFreshnessRoot(ctx, root, req, FreshnessReasonMissingIndex, language, mode), nil
 		}
+
 		return skippedFreshnessRefresh(decision, language, FreshnessReasonMissingIndex), nil
 	}
+
 	if len(decision.CheckedPaths) > 0 && decision.Reason == FreshnessReasonStaleScopeFiles {
 		paths := append(append([]string(nil), decision.StalePaths...), decision.MissingPaths...)
 		if len(paths) == 0 {
 			return skippedFreshnessRefresh(decision, language, FreshnessReasonReferencedPathsUnverified), nil
 		}
+
 		if req.MaxFiles > 0 && len(paths) > req.MaxFiles {
 			report := skippedFreshnessRefresh(decision, language, FreshnessReasonBudgetExceeded)
+
 			report.Reason = FreshnessReasonBudgetExceeded
 			report.StalePathCount = len(paths)
 			report.MaxFiles = req.MaxFiles
+
 			return report, nil
 		}
+
 		return refreshFreshnessFileSet(ctx, root, req, paths, FreshnessReasonStaleScopeFiles, language, mode), nil
 	}
+
 	paths := freshnessStatusPaths(status)
 	if len(paths) == 0 {
 		return skippedFreshnessRefresh(decision, language, FreshnessReasonMissingScope), nil
 	}
+
 	if req.MaxFiles > 0 && len(paths) > req.MaxFiles {
 		report := skippedFreshnessRefresh(decision, language, FreshnessReasonBudgetExceeded)
+
 		report.Reason = FreshnessReasonBudgetExceeded
 		report.StalePathCount = len(paths)
 		report.MaxFiles = req.MaxFiles
+
 		return report, nil
 	}
+
 	if req.Operation != "context_status" {
 		return refreshFreshnessRoot(ctx, root, req, FreshnessReasonStaleUnboundedGraph, language, mode), nil
 	}
+
 	return refreshFreshnessFileSet(ctx, root, req, paths, "small_stale_file_set", language, mode), nil
 }
 
@@ -371,6 +418,7 @@ func refreshFreshnessScope(ctx context.Context, root string, req FreshnessReques
 		Language:  language,
 		Reason:    reason,
 	}
+
 	build, err := Build(ctx, BuildOptions{
 		Root:             root,
 		Path:             scope,
@@ -385,10 +433,13 @@ func refreshFreshnessScope(ctx context.Context, root string, req FreshnessReques
 		report.Error = err.Error()
 		return report
 	}
+
 	applyBuildReportToRefresh(report, build)
+
 	if after, err := StatusForScope(root, scope); err == nil {
 		report.FreshAfter = after.Fresh
 	}
+
 	return report
 }
 
@@ -396,13 +447,16 @@ func refreshFreshnessRoot(ctx context.Context, root string, req FreshnessRequest
 	if blocker := rootFreshnessBudgetBlocker(ctx, root, req, reason, language); blocker != nil {
 		return blocker
 	}
+
 	freshnessRootRebuilds.Add(1)
+
 	report := &RefreshReport{
 		Attempted: true,
 		Scope:     ".",
 		Language:  language,
 		Reason:    reason,
 	}
+
 	build, err := Build(ctx, BuildOptions{
 		Root:      root,
 		Path:      ".",
@@ -414,10 +468,13 @@ func refreshFreshnessRoot(ctx context.Context, root string, req FreshnessRequest
 		report.Error = err.Error()
 		return report
 	}
+
 	applyBuildReportToRefresh(report, build)
+
 	if after, err := Status(root); err == nil {
 		report.FreshAfter = after.Fresh
 	}
+
 	return report
 }
 
@@ -425,6 +482,7 @@ func rootFreshnessBudgetBlocker(ctx context.Context, root string, req FreshnessR
 	if req.MaxFiles <= 0 {
 		return nil
 	}
+
 	count, overBudget, err := estimateRootRefreshSourceCount(ctx, root, language, req.MaxFiles)
 	if err != nil {
 		return &RefreshReport{
@@ -436,9 +494,11 @@ func rootFreshnessBudgetBlocker(ctx context.Context, root string, req FreshnessR
 			Error:         err.Error(),
 		}
 	}
+
 	if !overBudget {
 		return nil
 	}
+
 	return &RefreshReport{
 		Attempted:        false,
 		Scope:            ".",
@@ -455,10 +515,12 @@ func estimateRootRefreshSourceCount(ctx context.Context, root string, language s
 	if maxFiles <= 0 {
 		return 0, false, nil
 	}
+
 	files, err := collectGenericSourceFiles(ctx, root, ".", language, maxFiles+1, map[string]struct{}{})
 	if err != nil {
 		return 0, false, err
 	}
+
 	return len(files), len(files) > maxFiles, nil
 }
 
@@ -475,23 +537,29 @@ func recordFreshnessOutcome(decision FreshnessDecision) {
 	if decision.Policy == "" {
 		return
 	}
+
 	if decision.Refresh != nil && decision.Refresh.Error != "" {
 		freshnessRefreshFailures.Add(1)
 	}
+
 	if decision.FreshForScope {
 		return
 	}
+
 	switch decision.Policy {
 	case FreshnessReadThrough, FreshnessRequire:
 	default:
 		return
 	}
+
 	reason := strings.TrimSpace(decision.Reason)
 	if reason == "" {
 		reason = "freshness_blocker"
 	}
+
 	freshnessBlockers.Add(1)
 	freshnessStatsMu.Lock()
+
 	freshnessBlockersByReason[reason]++
 	freshnessStatsMu.Unlock()
 }
@@ -506,11 +574,13 @@ func refreshFreshnessFileSet(ctx context.Context, root string, req FreshnessRequ
 		RefreshedFiles: append([]string(nil), paths...),
 		RefreshScopes:  refreshScopes,
 	}
+
 	for _, path := range refreshScopes {
 		pathLanguage := language
 		if pathLanguage != "auto" && freshnessPathMissing(root, path) {
 			pathLanguage = "auto"
 		}
+
 		build, err := Build(ctx, BuildOptions{
 			Root:             root,
 			Path:             path,
@@ -525,20 +595,26 @@ func refreshFreshnessFileSet(ctx context.Context, root string, req FreshnessRequ
 			report.Error = err.Error()
 			return report
 		}
+
 		report.IndexID = build.IndexID
+
 		report.FilesIndexed += build.FilesIndexed
 		report.SymbolsIndexed += build.SymbolsIndexed
 		report.EdgesIndexed += build.EdgesIndexed
+
 		if report.PartialRefreshReason == "" {
 			report.PartialRefreshReason = build.PartialRefreshReason
 		}
+
 		if report.FullRebuildReason == "" {
 			report.FullRebuildReason = build.FullRebuildReason
 		}
 	}
+
 	if after, err := StatusForScope(root, commonFreshnessPathScope(paths)); err == nil {
 		report.FreshAfter = after.Fresh
 	}
+
 	return report
 }
 
@@ -547,73 +623,98 @@ func freshnessRefreshScopes(paths []string, maxFiles int) []string {
 	if len(paths) <= 1 || maxFiles > 0 {
 		return paths
 	}
+
 	byDir := make(map[string][]string)
+
 	for _, path := range paths {
 		dir := pathDirForRefresh(path)
+
 		byDir[dir] = append(byDir[dir], path)
 	}
+
 	scopes := make([]string, 0, len(byDir))
 	dirs := make([]string, 0, len(byDir))
+
 	for dir, members := range byDir {
 		if dir != "." {
 			dirs = append(dirs, dir)
 		}
+
 		if dir != "." && len(members) > 1 {
 			scopes = append(scopes, dir)
 			continue
 		}
+
 		scopes = append(scopes, members...)
 	}
+
 	scopes = append(scopes, collapseHighFanoutFreshnessScopes(dirs)...)
+
 	return removeCoveredFreshnessScopes(scopes)
 }
 
 func collapseHighFanoutFreshnessScopes(scopes []string) []string {
 	const siblingCollapseThreshold = 8
+
 	scopes = cleanFreshnessPaths(scopes)
+
 	byParent := make(map[string][]string)
+
 	for _, scope := range scopes {
 		parent := pathDirForRefresh(scope)
 		if parent == "." || parent == "" {
 			continue
 		}
+
 		byParent[parent] = append(byParent[parent], scope)
 	}
+
 	collapsedParents := make(map[string]struct{})
+
 	for parent, members := range byParent {
 		if len(members) >= siblingCollapseThreshold {
 			collapsedParents[parent] = struct{}{}
 		}
 	}
+
 	if len(collapsedParents) == 0 {
 		return nil
 	}
+
 	next := make([]string, 0, len(collapsedParents))
 	for parent := range collapsedParents {
 		next = append(next, parent)
 	}
+
 	return cleanFreshnessPaths(next)
 }
 
 func removeCoveredFreshnessScopes(scopes []string) []string {
 	scopes = cleanFreshnessPaths(scopes)
+
 	out := make([]string, 0, len(scopes))
+
 	for _, scope := range scopes {
 		covered := false
+
 		for _, other := range scopes {
 			if other == scope {
 				continue
 			}
+
 			if pathInScope(scope, other) {
 				covered = true
 				break
 			}
 		}
+
 		if !covered {
 			out = append(out, scope)
 		}
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -623,8 +724,10 @@ func statusAfterFreshnessRefresh(root string, scope string, operation string, be
 		if err != nil {
 			return StatusReport{}, err
 		}
+
 		return combineStatusAfterScopedRefresh(before, scoped, scope), nil
 	}
+
 	return Status(root)
 }
 
@@ -633,12 +736,15 @@ func combineStatusAfterScopedRefresh(before StatusReport, scoped StatusReport, s
 		scoped.Fresh = false
 		return scoped
 	}
+
 	combined := before
+
 	combined.StaleFiles = replaceScopedStatusPaths(before.StaleFiles, scoped.StaleFiles, scope)
 	combined.MissingFiles = replaceScopedStatusPaths(before.MissingFiles, scoped.MissingFiles, scope)
 	combined.StaleSymbols = 0
 	combined.StaleSymbolSamples = nil
 	combined.Fresh = !combined.CollectorVersionMismatch && len(combined.StaleFiles) == 0 && len(combined.MissingFiles) == 0
+
 	return combined
 }
 
@@ -649,19 +755,24 @@ func replaceScopedStatusPaths(before []string, scoped []string, scope string) []
 		if path == "" || pathInScope(path, scope) {
 			continue
 		}
+
 		seen[path] = struct{}{}
 	}
+
 	for _, path := range scoped {
 		path = cleanFreshnessPath(path)
 		if path != "" {
 			seen[path] = struct{}{}
 		}
 	}
+
 	out := make([]string, 0, len(seen))
 	for path := range seen {
 		out = append(out, path)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -689,19 +800,24 @@ func inferFreshnessScope(root string, req FreshnessRequest) string {
 	if scope := boundedFreshnessScope(req.Path); scope != "" {
 		return scope
 	}
+
 	if scope := boundedFreshnessScope(pathFromFreshnessHandle(req.Handle)); scope != "" {
 		return scope
 	}
+
 	paths := cleanFreshnessPaths(req.ReferencedPaths)
 	if len(paths) == 1 {
 		return paths[0]
 	}
+
 	if len(paths) > 1 {
 		return commonFreshnessPathScope(paths)
 	}
+
 	if scope := existingQueryPathScope(root, req.Query); scope != "" {
 		return scope
 	}
+
 	return ""
 }
 
@@ -710,9 +826,11 @@ func freshnessCheckedPaths(req FreshnessRequest, scope string) []string {
 	if len(paths) > 0 {
 		return paths
 	}
+
 	if scope != "" {
 		return []string{scope}
 	}
+
 	return nil
 }
 
@@ -720,21 +838,27 @@ func freshnessReason(root string, status StatusReport, scope string, checkedPath
 	if !status.Indexed {
 		return FreshnessReasonMissingIndex
 	}
+
 	if status.CollectorVersionMismatch {
 		return FreshnessReasonCollectorVersionMismatch
 	}
+
 	if scope != "" && len(checkedPaths) == 1 && checkedPaths[0] == scope && !freshnessGraphHasFileInScope(root, scope) {
 		return FreshnessReasonScopeNotIndexed
 	}
+
 	if scope == "" && len(checkedPaths) == 0 {
 		if !status.Fresh {
 			return FreshnessReasonStaleUnboundedGraph
 		}
+
 		return ""
 	}
+
 	if len(freshnessRelevantPaths(status.StaleFiles, scope, checkedPaths)) > 0 || len(freshnessRelevantPaths(status.MissingFiles, scope, checkedPaths)) > 0 {
 		return FreshnessReasonStaleScopeFiles
 	}
+
 	return ""
 }
 
@@ -742,9 +866,11 @@ func freshnessScopeFresh(status StatusReport, scope string, checkedPaths []strin
 	if !status.Indexed || status.CollectorVersionMismatch {
 		return false
 	}
+
 	if scope == "" && len(checkedPaths) == 0 {
 		return status.Fresh
 	}
+
 	return len(freshnessRelevantPaths(status.StaleFiles, scope, checkedPaths)) == 0 && len(freshnessRelevantPaths(status.MissingFiles, scope, checkedPaths)) == 0
 }
 
@@ -752,12 +878,15 @@ func freshnessRelevantPaths(paths []string, scope string, checkedPaths []string)
 	if len(paths) == 0 {
 		return nil
 	}
+
 	seen := make(map[string]struct{})
+
 	for _, path := range paths {
 		path = cleanFreshnessPath(path)
 		if path == "" {
 			continue
 		}
+
 		switch {
 		case len(checkedPaths) > 0:
 			for _, checked := range checkedPaths {
@@ -774,11 +903,14 @@ func freshnessRelevantPaths(paths []string, scope string, checkedPaths []string)
 			seen[path] = struct{}{}
 		}
 	}
+
 	out := make([]string, 0, len(seen))
 	for path := range seen {
 		out = append(out, path)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -790,10 +922,12 @@ func freshnessBudgetExceeded(status StatusReport, decision FreshnessDecision, ma
 	if maxFiles <= 0 {
 		return false
 	}
+
 	pathCount := len(decision.StalePaths) + len(decision.MissingPaths)
 	if decision.Scope == "" && len(decision.CheckedPaths) == 0 {
 		pathCount = len(freshnessStatusPaths(status))
 	}
+
 	return pathCount > maxFiles
 }
 
@@ -804,11 +938,14 @@ func cleanFreshnessPaths(paths []string) []string {
 			seen[clean] = struct{}{}
 		}
 	}
+
 	out := make([]string, 0, len(seen))
 	for path := range seen {
 		out = append(out, path)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -817,10 +954,12 @@ func cleanFreshnessPath(path string) string {
 	if normalized == "" || filepath.IsAbs(path) || strings.HasPrefix(normalized, "/") || looksLikeWindowsAbsPath(normalized) {
 		return ""
 	}
+
 	path = pathpkg.Clean(normalized)
 	if path == "" || path == "." || path == ".." || strings.HasPrefix(path, "../") {
 		return ""
 	}
+
 	return strings.TrimSuffix(path, "/")
 }
 
@@ -842,6 +981,7 @@ func pathFromFreshnessHandle(handle string) string {
 		if idx := strings.Index(rest, "#"); idx >= 0 {
 			return rest[:idx]
 		}
+
 		return rest
 	default:
 		return ""
@@ -856,26 +996,32 @@ func existingQueryPathScope(root string, query string) string {
 		if scope == "" || !strings.Contains(scope, "/") {
 			continue
 		}
+
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(scope))); err == nil {
 			return scope
 		}
 	}
+
 	return ""
 }
 
 func commonFreshnessPathScope(paths []string) string {
 	common := ""
+
 	for _, path := range paths {
 		dir := pathDirForRefresh(path)
 		if common == "" {
 			common = dir
 			continue
 		}
+
 		common = commonPathPrefix(common, dir)
 	}
+
 	if common == "." {
 		return ""
 	}
+
 	return common
 }
 
@@ -884,11 +1030,13 @@ func freshnessGraphHasFileInScope(root string, scope string) bool {
 	if err != nil {
 		return false
 	}
+
 	for _, node := range graph.Nodes {
 		if node.Kind == "file" && strings.TrimSpace(node.Path) != "" && pathInScope(node.Path, scope) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -902,6 +1050,7 @@ func freshnessLanguage(language string) string {
 	if language == "" {
 		return "auto"
 	}
+
 	return language
 }
 
@@ -930,6 +1079,7 @@ func freshnessBlocker(reason string, scope string, pathCount int, maxFiles int) 
 		if maxFiles > 0 && pathCount > maxFiles {
 			return FreshnessReasonBudgetExceeded
 		}
+
 		return reason
 	}
 }

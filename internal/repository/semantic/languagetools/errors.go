@@ -26,6 +26,7 @@ func annotateToolFailure(result ToolResult) ToolResult {
 	if result.Failure != nil || strings.TrimSpace(result.Error) == "" {
 		return result
 	}
+
 	text := strings.ToLower(strings.Join([]string{result.Code, result.Summary, result.Error}, " "))
 	switch {
 	case strings.Contains(text, "unsupported") || strings.Contains(text, "unknown"):
@@ -53,14 +54,18 @@ func withToolFailure(result ToolResult, code failures.Code, reason failures.Reas
 	if result.Failure != nil {
 		return result
 	}
+
 	message := strings.TrimSpace(result.Error)
 	if message == "" {
 		message = strings.TrimSpace(result.Summary)
 	}
+
 	if message == "" {
 		return result
 	}
+
 	result.Failure = failures.New(code, reason, message)
+
 	return result
 }
 

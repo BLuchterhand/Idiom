@@ -21,9 +21,11 @@ func TestComposePlannerPromptWithContextPackScopesBriefBody(t *testing.T) {
 	if !strings.Contains(prompt, "## Context Pack") {
 		t.Fatalf("prompt missing context pack:\n%s", prompt)
 	}
+
 	if !strings.Contains(prompt, "<!-- IDIOM:BRIEF-BODY-START -->") || !strings.Contains(prompt, "<!-- IDIOM:BRIEF-BODY-END -->") {
 		t.Fatalf("prompt missing brief body markers:\n%s", prompt)
 	}
+
 	got := RequiredEditPathsFromPrompt(prompt)
 	if len(got) != 1 || got[0] != "pkg/target.go" {
 		t.Fatalf("required paths = %#v, want only brief-scoped target path", got)
@@ -41,6 +43,7 @@ func TestPromptContextPackNeedsFreshnessRecovery(t *testing.T) {
 			t.Fatalf("expected freshness recovery for %#v", result)
 		}
 	}
+
 	if promptContextPackNeedsFreshnessRecovery(workspace.ToolResult{Tool: "context_pack", Summary: "Context pack wrote view"}) {
 		t.Fatal("successful context_pack summary should not trigger freshness recovery")
 	}
@@ -61,6 +64,7 @@ func TestContextDiscoveryFallbackUsesLaneNeutralEditBearingLanguage(t *testing.T
 			t.Fatalf("fallback prompt missing %q:\n%s", want, got)
 		}
 	}
+
 	for _, notWant := range []string{"before writing", "before the first write"} {
 		if strings.Contains(got, notWant) {
 			t.Fatalf("fallback prompt should not use implementation-only phrase %q:\n%s", notWant, got)
@@ -82,12 +86,14 @@ func TestRequiredEditPathsFromPromptIgnoresAllowedEditPaths(t *testing.T) {
 	if got := RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
 		t.Fatalf("allowed edit paths must not define required coverage, got %#v", got)
 	}
+
 	allowed := AllowedEditPathsFromPrompt(prompt)
 	for _, want := range []string{"pkg/target.go", "pkg/optional.go"} {
 		if !slices.Contains(allowed, want) {
 			t.Fatalf("missing allowed path %q, got %#v", want, allowed)
 		}
 	}
+
 	if slices.Contains(allowed, "pkg/evidence.go") {
 		t.Fatalf("evidence path must not bleed into allowed edit paths, got %#v", allowed)
 	}
@@ -96,6 +102,7 @@ func TestRequiredEditPathsFromPromptIgnoresAllowedEditPaths(t *testing.T) {
 func TestRequiredEditPathsFromPromptCapturesInlineColonList(t *testing.T) {
 	prompt := "Implement the change. Required edit paths: cmd/idiom/product_workflow.go, cmd/idiom/product_workflow_test.go"
 	got := RequiredEditPathsFromPrompt(prompt)
+
 	for _, want := range []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"} {
 		if !slices.Contains(got, want) {
 			t.Fatalf("missing required path %q, got %#v", want, got)
@@ -112,6 +119,7 @@ func TestRequiredEditPathsFromPromptCapturesInlineOnlyColonList(t *testing.T) {
 		"internal/surfaces/tui/app/lifecycle.go",
 	}
 	got := RequiredEditPathsFromPrompt(prompt)
+
 	if !slices.Equal(got, want) {
 		t.Fatalf("required paths = %#v, want %#v", got, want)
 	}
@@ -121,14 +129,17 @@ func TestRequiredEditPathsFromPromptIgnoresTrailingSlashProse(t *testing.T) {
 	prompt := "Implement the change. Required edit paths: `cmd/idiom/product_workflow.go`, `cmd/idiom/product_workflow_test.go`. Add focused tests for missing `--effort-root` and mutually exclusive/missing mode flags under JSON output."
 	got := RequiredEditPathsFromPrompt(prompt)
 	want := []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"}
+
 	if len(got) != len(want) {
 		t.Fatalf("required paths = %#v, want %#v", got, want)
 	}
+
 	for _, path := range want {
 		if !slices.Contains(got, path) {
 			t.Fatalf("missing required path %q, got %#v", path, got)
 		}
 	}
+
 	for _, forbidden := range []string{"exclusive/missing", "cmd/idiom"} {
 		if slices.Contains(got, forbidden) {
 			t.Fatalf("slash prose or truncated directory leaked into required paths: %#v", got)
@@ -146,14 +157,17 @@ func TestRequiredEditPathsFromPromptRejectsDirectoryLikeObligations(t *testing.T
 	}, "\n")
 	got := RequiredEditPathsFromPrompt(prompt)
 	want := []string{"cmd/idiom/product_workflow.go", "Makefile"}
+
 	if len(got) != len(want) {
 		t.Fatalf("expected file-only required paths %#v, got %#v", want, got)
 	}
+
 	for _, path := range want {
 		if !slices.Contains(got, path) {
 			t.Fatalf("missing required path %q, got %#v", path, got)
 		}
 	}
+
 	if slices.Contains(got, "cmd/idiom") {
 		t.Fatalf("directory-like target must not become an exact required edit path: %#v", got)
 	}
@@ -165,9 +179,11 @@ func TestPlanExecuteAllowedEditPathsIncludesPromptAllowedScope(t *testing.T) {
   "evidence": ["pkg/evidence.go"]
 }`
 	required := planExecuteRequiredEditPaths(Options{}, prompt)
+
 	if len(required) != 0 {
 		t.Fatalf("allowed_edit_paths must not define required coverage, got %#v", required)
 	}
+
 	allowed := planExecuteAllowedEditPaths(Options{
 		AllowedEditPaths: []string{"pkg/explicit.go"},
 	}, prompt)
@@ -176,6 +192,7 @@ func TestPlanExecuteAllowedEditPathsIncludesPromptAllowedScope(t *testing.T) {
 			t.Fatalf("missing allowed path %q, got %#v", want, allowed)
 		}
 	}
+
 	if slices.Contains(allowed, "pkg/evidence.go") {
 		t.Fatalf("evidence path must not bleed into allowed edit paths, got %#v", allowed)
 	}
@@ -188,12 +205,14 @@ func TestPlanExecuteAllowedEditPathsIncludesInlineNaturalLanguageScope(t *testin
 	if len(required) != 0 {
 		t.Fatalf("inline candidate scope must not define required coverage, got %#v", required)
 	}
+
 	allowed := planExecuteAllowedEditPaths(Options{}, prompt)
 	for _, want := range []string{"pkg/feature.go", "pkg/feature_test.go"} {
 		if !slices.Contains(allowed, want) {
 			t.Fatalf("missing inline allowed path %q, got %#v", want, allowed)
 		}
 	}
+
 	if slices.Contains(allowed, "pkg/evidence.go") {
 		t.Fatalf("read-only evidence sentence must not become allowed edit scope, got %#v", allowed)
 	}
@@ -207,6 +226,7 @@ func TestPlanExecuteEditableFilesHeadingIsCandidateScopeOnly(t *testing.T) {
 	if required := planExecuteRequiredEditPaths(Options{}, prompt); len(required) != 0 {
 		t.Fatalf("editable files must not define required coverage, got %#v", required)
 	}
+
 	allowed := planExecuteAllowedEditPaths(Options{}, prompt)
 	for _, want := range []string{"pkg/feature.go", "pkg/feature_test.go"} {
 		if !slices.Contains(allowed, want) {
@@ -218,6 +238,7 @@ func TestPlanExecuteEditableFilesHeadingIsCandidateScopeOnly(t *testing.T) {
 func TestPlanScopeContractIDTracksNormalizedContent(t *testing.T) {
 	contract := NewPlanScopeContract([]string{"pkg/a.go"}, nil, nil)
 	originalID := contract.ContractID
+
 	contract.ContractID = "stale"
 	contract.RequiredCoveragePaths = []string{"pkg/b.go"}
 	contract = contract.Normalized()
@@ -235,15 +256,18 @@ func TestPlanExecuteEditSetObligationsDoNotPromoteAllowedPathsToRequiredPaths(t 
 - pkg/feature_test.go
 `
 	required := planExecuteRequiredEditPaths(Options{}, prompt)
+
 	if len(required) != 0 {
 		t.Fatalf("edit-set obligations and allowed scope must not define required paths, got %#v", required)
 	}
+
 	allowed := planExecuteAllowedEditPaths(Options{}, prompt)
 	for _, want := range []string{"pkg/feature.go", "pkg/feature_test.go"} {
 		if !slices.Contains(allowed, want) {
 			t.Fatalf("missing allowed path %q, got %#v", want, allowed)
 		}
 	}
+
 	obligations := planExecuteEditSetObligations(Options{}, prompt)
 	if len(obligations) != 0 {
 		t.Fatalf("prompt prose must not create edit-set obligations, got %#v", obligations)
@@ -256,6 +280,7 @@ func TestPlanExecuteSourceSatisfiedUsesNamedAllowedEvidenceOnly(t *testing.T) {
 		"- pkg/feature.go: requested final state is already present.",
 	}, "\n")
 	paths := planExecuteSourceSatisfiedEvidencePaths(answer, nil, []string{"pkg/feature.go", "pkg/feature_test.go"})
+
 	if len(paths) != 1 || paths[0] != "pkg/feature.go" {
 		t.Fatalf("allowed scope must not become source-satisfied coverage obligations, got %#v", paths)
 	}
@@ -265,6 +290,7 @@ func TestPlanExecuteMissingSourceSatisfiedCoveragePathsUsesExactCoverage(t *test
 	answer := "Decision: source-satisfied\n- pkg/parser.go.bak: already present.\n- pkg/parser_test.go: already present."
 	got := planExecuteMissingSourceSatisfiedCoveragePaths(answer, []string{"pkg/parser.go", "pkg/parser_test.go"})
 	want := []string{"pkg/parser.go"}
+
 	if !slices.Equal(got, want) {
 		t.Fatalf("missing source-satisfied coverage paths = %#v, want %#v", got, want)
 	}
@@ -273,6 +299,7 @@ func TestPlanExecuteMissingSourceSatisfiedCoveragePathsUsesExactCoverage(t *test
 func TestPlanExecuteAutoSourceSatisfiedAnswerCoversRequiredPaths(t *testing.T) {
 	answer := planExecuteAutoSourceSatisfiedAnswer([]string{"pkg/parser.go", "pkg/parser_test.go"})
 	got := planExecuteMissingSourceSatisfiedCoveragePaths(answer, []string{"pkg/parser.go", "pkg/parser_test.go"})
+
 	if len(got) != 0 {
 		t.Fatalf("auto source-satisfied answer should cover required paths, missing %#v in:\n%s", got, answer)
 	}
@@ -286,6 +313,7 @@ func TestAppendPlanExecuteScopeToBriefBodyMakesAllowedPathsParseable(t *testing.
 	if !strings.Contains(scoped, "allowed_edit_paths:") || !strings.Contains(scoped, "internal/surfaces/tui/app/rendering.go") {
 		t.Fatalf("allowed scope was not inserted inside the brief body:\n%s", got)
 	}
+
 	allowed := AllowedEditPathsFromPrompt(got)
 	if len(allowed) != 1 || allowed[0] != "internal/surfaces/tui/app/rendering.go" {
 		t.Fatalf("allowed paths not parseable from composed prompt: %#v\n%s", allowed, got)
@@ -297,10 +325,12 @@ func TestAppendPlanExecuteScopeToBriefBodyDoesNotRepeatRequiredAsAllowed(t *test
 	if strings.Count(got, "pkg/feature_test.go") != 1 {
 		t.Fatalf("required path should appear once in canonical scope:\n%s", got)
 	}
+
 	allowed := AllowedEditPathsFromPrompt(got)
 	if slices.Contains(allowed, "pkg/feature_test.go") {
 		t.Fatalf("required path must not remain allowed candidate scope: %#v\n%s", allowed, got)
 	}
+
 	if !slices.Contains(allowed, "pkg/optional.go") {
 		t.Fatalf("optional allowed path missing from prompt: %#v\n%s", allowed, got)
 	}
@@ -322,6 +352,7 @@ func TestRenderPromptContextPackSectionOmitsCacheArtifactPath(t *testing.T) {
     {"command":"go test ./internal/surfaces/tui/app","path":"internal/surfaces/tui/app/prompt_runtime_test.go"}
   ]
 }`
+
 	section, err := RenderPromptContextPackSection(workspace.ToolResult{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote .idiom/comprehension/views/abc123.json with 1 candidate file(s)",
@@ -330,9 +361,11 @@ func TestRenderPromptContextPackSectionOmitsCacheArtifactPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render context pack: %v", err)
 	}
+
 	if strings.Contains(section, ".idiom/comprehension/views/abc123.json") {
 		t.Fatalf("context pack section should not expose cache artifact as a workspace evidence path:\n%s", section)
 	}
+
 	for _, want := range []string{
 		"context view artifact",
 		"context_pack_summary:",
@@ -352,10 +385,12 @@ func TestRenderPromptContextPackSectionOmitsCacheArtifactPath(t *testing.T) {
 			t.Fatalf("expected %q in context section:\n%s", want, section)
 		}
 	}
+
 	// Verify quality fields are present and substantive.
 	if !strings.Contains(section, "localization_confidence:") {
 		t.Fatalf("context section missing localization_confidence:\n%s", section)
 	}
+
 	if !strings.Contains(section, "source_owner_found:") {
 		t.Fatalf("context section missing source_owner_found:\n%s", section)
 	}
@@ -364,12 +399,15 @@ func TestRenderPromptContextPackSectionOmitsCacheArtifactPath(t *testing.T) {
 func TestRenderPromptContextPackSectionIncludesQualityInPreload(t *testing.T) {
 	root := t.TempDir()
 	testPath := filepath.Join(root, "internal", "workflows", "productworkflow", "migration_apply_test.go")
+
 	if err := os.MkdirAll(filepath.Dir(testPath), 0o755); err != nil {
 		t.Fatalf("mkdir test dir: %v", err)
 	}
+
 	if err := os.WriteFile(testPath, []byte("package productworkflow\n"), 0o644); err != nil {
 		t.Fatalf("write sibling test: %v", err)
 	}
+
 	output := `{
   "pack_id": "abc123",
   "fresh": true,
@@ -385,6 +423,7 @@ func TestRenderPromptContextPackSectionIncludesQualityInPreload(t *testing.T) {
     {"command":"go test ./internal/surfaces/cli/lane","path":"internal/surfaces/cli/lane/lane_test.go"}
   ]
 }`
+
 	section, err := RenderPromptContextPackSectionWithOptions(workspace.ToolResult{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote .idiom/comprehension/views/abc123.json with 2 candidate file(s)",
@@ -393,6 +432,7 @@ func TestRenderPromptContextPackSectionIncludesQualityInPreload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render context pack: %v", err)
 	}
+
 	// Verify the compact projection format with quality is present.
 	for _, want := range []string{
 		"context_pack_summary:",
@@ -408,6 +448,7 @@ func TestRenderPromptContextPackSectionIncludesQualityInPreload(t *testing.T) {
 			t.Fatalf("expected %q in context section:\n%s", want, section)
 		}
 	}
+
 	// The old test verified sibling-test filtering; with the shared compact
 	// projection, all candidates are rendered. Verify both candidates appear.
 	for _, want := range []string{
@@ -429,6 +470,7 @@ func TestRenderPromptContextPackSectionAddsFallbackWhenNoTargets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render context pack: %v", err)
 	}
+
 	for _, want := range []string{
 		"## Context Discovery Fallback",
 		"context_pack returned no candidate files",
@@ -469,18 +511,23 @@ func TestBuildPromptContextPackSectionSeedsRequiredEditPaths(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/planexecutecontext\n\ngo 1.22\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "target.go"), []byte("package pkg\n\nfunc Target() string { return \"target\" }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "noise.go"), []byte("package pkg\n\nfunc Noise() string { return \"noise\" }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	brief := "# Plan-execute atom\n\n## Task\n\nPlan a change to Noise.\n\n## Files To Modify\n\n- pkg/target.go\n"
+
 	var stderr bytes.Buffer
+
 	section := BuildPromptContextPackSection(config.Config{Workspace: config.Workspace{Root: root, CWD: root}}, PromptContextPackOptions{
 		Mode:              "plan-execute",
 		Title:             "Plan-execute atom",
@@ -488,13 +535,16 @@ func TestBuildPromptContextPackSectionSeedsRequiredEditPaths(t *testing.T) {
 		ProjectRoot:       root,
 		RequiredEditPaths: []string{"pkg/target.go"},
 	}, &stderr)
+
 	if !strings.Contains(section, "pkg/target.go") {
 		t.Fatalf("automatic context pack should include required edit path, stderr=%s\nsection:\n%s", stderr.String(), section)
 	}
+
 	// Verify quality is present in the plan-execute preload.
 	if !strings.Contains(section, "packet_quality:") {
 		t.Fatalf("context pack section should include packet_quality, stderr=%s\nsection:\n%s", stderr.String(), section)
 	}
+
 	if !strings.Contains(section, "localization_confidence") {
 		t.Fatalf("context pack section should include localization_confidence, stderr=%s\nsection:\n%s", stderr.String(), section)
 	}

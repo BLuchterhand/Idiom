@@ -25,11 +25,14 @@ type p75DeniedToolPayload struct {
 
 func writeMainConfigRoot(t *testing.T, root string) string {
 	t.Helper()
+
 	path := filepath.Join(t.TempDir(), "config.json")
 	configJSON := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q}}`, root, root)
+
 	if err := os.WriteFile(path, []byte(configJSON+"\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+
 	return path
 }
 
@@ -40,12 +43,14 @@ func TestP75DiscoveryProfileDeniesPrivatePathMutationWithoutLeakingInput(t *test
 	secretSentinel := "P75_SECRET_SENTINEL_DO_NOT_LEAK"
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{
 		"write_file",
 		"-config", configPath,
 		"--profile", "discovery",
 		"--input", fmt.Sprintf(`{"path":%q,"content":%q}`, privatePath, secretSentinel),
 	}, &stdout, &stderr)
+
 	if code != 1 {
 		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -53,6 +58,7 @@ func TestP75DiscoveryProfileDeniesPrivatePathMutationWithoutLeakingInput(t *test
 	payload := decodeP75DeniedToolPayload(t, stdout.Bytes())
 	assertP75DiscoveryProfileDenial(t, payload, "write_file")
 	assertP75NoSensitiveLeak(t, stdout.String()+stderr.String(), privatePath, root, secretSentinel)
+
 	if _, err := os.Stat(privatePath); !os.IsNotExist(err) {
 		t.Fatalf("denied private-path mutation should not create %s; stat err=%v", privatePath, err)
 	}
@@ -65,12 +71,14 @@ func TestP75DiscoveryProfileDeniesShellBeforeExternalSideEffect(t *testing.T) {
 	command := fmt.Sprintf("printf touched > %s", markerPath)
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{
 		"shell",
 		"-config", configPath,
 		"--profile", "discovery",
 		"--input", fmt.Sprintf(`{"command":%q}`, command),
 	}, &stdout, &stderr)
+
 	if code != 1 {
 		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -78,6 +86,7 @@ func TestP75DiscoveryProfileDeniesShellBeforeExternalSideEffect(t *testing.T) {
 	payload := decodeP75DeniedToolPayload(t, stdout.Bytes())
 	assertP75DiscoveryProfileDenial(t, payload, "shell")
 	assertP75NoSensitiveLeak(t, stdout.String()+stderr.String(), markerPath, command)
+
 	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
 		t.Fatalf("denied shell should not create %s; stat err=%v", markerPath, err)
 	}
@@ -89,12 +98,14 @@ func TestP75DiscoveryProfileDeniesArtifactWritingContextRequestBeforeExecution(t
 	secretTask := "P75_CONTEXT_TASK_SENTINEL_DO_NOT_LEAK"
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{
 		"context_pack",
 		"-config", configPath,
 		"--profile", "discovery",
 		"--input", fmt.Sprintf(`{"task":%q,"mode":"plan","limit":1}`, secretTask),
 	}, &stdout, &stderr)
+
 	if code != 1 {
 		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -102,6 +113,7 @@ func TestP75DiscoveryProfileDeniesArtifactWritingContextRequestBeforeExecution(t
 	payload := decodeP75DeniedToolPayload(t, stdout.Bytes())
 	assertP75DiscoveryProfileDenial(t, payload, "context_pack")
 	assertP75NoSensitiveLeak(t, stdout.String()+stderr.String(), secretTask)
+
 	for _, path := range []string{
 		filepath.Join(root, ".idiom", "comprehension"),
 		filepath.Join(root, ".idiom", "comprehension", "graph.sqlite"),
@@ -126,12 +138,14 @@ func TestP75DiscoveryProfileDeniesExternalSideEffectToolsBeforeExecution(t *test
 	})
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{
 		"publish_release",
 		"-config", configPath,
 		"--profile", "discovery",
 		"--input", `{"target":"prod"}`,
 	}, &stdout, &stderr)
+
 	if code != 1 {
 		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -139,6 +153,7 @@ func TestP75DiscoveryProfileDeniesExternalSideEffectToolsBeforeExecution(t *test
 	payload := decodeP75DeniedToolPayload(t, stdout.Bytes())
 	assertP75DiscoveryProfileDenial(t, payload, "publish_release")
 	assertP75NoSensitiveLeak(t, stdout.String()+stderr.String(), markerPath)
+
 	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
 		t.Fatalf("denied external tool should not create %s; stat err=%v", markerPath, err)
 	}
@@ -170,20 +185,25 @@ func TestP75DiscoveryProfileRequiresExternalReadOnlyDiscoveryDeclaration(t *test
 			})
 
 			var stdout, stderr bytes.Buffer
+
 			code := Run([]string{
 				tc.name,
 				"-config", configPath,
 				"--profile", "discovery",
 				"--input", `{}`,
 			}, &stdout, &stderr)
+
 			if code != tc.wantCode {
 				t.Fatalf("exit code = %d, want %d stdout=%s stderr=%s", code, tc.wantCode, stdout.String(), stderr.String())
 			}
+
 			if tc.wantCode == 1 {
 				payload := decodeP75DeniedToolPayload(t, stdout.Bytes())
 				assertP75DiscoveryProfileDenial(t, payload, tc.name)
+
 				return
 			}
+
 			if !strings.Contains(stdout.String(), `"profile": "discovery"`) || !strings.Contains(stdout.String(), "external-ok") {
 				t.Fatalf("allowed read-only discovery external tool should execute with discovery sidecar profile, stdout=%s", stdout.String())
 			}
@@ -193,21 +213,27 @@ func TestP75DiscoveryProfileRequiresExternalReadOnlyDiscoveryDeclaration(t *test
 
 func decodeP75DeniedToolPayload(t *testing.T, data []byte) p75DeniedToolPayload {
 	t.Helper()
+
 	var payload p75DeniedToolPayload
+
 	if err := json.Unmarshal(data, &payload); err != nil {
 		t.Fatalf("decode denial output: %v\n%s", err, string(data))
 	}
+
 	return payload
 }
 
 func assertP75DiscoveryProfileDenial(t *testing.T, payload p75DeniedToolPayload, tool string) {
 	t.Helper()
+
 	if payload.Tool != tool || payload.Sidecar.Profile != "discovery" {
 		t.Fatalf("unexpected denial identity: %#v", payload)
 	}
+
 	if payload.Sidecar.Error.Class != "profile_denied" || payload.Sidecar.Error.Code != "profile_denied" {
 		t.Fatalf("unexpected structured denial code: %#v", payload.Sidecar.Error)
 	}
+
 	if !strings.Contains(payload.Sidecar.Error.Message, "read_only_profile") {
 		t.Fatalf("denial message should carry stable read_only_profile invariant: %#v", payload.Sidecar.Error)
 	}
@@ -215,10 +241,12 @@ func assertP75DiscoveryProfileDenial(t *testing.T, payload p75DeniedToolPayload,
 
 func assertP75NoSensitiveLeak(t *testing.T, publicPayload string, forbidden ...string) {
 	t.Helper()
+
 	for _, value := range forbidden {
 		if value == "" {
 			continue
 		}
+
 		if strings.Contains(publicPayload, value) {
 			t.Fatalf("public denial payload leaked %q:\n%s", value, publicPayload)
 		}
@@ -227,6 +255,7 @@ func assertP75NoSensitiveLeak(t *testing.T, publicPayload string, forbidden ...s
 
 func writeP75ExternalToolConfig(t *testing.T, root string, tools []map[string]any) string {
 	t.Helper()
+
 	path := filepath.Join(t.TempDir(), "config.json")
 	payload := map[string]any{
 		"workspace": map[string]any{
@@ -235,12 +264,15 @@ func writeP75ExternalToolConfig(t *testing.T, root string, tools []map[string]an
 			"external_tools": tools,
 		},
 	}
+
 	data, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal external tool config: %v", err)
 	}
+
 	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
 		t.Fatalf("write external tool config: %v", err)
 	}
+
 	return path
 }

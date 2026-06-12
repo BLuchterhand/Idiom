@@ -1,31 +1,31 @@
 [2m  ▎ thinking[0m
   · 17305 tok · in 16945 (16640 cached / 305 new) · out 360 (132 reasoning) · ¥0.0014
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/docs/design-direct-answer-efficiency.md"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/docs/evidence/idiom-efficiency-optimization/ledger.md"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/docs/evidence/idiom-efficiency-optimization/agents/final-drift-review-rerun....
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD"}
+  -> read_file {"path": "/workspace/idiom/docs/design-direct-answer-efficiency.md"}
+  -> read_file {"path": "/workspace/idiom/docs/evidence/idiom-efficiency-optimization/ledger.md"}
+  -> read_file {"path": "/workspace/idiom/docs/evidence/idiom-efficiency-optimization/agents/final-drift-review-rerun....
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD"}
 [2m  ▎ thinking[0m
 Now let me verify the actual code state — the new A6 files and the A3 tests that the diff doesn't show (they're new files):
   · 39824 tok · in 38940 (17152 cached / 21788 new) · out 884 (716 reasoning) · ¥0.0239 · cache prefix changed: tools
   -> glob {"pattern": "internal/runtime/agent/direct_answer_surface*"}
   -> glob {"pattern": "internal/runtime/llama/deepseek_test*"}
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git status --short"}
+  -> bash {"command": "cd /workspace/idiom && git status --short"}
 [2m  ▎ thinking[0m
   · 40466 tok · in 40170 (39808 cached / 362 new) · out 296 (125 reasoning) · ¥0.0018
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/direct_answer_surface.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/direct_answer_surface_test.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/deepseek_test.go"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/direct_answer_surface.go"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/direct_answer_surface_test.go"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/llama/deepseek_test.go"}
 [2m  ▎ thinking[0m
 Good — I have all the source. Now let me run the focused test suites to verify PASS/WITH_RISKS claims independently:
   · 55128 tok · in 54160 (40448 cached / 13712 new) · out 968 (749 reasoning) · ¥0.0165
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && go test ./internal/runtime/llama ./internal/contracts/writerroute ....
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && go test ./internal/runtime/agent -run 'DirectAnswerSurface|DirectAn...
+  -> bash {"command": "cd /workspace/idiom && go test ./internal/runtime/llama ./internal/contracts/writerroute ....
+  -> bash {"command": "cd /workspace/idiom && go test ./internal/runtime/agent -run 'DirectAnswerSurface|DirectAn...
 [2m  ▎ thinking[0m
 All 52 focused tests pass across both test groups. Let me now do the final verification sweeps:
   · 57601 tok · in 57258 (55040 cached / 2218 new) · out 343 (65 reasoning) · ¥0.0040
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && grep -rn 'EvidenceCitationsOnly\\|citationClassifier\\|HostedUsage\...
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && go build ./... 2>&1"}
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && grep -n 'DirectAnswerSurfaceForBrief\\|directAnswerSurfaceEmitted\\...
+  -> bash {"command": "cd /workspace/idiom && grep -rn 'EvidenceCitationsOnly\\|citationClassifier\\|HostedUsage\...
+  -> bash {"command": "cd /workspace/idiom && go build ./... 2>&1"}
+  -> bash {"command": "cd /workspace/idiom && grep -n 'DirectAnswerSurfaceForBrief\\|directAnswerSurfaceEmitted\\...
 [2m  ▎ thinking[0m
 All evidence collected. Here is my independent final alignment verdict.
 

@@ -7,18 +7,15 @@ import (
 	"os"
 	"path/filepath"
 
-	"idiom/internal/surfaces/cliassets"
 	canonicalprompts "idiom/prompts"
 )
 
 // initSeedCodingProfile / initSeedClaudeQwenWorkerProfile are the
 // canonical chat-profile templates `idiom init` seeds under
-// .idiom/prompts/profiles/. Embedded assets live in internal/surfaces/cliassets;
-// the canonical reference copies live at prompts/profiles/<name>.md and
-// tests keep both locations in sync.
-var initSeedCodingProfile = cliassets.MustProfile("coding.md")
+// .idiom/prompts/profiles/.
+var initSeedCodingProfile = canonicalprompts.MustProfile("coding.md")
 
-var initSeedClaudeQwenWorkerProfile = cliassets.MustProfile("claude-qwen-worker.md")
+var initSeedClaudeQwenWorkerProfile = canonicalprompts.MustProfile("claude-qwen-worker.md")
 
 var initSeedBasePrompt = canonicalprompts.BasePrompt()
 
@@ -34,37 +31,47 @@ var initSeedBasePrompt = canonicalprompts.BasePrompt()
 func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom init", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	merge := fs.Bool("merge", false, "add only missing files; do not overwrite existing ones (use to upgrade an existing .idiom/ layout)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
 	tail := fs.Args()
 	target := "."
+
 	if len(tail) == 1 {
 		target = tail[0]
 	} else if len(tail) > 1 {
 		fmt.Fprintln(stderr, "init: too many positional arguments (expected at most one directory)")
+
 		return 2
 	}
 
 	abs, err := filepath.Abs(target)
 	if err != nil {
 		fmt.Fprintf(stderr, "init: resolve target: %v\n", err)
+
 		return 1
 	}
+
 	info, err := os.Stat(abs)
 	if err != nil {
 		fmt.Fprintf(stderr, "init: target directory does not exist: %s\n", abs)
+
 		return 2
 	}
+
 	if !info.IsDir() {
 		fmt.Fprintf(stderr, "init: target %q is not a directory\n", abs)
+
 		return 2
 	}
 
 	idiomDir := filepath.Join(abs, ".idiom")
 	if _, err := os.Stat(idiomDir); err == nil && !*merge {
 		fmt.Fprintf(stderr, "init: .idiom/ already exists at %s (use --merge to add only missing files)\n", idiomDir)
+
 		return 2
 	}
 
@@ -73,22 +80,30 @@ func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
 		if *merge {
 			if _, err := os.Stat(path); err == nil {
 				fmt.Fprintf(stdout, "(skipped existing %s)\n", path)
+
 				continue
 			}
 		}
+
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			fmt.Fprintf(stderr, "init: mkdir %q: %v\n", filepath.Dir(path), err)
+
 			return 1
 		}
+
 		if err := os.WriteFile(path, []byte(f.body), 0o644); err != nil {
 			fmt.Fprintf(stderr, "init: write %q: %v\n", path, err)
+
 			return 1
 		}
+
 		fmt.Fprintf(stdout, "created %s\n", path)
 	}
+
 	if !*merge {
 		fmt.Fprintf(stdout, "Initialized .idiom/ at %s\n", idiomDir)
 	}
+
 	return 0
 }
 

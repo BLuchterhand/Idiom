@@ -115,7 +115,7 @@ Now let me check for any remaining tests and verify the budget_ledger handling i
   · 77458 tok · in 74755 (73984 cached / 771 new) · out 2703 (2546 reasoning) · ¥0.0077
   -> grep {"path": "internal/evidence/eval", "pattern": "prompt_cache|PromptCache|reasoning_tokens|ReasoningTokens"}
   -> grep {"path": "internal/evidence/localization_report.go", "pattern": "cache_metrics_not_available"}
-  ⊘ grep ripgrep: rg: /Users/ben/Documents/GitHub/idiom/internal/evidence/localization_report.go: IO error for operation on /Users/ben/Documents/GitHub/idiom/internal/evidence/localization_report.go: No such file or directory (os error 2)
+  ⊘ grep ripgrep: rg: /workspace/idiom/internal/evidence/localization_report.go: IO error for operation on /workspace/idiom/internal/evidence/localization_report.go: No such file or directory (os error 2)
 [2m  ▎ thinking[0m
   · 77679 tok · in 77544 (77440 cached / 104 new) · out 135 (60 reasoning) · ¥0.0019
   -> grep {"path": "internal/evidence/eval/localization_report.go", "pattern": "cache_metrics_not_available|cache"}

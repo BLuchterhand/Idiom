@@ -95,9 +95,11 @@ func (err *ValidationError) Error() string {
 	if err == nil {
 		return ""
 	}
+
 	if strings.TrimSpace(err.Field) == "" {
 		return fmt.Sprintf("%s: %s", err.Code, err.Message)
 	}
+
 	return fmt.Sprintf("%s: %s: %s", err.Code, err.Field, err.Message)
 }
 
@@ -105,6 +107,7 @@ func Validate(artifact Artifact, contract Contract) error {
 	if artifact.SchemaVersion != SchemaVersion {
 		return validationError(CodeInvalidSchemaVersion, "schema_version", "must be "+SchemaVersion)
 	}
+
 	if artifact.Source != SourcePlanner && artifact.Source != SourceArtifactDistiller {
 		return validationError(CodeInvalidSource, "source", "must be planner or artifact_distiller")
 	}
@@ -113,10 +116,12 @@ func Validate(artifact Artifact, contract Contract) error {
 	if err != nil {
 		return validationError(CodeInvalidScope, "scope.required_edit_paths", err.Error())
 	}
+
 	contractRequired, err := normalizePathList(contract.RequiredEditPaths)
 	if err != nil {
 		return validationError(CodeInvalidScope, "contract.required_edit_paths", err.Error())
 	}
+
 	if !sameStringSet(required, contractRequired) {
 		return validationError(CodeRequiredScopeMismatch, "scope.required_edit_paths", "must match the active contract exactly")
 	}
@@ -125,22 +130,27 @@ func Validate(artifact Artifact, contract Contract) error {
 	if err != nil {
 		return validationError(CodeInvalidScope, "scope.candidate_edit_paths", err.Error())
 	}
+
 	contractCandidates, err := normalizePathList(contract.CandidateEditPaths)
 	if err != nil {
 		return validationError(CodeInvalidScope, "contract.candidate_edit_paths", err.Error())
 	}
+
 	allowed := pathSet(append(contractRequired, contractCandidates...))
 	for _, path := range candidates {
 		if _, ok := allowed[path]; !ok {
 			return validationError(CodeCandidateScopeRejected, "scope.candidate_edit_paths", fmt.Sprintf("%s is not in active candidate scope", path))
 		}
 	}
+
 	for _, path := range required {
 		allowed[path] = struct{}{}
 	}
+
 	for _, path := range candidates {
 		allowed[path] = struct{}{}
 	}
+
 	if err := validateEvidenceRefs("scope.evidence_refs", artifact.Scope.EvidenceRefs); err != nil {
 		return err
 	}
@@ -148,19 +158,23 @@ func Validate(artifact Artifact, contract Contract) error {
 	if len(artifact.Intents) == 0 && len(artifact.Blockers) == 0 {
 		return validationError(CodeInvalidIntentShape, "intents", "artifact must contain at least one intent or blocker")
 	}
+
 	if len(artifact.Intents) > 0 && len(artifact.Blockers) > 0 {
 		return validationError(CodeInvalidBlocker, "blockers", "artifact must contain intents or blockers, not both")
 	}
+
 	for i, intent := range artifact.Intents {
 		if err := validateIntent(i, intent, allowed); err != nil {
 			return err
 		}
 	}
+
 	for i, blocker := range artifact.Blockers {
 		if err := validateBlocker(i, blocker, allowed); err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -168,24 +182,30 @@ func validateIntent(index int, intent Intent, allowed map[string]struct{}) error
 	field := func(name string) string {
 		return fmt.Sprintf("intents[%d].%s", index, name)
 	}
+
 	path, err := normalizePath(intent.Path)
 	if err != nil {
 		return validationError(CodeInvalidScope, field("path"), err.Error())
 	}
+
 	if _, ok := allowed[path]; !ok {
 		return validationError(CodeIntentScopeRejected, field("path"), fmt.Sprintf("%s is outside active edit scope", path))
 	}
+
 	if !operationAllowed(intent.Operation) {
 		return validationError(CodeInvalidOperation, field("operation"), fmt.Sprintf("%s is not in edit_intent.v1 operation vocabulary", intent.Operation))
 	}
+
 	if err := validateEvidenceRefs(field("evidence_refs"), intent.EvidenceRefs); err != nil {
 		return err
 	}
+
 	switch intent.Operation {
 	case OperationReplaceExactText:
 		if strings.TrimSpace(intent.OldText) == "" || strings.TrimSpace(intent.NewText) == "" {
 			return validationError(CodeInvalidIntentShape, field("old_text"), "replace_exact_text requires non-empty old_text and new_text")
 		}
+
 		if intent.OldText == intent.NewText {
 			return validationError(CodeInvalidIntentShape, field("new_text"), "replace_exact_text cannot be a no-op")
 		}
@@ -202,6 +222,7 @@ func validateIntent(index int, intent Intent, allowed map[string]struct{}) error
 			return validationError(CodeInvalidIntentShape, field("old_text"), "delete_exact_text requires non-empty old_text")
 		}
 	}
+
 	return nil
 }
 
@@ -212,15 +233,18 @@ func validateBlocker(index int, blocker Blocker, allowed map[string]struct{}) er
 	if strings.TrimSpace(blocker.Code) == "" || strings.TrimSpace(blocker.Message) == "" {
 		return validationError(CodeInvalidBlocker, field("code"), "blockers require non-empty code and message")
 	}
+
 	for _, rawPath := range blocker.Paths {
 		path, err := normalizePath(rawPath)
 		if err != nil {
 			return validationError(CodeInvalidScope, field("paths"), err.Error())
 		}
+
 		if _, ok := allowed[path]; !ok {
 			return validationError(CodeIntentScopeRejected, field("paths"), fmt.Sprintf("%s is outside active edit scope", path))
 		}
 	}
+
 	return validateEvidenceRefs(field("evidence_refs"), blocker.EvidenceRefs)
 }
 
@@ -246,24 +270,30 @@ func validateEvidenceRefs(field string, refs []string) error {
 			return validationError(CodeInvalidEvidenceRef, fmt.Sprintf("%s[%d]", field, i), "evidence refs must be non-empty single-line strings")
 		}
 	}
+
 	return nil
 }
 
 func normalizePathList(paths []string) ([]string, error) {
 	out := make([]string, 0, len(paths))
 	seen := map[string]struct{}{}
+
 	for _, raw := range paths {
 		path, err := normalizePath(raw)
 		if err != nil {
 			return nil, err
 		}
+
 		if _, ok := seen[path]; ok {
 			continue
 		}
+
 		seen[path] = struct{}{}
 		out = append(out, path)
 	}
+
 	sort.Strings(out)
+
 	return out, nil
 }
 
@@ -272,6 +302,7 @@ func normalizePath(path string) (string, error) {
 	if normalized == "" {
 		return "", fmt.Errorf("path must stay relative to the workspace")
 	}
+
 	return normalized, nil
 }
 
@@ -279,11 +310,13 @@ func sameStringSet(left []string, right []string) bool {
 	if len(left) != len(right) {
 		return false
 	}
+
 	for i := range left {
 		if left[i] != right[i] {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -294,6 +327,7 @@ func pathSet(paths []string) map[string]struct{} {
 			out[path] = struct{}{}
 		}
 	}
+
 	return out
 }
 

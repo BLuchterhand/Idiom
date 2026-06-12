@@ -44,19 +44,24 @@ func TestBuildFailingScenarioSuiteCopiesFailedTasksWithRecords(t *testing.T) {
 	if got.Name != "source suite generated regressions" || got.Version != 2 {
 		t.Fatalf("unexpected suite identity: %#v", got)
 	}
+
 	if len(got.Tasks) != 1 {
 		t.Fatalf("expected one generated regression task, got %#v", got.Tasks)
 	}
+
 	task := got.Tasks[0]
 	if task.ID != "failed-regression" || task.Family != "behavior" || task.Prompt != "latest user prompt" {
 		t.Fatalf("unexpected generated task identity: %#v", task)
 	}
+
 	if len(task.Turns) != 2 || task.Fixture != "fixture-repo" || !task.Oracle.RequireNoShell {
 		t.Fatalf("expected source task fields to be preserved: %#v", task)
 	}
+
 	if !containsStringFold(task.Tags, "existing") || !containsStringFold(task.Tags, "generated-regression") {
 		t.Fatalf("expected source and generated tags, got %#v", task.Tags)
 	}
+
 	if task.Scenario.Name == "" || !containsStringFold(task.Scenario.RequireTools, "read_file") {
 		t.Fatalf("expected generated scenario from records, got %#v", task.Scenario)
 	}

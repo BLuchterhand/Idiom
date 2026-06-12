@@ -334,9 +334,11 @@ func TestSearchContentRedirectsAdditionalLanguageSyntaxPatterns(t *testing.T) {
 			ws := newTestWorkspaceWithFiles(t, tc.files)
 			d := NewDiscoveryRedirect()
 			decision := d.Consider(workspace.ToolRequest{Tool: "search_content", Pattern: tc.pattern}, ws)
+
 			if !decision.ShouldRedirect {
 				t.Fatalf("pattern %q should redirect", tc.pattern)
 			}
+
 			if decision.Language != tc.want {
 				t.Fatalf("language: want %s, got %s", tc.want, decision.Language)
 			}

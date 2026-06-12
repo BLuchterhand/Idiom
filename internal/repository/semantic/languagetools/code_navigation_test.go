@@ -34,6 +34,7 @@ func TestCodeNavigationSpecAcceptsDefinitionAliases(t *testing.T) {
 			if err != nil {
 				t.Fatalf("codeNavigationSpecFor(%q): %v", tc.capability, err)
 			}
+
 			if spec.Name != tc.wantName || spec.Capability != tc.wantCap {
 				t.Fatalf("codeNavigationSpecFor(%q) = %#v, want name=%q capability=%q", tc.capability, spec, tc.wantName, tc.wantCap)
 			}
@@ -46,24 +47,29 @@ func TestCodeNavigationCapabilityListMatchesSpecs(t *testing.T) {
 	if len(names) == 0 {
 		t.Fatal("expected advertised code navigation capabilities")
 	}
+
 	for _, name := range names {
 		spec, err := codeNavigationSpecFor(name)
 		if err != nil {
 			t.Fatalf("advertised capability %q did not resolve: %v", name, err)
 		}
+
 		if spec.Name != name {
 			t.Fatalf("advertised capability %q resolved as %q", name, spec.Name)
 		}
 	}
+
 	_, err := codeNavigationSpecFor("not_a_capability")
 	if err == nil {
 		t.Fatal("expected unknown capability to be rejected")
 	}
+
 	for _, name := range names {
 		if !strings.Contains(err.Error(), name) {
 			t.Fatalf("unknown-capability error omitted advertised capability %q: %s", name, err.Error())
 		}
 	}
+
 	if strings.Join(names, ", ") != codeNavigationCapabilityList() {
 		t.Fatalf("capability list helper drifted from names: names=%#v list=%q", names, codeNavigationCapabilityList())
 	}
@@ -90,6 +96,7 @@ const DebugLogModeRedacted DebugLogMode = "redacted"
 	if result.Error != "" {
 		t.Fatalf("code_navigate find_definition should route from symbol, got error: %s\n%s", result.Error, result.Output)
 	}
+
 	for _, want := range []string{"capability: definition", "routed_tool: go_definition", "route_summary: Resolved Go definition"} {
 		if !strings.Contains(result.Output, want) {
 			t.Fatalf("code_navigate output missing %q:\nsummary=%s\noutput=\n%s", want, result.Summary, result.Output)

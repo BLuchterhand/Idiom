@@ -39,95 +39,125 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 	if metrics.LastUser != "please edit the banner" {
 		t.Fatalf("unexpected last user: %q", metrics.LastUser)
 	}
+
 	if metrics.Tools["edit_file"] != 1 {
 		t.Fatalf("expected edit_file tool count, got %#v", metrics.Tools)
 	}
+
 	if !metrics.VerificationPassed {
 		t.Fatal("expected verification to pass")
 	}
+
 	if len(metrics.ChangedFiles) != 1 || metrics.ChangedFiles[0] != "internal/surfaces/tui/app/app.go" {
 		t.Fatalf("unexpected changed files: %#v", metrics.ChangedFiles)
 	}
+
 	if len(metrics.RoutePlans) != 1 {
 		t.Fatalf("expected one route plan, got %#v", metrics.RoutePlans)
 	}
+
 	plan := metrics.RoutePlans[0]
 	if plan.InitialLane != "locate" || plan.FollowupLane != "implement" || plan.Reason != "locate_request" || plan.Contract != "locate_targets" || plan.AgentMode != "plan" || plan.WorkflowKind != "optimization_refactor" || plan.WorkflowPhase != "awaiting_approval" || plan.Thoroughness != "medium" {
 		t.Fatalf("unexpected route plan: %#v", plan)
 	}
+
 	if !containsStringFold(metrics.EvidencePaths, "internal/surfaces/tui/app/app.go") {
 		t.Fatalf("expected evidence path from tool result summary, got %#v", metrics.EvidencePaths)
 	}
+
 	if len(metrics.Replans) != 1 || metrics.Replans[0].FromLane != "review" || metrics.Replans[0].ToLane != "architecture" {
 		t.Fatalf("unexpected replan recommendation: %#v", metrics.Replans)
 	}
+
 	if !languageCapabilityMatches(metrics.LanguageCapabilities, LanguageCapabilityExpectation{Language: "go", Tool: "go_find_symbol", Signal: "go.mod"}) {
 		t.Fatalf("expected Go language capability, got %#v", metrics.LanguageCapabilities)
 	}
+
 	if !languageCapabilityMatches(metrics.LanguageCapabilities, LanguageCapabilityExpectation{Language: "shell", Tool: "read_file", Signal: "scripts/run.sh"}) {
 		t.Fatalf("expected shell language capability, got %#v", metrics.LanguageCapabilities)
 	}
+
 	if len(metrics.VerificationPlans) != 1 {
 		t.Fatalf("expected one verification plan, got %#v", metrics.VerificationPlans)
 	}
+
 	verifyPlan := metrics.VerificationPlans[0]
 	if verifyPlan.RiskLevel != "high" || verifyPlan.Confidence != "medium" || verifyPlan.Coverage != "targeted package verification" {
 		t.Fatalf("unexpected verification plan: %#v", verifyPlan)
 	}
+
 	if !containsStringFold(verifyPlan.Commands, "go test -vet=off ./internal/surfaces/tui/app") || !containsStringFold(verifyPlan.ExpectedFailures, "routing or prompt assembly regressions") {
 		t.Fatalf("expected verification command and failure mode, got %#v", verifyPlan)
 	}
+
 	if metrics.SummaryRejections != 1 || !containsStringFold(metrics.SummaryRejectionLanes, "review") {
 		t.Fatalf("expected review summary rejection metric, got count=%d lanes=%#v", metrics.SummaryRejections, metrics.SummaryRejectionLanes)
 	}
+
 	if len(metrics.ReadinessChecks) != 1 || !metrics.ReadinessChecks[0].Ready || metrics.ReadinessChecks[0].Confidence != "high" {
 		t.Fatalf("expected readiness check metric, got %#v", metrics.ReadinessChecks)
 	}
+
 	if len(metrics.DeepeningAttempts) != 1 || !metrics.DeepeningAttempts[0].Attempted || metrics.DeepeningAttempts[0].Action != "retry_with_evidence" {
 		t.Fatalf("expected deepening attempt metric, got %#v", metrics.DeepeningAttempts)
 	}
+
 	if len(metrics.FinalAnswerCritics) != 1 || !metrics.FinalAnswerCritics[0].Passed || metrics.FinalAnswerCritics[0].Action != "accept" {
 		t.Fatalf("expected final answer critic metric, got %#v", metrics.FinalAnswerCritics)
 	}
+
 	if len(metrics.EffortPolicies) != 1 || metrics.EffortPolicies[0].Level != "thorough" || metrics.EffortPolicies[0].DeepeningPasses != 2 {
 		t.Fatalf("expected effort policy metric, got %#v", metrics.EffortPolicies)
 	}
+
 	if len(metrics.LongHorizonStates) != 1 || metrics.LongHorizonStates[0].Action != "persist" || !metrics.LongHorizonStates[0].Resumable {
 		t.Fatalf("expected long-horizon state metric, got %#v", metrics.LongHorizonStates)
 	}
+
 	if len(metrics.WorkflowStates) != 1 || metrics.WorkflowStates[0].Phase != "awaiting_approval" || !metrics.WorkflowStates[0].Resumable {
 		t.Fatalf("expected workflow state metric, got %#v", metrics.WorkflowStates)
 	}
+
 	if !containsStringFold(metrics.WorkflowStates[0].EditableTargets, "internal/surfaces/tui/app/app.go") || !containsStringFold(metrics.WorkflowStates[0].Verification, "go test ./internal/surfaces/tui/app") {
 		t.Fatalf("expected workflow target and verification metrics, got %#v", metrics.WorkflowStates[0])
 	}
+
 	if len(metrics.BudgetLedgers) != 1 || !metrics.BudgetLedgers[0].BudgetExhausted {
 		t.Fatalf("expected budget ledger metric, got %#v", metrics.BudgetLedgers)
 	}
+
 	if len(metrics.EvidenceDeltas) != 1 || metrics.EvidenceDeltas[0].MarginalValue != "medium" {
 		t.Fatalf("expected evidence delta metric, got %#v", metrics.EvidenceDeltas)
 	}
+
 	if len(metrics.ClaimConfidences) != 1 || metrics.ClaimConfidences[0].Confidence != "high" {
 		t.Fatalf("expected claim confidence metric, got %#v", metrics.ClaimConfidences)
 	}
+
 	if len(metrics.ContextCompactions) != 1 || metrics.ContextCompactions[0].DroppedMessages != 4 || !containsStringFold(metrics.ContextCompactions[0].PinnedPaths, "internal/surfaces/tui/app/app.go") {
 		t.Fatalf("expected context compaction metric, got %#v", metrics.ContextCompactions)
 	}
+
 	if len(metrics.RouteAmbiguities) != 1 || !metrics.RouteAmbiguities[0].Ambiguous {
 		t.Fatalf("expected route ambiguity metric, got %#v", metrics.RouteAmbiguities)
 	}
+
 	if len(metrics.VerificationFeedback) != 1 || metrics.VerificationFeedback[0].LearnedRecommendation == "" {
 		t.Fatalf("expected verification feedback metric, got %#v", metrics.VerificationFeedback)
 	}
+
 	if len(metrics.ToolFailureConfidence) != 1 || metrics.ToolFailureConfidence[0].ConfidenceImpact == "" {
 		t.Fatalf("expected tool-failure confidence metric, got %#v", metrics.ToolFailureConfidence)
 	}
+
 	if len(metrics.ControlRails) != 1 || metrics.ControlRails[0].TaskFamily != "review" || metrics.ControlRails[0].PermissionProfile != "analysis_read_only_then_guarded_writes" {
 		t.Fatalf("expected control rails metric, got %#v", metrics.ControlRails)
 	}
+
 	if !containsStringFold(metrics.ControlRails[0].TargetRefs, "internal/surfaces/tui/app/app.go") {
 		t.Fatalf("expected control rails target refs, got %#v", metrics.ControlRails[0].TargetRefs)
 	}
+
 	if metrics.ControlRails[0].AgentMode != "plan" || metrics.ControlRails[0].WorkflowKind != "optimization_refactor" || metrics.ControlRails[0].WorkflowPhase != "awaiting_approval" || !containsStringFold(metrics.ControlRails[0].AllowedTools, "task") {
 		t.Fatalf("expected control rails mode and allowed tools, got %#v", metrics.ControlRails[0])
 	}
@@ -149,10 +179,12 @@ func TestScenarioRoundTripFileHelpers(t *testing.T) {
 	if err := WriteScenario(path, scenario); err != nil {
 		t.Fatalf("WriteScenario: %v", err)
 	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read scenario file: %v", err)
 	}
+
 	if !strings.HasSuffix(string(data), "\n") {
 		t.Fatalf("WriteScenario should emit newline-terminated JSON, got %q", string(data))
 	}
@@ -161,6 +193,7 @@ func TestScenarioRoundTripFileHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadScenario: %v", err)
 	}
+
 	if got.Name != scenario.Name || !containsStringFold(got.RequireTools, "read_file") || !containsStringFold(got.RequireEvidencePaths, "internal/evidence/answergrounding/grounding.go") {
 		t.Fatalf("scenario round trip mismatch: %#v", got)
 	}
@@ -172,6 +205,7 @@ func TestLoadRecordsNormalizesLegacyPayloadRecords(t *testing.T) {
 		`{"kind":"message","payload":{"role":"user","content":"hello"},"ts":"2026-06-07T00:00:00Z","session_id":"s1"}`,
 		`{"type":"tool_result","tool":"read_file","summary":"Read internal/evidence/eval/eval.go"}`,
 	}
+
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
 		t.Fatalf("write log: %v", err)
 	}
@@ -180,12 +214,15 @@ func TestLoadRecordsNormalizesLegacyPayloadRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadRecords: %v", err)
 	}
+
 	if len(records) != 2 {
 		t.Fatalf("records length = %d, want 2", len(records))
 	}
+
 	if records[0].Type != "message" || records[0].Data["type"] != "message" || records[0].Data["kind"] != "message" || records[0].Data["session_id"] != "s1" {
 		t.Fatalf("legacy record was not normalized: %#v", records[0])
 	}
+
 	if records[1].Type != "tool_result" || records[1].Data["tool"] != "read_file" {
 		t.Fatalf("typed record should pass through: %#v", records[1])
 	}
@@ -205,9 +242,11 @@ func TestAnalyzeIncludesLiveContractRollbackChangedFiles(t *testing.T) {
 	if len(metrics.ChangedFiles) != 1 || metrics.ChangedFiles[0] != "internal/labels/labels.go" {
 		t.Fatalf("expected rollback changed-file evidence, got %#v", metrics.ChangedFiles)
 	}
+
 	if metrics.RecordTypes["idiom.live_contract.rollback"] != 1 {
 		t.Fatalf("expected rollback record type count, got %#v", metrics.RecordTypes)
 	}
+
 	if len(metrics.LiveContractRollbacks) != 1 || metrics.LiveContractRollbacks[0].Status != "clean" {
 		t.Fatalf("expected rollback snapshot, got %#v", metrics.LiveContractRollbacks)
 	}
@@ -279,6 +318,7 @@ func TestAnalyzeRoutePlanFromPlanExecuteWriterRouteDecision(t *testing.T) {
 	if len(metrics.RoutePlans) != 1 {
 		t.Fatalf("expected route plan from writer route event, got %#v", metrics.RoutePlans)
 	}
+
 	plan := metrics.RoutePlans[0]
 	if plan.InitialLane != "plan_then_execute_planner" || plan.Reason != "plan_then_execute_request" || plan.Contract != "implementation_result" {
 		t.Fatalf("unexpected plan-execute route plan: %#v", plan)
@@ -297,12 +337,15 @@ func TestAnalyzeExtractsRunnerMetricsFromRunEvents(t *testing.T) {
 	if got := metrics.MessageRoles["control_rails"]; got != 1 {
 		t.Fatalf("expected control_rails run_event role to be counted, got %d", got)
 	}
+
 	if len(metrics.ControlRails) != 1 || metrics.ControlRails[0].TaskFamily != "implementation" {
 		t.Fatalf("expected control rails from run_event, got %#v", metrics.ControlRails)
 	}
+
 	if len(metrics.BudgetLedgers) != 1 || metrics.BudgetLedgers[0].Lane != "implement" {
 		t.Fatalf("expected budget ledger from run_event, got %#v", metrics.BudgetLedgers)
 	}
+
 	if len(metrics.ContextCompactions) != 1 || metrics.ContextCompactions[0].DroppedMessages != 2 {
 		t.Fatalf("expected context compaction from run_event, got %#v", metrics.ContextCompactions)
 	}
@@ -338,9 +381,11 @@ func TestEvaluatePlanExecutionExpectationDetectsScopeDrift(t *testing.T) {
 			RequireExecutionPermissions: []string{"execute_approved_scope"},
 		},
 	})
+
 	if !report.Passed {
 		t.Fatalf("expected plan execution drift assertions to pass, got %#v", report.Findings)
 	}
+
 	noDrift := Evaluate("", records, Scenario{
 		Name: "plan-execution-no-drift",
 		RequirePlanExecution: &PlanExecutionExpectation{
@@ -352,6 +397,7 @@ func TestEvaluatePlanExecutionExpectationDetectsScopeDrift(t *testing.T) {
 	if noDrift.Passed {
 		t.Fatalf("expected no-drift assertion to fail when drift event is present")
 	}
+
 	if !strings.Contains(strings.Join(noDrift.Findings, "\n"), "plan execution drift was forbidden") {
 		t.Fatalf("expected no-drift finding, got %#v", noDrift.Findings)
 	}
@@ -378,6 +424,7 @@ func TestEvaluatePlanExecutionExpectationRequiresPacketFreshness(t *testing.T) {
 			RequirePacketFreshnessState: []string{"fresh"},
 		},
 	})
+
 	if !report.Passed {
 		t.Fatalf("expected fresh packet assertions to pass, got %#v", report.Findings)
 	}
@@ -397,6 +444,7 @@ func TestEvaluatePlanExecutionExpectationRequiresPacketFreshness(t *testing.T) {
 	if missing.Passed {
 		t.Fatalf("expected missing packet assertions to fail")
 	}
+
 	joined := strings.Join(missing.Findings, "\n")
 	for _, want := range []string{"packet presence was required", "fresh packet was required"} {
 		if !strings.Contains(joined, want) {
@@ -416,6 +464,7 @@ func TestEvaluatePlanExecutionExpectationRequiresPacketFreshness(t *testing.T) {
 	if createdOnly.Passed {
 		t.Fatalf("handoff_created without handoff_id must not satisfy RequireHandoffID")
 	}
+
 	if !strings.Contains(strings.Join(createdOnly.Findings, "\n"), "handoff id was required but not observed") {
 		t.Fatalf("expected strict handoff id finding, got %#v", createdOnly.Findings)
 	}
@@ -441,6 +490,7 @@ func TestEvaluatePlanExecuteVerificationEventsSatisfyVerificationRequirement(t *
 	if !report.Passed {
 		t.Fatalf("expected plan-execute verification events to satisfy verification requirement, got %#v", report.Findings)
 	}
+
 	if report.Metrics.VerificationChecks != 1 || !report.Metrics.VerificationPassed {
 		t.Fatalf("expected one passed verification check, got checks=%d passed=%t failed=%t", report.Metrics.VerificationChecks, report.Metrics.VerificationPassed, report.Metrics.VerificationFailed)
 	}
@@ -466,9 +516,11 @@ func TestEvaluatePlanExecuteVerificationFailureFailsPassedRequirement(t *testing
 	if report.Passed {
 		t.Fatalf("expected failed plan-execute verification to fail passed requirement")
 	}
+
 	if !strings.Contains(strings.Join(report.Findings, "\n"), "verification did not pass") {
 		t.Fatalf("expected verification failure finding, got %#v", report.Findings)
 	}
+
 	if report.Metrics.VerificationChecks != 1 || !report.Metrics.VerificationFailed || report.Metrics.VerificationPassed {
 		t.Fatalf("expected one failed verification check, got checks=%d passed=%t failed=%t", report.Metrics.VerificationChecks, report.Metrics.VerificationPassed, report.Metrics.VerificationFailed)
 	}
@@ -490,6 +542,7 @@ func TestAnalyzeDoesNotTreatGenericSourceSanityFallbackAsPassedVerification(t *t
 	if metrics.VerificationChecks != 1 {
 		t.Fatalf("VerificationChecks = %d, want 1", metrics.VerificationChecks)
 	}
+
 	if metrics.VerificationPassed || metrics.VerificationFailed {
 		t.Fatalf("generic fallback should be insufficient, not passed/failed: passed=%t failed=%t", metrics.VerificationPassed, metrics.VerificationFailed)
 	}
@@ -542,6 +595,7 @@ func TestAnalyzeDoesNotTreatPatchHygieneToolResultAsPassedVerification(t *testin
 	if report.Metrics.VerificationChecks != 1 {
 		t.Fatalf("VerificationChecks = %d, want 1", report.Metrics.VerificationChecks)
 	}
+
 	if report.Metrics.VerificationPassed || report.Metrics.VerificationFailed || report.Passed {
 		t.Fatalf("patch hygiene tool result should be insufficient, passed=%t failed=%t report=%t", report.Metrics.VerificationPassed, report.Metrics.VerificationFailed, report.Passed)
 	}
@@ -561,9 +615,11 @@ func TestAnalyzeUsesLaneSummaryAsAssistantFallback(t *testing.T) {
 	if metrics.AssistantTurns != 2 {
 		t.Fatalf("expected lane summaries to count as assistant fallback turns, got %d", metrics.AssistantTurns)
 	}
+
 	if !strings.Contains(metrics.FinalAssistant, "concrete line anchor") {
 		t.Fatalf("expected final assistant fallback from latest lane summary, got %q", metrics.FinalAssistant)
 	}
+
 	if len(metrics.RoutePlans) != 2 || metrics.RoutePlans[1].InitialLane != "implement" {
 		t.Fatalf("expected route_plan_final to be evaluated, got %#v", metrics.RoutePlans)
 	}
@@ -581,6 +637,7 @@ func TestAnalyzeCountsLaneSummaryWhenLaterTurnHasAssistant(t *testing.T) {
 	if metrics.AssistantTurns != 2 {
 		t.Fatalf("expected lane summary plus final assistant to cover both user turns, got %d", metrics.AssistantTurns)
 	}
+
 	if metrics.FinalAssistant != "Need a concrete anchor." {
 		t.Fatalf("expected real assistant to remain final assistant, got %q", metrics.FinalAssistant)
 	}
@@ -721,6 +778,7 @@ func TestEvaluateScenarioReportsFailures(t *testing.T) {
 	if report.Passed {
 		t.Fatalf("expected scenario to fail, got %#v", report)
 	}
+
 	joined := strings.Join(report.Findings, "\n")
 	for _, expected := range []string{"required tool", "route plan mismatch", "replan recommendation mismatch", "evidence paths do not include", "verification plan mismatch", "required readiness check", "required deepening attempt", "required final answer critic", "required effort policy", "required long-horizon state", "required workflow state", "required budget ledger", "required evidence delta", "required claim confidence", "required context compaction", "required route ambiguity", "required verification feedback", "required tool-failure confidence", "required control rails", "language capabilities do not include", "broad tool requests exceeded", "repeated dead-end requests exceeded", "summary rejections exceeded", "verification did not pass"} {
 		if !strings.Contains(joined, expected) {
@@ -758,12 +816,15 @@ func TestAnalyzeCountsRejectedToolResultWithoutRequestAsAttempt(t *testing.T) {
 	if metrics.ToolRequests != 3 {
 		t.Fatalf("expected rejected unrequested tool_result attempts to count as tool requests, got %d", metrics.ToolRequests)
 	}
+
 	if metrics.Tools["code_navigate"] != 1 {
 		t.Fatalf("expected rejected code_navigate attempt to count as tool usage, got %#v", metrics.Tools)
 	}
+
 	if metrics.DiscoveryTools["code_navigate"] != 1 || metrics.DiscoveryClasses["language_symbol"] != 1 {
 		t.Fatalf("expected rejected code_navigate attempt to count as discovery attempt, tools=%#v classes=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses)
 	}
+
 	if metrics.ErrorCount != 2 || len(metrics.Errors) != 2 {
 		t.Fatalf("expected two error events and two unique errors, count=%d errors=%#v", metrics.ErrorCount, metrics.Errors)
 	}
@@ -812,12 +873,15 @@ func TestAnalyzeUncountsRecoverablePostReadinessGapAttempt(t *testing.T) {
 	if metrics.ToolRequests != 1 {
 		t.Fatalf("expected recoverable post-readiness gap attempt to be uncounted, got %d", metrics.ToolRequests)
 	}
+
 	if metrics.Tools["code_navigate"] != 0 {
 		t.Fatalf("expected recoverable code_navigate attempt to be uncounted, got %#v", metrics.Tools)
 	}
+
 	if metrics.DiscoveryTools["code_navigate"] != 0 || metrics.DiscoveryClasses["language_symbol"] != 0 {
 		t.Fatalf("expected recoverable discovery metrics to be uncounted, tools=%#v classes=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses)
 	}
+
 	if metrics.ErrorCount != 0 || len(metrics.Errors) != 0 {
 		t.Fatalf("expected recoverable post-readiness gap not to count as an error, count=%d errors=%#v", metrics.ErrorCount, metrics.Errors)
 	}
@@ -834,9 +898,11 @@ func TestAnalyzeDoesNotCountCompletionGateAsToolRequest(t *testing.T) {
 	if metrics.ToolRequests != 1 {
 		t.Fatalf("expected completion_gate feedback not to count as workspace tool request, got %d", metrics.ToolRequests)
 	}
+
 	if metrics.Tools["completion_gate"] != 0 {
 		t.Fatalf("expected completion_gate not to count as tool usage, got %#v", metrics.Tools)
 	}
+
 	if metrics.CompletionGateRejections != 1 {
 		t.Fatalf("expected completion gate rejection metric to remain, got %d", metrics.CompletionGateRejections)
 	}
@@ -855,6 +921,7 @@ func TestAnalyzeParsesVerificationPlanRunEvent(t *testing.T) {
 	if len(metrics.VerificationPlans) != 1 {
 		t.Fatalf("expected verification plan from run_event, got %#v", metrics.VerificationPlans)
 	}
+
 	plan := metrics.VerificationPlans[0]
 	if plan.Confidence != "low" || !containsStringFold(plan.Commands, "bash -n scripts/run-harness.sh") || !containsStringFold(plan.ExpectedFailures, "shell syntax errors") {
 		t.Fatalf("unexpected verification plan: %#v", plan)
@@ -880,6 +947,7 @@ func TestAnalyzeDoesNotUncountPriorToolForUnrequestedRecoverableGap(t *testing.T
 	if metrics.ToolRequests != 1 || metrics.Tools["code_navigate"] != 1 {
 		t.Fatalf("expected unrequested recoverable gap not to decrement prior valid attempt, requests=%d tools=%#v", metrics.ToolRequests, metrics.Tools)
 	}
+
 	if metrics.ErrorCount != 0 {
 		t.Fatalf("expected unrequested recoverable gap not to count as an error, got %d", metrics.ErrorCount)
 	}
@@ -895,6 +963,7 @@ func TestAnalyzeKeepsRepeatedIdenticalErrorEventCount(t *testing.T) {
 	if metrics.ErrorCount != 2 {
 		t.Fatalf("expected repeated identical errors to count as two events, got %d", metrics.ErrorCount)
 	}
+
 	if len(metrics.Errors) != 1 {
 		t.Fatalf("expected retained error messages to remain deduplicated, got %#v", metrics.Errors)
 	}
@@ -912,9 +981,11 @@ func TestAnalyzeDeduplicatesMirroredToolAndErrorRecordsByStep(t *testing.T) {
 	if metrics.ToolRequests != 2 {
 		t.Fatalf("expected mirrored records to count as two logical attempts, got %d", metrics.ToolRequests)
 	}
+
 	if metrics.Tools["read_file"] != 1 || metrics.Tools["code_navigate"] != 1 {
 		t.Fatalf("expected logical tool counts, got %#v", metrics.Tools)
 	}
+
 	if metrics.ErrorCount != 1 {
 		t.Fatalf("expected duplicate rejected result records to count as one logical error event, got %d", metrics.ErrorCount)
 	}
@@ -1014,6 +1085,7 @@ func TestEvaluateScenarioRequiresAssistantForEachUserTurn(t *testing.T) {
 	if report.Passed {
 		t.Fatalf("expected missing assistant-turn coverage to fail, got %#v", report)
 	}
+
 	if !strings.Contains(strings.Join(report.Findings, "\n"), "assistant turns fewer than user turns") {
 		t.Fatalf("expected assistant-turn finding, got %#v", report.Findings)
 	}
@@ -1066,6 +1138,7 @@ func TestEvaluateScenarioRequireRunEventsPassesWhenRolesPresent(t *testing.T) {
 	if !report.Passed {
 		t.Fatalf("expected scenario to pass when both required run events appear, got findings %v", report.Findings)
 	}
+
 	if got := report.Metrics.MessageRoles["plan_then_execute_write_guard"]; got != 1 {
 		t.Fatalf("expected MessageRoles to count plan_then_execute_write_guard once, got %d", got)
 	}
@@ -1084,12 +1157,15 @@ func TestEvaluateScenarioRequireRunEventsFailsWhenRoleMissing(t *testing.T) {
 	if report.Passed {
 		t.Fatalf("expected scenario to fail when required run event is absent, got pass")
 	}
+
 	var sawFinding bool
+
 	for _, finding := range report.Findings {
 		if strings.Contains(finding, `required run event "plan_then_execute_write_guard" was not observed`) {
 			sawFinding = true
 		}
 	}
+
 	if !sawFinding {
 		t.Fatalf("expected finding pointing at the missing run event, got %v", report.Findings)
 	}
@@ -1119,6 +1195,7 @@ func TestEvaluateScenarioRequireRunEventsMatchesOrchestratorEventTypes(t *testin
 	if !report.Passed {
 		t.Fatalf("expected scenario to pass when orchestrator events appear as top-level record types, got findings %v", report.Findings)
 	}
+
 	if got := report.Metrics.RecordTypes["idiom.plan_execute.preflight_failed"]; got != 1 {
 		t.Fatalf("expected RecordTypes to count preflight_failed once, got %d", got)
 	}
@@ -1160,6 +1237,7 @@ func TestEvaluateScenarioRequireRunEventsMatchesNestedAutonomyEventTypes(t *test
 	if !report.Passed {
 		t.Fatalf("expected scenario to pass when autonomy event payload type appears, got findings %v", report.Findings)
 	}
+
 	if got := report.Metrics.RecordTypes["tool_policy_result"]; got != 1 {
 		t.Fatalf("expected RecordTypes to count nested tool_policy_result once, got %d", got)
 	}
@@ -1242,6 +1320,7 @@ func TestEvaluateScenarioAcceptsFrontierControllerTelemetry(t *testing.T) {
 			FailureToEval:         boolPtr(false),
 		},
 	})
+
 	if !report.Passed {
 		t.Fatalf("expected frontier telemetry scenario to pass, got %#v", report)
 	}
@@ -1281,72 +1360,95 @@ func TestBuildSuggestedScenarioReflectsObservedMetrics(t *testing.T) {
 	if scenario.Name != "banner-remove" {
 		t.Fatalf("unexpected scenario name: %q", scenario.Name)
 	}
+
 	if len(scenario.PromptContains) != 1 || scenario.PromptContains[0] != "remove the banner text" {
 		t.Fatalf("unexpected prompt matchers: %#v", scenario.PromptContains)
 	}
+
 	if scenario.RequireVerification != "passed" {
 		t.Fatalf("expected passed verification, got %q", scenario.RequireVerification)
 	}
+
 	if !containsStringFold(scenario.RequireTools, "search_content") {
 		t.Fatalf("expected successful narrowing tool in scenario: %#v", scenario.RequireTools)
 	}
+
 	if !containsStringFold(scenario.RequireChangedFiles, "internal/surfaces/tui/app/app.go") {
 		t.Fatalf("expected changed file in scenario: %#v", scenario.RequireChangedFiles)
 	}
+
 	if scenario.RequireRoutePlan == nil || scenario.RequireRoutePlan.InitialLane != "locate" || scenario.RequireRoutePlan.Contract != "locate_targets" {
 		t.Fatalf("expected suggested route plan in scenario, got %#v", scenario.RequireRoutePlan)
 	}
+
 	if scenario.RequireReplan == nil || scenario.RequireReplan.FromLane != "locate" || scenario.RequireReplan.ToLane != "review" {
 		t.Fatalf("expected suggested replan in scenario, got %#v", scenario.RequireReplan)
 	}
+
 	if !containsStringFold(scenario.RequireEvidencePaths, "internal/surfaces/tui/app/app.go") {
 		t.Fatalf("expected suggested evidence path in scenario, got %#v", scenario.RequireEvidencePaths)
 	}
+
 	if !containsLanguageCapabilityExpectation(scenario.RequireLanguageCapabilities, "go") {
 		t.Fatalf("expected suggested Go language capability, got %#v", scenario.RequireLanguageCapabilities)
 	}
+
 	if scenario.RequireVerificationPlan == nil || scenario.RequireVerificationPlan.RiskLevel != "high" || scenario.RequireVerificationPlan.UsesFullSuite == nil || !*scenario.RequireVerificationPlan.UsesFullSuite {
 		t.Fatalf("expected suggested verification plan, got %#v", scenario.RequireVerificationPlan)
 	}
+
 	if scenario.RequireReadiness == nil || scenario.RequireReadiness.Ready == nil || *scenario.RequireReadiness.Ready || scenario.RequireReadiness.Action != "retry" {
 		t.Fatalf("expected suggested readiness check, got %#v", scenario.RequireReadiness)
 	}
+
 	if scenario.RequireDeepening == nil || scenario.RequireDeepening.Attempted == nil || !*scenario.RequireDeepening.Attempted || scenario.RequireDeepening.Action != "retry_with_evidence" {
 		t.Fatalf("expected suggested deepening attempt, got %#v", scenario.RequireDeepening)
 	}
+
 	if scenario.RequireFinalAnswerCritic == nil || scenario.RequireFinalAnswerCritic.Repaired == nil || !*scenario.RequireFinalAnswerCritic.Repaired || scenario.RequireFinalAnswerCritic.Action != "repair" {
 		t.Fatalf("expected suggested final answer critic, got %#v", scenario.RequireFinalAnswerCritic)
 	}
+
 	if scenario.RequireEffortPolicy == nil || scenario.RequireEffortPolicy.Level != "medium" || scenario.RequireEffortPolicy.MinAnalysisToolBudget == nil || *scenario.RequireEffortPolicy.MinAnalysisToolBudget != 6 {
 		t.Fatalf("expected suggested effort policy, got %#v", scenario.RequireEffortPolicy)
 	}
+
 	if scenario.RequireLongHorizonState == nil || scenario.RequireLongHorizonState.Action != "resume" || scenario.RequireLongHorizonState.Stage == nil || *scenario.RequireLongHorizonState.Stage != 2 {
 		t.Fatalf("expected suggested long-horizon state, got %#v", scenario.RequireLongHorizonState)
 	}
+
 	if scenario.RequireBudgetLedger == nil || scenario.RequireBudgetLedger.BudgetExhausted == nil || !*scenario.RequireBudgetLedger.BudgetExhausted || scenario.RequireBudgetLedger.MinModelCalls == nil || *scenario.RequireBudgetLedger.MinModelCalls != 2 {
 		t.Fatalf("expected suggested budget ledger, got %#v", scenario.RequireBudgetLedger)
 	}
+
 	if scenario.RequireEvidenceDelta == nil || scenario.RequireEvidenceDelta.MinNewPaths == nil || *scenario.RequireEvidenceDelta.MinNewPaths != 1 || scenario.RequireEvidenceDelta.MaxFailedTools == nil || *scenario.RequireEvidenceDelta.MaxFailedTools != 0 {
 		t.Fatalf("expected suggested evidence delta, got %#v", scenario.RequireEvidenceDelta)
 	}
+
 	if scenario.RequireClaimConfidence == nil || scenario.RequireClaimConfidence.MaxUnresolved == nil || *scenario.RequireClaimConfidence.MaxUnresolved != 1 || scenario.RequireClaimConfidence.CalibrationBasis == "" {
 		t.Fatalf("expected suggested claim confidence, got %#v", scenario.RequireClaimConfidence)
 	}
+
 	if scenario.RequireContextCompaction == nil || scenario.RequireContextCompaction.MinDroppedMessages == nil || *scenario.RequireContextCompaction.MinDroppedMessages != 3 || !containsStringFold(scenario.RequireContextCompaction.RequirePinnedPaths, "internal/surfaces/tui/app/app.go") {
 		t.Fatalf("expected suggested context compaction, got %#v", scenario.RequireContextCompaction)
 	}
+
 	if scenario.RequireRouteAmbiguity == nil || scenario.RequireRouteAmbiguity.Ambiguous == nil || !*scenario.RequireRouteAmbiguity.Ambiguous || !containsStringFold(scenario.RequireRouteAmbiguity.RequireSignals, "implement") {
 		t.Fatalf("expected suggested route ambiguity, got %#v", scenario.RequireRouteAmbiguity)
 	}
+
 	if scenario.RequireVerificationFeedback == nil || scenario.RequireVerificationFeedback.Confidence != "high" || len(scenario.RequireVerificationFeedback.RecommendationContains) != 1 || !containsStringFold(scenario.RequireVerificationFeedback.RequireFailureClasses, "go_unused_variable") {
 		t.Fatalf("expected suggested verification feedback, got %#v", scenario.RequireVerificationFeedback)
 	}
+
 	if scenario.RequireToolFailureConfidence == nil || scenario.RequireToolFailureConfidence.Tool != "read_file" || scenario.RequireToolFailureConfidence.ConfidenceImpact == "" {
 		t.Fatalf("expected suggested tool-failure confidence, got %#v", scenario.RequireToolFailureConfidence)
 	}
+
 	if scenario.RequireControlRails == nil || scenario.RequireControlRails.TaskFamily != "locate" || scenario.RequireControlRails.VerificationContract != "tests_passed_or_failed_or_skipped_with_blocker" {
 		t.Fatalf("expected suggested control rails, got %#v", scenario.RequireControlRails)
 	}
+
 	if scenario.MaxSummaryRejections == nil || *scenario.MaxSummaryRejections != 1 {
 		t.Fatalf("expected suggested summary rejection budget, got %#v", scenario.MaxSummaryRejections)
 	}
@@ -1357,6 +1459,7 @@ func TestParseReplanRecommendation(t *testing.T) {
 	if replan.FromLane != "review" || replan.ToLane != "architecture" || !strings.Contains(replan.Reason, "structural evidence") {
 		t.Fatalf("unexpected replan parse: %#v", replan)
 	}
+
 	if !replanMatches(replan, ReplanExpectation{FromLane: "review", ToLane: "architecture", Reason: "structural"}) {
 		t.Fatalf("expected replan matcher to accept %#v", replan)
 	}
@@ -1376,6 +1479,7 @@ func TestParseLanguageCapabilities(t *testing.T) {
 	if !languageCapabilityMatches(caps, LanguageCapabilityExpectation{Language: "go", Tool: "go_find_symbol", Signal: "internal/surfaces/tui/app/app.go"}) {
 		t.Fatalf("expected Go capability, got %#v", caps)
 	}
+
 	if !languageCapabilityMatches(caps, LanguageCapabilityExpectation{Language: "c/c++", Tool: "cpp_find_symbol", Signal: "native/main.cpp"}) {
 		t.Fatalf("expected C/C++ capability, got %#v", caps)
 	}
@@ -1386,6 +1490,7 @@ func TestParseVerificationPlan(t *testing.T) {
 	if plan.Raw == "" {
 		t.Fatal("expected verification plan to parse")
 	}
+
 	if !verificationPlanMatches(plan, VerificationPlanExpectation{
 		Coverage:                "full-suite escalation",
 		Confidence:              "high",
@@ -1394,6 +1499,7 @@ func TestParseVerificationPlan(t *testing.T) {
 		RequireCommands:         []string{"go test -vet=off ./..."},
 		RequireExpectedFailures: []string{"compile errors"},
 	}) {
+
 		t.Fatalf("expected verification plan matcher to accept %#v", plan)
 	}
 }
@@ -1403,6 +1509,7 @@ func TestParseReadinessCheck(t *testing.T) {
 	if readiness.Raw == "" {
 		t.Fatal("expected readiness check to parse")
 	}
+
 	if !readinessMatches(readiness, ReadinessExpectation{
 		Lane:             "architecture",
 		Ready:            boolPtr(false),
@@ -1411,6 +1518,7 @@ func TestParseReadinessCheck(t *testing.T) {
 		MinEvidencePaths: intPtr(2),
 		ReasonContains:   []string{"more evidence"},
 	}) {
+
 		t.Fatalf("expected readiness matcher to accept %#v", readiness)
 	}
 }
@@ -1420,6 +1528,7 @@ func TestParseDeepeningAttempt(t *testing.T) {
 	if deepening.Raw == "" {
 		t.Fatal("expected deepening attempt to parse")
 	}
+
 	if !deepeningMatches(deepening, DeepeningExpectation{
 		Lane:             "review",
 		Attempted:        boolPtr(true),
@@ -1428,6 +1537,7 @@ func TestParseDeepeningAttempt(t *testing.T) {
 		MinEvidencePaths: intPtr(2),
 		ReasonContains:   []string{"readiness gate"},
 	}) {
+
 		t.Fatalf("expected deepening matcher to accept %#v", deepening)
 	}
 }
@@ -1437,6 +1547,7 @@ func TestParseFinalAnswerCritic(t *testing.T) {
 	if critic.Raw == "" {
 		t.Fatal("expected final answer critic to parse")
 	}
+
 	if !finalAnswerCriticMatches(critic, FinalAnswerCriticExpectation{
 		Contract:        "implementation_result",
 		Passed:          boolPtr(false),
@@ -1444,6 +1555,7 @@ func TestParseFinalAnswerCritic(t *testing.T) {
 		Repaired:        boolPtr(true),
 		RequireFindings: []string{"verification"},
 	}) {
+
 		t.Fatalf("expected final answer critic matcher to accept %#v", critic)
 	}
 }
@@ -1453,6 +1565,7 @@ func TestParseEffortPolicy(t *testing.T) {
 	if policy.Raw == "" {
 		t.Fatal("expected effort policy to parse")
 	}
+
 	if !effortPolicyMatches(policy, EffortPolicyExpectation{
 		Lane:                   "review",
 		Level:                  "thorough",
@@ -1463,6 +1576,7 @@ func TestParseEffortPolicy(t *testing.T) {
 		ConfidenceFloor:        "high_or_exhausted_budget",
 		BudgetExhaustionMode:   "answer_with_explicit_uncertainty_or_fallback",
 	}) {
+
 		t.Fatalf("expected effort policy matcher to accept %#v", policy)
 	}
 }
@@ -1472,6 +1586,7 @@ func TestParseLongHorizonState(t *testing.T) {
 	if state.Raw == "" {
 		t.Fatal("expected long-horizon state to parse")
 	}
+
 	if !longHorizonStateMatches(state, LongHorizonStateExpectation{
 		Action:           "persist",
 		SourceLane:       "architecture",
@@ -1481,6 +1596,7 @@ func TestParseLongHorizonState(t *testing.T) {
 		NextContains:     []string{"workspace manager"},
 		Resumable:        boolPtr(true),
 	}) {
+
 		t.Fatalf("expected long-horizon matcher to accept %#v", state)
 	}
 }
@@ -1490,6 +1606,7 @@ func TestParseContextCompaction(t *testing.T) {
 	if compaction.Raw == "" {
 		t.Fatal("expected context compaction to parse")
 	}
+
 	if !contextCompactionMatches(compaction, ContextCompactionExpectation{
 		MinDroppedMessages:  intPtr(3),
 		MinRetainedMessages: intPtr(5),
@@ -1498,6 +1615,7 @@ func TestParseContextCompaction(t *testing.T) {
 		PinnedMemoryKind:    "partial_repair",
 		StrategyContains:    []string{"pinned_task_memory"},
 	}) {
+
 		t.Fatalf("expected context compaction matcher to accept %#v", compaction)
 	}
 }
@@ -1516,8 +1634,10 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		MinEvidencePaths: intPtr(1),
 		BudgetExhausted:  boolPtr(true),
 	}) {
+
 		t.Fatal("expected budget ledger mismatch to be rejected")
 	}
+
 	if !budgetLedgerMatches(BudgetLedgerSnapshot{
 		Lane:            "review",
 		UsedModelCalls:  2,
@@ -1530,8 +1650,10 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		MinTotalTokens: intPtr(40),
 		StopReason:     "model_final",
 	}) {
+
 		t.Fatal("expected budget ledger matcher to accept sufficient token usage")
 	}
+
 	if budgetLedgerMatches(BudgetLedgerSnapshot{
 		Lane:        "review",
 		TotalTokens: 10,
@@ -1539,8 +1661,10 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		Lane:           "review",
 		MinTotalTokens: intPtr(40),
 	}) {
+
 		t.Fatal("expected budget ledger token mismatch to be rejected")
 	}
+
 	if evidenceDeltaMatches(EvidenceDeltaSnapshot{
 		Lane:             "review",
 		NewEvidencePaths: nil,
@@ -1554,8 +1678,10 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		MinToolResults: intPtr(2),
 		MaxFailedTools: intPtr(0),
 	}) {
+
 		t.Fatal("expected evidence delta mismatch to be rejected")
 	}
+
 	if claimConfidenceMatches(ClaimConfidenceSnapshot{
 		Lane:                  "review",
 		Confidence:            "low",
@@ -1569,8 +1695,10 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		MaxUnresolved:    intPtr(0),
 		CalibrationBasis: "grounded",
 	}) {
+
 		t.Fatal("expected claim confidence mismatch to be rejected")
 	}
+
 	if contextCompactionMatches(ContextCompactionSnapshot{
 		DroppedMessages:  1,
 		RetainedMessages: 2,
@@ -1586,8 +1714,10 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		PinnedMemoryKind:    "partial_repair",
 		StrategyContains:    []string{"pinned_task_memory"},
 	}) {
+
 		t.Fatal("expected context compaction mismatch to be rejected")
 	}
+
 	if routeAmbiguityMatches(RouteAmbiguitySnapshot{
 		SelectedLane: "architecture",
 		Signals:      []string{"architecture"},
@@ -1599,8 +1729,10 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		RequireSignals:   []string{"implement"},
 		TieBreakContains: []string{"selected review"},
 	}) {
+
 		t.Fatal("expected route ambiguity mismatch to be rejected")
 	}
+
 	if verificationFeedbackMatches(VerificationFeedbackSnapshot{
 		Confidence:            "low",
 		FailedCommands:        []string{"go test ./internal/surfaces/tui/app"},
@@ -1612,8 +1744,10 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		RequireFailureClasses:  []string{"go_import_cycle"},
 		RecommendationContains: []string{"full-suite success"},
 	}) {
+
 		t.Fatal("expected verification feedback mismatch to be rejected")
 	}
+
 	if toolFailureConfidenceMatches(ToolFailureConfidenceSnapshot{
 		Lane:             "review",
 		Tool:             "read_file",
@@ -1623,6 +1757,7 @@ func TestFrontierControllerMatchersRejectMismatches(t *testing.T) {
 		Tool:             "search_content",
 		ConfidenceImpact: "ignore_failure",
 	}) {
+
 		t.Fatal("expected tool-failure confidence mismatch to be rejected")
 	}
 }
@@ -1632,6 +1767,7 @@ func TestParseGeneralLongHorizonTaskMemory(t *testing.T) {
 	if state.Raw == "" {
 		t.Fatal("expected general long-horizon state to parse")
 	}
+
 	if !longHorizonStateMatches(state, LongHorizonStateExpectation{
 		Action:                     "persist",
 		MemoryKind:                 "partial_repair",
@@ -1643,6 +1779,7 @@ func TestParseGeneralLongHorizonTaskMemory(t *testing.T) {
 		RequireNextActions:         []string{"repair failing verification before widening implementation scope"},
 		Resumable:                  boolPtr(true),
 	}) {
+
 		t.Fatalf("expected general long-horizon matcher to accept %#v", state)
 	}
 }
@@ -1680,12 +1817,15 @@ func TestAnalyzeTracksDiscoveryBalanceMetadata(t *testing.T) {
 	if metrics.DiscoveryTools["structural_search"] != 1 || metrics.DiscoveryTools["discovery_query"] != 1 || metrics.DiscoveryTools["semgrep_scan"] != 1 || metrics.DiscoveryTools["dependency_graph"] != 1 {
 		t.Fatalf("unexpected discovery tool counts: %#v", metrics.DiscoveryTools)
 	}
+
 	if metrics.DiscoveryClasses["ast_search"] != 1 || metrics.DiscoveryClasses["composite_query"] != 1 || metrics.DiscoveryClasses["security_scan"] != 1 || metrics.DiscoveryClasses["dependency_graph"] != 1 {
 		t.Fatalf("unexpected discovery class counts: %#v", metrics.DiscoveryClasses)
 	}
+
 	if metrics.DiscoveryScopes["targeted"] != 2 || metrics.DiscoveryScopes["broad"] != 2 {
 		t.Fatalf("unexpected discovery scope counts: %#v", metrics.DiscoveryScopes)
 	}
+
 	if metrics.DiscoveryCosts["high"] != 1 || metrics.DiscoveryCosts["medium"] != 3 || metrics.HeavyDiscoveryRequests != 1 {
 		t.Fatalf("unexpected discovery cost metrics: costs=%#v heavy=%d", metrics.DiscoveryCosts, metrics.HeavyDiscoveryRequests)
 	}
@@ -1715,6 +1855,7 @@ func TestAnalyzePromotesRunEventSidecarRoles(t *testing.T) {
 	if len(metrics.ReadinessChecks) != 1 || len(metrics.FinalAnswerCritics) != 1 {
 		t.Fatalf("expected run_event sidecar roles to be analyzed, got readiness=%#v critic=%#v", metrics.ReadinessChecks, metrics.FinalAnswerCritics)
 	}
+
 	for _, want := range []string{"internal/runtime/agent/runner.go", "internal/runtime/agent/runner_child_tasks.go", "internal/runtime/agent/answer_composer.go"} {
 		if !containsStringFold(metrics.EvidencePaths, want) {
 			t.Fatalf("expected run_event readiness evidence path %q in metrics, got %#v", want, metrics.EvidencePaths)
@@ -1738,15 +1879,18 @@ func TestEvaluateDiscoveryBalanceAssertions(t *testing.T) {
 		RequireDiscoveryClasses:   []string{"composite_query", "security_scan"},
 		MaxHeavyDiscoveryRequests: &maxHeavy,
 	})
+
 	if !report.Passed {
 		t.Fatalf("expected discovery balance scenario to pass, findings=%#v", report.Findings)
 	}
 
 	zeroHeavy := 0
+
 	report = Evaluate("discovery.jsonl", records, Scenario{
 		Name:                      "heavy budget",
 		MaxHeavyDiscoveryRequests: &zeroHeavy,
 	})
+
 	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), "heavy discovery requests exceeded") {
 		t.Fatalf("expected heavy discovery budget failure, got passed=%t findings=%#v", report.Passed, report.Findings)
 	}
@@ -1755,14 +1899,18 @@ func TestEvaluateDiscoveryBalanceAssertions(t *testing.T) {
 func TestLoadRecordsReadsJSONL(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sample.jsonl")
+
 	const payload = "{\"type\":\"message\",\"role\":\"user\",\"content\":\"hi\"}\n{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"hello\"}\n"
+
 	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
 		t.Fatalf("write sample log: %v", err)
 	}
+
 	records, err := LoadRecords(path)
 	if err != nil {
 		t.Fatalf("LoadRecords: %v", err)
 	}
+
 	if len(records) != 2 {
 		t.Fatalf("expected 2 records, got %d", len(records))
 	}
@@ -1771,20 +1919,26 @@ func TestLoadRecordsReadsJSONL(t *testing.T) {
 func TestLoadRecordsNormalizesKindPayloadJSONL(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sample.jsonl")
+
 	const payload = "{\"kind\":\"tool_request\",\"payload\":{\"tool\":\"search_content\",\"raw\":\"{\\\"pattern\\\":\\\"Runner\\\"}\",\"action\":\"search_content:Runner\"}}\n"
+
 	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
 		t.Fatalf("write sample log: %v", err)
 	}
+
 	records, err := LoadRecords(path)
 	if err != nil {
 		t.Fatalf("LoadRecords: %v", err)
 	}
+
 	if len(records) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(records))
 	}
+
 	if records[0].Type != "tool_request" {
 		t.Fatalf("record type: want tool_request, got %q", records[0].Type)
 	}
+
 	if got, _ := records[0].Data["tool"].(string); got != "search_content" {
 		t.Fatalf("normalized tool: want search_content, got %q", got)
 	}
@@ -1794,16 +1948,20 @@ func TestLoadRecordsHandlesLongJSONLLine(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sample.jsonl")
 	payload := "{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"" + strings.Repeat("x", 128*1024) + "\"}\n"
+
 	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
 		t.Fatalf("write sample log: %v", err)
 	}
+
 	records, err := LoadRecords(path)
 	if err != nil {
 		t.Fatalf("LoadRecords: %v", err)
 	}
+
 	if len(records) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(records))
 	}
+
 	if got, _ := records[0].Data["content"].(string); len(got) != 128*1024 {
 		t.Fatalf("long content length: want %d, got %d", 128*1024, len(got))
 	}
@@ -1819,19 +1977,24 @@ func TestAnalyzeLogSupportsE2EKindPayloadRecords(t *testing.T) {
 		`{"kind":"assistant_turn","payload":{"index":0,"chars":42}}`,
 		`{"kind":"summary","payload":{"elapsed_ms":99,"tool_requests":1,"tool_results":1,"answer_chars":42}}`,
 	}, "\n") + "\n"
+
 	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
 		t.Fatalf("write e2e log: %v", err)
 	}
+
 	report, err := AnalyzeLog(path)
 	if err != nil {
 		t.Fatalf("AnalyzeLog: %v", err)
 	}
+
 	if report.UserPrompt != "find Runner" {
 		t.Fatalf("user prompt: want find Runner, got %q", report.UserPrompt)
 	}
+
 	if report.Tools.SearchContent != 1 || report.Tools.Total != 1 {
 		t.Fatalf("tool counts not parsed: %+v", report.Tools)
 	}
+
 	if report.ToolResults != 1 || report.DurationMillis != 99 || report.FinalAnswerChars != 42 {
 		t.Fatalf("summary metrics not parsed: %+v", report)
 	}
@@ -1843,6 +2006,7 @@ func containsLanguageCapabilityExpectation(items []LanguageCapabilityExpectation
 			return true
 		}
 	}
+
 	return false
 }
 

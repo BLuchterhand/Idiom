@@ -12,9 +12,12 @@ func packWorkspaceStateFingerprints(root string, learnedWeights map[string]float
 	if learnedWeights == nil {
 		return state
 	}
+
 	data, _ := json.Marshal(learnedWeights)
+
 	state.RankerWeightsFingerprint = shortSHA256Hex(append([]byte("learned_weights_override\x00"), data...))
 	state.WorkspaceStateFingerprint = composeWorkspaceStateFingerprint(state.RankerWeightsFingerprint, state.RuntimeTracesFingerprint)
+
 	return state
 }
 
@@ -53,9 +56,11 @@ func savePack(root string, result PackResult) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
+
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return err
 	}
+
 	return os.WriteFile(path, append(data, '\n'), 0o644)
 }

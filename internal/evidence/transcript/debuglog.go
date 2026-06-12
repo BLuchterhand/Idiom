@@ -188,24 +188,29 @@ func NewDebugLogger(opts DebugLoggerOptions) (*DebugLogger, error) {
 	if strings.TrimSpace(opts.Dir) == "" {
 		opts.Dir = "logs/conversations"
 	}
+
 	if opts.Mode == "" {
 		opts.Mode = DebugLogModeRedacted
 	}
 
 	var filename string
+
 	if strings.TrimSpace(opts.ResumePath) != "" {
 		if _, err := os.Stat(opts.ResumePath); err != nil {
 			return nil, fmt.Errorf("resume log %q: %w", opts.ResumePath, err)
 		}
+
 		filename = opts.ResumePath
 	} else {
 		if err := os.MkdirAll(opts.Dir, 0o755); err != nil {
 			return nil, fmt.Errorf("create debug log dir: %w", err)
 		}
+
 		stem := time.Now().Format("20060102-150405.000")
 		if sid := strings.TrimSpace(opts.SessionID); sid != "" {
 			stem = stem + "-" + sid
 		}
+
 		filename = filepath.Join(opts.Dir, stem+".jsonl")
 	}
 
@@ -226,6 +231,7 @@ func (l *DebugLogger) Path() string {
 	if l == nil {
 		return ""
 	}
+
 	return l.path
 }
 
@@ -233,6 +239,7 @@ func (l *DebugLogger) Mode() DebugLogMode {
 	if l == nil {
 		return DebugLogModeRedacted
 	}
+
 	return l.mode
 }
 
@@ -240,9 +247,11 @@ func (l *DebugLogger) SetMode(mode DebugLogMode) {
 	if l == nil {
 		return
 	}
+
 	if mode == "" {
 		mode = DebugLogModeRedacted
 	}
+
 	l.mode = mode
 }
 
@@ -250,6 +259,7 @@ func (l *DebugLogger) Close() error {
 	if l == nil || l.file == nil {
 		return nil
 	}
+
 	return l.file.Close()
 }
 
@@ -268,11 +278,13 @@ func (l *DebugLogger) LogSessionStart(start SessionStart) error {
 	if start.CtxSize > 0 {
 		record["ctx_size"] = start.CtxSize
 	}
+
 	if l.mode == DebugLogModeFull {
 		record["system_prompt"] = start.SystemPrompt
 	} else if digest := digestText(start.SystemPrompt); digest != "" {
 		record["system_prompt_digest"] = digest
 	}
+
 	return l.writeRecord(record)
 }
 
@@ -280,6 +292,7 @@ func (l *DebugLogger) sanitizePromptSources(sources []PromptSource) []PromptSour
 	if len(sources) == 0 {
 		return nil
 	}
+
 	out := make([]PromptSource, 0, len(sources))
 	for _, source := range sources {
 		out = append(out, PromptSource{
@@ -288,6 +301,7 @@ func (l *DebugLogger) sanitizePromptSources(sources []PromptSource) []PromptSour
 			Path:        l.sanitizeText(source.Path),
 		})
 	}
+
 	return out
 }
 
@@ -304,6 +318,7 @@ func (l *DebugLogger) LogContext(contextSources []string, systemPrompt string, w
 	} else if digest := digestText(systemPrompt); digest != "" {
 		record["system_prompt_digest"] = digest
 	}
+
 	return l.writeRecord(record)
 }
 
@@ -336,12 +351,15 @@ func (l *DebugLogger) LogToolRequestDetail(d ToolRequestDetail) error {
 	if strings.TrimSpace(d.DiscoveryClass) != "" {
 		record["discovery_class"] = strings.TrimSpace(d.DiscoveryClass)
 	}
+
 	if strings.TrimSpace(d.DiscoveryScope) != "" {
 		record["discovery_scope"] = strings.TrimSpace(d.DiscoveryScope)
 	}
+
 	if strings.TrimSpace(d.DiscoveryCost) != "" {
 		record["discovery_cost"] = strings.TrimSpace(d.DiscoveryCost)
 	}
+
 	return l.writeRecord(record)
 }
 
@@ -368,31 +386,41 @@ func (l *DebugLogger) LogToolResultDetail(d ToolResultDetail) error {
 	if d.OutputChars > 0 {
 		record["output_chars"] = d.OutputChars
 	}
+
 	if d.OutputLines > 0 {
 		record["output_lines"] = d.OutputLines
 	}
+
 	if path := strings.TrimSpace(d.Path); path != "" {
 		record["path"] = l.sanitizeText(path)
 	}
+
 	if d.StartLine > 0 {
 		record["start_line"] = d.StartLine
 	}
+
 	if d.EndLine > 0 {
 		record["end_line"] = d.EndLine
 	}
+
 	if d.Truncated {
 		record["truncated"] = true
 	}
+
 	if strings.TrimSpace(d.DiscoveryClass) != "" {
 		record["discovery_class"] = strings.TrimSpace(d.DiscoveryClass)
 	}
+
 	if strings.TrimSpace(d.DiscoveryScope) != "" {
 		record["discovery_scope"] = strings.TrimSpace(d.DiscoveryScope)
 	}
+
 	if strings.TrimSpace(d.DiscoveryCost) != "" {
 		record["discovery_cost"] = strings.TrimSpace(d.DiscoveryCost)
 	}
+
 	l.addToolResultExtraFields(record, d.ExtraFields)
+
 	return l.writeRecord(record)
 }
 
@@ -402,6 +430,7 @@ func (l *DebugLogger) addToolResultExtraFields(record map[string]any, fields map
 		if !strings.HasPrefix(key, "context_") {
 			continue
 		}
+
 		switch typed := value.(type) {
 		case string:
 			if strings.TrimSpace(typed) != "" {
@@ -426,35 +455,44 @@ func (l *DebugLogger) LogModelCall(c ModelCall) error {
 	if c.PromptTokens > 0 {
 		record["prompt_tokens"] = c.PromptTokens
 	}
+
 	if c.CompletionTokens > 0 {
 		record["completion_tokens"] = c.CompletionTokens
 	}
+
 	if c.TotalTokens > 0 {
 		record["total_tokens"] = c.TotalTokens
 	}
+
 	if c.PromptCacheAccountingKnown {
 		record["prompt_cache_hit_tokens"] = c.PromptCacheHitTokens
 		record["prompt_cache_miss_tokens"] = c.PromptCacheMissTokens
 		record["prompt_cache_accounting_known"] = true
 	}
+
 	if c.ReasoningTokens > 0 {
 		record["reasoning_tokens"] = c.ReasoningTokens
 	}
+
 	if c.CtxSize > 0 {
 		record["ctx_size"] = c.CtxSize
 		if c.PromptTokens > 0 {
 			record["ctx_pct"] = roundPct(float64(c.PromptTokens) / float64(c.CtxSize))
 		}
 	}
+
 	if len(c.RoleChars) > 0 {
 		record["role_chars"] = c.RoleChars
 	}
+
 	if strings.TrimSpace(c.ChosenTool) != "" {
 		record["chosen_tool"] = c.ChosenTool
 	}
+
 	if c.DurationMillis > 0 {
 		record["duration_ms"] = c.DurationMillis
 	}
+
 	return l.writeRecord(record)
 }
 
@@ -483,9 +521,11 @@ func (l *DebugLogger) LogTurnSummary(s TurnSummary) error {
 	if s.MaxModelCalls > 0 {
 		record["max_model_calls"] = s.MaxModelCalls
 	}
+
 	if s.MaxToolSteps > 0 {
 		record["max_tool_steps"] = s.MaxToolSteps
 	}
+
 	return l.writeRecord(record)
 }
 
@@ -511,18 +551,23 @@ func (l *DebugLogger) LogSessionSummary(s SessionSummary) error {
 		record["ctx_size"] = s.CtxSize
 		record["peak_ctx_pct"] = roundPct(s.PeakCtxPct)
 	}
+
 	if s.PromptCacheAccountingKnown && s.PromptCacheHitTokens+s.PromptCacheMissTokens > 0 {
 		record["prompt_cache_hit_rate"] = roundPct(s.PromptCacheHitRate)
 	}
+
 	if len(s.TopToolsByOutput) > 0 {
 		record["top_tools_by_output"] = s.TopToolsByOutput
 	}
+
 	if len(s.DiscoveryByClass) > 0 {
 		record["discovery_by_class"] = s.DiscoveryByClass
 	}
+
 	if len(s.DiscoveryByCost) > 0 {
 		record["discovery_by_cost"] = s.DiscoveryByCost
 	}
+
 	return l.writeRecord(record)
 }
 
@@ -533,17 +578,20 @@ func roundPct(v float64) float64 {
 
 func (l *DebugLogger) LogMessage(role, content string) error {
 	content = l.sanitizeText(content)
+
 	record := map[string]any{
 		"ts":      time.Now().Format(time.RFC3339Nano),
 		"type":    "message",
 		"role":    role,
 		"content": content,
 	}
+
 	return l.writeMessageRecord(role, content, record)
 }
 
 func (l *DebugLogger) LogInputSubmission(content string) error {
 	content = l.sanitizeText(content)
+
 	return l.writeRecord(map[string]any{
 		"ts":      time.Now().Format(time.RFC3339Nano),
 		"type":    "input_submission",
@@ -553,6 +601,7 @@ func (l *DebugLogger) LogInputSubmission(content string) error {
 
 func (l *DebugLogger) LogRunEvent(role, content string) error {
 	content = l.sanitizeText(content)
+
 	return l.writeRecord(map[string]any{
 		"ts":      time.Now().Format(time.RFC3339Nano),
 		"type":    "run_event",
@@ -605,15 +654,20 @@ func (l *DebugLogger) sanitizeToolRaw(raw string) string {
 	if l == nil || l.mode == DebugLogModeFull || strings.TrimSpace(raw) == "" {
 		return raw
 	}
+
 	var payload any
+
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return l.sanitizeText(raw)
 	}
+
 	sanitized := l.sanitizeValue("", payload)
+
 	encoded, err := json.Marshal(sanitized)
 	if err != nil {
 		return l.sanitizeText(raw)
 	}
+
 	return string(encoded)
 }
 
@@ -624,12 +678,14 @@ func (l *DebugLogger) sanitizeValue(key string, value any) any {
 		for k, v := range typed {
 			out[k] = l.sanitizeValue(k, v)
 		}
+
 		return out
 	case []any:
 		out := make([]any, 0, len(typed))
 		for _, item := range typed {
 			out = append(out, l.sanitizeValue("", item))
 		}
+
 		return out
 	case string:
 		switch key {
@@ -649,8 +705,10 @@ func (l *DebugLogger) sanitizeText(text string) string {
 	if l == nil || l.mode == DebugLogModeFull || strings.TrimSpace(text) == "" {
 		return text
 	}
+
 	text = redactWorkspacePaths(text, l.workspaceRoot)
 	text = util.RedactSecrets(text)
+
 	return text
 }
 
@@ -670,6 +728,7 @@ func (l *DebugLogger) writeRecord(record map[string]any) error {
 	if _, err := l.file.Write(append(line, '\n')); err != nil {
 		return fmt.Errorf("write debug log: %w", err)
 	}
+
 	return nil
 }
 
@@ -690,16 +749,20 @@ func (l *DebugLogger) writeMessageRecord(role, content string, record map[string
 		l.lastSummaryContent = ""
 		return nil
 	}
+
 	if _, err := l.file.Write(append(line, '\n')); err != nil {
 		return fmt.Errorf("write debug log: %w", err)
 	}
+
 	l.lastMessageRole = role
 	l.lastMessageContent = content
+
 	if isLaneSummaryRole(role) {
 		l.lastSummaryContent = content
 	} else if role == "assistant" {
 		l.lastSummaryContent = ""
 	}
+
 	return nil
 }
 
@@ -722,7 +785,9 @@ func digestText(text string) string {
 	if strings.TrimSpace(text) == "" {
 		return ""
 	}
+
 	sum := sha256.Sum256([]byte(text))
+
 	return fmt.Sprintf("sha256:%x", sum[:8])
 }
 
@@ -730,6 +795,7 @@ func redactedBlob(text string) string {
 	if strings.TrimSpace(text) == "" {
 		return ""
 	}
+
 	return fmt.Sprintf("<redacted %d chars>", len(text))
 }
 
@@ -738,7 +804,9 @@ func redactWorkspacePaths(text string, workspaceRoot string) string {
 	if workspaceRoot == "" {
 		return text
 	}
+
 	text = strings.ReplaceAll(text, workspaceRoot+string(filepath.Separator), "./")
 	text = strings.ReplaceAll(text, workspaceRoot, ".")
+
 	return text
 }

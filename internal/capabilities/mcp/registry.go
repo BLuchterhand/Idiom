@@ -43,6 +43,7 @@ type registeredTool struct {
 // ListTools / CallTool to use them.
 func NewRegistry() *Registry {
 	bg, cancel := context.WithCancel(context.Background())
+
 	return &Registry{
 		clients:  make(map[string]*Client),
 		tools:    make(map[string]registeredTool),
@@ -64,28 +65,35 @@ func (r *Registry) Spawn(ctx context.Context, cfg ServerConfig) error {
 	if name == "" {
 		return fmt.Errorf("mcp server name is required")
 	}
+
 	if strings.TrimSpace(cfg.Command) == "" {
 		return fmt.Errorf("mcp server %q command is required", name)
 	}
+
 	transport, err := StartStdio(r.bgCtx, cfg.Command, cfg.Args, cfg.Env)
 	if err != nil {
 		return fmt.Errorf("mcp %s start: %w", name, err)
 	}
+
 	client := NewClient(transport)
 	if err := client.Start(r.bgCtx); err != nil {
 		_ = transport.Close()
 		return fmt.Errorf("mcp %s reader: %w", name, err)
 	}
+
 	if err := client.Initialize(ctx, "idiom"); err != nil {
 		_ = client.Close()
 		return fmt.Errorf("mcp %s initialize: %w", name, err)
 	}
+
 	tools, err := client.ListTools(ctx)
 	if err != nil {
 		_ = client.Close()
 		return fmt.Errorf("mcp %s tools/list: %w", name, err)
 	}
+
 	r.register(name, client, tools)
+
 	return nil
 }
 
@@ -96,23 +104,29 @@ func (r *Registry) RegisterExisting(ctx context.Context, name string, client *Cl
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("mcp server name is required")
 	}
+
 	if err := client.Start(r.bgCtx); err != nil {
 		return err
 	}
+
 	if err := client.Initialize(ctx, "idiom"); err != nil {
 		return err
 	}
+
 	tools, err := client.ListTools(ctx)
 	if err != nil {
 		return err
 	}
+
 	r.register(name, client, tools)
+
 	return nil
 }
 
 func (r *Registry) register(name string, client *Client, tools []Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	r.clients[name] = client
 	for _, tool := range tools {
 		r.tools[QualifiedToolName(name, tool.Name)] = registeredTool{Server: name, Tool: tool}
@@ -132,10 +146,12 @@ func ParseQualifiedToolName(name string) (server string, tool string, ok bool) {
 	if trimmed == name {
 		return "", "", false
 	}
+
 	idx := strings.IndexByte(trimmed, '/')
 	if idx <= 0 || idx >= len(trimmed)-1 {
 		return "", "", false
 	}
+
 	return trimmed[:idx], trimmed[idx+1:], true
 }
 
@@ -143,10 +159,12 @@ func ParseQualifiedToolName(name string) (server string, tool string, ok bool) {
 func (r *Registry) Tools() map[string]Tool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	out := make(map[string]Tool, len(r.tools))
 	for k, v := range r.tools {
 		out[k] = v.Tool
 	}
+
 	return out
 }
 
@@ -154,7 +172,9 @@ func (r *Registry) Tools() map[string]Tool {
 func (r *Registry) Has(qualified string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	_, ok := r.tools[qualified]
+
 	return ok
 }
 
@@ -164,13 +184,17 @@ func (r *Registry) Call(ctx context.Context, qualified string, arguments json.Ra
 	if !ok {
 		return ToolCallResult{}, fmt.Errorf("mcp: %q is not a qualified MCP tool", qualified)
 	}
+
 	r.mu.RLock()
+
 	client := r.clients[server]
 	_, known := r.tools[qualified]
 	r.mu.RUnlock()
+
 	if client == nil || !known {
 		return ToolCallResult{}, fmt.Errorf("mcp: server %q not registered for tool %q", server, tool)
 	}
+
 	return client.CallTool(ctx, tool, arguments)
 }
 
@@ -180,18 +204,24 @@ func (r *Registry) Close() error {
 	if r == nil {
 		return nil
 	}
+
 	if r.bgCancel != nil {
 		r.bgCancel()
 	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	var firstErr error
+
 	for _, client := range r.clients {
 		if err := client.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
+
 	r.clients = make(map[string]*Client)
 	r.tools = make(map[string]registeredTool)
+
 	return firstErr
 }

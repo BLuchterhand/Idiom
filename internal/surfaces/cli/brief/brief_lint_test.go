@@ -14,14 +14,18 @@ import (
 // sees the right root.
 func briefPreflightTestDeps(t *testing.T) string {
 	t.Helper()
+
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not available on PATH")
 	}
+
 	scriptPath, cleanup, err := writeEmbeddedBriefPreflight()
 	if err != nil {
 		t.Fatalf("materialize brief-preflight.py: %v", err)
 	}
+
 	t.Cleanup(cleanup)
+
 	return scriptPath
 }
 
@@ -31,15 +35,20 @@ func briefPreflightTestDeps(t *testing.T) string {
 // decides where to verify named files. Returns (exitCode, combinedOutput).
 func runPreflight(t *testing.T, scriptPath, briefPath, workspace string) (int, string) {
 	t.Helper()
+
 	cmd := exec.Command("python3", scriptPath, briefPath)
+
 	cmd.Dir = workspace
+
 	out, err := cmd.CombinedOutput()
 	exit := 0
+
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		exit = exitErr.ExitCode()
 	} else if err != nil {
 		t.Fatalf("preflight subprocess failed: %v (output=%s)", err, out)
 	}
+
 	return exit, string(out)
 }
 
@@ -48,29 +57,36 @@ func runPreflight(t *testing.T, scriptPath, briefPath, workspace string) (int, s
 // keyed by relative path are written under it.
 func makeWorkspace(t *testing.T, files map[string]string) string {
 	t.Helper()
+
 	dir := t.TempDir()
 	gitDir := filepath.Join(dir, ".git")
+
 	if err := os.Mkdir(gitDir, 0o755); err != nil {
 		t.Fatalf("mkdir .git: %v", err)
 	}
+
 	for rel, content := range files {
 		full := filepath.Join(dir, rel)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatalf("mkdir parent of %s: %v", rel, err)
 		}
+
 		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
 			t.Fatalf("write %s: %v", rel, err)
 		}
 	}
+
 	return dir
 }
 
 func writeLintBrief(t *testing.T, dir, content string) string {
 	t.Helper()
+
 	briefPath := filepath.Join(dir, "brief.md")
 	if err := os.WriteFile(briefPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("write brief: %v", err)
 	}
+
 	return briefPath
 }
 
@@ -85,9 +101,11 @@ func withCanonicalSections(body string) string {
 	if !strings.Contains(out, "## Required Edits") && !strings.Contains(out, "## Required Behavior") {
 		out += "\n## Required Edits\n\nApply the edit named in the Files to Modify row.\n"
 	}
+
 	if !strings.Contains(out, "## Acceptance") {
 		out += "\n## Acceptance\n\n- `go build ./...` succeeds.\n"
 	}
+
 	return out
 }
 
@@ -110,9 +128,11 @@ func TestBriefLintParsesParentheticalHeading(t *testing.T) {
 		"## Verified Anchors\n\n"+
 		"Confirmed: `Existing` is at line 2.\n"))
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("expected lint OK on a well-formed brief, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "1 file-allowlist row(s)") {
 		t.Fatalf("parser must recognize parenthetical heading and parse the row: %s", out)
 	}
@@ -131,9 +151,11 @@ func TestBriefLintParsesScopeFilesHeading(t *testing.T) {
 		"| `scripts/verify_atom.sh` | MODIFY trace audit at line 1 |\n\n"+
 		"## Verified Current State\n\nLine 1 is `#!/usr/bin/env bash`.\n"))
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("expected lint OK on Scope/Files allowlist, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "1 file-allowlist row(s)") {
 		t.Fatalf("parser must recognize Scope/Files and parse the row: %s", out)
 	}
@@ -157,12 +179,15 @@ func TestBriefLintBlocksScopeFilesBriefWithoutAnchoredSections(t *testing.T) {
 		"## Acceptance\n\n"+
 		"1. `bash -n scripts/verify_atom.sh`\n")
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 1 {
 		t.Fatalf("expected lint FAIL on Scope/Files brief missing anchored sections, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "required section missing for anchored-edits mode") {
 		t.Fatalf("stderr should report anchored structural failure: %s", out)
 	}
+
 	if strings.Contains(out, "brief shape is unknown") {
 		t.Fatalf("Scope/Files should be classified as anchored, not unknown: %s", out)
 	}
@@ -177,9 +202,11 @@ func TestBriefLintBlocksUnknownBriefShape(t *testing.T) {
 		"## Acceptance\n\n"+
 		"- `go test ./...`\n")
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 1 {
 		t.Fatalf("expected lint FAIL on unknown brief shape, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "brief shape is unknown") {
 		t.Fatalf("stderr should report unknown brief shape: %s", out)
 	}
@@ -202,12 +229,15 @@ func TestBriefLintBlocksProseAnchorInAllowlist(t *testing.T) {
 		"| `internal/foo/bar.go` | ADD `func Added()` near top of file (line 2) |\n\n"+
 		"## Current state\n\nLine 2 is `func Existing() {}`.\n")
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 1 {
 		t.Fatalf("expected lint FAIL on prose anchor, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "prose anchor in allowlist row") {
 		t.Fatalf("stderr should name the prose-anchor failure: %s", out)
 	}
+
 	if !strings.Contains(out, "near top of file") {
 		t.Fatalf("stderr should echo the offending phrase: %s", out)
 	}
@@ -232,9 +262,11 @@ func TestBriefLintWarnsOnBranchingInRequiredEdit(t *testing.T) {
 		"### Edit 1 — `bar.go` add Added\n\n"+
 		"Either add the function alongside Existing or define it in a new file.\n"))
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("branching should WARN, not FAIL, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "branching language in Required Edit") {
 		t.Fatalf("stderr should carry the branching WARN: %s", out)
 	}
@@ -268,9 +300,11 @@ func TestBriefLintDoesNotWarnOnMultipleReadFirstAnchors(t *testing.T) {
 		"## Acceptance\n\n"+
 		"- `go build ./...` succeeds.\n")
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("read-first anchors should not fail lint, got exit=%d output=%s", exit, out)
 	}
+
 	if strings.Contains(out, "structure-describing anchors") {
 		t.Fatalf("read-first/current-state line evidence should not trigger edit-contract warning: %s", out)
 	}
@@ -295,9 +329,11 @@ func TestBriefLintWarnsOnMultipleRequiredEditAnchors(t *testing.T) {
 		"## Acceptance\n\n"+
 		"- `go build ./...` succeeds.\n")
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("structure anchor issue should WARN, not FAIL, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "structure-describing anchors") {
 		t.Fatalf("required-edit line soup should still trigger the warning: %s", out)
 	}
@@ -320,9 +356,11 @@ func TestBriefLintBlocksDiscoveryMandate(t *testing.T) {
 		"## Current state\n\nLine 2 is `func Existing() {}`.\n\n"+
 		"## Discovery\n\nFirst, run idiom tool lookup and inline the output here.\n")
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 1 {
 		t.Fatalf("expected lint FAIL on discovery mandate, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "discovery-mandate") {
 		t.Fatalf("stderr should carry the discovery-mandate failure: %s", out)
 	}
@@ -343,9 +381,11 @@ func TestBriefLintAnchorVerificationFileExists(t *testing.T) {
 		"| `internal/foo/bar.go` | ADD `func Added()` at line 2 |\n\n"+
 		"## Current state\n\nLine 2 is `func Existing() {}`.\n"))
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("expected OK when named file exists, got exit=%d output=%s", exit, out)
 	}
+
 	if strings.Contains(out, "anchor verification skipped") {
 		t.Fatalf("verification should run when the file exists: %s", out)
 	}
@@ -368,12 +408,15 @@ func TestBriefLintAnchorVerificationFileMissing(t *testing.T) {
 		"| `internal/foo/missing.go` | ADD `func Other()` at line 1 |\n\n"+
 		"## Current state\n\nLine 2 is `func Existing() {}`.\n")
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 1 {
 		t.Fatalf("expected FAIL when a named file is missing, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "file not found in workspace") {
 		t.Fatalf("stderr should name the missing-file failure: %s", out)
 	}
+
 	if !strings.Contains(out, "internal/foo/missing.go") {
 		t.Fatalf("stderr should name the specific missing path: %s", out)
 	}
@@ -397,9 +440,11 @@ func TestBriefLintAnchorVerificationSkipsExplicitNewFileRows(t *testing.T) {
 		"| `.idiom/postflight/checks/new_guard.json` | New file target. Create the idiom project check JSON. |\n\n"+
 		"## Current state\n\nLine 2 is `func Existing() {}`.\n"))
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("expected OK with explicit new-file rows skipped, got exit=%d output=%s", exit, out)
 	}
+
 	if strings.Contains(out, "file not found in workspace") {
 		t.Fatalf("new-file rows should not be treated as stale paths: %s", out)
 	}
@@ -424,9 +469,11 @@ func TestBriefLintPlanExecuteNewSourceFileRequiresInlineBody(t *testing.T) {
 		"## Acceptance\n\n"+
 		"- `python3 native/tests/run_tests.py -- -ts=NewPairwise`\n"))
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 1 {
 		t.Fatalf("expected FAIL for plan-execute new source file without body, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "plan-execute new-file body missing") {
 		t.Fatalf("stderr should name missing new-file body failure: %s", out)
 	}
@@ -466,9 +513,11 @@ func TestBriefLintPlanExecuteNewSourceFileAcceptsInlineBody(t *testing.T) {
 		"## Acceptance\n\n"+
 		"- `python3 native/tests/run_tests.py -- -ts=NewPairwise`\n"))
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("expected OK with inline new-file body, got exit=%d output=%s", exit, out)
 	}
+
 	if strings.Contains(out, "plan-execute new-file body missing") {
 		t.Fatalf("inline body should satisfy new-file plan-execute gate: %s", out)
 	}
@@ -496,6 +545,7 @@ func TestBriefLintPlanExecuteNewSourceFileAcceptsReplaceAllShape(t *testing.T) {
 		"## Acceptance\n\n"+
 		"- `python3 native/tests/run_tests.py -- -ts=NewPairwise`\n"))
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("expected OK with explicit replace_all shape, got exit=%d output=%s", exit, out)
 	}
@@ -521,6 +571,7 @@ func TestBriefLintImplementationNewSourceFileAllowsImplementationShape(t *testin
 		"## Acceptance\n\n"+
 		"- `python3 native/tests/run_tests.py -- -ts=NewPairwise`\n"))
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("implementation lane should not require a full new-file body, got exit=%d output=%s", exit, out)
 	}
@@ -554,9 +605,11 @@ func TestBriefLintAnchorVerificationOldTextMatches(t *testing.T) {
 		"}\n"+
 		"```\n"))
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("expected OK when old_text matches file, got exit=%d output=%s", exit, out)
 	}
+
 	if strings.Contains(out, "does not match") {
 		t.Fatalf("verification should not report a mismatch: %s", out)
 	}
@@ -591,9 +644,11 @@ func TestBriefLintAnchorVerificationOldTextStale(t *testing.T) {
 		"}\n"+
 		"```\n")
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 1 {
 		t.Fatalf("expected FAIL on stale old_text, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "does not match") {
 		t.Fatalf("stderr should name the stale-anchor failure: %s", out)
 	}
@@ -617,9 +672,11 @@ func TestBriefLintBlocksCommandBackedMutationWithoutEditShape(t *testing.T) {
 		"## Acceptance\n\n"+
 		"- `git diff --check`\n")
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 1 {
 		t.Fatalf("expected FAIL for command-backed mutation without edit shape, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "mutating command") || !strings.Contains(out, "explicit edit shape") {
 		t.Fatalf("stderr should explain command-backed mutation contract, got: %s", out)
 	}
@@ -642,6 +699,7 @@ func TestBriefLintAllowsDomainFunctionCallWithRefreshWording(t *testing.T) {
 		"## Acceptance\n\n"+
 		"- `git diff --check`\n")
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("domain function calls with refresh wording should not be classified as shell-backed mutation, got exit=%d output=%s", exit, out)
 	}
@@ -664,9 +722,11 @@ func TestBriefLintBlocksProseAppendWithoutEditShape(t *testing.T) {
 		"## Acceptance\n\n"+
 		"- `git diff --check`\n")
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 1 {
 		t.Fatalf("expected FAIL for prose append without edit shape, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "prose-only mutation site") || !strings.Contains(out, "old_text/new_text") {
 		t.Fatalf("stderr should explain prose-anchor mutation contract, got: %s", out)
 	}
@@ -695,9 +755,11 @@ func TestBriefLintAnchorVerificationOldTextAmbiguousFails(t *testing.T) {
 		"```\n\n"+
 		"## Acceptance\n\n- `go test ./internal/foo` passes.\n")
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 1 {
 		t.Fatalf("expected FAIL on ambiguous old_text, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "anchor not unique") {
 		t.Fatalf("stderr should name the ambiguous-anchor failure: %s", out)
 	}
@@ -720,9 +782,11 @@ func TestBriefLintBlocksForeignTestMarkerForGDScript(t *testing.T) {
 		"## Acceptance\n\n"+
 		"- Add a doctest-style `TEST_CASE` for this GDScript behavior.\n")
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 1 {
 		t.Fatalf("expected FAIL on GDScript/C++ test marker mismatch, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "language/profile mismatch") || !strings.Contains(out, "TEST_CASE") {
 		t.Fatalf("stderr should report foreign test marker: %s", out)
 	}
@@ -744,9 +808,11 @@ func TestBriefLintBlocksMissingAcceptanceCommandPath(t *testing.T) {
 		"## Acceptance\n\n"+
 		"- `bash scripts/missing.sh` passes.\n")
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 1 {
 		t.Fatalf("expected FAIL on missing command path, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "acceptance command references missing path") {
 		t.Fatalf("stderr should report missing command path: %s", out)
 	}
@@ -775,9 +841,11 @@ func TestBriefLintAllowsAcceptanceCommandForDeclaredNewFileTarget(t *testing.T) 
 		"- `bash scripts/run_scenario.sh tests/scenarios/smoke/wild_wolf_seed.json`\n"+
 		"- `git diff --check -- scripts/run_scenario.sh tests/scenarios/smoke/wild_wolf_seed.json`\n"))
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("expected OK when commands reference a declared new-file target, got exit=%d output=%s", exit, out)
 	}
+
 	if strings.Contains(out, "acceptance command references missing path") {
 		t.Fatalf("declared new-file target should satisfy command-path validation: %s", out)
 	}
@@ -802,9 +870,11 @@ func TestBriefLintAllowsAcceptanceCommandForDeclaredNewFilePackageDir(t *testing
 		"## Acceptance\n\n"+
 		"- `go test ./internal/contracts/writerroute`\n"))
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("expected OK when command references declared new-file package dir, got exit=%d output=%s", exit, out)
 	}
+
 	if strings.Contains(out, "acceptance command references missing path") {
 		t.Fatalf("new-file package dir should satisfy command-path validation: %s", out)
 	}
@@ -826,6 +896,7 @@ func TestBriefLintIgnoresAbsoluteAcceptanceCommandPath(t *testing.T) {
 		"## Acceptance\n\n"+
 		"- `bash /tmp/idiom-missing-helper.sh` remains an external harness command.\n")
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("expected OK when command path is absolute/external, got exit=%d output=%s", exit, out)
 	}
@@ -848,9 +919,11 @@ func TestBriefLintAnchorVerificationWorkspaceSkipsCleanly(t *testing.T) {
 		"| `native/src/foo.cpp` | ADD `void bar()` at line 2 |\n\n"+
 		"## Current state\n\nLine 2 of native/src/foo.cpp.\n"))
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("expected OK with workspace-skip WARN, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "anchor verification skipped") {
 		t.Fatalf("stderr should carry the workspace-skip WARN: %s", out)
 	}
@@ -861,11 +934,15 @@ func TestBriefLintAnchorVerificationWorkspaceSkipsCleanly(t *testing.T) {
 // known threshold.
 func buildInlinedContent(lineCount int) string {
 	var b strings.Builder
+
 	b.WriteString("```text\n")
+
 	for i := 0; i < lineCount; i++ {
 		b.WriteString("    return 42 // synth line\n")
 	}
+
 	b.WriteString("```")
+
 	return b.String()
 }
 
@@ -888,12 +965,15 @@ func TestBriefLintAtomSizeWarnsAroundHalfMaxTokens(t *testing.T) {
 		"## Current state\n\nLine 2 is `func Existing() {}`.\n\n"+
 		buildInlinedContent(600)+"\n"))
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 0 {
 		t.Fatalf("expected exit=0 (WARN only), got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "atom-size estimate") {
 		t.Fatalf("expected atom-size WARN in output: %s", out)
 	}
+
 	if !strings.Contains(out, "Heaviest inlined blocks") {
 		t.Fatalf("expected decomposition hint in WARN: %s", out)
 	}
@@ -918,9 +998,11 @@ func TestBriefLintAtomSizeFailsAtEightyPercentCap(t *testing.T) {
 		"## Current state\n\nLine 2 is `func Existing() {}`.\n\n"+
 		buildInlinedContent(1100)+"\n")
 	exit, out := runPreflight(t, script, brief, ws)
+
 	if exit != 1 {
 		t.Fatalf("expected exit=1 (FAIL), got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(out, "submit_plan will likely truncate") {
 		t.Fatalf("expected truncation-warning in FAIL message: %s", out)
 	}
@@ -944,18 +1026,24 @@ func TestBriefLintAtomSizeRespectsEnvOverride(t *testing.T) {
 	// 200 lines → ~1500 tokens. At cap=1024, threshold FAIL=819, so
 	// this should fail.
 	cmd := exec.Command("python3", script, brief)
+
 	cmd.Dir = ws
+
 	cmd.Env = append(os.Environ(), "IDIOM_PLANNER_MAX_TOKENS=1024")
+
 	out, err := cmd.CombinedOutput()
 	exit := 0
+
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		exit = exitErr.ExitCode()
 	} else if err != nil {
 		t.Fatalf("preflight subprocess failed: %v (output=%s)", err, out)
 	}
+
 	if exit != 1 {
 		t.Fatalf("expected FAIL under cap=1024, got exit=%d output=%s", exit, out)
 	}
+
 	if !strings.Contains(string(out), "max_tokens=1024") {
 		t.Fatalf("expected env override to show in failure message: %s", out)
 	}

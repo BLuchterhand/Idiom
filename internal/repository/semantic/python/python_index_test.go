@@ -49,9 +49,11 @@ def test_engine():
 	if err != nil {
 		t.Fatalf("BuildPythonIndex error: %v", err)
 	}
+
 	if index == nil || len(index.Files) == 0 {
 		t.Fatal("expected non-empty python index")
 	}
+
 	if len(index.Files) < 4 {
 		t.Fatalf("expected at least 4 files, got %d", len(index.Files))
 	}
@@ -60,15 +62,19 @@ def test_engine():
 	if core == nil {
 		t.Fatal("expected src/demo/core.py indexed")
 	}
+
 	if !core.HasMain {
 		t.Fatal("expected core.py HasMain = true")
 	}
+
 	if core.Classes != 1 {
 		t.Fatalf("expected 1 class in core.py, got %d", core.Classes)
 	}
+
 	if core.Funcs < 1 {
 		t.Fatalf("expected at least 1 top-level func in core.py, got %d", core.Funcs)
 	}
+
 	if core.Methods < 2 {
 		t.Fatalf("expected at least 2 methods in core.py, got %d", core.Methods)
 	}
@@ -77,13 +83,16 @@ def test_engine():
 	if len(matches) == 0 {
 		t.Fatal("expected FindSymbols to match tick")
 	}
+
 	foundTick := false
+
 	for _, m := range matches {
 		if m.Name == "tick" && strings.Contains(m.Path, "core.py") {
 			foundTick = true
 			break
 		}
 	}
+
 	if !foundTick {
 		t.Fatalf("did not find Engine.tick among matches: %+v", matches)
 	}
@@ -97,13 +106,16 @@ def test_engine():
 	if len(entry) == 0 {
 		t.Fatal("expected DefaultFiles to return entrypoints")
 	}
+
 	foundAnchor := false
+
 	for _, p := range entry {
 		if strings.Contains(p, "core.py") || strings.Contains(p, "app.py") {
 			foundAnchor = true
 			break
 		}
 	}
+
 	if !foundAnchor {
 		t.Fatalf("DefaultFiles did not surface core/app, got %v", entry)
 	}
@@ -148,9 +160,11 @@ func TestPythonImportResolution(t *testing.T) {
 	if got := resolvePythonModule("src/demo/app.py", ".core", byModule, byRel); got != "src/demo/core.py" {
 		t.Fatalf("relative import failed, got %q", got)
 	}
+
 	if got := resolvePythonModule("src/demo/app.py", "demo.core", byModule, byRel); got != "src/demo/core.py" {
 		t.Fatalf("absolute dotted import failed, got %q", got)
 	}
+
 	if got := resolvePythonModule("src/demo/app.py", "math", byModule, byRel); got != "" {
 		t.Fatalf("stdlib import should resolve to empty, got %q", got)
 	}
@@ -174,6 +188,7 @@ def load():
 	if !slices.Contains(raw, ".plugin") || !slices.Contains(raw, "demo.core") || !slices.Contains(raw, "demo.plugin") {
 		t.Fatalf("expected raw imports to include relative, multi-import, and dynamic imports, got %v", raw)
 	}
+
 	if !slices.Contains(resolved, "src/demo/plugin.py") || !slices.Contains(resolved, "src/demo/core.py") {
 		t.Fatalf("expected imports to resolve plugin and core, got %v", resolved)
 	}
@@ -196,9 +211,11 @@ func TestPythonStripComment(t *testing.T) {
 
 func writePythonFixture(t *testing.T, path string, content string) {
 	t.Helper()
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", path, err)
 	}
+
 	trimmed := strings.TrimLeft(content, "\n")
 	if err := os.WriteFile(path, []byte(trimmed), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)

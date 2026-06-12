@@ -37,12 +37,14 @@ func (idx *GoIndex) FindSymbols(pattern string, limit int) []SymbolMatch {
 	}
 
 	matches := make([]SymbolMatch, 0)
+
 	for _, file := range idx.Files {
 		for _, symbol := range file.Symbols {
 			score := scoreSymbolMatch(pattern, file, symbol)
 			if score <= 0 {
 				continue
 			}
+
 			matches = append(matches, SymbolMatch{
 				Path:      file.Path,
 				Package:   file.Package,
@@ -62,18 +64,22 @@ func (idx *GoIndex) FindSymbols(pattern string, limit int) []SymbolMatch {
 		if c := -cmp.Compare(a.Score, b.Score); c != 0 {
 			return c
 		}
+
 		if c := cmp.Compare(a.Path, b.Path); c != 0 {
 			return c
 		}
+
 		if c := cmp.Compare(a.Line, b.Line); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Name, b.Name)
 	})
 
 	if limit > 0 && len(matches) > limit {
 		matches = matches[:limit]
 	}
+
 	return matches
 }
 
@@ -91,6 +97,7 @@ func normalizeGoSymbolPattern(pattern string) string {
 			return m[1]
 		}
 	}
+
 	return pattern
 }
 
@@ -100,17 +107,21 @@ func (idx *GoIndex) FindSymbolsByKind(pattern string, kind string, limit int) []
 		if limit > 0 && len(matches) > limit {
 			return matches[:limit]
 		}
+
 		return matches
 	}
+
 	filtered := make([]SymbolMatch, 0, len(matches))
 	for _, match := range matches {
 		if match.Kind == kind {
 			filtered = append(filtered, match)
 		}
 	}
+
 	if limit > 0 && len(filtered) > limit {
 		filtered = filtered[:limit]
 	}
+
 	return filtered
 }
 
@@ -121,10 +132,12 @@ func (idx *GoIndex) FindPackages(pattern string, limit int) []PackageMatch {
 	}
 
 	matches := make([]PackageMatch, 0)
+
 	for path, pkg := range idx.Package {
 		score := 0
 		pathLower := strings.ToLower(path)
 		nameLower := strings.ToLower(pkg.Name)
+
 		switch {
 		case pathLower == pattern || nameLower == pattern:
 			score += 40
@@ -135,7 +148,9 @@ func (idx *GoIndex) FindPackages(pattern string, limit int) []PackageMatch {
 		default:
 			continue
 		}
+
 		score += min(pkg.Funcs+pkg.Methods+pkg.Types, 20)
+
 		matches = append(matches, PackageMatch{
 			Path:    path,
 			Name:    pkg.Name,
@@ -151,12 +166,14 @@ func (idx *GoIndex) FindPackages(pattern string, limit int) []PackageMatch {
 		if c := -cmp.Compare(a.Score, b.Score); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Path, b.Path)
 	})
 
 	if limit > 0 && len(matches) > limit {
 		matches = matches[:limit]
 	}
+
 	return matches
 }
 
@@ -173,16 +190,20 @@ func (idx *GoIndex) FindCallsFrom(pattern string, limit int) []CallMatch {
 	if len(symbols) == 0 {
 		return nil
 	}
+
 	matches := make([]CallMatch, 0)
+
 	for _, symbol := range symbols {
 		source := idx.fileByPath(symbol.Path)
 		if source == nil {
 			continue
 		}
+
 		for _, fileSymbol := range source.Symbols {
 			if fileSymbol.Name != symbol.Name || fileSymbol.Kind != symbol.Kind || fileSymbol.Line != symbol.Line {
 				continue
 			}
+
 			for _, call := range fileSymbol.Calls {
 				match := CallMatch{
 					Caller:     symbol,
@@ -204,13 +225,16 @@ func (idx *GoIndex) FindCallsFrom(pattern string, limit int) []CallMatch {
 						Score:     0,
 					}
 				}
+
 				matches = append(matches, match)
 			}
 		}
 	}
+
 	if limit > 0 && len(matches) > limit {
 		matches = matches[:limit]
 	}
+
 	return matches
 }
 
@@ -219,6 +243,7 @@ func (idx *GoIndex) FindCallsInto(pattern string, limit int) []CallMatch {
 	if len(targets) == 0 {
 		return nil
 	}
+
 	targetNames := make(map[string]SymbolMatch, len(targets))
 	for _, target := range targets {
 		targetNames[strings.ToLower(goQualifiedName(target.Receiver, target.Name))] = target
@@ -226,19 +251,23 @@ func (idx *GoIndex) FindCallsInto(pattern string, limit int) []CallMatch {
 	}
 
 	matches := make([]CallMatch, 0)
+
 	for _, file := range idx.Files {
 		for _, symbol := range file.Symbols {
 			if len(symbol.Calls) == 0 {
 				continue
 			}
+
 			for _, call := range symbol.Calls {
 				target, ok := targetNames[strings.ToLower(qualifiedCallName(call))]
 				if !ok {
 					target, ok = targetNames[strings.ToLower(call.Name)]
 				}
+
 				if !ok {
 					continue
 				}
+
 				matches = append(matches, CallMatch{
 					Caller: SymbolMatch{
 						Path:      file.Path,
@@ -259,15 +288,19 @@ func (idx *GoIndex) FindCallsInto(pattern string, limit int) []CallMatch {
 			}
 		}
 	}
+
 	slices.SortFunc(matches, func(a, b CallMatch) int {
 		if c := cmp.Compare(a.Caller.Path, b.Caller.Path); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Line, b.Line)
 	})
+
 	if limit > 0 && len(matches) > limit {
 		matches = matches[:limit]
 	}
+
 	return matches
 }
 
@@ -300,30 +333,36 @@ func scoreSymbolMatch(pattern string, file GoFile, symbol GoSymbol) int {
 	default:
 		score += 6
 	}
+
 	score += sourceDirPriority(file.SourceDir)
 	if file.IsTest {
 		score -= 20
 	}
+
 	return score
 }
 
 func (idx *GoIndex) bestSymbolForCall(call GoCall) *GoSymbol {
 	callNameLower := strings.ToLower(call.Name)
 	qualifiedLower := strings.ToLower(qualifiedCallName(call))
+
 	for _, file := range idx.Files {
 		for i := range file.Symbols {
 			symbol := &file.Symbols[i]
 			if symbol.Kind != "func" && symbol.Kind != "method" {
 				continue
 			}
+
 			if strings.ToLower(symbol.Name) == callNameLower {
 				return symbol
 			}
+
 			if qualifiedLower != "" && strings.ToLower(goQualifiedName(symbol.Receiver, symbol.Name)) == qualifiedLower {
 				return symbol
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -331,6 +370,7 @@ func qualifiedCallName(call GoCall) string {
 	if call.Qualifier == "" {
 		return call.Name
 	}
+
 	return call.Qualifier + "." + call.Name
 }
 
@@ -338,5 +378,6 @@ func goQualifiedName(receiver, name string) string {
 	if strings.TrimSpace(receiver) == "" {
 		return name
 	}
+
 	return receiver + "." + name
 }

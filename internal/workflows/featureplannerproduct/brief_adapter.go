@@ -41,6 +41,7 @@ func BriefFromImplementationHandoff(handoff productworkflow.ImplementationHandof
 			Obligations: append([]string(nil), req.Obligations...),
 		})
 	}
+
 	for _, obligation := range handoff.TDDObligations {
 		brief.TDDObligations = append(brief.TDDObligations, featureplanner.TDDObligationBrief{
 			ID:             obligation.ID,
@@ -50,5 +51,6 @@ func BriefFromImplementationHandoff(handoff productworkflow.ImplementationHandof
 			Status:         obligation.Status,
 		})
 	}
+
 	return brief
 }

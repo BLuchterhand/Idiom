@@ -20,6 +20,7 @@ type Result struct {
 // terse error line.
 func Run(d Diff, ctx RunContext, checks []Check) Result {
 	var all []Finding
+
 	for _, c := range checks {
 		findings, err := c.Run(d, ctx)
 		if err != nil {
@@ -28,10 +29,13 @@ func Run(d Diff, ctx RunContext, checks []Check) Result {
 				Severity: SeverityError,
 				Message:  fmt.Sprintf("check failed to run: %v", err),
 			})
+
 			continue
 		}
+
 		all = append(all, findings...)
 	}
+
 	return Result{
 		Findings: all,
 		Pass:     !hasErrorSeverity(all),
@@ -46,17 +50,21 @@ func FilterChecks(checks []Check, skip []string) []Check {
 	if len(skip) == 0 {
 		return checks
 	}
+
 	skipSet := make(map[string]struct{}, len(skip))
 	for _, s := range skip {
 		skipSet[strings.TrimSpace(s)] = struct{}{}
 	}
+
 	out := make([]Check, 0, len(checks))
 	for _, c := range checks {
 		if _, drop := skipSet[c.Name()]; drop {
 			continue
 		}
+
 		out = append(out, c)
 	}
+
 	return out
 }
 
@@ -69,5 +77,6 @@ func hasErrorSeverity(findings []Finding) bool {
 			return true
 		}
 	}
+
 	return false
 }

@@ -78,11 +78,14 @@ func (UnresolvedQuestionMarker) Name() string { return "unresolved_question_mark
 
 func (c UnresolvedQuestionMarker) Run(d Diff, _ RunContext) ([]Finding, error) {
 	const marker = "<<QUESTION>>:"
+
 	var findings []Finding
+
 	for _, f := range d.Files {
 		if f.Deleted {
 			continue
 		}
+
 		for _, added := range f.AddedLines {
 			if strings.Contains(added.Body, marker) {
 				findings = append(findings, Finding{
@@ -95,6 +98,7 @@ func (c UnresolvedQuestionMarker) Run(d Diff, _ RunContext) ([]Finding, error) {
 			}
 		}
 	}
+
 	return findings, nil
 }
 
@@ -111,11 +115,14 @@ func (c FileAllowlistMismatch) Run(d Diff, ctx RunContext) ([]Finding, error) {
 	if len(ctx.RequiredEditPaths) == 0 {
 		return nil, nil
 	}
+
 	allow := make(map[string]struct{}, len(ctx.RequiredEditPaths))
 	for _, p := range ctx.RequiredEditPaths {
 		allow[normalizePath(p)] = struct{}{}
 	}
+
 	var findings []Finding
+
 	for _, p := range d.ModifiedPaths() {
 		if _, ok := allow[normalizePath(p)]; !ok {
 			findings = append(findings, Finding{
@@ -126,6 +133,7 @@ func (c FileAllowlistMismatch) Run(d Diff, ctx RunContext) ([]Finding, error) {
 			})
 		}
 	}
+
 	return findings, nil
 }
 
@@ -141,10 +149,12 @@ func (NarratingTestComments) Name() string { return "narrating_test_comments" }
 
 func (c NarratingTestComments) Run(d Diff, _ RunContext) ([]Finding, error) {
 	var findings []Finding
+
 	for _, f := range d.Files {
 		if !looksLikeTestFile(f.Path) {
 			continue
 		}
+
 		// Only freshly-added lines are interesting — we can't ask
 		// the model to fix something that was already in the file
 		// before the lane ran.
@@ -153,10 +163,12 @@ func (c NarratingTestComments) Run(d Diff, _ RunContext) ([]Finding, error) {
 			if trimmed == "" {
 				continue
 			}
+
 			lower := strings.ToLower(trimmed)
 			if !narratingPhrase.MatchString(lower) {
 				continue
 			}
+
 			findings = append(findings, Finding{
 				Check:    c.Name(),
 				Severity: SeverityWarning,
@@ -166,6 +178,7 @@ func (c NarratingTestComments) Run(d Diff, _ RunContext) ([]Finding, error) {
 			})
 		}
 	}
+
 	return findings, nil
 }
 
@@ -189,11 +202,13 @@ func commentBody(line string) string {
 	case strings.HasPrefix(s, "/*"):
 		s = strings.TrimPrefix(s, "/*")
 		s = strings.TrimSuffix(s, "*/")
+
 		return strings.TrimSpace(s)
 	case strings.HasPrefix(s, "*"):
 		// continuation line of a /* ... */ block
 		return strings.TrimSpace(strings.TrimPrefix(s, "*"))
 	}
+
 	return ""
 }
 
@@ -214,6 +229,7 @@ func looksLikeTestFile(path string) bool {
 	case strings.HasSuffix(base, "_test.cpp") || strings.HasSuffix(base, "_test.cc") || strings.HasSuffix(base, "_test.py"):
 		return true
 	}
+
 	return false
 }
 

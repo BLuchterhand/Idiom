@@ -38,18 +38,23 @@ func (m *Manager) SetPermissionRules(rules map[string][]ToolRule) {
 	if m == nil {
 		return
 	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	if len(rules) == 0 {
 		m.permissionRules = nil
 		return
 	}
+
 	copied := make(map[string][]ToolRule, len(rules))
 	for tool, list := range rules {
 		next := make([]ToolRule, len(list))
 		copy(next, list)
+
 		copied[tool] = next
 	}
+
 	m.permissionRules = copied
 }
 
@@ -60,6 +65,7 @@ func (m *Manager) EvaluateConfiguredToolRule(req ToolRequest) ToolRuleDecision {
 	if m == nil || len(m.cfg.ToolRules) == 0 {
 		return ToolRuleNone
 	}
+
 	return MatchToolRule(strings.TrimSpace(req.Tool), req, convertConfiguredToolRules(m.cfg.ToolRules))
 }
 
@@ -71,22 +77,29 @@ func (m *Manager) EvaluateToolRule(req ToolRequest) ToolRuleDecision {
 	if m == nil {
 		return ToolRuleNone
 	}
+
 	tool := strings.TrimSpace(req.Tool)
 	configDecision := m.EvaluateConfiguredToolRule(req)
+
 	if configDecision == ToolRuleDeny {
 		return ToolRuleDeny
 	}
+
 	m.mu.Lock()
+
 	modeRules := m.permissionRules
 	m.mu.Unlock()
+
 	if len(modeRules) > 0 {
 		if decision := MatchToolRule(tool, req, modeRules); decision != ToolRuleNone {
 			return decision
 		}
 	}
+
 	if configDecision != ToolRuleNone {
 		return configDecision
 	}
+
 	return ToolRuleNone
 }
 
@@ -94,6 +107,7 @@ func convertConfiguredToolRules(configRules map[string][]config.ToolRule) map[st
 	if len(configRules) == 0 {
 		return nil
 	}
+
 	convertedRules := make(map[string][]ToolRule, len(configRules))
 	for name, rules := range configRules {
 		converted := make([]ToolRule, 0, len(rules))
@@ -103,8 +117,10 @@ func convertConfiguredToolRules(configRules map[string][]config.ToolRule) map[st
 				Decision: ToolRuleDecision(strings.ToLower(strings.TrimSpace(r.Decision))),
 			})
 		}
+
 		convertedRules[name] = converted
 	}
+
 	return convertedRules
 }
 

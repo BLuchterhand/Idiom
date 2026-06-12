@@ -32,9 +32,11 @@ func (contract PlanScopeContract) Normalized() PlanScopeContract {
 	contract.WriteAllowedPaths = UniqueScopePaths(contract.WriteAllowedPaths)
 	contract.EditSetObligations = contract.EditSetObligations.Normalized()
 	contract.ContractID = ""
+
 	if contract.HasContent() {
 		contract.ContractID = planScopeContractID(contract)
 	}
+
 	return contract
 }
 
@@ -64,6 +66,7 @@ func (contract PlanScopeContract) WriteEnvelopePaths() []string {
 func (contract PlanScopeContract) WithWriteAllowedPaths(paths []string) PlanScopeContract {
 	contract.WriteAllowedPaths = append([]string(nil), paths...)
 	contract.WriteAllowedExplicit = true
+
 	return contract.Normalized()
 }
 
@@ -74,18 +77,23 @@ func (contract PlanScopeContract) WithEditSetObligation(kind EditSetObligationKi
 
 func UniqueScopePaths(paths []string) []string {
 	var out []string
+
 	seen := make(map[string]struct{}, len(paths))
+
 	for _, path := range paths {
 		path = NormalizeScopePath(path)
 		if path == "" {
 			continue
 		}
+
 		if _, ok := seen[path]; ok {
 			continue
 		}
+
 		seen[path] = struct{}{}
 		out = append(out, path)
 	}
+
 	return out
 }
 
@@ -96,58 +104,73 @@ func scopePathsExcludingRequired(paths []string, required []string) []string {
 			requiredSet[normalized] = struct{}{}
 		}
 	}
+
 	if len(requiredSet) == 0 {
 		return paths
 	}
+
 	out := make([]string, 0, len(paths))
 	for _, path := range paths {
 		if _, ok := requiredSet[path]; ok {
 			continue
 		}
+
 		out = append(out, path)
 	}
+
 	return out
 }
 
 func NormalizeScopePath(path string) string {
 	path = strings.TrimSpace(path)
 	path = strings.ReplaceAll(path, "\\", "/")
+
 	for strings.HasPrefix(path, "./") {
 		path = strings.TrimPrefix(path, "./")
 	}
+
 	if path == "" || path == "." || path == ".." || filepath.IsAbs(path) || strings.HasPrefix(path, "../") {
 		return ""
 	}
+
 	for _, part := range strings.Split(path, "/") {
 		if part == "" || part == "." || part == ".." {
 			return ""
 		}
 	}
+
 	return path
 }
 
 func NormalizeWorkspacePath(path string) string {
 	path = strings.TrimSpace(path)
 	path = strings.ReplaceAll(path, "\\", "/")
+
 	for strings.HasPrefix(path, "./") {
 		path = strings.TrimPrefix(path, "./")
 	}
+
 	if path == "" || filepath.IsAbs(path) || strings.ContainsRune(path, 0) {
 		return ""
 	}
+
 	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 		return ""
 	}
+
 	return NormalizeScopePath(clean)
 }
 
 func planScopeContractID(contract PlanScopeContract) string {
 	contract.ContractID = ""
+
 	body, err := json.Marshal(contract)
 	if err != nil {
 		return ""
 	}
+
 	sum := sha256.Sum256(body)
+
 	return hex.EncodeToString(sum[:])[:16]
 }

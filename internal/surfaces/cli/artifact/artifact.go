@@ -90,17 +90,21 @@ func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 	opts, err := parseArtifactOptions(args, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 2
 	}
 
 	cfg, err := config.Load(opts.ConfigPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	if strings.TrimSpace(opts.Model) != "" {
 		cfg.LlamaServer.Model = opts.Model
 	}
+
 	logArtifactPhase(rec, "artifact_start", map[string]any{
 		"has_output":          strings.TrimSpace(opts.OutputPath) != "",
 		"has_json_out":        strings.TrimSpace(opts.JSONOut) != "",
@@ -114,10 +118,13 @@ func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 	rawPrompt, err := artifactPrompt(opts)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	report := newArtifactReport(opts, cfg, rawPrompt)
 	prompt := rawPrompt
+
 	if opts.NoTools {
 		prompt = noToolsArtifactPrompt(prompt)
 		opts.FailOnTools = true
@@ -128,18 +135,26 @@ func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 	if opts.NoTools {
 		runOpts.TaskFamily = workerruntime.ArtifactFinalAnswerTaskFamily
 	}
+
 	var events bytes.Buffer
+
 	answer, err := promptRun(cfg, prompt, runOpts, &events)
+
 	if writeErr := writeOptionalFile(opts.JSONOut, events.Bytes()); writeErr != nil {
 		fmt.Fprintln(stderr, writeErr)
+
 		return 1
 	}
+
 	if err != nil {
 		report.Error = err.Error()
 		_ = writeArtifactReport(opts.ReportOut, report)
+
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	if opts.MechanicalRepair {
 		if repaired, changed := repairArtifactMechanically(answer); changed {
 			answer = repaired
@@ -147,22 +162,28 @@ func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 			report.MechanicalRepairApplied = true
 		}
 	}
+
 	report.AnswerHash = sha256HexString(answer)
 	report.AnswerBytes = len(answer)
+
 	if opts.FailOnTools {
 		used, tool, err := artifactEventsUsedTools(events.Bytes())
 		if err != nil {
 			report.Error = err.Error()
 			_ = writeArtifactReport(opts.ReportOut, report)
+
 			fmt.Fprintln(stderr, err)
+
 			return 1
 		}
+
 		if used {
 			report.ToolUseDetected = true
 			report.ToolName = tool
 			report.Error = "artifact run used tools despite no-tool contract: " + tool
 			_ = writeArtifactReport(opts.ReportOut, report)
 			fmt.Fprintln(stderr, report.Error)
+
 			return 1
 		}
 	}
@@ -171,31 +192,43 @@ func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 	if cleanup != nil {
 		defer cleanup()
 	}
+
 	if err != nil {
 		report.Error = err.Error()
 		_ = writeArtifactReport(opts.ReportOut, report)
+
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	if opts.Validator != "" {
 		exit, err := runArtifactValidator(opts.Validator, artifactPath, stderr)
+
 		report.ValidatorExit = exit
+
 		if err != nil {
 			report.ValidatorError = err.Error()
 			report.Error = err.Error()
 			_ = writeArtifactReport(opts.ReportOut, report)
+
 			fmt.Fprintln(stderr, err)
+
 			return 1
 		}
 	}
+
 	if opts.OutputPath == "" || opts.OutputPath == "-" {
 		fmt.Fprintln(stdout, answer)
 	}
+
 	report.DispatchReady = true
 	if err := writeArtifactReport(opts.ReportOut, report); err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	logArtifactPhase(rec, "artifact_written", map[string]any{
 		"output_path":         strings.TrimSpace(opts.OutputPath),
 		"report_out":          strings.TrimSpace(opts.ReportOut),
@@ -208,6 +241,7 @@ func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 		"artifact_contract":   report.ArtifactContract,
 		"mechanical_repaired": report.MechanicalRepairApplied,
 	})
+
 	return 0
 }
 
@@ -229,21 +263,27 @@ func parseArtifactOptions(args []string, stderr io.Writer) (artifactOptions, err
 	fs.BoolVar(&opts.NoTools, "no-tools", false, "ask the model not to use tools and fail if any tool events occur")
 	fs.BoolVar(&opts.FailOnTools, "fail-on-tools", false, "fail if any tool request/result events occur")
 	fs.BoolVar(&opts.MechanicalRepair, "mechanical-repair", false, "apply deterministic artifact-only cleanup before writing/validation")
+
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}
+
 	if fs.NArg() != 0 {
 		return opts, fmt.Errorf("unexpected positional argument: %s", fs.Arg(0))
 	}
+
 	if strings.TrimSpace(opts.Prompt) != "" && strings.TrimSpace(opts.PromptFile) != "" {
 		return opts, fmt.Errorf("--prompt and --prompt-file are mutually exclusive")
 	}
+
 	if strings.TrimSpace(opts.Prompt) == "" && strings.TrimSpace(opts.PromptFile) == "" {
 		return opts, fmt.Errorf("--prompt or --prompt-file is required")
 	}
+
 	if opts.MaxTokens < 0 {
 		return opts, fmt.Errorf("--max-token must be non-negative")
 	}
+
 	return opts, nil
 }
 
@@ -251,14 +291,17 @@ func artifactPrompt(opts artifactOptions) (string, error) {
 	if opts.PromptFile == "" {
 		return strings.TrimSpace(opts.Prompt), nil
 	}
+
 	data, err := os.ReadFile(filepath.Clean(opts.PromptFile))
 	if err != nil {
 		return "", fmt.Errorf("read prompt file: %w", err)
 	}
+
 	prompt := strings.TrimSpace(string(data))
 	if prompt == "" {
 		return "", fmt.Errorf("prompt file is empty")
 	}
+
 	return prompt, nil
 }
 
@@ -281,28 +324,36 @@ IMPORTANT:
 func artifactEventsUsedTools(data []byte) (bool, string, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
+
 		var event map[string]any
+
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			return false, "", fmt.Errorf("parse artifact JSONL event: %w", err)
 		}
+
 		eventType, _ := event["type"].(string)
 		if eventType != "tool_request" && eventType != "tool_result" {
 			continue
 		}
+
 		tool, _ := event["tool"].(string)
 		if tool == "" {
 			tool = eventType
 		}
+
 		return true, tool, nil
 	}
+
 	if err := scanner.Err(); err != nil {
 		return false, "", fmt.Errorf("scan artifact JSONL events: %w", err)
 	}
+
 	return false, "", nil
 }
 
@@ -310,13 +361,16 @@ func writeOptionalFile(path string, data []byte) error {
 	if strings.TrimSpace(path) == "" {
 		return nil
 	}
+
 	clean := filepath.Clean(path)
 	if err := os.MkdirAll(filepath.Dir(clean), 0o755); err != nil {
 		return fmt.Errorf("create parent directory for %s: %w", clean, err)
 	}
+
 	if err := os.WriteFile(clean, data, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", clean, err)
 	}
+
 	return nil
 }
 
@@ -325,26 +379,36 @@ func materializeArtifactForValidation(answer string, outputPath string, validato
 		if err := writeOptionalFile(outputPath, []byte(answer)); err != nil {
 			return "", nil, err
 		}
+
 		return filepath.Clean(outputPath), nil, nil
 	}
+
 	if validator == "" {
 		return "", nil, nil
 	}
+
 	file, err := os.CreateTemp("", "idiom-artifact-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create temporary artifact: %w", err)
 	}
+
 	path := file.Name()
 	cleanup := func() { _ = os.Remove(path) }
+
 	if _, err := io.WriteString(file, answer); err != nil {
 		_ = file.Close()
+
 		cleanup()
+
 		return "", nil, fmt.Errorf("write temporary artifact: %w", err)
 	}
+
 	if err := file.Close(); err != nil {
 		cleanup()
+
 		return "", nil, fmt.Errorf("close temporary artifact: %w", err)
 	}
+
 	return path, cleanup, nil
 }
 
@@ -371,6 +435,7 @@ func artifactContract(opts artifactOptions) string {
 	if opts.NoTools {
 		return "artifact.no_tools.v1"
 	}
+
 	return "artifact.v1"
 }
 
@@ -378,11 +443,14 @@ func writeArtifactReport(path string, report artifactReport) error {
 	if strings.TrimSpace(path) == "" {
 		return nil
 	}
+
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal artifact report: %w", err)
 	}
+
 	data = append(data, '\n')
+
 	return writeOptionalFile(path, data)
 }
 
@@ -396,6 +464,7 @@ func repairArtifactMechanically(answer string) (string, bool) {
 	if unwrapped != answer {
 		return unwrapped, true
 	}
+
 	return answer, false
 }
 
@@ -403,21 +472,29 @@ func runArtifactValidator(command string, artifactPath string, stderr io.Writer)
 	if artifactPath == "" {
 		return 2, fmt.Errorf("validator requires a materialized artifact path")
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+
 	defer cancel()
+
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+
 	cmd.Env = append(os.Environ(), "IDIOM_ARTIFACT="+artifactPath)
 	cmd.Stdout = stderr
 	cmd.Stderr = stderr
+
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
 			return 124, fmt.Errorf("artifact validator timed out: %w", ctx.Err())
 		}
+
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode(), fmt.Errorf("artifact validator failed: %w", err)
 		}
+
 		return 1, fmt.Errorf("artifact validator failed: %w", err)
 	}
+
 	return 0, nil
 }
 

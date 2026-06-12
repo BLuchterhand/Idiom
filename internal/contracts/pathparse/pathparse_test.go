@@ -20,6 +20,7 @@ func TestMentionedWorkspacePathsRejectsBacktickProseTokens(t *testing.T) {
 	// path candidate (it contains "/", so LooksLike returns true).
 	text := "Each edit: `path` + (`old_text`+`new_text` | `start_line`+`end_line`+`content`)"
 	got := MentionedWorkspacePaths(text)
+
 	for _, p := range got {
 		if strings.Contains(p, "`") {
 			t.Fatalf("backtick-prose token leaked into extracted paths: %q (full set: %v)", p, got)
@@ -40,9 +41,11 @@ func TestScopeToBriefBodyExtractsMarkedRegion(t *testing.T) {
 		"<!-- IDIOM:BRIEF-BODY-END -->\n" +
 		"postamble has cmd/idiom/extra.go\n"
 	scoped := ScopeToBriefBody(composed)
+
 	if !strings.Contains(scoped, "internal/runtime/agent/runner.go") {
 		t.Fatalf("scoped region should contain the brief body: %q", scoped)
 	}
+
 	if strings.Contains(scoped, "preamble") || strings.Contains(scoped, "postamble") {
 		t.Fatalf("scoped region must drop preamble/postamble: %q", scoped)
 	}
@@ -70,14 +73,17 @@ func TestMentionedWorkspacePathsScopesToBriefBody(t *testing.T) {
 		"<!-- IDIOM:BRIEF-BODY-END -->\n"
 	got := MentionedWorkspacePaths(composed)
 	wantSeen := false
+
 	for _, p := range got {
 		if p == "cmd/idiom/preamble_only.go" {
 			t.Fatalf("preamble path leaked into extracted set: %v", got)
 		}
+
 		if p == "internal/runtime/agent/runner.go" {
 			wantSeen = true
 		}
 	}
+
 	if !wantSeen {
 		t.Fatalf("brief-body path missing from extracted set: %v", got)
 	}
@@ -97,6 +103,7 @@ func TestLooksLikeWorkspacePathTokenRejectsBackticks(t *testing.T) {
 			t.Errorf("LooksLikeWorkspacePathToken(%q) should be false (contains backtick)", c)
 		}
 	}
+
 	// Sanity check: legitimate paths still pass.
 	if !LooksLikeWorkspacePathToken("internal/runtime/agent/runner.go") {
 		t.Fatal("backtick gate must not break legitimate paths")
@@ -109,9 +116,11 @@ func TestLooksLikeWorkspacePathTokenRejectsSlashSeparatedSymbolProse(t *testing.
 			t.Fatalf("LooksLikeWorkspacePathToken(%q) should be false for slash-separated prose", candidate)
 		}
 	}
+
 	if !LooksLikeWorkspacePathToken("internal/API.md") {
 		t.Fatal("uppercase path segments with a real file extension should still pass")
 	}
+
 	if !LooksLikeWorkspacePathToken("internal/capabilities/workspace") {
 		t.Fatal("lowercase extensionless workspace paths should still pass")
 	}
@@ -124,6 +133,7 @@ func TestMentionedWorkspacePathsUnderHeadingsRejectsSlashProseInListRows(t *test
 	}, "\n")
 	got := MentionedWorkspacePathsUnderHeadings(text, "files to modify")
 	want := []string{"native/tests/test_funeral.cpp"}
+
 	if len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("expected only %#v, got %#v", want, got)
 	}
@@ -136,9 +146,11 @@ func TestMentionedWorkspacePathsNormalizesEscapedNewlinePrefix(t *testing.T) {
 		"internal/runtime/agent/runner_child_tasks.go",
 		"internal/runtime/agent/runner.go",
 	}
+
 	if len(got) != len(want) {
 		t.Fatalf("expected %d normalized paths, got %#v", len(want), got)
 	}
+
 	for i, value := range want {
 		if got[i] != value {
 			t.Fatalf("expected normalized paths %#v, got %#v", want, got)
@@ -150,6 +162,7 @@ func TestMentionedWorkspacePathsHandlesBacktickedPathBeforePeriod(t *testing.T) 
 	text := "`cmd/idiom/product_workflow_test.go`."
 	got := MentionedWorkspacePaths(text)
 	want := []string{"cmd/idiom/product_workflow_test.go"}
+
 	if len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("expected %#v, got %#v", want, got)
 	}
@@ -159,9 +172,11 @@ func TestMentionedWorkspacePathsInInlineListStopsAfterPathSentence(t *testing.T)
 	text := "`cmd/idiom/product_workflow.go`, `cmd/idiom/product_workflow_test.go`. Add tests for mutually exclusive/missing mode flags and run `go test ./cmd/idiom`."
 	got := MentionedWorkspacePathsInInlineList(text)
 	want := []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"}
+
 	if len(got) != len(want) {
 		t.Fatalf("expected %#v, got %#v", want, got)
 	}
+
 	for i, value := range want {
 		if got[i] != value {
 			t.Fatalf("expected %#v, got %#v", want, got)
@@ -173,9 +188,11 @@ func TestMentionedWorkspaceFilesInInlineListRejectsDirectoryLikeTargets(t *testi
 	text := "`cmd/idiom`, `cmd/idiom/product_workflow.go`, `Makefile`. Run `go test ./cmd/idiom`."
 	got := MentionedWorkspaceFilesInInlineList(text)
 	want := []string{"cmd/idiom/product_workflow.go", "Makefile"}
+
 	if len(got) != len(want) {
 		t.Fatalf("expected file-only paths %#v, got %#v", want, got)
 	}
+
 	for i, value := range want {
 		if got[i] != value {
 			t.Fatalf("expected file-only paths %#v, got %#v", want, got)
@@ -205,9 +222,11 @@ func TestMentionedWorkspacePathsCoversCommonSourceExtensions(t *testing.T) {
 		"src/App.java",
 		"tools/build.sh",
 	}
+
 	if len(got) != len(want) {
 		t.Fatalf("expected %d paths, got %#v", len(want), got)
 	}
+
 	for i, value := range want {
 		if got[i] != value {
 			t.Fatalf("expected paths %#v, got %#v", want, got)
@@ -228,9 +247,11 @@ func TestMentionedWorkspacePathsUnderHeadings(t *testing.T) {
 	}, "\n")
 	got := MentionedWorkspacePathsUnderHeadings(text, "files to modify", "files-to-modify")
 	want := []string{"native/src/item_lifecycle.cpp", "scripts/player.gd"}
+
 	if len(got) != len(want) {
 		t.Fatalf("expected %d paths, got %#v", len(want), got)
 	}
+
 	for i, value := range want {
 		if got[i] != value {
 			t.Fatalf("expected paths %#v, got %#v", want, got)
@@ -254,14 +275,17 @@ func TestMentionedWorkspacePathsUnderHeadingsOnlyUsesFirstTableCell(t *testing.T
 	}, "\n")
 	got := MentionedWorkspacePathsUnderHeadings(text, "files to modify")
 	want := []string{"native/tests/test_funeral.cpp", "native/src/simulation/creatures/social_welfare.cpp"}
+
 	if len(got) != len(want) {
 		t.Fatalf("expected %d paths, got %#v", len(want), got)
 	}
+
 	for i, value := range want {
 		if got[i] != value {
 			t.Fatalf("expected paths %#v, got %#v", want, got)
 		}
 	}
+
 	for _, value := range got {
 		if value == "RIVAL/NEMESIS" {
 			t.Fatalf("table prose leaked into path set: %#v", got)

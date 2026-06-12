@@ -1,6 +1,6 @@
 ---
 tags:
-  - harness
+  - idiom
   - prompts
   - profiles
   - authority
@@ -31,7 +31,7 @@ default.
 | `prompts/base.md` | Baseline behavior shared across sessions |
 | `prompts/plan-mode.md` | Plan-mode expectations |
 | `prompts/profiles/coding.md` | Code-quality profile expectations |
-| `prompts/profiles/LLM-agent-worker.md` | Executor-model profile for LLM agent/local model worker-style runs |
+| `prompts/profiles/claude-qwen-worker.md` | Executor-model profile for Claude/Qwen worker-style runs |
 
 Project-local profiles can also be loaded through configured profile dirs.
 
@@ -59,7 +59,7 @@ flowchart TD
 ```
 
 Static prompts teach behavior. Runtime briefs and tool manifests describe the
-active lane, task, tools, obligations, paths, and verification expectations.
+current lane, task, tools, obligations, paths, and verification expectations.
 Host gates enforce the invariants.
 
 ## Authority Rules

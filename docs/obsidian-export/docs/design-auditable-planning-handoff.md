@@ -1,13 +1,13 @@
 # Auditable Planning And Handoff
 
-Status: design guidance
+Status: design draft, 2026-05-12
 
-This is one pillar in the coordinated design map:
-[harness-design-map.md](harness-design-map.md). It turns contract,
+This is one pillar in the coordinated roadmap:
+[idiom-design-roadmap.md](idiom-design-roadmap.md). It turns contract,
 repository-memory, capability, local-model, and verification evidence into a
 durable handoff between planning and execution.
 
-This document defines Agent Harness's auditable planning and handoff pillar. It turns
+This document defines Idiom's auditable planning and handoff pillar. It turns
 planning from transient model prose into a host-owned sequence of packets,
 durable plan artifacts, deterministic audits, and executor handoff contracts.
 
@@ -23,7 +23,7 @@ executor preflight, telemetry, and acceptance gates.
 
 ## Summary
 
-Agent Harness should provide the pieces of this pillar:
+Idiom already has the pieces of this pillar:
 
 - `context_pack` and graph-backed views localize task evidence and persist a
   `pack_id`.
@@ -35,8 +35,8 @@ Agent Harness should provide the pieces of this pillar:
 - `plan-execute` separates a planner phase from a deterministic executor phase.
   The planner emits `submit_plan`; the executor loads a `PlanArtifact`, checks
   `required_edit_paths`, preflights edit anchors, and emits per-edit events.
-- Durable plan approval scope and typed workflow state are tracked in
-  the autonomy design map and eval parsing.
+- Durable plan approval scope and typed workflow state are already tracked in
+  the autonomy roadmap and eval parsing.
 
 The missing product shape is a single auditable lifecycle that connects those
 pieces:
@@ -76,12 +76,12 @@ Without this structure, "plan first" is only a prompt style. It does not answer:
 - Would a new packet or prompt have produced a better plan on the same task?
 
 The planning problem is therefore a contract problem, not only a reasoning
-problem. Agent Harness should make planning inspectable before execution, enforceable
+problem. Idiom should make planning inspectable before execution, enforceable
 during execution, and measurable after execution.
 
 ## External Patterns
 
-The active ecosystem points in the same direction: effective coding agents are
+The current ecosystem points in the same direction: effective coding agents are
 increasingly shaped by host-owned workflow state, permissions, repository
 memory, and audit surfaces.
 
@@ -104,34 +104,53 @@ memory, and audit surfaces.
   calls while preserving most answer quality:
   https://arxiv.org/abs/2603.27277
 - The 2026 arXiv preprint on agentic-tool configuration reports that
-  repository-level artifacts such as Markdown and JSON files are a standard
+  repository-level artifacts such as Markdown and JSON files are now a standard
   way developers configure coding agents, with `AGENTS.md` emerging as an
   interoperable starting point:
   https://arxiv.org/abs/2602.14690
 
-LLM-agent products show similar workflow patterns:
+The product tools show similar workflow patterns:
 
-- read-first planning modes that research and propose changes before source
-  edits are authorized
-- subagents that separate exploration, planning, and implementation contexts
-- lifecycle hooks that can block tool calls, add context, or require a reason
-  before stop
-- explicit ask/allow/deny permissions over read, edit, shell, task, web, LSP,
-  and MCP tool classes
-- CLI workflows for planning, review, status, permissions, context compaction,
-  and MCP inspection
-- durable sandbox and approval settings such as writable roots, permission
-  profiles, and command rules
-- agent-platform APIs that treat agent definitions, runtime state, sandboxing,
-  handoffs, guardrails, tools, observability, and evals as separate surfaces
+- Claude Code plan mode is a read-first mode: Claude researches and proposes
+  changes, but does not edit source until a plan is approved. The approval can
+  transition to auto, accept-edits, or manual review modes:
+  https://code.claude.com/docs/en/permission-modes
+- Claude Code subagents separate exploration, planning, and general-purpose
+  work. Its built-in Plan subagent is read-only and cannot spawn nested
+  subagents, which keeps planning research bounded:
+	  https://code.claude.com/docs/en/sub-agents
+- Claude Code hooks expose deterministic lifecycle control. `PreToolUse` can
+  block tool calls, `Stop` and `SubagentStop` hooks can prevent stopping with a
+  required reason, and agent hooks can inspect real files or test output before
+  returning a structured decision:
+  https://code.claude.com/docs/en/hooks
+- OpenCode has primary Build and Plan agents plus subagents. Its permissions are
+  explicit `ask`, `allow`, or `deny` controls over read, edit, bash, task,
+  web, LSP, and other tool classes, with per-agent overrides:
+  https://opencode.ai/docs/agents/
+- Codex exposes `/plan`, `/review`, `/status`, `/permissions`, subagent thread
+  switching, MCP inspection, and context compaction as first-class CLI
+  workflows:
+  https://developers.openai.com/codex/cli/slash-commands
+- Codex sandboxing and approvals are configured with durable settings such as
+  `sandbox_mode`, `approval_policy`, writable roots, permission profiles, and
+  command rules:
+  https://developers.openai.com/codex/concepts/sandboxing
+- Codex customization recommends moving from repository instructions to
+  plugins, MCP, and subagents as workflows become reusable:
+  https://developers.openai.com/codex/concepts/customization
+- OpenAI's Agents SDK documentation treats agent definitions, runtime loop and
+  state, sandboxing, handoffs, guardrails/human review, results/state, tools,
+  observability, and evals as separate design surfaces:
+  https://developers.openai.com/api/docs/guides/agents
 
-Agent Harness's differentiator should not be copying any one UI. The
-differential is that the local harness can produce and enforce a task-specific
-planning envelope, then replay it from local logs.
+Idiom's differentiator should not be copying any one UI. The differential is
+that the local harness can produce and enforce a task-specific planning
+envelope, then replay it from local logs.
 
-## Target Lanes And Packets
+## Current Idiom Lanes And Packets
 
-Verified active state from the requested docs and code:
+Verified current state from the requested docs and code:
 
 - `implement` is a write-capable lane where the model interleaves reads and
   edits. It is appropriate for narrow work where one trajectory is enough.
@@ -140,11 +159,11 @@ Verified active state from the requested docs and code:
   submitted edits deterministically.
 - `atom-spec` is a drafting lane that produces a brief artifact without
   touching the workspace.
-- `harness lane implement` and `harness lane plan-execute` preload a compact ranked
+- `idiom lane implement` and `idiom lane plan-execute` preload a compact ranked
   `context_pack` by default, unless the caller passes `--no-context-pack`.
 - `context_pack` writes a cached graph view under
-  `.harness/comprehension/graph.sqlite` and a human-readable mirror under
-  `.harness/comprehension/views/<pack_id>.json`.
+  `.idiom/comprehension/graph.sqlite` and a human-readable mirror under
+  `.idiom/comprehension/views/<pack_id>.json`.
 - The `pack_id` can round-trip through `submit_plan` into
   `workspace.PlanArtifact.PackID`. The executor can call
   `comprehension.LoadViewByID(root, pack_id)` and emits
@@ -158,15 +177,15 @@ Verified active state from the requested docs and code:
 - `architect budget` estimates packet budget tiers and placement probes.
 - `architect packet-compare` and `architect replay-compare` compare packet and
   model-plan variants.
-- `submit_plan` persists `harness.plan.v1` with `schema_version`,
+- `submit_plan` currently persists `idiom.plan.v1` with `schema_version`,
   `created`, `rationale`, optional `pack_id`, optional `session_id`, and
   ordered `edits`.
 - The executor preflights `required_edit_paths` and substring anchors before
-  any edit lands, then emits `harness.plan_execute.*` events for artifact load,
+  any edit lands, then emits `idiom.plan_execute.*` events for artifact load,
   preflight, executor start, each edit, and completion.
 - The autonomy tracker marks durable plan approval scope, plan exit semantics,
   build-switch reminders, typed workflow state, target-role packets, and
-  workflow-state eval parsing as defined capabilities or tracked
+  workflow-state eval parsing as implemented capabilities or tracked
   requirements.
 
 This design builds on those facts. It does not require a new model loop before
@@ -194,14 +213,14 @@ it becomes useful.
 ### 1. Task Intake
 
 Input can arrive from a user prompt, a brief file, a workflow resume, an eval
-scenario, or an LLM agent calling `harness tool`.
+scenario, or an external agent calling `idiom tool`.
 
 The harness assigns:
 
 - `task_id`
 - `session_id`
 - workspace root and cwd
-- active git head and dirty fingerprint
+- current git head and dirty fingerprint
 - requested lane or mode
 - explicit user constraints
 - initial target roles, if any
@@ -227,10 +246,10 @@ the next tool call.
 
 ### 3. Planning Packet
 
-The harness builds a planning packet, through:
+The harness builds a planning packet, currently through:
 
 ```bash
-harness architect packet \
+idiom architect packet \
   --schema planning_v2 \
   --task-file <task.md> \
   --context-view <context-view.json> \
@@ -257,8 +276,8 @@ rewrite the contract fields.
 The model drafts a plan from the packet using a read-only surface:
 
 ```bash
-harness architect plan --packet <packet.json> --output <plan.prompt.md>
-harness artifact --prompt-file <plan.prompt.md> --output <plan.md> --no-tools
+idiom architect plan --packet <packet.json> --output <plan.prompt.md>
+idiom artifact --prompt-file <plan.prompt.md> --output <plan.md> --no-tools
 ```
 
 Later CLI sugar can hide those two steps, but the artifact boundary should stay
@@ -340,9 +359,8 @@ The handoff projects the approved durable plan into the lane-specific contract:
 - `implement`: the runtime brief and implementation target packet expose
   editable primary paths, read-only evidence, forbidden paths, allowed new
   destinations, and verification intent.
-- LLM-agent sidecar: `harness tool` returns the packet, plan, audit, and
-  approval scope for another LLM agent to consume, while Agent Harness remains
-  the verifier/auditor.
+- external sidecar: `idiom tool` returns the packet, plan, audit, and approval
+  scope for another agent to consume, while Idiom remains the verifier/auditor.
 
 The executor must re-check the handoff immediately before writing. If the
 workspace fingerprint, target file fingerprint, or packet freshness has expired,
@@ -390,23 +408,23 @@ without reconstructing them from raw prose.
 ## Durable Plan Schema
 
 The durable plan schema should be explicit about field ownership. Proposed
-schema version: `harness.durable_plan.v1`.
+schema version: `idiom.durable_plan.v1`.
 
 ```json
 {
-  "schema_version": "harness.durable_plan.v1",
-  "plan_id": "plan_EXAMPLE_abcd1234",
+  "schema_version": "idiom.durable_plan.v1",
+  "plan_id": "plan_20260512_235959_abcd1234",
   "task_id": "task_abcd1234",
-  "created_at": "<iso-timestamp>",
+  "created_at": "2026-05-12T23:59:59Z",
   "source": {
     "packet_id": "packet_...",
-    "packet_schema": "harness.architect.planning_packet.v2",
+    "packet_schema": "idiom.architect.planning_packet.v2",
     "pack_id": "811c2a5c2d387cb1",
     "context_index_id": "eb4f08f4874da419",
     "git_head": "abc123",
     "dirty_fingerprint": "sha256:...",
     "prompt_hash": "sha256:...",
-    "model": "coder-model"
+    "model": "qwen3-coder-30b"
   },
   "objective": "Implement the approved refactor without changing prompt semantics.",
   "constraints": [
@@ -417,7 +435,7 @@ schema version: `harness.durable_plan.v1`.
     {
       "id": "assumption-1",
       "text": "The existing plan-execute executor remains the execution path.",
-      "evidence": ["file://cmd/harness/plan_execute.go"]
+      "evidence": ["file://cmd/idiom/plan_execute.go"]
     }
   ],
   "open_questions": [
@@ -453,7 +471,7 @@ schema version: `harness.durable_plan.v1`.
         "internal/workflows/architect/packet.go",
         "internal/capabilities/workspace/submit_plan.go"
       ],
-      "forbidden_paths": [".git", ".harness/comprehension/graph.sqlite"],
+      "forbidden_paths": [".git", ".idiom/comprehension/graph.sqlite"],
       "dependencies": [],
       "expected_change": "Add schema structs and validation helpers.",
       "anchors": [
@@ -472,7 +490,7 @@ schema version: `harness.durable_plan.v1`.
     }
   ],
   "verification": {
-    "commands": ["go test ./internal/workflows/architect", "go test ./cmd/harness"],
+    "commands": ["go test ./internal/workflows/architect", "go test ./internal/surfaces/cli/root ./internal/lanecmd ./internal/surfaces/cli/planexecute"],
     "source_sanity_paths": ["internal/workflows/architect/durable_plan.go"],
     "expected_failures": [],
     "blocked_if_unavailable": true,
@@ -487,10 +505,10 @@ schema version: `harness.durable_plan.v1`.
     ],
     "allowed_new_destinations": ["internal/workflows/architect/durable_plan.go"],
     "analogy_paths": [],
-    "forbidden_paths": [".git", ".harness/comprehension/graph.sqlite"],
+    "forbidden_paths": [".git", ".idiom/comprehension/graph.sqlite"],
     "allowed_tool_classes": ["read", "semantic_read", "edit", "verification"],
     "command_policy": {
-      "allow": ["go test ./internal/workflows/architect", "go test ./cmd/harness"],
+      "allow": ["go test ./internal/workflows/architect", "go test ./internal/surfaces/cli/root ./internal/lanecmd ./internal/surfaces/cli/planexecute"],
       "ask": [],
       "deny": ["git push", "git reset --hard"]
     },
@@ -531,7 +549,7 @@ Plan audit is deterministic and should be callable before any model is asked to
 execute:
 
 ```bash
-harness architect plan-audit \
+idiom architect plan-audit \
   --packet packet.json \
   --plan-file plan.md \
   --output audit.json
@@ -591,7 +609,7 @@ Post-execution replay:
 - Did verification match the plan's verification section?
 - Would the old packet have failed earlier or produced a broader plan?
 
-`architect replay-compare` compares two packets and two plan
+Current `architect replay-compare` already compares two packets and two plan
 texts through deterministic plan audit. Extend it with durable plan and
 execution fields:
 
@@ -638,11 +656,11 @@ Replay compare should be allowed to say "not comparable" when these differ.
 
 The executor handoff is the bridge from approved plan to write-capable lane.
 
-`PlanArtifact` should carry edit-list-oriented fields:
+Current `PlanArtifact` is edit-list oriented:
 
 ```json
 {
-  "schema_version": "harness.plan.v1",
+  "schema_version": "idiom.plan.v1",
   "created": "...",
   "rationale": "...",
   "pack_id": "...",
@@ -654,11 +672,11 @@ The executor handoff is the bridge from approved plan to write-capable lane.
 Keep that shape for backwards compatibility, but add an adjacent handoff
 artifact rather than overloading every `PlanEdit` immediately.
 
-Proposed schema version: `harness.executor_handoff.v1`.
+Proposed schema version: `idiom.executor_handoff.v1`.
 
 ```json
 {
-  "schema_version": "harness.executor_handoff.v1",
+  "schema_version": "idiom.executor_handoff.v1",
   "handoff_id": "handoff_...",
   "plan_id": "plan_...",
   "approval_scope_id": "approval_...",
@@ -668,7 +686,7 @@ Proposed schema version: `harness.executor_handoff.v1`.
   "required_edit_paths": ["internal/workflows/architect/durable_plan.go"],
   "allowed_new_destinations": ["internal/workflows/architect/durable_plan.go"],
   "read_only_evidence": ["internal/capabilities/workspace/submit_plan.go"],
-  "forbidden_paths": [".git", ".harness/comprehension/graph.sqlite"],
+  "forbidden_paths": [".git", ".idiom/comprehension/graph.sqlite"],
   "validation_commands": ["go test ./internal/workflows/architect"],
   "verification_owner": "executor",
   "atoms": [
@@ -721,27 +739,27 @@ simplest safe lane:
 Use existing commands first, then add convenience wrappers after the artifact
 shape settles.
 
-Explicit flow:
+Current explicit flow:
 
 ```bash
-harness context pack --task-file task.md --mode plan --output context-view.json
+idiom context pack --task-file task.md --mode plan --output context-view.json
 
-harness architect packet \
+idiom architect packet \
   --task-file task.md \
   --schema planning_v2 \
   --context-view context-view.json \
   --output packet.json
 
-harness architect lint --packet packet.json
-harness architect budget --packet packet.json
-harness architect plan --packet packet.json --output plan.prompt.md
+idiom architect lint --packet packet.json
+idiom architect budget --packet packet.json
+idiom architect plan --packet packet.json --output plan.prompt.md
 
-harness artifact \
+idiom artifact \
   --prompt-file plan.prompt.md \
   --output plan.md \
   --no-tools
 
-harness architect plan-audit \
+idiom architect plan-audit \
   --packet packet.json \
   --plan-file plan.md \
   --output audit.json
@@ -750,34 +768,34 @@ harness architect plan-audit \
 Proposed durable wrappers:
 
 ```bash
-harness plan draft \
+idiom plan draft \
   --task-file task.md \
   --packet-out packet.json \
-  --plan-out .harness/plans/<plan_id>.plan.json \
+  --plan-out .idiom/plans/<plan_id>.plan.json \
   --markdown-out .planning/<plan_id>.md
 
-harness plan audit \
-  --plan .harness/plans/<plan_id>.plan.json \
-  --output .harness/plans/<plan_id>.audit.json
+idiom plan audit \
+  --plan .idiom/plans/<plan_id>.plan.json \
+  --output .idiom/plans/<plan_id>.audit.json
 
-harness plan approve \
-  --plan .harness/plans/<plan_id>.plan.json \
+idiom plan approve \
+  --plan .idiom/plans/<plan_id>.plan.json \
   --atom atom-1 \
-  --output .harness/plans/<plan_id>.approval.json
+  --output .idiom/plans/<plan_id>.approval.json
 
-harness plan handoff \
-  --approval .harness/plans/<plan_id>.approval.json \
+idiom plan handoff \
+  --approval .idiom/plans/<plan_id>.approval.json \
   --lane plan-execute \
-  --output .harness/plans/<plan_id>.handoff.json
+  --output .idiom/plans/<plan_id>.handoff.json
 
-harness lane plan-execute \
-  --handoff .harness/plans/<plan_id>.handoff.json \
+idiom lane plan-execute \
+  --handoff .idiom/plans/<plan_id>.handoff.json \
   --json
 ```
 
 Interactive UX:
 
-- `/plan` opens or drafts the active session plan.
+- `/plan` opens or drafts the current session plan.
 - The Plan panel shows packet ID, plan ID, audit status, approval status,
   editable targets, read-only evidence, validation commands, and replay status.
 - Approval prompts show only the scope delta: editable targets, new
@@ -787,14 +805,14 @@ Interactive UX:
 - If execution is blocked by stale fingerprints, the UI should offer "refresh
   packet and re-audit" rather than continuing with stale scope.
 
-LLM-agent UX:
+External-agent UX:
 
-- `harness tool context_pack` remains the first sidecar entry point.
-- `harness tool harness_audit` reports planning-quality feedback clusters.
-- Add `harness tool plan_audit` or expose `architect plan-audit` through the tool
+- `idiom tool context_pack` remains the first sidecar entry point.
+- `idiom tool harness_audit` reports planning-quality feedback clusters.
+- Add `idiom tool plan_audit` or expose `architect plan-audit` through the tool
   surface once the durable schema is stable.
-- Return machine-readable paths and IDs so LLM agents and scripts
-  can use Agent Harness as a local planning/audit sidecar.
+- Return machine-readable paths and IDs so Codex, Claude Code, OpenCode, or
+  Aider can use Idiom as a local planning/audit sidecar.
 
 ## Telemetry
 
@@ -925,7 +943,7 @@ Local-model operating metrics:
 - time to first approved edit
 - budget-risk warnings by packet tier
 
-`harness-eval` and SWE-style scenarios should be able to assert:
+`idiom-eval` and SWE-style scenarios should be able to assert:
 
 - workflow phase
 - editable targets
@@ -942,7 +960,7 @@ Local-model operating metrics:
 ### Phase 1: Document And Align Existing Surfaces
 
 - Land this design doc.
-- Update active planning docs to point at the lifecycle terminology.
+- Update current planning docs to point at the lifecycle terminology.
 - Keep existing commands unchanged.
 - Add examples that use `context_pack`, `architect packet --schema
   planning_v2`, `architect plan-audit`, and `replay-compare`.
@@ -950,13 +968,13 @@ Local-model operating metrics:
 Exit criteria:
 
 - The design language matches `lane-architecture.md`,
-  `architect-packets.md`, and the autonomy tracker.
+  `architect-packets.md`, and `agent-autonomy-tracker.md`.
 - No command behavior changes are required.
 
 ### Phase 2: Durable Plan Artifact
 
-- Add `harness.durable_plan.v1` structs and JSON validation.
-- Persist durable plans under `.harness/plans/`.
+- Add `idiom.durable_plan.v1` structs and JSON validation.
+- Persist durable plans under `.idiom/plans/`.
 - Keep a markdown mirror under `.planning/` for the Plan panel.
 - Parse model-authored plan JSON when present; otherwise store unparsed prose
   with `status: unparsed`.
@@ -983,10 +1001,10 @@ Exit criteria:
 
 ### Phase 4: Executor Handoff
 
-- Add `harness.executor_handoff.v1`.
+- Add `idiom.executor_handoff.v1`.
 - Teach `plan-execute` to accept a handoff file.
 - Add optional `atom_id` and `approval_scope_id` to `PlanEdit` or executor
-  telemetry without breaking `harness.plan.v1`.
+  telemetry without breaking `idiom.plan.v1`.
 - Enforce allowed new destinations and read-only evidence roles in executor
   preflight.
 - Keep `pack_id` rehydration visible.
@@ -1012,15 +1030,15 @@ Exit criteria:
 
 ### Phase 6: CLI And Sidecar Polish
 
-- Add top-level `harness plan` wrappers once schemas are stable.
-- Expose plan audit through `harness tool`.
-- Document sidecar workflows for LLM agents.
+- Add top-level `idiom plan` wrappers once schemas are stable.
+- Expose plan audit through `idiom tool`.
+- Document sidecar workflows for Codex, Claude Code, OpenCode, and Aider.
 - Add retention and cleanup controls for plan artifacts.
 
 Exit criteria:
 
-- LLM agents can call Agent Harness for packet, audit, handoff, and replay without
-  starting an Agent Harness model session.
+- External agents can call Idiom for packet, audit, handoff, and replay without
+  starting an Idiom model session.
 
 ## Risks
 
@@ -1043,9 +1061,9 @@ Exit criteria:
 - Privacy and log volume: durable artifacts may contain sensitive paths or
   command output. Mitigation: local storage by default, redaction, and hashes
   for large raw content.
-- LLM-agent mismatch: another LLM agent may treat Agent Harness's packet as advice
+- External-agent mismatch: another agent may treat Idiom's packet as advice
   rather than a contract. Mitigation: expose explicit `ok`, `errors`, and
-  `allowed_scope` fields through `harness tool`.
+  `allowed_scope` fields through `idiom tool`.
 
 ## Non-Goals
 
@@ -1081,23 +1099,23 @@ The auditable planning and handoff pillar is successful when:
 - Final answers report changed paths and verification honestly.
 - Replay compare can show whether a packet or plan change reduced audit
   findings on the same task.
-- `harness-eval` can assert workflow phase, approved targets, evidence roles,
+- `idiom-eval` can assert workflow phase, approved targets, evidence roles,
   audit findings, handoff status, and verification outcome.
 - `harness_audit` can summarize planning-quality failures without manual JSONL
   reconstruction.
-- LLM agents can use Agent Harness as a context/audit/handoff sidecar through
-  stable CLI or `harness tool` outputs.
+- External agents can use Idiom as a context/audit/handoff sidecar through
+  stable CLI or `idiom tool` outputs.
 
 ## Open Questions
 
-- Should durable plan artifacts live only under `.harness/plans/`, or should the
+- Should durable plan artifacts live only under `.idiom/plans/`, or should the
   markdown mirror under `.planning/` become the user-facing source of truth?
-- Should `plan-execute` accept `--handoff` directly, or should `harness lane
+- Should `plan-execute` accept `--handoff` directly, or should `idiom lane
   plan-execute` own handoff resolution and call the lower-level subcommand?
-- Should `PlanArtifactSchemaVersion` move to `harness.plan.v2` when adding
+- Should `PlanArtifactSchemaVersion` move to `idiom.plan.v2` when adding
   `atom_id`, or should those IDs remain only in executor telemetry and the
   adjacent handoff artifact?
 - What retention policy should apply to plan artifacts that include raw
   evidence excerpts?
-- How much of plan audit should run automatically inside `harness lane
+- How much of plan audit should run automatically inside `idiom lane
   plan-execute` versus remaining an explicit preflight command?

@@ -45,12 +45,15 @@ func TestNewCompactPackProjection_FromPackResult(t *testing.T) {
 	if p.Quality.LocalizationConfidence != "high" {
 		t.Errorf("expected LocalizationConfidence 'high', got %q", p.Quality.LocalizationConfidence)
 	}
+
 	if !p.Quality.SourceOwnerFound {
 		t.Error("expected SourceOwnerFound=true")
 	}
+
 	if len(p.Quality.EvidencePaths) != 2 {
 		t.Errorf("expected 2 EvidencePaths, got %d", len(p.Quality.EvidencePaths))
 	}
+
 	if len(p.Quality.Reasons) != 1 {
 		t.Errorf("expected 1 Reason, got %d", len(p.Quality.Reasons))
 	}
@@ -59,9 +62,11 @@ func TestNewCompactPackProjection_FromPackResult(t *testing.T) {
 	if len(p.CandidateFiles) != 2 {
 		t.Errorf("expected 2 CandidateFiles, got %d", len(p.CandidateFiles))
 	}
+
 	if p.CandidateFiles[0].Path != "internal/foo/bar.go" {
 		t.Errorf("expected file path 'internal/foo/bar.go', got %q", p.CandidateFiles[0].Path)
 	}
+
 	if p.CandidateFiles[0].Role != "source" {
 		t.Errorf("expected role 'source', got %q", p.CandidateFiles[0].Role)
 	}
@@ -70,6 +75,7 @@ func TestNewCompactPackProjection_FromPackResult(t *testing.T) {
 	if len(p.CandidateSymbols) != 1 {
 		t.Errorf("expected 1 CandidateSymbol, got %d", len(p.CandidateSymbols))
 	}
+
 	if p.CandidateSymbols[0].QualifiedName != "DoFoo" {
 		t.Errorf("expected QualifiedName 'DoFoo', got %q", p.CandidateSymbols[0].QualifiedName)
 	}
@@ -125,9 +131,11 @@ func TestRenderCompactPackProjection_NoBudget(t *testing.T) {
 	if !strings.Contains(out, "packet_quality:") {
 		t.Error("expected packet_quality section in output")
 	}
+
 	if !strings.Contains(out, "localization_confidence: medium") {
 		t.Error("expected localization_confidence in output")
 	}
+
 	if !strings.Contains(out, "source_owner_found: true") {
 		t.Error("expected source_owner_found in output")
 	}
@@ -151,9 +159,11 @@ func TestRenderCompactPackProjection_NoBudget(t *testing.T) {
 	if !strings.Contains(out, "pkg/handler.go") {
 		t.Error("expected handler.go in output")
 	}
+
 	if !strings.Contains(out, "pkg/service.go") {
 		t.Error("expected service.go in output")
 	}
+
 	if !strings.Contains(out, "HandleRequest") {
 		t.Error("expected HandleRequest in output")
 	}
@@ -167,9 +177,11 @@ func TestRenderCompactPackProjection_NoBudget(t *testing.T) {
 	if returned.OmittedFiles != 0 {
 		t.Errorf("expected OmittedFiles=0 in unbounded mode, got %d", returned.OmittedFiles)
 	}
+
 	if returned.OmittedSymbols != 0 {
 		t.Errorf("expected OmittedSymbols=0 in unbounded mode, got %d", returned.OmittedSymbols)
 	}
+
 	if returned.OmittedTests != 0 {
 		t.Errorf("expected OmittedTests=0 in unbounded mode, got %d", returned.OmittedTests)
 	}
@@ -185,6 +197,7 @@ func TestRenderCompactPackProjection_BudgetTruncation(t *testing.T) {
 			Reason: "relevant to task",
 		}
 	}
+
 	symbols := make([]PackSymbol, 10)
 	for i := range symbols {
 		symbols[i] = PackSymbol{
@@ -195,6 +208,7 @@ func TestRenderCompactPackProjection_BudgetTruncation(t *testing.T) {
 			Reason:        "symbol match",
 		}
 	}
+
 	tests := make([]PackTest, 5)
 	for i := range tests {
 		tests[i] = PackTest{
@@ -238,12 +252,15 @@ func TestRenderCompactPackProjection_BudgetTruncation(t *testing.T) {
 	if !strings.Contains(out, "pack_id: pack-budget-test") {
 		t.Error("expected pack_id in truncated output")
 	}
+
 	if !strings.Contains(out, "packet_quality:") {
 		t.Error("expected packet_quality in truncated output")
 	}
+
 	if !strings.Contains(out, "localization_confidence: high") {
 		t.Error("expected localization_confidence in truncated output")
 	}
+
 	if !strings.Contains(out, "source_owner_found: true") {
 		t.Error("expected source_owner_found in truncated output")
 	}
@@ -269,6 +286,7 @@ func TestRenderCompactPackProjection_BudgetTokensZeroNoTruncation(t *testing.T) 
 	for i := range files {
 		files[i] = PackFile{Path: "pkg/f.go", Role: "source", Reason: "match"}
 	}
+
 	result := PackResult{
 		PackID: "pack-unbounded",
 		Fresh:  false,
@@ -346,9 +364,11 @@ func TestRenderCompactPackProjection_EmptyQuality(t *testing.T) {
 	if !strings.Contains(out, "packet_quality:") {
 		t.Error("expected packet_quality section even with empty quality")
 	}
+
 	if !strings.Contains(out, "localization_confidence: unknown") {
 		t.Error("expected unknown localization_confidence for empty quality")
 	}
+
 	if !strings.Contains(out, "source_owner_found: false") {
 		t.Error("expected source_owner_found: false for empty quality")
 	}
@@ -361,15 +381,19 @@ func TestNewCompactPackProjection_EmptyResult(t *testing.T) {
 	if p.PackID != "" {
 		t.Errorf("expected empty PackID, got %q", p.PackID)
 	}
+
 	if p.TotalCandidates != 0 {
 		t.Errorf("expected 0 TotalCandidates, got %d", p.TotalCandidates)
 	}
+
 	if len(p.CandidateFiles) != 0 {
 		t.Errorf("expected 0 CandidateFiles, got %d", len(p.CandidateFiles))
 	}
+
 	if len(p.CandidateSymbols) != 0 {
 		t.Errorf("expected 0 CandidateSymbols, got %d", len(p.CandidateSymbols))
 	}
+
 	if len(p.Tests) != 0 {
 		t.Errorf("expected 0 Tests, got %d", len(p.Tests))
 	}
@@ -398,12 +422,15 @@ func TestRenderCompactPackProjection_NoCandidates(t *testing.T) {
 	if !strings.Contains(out, "pack_id: pack-no-candidates") {
 		t.Error("expected pack_id in output")
 	}
+
 	if !strings.Contains(out, "packet_quality:") {
 		t.Error("expected packet_quality in output")
 	}
+
 	if !strings.Contains(out, "context_gaps:") {
 		t.Error("expected context_gaps in output")
 	}
+
 	if !strings.Contains(out, "evidence_note:") {
 		t.Error("expected evidence_note in output")
 	}
@@ -412,9 +439,11 @@ func TestRenderCompactPackProjection_NoCandidates(t *testing.T) {
 	if strings.Contains(out, "candidate_files:") {
 		t.Error("unexpected candidate_files section with no files")
 	}
+
 	if strings.Contains(out, "candidate_symbols:") {
 		t.Error("unexpected candidate_symbols section with no symbols")
 	}
+
 	if strings.Contains(out, "tests:") {
 		t.Error("unexpected tests section with no tests")
 	}
@@ -456,6 +485,7 @@ func TestRenderCompactPackProjection_SmallBudget(t *testing.T) {
 	if !strings.Contains(out, "pack_id:") {
 		t.Error("expected pack_id with small budget")
 	}
+
 	if !strings.Contains(out, "packet_quality:") {
 		t.Error("expected packet_quality with small budget")
 	}
@@ -512,6 +542,7 @@ func TestRenderCompactPackProjection_TinyBudgetHeaderExceeds(t *testing.T) {
 	if returned.OmittedFiles != 1 {
 		t.Errorf("expected OmittedFiles=1, got %d", returned.OmittedFiles)
 	}
+
 	if returned.OmittedSymbols != 1 {
 		t.Errorf("expected OmittedSymbols=1, got %d", returned.OmittedSymbols)
 	}
@@ -546,6 +577,7 @@ func TestRenderCompactPackProjection_SymbolRendersReason(t *testing.T) {
 	if !strings.Contains(out, "matches query pattern") {
 		t.Error("expected symbol reason in output")
 	}
+
 	// Symbol line should include both the name and the reason
 	if !strings.Contains(out, "DoBar") {
 		t.Error("expected symbol name DoBar in output")
@@ -562,6 +594,7 @@ func TestRenderCompactPackProjection_Budget100(t *testing.T) {
 			Reason: "relevant to task",
 		}
 	}
+
 	symbols := make([]PackSymbol, 10)
 	for i := range symbols {
 		symbols[i] = PackSymbol{
@@ -634,15 +667,18 @@ func TestPackResultCompactProjectionPopulated(t *testing.T) {
 	// Simulate the Pack() wiring from Atom 5.
 	proj := NewCompactPackProjection(result)
 	_, compactProj := RenderCompactPackProjection(proj, result.BudgetTokens)
+
 	result.CompactProjection = compactProj
 
 	// CompactProjection must be populated.
 	if result.CompactProjection.PackID != "wired-pack-1" {
 		t.Errorf("expected CompactProjection.PackID 'wired-pack-1', got %q", result.CompactProjection.PackID)
 	}
+
 	if result.CompactProjection.BudgetTokens != 80 {
 		t.Errorf("expected CompactProjection.BudgetTokens 80, got %d", result.CompactProjection.BudgetTokens)
 	}
+
 	if result.CompactProjection.TotalCandidates == 0 {
 		t.Error("expected TotalCandidates > 0")
 	}
@@ -662,6 +698,7 @@ func TestPackResultCompactProjectionPopulated(t *testing.T) {
 		t.Errorf("expected localization_confidence 'high', got %q",
 			result.CompactProjection.Quality.LocalizationConfidence)
 	}
+
 	if !result.CompactProjection.Quality.SourceOwnerFound {
 		t.Error("expected SourceOwnerFound=true")
 	}
@@ -675,6 +712,7 @@ func TestPackResultCompactProjectionUnbounded(t *testing.T) {
 	for i := range files {
 		files[i] = PackFile{Path: "pkg/f.go", Role: "source", Reason: "match"}
 	}
+
 	result := PackResult{
 		PackID:           "wired-pack-unbounded",
 		Fresh:            true,
@@ -686,6 +724,7 @@ func TestPackResultCompactProjectionUnbounded(t *testing.T) {
 	// Simulate Pack() wiring with BudgetTokens=0 (unbounded).
 	proj := NewCompactPackProjection(result)
 	_, compactProj := RenderCompactPackProjection(proj, 0)
+
 	result.CompactProjection = compactProj
 
 	// All omitted counts must be zero (no budget enforcement).
@@ -693,10 +732,12 @@ func TestPackResultCompactProjectionUnbounded(t *testing.T) {
 		t.Errorf("expected OmittedFiles=0 in unbounded mode, got %d",
 			result.CompactProjection.OmittedFiles)
 	}
+
 	if result.CompactProjection.OmittedSymbols != 0 {
 		t.Errorf("expected OmittedSymbols=0 in unbounded mode, got %d",
 			result.CompactProjection.OmittedSymbols)
 	}
+
 	if result.CompactProjection.OmittedTests != 0 {
 		t.Errorf("expected OmittedTests=0 in unbounded mode, got %d",
 			result.CompactProjection.OmittedTests)
@@ -738,6 +779,7 @@ func TestLoadCachedPackCompactProjectionFallback(t *testing.T) {
 	if result.CompactProjection.PackID == "" {
 		cp := NewCompactPackProjection(result)
 		_, compactProj := RenderCompactPackProjection(cp, result.BudgetTokens)
+
 		result.CompactProjection = compactProj
 	}
 
@@ -746,6 +788,7 @@ func TestLoadCachedPackCompactProjectionFallback(t *testing.T) {
 		t.Errorf("expected CompactProjection.PackID 'legacy-pack' after fallback, got %q",
 			result.CompactProjection.PackID)
 	}
+
 	// With BudgetTokens=100 and 3 items, at least one omitted.
 	totalOmitted := result.CompactProjection.OmittedFiles +
 		result.CompactProjection.OmittedSymbols +
@@ -760,6 +803,7 @@ func TestLoadCachedPackCompactProjectionFallback(t *testing.T) {
 // budget enforcement omits items (Atom 6).
 func TestEstimatedFullTokensSaved_BudgetEnforcement(t *testing.T) {
 	ResetViewCacheCounters()
+
 	fullSaved, _ := TokenSavingsCounters()
 	if fullSaved != 0 {
 		t.Fatalf("expected zero initial savings, got %d", fullSaved)
@@ -772,6 +816,7 @@ func TestEstimatedFullTokensSaved_BudgetEnforcement(t *testing.T) {
 	for i := range files {
 		files[i] = PackFile{Path: "pkg/f" + strings.Repeat("x", 30) + ".go", Role: "source", Reason: "relevant to task"}
 	}
+
 	result := PackResult{
 		PackID:         "savings-test",
 		Fresh:          true,
@@ -786,6 +831,7 @@ func TestEstimatedFullTokensSaved_BudgetEnforcement(t *testing.T) {
 	if returned.OmittedFiles == 0 && returned.OmittedSymbols == 0 && returned.OmittedTests == 0 {
 		t.Error("expected at least some omitted items with budget=200 and 15 files")
 	}
+
 	t.Logf("output tokens=%d, omitted files=%d", estimateTokens(out), returned.OmittedFiles)
 
 	// Savings counter must be > 0 (genuine savings from compact projection).
@@ -793,6 +839,7 @@ func TestEstimatedFullTokensSaved_BudgetEnforcement(t *testing.T) {
 	if fullSaved <= 0 {
 		t.Errorf("expected estimatedFullTokensSaved > 0 after budget enforcement, got %d", fullSaved)
 	}
+
 	t.Logf("estimatedFullTokensSaved=%d from budget=200 render", fullSaved)
 }
 
@@ -852,6 +899,7 @@ func TestEstimatedFullTokensSaved_HeaderExceedsBudget(t *testing.T) {
 	if returned.OmittedFiles != 20 {
 		t.Errorf("expected all 20 files omitted when header exceeds budget, got OmittedFiles=%d", returned.OmittedFiles)
 	}
+
 	if !strings.Contains(out, "truncation_note: budget exhausted by header") {
 		t.Error("expected truncation note in output")
 	}
@@ -863,5 +911,6 @@ func TestEstimatedFullTokensSaved_HeaderExceedsBudget(t *testing.T) {
 	if fullSaved <= 0 {
 		t.Errorf("expected estimatedFullTokensSaved > 0 when header exceeds budget with many files, got %d", fullSaved)
 	}
+
 	t.Logf("estimatedFullTokensSaved=%d from header-exceeds-budget render", fullSaved)
 }

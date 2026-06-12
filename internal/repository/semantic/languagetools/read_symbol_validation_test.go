@@ -61,15 +61,19 @@ func TestValidateSymbolPatternRejectsProseFromDonkeyRun(t *testing.T) {
 		err := validateSymbolPattern("cpp_read_symbol", p)
 		if err == nil {
 			t.Errorf("validateSymbolPattern accepted %q but should reject (prose/expression)", p)
+
 			continue
 		}
+
 		msg := err.Error()
 		if !strings.Contains(msg, "exact-text search") {
 			t.Errorf("error for %q must name exact-text search as the alternative; got: %s", p, msg)
 		}
+
 		if !strings.Contains(msg, "AST-pattern capability") {
 			t.Errorf("error for %q must name AST-pattern capability as the alternative; got: %s", p, msg)
 		}
+
 		if !strings.Contains(msg, "cpp_read_symbol") {
 			t.Errorf("error for %q must name the rejecting tool; got: %s", p, msg)
 		}
@@ -83,6 +87,7 @@ func TestValidateSymbolPatternEmptyAllowed(t *testing.T) {
 	if err := validateSymbolPattern("go_read_symbol", ""); err != nil {
 		t.Errorf("empty pattern should be left to caller's required-field check, got: %v", err)
 	}
+
 	if err := validateSymbolPattern("go_read_symbol", "   "); err != nil {
 		t.Errorf("whitespace-only pattern should be left to caller's required-field check, got: %v", err)
 	}

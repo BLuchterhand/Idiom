@@ -80,6 +80,7 @@ func TestPostReadinessReadinessWithoutAnswerableEvidenceRemainsAdvisory(t *testi
 	if gap := postReadinessGap(req); gap != "" {
 		t.Fatalf("test setup should omit post-readiness gap fields, got %q", gap)
 	}
+
 	if contract := postReadinessToolContractForBrief(brief, nil, true, false); contract.RequireSourceRefreshContract || !contract.ReadinessAdvisory {
 		t.Fatalf("readiness without answerable evidence should remain advisory, got %#v", contract)
 	}

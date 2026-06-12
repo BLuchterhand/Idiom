@@ -11,6 +11,7 @@ func ApplyProductSourceSatisfiedCloseout(state *FeatureState) {
 	if state == nil {
 		return
 	}
+
 	state.Status = FeatureStateSourceSatisfied
 	state.PlanningLoop.State = FeatureStateSourceSatisfied
 	state.Blockers = nil
@@ -22,7 +23,9 @@ func ApplyProductSourceSatisfiedCloseout(state *FeatureState) {
 func ProductSourceSatisfiedCloseout(state FeatureState, brief ProductWorkflowBrief, requestedEffortID string) (FeatureState, Event) {
 	state.EffortRoot = strings.TrimSpace(brief.EffortRoot)
 	state.EffortID = firstNonEmptyTrimmed(requestedEffortID, brief.EffortID, state.EffortID)
+
 	activeRunDeltas := make([]ActiveRunDelta, 0, len(state.ActiveRuns))
+
 	for _, run := range state.ActiveRuns {
 		activeRunDeltas = append(activeRunDeltas, ActiveRunDelta{
 			Op:            "fold_terminal",
@@ -32,6 +35,7 @@ func ProductSourceSatisfiedCloseout(state FeatureState, brief ProductWorkflowBri
 			AfterState:    FeatureStateSourceSatisfied,
 		})
 	}
+
 	event := Event{
 		Type:            EventProductSourceSatisfied,
 		SessionID:       state.SessionID,
@@ -48,8 +52,10 @@ func ProductSourceSatisfiedCloseout(state FeatureState, brief ProductWorkflowBri
 		},
 	}
 	ApplyProductSourceSatisfiedCloseout(&state)
+
 	state.ActiveRuns = nil
 	state.DerivedNextValidActions = DeriveNextValidActions(state)
+
 	return state, event
 }
 
@@ -64,5 +70,6 @@ func firstNonEmptyTrimmed(values ...string) string {
 			return value
 		}
 	}
+
 	return ""
 }

@@ -1,7 +1,7 @@
 # Decisioning North Star
 
-**North Star: AI coding agents are becoming common, but teams do not trust
-their context, decisions, or outputs. Agent Harness sells the missing substrate: repo
+**North Star: AI coding agents are becoming common, but teams do not yet trust
+their context, decisions, or outputs. Idiom sells the missing substrate: repo
 memory, freshness, contracts, audit, and evals.**
 
 This is the decisioning standard for the harness.
@@ -10,6 +10,13 @@ This is the decisioning standard for the harness.
 
 - The model owns strategy.
 - The harness owns contracts.
+
+The harness tracks evidence (inspected paths, closed claims, open
+obligations) and may present that evidence to the model as context. The
+harness must not declare that evidence is sufficient or that the model is
+ready to answer. The model owns the decision of when it understands enough
+to synthesize a response. The harness must not degrade the tool surface
+or change the contract based on its own readiness assessment.
 
 In practice:
 
@@ -24,6 +31,22 @@ When the model is making a normal execution choice, the harness should steer bef
 - Prefer a redirect over a hard rejection on the first mistake.
 - Prefer bounded follow-up budgets over automatic answer synthesis.
 - Prefer “answer now or take one narrow next step” over “you must use tool X next”.
+
+## No User-Visible Hard Blockers In Strategy Lanes
+
+Read-only direct-answer and conversation lanes are strategy lanes. They may end
+with a supported answer, a partial answer with explicit uncertainty, or a
+normal user-facing statement that the gathered evidence is insufficient. They
+must not end by exposing harness blocker protocol, completion-gate retry text,
+or mutation-lane status such as "no files changed" as the user answer.
+
+`<<QUESTION>>` remains valid as model-facing and machine-consumed protocol in
+mutation, planning, repair, and recovery phases that need a typed blocker. In
+read-only direct-answer lanes, the same marker is not a user-facing terminal
+state. If the model emits it, the harness should either retry with a clearer
+contract while tools are still useful, or synthesize/present a normal
+uncertainty answer from the gathered evidence. The harness may still log the
+failed protocol internally, but the user-visible answer must remain prose.
 
 ## Model-Harness Parity
 
@@ -95,6 +118,16 @@ to make the structured contract clearer at its canonical owner: route metadata,
 runtime brief, tool result, step-state packet, or one prompt surface. Do not add
 the same rule to every prompt layer.
 
+Do not confuse harness-induced degradation with model incapability. When a
+model that is normally capable of multi-file editing or planning starts
+producing shallow prose, malformed artifacts, omitted paths, or repeated
+contract misses, first compare the actual runtime against the intended one:
+role selection, model route, thinking mode, context budget, prompt lead-in,
+available tools, recovery state, and completion gate. If the harness changes a
+semantic editing task into a brittle serialization task, or routes a planning
+contract through an actor configured for a different role, the right fix is to
+realign the lane contract or actor boundary before tightening prompts.
+
 ## Workflow Transition Contracts
 
 Long-running agent workflows should be modeled as bounded, auditable state
@@ -114,12 +147,12 @@ The generic pattern is:
 - Execution lanes refuse terminal, stale, dirty, or unscoped artifacts before
   spending model tokens.
 - Review and acceptance lanes write explicit source-satisfied or complete
-  outcomes instead of rewriting satisfied work.
+  outcomes instead of rewriting already-satisfied work.
 - Queue producers consume the same state report instead of duplicating
   project-specific status parsing.
 
-This belongs in harness core when the invariant is generic: do not ask an agent
-to mutate stale, complete, or ambiguous work. Project policies can
+This belongs in idiom core when the invariant is generic: do not ask an agent
+to mutate stale, already-complete, or ambiguous work. Project policies can
 choose what artifact format to feed the gate, but the bounded transition and
 audit behavior are harness responsibilities.
 
@@ -132,8 +165,13 @@ Hard enforcement is still required for invariants. These are not strategy sugges
 - Native tool-call protocol correctness.
 - Verification requirements after writes.
 - Final-answer readiness and evidence contracts.
-- Repeated identical-call loop breaks after warnings.
-- Post-budget “no more tools” cutoffs.
+- Repeated identical-call loop breaks after warnings (doom-loop guard).
+- Mutation-lane budget limits: writes must complete within a bounded
+  window to avoid unbounded resource consumption on concrete deliverables.
+- Read-only and conversation lanes must not have model-call budgets. The
+  model owns the decision of when evidence is sufficient to answer. The
+  doom-loop guard catches genuine loops; budget walls that preempt
+  legitimate investigation produce garbage forced answers.
 
 ## No Prompt-Magic Contract Triggers
 
@@ -145,7 +183,7 @@ particular run mode.
 
 Contract selection belongs in run metadata, typed route plans, runtime briefs,
 roles, or command modes — not in the model's strategy text. When a harness
-feature exists (for example, `harness implement` sets
+feature exists (for example, `idiom implement` sets
 `runOptions{TaskFamily: "implementation"}`), use it. If generic prompt routing
 misclassifies a write task, fix the structured routing or brief construction
 rather than adding magic phrases to atom specs.
@@ -153,6 +191,65 @@ rather than adding magic phrases to atom specs.
 Good: run metadata or a command mode declares the contract; the model receives a clean strategy brief.
 
 Bad: a strategy prompt or atom spec includes a magic phrase that a harness component parses to override route classification.
+
+For interactive lane activation, magic phrases are not allowed at all. A TUI
+prompt must not enter `implement`, `plan-execute`, `verification`, `locate`,
+`review`, or `architecture` because a keyword, path suffix, required-path
+heading, or sentence pattern matched a local heuristic. Use the classifier for
+natural language and explicit typed commands for operator-selected lanes; if
+classification is unavailable, fall back to conversation rather than guessing.
+
+## Typed Authority Contracts
+
+Prompts may explain a contract, but they are not the contract's source of
+truth. When a lane needs authority or obligations, compile them once into a
+typed route/runtime contract and carry that contract through CLI, TUI, runner,
+executor, review, resume, recovery, telemetry, and audit.
+
+Keep these fields distinct:
+
+- required coverage paths: every path must be edited, source-satisfied, or
+  explicitly blocked
+- allowed candidate paths: safe write/search scope, not mandatory coverage
+- exact edit snippets: source/current-state anchors that must survive into the
+  edit or `submit_plan`
+- edit-set obligations: run-level requirements such as at least one test edit
+  or at least one implementation-shaped edit
+- evidence paths: facts observed in packets, logs, commands, or source reads
+- recovery state: which typed obligation already failed and which retry is
+  still allowed
+
+Do not infer hard authority from generated prompt text, examples, tool schemas,
+context packets, transcript excerpts, recovery prose, or headings such as
+`editable files`. Those may localize or explain work, but they must enter the
+typed contract as candidate scope unless a human, command mode, durable
+artifact, or explicit structured field makes them required coverage. If a
+recovery retry adds a new obligation, store it in the typed contract and progress
+state before the next model call; do not rely on the retry addendum to be
+rediscovered later.
+
+Malformed structured output follows the same rule. `idiom.edit_intent.v1` is a
+non-executable handoff artifact: it may preserve model strategy after JSON or
+`submit_plan` serialization failure, but it cannot widen scope, claim source
+evidence, or authorize mutation. The harness must validate the artifact,
+compile only candidate edits, and then route those candidates through the
+existing `submit_plan` validation/preflight boundary before execution.
+
+## Git History As Decision Evidence
+
+Repository history is part of Idiom's memory substrate. Before changing,
+reverting, or simplifying established behavior, use focused history evidence
+when the existing rationale is not obvious: line history, symbol history, blame,
+or a narrow `git log` over affected paths. Old rationale is not a veto, but it
+must be considered as evidence alongside current logs, tests, audits, and
+product requirements.
+
+Commits should preserve the decision context needed by future agents. For
+non-trivial changes, the commit body should explain why the change was needed,
+which failure or requirement it addresses, what contract or tradeoff was chosen,
+what meaningful alternatives or reversions were avoided, and what verification
+supports the result. A diff tells what changed; the commit should tell why this
+change should survive.
 
 ## Prompt Surface Ownership
 
@@ -185,12 +282,12 @@ Do not use prompt text for:
 - compensating for unknown config keys or unmodeled runtime settings
 - scenario-specific recovery scripts after a generic contract failed
 
-## LLM-Agent Harness Simplicity
+## Frontier Harness Simplicity
 
-When comparing harness behavior to LLM-agent harnesses, prefer the simplest
+When comparing idiom to frontier coding harnesses, prefer the simplest
 equivalent contract over another prompt layer or phase machine.
 
-LLM-agent style does not mean fewer capabilities. It means:
+Frontier-style does not mean fewer capabilities. It means:
 
 - small, typed tool surfaces where possible
 - permissions, writes, verification, and loop breaks enforced by the host
@@ -206,9 +303,26 @@ ask whether the issue is really one of these simpler contract gaps:
 - the route brief failed to declare the contract
 - the completion gate accepted weaker evidence than the changed artifact
   requires
-- the loop fuse allowed repeated low-value work after the evidence was
+- the loop fuse allowed repeated low-value work after the evidence was already
   sufficient
 - telemetry cannot show the failure shape clearly enough for the next audit
+
+Repeated tool intent is not automatically stubbornness or weak reasoning. Treat
+it as a signal that the model is trying to satisfy a missing information need.
+Before nudging the model away from the repeated request, ask whether the command
+returned the evidence shape it implied: exact anchors, source bodies, handles,
+candidate quality, confidence, or a clear blocker. If the model keeps asking for
+the same class of evidence, either the tool is not returning what it should, or
+the model-visible contract promised a capability the tool cannot satisfy. The
+north-star repair is to make the evidence path work or correct the advertised
+expectation, not to steer the model into a premature answer.
+
+Do not count safer failure as material capability. A repair materially improves
+Idiom only when live logs, evals, or focused tests show the original task class
+now reaches a useful grounded answer or action. If the evidence only shows that
+garbage output became a typed blocker, fallback, or narrower failure, classify
+the change as partial hardening; keep only the generic invariant fixes and
+continue root-cause work before calling the incident solved.
 
 Verification must match artifact risk. Patch-hygiene checks such as
 `git diff --check` can satisfy prose/config formatting checks, but they are not
@@ -245,7 +359,7 @@ signals before adding more instructions:
 - agents enter read/search loops after a bounded implementation brief because
   the edit scope, exact anchor, or verification owner was only prose
 - deterministic backstops fire frequently for behavior the model should be able
-  to infer from the runtime brief and target evidence
+  to infer from the runtime brief and current evidence
 - behavior audits show `prompt_surface_overlap`, repeated rejections, broad-read
   loops, or structured `harness_feedback` against prompt/tool/context contracts
 
@@ -294,12 +408,12 @@ Good:
 - “After readiness, ask the model to name one exact missing claim and one exact probe that would resolve it; do not hard-pick the probe for the model.”
 - “Later recovery and failure prompts should stay closure-biased too: after readiness, prefer ‘answer now or one exact probe,’ not broad fallback menus like repo-wide filename search.”
 - “Use the structured tool instead; if it returns nothing, retry the original request.”
-- “You have used many read calls. Pause, summarize, and commit to the minimal next step.”
+- “You have already used many read calls. Pause, summarize, and commit to the minimal next step.”
 
 Bad:
 
 - “You must delegate a child task before any other read is allowed.”
-- “You have enough evidence, so the harness will synthesize the final answer for you.”
+- “You already have enough evidence, so the harness will synthesize the final answer for you.”
 - “Only tool X remains available” when the model could still safely answer or use a narrow follow-up.
 
 ## Repo Policy
@@ -323,10 +437,10 @@ Prompt layers should agree on the same shape:
 - strategy guidance belongs in runtime briefs and control rails, not in evidence summaries or result payloads
 - do not hardcode strategy around one recurring scenario or question class; if a rule is real, express it in generic evidence/contract terms rather than domain-specific terms
 - answer composition must be evidence-shaped, not topic-template-shaped; repeated live-test topics should become generic contracts or eval fixtures, not special final-answer branches
-- before adding prompt text, check whether the same obligation is owned by the base prompt, a profile, runtime brief, control rail, tool schema, wrapper doc, or recovery packet
+- before adding prompt text, check whether the same obligation is already owned by the base prompt, a profile, runtime brief, control rail, tool schema, wrapper doc, or recovery packet
 - model-facing guidance and harness enforcement should describe the same
   contract from different sides: prompts explain how to recognize readiness,
   while gates enforce the invariant when readiness is ignored
 - prompt-surface drift should produce audit-visible evidence (`prompt_surface_overlap` or `harness_feedback`) and a consolidation plan, not another overlapping instruction
 
-The goal is LLM-agent-style behavior: open-ended model decisioning constrained by explicit, observable harness contracts.
+The goal is frontier-style behavior: open-ended model decisioning constrained by explicit, observable harness contracts.

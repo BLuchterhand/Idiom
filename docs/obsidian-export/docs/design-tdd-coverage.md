@@ -1,16 +1,20 @@
 # Behavioral TDD Coverage
 
-**North Star: AI coding agents are becoming common, but teams do not trust
-their context, decisions, or outputs. Agent Harness sells the missing substrate: repo
+**North Star: AI coding agents are becoming common, but teams do not yet trust
+their context, decisions, or outputs. Idiom sells the missing substrate: repo
 memory, freshness, contracts, audit, and evals.**
 
-Status: design guidance
+Status: cross-pillar target design with implementation status overlay, drafted
+2026-05-15; reviewed 2026-05-18
 
-This document defines the complete target behavioral coverage pipeline. Build it
-as the dispatch-quality contract between approved ADRs, test obligations, and
-implementation briefs.
+Implementation state as of 2026-05-24: the full behavioral coverage pipeline is
+still a target design. The PRD/ADR/brief workflow effort has shipped a
+deterministic tiered coverage evaluator, brief-render dependency, product
+lint/audit authority preflight, and passive `coverage_gate_evaluated` telemetry
+event. That gate is still not the complete nine-stage coverage pipeline
+described here.
 
-This document defines how Agent Harness achieves exhaustive behavioral coverage between
+This document defines how Idiom achieves exhaustive behavioral coverage between
 a human-approved ADR and a dispatch-ready implementation brief. It is the
 verification contract for the upstream artifact pipeline defined in
 [design-prd-adr-brief-research-workflow.md](design-prd-adr-brief-research-workflow.md).
@@ -28,7 +32,7 @@ leave.
 ## Executive Summary
 
 Classic TDD is retrospective: you write tests for behaviors you can imagine.
-Agent Harness needs prospective completeness: a systematic process that guarantees all
+Idiom needs prospective completeness: a systematic process that guarantees all
 possible behaviors and failure modes have been enumerated before the contract is
 frozen and the brief is dispatched.
 
@@ -62,7 +66,7 @@ and rules, but it does not specify how to ensure the obligation set is
   boundary conditions.
 - Regression tests catch known failures, but not failures that have not
   occurred yet.
-- Mutation testing measures test quality, but target harness workflows do not
+- Mutation testing measures test quality, but current Idiom workflows do not
   require it.
 - No gate blocks dispatch when behavioral coverage is incomplete.
 
@@ -89,7 +93,7 @@ constrain behavior.
 - Do not replace the ADR or PRD as the human authority.
 - Do not require formal verification (TLA+/Alloy) for every ADR. Reserve
   formal methods for protocol-critical or safety-critical contracts.
-- Do not build a test generation engine inside Agent Harness core. Generate obligations
+- Do not build a test generation engine inside Idiom core. Generate obligations
   and schemas; delegate test authoring to the implementation lane.
 - Do not mandate a specific test framework. Specify obligation shapes and let
   the project choose the runner.
@@ -188,10 +192,10 @@ Feature: Protected path enforcement
   I want to prevent writes to protected paths
   So that agent config and git metadata remain safe
 
-  Scenario: Agent attempts to edit .harness config
+  Scenario: Agent attempts to edit .idiom config
     Given the agent is in implementation phase
-    And .harness/ is a protected path
-    When the agent issues a write to .harness/config.json
+    And .idiom/ is a protected path
+    When the agent issues a write to .idiom/config.json
     Then the harness rejects the write
     And the harness emits tool_policy_decision with decision reject
     And the harness logs invariant_id write.protected_path
@@ -322,7 +326,7 @@ coverage.
 
 ### Stage 6: State Machine Model
 
-The dispatch readiness state machine (defined in the PRD-to-brief
+The dispatch readiness state machine (already defined in the PRD-to-brief
 workflow) is a protocol that must be verified:
 
 ```text
@@ -350,7 +354,7 @@ persistent state machines), consider lightweight formal verification:
 - **Alloy** for component-level contract algebra (first-order relational logic,
   bounded exhaustive search with counterexample visualization)
 
-Reserve formal methods for contracts where informal reasoning has
+Reserve formal methods for contracts where informal reasoning has already
 failed or where the blast radius of a protocol bug is high.
 
 ### Stage 7: Test Suite Generation
@@ -366,7 +370,7 @@ From the accumulated analysis, generate the test suite:
 | HAZOP deviation tests | Guide-word analysis | Deviation-from-nominal coverage |
 | Decision table tests | Combinatorial conditions | Exhaustive boolean condition coverage |
 | Boundary value tests | Numeric bounds in contracts | Edge cases at partition boundaries |
-| Characterization tests | Existing behavior | Legacy safety net before changes |
+| Characterization tests | Current codebase behavior | Legacy safety net before changes |
 | Approval tests | Reference transcripts | Behavioral regression detection |
 
 #### Property-Based Testing for Session Invariants
@@ -394,7 +398,7 @@ Obligation schema:
   "transitions": ["tool_call", "phase_change", "write", "verify"],
   "min_cases": 1000,
   "shrink_on_failure": true,
-  "status": "optional"
+  "status": "pending"
 }
 ```
 
@@ -431,7 +435,7 @@ Obligation schema:
     {"conditions": [true, true, null, null], "expected": "reject_protected"},
     {"conditions": [false, null, null, null], "expected": "halt_budget"}
   ],
-  "status": "optional"
+  "status": "pending"
 }
 ```
 
@@ -480,7 +484,7 @@ Mutation testing obligation:
   "target_contract": "write.required_path_scope",
   "operators": ["negate_invariant", "widen_scope", "escalate_permission"],
   "min_score": 80,
-  "status": "optional"
+  "status": "pending"
 }
 ```
 
@@ -516,7 +520,7 @@ Execution outcomes feed back into coverage:
 | Test passes but spec violated | Add spec-compliance eval obligation, strengthen mutation testing |
 | Test fails unexpectedly | Add characterization test, check if FMEA missed this failure mode |
 | Agent enters unexpected state | Add state machine test, check HAZOP coverage for this deviation |
-| Recovery triggered | Add FMEA failure mode if not enumerated |
+| Recovery triggered | Add FMEA failure mode if not already enumerated |
 | Budget exhausted before completion | Add boundary value test at budget limits |
 | Post-mortem identifies incident | Create one new obligation per incident. Every incident must produce at least one test that would have caught it. |
 
@@ -532,7 +536,7 @@ Post-mortem obligation template:
   "invariant_violated": "loop.same_tool_repeat",
   "invariant_already_in_contract": false,
   "action": "add_invariant",
-  "status": "optional"
+  "status": "pending"
 }
 ```
 
@@ -550,7 +554,7 @@ These techniques are chosen so their blind spots do not overlap:
 | Approval Testing | BDD Scenarios | Approval captures complex output; BDD specifies behavioral expectations |
 | FMEA | FTA | FMEA is bottom-up (what can go wrong?); FTA is top-down (how could this bad thing happen?) |
 | Decision Tables | Boundary Values | Decision tables enumerate logic combinations; boundary values test numeric edges |
-| Characterization Testing | Behavioral Tests | Characterization captures active; behavioral asserts desired; together they measure the gap |
+| Characterization Testing | Behavioral Tests | Characterization captures current; behavioral asserts desired; together they measure the gap |
 
 Redundant pairs (pick one):
 
@@ -563,17 +567,19 @@ Redundant pairs (pick one):
 ## Obligation Type Extension
 
 The PRD-to-brief workflow defines eight obligation types. This document adds
-seven more to achieve exhaustive coverage:
+nine more to achieve exhaustive coverage:
 
 | New Type | When to use | Evidence source |
 | --- | --- | --- |
 | `property_based` | session invariant must hold for arbitrary sequences | contract invariants, state machine model |
 | `fmea_negative` | failure mode with RPN >= 21 must be mitigated | FMEA analysis of contract boundary |
 | `hazop_deviation` | deviation with severity >= 3 must be handled | guide-word analysis of workflow steps |
+| `fault_tree` | critical top event leaf must be tested or mitigated | fault tree analysis of catastrophic outcomes |
 | `decision_table` | behavior depends on multiple boolean conditions | combinatorial enumeration of conditions |
 | `boundary_value` | numeric bound must be tested at edges | contract parameters with numeric ranges |
 | `mutation_score` | test suite must detect injected faults | mutation testing of contract implementation |
 | `post_mortem` | incident must produce at least one catching test | execution audit, telemetry, post-mortem |
+| `formal_verification` | protocol-critical contract needs bounded model proof | TLA+/Alloy model check or equivalent artifact |
 
 Updated complete obligation type set:
 
@@ -589,10 +595,12 @@ Updated complete obligation type set:
 | `property_based` | coverage | session invariant must hold for arbitrary sequences |
 | `fmea_negative` | negative | failure mode with RPN >= 21 must be mitigated |
 | `hazop_deviation` | negative | deviation with severity >= 3 must be handled |
+| `fault_tree` | negative | critical top event leaf must be tested or mitigated |
 | `decision_table` | combinatorial | behavior depends on multiple boolean conditions |
 | `boundary_value` | combinatorial | numeric bound must be tested at edges |
 | `mutation_score` | verification | test suite must detect injected faults |
 | `post_mortem` | feedback | incident must produce at least one catching test |
+| `formal_verification` | optional formal | protocol-critical contract needs bounded model proof |
 | `manual` | fallback | automation is unavailable |
 
 ## TDD Obligation Ledger Schema Extension
@@ -601,7 +609,7 @@ The obligation ledger schema gains coverage metadata:
 
 ```json
 {
-  "schema_version": "harness.tdd_obligations.v2",
+  "schema_version": "idiom.tdd_obligations.v2",
   "coverage": {
     "ears_total": 0,
     "ears_mapped": 0,
@@ -613,8 +621,18 @@ The obligation ledger schema gains coverage metadata:
     "hazop_deviations_tested": 0,
     "invariants_total": 0,
     "invariants_with_pbt": 0,
+    "state_machines_total": 0,
+    "state_machines_covered": 0,
     "decision_tables_total": 0,
     "decision_tables_enumerated": 0,
+    "boundary_values_total": 0,
+    "boundary_values_tested": 0,
+    "fault_tree_leaves_total": 0,
+    "fault_tree_leaves_tested": 0,
+    "post_mortem_incidents_total": 0,
+    "post_mortem_catching_tests": 0,
+    "formal_models_total": 0,
+    "formal_models_verified": 0,
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [],
@@ -636,7 +654,12 @@ The obligation ledger schema gains coverage metadata:
     "fmea_mitigation_pct": 95,
     "hazop_tested_pct": 100,
     "invariant_pbt_pct": 100,
+    "state_machine_pct": 100,
     "decision_table_pct": 100,
+    "boundary_value_pct": 100,
+    "fault_tree_coverage_pct": 100,
+    "post_mortem_coverage_pct": 100,
+    "formal_verification_pct": 100,
     "mutation_score": 85
   },
   "gate_result": "pass",
@@ -699,13 +722,13 @@ Spec-compliance eval obligation:
     "no prompt-magic contract triggers in output"
   ],
   "independent_of": "functional_correctness",
-  "status": "optional"
+  "status": "pending"
 }
 ```
 
-## Relation To Existing Agent Harness Capabilities
+## Relation To Existing Idiom Capabilities
 
-This design composes with existing Agent Harness surfaces, not replaces them:
+This design composes with existing Idiom surfaces, not replaces them:
 
 | Capability | Usage In Coverage Pipeline |
 | --- | --- |
@@ -716,17 +739,21 @@ This design composes with existing Agent Harness surfaces, not replaces them:
 | `architect packet` | Carry coverage metadata in planning packets |
 | `brief lint` | Verify brief references complete TDD obligation set |
 | `atom intake` | Block dispatch when coverage gate has not passed |
-| `harness-eval` | Run spec-compliance evaluation independently of functional tests |
+| `idiom-eval` | Run spec-compliance evaluation independently of functional tests |
 
 ## Phased Implementation
 
 ### Phase 0: Schema And Gate Definitions
 
 - Add TDD obligation schema v2 with coverage metadata.
-- Add coverage gate event schema.
-- Add seven new obligation types to the obligation type enum.
+- Add coverage gate event schema. Implemented as passive
+  `coverage_gate_evaluated` telemetry in `idiom product tdd --evaluate-coverage`.
+- Add nine new obligation types to the obligation type enum. Implemented for
+  ledger validation.
 - Add coverage gate as a mandatory step between TDD audit (stage 8) and brief
-  generation (stage 9) in the PRD-to-brief lifecycle.
+  generation (stage 9) in the PRD-to-brief lifecycle. Implemented in
+  `idiom product brief --render`, using the same authority-preflighted coverage
+  evaluation as `idiom product tdd --evaluate-coverage`.
 - No behavior change; schemas are passive.
 
 ### Phase 1: EARS And BDD Coverage Checks

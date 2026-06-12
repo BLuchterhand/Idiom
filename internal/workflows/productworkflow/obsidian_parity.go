@@ -31,6 +31,7 @@ func EvaluateObsidianParity(root string, ws *WorkflowState, ledger []Implementat
 	if ws == nil || ws.EffortID != "prd-adr-brief-workflow" {
 		return result
 	}
+
 	result.CheckedFiles = []string{ObsidianProductWorkflowPath, ObsidianRecoveryPath}
 
 	productWorkflowDoc, productWorkflowErr := readObsidian(root, ObsidianProductWorkflowPath)
@@ -41,6 +42,7 @@ func EvaluateObsidianParity(root string, ws *WorkflowState, ledger []Implementat
 			Message: fileReadFindingMessage(productWorkflowErr),
 		})
 	}
+
 	_, recoveryErr := readObsidian(root, ObsidianRecoveryPath)
 	if recoveryErr != nil {
 		result.Findings = append(result.Findings, ObsidianParityFinding{
@@ -49,12 +51,15 @@ func EvaluateObsidianParity(root string, ws *WorkflowState, ledger []Implementat
 			Message: fileReadFindingMessage(recoveryErr),
 		})
 	}
+
 	if productWorkflowErr != nil || recoveryErr != nil {
 		return result
 	}
 
 	productWorkflowText := string(productWorkflowDoc)
+
 	var stale []ObsidianParityFinding
+
 	if strings.Contains(strings.ToUpper(productWorkflowText), "STATUS: NOT STARTED") {
 		stale = append(stale, ObsidianParityFinding{
 			Code:    "obsidian_stale_status",
@@ -62,6 +67,7 @@ func EvaluateObsidianParity(root string, ws *WorkflowState, ledger []Implementat
 			Message: "product workflow note status claims NOT STARTED while durable workflow is active",
 		})
 	}
+
 	if strings.Contains(productWorkflowText, "## NOT STARTED: PRD/ADR/Brief Workflow") {
 		stale = append(stale, ObsidianParityFinding{
 			Code:    "obsidian_stale_status",
@@ -69,6 +75,7 @@ func EvaluateObsidianParity(root string, ws *WorkflowState, ledger []Implementat
 			Message: "product workflow note marks PRD/ADR/Brief workflow as NOT STARTED while durable workflow is active",
 		})
 	}
+
 	if ws.CurrentPhase == "phase-5-execution-feedback" {
 		for _, phase := range []string{"Phase 0", "Phase 1", "Phase 2", "Phase 3", "Phase 4"} {
 			if hasUncheckedPhase(productWorkflowText, phase) {
@@ -80,6 +87,7 @@ func EvaluateObsidianParity(root string, ws *WorkflowState, ledger []Implementat
 			}
 		}
 	}
+
 	if obsidianParityAtomCompleted(ledger) && strings.Contains(productWorkflowText, "- [ ] Obsidian parity check in product lint/audit") {
 		stale = append(stale, ObsidianParityFinding{
 			Code:    "obsidian_roadmap_checklist_drift",
@@ -87,13 +95,17 @@ func EvaluateObsidianParity(root string, ws *WorkflowState, ledger []Implementat
 			Message: "product workflow note still lists Obsidian parity check as TODO after atom completion",
 		})
 	}
+
 	if len(stale) == 0 {
 		return result
 	}
+
 	if HasObsidianNoChangeRationale(ws.TaskID, investigations) {
 		return result
 	}
+
 	result.Findings = append(result.Findings, stale...)
+
 	return result
 }
 
@@ -106,15 +118,18 @@ func HasObsidianNoChangeRationale(taskID string, investigations []InvestigationR
 		if report.TaskID != taskID {
 			continue
 		}
+
 		raw, ok := report.Scope["obsidian_no_change_rationale"]
 		if !ok {
 			continue
 		}
+
 		reason, ok := raw.(string)
 		if ok && strings.TrimSpace(reason) != "" {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -123,10 +138,12 @@ func obsidianParityAtomCompleted(ledger []ImplementationLedgerRecord) bool {
 		if !strings.Contains(rec.TaskID, "obsidian-parity-check") {
 			continue
 		}
+
 		if rec.RecordType == "atom_closed" && len(rec.OpenBlockers) == 0 {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -134,6 +151,7 @@ func fileReadFindingMessage(err error) string {
 	if os.IsNotExist(err) {
 		return "required file not found"
 	}
+
 	return "required file could not be read"
 }
 
@@ -144,5 +162,6 @@ func readObsidian(root string, relPath string) ([]byte, error) {
 	} else if info.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("required file must not be a symlink")
 	}
+
 	return os.ReadFile(fullPath)
 }

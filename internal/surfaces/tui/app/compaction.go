@@ -30,12 +30,15 @@ func (m *Model) compactionContextSize() int {
 	if m == nil {
 		return 65536
 	}
+
 	if sz := m.cfg.LlamaServer.CtxSize; sz > 0 {
 		return sz
 	}
+
 	if sz := m.cfg.RouteClassifier.CtxSize; sz > 0 {
 		return sz
 	}
+
 	return 65536
 }
 
@@ -62,18 +65,22 @@ func compactionParams(ctxSize int) (threshold int, recentToKeep int) {
 	if threshold < 10 {
 		threshold = 10
 	}
+
 	if recentToKeep < 3 {
 		recentToKeep = 3
 	}
+
 	// recentToKeep must not exceed half the threshold — otherwise compaction
 	// would fold almost nothing.
 	if recentToKeep > threshold/2 {
 		recentToKeep = threshold / 2
 	}
+
 	// Cap at reasonable maxima even for huge context windows.
 	if threshold > 200 {
 		threshold = 200
 	}
+
 	if recentToKeep > 40 {
 		recentToKeep = 40
 	}
@@ -89,12 +96,15 @@ func runnerContextLimitsForConversation(ctxSize int) (maxMsgs int, maxChars int)
 	if ctxSize <= 0 {
 		ctxSize = 65536
 	}
+
 	// 80% of context window for messages, using the same token estimate as
 	// compactionParams.
 	const estTokensPerMsg = 125
+
 	maxMsgs = (ctxSize * 80 / 100) / estTokensPerMsg
 	// Character limit: tokens * 4 (rough chars-per-token), at 80% of window.
 	maxChars = ctxSize * 4 * 80 / 100
+
 	return maxMsgs, maxChars
 }
 
@@ -123,18 +133,25 @@ func (m *Model) MaybeCompactHistory(ctx context.Context, history []llama.ChatMes
 	if !result.Compacted {
 		return history
 	}
+
 	m.logMessage("session_digest", fmt.Sprintf("compacted %d messages into digest (%d chars); kept %d verbatim", result.Folded, len(result.Messages[0].Content), result.Kept))
+
 	return result.Messages
 }
 
 func (m *Model) compactHistoryAsync() {
 	history := append([]llama.ChatMessage(nil), m.messages...)
+
 	m.status = "Compacting conversation."
+
 	if m.events == nil {
 		result := m.compactHistory(context.Background(), modelPayloadHistory(history), true)
+
 		_, _ = m.handleCompactHistoryDone(compactHistoryDoneMsg{result: result})
+
 		return
 	}
+
 	go func() {
 		result := m.compactHistory(context.Background(), modelPayloadHistory(history), true)
 		m.events <- compactHistoryDoneMsg{result: result}
@@ -150,10 +167,12 @@ func (m *Model) compactHistory(ctx context.Context, history []llama.ChatMessage,
 		result.Reason = "empty_history"
 		return result
 	}
+
 	if !force && len(history) <= m.compactionThreshold() {
 		result.Reason = "below_threshold"
 		return result
 	}
+
 	budget := NewContextBudget(m.compactionContextSize())
 	threshold, recentToKeep := budget.CompactionThreshold, budget.CompactionRecentKeep
 	// When MaxHistory is the binding constraint (more restrictive than the
@@ -165,25 +184,31 @@ func (m *Model) compactHistory(ctx context.Context, history []llama.ChatMessage,
 			recentToKeep = limit / 2
 		}
 	}
+
 	keepFrom := len(history) - recentToKeep
 	if keepFrom <= 0 {
 		if !force || len(history) < 2 {
 			result.Reason = "too_short"
 			return result
 		}
+
 		keepFrom = len(history) - 1
 	}
+
 	oldest := history[:keepFrom]
 	if len(oldest) == 0 {
 		result.Reason = "too_short"
 		return result
 	}
+
 	digest := m.buildSessionDigest(ctx, oldest)
 	if strings.TrimSpace(digest) == "" {
 		result.Reason = "empty_digest"
 		return result
 	}
+
 	compacted := make([]llama.ChatMessage, 0, 1+len(history)-keepFrom)
+
 	compacted = append(compacted, llama.ChatMessage{Role: "system", Content: digest})
 	compacted = append(compacted, history[keepFrom:]...)
 	result.Messages = compacted
@@ -191,6 +216,7 @@ func (m *Model) compactHistory(ctx context.Context, history []llama.ChatMessage,
 	result.Kept = len(history) - keepFrom
 	result.Compacted = true
 	result.Reason = "compacted"
+
 	return result
 }
 
@@ -207,12 +233,16 @@ func (m *Model) handleCompactHistoryDone(msg compactHistoryDoneMsg) (tea.Cmd, bo
 		default:
 			m.status = "Conversation does not need compaction."
 		}
+
 		return nil, false
 	}
+
 	m.messages = result.Messages
 	m.logMessage("session_digest", fmt.Sprintf("manual compact folded %d messages; kept %d verbatim", result.Folded, result.Kept))
+
 	m.status = fmt.Sprintf("Compacted conversation: folded %d message(s), kept %d.", result.Folded, result.Kept)
 	m.renderMessages(true)
+
 	return nil, false
 }
 
@@ -221,6 +251,7 @@ func (m *Model) compactionThreshold() int {
 		budget := NewContextBudget(65536)
 		return budget.CompactionThreshold
 	}
+
 	budget := NewContextBudget(m.compactionContextSize())
 	ctxThreshold := budget.CompactionThreshold
 	// If MaxHistory is set and is more restrictive than the context-derived
@@ -228,6 +259,7 @@ func (m *Model) compactionThreshold() int {
 	if limit := m.cfg.Chat.MaxHistory; limit > 0 && limit < ctxThreshold {
 		return limit
 	}
+
 	return ctxThreshold
 }
 
@@ -235,7 +267,9 @@ func (m *Model) buildSessionDigest(ctx context.Context, oldest []llama.ChatMessa
 	if m == nil {
 		return fallbackSessionDigest(oldest)
 	}
+
 	prompt := renderCompactionPrompt(oldest)
+
 	reply, err := m.completeChatWithFallback(ctx, []llama.ChatMessage{
 		{Role: "system", Content: compactionSystemPromptPreamble},
 		{Role: "user", Content: prompt},
@@ -243,30 +277,38 @@ func (m *Model) buildSessionDigest(ctx context.Context, oldest []llama.ChatMessa
 	if err != nil {
 		return fallbackSessionDigest(oldest)
 	}
+
 	reply = strings.TrimSpace(reply)
 	if reply == "" {
 		return fallbackSessionDigest(oldest)
 	}
+
 	return "Session digest (prior history compacted):\n" + reply
 }
 
 func renderCompactionPrompt(oldest []llama.ChatMessage) string {
 	var b strings.Builder
+
 	b.WriteString("Summarize this prior conversation into a compact digest. Follow the system preamble rules.\n\n")
+
 	for _, msg := range oldest {
 		role := strings.TrimSpace(msg.Role)
 		if role == "" {
 			role = "unknown"
 		}
+
 		content := strings.TrimSpace(msg.Content)
 		if content == "" {
 			continue
 		}
+
 		if len(content) > 800 {
 			content = content[:800] + "…"
 		}
+
 		fmt.Fprintf(&b, "[%s] %s\n", role, content)
 	}
+
 	return b.String()
 }
 
@@ -280,9 +322,11 @@ func (m *Model) completeChatWithFallback(ctx context.Context, messages []llama.C
 			return text, nil
 		}
 	}
+
 	if m.client == nil {
 		return "", fmt.Errorf("completeChatWithFallback: no model client available")
 	}
+
 	return m.client.CompleteChat(ctx, messages, opts)
 }
 
@@ -291,8 +335,10 @@ func (m *Model) completeChatWithFallback(ctx context.Context, messages []llama.C
 // load-bearing intent) plus a one-line count of everything else.
 func fallbackSessionDigest(oldest []llama.ChatMessage) string {
 	var firstUser string
+
 	assistantCount := 0
 	toolResultCount := 0
+
 	for _, msg := range oldest {
 		switch strings.TrimSpace(msg.Role) {
 		case "user":
@@ -305,11 +351,14 @@ func fallbackSessionDigest(oldest []llama.ChatMessage) string {
 			toolResultCount++
 		}
 	}
+
 	if firstUser == "" {
 		return ""
 	}
+
 	if len(firstUser) > 600 {
 		firstUser = firstUser[:600] + "…"
 	}
+
 	return fmt.Sprintf("Session digest (model summarization unavailable — deterministic fallback):\nOriginal user goal: %s\nEarlier conversation: %d assistant turns, %d tool/system messages (content dropped to stay within context).", firstUser, assistantCount, toolResultCount)
 }

@@ -34,6 +34,7 @@ func TestFormatJobAgeAppendsIdleSuffix(t *testing.T) {
 	if !strings.HasSuffix(got, " IDLE") {
 		t.Fatalf("idle suffix missing: got %q", got)
 	}
+
 	if !strings.HasPrefix(got, "15m") {
 		t.Fatalf("expected 15m prefix, got %q", got)
 	}

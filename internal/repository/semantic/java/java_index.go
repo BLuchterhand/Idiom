@@ -110,6 +110,7 @@ func BuildJavaIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Ja
 	if root == "" {
 		return nil, nil
 	}
+
 	scope := indexsupport.CleanIndexScope(opts.Scope)
 	index := &JavaIndex{
 		Root:      root,
@@ -123,66 +124,87 @@ func BuildJavaIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Ja
 		if err := indexsupport.ContextErr(opts); err != nil {
 			return err
 		}
+
 		if walkErr != nil {
 			return walkErr
 		}
+
 		if d.IsDir() {
 			if !indexsupport.ShouldVisitDir(root, path, scope) {
 				return filepath.SkipDir
 			}
+
 			if _, skip := javaSkippedDirNames[d.Name()]; skip && path != root {
 				return filepath.SkipDir
 			}
+
 			if discovery.ShouldSkipDirName(d.Name()) && path != root {
 				return filepath.SkipDir
 			}
+
 			return nil
 		}
+
 		if !isJavaPath(path) {
 			return nil
 		}
+
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return nil
 		}
+
 		rel = filepath.ToSlash(filepath.Clean(rel))
 		if discovery.ShouldSkipRelFile(rel) {
 			return nil
 		}
+
 		if !indexsupport.PathInScope(rel, scope) {
 			return nil
 		}
+
 		paths = append(paths, rel)
 		if opts.MaxFiles > 0 && len(paths) >= opts.MaxFiles {
 			return errStop
 		}
+
 		return nil
 	})
+
 	if err == errStop {
 		err = nil
 	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	if len(paths) == 0 {
 		return nil, nil
 	}
+
 	slices.Sort(paths)
 
 	classByFQN := make(map[string]string) // fq class name -> file path
+
 	for _, rel := range paths {
 		if err := indexsupport.ContextErr(opts); err != nil {
 			return nil, err
 		}
+
 		full := filepath.Join(root, filepath.FromSlash(rel))
+
 		contentBytes, err := os.ReadFile(full)
 		if err != nil {
 			continue
 		}
+
 		content := string(contentBytes)
 		file := parseJavaFile(rel, content)
+
 		index.Files = append(index.Files, file)
 		index.byPackage[file.Package] = append(index.byPackage[file.Package], rel)
+
 		for _, sym := range file.Symbols {
 			switch sym.Kind {
 			case "class", "record":
@@ -206,17 +228,21 @@ func BuildJavaIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Ja
 			if sib == file.Path {
 				continue
 			}
+
 			index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], sib)
 			index.Reverse[sib] = util.AppendUnique(index.Reverse[sib], file.Path)
 		}
+
 		// Import edges — only those pointing at in-workspace FQNs.
 		for _, imp := range file.Imports {
 			target := strings.TrimSuffix(imp, ".*")
 			if rel, ok := classByFQN[target]; ok {
 				index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], rel)
 				index.Reverse[rel] = util.AppendUnique(index.Reverse[rel], file.Path)
+
 				continue
 			}
+
 			// Wildcard: pull in every file in the matching package.
 			if strings.HasSuffix(imp, ".*") {
 				pkg := strings.TrimSuffix(imp, ".*")
@@ -224,12 +250,14 @@ func BuildJavaIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Ja
 					if rel == file.Path {
 						continue
 					}
+
 					index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], rel)
 					index.Reverse[rel] = util.AppendUnique(index.Reverse[rel], file.Path)
 				}
 			}
 		}
 	}
+
 	return index, nil
 }
 
@@ -238,18 +266,23 @@ func (idx *JavaIndex) Summary() string {
 	if idx == nil || len(idx.Files) == 0 {
 		return ""
 	}
+
 	var b strings.Builder
+
 	b.WriteString("Indexed ")
 	b.WriteString(indexsupport.IntString(len(idx.Files)))
 	b.WriteString(" Java files\n")
+
 	anchors := idx.DefaultFiles(4)
 	if len(anchors) > 0 {
 		b.WriteString("Likely anchors:\n")
+
 		for _, path := range anchors {
 			file := idx.FileByPath(path)
 			if file == nil {
 				continue
 			}
+
 			b.WriteString("- ")
 			b.WriteString(path)
 			b.WriteString(" (")
@@ -261,6 +294,7 @@ func (idx *JavaIndex) Summary() string {
 			b.WriteString(" imports)\n")
 		}
 	}
+
 	return strings.TrimSpace(b.String())
 }
 
@@ -272,12 +306,15 @@ func (idx *JavaIndex) DefaultFiles(limit int) []string {
 		if file.HasMain {
 			score += 100
 		}
+
 		score += javaSourceDirPriority(file.SourceDir)
 		if file.IsTest {
 			score -= 30
 		}
+
 		score += min(file.Methods*2, 24)
 		score += min((file.Classes+file.Interfaces+file.Enums)*3, 18)
+
 		return score
 	}, limit), limit)
 }
@@ -288,31 +325,38 @@ func (idx *JavaIndex) RelevantFiles(terms []string, limit int) []string {
 	if len(normalized) == 0 {
 		return nil
 	}
+
 	return idx.uniqueRankedPaths(idx.rankFiles(func(file JavaFile) int {
 		score := 0
 		pathLower := strings.ToLower(file.Path)
+
 		for _, term := range normalized {
 			if strings.Contains(pathLower, term) {
 				score += 16
 			}
+
 			if strings.Contains(strings.ToLower(file.Package), term) {
 				score += 12
 			}
+
 			for _, imp := range file.Imports {
 				if strings.Contains(strings.ToLower(imp), term) {
 					score += 6
 				}
 			}
+
 			for _, sym := range file.Symbols {
 				if strings.Contains(strings.ToLower(sym.Name), term) || strings.Contains(strings.ToLower(sym.Qualified), term) {
 					score += 10
 				}
 			}
 		}
+
 		score += javaSourceDirPriority(file.SourceDir)
 		if file.IsTest {
 			score -= 20
 		}
+
 		return score
 	}, limit), limit)
 }
@@ -322,12 +366,14 @@ func (idx *JavaIndex) FileByPath(path string) *JavaFile {
 	if idx == nil {
 		return nil
 	}
+
 	path = indexsupport.NormalizeLookupPath(path)
 	for i := range idx.Files {
 		if indexsupport.NormalizeLookupPath(idx.Files[i].Path) == path {
 			return &idx.Files[i]
 		}
 	}
+
 	return nil
 }
 
@@ -335,6 +381,7 @@ func (idx *JavaIndex) findFiles(pattern string) []string {
 	if idx == nil {
 		return nil
 	}
+
 	return indexsupport.FindFilesExactPartial(idx.Files, func(file JavaFile) string { return file.Path }, pattern)
 }
 
@@ -356,35 +403,46 @@ func (idx *JavaIndex) Entrypoints(limit int) []string {
 	if idx == nil {
 		return nil
 	}
+
 	out := make([]string, 0)
 	seen := make(map[string]struct{})
 	add := func(path string) {
 		if _, ok := seen[path]; ok {
 			return
 		}
+
 		seen[path] = struct{}{}
 		out = append(out, path)
 	}
+
 	for _, file := range idx.Files {
 		if file.HasMain {
 			add(file.Path)
+
 			continue
 		}
+
 		for _, sym := range file.Symbols {
 			if hasJavaAnnotation(sym.Annotations, "Test") {
 				add(file.Path)
+
 				break
 			}
+
 			if hasJavaAnnotation(sym.Annotations, "SpringBootApplication") {
 				add(file.Path)
+
 				break
 			}
 		}
 	}
+
 	slices.Sort(out)
+
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
+
 	return out
 }
 
@@ -396,14 +454,17 @@ func hasJavaAnnotation(annotations []string, name string) bool {
 		if idx := strings.Index(a, "("); idx >= 0 {
 			a = a[:idx]
 		}
+
 		// Drop package prefix, e.g. `org.junit.Test`.
 		if idx := strings.LastIndex(a, "."); idx >= 0 {
 			a = a[idx+1:]
 		}
+
 		if a == name {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -420,19 +481,23 @@ func parseJavaFile(rel string, content string) JavaFile {
 	for _, raw := range lines {
 		line := stripJavaLineComment(raw)
 		trimmed := strings.TrimSpace(line)
+
 		if trimmed == "" {
 			continue
 		}
+
 		if file.Package == "" {
 			if match := javaPackageRe.FindStringSubmatch(trimmed); len(match) == 2 {
 				file.Package = match[1]
 				continue
 			}
 		}
+
 		if match := javaImportRe.FindStringSubmatch(trimmed); len(match) == 3 {
 			file.Imports = util.AppendUnique(file.Imports, match[2])
 			continue
 		}
+
 		// Once we see a type declaration the preamble is over.
 		if javaTypeRe.MatchString(trimmed) {
 			break
@@ -456,6 +521,7 @@ func parseJavaFile(rel string, content string) JavaFile {
 		lineNo := i + 1
 		line := stripJavaLineComment(raw)
 		trimmed := strings.TrimSpace(line)
+
 		if trimmed == "" {
 			continue
 		}
@@ -469,6 +535,7 @@ func parseJavaFile(rel string, content string) JavaFile {
 				continue
 			}
 		}
+
 		if strings.HasPrefix(trimmed, "@") && strings.Contains(trimmed, "(") {
 			// Annotation with args: @Test(expected = ...) — still capture the name.
 			if match := javaAnnotationRe.FindStringSubmatch(trimmed); len(match) == 2 {
@@ -489,9 +556,11 @@ func parseJavaFile(rel string, content string) JavaFile {
 				scope := strings.Join(classStack, ".")
 				qualified := javaQualifiedName(file.Package, classStack, name)
 				end := lineNo
+
 				if strings.Contains(trimmed, "{") {
 					end = findJavaBraceEnd(lines, i)
 				}
+
 				extends, implements := parseJavaTypeClause(rest)
 				sym := JavaSymbol{
 					Name:        name,
@@ -507,7 +576,9 @@ func parseJavaFile(rel string, content string) JavaFile {
 					EndLine:     end,
 					SourceFile:  rel,
 				}
+
 				file.Symbols = append(file.Symbols, sym)
+
 				switch kind {
 				case "class", "record":
 					file.Classes++
@@ -516,12 +587,16 @@ func parseJavaFile(rel string, content string) JavaFile {
 				case "enum":
 					file.Enums++
 				}
+
 				// Push onto class stack if this type opens a body on the same line.
 				if strings.Contains(trimmed, "{") {
 					classStack = append(classStack, name)
 				}
+
 				pendingAnnotations = nil
+
 				braceDepth += javaBraceBalance(trimmed)
+
 				continue
 			}
 		}
@@ -536,12 +611,14 @@ func parseJavaFile(rel string, content string) JavaFile {
 			parenDepth = javaParenBalance(trimmed)
 		case pendingStart > 0:
 			pendingSignature = append(pendingSignature, trimmed)
+
 			parenDepth += javaParenBalance(trimmed)
 		default:
 			braceDepth += javaBraceBalance(trimmed)
 			if strings.Contains(trimmed, "}") {
 				popJavaClasses(&classStack, &braceDepth, trimmed)
 			}
+
 			continue
 		}
 
@@ -549,6 +626,7 @@ func parseJavaFile(rel string, content string) JavaFile {
 		if !ready {
 			continue
 		}
+
 		signature := strings.Join(pendingSignature, " ")
 		if sym, ok := parseJavaMethodSignature(signature, file.Package, classStack); ok {
 			sym.Line = pendingStart
@@ -556,19 +634,25 @@ func parseJavaFile(rel string, content string) JavaFile {
 			sym.StartLine = pendingStart
 			sym.EndLine = pendingStart
 			sym.SourceFile = rel
+
 			sym.Annotations = append([]string(nil), pendingAnnotations...)
+
 			if strings.Contains(signature, "{") {
 				sym.EndLine = findJavaBraceEnd(lines, i)
 				sym.Calls = extractJavaCalls(lines, sym.StartLine, sym.EndLine)
 			}
+
 			if sym.Kind == "method" || sym.Kind == "constructor" {
 				file.Methods++
 			}
+
 			if sym.Name == "main" && hasJavaModifier(sym.Modifiers, "static") && hasJavaModifier(sym.Modifiers, "public") {
 				file.HasMain = true
 			}
+
 			file.Symbols = append(file.Symbols, sym)
 		}
+
 		pendingSignature = nil
 		pendingStart = 0
 		parenDepth = 0
@@ -588,6 +672,7 @@ func parseJavaFile(rel string, content string) JavaFile {
 	slices.SortFunc(file.Symbols, func(a, b JavaSymbol) int {
 		return cmp.Compare(a.Line, b.Line)
 	})
+
 	return file
 }
 
@@ -596,13 +681,17 @@ func parseJavaTypeClause(rest string) (extends string, implements []string) {
 	if rest == "" {
 		return "", nil
 	}
+
 	// Split off the opening brace if present.
 	if idx := strings.Index(rest, "{"); idx >= 0 {
 		rest = rest[:idx]
 	}
+
 	tokens := strings.Fields(rest)
 	mode := ""
+
 	var implList []string
+
 	for _, tok := range tokens {
 		tok = strings.TrimRight(tok, ",")
 		switch tok {
@@ -625,6 +714,7 @@ func parseJavaTypeClause(rest string) (extends string, implements []string) {
 			}
 		}
 	}
+
 	return extends, implList
 }
 
@@ -633,29 +723,37 @@ func parseJavaMethodSignature(signature string, pkg string, classStack []string)
 	if signature == "" || strings.HasPrefix(signature, "//") || strings.HasPrefix(signature, "*") {
 		return JavaSymbol{}, false
 	}
+
 	idx := strings.Index(signature, "(")
 	if idx < 0 {
 		return JavaSymbol{}, false
 	}
+
 	before := strings.TrimSpace(signature[:idx])
 	match := javaNameBeforeParen.FindStringSubmatch(before)
+
 	if len(match) != 2 {
 		return JavaSymbol{}, false
 	}
+
 	name := match[1]
 	if isJavaKeywordName(name) {
 		return JavaSymbol{}, false
 	}
+
 	modifiers := extractJavaModifiers(before)
 	nonModifierFields := strings.Fields(stripJavaModifiers(before))
 	scope := strings.Join(classStack, ".")
 	kind := "method"
+
 	if len(classStack) > 0 && classStack[len(classStack)-1] == name && len(nonModifierFields) == 1 {
 		kind = "constructor"
 	} else if len(nonModifierFields) < 2 {
 		return JavaSymbol{}, false
 	}
+
 	qualified := javaMemberQualifiedName(pkg, classStack, name)
+
 	return JavaSymbol{
 		Name:      name,
 		Qualified: qualified,
@@ -674,12 +772,14 @@ func extractJavaCalls(lines []string, startLine int, endLine int) []JavaCall {
 func findJavaBraceEnd(lines []string, startIdx int) int {
 	depth := 0
 	seen := false
+
 	for i := startIdx; i < len(lines); i++ {
 		line := stripJavaLineComment(lines[i])
 		for _, r := range line {
 			switch r {
 			case '{':
 				depth++
+
 				seen = true
 			case '}':
 				if seen {
@@ -691,6 +791,7 @@ func findJavaBraceEnd(lines []string, startIdx int) int {
 			}
 		}
 	}
+
 	return startIdx + 1
 }
 
@@ -699,26 +800,33 @@ func shouldStartJavaSignature(line string) bool {
 	if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "@") {
 		return false
 	}
+
 	if strings.HasPrefix(line, "//") || strings.HasPrefix(line, "*") || strings.HasPrefix(line, "/*") {
 		return false
 	}
+
 	if !strings.Contains(line, "(") {
 		return false
 	}
+
 	// Skip lines that look like statements, not signatures.
 	if strings.HasPrefix(line, "if") || strings.HasPrefix(line, "for") || strings.HasPrefix(line, "while") ||
 		strings.HasPrefix(line, "switch") || strings.HasPrefix(line, "return") || strings.HasPrefix(line, "throw") ||
 		strings.HasPrefix(line, "catch") || strings.HasPrefix(line, "new ") {
+
 		return false
 	}
+
 	prefix := line
 	if idx := strings.Index(line, "("); idx >= 0 {
 		prefix = strings.TrimSpace(line[:idx])
 	}
+
 	fields := strings.Fields(prefix)
 	if len(fields) == 0 {
 		return false
 	}
+
 	// A signature typically has at least one modifier or a return type
 	// token before the name. A bare `foo(...)` at class level is either
 	// a call (rejected) or a constructor (accepted only when the prefix
@@ -729,6 +837,7 @@ func shouldStartJavaSignature(line string) bool {
 
 func javaParenBalance(text string) int {
 	balance := 0
+
 	for _, r := range text {
 		switch r {
 		case '(':
@@ -737,6 +846,7 @@ func javaParenBalance(text string) int {
 			balance--
 		}
 	}
+
 	return balance
 }
 
@@ -744,23 +854,28 @@ func javaBraceBalance(text string) int {
 	balance := 0
 	inString := false
 	inChar := false
+
 	for i := 0; i < len(text); i++ {
 		r := text[i]
 		if r == '\\' {
 			i++
 			continue
 		}
+
 		if r == '"' && !inChar {
 			inString = !inString
 			continue
 		}
+
 		if r == '\'' && !inString {
 			inChar = !inChar
 			continue
 		}
+
 		if inString || inChar {
 			continue
 		}
+
 		switch r {
 		case '{':
 			balance++
@@ -768,6 +883,7 @@ func javaBraceBalance(text string) int {
 			balance--
 		}
 	}
+
 	return balance
 }
 
@@ -777,6 +893,7 @@ func popJavaClasses(stack *[]string, depth *int, line string) {
 	opens := strings.Count(line, "{")
 	closes := strings.Count(line, "}")
 	net := opens - closes
+
 	for net < 0 && len(*stack) > 0 {
 		*stack = (*stack)[:len(*stack)-1]
 		net++
@@ -786,20 +903,24 @@ func popJavaClasses(stack *[]string, depth *int, line string) {
 func stripJavaLineComment(line string) string {
 	// Strip //... comments, honoring simple string quoting.
 	inString := false
+
 	for i := 0; i < len(line)-1; i++ {
 		r := line[i]
 		if r == '\\' {
 			i++
 			continue
 		}
+
 		if r == '"' {
 			inString = !inString
 			continue
 		}
+
 		if !inString && line[i] == '/' && line[i+1] == '/' {
 			return line[:i]
 		}
 	}
+
 	return line
 }
 
@@ -810,6 +931,7 @@ func isJavaPath(path string) bool {
 
 func looksLikeJavaTestPath(path string) bool {
 	path = strings.ToLower(filepath.ToSlash(path))
+
 	return strings.Contains(path, "/test/") || strings.Contains(path, "/tests/") ||
 		strings.HasSuffix(path, "test.java") || strings.HasSuffix(path, "tests.java") ||
 		strings.Contains(path, "src/test/java")
@@ -855,17 +977,22 @@ func javaQualifiedName(pkg string, classStack []string, name string) string {
 	if pkg != "" {
 		parts = append(parts, pkg)
 	}
+
 	parts = append(parts, classStack...)
 	parts = append(parts, name)
+
 	return strings.Join(parts, ".")
 }
 
 func javaMemberQualifiedName(pkg string, classStack []string, name string) string {
 	scope := javaQualifiedName(pkg, classStack, "")
+
 	scope = strings.TrimSuffix(scope, ".")
+
 	if scope == "" {
 		return name
 	}
+
 	return scope + "#" + name
 }
 
@@ -877,11 +1004,13 @@ func extractJavaModifiers(before string) []string {
 		"strictfp": {}, "transient": {}, "volatile": {},
 	}
 	out := make([]string, 0, 4)
+
 	for _, tok := range strings.Fields(before) {
 		if _, ok := keywords[tok]; ok {
 			out = append(out, tok)
 		}
 	}
+
 	return out
 }
 
@@ -892,13 +1021,17 @@ func stripJavaModifiers(before string) string {
 		"synchronized": {}, "native": {}, "default": {},
 		"strictfp": {}, "transient": {}, "volatile": {},
 	}
+
 	var out []string
+
 	for _, tok := range strings.Fields(before) {
 		if _, ok := keywords[tok]; ok {
 			continue
 		}
+
 		out = append(out, tok)
 	}
+
 	return strings.Join(out, " ")
 }
 
@@ -908,6 +1041,7 @@ func hasJavaModifier(modifiers []string, name string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -915,18 +1049,23 @@ func countJavaFieldLines(lines []string) int {
 	// Approximate: count lines that look like field declarations.
 	// (Used only as a display hint, not for routing.)
 	count := 0
+
 	for _, raw := range lines {
 		trimmed := strings.TrimSpace(stripJavaLineComment(raw))
 		if trimmed == "" || !strings.HasSuffix(trimmed, ";") {
 			continue
 		}
+
 		if strings.Contains(trimmed, "(") {
 			continue
 		}
+
 		if strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "package ") {
 			continue
 		}
+
 		count++
 	}
+
 	return count
 }

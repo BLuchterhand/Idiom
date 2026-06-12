@@ -35,13 +35,16 @@ func (idx *CppIndex) FindSymbols(pattern string, limit int) []CppSymbolMatch {
 	if idx == nil || pattern == "" {
 		return nil
 	}
+
 	matches := make([]CppSymbolMatch, 0)
+
 	for _, file := range idx.Files {
 		for _, symbol := range file.Symbols {
 			score := scoreCppSymbolMatch(pattern, file, symbol)
 			if score <= 0 {
 				continue
 			}
+
 			matches = append(matches, CppSymbolMatch{
 				Path:      file.Path,
 				Name:      symbol.Name,
@@ -56,18 +59,23 @@ func (idx *CppIndex) FindSymbols(pattern string, limit int) []CppSymbolMatch {
 			})
 		}
 	}
+
 	slices.SortFunc(matches, func(a, b CppSymbolMatch) int {
 		if c := -cmp.Compare(a.Score, b.Score); c != 0 {
 			return c
 		}
+
 		if c := cmp.Compare(a.Path, b.Path); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Line, b.Line)
 	})
+
 	if limit > 0 && len(matches) > limit {
 		matches = matches[:limit]
 	}
+
 	return matches
 }
 
@@ -89,16 +97,20 @@ func (idx *CppIndex) FindCallsFrom(pattern string, limit int) []CppCallMatch {
 	if len(symbols) == 0 {
 		return nil
 	}
+
 	out := make([]CppCallMatch, 0, 16)
+
 	for _, match := range symbols {
 		file := idx.FileByPath(match.Path)
 		if file == nil {
 			continue
 		}
+
 		for _, symbol := range file.Symbols {
 			if symbol.Line != match.Line || symbol.Name != match.Name || firstCppQualified(symbol) != firstCppQualified(CppSymbol{Qualified: match.Qualified, Scope: match.Scope, Name: match.Name}) {
 				continue
 			}
+
 			for _, call := range symbol.Calls {
 				out = append(out, CppCallMatch{
 					Caller:     match,
@@ -109,9 +121,11 @@ func (idx *CppIndex) FindCallsFrom(pattern string, limit int) []CppCallMatch {
 			}
 		}
 	}
+
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
+
 	return out
 }
 
@@ -120,6 +134,7 @@ func (idx *CppIndex) FindCallsInto(pattern string, limit int) []CppCallMatch {
 	if len(targets) == 0 {
 		return nil
 	}
+
 	names := make(map[string]CppSymbolMatch, len(targets)*2)
 	for _, target := range targets {
 		names[strings.ToLower(target.Name)] = target
@@ -127,7 +142,9 @@ func (idx *CppIndex) FindCallsInto(pattern string, limit int) []CppCallMatch {
 			names[strings.ToLower(target.Qualified)] = target
 		}
 	}
+
 	out := make([]CppCallMatch, 0, 16)
+
 	for _, file := range idx.Files {
 		for _, symbol := range file.Symbols {
 			for _, call := range symbol.Calls {
@@ -135,6 +152,7 @@ func (idx *CppIndex) FindCallsInto(pattern string, limit int) []CppCallMatch {
 				if !ok {
 					continue
 				}
+
 				out = append(out, CppCallMatch{
 					Caller: CppSymbolMatch{
 						Path:      file.Path,
@@ -154,15 +172,19 @@ func (idx *CppIndex) FindCallsInto(pattern string, limit int) []CppCallMatch {
 			}
 		}
 	}
+
 	slices.SortFunc(out, func(a, b CppCallMatch) int {
 		if c := cmp.Compare(a.Caller.Path, b.Caller.Path); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Line, b.Line)
 	})
+
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
+
 	return out
 }
 
@@ -171,18 +193,23 @@ func (idx *CppIndex) Dependencies(pattern string) []string {
 	if len(targets) == 0 {
 		return nil
 	}
+
 	out := make([]string, 0)
 	seen := make(map[string]struct{})
+
 	for _, target := range targets {
 		for _, dep := range transitiveStringClosure(idx.Forward, target) {
 			if _, ok := seen[dep]; ok {
 				continue
 			}
+
 			seen[dep] = struct{}{}
 			out = append(out, dep)
 		}
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -191,18 +218,23 @@ func (idx *CppIndex) WhoIncludes(pattern string) []string {
 	if len(targets) == 0 {
 		return nil
 	}
+
 	out := make([]string, 0)
 	seen := make(map[string]struct{})
+
 	for _, target := range targets {
 		for _, dep := range transitiveStringClosure(idx.Reverse, target) {
 			if _, ok := seen[dep]; ok {
 				continue
 			}
+
 			seen[dep] = struct{}{}
 			out = append(out, dep)
 		}
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -211,14 +243,18 @@ func (idx *CppIndex) BlastRadius(pattern string) []string {
 	if len(files) == 0 {
 		return nil
 	}
+
 	out := make([]string, 0, len(files))
 	for _, file := range files {
 		if isCppHeader(file) {
 			continue
 		}
+
 		out = append(out, file)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -227,6 +263,7 @@ func scoreCppSymbolMatch(pattern string, file CppFile, symbol CppSymbol) int {
 	qualifiedLower := strings.ToLower(firstCppQualified(symbol))
 	pathLower := strings.ToLower(file.Path)
 	score := 0
+
 	switch {
 	case nameLower == pattern || qualifiedLower == pattern:
 		score += 48
@@ -235,12 +272,15 @@ func scoreCppSymbolMatch(pattern string, file CppFile, symbol CppSymbol) int {
 	case strings.Contains(nameLower, pattern):
 		score += 20
 	}
+
 	if strings.Contains(pathLower, pattern) {
 		score += 8
 	}
+
 	if score > 0 && symbol.Kind == "method" {
 		score += 2
 	}
+
 	return score
 }
 
@@ -248,6 +288,7 @@ func firstCppQualified(symbol CppSymbol) string {
 	if strings.TrimSpace(symbol.Qualified) != "" {
 		return symbol.Qualified
 	}
+
 	return indexsupport.FirstQualified(symbol.Scope, symbol.Name, "::")
 }
 
@@ -255,20 +296,26 @@ func transitiveStringClosure(graph map[string][]string, start string) []string {
 	if start == "" {
 		return nil
 	}
+
 	queue := []string{start}
 	seen := make(map[string]struct{})
 	out := make([]string, 0)
+
 	for len(queue) > 0 {
 		current := queue[0]
+
 		queue = queue[1:]
+
 		for _, next := range graph[current] {
 			if _, ok := seen[next]; ok {
 				continue
 			}
+
 			seen[next] = struct{}{}
 			out = append(out, next)
 			queue = append(queue, next)
 		}
 	}
+
 	return out
 }

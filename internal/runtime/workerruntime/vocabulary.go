@@ -215,6 +215,7 @@ func evidenceRequirementStrings(values []EvidenceRequirementID) []string {
 			out = append(out, trimmed)
 		}
 	}
+
 	return out
 }
 
@@ -229,6 +230,7 @@ func readinessGateStrings(values []ReadinessGateID) []string {
 			out = append(out, trimmed)
 		}
 	}
+
 	return out
 }
 
@@ -243,6 +245,7 @@ func searchPolicyStrings(values []SearchPolicyID) []string {
 			out = append(out, trimmed)
 		}
 	}
+
 	return out
 }
 
@@ -253,6 +256,7 @@ func stopConditionStrings(values []StopConditionID) []string {
 			out = append(out, trimmed)
 		}
 	}
+
 	return out
 }
 
@@ -263,6 +267,7 @@ func finalCriticStrings(values []FinalCriticID) []string {
 			out = append(out, trimmed)
 		}
 	}
+
 	return out
 }
 

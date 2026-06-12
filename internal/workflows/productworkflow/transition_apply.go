@@ -64,38 +64,53 @@ func ApplyProductWorkflowTransition(options ProductWorkflowTransitionApplyOption
 	}
 	if result.EffortRoot == "" {
 		result.addBlocker("missing_effort_root", "", "effort root is required")
+
 		return result
 	}
+
 	if result.Action == "" {
 		result.addBlocker("missing_action", "", "transition action is required")
+
 		return result
 	}
+
 	absRoot, err := filepath.Abs(result.EffortRoot)
 	if err != nil {
 		result.addBlocker("resolve_effort_root_error", "", err.Error())
+
 		return result
 	}
+
 	result.EffortRoot = filepath.Clean(absRoot)
 
 	statusView, workflowState, statusErr := LoadCheckedProductStatus(result.EffortRoot)
 	if statusErr != nil {
 		result.addBlocker("product_status_error", WorkflowStateFileName, statusErr.Error())
+
 		return result
 	}
+
 	if workflowState == nil {
 		result.addBlocker("missing_workflow_state", WorkflowStateFileName, WorkflowStateFileName+" not loaded")
+
 		return result
 	}
+
 	result.FromState = workflowState.CurrentState
+
 	operatorStatus := BuildProductOperatorStatusView(statusView, workflowState)
+
 	for _, blocker := range operatorStatus.Blockers {
 		result.addBlocker(blocker.Code, blocker.Source, blocker.Message)
 	}
+
 	if len(result.Blockers) > 0 {
 		return result
 	}
+
 	if !stringSliceContains(workflowState.NextValidActions, result.Action) {
 		result.addBlocker("action_not_listed", "workflow_state.next_valid_actions", fmt.Sprintf("action %q is not listed as a next_valid_action", result.Action))
+
 		return result
 	}
 
@@ -110,15 +125,20 @@ func ApplyProductWorkflowTransition(options ProductWorkflowTransitionApplyOption
 	for _, blocker := range transition.Blockers {
 		result.addBlocker(blocker.Code, "workflow_transition", blocker.Message)
 	}
+
 	if len(result.Blockers) > 0 {
 		return result
 	}
+
 	if strings.TrimSpace(transition.ToState) == "" {
 		result.addBlocker("empty_transition_target", "workflow_transition", fmt.Sprintf("action %q did not produce a target state", result.Action))
+
 		return result
 	}
+
 	if options.ExpectedStateRevision > 0 && workflowState.StateRevision != options.ExpectedStateRevision {
 		result.addBlocker("stale_workflow_state_revision", WorkflowStateFileName, fmt.Sprintf("workflow state revision %d does not match expected revision %d", workflowState.StateRevision, options.ExpectedStateRevision))
+
 		return result
 	}
 
@@ -126,15 +146,19 @@ func ApplyProductWorkflowTransition(options ProductWorkflowTransitionApplyOption
 	if updatedAt == "" {
 		updatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
+
 	eventID := strings.TrimSpace(options.EventID)
 	if eventID == "" {
 		eventID = "evt-product-transition-" + time.Now().UTC().Format("20060102T150405.000000000Z")
 	}
+
 	updated := *workflowState
+
 	updated.CurrentState = transition.ToState
 	updated.CurrentPhase = productWorkflowTransitionPhase(updated.CurrentPhase, transition.ToState)
 	updated.UpdatedAt = updatedAt
 	updated.StateRevision++
+
 	updated.LastEventID = eventID
 	updated.NextValidActions = transitionActionNames(nextActionsFor(transition.ToState, updated.Coverage.GateResults))
 
@@ -155,13 +179,16 @@ func ApplyProductWorkflowTransition(options ProductWorkflowTransitionApplyOption
 	}
 	if err := writeProductWorkflowTransition(result.EffortRoot, updated, event); err != nil {
 		result.addBlocker("transition_write_error", WorkflowStateFileName, err.Error())
+
 		return result
 	}
+
 	result.Status = ProductWorkflowStatusApplied
 	result.ToState = updated.CurrentState
 	result.UpdatedWorkflowState = updated
 	result.Event = event
 	result.NextValidAction = firstTransitionAction(updated.NextValidActions)
+
 	return result
 }
 
@@ -183,6 +210,7 @@ func productWorkflowTransitionPhase(currentPhase, toState string) string {
 		if strings.TrimSpace(currentPhase) != "" {
 			return currentPhase
 		}
+
 		return "phase-" + strings.ReplaceAll(strings.TrimSpace(toState), "_", "-")
 	}
 }
@@ -193,6 +221,7 @@ func firstTransitionAction(actions []string) string {
 			return strings.TrimSpace(action)
 		}
 	}
+
 	return ""
 }
 
@@ -203,43 +232,56 @@ func stringSliceContains(values []string, want string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 func writeProductWorkflowTransition(absRoot string, state WorkflowState, event ProductWorkflowTransitionEvent) error {
 	workflowPath := filepath.Join(absRoot, WorkflowStateFileName)
+
 	originalWorkflowBytes, err := os.ReadFile(workflowPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", WorkflowStateFileName, err)
 	}
+
 	if err := rejectTransitionSymlink(workflowPath); err != nil {
 		return err
 	}
+
 	workflowBytes, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", WorkflowStateFileName, err)
 	}
+
 	workflowBytes = append(workflowBytes, '\n')
 
-	var eventsPath string
-	var eventsBytes []byte
-	var originalEventsBytes []byte
+	var (
+		eventsPath          string
+		eventsBytes         []byte
+		originalEventsBytes []byte
+	)
+
 	eventsExisted := false
+
 	if relEventsPath := strings.TrimSpace(state.ArtifactPaths["events"]); relEventsPath != "" {
 		rel, ok := normalizedSafeEffortPath(relEventsPath)
 		if !ok {
 			return fmt.Errorf("workflow_state artifact_paths.events must be a safe relative path")
 		}
+
 		eventsPath = filepath.Join(absRoot, filepath.FromSlash(rel))
 		if err := rejectTransitionSymlinkParent(absRoot, eventsPath); err != nil {
 			return err
 		}
+
 		if err := rejectTransitionSymlink(eventsPath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
+
 		if err := os.MkdirAll(filepath.Dir(eventsPath), 0o755); err != nil {
 			return fmt.Errorf("prepare events parent: %w", err)
 		}
+
 		if data, err := os.ReadFile(eventsPath); err == nil {
 			eventsBytes = data
 			originalEventsBytes = append([]byte(nil), data...)
@@ -247,13 +289,16 @@ func writeProductWorkflowTransition(absRoot string, state WorkflowState, event P
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("read events artifact: %w", err)
 		}
+
 		eventLine, err := json.Marshal(event)
 		if err != nil {
 			return fmt.Errorf("encode transition event: %w", err)
 		}
+
 		if len(eventsBytes) > 0 && eventsBytes[len(eventsBytes)-1] != '\n' {
 			eventsBytes = append(eventsBytes, '\n')
 		}
+
 		eventsBytes = append(eventsBytes, eventLine...)
 		eventsBytes = append(eventsBytes, '\n')
 	}
@@ -262,35 +307,45 @@ func writeProductWorkflowTransition(absRoot string, state WorkflowState, event P
 	if err := rejectTransitionTempPath(workflowTemp); err != nil {
 		return err
 	}
+
 	if err := os.WriteFile(workflowTemp, workflowBytes, 0o644); err != nil {
 		return fmt.Errorf("stage %s: %w", WorkflowStateFileName, err)
 	}
+
 	var eventsTemp string
+
 	if eventsPath != "" {
 		eventsTemp = eventsPath + ".product-transition.tmp"
 		if err := rejectTransitionTempPath(eventsTemp); err != nil {
 			_ = os.Remove(workflowTemp)
 			return err
 		}
+
 		if err := os.WriteFile(eventsTemp, eventsBytes, 0o644); err != nil {
 			_ = os.Remove(workflowTemp)
 			return fmt.Errorf("stage events artifact: %w", err)
 		}
 	}
+
 	if err := os.Rename(workflowTemp, workflowPath); err != nil {
 		_ = os.Remove(workflowTemp)
 		_ = os.Remove(eventsTemp)
+
 		return fmt.Errorf("replace %s: %w", WorkflowStateFileName, err)
 	}
+
 	if eventsTemp != "" {
 		if err := os.Rename(eventsTemp, eventsPath); err != nil {
 			_ = os.Remove(eventsTemp)
+
 			if rollbackErr := rollbackProductWorkflowTransition(workflowPath, originalWorkflowBytes, eventsPath, originalEventsBytes, eventsExisted); rollbackErr != nil {
 				return fmt.Errorf("replace events artifact: %w (rollback error: %v)", err, rollbackErr)
 			}
+
 			return fmt.Errorf("replace events artifact: %w", err)
 		}
 	}
+
 	return nil
 }
 
@@ -299,12 +354,15 @@ func rejectTransitionTempPath(path string) error {
 	if os.IsNotExist(err) {
 		return nil
 	}
+
 	if err != nil {
 		return err
 	}
+
 	if info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("%s must not be a symlink", filepath.Base(path))
 	}
+
 	return fmt.Errorf("%s already exists", filepath.Base(path))
 }
 
@@ -313,31 +371,41 @@ func rejectTransitionSymlinkParent(absRoot, targetPath string) error {
 	if err != nil || rel == "." {
 		return err
 	}
+
 	current := absRoot
+
 	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
 		if part == "" || part == "." {
 			continue
 		}
+
 		current = filepath.Join(current, part)
+
 		info, statErr := os.Lstat(current)
+
 		if os.IsNotExist(statErr) {
 			return nil
 		}
+
 		if statErr != nil {
 			return statErr
 		}
+
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("%s must not be a symlink", filepath.Base(current))
 		}
 	}
+
 	return nil
 }
 
 func rollbackProductWorkflowTransition(workflowPath string, workflowBytes []byte, eventsPath string, eventsBytes []byte, eventsExisted bool) error {
 	var errs []string
+
 	if err := os.WriteFile(workflowPath, workflowBytes, 0o644); err != nil {
 		errs = append(errs, fmt.Sprintf("restore %s: %v", WorkflowStateFileName, err))
 	}
+
 	if eventsPath != "" {
 		if eventsExisted {
 			if err := os.WriteFile(eventsPath, eventsBytes, 0o644); err != nil {
@@ -347,9 +415,11 @@ func rollbackProductWorkflowTransition(workflowPath string, workflowBytes []byte
 			errs = append(errs, fmt.Sprintf("remove created events artifact: %v", err))
 		}
 	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
+
 	return nil
 }
 
@@ -358,8 +428,10 @@ func rejectTransitionSymlink(path string) error {
 	if err != nil {
 		return err
 	}
+
 	if info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("%s must not be a symlink", filepath.Base(path))
 	}
+
 	return nil
 }

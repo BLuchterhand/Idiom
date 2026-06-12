@@ -450,17 +450,21 @@ func NewEvent(input EventInput) (Event, error) {
 		Metadata:      copyMetadata(input.Metadata),
 	}
 	event.Normalize()
+
 	if event.EventID == "" {
 		event.EventID = event.stableID()
 	}
+
 	if err := event.Validate(); err != nil {
 		return Event{}, err
 	}
+
 	return event, nil
 }
 
 func NewContractCompiledEvent(contract AutonomyContract, occurredAt time.Time, sequence int64) (Event, error) {
 	summary := contract.Summary()
+
 	return NewEvent(EventInput{
 		Type:        EventContractCompiled,
 		OccurredAt:  occurredAt,
@@ -495,9 +499,11 @@ func NewPolicyEvent(eventType EventType, contract AutonomyContract, policy Contr
 	if policy.ToolCallID == "" {
 		policy.ToolCallID = correlation.ToolCallID
 	}
+
 	if policy.ToolName == "" {
 		policy.ToolName = correlation.ToolName
 	}
+
 	return NewEvent(EventInput{
 		Type:        eventType,
 		OccurredAt:  occurredAt,
@@ -512,6 +518,7 @@ func NewPolicyEvent(eventType EventType, contract AutonomyContract, policy Contr
 
 func NewObligationStateEvent(eventType EventType, contract AutonomyContract, obligation Obligation, occurredAt time.Time, sequence int64) (Event, error) {
 	payload := ObligationEventFromObligation(obligation)
+
 	return NewEvent(EventInput{
 		Type:        eventType,
 		OccurredAt:  occurredAt,
@@ -567,9 +574,11 @@ func NewGuardFrictionEvent(contract AutonomyContract, friction ContractGuardFric
 	friction.ContractID = firstNonEmptyEventValue(friction.ContractID, contract.ContractID)
 	friction.Lane = firstNonEmptyEventValue(friction.Lane, contract.Scope.Lane)
 	friction.Phase = firstNonEmptyEventValue(friction.Phase, contract.Scope.Phase)
+
 	if len(friction.EvidenceRefs) == 0 {
 		friction.EvidenceRefs = nil
 	}
+
 	return NewEvent(EventInput{
 		Type:          EventGuardFriction,
 		OccurredAt:    occurredAt,
@@ -585,6 +594,7 @@ func NewGuardFrictionEvent(contract AutonomyContract, friction ContractGuardFric
 
 func NewModelExchangeEvent(contract AutonomyContract, exchange ContractModelExchangeEvent, occurredAt time.Time, sequence int64) (Event, error) {
 	exchange.ContractID = firstNonEmptyEventValue(exchange.ContractID, contract.ContractID)
+
 	return NewEvent(EventInput{
 		Type:          EventModelExchange,
 		OccurredAt:    occurredAt,
@@ -604,6 +614,7 @@ func firstNonEmptyEventValue(values ...string) string {
 			return trimmed
 		}
 	}
+
 	return ""
 }
 
@@ -623,11 +634,14 @@ func CorrelationFromContract(contract AutonomyContract) EventCorrelation {
 		correlation.SidecarRequestID = contract.Scope.Sidecar.RequestID
 		correlation.SidecarTool = contract.Scope.Sidecar.Tool
 	}
+
 	if contract.Scope.ToolCall != nil {
 		correlation.ToolCallID = contract.Scope.ToolCall.ToolCallID
 		correlation.ToolName = contract.Scope.ToolCall.ToolName
 	}
+
 	correlation.normalize()
+
 	return correlation
 }
 
@@ -646,6 +660,7 @@ func ObligationEventFromObligation(obligation Obligation) ContractObligationEven
 		FinalAnswerRequirement: obligation.FinalAnswerRequirement,
 	}
 	payload.normalize()
+
 	return payload
 }
 
@@ -657,25 +672,33 @@ func (s *MemoryEventSink) Emit(event Event) error {
 	if s == nil {
 		return fmt.Errorf("autonomy event sink is nil")
 	}
+
 	event.Normalize()
+
 	if event.EventID == "" {
 		event.EventID = event.stableID()
 	}
+
 	if err := event.Validate(); err != nil {
 		return err
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	if len(s.events) > 0 {
 		last := s.events[len(s.events)-1]
 		if event.Sequence <= last.Sequence {
 			return fmt.Errorf("autonomy event sequence must increase: got %d after %d", event.Sequence, last.Sequence)
 		}
+
 		if event.OccurredAt.Before(last.OccurredAt) {
 			return fmt.Errorf("autonomy event timestamp moved backwards: got %s after %s", event.OccurredAt.Format(time.RFC3339Nano), last.OccurredAt.Format(time.RFC3339Nano))
 		}
 	}
+
 	s.events = append(s.events, copyEvent(event))
+
 	return nil
 }
 
@@ -683,12 +706,15 @@ func (s *MemoryEventSink) Events() []Event {
 	if s == nil {
 		return nil
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	out := make([]Event, 0, len(s.events))
 	for _, event := range s.events {
 		out = append(out, copyEvent(event))
 	}
+
 	return out
 }
 
@@ -696,80 +722,103 @@ func (e *Event) Normalize() {
 	if e.SchemaVersion == "" {
 		e.SchemaVersion = EventSchemaVersion
 	}
+
 	if e.Effect == "" {
 		e.Effect = EventEffectObserveOnly
 	}
+
 	e.EventID = strings.TrimSpace(e.EventID)
 	e.ContractID = strings.TrimSpace(e.ContractID)
 	e.ParentID = strings.TrimSpace(e.ParentID)
 	e.OccurredAt = e.OccurredAt.UTC()
 	e.Correlation.normalize()
+
 	if e.Lifecycle != nil {
 		e.Lifecycle.normalize()
 	}
+
 	if e.Policy != nil {
 		e.Policy.normalize()
 	}
+
 	if e.Obligation != nil {
 		e.Obligation.normalize()
 	}
+
 	if e.Readiness != nil {
 		e.Readiness.normalize()
 	}
+
 	if e.Completion != nil {
 		e.Completion.normalize()
 	}
+
 	if e.Gate != nil {
 		e.Gate.normalize()
 	}
+
 	if e.GuardFriction != nil {
 		e.GuardFriction.normalize()
 	}
+
 	if e.ModelExchange != nil {
 		e.ModelExchange.Normalize()
 	}
+
 	e.EvidenceRefs = compactStrings(e.EvidenceRefs)
 	e.Metadata.normalize()
 }
 
 func (e Event) Validate() error {
 	var problems []string
+
 	if e.SchemaVersion != EventSchemaVersion {
 		problems = append(problems, "schema_version must be "+EventSchemaVersion)
 	}
+
 	if e.EventID == "" {
 		problems = append(problems, "event_id is required")
 	}
+
 	if !validEventType(e.Type) {
 		problems = append(problems, "type is required and must be a known autonomy event type")
 	}
+
 	if e.Effect != EventEffectObserveOnly {
 		problems = append(problems, "effect must be observe_only")
 	}
+
 	if e.OccurredAt.IsZero() {
 		problems = append(problems, "occurred_at is required")
 	}
+
 	if e.Sequence <= 0 {
 		problems = append(problems, "sequence must be positive")
 	}
+
 	if e.ContractID == "" {
 		problems = append(problems, "contract_id is required")
 	}
+
 	e.validatePayload(&problems)
 	e.validateCorrelation(&problems)
+
 	for i, client := range e.Metadata.ClientClassifications {
 		if !validClientClassification(client) {
 			problems = append(problems, fmt.Sprintf("metadata.client_classifications[%d] is invalid", i))
 		}
 	}
+
 	for i, signal := range e.Metadata.ProductSignals {
 		if !validProductSignal(signal) {
 			problems = append(problems, fmt.Sprintf("metadata.product_signals[%d] is invalid", i))
 		}
 	}
+
 	if len(problems) > 0 {
 		return EventValidationError{Problems: problems}
 	}
+
 	return nil
 }
 
@@ -783,12 +832,16 @@ func (e EventValidationError) Error() string {
 
 func (e Event) stableID() string {
 	copy := copyEvent(e)
+
 	copy.EventID = ""
+
 	encoded, err := json.Marshal(copy)
 	if err != nil {
 		panic(err)
 	}
+
 	sum := sha256.Sum256(encoded)
+
 	return "event_" + hex.EncodeToString(sum[:])[:16]
 }
 
@@ -797,39 +850,50 @@ func (e Event) validatePayload(problems *[]string) {
 	if e.Lifecycle != nil {
 		payloads++
 	}
+
 	if e.Policy != nil {
 		payloads++
 	}
+
 	if e.Obligation != nil {
 		payloads++
 	}
+
 	if e.Readiness != nil {
 		payloads++
 	}
+
 	if e.Completion != nil {
 		payloads++
 	}
+
 	if e.Gate != nil {
 		payloads++
 	}
+
 	if e.GuardFriction != nil {
 		payloads++
 	}
+
 	if e.ModelExchange != nil {
 		payloads++
 	}
+
 	if payloads != 1 {
 		*problems = append(*problems, "exactly one event payload is required")
 	}
+
 	switch e.Type {
 	case EventContractCompiled, EventContractPresented, EventContractRecompiled, EventContractStopped:
 		if e.Lifecycle == nil {
 			*problems = append(*problems, "lifecycle payload is required for "+string(e.Type))
 			return
 		}
+
 		if e.Lifecycle.Summary != nil && e.Lifecycle.Summary.ContractID != "" && e.Lifecycle.Summary.ContractID != e.ContractID {
 			*problems = append(*problems, "lifecycle.summary.contract_id must match event contract_id")
 		}
+
 		if e.Type == EventContractRecompiled && (e.Lifecycle.OldContractID == "" || e.Lifecycle.NewContractID == "") {
 			*problems = append(*problems, "contract_recompiled requires old_contract_id and new_contract_id")
 		}
@@ -838,16 +902,20 @@ func (e Event) validatePayload(problems *[]string) {
 			*problems = append(*problems, "policy payload is required for "+string(e.Type))
 			return
 		}
+
 		if e.Type == EventToolPolicyDecision && !validDecision(e.Policy.Decision) {
 			*problems = append(*problems, "policy.decision is required for tool_policy_decision")
 		}
+
 		if e.Policy.SideEffect != "" && !validSideEffect(e.Policy.SideEffect) {
 			*problems = append(*problems, "policy.side_effect is invalid")
 		}
+
 		for i, match := range e.Policy.PathRoles {
 			if match.Role != "" && !validPathRole(match.Role) {
 				*problems = append(*problems, fmt.Sprintf("policy.path_roles[%d].role is invalid", i))
 			}
+
 			if match.Freshness != "" && !validFreshness(match.Freshness) {
 				*problems = append(*problems, fmt.Sprintf("policy.path_roles[%d].freshness is invalid", i))
 			}
@@ -857,24 +925,31 @@ func (e Event) validatePayload(problems *[]string) {
 			*problems = append(*problems, "obligation payload is required for "+string(e.Type))
 			return
 		}
+
 		if e.Obligation.ObligationID == "" {
 			*problems = append(*problems, "obligation.obligation_id is required")
 		}
+
 		if !validObligationKind(e.Obligation.Kind) {
 			*problems = append(*problems, "obligation.kind is invalid")
 		}
+
 		if !validObligationStatus(e.Obligation.Status) {
 			*problems = append(*problems, "obligation.status is invalid")
 		}
+
 		if e.Obligation.Owner != "" && !validObligationOwner(e.Obligation.Owner) {
 			*problems = append(*problems, "obligation.owner is invalid")
 		}
+
 		if e.Type == EventObligationOpened && e.Obligation.Status != ObligationOpen {
 			*problems = append(*problems, "obligation_opened requires status open")
 		}
+
 		if e.Type == EventObligationResolved && e.Obligation.Status != ObligationResolved {
 			*problems = append(*problems, "obligation_resolved requires status resolved")
 		}
+
 		if e.Type == EventObligationWaived && e.Obligation.Status != ObligationWaived {
 			*problems = append(*problems, "obligation_waived requires status waived")
 		}
@@ -887,6 +962,7 @@ func (e Event) validatePayload(problems *[]string) {
 			*problems = append(*problems, "completion payload is required for completion_gate_decision")
 			return
 		}
+
 		if !validDecision(e.Completion.Decision) {
 			*problems = append(*problems, "completion.decision is required")
 		}
@@ -895,24 +971,31 @@ func (e Event) validatePayload(problems *[]string) {
 			*problems = append(*problems, "gate payload is required for gate_decision")
 			return
 		}
+
 		if !validGateKind(e.Gate.Gate) {
 			*problems = append(*problems, "gate.gate is invalid")
 		}
+
 		if e.Gate.PackID != "" && !validContractPackID(e.Gate.PackID) {
 			*problems = append(*problems, "gate.pack_id is invalid")
 		}
+
 		if e.Gate.EnforcementMode != "" && !validEnforcementMode(e.Gate.EnforcementMode) {
 			*problems = append(*problems, "gate.enforcement_mode is invalid")
 		}
+
 		if !validDecision(e.Gate.Decision) {
 			*problems = append(*problems, "gate.decision is required")
 		}
+
 		if e.Gate.Attempts < 0 {
 			*problems = append(*problems, "gate.attempts cannot be negative")
 		}
+
 		if e.Gate.Budget != nil {
 			validateBudget(*e.Gate.Budget, problems)
 		}
+
 		e.Gate.validateObservedFacts(problems)
 		e.Gate.validateRedactedFields(problems)
 	case EventGuardFriction:
@@ -920,12 +1003,14 @@ func (e Event) validatePayload(problems *[]string) {
 			*problems = append(*problems, "guard_friction payload is required for guard_friction")
 			return
 		}
+
 		e.GuardFriction.validate(e.ContractID, problems)
 	case EventModelExchange:
 		if e.ModelExchange == nil {
 			*problems = append(*problems, "model_exchange payload is required for model_exchange")
 			return
 		}
+
 		e.ModelExchange.validate(e.ContractID, problems)
 	}
 }
@@ -935,12 +1020,15 @@ func modelExchangeEvidenceRefs(exchange ContractModelExchangeEvent) []string {
 	if exchange.SourceEventID != "" {
 		refs = append(refs, "event:"+exchange.SourceEventID)
 	}
+
 	if exchange.SourceEventType != "" {
 		refs = append(refs, "event_type:"+exchange.SourceEventType)
 	}
+
 	if exchange.InvariantID != "" {
 		refs = append(refs, "invariant:"+exchange.InvariantID)
 	}
+
 	return compactStrings(refs)
 }
 
@@ -949,6 +1037,7 @@ func (e Event) validateCorrelation(problems *[]string) {
 		if e.Correlation.ToolCallID != "" && e.Policy.ToolCallID != "" && e.Correlation.ToolCallID != e.Policy.ToolCallID {
 			*problems = append(*problems, "correlation.tool_call_id must match policy.tool_call_id")
 		}
+
 		if e.Correlation.ToolName != "" && e.Policy.ToolName != "" && e.Correlation.ToolName != e.Policy.ToolName {
 			*problems = append(*problems, "correlation.tool_name must match policy.tool_name")
 		}
@@ -975,6 +1064,7 @@ func (e *ContractLifecycleEvent) normalize() {
 	if e.Summary != nil {
 		*e.Summary = copyContractSummary(*e.Summary)
 	}
+
 	e.OldContractID = strings.TrimSpace(e.OldContractID)
 	e.NewContractID = strings.TrimSpace(e.NewContractID)
 	e.Reason = strings.TrimSpace(e.Reason)
@@ -988,19 +1078,24 @@ func (e *ContractLifecycleEvent) normalize() {
 	e.VerificationContract = strings.TrimSpace(e.VerificationContract)
 	e.InvariantID = strings.TrimSpace(e.InvariantID)
 	e.RemainingObligations = compactStrings(e.RemainingObligations)
+
 	if e.TurnPhaseContract != nil {
 		e.TurnPhaseContract.normalize()
 	}
+
 	if e.ModelProtocol != nil {
 		e.ModelProtocol.normalize()
 	}
+
 	for i := range e.SurfaceSummaries {
 		e.SurfaceSummaries[i].normalize()
 	}
+
 	slices.SortFunc(e.SurfaceSummaries, func(a, b TurnPhaseSurfaceSummaryEvent) int {
 		if c := cmp.Compare(a.SurfaceID, b.SurfaceID); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.ModelCallID, b.ModelCallID)
 	})
 }
@@ -1025,6 +1120,7 @@ func (p *TurnPhaseContractEvent) normalize() {
 	p.ActionPolicy.normalize()
 	p.RuntimeCall.normalize()
 	p.EvidenceState.normalize()
+
 	p.EnforcementMode = strings.TrimSpace(p.EnforcementMode)
 }
 
@@ -1109,10 +1205,13 @@ func (p *ContractPolicyEvent) normalize() {
 	p.Confidence = strings.TrimSpace(p.Confidence)
 	p.ArgumentsSummary = strings.TrimSpace(p.ArgumentsSummary)
 	p.ArgumentsDigest = strings.TrimSpace(p.ArgumentsDigest)
+
 	for i := range p.PathRoles {
 		p.PathRoles[i].normalize()
 	}
+
 	slices.SortFunc(p.PathRoles, func(a, b PathRoleMatch) int { return cmp.Compare(a.sortKey(), b.sortKey()) })
+
 	p.ProtectedMatches = compactStrings(p.ProtectedMatches)
 	p.RequiredEditMatches = compactStrings(p.RequiredEditMatches)
 	p.OutsideWorkspace = compactStrings(p.OutsideWorkspace)
@@ -1183,10 +1282,13 @@ func (g *ContractGateEvent) normalize() {
 	g.ObservedFacts = compactObservedFacts(g.ObservedFacts)
 	g.SafeAlternatives = compactStrings(g.SafeAlternatives)
 	g.VerificationStatus = strings.TrimSpace(g.VerificationStatus)
+
 	if g.Budget != nil {
 		budget := *g.Budget
+
 		g.Budget = &budget
 	}
+
 	g.LoopFingerprintDigest = strings.TrimSpace(g.LoopFingerprintDigest)
 	g.Source = strings.TrimSpace(g.Source)
 }
@@ -1195,6 +1297,7 @@ func (g *ContractGuardFrictionEvent) normalize() {
 	if g.Schema == "" {
 		g.Schema = GuardFrictionSchemaVersion
 	}
+
 	g.Schema = strings.TrimSpace(g.Schema)
 	g.SessionID = strings.TrimSpace(g.SessionID)
 	g.Lane = strings.TrimSpace(g.Lane)
@@ -1211,12 +1314,15 @@ func (g *ContractGuardFrictionEvent) normalize() {
 	g.VisibleActionClasses = compactStrings(g.VisibleActionClasses)
 	g.VisibleTools = compactStrings(g.VisibleTools)
 	g.SafeAlternatives = compactStrings(g.SafeAlternatives)
+
 	if g.RetryOutcome == "" {
 		g.RetryOutcome = GuardFrictionRetryNotApplicable
 	}
+
 	if g.Avoidability == "" {
 		g.Avoidability = GuardFrictionAvoidabilityUnknown
 	}
+
 	g.EvidenceRefs = compactStrings(g.EvidenceRefs)
 }
 
@@ -1224,33 +1330,43 @@ func (g ContractGuardFrictionEvent) validate(eventContractID string, problems *[
 	if g.Schema != GuardFrictionSchemaVersion {
 		*problems = append(*problems, "guard_friction.schema must be "+GuardFrictionSchemaVersion)
 	}
+
 	if g.ContractID != "" && eventContractID != "" && g.ContractID != eventContractID {
 		*problems = append(*problems, "guard_friction.contract_id must match event contract_id")
 	}
+
 	if !validGuardFrictionSubject(g.Subject) {
 		*problems = append(*problems, "guard_friction.subject is invalid")
 	}
+
 	if !validGuardFrictionDecision(g.Decision) {
 		*problems = append(*problems, "guard_friction.decision is invalid")
 	}
+
 	if !validGuardFrictionSurface(g.GuardSurface) {
 		*problems = append(*problems, "guard_friction.guard_surface is invalid")
 	}
+
 	if !validGuardFrictionRetryOutcome(g.RetryOutcome) {
 		*problems = append(*problems, "guard_friction.retry_outcome is invalid")
 	}
+
 	if !validGuardFrictionAvoidability(g.Avoidability) {
 		*problems = append(*problems, "guard_friction.avoidability is invalid")
 	}
+
 	if g.RetryNumber < 0 {
 		*problems = append(*problems, "guard_friction.retry_number cannot be negative")
 	}
+
 	if g.InvariantID == "" {
 		*problems = append(*problems, "guard_friction.invariant_id is required")
 	}
+
 	if g.ModelContractVisible && g.ProtocolHash == "" {
 		*problems = append(*problems, "guard_friction.protocol_hash is required when model_contract_visible is true")
 	}
+
 	g.validateRedactedFields(problems)
 }
 
@@ -1275,23 +1391,27 @@ func (g ContractGateEvent) validateRedactedFields(problems *[]string) {
 		g.LoopFingerprintDigest,
 		g.Source,
 	}
+
 	values = append(values, g.TargetRefs...)
 	values = append(values, g.ObligationRefs...)
 	values = append(values, g.OpenObligations...)
 	values = append(values, g.ResolvedObligations...)
 	values = append(values, g.ChangedPaths...)
+
 	for _, value := range values {
 		if looksLikeRawContractEventContent(value) {
 			*problems = append(*problems, "gate fields must contain redaction-safe metadata only")
 			return
 		}
 	}
+
 	for _, fact := range g.ObservedFacts {
 		if looksLikeRawContractEventContent(string(fact)) {
 			*problems = append(*problems, "gate.observed_facts must contain redaction-safe metadata only")
 			return
 		}
 	}
+
 	for _, alternative := range g.SafeAlternatives {
 		if looksLikeRawContractEventContent(alternative) {
 			*problems = append(*problems, "gate.safe_alternatives must contain redaction-safe recovery options only")
@@ -1315,10 +1435,12 @@ func (g ContractGuardFrictionEvent) validateRedactedFields(problems *[]string) {
 		g.ObligationID,
 		g.FirstInvalidAction,
 	}
+
 	values = append(values, g.VisibleActionClasses...)
 	values = append(values, g.VisibleTools...)
 	values = append(values, g.SafeAlternatives...)
 	values = append(values, g.EvidenceRefs...)
+
 	for _, value := range values {
 		if looksLikeRawGuardFrictionContent(value) {
 			*problems = append(*problems, "guard_friction fields must contain redaction-safe metadata only")
@@ -1336,13 +1458,16 @@ func validObservedFactLabel(fact string) bool {
 	if !validContractLabel(fact, 160) {
 		return false
 	}
+
 	prefix, rest, hasPrefix := strings.Cut(fact, ":")
 	if !hasPrefix {
 		return true
 	}
+
 	if rest == "" || strings.ContainsAny(prefix, "/.-=@") {
 		return true
 	}
+
 	return validObservedFactKind(ObservedFactKind(prefix))
 }
 
@@ -1411,6 +1536,7 @@ func looksLikeRawGuardFrictionContent(value string) bool {
 	if trimmed == "" {
 		return false
 	}
+
 	lowered := strings.ToLower(trimmed)
 	for _, marker := range []string{
 		"\n",
@@ -1432,6 +1558,7 @@ func looksLikeRawGuardFrictionContent(value string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1439,25 +1566,32 @@ func compactObservedFacts(values []ContractObservedFact) []ContractObservedFact 
 	if len(values) == 0 {
 		return nil
 	}
+
 	seen := make(map[string]struct{}, len(values))
 	out := make([]ContractObservedFact, 0, len(values))
+
 	for _, value := range values {
 		trimmed := strings.TrimSpace(string(value))
 		if trimmed == "" {
 			continue
 		}
+
 		if _, ok := seen[trimmed]; ok {
 			continue
 		}
+
 		seen[trimmed] = struct{}{}
 		out = append(out, ContractObservedFact(trimmed))
 	}
+
 	if len(out) == 0 {
 		return nil
 	}
+
 	slices.SortFunc(out, func(a, b ContractObservedFact) int {
 		return cmp.Compare(string(a), string(b))
 	})
+
 	return out
 }
 
@@ -1489,11 +1623,14 @@ func copyLifecycleEvent(in *ContractLifecycleEvent) *ContractLifecycleEvent {
 	if in == nil {
 		return nil
 	}
+
 	out := *in
 	if in.Summary != nil {
 		summary := copyContractSummary(*in.Summary)
+
 		out.Summary = &summary
 	}
+
 	out.StateDelta = append([]string(nil), in.StateDelta...)
 	out.AllowedTools = append([]string(nil), in.AllowedTools...)
 	out.HiddenTools = append([]string(nil), in.HiddenTools...)
@@ -1502,6 +1639,7 @@ func copyLifecycleEvent(in *ContractLifecycleEvent) *ContractLifecycleEvent {
 	out.TurnPhaseContract = copyTurnPhaseContractEvent(in.TurnPhaseContract)
 	out.ModelProtocol = copyModelProtocolEvent(in.ModelProtocol)
 	out.SurfaceSummaries = copyTurnPhaseSurfaceSummaryEvents(in.SurfaceSummaries)
+
 	return &out
 }
 
@@ -1509,7 +1647,9 @@ func copyTurnPhaseContractEvent(in *TurnPhaseContractEvent) *TurnPhaseContractEv
 	if in == nil {
 		return nil
 	}
+
 	out := *in
+
 	out.InvariantIDs = append([]string(nil), in.InvariantIDs...)
 	out.AllowedTools = append([]string(nil), in.AllowedTools...)
 	out.HiddenTools = append([]string(nil), in.HiddenTools...)
@@ -1528,6 +1668,7 @@ func copyTurnPhaseContractEvent(in *TurnPhaseContractEvent) *TurnPhaseContractEv
 	out.EvidenceState.VerificationEvidenceRefs = append([]string(nil), in.EvidenceState.VerificationEvidenceRefs...)
 	out.EvidenceState.RecoveryPacketRefs = append([]string(nil), in.EvidenceState.RecoveryPacketRefs...)
 	out.EvidenceState.ResidualBlockers = append([]string(nil), in.EvidenceState.ResidualBlockers...)
+
 	return &out
 }
 
@@ -1535,7 +1676,9 @@ func copyModelProtocolEvent(in *ModelProtocolEvent) *ModelProtocolEvent {
 	if in == nil {
 		return nil
 	}
+
 	out := *in
+
 	out.VisibleTools = append([]string(nil), in.VisibleTools...)
 	out.CallableTools = append([]string(nil), in.CallableTools...)
 	out.CallableActionClasses = append([]string(nil), in.CallableActionClasses...)
@@ -1546,6 +1689,7 @@ func copyModelProtocolEvent(in *ModelProtocolEvent) *ModelProtocolEvent {
 	out.PathRoleSummary = append([]string(nil), in.PathRoleSummary...)
 	out.VerificationObligations = append([]string(nil), in.VerificationObligations...)
 	out.SafeAlternatives = append([]string(nil), in.SafeAlternatives...)
+
 	return &out
 }
 
@@ -1553,6 +1697,7 @@ func copyTurnPhaseSurfaceSummaryEvents(in []TurnPhaseSurfaceSummaryEvent) []Turn
 	if len(in) == 0 {
 		return nil
 	}
+
 	out := make([]TurnPhaseSurfaceSummaryEvent, len(in))
 	for i := range in {
 		out[i] = in[i]
@@ -1564,6 +1709,7 @@ func copyTurnPhaseSurfaceSummaryEvents(in []TurnPhaseSurfaceSummaryEvent) []Turn
 		out[i].ObligationRefs = append([]string(nil), in[i].ObligationRefs...)
 		out[i].RuntimeCall.ExpressibleActionClasses = append([]string(nil), in[i].RuntimeCall.ExpressibleActionClasses...)
 	}
+
 	return out
 }
 
@@ -1571,11 +1717,14 @@ func copyGuardFrictionEvent(in *ContractGuardFrictionEvent) *ContractGuardFricti
 	if in == nil {
 		return nil
 	}
+
 	out := *in
+
 	out.VisibleActionClasses = append([]string(nil), in.VisibleActionClasses...)
 	out.VisibleTools = append([]string(nil), in.VisibleTools...)
 	out.SafeAlternatives = append([]string(nil), in.SafeAlternatives...)
 	out.EvidenceRefs = append([]string(nil), in.EvidenceRefs...)
+
 	return &out
 }
 
@@ -1583,7 +1732,9 @@ func copyPolicyEvent(in *ContractPolicyEvent) *ContractPolicyEvent {
 	if in == nil {
 		return nil
 	}
+
 	out := *in
+
 	out.PathRoles = append([]PathRoleMatch(nil), in.PathRoles...)
 	out.ProtectedMatches = append([]string(nil), in.ProtectedMatches...)
 	out.RequiredEditMatches = append([]string(nil), in.RequiredEditMatches...)
@@ -1592,6 +1743,7 @@ func copyPolicyEvent(in *ContractPolicyEvent) *ContractPolicyEvent {
 	out.EvidencePaths = append([]string(nil), in.EvidencePaths...)
 	out.ObligationsOpened = append([]string(nil), in.ObligationsOpened...)
 	out.ObligationsResolved = append([]string(nil), in.ObligationsResolved...)
+
 	return &out
 }
 
@@ -1599,7 +1751,9 @@ func copyObligationEvent(in *ContractObligationEvent) *ContractObligationEvent {
 	if in == nil {
 		return nil
 	}
+
 	out := *in
+
 	return &out
 }
 
@@ -1607,10 +1761,13 @@ func copyReadinessEvent(in *ContractReadinessEvent) *ContractReadinessEvent {
 	if in == nil {
 		return nil
 	}
+
 	out := *in
+
 	out.ClosedClaims = append([]string(nil), in.ClosedClaims...)
 	out.OpenObligations = append([]string(nil), in.OpenObligations...)
 	out.EvidenceRefs = append([]string(nil), in.EvidenceRefs...)
+
 	return &out
 }
 
@@ -1618,10 +1775,13 @@ func copyCompletionEvent(in *ContractCompletionEvent) *ContractCompletionEvent {
 	if in == nil {
 		return nil
 	}
+
 	out := *in
+
 	out.RemainingObligations = append([]string(nil), in.RemainingObligations...)
 	out.ChangedPaths = append([]string(nil), in.ChangedPaths...)
 	out.RequiredPathStatus = append([]string(nil), in.RequiredPathStatus...)
+
 	return &out
 }
 
@@ -1629,7 +1789,9 @@ func copyGateEvent(in *ContractGateEvent) *ContractGateEvent {
 	if in == nil {
 		return nil
 	}
+
 	out := *in
+
 	out.TargetRefs = append([]string(nil), in.TargetRefs...)
 	out.ObligationRefs = append([]string(nil), in.ObligationRefs...)
 	out.OpenObligations = append([]string(nil), in.OpenObligations...)
@@ -1637,10 +1799,13 @@ func copyGateEvent(in *ContractGateEvent) *ContractGateEvent {
 	out.ChangedPaths = append([]string(nil), in.ChangedPaths...)
 	out.ObservedFacts = append([]ContractObservedFact(nil), in.ObservedFacts...)
 	out.SafeAlternatives = append([]string(nil), in.SafeAlternatives...)
+
 	if in.Budget != nil {
 		budget := *in.Budget
+
 		out.Budget = &budget
 	}
+
 	return &out
 }
 
@@ -1648,9 +1813,11 @@ func copyModelExchangeEvent(in *ContractModelExchangeEvent) *ContractModelExchan
 	if in == nil {
 		return nil
 	}
+
 	out := *in
 	if in.ContextPacket != nil {
 		payload := *in.ContextPacket
+
 		payload.SummaryRefs = append([]string(nil), in.ContextPacket.SummaryRefs...)
 		payload.TargetRefs = append([]string(nil), in.ContextPacket.TargetRefs...)
 		payload.PathRefs = append([]string(nil), in.ContextPacket.PathRefs...)
@@ -1661,54 +1828,71 @@ func copyModelExchangeEvent(in *ContractModelExchangeEvent) *ContractModelExchan
 		payload.RedactionMarkers = append([]string(nil), in.ContextPacket.RedactionMarkers...)
 		out.ContextPacket = &payload
 	}
+
 	if in.PermissionSnapshot != nil {
 		payload := *in.PermissionSnapshot
+
 		payload.AllowedTools = append([]string(nil), in.PermissionSnapshot.AllowedTools...)
 		payload.HiddenTools = append([]string(nil), in.PermissionSnapshot.HiddenTools...)
 		payload.CapabilityRefs = append([]string(nil), in.PermissionSnapshot.CapabilityRefs...)
 		payload.PathRoleRefs = append([]string(nil), in.PermissionSnapshot.PathRoleRefs...)
 		out.PermissionSnapshot = &payload
 	}
+
 	if in.FailureDelta != nil {
 		payload := *in.FailureDelta
+
 		payload.EvidenceRefs = append([]string(nil), in.FailureDelta.EvidenceRefs...)
 		out.FailureDelta = &payload
 	}
+
 	if in.ModelResponse != nil {
 		payload := copyModelResponse(*in.ModelResponse)
+
 		out.ModelResponse = &payload
 	}
+
 	if in.ValidationSignal != nil {
 		payload := *in.ValidationSignal
+
 		payload.EvidenceRefs = append([]string(nil), in.ValidationSignal.EvidenceRefs...)
 		payload.CommandRefs = append([]string(nil), in.ValidationSignal.CommandRefs...)
 		out.ValidationSignal = &payload
 	}
+
 	if in.TraceStorePolicy != nil {
 		payload := *in.TraceStorePolicy
+
 		payload.AllowedFields = append([]string(nil), in.TraceStorePolicy.AllowedFields...)
 		payload.ForbiddenFields = append([]string(nil), in.TraceStorePolicy.ForbiddenFields...)
 		payload.StoreRefs = append([]string(nil), in.TraceStorePolicy.StoreRefs...)
 		out.TraceStorePolicy = &payload
 	}
+
 	if in.ReplayClassification != nil {
 		payload := *in.ReplayClassification
+
 		payload.AtomRefs = append([]string(nil), in.ReplayClassification.AtomRefs...)
 		payload.ViolationRefs = append([]string(nil), in.ReplayClassification.ViolationRefs...)
 		out.ReplayClassification = &payload
 	}
+
 	if in.PhaseGatePolicy != nil {
 		payload := *in.PhaseGatePolicy
+
 		payload.GateRefs = append([]string(nil), in.PhaseGatePolicy.GateRefs...)
 		payload.TerminalResponseKinds = append([]string(nil), in.PhaseGatePolicy.TerminalResponseKinds...)
 		out.PhaseGatePolicy = &payload
 	}
+
 	if in.RollbackControl != nil {
 		payload := *in.RollbackControl
+
 		payload.GuardRefs = append([]string(nil), in.RollbackControl.GuardRefs...)
 		payload.AffectedPackIDs = append([]string(nil), in.RollbackControl.AffectedPackIDs...)
 		out.RollbackControl = &payload
 	}
+
 	return &out
 }
 
@@ -1716,37 +1900,47 @@ func copyModelResponse(in ModelResponse) ModelResponse {
 	out := in
 	if in.ProposedAction != nil {
 		payload := *in.ProposedAction
+
 		payload.TargetRefs = append([]string(nil), in.ProposedAction.TargetRefs...)
 		payload.EvidenceRefs = append([]string(nil), in.ProposedAction.EvidenceRefs...)
 		payload.ProposalRefs = append([]string(nil), in.ProposedAction.ProposalRefs...)
 		out.ProposedAction = &payload
 	}
+
 	if in.ContextRequest != nil {
 		payload := *in.ContextRequest
+
 		payload.RequestRefs = append([]string(nil), in.ContextRequest.RequestRefs...)
 		payload.MissingRefs = append([]string(nil), in.ContextRequest.MissingRefs...)
 		out.ContextRequest = &payload
 	}
+
 	if in.ContextChallenge != nil {
 		payload := *in.ContextChallenge
+
 		payload.ChallengeRefs = append([]string(nil), in.ContextChallenge.ChallengeRefs...)
 		payload.EvidenceRefs = append([]string(nil), in.ContextChallenge.EvidenceRefs...)
 		out.ContextChallenge = &payload
 	}
+
 	if in.ValidationProposal != nil {
 		payload := *in.ValidationProposal
+
 		payload.ValidationRefs = append([]string(nil), in.ValidationProposal.ValidationRefs...)
 		payload.CommandRefs = append([]string(nil), in.ValidationProposal.CommandRefs...)
 		payload.EvidenceRefs = append([]string(nil), in.ValidationProposal.EvidenceRefs...)
 		out.ValidationProposal = &payload
 	}
+
 	if in.Escalation != nil {
 		payload := *in.Escalation
+
 		payload.EscalationRefs = append([]string(nil), in.Escalation.EscalationRefs...)
 		payload.BlockerRefs = append([]string(nil), in.Escalation.BlockerRefs...)
 		payload.QuestionRefs = append([]string(nil), in.Escalation.QuestionRefs...)
 		out.Escalation = &payload
 	}
+
 	return out
 }
 
@@ -1775,9 +1969,11 @@ func copyStringIntMap(in map[string]int) map[string]int {
 	if len(in) == 0 {
 		return nil
 	}
+
 	out := make(map[string]int, len(in))
 	for key, value := range in {
 		out[key] = value
 	}
+
 	return out
 }

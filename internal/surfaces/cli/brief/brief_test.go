@@ -36,19 +36,24 @@ Some state.
 
 test done.
 `
+
 	if err := os.WriteFile(briefPath, []byte(briefContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	exit := runBriefPreview([]string{briefPath}, &stdout, &stderr, nil)
+
 	if exit != 0 {
 		t.Fatalf("expected exit 0, got %d: %s", exit, stderr.String())
 	}
+
 	out := stdout.String()
 	if !bytes.Contains([]byte(out), []byte("Files To Modify: 2")) {
 		t.Errorf("expected 'Files To Modify: 2' in output, got:\n%s", out)
 	}
+
 	if !bytes.Contains([]byte(out), []byte("Lint: OK")) {
 		t.Errorf("expected 'Lint: OK' in output, got:\n%s", out)
 	}

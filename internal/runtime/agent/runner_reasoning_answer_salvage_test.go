@@ -76,6 +76,7 @@ func TestExtractAnswerProseFromReasoning(t *testing.T) {
 			} else if !strings.Contains(got, tt.wantContains) {
 				t.Errorf("result does not contain expected text:\n  got:  %q\n  want contains: %q", got, tt.wantContains)
 			}
+
 			if tt.wantNot != "" && strings.Contains(got, tt.wantNot) {
 				t.Errorf("result contains forbidden text %q:\n  got: %q", tt.wantNot, got)
 			}
@@ -96,6 +97,7 @@ func TestExtractAnswerProseFromReasoningUsesSingleCleanMarkedAnswer(t *testing.T
 	if !strings.Contains(got, "belongs in the input key-handling path") {
 		t.Fatalf("expected clean marked answer, got %q", got)
 	}
+
 	for _, forbidden := range []string{"The user wants", "Let me", "I should", "[Answer]"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("marked answer leaked %q: %q", forbidden, got)
@@ -249,6 +251,7 @@ func TestSalvageAnswerFromReasoning(t *testing.T) {
 						if tt.mutation {
 							return "read_write_workspace"
 						}
+
 						return "read_only_workspace"
 					}(),
 				},
@@ -258,9 +261,11 @@ func TestSalvageAnswerFromReasoning(t *testing.T) {
 				ReasoningContent: tt.reasoning,
 			}
 			got, ok := runner.salvageAnswerFromReasoning(reply, nil)
+
 			if ok != tt.wantOk {
 				t.Errorf("salvageAnswerFromReasoning ok=%v, want=%v (got=%q)", ok, tt.wantOk, got)
 			}
+
 			if tt.wantContains != "" && !strings.Contains(got, tt.wantContains) {
 				t.Errorf("salvageAnswerFromReasoning result missing %q:\n  got: %q", tt.wantContains, got)
 			}
@@ -290,9 +295,11 @@ func TestSalvageAnswerFromReasoningRejectsSourceGroundedScratchpadShape(t *testi
 		},
 	}
 	answer := "The user wants me to explain the failure. Actually, the root cause is in `internal/surfaces/tui/app/app.go:42` because hidden reasoning was accepted as visible final-answer prose."
+
 	if blocker, reason := runner.finalAnswerBlockerKind(answer, nil); blocker != "non_answer_prose" || reason != "non_answer_prose" {
 		t.Fatalf("shared final-answer hygiene should reject scratchpad-shaped source answer, got (%q, %q)", blocker, reason)
 	}
+
 	reply := llama.ChatMessage{
 		ReasoningContent: strings.Join([]string{
 			"Let me write the final response.",
@@ -339,6 +346,7 @@ func TestSalvageAnswerFromReasoningRejectsUngroundedSourceCitation(t *testing.T)
 	if err := os.MkdirAll(filepath.Join(root, "internal", "surfaces", "tui", "app"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	runner := &Runner{
 		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -366,9 +374,11 @@ func TestNormalizeToolRequestSyntaxEmptyContentWithReasoning(t *testing.T) {
 		ReasoningContent: "substantial reasoning text here that has enough characters to be meaningful as an answer",
 	}
 	result := normalizeToolRequestSyntax(msg)
+
 	if result.EventOutcome == toolRequestNormalizerOutcomeUnsafeToInfer {
 		t.Fatalf("empty content must not classify as unsafe_to_infer after Fix 1")
 	}
+
 	if result.OK {
 		t.Fatalf("empty content must not parse as a valid tool request")
 	}

@@ -64,47 +64,64 @@ type mcpToolCallParams struct {
 func RunWithTelemetryAndVersion(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, version string) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		printMCPUsage(stderr)
+
 		return 0
 	}
+
 	if args[0] != "serve" {
 		fmt.Fprintf(stderr, "unknown mcp subcommand %q\n", args[0])
 		printMCPUsage(stderr)
+
 		return 2
 	}
+
 	fs := flag.NewFlagSet("idiom mcp serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	configPath := fs.String("config", "config.json", "path to config file")
 	stdio := fs.Bool("stdio", false, "serve MCP over newline-delimited stdio")
 	profileFlag := fs.String("profile", DiscoveryProfile, "tool permission profile: discovery, mcp_discovery")
 	callerID := fs.String("caller-id", "", "opaque caller identifier for sidecar.caller metadata")
 	requestID := fs.String("request-id", "", "opaque request identifier for sidecar.caller metadata")
 	traceID := fs.String("trace-id", "", "opaque trace identifier for sidecar.caller metadata")
+
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
+
 	if !*stdio {
 		fmt.Fprintln(stderr, "idiom mcp serve currently requires --stdio")
+
 		return 2
 	}
+
 	profile, err := workspace.NormalizeToolProfile(*profileFlag)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 2
 	}
+
 	if profile != workspace.ToolProfileDiscovery && profile != workspace.ToolProfileMCPDiscovery {
 		fmt.Fprintln(stderr, "idiom mcp serve supports --profile discovery or mcp_discovery")
+
 		return 2
 	}
+
 	caller, err := workspace.NewToolSidecarCaller(*callerID, *requestID, *traceID)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 2
 	}
+
 	cfg, err := toolcmd.LoadConfig(*configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	server, err := NewDiscoveryServerWithOptions(cfg, profile, DiscoveryServerOptions{
 		Caller:    caller,
 		Telemetry: rec,
@@ -112,12 +129,16 @@ func RunWithTelemetryAndVersion(args []string, stdout io.Writer, stderr io.Write
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "initialize mcp server: %v\n", err)
+
 		return 1
 	}
+
 	if err := server.Serve(context.Background(), os.Stdin, stdout); err != nil {
 		fmt.Fprintf(stderr, "mcp serve: %v\n", err)
+
 		return 1
 	}
+
 	return 0
 }
 
@@ -158,16 +179,20 @@ func NewDiscoveryServerWithOptions(cfg config.Config, profile string, opts Disco
 	if err != nil {
 		return nil, err
 	}
+
 	toolByName := make(map[string]workspace.ExportedToolSchema, len(tools))
 	for _, tool := range tools {
 		toolByName[tool.Name] = tool
 	}
+
 	mgr := workspace.NewManager(cfg.Workspace)
 	mgr.SetBypassReadBeforeEdit(true)
+
 	version := strings.TrimSpace(opts.Version)
 	if version == "" {
 		version = defaultVersion
 	}
+
 	return &DiscoveryServer{
 		cfg:        cfg,
 		profile:    profile,
@@ -183,66 +208,81 @@ func NewDiscoveryServerWithOptions(cfg config.Config, profile string, opts Disco
 func (s *DiscoveryServer) Serve(ctx context.Context, stdin io.Reader, stdout io.Writer) error {
 	scanner := bufio.NewScanner(stdin)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+
 	enc := json.NewEncoder(stdout)
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
+
 		resp, ok := s.handleFrame(ctx, []byte(line))
 		if !ok {
 			continue
 		}
+
 		if err := enc.Encode(resp); err != nil {
 			return err
 		}
 	}
+
 	if err := scanner.Err(); err != nil {
 		return err
 	}
+
 	return nil
 }
 
 func (s *DiscoveryServer) handleFrame(ctx context.Context, payload []byte) (mcpRPCResponse, bool) {
 	var req mcpRPCRequest
+
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return mcpRPCResponse{JSONRPC: "2.0", Error: &mcpRPCError{Code: -32700, Message: "parse error"}}, true
 	}
+
 	if len(req.ID) == 0 {
 		return mcpRPCResponse{}, false
 	}
+
 	switch strings.TrimSpace(req.Method) {
 	case "initialize":
 		if err := validateMCPObjectParams(req.Params, true); err != nil {
 			return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: &mcpRPCError{Code: -32602, Message: err.Error()}}, true
 		}
+
 		return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: s.initializeResult()}, true
 	case "tools/list":
 		if err := validateMCPObjectParams(req.Params, true); err != nil {
 			return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: &mcpRPCError{Code: -32602, Message: err.Error()}}, true
 		}
+
 		return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"tools": s.mcpTools()}}, true
 	case "tools/call":
 		result, err := s.callTool(ctx, req.Params)
 		if err != nil {
 			return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: &mcpRPCError{Code: -32602, Message: err.Error()}}, true
 		}
+
 		return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: result}, true
 	case "roots/list":
 		if err := validateMCPObjectParams(req.Params, true); err != nil {
 			return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: &mcpRPCError{Code: -32602, Message: err.Error()}}, true
 		}
+
 		return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"roots": s.mcpRoots()}}, true
 	case "resources/list":
 		if err := validateMCPObjectParams(req.Params, true); err != nil {
 			return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: &mcpRPCError{Code: -32602, Message: err.Error()}}, true
 		}
+
 		return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"resources": s.mcpResources()}}, true
 	case "resources/read":
 		result, err := s.readResource(req.Params)
 		if err != nil {
 			return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: &mcpRPCError{Code: -32602, Message: err.Error()}}, true
 		}
+
 		return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: result}, true
 	default:
 		return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: &mcpRPCError{Code: -32601, Message: "method not found"}}, true
@@ -278,6 +318,7 @@ func (s *DiscoveryServer) mcpTools() []map[string]any {
 			},
 		})
 	}
+
 	return out
 }
 
@@ -330,24 +371,30 @@ func (s *DiscoveryServer) mcpResources() []map[string]any {
 
 func (s *DiscoveryServer) readResource(params json.RawMessage) (mcppkg.ResourceReadResult, error) {
 	var req mcppkg.ResourceReadParams
+
 	if len(params) == 0 {
 		return mcppkg.ResourceReadResult{}, fmt.Errorf("resources/read params are required")
 	}
+
 	if err := json.Unmarshal(params, &req); err != nil {
 		return mcppkg.ResourceReadResult{}, fmt.Errorf("invalid resources/read params")
 	}
+
 	uri := strings.TrimSpace(req.URI)
 	if uri == "" {
 		return mcppkg.ResourceReadResult{}, fmt.Errorf("resources/read uri is required")
 	}
+
 	payload, err := s.resourcePayload(uri)
 	if err != nil {
 		return mcppkg.ResourceReadResult{}, err
 	}
+
 	text, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return mcppkg.ResourceReadResult{}, fmt.Errorf("encode resource metadata")
 	}
+
 	return mcppkg.ResourceReadResult{Contents: []mcppkg.ResourceContent{{
 		URI:      canonicalMCPResourceURI(uri),
 		MimeType: "application/json",
@@ -372,6 +419,7 @@ func (s *DiscoveryServer) resourcePayload(uri string) (map[string]any, error) {
 		for _, tool := range s.tools {
 			names = append(names, tool.Name)
 		}
+
 		return map[string]any{
 			"schema_version": "idiom.mcp_resource.v1",
 			"kind":           "discovery_tools",
@@ -414,6 +462,7 @@ func (s *DiscoveryServer) resourcePayload(uri string) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		info, err := os.Lstat(resourcePath)
 		switch {
 		case err == nil:
@@ -446,6 +495,7 @@ func (s *DiscoveryServer) resourceFreshness(rel string) map[string]any {
 	if strings.TrimSpace(req.Path) == "" {
 		req.Path = "."
 	}
+
 	result := s.manager.Execute(context.Background(), req)
 	evidence := map[string]any{
 		"policy":            "report_only",
@@ -453,30 +503,39 @@ func (s *DiscoveryServer) resourceFreshness(rel string) map[string]any {
 		"refresh_allowed":   false,
 		"refresh_attempted": false,
 	}
+
 	if result.Error != "" {
 		evidence["state"] = "unavailable"
 		evidence["error_class"] = "context_status_unavailable"
+
 		return evidence
 	}
+
 	var status map[string]any
+
 	if err := json.Unmarshal([]byte(result.Output), &status); err != nil {
 		evidence["state"] = "unavailable"
 		evidence["error_class"] = "context_status_decode_failed"
+
 		return evidence
 	}
+
 	if freshness, ok := status["freshness"].(map[string]any); ok {
 		for key, value := range freshness {
 			evidence[key] = value
 		}
 	}
+
 	if stale, ok := status["stale_evidence"].(map[string]any); ok {
 		evidence["stale_evidence"] = stale
 	}
+
 	for _, key := range []string{"indexed", "fresh", "index_id", "store_kind"} {
 		if value, ok := status[key]; ok {
 			evidence[key] = value
 		}
 	}
+
 	return evidence
 }
 
@@ -485,48 +544,61 @@ func (s *DiscoveryServer) resolveResourceFileURI(rawURI string) (string, string,
 	if root == "" || root == "." {
 		return "", "", fmt.Errorf("workspace root is not configured")
 	}
+
 	parsed, err := url.Parse(strings.TrimSpace(rawURI))
 	if err != nil {
 		return "", "", fmt.Errorf("invalid resource uri")
 	}
+
 	var candidate string
+
 	switch parsed.Scheme {
 	case "idiom":
 		if parsed.Host != "workspace" || !strings.HasPrefix(parsed.Path, "/file/") {
 			return "", "", fmt.Errorf("unsupported resource uri")
 		}
+
 		rel := strings.TrimPrefix(parsed.EscapedPath(), "/file/")
+
 		unescaped, err := url.PathUnescape(rel)
 		if err != nil {
 			return "", "", fmt.Errorf("invalid resource uri")
 		}
+
 		candidate = filepath.Join(root, filepath.FromSlash(unescaped))
 	case "file":
 		if parsed.Path == "" {
 			return "", "", fmt.Errorf("invalid resource uri")
 		}
+
 		candidate = filepath.Clean(parsed.Path)
 	default:
 		return "", "", fmt.Errorf("unsupported resource uri")
 	}
+
 	rel, err := mcpResourceRel(root, candidate)
 	if err != nil {
 		return "", "", err
 	}
+
 	if denied, reason := ResourcePathDenied(rel); denied {
 		return "", "", fmt.Errorf("resource denied: %s", reason)
 	}
+
 	if evaluated, err := filepath.EvalSymlinks(candidate); err == nil {
 		evaluatedRel, err := mcpResourceRel(root, evaluated)
 		if err != nil {
 			return "", "", err
 		}
+
 		if denied, reason := ResourcePathDenied(evaluatedRel); denied {
 			return "", "", fmt.Errorf("resource denied: %s", reason)
 		}
+
 		candidate = evaluated
 		rel = evaluatedRel
 	}
+
 	return candidate, rel, nil
 }
 
@@ -535,12 +607,15 @@ func mcpResourceRel(root string, candidate string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resource path error")
 	}
+
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("resource is outside workspace root")
 	}
+
 	if rel == "." {
 		return ".", nil
 	}
+
 	return rel, nil
 }
 
@@ -549,6 +624,7 @@ func ResourcePathDenied(rel string) (bool, string) {
 	if slash == "" || slash == "." {
 		return false, ""
 	}
+
 	segments := strings.Split(slash, "/")
 	switch segments[0] {
 	case ".git", ".idiom", ".codex", ".agents":
@@ -558,6 +634,7 @@ func ResourcePathDenied(rel string) (bool, string) {
 			return true, "protected log path"
 		}
 	}
+
 	for i, segment := range segments {
 		lower := strings.ToLower(segment)
 		switch lower {
@@ -571,6 +648,7 @@ func ResourcePathDenied(rel string) (bool, string) {
 				}
 			}
 		}
+
 		if lower == "secrets" ||
 			lower == ".env" ||
 			strings.HasPrefix(lower, ".env.") ||
@@ -580,9 +658,11 @@ func ResourcePathDenied(rel string) (bool, string) {
 			strings.Contains(lower, "password") ||
 			strings.Contains(lower, "private-key") ||
 			strings.Contains(lower, "private_key") {
+
 			return true, "protected path"
 		}
 	}
+
 	return false, ""
 }
 
@@ -602,6 +682,7 @@ func canonicalMCPResourceURI(uri string) string {
 	if strings.HasPrefix(trimmed, "file://") {
 		return "idiom://workspace/file/<redacted_path>"
 	}
+
 	return trimmed
 }
 
@@ -611,85 +692,114 @@ func validateMCPObjectParams(params json.RawMessage, allowEmpty bool) error {
 		if allowEmpty {
 			return nil
 		}
+
 		return fmt.Errorf("params are required")
 	}
+
 	var value any
+
 	if err := json.Unmarshal(params, &value); err != nil {
 		return fmt.Errorf("invalid params")
 	}
+
 	if _, ok := value.(map[string]any); !ok {
 		return fmt.Errorf("params must be an object")
 	}
+
 	return nil
 }
 
 func (s *DiscoveryServer) callTool(ctx context.Context, params json.RawMessage) (mcpToolCallResult, error) {
 	var call mcpToolCallParams
+
 	if len(params) == 0 {
 		return mcpToolCallResult{}, fmt.Errorf("tools/call params are required")
 	}
+
 	if err := json.Unmarshal(params, &call); err != nil {
 		return mcpToolCallResult{}, fmt.Errorf("invalid tools/call params")
 	}
+
 	caller, err := s.callerForToolCall(call.Meta)
 	if err != nil {
 		return mcpToolCallResult{}, err
 	}
+
 	toolName := strings.TrimSpace(call.Name)
 	if toolName == "" {
 		return mcpToolCallResult{}, fmt.Errorf("tools/call name is required")
 	}
+
 	args := bytesForMCPArguments(call.Arguments)
 	if mcpArgumentsContainPrivatePath(args) {
 		req := workspace.ToolRequest{Tool: toolName, Args: json.RawMessage(args)}
 		s.logMCPToolRequest(req, len(args), caller)
+
 		result := workspace.ToolProfileDeniedResult(toolName, s.profile, workspace.ToolProfileDecision{
 			Allowed: false,
 			Code:    "profile_denied",
 			Reason:  "private or temp absolute path request shapes are deferred until MCP root/resource containment",
 		})
+
 		result = s.redactToolResult(result)
 		s.logMCPToolResult(req, result, 0, caller)
+
 		return s.mcpToolResult(req, result, caller), nil
 	}
+
 	req, err := workspace.DecodeToolRequestJSON(args)
 	if err != nil {
 		req = workspace.ToolRequest{Tool: toolName, Args: json.RawMessage(args)}
 		s.logMCPToolRequest(req, len(args), caller)
+
 		result := workspace.ToolResult{
 			Tool:    toolName,
 			Summary: "MCP tool input rejected",
 			Error:   "invalid_input: tool arguments must be a JSON object matching the exported schema",
 		}
+
 		result = s.redactToolResult(result)
 		s.logMCPToolResult(req, result, 0, caller)
+
 		return s.mcpToolResult(req, result, caller), nil
 	}
+
 	req.Tool = toolName
 	req.Args = json.RawMessage(args)
 	s.logMCPToolRequest(req, len(args), caller)
+
 	if _, ok := s.toolByName[toolName]; !ok {
 		result := workspace.ToolProfileDeniedResult(toolName, s.profile, workspace.ToolProfileDecision{
 			Allowed: false,
 			Code:    "profile_denied",
 			Reason:  "tool is not exposed by the schema-derived MCP discovery profile",
 		})
+
 		result = s.redactToolResult(result)
 		s.logMCPToolResult(req, result, 0, caller)
+
 		return s.mcpToolResult(req, result, caller), nil
 	}
+
 	if decision := workspace.ToolRequestAllowedForProfile(req, s.profile); !decision.Allowed {
 		result := workspace.ToolProfileDeniedResult(req.Tool, s.profile, decision)
+
 		result = s.redactToolResult(result)
 		s.logMCPToolResult(req, result, 0, caller)
+
 		return s.mcpToolResult(req, result, caller), nil
 	}
+
 	toolCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+
 	defer cancel()
+
 	startedAt := time.Now()
 	result := s.manager.Execute(toolCtx, req)
+
 	result = s.redactToolResult(result)
 	s.logMCPToolResult(req, result, time.Since(startedAt).Milliseconds(), caller)
+
 	return s.mcpToolResult(req, result, caller), nil
 }
 
@@ -704,25 +814,32 @@ func (s *DiscoveryServer) callerForToolCall(meta json.RawMessage) (workspace.Too
 	callerID := s.caller.CallerID
 	requestID := s.caller.RequestID
 	traceID := s.caller.TraceID
+
 	if strings.TrimSpace(requestID) == "" {
 		requestID = fmt.Sprintf("mcp:req-%d", s.requestSeq.Add(1))
 	}
+
 	if len(meta) > 0 && strings.TrimSpace(string(meta)) != "" && strings.TrimSpace(string(meta)) != "null" {
 		var decoded mcpCallerMeta
+
 		if err := json.Unmarshal(meta, &decoded); err != nil {
 			return workspace.ToolSidecarCaller{}, fmt.Errorf("invalid tools/call _meta")
 		}
+
 		if decoded.Idiom != nil {
 			decoded = *decoded.Idiom
 		}
+
 		callerID = toolcmd.FirstNonEmptyString(decoded.CallerID, callerID)
 		requestID = toolcmd.FirstNonEmptyString(decoded.RequestID, requestID)
 		traceID = toolcmd.FirstNonEmptyString(decoded.TraceID, traceID)
 	}
+
 	caller, err := workspace.NewToolSidecarCaller(callerID, requestID, traceID)
 	if err != nil {
 		return workspace.ToolSidecarCaller{}, err
 	}
+
 	return caller, nil
 }
 
@@ -730,6 +847,7 @@ func (s *DiscoveryServer) logMCPToolRequest(req workspace.ToolRequest, rawInputB
 	if s.rec == nil {
 		return
 	}
+
 	fields := map[string]any{
 		"step":            1,
 		"agent":           "mcp",
@@ -749,15 +867,18 @@ func (s *DiscoveryServer) logMCPToolRequest(req workspace.ToolRequest, rawInputB
 		"recursive":       req.Recursive,
 	}
 	toolcmd.AddToolAttributionTelemetry(fields, workspace.ToolSidecarEnvelopeVersion, StdioTransport, s.profile, caller, strings.TrimSpace(req.Tool))
+
 	if caller.RequestID != "" {
 		fields["telemetry_event_id"] = caller.RequestID + ":request"
 	}
+
 	profile := workspace.DiscoveryProfileForRequest(req)
 	if profile.Discovery {
 		fields["discovery_class"] = profile.Class
 		fields["discovery_scope"] = profile.Scope
 		fields["discovery_cost"] = profile.Cost
 	}
+
 	_ = s.rec.Log("tool_request", fields)
 }
 
@@ -765,6 +886,7 @@ func (s *DiscoveryServer) logMCPToolResult(req workspace.ToolRequest, result wor
 	if s.rec == nil {
 		return
 	}
+
 	tool := toolcmd.FirstNonEmptyString(result.Tool, req.Tool)
 	fields := map[string]any{
 		"step":        1,
@@ -775,16 +897,20 @@ func (s *DiscoveryServer) logMCPToolResult(req workspace.ToolRequest, result wor
 		"duration_ms": durationMillis,
 	}
 	toolcmd.AddToolAttributionTelemetry(fields, workspace.ToolSidecarEnvelopeVersion, StdioTransport, s.profile, caller, tool)
+
 	if caller.RequestID != "" {
 		fields["telemetry_event_id"] = caller.RequestID + ":result"
 	}
+
 	if result.Output != "" {
 		fields["output_chars"] = len(result.Output)
 		fields["output_lines"] = toolcmd.OutputLineCount(result.Output)
 	}
+
 	if result.PrecisionTier != "" {
 		fields["precision_tier"] = result.PrecisionTier
 	}
+
 	envelope := workspace.BuildToolSidecarEnvelopeWithOptions(req, result, s.profile, workspace.ToolSidecarOptions{
 		Caller:    caller,
 		Transport: StdioTransport,
@@ -792,15 +918,18 @@ func (s *DiscoveryServer) logMCPToolResult(req workspace.ToolRequest, result wor
 	if len(envelope.AuditEventIDs) > 0 {
 		fields["audit_event_ids"] = append([]string(nil), envelope.AuditEventIDs...)
 	}
+
 	profile := workspace.DiscoveryProfileForRequest(req)
 	if profile.Discovery {
 		fields["discovery_class"] = profile.Class
 		fields["discovery_scope"] = profile.Scope
 		fields["discovery_cost"] = profile.Cost
 	}
+
 	for key, value := range workspace.ToolTelemetryFields(tool, result.Output) {
 		fields[key] = value
 	}
+
 	_ = s.rec.Log("tool_result", fields)
 }
 
@@ -809,6 +938,7 @@ func bytesForMCPArguments(args json.RawMessage) []byte {
 	if trimmed == "" || trimmed == "null" {
 		return []byte("{}")
 	}
+
 	return []byte(trimmed)
 }
 
@@ -819,6 +949,7 @@ func mcpArgumentsContainPrivatePath(args []byte) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -833,11 +964,14 @@ func (s *DiscoveryServer) mcpToolResult(req workspace.ToolRequest, result worksp
 			Transport: StdioTransport,
 		}),
 	}
+
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		data = []byte(`{"Error":"encode MCP tool result"}`)
 	}
+
 	text := s.redactText(string(data))
+
 	return mcpToolCallResult{
 		Content: []mcpToolContent{{Type: "text", Text: text}},
 		IsError: strings.TrimSpace(result.Error) != "",
@@ -848,11 +982,13 @@ func (s *DiscoveryServer) redactToolResult(result workspace.ToolResult) workspac
 	result.Summary = s.redactText(result.Summary)
 	result.Output = s.redactText(result.Output)
 	result.Error = s.redactText(result.Error)
+
 	for i := range result.Relationships {
 		result.Relationships[i].SourcePath = s.redactText(result.Relationships[i].SourcePath)
 		result.Relationships[i].TargetPath = s.redactText(result.Relationships[i].TargetPath)
 		result.Relationships[i].Evidence = s.redactText(result.Relationships[i].Evidence)
 	}
+
 	return result
 }
 
@@ -860,9 +996,11 @@ func (s *DiscoveryServer) redactText(text string) string {
 	if text == "" {
 		return ""
 	}
+
 	for _, re := range mcpPrivatePathRegexPatterns {
 		text = re.ReplaceAllString(text, "<redacted_path>")
 	}
+
 	replacements := []string{
 		s.cfg.Workspace.Root,
 		s.cfg.Workspace.CWD,
@@ -876,8 +1014,10 @@ func (s *DiscoveryServer) redactText(text string) string {
 		if value == "" || value == "." {
 			continue
 		}
+
 		text = strings.ReplaceAll(text, value, "<redacted_path>")
 	}
+
 	return text
 }
 

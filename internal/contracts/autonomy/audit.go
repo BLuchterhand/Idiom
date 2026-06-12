@@ -333,6 +333,7 @@ func AuditEvents(events []Event, opts EventAuditOptions) EventAuditReport {
 
 	ordered := append([]Event(nil), events...)
 	slices.SortStableFunc(ordered, compareEventAuditOrder)
+
 	state.report.TotalEvents = len(ordered)
 	for i := range ordered {
 		event := copyEvent(ordered[i])
@@ -340,8 +341,10 @@ func AuditEvents(events []Event, opts EventAuditOptions) EventAuditReport {
 		event.Normalize()
 		state.addEvent(event, rawGateFields)
 	}
+
 	state.report.ReplayClassification, state.report.ReplayMetrics, state.report.PrivacyChecks = replayIntentForEvents(ordered)
 	state.finish()
+
 	return state.report
 }
 
@@ -350,14 +353,18 @@ func compareEventAuditOrder(a, b Event) int {
 		if a.OccurredAt.IsZero() {
 			return 1
 		}
+
 		if b.OccurredAt.IsZero() {
 			return -1
 		}
+
 		if a.OccurredAt.Before(b.OccurredAt) {
 			return -1
 		}
+
 		return 1
 	}
+
 	return cmp.Or(
 		cmp.Compare(a.ContractID, b.ContractID),
 		cmp.Compare(a.Sequence, b.Sequence),
@@ -371,19 +378,25 @@ func (s *eventAuditState) addEvent(event Event, rawGateFields gateAuditFieldSnap
 		s.report.ReferenceCoverage.MissingContractIDEvents = append(s.report.ReferenceCoverage.MissingContractIDEvents, auditRef(event, "", "event has no contract_id"))
 	} else {
 		s.referencedContracts[event.ContractID] = struct{}{}
+
 		coverage := s.contractCoverage(event.ContractID)
 		coverage.EventCount++
+
 		coverage.ParentID = firstNonEmptyAuditValue(coverage.ParentID, event.ParentID)
+
 		if coverage.FirstSequence == 0 || event.Sequence < coverage.FirstSequence {
 			coverage.FirstSequence = event.Sequence
 		}
+
 		if event.Sequence > coverage.LastSequence {
 			coverage.LastSequence = event.Sequence
 		}
+
 		if stale, ok := s.staleAfterSequence[event.ContractID]; ok && sequenceAfter(event.Sequence, stale.Sequence) {
 			s.report.ReferenceCoverage.StaleContractReferences = append(s.report.ReferenceCoverage.StaleContractReferences, auditRef(event, event.ContractID, stale.Reason))
 		}
 	}
+
 	s.addMetadata(event)
 	s.addSidecarToolCorrelation(event)
 
@@ -413,20 +426,25 @@ func (s *eventAuditState) addLifecycle(event Event) {
 		s.lifecycleContracts[event.ContractID] = struct{}{}
 		incrementContractMap(s.contractCoverage(event.ContractID), "lifecycle", string(event.Type))
 	}
+
 	if event.Lifecycle != nil && event.Lifecycle.Summary != nil && event.Lifecycle.Summary.ContractID != "" {
 		s.lifecycleContracts[event.Lifecycle.Summary.ContractID] = struct{}{}
 	}
+
 	if event.Lifecycle != nil && event.Lifecycle.TurnPhaseContract != nil {
 		s.addTurnPhaseContract(event, *event.Lifecycle.TurnPhaseContract)
+
 		if event.Lifecycle.ModelProtocol != nil {
 			s.addTurnPhaseSurfaceSummary(event, SurfaceSummaryFromModelProtocol(*event.Lifecycle.ModelProtocol, *event.Lifecycle.TurnPhaseContract))
 		}
 	}
+
 	if event.Lifecycle != nil {
 		for _, surface := range event.Lifecycle.SurfaceSummaries {
 			s.addTurnPhaseSurfaceSummary(event, surface)
 		}
 	}
+
 	switch event.Type {
 	case EventContractCompiled:
 		s.report.LifecycleCoverage.Compiled++
@@ -434,13 +452,16 @@ func (s *eventAuditState) addLifecycle(event Event) {
 		s.report.LifecycleCoverage.Presented++
 	case EventContractRecompiled:
 		s.report.LifecycleCoverage.Recompiled++
+
 		if event.Lifecycle != nil {
 			if event.Lifecycle.OldContractID != "" {
 				if !s.contractKnown(event.Lifecycle.OldContractID) {
 					s.report.ReferenceCoverage.UnmatchedContractReferences = append(s.report.ReferenceCoverage.UnmatchedContractReferences, auditRef(event, event.Lifecycle.OldContractID, "recompiled old_contract_id has no prior lifecycle or expected contract"))
 				}
+
 				s.staleAfterSequence[event.Lifecycle.OldContractID] = staleContractState{Sequence: event.Sequence, Reason: "contract superseded by recompile"}
 			}
+
 			if event.Lifecycle.NewContractID != "" {
 				s.lifecycleContracts[event.Lifecycle.NewContractID] = struct{}{}
 			}
@@ -458,6 +479,7 @@ func (s *eventAuditState) addPolicy(event Event) {
 	if event.ContractID != "" {
 		incrementContractMap(s.contractCoverage(event.ContractID), "policy", string(event.Type))
 	}
+
 	switch event.Type {
 	case EventToolIntentClassified:
 		s.report.PolicyCoverage.IntentClassified++
@@ -468,14 +490,17 @@ func (s *eventAuditState) addPolicy(event Event) {
 	case EventToolPolicyResult:
 		s.report.PolicyCoverage.ResultEvents++
 	}
+
 	if event.Policy == nil {
 		return
 	}
+
 	s.addTurnPhasePolicyObservation(event)
 	incrementStringMap(&s.report.PolicyCoverage.DecisionCounts, string(event.Policy.Decision))
 	incrementStringMap(&s.report.PolicyCoverage.ToolCounts, event.Policy.ToolName)
 	incrementStringMap(&s.report.PolicyCoverage.CapabilityCounts, string(event.Policy.Capability))
 	incrementStringMap(&s.report.PolicyCoverage.SideEffectCounts, string(event.Policy.SideEffect))
+
 	if event.ContractID != "" {
 		coverage := s.contractCoverage(event.ContractID)
 		incrementStringMap(&coverage.PolicyDecisions, string(event.Policy.Decision))
@@ -485,27 +510,36 @@ func (s *eventAuditState) addPolicy(event Event) {
 
 func (s *eventAuditState) addTurnPhaseContract(event Event, phase TurnPhaseContractEvent) {
 	phase.normalize()
+
 	if phase.PhaseID == "" {
 		return
 	}
+
 	s.report.TurnPhaseCoverage.Total++
+
 	s.turnPhaseContracts[event.ContractID] = phase
+
 	if event.ContractID != "" {
 		s.turnPhaseContractIDs[event.ContractID] = struct{}{}
 	}
+
 	incrementStringMap(&s.report.TurnPhaseCoverage.PhaseCounts, phase.PhaseID)
 	incrementStringMap(&s.report.TurnPhaseCoverage.EnforcementModeCounts, phase.EnforcementMode)
+
 	submitPlanClass := ActionClassToken(ActionClassSubmitPlan)
 	if stringSetContains(phase.ActionPolicy.AllowedActionClasses, submitPlanClass) &&
 		!stringSetContains(phase.RuntimeCall.ExpressibleActionClasses, submitPlanClass) {
+
 		s.addTurnPhaseContradiction(event, phase, "", submitPlanClass, "phase allows submit_plan but runtime_call cannot express submit_plan")
 	}
+
 	if strings.EqualFold(phase.RuntimeCall.ToolTransportMode, "textual") {
 		tools := TurnPhaseCallableTools(phase)
 		if textualPhaseAdvertisesUnexpressibleManifestTool(phase, tools) {
 			s.addTurnPhaseContradiction(event, phase, strings.Join(tools, ","), "", "textual phase advertised manifest-visible allowed_tools")
 		}
 	}
+
 	finalAnswerClass := ActionClassToken(ActionClassFinalAnswer)
 	if stringSetContains(phase.ActionPolicy.AllowedActionClasses, finalAnswerClass) && turnPhaseEvidenceOpen(phase.EvidenceState) {
 		s.addTurnPhaseContradiction(event, phase, "", finalAnswerClass, "phase allows final_answer while evidence_state still has open acceptance, verification, recovery, or blocker evidence")
@@ -518,28 +552,36 @@ func textualPhaseAdvertisesUnexpressibleManifestTool(phase TurnPhaseContractEven
 		if tool == "" {
 			continue
 		}
+
 		actionClass := TurnPhaseActionClassForTool(tool)
 		if actionClass == "" {
 			actionClass = tool
 		}
+
 		if stringSetContains(phase.RuntimeCall.ExpressibleActionClasses, actionClass) {
 			continue
 		}
+
 		return true
 	}
+
 	return false
 }
 
 func (s *eventAuditState) addTurnPhaseSurfaceSummary(event Event, surface TurnPhaseSurfaceSummaryEvent) {
 	surface.normalize()
+
 	if surface.SurfaceID == "" {
 		return
 	}
+
 	incrementStringMap(&s.report.TurnPhaseCoverage.SurfaceCounts, surface.SurfaceID)
+
 	phase, ok := s.turnPhaseContracts[event.ContractID]
 	if !ok || phase.PhaseID == "" {
 		return
 	}
+
 	for _, issue := range ReconcileTurnPhaseSurface(phase, surface) {
 		issue.EventID = event.EventID
 		issue.Type = string(event.Type)
@@ -553,27 +595,36 @@ func (s *eventAuditState) addTurnPhasePolicyObservation(event Event) {
 	if event.Policy == nil || event.ContractID == "" {
 		return
 	}
+
 	phase, ok := s.turnPhaseContracts[event.ContractID]
 	if !ok || phase.PhaseID == "" {
 		return
 	}
+
 	tool := strings.TrimSpace(event.Policy.ToolName)
 	if tool == "" {
 		return
 	}
+
 	actionClass := TurnPhaseActionClassForTool(tool)
 	if actionClass != "" && stringSetContains(phase.ActionPolicy.InvalidActionClasses, actionClass) {
 		s.addTurnPhaseContradiction(event, phase, tool, actionClass, "observed tool action class is invalid in latest turn_phase_contract")
+
 		return
 	}
+
 	if len(phase.AllowedTools) == 0 && tool != "" && phase.RuntimeCall.ToolTransportMode != "textual" {
 		s.addTurnPhaseContradiction(event, phase, tool, actionClass, "observed tool while latest turn_phase_contract exposes no manifest-visible tools")
+
 		return
 	}
+
 	if len(phase.ActionPolicy.CallableToolNames) > 0 && !stringSetContains(phase.ActionPolicy.CallableToolNames, tool) {
 		s.addTurnPhaseContradiction(event, phase, tool, actionClass, "observed tool is absent from latest turn_phase_contract callable_tool_names")
+
 		return
 	}
+
 	if len(phase.AllowedTools) > 0 && !stringSetContains(phase.AllowedTools, tool) {
 		s.addTurnPhaseContradiction(event, phase, tool, actionClass, "observed tool is absent from latest turn_phase_contract allowed_tools")
 	}
@@ -602,6 +653,7 @@ func (s *eventAuditState) addObligation(event Event) {
 	if event.ContractID != "" {
 		incrementContractMap(s.contractCoverage(event.ContractID), "obligation", string(event.Type))
 	}
+
 	switch event.Type {
 	case EventObligationOpened:
 		s.report.ObligationCoverage.Opened++
@@ -610,9 +662,11 @@ func (s *eventAuditState) addObligation(event Event) {
 	case EventObligationWaived:
 		s.report.ObligationCoverage.Waived++
 	}
+
 	if event.Obligation == nil {
 		return
 	}
+
 	ref := ObligationAuditRef{
 		EventID:      event.EventID,
 		Sequence:     event.Sequence,
@@ -624,10 +678,12 @@ func (s *eventAuditState) addObligation(event Event) {
 	incrementStringMap(&s.report.ObligationCoverage.KindCounts, string(event.Obligation.Kind))
 	incrementStringMap(&s.report.ObligationCoverage.StatusCounts, string(event.Obligation.Status))
 	incrementStringMap(&s.report.ObligationCoverage.OwnerCounts, string(event.Obligation.Owner))
+
 	if event.ContractID != "" {
 		coverage := s.contractCoverage(event.ContractID)
 		incrementStringMap(&coverage.ObligationStatusCounts, string(event.Obligation.Status))
 		incrementStringMap(&coverage.ObligationKindCounts, string(event.Obligation.Kind))
+
 		switch event.Type {
 		case EventObligationOpened:
 			coverage.OpenObligations = util.AppendUnique(coverage.OpenObligations, event.Obligation.ObligationID)
@@ -637,6 +693,7 @@ func (s *eventAuditState) addObligation(event Event) {
 			coverage.WaivedObligations = util.AppendUnique(coverage.WaivedObligations, event.Obligation.ObligationID)
 		}
 	}
+
 	key := obligationKey(event.ContractID, event.Obligation.ObligationID)
 	switch event.Type {
 	case EventObligationOpened:
@@ -646,9 +703,12 @@ func (s *eventAuditState) addObligation(event Event) {
 			ref.Reason = "obligation resolution has no matching opened obligation event"
 			s.report.ObligationCoverage.UnmatchedObligations = append(s.report.ObligationCoverage.UnmatchedObligations, ref)
 		}
+
 		delete(s.openObligations, key)
+
 		if event.ContractID != "" {
 			coverage := s.contractCoverage(event.ContractID)
+
 			coverage.OpenObligations = removeString(coverage.OpenObligations, event.Obligation.ObligationID)
 		}
 	}
@@ -659,45 +719,64 @@ func (s *eventAuditState) addReadiness(event Event) {
 	if event.ContractID != "" {
 		incrementContractMap(s.contractCoverage(event.ContractID), "readiness", string(event.Type))
 	}
+
 	switch event.Type {
 	case EventReadinessStateUpdated:
 		s.report.ReadinessCoverage.StateUpdatedEvents++
 	}
+
 	if event.Readiness == nil {
 		return
 	}
+
 	readiness := *event.Readiness
 	readiness.normalize()
+
 	var coverage *ContractEventCoverage
+
 	if event.ContractID != "" {
 		coverage = s.contractCoverage(event.ContractID)
 	}
+
 	if readiness.ReadyToAnswer {
 		s.report.ReadinessCoverage.ReadyToAnswerEvents++
+
 		incrementContractReadinessSignal(coverage, "ready_to_answer")
 	}
+
 	if readiness.ReadyToWrite {
 		s.report.ReadinessCoverage.ReadyToWriteEvents++
+
 		incrementContractReadinessSignal(coverage, "ready_to_write")
 	}
+
 	if readiness.ReadyToVerify {
 		s.report.ReadinessCoverage.ReadyToVerifyEvents++
+
 		incrementContractReadinessSignal(coverage, "ready_to_verify")
 	}
+
 	if len(readiness.ClosedClaims) > 0 {
 		s.report.ReadinessCoverage.EventsWithClosedClaims++
+
 		incrementContractReadinessSignal(coverage, "closed_claims")
 	}
+
 	if len(readiness.OpenObligations) > 0 {
 		s.report.ReadinessCoverage.EventsWithOpenObligations++
+
 		incrementContractReadinessSignal(coverage, "open_obligations")
 	}
+
 	if len(readiness.EvidenceRefs) > 0 {
 		s.report.ReadinessCoverage.EventsWithEvidenceRefs++
+
 		incrementContractReadinessSignal(coverage, "evidence_refs")
 	}
+
 	if readiness.FurtherReadsRequire != "" {
 		s.report.ReadinessCoverage.EventsWithFurtherReadCriteria++
+
 		incrementContractReadinessSignal(coverage, "further_reads_require")
 	}
 }
@@ -707,46 +786,64 @@ func (s *eventAuditState) addCompletion(event Event) {
 	if event.ContractID != "" {
 		incrementContractMap(s.contractCoverage(event.ContractID), "completion", string(event.Type))
 	}
+
 	switch event.Type {
 	case EventCompletionGateDecision:
 		s.report.CompletionCoverage.DecisionEvents++
 	}
+
 	if event.Completion == nil {
 		return
 	}
+
 	completion := *event.Completion
 	completion.normalize()
+
 	var coverage *ContractEventCoverage
+
 	if event.ContractID != "" {
 		coverage = s.contractCoverage(event.ContractID)
 	}
+
 	incrementStringMap(&s.report.CompletionCoverage.DecisionCounts, string(completion.Decision))
 	incrementStringMap(&s.report.CompletionCoverage.VerificationStatusCounts, completion.VerificationStatus)
+
 	if coverage != nil {
 		incrementStringMap(&coverage.CompletionDecisions, string(completion.Decision))
 		incrementStringMap(&coverage.CompletionVerifications, completion.VerificationStatus)
 	}
+
 	if completion.ProtocolHash != "" {
 		s.report.CompletionCoverage.EventsWithProtocolHash++
+
 		incrementContractCompletionSignal(coverage, "protocol_hash_present")
 	} else {
 		s.report.CompletionCoverage.EventsMissingProtocolHash++
+
 		s.report.CompletionCoverage.MissingProtocolHashRefs = append(s.report.CompletionCoverage.MissingProtocolHashRefs, auditRef(event, "protocol_hash", "completion event missing protocol_hash"))
+
 		incrementContractCompletionSignal(coverage, "protocol_hash_missing")
 	}
+
 	if len(completion.RemainingObligations) > 0 {
 		s.report.CompletionCoverage.EventsWithRemainingObligations++
+
 		incrementContractCompletionSignal(coverage, "remaining_obligations")
+
 		if completion.Decision == PolicyAllow {
 			s.report.CompletionCoverage.AllowWithRemainingObligationsRefs = append(s.report.CompletionCoverage.AllowWithRemainingObligationsRefs, auditRef(event, "remaining_obligations", "completion allowed with remaining obligations"))
 		}
 	}
+
 	if len(completion.ChangedPaths) > 0 {
 		s.report.CompletionCoverage.EventsWithChangedPaths++
+
 		incrementContractCompletionSignal(coverage, "changed_paths")
 	}
+
 	if len(completion.RequiredPathStatus) > 0 {
 		s.report.CompletionCoverage.EventsWithRequiredPathStatus++
+
 		incrementContractCompletionSignal(coverage, "required_path_status")
 	}
 }
@@ -756,47 +853,61 @@ func (s *eventAuditState) addGate(event Event, rawGateFields gateAuditFieldSnaps
 	if event.ContractID != "" {
 		incrementContractMap(s.contractCoverage(event.ContractID), "gate", string(event.Type))
 	}
+
 	switch event.Type {
 	case EventGateDecision:
 		s.report.GateCoverage.DecisionEvents++
 	}
+
 	if event.Gate == nil {
 		return
 	}
+
 	s.addGateProtocolHashParity(event)
 	incrementStringMap(&s.report.GateCoverage.KindCounts, string(event.Gate.Gate))
 	incrementStringMap(&s.report.GateCoverage.DecisionCounts, string(event.Gate.Decision))
 	incrementStringMap(&s.report.GateCoverage.ReasonCounts, event.Gate.ReasonCode)
 	incrementStringMap(&s.report.GateCoverage.ToolCounts, event.Gate.ToolName)
+
 	extended := gateAuditExtendedFields(event.Gate)
+
 	if rawGateFields.PackIDFieldPresent {
 		if rawGateFields.PackID == "" {
 			s.report.GateCoverage.MissingPackIDRefs = append(s.report.GateCoverage.MissingPackIDRefs, auditRef(event, "pack_id", "typed gate event missing pack_id"))
 		}
 	}
+
 	incrementStringMap(&s.report.GateCoverage.DecisionCountsByPackID, extended.PackID)
+
 	if rawGateFields.EnforcementModeFieldPresent {
 		if rawGateFields.EnforcementMode == "" {
 			s.report.GateCoverage.MissingEnforcementModeRefs = append(s.report.GateCoverage.MissingEnforcementModeRefs, auditRef(event, "enforcement_mode", "typed gate event missing enforcement_mode"))
 		}
 	}
+
 	incrementStringMap(&s.report.GateCoverage.DecisionCountsByEnforcementMode, extended.EnforcementMode)
+
 	if rawGateFields.ObservedFactsFieldPresent && len(rawGateFields.ObservedFacts) > 0 {
 		s.report.GateCoverage.EventsWithObservedFacts++
 	}
+
 	if rawGateFields.SafeAlternativesFieldPresent && len(rawGateFields.SafeAlternatives) > 0 {
 		s.report.GateCoverage.EventsWithSafeAlternatives++
 	}
+
 	if rawGateFields.SafeAlternativesFieldPresent && gateDecisionNeedsSafeAlternatives(event.Gate.Decision, extended.EnforcementMode) && len(rawGateFields.SafeAlternatives) == 0 {
 		s.report.GateCoverage.MissingSafeAlternativesRefs = append(s.report.GateCoverage.MissingSafeAlternativesRefs, auditRef(event, "safe_alternatives", "enforced reject/deny/stop gate event missing safe_alternatives"))
 	}
+
 	s.report.GateCoverage.OpenObligationRefs = append(s.report.GateCoverage.OpenObligationRefs, event.Gate.OpenObligations...)
 	s.report.GateCoverage.ResolvedObligationRefs = append(s.report.GateCoverage.ResolvedObligationRefs, event.Gate.ResolvedObligations...)
+
 	for _, obligationID := range event.Gate.OpenObligations {
 		if _, ok := s.openObligations[obligationKey(event.ContractID, obligationID)]; !ok {
 			s.report.GateCoverage.InconsistentOpenObligationRefs = append(s.report.GateCoverage.InconsistentOpenObligationRefs, auditRef(event, obligationID, "gate reported open obligation that was not open at gate sequence"))
 		}
 	}
+
 	if event.ContractID != "" {
 		coverage := s.contractCoverage(event.ContractID)
 		incrementStringMap(&coverage.GateDecisionCounts, string(event.Gate.Decision))
@@ -808,19 +919,24 @@ func (s *eventAuditState) addGateProtocolHashParity(event Event) {
 	if event.Gate == nil || event.ContractID == "" {
 		return
 	}
+
 	phase, ok := s.turnPhaseContracts[event.ContractID]
 	if !ok || phase.PhaseID == "" {
 		return
 	}
+
 	if event.Gate.Gate != GateCompletion {
 		return
 	}
+
 	gateHash := strings.TrimSpace(event.Gate.ProtocolHash)
 	phaseHash := strings.TrimSpace(phase.ProtocolHash)
+
 	switch {
 	case phaseHash != "" && gateHash != "" && gateHash != phaseHash:
 		s.addTurnPhaseContradiction(event, phase, "", "", "completion gate protocol_hash differs from latest turn_phase_contract")
 	}
+
 	if n := len(s.report.TurnPhaseCoverage.Contradictions); n > 0 && strings.TrimSpace(s.report.TurnPhaseCoverage.Contradictions[n-1].EventID) == event.EventID {
 		s.report.TurnPhaseCoverage.Contradictions[n-1].SurfaceID = "completion_gate"
 		s.report.TurnPhaseCoverage.Contradictions[n-1].SurfacePair = turnPhaseSurfacePair("turn_phase_contract", "completion_gate")
@@ -833,13 +949,18 @@ func (s *eventAuditState) addGuardFriction(event Event) {
 	if event.ContractID != "" {
 		incrementStringMap(&s.contractCoverage(event.ContractID).GuardFrictionCounts, string(EventGuardFriction))
 	}
+
 	if event.GuardFriction == nil {
 		s.report.GuardFrictionCoverage.UnclassifiedFriction++
+
 		s.report.GuardFrictionCoverage.UnclassifiedRefs = append(s.report.GuardFrictionCoverage.UnclassifiedRefs, auditRef(event, event.ContractID, "guard_friction payload missing"))
+
 		return
 	}
+
 	friction := *event.GuardFriction
 	friction.normalize()
+
 	contractID := firstNonEmptyAuditValue(friction.ContractID, event.ContractID)
 	incrementStringMap(&s.report.GuardFrictionCoverage.LaneCounts, firstNonEmptyAuditValue(friction.Lane, event.Correlation.Lane))
 	incrementStringMap(&s.report.GuardFrictionCoverage.PhaseCounts, firstNonEmptyAuditValue(friction.PhaseID, friction.Phase, event.Correlation.Phase))
@@ -848,6 +969,7 @@ func (s *eventAuditState) addGuardFriction(event Event) {
 	incrementStringMap(&s.report.GuardFrictionCoverage.RetryOutcomeCounts, string(friction.RetryOutcome))
 	incrementStringMap(&s.report.GuardFrictionCoverage.GuardSurfaceCounts, string(friction.GuardSurface))
 	incrementStringMap(&s.report.GuardFrictionCoverage.DecisionCounts, string(friction.Decision))
+
 	if len(friction.SafeAlternatives) > 0 {
 		s.report.GuardFrictionCoverage.SafeAlternativeCoverage.EventsWithSafeAlternatives++
 		for _, alternative := range friction.SafeAlternatives {
@@ -856,21 +978,29 @@ func (s *eventAuditState) addGuardFriction(event Event) {
 	} else {
 		s.report.GuardFrictionCoverage.SafeAlternativeCoverage.EventsMissingSafeAlternatives++
 	}
+
 	for _, actionClass := range friction.VisibleActionClasses {
 		incrementStringMap(&s.report.GuardFrictionCoverage.SafeAlternativeCoverage.VisibleActionClassCounts, actionClass)
 	}
+
 	for _, tool := range friction.VisibleTools {
 		incrementStringMap(&s.report.GuardFrictionCoverage.SafeAlternativeCoverage.VisibleToolCounts, tool)
 	}
+
 	contractCoverage := s.guardFrictionContractCoverage(contractID)
 	contractCoverage.Total++
+
 	if guardFrictionAvoidable(friction.Avoidability) {
 		s.report.GuardFrictionCoverage.AvoidableFriction++
+
 		contractCoverage.AvoidableFriction++
 	}
+
 	if guardFrictionUnclassified(event, friction) {
 		s.report.GuardFrictionCoverage.UnclassifiedFriction++
+
 		contractCoverage.UnclassifiedFriction++
+
 		s.report.GuardFrictionCoverage.UnclassifiedRefs = append(s.report.GuardFrictionCoverage.UnclassifiedRefs, auditRef(event, contractID, "guard_friction lacks enough structured classification evidence"))
 	}
 }
@@ -880,15 +1010,19 @@ func (s *eventAuditState) addModelExchange(event Event) {
 	if event.ContractID != "" {
 		incrementContractMap(s.contractCoverage(event.ContractID), "model_exchange", string(EventModelExchange))
 	}
+
 	if event.ModelExchange == nil {
 		s.report.ModelExchangeCoverage.EventsMissingHarnessPayload = append(s.report.ModelExchangeCoverage.EventsMissingHarnessPayload, auditRef(event, "model_exchange", "model_exchange payload missing"))
 		return
 	}
+
 	exchange := *event.ModelExchange
 	incrementStringMap(&s.report.ModelExchangeCoverage.KindCounts, exchange.Kind)
+
 	if exchange.ProtocolHash == "" {
 		s.report.ModelExchangeCoverage.EventsMissingProtocolHash = append(s.report.ModelExchangeCoverage.EventsMissingProtocolHash, auditRef(event, "protocol_hash", "model_exchange missing protocol_hash"))
 	}
+
 	switch {
 	case exchange.ContextPacket != nil:
 		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "context_packet")
@@ -911,6 +1045,7 @@ func (s *eventAuditState) addModelExchange(event Event) {
 	case exchange.RollbackControl != nil:
 		s.report.ModelExchangeCoverage.RollbackControlEvents++
 		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "rollback_control")
+
 		if exchange.RollbackControl.Decision != "" && exchange.RollbackControl.Decision != "not_required" {
 			s.report.ModelExchangeCoverage.RollbackActive = true
 			s.report.ModelExchangeCoverage.RollbackRefs = append(s.report.ModelExchangeCoverage.RollbackRefs, auditRef(event, exchange.RollbackControl.Decision, "rollback control active"))
@@ -924,10 +1059,12 @@ func (s *eventAuditState) addMetadata(event Event) {
 	if len(event.Metadata.ClientClassifications) == 0 && len(event.Metadata.ProductSignals) == 0 {
 		return
 	}
+
 	s.report.MetadataCoverage.EventsWithMetadata++
 	for _, classification := range event.Metadata.ClientClassifications {
 		incrementStringMap(&s.report.MetadataCoverage.ClientClassificationCounts, string(classification))
 	}
+
 	for _, signal := range event.Metadata.ProductSignals {
 		incrementStringMap(&s.report.MetadataCoverage.ProductSignalCounts, string(signal))
 	}
@@ -937,49 +1074,61 @@ func (s *eventAuditState) addSidecarToolCorrelation(event Event) {
 	sidecarPresent := event.Correlation.SidecarRequestID != "" || event.Correlation.SidecarCaller != "" || event.Correlation.SidecarProfile != "" || event.Correlation.SidecarTool != ""
 	toolCallID := event.Correlation.ToolCallID
 	toolName := event.Correlation.ToolName
+
 	if event.Policy != nil {
 		toolCallID = firstNonEmptyAuditValue(toolCallID, event.Policy.ToolCallID)
 		toolName = firstNonEmptyAuditValue(toolName, event.Policy.ToolName)
 	}
+
 	if sidecarPresent {
 		s.report.SidecarToolCorrelation.SidecarEventCount++
 		if event.Correlation.SidecarRequestID != "" {
 			s.sidecarRequestIDs[event.Correlation.SidecarRequestID] = struct{}{}
 			if event.ContractID != "" {
 				coverage := s.contractCoverage(event.ContractID)
+
 				coverage.SidecarRequestIDs = util.AppendUnique(coverage.SidecarRequestIDs, event.Correlation.SidecarRequestID)
 			}
 		}
 	}
+
 	if toolCallID != "" || toolName != "" {
 		s.report.SidecarToolCorrelation.ToolCallEventCount++
 		if toolCallID != "" {
 			s.toolCallIDs[toolCallID] = struct{}{}
 			if event.ContractID != "" {
 				coverage := s.contractCoverage(event.ContractID)
+
 				coverage.ToolCallIDs = util.AppendUnique(coverage.ToolCallIDs, toolCallID)
 			}
 		}
 	}
+
 	if sidecarPresent && toolCallID != "" {
 		s.report.SidecarToolCorrelation.CorrelatedEventCount++
 	}
+
 	if !sidecarPresent {
 		return
 	}
+
 	if toolCallID == "" && isPolicyToolEvent(event.Type) {
 		s.addSidecarIssue(event, toolCallID, toolName, "sidecar policy event missing tool_call_id")
 	}
+
 	if event.Correlation.SidecarRequestID == "" && toolCallID != "" {
 		s.addSidecarIssue(event, toolCallID, toolName, "tool call correlation missing sidecar_request_id")
 	}
+
 	if event.Correlation.SidecarTool != "" && toolName != "" && event.Correlation.SidecarTool != toolName {
 		s.addSidecarIssue(event, toolCallID, toolName, "sidecar_tool does not match tool_name")
 	}
+
 	if event.Policy != nil {
 		if event.Correlation.ToolCallID != "" && event.Policy.ToolCallID != "" && event.Correlation.ToolCallID != event.Policy.ToolCallID {
 			s.addSidecarIssue(event, toolCallID, toolName, "correlation tool_call_id does not match policy tool_call_id")
 		}
+
 		if event.Correlation.ToolName != "" && event.Policy.ToolName != "" && event.Correlation.ToolName != event.Policy.ToolName {
 			s.addSidecarIssue(event, toolCallID, toolName, "correlation tool_name does not match policy tool_name")
 		}
@@ -1002,21 +1151,25 @@ func (s *eventAuditState) addSidecarIssue(event Event, toolCallID, toolName, rea
 
 func (s *eventAuditState) finish() {
 	finishReplayIntentReport(&s.report.ReplayClassification, &s.report.ReplayMetrics, &s.report.PrivacyChecks)
+
 	for contractID := range s.expectedContracts {
 		if _, ok := s.referencedContracts[contractID]; !ok {
 			s.report.ReferenceCoverage.MissingExpectedContracts = append(s.report.ReferenceCoverage.MissingExpectedContracts, contractID)
 		}
 	}
+
 	for contractID := range s.referencedContracts {
 		if contractID == "" || s.contractKnown(contractID) {
 			continue
 		}
+
 		s.report.ReferenceCoverage.UnmatchedContractReferences = append(s.report.ReferenceCoverage.UnmatchedContractReferences, EventAuditRef{
 			ContractID: contractID,
 			Reference:  contractID,
 			Reason:     "contract reference has no lifecycle event or expected contract",
 		})
 	}
+
 	for _, coverage := range s.contracts {
 		if coverage.ParentID != "" && !s.contractKnown(coverage.ParentID) {
 			s.report.ReferenceCoverage.UnmatchedParentReferences = append(s.report.ReferenceCoverage.UnmatchedParentReferences, EventAuditRef{
@@ -1025,17 +1178,20 @@ func (s *eventAuditState) finish() {
 				Reason:     "parent_id has no lifecycle event or expected contract",
 			})
 		}
+
 		slices.Sort(coverage.OpenObligations)
 		slices.Sort(coverage.ResolvedObligations)
 		slices.Sort(coverage.WaivedObligations)
 		slices.Sort(coverage.SidecarRequestIDs)
 		slices.Sort(coverage.ToolCallIDs)
 	}
+
 	for _, ref := range s.openObligations {
 		s.report.ObligationCoverage.OpenObligations = append(s.report.ObligationCoverage.OpenObligations, ref)
 		ref.Reason = "obligation opened without resolved or waived event"
 		s.report.ObligationCoverage.UnresolvedObligations = append(s.report.ObligationCoverage.UnresolvedObligations, ref)
 	}
+
 	s.report.LifecycleCoverage.ContractsWithLifecycle = sortedKeys(s.lifecycleContracts)
 	s.report.PolicyCoverage.ContractsWithPolicy = s.contractsWithMap("policy")
 	s.report.ObligationCoverage.ContractsWithObligations = s.contractsWithMap("obligation")
@@ -1076,6 +1232,7 @@ func (s *eventAuditState) finish() {
 	slices.Sort(s.report.ReferenceCoverage.MissingExpectedContracts)
 	sortSidecarIssues(s.report.SidecarToolCorrelation.UnmatchedCorrelations)
 	s.addFindings()
+
 	s.report.AllClear = s.report.TotalEvents > 0 && len(s.report.Findings) == 0 && len(s.report.ObligationCoverage.UnresolvedObligations) == 0
 }
 
@@ -1088,6 +1245,7 @@ func (s *eventAuditState) addFindings() {
 			EventIDs: eventIDsFromAuditRefs(refs),
 		})
 	}
+
 	if refs := s.report.ReferenceCoverage.UnmatchedContractReferences; len(refs) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "contract_event_unmatched_contract_reference",
@@ -1096,6 +1254,7 @@ func (s *eventAuditState) addFindings() {
 			ContractIDs: contractIDsFromAuditRefs(refs),
 		})
 	}
+
 	if refs := s.report.ReferenceCoverage.StaleContractReferences; len(refs) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "contract_event_stale_contract_reference",
@@ -1105,6 +1264,7 @@ func (s *eventAuditState) addFindings() {
 			ContractIDs: contractIDsFromAuditRefs(refs),
 		})
 	}
+
 	if refs := s.report.ReferenceCoverage.UnmatchedParentReferences; len(refs) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "contract_event_unmatched_parent_reference",
@@ -1113,6 +1273,7 @@ func (s *eventAuditState) addFindings() {
 			ContractIDs: contractIDsFromAuditRefs(refs),
 		})
 	}
+
 	if missing := s.report.ReferenceCoverage.MissingExpectedContracts; len(missing) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "contract_event_expected_contract_missing",
@@ -1121,6 +1282,7 @@ func (s *eventAuditState) addFindings() {
 			ContractIDs: append([]string(nil), missing...),
 		})
 	}
+
 	if issues := s.report.SidecarToolCorrelation.UnmatchedCorrelations; len(issues) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "contract_event_sidecar_tool_correlation_mismatch",
@@ -1130,6 +1292,7 @@ func (s *eventAuditState) addFindings() {
 			ContractIDs: contractIDsFromSidecarIssues(issues),
 		})
 	}
+
 	if refs := s.report.GateCoverage.InconsistentOpenObligationRefs; len(refs) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "contract_event_gate_open_obligation_inconsistent",
@@ -1139,6 +1302,7 @@ func (s *eventAuditState) addFindings() {
 			ContractIDs: contractIDsFromAuditRefs(refs),
 		})
 	}
+
 	if refs := s.report.GateCoverage.MissingPackIDRefs; len(refs) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "contract_event_gate_missing_pack_id",
@@ -1148,6 +1312,7 @@ func (s *eventAuditState) addFindings() {
 			ContractIDs: contractIDsFromAuditRefs(refs),
 		})
 	}
+
 	if refs := s.report.GateCoverage.MissingEnforcementModeRefs; len(refs) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "contract_event_gate_missing_enforcement_mode",
@@ -1157,6 +1322,7 @@ func (s *eventAuditState) addFindings() {
 			ContractIDs: contractIDsFromAuditRefs(refs),
 		})
 	}
+
 	if refs := s.report.GateCoverage.MissingSafeAlternativesRefs; len(refs) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "contract_event_gate_missing_safe_alternatives",
@@ -1166,6 +1332,7 @@ func (s *eventAuditState) addFindings() {
 			ContractIDs: contractIDsFromAuditRefs(refs),
 		})
 	}
+
 	if refs := s.report.CompletionCoverage.AllowWithRemainingObligationsRefs; len(refs) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "contract_event_completion_allow_with_remaining_obligations",
@@ -1175,6 +1342,7 @@ func (s *eventAuditState) addFindings() {
 			ContractIDs: contractIDsFromAuditRefs(refs),
 		})
 	}
+
 	if refs := s.report.ObligationCoverage.UnmatchedObligations; len(refs) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "contract_event_unmatched_obligation_reference",
@@ -1184,6 +1352,7 @@ func (s *eventAuditState) addFindings() {
 			ContractIDs: contractIDsFromObligationRefs(refs),
 		})
 	}
+
 	if issues := s.report.TurnPhaseCoverage.Contradictions; len(issues) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "turn_phase_contract_contradiction",
@@ -1193,6 +1362,7 @@ func (s *eventAuditState) addFindings() {
 			ContractIDs: contractIDsFromTurnPhaseContradictions(issues),
 		})
 	}
+
 	if refs := s.report.ModelExchangeCoverage.EventsMissingProtocolHash; len(refs) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "model_exchange_missing_protocol_hash",
@@ -1202,6 +1372,7 @@ func (s *eventAuditState) addFindings() {
 			ContractIDs: contractIDsFromAuditRefs(refs),
 		})
 	}
+
 	if refs := s.report.ModelExchangeCoverage.EventsMissingHarnessPayload; len(refs) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "model_exchange_missing_typed_payload",
@@ -1211,6 +1382,7 @@ func (s *eventAuditState) addFindings() {
 			ContractIDs: contractIDsFromAuditRefs(refs),
 		})
 	}
+
 	if refs := s.report.PrivacyChecks.Refs; len(refs) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "contract_event_privacy_forbidden_raw_content",
@@ -1227,8 +1399,10 @@ func (s *eventAuditState) contractCoverage(contractID string) *ContractEventCove
 	if ok {
 		return coverage
 	}
+
 	coverage = &ContractEventCoverage{ContractID: contractID}
 	s.contracts[contractID] = coverage
+
 	return coverage
 }
 
@@ -1237,12 +1411,15 @@ func (s *eventAuditState) guardFrictionContractCoverage(contractID string) *Guar
 	if contractID == "" {
 		contractID = "(missing)"
 	}
+
 	coverage, ok := s.guardFrictionContracts[contractID]
 	if ok {
 		return coverage
 	}
+
 	coverage = &GuardFrictionContractCoverage{ContractID: contractID}
 	s.guardFrictionContracts[contractID] = coverage
+
 	return coverage
 }
 
@@ -1250,17 +1427,21 @@ func (s *eventAuditState) contractKnown(contractID string) bool {
 	if contractID == "" {
 		return false
 	}
+
 	if _, ok := s.lifecycleContracts[contractID]; ok {
 		return true
 	}
+
 	if _, ok := s.expectedContracts[contractID]; ok {
 		return true
 	}
+
 	return false
 }
 
 func (s *eventAuditState) contractsWithMap(kind string) []string {
 	set := make(map[string]struct{})
+
 	for contractID, coverage := range s.contracts {
 		switch kind {
 		case "policy":
@@ -1293,16 +1474,19 @@ func (s *eventAuditState) contractsWithMap(kind string) []string {
 			}
 		}
 	}
+
 	return sortedKeys(set)
 }
 
 func (s *eventAuditState) lifecycleOnlyContracts() []string {
 	set := make(map[string]struct{})
+
 	for contractID, coverage := range s.contracts {
 		if len(coverage.LifecycleEvents) > 0 && len(coverage.PolicyEvents) == 0 && len(coverage.ObligationEvents) == 0 && len(coverage.ReadinessEvents) == 0 && len(coverage.CompletionEvents) == 0 && len(coverage.GateEvents) == 0 && len(coverage.GuardFrictionCounts) == 0 && len(coverage.ModelExchangeCounts) == 0 {
 			set[contractID] = struct{}{}
 		}
 	}
+
 	return sortedKeys(set)
 }
 
@@ -1329,6 +1513,7 @@ func incrementContractReadinessSignal(coverage *ContractEventCoverage, key strin
 	if coverage == nil {
 		return
 	}
+
 	incrementStringMap(&coverage.ReadinessSignalCounts, key)
 }
 
@@ -1336,6 +1521,7 @@ func incrementContractCompletionSignal(coverage *ContractEventCoverage, key stri
 	if coverage == nil {
 		return
 	}
+
 	incrementStringMap(&coverage.CompletionSignals, key)
 }
 
@@ -1344,9 +1530,11 @@ func incrementStringMap(target *map[string]int, key string) {
 	if key == "" {
 		return
 	}
+
 	if *target == nil {
 		*target = make(map[string]int)
 	}
+
 	(*target)[key]++
 }
 
@@ -1389,11 +1577,14 @@ func gateAuditExtendedFields(gate *ContractGateEvent) gateAuditFieldSnapshot {
 	if gate == nil {
 		return gateAuditFieldSnapshot{}
 	}
+
 	value := reflect.ValueOf(gate)
 	if value.Kind() != reflect.Pointer || value.IsNil() {
 		return gateAuditFieldSnapshot{}
 	}
+
 	elem := value.Elem()
+
 	return gateAuditFieldSnapshot{
 		PackID:                       stringFieldByName(elem, "PackID"),
 		EnforcementMode:              stringFieldByName(elem, "EnforcementMode"),
@@ -1410,6 +1601,7 @@ func gateDecisionNeedsSafeAlternatives(decision ToolPolicyDecision, enforcementM
 	if !util.EqualTrimFold(enforcementMode, "enforce") {
 		return false
 	}
+
 	switch decision {
 	case PolicyReject, PolicyDeny, PolicyStop:
 		return true
@@ -1423,6 +1615,7 @@ func stringFieldByName(value reflect.Value, fieldName string) string {
 	if !field.IsValid() || field.Kind() != reflect.String {
 		return ""
 	}
+
 	return strings.TrimSpace(field.String())
 }
 
@@ -1431,10 +1624,12 @@ func stringSliceFieldByName(value reflect.Value, fieldName string) []string {
 	if !field.IsValid() || field.Kind() != reflect.Slice || field.Type().Elem().Kind() != reflect.String {
 		return nil
 	}
+
 	values := make([]string, 0, field.Len())
 	for i := 0; i < field.Len(); i++ {
 		values = append(values, field.Index(i).String())
 	}
+
 	return compactStrings(values)
 }
 
@@ -1457,9 +1652,11 @@ func sequenceAfter(sequence, staleAfter int64) bool {
 	if staleAfter <= 0 {
 		return false
 	}
+
 	if sequence <= 0 {
 		return true
 	}
+
 	return sequence > staleAfter
 }
 
@@ -1497,6 +1694,7 @@ func TurnPhaseActionClassForToolClass(tool string) ActionClass {
 
 func turnPhaseEvidenceOpen(state PhaseEvidenceStateEvent) bool {
 	verificationStatus := strings.ToLower(strings.TrimSpace(state.VerificationStatus))
+
 	return len(state.TDDObligationRefs) > 0 ||
 		len(state.ResidualBlockers) > 0 ||
 		len(state.RecoveryPacketRefs) > 0 ||
@@ -1513,11 +1711,13 @@ func stringSetContains(values []string, want string) bool {
 	if want == "" {
 		return false
 	}
+
 	for _, value := range values {
 		if strings.TrimSpace(value) == want {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1530,12 +1730,14 @@ func removeString(values []string, remove string) []string {
 	if remove == "" || len(values) == 0 {
 		return values
 	}
+
 	out := values[:0]
 	for _, value := range values {
 		if value != remove {
 			out = append(out, value)
 		}
 	}
+
 	return out
 }
 
@@ -1546,7 +1748,9 @@ func sortedKeys(set map[string]struct{}) []string {
 			out = append(out, key)
 		}
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -1557,7 +1761,9 @@ func sortedMapKeys(values map[string]int) []string {
 			out = append(out, key)
 		}
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -1566,9 +1772,11 @@ func sortedContractCoverages(values map[string]*ContractEventCoverage) []Contrac
 	for _, coverage := range values {
 		out = append(out, *coverage)
 	}
+
 	slices.SortFunc(out, func(a, b ContractEventCoverage) int {
 		return cmp.Compare(a.ContractID, b.ContractID)
 	})
+
 	return out
 }
 
@@ -1577,19 +1785,25 @@ func sortedGuardFrictionContractCoverages(values map[string]*GuardFrictionContra
 	for _, coverage := range values {
 		out = append(out, *coverage)
 	}
+
 	slices.SortFunc(out, func(a, b GuardFrictionContractCoverage) int {
 		if c := cmp.Compare(b.AvoidableFriction, a.AvoidableFriction); c != 0 {
 			return c
 		}
+
 		if c := cmp.Compare(b.Total, a.Total); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.ContractID, b.ContractID)
 	})
+
 	const maxTopGuardFrictionContracts = 10
+
 	if len(out) > maxTopGuardFrictionContracts {
 		out = out[:maxTopGuardFrictionContracts]
 	}
+
 	return out
 }
 
@@ -1598,9 +1812,11 @@ func sortAuditRefs(refs []EventAuditRef) {
 		if c := cmp.Compare(a.Sequence, b.Sequence); c != 0 {
 			return c
 		}
+
 		if c := cmp.Compare(a.ContractID, b.ContractID); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.EventID, b.EventID)
 	})
 }
@@ -1610,9 +1826,11 @@ func sortObligationRefs(refs []ObligationAuditRef) {
 		if c := cmp.Compare(a.Sequence, b.Sequence); c != 0 {
 			return c
 		}
+
 		if c := cmp.Compare(a.ContractID, b.ContractID); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.ObligationID, b.ObligationID)
 	})
 }
@@ -1622,9 +1840,11 @@ func sortSidecarIssues(issues []SidecarToolCorrelationIssue) {
 		if c := cmp.Compare(a.Sequence, b.Sequence); c != 0 {
 			return c
 		}
+
 		if c := cmp.Compare(a.ContractID, b.ContractID); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.EventID, b.EventID)
 	})
 }
@@ -1634,12 +1854,15 @@ func sortTurnPhaseContradictions(issues []TurnPhaseContradiction) {
 		if c := cmp.Compare(a.Sequence, b.Sequence); c != 0 {
 			return c
 		}
+
 		if c := cmp.Compare(a.ContractID, b.ContractID); c != 0 {
 			return c
 		}
+
 		if c := cmp.Compare(a.PhaseID, b.PhaseID); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.EventID, b.EventID)
 	})
 }
@@ -1649,115 +1872,139 @@ func sortPrivacyRefs(refs []ReplayPrivacyRef) {
 		if c := cmp.Compare(a.Sequence, b.Sequence); c != 0 {
 			return c
 		}
+
 		if c := cmp.Compare(a.ContractID, b.ContractID); c != 0 {
 			return c
 		}
+
 		if c := cmp.Compare(a.EventID, b.EventID); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Field, b.Field)
 	})
 }
 
 func eventIDsFromAuditRefs(refs []EventAuditRef) []string {
 	set := make(map[string]struct{})
+
 	for _, ref := range refs {
 		if ref.EventID != "" {
 			set[ref.EventID] = struct{}{}
 		}
 	}
+
 	return sortedKeys(set)
 }
 
 func contractIDsFromAuditRefs(refs []EventAuditRef) []string {
 	set := make(map[string]struct{})
+
 	for _, ref := range refs {
 		if ref.ContractID != "" {
 			set[ref.ContractID] = struct{}{}
 		}
+
 		if ref.Reference != "" {
 			set[ref.Reference] = struct{}{}
 		}
 	}
+
 	return sortedKeys(set)
 }
 
 func eventIDsFromSidecarIssues(issues []SidecarToolCorrelationIssue) []string {
 	set := make(map[string]struct{})
+
 	for _, issue := range issues {
 		if issue.EventID != "" {
 			set[issue.EventID] = struct{}{}
 		}
 	}
+
 	return sortedKeys(set)
 }
 
 func contractIDsFromSidecarIssues(issues []SidecarToolCorrelationIssue) []string {
 	set := make(map[string]struct{})
+
 	for _, issue := range issues {
 		if issue.ContractID != "" {
 			set[issue.ContractID] = struct{}{}
 		}
 	}
+
 	return sortedKeys(set)
 }
 
 func eventIDsFromTurnPhaseContradictions(issues []TurnPhaseContradiction) []string {
 	set := make(map[string]struct{})
+
 	for _, issue := range issues {
 		if issue.EventID != "" {
 			set[issue.EventID] = struct{}{}
 		}
 	}
+
 	return sortedKeys(set)
 }
 
 func contractIDsFromTurnPhaseContradictions(issues []TurnPhaseContradiction) []string {
 	set := make(map[string]struct{})
+
 	for _, issue := range issues {
 		if issue.ContractID != "" {
 			set[issue.ContractID] = struct{}{}
 		}
 	}
+
 	return sortedKeys(set)
 }
 
 func eventIDsFromObligationRefs(refs []ObligationAuditRef) []string {
 	set := make(map[string]struct{})
+
 	for _, ref := range refs {
 		if ref.EventID != "" {
 			set[ref.EventID] = struct{}{}
 		}
 	}
+
 	return sortedKeys(set)
 }
 
 func contractIDsFromObligationRefs(refs []ObligationAuditRef) []string {
 	set := make(map[string]struct{})
+
 	for _, ref := range refs {
 		if ref.ContractID != "" {
 			set[ref.ContractID] = struct{}{}
 		}
 	}
+
 	return sortedKeys(set)
 }
 
 func eventIDsFromPrivacyRefs(refs []ReplayPrivacyRef) []string {
 	set := make(map[string]struct{})
+
 	for _, ref := range refs {
 		if ref.EventID != "" {
 			set[ref.EventID] = struct{}{}
 		}
 	}
+
 	return sortedKeys(set)
 }
 
 func contractIDsFromPrivacyRefs(refs []ReplayPrivacyRef) []string {
 	set := make(map[string]struct{})
+
 	for _, ref := range refs {
 		if ref.ContractID != "" {
 			set[ref.ContractID] = struct{}{}
 		}
 	}
+
 	return sortedKeys(set)
 }

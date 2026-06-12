@@ -50,11 +50,13 @@ func PoolHeldByAncestor(heldPools, pool string) bool {
 	if pool == "" {
 		return false
 	}
+
 	for _, entry := range strings.Split(heldPools, ":") {
 		if strings.TrimSpace(entry) == pool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -100,21 +102,27 @@ func MaybeAcquireWithResult(ctx context.Context, socketPath, pool, label, client
 		if statusOut != nil {
 			fmt.Fprintf(statusOut, "[idiom queue %s] ancestor holds slot in same pool; nested acquire is no-op\n", pool)
 		}
+
 		return MaybeAcquireResult{State: MaybeAcquireStateDegraded, Pool: pool, Reason: "nested_same_pool", Release: func() {}}
 	}
+
 	if strings.TrimSpace(heldPools) != "" {
 		if statusOut != nil {
 			fmt.Fprintf(statusOut, "[idiom queue %s] ancestor holds slot in different pool(s) (%s); skipping nested acquire to prevent cross-pool deadlock — wrap the outer command with the pool the inner inference actually uses\n", pool, heldPools)
 		}
+
 		return MaybeAcquireResult{State: MaybeAcquireStateDegraded, Pool: pool, Reason: "nested_cross_pool", Release: func() {}}
 	}
+
 	socketPath = strings.TrimSpace(socketPath)
 	if socketPath == "" {
 		socketPath = DefaultSocketPath()
 	}
+
 	if !socketReachable(socketPath) {
 		return MaybeAcquireResult{State: MaybeAcquireStateUnavailable, Pool: pool, Reason: "daemon_unreachable", Release: func() {}}
 	}
+
 	lease, err := Acquire(ctx, socketPath, pool, label, client)
 	if err != nil {
 		// Reachable but acquire failed (unknown pool, daemon error
@@ -122,6 +130,7 @@ func MaybeAcquireWithResult(ctx context.Context, socketPath, pool, label, client
 		// fail loud or proceed un-gated; current callers proceed.
 		return MaybeAcquireResult{State: MaybeAcquireStateError, Pool: pool, Reason: err.Error(), Release: func() {}, Err: err}
 	}
+
 	for {
 		select {
 		case <-lease.Granted():
@@ -136,11 +145,15 @@ func MaybeAcquireWithResult(ctx context.Context, socketPath, pool, label, client
 			if e != nil {
 				return MaybeAcquireResult{State: MaybeAcquireStateError, Pool: lease.Pool, Reason: e.Error(), Release: func() {}, Err: e}
 			}
+
 			err := queueConnectionClosedError()
+
 			return MaybeAcquireResult{State: MaybeAcquireStateError, Pool: lease.Pool, Reason: err.Error(), Release: func() {}, Err: err}
 		case <-ctx.Done():
 			_ = lease.Close()
+
 			err := ctx.Err()
+
 			return MaybeAcquireResult{State: MaybeAcquireStateError, Pool: lease.Pool, Reason: err.Error(), Release: func() {}, Err: err}
 		}
 	}
@@ -153,14 +166,18 @@ func socketReachable(socketPath string) bool {
 	if socketPath == "" {
 		return false
 	}
+
 	if _, err := os.Stat(socketPath); err != nil {
 		return false
 	}
+
 	conn, err := net.DialTimeout("unix", socketPath, 200*time.Millisecond)
 	if err != nil {
 		return false
 	}
+
 	_ = conn.Close()
+
 	return true
 }
 
@@ -180,9 +197,11 @@ func PoolForModelAlias(alias string) string {
 	if a == "" {
 		return ""
 	}
+
 	if strings.Contains(a, "coder") {
 		return "qwen-coder"
 	}
+
 	// Check the nothink variant FIRST — both contain "35b" so the
 	// broader match below would otherwise capture nothink aliases
 	// into qwen-35b (the thinking pool), causing the cross-pool
@@ -191,11 +210,14 @@ func PoolForModelAlias(alias string) string {
 	if strings.Contains(a, "nothink") {
 		return "qwen-35b-nothink"
 	}
+
 	if strings.Contains(a, "27b") {
 		return "qwen-27b"
 	}
+
 	if strings.Contains(a, "35b") || strings.Contains(a, "planner") {
 		return "qwen-35b"
 	}
+
 	return ""
 }

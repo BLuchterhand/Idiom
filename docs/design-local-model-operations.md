@@ -318,8 +318,8 @@ roles. Each model entry should remain small and inspectable:
 {
   "alias": "qwen3.6-27b",
   "kind": "mlx",
-  "binary": "/Users/ben/scripts/vmlx-idiom-launch.sh",
-  "model_path": "/Users/ben/models/qwen3.6-27b-mlx-6bit",
+  "binary": "/path/to/vmlx-idiom-launch.sh",
+  "model_path": "/path/to/models/qwen3.6-27b-mlx",
   "host": "127.0.0.1",
   "port": 47783,
   "cache_size": 4,

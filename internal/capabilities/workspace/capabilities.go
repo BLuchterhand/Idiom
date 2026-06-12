@@ -236,11 +236,13 @@ func ReadOnlyCapabilityEvidenceCapabilities() []string {
 
 func CodeNavigationEvidenceCapabilities() []string {
 	var out []string
+
 	for _, capability := range languagetools.CodeNavigationCapabilities() {
 		if evidence := evidenceCapabilityForLanguageCapability(Capability(capability)); evidence != "" {
 			out = append(out, evidence)
 		}
 	}
+
 	return util.UniqueNonEmpty(out)
 }
 
@@ -348,6 +350,7 @@ func BuildReadOnlyCapabilityRegistry() ReadOnlyCapabilityRegistry {
 func attachToolManifestCapabilityMetadata(entry ToolManifestEntry) ToolManifestEntry {
 	entry.EvidenceCapabilities = EvidenceCapabilitiesForTool(entry.Tool)
 	entry.CapabilityClassification = CapabilityClassificationForTool(entry.Tool)
+
 	return entry
 }
 
@@ -356,12 +359,15 @@ func EvidenceCapabilitiesForTool(tool string) []string {
 	if tool == "" {
 		return nil
 	}
+
 	if capabilities := languageToolEvidenceCapabilities(tool); len(capabilities) > 0 {
 		return capabilities
 	}
+
 	if capabilities := builtInToolSurfaceEvidenceCapabilities(tool); len(capabilities) > 0 {
 		return capabilities
 	}
+
 	return nil
 }
 
@@ -375,12 +381,15 @@ func CapabilityClassificationForTool(tool string) string {
 	case isToolSchemaDiagnosticTool(tool):
 		return CapabilityClassDeferred
 	}
+
 	if metadata, ok := builtInToolSurfaceMetadata(tool); ok && metadata.CapabilityClassification != "" {
 		return metadata.CapabilityClassification
 	}
+
 	if len(languageToolEvidenceCapabilities(tool)) > 0 {
 		return CapabilityClassCompatibilityAdapter
 	}
+
 	return ""
 }
 
@@ -416,11 +425,14 @@ func evidenceCapabilityForLanguageCapability(capability Capability) string {
 func ResolveReadOnlyCapability(id string, availableTools []string) (ReadOnlyCapabilityResolution, bool) {
 	registry := BuildReadOnlyCapabilityRegistry()
 	want := normalizeReadOnlyCapabilityID(id)
+
 	for _, capability := range registry.Capabilities {
 		if capability.ID != want {
 			continue
 		}
+
 		available, unavailable := filterCapabilityAdapters(capability.Adapters, availableTools)
+
 		return ReadOnlyCapabilityResolution{
 			Capability:             capability,
 			ResolverRuntimeEnabled: registry.ResolverRuntimeEnabled,
@@ -429,6 +441,7 @@ func ResolveReadOnlyCapability(id string, availableTools []string) (ReadOnlyCapa
 			UnavailableAdapters:    unavailable,
 		}, true
 	}
+
 	return ReadOnlyCapabilityResolution{}, false
 }
 
@@ -436,11 +449,13 @@ func ReadOnlyCapabilityCoverageForTools(tools []string) ReadOnlyCapabilityCovera
 	if len(tools) == 0 {
 		tools = toolManifestToolsAcrossBuiltInSurfaces()
 	}
+
 	registry := BuildReadOnlyCapabilityRegistry()
 	readOnlyAdapters := readOnlyCapabilityMetricAdapters(tools)
 	readOnlySet := stringSet(readOnlyAdapters)
 	toolSet := stringSet(tools)
 	mappedSet := make(map[string]struct{})
+
 	for _, capability := range registry.Capabilities {
 		for _, adapter := range capability.Adapters {
 			tool := strings.TrimSpace(adapter.Tool)
@@ -451,17 +466,21 @@ func ReadOnlyCapabilityCoverageForTools(tools []string) ReadOnlyCapabilityCovera
 	}
 
 	mappedReadOnly := 0
+
 	for tool := range mappedSet {
 		if _, ok := readOnlySet[tool]; ok {
 			mappedReadOnly++
 		}
 	}
+
 	unmapped := make([]string, 0)
+
 	for _, tool := range readOnlyAdapters {
 		if _, ok := mappedSet[tool]; !ok {
 			unmapped = append(unmapped, tool)
 		}
 	}
+
 	unsafe := unsafeReadOnlyCapabilityMappingsForTools(registry, tools)
 	deferred := deferredReadOnlyCapabilityAdaptersForTools(toolSet)
 	routeStates := readOnlyCapabilityRouteStates(registry, tools)
@@ -474,6 +493,7 @@ func ReadOnlyCapabilityCoverageForTools(tools []string) ReadOnlyCapabilityCovera
 	if len(readOnlyAdapters) > 0 {
 		coverage = float64(mappedReadOnly) / float64(len(readOnlyAdapters))
 	}
+
 	return ReadOnlyCapabilityCoverage{
 		SchemaVersion:              registry.SchemaVersion,
 		ResolverRuntimeEnabled:     registry.ResolverRuntimeEnabled,
@@ -507,6 +527,7 @@ func ReadOnlyCapabilityCoverageForTools(tools []string) ReadOnlyCapabilityCovera
 func (m *Manager) readOnlyCapability(ctx context.Context, req ToolRequest) ToolResult {
 	requested := strings.TrimSpace(util.FirstNonEmpty(req.Capability, req.ID))
 	target := readOnlyCapabilityResolvedTarget(req)
+
 	if requested == "" {
 		return readOnlyCapabilityFallbackResult(requested, target, ReadOnlyCapabilityResolution{}, "invalid_input", "capability is required")
 	}
@@ -516,17 +537,21 @@ func (m *Manager) readOnlyCapability(ctx context.Context, req ToolRequest) ToolR
 		if deferred, ok := deferredReadOnlyCapabilityAdapter(requested); ok {
 			return readOnlyCapabilityDeferredResult(requested, target, deferred)
 		}
+
 		return readOnlyCapabilityFallbackResult(requested, target, ReadOnlyCapabilityResolution{
 			ResolverRuntimeEnabled: readOnlyCapabilityResolverRuntimeEnabled(),
 			DirectToolFallback:     true,
 		}, "capability_unmapped", "")
 	}
+
 	if !resolution.ResolverRuntimeEnabled {
 		return readOnlyCapabilityFallbackResult(requested, target, resolution, "resolver_runtime_disabled", "")
 	}
+
 	if isReadOnlyCapabilityRouteDisabled(resolution.Capability.ID) {
 		return readOnlyCapabilityFallbackResult(requested, target, resolution, "capability_route_disabled", "")
 	}
+
 	if !isReadOnlyCapabilityRuntimeRouted(resolution.Capability.ID) {
 		return readOnlyCapabilityFallbackResult(requested, target, resolution, "capability_not_runtime_routed", "")
 	}
@@ -537,9 +562,12 @@ func (m *Manager) readOnlyCapability(ctx context.Context, req ToolRequest) ToolR
 	}
 
 	routedReq := req
+
 	routedReq.Tool = adapter.Tool
 	routedReq.Capability = adapter.Capability
+
 	result := m.Execute(ctx, routedReq)
+
 	return readOnlyCapabilityWrapResult(requested, target, resolution, adapter, result)
 }
 
@@ -549,11 +577,13 @@ func resolveReadOnlyCapabilityForRequest(id string, req ToolRequest) (ReadOnlyCa
 
 func readOnlyCapabilityResolverTools(req ToolRequest) []string {
 	tools := []string{"code_navigate"}
+
 	if lang, ok := readOnlyCapabilityRequestLanguage(req); ok {
 		for _, tool := range lang.Tools {
 			tools = append(tools, tool)
 		}
 	}
+
 	return util.UniqueNonEmpty(tools)
 }
 
@@ -563,9 +593,11 @@ func readOnlyCapabilityRequestLanguage(req ToolRequest) (LanguageSupport, bool) 
 			return lang, true
 		}
 	}
+
 	if language := strings.TrimSpace(req.Language); language != "" {
 		return LanguageForName(language)
 	}
+
 	return LanguageSupport{}, false
 }
 
@@ -585,15 +617,20 @@ func readOnlyCapabilityFallbackResult(requested string, target ReadOnlyCapabilit
 	if reason == "" {
 		reason = "no_available_read_only_adapter"
 	}
+
 	payload := readOnlyCapabilityExecutionPayload(requested, target, resolution)
+
 	payload.FallbackReason = reason
+
 	if detail != "" {
 		payload.UnderlyingResult = &ReadOnlyCapabilityUnderlyingResult{
 			Tool:  readOnlyCapabilityToolName,
 			Error: detail,
 		}
 	}
+
 	readOnlyCapabilityAttachStatus(&payload, nil, nil)
+
 	return ToolResult{
 		Tool:    readOnlyCapabilityToolName,
 		Summary: "Read-only capability not routed",
@@ -613,6 +650,7 @@ func readOnlyCapabilityDeferredResult(requested string, target ReadOnlyCapabilit
 		ResolverRuntimeEnabled: readOnlyCapabilityResolverRuntimeEnabled(),
 		DirectToolFallback:     true,
 	})
+
 	payload.FallbackReason = "capability_deferred"
 	payload.UnderlyingResult = &ReadOnlyCapabilityUnderlyingResult{
 		Tool:    strings.TrimSpace(adapter.Tool),
@@ -620,6 +658,7 @@ func readOnlyCapabilityDeferredResult(requested string, target ReadOnlyCapabilit
 		Error:   strings.TrimSpace(adapter.Reason),
 	}
 	readOnlyCapabilityAttachStatus(&payload, nil, nil)
+
 	return ToolResult{
 		Tool:    readOnlyCapabilityToolName,
 		Summary: "Read-only capability deferred",
@@ -630,9 +669,12 @@ func readOnlyCapabilityDeferredResult(requested string, target ReadOnlyCapabilit
 
 func readOnlyCapabilityWrapResult(requested string, target ReadOnlyCapabilityResolvedTarget, resolution ReadOnlyCapabilityResolution, adapter ReadOnlyCapabilityAdapterSpec, result ToolResult) ToolResult {
 	payload := readOnlyCapabilityExecutionPayload(requested, target, resolution)
+
 	payload.Routed = true
 	payload.RoutedTool = strings.TrimSpace(adapter.Tool)
+
 	adapterCopy := adapter
+
 	adapterCopy.SideEffects = append([]autonomy.SideEffectClass(nil), adapter.SideEffects...)
 	payload.RoutedAdapter = &adapterCopy
 	payload.FallbackReason = readOnlyCapabilityUnderlyingFallbackReason(result)
@@ -650,6 +692,7 @@ func readOnlyCapabilityWrapResult(requested string, target ReadOnlyCapabilityRes
 	if payload.FallbackReason != "" {
 		summary += " with fallback"
 	}
+
 	return ToolResult{
 		Tool:          readOnlyCapabilityToolName,
 		Summary:       summary,
@@ -676,16 +719,22 @@ func readOnlyCapabilityExecutionPayload(requested string, target ReadOnlyCapabil
 
 func readOnlyCapabilityFollowUps(current string) []string {
 	current = normalizeReadOnlyCapabilityID(current)
+
 	registry := BuildReadOnlyCapabilityRegistry()
+
 	var out []string
+
 	for _, capability := range registry.Capabilities {
 		id := strings.TrimSpace(capability.ID)
 		if id == "" || id == current || !isReadOnlyCapabilityRuntimeRouted(id) || isReadOnlyCapabilityRouteDisabled(id) {
 			continue
 		}
+
 		out = append(out, id)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -694,6 +743,7 @@ func marshalReadOnlyCapabilityExecutionResult(payload ReadOnlyCapabilityExecutio
 	if err != nil {
 		return `{"schema_version":"` + readOnlyCapabilityResultVersion + `","fallback_reason":"marshal_failed"}`
 	}
+
 	return string(data)
 }
 
@@ -740,8 +790,10 @@ func readOnlyCapabilityPublicExecutionResult(payload ReadOnlyCapabilityExecution
 	}
 	if readOnlyCapabilityPublicStatusEnabled() {
 		status := payload.Status
+
 		result.Status = &status
 	}
+
 	return result
 }
 
@@ -749,9 +801,11 @@ func readOnlyCapabilityAttachStatus(payload *ReadOnlyCapabilityExecutionResult, 
 	if payload == nil {
 		return
 	}
+
 	fallback := readOnlyCapabilityFallbackStatusFor(payload.FallbackReason)
 	absence := readOnlyCapabilityAbsenceConfidenceFor(result)
 	precisionTier := readOnlyCapabilityStatusPrecisionTier(result, payload.UnderlyingResult)
+
 	payload.FreshnessState = readOnlyCapabilityFreshnessState(payload, result)
 	payload.ResultCounts = readOnlyCapabilityResultCounts(result, payload.UnderlyingResult)
 	payload.TruncationState = readOnlyCapabilityTruncationState(result, payload.UnderlyingResult)
@@ -770,7 +824,9 @@ func readOnlyCapabilitySelectedAdapterStatus(adapter *ReadOnlyCapabilityAdapterS
 	if adapter == nil {
 		return nil
 	}
+
 	source := strings.TrimSpace(adapter.Source)
+
 	return &ReadOnlyCapabilitySelectedAdapter{
 		Tool:        strings.TrimSpace(adapter.Tool),
 		Capability:  strings.TrimSpace(adapter.Capability),
@@ -786,6 +842,7 @@ func readOnlyCapabilityAdapterProvenance(source string) string {
 	if source == "" {
 		return "read_only_capability_registry"
 	}
+
 	return "read_only_capability_registry:" + source
 }
 
@@ -795,9 +852,11 @@ func readOnlyCapabilityStatusPrecisionTier(result *ToolResult, underlying *ReadO
 			return tier
 		}
 	}
+
 	if underlying != nil {
 		return strings.TrimSpace(underlying.PrecisionTier)
 	}
+
 	return ""
 }
 
@@ -805,9 +864,11 @@ func readOnlyCapabilityRouteConfidence(precisionTier string, fallback ReadOnlyCa
 	if absence != nil {
 		return absence.Level
 	}
+
 	if result != nil && strings.TrimSpace(result.Error) != "" {
 		return "low"
 	}
+
 	switch strings.TrimSpace(precisionTier) {
 	case PrecisionTierLSP:
 		return "high"
@@ -816,9 +877,11 @@ func readOnlyCapabilityRouteConfidence(precisionTier string, fallback ReadOnlyCa
 	case PrecisionTierRGFallback, PrecisionTierUnavailable:
 		return "low"
 	}
+
 	if fallback.State != "" && fallback.State != "none" {
 		return "low"
 	}
+
 	return "observed"
 }
 
@@ -832,25 +895,31 @@ func readOnlyCapabilityFreshnessState(payload *ReadOnlyCapabilityExecutionResult
 			return "fresh_reported"
 		}
 	}
+
 	if payload != nil && payload.Routed {
 		return "not_reported"
 	}
+
 	return "unavailable"
 }
 
 func readOnlyCapabilityResultCounts(result *ToolResult, underlying *ReadOnlyCapabilityUnderlyingResult) ReadOnlyCapabilityResultCounts {
 	var counts ReadOnlyCapabilityResultCounts
+
 	if result != nil {
 		counts.RelationshipCount = len(result.Relationships)
 		counts.OutputLineCount = nonEmptyLineCount(result.Output)
 		counts.OutputByteCount = len(result.Output)
+
 		return counts
 	}
+
 	if underlying != nil {
 		counts.RelationshipCount = len(underlying.Relationships)
 		counts.OutputLineCount = nonEmptyLineCount(underlying.Output)
 		counts.OutputByteCount = len(underlying.Output)
 	}
+
 	return counts
 }
 
@@ -861,10 +930,12 @@ func readOnlyCapabilityTruncationState(result *ToolResult, underlying *ReadOnlyC
 	} else if underlying != nil {
 		output = underlying.Output
 	}
+
 	state := "not_reported"
 	if strings.Contains(strings.ToLower(output), "truncated") {
 		state = "truncated_reported"
 	}
+
 	return ReadOnlyCapabilityTruncationState{State: state, OutputByteCount: len(output)}
 }
 
@@ -873,12 +944,15 @@ func nonEmptyLineCount(value string) int {
 	if value == "" {
 		return 0
 	}
+
 	count := 0
+
 	for _, line := range strings.Split(value, "\n") {
 		if strings.TrimSpace(line) != "" {
 			count++
 		}
 	}
+
 	return count
 }
 
@@ -886,12 +960,15 @@ func readOnlyCapabilityStatusState(routed bool, fallback ReadOnlyCapabilityFallb
 	if absence != nil {
 		return "absent"
 	}
+
 	if fallback.State != "" && fallback.State != "none" {
 		return "fallback"
 	}
+
 	if routed {
 		return "routed"
 	}
+
 	return "fallback"
 }
 
@@ -900,14 +977,17 @@ func readOnlyCapabilityFallbackStatusFor(sourceReason string) ReadOnlyCapability
 	if sourceReason == "" {
 		return ReadOnlyCapabilityFallbackStatus{State: "none"}
 	}
+
 	reason := readOnlyCapabilityFallbackReasonCode(sourceReason)
 	status := ReadOnlyCapabilityFallbackStatus{
 		State:  readOnlyCapabilityFallbackState(reason),
 		Reason: reason,
 	}
+
 	if sourceReason != reason {
 		status.SourceReason = limitCapabilityStatusDetail(sourceReason)
 	}
+
 	return status
 }
 
@@ -926,6 +1006,7 @@ func readOnlyCapabilityFallbackReasonCode(sourceReason string) string {
 		"underlying_adapter_fallback":
 		return sourceReason
 	}
+
 	lower := strings.ToLower(sourceReason)
 	switch {
 	case strings.Contains(lower, "unsupported language"):
@@ -973,12 +1054,16 @@ func readOnlyCapabilityAbsenceConfidenceFor(result *ToolResult) *ReadOnlyCapabil
 	if result == nil || strings.TrimSpace(result.Error) != "" {
 		return nil
 	}
+
 	summary := strings.ToLower(strings.TrimSpace(result.Summary))
 	output := strings.ToLower(strings.TrimSpace(result.Output))
+
 	if !readOnlyCapabilityReportsAbsence(summary, output) {
 		return nil
 	}
+
 	tier := strings.TrimSpace(result.PrecisionTier)
+
 	return &ReadOnlyCapabilityAbsenceConfidence{
 		Level:         readOnlyCapabilityAbsenceConfidenceLevel(tier),
 		Reason:        readOnlyCapabilityAbsenceReason(summary, output),
@@ -990,11 +1075,14 @@ func readOnlyCapabilityAbsenceConfidenceFor(result *ToolResult) *ReadOnlyCapabil
 func readOnlyCapabilityReportsAbsence(summary string, output string) bool {
 	if strings.Contains(summary, "no warnings or errors") || strings.Contains(output, "no warnings or errors") ||
 		strings.Contains(summary, "no issues found") || strings.Contains(output, "no issues found") {
+
 		return false
 	}
+
 	if readOnlyCapabilityLineReportsAbsence(summary) {
 		return true
 	}
+
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "route_summary: ") {
@@ -1003,11 +1091,13 @@ func readOnlyCapabilityReportsAbsence(summary string, output string) bool {
 			}
 		}
 	}
+
 	return false
 }
 
 func readOnlyCapabilityLineReportsAbsence(line string) bool {
 	line = strings.TrimSpace(line)
+
 	return strings.HasPrefix(line, "no ") &&
 		(strings.Contains(line, " matched") ||
 			strings.Contains(line, " matches") ||
@@ -1018,12 +1108,15 @@ func readOnlyCapabilityAbsenceReason(summary string, output string) string {
 	if strings.Contains(summary, "no generic code navigation matches") || strings.Contains(output, "no generic code navigation matches") {
 		return "generic_fallback_no_matches"
 	}
+
 	if strings.Contains(summary, " matched") || strings.Contains(output, "route_summary: no ") {
 		return "adapter_reported_no_matches"
 	}
+
 	if strings.Contains(summary, " found") {
 		return "adapter_reported_not_found"
 	}
+
 	return "adapter_reported_absent_result"
 }
 
@@ -1042,6 +1135,7 @@ func readOnlyCapabilityAbsenceConfidenceLevel(precisionTier string) string {
 
 func readOnlyCapabilityStatusGaps(payload ReadOnlyCapabilityExecutionResult, fallback ReadOnlyCapabilityFallbackStatus, absence *ReadOnlyCapabilityAbsenceConfidence) []ReadOnlyCapabilityUnresolvedGap {
 	var gaps []ReadOnlyCapabilityUnresolvedGap
+
 	if fallback.State != "" && fallback.State != "none" {
 		gaps = append(gaps, ReadOnlyCapabilityUnresolvedGap{
 			State:      fallback.State,
@@ -1051,6 +1145,7 @@ func readOnlyCapabilityStatusGaps(payload ReadOnlyCapabilityExecutionResult, fal
 			Detail:     fallback.SourceReason,
 		})
 	}
+
 	if !payload.Routed && len(payload.AvailableAdapters) == 0 && len(payload.UnavailableAdapters) > 0 {
 		gaps = append(gaps, ReadOnlyCapabilityUnresolvedGap{
 			State:        "unavailable",
@@ -1059,6 +1154,7 @@ func readOnlyCapabilityStatusGaps(payload ReadOnlyCapabilityExecutionResult, fal
 			AdapterCount: len(payload.UnavailableAdapters),
 		})
 	}
+
 	if absence != nil {
 		gaps = append(gaps, ReadOnlyCapabilityUnresolvedGap{
 			State:      "empty",
@@ -1067,6 +1163,7 @@ func readOnlyCapabilityStatusGaps(payload ReadOnlyCapabilityExecutionResult, fal
 			Capability: payload.Capability,
 		})
 	}
+
 	return readOnlyCapabilityUniqueGaps(gaps)
 }
 
@@ -1074,25 +1171,33 @@ func readOnlyCapabilityUniqueGaps(gaps []ReadOnlyCapabilityUnresolvedGap) []Read
 	if len(gaps) <= 1 {
 		return gaps
 	}
+
 	seen := make(map[string]struct{}, len(gaps))
 	out := make([]ReadOnlyCapabilityUnresolvedGap, 0, len(gaps))
+
 	for _, gap := range gaps {
 		key := gap.State + "\x00" + gap.Reason + "\x00" + gap.Tool + "\x00" + gap.Capability + "\x00" + gap.Detail
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
+
 		out = append(out, gap)
 	}
+
 	return out
 }
 
 func limitCapabilityStatusDetail(value string) string {
 	value = strings.TrimSpace(value)
+
 	const limit = 240
+
 	if len(value) <= limit {
 		return value
 	}
+
 	return value[:limit]
 }
 
@@ -1101,24 +1206,31 @@ func selectReadOnlyCapabilityAdapter(adapters []ReadOnlyCapabilityAdapterSpec) (
 		if adapter.Tool != "code_navigate" {
 			continue
 		}
+
 		if !isReadOnlyOnlySideEffects(toolSchemaSideEffects(adapter.Tool)) {
 			return ReadOnlyCapabilityAdapterSpec{}, "adapter_schema_side_effects_not_read_only_only", false
 		}
+
 		return adapter, "", true
 	}
+
 	for _, adapter := range adapters {
 		tool := strings.TrimSpace(adapter.Tool)
 		if tool == "" {
 			continue
 		}
+
 		if !isReadOnlyOnlySideEffects(toolSchemaSideEffects(tool)) {
 			continue
 		}
+
 		return adapter, "", true
 	}
+
 	if len(adapters) > 0 {
 		return ReadOnlyCapabilityAdapterSpec{}, "adapter_schema_side_effects_not_read_only_only", false
 	}
+
 	return ReadOnlyCapabilityAdapterSpec{}, "no_available_read_only_adapter", false
 }
 
@@ -1126,12 +1238,15 @@ func readOnlyCapabilityUnderlyingFallbackReason(result ToolResult) string {
 	if strings.TrimSpace(result.Error) != "" {
 		return "underlying_adapter_error"
 	}
+
 	if reason := toolOutputMetadataValue(result.Output, "fallback_reason"); reason != "" {
 		return reason
 	}
+
 	if strings.Contains(strings.ToLower(result.Summary), "fallback") {
 		return "underlying_adapter_fallback"
 	}
+
 	return ""
 }
 
@@ -1140,13 +1255,16 @@ func toolOutputMetadataValue(output string, key string) string {
 	if key == "" {
 		return ""
 	}
+
 	prefix := strings.ToLower(key) + ":"
+
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(strings.ToLower(line), prefix) {
 			return strings.TrimSpace(line[len(prefix):])
 		}
 	}
+
 	return ""
 }
 
@@ -1164,7 +1282,9 @@ func isReadOnlyCapabilityRouteDisabled(id string) bool {
 	if len(disabled) == 0 {
 		return false
 	}
+
 	_, ok := disabled[normalizeReadOnlyCapabilityID(id)]
+
 	return ok
 }
 
@@ -1173,17 +1293,21 @@ func readOnlyCapabilityDisabledRouteSet() map[string]struct{} {
 	if raw == "" {
 		return nil
 	}
+
 	fields := strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || r == ';' || r == '\n' || r == '\t' || r == ' '
 	})
 	out := make(map[string]struct{}, len(fields))
+
 	for _, field := range fields {
 		id := normalizeReadOnlyCapabilityID(field)
 		if id == "" {
 			continue
 		}
+
 		out[id] = struct{}{}
 	}
+
 	return out
 }
 
@@ -1198,6 +1322,7 @@ func readOnlyCapabilityPublicStatusEnabled() bool {
 
 func readOnlyCapabilityRouteStates(registry ReadOnlyCapabilityRegistry, tools []string) []ReadOnlyCapabilityRouteState {
 	var states []ReadOnlyCapabilityRouteState
+
 	for _, capability := range registry.Capabilities {
 		state := ReadOnlyCapabilityRouteState{Capability: strings.TrimSpace(capability.ID)}
 		switch {
@@ -1212,12 +1337,16 @@ func readOnlyCapabilityRouteStates(registry ReadOnlyCapabilityRegistry, tools []
 			state.Reason = "capability_not_runtime_routed"
 		default:
 			available, unavailable := filterCapabilityAdapters(capability.Adapters, tools)
+
 			state.AdapterCount = len(available)
+
 			if len(available) == 0 && len(unavailable) > 0 {
 				state.State = "unavailable"
 				state.Reason = "adapter_unavailable"
+
 				break
 			}
+
 			if _, reason, ok := selectReadOnlyCapabilityAdapter(available); ok {
 				state.State = "routed"
 			} else {
@@ -1225,8 +1354,10 @@ func readOnlyCapabilityRouteStates(registry ReadOnlyCapabilityRegistry, tools []
 				state.Reason = readOnlyCapabilityFallbackReasonCode(reason)
 			}
 		}
+
 		states = append(states, state)
 	}
+
 	for _, adapter := range deferredReadOnlyCapabilityAdaptersForTools(stringSet(tools)) {
 		states = append(states, ReadOnlyCapabilityRouteState{
 			Capability: strings.TrimSpace(adapter.Capability),
@@ -1234,31 +1365,39 @@ func readOnlyCapabilityRouteStates(registry ReadOnlyCapabilityRegistry, tools []
 			Reason:     strings.TrimSpace(adapter.Reason),
 		})
 	}
+
 	slices.SortFunc(states, func(a, b ReadOnlyCapabilityRouteState) int {
 		return cmp.Compare(a.Capability, b.Capability)
 	})
+
 	return states
 }
 
 func readOnlyCapabilityRoutedIDsFromStates(states []ReadOnlyCapabilityRouteState) []string {
 	var routed []string
+
 	for _, state := range states {
 		if state.State == "routed" {
 			routed = append(routed, state.Capability)
 		}
 	}
+
 	slices.Sort(routed)
+
 	return routed
 }
 
 func readOnlyCapabilityDisabledIDsFromStates(states []ReadOnlyCapabilityRouteState) []string {
 	var disabled []string
+
 	for _, state := range states {
 		if state.State == "disabled" {
 			disabled = append(disabled, state.Capability)
 		}
 	}
+
 	slices.Sort(disabled)
+
 	return disabled
 }
 
@@ -1266,12 +1405,15 @@ func readOnlyCapabilityRouteStateCounts(states []ReadOnlyCapabilityRouteState) m
 	if len(states) == 0 {
 		return nil
 	}
+
 	counts := make(map[string]int)
+
 	for _, state := range states {
 		if state.State != "" {
 			counts[state.State]++
 		}
 	}
+
 	return counts
 }
 
@@ -1331,17 +1473,21 @@ func readOnlyCapabilityStatusFieldCount() int {
 
 func jsonFieldCount(t reflect.Type) int {
 	count := 0
+
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		if field.PkgPath != "" {
 			continue
 		}
+
 		name := strings.Split(field.Tag.Get("json"), ",")[0]
 		if name == "-" {
 			continue
 		}
+
 		count++
 	}
+
 	return count
 }
 
@@ -1361,13 +1507,16 @@ func codeNavigateCapabilityAdapter(cap Capability) ReadOnlyCapabilityAdapterSpec
 
 func languageCapabilityAdapters(cap Capability) []ReadOnlyCapabilityAdapterSpec {
 	var adapters []ReadOnlyCapabilityAdapterSpec
+
 	for _, lang := range LanguageRegistry() {
 		tool := strings.TrimSpace(lang.Tool(cap))
 		if tool == "" {
 			continue
 		}
+
 		adapters = append(adapters, readOnlyAdapter(tool, string(cap), lang.Name, "language_registry"))
 	}
+
 	return adapters
 }
 
@@ -1388,8 +1537,12 @@ func filterCapabilityAdapters(adapters []ReadOnlyCapabilityAdapterSpec, availabl
 	if len(availableSet) == 0 {
 		return cloneCapabilityAdapters(adapters), nil
 	}
-	var available []ReadOnlyCapabilityAdapterSpec
-	var unavailable []ReadOnlyCapabilityAdapterSpec
+
+	var (
+		available   []ReadOnlyCapabilityAdapterSpec
+		unavailable []ReadOnlyCapabilityAdapterSpec
+	)
+
 	for _, adapter := range adapters {
 		if _, ok := availableSet[adapter.Tool]; ok {
 			available = append(available, adapter)
@@ -1397,6 +1550,7 @@ func filterCapabilityAdapters(adapters []ReadOnlyCapabilityAdapterSpec, availabl
 			unavailable = append(unavailable, adapter)
 		}
 	}
+
 	return available, unavailable
 }
 
@@ -1404,14 +1558,18 @@ func readOnlyCapabilityMetricAdapters(tools []string) []string {
 	if len(tools) == 0 {
 		tools = toolManifestToolsAcrossBuiltInSurfaces()
 	}
+
 	unique := util.UniqueNonEmpty(tools)
 	out := make([]string, 0, len(unique))
+
 	for _, tool := range unique {
 		if isReadOnlyCapabilityMetricAdapter(tool) {
 			out = append(out, tool)
 		}
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -1419,16 +1577,20 @@ func isReadOnlyCapabilityMetricAdapter(tool string) bool {
 	if strings.TrimSpace(tool) == readOnlyCapabilityToolName {
 		return false
 	}
+
 	return isReadOnlyOnlySideEffects(toolSchemaSideEffects(tool))
 }
 
 func normalizeReadOnlyCapabilityID(id string) string {
 	key := strings.ToLower(strings.TrimSpace(id))
+
 	key = strings.ReplaceAll(key, "_", "-")
 	key = strings.ReplaceAll(key, " ", "-")
+
 	for strings.Contains(key, "--") {
 		key = strings.ReplaceAll(key, "--", "-")
 	}
+
 	switch key {
 	case "outline", "fileoutline":
 		return string(ReadOnlyCapabilityFileOutline)
@@ -1458,23 +1620,29 @@ func unsafeReadOnlyCapabilityMappings(registry ReadOnlyCapabilityRegistry) []Rea
 func unsafeReadOnlyCapabilityMappingsForTools(registry ReadOnlyCapabilityRegistry, tools []string) []ReadOnlyCapabilityUnsafeAdapterSpec {
 	toolSet := stringSet(tools)
 	filterTools := len(toolSet) > 0
+
 	var unsafe []ReadOnlyCapabilityUnsafeAdapterSpec
+
 	for _, capability := range registry.Capabilities {
 		for _, adapter := range capability.Adapters {
 			tool := strings.TrimSpace(adapter.Tool)
 			if tool == "" {
 				continue
 			}
+
 			if filterTools {
 				if _, ok := toolSet[tool]; !ok {
 					continue
 				}
 			}
+
 			schemaSideEffects := toolSchemaSideEffects(tool)
 			reason := unsafeReadOnlyCapabilityReason(adapter.SideEffects, schemaSideEffects)
+
 			if reason == "" {
 				continue
 			}
+
 			unsafe = append(unsafe, ReadOnlyCapabilityUnsafeAdapterSpec{
 				Capability:          strings.TrimSpace(capability.ID),
 				Tool:                tool,
@@ -1484,12 +1652,15 @@ func unsafeReadOnlyCapabilityMappingsForTools(registry ReadOnlyCapabilityRegistr
 			})
 		}
 	}
+
 	slices.SortFunc(unsafe, func(a, b ReadOnlyCapabilityUnsafeAdapterSpec) int {
 		if c := cmp.Compare(a.Capability, b.Capability); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Tool, b.Tool)
 	})
+
 	return unsafe
 }
 
@@ -1497,9 +1668,11 @@ func unsafeReadOnlyCapabilityReason(declaredSideEffects []autonomy.SideEffectCla
 	if !isReadOnlyOnlySideEffects(schemaSideEffects) {
 		return "schema_side_effects_not_read_only_only"
 	}
+
 	if !sameSideEffects(declaredSideEffects, schemaSideEffects) {
 		return "declared_side_effects_mismatch_schema"
 	}
+
 	return ""
 }
 
@@ -1513,20 +1686,25 @@ func deferredReadOnlyCapabilityAdaptersForTools(toolSet map[string]struct{}) []R
 		},
 	}
 	out := deferred[:0]
+
 	for _, adapter := range deferred {
 		if len(toolSet) > 0 {
 			if _, ok := toolSet[adapter.Tool]; !ok {
 				continue
 			}
 		}
+
 		out = append(out, adapter)
 	}
+
 	slices.SortFunc(out, func(a, b ReadOnlyCapabilityDeferredAdapterSpec) int {
 		if c := cmp.Compare(a.Capability, b.Capability); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Tool, b.Tool)
 	})
+
 	return append([]ReadOnlyCapabilityDeferredAdapterSpec(nil), out...)
 }
 
@@ -1537,6 +1715,7 @@ func deferredReadOnlyCapabilityAdapter(id string) (ReadOnlyCapabilityDeferredAda
 			return adapter, true
 		}
 	}
+
 	return ReadOnlyCapabilityDeferredAdapterSpec{}, false
 }
 
@@ -1548,20 +1727,24 @@ func sameSideEffects(left []autonomy.SideEffectClass, right []autonomy.SideEffec
 	if len(left) != len(right) {
 		return false
 	}
+
 	for i := range left {
 		if left[i] != right[i] {
 			return false
 		}
 	}
+
 	return true
 }
 
 func cloneCapabilityAdapters(adapters []ReadOnlyCapabilityAdapterSpec) []ReadOnlyCapabilityAdapterSpec {
 	out := make([]ReadOnlyCapabilityAdapterSpec, len(adapters))
 	copy(out, adapters)
+
 	for i := range out {
 		out[i].SideEffects = append([]autonomy.SideEffectClass(nil), out[i].SideEffects...)
 	}
+
 	return out
 }
 
@@ -1572,7 +1755,9 @@ func stringSet(values []string) map[string]struct{} {
 		if value == "" {
 			continue
 		}
+
 		seen[value] = struct{}{}
 	}
+
 	return seen
 }

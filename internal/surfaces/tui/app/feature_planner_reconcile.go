@@ -11,9 +11,11 @@ func (m *Model) reconcileFeaturePlannerActivePlanExecuteRuns(state *featureplann
 	if m == nil || state == nil {
 		return nil
 	}
+
 	root := strings.TrimSpace(m.projectRoot())
 	if root == "" {
 		root = strings.TrimSpace(m.cfg.Workspace.Root)
 	}
+
 	return planexecuteadapter.ReconcileActiveRuns(state, root)
 }

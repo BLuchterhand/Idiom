@@ -23,11 +23,13 @@ type Config struct {
 
 func Cleanup(cfg Config) {
 	dir := filepath.Join(strings.TrimSpace(cfg.Root), ".idiom", cfg.Subdir)
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			fmt.Fprintf(cfg.LogOut, "%s cleanup: read %s: %v\n", cfg.Label, dir, err)
 		}
+
 		return
 	}
 
@@ -36,11 +38,14 @@ func Cleanup(cfg Config) {
 		path, stale, err := cfg.ShouldRemove(dir, entry, cutoff)
 		if err != nil {
 			fmt.Fprintf(cfg.LogOut, "%s cleanup: scan %s: %v\n", cfg.Label, path, err)
+
 			continue
 		}
+
 		if !stale {
 			continue
 		}
+
 		if err := cfg.Remove(path); err != nil {
 			fmt.Fprintf(cfg.LogOut, "%s cleanup: remove %s: %v\n", cfg.Label, path, err)
 		}

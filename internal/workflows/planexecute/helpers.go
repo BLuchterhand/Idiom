@@ -34,6 +34,7 @@ import (
 
 func ParseOptions(args []string, stderr io.Writer) (Options, error) {
 	var opts Options
+
 	fs := flag.NewFlagSet("idiom plan-execute", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&opts.ConfigPath, "config", "config.json", "path to config file")
@@ -53,18 +54,23 @@ func ParseOptions(args []string, stderr io.Writer) (Options, error) {
 	fs.Var(&opts.WriteAllowedPaths, "write-allowed-path", "workspace-relative write envelope path for this plan-execute run; repeatable and limits writes without adding coverage")
 	fs.BoolVar(&opts.WriteAllowedPathsExplicit, "write-allowed-paths-explicit", false, "treat write-allowed-path as an explicit write envelope even when empty")
 	fs.Var((*MultiFlag)(&opts.AuthorizedNewFiles), "authorized-new-file", "workspace-relative new file path authorized by an upstream typed plan contract; repeatable")
+
 	if err := fs.Parse(args); err != nil {
 		return Options{}, err
 	}
+
 	if fs.NArg() > 0 {
 		if strings.TrimSpace(opts.Prompt) != "" || strings.TrimSpace(opts.PromptFile) != "" {
 			return Options{}, fmt.Errorf("positional prompt cannot be combined with --prompt or --prompt-file")
 		}
+
 		opts.Prompt = strings.Join(fs.Args(), " ")
 	}
+
 	if strings.TrimSpace(opts.Prompt) == "" && strings.TrimSpace(opts.PromptFile) == "" {
 		return Options{}, fmt.Errorf("provide --prompt, --prompt-file, or a positional prompt")
 	}
+
 	return opts, nil
 }
 
@@ -75,20 +81,25 @@ func PlanExecutePrompt(opts Options) (string, error) {
 func planExecutePrompt(opts Options) (string, error) {
 	hasPrompt := strings.TrimSpace(opts.Prompt) != ""
 	hasFile := strings.TrimSpace(opts.PromptFile) != ""
+
 	if hasPrompt && hasFile {
 		return "", fmt.Errorf("--prompt and --prompt-file are mutually exclusive")
 	}
+
 	if hasPrompt {
 		return opts.Prompt, nil
 	}
+
 	data, err := os.ReadFile(opts.PromptFile)
 	if err != nil {
 		return "", fmt.Errorf("read prompt file: %w", err)
 	}
+
 	prompt := strings.TrimSpace(string(data))
 	if prompt == "" {
 		return "", fmt.Errorf("prompt file %q is empty", opts.PromptFile)
 	}
+
 	return prompt, nil
 }
 
@@ -116,17 +127,21 @@ func inheritPlanExecutePromptPackID(plan *workspace.PlanArtifact, prompt string)
 	if plan == nil || strings.TrimSpace(plan.PackID) != "" {
 		return ""
 	}
+
 	packID := extractPlanExecutePromptPackID(prompt)
 	if packID == "" {
 		return ""
 	}
+
 	plan.PackID = packID
 	if strings.TrimSpace(plan.Packet.PackID) == "" {
 		plan.Packet.PackID = packID
 	}
+
 	if status := strings.TrimSpace(plan.Packet.Status); status == "" || status == "not_provided" {
 		plan.Packet.Status = "provided"
 	}
+
 	return packID
 }
 
@@ -134,9 +149,11 @@ func extractPlanExecutePromptPackID(prompt string) string {
 	for _, rawLine := range strings.Split(prompt, "\n") {
 		line := strings.TrimSpace(rawLine)
 		lower := strings.ToLower(line)
+
 		if !strings.Contains(lower, "pack") {
 			continue
 		}
+
 		for _, token := range strings.FieldsFunc(line, func(r rune) bool {
 			return !((r >= 'a' && r <= 'z') ||
 				(r >= 'A' && r <= 'Z') ||
@@ -148,6 +165,7 @@ func extractPlanExecutePromptPackID(prompt string) string {
 			}
 		}
 	}
+
 	return ""
 }
 
@@ -155,11 +173,13 @@ func isPlanExecutePackID(value string) bool {
 	if len(value) != 16 {
 		return false
 	}
+
 	for _, r := range value {
 		if !((r >= 'a' && r <= 'f') || (r >= '0' && r <= '9')) {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -172,46 +192,62 @@ func patchPlanArtifactPackID(path string, packID string) error {
 	if path == "" || packID == "" {
 		return nil
 	}
+
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
+
 	var raw map[string]json.RawMessage
+
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return err
 	}
+
 	encodedPackID, err := json.Marshal(packID)
 	if err != nil {
 		return err
 	}
+
 	raw["pack_id"] = encodedPackID
+
 	var packet map[string]json.RawMessage
+
 	if body, ok := raw["packet"]; ok {
 		_ = json.Unmarshal(body, &packet)
 	}
+
 	if packet == nil {
 		packet = map[string]json.RawMessage{}
 	}
+
 	if current, ok := packet["pack_id"]; !ok || strings.Trim(strings.TrimSpace(string(current)), `"`) == "" {
 		packet["pack_id"] = encodedPackID
 	}
+
 	if current, ok := packet["status"]; !ok || strings.Trim(strings.TrimSpace(string(current)), `"`) == "" || strings.Trim(strings.TrimSpace(string(current)), `"`) == "not_provided" {
 		encodedStatus, err := json.Marshal("provided")
 		if err != nil {
 			return err
 		}
+
 		packet["status"] = encodedStatus
 	}
+
 	encodedPacket, err := json.Marshal(packet)
 	if err != nil {
 		return err
 	}
+
 	raw["packet"] = encodedPacket
+
 	updated, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return err
 	}
+
 	updated = append(updated, '\n')
+
 	return os.WriteFile(path, updated, 0o644)
 }
 
@@ -258,9 +294,11 @@ func planExecutePlannerSystemAddendumWithObligations(requiredEditPaths []string,
 	} else {
 		lines = append(lines, "", "No required edit paths were provided. Use the objective's candidate/target refs as the planning scope: you still must either call `submit_plan` with real edits grounded in the objective/target refs, answer `Decision: source-satisfied` with evidence, or answer `<<QUESTION>>:` with the exact blocker.")
 	}
+
 	if checklist := planExecuteEditSetObligationChecklist(obligations); checklist != "" {
 		lines = append(lines, "", checklist)
 	}
+
 	return strings.Join(lines, "\n")
 }
 
@@ -269,15 +307,21 @@ func planExecuteEditSetObligationChecklist(obligations EditSetObligations) strin
 	if len(obligations) == 0 {
 		return ""
 	}
+
 	var lines []string
+
 	lines = append(lines, fmt.Sprintf("Requested edit-set obligations for this run: %d obligation(s).", len(obligations)))
+
 	if obligations.Has(EditSetObligationKindTestEdit) {
 		lines = append(lines, "- `test_edit_required`: `submit_plan.edits`, source-satisfied evidence, or a corrective review plan must include at least one real test edit or test-path evidence.")
 	}
+
 	if obligations.Has(EditSetObligationKindImplementationEdit) {
 		lines = append(lines, "- `implementation_edit_required`: `submit_plan.edits`, source-satisfied evidence, or a corrective review plan must include at least one real non-test implementation edit or implementation-path evidence.")
 	}
+
 	lines = append(lines, "These obligations do not add or promote `required_edit_paths`; candidate and allowed paths remain scope only.")
+
 	return strings.Join(lines, "\n")
 }
 
@@ -290,41 +334,52 @@ func appendPlanExecuteScopeToBriefBody(prompt string, requiredEditPaths []string
 	if section == "" {
 		return prompt
 	}
+
 	if end := strings.Index(prompt, pathparse.BriefBodyEndMarker); end >= 0 {
 		return strings.TrimSpace(prompt[:end]) + "\n\n" + section + "\n\n" + strings.TrimSpace(prompt[end:])
 	}
+
 	return strings.TrimSpace(prompt) + "\n\n" + section
 }
 
 func planExecuteScopeSection(requiredEditPaths []string, allowedEditPaths []string) string {
 	required := planExecuteUniqueRequiredPaths(requiredEditPaths)
 	allowed := planExecuteUniqueRequiredPaths(allowedEditPaths)
+
 	allowed = planExecuteScopePathsExcludingRequired(allowed, required)
+
 	if len(required) == 0 && len(allowed) == 0 {
 		return ""
 	}
+
 	var b strings.Builder
+
 	if len(required) > 0 {
 		b.WriteString("## Files to Modify\n\n")
 		b.WriteString("required_edit_paths:\n")
+
 		for _, path := range required {
 			b.WriteString("- ")
 			b.WriteString(path)
 			b.WriteByte('\n')
 		}
 	}
+
 	if len(allowed) > 0 {
 		if b.Len() > 0 {
 			b.WriteByte('\n')
 		}
+
 		b.WriteString("## Candidate Edit Scope From Target References\n\n")
 		b.WriteString("allowed_edit_paths:\n")
+
 		for _, path := range allowed {
 			b.WriteString("- ")
 			b.WriteString(path)
 			b.WriteByte('\n')
 		}
 	}
+
 	return strings.TrimSpace(b.String())
 }
 
@@ -335,16 +390,20 @@ func planExecuteScopePathsExcludingRequired(paths []string, required []string) [
 			requiredSet[path] = struct{}{}
 		}
 	}
+
 	if len(requiredSet) == 0 {
 		return paths
 	}
+
 	out := make([]string, 0, len(paths))
 	for _, path := range paths {
 		if _, ok := requiredSet[path]; ok {
 			continue
 		}
+
 		out = append(out, path)
 	}
+
 	return out
 }
 
@@ -353,14 +412,19 @@ func planExecuteRequiredPathChecklist(requiredEditPaths []string) string {
 	if len(paths) == 0 {
 		return ""
 	}
+
 	var b strings.Builder
+
 	fmt.Fprintf(&b, "Required path coverage for this run: %d required path(s).\n", len(paths))
+
 	for _, path := range paths {
 		b.WriteString("- ")
 		b.WriteString(path)
 		b.WriteByte('\n')
 	}
+
 	b.WriteString("After every existing required path has satisfied its source-body obligation, do not perform additional source reads. Read runtime-required git history evidence for every listed existing required path (new files satisfy this automatically). If at least one required path needs a change, your first successful `submit_plan` must cover every path above with real executable edits for changed paths and top-level `source_satisfied_paths` only for already-final paths. If every required path already contains the requested final state, do not call `submit_plan`; answer `Decision: source-satisfied` with per-path current-state evidence. Do not submit no-op edits for source-satisfied paths. Do not treat a source read or history read as plan coverage. Do not submit a partial plan and do not answer in prose while any listed path remains uncovered.")
+
 	return strings.TrimSpace(b.String())
 }
 
@@ -369,14 +433,19 @@ func planExecuteAllowedPathChecklist(allowedEditPaths []string) string {
 	if len(paths) == 0 {
 		return ""
 	}
+
 	var b strings.Builder
+
 	fmt.Fprintf(&b, "Allowed `submit_plan` edit scope for this run: %d candidate path(s).\n", len(paths))
+
 	for _, path := range paths {
 		b.WriteString("- ")
 		b.WriteString(path)
 		b.WriteByte('\n')
 	}
+
 	b.WriteString("These paths are an allowlist, not coverage obligations. Submit edits only for the paths needed by the objective, and do not submit outside paths.")
+
 	return strings.TrimSpace(b.String())
 }
 
@@ -385,17 +454,20 @@ func planExecuteAllPathsMissing(workspaceRoot string, paths []string) bool {
 	if workspaceRoot == "" || len(paths) == 0 {
 		return false
 	}
+
 	for _, path := range paths {
 		path = normalizePlanExecutePath(path)
 		if path == "" {
 			return false
 		}
+
 		if _, err := os.Stat(filepath.Join(workspaceRoot, filepath.FromSlash(path))); err == nil {
 			return false
 		} else if !os.IsNotExist(err) {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -404,6 +476,7 @@ func planExecuteImplicitBodyLooksSafeForPath(path string, body string) bool {
 	if body == "" {
 		return false
 	}
+
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".go":
 		return strings.HasPrefix(body, "package ")
@@ -415,33 +488,42 @@ func planExecuteImplicitBodyLooksSafeForPath(path string, body string) bool {
 func planExecuteInferPathsForOldText(workspaceRoot string, required []string, oldText string) []string {
 	workspaceRoot = strings.TrimSpace(workspaceRoot)
 	oldText = strings.TrimSpace(oldText)
+
 	if workspaceRoot == "" || oldText == "" {
 		return nil
 	}
+
 	var matches []string
+
 	for _, requiredPath := range required {
 		path := normalizePlanExecutePath(requiredPath)
 		if path == "" {
 			continue
 		}
+
 		body, err := os.ReadFile(filepath.Join(workspaceRoot, filepath.FromSlash(path)))
 		if err != nil {
 			continue
 		}
+
 		if strings.Count(string(body), oldText) == 1 {
 			matches = append(matches, path)
 		}
 	}
+
 	if len(matches) != 1 {
 		return nil
 	}
+
 	return matches
 }
 
 func planExecuteExactEditBlockKind(label string) string {
 	normalized := strings.Trim(strings.ToLower(strings.TrimSpace(label)), ":. ")
+
 	normalized = strings.ReplaceAll(normalized, "-", "_")
 	normalized = strings.ReplaceAll(normalized, " ", "_")
+
 	switch {
 	case strings.HasPrefix(normalized, "old_text"), strings.HasPrefix(normalized, "old"):
 		return "old"
@@ -538,12 +620,15 @@ func planExecuteMissingEditPaths(required []string, edits []workspace.PlanEdit) 
 			covered[path] = struct{}{}
 		}
 	}
+
 	var missing []string
+
 	for _, path := range required {
 		if _, ok := covered[path]; !ok {
 			missing = append(missing, path)
 		}
 	}
+
 	return missing
 }
 
@@ -553,67 +638,87 @@ func NewPlanExecuteSessionID() string {
 
 func newPlanExecuteSessionID() string {
 	var buf [8]byte
+
 	if _, err := rand.Read(buf[:]); err != nil {
 		return fmt.Sprintf("ts%016x", time.Now().UnixNano())
 	}
+
 	return hex.EncodeToString(buf[:])
 }
 
 func FindLatestPlanArtifact(root string, notBefore time.Time, sessionID string) (string, error) {
 	dir := filepath.Join(strings.TrimSpace(root), ".idiom", "plans")
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return "", fmt.Errorf("plan dir %q: %w", dir, err)
 	}
+
 	type candidate struct {
 		path  string
 		mtime time.Time
 	}
+
 	sessionID = strings.TrimSpace(sessionID)
+
 	var hits []candidate
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
+
 		name := entry.Name()
 		if name == "last.plan.json" {
 			continue
 		}
+
 		if !strings.HasSuffix(name, ".plan.json") {
 			continue
 		}
+
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
+
 		if !notBefore.IsZero() && info.ModTime().Before(notBefore) {
 			continue
 		}
+
 		path := filepath.Join(dir, name)
 		if sessionID != "" {
 			body, err := os.ReadFile(path)
 			if err != nil {
 				continue
 			}
+
 			var head struct {
 				SessionID string `json:"session_id"`
 			}
+
 			if err := json.Unmarshal(body, &head); err != nil {
 				continue
 			}
+
 			if strings.TrimSpace(head.SessionID) != sessionID {
 				continue
 			}
 		}
+
 		hits = append(hits, candidate{path: path, mtime: info.ModTime()})
 	}
+
 	if len(hits) == 0 {
 		if sessionID != "" {
 			return "", fmt.Errorf("no plan artifacts under %s written since %s with session_id=%s", dir, notBefore.Format(time.RFC3339), sessionID)
 		}
+
 		return "", fmt.Errorf("no plan artifacts under %s written since %s", dir, notBefore.Format(time.RFC3339))
 	}
+
 	sort.Slice(hits, func(i, j int) bool { return hits[i].mtime.After(hits[j].mtime) })
+
 	return hits[0].path, nil
 }
 
@@ -639,40 +744,50 @@ func classifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) Exe
 	declaredPackID, declaredValid := normalizePlanExecuteEventPackID(plan.Packet.PackID)
 	rawTopLevelPackID := strings.TrimSpace(plan.PackID)
 	rawDeclaredPackID := strings.TrimSpace(plan.Packet.PackID)
+
 	if rawTopLevelPackID != "" && !topLevelValid {
 		handoff.Reason = "invalid_pack_id"
 		return handoff
 	}
+
 	if rawDeclaredPackID != "" && !declaredValid {
 		handoff.Reason = "invalid_declared_packet_id"
 		if topLevelPackID == "" {
 			return handoff
 		}
 	}
+
 	effectivePackID := firstNonEmptyString(topLevelPackID, declaredPackID)
+
 	handoff.PackID = effectivePackID
 	handoff.DeclaredPackID = declaredPackID
+
 	if effectivePackID == "" {
 		if util.EqualTrimFold(plan.Packet.Status, "not_used") {
 			handoff.PacketNotUsedByDesign = true
 			handoff.PacketFreshnessState = ExecutorPacketFreshnessNotUsedByDesign
 			handoff.Reason = "packet_not_used_by_design"
 		}
+
 		return handoff
 	}
+
 	overridden := topLevelPackID != "" && declaredPackID != "" && topLevelPackID != declaredPackID
 	if overridden || (topLevelPackID != "" && rawDeclaredPackID != "" && !declaredValid) {
 		handoff.State = ExecutorHandoffStateOverridden
 		handoff.Reason = "packet_id_override"
 	}
+
 	view, viewStatus, err := comprehension.LoadViewByIDStatus(root, effectivePackID)
 	if err != nil {
 		if handoff.State != ExecutorHandoffStateOverridden {
 			handoff.State = ExecutorHandoffStateMissing
 			handoff.Reason = "cache_load_error"
 		}
+
 		return handoff
 	}
+
 	switch viewStatus.State {
 	case comprehension.ViewLoadStateFresh:
 		handoff = applyExecutorHandoffView(handoff, view)
@@ -686,6 +801,7 @@ func classifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) Exe
 			handoff.State = ExecutorHandoffStateStale
 			handoff.Reason = "stale_graph_view"
 		}
+
 		return handoff
 	case comprehension.ViewLoadStateStale:
 		handoff = applyExecutorHandoffView(handoff, view)
@@ -699,32 +815,41 @@ func classifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) Exe
 			handoff.State = ExecutorHandoffStateStale
 			handoff.Reason = "stale_graph_view"
 		}
+
 		return handoff
 	}
+
 	view, artifactHit, artifactErr := loadPlanExecutePacketArtifact(root, effectivePackID)
 	if artifactErr != nil {
 		if handoff.State != ExecutorHandoffStateOverridden {
 			handoff.State = ExecutorHandoffStateMissing
 			handoff.Reason = "artifact_load_error"
 		}
+
 		return handoff
 	}
+
 	if artifactHit {
 		handoff = applyExecutorHandoffView(handoff, view)
 		if overridden {
 			handoff.State = ExecutorHandoffStateOverridden
 			handoff.Reason = "packet_id_override"
+
 			return handoff
 		}
+
 		handoff.State = ExecutorHandoffStateStale
 		handoff.Reason = "legacy_artifact_fallback"
 		handoff.Fresh = false
+
 		return handoff
 	}
+
 	if handoff.State != ExecutorHandoffStateOverridden {
 		handoff.State = ExecutorHandoffStateMissing
 		handoff.Reason = "cache_miss"
 	}
+
 	return handoff
 }
 
@@ -737,16 +862,21 @@ func applyExecutorHandoffView(handoff ExecutorHandoffPacket, view comprehension.
 	handoff.IndexID = sanitizePlanExecuteEventToken(firstNonEmptyString(view.IndexID, handoff.IndexID))
 	handoff.Fresh = executorHandoffViewFresh(view)
 	handoff.PacketPresent = true
+
 	if handoff.Fresh {
 		handoff.PacketFreshnessState = ExecutorPacketFreshnessFresh
 	} else {
 		handoff.PacketFreshnessState = ExecutorPacketFreshnessStale
 	}
+
 	handoff.CandidateFiles = len(view.CandidateFiles)
 	handoff.CandidateSymbols = len(view.CandidateSymbols)
 	handoff.Tests = len(view.Tests)
+
 	proj := comprehension.NewCompactPackProjection(view)
+
 	handoff.Quality = proj.Quality
+
 	return handoff
 }
 
@@ -757,9 +887,11 @@ func executorHandoffViewFresh(view comprehension.PackResult) bool {
 func emitExecutorHandoffPacketEvents(stdout io.Writer, jsonEvents bool, handoff ExecutorHandoffPacket) {
 	fields := executorHandoffPacketEventFields(handoff)
 	emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_handoff_packet", fields)
+
 	switch handoff.State {
 	case ExecutorHandoffStateInherited:
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_inherits_pack", fields)
+
 		if !jsonEvents && handoff.PackID != "" {
 			fmt.Fprintf(stdout, "  executor inherits planner pack %s (%d files, %d symbols, %d tests)\n",
 				handoff.PackID, handoff.CandidateFiles, handoff.CandidateSymbols, handoff.Tests)
@@ -798,25 +930,32 @@ func executorHandoffPacketEventFields(handoff ExecutorHandoffPacket) map[string]
 	addPlanExecuteEventString(fields, "artifact_packet_status", handoff.ArtifactPacketStatus)
 	addPlanExecuteEventString(fields, "artifact_packet_freshness", handoff.ArtifactPacketFreshness)
 	addPlanExecuteEventString(fields, "index_id", handoff.IndexID)
+
 	if handoff.ApprovedPathCount > 0 {
 		fields["approved_path_count"] = handoff.ApprovedPathCount
 	}
+
 	if handoff.PendingPathCount > 0 {
 		fields["pending_path_count"] = handoff.PendingPathCount
 	}
+
 	if handoff.CandidateFiles > 0 {
 		fields["candidate_files"] = handoff.CandidateFiles
 	}
+
 	if handoff.CandidateSymbols > 0 {
 		fields["candidate_symbols"] = handoff.CandidateSymbols
 	}
+
 	if handoff.Tests > 0 {
 		fields["tests"] = handoff.Tests
 	}
+
 	quality := executorHandoffQualityFields(handoff.Quality)
 	if len(quality) > 0 {
 		fields["quality"] = quality
 	}
+
 	return fields
 }
 
@@ -828,6 +967,7 @@ func executorHandoffQualityFields(q comprehension.CompactPackQuality) map[string
 	if confidence == "" {
 		return nil
 	}
+
 	fields := map[string]any{
 		"localization_confidence": confidence,
 		"source_owner_found":      q.SourceOwnerFound,
@@ -835,9 +975,11 @@ func executorHandoffQualityFields(q comprehension.CompactPackQuality) map[string
 	if len(q.EvidencePaths) > 0 {
 		fields["evidence_paths"] = q.EvidencePaths
 	}
+
 	if len(q.Reasons) > 0 {
 		fields["reasons"] = q.Reasons
 	}
+
 	return fields
 }
 
@@ -855,9 +997,11 @@ func addPlanExecuteEventString(fields map[string]any, key string, value string) 
 func normalizePlanExecuteEventPackID(value string) (string, bool) {
 	raw := strings.TrimSpace(value)
 	normalized := normalizePlanExecutePackID(raw)
+
 	if normalized == "" {
 		return "", raw == ""
 	}
+
 	return normalized, true
 }
 
@@ -866,6 +1010,7 @@ func normalizePlanExecutePackID(value string) string {
 	if isPlanExecutePackID(value) {
 		return value
 	}
+
 	return ""
 }
 
@@ -874,9 +1019,11 @@ func sanitizePlanExecuteEventID(value string) string {
 	if value == "" {
 		return ""
 	}
+
 	if planExecuteEventTextLooksSensitive(value) {
 		return "redacted:" + planExecuteEventHash(value)
 	}
+
 	return sanitizePlanExecuteEventToken(value)
 }
 
@@ -885,23 +1032,30 @@ func sanitizePlanExecuteEventToken(value string) string {
 	if value == "" || planExecuteEventTextLooksSensitive(value) {
 		return ""
 	}
+
 	var b strings.Builder
+
 	lastUnderscore := false
+
 	for _, r := range value {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
 			b.WriteRune(r)
+
 			lastUnderscore = false
 		case r == '-' || r == '_' || r == '.' || r == ':':
 			if !lastUnderscore {
 				b.WriteRune('_')
+
 				lastUnderscore = true
 			}
 		}
+
 		if b.Len() >= 120 {
 			break
 		}
 	}
+
 	return strings.Trim(b.String(), "_")
 }
 
@@ -910,14 +1064,18 @@ func sanitizePlanExecuteEventPath(value string) string {
 	if value == "" {
 		return ""
 	}
+
 	if planExecuteEventTextLooksSensitive(value) {
 		return "redacted:" + planExecuteEventHash(value)
 	}
+
 	value = filepath.ToSlash(filepath.Clean(filepath.FromSlash(value)))
 	value = strings.TrimPrefix(value, "./")
+
 	if value == "." {
 		return ""
 	}
+
 	return value
 }
 
@@ -930,11 +1088,13 @@ func planExecuteEventTextLooksSensitive(value string) bool {
 		"secret=", "api_key", "api-key", "password=", "bearer ", "customer-",
 		"customer_", "secrets/", "/secrets/", "\\secrets\\",
 	}
+
 	for _, marker := range markers {
 		if strings.Contains(lower, marker) {
 			return true
 		}
 	}
+
 	for _, token := range strings.FieldsFunc(lower, func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
 	}) {
@@ -942,12 +1102,14 @@ func planExecuteEventTextLooksSensitive(value string) bool {
 			return true
 		}
 	}
+
 	normalized := strings.ReplaceAll(lower, "\\", "/")
 	for _, marker := range []string{"/users/", "/home/", "/volumes/", "/private/", "c:/users/"} {
 		if strings.Contains(normalized, marker) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -968,37 +1130,52 @@ func RunReviewRepairPhase(
 	promptRun PromptRunner,
 	rec *telemetry.Recorder,
 ) (ReviewRepairPhaseReport, error) {
+
 	changedPaths := planChangedPaths(plan)
 	if len(changedPaths) == 0 {
 		return ReviewRepairPhaseReport{Status: "skipped (no changed paths)"}, nil
 	}
+
 	allowedRepairPaths := mergePlanExecutePaths(changedPaths, requiredEditPaths)
 	evidence := collectReviewRepairEvidence(cfg.Workspace.Root, changedPaths, baseline)
+
 	autoRepair, autoRepairErr := autoRepairReviewPatchHygiene(cfg.Workspace.Root, changedPaths, evidence)
 	if autoRepairErr != nil {
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_auto_patch_hygiene_failed", map[string]any{
 			"reason": autoRepairErr.Error(),
 		})
+
 		return ReviewRepairPhaseReport{Status: "failed"}, fmt.Errorf("review-repair auto patch hygiene failed: %w", autoRepairErr)
 	}
+
 	if autoRepair.Repaired {
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_auto_patch_hygiene", map[string]any{
 			"paths": autoRepair.Paths,
 			"lines": autoRepair.Lines,
 		})
+
 		evidence = collectReviewRepairEvidence(cfg.Workspace.Root, changedPaths, baseline)
 	}
+
 	evidence.PhaseEvidence = collectPlanExecutePhaseEvidence(cfg.Workspace.Root, "review_repair", plan, changedPaths, requiredEditPaths, allowedRepairPaths, evidence, executorReport)
+
 	editSetObligations := planExecuteEditSetObligations(opts, originalPrompt)
+
 	evidence.PhaseEvidence.EditSetObligations = editSetObligations
 	evidence.PhaseEvidence.OpenObligations = append(evidence.PhaseEvidence.OpenObligations, editSetObligations.MissingOpenObligations(changedPaths)...)
+
 	reviewSessionID := strings.TrimSpace(opts.ReviewSessionID)
+
 	if reviewSessionID == "" {
 		reviewSessionID = newPlanExecuteSessionID()
 	}
+
 	reviewCfg := cfg
+
 	reviewCfg.Workspace.SessionID = reviewSessionID
+
 	reviewStart := time.Now().Add(-1 * time.Second)
+
 	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_start", map[string]any{
 		"session_id":                reviewSessionID,
 		"changed_paths":             changedPaths,
@@ -1007,11 +1184,13 @@ func RunReviewRepairPhase(
 		"edit_set_obligation_count": len(editSetObligations),
 		"phase_evidence":            phaseEvidenceTelemetry(evidence.PhaseEvidence),
 	})
+
 	if planExecuteDeterministicCleanReviewEnabled() {
 		reason := phaseEvidencePassRejectionReason(evidence.PhaseEvidence)
 		if reason == "" {
 			reason = editSetObligations.RejectionReason(changedPaths)
 		}
+
 		if reason == "" && len(evidence.PhaseEvidence.OpenObligations) == 0 {
 			emitPlanExecuteSyntheticTurnSummary(stdout, opts.JSONEvents, "review_repair_deterministic_pass")
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_complete", map[string]any{
@@ -1019,16 +1198,23 @@ func RunReviewRepairPhase(
 				"repairs":       0,
 				"deterministic": true,
 			})
+
 			return ReviewRepairPhaseReport{Status: "pass (deterministic evidence)", AutoRepairs: autoRepair.Lines, ChecklistFound: true}, nil
 		}
 	}
+
 	prompt := planExecuteReviewRepairPrompt(originalPrompt, plan, changedPaths, allowedRepairPaths, evidence)
 	reviewMaxTokens := opts.MaxTokens
+
 	if reviewMaxTokens <= 0 {
 		reviewMaxTokens = 8192
 	}
-	var planPath string
-	var found bool
+
+	var (
+		planPath string
+		found    bool
+	)
+
 	for attempt := 0; ; attempt++ {
 		answer, err := promptRun(reviewCfg, prompt, RunOptions{
 			JSONEvents:                  opts.JSONEvents,
@@ -1047,30 +1233,37 @@ func RunReviewRepairPhase(
 				"changed_paths": changedPaths,
 				"allowed_paths": allowedRepairPaths,
 			})
+
 			return ReviewRepairPhaseReport{
 				Status:      "degraded (review unavailable)",
 				AutoRepairs: autoRepair.Lines,
 				ReasonClass: reasonClass,
 			}, nil
 		}
+
 		planPath, found, err = findOptionalReviewPlanArtifact(cfg.Workspace.Root, reviewStart, reviewSessionID)
 		if err != nil {
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_failed", map[string]any{
 				"reason": err.Error(),
 			})
+
 			return ReviewRepairPhaseReport{Status: "failed"}, err
 		}
+
 		if found {
 			break
 		}
+
 		if plancontract.ReviewRepairAnswerDeclaresPass(answer) && plancontract.ReviewRepairTextHasChecklist(answer) {
 			reason := phaseEvidencePassRejectionReason(evidence.PhaseEvidence)
 			if reason == "" {
 				reason = reviewAnswerPassContradictionReason(answer)
 			}
+
 			if reason == "" {
 				reason = editSetObligations.RejectionReason(changedPaths)
 			}
+
 			if reason != "" {
 				emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_pass_rejected", map[string]any{
 					"reason":                    reason,
@@ -1078,44 +1271,58 @@ func RunReviewRepairPhase(
 					"edit_set_obligation_count": len(editSetObligations),
 					"retry_available":           attempt == 0,
 				})
+
 				if attempt == 0 {
 					emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_retry", map[string]any{
 						"reason": reason,
 					})
+
 					prompt = planExecuteReviewRepairRejectedPassRetryPrompt(prompt, reason)
+
 					continue
 				}
+
 				return ReviewRepairPhaseReport{Status: "failed", ChecklistFound: true}, fmt.Errorf("review-repair phase rejected contradictory `Decision: pass`: %s", reason)
 			}
+
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_complete", map[string]any{
 				"status":  "pass",
 				"repairs": 0,
 			})
+
 			return ReviewRepairPhaseReport{Status: "pass (no corrective edits)", AutoRepairs: autoRepair.Lines, ChecklistFound: true}, nil
 		}
+
 		if reviewAnswerDeclaresBlocker(answer) {
 			blocker := reviewRepairBlockerSummary(answer)
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_blocked", map[string]any{
 				"status":  "blocked",
 				"blocker": blocker,
 			})
+
 			status := "blocked"
 			if blocker != "" {
 				status += ": " + blocker
 			}
+
 			return ReviewRepairPhaseReport{Status: status}, nil
 		}
+
 		return ReviewRepairPhaseReport{Status: "inconclusive"}, fmt.Errorf("review-repair phase produced no corrective plan and no `Decision: pass` with `Verification Checklist`")
 	}
+
 	repairPlan, err := workspace.LoadPlanArtifact(planPath)
 	if err != nil {
 		return ReviewRepairPhaseReport{Status: "failed", ReviewPlan: planPath}, fmt.Errorf("read review-repair plan artifact %q: %w", planPath, err)
 	}
+
 	if !plancontract.ReviewRepairTextHasChecklist(repairPlan.Rationale) {
 		return ReviewRepairPhaseReport{Status: "failed", ReviewPlan: planPath}, fmt.Errorf("review-repair plan %q is missing `Verification Checklist` in submit_plan rationale", planPath)
 	}
+
 	repairPaths := planChangedPaths(repairPlan)
 	combinedPaths := mergePlanExecutePaths(changedPaths, repairPaths)
+
 	if reason := editSetObligations.RejectionReason(combinedPaths); reason != "" {
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_plan_rejected", map[string]any{
 			"reason":                    reason,
@@ -1126,8 +1333,10 @@ func RunReviewRepairPhase(
 			"edit_set_obligations":      editSetObligations,
 			"edit_set_obligation_count": len(editSetObligations),
 		})
+
 		return ReviewRepairPhaseReport{Status: "failed", ReviewPlan: planPath, ChecklistFound: true}, fmt.Errorf("review-repair phase rejected corrective plan: %s", reason)
 	}
+
 	repairReport, err := RunExecutorPhaseScoped(cfg, repairPlan, nil, allowedRepairPaths, opts.JSONEvents, stdout)
 	if err != nil {
 		return ReviewRepairPhaseReport{
@@ -1138,12 +1347,14 @@ func RunReviewRepairPhase(
 			ChecklistFound: true,
 		}, fmt.Errorf("review-repair executor failed: %w", err)
 	}
+
 	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_complete", map[string]any{
 		"status":        "repaired",
 		"repairs":       repairReport.Succeeded,
 		"review_plan":   planPath,
 		"changed_paths": allowedRepairPaths,
 	})
+
 	return ReviewRepairPhaseReport{
 		Status:               "repaired",
 		Repairs:              repairReport.Succeeded,
@@ -1162,6 +1373,7 @@ func reviewRepairDegradedReasonClass(err error) string {
 	if err == nil {
 		return ""
 	}
+
 	switch failures.CodeOf(err) {
 	case failures.Canceled:
 		return "backend_canceled"
@@ -1173,6 +1385,7 @@ func reviewRepairDegradedReasonClass(err error) string {
 		failures.InvalidArgument, failures.Internal, failures.DataLoss:
 		return "review_model_error"
 	}
+
 	reason := strings.ToLower(strings.TrimSpace(err.Error()))
 	switch {
 	case reason == "":
@@ -1204,6 +1417,7 @@ func phaseEvidencePassRejectionReason(bundle PhaseEvidenceBundle) string {
 			return RunFailureVerificationRequired
 		}
 	}
+
 	return ""
 }
 
@@ -1216,24 +1430,29 @@ func findOptionalReviewPlanArtifact(root string, notBefore time.Time, sessionID 
 	if err == nil {
 		return path, true, nil
 	}
+
 	text := err.Error()
 	if strings.Contains(text, "no plan artifacts under") || strings.Contains(text, "plan dir") {
 		return "", false, nil
 	}
+
 	return "", false, err
 }
 
 func planExecuteReviewRepairPrompt(originalPrompt string, plan workspace.PlanArtifact, changedPaths []string, allowedRepairPaths []string, evidence ReviewRepairEvidence) string {
 	var b strings.Builder
+
 	b.WriteString("# Plan-then-execute review-repair phase\n\n")
 	b.WriteString("You are the REVIEW-REPAIR planner for a plan-execute run that already applied executor edits. Review the actual diff and behavioral contract, then either submit a narrow corrective plan or explicitly pass.\n\n")
 	b.WriteString("## Required Review Contract\n\n")
 	b.WriteString("Use the Phase Evidence Bundle, Diff Evidence, submitted_plan_state, source_sanity, verification entries, and inherited context packet as the primary evidence ledger. Do not restart discovery as if this were a fresh review.\n\n")
+
 	if reason := phaseEvidencePassRejectionReason(evidence.PhaseEvidence); reason != "" {
 		fmt.Fprintf(&b, "Phase Evidence already has failed verification or source_sanity obligations (`%s`). Treat that failure as sufficient post-edit evidence: do not perform additional reads, searches, or context refreshes before choosing the terminal outcome. Submit a corrective plan if the failure can be repaired inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` naming the exact failed check.\n\n", reason)
 	} else {
 		b.WriteString("If exact post-edit evidence is missing, make one targeted probe: refresh/check context state with `context_status` (`refresh=true`) or use `context_query`, `context_zoom`, `code_navigate`, or one bounded `read_file` range for one named checklist fact. Do not sweep large files with unbounded or multi-hundred-line raw reads; broad raw reads waste the review budget and duplicate the sidecar evidence.\n\n")
 	}
+
 	b.WriteString("Create a `Verification Checklist` before deciding. This checklist must verify behavior, not just literal code correctness. Cover:\n\n")
 	b.WriteString("- Required behavior from the original task/spec.\n")
 	b.WriteString("- Default/non-regression behavior that should remain equivalent.\n")
@@ -1257,28 +1476,36 @@ func planExecuteReviewRepairPrompt(originalPrompt string, plan workspace.PlanArt
 	b.WriteString("Do not call `ask` or external question tools in this phase. If blocked, return `<<QUESTION>>:` with the blocker.\n\n")
 	b.WriteString("A repair that replaces missing behavioral evidence with a tautology (`assert true`, `CHECK(true)`, `_assert_true(true)`) or with comments admitting behavior is not inspected is not a valid repair. Submit a concrete state assertion or stop with `<<QUESTION>>:`.\n\n")
 	b.WriteString("## Allowed Repair Paths\n\n")
+
 	for _, path := range allowedRepairPaths {
 		fmt.Fprintf(&b, "- `%s`\n", path)
 	}
+
 	b.WriteString("\n## Changed Paths\n\n")
+
 	for _, path := range changedPaths {
 		fmt.Fprintf(&b, "- `%s`\n", path)
 	}
+
 	b.WriteString("\n## Submitted Plan\n\n")
+
 	if strings.TrimSpace(plan.Rationale) != "" {
 		b.WriteString("Rationale:\n")
 		b.WriteString(truncatePlanExecuteText(plan.Rationale, 4000))
 		b.WriteString("\n\n")
 	}
+
 	for i, edit := range plan.Edits {
 		fmt.Fprintf(&b, "%d. `%s`: %s\n", i+1, edit.Path, firstNonEmptyString(edit.Purpose, "planned edit"))
 	}
+
 	b.WriteString("\n## Phase Evidence Bundle\n\n")
 	b.WriteString("Use this bundle as the current evidence ledger for the review decision. Treat open obligations as items that must be resolved by the checklist, a narrow repair, or a blocker.\n\n")
 	b.WriteString("```text\n")
 	b.WriteString(renderPlanExecutePhaseEvidence(evidence.PhaseEvidence))
 	b.WriteString("```\n")
 	b.WriteString("\n## Diff Evidence\n\n")
+
 	if strings.TrimSpace(evidence.Diff) == "" {
 		b.WriteString("(No git diff available or changed paths are not tracked by git.)\n")
 	} else {
@@ -1286,16 +1513,20 @@ func planExecuteReviewRepairPrompt(originalPrompt string, plan workspace.PlanArt
 		b.WriteString(truncatePlanExecuteText(evidence.Diff, 60000))
 		b.WriteString("\n```\n")
 	}
+
 	b.WriteString("\n## Patch Hygiene Evidence\n\n")
 	fmt.Fprintf(&b, "current-run whitespace check exit: %d\n\n", evidence.DiffCheckExit)
+
 	if strings.TrimSpace(evidence.DiffCheck) != "" {
 		b.WriteString("```text\n")
 		b.WriteString(truncatePlanExecuteText(evidence.DiffCheck, 12000))
 		b.WriteString("\n```\n")
 	}
+
 	b.WriteString("\n## Original Task / Spec\n\n")
 	b.WriteString("Reference only. The original spec is quoted so its file allowlist does not become this review pass's active write contract.\n\n")
 	b.WriteString(quotePlanExecuteReference(truncatePlanExecuteText(originalPrompt, 40000)))
+
 	return b.String()
 }
 
@@ -1304,14 +1535,17 @@ func quotePlanExecuteReference(text string) string {
 	if text == "" {
 		return "> (empty)\n"
 	}
+
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		if strings.TrimSpace(line) == "" {
 			lines[i] = ">"
 			continue
 		}
+
 		lines[i] = "> " + line
 	}
+
 	return strings.Join(lines, "\n") + "\n"
 }
 
@@ -1319,8 +1553,10 @@ func collectReviewRepairEvidence(root string, paths []string, baseline *ReviewRe
 	if baseline != nil {
 		diff := collectReviewRepairDiffFromBaseline(root, paths, *baseline)
 		check, exit := reviewRepairWhitespaceCheck(diff)
+
 		return ReviewRepairEvidence{Diff: diff, DiffCheck: check, DiffCheckExit: exit}
 	}
+
 	return ReviewRepairEvidence{
 		Diff:          runGitEvidence(root, append([]string{"diff", "--"}, paths...)...),
 		DiffCheck:     runGitEvidence(root, append([]string{"diff", "--check", "--"}, paths...)...),
@@ -1332,19 +1568,24 @@ func autoRepairReviewPatchHygiene(root string, changedPaths []string, evidence R
 	if evidence.DiffCheckExit != 1 {
 		return PatchHygieneAutoRepairReport{}, nil
 	}
+
 	trailingWhitespace := reviewRepairTrailingWhitespaceLines(evidence.Diff)
 	if len(trailingWhitespace) == 0 {
 		return PatchHygieneAutoRepairReport{}, nil
 	}
+
 	changedSet := planExecutePathSet(changedPaths)
 	paths := make([]string, 0, len(trailingWhitespace))
+
 	for path := range trailingWhitespace {
 		normalized := normalizePlanExecutePath(path)
 		if _, ok := changedSet[normalized]; !ok {
 			return PatchHygieneAutoRepairReport{}, nil
 		}
+
 		paths = append(paths, normalized)
 	}
+
 	slices.Sort(paths)
 
 	report := PatchHygieneAutoRepairReport{Repaired: true, Paths: paths}
@@ -1353,78 +1594,100 @@ func autoRepairReviewPatchHygiene(root string, changedPaths []string, evidence R
 		if err != nil {
 			return PatchHygieneAutoRepairReport{}, err
 		}
+
 		body, err := os.ReadFile(fullPath)
 		if err != nil {
 			return PatchHygieneAutoRepairReport{}, fmt.Errorf("read %s for patch hygiene repair: %w", path, err)
 		}
+
 		repaired, lines := trimTrailingWhitespaceOnLines(string(body), trailingWhitespace[path])
 		if lines == 0 {
 			continue
 		}
+
 		if err := os.WriteFile(fullPath, []byte(repaired), 0o644); err != nil {
 			return PatchHygieneAutoRepairReport{}, fmt.Errorf("write %s for patch hygiene repair: %w", path, err)
 		}
+
 		report.Lines += lines
 	}
+
 	if report.Lines == 0 {
 		return PatchHygieneAutoRepairReport{}, nil
 	}
+
 	return report, nil
 }
 
 func CaptureReviewRepairBaseline(root string, paths []string) ReviewRepairBaseline {
 	baseline := ReviewRepairBaseline{Files: map[string]ReviewRepairFileSnapshot{}}
+
 	for _, path := range mergePlanExecutePaths(paths) {
 		full := path
 		if !filepath.IsAbs(full) {
 			full = filepath.Join(root, path)
 		}
+
 		data, err := os.ReadFile(filepath.Clean(full))
 		if err != nil {
 			baseline.Files[path] = ReviewRepairFileSnapshot{Exists: false}
 			continue
 		}
+
 		baseline.Files[path] = ReviewRepairFileSnapshot{Before: string(data), Exists: true}
 	}
+
 	return baseline
 }
 
 func collectReviewRepairDiffFromBaseline(root string, paths []string, baseline ReviewRepairBaseline) string {
 	var b strings.Builder
+
 	for _, path := range mergePlanExecutePaths(paths) {
 		snapshot, ok := baseline.Files[path]
 		if !ok {
 			snapshot = ReviewRepairFileSnapshot{Exists: false}
 		}
+
 		full := path
 		if !filepath.IsAbs(full) {
 			full = filepath.Join(root, path)
 		}
+
 		var after string
+
 		afterData, err := os.ReadFile(filepath.Clean(full))
+
 		afterExists := err == nil
 		if err == nil {
 			after = string(afterData)
 		} else if !os.IsNotExist(err) {
 			fmt.Fprintf(&b, "# %s: current content unavailable: %v\n", path, err)
+
 			continue
 		}
+
 		if !snapshot.Exists && !afterExists {
 			continue
 		}
+
 		diff := UnifiedDiff(path, snapshot.Before, after)
 		if strings.TrimSpace(diff) == "" {
 			continue
 		}
+
 		if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
 			b.WriteByte('\n')
 		}
+
 		fmt.Fprintf(&b, "diff --git a/%s b/%s\n", path, path)
 		b.WriteString(diff)
+
 		if !strings.HasSuffix(diff, "\n") {
 			b.WriteByte('\n')
 		}
 	}
+
 	return b.String()
 }
 
@@ -1433,14 +1696,17 @@ func reviewRepairWhitespaceCheck(diff string) (string, int) {
 	if len(findings) == 0 {
 		return "", 0
 	}
+
 	return strings.Join(findings, "\n"), 1
 }
 
 func reviewRepairTrailingWhitespaceFindings(diff string) []string {
 	var findings []string
+
 	path := ""
 	newLine := 0
 	inHunk := false
+
 	for _, raw := range strings.Split(diff, "\n") {
 		line := strings.TrimSuffix(raw, "\r")
 		switch {
@@ -1448,32 +1714,40 @@ func reviewRepairTrailingWhitespaceFindings(diff string) []string {
 			path = strings.TrimSpace(strings.TrimPrefix(line, "+++ b/"))
 			inHunk = false
 			newLine = 0
+
 			continue
 		case strings.HasPrefix(line, "@@ "):
 			newLine = parseReviewRepairHunkNewStart(line)
 			inHunk = true
+
 			continue
 		case strings.HasPrefix(line, "diff --git ") || strings.HasPrefix(line, "--- "):
 			inHunk = false
 			newLine = 0
+
 			continue
 		}
+
 		if !inHunk || line == "" || strings.HasPrefix(line, "\\ ") {
 			continue
 		}
+
 		switch line[0] {
 		case '+':
 			if strings.HasPrefix(line, "+++") {
 				continue
 			}
+
 			content := line[1:]
 			if strings.TrimRight(content, " \t") != content {
 				loc := path
 				if newLine > 0 {
 					loc = fmt.Sprintf("%s:%d", firstNonEmptyString(path, "(unknown)"), newLine)
 				}
+
 				findings = append(findings, fmt.Sprintf("%s: trailing whitespace.\n%s", loc, line))
 			}
+
 			if newLine > 0 {
 				newLine++
 			}
@@ -1484,6 +1758,7 @@ func reviewRepairTrailingWhitespaceFindings(diff string) []string {
 		case '-':
 		}
 	}
+
 	return findings
 }
 
@@ -1492,6 +1767,7 @@ func reviewRepairTrailingWhitespaceLines(diff string) map[string]map[int]struct{
 	path := ""
 	newLine := 0
 	inHunk := false
+
 	for _, raw := range strings.Split(diff, "\n") {
 		line := strings.TrimSuffix(raw, "\r")
 		switch {
@@ -1499,31 +1775,39 @@ func reviewRepairTrailingWhitespaceLines(diff string) map[string]map[int]struct{
 			path = normalizePlanExecutePath(strings.TrimSpace(strings.TrimPrefix(line, "+++ b/")))
 			inHunk = false
 			newLine = 0
+
 			continue
 		case strings.HasPrefix(line, "@@ "):
 			newLine = parseReviewRepairHunkNewStart(line)
 			inHunk = true
+
 			continue
 		case strings.HasPrefix(line, "diff --git ") || strings.HasPrefix(line, "--- "):
 			inHunk = false
 			newLine = 0
+
 			continue
 		}
+
 		if !inHunk || line == "" || strings.HasPrefix(line, "\\ ") {
 			continue
 		}
+
 		switch line[0] {
 		case '+':
 			if strings.HasPrefix(line, "+++") {
 				continue
 			}
+
 			content := line[1:]
 			if path != "" && newLine > 0 && strings.TrimRight(content, " \t") != content {
 				if _, ok := out[path]; !ok {
 					out[path] = make(map[int]struct{})
 				}
+
 				out[path][newLine] = struct{}{}
 			}
+
 			if newLine > 0 {
 				newLine++
 			}
@@ -1534,6 +1818,7 @@ func reviewRepairTrailingWhitespaceLines(diff string) map[string]map[int]struct{
 		case '-':
 		}
 	}
+
 	return out
 }
 
@@ -1541,53 +1826,71 @@ func trimTrailingWhitespaceOnLines(text string, targetLines map[int]struct{}) (s
 	if len(targetLines) == 0 {
 		return text, 0
 	}
+
 	var b strings.Builder
+
 	b.Grow(len(text))
+
 	changed := 0
 	lineNo := 1
+
 	for start := 0; start < len(text); lineNo++ {
 		end := start
 		for end < len(text) && text[end] != '\n' {
 			end++
 		}
+
 		line := text[start:end]
 		newline := ""
+
 		if end < len(text) && text[end] == '\n' {
 			newline = "\n"
 			end++
 		}
+
 		if _, ok := targetLines[lineNo]; ok {
 			repaired := trimTrailingWhitespaceBeforeLineEnding(line)
 			if repaired != line {
 				changed++
+
 				line = repaired
 			}
 		}
+
 		b.WriteString(line)
 		b.WriteString(newline)
+
 		start = end
 	}
+
 	return b.String(), changed
 }
 
 func trimTrailingWhitespaceEveryLine(text string) string {
 	var b strings.Builder
+
 	b.Grow(len(text))
+
 	for start := 0; start < len(text); {
 		end := start
 		for end < len(text) && text[end] != '\n' {
 			end++
 		}
+
 		line := text[start:end]
 		newline := ""
+
 		if end < len(text) && text[end] == '\n' {
 			newline = "\n"
 			end++
 		}
+
 		b.WriteString(trimTrailingWhitespaceBeforeLineEnding(line))
 		b.WriteString(newline)
+
 		start = end
 	}
+
 	return b.String()
 }
 
@@ -1599,6 +1902,7 @@ func trimTrailingWhitespaceBeforeLineEnding(line string) string {
 	if strings.HasSuffix(line, "\r") {
 		return strings.TrimRight(line[:len(line)-1], " \t") + "\r"
 	}
+
 	return strings.TrimRight(line, " \t")
 }
 
@@ -1607,15 +1911,19 @@ func planExecuteWorkspaceFile(root string, path string) (string, error) {
 	if normalized == "" {
 		return "", fmt.Errorf("empty workspace path")
 	}
+
 	if filepath.IsAbs(normalized) {
 		return "", fmt.Errorf("workspace path must be relative: %s", normalized)
 	}
+
 	cleanRoot := filepath.Clean(strings.TrimSpace(root))
 	fullPath := filepath.Clean(filepath.Join(cleanRoot, filepath.FromSlash(normalized)))
 	rel, err := filepath.Rel(cleanRoot, fullPath)
+
 	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") || strings.HasPrefix(rel, `..\`) {
 		return "", fmt.Errorf("workspace path escapes root: %s", normalized)
 	}
+
 	return fullPath, nil
 }
 
@@ -1624,27 +1932,34 @@ func parseReviewRepairHunkNewStart(line string) int {
 	if plus < 0 {
 		return 0
 	}
+
 	rest := line[plus+2:]
 	end := 0
+
 	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
 		end++
 	}
+
 	if end == 0 {
 		return 0
 	}
+
 	value, err := strconv.Atoi(rest[:end])
 	if err != nil {
 		return 0
 	}
+
 	return value
 }
 
 func runGitEvidence(root string, args ...string) string {
 	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
 	out, err := cmd.CombinedOutput()
+
 	if err != nil && len(out) == 0 {
 		return err.Error()
 	}
+
 	return string(out)
 }
 
@@ -1654,8 +1969,10 @@ func runGitEvidenceExit(root string, args ...string) int {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode()
 		}
+
 		return 127
 	}
+
 	return 0
 }
 
@@ -1664,6 +1981,7 @@ func planChangedPaths(plan workspace.PlanArtifact) []string {
 	for _, edit := range plan.Edits {
 		paths = append(paths, edit.Path)
 	}
+
 	return mergePlanExecutePaths(paths)
 }
 
@@ -1673,9 +1991,11 @@ func reviewAnswerPassContradictionReason(answer string) string {
 		if line == "" || strings.Contains(line, "decision: pass") {
 			continue
 		}
+
 		if reviewLineHasPassNegation(line) {
 			continue
 		}
+
 		switch {
 		case plancontract.ReviewRepairLineIsPlaceholderChecklist(line):
 			return "placeholder_checklist_item"
@@ -1683,6 +2003,7 @@ func reviewAnswerPassContradictionReason(answer string) string {
 			if reviewLineIsPlannerOwnedPending(line) {
 				continue
 			}
+
 			return "failed_checklist_item"
 		case reviewLineContainsAny(line,
 			"appears to be missing",
@@ -1718,9 +2039,11 @@ func reviewAnswerPassContradictionReason(answer string) string {
 			if reviewLineIsPlannerOwnedPending(line) {
 				continue
 			}
+
 			return "missing_command_evidence_claim"
 		}
 	}
+
 	return ""
 }
 
@@ -1770,6 +2093,7 @@ func reviewLineIsPlannerOwnedPending(line string) bool {
 func normalizeReviewAnswerLine(line string) string {
 	line = strings.ToLower(strings.TrimSpace(line))
 	line = strings.TrimLeft(line, "-*0123456789. )\t")
+
 	return strings.Join(strings.Fields(line), " ")
 }
 
@@ -1796,6 +2120,7 @@ func reviewLineContainsProjectedVerificationClaim(line string) bool {
 	if !reviewLineContainsAny(line, "should pass", "should still pass", "should pass with", "would pass") {
 		return false
 	}
+
 	return reviewLineContainsAny(line,
 		"test",
 		"tests",
@@ -1818,6 +2143,7 @@ func reviewLineContainsAny(line string, needles ...string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1825,11 +2151,13 @@ func truncatePlanExecuteText(text string, maxBytes int) string {
 	if maxBytes <= 0 || len(text) <= maxBytes {
 		return text
 	}
+
 	for i := range text {
 		if i >= maxBytes {
 			return text[:i] + fmt.Sprintf("\n\n[truncated %d bytes]\n", len(text)-i)
 		}
 	}
+
 	return text
 }
 
@@ -1843,11 +2171,13 @@ func RunExecutorPhaseScoped(cfg config.Config, plan workspace.PlanArtifact, requ
 
 func RunExecutorPhaseScopedWithVerification(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, verificationCommands []string, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
 	plan = workspace.NormalizeLoadedPlanArtifact(plan)
+
 	verificationPlan := PlanVerification(VerificationPlannerInput{
 		WorkspaceRoot:    cfg.Workspace.Root,
 		ExplicitCommands: verificationCommands,
 		ChangedPaths:     planChangedPaths(plan),
 	})
+
 	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, nil, false, nil, verificationPlan, jsonEvents, stdout, progress...)
 }
 
@@ -1868,16 +2198,21 @@ func RunExecutorPhaseScopedWithVerificationPlanAndWriteScopeAuthorizedNewFiles(c
 
 func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, writeAllowedPaths []string, writeAllowedExplicit bool, authorizedNewFiles []string, verificationPlan VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
 	report := ExecutorPhaseReport{Total: len(plan.Edits)}
+
 	report.VerificationCommands = append([]VerificationCommand(nil), verificationPlan.Commands...)
 	report.VerificationSkips = append([]VerificationSkip(nil), verificationPlan.Skips...)
 	report.VerificationRejects = append([]VerificationReject(nil), verificationPlan.Rejects...)
+
 	if len(plan.Edits) == 0 {
 		return report, fmt.Errorf("plan has no edits")
 	}
+
 	mgr := workspace.NewManager(cfg.Workspace)
 	mgr.SetBypassReadBeforeEdit(true)
+
 	ctx := context.Background()
 	handoff := classifyExecutorHandoffPacket(cfg.Workspace.Root, plan)
+
 	report.Handoff = handoff
 	emitExecutorHandoffPacketEvents(stdout, jsonEvents, handoff)
 
@@ -1890,33 +2225,42 @@ func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspac
 			"handoff_id":        handoff.HandoffID,
 			"approval_scope_id": handoff.ApprovalScopeID,
 		})
+
 		if !jsonEvents {
 			fmt.Fprintf(stdout, "  preflight FAILED on approval/scope %s: %s\n", mismatch.Path, mismatch.Reason)
 		}
+
 		return report, fmt.Errorf("plan approval/scope preflight failed (%s): %s", mismatch.Path, mismatch.Reason)
 	}
+
 	if mismatch := preflightPlanWriteAllowedPaths(writeAllowedPaths, writeAllowedExplicit, plan); mismatch != nil {
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
 			"edit_index": mismatch.Index,
 			"path":       mismatch.Path,
 			"reason":     mismatch.Reason,
 		})
+
 		if !jsonEvents {
 			fmt.Fprintf(stdout, "  preflight FAILED on write_allowed_paths %s: %s\n", mismatch.Path, mismatch.Reason)
 		}
+
 		return report, fmt.Errorf("plan write_allowed_paths preflight failed (%s): %s", mismatch.Path, mismatch.Reason)
 	}
+
 	if mismatch := preflightPlanRequiredEditPaths(requiredEditPaths, plan); mismatch != nil {
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
 			"edit_index": mismatch.Index,
 			"path":       mismatch.Path,
 			"reason":     mismatch.Reason,
 		})
+
 		if !jsonEvents {
 			fmt.Fprintf(stdout, "  preflight FAILED on required_edit_paths %s: %s\n", mismatch.Path, mismatch.Reason)
 		}
+
 		return report, fmt.Errorf("plan required_edit_paths preflight failed (%s): %s", mismatch.Path, mismatch.Reason)
 	}
+
 	if len(requiredEditPaths) == 0 {
 		if mismatch := preflightPlanAllowedEditPaths(allowedEditPaths, plan); mismatch != nil {
 			emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
@@ -1924,9 +2268,11 @@ func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspac
 				"path":       mismatch.Path,
 				"reason":     mismatch.Reason,
 			})
+
 			if !jsonEvents {
 				fmt.Fprintf(stdout, "  preflight FAILED on allowed_edit_paths %s: %s\n", mismatch.Path, mismatch.Reason)
 			}
+
 			return report, fmt.Errorf("plan allowed_edit_paths preflight failed (%s): %s", mismatch.Path, mismatch.Reason)
 		}
 	}
@@ -1937,34 +2283,44 @@ func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspac
 			"path":       mismatch.Path,
 			"reason":     mismatch.Reason,
 		})
+
 		if !jsonEvents {
 			fmt.Fprintf(stdout, "  preflight FAILED on edit %d/%d %s: %s\n", mismatch.Index+1, len(plan.Edits), mismatch.Path, mismatch.Reason)
 		}
+
 		return report, fmt.Errorf("plan preflight failed on edit %d (%s): %s", mismatch.Index, mismatch.Path, mismatch.Reason)
 	}
+
 	if mismatch := preflightPlanUnsupportedProofClaims(plan); mismatch != nil {
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
 			"edit_index": mismatch.Index,
 			"path":       mismatch.Path,
 			"reason":     mismatch.Reason,
 		})
+
 		if !jsonEvents {
 			fmt.Fprintf(stdout, "  preflight FAILED on edit %d/%d %s: %s\n", mismatch.Index+1, len(plan.Edits), mismatch.Path, mismatch.Reason)
 		}
+
 		return report, fmt.Errorf("plan preflight failed on edit %d (%s): %s", mismatch.Index, mismatch.Path, mismatch.Reason)
 	}
+
 	emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_ok", map[string]any{
 		"edits": len(plan.Edits),
 	})
 
 	executorStartedAt := time.Now()
+
 	emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_start", map[string]any{
 		"edits":        len(plan.Edits),
 		"packet_state": handoff.State,
 	})
+
 	for i, edit := range plan.Edits {
 		isWholeFile := edit.ReplaceAll && strings.TrimSpace(edit.OldText) == "" && strings.TrimSpace(edit.NewText) != ""
+
 		var req workspace.ToolRequest
+
 		if isWholeFile {
 			req = workspace.ToolRequest{
 				Tool:        "write_file",
@@ -1984,10 +2340,13 @@ func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspac
 					"status": status,
 					"error":  strings.TrimSpace(result.Error),
 				})
+
 				if !jsonEvents {
 					fmt.Fprintf(stdout, "  edit %d/%d %s ... %s\n", i+1, len(plan.Edits), edit.Path, executorEditOutcome(result))
 				}
+
 				report.Failed++
+
 				report.Failures = append(report.Failures, fmt.Sprintf("edits[%d] %s: %s", i, edit.Path, result.Error))
 				emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_complete", map[string]any{
 					"total":       report.Total,
@@ -1995,8 +2354,10 @@ func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspac
 					"failed":      report.Failed,
 					"duration_ms": time.Since(executorStartedAt).Milliseconds(),
 				})
+
 				return report, fmt.Errorf("executor phase aborted on edit %d (%s): %s", i, edit.Path, result.Error)
 			}
+
 			req = workspace.ToolRequest{
 				Tool:        "write_file",
 				Path:        edit.Path,
@@ -2016,11 +2377,14 @@ func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspac
 				Description: firstNonEmptyString(edit.Purpose, "executor phase: planned edit"),
 			}
 		}
+
 		result := mgr.Execute(ctx, req)
 		status := "ok"
+
 		if strings.TrimSpace(result.Error) != "" {
 			status = "failed"
 		}
+
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_edit", map[string]any{
 			"step":   i + 1,
 			"total":  len(plan.Edits),
@@ -2028,14 +2392,18 @@ func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspac
 			"status": status,
 			"error":  strings.TrimSpace(result.Error),
 		})
+
 		if !jsonEvents {
 			fmt.Fprintf(stdout, "  edit %d/%d %s ... %s\n", i+1, len(plan.Edits), edit.Path, executorEditOutcome(result))
 		}
+
 		if len(progress) > 0 && progress[0] != nil {
 			progress[0](i+1, len(plan.Edits), edit.Path, status == "ok")
 		}
+
 		if status == "failed" {
 			report.Failed++
+
 			report.Failures = append(report.Failures, fmt.Sprintf("edits[%d] %s: %s", i, edit.Path, result.Error))
 			emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_complete", map[string]any{
 				"total":       report.Total,
@@ -2043,12 +2411,17 @@ func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspac
 				"failed":      report.Failed,
 				"duration_ms": time.Since(executorStartedAt).Milliseconds(),
 			})
+
 			return report, fmt.Errorf("executor phase aborted on edit %d (%s): %s", i, edit.Path, result.Error)
 		}
+
 		report.Succeeded++
 	}
+
 	sourceSanityChecked, sourceSanityEvidence, err := runPlanExecuteSourceSanity(ctx, mgr, cfg.Workspace.Root, planChangedPaths(plan), jsonEvents, stdout)
+
 	report.SourceSanity = sourceSanityEvidence
+
 	if err != nil {
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_complete", map[string]any{
 			"total":                 report.Total,
@@ -2058,10 +2431,14 @@ func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspac
 			"source_sanity_status":  "failed",
 			"duration_ms":           time.Since(executorStartedAt).Milliseconds(),
 		})
+
 		return report, err
 	}
+
 	verificationChecked, verificationEvidence, verificationErr := runPlanExecuteVerificationPlan(cfg.Workspace.Root, verificationPlan, jsonEvents, stdout)
+
 	report.Verification = verificationEvidence
+
 	if verificationErr != nil {
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_complete", map[string]any{
 			"total":                    report.Total,
@@ -2074,8 +2451,10 @@ func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspac
 			"verification_command_cnt": len(verificationEvidence),
 			"duration_ms":              time.Since(executorStartedAt).Milliseconds(),
 		})
+
 		return report, verificationErr
 	}
+
 	emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_complete", map[string]any{
 		"total":                 report.Total,
 		"succeeded":             report.Succeeded,
@@ -2086,6 +2465,7 @@ func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspac
 		"verification_status":   VerificationStatus(verificationEvidence),
 		"duration_ms":           time.Since(executorStartedAt).Milliseconds(),
 	})
+
 	return report, nil
 }
 
@@ -2104,55 +2484,73 @@ func runPlanExecuteVerificationPlan(root string, plan VerificationPlan, jsonEven
 			Error:   strings.TrimSpace(reject.Reason),
 			Summary: "requested verification command was rejected before execution",
 		}
+
 		evidence = append(evidence, check)
+
 		event := map[string]any{
 			"command": check.Command,
 			"status":  check.Status,
 			"summary": check.Summary,
 			"error":   check.Error,
 		}
+
 		if strings.TrimSpace(reject.Source) != "" {
 			event["source"] = strings.TrimSpace(reject.Source)
 		}
+
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "verification", event)
+
 		if !jsonEvents {
 			fmt.Fprintf(stdout, "  verification %s ... failed\n", check.Command)
 		}
+
 		return len(evidence), evidence, fmt.Errorf("verification rejected for %q: %s", check.Command, firstNonEmptyString(check.Error, check.Summary))
 	}
+
 	for _, command := range plan.Commands {
 		check := runPlanExecuteVerificationCommand(root, command)
+
 		evidence = append(evidence, check)
+
 		event := map[string]any{
 			"command": command.Command,
 			"status":  check.Status,
 			"summary": check.Summary,
 			"error":   check.Error,
 		}
+
 		if check.WorkingDir != "" {
 			event["working_dir"] = check.WorkingDir
 		}
+
 		if command.Source != "" {
 			event["source"] = command.Source
 		}
+
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "verification", event)
+
 		if !jsonEvents {
 			location := ""
 			if check.WorkingDir != "" {
 				location = " (dir " + check.WorkingDir + ")"
 			}
+
 			fmt.Fprintf(stdout, "  verification %s%s ... %s\n", command.Command, location, check.Status)
 		}
+
 		if check.Status != "ok" && check.Status != "passed" {
 			return len(evidence), evidence, fmt.Errorf("verification failed for %q: %s", command.Command, firstNonEmptyString(check.Error, check.Summary))
 		}
 	}
+
 	return len(evidence), evidence, nil
 }
 
 func runPlanExecuteVerificationCommand(root string, command VerificationCommand) PhaseEvidenceCheck {
 	command.Command = strings.TrimSpace(command.Command)
+
 	args := normalizeVerificationArgv(command.Argv)
+
 	if len(args) == 0 {
 		parsed, ok := VerificationCommandArgs(command.Command)
 		if !ok {
@@ -2161,6 +2559,7 @@ func runPlanExecuteVerificationCommand(root string, command VerificationCommand)
 			args = parsed
 		}
 	}
+
 	check := PhaseEvidenceCheck{
 		Kind:       "verification",
 		Command:    command.Command,
@@ -2171,28 +2570,38 @@ func runPlanExecuteVerificationCommand(root string, command VerificationCommand)
 		check.Error = "unsupported verification command"
 		return check
 	}
+
 	cmd := exec.Command(args[0], args[1:]...)
+
 	cmd.Dir = strings.TrimSpace(root)
+
 	if cmd.Dir == "" {
 		cmd.Dir = "."
 	}
+
 	if command.WorkingDir != "" {
 		workingDir, ok := cleanVerificationWorkingDir(command.WorkingDir)
 		if !ok {
 			check.Error = "unsafe verification working_dir"
 			return check
 		}
+
 		cmd.Dir = filepath.Join(cmd.Dir, filepath.FromSlash(workingDir))
 	}
+
 	out, err := cmd.CombinedOutput()
 	output := truncatePlanExecuteText(strings.TrimSpace(string(out)), 12000)
+
 	if err != nil {
 		check.Error = firstNonEmptyString(output, err.Error())
 		check.Summary = err.Error()
+
 		return check
 	}
+
 	check.Status = "ok"
 	check.Summary = output
+
 	return check
 }
 
@@ -2200,36 +2609,45 @@ func VerificationStatus(evidence []PhaseEvidenceCheck) string {
 	if len(evidence) == 0 {
 		return "not_applicable"
 	}
+
 	for _, check := range evidence {
 		if check.Status != "ok" && check.Status != "passed" {
 			return "failed"
 		}
 	}
+
 	return "passed"
 }
 
 func runPlanExecuteSourceSanity(ctx context.Context, mgr *workspace.Manager, root string, paths []string, jsonEvents bool, stdout io.Writer) (int, []PhaseEvidenceCheck, error) {
 	checked := 0
 	evidence := make([]PhaseEvidenceCheck, 0)
+
 	for _, path := range mergePlanExecutePaths(paths) {
 		if !workspace.SourceSanityCoversPath(path) {
 			continue
 		}
+
 		fullPath := path
 		if !filepath.IsAbs(fullPath) {
 			fullPath = filepath.Join(root, path)
 		}
+
 		info, err := os.Stat(filepath.Clean(fullPath))
 		if err != nil || info.IsDir() {
 			continue
 		}
+
 		checked++
+
 		result := mgr.Execute(ctx, workspace.ToolRequest{Tool: workspace.ToolNameSourceSanity, Path: path})
 		status := "ok"
 		errText := strings.TrimSpace(result.Error)
+
 		if errText != "" {
 			status = "failed"
 		}
+
 		evidence = append(evidence, PhaseEvidenceCheck{
 			Kind:    "source_sanity",
 			Path:    path,
@@ -2243,13 +2661,16 @@ func runPlanExecuteSourceSanity(ctx context.Context, mgr *workspace.Manager, roo
 			"summary": strings.TrimSpace(result.Summary),
 			"error":   errText,
 		})
+
 		if !jsonEvents {
 			fmt.Fprintf(stdout, "  source sanity %s ... %s\n", path, status)
 		}
+
 		if errText != "" {
 			return checked, evidence, fmt.Errorf("source_sanity failed for %s: %s", path, errText)
 		}
 	}
+
 	return checked, evidence, nil
 }
 
@@ -2257,12 +2678,15 @@ func preflightPlanApprovalAndScope(plan workspace.PlanArtifact, requiredEditPath
 	if strings.TrimSpace(plan.Handoff.ID) == "" {
 		return &PlanEditPreflightMismatch{Index: -1, Reason: "handoff id is missing"}
 	}
+
 	if !plan.Handoff.Ready {
 		return &PlanEditPreflightMismatch{Index: -1, Reason: "handoff is not ready"}
 	}
+
 	if len(plan.Handoff.Blockers) > 0 {
 		return &PlanEditPreflightMismatch{Index: -1, Reason: "handoff has unresolved blockers"}
 	}
+
 	if plan.Approval.Required {
 		if planExecuteApprovalPartial(plan.Approval.Status) {
 			if mismatch := preflightPlanPartialApprovalScope(plan); mismatch != nil {
@@ -2272,9 +2696,11 @@ func preflightPlanApprovalAndScope(plan workspace.PlanArtifact, requiredEditPath
 			return &PlanEditPreflightMismatch{Index: -1, Reason: "required approval is not satisfied"}
 		}
 	}
+
 	if plan.Approval.ExecutionPermission == "blocked" {
 		return &PlanEditPreflightMismatch{Index: -1, Reason: "approval execution permission is blocked"}
 	}
+
 	return preflightPlanDeclaredScope(plan, requiredEditPaths)
 }
 
@@ -2282,35 +2708,44 @@ func preflightPlanPartialApprovalScope(plan workspace.PlanArtifact) *PlanEditPre
 	if strings.TrimSpace(plan.Approval.ScopeID) == "" {
 		return &PlanEditPreflightMismatch{Index: -1, Reason: "partial approval scope id is missing"}
 	}
+
 	if len(plan.Approval.ApprovedPaths) == 0 {
 		return &PlanEditPreflightMismatch{Index: -1, Reason: "partial approval has no approved scope paths"}
 	}
+
 	if len(plan.Approval.PendingPaths) == 0 {
 		return &PlanEditPreflightMismatch{Index: -1, Reason: "partial approval has no pending scope paths"}
 	}
+
 	if plan.Approval.ExecutionPermission != "execute_approved_scope" {
 		return &PlanEditPreflightMismatch{Index: -1, Reason: "partial approval must execute only approved scope"}
 	}
+
 	approved := planExecutePathSet(plan.Approval.ApprovedPaths)
 	pending := planExecutePathSet(plan.Approval.PendingPaths)
+
 	for i, edit := range plan.Edits {
 		path := normalizePlanExecutePath(edit.Path)
 		if path == "" {
 			return &PlanEditPreflightMismatch{Index: i, Reason: "edit has no path"}
 		}
+
 		if _, ok := pending[path]; ok {
 			return &PlanEditPreflightMismatch{Index: i, Path: path, Reason: "plan edit path is still pending approval"}
 		}
+
 		if _, ok := approved[path]; !ok {
 			return &PlanEditPreflightMismatch{Index: i, Path: path, Reason: "plan edit path is outside approved scope"}
 		}
 	}
+
 	return nil
 }
 
 func preflightPlanDeclaredScope(plan workspace.PlanArtifact, originalRequiredPaths ...[]string) *PlanEditPreflightMismatch {
 	forbidden := planExecutePathSet(append(append([]string(nil), plan.Paths.Forbidden...), plan.Contract.ForbiddenPaths...))
 	required := planExecutePathSet(append(append([]string(nil), plan.Paths.Required...), plan.Contract.RequiredEditPaths...))
+
 	for _, paths := range originalRequiredPaths {
 		for _, path := range paths {
 			if normalized := normalizePlanExecutePath(path); normalized != "" {
@@ -2318,6 +2753,7 @@ func preflightPlanDeclaredScope(plan workspace.PlanArtifact, originalRequiredPat
 			}
 		}
 	}
+
 	planned := planExecutePathSet(append(append([]string(nil), plan.Paths.Editable...), plan.Paths.Changed...))
 	approved := planExecutePathSet(plan.Approval.ApprovedPaths)
 	pending := planExecutePathSet(plan.Approval.PendingPaths)
@@ -2329,52 +2765,65 @@ func preflightPlanDeclaredScope(plan workspace.PlanArtifact, originalRequiredPat
 		PendingPaths:         plan.Approval.PendingPaths,
 		RequireEvidence:      true,
 	})
+
 	if mismatch := preflightPlanSourceSatisfiedViolationMismatch(sourceSatisfiedViolations); mismatch != nil {
 		if mismatch.Reason == "source-satisfied path is outside declared required scope" {
 			mismatch.Reason = "source-satisfied path is outside required plan scope"
 		}
+
 		return mismatch
 	}
+
 	seen := map[string]struct{}{}
+
 	for path := range planExecutePathSet(plan.Paths.SourceSatisfied) {
 		if _, ok := forbidden[path]; ok {
 			return &PlanEditPreflightMismatch{Index: -1, Path: path, Reason: "source-satisfied path is forbidden"}
 		}
+
 		seen[path] = struct{}{}
 	}
+
 	for i, edit := range plan.Edits {
 		path := normalizePlanExecutePath(edit.Path)
 		if path == "" {
 			return &PlanEditPreflightMismatch{Index: i, Reason: "edit has no path"}
 		}
+
 		seen[path] = struct{}{}
 		if _, ok := forbidden[path]; ok {
 			return &PlanEditPreflightMismatch{Index: i, Path: path, Reason: "plan edit path is forbidden"}
 		}
+
 		if _, ok := pending[path]; ok {
 			return &PlanEditPreflightMismatch{Index: i, Path: path, Reason: "plan edit path is still pending approval"}
 		}
+
 		if len(approved) > 0 {
 			if _, ok := approved[path]; !ok {
 				return &PlanEditPreflightMismatch{Index: i, Path: path, Reason: "plan edit path is outside approved scope"}
 			}
 		}
+
 		if len(required) > 0 {
 			if _, ok := required[path]; !ok {
 				return &PlanEditPreflightMismatch{Index: i, Path: path, Reason: "plan edit path is outside required plan scope"}
 			}
 		}
+
 		if len(planned) > 0 {
 			if _, ok := planned[path]; !ok {
 				return &PlanEditPreflightMismatch{Index: i, Path: path, Reason: "plan edit path is outside declared editable scope"}
 			}
 		}
 	}
+
 	for path := range required {
 		if _, ok := seen[path]; !ok {
 			return &PlanEditPreflightMismatch{Index: -1, Path: path, Reason: "required plan scope path has no submitted edit"}
 		}
 	}
+
 	return nil
 }
 
@@ -2385,6 +2834,7 @@ func planExecutePathSet(paths []string) map[string]struct{} {
 			out[normalized] = struct{}{}
 		}
 	}
+
 	return out
 }
 
@@ -2393,7 +2843,9 @@ func planExecuteSetStrings(values map[string]struct{}) []string {
 	for value := range values {
 		out = append(out, value)
 	}
+
 	sort.Strings(out)
+
 	return out
 }
 
@@ -2405,7 +2857,9 @@ func preflightPlanSourceSatisfiedViolationMismatch(violations []plancontract.Sou
 	if len(violations) == 0 {
 		return nil
 	}
+
 	violation := violations[0]
+
 	return &PlanEditPreflightMismatch{
 		Index:  -1,
 		Path:   normalizePlanExecutePath(violation.Path),
@@ -2446,6 +2900,7 @@ func planScopeDriftEventFields(handoff ExecutorHandoffPacket, mismatch *PlanEdit
 	if path := sanitizePlanExecuteEventPath(mismatch.Path); path != "" {
 		fields["path"] = path
 	}
+
 	return fields
 }
 
@@ -2461,13 +2916,16 @@ func preflightPlanRequiredEditPaths(required []string, plan workspace.PlanArtifa
 	if err != nil {
 		return &PlanEditPreflightMismatch{Index: -1, Reason: err.Error()}
 	}
+
 	if len(coverage.RequiredCoveragePaths) == 0 {
 		return nil
 	}
+
 	candidatePaths, invalid := preflightPlanCandidatePaths(plan)
 	if invalid != nil {
 		return invalid
 	}
+
 	if mismatch := preflightPlanSourceSatisfiedPaths(plancontract.SourceSatisfiedPathCoverageInput{
 		RequiredPaths:        coverage.RequiredCoveragePaths,
 		SourceSatisfiedPaths: plan.Paths.SourceSatisfied,
@@ -2479,9 +2937,12 @@ func preflightPlanRequiredEditPaths(required []string, plan workspace.PlanArtifa
 		if mismatch.Reason == "source-satisfied path is outside declared required scope" {
 			mismatch.Reason = "source-satisfied path is outside required_edit_paths allowlist"
 		}
+
 		return mismatch
 	}
+
 	candidatePaths = append(candidatePaths, plan.Paths.SourceSatisfied...)
+
 	coverage, err = autonomy.ResolvePlanScopePathRoleObligations(autonomy.PlanScopePathRoleObligationInput{
 		RequiredEditPaths:      coverage.RequiredCoveragePaths,
 		CandidateCoveragePaths: candidatePaths,
@@ -2490,7 +2951,9 @@ func preflightPlanRequiredEditPaths(required []string, plan workspace.PlanArtifa
 	if err != nil {
 		return &PlanEditPreflightMismatch{Index: -1, Reason: err.Error()}
 	}
+
 	coverageByPath := planScopeCandidateCoverageByPath(coverage.CandidateCoverage)
+
 	for i, edit := range plan.Edits {
 		path := normalizePlanExecutePath(edit.Path)
 		if !coverageByPath[path].SatisfiesRequiredCoverage {
@@ -2501,6 +2964,7 @@ func preflightPlanRequiredEditPaths(required []string, plan workspace.PlanArtifa
 			}
 		}
 	}
+
 	for _, path := range coverage.MissingRequiredCoveragePaths {
 		return &PlanEditPreflightMismatch{
 			Index:  -1,
@@ -2508,6 +2972,7 @@ func preflightPlanRequiredEditPaths(required []string, plan workspace.PlanArtifa
 			Reason: "plan does not include an edit for this required_edit_paths entry",
 		}
 	}
+
 	return nil
 }
 
@@ -2516,14 +2981,17 @@ func preflightPlanMissingPathAuthorization(root string, authorizedNewFiles []str
 	for _, path := range mergePlanExecutePaths(authorizedNewFiles) {
 		authorized[path] = struct{}{}
 	}
+
 	for i, edit := range plan.Edits {
 		path := normalizePlanExecutePath(edit.Path)
 		if path == "" {
 			continue
 		}
+
 		if _, ok := authorized[path]; ok {
 			continue
 		}
+
 		abs := filepath.Join(root, filepath.FromSlash(path))
 		if _, err := os.Stat(abs); err != nil {
 			if os.IsNotExist(err) {
@@ -2533,6 +3001,7 @@ func preflightPlanMissingPathAuthorization(root string, authorizedNewFiles []str
 					Reason: "plan would create missing edit path without new-file authorization",
 				}
 			}
+
 			return &PlanEditPreflightMismatch{
 				Index:  i,
 				Path:   path,
@@ -2540,6 +3009,7 @@ func preflightPlanMissingPathAuthorization(root string, authorizedNewFiles []str
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -2551,6 +3021,7 @@ func preflightPlanWriteAllowedPaths(writeAllowed []string, explicit bool, plan w
 	if err != nil {
 		return &PlanEditPreflightMismatch{Index: -1, Reason: err.Error()}
 	}
+
 	if len(coverage.AllowedCandidatePaths) == 0 {
 		if explicit && len(plan.Edits) > 0 {
 			return &PlanEditPreflightMismatch{
@@ -2559,12 +3030,15 @@ func preflightPlanWriteAllowedPaths(writeAllowed []string, explicit bool, plan w
 				Reason: "edit path is outside explicit empty write_allowed_paths envelope",
 			}
 		}
+
 		return nil
 	}
+
 	candidatePaths, invalid := preflightPlanCandidatePaths(plan)
 	if invalid != nil {
 		return invalid
 	}
+
 	coverage, err = autonomy.ResolvePlanScopePathRoleObligations(autonomy.PlanScopePathRoleObligationInput{
 		AllowedCandidatePaths:  coverage.AllowedCandidatePaths,
 		CandidateCoveragePaths: candidatePaths,
@@ -2573,7 +3047,9 @@ func preflightPlanWriteAllowedPaths(writeAllowed []string, explicit bool, plan w
 	if err != nil {
 		return &PlanEditPreflightMismatch{Index: -1, Reason: err.Error()}
 	}
+
 	coverageByPath := planScopeCandidateCoverageByPath(coverage.CandidateCoverage)
+
 	for i, edit := range plan.Edits {
 		path := normalizePlanExecutePath(edit.Path)
 		if !coverageByPath[path].WithinAllowedCandidatePath {
@@ -2584,6 +3060,7 @@ func preflightPlanWriteAllowedPaths(writeAllowed []string, explicit bool, plan w
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -2595,13 +3072,16 @@ func preflightPlanAllowedEditPaths(allowed []string, plan workspace.PlanArtifact
 	if err != nil {
 		return &PlanEditPreflightMismatch{Index: -1, Reason: err.Error()}
 	}
+
 	if len(coverage.AllowedCandidatePaths) == 0 {
 		return nil
 	}
+
 	candidatePaths, invalid := preflightPlanCandidatePaths(plan)
 	if invalid != nil {
 		return invalid
 	}
+
 	coverage, err = autonomy.ResolvePlanScopePathRoleObligations(autonomy.PlanScopePathRoleObligationInput{
 		AllowedCandidatePaths:  coverage.AllowedCandidatePaths,
 		CandidateCoveragePaths: candidatePaths,
@@ -2610,7 +3090,9 @@ func preflightPlanAllowedEditPaths(allowed []string, plan workspace.PlanArtifact
 	if err != nil {
 		return &PlanEditPreflightMismatch{Index: -1, Reason: err.Error()}
 	}
+
 	coverageByPath := planScopeCandidateCoverageByPath(coverage.CandidateCoverage)
+
 	for i, edit := range plan.Edits {
 		path := normalizePlanExecutePath(edit.Path)
 		if !coverageByPath[path].WithinAllowedCandidatePath {
@@ -2621,18 +3103,22 @@ func preflightPlanAllowedEditPaths(allowed []string, plan workspace.PlanArtifact
 			}
 		}
 	}
+
 	return nil
 }
 
 func preflightPlanCandidatePaths(plan workspace.PlanArtifact) ([]string, *PlanEditPreflightMismatch) {
 	var paths []string
+
 	for i, edit := range plan.Edits {
 		path := normalizePlanExecutePath(edit.Path)
 		if path == "" {
 			return nil, &PlanEditPreflightMismatch{Index: i, Reason: "edit has no path"}
 		}
+
 		paths = append(paths, path)
 	}
+
 	return paths, nil
 }
 
@@ -2641,6 +3127,7 @@ func planScopeCandidateCoverageByPath(coverage []autonomy.PlanScopePathRoleCover
 	for _, item := range coverage {
 		out[item.Path] = item
 	}
+
 	return out
 }
 
@@ -2651,6 +3138,7 @@ func preflightPlanUnsupportedProofClaims(plan workspace.PlanArtifact) *PlanEditP
 			return &PlanEditPreflightMismatch{Index: i, Path: path, Reason: reason}
 		}
 	}
+
 	return nil
 }
 
@@ -2660,34 +3148,43 @@ func normalizePlanExecutePath(path string) string {
 
 func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
 	cache := make(map[string][]byte)
+
 	for i, edit := range plan.Edits {
 		oldText := strings.TrimSpace(edit.OldText)
 		if !workspace.PlanEditNeedsAnchorProvenance(edit) {
 			continue
 		}
+
 		rawPath := strings.TrimSpace(edit.Path)
 		path := normalizePlanExecutePath(rawPath)
+
 		if path == "" {
 			reason := "edit has no path"
 			if rawPath != "" {
 				reason = "edit has invalid path"
 			}
+
 			return &PlanEditPreflightMismatch{Index: i, Path: rawPath, Reason: reason}
 		}
+
 		abs := path
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(strings.TrimSpace(workspaceRoot), filepath.FromSlash(path))
 		}
+
 		body, ok := cache[abs]
 		if !ok {
 			content, err := os.ReadFile(abs)
 			if err != nil {
 				return &PlanEditPreflightMismatch{Index: i, Path: path, Reason: fmt.Sprintf("could not read file: %s", err.Error())}
 			}
+
 			body = content
 			cache[abs] = body
 		}
+
 		current := string(body)
+
 		if workspace.PlanArtifactRequiresSubmitPlanAnchorProvenance(plan) && edit.AnchorProvenance == nil {
 			return &PlanEditPreflightMismatch{
 				Index:  i,
@@ -2695,6 +3192,7 @@ func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *Plan
 				Reason: "current-schema plan edit is missing submit_plan anchor provenance",
 			}
 		}
+
 		if err := workspace.ValidatePlanEditAnchorProvenance(workspaceRoot, edit); err != nil {
 			return &PlanEditPreflightMismatch{
 				Index:  i,
@@ -2702,9 +3200,11 @@ func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *Plan
 				Reason: err.Error(),
 			}
 		}
+
 		if oldText == "" {
 			continue
 		}
+
 		matchCount := strings.Count(current, edit.OldText)
 		if matchCount == 0 {
 			return &PlanEditPreflightMismatch{
@@ -2713,6 +3213,7 @@ func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *Plan
 				Reason: "old_text does not appear in file (whitespace/indentation mismatch is the most common cause)",
 			}
 		}
+
 		if matchCount > 1 && !edit.ReplaceAll {
 			return &PlanEditPreflightMismatch{
 				Index:  i,
@@ -2721,28 +3222,35 @@ func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *Plan
 			}
 		}
 	}
+
 	if mismatch := preflightPlanFinalState(workspaceRoot, plan); mismatch != nil {
 		return mismatch
 	}
+
 	return nil
 }
 
 func preflightPlanFinalState(workspaceRoot string, plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
 	cache := make(map[string][]byte)
+
 	for i, edit := range plan.Edits {
 		rawPath := strings.TrimSpace(edit.Path)
 		path := normalizePlanExecutePath(rawPath)
+
 		if path == "" {
 			reason := "edit has no path"
 			if rawPath != "" {
 				reason = "edit has invalid path"
 			}
+
 			return &PlanEditPreflightMismatch{Index: i, Path: rawPath, Reason: reason}
 		}
+
 		abs := path
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(strings.TrimSpace(workspaceRoot), filepath.FromSlash(path))
 		}
+
 		body, ok := cache[abs]
 		if !ok {
 			content, err := os.ReadFile(abs)
@@ -2753,9 +3261,11 @@ func preflightPlanFinalState(workspaceRoot string, plan workspace.PlanArtifact) 
 					return &PlanEditPreflightMismatch{Index: i, Path: path, Reason: fmt.Sprintf("could not read file: %s", err.Error())}
 				}
 			}
+
 			body = content
 			cache[abs] = body
 		}
+
 		if edit.ReplaceAll && strings.TrimSpace(edit.OldText) == "" && strings.TrimSpace(edit.NewText) != "" && workspace.IsCompletedPlanningArtifact(path, body) {
 			return &PlanEditPreflightMismatch{
 				Index:  i,
@@ -2763,10 +3273,12 @@ func preflightPlanFinalState(workspaceRoot string, plan workspace.PlanArtifact) 
 				Reason: "whole-file edit would overwrite a completed planning artifact; use a bounded anchored edit or ask the user to reopen/replace it explicitly",
 			}
 		}
+
 		updated, changed, err := workspace.PreviewPlanEditContent(string(body), edit)
 		if err != nil {
 			return &PlanEditPreflightMismatch{Index: i, Path: path, Reason: err.Error()}
 		}
+
 		if changed {
 			if lineNo, line, ok := workspace.NewSuspiciousAdjacentDuplicateCodeLine(path, body, []byte(updated)); ok {
 				return &PlanEditPreflightMismatch{
@@ -2776,8 +3288,10 @@ func preflightPlanFinalState(workspaceRoot string, plan workspace.PlanArtifact) 
 				}
 			}
 		}
+
 		cache[abs] = []byte(updated)
 	}
+
 	return nil
 }
 
@@ -2786,21 +3300,26 @@ func projectedInsertAfterLineContent(workspaceRoot string, edit workspace.PlanEd
 	if path == "" {
 		return "", fmt.Errorf("edit has invalid path")
 	}
+
 	abs := path
 	if !filepath.IsAbs(abs) {
 		abs = filepath.Join(strings.TrimSpace(workspaceRoot), filepath.FromSlash(path))
 	}
+
 	body, err := os.ReadFile(abs)
 	if err != nil {
 		return "", fmt.Errorf("insert_after_line could not read existing %s: %w", path, err)
 	}
+
 	updated, changed, err := workspace.PreviewPlanEditContent(string(body), edit)
 	if err != nil {
 		return "", err
 	}
+
 	if !changed {
 		return "", fmt.Errorf("insert_after_line would not change %s", path)
 	}
+
 	return updated, nil
 }
 
@@ -2808,6 +3327,7 @@ func executorEditOutcome(result workspace.ToolResult) string {
 	if strings.TrimSpace(result.Error) != "" {
 		return "FAILED: " + result.Error
 	}
+
 	return "ok"
 }
 
@@ -2815,15 +3335,18 @@ func emitPlanExecuteJSONEvent(stdout io.Writer, jsonEvents bool, eventType strin
 	if !jsonEvents {
 		return
 	}
+
 	payload := map[string]any{
 		"type": "idiom.plan_execute." + eventType,
 		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	maps.Copy(payload, fields)
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}
+
 	fmt.Fprintln(stdout, string(body))
 }
 
@@ -2831,6 +3354,7 @@ func emitPlanExecuteSyntheticTurnSummary(stdout io.Writer, jsonEvents bool, stop
 	if !jsonEvents {
 		return
 	}
+
 	payload := map[string]any{
 		"type":                       "turn_summary",
 		"ts":                         time.Now().UTC().Format(time.RFC3339Nano),
@@ -2850,10 +3374,12 @@ func emitPlanExecuteSyntheticTurnSummary(stdout io.Writer, jsonEvents bool, stop
 		"stop_reason":                strings.TrimSpace(stopReason),
 		"budget_exhausted":           false,
 	}
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}
+
 	fmt.Fprintln(stdout, string(body))
 }
 
@@ -2867,37 +3393,47 @@ func firstNonEmptyString(values ...string) string {
 			return v
 		}
 	}
+
 	return ""
 }
 
 func cleanupStalePlanArtifacts(root string, threshold time.Duration, logOut io.Writer) {
 	dir := filepath.Join(strings.TrimSpace(root), ".idiom", "plans")
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			fmt.Fprintf(logOut, "plan-execute cleanup: read %s: %v\n", dir, err)
 		}
+
 		return
 	}
+
 	cutoff := time.Now().Add(-threshold)
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
+
 		name := entry.Name()
 		if name == "last.plan.json" {
 			continue
 		}
+
 		if !strings.HasSuffix(name, ".plan.json") {
 			continue
 		}
+
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
+
 		if !info.ModTime().Before(cutoff) {
 			continue
 		}
+
 		path := filepath.Join(dir, name)
 		if err := os.Remove(path); err != nil {
 			fmt.Fprintf(logOut, "plan-execute cleanup: remove %s: %v\n", path, err)
@@ -2918,20 +3454,25 @@ func collectPlanExecutePhaseEvidence(root string, phase string, plan workspace.P
 	if strings.TrimSpace(handoff.State) == "" {
 		handoff = classifyExecutorHandoffPacket(root, plan)
 	}
+
 	packet := loadPlanExecutePacketEvidence(root, handoff.PackID)
 	submittedPlan := collectSubmittedPlanState(root, plan)
+
 	sourceSanity := append([]PhaseEvidenceCheck(nil), executorReport.SourceSanity...)
 	patchHygiene := PhaseEvidenceCheck{
 		Kind:   "git_diff_check",
 		Status: "passed",
 	}
+
 	if reviewEvidence.DiffCheckExit != 0 {
 		patchHygiene.Status = "failed"
 		if reviewEvidence.DiffCheckExit != 1 {
 			patchHygiene.Status = "unavailable"
 		}
+
 		patchHygiene.Error = strings.TrimSpace(reviewEvidence.DiffCheck)
 	}
+
 	bundle := PhaseEvidenceBundle{
 		SchemaVersion:    PhaseEvidenceSchemaVersion,
 		Phase:            firstNonEmptyString(strings.TrimSpace(phase), "unknown"),
@@ -2950,6 +3491,7 @@ func collectPlanExecutePhaseEvidence(root string, phase string, plan workspace.P
 		OpenObligations:  phaseEvidenceOpenObligations(plan, packet, changedPaths, submittedPlan, sourceSanity, executorReport.Verification, patchHygiene),
 		DecisionEvidence: phaseEvidenceDecisionSummary(packet, submittedPlan, sourceSanity, executorReport.Verification, patchHygiene),
 	}
+
 	return bundle
 }
 
@@ -2984,28 +3526,36 @@ func collectSubmittedPlanState(root string, plan workspace.PlanArtifact) []Phase
 			Path:   path,
 			Status: "unknown",
 		}
+
 		if path == "" {
 			check.Status = "failed"
 			check.Error = "edit has no path"
 			out = append(out, check)
+
 			continue
 		}
+
 		fullPath := path
 		if !filepath.IsAbs(fullPath) {
 			fullPath = filepath.Join(strings.TrimSpace(root), path)
 		}
+
 		body, err := os.ReadFile(filepath.Clean(fullPath))
 		if err != nil {
 			check.Status = "failed"
 			check.Error = err.Error()
 			out = append(out, check)
+
 			continue
 		}
+
 		status, summary := submittedPlanEditStatus(string(body), edit)
+
 		check.Status = status
 		check.Summary = fmt.Sprintf("edit %d/%d: %s", i+1, len(plan.Edits), summary)
 		out = append(out, check)
 	}
+
 	return out
 }
 
@@ -3014,41 +3564,54 @@ func submittedPlanEditStatus(current string, edit workspace.PlanEdit) (string, s
 		if current == edit.NewText {
 			return "applied", "whole-file content matches submitted new_text"
 		}
+
 		if repaired := trimTrailingWhitespaceEveryLine(edit.NewText); repaired != edit.NewText && current == repaired {
 			return "applied", "whole-file content matches submitted new_text after mechanical trailing-whitespace repair"
 		}
+
 		return "pending", "whole-file content does not match submitted new_text"
 	}
+
 	if strings.TrimSpace(edit.OldText) != "" {
 		if strings.TrimSpace(edit.NewText) == "" {
 			if !strings.Contains(current, edit.OldText) {
 				return "applied", "submitted old_text is absent after deletion"
 			}
+
 			return "pending", "submitted old_text is still present after deletion"
 		}
+
 		if strings.Contains(current, edit.NewText) {
 			return "applied", "submitted new_text is present"
 		}
+
 		if repaired := trimTrailingWhitespaceEveryLine(edit.NewText); repaired != edit.NewText && strings.Contains(current, repaired) {
 			return "applied", "submitted new_text is present after mechanical trailing-whitespace repair"
 		}
+
 		if strings.Contains(current, edit.OldText) {
 			return "pending", "submitted old_text is still present and new_text is absent"
 		}
+
 		return "unknown", "neither submitted old_text nor new_text is present"
 	}
+
 	if edit.StartLine > 0 || edit.EndLine > 0 {
 		if strings.TrimSpace(edit.Content) != "" && strings.Contains(current, edit.Content) {
 			return "applied", "submitted range content is present"
 		}
+
 		return "unknown", "submitted range content is not present as an exact substring"
 	}
+
 	if strings.TrimSpace(edit.NewText) != "" && strings.Contains(current, edit.NewText) {
 		return "applied", "submitted new_text is present"
 	}
+
 	if repaired := trimTrailingWhitespaceEveryLine(edit.NewText); repaired != edit.NewText && strings.TrimSpace(repaired) != "" && strings.Contains(current, repaired) {
 		return "applied", "submitted new_text is present after mechanical trailing-whitespace repair"
 	}
+
 	return "unknown", "submitted edit shape has no deterministic postcondition"
 }
 
@@ -3057,13 +3620,16 @@ func loadPlanExecutePacketEvidence(root string, packID string) PhaseEvidencePack
 	if packID == "" {
 		return PhaseEvidencePacket{Status: "not_provided"}
 	}
+
 	if !isPlanExecutePackID(packID) {
 		return PhaseEvidencePacket{PackID: packID, Status: "invalid_pack_id", Error: "pack_id must be a 16-character lowercase hex context view id"}
 	}
+
 	view, viewStatus, err := comprehension.LoadViewByIDStatus(root, packID)
 	if err != nil {
 		return PhaseEvidencePacket{PackID: packID, Status: "error", Error: err.Error()}
 	}
+
 	switch viewStatus.State {
 	case comprehension.ViewLoadStateFresh:
 		packet := PhaseEvidencePacketFromView(view)
@@ -3072,44 +3638,58 @@ func loadPlanExecutePacketEvidence(root string, packID string) PhaseEvidencePack
 			packet.Fresh = false
 			packet.Confidence = firstNonEmptyString(packet.Confidence, "stale")
 		}
+
 		return packet
 	case comprehension.ViewLoadStateStale:
 		packet := PhaseEvidencePacketFromView(view)
+
 		packet.Status = "available_stale"
 		packet.Fresh = false
 		packet.Confidence = firstNonEmptyString(packet.Confidence, "stale")
+
 		return packet
 	}
+
 	view, artifactHit, artifactErr := loadPlanExecutePacketArtifact(root, packID)
 	if artifactErr != nil {
 		return PhaseEvidencePacket{PackID: packID, Status: "error", Error: artifactErr.Error()}
 	}
+
 	if !artifactHit {
 		return PhaseEvidencePacket{PackID: packID, Status: "miss"}
 	}
+
 	packet := PhaseEvidencePacketFromView(view)
+
 	packet.Status = "available_stale"
 	packet.Fresh = false
 	packet.Confidence = firstNonEmptyString(packet.Confidence, "stale")
+
 	return packet
 }
 
 func loadPlanExecutePacketArtifact(root string, packID string) (comprehension.PackResult, bool, error) {
 	path := filepath.Join(strings.TrimSpace(root), ".idiom", "comprehension", "views", packID+".json")
 	body, err := os.ReadFile(filepath.Clean(path))
+
 	if os.IsNotExist(err) {
 		return comprehension.PackResult{}, false, nil
 	}
+
 	if err != nil {
 		return comprehension.PackResult{}, false, err
 	}
+
 	var view comprehension.PackResult
+
 	if err := json.Unmarshal(body, &view); err != nil {
 		return comprehension.PackResult{}, false, err
 	}
+
 	if strings.TrimSpace(view.PackID) == "" {
 		view.PackID = packID
 	}
+
 	return view, true, nil
 }
 
@@ -3126,10 +3706,13 @@ func PhaseEvidencePacketFromView(view comprehension.PackResult) PhaseEvidencePac
 		CandidateFiles:   PhaseEvidenceFiles(view.CandidateFiles, 8),
 		CandidateSymbols: PhaseEvidenceSymbols(view.CandidateSymbols, 8),
 	}
+
 	packet.UnresolvedGaps = append(packet.UnresolvedGaps, cappedStrings(view.UnresolvedGaps, 8)...)
+
 	for _, risk := range cappedStrings(view.Risks, 4) {
 		packet.UnresolvedGaps = append(packet.UnresolvedGaps, "risk="+risk)
 	}
+
 	for _, test := range view.Tests {
 		packet.SuggestedTests = append(packet.SuggestedTests, PhaseEvidenceTest{
 			Command:  strings.TrimSpace(test.Command),
@@ -3142,6 +3725,7 @@ func PhaseEvidencePacketFromView(view comprehension.PackResult) PhaseEvidencePac
 			break
 		}
 	}
+
 	return packet
 }
 
@@ -3160,6 +3744,7 @@ func PhaseEvidenceFiles(files []comprehension.PackFile, limit int) []PhaseEviden
 			break
 		}
 	}
+
 	return out
 }
 
@@ -3178,6 +3763,7 @@ func PhaseEvidenceSymbols(symbols []comprehension.PackSymbol, limit int) []Phase
 			break
 		}
 	}
+
 	return out
 }
 
@@ -3187,29 +3773,36 @@ func packetSuggestedTests(packet PhaseEvidencePacket) []PhaseEvidenceTest {
 
 func phaseEvidenceOpenObligations(plan workspace.PlanArtifact, packet PhaseEvidencePacket, changedPaths []string, submittedPlan []PhaseEvidenceCheck, sourceSanity []PhaseEvidenceCheck, verification []PhaseEvidenceCheck, patchHygiene PhaseEvidenceCheck) []string {
 	var out []string
+
 	if strings.TrimSpace(plan.PackID) != "" {
 		if packet.Status != "available" && packet.Status != "available_stale" {
 			out = append(out, "context_packet_unavailable:"+firstNonEmptyString(packet.Status, "unknown"))
 		}
 	}
+
 	for i, check := range submittedPlan {
 		status := firstNonEmptyString(strings.TrimSpace(check.Status), "unknown")
 		if status == "applied" {
 			continue
 		}
+
 		out = append(out, fmt.Sprintf("submitted_edit_%s:%s#%d", status, firstNonEmptyString(strings.TrimSpace(check.Path), "(unknown)"), i+1))
 	}
+
 	if patchHygiene.Status == "failed" {
 		out = append(out, "patch_hygiene_failed")
 	} else if patchHygiene.Status == "unavailable" {
 		out = append(out, "patch_hygiene_unavailable")
 	}
+
 	sourceSanityByPath := map[string]bool{}
+
 	for _, check := range sourceSanity {
 		if path := strings.TrimSpace(check.Path); path != "" {
 			sourceSanityByPath[path] = true
 		}
 	}
+
 	for _, path := range mergePlanExecutePaths(changedPaths) {
 		if workspace.SourceSanityCoversPath(path) {
 			if !sourceSanityByPath[path] {
@@ -3217,18 +3810,21 @@ func phaseEvidenceOpenObligations(plan workspace.PlanArtifact, packet PhaseEvide
 			}
 		}
 	}
+
 	for _, check := range sourceSanity {
 		status := firstNonEmptyString(strings.TrimSpace(check.Status), "unknown")
 		if status != "ok" && status != "passed" {
 			out = append(out, "source_sanity_"+status+":"+firstNonEmptyString(strings.TrimSpace(check.Path), "(unknown)"))
 		}
 	}
+
 	for _, check := range verification {
 		status := firstNonEmptyString(strings.TrimSpace(check.Status), "unknown")
 		if status != "ok" && status != "passed" {
 			out = append(out, "verification_"+status+":"+firstNonEmptyString(strings.TrimSpace(check.Command), "(unknown)"))
 		}
 	}
+
 	return cappedStrings(out, 16)
 }
 
@@ -3238,8 +3834,10 @@ func phaseEvidenceDecisionSummary(packet PhaseEvidencePacket, submittedPlan []Ph
 		{Kind: "patch_hygiene", Status: patchHygiene.Status, Summary: strings.TrimSpace(patchHygiene.Error)},
 	}
 	submittedStatus := "not_applicable"
+
 	if len(submittedPlan) > 0 {
 		submittedStatus = "applied"
+
 		for _, check := range submittedPlan {
 			if check.Status != "applied" {
 				submittedStatus = "open"
@@ -3247,10 +3845,14 @@ func phaseEvidenceDecisionSummary(packet PhaseEvidencePacket, submittedPlan []Ph
 			}
 		}
 	}
+
 	out = append(out, phaseEvidenceSummary{Kind: "submitted_plan", Status: submittedStatus, Summary: fmt.Sprintf("%d edit(s)", len(submittedPlan))})
+
 	status := "not_applicable"
+
 	if len(sourceSanity) > 0 {
 		status = "passed"
+
 		for _, check := range sourceSanity {
 			if check.Status != "ok" && check.Status != "passed" {
 				status = "failed"
@@ -3258,10 +3860,14 @@ func phaseEvidenceDecisionSummary(packet PhaseEvidencePacket, submittedPlan []Ph
 			}
 		}
 	}
+
 	out = append(out, phaseEvidenceSummary{Kind: "source_sanity", Status: status, Summary: fmt.Sprintf("%d check(s)", len(sourceSanity))})
+
 	verificationStatus := "not_applicable"
+
 	if len(verification) > 0 {
 		verificationStatus = "passed"
+
 		for _, check := range verification {
 			if check.Status != "ok" && check.Status != "passed" {
 				verificationStatus = "failed"
@@ -3269,7 +3875,9 @@ func phaseEvidenceDecisionSummary(packet PhaseEvidencePacket, submittedPlan []Ph
 			}
 		}
 	}
+
 	out = append(out, phaseEvidenceSummary{Kind: "verification", Status: verificationStatus, Summary: fmt.Sprintf("%d command(s)", len(verification))})
+
 	return out
 }
 
@@ -3286,27 +3894,34 @@ func PhaseEvidencePacketSummary(packet PhaseEvidencePacket) string {
 
 func renderPlanExecutePhaseEvidence(bundle PhaseEvidenceBundle) string {
 	var b strings.Builder
+
 	fmt.Fprintf(&b, "schema: %s\nphase: %s\n", bundle.SchemaVersion, bundle.Phase)
 	fmt.Fprintf(&b, "changed_paths: %s\n", formatInlineList(bundle.ChangedPaths))
 	fmt.Fprintf(&b, "required_paths: %s\n", formatInlineList(bundle.RequiredPaths))
 	fmt.Fprintf(&b, "allowed_repair_paths: %s\n", formatInlineList(bundle.AllowedPaths))
 	fmt.Fprintf(&b, "edit_set_obligations: %s\n\n", formatInlineList(bundle.EditSetObligations.Kinds()))
 	fmt.Fprintf(&b, "context_packet: status=%s", bundle.Packet.Status)
+
 	if bundle.Packet.PackID != "" {
 		fmt.Fprintf(&b, " pack_id=%s", bundle.Packet.PackID)
 	}
+
 	if bundle.Packet.IndexID != "" {
 		fmt.Fprintf(&b, " index_id=%s fresh=%t", bundle.Packet.IndexID, bundle.Packet.Fresh)
 	}
+
 	if summary := PhaseEvidencePacketSummary(bundle.Packet); summary != "" {
 		fmt.Fprintf(&b, " summary=%s", summary)
 	}
+
 	b.WriteString("\n")
+
 	if bundle.Packet.Quality.LocalizationConfidence != "" {
 		fmt.Fprintf(&b, "packet_quality: localization_confidence=%s source_owner_found=%t\n",
 			bundle.Packet.Quality.LocalizationConfidence,
 			bundle.Packet.Quality.SourceOwnerFound)
 	}
+
 	fmt.Fprintf(&b, "executor_handoff_packet: state=%s reason=%s handoff_created=%t packet_present=%t packet_not_used_by_design=%t packet_freshness_state=%s",
 		bundle.ExecutorHandoff.PacketState,
 		bundle.ExecutorHandoff.Reason,
@@ -3315,75 +3930,100 @@ func renderPlanExecutePhaseEvidence(bundle PhaseEvidenceBundle) string {
 		bundle.ExecutorHandoff.PacketNotUsed,
 		bundle.ExecutorHandoff.PacketFreshness,
 	)
+
 	if bundle.ExecutorHandoff.PackID != "" {
 		fmt.Fprintf(&b, " pack_id=%s", bundle.ExecutorHandoff.PackID)
 	}
+
 	if bundle.ExecutorHandoff.IndexID != "" {
 		fmt.Fprintf(&b, " index_id=%s fresh=%t", bundle.ExecutorHandoff.IndexID, bundle.ExecutorHandoff.Fresh)
 	}
+
 	b.WriteString("\n")
+
 	if bundle.ExecutorHandoff.Quality.LocalizationConfidence != "" {
 		fmt.Fprintf(&b, "executor_handoff_quality: localization_confidence=%s source_owner_found=%t\n",
 			bundle.ExecutorHandoff.Quality.LocalizationConfidence,
 			bundle.ExecutorHandoff.Quality.SourceOwnerFound)
 	}
+
 	if len(bundle.Packet.CandidateFiles) > 0 {
 		b.WriteString("candidate_files:\n")
+
 		for _, file := range bundle.Packet.CandidateFiles {
 			fmt.Fprintf(&b, "- `%s` role=%s reason=%s confidence=%s\n", file.Path, file.Role, file.Reason, file.Confidence)
 		}
 	}
+
 	if len(bundle.Packet.CandidateSymbols) > 0 {
 		b.WriteString("candidate_symbols:\n")
+
 		for _, symbol := range bundle.Packet.CandidateSymbols {
 			fmt.Fprintf(&b, "- `%s` (%s) path=%s reason=%s\n", symbol.Name, symbol.Kind, symbol.Path, symbol.Reason)
 		}
 	}
+
 	if len(bundle.SuggestedTests) > 0 {
 		b.WriteString("suggested_tests:\n")
+
 		for _, test := range bundle.SuggestedTests {
 			fmt.Fprintf(&b, "- `%s` path=%s reason=%s\n", test.Command, test.Path, test.Reason)
 		}
 	}
+
 	if len(bundle.SubmittedPlan) > 0 {
 		b.WriteString("submitted_plan_state:\n")
+
 		for _, check := range bundle.SubmittedPlan {
 			fmt.Fprintf(&b, "- `%s` status=%s summary=%s error=%s\n", check.Path, check.Status, check.Summary, check.Error)
 		}
 	}
+
 	if len(bundle.SourceSanity) > 0 {
 		b.WriteString("source_sanity:\n")
+
 		for _, check := range bundle.SourceSanity {
 			fmt.Fprintf(&b, "- `%s` status=%s summary=%s error=%s\n", check.Path, check.Status, check.Summary, check.Error)
 		}
 	}
+
 	if len(bundle.Verification) > 0 {
 		b.WriteString("verification:\n")
+
 		for _, check := range bundle.Verification {
 			workingDir := ""
 			if strings.TrimSpace(check.WorkingDir) != "" {
 				workingDir = " working_dir=" + strings.TrimSpace(check.WorkingDir)
 			}
+
 			fmt.Fprintf(&b, "- `%s`%s status=%s summary=%s error=%s\n", check.Command, workingDir, check.Status, check.Summary, check.Error)
 		}
 	}
+
 	fmt.Fprintf(&b, "patch_hygiene: status=%s", bundle.PatchHygiene.Status)
+
 	if strings.TrimSpace(bundle.PatchHygiene.Error) != "" {
 		fmt.Fprintf(&b, " error=%s", strings.TrimSpace(bundle.PatchHygiene.Error))
 	}
+
 	b.WriteString("\n")
+
 	if len(bundle.UnresolvedGaps) > 0 {
 		b.WriteString("unresolved_gaps:\n")
+
 		for _, gap := range bundle.UnresolvedGaps {
 			fmt.Fprintf(&b, "- %s\n", gap)
 		}
 	}
+
 	if len(bundle.OpenObligations) > 0 {
 		b.WriteString("open_obligations:\n")
+
 		for _, obligation := range bundle.OpenObligations {
 			fmt.Fprintf(&b, "- %s\n", obligation)
 		}
 	}
+
 	return b.String()
 }
 
@@ -3438,11 +4078,13 @@ func phaseEvidenceTelemetryFilePaths(files []PhaseEvidenceFile, limit int) []str
 		if path == "" {
 			continue
 		}
+
 		out = append(out, path)
 		if len(out) >= limit {
 			break
 		}
 	}
+
 	return out
 }
 
@@ -3453,11 +4095,13 @@ func phaseEvidenceTelemetrySymbolNames(symbols []PhaseEvidenceSymbol, limit int)
 		if name == "" {
 			continue
 		}
+
 		out = append(out, name)
 		if len(out) >= limit {
 			break
 		}
 	}
+
 	return out
 }
 
@@ -3468,11 +4112,13 @@ func phaseEvidenceTelemetryTestCommands(tests []PhaseEvidenceTest, limit int) []
 		if command == "" {
 			continue
 		}
+
 		out = append(out, command)
 		if len(out) >= limit {
 			break
 		}
 	}
+
 	return out
 }
 
@@ -3487,20 +4133,25 @@ func phaseEvidenceTelemetryChecks(checks []PhaseEvidenceCheck, limit int) []map[
 		if command := strings.TrimSpace(check.Command); command != "" {
 			entry["command"] = phaseEvidenceTruncate(command, 240)
 		}
+
 		if workingDir := strings.TrimSpace(check.WorkingDir); workingDir != "" {
 			entry["working_dir"] = phaseEvidenceTruncate(workingDir, 240)
 		}
+
 		if summary := strings.TrimSpace(check.Summary); summary != "" {
 			entry["summary"] = phaseEvidenceTruncate(summary, 240)
 		}
+
 		if errText := strings.TrimSpace(check.Error); errText != "" {
 			entry["error"] = phaseEvidenceTruncate(errText, 240)
 		}
+
 		out = append(out, entry)
 		if len(out) >= limit {
 			break
 		}
 	}
+
 	return out
 }
 
@@ -3509,11 +4160,13 @@ func phaseEvidenceTruncate(text string, limit int) string {
 	if limit <= 0 || len(text) <= limit {
 		return text
 	}
+
 	for i := range text {
 		if i >= limit {
 			return text[:i] + "...(truncated)"
 		}
 	}
+
 	return text
 }
 
@@ -3524,11 +4177,13 @@ func cappedStrings(values []string, limit int) []string {
 		if value == "" {
 			continue
 		}
+
 		out = append(out, value)
 		if len(out) >= limit {
 			break
 		}
 	}
+
 	return out
 }
 
@@ -3536,6 +4191,7 @@ func phaseEvidenceMinInt(a int, b int) int {
 	if a < b {
 		return a
 	}
+
 	return b
 }
 
@@ -3544,6 +4200,7 @@ func formatInlineList(values []string) string {
 	if len(values) == 0 {
 		return "(none)"
 	}
+
 	return strings.Join(values, ", ")
 }
 
@@ -3554,6 +4211,7 @@ func atomMarkdownSectionByHeading(markdown string, headingName string) string {
 	startLevel := 0
 	inFence := false
 	fence := ""
+
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if marker, _, ok := atomMarkdownFenceOpen(trimmed); ok {
@@ -3564,25 +4222,34 @@ func atomMarkdownSectionByHeading(markdown string, headingName string) string {
 				inFence = false
 				fence = ""
 			}
+
 			continue
 		}
+
 		if inFence {
 			continue
 		}
+
 		level, text, ok := atomMarkdownHeading(trimmed)
 		if !ok || !atomMarkdownHeadingMatches(atomNormalizeMarkdownHeadingText(text), want) {
 			continue
 		}
+
 		start = i + 1
 		startLevel = level
+
 		break
 	}
+
 	if start < 0 {
 		return ""
 	}
+
 	end := len(lines)
+
 	inFence = false
 	fence = ""
+
 	for i := start; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
 		if marker, _, ok := atomMarkdownFenceOpen(trimmed); ok {
@@ -3593,17 +4260,21 @@ func atomMarkdownSectionByHeading(markdown string, headingName string) string {
 				inFence = false
 				fence = ""
 			}
+
 			continue
 		}
+
 		if inFence {
 			continue
 		}
+
 		level, _, ok := atomMarkdownHeading(trimmed)
 		if ok && level <= startLevel {
 			end = i
 			break
 		}
 	}
+
 	return strings.Join(lines[start:end], "\n")
 }
 
@@ -3611,18 +4282,24 @@ func atomMarkdownHeading(line string) (int, string, bool) {
 	if !strings.HasPrefix(line, "#") {
 		return 0, "", false
 	}
+
 	level := 0
 	for level < len(line) && line[level] == '#' {
 		level++
 	}
+
 	if level == 0 || level > 6 || level >= len(line) || line[level] != ' ' {
 		return 0, "", false
 	}
+
 	text := strings.TrimSpace(line[level+1:])
+
 	text = strings.TrimSpace(strings.TrimRight(text, "#"))
+
 	if text == "" {
 		return 0, "", false
 	}
+
 	return level, text, true
 }
 
@@ -3634,6 +4311,7 @@ func atomNormalizeMarkdownHeadingText(text string) string {
 func atomMarkdownHeadingMatches(candidate string, want string) bool {
 	candidate = util.TrimHeadingQualifier(candidate)
 	want = util.TrimHeadingQualifier(want)
+
 	return candidate == want
 }
 
@@ -3653,32 +4331,39 @@ func atomRequiredEditPathsFromLabel(label string, scopePaths []string) []string 
 	if label == "" {
 		return nil
 	}
+
 	baseCounts := make(map[string]int, len(scopePaths))
 	for _, path := range scopePaths {
 		baseCounts[filepath.Base(filepath.FromSlash(path))]++
 	}
+
 	matched := make(map[string]struct{}, len(scopePaths))
 	for _, path := range scopePaths {
 		normalized := strings.ReplaceAll(strings.TrimSpace(path), "\\", "/")
 		if normalized == "" {
 			continue
 		}
+
 		if strings.Contains(label, "`"+normalized+"`") || strings.Contains(label, normalized) {
 			matched[path] = struct{}{}
 		}
+
 		base := filepath.Base(filepath.FromSlash(normalized))
 		if base != "" && baseCounts[base] == 1 && strings.Contains(label, "`"+base+"`") {
 			matched[path] = struct{}{}
 		}
 	}
+
 	if len(matched) == 0 {
 		return nil
 	}
+
 	out := make([]string, 0, len(matched))
 	for _, path := range scopePaths {
 		if _, ok := matched[path]; ok {
 			out = append(out, path)
 		}
 	}
+
 	return out
 }

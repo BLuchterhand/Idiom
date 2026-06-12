@@ -34,8 +34,11 @@ func disableQueueDaemonForTurnPlannerTest(t *testing.T, root string) {
 
 func stubImplementationDispatchPlanDocumentPreflight(t *testing.T, stub func(context.Context, config.Config, implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult) {
 	t.Helper()
+
 	orig := implementationDispatchPlanDocumentPreflightRunner
+
 	implementationDispatchPlanDocumentPreflightRunner = stub
+
 	t.Cleanup(func() { implementationDispatchPlanDocumentPreflightRunner = orig })
 }
 
@@ -48,15 +51,20 @@ func allowImplementationDispatchPlanDocumentPreflight(t *testing.T) {
 
 func stubImplementationDispatchPlanDocumentRefine(t *testing.T, stub func(context.Context, config.Config, implementationDispatchPlanDocument) implementationDispatchPlanDocumentRefineResult) {
 	t.Helper()
+
 	orig := implementationDispatchPlanDocumentRefineRunner
+
 	implementationDispatchPlanDocumentRefineRunner = stub
+
 	t.Cleanup(func() { implementationDispatchPlanDocumentRefineRunner = orig })
 }
 
 func TestImplementationDispatchSkipsRefineScratchpadMetaBriefs(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Chat.ImplementationDispatch = "plan_execute"
 	cfg.Workspace.EnableWrites = true
+
 	plan := promptExecutionPlan{
 		route: turnRoutePlan{Family: "implementation"},
 	}
@@ -70,6 +78,7 @@ func TestImplementationDispatchSkipsRefineScratchpadMetaBriefs(t *testing.T) {
 
 	m := &Model{cfg: cfg}
 	decision := m.writerRouteDecisionForPrompt(prompt, plan)
+
 	if decision.Lane != "implement" {
 		t.Fatalf("refine scratchpad meta-brief should stay on implement lane, got %#v", decision)
 	}
@@ -78,13 +87,16 @@ func TestImplementationDispatchSkipsRefineScratchpadMetaBriefs(t *testing.T) {
 func TestImplementationDispatchPlanDocumentSkipsRefineIterArtifactsButAllowsAcceptedBrief(t *testing.T) {
 	root := t.TempDir()
 	iterDir := filepath.Join(root, ".idiom", "refine", "example", "iter-1")
+
 	if err := os.MkdirAll(iterDir, 0o755); err != nil {
 		t.Fatalf("mkdir iter dir: %v", err)
 	}
+
 	draftPath := filepath.Join(iterDir, "draft.md")
 	if err := os.WriteFile(draftPath, []byte("# Draft\n\n## Files To Modify\n\n- target.txt\n"), 0o644); err != nil {
 		t.Fatalf("write draft: %v", err)
 	}
+
 	acceptedPath := filepath.Join(root, ".idiom", "refine", "example", "accepted.md")
 	if err := os.WriteFile(acceptedPath, []byte("# Accepted\n\n## Files To Modify\n\n- target.txt\n"), 0o644); err != nil {
 		t.Fatalf("write accepted: %v", err)
@@ -93,6 +105,7 @@ func TestImplementationDispatchPlanDocumentSkipsRefineIterArtifactsButAllowsAcce
 	if _, ok := readImplementationDispatchPlanDocument(root, ".idiom/refine/example/iter-1/draft.md"); ok {
 		t.Fatalf("refine iter draft should not be treated as a plan document for recursive TUI refine")
 	}
+
 	if _, ok := readImplementationDispatchPlanDocument(root, ".idiom/refine/example/accepted.md"); !ok {
 		t.Fatalf("accepted refine output should remain readable as a plan document")
 	}
@@ -101,9 +114,11 @@ func TestImplementationDispatchPlanDocumentSkipsRefineIterArtifactsButAllowsAcce
 func TestImplementationDispatchRefineTitleIsBounded(t *testing.T) {
 	longPath := ".idiom/refine/" + strings.Repeat("nested-title-", 40) + "iter-1/draft.md"
 	title := implementationDispatchRefineTitle(longPath)
+
 	if !strings.HasPrefix(title, "tui-") {
 		t.Fatalf("title %q missing tui prefix", title)
 	}
+
 	if len(title) > 84 {
 		t.Fatalf("title length = %d, want <= 84: %s", len(title), title)
 	}
@@ -124,9 +139,11 @@ func TestImplementationDispatchSanitizesNonzeroRefineAcceptedContent(t *testing.
 		"",
 	}, "\n")
 	sanitized, changed := sanitizeImplementationDispatchNonzeroRefineAcceptedContent(content)
+
 	if !changed {
 		t.Fatalf("expected sanitize to report changed content")
 	}
+
 	for _, forbidden := range []string{
 		"refine exited non-zero",
 		"idiom:refine-drafted",
@@ -136,8 +153,10 @@ func TestImplementationDispatchSanitizesNonzeroRefineAcceptedContent(t *testing.
 			t.Fatalf("sanitized content still contains %q:\n%s", forbidden, sanitized)
 		}
 	}
+
 	if !strings.Contains(sanitized, "idiom:tui-refine-accepted-after-structural-preflight") ||
 		!strings.Contains(sanitized, "## Files To Modify") {
+
 		t.Fatalf("sanitized content lost expected dispatchable brief shape:\n%s", sanitized)
 	}
 }
@@ -145,6 +164,7 @@ func TestImplementationDispatchSanitizesNonzeroRefineAcceptedContent(t *testing.
 func TestImplementationDispatchNonzeroRefineCandidateCarriesPreflightBlockers(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
@@ -162,9 +182,11 @@ func TestImplementationDispatchNonzeroRefineCandidateCarriesPreflightBlockers(t 
 
 	acceptedRel := filepath.ToSlash(filepath.Join(".idiom", "refine", "example", "accepted.md"))
 	acceptedAbs := filepath.Join(root, filepath.FromSlash(acceptedRel))
+
 	if err := os.MkdirAll(filepath.Dir(acceptedAbs), 0o755); err != nil {
 		t.Fatalf("mkdir refine dir: %v", err)
 	}
+
 	content := strings.Join([]string{
 		"> WARNING: refine exited non-zero - reason=max-iters-exhausted after iter 3.",
 		"",
@@ -186,12 +208,15 @@ func TestImplementationDispatchNonzeroRefineCandidateCarriesPreflightBlockers(t 
 	if ok {
 		t.Fatalf("candidate should remain blocked by preflight")
 	}
+
 	if candidatePath != ".idiom/refine/example/accepted.dispatch.md" {
 		t.Fatalf("candidate path = %q", candidatePath)
 	}
+
 	if candidate.Path != candidatePath {
 		t.Fatalf("candidate document path = %q, want %q", candidate.Path, candidatePath)
 	}
+
 	if len(blockers) != 1 || !strings.Contains(strings.Join(blockers[0].Blockers, "\n"), "dirty scoped paths: target.txt") {
 		t.Fatalf("expected dirty-path blocker to survive materialization, got %#v", blockers)
 	}
@@ -206,9 +231,11 @@ func TestImplementationDispatchDirtyAllowanceMarksOnlyNamedScopedDocument(t *tes
 		"implement atom and explicitly allow dirty scoped path internal/contracts/writerroute/decision_test.go for this run",
 		docs,
 	)
+
 	if !got[0].AllowDirtyAtomScope {
 		t.Fatalf("expected named dirty scoped path to allow matching document: %#v", got)
 	}
+
 	if got[1].AllowDirtyAtomScope {
 		t.Fatalf("dirty scoped path allowance must not apply to unrelated document: %#v", got)
 	}
@@ -222,6 +249,7 @@ func TestImplementationDispatchDirtyAllowanceIgnoresQuotedNextAction(t *testing.
 		"atom intake said next: finish, commit, or explicitly allow the dirty scoped paths before dispatch",
 		docs,
 	)
+
 	if got[0].AllowDirtyAtomScope {
 		t.Fatalf("quoted blocker next-action must not grant dirty scoped path allowance: %#v", got)
 	}
@@ -278,6 +306,7 @@ func TestImplementationDispatchDirtyAllowanceBroadFlagAllowsAllScopedDocuments(t
 		{Path: "atom-b.md", EditPaths: []string{"internal/contracts/writerroute/decision.go"}},
 	}
 	got := implementationDispatchPlanDocumentsWithDirtyAllowance("rerun with --allow-dirty for these atom scopes", docs)
+
 	if !got[0].AllowDirtyAtomScope || !got[1].AllowDirtyAtomScope {
 		t.Fatalf("--allow-dirty should explicitly allow all atom documents in the turn: %#v", got)
 	}
@@ -313,15 +342,19 @@ func TestImplementationDispatchAtomMarksMissingPathAsNewFile(t *testing.T) {
 		Path:   "internal/contracts/writerroute/decision.go",
 		Change: "Domain type, normalization, stable ID, event fields",
 	})
+
 	if !strings.HasPrefix(atom.Change, "NEW FILE:") {
 		t.Fatalf("missing path atom change = %q, want NEW FILE marker", atom.Change)
 	}
+
 	if err := os.MkdirAll(filepath.Join(root, "internal", "contracts", "writerroute"), 0o755); err != nil {
 		t.Fatalf("mkdir writerroute: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "internal", "contracts", "writerroute", "decision.go"), []byte("package writerroute\n"), 0o644); err != nil {
 		t.Fatalf("write existing file: %v", err)
 	}
+
 	atom = implementationDispatchPlanDocumentAtomWithWorkspaceShape(root, implementationDispatchPlanDocumentAtom{
 		Path:   "internal/contracts/writerroute/decision.go",
 		Change: "Domain type, normalization, stable ID, event fields",
@@ -329,11 +362,14 @@ func TestImplementationDispatchAtomMarksMissingPathAsNewFile(t *testing.T) {
 	if strings.HasPrefix(atom.Change, "NEW FILE:") {
 		t.Fatalf("existing path atom change = %q, should not add NEW FILE marker", atom.Change)
 	}
+
 	if len(atom.Anchors) == 0 {
 		t.Fatalf("existing path atom should carry host current-state anchors")
 	}
+
 	if !strings.Contains(atom.Anchors[0], "internal/contracts/writerroute/decision.go:1") ||
 		!strings.Contains(atom.Anchors[0], "package writerroute") {
+
 		t.Fatalf("unexpected existing path anchor: %#v", atom.Anchors)
 	}
 }
@@ -342,11 +378,14 @@ func TestImplementationDispatchAtomAnchorsPreserveCompleteSourceLines(t *testing
 	root := t.TempDir()
 	relPath := filepath.ToSlash(filepath.Join("internal", "contracts", "writerroute", "decision.go"))
 	srcPath := filepath.Join(root, filepath.FromSlash(relPath))
+
 	if err := os.MkdirAll(filepath.Dir(srcPath), 0o755); err != nil {
 		t.Fatalf("mkdir source dir: %v", err)
 	}
+
 	longLine := "func NewDecision(mode WriterMode, lane string, plannerModel string, executorModel string, reviewerModel string, classifierModel string, riskTier string, costTier string, scopeTier string, verificationOwner string, reviewPolicy string, requiredEditPaths []string, evidencePacketIDs []string, reasonCodes []string, escalationTriggers []string, userOverride bool, taskFamily string) Decision {"
 	source := "package writerroute\n\n" + longLine + "\n\treturn Decision{}\n}\n"
+
 	if err := os.WriteFile(srcPath, []byte(source), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
@@ -357,9 +396,11 @@ func TestImplementationDispatchAtomAnchorsPreserveCompleteSourceLines(t *testing
 		Excerpt: "NewDecision constructor shape",
 	})
 	anchors := strings.Join(atom.Anchors, "\n")
+
 	if !strings.Contains(anchors, longLine) {
 		t.Fatalf("anchor lost complete source line:\n%s", anchors)
 	}
+
 	if strings.Contains(anchors, "...") {
 		t.Fatalf("source anchors must not truncate actionable snippets:\n%s", anchors)
 	}
@@ -372,10 +413,12 @@ func TestImplementationDispatchMaterializedAtomsCarryDesignDocTestObligations(t 
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", path, err)
 		}
+
 		if err := os.WriteFile(full, []byte("package pkg\n"), 0o644); err != nil {
 			t.Fatalf("write %s: %v", path, err)
 		}
 	}
+
 	doc := implementationDispatchPlanDocument{
 		Path: "docs/design.md",
 		Content: strings.Join([]string{
@@ -400,6 +443,7 @@ func TestImplementationDispatchMaterializedAtomsCarryDesignDocTestObligations(t 
 		TestObligations: []string{"`pkg/source_test.go`: add `TestRouteDecisionShape`.", "`go test ./pkg`"},
 	}
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
@@ -407,19 +451,24 @@ func TestImplementationDispatchMaterializedAtomsCarryDesignDocTestObligations(t 
 	if err != nil {
 		t.Fatalf("materialize atoms: %v", err)
 	}
+
 	var testAtom implementationDispatchPlanDocument
+
 	for _, atom := range atoms {
 		if slices.Contains(atom.EditPaths, "pkg/source_test.go") {
 			testAtom = atom
 			break
 		}
 	}
+
 	if strings.TrimSpace(testAtom.Path) == "" {
 		t.Fatalf("expected test obligation to materialize a test atom, got %#v", atoms)
 	}
+
 	if !strings.Contains(testAtom.Content, "## Design Doc Test Obligations") ||
 		!strings.Contains(testAtom.Content, "TestRouteDecisionShape") ||
 		!strings.Contains(testAtom.Content, "go test ./pkg") {
+
 		t.Fatalf("materialized test atom missing design-doc test obligations:\n%s", testAtom.Content)
 	}
 }
@@ -427,12 +476,15 @@ func TestImplementationDispatchMaterializedAtomsCarryDesignDocTestObligations(t 
 func TestImplementationDispatchMaterializedAtomsPreserveTerminalAtomState(t *testing.T) {
 	root := t.TempDir()
 	sourcePath := filepath.Join(root, "pkg", "source.go")
+
 	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o755); err != nil {
 		t.Fatalf("mkdir source dir: %v", err)
 	}
+
 	if err := os.WriteFile(sourcePath, []byte("package pkg\n"), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
+
 	doc := implementationDispatchPlanDocument{
 		Path: "docs/design.md",
 		Content: strings.Join([]string{
@@ -447,14 +499,17 @@ func TestImplementationDispatchMaterializedAtomsPreserveTerminalAtomState(t *tes
 		EditPaths: []string{"pkg/source.go"},
 	}
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
 	atomRel := ".idiom/atoms/tui-docs-design/atom-001.md"
 	atomAbs := filepath.Join(root, filepath.FromSlash(atomRel))
+
 	if err := os.MkdirAll(filepath.Dir(atomAbs), 0o755); err != nil {
 		t.Fatalf("mkdir atom dir: %v", err)
 	}
+
 	existing := strings.Join([]string{
 		"# design atom 001",
 		"",
@@ -481,17 +536,21 @@ func TestImplementationDispatchMaterializedAtomsPreserveTerminalAtomState(t *tes
 	if err != nil {
 		t.Fatalf("materialize atoms: %v", err)
 	}
+
 	if len(atoms) != 1 || atoms[0].Path != atomRel {
 		t.Fatalf("expected existing atom to be returned, got %#v", atoms)
 	}
+
 	status, ok := implementationDispatchPlanDocumentTerminalAtomStatus(atoms[0])
 	if !ok || status != "completed" {
 		t.Fatalf("existing atom should stay terminal, status=%q ok=%v", status, ok)
 	}
+
 	updated, err := os.ReadFile(atomAbs)
 	if err != nil {
 		t.Fatalf("read atom: %v", err)
 	}
+
 	if string(updated) != existing {
 		t.Fatalf("materialization overwrote terminal atom:\n%s", string(updated))
 	}
@@ -500,11 +559,14 @@ func TestImplementationDispatchMaterializedAtomsPreserveTerminalAtomState(t *tes
 func TestRunAtomizedImplementationPlanDocumentsSkipsTerminalAtoms(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
+
 	atomRel := ".idiom/atoms/design/atom-001.md"
 	atomAbs := filepath.Join(root, filepath.FromSlash(atomRel))
+
 	if err := os.MkdirAll(filepath.Dir(atomAbs), 0o755); err != nil {
 		t.Fatalf("mkdir atom dir: %v", err)
 	}
+
 	body := strings.Join([]string{
 		"# design atom 001",
 		"",
@@ -524,30 +586,38 @@ func TestRunAtomizedImplementationPlanDocumentsSkipsTerminalAtoms(t *testing.T) 
 	if err := os.WriteFile(atomAbs, []byte(body), 0o644); err != nil {
 		t.Fatalf("write atom: %v", err)
 	}
+
 	doc, ok := readImplementationDispatchPlanDocument(root, atomRel)
 	if !ok {
 		t.Fatalf("atom doc should be readable")
 	}
+
 	cfg := config.Default()
+
 	cfg.Chat.ImplementationDispatch = "plan_execute"
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
 	cfg.MCP = nil
+
 	model := New(cfg)
+
 	defer model.Close()
 
 	answer, err := model.runAtomizedImplementationPlanDocumentsViaPlanExecute(context.Background(), "implement docs/design.md", promptExecutionPlan{}, []implementationDispatchPlanDocument{doc})
 	if err != nil {
 		t.Fatalf("run atomized plan documents: %v", err)
 	}
+
 	if !strings.Contains(answer, "already closed") || !strings.Contains(answer, "skipped: completed") {
 		t.Fatalf("closed atom should be skipped without dispatch:\n%s", answer)
 	}
+
 	updated, err := os.ReadFile(atomAbs)
 	if err != nil {
 		t.Fatalf("read atom: %v", err)
 	}
+
 	if string(updated) != body {
 		t.Fatalf("skipping terminal atom should not rewrite it:\n%s", string(updated))
 	}
@@ -557,32 +627,42 @@ func TestImplementationDispatchSourceSatisfiedRequiresTestObligationEvidence(t *
 	root := t.TempDir()
 	testPath := "pkg/source_test.go"
 	full := filepath.Join(root, filepath.FromSlash(testPath))
+
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		t.Fatalf("mkdir source test: %v", err)
 	}
+
 	if err := os.WriteFile(full, []byte("package pkg\n\nvar routeDecisionHarness = true\n"), 0o644); err != nil {
 		t.Fatalf("write source test: %v", err)
 	}
+
 	doc := sourceSatisfiedAtomDoc(".idiom/atoms/design/atom-001.md", testPath, "Add `routeDecisionHarness` coverage", []string{
 		"`pkg/source_test.go:1`: `package pkg`",
 		"`pkg/source_test.go:3`: `var routeDecisionHarness = true`",
 	})
+
 	doc.Content += "\n\n## Design Doc Test Obligations\n\n- `pkg/source_test.go`: add `TestRouteDecisionShape`.\n"
+
 	doc.TestObligations = implementationDispatchDesignDocTestObligations(doc.Content)
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
 	if records := implementationDispatchPlanDocumentsSourceSatisfied(cfg, []implementationDispatchPlanDocument{doc}); len(records) != 0 {
 		t.Fatalf("source-satisfied must not close without matching test evidence: %#v", records)
 	}
+
 	if err := os.WriteFile(full, []byte("package pkg\n\nvar routeDecisionHarness = true\n\nfunc TestRouteDecisionShape(t *testing.T) {}\n"), 0o644); err != nil {
 		t.Fatalf("write source test with evidence: %v", err)
 	}
+
 	records := implementationDispatchPlanDocumentsSourceSatisfied(cfg, []implementationDispatchPlanDocument{doc})
 	if len(records) != 1 || len(records[0].TestEvidence) == 0 {
 		t.Fatalf("expected source-satisfied test evidence, got %#v", records)
 	}
+
 	message := humanImplementationDispatchSourceSatisfiedMessage(records)
 	if !strings.Contains(message, "Test obligations") || !strings.Contains(message, "TestRouteDecisionShape") {
 		t.Fatalf("source-satisfied message should report test obligations and evidence:\n%s", message)
@@ -593,19 +673,26 @@ func TestImplementationDispatchSourceSatisfiedRequiresVerificationCommandEvidenc
 	root := t.TempDir()
 	sourcePath := "pkg/source.go"
 	full := filepath.Join(root, filepath.FromSlash(sourcePath))
+
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		t.Fatalf("mkdir source: %v", err)
 	}
+
 	if err := os.WriteFile(full, []byte("package pkg\n\nfunc routeDecisionHarness() {}\n"), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
+
 	doc := sourceSatisfiedAtomDoc(".idiom/atoms/design/atom-001.md", sourcePath, "Add `routeDecisionHarness` implementation", []string{
 		"`pkg/source.go:1`: `package pkg`",
 		"`pkg/source.go:3`: `func routeDecisionHarness() {}`",
 	})
+
 	doc.Content += "\n\n## Design Doc Test Obligations\n\n- `go test ./pkg`\n"
+
 	doc.TestObligations = implementationDispatchDesignDocTestObligations(doc.Content)
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
@@ -618,9 +705,11 @@ func TestImplementationDispatchBlockedQuestionDoesNotMarkAtomCompleted(t *testin
 	root := t.TempDir()
 	atomRel := ".idiom/atoms/design/atom-001.md"
 	atomAbs := filepath.Join(root, filepath.FromSlash(atomRel))
+
 	if err := os.MkdirAll(filepath.Dir(atomAbs), 0o755); err != nil {
 		t.Fatalf("mkdir atom dir: %v", err)
 	}
+
 	body := strings.Join([]string{
 		"# design atom 001",
 		"",
@@ -636,11 +725,14 @@ func TestImplementationDispatchBlockedQuestionDoesNotMarkAtomCompleted(t *testin
 	if err := os.WriteFile(atomAbs, []byte(body), 0o644); err != nil {
 		t.Fatalf("write atom: %v", err)
 	}
+
 	doc, ok := readImplementationDispatchPlanDocument(root, atomRel)
 	if !ok {
 		t.Fatalf("atom doc should be readable")
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
@@ -648,11 +740,14 @@ func TestImplementationDispatchBlockedQuestionDoesNotMarkAtomCompleted(t *testin
 	if !implementationDispatchAnswerLooksBlocked(answer) {
 		t.Fatalf("question answer should be classified as blocked")
 	}
+
 	implementationDispatchMarkCompletedAtomDocument(cfg, doc, answer)
+
 	updated, err := os.ReadFile(atomAbs)
 	if err != nil {
 		t.Fatalf("read atom: %v", err)
 	}
+
 	if strings.Contains(string(updated), "Status: completed") || strings.Contains(string(updated), "## Result") {
 		t.Fatalf("blocked question must not mark atom completed:\n%s", string(updated))
 	}
@@ -662,9 +757,11 @@ func TestImplementationDispatchCommandObligationMustBeProvenBeforeAtomComplete(t
 	root := t.TempDir()
 	atomRel := ".idiom/atoms/design/atom-001.md"
 	atomAbs := filepath.Join(root, filepath.FromSlash(atomRel))
+
 	if err := os.MkdirAll(filepath.Dir(atomAbs), 0o755); err != nil {
 		t.Fatalf("mkdir atom dir: %v", err)
 	}
+
 	body := strings.Join([]string{
 		"# design atom 001",
 		"",
@@ -684,11 +781,14 @@ func TestImplementationDispatchCommandObligationMustBeProvenBeforeAtomComplete(t
 	if err := os.WriteFile(atomAbs, []byte(body), 0o644); err != nil {
 		t.Fatalf("write atom: %v", err)
 	}
+
 	doc, ok := readImplementationDispatchPlanDocument(root, atomRel)
 	if !ok {
 		t.Fatalf("atom doc should be readable")
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
@@ -696,21 +796,26 @@ func TestImplementationDispatchCommandObligationMustBeProvenBeforeAtomComplete(t
 	if pending := implementationDispatchUnprovenVerificationCommands(doc, unprovenAnswer); len(pending) != 1 {
 		t.Fatalf("expected pending command, got %#v", pending)
 	}
+
 	implementationDispatchMarkCompletedAtomDocument(cfg, doc, unprovenAnswer)
+
 	updated, err := os.ReadFile(atomAbs)
 	if err != nil {
 		t.Fatalf("read atom: %v", err)
 	}
+
 	if strings.Contains(string(updated), "Status: completed") || strings.Contains(string(updated), "## Result") {
 		t.Fatalf("unproven command must not mark atom complete:\n%s", string(updated))
 	}
 
 	provenAnswer := "Completed source work.\n\nVerification: `go test ./pkg` passed with exit 0."
 	implementationDispatchMarkCompletedAtomDocument(cfg, doc, provenAnswer)
+
 	updated, err = os.ReadFile(atomAbs)
 	if err != nil {
 		t.Fatalf("read atom after proven answer: %v", err)
 	}
+
 	if !strings.Contains(string(updated), "Status: completed") || !strings.Contains(string(updated), "go test ./pkg") {
 		t.Fatalf("proven command should allow completion:\n%s", string(updated))
 	}
@@ -718,10 +823,12 @@ func TestImplementationDispatchCommandObligationMustBeProvenBeforeAtomComplete(t
 
 func TestWriterRouteDecisionForPromptReportsGuardedImplementForExactEditPacket(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
 	cfg.LlamaServer.Model = "planner-model"
 	cfg.RouteClassifier.Model = "classifier-model"
+
 	m := &Model{
 		cfg:          cfg,
 		plannerSpec:  config.LlamaServer{Model: "planner-model"},
@@ -759,12 +866,15 @@ func TestWriterRouteDecisionForPromptReportsGuardedImplementForExactEditPacket(t
 	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
 		t.Fatalf("unexpected writer route decision: %#v", decision)
 	}
+
 	if decision.TaskFamily != "implementation" {
 		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
 	}
+
 	if decision.PlannerModel != "planner-model" || decision.ExecutorModel != "executor-model" || decision.ClassifierModel != "classifier-model" {
 		t.Fatalf("unexpected model fields: %#v", decision)
 	}
+
 	if !slices.Contains(decision.RequiredEditPaths, "internal/surfaces/tui/app/writer_route.go") {
 		t.Fatalf("required paths missing from writer route decision: %#v", decision.RequiredEditPaths)
 	}
@@ -772,8 +882,10 @@ func TestWriterRouteDecisionForPromptReportsGuardedImplementForExactEditPacket(t
 
 func TestWriterRouteDecisionForPromptDoesNotCreateSemanticTDDScopeFromProse(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
+
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
 		mode:  agent.BuildMode(),
@@ -788,9 +900,11 @@ func TestWriterRouteDecisionForPromptDoesNotCreateSemanticTDDScopeFromProse(t *t
 	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
 		t.Fatalf("semantic TDD source+test implementation should stay on guarded implement until semantic plan handoff exists, got %#v", decision)
 	}
+
 	if decision.TaskFamily != "implementation" {
 		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
 	}
+
 	if slices.Contains(decision.ReasonCodes, "route.semantic_source_test_executor") {
 		t.Fatalf("prompt prose must not create semantic source/test executor reason: %#v", decision.ReasonCodes)
 	}
@@ -798,8 +912,10 @@ func TestWriterRouteDecisionForPromptDoesNotCreateSemanticTDDScopeFromProse(t *t
 
 func TestWriterRouteDecisionForPromptDoesNotUseTDDProductKeywordForSemanticScope(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
+
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
 		mode:  agent.BuildMode(),
@@ -814,9 +930,11 @@ func TestWriterRouteDecisionForPromptDoesNotUseTDDProductKeywordForSemanticScope
 	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
 		t.Fatalf("implementation prompt should stay on guarded implement lane, got %#v", decision)
 	}
+
 	if slices.Contains(decision.ReasonCodes, "route.semantic_source_test_executor") {
 		t.Fatalf("TDD/product wording alone must not create semantic source/test executor reason: %#v", decision.ReasonCodes)
 	}
+
 	if !slices.Contains(decision.ReasonCodes, "route.local_model_default") {
 		t.Fatalf("direct implementation reason missing: %#v", decision.ReasonCodes)
 	}
@@ -824,8 +942,10 @@ func TestWriterRouteDecisionForPromptDoesNotUseTDDProductKeywordForSemanticScope
 
 func TestWriterRouteDecisionForPromptDoesNotUsePlanExecutePhraseForSemanticTDDScope(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
+
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
 		mode:  agent.BuildMode(),
@@ -840,9 +960,11 @@ func TestWriterRouteDecisionForPromptDoesNotUsePlanExecutePhraseForSemanticTDDSc
 	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
 		t.Fatalf("plan-execute prose mention should not route to plan-execute, got %#v", decision)
 	}
+
 	if decision.TaskFamily != "implementation" {
 		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
 	}
+
 	if slices.Contains(decision.ReasonCodes, "route.semantic_source_test_executor") {
 		t.Fatalf("plan-execute prose mention must not create semantic source/test executor reason: %#v", decision.ReasonCodes)
 	}
@@ -850,7 +972,9 @@ func TestWriterRouteDecisionForPromptDoesNotUsePlanExecutePhraseForSemanticTDDSc
 
 func TestPlanExecuteSlashCommandExecutionPlanUsesPlannerMetadata(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
+
 	m := &Model{cfg: cfg}
 	objective := "Implement the typed TUI command. Required edit paths only: internal/workflows/planexecute/prompt.go, internal/workflows/planexecute/context_pack_test.go, internal/surfaces/tui/app/update_handlers.go, internal/surfaces/tui/app/lifecycle.go."
 
@@ -866,15 +990,19 @@ func TestPlanExecuteSlashCommandExecutionPlanUsesPlannerMetadata(t *testing.T) {
 	if plan.mode.Name != "build" {
 		t.Fatalf("mode = %q, want build", plan.mode.Name)
 	}
+
 	if plan.route.Family != agent.PlanThenExecutePlannerTaskFamily || plan.runtimeBrief.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
 		t.Fatalf("typed command should set plan-execute planner family, route=%#v brief=%#v", plan.route, plan.runtimeBrief)
 	}
+
 	if !slices.Equal(plan.runtimeBrief.RequiredEditPaths, wantPaths) {
 		t.Fatalf("required edit paths = %#v, want %#v", plan.runtimeBrief.RequiredEditPaths, wantPaths)
 	}
+
 	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
 		t.Fatalf("typed command should report plan-execute writer metadata, got %#v", decision)
 	}
+
 	if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily || !slices.Contains(decision.ReasonCodes, "route.plan_execute_planner") {
 		t.Fatalf("typed command writer metadata missing planner route, got %#v", decision)
 	}
@@ -882,7 +1010,9 @@ func TestPlanExecuteSlashCommandExecutionPlanUsesPlannerMetadata(t *testing.T) {
 
 func TestClassifierSelectedPlanExecuteFamilyRequiresConfirmation(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
+
 	m := &Model{cfg: cfg}
 	objective := "Can you send this product workflow implementation atom through the TUI plan-execute flow?"
 
@@ -913,12 +1043,15 @@ func TestClassifierSelectedPlanExecuteFamilyRequiresConfirmation(t *testing.T) {
 			if route.Family != agent.PlanThenExecutePlannerTaskFamily {
 				t.Fatalf("normalized family = %q, want %s", route.Family, agent.PlanThenExecutePlannerTaskFamily)
 			}
+
 			if route.InitialLane != "implement" || route.Contract != "implementation_result" {
 				t.Fatalf("normalized route lost planner execution contract: %#v", route)
 			}
+
 			if decision.WriterMode != string(writerroute.ModeReadOnly) || decision.Lane != "main" {
 				t.Fatalf("classifier-selected planner family should wait for confirmation, got %#v", decision)
 			}
+
 			if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily || !slices.Contains(decision.ReasonCodes, "route.mutation_confirmation_required") {
 				t.Fatalf("classifier-selected planner route missing confirmation metadata, got %#v", decision)
 			}
@@ -928,19 +1061,24 @@ func TestClassifierSelectedPlanExecuteFamilyRequiresConfirmation(t *testing.T) {
 
 func TestBuildPromptExecutionPlanPreservesClassifierSelectedPlanExecuteFamily(t *testing.T) {
 	var calls atomic.Int64
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": `{"family":"plan_then_execute_planner","initial_lane":"implement","reason":"classifier_atom_dispatch","contract":"implementation_result"}`},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
 	cfg.RouteClassifier.Enabled = true
+
 	m := &Model{
 		cfg:    cfg,
 		client: llama.NewClient(server.URL, time.Second),
@@ -953,15 +1091,19 @@ func TestBuildPromptExecutionPlanPreservesClassifierSelectedPlanExecuteFamily(t 
 	if calls.Load() != 1 {
 		t.Fatalf("classifier calls = %d, want 1", calls.Load())
 	}
+
 	if plan.route.Family != agent.PlanThenExecutePlannerTaskFamily {
 		t.Fatalf("route family = %q, want %s", plan.route.Family, agent.PlanThenExecutePlannerTaskFamily)
 	}
+
 	if plan.runtimeBrief.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
 		t.Fatalf("runtime brief task family = %q, want %s", plan.runtimeBrief.TaskFamily, agent.PlanThenExecutePlannerTaskFamily)
 	}
+
 	if decision.WriterMode != string(writerroute.ModeReadOnly) || decision.Lane != "main" {
 		t.Fatalf("classifier-selected planner should wait for confirmation, got %#v", decision)
 	}
+
 	if !slices.Contains(decision.ReasonCodes, "route.mutation_confirmation_required") {
 		t.Fatalf("confirmation reason missing: %#v", decision.ReasonCodes)
 	}
@@ -969,8 +1111,10 @@ func TestBuildPromptExecutionPlanPreservesClassifierSelectedPlanExecuteFamily(t 
 
 func TestImplementSlashCommandExecutionPlanUsesImplementMetadata(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
+
 	m := &Model{cfg: cfg}
 	objective := "Create a small fixture file. Required edit paths only: tmp/typed-implement.txt."
 
@@ -980,15 +1124,19 @@ func TestImplementSlashCommandExecutionPlanUsesImplementMetadata(t *testing.T) {
 	if plan.mode.Name != "build" {
 		t.Fatalf("mode = %q, want build", plan.mode.Name)
 	}
+
 	if plan.route.Family != "implementation" || plan.route.Reason != "typed_implement_command" {
 		t.Fatalf("typed command should set implementation route, got %#v", plan.route)
 	}
+
 	if plan.runtimeBrief.TaskFamily != "implementation" {
 		t.Fatalf("brief task family = %q, want implementation", plan.runtimeBrief.TaskFamily)
 	}
+
 	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
 		t.Fatalf("typed command should report implement writer metadata, got %#v", decision)
 	}
+
 	if decision.TaskFamily != "implementation" || !slices.Contains(decision.ReasonCodes, "route.typed_implement_command") {
 		t.Fatalf("typed command writer metadata missing implement route, got %#v", decision)
 	}
@@ -996,7 +1144,9 @@ func TestImplementSlashCommandExecutionPlanUsesImplementMetadata(t *testing.T) {
 
 func TestWriterRouteDecisionForPromptReportsReviewRepairAsPlanSubmission(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
+
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
 		mode: agent.BuildMode(),
@@ -1017,12 +1167,15 @@ func TestWriterRouteDecisionForPromptReportsReviewRepairAsPlanSubmission(t *test
 	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
 		t.Fatalf("review-repair should report plan-submission authority under plan-execute, got %#v", decision)
 	}
+
 	if decision.TaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
 		t.Fatalf("task family = %q, want %s", decision.TaskFamily, agent.PlanThenExecuteReviewRepairTaskFamily)
 	}
+
 	if decision.VerificationOwner != "planner_owned" {
 		t.Fatalf("review-repair should preserve planner-owned verification, got %#v", decision)
 	}
+
 	if !slices.Contains(decision.ReasonCodes, "route.plan_execute_review_repair") {
 		t.Fatalf("review-repair route reason missing: %#v", decision.ReasonCodes)
 	}
@@ -1030,8 +1183,10 @@ func TestWriterRouteDecisionForPromptReportsReviewRepairAsPlanSubmission(t *test
 
 func TestWriterRouteDecisionForPromptDoesNotUsePlanExecutePhraseAsContract(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
+
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
 		mode:  agent.BuildMode(),
@@ -1046,6 +1201,7 @@ func TestWriterRouteDecisionForPromptDoesNotUsePlanExecutePhraseAsContract(t *te
 	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
 		t.Fatalf("plan-execute wording alone should not select plan-submission contract, got %#v", decision)
 	}
+
 	if decision.TaskFamily != "implementation" {
 		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
 	}
@@ -1053,8 +1209,10 @@ func TestWriterRouteDecisionForPromptDoesNotUsePlanExecutePhraseAsContract(t *te
 
 func TestWriterRouteDecisionForPromptKeepsSimpleUnscopedImplementationOnGuardedLane(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
+
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
 		mode:         agent.BuildMode(),
@@ -1067,9 +1225,11 @@ func TestWriterRouteDecisionForPromptKeepsSimpleUnscopedImplementationOnGuardedL
 	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
 		t.Fatalf("simple unscoped implementation should stay on guarded implement lane, got %#v", decision)
 	}
+
 	if decision.TaskFamily != "implementation" {
 		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
 	}
+
 	if !slices.Contains(decision.ReasonCodes, "route.local_model_default") {
 		t.Fatalf("direct implementation reason missing: %#v", decision.ReasonCodes)
 	}
@@ -1077,8 +1237,10 @@ func TestWriterRouteDecisionForPromptKeepsSimpleUnscopedImplementationOnGuardedL
 
 func TestWriterRouteDecisionForPromptKeepsSimpleScopedSourceTestImplementationOnGuardedLane(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
+
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
 		mode:  agent.BuildMode(),
@@ -1093,9 +1255,11 @@ func TestWriterRouteDecisionForPromptKeepsSimpleScopedSourceTestImplementationOn
 	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
 		t.Fatalf("simple scoped source+test implementation should stay on guarded implement lane, got %#v", decision)
 	}
+
 	if decision.TaskFamily != "implementation" {
 		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
 	}
+
 	if !slices.Contains(decision.ReasonCodes, "route.local_model_default") {
 		t.Fatalf("direct implementation reason missing: %#v", decision.ReasonCodes)
 	}
@@ -1103,8 +1267,10 @@ func TestWriterRouteDecisionForPromptKeepsSimpleScopedSourceTestImplementationOn
 
 func TestWriterRouteDecisionForPromptKeepsExactEditPacketOnGuardedLane(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
+
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
 		mode:  agent.BuildMode(),
@@ -1136,6 +1302,7 @@ func TestWriterRouteDecisionForPromptKeepsExactEditPacketOnGuardedLane(t *testin
 	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
 		t.Fatalf("exact edit packet should stay on guarded implement lane, got %#v", decision)
 	}
+
 	if decision.TaskFamily != "implementation" {
 		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
 	}
@@ -1143,8 +1310,10 @@ func TestWriterRouteDecisionForPromptKeepsExactEditPacketOnGuardedLane(t *testin
 
 func TestWriterRouteDecisionForPromptDoesNotUsePlanExecutePhraseForExactEditPacket(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
+
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
 		mode:  agent.BuildMode(),
@@ -1186,6 +1355,7 @@ func TestWriterRouteDecisionForPromptDoesNotUsePlanExecutePhraseForExactEditPack
 	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
 		t.Fatalf("plan-execute prose mention should not route exact edit packet to plan-execute, got %#v", decision)
 	}
+
 	if decision.TaskFamily != "implementation" {
 		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
 	}
@@ -1193,8 +1363,10 @@ func TestWriterRouteDecisionForPromptDoesNotUsePlanExecutePhraseForExactEditPack
 
 func TestWriterRouteDecisionForPromptReportsPlanExecutePlannerFamily(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
+
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
 		mode:  agent.BuildMode(),
@@ -1209,9 +1381,11 @@ func TestWriterRouteDecisionForPromptReportsPlanExecutePlannerFamily(t *testing.
 	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
 		t.Fatalf("plan-execute planner should report plan-submission route, got %#v", decision)
 	}
+
 	if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
 		t.Fatalf("task family = %q, want %s", decision.TaskFamily, agent.PlanThenExecutePlannerTaskFamily)
 	}
+
 	if !slices.Contains(decision.ReasonCodes, "route.plan_execute_planner") {
 		t.Fatalf("plan-execute planner reason missing: %#v", decision.ReasonCodes)
 	}
@@ -1253,6 +1427,7 @@ func TestAppendDiscoveredCandidateScopeStaysInsideBriefBody(t *testing.T) {
 	if !strings.Contains(scoped, "allowed_edit_paths:") || !strings.Contains(scoped, "internal/surfaces/tui/app/rendering.go") {
 		t.Fatalf("discovered candidate scope was not inserted inside brief body:\n%s", got)
 	}
+
 	if allowed := AllowedEditPathsFromPrompt(got); len(allowed) != 1 || allowed[0] != "internal/surfaces/tui/app/rendering.go" {
 		t.Fatalf("discovered candidate scope is not parseable as allowed paths: %#v\n%s", allowed, got)
 	}
@@ -1378,16 +1553,22 @@ func TestImplementationDispatchContextPackTestPathsUsesCandidateTests_CompactFor
 func TestImplementationDispatchPreloadedContextPackBecomesInitialAllowedScope_CompactFormat(t *testing.T) {
 	root := t.TempDir()
 	testPath := filepath.Join(root, "internal", "workflows", "productworkflow", "migration_apply_test.go")
+
 	if err := os.MkdirAll(filepath.Dir(testPath), 0o755); err != nil {
 		t.Fatalf("mkdir test dir: %v", err)
 	}
+
 	if err := os.WriteFile(testPath, []byte("package productworkflow\n"), 0o644); err != nil {
 		t.Fatalf("write sibling test: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
+
 	model := New(cfg)
+
 	defer model.Close()
 
 	// New compact projection format.
@@ -1419,6 +1600,7 @@ func TestImplementationDispatchPreloadedContextPackBecomesInitialAllowedScope_Co
 		"internal/workflows/productworkflow/migration_apply.go",
 		"internal/workflows/productworkflow/migration_apply_test.go",
 	}
+
 	if !slices.Equal(paths, want) {
 		t.Fatalf("preloaded context-pack scope (compact format) = %#v, want %#v", paths, want)
 	}
@@ -1426,9 +1608,12 @@ func TestImplementationDispatchPreloadedContextPackBecomesInitialAllowedScope_Co
 
 func TestImplementationDispatchPreloadedContextPackRejectsIrrelevantCandidateScope_CompactFormat(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.Root = t.TempDir()
 	cfg.Workspace.CWD = cfg.Workspace.Root
+
 	model := New(cfg)
+
 	defer model.Close()
 
 	// New compact projection format with irrelevant paths.
@@ -1471,19 +1656,24 @@ func TestImplementationDispatchAllowedPathsFromBuildContextPackSection_Integrati
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/ctxpack\n\ngo 1.22\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+
 	editPath := filepath.Join(root, "pkg", "target.go")
 	if err := os.WriteFile(editPath, []byte("package pkg\n\nfunc Target() string { return \"target\" }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "noise.go"), []byte("package pkg\n\nfunc Noise() string { return \"noise\" }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	brief := "# Plan-execute atom\n\n## Task\n\nPlan a change to Target.\n\n## Files To Modify\n\n- pkg/target.go\n"
+
 	var stderr bytes.Buffer
+
 	section := planexecute.BuildPromptContextPackSection(config.Config{Workspace: config.Workspace{Root: root, CWD: root}}, planexecute.PromptContextPackOptions{
 		Mode:              "plan",
 		Title:             "Plan-execute atom",
@@ -1512,12 +1702,14 @@ func TestImplementationDispatchAllowedPathsFromBuildContextPackSection_Integrati
 
 	// At minimum, pkg/target.go should be found since it was a required edit path.
 	foundTarget := false
+
 	for _, p := range allPaths {
 		if strings.Contains(p, "pkg/target.go") {
 			foundTarget = true
 			break
 		}
 	}
+
 	if !foundTarget {
 		t.Fatalf("expected pkg/target.go in parsed paths, got %v; section:\n%s\nstderr=%s", allPaths, section, stderr.String())
 	}
@@ -1526,16 +1718,22 @@ func TestImplementationDispatchAllowedPathsFromBuildContextPackSection_Integrati
 func TestImplementationDispatchPreloadedContextPackBecomesInitialAllowedScope(t *testing.T) {
 	root := t.TempDir()
 	testPath := filepath.Join(root, "internal", "workflows", "productworkflow", "migration_apply_test.go")
+
 	if err := os.MkdirAll(filepath.Dir(testPath), 0o755); err != nil {
 		t.Fatalf("mkdir test dir: %v", err)
 	}
+
 	if err := os.WriteFile(testPath, []byte("package productworkflow\n"), 0o644); err != nil {
 		t.Fatalf("write sibling test: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
+
 	model := New(cfg)
+
 	defer model.Close()
 
 	contextPack := strings.Join([]string{
@@ -1556,6 +1754,7 @@ func TestImplementationDispatchPreloadedContextPackBecomesInitialAllowedScope(t 
 		"internal/workflows/productworkflow/migration_apply.go",
 		"internal/workflows/productworkflow/migration_apply_test.go",
 	}
+
 	if !slices.Equal(paths, want) {
 		t.Fatalf("preloaded context-pack scope = %#v, want %#v", paths, want)
 	}
@@ -1563,9 +1762,12 @@ func TestImplementationDispatchPreloadedContextPackBecomesInitialAllowedScope(t 
 
 func TestImplementationDispatchPreloadedContextPackRejectsIrrelevantCandidateScope(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.Root = t.TempDir()
 	cfg.Workspace.CWD = cfg.Workspace.Root
+
 	model := New(cfg)
+
 	defer model.Close()
 
 	contextPack := strings.Join([]string{
@@ -1592,15 +1794,19 @@ func TestImplementationDispatchPreloadedContextPackRejectsIrrelevantCandidateSco
 func TestImplementationDispatchFallbackSearchPatternSkipsProcessWords(t *testing.T) {
 	pattern := implementationDispatchFallbackSearchPattern("We are continuing TDD completion work from docs/design-prd-adr-brief-research-workflow.md. Implement one bounded topic only: status migration apply must harden predictable temp-path writes against pre-existing symlinks.")
 	want := "status|migration|apply|harden"
+
 	if pattern != want {
 		t.Fatalf("fallback pattern = %q, want %q", pattern, want)
 	}
+
 	patterns := implementationDispatchFallbackFilePatterns("status migration apply must harden temp path writes")
 	if len(patterns) < 2 || patterns[0] != "status_migration_apply" || patterns[1] != "migration_apply_harden" {
 		t.Fatalf("fallback file patterns = %#v", patterns)
 	}
+
 	paths := implementationDispatchPathsFromSearchFilesOutput("f1 internal/workflows/productworkflow/migration_apply.go\nf2 internal/workflows/productworkflow/migration_apply_test.go\n", 4)
 	wantPaths := []string{"internal/workflows/productworkflow/migration_apply.go", "internal/workflows/productworkflow/migration_apply_test.go"}
+
 	if !slices.Equal(paths, wantPaths) {
 		t.Fatalf("search_files paths = %#v, want %#v", paths, wantPaths)
 	}
@@ -1609,32 +1815,42 @@ func TestImplementationDispatchFallbackSearchPatternSkipsProcessWords(t *testing
 func TestImplementationDispatchMissingTestRetryPreservesCandidateScope(t *testing.T) {
 	root := t.TempDir()
 	testPath := filepath.Join(root, "internal", "workflows", "productworkflow", "migration_apply_test.go")
+
 	if err := os.MkdirAll(filepath.Dir(testPath), 0o755); err != nil {
 		t.Fatalf("mkdir test dir: %v", err)
 	}
+
 	if err := os.WriteFile(testPath, []byte("package productworkflow\n"), 0o644); err != nil {
 		t.Fatalf("write sibling test: %v", err)
 	}
+
 	stateDir := filepath.Join(root, ".idiom", "plan-execute", "sessions")
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatalf("mkdir state dir: %v", err)
 	}
+
 	state := planexecute.ProgressState{
 		SchemaVersion: planexecute.ProgressStateSchemaVersion,
 		SessionID:     "missing-test-retry",
 		ChangedPaths:  []string{"internal/workflows/productworkflow/migration_apply.go"},
 	}
+
 	body, err := json.Marshal(state)
 	if err != nil {
 		t.Fatalf("marshal state: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(stateDir, "missing-test-retry.json"), body, 0o600); err != nil {
 		t.Fatalf("write state: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
+
 	model := New(cfg)
+
 	defer model.Close()
 
 	paths := model.implementationDispatchAllowedPathsForMissingRequestedTestEdit(implementationDispatchPlanExecuteFailure{
@@ -1677,35 +1893,46 @@ func TestImplementationDispatchMissingImplementationRetryPreservesCandidateScope
 	root := t.TempDir()
 	sourcePath := filepath.Join(root, "internal", "workflows", "productworkflow", "migration_apply.go")
 	testPath := filepath.Join(root, "internal", "workflows", "productworkflow", "migration_apply_test.go")
+
 	if err := os.MkdirAll(filepath.Dir(testPath), 0o755); err != nil {
 		t.Fatalf("mkdir test dir: %v", err)
 	}
+
 	if err := os.WriteFile(sourcePath, []byte("package productworkflow\n"), 0o644); err != nil {
 		t.Fatalf("write sibling source: %v", err)
 	}
+
 	if err := os.WriteFile(testPath, []byte("package productworkflow\n"), 0o644); err != nil {
 		t.Fatalf("write sibling test: %v", err)
 	}
+
 	stateDir := filepath.Join(root, ".idiom", "plan-execute", "sessions")
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatalf("mkdir state dir: %v", err)
 	}
+
 	state := planexecute.ProgressState{
 		SchemaVersion: planexecute.ProgressStateSchemaVersion,
 		SessionID:     "missing-implementation-retry",
 		ChangedPaths:  []string{"internal/workflows/productworkflow/migration_apply_test.go"},
 	}
+
 	body, err := json.Marshal(state)
 	if err != nil {
 		t.Fatalf("marshal state: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(stateDir, "missing-implementation-retry.json"), body, 0o600); err != nil {
 		t.Fatalf("write state: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
+
 	model := New(cfg)
+
 	defer model.Close()
 
 	paths := model.implementationDispatchAllowedPathsForMissingRequestedImplementationEdit(implementationDispatchPlanExecuteFailure{
@@ -1736,35 +1963,44 @@ func TestImplementationDispatchMissingImplementationRetryKeepsSubmittedSiblingAn
 	sourcePath := filepath.Join(root, "internal", "surfaces", "cli", "product", "product_workflow.go")
 	testPath := filepath.Join(root, "internal", "surfaces", "cli", "product", "product_workflow_test.go")
 	statusPath := filepath.Join(root, "internal", "workflows", "productworkflow", "status.go")
+
 	for _, path := range []string{sourcePath, testPath, statusPath} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", path, err)
 		}
+
 		if err := os.WriteFile(path, []byte("package productworkflow\n"), 0o644); err != nil {
 			t.Fatalf("write %s: %v", path, err)
 		}
 	}
+
 	stateDir := filepath.Join(root, ".idiom", "plan-execute", "sessions")
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatalf("mkdir state dir: %v", err)
 	}
+
 	state := planexecute.ProgressState{
 		SchemaVersion: planexecute.ProgressStateSchemaVersion,
 		SessionID:     "product-workflow-missing-implementation",
 		ChangedPaths:  []string{"internal/surfaces/cli/product/product_workflow_test.go"},
 	}
+
 	body, err := json.Marshal(state)
 	if err != nil {
 		t.Fatalf("marshal state: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(stateDir, "product-workflow-missing-implementation.json"), body, 0o600); err != nil {
 		t.Fatalf("write state: %v", err)
 	}
 
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
+
 	model := New(cfg)
+
 	defer model.Close()
 
 	failure := implementationDispatchPlanExecuteFailure{
@@ -1784,6 +2020,7 @@ func TestImplementationDispatchMissingImplementationRetryKeepsSubmittedSiblingAn
 		},
 	}
 	allowedPaths := model.implementationDispatchAllowedPathsForMissingRequestedImplementationEdit(failure)
+
 	for _, want := range []string{
 		"internal/surfaces/cli/product/product_workflow_test.go",
 		"internal/surfaces/cli/product/product_workflow.go",
@@ -1795,10 +2032,13 @@ func TestImplementationDispatchMissingImplementationRetryKeepsSubmittedSiblingAn
 	}
 
 	retryOptions := implementationDispatchRetryOptionsWithCandidateScope(failure.Options, allowedPaths)
+
 	retryOptions = implementationDispatchRetryOptionsWithEditSetObligation(retryOptions, planexecute.EditSetObligationKindImplementationEdit)
+
 	if len(retryOptions.RequiredEditPaths) != 0 {
 		t.Fatalf("retry required paths must remain empty for candidate-only recovery, got %#v", []string(retryOptions.RequiredEditPaths))
 	}
+
 	for _, want := range []string{
 		"internal/surfaces/cli/product/product_workflow_test.go",
 		"internal/surfaces/cli/product/product_workflow.go",
@@ -1808,6 +2048,7 @@ func TestImplementationDispatchMissingImplementationRetryKeepsSubmittedSiblingAn
 			t.Fatalf("retry allowed paths missing %q, got %#v", want, []string(retryOptions.AllowedEditPaths))
 		}
 	}
+
 	if !retryOptions.EditSetObligations.Has(planexecute.EditSetObligationKindImplementationEdit) {
 		t.Fatalf("retry options missing implementation edit obligation: %#v", retryOptions.EditSetObligations)
 	}
@@ -1826,13 +2067,16 @@ func TestImplementationDispatchMissingEditRetryKeepsCandidateScopeAllowed(t *tes
 	if !slices.Equal([]string(opts.RequiredEditPaths), wantRequired) {
 		t.Fatalf("retry required paths = %#v, want %#v", []string(opts.RequiredEditPaths), wantRequired)
 	}
+
 	wantAllowed := []string{"pkg/existing_candidate.go", "pkg/feature_test.go", "pkg/feature.go"}
 	if !slices.Equal([]string(opts.AllowedEditPaths), wantAllowed) {
 		t.Fatalf("retry allowed paths = %#v, want %#v", []string(opts.AllowedEditPaths), wantAllowed)
 	}
+
 	if !slices.Equal(opts.ScopeContract.RequiredCoveragePaths, wantRequired) {
 		t.Fatalf("retry scope required coverage = %#v, want %#v", opts.ScopeContract.RequiredCoveragePaths, wantRequired)
 	}
+
 	if !slices.Equal(opts.ScopeContract.AllowedCandidatePaths, wantAllowed) {
 		t.Fatalf("retry scope allowed candidates = %#v, want %#v", opts.ScopeContract.AllowedCandidatePaths, wantAllowed)
 	}
@@ -1868,6 +2112,7 @@ func TestMissingRequestedImplementationAddendumMarksPathsAsCandidateScope(t *tes
 			t.Fatalf("implementation recovery addendum missing %q:\n%s", want, got)
 		}
 	}
+
 	if strings.Contains(got, "required_edit_paths:") {
 		t.Fatalf("implementation recovery addendum must not promote candidates to required paths:\n%s", got)
 	}
@@ -1889,6 +2134,7 @@ func TestMissingRequestedTestAddendumMarksPathsAsCandidateScope(t *testing.T) {
 			t.Fatalf("test recovery addendum missing %q:\n%s", want, got)
 		}
 	}
+
 	if strings.Contains(got, "required_edit_paths:") {
 		t.Fatalf("test recovery addendum must not promote candidates to required paths:\n%s", got)
 	}
@@ -1929,6 +2175,7 @@ func TestImplementationDispatchPlanExecuteMaxTokensDoesNotUsePromptTestHeuristic
 		nil,
 		nil,
 	)
+
 	if got != 8192 {
 		t.Fatalf("prompt prose must not inflate missing-test budget, got %d want 8192", got)
 	}
@@ -1962,6 +2209,7 @@ func TestImplementationDispatchPlanExecuteMaxTokensDoesNotUsePlanDocTestHeuristi
 			EditPaths: []string{"tests/parser_test.py"},
 		}},
 	)
+
 	if got != 8192 {
 		t.Fatalf("plan-doc prose must not inflate missing-test budget, got %d want 8192", got)
 	}
@@ -1975,6 +2223,7 @@ func TestAppendMissingRequestedTestEditRecoveryAddendumStaysInsideBriefBody(t *t
 	if !strings.Contains(scoped, "Missing Requested Test Edit Recovery") || !strings.Contains(scoped, "internal/surfaces/tui/app/rendering_test.go") {
 		t.Fatalf("missing-test recovery scope was not inserted inside brief body:\n%s", got)
 	}
+
 	if allowed := AllowedEditPathsFromPrompt(got); !slices.Contains(allowed, "internal/surfaces/tui/app/rendering_test.go") {
 		t.Fatalf("missing-test recovery scope is not parseable as allowed paths: %#v\n%s", allowed, got)
 	}
@@ -1982,9 +2231,11 @@ func TestAppendMissingRequestedTestEditRecoveryAddendumStaysInsideBriefBody(t *t
 
 func TestWriterRouteDecisionForPromptReportsDirectImplementation(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = ""
 	cfg.LlamaServer.Model = "default-model"
+
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
 		mode:  agent.BuildMode(),
@@ -1999,9 +2250,11 @@ func TestWriterRouteDecisionForPromptReportsDirectImplementation(t *testing.T) {
 	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
 		t.Fatalf("unexpected direct implementation writer route decision: %#v", decision)
 	}
+
 	if decision.VerificationOwner != "executor" {
 		t.Fatalf("direct implementation verification owner = %q, want executor", decision.VerificationOwner)
 	}
+
 	if !slices.Contains(decision.ReasonCodes, "route.local_model_default") {
 		t.Fatalf("direct implementation reason missing: %#v", decision.ReasonCodes)
 	}
@@ -2009,8 +2262,10 @@ func TestWriterRouteDecisionForPromptReportsDirectImplementation(t *testing.T) {
 
 func TestWriterRouteDecisionForClassifierImplementationRequiresConfirmation(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = ""
+
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
 		mode:  agent.BuildMode(),
@@ -2022,6 +2277,7 @@ func TestWriterRouteDecisionForClassifierImplementationRequiresConfirmation(t *t
 	if decision.WriterMode != string(writerroute.ModeReadOnly) || decision.Lane != "main" {
 		t.Fatalf("classifier implementation should wait for confirmation, got %#v", decision)
 	}
+
 	if !slices.Contains(decision.ReasonCodes, "route.mutation_confirmation_required") {
 		t.Fatalf("confirmation reason missing: %#v", decision.ReasonCodes)
 	}
@@ -2029,8 +2285,10 @@ func TestWriterRouteDecisionForClassifierImplementationRequiresConfirmation(t *t
 
 func TestWriterRouteDecisionForPromptReportsReadOnlyRoute(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
+
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
 		mode:  agent.PlanMode(),
@@ -2042,9 +2300,11 @@ func TestWriterRouteDecisionForPromptReportsReadOnlyRoute(t *testing.T) {
 	if decision.WriterMode != string(writerroute.ModeReadOnly) || decision.Lane != "main" {
 		t.Fatalf("unexpected read-only writer route decision: %#v", decision)
 	}
+
 	if decision.VerificationOwner != "" {
 		t.Fatalf("read-only route should not claim verification ownership: %#v", decision)
 	}
+
 	if !slices.Contains(decision.ReasonCodes, "route.read_only_question") {
 		t.Fatalf("read-only route reason missing: %#v", decision.ReasonCodes)
 	}
@@ -2053,13 +2313,16 @@ func TestWriterRouteDecisionForPromptReportsReadOnlyRoute(t *testing.T) {
 func TestRunPromptOnceUnscopedImplementationUsesDirectImplementWhenDispatchDisabled(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
+
 	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("old\n"), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
 
 	var chatRequests atomic.Int64
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Logf("request path=%s auth=%q", r.URL.Path, r.Header.Get("Authorization"))
+
 		switch r.URL.Path {
 		case "/v1/models":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -2070,10 +2333,12 @@ func TestRunPromptOnceUnscopedImplementationUsesDirectImplementWhenDispatchDisab
 			if err != nil {
 				t.Fatalf("read request: %v", err)
 			}
+
 			requestText := string(body)
 			if strings.Contains(requestText, "Plan-then-execute (planner phase)") {
 				t.Fatalf("unscoped TUI implementation should not enter plan-execute planner:\n%s", requestText)
 			}
+
 			switch chatRequests.Add(1) {
 			case 1:
 				_ = json.NewEncoder(w).Encode(map[string]any{
@@ -2100,9 +2365,11 @@ func TestRunPromptOnceUnscopedImplementationUsesDirectImplementWhenDispatchDisab
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer server.Close()
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = server.URL
 	cfg.Chat.AutoStartServer = false
 	cfg.Chat.AttachInstructionFiles = false
@@ -2123,10 +2390,12 @@ func TestRunPromptOnceUnscopedImplementationUsesDirectImplementWhenDispatchDisab
 	if err != nil {
 		t.Fatalf("runImplementCommandOnce: %v\nanswer: %s", err, answer)
 	}
+
 	got, err := os.ReadFile(filepath.Join(root, "target.txt"))
 	if err != nil {
 		t.Fatalf("read target: %v", err)
 	}
+
 	if string(got) != "new\n" {
 		t.Fatalf("target content = %q, want new", string(got))
 	}
@@ -2135,21 +2404,26 @@ func TestRunPromptOnceUnscopedImplementationUsesDirectImplementWhenDispatchDisab
 func TestDirectImplementationContextPreloadAppliesToNaturalUnscopedEdits(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
+
 	sourcePath := filepath.Join(root, "internal", "surfaces", "tui", "app", "rendering.go")
 	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o755); err != nil {
 		t.Fatalf("mkdir source dir: %v", err)
 	}
+
 	if err := os.WriteFile(sourcePath, []byte("package app\n\nfunc renderBanner() string { return \"top-right model path banner\" }\n"), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
 
 	cfg := config.Default()
+
 	cfg.Chat.ImplementationDispatch = "plan_execute"
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
 	cfg.MCP = nil
+
 	model := New(cfg)
+
 	defer model.Close()
 
 	plan := promptExecutionPlan{
@@ -2157,15 +2431,18 @@ func TestDirectImplementationContextPreloadAppliesToNaturalUnscopedEdits(t *test
 		route:        turnRoutePlan{Family: "implementation"},
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{TaskFamily: "implementation"},
 	}
+
 	plan = model.recoverDirectImplementationContext("change the model string in the top-right banner from the path to the alias", plan)
 
 	if !slices.Contains(plan.runtimeBrief.TargetPacket, "prompt_context:direct_implementation_preload") {
 		t.Fatalf("expected direct implementation context preload marker, got %#v", plan.runtimeBrief.TargetPacket)
 	}
+
 	packet := strings.Join(plan.runtimeBrief.TargetPacket, "\n")
 	if !strings.Contains(packet, "Context Pack") && !strings.Contains(packet, "Context Discovery Fallback") {
 		t.Fatalf("expected context preload or fallback packet, got:\n%s", packet)
 	}
+
 	if !slices.Contains(plan.runtimeBrief.SearchPolicy, "direct_implement_context_preloaded_before_model_turn") {
 		t.Fatalf("expected direct context search policy, got %#v", plan.runtimeBrief.SearchPolicy)
 	}
@@ -2176,12 +2453,15 @@ func TestDirectImplementationContextPreloadSkipsScopedPrompts(t *testing.T) {
 	disableQueueDaemonForTurnPlannerTest(t, root)
 
 	cfg := config.Default()
+
 	cfg.Chat.ImplementationDispatch = "plan_execute"
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
 	cfg.MCP = nil
+
 	model := New(cfg)
+
 	defer model.Close()
 
 	plan := promptExecutionPlan{
@@ -2192,6 +2472,7 @@ func TestDirectImplementationContextPreloadSkipsScopedPrompts(t *testing.T) {
 	if model.shouldPreloadDirectImplementationContext("update target.txt", plan) {
 		t.Fatal("prompt with an explicit workspace path should not need unscoped direct context preload")
 	}
+
 	plan.runtimeBrief.RequiredEditPaths = []string{"pkg/feature.go"}
 	if model.shouldPreloadDirectImplementationContext("fix the feature behavior", plan) {
 		t.Fatal("required edit paths already provide direct implementation scope")
@@ -2201,20 +2482,25 @@ func TestDirectImplementationContextPreloadSkipsScopedPrompts(t *testing.T) {
 func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfigured(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
+
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir .idiom: %v", err)
 	}
+
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatalf("mkdir pkg: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "feature.go"), []byte("package pkg\n\nfunc Enabled() bool { return false }\n"), 0o644); err != nil {
 		t.Fatalf("write feature: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "feature_test.go"), []byte("package pkg\n\nconst Covered = false\n"), 0o644); err != nil {
 		t.Fatalf("write feature test: %v", err)
 	}
 
 	var plannerChatRequests atomic.Int64
+
 	plannerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -2228,9 +2514,11 @@ func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfig
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer plannerServer.Close()
 
 	var executorChatRequests atomic.Int64
+
 	executorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -2242,14 +2530,18 @@ func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfig
 			if err != nil {
 				t.Fatalf("read request: %v", err)
 			}
+
 			requestText := string(body)
 			if !strings.Contains(requestText, `"model":"executor-model"`) {
 				t.Fatalf("direct implementation should send executor model id, got request:\n%s", requestText)
 			}
+
 			if strings.Contains(requestText, "Plan-then-execute (planner phase)") {
 				t.Fatalf("semantic direct implementation should not include plan-execute planner prompt:\n%s", requestText)
 			}
+
 			reply := ""
+
 			switch executorChatRequests.Add(1) {
 			case 1:
 				reply = `<tool_call>
@@ -2260,6 +2552,7 @@ func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfig
 			default:
 				reply = "Updated pkg/feature.go and pkg/feature_test.go."
 			}
+
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{
 					"message": map[string]string{"content": reply},
@@ -2269,6 +2562,7 @@ func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfig
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer executorServer.Close()
 
 	backendsJSON := fmt.Sprintf(`{"profiles":{"local":{"models":[
@@ -2280,6 +2574,7 @@ func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfig
 	}
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = plannerServer.URL
 	cfg.LlamaServer.Model = "planner-model"
 	cfg.RouteClassifier.Enabled = false
@@ -2302,23 +2597,29 @@ func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfig
 	if err != nil {
 		t.Fatalf("runImplementCommandOnce: %v\nanswer: %s", err, answer)
 	}
+
 	if plannerChatRequests.Load() != 0 {
 		t.Fatalf("semantic implementation should not use exact plan-execute planner, got %d request(s)", plannerChatRequests.Load())
 	}
+
 	if executorChatRequests.Load() == 0 {
 		t.Fatalf("expected direct implementation to use executor chat")
 	}
+
 	gotSource, err := os.ReadFile(filepath.Join(root, "pkg", "feature.go"))
 	if err != nil {
 		t.Fatalf("read source: %v", err)
 	}
+
 	if !strings.Contains(string(gotSource), "return true") {
 		t.Fatalf("source was not updated after %d executor request(s), answer=%q:\n%s", executorChatRequests.Load(), answer, string(gotSource))
 	}
+
 	gotTest, err := os.ReadFile(filepath.Join(root, "pkg", "feature_test.go"))
 	if err != nil {
 		t.Fatalf("read test: %v", err)
 	}
+
 	if !strings.Contains(string(gotTest), "Covered = true") {
 		t.Fatalf("test was not updated after %d executor request(s), answer=%q:\n%s", executorChatRequests.Load(), answer, string(gotTest))
 	}
@@ -2327,11 +2628,13 @@ func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfig
 func TestRunPromptOnceNaturalLanguageTDDFeatureAsksBeforeClassifierImplementLane(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
+
 	for _, dir := range []string{".idiom", "docs", "pkg"} {
 		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "docs", "tdd-feature.md"), []byte(strings.Join([]string{
 		"# TDD Feature Atom",
 		"",
@@ -2341,15 +2644,20 @@ func TestRunPromptOnceNaturalLanguageTDDFeatureAsksBeforeClassifierImplementLane
 	}, "\n")), 0o644); err != nil {
 		t.Fatalf("write tdd feature atom: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "feature.go"), []byte("package pkg\n\nfunc Enabled() bool { return false }\n"), 0o644); err != nil {
 		t.Fatalf("write feature: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "feature_test.go"), []byte("package pkg\n\nconst Covered = false\n"), 0o644); err != nil {
 		t.Fatalf("write feature test: %v", err)
 	}
 
-	var classifierRequests atomic.Int64
-	var unexpectedPlannerRequests atomic.Int64
+	var (
+		classifierRequests        atomic.Int64
+		unexpectedPlannerRequests atomic.Int64
+	)
+
 	plannerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -2361,25 +2669,31 @@ func TestRunPromptOnceNaturalLanguageTDDFeatureAsksBeforeClassifierImplementLane
 			if err != nil {
 				t.Fatalf("read planner request: %v", err)
 			}
+
 			requestText := string(body)
 			if strings.Contains(requestText, "Current user prompt:") && strings.Contains(requestText, "Return JSON now.") {
 				classifierRequests.Add(1)
+
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"choices": []map[string]any{{
 						"message": map[string]string{"content": `{"family":"implementation","initial_lane":"implement","reason":"classifier_directive","contract":"implementation_result"}`},
 					}},
 				})
+
 				return
 			}
+
 			unexpectedPlannerRequests.Add(1)
 			t.Fatalf("natural-language TDD request should not enter planner/plan-execute path:\n%s", requestText)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer plannerServer.Close()
 
 	var executorChatRequests atomic.Int64
+
 	executorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -2388,15 +2702,18 @@ func TestRunPromptOnceNaturalLanguageTDDFeatureAsksBeforeClassifierImplementLane
 			})
 		case "/v1/chat/completions":
 			executorChatRequests.Add(1)
+
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Fatalf("read executor request: %v", err)
 			}
+
 			t.Fatalf("natural-language detected implementation should ask for confirmation before executor chat:\n%s", string(body))
 		default:
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer executorServer.Close()
 
 	backendsJSON := fmt.Sprintf(`{"profiles":{"local":{"models":[
@@ -2408,6 +2725,7 @@ func TestRunPromptOnceNaturalLanguageTDDFeatureAsksBeforeClassifierImplementLane
 	}
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = plannerServer.URL
 	cfg.LlamaServer.Model = "planner-model"
 	cfg.RouteClassifier.Enabled = true
@@ -2425,29 +2743,37 @@ func TestRunPromptOnceNaturalLanguageTDDFeatureAsksBeforeClassifierImplementLane
 
 	model := New(cfg)
 	defer model.Close()
+
 	var eventBuf bytes.Buffer
+
 	model.SetJSONEventStream(&eventBuf, "natural-tdd-test")
 
 	answer, err := model.RunPromptOnce(context.Background(), "Can you implement this feature: docs/tdd-feature.md")
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
+
 	if classifierRequests.Load() != 1 {
 		t.Fatalf("expected one classifier request, got %d", classifierRequests.Load())
 	}
+
 	if unexpectedPlannerRequests.Load() != 0 {
 		t.Fatalf("unexpected planner requests: %d", unexpectedPlannerRequests.Load())
 	}
+
 	if executorChatRequests.Load() != 0 {
 		t.Fatalf("unexpected executor chat before confirmation: %d", executorChatRequests.Load())
 	}
+
 	if !strings.Contains(answer, "Do you want me to switch") || !strings.Contains(answer, "/implement") {
 		t.Fatalf("answer should ask for explicit implementation confirmation, got %q", answer)
 	}
+
 	gotSource, err := os.ReadFile(filepath.Join(root, "pkg", "feature.go"))
 	if err != nil {
 		t.Fatalf("read source: %v", err)
 	}
+
 	if !strings.Contains(string(gotSource), "return false") {
 		t.Fatalf("source should stay unchanged before confirmation, answer=%q events=%s:\n%s", answer, eventBuf.String(), string(gotSource))
 	}
@@ -2456,14 +2782,17 @@ func TestRunPromptOnceNaturalLanguageTDDFeatureAsksBeforeClassifierImplementLane
 func TestRunPromptOnceSemanticRequiredPathsFallsBackToActiveModelWhenExecutorUnavailable(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
+
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir .idiom: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("old\n"), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
 
 	var plannerChatRequests atomic.Int64
+
 	plannerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -2475,14 +2804,17 @@ func TestRunPromptOnceSemanticRequiredPathsFallsBackToActiveModelWhenExecutorUna
 			if err != nil {
 				t.Fatalf("read planner request: %v", err)
 			}
+
 			if !strings.Contains(string(body), `"model":"planner-model"`) {
 				t.Fatalf("active-model fallback should send planner model id, got request:\n%s", string(body))
 			}
+
 			reply := "Updated target.txt."
 			if plannerChatRequests.Add(1) == 1 {
 				reply = `<tool_call>
 {"tool":"write_file","path":"target.txt","content":"new\n","description":"update target through active-model fallback"}`
 			}
+
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{
 					"message": map[string]string{"content": reply},
@@ -2492,9 +2824,11 @@ func TestRunPromptOnceSemanticRequiredPathsFallsBackToActiveModelWhenExecutorUna
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer plannerServer.Close()
 
 	var executorChatRequests atomic.Int64
+
 	executorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -2506,6 +2840,7 @@ func TestRunPromptOnceSemanticRequiredPathsFallsBackToActiveModelWhenExecutorUna
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer executorServer.Close()
 
 	backendsJSON := fmt.Sprintf(`{"profiles":{"local":{"models":[
@@ -2517,6 +2852,7 @@ func TestRunPromptOnceSemanticRequiredPathsFallsBackToActiveModelWhenExecutorUna
 	}
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = plannerServer.URL
 	cfg.LlamaServer.Model = "planner-model"
 	cfg.RouteClassifier.Enabled = false
@@ -2539,16 +2875,20 @@ func TestRunPromptOnceSemanticRequiredPathsFallsBackToActiveModelWhenExecutorUna
 	if err != nil {
 		t.Fatalf("runImplementCommandOnce: %v\nanswer: %s", err, answer)
 	}
+
 	if plannerChatRequests.Load() == 0 {
 		t.Fatalf("expected active-model fallback to use planner chat")
 	}
+
 	if executorChatRequests.Load() != 0 {
 		t.Fatalf("unreachable executor should not receive chat, got %d request(s)", executorChatRequests.Load())
 	}
+
 	got, err := os.ReadFile(filepath.Join(root, "target.txt"))
 	if err != nil {
 		t.Fatalf("read target: %v", err)
 	}
+
 	if string(got) != "new\n" {
 		t.Fatalf("target content = %q, want new", string(got))
 	}
@@ -2557,9 +2897,12 @@ func TestRunPromptOnceSemanticRequiredPathsFallsBackToActiveModelWhenExecutorUna
 func TestPlanExecutePlannerBlockedNoScopeSurfacesWithoutRetry(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
+
 	model := New(cfg)
+
 	defer model.Close()
 
 	answer, handled, err := model.handlePlanExecutePlannerBlocked(context.Background(), implementationDispatchPlanExecuteFailure{
@@ -2577,6 +2920,7 @@ func TestPlanExecutePlannerBlockedNoScopeSurfacesWithoutRetry(t *testing.T) {
 	if err != nil || !handled {
 		t.Fatalf("expected handled no-scope blocker, handled=%t err=%v answer=%q", handled, err, answer)
 	}
+
 	for _, want := range []string{
 		"Plan-execute dispatch blocked before retry",
 		"concrete edit scope",
@@ -2609,6 +2953,7 @@ func TestPlanExecutePlannerBlockedMessageHidesInternalCompletionGatePrompt(t *te
 			t.Fatalf("planner blocked message missing %q:\n%s", want, answer)
 		}
 	}
+
 	for _, forbidden := range []string{
 		"Completion gate rejected",
 		"Missing completion evidence",
@@ -2650,12 +2995,15 @@ func TestPlanExecutePlannerBlockedMessageCompactsCanonicalPlannerQuestion(t *tes
 	if !strings.Contains(answer, "Planner detail:") {
 		t.Fatalf("expected compact planner detail section:\n%s", answer)
 	}
+
 	if strings.Contains(answer, "Planner answer:") {
 		t.Fatalf("canonical blocker should not repeat the full planner answer:\n%s", answer)
 	}
+
 	if strings.Count(answer, "Required edit paths not changed:") != 0 {
 		t.Fatalf("full planner changed-path list should be omitted because required paths are already listed:\n%s", answer)
 	}
+
 	if !strings.Contains(answer, "read source for internal/workflows/productworkflow/coverage_gate.go") {
 		t.Fatalf("compact detail should preserve the actionable blocker:\n%s", answer)
 	}
@@ -2696,6 +3044,7 @@ func TestPlanExecuteRepeatedCompletionGateSurfacesDeterministicMessage(t *testin
 	if !planExecuteFailureIsRepeatedCompletionGate(failure) {
 		t.Fatalf("expected repeated completion gate classifier to match")
 	}
+
 	answer := humanPlanExecutePlannerBlockedMessage(failure, implementationDispatchRecoveryDecision{
 		Decision: "surface",
 		Reason:   "planner stopped before emitting `submit_plan`, `Decision: source-satisfied`, or a concrete blocker after repeated completion-gate rejection",
@@ -2710,6 +3059,7 @@ func TestPlanExecuteRepeatedCompletionGateSurfacesDeterministicMessage(t *testin
 			t.Fatalf("deterministic repeated-gate message missing %q:\n%s", want, answer)
 		}
 	}
+
 	for _, forbidden := range []string{"Manually invoke", "system rejected", "submit_plan tool"} {
 		if strings.Contains(answer, forbidden) {
 			t.Fatalf("deterministic repeated-gate message leaked %q:\n%s", forbidden, answer)
@@ -2732,6 +3082,7 @@ func TestPlanExecutePlannerBlockedCanRetryOnActiveModel(t *testing.T) {
 
 	failure.Result.FailureReason = "<<QUESTION>>: required_edit_paths_remaining"
 	failure.Result.PlannerAnswer = "Planner failed after submit_plan rejected: required edit path coverage mismatch; missing required edit path(s): `internal/surfaces/cli/product/product_workflow_test.go`; invalid edit anchor(s): `internal/surfaces/cli/product/product_workflow.go: old_text not found in current source`."
+
 	if !planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
 		t.Fatalf("expected invalid submit_plan with exact scope to retry on active model")
 	}
@@ -2739,6 +3090,7 @@ func TestPlanExecutePlannerBlockedCanRetryOnActiveModel(t *testing.T) {
 	failure.Result.FailureReason = "<<QUESTION>>: Implementation incomplete; required edit path(s) remain unchanged."
 	failure.Result.PlannerAnswer = ""
 	failure.Stdout = "Blocker:\n- Plan submission required: every required_edit_path has satisfied its source-body obligation. Do not use more read/search discovery. Submit one parser-readable `submit_plan` request whose `edits[]` coverage includes every required path."
+
 	if !planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
 		t.Fatalf("expected post-readiness discovery loop with exact scope to retry on active model")
 	}
@@ -2750,6 +3102,7 @@ func TestPlanExecutePlannerBlockedCanRetryOnActiveModel(t *testing.T) {
 
 	failure.Options.UseActiveModel = false
 	failure.RequiredPaths = nil
+
 	if planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
 		t.Fatalf("unscoped planner blocker should not use active-model fallback")
 	}
@@ -2769,9 +3122,11 @@ func TestPlanExecutePlannerBlockedMessageDoesNotClaimUnreadSourcesAfterSourceSat
 		Reason:   "the planner failed because it lacks the current source code for the required edit paths",
 		Message:  "Planner blocked: the planner cannot generate a valid `submit_plan` because it has not read the current state of the required files. Please allow the planner to read these files.",
 	})
+
 	if strings.Contains(strings.ToLower(answer), "has not read") || strings.Contains(strings.ToLower(answer), "please allow the planner to read") {
 		t.Fatalf("source-satisfied failure must not surface contradictory unread-source guidance:\n%s", answer)
 	}
+
 	if !strings.Contains(answer, "kept choosing discovery instead of emitting a `submit_plan`") {
 		t.Fatalf("expected source-satisfied blocker summary, got:\n%s", answer)
 	}
@@ -2780,20 +3135,25 @@ func TestPlanExecutePlannerBlockedMessageDoesNotClaimUnreadSourcesAfterSourceSat
 func TestPlanExecuteActiveModelFallbackAddendumInsertedBeforeBriefEnd(t *testing.T) {
 	prompt := "# Objective\n\nUpdate files.\n\n" + pathparse.BriefBodyEndMarker + "\n\n# Tooling"
 	got := appendPlanExecuteActiveModelFallbackAddendum(prompt)
+
 	if !strings.Contains(got, "## Active Model Fallback") {
 		t.Fatalf("fallback addendum missing:\n%s", got)
 	}
+
 	if strings.Index(got, "## Active Model Fallback") > strings.Index(got, pathparse.BriefBodyEndMarker) {
 		t.Fatalf("fallback addendum should stay inside brief body:\n%s", got)
 	}
+
 	if !strings.Contains(got, "fresh tool transcript") || !strings.Contains(got, "source-body evidence from the previous attempt is not executable evidence") {
 		t.Fatalf("fallback addendum should make source evidence freshness explicit:\n%s", got)
 	}
+
 	for _, forbidden := range []string{"already provided", "executor-role planner"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("fallback addendum must not use confusing stale wording %q:\n%s", forbidden, got)
 		}
 	}
+
 	if !strings.Contains(got, "previous plan-execute planner attempt") {
 		t.Fatalf("fallback addendum should name the planner attempt without executor-role wording:\n%s", got)
 	}
@@ -2831,6 +3191,7 @@ func TestPlanExecutePlannerRecoveryAddendumUsesHarnessOwnedRetryContract(t *test
 			t.Fatalf("recovery addendum missing %q:\n%s", want, got)
 		}
 	}
+
 	for _, forbidden := range []string{
 		"Each entry must have `Decision: source-satisfied`",
 		"include the full file content",
@@ -2857,9 +3218,11 @@ func TestPlanExecutePlannerRecoveryAddendumPrioritizesRequiredSourceReadBlocker(
 		},
 	}
 	path, ok := planExecuteRequiredSourceReadBlockerPath(failure)
+
 	if !ok || path != "internal/surfaces/cli/product/product_workflow_test.go" {
 		t.Fatalf("source-read blocker path = %q, %v", path, ok)
 	}
+
 	got := appendPlanExecutePlannerRecoveryAddendum(failure.Brief, failure, implementationDispatchRecoveryDecision{
 		Decision:      "retry",
 		Reason:        "source read blocker",
@@ -2868,9 +3231,11 @@ func TestPlanExecutePlannerRecoveryAddendumPrioritizesRequiredSourceReadBlocker(
 	if !strings.Contains(got, "First read source for `internal/surfaces/cli/product/product_workflow_test.go`") {
 		t.Fatalf("recovery addendum should prioritize the required source read:\n%s", got)
 	}
+
 	idxRead := strings.Index(got, "First read source")
 	idxHistory := strings.Index(got, "then satisfy runtime-required git history evidence")
 	idxSubmit := strings.Index(got, "then produce one valid `submit_plan`")
+
 	if idxRead < 0 || idxHistory < 0 || idxSubmit < 0 || idxRead > idxHistory || idxHistory > idxSubmit {
 		t.Fatalf("source read instruction should precede history evidence, then submit_plan:\n%s", got)
 	}
@@ -2889,6 +3254,7 @@ func TestPlanExecutePlannerRecoveryInstructionKeepsAllowedCandidatesNonMandatory
 			t.Fatalf("allowed-scope retry instruction missing %q:\n%s", want, got)
 		}
 	}
+
 	if strings.Contains(got, "whose edits include at least one real edit for each required path") {
 		t.Fatalf("allowed candidate retry must not use required-path coverage wording:\n%s", got)
 	}
@@ -2910,6 +3276,7 @@ func TestPlanExecutePlannerRecoveryInstructionPreservesHistoryGate(t *testing.T)
 			t.Fatalf("required-scope retry instruction missing %q:\n%s", want, got)
 		}
 	}
+
 	if idxHistory, idxSubmit := strings.Index(got, "runtime-required git history evidence"), strings.Index(got, "one valid `submit_plan` call"); idxHistory < 0 || idxSubmit < 0 || idxHistory > idxSubmit {
 		t.Fatalf("history evidence instruction should precede submit_plan instruction:\n%s", got)
 	}
@@ -2963,13 +3330,16 @@ func TestPlanExecuteMissingEditRecoveryUsesTypedFailureKindOnly(t *testing.T) {
 			if got := implementationDispatchShouldChainMissingEditRecovery(tt.result); got != tt.wantChain {
 				t.Fatalf("chain missing-edit recovery = %t, want %t", got, tt.wantChain)
 			}
+
 			gotObligation, ok := implementationDispatchFailureKindToEditSetObligation(tt.result.FailureKind)
 			if tt.wantObligation == "" {
 				if ok {
 					t.Fatalf("unexpected obligation %q from failure kind %q", gotObligation, tt.result.FailureKind)
 				}
+
 				return
 			}
+
 			if !ok || gotObligation != tt.wantObligation {
 				t.Fatalf("obligation = %q, %t; want %q, true", gotObligation, ok, tt.wantObligation)
 			}
@@ -2982,6 +3352,7 @@ func TestImplementationDispatchRecoveryMessageIsInternalWithQuotedSubmitPlanTool
 	if !implementationDispatchRecoveryMessageIsInternal(msg) {
 		t.Fatalf("expected quoted submit_plan tool-call instruction to be internal")
 	}
+
 	if observation := planExecutePlannerRecoveryObservation(msg); observation != "" {
 		t.Fatalf("expected internal retry addendum to be suppressed, got %q", observation)
 	}
@@ -3072,15 +3443,18 @@ func TestPlanExecuteTerminalOutcomeMatrixForTUIWrapper(t *testing.T) {
 			if got := implementationDispatchPlanExecuteFailureCanUseRecovery(tt.failure.Result); got != tt.recovery {
 				t.Fatalf("recovery eligibility = %t, want %t", got, tt.recovery)
 			}
+
 			answer, ok := humanPlanExecuteSourceSatisfiedCoverageBlockerMessage(tt.failure)
 			if ok != tt.sourceMismatch {
 				t.Fatalf("source-satisfied mismatch = %t, want %t; answer=%q", ok, tt.sourceMismatch, answer)
 			}
+
 			for _, want := range tt.want {
 				if !strings.Contains(answer, want) {
 					t.Fatalf("answer missing %q:\n%s", want, answer)
 				}
 			}
+
 			for _, forbidden := range tt.forbidden {
 				if strings.Contains(answer, forbidden) {
 					t.Fatalf("answer leaked %q:\n%s", forbidden, answer)
@@ -3122,6 +3496,7 @@ func TestPlanExecuteSourceSatisfiedCoverageBlockerUsesExactMissingPaths(t *testi
 	if !ok {
 		t.Fatalf("expected exact source-satisfied mismatch blocker")
 	}
+
 	if !strings.Contains(answer, "\n- pkg/parser.go") {
 		t.Fatalf("blocker should name the exact missing path, got:\n%s", answer)
 	}
@@ -3142,6 +3517,7 @@ func TestPlanExecuteSourceSatisfiedCoverageBlockerReportsExtensionlessCoveredPat
 	if !ok {
 		t.Fatalf("expected extensionless source-satisfied mismatch blocker")
 	}
+
 	for _, want := range []string{"Covered source-satisfied evidence paths:\n- Dockerfile", "Missing required edit paths:\n- BUILD"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("blocker missing %q:\n%s", want, answer)
@@ -3160,9 +3536,11 @@ func TestHandleStreamDoneClearsPlanPhaseOnTerminalPlannerFailure(t *testing.T) {
 	if m.streaming {
 		t.Fatal("streaming should be false after terminal planner failure")
 	}
+
 	if m.planPhaseText != "" {
 		t.Fatalf("terminal planner failure must not leave active plan phase text, got %q", m.planPhaseText)
 	}
+
 	if !strings.Contains(m.status, "Chat failed: planner phase reported a blocker") {
 		t.Fatalf("expected terminal error status, got %q", m.status)
 	}
@@ -3174,9 +3552,11 @@ func TestImplementationDispatchRefineDiagnosticsDoNotTruncateActionableLine(t *t
 		Stderr: "noise\nrefine: iter 1\n" + longBlocker + "\n",
 	})
 	joined := strings.Join(diagnostics, "\n")
+
 	if !strings.Contains(joined, longBlocker) {
 		t.Fatalf("diagnostics lost actionable blocker:\n%s", joined)
 	}
+
 	if strings.Contains(joined, "[truncated") {
 		t.Fatalf("diagnostics should not include truncation marker:\n%s", joined)
 	}
@@ -3184,6 +3564,7 @@ func TestImplementationDispatchRefineDiagnosticsDoNotTruncateActionableLine(t *t
 
 func TestImplementationDispatchBriefLintBlockersDoNotTruncateActionableLine(t *testing.T) {
 	longBlocker := "exact-anchor specificity failed for required edit path(s): " + strings.Repeat("internal/pkg/path.go ", 40) + "Each required edit path must carry at least one `<path>:<line>` reference."
+
 	payload, err := json.Marshal(map[string]any{
 		"exit": 1,
 		"findings": []map[string]string{
@@ -3197,14 +3578,17 @@ func TestImplementationDispatchBriefLintBlockersDoNotTruncateActionableLine(t *t
 	if err != nil {
 		t.Fatalf("marshal lint report: %v", err)
 	}
+
 	blockers := implementationDispatchBriefLintBlockers(implementationDispatchPreflightCommandResult{
 		ExitCode: 1,
 		Stdout:   string(payload),
 	})
 	joined := strings.Join(blockers, "\n")
+
 	if !strings.Contains(joined, longBlocker) {
 		t.Fatalf("lint blockers lost actionable blocker:\n%s", joined)
 	}
+
 	if strings.Contains(joined, "[truncated") {
 		t.Fatalf("lint blockers should not include truncation marker:\n%s", joined)
 	}
@@ -3215,6 +3599,7 @@ func TestFallbackTurnRouteDoesNotRecognizeDebugLogsFromHeuristics(t *testing.T) 
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -3238,6 +3623,7 @@ func TestCorrectTurnRoutePlanCorrectsConceptualDebugLogQuestionToArchitecture(t 
 	if plan.Family != "architecture" {
 		t.Fatalf("family = %q, want architecture", plan.Family)
 	}
+
 	if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -3254,6 +3640,7 @@ func TestCorrectTurnRoutePlanKeepsExplicitLogArtifactRequestsOnStandardReadLane(
 		if plan.Family != "conversation" {
 			t.Fatalf("family for %q = %q, want conversation", prompt, plan.Family)
 		}
+
 		if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 			t.Fatalf("unexpected plan for %q: %#v", prompt, plan)
 		}
@@ -3263,9 +3650,11 @@ func TestCorrectTurnRoutePlanKeepsExplicitLogArtifactRequestsOnStandardReadLane(
 func TestCorrectTurnRoutePlanKeepsSourceDebugPromptOnStandardReadLane(t *testing.T) {
 	prompt := "you are a debugging assistant to another agent. you are tasked with finding the cause of terminal resizing causing conversation window to become unscrollable. Please provide your proof with evidence, files, symbols, and line numbers."
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, prompt, agent.BuildMode())
+
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("source-debug prompt should use standard read lane, got %#v", plan)
 	}
@@ -3276,6 +3665,7 @@ func TestCorrectTurnRoutePlanKeepsArchitectureForProjectFeatureQuestion(t *testi
 	if plan.Family != "architecture" {
 		t.Fatalf("family = %q, want architecture", plan.Family)
 	}
+
 	if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -3292,6 +3682,7 @@ func TestCorrectTurnRoutePlanCorrectsRepoInternalQuestionsToArchitecture(t *test
 		if plan.Family != "architecture" {
 			t.Fatalf("family for %q = %q, want architecture", prompt, plan.Family)
 		}
+
 		if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
 			t.Fatalf("unexpected plan for %q: %#v", prompt, plan)
 		}
@@ -3303,6 +3694,7 @@ func TestCorrectTurnRoutePlanKeepsOperationalHowToQuestionReadOnly(t *testing.T)
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -3311,9 +3703,11 @@ func TestCorrectTurnRoutePlanKeepsOperationalHowToQuestionReadOnly(t *testing.T)
 func TestCorrectTurnRoutePlanKeepsQuestionShapedUILayoutConversation(t *testing.T) {
 	prompt := "The current model string in the top-right portion of the banner shows a path with what seems to be a stripped filename. Can we shorten this to be just the model's alias?"
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "direct_question"}, prompt, agent.BuildMode())
+
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -3329,9 +3723,11 @@ func TestCorrectTurnRoutePlanKeepsSourceDiagnosisOnStandardReadLane(t *testing.T
 		WriteIntent:        "no",
 		ReadOnlyConstraint: true,
 	}, prompt, agent.BuildMode())
+
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -3345,6 +3741,7 @@ func TestNormalizeTurnRoutePlanDiagnoseDefaultsToConversation(t *testing.T) {
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -3355,6 +3752,7 @@ func TestCorrectTurnRoutePlanDoesNotUsePromptFallbackHeuristics(t *testing.T) {
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -3365,6 +3763,7 @@ func TestFallbackTurnRouteRecognizesCodeExplanationAsConversation(t *testing.T) 
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -3385,6 +3784,7 @@ func TestFallbackTurnRouteNeverActivatesLanesFromPromptHeuristics(t *testing.T) 
 		if plan.Family != "conversation" {
 			t.Fatalf("fallback heuristic activated lane for %q: %#v", prompt, plan)
 		}
+
 		if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 			t.Fatalf("unexpected conservative fallback for %q: %#v", prompt, plan)
 		}
@@ -3396,6 +3796,7 @@ func TestFallbackTurnRouteDoesNotRecognizeVerificationOnlyFromHeuristics(t *test
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -3406,6 +3807,7 @@ func TestFallbackTurnRouteDoesNotRecognizeSuggestionQuestionAsArchitecture(t *te
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -3414,9 +3816,11 @@ func TestFallbackTurnRouteDoesNotRecognizeSuggestionQuestionAsArchitecture(t *te
 func TestFallbackTurnRouteKeepsQuestionShapedUILayoutRequestReadOnly(t *testing.T) {
 	prompt := "can you re-align the text input field to be flush against the bottom of the terminal? When it needs to wrap to a new line, it should simply increase in height to avoid going off-screen"
 	plan := fallbackTurnRoute(prompt, agent.BuildMode())
+
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -3427,6 +3831,7 @@ func TestFallbackTurnRouteDoesNotRecognizeLocateFromHeuristics(t *testing.T) {
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.FollowupLane != "" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -3437,6 +3842,7 @@ func TestFallbackTurnRouteDoesNotRecognizeLocateThenRemoveAsImplementation(t *te
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.FollowupLane != "" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -3447,6 +3853,7 @@ func TestFallbackTurnRouteDoesNotRecognizeGDScriptEditsFromHeuristics(t *testing
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -3462,6 +3869,7 @@ func TestFallbackTurnRouteDoesNotRecognizeStartWorkingOnNamedDocAsDocsEdit(t *te
 		if plan.Family != "conversation" {
 			t.Fatalf("family for %q = %q, want conversation", prompt, plan.Family)
 		}
+
 		if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 			t.Fatalf("unexpected plan for %q: %#v", prompt, plan)
 		}
@@ -3473,6 +3881,7 @@ func TestCorrectTurnRoutePlanDoesNotDowngradeClassifierImplementationRoute(t *te
 	if plan.Family != "explore_then_implement" {
 		t.Fatalf("family = %q, want explore_then_implement", plan.Family)
 	}
+
 	if plan.InitialLane != "explore" || plan.FollowupLane != "implement" || plan.Contract != "implementation_result" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -3482,18 +3891,23 @@ func TestRunPromptOnceDispatchesStartImplementingPlanDocToPlanExecute(t *testing
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
 	allowImplementationDispatchPlanDocumentPreflight(t)
+
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
 	}
+
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatalf("mkdir pkg: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/dispatch\n\ngo 1.22\n"), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "target.go"), []byte("package pkg\n\nconst Value = \"old\"\n"), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
+
 	planDoc := strings.Join([]string{
 		"# Plan",
 		"",
@@ -3530,8 +3944,11 @@ func TestRunPromptOnceDispatchesStartImplementingPlanDocToPlanExecute(t *testing
 		t.Fatalf("write plan doc: %v", err)
 	}
 
-	var chatRequests atomic.Int64
-	var sawReviewPrompt atomic.Bool
+	var (
+		chatRequests    atomic.Int64
+		sawReviewPrompt atomic.Bool
+	)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -3543,21 +3960,27 @@ func TestRunPromptOnceDispatchesStartImplementingPlanDocToPlanExecute(t *testing
 			if err != nil {
 				t.Fatalf("read request: %v", err)
 			}
+
 			chatRequests.Add(1)
+
 			requestText := string(body)
 			reply := ""
+
 			switch {
 			case strings.Contains(requestText, "Allowed Repair Paths"):
 				if !strings.Contains(requestText, `"enable_thinking":false`) {
 					t.Fatalf("review request should force visible terminal output with thinking disabled:\n%s", requestText)
 				}
+
 				sawReviewPrompt.Store(true)
+
 				reply = "Decision: pass\n\nVerification Checklist:\n- pkg/target.go contains the requested replacement.\n- No out-of-scope paths were changed.\n- Planner-owned build or test commands remain pending outside this mocked lane."
 			case strings.Contains(requestText, "Plan submitted with"):
 				reply = "Plan submitted."
 			default:
 				t.Fatalf("complete exact plan-doc packet should auto-submit before planner model call:\n%s", requestText)
 			}
+
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{
 					"message": map[string]string{"content": reply},
@@ -3567,9 +3990,11 @@ func TestRunPromptOnceDispatchesStartImplementingPlanDocToPlanExecute(t *testing
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer server.Close()
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = server.URL
 	cfg.Chat.AutoStartServer = false
 	cfg.Chat.AttachInstructionFiles = false
@@ -3577,7 +4002,9 @@ func TestRunPromptOnceDispatchesStartImplementingPlanDocToPlanExecute(t *testing
 	cfg.Chat.DefaultProfiles = nil
 	cfg.Chat.DebugLogDir = filepath.Join(root, "logs", "conversations")
 	cfg.Chat.ImplementationDispatch = "plan_execute"
+
 	thinkingOn := true
+
 	cfg.Chat.EnableThinking = &thinkingOn
 	cfg.Chat.PreserveThinking = true
 	cfg.Workspace.Root = root
@@ -3593,29 +4020,37 @@ func TestRunPromptOnceDispatchesStartImplementingPlanDocToPlanExecute(t *testing
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
+
 	got, err := os.ReadFile(filepath.Join(root, "pkg", "target.go"))
 	if err != nil {
 		t.Fatalf("read target: %v", err)
 	}
+
 	if string(got) != "package pkg\n\nconst Value = \"new\"\n" {
 		t.Fatalf("target content = %q, want updated Go file", string(got))
 	}
+
 	planArtifact := loadOnlyTimestampedPlanArtifactForTest(t, root)
 	if planArtifact.SchemaVersion != workspace.PlanArtifactSchemaVersion {
 		t.Fatalf("plan artifact schema = %q, want %q", planArtifact.SchemaVersion, workspace.PlanArtifactSchemaVersion)
 	}
+
 	if planArtifact.SessionID == "" {
 		t.Fatalf("plan artifact should carry the plan-execute session id")
 	}
+
 	if len(planArtifact.Edits) != 1 || planArtifact.Edits[0].Path != "pkg/target.go" {
 		t.Fatalf("plan artifact edits = %#v, want one pkg/target.go edit", planArtifact.Edits)
 	}
+
 	if !strings.Contains(answer, "plan-then-execute summary") {
 		t.Fatalf("expected plan-execute summary answer, got %q", answer)
 	}
+
 	if !sawReviewPrompt.Load() {
 		t.Fatalf("expected review-repair prompt after executor phase")
 	}
+
 	if chatRequests.Load() != 1 {
 		t.Fatalf("expected only review chat request after auto-exact planning, got %d", chatRequests.Load())
 	}
@@ -3624,10 +4059,12 @@ func TestRunPromptOnceDispatchesStartImplementingPlanDocToPlanExecute(t *testing
 func TestRunPromptOnceBlocksAmbiguousPlanDocBasenameBeforePlanExecute(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
+
 	for _, dir := range []string{"docs", "notes"} {
 		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
+
 		body := "# Plan\n\n## Files To Modify\n\n- target.txt\n"
 		if err := os.WriteFile(filepath.Join(root, dir, "plan.md"), []byte(body), 0o644); err != nil {
 			t.Fatalf("write %s plan doc: %v", dir, err)
@@ -3635,6 +4072,7 @@ func TestRunPromptOnceBlocksAmbiguousPlanDocBasenameBeforePlanExecute(t *testing
 	}
 
 	var chatRequests atomic.Int64
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -3648,9 +4086,11 @@ func TestRunPromptOnceBlocksAmbiguousPlanDocBasenameBeforePlanExecute(t *testing
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer server.Close()
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = server.URL
 	cfg.Chat.AutoStartServer = false
 	cfg.Chat.AttachInstructionFiles = false
@@ -3671,6 +4111,7 @@ func TestRunPromptOnceBlocksAmbiguousPlanDocBasenameBeforePlanExecute(t *testing
 	if err != nil {
 		t.Fatalf("RunPromptOnce should return a typed ambiguity blocker, got err=%v answer=%q", err, answer)
 	}
+
 	for _, want := range []string{
 		"Plan-execute dispatch blocked before the planner ran",
 		"ambiguous shorthand",
@@ -3681,6 +4122,7 @@ func TestRunPromptOnceBlocksAmbiguousPlanDocBasenameBeforePlanExecute(t *testing
 			t.Fatalf("ambiguity answer missing %q:\n%s", want, answer)
 		}
 	}
+
 	if chatRequests.Load() != 0 {
 		t.Fatalf("planner should not be called for ambiguous design-doc shorthand, got %d chat request(s)", chatRequests.Load())
 	}
@@ -3708,9 +4150,11 @@ func TestRunPromptOnceBlocksUnlintedPlanDocBeforePlanExecute(t *testing.T) {
 			Stderr:       "refine: max iters reached without ship-as-is verdict",
 		}
 	})
+
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
 	}
+
 	planDoc := strings.Join([]string{
 		"# Plan",
 		"",
@@ -3730,11 +4174,13 @@ func TestRunPromptOnceBlocksUnlintedPlanDocBeforePlanExecute(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "docs", "plan.md"), []byte(planDoc), 0o644); err != nil {
 		t.Fatalf("write plan doc: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("old\n"), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
 
 	var chatRequests atomic.Int64
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -3748,9 +4194,11 @@ func TestRunPromptOnceBlocksUnlintedPlanDocBeforePlanExecute(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer server.Close()
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = server.URL
 	cfg.Chat.AutoStartServer = false
 	cfg.Chat.AttachInstructionFiles = false
@@ -3771,6 +4219,7 @@ func TestRunPromptOnceBlocksUnlintedPlanDocBeforePlanExecute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunPromptOnce should surface preflight blocker as an assistant answer, got err=%v answer=%q", err, answer)
 	}
+
 	for _, want := range []string{
 		"automatic refine did not produce an accepted brief",
 		".idiom/refine/tui-docs-plan/accepted.md",
@@ -3780,6 +4229,7 @@ func TestRunPromptOnceBlocksUnlintedPlanDocBeforePlanExecute(t *testing.T) {
 			t.Fatalf("preflight answer missing %q:\n%s", want, answer)
 		}
 	}
+
 	if chatRequests.Load() != 0 {
 		t.Fatalf("planner should not be called, got %d chat request(s)", chatRequests.Load())
 	}
@@ -3788,7 +4238,9 @@ func TestRunPromptOnceBlocksUnlintedPlanDocBeforePlanExecute(t *testing.T) {
 func TestRunPromptOnceSurfacesRefinedCandidatePreflightBlocker(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
+
 	const refinedPath = ".idiom/refine/tui-docs-plan/accepted.dispatch.md"
+
 	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult {
 		return implementationDispatchPlanDocumentPreflightResult{
 			Path:         doc.Path,
@@ -3819,9 +4271,11 @@ func TestRunPromptOnceSurfacesRefinedCandidatePreflightBlocker(t *testing.T) {
 			}},
 		}
 	})
+
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
 	}
+
 	planDoc := strings.Join([]string{
 		"# Plan",
 		"",
@@ -3837,11 +4291,13 @@ func TestRunPromptOnceSurfacesRefinedCandidatePreflightBlocker(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "docs", "plan.md"), []byte(planDoc), 0o644); err != nil {
 		t.Fatalf("write plan doc: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("dirty\n"), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
 
 	var chatRequests atomic.Int64
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -3855,9 +4311,11 @@ func TestRunPromptOnceSurfacesRefinedCandidatePreflightBlocker(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer server.Close()
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = server.URL
 	cfg.Chat.AutoStartServer = false
 	cfg.Chat.AttachInstructionFiles = false
@@ -3878,6 +4336,7 @@ func TestRunPromptOnceSurfacesRefinedCandidatePreflightBlocker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunPromptOnce should surface refined candidate blocker as an assistant answer, got err=%v answer=%q", err, answer)
 	}
+
 	for _, want := range []string{
 		"Automatic refine produced a brief, but intake/lint still blocked plan-execute dispatch",
 		refinedPath,
@@ -3888,9 +4347,11 @@ func TestRunPromptOnceSurfacesRefinedCandidatePreflightBlocker(t *testing.T) {
 			t.Fatalf("refined preflight answer missing %q:\n%s", want, answer)
 		}
 	}
+
 	if strings.Contains(answer, "automatic refine did not produce an accepted brief") {
 		t.Fatalf("answer should name the refined candidate blocker instead of generic refine failure:\n%s", answer)
 	}
+
 	if chatRequests.Load() != 0 {
 		t.Fatalf("planner should not be called, got %d chat request(s)", chatRequests.Load())
 	}
@@ -3899,11 +4360,14 @@ func TestRunPromptOnceSurfacesRefinedCandidatePreflightBlocker(t *testing.T) {
 func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
+
 	const refinedPath = ".idiom/refine/tui-docs-plan/accepted.md"
+
 	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult {
 		if doc.Path == refinedPath {
 			return implementationDispatchPlanDocumentPreflightResult{Path: doc.Path, OK: true}
 		}
+
 		return implementationDispatchPlanDocumentPreflightResult{
 			Path:         doc.Path,
 			OK:           false,
@@ -3914,12 +4378,15 @@ func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 	stubImplementationDispatchPlanDocumentRefine(t, func(_ context.Context, cfg config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentRefineResult {
 		root := implementationDispatchWorkspaceRoot(cfg)
 		outAbs, ok := implementationDispatchWorkspaceFile(root, refinedPath)
+
 		if !ok {
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: refinedPath, ExitCode: 2}
 		}
+
 		if err := os.MkdirAll(filepath.Dir(outAbs), 0o755); err != nil {
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: refinedPath, ExitCode: 1, Err: err}
 		}
+
 		refinedBody := strings.Join([]string{
 			"# Refined Plan",
 			"",
@@ -3957,10 +4424,12 @@ func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 		if err := os.WriteFile(outAbs, []byte(refinedBody), 0o644); err != nil {
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: refinedPath, ExitCode: 1, Err: err}
 		}
+
 		refinedDoc, ok := readImplementationDispatchPlanDocument(root, refinedPath)
 		if !ok {
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: refinedPath, ExitCode: 1}
 		}
+
 		return implementationDispatchPlanDocumentRefineResult{
 			OriginalPath: doc.Path,
 			OutputPath:   refinedPath,
@@ -3968,9 +4437,11 @@ func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 			Document:     refinedDoc,
 		}
 	})
+
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
 	}
+
 	planDoc := strings.Join([]string{
 		"# Plan",
 		"",
@@ -3986,6 +4457,7 @@ func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "docs", "plan.md"), []byte(planDoc), 0o644); err != nil {
 		t.Fatalf("write plan doc: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("old\n"), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
@@ -4001,8 +4473,10 @@ func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read request: %v", err)
 			}
+
 			requestText := string(body)
 			reply := ""
+
 			switch {
 			case strings.Contains(requestText, "Allowed Repair Paths"):
 				reply = "Decision: pass\n\nVerification Checklist:\n- target.txt contains the requested replacement.\n- No out-of-scope paths were changed.\n- Planner-owned build or test commands remain pending outside this mocked lane."
@@ -4011,6 +4485,7 @@ func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 			default:
 				t.Fatalf("refined exact dispatch brief should auto-submit before planner model call:\n%s", requestText)
 			}
+
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{
 					"message": map[string]string{"content": reply},
@@ -4023,6 +4498,7 @@ func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 	defer server.Close()
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = server.URL
 	cfg.Chat.AutoStartServer = false
 	cfg.Chat.AttachInstructionFiles = false
@@ -4043,16 +4519,20 @@ func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
+
 	got, err := os.ReadFile(filepath.Join(root, "target.txt"))
 	if err != nil {
 		t.Fatalf("read target: %v", err)
 	}
+
 	if string(got) != "new\n" {
 		t.Fatalf("target content = %q, want new line", string(got))
 	}
+
 	if !strings.Contains(answer, "plan-then-execute summary") {
 		t.Fatalf("expected plan-execute summary answer, got %q", answer)
 	}
+
 	planArtifact := loadOnlyTimestampedPlanArtifactForTest(t, root)
 	if len(planArtifact.Edits) != 1 || planArtifact.Edits[0].Path != "target.txt" {
 		t.Fatalf("plan artifact edits = %#v, want one target.txt edit", planArtifact.Edits)
@@ -4087,24 +4567,31 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 		if len(doc.EditPaths) > 0 {
 			target = doc.EditPaths[0]
 		}
+
 		if target == "" {
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, ExitCode: 1, Stderr: "missing atom edit path"}
 		}
+
 		root := implementationDispatchWorkspaceRoot(cfg)
 		outRel := filepath.ToSlash(filepath.Join(".idiom", "refine", implementationDispatchRefineTitle(doc.Path), "accepted.md"))
 		outAbs, ok := implementationDispatchWorkspaceFile(root, outRel)
+
 		if !ok {
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: outRel, ExitCode: 2}
 		}
+
 		if err := os.MkdirAll(filepath.Dir(outAbs), 0o755); err != nil {
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: outRel, ExitCode: 1, Err: err}
 		}
+
 		change := "Apply this atom's design-doc slice."
 		currentState := "`" + target + "` exists in the test fixture workspace."
+
 		if target == "pkg/c.go" {
 			change = "Create this atom's design-doc slice as a new file."
 			currentState = "`" + target + "` is a new file target in the test fixture workspace."
 		}
+
 		refinedBody := strings.Join([]string{
 			"# Refined Atom",
 			"",
@@ -4132,10 +4619,12 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 		if err := os.WriteFile(outAbs, []byte(refinedBody), 0o644); err != nil {
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: outRel, ExitCode: 1, Err: err}
 		}
+
 		refinedDoc, ok := readImplementationDispatchPlanDocument(root, outRel)
 		if !ok {
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: outRel, ExitCode: 1}
 		}
+
 		return implementationDispatchPlanDocumentRefineResult{
 			OriginalPath: doc.Path,
 			OutputPath:   outRel,
@@ -4145,21 +4634,27 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 			Document:     refinedDoc,
 		}
 	})
+
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
 	}
+
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatalf("mkdir pkg: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/atomize\n\ngo 1.22\n"), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "a.go"), []byte("package pkg\n\nconst A = \"old\"\n"), 0o644); err != nil {
 		t.Fatalf("write a.go: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "b.go"), []byte("package pkg\n\nconst B = \"old\"\n"), 0o644); err != nil {
 		t.Fatalf("write b.go: %v", err)
 	}
+
 	designDoc := strings.Join([]string{
 		"# Design",
 		"",
@@ -4182,8 +4677,11 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 		t.Fatalf("write design doc: %v", err)
 	}
 
-	var plannerPromptRequests atomic.Int64
-	var sawAtomPrompt atomic.Bool
+	var (
+		plannerPromptRequests atomic.Int64
+		sawAtomPrompt         atomic.Bool
+	)
+
 	sourceReadReplies := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -4196,8 +4694,10 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 			if err != nil {
 				t.Fatalf("read request: %v", err)
 			}
+
 			requestText := string(body)
 			reply := ""
+
 			switch {
 			case strings.Contains(requestText, "Plan-Execute Planner Blocked Recovery"):
 				reply = `{"decision":"surface","reason":"test planner should have received one scoped atom path","message":"planner recovery was reached unexpectedly"}`
@@ -4207,12 +4707,17 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 				reply = "Plan submitted."
 			default:
 				plannerPromptRequests.Add(1)
+
 				if !strings.Contains(requestText, "### .idiom/refine/") ||
 					!strings.Contains(requestText, "Required path coverage for this run") {
+
 					t.Fatalf("planner request did not receive refined atom brief with required scope:\n%s", requestText)
 				}
+
 				sawAtomPrompt.Store(true)
+
 				readPaths := []string{}
+
 				switch {
 				case strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\\n- pkg/a.go\\n") ||
 					strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\n- pkg/a.go\n"):
@@ -4224,10 +4729,12 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 					strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\n- pkg/c.go\n"):
 					readPaths = []string{"pkg/c.go"}
 				}
+
 				if readReply, ok := planExecuteSourceReadFixtureReply(requestText, sourceReadReplies, readPaths...); ok {
 					reply = readReply
 					break
 				}
+
 				switch {
 				case strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\\n- pkg/a.go\\n") ||
 					strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\n- pkg/a.go\n"):
@@ -4245,6 +4752,7 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 					t.Fatalf("planner request missing atom required path:\n%s", requestText)
 				}
 			}
+
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{
 					"message": map[string]string{"content": reply},
@@ -4254,9 +4762,11 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer server.Close()
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = server.URL
 	cfg.Chat.AutoStartServer = false
 	cfg.Chat.AttachInstructionFiles = false
@@ -4277,42 +4787,53 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
+
 	gotA, err := os.ReadFile(filepath.Join(root, "pkg", "a.go"))
 	if err != nil {
 		t.Fatalf("read a.go: %v", err)
 	}
+
 	gotB, err := os.ReadFile(filepath.Join(root, "pkg", "b.go"))
 	if err != nil {
 		t.Fatalf("read b.go: %v", err)
 	}
+
 	if string(gotA) != "package pkg\n\nconst A = \"new\"\n" {
 		t.Fatalf("a.go content = %q, want updated fixture", string(gotA))
 	}
+
 	if string(gotB) != "package pkg\n\nconst B = \"new\"\n" {
 		t.Fatalf("b.go content = %q, want updated fixture", string(gotB))
 	}
+
 	gotC, err := os.ReadFile(filepath.Join(root, "pkg", "c.go"))
 	if err != nil {
 		t.Fatalf("read c.go: %v", err)
 	}
+
 	if string(gotC) != "package pkg\n\nconst C = \"new\"\n" {
 		t.Fatalf("c.go content = %q, want created fixture", string(gotC))
 	}
+
 	atomDir := filepath.Join(root, ".idiom", "atoms", implementationDispatchRefineTitle("docs/design.md"))
 	for _, name := range []string{"atom-001.md", "atom-002.md", "atom-003.md"} {
 		if _, err := os.Stat(filepath.Join(atomDir, name)); err != nil {
 			t.Fatalf("expected materialized atom %s: %v", name, err)
 		}
 	}
+
 	firstAtom, err := os.ReadFile(filepath.Join(atomDir, "atom-001.md"))
 	if err != nil {
 		t.Fatalf("read first atom: %v", err)
 	}
+
 	if !strings.Contains(string(firstAtom), "Host current-state anchors captured before dispatch") ||
 		!strings.Contains(string(firstAtom), "pkg/a.go:3") ||
 		!strings.Contains(string(firstAtom), `const A = "old"`) {
+
 		t.Fatalf("existing-path atom should carry host exact anchors in Verified Current State:\n%s", string(firstAtom))
 	}
+
 	for _, want := range []string{
 		"Status: source-satisfied - do not dispatch",
 		"exact `old_text`/`new_text` blocks",
@@ -4322,19 +4843,24 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 			t.Fatalf("existing-path atom should carry dispatch contract %q:\n%s", want, string(firstAtom))
 		}
 	}
+
 	thirdAtom, err := os.ReadFile(filepath.Join(atomDir, "atom-003.md"))
 	if err != nil {
 		t.Fatalf("read third atom: %v", err)
 	}
+
 	if !strings.Contains(string(thirdAtom), "NEW FILE:") {
 		t.Fatalf("missing-path atom should be marked NEW FILE:\n%s", string(thirdAtom))
 	}
+
 	if !strings.Contains(answer, "Design document implementation completed through 3 atom(s)") {
 		t.Fatalf("expected atomized completion answer, got %q", answer)
 	}
+
 	if !sawAtomPrompt.Load() {
 		t.Fatalf("expected planner to receive atom prompt")
 	}
+
 	if plannerPromptRequests.Load() != 6 {
 		t.Fatalf("expected source-read and submit request per atom, got %d", plannerPromptRequests.Load())
 	}
@@ -4343,9 +4869,11 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 func TestRunImplementationPlanDocumentsSourceSatisfiedAtomSkipsRefineAndPlanExecute(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
+
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatalf("mkdir pkg: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "events.go"), []byte(strings.Join([]string{
 		"package pkg",
 		"",
@@ -4362,13 +4890,18 @@ func TestRunImplementationPlanDocumentsSourceSatisfiedAtomSkipsRefineAndPlanExec
 	}
 
 	var refineCalls atomic.Int64
+
 	stubImplementationDispatchPlanDocumentRefine(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentRefineResult {
 		refineCalls.Add(1)
+
 		return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, ExitCode: 1, Stderr: "refine should not run"}
 	})
+
 	var preflightCalls atomic.Int64
+
 	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult {
 		preflightCalls.Add(1)
+
 		return implementationDispatchPlanDocumentPreflightResult{Path: doc.Path, OK: true}
 	})
 
@@ -4407,6 +4940,7 @@ func TestRunImplementationPlanDocumentsSourceSatisfiedAtomSkipsRefineAndPlanExec
 	}
 
 	cfg := config.Default()
+
 	cfg.Chat.ImplementationDispatch = "plan_execute"
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
@@ -4415,18 +4949,23 @@ func TestRunImplementationPlanDocumentsSourceSatisfiedAtomSkipsRefineAndPlanExec
 
 	model := New(cfg)
 	defer model.Close()
+
 	answer, err := model.runImplementationPlanDocumentsViaPlanExecute(context.Background(), "implement docs/design.md", promptExecutionPlan{}, []implementationDispatchPlanDocument{doc})
 	if err != nil {
 		t.Fatalf("runImplementationPlanDocumentsViaPlanExecute: %v", err)
 	}
+
 	if !strings.Contains(answer, "Decision: source-satisfied") ||
 		!strings.Contains(answer, "writer_route_decision") ||
 		!strings.Contains(answer, "idiom.pkg.") {
+
 		t.Fatalf("expected source-satisfied evidence answer, got:\n%s", answer)
 	}
+
 	if refineCalls.Load() != 0 {
 		t.Fatalf("refine should not run for source-satisfied atom, got %d call(s)", refineCalls.Load())
 	}
+
 	if preflightCalls.Load() != 0 {
 		t.Fatalf("preflight should not run before source-satisfied short-circuit, got %d call(s)", preflightCalls.Load())
 	}
@@ -4435,9 +4974,11 @@ func TestRunImplementationPlanDocumentsSourceSatisfiedAtomSkipsRefineAndPlanExec
 func TestRunImplementationPlanDocumentsSourceSatisfiedAtomMarksAtomComplete(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
+
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatalf("mkdir pkg: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "events.go"), []byte(strings.Join([]string{
 		"package pkg",
 		"",
@@ -4476,40 +5017,51 @@ func TestRunImplementationPlanDocumentsSourceSatisfiedAtomMarksAtomComplete(t *t
 	}, "\n")
 	atomRel := ".idiom/atoms/design/atom-001.md"
 	atomAbs := filepath.Join(root, filepath.FromSlash(atomRel))
+
 	if err := os.MkdirAll(filepath.Dir(atomAbs), 0o755); err != nil {
 		t.Fatalf("mkdir atom dir: %v", err)
 	}
+
 	if err := os.WriteFile(atomAbs, []byte(atomContent), 0o644); err != nil {
 		t.Fatalf("write atom: %v", err)
 	}
+
 	doc, ok := readImplementationDispatchPlanDocument(root, atomRel)
 	if !ok {
 		t.Fatalf("atom doc should be readable")
 	}
+
 	cfg := config.Default()
+
 	cfg.Chat.ImplementationDispatch = "plan_execute"
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
 	cfg.MCP = nil
+
 	model := New(cfg)
+
 	defer model.Close()
 
 	answer, err := model.runImplementationPlanDocumentsViaPlanExecute(context.Background(), "implement docs/design.md", promptExecutionPlan{}, []implementationDispatchPlanDocument{doc})
 	if err != nil {
 		t.Fatalf("runImplementationPlanDocumentsViaPlanExecute: %v", err)
 	}
+
 	if !strings.Contains(answer, "Decision: source-satisfied") {
 		t.Fatalf("expected source-satisfied answer, got:\n%s", answer)
 	}
+
 	updatedBody, err := os.ReadFile(atomAbs)
 	if err != nil {
 		t.Fatalf("read updated atom: %v", err)
 	}
+
 	updated := string(updatedBody)
 	if !strings.Contains(updated, "Status: source-satisfied - do not dispatch") ||
 		!strings.Contains(updated, "## Result") ||
 		!strings.Contains(updated, "writer_route_decision") {
+
 		t.Fatalf("source-satisfied atom doc should be closed with result evidence:\n%s", updated)
 	}
 }
@@ -4561,15 +5113,18 @@ func TestImplementationDispatchSourceSatisfiedUsesCurrentStateAnchorConcepts(t *
 			"",
 		}, "\n"),
 	}
+
 	for path, content := range files {
 		full := filepath.Join(root, filepath.FromSlash(path))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", path, err)
 		}
+
 		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
 			t.Fatalf("write %s: %v", path, err)
 		}
 	}
+
 	docs := []implementationDispatchPlanDocument{
 		sourceSatisfiedAtomDoc(".idiom/atoms/design/atom-001.md", "internal/contracts/writerroute/decision.go", "Domain type, normalization, stable ID, event fields", []string{
 			"`internal/contracts/writerroute/decision.go:3`: `// SchemaVersion is the current version of the WriterRouteDecision schema.`",
@@ -4591,6 +5146,7 @@ func TestImplementationDispatchSourceSatisfiedUsesCurrentStateAnchorConcepts(t *
 		}),
 	}
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
@@ -4598,6 +5154,7 @@ func TestImplementationDispatchSourceSatisfiedUsesCurrentStateAnchorConcepts(t *
 	if len(records) != len(docs) {
 		t.Fatalf("records = %#v, want one source-satisfied record per atom", records)
 	}
+
 	for _, record := range records {
 		if record.EditPath == "" || len(record.Evidence) == 0 {
 			t.Fatalf("record should carry path evidence: %#v", record)
@@ -4609,9 +5166,11 @@ func TestImplementationDispatchSourceSatisfiedUsesCurrentSourceBodyWhenAnchorsAr
 	root := t.TempDir()
 	path := "internal/contracts/writerroute/decision_test.go"
 	full := filepath.Join(root, filepath.FromSlash(path))
+
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		t.Fatalf("mkdir target: %v", err)
 	}
+
 	body := strings.Join([]string{
 		"package writerroute",
 		"",
@@ -4627,10 +5186,12 @@ func TestImplementationDispatchSourceSatisfiedUsesCurrentSourceBodyWhenAnchorsAr
 	if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
+
 	doc := sourceSatisfiedAtomDoc(".idiom/atoms/design/atom-002.md", path, "Unit tests for normalization, stable ID, JSON/event fields", []string{
 		"`internal/contracts/writerroute/decision_test.go:8`: `// stale comment anchor no longer present`",
 	})
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
@@ -4638,6 +5199,7 @@ func TestImplementationDispatchSourceSatisfiedUsesCurrentSourceBodyWhenAnchorsAr
 	if len(records) != 1 {
 		t.Fatalf("records = %#v, want source-satisfied from current source body", records)
 	}
+
 	if !strings.Contains(strings.Join(records[0].Evidence, "\n"), "current source covers requested source-scope term") {
 		t.Fatalf("expected source-body evidence, got %#v", records[0].Evidence)
 	}
@@ -4648,14 +5210,17 @@ func TestImplementationDispatchSourceSatisfiedDoesNotTreatFallbackAnchorsAsDone(
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatalf("mkdir pkg: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "a.go"), []byte("package pkg\n\nconst A = \"old\"\n"), 0o644); err != nil {
 		t.Fatalf("write pkg/a.go: %v", err)
 	}
+
 	doc := sourceSatisfiedAtomDoc(".idiom/atoms/design/atom-001.md", "pkg/a.go", "Replace A's fixture value with new", []string{
 		"`pkg/a.go:1`: `package pkg`",
 		"`pkg/a.go:3`: `const A = \"old\"`",
 	})
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
@@ -4668,9 +5233,11 @@ func TestImplementationDispatchOptionalSourceSatisfiedRequiresLiveAnchor(t *test
 	root := t.TempDir()
 	path := "internal/surfaces/tui/app/implementation_dispatch.go"
 	full := filepath.Join(root, filepath.FromSlash(path))
+
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		t.Fatalf("mkdir target: %v", err)
 	}
+
 	if err := os.WriteFile(full, []byte(strings.Join([]string{
 		"package app",
 		"",
@@ -4681,10 +5248,12 @@ func TestImplementationDispatchOptionalSourceSatisfiedRequiresLiveAnchor(t *test
 	}, "\n")), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
+
 	doc := sourceSatisfiedAtomDoc(".idiom/atoms/design/atom-008.md", path, "If needed, pass or annotate dispatch route without changing behavior", []string{
 		"`internal/surfaces/tui/app/implementation_dispatch.go:3`: `func staleAnchor() {}`",
 	})
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
@@ -4695,6 +5264,7 @@ func TestImplementationDispatchOptionalSourceSatisfiedRequiresLiveAnchor(t *test
 
 func sourceSatisfiedAtomDoc(docPath string, editPath string, change string, anchors []string) implementationDispatchPlanDocument {
 	var b strings.Builder
+
 	b.WriteString("# Atom\n\n")
 	b.WriteString("Status: pending\n\n")
 	b.WriteString("<!-- idiom:design-doc-atom source=\"docs/design.md\" index=1 total=1 -->\n\n")
@@ -4707,11 +5277,13 @@ func sourceSatisfiedAtomDoc(docPath string, editPath string, change string, anch
 	b.WriteString(" |\n\n")
 	b.WriteString("## Verified Current State\n\n")
 	b.WriteString("- Host current-state anchors captured before dispatch:\n")
+
 	for _, anchor := range anchors {
 		b.WriteString("  - ")
 		b.WriteString(anchor)
 		b.WriteString("\n")
 	}
+
 	b.WriteString("\n## Required Behavior\n\n")
 	b.WriteString("Source scope row:\n\n")
 	b.WriteString("> | `")
@@ -4719,6 +5291,7 @@ func sourceSatisfiedAtomDoc(docPath string, editPath string, change string, anch
 	b.WriteString("` | ")
 	b.WriteString(change)
 	b.WriteString(" |\n")
+
 	return implementationDispatchPlanDocument{
 		Path:      docPath,
 		Content:   b.String(),
@@ -4731,11 +5304,13 @@ func TestPlanExecutePromptRunnerIsolatesInteractiveHistoryAndPinnedFiles(t *test
 	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("old\n"), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "parent-only.txt"), []byte("PARENT_PINNED_SENTINEL_8f32f6\n"), 0o644); err != nil {
 		t.Fatalf("write parent-only: %v", err)
 	}
 
 	var chatRequests atomic.Int64
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -4747,8 +5322,11 @@ func TestPlanExecutePromptRunnerIsolatesInteractiveHistoryAndPinnedFiles(t *test
 			if err != nil {
 				t.Fatalf("read request: %v", err)
 			}
+
 			requestText := string(body)
+
 			chatRequests.Add(1)
+
 			for _, forbidden := range []string{
 				"PARENT_HISTORY_SENTINEL_24d4f8",
 				"PARENT_ASSISTANT_SENTINEL_977aae",
@@ -4759,11 +5337,14 @@ func TestPlanExecutePromptRunnerIsolatesInteractiveHistoryAndPinnedFiles(t *test
 					t.Fatalf("isolated plan-execute planner request leaked parent TUI state %q:\n%s", forbidden, requestText)
 				}
 			}
+
 			if !strings.Contains(requestText, "PLANNER_PROMPT_SENTINEL_d66863") {
 				t.Fatalf("planner request missing isolated prompt sentinel:\n%s", requestText)
 			}
+
 			reply := "<tool_call>\n" +
 				`{"tool":"submit_plan","rationale":"Update target.txt from the isolated planner prompt.","edits":[{"path":"target.txt","old_text":"old\n","new_text":"new\n","purpose":"replace the target fixture text"}]}`
+
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{
 					"message": map[string]string{"content": reply},
@@ -4773,9 +5354,11 @@ func TestPlanExecutePromptRunnerIsolatesInteractiveHistoryAndPinnedFiles(t *test
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer server.Close()
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = server.URL
 	cfg.Chat.AutoStartServer = false
 	cfg.Chat.AttachInstructionFiles = false
@@ -4792,15 +5375,18 @@ func TestPlanExecutePromptRunnerIsolatesInteractiveHistoryAndPinnedFiles(t *test
 
 	model := New(cfg)
 	defer model.Close()
+
 	model.messages = []llama.ChatMessage{
 		{Role: "user", Content: "PARENT_HISTORY_SENTINEL_24d4f8"},
 		{Role: "assistant", Content: "PARENT_ASSISTANT_SENTINEL_977aae"},
 	}
 	model.lastAssistantReasoningContent = "parent reasoning"
+
 	parentPins := model.pinnedFilesRegistry()
 	parentPins.Pin("parent-only.txt")
 
 	runner := model.newPlanExecutePromptRunner(context.Background())
+
 	answer, err := runner(cfg, "PLANNER_PROMPT_SENTINEL_d66863 update target.txt", planexecute.RunOptions{
 		TaskFamily:               agent.PlanThenExecutePlannerTaskFamily,
 		PlannerOwnedVerification: true,
@@ -4809,15 +5395,19 @@ func TestPlanExecutePromptRunnerIsolatesInteractiveHistoryAndPinnedFiles(t *test
 	if err != nil {
 		t.Fatalf("prompt runner: %v\nanswer: %s", err, answer)
 	}
+
 	if chatRequests.Load() == 0 {
 		t.Fatalf("expected planner chat request")
 	}
+
 	if len(model.messages) != 2 || model.messages[0].Content != "PARENT_HISTORY_SENTINEL_24d4f8" || model.messages[1].Content != "PARENT_ASSISTANT_SENTINEL_977aae" {
 		t.Fatalf("parent messages were not restored: %#v", model.messages)
 	}
+
 	if model.lastAssistantReasoningContent != "parent reasoning" {
 		t.Fatalf("parent reasoning was not restored: %q", model.lastAssistantReasoningContent)
 	}
+
 	if model.pinnedFiles != parentPins {
 		t.Fatalf("parent pinned-file registry was not restored")
 	}
@@ -4832,6 +5422,7 @@ func TestPlanExecutePlannerThinkingPolicyDisablesLocalThinkingOnly(t *testing.T)
 		},
 		modelID: "qwen3.6-35b",
 	}
+
 	if !qwen.shouldDisableThinkingForPlanExecutePlanner() {
 		t.Fatalf("local Qwen planner should disable thinking for strict plan-execute tool emission")
 	}
@@ -4859,10 +5450,13 @@ func TestPlanExecutePromptRunnerRoutePreservesHostedExecutorThinkingFloor(t *tes
 		modelID:           "local-planner",
 	}
 	restore := m.applyPlanExecutePromptRunnerRoute(context.Background(), planexecute.RunOptions{})
+
 	if !m.modelThinkingFloor {
 		t.Fatalf("hosted executor route should set modelThinkingFloor during in-process plan-execute")
 	}
+
 	restore()
+
 	if m.modelThinkingFloor {
 		t.Fatalf("modelThinkingFloor should restore after in-process plan-execute route")
 	}
@@ -4881,11 +5475,14 @@ func TestPlanExecutePromptRunnerStatePreservesThinkingForHostedExecutorRoute(t *
 	restoreState := m.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
 		TaskFamily: agent.PlanThenExecutePlannerTaskFamily,
 	}, io.Discard)
+
 	if m.disableThinkingOverride {
 		t.Fatalf("hosted executor route must not inherit local planner no-thinking override")
 	}
+
 	restoreState()
 	restoreRoute()
+
 	if m.disableThinkingOverride || m.modelThinkingFloor {
 		t.Fatalf("plan-execute state/route should restore, disableThinking=%t floor=%t", m.disableThinkingOverride, m.modelThinkingFloor)
 	}
@@ -4904,10 +5501,13 @@ func TestPlanExecutePromptRunnerStateDisablesLocalThinkingForActiveModelFallback
 		TaskFamily:     agent.PlanThenExecutePlannerTaskFamily,
 		UseActiveModel: true,
 	}, io.Discard)
+
 	if !m.disableThinkingOverride {
 		t.Fatalf("active-model fallback should still disable local thinking for strict plan-execute tool emission")
 	}
+
 	restoreState()
+
 	if m.disableThinkingOverride {
 		t.Fatalf("plan-execute state should restore disableThinking=false")
 	}
@@ -4916,36 +5516,43 @@ func TestPlanExecutePromptRunnerStateDisablesLocalThinkingForActiveModelFallback
 func TestPlanExecutePromptRunnerUsesExecutorRouteWhenAvailable(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
+
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir .idiom: %v", err)
 	}
 
 	var plannerChat atomic.Int64
+
 	plannerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": "planner-model"}}})
 		case "/v1/chat/completions":
 			plannerChat.Add(1)
+
 			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "planner route"}}}})
 		default:
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer plannerServer.Close()
 
 	var executorChat atomic.Int64
+
 	executorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": "executor-model"}}})
 		case "/v1/chat/completions":
 			executorChat.Add(1)
+
 			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "executor route"}}}})
 		default:
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer executorServer.Close()
 
 	backendsJSON := fmt.Sprintf(`{"profiles":{"local":{"models":[
@@ -4957,6 +5564,7 @@ func TestPlanExecutePromptRunnerUsesExecutorRouteWhenAvailable(t *testing.T) {
 	}
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = plannerServer.URL
 	cfg.LlamaServer.Model = "planner-model"
 	cfg.Chat.AutoStartServer = false
@@ -4972,6 +5580,7 @@ func TestPlanExecutePromptRunnerUsesExecutorRouteWhenAvailable(t *testing.T) {
 
 	model := New(cfg)
 	defer model.Close()
+
 	model.modelID = "planner-model"
 
 	answer, err := model.newPlanExecutePromptRunner(context.Background())(cfg, "answer directly", planexecute.RunOptions{
@@ -4981,15 +5590,19 @@ func TestPlanExecutePromptRunnerUsesExecutorRouteWhenAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prompt runner: %v", err)
 	}
+
 	if strings.TrimSpace(answer) != "executor route" {
 		t.Fatalf("answer = %q, want executor route", answer)
 	}
+
 	if executorChat.Load() == 0 {
 		t.Fatalf("expected executor chat request")
 	}
+
 	if plannerChat.Load() != 0 {
 		t.Fatalf("plan-execute prompt runner should not use planner chat when executor is reachable, got %d", plannerChat.Load())
 	}
+
 	if model.modelID != "planner-model" {
 		t.Fatalf("modelID was not restored after prompt runner: %q", model.modelID)
 	}
@@ -4998,36 +5611,43 @@ func TestPlanExecutePromptRunnerUsesExecutorRouteWhenAvailable(t *testing.T) {
 func TestPlanExecutePromptRunnerUseActiveModelSkipsExecutorRoute(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
+
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir .idiom: %v", err)
 	}
 
 	var plannerChat atomic.Int64
+
 	plannerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": "planner-model"}}})
 		case "/v1/chat/completions":
 			plannerChat.Add(1)
+
 			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "planner route"}}}})
 		default:
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer plannerServer.Close()
 
 	var executorChat atomic.Int64
+
 	executorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": "executor-model"}}})
 		case "/v1/chat/completions":
 			executorChat.Add(1)
+
 			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "executor route"}}}})
 		default:
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer executorServer.Close()
 
 	backendsJSON := fmt.Sprintf(`{"profiles":{"local":{"models":[
@@ -5039,6 +5659,7 @@ func TestPlanExecutePromptRunnerUseActiveModelSkipsExecutorRoute(t *testing.T) {
 	}
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = plannerServer.URL
 	cfg.LlamaServer.Model = "planner-model"
 	cfg.Chat.AutoStartServer = false
@@ -5054,6 +5675,7 @@ func TestPlanExecutePromptRunnerUseActiveModelSkipsExecutorRoute(t *testing.T) {
 
 	model := New(cfg)
 	defer model.Close()
+
 	model.modelID = "planner-model"
 
 	answer, err := model.newPlanExecutePromptRunner(context.Background())(cfg, "answer directly", planexecute.RunOptions{
@@ -5064,15 +5686,19 @@ func TestPlanExecutePromptRunnerUseActiveModelSkipsExecutorRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prompt runner: %v", err)
 	}
+
 	if strings.TrimSpace(answer) != "planner route" {
 		t.Fatalf("answer = %q, want planner route", answer)
 	}
+
 	if plannerChat.Load() == 0 {
 		t.Fatalf("expected planner chat request")
 	}
+
 	if executorChat.Load() != 0 {
 		t.Fatalf("active-model fallback should not use executor chat, got %d", executorChat.Load())
 	}
+
 	if model.modelID != "planner-model" {
 		t.Fatalf("modelID was not restored after prompt runner: %q", model.modelID)
 	}
@@ -5082,9 +5708,11 @@ func TestRunPromptOncePlanExecuteRecoversFromMissingPackageOutlineForNewRequired
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
 	allowImplementationDispatchPlanDocumentPreflight(t)
+
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
 	}
+
 	planDoc := strings.Join([]string{
 		"# Plan",
 		"",
@@ -5103,8 +5731,11 @@ func TestRunPromptOncePlanExecuteRecoversFromMissingPackageOutlineForNewRequired
 		t.Fatalf("write plan doc: %v", err)
 	}
 
-	var sawNewFileNudge atomic.Bool
-	var initialPlannerRequests atomic.Int64
+	var (
+		sawNewFileNudge        atomic.Bool
+		initialPlannerRequests atomic.Int64
+	)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -5116,8 +5747,10 @@ func TestRunPromptOncePlanExecuteRecoversFromMissingPackageOutlineForNewRequired
 			if err != nil {
 				t.Fatalf("read request: %v", err)
 			}
+
 			requestText := string(body)
 			reply := ""
+
 			switch {
 			case strings.Contains(requestText, "Allowed Repair Paths"):
 				reply = "Decision: pass\n\nVerification Checklist:\n- internal/newpkg/decision.go exists with the requested helper.\n- No out-of-scope paths were changed.\n- Planner-owned build or test commands remain pending outside this mocked lane."
@@ -5125,16 +5758,21 @@ func TestRunPromptOncePlanExecuteRecoversFromMissingPackageOutlineForNewRequired
 				reply = "Plan submitted."
 			case strings.Contains(requestText, "Required new-file directory does not exist yet"):
 				sawNewFileNudge.Store(true)
+
 				reply = "<tool_call>\n" +
 					`{"tool":"submit_plan","rationale":"Create the new package file from the referenced plan document.","edits":[{"path":"internal/newpkg/decision.go","replace_all":true,"old_text":"","new_text":"package newpkg\n\nfunc Decision() string {\n\treturn \"ok\"\n}\n","purpose":"create the decision helper"}]}`
 			default:
 				initialPlannerRequests.Add(1)
+
 				if !strings.Contains(requestText, "Required path coverage for this run") ||
 					!strings.Contains(requestText, "- internal/newpkg/decision.go") {
+
 					t.Fatalf("planner request missing required new-file scope:\n%s", requestText)
 				}
+
 				reply = "<tool_call>\n" + `{"tool":"go_file_outline","path":"internal/newpkg"}`
 			}
+
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{
 					"message": map[string]string{"content": reply},
@@ -5144,9 +5782,11 @@ func TestRunPromptOncePlanExecuteRecoversFromMissingPackageOutlineForNewRequired
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer server.Close()
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = server.URL
 	cfg.Chat.AutoStartServer = false
 	cfg.Chat.AttachInstructionFiles = false
@@ -5154,7 +5794,9 @@ func TestRunPromptOncePlanExecuteRecoversFromMissingPackageOutlineForNewRequired
 	cfg.Chat.DefaultProfiles = nil
 	cfg.Chat.DebugLogDir = filepath.Join(root, "logs", "conversations")
 	cfg.Chat.ImplementationDispatch = "plan_execute"
+
 	thinkingOn := true
+
 	cfg.Chat.EnableThinking = &thinkingOn
 	cfg.Chat.PreserveThinking = true
 	cfg.Workspace.Root = root
@@ -5170,16 +5812,20 @@ func TestRunPromptOncePlanExecuteRecoversFromMissingPackageOutlineForNewRequired
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
+
 	got, err := os.ReadFile(filepath.Join(root, "internal", "newpkg", "decision.go"))
 	if err != nil {
 		t.Fatalf("read generated file: %v", err)
 	}
+
 	if string(got) != "package newpkg\n\nfunc Decision() string {\n\treturn \"ok\"\n}\n" {
 		t.Fatalf("generated file content = %q", string(got))
 	}
+
 	if !sawNewFileNudge.Load() {
 		t.Fatalf("expected missing package outline to be rewritten into a new-file submit_plan nudge")
 	}
+
 	if initialPlannerRequests.Load() != 1 {
 		t.Fatalf("expected one initial planner request, got %d", initialPlannerRequests.Load())
 	}
@@ -5189,9 +5835,11 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanSurfaceThroughRecoveryDecision
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
 	allowImplementationDispatchPlanDocumentPreflight(t)
+
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
 	}
+
 	planDoc := strings.Join([]string{
 		"# Plan",
 		"",
@@ -5205,11 +5853,13 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanSurfaceThroughRecoveryDecision
 	if err := os.WriteFile(filepath.Join(root, "docs", "plan.md"), []byte(planDoc), 0o644); err != nil {
 		t.Fatalf("write plan doc: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("old\n"), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
 
 	var sawRecoveryDecision atomic.Bool
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -5221,17 +5871,21 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanSurfaceThroughRecoveryDecision
 			if err != nil {
 				t.Fatalf("read request: %v", err)
 			}
+
 			requestText := string(body)
 			reply := ""
+
 			switch {
 			case strings.Contains(requestText, "Plan-Execute Planner Blocked Recovery"):
 				sawRecoveryDecision.Store(true)
+
 				reply = `{"decision":"surface","reason":"same-model retry is unlikely after no submit_plan tool call","message":"Planner failed before submitting a plan. Please refine the brief into exact implementation edits or retry with a stronger planner."}`
 			case strings.Contains(requestText, "The completion gate rejected a final answer before the plan-submission contract"):
 				reply = "I still cannot proceed."
 			default:
 				reply = "I can do this."
 			}
+
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{
 					"message": map[string]string{"content": reply},
@@ -5241,9 +5895,11 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanSurfaceThroughRecoveryDecision
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer server.Close()
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = server.URL
 	cfg.Chat.AutoStartServer = false
 	cfg.Chat.AttachInstructionFiles = false
@@ -5264,12 +5920,15 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanSurfaceThroughRecoveryDecision
 	if err != nil {
 		t.Fatalf("RunPromptOnce should surface planner blocker as an assistant answer, got err=%v answer=%q", err, answer)
 	}
+
 	if !sawRecoveryDecision.Load() {
 		t.Fatalf("expected planner_blocked failure to be consumed by recovery decision model")
 	}
+
 	if !strings.Contains(answer, "Planner failed before submitting a plan") {
 		t.Fatalf("expected human-facing recovery message, got %q", answer)
 	}
+
 	if strings.Contains(answer, "Chat failed") {
 		t.Fatalf("planner blocker should not be surfaced as transport failure, got %q", answer)
 	}
@@ -5281,26 +5940,34 @@ func planExecuteSourceReadFixtureReply(requestText string, seen map[string]bool,
 		!strings.Contains(lower, "source body") &&
 		!strings.Contains(lower, "required source read pending") &&
 		!strings.Contains(lower, "candidate_source_pending") {
+
 		return "", false
 	}
+
 	for _, path := range paths {
 		path = strings.TrimSpace(path)
 		if path == "" || !strings.Contains(requestText, path) {
 			continue
 		}
+
 		if seen != nil && seen[path] {
 			continue
 		}
+
 		if strings.Contains(requestText, "Read f1 "+path) ||
 			strings.Contains(requestText, "read_file failed for "+path) ||
 			strings.Contains(requestText, "path \""+path+"\" is in your required_edit_paths but does not exist") {
+
 			continue
 		}
+
 		if seen != nil {
 			seen[path] = true
 		}
+
 		return "<tool_call>\n" + fmt.Sprintf(`{"tool":"read_file","path":%q,"start_line":1,"end_line":80}`, path), true
 	}
+
 	return "", false
 }
 
@@ -5308,9 +5975,11 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
 	allowImplementationDispatchPlanDocumentPreflight(t)
+
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
 	}
+
 	planDoc := strings.Join([]string{
 		"# Plan",
 		"",
@@ -5324,13 +5993,17 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *
 	if err := os.WriteFile(filepath.Join(root, "docs", "plan.md"), []byte(planDoc), 0o644); err != nil {
 		t.Fatalf("write plan doc: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("old\n"), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
 
-	var sawRecoveryDecision atomic.Bool
-	var sawRetryPrompt atomic.Bool
-	var firstPlannerReplies atomic.Int64
+	var (
+		sawRecoveryDecision atomic.Bool
+		sawRetryPrompt      atomic.Bool
+		firstPlannerReplies atomic.Int64
+	)
+
 	sourceReadReplies := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -5343,8 +6016,10 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *
 			if err != nil {
 				t.Fatalf("read request: %v", err)
 			}
+
 			requestText := string(body)
 			reply := ""
+
 			switch {
 			case strings.Contains(requestText, "Allowed Repair Paths"):
 				reply = "Decision: pass\n\nVerification Checklist:\n- target.txt contains the requested replacement.\n- No out-of-scope paths were changed.\n- Planner-owned build or test commands remain pending outside this mocked lane."
@@ -5352,9 +6027,11 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *
 				reply = "Plan submitted."
 			case strings.Contains(requestText, "Plan-Execute Planner Blocked Recovery"):
 				sawRecoveryDecision.Store(true)
+
 				reply = `{"decision":"retry","reason":"the brief has enough exact target scope and the previous attempt failed before tool use","retry_addendum":"Respond with a submit_plan tool call only; do not narrate completion."}`
 			case strings.Contains(requestText, "Previous Planner Blocker Recovery"):
 				sawRetryPrompt.Store(true)
+
 				if readReply, ok := planExecuteSourceReadFixtureReply(requestText, sourceReadReplies, "target.txt"); ok {
 					reply = readReply
 				} else {
@@ -5365,8 +6042,10 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *
 				reply = "Still no plan."
 			default:
 				firstPlannerReplies.Add(1)
+
 				reply = "I can do this."
 			}
+
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{
 					"message": map[string]string{"content": reply},
@@ -5376,9 +6055,11 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer server.Close()
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = server.URL
 	cfg.Chat.AutoStartServer = false
 	cfg.Chat.AttachInstructionFiles = false
@@ -5399,22 +6080,28 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
+
 	if !sawRecoveryDecision.Load() {
 		t.Fatalf("expected recovery decision prompt after planner_blocked")
 	}
+
 	if !sawRetryPrompt.Load() {
 		t.Fatalf("expected second plan-execute attempt with recovery addendum")
 	}
+
 	if firstPlannerReplies.Load() != 1 {
 		t.Fatalf("expected visible prose planner reply to block without hidden deterministic retry before recovery decision; got %d planner replies", firstPlannerReplies.Load())
 	}
+
 	got, err := os.ReadFile(filepath.Join(root, "target.txt"))
 	if err != nil {
 		t.Fatalf("read target: %v", err)
 	}
+
 	if string(got) != "new\n" {
 		t.Fatalf("target content = %q, want new line", string(got))
 	}
+
 	if !strings.Contains(answer, "plan-then-execute summary") {
 		t.Fatalf("expected successful retry summary, got %q", answer)
 	}
@@ -5424,18 +6111,23 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestRetry(t *testin
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
 	allowImplementationDispatchPlanDocumentPreflight(t)
+
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatalf("mkdir pkg: %v", err)
 	}
+
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "feature.go"), []byte("package pkg\n\nfunc Hardened() bool { return false }\n"), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "feature_test.go"), []byte("package pkg\n\nconst RegressionCovered = false\n"), 0o644); err != nil {
 		t.Fatalf("write test: %v", err)
 	}
+
 	planDoc := strings.Join([]string{
 		"# Feature hardening plan",
 		"",
@@ -5454,8 +6146,11 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestRetry(t *testin
 		t.Fatalf("write plan doc: %v", err)
 	}
 
-	var sawMissingTestRetry atomic.Bool
-	var plannerRequests atomic.Int64
+	var (
+		sawMissingTestRetry atomic.Bool
+		plannerRequests     atomic.Int64
+	)
+
 	sourceReadReplies := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -5468,8 +6163,10 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestRetry(t *testin
 			if err != nil {
 				t.Fatalf("read request: %v", err)
 			}
+
 			requestText := string(body)
 			reply := ""
+
 			switch {
 			case strings.Contains(requestText, "Allowed Repair Paths"):
 				reply = "Decision: pass\n\nVerification Checklist:\n- pkg/feature.go contains the hardening.\n- pkg/feature_test.go contains regression coverage.\n- No out-of-scope paths were changed."
@@ -5477,13 +6174,16 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestRetry(t *testin
 				reply = "Plan submitted."
 			case strings.Contains(requestText, "Missing Requested Test Edit Recovery"):
 				sawMissingTestRetry.Store(true)
+
 				if !strings.Contains(requestText, "pkg/feature_test.go") {
 					t.Fatalf("missing-test retry prompt did not expose test path:\n%s", requestText)
 				}
+
 				reply = "<tool_call>\n" +
 					`{"tool":"submit_plan","rationale":"Retry with the required regression test edit included.","edits":[{"path":"pkg/feature.go","old_text":"return false","new_text":"return true","purpose":"harden feature behavior"},{"path":"pkg/feature_test.go","old_text":"const RegressionCovered = false","new_text":"const RegressionCovered = true","purpose":"cover the hardening regression"}]}`
 			default:
 				plannerRequests.Add(1)
+
 				if readReply, ok := planExecuteSourceReadFixtureReply(requestText, sourceReadReplies, "pkg/feature.go", "pkg/feature_test.go"); ok {
 					reply = readReply
 				} else {
@@ -5491,6 +6191,7 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestRetry(t *testin
 						`{"tool":"submit_plan","rationale":"Production-only hardening plan that should be rejected before writes.","edits":[{"path":"pkg/feature.go","old_text":"return false","new_text":"return true","purpose":"harden feature behavior"}]}`
 				}
 			}
+
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{
 					"message": map[string]string{"content": reply},
@@ -5500,9 +6201,11 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestRetry(t *testin
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer server.Close()
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = server.URL
 	cfg.Chat.AutoStartServer = false
 	cfg.Chat.AttachInstructionFiles = false
@@ -5523,26 +6226,33 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestRetry(t *testin
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
+
 	if sawMissingTestRetry.Load() {
 		t.Fatalf("prompt prose must not trigger automatic missing-test retry; answer=%s", answer)
 	}
+
 	if plannerRequests.Load() == 0 {
 		t.Fatalf("expected initial production-only planner request")
 	}
+
 	gotSource, err := os.ReadFile(filepath.Join(root, "pkg", "feature.go"))
 	if err != nil {
 		t.Fatalf("read source: %v", err)
 	}
+
 	if !strings.Contains(string(gotSource), "return true") {
 		t.Fatalf("source was not hardened:\n%s", string(gotSource))
 	}
+
 	gotTest, err := os.ReadFile(filepath.Join(root, "pkg", "feature_test.go"))
 	if err != nil {
 		t.Fatalf("read test: %v", err)
 	}
+
 	if strings.Contains(string(gotTest), "RegressionCovered = true") {
 		t.Fatalf("test should not be updated by a prompt-inferred retry:\n%s", string(gotTest))
 	}
+
 	if !strings.Contains(answer, "plan-then-execute summary") {
 		t.Fatalf("expected successful retry summary, got %q", answer)
 	}
@@ -5552,20 +6262,26 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestSourceSatisfied
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
 	allowImplementationDispatchPlanDocumentPreflight(t)
+
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatalf("mkdir pkg: %v", err)
 	}
+
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
 	}
+
 	sourceBody := "package pkg\n\nfunc Hardened() bool { return true }\n"
 	testBody := "package pkg\n\nconst RegressionCovered = true\n"
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "feature.go"), []byte(sourceBody), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "feature_test.go"), []byte(testBody), 0o644); err != nil {
 		t.Fatalf("write test: %v", err)
 	}
+
 	planDoc := strings.Join([]string{
 		"# Feature hardening plan",
 		"",
@@ -5584,8 +6300,11 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestSourceSatisfied
 		t.Fatalf("write plan doc: %v", err)
 	}
 
-	var sawMissingTestRetry atomic.Bool
-	var retryTurns atomic.Int64
+	var (
+		sawMissingTestRetry atomic.Bool
+		retryTurns          atomic.Int64
+	)
+
 	sourceReadReplies := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -5598,13 +6317,16 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestSourceSatisfied
 			if err != nil {
 				t.Fatalf("read request: %v", err)
 			}
+
 			requestText := string(body)
 			reply := ""
+
 			switch {
 			case strings.Contains(requestText, "Plan submitted with"):
 				reply = "Plan submitted."
 			case strings.Contains(requestText, "Missing Requested Test Edit Recovery"):
 				sawMissingTestRetry.Store(true)
+
 				for _, want := range []string{
 					"Decision: source-satisfied",
 					"pkg/feature.go",
@@ -5614,6 +6336,7 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestSourceSatisfied
 						t.Fatalf("missing-test retry prompt missing %q:\n%s", want, requestText)
 					}
 				}
+
 				switch retryTurns.Add(1) {
 				case 1:
 					reply = "<tool_call>\n" + `{"tool":"read_file","path":"pkg/feature.go","start_line":1,"end_line":4}`
@@ -5634,6 +6357,7 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestSourceSatisfied
 						`{"tool":"submit_plan","rationale":"Production-only stale plan that should be rejected before writes.","edits":[{"path":"pkg/feature.go","old_text":"return true","new_text":"return false","purpose":"stale production-only edit"}]}`
 				}
 			}
+
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{
 					"message": map[string]string{"content": reply},
@@ -5643,9 +6367,11 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestSourceSatisfied
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer server.Close()
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = server.URL
 	cfg.Chat.AutoStartServer = false
 	cfg.Chat.AttachInstructionFiles = false
@@ -5666,20 +6392,25 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestSourceSatisfied
 	if err == nil {
 		t.Fatalf("expected stale production-only plan to fail without prompt-inferred missing-test retry; answer=%s", answer)
 	}
+
 	if sawMissingTestRetry.Load() {
 		t.Fatalf("prompt prose must not trigger missing-test retry; answer=%s", answer)
 	}
+
 	gotSource, err := os.ReadFile(filepath.Join(root, "pkg", "feature.go"))
 	if err != nil {
 		t.Fatalf("read source: %v", err)
 	}
+
 	if !strings.Contains(string(gotSource), "return false") {
 		t.Fatalf("stale production-only plan should be the only applied change without inferred retry:\n%s", string(gotSource))
 	}
+
 	gotTest, err := os.ReadFile(filepath.Join(root, "pkg", "feature_test.go"))
 	if err != nil {
 		t.Fatalf("read test: %v", err)
 	}
+
 	if string(gotTest) != testBody {
 		t.Fatalf("test changed during source-satisfied retry:\n%s", string(gotTest))
 	}
@@ -5692,20 +6423,26 @@ func loadOnlyTimestampedPlanArtifactForTest(t *testing.T, root string) workspace
 	if err != nil {
 		t.Fatalf("glob plan artifacts: %v", err)
 	}
+
 	var stamped []string
+
 	for _, path := range paths {
 		if filepath.Base(path) == "last.plan.json" {
 			continue
 		}
+
 		stamped = append(stamped, path)
 	}
+
 	if len(stamped) != 1 {
 		t.Fatalf("expected one timestamped plan artifact under .idiom/plans, got %d: %v", len(stamped), stamped)
 	}
+
 	artifact, err := workspace.LoadPlanArtifact(stamped[0])
 	if err != nil {
 		t.Fatalf("load plan artifact %s: %v", stamped[0], err)
 	}
+
 	return artifact
 }
 
@@ -5714,13 +6451,16 @@ func TestImplementationDispatchInlineOnlyEditMarkdownTargetIsNotPlanDocument(t *
 	if err := os.WriteFile(filepath.Join(root, "widget_config.json"), []byte(`{"labels":["alpha"]}`+"\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "widget_notes.md"), []byte("# Notes\n\nStatus: draft.\n"), 0o644); err != nil {
 		t.Fatalf("write notes: %v", err)
 	}
 
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
+
 	plan := promptExecutionPlan{
 		route: turnRoutePlan{Family: "direct_implementation"},
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -5735,14 +6475,17 @@ func TestImplementationDispatchInlineOnlyEditMarkdownTargetIsNotPlanDocument(t *
 	if len(required) != 0 {
 		t.Fatalf("inline only-edit scope should not become required coverage, got %#v", required)
 	}
+
 	for _, want := range []string{"widget_config.json", "widget_notes.md"} {
 		if !slices.Contains(allowed, want) {
 			t.Fatalf("allowed edit paths missing %q: %#v", want, allowed)
 		}
 	}
+
 	if len(docs) != 0 {
 		t.Fatalf("markdown edit target must not be treated as a referenced plan document: %#v", docs)
 	}
+
 	if len(blockers) != 0 {
 		t.Fatalf("direct markdown edit target must not produce plan-document blockers: %#v", blockers)
 	}
@@ -5751,18 +6494,23 @@ func TestImplementationDispatchInlineOnlyEditMarkdownTargetIsNotPlanDocument(t *
 func TestRunPromptOnceReferenceOnlyDesignDocDispatchesPlanExecuteWithoutRefine(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
+
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
 	}
+
 	if err := os.MkdirAll(filepath.Join(root, "internal", "workflows", "productworkflow"), 0o755); err != nil {
 		t.Fatalf("mkdir productworkflow: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "internal", "workflows", "productworkflow", "migration_apply.go"), []byte("package productworkflow\n\nconst TempPolicy = \"weak\"\n"), 0o644); err != nil {
 		t.Fatalf("write migration file: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "internal", "workflows", "productworkflow", "migration_apply_test.go"), []byte("package productworkflow\n\nconst TempPolicyTested = false\n"), 0o644); err != nil {
 		t.Fatalf("write migration test file: %v", err)
 	}
+
 	designDoc := strings.Join([]string{
 		"# Product Workflow Design",
 		"",
@@ -5776,8 +6524,10 @@ func TestRunPromptOnceReferenceOnlyDesignDocDispatchesPlanExecuteWithoutRefine(t
 	}
 
 	var preflightCalls atomic.Int64
+
 	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult {
 		preflightCalls.Add(1)
+
 		return implementationDispatchPlanDocumentPreflightResult{
 			Path:     doc.Path,
 			OK:       false,
@@ -5793,6 +6543,7 @@ func TestRunPromptOnceReferenceOnlyDesignDocDispatchesPlanExecuteWithoutRefine(t
 	})
 
 	var plannerRequests atomic.Int64
+
 	sourceReadReplies := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -5805,8 +6556,10 @@ func TestRunPromptOnceReferenceOnlyDesignDocDispatchesPlanExecuteWithoutRefine(t
 			if err != nil {
 				t.Fatalf("read request: %v", err)
 			}
+
 			requestText := string(body)
 			reply := ""
+
 			switch {
 			case strings.Contains(requestText, "Allowed Repair Paths"):
 				reply = "Decision: pass\n\nVerification Checklist:\n- internal/workflows/productworkflow/migration_apply.go contains the hardened temp policy.\n- No out-of-scope paths were changed.\n- Planner-owned focused tests remain pending outside this mocked lane."
@@ -5814,6 +6567,7 @@ func TestRunPromptOnceReferenceOnlyDesignDocDispatchesPlanExecuteWithoutRefine(t
 				reply = "Plan submitted."
 			default:
 				plannerRequests.Add(1)
+
 				for _, want := range []string{
 					"Implement one bounded topic from docs/design.md",
 					"## Referenced Plan Documents",
@@ -5823,6 +6577,7 @@ func TestRunPromptOnceReferenceOnlyDesignDocDispatchesPlanExecuteWithoutRefine(t
 						t.Fatalf("planner prompt lost reference-only design-doc context %q:\n%s", want, requestText)
 					}
 				}
+
 				if readReply, ok := planExecuteSourceReadFixtureReply(requestText, sourceReadReplies, "internal/workflows/productworkflow/migration_apply.go", "internal/workflows/productworkflow/migration_apply_test.go"); ok {
 					reply = readReply
 				} else {
@@ -5830,6 +6585,7 @@ func TestRunPromptOnceReferenceOnlyDesignDocDispatchesPlanExecuteWithoutRefine(t
 						`{"tool":"submit_plan","rationale":"Harden the migration temp policy requested by the referenced design document and add regression coverage.","edits":[{"path":"internal/workflows/productworkflow/migration_apply.go","old_text":"const TempPolicy = \"weak\"\n","new_text":"const TempPolicy = \"hardened\"\n","purpose":"harden migration temp path policy"},{"path":"internal/workflows/productworkflow/migration_apply_test.go","old_text":"const TempPolicyTested = false\n","new_text":"const TempPolicyTested = true\n","purpose":"cover migration temp path policy"}]}`
 				}
 			}
+
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{
 					"message": map[string]string{"content": reply},
@@ -5839,9 +6595,11 @@ func TestRunPromptOnceReferenceOnlyDesignDocDispatchesPlanExecuteWithoutRefine(t
 			http.NotFound(w, r)
 		}
 	}))
+
 	defer server.Close()
 
 	cfg := config.Default()
+
 	cfg.LlamaServer.BaseURL = server.URL
 	cfg.Chat.AutoStartServer = false
 	cfg.Chat.AttachInstructionFiles = false
@@ -5862,23 +6620,29 @@ func TestRunPromptOnceReferenceOnlyDesignDocDispatchesPlanExecuteWithoutRefine(t
 	if err != nil {
 		t.Fatalf("runPlanExecuteCommandOnce: %v\nanswer: %s", err, answer)
 	}
+
 	got, err := os.ReadFile(filepath.Join(root, "internal", "workflows", "productworkflow", "migration_apply.go"))
 	if err != nil {
 		t.Fatalf("read migration file: %v", err)
 	}
+
 	if string(got) != "package productworkflow\n\nconst TempPolicy = \"hardened\"\n" {
 		t.Fatalf("migration file content = %q, want hardened policy", string(got))
 	}
+
 	gotTest, err := os.ReadFile(filepath.Join(root, "internal", "workflows", "productworkflow", "migration_apply_test.go"))
 	if err != nil {
 		t.Fatalf("read migration test file: %v", err)
 	}
+
 	if string(gotTest) != "package productworkflow\n\nconst TempPolicyTested = true\n" {
 		t.Fatalf("migration test file content = %q, want regression coverage marker", string(gotTest))
 	}
+
 	if preflightCalls.Load() != 0 {
 		t.Fatalf("reference-only design doc should skip plan-document preflight, got %d call(s)", preflightCalls.Load())
 	}
+
 	if plannerRequests.Load() == 0 {
 		t.Fatalf("expected plan-execute planner request")
 	}
@@ -5889,6 +6653,7 @@ func TestComposeImplementationBriefTreatsDesignDocScopeAsCandidatePaths(t *testi
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
 	}
+
 	planDoc := strings.Join([]string{
 		"# Handoff",
 		"",
@@ -5906,24 +6671,30 @@ func TestComposeImplementationBriefTreatsDesignDocScopeAsCandidatePaths(t *testi
 	if err := os.WriteFile(filepath.Join(root, "docs", "handoff.md"), []byte(planDoc), 0o644); err != nil {
 		t.Fatalf("write handoff: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("existing\n"), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
 
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
+
 	plan := promptExecutionPlan{
 		route:        turnRoutePlan{Family: "docs_edit"},
 		runtimeBrief: runtimeBriefForTest([]string{"docs/handoff.md"}),
 	}
 	brief := composeImplementationBrief("start working on docs/handoff.md", plan, cfg)
+
 	if strings.Contains(brief, "## Files to Modify\n\n- target.txt") {
 		t.Fatalf("design-doc scope must not become active required edit scope:\n%s", brief)
 	}
+
 	if !strings.Contains(brief, "## Candidate Edit Scope From Target References\n\n- target.txt") {
 		t.Fatalf("brief missing candidate edit scope:\n%s", brief)
 	}
+
 	for _, want := range []string{
 		"## Referenced Plan Documents",
 		"### docs/handoff.md",
@@ -5935,9 +6706,11 @@ func TestComposeImplementationBriefTreatsDesignDocScopeAsCandidatePaths(t *testi
 			t.Fatalf("brief missing %q:\n%s", want, brief)
 		}
 	}
+
 	if got := requiredEditPathsFromPrompt(brief); slices.Contains(got, "target.txt") {
 		t.Fatalf("design-doc scope must not become required edit paths, got %#v\n%s", got, brief)
 	}
+
 	if got := allowedEditPathsFromPrompt(brief); !slices.Contains(got, "target.txt") {
 		t.Fatalf("design-doc scope must become candidate edit paths, got %#v\n%s", got, brief)
 	}
@@ -5948,20 +6721,27 @@ func TestComposeImplementationBriefExcerptsLongReferenceDocument(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
 	}
+
 	var doc strings.Builder
+
 	doc.WriteString("# Long Design\n\n")
 	doc.WriteString("Status migration apply must harden predictable temp-path writes against pre-existing workflow/index/events temp symlinks.\n\n")
+
 	for i := 0; i < 500; i++ {
 		fmt.Fprintf(&doc, "## Unrelated Section %03d\n\nThis section discusses unrelated operator UX material and filler details that should not dominate the implementation brief.\n\n", i)
 	}
+
 	doc.WriteString("## Relevant Regression Coverage\n\nAdd regression tests proving pre-existing workflow/index/events temp symlinks are rejected without partial durable mutation.\n\n")
+
 	if err := os.WriteFile(filepath.Join(root, "docs", "long-design.md"), []byte(doc.String()), 0o644); err != nil {
 		t.Fatalf("write design doc: %v", err)
 	}
 
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
+
 	plan := promptExecutionPlan{
 		route:        turnRoutePlan{Family: "docs_edit"},
 		runtimeBrief: runtimeBriefForTest(nil),
@@ -5972,6 +6752,7 @@ func TestComposeImplementationBriefExcerptsLongReferenceDocument(t *testing.T) {
 	if len(brief) > 18000 {
 		t.Fatalf("long reference doc should be compacted, got %d bytes", len(brief))
 	}
+
 	lowerBrief := strings.ToLower(brief)
 	for _, want := range []string{
 		"[excerpted from long referenced document",
@@ -5982,6 +6763,7 @@ func TestComposeImplementationBriefExcerptsLongReferenceDocument(t *testing.T) {
 			t.Fatalf("compacted brief missing %q:\n%s", want, brief)
 		}
 	}
+
 	if strings.Contains(brief, "Unrelated Section 001") || strings.Contains(brief, "Unrelated Section 499") {
 		t.Fatalf("compacted brief retained unrelated tail:\n%s", brief)
 	}
@@ -5992,6 +6774,7 @@ func TestComposeImplementationBriefResolvesUniquePlanDocumentBasenameAsCandidate
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
 	}
+
 	planDoc := strings.Join([]string{
 		"# Writer Route Decision",
 		"",
@@ -6003,24 +6786,30 @@ func TestComposeImplementationBriefResolvesUniquePlanDocumentBasenameAsCandidate
 		"",
 	}, "\n")
 	docName := "writer-route-decision-report-only-plan.md"
+
 	if err := os.WriteFile(filepath.Join(root, "docs", docName), []byte(planDoc), 0o644); err != nil {
 		t.Fatalf("write plan doc: %v", err)
 	}
+
 	if err := os.MkdirAll(filepath.Join(root, "internal", "surfaces", "tui", "app"), 0o755); err != nil {
 		t.Fatalf("mkdir internal/surfaces/tui/app: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "internal", "surfaces", "tui", "app", "writer_route.go"), []byte("package app\n"), 0o644); err != nil {
 		t.Fatalf("write writer route: %v", err)
 	}
 
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
+
 	plan := promptExecutionPlan{
 		route:        turnRoutePlan{Family: "docs_edit"},
 		runtimeBrief: runtimeBriefForTest([]string{docName}),
 	}
 	brief := composeImplementationBrief("start working on "+docName, plan, cfg)
+
 	for _, want := range []string{
 		"## Candidate Edit Scope From Target References\n\n- internal/surfaces/tui/app/writer_route.go",
 		"### docs/" + docName,
@@ -6030,9 +6819,11 @@ func TestComposeImplementationBriefResolvesUniquePlanDocumentBasenameAsCandidate
 			t.Fatalf("brief missing %q:\n%s", want, brief)
 		}
 	}
+
 	if got := requiredEditPathsFromPrompt(brief); slices.Contains(got, "internal/surfaces/tui/app/writer_route.go") {
 		t.Fatalf("resolved design-doc scope must not become required edit paths, got %#v\n%s", got, brief)
 	}
+
 	if got := allowedEditPathsFromPrompt(brief); !slices.Contains(got, "internal/surfaces/tui/app/writer_route.go") {
 		t.Fatalf("resolved design-doc scope must become candidate edit paths, got %#v\n%s", got, brief)
 	}
@@ -6041,9 +6832,11 @@ func TestComposeImplementationBriefResolvesUniquePlanDocumentBasenameAsCandidate
 func TestComposeImplementationBriefKeepsAtomScopeAsRequiredPaths(t *testing.T) {
 	root := t.TempDir()
 	atomRel := filepath.Join(".idiom", "atoms", "handoff", "atom-001.md")
+
 	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(atomRel)), 0o755); err != nil {
 		t.Fatalf("mkdir atom dir: %v", err)
 	}
+
 	atomDoc := strings.Join([]string{
 		"# Handoff Atom",
 		"",
@@ -6059,16 +6852,20 @@ func TestComposeImplementationBriefKeepsAtomScopeAsRequiredPaths(t *testing.T) {
 	}
 
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
+
 	plan := promptExecutionPlan{
 		route:        turnRoutePlan{Family: "docs_edit"},
 		runtimeBrief: runtimeBriefForTest([]string{filepath.ToSlash(atomRel)}),
 	}
 	brief := composeImplementationBrief("start working on "+filepath.ToSlash(atomRel), plan, cfg)
+
 	if !strings.Contains(brief, "## Files to Modify\n\n- target.txt") {
 		t.Fatalf("atom scope must remain active required edit scope:\n%s", brief)
 	}
+
 	if got := requiredEditPathsFromPrompt(brief); !slices.Contains(got, "target.txt") {
 		t.Fatalf("atom scope must become required edit paths, got %#v\n%s", got, brief)
 	}
@@ -6081,24 +6878,30 @@ func TestImplementationDispatchInlineRequiredPathsBecomePlanExecuteRequiredScope
 		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", rel, err)
 		}
+
 		if err := os.WriteFile(abs, []byte("package main\n"), 0o644); err != nil {
 			t.Fatalf("write %s: %v", rel, err)
 		}
 	}
 
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
+
 	plan := promptExecutionPlan{runtimeBrief: runtimeBriefForTest(nil)}
 	prompt := "Implement JSON usage-error parity. Required edit paths: internal/surfaces/cli/product/product_workflow.go, internal/surfaces/cli/product/product_workflow_test.go"
 	required, allowed, _, blockers := implementationDispatchEditScopePlanDocumentsAndResolution(prompt, plan, cfg)
+
 	if len(blockers) != 0 {
 		t.Fatalf("unexpected blockers: %#v", blockers)
 	}
+
 	for _, want := range []string{"internal/surfaces/cli/product/product_workflow.go", "internal/surfaces/cli/product/product_workflow_test.go"} {
 		if !slices.Contains(required, want) {
 			t.Fatalf("missing required path %q, got required=%#v allowed=%#v", want, required, allowed)
 		}
+
 		if slices.Contains(allowed, want) {
 			t.Fatalf("inline required path %q must not be demoted to allowed scope: required=%#v allowed=%#v", want, required, allowed)
 		}
@@ -6112,29 +6915,36 @@ func TestImplementationDispatchInlineRequiredPathsIgnoreTrailingSlashProse(t *te
 		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", rel, err)
 		}
+
 		if err := os.WriteFile(abs, []byte("package main\n"), 0o644); err != nil {
 			t.Fatalf("write %s: %v", rel, err)
 		}
 	}
 
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
+
 	plan := promptExecutionPlan{runtimeBrief: runtimeBriefForTest(nil)}
 	prompt := "Implement JSON usage-error parity. Required edit paths: `internal/surfaces/cli/product/product_workflow.go`, `internal/surfaces/cli/product/product_workflow_test.go`. Add focused tests for missing `--effort-root` and mutually exclusive/missing mode flags under JSON output."
 	required, allowed, _, blockers := implementationDispatchEditScopePlanDocumentsAndResolution(prompt, plan, cfg)
+
 	if len(blockers) != 0 {
 		t.Fatalf("unexpected blockers: %#v", blockers)
 	}
+
 	want := []string{"internal/surfaces/cli/product/product_workflow.go", "internal/surfaces/cli/product/product_workflow_test.go"}
 	if len(required) != len(want) {
 		t.Fatalf("required paths = %#v, want %#v", required, want)
 	}
+
 	for _, path := range want {
 		if !slices.Contains(required, path) {
 			t.Fatalf("missing required path %q, got required=%#v allowed=%#v", path, required, allowed)
 		}
 	}
+
 	for _, forbidden := range []string{"exclusive/missing", "cmd/idiom"} {
 		if slices.Contains(required, forbidden) || slices.Contains(allowed, forbidden) {
 			t.Fatalf("slash prose or truncated directory leaked into scope: required=%#v allowed=%#v", required, allowed)
@@ -6151,6 +6961,7 @@ func TestCorrectTurnRoutePlanDoesNotUpgradeVerificationOnlyWithEditIntentHeurist
 	if plan.Family != "verification_only" {
 		t.Fatalf("family = %q, want verification_only", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -6182,9 +6993,11 @@ git diff --check
 ` + "```" + `
 `
 	plan := fallbackTurnRoute(prompt, agent.BuildMode())
+
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -6195,6 +7008,7 @@ func TestCorrectTurnRoutePlanDoesNotRewriteAnalysisContinuationRoute(t *testing.
 	if plan.Family != "explore_then_implement" {
 		t.Fatalf("family = %q, want explore_then_implement", plan.Family)
 	}
+
 	if plan.InitialLane != "explore" || plan.FollowupLane != "implement" || plan.Contract != "implementation_result" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -6203,9 +7017,11 @@ func TestCorrectTurnRoutePlanDoesNotRewriteAnalysisContinuationRoute(t *testing.
 func TestGDScriptRouteFallsBackForNonGDScriptExplicitScope(t *testing.T) {
 	prompt := "Implement the change.\n\nrequired_edit_paths:\n- internal/labels/labels.go\n"
 	route := validateRouteFamilyAgainstExplicitEditScope(turnRoutePlan{Family: "gdscript_edit", Reason: "classifier"}, prompt, agent.BuildMode())
+
 	if route.Family != "implementation" {
 		t.Fatalf("family = %q, want implementation for non-GDScript explicit scope", route.Family)
 	}
+
 	if route.Reason != "gdscript_scope_mismatch" {
 		t.Fatalf("reason = %q, want gdscript_scope_mismatch", route.Reason)
 	}
@@ -6214,6 +7030,7 @@ func TestGDScriptRouteFallsBackForNonGDScriptExplicitScope(t *testing.T) {
 func TestGDScriptRouteKeepsAllGDScriptExplicitScope(t *testing.T) {
 	prompt := "Implement the change.\n\nrequired_edit_paths:\n- scenes/player.gd\nallowed_edit_paths:\n- tests/player_test.gd\n"
 	route := validateRouteFamilyAgainstExplicitEditScope(turnRoutePlan{Family: "gdscript_edit", Reason: "classifier"}, prompt, agent.BuildMode())
+
 	if route.Family != "gdscript_edit" {
 		t.Fatalf("family = %q, want gdscript_edit for GDScript-only explicit scope", route.Family)
 	}
@@ -6224,10 +7041,12 @@ func TestShouldPreferFallbackRouteDoesNotOverrideConversationWithHeuristicFallba
 	if fallback.Family != "conversation" {
 		t.Fatalf("fallback family = %q, want conversation", fallback.Family)
 	}
+
 	planned := normalizeTurnRoutePlan(turnRoutePlan{Family: "direct_question"}, agent.BuildMode())
 	if planned.Family != "conversation" {
 		t.Fatalf("legacy direct_question should normalize to conversation, got %#v", planned)
 	}
+
 	if shouldPreferFallbackRoute(fallback, planned, "Ok, check the most recent logs. Lots of weird decisions in there. Can this be made smarter?") {
 		t.Fatal("conservative fallback must not override a generic conversation model route")
 	}
@@ -6250,9 +7069,11 @@ func TestClassifyTurnRouteLetsModelUpgradeConversationFallback(t *testing.T) {
 		client: llama.NewClient(server.URL, time.Second),
 	}
 	plan := m.classifyTurnRoute(context.Background(), "Can you verify that this still builds?", agent.BuildMode())
+
 	if plan.Family != "verification_only" {
 		t.Fatalf("family = %q, want verification_only", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
@@ -6260,14 +7081,17 @@ func TestClassifyTurnRouteLetsModelUpgradeConversationFallback(t *testing.T) {
 
 func TestClassifyTurnRouteUsesClassifierBeforeImplementationFallback(t *testing.T) {
 	var calls atomic.Int64
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": `{"family":"docs_edit","initial_lane":"implement","reason":"direct_implementation","contract":"implementation_result"}`},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	m := &Model{
@@ -6277,9 +7101,11 @@ func TestClassifyTurnRouteUsesClassifierBeforeImplementationFallback(t *testing.
 		client: llama.NewClient(server.URL, time.Second),
 	}
 	plan := m.classifyTurnRoute(context.Background(), "Update the README docs for the new workflow.", agent.BuildMode())
+
 	if plan.Family != "docs_edit" {
 		t.Fatalf("family = %q, want docs_edit", plan.Family)
 	}
+
 	if calls.Load() != 1 {
 		t.Fatalf("implementation-like prose should go through classifier first, got %d calls", calls.Load())
 	}
@@ -6288,12 +7114,15 @@ func TestClassifyTurnRouteUsesClassifierBeforeImplementationFallback(t *testing.
 func TestRouteClassifierPromptOmitsFencedCodeBodies(t *testing.T) {
 	prompt := "Implement the change.\n```go\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n```\nUse the exact source."
 	got := routeClassifierPromptForModel(prompt)
+
 	if strings.Contains(got, "ShortLabel") || strings.Contains(got, "Save changes") {
 		t.Fatalf("classifier prompt leaked code body:\n%s", got)
 	}
+
 	if !strings.Contains(got, "[code block omitted for route classification]") {
 		t.Fatalf("classifier prompt missing omission marker:\n%s", got)
 	}
+
 	if !strings.Contains(got, "Implement the change.") || !strings.Contains(got, "Use the exact source.") {
 		t.Fatalf("classifier prompt lost surrounding prose:\n%s", got)
 	}
@@ -6301,18 +7130,22 @@ func TestRouteClassifierPromptOmitsFencedCodeBodies(t *testing.T) {
 
 func TestClassifyTurnRouteRepairsInvalidJSONOnce(t *testing.T) {
 	var calls atomic.Int64
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := calls.Add(1)
 		content := `{`
+
 		if call == 2 {
 			content = `{"family":"implementation","initial_lane":"implement","reason":"classifier_repaired","contract":"implementation_result"}`
 		}
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": content},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	m := &Model{
@@ -6322,9 +7155,11 @@ func TestClassifyTurnRouteRepairsInvalidJSONOnce(t *testing.T) {
 		client: llama.NewClient(server.URL, time.Second),
 	}
 	plan := m.classifyTurnRoute(context.Background(), "Implement the label change.", agent.BuildMode())
+
 	if plan.Family != "implementation" || plan.InitialLane != "implement" {
 		t.Fatalf("repaired classifier route = %#v, want implementation", plan)
 	}
+
 	if calls.Load() != 2 {
 		t.Fatalf("classifier calls = %d, want initial + repair", calls.Load())
 	}
@@ -6337,18 +7172,22 @@ func TestClassifyTurnRouteRepairsInvalidJSONFromFallbackClient(t *testing.T) {
 	defer classifierServer.Close()
 
 	var fallbackCalls atomic.Int64
+
 	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := fallbackCalls.Add(1)
 		content := `{`
+
 		if call == 2 {
 			content = `{"family":"implementation","initial_lane":"implement","reason":"fallback_repaired","contract":"implementation_result"}`
 		}
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": content},
 			}},
 		})
 	}))
+
 	defer fallbackServer.Close()
 
 	m := &Model{
@@ -6359,9 +7198,11 @@ func TestClassifyTurnRouteRepairsInvalidJSONFromFallbackClient(t *testing.T) {
 		summaryClient: llama.NewClient(classifierServer.URL, time.Second),
 	}
 	plan := m.classifyTurnRoute(context.Background(), "Implement the label change.", agent.BuildMode())
+
 	if plan.Family != "implementation" || plan.InitialLane != "implement" {
 		t.Fatalf("repaired classifier route = %#v, want implementation", plan)
 	}
+
 	if fallbackCalls.Load() != 2 {
 		t.Fatalf("fallback client calls = %d, want invalid response + repair", fallbackCalls.Load())
 	}
@@ -6369,14 +7210,17 @@ func TestClassifyTurnRouteRepairsInvalidJSONFromFallbackClient(t *testing.T) {
 
 func TestClassifyTurnRouteDoesNotSkipClassifierForDebugLogSignal(t *testing.T) {
 	var calls atomic.Int64
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": `{"family":"direct_question"}`},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	m := &Model{
@@ -6386,9 +7230,11 @@ func TestClassifyTurnRouteDoesNotSkipClassifierForDebugLogSignal(t *testing.T) {
 		client: llama.NewClient(server.URL, time.Second),
 	}
 	plan := m.classifyTurnRoute(context.Background(), "Check the most recent logs and explain why it failed.", agent.BuildMode())
+
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if calls.Load() != 1 {
 		t.Fatalf("debug log wording should be classified by model, got %d calls", calls.Load())
 	}
@@ -6396,14 +7242,17 @@ func TestClassifyTurnRouteDoesNotSkipClassifierForDebugLogSignal(t *testing.T) {
 
 func TestClassifyTurnRouteUsesClassifierForPlanExecuteSourceSatisfiedSmokeWriteShaped(t *testing.T) {
 	var calls atomic.Int64
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": `{"family":"implementation","initial_lane":"implement","reason":"classifier_directive","contract":"implementation_result"}`},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	m := &Model{
@@ -6414,12 +7263,15 @@ func TestClassifyTurnRouteUsesClassifierForPlanExecuteSourceSatisfiedSmokeWriteS
 	}
 	prompt := "Smoke test the default implementation lane through the full PRD-to-plan-to-execute path without changing files. Requirement: verify the durable TUI smoke fixture is already satisfied by the current repository and answer source-satisfied with evidence. Required edit paths: internal/surfaces/tui/app/app.go, internal/runtime/agent/runner.go. Do not write files unless the evidence proves a real missing fixture."
 	plan := m.classifyTurnRoute(context.Background(), prompt, agent.BuildMode())
+
 	if plan.Family != "implementation" {
 		t.Fatalf("family = %q, want implementation", plan.Family)
 	}
+
 	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
+
 	if calls.Load() != 1 {
 		t.Fatalf("source-satisfied plan-execute workflow should go through classifier, got classifier calls=%d", calls.Load())
 	}
@@ -6428,6 +7280,7 @@ func TestClassifyTurnRouteUsesClassifierForPlanExecuteSourceSatisfiedSmokeWriteS
 func TestClassifyTurnRouteKeepsPlanExecuteHowToQuestionReadOnly(t *testing.T) {
 	m := &Model{cfg: config.Config{RouteClassifier: config.RouteClassifier{Enabled: false}}}
 	plan := m.classifyTurnRoute(context.Background(), "How do I run plan-execute without changing files?", agent.BuildMode())
+
 	if isImplementationLikeFamily(plan.Family) {
 		t.Fatalf("plan-execute how-to question should stay read-only, got %#v", plan)
 	}
@@ -6435,14 +7288,17 @@ func TestClassifyTurnRouteKeepsPlanExecuteHowToQuestionReadOnly(t *testing.T) {
 
 func TestClassifyTurnRouteKeepsQuestionShapedMutationReadOnly(t *testing.T) {
 	var calls atomic.Int64
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": `{"family":"direct_question","initial_lane":"main","reason":"read_only_question","contract":"direct_answer"}`},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	m := &Model{
@@ -6453,12 +7309,15 @@ func TestClassifyTurnRouteKeepsQuestionShapedMutationReadOnly(t *testing.T) {
 	}
 	prompt := "The current model string in the top-right portion of the banner shows a path with what seems to be a stripped filename. Can we shorten this to be just the model's alias?"
 	plan := m.classifyTurnRoute(context.Background(), prompt, agent.BuildMode())
+
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
+
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
+
 	if calls.Load() == 0 {
 		t.Fatal("expected classifier to be consulted before honoring the read-only route")
 	}
@@ -6466,11 +7325,13 @@ func TestClassifyTurnRouteKeepsQuestionShapedMutationReadOnly(t *testing.T) {
 
 func TestRouteClassifierPromptDoesNotTreatQuestionShapeAsLaneSignal(t *testing.T) {
 	var requestText string
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Fatalf("read classifier request: %v", err)
 		}
+
 		requestText = string(body)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
@@ -6478,6 +7339,7 @@ func TestRouteClassifierPromptDoesNotTreatQuestionShapeAsLaneSignal(t *testing.T
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	m := &Model{
@@ -6487,12 +7349,15 @@ func TestRouteClassifierPromptDoesNotTreatQuestionShapeAsLaneSignal(t *testing.T
 		client: llama.NewClient(server.URL, time.Second),
 	}
 	plan := m.classifyTurnRoute(context.Background(), "Can you implement this feature: docs/design-prd-adr-brief-research-workflow.md Phase 7?", agent.BuildMode())
+
 	if plan.Family != "implementation" {
 		t.Fatalf("classifier-selected polite implementation directive should route implementation, got %#v", plan)
 	}
+
 	if !strings.Contains(requestText, `"top_p":1`) {
 		t.Fatalf("classifier request must use valid deterministic top_p, got:\n%s", requestText)
 	}
+
 	for _, want := range []string{
 		"Classify the requested outcome first",
 		"requested_outcome enum: answer, diagnose, change_workspace, diagnose_then_change, verify, plan, review, locate",
@@ -6522,9 +7387,11 @@ func TestTurnRoutePlanCarriesEvidenceIntent(t *testing.T) {
 	if plan.EvidenceIntent != "relation_trace" {
 		t.Fatalf("evidence intent = %q, want relation_trace", plan.EvidenceIntent)
 	}
+
 	if rendered := renderTurnRoutePlan(plan); !strings.Contains(rendered, "evidence_intent=relation_trace") {
 		t.Fatalf("rendered route missing evidence intent: %q", rendered)
 	}
+
 	brief := turnRoutePlanRuntimeBrief(plan, agent.BuildMode(), []string{"context_pack", "code_navigate", "read_file"})
 	if brief.EvidenceIntent != "relation_trace" || brief.RequestedOutcome != "answer" || brief.WriteIntent != "no" {
 		t.Fatalf("runtime brief did not preserve typed route intent: %#v", brief)
@@ -6534,6 +7401,7 @@ func TestTurnRoutePlanCarriesEvidenceIntent(t *testing.T) {
 func TestClassifyTurnRouteQuestionShapedMutationFallbackIsReadOnly(t *testing.T) {
 	m := &Model{cfg: config.Config{RouteClassifier: config.RouteClassifier{Enabled: false}}}
 	plan := m.classifyTurnRoute(context.Background(), "Can we shorten the displayed model label to just the alias?", agent.BuildMode())
+
 	if isImplementationLikeFamily(plan.Family) {
 		t.Fatalf("question-shaped mutation should stay read-only, got %#v", plan)
 	}
@@ -6555,14 +7423,17 @@ func TestClassifyTurnRouteLaneNameQuestionStaysReadOnly(t *testing.T) {
 
 func TestClassifyTurnRouteHonorsClassifierImplementationDirective(t *testing.T) {
 	var calls atomic.Int64
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": `{"family":"implementation","initial_lane":"implement","reason":"classifier_directive","contract":"implementation_result"}`},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	m := &Model{
@@ -6572,9 +7443,11 @@ func TestClassifyTurnRouteHonorsClassifierImplementationDirective(t *testing.T) 
 		client: llama.NewClient(server.URL, time.Second),
 	}
 	plan := m.classifyTurnRoute(context.Background(), "Shorten the displayed model label to just the alias.", agent.BuildMode())
+
 	if plan.Family != "implementation" || plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
 		t.Fatalf("classifier-selected directive should route implementation, got %#v", plan)
 	}
+
 	if calls.Load() != 1 {
 		t.Fatalf("expected classifier call, got %d", calls.Load())
 	}
@@ -6582,14 +7455,17 @@ func TestClassifyTurnRouteHonorsClassifierImplementationDirective(t *testing.T) 
 
 func TestClassifyTurnRouteImplementSlashMentionDoesNotBypassClassifier(t *testing.T) {
 	var calls atomic.Int64
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": `{"family":"direct_question","initial_lane":"main","reason":"read_only_question","contract":"direct_answer"}`},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	m := &Model{
@@ -6600,9 +7476,11 @@ func TestClassifyTurnRouteImplementSlashMentionDoesNotBypassClassifier(t *testin
 	}
 	prompt := `I want to test the implement lane... can you use /implement to create and write a new file with the text "ben is cool"?`
 	plan := m.classifyTurnRoute(context.Background(), prompt, agent.BuildMode())
+
 	if isImplementationLikeFamily(plan.Family) {
 		t.Fatalf("slash mention inside prose should not deterministically route implementation, got %#v", plan)
 	}
+
 	if calls.Load() != 1 {
 		t.Fatalf("expected classifier call, got %d", calls.Load())
 	}
@@ -6611,6 +7489,7 @@ func TestClassifyTurnRouteImplementSlashMentionDoesNotBypassClassifier(t *testin
 func TestFallbackTurnRouteLaneExerciseDoesNotBecomeVerificationOnly(t *testing.T) {
 	m := &Model{cfg: config.Config{RouteClassifier: config.RouteClassifier{Enabled: false}}}
 	plan := m.classifyTurnRoute(context.Background(), "I want to test the implementation lane.", agent.BuildMode())
+
 	if plan.Family == "verification_only" {
 		t.Fatalf("lane exercise wording should not auto-run tests, got %#v", plan)
 	}
@@ -6618,14 +7497,17 @@ func TestFallbackTurnRouteLaneExerciseDoesNotBecomeVerificationOnly(t *testing.T
 
 func TestClassifyTurnRouteUsesClassifierForPlanExecuteRequiredPathEditWriteShaped(t *testing.T) {
 	var calls atomic.Int64
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": `{"family":"implementation","initial_lane":"implement","reason":"classifier_directive","contract":"implementation_result"}`},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	m := &Model{
@@ -6636,12 +7518,15 @@ func TestClassifyTurnRouteUsesClassifierForPlanExecuteRequiredPathEditWriteShape
 	}
 	prompt := "Implement the durable TUI smoke fixture through the full PRD-to-plan-to-execute path. Required edit paths: internal/surfaces/tui/app/app.go, internal/runtime/agent/runner.go."
 	plan := m.classifyTurnRoute(context.Background(), prompt, agent.BuildMode())
+
 	if plan.Family != "implementation" {
 		t.Fatalf("family = %q, want implementation", plan.Family)
 	}
+
 	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
+
 	if calls.Load() != 1 {
 		t.Fatalf("required-path plan-execute edit workflow should go through classifier, got classifier calls=%d", calls.Load())
 	}
@@ -6650,15 +7535,19 @@ func TestClassifyTurnRouteUsesClassifierForPlanExecuteRequiredPathEditWriteShape
 func TestTurnRoutePlanRuntimeBriefForConversationUsesReadOnlyWorkspace(t *testing.T) {
 	available := []string{"task", "pwd", "list_files", "search_files", "search_content", "read_file", "go_workspace_symbol", "go_read_symbol", "edit_file", "shell"}
 	brief := turnRoutePlanRuntimeBrief(turnRoutePlan{Family: "conversation"}, agent.BuildMode(), available)
+
 	if brief.PermissionProfile != "read_only_workspace" {
 		t.Fatalf("permission = %q, want read_only_workspace", brief.PermissionProfile)
 	}
+
 	if len(brief.AllowedTools) == 0 {
 		t.Fatalf("conversation should advertise read-only tools, got %#v", brief.AllowedTools)
 	}
+
 	if len(brief.ReadinessGate) != 0 ||
 		!slices.Contains(brief.FinalCritic, "answers_actual_user_request") ||
 		!slices.Contains(brief.FinalCritic, "well_formatted_informative_on_topic") {
+
 		t.Fatalf("expected conversation to use no readiness gate and answer-quality critics, got %#v", brief)
 	}
 }
@@ -6666,17 +7555,21 @@ func TestTurnRoutePlanRuntimeBriefForConversationUsesReadOnlyWorkspace(t *testin
 func TestTurnRoutePlanRuntimeBriefForVerificationOnly(t *testing.T) {
 	available := []string{"task", "pwd", "read_file", "search_files", "search_content", "shell", "edit_file", "write_file"}
 	brief := turnRoutePlanRuntimeBrief(turnRoutePlan{Family: "verification_only"}, agent.BuildMode(), available)
+
 	if brief.PermissionProfile != "read_only_verification_shell" {
 		t.Fatalf("permission = %q, want read_only_verification_shell", brief.PermissionProfile)
 	}
+
 	if !strings.Contains(strings.Join(brief.AllowedTools, ","), "shell") {
 		t.Fatalf("expected shell in allowed tools, got %#v", brief.AllowedTools)
 	}
+
 	for _, tool := range brief.AllowedTools {
 		if tool == "edit_file" || tool == "write_file" || tool == "pwd" {
 			t.Fatalf("unexpected write tool %q in allowed tools %#v", tool, brief.AllowedTools)
 		}
 	}
+
 	if brief.VerificationContract != "not_required_for_read_only_lane" {
 		t.Fatalf("verification contract = %q", brief.VerificationContract)
 	}
@@ -6685,12 +7578,15 @@ func TestTurnRoutePlanRuntimeBriefForVerificationOnly(t *testing.T) {
 func TestTurnRoutePlanRuntimeBriefForDebugLogsUsesStandardReadLane(t *testing.T) {
 	available := []string{"pwd", "read_file", "search_files", "search_content", "edit_file"}
 	brief := turnRoutePlanRuntimeBrief(turnRoutePlan{Family: "debug_logs"}, agent.BuildMode(), available)
+
 	if brief.PermissionProfile != "read_only_workspace" {
 		t.Fatalf("permission = %q, want read_only_workspace", brief.PermissionProfile)
 	}
+
 	if brief.TaskFamily != "conversation" || brief.Lane != "main" || brief.Contract != "direct_answer" {
 		t.Fatalf("debug_logs route should collapse to standard read lane, got %#v", brief)
 	}
+
 	if !strings.Contains(strings.Join(brief.AllowedTools, ","), "search_files") {
 		t.Fatalf("expected search_files in allowed tools, got %#v", brief.AllowedTools)
 	}
@@ -6699,9 +7595,11 @@ func TestTurnRoutePlanRuntimeBriefForDebugLogsUsesStandardReadLane(t *testing.T)
 func TestTurnRoutePlanRuntimeBriefForArchitectureUsesShapingOnly(t *testing.T) {
 	available := []string{"task", "search_files", "search_content", "read_file", "go_workspace_symbol", "go_read_symbol", "shell"}
 	brief := turnRoutePlanRuntimeBrief(turnRoutePlan{Family: "architecture"}, agent.BuildMode(), available)
+
 	if brief.PermissionProfile != "read_only_workspace" {
 		t.Fatalf("permission = %q, want read_only_workspace", brief.PermissionProfile)
 	}
+
 	if len(brief.ReadinessGate) == 0 || len(brief.FinalCritic) == 0 {
 		t.Fatalf("expected architecture analysis to keep a closure gate and final critic, got %#v", brief)
 	}

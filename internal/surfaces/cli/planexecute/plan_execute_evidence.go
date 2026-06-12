@@ -105,20 +105,25 @@ func collectPlanExecutePhaseEvidence(root string, phase string, plan workspace.P
 	if strings.TrimSpace(handoff.State) == "" {
 		handoff = classifyExecutorHandoffPacket(root, plan)
 	}
+
 	packet := loadPlanExecutePacketEvidence(root, handoff.PackID)
 	submittedPlan := collectSubmittedPlanState(root, plan)
+
 	sourceSanity := append([]phaseEvidenceCheck(nil), executorReport.SourceSanity...)
 	patchHygiene := phaseEvidenceCheck{
 		Kind:   "git_diff_check",
 		Status: "passed",
 	}
+
 	if reviewEvidence.DiffCheckExit != 0 {
 		patchHygiene.Status = "failed"
 		if reviewEvidence.DiffCheckExit != 1 {
 			patchHygiene.Status = "unavailable"
 		}
+
 		patchHygiene.Error = strings.TrimSpace(reviewEvidence.DiffCheck)
 	}
+
 	bundle := phaseEvidenceBundle{
 		SchemaVersion:    phaseEvidenceSchemaVersion,
 		Phase:            firstNonEmptyString(strings.TrimSpace(phase), "unknown"),
@@ -137,6 +142,7 @@ func collectPlanExecutePhaseEvidence(root string, phase string, plan workspace.P
 		OpenObligations:  phaseEvidenceOpenObligations(plan, packet, changedPaths, submittedPlan, sourceSanity, executorReport.Verification, patchHygiene),
 		DecisionEvidence: phaseEvidenceDecisionSummary(packet, submittedPlan, sourceSanity, executorReport.Verification, patchHygiene),
 	}
+
 	return bundle
 }
 
@@ -167,28 +173,36 @@ func collectSubmittedPlanState(root string, plan workspace.PlanArtifact) []phase
 			Path:   path,
 			Status: "unknown",
 		}
+
 		if path == "" {
 			check.Status = "failed"
 			check.Error = "edit has no path"
 			out = append(out, check)
+
 			continue
 		}
+
 		fullPath := path
 		if !filepath.IsAbs(fullPath) {
 			fullPath = filepath.Join(strings.TrimSpace(root), path)
 		}
+
 		body, err := os.ReadFile(filepath.Clean(fullPath))
 		if err != nil {
 			check.Status = "failed"
 			check.Error = err.Error()
 			out = append(out, check)
+
 			continue
 		}
+
 		status, summary := submittedPlanEditStatus(string(body), edit)
+
 		check.Status = status
 		check.Summary = fmt.Sprintf("edit %d/%d: %s", i+1, len(plan.Edits), summary)
 		out = append(out, check)
 	}
+
 	return out
 }
 
@@ -197,41 +211,54 @@ func submittedPlanEditStatus(current string, edit workspace.PlanEdit) (string, s
 		if current == edit.NewText {
 			return "applied", "whole-file content matches submitted new_text"
 		}
+
 		if repaired := planexecute.TrimTrailingWhitespaceEveryLine(edit.NewText); repaired != edit.NewText && current == repaired {
 			return "applied", "whole-file content matches submitted new_text after mechanical trailing-whitespace repair"
 		}
+
 		return "pending", "whole-file content does not match submitted new_text"
 	}
+
 	if strings.TrimSpace(edit.OldText) != "" {
 		if strings.TrimSpace(edit.NewText) == "" {
 			if !strings.Contains(current, edit.OldText) {
 				return "applied", "submitted old_text is absent after deletion"
 			}
+
 			return "pending", "submitted old_text is still present after deletion"
 		}
+
 		if strings.Contains(current, edit.NewText) {
 			return "applied", "submitted new_text is present"
 		}
+
 		if repaired := planexecute.TrimTrailingWhitespaceEveryLine(edit.NewText); repaired != edit.NewText && strings.Contains(current, repaired) {
 			return "applied", "submitted new_text is present after mechanical trailing-whitespace repair"
 		}
+
 		if strings.Contains(current, edit.OldText) {
 			return "pending", "submitted old_text is still present and new_text is absent"
 		}
+
 		return "unknown", "neither submitted old_text nor new_text is present"
 	}
+
 	if edit.StartLine > 0 || edit.EndLine > 0 {
 		if strings.TrimSpace(edit.Content) != "" && strings.Contains(current, edit.Content) {
 			return "applied", "submitted range content is present"
 		}
+
 		return "unknown", "submitted range content is not present as an exact substring"
 	}
+
 	if strings.TrimSpace(edit.NewText) != "" && strings.Contains(current, edit.NewText) {
 		return "applied", "submitted new_text is present"
 	}
+
 	if repaired := planexecute.TrimTrailingWhitespaceEveryLine(edit.NewText); repaired != edit.NewText && strings.TrimSpace(repaired) != "" && strings.Contains(current, repaired) {
 		return "applied", "submitted new_text is present after mechanical trailing-whitespace repair"
 	}
+
 	return "unknown", "submitted edit shape has no deterministic postcondition"
 }
 
@@ -240,13 +267,16 @@ func loadPlanExecutePacketEvidence(root string, packID string) phaseEvidencePack
 	if packID == "" {
 		return phaseEvidencePacket{Status: "not_provided"}
 	}
+
 	if !isPlanExecutePackID(packID) {
 		return phaseEvidencePacket{PackID: packID, Status: "invalid_pack_id", Error: "pack_id must be a 16-character lowercase hex context view id"}
 	}
+
 	view, viewStatus, err := comprehension.LoadViewByIDStatus(root, packID)
 	if err != nil {
 		return phaseEvidencePacket{PackID: packID, Status: "error", Error: err.Error()}
 	}
+
 	switch viewStatus.State {
 	case comprehension.ViewLoadStateFresh:
 		packet := phaseEvidencePacketFromView(view)
@@ -255,44 +285,58 @@ func loadPlanExecutePacketEvidence(root string, packID string) phaseEvidencePack
 			packet.Fresh = false
 			packet.Confidence = firstNonEmptyString(packet.Confidence, "stale")
 		}
+
 		return packet
 	case comprehension.ViewLoadStateStale:
 		packet := phaseEvidencePacketFromView(view)
+
 		packet.Status = "available_stale"
 		packet.Fresh = false
 		packet.Confidence = firstNonEmptyString(packet.Confidence, "stale")
+
 		return packet
 	}
+
 	view, artifactHit, artifactErr := loadPlanExecutePacketArtifact(root, packID)
 	if artifactErr != nil {
 		return phaseEvidencePacket{PackID: packID, Status: "error", Error: artifactErr.Error()}
 	}
+
 	if !artifactHit {
 		return phaseEvidencePacket{PackID: packID, Status: "miss"}
 	}
+
 	packet := phaseEvidencePacketFromView(view)
+
 	packet.Status = "available_stale"
 	packet.Fresh = false
 	packet.Confidence = firstNonEmptyString(packet.Confidence, "stale")
+
 	return packet
 }
 
 func loadPlanExecutePacketArtifact(root string, packID string) (comprehension.PackResult, bool, error) {
 	path := filepath.Join(strings.TrimSpace(root), ".idiom", "comprehension", "views", packID+".json")
 	body, err := os.ReadFile(filepath.Clean(path))
+
 	if os.IsNotExist(err) {
 		return comprehension.PackResult{}, false, nil
 	}
+
 	if err != nil {
 		return comprehension.PackResult{}, false, err
 	}
+
 	var view comprehension.PackResult
+
 	if err := json.Unmarshal(body, &view); err != nil {
 		return comprehension.PackResult{}, false, err
 	}
+
 	if strings.TrimSpace(view.PackID) == "" {
 		view.PackID = packID
 	}
+
 	return view, true, nil
 }
 
@@ -309,10 +353,13 @@ func phaseEvidencePacketFromView(view comprehension.PackResult) phaseEvidencePac
 		CandidateFiles:   phaseEvidenceFiles(view.CandidateFiles, 8),
 		CandidateSymbols: phaseEvidenceSymbols(view.CandidateSymbols, 8),
 	}
+
 	packet.UnresolvedGaps = append(packet.UnresolvedGaps, cappedStrings(view.UnresolvedGaps, 8)...)
+
 	for _, risk := range cappedStrings(view.Risks, 4) {
 		packet.UnresolvedGaps = append(packet.UnresolvedGaps, "risk="+risk)
 	}
+
 	for _, test := range view.Tests {
 		packet.SuggestedTests = append(packet.SuggestedTests, phaseEvidenceTest{
 			Command:  strings.TrimSpace(test.Command),
@@ -325,6 +372,7 @@ func phaseEvidencePacketFromView(view comprehension.PackResult) phaseEvidencePac
 			break
 		}
 	}
+
 	return packet
 }
 
@@ -343,6 +391,7 @@ func phaseEvidenceFiles(files []comprehension.PackFile, limit int) []phaseEviden
 			break
 		}
 	}
+
 	return out
 }
 
@@ -361,6 +410,7 @@ func phaseEvidenceSymbols(symbols []comprehension.PackSymbol, limit int) []phase
 			break
 		}
 	}
+
 	return out
 }
 
@@ -370,29 +420,36 @@ func packetSuggestedTests(packet phaseEvidencePacket) []phaseEvidenceTest {
 
 func phaseEvidenceOpenObligations(plan workspace.PlanArtifact, packet phaseEvidencePacket, changedPaths []string, submittedPlan []phaseEvidenceCheck, sourceSanity []phaseEvidenceCheck, verification []phaseEvidenceCheck, patchHygiene phaseEvidenceCheck) []string {
 	var out []string
+
 	if strings.TrimSpace(plan.PackID) != "" {
 		if packet.Status != "available" && packet.Status != "available_stale" {
 			out = append(out, "context_packet_unavailable:"+firstNonEmptyString(packet.Status, "unknown"))
 		}
 	}
+
 	for i, check := range submittedPlan {
 		status := firstNonEmptyString(strings.TrimSpace(check.Status), "unknown")
 		if status == "applied" {
 			continue
 		}
+
 		out = append(out, fmt.Sprintf("submitted_edit_%s:%s#%d", status, firstNonEmptyString(strings.TrimSpace(check.Path), "(unknown)"), i+1))
 	}
+
 	if patchHygiene.Status == "failed" {
 		out = append(out, "patch_hygiene_failed")
 	} else if patchHygiene.Status == "unavailable" {
 		out = append(out, "patch_hygiene_unavailable")
 	}
+
 	sourceSanityByPath := map[string]bool{}
+
 	for _, check := range sourceSanity {
 		if path := strings.TrimSpace(check.Path); path != "" {
 			sourceSanityByPath[path] = true
 		}
 	}
+
 	for _, path := range mergePlanExecutePaths(changedPaths) {
 		if workspace.SourceSanityCoversPath(path) {
 			if !sourceSanityByPath[path] {
@@ -400,18 +457,21 @@ func phaseEvidenceOpenObligations(plan workspace.PlanArtifact, packet phaseEvide
 			}
 		}
 	}
+
 	for _, check := range sourceSanity {
 		status := firstNonEmptyString(strings.TrimSpace(check.Status), "unknown")
 		if status != "ok" && status != "passed" {
 			out = append(out, "source_sanity_"+status+":"+firstNonEmptyString(strings.TrimSpace(check.Path), "(unknown)"))
 		}
 	}
+
 	for _, check := range verification {
 		status := firstNonEmptyString(strings.TrimSpace(check.Status), "unknown")
 		if status != "ok" && status != "passed" {
 			out = append(out, "verification_"+status+":"+firstNonEmptyString(strings.TrimSpace(check.Command), "(unknown)"))
 		}
 	}
+
 	return cappedStrings(out, 16)
 }
 
@@ -421,8 +481,10 @@ func phaseEvidenceDecisionSummary(packet phaseEvidencePacket, submittedPlan []ph
 		{Kind: "patch_hygiene", Status: patchHygiene.Status, Summary: strings.TrimSpace(patchHygiene.Error)},
 	}
 	submittedStatus := "not_applicable"
+
 	if len(submittedPlan) > 0 {
 		submittedStatus = "applied"
+
 		for _, check := range submittedPlan {
 			if check.Status != "applied" {
 				submittedStatus = "open"
@@ -430,10 +492,14 @@ func phaseEvidenceDecisionSummary(packet phaseEvidencePacket, submittedPlan []ph
 			}
 		}
 	}
+
 	out = append(out, phaseEvidenceSummary{Kind: "submitted_plan", Status: submittedStatus, Summary: fmt.Sprintf("%d edit(s)", len(submittedPlan))})
+
 	status := "not_applicable"
+
 	if len(sourceSanity) > 0 {
 		status = "passed"
+
 		for _, check := range sourceSanity {
 			if check.Status != "ok" && check.Status != "passed" {
 				status = "failed"
@@ -441,10 +507,14 @@ func phaseEvidenceDecisionSummary(packet phaseEvidencePacket, submittedPlan []ph
 			}
 		}
 	}
+
 	out = append(out, phaseEvidenceSummary{Kind: "source_sanity", Status: status, Summary: fmt.Sprintf("%d check(s)", len(sourceSanity))})
+
 	verificationStatus := "not_applicable"
+
 	if len(verification) > 0 {
 		verificationStatus = "passed"
+
 		for _, check := range verification {
 			if check.Status != "ok" && check.Status != "passed" {
 				verificationStatus = "failed"
@@ -452,7 +522,9 @@ func phaseEvidenceDecisionSummary(packet phaseEvidencePacket, submittedPlan []ph
 			}
 		}
 	}
+
 	out = append(out, phaseEvidenceSummary{Kind: "verification", Status: verificationStatus, Summary: fmt.Sprintf("%d command(s)", len(verification))})
+
 	return out
 }
 
@@ -514,11 +586,13 @@ func phaseEvidenceTelemetryFilePaths(files []phaseEvidenceFile, limit int) []str
 		if path == "" {
 			continue
 		}
+
 		out = append(out, path)
 		if len(out) >= limit {
 			break
 		}
 	}
+
 	return out
 }
 
@@ -529,11 +603,13 @@ func phaseEvidenceTelemetrySymbolNames(symbols []phaseEvidenceSymbol, limit int)
 		if name == "" {
 			continue
 		}
+
 		out = append(out, name)
 		if len(out) >= limit {
 			break
 		}
 	}
+
 	return out
 }
 
@@ -544,11 +620,13 @@ func phaseEvidenceTelemetryTestCommands(tests []phaseEvidenceTest, limit int) []
 		if command == "" {
 			continue
 		}
+
 		out = append(out, command)
 		if len(out) >= limit {
 			break
 		}
 	}
+
 	return out
 }
 
@@ -563,11 +641,13 @@ func cappedStrings(values []string, limit int) []string {
 		if value == "" {
 			continue
 		}
+
 		out = append(out, value)
 		if len(out) >= limit {
 			break
 		}
 	}
+
 	return out
 }
 
@@ -575,5 +655,6 @@ func phaseEvidenceMinInt(a int, b int) int {
 	if a < b {
 		return a
 	}
+
 	return b
 }

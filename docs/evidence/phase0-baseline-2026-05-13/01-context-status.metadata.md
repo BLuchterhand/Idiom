@@ -2,7 +2,7 @@
 
 Command: `idiom tool context_status`
 
-Working directory: `/Users/ben/Documents/GitHub/idiom`
+Working directory: `/workspace/idiom`
 
 Started at UTC: `2026-05-13T01:14:46Z`
 

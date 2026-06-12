@@ -35,32 +35,43 @@ func noteToolDefinition() llama.Tool {
 
 func runNoteTool(workspaceRoot string, raw string) workspace.ToolResult {
 	result := workspace.ToolResult{Tool: noteToolName}
+
 	var args noteToolArgs
+
 	if err := json.Unmarshal([]byte(raw), &args); err != nil {
 		result.Summary = "Note rejected: invalid arguments"
 		result.Error = "note requires JSON arguments with non-empty key and content"
+
 		return result
 	}
+
 	key, err := validateNoteToolKey(args.Key)
 	if err != nil {
 		result.Summary = "Note rejected: invalid key"
 		result.Error = err.Error()
+
 		return result
 	}
+
 	content, err := validateNoteToolContent(args.Content)
 	if err != nil {
 		result.Summary = "Note rejected: invalid content"
 		result.Error = err.Error()
+
 		return result
 	}
+
 	relPath, err := writeNoteToolFile(workspaceRoot, key, content)
 	if err != nil {
 		result.Summary = "Note failed: write rejected"
 		result.Error = err.Error()
+
 		return result
 	}
+
 	result.Summary = fmt.Sprintf("Note saved: %s", key)
 	result.Output = fmt.Sprintf("Recorded finding %q at %s (%d bytes)", key, relPath, len([]byte(content)))
+
 	return result
 }
 
@@ -71,6 +82,7 @@ func writeAutoFindingsNote(workspaceRoot string, brief workerruntime.WorkerRunti
 			summaries = append(summaries, result.Summary)
 		}
 	}
+
 	return scratchnotes.WriteAutoFindings(workspaceRoot, brief.Objective, summaries)
 }
 

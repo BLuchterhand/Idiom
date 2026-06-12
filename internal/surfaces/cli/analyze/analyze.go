@@ -85,29 +85,37 @@ func Main() {
 		cfgPath     = flag.String("config", "config.json", "path to config.json (only used with -llm)")
 		maxExamples = flag.Int("max-examples", 4, "max raw examples per cluster in the report")
 	)
+
 	flag.Parse()
 
 	files, err := filepath.Glob(*logsGlob)
 	if err != nil {
 		fatalf("glob %s: %v", *logsGlob, err)
 	}
+
 	if len(files) == 0 {
 		fatalf("no log files match %q", *logsGlob)
 	}
+
 	slices.Sort(files)
 
 	var calls []toolCall
+
 	sessionSummaries := make(map[string]*sessionSummary)
+
 	for _, f := range files {
 		session := filepath.Base(f)
 		summary := &sessionSummary{Name: session}
+
 		sessionSummaries[session] = summary
 
 		fileCalls, err := parseSession(f, session, summary)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warn: %s: %v\n", f, err)
+
 			continue
 		}
+
 		calls = append(calls, fileCalls...)
 	}
 
@@ -123,6 +131,7 @@ func Main() {
 	existing, novel := splitClusters(clusters)
 
 	ts := time.Now().Format("20060102-150405")
+
 	if strings.TrimSpace(*outPath) == "" {
 		_ = os.MkdirAll("docs", 0o755)
 		*outPath = filepath.Join("docs", "rule-proposals-"+ts+".md")
@@ -142,6 +151,7 @@ func Main() {
 		note, err := llmReview(*cfgPath, calls, sessionSummaries, existing, novel)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warn: llm review failed: %v\n", err)
+
 			report += "\n## LLM review\n\n_LLM review requested but failed: " + err.Error() + "_\n"
 		} else {
 			report += "\n## LLM review (single pass)\n\n" + note + "\n"
@@ -151,6 +161,7 @@ func Main() {
 	if err := os.WriteFile(*outPath, []byte(report), 0o644); err != nil {
 		fatalf("write %s: %v", *outPath, err)
 	}
+
 	fmt.Printf("wrote %s (%d calls, %d existing-capability clusters, %d novel clusters)\n",
 		*outPath, len(calls), len(existing), len(novel))
 }
@@ -169,24 +180,31 @@ func parseSession(path, session string, summary *sessionSummary) ([]toolCall, er
 	if err != nil {
 		return nil, err
 	}
+
 	var calls []toolCall
+
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
+
 		var entry logEntry
+
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			continue
 		}
+
 		kind := strings.TrimSpace(entry.Kind)
 		if kind == "" {
 			kind = strings.TrimSpace(entry.Type)
 		}
+
 		payload := entry.Payload
 		if len(payload) == 0 {
 			payload = []byte(line)
 		}
+
 		switch kind {
 		case "message":
 			if summary.FirstPrompt == "" {
@@ -194,6 +212,7 @@ func parseSession(path, session string, summary *sessionSummary) ([]toolCall, er
 					Role    string `json:"role"`
 					Content string `json:"content"`
 				}
+
 				if json.Unmarshal(payload, &p) == nil && p.Role == "user" {
 					summary.FirstPrompt = p.Content
 				}
@@ -203,15 +222,19 @@ func parseSession(path, session string, summary *sessionSummary) ([]toolCall, er
 				var p struct {
 					Prompt string `json:"prompt"`
 				}
+
 				_ = json.Unmarshal(payload, &p)
 				summary.FirstPrompt = p.Prompt
 			}
 		case "tool_request":
 			var p toolRequestPayload
+
 			if err := json.Unmarshal(payload, &p); err != nil {
 				continue
 			}
+
 			summary.TotalCalls++
+
 			tc := toolCall{
 				Session: session,
 				Turn:    p.Turn,
@@ -220,23 +243,28 @@ func parseSession(path, session string, summary *sessionSummary) ([]toolCall, er
 				Raw:     p.Raw,
 			}
 			parseRaw(&tc)
+
 			if isStructuredTool(tc.Tool) {
 				summary.Structured++
 			} else {
 				summary.Generic++
 			}
+
 			calls = append(calls, tc)
 		case "run_event":
 			var p struct {
 				Role    string `json:"role"`
 				Content string `json:"content"`
 			}
+
 			_ = json.Unmarshal(payload, &p)
+
 			if p.Role == "discovery_redirect" {
 				summary.Redirects++
 			}
 		}
 	}
+
 	return calls, nil
 }
 
@@ -244,25 +272,33 @@ func parseRaw(tc *toolCall) {
 	if strings.TrimSpace(tc.Raw) == "" {
 		return
 	}
+
 	var m map[string]any
+
 	if err := json.Unmarshal([]byte(tc.Raw), &m); err != nil {
 		return
 	}
+
 	if v, ok := m["pattern"].(string); ok {
 		tc.Pattern = v
 	}
+
 	if v, ok := m["path"].(string); ok {
 		tc.Path = v
 	}
+
 	if v, ok := m["glob"].(string); ok {
 		tc.Glob = v
 	}
+
 	if v, ok := m["command"].(string); ok {
 		tc.Command = v
 	}
+
 	if v, ok := m["start_line"].(float64); ok {
 		tc.StartLine = int(v)
 	}
+
 	if v, ok := m["end_line"].(float64); ok {
 		tc.EndLine = int(v)
 	}
@@ -309,19 +345,23 @@ var (
 func classifySearch(tc *toolCall) {
 	p := strings.TrimSpace(tc.Pattern)
 	lang := langFromGlob(tc.Glob)
+
 	tc.Language = lang
+
 	switch {
 	case reGoFuncMethodDef.MatchString(p):
 		tc.Shape = "search:func_method_def"
 		if tc.Language == "" {
 			tc.Language = "go"
 		}
+
 		tc.Capability = capForLangSymbol(tc.Language)
 	case reGoFuncDef.MatchString(p):
 		tc.Shape = "search:func_def"
 		if tc.Language == "" {
 			tc.Language = "go"
 		}
+
 		tc.Capability = capForLangSymbol(tc.Language)
 	case reGoFuncWildcard.MatchString(p):
 		tc.Shape = "search:func_wildcard"
@@ -330,16 +370,19 @@ func classifySearch(tc *toolCall) {
 		if tc.Language == "" {
 			tc.Language = "go"
 		}
+
 		tc.Capability = capForLangSymbol(tc.Language)
 	case reGoTypeDef.MatchString(p):
 		tc.Shape = "search:type_def"
 		if tc.Language == "" {
 			tc.Language = "go"
 		}
+
 		tc.Capability = capForLangSymbol(tc.Language)
 	case reCppClassDef.MatchString(p):
 		tc.Shape = "search:cpp_class_def"
 		tc.Capability = capForLangSymbol("cpp")
+
 		if tc.Language == "" {
 			tc.Language = "cpp"
 		}
@@ -360,8 +403,11 @@ func classifySearch(tc *toolCall) {
 
 func classifyRead(tc *toolCall) {
 	lang := langFromPath(tc.Path)
+
 	tc.Language = lang
+
 	span := tc.EndLine - tc.StartLine
+
 	switch {
 	case tc.StartLine == 0 && tc.EndLine == 0:
 		tc.Shape = "read:no_range"
@@ -385,12 +431,15 @@ func classifyShell(tc *toolCall) {
 		tc.Shape = "shell:empty"
 		return
 	}
+
 	fields := strings.Fields(cmd)
 	head := fields[0]
 	sub := ""
+
 	if len(fields) > 1 {
 		sub = fields[1]
 	}
+
 	// Normalize well-known two-token prefixes; single-token otherwise.
 	switch head {
 	case "grep", "rg":
@@ -399,6 +448,7 @@ func classifyShell(tc *toolCall) {
 		} else {
 			tc.Shape = "shell:" + head
 		}
+
 		tc.Capability = "workspace_symbol_or_references"
 	case "git":
 		tc.Shape = "shell:git " + sub
@@ -433,14 +483,17 @@ func langFromGlob(glob string) string {
 	if glob == "" {
 		return ""
 	}
+
 	if strings.Contains(glob, ".go") {
 		return "go"
 	}
+
 	for _, ext := range []string{".cpp", ".cc", ".cxx", ".c", ".h", ".hpp", ".hh", ".hxx"} {
 		if strings.Contains(glob, ext) {
 			return "cpp"
 		}
 	}
+
 	return ""
 }
 
@@ -452,6 +505,7 @@ func langFromPath(path string) string {
 	case ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ipp", ".inl", ".tpp":
 		return "cpp"
 	}
+
 	return ""
 }
 
@@ -459,6 +513,7 @@ func capForLangSymbol(lang string) string {
 	if lang == "" {
 		return ""
 	}
+
 	return "workspace_symbol_or_find_symbol"
 }
 
@@ -469,22 +524,27 @@ func isStructuredTool(tool string) bool {
 
 func clusterByShape(calls []toolCall) []shapeCluster {
 	byShape := make(map[string]*shapeCluster)
+
 	for _, c := range calls {
 		if c.Shape == "" {
 			continue
 		}
+
 		// Skip already-structured and baseline calls — those aren't
 		// candidates for new rules or new tools.
 		if strings.HasPrefix(c.Shape, "structured:") || strings.HasPrefix(c.Shape, "baseline:") {
 			continue
 		}
+
 		// read:targeted is the desired path (bounded read after an
 		// outline) — nothing to propose, so drop it from clustering.
 		if c.Shape == "read:targeted" {
 			continue
 		}
+
 		key := c.Shape + "|" + c.Language
 		cl, ok := byShape[key]
+
 		if !ok {
 			cl = &shapeCluster{
 				Shape:      c.Shape,
@@ -494,25 +554,33 @@ func clusterByShape(calls []toolCall) []shapeCluster {
 			}
 			byShape[key] = cl
 		}
+
 		cl.Count++
+
 		cl.Sessions[c.Session]++
+
 		if len(cl.Examples) < 12 {
 			cl.Examples = append(cl.Examples, util.TruncateBytes(strings.ReplaceAll(c.Raw, "\n", " "), 180, "…"))
 		}
 	}
+
 	var out []shapeCluster
+
 	for _, cl := range byShape {
 		if !clusterMeetsThreshold(cl) {
 			continue
 		}
+
 		out = append(out, *cl)
 	}
+
 	slices.SortFunc(out, func(a, b shapeCluster) int {
 		return cmp.Or(
 			-cmp.Compare(a.Count, b.Count),
 			cmp.Compare(a.Shape, b.Shape),
 		)
 	})
+
 	return out
 }
 
@@ -520,11 +588,13 @@ func clusterMeetsThreshold(cl *shapeCluster) bool {
 	if cl.Count >= clusterThreshold {
 		return true
 	}
+
 	for _, n := range cl.Sessions {
 		if n >= clusterThreshold {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -538,20 +608,24 @@ func splitClusters(all []shapeCluster) (existing, novel []shapeCluster) {
 			capByShape[cl.Shape] = cl.Capability
 		}
 	}
+
 	for _, cl := range all {
 		if cl.Capability == "" {
 			if cap, ok := capByShape[cl.Shape]; ok {
 				cl.Capability = cap + " (langless — needs inference)"
 				existing = append(existing, cl)
+
 				continue
 			}
 		}
+
 		if strings.TrimSpace(cl.Capability) != "" {
 			existing = append(existing, cl)
 		} else {
 			novel = append(novel, cl)
 		}
 	}
+
 	return
 }
 
@@ -567,6 +641,7 @@ type reportInputs struct {
 
 func renderReport(in reportInputs) string {
 	var b strings.Builder
+
 	fmt.Fprintf(&b, "# Discovery redirect rule proposals\n\n")
 	fmt.Fprintf(&b, "_Generated %s from `%s` (%d sessions, %d tool calls)._\n\n",
 		time.Now().Format(time.RFC3339), in.LogsGlob, len(in.Files), len(in.Calls))
@@ -575,26 +650,34 @@ func renderReport(in reportInputs) string {
 	b.WriteString("## Sessions analyzed\n\n")
 	b.WriteString("| Session | Total calls | Structured | Generic | Redirects fired | Deterministic % |\n")
 	b.WriteString("|---|---:|---:|---:|---:|---:|\n")
+
 	var sessionNames []string
+
 	for name := range in.Sessions {
 		sessionNames = append(sessionNames, name)
 	}
+
 	slices.Sort(sessionNames)
+
 	for _, name := range sessionNames {
 		s := in.Sessions[name]
 		pct := 0.0
+
 		if s.TotalCalls > 0 {
 			pct = 100 * float64(s.Structured) / float64(s.TotalCalls)
 		}
+
 		fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %.0f%% |\n",
 			name, s.TotalCalls, s.Structured, s.Generic, s.Redirects, pct)
 	}
+
 	b.WriteString("\n")
 
 	// Overall shape breakdown (all clusters, not just ≥threshold)
 	fmt.Fprintf(&b, "## Clusters meeting threshold (≥%d across corpus or in one session)\n\n", clusterThreshold)
 
 	b.WriteString("### 1. Existing-capability clusters — candidates for new redirect rules\n\n")
+
 	if len(in.Existing) == 0 {
 		b.WriteString("_No existing-capability clusters above threshold._\n\n")
 	} else {
@@ -604,6 +687,7 @@ func renderReport(in reportInputs) string {
 	}
 
 	b.WriteString("### 2. Novel clusters — candidates for new deterministic tools\n\n")
+
 	if len(in.Novel) == 0 {
 		b.WriteString("_No novel clusters above threshold._\n\n")
 	} else {
@@ -614,17 +698,21 @@ func renderReport(in reportInputs) string {
 
 	// Proposal summary (one-liners)
 	b.WriteString("## Proposal summary\n\n")
+
 	for _, cl := range in.Existing {
 		fmt.Fprintf(&b, "- **Add redirect rule** for `%s` (lang=%s, %d hits) → capability `%s`. %s\n",
 			cl.Shape, orDash(cl.Language), cl.Count, cl.Capability, proposalRationale(cl))
 	}
+
 	for _, cl := range in.Novel {
 		fmt.Fprintf(&b, "- **Consider new discovery tool** covering `%s` (%d hits). %s\n",
 			cl.Shape, cl.Count, noveltyRationale(cl))
 	}
+
 	if len(in.Existing)+len(in.Novel) == 0 {
 		b.WriteString("_Nothing above threshold — corpus is either small or routing is already clean._\n")
 	}
+
 	b.WriteString("\n")
 
 	return b.String()
@@ -632,10 +720,13 @@ func renderReport(in reportInputs) string {
 
 func renderCluster(b *strings.Builder, cl shapeCluster, maxExamples int, existing bool) {
 	fmt.Fprintf(b, "#### `%s`", cl.Shape)
+
 	if cl.Language != "" {
 		fmt.Fprintf(b, " (lang=%s)", cl.Language)
 	}
+
 	fmt.Fprintf(b, " — %d hits across %d session(s)\n\n", cl.Count, len(cl.Sessions))
+
 	if existing {
 		fmt.Fprintf(b, "- Suggested capability: `%s`\n", cl.Capability)
 		fmt.Fprintf(b, "- Rationale: %s\n", proposalRationale(cl))
@@ -643,24 +734,31 @@ func renderCluster(b *strings.Builder, cl shapeCluster, maxExamples int, existin
 		fmt.Fprintf(b, "- No existing capability clearly fits.\n")
 		fmt.Fprintf(b, "- Rationale: %s\n", noveltyRationale(cl))
 	}
+
 	if len(cl.Sessions) > 0 {
 		var pairs []string
+
 		for name, n := range cl.Sessions {
 			pairs = append(pairs, fmt.Sprintf("%s×%d", name, n))
 		}
+
 		slices.Sort(pairs)
 		fmt.Fprintf(b, "- By session: %s\n", strings.Join(pairs, ", "))
 	}
+
 	if len(cl.Examples) > 0 {
 		b.WriteString("- Examples:\n")
+
 		n := maxExamples
 		if n > len(cl.Examples) {
 			n = len(cl.Examples)
 		}
+
 		for _, ex := range cl.Examples[:n] {
 			fmt.Fprintf(b, "  - `%s`\n", ex)
 		}
 	}
+
 	b.WriteString("\n")
 }
 
@@ -687,6 +785,7 @@ func proposalRationale(cl shapeCluster) string {
 	case "shell:go test", "shell:go vet", "shell:go build":
 		return "go_diagnostics already answers this and is structured."
 	}
+
 	return "shape is deterministic enough to match a rule; promoting it would cut generic-tool noise."
 }
 
@@ -705,6 +804,7 @@ func noveltyRationale(cl shapeCluster) string {
 	case cl.Shape == "search:complex_regex":
 		return "structured regex search could be exposed explicitly rather than via shell."
 	}
+
 	return "shape appears consistently but no clean capability match — worth investigating what underlying question it represents."
 }
 
@@ -712,6 +812,7 @@ func orDash(s string) string {
 	if s == "" {
 		return "-"
 	}
+
 	return s
 }
 
@@ -723,8 +824,10 @@ func llmReview(cfgPath string, calls []toolCall, sessions map[string]*sessionSum
 	if err != nil {
 		return "", fmt.Errorf("load config: %w", err)
 	}
+
 	client := llama.NewClient(cfg.BaseURL(), 0).WithBackend(cfg.LlamaServer.Kind)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+
 	defer cancel()
 
 	sysMsg := "You are reviewing session logs for idiom, a local coding agent. " +
@@ -734,24 +837,33 @@ func llmReview(cfgPath string, calls []toolCall, sessions map[string]*sessionSum
 		"Be terse. Bullet points only. If nothing stands out, say so. Never repeat the deterministic findings."
 
 	var userBuf strings.Builder
+
 	fmt.Fprintf(&userBuf, "Corpus: %d sessions, %d tool calls total.\n\n", len(sessions), len(calls))
 	userBuf.WriteString("Deterministic findings (already covered — do not repeat):\n")
+
 	for _, cl := range existing {
 		fmt.Fprintf(&userBuf, "- %s (%d) → %s\n", cl.Shape, cl.Count, cl.Capability)
 	}
+
 	for _, cl := range novel {
 		fmt.Fprintf(&userBuf, "- %s (%d) novel\n", cl.Shape, cl.Count)
 	}
+
 	userBuf.WriteString("\nPer-session traces (tool sequence only):\n")
+
 	var names []string
+
 	for n := range sessions {
 		names = append(names, n)
 	}
+
 	slices.Sort(names)
+
 	for _, name := range names {
 		traces := traceFor(calls, name, 60)
 		fmt.Fprintf(&userBuf, "\n[%s]\n%s\n", name, strings.Join(traces, " → "))
 	}
+
 	userBuf.WriteString("\nWhat multi-call patterns or non-obvious workarounds do you see that the single-call rule miner missed?")
 
 	reply, err := client.CompleteChat(ctx, []llama.ChatMessage{
@@ -764,25 +876,30 @@ func llmReview(cfgPath string, calls []toolCall, sessions map[string]*sessionSum
 	if err != nil {
 		return "", err
 	}
+
 	return strings.TrimSpace(reply), nil
 }
 
 func traceFor(calls []toolCall, session string, limit int) []string {
 	var out []string
+
 	for _, c := range calls {
 		if c.Session != session {
 			continue
 		}
+
 		label := c.Tool
 		if c.Shape != "" && !strings.HasPrefix(c.Shape, "structured:") {
 			label = c.Shape
 		}
+
 		out = append(out, label)
 		if len(out) >= limit {
 			out = append(out, "…")
 			break
 		}
 	}
+
 	return out
 }
 

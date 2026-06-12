@@ -87,6 +87,7 @@ func codeNavigationSpecFor(value string) (codeNavigationSpec, error) {
 	if err != nil {
 		return codeNavigationSpec{}, err
 	}
+
 	return codeNavigationSpec{
 		Name:            spec.Name,
 		Capability:      spec.Capability,
@@ -137,9 +138,11 @@ func executeToolCtx(ctx context.Context, mgr *Manager, tool string, req ToolRequ
 
 func writeTestFile(t testFataler, path string, content string) {
 	t.Helper()
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", path, err)
 	}
+
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
@@ -152,9 +155,11 @@ type testFataler interface {
 
 func writeWorkspaceFile(t testFataler, path string, content string) {
 	t.Helper()
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", path, err)
 	}
+
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}

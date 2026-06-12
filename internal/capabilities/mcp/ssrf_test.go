@@ -69,17 +69,22 @@ func TestValidateHTTPURL(t *testing.T) {
 				if err != nil {
 					t.Fatalf("expected success, got error: %v", err)
 				}
+
 				if parsed == nil {
 					t.Fatalf("expected parsed URL, got nil")
 				}
+
 				if len(ips) == 0 {
 					t.Fatalf("expected at least one resolved IP, got none")
 				}
+
 				return
 			}
+
 			if err == nil {
 				t.Fatalf("expected error containing %q, got nil (parsed=%v ips=%v)", tc.wantErrSub, parsed, ips)
 			}
+
 			if !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tc.wantErrSub)) {
 				t.Fatalf("expected error containing %q, got %q", tc.wantErrSub, err.Error())
 			}
@@ -92,6 +97,7 @@ func TestValidateHTTPURL_TrimsWhitespace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got error: %v", err)
 	}
+
 	if parsed.Host != "1.1.1.1" {
 		t.Fatalf("expected host 1.1.1.1, got %q", parsed.Host)
 	}

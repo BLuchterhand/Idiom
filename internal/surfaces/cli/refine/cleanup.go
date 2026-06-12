@@ -35,8 +35,10 @@ func staleRefineTitlePath(dir string, entry os.DirEntry, cutoff time.Time) (stri
 	if !entry.IsDir() {
 		return "", false, nil
 	}
+
 	titleDir := filepath.Join(dir, entry.Name())
 	stale, err := titleDirIsStale(titleDir, cutoff)
+
 	return titleDir, stale, err
 }
 
@@ -51,21 +53,28 @@ func titleDirIsStale(titleDir string, cutoff time.Time) (bool, error) {
 		if err != nil {
 			return err
 		}
+
 		if info.IsDir() {
 			return nil
 		}
+
 		seenAny = true
+
 		if !info.ModTime().Before(cutoff) {
 			stale = false
 			return filepath.SkipDir
 		}
+
 		return nil
 	})
+
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
 	}
+
 	if !seenAny {
 		return true, nil
 	}
+
 	return stale, nil
 }

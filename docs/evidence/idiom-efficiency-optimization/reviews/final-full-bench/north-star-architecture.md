@@ -1,87 +1,87 @@
 [2m  ▎ thinking[0m
   · 17015 tok · in 16836 (16640 cached / 196 new) · out 179 (70 reasoning) · ¥0.0009
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git status --short"}
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git log --oneline -30"}
+  -> bash {"command": "cd /workspace/idiom && git status --short"}
+  -> bash {"command": "cd /workspace/idiom && git log --oneline -30"}
 [2m  ▎ thinking[0m
   · 18656 tok · in 18423 (17152 cached / 1271 new) · out 233 (66 reasoning) · ¥0.0021 · cache prefix changed: tools
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/docs/design-direct-answer-efficiency.md"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/docs/design-hosted-cache-cost-metrics.md"}
-  -> ls {"path": "/Users/ben/Documents/GitHub/idiom/docs/evidence/idiom-efficiency-optimization"}
+  -> read_file {"path": "/workspace/idiom/docs/design-direct-answer-efficiency.md"}
+  -> read_file {"path": "/workspace/idiom/docs/design-hosted-cache-cost-metrics.md"}
+  -> ls {"path": "/workspace/idiom/docs/evidence/idiom-efficiency-optimization"}
 [2m  ▎ thinking[0m
   · 28686 tok · in 28472 (18560 cached / 9912 new) · out 214 (44 reasoning) · ¥0.0107
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff --stat HEAD"}
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff --name-only HEAD~1..HEAD"}
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git log HEAD~5..HEAD --format=\"%h %s\""}
+  -> bash {"command": "cd /workspace/idiom && git diff --stat HEAD"}
+  -> bash {"command": "cd /workspace/idiom && git diff --name-only HEAD~1..HEAD"}
+  -> bash {"command": "cd /workspace/idiom && git log HEAD~5..HEAD --format=\"%h %s\""}
 [2m  ▎ thinking[0m
 Let me examine the actual diffs more carefully to distinguish effort changes from unrelated noise.
   · 31460 tok · in 29405 (28672 cached / 733 new) · out 2055 (1780 reasoning) · ¥0.0054
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD -- .codex/README.md AGENTS.md internal/contracts/writ...
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD -- internal/runtime/llama/client.go internal/runtime/...
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD -- internal/runtime/agent/runner.go internal/runtime/...
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD -- .codex/README.md AGENTS.md internal/contracts/writ...
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD -- internal/runtime/llama/client.go internal/runtime/...
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD -- internal/runtime/agent/runner.go internal/runtime/...
 [2m  ▎ thinking[0m
   · 39997 tok · in 39708 (31360 cached / 8348 new) · out 289 (44 reasoning) · ¥0.0096
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD -- internal/runtime/agent/read_only_closure.go intern...
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD -- internal/surfaces/cli/route/writer_route.go intern...
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD -- internal/evidence/transcript/debuglog.go internal/...
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD -- internal/runtime/agent/read_only_closure.go intern...
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD -- internal/surfaces/cli/route/writer_route.go intern...
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD -- internal/evidence/transcript/debuglog.go internal/...
 [2m  ▎ thinking[0m
   · 48910 tok · in 48733 (39936 cached / 8797 new) · out 177 (60 reasoning) · ¥0.0099
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/direct_answer_surface.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner_runstate.go"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/direct_answer_surface.go"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/runner_runstate.go"}
 [2m  ▎ thinking[0m
   · 56984 tok · in 56739 (48896 cached / 7843 new) · out 245 (44 reasoning) · ¥0.0093
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD -- internal/surfaces/tui/app/model_state.go | head -3...
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD -- internal/surfaces/cli/lane/explain.go internal/sur...
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/deepseek_test.go"}
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD -- internal/surfaces/tui/app/model_state.go | head -3...
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD -- internal/surfaces/cli/lane/explain.go internal/sur...
+  -> read_file {"path": "/workspace/idiom/internal/runtime/llama/deepseek_test.go"}
 [2m  ▎ thinking[0m
   · 69871 tok · in 69732 (56960 cached / 12772 new) · out 139 (18 reasoning) · ¥0.0142
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/direct_answer_surface_test.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner_usage_metrics_test.go"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/direct_answer_surface_test.go"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/runner_usage_metrics_test.go"}
 [2m  ▎ thinking[0m
   · 74920 tok · in 74594 (69760 cached / 4834 new) · out 326 (33 reasoning) · ¥0.0069
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/lane_policy_test.go", "limit": 50}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/cli/route/writer_route_test.go", "limit": 50}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/tui/app/writer_route_test.go", "limit": 50}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/tui/app/session_summary_test.go", "limit": 80}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/lane_policy_test.go", "limit": 50}
+  -> read_file {"path": "/workspace/idiom/internal/surfaces/cli/route/writer_route_test.go", "limit": 50}
+  -> read_file {"path": "/workspace/idiom/internal/surfaces/tui/app/writer_route_test.go", "limit": 50}
+  -> read_file {"path": "/workspace/idiom/internal/surfaces/tui/app/session_summary_test.go", "limit": 80}
 [2m  ▎ thinking[0m
   · 77482 tok · in 77278 (74880 cached / 2398 new) · out 204 (14 reasoning) · ¥0.0043
-  -> bash {"command": "wc -l /Users/ben/Documents/GitHub/idiom/internal/surfaces/tui/app/session_summary_test.go"}
-  -> bash {"command": "wc -l /Users/ben/Documents/GitHub/idiom/internal/runtime/agent/lane_policy_test.go"}
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD -- internal/runtime/agent/runner_plan_then_execute_gu...
+  -> bash {"command": "wc -l /workspace/idiom/internal/surfaces/tui/app/session_summary_test.go"}
+  -> bash {"command": "wc -l /workspace/idiom/internal/runtime/agent/lane_policy_test.go"}
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD -- internal/runtime/agent/runner_plan_then_execute_gu...
 [2m  ▎ thinking[0m
   · 78667 tok · in 78442 (77440 cached / 1002 new) · out 225 (88 reasoning) · ¥0.0030
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD -- internal/runtime/agent/runner.go | grep -A3 -B3 \"...
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD -- internal/runtime/agent/runner.go | head -40"}
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD -- internal/runtime/agent/runner.go | grep -A3 -B3 \"...
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD -- internal/runtime/agent/runner.go | head -40"}
 [2m  ▎ thinking[0m
   · 81184 tok · in 79548 (78592 cached / 956 new) · out 1636 (1458 reasoning) · ¥0.0058
-  -> ls {"path": "/Users/ben/Documents/GitHub/idiom/docs/evidence/idiom-efficiency-optimization", "recursive": true}
-  -> bash {"command": "head -50 /Users/ben/Documents/GitHub/idiom/docs/refactor-phase2-plan.md"}
-  -> ls {"path": "/Users/ben/Documents/GitHub/idiom/.codex/agents"}
+  -> ls {"path": "/workspace/idiom/docs/evidence/idiom-efficiency-optimization", "recursive": true}
+  -> bash {"command": "head -50 /workspace/idiom/docs/refactor-phase2-plan.md"}
+  -> ls {"path": "/workspace/idiom/.codex/agents"}
 [2m  ▎ thinking[0m
   · 83816 tok · in 83695 (81152 cached / 2543 new) · out 121 (42 reasoning) · ¥0.0044
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/docs/evidence/idiom-efficiency-optimization/reviews/final-full-bench/north-s...
+  -> read_file {"path": "/workspace/idiom/docs/evidence/idiom-efficiency-optimization/reviews/final-full-bench/north-s...
 [2m  ▎ thinking[0m
 Now I have a thorough picture. Let me also check the tests compile and get a quick test result.
   · 86018 tok · in 85812 (83712 cached / 2100 new) · out 206 (115 reasoning) · ¥0.0042
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && go build ./cmd/idiom 2>&1 | head -30"}
+  -> bash {"command": "cd /workspace/idiom && go build ./cmd/idiom 2>&1 | head -30"}
 [2m  ▎ thinking[0m
   · 86242 tok · in 86029 (86016 cached / 13 new) · out 213 (21 reasoning) · ¥0.0022
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && go test ./internal/runtime/llama -run 'Usage|DeepSeek|Cache|Reasoni...
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && go test ./internal/runtime/agent -run 'DirectAnswer|Usage|BudgetLed...
+  -> bash {"command": "cd /workspace/idiom && go test ./internal/runtime/llama -run 'Usage|DeepSeek|Cache|Reasoni...
+  -> bash {"command": "cd /workspace/idiom && go test ./internal/runtime/agent -run 'DirectAnswer|Usage|BudgetLed...
 [2m  ▎ thinking[0m
   · 88676 tok · in 88351 (86144 cached / 2207 new) · out 325 (151 reasoning) · ¥0.0046
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && go test ./internal/runtime/agent -run 'TestEmitAcceptedAnswerSignal...
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && grep -n \"TestEmitAcceptedAnswerSignalsDirectAnswerAliasBlocksUnrel...
+  -> bash {"command": "cd /workspace/idiom && go test ./internal/runtime/agent -run 'TestEmitAcceptedAnswerSignal...
+  -> bash {"command": "cd /workspace/idiom && grep -n \"TestEmitAcceptedAnswerSignalsDirectAnswerAliasBlocksUnrel...
   · 88931 tok · in 88834 (88576 cached / 258 new) · out 97 · ¥0.0022
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner_test.go", "offset": 17313, "limit": 60}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/runner_test.go", "offset": 17313, "limit": 60}
 [2m  ▎ thinking[0m
   · 90308 tok · in 89916 (88832 cached / 1084 new) · out 392 (312 reasoning) · ¥0.0036
-  -> grep {"pattern": "func closurePromptEvidencePaths", "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent"}
+  -> grep {"pattern": "func closurePromptEvidencePaths", "path": "/workspace/idiom/internal/runtime/agent"}
   · 90498 tok · in 90402 (90240 cached / 162 new) · out 96 · ¥0.0022
-  -> read_file {"offset": 18772, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner.go", "limit": 15}
+  -> read_file {"offset": 18772, "path": "/workspace/idiom/internal/runtime/agent/runner.go", "limit": 15}
 [2m  ▎ thinking[0m
 Let me read the specific test assertion line in context to fully understand the evidence_paths leak.
   · 92440 tok · in 90736 (90368 cached / 368 new) · out 1704 (1589 reasoning) · ¥0.0056
-  -> read_file {"limit": 20, "offset": 17346, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner_test.go"}
+  -> read_file {"limit": 20, "offset": 17346, "path": "/workspace/idiom/internal/runtime/agent/runner_test.go"}
 [2m  ▎ thinking[0m
 ---
 
@@ -114,8 +114,8 @@ Let me read the specific test assertion line in context to fully understand the 
 | `.codegraph/` | Auto-generated index | `.gitignore` or separate |
 | `.codex/agents/` | Codex agent `.toml` configs | Separate commit |
 | `docs/refactor-phase2-plan.md` | Plan to wire `runner_runstate.go` into runner.go — separate refactor | Separate |
-| `global-reasonix-config.toml` `reasonix.toml` | Dev config | Remove or `.gitignore` |
-| `internal/surfaces/cliassets/base.md` `prompts/assets.go` | Generated assets | Separate commit |
+| external local agent config | Dev config | Remove from repository |
+| `prompts/base.md` `prompts/assets.go` | Generated assets | Separate commit |
 | `internal/runtime/agent/runner_runstate.go` | Closure→struct extraction, not wired in yet (dead code per phase2-plan) | Separate commit or remove from working tree |
 | `internal/runtime/agent/runner_plan_then_execute_guard.go` | Evidence-ledger source-satisfied hardening, separate concern | Separate commit |
 | `internal/runtime/agent/lane_policy_test.go` | Conversation lane policy for read-only lanes — behavior fix, not efficiency | Separate commit |

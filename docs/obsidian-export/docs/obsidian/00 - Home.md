@@ -1,12 +1,12 @@
 ---
 tags:
-  - harness
+  - idiom
   - overview
 ---
 
-# Agent Harness Documentation Base
+# Idiom Documentation Base
 
-Agent Harness is a local, evidence-first coding-agent harness. Its core thesis is that
+Idiom is a local, evidence-first coding-agent harness. Its core thesis is that
 teams will use coding agents more when the agent work is grounded in repository
 memory, explicit contracts, deterministic gates, audit trails, and repeatable
 verification.
@@ -16,16 +16,17 @@ The important split is simple:
 - The model owns strategy.
 - The harness owns contracts.
 
-That split drives every major target subsystem. The model can choose how to
+That split drives every major system in the repo. The model can choose how to
 approach a task, but the harness constrains what counts as valid work: scoped
 paths, permissions, typed artifacts, source evidence, verification, readiness,
 loop limits, and auditability.
 
-## Guidance Scope
+## Roadmap Marker
 
-Across these notes, `*` marks target guidance. When
+Across these notes, `*` marks roadmapped or not-yet-implemented behavior. When
 an element in a table, diagram, command list, or prose sentence carries `*`,
-treat it as greenfield guidance to adapt during implementation.
+treat it as target direction rather than shipped capability unless source,
+tests, or operator commands prove otherwise.
 
 ## What To Read First
 
@@ -60,7 +61,7 @@ treat it as greenfield guidance to adapt during implementation.
 - [[18 - Prompt Stack and Profiles]]
 
 Read [[02 - Deterministic Evidence-Based Development]] first if you need to
-understand how Agent Harness is meant to be worked on. It describes the most
+understand how Idiom is meant to be worked on. It describes the repo's most
 important engineering pattern: localize with evidence, change only after tests
 or probes define behavior, verify after mutation, and feed outcomes back into
 audit and eval loops.
@@ -71,7 +72,7 @@ Read [[14 - Maintenance Playbooks]] before changing prompts, runner behavior,
 lane contracts, workspace tools, context memory, audit logic, or eval fixtures.
 
 Read [[16 - Operational Commands and Evidence Products]] if you need to explain
-the operator-facing command surfaces. Read [[17 - Security Privacy and Data Boundaries]]
+the repo's operator-facing command surfaces. Read [[17 - Security Privacy and Data Boundaries]]
 before discussing enterprise or regulated use.
 
 ## Full Note Index
@@ -87,7 +88,7 @@ before discussing enterprise or regulated use.
 - [[09 - Verification Readiness and Completion]]
 - [[10 - Telemetry Audit Eval and Learning]]
 - [[11 - Local Model Operations]]
-- [[12 - Sidecar and LLM Agent Integrations]]
+- [[12 - Sidecar and External Integrations]]
 - [[13 - Package Guide]]
 - [[14 - Maintenance Playbooks]]
 - [[15 - Glossary]]
@@ -102,9 +103,9 @@ before discussing enterprise or regulated use.
 
 ## Major System Onboarding
 
-Use [[23 - Major Systems Architectural Onboarding]] when entering a subsystem
-for the first time or assigning work to another agent. It maps each major target
-system to:
+Use [[23 - Major Systems Architectural Onboarding]] when you are entering a
+subsystem for the first time or handing work to another agent. It maps each
+major system to:
 
 - what the system owns and must not own
 - the packages and docs to inspect first
@@ -114,13 +115,14 @@ system to:
 
 ## Product Workflow and Recovery
 
-These notes are the product workflow and recovery entry points. They describe
-the target CLI, TUI, sidecar, evidence, and behavioral coverage surfaces as
-greenfield design guidance.
+These notes replace the older proposal/roadmap split. All seven architectural
+pillars have substantial implementation. The product workflow has deterministic
+headless CLI surfaces and durable fixtures, while full behavioral coverage*,
+write-capable TUI continuation*, and some sidecar exposure* remain open work.
 
 - [[20 - Product Workflow and Behavioral Coverage]] — upstream artifact
-  pipeline from research evidence to dispatch-ready briefs, specified commands,
-  behavioral coverage target*, and design questions*
+  pipeline from research evidence to dispatch-ready briefs, current shipped
+  commands, behavioral coverage target*, and remaining work*
 - [[21 - Recovery and Decomposition]] — recovery layer for converting failed
   plan-execute runs into classified evidence, decomposition packets, and gated
   follow-up atoms
@@ -130,8 +132,13 @@ greenfield design guidance.
 
 ## Core Sources
 
-- [docs/harness-strategic-thesis.md](../harness-strategic-thesis.md) defines the
+- [README.md](../../README.md) describes the user-facing CLI, TUI, local ops,
+  lane, atom, queue, MCP, and release-evidence surfaces.
+- [docs/idiom-strategic-thesis.md](../idiom-strategic-thesis.md) defines the
   product thesis and seven pillars.
+- [docs/idiom-implementation-plan.md](../idiom-implementation-plan.md) is the
+  canonical repository implementation plan that this vault blueprint summarizes
+  into rebuild order.
 - [docs/decisioning-north-star.md](../decisioning-north-star.md) defines the
   model-strategy versus harness-contract split.
 - [docs/lane-architecture.md](../lane-architecture.md) explains lane execution.

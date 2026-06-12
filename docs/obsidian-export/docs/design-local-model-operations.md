@@ -1,16 +1,19 @@
 # Local Model Operations Design
 
-Status: design guidance
+Status: design proposal, drafted 2026-05-12
 
-This is one pillar in the coordinated design map:
-[harness-design-map.md](harness-design-map.md). It supplies the runtime
+This is one pillar in the coordinated roadmap:
+[idiom-design-roadmap.md](idiom-design-roadmap.md). It supplies the runtime
 capacity, readiness, role routing, queue, and context-budget constraints that
 all other pillars rely on when local or smaller models are in the loop.
 
-This document defines Agent Harness's local-model operations pillar. It complements
-[harness-strategic-thesis.md](harness-strategic-thesis.md), especially Phase 5:
-make local-model operation a product strength. Adapt the details to the model
-backends, hardware limits, and operator workflow of the target ecosystem.
+This document defines Idiom's local-model operations pillar. It complements
+[idiom-strategic-thesis.md](idiom-strategic-thesis.md), especially Phase 5:
+make local-model operation a product strength. It also depends on the
+planner-quality context design in
+[local-model-planning-quality-design.md](local-model-planning-quality-design.md)
+and the Qwen-specific backlog in
+[archive/2026-05-historical/qwen-harness-optimizations.md](archive/2026-05-historical/qwen-harness-optimizations.md).
 
 The thesis-level rule remains unchanged:
 
@@ -19,11 +22,11 @@ The thesis-level rule remains unchanged:
 
 Local-model operations is the pillar that makes that rule practical on machines
 where inference is memory-bound, context is expensive, helper models can fail,
-and small/local models need more structure than highly capable hosted models.
+and small/local models need more structure than frontier cloud models.
 
 ## Executive Summary
 
-Agent Harness should treat local inference as an operational system, not just a model
+Idiom should treat local inference as an operational system, not just a model
 URL. The harness must know which backend process is expected to serve each role,
 how much memory and context that role can consume, when a route-classifier or
 executor is degraded, whether the queue daemon is protecting scarce GPU/Metal
@@ -31,14 +34,14 @@ resources, and which readiness checks prove that a lane can run now.
 
 The desired product promise:
 
-> A developer can run bounded coding-agent work on local model models with
+> A developer can run bounded coding-agent work on local Qwen-class models with
 > predictable setup, explicit role routing, bounded concurrency, visible
 > context budgets, actionable health checks, and logs that explain failures
 > without hand-reconstructing every run.
 
 Near-term design choices:
 
-- Keep the active `llama.cpp`, MLX-LM, and Ollama-compatible posture, but
+- Keep the current `llama.cpp`, MLX-LM, and Ollama-compatible posture, but
   normalize them behind a role-aware backend contract.
 - Make queue admission a first-class readiness signal, not an optional footnote.
 - Separate model roles: planner, executor/coder, route classifier, summarizer,
@@ -46,23 +49,22 @@ Near-term design choices:
 - Budget prompt context, output tokens, thinking traces, tool output, and KV
   cache as one capacity model.
 - Prefer compact evidence packets and zoom handles over raw file flooding.
-- Use telemetry, `harness_audit`, and `harness doctor` to expose health, not to
+- Use telemetry, `harness_audit`, and `idiom doctor` to expose health, not to
   prescribe the model's next strategic action.
 
 ## Target User And System
 
 Primary user:
 
-- A developer running Agent Harness locally against one or more real repositories.
-- The developer may also use LLM agents, custom scripts, or another
-  agent loop, with Agent Harness acting as a local context/audit/verification
-  sidecar.
+- A developer running Idiom locally against one or more real repositories.
+- The developer may also use Codex, Claude Code, OpenCode, Aider, or another
+  agent, with Idiom acting as a local context/audit/verification sidecar.
 - The developer values privacy, inspectability, offline or low-cloud operation,
-  and reproducibility more than maximal hosted-model reasoning.
+  and reproducibility more than maximal frontier-model reasoning.
 
 Primary machine shape:
 
-- Apple Silicon with MLX-LM for the main local model stack.
+- Apple Silicon with MLX-LM for the main local Qwen stack.
 - Linux or macOS with `llama.cpp` / `llama-server` and GGUF models.
 - Ollama-compatible environments used either directly or as a familiar local
   model manager.
@@ -72,30 +74,30 @@ Primary task shape:
 
 - Bounded software-engineering work: plan, implement, verify, audit, explain,
   and debug failures.
-- Multi-file tasks should be decomposed into reasonable atoms. Current
-  local model workflow notes identify small, single-purpose atoms as the dominant
+- Multi-file tasks should already be decomposed into reasonable atoms. Current
+  Qwen workflow notes identify small, single-purpose atoms as the dominant
   predictor of success; large briefs with many files or hundreds of lines are
   operationally different work, not just "more of the same."
 
 System success is not "a local model always behaves like Opus." Success is that
-Agent Harness makes local models safe and useful by owning setup, contracts, memory,
+Idiom makes local models safe and useful by owning setup, contracts, memory,
 queues, routing, telemetry, and readiness.
 
-## Target Harness Baseline
+## Current Idiom Baseline
 
-Verified from the target ecosystem docs and code:
+Verified from the current repo docs and code:
 
 - `README.md` documents three inference backend blocks:
   `llama_server`, `implementer`, and `route_classifier`.
 - `internal/platform/config.Config` models those as `LlamaServer`, optional
   `Implementer`, and `RouteClassifier`.
-- `.harness/backends.json` declares role-aware backend profiles. The active
-  self-hosted profile uses a local model 35B/27B planner-classifier plus
-  `coder-model` executor, with a proxy on port `47680`.
-- `internal/runtime/backends` owns `.harness/backends.json`, role alias resolution,
+- `.idiom/backends.json` declares role-aware backend profiles. The current
+  self-hosted `qwen-pair` profile uses a Qwen 35B planner-classifier plus a
+  Qwen3.6-27B executor, with a proxy on port `47680`.
+- `internal/runtime/backends` owns `.idiom/backends.json`, role alias resolution,
   backend launch/stop/status, and an alias-routing proxy.
-- `cmd/harness/backend.go` exposes `harness backend start|stop|status|list|proxy`.
-- `cmd/harness/queue.go` and `internal/runtime/runner` expose a per-user Unix-socket
+- `cmd/idiom/backend.go` exposes `idiom backend start|stop|status|list|proxy`.
+- `cmd/idiom/queue.go` and `internal/runtime/runner` expose a per-user Unix-socket
   queue daemon with named pools, leases, waiting positions, status, ping,
   cancel, and idle flags.
 - `runner.MaybeAcquire` is opportunistic: if the daemon is absent, lane entry
@@ -106,14 +108,14 @@ Verified from the target ecosystem docs and code:
   classifier is disabled, unhealthy, times out, or returns invalid JSON.
 - `internal/surfaces/tui/app/history.go` also uses the route-classifier client for history
   summarization and can lazily launch the configured helper server.
-- `cmd/harness/doctor.go` checks for backend binaries, model caches,
+- `cmd/idiom/doctor.go` currently checks for backend binaries, model caches,
   project config, writable workspace, `python3`, and `git`.
 - `internal/evidence/telemetry` writes local JSONL process telemetry under
-  `logs/telemetry` by default and supports `HARNESS_TELEMETRY=0`.
+  `logs/telemetry` by default and supports `IDIOM_TELEMETRY=0`.
 - Conversation debug logs and `harness_audit` provide the richer behavior trail.
 
-That baseline is close to the target shape. The gap is making it
-coherent enough that users and LLM agents can reason about local readiness
+That baseline is already close to the target shape. The gap is making it
+coherent enough that users and external agents can reason about local readiness
 before they burn a 20-minute local run.
 
 ## External Basis
@@ -126,7 +128,7 @@ operational truth: context, concurrency, and KV cache are scarce resources.
   quantization from roughly 1.5 to 8 bits. See
   <https://github.com/ggml-org/llama.cpp>.
 - `llama-server` exposes server controls such as context size, chat templates,
-  reasoning/thinking handling, and API-compatible function calling. See
+  reasoning/thinking handling, and OpenAI-compatible function calling. See
   <https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md>.
 - `llama-quantize` documents that quantization shrinks model size and can speed
   inference, but may reduce accuracy; it recommends importance-matrix-based
@@ -137,9 +139,9 @@ operational truth: context, concurrency, and KV cache are scarce resources.
   `--max-kv-size` values use less memory with worse quality; larger values use
   more memory with better quality. See
   <https://github.com/ml-explore/mlx-lm#long-prompts-and-generations>.
-- `mlx_lm.server` intentionally offers an OpenAI-compatible HTTP API, but its docs
+- `mlx_lm.server` intentionally offers an OpenAI-like HTTP API, but its docs
   say it is not recommended for production because it only implements basic
-  security checks. Agent Harness must therefore provide the operational wrapper, not
+  security checks. Idiom must therefore provide the operational wrapper, not
   treat the server as a complete production boundary. See
   <https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/SERVER.md>.
 - Ollama documents that larger context lengths increase memory requirements,
@@ -150,13 +152,13 @@ operational truth: context, concurrency, and KV cache are scarce resources.
   `OLLAMA_MAX_QUEUE` controls overload rejection. It also documents Flash
   Attention and KV-cache quantization tradeoffs. See
   <https://docs.ollama.com/faq>.
-- local model-A3B's model card shows 262,144-token serving examples and
+- Qwen3.6-35B-A3B's model card shows 262,144-token serving examples and
   separate tool-call parser guidance for SGLang/vLLM. See
-  <https://huggingface.co/local model/local model-A3B>.
-- local model3-Coder-30B-A3B-Instruct is a 30.5B total / 3.3B active MoE coding model
-  with native 262,144-token context and a model-card warning to reduce context
-  to 32,768 when OOM occurs. See
-  <https://huggingface.co/local model/local model3-Coder-30B-A3B-Instruct>.
+  <https://huggingface.co/Qwen/Qwen3.6-35B-A3B>.
+- Qwen3.6-27B is a 27B language model with native 262,144-token context,
+  built-in MTP weights, and model-card guidance to keep at least 128k context
+  for complex tasks when memory allows. See
+  <https://huggingface.co/Qwen/Qwen3.6-27B>.
 - "Lost in the Middle" shows that long-context models do not robustly use all
   positions in large prompts; relevant information in the middle can be used
   worse than information at the beginning or end. See
@@ -166,35 +168,43 @@ operational truth: context, concurrency, and KV cache are scarce resources.
   test execution. See
   <https://proceedings.neurips.cc/paper_files/paper/2024/hash/5a7c947568c1b1328ccc5230172e1e7c-Abstract-Conference.html>.
 
-LLM-agent tools also converge on host-owned operational contracts:
+Frontier coding tools also converge on host-owned operational contracts:
 
-- Sandbox mode and approval policy are separate layers: one defines technical
-  access boundaries, the other defines when the agent must ask before acting.
-- Runtime configuration should expose model context windows, auto-compaction
-  thresholds, tool-output token limits, background terminal timeouts, thread
-  limits, sandbox settings, approval policies, and local provider support.
-- Operator commands such as `/compact`, `/status`, `/permissions`, `/plan`,
-  `/review`, and `/ps` are useful reference shapes for making budgets,
-  permissions, and background work visible.
-- Permission systems should support deny/ask/allow rules, deny-first
-  precedence, hooks, working-directory access, and OS-level sandboxing for
-  shell commands.
-- Cost guidance should treat context size, compaction, subagent isolation,
-  model choice, hooks, skills, and thinking-token budgets as operational cost
-  controls.
-- Context-window controls should treat startup instructions, file reads, hooks,
-  subagent summaries, and compaction as context lifecycle events.
-- Agent profiles should expose per-agent permissions for read, edit, grep,
-  shell, task delegation, external directories, LSP, skills, web, and
-  stuck-loop recovery.
+- Codex documents sandbox mode and approval policy as separate layers:
+  technical access boundaries plus approval decisions. Codex CLI defaults
+  include workspace-limited writes and no network access, with approvals for
+  leaving the sandbox or using networked commands. See
+  <https://developers.openai.com/codex/agent-approvals-security#sandbox-and-approvals>.
+- Codex `config.toml` exposes `model_context_window`,
+  `model_auto_compact_token_limit`, `tool_output_token_limit`,
+  `background_terminal_max_timeout`, agent thread limits, sandbox settings,
+  approval policies, and local provider support. See
+  <https://developers.openai.com/codex/config-reference#configtoml>.
+- Codex slash commands include `/compact`, `/status`, `/permissions`,
+  `/plan`, `/review`, and `/ps`, which is a useful reference shape for making
+  budgets, permissions, and background work visible. See
+  <https://developers.openai.com/codex/cli/slash-commands#built-in-slash-commands>.
+- Claude Code documents deny/ask/allow permission rules, deny-first
+  precedence, hooks, working-directory access, and sandboxing as a complementary
+  OS-level layer for Bash commands. See
+  <https://code.claude.com/docs/en/permissions>.
+- Claude Code cost guidance explicitly treats context size, compaction,
+  subagent isolation, model choice, hooks, skills, and thinking-token budgets
+  as operational cost controls. See <https://code.claude.com/docs/en/costs>.
+- Claude Code's context-window docs show startup instructions, file reads,
+  hooks, subagent summaries, and compaction as context lifecycle events. See
+  <https://code.claude.com/docs/en/context-window>.
+- OpenCode agents expose per-agent permissions with `ask`, `allow`, and `deny`
+  for read, edit, grep, bash, task, external-directory, LSP, skills, web, and
+  stuck-loop recovery. See <https://opencode.ai/docs/agents/>.
 
-The design implication for Agent Harness: local operations needs a typed contract that
+The design implication for Idiom: local operations needs a typed contract that
 combines backend capacity, model role, queue admission, context budget,
 permissions, and evidence readiness. Prompt reminders cannot replace that.
 
 ## Local And Smaller Model Constraints
 
-Local models fail differently from highly capable hosted agents. The harness should
+Local models fail differently from frontier cloud agents. The harness should
 assume these constraints and design for them directly.
 
 ### Model Behavior Constraints
@@ -203,7 +213,7 @@ assume these constraints and design for them directly.
   tool calls even if the nominal context window is large.
 - Higher prompt-bloat sensitivity. A 256k window does not mean all 256k tokens
   are equally usable, and long prompts increase prefill cost.
-- Weaker self-critique. local model workflow notes record that local self-review misses
+- Weaker self-critique. Qwen workflow notes record that local self-review misses
   issues a second agent or deterministic audit catches.
 - Tool-call fragility. Local models are more likely to emit malformed JSON,
   extra prose, wrong field names, or tool calls after readiness.
@@ -269,23 +279,23 @@ assume these constraints and design for them directly.
 
 ## Backend Architecture
 
-### Target Components
+### Current Components
 
 ```text
-.harness/backends.json
+.idiom/backends.json
   -> internal/runtime/backends.File/Profile/Model/Proxy
-  -> harness backend start|stop|status|proxy
+  -> idiom backend start|stop|status|proxy
   -> role-specific base URLs
   -> app lifecycle / lane entry points
   -> agent runner
 
-config.json / .harness/config.json
+config.json / .idiom/config.json
   -> llama_server
   -> implementer
   -> route_classifier
   -> chat and workspace budgets
 
-harness queue serve
+idiom queue serve
   -> named pool caps
   -> MaybeAcquire from implement / plan-execute / queue run
 ```
@@ -293,9 +303,9 @@ harness queue serve
 The design should preserve this split:
 
 - `config.json` describes baseline harness behavior and fallback servers.
-- `.harness/backends.json` describes local model stacks and role routing.
-- `harness backend` manages backend processes.
-- `harness queue` manages scarce local execution slots.
+- `.idiom/backends.json` describes local model stacks and role routing.
+- `idiom backend` manages backend processes.
+- `idiom queue` manages scarce local execution slots.
 - `internal/surfaces/tui/app` resolves role-specific clients for the active run.
 - `internal/runtime/agent` enforces runtime contracts and emits budget/stop telemetry.
 
@@ -306,20 +316,32 @@ roles. Each model entry should remain small and inspectable:
 
 ```json
 {
-  "alias": "coder-model",
+  "alias": "qwen3.6-27b",
   "kind": "mlx",
-  "binary": "/home/user/.venv/mlx-lm/bin/mlx_lm.server",
-  "model_path": "/home/user/models/coder-model",
+  "binary": "/path/to/vmlx-idiom-launch.sh",
+  "model_path": "/path/to/models/qwen3.6-27b-mlx",
   "host": "127.0.0.1",
-  "port": 47781,
+  "port": 47783,
   "cache_size": 4,
   "cache_bytes": 12884901888,
   "max_tokens": 8192,
+  "extra_args": [
+    "--temp", "0.6",
+    "--top-p", "0.95",
+    "--top-k", "20",
+    "--chat-template-args", "{\"enable_thinking\":true,\"preserve_thinking\":true}",
+    "--prefill-step-size", "1024",
+    "--max-prompt-tokens", "131072",
+    "--use-paged-cache",
+    "--enable-disk-cache",
+    "--enable-pld",
+    "--enable-jit"
+  ],
   "roles": ["executor"],
-  "queue_pool": "local-model-coder",
+  "queue_pool": "qwen-coder",
   "context_tokens": 262144,
-  "recommended_context_tokens": 65536,
-  "quantization": "mlx-4bit-dwq",
+  "recommended_context_tokens": 131072,
+  "quantization": "mlx-6bit",
   "health": {
     "startup_timeout_seconds": 120,
     "request_timeout_seconds": 900
@@ -327,7 +349,7 @@ roles. Each model entry should remain small and inspectable:
 }
 ```
 
-New fields are intentionally descriptive. The greenfield guidance can keep
+New fields are intentionally descriptive. The current implementation can keep
 using the existing fields first, but doctor/readiness should eventually report:
 
 - alias
@@ -339,10 +361,26 @@ using the existing fields first, but doctor/readiness should eventually report:
 - configured working context
 - output token cap
 - prompt/KV cache budget
+- acceleration settings: paged/prefix cache, PLD speculative acceleration,
+  JIT, and whether explicit KV quantization is absent so vMLX can use its
+  TurboQuant auto mode where compatible
 - quantization family
 - queue pool
 - readiness probe outcome
 - last known error or degraded mode
+
+`qwen-pair` currently runs both local models through the vMLX wrapper. The
+wrapper translates the common `mlx_lm.server` flags from `.idiom/backends.json`
+to vMLX flags and appends Qwen reasoning/tool parser auto-detection. The profile
+enables paged cache, disk cache, PLD speculative acceleration, JIT, 128k prompt
+admission, and a smaller 1024-token prefill step to reduce Metal peak-memory
+spikes on long prompts. It intentionally does not pass an explicit
+`--kv-cache-quantization` value: vMLX's documented default is TurboQuant KV for
+compatible models plus q4 stored-prefix fallback, while an explicit value opts
+out of that calibrated auto path. MTP is present in the Qwen3.6 artifacts, but
+the current MLX/vMLX server surface does not expose a Qwen3.6 MTP decoding flag;
+enabling it would require a serving backend with Qwen's MTP speculative
+configuration rather than a harmless config-file toggle.
 
 ### Backend Kind Adapter
 
@@ -351,30 +389,30 @@ callers while preserving them for operators.
 
 | Backend kind | Operational strengths | Harness responsibilities |
 | --- | --- | --- |
-| `mlx` | Apple Silicon throughput, MLX quantized models, prompt cache, request-level chat-template args in target harness usage. | Guard memory, expose cache budgets, report MLX server's non-production security note, validate model directory, detect unsupported flags. |
+| `mlx` | Apple Silicon throughput, MLX quantized models, prompt cache, request-level chat-template args in current Idiom usage. | Guard memory, expose cache budgets, report MLX server's non-production security note, validate model directory, detect unsupported flags. |
 | `llama` | GGUF portability, explicit context size, broad hardware backends, KV cache quantization, reasoning/chat-template flags. | Normalize `--ctx-size`, KV cache type, reasoning parser, Jinja/tool-call support, PID/log lifecycle. |
 | `ollama` | Familiar local model management, model preload/keepalive, app settings, server env knobs. | Treat context/concurrency/env settings as readiness inputs, detect overload/503, avoid hidden parallel-context multiplication. |
-| `api_compatible` | Any local or LAN endpoint implementing `/v1/chat/completions`. | Mark as externally managed; doctor can probe but should not start/stop. Require explicit permissions for non-loopback. |
+| `openai_compatible` | Any local or LAN endpoint implementing `/v1/chat/completions`. | Mark as externally managed; doctor can probe but should not start/stop. Require explicit permissions for non-loopback. |
 
 Do not leak these choices into model-facing prompts. The model needs role and
 capability facts; the operator needs backend knobs.
 
 ### Process Lifecycle
 
-`harness backend start` should remain conservative:
+`idiom backend start` should remain conservative:
 
 - Validate profile and role aliases before spawning.
 - Refuse empty binary, empty model path for local model kinds, invalid port, or
   duplicate port in one profile.
 - Start every declared model and report every failure, not first failure only.
-- Write per-alias PID files under `.harness/run`.
-- Treat "port in use" as a warning with enough data to identify the
+- Write per-alias PID files under `.idiom/run`.
+- Treat "port already in use" as a warning with enough data to identify the
   process, not as silent success.
 - Probe both TCP readiness and a minimal model endpoint when the backend speaks
-  an API-compatible API.
+  an OpenAI-compatible API.
 - Stamp backend start/status events into telemetry.
 
-`harness backend stop` should preserve the existing PID-file-first behavior:
+`idiom backend stop` should preserve the existing PID-file-first behavior:
 
 - Prefer the recorded PID over `lsof` so a reused port does not kill an
   unrelated process.
@@ -382,7 +420,7 @@ capability facts; the operator needs backend knobs.
 - Remove stale PID files.
 - Report per-model outcomes.
 
-`harness backend proxy` should stay a role/alias router, not become a scheduler.
+`idiom backend proxy` should stay a role/alias router, not become a scheduler.
 Scheduling belongs to the queue daemon.
 
 ## Model Roles
@@ -407,7 +445,7 @@ Role defaults should be resolved in this order:
 4. Executor-only legacy `coder` alias heuristic.
 5. Fallback to `config.json` server block.
 
-This matches the active `Profile.AliasForRole` direction while making the
+This matches the current `Profile.AliasForRole` direction while making the
 operator-facing contract clearer.
 
 ## Queue And OOM Controls
@@ -422,19 +460,19 @@ multiply context memory, and queue length must be bounded
 
 ### Queue Contract
 
-`harness queue serve` should be the standard admission-control surface for local
+`idiom queue serve` should be the standard admission-control surface for local
 model work:
 
 - One daemon per user/machine.
 - One Unix socket with `0600` permissions.
 - Named pools for scarce resources, usually one per backend memory pool:
-  `local-model-35b`, `local-model-27b`, `local-model-coder`, or `default`.
+  `qwen-35b`, `qwen-27b`, `qwen-coder`, or `default`.
 - Each pool has `max_in_flight`, waiting queue, in-flight list, and idle
   threshold.
 - A lease is held by an open connection. Disconnect releases it.
 - Waiting jobs can be canceled. In-flight jobs are not killed by the daemon;
   the holder process owns cancellation.
-- Nested acquires are skipped when an ancestor holds any pool, avoiding
+- Nested acquires are skipped when an ancestor already holds any pool, avoiding
   same-pool self-deadlock and cross-pool dining-philosopher deadlocks.
 
 ### Required Enhancements
@@ -445,13 +483,13 @@ Make queue health visible at lane start:
 {
   "queue": {
     "required": false,
-    "socket": "~/.harness/runner.sock",
+    "socket": "~/.idiom/runner.sock",
     "reachable": true,
-    "pool": "local-model-coder",
+    "pool": "qwen-coder",
     "max_in_flight": 1,
     "position": 0,
-    "lease_job_id": "j-17786EXAMPLE-1",
-    "held_pools": ["local-model-coder"]
+    "lease_job_id": "j-1778620000000-1",
+    "held_pools": ["qwen-coder"]
   }
 }
 ```
@@ -483,7 +521,7 @@ CI, eval, and multi-agent scripts should use required gating.
 - Executor and planner pools should be separate only when they do not contend
   for the same physical memory pressure.
 - If a nested command needs a different pool, wrap the outermost command in the
-  pool used by the inner inference path or skip nested acquisition as active
+  pool used by the inner inference path or skip nested acquisition as current
   code does.
 - Queue status should flag in-flight jobs older than the idle threshold because
   local-model wedges are often "still running" from the process table's point
@@ -494,7 +532,7 @@ CI, eval, and multi-agent scripts should use required gating.
 The route classifier is useful, but it must never become the hidden source of
 truth for permissions or strategy.
 
-Target behavior:
+Current behavior is aligned:
 
 - Deterministic routing runs first.
 - Decisive deterministic routes skip the classifier.
@@ -509,7 +547,7 @@ Required health model:
   "route_classifier": {
     "enabled": true,
     "always_on": true,
-    "role_alias": "planner-model",
+    "role_alias": "qwen3.6-35b",
     "base_url": "http://127.0.0.1:47780",
     "timeout_seconds": 20,
     "last_probe": "pass",
@@ -543,14 +581,14 @@ Classifier telemetry events:
 
 Health policy:
 
-- One failure: degrade for the active turn and log.
+- One failure: degrade for the current turn and log.
 - Repeated failures in a session: suppress further classifier calls for that
   session and log `route_classifier_disabled_for_session`.
 - Doctor failure: warn, not fail, unless a lane declares classifier-required.
 
 ## Prompt And Context Budget Strategy
 
-Large local windows are useful, but they are not the product. Agent Harness's product is
+Large local windows are useful, but they are not the product. Idiom's product is
 budgeted evidence.
 
 ### Budget Surfaces
@@ -575,7 +613,7 @@ Expose the ledger in telemetry and optionally in `/context` or lane status:
 ```json
 {
   "context_budget": {
-    "model_alias": "planner-model",
+    "model_alias": "qwen3.6-35b",
     "model_context_tokens": 262144,
     "configured_context_tokens": 65536,
     "estimated_input_tokens": 42000,
@@ -599,7 +637,7 @@ Expose the ledger in telemetry and optionally in `/context` or lane status:
   (<https://docs.ollama.com/context-length>) while avoiding casual 256k dumps.
 - Use `planning_v2` packet tiers: `brief`, `standard`, `deep`, `max-local`.
 - Reserve output first. A plan that cannot emit `submit_plan` or an executor
-  that cannot emit the final patch has failed.
+  that cannot emit the final patch has already failed.
 - For thinking models, make thinking preservation role-specific:
   - Planner: enable/preserve thinking when the task is complex and budget
     permits.
@@ -619,7 +657,7 @@ Expose the ledger in telemetry and optionally in `/context` or lane status:
 
 Compaction should be typed, not a prose-only summary:
 
-- Keep active task, required paths, protected paths, verification obligations,
+- Keep current task, required paths, protected paths, verification obligations,
   changed files, open blockers, and final-answer contract.
 - Keep source evidence as handles plus exact excerpts only where needed.
 - Drop duplicate broad reads and stale search output.
@@ -627,10 +665,10 @@ Compaction should be typed, not a prose-only summary:
   fingerprint.
 - Mark claims as `verified`, `inferred`, `stale`, or `unknown`.
 
-LLM agents expose compaction and status controls as user-visible
-operational surfaces.
-
-Agent Harness should do the same for local context pressure.
+Claude Code and Codex both expose compaction/status controls as user-visible
+operational surfaces (<https://code.claude.com/docs/en/context-window>,
+<https://developers.openai.com/codex/cli/slash-commands#built-in-slash-commands>).
+Idiom should do the same for local context pressure.
 
 ## Telemetry And Audit
 
@@ -703,7 +741,7 @@ for behavior debugging. Local operations should add enough typed records that
 Add a local-model operations purpose:
 
 ```bash
-harness tool harness_audit --input '{"purpose":"local_model_operations"}'
+idiom tool harness_audit --input '{"purpose":"local_model_operations"}'
 ```
 
 It should summarize:
@@ -725,10 +763,10 @@ The audit should produce findings and evidence, not strategy prescriptions.
 
 ## Doctor And Readiness Checks
 
-`harness doctor` should grow from generic host checks into a lane-readiness
+`idiom doctor` should grow from generic host checks into a lane-readiness
 profile.
 
-### Required Checks
+### Current Checks To Keep
 
 - Supported backend runner on `PATH`.
 - Local model files in known caches.
@@ -741,7 +779,7 @@ profile.
 
 Backend profile:
 
-- `.harness/backends.json` exists, parses, and has a selected/default profile.
+- `.idiom/backends.json` exists, parses, and has a selected/default profile.
 - Every model has alias, kind, binary, model path/model id, port, and roles.
 - No duplicate aliases or duplicate ports within a profile.
 - Every declared local model path is readable.
@@ -793,7 +831,7 @@ Language/workspace readiness:
 
 ### Readiness Profiles
 
-`harness doctor --profile local-model-ops` should emit:
+`idiom doctor --profile local-model-ops` should emit:
 
 ```json
 {
@@ -801,14 +839,14 @@ Language/workspace readiness:
   "lanes": {
     "plan-execute": {
       "status": "pass",
-      "planner": "planner-model",
-      "executor": "coder-model",
+      "planner": "qwen3.6-35b",
+      "executor": "qwen3.6-27b",
       "queue": "gated",
       "classifier": "degraded"
     },
     "implement": {
       "status": "pass",
-      "executor": "coder-model",
+      "executor": "qwen3.6-27b",
       "queue": "gated"
     },
     "audit": {
@@ -818,7 +856,7 @@ Language/workspace readiness:
   },
   "checks": [
     {
-      "name": "queue pool local-model-coder",
+      "name": "queue pool qwen-coder",
       "status": "pass",
       "detail": "reachable, max_in_flight=1"
     },
@@ -826,13 +864,13 @@ Language/workspace readiness:
       "name": "route classifier JSON probe",
       "status": "warn",
       "detail": "timeout after 20s",
-      "remedy": "run `harness backend status --profile local-model-pair` and inspect logs/route-classifier.log"
+      "remedy": "run `idiom backend status --profile qwen-pair` and inspect logs/route-classifier.log"
     }
   ]
 }
 ```
 
-Readiness gates are explicit policy decisions over the underlying
+P6.3 readiness gates are explicit policy decisions over the underlying
 readiness facts. The profile report distinguishes `pass`, `degraded`, and
 `blocked` with machine-readable reasons and remedies:
 
@@ -850,8 +888,8 @@ readiness facts. The profile report distinguishes `pass`, `degraded`, and
       "enforcement": "report_only",
       "required_for_launch": true,
       "evidence": "backend role config",
-      "reason": ".harness/backends.json not found",
-      "remedy": "create .harness/backends.json to make role readiness machine-readable"
+      "reason": ".idiom/backends.json not found",
+      "remedy": "create .idiom/backends.json to make role readiness machine-readable"
     },
     {
       "name": "queue_admission_known",
@@ -861,7 +899,7 @@ readiness facts. The profile report distinguishes `pass`, `degraded`, and
       "required_for_launch": false,
       "evidence": "queue admission",
       "reason": "queue daemon not reachable",
-      "remedy": "start the daemon with `harness queue serve` for live queue capacity evidence"
+      "remedy": "start the daemon with `idiom queue serve` for live queue capacity evidence"
     }
   ],
   "hard_failures": [
@@ -887,7 +925,7 @@ Policy is profile-shaped, not client-shaped:
   `sidecar`, and soft for `discovery`.
 - `queue_admission_known` is hard for `eval` because repeatable evaluation
   should not silently saturate local inference, and soft for `discovery`,
-  `plan`, `implement`, and `sidecar` while active lane-start queue plumbing is
+  `plan`, `implement`, and `sidecar` while current lane-start queue plumbing is
   opportunistic.
 - `context_budget_valid` is hard for `plan`, `implement`, and `eval`, and soft
   for `discovery` and `sidecar`.
@@ -895,12 +933,13 @@ Policy is profile-shaped, not client-shaped:
   deterministic routing fallback remains visible instead of becoming a hidden
   strategy choice.
 
-The target doctor policy should distinguish report-only readiness from blocking
-lane-start enforcement. Claim broad runtime blocking only when lane-start
-enforcement and parity tests prove it. Gate telemetry and exported evidence must
-remain metadata-only: profile name, status, counts, queue/context/backend
+Until P6.4/P6.5 wire equivalent lane-start enforcement and parity tests, the
+doctor policy stays `enforcement:"report_only"`. The harness reports unsafe or
+degraded starts before launch, but P6.3 does not claim broad runtime blocking
+that the lane runner cannot yet prove. Gate telemetry and exported evidence
+must remain metadata-only: profile name, status, counts, queue/context/backend
 states, and remedies, with no raw prompts, file bodies, secrets, or
-deployment-identifying payloads.
+customer-identifying payloads.
 
 Human output should be the same information with exact remedy lines.
 
@@ -969,14 +1008,14 @@ Use real logs:
 - Budget-exhausted runs.
 - Queue deadlock/idle incidents.
 - Backend timeout incidents.
-- Large-atom local model wedges from the local model backlog.
+- Large-atom Qwen wedges from the Qwen backlog.
 
 Replay should compare:
 
 - ungated vs gated
 - no packet vs `context_pack`
 - preserved thinking vs non-thinking role defaults
-- active packet budget vs compacted packet budget
+- current packet budget vs compacted packet budget
 - classifier on vs deterministic fallback
 
 Success is a measurable reduction in:
@@ -995,7 +1034,7 @@ Success is a measurable reduction in:
 ### Phase 0: Document And Align
 
 - Land this design doc.
-- Tag local-model operations as a thesis pillar in feature briefs.
+- Tag local-model operations as a thesis pillar in future work briefs.
 - Keep existing behavior unchanged.
 
 Exit criteria:
@@ -1004,8 +1043,8 @@ Exit criteria:
 
 ### Phase 1: Readiness Profile
 
-- Extend `harness doctor` with `--profile local-model-ops`.
-- Add role resolution checks against `.harness/backends.json`.
+- Extend `idiom doctor` with `--profile local-model-ops`.
+- Add role resolution checks against `.idiom/backends.json`.
 - Add queue reachability/pool checks.
 - Add classifier JSON probe.
 - Add JSON schema for doctor output.
@@ -1087,12 +1126,12 @@ Exit criteria:
 | Context budget estimates are approximate. | Mark estimates as estimates. Use actual token counts from model responses when available and feed them back into audit. |
 | Classifier health causes false confidence. | Classifier never owns final contract. Invalid/missing classifier output always degrades to deterministic routing. |
 | Benchmarks overfit to one machine. | Record machine/backend/profile metadata and compare within the same profile first. Use benchmarks for trend, not universal claims. |
-| MLX-LM server security is overestimated. | Bind local-only, document that MLX-LM is not a production security boundary, and keep workspace permissions in Agent Harness. |
+| MLX-LM server security is overestimated. | Bind local-only, document that MLX-LM is not a production security boundary, and keep workspace permissions in Idiom. |
 | More telemetry risks secret leakage. | Keep process telemetry redacted and summary-only; raw data stays in local debug logs under explicit mode. |
 
 ## Non-Goals
 
-- Do not guarantee that local models match highly capable hosted models on arbitrary
+- Do not guarantee that local models match frontier cloud models on arbitrary
   reasoning.
 - Do not build a hidden planner that chooses the model's implementation
   strategy.
@@ -1108,7 +1147,7 @@ Exit criteria:
 
 The local-model operations pillar is acceptable when:
 
-- `harness doctor --profile local-model-ops --json` reports lane readiness for
+- `idiom doctor --profile local-model-ops --json` reports lane readiness for
   `plan-execute`, `implement`, `audit`, and route classification with exact
   remedies.
 - Backend profiles can declare planner, executor, and classifier roles without
@@ -1130,14 +1169,14 @@ The local-model operations pillar is acceptable when:
 - At least one replay suite shows fewer broad reads, repeated tool calls,
   malformed tool calls, or budget-exhausted endings after adopting the
   readiness/budget changes.
-- The design remains north-star aligned: the model chooses strategy; Agent Harness
+- The design remains north-star aligned: the model chooses strategy; Idiom
   enforces operational contracts and reports evidence.
 
 ## Open Questions
 
 - Should queue gating become required by default for `plan-execute` when
-  `.harness/backends.json` declares more than one large local model?
-- Should `harness backend start` manage Ollama model preload/keepalive, or should
+  `.idiom/backends.json` declares more than one large local model?
+- Should `idiom backend start` manage Ollama model preload/keepalive, or should
   Ollama remain externally managed with doctor-only probes?
 - Should context budget defaults be per role in `backends.json`, per lane in
   `config.json`, or computed from both?

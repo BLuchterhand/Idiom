@@ -16,12 +16,15 @@ func TestParseToolRequestExtractsFirstJSONObjectFromToolFence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "read_file" || req.Path != "README.md" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if raw != `{"tool":"read_file","path":"README.md"}` {
 		t.Fatalf("unexpected raw payload: %q", raw)
 	}
@@ -42,12 +45,15 @@ func TestParseToolRequestAcceptsPlainToolPrefixJSONObject(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseToolRequest: %v", err)
 			}
+
 			if !ok {
 				t.Fatal("expected tool request")
 			}
+
 			if req.Tool == "" {
 				t.Fatalf("missing parsed tool: %#v raw=%q", req, raw)
 			}
+
 			if !strings.HasPrefix(raw, `{"tool":`) {
 				t.Fatalf("expected JSON object payload, got %q", raw)
 			}
@@ -60,12 +66,15 @@ func TestParseToolRequestAcceptsBareJSONWithSafeMissingToolAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected bare JSON read request to be accepted")
 	}
+
 	if req.Tool != "read_file" || req.Path != "internal/example/target.go" || req.StartLine != 1 || req.EndLine != 300 {
 		t.Fatalf("unexpected inferred request: %#v", req)
 	}
+
 	if !strings.Contains(raw, `"path":"internal/example/target.go"`) {
 		t.Fatalf("unexpected raw payload: %q", raw)
 	}
@@ -85,6 +94,7 @@ func TestParseToolRequestRejectsBareJSONSideEffectAliases(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseToolRequest: %v", err)
 			}
+
 			if ok {
 				t.Fatalf("bare JSON side-effect or answer-shaped payload should remain answer content: %s", tc)
 			}
@@ -97,6 +107,7 @@ func TestParseToolRequestIgnoresBareJSONWithoutToolShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if ok {
 		t.Fatal("ordinary bare JSON should remain answer content")
 	}
@@ -114,12 +125,15 @@ func TestParseToolRequestPreservesPostReadinessGapFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.NamedGap != "find the exact stop-condition branch" {
 		t.Fatalf("unexpected named gap: %#v", req)
 	}
+
 	if req.WhyNotAnswering != "I still need the deciding condition" {
 		t.Fatalf("unexpected why_not_answering: %#v", req)
 	}
@@ -133,16 +147,20 @@ func TestParseToolRequestRepairsRawControlCharsInsideStringValues(t *testing.T) 
 		"  \"new_text\":\"func ShortLabel() string {\\n\treturn \\\"Save\\\"\\n}\",\n" +
 		"  \"description\":\"shorten label\"\n" +
 		"}"
+
 	req, _, ok, err := ParseToolRequest("```tool\n" + raw + "\n```")
 	if err != nil {
 		t.Fatalf("ParseToolRequest should repair raw tabs in JSON strings: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "edit_file" || req.Path != "internal/labels/labels.go" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if !strings.Contains(req.OldText, "\treturn \"Save changes\"") || !strings.Contains(req.NewText, "\treturn \"Save\"") {
 		t.Fatalf("expected repaired text fields to preserve tabs, old=%q new=%q", req.OldText, req.NewText)
 	}
@@ -153,9 +171,11 @@ func TestParseToolRequestRepairsMalformedToolNameObjectPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest should repair malformed tool-name object: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected repaired tool request")
 	}
+
 	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Path != "cmd/idiom/audit.go" || req.Symbol != "runAuditWatchMain" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
@@ -166,9 +186,11 @@ func TestParseToolRequestUnwrapsNestedRequestPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Path != "cmd/idiom/main.go" || req.Pattern != "Run" {
 		t.Fatalf("unexpected nested request repair: %#v", req)
 	}
@@ -179,9 +201,11 @@ func TestParseToolRequestUnwrapsNestedRequestObjectPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "search_content" || req.Pattern != "redacted" || req.Path != "internal" {
 		t.Fatalf("unexpected nested object request repair: %#v", req)
 	}
@@ -192,12 +216,15 @@ func TestParseToolRequestNestedCodeNavigateGraphResolutionDoesNotBecomeCapabilit
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "code_navigate" || req.Query != "task tool implementation" || req.Resolution != "symbol" || !req.IncludeEvidence {
 		t.Fatalf("unexpected nested object request repair: %#v", req)
 	}
+
 	if req.Capability != "" {
 		t.Fatalf("graph resolution must not be treated as code_navigate capability: %#v", req)
 	}
@@ -208,9 +235,11 @@ func TestParseToolRequestUnwrapsNestedInputObjectPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Path != "internal/frontier/discovery.go" || req.Symbol != "DiscoveryQuery" {
 		t.Fatalf("unexpected nested input object request repair: %#v", req)
 	}
@@ -221,6 +250,7 @@ func TestCodeNavigateAcceptsFindReferencesAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codeNavigationSpecFor(find_references): %v", err)
 	}
+
 	if spec.Name != "references" || spec.Capability != CapReferences {
 		t.Fatalf("unexpected references alias spec: %#v", spec)
 	}
@@ -230,6 +260,7 @@ func TestCodeNavigateFileOutlineDirectoryReturnsCandidates(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "internal/surfaces/tui/app/lifecycle.go"), "package app\n")
 	writeTestFile(t, filepath.Join(dir, "internal/surfaces/tui/app/rendering.go"), "package app\n")
+
 	mgr := NewManager(config.Workspace{Root: dir, CWD: dir})
 
 	result := mgr.Execute(context.Background(), ToolRequest{
@@ -241,9 +272,11 @@ func TestCodeNavigateFileOutlineDirectoryReturnsCandidates(t *testing.T) {
 	if result.Error != "" {
 		t.Fatalf("directory outline should return candidate evidence, got error: %s", result.Error)
 	}
+
 	if !strings.Contains(result.Output, "routed_tool: directory_candidates") ||
 		!strings.Contains(result.Output, "candidate_file: internal/surfaces/tui/app/lifecycle.go") ||
 		!strings.Contains(result.Output, "candidate_file: internal/surfaces/tui/app/rendering.go") {
+
 		t.Fatalf("directory outline missing candidate files:\n%s", result.Output)
 	}
 }
@@ -252,6 +285,7 @@ func TestCodeNavigateRejectsGraphResolutionWithoutNavigationCapability(t *testin
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.22\n")
 	writeTestFile(t, filepath.Join(dir, "internal/surfaces/tui/app/lifecycle.go"), "package app\nfunc Run() {}\n")
+
 	mgr := NewManager(config.Workspace{Root: dir, CWD: dir})
 
 	result := mgr.Execute(context.Background(), ToolRequest{
@@ -264,6 +298,7 @@ func TestCodeNavigateRejectsGraphResolutionWithoutNavigationCapability(t *testin
 	if result.Error == "" {
 		t.Fatalf("expected graph-resolution-shaped code_navigate request to be rejected, got %#v", result)
 	}
+
 	if !strings.Contains(result.Error, "use context_query") || !strings.Contains(result.Error, "set capability") {
 		t.Fatalf("rejection should explain the contract mismatch, got %q", result.Error)
 	}
@@ -274,9 +309,11 @@ func TestParseToolRequestTreatsSymbolAsPatternAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Pattern != "Runner.Run" {
 		t.Fatalf("pattern = %q, want symbol alias", req.Pattern)
 	}
@@ -287,12 +324,15 @@ func TestParseToolRequestTreatsSearchQueryAsPatternAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "search_content" {
 		t.Fatalf("tool = %q, want search_content", req.Tool)
 	}
+
 	if req.Pattern != "lint audit authority" {
 		t.Fatalf("pattern = %q, want query alias", req.Pattern)
 	}
@@ -303,9 +343,11 @@ func TestParseToolRequestTreatsOperationAsCapabilityAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Pattern != "EvaluateCoverageGate" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
@@ -316,9 +358,11 @@ func TestParseToolRequestTreatsActionAsCodeNavigateCapabilityAlias(t *testing.T)
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Pattern != "CoverageResult" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
@@ -329,9 +373,11 @@ func TestParseToolRequestTreatsResolutionAsCodeNavigateCapabilityAlias(t *testin
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "code_navigate" || req.Capability != "definition" || req.Pattern != "EvaluateCoverageGate" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
@@ -342,12 +388,15 @@ func TestParseToolRequestDoesNotTreatGraphResolutionAsCodeNavigateCapability(t *
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "code_navigate" || req.Resolution != "symbol" || req.Query != "task tool implementation" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if req.Capability != "" {
 		t.Fatalf("graph resolution must not become capability: %#v", req)
 	}
@@ -358,12 +407,15 @@ func TestParseToolRequestAcceptsLineAnchoredToolJSONObjectAfterProse(t *testing.
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected line-anchored tool request")
 	}
+
 	if req.Tool != "read_file" || req.Path != "cmd/idiom/product_workflow.go" || req.StartLine != 1 || req.EndLine != 80 {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if !strings.Contains(raw, `"tool":"read_file"`) {
 		t.Fatalf("expected normalized JSON raw payload, got %q", raw)
 	}
@@ -374,9 +426,11 @@ func TestParseToolRequestAcceptsTaggedToolCodeJSONObjectAfterProse(t *testing.T)
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tagged tool_code request")
 	}
+
 	if req.Tool != "read_file" || req.Path != "internal/workflows/productworkflow/coverage_gate.go" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
@@ -399,12 +453,15 @@ func TestParseToolRequestAcceptsBareToolJSONObject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected bare tool JSON request")
 	}
+
 	if req.Tool != "submit_plan" || req.Rationale == "" || len(req.Edits) != 1 || req.Edits[0].Path != "target.txt" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if !strings.Contains(raw, `"tool":"submit_plan"`) {
 		t.Fatalf("expected normalized raw payload to include tool, got %q", raw)
 	}
@@ -431,15 +488,19 @@ Add the required policy gate.
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "submit_plan" || req.Rationale != "Add the required policy gate." {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if len(req.Edits) != 1 || req.Edits[0].Path != "scripts/affected_suites.py" || req.Edits[0].StartLine != 10 || req.Edits[0].EndLine != 12 {
 		t.Fatalf("unexpected edits: %#v", req.Edits)
 	}
+
 	if !strings.Contains(raw, `"tool":"submit_plan"`) {
 		t.Fatalf("expected normalized JSON raw payload, got %q", raw)
 	}
@@ -461,12 +522,15 @@ CoverageGate
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected repaired prefixed XML tool request")
 	}
+
 	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Path != "internal/workflows/productworkflow/coverage_gate.go" || req.Pattern != "CoverageGate" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if !strings.Contains(raw, `"tool":"code_navigate"`) {
 		t.Fatalf("expected normalized JSON raw payload, got %q", raw)
 	}
@@ -492,12 +556,15 @@ tool_name>
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected repaired split-tag tool request")
 	}
+
 	if req.Tool != "read_file" || req.Path != "internal/workflows/productworkflow/coverage_gate.go" || req.StartLine != 1 || req.EndLine != 120 {
 		t.Fatalf("unexpected repaired request: %#v", req)
 	}
+
 	if !strings.Contains(raw, `"tool":"read_file"`) || !strings.Contains(raw, `"path":"internal/workflows/productworkflow/coverage_gate.go"`) {
 		t.Fatalf("expected normalized JSON raw payload, got %q", raw)
 	}
@@ -508,15 +575,19 @@ func TestParseToolRequestRecoversEmbeddedQwenParametersInRationale(t *testing.T)
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "submit_plan" {
 		t.Fatalf("unexpected tool: %q", req.Tool)
 	}
+
 	if req.Rationale != "Add the required policy gate." {
 		t.Fatalf("rationale = %q", req.Rationale)
 	}
+
 	if len(req.Edits) != 1 || req.Edits[0].Path != "target.txt" || req.Edits[0].OldText != "old" || req.Edits[0].NewText != "new" {
 		t.Fatalf("embedded edits were not recovered: %#v", req.Edits)
 	}
@@ -529,12 +600,15 @@ func TestParseToolRequestAcceptsQwenJSONToolCallEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "read_file" || req.Path != "README.md" || req.StartLine != 1 || req.EndLine != 20 {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if raw != `{"tool":"read_file","path":"README.md","start_line":1,"end_line":20}` {
 		t.Fatalf("unexpected raw payload: %q", raw)
 	}
@@ -546,12 +620,15 @@ func TestParseToolRequestAcceptsUnterminatedQwenJSONToolCallEnvelope(t *testing.
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "read_file" || req.Path != "README.md" || req.StartLine != 1 || req.EndLine != 20 {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if raw != `{"tool":"read_file","path":"README.md","start_line":1,"end_line":20}` {
 		t.Fatalf("unexpected raw payload: %q", raw)
 	}
@@ -564,15 +641,19 @@ func TestParseToolRequestAcceptsQwenJSONNameArgumentsEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "submit_plan" || req.Rationale != "Update target." {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if len(req.Edits) != 1 || req.Edits[0].Path != "target.txt" || req.Edits[0].OldText != "old\n" || req.Edits[0].NewText != "new\n" {
 		t.Fatalf("unexpected edits: %#v", req.Edits)
 	}
+
 	if !strings.Contains(raw, `"tool":"submit_plan"`) {
 		t.Fatalf("expected normalized JSON raw payload, got %q", raw)
 	}
@@ -595,12 +676,15 @@ EvaluateCoverageGate
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected prefixed XML tool request")
 	}
+
 	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Path != "internal/workflows/productworkflow/coverage_gate.go" || req.Pattern != "EvaluateCoverageGate" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if !strings.Contains(raw, `"tool":"code_navigate"`) || !strings.Contains(raw, `"capability":"read_symbol"`) {
 		t.Fatalf("expected normalized JSON raw payload, got %q", raw)
 	}
@@ -615,12 +699,15 @@ func TestParseToolRequestAcceptsQwenPrefixedToolTagJSONArguments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected prefixed XML tool request with JSON arguments")
 	}
+
 	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Path != "internal/workflows/productworkflow/coverage_gate.go" || req.Pattern != "CoverageGate" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if !strings.Contains(raw, `"tool":"code_navigate"`) || !strings.Contains(raw, `"capability":"read_symbol"`) {
 		t.Fatalf("expected normalized JSON raw payload, got %q", raw)
 	}
@@ -635,12 +722,15 @@ func TestParseToolRequestAcceptsQwenPrefixedToolTagJSONArgumentsWithoutCapabilit
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected prefixed XML tool request with JSON arguments to remain a tool request")
 	}
+
 	if req.Tool != "code_navigate" || req.Capability != "" || req.Path != "internal/workflows/productworkflow/coverage_gate.go" || req.Pattern != "CoverageGate" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if !strings.Contains(raw, `"tool":"code_navigate"`) {
 		t.Fatalf("expected normalized JSON raw payload, got %q", raw)
 	}
@@ -676,12 +766,15 @@ Replace comparison examples.
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected qwen XML submit_plan request")
 	}
+
 	if req.Tool != "submit_plan" || len(req.Edits) != 1 {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if req.Edits[0].OldText != "if a < name > args {\n\treturn old\n}" || req.Edits[0].NewText != "if a < name > args {\n\treturn next\n}" {
 		t.Fatalf("angle comparison text was not preserved: %#v", req.Edits[0])
 	}
@@ -711,6 +804,7 @@ func TestParseToolRequestRejectsMalformedOrMissingTool(t *testing.T) {
 	if err != nil || ok {
 		t.Fatalf("expected no request, ok=%t err=%v", ok, err)
 	}
+
 	_, _, ok, err = ParseToolRequest("```tool\n{\"path\":\"README.md\"}\n```")
 	if !ok || err == nil || !strings.Contains(err.Error(), "missing tool") {
 		t.Fatalf("expected missing tool error, ok=%t err=%v", ok, err)
@@ -756,9 +850,11 @@ func TestParseToolRequestRepairsSafeMissingToolAliases(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseToolRequest: %v", err)
 			}
+
 			if !ok {
 				t.Fatal("expected tool request")
 			}
+
 			if req.Tool != tc.want {
 				t.Fatalf("tool = %q, want %q", req.Tool, tc.want)
 			}
@@ -771,9 +867,11 @@ func TestParseToolRequestRepairsNumericStringFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.StartLine != 10 || req.EndLine != 12 {
 		t.Fatalf("line range = %d-%d, want 10-12", req.StartLine, req.EndLine)
 	}
@@ -784,12 +882,15 @@ func TestParseToolRequestRepairsStringifiedStructuredFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "context_pack" || len(req.RequiredTests) != 1 {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if req.RequiredTests[0] != "go test ./cmd/idiom" {
 		t.Fatalf("unexpected repaired tests: %#v", req.RequiredTests)
 	}
@@ -801,6 +902,7 @@ func TestDecodeToolRequestJSONRepairsNativeStringifiedSubmitPlanEdits(t *testing
 }","new_text":"func runProductTDD() {
 	return 1
 }","purpose":"replace the confirmed function body"}]`
+
 	payload, err := json.Marshal(map[string]any{
 		"rationale": "plan",
 		"edits":     inner,
@@ -808,10 +910,12 @@ func TestDecodeToolRequestJSONRepairsNativeStringifiedSubmitPlanEdits(t *testing
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
+
 	req, err := DecodeToolRequestJSON(payload)
 	if err != nil {
 		t.Fatalf("DecodeToolRequestJSON: %v", err)
 	}
+
 	if len(req.Edits) != 1 || req.Edits[0].Path != "cmd/idiom/product_workflow.go" {
 		t.Fatalf("expected stringified submit_plan edits to repair into typed edits, got %#v", req.Edits)
 	}
@@ -821,6 +925,7 @@ func TestDecodeToolRequestJSONRepairsStringifiedSubmitPlanEditsWithTrailingProse
 	inner := `[{"path":"cmd/idiom/product_workflow.go","start_line":10,"end_line":12,"content":"updated\n","purpose":"replace the confirmed line range"}]
 
 This is only explanatory prose after the structured edit array.`
+
 	payload, err := json.Marshal(map[string]any{
 		"tool":      "submit_plan",
 		"rationale": "plan",
@@ -829,10 +934,12 @@ This is only explanatory prose after the structured edit array.`
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
+
 	req, err := DecodeToolRequestJSON(payload)
 	if err != nil {
 		t.Fatalf("DecodeToolRequestJSON: %v", err)
 	}
+
 	if len(req.Edits) != 1 || req.Edits[0].Path != "cmd/idiom/product_workflow.go" || req.Edits[0].Content != "updated\n" {
 		t.Fatalf("expected trailing prose repair to preserve the edit array, got %#v", req.Edits)
 	}
@@ -843,9 +950,11 @@ func TestDecodeToolRequestJSONRepairsStringifiedEmptySubmitPlanEdits(t *testing.
 	if err != nil {
 		t.Fatalf("DecodeToolRequestJSON should parse stringified empty edits and leave validation to submit_plan: %v", err)
 	}
+
 	if req.Tool != "submit_plan" {
 		t.Fatalf("unexpected tool after repair: %#v", req)
 	}
+
 	if len(req.Edits) != 0 {
 		t.Fatalf("expected empty repaired edits, got %#v", req.Edits)
 	}
@@ -853,13 +962,16 @@ func TestDecodeToolRequestJSONRepairsStringifiedEmptySubmitPlanEdits(t *testing.
 
 func TestDecodeToolRequestJSONRepairsStringifiedEmptyStructuredArrays(t *testing.T) {
 	payload := []byte(`{"tool":"context_pack","task":"localize","evidence":"[]","required_tests":"[]","required_edit_paths":"[]","forbidden_paths":"[]","declarations":"[]","moves":"[]","todos":"[]","items":"[]"}`)
+
 	req, err := DecodeToolRequestJSON(payload)
 	if err != nil {
 		t.Fatalf("DecodeToolRequestJSON should repair stringified empty arrays: %v", err)
 	}
+
 	if req.Tool != "context_pack" || req.Task != "localize" {
 		t.Fatalf("unexpected repaired request: %#v", req)
 	}
+
 	if len(req.Evidence) != 0 ||
 		len(req.RequiredTests) != 0 ||
 		len(req.RequiredEditPaths) != 0 ||
@@ -868,19 +980,23 @@ func TestDecodeToolRequestJSONRepairsStringifiedEmptyStructuredArrays(t *testing
 		len(req.Moves) != 0 ||
 		len(req.Todos) != 0 ||
 		len(req.Items) != 0 {
+
 		t.Fatalf("expected all stringified empty arrays to decode as empty typed fields: %#v", req)
 	}
 }
 
 func TestDecodeToolRequestJSONRepairsObjectEvidenceForSubmitPlan(t *testing.T) {
 	payload := []byte(`{"tool":"submit_plan","rationale":"plan","evidence":{"native/tests/test_quality_inventory_bindings.cpp":"read lines 1-180"},"edits":[{"path":"native/tests/test_quality_inventory_bindings.cpp","old_text":"old","new_text":"new","purpose":"replace test expectation"}]}`)
+
 	req, err := DecodeToolRequestJSON(payload)
 	if err != nil {
 		t.Fatalf("DecodeToolRequestJSON should tolerate object evidence metadata: %v", err)
 	}
+
 	if req.Tool != "submit_plan" || len(req.Edits) != 1 {
 		t.Fatalf("unexpected repaired submit_plan request: %#v", req)
 	}
+
 	if len(req.Evidence) != 1 || !strings.Contains(req.Evidence[0], "native/tests/test_quality_inventory_bindings.cpp") {
 		t.Fatalf("object evidence should be preserved as compact evidence text, got %#v", req.Evidence)
 	}
@@ -888,13 +1004,16 @@ func TestDecodeToolRequestJSONRepairsObjectEvidenceForSubmitPlan(t *testing.T) {
 
 func TestDecodeToolRequestJSONRepairsStructuredSourceSatisfiedPaths(t *testing.T) {
 	payload := []byte(`{"tool":"submit_plan","rationale":"mixed plan","source_satisfied_paths":[{"path":"b.txt","evidence":"current source already final"},{"file":"c.txt"}],"edits":[{"path":"a.txt","old_text":"old","new_text":"new","purpose":"replace fixture"}]}`)
+
 	req, err := DecodeToolRequestJSON(payload)
 	if err != nil {
 		t.Fatalf("DecodeToolRequestJSON should repair structured source_satisfied_paths: %v", err)
 	}
+
 	if req.Tool != "submit_plan" || len(req.Edits) != 1 {
 		t.Fatalf("unexpected repaired submit_plan request: %#v", req)
 	}
+
 	if got, want := req.SourceSatisfiedPaths, []string{"b.txt", "c.txt"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("source_satisfied_paths = %#v, want %#v", got, want)
 	}
@@ -902,10 +1021,12 @@ func TestDecodeToolRequestJSONRepairsStructuredSourceSatisfiedPaths(t *testing.T
 
 func TestDecodeToolRequestJSONRepairsObjectSourceSatisfiedPaths(t *testing.T) {
 	payload := []byte(`{"tool":"submit_plan","rationale":"mixed plan","source_satisfied_paths":{"b.txt":"current source already final","c.txt":"current source already final"},"edits":[{"path":"a.txt","old_text":"old","new_text":"new","purpose":"replace fixture"}]}`)
+
 	req, err := DecodeToolRequestJSON(payload)
 	if err != nil {
 		t.Fatalf("DecodeToolRequestJSON should repair object source_satisfied_paths: %v", err)
 	}
+
 	if got, want := req.SourceSatisfiedPaths, []string{"b.txt", "c.txt"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("source_satisfied_paths = %#v, want %#v", got, want)
 	}
@@ -914,6 +1035,7 @@ func TestDecodeToolRequestJSONRepairsObjectSourceSatisfiedPaths(t *testing.T) {
 func TestDecodeToolRequestJSONRejectsMetadataOnlySourceSatisfiedPathObjects(t *testing.T) {
 	payload := []byte(`{"tool":"submit_plan","rationale":"mixed plan","source_satisfied_paths":[{"evidence":"current source already final"}],"edits":[{"path":"a.txt","old_text":"old","new_text":"new","purpose":"replace fixture"}]}`)
 	_, err := DecodeToolRequestJSON(payload)
+
 	if err == nil || !strings.Contains(err.Error(), "source_satisfied_paths") {
 		t.Fatalf("metadata-only source_satisfied_paths object should remain a decode error, got %v", err)
 	}
@@ -923,6 +1045,7 @@ func TestDecodeToolRequestJSONRepairsStringifiedSourceSatisfiedPathsWithTrailing
 	inner := `["b.txt"]
 
 These are already final.`
+
 	payload, err := json.Marshal(map[string]any{
 		"tool":                   "submit_plan",
 		"rationale":              "mixed plan",
@@ -932,10 +1055,12 @@ These are already final.`
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
+
 	req, err := DecodeToolRequestJSON(payload)
 	if err != nil {
 		t.Fatalf("DecodeToolRequestJSON should repair stringified source_satisfied_paths: %v", err)
 	}
+
 	if got, want := req.SourceSatisfiedPaths, []string{"b.txt"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("source_satisfied_paths = %#v, want %#v", got, want)
 	}
@@ -952,6 +1077,7 @@ func TestDecodeToolRequestJSONRejectsMalformedStringifiedSubmitPlanEdits(t *test
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
+
 	_, err = DecodeToolRequestJSON(payload)
 	if err == nil || !strings.Contains(err.Error(), "ToolRequest.edits") {
 		t.Fatalf("expected malformed stringified edits to remain a decode error, got %v", err)
@@ -966,6 +1092,7 @@ func TestDecodeToolRequestJSONRejectsMalformedStringifiedSubmitPlanEditsWithoutD
 }","purpose":"replace a"},{"path":"b.go","old_text":"fmt.Println("badly escaped")
 ","new_text":"fmt.Println("still badly escaped")
 ","purpose":"replace b"}]`
+
 	payload, err := json.Marshal(map[string]any{
 		"tool":      "submit_plan",
 		"rationale": "plan",
@@ -974,6 +1101,7 @@ func TestDecodeToolRequestJSONRejectsMalformedStringifiedSubmitPlanEditsWithoutD
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
+
 	_, err = DecodeToolRequestJSON(payload)
 	if err == nil || !strings.Contains(err.Error(), "ToolRequest.edits") {
 		t.Fatalf("expected malformed stringified edits to remain a decode error, got %v", err)
@@ -983,6 +1111,7 @@ func TestDecodeToolRequestJSONRejectsMalformedStringifiedSubmitPlanEditsWithoutD
 func TestParseToolRequestRepairsStringifiedMultilineStructuredFields(t *testing.T) {
 	inner := `["old line
 second line"]`
+
 	payload, err := json.Marshal(map[string]any{
 		"tool":     "harness_feedback",
 		"category": "bug",
@@ -991,16 +1120,20 @@ second line"]`
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
+
 	req, _, ok, err := ParseToolRequest("```tool\n" + string(payload) + "\n```")
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "harness_feedback" || len(req.Evidence) != 1 {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if req.Evidence[0] != "old line\nsecond line" {
 		t.Fatalf("unexpected repaired evidence: %#v", req.Evidence)
 	}
@@ -1011,9 +1144,11 @@ func TestParseToolRequestRepairsBoolStringFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if !req.IncludeEvidence {
 		t.Fatalf("include_evidence was not repaired: %#v", req)
 	}
@@ -1024,12 +1159,15 @@ func TestParseToolRequestRepairsCombinedNumericAndBoolStringFields(t *testing.T)
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if req.Tool != "read_file" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
+
 	if req.Path != "a.py" || req.StartLine != 10 || req.EndLine != 12 || !req.IncludeSource {
 		t.Fatalf("unexpected repaired request: %#v", req)
 	}
@@ -1040,12 +1178,15 @@ func TestParseToolRequestRepairsSingletonArrayFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if len(req.RequiredEditPaths) != 1 || req.RequiredEditPaths[0] != "a.py" {
 		t.Fatalf("unexpected required edit paths: %#v", req.RequiredEditPaths)
 	}
+
 	if len(req.Edits) != 1 || req.Edits[0].Path != "a.py" {
 		t.Fatalf("unexpected singleton edit repair: %#v", req.Edits)
 	}
@@ -1056,9 +1197,11 @@ func TestParseToolRequestRepairsEmbeddedStringifiedSubmitPlanEdits(t *testing.T)
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request")
 	}
+
 	if len(req.Edits) != 1 || req.Edits[0].Path != "a.py" {
 		t.Fatalf("expected embedded stringified edits to repair into typed edits, got %#v", req.Edits)
 	}
@@ -1119,6 +1262,7 @@ func TestParseToolRequestRejectsProseJSONInsideQwenPrefixedTags(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseToolRequest returned unexpected error: %v", err)
 			}
+
 			if ok {
 				t.Fatalf("expected prose JSON inside prefixed tool tags to remain answer content, got ok=true for: %s", tc.name)
 			}
@@ -1172,9 +1316,11 @@ func TestParseToolRequestAcceptsDeepSeekNativeJSONFormat(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseToolRequest: %v", err)
 			}
+
 			if !ok {
 				t.Fatalf("expected DeepSeek-native tool request to be accepted: %s", tc.name)
 			}
+
 			if req.Tool != tc.want {
 				t.Fatalf("tool = %q, want %q", req.Tool, tc.want)
 			}
@@ -1188,13 +1334,16 @@ func TestParseToolRequestAcceptsDeepSeekXMLReadTools(t *testing.T) {
 <parameter name="start_line">1</parameter>
 <parameter name="end_line">20</parameter>
 </function><｜tool_call_end｜><｜tool_calls_end｜>`
+
 	req, _, ok, err := ParseToolRequest(text)
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected DeepSeek XML read_file request to parse")
 	}
+
 	if req.Tool != "read_file" || req.Path != "internal/runtime/agent/runner.go" || req.StartLine != 1 || req.EndLine != 20 {
 		t.Fatalf("unexpected request: %#v", req)
 	}
@@ -1205,9 +1354,11 @@ func TestParseToolRequestRejectsDeepSeekXMLWriteTools(t *testing.T) {
 <parameter name="rationale">submit edits</parameter>
 </function><｜tool_call_end｜><｜tool_calls_end｜>`
 	_, _, ok, err := ParseToolRequest(text)
+
 	if !ok || err == nil {
 		t.Fatalf("expected DeepSeek XML write tool to be rejected, ok=%t err=%v", ok, err)
 	}
+
 	if !strings.Contains(err.Error(), "not a read/search/discovery tool") {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1286,9 +1437,11 @@ func TestParseToolRequestAcceptsAllQwenFormatsAfterGuard(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseToolRequest: %v", err)
 			}
+
 			if !ok {
 				t.Fatalf("expected Qwen tool request to be accepted after guard: %s", tc.name)
 			}
+
 			if req.Tool != tc.want {
 				t.Fatalf("tool = %q, want %q", req.Tool, tc.want)
 			}
@@ -1310,6 +1463,7 @@ func TestParseToolRequestRejectsProseWithToolPrefixNoJSON(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ParseToolRequest returned unexpected error for prose: %v (text=%q)", err, tc)
 		}
+
 		if ok {
 			t.Fatalf("expected prose with <tool_ references to remain answer content: %q", tc)
 		}
@@ -1320,12 +1474,15 @@ func TestExploreShellClassificationAndValidation(t *testing.T) {
 	if !IsBroadInspectionRequest(ToolRequest{Tool: "shell", Command: "find . -maxdepth 2"}) {
 		t.Fatal("expected find shell command to be broad inspection")
 	}
+
 	if !IsNarrowingRequest(ToolRequest{Tool: "shell", Command: "rg TODO internal"}) {
 		t.Fatal("expected rg shell command to be narrowing")
 	}
+
 	if err := validateExploreShellCommand("git status --short"); err != nil {
 		t.Fatalf("expected git status to be allowed: %v", err)
 	}
+
 	for _, command := range []string{"git checkout main", "python3 script.py", "rg TODO > out.txt", "cat $(pwd)"} {
 		if err := validateExploreShellCommand(command); err == nil {
 			t.Fatalf("expected command %q to be rejected", command)
@@ -1338,12 +1495,15 @@ func TestShouldClearBroadInspectionLockRequiresRelevantSuccessfulNarrowing(t *te
 	if !mgr.ShouldClearBroadInspectionLock(ToolRequest{Tool: "search_content", Pattern: "route"}, ToolResult{Summary: "ok"}) {
 		t.Fatal("search_content should clear broad inspection lock")
 	}
+
 	if !mgr.ShouldClearBroadInspectionLock(ToolRequest{Tool: "list_files", Path: "internal", Recursive: true}, ToolResult{Summary: "ok"}) {
 		t.Fatal("scoped list_files should clear broad inspection lock")
 	}
+
 	if mgr.ShouldClearBroadInspectionLock(ToolRequest{Tool: "search_content"}, ToolResult{Error: "failed"}) {
 		t.Fatal("failed tool result should not clear broad inspection lock")
 	}
+
 	if mgr.ShouldClearBroadInspectionLock(ToolRequest{Tool: "list_files"}, ToolResult{Summary: "ok"}) {
 		t.Fatal("broad inspection should not clear broad inspection lock")
 	}
@@ -1351,12 +1511,14 @@ func TestShouldClearBroadInspectionLockRequiresRelevantSuccessfulNarrowing(t *te
 
 func TestStructuredNarrowingUsesSharedRegistryPredicate(t *testing.T) {
 	mgr := NewManager(testWorkspaceConfig(t))
+
 	for _, lang := range LanguageRegistry() {
 		for capability, tool := range lang.Tools {
 			req := ToolRequest{Tool: tool}
 			if !IsNarrowingRequest(req) {
 				t.Fatalf("%s tool %s for %s should be narrowing", lang.Name, tool, capability)
 			}
+
 			if !mgr.ShouldClearBroadInspectionLock(req, ToolResult{Tool: tool, Summary: "ok"}) {
 				t.Fatalf("%s tool %s for %s should clear broad inspection lock", lang.Name, tool, capability)
 			}
@@ -1367,9 +1529,11 @@ func TestStructuredNarrowingUsesSharedRegistryPredicate(t *testing.T) {
 		for _, spec := range specs {
 			tool := spec.Tool
 			req := ToolRequest{Tool: tool}
+
 			if !IsNarrowingRequest(req) {
 				t.Fatalf("legacy language helper %s should be narrowing", tool)
 			}
+
 			if !mgr.ShouldClearBroadInspectionLock(req, ToolResult{Tool: tool, Summary: "ok"}) {
 				t.Fatalf("legacy language helper %s should clear broad inspection lock", tool)
 			}
@@ -1381,6 +1545,7 @@ func TestStructuredNarrowingUsesSharedRegistryPredicate(t *testing.T) {
 		if IsNarrowingRequest(req) {
 			t.Fatalf("%s should not be narrowing", tool)
 		}
+
 		if mgr.ShouldClearBroadInspectionLock(req, ToolResult{Tool: tool, Summary: "ok"}) {
 			t.Fatalf("%s should not clear broad inspection lock", tool)
 		}
@@ -1391,9 +1556,11 @@ func TestScopedListFilesIsNarrowingNotBroadInspection(t *testing.T) {
 	if !IsBroadInspectionRequest(ToolRequest{Tool: "list_files", Path: "."}) {
 		t.Fatal("root list_files should be broad inspection")
 	}
+
 	if IsBroadInspectionRequest(ToolRequest{Tool: "list_files", Path: "internal", Recursive: true}) {
 		t.Fatal("scoped list_files should not be broad inspection")
 	}
+
 	if !IsNarrowingRequest(ToolRequest{Tool: "list_files", Path: "internal", Recursive: true}) {
 		t.Fatal("scoped list_files should be a narrowing request")
 	}
@@ -1429,25 +1596,32 @@ func TestRuntimeInspectionRequestUsesToolSurfaceMetadata(t *testing.T) {
 func TestParseToolRequestAcceptsCallingToolEnvelope(t *testing.T) {
 	// Exact format emitted by Qwen 3.6b-35b in session 20260530-052348.879
 	text := `[Calling tool: search_content({"glob":"*.go","pattern":"type.*Evidence","named_gap":"exact definition of Evidence type/struct/interface","path":".","tool":"search_content","why_not_answering":"Without the Evidence type definition, I cannot describe how evidence is structured in the idiom harness."})]`
+
 	req, raw, ok, err := ParseToolRequest(text)
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request for [Calling tool: ...] format")
 	}
+
 	if req.Tool != "search_content" {
 		t.Fatalf("expected tool=search_content, got %q", req.Tool)
 	}
+
 	if req.Pattern != "type.*Evidence" {
 		t.Fatalf("expected pattern=type.*Evidence, got %q", req.Pattern)
 	}
+
 	if req.Path != "." {
 		t.Fatalf("expected path=., got %q", req.Path)
 	}
+
 	if req.NamedGap != "exact definition of Evidence type/struct/interface" {
 		t.Fatalf("expected named_gap to be preserved, got %q", req.NamedGap)
 	}
+
 	if !strings.HasPrefix(raw, `{"`) {
 		t.Fatalf("expected JSON object payload, got %q", raw)
 	}
@@ -1455,13 +1629,16 @@ func TestParseToolRequestAcceptsCallingToolEnvelope(t *testing.T) {
 
 func TestParseToolRequestAcceptsCallingToolEnvelopeLowercase(t *testing.T) {
 	text := `[calling tool: search_content({"glob":"*.go","pattern":"type.*Evidence","path":".","tool":"search_content"})]`
+
 	req, _, ok, err := ParseToolRequest(text)
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request for [calling tool: ...] format (lowercase)")
 	}
+
 	if req.Tool != "search_content" {
 		t.Fatalf("expected tool=search_content, got %q", req.Tool)
 	}
@@ -1470,6 +1647,7 @@ func TestParseToolRequestAcceptsCallingToolEnvelopeLowercase(t *testing.T) {
 func TestParseToolRequestRejectsCallingToolWithoutJSON(t *testing.T) {
 	text := `[Calling tool: search_content not valid json]`
 	_, _, ok, _ := ParseToolRequest(text)
+
 	if ok {
 		t.Fatal("expected rejection for [Calling tool: ...] without JSON object")
 	}
@@ -1478,6 +1656,7 @@ func TestParseToolRequestRejectsCallingToolWithoutJSON(t *testing.T) {
 func TestParseToolRequestRejectsCallingToolWithoutToolKey(t *testing.T) {
 	text := `[Calling tool: search_content({"pattern":"type.*Evidence","path":"."})]`
 	_, _, ok, _ := ParseToolRequest(text)
+
 	if ok {
 		t.Fatal("expected rejection for [Calling tool: ...] without tool key in JSON")
 	}
@@ -1485,13 +1664,16 @@ func TestParseToolRequestRejectsCallingToolWithoutToolKey(t *testing.T) {
 
 func TestParseToolRequestAcceptsCallingToolEnvelopeWithWhitespace(t *testing.T) {
 	text := `[Calling tool:   search_content ( {"glob":"*.go","pattern":"type.*Evidence","path":".","tool":"search_content"} ) ]`
+
 	req, _, ok, err := ParseToolRequest(text)
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
+
 	if !ok {
 		t.Fatal("expected tool request for [Calling tool: ...] with whitespace")
 	}
+
 	if req.Tool != "search_content" {
 		t.Fatalf("expected tool=search_content, got %q", req.Tool)
 	}

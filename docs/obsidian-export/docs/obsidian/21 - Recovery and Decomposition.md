@@ -1,7 +1,7 @@
 ---
-status: design-guidance
+status: current-with-open-work
 tags:
-  - harness
+  - idiom
   - failure-recovery
   - decomposition
   - lanes
@@ -15,28 +15,28 @@ work instead of unbounded retries or manual splitting.
 
 Long-form source: [design-decompose-on-failure.md](../design-decompose-on-failure.md)
 
-## Target State
+## Current State
 
-The plan-execute loop and the first lane-implement adapter are is specified.
+The plan-execute loop and the first lane-implement adapter are landed.
 
-Target surfaces include:
+Implemented surfaces include:
 
 - failed `plan-execute` recovery records
-- failed `harness lane implement` recovery records
+- failed `idiom lane implement` recovery records
 - automatic decomposition packets from bounded lane/session evidence
-- `harness recover inspect`
-- `harness recover status`
-- `harness recover decompose`
-- `harness recover promote`
-- `harness recover reconcile`
-- read-only `recovery_inspect` and `recovery_status` through `harness tool`/MCP
+- `idiom recover inspect`
+- `idiom recover status`
+- `idiom recover decompose`
+- `idiom recover promote`
+- `idiom recover reconcile`
+- read-only `recovery_inspect` and `recovery_status` through `idiom tool`/MCP
 - TUI `/recover-status`
 - TUI `/product-status` recovery packet projection
 - audit-watch recovery findings
 - product-evidence and release-evidence recovery rollups
 - sanitized ranker-learning evidence from valid reconciliation
 
-Future extensions include write-capable TUI continuation/handoff actions and
+Open work remains for write-capable TUI continuation/handoff actions and
 additional non-plan-execute failure sources.
 
 ## Recovery Loop
@@ -94,7 +94,7 @@ or file bodies.
   workflow gates before dispatch.
 - Reconciliation closes a packet only after packet digest, atom manifest, and
   required-test evidence validation.
-- CLI, TUI, product workflow, `harness tool`, and MCP expose the same read-only
+- CLI, TUI, product workflow, `idiom tool`, and MCP expose the same read-only
   recovery status model.
 - Product and release evidence exports include bounded metadata-only recovery
   rollups and treat open recovery as release-impact evidence.
@@ -112,7 +112,7 @@ or file bodies.
 | `git_status`, `git_diff`, verification commands | Partial-state and test-failure evidence |
 | `harness_audit`, `audit watch`, evals | Recurring failure and recovery coverage |
 | product workflow, product evidence, release evidence | Effort linkage and external review summaries |
-| TUI, `harness tool`, MCP | Shared presenter/read-only status parity |
+| TUI, `idiom tool`, MCP | Shared presenter/read-only status parity |
 
 ## North-Star Fit
 

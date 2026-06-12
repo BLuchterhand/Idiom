@@ -37,18 +37,21 @@ func validateSymbolPattern(tool, pattern string) error {
 	if p == "" {
 		return nil
 	}
+
 	// C++ operator overloads (operator==, operator(), operator<<,
 	// operator new, operator delete) carry characters that the
 	// expression checks below would reject. They're real symbols.
 	if strings.HasPrefix(p, "operator") {
 		return nil
 	}
+
 	// Function-call shapes: parens with content inside. A real
 	// declaration uses "()" with nothing between; a call carries
 	// arguments.
 	if funcCallShapeRE.MatchString(p) {
 		return symbolPatternRejection(tool, p)
 	}
+
 	// Boolean / comparison / arithmetic operators surrounded by
 	// whitespace. Template syntax uses tight <Foo>, never " < ".
 	// Declarations never include " && ", " == ", " > ", etc.
@@ -57,12 +60,14 @@ func validateSymbolPattern(tool, pattern string) error {
 			return symbolPatternRejection(tool, p)
 		}
 	}
+
 	// Prose: long token sequences. The longest legitimate declaration
 	// we accept is "template <typename T> class EntityBox" at five
 	// whitespace tokens. Anything beyond six is prose.
 	if len(strings.Fields(p)) > 6 {
 		return symbolPatternRejection(tool, p)
 	}
+
 	return nil
 }
 

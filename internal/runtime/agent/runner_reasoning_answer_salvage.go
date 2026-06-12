@@ -20,29 +20,36 @@ func (r *Runner) salvageAnswerFromReasoning(reply llama.ChatMessage, results []w
 	if r == nil || strings.TrimSpace(reply.Content) != "" {
 		return "", false
 	}
+
 	reasoning := strings.TrimSpace(reply.ReasoningContent)
 	if reasoning == "" {
 		return "", false
 	}
+
 	// Only apply to lanes that can produce a direct answer (conversation,
 	// read-only). Mutation lanes need tool-call-shaped recovery, not prose.
 	if runnerBriefRequiresMutation(r.RuntimeBrief) {
 		return "", false
 	}
+
 	// Reasoning must be substantial enough to plausibly contain an answer.
 	if len(reasoning) < 200 {
 		return "", false
 	}
+
 	answer := extractAnswerProseFromReasoning(reasoning)
 	if len(strings.TrimSpace(answer)) < reasoningAnswerSalvageMinChars {
 		return "", false
 	}
+
 	if !reasoningAnswerCandidateIsClean(answer) {
 		return "", false
 	}
+
 	if blockerKind, _ := r.finalAnswerBlockerKind(answer, results); blockerKind != "" {
 		return "", false
 	}
+
 	return answer, true
 }
 
@@ -56,6 +63,7 @@ func extractAnswerProseFromReasoning(reasoning string) string {
 	if reasoning == "" {
 		return ""
 	}
+
 	if sections, hasMarkers := markedReasoningAnswerSections(reasoning); hasMarkers {
 		return selectMarkedReasoningAnswerSection(sections)
 	}
@@ -63,7 +71,9 @@ func extractAnswerProseFromReasoning(reasoning string) string {
 	// Phase 1: strip fenced code blocks, Qwen XML tool calls,
 	// tool-call wrappers, and internal-monologue lines.
 	var cleaned strings.Builder
+
 	inFence := false
+
 	for _, line := range strings.Split(reasoning, "\n") {
 		trimmed := strings.TrimSpace(line)
 
@@ -71,25 +81,33 @@ func extractAnswerProseFromReasoning(reasoning string) string {
 			inFence = !inFence
 			continue
 		}
+
 		if inFence {
 			continue
 		}
+
 		if looksLikeQwenThinkingToolCall(trimmed) {
 			continue
 		}
+
 		if trimmed == "" {
 			cleaned.WriteString("\n")
+
 			continue
 		}
+
 		if looksLikeToolCallWrapper(trimmed) {
 			continue
 		}
+
 		if looksLikeInternalMonologue(trimmed) {
 			continue
 		}
+
 		cleaned.WriteString(line)
 		cleaned.WriteString("\n")
 	}
+
 	text := cleaned.String()
 
 	// Phase 2: score each paragraph by how answer-like it is and
@@ -101,98 +119,128 @@ func extractAnswerProseFromReasoning(reasoning string) string {
 
 	best := ""
 	bestScore := 0
+
 	for _, p := range paragraphs {
 		p = strings.TrimSpace(p)
 		if len(p) < 40 {
 			continue
 		}
+
 		if looksLikeMetadataBlock(p) {
 			continue
 		}
+
 		if looksLikeUnfinishedReasoningPlan(p) {
 			continue
 		}
+
 		score := answerParagraphScore(p)
 		if score > bestScore {
 			bestScore = score
 			best = p
 		}
 	}
+
 	if !reasoningAnswerCandidateIsClean(best) {
 		return ""
 	}
+
 	return best
 }
 
 func markedReasoningAnswerSections(reasoning string) ([]string, bool) {
-	var sections []string
-	var current strings.Builder
+	var (
+		sections []string
+		current  strings.Builder
+	)
+
 	active := false
 	seenMarker := false
+
 	for _, line := range strings.Split(reasoning, "\n") {
 		if rest, ok := finalAnswerSectionMarkerRest(line); ok {
 			seenMarker = true
+
 			if active {
 				sections = append(sections, current.String())
 				current.Reset()
 			}
+
 			active = true
+
 			if rest != "" {
 				current.WriteString(rest)
 				current.WriteString("\n")
 			}
+
 			continue
 		}
+
 		if active {
 			current.WriteString(line)
 			current.WriteString("\n")
 		}
 	}
+
 	if active {
 		sections = append(sections, current.String())
 	}
+
 	return sections, seenMarker
 }
 
 func finalAnswerSectionMarkerRest(line string) (string, bool) {
 	trimmed := strings.TrimSpace(line)
 	lower := strings.ToLower(trimmed)
+
 	for _, marker := range []string{"[final answer]", "[answer]"} {
 		if strings.HasPrefix(lower, marker) {
 			rest := strings.TrimSpace(trimmed[len(marker):])
+
 			rest = strings.TrimLeft(rest, ":.- ")
+
 			return strings.TrimSpace(rest), true
 		}
 	}
+
 	for _, marker := range []string{"final answer:", "answer:"} {
 		if strings.HasPrefix(lower, marker) {
 			return strings.TrimSpace(trimmed[len(marker):]), true
 		}
 	}
+
 	return "", false
 }
 
 func selectMarkedReasoningAnswerSection(sections []string) string {
-	var selected string
-	var selectedKey string
+	var (
+		selected    string
+		selectedKey string
+	)
+
 	for _, section := range sections {
 		candidate := strings.TrimSpace(section)
 		if !reasoningAnswerCandidateIsClean(candidate) {
 			return ""
 		}
+
 		key := normalizeReasoningAnswerForDedupe(candidate)
 		if key == "" {
 			return ""
 		}
+
 		if selected == "" {
 			selected = candidate
 			selectedKey = key
+
 			continue
 		}
+
 		if key != selectedKey {
 			return ""
 		}
 	}
+
 	return selected
 }
 
@@ -205,31 +253,39 @@ func reasoningAnswerCandidateIsClean(answer string) bool {
 	if answer == "" {
 		return false
 	}
+
 	if len(answer) > reasoningAnswerSalvageMaxChars {
 		return false
 	}
+
 	if finalAnswerSectionMarkerCount(answer) > 0 {
 		return false
 	}
+
 	if reasoningAnswerLooksTruncated(answer) {
 		return false
 	}
+
 	if looksLikeTextualToolCall(answer) ||
 		looksLikeRawToolResultTranscript(answer) ||
 		looksLikeUnexecutedToolRequestAnswer(answer) ||
 		looksLikeNonAnswerProse(answer) {
+
 		return false
 	}
+
 	return true
 }
 
 func finalAnswerSectionMarkerCount(text string) int {
 	count := 0
+
 	for _, line := range strings.Split(text, "\n") {
 		if _, ok := finalAnswerSectionMarkerRest(line); ok {
 			count++
 		}
 	}
+
 	return count
 }
 
@@ -238,6 +294,7 @@ func reasoningAnswerLooksTruncated(answer string) bool {
 	if answer == "" {
 		return true
 	}
+
 	last := answer[len(answer)-1]
 	switch last {
 	case '.', '!', '?', ')', ']', '`', '"', '\'':
@@ -249,25 +306,33 @@ func reasoningAnswerLooksTruncated(answer string) bool {
 
 func splitReasoningParagraphs(text string) []string {
 	raw := strings.Split(text, "\n\n")
+
 	var out []string
+
 	for _, block := range raw {
 		block = strings.TrimSpace(block)
 		if block == "" {
 			continue
 		}
+
 		lines := strings.Split(block, "\n")
+
 		var joined []string
+
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue
 			}
+
 			joined = append(joined, line)
 		}
+
 		if len(joined) > 0 {
 			out = append(out, strings.Join(joined, " "))
 		}
 	}
+
 	return out
 }
 
@@ -294,6 +359,7 @@ func answerParagraphScore(p string) int {
 	if strings.HasSuffix(strings.TrimSpace(p), ".") ||
 		strings.HasSuffix(strings.TrimSpace(p), "?") ||
 		strings.HasSuffix(strings.TrimSpace(p), "!") {
+
 		score += 2
 	}
 
@@ -310,6 +376,7 @@ func answerParagraphScore(p string) int {
 	if len(p) > 100 {
 		score += 2
 	}
+
 	if len(p) > 200 {
 		score += 1
 	}
@@ -322,6 +389,7 @@ func looksLikeQwenThinkingToolCall(line string) bool {
 	if !strings.HasPrefix(trimmed, "<") {
 		return false
 	}
+
 	rest := trimmed[1:]
 	if idx := strings.IndexAny(rest, " />"); idx > 0 {
 		name := strings.TrimSpace(rest[:idx])
@@ -329,9 +397,11 @@ func looksLikeQwenThinkingToolCall(line string) bool {
 			return true
 		}
 	}
+
 	if strings.HasPrefix(trimmed, "</") {
 		return true
 	}
+
 	return false
 }
 
@@ -354,18 +424,23 @@ func looksLikeToolCallWrapper(line string) bool {
 	if trimmed == "" {
 		return true
 	}
+
 	if strings.Contains(trimmed, "<tool_call>") || strings.Contains(trimmed, "</tool_call>") {
 		return true
 	}
+
 	if strings.Contains(trimmed, "<function=") || strings.Contains(trimmed, "</function>") {
 		return true
 	}
+
 	if strings.HasPrefix(trimmed, "tool:") || strings.HasPrefix(trimmed, "TOOL:") {
 		return true
 	}
+
 	if strings.HasPrefix(trimmed, `{"tool":`) {
 		return true
 	}
+
 	return false
 }
 
@@ -374,6 +449,7 @@ func looksLikeInternalMonologue(line string) bool {
 	if trimmed == "" {
 		return true
 	}
+
 	lower := strings.ToLower(trimmed)
 	for _, prefix := range []string{
 		"now i", "let me", "i should", "i need to", "i can see",
@@ -387,6 +463,7 @@ func looksLikeInternalMonologue(line string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -395,24 +472,31 @@ func looksLikeMetadataBlock(p string) bool {
 	if p == "" {
 		return true
 	}
+
 	if looksLikeStructuredInternalState(p) {
 		return true
 	}
+
 	if !strings.Contains(p, " ") && len(p) < 20 {
 		return true
 	}
+
 	if len(p) > 10 && strings.ToUpper(p) == p {
 		return true
 	}
+
 	alpha := 0
+
 	for _, r := range p {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
 			alpha++
 		}
 	}
+
 	if alpha < 3 && len(p) > 2 {
 		return true
 	}
+
 	return false
 }
 
@@ -421,6 +505,7 @@ func looksLikeUnfinishedReasoningPlan(p string) bool {
 	if lower == "" {
 		return true
 	}
+
 	taskFramingPrefixes := []string{
 		"the user wants me",
 		"the user asked me",
@@ -444,9 +529,11 @@ func looksLikeUnfinishedReasoningPlan(p string) bool {
 			)
 		}
 	}
+
 	if strings.Contains(lower, " i need to ") || strings.Contains(lower, " i should ") {
 		return !looksLikeGroundedAnswer(lower)
 	}
+
 	return false
 }
 
@@ -468,19 +555,23 @@ func looksLikeStructuredInternalState(p string) bool {
 	if trimmed == "" {
 		return false
 	}
+
 	lower := strings.ToLower(trimmed)
 	for _, prefix := range []string{"current_state:", "tool_manifest:", "allowed_tools:", "forbidden_tools:"} {
 		if strings.HasPrefix(lower, prefix) {
 			return true
 		}
 	}
+
 	first := trimmed[0]
 	if first != '{' && first != '[' {
 		return false
 	}
+
 	hasInternalStateMarker := strings.Contains(lower, `"current_state"`) ||
 		strings.Contains(lower, `"tool_manifest"`) ||
 		strings.Contains(lower, `"allowed_tools"`) ||
 		strings.Contains(lower, `"forbidden_tools"`)
+
 	return hasInternalStateMarker
 }

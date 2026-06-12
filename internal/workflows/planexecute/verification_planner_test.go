@@ -21,12 +21,15 @@ func TestVerificationPlannerDedupeExplicitAndInferredCommands(t *testing.T) {
 	if len(plan.Commands) != 1 {
 		t.Fatalf("commands = %#v, want one deduped command", plan.Commands)
 	}
+
 	if got := plan.Commands[0]; got.Command != "go test ./pkg/feature" || got.WorkingDir != "" || got.Source != VerificationCommandSourcePrompt {
 		t.Fatalf("unexpected command = %#v", got)
 	}
+
 	if got := plan.Commands[0].Argv; len(got) != 3 || got[0] != "go" || got[1] != "test" || got[2] != "./pkg/feature" {
 		t.Fatalf("unexpected argv = %#v", got)
 	}
+
 	if len(plan.Skips) != 0 || len(plan.Rejects) != 0 {
 		t.Fatalf("unexpected skips/rejects: skips=%#v rejects=%#v", plan.Skips, plan.Rejects)
 	}
@@ -44,6 +47,7 @@ func TestVerificationPlannerRejectsUnsafePromptCommand(t *testing.T) {
 	if len(plan.Commands) != 0 {
 		t.Fatalf("unsafe prompt command must not be executable: %#v", plan.Commands)
 	}
+
 	if len(plan.Rejects) != 1 || plan.Rejects[0].Reason != VerificationRejectUnsupportedCmd {
 		t.Fatalf("unsafe prompt command should be a structured reject, got %#v", plan.Rejects)
 	}
@@ -68,9 +72,11 @@ func TestVerificationPlannerUsesClosestGoModuleRoot(t *testing.T) {
 	for _, command := range plan.Commands {
 		got[command.Path] = command
 	}
+
 	if command := got["pkg/root/root.go"]; command.Command != "go test ./pkg/root" || command.WorkingDir != "" {
 		t.Fatalf("root command = %#v", command)
 	}
+
 	if command := got["nested/pkg/feature/feature.go"]; command.Command != "go test ./pkg/feature" || command.WorkingDir != "nested" {
 		t.Fatalf("nested command = %#v", command)
 	}
@@ -89,6 +95,7 @@ func TestVerificationPlannerDoesNotInferFromGoWorkAlone(t *testing.T) {
 	if len(plan.Commands) != 0 {
 		t.Fatalf("go.work without a go.mod must not infer verification commands: %#v", plan.Commands)
 	}
+
 	if !collectVerificationPlannerSkipReasons(plan.Skips).contains(VerificationSkipNoGoModuleRoot) {
 		t.Fatalf("missing no-module skip, got %#v", plan.Skips)
 	}
@@ -130,9 +137,11 @@ func TestVerificationPlannerSkipsUnsafeAndUnsupportedPaths(t *testing.T) {
 			t.Fatalf("missing skip reason %q in %#v", want, plan.Skips)
 		}
 	}
+
 	if len(plan.Commands) != 1 || plan.Commands[0].Command != "go test ./pkg" {
 		t.Fatalf("expected only safe explicit command, got %#v", plan.Commands)
 	}
+
 	if len(plan.Rejects) != 1 || plan.Rejects[0].Reason != VerificationRejectUnsupportedCmd {
 		t.Fatalf("expected structured reject for unsafe command, got %#v", plan.Rejects)
 	}
@@ -149,15 +158,18 @@ func collectVerificationPlannerSkipReasons(skips []VerificationSkip) verificatio
 	for _, skip := range skips {
 		reasons = append(reasons, skip.Reason)
 	}
+
 	return reasons
 }
 
 func writeVerificationPlannerFile(t *testing.T, root string, rel string, body string) {
 	t.Helper()
+
 	path := filepath.Join(root, filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
+
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}

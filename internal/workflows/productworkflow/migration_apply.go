@@ -60,6 +60,7 @@ func PlanProductStatusMigrationFromEffortRoot(options ProductStatusMigrationAppl
 		WorkspaceFingerprint: options.WorkspaceFingerprint,
 		EffortsRoot:          state.plannerRoot,
 	})
+
 	return plan
 }
 
@@ -96,6 +97,7 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 			"status migration apply requires an expected workflow_state revision",
 		)
 	}
+
 	plan.Event.Event = "status_migration_applied"
 	plan.Event.Source = "product_status_migration_apply"
 
@@ -106,6 +108,7 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 			fmt.Sprintf("workflow state revision %d does not match expected revision %d", state.workflowState.StateRevision, options.ExpectedStateRevision),
 		)
 	}
+
 	if expectedBucket := strings.TrimSpace(options.ExpectedSourceStatusBucket); expectedBucket != "" && state.workflowState.StatusBucket != expectedBucket {
 		plan.addBlocker(
 			"stale_source_status_bucket",
@@ -118,9 +121,11 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 	if rel, err := filepath.Rel(state.absEffortsRoot, targetRoot); err != nil || !safeMigrationRelativePath(rel) {
 		plan.addBlocker("unsafe_target_folder_path", "target_folder_path", "target folder path must stay within the efforts root")
 	}
+
 	if err := rejectProductStatusMigrationSymlinks(state.absEffortsRoot, filepath.Dir(targetRoot)); err != nil {
 		plan.addBlocker("unsafe_target_folder_symlink", "target_folder_path", err.Error())
 	}
+
 	if info, err := os.Stat(state.absEffortRoot); err != nil {
 		if os.IsNotExist(err) {
 			plan.addBlocker("missing_source_folder", "source_folder_path", "source effort folder not found")
@@ -130,14 +135,17 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 	} else if !info.IsDir() {
 		plan.addBlocker("invalid_source_folder", "source_folder_path", "source effort root is not a directory")
 	}
+
 	if _, err := os.Stat(targetRoot); err == nil {
 		plan.addBlocker("target_folder_exists", "target_folder_path", fmt.Sprintf("target effort folder %q already exists", plan.TargetFolderPath))
 	} else if !os.IsNotExist(err) {
 		plan.addBlocker("read_target_folder_error", "target_folder_path", err.Error())
 	}
+
 	if err := validateProductStatusMigrationEventsJSONL(state.eventsBytes); err != nil {
 		plan.addBlocker("malformed_events_jsonl", state.eventsPath, err.Error())
 	}
+
 	if len(plan.Blockers) > 0 {
 		plan.Status = ProductWorkflowStatusBlocked
 		return plan
@@ -146,16 +154,21 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 	updatedWorkflowBytes, err := marshalIndentedJSON(plan.UpdatedWorkflowState)
 	if err != nil {
 		plan.addBlocker("workflow_state_encode_error", WorkflowStateFileName, err.Error())
+
 		return plan
 	}
+
 	updatedIndexBytes, err := marshalIndentedJSON(plan.UpdatedEffortIndex)
 	if err != nil {
 		plan.addBlocker("effort_index_encode_error", "efforts/index.json", err.Error())
+
 		return plan
 	}
+
 	updatedEventsBytes, err := appendProductStatusMigrationEvent(state.eventsBytes, plan.Event)
 	if err != nil {
 		plan.addBlocker("events_encode_error", state.eventsPath, err.Error())
+
 		return plan
 	}
 
@@ -166,33 +179,48 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 
 	if err := rejectProductStatusMigrationTempSymlink(workflowTemp); err != nil {
 		plan.addBlocker("unsafe_workflow_state_temp_symlink", WorkflowStateFileName, err.Error())
+
 		plan.Status = ProductWorkflowStatusBlocked
+
 		return plan
 	}
+
 	if err := rejectProductStatusMigrationTempSymlink(eventsTemp); err != nil {
 		plan.addBlocker("unsafe_events_temp_symlink", state.eventsPath, err.Error())
+
 		plan.Status = ProductWorkflowStatusBlocked
+
 		return plan
 	}
+
 	if err := rejectProductStatusMigrationTempSymlink(indexTemp); err != nil {
 		plan.addBlocker("unsafe_effort_index_temp_symlink", "efforts/index.json", err.Error())
+
 		plan.Status = ProductWorkflowStatusBlocked
+
 		return plan
 	}
 
 	if err := writeMigrationTempFile(workflowTemp, updatedWorkflowBytes); err != nil {
 		plan.addBlocker("workflow_state_stage_error", WorkflowStateFileName, err.Error())
+
 		return plan
 	}
+
 	if err := writeMigrationTempFile(eventsTemp, updatedEventsBytes); err != nil {
 		_ = os.Remove(workflowTemp)
+
 		plan.addBlocker("events_stage_error", state.eventsPath, err.Error())
+
 		return plan
 	}
+
 	if err := os.MkdirAll(filepath.Dir(targetRoot), 0o755); err != nil {
 		_ = os.Remove(workflowTemp)
 		_ = os.Remove(eventsTemp)
+
 		plan.addBlocker("target_folder_prepare_error", "target_folder_path", err.Error())
+
 		return plan
 	}
 
@@ -223,31 +251,40 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 		})
 		cleanupTemps(state.absEffortRoot)
 		cleanupTemps(targetRoot)
+
 		plan.Status = ProductWorkflowStatusBlocked
 		if rollbackErr != nil {
 			plan.addBlocker("status_migration_rollback_failed", "", fmt.Sprintf("%v (rollback error: %v)", applyErr, rollbackErr))
 		} else {
 			plan.addBlocker("status_migration_apply_error", "", applyErr.Error())
 		}
+
 		plan.NextValidAction = "inspect migration blockers and rerun status migration apply after restoring a clean effort root"
+
 		return plan
 	}
 
 	if err := os.Rename(state.absEffortRoot, targetRoot); err != nil {
 		cleanupTemps(state.absEffortRoot)
 		plan.addBlocker("status_migration_apply_error", "source_folder_path", err.Error())
+
 		plan.NextValidAction = "inspect migration blockers and rerun status migration apply after restoring a clean effort root"
+
 		return plan
 	}
+
 	renamed = true
+
 	if err := syncDirBestEffort(filepath.Dir(state.absEffortRoot)); err != nil {
 		return rollback(err)
 	}
+
 	if targetParent := filepath.Dir(targetRoot); targetParent != filepath.Dir(state.absEffortRoot) {
 		if err := syncDirBestEffort(targetParent); err != nil {
 			return rollback(err)
 		}
 	}
+
 	if productStatusMigrationAfterFolderRenameHook != nil {
 		if err := productStatusMigrationAfterFolderRenameHook(); err != nil {
 			return rollback(err)
@@ -256,33 +293,44 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 
 	targetWorkflowTemp := filepath.Join(targetRoot, WorkflowStateFileName+productStatusMigrationTempSuffix)
 	targetEventsTemp := filepath.Join(targetRoot, filepath.FromSlash(state.eventsPath)+productStatusMigrationTempSuffix)
+
 	if err := os.Rename(targetWorkflowTemp, filepath.Join(targetRoot, WorkflowStateFileName)); err != nil {
 		return rollback(err)
 	}
+
 	workflowReplaced = true
+
 	if err := syncFileBestEffort(filepath.Join(targetRoot, WorkflowStateFileName)); err != nil {
 		return rollback(err)
 	}
+
 	if err := syncDirBestEffort(targetRoot); err != nil {
 		return rollback(err)
 	}
+
 	if err := os.Rename(targetEventsTemp, filepath.Join(targetRoot, filepath.FromSlash(state.eventsPath))); err != nil {
 		return rollback(err)
 	}
+
 	eventsReplaced = true
+
 	if err := syncFileBestEffort(filepath.Join(targetRoot, filepath.FromSlash(state.eventsPath))); err != nil {
 		return rollback(err)
 	}
+
 	if err := syncDirBestEffort(filepath.Dir(filepath.Join(targetRoot, filepath.FromSlash(state.eventsPath)))); err != nil {
 		return rollback(err)
 	}
+
 	indexReplaced = true
+
 	if err := atomicWriteFile(indexPath, updatedIndexBytes, 0o644); err != nil {
 		return rollback(err)
 	}
 
 	plan.Status = ProductWorkflowStatusApplied
 	plan.NextValidAction = fmt.Sprintf("inspect migrated effort under %s and rerun `idiom product status --effort-root <path>`", plan.TargetFolderPath)
+
 	return plan
 }
 
@@ -306,32 +354,39 @@ func rollbackProductStatusMigrationFiles(input productStatusMigrationRollback) e
 	if !input.renamed {
 		return nil
 	}
+
 	if err := os.Rename(input.targetRoot, input.sourceRoot); err != nil {
 		return fmt.Errorf("rename migrated effort back to source: %w", err)
 	}
+
 	if err := syncDirBestEffort(filepath.Dir(input.sourceRoot)); err != nil {
 		return fmt.Errorf("sync source parent after rollback rename: %w", err)
 	}
+
 	if targetParent := filepath.Dir(input.targetRoot); targetParent != filepath.Dir(input.sourceRoot) {
 		if err := syncDirBestEffort(targetParent); err != nil {
 			return fmt.Errorf("sync target parent after rollback rename: %w", err)
 		}
 	}
+
 	if input.workflowReplaced {
 		if err := atomicWriteFile(filepath.Join(input.sourceRoot, WorkflowStateFileName), input.originalWorkflow, 0o644); err != nil {
 			return fmt.Errorf("restore %s: %w", WorkflowStateFileName, err)
 		}
 	}
+
 	if input.eventsReplaced {
 		if err := atomicWriteFile(filepath.Join(input.sourceRoot, filepath.FromSlash(input.eventsPath)), input.originalEvents, 0o644); err != nil {
 			return fmt.Errorf("restore %s: %w", input.eventsPath, err)
 		}
 	}
+
 	if input.indexReplaced {
 		if err := atomicWriteFile(input.indexPath, input.originalIndex, 0o644); err != nil {
 			return fmt.Errorf("restore efforts/index.json: %w", err)
 		}
 	}
+
 	return nil
 }
 
@@ -339,16 +394,23 @@ func loadProductStatusMigrationDiskState(options ProductStatusMigrationApplyOpti
 	state := productStatusMigrationDiskState{}
 	effortRoot := strings.TrimSpace(options.EffortRoot)
 	absEffortRoot, err := filepath.Abs(effortRoot)
+
 	if effortRoot == "" || err != nil {
 		plan.addBlocker("missing_effort_root", "effort_root", "effort root is required")
+
 		plan.NextValidAction = "rerun status migration with --effort-root pointing at one effort folder"
+
 		return state, false
 	}
+
 	if hasPathTraversal(effortRoot) {
 		plan.addBlocker("unsafe_effort_root", "effort_root", "effort root must not contain traversal components")
+
 		plan.NextValidAction = "rerun status migration with a safe effort root"
+
 		return state, false
 	}
+
 	state.absEffortRoot = absEffortRoot
 
 	if strings.TrimSpace(options.EffortsRoot) != "" && hasPathTraversal(options.EffortsRoot) {
@@ -359,48 +421,62 @@ func loadProductStatusMigrationDiskState(options ProductStatusMigrationApplyOpti
 	if absEffortsRoot == "" {
 		absEffortsRoot = filepath.Dir(filepath.Dir(absEffortRoot))
 	}
+
 	absEffortsRoot, err = filepath.Abs(absEffortsRoot)
 	if err != nil {
 		plan.addBlocker("unsafe_efforts_root", "efforts_root", fmt.Sprintf("resolve efforts root: %v", err))
+
 		return state, false
 	}
+
 	state.absEffortsRoot = absEffortsRoot
+
 	effortsRootOK := true
+
 	if isSymlink, symlinkErr := productStatusMigrationPathIsSymlink(absEffortsRoot); symlinkErr != nil {
 		plan.addBlocker("read_efforts_root_error", "efforts_root", symlinkErr.Error())
+
 		effortsRootOK = false
 	} else if isSymlink {
 		plan.addBlocker("unsafe_efforts_root_symlink", "efforts_root", "efforts root must not be a symlink")
+
 		effortsRootOK = false
 	}
+
 	if !effortsRootOK {
 		return state, false
 	}
 
 	sourceFolderPath, relErr := filepath.Rel(absEffortsRoot, absEffortRoot)
+
 	sourceRootOK := relErr == nil
 	if relErr != nil {
 		plan.addBlocker("effort_root_outside_efforts_root", "effort_root", "effort root must stay within the efforts root")
 	} else {
 		sourceFolderPath = filepath.ToSlash(sourceFolderPath)
 	}
+
 	if !safeMigrationRelativePath(sourceFolderPath) {
 		if sourceFolderPath == "." || sourceFolderPath == "" {
 			plan.addBlocker("unsafe_source_folder_path", "effort_root", "effort root must resolve to a status bucket and effort folder inside the efforts root")
 		} else {
 			plan.addBlocker("effort_root_outside_efforts_root", "effort_root", "effort root must stay within the efforts root")
 		}
+
 		sourceRootOK = false
 	} else {
 		state.sourceFolderPath = sourceFolderPath
 		plan.SourceFolderPath = sourceFolderPath
 	}
+
 	if sourceRootOK {
 		if err := rejectProductStatusMigrationSymlinks(absEffortsRoot, absEffortRoot); err != nil {
 			plan.addBlocker("unsafe_effort_root_symlink", "effort_root", err.Error())
+
 			sourceRootOK = false
 		}
 	}
+
 	if !sourceRootOK {
 		return state, false
 	}
@@ -428,6 +504,7 @@ func loadProductStatusMigrationDiskState(options ProductStatusMigrationApplyOpti
 			}
 		} else {
 			state.indexBytes = indexBytes
+
 			idx, parseErr := ParseEffortIndexJSON(indexBytes)
 			if parseErr != nil {
 				plan.addBlocker("malformed_effort_index", "efforts/index.json", parseErr.Error())
@@ -440,8 +517,10 @@ func loadProductStatusMigrationDiskState(options ProductStatusMigrationApplyOpti
 	workflowPath := filepath.Join(absEffortRoot, WorkflowStateFileName)
 	if err := rejectProductStatusMigrationSymlinks(absEffortRoot, workflowPath); err != nil {
 		plan.addBlocker("unsafe_workflow_state_symlink", WorkflowStateFileName, err.Error())
+
 		return state, false
 	}
+
 	workflowBytes, workflowErr := os.ReadFile(workflowPath)
 	if workflowErr != nil {
 		if os.IsNotExist(workflowErr) {
@@ -449,14 +528,19 @@ func loadProductStatusMigrationDiskState(options ProductStatusMigrationApplyOpti
 		} else {
 			plan.addBlocker("read_workflow_state_error", WorkflowStateFileName, workflowErr.Error())
 		}
+
 		return state, false
 	}
+
 	state.workflowBytes = workflowBytes
+
 	workflowState, parseErr := ParseWorkflowStateJSON(workflowBytes)
 	if parseErr != nil {
 		plan.addBlocker("malformed_workflow_state", WorkflowStateFileName, parseErr.Error())
+
 		return state, false
 	}
+
 	state.workflowState = workflowState
 	plan.EffortID = workflowState.EffortID
 	plan.SourceStatusBucket = workflowState.StatusBucket
@@ -468,7 +552,9 @@ func loadProductStatusMigrationDiskState(options ProductStatusMigrationApplyOpti
 		plan.addBlocker("unsafe_events_artifact_path", WorkflowStateFileName, "workflow_state artifact_paths.events must be a safe relative path")
 	} else {
 		state.eventsPath = eventsPath
+
 		eventsFullPath := filepath.Join(absEffortRoot, filepath.FromSlash(eventsPath))
+
 		if err := rejectProductStatusMigrationSymlinks(absEffortRoot, eventsFullPath); err != nil {
 			plan.addBlocker("unsafe_events_file_symlink", eventsPath, err.Error())
 		} else {
@@ -488,9 +574,11 @@ func loadProductStatusMigrationDiskState(options ProductStatusMigrationApplyOpti
 	if sourceRootOK {
 		state.plannerRoot = deriveProductStatusMigrationPlannerRoot(workflowState.FolderPath, state.sourceFolderPath)
 	}
+
 	if len(plan.Blockers) > 0 {
 		return state, false
 	}
+
 	return state, true
 }
 
@@ -499,14 +587,17 @@ func deriveProductStatusMigrationPlannerRoot(folderPath, sourceFolderPath string
 	if !ok || !folderPathMatchesRelative(normalizedFolder, sourceFolderPath) {
 		return DefaultProductEffortsRoot
 	}
+
 	suffix := "/" + normalizeEffortRelPath(sourceFolderPath)
 	if !strings.HasSuffix(normalizedFolder, suffix) {
 		return DefaultProductEffortsRoot
 	}
+
 	root := strings.TrimSuffix(normalizedFolder, suffix)
 	if normalized, ok := normalizedSafeEffortPath(root); ok {
 		return normalized
 	}
+
 	return DefaultProductEffortsRoot
 }
 
@@ -515,13 +606,17 @@ func appendProductStatusMigrationEvent(existing []byte, event ProductStatusMigra
 	if err != nil {
 		return nil, fmt.Errorf("marshal status migration event: %w", err)
 	}
+
 	trimmed := bytes.TrimRight(existing, "\n")
 	out := append([]byte{}, trimmed...)
+
 	if len(out) > 0 {
 		out = append(out, '\n')
 	}
+
 	out = append(out, eventBytes...)
 	out = append(out, '\n')
+
 	return out, nil
 }
 
@@ -532,11 +627,14 @@ func validateProductStatusMigrationEventsJSONL(data []byte) error {
 		if text == "" {
 			continue
 		}
+
 		var payload map[string]any
+
 		if err := json.Unmarshal([]byte(text), &payload); err != nil {
 			return fmt.Errorf("parse events line %d: %w", i+1, err)
 		}
 	}
+
 	return nil
 }
 
@@ -545,6 +643,7 @@ func marshalIndentedJSON(value any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return append(data, '\n'), nil
 }
 
@@ -552,15 +651,19 @@ func writeMigrationTempFile(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
+
 	if err := rejectProductStatusMigrationTempSymlink(path); err != nil {
 		return err
 	}
+
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return err
 	}
+
 	if err := syncFileBestEffort(path); err != nil {
 		return err
 	}
+
 	return syncDirBestEffort(filepath.Dir(path))
 }
 
@@ -569,16 +672,20 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	if err := writeMigrationTempFile(tempPath, data); err != nil {
 		return err
 	}
+
 	if err := os.Rename(tempPath, path); err != nil {
 		_ = os.Remove(tempPath)
 		return err
 	}
+
 	if err := syncFileBestEffort(path); err != nil {
 		return err
 	}
+
 	if err := syncDirBestEffort(filepath.Dir(path)); err != nil {
 		return err
 	}
+
 	return nil
 }
 
@@ -587,12 +694,15 @@ func rejectProductStatusMigrationTempSymlink(path string) error {
 	if os.IsNotExist(err) {
 		return nil
 	}
+
 	if err != nil {
 		return err
 	}
+
 	if info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("temp path %q must not be a symlink", filepath.Base(path))
 	}
+
 	return nil
 }
 
@@ -601,30 +711,40 @@ func rejectProductStatusMigrationSymlinks(root, target string) error {
 	if err != nil {
 		return fmt.Errorf("resolve relative path: %w", err)
 	}
+
 	if rel == "." {
 		return nil
 	}
+
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return fmt.Errorf("path %q must stay within %q", target, root)
 	}
+
 	current := root
+
 	for _, part := range strings.Split(rel, string(os.PathSeparator)) {
 		if part == "" || part == "." {
 			continue
 		}
+
 		current = filepath.Join(current, part)
+
 		info, statErr := os.Lstat(current)
+
 		if os.IsNotExist(statErr) {
 			return nil
 		}
+
 		if statErr != nil {
 			return statErr
 		}
+
 		if info.Mode()&os.ModeSymlink != 0 {
 			offendingRel, _ := filepath.Rel(root, current)
 			return fmt.Errorf("path component %q must not be a symlink", filepath.ToSlash(offendingRel))
 		}
 	}
+
 	return nil
 }
 
@@ -633,9 +753,11 @@ func productStatusMigrationPathIsSymlink(path string) (bool, error) {
 	if os.IsNotExist(err) {
 		return false, nil
 	}
+
 	if err != nil {
 		return false, err
 	}
+
 	return info.Mode()&os.ModeSymlink != 0, nil
 }
 
@@ -653,6 +775,7 @@ func syncProductStatusMigrationFile(path string) error {
 		return err
 	}
 	defer file.Close()
+
 	return file.Sync()
 }
 
@@ -662,6 +785,7 @@ func syncProductStatusMigrationDir(path string) error {
 		return err
 	}
 	defer dir.Close()
+
 	return dir.Sync()
 }
 
@@ -670,5 +794,6 @@ func safeMigrationRelativePath(value string) bool {
 	if !ok {
 		return false
 	}
+
 	return strings.Contains(normalized, "/")
 }

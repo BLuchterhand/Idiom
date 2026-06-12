@@ -58,7 +58,9 @@ func RelTargetsNoisyDir(rel string) bool {
 	if rel == "" || rel == "." {
 		return false
 	}
+
 	first := strings.Split(rel, "/")[0]
+
 	return ShouldSkipDirName(first)
 }
 
@@ -70,11 +72,13 @@ func ShouldSkipRelFile(rel string) bool {
 	if _, ok := noisyRelFiles[rel]; ok {
 		return true
 	}
+
 	for _, prefix := range noisyRelDirPrefixes {
 		if strings.HasPrefix(rel, prefix) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -85,17 +89,21 @@ func ShouldSkipPath(root string, path string, isDir bool) bool {
 	if filepath.Clean(path) == filepath.Clean(root) {
 		return false
 	}
+
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
 		return false
 	}
+
 	rel = NormalizeRel(rel)
 	if rel == "." || rel == "" {
 		return false
 	}
+
 	if isDir {
 		return ShouldSkipDirName(filepath.Base(rel))
 	}
+
 	return ShouldSkipRelFile(rel)
 }
 

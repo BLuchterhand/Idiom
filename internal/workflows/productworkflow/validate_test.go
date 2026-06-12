@@ -12,28 +12,35 @@ func TestParseCommittedPhase0Fixtures(t *testing.T) {
 	root := repoRoot(t)
 	read := func(path string) []byte {
 		t.Helper()
+
 		data, err := os.ReadFile(filepath.Join(root, path))
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
 		}
+
 		return data
 	}
 
 	if _, err := ParseEffortIndexJSON(read("docs/product-workflows/efforts/index.json")); err != nil {
 		t.Fatalf("parse effort index: %v", err)
 	}
+
 	if _, err := ParseWorkflowStateJSON(read("docs/product-workflows/efforts/closed/prd-adr-brief-workflow/workflow_state.json")); err != nil {
 		t.Fatalf("parse workflow state: %v", err)
 	}
+
 	if _, err := ParseTDDLedgerJSON(read("docs/product-workflows/efforts/closed/prd-adr-brief-workflow/tdd.json")); err != nil {
 		t.Fatalf("parse tdd ledger: %v", err)
 	}
+
 	if _, err := ParseEvidenceCardsJSONL(read("docs/product-workflows/efforts/closed/prd-adr-brief-workflow/evidence/evidence.jsonl")); err != nil {
 		t.Fatalf("parse evidence JSONL: %v", err)
 	}
+
 	if _, err := ParseTraceabilityMatrixJSON(read("docs/product-workflows/efforts/closed/prd-adr-brief-workflow/evidence/traceability_matrix.json")); err != nil {
 		t.Fatalf("parse traceability matrix: %v", err)
 	}
+
 	if _, err := ParseImplementationLedgerJSONL(read("docs/product-workflows/efforts/closed/prd-adr-brief-workflow/implementation_ledger.jsonl")); err != nil {
 		t.Fatalf("parse implementation ledger: %v", err)
 	}
@@ -41,30 +48,38 @@ func TestParseCommittedPhase0Fixtures(t *testing.T) {
 
 func TestParsePRDFixturePasses(t *testing.T) {
 	root := repoRoot(t)
+
 	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/prd.md"))
 	if err != nil {
 		t.Fatalf("read prd.md: %v", err)
 	}
+
 	doc, err := ParsePRDMarkdown(data)
 	if err != nil {
 		t.Fatalf("parse PRD fixture: %v", err)
 	}
+
 	if doc.FrontMatter.PRDID != "prd-impl-0001-phase-0" {
 		t.Fatalf("expected prd_id prd-impl-0001-phase-0, got %q", doc.FrontMatter.PRDID)
 	}
+
 	if doc.FrontMatter.AcceptedAt == "" || doc.FrontMatter.AcceptedBy == "" || doc.FrontMatter.AcceptanceProfile == "" {
 		t.Fatalf("expected accepted PRD fixture to include acceptance metadata, got %#v", doc.FrontMatter)
 	}
+
 	if len(doc.Requirements) == 0 {
 		t.Fatal("expected at least one requirement")
 	}
+
 	req := doc.Requirements[0]
 	if req.ID != "REQ-IMPL-0001" {
 		t.Fatalf("expected requirement ID REQ-IMPL-0001, got %q", req.ID)
 	}
+
 	if len(req.EvidenceRefs) == 0 {
 		t.Fatal("expected evidence_refs on requirement")
 	}
+
 	if len(req.TDDObligations) == 0 {
 		t.Fatal("expected tdd_obligations on requirement")
 	}
@@ -72,17 +87,21 @@ func TestParsePRDFixturePasses(t *testing.T) {
 
 func TestParseADRIndexFixturePasses(t *testing.T) {
 	root := repoRoot(t)
+
 	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/adrs/index.json"))
 	if err != nil {
 		t.Fatalf("read ADR index: %v", err)
 	}
+
 	idx, err := ParseADRIndexJSON(data)
 	if err != nil {
 		t.Fatalf("parse ADR index fixture: %v", err)
 	}
+
 	if len(idx.ADRs) == 0 {
 		t.Fatal("expected at least one ADR entry")
 	}
+
 	if idx.ADRs[0].ADRID != "ADR-0001" {
 		t.Fatalf("expected ADR-0001, got %q", idx.ADRs[0].ADRID)
 	}
@@ -90,20 +109,25 @@ func TestParseADRIndexFixturePasses(t *testing.T) {
 
 func TestParseADRMarkdownFixturePasses(t *testing.T) {
 	root := repoRoot(t)
+
 	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/adrs/ADR-0001-durable-workflow-substrate.md"))
 	if err != nil {
 		t.Fatalf("read ADR markdown: %v", err)
 	}
+
 	doc, err := ParseADRMarkdown(data)
 	if err != nil {
 		t.Fatalf("parse ADR fixture: %v", err)
 	}
+
 	if doc.FrontMatter.ADRID != "ADR-0001" {
 		t.Fatalf("expected adr_id ADR-0001, got %q", doc.FrontMatter.ADRID)
 	}
+
 	if !doc.Sections.HasDecision {
 		t.Fatal("expected HasDecision true")
 	}
+
 	if len(doc.FrontMatter.PRDRefs) == 0 {
 		t.Fatal("expected prd_refs in ADR front matter")
 	}
@@ -130,13 +154,16 @@ created_at: 2026-05-17T00:00:00Z
 - **evidence_refs**: []
 - **tdd_obligations**: []
 `
+
 	_, err := ParsePRDMarkdown([]byte(prd))
 	if err == nil {
 		t.Fatal("expected PRD with empty evidence_refs to fail")
 	}
+
 	if !strings.Contains(err.Error(), "missing evidence_refs") {
 		t.Fatalf("expected evidence_refs error, got %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "missing tdd_obligations") {
 		t.Fatalf("expected tdd_obligations error, got %v", err)
 	}
@@ -153,10 +180,12 @@ created_at: 2026-05-17T00:00:00Z
 
 # PRD: Test
 `
+
 	_, err := ParsePRDMarkdown([]byte(prd))
 	if err == nil {
 		t.Fatal("expected PRD with no requirements to fail")
 	}
+
 	if !strings.Contains(err.Error(), "no requirements") {
 		t.Fatalf("expected no requirements error, got %v", err)
 	}
@@ -171,13 +200,16 @@ task_id: task-test
 
 # PRD: Test
 `
+
 	_, err := ParsePRDMarkdown([]byte(prd))
 	if err == nil {
 		t.Fatal("expected PRD missing schema_version/created_at to fail")
 	}
+
 	if !strings.Contains(err.Error(), "missing schema_version") {
 		t.Fatalf("expected schema_version error, got %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "missing created_at") {
 		t.Fatalf("expected created_at error, got %v", err)
 	}
@@ -204,10 +236,12 @@ created_at: 2026-05-17T00:00:00Z
 
 Test.
 `
+
 	_, err := ParseADRMarkdown([]byte(adr))
 	if err == nil {
 		t.Fatal("expected ADR missing Decision section to fail")
 	}
+
 	if !strings.Contains(err.Error(), "missing ## Decision section") {
 		t.Fatalf("expected Decision section error, got %v", err)
 	}
@@ -236,10 +270,12 @@ Test.
 
 Test.
 `
+
 	_, err := ParseADRMarkdown([]byte(adr))
 	if err == nil {
 		t.Fatal("expected ADR missing status to fail")
 	}
+
 	if !strings.Contains(err.Error(), "missing status") {
 		t.Fatalf("expected status error, got %v", err)
 	}
@@ -267,10 +303,12 @@ Test.
 
 Test.
 `
+
 	_, err := ParseADRMarkdown([]byte(adr))
 	if err == nil {
 		t.Fatal("expected ADR missing prd_refs to fail")
 	}
+
 	if !strings.Contains(err.Error(), "missing prd_refs") {
 		t.Fatalf("expected prd_refs error, got %v", err)
 	}
@@ -278,10 +316,12 @@ Test.
 
 func TestInvalidADRIndexMissingIDPathStatusFailsClosed(t *testing.T) {
 	idx := `{"schema_version":"v1","effort_id":"test","adrs":[{"title":"test","prd_refs":["REQ-1"]}]}`
+
 	_, err := ParseADRIndexJSON([]byte(idx))
 	if err == nil {
 		t.Fatal("expected ADR index with missing fields to fail")
 	}
+
 	for _, want := range []string{"missing adr_id", "missing status", "missing path"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error containing %q, got %v", want, err)
@@ -291,10 +331,12 @@ func TestInvalidADRIndexMissingIDPathStatusFailsClosed(t *testing.T) {
 
 func TestInvalidADRIndexMissingPRDRefsFailsClosed(t *testing.T) {
 	idx := `{"schema_version":"v1","effort_id":"test","adrs":[{"adr_id":"ADR-1","title":"test","status":"accepted","path":"adr.md"}]}`
+
 	_, err := ParseADRIndexJSON([]byte(idx))
 	if err == nil {
 		t.Fatal("expected ADR index entry without prd_refs to fail")
 	}
+
 	if !strings.Contains(err.Error(), "missing prd_refs") {
 		t.Fatalf("expected prd_refs error, got %v", err)
 	}
@@ -322,6 +364,7 @@ func TestWorkflowStateFailsClosedForMissingRequiredFields(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing workflow state fields to fail")
 	}
+
 	for _, want := range []string{"missing task_id", "missing current_state", "missing folder_path", "missing next_valid_actions"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error to contain %q, got %v", want, err)
@@ -351,6 +394,7 @@ func TestWorkflowStateRejectsRawPrivacyExposureFlags(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected privacy exposure flag to fail")
 	}
+
 	if !strings.Contains(err.Error(), "raw_prompts_stored") {
 		t.Fatalf("expected raw prompt privacy error, got %v", err)
 	}
@@ -363,6 +407,7 @@ func TestImplementationLedgerPlannedAtomRequiresModelReviewerAndScope(t *testing
 	if err == nil {
 		t.Fatal("expected incomplete planned atom to fail")
 	}
+
 	for _, want := range []string{"implementor missing model", "implementor missing command", "reviewer missing model", "reviewer missing reasoning_effort", "same id", "scope missing expected_files", "scope missing forbidden files", "missing required_verification", "missing report_paths"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error to contain %q, got %v", want, err)
@@ -378,6 +423,7 @@ func TestImplementationLedgerCloseoutRequiresVerificationReviewInvestigationAndN
 	if err == nil {
 		t.Fatal("expected premature atom closeout to fail")
 	}
+
 	for _, want := range []string{"without implementation_completed", "without verification_completed", "without review_completed", "without post_effort_investigation_completed", "with open blockers"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error to contain %q, got %v", want, err)
@@ -402,10 +448,12 @@ func TestImplementationLedgerValidCloseoutAllowsFallbackCompletion(t *testing.T)
 
 func TestParseEvidenceCardMissingRequiredFieldsFailsClosed(t *testing.T) {
 	card := `{"card_id":"EV-BAD","kind":"","source_handle":"","claim":"","confidence":"","freshness":"","evidence_refs":[],"researcher_id":"","timestamp":""}`
+
 	_, err := ParseEvidenceCardsJSONL([]byte(card))
 	if err == nil {
 		t.Fatal("expected evidence card missing required fields to fail")
 	}
+
 	for _, want := range []string{"missing kind", "missing source_handle", "missing claim", "missing confidence", "missing freshness", "missing researcher_id", "missing timestamp", "missing evidence_refs"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error containing %q, got %v", want, err)
@@ -440,16 +488,20 @@ func TestValidResearchProfilePassesValidation(t *testing.T) {
 			"stale_local_context": "refresh_or_mark_gap"
 		}
 	}`
+
 	p, err := ParseResearchProfileJSON([]byte(profile))
 	if err != nil {
 		t.Fatalf("expected valid research profile to pass, got %v", err)
 	}
+
 	if p.SchemaVersion != "idiom.research_profile.v1" {
 		t.Fatalf("expected schema_version idiom.research_profile.v1, got %q", p.SchemaVersion)
 	}
+
 	if len(p.Researchers) != 2 {
 		t.Fatalf("expected 2 researchers, got %d", len(p.Researchers))
 	}
+
 	if p.MergePolicy.Conflicts != "preserve_until_adr" {
 		t.Fatalf("expected merge_policy.conflicts preserve_until_adr, got %q", p.MergePolicy.Conflicts)
 	}
@@ -497,10 +549,12 @@ func TestInvalidResearchProfileMissingIdentityFailsClosed(t *testing.T) {
 			"stale_local_context": "s"
 		}
 	}`
+
 	_, err := ParseResearchProfileJSON([]byte(profile))
 	if err == nil {
 		t.Fatal("expected profile missing name and profile_id to fail")
 	}
+
 	if !strings.Contains(err.Error(), "missing name or profile_id") {
 		t.Fatalf("expected identity error, got %v", err)
 	}
@@ -525,10 +579,12 @@ func TestInvalidResearchProfileMissingResearcherFieldsFailsClosed(t *testing.T) 
 			"stale_local_context": "s"
 		}
 	}`
+
 	_, err := ParseResearchProfileJSON([]byte(profile))
 	if err == nil {
 		t.Fatal("expected profile with empty researcher fields to fail")
 	}
+
 	for _, want := range []string{"missing id", "missing alignment", "missing question", "missing allowed_capabilities", "missing output"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error containing %q, got %v", want, err)
@@ -555,10 +611,12 @@ func TestInvalidResearchProfileMissingMergePolicyFailsClosed(t *testing.T) {
 			"stale_local_context": ""
 		}
 	}`
+
 	_, err := ParseResearchProfileJSON([]byte(profile))
 	if err == nil {
 		t.Fatal("expected profile with empty merge policy to fail")
 	}
+
 	for _, want := range []string{"missing merge_policy.conflicts", "missing merge_policy.unsupported_claims", "missing merge_policy.stale_local_context"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error containing %q, got %v", want, err)
@@ -577,10 +635,12 @@ func TestInvalidResearchProfileNoResearchersFailsClosed(t *testing.T) {
 			"stale_local_context": "s"
 		}
 	}`
+
 	_, err := ParseResearchProfileJSON([]byte(profile))
 	if err == nil {
 		t.Fatal("expected profile with no researchers to fail")
 	}
+
 	if !strings.Contains(err.Error(), "missing researchers") {
 		t.Fatalf("expected researchers error, got %v", err)
 	}
@@ -588,20 +648,25 @@ func TestInvalidResearchProfileNoResearchersFailsClosed(t *testing.T) {
 
 func TestValidCurrentDurableTDDFixturePasses(t *testing.T) {
 	root := repoRoot(t)
+
 	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/tdd.json"))
 	if err != nil {
 		t.Fatalf("read tdd.json: %v", err)
 	}
+
 	ledger, err := ParseTDDLedgerJSON(data)
 	if err != nil {
 		t.Fatalf("expected current durable tdd.json to pass, got %v", err)
 	}
+
 	if ledger.CoverageTier != "unit" {
 		t.Fatalf("expected coverage_tier unit, got %q", ledger.CoverageTier)
 	}
+
 	if ledger.Coverage.MutationMinScore != 80 {
 		t.Fatalf("expected mutation_min_score 80, got %d", ledger.Coverage.MutationMinScore)
 	}
+
 	if len(ledger.Obligations) == 0 {
 		t.Fatal("expected at least one obligation")
 	}
@@ -648,6 +713,7 @@ func TestValidContractHighTDDWithCoverageMetadataPasses(t *testing.T) {
 			{ID: "TDD-3", Type: "property_based", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
 		},
 	}
+
 	if err := validateTDDLedger(ledger); err != nil {
 		t.Fatalf("expected valid contract_high TDD to pass, got %v", err)
 	}
@@ -668,13 +734,16 @@ func TestInvalidTDDNegativeCounterFailsClosed(t *testing.T) {
 			{ID: "TDD-1", Type: "acceptance", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
 		},
 	}
+
 	err := validateTDDLedger(ledger)
 	if err == nil {
 		t.Fatal("expected negative counters to fail")
 	}
+
 	if !strings.Contains(err.Error(), "ears_total must be non-negative") {
 		t.Fatalf("expected ears_total error, got %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "bdd_with_concrete_data must be non-negative") {
 		t.Fatalf("expected bdd_with_concrete_data error, got %v", err)
 	}
@@ -697,13 +766,16 @@ func TestInvalidTDDMappedExceedsTotalFailsClosed(t *testing.T) {
 			{ID: "TDD-1", Type: "acceptance", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
 		},
 	}
+
 	err := validateTDDLedger(ledger)
 	if err == nil {
 		t.Fatal("expected mapped>total to fail")
 	}
+
 	if !strings.Contains(err.Error(), "ears_mapped (5) exceeds ears_total (3)") {
 		t.Fatalf("expected ears_mapped exceeds error, got %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "fmea_modes_mitigated (4) exceeds fmea_modes_total (2)") {
 		t.Fatalf("expected fmea_modes_mitigated exceeds error, got %v", err)
 	}
@@ -724,10 +796,12 @@ func TestInvalidTDDStateMachineCountersFailClosed(t *testing.T) {
 			{ID: "TDD-1", Type: "contract", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
 		},
 	}
+
 	err := validateTDDLedger(ledger)
 	if err == nil {
 		t.Fatal("expected covered>total to fail")
 	}
+
 	if !strings.Contains(err.Error(), "state_machines_covered (3) exceeds state_machines_total (2)") {
 		t.Fatalf("expected state machine exceeds error, got %v", err)
 	}
@@ -748,10 +822,12 @@ func TestInvalidTDDBoundaryValueCountersFailClosed(t *testing.T) {
 			{ID: "TDD-1", Type: "contract", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
 		},
 	}
+
 	err := validateTDDLedger(ledger)
 	if err == nil {
 		t.Fatal("expected tested>total to fail")
 	}
+
 	if !strings.Contains(err.Error(), "boundary_values_tested (3) exceeds boundary_values_total (2)") {
 		t.Fatalf("expected boundary value exceeds error, got %v", err)
 	}
@@ -772,10 +848,12 @@ func TestInvalidTDDFaultTreeCountersFailClosed(t *testing.T) {
 			{ID: "TDD-1", Type: "contract", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
 		},
 	}
+
 	err := validateTDDLedger(ledger)
 	if err == nil {
 		t.Fatal("expected tested>total to fail")
 	}
+
 	if !strings.Contains(err.Error(), "fault_tree_leaves_tested (3) exceeds fault_tree_leaves_total (2)") {
 		t.Fatalf("expected fault tree exceeds error, got %v", err)
 	}
@@ -796,10 +874,12 @@ func TestInvalidTDDPostMortemCountersFailClosed(t *testing.T) {
 			{ID: "TDD-1", Type: "post_mortem", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
 		},
 	}
+
 	err := validateTDDLedger(ledger)
 	if err == nil {
 		t.Fatal("expected catching_tests>total to fail")
 	}
+
 	if !strings.Contains(err.Error(), "post_mortem_catching_tests (3) exceeds post_mortem_incidents_total (2)") {
 		t.Fatalf("expected post-mortem exceeds error, got %v", err)
 	}
@@ -820,10 +900,12 @@ func TestInvalidTDDFormalVerificationCountersFailClosed(t *testing.T) {
 			{ID: "TDD-1", Type: "formal_verification", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
 		},
 	}
+
 	err := validateTDDLedger(ledger)
 	if err == nil {
 		t.Fatal("expected verified>total to fail")
 	}
+
 	if !strings.Contains(err.Error(), "formal_models_verified (3) exceeds formal_models_total (2)") {
 		t.Fatalf("expected formal verification exceeds error, got %v", err)
 	}
@@ -840,10 +922,12 @@ func TestInvalidTDDUnknownCoverageTierFailsClosed(t *testing.T) {
 			{ID: "TDD-1", Type: "acceptance", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
 		},
 	}
+
 	err := validateTDDLedger(ledger)
 	if err == nil {
 		t.Fatal("expected unknown coverage_tier to fail")
 	}
+
 	if !strings.Contains(err.Error(), "invalid coverage_tier") {
 		t.Fatalf("expected coverage_tier error, got %v", err)
 	}
@@ -860,10 +944,12 @@ func TestInvalidTDDUnknownObligationTypeFailsClosed(t *testing.T) {
 			{ID: "TDD-1", Type: "unknown_type", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
 		},
 	}
+
 	err := validateTDDLedger(ledger)
 	if err == nil {
 		t.Fatal("expected unknown obligation type to fail")
 	}
+
 	if !strings.Contains(err.Error(), "invalid type") {
 		t.Fatalf("expected invalid type error, got %v", err)
 	}
@@ -884,10 +970,12 @@ func TestInvalidTDDMutationScoreOutOfBoundsFailsClosed(t *testing.T) {
 			{ID: "TDD-1", Type: "contract", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
 		},
 	}
+
 	err := validateTDDLedger(ledger)
 	if err == nil {
 		t.Fatal("expected mutation_score out of bounds to fail")
 	}
+
 	if !strings.Contains(err.Error(), "mutation_score must be 0..100") {
 		t.Fatalf("expected mutation_score bounds error, got %v", err)
 	}
@@ -909,10 +997,12 @@ func TestInvalidTDDMutationScoreBelowMinWithoutGateBlockedFailsClosed(t *testing
 			{ID: "TDD-1", Type: "contract", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
 		},
 	}
+
 	err := validateTDDLedger(ledger)
 	if err == nil {
 		t.Fatal("expected mutation_score below min without gate block to fail")
 	}
+
 	if !strings.Contains(err.Error(), "below mutation_min_score") {
 		t.Fatalf("expected below min_score error, got %v", err)
 	}
@@ -934,6 +1024,7 @@ func TestValidTDDMutationScoreBelowMinWithGateBlockedPasses(t *testing.T) {
 			{ID: "TDD-1", Type: "contract", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
 		},
 	}
+
 	if err := validateTDDLedger(ledger); err != nil {
 		t.Fatalf("expected mutation score below min with gate blocked to pass, got %v", err)
 	}
@@ -954,10 +1045,12 @@ func TestInvalidTDDNegativeMutationScoreFailsClosed(t *testing.T) {
 			{ID: "TDD-1", Type: "contract", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
 		},
 	}
+
 	err := validateTDDLedger(ledger)
 	if err == nil {
 		t.Fatal("expected negative mutation_score to fail")
 	}
+
 	if !strings.Contains(err.Error(), "mutation_score must be 0..100") {
 		t.Fatalf("expected mutation_score bounds error, got %v", err)
 	}
@@ -974,10 +1067,12 @@ func TestInvalidTDDZeroMutationMinScoreFailsClosed(t *testing.T) {
 			{ID: "TDD-1", Type: "acceptance", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
 		},
 	}
+
 	err := validateTDDLedger(ledger)
 	if err == nil {
 		t.Fatal("expected zero mutation_min_score to fail")
 	}
+
 	if !strings.Contains(err.Error(), "missing positive mutation_min_score") {
 		t.Fatalf("expected mutation_min_score error, got %v", err)
 	}
@@ -1032,10 +1127,12 @@ x
 ## Open Questions
 x
 `)
+
 	_, err := ParseADRMarkdown(adr)
 	if err == nil {
 		t.Fatal("expected invalid ADR coverage tier to fail")
 	}
+
 	if !strings.Contains(err.Error(), "invalid coverage_tier") {
 		t.Fatalf("expected coverage tier error, got %v", err)
 	}
@@ -1058,6 +1155,7 @@ func TestADRIndexInvalidCoverageTierFailsClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected invalid ADR index coverage tier to fail")
 	}
+
 	if !strings.Contains(err.Error(), "invalid coverage_tier") {
 		t.Fatalf("expected coverage tier error, got %v", err)
 	}
@@ -1086,65 +1184,78 @@ func TestDurableTraceabilityMatrixPassesCrossLinkValidation(t *testing.T) {
 	root := repoRoot(t)
 	read := func(path string) []byte {
 		t.Helper()
+
 		data, err := os.ReadFile(filepath.Join(root, path))
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
 		}
+
 		return data
 	}
 	rel := "docs/product-workflows/efforts/closed/prd-adr-brief-workflow"
 
 	matrixData := read(filepath.Join(rel, "evidence/traceability_matrix.json"))
+
 	matrix, err := ParseTraceabilityMatrixJSON(matrixData)
 	if err != nil {
 		t.Fatalf("parse traceability matrix: %v", err)
 	}
 
 	cardsData := read(filepath.Join(rel, "evidence/evidence.jsonl"))
+
 	cards, err := ParseEvidenceCardsJSONL(cardsData)
 	if err != nil {
 		t.Fatalf("parse evidence cards: %v", err)
 	}
+
 	evidenceIDs := map[string]bool{}
 	for _, c := range cards {
 		evidenceIDs[c.CardID] = true
 	}
 
 	prdData := read(filepath.Join(rel, "prd.md"))
+
 	prd, err := ParsePRDMarkdown(prdData)
 	if err != nil {
 		t.Fatalf("parse PRD: %v", err)
 	}
+
 	prdReqIDs := map[string]bool{}
 	for _, r := range prd.Requirements {
 		prdReqIDs[r.ID] = true
 	}
 
 	adrIdxData := read(filepath.Join(rel, "adrs/index.json"))
+
 	adrIdx, err := ParseADRIndexJSON(adrIdxData)
 	if err != nil {
 		t.Fatalf("parse ADR index: %v", err)
 	}
+
 	adrIDs := map[string]bool{}
 	for _, a := range adrIdx.ADRs {
 		adrIDs[a.ADRID] = true
 	}
 
 	tddData := read(filepath.Join(rel, "tdd.json"))
+
 	tdd, err := ParseTDDLedgerJSON(tddData)
 	if err != nil {
 		t.Fatalf("parse TDD: %v", err)
 	}
+
 	tddIDs := map[string]bool{}
 	for _, o := range tdd.Obligations {
 		tddIDs[o.ID] = true
 	}
 
 	ledgerData := read(filepath.Join(rel, "implementation_ledger.jsonl"))
+
 	ledger, err := ParseImplementationLedgerJSONL(ledgerData)
 	if err != nil {
 		t.Fatalf("parse implementation ledger: %v", err)
 	}
+
 	for _, rec := range ledger {
 		for _, id := range rec.TDDObligationsSatisfied {
 			tddIDs[id] = true
@@ -1153,6 +1264,7 @@ func TestDurableTraceabilityMatrixPassesCrossLinkValidation(t *testing.T) {
 
 	briefPaths := map[string]bool{}
 	briefsDir := filepath.Join(root, rel, "briefs")
+
 	if entries, err := os.ReadDir(briefsDir); err == nil {
 		for _, e := range entries {
 			if !e.IsDir() {
@@ -1163,6 +1275,7 @@ func TestDurableTraceabilityMatrixPassesCrossLinkValidation(t *testing.T) {
 
 	reportPaths := map[string]bool{}
 	reportsDir := filepath.Join(root, rel, "reports")
+
 	if entries, err := os.ReadDir(reportsDir); err == nil {
 		for _, e := range entries {
 			if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
@@ -1176,6 +1289,7 @@ func TestDurableTraceabilityMatrixPassesCrossLinkValidation(t *testing.T) {
 		for _, le := range linkErrs {
 			t.Errorf("unexpected broken link: row %d field %s value %q: %s", le.RowIndex, le.Field, le.Value, le.Message)
 		}
+
 		t.Fatalf("expected zero link errors, got %d", len(linkErrs))
 	}
 }
@@ -1195,6 +1309,7 @@ func TestCrossLinkValidationDetectsBrokenEvidenceCard(t *testing.T) {
 		map[string]bool{"briefs/a.md": true},
 		map[string]bool{"reports/a.json": true},
 	)
+
 	if len(errs) != 1 || errs[0].Field != "evidence_card" || !strings.Contains(errs[0].Message, "EV-MISSING") {
 		t.Fatalf("expected one evidence_card error, got %v", errs)
 	}
@@ -1215,6 +1330,7 @@ func TestCrossLinkValidationDetectsBrokenPRDRequirement(t *testing.T) {
 		map[string]bool{"briefs/a.md": true},
 		map[string]bool{"reports/a.json": true},
 	)
+
 	if len(errs) != 1 || errs[0].Field != "prd_requirement" {
 		t.Fatalf("expected one prd_requirement error, got %v", errs)
 	}
@@ -1235,6 +1351,7 @@ func TestCrossLinkValidationDetectsBrokenADR(t *testing.T) {
 		map[string]bool{"briefs/a.md": true},
 		map[string]bool{"reports/a.json": true},
 	)
+
 	if len(errs) != 1 || errs[0].Field != "adr" {
 		t.Fatalf("expected one adr error, got %v", errs)
 	}
@@ -1255,6 +1372,7 @@ func TestCrossLinkValidationDetectsBrokenTDDObligation(t *testing.T) {
 		map[string]bool{"briefs/a.md": true},
 		map[string]bool{"reports/a.json": true},
 	)
+
 	if len(errs) != 1 || errs[0].Field != "tdd_obligation" {
 		t.Fatalf("expected one tdd_obligation error, got %v", errs)
 	}
@@ -1276,6 +1394,7 @@ func TestCrossLinkValidationAcceptsHistoricalTDDObligationIDs(t *testing.T) {
 		map[string]bool{"briefs/a.md": true},
 		map[string]bool{"reports/a.json": true},
 	)
+
 	if len(errs) != 0 {
 		t.Fatalf("expected zero errors for historical TDD ID, got %v", errs)
 	}
@@ -1296,6 +1415,7 @@ func TestCrossLinkValidationDetectsBrokenBriefPath(t *testing.T) {
 		map[string]bool{"briefs/a.md": true},
 		map[string]bool{"reports/a.json": true},
 	)
+
 	if len(errs) != 1 || errs[0].Field != "brief" {
 		t.Fatalf("expected one brief error, got %v", errs)
 	}
@@ -1316,6 +1436,7 @@ func TestCrossLinkValidationDetectsBrokenReportPath(t *testing.T) {
 		map[string]bool{"briefs/a.md": true},
 		map[string]bool{"reports/a.json": true},
 	)
+
 	if len(errs) != 1 || errs[0].Field != "report" {
 		t.Fatalf("expected one report error, got %v", errs)
 	}
@@ -1329,6 +1450,7 @@ func TestCrossLinkValidationSkipsCheckForNilMaps(t *testing.T) {
 		},
 	}
 	errs := ValidateTraceabilityCrossLinks(matrix, nil, nil, nil, nil, nil, nil)
+
 	if len(errs) != 0 {
 		t.Fatalf("expected zero errors when all maps nil (artifact parse failed), got %v", errs)
 	}
@@ -1341,10 +1463,12 @@ func TestTraceabilityRowMissingFieldsFailClosed(t *testing.T) {
 			{EvidenceCard: "", PRDRequirement: "", ADR: "", TDDObligation: "", Brief: "", Report: ""},
 		},
 	}
+
 	err := validateTraceabilityMatrix(m)
 	if err == nil {
 		t.Fatal("expected empty row fields to fail")
 	}
+
 	for _, want := range []string{"missing evidence_card", "missing prd_requirement", "missing adr", "missing tdd_obligation", "missing brief", "missing report"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("expected error containing %q, got %v", want, err)
@@ -1367,6 +1491,7 @@ func TestValidateArtifactStateRejectsInvalidStates(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected empty status to fail")
 			}
+
 			if !strings.Contains(err.Error(), "empty") {
 				t.Fatalf("expected empty error, got %v", err)
 			}
@@ -1374,9 +1499,11 @@ func TestValidateArtifactStateRejectsInvalidStates(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected status %q to fail", s)
 			}
+
 			if !strings.Contains(err.Error(), s) {
 				t.Fatalf("expected error to mention %q, got %v", s, err)
 			}
+
 			if !strings.Contains(err.Error(), "valid states") {
 				t.Fatalf("expected error to mention valid states, got %v", err)
 			}
@@ -1389,6 +1516,7 @@ func TestValidateArtifactStateRejectsAcceptedFixtureExplicitly(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected accepted_fixture to be rejected")
 	}
+
 	if !strings.Contains(err.Error(), "accepted_fixture") {
 		t.Fatalf("expected error to mention accepted_fixture, got %v", err)
 	}
@@ -1415,13 +1543,16 @@ created_at: 2026-05-17T00:00:00Z
 - **evidence_refs**: ["EV-001"]
 - **tdd_obligations**: ["TDD-001"]
 `
+
 	_, err := ParsePRDMarkdown([]byte(prd))
 	if err == nil {
 		t.Fatal("expected PRD with invalid status to fail")
 	}
+
 	if !strings.Contains(err.Error(), "accepted_fixture") {
 		t.Fatalf("expected error mentioning accepted_fixture, got %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "valid states") {
 		t.Fatalf("expected error mentioning valid states, got %v", err)
 	}
@@ -1429,10 +1560,12 @@ created_at: 2026-05-17T00:00:00Z
 
 func TestDurablePRDFixtureStillPasses(t *testing.T) {
 	root := repoRoot(t)
+
 	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/prd.md"))
 	if err != nil {
 		t.Fatalf("read prd.md: %v", err)
 	}
+
 	if _, err := ParsePRDMarkdown(data); err != nil {
 		t.Fatalf("expected durable PRD fixture to pass, got %v", err)
 	}
@@ -1440,10 +1573,12 @@ func TestDurablePRDFixtureStillPasses(t *testing.T) {
 
 func TestInvalidADRIndexStatusFailsClosed(t *testing.T) {
 	idx := `{"schema_version":"v1","effort_id":"test","adrs":[{"adr_id":"ADR-1","title":"Test","status":"accepted_fixture","path":"a.md","prd_refs":["REQ-1"]}]}`
+
 	_, err := ParseADRIndexJSON([]byte(idx))
 	if err == nil {
 		t.Fatal("expected ADR index with invalid status to fail")
 	}
+
 	if !strings.Contains(err.Error(), "accepted_fixture") {
 		t.Fatalf("expected error mentioning accepted_fixture, got %v", err)
 	}
@@ -1451,10 +1586,12 @@ func TestInvalidADRIndexStatusFailsClosed(t *testing.T) {
 
 func TestDurableADRIndexFixtureStillPasses(t *testing.T) {
 	root := repoRoot(t)
+
 	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/adrs/index.json"))
 	if err != nil {
 		t.Fatalf("read ADR index: %v", err)
 	}
+
 	if _, err := ParseADRIndexJSON(data); err != nil {
 		t.Fatalf("expected durable ADR index fixture to pass, got %v", err)
 	}
@@ -1512,10 +1649,12 @@ Revert.
 
 None.
 `
+
 	_, err := ParseADRMarkdown([]byte(adr))
 	if err == nil {
 		t.Fatal("expected ADR with invalid status to fail")
 	}
+
 	if !strings.Contains(err.Error(), "accepted_fixture") {
 		t.Fatalf("expected error mentioning accepted_fixture, got %v", err)
 	}
@@ -1523,10 +1662,12 @@ None.
 
 func TestDurableADRMarkdownFixtureStillPasses(t *testing.T) {
 	root := repoRoot(t)
+
 	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/adrs/ADR-0001-durable-workflow-substrate.md"))
 	if err != nil {
 		t.Fatalf("read ADR markdown: %v", err)
 	}
+
 	if _, err := ParseADRMarkdown(data); err != nil {
 		t.Fatalf("expected durable ADR markdown fixture to pass, got %v", err)
 	}
@@ -1538,6 +1679,7 @@ func TestPRDWithEachCanonicalStatusPasses(t *testing.T) {
 		if status == "accepted" {
 			acceptance = "accepted_at: 2026-05-17T00:00:00Z\naccepted_by: reviewer-1\nacceptance_profile: human-review\n"
 		}
+
 		prd := fmt.Sprintf(`---
 schema_version: idiom.prd.v1
 prd_id: prd-test
@@ -1584,6 +1726,7 @@ func TestADRMarkdownWithEachCanonicalStatusPasses(t *testing.T) {
 		if status == "accepted" {
 			acceptance = "accepted_at: 2026-05-17T00:00:00Z\naccepted_by: reviewer-1\nacceptance_profile: human-review\n"
 		}
+
 		adr := fmt.Sprintf(`---
 schema_version: idiom.adr.v1
 adr_id: ADR-TEST
@@ -1671,10 +1814,12 @@ func TestValidImplementationReportPasses(t *testing.T) {
 
 func TestInvalidImplementationReportMissingFieldsFailsClosed(t *testing.T) {
 	report := ImplementationReport{}
+
 	err := validateImplementationReport(report)
 	if err == nil {
 		t.Fatal("expected empty implementation report to fail")
 	}
+
 	for _, want := range []string{
 		"missing schema_version", "missing task_id", "missing effort_id",
 		"missing implementor_id", "missing runtime", "missing model",
@@ -1695,10 +1840,12 @@ func TestInvalidImplementationReportBadComplexityTierFailsClosed(t *testing.T) {
 		ReviewerID: "rev", Verification: VerificationState{Status: "pending"},
 		PrivacyNote: "safe", OpenBlockers: []string{},
 	}
+
 	err := validateImplementationReport(report)
 	if err == nil {
 		t.Fatal("expected invalid complexity_tier to fail")
 	}
+
 	if !strings.Contains(err.Error(), "invalid complexity_tier") {
 		t.Fatalf("expected complexity_tier error, got %v", err)
 	}
@@ -1711,10 +1858,12 @@ func TestInvalidImplementationReportVerificationNotPendingRequiresCommands(t *te
 		ReviewerID: "rev", Verification: VerificationState{Status: "passed", Commands: nil},
 		PrivacyNote: "safe", OpenBlockers: []string{},
 	}
+
 	err := validateImplementationReport(report)
 	if err == nil {
 		t.Fatal("expected verification.commands required when status not pending")
 	}
+
 	if !strings.Contains(err.Error(), "requires verification.commands") {
 		t.Fatalf("expected verification.commands error, got %v", err)
 	}
@@ -1728,10 +1877,12 @@ func TestInvalidImplementationReportCodeChangesRequiresChangedPaths(t *testing.T
 		Verification: VerificationState{Status: "pending"},
 		PrivacyNote:  "safe", OpenBlockers: []string{},
 	}
+
 	err := validateImplementationReport(report)
 	if err == nil {
 		t.Fatal("expected changed_paths required when code_changes true")
 	}
+
 	if !strings.Contains(err.Error(), "changed_paths is empty") {
 		t.Fatalf("expected changed_paths error, got %v", err)
 	}
@@ -1744,10 +1895,12 @@ func TestInvalidImplementationReportPrivacyNoteClaimsStoredFailsClosed(t *testin
 		ReviewerID: "rev", Verification: VerificationState{Status: "pending"},
 		PrivacyNote: "raw_prompts_stored: true was recorded", OpenBlockers: []string{},
 	}
+
 	err := validateImplementationReport(report)
 	if err == nil {
 		t.Fatal("expected privacy note claiming raw_prompts_stored to fail")
 	}
+
 	if !strings.Contains(err.Error(), "raw_prompts_stored") {
 		t.Fatalf("expected privacy claim error, got %v", err)
 	}
@@ -1792,10 +1945,12 @@ func TestValidReviewReportPasses(t *testing.T) {
 
 func TestInvalidReviewReportMissingFieldsFailsClosed(t *testing.T) {
 	report := ReviewReport{}
+
 	err := validateReviewReport(report)
 	if err == nil {
 		t.Fatal("expected empty review report to fail")
 	}
+
 	for _, want := range []string{
 		"missing schema_version", "missing effort_id", "missing task_id",
 		"missing reviewer.agent_id", "missing reviewer.model",
@@ -1816,10 +1971,12 @@ func TestInvalidReviewReportNotIndependentFailsClosed(t *testing.T) {
 			IndependentFromImplementor: false,
 		},
 	}
+
 	err := validateReviewReport(report)
 	if err == nil {
 		t.Fatal("expected reviewer not independent to fail")
 	}
+
 	if !strings.Contains(err.Error(), "independent_from_implementor must be true") {
 		t.Fatalf("expected independence error, got %v", err)
 	}
@@ -1833,10 +1990,12 @@ func TestInvalidReviewReportNotPendingRequiresCloseoutFailsClosed(t *testing.T) 
 			IndependentFromImplementor: true,
 		},
 	}
+
 	err := validateReviewReport(report)
 	if err == nil {
 		t.Fatal("expected non-pending review without closeout to fail")
 	}
+
 	for _, want := range []string{"missing reviewed_at", "missing commands_reviewed", "missing checks"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error containing %q, got %v", want, err)
@@ -1881,10 +2040,12 @@ func TestValidInvestigationReportCompletePasses(t *testing.T) {
 
 func TestInvalidInvestigationReportMissingFieldsFailsClosed(t *testing.T) {
 	report := InvestigationReport{}
+
 	err := validateInvestigationReport(report)
 	if err == nil {
 		t.Fatal("expected empty investigation report to fail")
 	}
+
 	for _, want := range []string{"missing schema_version", "missing effort_id", "missing task_id", "missing status"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error containing %q, got %v", want, err)
@@ -1901,10 +2062,12 @@ func TestInvalidInvestigationReportCompleteWithBlockersFailsClosed(t *testing.T)
 		PrivacyAudit: map[string]any{"a": 1},
 		Blockers:     []string{"still_broken"},
 	}
+
 	err := validateInvestigationReport(report)
 	if err == nil {
 		t.Fatal("expected complete investigation with blockers to fail")
 	}
+
 	if !strings.Contains(err.Error(), "blockers is non-empty") {
 		t.Fatalf("expected blockers error, got %v", err)
 	}
@@ -1914,10 +2077,12 @@ func TestInvalidInvestigationReportCompleteMissingCloseoutFieldsFailsClosed(t *t
 	report := InvestigationReport{
 		SchemaVersion: "v1", EffortID: "e", TaskID: "t", Status: "complete",
 	}
+
 	err := validateInvestigationReport(report)
 	if err == nil {
 		t.Fatal("expected complete investigation without closeout to fail")
 	}
+
 	for _, want := range []string{
 		"missing completed_at", "missing next_valid_action",
 		"missing scope", "missing tests", "missing coverage",
@@ -1949,10 +2114,12 @@ func TestInvalidInvestigationReportPrivacyAuditRawPromptsStoredFailsClosed(t *te
 		PrivacyAudit: map[string]any{"raw_prompts_stored": true},
 		Blockers:     []string{},
 	}
+
 	err := validateInvestigationReport(report)
 	if err == nil {
 		t.Fatal("expected complete investigation without closeout to fail")
 	}
+
 	if !strings.Contains(err.Error(), "raw_prompts_stored must not be true") {
 		t.Fatalf("expected raw_prompts_stored error, got %v", err)
 	}
@@ -1967,10 +2134,12 @@ func TestInvalidInvestigationReportPrivacyAuditNoRawPromptsFalseFailsClosed(t *t
 		PrivacyAudit: map[string]any{"no_raw_prompts": false},
 		Blockers:     []string{},
 	}
+
 	err := validateInvestigationReport(report)
 	if err == nil {
 		t.Fatal("expected privacy_audit no_raw_prompts=false to fail")
 	}
+
 	if !strings.Contains(err.Error(), "no_raw_prompts must not be false") {
 		t.Fatalf("expected no_raw_prompts error, got %v", err)
 	}
@@ -2006,10 +2175,12 @@ func TestInvalidInvestigationReportPrivacyAuditAllStoredClaimsFailsClosed(t *tes
 		},
 		Blockers: []string{},
 	}
+
 	err := validateInvestigationReport(report)
 	if err == nil {
 		t.Fatal("expected all stored claims to fail")
 	}
+
 	for _, want := range []string{
 		"raw_prompts_stored must not be true",
 		"raw_transcripts_stored must not be true",
@@ -2035,10 +2206,12 @@ func TestInvalidInvestigationReportPrivacyAuditAllNoFieldsFalseFailsClosed(t *te
 		},
 		Blockers: []string{},
 	}
+
 	err := validateInvestigationReport(report)
 	if err == nil {
 		t.Fatal("expected all no_* fields false to fail")
 	}
+
 	for _, want := range []string{
 		"no_raw_prompts must not be false",
 		"no_raw_transcripts must not be false",
@@ -2089,18 +2262,22 @@ func TestClassifyReportFileNameKnownSuffixes(t *testing.T) {
 func TestDurableImplementationReportFixturesPassValidation(t *testing.T) {
 	root := repoRoot(t)
 	reportDir := filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/reports")
+
 	entries, err := os.ReadDir(reportDir)
 	if err != nil {
 		t.Fatalf("read reports dir: %v", err)
 	}
+
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "-implementation.json") {
 			continue
 		}
+
 		data, err := os.ReadFile(filepath.Join(reportDir, entry.Name()))
 		if err != nil {
 			t.Fatalf("read %s: %v", entry.Name(), err)
 		}
+
 		if _, err := ParseImplementationReportJSON(data); err != nil {
 			t.Fatalf("expected %s to pass implementation report validation, got %v", entry.Name(), err)
 		}
@@ -2110,18 +2287,22 @@ func TestDurableImplementationReportFixturesPassValidation(t *testing.T) {
 func TestDurableReviewReportFixturesPassValidation(t *testing.T) {
 	root := repoRoot(t)
 	reportDir := filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/reports")
+
 	entries, err := os.ReadDir(reportDir)
 	if err != nil {
 		t.Fatalf("read reports dir: %v", err)
 	}
+
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "-review.json") {
 			continue
 		}
+
 		data, err := os.ReadFile(filepath.Join(reportDir, entry.Name()))
 		if err != nil {
 			t.Fatalf("read %s: %v", entry.Name(), err)
 		}
+
 		if _, err := ParseReviewReportJSON(data); err != nil {
 			t.Fatalf("expected %s to pass review report validation, got %v", entry.Name(), err)
 		}
@@ -2131,18 +2312,22 @@ func TestDurableReviewReportFixturesPassValidation(t *testing.T) {
 func TestDurableInvestigationReportFixturesPassValidation(t *testing.T) {
 	root := repoRoot(t)
 	reportDir := filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/reports")
+
 	entries, err := os.ReadDir(reportDir)
 	if err != nil {
 		t.Fatalf("read reports dir: %v", err)
 	}
+
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "-investigation.json") {
 			continue
 		}
+
 		data, err := os.ReadFile(filepath.Join(reportDir, entry.Name()))
 		if err != nil {
 			t.Fatalf("read %s: %v", entry.Name(), err)
 		}
+
 		if _, err := ParseInvestigationReportJSON(data); err != nil {
 			t.Fatalf("expected %s to pass investigation report validation, got %v", entry.Name(), err)
 		}
@@ -2174,26 +2359,33 @@ created_at: 2026-05-17T00:00:00Z
 - **tdd_obligations**: ["TDD-001"]
 - **open_questions**: []
 `
+
 	doc, err := ParsePRDMarkdown([]byte(prd))
 	if err != nil {
 		t.Fatalf("expected valid PRD to pass, got %v", err)
 	}
+
 	if len(doc.Requirements) == 0 {
 		t.Fatal("expected at least one requirement")
 	}
+
 	req := doc.Requirements[0]
 	if req.OwnerAlignment != "team" {
 		t.Fatalf("expected OwnerAlignment team, got %q", req.OwnerAlignment)
 	}
+
 	if req.Testability != "automated" {
 		t.Fatalf("expected Testability automated, got %q", req.Testability)
 	}
+
 	if req.Metric != "coverage > 80%" {
 		t.Fatalf("expected Metric coverage > 80%%, got %q", req.Metric)
 	}
+
 	if !req.OpenQuestionsPresent {
 		t.Fatal("expected OpenQuestionsPresent true")
 	}
+
 	if req.OpenQuestions != nil {
 		t.Fatalf("expected empty OpenQuestions, got %v", req.OpenQuestions)
 	}
@@ -2223,10 +2415,12 @@ created_at: 2026-05-17T00:00:00Z
 - **tdd_obligations**: ["TDD-001"]
 - **open_questions**: []
 `
+
 	_, err := ParsePRDMarkdown([]byte(prd))
 	if err == nil {
 		t.Fatal("expected PRD missing metric to fail")
 	}
+
 	if !strings.Contains(err.Error(), "missing metric") {
 		t.Fatalf("expected missing metric error, got %v", err)
 	}
@@ -2256,10 +2450,12 @@ created_at: 2026-05-17T00:00:00Z
 - **evidence_refs**: ["EV-001"]
 - **tdd_obligations**: ["TDD-001"]
 `
+
 	_, err := ParsePRDMarkdown([]byte(prd))
 	if err == nil {
 		t.Fatal("expected PRD missing open_questions to fail")
 	}
+
 	if !strings.Contains(err.Error(), "missing open_questions") {
 		t.Fatalf("expected missing open_questions error, got %v", err)
 	}
@@ -2386,6 +2582,7 @@ created_at: 2026-05-17T00:00:00Z
 			if err == nil {
 				t.Fatalf("expected PRD %s to fail", tc.name)
 			}
+
 			if !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
 			}
@@ -2451,34 +2648,44 @@ None.
 	if err != nil {
 		t.Fatalf("expected valid ADR to parse: %v", err)
 	}
+
 	fm := doc.FrontMatter
 	if fm.SchemaVersion != "idiom.adr.v1" {
 		t.Fatalf("expected schema_version idiom.adr.v1, got %q", fm.SchemaVersion)
 	}
+
 	if fm.ADRID != "ADR-TEST" {
 		t.Fatalf("expected adr_id ADR-TEST, got %q", fm.ADRID)
 	}
+
 	if fm.Status != "accepted" {
 		t.Fatalf("expected status accepted, got %q", fm.Status)
 	}
+
 	if len(fm.PRDRefs) != 1 || fm.PRDRefs[0] != "REQ-1" {
 		t.Fatalf("expected prd_refs [REQ-1], got %v", fm.PRDRefs)
 	}
+
 	if len(fm.EvidenceRefs) != 1 || fm.EvidenceRefs[0] != "EV-1" {
 		t.Fatalf("expected evidence_refs [EV-1], got %v", fm.EvidenceRefs)
 	}
+
 	if len(fm.TDDObligations) != 1 || fm.TDDObligations[0] != "TDD-1" {
 		t.Fatalf("expected tdd_obligations [TDD-1], got %v", fm.TDDObligations)
 	}
+
 	if fm.CoverageTier != "unit" {
 		t.Fatalf("expected coverage_tier unit, got %q", fm.CoverageTier)
 	}
+
 	if fm.AcceptedAt != "2026-05-17T00:00:00Z" {
 		t.Fatalf("expected accepted_at, got %q", fm.AcceptedAt)
 	}
+
 	if fm.AcceptedBy != "test-agent" {
 		t.Fatalf("expected accepted_by test-agent, got %q", fm.AcceptedBy)
 	}
+
 	if fm.AcceptanceProfile != "test-profile" {
 		t.Fatalf("expected acceptance_profile test-profile, got %q", fm.AcceptanceProfile)
 	}
@@ -2539,31 +2746,40 @@ None.
 	if err != nil {
 		t.Fatalf("expected valid ADR: %v", err)
 	}
+
 	s := doc.Sections
 	if !s.HasContext {
 		t.Fatal("expected HasContext true")
 	}
+
 	if !s.HasDecision {
 		t.Fatal("expected HasDecision true")
 	}
+
 	if !s.HasAlternativesConsidered {
 		t.Fatal("expected HasAlternativesConsidered true")
 	}
+
 	if !s.HasEvidence {
 		t.Fatal("expected HasEvidence true")
 	}
+
 	if !s.HasConsequences {
 		t.Fatal("expected HasConsequences true")
 	}
+
 	if !s.HasCompatibilityAndMigration {
 		t.Fatal("expected HasCompatibilityAndMigration true")
 	}
+
 	if !s.HasTDDObligations {
 		t.Fatal("expected HasTDDObligations true")
 	}
+
 	if !s.HasRollback {
 		t.Fatal("expected HasRollback true")
 	}
+
 	if !s.HasOpenQuestions {
 		t.Fatal("expected HasOpenQuestions true")
 	}
@@ -2624,9 +2840,11 @@ None.
 	if err != nil {
 		t.Fatalf("expected valid ADR with short section names: %v", err)
 	}
+
 	if !doc.Sections.HasAlternativesConsidered {
 		t.Fatal("expected HasAlternativesConsidered true for ## Alternatives")
 	}
+
 	if !doc.Sections.HasCompatibilityAndMigration {
 		t.Fatal("expected HasCompatibilityAndMigration true for ## Compatibility")
 	}
@@ -2657,10 +2875,12 @@ created_at: 2026-05-17T00:00:00Z
 - **tdd_obligations**: ["TDD-001"]
 - **open_questions**: []
 `
+
 	_, err := ParsePRDMarkdown([]byte(prd))
 	if err == nil {
 		t.Fatal("expected accepted PRD without acceptance metadata to fail")
 	}
+
 	for _, want := range []string{"missing accepted_at", "missing accepted_by", "missing acceptance_profile"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error containing %q, got %v", want, err)
@@ -2720,10 +2940,12 @@ Revert.
 
 None.
 `
+
 	_, err := ParseADRMarkdown([]byte(adr))
 	if err == nil {
 		t.Fatal("expected accepted ADR without acceptance metadata to fail")
 	}
+
 	for _, want := range []string{"missing accepted_at", "missing accepted_by", "missing acceptance_profile"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error containing %q, got %v", want, err)
@@ -2757,13 +2979,16 @@ func TestValidateADRSupersessionLinksDetectsBrokenSelfDuplicateAndNonReciprocal(
 		},
 	}
 	errs := ValidateADRSupersessionLinks(adrs)
+
 	if len(errs) < 5 {
 		t.Fatalf("expected at least 5 supersession errors, got %v", errs)
 	}
+
 	codes := map[string]bool{}
 	for _, err := range errs {
 		codes[err.Code] = true
 	}
+
 	for _, code := range []string{
 		"adr_supersession_duplicate_ref",
 		"adr_supersession_self_ref",
@@ -2806,13 +3031,16 @@ func TestADRIndexSupersessionLinksDetectBrokenSelfDuplicateAndNonReciprocal(t *t
 		},
 	}
 	errs := ValidateADRIndexSupersessionLinks(idx)
+
 	if len(errs) < 5 {
 		t.Fatalf("expected at least 5 supersession errors, got %v", errs)
 	}
+
 	codes := map[string]bool{}
 	for _, err := range errs {
 		codes[err.Code] = true
 	}
+
 	for _, code := range []string{
 		"adr_supersession_duplicate_ref",
 		"adr_supersession_self_ref",
@@ -2998,6 +3226,7 @@ None.
 			if err == nil {
 				t.Fatalf("expected ADR %s to fail", tc.name)
 			}
+
 			if !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
 			}
@@ -3057,6 +3286,7 @@ Revert.
 
 None.
 `
+
 	for _, tc := range sections {
 		t.Run(tc.name, func(t *testing.T) {
 			body := strings.Replace(fullBody, tc.remove, "", 1)
@@ -3076,10 +3306,12 @@ coverage_tier: unit
 # ADR-TEST: Test
 
 %s`, body)
+
 			_, err := ParseADRMarkdown([]byte(adr))
 			if err == nil {
 				t.Fatalf("expected ADR %s to fail", tc.name)
 			}
+
 			if !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
 			}
@@ -3103,9 +3335,11 @@ func TestADRCrossLinkValidationDetectsMissingPRDRef(t *testing.T) {
 		map[string]bool{"EV-1": true},
 		map[string]bool{"TDD-1": true},
 	)
+
 	if len(errs) != 1 || errs[0].Field != "prd_refs" {
 		t.Fatalf("expected one prd_refs error, got %v", errs)
 	}
+
 	if !strings.Contains(errs[0].Message, "REQ-MISSING") {
 		t.Fatalf("expected REQ-MISSING in message, got %q", errs[0].Message)
 	}
@@ -3127,9 +3361,11 @@ func TestADRCrossLinkValidationDetectsMissingEvidenceRef(t *testing.T) {
 		map[string]bool{"EV-1": true},
 		map[string]bool{"TDD-1": true},
 	)
+
 	if len(errs) != 1 || errs[0].Field != "evidence_refs" {
 		t.Fatalf("expected one evidence_refs error, got %v", errs)
 	}
+
 	if !strings.Contains(errs[0].Message, "EV-MISSING") {
 		t.Fatalf("expected EV-MISSING in message, got %q", errs[0].Message)
 	}
@@ -3151,9 +3387,11 @@ func TestADRCrossLinkValidationDetectsMissingTDDObligation(t *testing.T) {
 		map[string]bool{"EV-1": true},
 		map[string]bool{"TDD-1": true},
 	)
+
 	if len(errs) != 1 || errs[0].Field != "tdd_obligations" {
 		t.Fatalf("expected one tdd_obligations error, got %v", errs)
 	}
+
 	if !strings.Contains(errs[0].Message, "TDD-MISSING") {
 		t.Fatalf("expected TDD-MISSING in message, got %q", errs[0].Message)
 	}
@@ -3175,9 +3413,11 @@ func TestADRCrossLinkValidationMessageFallsBackToADRIDWhenPathMissing(t *testing
 		map[string]bool{"EV-1": true},
 		map[string]bool{"TDD-1": true},
 	)
+
 	if len(errs) != 1 || errs[0].Field != "tdd_obligations" {
 		t.Fatalf("expected one tdd_obligations error, got %v", errs)
 	}
+
 	if !strings.Contains(errs[0].Message, "ADR-1") || !strings.Contains(errs[0].Message, "TDD-MISSING") {
 		t.Fatalf("expected message to mention ADR-1 and TDD-MISSING, got %q", errs[0].Message)
 	}
@@ -3201,6 +3441,7 @@ func TestADRCrossLinkValidationPassesWhenAllRefsPresent(t *testing.T) {
 		map[string]bool{"EV-1": true},
 		map[string]bool{"TDD-1": true},
 	)
+
 	if len(errs) != 0 {
 		t.Fatalf("expected zero errors, got %v", errs)
 	}
@@ -3220,6 +3461,7 @@ func TestADRCrossLinkValidationSkipsCheckForNilMaps(t *testing.T) {
 		},
 	}
 	errs := ValidateADRCrossLinks(adrs, nil, nil, nil)
+
 	if len(errs) != 0 {
 		t.Fatalf("expected zero errors when all maps nil, got %v", errs)
 	}
@@ -3231,15 +3473,19 @@ func TestValidatePRDTDDObligationCrossLinksDetectsMissingMust(t *testing.T) {
 		{ID: "REQ-2", Priority: "should", TDDObligations: []string{"TDD-ALSO-MISSING"}},
 	}
 	errs := ValidatePRDTDDObligationCrossLinks(reqs, map[string]bool{"TDD-1": true})
+
 	if len(errs) != 1 {
 		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
 	}
+
 	if errs[0].RequirementID != "REQ-1" {
 		t.Fatalf("expected RequirementID REQ-1, got %q", errs[0].RequirementID)
 	}
+
 	if errs[0].TDDObligation != "TDD-MISSING" {
 		t.Fatalf("expected TDDObligation TDD-MISSING, got %q", errs[0].TDDObligation)
 	}
+
 	if !strings.Contains(errs[0].Message, "TDD-MISSING") {
 		t.Fatalf("expected message to mention TDD-MISSING, got %q", errs[0].Message)
 	}
@@ -3250,6 +3496,7 @@ func TestValidatePRDTDDObligationCrossLinksPassesWhenAllPresent(t *testing.T) {
 		{ID: "REQ-1", Priority: "must", TDDObligations: []string{"TDD-1", "TDD-2"}},
 	}
 	errs := ValidatePRDTDDObligationCrossLinks(reqs, map[string]bool{"TDD-1": true, "TDD-2": true})
+
 	if len(errs) != 0 {
 		t.Fatalf("expected 0 errors, got %d: %v", len(errs), errs)
 	}
@@ -3261,6 +3508,7 @@ func TestValidatePRDTDDObligationCrossLinksSkipsNonMust(t *testing.T) {
 		{ID: "REQ-2", Priority: "MUST", TDDObligations: []string{"TDD-1"}},
 	}
 	errs := ValidatePRDTDDObligationCrossLinks(reqs, map[string]bool{"TDD-1": true})
+
 	if len(errs) != 0 {
 		t.Fatalf("expected 0 errors (should-priority skipped, MUST case-insensitive match), got %d: %v", len(errs), errs)
 	}
@@ -3271,6 +3519,7 @@ func TestValidatePRDTDDObligationCrossLinksNilMapSkipsCheck(t *testing.T) {
 		{ID: "REQ-1", Priority: "must", TDDObligations: []string{"TDD-MISSING"}},
 	}
 	errs := ValidatePRDTDDObligationCrossLinks(reqs, nil)
+
 	if len(errs) != 0 {
 		t.Fatalf("expected 0 errors with nil map, got %d: %v", len(errs), errs)
 	}
@@ -3292,10 +3541,12 @@ func TestCommitHashEmptyStringPasses(t *testing.T) {
 
 func TestCommitHashInvalidHexFails(t *testing.T) {
 	data := `{"record_type":"implementation_completed","task_id":"impl-001","effort_id":"effort-1","timestamp":"2026-05-17T16:00:00Z","commit_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaG"}`
+
 	_, err := ParseImplementationLedgerJSONL([]byte(data))
 	if err == nil {
 		t.Fatal("expected commit_hash with non-hex chars to fail")
 	}
+
 	if !strings.Contains(err.Error(), "commit_hash must be 40 hex chars") {
 		t.Fatalf("expected commit_hash format error, got %v", err)
 	}
@@ -3303,10 +3554,12 @@ func TestCommitHashInvalidHexFails(t *testing.T) {
 
 func TestCommitHashTooShortFails(t *testing.T) {
 	data := `{"record_type":"implementation_completed","task_id":"impl-001","effort_id":"effort-1","timestamp":"2026-05-17T16:00:00Z","commit_hash":"abc1234"}`
+
 	_, err := ParseImplementationLedgerJSONL([]byte(data))
 	if err == nil {
 		t.Fatal("expected short commit_hash to fail")
 	}
+
 	if !strings.Contains(err.Error(), "commit_hash must be 40 hex chars") {
 		t.Fatalf("expected commit_hash format error, got %v", err)
 	}
@@ -3314,10 +3567,12 @@ func TestCommitHashTooShortFails(t *testing.T) {
 
 func TestCommitHashUppercaseHexFails(t *testing.T) {
 	data := `{"record_type":"implementation_completed","task_id":"impl-001","effort_id":"effort-1","timestamp":"2026-05-17T16:00:00Z","commit_hash":"A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2"}`
+
 	_, err := ParseImplementationLedgerJSONL([]byte(data))
 	if err == nil {
 		t.Fatal("expected uppercase hex commit_hash to fail")
 	}
+
 	if !strings.Contains(err.Error(), "commit_hash must be 40 hex chars") {
 		t.Fatalf("expected commit_hash format error, got %v", err)
 	}
@@ -3325,10 +3580,12 @@ func TestCommitHashUppercaseHexFails(t *testing.T) {
 
 func TestCommitHashValidatedOnFallbackCompletion(t *testing.T) {
 	data := `{"record_type":"fallback_completion","task_id":"impl-001","effort_id":"effort-1","timestamp":"2026-05-17T16:00:00Z","commit_hash":"bad"}`
+
 	_, err := ParseImplementationLedgerJSONL([]byte(data))
 	if err == nil {
 		t.Fatal("expected bad commit_hash on fallback_completion to fail")
 	}
+
 	if !strings.Contains(err.Error(), "commit_hash must be 40 hex chars") {
 		t.Fatalf("expected commit_hash format error, got %v", err)
 	}
@@ -3336,10 +3593,12 @@ func TestCommitHashValidatedOnFallbackCompletion(t *testing.T) {
 
 func TestCommitHashValidatedOnPartialImplementation(t *testing.T) {
 	data := `{"record_type":"partial_implementation_recorded","task_id":"impl-001","effort_id":"effort-1","timestamp":"2026-05-17T16:00:00Z","commit_hash":"bad"}`
+
 	_, err := ParseImplementationLedgerJSONL([]byte(data))
 	if err == nil {
 		t.Fatal("expected bad commit_hash on partial_implementation_recorded to fail")
 	}
+
 	if !strings.Contains(err.Error(), "commit_hash must be 40 hex chars") {
 		t.Fatalf("expected commit_hash format error, got %v", err)
 	}
@@ -3373,12 +3632,14 @@ func TestValidateADRIndexFrontMatterConsistencyCoversAuthorityFields(t *testing.
 		}},
 	}})
 	fields := map[string]bool{}
+
 	for _, err := range errs {
 		fields[err.Field] = true
 		if err.Code != "adr_index_frontmatter_mismatch" || err.Path != "adrs/index.json" {
 			t.Fatalf("unexpected consistency error: %#v", err)
 		}
 	}
+
 	for _, want := range []string{"adr_id", "status", "coverage_tier", "prd_refs", "supersedes", "superseded_by"} {
 		if !fields[want] {
 			t.Fatalf("expected mismatch for %s, got %#v", want, errs)
@@ -3388,18 +3649,22 @@ func TestValidateADRIndexFrontMatterConsistencyCoversAuthorityFields(t *testing.
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
+
 	dir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir
 		}
+
 		next := filepath.Dir(dir)
 		if next == dir {
 			t.Fatal("could not find repo root")
 		}
+
 		dir = next
 	}
 }
@@ -3444,6 +3709,7 @@ func TestUnwrapSingleMarkdownFence(t *testing.T) {
 	input := fenced(prdBody)
 	result := UnwrapSingleMarkdownFence(input)
 	expected := strings.TrimSpace(prdBody)
+
 	if result != expected {
 		t.Fatalf("expected unwrapped PRD content, got: %s", result)
 	}
@@ -3458,8 +3724,11 @@ func TestUnwrapSingleMarkdownFenceNoFenceReturnsOriginal(t *testing.T) {
 
 func TestUnwrapSingleMarkdownFenceMissingClosingReturnsOriginal(t *testing.T) {
 	input := fenced(prdBody)
+
 	input = input[:len(input)-len(fenceClose())-1]
+
 	result := UnwrapSingleMarkdownFence(input)
+
 	if result != input {
 		t.Fatalf("expected unchanged input for unclosed fence, got: %s", result)
 	}
@@ -3468,6 +3737,7 @@ func TestUnwrapSingleMarkdownFenceMissingClosingReturnsOriginal(t *testing.T) {
 func TestUnwrapSingleMarkdownFenceEmptyBodyReturnsOriginal(t *testing.T) {
 	input := fenceOpen() + "markdown\n\n" + fenceClose()
 	result := UnwrapSingleMarkdownFence(input)
+
 	if result != input {
 		t.Fatalf("expected unchanged input for empty fence body, got: %s", result)
 	}
@@ -3476,16 +3746,20 @@ func TestUnwrapSingleMarkdownFenceEmptyBodyReturnsOriginal(t *testing.T) {
 func TestParsePRDMarkdownWithFenceWrappedInput(t *testing.T) {
 	prd := fenced(prdBody)
 	unwrapped := UnwrapSingleMarkdownFence(prd)
+
 	if unwrapped == prd {
 		t.Fatal("expected fence to be unwrapped")
 	}
+
 	doc, err := ParsePRDMarkdown([]byte(unwrapped))
 	if err != nil {
 		t.Fatalf("expected fence-wrapped PRD to parse after unwrapping: %v", err)
 	}
+
 	if doc.FrontMatter.PRDID != "prd-test" {
 		t.Fatalf("expected prd_id prd-test, got %q", doc.FrontMatter.PRDID)
 	}
+
 	if len(doc.Requirements) != 1 {
 		t.Fatalf("expected 1 requirement, got %d", len(doc.Requirements))
 	}
@@ -3494,13 +3768,16 @@ func TestParsePRDMarkdownWithFenceWrappedInput(t *testing.T) {
 func TestParsePRDMarkdownWithPlainCodeFence(t *testing.T) {
 	prd := fencedPlain(prdBody)
 	unwrapped := UnwrapSingleMarkdownFence(prd)
+
 	if unwrapped == prd {
 		t.Fatal("expected unlabeled fence to be unwrapped")
 	}
+
 	doc, err := ParsePRDMarkdown([]byte(unwrapped))
 	if err != nil {
 		t.Fatalf("expected fence-wrapped PRD (unlabeled) to parse after unwrapping: %v", err)
 	}
+
 	if doc.FrontMatter.PRDID != "prd-test" {
 		t.Fatalf("expected prd_id prd-test, got %q", doc.FrontMatter.PRDID)
 	}
@@ -3549,13 +3826,16 @@ Revert.
 ## Open Questions
 None.
 `
+
 	doc, repaired, err := TryParseADRMarkdown(adr)
 	if err != nil {
 		t.Fatalf("TryParseADRMarkdown: %v", err)
 	}
+
 	if doc.FrontMatter.ADRID != "ADR-TEST" {
 		t.Fatalf("expected ADR-TEST, got %q", doc.FrontMatter.ADRID)
 	}
+
 	if repaired != strings.TrimSpace(adr) {
 		t.Fatalf("expected repaired text to match input, got: %q vs %q", repaired, strings.TrimSpace(adr))
 	}
@@ -3563,10 +3843,12 @@ None.
 
 func TestTryParseADRMarkdownWithFence(t *testing.T) {
 	fenced := "```markdown\n---\nschema_version: idiom.adr.v1\nadr_id: ADR-TEST\nstatus: draft\nprd_refs:\n  - REQ-1\nevidence_refs:\n  - EV-1\ntdd_obligations:\n  - TDD-1\ncoverage_tier: unit\n---\n\n# ADR-TEST: Test\n\n## Context\nTest.\n\n## Decision\nTest.\n\n## Alternatives Considered\nNone.\n\n## Evidence\n- EV-1: Test.\n\n## Consequences\nNone.\n\n## Compatibility and Migration\nCompatible.\n\n## TDD Obligations\n- TDD-1: Test.\n\n## Rollback\nRevert.\n\n## Open Questions\nNone.\n```"
+
 	doc, _, err := TryParseADRMarkdown(fenced)
 	if err != nil {
 		t.Fatalf("TryParseADRMarkdown with fence: %v", err)
 	}
+
 	if doc.FrontMatter.ADRID != "ADR-TEST" {
 		t.Fatalf("expected ADR-TEST, got %q", doc.FrontMatter.ADRID)
 	}

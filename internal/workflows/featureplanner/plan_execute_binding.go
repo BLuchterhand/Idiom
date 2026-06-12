@@ -8,11 +8,13 @@ func PlanExecuteSessionIDFromImplementorPrompt(prompt string) string {
 		if !ok || strings.TrimSpace(strings.ToLower(key)) != "plan-execute session id" {
 			continue
 		}
+
 		sessionID := strings.TrimSpace(value)
 		if validPlanExecuteSessionID(sessionID) {
 			return sessionID
 		}
 	}
+
 	return ""
 }
 
@@ -20,6 +22,7 @@ func validPlanExecuteSessionID(sessionID string) bool {
 	if sessionID == "" || len(sessionID) > 128 || strings.Contains(sessionID, "..") {
 		return false
 	}
+
 	for _, r := range sessionID {
 		switch {
 		case r >= 'a' && r <= 'z':
@@ -30,5 +33,6 @@ func validPlanExecuteSessionID(sessionID string) bool {
 			return false
 		}
 	}
+
 	return true
 }

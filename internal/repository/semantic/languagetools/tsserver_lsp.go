@@ -53,17 +53,23 @@ func (m *Manager) newTsLSPClient(ctx context.Context) (*tsLSPClient, error) {
 	if tsserver == "" {
 		return nil, fmt.Errorf("typescript-language-server is not installed")
 	}
+
 	cmd := exec.CommandContext(ctx, tsserver, "--stdio")
+
 	cmd.Dir = m.Root()
+
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
 	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
 	}
+
 	client := &tsLSPClient{pendingDiagnostics: make(map[string][]tsDiagnostic)}
+
 	client.lspBaseClient = lspBaseClient{
 		serverName:         "typescript-language-server",
 		cmd:                cmd,
@@ -72,6 +78,7 @@ func (m *Manager) newTsLSPClient(ctx context.Context) (*tsLSPClient, error) {
 		handleNotification: client.handleNotification,
 	}
 	cmd.Stderr = &client.stderr
+
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -103,15 +110,21 @@ func (m *Manager) newTsLSPClient(ctx context.Context) (*tsLSPClient, error) {
 			"disableAutomaticTypingAcquisition": true,
 		},
 	}
+
 	var initResult map[string]any
+
 	if err := client.request(ctx, "initialize", params, &initResult); err != nil {
 		client.forceClose()
+
 		return nil, fmt.Errorf("typescript-language-server initialize failed: %w", err)
 	}
+
 	if err := client.notify("initialized", map[string]any{}); err != nil {
 		client.forceClose()
+
 		return nil, fmt.Errorf("typescript-language-server initialized notification failed: %w", err)
 	}
+
 	return client, nil
 }
 
@@ -119,7 +132,9 @@ func (c *tsLSPClient) handleNotification(method string, params json.RawMessage) 
 	if method != "textDocument/publishDiagnostics" || len(params) == 0 {
 		return
 	}
+
 	var payload tsPublishDiagnosticsParams
+
 	if err := json.Unmarshal(params, &payload); err == nil {
 		c.pendingDiagnostics[payload.URI] = payload.Diagnostics
 	}
@@ -137,15 +152,21 @@ func (c *tsLSPClient) waitForDiagnostics(ctx context.Context, uri string, budget
 		if diags, ok := c.pendingDiagnostics[uri]; ok {
 			return diags
 		}
+
 		if ctx.Err() != nil {
 			return nil
 		}
+
 		// Use a tiny timeout request to force a message pump cycle.
 		pumpCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+
 		var dummy json.RawMessage
+
 		_ = c.request(pumpCtx, "workspace/symbol", map[string]any{"query": ""}, &dummy)
+
 		cancel()
 	}
+
 	return c.pendingDiagnostics[uri]
 }
 
@@ -175,13 +196,16 @@ func (m *Manager) tsLSPPosition(abs string, match semantic.TsSymbolMatch) map[st
 	if line < 0 {
 		line = 0
 	}
+
 	character := match.Column - 1
 	if character < 0 {
 		character = 0
 	}
+
 	if resolved, ok := m.tsLSPCharacter(abs, match); ok {
 		character = resolved
 	}
+
 	return map[string]any{
 		"line":      line,
 		"character": character,
@@ -192,25 +216,30 @@ func (m *Manager) tsLSPCharacter(abs string, match semantic.TsSymbolMatch) (int,
 	if abs == "" || match.Line <= 0 {
 		return 0, false
 	}
+
 	lineText := m.sourceLineText(abs, match.Line)
 	if lineText == "" {
 		return 0, false
 	}
+
 	candidates := []string{match.Name}
 	if strings.TrimSpace(match.Qualified) != "" {
 		if idx := strings.LastIndex(match.Qualified, "."); idx >= 0 && idx+1 < len(match.Qualified) {
 			candidates = append([]string{match.Qualified[idx+1:]}, candidates...)
 		}
 	}
+
 	for _, candidate := range candidates {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == "" {
 			continue
 		}
+
 		if idx := strings.Index(lineText, candidate); idx >= 0 {
 			return idx, true
 		}
 	}
+
 	return 0, false
 }
 
@@ -225,10 +254,12 @@ func (m *Manager) tsWorkspaceSymbolsViaLSP(ctx context.Context, pattern string, 
 			if err != nil {
 				return nil, err
 			}
+
 			candidates := index.RelevantFiles(strings.Fields(pattern), budget)
 			if len(candidates) == 0 {
 				candidates = index.DefaultFiles(budget)
 			}
+
 			return candidates, nil
 		},
 		flatten: flattenTsDocumentSymbols,
@@ -293,24 +324,32 @@ func (m *Manager) tsCallHierarchyViaLSP(ctx context.Context, match semantic.TsSy
 	if err != nil {
 		return callHierarchyResult{}, err
 	}
+
 	items, err := prepareLSPCallHierarchy(ctx, client, tsFileURI, abs, m.tsLSPPosition(abs, match))
 	if err != nil {
 		return callHierarchyResult{}, err
 	}
+
 	if len(items) == 0 {
 		return callHierarchyResult{}, nil
 	}
+
 	if incoming {
 		var calls []LSPIncomingCall
+
 		if err := client.request(ctx, "callHierarchy/incomingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
 			return callHierarchyResult{}, err
 		}
+
 		return m.formatTsIncomingCalls(calls, pathFilter, match), nil
 	}
+
 	var calls []LSPOutgoingCall
+
 	if err := client.request(ctx, "callHierarchy/outgoingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
 		return callHierarchyResult{}, err
 	}
+
 	return m.formatTsOutgoingCalls(abs, match.Name, calls, pathFilter), nil
 }
 
@@ -325,10 +364,13 @@ func (m *Manager) tsDiagnosticsViaLSP(ctx context.Context, rel string) (string, 
 	if err != nil {
 		return "", err
 	}
+
 	if err := client.openFile(abs); err != nil {
 		return "", err
 	}
+
 	diagnostics := client.waitForDiagnostics(ctx, tsFileURI(abs), 2*time.Second)
+
 	return m.formatTsDiagnostics(abs, diagnostics), nil
 }
 
@@ -352,18 +394,23 @@ func (m *Manager) formatTsDiagnostics(abs string, diagnostics []tsDiagnostic) st
 	if len(diagnostics) == 0 {
 		return ""
 	}
+
 	display := m.displayPath(abs)
 	lines := make([]string, 0, len(diagnostics))
+
 	for _, diag := range diagnostics {
 		severity := tsSeverityName(diag.Severity)
 		line := diag.Range.Start.Line + 1
 		col := diag.Range.Start.Character + 1
 		message := strings.TrimSpace(diag.Message)
+
 		if code := stringifyTsDiagCode(diag.Code); code != "" {
 			message = fmt.Sprintf("%s [%s]", message, code)
 		}
+
 		lines = append(lines, fmt.Sprintf("%s:%d:%d %s: %s", display, line, col, severity, message))
 	}
+
 	return strings.Join(lines, "\n")
 }
 

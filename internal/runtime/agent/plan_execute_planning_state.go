@@ -95,11 +95,13 @@ func DerivePlanExecutePlanningActionState(brief workerruntime.WorkerRuntimeBrief
 	if reason, ok := planThenExecuteLowValueActionReason(req, brief, results, state); ok {
 		state.LowValueActions = []string{reason}
 	}
+
 	return state
 }
 
 func DerivePlanExecuteRecoverySurface(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, transport PlanExecutePlanningTransport) PlanExecuteRecoverySurface {
 	state := DerivePlanExecutePlanningState(brief, results, transport)
+
 	return PlanExecuteRecoverySurface{
 		Kind:  planExecuteRecoverySurfaceKind(brief, results, state),
 		State: state,
@@ -110,21 +112,27 @@ func planExecuteRecoverySurfaceKind(brief workerruntime.WorkerRuntimeBrief, resu
 	if !planThenExecutePlannerBrief(brief) {
 		return PlanExecuteRecoverySurfaceNone
 	}
+
 	if state.Mode == PlanExecutePlanningModeAnchorRefresh && len(state.RefreshPaths) > 0 {
 		return PlanExecuteRecoverySurfaceAnchorRefresh
 	}
+
 	if state.Mode == PlanExecutePlanningModeHistoryPending {
 		return PlanExecuteRecoverySurfaceHistoryPending
 	}
+
 	if planExecuteSourceSatisfiedTerminalEvidenceComplete(brief, results, state) {
 		return PlanExecuteRecoverySurfaceSourceSatisfiedTerminal
 	}
+
 	if state.Mode == PlanExecutePlanningModeSubmitCorrection {
 		return PlanExecuteRecoverySurfaceSubmitCorrection
 	}
+
 	if state.Mode == PlanExecutePlanningModeSubmitReady || planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
 		return PlanExecuteRecoverySurfaceSubmitReady
 	}
+
 	return PlanExecuteRecoverySurfaceNone
 }
 
@@ -132,9 +140,11 @@ func planExecuteSourceSatisfiedTerminalEvidenceComplete(brief workerruntime.Work
 	if !planThenExecuteSourceSatisfiedTerminalRequiredActive(results) || len(state.RefreshPaths) > 0 {
 		return false
 	}
+
 	if len(state.RequiredCoveragePaths) > 0 {
 		return len(planThenExecuteUnreadRequiredPaths(brief, results)) == 0
 	}
+
 	return len(state.EvidencePaths) > 0 || len(state.SelectedEditPaths) > 0
 }
 
@@ -154,12 +164,15 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 		state.Mode = PlanExecutePlanningModeReviewRepair
 		return state
 	}
+
 	if !planThenExecutePlannerBrief(brief) {
 		return state
 	}
+
 	if successfulSubmitPlanResultCount(results) > 0 {
 		state.Mode = PlanExecutePlanningModeDone
 		state.TerminalOptions = []string{"plan_artifact"}
+
 		return state
 	}
 
@@ -169,8 +182,10 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	state.EvidencePaths = sortedRunnerPathKeys(readPathsFromResults(results))
 	state.LastInvalidPaths = planThenExecuteLastInvalidSubmitPlanPaths(results)
 	state.TerminalOptions = []string{"source_satisfied", "blocker"}
+
 	unscopedEmptySubmitRecovery := planThenExecuteUnscopedEmptySubmitPlanRejected(brief, results)
 	candidateReadyRejection := planThenExecuteCandidateSourceReadyRejectionSeen(results) && !unscopedEmptySubmitRecovery
+
 	if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
 		state.RefreshPaths = planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt)
 	}
@@ -211,16 +226,20 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 			state.SelectedEditPaths = pending
 		}
 	}
+
 	if state.Mode == PlanExecutePlanningModeSubmitReady ||
 		state.Mode == PlanExecutePlanningModeSubmitCorrection ||
 		unscopedEmptySubmitRecovery ||
 		(state.Mode != PlanExecutePlanningModeHistoryPending &&
 			state.Mode != PlanExecutePlanningModeAnchorRefresh &&
 			len(state.SelectedEditPaths) > 0) {
+
 		state.TerminalOptions = append(state.TerminalOptions, "submit_plan")
 	}
+
 	state.TerminalOptions = uniquePhaseStrings(state.TerminalOptions)
 	state.applyProjection(transport)
+
 	return state
 }
 
@@ -252,6 +271,7 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		state.AllowedActionClasses = []string{actionRead, actionSearch, actionBlocker, actionSourceSatisfied}
 		state.InvalidActionClasses = []string{actionSubmitPlan, actionPerEditWrite, actionVerify, actionGenericProbe}
 		state.TerminalResponseShapes = planExecuteTerminalSourceSatisfiedOrQuestion()
+
 		if slices.Contains(state.TerminalOptions, "submit_plan") {
 			state.ParserVisibleTools = append(state.ParserVisibleTools, "submit_plan")
 			state.CallableTools = append(state.CallableTools, "submit_plan")
@@ -282,19 +302,23 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		state.PhaseID = turnPhaseSubmitReadyTextual
 		state.Phase = "submit_ready_textual"
 		state.DerivationReason = "plan_execute_source_ready"
+
 		if state.Mode == PlanExecutePlanningModeSubmitCorrection {
 			state.DerivationReason = "plan_execute_submit_plan_correction"
 		}
+
 		state.ParserVisibleTools = []string{"submit_plan"}
 		state.CallableTools = []string{"submit_plan"}
 		state.AllowedActionClasses = []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker}
 		state.InvalidActionClasses = []string{actionRead, actionSearch, actionVerify, actionPerEditWrite, actionGenericProbe, actionProseFinal}
 		state.TerminalResponseShapes = planExecuteTerminalSubmitPlanSourceSatisfiedQuestion()
+
 		if state.Mode == PlanExecutePlanningModeSubmitCorrection {
 			state.AllowedActionClasses = []string{actionSubmitPlan}
 			state.InvalidActionClasses = []string{actionRead, actionSearch, actionSourceSatisfied, actionBlocker, actionVerify, actionPerEditWrite, actionGenericProbe, actionProseFinal}
 			state.TerminalResponseShapes = planExecuteTerminalSubmitPlanOnly()
 		}
+
 		if planExecuteSubmitReadyNativeRequired(transport) {
 			state.PhaseID = turnPhaseSubmitReadyNativeRequired
 			state.Phase = "submit_ready_native"
@@ -302,6 +326,7 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 			state.TerminalResponseShapes = planExecuteTerminalSubmitPlanOnly()
 		}
 	}
+
 	state.ParserVisibleTools = uniquePhaseStrings(state.ParserVisibleTools)
 	state.CallableTools = uniquePhaseStrings(state.CallableTools)
 	state.AllowedActionClasses = uniquePhaseStrings(state.AllowedActionClasses)
@@ -317,9 +342,11 @@ func planExecuteTransportMode(transport PlanExecutePlanningTransport) PlanExecut
 	if transport.ForceNativeTools || (transport.SupportsNativeTools && !transport.TextualToolParser && !transport.ResponseFormatJSON) {
 		return PlanExecuteTransportModeNative
 	}
+
 	if transport.TerminalOnly || transport.ResponseFormatJSON {
 		return PlanExecuteTransportModeTextualJSON
 	}
+
 	return PlanExecuteTransportModeTextual
 }
 
@@ -327,20 +354,26 @@ func planThenExecuteHistoryPendingPaths(brief workerruntime.WorkerRuntimeBrief, 
 	if !mutationHistoryEvidenceRequired(brief) {
 		return nil
 	}
+
 	paths := uniqueSortedRunnerPaths(selected)
 	if len(paths) == 0 {
 		paths = planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")
 	}
+
 	var pending []string
+
 	for _, path := range paths {
 		if !concreteSourceEvidenceReadForPath(path, results) {
 			continue
 		}
+
 		if successfulGitHistoryResultForPath(path, results) {
 			continue
 		}
+
 		pending = append(pending, path)
 	}
+
 	return uniqueSortedRunnerPaths(pending)
 }
 
@@ -348,6 +381,7 @@ func planThenExecuteHistoryPendingEligible(brief workerruntime.WorkerRuntimeBrie
 	if len(state.RequiredCoveragePaths) == 0 {
 		return true
 	}
+
 	return len(planThenExecuteUnreadRequiredPaths(brief, results)) == 0
 }
 
@@ -355,24 +389,31 @@ func planThenExecuteSelectedEditPaths(brief workerruntime.WorkerRuntimeBrief, re
 	if len(state.RequiredCoveragePaths) > 0 {
 		return append([]string(nil), state.RequiredCoveragePaths...)
 	}
+
 	if len(state.LastInvalidPaths) > 0 {
 		return append([]string(nil), state.LastInvalidPaths...)
 	}
+
 	candidates := planThenExecuteSelectableEditPaths(brief, results, 16)
 	if len(candidates) == 0 {
 		return nil
 	}
+
 	evidence := normalizedRequiredEditPathSet(state.EvidencePaths)
+
 	var selected []string
+
 	for _, path := range candidates {
 		normalized := normalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
+
 		if _, ok := evidence[normalized]; ok {
 			selected = append(selected, normalized)
 		}
 	}
+
 	return uniqueSortedRunnerPaths(selected)
 }
 
@@ -382,11 +423,13 @@ func planThenExecuteSubmitPlanSkeletonPaths(state PlanExecutePlanningState) []st
 		if len(state.RequiredCoveragePaths) > 0 {
 			return uniqueSortedRunnerPaths(state.RequiredCoveragePaths)
 		}
+
 		return uniqueSortedRunnerPaths(state.LastInvalidPaths)
 	case PlanExecutePlanningModeSubmitReady:
 		if len(state.RequiredCoveragePaths) > 0 {
 			return uniqueSortedRunnerPaths(state.RequiredCoveragePaths)
 		}
+
 		return uniqueSortedRunnerPaths(state.SelectedEditPaths)
 	case PlanExecutePlanningModeRequiredSource:
 		return uniqueSortedRunnerPaths(state.RequiredCoveragePaths)
@@ -401,6 +444,7 @@ func planThenExecuteSelectableEditPaths(brief workerruntime.WorkerRuntimeBrief, 
 	if max <= 0 {
 		max = 4
 	}
+
 	paths := make([]string, 0, max)
 	seen := map[string]struct{}{}
 	add := func(path string) {
@@ -408,24 +452,31 @@ func planThenExecuteSelectableEditPaths(brief workerruntime.WorkerRuntimeBrief, 
 		if normalized == "" {
 			return
 		}
+
 		if _, ok := seen[normalized]; ok {
 			return
 		}
+
 		seen[normalized] = struct{}{}
 		paths = append(paths, normalized)
 	}
+
 	for _, path := range normalizedRequiredEditPaths(brief.AllowedEditPaths) {
 		add(path)
+
 		if len(paths) >= max {
 			return paths
 		}
 	}
+
 	for _, path := range contextPackCandidatePathsFromResults(results, max) {
 		add(path)
+
 		if len(paths) >= max {
 			return paths
 		}
 	}
+
 	return paths
 }
 
@@ -434,22 +485,27 @@ func planThenExecuteLastInvalidSubmitPlanPaths(results []workspace.ToolResult) [
 	if !ok {
 		return nil
 	}
+
 	pathSet := map[string]struct{}{}
+
 	for path := range submitPlanInvalidAnchorPaths(rejected) {
 		if normalized := normalizeRunnerPath(path); normalized != "" {
 			pathSet[normalized] = struct{}{}
 		}
 	}
+
 	for path := range submitPlanMissingRequiredPaths(rejected) {
 		if normalized := normalizeRunnerPath(path); normalized != "" {
 			pathSet[normalized] = struct{}{}
 		}
 	}
+
 	for path := range submitPlanMissingSourceGroundingPaths(rejected) {
 		if normalized := normalizeRunnerPath(path); normalized != "" {
 			pathSet[normalized] = struct{}{}
 		}
 	}
+
 	return sortedRunnerPathKeys(pathSet)
 }
 
@@ -460,24 +516,30 @@ func sortedRunnerPathKeys(paths map[string]struct{}) []string {
 			out = append(out, normalized)
 		}
 	}
+
 	return uniqueSortedRunnerPaths(out)
 }
 
 func uniqueSortedRunnerPaths(paths []string) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, len(paths))
+
 	for _, path := range paths {
 		normalized := normalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
+
 		if _, ok := seen[normalized]; ok {
 			continue
 		}
+
 		seen[normalized] = struct{}{}
 		out = append(out, normalized)
 	}
+
 	sort.Strings(out)
+
 	return out
 }
 
@@ -486,16 +548,21 @@ func planThenExecuteLowValueActionReason(req workspace.ToolRequest, brief worker
 		successfulSubmitPlanResultCount(results) > 0 ||
 		!isReadClassTool(req) ||
 		strings.TrimSpace(req.Tool) == "submit_plan" {
+
 		return "", false
 	}
+
 	if len(planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")) > 0 &&
 		len(planThenExecuteUnreadRequiredPaths(brief, results)) > 0 {
+
 		return "", false
 	}
+
 	target := normalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 	if target == "" && planThenExecuteReadRequestMissingConcreteTarget(req) {
 		return "candidate_read_missing_target", true
 	}
+
 	return "", false
 }
 
@@ -507,13 +574,16 @@ func planThenExecuteReadRequestMissingConcreteTarget(req workspace.ToolRequest) 
 			strings.TrimSpace(req.Handle) == ""
 	case "code_navigate":
 		capability := strings.ToLower(strings.TrimSpace(req.Capability))
+
 		capability = strings.ReplaceAll(capability, "-", "_")
+
 		switch capability {
 		case "find_symbol", "symbol", "symbol_lookup", "lookup",
 			"workspace_symbol", "workspace_symbols", "find_symbol_workspace":
 			return strings.TrimSpace(req.Pattern) == "" &&
 				strings.TrimSpace(req.Query) == ""
 		}
+
 		return strings.TrimSpace(req.Path) == "" &&
 			strings.TrimSpace(req.ID) == "" &&
 			strings.TrimSpace(req.Handle) == "" &&

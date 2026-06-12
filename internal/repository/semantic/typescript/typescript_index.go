@@ -120,6 +120,7 @@ func BuildTsIndexWithOptions(root string, opts indexsupport.IndexOptions) (*TsIn
 	if root == "" {
 		return nil, nil
 	}
+
 	scope := indexsupport.CleanIndexScope(opts.Scope)
 
 	index := &TsIndex{
@@ -136,63 +137,82 @@ func BuildTsIndexWithOptions(root string, opts indexsupport.IndexOptions) (*TsIn
 		if err := indexsupport.ContextErr(opts); err != nil {
 			return err
 		}
+
 		if walkErr != nil {
 			return walkErr
 		}
+
 		if d.IsDir() {
 			if !indexsupport.ShouldVisitDir(root, path, scope) {
 				return filepath.SkipDir
 			}
+
 			if _, skip := tsSkippedDirs[d.Name()]; skip && path != root {
 				return filepath.SkipDir
 			}
+
 			if discovery.ShouldSkipDirName(d.Name()) && path != root {
 				return filepath.SkipDir
 			}
+
 			return nil
 		}
+
 		if !isTsPath(path) {
 			return nil
 		}
+
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return nil
 		}
+
 		rel = filepath.ToSlash(filepath.Clean(rel))
 		if discovery.ShouldSkipRelFile(rel) {
 			return nil
 		}
+
 		if !indexsupport.PathInScope(rel, scope) {
 			return nil
 		}
+
 		paths = append(paths, rel)
 		byName[filepath.Base(rel)] = rel
 		byRel[rel] = rel
+
 		if opts.MaxFiles > 0 && len(paths) >= opts.MaxFiles {
 			return errStop
 		}
+
 		return nil
 	})
+
 	if err == errStop {
 		err = nil
 	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	if len(paths) == 0 {
 		return nil, nil
 	}
 
 	slices.Sort(paths)
+
 	for _, rel := range paths {
 		if err := indexsupport.ContextErr(opts); err != nil {
 			return nil, err
 		}
+
 		full := filepath.Join(root, filepath.FromSlash(rel))
+
 		contentBytes, err := os.ReadFile(full)
 		if err != nil {
 			continue
 		}
+
 		content := string(contentBytes)
 		imports := parseTsImports(rel, content, byName, byRel)
 		symbols := parseTsSymbols(rel, content)
@@ -206,6 +226,7 @@ func BuildTsIndexWithOptions(root string, opts indexsupport.IndexOptions) (*TsIn
 			IsJS:       isTsJavaScriptPath(rel),
 			SourceDir:  indexsupport.TopLevelDir(rel),
 		}
+
 		for _, symbol := range symbols {
 			switch symbol.Kind {
 			case "function":
@@ -214,29 +235,35 @@ func BuildTsIndexWithOptions(root string, opts indexsupport.IndexOptions) (*TsIn
 				file.Methods++
 			case "class":
 				file.Classes++
+
 				file.Types++
 			case "interface", "type", "enum", "namespace":
 				file.Types++
 			}
+
 			if symbol.Name == "main" || symbol.Name == "run" || symbol.Name == "start" {
 				file.HasMain = true
 			}
 		}
+
 		index.Files = append(index.Files, file)
 	}
 
 	slices.SortFunc(index.Files, func(a, b TsFile) int {
 		return cmp.Compare(a.Path, b.Path)
 	})
+
 	for _, file := range index.Files {
 		if len(file.Imports) == 0 {
 			continue
 		}
+
 		for _, imp := range file.Imports {
 			index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], imp)
 			index.Reverse[imp] = util.AppendUnique(index.Reverse[imp], file.Path)
 		}
 	}
+
 	return index, nil
 }
 
@@ -244,11 +271,13 @@ func (idx *TsIndex) Summary() string {
 	if idx == nil || len(idx.Files) == 0 {
 		return ""
 	}
+
 	return indexsupport.FormatIndexSummary(len(idx.Files), "TypeScript/JavaScript", idx.DefaultFiles(4), func(path string) (string, bool) {
 		file := idx.FileByPath(path)
 		if file == nil {
 			return "", false
 		}
+
 		return indexsupport.IntString(file.Funcs+file.Methods) + " funcs/methods, " +
 			indexsupport.IntString(file.Types) + " types, " +
 			indexsupport.IntString(len(file.Imports)) + " imports", true
@@ -261,19 +290,25 @@ func (idx *TsIndex) DefaultFiles(limit int) []string {
 		if file.HasMain {
 			score += 100
 		}
+
 		score += tsSourceDirPriority(file.SourceDir)
 		if file.IsDeclFile {
 			score -= 20
 		}
+
 		if file.IsTest {
 			score -= 30
 		}
+
 		score += min(file.Funcs+file.Methods*2, 24)
 		score += min(file.Types*2, 16)
+
 		base := strings.ToLower(filepath.Base(file.Path))
+
 		if base == "index.ts" || base == "index.tsx" || base == "index.js" || base == "index.jsx" || base == "main.ts" || base == "main.tsx" || base == "main.js" {
 			score += 18
 		}
+
 		return score
 	}, limit), limit)
 }
@@ -283,6 +318,7 @@ func (idx *TsIndex) RelevantFiles(terms []string, limit int) []string {
 	if len(normalized) == 0 {
 		return nil
 	}
+
 	return idx.uniqueRankedPaths(idx.rankFiles(func(file TsFile) int {
 		return indexsupport.RelevantFileScore(normalized, file.Path, file.Imports, tsSymbolSearchTerms(file.Symbols), tsSourceDirPriority(file.SourceDir), file.IsTest)
 	}, limit), limit)
@@ -292,12 +328,14 @@ func (idx *TsIndex) FileByPath(path string) *TsFile {
 	if idx == nil {
 		return nil
 	}
+
 	path = indexsupport.NormalizeLookupPath(path)
 	for i := range idx.Files {
 		if indexsupport.NormalizeLookupPath(idx.Files[i].Path) == path {
 			return &idx.Files[i]
 		}
 	}
+
 	return nil
 }
 
@@ -305,6 +343,7 @@ func (idx *TsIndex) findFiles(pattern string) []string {
 	if idx == nil {
 		return nil
 	}
+
 	return indexsupport.FindFilesExactPartial(idx.Files, func(file TsFile) string { return file.Path }, pattern)
 }
 
@@ -321,6 +360,7 @@ func tsSymbolSearchTerms(symbols []TsSymbol) []string {
 	for _, symbol := range symbols {
 		terms = append(terms, symbol.Name, symbol.Qualified)
 	}
+
 	return terms
 }
 
@@ -331,23 +371,29 @@ func parseTsImports(rel string, content string, byName map[string]string, byRel 
 	// Strip comments cheaply so regexes don't fire inside them.
 	stripped := stripTsComments(content)
 	rawMatches := make([]string, 0, 8)
+
 	for _, re := range []*regexp.Regexp{tsImportFromRe, tsImportSideRe, tsRequireRe, tsDynImportRe} {
 		for _, match := range re.FindAllStringSubmatch(stripped, -1) {
 			if len(match) < 2 {
 				continue
 			}
+
 			rawMatches = append(rawMatches, match[1])
 		}
 	}
+
 	includes := make([]string, 0, len(rawMatches))
 	for _, spec := range rawMatches {
 		resolved := resolveTsImport(rel, spec, byName, byRel)
 		if resolved == "" {
 			resolved = filepath.ToSlash(strings.TrimSpace(spec))
 		}
+
 		includes = util.AppendUnique(includes, resolved)
 	}
+
 	slices.Sort(includes)
+
 	return includes
 }
 
@@ -359,6 +405,7 @@ func resolveTsImport(sourceRel string, spec string, byName map[string]string, by
 	if spec == "" {
 		return ""
 	}
+
 	if !strings.HasPrefix(spec, ".") && !strings.HasPrefix(spec, "/") {
 		// Bare specifier — probably a package import. Fall through to basename
 		// lookup which will almost always fail for external packages; that's
@@ -366,8 +413,10 @@ func resolveTsImport(sourceRel string, spec string, byName map[string]string, by
 		if rel, ok := byName[filepath.Base(spec)]; ok {
 			return rel
 		}
+
 		return ""
 	}
+
 	sourceDir := filepath.ToSlash(filepath.Dir(sourceRel))
 	base := filepath.ToSlash(filepath.Clean(sourceDir + "/" + spec))
 	candidates := []string{
@@ -385,11 +434,13 @@ func resolveTsImport(sourceRel string, spec string, byName map[string]string, by
 		base + "/index.js",
 		base + "/index.jsx",
 	}
+
 	for _, candidate := range candidates {
 		if _, ok := byRel[candidate]; ok {
 			return candidate
 		}
 	}
+
 	return ""
 }
 
@@ -404,9 +455,11 @@ func parseTsSymbols(rel string, content string) []TsSymbol {
 		lineNo := i + 1
 		clean := stripTsLineComment(line)
 		trimmed := strings.TrimSpace(clean)
+
 		if trimmed == "" {
 			// still need to track brace depth so methods close out correctly
 			popClassFrames(&classStack, line, lineNo)
+
 			continue
 		}
 
@@ -417,6 +470,7 @@ func parseTsSymbols(rel string, content string) []TsSymbol {
 		// names — the LSP handles that.
 		if match := tsInterfaceRe.FindStringSubmatch(trimmed); len(match) == 2 && !inClass {
 			end := findTsBraceEnd(lines, i)
+
 			symbols = append(symbols, TsSymbol{
 				Name: match[1], Qualified: match[1], Kind: "interface",
 				Line: lineNo, Column: indexOfIdent(line, match[1]) + 1,
@@ -432,6 +486,7 @@ func parseTsSymbols(rel string, content string) []TsSymbol {
 			})
 		} else if match := tsEnumRe.FindStringSubmatch(trimmed); len(match) == 2 && !inClass {
 			end := findTsBraceEnd(lines, i)
+
 			symbols = append(symbols, TsSymbol{
 				Name: match[1], Qualified: match[1], Kind: "enum",
 				Line: lineNo, Column: indexOfIdent(line, match[1]) + 1,
@@ -440,6 +495,7 @@ func parseTsSymbols(rel string, content string) []TsSymbol {
 			})
 		} else if match := tsNamespaceRe.FindStringSubmatch(trimmed); len(match) == 2 && !inClass {
 			end := findTsBraceEnd(lines, i)
+
 			symbols = append(symbols, TsSymbol{
 				Name: match[1], Qualified: match[1], Kind: "namespace",
 				Line: lineNo, Column: indexOfIdent(line, match[1]) + 1,
@@ -448,6 +504,7 @@ func parseTsSymbols(rel string, content string) []TsSymbol {
 			})
 		} else if match := tsClassRe.FindStringSubmatch(trimmed); len(match) == 2 && !inClass {
 			end := findTsBraceEnd(lines, i)
+
 			symbols = append(symbols, TsSymbol{
 				Name: match[1], Qualified: match[1], Kind: "class",
 				Line: lineNo, Column: indexOfIdent(line, match[1]) + 1,
@@ -455,10 +512,12 @@ func parseTsSymbols(rel string, content string) []TsSymbol {
 				Exported: strings.Contains(trimmed, "export"), SourceFile: rel,
 			})
 			classStack = append(classStack, classFrame{name: match[1], startLine: lineNo, depth: tsBraceDelta(line)})
+
 			continue
 		} else if match := tsFunctionRe.FindStringSubmatch(trimmed); len(match) == 2 && !inClass {
 			end := findTsBraceEnd(lines, i)
 			calls := extractTsCalls(lines, lineNo, end)
+
 			symbols = append(symbols, TsSymbol{
 				Name: match[1], Qualified: match[1], Kind: "function",
 				Line: lineNo, Column: indexOfIdent(line, match[1]) + 1,
@@ -470,7 +529,9 @@ func parseTsSymbols(rel string, content string) []TsSymbol {
 			if end < lineNo {
 				end = lineNo
 			}
+
 			calls := extractTsCalls(lines, lineNo, end)
+
 			symbols = append(symbols, TsSymbol{
 				Name: match[1], Qualified: match[1], Kind: "function",
 				Line: lineNo, Column: indexOfIdent(line, match[1]) + 1,
@@ -493,6 +554,7 @@ func parseTsSymbols(rel string, content string) []TsSymbol {
 					calls := extractTsCalls(lines, lineNo, end)
 					class := classStack[len(classStack)-1]
 					qualified := class.name + "." + name
+
 					symbols = append(symbols, TsSymbol{
 						Name: name, Qualified: qualified, Kind: "method",
 						Scope: class.name, Line: lineNo,
@@ -513,8 +575,10 @@ func parseTsSymbols(rel string, content string) []TsSymbol {
 		if c := cmp.Compare(a.SourceFile, b.SourceFile); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Line, b.Line)
 	})
+
 	return symbols
 }
 
@@ -528,7 +592,9 @@ func popClassFrames(stack *[]classFrame, line string, lineNo int) {
 	delta := tsBraceDelta(stripTsLineComment(line))
 	if len(*stack) > 0 && delta != 0 {
 		top := &(*stack)[len(*stack)-1]
+
 		top.depth += delta
+
 		if top.depth <= 0 {
 			*stack = (*stack)[:len(*stack)-1]
 		}
@@ -544,12 +610,14 @@ func extractTsCalls(lines []string, startLine int, endLine int) []TsCall {
 func findTsBraceEnd(lines []string, startIdx int) int {
 	depth := 0
 	seen := false
+
 	for i := startIdx; i < len(lines); i++ {
 		line := stripTsLineComment(lines[i])
 		for _, r := range line {
 			switch r {
 			case '{':
 				depth++
+
 				seen = true
 			case '}':
 				if seen {
@@ -561,11 +629,13 @@ func findTsBraceEnd(lines []string, startIdx int) int {
 			}
 		}
 	}
+
 	return startIdx + 1
 }
 
 func tsBraceDelta(line string) int {
 	delta := 0
+
 	for _, r := range line {
 		switch r {
 		case '{':
@@ -574,6 +644,7 @@ func tsBraceDelta(line string) int {
 			delta--
 		}
 	}
+
 	return delta
 }
 
@@ -581,6 +652,7 @@ func stripTsLineComment(line string) string {
 	if idx := strings.Index(line, "//"); idx >= 0 {
 		return line[:idx]
 	}
+
 	return line
 }
 
@@ -589,7 +661,9 @@ func stripTsLineComment(line string) string {
 // will be clobbered, but those are astronomically rare in real code.
 func stripTsComments(content string) string {
 	var b strings.Builder
+
 	b.Grow(len(content))
+
 	i := 0
 	for i < len(content) {
 		if i+1 < len(content) && content[i] == '/' && content[i+1] == '*' {
@@ -597,20 +671,28 @@ func stripTsComments(content string) string {
 			if end < 0 {
 				break
 			}
+
 			i += end + 4
+
 			continue
 		}
+
 		if i+1 < len(content) && content[i] == '/' && content[i+1] == '/' {
 			end := strings.Index(content[i:], "\n")
 			if end < 0 {
 				break
 			}
+
 			i += end
+
 			continue
 		}
+
 		b.WriteByte(content[i])
+
 		i++
 	}
+
 	return b.String()
 }
 
@@ -618,6 +700,7 @@ func indexOfIdent(line string, name string) int {
 	if idx := strings.Index(line, name); idx >= 0 {
 		return idx
 	}
+
 	return 0
 }
 
@@ -628,8 +711,10 @@ func isTsPath(path string) bool {
 			return true
 		}
 	}
+
 	ext := strings.ToLower(filepath.Ext(path))
 	_, ok := tsFileExtensions[ext]
+
 	return ok
 }
 
@@ -640,6 +725,7 @@ func isTsDeclPath(path string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -655,9 +741,11 @@ func isTsJavaScriptPath(path string) bool {
 func looksLikeTsTestPath(path string) bool {
 	lower := strings.ToLower(filepath.ToSlash(path))
 	base := filepath.Base(lower)
+
 	if strings.Contains(lower, "/__tests__/") || strings.Contains(lower, "/test/") || strings.Contains(lower, "/tests/") {
 		return true
 	}
+
 	return strings.Contains(base, ".test.") || strings.Contains(base, ".spec.")
 }
 
@@ -687,6 +775,7 @@ func isTsMethodKeyword(name string) bool {
 	case "if", "for", "while", "switch", "return", "typeof", "catch", "throw", "new", "delete", "await", "yield", "function", "class", "interface", "type", "enum", "namespace", "import", "export", "const", "let", "var", "do", "else", "case":
 		return true
 	}
+
 	return false
 }
 
@@ -695,5 +784,6 @@ func isTsJSBuiltinKeyword(name string) bool {
 	case "if", "for", "while", "switch", "return", "typeof", "catch", "throw", "new", "delete", "await", "yield", "function", "class", "do", "else", "case":
 		return true
 	}
+
 	return false
 }

@@ -100,7 +100,9 @@ func NewProgressState(sessionID string, prompt string, promptFile string, requir
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+
 	stamp := now.UTC().Format(time.RFC3339Nano)
+
 	return ProgressState{
 		SchemaVersion:     ProgressStateSchemaVersion,
 		SessionID:         strings.TrimSpace(sessionID),
@@ -119,6 +121,7 @@ func (s *ProgressState) SetWriteAllowedPaths(paths []string) {
 	if s == nil {
 		return
 	}
+
 	s.WriteAllowedPaths = mergePlanExecutePaths(paths)
 	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 }
@@ -127,6 +130,7 @@ func (s *ProgressState) SetWriteAllowedEnvelope(paths []string, explicit bool) {
 	if s == nil {
 		return
 	}
+
 	s.WriteAllowedPaths = mergePlanExecutePaths(paths)
 	s.WriteAllowedExplicit = explicit
 	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
@@ -136,6 +140,7 @@ func (s *ProgressState) SetScopeContractID(contractID string) {
 	if s == nil {
 		return
 	}
+
 	contractID = strings.TrimSpace(contractID)
 	s.ScopeContractID = contractID
 	s.ScopeContractHash = contractID
@@ -151,41 +156,53 @@ func SaveProgressState(root string, state *ProgressState) (string, error) {
 	if state == nil {
 		return "", fmt.Errorf("plan-execute progress state is nil")
 	}
+
 	state.SessionID = strings.TrimSpace(state.SessionID)
 	if !validProgressSessionID(state.SessionID) {
 		return "", fmt.Errorf("invalid plan-execute progress session id %q", state.SessionID)
 	}
+
 	if state.SchemaVersion == "" {
 		state.SchemaVersion = ProgressStateSchemaVersion
 	}
+
 	if state.SchemaVersion != ProgressStateSchemaVersion {
 		return "", fmt.Errorf("unsupported plan-execute progress schema %q", state.SchemaVersion)
 	}
+
 	sanitizeProgressState(state)
+
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if strings.TrimSpace(state.CreatedAt) == "" {
 		state.CreatedAt = now
 	}
+
 	state.UpdatedAt = now
+
 	fullPath, relPath, err := progressStatePath(root, state.SessionID)
 	if err != nil {
 		return "", err
 	}
+
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		return "", fmt.Errorf("mkdir plan-execute progress dir: %w", err)
 	}
+
 	body, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal plan-execute progress state: %w", err)
 	}
+
 	tmpPath := fullPath + ".tmp"
 	if err := os.WriteFile(tmpPath, append(body, '\n'), 0o600); err != nil {
 		return "", fmt.Errorf("write plan-execute progress state: %w", err)
 	}
+
 	if err := os.Rename(tmpPath, fullPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("replace plan-execute progress state: %w", err)
 	}
+
 	return relPath, nil
 }
 
@@ -194,29 +211,38 @@ func TryLoadProgressState(root string, resumeID string) (ProgressState, string, 
 	if err != nil {
 		return ProgressState{}, "", false, err
 	}
+
 	body, err := os.ReadFile(fullPath)
 	if os.IsNotExist(err) {
 		return ProgressState{}, relPath, false, nil
 	}
+
 	if err != nil {
 		return ProgressState{}, relPath, false, fmt.Errorf("read plan-execute progress state %s: %w", relPath, err)
 	}
+
 	var state ProgressState
+
 	if err := json.Unmarshal(body, &state); err != nil {
 		return ProgressState{}, relPath, false, fmt.Errorf("decode plan-execute progress state %s: %w", relPath, err)
 	}
+
 	if state.SchemaVersion != "" && state.SchemaVersion != ProgressStateSchemaVersion {
 		return ProgressState{}, relPath, false, fmt.Errorf("unsupported plan-execute progress schema %q in %s", state.SchemaVersion, relPath)
 	}
+
 	if strings.TrimSpace(state.SessionID) == "" {
 		state.SessionID = strings.TrimSpace(resumeID)
 	}
+
 	if !validProgressSessionID(state.SessionID) {
 		return ProgressState{}, relPath, false, fmt.Errorf("invalid plan-execute progress session id %q in %s", state.SessionID, relPath)
 	}
+
 	if state.SchemaVersion == "" {
 		state.SchemaVersion = ProgressStateSchemaVersion
 	}
+
 	return state, relPath, true, nil
 }
 
@@ -225,9 +251,11 @@ func LoadProgressState(root string, resumeID string) (ProgressState, string, err
 	if err != nil {
 		return ProgressState{}, relPath, err
 	}
+
 	if !found {
 		return ProgressState{}, relPath, fmt.Errorf("plan-execute progress state %s does not exist", relPath)
 	}
+
 	return state, relPath, nil
 }
 
@@ -240,6 +268,7 @@ func (s *ProgressState) MarkPlanLoaded(root string, planPath string, plan worksp
 	s.ChangedPaths = planChangedPaths(plan)
 	s.TotalEdits = len(plan.Edits)
 	s.ReviewBaseline = baseline
+
 	if s.Executor.Total == 0 {
 		s.Executor.Total = len(plan.Edits)
 	}
@@ -256,15 +285,19 @@ func (s *ProgressState) MarkEditProgress(step int, total int, path string, succe
 	if step <= 0 {
 		return
 	}
+
 	s.Phase = ProgressPhaseExecutor
 	s.Status = ProgressStatusRunning
 	s.Executor.Status = ProgressStatusRunning
 	s.TotalEdits = total
 	s.Executor.Total = total
+
 	status := ProgressStatusCompleted
+
 	if !succeeded {
 		status = ProgressStatusFailed
 	}
+
 	edit := ProgressEdit{
 		Step:      step,
 		Total:     total,
@@ -273,9 +306,11 @@ func (s *ProgressState) MarkEditProgress(step int, total int, path string, succe
 		UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	index := step - 1
+
 	for len(s.Edits) <= index {
 		s.Edits = append(s.Edits, ProgressEdit{Step: len(s.Edits) + 1, Total: total})
 	}
+
 	s.Edits[index] = edit
 }
 
@@ -294,6 +329,7 @@ func (s *ProgressState) MarkExecutorComplete(report ExecutorPhaseReport, runErr 
 		VerificationRejects:  append([]VerificationReject(nil), report.VerificationRejects...),
 		Handoff:              report.Handoff,
 	}
+
 	if runErr != nil {
 		s.Status = ProgressStatusFailed
 		if ExecutorSourceSanityFailed(report, runErr) {
@@ -306,9 +342,12 @@ func (s *ProgressState) MarkExecutorComplete(report ExecutorPhaseReport, runErr 
 			s.Executor.Status = ProgressStatusFailed
 			s.FailureKind = "executor_failed"
 		}
+
 		s.FailureReason = sanitizeProgressReason(runErr.Error())
+
 		return
 	}
+
 	s.Status = ProgressStatusCompleted
 	s.FailureKind = ""
 	s.FailureReason = ""
@@ -316,6 +355,7 @@ func (s *ProgressState) MarkExecutorComplete(report ExecutorPhaseReport, runErr 
 
 func (s *ProgressState) MarkReviewStarted(reviewSessionID string) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+
 	s.Phase = ProgressPhaseReviewRepair
 	s.Status = ProgressStatusRunning
 	s.Review.SessionID = strings.TrimSpace(reviewSessionID)
@@ -334,33 +374,42 @@ func (s *ProgressState) MarkReviewComplete(report ReviewRepairPhaseReport, revie
 	s.Review.ReasonClass = report.ReasonClass
 	s.Review.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	s.Review.Status = strings.TrimSpace(report.Status)
+
 	if s.Review.Status == "" {
 		s.Review.Status = ProgressStatusCompleted
 	}
+
 	if reviewErr != nil {
 		s.Status = ProgressStatusFailed
 		s.Review.Status = ProgressStatusFailed
 		s.Review.Error = sanitizeProgressReason(reviewErr.Error())
 		s.FailureKind = "review_repair_failed"
 		s.FailureReason = sanitizeProgressReason(reviewErr.Error())
+
 		return
 	}
+
 	if strings.Contains(strings.ToLower(report.Status), "degraded") {
 		s.Status = ProgressStatusDegraded
 		s.FailureKind = firstProgressNonEmptyString(report.ReasonClass, "review_repair_degraded")
 		s.FailureReason = sanitizeProgressReason(report.Status)
+
 		return
 	}
+
 	if strings.Contains(strings.ToLower(report.Status), "blocked") {
 		s.Status = ProgressStatusBlocked
 		s.FailureKind = "review_repair_blocked"
 		s.FailureReason = sanitizeProgressReason(s.Review.Status)
+
 		return
 	}
+
 	if report.Skipped {
 		s.Status = ProgressStatusSkipped
 		return
 	}
+
 	s.Status = ProgressStatusCompleted
 	s.FailureKind = ""
 	s.FailureReason = ""
@@ -381,12 +430,15 @@ func (s ProgressState) ReviewResumeReady() bool {
 	if strings.TrimSpace(s.PlanPath) == "" {
 		return false
 	}
+
 	if s.Executor.Status != ProgressStatusCompleted {
 		return false
 	}
+
 	if len(s.ChangedPaths) == 0 && s.TotalEdits == 0 {
 		return false
 	}
+
 	switch s.Phase {
 	case ProgressPhaseExecutor:
 		return s.Status == ProgressStatusCompleted ||
@@ -402,6 +454,7 @@ func (s ProgressState) ReviewResumeReady() bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -425,6 +478,7 @@ func (s ProgressState) ResolvedPlanPath(root string) string {
 	if planPath == "" || filepath.IsAbs(planPath) {
 		return planPath
 	}
+
 	return filepath.Join(root, filepath.FromSlash(planPath))
 }
 
@@ -438,71 +492,93 @@ func ProgressStateEventFields(state ProgressState, statePath string) map[string]
 	if state.PlanPath != "" {
 		fields["plan_path"] = state.PlanPath
 	}
+
 	if state.FailureKind != "" {
 		fields["failure_kind"] = state.FailureKind
 	}
+
 	if state.FailureReason != "" {
 		fields["failure_reason"] = state.FailureReason
 	}
+
 	if len(state.RequiredEditPaths) > 0 {
 		fields["required_edit_paths"] = append([]string(nil), state.RequiredEditPaths...)
 	}
+
 	if len(state.AllowedEditPaths) > 0 {
 		fields["allowed_edit_paths"] = append([]string(nil), state.AllowedEditPaths...)
 	}
+
 	if len(state.WriteAllowedPaths) > 0 {
 		fields["write_allowed_paths"] = append([]string(nil), state.WriteAllowedPaths...)
 	}
+
 	if state.WriteAllowedExplicit {
 		fields["write_allowed_explicit"] = true
 	}
+
 	if state.ScopeContractID != "" {
 		fields["scope_contract_id"] = state.ScopeContractID
 	}
+
 	if state.ScopeContractHash != "" {
 		fields["scope_contract_hash"] = state.ScopeContractHash
 	}
+
 	if len(state.AcceptanceEvidenceIDs) > 0 {
 		fields["acceptance_evidence_ids"] = append([]string(nil), state.AcceptanceEvidenceIDs...)
 	}
+
 	if len(state.ChangedPaths) > 0 {
 		fields["changed_paths"] = append([]string(nil), state.ChangedPaths...)
 	}
+
 	if state.TotalEdits > 0 {
 		fields["total_edits"] = state.TotalEdits
 	}
+
 	if state.Executor.Succeeded > 0 {
 		fields["executor_succeeded"] = state.Executor.Succeeded
 	}
+
 	if state.Executor.Failed > 0 {
 		fields["executor_failed"] = state.Executor.Failed
 	}
+
 	if state.Review.Status != "" {
 		fields["review_status"] = state.Review.Status
 	}
+
 	if state.Review.Status == ProgressStatusSkipped {
 		fields["review_repair_skipped"] = true
 	}
+
 	if state.Review.Repairs > 0 {
 		fields["review_repairs"] = state.Review.Repairs
 	}
+
 	if obligations := state.EditSetObligations.Normalized(); len(obligations) > 0 {
 		fields["edit_set_obligations"] = obligations
 		fields["edit_set_obligation_count"] = len(obligations)
 	}
+
 	return fields
 }
 
 func progressStatePath(root string, sessionID string) (string, string, error) {
 	root = strings.TrimSpace(root)
 	sessionID = strings.TrimSpace(sessionID)
+
 	if root == "" {
 		return "", "", fmt.Errorf("workspace root is empty")
 	}
+
 	if !validProgressSessionID(sessionID) {
 		return "", "", fmt.Errorf("invalid plan-execute progress session id %q", sessionID)
 	}
+
 	relPath := filepath.ToSlash(filepath.Join(".idiom", "plan-execute", "sessions", sessionID+".json"))
+
 	return filepath.Join(root, filepath.FromSlash(relPath)), relPath, nil
 }
 
@@ -510,6 +586,7 @@ func validProgressSessionID(sessionID string) bool {
 	if sessionID == "" || len(sessionID) > 128 {
 		return false
 	}
+
 	for _, r := range sessionID {
 		switch {
 		case r >= 'a' && r <= 'z':
@@ -520,6 +597,7 @@ func validProgressSessionID(sessionID string) bool {
 			return false
 		}
 	}
+
 	return !strings.Contains(sessionID, "..")
 }
 
@@ -528,14 +606,17 @@ func progressRelPath(root string, path string) string {
 	if path == "" {
 		return ""
 	}
+
 	if root != "" {
 		if rel, err := filepath.Rel(root, path); err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
 			return filepath.ToSlash(filepath.Clean(rel))
 		}
 	}
+
 	if filepath.IsAbs(path) {
 		return filepath.ToSlash(filepath.Clean(path))
 	}
+
 	return filepath.ToSlash(filepath.Clean(path))
 }
 
@@ -552,10 +633,12 @@ func sanitizeProgressState(state *ProgressState) {
 	state.EditSetObligations = state.EditSetObligations.Normalized()
 	state.Executor.Failures = sanitizeProgressReasons(state.Executor.Failures)
 	state.Review.Error = sanitizeProgressReason(state.Review.Error)
+
 	for i := range state.Executor.SourceSanity {
 		state.Executor.SourceSanity[i].Summary = sanitizeProgressReason(state.Executor.SourceSanity[i].Summary)
 		state.Executor.SourceSanity[i].Error = sanitizeProgressReason(state.Executor.SourceSanity[i].Error)
 	}
+
 	for i := range state.Executor.Verification {
 		state.Executor.Verification[i].Summary = sanitizeProgressReason(state.Executor.Verification[i].Summary)
 		state.Executor.Verification[i].Error = sanitizeProgressReason(state.Executor.Verification[i].Error)
@@ -569,6 +652,7 @@ func sanitizeProgressReasons(values []string) []string {
 			out = append(out, sanitized)
 		}
 	}
+
 	return out
 }
 
@@ -582,6 +666,7 @@ func firstProgressNonEmptyString(values ...string) string {
 			return strings.TrimSpace(value)
 		}
 	}
+
 	return ""
 }
 
@@ -590,11 +675,13 @@ func truncateProgressReason(reason string) string {
 	if len(reason) <= 2000 {
 		return reason
 	}
+
 	for i := range reason {
 		if i >= 2000 {
 			return strings.TrimSpace(reason[:i]) + fmt.Sprintf(" [truncated %d bytes]", len(reason)-i)
 		}
 	}
+
 	return reason
 }
 
@@ -602,5 +689,6 @@ func mergeProgressPaths(primary []string, fallback []string) []string {
 	if len(primary) == 0 {
 		return mergePlanExecutePaths(fallback)
 	}
+
 	return mergePlanExecutePaths(primary)
 }

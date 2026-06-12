@@ -19,6 +19,7 @@ func TestWritePreimagePathsExtractsDirectWriteTargets(t *testing.T) {
 		if err != nil || !ok {
 			t.Fatalf("%s extraction failed: ok=%v err=%v", tool, ok, err)
 		}
+
 		if !slices.Equal(paths, []string{"README.md"}) {
 			t.Fatalf("%s paths = %#v", tool, paths)
 		}
@@ -35,9 +36,11 @@ func TestWritePreimagePathsExtractsApplyPatchTargets(t *testing.T) {
 		"+new\n" +
 		"*** End Patch"
 	paths, ok, err := WritePreimagePaths(ToolRequest{Tool: ToolNameApplyPatch, Content: patch})
+
 	if err != nil || !ok {
 		t.Fatalf("apply_patch extraction failed: ok=%v err=%v", ok, err)
 	}
+
 	if !slices.Equal(paths, []string{"a.txt", "b.txt"}) {
 		t.Fatalf("apply_patch paths = %#v", paths)
 	}
@@ -56,6 +59,7 @@ func TestWritePreimagePathsExtractsGoMoveTargets(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("go_move_declarations extraction failed: ok=%v err=%v", ok, err)
 	}
+
 	if !slices.Equal(paths, []string{"source.go", "dest.go", "other.go"}) {
 		t.Fatalf("go_move_declarations paths = %#v", paths)
 	}
@@ -66,6 +70,7 @@ func TestWritePreimagePathsAllowsWriteToolsWithoutFilePreimage(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("mkdir classification failed: ok=%v err=%v", ok, err)
 	}
+
 	if len(paths) != 0 {
 		t.Fatalf("mkdir should not produce file preimage paths, got %#v", paths)
 	}

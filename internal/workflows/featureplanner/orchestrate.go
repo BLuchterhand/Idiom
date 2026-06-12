@@ -37,22 +37,27 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 	if runner == nil {
 		return RunResult{State: state}, fmt.Errorf("feature planner prompt runner is nil")
 	}
+
 	if state.PlanningLoop.MaxIterations <= 0 {
 		state.PlanningLoop.MaxIterations = firstPositive(opts.MaxPlanningIterations, 3)
 	}
+
 	var events []Event
+
 	if strings.TrimSpace(opts.ResumeAnswer) != "" {
 		events = append(events, answerOpenQuestion(&state, opts.ResumeAnswer)...)
 		if state.Status == FeatureStatePlanningQuestion {
 			return RunResult{State: state, Events: events}, nil
 		}
 	}
+
 	if opts.ReconcileActiveRuns != nil && len(state.ActiveRuns) > 0 {
 		events = append(events, opts.ReconcileActiveRuns(&state)...)
 		if state.Status != FeatureStateDispatching {
 			return RunResult{State: state, Events: events}, nil
 		}
 	}
+
 	if len(state.ActiveRuns) > 0 {
 		return RunResult{
 			State: state,
@@ -63,12 +68,15 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 			}),
 		}, nil
 	}
+
 	if shouldResumeDispatch(state) {
 		events = append(events, DispatchReadyAtoms(&state, opts.MaxAtoms, runner)...)
 		return RunResult{State: state, Events: events}, nil
 	}
+
 	if state.PlanningLoop.Iteration >= state.PlanningLoop.MaxIterations {
 		MarkPlanningStuck(&state, "")
+
 		return RunResult{
 			State:  state,
 			Events: []Event{{Type: "idiom.feature_planner.planning_stuck", SessionID: state.SessionID, Message: state.PlanningLoop.StuckReason}},
@@ -76,59 +84,74 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 	}
 
 	plannerPrompt := BuildPlannerPrompt(opts.Prompt, state, opts.ProductWorkflowBrief)
+
 	answer, err := runner(plannerPrompt, string(autonomy.TaskFamilyFeaturePlannerPlanner))
 	if err != nil {
 		state.Status = FeatureStateFailed
 		state.LastError = err.Error()
+
 		return RunResult{State: state}, err
 	}
+
 	parsed, err := ParsePlannerOutput(answer)
 	if err != nil {
 		state.Status = FeatureStateMalformedOutput
 		state.PlanningLoop.State = FeatureStateMalformedOutput
 		state.LastError = err.Error()
+
 		return RunResult{
 			State:  state,
 			Events: []Event{{Type: "idiom.feature_planner.malformed_structured_output", SessionID: state.SessionID, Message: err.Error()}},
 		}, nil
 	}
+
 	if parsed.Kind == ToolSubmitFeaturePlan && opts.ProductWorkflowBrief != nil {
 		PreserveSourceSatisfiedGate(&parsed.Plan, opts.Prompt)
+
 		if err := ValidatePlanProductWorkflowContext(parsed.Plan, *opts.ProductWorkflowBrief, opts.WorkspaceRoot); err != nil {
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
+
 			return RunResult{
 				State:  state,
 				Events: []Event{{Type: "idiom.feature_planner.product_context_blocked", SessionID: state.SessionID, Message: err.Error()}},
 			}, nil
 		}
+
 		parsed.Plan = NormalizePlanProductWorkflowContext(parsed.Plan, *opts.ProductWorkflowBrief, opts.WorkspaceRoot)
 		if err := ValidateSubmittedPlanAgainstLockedContract(state.Plan, parsed.Plan, state.AuthorityDeltas); err != nil {
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
+
 			return RunResult{
 				State:  state,
 				Events: []Event{{Type: "idiom.feature_planner.plan_contract_blocked", SessionID: state.SessionID, Message: err.Error()}},
 			}, nil
 		}
+
 		StampPlanAuthorityContract(&parsed.Plan, state.AuthorityDeltas)
 	}
+
 	if parsed.Kind == ToolSubmitFeaturePlan && opts.ProductWorkflowBrief == nil {
 		PreserveSourceSatisfiedGate(&parsed.Plan, opts.Prompt)
+
 		if err := ValidateSubmittedPlanAgainstLockedContract(state.Plan, parsed.Plan, state.AuthorityDeltas); err != nil {
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
+
 			return RunResult{
 				State:  state,
 				Events: []Event{{Type: "idiom.feature_planner.plan_contract_blocked", SessionID: state.SessionID, Message: err.Error()}},
 			}, nil
 		}
+
 		for _, delta := range StandalonePromptNewFileAuthorityDeltas(parsed.Plan, opts.Prompt, opts.WorkspaceRoot, opts.Now) {
 			upsertPlanAuthorityDelta(&state, delta)
 		}
+
 		contract := StampPlanAuthorityContract(&parsed.Plan, state.AuthorityDeltas)
 		if err := ValidatePlanStandaloneWorkspaceContext(parsed.Plan, StandaloneWorkspaceContext{
 			WorkspaceRoot: opts.WorkspaceRoot,
@@ -137,34 +160,42 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
+
 			return RunResult{
 				State:  state,
 				Events: []Event{{Type: "idiom.feature_planner.standalone_context_blocked", SessionID: state.SessionID, Message: err.Error()}},
 			}, nil
 		}
 	}
+
 	if parsed.Kind == ToolSourceSatisfied {
 		if err := ValidateSourceSatisfiedWorkspaceContext(parsed.SourceSatisfied, opts.WorkspaceRoot); err != nil {
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
+
 			return RunResult{
 				State:  state,
 				Events: []Event{{Type: "idiom.feature_planner.source_satisfied_rejected", SessionID: state.SessionID, Message: err.Error()}},
 			}, nil
 		}
 	}
+
 	events = append(events, ApplyPlannerOutput(&state, parsed, opts.Now)...)
 	if state.Status != FeatureStateDispatching {
 		return RunResult{State: state, Events: events}, nil
 	}
+
 	dispatchEvents := DispatchReadyAtoms(&state, opts.MaxAtoms, runner)
+
 	events = append(events, dispatchEvents...)
+
 	return RunResult{State: state, Events: events}, nil
 }
 
 func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWorkflowBrief) string {
 	var b strings.Builder
+
 	b.WriteString("You are the feature planner. Produce exactly one JSON object.\n")
 	b.WriteString("Valid tools: submit_feature_plan, source_satisfied, or ask_planner_question.\n")
 	b.WriteString("For submit_feature_plan, return the FeaturePlan object itself with tool=\"submit_feature_plan\" at the top level. Do not nest the plan under a plan, payload, arguments, or input field.\n")
@@ -180,58 +211,76 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 
 		if len(brief.PRDRequirements) > 0 {
 			b.WriteString("PRD Requirements:\n")
+
 			for _, req := range brief.PRDRequirements {
 				fmt.Fprintf(&b, "  - %s [%s]: %s", req.ID, req.Priority, req.Statement)
+
 				if len(req.Obligations) > 0 {
 					fmt.Fprintf(&b, " (TDD obligations: %s)", strings.Join(req.Obligations, ", "))
 				}
+
 				b.WriteString("\n")
 			}
 		}
+
 		if len(brief.AcceptedADRIDs) > 0 {
 			fmt.Fprintf(&b, "Accepted ADRs: %s\n", strings.Join(brief.AcceptedADRIDs, ", "))
 		}
+
 		if len(brief.AcceptedADRPaths) > 0 {
 			fmt.Fprintf(&b, "Accepted ADR paths: %s\n", strings.Join(brief.AcceptedADRPaths, ", "))
 		}
+
 		if len(brief.TDDObligations) > 0 {
 			b.WriteString("TDD Obligations:\n")
+
 			for _, obl := range brief.TDDObligations {
 				fmt.Fprintf(&b, "  - %s: %s (command: %s, required_before: %s, status: %s)\n", obl.ID, obl.Behavior, obl.Command, obl.RequiredBefore, obl.Status)
 			}
 		}
+
 		if len(brief.RequiredBehavior) > 0 {
 			fmt.Fprintf(&b, "Required behavior: %s\n", strings.Join(brief.RequiredBehavior, "; "))
 		}
+
 		if len(brief.Acceptance) > 0 {
 			fmt.Fprintf(&b, "Acceptance: %s\n", strings.Join(brief.Acceptance, "; "))
 		}
+
 		if len(brief.Decisions) > 0 {
 			b.WriteString("Accepted decisions:\n")
+
 			for _, decision := range brief.Decisions {
 				fmt.Fprintf(&b, "  - %s\n", decision)
 			}
 		}
+
 		if len(brief.FilesToModify) > 0 {
 			fmt.Fprintf(&b, "Files to modify: %s\n", strings.Join(brief.FilesToModify, ", "))
 		} else {
 			b.WriteString("Files to modify: none supplied by product workflow localization.\n")
 		}
+
 		if len(brief.ContextEvidencePaths) > 0 {
 			fmt.Fprintf(&b, "Source/context evidence paths: %s\n", strings.Join(brief.ContextEvidencePaths, ", "))
 		}
+
 		if len(brief.AuthorizedNewPackageRoots) > 0 {
 			fmt.Fprintf(&b, "Authorized new package roots: %s\n", strings.Join(brief.AuthorizedNewPackageRoots, ", "))
 		}
+
 		if len(brief.Tests) > 0 {
 			fmt.Fprintf(&b, "Tests: %s\n", strings.Join(brief.Tests, ", "))
 		}
+
 		if len(brief.Constraints) > 0 {
 			fmt.Fprintf(&b, "Constraints: %s\n", strings.Join(brief.Constraints, "; "))
 		}
+
 		if len(brief.Blockers) > 0 {
 			fmt.Fprintf(&b, "Blockers: %s\n", strings.Join(brief.Blockers, "; "))
 		}
+
 		if len(brief.CoverageBlockers) > 0 {
 			fmt.Fprintf(&b, "Coverage blockers: %s\n", strings.Join(brief.CoverageBlockers, "; "))
 		}
@@ -241,10 +290,12 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 			b.WriteString(productSubmitFeaturePlanShape(brief.CoverageTier))
 			b.WriteString("Your FeaturePlan SDD refs MUST reference only PRD requirement IDs and ADR IDs from the context above.\n")
 			b.WriteString("Your TDD obligations MUST reference only the obligation IDs listed above.\n")
+
 			if brief.coveragePendingImplementationVerification() {
 				b.WriteString("The coverage gate is pending only because TDD pre-execution evidence is not recorded yet; treat the listed TDD obligations as test-first acceptance for this dispatch, and do not ask a planner question solely for that missing pre-execution evidence.\n")
 				b.WriteString("Do not include a blocked coverage_gate_result in the plan; the pending evidence is carried by tdd_contract and planned_tdd_snapshot.\n")
 			}
+
 			b.WriteString("Set tdd_contract.obligations[].required_before to the exact scalar string \"implementation\". Do not use an array for required_before.\n")
 			b.WriteString("For each atom, planned_tdd_snapshot.obligation_ids must exactly match test_first.obligation_refs, planned_tdd_snapshot.test_commands must exactly match test_first.commands, and planned_tdd_snapshot.test_artifact_paths must exactly match test_first.test_artifact_paths.\n")
 			b.WriteString("planned_tdd_snapshot.snapshot_id and snapshot_digest are harness evidence identities; do not copy placeholder/example values or invent fake digests.\n")
@@ -254,6 +305,7 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 			b.WriteString("Accepted ADR paths, PRD/TDD files, and product workflow planning/tracker files are context evidence only unless they are explicitly listed under Files to modify; do not put context-only docs in required_edit_paths or allowed_edit_paths.\n")
 			b.WriteString("allowed_edit_paths is still edit scope, not an evidence/reference list. Put design references in sdd_refs, tdd_obligations, acceptance, decisions, or prompt text instead.\n")
 			b.WriteString("The schema example path placeholders are not authority. Do not copy or invent paths from examples.\n")
+
 			if len(brief.FilesToModify) == 0 && len(brief.AuthorizedNewPackageRoots) == 0 {
 				b.WriteString("No Files to modify or authorized new package roots are present. Use ask_planner_question for localization repair instead of concrete required_edit_paths or allowed_edit_paths; source/context evidence paths are read-only evidence.\n")
 			}
@@ -276,16 +328,21 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 
 	b.WriteString("Before any atom can be dispatched, every atom must carry SDD refs and test_first commands tied to TDD obligations required_before implementation.\n")
 	b.WriteString("Top-level scope is the smallest releasable feature objective; atoms are independently dispatchable implementation units.\n\n")
+
 	if len(state.OpenQuestions) > 0 {
 		b.WriteString("Open planner questions and answers:\n")
+
 		for _, question := range state.OpenQuestions {
 			fmt.Fprintf(&b, "- %s status=%s answer=%s\n", question.QuestionSummary, question.Status, question.Answer)
 		}
+
 		b.WriteString("\n")
 	}
+
 	b.WriteString("User request:\n")
 	b.WriteString(strings.TrimSpace(userPrompt))
 	b.WriteString("\n")
+
 	return b.String()
 }
 
@@ -293,23 +350,31 @@ func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) 
 	if state == nil || runner == nil {
 		return nil
 	}
+
 	limit := firstPositive(maxAtoms, len(state.Atoms))
+
 	var events []Event
+
 	dispatched := 0
+
 	for i := range state.Atoms {
 		if dispatched >= limit {
 			break
 		}
+
 		atom := &state.Atoms[i]
 		if atom.State != AtomStateQueued && atom.State != AtomStateDispatchable {
 			continue
 		}
+
 		if !atomDependenciesSatisfied(state.Atoms, *atom) {
 			continue
 		}
+
 		atomFrom := atom.State
 		if missing := MissingPreDispatchTDD(*state, *atom); len(missing) > 0 {
 			featureFrom := state.Status
+
 			atom.State = AtomStateBlockedMissingTDD
 			atom.Blockers = append(atom.Blockers, missing...)
 			state.Status = FeatureStatePlanningRepair
@@ -325,17 +390,26 @@ func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) 
 				AtomDeltas:  []AtomDelta{{Op: "update", AtomID: atom.ID, AtomFrom: atomFrom, AtomTo: AtomStateBlockedMissingTDD}},
 				Fields:      map[string]any{"missing": missing},
 			})
+
 			break
 		}
+
 		dispatched++
+
 		atom.Attempt++
+
 		featureFrom := state.Status
+
 		atom.State = AtomStateImplementing
+
 		runID := planExecuteRunIDForAtom(atom.ID, atom.Attempt)
 		startedAt := time.Now().UTC().Format(time.RFC3339Nano)
+
 		atom.LastRunID = runID
+
 		contract := CompilePlanAuthorityContract(state.Plan, state.AuthorityDeltas)
 		atomContract, _ := planAuthorityContractAtom(contract, atom.ID)
+
 		state.ActiveRuns = append(state.ActiveRuns, ActiveRun{
 			RunID:                runID,
 			AtomID:               atom.ID,
@@ -369,12 +443,15 @@ func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) 
 			}},
 			Fields: map[string]any{"run_id": runID},
 		})
+
 		answer, err := runner(BuildImplementorPromptFromContract(*atom, state.Plan, contract), string(autonomy.TaskFamilyFeaturePlannerImplementor))
 		if err != nil {
 			atomFrom := atom.State
+
 			atom.State = AtomStateFailed
 			atom.Blockers = append(atom.Blockers, err.Error())
 			foldActiveRun(state, atom.ID, runID)
+
 			events = append(events, Event{
 				Type:       "idiom.feature_planner.atom_failed",
 				SessionID:  state.SessionID,
@@ -391,16 +468,22 @@ func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) 
 				}},
 				Message: err.Error(),
 			})
+
 			break
 		}
+
 		beforeStatus := state.Status
 		beforeAtomState := atom.State
+
 		events = append(events, ApplyImplementorOutput(state, atom, answer)...)
+
 		if featurePlannerDispatchShouldStopAfterAtom(beforeStatus, beforeAtomState, state.Status, atom.State) {
 			break
 		}
 	}
+
 	refreshContinuation(state)
+
 	return events
 }
 
@@ -411,9 +494,11 @@ func featurePlannerDispatchShouldStopAfterAtom(beforeStatus string, beforeAtomSt
 			return true
 		}
 	}
+
 	if beforeAtomState == afterAtomState {
 		return false
 	}
+
 	switch strings.TrimSpace(afterAtomState) {
 	case AtomStateQuestionForPlanner, AtomStateQuestionForOperator, AtomStateRecoveryOpen, AtomStateBlocked, AtomStateFailed, AtomStateBlockedMissingTDD:
 		return true
@@ -431,57 +516,73 @@ func BuildImplementorPromptFromContract(atom FeatureAtomState, plan FeaturePlan,
 	atomContract, _ := planAuthorityContractAtom(contract, atom.ID)
 	contractBody, _ := json.MarshalIndent(atomContract, "", "  ")
 	planContractBody, _ := json.MarshalIndent(contract, "", "  ")
+
 	var b strings.Builder
+
 	fmt.Fprintf(&b, "Implement one feature atom from feature plan %q.\n", plan.Summary)
+
 	if runID := strings.TrimSpace(atom.LastRunID); runID != "" {
 		fmt.Fprintf(&b, "Plan-execute session id: %s\n", runID)
 	}
+
 	if atomContract.Scope.ContractID != "" {
 		fmt.Fprintf(&b, "Active plan contract id: %s\n", atomContract.Scope.ContractID)
 		fmt.Fprintf(&b, "Active plan contract snapshot hash: %s\n", contract.ContractHash)
 	}
+
 	if contract.ContractID != "" {
 		fmt.Fprintf(&b, "Active plan execution contract id: %s\n", contract.ContractID)
 	}
+
 	b.WriteString("This atom brief is consumed by plan-execute. Plan-execute owns the terminal response protocol; do not emit feature-planner completion JSON from inside the atom brief.\n")
 	b.WriteString("Do not claim files were edited or tests were run unless those effects were produced by tool-backed execution visible to the harness; unsupported edit/test claims are rejected as recovery-open.\n")
 	b.WriteString("TDD baseline commands that must exist before execution:\n")
+
 	for _, command := range atom.TestFirst.Commands {
 		fmt.Fprintf(&b, "- %s\n", command)
 	}
+
 	requiredTests := append([]string(nil), atom.RequiredTests...)
 	if len(requiredTests) == 0 {
 		requiredTests = append(requiredTests, atom.TestFirst.Commands...)
 	}
+
 	if len(requiredTests) > 0 {
 		b.WriteString("Requested verification commands for executor phase:\n")
+
 		for _, command := range requiredTests {
 			fmt.Fprintf(&b, "- Required verification command: run `%s` after edits.\n", command)
 		}
 	}
+
 	if strings.TrimSpace(atom.Prompt) != "" {
 		b.WriteString("\nAtom implementation brief:\n")
 		b.WriteString(strings.TrimSpace(atom.Prompt))
 		b.WriteString("\n")
 	}
+
 	if scope := strings.TrimSpace(buildFeaturePlannerAtomScopeSection(atomContract.Scope.RequiredEditPaths(), atomContract.Scope.AllowedEditPaths())); scope != "" {
 		b.WriteString("\nCanonical plan-execute edit scope:\n")
 		b.WriteString(scope)
 		b.WriteString("\n")
 	}
+
 	if contract.ContractID != "" {
 		b.WriteString("\nTyped plan execution contract:\n")
 		b.Write(planContractBody)
 		b.WriteString("\n")
 	}
+
 	if atomContract.AtomID != "" {
 		b.WriteString("\nTyped plan authority projection:\n")
 		b.Write(contractBody)
 		b.WriteString("\n")
 	}
+
 	b.WriteString("\nAtom contract:\n")
 	b.Write(body)
 	b.WriteString("\n")
+
 	return b.String()
 }
 
@@ -490,16 +591,21 @@ func PlanExecuteAuthorizedNewFilesFromImplementorPrompt(prompt string) []string 
 	if strings.TrimSpace(contractJSON) == "" {
 		return nil
 	}
+
 	var contract plancontract.PlanExecutionContract
+
 	if err := json.Unmarshal([]byte(contractJSON), &contract); err != nil {
 		return nil
 	}
+
 	var paths []string
+
 	for _, file := range contract.Normalized().AuthorizedNewFiles {
 		if path := plancontract.NormalizeScopePath(file.Path); path != "" {
 			paths = append(paths, path)
 		}
 	}
+
 	return normalizedStringList(paths)
 }
 
@@ -508,6 +614,7 @@ func promptSectionAfterMarker(prompt string, marker string) string {
 	if idx < 0 {
 		return ""
 	}
+
 	section := strings.TrimSpace(prompt[idx+len(marker):])
 	for _, next := range []string{
 		"\nTyped plan authority projection:",
@@ -517,6 +624,7 @@ func promptSectionAfterMarker(prompt string, marker string) string {
 			section = section[:nextIdx]
 		}
 	}
+
 	return strings.TrimSpace(section)
 }
 
@@ -538,67 +646,87 @@ func planExecuteRunIDForAtom(atomID string, attempt int) string {
 	if stem == "" {
 		stem = "atom"
 	}
+
 	if stem != strings.TrimSpace(atomID) {
 		h := fnv.New32a()
+
 		_, _ = h.Write([]byte(strings.TrimSpace(atomID)))
 		stem = fmt.Sprintf("%s-%08x", stem, h.Sum32())
 	}
+
 	runID := fmt.Sprintf("%s-run-%d", stem, attempt)
 	if len(runID) <= 128 {
 		return runID
 	}
+
 	h := fnv.New32a()
+
 	_, _ = h.Write([]byte(runID))
+
 	maxStem := 128 - len("-run-") - len(fmt.Sprint(attempt)) - 9
+
 	if maxStem < 4 {
 		maxStem = 4
 	}
+
 	if len(stem) > maxStem {
 		stem = stem[:maxStem]
 	}
+
 	return fmt.Sprintf("%s-%08x-run-%d", strings.Trim(stem, "-_"), h.Sum32(), attempt)
 }
 
 func buildFeaturePlannerAtomScopeSection(requiredEditPaths []string, allowedEditPaths []string) string {
 	required := normalizeEditScopeList(requiredEditPaths)
 	allowed := featurePlannerAllowedScopeExcludingRequired(normalizeEditScopeList(allowedEditPaths), required)
+
 	if len(required) == 0 && len(allowed) == 0 {
 		return ""
 	}
+
 	var b strings.Builder
+
 	if len(required) > 0 {
 		b.WriteString("## Files to Modify\n\n")
 		b.WriteString("required_edit_paths:\n")
+
 		for _, path := range required {
 			b.WriteString("- ")
 			b.WriteString(path)
 			b.WriteByte('\n')
 		}
 	}
+
 	if len(allowed) > 0 {
 		if b.Len() > 0 {
 			b.WriteByte('\n')
 		}
+
 		b.WriteString("## Candidate Edit Scope From Target References\n\n")
 		b.WriteString("allowed_edit_paths:\n")
+
 		for _, path := range allowed {
 			b.WriteString("- ")
 			b.WriteString(path)
 			b.WriteByte('\n')
 		}
 	}
+
 	return strings.TrimSpace(b.String())
 }
 
 func featurePlannerAllowedScopeExcludingRequired(paths []string, required []string) []string {
 	requiredSet := normalizedStringSet(required)
 	out := make([]string, 0, len(paths))
+
 	for _, path := range paths {
 		if requiredSet[path] {
 			continue
 		}
+
 		out = append(out, path)
 	}
+
 	return out
 }
 
@@ -606,50 +734,68 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 	if atom == nil || state == nil {
 		return nil
 	}
+
 	trimmed := strings.TrimSpace(raw)
 	if strings.HasPrefix(trimmed, "{") {
 		var envelope implementorOutputEnvelope
+
 		if err := json.Unmarshal([]byte(trimmed), &envelope); err != nil {
 			return rejectUnverifiedCompletion(state, atom, "implementor returned malformed JSON completion envelope: "+err.Error())
 		}
+
 		var envelopeFields map[string]any
+
 		_ = json.Unmarshal([]byte(trimmed), &envelopeFields)
 		applyRegisteredAcceptanceEvidenceTrust(&envelope, envelopeFields)
+
 		tool := strings.TrimSpace(envelope.Tool)
 		if tool == ToolPlanExecuteComplete {
 			completion := planExecuteCompletionFromEnvelope(envelope)
+
 			completion = bindPlanExecuteCompletionToActiveAuthority(completion, *state, *atom)
+
 			if ok, reason := planExecuteCompletionIsSuccess(completion, *state, *atom); !ok {
 				return rejectPlanExecuteCompletion(state, atom, completion, reason)
 			}
+
 			return completeAtomFromPlanExecute(state, atom, completion)
 		}
+
 		if tool != "" && tool != ToolQuestionForPlanner {
 			return rejectUnverifiedCompletion(state, atom, fmt.Sprintf("implementor returned unsupported completion tool %q; expected %q with typed status or %q for blockers", tool, ToolPlanExecuteComplete, ToolQuestionForPlanner))
 		}
+
 		if tool == "" {
 			return rejectUnverifiedCompletion(state, atom, fmt.Sprintf("implementor returned JSON without a supported tool; expected %q with typed status or %q for blockers", ToolPlanExecuteComplete, ToolQuestionForPlanner))
 		}
+
 		var question PlannerQuestion
+
 		if err := json.Unmarshal([]byte(trimmed), &question); err != nil {
 			atom.Blockers = append(atom.Blockers, err.Error())
 			state.Status = FeatureStatePlanningRepair
+
 			return []Event{{Type: "idiom.feature_planner.planner_question_rejected", SessionID: state.SessionID, AtomID: atom.ID, Message: err.Error()}}
 		}
+
 		return openImplementorPlannerQuestion(state, atom, question)
 	}
+
 	if strings.HasPrefix(trimmed, "<<QUESTION>>:") {
 		return openImplementorPlannerQuestion(state, atom, PlannerQuestion{
 			QuestionSummary: strings.TrimSpace(strings.TrimPrefix(trimmed, "<<QUESTION>>:")),
 			BlockingClaim:   "implementor could not complete the atom contract",
 		})
 	}
+
 	if strings.Contains(strings.ToLower(trimmed), "decision: source-satisfied") {
 		return rejectUnverifiedCompletion(state, atom, fmt.Sprintf("implementor reported source-satisfied without typed %q plan-execute completion evidence", ToolPlanExecuteComplete))
 	}
+
 	if claimsUnverifiedEditOrTestEvidence(trimmed) {
 		return rejectUnverifiedCompletion(state, atom, "implementor claimed edit/test evidence that was not observed by the feature-planner harness")
 	}
+
 	return rejectUnverifiedCompletion(state, atom, fmt.Sprintf("implementor returned raw text without typed %q plan-execute completion evidence", ToolPlanExecuteComplete))
 }
 
@@ -657,18 +803,24 @@ func openImplementorPlannerQuestion(state *FeatureState, atom *FeatureAtomState,
 	if strings.TrimSpace(question.QuestionSummary) == "" {
 		question.QuestionSummary = "implementor requested planner clarification"
 	}
+
 	question = normalizePlannerQuestion(question, fmt.Sprintf("q-%03d", len(state.OpenQuestions)+1), atom.ID, time.Now().UTC())
 	if err := ValidatePlannerQuestion(question); err != nil {
 		atom.Blockers = append(atom.Blockers, err.Error())
 		state.Status = FeatureStatePlanningRepair
+
 		return []Event{{Type: "idiom.feature_planner.planner_question_rejected", SessionID: state.SessionID, AtomID: atom.ID, Message: err.Error()}}
 	}
+
 	atomFrom := atom.State
+
 	atom.State = AtomStateQuestionForPlanner
 	atom.LastQuestion = question.QuestionSummary
 	foldActiveRun(state, atom.ID, atom.LastRunID)
+
 	state.OpenQuestions = append(state.OpenQuestions, question)
 	state.Status = FeatureStatePlanningQuestion
+
 	return []Event{{
 		Type:       "idiom.feature_planner.implementor_question_opened",
 		SessionID:  state.SessionID,
@@ -691,10 +843,12 @@ func applyRegisteredAcceptanceEvidenceTrust(envelope *implementorOutputEnvelope,
 	if envelope == nil {
 		return
 	}
+
 	envelope.AcceptanceEvidenceTrusted = planExecuteAcceptanceEvidenceTrustRegistered(fields)
 	if nestedFields, ok := fields["plan_execute"].(map[string]any); ok && envelope.PlanExecute != nil {
 		envelope.PlanExecute.AcceptanceEvidenceTrusted = planExecuteAcceptanceEvidenceTrustRegistered(nestedFields)
 	}
+
 	if nestedFields, ok := fields["nested"].(map[string]any); ok && envelope.Nested != nil {
 		envelope.Nested.AcceptanceEvidenceTrusted = planExecuteAcceptanceEvidenceTrustRegistered(nestedFields)
 	}
@@ -815,9 +969,11 @@ func planExecuteCompletionFromEnvelope(envelope implementorOutputEnvelope) planE
 	if envelope.PlanExecute != nil {
 		completion.overlay(*envelope.PlanExecute)
 	}
+
 	if envelope.Nested != nil {
 		completion.overlay(*envelope.Nested)
 	}
+
 	return completion.normalized()
 }
 
@@ -829,12 +985,14 @@ func bindPlanExecuteCompletionToActiveAuthority(completion planExecuteCompletion
 			atom.RuntimeEnvelope.ContractID,
 		)
 	}
+
 	if completion.SnapshotHash == "" {
 		completion.SnapshotHash = firstActiveRunAuthorityString(state, atom.ID,
 			func(run ActiveRun) string { return run.RuntimeEnvelopeID },
 			atom.RuntimeEnvelope.ProtocolHash,
 		)
 	}
+
 	return completion.normalized()
 }
 
@@ -843,10 +1001,12 @@ func firstActiveRunAuthorityString(state FeatureState, atomID string, selector f
 		if strings.TrimSpace(run.AtomID) != strings.TrimSpace(atomID) {
 			continue
 		}
+
 		if value := strings.TrimSpace(selector(run)); value != "" {
 			return value
 		}
 	}
+
 	return strings.TrimSpace(fallback)
 }
 
@@ -886,6 +1046,7 @@ func (completion *planExecuteCompletion) overlay(nested nestedPlanExecuteComplet
 			ValidationFailures:           nested.ValidationFailures,
 		},
 	)
+
 	*completion = planExecuteCompletionFromSummary(merged)
 }
 
@@ -894,6 +1055,7 @@ func (completion planExecuteCompletion) normalized() planExecuteCompletion {
 	if completion.LaneFamily == "" {
 		completion.LaneFamily = "plan-execute"
 	}
+
 	completion.Summary = strings.TrimSpace(completion.Summary)
 	completion.ProgressPath = strings.TrimSpace(completion.ProgressPath)
 	completion.Status = strings.TrimSpace(completion.Status)
@@ -901,14 +1063,18 @@ func (completion planExecuteCompletion) normalized() planExecuteCompletion {
 	completion.ReviewStatus = strings.TrimSpace(completion.ReviewStatus)
 	completion.TerminalClass = strings.TrimSpace(completion.TerminalClass)
 	completion.Outcome = strings.TrimSpace(completion.Outcome)
+
 	if strings.EqualFold(completion.Status, "source-satisfied") && completion.Outcome == "" {
 		completion.Outcome = "source_satisfied"
 	}
+
 	completion.FailureKind = strings.TrimSpace(completion.FailureKind)
 	completion.FailureReason = strings.TrimSpace(completion.FailureReason)
+
 	if planExecuteCompletionSourceSatisfied(completion) && completion.FailureKind == "" && completion.FailureReason == "" {
 		completion.Status = "source-satisfied"
 	}
+
 	completion.FailureID = strings.TrimSpace(completion.FailureID)
 	completion.RecordPath = strings.TrimSpace(completion.RecordPath)
 	completion.PacketPath = strings.TrimSpace(completion.PacketPath)
@@ -917,9 +1083,11 @@ func (completion planExecuteCompletion) normalized() planExecuteCompletion {
 	completion.ContractID = strings.TrimSpace(completion.ContractID)
 	completion.ContractHash = strings.TrimSpace(completion.ContractHash)
 	completion.SnapshotHash = strings.TrimSpace(completion.SnapshotHash)
+
 	if completion.SnapshotHash == "" {
 		completion.SnapshotHash = completion.ContractHash
 	}
+
 	completion.ScopeContractID = strings.TrimSpace(completion.ScopeContractID)
 	completion.ScopeContractHash = strings.TrimSpace(completion.ScopeContractHash)
 	completion.RequiredEditPaths = normalizeCompletionStringList(completion.RequiredEditPaths)
@@ -929,10 +1097,13 @@ func (completion planExecuteCompletion) normalized() planExecuteCompletion {
 	completion.ChangedPaths = normalizeCompletionStringList(completion.ChangedPaths)
 	completion.SourceSanity = normalizeCompletionPhaseEvidenceChecks(completion.SourceSanity)
 	completion.AcceptanceEvidenceIDs = normalizeCompletionStableIDList(completion.AcceptanceEvidenceIDs)
+
 	if len(completion.AcceptanceEvidenceIDs) == 0 || !planExecuteCompletionSourceTrustsAcceptanceEvidence(completion.CompletionSource) {
 		completion.AcceptanceEvidenceTrusted = false
 	}
+
 	completion.ValidationFailures = normalizeCompletionStringList(completion.ValidationFailures)
+
 	return completion
 }
 
@@ -1056,83 +1227,108 @@ func planExecuteCompletionIsSuccess(completion planExecuteCompletion, state Feat
 	if decision.Class != PlanExecuteTerminalCompleted {
 		return false, decision.Reason
 	}
+
 	if reason := validateCompletionAgainstActiveContract(completion, state, atom); reason != "" {
 		return false, reason
 	}
+
 	return true, ""
 }
 
 func validateCompletionAgainstActiveContract(completion planExecuteCompletion, state FeatureState, atom FeatureAtomState) string {
 	expectedContractID := strings.TrimSpace(atom.RuntimeEnvelope.ContractID)
 	expectedSnapshot := strings.TrimSpace(atom.RuntimeEnvelope.ProtocolHash)
+
 	if expectedContractID == "" || expectedSnapshot == "" {
 		return "active atom is missing typed plan contract snapshot"
 	}
+
 	if explicitParentIdentityConflict(completion, expectedContractID, expectedSnapshot) {
 		return "plan-execute terminal completion conflicts with the active plan contract snapshot"
 	}
+
 	if !completionMatchesActiveContract(completion, expectedContractID, expectedSnapshot) {
 		return "plan-execute terminal completion is not correlated to the active plan contract snapshot"
 	}
+
 	contract := CompilePlanAuthorityContract(state.Plan, state.AuthorityDeltas)
 	atomContract, ok := planAuthorityContractAtom(contract, atom.ID)
+
 	if !ok {
 		return "active atom is missing compiled plan execution contract"
 	}
+
 	required := atomContract.Scope.RequiredEditPaths()
 	allowed := atomContract.Scope.AllowedEditPaths()
 	changed := plancontract.UniqueScopePaths(completion.ChangedPaths)
 	sourceSatisfied := plancontract.UniqueScopePaths(completion.SourceSatisfiedEvidencePaths)
+
 	if planExecuteCompletionSourceSatisfied(completion) {
 		if len(changed) > 0 {
 			return "source-satisfied completion must not include changed_paths"
 		}
+
 		if len(required) == 0 {
 			return "source-satisfied completion missing required edit scope"
 		}
+
 		if len(sourceSatisfied) == 0 {
 			return "source-satisfied completion missing typed source_satisfied_evidence_paths"
 		}
+
 		if !completionPathsWithinScope(sourceSatisfied, required) {
 			return "source-satisfied completion includes paths outside required edit scope"
 		}
+
 		if missing := missingSourceSatisfiedEvidenceRefs(sourceSatisfied, completion.SourceSatisfiedEvidence); len(missing) > 0 {
 			return "source-satisfied completion missing typed source_satisfied_evidence refs: " + strings.Join(missing, ", ")
 		}
+
 		if missing := missingRequiredCompletionPaths(required, sourceSatisfied); len(missing) > 0 {
 			return "source-satisfied completion does not cover required edit paths: " + strings.Join(missing, ", ")
 		}
+
 		if reason := untrustedAcceptanceEvidenceReason(atomContract, completion, "source-satisfied completion"); reason != "" {
 			return reason
 		}
+
 		if missing := missingAcceptanceEvidenceIDs(atomContract, trustedAcceptanceEvidenceIDs(completion)); len(missing) > 0 {
 			return "source-satisfied completion missing acceptance_evidence_ids: " + strings.Join(missing, ", ")
 		}
+
 		return ""
 	}
+
 	if len(changed) == 0 {
 		return "completed plan-execute terminal completion missing typed changed_paths"
 	}
+
 	covered := plancontract.UniqueScopePaths(append(append([]string(nil), changed...), sourceSatisfied...))
 	if missing := missingRequiredCompletionPaths(required, covered); len(missing) > 0 {
 		return "completed plan-execute terminal completion does not cover required edit paths: " + strings.Join(missing, ", ")
 	}
+
 	scope := plancontract.UniqueScopePaths(append(append([]string(nil), required...), allowed...))
 	if len(scope) > 0 && !completionPathsWithinScope(changed, scope) {
 		return "completed plan-execute terminal completion changed paths outside active contract scope"
 	}
+
 	if failures := planExecuteTerminalValidationFailures(completion); len(failures) > 0 {
 		return "nested plan-execute terminal validation failed: " + strings.Join(failures, "; ")
 	}
+
 	if reason := untrustedAcceptanceEvidenceReason(atomContract, completion, "completed plan-execute terminal completion"); reason != "" {
 		return reason
 	}
+
 	if missing := missingAcceptanceEvidenceIDs(atomContract, trustedAcceptanceEvidenceIDs(completion)); len(missing) > 0 {
 		return "completed plan-execute terminal completion missing acceptance_evidence_ids: " + strings.Join(missing, ", ")
 	}
+
 	if reason := atomContract.Scope.EditSetObligations.RejectionReason(changed); reason != "" {
 		return plancontract.EditSetObligationFailureMessage(reason)
 	}
+
 	return ""
 }
 
@@ -1140,6 +1336,7 @@ func untrustedAcceptanceEvidenceReason(atom plancontract.AtomExecutionContract, 
 	if completion.AcceptanceEvidenceTrusted || len(completion.AcceptanceEvidenceIDs) == 0 || len(requiredAcceptanceEvidenceIDs(atom)) == 0 {
 		return ""
 	}
+
 	return prefix + " acceptance_evidence_ids are not backed by trusted plan-execute terminal evidence"
 }
 
@@ -1147,6 +1344,7 @@ func trustedAcceptanceEvidenceIDs(completion planExecuteCompletion) []string {
 	if !completion.AcceptanceEvidenceTrusted {
 		return nil
 	}
+
 	return completion.AcceptanceEvidenceIDs
 }
 
@@ -1155,35 +1353,43 @@ func missingAcceptanceEvidenceIDs(atom plancontract.AtomExecutionContract, provi
 	for _, id := range normalizeCompletionStableIDList(provided) {
 		providedSet[id] = true
 	}
+
 	var missing []string
+
 	for _, obligation := range atom.AcceptanceObligations {
 		if !obligation.Required {
 			continue
 		}
+
 		id := plancontract.NormalizeStableContractIDPart(obligation.ID)
 		if id == "" {
 			continue
 		}
+
 		if !providedSet[id] {
 			missing = append(missing, id)
 		}
 	}
+
 	return normalizeCompletionStableIDList(missing)
 }
 
 func requiredAcceptanceEvidenceIDs(atom plancontract.AtomExecutionContract) []string {
 	var ids []string
+
 	for _, obligation := range atom.AcceptanceObligations {
 		if obligation.Required && strings.TrimSpace(obligation.ID) != "" {
 			ids = append(ids, obligation.ID)
 		}
 	}
+
 	return normalizeCompletionStableIDList(ids)
 }
 
 func planExecuteTerminalValidationFailures(completion planExecuteCompletion) []string {
 	fields := completion.summary().Fields()
 	record := coreplanexecute.PlanExecuteTerminalCompletionRecordFromFields(fields)
+
 	return normalizeCompletionStringList(record.ValidationFailures)
 }
 
@@ -1191,9 +1397,11 @@ func explicitParentIdentityConflict(completion planExecuteCompletion, expectedCo
 	if candidate := strings.TrimSpace(completion.ContractID); candidate != "" && candidate != expectedContractID {
 		return true
 	}
+
 	if candidate := strings.TrimSpace(completion.SnapshotHash); candidate != "" && candidate != expectedSnapshot {
 		return true
 	}
+
 	return strings.TrimSpace(completion.ContractHash) != "" && strings.TrimSpace(completion.ContractHash) != expectedSnapshot
 }
 
@@ -1201,12 +1409,15 @@ func completionMatchesActiveContract(completion planExecuteCompletion, expectedC
 	if strings.TrimSpace(completion.ContractID) != "" && strings.TrimSpace(completion.ContractID) != expectedContractID {
 		return false
 	}
+
 	if strings.TrimSpace(completion.SnapshotHash) != "" && strings.TrimSpace(completion.SnapshotHash) != expectedSnapshot {
 		return false
 	}
+
 	if strings.TrimSpace(completion.ContractHash) != "" && strings.TrimSpace(completion.ContractHash) != expectedSnapshot {
 		return false
 	}
+
 	return strings.TrimSpace(completion.ContractID) == expectedContractID ||
 		strings.TrimSpace(completion.SnapshotHash) == expectedSnapshot ||
 		strings.TrimSpace(completion.ContractHash) == expectedSnapshot
@@ -1214,12 +1425,15 @@ func completionMatchesActiveContract(completion planExecuteCompletion, expectedC
 
 func missingRequiredCompletionPaths(required []string, covered []string) []string {
 	coveredSet := normalizedStringSet(covered)
+
 	var missing []string
+
 	for _, path := range required {
 		if !coveredSet[path] {
 			missing = append(missing, path)
 		}
 	}
+
 	return missing
 }
 
@@ -1230,6 +1444,7 @@ func completionPathsWithinScope(paths []string, scope []string) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -1237,19 +1452,25 @@ func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, co
 	atomFrom := atom.State
 	atomTo := AtomStateComplete
 	eventType := "idiom.feature_planner.atom_completed"
+
 	if planExecuteCompletionSourceSatisfied(completion) {
 		atomTo = AtomStateSourceSatisfied
 		eventType = "idiom.feature_planner.atom_source_satisfied"
 	}
+
 	atom.State = atomTo
 	atom.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	foldActiveRun(state, atom.ID, atom.LastRunID)
+
 	state.Continuation.CompletedAtoms = appendUnique(state.Continuation.CompletedAtoms, atom.ID)
+
 	featureTo := state.Status
+
 	if allAtomsTerminal(state.Atoms) && state.Status != FeatureStatePlanningQuestion {
 		state.Status = FeatureStateComplete
 		featureTo = FeatureStateComplete
 	}
+
 	fields := map[string]any{
 		"lane_family":   completion.LaneFamily,
 		"nested_status": completion.Status,
@@ -1257,28 +1478,37 @@ func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, co
 	if completion.Phase != "" {
 		fields["nested_phase"] = completion.Phase
 	}
+
 	if completion.ReviewStatus != "" {
 		fields["nested_review_status"] = completion.ReviewStatus
 	}
+
 	if completion.Outcome != "" {
 		fields["outcome"] = completion.Outcome
 	}
+
 	if completion.TerminalClass != "" {
 		fields["terminal_class"] = completion.TerminalClass
 	}
+
 	if completion.ProgressPath != "" {
 		fields["progress_path"] = completion.ProgressPath
 	}
+
 	if completion.Summary != "" {
 		fields["summary"] = completion.Summary
 	}
+
 	if completion.CompletionSource != "" {
 		fields["completion_source"] = completion.CompletionSource
 	}
+
 	if completion.ReviewRepairSkipped {
 		fields["review_repair_skipped"] = true
 	}
+
 	addPlanExecuteCompletionEvidenceFields(fields, completion)
+
 	return []Event{{
 		Type:       eventType,
 		SessionID:  state.SessionID,
@@ -1322,6 +1552,7 @@ func rejectPlanExecuteCompletion(state *FeatureState, atom *FeatureAtomState, co
 	if detail := planExecuteCompletionFailureDetail(completion); detail != "" {
 		reason = strings.TrimSpace(reason + ": " + detail)
 	}
+
 	return recoverAtom(state, atom, reason, "repair_nested_plan_execute_completion", "idiom.feature_planner.plan_execute_completion_rejected", fields)
 }
 
@@ -1332,6 +1563,7 @@ func rejectUnverifiedCompletion(state *FeatureState, atom *FeatureAtomState, rea
 func recoverAtom(state *FeatureState, atom *FeatureAtomState, reason string, resumeAction string, eventType string, fields map[string]any) []Event {
 	atomFrom := atom.State
 	featureFrom := state.Status
+
 	atom.State = AtomStateRecoveryOpen
 	atom.Blockers = appendUnique(atom.Blockers, reason)
 	state.Status = FeatureStateRecoveryOpen
@@ -1341,12 +1573,15 @@ func recoverAtom(state *FeatureState, atom *FeatureAtomState, reason string, res
 	state.Continuation.ResumeAction = resumeAction
 	state.Continuation.ResumeReason = reason
 	foldActiveRun(state, atom.ID, atom.LastRunID)
+
 	if fields == nil {
 		fields = map[string]any{}
 	}
+
 	if packetPath := CompletionFieldString(fields, "packet_path"); packetPath != "" {
 		state.OpenRecoveryPackets = appendUnique(state.OpenRecoveryPackets, packetPath)
 	}
+
 	return []Event{{
 		Type:        eventType,
 		SessionID:   state.SessionID,
@@ -1376,46 +1611,61 @@ func planExecuteCompletionFields(completion planExecuteCompletion) map[string]an
 	if completion.Phase != "" {
 		fields["nested_phase"] = completion.Phase
 	}
+
 	if completion.ReviewStatus != "" {
 		fields["nested_review_status"] = completion.ReviewStatus
 	}
+
 	if completion.Outcome != "" {
 		fields["outcome"] = completion.Outcome
 	}
+
 	if completion.TerminalClass != "" {
 		fields["terminal_class"] = completion.TerminalClass
 	}
+
 	if completion.FailureKind != "" {
 		fields["nested_failure_kind"] = completion.FailureKind
 	}
+
 	if completion.FailureReason != "" {
 		fields["nested_failure_reason"] = completion.FailureReason
 	}
+
 	if completion.FailureID != "" {
 		fields["failure_id"] = completion.FailureID
 	}
+
 	if completion.RecordPath != "" {
 		fields["record_path"] = completion.RecordPath
 	}
+
 	if completion.PacketPath != "" {
 		fields["packet_path"] = completion.PacketPath
 	}
+
 	if completion.NextAction != "" {
 		fields["next_valid_action"] = completion.NextAction
 	}
+
 	if completion.ProgressPath != "" {
 		fields["progress_path"] = completion.ProgressPath
 	}
+
 	if completion.Summary != "" {
 		fields["summary"] = completion.Summary
 	}
+
 	if completion.CompletionSource != "" {
 		fields["completion_source"] = completion.CompletionSource
 	}
+
 	if completion.ReviewRepairSkipped {
 		fields["review_repair_skipped"] = true
 	}
+
 	addPlanExecuteCompletionEvidenceFields(fields, completion)
+
 	return fields
 }
 
@@ -1423,36 +1673,47 @@ func addPlanExecuteCompletionEvidenceFields(fields map[string]any, completion pl
 	if completion.ContractID != "" {
 		fields["contract_id"] = completion.ContractID
 	}
+
 	if completion.SnapshotHash != "" {
 		fields["snapshot_hash"] = completion.SnapshotHash
 	}
+
 	if completion.ScopeContractID != "" {
 		fields["scope_contract_id"] = completion.ScopeContractID
 	}
+
 	if completion.ScopeContractHash != "" {
 		fields["scope_contract_hash"] = completion.ScopeContractHash
 	}
+
 	if len(completion.RequiredEditPaths) > 0 {
 		fields["required_edit_paths"] = append([]string(nil), completion.RequiredEditPaths...)
 	}
+
 	if len(completion.AllowedEditPaths) > 0 {
 		fields["allowed_edit_paths"] = append([]string(nil), completion.AllowedEditPaths...)
 	}
+
 	if len(completion.SourceSatisfiedEvidencePaths) > 0 {
 		fields["source_satisfied_evidence_paths"] = append([]string(nil), completion.SourceSatisfiedEvidencePaths...)
 	}
+
 	if len(completion.SourceSatisfiedEvidence) > 0 {
 		fields["source_satisfied_evidence"] = append([]PlanExecuteSourceSatisfiedEvidenceRef(nil), completion.SourceSatisfiedEvidence...)
 	}
+
 	if len(completion.ChangedPaths) > 0 {
 		fields["changed_paths"] = append([]string(nil), completion.ChangedPaths...)
 	}
+
 	if len(completion.SourceSanity) > 0 {
 		fields["source_sanity"] = append([]coreplanexecute.PhaseEvidenceCheck(nil), completion.SourceSanity...)
 	}
+
 	if len(completion.AcceptanceEvidenceIDs) > 0 {
 		fields["acceptance_evidence_ids"] = append([]string(nil), completion.AcceptanceEvidenceIDs...)
 	}
+
 	if completion.AcceptanceEvidenceTrusted {
 		fields["acceptance_evidence_trusted"] = true
 	}
@@ -1460,24 +1721,30 @@ func addPlanExecuteCompletionEvidenceFields(fields map[string]any, completion pl
 
 func missingSourceSatisfiedEvidenceRefs(paths []string, refs []PlanExecuteSourceSatisfiedEvidenceRef) []string {
 	covered := map[string]bool{}
+
 	for _, ref := range normalizePlanExecuteSourceSatisfiedEvidenceRefs(refs) {
 		if !plancontract.SourceSatisfiedEvidenceKindProvesCurrentState(ref.Kind) {
 			continue
 		}
+
 		covered[ref.Path] = true
 	}
+
 	var missing []string
+
 	for _, path := range plancontract.UniqueScopePaths(paths) {
 		if !covered[path] {
 			missing = append(missing, path)
 		}
 	}
+
 	return missing
 }
 
 func planExecuteCompletionFailureDetail(completion planExecuteCompletion) string {
 	kind := strings.TrimSpace(completion.FailureKind)
 	reason := strings.TrimSpace(completion.FailureReason)
+
 	switch {
 	case kind != "" && reason != "":
 		return kind + " - " + reason
@@ -1517,12 +1784,15 @@ func claimsUnverifiedEditOrTestEvidence(raw string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 func MissingPreDispatchTDD(state FeatureState, atom FeatureAtomState) []string {
 	missing := MissingStrictPreDispatchTDD(atom.FeatureAtomPlan)
+
 	missing = append(missing, MismatchedStrictPreDispatchTDD(atom.FeatureAtomPlan)...)
+
 	return append(missing, MissingPreDispatchEvidence(state, atom.FeatureAtomPlan)...)
 }
 
@@ -1531,7 +1801,9 @@ func MissingPreDispatchEvidence(state FeatureState, atom FeatureAtomPlan) []stri
 	if wantEventID == "" || strings.TrimSpace(atom.ID) == "" {
 		return nil
 	}
+
 	var evidence *TDDPreExecutionEvidence
+
 	for i := range state.TDDPreExecutionEvidence {
 		candidate := &state.TDDPreExecutionEvidence[i]
 		if strings.TrimSpace(candidate.AtomID) == strings.TrimSpace(atom.ID) && strings.TrimSpace(candidate.EventID) == wantEventID {
@@ -1539,31 +1811,41 @@ func MissingPreDispatchEvidence(state FeatureState, atom FeatureAtomPlan) []stri
 			break
 		}
 	}
+
 	if evidence == nil {
 		return []string{"tdd_pre_execution_evidence." + wantEventID}
 	}
+
 	var missing []string
+
 	if !sameStringSet(evidence.ObligationRefs, atom.TestFirst.ObligationRefs) {
 		missing = append(missing, "tdd_pre_execution_evidence.obligation_refs")
 	}
+
 	if !sameStringSet(evidence.Commands, atom.TestFirst.Commands) {
 		missing = append(missing, "tdd_pre_execution_evidence.commands")
 	}
+
 	if !sameStringSet(evidence.TestArtifactPaths, atom.TestFirst.TestArtifactPaths) {
 		missing = append(missing, "tdd_pre_execution_evidence.test_artifact_paths")
 	}
+
 	if strings.TrimSpace(evidence.ExpectedPreExecutionResult) != strings.TrimSpace(atom.TestFirst.ExpectedPreExecutionResult) {
 		missing = append(missing, "tdd_pre_execution_evidence.expected_pre_execution_result")
 	}
+
 	if strings.TrimSpace(evidence.CoverageGateEventID) != strings.TrimSpace(atom.TestFirst.CoverageGateEventID) {
 		missing = append(missing, "tdd_pre_execution_evidence.coverage_gate_event_id")
 	}
+
 	if strings.TrimSpace(evidence.SnapshotID) != strings.TrimSpace(atom.PlannedTDDSnapshot.SnapshotID) {
 		missing = append(missing, "tdd_pre_execution_evidence.snapshot_id")
 	}
+
 	if strings.TrimSpace(evidence.SnapshotDigest) != strings.TrimSpace(atom.PlannedTDDSnapshot.SnapshotDigest) {
 		missing = append(missing, "tdd_pre_execution_evidence.snapshot_digest")
 	}
+
 	return missing
 }
 
@@ -1582,15 +1864,20 @@ func answerOpenQuestion(state *FeatureState, answer string) []Event {
 				state.Status = FeatureStatePlanningQuestion
 				state.PlanningLoop.State = FeatureStatePlanningQuestion
 				state.Blockers = append(state.Blockers, err.Error())
+
 				return []Event{{Type: "idiom.feature_planner.planner_question_answer_rejected", SessionID: state.SessionID, Message: err.Error()}}
 			}
+
 			upsertPlanAuthorityDelta(state, delta)
+
 			state.OpenQuestions[i].Status = "answered"
 			state.Status = FeatureStatePlanning
 			state.PlanningLoop.State = FeatureStatePlanning
+
 			return []Event{{Type: "idiom.feature_planner.planner_question_answered", SessionID: state.SessionID, Message: state.OpenQuestions[i].QuestionSummary, Fields: map[string]any{"authority_delta": delta}}}
 		}
 	}
+
 	return nil
 }
 
@@ -1598,25 +1885,32 @@ func applyQuestionAnswerAuthority(question *PlannerQuestion, rawAnswer string, r
 	if question == nil {
 		return PlanAuthorityDelta{}, fmt.Errorf("planner question is nil")
 	}
+
 	answer := strings.TrimSpace(rawAnswer)
 	if answer == "" {
 		return PlanAuthorityDelta{}, fmt.Errorf("planner question answer is empty")
 	}
+
 	if revision <= 0 {
 		revision = 1
 	}
+
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+
 	required := strings.TrimSpace(question.AuthorityRequired)
 	if required == "" || required == "operator_approval" {
 		question.Answer = answer
 		if strings.TrimSpace(question.AnswerSourceKind) == "" {
 			question.AnswerSourceKind = "operator_approval"
 		}
+
 		delta := planAuthorityDeltaFromQuestion(*question, revision, now)
+
 		return delta, nil
 	}
+
 	var payload struct {
 		Answer           string   `json:"answer"`
 		AnswerSourceKind string   `json:"answer_source_kind"`
@@ -1627,40 +1921,52 @@ func applyQuestionAnswerAuthority(question *PlannerQuestion, rawAnswer string, r
 		Expected         string   `json:"expected"`
 		Actual           string   `json:"actual"`
 	}
+
 	if err := json.Unmarshal([]byte(answer), &payload); err != nil {
 		return PlanAuthorityDelta{}, fmt.Errorf("planner question %q requires typed %s authority answer", question.ID, required)
 	}
+
 	if strings.TrimSpace(payload.AnswerSourceKind) != required {
 		return PlanAuthorityDelta{}, fmt.Errorf("planner question %q requires answer_source_kind %q", question.ID, required)
 	}
+
 	if strings.TrimSpace(payload.Answer) == "" {
 		return PlanAuthorityDelta{}, fmt.Errorf("planner question %q typed answer missing answer", question.ID)
 	}
+
 	if len(payload.EvidenceRefs) == 0 {
 		return PlanAuthorityDelta{}, fmt.Errorf("planner question %q typed answer missing evidence_refs", question.ID)
 	}
+
 	question.Answer = payload.Answer
 	question.AnswerSourceKind = payload.AnswerSourceKind
 	question.EvidenceRefs = append(question.EvidenceRefs, payload.EvidenceRefs...)
+
 	if len(payload.AffectedPaths) > 0 {
 		question.AffectedPaths = append(question.AffectedPaths, payload.AffectedPaths...)
 	}
+
 	if len(payload.AffectedFields) > 0 {
 		question.AffectedFields = append(question.AffectedFields, payload.AffectedFields...)
 	}
+
 	delta := planAuthorityDeltaFromQuestion(*question, revision, now)
 	if strings.TrimSpace(payload.AuthorityKind) != "" {
 		delta.AuthorityKind = strings.TrimSpace(payload.AuthorityKind)
 	}
+
 	if len(payload.AffectedFields) > 0 {
 		delta.AffectedFields = normalizedStringList(append(delta.AffectedFields, payload.AffectedFields...))
 	}
+
 	if strings.TrimSpace(payload.Expected) != "" {
 		delta.Expected = strings.TrimSpace(payload.Expected)
 	}
+
 	if strings.TrimSpace(payload.Actual) != "" {
 		delta.Actual = strings.TrimSpace(payload.Actual)
 	}
+
 	return delta, nil
 }
 
@@ -1668,10 +1974,12 @@ func planAuthorityDeltaFromQuestion(question PlannerQuestion, revision int, now 
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+
 	evidenceRefs := normalizedStringList(question.EvidenceRefs)
 	if len(evidenceRefs) == 0 {
 		evidenceRefs = []string{"planner_question:" + firstNonEmpty(question.QuestionID, question.ID)}
 	}
+
 	return PlanAuthorityDelta{
 		QuestionID:     firstNonEmpty(question.QuestionID, question.ID),
 		AuthorityKind:  firstNonEmpty(question.AnswerSourceKind, question.AuthorityRequired, "operator_approval"),
@@ -1689,12 +1997,14 @@ func upsertPlanAuthorityDelta(state *FeatureState, delta PlanAuthorityDelta) {
 	if state == nil || strings.TrimSpace(delta.QuestionID) == "" {
 		return
 	}
+
 	for i := range state.AuthorityDeltas {
 		if state.AuthorityDeltas[i].QuestionID == delta.QuestionID && state.AuthorityDeltas[i].Revision == delta.Revision {
 			state.AuthorityDeltas[i] = delta
 			return
 		}
 	}
+
 	state.AuthorityDeltas = append(state.AuthorityDeltas, delta)
 }
 
@@ -1704,11 +2014,13 @@ func shouldResumeDispatch(state FeatureState) bool {
 	default:
 		return false
 	}
+
 	for _, atom := range state.Atoms {
 		if atom.State == AtomStateQueued || atom.State == AtomStateDispatchable {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1716,6 +2028,7 @@ func foldActiveRun(state *FeatureState, atomID string, runID string) {
 	if state == nil {
 		return
 	}
+
 	for i := range state.ActiveRuns {
 		run := state.ActiveRuns[i]
 		if run.AtomID == atomID && (runID == "" || run.RunID == runID || run.LaneSessionID == runID) {
@@ -1727,24 +2040,31 @@ func foldActiveRun(state *FeatureState, atomID string, runID string) {
 
 func refreshContinuation(state *FeatureState) {
 	state.Continuation.NextAtomID = ""
+
 	var waitingOnDependencies string
+
 	for _, atom := range state.Atoms {
 		if atom.State == AtomStateQueued {
 			if atomDependenciesSatisfied(state.Atoms, atom) {
 				state.Continuation.NextAtomID = atom.ID
 				state.Continuation.ResumeAction = "dispatch_next_atom"
+
 				return
 			}
+
 			if waitingOnDependencies == "" {
 				waitingOnDependencies = atom.ID
 			}
 		}
 	}
+
 	if waitingOnDependencies != "" {
 		state.Continuation.NextAtomID = waitingOnDependencies
 		state.Continuation.ResumeAction = "waiting_on_dependencies"
+
 		return
 	}
+
 	if state.Status == FeatureStateDispatching && allAtomsTerminal(state.Atoms) {
 		state.Status = FeatureStateComplete
 		state.Continuation.ResumeAction = "close_feature"
@@ -1757,20 +2077,26 @@ func atomDependenciesSatisfied(atoms []FeatureAtomState, atom FeatureAtomState) 
 		if dep == "" {
 			return false
 		}
+
 		foundTerminal := false
+
 		for _, candidate := range atoms {
 			if candidate.ID != dep {
 				continue
 			}
+
 			if candidate.State == AtomStateComplete || candidate.State == AtomStateSourceSatisfied {
 				foundTerminal = true
 			}
+
 			break
 		}
+
 		if !foundTerminal {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -1778,6 +2104,7 @@ func allAtomsTerminal(atoms []FeatureAtomState) bool {
 	if len(atoms) == 0 {
 		return false
 	}
+
 	for _, atom := range atoms {
 		switch atom.State {
 		case AtomStateComplete, AtomStateSourceSatisfied:
@@ -1785,6 +2112,7 @@ func allAtomsTerminal(atoms []FeatureAtomState) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -1793,11 +2121,13 @@ func appendUnique(values []string, next string) []string {
 	if next == "" {
 		return values
 	}
+
 	for _, value := range values {
 		if value == next {
 			return values
 		}
 	}
+
 	return append(values, next)
 }
 
@@ -1807,5 +2137,6 @@ func firstPositive(values ...int) int {
 			return value
 		}
 	}
+
 	return 0
 }

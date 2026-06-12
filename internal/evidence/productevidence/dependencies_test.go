@@ -47,18 +47,23 @@ func TestWithFallback(t *testing.T) {
 		if result.Version != "fallback-version" {
 			t.Fatalf("version: got %q, want fallback-version", result.Version)
 		}
+
 		if result.Commit != "fallback-commit" {
 			t.Fatalf("commit: got %q, want fallback-commit", result.Commit)
 		}
+
 		if result.Date != "fallback-date" {
 			t.Fatalf("date: got %q, want fallback-date", result.Date)
 		}
+
 		if result.DemoCommandRunnerID != "fallback-runner" {
 			t.Fatalf("runner: got %q, want fallback-runner", result.DemoCommandRunnerID)
 		}
+
 		if result.SummarizeLaneHistory == nil {
 			t.Fatal("SummarizeLaneHistory should be populated from fallback")
 		}
+
 		if result.RunMainNoTelemetry == nil {
 			t.Fatal("RunMainNoTelemetry should be populated from fallback")
 		}
@@ -70,12 +75,15 @@ func TestWithFallback(t *testing.T) {
 			Commit:  "custom-commit",
 		}
 		result := deps.withFallback(fallback)
+
 		if result.Version != "custom-version" {
 			t.Fatalf("version: got %q, want custom-version", result.Version)
 		}
+
 		if result.Commit != "custom-commit" {
 			t.Fatalf("commit: got %q, want custom-commit", result.Commit)
 		}
+
 		// Unset fields still come from fallback
 		if result.Date != "fallback-date" {
 			t.Fatalf("date: got %q, want fallback-date", result.Date)
@@ -90,6 +98,7 @@ func TestWithFallback(t *testing.T) {
 		if result.SummarizeLaneHistory == nil {
 			t.Fatal("SummarizeLaneHistory nil was not filled from fallback")
 		}
+
 		if result.RunMainNoTelemetry == nil {
 			t.Fatal("RunMainNoTelemetry nil was not filled from fallback")
 		}
@@ -100,9 +109,11 @@ func TestWithFallback(t *testing.T) {
 		result := Dependencies{
 			SummarizeLaneHistory: custom,
 		}.withFallback(fallback)
+
 		if result.SummarizeLaneHistory == nil {
 			t.Fatal("SummarizeLaneHistory should be kept when non-nil")
 		}
+
 		summary, _ := result.SummarizeLaneHistory("")
 		if summary.Total != 99 {
 			t.Fatalf("custom function was replaced by fallback: got total=%d", summary.Total)
@@ -116,10 +127,12 @@ func TestSummarizeLaneHistoryNilDeps(t *testing.T) {
 	// summary without error. TestMain does NOT set SummarizeLaneHistory in
 	// defaultDependencies, so this path is reachable.
 	deps := Dependencies{SummarizeLaneHistory: nil}
+
 	summary, err := deps.summarizeLaneHistory(".")
 	if err != nil {
 		t.Fatalf("expected no error with nil SummarizeLaneHistory, got %v", err)
 	}
+
 	if summary.Total != 0 {
 		t.Fatalf("expected empty summary with Total=0, got %#v", summary)
 	}
@@ -135,7 +148,9 @@ func TestLogCLIPhaseNilSafe(t *testing.T) {
 func TestP911RunMainNoTelemetryWithDeps(t *testing.T) {
 	t.Run("sets IDIOM_TELEMETRY=0 and restores", func(t *testing.T) {
 		previous := os.Getenv("IDIOM_TELEMETRY")
+
 		var capturedTelemetry string
+
 		runner := func(args []string, stdout, stderr io.Writer) int {
 			capturedTelemetry = os.Getenv("IDIOM_TELEMETRY")
 			return 0
@@ -143,12 +158,15 @@ func TestP911RunMainNoTelemetryWithDeps(t *testing.T) {
 		code := p911RunMainNoTelemetryWithDeps([]string{"tool"}, nil, nil, Dependencies{
 			RunMainNoTelemetry: runner,
 		})
+
 		if code != 0 {
 			t.Fatalf("expected exit 0, got %d", code)
 		}
+
 		if capturedTelemetry != "0" {
 			t.Fatalf("expected IDIOM_TELEMETRY=0 during call, got %q", capturedTelemetry)
 		}
+
 		after := os.Getenv("IDIOM_TELEMETRY")
 		if after != previous {
 			t.Fatalf("IDIOM_TELEMETRY not restored: was %q, now %q", previous, after)
@@ -157,6 +175,7 @@ func TestP911RunMainNoTelemetryWithDeps(t *testing.T) {
 
 	t.Run("passes args to RunMainNoTelemetry", func(t *testing.T) {
 		var capturedArgs []string
+
 		runner := func(args []string, stdout, stderr io.Writer) int {
 			capturedArgs = append([]string(nil), args...)
 			return 0
@@ -164,6 +183,7 @@ func TestP911RunMainNoTelemetryWithDeps(t *testing.T) {
 		p911RunMainNoTelemetryWithDeps([]string{"tool", "context_pack"}, nil, nil, Dependencies{
 			RunMainNoTelemetry: runner,
 		})
+
 		if len(capturedArgs) != 2 || capturedArgs[0] != "tool" || capturedArgs[1] != "context_pack" {
 			t.Fatalf("expected args [tool context_pack], got %#v", capturedArgs)
 		}
@@ -178,12 +198,15 @@ func TestP911RunMainNoTelemetryWithDeps(t *testing.T) {
 		defer restore()
 
 		var stderr bytes.Buffer
+
 		code := p911RunMainNoTelemetryWithDeps([]string{"tool"}, nil, &stderr, Dependencies{
 			RunMainNoTelemetry: nil,
 		})
+
 		if code != 127 {
 			t.Fatalf("expected exit code 127 when no runner in deps or fallback, got %d", code)
 		}
+
 		if !strings.Contains(stderr.String(), "unavailable") {
 			t.Fatalf("expected 'unavailable' message in stderr, got %q", stderr.String())
 		}

@@ -26,12 +26,14 @@ func TestRunnerRequestBudgetFingerprintDecisionWarnsThenBlocks(t *testing.T) {
 
 	state.noteFingerprint(fingerprint)
 	state.noteFingerprint(fingerprint)
+
 	decision := state.fingerprintDecision(RunPolicy{FingerprintNudgeAt: 2}, req, fingerprint)
 	if !decision.Handled || decision.Nudge == "" || decision.EventRole != "fingerprint_nudge" {
 		t.Fatalf("expected fingerprint nudge decision, got %#v", decision)
 	}
 
 	state.noteFingerprint(fingerprint)
+
 	decision = state.fingerprintDecision(RunPolicy{FingerprintNudgeAt: 2}, req, fingerprint)
 	if !decision.Handled || decision.ForceAnswerReason != "fingerprint_hard_block_exhausted" {
 		t.Fatalf("expected hard block after repeated warned fingerprint, got %#v", decision)
@@ -40,6 +42,7 @@ func TestRunnerRequestBudgetFingerprintDecisionWarnsThenBlocks(t *testing.T) {
 
 func TestRunnerRequestBudgetSamePathFixationNudgesOnVariedRanges(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
+
 	for i := 0; i < samePathFixationNudgeAt-1; i++ {
 		req := workspace.ToolRequest{Tool: "read_file", Path: "internal/surfaces/tui/app/app.go", StartLine: i*50 + 1, EndLine: (i + 1) * 50}
 		if decision := state.samePathFixationDecision(req, false); decision.Handled {
@@ -49,17 +52,21 @@ func TestRunnerRequestBudgetSamePathFixationNudgesOnVariedRanges(t *testing.T) {
 
 	req := workspace.ToolRequest{Tool: "read_file", Path: "internal/surfaces/tui/app/app.go", StartLine: 201, EndLine: 250}
 	decision := state.samePathFixationDecision(req, true)
+
 	if !decision.Handled || decision.Nudge == "" || decision.EventRole != "same_path_fixation_nudge" {
 		t.Fatalf("expected same-path fixation nudge, got %#v", decision)
 	}
+
 	if !strings.Contains(decision.Nudge, "internal/surfaces/tui/app/app.go") ||
 		!strings.Contains(decision.Nudge, "exact missing claim") ||
 		!strings.Contains(decision.Nudge, "Do not request another adjacent range") {
+
 		t.Fatalf("same-path nudge should name the path and bounded next action, got %q", decision.Nudge)
 	}
 
 	req = workspace.ToolRequest{Tool: "read_file", Path: "internal/surfaces/tui/app/app.go", StartLine: 251, EndLine: 300}
 	decision = state.samePathFixationDecision(req, true)
+
 	if !decision.Handled || decision.HideTool != "read_file" || decision.EventRole != "same_path_fixation_tool_hidden" {
 		t.Fatalf("ignored same-path nudge should hide the repeated tool, got %#v", decision)
 	}
@@ -67,6 +74,7 @@ func TestRunnerRequestBudgetSamePathFixationNudgesOnVariedRanges(t *testing.T) {
 
 func TestRunnerRequestBudgetSamePathFixationSkipsDiagnosticLogs(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
+
 	for i := 0; i < samePathFixationNudgeAt+2; i++ {
 		req := workspace.ToolRequest{Tool: "read_file", Path: "logs/conversations/20260604-192533.289.jsonl", StartLine: i*80 + 1, EndLine: (i + 1) * 80}
 		if decision := state.samePathFixationDecision(req, true); decision.Handled {
@@ -79,6 +87,7 @@ func TestRunnerRequestBudgetDoesNotForceNoToolsForTerminalArtifactRetry(t *testi
 	state := newRunnerRequestBudgetState(2)
 	req := workspace.ToolRequest{Tool: "read_file", Path: "README.md"}
 	fingerprint := "read_file|README.md"
+
 	state.fingerprint.rejected[fingerprint] = "Plan-execute submit_plan required"
 	state.noteFingerprint(fingerprint)
 	state.noteFingerprint(fingerprint)
@@ -88,12 +97,15 @@ func TestRunnerRequestBudgetDoesNotForceNoToolsForTerminalArtifactRetry(t *testi
 	if !decision.Handled {
 		t.Fatal("expected terminal artifact retry to be handled")
 	}
+
 	if decision.ForceAnswerReason != "" || decision.ForceAnswerPrompt != "" {
 		t.Fatalf("terminal artifact retry must preserve submit_plan surface, got %#v", decision)
 	}
+
 	if decision.Nudge == "" || decision.EventRole != "terminal_artifact_retry_recovery" {
 		t.Fatalf("expected terminal artifact repair nudge, got %#v", decision)
 	}
+
 	if !strings.Contains(decision.Nudge, "submit_plan") || strings.Contains(decision.Nudge, "Tools are now disabled") {
 		t.Fatalf("nudge should require submit_plan without no-tools closeout: %q", decision.Nudge)
 	}
@@ -108,6 +120,7 @@ func TestRunnerRequestBudgetSubmitCorrectionRetryDoesNotAdvertiseTerminalExcepti
 	state := newRunnerRequestBudgetState(2)
 	req := workspace.ToolRequest{Tool: "read_file", Path: "README.md"}
 	fingerprint := "read_file|README.md"
+
 	state.fingerprint.rejected[fingerprint] = "Corrected submit_plan required"
 	state.noteFingerprint(fingerprint)
 	state.noteFingerprint(fingerprint)
@@ -117,9 +130,11 @@ func TestRunnerRequestBudgetSubmitCorrectionRetryDoesNotAdvertiseTerminalExcepti
 	if !decision.Handled {
 		t.Fatal("expected submit-correction retry to be handled")
 	}
+
 	if !strings.Contains(decision.Nudge, "submit-correction mode") || !strings.Contains(decision.Nudge, "submit_plan") {
 		t.Fatalf("expected submit-correction nudge, got %#v", decision)
 	}
+
 	for _, forbidden := range []string{"true terminal exception", "or use `Decision: source-satisfied` / `<<QUESTION>>:`"} {
 		if strings.Contains(decision.Nudge, forbidden) {
 			t.Fatalf("submit-correction retry nudge advertised stale exception %q: %s", forbidden, decision.Nudge)
@@ -136,6 +151,7 @@ func TestRunnerRequestBudgetEarlyBlocksRepeatedRangeLessReadRetry(t *testing.T) 
 			state := newRunnerRequestBudgetState(2)
 			req := workspace.ToolRequest{Tool: "read_file", Path: "README.md"}
 			fingerprint := "read_file|README.md"
+
 			state.fingerprint.rejected[fingerprint] = summary
 
 			// First retry: nudge (nudge-then-block pattern)
@@ -161,12 +177,14 @@ func TestRunnerRequestBudgetAllowsOneCorrectedRetryAfterMissingNamedGap(t *testi
 		NamedGap: "inspect the exact branch that delegates the child task",
 	}
 	fingerprint := "read_file|internal/runtime/agent/runner.go"
+
 	state.fingerprint.rejected[fingerprint] = "Post-readiness follow-up missing named gap"
 
 	decision := state.fingerprintDecision(RunPolicy{}, req, fingerprint)
 	if decision.Handled {
 		t.Fatalf("expected corrected retry to be allowed, got %#v", decision)
 	}
+
 	if _, ok := state.fingerprint.rejected[fingerprint]; ok {
 		t.Fatalf("expected recoverable rejection fingerprint to be cleared after corrected retry")
 	}
@@ -183,6 +201,7 @@ func TestRecoverablePostReadinessRejectionSummaryUsesContractNamespace(t *testin
 			t.Fatalf("expected %q to be recoverable post-readiness rejection", summary)
 		}
 	}
+
 	for _, summary := range []string{
 		"Post-child broad inspection blocked",
 		"Repeated dead-end action rejected",
@@ -201,6 +220,7 @@ func TestRunnerRequestBudgetClearsLegacyMissingNamedGapRetryWithoutNamedGap(t *t
 		Path: "internal/runtime/agent/runner.go",
 	}
 	fingerprint := "read_file|internal/runtime/agent/runner.go"
+
 	state.fingerprint.rejected[fingerprint] = "Post-readiness follow-up missing named gap"
 
 	// Read-only post-readiness follow-ups are advisory now. The old
@@ -209,6 +229,7 @@ func TestRunnerRequestBudgetClearsLegacyMissingNamedGapRetryWithoutNamedGap(t *t
 	if decision.Handled {
 		t.Fatalf("advisory post-readiness retry should not be budget-blocked, got %#v", decision)
 	}
+
 	if _, ok := state.fingerprint.rejected[fingerprint]; ok {
 		t.Fatal("expected legacy missing named-gap rejection fingerprint to be cleared")
 	}
@@ -224,7 +245,9 @@ func TestRunnerRequestBudgetExplorationDecisionNudgesWithoutForcingDelegation(t 
 		},
 	}
 	state := newRunnerRequestBudgetState(2)
+
 	state.readCallsSinceWrite = 4
+
 	results := []workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read README.md", Output: "one"},
 		{Tool: "search_files", Summary: "Matched 1 file", Output: "README.md"},
@@ -234,6 +257,7 @@ func TestRunnerRequestBudgetExplorationDecisionNudgesWithoutForcingDelegation(t 
 	if !decision.Handled || decision.Nudge == "" || decision.EventRole != "exploration_task_delegation_nudge" {
 		t.Fatalf("expected exploration delegation nudge, got %#v", decision)
 	}
+
 	if !state.broadEvidenceDelegationRequired {
 		t.Fatal("expected delegation requirement to latch after nudge")
 	}
@@ -260,6 +284,7 @@ func TestRunnerRequestBudgetExplorationDecisionNudgesWithoutForcingDelegation(t 
 // the removal so a future re-introduction is caught.
 func TestRunnerRequestBudgetReadBudgetIsNoLongerEnforced(t *testing.T) {
 	state := newRunnerRequestBudgetState(1)
+
 	state.readOnlyChildTaskSatisfied = true
 	state.noteReadClassRequest(workspace.ToolRequest{Tool: "read_file", Path: "README.md"})
 	state.noteReadClassRequest(workspace.ToolRequest{Tool: "read_file", Path: "README.md"})
@@ -268,6 +293,7 @@ func TestRunnerRequestBudgetReadBudgetIsNoLongerEnforced(t *testing.T) {
 	if decision.Handled {
 		t.Fatalf("readBudgetDecision should no longer force-finish on post-child reads; got %#v", decision)
 	}
+
 	if decision.RejectStopReason != "" {
 		t.Fatalf("expected empty stop reason, got %q", decision.RejectStopReason)
 	}
@@ -283,6 +309,7 @@ func TestRunnerRequestBudgetNudgesAndBlocksZeroHitSearchFamily(t *testing.T) {
 
 	second := workspace.ToolRequest{Tool: "search_content", Path: ".", Pattern: "pkey.KeyArrowDown"}
 	decision := state.fingerprintDecision(RunPolicy{}, second, "search_content|.|pkey.KeyArrowDown")
+
 	if !decision.Handled || decision.EventRole != "zero_hit_family_nudge" || decision.Nudge == "" {
 		t.Fatalf("expected same-family zero-hit nudge, got %#v", decision)
 	}
@@ -291,8 +318,11 @@ func TestRunnerRequestBudgetNudgesAndBlocksZeroHitSearchFamily(t *testing.T) {
 		Tool:    "search_content",
 		Summary: `No content matches for "pkey.KeyArrowDown"`,
 	})
+
 	third := workspace.ToolRequest{Tool: "search_content", Path: ".", Pattern: "key arrow"}
+
 	decision = state.fingerprintDecision(RunPolicy{}, third, "search_content|.|key arrow")
+
 	if !decision.Handled || decision.RejectSummary != "Zero-hit search family blocked" || decision.RejectStopReason != "zero_hit_family_budget_exhausted" {
 		t.Fatalf("expected same-family zero-hit block, got %#v", decision)
 	}
@@ -300,6 +330,7 @@ func TestRunnerRequestBudgetNudgesAndBlocksZeroHitSearchFamily(t *testing.T) {
 
 func TestRunnerRequestBudgetBlocksUnrelatedPostChildDiscovery(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
+
 	state.readOnlyChildTaskSatisfied = true
 	state.noteReadOnlyChildPacket([]string{"internal/runtime/agent/discovery_redirect.go"})
 
@@ -311,6 +342,7 @@ func TestRunnerRequestBudgetBlocksUnrelatedPostChildDiscovery(t *testing.T) {
 	if !decision.Handled || decision.RejectSummary != "Post-child unrelated discovery blocked" {
 		t.Fatalf("expected unrelated post-child search to be blocked, got %#v", decision)
 	}
+
 	if !strings.Contains(decision.RejectError, "discovery_redirect.go") {
 		t.Fatalf("expected rejection to mention packet evidence paths, got %#v", decision)
 	}
@@ -327,6 +359,7 @@ func TestRunnerRequestBudgetBlocksUnrelatedPostChildDiscovery(t *testing.T) {
 // MaxToolSteps own the runaway-exploration ceiling.
 func TestRunnerRequestBudgetMutationParentSuppressesPostChildBlocks(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
+
 	state.readOnlyChildTaskSatisfied = true
 	state.noteReadOnlyChildPacket([]string{"internal/runtime/agent/discovery_redirect.go"})
 
@@ -363,6 +396,7 @@ func TestRunnerRequestBudgetMutationParentSuppressesPostChildBlocks(t *testing.T
 
 func TestRunnerRequestBudgetAllowsPacketAnchoredPostChildDiscovery(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
+
 	state.readOnlyChildTaskSatisfied = true
 	state.noteReadOnlyChildPacket([]string{"internal/capabilities/workspace/discovery_query.go"})
 
@@ -387,8 +421,10 @@ func TestRunnerRequestBudgetAllowsPacketAnchoredPostChildDiscovery(t *testing.T)
 // block was removed.
 func TestRunnerRequestBudgetNudgesPostChildRereadsButDoesNotBlock(t *testing.T) {
 	state := newRunnerRequestBudgetState(4)
+
 	state.readOnlyChildTaskSatisfied = true
 	state.noteReadOnlyChildPacket([]string{"internal/runtime/agent/discovery_redirect.go"})
+
 	req := workspace.ToolRequest{Tool: "read_file", Path: "internal/runtime/agent/discovery_redirect.go"}
 
 	state.noteReadClassRequest(req)
@@ -404,6 +440,7 @@ func TestRunnerRequestBudgetNudgesPostChildRereadsButDoesNotBlock(t *testing.T) 
 	if decision.Handled {
 		t.Fatalf("expected repeated post-child reread to be allowed (no hard block); got %#v", decision)
 	}
+
 	if decision.RejectStopReason != "" {
 		t.Fatalf("expected no stop reason on repeated post-child reread, got %q", decision.RejectStopReason)
 	}
@@ -414,9 +451,12 @@ func TestRunnerRequestBudgetNudgesPostChildRereadsButDoesNotBlock(t *testing.T) 
 // instead of force-answering, deferring to the write-ready escalation.
 func TestWriteReadyNudgeActiveDefersRejectionRetry(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
+
 	state.writeReadyNudgeActive = true
+
 	req := workspace.ToolRequest{Tool: "search_content", Path: "internal/surfaces/tui/app"}
 	fingerprint := "search_content|internal/surfaces/tui/app"
+
 	state.fingerprint.rejected[fingerprint] = "Chained search rejected"
 	state.fingerprint.rejectedRetries = make(map[string]int)
 
@@ -424,15 +464,19 @@ func TestWriteReadyNudgeActiveDefersRejectionRetry(t *testing.T) {
 	if !decision.Handled {
 		t.Fatal("expected rejection retry to be handled")
 	}
+
 	if decision.ForceAnswerReason != "" {
 		t.Fatalf("expected nudge (not force-answer) when writeReadyNudgeActive, got ForceAnswerReason=%q", decision.ForceAnswerReason)
 	}
+
 	if decision.EventRole != "rejection_retry_deferred_to_write_ready" {
 		t.Fatalf("expected rejection_retry_deferred_to_write_ready event, got %q", decision.EventRole)
 	}
+
 	if decision.Nudge == "" {
 		t.Fatal("expected a nudge message when writeReadyNudgeActive is true")
 	}
+
 	t.Logf("nudge: %s", decision.Nudge)
 }
 
@@ -442,6 +486,7 @@ func TestRejectionRetryNudgeThenBlock(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
 	req := workspace.ToolRequest{Tool: "list_files", Path: "."}
 	fingerprint := "list_files|."
+
 	state.fingerprint.rejected[fingerprint] = "Broad inspection blocked"
 	state.fingerprint.rejectedRetries = make(map[string]int)
 
@@ -450,9 +495,11 @@ func TestRejectionRetryNudgeThenBlock(t *testing.T) {
 	if !d1.Handled || d1.Nudge == "" {
 		t.Fatalf("expected nudge on first retry, got %#v", d1)
 	}
+
 	if d1.ForceAnswerReason != "" {
 		t.Fatalf("expected nudge (not force-answer) on first retry, got ForceAnswerReason=%q", d1.ForceAnswerReason)
 	}
+
 	t.Log("first retry: nudge")
 
 	// Second retry: blocked
@@ -460,6 +507,7 @@ func TestRejectionRetryNudgeThenBlock(t *testing.T) {
 	if !d2.Handled || d2.ForceAnswerReason != "rejection_retry_blocked" {
 		t.Fatalf("expected force-answer on second retry, got %#v", d2)
 	}
+
 	t.Log("second retry: blocked")
 }
 
@@ -468,6 +516,7 @@ func TestRejectionRetryNudgeThenBlock(t *testing.T) {
 // rejected/rejectedRetries maps.
 func TestNoteWriteProgressClearsWriteReadyNudgeAndRejectionState(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
+
 	state.writeReadyNudgeActive = true
 	state.fingerprint.rejected["fp"] = "test rejection"
 	state.fingerprint.rejectedRetries = map[string]int{"fp": 3}
@@ -477,9 +526,11 @@ func TestNoteWriteProgressClearsWriteReadyNudgeAndRejectionState(t *testing.T) {
 	if state.writeReadyNudgeActive {
 		t.Fatal("writeReadyNudgeActive should be false after noteWriteProgress")
 	}
+
 	if _, ok := state.fingerprint.rejected["fp"]; ok {
 		t.Fatal("rejected fingerprints should be cleared after noteWriteProgress")
 	}
+
 	if _, ok := state.fingerprint.rejectedRetries["fp"]; ok {
 		t.Fatal("rejectedRetries should be cleared after noteWriteProgress")
 	}

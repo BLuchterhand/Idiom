@@ -57,6 +57,7 @@ func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 		if normalizeDiscoveryQueryPurpose(req.Purpose) == "security_review" {
 			cost = "high"
 		}
+
 		return discoveryProfile("composite_query", scopeFromPathAndPattern(req.Path, req.Pattern), cost, true)
 	case ToolNameStructuralSearch:
 		return discoveryProfile("ast_search", "targeted", "medium", true)
@@ -79,7 +80,9 @@ func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 
 func readOnlyCapabilityDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
 	routed := req
+
 	routed.Tool = ToolNameCodeNavigate
+
 	switch normalizeReadOnlyCapabilityID(req.Capability) {
 	case string(ReadOnlyCapabilityFileOutline):
 		routed.Capability = string(CapFileOutline)
@@ -100,17 +103,20 @@ func readOnlyCapabilityDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
 	default:
 		return discoveryProfile("read_only_capability", scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), "medium", true)
 	}
+
 	return codeNavigationDiscoveryProfile(routed)
 }
 
 func codeNavigationDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
 	class := "language_symbol"
 	cost := "low"
+
 	switch normalizeCodeNavigationCapability(req.Capability) {
 	case "definition", "references", "calls_from", "calls_into", "implementations", "related_files":
 		class = "language_relationship"
 		cost = "medium"
 	}
+
 	return discoveryProfile(class, scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), cost, true)
 }
 
@@ -118,6 +124,7 @@ func normalizeCodeNavigationCapability(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.ReplaceAll(value, "-", "_")
 	value = strings.ReplaceAll(value, " ", "_")
+
 	switch value {
 	case "outline":
 		return "file_outline"
@@ -159,6 +166,7 @@ func scopeFromPath(path string) string {
 	if path == "." || path == string(filepath.Separator) {
 		return "broad"
 	}
+
 	return "targeted"
 }
 
@@ -166,6 +174,7 @@ func scopeFromPathAndPattern(path string, pattern string) string {
 	if strings.TrimSpace(pattern) != "" {
 		return "targeted"
 	}
+
 	return scopeFromPath(path)
 }
 
@@ -185,7 +194,9 @@ func languageDiscoveryProfile(tool string) ToolDiscoveryProfile {
 	if !ok {
 		return ToolDiscoveryProfile{Class: "other"}
 	}
+
 	_ = lang
+
 	switch suffix {
 	case "overview", "entrypoints":
 		return discoveryProfile("language_overview", "broad", "medium", false)
@@ -206,5 +217,6 @@ func splitLanguageTool(tool string) (string, string, bool) {
 			return strings.TrimSuffix(prefix, "_"), strings.TrimPrefix(tool, prefix), true
 		}
 	}
+
 	return "", "", false
 }

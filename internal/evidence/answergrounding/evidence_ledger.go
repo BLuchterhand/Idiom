@@ -18,6 +18,7 @@ func (l EvidenceLedger) FindAny(kinds ...EvidenceKind) (EvidenceReceipt, bool) {
 			return receipt, true
 		}
 	}
+
 	return EvidenceReceipt{}, false
 }
 
@@ -26,10 +27,12 @@ func (l EvidenceLedger) FindTarget(target string, kinds ...EvidenceKind) (Eviden
 		if !evidenceKindAllowed(receipt.Kind, kinds) {
 			continue
 		}
+
 		if l.normalizer.Same(receipt.Target, target) {
 			return receipt, true
 		}
 	}
+
 	return EvidenceReceipt{}, false
 }
 
@@ -38,13 +41,16 @@ func (l EvidenceLedger) FindCoveredTarget(target string, startLine int, endLine 
 		if !evidenceKindAllowed(receipt.Kind, kinds) {
 			continue
 		}
+
 		if !l.normalizer.Same(receipt.Target, target) {
 			continue
 		}
+
 		if receipt.StartLine <= startLine && endLine <= receipt.EndLine {
 			return receipt, true
 		}
 	}
+
 	return EvidenceReceipt{}, false
 }
 
@@ -54,5 +60,6 @@ func evidenceKindAllowed(kind EvidenceKind, allowed []EvidenceKind) bool {
 			return true
 		}
 	}
+
 	return false
 }

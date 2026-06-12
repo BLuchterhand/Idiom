@@ -1,30 +1,36 @@
 ---
 tags:
-  - harness
+  - idiom
   - package-guide
   - codebase-map
 ---
 
 # Package Guide
 
-This note gives a package-level map of the target codebase. Use it as an orientation aid,
+This note gives a package-level map of the repo. Use it as an orientation aid,
 not as a substitute for `context_pack` or source inspection.
 
 ## Commands
 
 | Package | Purpose |
 | --- | --- |
-| `cmd/harness` | Main CLI, TUI launch, tool commands, lanes, atom intake, local ops, artifact commands |
-| `cmd/harness-analyze` | Analysis command surface |
-| `cmd/harness-e2e` | End-to-end test command surface |
-| `cmd/harness-eval` | Evaluation command surface |
-| `cmd/harness-perf-eval` | Performance/eval command surface |
-| `cmd/harness-swe-eval` | SWE-style eval command surface |
+| `cmd/idiom` | Thin CLI entrypoint (`main.go`); all subcommand impls live in `internal/*cmd/` |
+| `cmd/idiom-analyze` | Thin entrypoint; analysis impl in `internal/analyzecmd/` |
+| `cmd/idiom-e2e` | Thin entrypoint; e2e impl in `internal/e2ecmd/` |
+| `cmd/idiom-eval` | Thin entrypoint; eval impl in `internal/surfaces/cli/eval/` |
+| `cmd/idiom-perf-eval` | Thin entrypoint; perf-eval impl in `internal/perfevalcmd/` |
+| `cmd/idiom-swe-eval` | Thin entrypoint; swe-eval impl in `internal/sweevalcmd/` |
 
-Important `cmd/harness` subcommands include lanes, tools, backend management,
-queue, atom intake, brief lint, lane postflight, product-evidence export,
-release evidence, audit watch, ranker commands, local-ops benchmark, and MCP
-serve.
+Important CLI subcommands live in `internal/*cmd/` packages:
+lanes (`internal/lanecmd`), tools (`internal/toolcmd`), backend management
+(`internal/surfaces/cli/backend`), queue (`internal/surfaces/cli/queue`), atom intake
+(`internal/atomcmd`), brief lint (`internal/briefcmd`), lane postflight
+(`internal/workflows/postflight`), product-evidence export (`internal/evidence/productevidence`),
+release evidence (`internal/evidence/productevidence`), audit watch (`internal/auditcmd`),
+ranker commands (`internal/surfaces/cli/ranker`), local-ops benchmark (`internal/surfaces/cli/localops`),
+MCP serve (`internal/surfaces/cli/mcp`), doctor (`internal/surfaces/cli/doctor`), probe
+(`internal/surfaces/cli/probe`), architect (`internal/surfaces/cli/architect`), refine
+(`internal/surfaces/cli/refine`), and init (`internal/initcmd`).
 
 ## Core Runtime Packages
 
@@ -44,8 +50,8 @@ serve.
 | `internal/capabilities/workspace` | Tool manager, dispatch, file operations, source sanity, context/audit tool entrypoints |
 | `internal/repository/semantic` | Semantic/language-aware support |
 | `internal/repository/discovery` | Discovery helpers and query orchestration |
-| `internal/runtime` | Runtime helper functionality |
-| `internal/runtime/pathparse` | Path parsing helpers |
+| `internal/frontier` | Frontier/runtime helper functionality |
+| `internal/contracts/pathparse` | Path parsing helpers |
 
 ## Repository Memory
 
@@ -69,7 +75,7 @@ serve.
 | `internal/runtime/backends` | Backend profiles, role aliases, launcher, status, and proxy management |
 | `internal/runtime/llama` | llama.cpp/local model integration |
 | `internal/platform/config` | Project and runtime configuration |
-| `internal/cmdutil` | Shared CLI utilities |
+| `internal/cmd/config` | Shared CLI configuration |
 | `internal/platform/util` | Shared utility helpers: string, exec, IO, JSON, and generic pointer functions |
 | `internal/platform/autodetect` | Host, model, backend, and toolchain discovery helpers |
 
@@ -80,19 +86,19 @@ serve.
 | `internal/evidence/telemetry` | Structured runtime events and telemetry plumbing |
 | `internal/evidence/transcript` | Conversation transcript handling |
 | `internal/evidence/eval` | Eval scoring and behavior-pattern detection |
-| `internal/capabilities/mcp` | Outbound MCP client and registry; inbound MCP server lives in `cmd/harness/mcp.go` |
+| `internal/capabilities/mcp` | Outbound MCP client and registry; inbound MCP server lives in `internal/surfaces/cli/mcp` |
 
 ## Operational Evidence Commands
 
-| Command family | Purpose |
+| Command family (package) | Purpose |
 | --- | --- |
-| `harness audit watch` | Poll telemetry/conversation logs, debounce high-signal events, and write review packets under `.harness/audits/watch` |
-| `harness brief lint` | Pre-dispatch lint for implementation briefs, exact anchors, prompt-magic risks, and plan-execute edit shape |
-| `harness lane postflight` | QC pipeline for returned diffs |
-| `harness local-ops benchmark` | Local readiness, activation, smoke, capacity, and privacy-safe benchmark evidence |
-| `harness product-evidence export` | Metadata-only go/no-go evidence export for product decisions |
-| `harness release evidence` | Release evidence bundle comparing baseline/active command artifacts |
-| `harness ranker` | Manual ranker learning inspection, boost/penalize controls, and rollback |
+| `internal/auditcmd` (`idiom audit watch`) | Poll telemetry/conversation logs, debounce high-signal events, and write review packets under `.idiom/audits/watch` |
+| `internal/briefcmd` (`idiom brief lint`) | Pre-dispatch lint for implementation briefs, exact anchors, prompt-magic risks, and plan-execute edit shape |
+| `internal/workflows/postflight` (`idiom lane postflight`) | QC pipeline for returned diffs |
+| `internal/surfaces/cli/localops` (`idiom local-ops benchmark`) | Local readiness, activation, smoke, capacity, and privacy-safe benchmark evidence |
+| `internal/evidence/productevidence` (`idiom product-evidence export`) | Metadata-only go/no-go evidence export for product decisions |
+| `internal/evidence/productevidence` (`idiom release evidence`) | Release evidence bundle comparing baseline/current command artifacts |
+| `internal/surfaces/cli/ranker` (`idiom ranker`) | Manual ranker learning inspection, boost/penalize controls, and rollback |
 
 ## Prompt And Docs Areas
 
@@ -100,21 +106,21 @@ serve.
 | --- | --- |
 | `prompts/` | Baseline prompt layers |
 | `prompts/profiles/` | Mode/profile-specific prompt layers |
-| `docs/` | Design, design map, operations, architecture, audit, and workflow docs |
-| `.agent-config/` | LLM-agent-specific project context and traps |
+| `docs/` | Design, roadmap, operations, architecture, audit, and workflow docs |
+| `.codex/` | Codex-specific repo context and traps |
 
 ## Key Source Anchors
 
 | Area | Files |
 | --- | --- |
-| Main CLI | `cmd/harness/main.go`, `cmd/harness/lane.go`, `cmd/harness/plan_execute.go` |
-| MCP and sidecar | `cmd/harness/mcp.go`, `internal/capabilities/mcp/client.go`, `internal/capabilities/mcp/registry.go`, `internal/capabilities/workspace/tool_schema_export.go` |
+| Main CLI | `cmd/idiom/main.go`, `internal/surfaces/cli/root`, `internal/lanecmd`, `internal/surfaces/cli/planexecute`, `internal/implementcmd`, `internal/toolcmd` |
+| MCP and sidecar | `internal/surfaces/cli/mcp`, `internal/capabilities/mcp/client.go`, `internal/capabilities/mcp/registry.go`, `internal/capabilities/workspace/tool_schema_export.go` |
 | Runner contracts | `internal/runtime/agent/runner.go`, `internal/runtime/agent/runner_autonomy.go`, `internal/runtime/agent/runner_task_ledger.go` |
 | Workspace tools | `internal/capabilities/workspace/manager.go`, `internal/capabilities/workspace/tool_schemas.go`, `internal/capabilities/workspace/context_tools.go`, `internal/capabilities/workspace/source_sanity.go` |
-| External project tools | `internal/capabilities/workspace/external_tool.go`, `.harness/external_tools/<name>.json` |
+| External project tools | `internal/capabilities/workspace/external_tool.go`, `.idiom/external_tools/<name>.json` |
 | Context memory | `internal/repository/comprehension/graph.go`, `internal/repository/comprehension/pack.go`, `internal/repository/comprehension/views.go`, `internal/repository/comprehension/freshness.go` |
 | Prompt stack | `internal/runtime/promptstack`, `prompts/`, `prompts/profiles/` |
-| Local operations | `cmd/harness/doctor.go`, `cmd/harness/backend.go`, `cmd/harness/queue.go`, `internal/runtime/backends`, `internal/platform/autodetect` |
+| Local operations | `internal/surfaces/cli/doctor`, `internal/surfaces/cli/backend`, `internal/surfaces/cli/queue`, `internal/surfaces/cli/localops`, `internal/runtime/backends`, `internal/platform/autodetect` |
 | Audit/eval | `internal/evidence/eval`, `internal/evidence/telemetry`, `internal/capabilities/workspace/harness_audit.go` |
 
 ## Change Localization Examples
@@ -124,7 +130,7 @@ serve.
 | Completion readiness | `internal/runtime/agent`, runner tests, [[09 - Verification Readiness and Completion]] |
 | Tool schema or dispatch | `internal/capabilities/workspace`, tool tests, [[06 - Workspace Tools and Capability Routing]] |
 | Context packet behavior | `internal/repository/comprehension`, context tool tests, [[07 - Repository Memory and Context Graph]] |
-| Plan-execute workflow | `cmd/harness/plan_execute.go`, lane tests, [[04 - Runtime Lanes]] |
+| Plan-execute workflow | `internal/surfaces/cli/planexecute`, lane tests, [[04 - Runtime Lanes]] |
 | Prompt behavior | `prompts/`, `internal/runtime/promptstack`, runner behavior tests |
 | Audit classification | `internal/evidence/eval`, `harness_audit`, telemetry fixtures |
 | Local backend readiness | `internal/runtime/backends`, `internal/platform/autodetect`, `internal/runtime/llama`, local ops docs |
@@ -147,7 +153,7 @@ belongs at a boundary.
 | Verification readiness and completion | [[23 - Major Systems Architectural Onboarding#Verification Readiness And Completion]] |
 | Telemetry, audit, eval, and learning | [[23 - Major Systems Architectural Onboarding#Telemetry Audit Eval And Learning]] |
 | Local model operations | [[23 - Major Systems Architectural Onboarding#Local Model Operations]] |
-| Sidecar and LLM agent integrations | [[23 - Major Systems Architectural Onboarding#Sidecar And LLM Agent Integrations]] |
+| Sidecar and external integrations | [[23 - Major Systems Architectural Onboarding#Sidecar And External Integrations]] |
 | Product workflow and behavioral coverage | [[23 - Major Systems Architectural Onboarding#Product Workflow And Behavioral Coverage]] |
 | Recovery and decomposition | [[23 - Major Systems Architectural Onboarding#Recovery And Decomposition]] |
 

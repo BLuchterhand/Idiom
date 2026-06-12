@@ -34,17 +34,23 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 	opts, err := parsePlanExecuteOptions(args, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 2
 	}
+
 	cfg, err := config.Load(opts.ConfigPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	if strings.TrimSpace(opts.Model) != "" {
 		cfg.LlamaServer.Model = opts.Model
 	}
+
 	result := planexecute.Run(cfg, opts, adaptPromptRunner(promptRun), rec, stdout, stderr)
+
 	return result.ExitCode
 }
 
@@ -200,6 +206,7 @@ func runReviewRepairPhase(
 	promptRun cmdruntime.PromptRunner,
 	rec *telemetry.Recorder,
 ) (reviewRepairPhaseReport, error) {
+
 	report, err := planexecute.RunReviewRepairPhase(
 		cfg,
 		originalPrompt,
@@ -212,6 +219,7 @@ func runReviewRepairPhase(
 		adaptPromptRunner(promptRun),
 		rec,
 	)
+
 	return report, err
 }
 
@@ -225,10 +233,12 @@ func toSharedReviewRepairEvidence(evidence reviewRepairEvidence) planexecute.Rev
 		DiffCheck:     evidence.DiffCheck,
 		DiffCheckExit: evidence.DiffCheckExit,
 	}
+
 	data, err := json.Marshal(evidence.PhaseEvidence)
 	if err == nil {
 		_ = json.Unmarshal(data, &shared.PhaseEvidence)
 	}
+
 	return shared
 }
 
@@ -238,10 +248,12 @@ func fromSharedReviewRepairEvidence(evidence planexecute.ReviewRepairEvidence) r
 		DiffCheck:     evidence.DiffCheck,
 		DiffCheckExit: evidence.DiffCheckExit,
 	}
+
 	data, err := json.Marshal(evidence.PhaseEvidence)
 	if err == nil {
 		_ = json.Unmarshal(data, &out.PhaseEvidence)
 	}
+
 	return out
 }
 
@@ -251,6 +263,7 @@ func collectReviewRepairEvidence(root string, paths []string, baseline *reviewRe
 
 func autoRepairReviewPatchHygiene(root string, changedPaths []string, evidence reviewRepairEvidence) (patchHygieneAutoRepairReport, error) {
 	report, err := planexecute.AutoRepairReviewPatchHygiene(root, changedPaths, toSharedReviewRepairEvidence(evidence))
+
 	return patchHygieneAutoRepairReport{
 		Repaired: report.Repaired,
 		Paths:    append([]string(nil), report.Paths...),
@@ -307,6 +320,7 @@ func planEditPreflightMismatchFromPackage(mismatch *planexecute.PlanEditPrefligh
 	if mismatch == nil {
 		return nil
 	}
+
 	return &planEditPreflightMismatch{
 		Index:  mismatch.Index,
 		Path:   mismatch.Path,

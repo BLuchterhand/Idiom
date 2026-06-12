@@ -26,20 +26,25 @@ func DiscoverProfiles(projectRoot string) (*ProfileStoreResult, error) {
 		Findings: []ProfileFinding{},
 	}
 	profilesDir := filepath.Join(projectRoot, ".idiom", "research", "profiles")
+
 	entries, err := os.ReadDir(profilesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return result, nil
 		}
+
 		return nil, fmt.Errorf("read profiles directory: %w", err)
 	}
+
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Name() < entries[j].Name()
 	})
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
+
 		name := entry.Name()
 		if entry.Type()&os.ModeSymlink != 0 {
 			result.Findings = append(result.Findings, ProfileFinding{
@@ -48,19 +53,24 @@ func DiscoverProfiles(projectRoot string) (*ProfileStoreResult, error) {
 				File:     name,
 				Severity: ProductWorkflowSeverityError,
 			})
+
 			continue
 		}
+
 		if strings.Contains(name, string(filepath.Separator)+".."+string(filepath.Separator)) ||
 			name == ".." || strings.HasPrefix(name, "../") ||
 			strings.HasSuffix(name, "/..") || strings.HasPrefix(name, "/") {
+
 			result.Findings = append(result.Findings, ProfileFinding{
 				Kind:     "path_traversal",
 				Message:  fmt.Sprintf("filename %q contains path traversal sequence", name),
 				File:     name,
 				Severity: ProductWorkflowSeverityError,
 			})
+
 			continue
 		}
+
 		if !strings.HasSuffix(name, ".json") {
 			result.Findings = append(result.Findings, ProfileFinding{
 				Kind:     "non_json_file",
@@ -68,8 +78,10 @@ func DiscoverProfiles(projectRoot string) (*ProfileStoreResult, error) {
 				File:     name,
 				Severity: "warning",
 			})
+
 			continue
 		}
+
 		data, readErr := os.ReadFile(filepath.Join(profilesDir, name))
 		if readErr != nil {
 			result.Findings = append(result.Findings, ProfileFinding{
@@ -78,8 +90,10 @@ func DiscoverProfiles(projectRoot string) (*ProfileStoreResult, error) {
 				File:     name,
 				Severity: ProductWorkflowSeverityError,
 			})
+
 			continue
 		}
+
 		profile, parseErr := ParseResearchProfileJSON(data)
 		if parseErr != nil {
 			result.Findings = append(result.Findings, ProfileFinding{
@@ -88,13 +102,18 @@ func DiscoverProfiles(projectRoot string) (*ProfileStoreResult, error) {
 				File:     name,
 				Severity: ProductWorkflowSeverityError,
 			})
+
 			continue
 		}
+
 		if strings.TrimSpace(profile.ProfileID) == "" {
 			stem := strings.TrimSuffix(name, filepath.Ext(name))
+
 			profile.ProfileID = stem
 		}
+
 		result.Profiles = append(result.Profiles, profile)
 	}
+
 	return result, nil
 }

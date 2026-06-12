@@ -94,12 +94,15 @@ func StatusReportWithMetadata(report StatusReport, operation string, freshness *
 	report.StaleFileCount = len(report.StaleFiles)
 	report.MissingFileCount = len(report.MissingFiles)
 	report.StalePathCount = report.StaleFileCount + report.MissingFileCount
+
 	if freshness != nil {
 		report.Freshness = freshness
 	}
+
 	report.Confidence = graphResultConfidenceForStatus(report, report.Freshness)
 	report.Provenance = graphResultProvenanceFromStatus(operation, report, "")
 	report.StaleEvidence = StaleEvidenceSafetyForStatus(report, report.Freshness)
+
 	return report
 }
 
@@ -107,6 +110,7 @@ func AttachPackResultContract(result *PackResult) {
 	if result == nil {
 		return
 	}
+
 	if result.Cache.State == "" {
 		result.Cache = GraphViewCacheState{
 			State:  "uncached",
@@ -119,16 +123,20 @@ func AttachPackResultContract(result *PackResult) {
 			},
 		}
 	}
+
 	if result.Cache.PackID == "" {
 		result.Cache.PackID = result.PackID
 	}
+
 	if result.Cache.StoreKind == "" {
 		result.Cache.StoreKind = result.StoreKind
 	}
+
 	result.Cache.ReadThroughRefresh = result.Cache.ReadThroughRefresh || (result.AutoRefresh != nil && result.AutoRefresh.Attempted)
 	if result.Freshness != nil {
 		result.Cache.FreshnessPolicy = result.Freshness.Policy
 	}
+
 	result.UnresolvedGapDetails = normalizedGapDetails(result.UnresolvedGapDetails, result.UnresolvedGaps)
 	result.Contract = GraphViewResultContract{
 		SchemaVersion:  GraphViewResultContractVersion,
@@ -147,13 +155,16 @@ func GraphViewCacheStateForKey(key ViewKey, storeKind string, state string, reas
 	if state == "" {
 		state = "miss_recompute"
 	}
+
 	source := "recompute"
+
 	switch state {
 	case "hit":
 		source = "graph_views"
 	case "fallback_recompute":
 		source = "fallback"
 	}
+
 	cache := GraphViewCacheState{
 		State:                     state,
 		Source:                    source,
@@ -169,11 +180,13 @@ func GraphViewCacheStateForKey(key ViewKey, storeKind string, state string, reas
 	if state == "fallback_recompute" {
 		cache.Fallback = true
 	}
+
 	return cache
 }
 
 func graphViewInvalidationSemantics(key ViewKey, cacheState string) GraphViewInvalidationSemantics {
 	state := "valid"
+
 	switch cacheState {
 	case "hit":
 		state = "valid"
@@ -184,10 +197,12 @@ func graphViewInvalidationSemantics(key ViewKey, cacheState string) GraphViewInv
 	default:
 		state = "recomputed"
 	}
+
 	workspaceFingerprint := strings.TrimSpace(key.Query.WorkspaceStateFingerprint)
 	rankerFingerprint := strings.TrimSpace(key.Query.RankerWeightsFingerprint)
 	runtimeFingerprint := strings.TrimSpace(key.Query.RuntimeTracesFingerprint)
 	componentsAttributed := workspaceFingerprint == "" || rankerFingerprint != "" || runtimeFingerprint != ""
+
 	return GraphViewInvalidationSemantics{
 		Policy: "content_addressed_read_through",
 		State:  state,
@@ -228,12 +243,15 @@ func componentWorkspaceStateSourceState(componentFingerprint string, workspaceFi
 	if strings.TrimSpace(componentFingerprint) != "" {
 		return "keyed"
 	}
+
 	if componentsAttributed {
 		return "baseline_keyed"
 	}
+
 	if strings.TrimSpace(workspaceFingerprint) != "" {
 		return "legacy_composite"
 	}
+
 	return "baseline_keyed"
 }
 
@@ -241,15 +259,19 @@ func componentWorkspaceStateReason(componentFingerprint string, workspaceFingerp
 	if strings.TrimSpace(componentFingerprint) != "" {
 		return reason
 	}
+
 	if componentsAttributed {
 		return reason
 	}
+
 	if strings.TrimSpace(workspaceFingerprint) != "" {
 		return "workspace_state_fingerprint_legacy"
 	}
+
 	if strings.TrimSpace(reason) == "" {
 		return "baseline_keyed"
 	}
+
 	return reason
 }
 
@@ -258,6 +280,7 @@ func graphResultProvenanceFromStatus(operation string, report StatusReport, arti
 	if !report.Indexed {
 		source = "context_status"
 	}
+
 	return GraphResultProvenance{
 		Source:                  source,
 		Operation:               strings.TrimSpace(operation),
@@ -298,9 +321,11 @@ func graphResultConfidenceForStatus(report StatusReport, freshness *FreshnessDec
 	if !report.Indexed {
 		return GraphResultConfidence{Level: "none", Source: "status_report", Reason: "missing_index"}
 	}
+
 	if report.CollectorVersionMismatch {
 		return GraphResultConfidence{Level: "low", Source: "status_report", Reason: "collector_version_mismatch"}
 	}
+
 	return GraphResultConfidenceForFreshness(report.Fresh, freshness)
 }
 
@@ -309,16 +334,21 @@ func GraphResultConfidenceForFreshness(globalFresh bool, freshness *FreshnessDec
 		if globalFresh {
 			return GraphResultConfidence{Level: "high", Source: "status_report"}
 		}
+
 		return GraphResultConfidence{Level: "low", Source: "status_report", Reason: FreshnessReasonStaleGraph}
 	}
+
 	source := "freshness_decision"
+
 	if !freshness.FreshForScope {
 		reason := util.FirstNonEmpty(strings.TrimSpace(freshness.Reason), strings.TrimSpace(freshness.Blocker), "stale_scope")
 		return GraphResultConfidence{Level: "low", Source: source, Reason: reason}
 	}
+
 	if !freshness.GlobalFresh {
 		return GraphResultConfidence{Level: "medium", Source: source, Reason: "scope_fresh_global_stale"}
 	}
+
 	return GraphResultConfidence{Level: "high", Source: source}
 }
 
@@ -326,12 +356,15 @@ func GraphGapForStatus(report StatusReport) string {
 	if !report.Indexed {
 		return "reason=missing_index"
 	}
+
 	if report.CollectorVersionMismatch {
 		return fmt.Sprintf("reason=%s index_id=%s collector_version=%s current_collector_version=%s", FreshnessReasonCollectorVersionMismatch, strings.TrimSpace(report.IndexID), strings.TrimSpace(report.CollectorVersion), strings.TrimSpace(report.CurrentCollectorVersion))
 	}
+
 	if report.Fresh {
 		return ""
 	}
+
 	return fmt.Sprintf("reason=%s index_id=%s stale_path_count=%d missing_path_count=%d stale_paths=%s missing_paths=%s", FreshnessReasonStaleGraph, strings.TrimSpace(report.IndexID), len(report.StaleFiles), len(report.MissingFiles), limitedCSV(report.StaleFiles, 5), limitedCSV(report.MissingFiles, 5))
 }
 
@@ -339,6 +372,7 @@ func GraphGapDetailForStatus(report StatusReport) (GraphUnresolvedGap, bool) {
 	if !report.Indexed {
 		return GraphUnresolvedGap{Reason: FreshnessReasonMissingIndex, State: "unavailable"}, true
 	}
+
 	if report.CollectorVersionMismatch {
 		return GraphUnresolvedGap{
 			Reason:  FreshnessReasonCollectorVersionMismatch,
@@ -346,9 +380,11 @@ func GraphGapDetailForStatus(report StatusReport) (GraphUnresolvedGap, bool) {
 			IndexID: strings.TrimSpace(report.IndexID),
 		}, true
 	}
+
 	if report.Fresh {
 		return GraphUnresolvedGap{}, false
 	}
+
 	return GraphUnresolvedGap{
 		Reason:           FreshnessReasonStaleGraph,
 		State:            "stale",
@@ -369,24 +405,31 @@ func FreshnessGapForDecision(decision FreshnessDecision) string {
 		fmt.Sprintf("stale_path_count=%d", decision.StalePathCount),
 		fmt.Sprintf("missing_path_count=%d", decision.MissingPathCount),
 	}
+
 	if decision.Scope != "" {
 		parts = append(parts, "scope="+decision.Scope)
 	}
+
 	if decision.IndexID != "" {
 		parts = append(parts, "index_id="+decision.IndexID)
 	}
+
 	if decision.Blocker != "" && decision.Blocker != reason {
 		parts = append(parts, "blocker="+decision.Blocker)
 	}
+
 	if decision.BudgetExceeded {
 		parts = append(parts, "budget_exceeded=true")
 	}
+
 	if len(decision.StalePaths) > 0 {
 		parts = append(parts, "stale_paths="+limitedCSV(decision.StalePaths, 5))
 	}
+
 	if len(decision.MissingPaths) > 0 {
 		parts = append(parts, "missing_paths="+limitedCSV(decision.MissingPaths, 5))
 	}
+
 	return strings.Join(parts, " ")
 }
 
@@ -394,6 +437,7 @@ func applyFreshnessStatusMetadata(decision *FreshnessDecision, status StatusRepo
 	if decision == nil {
 		return
 	}
+
 	decision.IndexID = status.IndexID
 	decision.StoreKind = status.StoreKind
 	decision.GeneratedAt = status.GeneratedAt
@@ -408,25 +452,33 @@ func normalizedGapDetails(details []GraphUnresolvedGap, legacy []string) []Graph
 	add := func(gap GraphUnresolvedGap) {
 		gap.Reason = strings.TrimSpace(gap.Reason)
 		gap.State = strings.TrimSpace(gap.State)
+
 		if gap.Reason == "" {
 			return
 		}
+
 		if gap.State == "" {
 			gap.State = "unknown"
 		}
+
 		key := gap.Reason + "\x00" + gap.State + "\x00" + gap.IndexID + "\x00" + gap.TraceID + "\x00" + gap.Scope
 		if _, ok := seen[key]; ok {
 			return
 		}
+
 		seen[key] = struct{}{}
+
 		out = append(out, gap)
 	}
+
 	for _, gap := range details {
 		add(gap)
 	}
+
 	for _, legacyGap := range legacy {
 		add(GraphGapDetailFromString(legacyGap))
 	}
+
 	return out
 }
 
@@ -445,22 +497,27 @@ func GraphGapDetailFromString(gap string) GraphUnresolvedGap {
 		StalePaths:         limitedStrings(splitGapList(fields["stale_paths"]), 5),
 		MissingPaths:       limitedStrings(splitGapList(fields["missing_paths"]), 5),
 	}
+
 	return detail
 }
 
 func parseGapFields(gap string) map[string]string {
 	out := make(map[string]string)
+
 	for _, field := range strings.Fields(strings.TrimSpace(gap)) {
 		key, value, ok := strings.Cut(field, "=")
 		if !ok {
 			continue
 		}
+
 		key = strings.TrimSpace(key)
 		value = strings.Trim(strings.TrimSpace(value), `"'`)
+
 		if key != "" && value != "" {
 			out[key] = value
 		}
 	}
+
 	return out
 }
 
@@ -484,28 +541,39 @@ func neutralGapReason(gap string) string {
 	if gap == "" {
 		return ""
 	}
+
 	var b strings.Builder
+
 	lastUnderscore := false
+
 	for _, r := range gap {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
 			b.WriteRune(r)
+
 			lastUnderscore = false
+
 			continue
 		}
+
 		if !lastUnderscore && b.Len() > 0 {
 			b.WriteByte('_')
+
 			lastUnderscore = true
 		}
+
 		if b.Len() >= 48 {
 			break
 		}
 	}
+
 	return strings.Trim(b.String(), "_")
 }
 
 func atoiGapField(value string) int {
 	var n int
+
 	_, _ = fmt.Sscanf(strings.TrimSpace(value), "%d", &n)
+
 	return n
 }
 
@@ -513,6 +581,7 @@ func splitGapList(value string) []string {
 	if strings.TrimSpace(value) == "" {
 		return nil
 	}
+
 	return strings.Split(value, ",")
 }
 
@@ -523,11 +592,13 @@ func limitedStrings(values []string, limit int) []string {
 		if value == "" {
 			continue
 		}
+
 		cleaned = append(cleaned, value)
 		if limit > 0 && len(cleaned) >= limit {
 			break
 		}
 	}
+
 	return cleaned
 }
 
@@ -538,13 +609,16 @@ func limitedCSV(values []string, limit int) string {
 		if value == "" {
 			continue
 		}
+
 		cleaned = append(cleaned, value)
 		if limit > 0 && len(cleaned) >= limit {
 			break
 		}
 	}
+
 	if len(cleaned) == 0 {
 		return ""
 	}
+
 	return strings.Join(cleaned, ",")
 }

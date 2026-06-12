@@ -30,6 +30,7 @@ func NormalizeToolProfile(profile string) (string, error) {
 	if profile == "" {
 		return ToolProfileDefault, nil
 	}
+
 	switch profile {
 	case ToolProfileDefault, ToolProfileDiscovery, ToolProfileMCPDiscovery:
 		return profile, nil
@@ -43,31 +44,41 @@ func ToolAllowedForProfile(tool string, profile string) ToolProfileDecision {
 	if err != nil {
 		return ToolProfileDecision{Allowed: false, Code: "invalid_profile", Reason: err.Error()}
 	}
+
 	tool = strings.TrimSpace(tool)
+
 	if profile == ToolProfileDefault {
 		return ToolProfileDecision{Allowed: true}
 	}
+
 	if tool == "" {
 		return ToolProfileDecision{Allowed: false, Code: "invalid_input", Reason: "tool is required"}
 	}
+
 	if !IsBuiltInToolName(tool) {
 		return discoveryProfileDenied("tool is not declared in the built-in read-only profile")
 	}
+
 	policy := toolSchemaPolicyForTool(tool)
 	if tool == "shell" || hasToolSchemaSideEffect(policy.SideEffects, autonomy.SideEffectUnknown) {
 		return discoveryProfileDenied("unknown or shell side effects are not allowed")
 	}
+
 	if IsWorkspaceWriteTool(tool) ||
 		hasToolSchemaSideEffect(policy.SideEffects, autonomy.SideEffectAdditive) ||
 		hasToolSchemaSideEffect(policy.SideEffects, autonomy.SideEffectDestructive) {
+
 		return discoveryProfileDenied("mutation side effects are not allowed")
 	}
+
 	if profile == ToolProfileDiscovery && discoveryProfileToolWritesLocalContextArtifacts(tool) {
 		return discoveryProfileDenied("tool writes local context artifacts")
 	}
+
 	if !hasToolSchemaSideEffect(policy.SideEffects, autonomy.SideEffectReadOnly) {
 		return discoveryProfileDenied("tool is not declared read-only")
 	}
+
 	return ToolProfileDecision{Allowed: true}
 }
 
@@ -76,20 +87,25 @@ func ToolRequestAllowedForProfile(req ToolRequest, profile string) ToolProfileDe
 	if !decision.Allowed {
 		return decision
 	}
+
 	profile, err := NormalizeToolProfile(profile)
 	if err != nil {
 		return ToolProfileDecision{Allowed: false, Code: "invalid_profile", Reason: err.Error()}
 	}
+
 	if profile != ToolProfileDiscovery {
 		return ToolProfileDecision{Allowed: true}
 	}
+
 	return discoveryProfileRequestAllowed(req)
 }
 
 func ToolProfileDeniedResult(tool string, profile string, decision ToolProfileDecision) ToolResult {
 	profile = util.FirstNonEmpty(strings.TrimSpace(profile), ToolProfileDefault)
+
 	code := util.FirstNonEmpty(strings.TrimSpace(decision.Code), "profile_denied")
 	reason := util.FirstNonEmpty(strings.TrimSpace(decision.Reason), "tool is not allowed by profile")
+
 	return ToolResult{
 		Tool:    strings.TrimSpace(tool),
 		Code:    code,
@@ -108,6 +124,7 @@ func discoveryProfileRequestAllowed(req ToolRequest) ToolProfileDecision {
 	if req.Refresh {
 		return discoveryProfileDenied("refresh requests are not allowed")
 	}
+
 	switch tool {
 	case "context_status":
 		if discoveryProfileFreshnessPolicyCanRefresh(req.FreshnessPolicy) {
@@ -118,6 +135,7 @@ func discoveryProfileRequestAllowed(req ToolRequest) ToolProfileDecision {
 			return discoveryProfileDenied("graph-backed discovery requests must use freshness_policy report_only or allow_stale")
 		}
 	}
+
 	return ToolProfileDecision{Allowed: true}
 }
 
@@ -148,16 +166,21 @@ func IsBuiltInToolName(tool string) bool {
 	if tool == "" {
 		return false
 	}
+
 	builtInToolNameSetOnce.Do(func() {
 		set := make(map[string]struct{})
+
 		for _, entry := range BuildToolManifest(nil) {
 			t := strings.TrimSpace(entry.Tool)
 			if t != "" {
 				set[t] = struct{}{}
 			}
 		}
+
 		builtInToolNameSet = set
 	})
+
 	_, ok := builtInToolNameSet[tool]
+
 	return ok
 }

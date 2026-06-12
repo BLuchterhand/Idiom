@@ -25,6 +25,7 @@ func NewExternalToolRegistry(tools []ExternalTool) (*ExternalToolRegistry, error
 	if err != nil {
 		return nil, err
 	}
+
 	return &ExternalToolRegistry{registry: registry}, nil
 }
 
@@ -32,6 +33,7 @@ func (r *ExternalToolRegistry) inner() *externaltool.Registry {
 	if r == nil {
 		return nil
 	}
+
 	return r.registry
 }
 
@@ -81,6 +83,7 @@ func externalToolDefinitions(defs []externaltool.Definition) []ToolDefinition {
 	if len(defs) == 0 {
 		return nil
 	}
+
 	out := make([]ToolDefinition, 0, len(defs))
 	for _, def := range defs {
 		out = append(out, ToolDefinition{
@@ -89,6 +92,7 @@ func externalToolDefinitions(defs []externaltool.Definition) []ToolDefinition {
 			ParametersJSON: def.ParametersJSON,
 		})
 	}
+
 	return out
 }
 

@@ -35,13 +35,16 @@ func (idx *TsIndex) FindSymbols(pattern string, limit int) []TsSymbolMatch {
 	if idx == nil || pattern == "" {
 		return nil
 	}
+
 	matches := make([]TsSymbolMatch, 0)
+
 	for _, file := range idx.Files {
 		for _, symbol := range file.Symbols {
 			score := scoreTsSymbolMatch(pattern, file, symbol)
 			if score <= 0 {
 				continue
 			}
+
 			matches = append(matches, TsSymbolMatch{
 				Path:      file.Path,
 				Name:      symbol.Name,
@@ -57,18 +60,23 @@ func (idx *TsIndex) FindSymbols(pattern string, limit int) []TsSymbolMatch {
 			})
 		}
 	}
+
 	slices.SortFunc(matches, func(a, b TsSymbolMatch) int {
 		if c := -cmp.Compare(a.Score, b.Score); c != 0 {
 			return c
 		}
+
 		if c := cmp.Compare(a.Path, b.Path); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Line, b.Line)
 	})
+
 	if limit > 0 && len(matches) > limit {
 		matches = matches[:limit]
 	}
+
 	return matches
 }
 
@@ -89,6 +97,7 @@ func normalizeTsSymbolPattern(pattern string) string {
 			return m[1]
 		}
 	}
+
 	return pattern
 }
 
@@ -97,16 +106,20 @@ func (idx *TsIndex) FindCallsFrom(pattern string, limit int) []TsCallMatch {
 	if len(symbols) == 0 {
 		return nil
 	}
+
 	out := make([]TsCallMatch, 0, 16)
+
 	for _, match := range symbols {
 		file := idx.FileByPath(match.Path)
 		if file == nil {
 			continue
 		}
+
 		for _, symbol := range file.Symbols {
 			if symbol.Line != match.Line || symbol.Name != match.Name || firstTsQualified(symbol) != firstTsQualified(TsSymbol{Qualified: match.Qualified, Scope: match.Scope, Name: match.Name}) {
 				continue
 			}
+
 			for _, call := range symbol.Calls {
 				out = append(out, TsCallMatch{
 					Caller:     match,
@@ -117,9 +130,11 @@ func (idx *TsIndex) FindCallsFrom(pattern string, limit int) []TsCallMatch {
 			}
 		}
 	}
+
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
+
 	return out
 }
 
@@ -128,6 +143,7 @@ func (idx *TsIndex) FindCallsInto(pattern string, limit int) []TsCallMatch {
 	if len(targets) == 0 {
 		return nil
 	}
+
 	names := make(map[string]TsSymbolMatch, len(targets)*2)
 	for _, target := range targets {
 		names[strings.ToLower(target.Name)] = target
@@ -135,7 +151,9 @@ func (idx *TsIndex) FindCallsInto(pattern string, limit int) []TsCallMatch {
 			names[strings.ToLower(target.Qualified)] = target
 		}
 	}
+
 	out := make([]TsCallMatch, 0, 16)
+
 	for _, file := range idx.Files {
 		for _, symbol := range file.Symbols {
 			for _, call := range symbol.Calls {
@@ -143,6 +161,7 @@ func (idx *TsIndex) FindCallsInto(pattern string, limit int) []TsCallMatch {
 				if !ok {
 					continue
 				}
+
 				out = append(out, TsCallMatch{
 					Caller: TsSymbolMatch{
 						Path:      file.Path,
@@ -162,15 +181,19 @@ func (idx *TsIndex) FindCallsInto(pattern string, limit int) []TsCallMatch {
 			}
 		}
 	}
+
 	slices.SortFunc(out, func(a, b TsCallMatch) int {
 		if c := cmp.Compare(a.Caller.Path, b.Caller.Path); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Line, b.Line)
 	})
+
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
+
 	return out
 }
 
@@ -179,6 +202,7 @@ func scoreTsSymbolMatch(pattern string, file TsFile, symbol TsSymbol) int {
 	qualifiedLower := strings.ToLower(firstTsQualified(symbol))
 	pathLower := strings.ToLower(file.Path)
 	score := 0
+
 	switch {
 	case nameLower == pattern || qualifiedLower == pattern:
 		score += 48
@@ -187,15 +211,19 @@ func scoreTsSymbolMatch(pattern string, file TsFile, symbol TsSymbol) int {
 	case strings.Contains(nameLower, pattern):
 		score += 20
 	}
+
 	if strings.Contains(pathLower, pattern) {
 		score += 8
 	}
+
 	if symbol.Exported {
 		score += 4
 	}
+
 	if symbol.Kind == "method" {
 		score += 2
 	}
+
 	return score
 }
 
@@ -203,8 +231,10 @@ func firstTsQualified(symbol TsSymbol) string {
 	if strings.TrimSpace(symbol.Qualified) != "" {
 		return symbol.Qualified
 	}
+
 	if strings.TrimSpace(symbol.Scope) != "" {
 		return symbol.Scope + "." + symbol.Name
 	}
+
 	return symbol.Name
 }

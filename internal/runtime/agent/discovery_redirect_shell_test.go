@@ -15,15 +15,19 @@ func TestShellGrepIdentifierRedirectsInCppWorkspace(t *testing.T) {
 	t.Run("scoped_to_cpp_file_uses_references", func(t *testing.T) {
 		d := NewDiscoveryRedirect()
 		decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: `grep -n EntityManager src/main.cpp`}, ws)
+
 		if !decision.ShouldRedirect {
 			t.Fatalf("scoped grep should redirect")
 		}
+
 		if decision.Language != "cpp" {
 			t.Fatalf("language: want cpp, got %s", decision.Language)
 		}
+
 		if decision.Capability != workspace.CapReferences {
 			t.Fatalf("capability: want references, got %s", decision.Capability)
 		}
+
 		if !strings.Contains(decision.Result.Output, "cpp_references") {
 			t.Fatalf("should name cpp_references: %q", decision.Result.Output)
 		}
@@ -31,9 +35,11 @@ func TestShellGrepIdentifierRedirectsInCppWorkspace(t *testing.T) {
 	t.Run("unscoped_uses_cpp_workspace_symbol", func(t *testing.T) {
 		d := NewDiscoveryRedirect()
 		decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: `grep -rn EntityManager`}, ws)
+
 		if !decision.ShouldRedirect {
 			t.Fatalf("recursive grep should redirect")
 		}
+
 		if decision.Language != "cpp" {
 			t.Fatalf("language: want cpp, got %s", decision.Language)
 		}
@@ -46,9 +52,11 @@ func TestShellSedRangeRedirectsOnCppFile(t *testing.T) {
 	ws := newCppTestWorkspace(t)
 	d := NewDiscoveryRedirect()
 	decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: `sed -n '10,40p' src/main.cpp`}, ws)
+
 	if !decision.ShouldRedirect {
 		t.Fatalf("sed on cpp file should redirect")
 	}
+
 	out := decision.Result.Output
 	if !strings.Contains(out, `"tool":"read_file"`) || !strings.Contains(out, "src/main.cpp") {
 		t.Fatalf("result should redirect to read_file on the cpp file: %q", out)
@@ -61,16 +69,20 @@ func TestShellSedRangeRedirectsToReadFile(t *testing.T) {
 	ws := newGoTestWorkspace(t)
 	d := NewDiscoveryRedirect()
 	decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: "sed -n '100,150p' internal/runtime/agent/runner.go"}, ws)
+
 	if !decision.ShouldRedirect {
 		t.Fatalf("sed range read should redirect")
 	}
+
 	out := decision.Result.Output
 	if !strings.Contains(out, `"tool":"read_file"`) {
 		t.Fatalf("result should name read_file: %q", out)
 	}
+
 	if !strings.Contains(out, `"start_line":100`) || !strings.Contains(out, `"end_line":150`) {
 		t.Fatalf("result should carry the bounds: %q", out)
 	}
+
 	if !strings.Contains(out, "internal/runtime/agent/runner.go") {
 		t.Fatalf("result should carry the path: %q", out)
 	}
@@ -88,6 +100,7 @@ func TestShellSedSkipsInPlaceEdits(t *testing.T) {
 		t.Run(cmd, func(t *testing.T) {
 			d := NewDiscoveryRedirect()
 			decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: cmd}, ws)
+
 			if decision.ShouldRedirect {
 				t.Fatalf("shell command %q should not redirect to read_file", cmd)
 			}
@@ -99,12 +112,15 @@ func TestShellWCRedirectsToFileStats(t *testing.T) {
 	ws := newGoTestWorkspace(t)
 	d := NewDiscoveryRedirect()
 	decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: "wc -l internal/runtime/agent/runner.go"}, ws)
+
 	if !decision.ShouldRedirect {
 		t.Fatalf("wc file count should redirect")
 	}
+
 	if decision.Capability != workspace.Capability("file_stats") {
 		t.Fatalf("capability: want file_stats, got %s", decision.Capability)
 	}
+
 	if !strings.Contains(decision.Result.Output, `"tool":"file_stats"`) || !strings.Contains(decision.Result.Output, "internal/runtime/agent/runner.go") {
 		t.Fatalf("result should redirect to file_stats with the path: %q", decision.Result.Output)
 	}
@@ -120,6 +136,7 @@ func TestShellWCSkipsPipelinesAndMultipleFiles(t *testing.T) {
 		t.Run(cmd, func(t *testing.T) {
 			d := NewDiscoveryRedirect()
 			decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: cmd}, ws)
+
 			if decision.ShouldRedirect {
 				t.Fatalf("shell command %q should not redirect to file_stats", cmd)
 			}
@@ -135,12 +152,15 @@ func TestShellGrepIdentifierRedirects(t *testing.T) {
 	t.Run("with_file_scope_uses_references", func(t *testing.T) {
 		d := NewDiscoveryRedirect()
 		decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: `grep -n RunPolicy main.go`}, ws)
+
 		if !decision.ShouldRedirect {
 			t.Fatalf("scoped grep should redirect")
 		}
+
 		if decision.Capability != workspace.CapReferences {
 			t.Fatalf("capability: want references, got %s", decision.Capability)
 		}
+
 		if !strings.Contains(decision.Result.Output, "go_references") {
 			t.Fatalf("should name go_references: %q", decision.Result.Output)
 		}
@@ -148,9 +168,11 @@ func TestShellGrepIdentifierRedirects(t *testing.T) {
 	t.Run("workspace_wide_uses_workspace_symbol", func(t *testing.T) {
 		d := NewDiscoveryRedirect()
 		decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: `grep -rn RunPolicy`}, ws)
+
 		if !decision.ShouldRedirect {
 			t.Fatalf("recursive grep should redirect")
 		}
+
 		if decision.Capability != workspace.CapWorkspaceSymbol {
 			t.Fatalf("capability: want workspace_symbol, got %s", decision.Capability)
 		}
@@ -158,12 +180,15 @@ func TestShellGrepIdentifierRedirects(t *testing.T) {
 	t.Run("quoted_declaration_extracts_symbol", func(t *testing.T) {
 		d := NewDiscoveryRedirect()
 		decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: `grep -n 'type ToolRequest struct' internal/capabilities/workspace/manager.go`}, ws)
+
 		if !decision.ShouldRedirect {
 			t.Fatalf("declaration grep should redirect")
 		}
+
 		if decision.Capability != workspace.CapReferences {
 			t.Fatalf("capability: want references, got %s", decision.Capability)
 		}
+
 		if !strings.Contains(decision.Result.Output, `"pattern":"ToolRequest"`) {
 			t.Fatalf("should extract the declaration symbol: %q", decision.Result.Output)
 		}
@@ -171,12 +196,15 @@ func TestShellGrepIdentifierRedirects(t *testing.T) {
 	t.Run("identifier_alternation_with_late_include", func(t *testing.T) {
 		d := NewDiscoveryRedirect()
 		decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: `grep -rn 'parseToolCall\|ParseToolRequest' internal/ --include='*.go'`}, ws)
+
 		if !decision.ShouldRedirect {
 			t.Fatalf("identifier alternation grep should redirect")
 		}
+
 		if decision.Language != "go" {
 			t.Fatalf("language: want go, got %s", decision.Language)
 		}
+
 		if !strings.Contains(decision.Result.Output, `"pattern":"parseToolCall"`) {
 			t.Fatalf("should start from the first identifier alternative: %q", decision.Result.Output)
 		}
@@ -197,6 +225,7 @@ func TestShellGrepSkipsRegexAndPipes(t *testing.T) {
 		t.Run(cmd, func(t *testing.T) {
 			d := NewDiscoveryRedirect()
 			decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: cmd}, ws)
+
 			if decision.ShouldRedirect {
 				t.Fatalf("shell command %q should not redirect", cmd)
 			}
@@ -215,6 +244,7 @@ func TestShellGrepSkipsAmbiguousUnscopedPolyglotSearch(t *testing.T) {
 	})
 	d := NewDiscoveryRedirect()
 	decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: `grep -rn Widget`}, ws)
+
 	if decision.ShouldRedirect {
 		t.Fatalf("unscoped grep in polyglot workspace should not pick %s", decision.Language)
 	}
@@ -229,9 +259,11 @@ func TestShellGrepUsesIncludeGlobForLanguage(t *testing.T) {
 	})
 	d := NewDiscoveryRedirect()
 	decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: `grep -rn --include=*.py Widget`}, ws)
+
 	if !decision.ShouldRedirect {
 		t.Fatalf("include-scoped grep should redirect")
 	}
+
 	if decision.Language != "python" {
 		t.Fatalf("language: want python, got %s", decision.Language)
 	}
@@ -244,13 +276,16 @@ func TestShellRedirectFingerprintPerCommand(t *testing.T) {
 	ws := newGoTestWorkspace(t)
 	d := NewDiscoveryRedirect()
 	first := d.Consider(workspace.ToolRequest{Tool: "shell", Command: `sed -n '1,20p' a.go`}, ws)
+
 	if !first.ShouldRedirect {
 		t.Fatalf("first shell redirect should fire")
 	}
+
 	second := d.Consider(workspace.ToolRequest{Tool: "shell", Command: `sed -n '30,50p' b.go`}, ws)
 	if !second.ShouldRedirect {
 		t.Fatalf("second shell redirect (different command) should also fire")
 	}
+
 	// But the same command a second time must fall through as the fallback.
 	third := d.Consider(workspace.ToolRequest{Tool: "shell", Command: `sed -n '1,20p' a.go`}, ws)
 	if third.ShouldRedirect {
@@ -272,15 +307,19 @@ func TestShellRedirectHardRejectsThirdDistinctCommandInClass(t *testing.T) {
 		if !decision.ShouldRedirect {
 			t.Fatalf("command %d should redirect", i+1)
 		}
+
 		if i < len(commands)-1 && decision.HardReject {
 			t.Fatalf("command %d should still be a soft redirect", i+1)
 		}
+
 		if i == len(commands)-1 && !decision.HardReject {
 			t.Fatalf("third distinct command in class should hard-reject")
 		}
+
 		if decision.HardReject && decision.Result.Error == "" {
 			t.Fatalf("hard reject should put guidance in Error")
 		}
+
 		if decision.HardReject && decision.Result.Output != "" {
 			t.Fatalf("hard reject should clear Output, got %q", decision.Result.Output)
 		}

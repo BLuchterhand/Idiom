@@ -28,28 +28,34 @@ func TestRunEmitsQueueAdmissionBeforePlanner(t *testing.T) {
 	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(root, "missing-runner.sock"))
 
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
 	var stdout, stderr bytes.Buffer
+
 	plannerCalled := false
 	result := Run(cfg, Options{
 		Prompt:     "plan this change",
 		JSONEvents: true,
 	}, func(_ config.Config, _ string, _ RunOptions, _ io.Writer) (string, error) {
 		plannerCalled = true
+
 		if !strings.Contains(stdout.String(), `"type":"idiom.plan_execute.queue_unavailable"`) {
 			t.Fatalf("queue admission event should be emitted before planner call, stdout=%s", stdout.String())
 		}
+
 		return "no plan", nil
 	}, nil, &stdout, &stderr)
 
 	if !plannerCalled {
 		t.Fatal("expected planner prompt runner to be called")
 	}
+
 	if result.ExitCode != 1 {
 		t.Fatalf("Run exit=%d, want missing-artifact failure; stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
 	}
+
 	if strings.Contains(stdout.String(), "idiom.plan_execute.queue_acquired") {
 		t.Fatalf("missing daemon should not be reported as acquired, stdout=%s", stdout.String())
 	}
@@ -60,17 +66,21 @@ func TestClassifyExecutorHandoffTreatsScopedFreshPacketAsFresh(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/planexec\n\ngo 1.22\n"), 0o644); err != nil {
 		t.Fatalf("seed go.mod: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package pkg\n\nfunc A() string { return \"alpha\" }\n"), 0o644); err != nil {
 		t.Fatalf("seed a.go: %v", err)
 	}
+
 	testPath := filepath.Join(root, "a_test.go")
 	if err := os.WriteFile(testPath, []byte("package pkg\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {}\n"), 0o644); err != nil {
 		t.Fatalf("seed a_test.go: %v", err)
 	}
+
 	build, err := comprehension.Build(t.Context(), comprehension.BuildOptions{Root: root, Language: "go"})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
+
 	key := comprehension.ViewKey{IndexID: build.IndexID, Task: "scoped fresh shared handoff", Mode: "plan"}
 	if err := comprehension.SaveView(root, key, comprehension.PackResult{
 		PackID:  key.ID(),
@@ -91,6 +101,7 @@ func TestClassifyExecutorHandoffTreatsScopedFreshPacketAsFresh(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveView: %v", err)
 	}
+
 	if err := os.WriteFile(testPath, []byte("package pkg\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) { t.Helper() }\n"), 0o644); err != nil {
 		t.Fatalf("make advisory test stale: %v", err)
 	}
@@ -123,15 +134,19 @@ func TestApplyExecutorHandoffViewPopulatesQuality(t *testing.T) {
 	if handoff.Quality.LocalizationConfidence != "high" {
 		t.Fatalf("Quality.LocalizationConfidence = %q, want high", handoff.Quality.LocalizationConfidence)
 	}
+
 	if !handoff.Quality.SourceOwnerFound {
 		t.Fatal("Quality.SourceOwnerFound should be true")
 	}
+
 	if len(handoff.Quality.EvidencePaths) != 1 || handoff.Quality.EvidencePaths[0] != "pkg/target.go" {
 		t.Fatalf("Quality.EvidencePaths = %#v, want [pkg/target.go]", handoff.Quality.EvidencePaths)
 	}
+
 	if len(handoff.Quality.Reasons) != 2 {
 		t.Fatalf("Quality.Reasons = %#v, want 2 reasons", handoff.Quality.Reasons)
 	}
+
 	if handoff.CandidateFiles != 1 {
 		t.Fatalf("CandidateFiles = %d, want 1", handoff.CandidateFiles)
 	}
@@ -156,19 +171,24 @@ func TestPhaseEvidencePacketFromViewPopulatesQuality(t *testing.T) {
 	if packet.Quality.LocalizationConfidence != "medium" {
 		t.Fatalf("Quality.LocalizationConfidence = %q, want medium", packet.Quality.LocalizationConfidence)
 	}
+
 	if packet.Quality.SourceOwnerFound {
 		t.Fatal("Quality.SourceOwnerFound should be false")
 	}
+
 	if len(packet.Quality.EvidencePaths) != 2 {
 		t.Fatalf("Quality.EvidencePaths = %#v, want 2 paths", packet.Quality.EvidencePaths)
 	}
+
 	if len(packet.Quality.Reasons) != 1 || packet.Quality.Reasons[0] != "partial match" {
 		t.Fatalf("Quality.Reasons = %#v, want [partial match]", packet.Quality.Reasons)
 	}
+
 	// Verify existing fields unchanged.
 	if packet.PackID != "abc123def456abc1" {
 		t.Fatalf("PackID = %q", packet.PackID)
 	}
+
 	if packet.Status != "available" {
 		t.Fatalf("Status = %q", packet.Status)
 	}
@@ -197,16 +217,20 @@ func TestExecutorHandoffPacketEventFieldsIncludesQuality(t *testing.T) {
 	if !ok {
 		t.Fatalf("fields[\"quality\"] missing or wrong type, fields=%#v", fields)
 	}
+
 	if quality["localization_confidence"] != "high" {
 		t.Fatalf("quality[localization_confidence] = %v", quality["localization_confidence"])
 	}
+
 	if quality["source_owner_found"] != true {
 		t.Fatalf("quality[source_owner_found] = %v", quality["source_owner_found"])
 	}
+
 	paths, _ := quality["evidence_paths"].([]string)
 	if len(paths) != 1 || paths[0] != "pkg/feature.go" {
 		t.Fatalf("quality[evidence_paths] = %#v", paths)
 	}
+
 	reasons, _ := quality["reasons"].([]string)
 	if len(reasons) != 1 || reasons[0] != "strong signal" {
 		t.Fatalf("quality[reasons] = %#v", reasons)
@@ -218,6 +242,7 @@ func TestExecutorHandoffPacketEventFieldsOmitsQualityWhenUnset(t *testing.T) {
 		State: ExecutorHandoffStateMissing,
 	}
 	fields := executorHandoffPacketEventFields(handoff)
+
 	if _, ok := fields["quality"]; ok {
 		t.Fatal("fields[\"quality\"] should be absent for unset quality")
 	}
@@ -243,9 +268,11 @@ func TestPhaseEvidenceHandoffFromExecutorCopiesQuality(t *testing.T) {
 	if peh.Quality.LocalizationConfidence != "high" {
 		t.Fatalf("Quality.LocalizationConfidence = %q, want high", peh.Quality.LocalizationConfidence)
 	}
+
 	if !peh.Quality.SourceOwnerFound {
 		t.Fatal("Quality.SourceOwnerFound should be true")
 	}
+
 	if len(peh.Quality.EvidencePaths) != 1 || peh.Quality.EvidencePaths[0] != "pkg/feature.go" {
 		t.Fatalf("Quality.EvidencePaths = %#v", peh.Quality.EvidencePaths)
 	}
@@ -254,9 +281,11 @@ func TestPhaseEvidenceHandoffFromExecutorCopiesQuality(t *testing.T) {
 func TestPreflightPlanEditsRejectsEscapingPathBeforeRead(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(filepath.Dir(root), "outside.txt")
+
 	if err := os.WriteFile(outside, []byte("secret\n"), 0o644); err != nil {
 		t.Fatalf("seed outside file: %v", err)
 	}
+
 	plan := workspace.PlanArtifact{
 		SchemaVersion: workspace.PlanArtifactSchemaVersion,
 		Edits: []workspace.PlanEdit{
@@ -275,26 +304,32 @@ func TestPreflightPlanEditsRejectsStaleAnchorProvenance(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
 		t.Fatalf("seed a.txt: %v", err)
 	}
+
 	edits, err := workspace.AttachPlanEditAnchorProvenance(root, []workspace.PlanEdit{
 		{Path: "a.txt", OldText: "alpha", NewText: "ALPHA"},
 	})
 	if err != nil {
 		t.Fatalf("attach anchor provenance: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("prefix\nalpha\n"), 0o644); err != nil {
 		t.Fatalf("mutate a.txt: %v", err)
 	}
+
 	plan := workspace.PlanArtifact{
 		SchemaVersion: workspace.PlanArtifactSchemaVersion,
 		Edits:         edits,
 	}
 	got := preflightPlanEdits(root, plan)
+
 	if got == nil {
 		t.Fatalf("preflight must reject stale anchor provenance before writes")
 	}
+
 	if got.Index != 0 || got.Path != "a.txt" {
 		t.Fatalf("mismatch should point at edit 0 in a.txt, got %#v", got)
 	}
+
 	if !strings.Contains(got.Reason, "anchor provenance stale") || !strings.Contains(got.Reason, "file fingerprint changed") {
 		t.Fatalf("mismatch should report stale provenance, got %q", got.Reason)
 	}
@@ -305,6 +340,7 @@ func TestPreflightPlanEditsRejectsCurrentSchemaMissingAnchorProvenance(t *testin
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
 		t.Fatalf("seed a.txt: %v", err)
 	}
+
 	plan := workspace.PlanArtifact{
 		SchemaVersion: workspace.PlanArtifactSchemaVersion,
 		Created:       "2026-06-08T20:00:00Z",
@@ -434,7 +470,9 @@ func TestRunExecutorPhaseAppliesInsertAfterLinePlanEdit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "feature_test.go"), []byte("package demo\n\nfunc TestExisting(t *testing.T) {}\n"), 0o644); err != nil {
 		t.Fatalf("seed feature_test.go: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
@@ -444,19 +482,23 @@ func TestRunExecutorPhaseAppliesInsertAfterLinePlanEdit(t *testing.T) {
 		Content:         "\nfunc TestInserted(t *testing.T) {}\n",
 		Purpose:         "insert a regression test after the existing test",
 	}}, "insert regression test")
+
 	plan, err := workspace.LoadPlanArtifact(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
 	if err != nil {
 		t.Fatalf("load submitted plan: %v", err)
 	}
 
 	var stdout bytes.Buffer
+
 	report, err := RunExecutorPhase(cfg, plan, []string{"feature_test.go"}, true, &stdout)
 	if err != nil {
 		t.Fatalf("executor should apply insert_after_line plan edit, report=%#v stdout=%s err=%v", report, stdout.String(), err)
 	}
+
 	if report.Succeeded != 1 || report.Failed != 0 {
 		t.Fatalf("unexpected executor report: %#v", report)
 	}
+
 	got := readFileStringForRunTest(t, filepath.Join(root, "feature_test.go"))
 	if !strings.Contains(got, "func TestExisting") || !strings.Contains(got, "func TestInserted") {
 		t.Fatalf("insert_after_line edit not applied:\n%s", got)
@@ -468,10 +510,13 @@ func TestRunAutoExactPlanSourceSatisfiedSkipsPlanner(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("new a\n"), 0o644); err != nil {
 		t.Fatalf("seed a.txt: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
+
 	prompt := "## Files To Modify\n\n" +
 		"| File | Change |\n" +
 		"|---|---|\n" +
@@ -480,7 +525,9 @@ func TestRunAutoExactPlanSourceSatisfiedSkipsPlanner(t *testing.T) {
 		"In `a.txt`, replace the text.\n\n" +
 		"old_text:\n\n```text\nold a\n```\n\n" +
 		"new_text:\n\n```text\nnew a\n```\n"
+
 	var stdout, stderr bytes.Buffer
+
 	plannerCalled := false
 
 	result := Run(cfg, Options{
@@ -494,11 +541,14 @@ func TestRunAutoExactPlanSourceSatisfiedSkipsPlanner(t *testing.T) {
 	if result.ExitCode != 0 {
 		t.Fatalf("source-satisfied run should pass, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
 	}
+
 	if plannerCalled {
 		t.Fatal("planner should not run when exact edits are already applied")
 	}
+
 	if !strings.Contains(stdout.String(), `"type":"idiom.plan_execute.auto_exact_plan_source_satisfied"`) ||
 		!strings.Contains(stdout.String(), `"type":"idiom.plan_execute.source_satisfied"`) {
+
 		t.Fatalf("source-satisfied events missing from stdout=%s", stdout.String())
 	}
 }
@@ -506,11 +556,13 @@ func TestRunAutoExactPlanSourceSatisfiedSkipsPlanner(t *testing.T) {
 func TestRunRejectsSourceSatisfiedAnswerWithOnlyProseEvidencePaths(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
 
 	var stdout, stderr bytes.Buffer
+
 	result := Run(cfg, Options{
 		Prompt: "Reject temp symlinks and add regression tests proving no partial mutation.",
 		RequiredEditPaths: MultiFlag{
@@ -525,17 +577,22 @@ func TestRunRejectsSourceSatisfiedAnswerWithOnlyProseEvidencePaths(t *testing.T)
 	if result.ExitCode != 1 || result.FailureKind != RunFailureTerminalCompletionContractFailed {
 		t.Fatalf("source-satisfied answer with only prose evidence should fail terminal contract, got code=%d kind=%s stdout=%s stderr=%s", result.ExitCode, result.FailureKind, stdout.String(), stderr.String())
 	}
+
 	if !strings.Contains(stdout.String(), `"type":"idiom.plan_execute.source_satisfied"`) {
 		t.Fatalf("source-satisfied event missing from stdout=%s", stdout.String())
 	}
+
 	events := planExecuteJSONEventsForRunTest(t, stdout.String())
 	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.source_satisfied")
+
 	if !ok {
 		t.Fatalf("expected source_satisfied event, got %s", stdout.String())
 	}
+
 	if got, _ := event["source_satisfied_evidence_paths"].([]any); len(got) != 2 {
 		t.Fatalf("expected source-satisfied evidence paths in telemetry, got %#v", event)
 	}
+
 	terminal, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.terminal_completion")
 	if !ok || terminal["failure_kind"] != RunFailureTerminalCompletionContractFailed {
 		t.Fatalf("expected terminal completion contract failure, got %#v", terminal)
@@ -545,11 +602,13 @@ func TestRunRejectsSourceSatisfiedAnswerWithOnlyProseEvidencePaths(t *testing.T)
 func TestRunRejectsSourceSatisfiedAnswerWithBenignUnsupportedWordButOnlyProseEvidence(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
 
 	var stdout, stderr bytes.Buffer
+
 	result := Run(cfg, Options{
 		Prompt: "Reject temp symlinks and add regression tests proving no partial mutation.",
 		RequiredEditPaths: MultiFlag{
@@ -569,6 +628,7 @@ func TestRunRejectsSourceSatisfiedAnswerWithBenignUnsupportedWordButOnlyProseEvi
 	if result.ExitCode != 1 || result.FailureKind != RunFailureTerminalCompletionContractFailed {
 		t.Fatalf("source-satisfied answer with only prose evidence should fail terminal contract, got code=%d kind=%s stdout=%s stderr=%s", result.ExitCode, result.FailureKind, stdout.String(), stderr.String())
 	}
+
 	if strings.Contains(stdout.String(), `"type":"idiom.plan_execute.source_satisfied_rejected"`) {
 		t.Fatalf("benign non-evidence marker should not reject source-satisfied answer, stdout=%s", stdout.String())
 	}
@@ -577,11 +637,13 @@ func TestRunRejectsSourceSatisfiedAnswerWithBenignUnsupportedWordButOnlyProseEvi
 func TestRunRejectsSourceSatisfiedAnswerWithUnsupportedInference(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
 
 	var stdout, stderr bytes.Buffer
+
 	result := Run(cfg, Options{
 		Prompt:     "Implement item tooltip display and native binding coverage.",
 		JSONEvents: true,
@@ -597,20 +659,26 @@ func TestRunRejectsSourceSatisfiedAnswerWithUnsupportedInference(t *testing.T) {
 	if result.ExitCode != 1 {
 		t.Fatalf("expected unsupported source-satisfied rejection, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
 	}
+
 	if result.FailureKind != RunFailureSourceSatisfiedUnsupportedEvidence {
 		t.Fatalf("expected %s, result=%#v stderr=%s", RunFailureSourceSatisfiedUnsupportedEvidence, result, stderr.String())
 	}
+
 	events := planExecuteJSONEventsForRunTest(t, stdout.String())
 	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.source_satisfied_rejected")
+
 	if !ok {
 		t.Fatalf("expected source_satisfied_rejected event, got %s", stdout.String())
 	}
+
 	if event["reason"] != RunFailureSourceSatisfiedUnsupportedEvidence {
 		t.Fatalf("expected unsupported-evidence reason, got %#v", event)
 	}
+
 	if event["unsupported_evidence_marker"] != "not shown in full" {
 		t.Fatalf("expected rejected marker in telemetry, got %#v", event)
 	}
+
 	if got, _ := event["source_satisfied_evidence_paths"].([]any); len(got) != 3 {
 		t.Fatalf("expected rejected source-satisfied evidence paths, got %#v", event)
 	}
@@ -619,11 +687,13 @@ func TestRunRejectsSourceSatisfiedAnswerWithUnsupportedInference(t *testing.T) {
 func TestRunRejectsSourceSatisfiedAnswerWhenRequestedTestEditMissing(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
 
 	var stdout, stderr bytes.Buffer
+
 	result := Run(cfg, Options{
 		Prompt:             "Fix parser behavior and add regression tests.",
 		JSONEvents:         true,
@@ -635,23 +705,30 @@ func TestRunRejectsSourceSatisfiedAnswerWhenRequestedTestEditMissing(t *testing.
 	if result.ExitCode != 1 {
 		t.Fatalf("expected missing test edit rejection, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
 	}
+
 	if result.FailureKind != EditSetFailureMissingRequestedTestEdit || !strings.Contains(stderr.String(), EditSetFailureMissingRequestedTestEdit) {
 		t.Fatalf("expected %s, result=%#v stderr=%s", EditSetFailureMissingRequestedTestEdit, result, stderr.String())
 	}
+
 	events := planExecuteJSONEventsForRunTest(t, stdout.String())
 	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.source_satisfied_rejected")
+
 	if !ok {
 		t.Fatalf("expected source_satisfied_rejected event, got %s", stdout.String())
 	}
+
 	if event["reason"] != EditSetFailureMissingRequestedTestEdit {
 		t.Fatalf("expected %s reason, got %#v", EditSetFailureMissingRequestedTestEdit, event)
 	}
+
 	if got, _ := event["edit_set_obligations"].([]any); len(got) == 0 {
 		t.Fatalf("expected edit_set_obligations metadata, got %#v", event)
 	}
+
 	if got, _ := event["source_satisfied_evidence_paths"].([]any); len(got) != 1 || got[0] != "pkg/parser.go" {
 		t.Fatalf("expected rejected source-satisfied evidence path, got %#v", event)
 	}
+
 	if got, _ := event["missing_edit_set_obligations"].([]any); len(got) == 0 {
 		t.Fatalf("expected missing edit-set obligations in rejection telemetry, got %#v", event)
 	}
@@ -660,11 +737,13 @@ func TestRunRejectsSourceSatisfiedAnswerWhenRequestedTestEditMissing(t *testing.
 func TestRunRejectsSourceSatisfiedAnswerWhenRequestedImplementationEditMissing(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
 
 	var stdout, stderr bytes.Buffer
+
 	result := Run(cfg, Options{
 		Prompt:             "Implement the feature and add tests.",
 		JSONEvents:         true,
@@ -676,23 +755,30 @@ func TestRunRejectsSourceSatisfiedAnswerWhenRequestedImplementationEditMissing(t
 	if result.ExitCode != 1 {
 		t.Fatalf("expected missing implementation edit rejection, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
 	}
+
 	if result.FailureKind != EditSetFailureMissingRequestedImplementationEdit || !strings.Contains(stderr.String(), EditSetFailureMissingRequestedImplementationEdit) {
 		t.Fatalf("expected %s, result=%#v stderr=%s", EditSetFailureMissingRequestedImplementationEdit, result, stderr.String())
 	}
+
 	events := planExecuteJSONEventsForRunTest(t, stdout.String())
 	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.source_satisfied_rejected")
+
 	if !ok {
 		t.Fatalf("expected source_satisfied_rejected event, got %s", stdout.String())
 	}
+
 	if event["reason"] != EditSetFailureMissingRequestedImplementationEdit {
 		t.Fatalf("expected %s reason, got %#v", EditSetFailureMissingRequestedImplementationEdit, event)
 	}
+
 	if got, _ := event["edit_set_obligations"].([]any); len(got) == 0 {
 		t.Fatalf("expected edit_set_obligations metadata, got %#v", event)
 	}
+
 	if got, _ := event["source_satisfied_evidence_paths"].([]any); len(got) != 1 || got[0] != "pkg/feature_test.go" {
 		t.Fatalf("expected rejected source-satisfied evidence path, got %#v", event)
 	}
+
 	if got, _ := event["missing_edit_set_obligations"].([]any); len(got) == 0 {
 		t.Fatalf("expected missing edit-set obligations in rejection telemetry, got %#v", event)
 	}
@@ -701,30 +787,38 @@ func TestRunRejectsSourceSatisfiedAnswerWhenRequestedImplementationEditMissing(t
 func TestSaveRunProgressStateWritesRecoveryDecompositionPacket(t *testing.T) {
 	root := t.TempDir()
 	state := NewProgressState("auto_recovery_packet", "make a change", "", []string{"a.txt"}, nil, timeNowForRunTest())
+
 	state.Status = ProgressStatusFailed
 	state.FailureKind = "executor_failed"
 	state.FailureReason = "executor failed"
 	state.ChangedPaths = []string{"a.txt"}
+
 	var stdout bytes.Buffer
+
 	statePath, err := saveRunProgressState(root, &state, true, &stdout, "test_state_saved")
 	if err != nil {
 		t.Fatalf("saveRunProgressState: %v", err)
 	}
+
 	record, _, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, state.SessionID)
 	if err != nil || !found {
 		t.Fatalf("TryLoadPlanExecuteFailureRecord found=%v err=%v", found, err)
 	}
+
 	packetPath, _, err := recovery.DecompositionPacketPath(root, record.FailureID, "")
 	if err != nil {
 		t.Fatalf("DecompositionPacketPath: %v", err)
 	}
+
 	packet, _, found, err := recovery.TryLoadDecompositionPacket(packetPath)
 	if err != nil || !found {
 		t.Fatalf("TryLoadDecompositionPacket found=%v err=%v", found, err)
 	}
+
 	if packet.FailureID != record.FailureID || len(packet.CandidateAtoms) != 1 {
 		t.Fatalf("unexpected packet: %#v", packet)
 	}
+
 	if !strings.Contains(stdout.String(), `"type":"idiom.plan_execute.recovery_decomposition_packet_written"`) {
 		t.Fatalf("packet event missing from stdout=%s statePath=%s", stdout.String(), statePath)
 	}
@@ -733,11 +827,13 @@ func TestSaveRunProgressStateWritesRecoveryDecompositionPacket(t *testing.T) {
 func TestRunPlannerBlockedProgressEventCarriesTerminalFailureFields(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
 
 	var stdout, stderr bytes.Buffer
+
 	result := Run(cfg, Options{
 		Prompt:            "Update target.txt.",
 		RequiredEditPaths: []string{"target.txt"},
@@ -746,35 +842,45 @@ func TestRunPlannerBlockedProgressEventCarriesTerminalFailureFields(t *testing.T
 		if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecutePlanner) {
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
 		}
+
 		return "<<QUESTION>>: target.txt: required source evidence is unavailable.", nil
 	}, nil, &stdout, &stderr)
 
 	if result.ExitCode != 1 || result.FailureKind != RunFailurePlannerBlocked {
 		t.Fatalf("expected planner_blocked result, got %#v stdout=%s stderr=%s", result, stdout.String(), stderr.String())
 	}
+
 	state, _, err := LoadProgressState(root, result.SessionID)
 	if err != nil {
 		t.Fatalf("load progress state: %v", err)
 	}
+
 	if state.Phase != ProgressPhasePlanning || state.Status != ProgressStatusFailed || state.FailureKind != RunFailurePlannerBlocked {
 		t.Fatalf("expected structured planning failure state, got %#v", state)
 	}
+
 	events := planExecuteJSONEventsForRunTest(t, stdout.String())
+
 	var event map[string]any
+
 	for _, candidate := range events {
 		if candidate["type"] == "idiom.plan_execute.resume_state_saved" && candidate["status"] == ProgressStatusFailed {
 			event = candidate
 		}
 	}
+
 	if event == nil {
 		t.Fatalf("expected resume_state_saved event, got %s", stdout.String())
 	}
+
 	if event["failure_kind"] != RunFailurePlannerBlocked {
 		t.Fatalf("resume state event missing failure_kind: %#v", event)
 	}
+
 	if got := fmt.Sprint(event["failure_reason"]); !strings.Contains(got, "target.txt") {
 		t.Fatalf("resume state event missing concrete failure reason: %#v", event)
 	}
+
 	if got, _ := event["required_edit_paths"].([]any); len(got) != 1 || got[0] != "target.txt" {
 		t.Fatalf("resume state event missing required paths: %#v", event)
 	}
@@ -783,27 +889,33 @@ func TestRunPlannerBlockedProgressEventCarriesTerminalFailureFields(t *testing.T
 func TestSaveProgressStateRedactsDurableFailureText(t *testing.T) {
 	root := t.TempDir()
 	state := NewProgressState("redacted_progress", "prompt", "", []string{"a.txt"}, nil, timeNowForRunTest())
+
 	state.Status = ProgressStatusFailed
 	state.FailureKind = "executor_failed"
 	state.FailureReason = "raw_prompt: include customer file\n```text\nfile body with OPENAI_API_KEY=sk-secret\n```"
 	state.Executor.Failures = []string{"old_text: customer file body\npassword=secret"}
+
 	if _, err := SaveProgressState(root, &state); err != nil {
 		t.Fatalf("SaveProgressState: %v", err)
 	}
+
 	loaded, _, err := LoadProgressState(root, state.SessionID)
 	if err != nil {
 		t.Fatalf("LoadProgressState: %v", err)
 	}
+
 	encoded, err := json.Marshal(loaded)
 	if err != nil {
 		t.Fatalf("marshal loaded progress: %v", err)
 	}
+
 	text := string(encoded)
 	for _, forbidden := range []string{"raw_prompt", "file body", "OPENAI_API_KEY", "sk-secret", "old_text", "password=secret"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("durable progress state leaked %q: %s", forbidden, text)
 		}
 	}
+
 	if !strings.Contains(text, "redacted") {
 		t.Fatalf("expected redaction marker in progress state: %s", text)
 	}
@@ -814,13 +926,17 @@ func TestRunPersistsProgressAndResumeRunsReviewRepairOnly(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("old\n"), 0o644); err != nil {
 		t.Fatalf("seed a.txt: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
+
 	prompt := "Make a.txt say new."
 
 	var firstStdout, firstStderr bytes.Buffer
+
 	first := Run(cfg, Options{
 		Prompt:     prompt,
 		JSONEvents: true,
@@ -830,11 +946,13 @@ func TestRunPersistsProgressAndResumeRunsReviewRepairOnly(t *testing.T) {
 			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
 				{Path: "a.txt", OldText: "old\n", NewText: "new\n", Purpose: "apply requested text"},
 			}, "change a.txt")
+
 			return "submitted plan", nil
 		case string(workerruntime.TaskFamilyPlanThenExecuteReview):
 			return "Decision: pass\nNo checklist.", nil
 		default:
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
+
 			return "", nil
 		}
 	}, nil, &firstStdout, &firstStderr)
@@ -842,34 +960,43 @@ func TestRunPersistsProgressAndResumeRunsReviewRepairOnly(t *testing.T) {
 	if first.ExitCode != 1 {
 		t.Fatalf("first run should fail review checklist gate, got code=%d stdout=%s stderr=%s", first.ExitCode, firstStdout.String(), firstStderr.String())
 	}
+
 	if first.ResumeStatePath == "" {
 		t.Fatalf("failed run should expose a resume state path")
 	}
+
 	state, _, err := LoadProgressState(root, first.SessionID)
 	if err != nil {
 		t.Fatalf("load progress state: %v", err)
 	}
+
 	if state.Phase != ProgressPhaseReviewRepair || state.Status != ProgressStatusFailed {
 		t.Fatalf("expected failed review progress, got phase=%s status=%s state=%#v", state.Phase, state.Status, state)
 	}
+
 	if state.Executor.Status != ProgressStatusCompleted || state.Executor.Succeeded != 1 {
 		t.Fatalf("executor progress should be complete before review resume, got %#v", state.Executor)
 	}
+
 	if strings.Contains(readFileStringForRunTest(t, filepath.Join(root, first.ResumeStatePath)), prompt) {
 		t.Fatalf("progress state must store prompt hash, not raw prompt")
 	}
+
 	record, recordPath, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, first.SessionID)
 	if err != nil {
 		t.Fatalf("load recovery record: %v", err)
 	}
+
 	if !found {
 		t.Fatalf("failed run should write recovery record")
 	}
+
 	if record.Failure.Class != recovery.FailureClassReviewRepair || record.NextAction != recovery.NextActionReviewDecomposition {
 		t.Fatalf("unexpected recovery record at %s: %#v", recordPath, record)
 	}
 
 	var resumedStdout, resumedStderr bytes.Buffer
+
 	reviewCalls := 0
 	resumedPrompt := ""
 	resumed := Run(cfg, Options{
@@ -879,20 +1006,26 @@ func TestRunPersistsProgressAndResumeRunsReviewRepairOnly(t *testing.T) {
 		if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
 			t.Fatalf("resume must not rerun planner/executor model phase, got task family %q", opts.TaskFamily)
 		}
+
 		reviewCalls++
+
 		resumedPrompt = prompt
+
 		return "Decision: pass\n\nVerification Checklist:\n- Required behavior: a.txt changed from old to new.\n- Scope safety: no corrective edit needed.", nil
 	}, nil, &resumedStdout, &resumedStderr)
 
 	if resumed.ExitCode != 0 {
 		t.Fatalf("resume should pass review, got code=%d stdout=%s stderr=%s", resumed.ExitCode, resumedStdout.String(), resumedStderr.String())
 	}
+
 	if reviewCalls != 1 {
 		t.Fatalf("resume should call review once, got %d calls", reviewCalls)
 	}
+
 	if !strings.Contains(resumedPrompt, "-old") || !strings.Contains(resumedPrompt, "+new") {
 		t.Fatalf("resumed review prompt should restore executor baseline diff, got:\n%s", resumedPrompt)
 	}
+
 	if got := readFileStringForRunTest(t, filepath.Join(root, "a.txt")); got != "new\n" {
 		t.Fatalf("resume must not reapply executor edits, got %q", got)
 	}
@@ -903,13 +1036,17 @@ func TestRunPersistsReviewRepairQuestionAsBlockedProgress(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("old\n"), 0o644); err != nil {
 		t.Fatalf("seed a.txt: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
+
 	prompt := "Make a.txt say new."
 
 	var stdout, stderr bytes.Buffer
+
 	result := Run(cfg, Options{
 		Prompt:     prompt,
 		JSONEvents: true,
@@ -919,11 +1056,13 @@ func TestRunPersistsReviewRepairQuestionAsBlockedProgress(t *testing.T) {
 			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
 				{Path: "a.txt", OldText: "old\n", NewText: "new\n", Purpose: "apply requested text"},
 			}, "change a.txt")
+
 			return "submitted plan", nil
 		case string(workerruntime.TaskFamilyPlanThenExecuteReview):
 			return "<<QUESTION>>: a.txt review found behavior outside the allowed repair scope.", nil
 		default:
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
+
 			return "", nil
 		}
 	}, nil, &stdout, &stderr)
@@ -931,16 +1070,20 @@ func TestRunPersistsReviewRepairQuestionAsBlockedProgress(t *testing.T) {
 	if result.ExitCode != 1 || result.FailureKind != "review_repair_blocked" {
 		t.Fatalf("expected blocked review result, got %#v stdout=%s stderr=%s", result, stdout.String(), stderr.String())
 	}
+
 	state, _, err := LoadProgressState(root, result.SessionID)
 	if err != nil {
 		t.Fatalf("load progress state: %v", err)
 	}
+
 	if state.Phase != ProgressPhaseReviewRepair || state.Status != ProgressStatusBlocked {
 		t.Fatalf("expected blocked review progress, got phase=%s status=%s state=%#v", state.Phase, state.Status, state)
 	}
+
 	if !strings.Contains(state.Review.Status, "a.txt review found behavior") || state.Review.Error != "" {
 		t.Fatalf("review blocker should be typed status, not error: %#v", state.Review)
 	}
+
 	if !strings.Contains(stdout.String(), `"type":"idiom.plan_execute.review_repair_blocked"`) {
 		t.Fatalf("expected review_repair_blocked event, got stdout=%s", stdout.String())
 	}
@@ -951,13 +1094,17 @@ func TestRunResumeReviewRepairUsesPersistedTypedEditSetObligations(t *testing.T)
 	if err := os.WriteFile(filepath.Join(root, "feature_test.go"), []byte("package demo\n\nfunc TestFeature(t *testing.T) {}\n"), 0o644); err != nil {
 		t.Fatalf("seed feature_test.go: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
+
 	prompt := "Add coverage for existing feature behavior."
 
 	var firstStdout, firstStderr bytes.Buffer
+
 	first := Run(cfg, Options{
 		Prompt:     prompt,
 		JSONEvents: true,
@@ -967,14 +1114,17 @@ func TestRunResumeReviewRepairUsesPersistedTypedEditSetObligations(t *testing.T)
 			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
 				{Path: "feature_test.go", OldText: "func TestFeature(t *testing.T) {}\n", NewText: "func TestFeature(t *testing.T) {\n\tt.Helper()\n}\n", Purpose: "add coverage detail"},
 			}, "test-only coverage plan")
+
 			return "submitted test-only plan", nil
 		case string(workerruntime.TaskFamilyPlanThenExecuteReview):
 			return "Decision: pass\nNo checklist.", nil
 		default:
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
+
 			return "", nil
 		}
 	}, nil, &firstStdout, &firstStderr)
+
 	if first.ExitCode != 1 {
 		t.Fatalf("first run should fail review checklist gate, got code=%d stdout=%s stderr=%s", first.ExitCode, firstStdout.String(), firstStderr.String())
 	}
@@ -983,12 +1133,14 @@ func TestRunResumeReviewRepairUsesPersistedTypedEditSetObligations(t *testing.T)
 	if err != nil {
 		t.Fatalf("load progress state: %v", err)
 	}
+
 	state.EditSetObligations = EditSetObligations{}.With(EditSetObligationKindImplementationEdit, "persisted_retry")
 	if _, err := SaveProgressState(root, &state); err != nil {
 		t.Fatalf("save progress state: %v", err)
 	}
 
 	var resumedStdout, resumedStderr bytes.Buffer
+
 	resumedPrompt := ""
 	resumed := Run(cfg, Options{
 		Prompt:     prompt,
@@ -998,16 +1150,20 @@ func TestRunResumeReviewRepairUsesPersistedTypedEditSetObligations(t *testing.T)
 		if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
 			t.Fatalf("resume must run review-repair only, got %q", opts.TaskFamily)
 		}
+
 		resumedPrompt = prompt
+
 		return "Decision: pass\n\nVerification Checklist:\n- Required behavior: test coverage is present.\n- Scope safety: no corrective edit needed.", nil
 	}, nil, &resumedStdout, &resumedStderr)
 
 	if resumed.ExitCode != 1 {
 		t.Fatalf("resume should reject pass against persisted implementation obligation, got code=%d stdout=%s stderr=%s", resumed.ExitCode, resumedStdout.String(), resumedStderr.String())
 	}
+
 	if !strings.Contains(resumedStderr.String(), EditSetFailureMissingRequestedImplementationEdit) {
 		t.Fatalf("expected persisted implementation obligation rejection, stderr=%s", resumedStderr.String())
 	}
+
 	if !strings.Contains(resumedPrompt, "requested_implementation_edit_missing") {
 		t.Fatalf("review prompt should expose persisted implementation obligation, got:\n%s", resumedPrompt)
 	}
@@ -1018,20 +1174,25 @@ func TestRunContinuesReviewRepairAfterSourceSanityFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recover-source-sanity\n\ngo 1.22\n"), 0o644); err != nil {
 		t.Fatalf("seed go.mod: %v", err)
 	}
+
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatalf("mkdir pkg: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "feature.go"), []byte("package pkg\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
 		t.Fatalf("seed feature.go: %v", err)
 	}
+
 	sourcePath := filepath.Join(root, "pkg", "feature.go")
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
 	cfg.Workspace.CommandTimeoutSeconds = 30
 
 	var stdout, stderr bytes.Buffer
+
 	reviewCalled := false
 	result := Run(cfg, Options{
 		Prompt:     "Update Value.",
@@ -1047,12 +1208,15 @@ func TestRunContinuesReviewRepairAfterSourceSanityFailure(t *testing.T) {
 					Purpose: "update Value with a compile defect",
 				},
 			}, "update Value with a compile defect")
+
 			return "submitted plan", nil
 		case string(workerruntime.TaskFamilyPlanThenExecuteReview):
 			reviewCalled = true
+
 			if !strings.Contains(prompt, "source_sanity_failed:pkg/feature.go") {
 				t.Fatalf("review prompt should expose failed source_sanity obligation, got:\n%s", prompt)
 			}
+
 			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
 				{
 					Path:    filepath.ToSlash(filepath.Join("pkg", "feature.go")),
@@ -1061,9 +1225,11 @@ func TestRunContinuesReviewRepairAfterSourceSanityFailure(t *testing.T) {
 					Purpose: "repair compile failure",
 				},
 			}, "Verification Checklist:\n- Source sanity: repair the undefined symbol.\n- Scope safety: edit only the changed source file.")
+
 			return "submitted repair plan", nil
 		default:
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
+
 			return "", nil
 		}
 	}, nil, &stdout, &stderr)
@@ -1071,22 +1237,28 @@ func TestRunContinuesReviewRepairAfterSourceSanityFailure(t *testing.T) {
 	if result.ExitCode != 0 {
 		t.Fatalf("expected review-repair to recover source sanity failure, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
 	}
+
 	if !reviewCalled {
 		t.Fatalf("review-repair phase was not called")
 	}
+
 	if got := readFileStringForRunTest(t, sourcePath); strings.Contains(got, "missingSymbol") || !strings.Contains(got, "return 1") {
 		t.Fatalf("expected repaired source body, got:\n%s", got)
 	}
+
 	if !strings.Contains(stdout.String(), `"type":"idiom.plan_execute.executor_verification_repair_required"`) {
 		t.Fatalf("expected typed executor verification handoff event, got stdout=%s", stdout.String())
 	}
+
 	state, _, err := LoadProgressState(root, result.SessionID)
 	if err != nil {
 		t.Fatalf("load progress state: %v", err)
 	}
+
 	if state.Status != ProgressStatusCompleted || state.Review.Status != "repaired" {
 		t.Fatalf("expected completed repaired progress, got %#v", state)
 	}
+
 	if record, recordPath, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, result.SessionID); err != nil || found {
 		t.Fatalf("successful repair should not leave stale recovery record found=%v path=%s record=%#v err=%v", found, recordPath, record, err)
 	}
@@ -1097,24 +1269,31 @@ func TestRunContinuesReviewRepairAfterRequestedVerificationFailure(t *testing.T)
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recover-requested-verification\n\ngo 1.22\n"), 0o644); err != nil {
 		t.Fatalf("seed go.mod: %v", err)
 	}
+
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatalf("mkdir pkg: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "feature.go"), []byte("package pkg\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
 		t.Fatalf("seed feature.go: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "feature_test.go"), []byte("package pkg\n\nimport \"testing\"\n\nfunc TestValue(t *testing.T) {\n\tif Value() != 1 {\n\t\tt.Fatalf(\"unexpected value: %d\", Value())\n\t}\n}\n"), 0o644); err != nil {
 		t.Fatalf("seed feature_test.go: %v", err)
 	}
+
 	sourcePath := filepath.Join(root, "pkg", "feature.go")
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
 	cfg.Workspace.CommandTimeoutSeconds = 30
 
 	command := "go test ./... -run 'TestValue' -count=1"
+
 	var stdout, stderr bytes.Buffer
+
 	reviewCalled := false
 	result := Run(cfg, Options{
 		Prompt:     "Update Value. Make this pass: `" + command + "`.",
@@ -1130,12 +1309,15 @@ func TestRunContinuesReviewRepairAfterRequestedVerificationFailure(t *testing.T)
 					Purpose: "change Value behavior",
 				},
 			}, "change Value behavior")
+
 			return "submitted plan", nil
 		case string(workerruntime.TaskFamilyPlanThenExecuteReview):
 			reviewCalled = true
+
 			if !strings.Contains(prompt, "verification_failed:"+command) {
 				t.Fatalf("review prompt should expose failed requested verification obligation, got:\n%s", prompt)
 			}
+
 			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
 				{
 					Path:    filepath.ToSlash(filepath.Join("pkg", "feature.go")),
@@ -1144,9 +1326,11 @@ func TestRunContinuesReviewRepairAfterRequestedVerificationFailure(t *testing.T)
 					Purpose: "repair requested verification failure",
 				},
 			}, "Verification Checklist:\n- Requested verification: restore TestValue expectation.\n- Scope safety: edit only the changed source file.")
+
 			return "submitted repair plan", nil
 		default:
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
+
 			return "", nil
 		}
 	}, nil, &stdout, &stderr)
@@ -1154,19 +1338,24 @@ func TestRunContinuesReviewRepairAfterRequestedVerificationFailure(t *testing.T)
 	if result.ExitCode != 0 {
 		t.Fatalf("expected review-repair to recover requested verification failure, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
 	}
+
 	if !reviewCalled {
 		t.Fatalf("review-repair phase was not called")
 	}
+
 	if got := readFileStringForRunTest(t, sourcePath); strings.Contains(got, "return 2") || !strings.Contains(got, "return 1") {
 		t.Fatalf("expected repaired source body, got:\n%s", got)
 	}
+
 	state, _, err := LoadProgressState(root, result.SessionID)
 	if err != nil {
 		t.Fatalf("load progress state: %v", err)
 	}
+
 	if state.Status != ProgressStatusCompleted || state.Review.Status != "repaired" {
 		t.Fatalf("expected completed repaired progress, got %#v", state)
 	}
+
 	if len(state.Executor.Verification) == 0 || state.Executor.Verification[len(state.Executor.Verification)-1].Status != "ok" {
 		t.Fatalf("expected successful post-review requested verification evidence, got %#v", state.Executor.Verification)
 	}
@@ -1177,19 +1366,24 @@ func TestRunKeepsSourceSanityFailureWhenReviewRepairUnavailable(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recover-source-sanity-unavailable\n\ngo 1.22\n"), 0o644); err != nil {
 		t.Fatalf("seed go.mod: %v", err)
 	}
+
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatalf("mkdir pkg: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "pkg", "feature.go"), []byte("package pkg\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
 		t.Fatalf("seed feature.go: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
 	cfg.Workspace.CommandTimeoutSeconds = 30
 
 	var stdout, stderr bytes.Buffer
+
 	result := Run(cfg, Options{
 		Prompt:     "Update Value.",
 		JSONEvents: true,
@@ -1204,11 +1398,13 @@ func TestRunKeepsSourceSanityFailureWhenReviewRepairUnavailable(t *testing.T) {
 					Purpose: "update Value with a compile defect",
 				},
 			}, "update Value with a compile defect")
+
 			return "submitted plan", nil
 		case string(workerruntime.TaskFamilyPlanThenExecuteReview):
 			return "", errors.New("review model unavailable")
 		default:
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
+
 			return "", nil
 		}
 	}, nil, &stdout, &stderr)
@@ -1216,20 +1412,25 @@ func TestRunKeepsSourceSanityFailureWhenReviewRepairUnavailable(t *testing.T) {
 	if result.ExitCode != 1 {
 		t.Fatalf("expected unresolved source sanity failure, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
 	}
+
 	if result.FailureKind != RunFailureSourceSanityFailed {
 		t.Fatalf("expected source_sanity_failed result, got %#v", result)
 	}
+
 	state, _, err := LoadProgressState(root, result.SessionID)
 	if err != nil {
 		t.Fatalf("load progress state: %v", err)
 	}
+
 	if state.Status != ProgressStatusFailed || state.FailureKind != RunFailureSourceSanityFailed || state.Review.Status != "degraded (review unavailable)" {
 		t.Fatalf("expected failed source sanity progress after degraded review, got %#v", state)
 	}
+
 	record, _, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, result.SessionID)
 	if err != nil || !found {
 		t.Fatalf("expected terminal failure record found=%v err=%v", found, err)
 	}
+
 	if record.Failure.Class != recovery.FailureClassVerification {
 		t.Fatalf("expected verification failure class, got %#v", record.Failure)
 	}
@@ -1240,10 +1441,13 @@ func TestRunRejectsInitialPlanWhenRequestedTestEditMissingBeforeWrites(t *testin
 	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Hardened() bool { return false }\n"), 0o644); err != nil {
 		t.Fatalf("seed pkg.go: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
+
 	var stdout, stderr bytes.Buffer
 
 	result := Run(cfg, Options{
@@ -1255,26 +1459,33 @@ func TestRunRejectsInitialPlanWhenRequestedTestEditMissingBeforeWrites(t *testin
 		if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecutePlanner) {
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
 		}
+
 		writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
 			{Path: "pkg.go", OldText: "return false", NewText: "return true", Purpose: "harden behavior"},
 		}, "production-only plan")
+
 		return "submitted production-only plan", nil
 	}, nil, &stdout, &stderr)
 
 	if result.ExitCode != 1 {
 		t.Fatalf("expected missing test edit rejection, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
 	}
+
 	if result.FailureKind != "missing_requested_test_edit" || !strings.Contains(stderr.String(), "missing_requested_test_edit") {
 		t.Fatalf("expected missing_requested_test_edit failure, result=%#v stderr=%s", result, stderr.String())
 	}
+
 	if got := readFileStringForRunTest(t, filepath.Join(root, "pkg.go")); strings.Contains(got, "return true") {
 		t.Fatalf("production edit must not be applied after plan rejection, got:\n%s", got)
 	}
+
 	events := planExecuteJSONEventsForRunTest(t, stdout.String())
 	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.planner_plan_rejected")
+
 	if !ok {
 		t.Fatalf("expected planner_plan_rejected event, got %s", stdout.String())
 	}
+
 	if event["reason"] != "missing_requested_test_edit" {
 		t.Fatalf("expected missing_requested_test_edit reason, got %#v", event)
 	}
@@ -1285,13 +1496,17 @@ func TestRunRejectsInitialPlanWhenRequestedImplementationEditMissingBeforeWrites
 	if err := os.WriteFile(filepath.Join(root, "feature.go"), []byte("package demo\n\nfunc Enabled() bool { return false }\n"), 0o644); err != nil {
 		t.Fatalf("seed feature.go: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "feature_test.go"), []byte("package demo\n\nfunc TestEnabled(t *testing.T) {}\n"), 0o644); err != nil {
 		t.Fatalf("seed feature_test.go: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
+
 	var stdout, stderr bytes.Buffer
 
 	result := Run(cfg, Options{
@@ -1303,26 +1518,33 @@ func TestRunRejectsInitialPlanWhenRequestedImplementationEditMissingBeforeWrites
 		if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecutePlanner) {
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
 		}
+
 		writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
 			{Path: "feature_test.go", OldText: "func TestEnabled(t *testing.T) {}\n", NewText: "func TestEnabled(t *testing.T) {\n\tif !Enabled() {\n\t\tt.Fatal(\"disabled\")\n\t}\n}\n", Purpose: "add feature test"},
 		}, "test-only plan")
+
 		return "submitted test-only plan", nil
 	}, nil, &stdout, &stderr)
 
 	if result.ExitCode != 1 {
 		t.Fatalf("expected missing implementation edit rejection, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
 	}
+
 	if result.FailureKind != "missing_requested_implementation_edit" || !strings.Contains(stderr.String(), "missing_requested_implementation_edit") {
 		t.Fatalf("expected missing_requested_implementation_edit failure, result=%#v stderr=%s", result, stderr.String())
 	}
+
 	if got := readFileStringForRunTest(t, filepath.Join(root, "feature_test.go")); strings.Contains(got, "t.Fatal") {
 		t.Fatalf("test-only edit must not be applied after plan rejection, got:\n%s", got)
 	}
+
 	events := planExecuteJSONEventsForRunTest(t, stdout.String())
 	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.planner_plan_rejected")
+
 	if !ok {
 		t.Fatalf("expected planner_plan_rejected event, got %s", stdout.String())
 	}
+
 	if event["reason"] != "missing_requested_implementation_edit" {
 		t.Fatalf("expected missing_requested_implementation_edit reason, got %#v", event)
 	}
@@ -1331,9 +1553,11 @@ func TestRunRejectsInitialPlanWhenRequestedImplementationEditMissingBeforeWrites
 func TestRunRejectsMissingEditPathWithoutNewFileAuthorizationBeforeWrites(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
+
 	var stdout, stderr bytes.Buffer
 
 	missingPath := "project/scripts/economy/score_breakdown.gd"
@@ -1348,6 +1572,7 @@ func TestRunRejectsMissingEditPathWithoutNewFileAuthorizationBeforeWrites(t *tes
 		if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecutePlanner) {
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
 		}
+
 		writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{{
 			Path:       missingPath,
 			OldText:    "",
@@ -1355,26 +1580,33 @@ func TestRunRejectsMissingEditPathWithoutNewFileAuthorizationBeforeWrites(t *tes
 			ReplaceAll: true,
 			Purpose:    "invented helper path",
 		}}, "invented missing helper")
+
 		return "submitted invented helper path", nil
 	}, nil, &stdout, &stderr)
 
 	if result.ExitCode != 1 {
 		t.Fatalf("expected missing edit path rejection, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
 	}
+
 	if result.FailureKind != "missing_edit_path_without_new_file_authorization" {
 		t.Fatalf("unexpected failure kind: %#v", result)
 	}
+
 	if !strings.Contains(stderr.String(), "missing edit path") && !strings.Contains(stderr.String(), "new-file authorization") {
 		t.Fatalf("stderr should explain missing-path/new-file rejection, got %s", stderr.String())
 	}
+
 	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(missingPath))); !os.IsNotExist(err) {
 		t.Fatalf("missing path must not be created, stat err=%v", err)
 	}
+
 	events := planExecuteJSONEventsForRunTest(t, stdout.String())
 	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.planner_plan_rejected")
+
 	if !ok {
 		t.Fatalf("expected planner_plan_rejected event, got %s", stdout.String())
 	}
+
 	if event["reason"] != "plan would create missing edit path without new-file authorization" {
 		t.Fatalf("unexpected rejection event: %#v", event)
 	}
@@ -1400,6 +1632,7 @@ func TestPreflightAcceptsTypedAuthorizedNewFileWithoutPromptProse(t *testing.T) 
 
 func TestParseOptionsAcceptsAuthorizedNewFileFlag(t *testing.T) {
 	var stderr bytes.Buffer
+
 	opts, err := ParseOptions([]string{
 		"-prompt", "implement",
 		"-authorized-new-file", "pkg/new_helper.go",
@@ -1408,6 +1641,7 @@ func TestParseOptionsAcceptsAuthorizedNewFileFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseOptions returned error: %v stderr=%s", err, stderr.String())
 	}
+
 	if !slices.Equal(opts.AuthorizedNewFiles, []string{"pkg/new_helper.go", "pkg/new_helper_test.go"}) {
 		t.Fatalf("authorized new files = %#v", opts.AuthorizedNewFiles)
 	}
@@ -1418,13 +1652,17 @@ func TestRunExecutorPhaseRejectsPlanOutsideWriteEnvelopeBeforeWrites(t *testing.
 	if err := os.WriteFile(filepath.Join(root, "approved.txt"), []byte("approved\n"), 0o644); err != nil {
 		t.Fatalf("seed approved.txt: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "generated.txt"), []byte("generated\n"), 0o644); err != nil {
 		t.Fatalf("seed generated.txt: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
+
 	plan := workspace.PlanArtifact{
 		SchemaVersion: workspace.PlanArtifactSchemaVersion,
 		Edits: []workspace.PlanEdit{{
@@ -1434,7 +1672,9 @@ func TestRunExecutorPhaseRejectsPlanOutsideWriteEnvelopeBeforeWrites(t *testing.
 			Purpose: "generated atom tried to widen scope",
 		}},
 	}
+
 	var stdout bytes.Buffer
+
 	_, err := RunExecutorPhaseScopedWithVerificationPlanAndWriteScope(
 		cfg,
 		plan,
@@ -1449,17 +1689,22 @@ func TestRunExecutorPhaseRejectsPlanOutsideWriteEnvelopeBeforeWrites(t *testing.
 	if err == nil {
 		t.Fatal("expected write envelope preflight rejection")
 	}
+
 	if !strings.Contains(err.Error(), "write_allowed_paths") {
 		t.Fatalf("expected write_allowed_paths rejection, got %v", err)
 	}
+
 	if got := readFileStringForRunTest(t, filepath.Join(root, "generated.txt")); got != "generated\n" {
 		t.Fatalf("out-of-envelope edit must not be applied, got:\n%s", got)
 	}
+
 	events := planExecuteJSONEventsForRunTest(t, stdout.String())
 	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.preflight_failed")
+
 	if !ok {
 		t.Fatalf("expected preflight_failed event, got %s", stdout.String())
 	}
+
 	if event["reason"] != "plan edit path is outside write_allowed_paths envelope" {
 		t.Fatalf("unexpected rejection event: %#v", event)
 	}
@@ -1467,6 +1712,7 @@ func TestRunExecutorPhaseRejectsPlanOutsideWriteEnvelopeBeforeWrites(t *testing.
 
 func TestVerificationPlanRejectsFailExecutorVerification(t *testing.T) {
 	var stdout bytes.Buffer
+
 	checked, evidence, err := RunVerificationPlan(t.TempDir(), VerificationPlan{
 		Rejects: []VerificationReject{{
 			Command: "bin/colony_tests -ts=quality_inventory_bindings",
@@ -1477,12 +1723,15 @@ func TestVerificationPlanRejectsFailExecutorVerification(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected unsupported requested verification to fail")
 	}
+
 	if checked != 1 || len(evidence) != 1 {
 		t.Fatalf("checked/evidence = %d/%d, want 1/1", checked, len(evidence))
 	}
+
 	if evidence[0].Status != "failed" || evidence[0].Error != VerificationRejectUnsupportedCmd {
 		t.Fatalf("unexpected evidence: %#v", evidence[0])
 	}
+
 	if !strings.Contains(stdout.String(), `"type":"idiom.plan_execute.verification"`) {
 		t.Fatalf("expected verification event, got %s", stdout.String())
 	}
@@ -1493,18 +1742,25 @@ func TestRunReviewRepairPhaseRejectsPassWhenRequestedTestEditMissing(t *testing.
 	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Hardened() bool { return true }\n"), 0o644); err != nil {
 		t.Fatalf("seed pkg.go: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
+
 	plan := workspace.PlanArtifact{
 		SchemaVersion: workspace.PlanArtifactSchemaVersion,
 		Edits: []workspace.PlanEdit{
 			{Path: "pkg.go", OldText: "return false", NewText: "return true", Purpose: "harden behavior"},
 		},
 	}
-	var stdout bytes.Buffer
-	var gotPrompt string
+
+	var (
+		stdout    bytes.Buffer
+		gotPrompt string
+	)
+
 	_, err := RunReviewRepairPhase(
 		cfg,
 		"Implement the hardening and add regression tests proving the edge case is rejected.",
@@ -1526,17 +1782,22 @@ func TestRunReviewRepairPhaseRejectsPassWhenRequestedTestEditMissing(t *testing.
 	if err == nil {
 		t.Fatalf("expected missing requested test edit to reject review pass")
 	}
+
 	if !strings.Contains(err.Error(), "missing_requested_test_edit") {
 		t.Fatalf("expected missing test edit rejection, got %v", err)
 	}
+
 	if !strings.Contains(gotPrompt, "requested_test_edit_missing") {
 		t.Fatalf("review prompt should expose requested test edit obligation, got:\n%s", gotPrompt)
 	}
+
 	events := planExecuteJSONEventsForRunTest(t, stdout.String())
 	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.review_repair_pass_rejected")
+
 	if !ok {
 		t.Fatalf("expected review_repair_pass_rejected event, got %s", stdout.String())
 	}
+
 	if event["reason"] != "missing_requested_test_edit" {
 		t.Fatalf("expected missing_requested_test_edit reason, got %#v", event)
 	}
@@ -1547,18 +1808,25 @@ func TestRunReviewRepairPhaseForcesVisibleTerminalContract(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("good\n"), 0o644); err != nil {
 		t.Fatalf("seed a.txt: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
+
 	plan := workspace.PlanArtifact{
 		SchemaVersion: workspace.PlanArtifactSchemaVersion,
 		Edits: []workspace.PlanEdit{
 			{Path: "a.txt", OldText: "bad", NewText: "good", Purpose: "seed changed path"},
 		},
 	}
-	var stdout bytes.Buffer
-	var gotOpts RunOptions
+
+	var (
+		stdout  bytes.Buffer
+		gotOpts RunOptions
+	)
+
 	report, err := RunReviewRepairPhase(
 		cfg,
 		"Review behavior.",
@@ -1577,12 +1845,15 @@ func TestRunReviewRepairPhaseForcesVisibleTerminalContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("review-repair pass should be accepted: %v", err)
 	}
+
 	if report.Status != "pass (no corrective edits)" {
 		t.Fatalf("unexpected report: %#v", report)
 	}
+
 	if gotOpts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
 		t.Fatalf("review-repair should use review-repair task family, got %q", gotOpts.TaskFamily)
 	}
+
 	if !gotOpts.DisableThinking {
 		t.Fatal("review-repair must force visible no-thinking output for its terminal contract")
 	}
@@ -1593,17 +1864,22 @@ func TestRunReviewRepairPhaseRejectsRecoveryTemplateAsPass(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("good\n"), 0o644); err != nil {
 		t.Fatalf("seed a.txt: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
+
 	plan := workspace.PlanArtifact{
 		SchemaVersion: workspace.PlanArtifactSchemaVersion,
 		Edits: []workspace.PlanEdit{
 			{Path: "a.txt", OldText: "bad", NewText: "good", Purpose: "seed changed path"},
 		},
 	}
+
 	var stdout bytes.Buffer
+
 	_, err := RunReviewRepairPhase(
 		cfg,
 		"Review behavior.",
@@ -1621,6 +1897,7 @@ func TestRunReviewRepairPhaseRejectsRecoveryTemplateAsPass(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected recovery template text not to count as a review pass")
 	}
+
 	if !strings.Contains(err.Error(), "Decision: pass") || !strings.Contains(err.Error(), "Verification Checklist") {
 		t.Fatalf("error should require an actual terminal pass shape, got %v", err)
 	}
@@ -1631,18 +1908,25 @@ func TestRunReviewRepairPhaseRejectsPassWhenRequestedImplementationEditMissing(t
 	if err := os.WriteFile(filepath.Join(root, "feature_test.go"), []byte("package demo\n\nfunc TestEnabled(t *testing.T) {\n\tif !Enabled() {\n\t\tt.Fatal(\"disabled\")\n\t}\n}\n"), 0o644); err != nil {
 		t.Fatalf("seed feature_test.go: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
+
 	plan := workspace.PlanArtifact{
 		SchemaVersion: workspace.PlanArtifactSchemaVersion,
 		Edits: []workspace.PlanEdit{
 			{Path: "feature_test.go", OldText: "func TestEnabled(t *testing.T) {}\n", NewText: "func TestEnabled(t *testing.T) {\n\tif !Enabled() {\n\t\tt.Fatal(\"disabled\")\n\t}\n}\n", Purpose: "add feature test"},
 		},
 	}
-	var stdout bytes.Buffer
-	var gotPrompt string
+
+	var (
+		stdout    bytes.Buffer
+		gotPrompt string
+	)
+
 	_, err := RunReviewRepairPhase(
 		cfg,
 		"Implement the feature. Start by adding failing tests, then implement.",
@@ -1664,17 +1948,22 @@ func TestRunReviewRepairPhaseRejectsPassWhenRequestedImplementationEditMissing(t
 	if err == nil {
 		t.Fatalf("expected missing requested implementation edit to reject review pass")
 	}
+
 	if !strings.Contains(err.Error(), "missing_requested_implementation_edit") {
 		t.Fatalf("expected missing implementation edit rejection, got %v", err)
 	}
+
 	if !strings.Contains(gotPrompt, "requested_implementation_edit_missing") {
 		t.Fatalf("review prompt should expose requested implementation edit obligation, got:\n%s", gotPrompt)
 	}
+
 	events := planExecuteJSONEventsForRunTest(t, stdout.String())
 	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.review_repair_pass_rejected")
+
 	if !ok {
 		t.Fatalf("expected review_repair_pass_rejected event, got %s", stdout.String())
 	}
+
 	if event["reason"] != "missing_requested_implementation_edit" {
 		t.Fatalf("expected missing_requested_implementation_edit reason, got %#v", event)
 	}
@@ -1685,17 +1974,22 @@ func TestRunReviewRepairPhaseRejectsPassThatAdmitsCommandWasNotRun(t *testing.T)
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("after\n"), 0o644); err != nil {
 		t.Fatalf("seed a.txt: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
+
 	plan := workspace.PlanArtifact{
 		SchemaVersion: workspace.PlanArtifactSchemaVersion,
 		Edits: []workspace.PlanEdit{
 			{Path: "a.txt", OldText: "before", NewText: "after", Purpose: "seed changed path"},
 		},
 	}
+
 	var stdout bytes.Buffer
+
 	_, err := RunReviewRepairPhase(
 		cfg,
 		"Implement behavior and run focused tests.",
@@ -1716,14 +2010,18 @@ func TestRunReviewRepairPhaseRejectsPassThatAdmitsCommandWasNotRun(t *testing.T)
 	if err == nil {
 		t.Fatalf("expected missing command evidence admission to reject review pass")
 	}
+
 	if !strings.Contains(err.Error(), "missing_command_evidence_claim") {
 		t.Fatalf("expected missing command evidence rejection, got %v", err)
 	}
+
 	events := planExecuteJSONEventsForRunTest(t, stdout.String())
 	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.review_repair_pass_rejected")
+
 	if !ok {
 		t.Fatalf("expected review_repair_pass_rejected event, got %s", stdout.String())
 	}
+
 	if event["reason"] != "missing_command_evidence_claim" {
 		t.Fatalf("expected missing_command_evidence_claim reason, got %#v", event)
 	}
@@ -1734,18 +2032,25 @@ func TestRunReviewRepairPhaseRejectsPassWhenSourceSanityFailed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package demo\n\nfunc Value() int { return missing }\n"), 0o644); err != nil {
 		t.Fatalf("seed a.go: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
+
 	plan := workspace.PlanArtifact{
 		SchemaVersion: workspace.PlanArtifactSchemaVersion,
 		Edits: []workspace.PlanEdit{
 			{Path: "a.go", OldText: "return 1", NewText: "return missing", Purpose: "introduce compile issue"},
 		},
 	}
-	var stdout bytes.Buffer
-	var gotPrompt string
+
+	var (
+		stdout    bytes.Buffer
+		gotPrompt string
+	)
+
 	_, err := RunReviewRepairPhase(
 		cfg,
 		"Repair Value.",
@@ -1769,17 +2074,22 @@ func TestRunReviewRepairPhaseRejectsPassWhenSourceSanityFailed(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected failed source_sanity to reject review pass")
 	}
+
 	if !strings.Contains(err.Error(), "verification_failed") {
 		t.Fatalf("expected verification_failed rejection, got %v", err)
 	}
+
 	if !strings.Contains(gotPrompt, "source_sanity_failed:a.go") {
 		t.Fatalf("review prompt should expose failed source_sanity obligation, got:\n%s", gotPrompt)
 	}
+
 	events := planExecuteJSONEventsForRunTest(t, stdout.String())
 	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.review_repair_pass_rejected")
+
 	if !ok {
 		t.Fatalf("expected review_repair_pass_rejected event, got %s", stdout.String())
 	}
+
 	if event["reason"] != "verification_failed" {
 		t.Fatalf("expected verification_failed reason, got %#v", event)
 	}
@@ -1788,21 +2098,28 @@ func TestRunReviewRepairPhaseRejectsPassWhenSourceSanityFailed(t *testing.T) {
 func TestRunReviewRepairPhaseRetriesContradictoryPassIntoCorrectivePlan(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "a.txt")
+
 	if err := os.WriteFile(path, []byte("value=bad\n"), 0o644); err != nil {
 		t.Fatalf("seed a.txt: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
+
 	plan := workspace.PlanArtifact{
 		SchemaVersion: workspace.PlanArtifactSchemaVersion,
 		Edits: []workspace.PlanEdit{
 			{Path: "a.txt", OldText: "value=good", NewText: "value=bad", Purpose: "introduce bad value"},
 		},
 	}
+
 	var stdout bytes.Buffer
+
 	attempts := 0
+
 	report, err := RunReviewRepairPhase(
 		cfg,
 		"Keep a.txt good.",
@@ -1819,21 +2136,27 @@ func TestRunReviewRepairPhaseRetriesContradictoryPassIntoCorrectivePlan(t *testi
 		&stdout,
 		func(cfg config.Config, prompt string, opts RunOptions, _ io.Writer) (string, error) {
 			attempts++
+
 			if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
 				t.Fatalf("unexpected task family %q", opts.TaskFamily)
 			}
+
 			if attempts == 1 {
 				if !strings.Contains(prompt, "verification_failed:check a.txt") {
 					t.Fatalf("initial prompt should expose failed verification, got:\n%s", prompt)
 				}
+
 				return "Decision: pass\n\nVerification Checklist:\n- Required behavior: acceptable.\n- Test or command evidence: acceptable.", nil
 			}
+
 			if !strings.Contains(prompt, "Rejected Previous Review Outcome") || !strings.Contains(prompt, "`Decision: pass` is not an allowed terminal outcome") {
 				t.Fatalf("retry prompt should forbid another pass, got:\n%s", prompt)
 			}
+
 			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
 				{Path: "a.txt", OldText: "value=bad", NewText: "value=good", Purpose: "repair failed verification"},
 			}, "Verification Checklist:\n- Failing item: check a.txt reported value was bad.\n- Scope safety: edit only a.txt.")
+
 			return "submitted repair plan", nil
 		},
 		nil,
@@ -1841,15 +2164,19 @@ func TestRunReviewRepairPhaseRetriesContradictoryPassIntoCorrectivePlan(t *testi
 	if err != nil {
 		t.Fatalf("expected retry corrective plan to repair, got %v", err)
 	}
+
 	if attempts != 2 {
 		t.Fatalf("expected one retry after contradictory pass, got %d attempts", attempts)
 	}
+
 	if report.Status != "repaired" || report.Repairs != 1 {
 		t.Fatalf("expected repaired report, got %#v", report)
 	}
+
 	if got := readFileStringForRunTest(t, path); got != "value=good\n" {
 		t.Fatalf("expected repair to apply, got %q", got)
 	}
+
 	events := planExecuteJSONEventsForRunTest(t, stdout.String())
 	if _, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.review_repair_retry"); !ok {
 		t.Fatalf("expected review_repair_retry event, got %s", stdout.String())
@@ -1861,17 +2188,22 @@ func TestRunReviewRepairPhaseRejectsCorrectivePlanWhenRequestedTestEditStillMiss
 	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Hardened() bool { return false }\n"), 0o644); err != nil {
 		t.Fatalf("seed pkg.go: %v", err)
 	}
+
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.Workspace.EnableWrites = true
+
 	plan := workspace.PlanArtifact{
 		SchemaVersion: workspace.PlanArtifactSchemaVersion,
 		Edits: []workspace.PlanEdit{
 			{Path: "pkg.go", OldText: "return false", NewText: "return true", Purpose: "harden behavior"},
 		},
 	}
+
 	var stdout bytes.Buffer
+
 	_, err := RunReviewRepairPhase(
 		cfg,
 		"Implement the hardening and add regression tests proving the edge case is rejected.",
@@ -1888,9 +2220,11 @@ func TestRunReviewRepairPhaseRejectsCorrectivePlanWhenRequestedTestEditStillMiss
 			if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
 				t.Fatalf("unexpected task family %q", opts.TaskFamily)
 			}
+
 			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
 				{Path: "pkg.go", OldText: "return false", NewText: "return true", Purpose: "retry production-only hardening"},
 			}, "Verification Checklist:\n- Required behavior: hardening is present.\n")
+
 			return "submitted production-only repair", nil
 		},
 		nil,
@@ -1898,17 +2232,22 @@ func TestRunReviewRepairPhaseRejectsCorrectivePlanWhenRequestedTestEditStillMiss
 	if err == nil {
 		t.Fatalf("expected production-only repair plan rejection")
 	}
+
 	if !strings.Contains(err.Error(), "missing_requested_test_edit") {
 		t.Fatalf("expected missing_requested_test_edit, got %v", err)
 	}
+
 	if got := readFileStringForRunTest(t, filepath.Join(root, "pkg.go")); strings.Contains(got, "return true") {
 		t.Fatalf("repair rejection must happen before writes, got:\n%s", got)
 	}
+
 	events := planExecuteJSONEventsForRunTest(t, stdout.String())
 	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.review_repair_plan_rejected")
+
 	if !ok {
 		t.Fatalf("expected review_repair_plan_rejected event, got %s", stdout.String())
 	}
+
 	if event["reason"] != "missing_requested_test_edit" {
 		t.Fatalf("expected missing_requested_test_edit reason, got %#v", event)
 	}
@@ -1924,11 +2263,13 @@ func TestPlanExecutePromptProseDoesNotCreateEditSetObligations(t *testing.T) {
 			t.Fatalf("prompt prose must not create hidden edit-set obligations: %q -> %#v", prompt, obligations)
 		}
 	}
+
 	for _, path := range []string{"tests/parser_test.py", "test/foo.py", "tests/panel_contract.gd"} {
 		if !planExecuteChangedPathsIncludeTest([]string{path}) {
 			t.Fatalf("path should count as a test path: %s", path)
 		}
 	}
+
 	if reason := (EditSetObligations{}).With(EditSetObligationKindImplementationEdit, "test").RejectionReason([]string{"docs/feature.md", "pkg/feature_test.go"}); reason != "missing_requested_implementation_edit" {
 		t.Fatalf("docs plus tests should not satisfy implementation edit obligation, got %q", reason)
 	}
@@ -1938,13 +2279,16 @@ func TestExtractRequestedVerificationCommandsPreservesQuotedRunPattern(t *testin
 	prompt := "/plan-execute Continue the repair. Make this pass: go test ./internal/workflows/productworkflow ./cmd/idiom -run 'Test.*(Coverage|TDD|ProductBriefRender|KnownTDD)' -count=1. Do not edit every allowed path unless it is needed."
 	want := "go test ./internal/workflows/productworkflow ./cmd/idiom -run 'Test.*(Coverage|TDD|ProductBriefRender|KnownTDD)' -count=1"
 	got := ExtractRequestedVerificationCommands(prompt)
+
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("verification commands = %#v, want %#v", got, []string{want})
 	}
+
 	args, ok := VerificationCommandArgs(got[0])
 	if !ok {
 		t.Fatalf("expected command to be allowed")
 	}
+
 	if joined := strings.Join(args, "\x00"); !strings.Contains(joined, "Test.*(Coverage|TDD|ProductBriefRender|KnownTDD)") {
 		t.Fatalf("quoted -run pattern was not preserved in args: %#v", args)
 	}
@@ -1953,6 +2297,7 @@ func TestExtractRequestedVerificationCommandsPreservesQuotedRunPattern(t *testin
 func TestExtractRequestedVerificationCommandsHandlesRunAfterExecutorPhrase(t *testing.T) {
 	prompt := "After the executor applies the plan, run `go test ./...`."
 	got := ExtractRequestedVerificationCommands(prompt)
+
 	if len(got) != 1 || got[0] != "go test ./..." {
 		t.Fatalf("verification commands = %#v, want %#v", got, []string{"go test ./..."})
 	}
@@ -2011,6 +2356,7 @@ func TestPlanExecuteImplementationEditObligationRequiresSourceLikePath(t *testin
 			t.Fatalf("non-source paths must not satisfy implementation obligation, paths=%#v reason=%q", paths, reason)
 		}
 	}
+
 	for _, path := range []string{
 		"pkg/feature.go",
 		"web/component.tsx",
@@ -2033,9 +2379,11 @@ func TestPlanExecuteExplicitEditSetObligationsSurvivePromptOnlyLanguage(t *testi
 	if !obligations.Has(EditSetObligationKindImplementationEdit) {
 		t.Fatalf("explicit implementation obligation was lost: %#v", obligations)
 	}
+
 	if reason := obligations.RejectionReason([]string{"pkg/feature_test.go"}); reason != EditSetFailureMissingRequestedImplementationEdit {
 		t.Fatalf("explicit implementation obligation must reject test-only edits, got %q from %#v", reason, obligations)
 	}
+
 	if reason := obligations.RejectionReason([]string{"pkg/feature.go"}); reason != "" {
 		t.Fatalf("implementation edit should satisfy explicit obligation, got %q", reason)
 	}
@@ -2044,26 +2392,35 @@ func TestPlanExecuteExplicitEditSetObligationsSurvivePromptOnlyLanguage(t *testi
 func TestRunResumeRejectsPromptMismatch(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
+
 	state := NewProgressState("resume_mismatch", "original prompt", "", nil, nil, timeNowForRunTest())
+
 	state.Phase = ProgressPhaseExecutor
 	state.Status = ProgressStatusCompleted
 	state.Executor.Status = ProgressStatusCompleted
 	state.PlanPath = ".idiom/plans/missing.plan.json"
 	state.TotalEdits = 1
 	state.ChangedPaths = []string{"a.txt"}
+
 	if _, err := SaveProgressState(root, &state); err != nil {
 		t.Fatalf("save progress state: %v", err)
 	}
+
 	var stdout, stderr bytes.Buffer
+
 	result := Run(cfg, Options{Prompt: "different prompt", Resume: "resume_mismatch"}, func(config.Config, string, RunOptions, io.Writer) (string, error) {
 		t.Fatal("prompt runner should not be called for mismatched resume prompt")
+
 		return "", nil
 	}, nil, &stdout, &stderr)
+
 	if result.ExitCode != 1 {
 		t.Fatalf("expected prompt mismatch failure, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
 	}
+
 	if !strings.Contains(stderr.String(), "different prompt") {
 		t.Fatalf("stderr should explain prompt mismatch, got %s", stderr.String())
 	}
@@ -2072,18 +2429,22 @@ func TestRunResumeRejectsPromptMismatch(t *testing.T) {
 func TestRunResumeRejectsMissingSession(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
+
 	var stdout, stderr bytes.Buffer
 
 	result := Run(cfg, Options{Prompt: "resume missing", Resume: "missing-session"}, func(config.Config, string, RunOptions, io.Writer) (string, error) {
 		t.Fatal("prompt runner should not be called for missing resume state")
+
 		return "", nil
 	}, nil, &stdout, &stderr)
 
 	if result.ExitCode != 1 {
 		t.Fatalf("expected missing resume to fail, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
 	}
+
 	if !strings.Contains(stderr.String(), "does not exist") {
 		t.Fatalf("stderr should explain missing resume state, got %s", stderr.String())
 	}
@@ -2091,12 +2452,14 @@ func TestRunResumeRejectsMissingSession(t *testing.T) {
 
 func writeRunTestPlanViaSubmitPlan(t *testing.T, cfg config.Config, edits []workspace.PlanEdit, rationale string) {
 	t.Helper()
+
 	mgr := workspace.NewManager(cfg.Workspace)
 	result := mgr.Execute(context.Background(), workspace.ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: rationale,
 		Edits:     edits,
 	})
+
 	if strings.TrimSpace(result.Error) != "" {
 		body, _ := json.MarshalIndent(result, "", "  ")
 		t.Fatalf("submit_plan failed: %s", body)
@@ -2105,10 +2468,12 @@ func writeRunTestPlanViaSubmitPlan(t *testing.T, cfg config.Config, edits []work
 
 func readFileStringForRunTest(t *testing.T, path string) string {
 	t.Helper()
+
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
+
 	return string(body)
 }
 
@@ -2118,18 +2483,24 @@ func timeNowForRunTest() time.Time {
 
 func planExecuteJSONEventsForRunTest(t *testing.T, stdout string) []map[string]any {
 	t.Helper()
+
 	var events []map[string]any
+
 	for _, line := range strings.Split(stdout, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || !strings.HasPrefix(line, "{") {
 			continue
 		}
+
 		var event map[string]any
+
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			t.Fatalf("decode JSON event %q: %v", line, err)
 		}
+
 		events = append(events, event)
 	}
+
 	return events
 }
 
@@ -2139,5 +2510,6 @@ func planExecuteEventByTypeForRunTest(events []map[string]any, eventType string)
 			return event, true
 		}
 	}
+
 	return nil, false
 }

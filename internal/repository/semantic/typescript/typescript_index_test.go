@@ -65,9 +65,11 @@ export default function defaultGreet(): void {}
 	if err != nil {
 		t.Fatalf("BuildTsIndex: %v", err)
 	}
+
 	if idx == nil {
 		t.Fatal("expected non-nil index")
 	}
+
 	if len(idx.Files) != 4 {
 		t.Fatalf("expected 4 files, got %d", len(idx.Files))
 	}
@@ -76,6 +78,7 @@ export default function defaultGreet(): void {}
 	if greeter == nil {
 		t.Fatal("missing greeter.ts")
 	}
+
 	if greeter.Funcs < 1 || greeter.Classes < 1 || greeter.Types < 1 {
 		t.Fatalf("greeter.ts counts: %#v", greeter)
 	}
@@ -90,30 +93,39 @@ export default function defaultGreet(): void {}
 	if len(matches) == 0 {
 		t.Fatal("expected FindSymbols to return greet")
 	}
+
 	if matches := idx.FindSymbols("export interface Greeter", 8); len(matches) == 0 || matches[0].Name != "Greeter" {
 		t.Fatalf("expected declaration-shaped interface search to find Greeter, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("export class Shouter", 8); len(matches) == 0 || matches[0].Name != "Shouter" {
 		t.Fatalf("expected declaration-shaped class search to find Shouter, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("export default class DefaultShouter", 8); len(matches) == 0 || matches[0].Name != "DefaultShouter" {
 		t.Fatalf("expected default class search to find DefaultShouter, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("export default function defaultGreet", 8); len(matches) == 0 || matches[0].Name != "defaultGreet" {
 		t.Fatalf("expected default function search to find defaultGreet, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("export function* greetNames", 8); len(matches) == 0 || matches[0].Name != "greetNames" {
 		t.Fatalf("expected declaration-shaped generator function search to find greetNames, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("export async function* streamNames", 8); len(matches) == 0 || matches[0].Name != "streamNames" {
 		t.Fatalf("expected declaration-shaped async generator search to find streamNames, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("export enum GreetMode", 8); len(matches) == 0 || matches[0].Name != "GreetMode" {
 		t.Fatalf("expected declaration-shaped enum search to find GreetMode, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("export const enum WireFormat", 8); len(matches) == 0 || matches[0].Name != "WireFormat" {
 		t.Fatalf("expected declaration-shaped const enum search to find WireFormat, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("export namespace GreeterTools", 8); len(matches) == 0 || matches[0].Name != "GreeterTools" {
 		t.Fatalf("expected declaration-shaped namespace search to find GreeterTools, got %#v", matches)
 	}
@@ -121,12 +133,14 @@ export default function defaultGreet(): void {}
 	// Call graph: main -> greet
 	outgoing := idx.FindCallsFrom("main", 8)
 	foundGreet := false
+
 	for _, call := range outgoing {
 		if call.CalleeName == "greet" {
 			foundGreet = true
 			break
 		}
 	}
+
 	if !foundGreet {
 		t.Fatalf("expected main to call greet, got %+v", outgoing)
 	}
@@ -153,9 +167,11 @@ func TestTsIndexSkipsNodeModules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildTsIndex: %v", err)
 	}
+
 	if idx == nil || len(idx.Files) != 1 {
 		t.Fatalf("expected 1 indexed file, got %d", len(idx.Files))
 	}
+
 	if idx.Files[0].Path != "src/app.ts" {
 		t.Fatalf("indexed wrong file: %s", idx.Files[0].Path)
 	}
@@ -169,18 +185,23 @@ export class Foo {
   baz(): number { return this.bar(); }
 }
 `)
+
 	idx, err := BuildTsIndex(root)
 	if err != nil || idx == nil {
 		t.Fatalf("BuildTsIndex: %v", err)
 	}
+
 	file := idx.FileByPath("cls.ts")
 	if file == nil {
 		t.Fatal("missing cls.ts")
 	}
+
 	var names []string
+
 	for _, sym := range file.Symbols {
 		names = append(names, sym.Qualified)
 	}
+
 	joined := strings.Join(names, ",")
 	if !strings.Contains(joined, "Foo.bar") || !strings.Contains(joined, "Foo.baz") {
 		t.Fatalf("expected Foo.bar and Foo.baz methods, got %s", joined)
@@ -213,6 +234,7 @@ export declare type Result<T> = T | Error;
 	if err != nil {
 		t.Fatalf("BuildTsIndex: %v", err)
 	}
+
 	if idx == nil {
 		t.Fatal("expected non-nil index")
 	}
@@ -223,8 +245,11 @@ export declare type Result<T> = T | Error;
 	}
 
 	// Verify symbols from declaration syntax are indexed
-	var foundClass, foundFunc, foundConst, foundExportConst, foundAmbientConst, foundInterface bool
-	var foundType bool
+	var (
+		foundClass, foundFunc, foundConst, foundExportConst, foundAmbientConst, foundInterface bool
+		foundType                                                                              bool
+	)
+
 	for _, sym := range declFile.Symbols {
 		switch sym.Name {
 		case "ExternalClient":
@@ -247,21 +272,27 @@ export declare type Result<T> = T | Error;
 	if !foundClass {
 		t.Error("expected to find ExternalClient class")
 	}
+
 	if !foundFunc {
 		t.Error("expected to find connect function")
 	}
+
 	if !foundConst {
 		t.Error("expected to find defaultEndpoint const")
 	}
+
 	if !foundExportConst {
 		t.Error("expected to find exportedEndpoint const")
 	}
+
 	if !foundAmbientConst {
 		t.Error("expected to find ambientEndpoint const")
 	}
+
 	if !foundInterface {
 		t.Error("expected to find Config interface")
 	}
+
 	if !foundType {
 		t.Error("expected to find Result type")
 	}
@@ -270,12 +301,15 @@ export declare type Result<T> = T | Error;
 	if matches := idx.FindSymbols("export declare class ExternalClient", 8); len(matches) == 0 || matches[0].Name != "ExternalClient" {
 		t.Fatalf("expected declaration-shaped class search to find ExternalClient, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("export declare function connect", 8); len(matches) == 0 || matches[0].Name != "connect" {
 		t.Fatalf("expected declaration-shaped function search to find connect, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("export declare const defaultEndpoint", 8); len(matches) == 0 || matches[0].Name != "defaultEndpoint" {
 		t.Fatalf("expected declaration-shaped const search to find defaultEndpoint, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("declare const ambientEndpoint", 8); len(matches) == 0 || matches[0].Name != "ambientEndpoint" {
 		t.Fatalf("expected bare declare const search to find ambientEndpoint, got %#v", matches)
 	}
@@ -283,9 +317,11 @@ export declare type Result<T> = T | Error;
 
 func writeTsFixture(t *testing.T, path string, content string) {
 	t.Helper()
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", path, err)
 	}
+
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}

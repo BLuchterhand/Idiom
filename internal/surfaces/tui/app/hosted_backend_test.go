@@ -21,15 +21,19 @@ func TestBackendsModelToLlamaServerCarriesHostedFields(t *testing.T) {
 		Verbosity:       "low",
 		Roles:           []string{backends.RolePlanner},
 	}, defaults)
+
 	if !got.IsHosted() || !got.IsZAI() {
 		t.Fatalf("expected hosted ZAI spec, got %#v", got)
 	}
+
 	if got.Model != "glm-5.1" || got.EndpointBaseURL() != "https://api.z.ai/api/paas/v4" || got.APIKeyEnvName() != "ZAI_API_KEY" {
 		t.Fatalf("hosted fields not carried: %#v", got)
 	}
+
 	if got.DisplayName != "glm" {
 		t.Fatalf("expected display name to preserve alias, got %q", got.DisplayName)
 	}
+
 	if got.ReasoningEffort != "high" || got.Verbosity != "low" {
 		t.Fatalf("provider options not carried: %#v", got)
 	}
@@ -37,6 +41,7 @@ func TestBackendsModelToLlamaServerCarriesHostedFields(t *testing.T) {
 
 func TestBackendsModelToLlamaServerDoesNotCarryLocalBaseURLIntoHostedRole(t *testing.T) {
 	defaults := config.Default().RouteClassifier.LlamaServerSpec()
+
 	defaults.Kind = config.BackendMLX
 	defaults.BaseURL = "http://127.0.0.1:11437"
 	defaults.Host = "127.0.0.1"
@@ -54,9 +59,11 @@ func TestBackendsModelToLlamaServerDoesNotCarryLocalBaseURLIntoHostedRole(t *tes
 	if !got.IsDeepSeek() {
 		t.Fatalf("expected hosted DeepSeek classifier, got %#v", got)
 	}
+
 	if got.BaseURL != "" {
 		t.Fatalf("hosted role without explicit base_url must not inherit local classifier base_url, got %q", got.BaseURL)
 	}
+
 	if got.EndpointBaseURL() != "https://api.deepseek.com" {
 		t.Fatalf("expected DeepSeek default endpoint, got %q from %#v", got.EndpointBaseURL(), got)
 	}
@@ -64,6 +71,7 @@ func TestBackendsModelToLlamaServerDoesNotCarryLocalBaseURLIntoHostedRole(t *tes
 
 func TestBackendsModelToLlamaServerKeepsCustomBaseURLForSameHostedKind(t *testing.T) {
 	defaults := config.Default().LlamaServer
+
 	defaults.Kind = config.BackendDeepSeek
 	defaults.BaseURL = "https://deepseek.internal/v1"
 	defaults.APIKeyEnv = "DEEPSEEK_API_KEY"
@@ -85,6 +93,7 @@ func TestRoleSpecResolvesExplicitHostedAliasAcrossProfiles(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir .idiom: %v", err)
 	}
+
 	backendsJSON := `{
   "default_profile": "local",
   "profiles": {
@@ -106,12 +115,17 @@ func TestRoleSpecResolvesExplicitHostedAliasAcrossProfiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
 		t.Fatalf("write backends.json: %v", err)
 	}
+
 	defaults := config.Default().LlamaServer
+
 	defaults.Model = "glm-5.1"
+
 	got, ok := roleSpec(root, backends.RolePlanner, defaults)
+
 	if !ok {
 		t.Fatal("expected explicit alias to resolve")
 	}
+
 	if !got.IsZAI() || got.Model != "glm-5.1" || got.EndpointBaseURL() != "https://api.z.ai/api/paas/v4" {
 		t.Fatalf("unexpected resolved spec: %#v", got)
 	}
@@ -122,6 +136,7 @@ func TestNewReusesPlannerClientWhenClassifierRoleMatchesPlanner(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir .idiom: %v", err)
 	}
+
 	backendsJSON := `{
   "default_profile": "local",
   "profiles": {
@@ -143,6 +158,7 @@ func TestNewReusesPlannerClientWhenClassifierRoleMatchesPlanner(t *testing.T) {
 	}
 
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.RouteClassifier.Enabled = true
@@ -159,6 +175,7 @@ func TestNewReusesPlannerClientWhenClassifierRoleMatchesPlanner(t *testing.T) {
 	if model.summaryClient != model.client {
 		t.Fatal("classifier role shares the planner target; expected summary client to reuse planner client")
 	}
+
 	if model.summaryController != nil {
 		t.Fatal("classifier role shares the planner target; must not create a second server controller")
 	}
@@ -169,6 +186,7 @@ func TestNewHostedClassifierRoleDoesNotUseStaleLocalClassifierBaseURL(t *testing
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir .idiom: %v", err)
 	}
+
 	backendsJSON := `{
   "default_profile": "deepseek",
   "profiles": {
@@ -193,6 +211,7 @@ func TestNewHostedClassifierRoleDoesNotUseStaleLocalClassifierBaseURL(t *testing
 	}
 
 	cfg := config.Default()
+
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 	cfg.RouteClassifier.Enabled = true
@@ -209,9 +228,11 @@ func TestNewHostedClassifierRoleDoesNotUseStaleLocalClassifierBaseURL(t *testing
 	if model.plannerSpec.EndpointBaseURL() != "https://api.deepseek.com" {
 		t.Fatalf("expected hosted planner endpoint, got %#v", model.plannerSpec)
 	}
+
 	if model.summaryClient != model.client {
 		t.Fatal("classifier role shares the hosted planner target; expected summary client to reuse planner client")
 	}
+
 	if model.summaryController != nil {
 		t.Fatal("hosted classifier role must not create a local summary controller")
 	}

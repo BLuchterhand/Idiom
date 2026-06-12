@@ -39,8 +39,10 @@ type routeContractProjection struct {
 
 func projectRouteContract(plan turnRoutePlan, mode agent.Mode) routeContractProjection {
 	plan = normalizeTurnRoutePlan(plan, mode)
+
 	source := normalizeRouteSource(plan.RouteSource)
 	authority := routeMutationAuthorityNone
+
 	if isImplementationLikeFamily(plan.Family) {
 		switch source {
 		case routeSourceTypedCommand:
@@ -49,6 +51,7 @@ func projectRouteContract(plan turnRoutePlan, mode agent.Mode) routeContractProj
 			authority = routeMutationAuthorityConfirmationRequired
 		}
 	}
+
 	return routeContractProjection{
 		Source:             source,
 		Family:             strings.TrimSpace(plan.Family),
@@ -83,5 +86,6 @@ func renderRouteContractProjection(contract routeContractProjection) string {
 	if err != nil {
 		return ""
 	}
+
 	return string(body)
 }

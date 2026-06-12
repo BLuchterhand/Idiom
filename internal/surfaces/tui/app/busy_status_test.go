@@ -13,6 +13,7 @@ func TestBusyStatusForPromptGenericizesRequest(t *testing.T) {
 	if got != "Qwen is orienting around your request" {
 		t.Fatalf("unexpected prompt status: %q", got)
 	}
+
 	if strings.Contains(got, "working on your request") {
 		t.Fatalf("prompt status should not use the old static busy text: %q", got)
 	}

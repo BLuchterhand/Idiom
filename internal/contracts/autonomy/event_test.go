@@ -15,28 +15,36 @@ func TestContractCompiledEventSerializesStableLifecyclePayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewContractCompiledEvent returned error: %v", err)
 	}
+
 	reconstructed, err := NewContractCompiledEvent(contract, occurredAt, 1)
 	if err != nil {
 		t.Fatalf("reconstructed event returned error: %v", err)
 	}
+
 	if reconstructed.EventID != event.EventID {
 		t.Fatalf("event id is not stable: got %q want %q", reconstructed.EventID, event.EventID)
 	}
+
 	if event.SchemaVersion != EventSchemaVersion || event.Effect != EventEffectObserveOnly {
 		t.Fatalf("event should be observe-only v1: %#v", event)
 	}
+
 	if event.Type != EventContractCompiled || event.ContractID != contract.ContractID {
 		t.Fatalf("event identity mismatch: %#v", event)
 	}
+
 	if event.OccurredAt.Location() != time.UTC {
 		t.Fatalf("event timestamp should normalize to UTC, got %s", event.OccurredAt.Location())
 	}
+
 	if event.Correlation.LaneRunID != "lane-123" || event.Correlation.PhaseRunID != "phase-456" {
 		t.Fatalf("lane/phase correlation missing: %#v", event.Correlation)
 	}
+
 	if event.Lifecycle == nil || event.Lifecycle.Summary == nil {
 		t.Fatalf("contract_compiled event should carry lifecycle summary: %#v", event.Lifecycle)
 	}
+
 	if event.Lifecycle.Summary.TargetRoleCounts[string(PathRoleRequiredEdit)] != 1 {
 		t.Fatalf("summary should include path-role counts: %#v", event.Lifecycle.Summary.TargetRoleCounts)
 	}
@@ -45,6 +53,7 @@ func TestContractCompiledEventSerializesStableLifecyclePayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal event: %v", err)
 	}
+
 	jsonText := string(encoded)
 	for _, forbidden := range []string{"next_action", "safe_alternatives", "must_call_tool"} {
 		if strings.Contains(jsonText, forbidden) {
@@ -53,9 +62,11 @@ func TestContractCompiledEventSerializesStableLifecyclePayload(t *testing.T) {
 	}
 
 	var roundTrip Event
+
 	if err := json.Unmarshal(encoded, &roundTrip); err != nil {
 		t.Fatalf("unmarshal event: %v", err)
 	}
+
 	if err := roundTrip.Validate(); err != nil {
 		t.Fatalf("round-tripped event should validate: %v", err)
 	}
@@ -64,10 +75,12 @@ func TestContractCompiledEventSerializesStableLifecyclePayload(t *testing.T) {
 func TestMemoryEventSinkPreservesOrderingAndCopiesEvents(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	occurredAt := time.Date(2026, 5, 13, 14, 0, 0, 0, time.UTC)
+
 	first, err := NewContractCompiledEvent(contract, occurredAt, 1)
 	if err != nil {
 		t.Fatalf("NewContractCompiledEvent returned error: %v", err)
 	}
+
 	second, err := NewObligationStateEvent(EventObligationOpened, contract, Obligation{
 		ObligationID: "obl-verify",
 		Kind:         ObligationVerify,
@@ -83,13 +96,16 @@ func TestMemoryEventSinkPreservesOrderingAndCopiesEvents(t *testing.T) {
 	if err := sink.Emit(first); err != nil {
 		t.Fatalf("emit first event: %v", err)
 	}
+
 	if err := sink.Emit(second); err != nil {
 		t.Fatalf("emit second event: %v", err)
 	}
+
 	events := sink.Events()
 	if len(events) != 2 {
 		t.Fatalf("sink stored %d events, want 2", len(events))
 	}
+
 	events[0].ContractID = "mutated"
 	if got := sink.Events()[0].ContractID; got != contract.ContractID {
 		t.Fatalf("sink returned aliased event copy, got contract_id %q", got)
@@ -105,6 +121,7 @@ func TestMemoryEventSinkPreservesOrderingAndCopiesEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("duplicate-sequence event should construct: %v", err)
 	}
+
 	if err := sink.Emit(duplicateSequence); err == nil || !strings.Contains(err.Error(), "sequence must increase") {
 		t.Fatalf("expected sequence ordering error, got %v", err)
 	}
@@ -119,6 +136,7 @@ func TestMemoryEventSinkPreservesOrderingAndCopiesEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("backward-timestamp event should construct: %v", err)
 	}
+
 	if err := sink.Emit(backwardTimestamp); err == nil || !strings.Contains(err.Error(), "timestamp moved backwards") {
 		t.Fatalf("expected timestamp ordering error, got %v", err)
 	}
@@ -127,6 +145,7 @@ func TestMemoryEventSinkPreservesOrderingAndCopiesEvents(t *testing.T) {
 func TestToolPolicyDecisionEventValidatesReadOnlySidecarCorrelation(t *testing.T) {
 	contract := newEventTestReadOnlySidecarContract(t)
 	occurredAt := time.Date(2026, 5, 13, 15, 0, 0, 0, time.UTC)
+
 	event, err := NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
 		ToolCallID:        "tool-001",
 		ToolName:          "context_pack",
@@ -151,19 +170,24 @@ func TestToolPolicyDecisionEventValidatesReadOnlySidecarCorrelation(t *testing.T
 	if err != nil {
 		t.Fatalf("NewToolPolicyDecisionEvent returned error: %v", err)
 	}
+
 	if event.Correlation.SidecarRequestID != "req-001" || event.Correlation.ToolCallID != "tool-001" {
 		t.Fatalf("sidecar/tool correlation missing: %#v", event.Correlation)
 	}
+
 	if event.Policy == nil || event.Policy.Decision != PolicyObserve || event.Policy.SideEffect != SideEffectReadOnly {
 		t.Fatalf("policy payload mismatch: %#v", event.Policy)
 	}
+
 	if event.Policy.ActionClass != ActionClassSearch || event.Policy.Transport != ToolTransportSidecarCall {
 		t.Fatalf("policy payload should preserve normalized action metadata: %#v", event.Policy)
 	}
+
 	encoded, err := json.Marshal(event)
 	if err != nil {
 		t.Fatalf("marshal policy event: %v", err)
 	}
+
 	jsonText := string(encoded)
 	for _, want := range []string{`"type":"tool_policy_decision"`, `"effect":"observe_only"`, `"sidecar_request_id":"req-001"`, `"action_class":"search"`, `"transport":"sidecar_call"`, `"capability":"semantic_discovery"`} {
 		if !strings.Contains(jsonText, want) {
@@ -189,6 +213,7 @@ func TestGateDecisionEventSerializesTypedGatePayload(t *testing.T) {
 		"count:open_obligations=1",
 	}
 	safeAlternatives := []string{"apply_patch within required paths", "ask the operator for expanded scope"}
+
 	event, err := NewGateDecisionEvent(contract, ContractGateEvent{
 		Gate:               GateWrite,
 		Decision:           PolicyReject,
@@ -209,44 +234,58 @@ func TestGateDecisionEventSerializesTypedGatePayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewGateDecisionEvent returned error: %v", err)
 	}
+
 	observedFacts[0] = "mutated"
 	safeAlternatives[0] = "mutated"
+
 	if event.Type != EventGateDecision || event.Gate == nil || event.Gate.Gate != GateWrite {
 		t.Fatalf("gate event payload mismatch: %#v", event)
 	}
+
 	if event.Gate.Decision != PolicyReject || event.Gate.InvariantID != "write.required_edit_paths" {
 		t.Fatalf("gate decision fields mismatch: %#v", event.Gate)
 	}
+
 	if event.Gate.PackID != ContractPackWriteRequiredPaths || event.Gate.EnforcementMode != EnforcementModeEnforce {
 		t.Fatalf("gate pack/mode fields mismatch: %#v", event.Gate)
 	}
+
 	if len(event.Gate.ObservedFacts) != 2 || event.Gate.ObservedFacts[1] == "mutated" {
 		t.Fatalf("gate observed facts should be copied and normalized: %#v", event.Gate.ObservedFacts)
 	}
+
 	if len(event.Gate.SafeAlternatives) != 2 || event.Gate.SafeAlternatives[0] == "mutated" {
 		t.Fatalf("gate safe alternatives should be copied: %#v", event.Gate.SafeAlternatives)
 	}
+
 	sink := NewMemoryEventSink()
 	if err := sink.Emit(event); err != nil {
 		t.Fatalf("emit gate event: %v", err)
 	}
+
 	stored := sink.Events()
+
 	stored[0].Gate.ObservedFacts[0] = "mutated"
 	stored[0].Gate.SafeAlternatives[0] = "mutated"
+
 	storedAgain := sink.Events()
+
 	if storedAgain[0].Gate.ObservedFacts[0] == "mutated" || storedAgain[0].Gate.SafeAlternatives[0] == "mutated" {
 		t.Fatalf("memory sink should return deep-copied gate payloads: %#v", storedAgain[0].Gate)
 	}
+
 	encoded, err := json.Marshal(event)
 	if err != nil {
 		t.Fatalf("marshal gate event: %v", err)
 	}
+
 	jsonText := string(encoded)
 	for _, want := range []string{`"type":"gate_decision"`, `"gate":"write_gate"`, `"decision":"reject"`, `"pack_id":"write/required_paths"`, `"enforcement_mode":"enforce"`, `"observed_facts":[`, `"safe_alternatives":["apply_patch within required paths","ask the operator for expanded scope"]`, `"open_obligations":["obl-write-runner"]`} {
 		if !strings.Contains(jsonText, want) {
 			t.Fatalf("gate event JSON missing %s: %s", want, jsonText)
 		}
 	}
+
 	for _, forbidden := range []string{"old_text", "new_text", "file_body", "must_call_tool"} {
 		if strings.Contains(jsonText, forbidden) {
 			t.Fatalf("gate event JSON should not leak raw edit body or strategy field %q: %s", forbidden, jsonText)
@@ -311,6 +350,7 @@ func TestGateDecisionEventRejectsUnsafeFactOrAlternative(t *testing.T) {
 func TestGateDecisionEventCoversReadOnlySidecarContract(t *testing.T) {
 	contract := newEventTestReadOnlySidecarContract(t)
 	occurredAt := time.Date(2026, 5, 13, 15, 45, 0, 0, time.UTC)
+
 	event, err := NewGateDecisionEvent(contract, ContractGateEvent{
 		Gate:            GateReadOnly,
 		Decision:        PolicyObserve,
@@ -326,17 +366,22 @@ func TestGateDecisionEventCoversReadOnlySidecarContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewGateDecisionEvent returned error: %v", err)
 	}
+
 	if event.Correlation.SidecarRequestID != "req-001" || event.Correlation.ToolCallID != "tool-001" {
 		t.Fatalf("sidecar/tool correlation missing: %#v", event.Correlation)
 	}
+
 	if event.Gate == nil || event.Gate.Gate != GateReadOnly || event.Gate.Decision != PolicyObserve {
 		t.Fatalf("read-only gate payload mismatch: %#v", event.Gate)
 	}
+
 	if containsCapability(contract.Capabilities.Allowed, CapabilityApplyPatch) || !containsCapability(contract.Capabilities.Forbidden, CapabilitySourceEdit) {
 		t.Fatalf("read-only sidecar capability policy should forbid writes: %#v", contract.Capabilities)
 	}
+
 	if !containsClientClassification(event.Metadata.ClientClassifications, ClientToolingVendor) ||
 		!containsProductSignal(event.Metadata.ProductSignals, ProductLocalEvidenceExport) {
+
 		t.Fatalf("read-only gate event should carry generic metadata: %#v", event.Metadata)
 	}
 }
@@ -344,6 +389,7 @@ func TestGateDecisionEventCoversReadOnlySidecarContract(t *testing.T) {
 func TestGuardFrictionEventSerializesPassiveRedactedPayload(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	occurredAt := time.Date(2026, 5, 13, 15, 50, 0, 0, time.UTC)
+
 	event, err := NewGuardFrictionEvent(contract, ContractGuardFrictionEvent{
 		SessionID:            "session-123",
 		Step:                 4,
@@ -369,25 +415,31 @@ func TestGuardFrictionEventSerializesPassiveRedactedPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewGuardFrictionEvent returned error: %v", err)
 	}
+
 	if event.Type != EventGuardFriction || event.GuardFriction == nil {
 		t.Fatalf("guard friction event payload mismatch: %#v", event)
 	}
+
 	if event.GuardFriction.Schema != GuardFrictionSchemaVersion {
 		t.Fatalf("guard friction schema mismatch: %#v", event.GuardFriction)
 	}
+
 	if event.GuardFriction.ContractID != contract.ContractID || event.GuardFriction.Lane != "implement" || event.GuardFriction.Phase != "execute" {
 		t.Fatalf("guard friction event should inherit contract identity: %#v", event.GuardFriction)
 	}
+
 	encoded, err := json.Marshal(event)
 	if err != nil {
 		t.Fatalf("marshal guard friction event: %v", err)
 	}
+
 	jsonText := string(encoded)
 	for _, want := range []string{`"type":"guard_friction"`, `"schema":"idiom.guard_friction.v1"`, `"guard_surface":"completion_gate"`, `"safe_alternatives":["\u003c\u003cQUESTION\u003e\u003e:","Decision: source-satisfied","submit_plan"]`} {
 		if !strings.Contains(jsonText, want) {
 			t.Fatalf("guard friction JSON missing %s: %s", want, jsonText)
 		}
 	}
+
 	for _, forbidden := range []string{"raw_prompt", "raw_transcript", "file_body", "old_text", "new_text", "secret="} {
 		if strings.Contains(jsonText, forbidden) {
 			t.Fatalf("guard friction JSON should not leak raw content marker %q: %s", forbidden, jsonText)
@@ -395,6 +447,7 @@ func TestGuardFrictionEventSerializesPassiveRedactedPayload(t *testing.T) {
 	}
 
 	event.GuardFriction.SafeAlternatives[0] = "mutated"
+
 	stored, err := NewGuardFrictionEvent(contract, ContractGuardFrictionEvent{
 		ProtocolHash:         "protocol-abc",
 		InvariantID:          "completion.submit_plan_or_terminal",
@@ -408,6 +461,7 @@ func TestGuardFrictionEventSerializesPassiveRedactedPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second guard friction event returned error: %v", err)
 	}
+
 	if stored.GuardFriction.RetryOutcome != GuardFrictionRetryNotApplicable || stored.GuardFriction.Avoidability != GuardFrictionAvoidabilityUnknown {
 		t.Fatalf("guard friction defaults not normalized: %#v", stored.GuardFriction)
 	}
@@ -416,6 +470,7 @@ func TestGuardFrictionEventSerializesPassiveRedactedPayload(t *testing.T) {
 func TestObligationEventCarriesClientClassificationAndProductMetadata(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	occurredAt := time.Date(2026, 5, 13, 16, 0, 0, 0, time.UTC)
+
 	event, err := NewObligationStateEvent(EventObligationOpened, contract, Obligation{
 		ObligationID: "obl-client-proof",
 		Kind:         ObligationEvidence,
@@ -428,22 +483,28 @@ func TestObligationEventCarriesClientClassificationAndProductMetadata(t *testing
 	if err != nil {
 		t.Fatalf("NewObligationStateEvent returned error: %v", err)
 	}
+
 	encoded, err := json.Marshal(event)
 	if err != nil {
 		t.Fatalf("marshal obligation event: %v", err)
 	}
+
 	var roundTrip Event
+
 	if err := json.Unmarshal(encoded, &roundTrip); err != nil {
 		t.Fatalf("unmarshal obligation event: %v", err)
 	}
+
 	if err := roundTrip.Validate(); err != nil {
 		t.Fatalf("round-tripped obligation event should validate: %v", err)
 	}
+
 	for _, want := range allClientClassifications() {
 		if !containsClientClassification(roundTrip.Metadata.ClientClassifications, want) {
 			t.Fatalf("missing client classification %q in %#v", want, roundTrip.Metadata.ClientClassifications)
 		}
 	}
+
 	for _, want := range allProductSignals() {
 		if !containsProductSignal(roundTrip.Metadata.ProductSignals, want) {
 			t.Fatalf("missing product signal %q in %#v", want, roundTrip.Metadata.ProductSignals)
@@ -464,6 +525,7 @@ func TestEventValidationRejectsInvalidPayloadShape(t *testing.T) {
 			Status:       ObligationOpen,
 		},
 	})
+
 	if err == nil || !strings.Contains(err.Error(), "obligation_resolved requires status resolved") {
 		t.Fatalf("expected obligation status validation error, got %v", err)
 	}
@@ -524,6 +586,7 @@ func TestEventValidationRejectsInvalidPayloadShape(t *testing.T) {
 
 func newEventTestPhaseContract(t *testing.T) AutonomyContract {
 	t.Helper()
+
 	contract, err := NewContract(ContractInput{
 		Scope: ContractScope{
 			InvocationKind:    InvocationPhase,
@@ -562,11 +625,13 @@ func newEventTestPhaseContract(t *testing.T) AutonomyContract {
 	if err != nil {
 		t.Fatalf("NewContract returned error: %v", err)
 	}
+
 	return contract
 }
 
 func newEventTestReadOnlySidecarContract(t *testing.T) AutonomyContract {
 	t.Helper()
+
 	contract, err := NewContract(ContractInput{
 		Scope: ContractScope{
 			InvocationKind:    InvocationSidecarCall,
@@ -609,5 +674,6 @@ func newEventTestReadOnlySidecarContract(t *testing.T) AutonomyContract {
 	if err != nil {
 		t.Fatalf("NewContract returned error: %v", err)
 	}
+
 	return contract
 }

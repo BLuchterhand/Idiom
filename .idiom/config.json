@@ -1,5 +1,5 @@
 {
-  "_comment": "Self-hosted dispatch config for idiom-on-idiom development. Adapted from config.example.json with auto_start_server flipped off (use `idiom backend start --profile qwen-pair` against .idiom/backends.json when launching local backends). Copy this file locally before adding machine-specific paths.",
+  "_comment": "Self-hosted dispatch config for idiom-on-idiom development. Adapted from config.example.json with auto_start_server flipped off (use `idiom backend start --profile qwen-pair` against .idiom/backends.json when launching local backends). Keep this tracked file portable; put machine-specific paths in an ignored config.json or another --config/IDIOM_CONFIG target.",
   "app_name": "Idiom (ds4)",
   "llama_server": {
     "kind": "llama",

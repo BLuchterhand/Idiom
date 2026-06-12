@@ -241,6 +241,7 @@ func (e *ContractEnvelope) Normalize() {
 	e.ProtocolRef = strings.TrimSpace(e.ProtocolRef)
 	e.SchemaNames = compactStrings(e.SchemaNames)
 	e.ProtocolShape.normalize()
+
 	if e.ContextPacket != nil {
 		e.ContextPacket.Normalize()
 	}
@@ -248,25 +249,32 @@ func (e *ContractEnvelope) Normalize() {
 
 func (e ContractEnvelope) Validate() error {
 	e.Normalize()
+
 	var problems []string
+
 	validateModelExchangeSchemaID("contract_envelope.schema_version", e.SchemaVersion, ContractEnvelopeSchemaVersion, &problems)
 	validateModelExchangeContractRefs(e.ContractID, e.ProtocolHash, &problems)
 	validateModelExchangeRedactionMarkers("contract_envelope", envelopeValues(e), &problems)
 	validateModelExchangeProtocolShape(e.ProtocolShape, &problems)
+
 	if e.ContextPacket != nil {
 		if err := e.ContextPacket.Validate(); err != nil {
 			problems = append(problems, err.Error())
 		}
+
 		if e.ContextPacket.ContractID != "" && e.ContextPacket.ContractID != e.ContractID {
 			problems = append(problems, "context_packet.contract_id must match contract_envelope.contract_id")
 		}
+
 		if e.ContextPacket.ProtocolHash != "" && e.ContextPacket.ProtocolHash != e.ProtocolHash {
 			problems = append(problems, "context_packet.protocol_hash must match contract_envelope.protocol_hash")
 		}
 	}
+
 	if len(problems) > 0 {
 		return ModelExchangeValidationError{Problems: problems}
 	}
+
 	return nil
 }
 
@@ -287,13 +295,17 @@ func (p *ContextPacket) Normalize() {
 
 func (p ContextPacket) Validate() error {
 	p.Normalize()
+
 	var problems []string
+
 	validateModelExchangeSchemaID("context_packet.schema_version", p.SchemaVersion, ContextPacketSchemaVersion, &problems)
 	validateOptionalModelExchangeContractRefs(p.ContractID, p.ProtocolHash, &problems)
 	validateModelExchangeRedactionMarkers("context_packet", contextPacketValues(p), &problems)
+
 	if len(problems) > 0 {
 		return ModelExchangeValidationError{Problems: problems}
 	}
+
 	return nil
 }
 
@@ -302,18 +314,23 @@ func (r *ModelResponse) Normalize() {
 	r.ResponseID = strings.TrimSpace(r.ResponseID)
 	r.ContractID = strings.TrimSpace(r.ContractID)
 	r.ProtocolHash = strings.TrimSpace(r.ProtocolHash)
+
 	if r.ProposedAction != nil {
 		r.ProposedAction.normalize()
 	}
+
 	if r.ContextRequest != nil {
 		r.ContextRequest.normalize()
 	}
+
 	if r.ContextChallenge != nil {
 		r.ContextChallenge.normalize()
 	}
+
 	if r.ValidationProposal != nil {
 		r.ValidationProposal.normalize()
 	}
+
 	if r.Escalation != nil {
 		r.Escalation.normalize()
 	}
@@ -321,14 +338,18 @@ func (r *ModelResponse) Normalize() {
 
 func (r ModelResponse) Validate() error {
 	r.Normalize()
+
 	var problems []string
+
 	validateModelExchangeSchemaID("model_response.schema_version", r.SchemaVersion, ModelResponseSchemaVersion, &problems)
 	validateModelExchangeContractRefs(r.ContractID, r.ProtocolHash, &problems)
 	validateModelResponsePayloadPresence(r, &problems)
 	validateModelExchangeRedactionMarkers("model_response", modelResponseValues(r), &problems)
+
 	if len(problems) > 0 {
 		return ModelExchangeValidationError{Problems: problems}
 	}
+
 	return nil
 }
 
@@ -347,6 +368,7 @@ func (s *PermissionSnapshot) Normalize() {
 
 func (s PermissionSnapshot) Validate() error {
 	s.Normalize()
+
 	return validateHarnessAuthorityRecord(PermissionSnapshotSchemaVersion, s.SchemaVersion, s.ContractID, s.ProtocolHash, permissionSnapshotValues(s), "permission_snapshot.captured_by", s.CapturedBy)
 }
 
@@ -364,6 +386,7 @@ func (s *ValidationSignal) Normalize() {
 
 func (s ValidationSignal) Validate() error {
 	s.Normalize()
+
 	return validateHarnessAuthorityRecord(ValidationSignalSchemaVersion, s.SchemaVersion, s.ContractID, s.ProtocolHash, validationSignalValues(s), "validation_signal.captured_by", s.CapturedBy)
 }
 
@@ -381,6 +404,7 @@ func (d *FailureDelta) Normalize() {
 
 func (d FailureDelta) Validate() error {
 	d.Normalize()
+
 	return validateHarnessAuthorityRecord(FailureDeltaSchemaVersion, d.SchemaVersion, d.ContractID, d.ProtocolHash, failureDeltaValues(d), "failure_delta.generated_by", d.GeneratedBy)
 }
 
@@ -400,6 +424,7 @@ func (p *TraceStorePolicy) Normalize() {
 
 func (p TraceStorePolicy) Validate() error {
 	p.Normalize()
+
 	return validateHarnessAuthorityRecord(TraceStorePolicySchemaVersion, p.SchemaVersion, p.ContractID, p.ProtocolHash, traceStorePolicyValues(p), "trace_store_policy.captured_by", p.CapturedBy)
 }
 
@@ -416,6 +441,7 @@ func (c *ReplayClassificationRecord) Normalize() {
 
 func (c ReplayClassificationRecord) Validate() error {
 	c.Normalize()
+
 	return validateHarnessAuthorityRecord(ReplayClassificationSchemaVersion, c.SchemaVersion, c.ContractID, c.ProtocolHash, replayClassificationValues(c), "replay_classification.classified_by", c.ClassifiedBy)
 }
 
@@ -433,6 +459,7 @@ func (p *PhaseGatePolicy) Normalize() {
 
 func (p PhaseGatePolicy) Validate() error {
 	p.Normalize()
+
 	return validateHarnessAuthorityRecord(PhaseGatePolicySchemaVersion, p.SchemaVersion, p.ContractID, p.ProtocolHash, phaseGatePolicyValues(p), "phase_gate_policy.captured_by", p.CapturedBy)
 }
 
@@ -455,6 +482,7 @@ func (c *RollbackControl) Normalize() {
 
 func (c RollbackControl) Validate() error {
 	c.Normalize()
+
 	return validateHarnessAuthorityRecord(RollbackControlSchemaVersion, c.SchemaVersion, c.ContractID, c.ProtocolHash, rollbackControlValues(c), "rollback_control.authorized_by", c.AuthorizedBy)
 }
 
@@ -467,30 +495,39 @@ func (e *ContractModelExchangeEvent) Normalize() {
 	e.InvariantID = strings.TrimSpace(e.InvariantID)
 	e.SourceEventID = strings.TrimSpace(e.SourceEventID)
 	e.SourceEventType = strings.TrimSpace(e.SourceEventType)
+
 	if e.ContextPacket != nil {
 		e.ContextPacket.Normalize()
 	}
+
 	if e.PermissionSnapshot != nil {
 		e.PermissionSnapshot.Normalize()
 	}
+
 	if e.FailureDelta != nil {
 		e.FailureDelta.Normalize()
 	}
+
 	if e.ModelResponse != nil {
 		e.ModelResponse.Normalize()
 	}
+
 	if e.ValidationSignal != nil {
 		e.ValidationSignal.Normalize()
 	}
+
 	if e.TraceStorePolicy != nil {
 		e.TraceStorePolicy.Normalize()
 	}
+
 	if e.ReplayClassification != nil {
 		e.ReplayClassification.Normalize()
 	}
+
 	if e.PhaseGatePolicy != nil {
 		e.PhaseGatePolicy.Normalize()
 	}
+
 	if e.RollbackControl != nil {
 		e.RollbackControl.Normalize()
 	}
@@ -498,11 +535,15 @@ func (e *ContractModelExchangeEvent) Normalize() {
 
 func (e ContractModelExchangeEvent) Validate() error {
 	e.Normalize()
+
 	var problems []string
+
 	e.validate("", &problems)
+
 	if len(problems) > 0 {
 		return ModelExchangeValidationError{Problems: problems}
 	}
+
 	return nil
 }
 
@@ -516,9 +557,11 @@ func validateModelExchangeContractRefs(contractID, protocolHash string, problems
 	if strings.TrimSpace(contractID) == "" {
 		*problems = append(*problems, "contract_id is required")
 	}
+
 	if strings.TrimSpace(protocolHash) == "" {
 		*problems = append(*problems, "protocol_hash is required")
 	}
+
 	validateOptionalModelExchangeContractRefs(contractID, protocolHash, problems)
 }
 
@@ -526,6 +569,7 @@ func validateOptionalModelExchangeContractRefs(contractID, protocolHash string, 
 	if contractID != "" && !validContractLabel(contractID, 128) {
 		*problems = append(*problems, "contract_id must be a compact contract reference")
 	}
+
 	if protocolHash != "" && !validContractLabel(protocolHash, 128) {
 		*problems = append(*problems, "protocol_hash must be a compact protocol reference")
 	}
@@ -536,21 +580,27 @@ func validateModelResponsePayloadPresence(response ModelResponse, problems *[]st
 	if response.ProposedAction != nil {
 		payloads++
 	}
+
 	if response.ContextRequest != nil {
 		payloads++
 	}
+
 	if response.ContextChallenge != nil {
 		payloads++
 	}
+
 	if response.ValidationProposal != nil {
 		payloads++
 	}
+
 	if response.Escalation != nil {
 		payloads++
 	}
+
 	if payloads != 1 {
 		*problems = append(*problems, "exactly one model response payload is required")
 	}
+
 	switch response.Kind {
 	case ModelResponseProposeAction:
 		if response.ProposedAction == nil {
@@ -579,11 +629,13 @@ func validateModelResponsePayloadPresence(response ModelResponse, problems *[]st
 
 func validateModelExchangeProtocolShape(shape ProtocolShape, problems *[]string) {
 	validateModelExchangeRedactionMarkers("protocol_shape", protocolShapeValues(shape), problems)
+
 	for i, value := range append(append([]string(nil), shape.CallableActionClasses...), shape.TerminalResponseKinds...) {
 		if !validModelExchangeLabel(value, 160) {
 			*problems = append(*problems, fmt.Sprintf("protocol_shape action/terminal entry %d must be a compact label", i))
 		}
 	}
+
 	for i, value := range shape.SchemaNames {
 		if !validModelExchangeLabel(value, 128) {
 			*problems = append(*problems, fmt.Sprintf("protocol_shape.schema_names[%d] must be a compact schema id", i))
@@ -596,16 +648,20 @@ func validModelExchangeLabel(value string, maxLen int) bool {
 	if value == "" || len(value) > maxLen {
 		return false
 	}
+
 	for _, r := range value {
 		if r >= 'a' && r <= 'z' {
 			continue
 		}
+
 		if r >= 'A' && r <= 'Z' {
 			continue
 		}
+
 		if r >= '0' && r <= '9' {
 			continue
 		}
+
 		switch r {
 		case '_', '-', '/', '.', ':', '=', '@', '<', '>', ' ':
 			continue
@@ -613,6 +669,7 @@ func validModelExchangeLabel(value string, maxLen int) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -627,15 +684,19 @@ func validateModelExchangeRedactionMarkers(field string, values []string, proble
 
 func validateHarnessAuthorityRecord(wantSchema, gotSchema, contractID, protocolHash string, values []string, provenanceField, provenance string) error {
 	var problems []string
+
 	validateModelExchangeSchemaID("schema_version", gotSchema, wantSchema, &problems)
 	validateModelExchangeContractRefs(contractID, protocolHash, &problems)
 	validateModelExchangeRedactionMarkers("harness authority record", values, &problems)
+
 	if strings.TrimSpace(provenance) != "harness" {
 		problems = append(problems, provenanceField+" must be harness")
 	}
+
 	if len(problems) > 0 {
 		return ModelExchangeValidationError{Problems: problems}
 	}
+
 	return nil
 }
 
@@ -643,41 +704,54 @@ func (e ContractModelExchangeEvent) validate(eventContractID string, problems *[
 	if e.Kind == "" {
 		*problems = append(*problems, "model_exchange.kind is required")
 	}
+
 	validateModelExchangeContractRefs(e.ContractID, e.ProtocolHash, problems)
+
 	if eventContractID != "" && e.ContractID != eventContractID {
 		*problems = append(*problems, "model_exchange.contract_id must match event contract_id")
 	}
+
 	payloads := 0
 	if e.ContextPacket != nil {
 		payloads++
 	}
+
 	if e.PermissionSnapshot != nil {
 		payloads++
 	}
+
 	if e.FailureDelta != nil {
 		payloads++
 	}
+
 	if e.ModelResponse != nil {
 		payloads++
 	}
+
 	if e.ValidationSignal != nil {
 		payloads++
 	}
+
 	if e.TraceStorePolicy != nil {
 		payloads++
 	}
+
 	if e.ReplayClassification != nil {
 		payloads++
 	}
+
 	if e.PhaseGatePolicy != nil {
 		payloads++
 	}
+
 	if e.RollbackControl != nil {
 		payloads++
 	}
+
 	if payloads != 1 {
 		*problems = append(*problems, "exactly one model_exchange payload is required")
 	}
+
 	e.validateNestedModelExchangeRefs(problems)
 	e.validateNestedModelExchangePayload(problems)
 }
@@ -697,9 +771,11 @@ func (e ContractModelExchangeEvent) validateNestedModelExchangeRefs(problems *[]
 		if refs.name == "" {
 			continue
 		}
+
 		if refs.contractID != "" && refs.contractID != e.ContractID {
 			*problems = append(*problems, refs.name+".contract_id must match model_exchange.contract_id")
 		}
+
 		if refs.protocolHash != "" && refs.protocolHash != e.ProtocolHash {
 			*problems = append(*problems, refs.name+".protocol_hash must match model_exchange.protocol_hash")
 		}
@@ -711,30 +787,39 @@ func (e ContractModelExchangeEvent) validateNestedModelExchangePayload(problems 
 	if e.ContextPacket != nil {
 		errs = append(errs, e.ContextPacket.Validate())
 	}
+
 	if e.PermissionSnapshot != nil {
 		errs = append(errs, e.PermissionSnapshot.Validate())
 	}
+
 	if e.FailureDelta != nil {
 		errs = append(errs, e.FailureDelta.Validate())
 	}
+
 	if e.ModelResponse != nil {
 		errs = append(errs, e.ModelResponse.Validate())
 	}
+
 	if e.ValidationSignal != nil {
 		errs = append(errs, e.ValidationSignal.Validate())
 	}
+
 	if e.TraceStorePolicy != nil {
 		errs = append(errs, e.TraceStorePolicy.Validate())
 	}
+
 	if e.ReplayClassification != nil {
 		errs = append(errs, e.ReplayClassification.Validate())
 	}
+
 	if e.PhaseGatePolicy != nil {
 		errs = append(errs, e.PhaseGatePolicy.Validate())
 	}
+
 	if e.RollbackControl != nil {
 		errs = append(errs, e.RollbackControl.Validate())
 	}
+
 	for _, err := range errs {
 		if err != nil {
 			*problems = append(*problems, err.Error())
@@ -752,6 +837,7 @@ func modelExchangeContextPacketRefs(value *ContextPacket) modelExchangeRefs {
 	if value == nil {
 		return modelExchangeRefs{}
 	}
+
 	return modelExchangeRefs{name: "context_packet", contractID: value.ContractID, protocolHash: value.ProtocolHash}
 }
 
@@ -759,6 +845,7 @@ func modelExchangePermissionSnapshotRefs(value *PermissionSnapshot) modelExchang
 	if value == nil {
 		return modelExchangeRefs{}
 	}
+
 	return modelExchangeRefs{name: "permission_snapshot", contractID: value.ContractID, protocolHash: value.ProtocolHash}
 }
 
@@ -766,6 +853,7 @@ func modelExchangeFailureDeltaRefs(value *FailureDelta) modelExchangeRefs {
 	if value == nil {
 		return modelExchangeRefs{}
 	}
+
 	return modelExchangeRefs{name: "failure_delta", contractID: value.ContractID, protocolHash: value.ProtocolHash}
 }
 
@@ -773,6 +861,7 @@ func modelExchangeModelResponseRefs(value *ModelResponse) modelExchangeRefs {
 	if value == nil {
 		return modelExchangeRefs{}
 	}
+
 	return modelExchangeRefs{name: "model_response", contractID: value.ContractID, protocolHash: value.ProtocolHash}
 }
 
@@ -780,6 +869,7 @@ func modelExchangeValidationSignalRefs(value *ValidationSignal) modelExchangeRef
 	if value == nil {
 		return modelExchangeRefs{}
 	}
+
 	return modelExchangeRefs{name: "validation_signal", contractID: value.ContractID, protocolHash: value.ProtocolHash}
 }
 
@@ -787,6 +877,7 @@ func modelExchangeTraceStorePolicyRefs(value *TraceStorePolicy) modelExchangeRef
 	if value == nil {
 		return modelExchangeRefs{}
 	}
+
 	return modelExchangeRefs{name: "trace_store_policy", contractID: value.ContractID, protocolHash: value.ProtocolHash}
 }
 
@@ -794,6 +885,7 @@ func modelExchangeReplayClassificationRefs(value *ReplayClassificationRecord) mo
 	if value == nil {
 		return modelExchangeRefs{}
 	}
+
 	return modelExchangeRefs{name: "replay_classification", contractID: value.ContractID, protocolHash: value.ProtocolHash}
 }
 
@@ -801,6 +893,7 @@ func modelExchangePhaseGatePolicyRefs(value *PhaseGatePolicy) modelExchangeRefs 
 	if value == nil {
 		return modelExchangeRefs{}
 	}
+
 	return modelExchangeRefs{name: "phase_gate_policy", contractID: value.ContractID, protocolHash: value.ProtocolHash}
 }
 
@@ -808,6 +901,7 @@ func modelExchangeRollbackControlRefs(value *RollbackControl) modelExchangeRefs 
 	if value == nil {
 		return modelExchangeRefs{}
 	}
+
 	return modelExchangeRefs{name: "rollback_control", contractID: value.ContractID, protocolHash: value.ProtocolHash}
 }
 
@@ -858,13 +952,16 @@ func (e *Escalation) normalize() {
 
 func envelopeValues(e ContractEnvelope) []string {
 	values := []string{e.SchemaVersion, e.EnvelopeID, e.ContractID, e.ContractRef, e.ProtocolHash, e.ProtocolRef}
+
 	values = append(values, e.SchemaNames...)
 	values = append(values, protocolShapeValues(e.ProtocolShape)...)
+
 	return values
 }
 
 func contextPacketValues(p ContextPacket) []string {
 	values := []string{p.SchemaVersion, p.PacketID, p.ContractID, p.ProtocolHash}
+
 	values = append(values, p.SummaryRefs...)
 	values = append(values, p.TargetRefs...)
 	values = append(values, p.PathRefs...)
@@ -873,15 +970,18 @@ func contextPacketValues(p ContextPacket) []string {
 	values = append(values, p.ObligationRefs...)
 	values = append(values, p.SchemaNames...)
 	values = append(values, p.RedactionMarkers...)
+
 	return values
 }
 
 func protocolShapeValues(shape ProtocolShape) []string {
 	values := append([]string(nil), shape.SchemaNames...)
+
 	values = append(values, shape.CallableActionClasses...)
 	values = append(values, shape.TerminalResponseKinds...)
 	values = append(values, shape.VisibleTools...)
 	values = append(values, shape.CallableTools...)
+
 	return values
 }
 
@@ -893,80 +993,99 @@ func modelResponseValues(r ModelResponse) []string {
 		values = append(values, r.ProposedAction.EvidenceRefs...)
 		values = append(values, r.ProposedAction.ProposalRefs...)
 	}
+
 	if r.ContextRequest != nil {
 		values = append(values, r.ContextRequest.ReasonCode, r.ContextRequest.RequestedShape)
 		values = append(values, r.ContextRequest.RequestRefs...)
 		values = append(values, r.ContextRequest.MissingRefs...)
 	}
+
 	if r.ContextChallenge != nil {
 		values = append(values, r.ContextChallenge.ReasonCode, r.ContextChallenge.ProposedShape)
 		values = append(values, r.ContextChallenge.ChallengeRefs...)
 		values = append(values, r.ContextChallenge.EvidenceRefs...)
 	}
+
 	if r.ValidationProposal != nil {
 		values = append(values, r.ValidationProposal.ReasonCode)
 		values = append(values, r.ValidationProposal.ValidationRefs...)
 		values = append(values, r.ValidationProposal.CommandRefs...)
 		values = append(values, r.ValidationProposal.EvidenceRefs...)
 	}
+
 	if r.Escalation != nil {
 		values = append(values, r.Escalation.ReasonCode)
 		values = append(values, r.Escalation.EscalationRefs...)
 		values = append(values, r.Escalation.BlockerRefs...)
 		values = append(values, r.Escalation.QuestionRefs...)
 	}
+
 	return values
 }
 
 func permissionSnapshotValues(s PermissionSnapshot) []string {
 	values := []string{s.SchemaVersion, s.SnapshotID, s.ContractID, s.ProtocolHash, s.PermissionProfile, s.CapturedBy}
+
 	values = append(values, s.AllowedTools...)
 	values = append(values, s.HiddenTools...)
 	values = append(values, s.CapabilityRefs...)
 	values = append(values, s.PathRoleRefs...)
+
 	return values
 }
 
 func validationSignalValues(s ValidationSignal) []string {
 	values := []string{s.SchemaVersion, s.SignalID, s.ContractID, s.ProtocolHash, s.ValidationRef, s.Status, s.CapturedBy}
+
 	values = append(values, s.EvidenceRefs...)
 	values = append(values, s.CommandRefs...)
+
 	return values
 }
 
 func failureDeltaValues(d FailureDelta) []string {
 	values := []string{d.SchemaVersion, d.DeltaID, d.ContractID, d.ProtocolHash, d.FailureClass, d.BeforeRef, d.AfterRef, d.GeneratedBy}
+
 	values = append(values, d.EvidenceRefs...)
+
 	return values
 }
 
 func traceStorePolicyValues(p TraceStorePolicy) []string {
 	values := []string{p.SchemaVersion, p.PolicyID, p.ContractID, p.ProtocolHash, p.RetentionRef, p.RedactionRef, p.RedactionStatus}
+
 	values = append(values, p.AllowedFields...)
 	values = append(values, p.StoreRefs...)
 	values = append(values, p.CapturedBy)
+
 	return values
 }
 
 func replayClassificationValues(c ReplayClassificationRecord) []string {
 	values := []string{c.SchemaVersion, c.ClassificationID, c.ContractID, c.ProtocolHash, c.Outcome, c.ClassifiedBy}
+
 	values = append(values, c.AtomRefs...)
 	values = append(values, c.ViolationRefs...)
+
 	return values
 }
 
 func phaseGatePolicyValues(p PhaseGatePolicy) []string {
 	values := []string{p.SchemaVersion, p.PolicyID, p.ContractID, p.ProtocolHash, p.PhaseID, p.EnforcementMode}
+
 	values = append(values, p.GateRefs...)
 	values = append(values, p.TerminalResponseKinds...)
 	values = append(values, p.CapturedBy)
+
 	return values
 }
 
 func rollbackControlValues(c RollbackControl) []string {
 	values := []string{c.SchemaVersion, c.ControlID, c.ContractID, c.ProtocolHash, c.RollbackRef, c.Decision, c.OperatorRef, c.Source, c.PreviousMode, c.NewMode, c.Reason, c.AuthorizedBy}
+
 	values = append(values, c.GuardRefs...)
 	values = append(values, c.AffectedPackIDs...)
+
 	return values
 }
 
@@ -976,5 +1095,6 @@ func firstModelExchangeValue(values ...string) string {
 			return trimmed
 		}
 	}
+
 	return ""
 }

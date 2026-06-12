@@ -161,6 +161,7 @@ func TestObligationResolutionAttemptsCountsOnlyNavigationFailures(t *testing.T) 
 		},
 	}
 	attempts := sourceEvidenceObligationResolutionAttempts("internal/surfaces/tui/app/sessions.go", results)
+
 	if attempts != 1 {
 		t.Fatalf("resolution attempts = %d, want 1 (only the one failed code_navigate on the path should count)", attempts)
 	}

@@ -30,19 +30,24 @@ func TestRecordTaskLedgerAppendsPlannedItems(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read plan: %v", err)
 	}
+
 	got := string(plan)
 	if !strings.Contains(got, "### Planned") {
 		t.Errorf("missing Planned heading:\n%s", got)
 	}
+
 	if !strings.Contains(got, "- [ ] rename Qwen to Idiom in config") {
 		t.Errorf("missing t1 line:\n%s", got)
 	}
+
 	if !strings.Contains(got, "(paths: config.go, cmd/idiom/main.go)") {
 		t.Errorf("missing paths note on t1:\n%s", got)
 	}
+
 	if !strings.Contains(got, "<!-- tid:t1 -->") {
 		t.Errorf("missing tid anchor on t1:\n%s", got)
 	}
+
 	if !strings.Contains(got, "<!-- tid:t2 -->") {
 		t.Errorf("missing tid anchor on t2:\n%s", got)
 	}
@@ -79,10 +84,12 @@ func TestRecordTaskLedgerOnlyAppendsNewItems(t *testing.T) {
 	if n := strings.Count(got, "### Planned"); n != 1 {
 		t.Errorf("want 1 Planned heading across two submissions, got %d:\n%s", n, got)
 	}
+
 	// t1 appears once; t2 appears once.
 	if n := strings.Count(got, "<!-- tid:t1 -->"); n != 1 {
 		t.Errorf("t1 duplicated, want 1, got %d", n)
 	}
+
 	if n := strings.Count(got, "<!-- tid:t2 -->"); n != 1 {
 		t.Errorf("t2 missing or duplicated, want 1, got %d", n)
 	}
@@ -95,6 +102,7 @@ func TestRecordTaskLedgerOnlyAppendsNewItems(t *testing.T) {
 func TestRecordWriteSuccessAttachesToPlannedItem(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.go", "pkg a\n")
+
 	m := snapshotModel(t, root)
 
 	m.recordTaskLedger(workspace.ToolRequest{
@@ -111,17 +119,21 @@ func TestRecordWriteSuccessAttachesToPlannedItem(t *testing.T) {
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
+
 	if strings.Contains(got, "### Unplanned") {
 		t.Errorf("planned attach should not fall back to Unplanned:\n%s", got)
 	}
+
 	// The tid line should now be checked off.
 	if !strings.Contains(got, "- [x] bump a.go") {
 		t.Errorf("planned item not checked off in place:\n%s", got)
 	}
+
 	// And it should carry the diff-id anchor so the UI can resolve a click.
 	if !strings.Contains(got, "<!-- tid:t1 -->") || !strings.Contains(got, "<!-- id:") {
 		t.Errorf("checked line missing anchors:\n%s", got)
 	}
+
 	// There must be exactly one checkbox line for t1 — never duplicated.
 	if n := strings.Count(got, "<!-- tid:t1 -->"); n != 1 {
 		t.Errorf("want 1 tid line for t1, got %d", n)
@@ -136,6 +148,7 @@ func TestRecordWriteSuccessUnplannedFallback(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.go", "pkg a\n")
 	writeFile(t, root, "b.go", "pkg b\n")
+
 	m := snapshotModel(t, root)
 
 	m.recordTaskLedger(workspace.ToolRequest{
@@ -153,12 +166,15 @@ func TestRecordWriteSuccessUnplannedFallback(t *testing.T) {
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
+
 	if !strings.Contains(got, "### Unplanned") {
 		t.Errorf("expected Unplanned section for drive-by write:\n%s", got)
 	}
+
 	if !strings.Contains(got, "- [x] drive-by (b.go)") {
 		t.Errorf("Unplanned line missing:\n%s", got)
 	}
+
 	// Planned item t1 must remain unchecked (we did not write a.go).
 	if !strings.Contains(got, "- [ ] edit a") {
 		t.Errorf("unrelated planned item should still be unchecked:\n%s", got)
@@ -172,6 +188,7 @@ func TestRecordWriteSuccessUnplannedFallback(t *testing.T) {
 func TestAttachCompletesItemSoSecondWriteDoesNotDoubleCheck(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.go", "pkg a\n")
+
 	m := snapshotModel(t, root)
 	m.recordTaskLedger(workspace.ToolRequest{
 		Tool: "task_ledger",
@@ -192,12 +209,15 @@ func TestAttachCompletesItemSoSecondWriteDoesNotDoubleCheck(t *testing.T) {
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
+
 	if !strings.Contains(got, "### Unplanned") {
 		t.Errorf("second touch should land under Unplanned:\n%s", got)
 	}
+
 	if !strings.Contains(got, "second touch (a.go)") {
 		t.Errorf("second-touch label missing:\n%s", got)
 	}
+
 	if n := strings.Count(got, "<!-- tid:t1 -->"); n != 1 {
 		t.Errorf("planned item should still be a single line, got %d:\n%s", n, got)
 	}
@@ -213,6 +233,7 @@ func TestMultiPathItemStaysUncheckedUntilAllPathsHit(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.go", "pkg a\n")
 	writeFile(t, root, "b.go", "pkg b\n")
+
 	m := snapshotModel(t, root)
 
 	m.recordTaskLedger(workspace.ToolRequest{
@@ -230,12 +251,15 @@ func TestMultiPathItemStaysUncheckedUntilAllPathsHit(t *testing.T) {
 
 	planPath := filepath.Join(root, ".planning", "sessA.md")
 	got, _ := os.ReadFile(planPath)
+
 	if strings.Contains(string(got), "### Unplanned") {
 		t.Fatalf("first write should attach, not fall to Unplanned:\n%s", got)
 	}
+
 	if !strings.Contains(string(got), "- [ ] rename across files") {
 		t.Errorf("multi-path item should still be unchecked after first write:\n%s", got)
 	}
+
 	if n := strings.Count(string(got), "<!-- id:"); n != 1 {
 		t.Errorf("want 1 diff-id anchor after first write, got %d:\n%s", n, got)
 	}
@@ -250,12 +274,15 @@ func TestMultiPathItemStaysUncheckedUntilAllPathsHit(t *testing.T) {
 	if strings.Contains(string(got), "### Unplanned") {
 		t.Fatalf("second write of multi-path item should not fall to Unplanned:\n%s", got)
 	}
+
 	if !strings.Contains(string(got), "- [x] rename across files") {
 		t.Errorf("multi-path item should flip to [x] after all paths hit:\n%s", got)
 	}
+
 	if n := strings.Count(string(got), "<!-- id:"); n != 2 {
 		t.Errorf("want 2 diff-id anchors after both writes, got %d:\n%s", n, got)
 	}
+
 	// Still only one tid line — the two writes share the same plan row.
 	if n := strings.Count(string(got), "<!-- tid:t1 -->"); n != 1 {
 		t.Errorf("tid line should remain single, got %d:\n%s", n, got)
@@ -290,6 +317,7 @@ func TestRecordTaskLedgerIgnoresFailures(t *testing.T) {
 		workspace.ToolRequest{Tool: "task_ledger", Todos: []workspace.TaskLedgerItem{{ID: "t1", Content: "x", Status: "pending"}}},
 		workspace.ToolResult{Tool: "task_ledger", Error: "validation failed"},
 	)
+
 	if _, err := os.Stat(filepath.Join(root, ".planning")); !os.IsNotExist(err) {
 		t.Fatalf("errored ledger should not create .planning; err = %v", err)
 	}
@@ -301,6 +329,7 @@ func TestRecordTaskLedgerSkipsNonLedgerTools(t *testing.T) {
 	root := t.TempDir()
 	m := snapshotModel(t, root)
 	m.recordTaskLedger(workspace.ToolRequest{Tool: "edit_file"}, workspace.ToolResult{Summary: "ok"})
+
 	if _, err := os.Stat(filepath.Join(root, ".planning")); !os.IsNotExist(err) {
 		t.Fatalf("non-ledger event should not create .planning; err = %v", err)
 	}
@@ -335,12 +364,15 @@ func TestAttachByExplicitTaskIDWhenPathsMissing(t *testing.T) {
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
+
 	if strings.Contains(got, "### Unplanned") {
 		t.Errorf("explicit task_id should prevent Unplanned fallback:\n%s", got)
 	}
+
 	if !strings.Contains(got, "- [x] asdfghjkl;'") {
 		t.Errorf("planned item should be checked off in place:\n%s", got)
 	}
+
 	if n := strings.Count(got, "<!-- tid:garbage-test-1 -->"); n != 1 {
 		t.Errorf("want 1 tid line, got %d:\n%s", n, got)
 	}
@@ -362,6 +394,7 @@ func TestAttachByExplicitTaskIDWinsOverPathMismatch(t *testing.T) {
 	}, workspace.ToolResult{Summary: "ok"})
 
 	writeFile(t, root, "x.go", "pkg x\n")
+
 	req := workspace.ToolRequest{
 		Tool:        "edit_file",
 		Path:        "x.go",
@@ -374,9 +407,11 @@ func TestAttachByExplicitTaskIDWinsOverPathMismatch(t *testing.T) {
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
+
 	if !strings.Contains(got, "- [x] the real work") {
 		t.Errorf("t-primary should be checked via task_id:\n%s", got)
 	}
+
 	if !strings.Contains(got, "- [ ] unrelated edit of x.go") {
 		t.Errorf("t-coincident should remain unchecked — task_id beats path match:\n%s", got)
 	}
@@ -403,9 +438,11 @@ func TestHeuristicAttachSinglePathsLessItem(t *testing.T) {
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
+
 	if strings.Contains(got, "### Unplanned") {
 		t.Errorf("heuristic should attach rather than fall to Unplanned:\n%s", got)
 	}
+
 	if !strings.Contains(got, "- [x] do the thing") {
 		t.Errorf("paths-less item should be checked via heuristic:\n%s", got)
 	}
@@ -434,9 +471,11 @@ func TestHeuristicDoesNotFireWhenAmbiguous(t *testing.T) {
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
+
 	if !strings.Contains(got, "### Unplanned") {
 		t.Errorf("ambiguous paths-less items should fall to Unplanned:\n%s", got)
 	}
+
 	if !strings.Contains(got, "- [ ] task a") || !strings.Contains(got, "- [ ] task b") {
 		t.Errorf("both planned items should remain unchecked:\n%s", got)
 	}
@@ -453,10 +492,12 @@ func TestRecordTaskLedgerAcceptsItemsField(t *testing.T) {
 		Items: []workspace.TaskLedgerItem{{ID: "t1", Content: "c", Status: "pending"}},
 	}
 	m.recordTaskLedger(req, workspace.ToolResult{Summary: "ok"})
+
 	plan, err := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	if err != nil {
 		t.Fatalf("read plan: %v", err)
 	}
+
 	if !strings.Contains(string(plan), "<!-- tid:t1 -->") {
 		t.Errorf("Items field should be honored: %s", plan)
 	}

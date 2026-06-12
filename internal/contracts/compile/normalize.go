@@ -43,7 +43,9 @@ func normalizePlanExecutePlannerInput(input PlanExecutePlannerInput) PlanExecute
 	normalizeReadinessInput(&input.Readiness)
 	normalizeRuntimeInput(&input.Runtime)
 	normalizeProtocolInput(&input.Protocol)
+
 	input.MetadataTags = uniqueStrings(input.MetadataTags)
+
 	return input
 }
 
@@ -65,18 +67,24 @@ func normalizeRuntimeInput(runtime *RuntimeEnvelopeInput) {
 	runtime.ToolChoice = strings.TrimSpace(runtime.ToolChoice)
 	runtime.ResponseFormat = strings.TrimSpace(runtime.ResponseFormat)
 	runtime.ThinkingPolicy = strings.TrimSpace(runtime.ThinkingPolicy)
+
 	if runtime.ThinkingBudget < 0 {
 		runtime.ThinkingBudget = 0
 	}
+
 	if runtime.EffectiveMaxTokens < 0 {
 		runtime.EffectiveMaxTokens = 0
 	}
+
 	runtime.ContextBudget = normalizeContextBudget(runtime.ContextBudget)
 	normalizeQueueState(&runtime.QueueState)
+
 	runtime.ReadinessProfile = strings.TrimSpace(runtime.ReadinessProfile)
 	runtime.EnforcementMode = strings.TrimSpace(runtime.EnforcementMode)
+
 	degradedInvariants := append([]string(nil), runtime.DegradedInvariants...)
 	authorizedFallbacks := append([]string(nil), runtime.AuthorizedFallback...)
+
 	runtime.DegradedInvariants = uniqueStrings(degradedInvariants)
 	runtime.AuthorizedFallback = uniqueStrings(authorizedFallbacks)
 	runtime.DegradationDecisions = normalizeDegradationDecisions(runtime.DegradationDecisions, degradedInvariants, authorizedFallbacks)
@@ -94,14 +102,18 @@ func normalizeRuntimeEnvelope(runtime *RuntimeEnvelope) {
 	runtime.ToolChoice = strings.TrimSpace(runtime.ToolChoice)
 	runtime.ResponseFormat = strings.TrimSpace(runtime.ResponseFormat)
 	runtime.ThinkingPolicy = strings.TrimSpace(runtime.ThinkingPolicy)
+
 	if runtime.ThinkingBudget < 0 {
 		runtime.ThinkingBudget = 0
 	}
+
 	if runtime.EffectiveMaxTokens < 0 {
 		runtime.EffectiveMaxTokens = 0
 	}
+
 	runtime.ContextBudget = normalizeContextBudget(runtime.ContextBudget)
 	normalizeQueueState(&runtime.QueueState)
+
 	runtime.ReadinessProfile = strings.TrimSpace(runtime.ReadinessProfile)
 	runtime.EnforcementMode = firstNonEmpty(runtime.EnforcementMode, "report_only")
 	runtime.DegradationDecisions = normalizeDegradationDecisions(runtime.DegradationDecisions, nil, nil)
@@ -115,8 +127,10 @@ func normalizeDegradationDecisions(decisions []DegradationDecision, degradedInva
 		if normalized.InvariantID == "" {
 			continue
 		}
+
 		out = append(out, normalized)
 	}
+
 	if len(out) == 0 {
 		for _, decision := range legacyDegradationDecisions(degradedInvariants, authorizedFallbacks) {
 			out = append(out, DegradationDecision{
@@ -127,6 +141,7 @@ func normalizeDegradationDecisions(decisions []DegradationDecision, degradedInva
 			})
 		}
 	}
+
 	out = mergeDegradationDecisions(out)
 	slices.SortFunc(out, func(a, b DegradationDecision) int {
 		return cmp.Or(
@@ -136,6 +151,7 @@ func normalizeDegradationDecisions(decisions []DegradationDecision, degradedInva
 			cmp.Compare(strings.Join(a.AuthorizedFallbacks, "\x00"), strings.Join(b.AuthorizedFallbacks, "\x00")),
 		)
 	})
+
 	return out
 }
 
@@ -143,6 +159,7 @@ func degradationDecisionForFallbacks(fallbacks []string) string {
 	if len(fallbacks) > 0 {
 		return "authorized_fallback"
 	}
+
 	return "degraded_no_fallback"
 }
 
@@ -150,12 +167,14 @@ func legacyDegradationDecisions(degradedInvariants []string, authorizedFallbacks
 	invariantIDs := uniqueStringsInOrder(degradedInvariants)
 	fallbacks := uniqueStringsInOrder(authorizedFallbacks)
 	out := make([]DegradationDecision, 0, len(invariantIDs))
+
 	for i, invariantID := range invariantIDs {
 		out = append(out, DegradationDecision{
 			InvariantID:         invariantID,
 			AuthorizedFallbacks: legacyFallbacksForInvariant(i, len(invariantIDs), fallbacks),
 		})
 	}
+
 	return out
 }
 
@@ -178,6 +197,7 @@ func normalizeDegradationDecision(decision DegradationDecision) DegradationDecis
 	decision.InvariantID = strings.TrimSpace(decision.InvariantID)
 	decision.ReasonCode = firstNonEmpty(decision.ReasonCode, "declared_runtime_degradation")
 	decision.AuthorizedFallbacks = uniqueStrings(decision.AuthorizedFallbacks)
+
 	if strings.TrimSpace(decision.Decision) == "" {
 		if len(decision.AuthorizedFallbacks) > 0 {
 			decision.Decision = "authorized_fallback"
@@ -187,6 +207,7 @@ func normalizeDegradationDecision(decision DegradationDecision) DegradationDecis
 	} else {
 		decision.Decision = strings.TrimSpace(decision.Decision)
 	}
+
 	return decision
 }
 
@@ -196,28 +217,34 @@ func mergeDegradationDecisions(decisions []DegradationDecision) []DegradationDec
 		reasonCode  string
 		decision    string
 	}
+
 	merged := make(map[key]DegradationDecision, len(decisions))
+
 	for _, decision := range decisions {
 		decision = normalizeDegradationDecision(decision)
 		if decision.InvariantID == "" {
 			continue
 		}
+
 		k := key{
 			invariantID: decision.InvariantID,
 			reasonCode:  decision.ReasonCode,
 			decision:    decision.Decision,
 		}
 		existing := merged[k]
+
 		existing.InvariantID = decision.InvariantID
 		existing.ReasonCode = decision.ReasonCode
 		existing.Decision = decision.Decision
 		existing.AuthorizedFallbacks = uniqueStrings(append(existing.AuthorizedFallbacks, decision.AuthorizedFallbacks...))
 		merged[k] = existing
 	}
+
 	out := make([]DegradationDecision, 0, len(merged))
 	for _, decision := range merged {
 		out = append(out, decision)
 	}
+
 	return out
 }
 
@@ -225,9 +252,11 @@ func normalizeContextBudget(budget ContextBudget) ContextBudget {
 	if budget.MaxContextMessages < 0 {
 		budget.MaxContextMessages = 0
 	}
+
 	if budget.MaxContextChars < 0 {
 		budget.MaxContextChars = 0
 	}
+
 	return budget
 }
 
@@ -243,14 +272,17 @@ func normalizeProtocolInput(protocol *ProtocolInput) {
 	protocol.ParserMode = strings.TrimSpace(protocol.ParserMode)
 	protocol.ExpectedVisibleOutput = strings.TrimSpace(protocol.ExpectedVisibleOutput)
 	protocol.VisibleTools = uniqueStrings(protocol.VisibleTools)
+
 	if protocol.CallableTools != nil {
 		protocol.CallableToolsSpecified = true
 	}
+
 	if protocol.CallableToolsSpecified {
 		protocol.CallableTools = uniqueStrings(protocol.CallableTools)
 	} else {
 		protocol.CallableTools = nil
 	}
+
 	protocol.CallableActionClasses = canonicalActionClassStrings(protocol.CallableActionClasses)
 	protocol.InvalidActionClasses = canonicalActionClassStrings(protocol.InvalidActionClasses)
 	protocol.TerminalResponseShapes = uniqueStrings(protocol.TerminalResponseShapes)
@@ -258,6 +290,7 @@ func normalizeProtocolInput(protocol *ProtocolInput) {
 	protocol.MalformedOutputPolicy = strings.TrimSpace(protocol.MalformedOutputPolicy)
 	protocol.StaleAnchorPolicy = strings.TrimSpace(protocol.StaleAnchorPolicy)
 	protocol.SourceBodyObligations = uniqueStrings(protocol.SourceBodyObligations)
+
 	if protocol.RecoveryBudget < 0 {
 		protocol.RecoveryBudget = 0
 	}
@@ -320,8 +353,10 @@ func canonicalActionClassStrings(values []string) []string {
 		if canonical == "" {
 			continue
 		}
+
 		out = append(out, string(canonical))
 	}
+
 	return uniqueStrings(out)
 }
 
@@ -346,6 +381,7 @@ func capabilitiesForTool(tool string) []autonomy.Capability {
 	if !ok {
 		return nil
 	}
+
 	return entry.Capabilities
 }
 
@@ -359,6 +395,7 @@ func sideEffectForTool(tool string) autonomy.SideEffectClass {
 	if !ok {
 		return autonomy.SideEffectUnknown
 	}
+
 	return entry.SideEffect
 }
 
@@ -370,6 +407,7 @@ func forbiddenEffects(input PlanExecutePlannerInput) []autonomy.SideEffectClass 
 	if strings.Contains(strings.ToLower(input.PermissionProfile), "read_only") {
 		return []autonomy.SideEffectClass{autonomy.SideEffectAdditive, autonomy.SideEffectDestructive, autonomy.SideEffectOpenWorld}
 	}
+
 	return []autonomy.SideEffectClass{autonomy.SideEffectDestructive, autonomy.SideEffectOpenWorld}
 }
 
@@ -378,7 +416,9 @@ func capabilityKeys(set map[autonomy.Capability]struct{}) []autonomy.Capability 
 	for capability := range set {
 		out = append(out, capability)
 	}
+
 	slices.SortFunc(out, func(a, b autonomy.Capability) int { return cmp.Compare(a, b) })
+
 	return out
 }
 
@@ -387,59 +427,74 @@ func obligationIDs(obligations []autonomy.Obligation) []string {
 	for _, obligation := range obligations {
 		ids = append(ids, obligation.ObligationID)
 	}
+
 	return uniqueStrings(ids)
 }
 
 func uniquePaths(values []string) []string {
 	out := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
+
 	for _, value := range values {
 		value = normalizePath(value)
 		if value == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
 func uniqueStrings(values []string) []string {
 	out := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
+
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
 func uniqueStringsInOrder(values []string) []string {
 	out := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
+
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
+
 	return out
 }
 
@@ -448,10 +503,12 @@ func normalizePath(path string) string {
 	if path == "" {
 		return ""
 	}
+
 	path = filepath.ToSlash(filepath.Clean(path))
 	if path == "." {
 		return ""
 	}
+
 	return strings.TrimPrefix(path, "./")
 }
 
@@ -461,6 +518,7 @@ func firstNonEmpty(values ...string) string {
 			return trimmed
 		}
 	}
+
 	return ""
 }
 
@@ -470,6 +528,7 @@ func firstPositive(values ...int) int {
 			return value
 		}
 	}
+
 	return 0
 }
 
@@ -478,6 +537,8 @@ func stableHashID(prefix string, parts ...any) string {
 	if err != nil {
 		panic(err)
 	}
+
 	sum := sha256.Sum256(encoded)
+
 	return prefix + "_" + hex.EncodeToString(sum[:])[:16]
 }

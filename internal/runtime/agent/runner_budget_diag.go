@@ -46,6 +46,7 @@ func (r *Runner) emitBriefAudit(brief workerruntime.WorkerRuntimeBrief, results 
 	if r == nil || r.OnEvent == nil {
 		return
 	}
+
 	event := briefAuditEvent{
 		Lane:                      strings.TrimSpace(brief.Lane),
 		TaskFamily:                strings.TrimSpace(brief.TaskFamily),
@@ -65,19 +66,24 @@ func (r *Runner) emitBriefAudit(brief workerruntime.WorkerRuntimeBrief, results 
 	}
 	if len(brief.RequiredEditSnippets) > 0 {
 		event.RequiredEditSnippetPaths = make([]string, 0, len(brief.RequiredEditSnippets))
+
 		seen := make(map[string]struct{}, len(brief.RequiredEditSnippets))
+
 		for _, snippet := range brief.RequiredEditSnippets {
 			path := strings.TrimSpace(snippet.Path)
 			if path == "" {
 				continue
 			}
+
 			if _, ok := seen[path]; ok {
 				continue
 			}
+
 			seen[path] = struct{}{}
 			event.RequiredEditSnippetPaths = append(event.RequiredEditSnippetPaths, path)
 		}
 	}
+
 	if brief.Readiness != nil {
 		event.ReadinessReadyToAnswer = brief.Readiness.ReadyToAnswer
 		event.ReadinessReadyToWrite = brief.Readiness.ReadyToWrite
@@ -86,6 +92,7 @@ func (r *Runner) emitBriefAudit(brief workerruntime.WorkerRuntimeBrief, results 
 		event.ReadinessOpenObligations = append([]string(nil), brief.Readiness.OpenObligations...)
 		event.ReadinessFurtherReadsRequire = strings.TrimSpace(brief.Readiness.FurtherReadsRequire)
 	}
+
 	r.emitEvent(marshalRunEvent("brief_audit", event))
 }
 
@@ -95,9 +102,11 @@ func targetPacketByteCount(packet []string) int {
 		total += len(line)
 		total++
 	}
+
 	if total > 0 {
 		total--
 	}
+
 	return total
 }
 
@@ -106,10 +115,12 @@ func requestPathInRequiredEditPaths(path string, required []string) bool {
 	if cleaned == "" {
 		return false
 	}
+
 	for _, p := range required {
 		if normalizeRunnerPath(p) == cleaned {
 			return true
 		}
 	}
+
 	return false
 }

@@ -89,18 +89,23 @@ func (m *Manager) discoveryQuery(ctx context.Context, req ToolRequest) ToolResul
 	if purpose == "" {
 		return ToolResult{Tool: "discovery_query", Summary: "Discovery query rejected", Error: "purpose must be one of impact_analysis, function_tracing, architecture_boundary, security_review, or history_context"}
 	}
+
 	targetAbs, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
 		return ToolResult{Tool: "discovery_query", Summary: "Failed to resolve discovery query target", Error: err.Error()}
 	}
+
 	targetRel := m.displayPath(targetAbs)
 	depth := req.MaxDepth
+
 	if depth <= 0 {
 		depth = 2
 	}
+
 	if depth > 4 {
 		depth = 4
 	}
+
 	language := normalizeDiscoveryQueryLanguage(req.Language)
 	if language == "" {
 		language = normalizeDiscoveryQueryLanguage(m.inferDependencyLanguage(targetAbs))
@@ -126,6 +131,7 @@ func (m *Manager) discoveryQuery(ctx context.Context, req ToolRequest) ToolResul
 	}
 
 	runner.run(req, targetAbs)
+
 	if err := runner.writeArtifact(); err != nil {
 		return ToolResult{Tool: "discovery_query", Summary: "Discovery query artifact write failed", Error: err.Error(), Output: runner.summaryJSON()}
 	}
@@ -145,6 +151,7 @@ func (r *discoveryQueryRunner) run(req ToolRequest, targetAbs string) {
 
 	contextBacked := r.addContextGraphLayer(req, path, pattern, language)
 	r.addContextLayer()
+
 	if isRegularFile(targetAbs) {
 		r.addFileOrientation(path, language)
 	} else if contextBacked && purpose != "security_review" {
@@ -202,10 +209,13 @@ func (r *discoveryQueryRunner) addContextGraphLayer(req ToolRequest, path string
 	if err != nil {
 		return false
 	}
+
 	if status.IndexID != "" {
 		r.packet.ContextIndexID = status.IndexID
 	}
+
 	task := discoveryContextPackTask(r.packet.Purpose, path, pattern, language, req.Query)
+
 	freshness, err := comprehension.EnsureFresh(r.ctx, comprehension.FreshnessRequest{
 		Root:      r.manager.cfg.Root,
 		Operation: "discovery_query",
@@ -222,21 +232,29 @@ func (r *discoveryQueryRunner) addContextGraphLayer(req ToolRequest, path string
 		r.packet.Gaps = append(r.packet.Gaps, "context freshness check failed: "+err.Error())
 		return false
 	}
+
 	r.packet.ContextFreshness = &freshness
+
 	staleEvidence := comprehension.StaleEvidenceSafetyForFreshness(freshness)
+
 	r.packet.ContextStaleEvidence = &staleEvidence
 	status = comprehension.StatusReportWithMetadata(status, "discovery_query", &freshness)
+
 	contextConfidence := status.Confidence
 	contextProvenance := status.Provenance
+
 	r.packet.ContextConfidence = &contextConfidence
 	r.packet.ContextProvenance = &contextProvenance
+
 	if refreshed, err := comprehension.Status(r.manager.cfg.Root); err == nil && refreshed.IndexID != "" {
 		r.packet.ContextIndexID = refreshed.IndexID
 	}
+
 	if !freshness.FreshForScope && freshness.Policy != comprehension.FreshnessAllowStale {
 		r.packet.Gaps = append(r.packet.Gaps, comprehension.FreshnessGapForDecision(freshness))
 		return false
 	}
+
 	result, ok := r.addLayerResult("context_pack", ToolRequest{
 		Tool:              "context_pack",
 		Task:              task,
@@ -249,42 +267,56 @@ func (r *discoveryQueryRunner) addContextGraphLayer(req ToolRequest, path string
 	if !ok || strings.TrimSpace(result.Error) != "" {
 		return false
 	}
+
 	var pack discoveryContextPackSummary
+
 	if err := json.Unmarshal([]byte(result.Output), &pack); err != nil {
 		r.packet.Gaps = append(r.packet.Gaps, "context_pack output could not be decoded; used live discovery layers")
 		return false
 	}
+
 	if pack.IndexID != "" {
 		r.packet.ContextIndexID = pack.IndexID
 	}
+
 	if r.packet.ContextFreshness == nil && pack.Freshness != nil {
 		r.packet.ContextFreshness = pack.Freshness
 	}
+
 	if r.packet.ContextStaleEvidence == nil {
 		packStaleEvidence := comprehension.StaleEvidenceSafetyForFreshness(freshness)
+
 		r.packet.ContextStaleEvidence = &packStaleEvidence
 	}
+
 	if pack.Confidence.Level != "" {
 		contextConfidence := pack.Confidence
+
 		r.packet.ContextConfidence = &contextConfidence
 	}
+
 	if pack.Provenance.Source != "" {
 		contextProvenance := pack.Provenance
+
 		r.packet.ContextProvenance = &contextProvenance
 	}
+
 	if pack.ArtifactPath != "" && !slices.Contains(r.packet.ContextViews, pack.ArtifactPath) {
 		r.packet.ContextViews = append(r.packet.ContextViews, pack.ArtifactPath)
 	}
+
 	if !pack.Fresh {
 		r.packet.Gaps = append(r.packet.Gaps, "context_pack reported stale context; live discovery layers remain authoritative")
 		return false
 	}
+
 	for _, gap := range pack.UnresolvedGaps {
 		gap = strings.TrimSpace(gap)
 		if gap != "" {
 			r.packet.Gaps = append(r.packet.Gaps, "context_pack: "+gap)
 		}
 	}
+
 	return true
 }
 
@@ -293,25 +325,31 @@ func discoveryContextPackTask(purpose string, path string, pattern string, langu
 	if strings.TrimSpace(query) != "" {
 		parts = append(parts, strings.TrimSpace(query))
 	}
+
 	if strings.TrimSpace(pattern) != "" {
 		parts = append(parts, "pattern "+strings.TrimSpace(pattern))
 	}
+
 	if strings.TrimSpace(path) != "" {
 		parts = append(parts, "path "+strings.TrimSpace(path))
 	}
+
 	if strings.TrimSpace(language) != "" {
 		parts = append(parts, "language "+strings.TrimSpace(language))
 	}
+
 	return strings.Join(parts, " ")
 }
 
 func (r *discoveryQueryRunner) addContextLayer() {
 	path := filepath.Join(r.manager.cfg.Root, ".idiom", "discovery", "context.md")
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		r.packet.Gaps = append(r.packet.Gaps, ".idiom/discovery/context.md was not present")
 		return
 	}
+
 	r.packet.Layers = append(r.packet.Layers, discoveryQueryLayer{
 		Name:          "project_context_digest",
 		Tool:          "artifact_read",
@@ -326,8 +364,10 @@ func (r *discoveryQueryRunner) addContextLayer() {
 func (r *discoveryQueryRunner) addFileOrientation(path string, language string) {
 	if prefix := discoveryLanguageToolPrefix(language); prefix != "" {
 		r.addLayer("file_outline", ToolRequest{Tool: prefix + "_file_outline", Path: path})
+
 		return
 	}
+
 	r.addLayer("file_read", ToolRequest{Tool: ToolNameReadFile, Path: path, StartLine: 1, EndLine: 160})
 }
 
@@ -341,12 +381,15 @@ func (r *discoveryQueryRunner) addLanguageRelationshipLayers(path string, patter
 		if pattern != "" {
 			r.addCtagsFallback(path, pattern)
 		}
+
 		return
 	}
+
 	if pattern == "" {
 		r.packet.Gaps = append(r.packet.Gaps, "pattern was empty; skipped symbol relationship layers")
 		return
 	}
+
 	for _, tool := range []string{
 		prefix + "_workspace_symbol",
 		prefix + "_definition",
@@ -355,6 +398,7 @@ func (r *discoveryQueryRunner) addLanguageRelationshipLayers(path string, patter
 	} {
 		r.addLayer(tool, ToolRequest{Tool: tool, Path: path, Pattern: pattern, MaxDepth: r.packet.Depth})
 	}
+
 	if includeCalls {
 		for _, tool := range []string{prefix + "_calls_from", prefix + "_calls_into"} {
 			r.addLayer(tool, ToolRequest{Tool: tool, Path: path, Pattern: pattern, MaxDepth: r.packet.Depth})
@@ -367,6 +411,7 @@ func (r *discoveryQueryRunner) addRelatedFileLayer(path string, pattern string, 
 	if prefix == "" {
 		return
 	}
+
 	r.addLayer("related_files", ToolRequest{Tool: prefix + "_related_files", Path: path, Pattern: pattern, MaxDepth: r.packet.Depth})
 }
 
@@ -374,11 +419,14 @@ func (r *discoveryQueryRunner) addHistoryLayers(path string, pattern string, req
 	if pattern != "" {
 		r.addLayer("history_symbol", ToolRequest{Tool: "history_symbol", Path: path, Pattern: pattern})
 	}
+
 	if req.StartLine > 0 && req.EndLine >= req.StartLine {
 		r.addLayer("history_range", ToolRequest{Tool: "history_range", Path: path, StartLine: req.StartLine, EndLine: req.EndLine})
 		r.addLayer("blame_range", ToolRequest{Tool: "blame_range", Path: path, StartLine: req.StartLine, EndLine: req.EndLine})
+
 		return
 	}
+
 	if path != "." {
 		r.addLayer("blame_range", ToolRequest{Tool: "blame_range", Path: path, StartLine: 1, EndLine: 80})
 	}
@@ -390,6 +438,7 @@ func (r *discoveryQueryRunner) addStructuralLayer(path string, req ToolRequest) 
 		r.packet.Gaps = append(r.packet.Gaps, "structural_search skipped because pattern was not an ast-grep shape")
 		return
 	}
+
 	r.addLayer("structural_search", ToolRequest{Tool: "structural_search", Path: path, Pattern: pattern, Language: r.packet.Language})
 }
 
@@ -397,6 +446,7 @@ func (r *discoveryQueryRunner) addCtagsFallback(path string, pattern string) {
 	if strings.TrimSpace(pattern) == "" {
 		return
 	}
+
 	r.addLayer("ctags_symbols", ToolRequest{Tool: "ctags_symbols", Path: path, Pattern: pattern})
 }
 
@@ -408,11 +458,14 @@ func (r *discoveryQueryRunner) addLayerResult(name string, req ToolRequest) (Too
 	if strings.TrimSpace(req.Tool) == "" || req.Tool == "discovery_query" {
 		return ToolResult{}, false
 	}
+
 	keyData, _ := json.Marshal(req)
 	key := name + ":" + string(keyData)
+
 	if _, ok := r.seen[key]; ok {
 		return ToolResult{}, false
 	}
+
 	r.seen[key] = struct{}{}
 
 	result := r.manager.Execute(r.ctx, req)
@@ -427,7 +480,9 @@ func (r *discoveryQueryRunner) addLayerResult(name string, req ToolRequest) (Too
 		OutputChars:   len(result.Output),
 		PrecisionTier: result.PrecisionTier,
 	}
+
 	r.packet.Layers = append(r.packet.Layers, layer)
+
 	return result, true
 }
 
@@ -436,14 +491,18 @@ func (r *discoveryQueryRunner) writeArtifact() error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("mkdir query artifact dir: %w", err)
 	}
+
 	_ = ensureDiscoveryArtifactsIgnored(r.manager.cfg.Root)
+
 	data, err := json.MarshalIndent(r.packet, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode query packet: %w", err)
 	}
+
 	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
 		return fmt.Errorf("write query artifact: %w", err)
 	}
+
 	return nil
 }
 
@@ -475,14 +534,17 @@ func (r *discoveryQueryRunner) summaryJSON() string {
 			Error:         layer.Error,
 			OutputExcerpt: compactDiscoveryQuerySummaryLayerOutput(layer),
 		})
+
 		if strings.TrimSpace(layer.Error) != "" {
 			summary.Errors = append(summary.Errors, layer.Name+":"+layer.Tool+": "+layer.Error)
 		}
 	}
+
 	data, err := json.MarshalIndent(summary, "", "  ")
 	if err != nil {
 		return ""
 	}
+
 	return string(data)
 }
 
@@ -490,6 +552,7 @@ func normalizeDiscoveryQueryPurpose(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.ReplaceAll(value, "-", "_")
 	value = strings.ReplaceAll(value, " ", "_")
+
 	switch value {
 	case "impact", "impact_analysis":
 		return "impact_analysis"
@@ -505,20 +568,26 @@ func normalizeDiscoveryQueryPurpose(value string) string {
 		if strings.Contains(value, "security") || strings.Contains(value, "vulnerability") {
 			return "security_review"
 		}
+
 		if strings.Contains(value, "history") || strings.Contains(value, "evolution") {
 			return "history_context"
 		}
+
 		if strings.Contains(value, "impact") || strings.Contains(value, "blast_radius") {
 			return "impact_analysis"
 		}
+
 		if strings.Contains(value, "trace") || strings.Contains(value, "tracing") || strings.Contains(value, "call_graph") {
 			return "function_tracing"
 		}
+
 		if strings.Contains(value, "architecture") ||
 			strings.Contains(value, "boundary") ||
 			(strings.Contains(value, "discovery") && (strings.Contains(value, "implementation") || strings.Contains(value, "definition") || strings.Contains(value, "orchestration") || strings.Contains(value, "pattern"))) {
+
 			return "architecture_boundary"
 		}
+
 		return ""
 	}
 }
@@ -526,6 +595,7 @@ func normalizeDiscoveryQueryPurpose(value string) string {
 func normalizeDiscoveryQueryLanguage(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.TrimPrefix(value, ".")
+
 	switch value {
 	case "go", "golang":
 		return "go"
@@ -568,35 +638,44 @@ func globForDiscoveryLanguage(language string) string {
 	if !ok {
 		return ""
 	}
+
 	return globForLanguageExtensions(lang.Extensions)
 }
 
 func globForLanguageExtensions(extensions []string) string {
 	seen := make(map[string]struct{}, len(extensions))
 	suffixes := make([]string, 0, len(extensions))
+
 	for _, ext := range extensions {
 		ext = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
 		if ext == "" {
 			continue
 		}
+
 		if _, ok := seen[ext]; ok {
 			continue
 		}
+
 		seen[ext] = struct{}{}
 		suffixes = append(suffixes, ext)
 	}
+
 	if len(suffixes) == 0 {
 		return ""
 	}
+
 	if len(suffixes) == 1 {
 		return "*." + suffixes[0]
 	}
+
 	return "*.{" + strings.Join(suffixes, ",") + "}"
 }
 
 func discoveryQueryID(root string, purpose string, req ToolRequest, target string, language string, depth int) string {
 	status, _ := execOutput(root, "git", "-C", root, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all")
+
 	status = filterDiscoveryQueryStatus(status)
+
 	head, _ := execOutput(root, "git", "-C", root, "rev-parse", "HEAD")
 	payload, _ := json.Marshal(map[string]any{
 		"purpose":  purpose,
@@ -609,27 +688,34 @@ func discoveryQueryID(root string, purpose string, req ToolRequest, target strin
 		"status":   strings.TrimSpace(status),
 	})
 	sum := sha256.Sum256(payload)
+
 	return fmt.Sprintf("%x", sum[:8])
 }
 
 func filterDiscoveryQueryStatus(status string) string {
 	var lines []string
+
 	for _, line := range strings.Split(status, "\n") {
 		if strings.Contains(line, ".idiom/") {
 			continue
 		}
+
 		line = strings.TrimSpace(line)
 		if line != "" {
 			lines = append(lines, line)
 		}
 	}
+
 	return strings.Join(lines, "\n")
 }
 
 func execOutput(dir string, name string, args ...string) (string, error) {
 	cmd := execCommand(name, args...)
+
 	cmd.Dir = dir
+
 	out, err := cmd.Output()
+
 	return string(out), err
 }
 
@@ -644,33 +730,42 @@ func ensureDiscoveryArtifactsIgnored(root string) error {
 	if err != nil || strings.TrimSpace(excludePath) == "" {
 		return err
 	}
+
 	data, err := os.ReadFile(excludePath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
+
 	for _, line := range strings.Split(string(data), "\n") {
 		switch strings.TrimSpace(line) {
 		case ".idiom/", "/.idiom/":
 			return nil
 		}
 	}
+
 	if err := os.MkdirAll(filepath.Dir(excludePath), 0o755); err != nil {
 		return err
 	}
+
 	addition := "# Idiom discovery artifacts\n.idiom/\n"
+
 	if len(data) > 0 {
 		prefix := "\n"
 		if strings.HasSuffix(string(data), "\n") {
 			prefix = ""
 		}
+
 		addition = prefix + addition
 	}
+
 	file, err := os.OpenFile(excludePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
+
 	_, err = file.WriteString(addition)
+
 	return err
 }
 
@@ -679,13 +774,16 @@ func gitInfoExcludePath(root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	path := strings.TrimSpace(output)
 	if path == "" {
 		return "", nil
 	}
+
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(root, path)
 	}
+
 	return path, nil
 }
 
@@ -694,15 +792,19 @@ func requestMap(req ToolRequest) map[string]any {
 	if err != nil {
 		return nil
 	}
+
 	var out map[string]any
+
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil
 	}
+
 	for key, value := range out {
 		if emptyJSONValue(value) {
 			delete(out, key)
 		}
 	}
+
 	return out
 }
 
@@ -729,6 +831,7 @@ func compactDiscoveryQuerySummaryLayerOutput(layer discoveryQueryLayer) string {
 	if layer.Name == "project_behavior_digest" || layer.Name == "project_context_digest" {
 		return ""
 	}
+
 	return compactDiscoveryQueryEvidenceOutput(layer.OutputExcerpt)
 }
 
@@ -737,14 +840,17 @@ func compactDiscoveryQueryOutput(text string) string {
 	if text == "" {
 		return ""
 	}
+
 	lines := strings.Split(text, "\n")
 	if len(lines) > discoveryQueryOutputLines {
 		lines = append(lines[:discoveryQueryOutputLines], "...")
 	}
+
 	out := strings.Join(lines, "\n")
 	if len(out) > discoveryQueryOutputChars {
 		out = out[:discoveryQueryOutputChars] + "\n..."
 	}
+
 	return out
 }
 
@@ -753,14 +859,17 @@ func compactDiscoveryQueryEvidenceOutput(text string) string {
 	if text == "" {
 		return ""
 	}
+
 	lines := strings.Split(text, "\n")
 	if len(lines) > 20 {
 		lines = append(lines[:20], "...")
 	}
+
 	out := strings.Join(lines, "\n")
 	if len(out) > 2500 {
 		out = out[:2500] + "\n..."
 	}
+
 	return out
 }
 
@@ -769,6 +878,7 @@ func countNonEmptyOutputLines(text string) int {
 	if text == "" {
 		return 0
 	}
+
 	return strings.Count(text, "\n") + 1
 }
 

@@ -24,6 +24,7 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 	if cmd == "" {
 		return RedirectDecision{}
 	}
+
 	if d.firedRedirects[redirectFingerprint(req)] {
 		return RedirectDecision{}
 	}
@@ -34,6 +35,7 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 				"candidate_request: {\"tool\":\"read_file\",\"path\":%q,\"start_line\":%d,\"end_line\":%d}\n"+
 				"direct_tool_fallback: if the bounded read returns nothing, the original command remains available.",
 			match.path, match.start, match.end)
+
 		return d.shellRedirectDecision(req, shellRedirect{
 			kind:              "shell|sed_read_file",
 			capability:        workspace.Capability("read_file"),
@@ -49,6 +51,7 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 				"candidate_request: {\"tool\":\"read_file\",\"path\":%q,\"start_line\":%d,\"end_line\":%d}\n"+
 				"direct_tool_fallback: if the bounded read returns nothing, the original command remains available.",
 			match.path, match.start, match.end)
+
 		return d.shellRedirectDecision(req, shellRedirect{
 			kind:              "shell|headtail_read_file",
 			capability:        workspace.Capability("read_file"),
@@ -64,6 +67,7 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 				"candidate_request: {\"tool\":\"read_file\",\"path\":%q}\n"+
 				"direct_tool_fallback: if the bounded read returns nothing, the original command remains available.",
 			match)
+
 		return d.shellRedirectDecision(req, shellRedirect{
 			kind:              "shell|cat_read_file",
 			capability:        workspace.Capability("read_file"),
@@ -79,6 +83,7 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 				"candidate_request: {\"tool\":\"search_files\",\"pattern\":%q}\n"+
 				"direct_tool_fallback: if file-name search returns nothing, the original command remains available.",
 			match)
+
 		return d.shellRedirectDecision(req, shellRedirect{
 			kind:              "shell|find_search_files",
 			capability:        workspace.Capability("search_files"),
@@ -94,6 +99,7 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 				"candidate_request: {\"tool\":\"file_stats\",\"path\":%q}\n"+
 				"direct_tool_fallback: if file stats do not answer the question, the original command remains available.",
 			match)
+
 		return d.shellRedirectDecision(req, shellRedirect{
 			kind:              "shell|file_stats",
 			capability:        workspace.Capability("file_stats"),
@@ -108,9 +114,11 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 		if !ok {
 			return RedirectDecision{}
 		}
+
 		if !languageActive(ws, lang) {
 			return RedirectDecision{}
 		}
+
 		// Prefer references when the model already named a file (that's
 		// the "where is X used in this file" question); workspace_symbol
 		// otherwise.
@@ -118,6 +126,7 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 		if match.path != "" {
 			primary = workspace.CapReferences
 		}
+
 		replacement := lang.Tool(primary)
 		if replacement == "" {
 			// Fall back to the other side of the symbol pair.
@@ -125,29 +134,37 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 			if primary == workspace.CapReferences {
 				alt = workspace.CapFindSymbol
 			}
+
 			replacement = lang.Tool(alt)
 			if replacement == "" {
 				return RedirectDecision{}
 			}
+
 			primary = alt
 		}
+
 		kind := "shell|" + lang.Name + "|" + string(primary)
 
 		guide := ""
+
 		if !d.decisionTablesShown[lang.Name] {
 			d.decisionTablesShown[lang.Name] = true
 			guide = lang.DecisionGuide
 		}
 
 		var b strings.Builder
+
 		fmt.Fprintf(&b, "The request greps for an identifier via shell on %s code. Capability route: %s via adapter %s; it returns file, line, and qualified-name for each hit.\n",
 			lang.Name, primary, replacement)
+
 		if match.path != "" {
 			fmt.Fprintf(&b, "candidate_request: {\"tool\":%q,\"pattern\":%q,\"path\":%q}\n", replacement, match.pattern, match.path)
 		} else {
 			fmt.Fprintf(&b, "candidate_request: {\"tool\":%q,\"pattern\":%q}\n", replacement, match.pattern)
 		}
+
 		b.WriteString("direct_tool_fallback: if the capability route returns nothing, the original command remains available.")
+
 		return d.shellRedirectDecision(req, shellRedirect{
 			kind:              kind,
 			capability:        primary,
@@ -180,6 +197,7 @@ const turnWideShellRedirectHardBlockAt = 3
 func (d *DiscoveryRedirect) shellRedirectDecision(req workspace.ToolRequest, redirect shellRedirect) RedirectDecision {
 	d.firedRedirects[redirectFingerprint(req)] = true
 	d.kindFireCount[redirect.kind]++
+
 	hardReject := d.kindFireCount[redirect.kind] >= turnWideShellRedirectHardBlockAt
 
 	result := workspace.ToolResult{Tool: req.Tool, Summary: redirect.summary, Output: redirect.message}
@@ -188,6 +206,7 @@ func (d *DiscoveryRedirect) shellRedirectDecision(req workspace.ToolRequest, red
 		result.Error = redirect.message
 		result.Output = ""
 	}
+
 	return RedirectDecision{
 		ShouldRedirect: true,
 		HardReject:     hardReject,

@@ -111,6 +111,7 @@ func DerivePlanExecuteRuntimeCallPolicy(input PlanExecuteRuntimeCallPolicyInput)
 		TransportMode:            planExecuteTransportModeFromRuntime(runtimePolicy.TransportMode),
 		ExpressibleActionClasses: append([]string(nil), runtimePolicy.ExpressibleActionClasses...),
 	}
+
 	return policy
 }
 
@@ -235,9 +236,11 @@ func (policy PlanExecuteRuntimeCallPolicy) TelemetryFields() map[string]any {
 	if policy.EnableThinking != nil {
 		fields["thinking_enabled"] = *policy.EnableThinking
 	}
+
 	if policy.TimeoutMillis > 0 {
 		fields["effective_timeout_ms"] = policy.TimeoutMillis
 	}
+
 	return fields
 }
 
@@ -245,6 +248,7 @@ func runnerTelemetryResponseFormat(policy PlanExecuteRuntimeCallPolicy) string {
 	if policy.ResponseFormatJSON {
 		return "json"
 	}
+
 	return strings.TrimSpace(policy.ResponseFormat)
 }
 
@@ -276,9 +280,11 @@ func planExecuteTextualToolParserFromChatOptions(opts llama.ChatOptions, support
 
 func planExecuteForceVisibleActionChatOptions(opts llama.ChatOptions) llama.ChatOptions {
 	thinkingOff := false
+
 	opts.EnableThinking = &thinkingOff
 	opts.ChatTemplateKwargs = true
 	opts.PreserveThinking = false
+
 	return opts
 }
 
@@ -291,6 +297,7 @@ func planExecuteSubmitPlanTerminalChatOptions(opts llama.ChatOptions, supportsNa
 	} else {
 		opts.ResponseFormatJSON = false
 	}
+
 	return opts
 }
 
@@ -298,9 +305,11 @@ func planExecuteSetExactMaxTokens(opts llama.ChatOptions, target int) llama.Chat
 	if target <= 0 {
 		return opts
 	}
+
 	if opts.MaxTokens <= 0 || opts.MaxTokens < target || opts.MaxTokens > target {
 		opts.MaxTokens = target
 	}
+
 	return opts
 }
 
@@ -308,8 +317,10 @@ func planExecuteCapMaxTokens(opts llama.ChatOptions, limit int) llama.ChatOption
 	if limit <= 0 {
 		return opts
 	}
+
 	if opts.MaxTokens <= 0 || opts.MaxTokens > limit {
 		opts.MaxTokens = limit
 	}
+
 	return opts
 }

@@ -96,22 +96,28 @@ func (r *Runner) effectivePolicy() RunPolicy {
 	if policy.MaxToolSteps == 0 && r.MaxToolSteps != 0 {
 		policy.MaxToolSteps = r.MaxToolSteps
 	}
+
 	if briefLimit := r.RuntimeBrief.Budget.MaxToolSteps; briefLimit > 0 && (policy.MaxToolSteps <= 0 || briefLimit < policy.MaxToolSteps) {
 		policy.MaxToolSteps = briefLimit
 	}
+
 	if policy.MaxNoProgressTurns <= 0 {
 		policy.MaxNoProgressTurns = 6
 	}
+
 	if runnerBriefRequiresMutation(r.RuntimeBrief) {
 		policy = scaleMaxToolStepsByRequiredPaths(policy, len(r.RuntimeBrief.RequiredEditPaths))
 		policy = scaleMaxModelCallsByRequiredPaths(policy, len(r.RuntimeBrief.RequiredEditPaths))
 	}
+
 	if briefLimit := r.RuntimeBrief.Budget.MaxToolSteps; briefLimit > 0 && (policy.MaxToolSteps <= 0 || briefLimit < policy.MaxToolSteps) {
 		policy.MaxToolSteps = briefLimit
 	}
+
 	if briefLimit := r.RuntimeBrief.Budget.MaxModelCalls; briefLimit > 0 && (policy.MaxModelCalls <= 0 || briefLimit < policy.MaxModelCalls) {
 		policy.MaxModelCalls = briefLimit
 	}
+
 	return policy
 }
 
@@ -131,13 +137,16 @@ func scaleMaxToolStepsByRequiredPaths(policy RunPolicy, pathCount int) RunPolicy
 	if pathCount <= 1 {
 		return policy
 	}
+
 	scaled := maxToolStepsBase + 4*(pathCount-1)
 	if scaled > maxToolStepsCeiling {
 		scaled = maxToolStepsCeiling
 	}
+
 	if policy.MaxToolSteps >= maxToolStepsBase && policy.MaxToolSteps < scaled {
 		policy.MaxToolSteps = scaled
 	}
+
 	return policy
 }
 
@@ -150,13 +159,16 @@ func scaleMaxModelCallsByRequiredPaths(policy RunPolicy, pathCount int) RunPolic
 	if pathCount <= 1 {
 		return policy
 	}
+
 	scaled := maxModelCallsBase + 2*(pathCount-1)
 	if scaled > maxModelCallsCeiling {
 		scaled = maxModelCallsCeiling
 	}
+
 	if policy.MaxModelCalls >= maxModelCallsBase && policy.MaxModelCalls < scaled {
 		policy.MaxModelCalls = scaled
 	}
+
 	return policy
 }
 
@@ -262,16 +274,22 @@ func (m *runnerMetrics) addUsage(usage llama.Usage) {
 	if m == nil {
 		return
 	}
+
 	m.PromptTokens += nonNegativeInt(usage.PromptTokens)
 	m.CompletionTokens += nonNegativeInt(usage.CompletionTokens)
 	m.PromptCacheHitTokens += nonNegativeInt(usage.PromptCacheHitTokens)
 	m.PromptCacheMissTokens += nonNegativeInt(usage.PromptCacheMissTokens)
+
 	m.PromptCacheAccountingKnown = m.PromptCacheAccountingKnown || usage.PromptCacheAccountingKnown
+
 	m.ReasoningTokens += nonNegativeInt(usage.ReasoningTokens)
+
 	total := usage.TotalTokens
+
 	if total <= 0 {
 		total = usage.PromptTokens + usage.CompletionTokens
 	}
+
 	m.TotalTokens += nonNegativeInt(total)
 }
 
@@ -279,6 +297,7 @@ func nonNegativeInt(value int) int {
 	if value < 0 {
 		return 0
 	}
+
 	return value
 }
 

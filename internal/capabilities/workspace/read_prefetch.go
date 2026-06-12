@@ -50,41 +50,54 @@ func (m *Manager) PrefetchReadFiles(paths []string, opts PrefetchReadOptions) Pr
 		for _, path := range paths {
 			report.SkippedPaths = append(report.SkippedPaths, PrefetchSkippedPath{Path: path, Reason: "workspace_unavailable"})
 		}
+
 		return report
 	}
+
 	opts = m.normalizePrefetchReadOptions(opts)
+
 	seen := map[string]struct{}{}
+
 	for _, requested := range paths {
 		requested = strings.TrimSpace(requested)
 		if requested == "" {
 			continue
 		}
+
 		if len(report.Results) >= opts.MaxFiles {
 			report.SkippedPaths = append(report.SkippedPaths, PrefetchSkippedPath{Path: requested, Reason: "max_files_exceeded"})
 			continue
 		}
+
 		if report.Bytes >= opts.MaxBytes {
 			report.SkippedPaths = append(report.SkippedPaths, PrefetchSkippedPath{Path: requested, Reason: "max_bytes_exceeded"})
 			continue
 		}
+
 		result, selectedPath, bytesRead, linesRead, truncated, skip := m.prefetchReadFile(requested, opts, opts.MaxBytes-report.Bytes)
 		if skip.Reason != "" {
 			report.SkippedPaths = append(report.SkippedPaths, skip)
 			continue
 		}
+
 		if _, ok := seen[selectedPath]; ok {
 			report.DuplicatePaths++
 			continue
 		}
+
 		seen[selectedPath] = struct{}{}
+
 		report.Results = append(report.Results, result)
 		report.SelectedPaths = append(report.SelectedPaths, selectedPath)
+
 		report.Bytes += bytesRead
 		report.Lines += linesRead
+
 		if truncated {
 			report.TruncatedFiles++
 		}
 	}
+
 	if len(report.Results) > 0 {
 		// Conservative lower bound: N prefetched files replace the serial
 		// "read file 1 ... read file N" tool-acquisition sequence with one
@@ -96,6 +109,7 @@ func (m *Manager) PrefetchReadFiles(paths []string, opts PrefetchReadOptions) Pr
 			report.EstimatedRoundTripsSaved = 0
 		}
 	}
+
 	return report
 }
 
@@ -103,24 +117,31 @@ func (m *Manager) normalizePrefetchReadOptions(opts PrefetchReadOptions) Prefetc
 	if opts.MaxFiles <= 0 {
 		opts.MaxFiles = DefaultPrefetchMaxFiles
 	}
+
 	if opts.MaxBytes <= 0 {
 		opts.MaxBytes = DefaultPrefetchMaxBytes
 	}
+
 	if opts.MaxBytesPerFile <= 0 {
 		opts.MaxBytesPerFile = DefaultPrefetchMaxBytesPerFile
 	}
+
 	if opts.MaxExcerptBytes <= 0 {
 		opts.MaxExcerptBytes = DefaultPrefetchMaxExcerptBytes
 	}
+
 	if m != nil && m.cfg.MaxFileBytes > 0 && opts.MaxBytesPerFile > m.cfg.MaxFileBytes {
 		opts.MaxBytesPerFile = m.cfg.MaxFileBytes
 	}
+
 	if opts.MaxBytesPerFile > opts.MaxBytes {
 		opts.MaxBytesPerFile = opts.MaxBytes
 	}
+
 	if opts.MaxExcerptBytes > opts.MaxBytesPerFile {
 		opts.MaxExcerptBytes = opts.MaxBytesPerFile
 	}
+
 	return opts
 }
 
@@ -129,64 +150,82 @@ func (m *Manager) prefetchReadFile(requested string, opts PrefetchReadOptions, r
 	if err != nil {
 		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: requested, Reason: "resolve_failed"}
 	}
+
 	displayPath := m.displayPath(path)
 	kind := classifySearchFilePath(displayPath)
+
 	switch kind {
 	case searchFileKindLog, searchFileKindGenerated:
 		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "excluded_" + string(kind)}
 	}
+
 	info, err := os.Stat(path)
 	if err != nil {
 		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "stat_failed"}
 	}
+
 	if info.IsDir() {
 		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "directory"}
 	}
+
 	if opts.MaxBytesPerFile <= 0 || opts.MaxExcerptBytes <= 0 || remainingBytes <= 0 {
 		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "max_bytes_exceeded"}
 	}
+
 	sampleLimit := opts.MaxBytesPerFile
 	if remainingBytes < sampleLimit {
 		sampleLimit = remainingBytes
 	}
+
 	file, err := os.Open(path)
 	if err != nil {
 		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "read_failed"}
 	}
 	defer file.Close()
+
 	data, err := io.ReadAll(io.LimitReader(file, int64(sampleLimit)))
 	if err != nil {
 		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "read_failed"}
 	}
+
 	if bytes.IndexByte(data, 0) >= 0 {
 		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "binary"}
 	}
+
 	originalLines, err := countWorkspaceFileLines(path)
 	if err != nil {
 		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "read_failed"}
 	}
+
 	excerptLimit := opts.MaxExcerptBytes
 	if remainingBytes < excerptLimit {
 		excerptLimit = remainingBytes
 	}
+
 	if excerptLimit > len(data) {
 		excerptLimit = len(data)
 	}
+
 	excerpt := data
 	if len(excerpt) > excerptLimit {
 		excerpt = excerpt[:excerptLimit]
 	}
+
 	outputBytes := len(excerpt)
 	truncated := int64(outputBytes) < info.Size()
 	lines := splitWorkspaceFileLines(excerpt)
+
 	if len(lines) == 0 {
 		lines = []string{""}
 	}
+
 	var b strings.Builder
+
 	for i, line := range lines {
 		line = util.TruncateBytes(strings.TrimRight(line, "\r\n"), defaultLogLineCharCap, "...[line truncated]")
 		fmt.Fprintf(&b, "%d:%s\n", i+1, line)
 	}
+
 	summary := fmt.Sprintf("Read %s lines 1-%d (total lines: %d; source: prefetch)", description, len(lines), len(lines))
 	if truncated {
 		summary = fmt.Sprintf("Read %s lines 1-%d (excerpt lines: %d; total lines: %d; bytes: %d/%d; source: prefetch; truncated=true)", description, len(lines), len(lines), originalLines, outputBytes, info.Size())
@@ -196,7 +235,9 @@ func (m *Manager) prefetchReadFile(requested string, opts PrefetchReadOptions, r
 			fmt.Fprintf(&b, "\n[prefetch excerpt truncated: omitted content after line %d; full file not included in prefetch]", len(lines))
 		}
 	}
+
 	m.MarkPathObserved(displayPath)
+
 	return ToolResult{
 		Tool:    ToolNamePrefetch,
 		Summary: summary,
@@ -210,18 +251,24 @@ func countWorkspaceFileLines(path string) (int, error) {
 		return 0, err
 	}
 	defer file.Close()
+
 	reader := bufio.NewReader(file)
 	lines := 0
+
 	for {
 		_, err := reader.ReadString('\n')
 		lines++
+
 		if err == nil {
 			continue
 		}
+
 		if err == io.EOF {
 			break
 		}
+
 		return 0, err
 	}
+
 	return lines, nil
 }

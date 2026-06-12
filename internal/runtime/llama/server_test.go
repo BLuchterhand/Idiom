@@ -27,15 +27,18 @@ func TestBuildArgsUsesExplicitFlashAttentionMode(t *testing.T) {
 
 	args := controller.buildArgs()
 	foundFlashAttention := false
+
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == "--flash-attn" && args[i+1] == "on" {
 			foundFlashAttention = true
 			break
 		}
 	}
+
 	if !foundFlashAttention {
 		t.Fatalf("expected explicit --flash-attn on args, got %#v", args)
 	}
+
 	for _, arg := range args {
 		if arg == "-fa" {
 			t.Fatalf("did not expect legacy -fa flag in args: %#v", args)
@@ -73,6 +76,7 @@ func TestBuildArgsForMLXOmitsLlamaFlags(t *testing.T) {
 	}
 
 	var sawModel, sawHost, sawPort, sawExtra bool
+
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--model":
@@ -91,6 +95,7 @@ func TestBuildArgsForMLXOmitsLlamaFlags(t *testing.T) {
 			sawExtra = true
 		}
 	}
+
 	if !sawModel || !sawHost || !sawPort || !sawExtra {
 		t.Fatalf("MLX args missing required flags (model=%v host=%v port=%v extra=%v): %#v",
 			sawModel, sawHost, sawPort, sawExtra, args)
@@ -109,6 +114,7 @@ func TestStartReturnsClearErrorWhenLlamaModelMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing model path to fail before spawning server")
 	}
+
 	if !strings.Contains(err.Error(), "llama model path") || !strings.Contains(err.Error(), "missing.gguf") {
 		t.Fatalf("expected clear missing-model error, got %v", err)
 	}

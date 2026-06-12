@@ -146,6 +146,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 		if strings.TrimSpace(family) == "security_review" {
 			searchPolicy = append(searchPolicy, "prefer_discovery_query_security_review_before_raw_scans", "name_heavy_scanner_need_instead_of_default_semgrep_or_joern")
 		}
+
 		return RuntimeContractSpec{
 			TaskFamily:           taskFamilyID(family),
 			Contract:             ContractReviewFindings,
@@ -253,10 +254,12 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 		// the gate fires; the prefix "not_required_for_*" short-circuits
 		// it.
 		verificationContract := VerificationTestsPassedFailedSkipped
+
 		switch family {
 		case "docs_edit", "prompt_edit_security":
 			verificationContract = VerificationNotRequiredTextMutation
 		}
+
 		return RuntimeContractSpec{
 			TaskFamily:           taskFamilyID(family),
 			Contract:             ContractImplementationResult,
@@ -286,9 +289,11 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 
 func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools []string) WorkerRuntimeBrief {
 	spec := RuntimeContractForTaskFamily(family)
+
 	if strings.TrimSpace(lane) == "" {
 		lane = "main"
 	}
+
 	brief := WorkerRuntimeBrief{
 		Lane:                 strings.TrimSpace(lane),
 		TaskFamily:           string(spec.TaskFamily),
@@ -312,6 +317,7 @@ func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools
 		// live-surface filtering does not remove the only valid planner write.
 		brief.AllowedTools = mergeStrings(brief.AllowedTools, []string{workspace.ToolNameSubmitPlan})
 	}
+
 	if spec.PermissionProfile == PermissionConversationOnly {
 		// Conversation mode is intentionally tool-free. Codebase questions
 		// should route to locate, architecture, review, or implementation
@@ -319,17 +325,21 @@ func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools
 		brief.AllowedTools = nil
 		brief.ToolManifest = nil
 	}
+
 	if spec.ToolProfile == CapabilityArtifactDistiller {
 		brief.AllowedTools = nil
 		brief.RequiredTools = nil
 		brief.ToolManifest = nil
 	}
+
 	if spec.PermissionProfile == PermissionReadOnlyWorkspace {
 		brief.ForbiddenTools = mergeStrings(brief.ForbiddenTools, []string{"mutating_shell"})
 	}
+
 	if spec.PermissionProfile == PermissionReadOnlyVerificationShell {
 		brief.ForbiddenTools = mergeStrings(brief.ForbiddenTools, []string{"mutating_shell"})
 	}
+
 	return NormalizeRuntimeBrief(brief)
 }
 
@@ -342,6 +352,7 @@ func AllowedToolsForCapabilityProfile(available []string, profile ToolCapability
 	if len(available) == 0 {
 		return nil
 	}
+
 	switch profile {
 	case CapabilityArtifactDistiller:
 		return nil
@@ -377,6 +388,7 @@ func toolManifestOptionsForProfile(profile ToolCapabilityProfile) workspace.Tool
 		IncludeRust:       true,
 		IncludeJava:       true,
 	}
+
 	switch profile {
 	case CapabilityGuardedWrite, CapabilityIsolatedWrite:
 		opts.IncludeTaskLedger = true
@@ -394,19 +406,24 @@ func toolManifestOptionsForProfile(profile ToolCapabilityProfile) workspace.Tool
 	case CapabilityImplementationScopedEdit:
 		opts.IncludeWriteTools = true
 	}
+
 	return opts
 }
 
 func readOnlyDiscoveryToolNames() []string {
 	names := mergeStrings(workspace.RuntimeSourceInspectionToolNames(), []string{workspace.ToolNameReadOnlyCapability, workspace.ToolNameHarnessAudit})
+
 	names = mergeStrings(names, workspace.RuntimeContextDiscoveryToolNames())
+
 	return mergeStrings(names, []string{workspace.ToolNameTask, "note"})
 }
 
 func planSubmissionReviewToolNames() []string {
 	names := mergeStrings([]string{workspace.ToolNameReadFile, workspace.ToolNameFileStats, workspace.ToolNameCodeNavigate, workspace.ToolNameSourceSanity}, []string{workspace.ToolNameHarnessAudit, workspace.ToolNameHarnessFeedback})
+
 	names = mergeStrings(names, workspace.RuntimeContextDiscoveryToolNames())
 	names = mergeStrings(names, workspace.RuntimeHistoryInspectionToolNames())
+
 	return mergeStrings(names, []string{workspace.ToolNameSubmitPlan})
 }
 
@@ -416,22 +433,26 @@ func planSubmissionPlannerToolNames() []string {
 
 func guardedWriteToolNames() []string {
 	names := []string{workspace.ToolNameTaskLedger, workspace.ToolNameTask, workspace.ToolNamePwd}
+
 	names = mergeStrings(names, workspace.RuntimeSourceInspectionToolNames())
 	names = mergeStrings(names, workspace.RuntimeContextDiscoveryToolNames())
 	names = mergeStrings(names, []string{workspace.ToolNameGitStatus, workspace.ToolNameGitDiff})
 	names = mergeStrings(names, workspace.RuntimeHistoryInspectionToolNames())
 	names = mergeStrings(names, []string{workspace.ToolNameShell})
 	names = mergeStrings(names, workspace.WorkspaceWriteToolNames())
+
 	return mergeStrings(names, []string{workspace.ToolNameSubmitPlan})
 }
 
 func implementationScopedEditToolNames() []string {
 	names := append([]string{}, workspace.WorkspaceWriteToolNames()...)
+
 	names = mergeStrings(names, []string{workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate, workspace.ToolNameSubmitPlan})
 	names = mergeStrings(names, workspace.RuntimeContextDiscoveryToolNames())
 	names = mergeStrings(names, []string{workspace.ToolNameDependencyGraph, workspace.ToolNameCtagsSymbols})
 	names = mergeStrings(names, workspace.RuntimeHistoryInspectionToolNames())
 	names = mergeStrings(names, []string{workspace.ToolNameSourceSanity})
+
 	return names
 }
 
@@ -439,6 +460,7 @@ func filterAllowedTools(available []string, profile ToolCapabilityProfile, names
 	if len(available) == 0 || len(names) == 0 {
 		return nil
 	}
+
 	allowed := make(map[string]struct{}, len(names))
 	for _, name := range names {
 		name = strings.TrimSpace(name)
@@ -446,13 +468,16 @@ func filterAllowedTools(available []string, profile ToolCapabilityProfile, names
 			allowed[name] = struct{}{}
 		}
 	}
+
 	var out []string
+
 	for _, tool := range available {
 		trimmed := strings.TrimSpace(tool)
 		if _, ok := allowed[trimmed]; ok {
 			out = append(out, tool)
 			continue
 		}
+
 		// External/MCP tools are opaque to idiom, so only broad discovery,
 		// planning, and implementation profiles may inherit them by
 		// default. Bounded review/verification profiles use exact
@@ -462,6 +487,7 @@ func filterAllowedTools(available []string, profile ToolCapabilityProfile, names
 			out = append(out, tool)
 		}
 	}
+
 	return out
 }
 
@@ -491,16 +517,20 @@ func isExternalToolName(name string) bool {
 	if name == "" {
 		return false
 	}
+
 	if strings.HasPrefix(name, "mcp:") {
 		return true
 	}
+
 	// rg is a search_content alias; it is not a separate manifest entry
 	// but must still be recognized as built-in.
 	if name == "rg" {
 		return false
 	}
+
 	if workspace.IsBuiltInToolName(name) {
 		return false
 	}
+
 	return true
 }

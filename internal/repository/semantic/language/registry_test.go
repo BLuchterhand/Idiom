@@ -21,6 +21,7 @@ func TestLanguageRegistryIncludesCanonicalToolFamilies(t *testing.T) {
 		if !ok {
 			t.Fatalf("LanguageForName(%q) not found", name)
 		}
+
 		if got := lang.Tool(CapReadSymbol); got != tool {
 			t.Fatalf("%s read-symbol tool = %q, want %q", name, got, tool)
 		}
@@ -31,9 +32,11 @@ func TestLanguageAliasesAndExtensions(t *testing.T) {
 	if lang, ok := LanguageForName("js"); !ok || lang.Name != "typescript" {
 		t.Fatalf("LanguageForName(js) = %#v, %v; want typescript", lang, ok)
 	}
+
 	if lang, ok := LanguageForExtension(".tsx"); !ok || lang.Name != "typescript" {
 		t.Fatalf("LanguageForExtension(.tsx) = %#v, %v; want typescript", lang, ok)
 	}
+
 	if lang, ok := LanguageForExtension(".hpp"); !ok || lang.Name != "cpp" {
 		t.Fatalf("LanguageForExtension(.hpp) = %#v, %v; want cpp", lang, ok)
 	}

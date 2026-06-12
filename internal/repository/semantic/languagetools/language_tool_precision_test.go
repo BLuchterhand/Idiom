@@ -39,6 +39,7 @@ func TestLanguageRegistryConformanceCapabilities(t *testing.T) {
 			if strings.TrimSpace(tool) == "" {
 				t.Fatalf("%s missing standard capability %s", lang.Name, cap)
 			}
+
 			if !strings.HasPrefix(tool, languageToolPrefix(lang.Name)) {
 				t.Fatalf("%s %s tool %q does not use expected language prefix", lang.Name, cap, tool)
 			}
@@ -53,6 +54,7 @@ func TestLanguageRegistryTypeScriptAliases(t *testing.T) {
 			t.Fatalf("LanguageForName(%q) = %#v, %v; want typescript", name, lang, ok)
 		}
 	}
+
 	for _, ext := range []string{".d.ts", ".d.mts", ".d.cts"} {
 		lang, ok := LanguageForExtension(ext)
 		if !ok || lang.Name != "typescript" {
@@ -63,6 +65,7 @@ func TestLanguageRegistryTypeScriptAliases(t *testing.T) {
 
 func TestLanguageToolPrecisionTierConformance(t *testing.T) {
 	ctx := context.Background()
+
 	for _, fixture := range []languagePrecisionFixture{
 		newGoPrecisionFixture(t),
 		newCppPrecisionFixture(t),
@@ -76,16 +79,21 @@ func TestLanguageToolPrecisionTierConformance(t *testing.T) {
 			if !ok {
 				t.Fatalf("language %q not in registry", fixture.name)
 			}
+
 			for cap, tool := range lang.Tools {
 				req, ok := fixture.requests[cap]
 				if !ok {
 					t.Fatalf("%s: missing conformance request for %s (%s)", fixture.name, cap, tool)
 				}
+
 				req.Tool = tool
+
 				result := fixture.manager.Execute(ctx, req)
+
 				if result.Tool != tool {
 					t.Fatalf("%s %s: result tool mismatch: want %s got %s", fixture.name, cap, tool, result.Tool)
 				}
+
 				if !validPrecisionTier(result.PrecisionTier) {
 					t.Fatalf("%s %s: invalid precision tier %q for result %#v", fixture.name, cap, result.PrecisionTier, result)
 				}
@@ -97,9 +105,11 @@ func TestLanguageToolPrecisionTierConformance(t *testing.T) {
 func TestLanguagePrecisionTierIsShownToModel(t *testing.T) {
 	result := ToolResult{Tool: "go_find_symbol", Summary: "Found 1 matching Go symbol", PrecisionTier: PrecisionTierSyntaxIndex}
 	rendered := FormatToolResultForModel(result)
+
 	if !strings.Contains(rendered, "precision_tier: syntax-index") {
 		t.Fatalf("model result missing precision tier:\n%s", rendered)
 	}
+
 	trace := FormatToolTrace(result)
 	if !strings.Contains(trace, "precision_tier=syntax-index") {
 		t.Fatalf("trace missing precision tier:\n%s", trace)
@@ -121,12 +131,14 @@ func TestSupplementalLanguageDiscoveryToolsReceivePrecisionTier(t *testing.T) {
 		{name: "cpp_includes", mgr: cppFixture.manager, req: ToolRequest{Tool: "cpp_includes", Path: filepath.Join("src", "worker_system.cpp")}},
 		{name: "cpp_dead_symbol", mgr: cppFixture.manager, req: ToolRequest{Tool: "cpp_dead_symbol", Pattern: "NoSuchSymbol"}},
 	}
+
 	for _, tt := range tests {
 		result := tt.mgr.Execute(context.Background(), tt.req)
 		if result.PrecisionTier == "" || !validPrecisionTier(result.PrecisionTier) {
 			t.Fatalf("%s precision tier = %q, want valid non-empty tier for result %#v", tt.name, result.PrecisionTier, result)
 		}
 	}
+
 	result := goFixture.manager.Execute(context.Background(), ToolRequest{Tool: "go_move_declarations"})
 	if result.PrecisionTier != "" {
 		t.Fatalf("write tool received precision tier %q", result.PrecisionTier)
@@ -139,6 +151,7 @@ func languageByName(name string) (LanguageSupport, bool) {
 			return lang, true
 		}
 	}
+
 	return LanguageSupport{}, false
 }
 
@@ -162,6 +175,7 @@ func validPrecisionTier(tier string) bool {
 
 func newGoPrecisionFixture(t *testing.T) languagePrecisionFixture {
 	t.Helper()
+
 	root := t.TempDir()
 	writePrecisionFile(t, filepath.Join(root, "go.mod"), "module example.test\n\ngo 1.22\n")
 	writePrecisionFile(t, filepath.Join(root, "main.go"), `
@@ -183,7 +197,9 @@ func main() {
 	Worker{}.Run()
 }
 `)
+
 	mgr := NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
+
 	return languagePrecisionFixture{
 		name:    "go",
 		manager: mgr,
@@ -208,6 +224,7 @@ func main() {
 
 func newCppPrecisionFixture(t *testing.T) languagePrecisionFixture {
 	t.Helper()
+
 	root := t.TempDir()
 	writeCppFixture(t, filepath.Join(root, "include", "system_base.h"), `
 #pragma once
@@ -234,7 +251,9 @@ int main() {
 }
 `)
 	writeCppCompileCommands(t, root, []string{filepath.Join("src", "worker_system.cpp"), filepath.Join("src", "main.cpp")})
+
 	mgr := NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
+
 	return languagePrecisionFixture{
 		name:    "cpp",
 		manager: mgr,
@@ -259,6 +278,7 @@ int main() {
 
 func newPythonPrecisionFixture(t *testing.T) languagePrecisionFixture {
 	t.Helper()
+
 	root := t.TempDir()
 	writePythonToolFixture(t, filepath.Join(root, "pyproject.toml"), "[project]\nname='demo'\n")
 	writePythonToolFixture(t, filepath.Join(root, "src", "demo", "engine.py"), `
@@ -276,7 +296,9 @@ def helper():
 if __name__ == "__main__":
     helper()
 `)
+
 	mgr := NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
+
 	return languagePrecisionFixture{
 		name:    "python",
 		manager: mgr,
@@ -300,6 +322,7 @@ if __name__ == "__main__":
 
 func newTsPrecisionFixture(t *testing.T) languagePrecisionFixture {
 	t.Helper()
+
 	root := t.TempDir()
 	writeTsTestFixture(t, filepath.Join(root, "tsconfig.json"), `{"compilerOptions":{"target":"es2020","module":"commonjs","strict":true}}`)
 	writeTsTestFixture(t, filepath.Join(root, "src", "service.ts"), `
@@ -316,7 +339,9 @@ export function main(): void {
   worker.run();
 }
 `)
+
 	mgr := NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
+
 	return languagePrecisionFixture{
 		name:    "typescript",
 		manager: mgr,
@@ -340,7 +365,9 @@ export function main(): void {
 
 func newRustPrecisionFixture(t *testing.T) languagePrecisionFixture {
 	t.Helper()
+
 	mgr, _ := newRustFixtureManager(t)
+
 	return languagePrecisionFixture{
 		name:    "rust",
 		manager: mgr,
@@ -364,8 +391,10 @@ func newRustPrecisionFixture(t *testing.T) languagePrecisionFixture {
 
 func newJavaPrecisionFixture(t *testing.T) languagePrecisionFixture {
 	t.Helper()
+
 	root := buildJavaTempWorkspace(t)
 	mgr := NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
+
 	return languagePrecisionFixture{
 		name:    "java",
 		manager: mgr,
@@ -389,9 +418,11 @@ func newJavaPrecisionFixture(t *testing.T) languagePrecisionFixture {
 
 func writePrecisionFile(t *testing.T, path string, content string) {
 	t.Helper()
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", path, err)
 	}
+
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}

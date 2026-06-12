@@ -1,28 +1,37 @@
 # Capability Registry
 
-The capability registry defines a read-only capability vocabulary for callers
-that want a stable contract instead of binding directly to tool names. The
-first read-only discovery slice should route through the
-`read_only_capability` tool while leaving direct tool names available as
-fallback.
+P3.1 introduced a read-only capability vocabulary for callers that want a
+stable contract instead of binding directly to tool names. P3.5 routes the
+first read-only discovery slice through the `read_only_capability` tool while
+leaving direct tool names available as fallback.
 
-Initial capability IDs:
+Stable read-only capability IDs:
 
 - `file-outline`
+- `inspect-symbol`
 - `symbol-lookup`
 - `definition`
 - `references`
+- `calls-from`
+- `calls-into`
 - `related-files`
 
 The model or caller asks for a capability. The harness registry resolves that
 ID to existing read-only adapters such as `code_navigate`, language-specific
-symbol tools, and other read-only discovery adapters. Runtime execution should
-route these five IDs through `code_navigate` first, preserving the adapter's
+symbol tools, and other read-only discovery adapters. Runtime execution now
+routes these IDs through `code_navigate` first, preserving the adapter's
 language routing, generic fallback, uncertainty, and result evidence. The
 response is a thin wrapper with capability metadata, the selected adapter, any
 fallback reason, and the underlying tool result.
 
-The wrapper keeps `schema_version: harness.read_only_capability_result.v1` and
+`read_only_capability` is intentionally narrower than `code_navigate`.
+`code_navigate` may expose newer runtime navigation affordances such as
+`implementations` and `extract_body` before they become stable product
+capability IDs. Promote those into `read_only_capability` only when the product
+contract, resolver adapters, schema enum, audit metadata, and regression tests
+are all updated together.
+
+The wrapper keeps `schema_version: idiom.read_only_capability_result.v1` and
 adds an additive `status` object:
 
 - `status.state`: `routed`, `fallback`, or `absent`.
@@ -41,13 +50,13 @@ adds an additive `status` object:
 
 Runtime disable path:
 
-- Set `HARNESS_READ_ONLY_CAPABILITY_RESOLVER=0` (also accepts `false`, `off`,
+- Set `IDIOM_READ_ONLY_CAPABILITY_RESOLVER=0` (also accepts `false`, `off`,
   `disabled`, `disable`, or `no`) to disable capability execution.
 - When disabled, `read_only_capability` returns a structured
   `resolver_runtime_disabled` fallback result.
 - Direct adapter tools such as `code_navigate`, `go_definition`, and
   `go_references` remain visible and callable.
-- Set `HARNESS_READ_ONLY_CAPABILITY_DISABLED_ROUTES` to a comma-, semicolon-, or
+- Set `IDIOM_READ_ONLY_CAPABILITY_DISABLED_ROUTES` to a comma-, semicolon-, or
   whitespace-separated list of capability IDs to disable individual routes
   without disabling the whole resolver. Aliases normalize the same way as
   requests, so `definition, related_files` disables `definition` and
@@ -58,11 +67,11 @@ Runtime disable path:
 
 Public status rollback path:
 
-- Set `HARNESS_READ_ONLY_CAPABILITY_PUBLIC_STATUS=0` (also accepts `false`,
+- Set `IDIOM_READ_ONLY_CAPABILITY_PUBLIC_STATUS=0` (also accepts `false`,
   `off`, `disabled`, `disable`, `no`, `hidden`, `hide`, `suppressed`, or
   `suppress`) to omit the public `status` object from `read_only_capability`
   result payloads.
-- This switch is distinct from `HARNESS_READ_ONLY_CAPABILITY_RESOLVER=0`: the
+- This switch is distinct from `IDIOM_READ_ONLY_CAPABILITY_RESOLVER=0`: the
   resolver still routes when enabled, and disabled/unmapped fallback payloads
   remain structured.
 - Internal telemetry and `harness_audit` coverage still derive status,

@@ -10,6 +10,7 @@ func LocalOpsFields(cfg config.Config, lane string) map[string]any {
 	ctxSize := cfg.LlamaServer.CtxSize
 	maxOutput := cfg.Chat.MaxTokens
 	contextState := "pass"
+
 	switch {
 	case ctxSize <= 0:
 		contextState = "unavailable"
@@ -21,14 +22,17 @@ func LocalOpsFields(cfg config.Config, lane string) map[string]any {
 
 	classifierState := "disabled_fallback"
 	routeClassifierState := "degraded"
+
 	if cfg.RouteClassifier.Enabled {
 		classifierState = "configured"
 		routeClassifierState = "pass"
+
 		if strings.TrimSpace(cfg.RouteClassifier.BaseURL) == "" && cfg.RouteClassifier.Port <= 0 {
 			classifierState = "degraded"
 			routeClassifierState = "degraded"
 		}
 	}
+
 	backendState := "unavailable"
 	if strings.TrimSpace(cfg.LlamaServer.Model) != "" {
 		backendState = "pass"
@@ -61,5 +65,6 @@ func firstNonEmpty(fallback string, values ...string) string {
 			return trimmed
 		}
 	}
+
 	return fallback
 }

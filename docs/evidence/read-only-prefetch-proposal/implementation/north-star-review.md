@@ -6,17 +6,17 @@
 [2m  ▎ thinking[0m
 Let me look at key implementation details that the diff references but doesn't show in full.
   · 34323 tok · in 34006 (12032 cached / 21974 new) · out 317 (45 reasoning) · ¥0.0228 · cache prefix changed: tools
-  -> task {"prompt": "In the repository at /Users/ben/Documents/GitHub/idiom, I need to understand the read-only named path prefet...
-  -> grep {"pattern": "maybeApplyReadOnlyNamedPathPrefetch", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "ToolNamePrefetch", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "readOnlyPrefetchEventRole", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "DirectAnswerSurfaceCapSourceBodyPrefetch", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> glob {"pattern": "**/internal/runtime/agent/*prefetch*", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/read_only_prefetch.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/capabilities/workspace/read_prefetch.go"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent", "pattern": "type RunEvent struct"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/direct_answer_surface.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner_state.go", "offset": 45, "limit": 15}
+  -> task {"prompt": "In the repository at /workspace/idiom, I need to understand the read-only named path prefet...
+  -> grep {"pattern": "maybeApplyReadOnlyNamedPathPrefetch", "path": "/workspace/idiom"}
+  -> grep {"pattern": "ToolNamePrefetch", "path": "/workspace/idiom"}
+  -> grep {"pattern": "readOnlyPrefetchEventRole", "path": "/workspace/idiom"}
+  -> grep {"pattern": "DirectAnswerSurfaceCapSourceBodyPrefetch", "path": "/workspace/idiom"}
+  -> glob {"pattern": "**/internal/runtime/agent/*prefetch*", "path": "/workspace/idiom"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/read_only_prefetch.go"}
+  -> read_file {"path": "/workspace/idiom/internal/capabilities/workspace/read_prefetch.go"}
+  -> grep {"path": "/workspace/idiom/internal/runtime/agent", "pattern": "type RunEvent struct"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/direct_answer_surface.go"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/runner_state.go", "offset": 45, "limit": 15}
 [2m  ▎ thinking[0m
   · 36659 tok · in 36504 (34304 cached / 2200 new) · out 155 (43 reasoning) · ¥0.0032
   -> read_file {"path": "internal/capabilities/workspace/read_prefetch.go"}

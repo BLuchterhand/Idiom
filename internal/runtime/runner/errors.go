@@ -20,10 +20,12 @@ var ErrDaemonUnreachable = failures.New(failures.Unavailable, reasonDaemonUnreac
 func daemonResponseError(message string) error {
 	code := failures.FailedPrecondition
 	reason := reasonDaemonResponseError
+
 	if strings.Contains(strings.ToLower(strings.TrimSpace(message)), "unknown pool") {
 		code = failures.InvalidArgument
 		reason = reasonUnknownPool
 	}
+
 	return failures.New(code, reason, message)
 }
 

@@ -50,18 +50,21 @@ func validateStateBucketConsistency(statusBucket, currentState string) *Transiti
 			Message: "status bucket closed requires current_state closed, got " + currentState,
 		}
 	}
+
 	if statusBucket == WorkflowStatusBucketStarted && currentState == WorkflowStateClosed {
 		return &TransitionBlocker{
 			Code:    "invalid_state_bucket",
 			Message: "status bucket started is incompatible with current_state closed",
 		}
 	}
+
 	if statusBucket == WorkflowStatusBucketUnstarted && currentState != "" && currentState != WorkflowStatePlanned {
 		return &TransitionBlocker{
 			Code:    "invalid_state_bucket",
 			Message: "status bucket unstarted requires empty or planned current_state, got " + currentState,
 		}
 	}
+
 	return nil
 }
 
@@ -143,6 +146,7 @@ func findStateEntry(state string) *orderedStateEntry {
 			return &orderedTransitionTable[i]
 		}
 	}
+
 	return nil
 }
 
@@ -152,6 +156,7 @@ func findActionRule(entry *orderedStateEntry, action string) (transitionRule, bo
 			return a.Rule, true
 		}
 	}
+
 	return transitionRule{}, false
 }
 
@@ -169,6 +174,7 @@ func EvaluateTransition(input TransitionInput) TransitionResult {
 			Code:    "invalid_status_bucket",
 			Message: "status bucket " + input.StatusBucket + " is not valid",
 		})
+
 		return TransitionResult{
 			FromState: input.CurrentState,
 			Blockers:  blockers,
@@ -180,6 +186,7 @@ func EvaluateTransition(input TransitionInput) TransitionResult {
 			Code:    "invalid_state",
 			Message: "state " + input.CurrentState + " is not valid",
 		})
+
 		return TransitionResult{
 			FromState: input.CurrentState,
 			Blockers:  blockers,
@@ -188,6 +195,7 @@ func EvaluateTransition(input TransitionInput) TransitionResult {
 
 	if consistencyBlocker := validateStateBucketConsistency(input.StatusBucket, input.CurrentState); consistencyBlocker != nil {
 		blockers = append(blockers, *consistencyBlocker)
+
 		return TransitionResult{
 			FromState: input.CurrentState,
 			Blockers:  blockers,
@@ -202,10 +210,12 @@ func EvaluateTransition(input TransitionInput) TransitionResult {
 				NextValidActions: unstartedActions,
 			}
 		}
+
 		blockers = append(blockers, TransitionBlocker{
 			Code:    "invalid_action",
 			Message: "action " + input.RequestedAction + " is not valid for status bucket unstarted",
 		})
+
 		return TransitionResult{
 			FromState: input.CurrentState,
 			Blockers:  blockers,
@@ -217,6 +227,7 @@ func EvaluateTransition(input TransitionInput) TransitionResult {
 			Code:    "terminal_status_bucket",
 			Message: "no transitions allowed from closed status bucket",
 		})
+
 		return TransitionResult{
 			FromState: input.CurrentState,
 			Blockers:  blockers,
@@ -229,6 +240,7 @@ func EvaluateTransition(input TransitionInput) TransitionResult {
 			Code:    "invalid_state",
 			Message: "state " + input.CurrentState + " is not valid",
 		})
+
 		return TransitionResult{
 			FromState: input.CurrentState,
 			Blockers:  blockers,
@@ -241,7 +253,9 @@ func EvaluateTransition(input TransitionInput) TransitionResult {
 			Code:    "invalid_action",
 			Message: "action " + input.RequestedAction + " is not valid for state " + input.CurrentState,
 		})
+
 		nextActions := nextActionsFor(input.CurrentState, input.GateResults)
+
 		return TransitionResult{
 			FromState:        input.CurrentState,
 			NextValidActions: nextActions,
@@ -253,6 +267,7 @@ func EvaluateTransition(input TransitionInput) TransitionResult {
 		closeBlockers := checkClosePreconditions(input.OpenBlockers, input.OpenObligations, input.GateResults)
 		if len(closeBlockers) > 0 {
 			nextActions := nextActionsFor(input.CurrentState, input.GateResults)
+
 			return TransitionResult{
 				FromState:        input.CurrentState,
 				NextValidActions: nextActions,
@@ -262,6 +277,7 @@ func EvaluateTransition(input TransitionInput) TransitionResult {
 	}
 
 	nextActions := nextActionsFor(rule.ToState, input.GateResults)
+
 	return TransitionResult{
 		FromState:        input.CurrentState,
 		ToState:          rule.ToState,
@@ -278,6 +294,7 @@ func NextActionsForState(statusBucket, currentState string) ([]TransitionAction,
 			Code:    "invalid_status_bucket",
 			Message: "status bucket " + statusBucket + " is not valid",
 		})
+
 		return nil, blockers
 	}
 
@@ -298,24 +315,29 @@ func NextActionsForState(statusBucket, currentState string) ([]TransitionAction,
 			Code:    "invalid_state",
 			Message: "state " + currentState + " is not valid",
 		})
+
 		return nil, blockers
 	}
 
 	actions := nextActionsFor(currentState, nil)
+
 	return actions, nil
 }
 
 func nextActionsFor(state string, gateResults []GateResult) []TransitionAction {
 	var entry *orderedStateEntry
+
 	for i := range orderedTransitionTable {
 		if orderedTransitionTable[i].State == state {
 			entry = &orderedTransitionTable[i]
 			break
 		}
 	}
+
 	if entry == nil {
 		return nil
 	}
+
 	actions := make([]TransitionAction, 0, len(entry.Actions))
 	for _, a := range entry.Actions {
 		if a.Action == "approve" && state == WorkflowStateReviewing {
@@ -323,8 +345,10 @@ func nextActionsFor(state string, gateResults []GateResult) []TransitionAction {
 				continue
 			}
 		}
+
 		actions = append(actions, TransitionAction{Action: a.Action, Owner: a.Rule.Owner})
 	}
+
 	return actions
 }
 
@@ -373,5 +397,6 @@ func gateStatusMap(gateResults []GateResult) map[string]string {
 	for _, g := range gateResults {
 		m[g.Gate] = g.Status
 	}
+
 	return m
 }

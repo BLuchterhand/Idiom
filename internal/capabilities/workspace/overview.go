@@ -31,6 +31,7 @@ func OverviewSystemPrompt(root string) string {
 	if cleaned == "" {
 		return ""
 	}
+
 	info, err := os.Stat(cleaned)
 	if err != nil || !info.IsDir() {
 		return ""
@@ -44,31 +45,39 @@ func OverviewSystemPrompt(root string) string {
 	dirs := make([]os.DirEntry, 0, len(entries))
 	topFiles := make([]string, 0, len(entries))
 	notable := make([]string, 0, 8)
+
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() && discovery.ShouldSkipDirName(name) {
 			continue
 		}
+
 		if !e.IsDir() && discovery.ShouldSkipRelFile(name) {
 			continue
 		}
+
 		if strings.HasPrefix(name, ".") {
 			if isNotableDotfile(name) {
 				notable = append(notable, overviewDisplayName(name))
 			}
+
 			continue
 		}
+
 		if e.IsDir() {
 			dirs = append(dirs, e)
 			continue
 		}
+
 		topFiles = append(topFiles, overviewDisplayName(name))
 	}
+
 	slices.SortFunc(dirs, func(a, b os.DirEntry) int { return cmp.Compare(a.Name(), b.Name()) })
 	slices.Sort(topFiles)
 	slices.Sort(notable)
 
 	var b strings.Builder
+
 	b.WriteString("Workspace overview (top-level layout, cheap snapshot at session start):\n")
 	b.WriteString("Root: ")
 	b.WriteString(filepath.Clean(cleaned))
@@ -79,33 +88,43 @@ func OverviewSystemPrompt(root string) string {
 		b.WriteString(strings.Join(limitStringsOverview(topFiles, workspaceOverviewMaxRootEntries), ", "))
 		b.WriteString("\n")
 	}
+
 	if len(notable) > 0 {
 		b.WriteString("Notable dotfiles: ")
 		b.WriteString(strings.Join(limitStringsOverview(notable, 10), ", "))
 		b.WriteString("\n")
 	}
+
 	if len(dirs) > 0 {
 		b.WriteString("\nTop-level directories:\n")
+
 		for i, d := range dirs {
 			if i >= workspaceOverviewMaxSubdirs {
 				b.WriteString(fmt.Sprintf("  ... %d more directories omitted\n", len(dirs)-workspaceOverviewMaxSubdirs))
+
 				break
 			}
+
 			sub := filepath.Join(cleaned, d.Name())
 			displayName := overviewDisplayName(d.Name())
 			count, sample := summarizeSubdir(sub, displayName+"/")
 			fmt.Fprintf(&b, "  %s/ (%d files)", displayName, count)
+
 			if len(sample) > 0 {
 				fmt.Fprintf(&b, " — e.g. %s", strings.Join(sample, ", "))
 			}
+
 			b.WriteString("\n")
 		}
 	}
+
 	b.WriteString("\nUse this only as a starting map; verify current workspace contents before editing.")
+
 	out := b.String()
 	if len(out) > workspaceOverviewMaxContentBytes {
 		out = out[:workspaceOverviewMaxContentBytes] + "\n... (overview truncated)"
 	}
+
 	return out
 }
 
@@ -116,6 +135,7 @@ func isNotableDotfile(name string) bool {
 		".tool-versions", ".python-version", ".nvmrc":
 		return true
 	}
+
 	return false
 }
 
@@ -124,12 +144,16 @@ func overviewDisplayName(name string) string {
 		if r < 0x20 || r == 0x7f {
 			return ' '
 		}
+
 		return r
 	}, name)
+
 	cleaned = strings.Join(strings.Fields(cleaned), " ")
+
 	if cleaned == "" {
 		return "_"
 	}
+
 	return cleaned
 }
 
@@ -143,27 +167,36 @@ func summarizeSubdir(path string, prefix string) (int, []string) {
 		if err != nil {
 			return 0, nil
 		}
+
 		for _, e := range entries {
 			if !e.IsDir() {
 				continue
 			}
+
 			name := e.Name()
 			if strings.HasPrefix(name, ".") || discovery.ShouldSkipDirName(name) {
 				continue
 			}
+
 			sub := filepath.Join(path, e.Name())
 			c, s := collectDirSample(sub, prefix+overviewDisplayName(e.Name())+"/")
+
 			count += c
+
 			sample = append(sample, s...)
+
 			if len(sample) >= workspaceOverviewMaxFilesPerDir {
 				break
 			}
 		}
 	}
+
 	slices.Sort(sample)
+
 	if len(sample) > workspaceOverviewMaxFilesPerDir {
 		sample = sample[:workspaceOverviewMaxFilesPerDir]
 	}
+
 	return count, sample
 }
 
@@ -172,25 +205,33 @@ func collectDirSample(path string, prefix string) (int, []string) {
 	if err != nil {
 		return 0, nil
 	}
+
 	count := 0
 	sample := make([]string, 0, workspaceOverviewMaxFilesPerDir)
+
 	for _, e := range entries {
 		name := e.Name()
 		rel := prefix + name
+
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
+
 		if discovery.ShouldSkipRelFile(rel) {
 			continue
 		}
+
 		if e.IsDir() {
 			continue
 		}
+
 		count++
+
 		if len(sample) < workspaceOverviewMaxFilesPerDir {
 			sample = append(sample, prefix+overviewDisplayName(name))
 		}
 	}
+
 	return count, sample
 }
 
@@ -198,7 +239,9 @@ func limitStringsOverview(values []string, limit int) []string {
 	if limit <= 0 || len(values) <= limit {
 		return values
 	}
+
 	out := make([]string, limit, limit+1)
 	copy(out, values[:limit])
+
 	return append(out, fmt.Sprintf("… (+%d more)", len(values)-limit))
 }

@@ -2,7 +2,7 @@
 
 ## Objective
 
-Make harness a stronger planner for local and smaller models by giving them a
+Make idiom a stronger planner for local and smaller models by giving them a
 multi-resolution, evidence-linked model of the codebase without flooding the
 prompt with raw files.
 
@@ -14,9 +14,9 @@ plans.
 North star: the model owns strategy; the harness owns contracts. See
 [decisioning-north-star.md](decisioning-north-star.md).
 
-## Baseline Capability
+## Current Capability
 
-harness should provide several important pieces:
+idiom already has several important pieces:
 
 - Architect packets externalize task context before a model writes a plan,
   critique, or executor brief. They are task-scoped envelopes containing task
@@ -24,8 +24,8 @@ harness should provide several important pieces:
   rules, and optional collector output.
 - `discovery_query` runs deterministic layered probes for impact analysis,
   tracing, architecture boundaries, security review, and history context. It
-  persists evidence packets under `.harness/discovery/queries`.
-- `.harness/discovery/context.md`, `modules.jsonl`, `manifest.json`, and related
+  persists evidence packets under `.idiom/discovery/queries`.
+- `.idiom/discovery/context.md`, `modules.jsonl`, `manifest.json`, and related
   artifacts provide a cheap project digest and top-level map.
 - Language tools expose symbol lookup, file outlines, references, definitions,
   calls, diagnostics, and related-file probes where the language backend
@@ -33,18 +33,18 @@ harness should provide several important pieces:
 - Workflow state, task ledger, typed resume context, target-role packets, and
   context compaction preserve active task state across longer runs.
 
-These are aligned with the desired direction. The missing layer is not
+These are already aligned with the desired direction. The missing layer is not
 "more context packets." It is a persistent comprehension substrate that can
 generate better packets and answer graph-shaped questions at the right
 resolution.
 
-## Baseline Vs Target
+## Current Vs Proposed
 
-| Area | Baseline harness capability | Target capability |
+| Area | Current idiom capability | Proposed capability |
 | --- | --- | --- |
 | Planning envelope | Architect packets carry task-scoped context. | Architect packets can be populated from reusable graph views. |
 | Discovery | `discovery_query` runs a live deterministic recipe. | `discovery_query` can reuse a persistent graph and probe only gaps. |
-| Project memory | `.harness/discovery/context.md` gives a cheap top-level digest. | `.harness/comprehension/graph.sqlite` stores the active graph; `.harness/comprehension/graph.json` remains an inspectable export. |
+| Project memory | `.idiom/discovery/context.md` gives a cheap top-level digest. | `.idiom/comprehension/graph.sqlite` stores the active graph; `.idiom/comprehension/graph.json` remains an inspectable export. |
 | Resolution | File listings, outlines, symbols, and evidence excerpts. | Repository, subsystem, package, file, symbol, and line/range views. |
 | Ranking | Mostly implicit in tool choice and search results. | Transparent graph-ranked localization with signal explanations. |
 | Freshness | Query artifacts include generated time and git-sensitive IDs. | Each node, edge, view, and summary has freshness and confidence metadata. |
@@ -52,9 +52,8 @@ resolution.
 
 ## Gap
 
-Baseline context packets package known or freshly probed evidence, but the
-target system must maintain a reusable, queryable, multi-resolution model of
-the codebase.
+Current context packets mostly package known or freshly probed evidence. They do
+not maintain a reusable, queryable, multi-resolution model of the codebase.
 
 The practical gaps are:
 
@@ -67,7 +66,7 @@ The practical gaps are:
   impact surfaces, candidate tests, and open gaps.
 - No first-class representation of confidence, staleness, static-analysis
   uncertainty, or missing backend coverage at each abstraction level.
-- Runtime evidence, test traces, and failing execution slices are not part
+- Runtime evidence, test traces, and failing execution slices are not yet part
   of the same comprehension model as static code structure.
 
 The result is that small models still spend too many calls reconstructing the
@@ -109,7 +108,7 @@ Add a new codebase comprehension subsystem with four layers:
 
 2. **Repository Graph**
    Store normalized nodes and edges in a local persistent database under
-   `.harness/comprehension/`.
+   `.idiom/comprehension/`.
 
 3. **Abstraction Builder**
    Build deterministic and optionally model-assisted summaries at multiple
@@ -126,7 +125,7 @@ not own indexing policy.
 
 ## Language Enrichment Layer
 
-The graph should have an explicit enrichment seam:
+The graph now has an explicit enrichment seam:
 
 - Fast enrichment records language backend availability, build/project
   manifests, and the tools/capabilities that can deepen each indexed language.
@@ -145,7 +144,7 @@ dedicated project collectors, LSPs, compilers, package managers, or generic
 fallbacks all write observations into the same durable model.
 
 The graph still supplements discovery tools rather than replacing them. Use the
-graph to map and package what is known; use language-aware tools,
+graph to map and package what is already known; use language-aware tools,
 `discovery_query`, exact reads, or runtime traces to verify stale or source-level
 claims.
 
@@ -153,7 +152,7 @@ claims.
 
 This design deliberately borrows proven ideas without cloning any one project:
 
-- [LLM agent repo maps]:
+- [Aider repo maps](https://aider.chat/2023/10/22/repomap.html):
   tree-sitter symbol extraction plus graph ranking to fit useful repository
   context into a small token budget.
 - [RepoGraph](https://proceedings.iclr.cc/paper_files/paper/2025/hash/4a4a3c197deac042461c677219efd36c-Abstract-Conference.html):
@@ -177,7 +176,7 @@ This design deliberately borrows proven ideas without cloning any one project:
   runtime execution and traces as necessary evidence for codebase-level
   understanding.
 
-The harness-specific adaptation is the north-star split: these systems inspire the
+The idiom-specific adaptation is the north-star split: these systems inspire the
 evidence substrate, but the model still owns strategy.
 
 ## Data Model
@@ -305,7 +304,7 @@ The index should support zooming across levels:
    related tests.
 
 5. **Symbol**
-   Signature, body range, callers, callees, references, defined interfaces,
+   Signature, body range, callers, callees, references, implemented interfaces,
    tests, diagnostics.
 
 6. **Line/Range**
@@ -350,7 +349,7 @@ Report index freshness and coverage.
 
 Output:
 
-- active git head and dirty status
+- current git head and dirty status
 - index fingerprint
 - stale scopes
 - available collectors
@@ -433,7 +432,7 @@ Output:
 - evidence entries suitable for architect packets
 - gaps that need one exact probe
 
-This does not replace `harness architect packet`. It supplies better evidence and
+This does not replace `idiom architect packet`. It supplies better evidence and
 defaults for it.
 
 ### `context_trace_pack`
@@ -461,7 +460,7 @@ JavaScript/TypeScript stack frames, JVM stack frames, C/C++ file-line output, or
 GDScript `res://` paths should all write the same runtime node/edge vocabulary.
 The first version runs a command, saves stdout/stderr excerpts, parses generic
 stack frames, Go test JSON, Go coverprofiles, and LCOV, and stores trace
-artifacts under `.harness/comprehension/traces/`.
+artifacts under `.idiom/comprehension/traces/`.
 
 ## Future Expansion Of Context Tools
 
@@ -477,7 +476,7 @@ replacement for exact discovery tools. The intended split stays stable:
   execution.
 - `context_trace_pack` adds runtime evidence without overwriting static facts.
 
-Hardening should continue to make this tool set more reliable for small
+Current hardening should continue to make this tool set more reliable for small
 local models:
 
 1. **Richer collector contracts.**
@@ -497,7 +496,7 @@ local models:
    prove it yet.
 
 3. **Incremental refresh.**
-   Scope-limited refresh should merge fresh per-path graph facts with reusable
+   Scope-limited refresh now merges fresh per-path graph facts with reusable
    out-of-scope facts and expands the refresh scope across directly related
    dependency files. Continue improving this with build-config invalidation,
    language backend availability changes, and finer package/module dependency
@@ -520,6 +519,22 @@ local models:
    planning. It ranks candidate files and symbols, labels evidence, includes
    tests and risks, and names unresolved gaps. It should remain the first
    consumer of stricter freshness policies.
+
+   **Compact projection and token efficiency.** The context_pack output is
+   projected into a model-facing compact form via a shared
+   `CompactPackProjection` type and budget-enforced renderer (see
+   [design-context-token-efficiency.md](design-context-token-efficiency.md)).
+   Full `PackResult` artifacts are always retained in `graph_views` and
+   `views/<pack_id>.json`; the compact projection is localization evidence
+   only, never source-body authority. The shared projection includes quality
+   metadata (`localization_confidence`, `source_owner_found`) across all
+   surfaces (plan-execute preloads, executor handoff, phase evidence, recovery,
+   sidecar, telemetry, and audit). Budget enforcement caps rendered token
+   count via progressive truncation with omitted-item counts. Cache-savings
+   metrics (`estimated_full_tokens_saved`, `estimated_rediscovery_tokens_avoided`)
+   are surfaced in `harness_audit`. The design was reviewed by a seven-role
+   bench and implemented incrementally as Atoms 1–8 of the harness optimization
+   program.
 
 7. **Runtime and history overlays.**
    `context_trace_pack`, blame/history collectors, and coverage data should add
@@ -544,7 +559,7 @@ Language-specific expansion should proceed opportunistically:
   should keep covering includes, declarations/definitions, local calls, template
   declarations, template call sites, and ambiguous include gaps.
 - **GDScript/Godot:** add a parser or language-server backend when practical.
-  The active Godot-aware collector covers scripts, scenes, resources,
+  The current Godot-aware collector covers scripts, scenes, resources,
   autoloads, exported/onready properties, signals, class names, extends, and
   `res://` dependencies; future work should deepen scene node trees, signal
   connections, groups, project settings, and additional Godot 3/4 resource
@@ -567,7 +582,7 @@ Add optional packet fields or evidence kinds:
 {
   "kind": "context_view",
   "label": "task localization",
-  "path": ".harness/comprehension/views/<id>.json",
+  "path": ".idiom/comprehension/views/<id>.json",
   "content": "bounded JSON excerpt or summary"
 }
 ```
@@ -584,14 +599,14 @@ Potential new architect packet fields:
 Keep backward compatibility by representing new data as `Evidence` first. Add
 typed packet fields only after the shape stabilizes.
 
-Packet rendering should preserve the active rule: planners use only the packet.
-The difference is that the packet can include better harness-computed views.
+Packet rendering should preserve the current rule: planners use only the packet.
+The difference is that the packet can now include better harness-computed views.
 
 ## Discovery Query Integration
 
 `discovery_query` should not disappear. It should become a bridge:
 
-- If no index exists, run the active recipe.
+- If no index exists, run the current recipe.
 - If an index exists, use it for the orientation layers and add live probes only
   for missing or stale claims.
 - Persist the same evidence packet shape, plus the context index/view IDs that
@@ -612,7 +627,7 @@ Initial runtime sources:
 - coverage reports
 - `go test -run ... -json`
 - explicit command logs
-- debug log slices for harness's own harness behavior
+- debug log slices for idiom's own harness behavior
 
 Later runtime sources:
 
@@ -634,7 +649,7 @@ Use deterministic summaries first:
 - test mapping
 - graph communities and centrality
 
-Use model-assisted summaries only as compression over collected facts.
+Use model-assisted summaries only as compression over already-collected facts.
 
 Model-assisted summary contract:
 
@@ -679,10 +694,10 @@ Do not hide ranking as an authoritative edit plan.
 
 ## Storage
 
-Use `.harness/comprehension/`:
+Use `.idiom/comprehension/`:
 
 ```text
-.harness/comprehension/
+.idiom/comprehension/
   manifest.json
   graph.sqlite        # active indexed backend (nodes, edges, views)
   graph.json          # compatibility/export copy
@@ -701,7 +716,7 @@ piggyback on the existing node fingerprint/staleness path. An earlier
 revision of this design listed a `summaries/` directory; the directory
 is not created and should not be relied on.
 
-Like `.harness/discovery/`, this directory should be ignored by git.
+Like `.idiom/discovery/`, this directory should be ignored by git.
 
 `manifest.json` should include:
 
@@ -719,13 +734,13 @@ Like `.harness/discovery/`, this directory should be ignored by git.
 The active local store is SQLite, with a JSON export kept for compatibility and
 inspection:
 
-- `.harness/comprehension/graph.sqlite` contains normalized node, edge, metadata,
+- `.idiom/comprehension/graph.sqlite` contains normalized node, edge, metadata,
   and view tables with `store_kind: "sqlite-graph-v1"`.
-- `.harness/comprehension/graph.json` contains an export copy with `nodes`,
+- `.idiom/comprehension/graph.json` contains an export copy with `nodes`,
   `edges`, root metadata, git state, languages, generated time, and
   `store_kind: "json-graph-v1"` so humans and older tooling can still inspect
   the graph shape.
-- `.harness/comprehension/manifest.json` contains the active SQLite graph ID,
+- `.idiom/comprehension/manifest.json` contains the active SQLite graph ID,
   artifact path, indexed counts, git state, generated time, and storage backend
   compatibility reports.
 - File nodes store content fingerprints; symbol nodes inherit the containing
@@ -836,7 +851,7 @@ CREATE INDEX graph_edges_target_kind_idx ON graph_edges(target_id, kind);
 This can evolve into a richer graph store later. The first goal is stable local
 facts and fast relationship queries, not graph-database sophistication.
 
-`graph.sqlite` uses a separate metadata contract so harness can detect absent,
+`graph.sqlite` uses a separate metadata contract so idiom can detect absent,
 unversioned, compatible, migration-ready, or incompatible SQLite stores before
 trusting them:
 
@@ -845,14 +860,14 @@ trusting them:
   "store_kind": "sqlite-graph-v1",
   "schema_version": 1,
   "source_index_id": "optional-json-index-id",
-  "created_at": "<iso-timestamp>",
-  "updated_at": "<iso-timestamp>"
+  "created_at": "2026-05-07T00:00:00Z",
+  "updated_at": "2026-05-07T00:00:00Z"
 }
 ```
 
 `context_status` reports the active SQLite graph and the JSON export. A future
 SQLite schema must be reported as incompatible rather than silently read by
-older harness binaries. Malformed active-schema SQLite files are reported as
+older idiom binaries. Malformed current-schema SQLite files are reported as
 invalid, and `context_index` is allowed to replace invalid or incompatible
 local graph artifacts during refresh.
 
@@ -876,7 +891,7 @@ Freshness policies:
 
 - `allow_stale`: return stale data with warnings.
 - `refresh_if_stale`: refresh affected scope first.
-- `require_fresh`: return a blocker if fresh evidence cannot be produced.
+- `require_fresh`: fail if refresh cannot complete.
 
 Default interactive behavior should be `allow_stale` for orientation and
 `refresh_if_stale` for packet generation.
@@ -906,7 +921,7 @@ Responsibilities:
 - `internal/workflows/architect` accepts context evidence but does not know how to index
   repositories.
 - `internal/runtime/agent` consumes tools and packets. It should not own graph policy.
-- `cmd/harness` exposes CLI commands for build/status/query/pack.
+- `cmd/idiom` exposes CLI commands for build/status/query/pack.
 
 This keeps durable repository comprehension separate from runner strategy.
 
@@ -915,12 +930,12 @@ This keeps durable repository comprehension separate from runner strategy.
 Proposed commands:
 
 ```bash
-./harness context build --path . --mode standard
-./harness context status
-./harness context query --task-file /tmp/task.md --resolution module
-./harness context zoom --handle symbol://internal/foo.go#Bar --resolution symbol
-./harness context pack --task-file /tmp/task.md --output /tmp/context-view.json
-./harness architect packet --task-file /tmp/task.md --context-view /tmp/context-view.json --output /tmp/packet.json
+./idiom context build --path . --mode standard
+./idiom context status
+./idiom context query --task-file /tmp/task.md --resolution module
+./idiom context zoom --handle symbol://internal/foo.go#Bar --resolution symbol
+./idiom context pack --task-file /tmp/task.md --output /tmp/context-view.json
+./idiom architect packet --task-file /tmp/task.md --context-view /tmp/context-view.json --output /tmp/packet.json
 ```
 
 The CLI should work without starting an inference session.
@@ -940,7 +955,7 @@ Acceptance:
 - Design accepted.
 - Fixtures cover symbol lookup, imports, tests, and one stale-file scenario.
 
-### Phase 1: Static Graph initial release
+### Phase 1: Static Graph MVP
 
 - Implement the SQLite graph store and keep the JSON export compatible with the
   node/edge model.
@@ -974,7 +989,7 @@ go test ./...
 ### Phase 2: Packet-Ready Views
 
 - Add `context_pack`.
-- Let `harness architect packet` accept context-view evidence.
+- Let `idiom architect packet` accept context-view evidence.
 - Add packet lint checks for stale or missing context views when required.
 - Update docs for architect packet flow.
 
@@ -988,14 +1003,14 @@ Acceptance:
 Verification:
 
 ```bash
-go test ./internal/repository/comprehension/... ./internal/workflows/architect/... ./cmd/harness/...
+go test ./internal/repository/comprehension/... ./internal/workflows/architect/... ./cmd/idiom/...
 go test ./...
 ```
 
 ### Phase 3: Hierarchical Summaries
 
 - Build deterministic repository, subsystem, package, file, and symbol views.
-- Add model-assisted summary generation through `harness artifact` or a bounded
+- Add model-assisted summary generation through `idiom artifact` or a bounded
   local model path only after deterministic views are stable.
 - Add summary invalidation and provenance checks.
 
@@ -1069,7 +1084,7 @@ Add scenario families:
 Compare:
 
 - baseline direct tools
-- active `discovery_query`
+- current `discovery_query`
 - `context_pack` generated packet
 - `context_pack` plus runtime trace when applicable
 
@@ -1081,41 +1096,68 @@ Success criteria should be practical:
 - no increase in unsafe writes or strategy forcing
 - no regression in existing `go test ./...`
 
-## Required Deliverables
+## Development Checklist
 
-- `internal/repository/comprehension` package with schema, store, graph types, bootstrap
-  versioning, and SQLite as the authoritative store.
-- JSON export for inspection only; exported files must never become the source
-  of truth for freshness or cache validity.
-- Collectors for supported language families with confidence tiers and explicit
-  gaps for unsupported relationships.
-- File, symbol, package, import, test, summary, runtime trace, and dependency
-  graph nodes with stable handles.
-- Fingerprint and staleness detection at file, symbol, packet, and cached-view
-  levels.
-- `context_index`, `context_status`, `context_query`, `context_zoom`,
-  `context_pack`, and `context_trace_pack` tools plus CLI equivalents under
-  `harness context`.
-- `context_pack` views materialized in `graph_views`, keyed by content
-  fingerprint rather than generation timestamp.
-- A canonical view key that includes index identity, task, mode, canonical query
-  JSON, path, scope, limits, required tests, forbidden paths, intent,
-  runtime-trace inclusion, workspace-state fingerprint, ranker fingerprint, and
-  runtime-trace fingerprint.
-- `pack_id` round-trip through plan artifacts so the executor, UI, audit, and
-  sidecar consumers can reference the planner's packet without rediscovery.
-- Per-row `graph_views` invalidation by referenced path or symbol, with blanket
-  invalidation reserved for full rebuilds and unknown-diff cases.
-- Deterministic summary provenance stored as graph nodes, not free-floating
-  prose.
-- `discovery_query` integration that uses graph-backed context when fresh and
-  falls back only when the graph cannot answer the request.
-- `harness_audit` coverage for index freshness, collector versions, cache row
-  counts, hit/miss counters, stale ratio, bytes stored, dependency refresh, and
-  summary provenance.
-- Eval scenarios that measure token/tool-call reduction, grounding quality,
-  localization accuracy, broad-read reduction, repeated-search reduction, and
-  stale-context detection.
+- [x] Create `internal/repository/comprehension` package with schema, store, and graph
+  types.
+- [x] Add bootstrap store/version handling for
+  `.idiom/comprehension/graph.json`.
+- [x] Activate `.idiom/comprehension/graph.sqlite` as the primary graph store
+  while preserving `.idiom/comprehension/graph.json` as an export.
+- [x] Add rich Go, C++, Python, TypeScript/JavaScript, Rust, Java, and
+  GDScript/Godot file/package/symbol/import/test collectors, plus a generic
+  cross-language fallback collector.
+- [x] Add fingerprint and staleness detection (file/symbol level).
+- [x] Expose `context_index` and `context_status`.
+- [x] Expose `context_query` for file, package, symbol, import, and test
+  relationships.
+- [x] Expose `context_zoom` for repository, file, and symbol handles.
+- [x] Add CLI equivalents under `idiom context`.
+- [x] Update harness prompts so the model can use context graph tools
+  effectively.
+- [x] Add `context_pack` after the graph MVP is stable.
+- [x] Integrate context-view evidence with architect packets.
+- [x] Add packet lint/freshness checks.
+- [x] Teach `discovery_query` to use the index opportunistically (calls
+  `context_pack` and surfaces the artifact path; does not yet reuse cached
+  view rows — gated on the `graph_views` cache below).
+- [x] Add migration/version handling for `.idiom/comprehension/graph.sqlite`
+  when incremental refresh or saved views require it.
+- [x] Add runtime trace packs.
+- [x] Expand collectors across language families.
+- [x] Add structured live-tool/LSP relationship payloads so deep-mode evidence
+  can be normalized without parsing prose-only output.
+- [x] Add dependency-aware scoped refresh and reusable out-of-scope graph merge
+  (for `graph_nodes` and `graph_edges`; `graph_views` invalidation is
+  separately tracked below).
+- [x] Add deterministic summary quality/provenance metadata (stored as
+  `graph_nodes` rows with `kind = "summary"`/`"derived_summary"`).
+- [x] Add audit/perf telemetry ingestion for collector versions, incremental
+  refresh, dependency refresh files, summary nodes, and normalized
+  relationship edges.
+- [x] Add eval scenarios for token/tool-call reduction and grounding quality
+  (`internal/evidence/eval/comprehension_suite.go`).
+- [x] Materialize `graph_views` cache and key by content fingerprint, not
+  generation timestamp. (Wired 2026-05-10. `Pack()` reads/writes
+  `graph_views` keyed by `ViewKey`: `(index_id, task, mode, canonical query
+  JSON)`. The canonical query includes `path`, `scope`, `limit`,
+  `budget_tokens`, `required_tests`, `forbidden_paths`, `intent`,
+  `include_stale_runtime`, and workspace-state fingerprints. The
+  `views/<pack_id>.json` export is derived from the cached row, not the source
+  of truth.)
+- [x] Plumb `pack_id` through `PlanArtifact` so the executor can rehydrate
+  the planner's packet from `graph_views` instead of re-discovering. (Wired
+  2026-05-10. Field is additive and optional; schema stays at
+  `idiom.plan.v1` since older artifacts remain readable with `PackID = ""`.)
+- [x] Per-row `graph_views` staleness keyed by referenced paths/symbols,
+  invoked from scoped refresh (not just full rebuild). (Wired 2026-05-10.
+  `replaceSQLiteGraph` keeps the blanket sweep for full rebuilds; the
+  scoped-refresh path now marks only the views whose `query_json` or
+  `output_json` references a changed path.)
+- [x] `harness_audit` reports `graph_views` row count, hit/miss counters,
+  stale ratio, and bytes stored. Required to make the eval section's
+  "fewer broad reads / fewer repeated searches" success criteria actually
+  measurable. (Wired 2026-05-10.)
 
 ## North-Star Alignment
 
@@ -1147,15 +1189,27 @@ This design follows the north star in these ways:
   `unknown` gaps.
 - **Strategy leakage in tool output.** Mitigation: review tool summaries against
   the north-star rule that evidence tools do not prescribe next actions.
-- **Overbuilding before value.** Mitigation: define graph initial release, packet views, and
+- **Overbuilding before value.** Mitigation: ship graph MVP, packet views, and
   evals before runtime tracing or model summaries.
 
 ## Open Questions
 
-- Should tree-sitter be introduced directly, or should the initial graph rely
-  entirely on existing language tool/index surfaces?
+- ~~Which SQLite-backed views should be materialized first: task packets,
+  subsystem summaries, or partial-refresh invalidation sets?~~ **Resolved
+  2026-05-10: task packets first.** `Pack()` is the highest-traffic builder
+  and the only one that already produces a stable, content-addressable
+  artifact, so it's the cheapest first writer of `graph_views`. Subsystem
+  summaries already live in `graph_nodes` (kind = "summary") and don't need
+  a separate view row. Partial-refresh invalidation sets are emergent: each
+  `graph_views` row records the paths/symbols its `referenced_paths_json`
+  references, with `output_json` as the legacy fallback, so scoped refresh can
+  mark stale by path lookup without a dedicated invalidation table.
+- Should tree-sitter be introduced directly, or should phase 1 rely entirely on
+  existing language tool/index surfaces?
 - What is the minimum useful test mapping for Go: package-level tests, symbol
   name heuristics, coverage, or all three?
+- Should `context_pack` be a workspace tool first, a CLI command first, or both
+  together?
 - How much model-assisted summarization is acceptable for default local-model
   runs, given token and latency constraints?
 
@@ -1163,10 +1217,35 @@ This design follows the north star in these ways:
 
 - **Open questions gate dependent checklist items.** A checklist item must
   not be marked complete while an Open Question it depends on is still open.
-  When in doubt, use an explicit partial state with a follow-on bullet rather
-  than marking a dependent item complete.
+  The 2026-05-10 audit (below) found that `context_pack`, `discovery_query`
+  backing, summary materialization, and audit telemetry were all marked
+  complete while Open Question #1 ("which SQLite-backed views should be
+  materialized first") remained unanswered. The honest checklist state was
+  "partially shipped, view materialization deferred" — not done. When in
+  doubt, use a `[~]` partial state with a follow-on bullet rather than a
+  premature `[x]`.
 
-## View Cache Contract
+## Reality vs Design Audit (2026-05-10)
+
+After ~6 months of incremental work, an audit found that several development
+checklist items were checked while their underlying implementation was either
+absent or substantially different from the design. The discrepancies and
+their resolution:
+
+| Claim | Reality at audit | Resolution |
+| --- | --- | --- |
+| `context_pack` shipped | `Pack()` writes `views/<id>.json` flat files only; `pack_id` keyed by `generatedAt` so identical inputs always miss any reuse. `graph_views` table created but never INSERTed/SELECTed (0 rows in idiom and Colony). | Wired `graph_views` read/write keyed by content fingerprint. Flat-file export retained for inspection. |
+| Plan-execute split documented | Executor receives only `Edits[]`; no handle to the planner's packet. Verification reads re-discover what the planner already ranked. | Added `PackID` to `PlanArtifact` as an additive optional field (schema stays at v1). Executor can `LoadView(pack_id)` lazily on demand. |
+| Fingerprint and staleness detection shipped | True for `graph_nodes` and `graph_edges`. `graph_views` had blanket "mark all stale on full rebuild" only — scoped refresh did not touch view rows. | Per-row invalidation by referenced path. Scoped refresh now marks dependent views stale. |
+| `discovery_query` uses index opportunistically | Calls `comprehension.Status()` for freshness; dispatches `context_pack` and surfaces the artifact path. Without the cache wired, every call rebuilt. | Now benefits from `Pack()` cache transparently. No code change needed in `discovery_query` itself — same call path, cached underneath. |
+| `summaries/<id>.json` directory documented | Directory does not exist anywhere. Implementation chose `graph_nodes` rows with `kind = "summary"` instead. | Design updated to reflect graph-node materialization. On-disk directory removed from spec. |
+| Audit/perf telemetry shipped | `harness_audit` reports collector versions, refresh sets, summary nodes, normalized edges — but no cache metrics, so the eval section's "fewer broad reads / fewer repeated searches" success criteria were unmeasurable. | Added `graph_views` row count, hit/miss counters, stale ratio, bytes stored. |
+
+The audit also found one strict win that wasn't credited: summaries were
+materialized as graph nodes with proper provenance (`internal/repository/comprehension/summaries.go`),
+which is functionally equivalent to the documented `summaries/` directory
+and slightly better for invalidation. The audit normalized the design to
+the implementation's choice rather than the other way around.
 
 The architectural takeaway: a multi-resolution cache only pays off when its
 invalidation matches its writers. Materializing `graph_views` rows without
@@ -1190,17 +1269,17 @@ attribution.
 `ComprehensionStateFingerprints()` computes the separated state:
 
 - `ranker_weights_fingerprint` hashes the contents of
-  `.harness/ranker/weights.json` when the file exists. `Pack()` also replaces
+  `.idiom/ranker/weights.json` when the file exists. `Pack()` also replaces
   this component with a deterministic hash of `opts.LearnedWeights` when the
   caller supplies in-memory learned weights.
 - `runtime_traces_fingerprint` comes from the runtime trace state. With a trace
   manifest present, the hash is bounded to the recent manifest horizon
-  (`runtimeTraceRecentLimit`, 12) after the manifest itself has been
-  capped (`runtimeTraceManifestLimit`, 64). The fingerprint contract
+  (`runtimeTraceRecentLimit`, currently 12) after the manifest itself has been
+  capped (`runtimeTraceManifestLimit`, currently 64). The fingerprint contract
   uses manifest metadata: schema, trace ID, artifact path, generated time,
   stored artifact fingerprint, mod time, and size.
 - If no trace manifest exists, the runtime trace fingerprint falls back to a
-  constant-work directory timestamp signal for `.harness/comprehension/traces`.
+  constant-work directory timestamp signal for `.idiom/comprehension/traces`.
   That legacy fallback avoids scanning every trace body, but it is coarse for
   hand-edited existing trace files until `context_trace_pack` writes a
   manifest.
@@ -1215,7 +1294,7 @@ Cache state/source fields in `GraphViewCacheState` are intentionally explicit:
 - `miss_recompute` uses `source: "recompute"` and means no usable row was
   loaded for the derived key.
 - `hit` uses `source: "graph_views"` and is returned only after `LoadView`
-  validates the active `index_id`, referenced source fingerprints, and scoped
+  validates the current `index_id`, referenced source fingerprints, and scoped
   freshness for the cached row.
 - `fallback_recompute` uses `source: "fallback"` and `fallback: true` when cache
   loading fails but packet recomputation can continue.
@@ -1230,9 +1309,18 @@ unknown-diff paths can still fall back to marking all view rows stale. The
 additive SQLite column handling is a local cache compatibility path, not a
 general production migration guarantee.
 
-The executor must receive the planner's `pack_id` as part of the plan artifact.
-At minimum, it should emit `executor_inherits_pack` or `executor_pack_miss`
-events with cached candidate counts so UIs, audit, debug tooling, and future
-smart-skip logic can attach without rediscovery. If executor smart-skip is
-enabled, it must remain advisory: it can avoid redundant reads of ranked files,
-but it cannot hide required evidence or bypass verification gates.
+The executor side is wired observably but not yet smart-skip-aware:
+`PlanArtifact.PackID` round-trips through `submit_plan`, and the executor phase
+emits `executor_inherits_pack` / `executor_pack_miss` JSON events with the
+cached candidate counts. The executor itself still does its own discovery - it
+doesn't yet shortcut reads based on the planner's ranked files. That hook is
+intentional first-cut scope; downstream consumers (UIs, debug tooling, future
+smart-skip logic) can attach to the JSON events without further harness
+changes.
+
+## Immediate Next Step
+
+With the implementation checklist complete, the next expansion should harden the
+eval fixtures and run live comparisons: direct tools versus `discovery_query`,
+`context_pack`, and `context_pack` plus runtime trace evidence on orientation,
+localization, planning, and failing-test tasks.

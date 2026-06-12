@@ -40,45 +40,57 @@ type ToolManifestToolOptions struct {
 
 func ToolManifestTools(opts ToolManifestToolOptions) []string {
 	var tools []string
+
 	if opts.IncludeTaskLedger {
 		tools = append(tools, "task_ledger")
 	}
+
 	if opts.IncludeTask {
 		tools = append(tools, "task")
 	}
+
 	tools = append(tools, defaultToolManifestTools()...)
 	if opts.IncludeWriteTools && !opts.IncludePlanThenExecute {
 		tools = append(tools, workspaceWriteToolNamesWithoutLanguageSpecific()...)
 	}
+
 	if opts.IncludePlanThenExecute {
 		if metadata, ok := builtInToolSurfaceMetadata("submit_plan"); ok {
 			tools = append(tools, metadata.Tool)
 		}
 	}
+
 	if opts.IncludeGo {
 		tools = appendLanguageManifestTools(tools, "go")
 		if opts.IncludeWriteTools {
 			tools = append(tools, "go_move_declarations")
 		}
 	}
+
 	if opts.IncludeCpp {
 		tools = appendLanguageManifestTools(tools, "cpp")
 	}
+
 	if opts.IncludePython {
 		tools = appendLanguageManifestTools(tools, "python")
 	}
+
 	if opts.IncludeTypescript {
 		tools = appendLanguageManifestTools(tools, "typescript")
 	}
+
 	if opts.IncludeRust {
 		tools = appendLanguageManifestTools(tools, "rust")
 	}
+
 	if opts.IncludeJava {
 		tools = appendLanguageManifestTools(tools, "java")
 	}
+
 	if opts.PlanThenExecutePlannerSurface {
 		tools = filterManifestToolNames(tools, planThenExecutePlannerManifestToolNames()...)
 	}
+
 	return tools
 }
 
@@ -87,11 +99,13 @@ func appendLanguageManifestTools(tools []string, languageName string) []string {
 	if !ok {
 		return tools
 	}
+
 	for _, entry := range languageToolCatalog() {
 		if entry.Language == lang.Name {
 			tools = append(tools, entry.Tool)
 		}
 	}
+
 	return tools
 }
 
@@ -107,12 +121,15 @@ func filterManifestToolNames(tools []string, names ...string) []string {
 			allowed[name] = struct{}{}
 		}
 	}
+
 	var out []string
+
 	for _, tool := range tools {
 		if _, ok := allowed[strings.TrimSpace(tool)]; ok {
 			out = append(out, tool)
 		}
 	}
+
 	return out
 }
 
@@ -129,8 +146,10 @@ func toolManifestToolsAcrossBuiltInSurfaces() []string {
 		IncludeJava:       true,
 	}
 	tools := ToolManifestTools(opts)
+
 	opts.IncludePlanThenExecute = true
 	tools = append(tools, ToolManifestTools(opts)...)
+
 	return util.UniqueNonEmpty(tools)
 }
 
@@ -154,6 +173,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 			allowed[tool] = struct{}{}
 		}
 	}
+
 	includeAll := len(allowed) == 0
 	entries := []ToolManifestEntry{
 		{Tool: ToolNameTaskLedger, Request: `{"tool":"task_ledger","todos":[{"id":"inspect","content":"Inspect target files","status":"in_progress"}]}`, Purpose: "track complex multi-step work"},
@@ -203,18 +223,23 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: ToolNameGitDiff, Request: `{"tool":"git_diff","workdir":".","path":"optional/path"}`, Purpose: "inspect git diff"},
 		{Tool: ToolNameShell, Request: `{"tool":"shell","command":"go test ./...","workdir":"."}`, Purpose: "run an allowed shell command"},
 	}
+
 	entries = mergeLanguageToolManifestEntries(entries)
+
 	out := make([]ToolManifestEntry, 0, len(entries))
+
 	for _, entry := range entries {
 		entry = attachToolManifestCapabilityMetadata(entry)
 		if includeAll {
 			out = append(out, entry)
 			continue
 		}
+
 		if _, ok := allowed[entry.Tool]; ok {
 			out = append(out, entry)
 		}
 	}
+
 	return SanitizeToolManifestRequests(out)
 }
 
@@ -223,21 +248,27 @@ func mergeLanguageToolManifestEntries(entries []ToolManifestEntry) []ToolManifes
 	if len(catalog) == 0 {
 		return entries
 	}
+
 	out := make([]ToolManifestEntry, 0, len(entries)+len(catalog))
 	inserted := false
+
 	for _, entry := range entries {
 		if isLanguageToolName(entry.Tool) {
 			if !inserted {
 				out = append(out, catalog...)
 				inserted = true
 			}
+
 			continue
 		}
+
 		out = append(out, entry)
 	}
+
 	if !inserted {
 		out = append(out, catalog...)
 	}
+
 	return out
 }
 
@@ -248,17 +279,20 @@ func SanitizeToolManifestRequests(manifest []ToolManifestEntry) []ToolManifestEn
 	if len(manifest) == 0 {
 		return nil
 	}
+
 	out := append([]ToolManifestEntry(nil), manifest...)
 	for i := range out {
 		if toolManifestRequestLooksPlaceholder(out[i].Request) {
 			out[i].Request = ""
 		}
 	}
+
 	return out
 }
 
 func toolManifestRequestLooksPlaceholder(request string) bool {
 	lower := strings.ToLower(strings.TrimSpace(request))
+
 	return util.ContainsAny(lower,
 		"relative/file",
 		"candidate/path.go",
@@ -297,16 +331,20 @@ func RenderToolManifestInstructions(allowedTools []string) string {
 	if len(manifest) == 0 {
 		return ""
 	}
+
 	lines := make([]string, 0, len(manifest))
 	for _, entry := range manifest {
 		line := "- " + entry.Tool
 		if strings.TrimSpace(entry.Request) != "" {
 			line += " " + entry.Request
 		}
+
 		if entry.Purpose != "" {
 			line += " (" + entry.Purpose + ")"
 		}
+
 		lines = append(lines, line)
 	}
+
 	return strings.Join(lines, "\n")
 }

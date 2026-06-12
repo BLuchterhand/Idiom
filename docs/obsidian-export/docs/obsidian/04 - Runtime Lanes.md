@@ -1,6 +1,6 @@
 ---
 tags:
-  - harness
+  - idiom
   - lanes
   - workflow
 ---
@@ -31,7 +31,7 @@ ordinary chat context.
 ```mermaid
 flowchart TD
     User["User"]
-    CLI["cmd/harness<br/>harness lane &lt;name&gt; --brief"]
+    CLI["cmd/idiom<br/>idiom lane &lt;name&gt; --brief"]
     Lane["Lane orchestrator<br/>parse flags and project config"]
     Prompt["Prompt/profile assembly<br/>attach lane profile, contracts, context"]
     Runner["Runner<br/>runtime brief and tool profile"]
@@ -64,15 +64,15 @@ Typical flow:
 6. Require verification according to risk.
 7. Close readiness before final response.
 
-Use `--no-context-pack` only when the caller supplied equivalent
+Use `--no-context-pack` only when the caller already supplied equivalent
 context. Keep the same task string across related context calls so packet cache
 reuse remains possible.
 
-When `implement` is run through `harness lane implement`, a non-zero subcommand
-exit writes `.harness/recovery/<failure-id>/failure.json` and `packet.json` from
+When `implement` is run through `idiom lane implement`, a non-zero subcommand
+exit writes `.idiom/recovery/<failure-id>/failure.json` and `packet.json` from
 bounded lane/session evidence. The wrapper records the original brief path and
 required edit paths rather than the composed temporary prompt, so follow-up
-`harness recover inspect`, `decompose`, `status`, `promote`, and `reconcile`
+`idiom recover inspect`, `decompose`, `status`, `promote`, and `reconcile`
 operations stay tied to the operator-authored atom.
 
 ## `plan-execute`
@@ -83,17 +83,25 @@ The planner phase is intentionally read-only. It can use discovery and read
 tools, then emits a structured `submit_plan` artifact. It should not call shell,
 git, task ledger, source sanity, or write tools.
 
+The contract-capability overhaul now has a report-only compiler foundation for
+this planner phase in `internal/contracts/contractcompile`. The compiler records required
+edit paths as submit-plan coverage, keeps source-body obligations distinct,
+binds a runtime envelope, and projects the model-visible protocol without
+granting planner write authority. Runner enforcement still remains with the
+existing gates until a later migration atom wires policy decisions into covered
+lane behavior.
+
 Like `implement`, `plan-execute` preloads a compact `context_pack` by default
 unless `--no-context-pack` is supplied. Refine scratchpad meta-prompts are the
-notable exclusion because refine preloads phase-specific source and
+notable exclusion because refine already preloads phase-specific source and
 lint evidence.
 
 The executor phase receives the structured plan and dispatches edits through
 controlled workspace execution. The lane then performs post-write source sanity,
 phase evidence capture, and review-repair gates.
 
-Direct `harness plan-execute` persists durable progress state under
-`.harness/plan-execute/sessions/<session-id>.json`. Resume is not transcript
+Direct `idiom plan-execute` persists durable progress state under
+`.idiom/plan-execute/sessions/<session-id>.json`. Resume is not transcript
 replay: `--resume` must point at an existing progress state, must match the
 same prompt or prompt file, and only continues states that are ready for
 review-repair.
@@ -138,8 +146,8 @@ that design doc into plan-execute work:
   scope, source-satisfied state, and single-purpose failures before model
   tokens are spent.
 - Broad design docs can be materialized into atom briefs under
-  `.harness/atoms/<title>/atom-NNN.md`.
-- Materialized atoms carry exact active-state anchors for existing files and a
+  `.idiom/atoms/<title>/atom-NNN.md`.
+- Materialized atoms carry exact current-state anchors for existing files and a
   `NEW FILE` marker for missing paths.
 - Existing terminal atoms are preserved during materialization and skipped on
   rerun.
@@ -152,6 +160,12 @@ This keeps design-doc execution aligned with the lane contract: the model
 chooses strategy inside bounded phases, while the harness owns artifact shape,
 scope classification, terminal-state detection, and readiness gates.
 
+For broad architecture or harness designs, implementation orchestration follows
+[Design Doc Implementation Workflow](../design-doc-implementation-workflow.md):
+full pre-implementation reviewer bench, durable reviewer evidence,
+dispatchable atoms, disjoint write scopes for parallel work, per-atom review,
+docs freshness, and final full-bench review before commit and push.
+
 ## Deterministic Lane Guarantees
 
 Lanes should make these properties observable:
@@ -163,19 +177,19 @@ Lanes should make these properties observable:
 - Which obligations are still open.
 - Which verification command or source sanity check was run.
 - Which result is terminal.
-- Which generated atom docs remain optional, terminal, blocked, or
+- Which generated atom docs remain pending, terminal, blocked, or
   source-satisfied.
 
 ## Auxiliary Lane Commands And Status
 
 Other lane-adjacent surfaces appear in the CLI and docs:
 
-- `harness lane postflight` reviews returned diffs.
+- `idiom lane postflight` reviews returned diffs.
 - `history` and `explain` style surfaces are operator aids rather than primary
   write lanes.
 - `refine` workflows preload phase-specific lint/source evidence instead of
   receiving an additional broad repo map.
-- Lane JSON events and `.harness/lane-history.jsonl` are diagnostic surfaces for
+- Lane JSON events and `.idiom/lane-history.jsonl` are diagnostic surfaces for
   routing, phase, and degradation state.
 
 Treat these as workflow surfaces around the main lane contracts unless the code

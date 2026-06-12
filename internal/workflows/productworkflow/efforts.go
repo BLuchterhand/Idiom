@@ -92,6 +92,7 @@ func BrowseProductEfforts(options ProductEffortsOptions) (ProductEffortsResult, 
 		result.NextValidAction = "rerun with --status unstarted, started, closed, or all"
 		result.addFinding("invalid_status_filter", "", "", err.Error())
 		result.refreshCounts()
+
 		return result, err
 	}
 
@@ -101,48 +102,63 @@ func BrowseProductEfforts(options ProductEffortsOptions) (ProductEffortsResult, 
 		result.NextValidAction = "rerun with a safe existing efforts root"
 		result.addFinding("unsafe_efforts_root", "", root, err.Error())
 		result.refreshCounts()
+
 		return result, err
 	}
+
 	result.Root = filepath.ToSlash(absRoot)
 
 	query := strings.ToLower(result.Query)
+
 	for _, bucket := range buckets {
 		bucketPath := filepath.Join(absRoot, bucket)
+
 		entries, err := os.ReadDir(bucketPath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
+
 			result.addFinding("read_status_bucket_error", bucket, productEffortRelPath(absRoot, bucketPath), err.Error())
+
 			continue
 		}
+
 		for _, entry := range entries {
 			if !entry.IsDir() {
 				continue
 			}
+
 			effortPath := filepath.Join(bucketPath, entry.Name())
 			relPath := productEffortRelPath(absRoot, effortPath)
 			wsPath := filepath.Join(effortPath, WorkflowStateFileName)
+
 			data, err := os.ReadFile(wsPath)
 			if err != nil {
 				code := "read_workflow_state_error"
 				message := err.Error()
+
 				if os.IsNotExist(err) {
 					code = "missing_workflow_state"
 					message = WorkflowStateFileName + " not found"
 				}
+
 				result.addFinding(code, bucket, filepath.ToSlash(filepath.Join(relPath, WorkflowStateFileName)), message)
+
 				continue
 			}
 
 			summary, err := productEffortSummaryFromState(data, bucket, relPath)
 			if err != nil {
 				result.addFinding("invalid_workflow_state", bucket, filepath.ToSlash(filepath.Join(relPath, WorkflowStateFileName)), err.Error())
+
 				continue
 			}
+
 			if query != "" && !productEffortSummaryMatches(summary, query) {
 				continue
 			}
+
 			result.Efforts = append(result.Efforts, summary)
 		}
 	}
@@ -150,6 +166,7 @@ func BrowseProductEfforts(options ProductEffortsOptions) (ProductEffortsResult, 
 	sortProductEfforts(result.Efforts)
 	sortProductEffortFindings(result.Findings)
 	result.refreshCounts()
+
 	if len(result.Findings) > 0 {
 		result.Status = ProductWorkflowStatusFail
 		result.NextValidAction = "fix product effort workflow_state findings before relying on the effort browser"
@@ -158,6 +175,7 @@ func BrowseProductEfforts(options ProductEffortsOptions) (ProductEffortsResult, 
 	} else {
 		result.NextValidAction = "select an effort and run idiom product status --effort-root <relative_folder_path>"
 	}
+
 	return result, nil
 }
 
@@ -176,17 +194,21 @@ func resolveProductEffortsRoot(root string) (string, error) {
 	if hasPathTraversal(root) {
 		return "", errors.New("efforts root must not contain traversal components")
 	}
+
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return "", fmt.Errorf("resolve efforts root: %w", err)
 	}
+
 	info, err := os.Stat(absRoot)
 	if err != nil {
 		return "", fmt.Errorf("stat efforts root: %w", err)
 	}
+
 	if !info.IsDir() {
 		return "", fmt.Errorf("efforts root is not a directory: %s", filepath.ToSlash(absRoot))
 	}
+
 	return absRoot, nil
 }
 
@@ -197,6 +219,7 @@ func hasPathTraversal(path string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -205,12 +228,15 @@ func productEffortSummaryFromState(data []byte, bucket string, relPath string) (
 	if err != nil {
 		return ProductEffortSummary{}, err
 	}
+
 	if err := validateProductEffortWorkflowState(ws, bucket); err != nil {
 		return ProductEffortSummary{}, err
 	}
+
 	if err := validateProductEffortFolderPath(ws, relPath); err != nil {
 		return ProductEffortSummary{}, err
 	}
+
 	return ProductEffortSummary{
 		EffortID:            strings.TrimSpace(ws.EffortID),
 		Title:               strings.TrimSpace(ws.Title),
@@ -231,6 +257,7 @@ func productEffortSummaryFromState(data []byte, bucket string, relPath string) (
 
 func validateProductEffortWorkflowState(ws WorkflowState, bucket string) error {
 	var errs []error
+
 	if ws.StatusBucket != "" {
 		if !validStatusBuckets[ws.StatusBucket] {
 			errs = append(errs, fmt.Errorf("workflow state invalid status_bucket %q", ws.StatusBucket))
@@ -238,12 +265,15 @@ func validateProductEffortWorkflowState(ws WorkflowState, bucket string) error {
 			errs = append(errs, fmt.Errorf("workflow state status_bucket %q does not match folder bucket %q", ws.StatusBucket, bucket))
 		}
 	}
+
 	if _, ok := validStates[ws.CurrentState]; !ok && ws.CurrentState != "" {
 		errs = append(errs, fmt.Errorf("workflow state current_state %q is not valid", ws.CurrentState))
 	}
+
 	if consistencyBlocker := validateStateBucketConsistency(ws.StatusBucket, ws.CurrentState); consistencyBlocker != nil {
 		errs = append(errs, errors.New(consistencyBlocker.Message))
 	}
+
 	return errors.Join(errs...)
 }
 
@@ -252,10 +282,12 @@ func validateProductEffortFolderPath(ws WorkflowState, relPath string) error {
 	if folderPath == "" {
 		return nil
 	}
+
 	relPath = strings.Trim(strings.TrimSpace(filepath.ToSlash(relPath)), "/")
 	if relPath == "" || folderPath == relPath || strings.HasSuffix(folderPath, "/"+relPath) {
 		return nil
 	}
+
 	return fmt.Errorf("workflow state folder_path %q does not match effort folder %q", ws.FolderPath, relPath)
 }
 
@@ -267,6 +299,7 @@ func compactStrings(values []string) []string {
 			out = append(out, value)
 		}
 	}
+
 	return out
 }
 
@@ -287,11 +320,13 @@ func productEffortSummaryMatches(summary ProductEffortSummary, query string) boo
 			return true
 		}
 	}
+
 	for _, action := range summary.NextValidActions {
 		if strings.Contains(strings.ToLower(action), query) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -300,6 +335,7 @@ func productEffortRelPath(root, path string) string {
 	if err != nil {
 		return filepath.ToSlash(path)
 	}
+
 	return filepath.ToSlash(rel)
 }
 
@@ -307,20 +343,25 @@ func sortProductEfforts(efforts []ProductEffortSummary) {
 	sort.Slice(efforts, func(i, j int) bool {
 		leftBucket := productEffortBucketRank(efforts[i].StatusBucket)
 		rightBucket := productEffortBucketRank(efforts[j].StatusBucket)
+
 		if leftBucket != rightBucket {
 			return leftBucket < rightBucket
 		}
+
 		leftID := efforts[i].EffortID
 		if leftID == "" {
 			leftID = efforts[i].RelativeFolderPath
 		}
+
 		rightID := efforts[j].EffortID
 		if rightID == "" {
 			rightID = efforts[j].RelativeFolderPath
 		}
+
 		if leftID != rightID {
 			return leftID < rightID
 		}
+
 		return efforts[i].RelativeFolderPath < efforts[j].RelativeFolderPath
 	})
 }
@@ -329,12 +370,15 @@ func sortProductEffortFindings(findings []ProductEffortFinding) {
 	sort.Slice(findings, func(i, j int) bool {
 		leftBucket := productEffortBucketRank(findings[i].StatusBucket)
 		rightBucket := productEffortBucketRank(findings[j].StatusBucket)
+
 		if leftBucket != rightBucket {
 			return leftBucket < rightBucket
 		}
+
 		if findings[i].Path != findings[j].Path {
 			return findings[i].Path < findings[j].Path
 		}
+
 		return findings[i].Code < findings[j].Code
 	})
 }
@@ -345,6 +389,7 @@ func productEffortBucketRank(bucket string) int {
 			return i
 		}
 	}
+
 	return len(productEffortStatusOrder)
 }
 
@@ -352,6 +397,7 @@ func (result *ProductEffortsResult) addFinding(code, bucket, path, message strin
 	if path == "" {
 		path = "."
 	}
+
 	result.Findings = append(result.Findings, ProductEffortFinding{
 		ID:           code + ":" + path,
 		Code:         code,
@@ -376,5 +422,6 @@ func (result *ProductEffortsResult) refreshCounts() {
 			counts.Closed++
 		}
 	}
+
 	result.Counts = counts
 }

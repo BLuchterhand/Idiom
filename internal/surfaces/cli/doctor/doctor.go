@@ -45,9 +45,11 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	fs := flag.NewFlagSet("idiom doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	configPath := fs.String("config", ".idiom/config.json", "path to project config (relative or absolute)")
 	asJSON := fs.Bool("json", false, "emit results as one JSON object instead of human-readable text")
 	readinessProfile := fs.String("profile", "all", "readiness profile to report: all, discovery, plan, implement, eval, or sidecar")
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -60,11 +62,14 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		checkPython3(),
 		checkGit(),
 	}
+
 	profiles, err := buildDoctorReadinessProfiles(*configPath, *readinessProfile, results)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 2
 	}
+
 	logDoctorReadinessTelemetry(rec, profiles)
 
 	if *asJSON {
@@ -78,6 +83,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 			return 1
 		}
 	}
+
 	return 0
 }
 
@@ -129,10 +135,12 @@ func checkBackends() checkResult {
 			remedy: fmt.Sprintf("install one of: %s (e.g. `pip install mlx-lm` for mlx_lm.server)", strings.Join(autodetect.KnownBackendNames(), ", ")),
 		}
 	}
+
 	names := make([]string, 0, len(backends))
 	for _, b := range backends {
 		names = append(names, b.BinaryName)
 	}
+
 	return checkResult{
 		name:   "backend runner",
 		status: "pass",
@@ -154,6 +162,7 @@ func checkModels() checkResult {
 			remedy: "run `idiom models pull <alias>` (Phase 9 deliverable) or download a model into one of the standard cache dirs",
 		}
 	}
+
 	return checkResult{
 		name:   "local models",
 		status: "pass",
@@ -171,6 +180,7 @@ func checkConfigFile(path string) checkResult {
 			abs = filepath.Join(cwd, path)
 		}
 	}
+
 	body, err := os.ReadFile(abs)
 	if err != nil {
 		return checkResult{
@@ -180,7 +190,9 @@ func checkConfigFile(path string) checkResult {
 			remedy: "run `idiom init` to scaffold .idiom/config.json (Phase 7)",
 		}
 	}
+
 	var probe map[string]any
+
 	if err := json.Unmarshal(body, &probe); err != nil {
 		return checkResult{
 			name:   "project config",
@@ -189,6 +201,7 @@ func checkConfigFile(path string) checkResult {
 			remedy: "fix the JSON syntax error or restore from a backup",
 		}
 	}
+
 	return checkResult{
 		name:   "project config",
 		status: "pass",
@@ -209,6 +222,7 @@ func checkWorkspaceWritable(configPath string) checkResult {
 			root = cwd
 		}
 	}
+
 	if root == "" {
 		return checkResult{
 			name:   "workspace writable",
@@ -217,6 +231,7 @@ func checkWorkspaceWritable(configPath string) checkResult {
 			remedy: "set workspace.root in .idiom/config.json",
 		}
 	}
+
 	probe, err := os.CreateTemp(root, ".idiom-doctor-write-probe-*")
 	if err != nil {
 		return checkResult{
@@ -226,9 +241,12 @@ func checkWorkspaceWritable(configPath string) checkResult {
 			remedy: "check filesystem permissions on the workspace root, or change workspace.root in config",
 		}
 	}
+
 	probePath := probe.Name()
+
 	_ = probe.Close()
 	_ = os.Remove(probePath)
+
 	return checkResult{
 		name:   "workspace writable",
 		status: "pass",
@@ -257,6 +275,7 @@ func checkPython3() checkResult {
 			remedy: "install python3 (required for `idiom brief lint` and mlx_lm.server)",
 		}
 	}
+
 	return checkResult{
 		name:   "python3",
 		status: "pass",
@@ -277,6 +296,7 @@ func checkGit() checkResult {
 			remedy: "install git (required for `idiom lane postflight` and most project workflows)",
 		}
 	}
+
 	return checkResult{
 		name:   "git",
 		status: "pass",
@@ -293,9 +313,12 @@ func emitDoctorText(w io.Writer, results []checkResult, profiles []readinessProf
 		"warn": "warn",
 		"fail": "FAIL",
 	}
+
 	var passes, warns, fails int
+
 	for _, r := range results {
 		fmt.Fprintf(w, "[%s] %-22s %s\n", icon[r.status], r.name, r.detail)
+
 		switch r.status {
 		case "pass":
 			passes++
@@ -305,18 +328,25 @@ func emitDoctorText(w io.Writer, results []checkResult, profiles []readinessProf
 			fails++
 		}
 	}
+
 	fmt.Fprintf(w, "\nsummary: %d pass, %d warn, %d fail\n", passes, warns, fails)
+
 	if warns+fails == 0 {
 		emitDoctorReadinessText(w, profiles)
+
 		return
 	}
+
 	fmt.Fprintln(w, "\nnext steps:")
+
 	for _, r := range results {
 		if r.status == "pass" || r.remedy == "" {
 			continue
 		}
+
 		fmt.Fprintf(w, "  - %s: %s\n", r.name, r.remedy)
 	}
+
 	emitDoctorReadinessText(w, profiles)
 }
 
@@ -330,11 +360,13 @@ func emitDoctorJSON(w io.Writer, results []checkResult, profiles []readinessProf
 		Detail string `json:"detail,omitempty"`
 		Remedy string `json:"remedy,omitempty"`
 	}
+
 	type summary struct {
 		Pass int `json:"pass"`
 		Warn int `json:"warn"`
 		Fail int `json:"fail"`
 	}
+
 	out := struct {
 		Checks            []entry                  `json:"checks"`
 		Summary           summary                  `json:"summary"`
@@ -343,6 +375,7 @@ func emitDoctorJSON(w io.Writer, results []checkResult, profiles []readinessProf
 		Checks:            make([]entry, 0, len(results)),
 		ReadinessProfiles: profiles,
 	}
+
 	for _, r := range results {
 		out.Checks = append(out.Checks, entry{r.name, r.status, r.detail, r.remedy})
 		switch r.status {
@@ -354,8 +387,10 @@ func emitDoctorJSON(w io.Writer, results []checkResult, profiles []readinessProf
 			out.Summary.Fail++
 		}
 	}
+
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
+
 	_ = enc.Encode(out)
 }
 
@@ -363,47 +398,63 @@ func emitDoctorReadinessText(w io.Writer, profiles []readinessProfileReport) {
 	if len(profiles) == 0 {
 		return
 	}
+
 	fmt.Fprintln(w, "\nreadiness profiles:")
+
 	for _, profile := range profiles {
 		fmt.Fprintf(w, "  - %s: %s", profile.Name, profile.State)
+
 		if profile.Detail != "" {
 			fmt.Fprintf(w, " (%s)", profile.Detail)
 		}
+
 		if len(profile.RequiredRoles) > 0 {
 			fmt.Fprintf(w, " roles=%s", strings.Join(profile.RequiredRoles, ","))
 		}
+
 		if len(profile.Unavailable) > 0 {
 			fmt.Fprintf(w, " unavailable=%d", len(profile.Unavailable))
 		}
+
 		if profile.Enforcement != "" {
 			fmt.Fprintf(w, " enforcement=%s", profile.Enforcement)
 		}
+
 		if len(profile.HardFailures) > 0 {
 			fmt.Fprintf(w, " hard_failures=%d", len(profile.HardFailures))
 		}
+
 		if len(profile.SoftDegradations) > 0 {
 			fmt.Fprintf(w, " soft_degradations=%d", len(profile.SoftDegradations))
 		}
+
 		fmt.Fprintln(w)
+
 		for _, gate := range profile.Gates {
 			if gate.Status == "pass" {
 				continue
 			}
+
 			fmt.Fprintf(w, "      gate %s %s/%s: %s\n", gate.Name, gate.Status, gate.Severity, gate.Reason)
+
 			if gate.Remedy != "" {
 				fmt.Fprintf(w, "        remedy: %s\n", gate.Remedy)
 			}
 		}
+
 		for _, unavailable := range profile.Unavailable {
 			fmt.Fprintf(w, "      unavailable %s: %s\n", unavailable.Check, unavailable.Reason)
+
 			if unavailable.Remedy != "" {
 				fmt.Fprintf(w, "        remedy: %s\n", unavailable.Remedy)
 			}
 		}
+
 		for _, check := range profile.Checks {
 			if check.State == "pass" || check.Remedy == "" {
 				continue
 			}
+
 			fmt.Fprintf(w, "      %s %s: %s\n", check.State, check.Name, check.Remedy)
 		}
 	}
@@ -423,5 +474,6 @@ func readinessHostChecks(results []checkResult) []readiness.HostCheck {
 			Remedy: result.remedy,
 		})
 	}
+
 	return out
 }

@@ -134,31 +134,40 @@ func AppendLearningLog(root string, entry LearningLogEntry) error {
 	if strings.TrimSpace(entry.Source) == "" {
 		return errors.New("learning log entry needs a non-empty source")
 	}
+
 	if strings.TrimSpace(entry.Action) == "" {
 		return errors.New("learning log entry needs a non-empty action")
 	}
+
 	entry = sanitizeLearningLogEntry(entry)
+
 	path := learningLogPath(root)
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
+
 	encoded, err := json.Marshal(entry)
 	if err != nil {
 		return err
 	}
+
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+
 	if _, err := f.Write(append(encoded, '\n')); err != nil {
 		return err
 	}
+
 	return nil
 }
 
 func sanitizeLearningLogEntry(entry LearningLogEntry) LearningLogEntry {
 	suppliedEventID := entry.EventID
+
 	entry.EventID = ""
 	entry.Timestamp = sanitizeLearningLogTimestamp(entry.Timestamp, time.Now().UTC())
 	entry.Source = sanitizeLearningSource(entry.Source)
@@ -169,29 +178,41 @@ func sanitizeLearningLogEntry(entry LearningLogEntry) LearningLogEntry {
 	entry.TaskID = sanitizeLearningCorrelationID("task", entry.TaskID)
 	entry.CorpusID = sanitizeLearningCorrelationID("corpus", entry.CorpusID)
 	entry.ResultID = sanitizeLearningCorrelationID("result", entry.ResultID)
+
 	if strings.TrimSpace(entry.Note) != "" {
 		entry.Note = LearningLogNotePresent
 	}
+
 	if entry.Evidence != nil {
 		evidence := sanitizeLearningEvidenceRef(*entry.Evidence)
+
 		entry.Evidence = &evidence
 	}
+
 	if entry.BeforeWeights != nil {
 		before := sanitizeLearningLogWeights(*entry.BeforeWeights)
+
 		entry.BeforeWeights = &before
 	}
+
 	if entry.AfterWeights != nil {
 		after := sanitizeLearningLogWeights(*entry.AfterWeights)
+
 		entry.AfterWeights = &after
 	}
+
 	if entry.Rollback != nil {
 		entry.Rollback = &LearningRollbackData{Weights: sanitizeLearningLogWeights(entry.Rollback.Weights)}
 	}
+
 	if entry.Verification != nil {
 		v := sanitizeLearningLogVerificationEvidence(*entry.Verification)
+
 		entry.Verification = &v
 	}
+
 	entry.EventID = sanitizeLearningEventID(suppliedEventID, entry)
+
 	return entry
 }
 
@@ -200,6 +221,7 @@ func sanitizeLearningLogTimestamp(value string, fallback time.Time) string {
 	if err != nil {
 		return fallback.UTC().Format(time.RFC3339Nano)
 	}
+
 	return parsed.UTC().Format(time.RFC3339Nano)
 }
 
@@ -212,6 +234,7 @@ func normalizeLearningLogAction(action string) string {
 	case "no_op":
 		return "no_op"
 	}
+
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case "reset":
 		return "reset"
@@ -240,9 +263,11 @@ func sanitizeLearningEvidenceRef(evidence LearningEvidenceRef) LearningEvidenceR
 	evidence.ResultID = sanitizeLearningCorrelationID("result", evidence.ResultID)
 	evidence.Files = sanitizeLearningLogPathList(evidence.Files)
 	evidence.Metrics = sanitizeLearningMetrics(evidence.Metrics)
+
 	if evidence.InvalidPathCount < 0 {
 		evidence.InvalidPathCount = 0
 	}
+
 	return evidence
 }
 
@@ -253,6 +278,7 @@ func sanitizeLearningEvidenceRef(evidence LearningEvidenceRef) LearningEvidenceR
 func sanitizeLearningLogVerificationEvidence(ve LearningLogVerificationEvidence) LearningLogVerificationEvidence {
 	ve.EditPaths = sanitizeLearningLogPathList(ve.EditPaths)
 	ve.VerificationCommand = sanitizeLearningLogVerificationCommand(ve.VerificationCommand)
+
 	return ve
 }
 
@@ -261,34 +287,42 @@ func sanitizeLearningLogVerificationCommand(cmd string) string {
 	if cmd == "" {
 		return ""
 	}
+
 	// Strip control characters; keep printable ASCII and common UTF-8.
 	cmd = strings.Map(func(r rune) rune {
 		if r < ' ' || r == 0x7f {
 			return -1
 		}
+
 		return r
 	}, cmd)
 	if len(cmd) > 256 {
 		cmd = cmd[:256]
 	}
+
 	return cmd
 }
 
 func sanitizeLearningLogPathList(paths []string) []string {
 	out := make([]string, 0, len(paths))
 	seen := make(map[string]struct{}, len(paths))
+
 	for _, path := range paths {
 		key := sanitizeLearningLogPath(path)
 		if key == "" {
 			continue
 		}
+
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
 		out = append(out, key)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -297,6 +331,7 @@ func sanitizeLearningLogPath(path string) string {
 	if key == "" || !isBoundedLearningLogPath(key) {
 		return ""
 	}
+
 	return key
 }
 
@@ -304,23 +339,29 @@ func isBoundedLearningLogPath(path string) bool {
 	if len(path) > 512 || strings.ContainsAny(path, "\x00\r\n\t") {
 		return false
 	}
+
 	parts := strings.Split(path, "/")
 	for _, part := range parts {
 		if part == "" || part == "." || part == ".." || len(part) > 128 {
 			return false
 		}
+
 		if !isSafeLearningLogPathSegment(part) {
 			return false
 		}
+
 		if isSensitiveLearningLogPathComponent(part) {
 			return false
 		}
 	}
+
 	name := strings.ToLower(parts[len(parts)-1])
 	if _, ok := learningLogKnownPathBasenames[name]; ok {
 		return true
 	}
+
 	_, ok := learningLogAllowedFileExtensions[strings.ToLower(filepath.Ext(name))]
+
 	return ok
 }
 
@@ -330,12 +371,15 @@ func isSafeLearningLogPathSegment(segment string) bool {
 		if c >= 'a' && c <= 'z' {
 			continue
 		}
+
 		if c >= 'A' && c <= 'Z' {
 			continue
 		}
+
 		if c >= '0' && c <= '9' {
 			continue
 		}
+
 		switch c {
 		case '.', '_', '-', '+', '@':
 			continue
@@ -343,20 +387,24 @@ func isSafeLearningLogPathSegment(segment string) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
 func isSensitiveLearningLogPathComponent(component string) bool {
 	clean := strings.TrimSpace(component)
 	candidates := []string{clean}
+
 	if ext := filepath.Ext(clean); ext != "" {
 		candidates = append(candidates, strings.TrimSuffix(candidates[0], ext))
 	}
+
 	for _, candidate := range candidates {
 		if isSensitiveLearningLogPathToken(candidate) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -365,6 +413,7 @@ func isSensitiveLearningLogPathToken(value string) bool {
 	if value == "" {
 		return false
 	}
+
 	lower := strings.ToLower(value)
 	switch {
 	case strings.HasPrefix(lower, "ghp_"),
@@ -378,33 +427,40 @@ func isSensitiveLearningLogPathToken(value string) bool {
 		strings.HasPrefix(lower, "sk_proj_"):
 		return true
 	}
+
 	if _, ok := learningLogSensitivePathTokens[lower]; ok {
 		return true
 	}
+
 	parts := learningLogPathTokenParts(value)
 	if hasSensitiveLearningLogPathCompound(parts) {
 		return true
 	}
+
 	for _, part := range parts {
 		if _, ok := learningLogSensitivePathTokens[part]; ok {
 			return true
 		}
 	}
+
 	return false
 }
 
 func learningLogPathTokenParts(value string) []string {
 	fields := strings.FieldsFunc(value, isLearningLogPathTokenSeparator)
 	parts := make([]string, 0, len(fields))
+
 	for _, field := range fields {
 		for _, part := range splitLearningLogCamelToken(field) {
 			part = strings.ToLower(strings.TrimSpace(part))
 			if part == "" {
 				continue
 			}
+
 			parts = append(parts, part)
 		}
 	}
+
 	return parts
 }
 
@@ -413,15 +469,20 @@ func splitLearningLogCamelToken(value string) []string {
 	if value == "" {
 		return nil
 	}
+
 	var parts []string
+
 	start := 0
+
 	for i := 1; i < len(value); i++ {
 		if isLearningLogCamelBoundary(value, i) {
 			parts = append(parts, value[start:i])
 			start = i
 		}
 	}
+
 	parts = append(parts, value[start:])
+
 	return parts
 }
 
@@ -429,11 +490,14 @@ func isLearningLogCamelBoundary(value string, index int) bool {
 	if index <= 0 || index >= len(value) || !isASCIILearningLogUpper(value[index]) {
 		return false
 	}
+
 	prev := value[index-1]
 	if isASCIILearningLogLower(prev) || isASCIILearningLogDigit(prev) {
 		return true
 	}
+
 	nextIndex := index + 1
+
 	return isASCIILearningLogUpper(prev) &&
 		nextIndex < len(value) &&
 		isASCIILearningLogLower(value[nextIndex])
@@ -455,11 +519,13 @@ func hasSensitiveLearningLogPathCompound(parts []string) bool {
 	if isCollapsedSensitiveLearningLogPathCompound(strings.Join(parts, "")) {
 		return true
 	}
+
 	for i := 0; i+1 < len(parts); i++ {
 		if isSensitiveLearningLogPathCompoundPair(parts[i], parts[i+1]) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -467,7 +533,9 @@ func isSensitiveLearningLogPathCompoundPair(left string, right string) bool {
 	if _, ok := learningLogSensitivePathCompoundLeads[left]; !ok {
 		return false
 	}
+
 	_, ok := learningLogSensitivePathCompoundTails[right]
+
 	return ok
 }
 
@@ -475,6 +543,7 @@ func isCollapsedSensitiveLearningLogPathCompound(value string) bool {
 	if value == "" {
 		return false
 	}
+
 	for left := range learningLogSensitivePathCompoundLeads {
 		for right := range learningLogSensitivePathCompoundTails {
 			if value == left+right {
@@ -482,6 +551,7 @@ func isCollapsedSensitiveLearningLogPathCompound(value string) bool {
 			}
 		}
 	}
+
 	return false
 }
 
@@ -500,12 +570,15 @@ func sanitizeLearningLogWeights(weights map[string]float64) map[string]float64 {
 		if value != value {
 			continue
 		}
+
 		clean := sanitizeLearningLogWeightKey(key)
 		if clean == "" {
 			continue
 		}
+
 		out[clean] = value
 	}
+
 	return out
 }
 
@@ -513,10 +586,12 @@ func sanitizeLearningLogWeightKey(key string) string {
 	if path := sanitizeLearningLogPath(key); path != "" {
 		return path
 	}
+
 	feature := normalizeLearningLogToken(key)
 	if _, ok := learningLogAllowedWeightFeatureKeys[feature]; ok {
 		return feature
 	}
+
 	return ""
 }
 
@@ -525,9 +600,11 @@ func sanitizeLearningEventID(value string, entry LearningLogEntry) string {
 	if clean == "" {
 		return ""
 	}
+
 	if learningGeneratedEventIDPattern.MatchString(clean) {
 		return clean
 	}
+
 	return learningEventID(entry)
 }
 
@@ -536,6 +613,7 @@ func sanitizeLearningSource(value string) string {
 	if _, ok := learningLogAllowedSources[clean]; ok {
 		return clean
 	}
+
 	return "unknown"
 }
 
@@ -544,9 +622,11 @@ func sanitizeLearningReason(value string) string {
 	if clean == "" {
 		return ""
 	}
+
 	if _, ok := learningLogAllowedReasons[clean]; ok {
 		return clean
 	}
+
 	return "unknown"
 }
 
@@ -555,9 +635,11 @@ func sanitizeLearningEvidenceKind(value string) string {
 	if clean == "" {
 		return ""
 	}
+
 	if _, ok := learningLogAllowedEvidenceKinds[clean]; ok {
 		return clean
 	}
+
 	return "unknown"
 }
 
@@ -566,9 +648,11 @@ func sanitizeLearningMetricKey(value string) string {
 	if clean == "" {
 		return ""
 	}
+
 	if _, ok := learningLogAllowedMetricKeys[clean]; ok {
 		return clean
 	}
+
 	return "unknown"
 }
 
@@ -577,9 +661,11 @@ func sanitizeLearningCorrelationID(prefix string, value string) string {
 	if clean == "" {
 		return ""
 	}
+
 	if learningHashedIDPatterns[prefix].MatchString(clean) {
 		return clean
 	}
+
 	return hashedLearningLogID(prefix, value)
 }
 
@@ -590,10 +676,13 @@ func hashedLearningLogID(prefix string, value string) string {
 
 func normalizeLearningLogToken(value string) string {
 	clean := strings.TrimSpace(strings.ToLower(value))
+
 	clean = strings.NewReplacer(" ", "_", "/", "_").Replace(clean)
+
 	if !learningSafeTokenPattern.MatchString(clean) {
 		return ""
 	}
+
 	return clean
 }
 
@@ -601,21 +690,28 @@ func normalizeLearningLogToken(value string) string {
 // malformed lines. Missing log returns an empty slice with no error.
 func ReadLearningLog(root string) ([]LearningLogEntry, error) {
 	path := learningLogPath(root)
+
 	var out []LearningLogEntry
+
 	err := util.ScanFile(path, func(raw json.RawMessage) error {
 		var entry LearningLogEntry
+
 		if err := json.Unmarshal(raw, &entry); err != nil {
 			return nil
 		}
+
 		out = append(out, entry)
+
 		return nil
 	})
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
+
 		return out, err
 	}
+
 	return out, nil
 }
 
@@ -654,12 +750,15 @@ func SummarizeLearningLog(entries []LearningLogEntry) LearningLogSummary {
 		RejectedReasonCounts: make(map[string]int),
 		LatestPerSource:      make(map[string]string),
 	}
+
 	for i := range entries {
 		entry := entries[i]
 		summary.TotalEntries++
+
 		if entry.EventID != "" || entry.State != "" {
 			summary.TotalEvents++
 		}
+
 		switch entry.Action {
 		case "boost":
 			summary.BoostCount++
@@ -672,8 +771,10 @@ func SummarizeLearningLog(entries []LearningLogEntry) LearningLogSummary {
 		default:
 			summary.NoOpCount++
 		}
+
 		state := strings.TrimSpace(entry.State)
 		reason := strings.TrimSpace(entry.Reason)
+
 		if state != "" {
 			summary.StateCounts[state]++
 			switch state {
@@ -689,28 +790,36 @@ func SummarizeLearningLog(entries []LearningLogEntry) LearningLogSummary {
 				}
 			}
 		}
+
 		if reason != "" {
 			summary.ReasonCounts[reason]++
 		}
+
 		if entry.Source != "" {
 			summary.BySource[entry.Source]++
 			if existing, ok := summary.LatestPerSource[entry.Source]; !ok || entry.Timestamp > existing {
 				summary.LatestPerSource[entry.Source] = entry.Timestamp
 			}
 		}
+
 		if summary.LatestEntry == nil || entry.Timestamp > summary.LatestEntry.Timestamp {
 			copy := entry
+
 			summary.LatestEntry = &copy
 		}
 	}
+
 	// Newest-first recent slice; cap at 10.
 	sorted := append([]LearningLogEntry(nil), entries...)
 	slices.SortFunc(sorted, func(a, b LearningLogEntry) int {
 		return -cmp.Compare(a.Timestamp, b.Timestamp)
 	})
+
 	if len(sorted) > 10 {
 		sorted = sorted[:10]
 	}
+
 	summary.Recent = sorted
+
 	return summary
 }

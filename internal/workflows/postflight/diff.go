@@ -75,8 +75,10 @@ func (d Diff) ModifiedPaths() []string {
 		if f.Deleted {
 			continue
 		}
+
 		out = append(out, f.Path)
 	}
+
 	return out
 }
 
@@ -88,6 +90,7 @@ func ParseDiffFile(path string) (Diff, error) {
 	if err != nil {
 		return Diff{}, fmt.Errorf("postflight: read diff %q: %w", path, err)
 	}
+
 	return ParseDiff(string(body)), nil
 }
 
@@ -114,6 +117,7 @@ var hunkHeaderRE = regexp.MustCompile(`^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 // weird diff doesn't poison the whole run.
 func ParseDiff(body string) Diff {
 	var d Diff
+
 	scanner := bufio.NewScanner(strings.NewReader(body))
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
@@ -123,6 +127,7 @@ func ParseDiff(body string) Diff {
 	// When no hunk header has appeared yet, it's 0 — `+` lines in
 	// that state get Line=0 to signal "no positional info."
 	var nextNewLine int
+
 	flush := func() {
 		if current != nil {
 			// For pure deletions the post-image path is /dev/null;
@@ -131,18 +136,24 @@ func ParseDiff(body string) Diff {
 			if current.Deleted && strings.TrimSpace(current.Path) == "" {
 				current.Path = current.OldPath
 			}
+
 			d.Files = append(d.Files, *current)
 			current = nil
 		}
+
 		nextNewLine = 0
 	}
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		switch {
 		case strings.HasPrefix(line, "--- "):
 			flush()
+
 			current = &FileChange{}
+
 			oldPath := strings.TrimPrefix(line, "--- ")
+
 			if oldPath == "/dev/null" {
 				current.Added = true
 			} else {
@@ -155,6 +166,7 @@ func ParseDiff(body string) Diff {
 			if current == nil {
 				continue
 			}
+
 			newPath := strings.TrimPrefix(line, "+++ ")
 			if newPath == "/dev/null" {
 				current.Deleted = true
@@ -192,7 +204,9 @@ func ParseDiff(body string) Diff {
 			flush()
 		}
 	}
+
 	flush()
+
 	return d
 }
 
@@ -206,11 +220,13 @@ func stripGitPrefix(p string) string {
 	if idx := strings.IndexByte(p, '\t'); idx >= 0 {
 		p = p[:idx]
 	}
+
 	switch {
 	case strings.HasPrefix(p, "a/"):
 		return p[2:]
 	case strings.HasPrefix(p, "b/"):
 		return p[2:]
 	}
+
 	return p
 }

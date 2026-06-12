@@ -20,10 +20,12 @@ func (p *Pipeline) Evaluate(reply string, results []workspace.ToolResult) (works
 	if p == nil {
 		return workspace.ToolResult{}, false
 	}
+
 	for _, check := range p.checks {
 		if rejection, rejected := check(reply, results); rejected {
 			return rejection, true
 		}
 	}
+
 	return workspace.ToolResult{}, false
 }

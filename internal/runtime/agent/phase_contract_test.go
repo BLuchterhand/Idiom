@@ -61,6 +61,7 @@ func TestDeriveTurnPhaseContractPlanExecuteRequiredSource(t *testing.T) {
 	if contract.PhaseID != turnPhaseRequiredSource {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseRequiredSource)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
@@ -81,6 +82,7 @@ func TestPlanExecutePlanningStateRequiredSourceProjectionSplitsParserVisibleSubm
 	if state.Mode != PlanExecutePlanningModeRequiredSource {
 		t.Fatalf("Mode = %q, want %q", state.Mode, PlanExecutePlanningModeRequiredSource)
 	}
+
 	assertNotContains(t, state.ParserVisibleTools, "submit_plan")
 	assertNotContains(t, state.CallableTools, "submit_plan")
 	assertNotContains(t, state.AllowedActionClasses, actionSubmitPlan)
@@ -102,6 +104,7 @@ func TestDeriveTurnPhaseContractPlanExecuteCandidateSourcePending(t *testing.T) 
 	if contract.PhaseID != turnPhaseCandidateSource {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseCandidateSource)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
@@ -117,6 +120,7 @@ func TestPlanExecutePlanningStateCandidateProjectionRequiresSelectedPathForSubmi
 	if state.Mode != PlanExecutePlanningModeAllowedCandidate {
 		t.Fatalf("Mode = %q, want %q", state.Mode, PlanExecutePlanningModeAllowedCandidate)
 	}
+
 	assertNotContains(t, state.ParserVisibleTools, "submit_plan")
 	assertNotContains(t, state.CallableTools, "submit_plan")
 	assertNotContains(t, state.AllowedActionClasses, actionSubmitPlan)
@@ -135,6 +139,7 @@ func TestPlanExecutePlanningStateCandidateProjectionAllowsSubmitWithSelectedPath
 	if state.Mode != PlanExecutePlanningModeAllowedCandidate {
 		t.Fatalf("Mode = %q, want %q", state.Mode, PlanExecutePlanningModeAllowedCandidate)
 	}
+
 	assertContains(t, state.SelectedEditPaths, "a.go")
 	assertContains(t, state.ParserVisibleTools, "submit_plan")
 	assertContains(t, state.CallableTools, "submit_plan")
@@ -160,6 +165,7 @@ func TestDeriveTurnPhaseContractPlanExecuteOpenCandidateSourceRequiresConcreteSe
 	if contract.PhaseID != turnPhaseCandidateSource {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseCandidateSource)
 	}
+
 	assertContains(t, contract.AllowedTools, "read_file")
 	assertContains(t, contract.AllowedTools, "search_content")
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
@@ -183,9 +189,11 @@ func TestDeriveTurnPhaseContractPlanExecuteTerminalRecoveryHidesReadActions(t *t
 	if contract.PhaseID != turnPhaseCandidateSource {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseCandidateSource)
 	}
+
 	if len(contract.AllowedTools) != 0 || len(contract.ActionPolicy.CallableToolNames) != 0 {
 		t.Fatalf("candidate source without selected edit paths must not advertise submit_plan as callable, got allowed=%#v callable=%#v", contract.AllowedTools, contract.ActionPolicy.CallableToolNames)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
 }
@@ -214,13 +222,16 @@ func TestDeriveTurnPhaseContractSubmitReadyNativeRequired(t *testing.T) {
 	if contract.PhaseID != turnPhaseSubmitReadyNativeRequired {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseSubmitReadyNativeRequired)
 	}
+
 	assertEqualSet(t, contract.AllowedTools, []string{"submit_plan"})
 	assertEqualSet(t, contract.RuntimeCall.ExpressibleActionClasses, []string{actionSubmitPlan})
 	assertEqualSet(t, contract.TerminalOutcomes, []string{"submit_plan"})
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+
 	if contract.RuntimeCall.ToolChoice != "required" {
 		t.Fatalf("ToolChoice = %q, want required", contract.RuntimeCall.ToolChoice)
 	}
+
 	if contract.RuntimeCall.Temperature != 0 || contract.RuntimeCall.TopP != 1 || contract.RuntimeCall.TopK != 20 || contract.RuntimeCall.MinP != 0.05 || contract.RuntimeCall.PresencePenalty != 0.1 || contract.RuntimeCall.RepetitionPenalty != 1.1 {
 		t.Fatalf("runtime sampling not projected into phase contract: %#v", contract.RuntimeCall)
 	}
@@ -244,15 +255,19 @@ func TestDeriveTurnPhaseContractSubmitReadyTextual(t *testing.T) {
 	if contract.PhaseID != turnPhaseSubmitReadyTextual {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseSubmitReadyTextual)
 	}
+
 	if len(contract.AllowedTools) != 0 {
 		t.Fatalf("textual submit-ready must not advertise manifest-visible tools, got %#v", contract.AllowedTools)
 	}
+
 	if len(contract.ActionPolicy.CallableToolNames) != 0 {
 		t.Fatalf("textual submit-ready must not advertise callable tool names, got %#v", contract.ActionPolicy.CallableToolNames)
 	}
+
 	assertEqualSet(t, contract.RuntimeCall.ExpressibleActionClasses, []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker})
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
+
 	if contract.RuntimeCall.ResponseFormat != "json" {
 		t.Fatalf("ResponseFormat = %q, want json", contract.RuntimeCall.ResponseFormat)
 	}
@@ -272,6 +287,7 @@ func TestPlanExecutePlanningStateSubmitReadyProjectionMatchesTransport(t *testin
 	if textual.Mode != PlanExecutePlanningModeSubmitReady {
 		t.Fatalf("textual Mode = %q, want %q", textual.Mode, PlanExecutePlanningModeSubmitReady)
 	}
+
 	assertEqualSet(t, textual.ParserVisibleTools, []string{"submit_plan"})
 	assertEqualSet(t, textual.CallableTools, []string{"submit_plan"})
 	assertEqualSet(t, textual.AllowedActionClasses, []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker})
@@ -282,6 +298,7 @@ func TestPlanExecutePlanningStateSubmitReadyProjectionMatchesTransport(t *testin
 	if native.Mode != PlanExecutePlanningModeSubmitReady {
 		t.Fatalf("native Mode = %q, want %q", native.Mode, PlanExecutePlanningModeSubmitReady)
 	}
+
 	assertEqualSet(t, native.ParserVisibleTools, []string{"submit_plan"})
 	assertEqualSet(t, native.CallableTools, []string{"submit_plan"})
 	assertEqualSet(t, native.AllowedActionClasses, []string{actionSubmitPlan})
@@ -358,6 +375,7 @@ func TestPlanExecutePlannerAuthorityProjectionParity(t *testing.T) {
 			if state.Mode != tt.wantMode {
 				t.Fatalf("planning state mode = %q, want %q", state.Mode, tt.wantMode)
 			}
+
 			assertEqualSet(t, state.CallableTools, tt.wantTools)
 
 			contract := deriveTurnPhaseContract(TurnPhaseContractInput{
@@ -368,6 +386,7 @@ func TestPlanExecutePlannerAuthorityProjectionParity(t *testing.T) {
 			if contract.PhaseID != tt.wantPhaseID {
 				t.Fatalf("phase contract PhaseID = %q, want %q", contract.PhaseID, tt.wantPhaseID)
 			}
+
 			assertEqualSet(t, contract.AllowedTools, tt.wantTools)
 			assertEqualSet(t, contract.ActionPolicy.CallableToolNames, tt.wantTools)
 
@@ -378,10 +397,12 @@ func TestPlanExecutePlannerAuthorityProjectionParity(t *testing.T) {
 			if !ok {
 				t.Fatal("expected planner compiler input")
 			}
+
 			compiled, err := contractcompile.CompilePlanExecutePlanner(input)
 			if err != nil {
 				t.Fatalf("compile planner contract: %v", err)
 			}
+
 			assertEqualSet(t, compiled.Protocol.VisibleTools, contract.AllowedTools)
 			assertEqualSet(t, compiled.Protocol.CallableTools, contract.ActionPolicy.CallableToolNames)
 			assertEqualSet(t, compiled.Protocol.CallableActionClasses, contract.ActionPolicy.AllowedActionClasses)
@@ -393,9 +414,11 @@ func TestPlanExecutePlannerAuthorityProjectionParity(t *testing.T) {
 			if !ok {
 				t.Fatal("expected model protocol projection")
 			}
+
 			if protocol.PhaseID != contract.PhaseID {
 				t.Fatalf("model protocol PhaseID = %q, want %q", protocol.PhaseID, contract.PhaseID)
 			}
+
 			assertEqualSet(t, protocol.VisibleTools, contract.AllowedTools)
 			assertEqualSet(t, protocol.CallableTools, contract.ActionPolicy.CallableToolNames)
 			assertEqualSet(t, protocol.CallableActionClasses, contract.ActionPolicy.AllowedActionClasses)
@@ -428,6 +451,7 @@ func TestDeriveTurnPhaseContractStaleAnchorRefresh(t *testing.T) {
 	if contract.PhaseID != turnPhaseStaleAnchorRefresh {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseStaleAnchorRefresh)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
@@ -459,6 +483,7 @@ func TestDeriveTurnPhaseContractStaleAnchorRefreshWinsOverUnreadRequiredSource(t
 	if contract.PhaseID != turnPhaseStaleAnchorRefresh {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseStaleAnchorRefresh)
 	}
+
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
 }
 
@@ -490,17 +515,23 @@ func TestPlanExecutePlanningStateAnchorRefreshWinsOverCandidateReadyAndHistory(t
 	if state.Mode != PlanExecutePlanningModeAnchorRefresh {
 		t.Fatalf("mode = %q, want anchor_refresh", state.Mode)
 	}
+
 	assertEqualSet(t, state.ParserVisibleTools, []string{"read_file", "code_navigate"})
+
 	if slices.Contains(state.ParserVisibleTools, "submit_plan") {
 		t.Fatalf("anchor-refresh state must not expose submit_plan: %#v", state.ParserVisibleTools)
 	}
 
 	withoutHistory := []workspace.ToolResult{results[0], results[2]}
+
 	state = DerivePlanExecutePlanningState(brief, withoutHistory, PlanExecutePlanningTransport{TextualToolParser: true})
+
 	if state.Mode != PlanExecutePlanningModeAnchorRefresh {
 		t.Fatalf("mode with pending history = %q, want anchor_refresh", state.Mode)
 	}
+
 	assertEqualSet(t, state.ParserVisibleTools, []string{"read_file", "code_navigate"})
+
 	if summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(workspace.ToolRequest{
 		Tool:      "read_file",
 		Path:      "a.go",
@@ -515,10 +546,13 @@ func TestPlanExecutePlanningStateAnchorRefreshWinsOverCandidateReadyAndHistory(t
 		Summary: "Read a.go lines 1-10 (total lines: 10)",
 		Output:  "1:package a\n",
 	})
+
 	state = DerivePlanExecutePlanningState(brief, withRefresh, PlanExecutePlanningTransport{TextualToolParser: true})
+
 	if state.Mode != PlanExecutePlanningModeHistoryPending {
 		t.Fatalf("mode after anchor refresh with pending history = %q, want history_pending", state.Mode)
 	}
+
 	if summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(workspace.ToolRequest{
 		Tool:      "history_range",
 		Path:      "a.go",
@@ -555,6 +589,7 @@ func TestPlanExecuteRecoverySurfaceAnchorRefreshWinsOverSourceSatisfiedTerminal(
 	if surface.Kind != PlanExecuteRecoverySurfaceAnchorRefresh {
 		t.Fatalf("surface kind = %q, want anchor_refresh; state=%#v", surface.Kind, surface.State)
 	}
+
 	assertEqualSet(t, surface.State.CallableTools, []string{"read_file", "code_navigate"})
 	assertContains(t, surface.State.TerminalResponseShapes, "Decision: source-satisfied")
 
@@ -567,6 +602,7 @@ func TestPlanExecuteRecoverySurfaceAnchorRefreshWinsOverSourceSatisfiedTerminal(
 	if contract.PhaseID != turnPhaseStaleAnchorRefresh {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseStaleAnchorRefresh)
 	}
+
 	assertContains(t, contract.ActionPolicy.TerminalResponseShapes, "Decision: source-satisfied")
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
@@ -600,14 +636,17 @@ func TestDeriveTurnPhaseContractSourceSatisfiedTerminalSurface(t *testing.T) {
 	if contract.PhaseID != turnPhaseSourceSatisfiedTerminal {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseSourceSatisfiedTerminal)
 	}
+
 	if len(contract.AllowedTools) != 0 || len(contract.ActionPolicy.CallableToolNames) != 0 {
 		t.Fatalf("source-satisfied terminal surface must expose no tools, got allowed=%#v callable=%#v", contract.AllowedTools, contract.ActionPolicy.CallableToolNames)
 	}
+
 	assertEqualSet(t, contract.ActionPolicy.AllowedActionClasses, []string{actionSourceSatisfied, actionBlocker})
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
 	assertEqualSet(t, contract.ActionPolicy.TerminalResponseShapes, []string{"Decision: source-satisfied", "<<QUESTION>>:"})
 	assertEqualSet(t, contract.RuntimeCall.ExpressibleActionClasses, []string{actionSourceSatisfied, actionBlocker})
+
 	if contract.RuntimeCall.ParserContract != "source_satisfied_terminal" {
 		t.Fatalf("ParserContract = %q, want source_satisfied_terminal", contract.RuntimeCall.ParserContract)
 	}
@@ -634,11 +673,14 @@ func TestDeriveTurnPhaseContractGroundingRejectedPlanUsesSourceRefresh(t *testin
 	if contract.PhaseID != turnPhaseStaleAnchorRefresh {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseStaleAnchorRefresh)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
+
 	if len(contract.AllowedTools) != 0 || len(contract.ActionPolicy.CallableToolNames) != 0 {
 		t.Fatalf("textual source refresh must not advertise manifest tools, got allowed=%#v callable=%#v", contract.AllowedTools, contract.ActionPolicy.CallableToolNames)
 	}
+
 	if contract.RuntimeCall.ParserContract != "source_refresh" {
 		t.Fatalf("ParserContract = %q, want source_refresh", contract.RuntimeCall.ParserContract)
 	}
@@ -667,8 +709,10 @@ func TestDeriveTurnPhaseContractSubmitCorrectionAfterAnchorRefresh(t *testing.T)
 	if contract.PhaseID != turnPhaseSubmitReadyTextual {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseSubmitReadyTextual)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSubmitPlan)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+
 	if contract.DerivationReason != "plan_execute_submit_plan_correction" {
 		t.Fatalf("DerivationReason = %q, want plan_execute_submit_plan_correction", contract.DerivationReason)
 	}
@@ -697,9 +741,11 @@ func TestDeriveTurnPhaseContractSubmitCorrectionIsSubmitPlanOnly(t *testing.T) {
 	if contract.PhaseID != turnPhaseSubmitReadyTextual {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseSubmitReadyTextual)
 	}
+
 	if contract.DerivationReason != "plan_execute_submit_plan_correction" {
 		t.Fatalf("DerivationReason = %q, want plan_execute_submit_plan_correction", contract.DerivationReason)
 	}
+
 	assertEqualSet(t, contract.TerminalOutcomes, []string{"submit_plan"})
 	assertEqualSet(t, contract.ActionPolicy.AllowedActionClasses, []string{actionSubmitPlan})
 	assertEqualSet(t, contract.ActionPolicy.TerminalResponseShapes, []string{"submit_plan"})
@@ -728,6 +774,7 @@ func TestTurnPhaseContractInvalidActionClassesWinDuringNormalization(t *testing.
 		},
 		TextualToolParser: true,
 	})
+
 	contract.ActionPolicy.AllowedActionClasses = []string{actionSubmitPlan, actionBlocker}
 	contract.ActionPolicy.InvalidActionClasses = []string{actionBlocker}
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionSubmitPlan, actionBlocker}
@@ -758,9 +805,11 @@ func TestDeriveTurnPhaseContractMalformedSubmitPlanRecoveryUsesTextualOutput(t *
 	if contract.PhaseID != turnPhaseMalformedSubmitPlanRecovery {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseMalformedSubmitPlanRecovery)
 	}
+
 	if contract.RuntimeCall.ExpectedVisibleOutput != "visible_text_tool_request" {
 		t.Fatalf("ExpectedVisibleOutput = %q, want visible_text_tool_request", contract.RuntimeCall.ExpectedVisibleOutput)
 	}
+
 	assertEqualSet(t, contract.RuntimeCall.ExpressibleActionClasses, []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker})
 }
 
@@ -777,6 +826,7 @@ func TestDeriveTurnPhaseContractReviewRepairTerminal(t *testing.T) {
 	if contract.PhaseID != turnPhaseReviewRepairTerminal {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseReviewRepairTerminal)
 	}
+
 	assertEqualSet(t, contract.AllowedTools, []string{"submit_plan"})
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionReviewPass)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSearch)
@@ -798,6 +848,7 @@ func TestDeriveTurnPhaseContractReviewRepairFailedEvidenceStartsTerminal(t *test
 	if contract.PhaseID != turnPhaseReviewRepairTerminal {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseReviewRepairTerminal)
 	}
+
 	assertEqualSet(t, contract.AllowedTools, []string{"submit_plan"})
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSubmitPlan)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
@@ -827,6 +878,7 @@ func TestDeriveTurnPhaseContractReviewRepairCompletionGateStartsTerminal(t *test
 	if contract.PhaseID != turnPhaseReviewRepairTerminal {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseReviewRepairTerminal)
 	}
+
 	assertEqualSet(t, contract.AllowedTools, []string{"submit_plan"})
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionReviewPass)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSubmitPlan)
@@ -853,6 +905,7 @@ func TestDeriveTurnPhaseContractImplementationWriteReady(t *testing.T) {
 	if contract.PhaseID != turnPhaseImplementationWriteReady {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseImplementationWriteReady)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionGenericProbe)
 	assertContains(t, contract.AllowedTools, "edit_file")
@@ -876,6 +929,7 @@ func TestDeriveTurnPhaseContractImplementationTargetSourcePending(t *testing.T) 
 	if contract.PhaseID != turnPhaseImplementationTargetSource {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseImplementationTargetSource)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
@@ -887,6 +941,7 @@ func TestDeriveTurnPhaseContractImplementationTargetSourcePending(t *testing.T) 
 	assertContains(t, contract.AllowedTools, "read_file")
 	assertContains(t, contract.AllowedTools, "edit_file")
 	assertContains(t, contract.HiddenTools, "source_sanity")
+
 	joinedNext := strings.Join(contract.RequiredNext, "\n")
 	for _, want := range []string{"source-body evidence", "parser-readable write", "<<QUESTION>>"} {
 		if !strings.Contains(joinedNext, want) {
@@ -944,14 +999,17 @@ func TestDeriveTurnPhaseContractWriteReadyDropsSupersededPendingRedirect(t *test
 	if contract.PhaseID != turnPhaseImplementationWriteReady {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseImplementationWriteReady)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.AllowedTools, "read_file")
 	assertContains(t, contract.AllowedTools, "search_content")
 	assertNotContains(t, contract.AllowedTools, "code_navigate")
+
 	joined := strings.Join(append(append([]string{}, contract.RequiredNext...), contract.InvalidNext...), "\n")
 	if strings.Contains(joined, "pending redirected source-body obligation") ||
 		strings.Contains(joined, "implementation_dispatch.go via code_navigate") {
+
 		t.Fatalf("stale redirected candidate should not remain a hard write-ready obligation: %#v / %#v", contract.RequiredNext, contract.InvalidNext)
 	}
 }
@@ -970,6 +1028,7 @@ func TestDeriveTurnPhaseContractPlanExecuteAllowedScopeDoesNotUseImplementationT
 	if contract.PhaseID != turnPhaseCandidateSource {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseCandidateSource)
 	}
+
 	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
 	assertNotContains(t, contract.AllowedTools, "edit_file")
 	assertNotContains(t, contract.AllowedTools, "apply_patch")
@@ -993,6 +1052,7 @@ func TestDeriveTurnPhaseContractImplementationVerifyReady(t *testing.T) {
 	if contract.PhaseID != turnPhaseImplementationVerifyReady {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseImplementationVerifyReady)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionVerify)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
@@ -1072,11 +1132,14 @@ func TestDeriveTurnPhaseContractImplementationTextualDoesNotAdvertiseManifestToo
 			if contract.PhaseID != tt.wantPhaseID {
 				t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, tt.wantPhaseID)
 			}
+
 			if len(contract.AllowedTools) != 0 || len(contract.ActionPolicy.CallableToolNames) != 0 {
 				t.Fatalf("textual implementation phase must not advertise manifest tools, got allowed=%#v callable=%#v", contract.AllowedTools, contract.ActionPolicy.CallableToolNames)
 			}
+
 			assertContains(t, contract.HiddenTools, tt.wantHiddenTool)
 			assertContains(t, contract.ActionPolicy.AllowedActionClasses, tt.wantAction)
+
 			if issues := autonomy.ReconcileTurnPhaseSurface(
 				contract.autonomyEventPayload(),
 				autonomy.SurfaceSummaryFromTurnPhaseContract(contract.autonomyEventPayload()),
@@ -1102,11 +1165,14 @@ func TestDeriveTurnPhaseContractGenericTextualDoesNotAdvertiseManifestTools(t *t
 	if contract.PhaseID != turnPhaseGeneric {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseGeneric)
 	}
+
 	if len(contract.AllowedTools) != 0 || len(contract.ActionPolicy.CallableToolNames) != 0 {
 		t.Fatalf("textual generic phase must not advertise manifest tools, got allowed=%#v callable=%#v", contract.AllowedTools, contract.ActionPolicy.CallableToolNames)
 	}
+
 	assertContains(t, contract.HiddenTools, "read_file")
 	assertContains(t, contract.RuntimeCall.ExpressibleActionClasses, actionFinalAnswer)
+
 	if issues := autonomy.ReconcileTurnPhaseSurface(
 		contract.autonomyEventPayload(),
 		autonomy.SurfaceSummaryFromTurnPhaseContract(contract.autonomyEventPayload()),
@@ -1129,10 +1195,12 @@ func TestDeriveTurnPhaseContractVerificationOnlyShellAllowsVerify(t *testing.T) 
 	if contract.PhaseID != turnPhaseGeneric {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseGeneric)
 	}
+
 	assertEqualSet(t, contract.AllowedTools, []string{"shell"})
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionVerify)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
 	assertContains(t, contract.RuntimeCall.ExpressibleActionClasses, actionVerify)
+
 	if issues := autonomy.ReconcileTurnPhaseSurface(
 		contract.autonomyEventPayload(),
 		autonomy.TurnPhaseSurfaceSummaryEvent{
@@ -1164,6 +1232,7 @@ func TestDeriveTurnPhaseContractUnscopedImplementationVerifyReadyRequiresVerific
 	if contract.PhaseID != turnPhaseImplementationVerifyReady {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseImplementationVerifyReady)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionVerify)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionPerEditWrite)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
@@ -1191,6 +1260,7 @@ func TestDeriveTurnPhaseContractFailedVerificationOpensRepairLane(t *testing.T) 
 	if contract.Phase != "verification_repair" {
 		t.Fatalf("Phase = %q, want verification_repair", contract.Phase)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionVerify)
@@ -1218,6 +1288,7 @@ func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSourceBody(
 	if contract.Phase != "target_write_ready" {
 		t.Fatalf("Phase = %q, want target_write_ready", contract.Phase)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
@@ -1225,6 +1296,7 @@ func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSourceBody(
 	assertContains(t, contract.AllowedTools, "apply_patch")
 	assertContains(t, contract.AllowedTools, "read_file")
 	assertContains(t, contract.AllowedTools, "search_content")
+
 	if !strings.Contains(strings.Join(contract.Constraints, "\n"), "bounded_source_refresh_allowance") {
 		t.Fatalf("target-write-ready contract should project bounded source refresh allowance: %#v", contract.Constraints)
 	}
@@ -1256,6 +1328,7 @@ func TestDeriveTurnPhaseContractTargetWriteReadyShowsPendingRedirectedSourceObli
 	if contract.Phase != "target_write_ready" {
 		t.Fatalf("Phase = %q, want target_write_ready with pending redirected source obligation; contract=%#v", contract.Phase, contract)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
@@ -1291,6 +1364,7 @@ func TestDeriveTurnPhaseContractUnscopedImplementationDesignDocReadStaysTargetSo
 	if contract.PhaseID != turnPhaseImplementationTargetSource {
 		t.Fatalf("PhaseID = %q, want target source after design-doc-only read", contract.PhaseID)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
@@ -1324,6 +1398,7 @@ func TestDeriveTurnPhaseContractUnscopedImplementationWrongTargetReadStaysTarget
 	if contract.PhaseID != turnPhaseImplementationTargetSource {
 		t.Fatalf("PhaseID = %q, want target_source after non-plausible source read; contract=%#v", contract.PhaseID, contract)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
 	assertContains(t, contract.AllowedTools, "context_pack")
@@ -1354,6 +1429,7 @@ func TestDeriveTurnPhaseContractSingleObjectiveTokenReadStaysTargetSource(t *tes
 	if contract.PhaseID != turnPhaseImplementationTargetSource {
 		t.Fatalf("PhaseID = %q, want target_source after weak single-token evidence read; contract=%#v", contract.PhaseID, contract)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
 	assertContains(t, contract.AllowedTools, "context_pack")
@@ -1383,6 +1459,7 @@ func TestDeriveTurnPhaseContractNonEditableTargetPacketReadStaysTargetSource(t *
 	if contract.PhaseID != turnPhaseImplementationTargetSource {
 		t.Fatalf("PhaseID = %q, want target_source after non-editable target-packet read; contract=%#v", contract.PhaseID, contract)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.AllowedTools, "context_pack")
 }
@@ -1411,6 +1488,7 @@ func TestDeriveTurnPhaseContractUnscopedImplementationPlausibleTargetReadBecomes
 	if contract.Phase != "target_write_ready" {
 		t.Fatalf("Phase = %q, want target_write_ready for objective-plausible source read; contract=%#v", contract.Phase, contract)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.AllowedTools, "edit_file")
@@ -1444,6 +1522,7 @@ func TestDeriveTurnPhaseContractUnscopedImplementationStaysWriteReadyAfterMultip
 	if contract.Phase != "target_write_ready" {
 		t.Fatalf("Phase = %q, want target_write_ready", contract.Phase)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.AllowedTools, "edit_file")
@@ -1480,6 +1559,7 @@ func TestDeriveTurnPhaseContractUnscopedImplementationStaysTargetSourceAfterSymb
 	if contract.PhaseID != turnPhaseImplementationTargetSource {
 		t.Fatalf("PhaseID = %q, want target_source after symbol miss; contract=%#v", contract.PhaseID, contract)
 	}
+
 	assertContains(t, contract.AllowedTools, "read_file")
 	assertContains(t, contract.AllowedTools, "code_navigate")
 }
@@ -1514,6 +1594,7 @@ func TestDeriveTurnPhaseContractUnscopedImplementationStaysTargetSourceAfterCand
 	if contract.PhaseID != turnPhaseImplementationTargetSource {
 		t.Fatalf("PhaseID = %q, want target_source after candidate-anchor miss; contract=%#v", contract.PhaseID, contract)
 	}
+
 	assertContains(t, contract.AllowedTools, "read_file")
 	assertContains(t, contract.AllowedTools, "code_navigate")
 }
@@ -1544,6 +1625,7 @@ func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSymbolBody(
 	if contract.Phase != "target_write_ready" {
 		t.Fatalf("Phase = %q, want target_write_ready after symbol body; contract=%#v", contract.Phase, contract)
 	}
+
 	assertContains(t, contract.AllowedTools, "edit_file")
 	assertContains(t, contract.AllowedTools, "apply_patch")
 	assertContains(t, contract.AllowedTools, "read_file")
@@ -1565,6 +1647,7 @@ func TestDeriveTurnPhaseContractReadOnlyWorkspaceAllowsFinalAnswerStrategyWhileE
 	if contract.Phase != "read_only_evidence_pending" {
 		t.Fatalf("Phase = %q, want read_only_evidence_pending", contract.Phase)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
@@ -1590,6 +1673,7 @@ func TestDeriveTurnPhaseContractReadOnlyConversationWithoutReadinessRequiresEvid
 	if contract.Phase != "read_only_evidence_pending" {
 		t.Fatalf("Phase = %q, want read_only_evidence_pending", contract.Phase)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
@@ -1612,6 +1696,7 @@ func TestDeriveTurnPhaseContractReadOnlyDirectAnswerWithoutReadinessRequiresEvid
 	if contract.Phase != "read_only_evidence_pending" {
 		t.Fatalf("Phase = %q, want read_only_evidence_pending", contract.Phase)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
@@ -1641,6 +1726,7 @@ func TestDeriveTurnPhaseContractReadOnlyWorkspaceAllowsAnswerAfterEvidence(t *te
 	if contract.Phase != "read_only_evidence_available" {
 		t.Fatalf("Phase = %q, want read_only_evidence_available after evidence", contract.Phase)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
 	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
@@ -1672,6 +1758,7 @@ func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceAvailableKeepsProofR
 	if contract.Phase != "read_only_evidence_available" {
 		t.Fatalf("Phase = %q, want read_only_evidence_available", contract.Phase)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
@@ -1683,10 +1770,13 @@ func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceAvailableKeepsProofR
 
 	input.TextualToolParser = true
 	input.ToolTransportMode = "textual"
+
 	textual := deriveTurnPhaseContract(input)
+
 	if textual.Phase != "read_only_evidence_available" {
 		t.Fatalf("textual Phase = %q, want read_only_evidence_available", textual.Phase)
 	}
+
 	assertContains(t, textual.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, textual.ActionPolicy.AllowedActionClasses, actionSearch)
 	assertNotContains(t, textual.ActionPolicy.InvalidActionClasses, actionRead)
@@ -1739,6 +1829,7 @@ func TestDeriveTurnPhaseContractReadOnlyConversationKeepsToolsForUnreadNamedPath
 	if contract.Phase != "read_only_evidence_pending" {
 		t.Fatalf("Phase = %q, want read_only_evidence_pending until every named path is read", contract.Phase)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
 	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
@@ -1762,6 +1853,7 @@ func TestDeriveTurnPhaseContractReadOnlyWorkspaceStaysPendingAfterShallowDiscove
 	if contract.Phase != "read_only_evidence_pending" {
 		t.Fatalf("Phase = %q, want read_only_evidence_pending after shallow discovery; contract=%#v", contract.Phase, contract)
 	}
+
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
 	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
 	assertContains(t, contract.AllowedTools, "read_file")
@@ -1779,12 +1871,15 @@ func TestDeriveTurnPhaseContractProductAcceptanceBlocksFinalWithOpenEvidence(t *
 	if contract.PhaseID != turnPhaseProductAcceptanceCloseout {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseProductAcceptanceCloseout)
 	}
+
 	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
 	assertEqualSet(t, contract.RuntimeCall.ExpressibleActionClasses, []string{actionBlocker})
+
 	if len(contract.AllowedTools) != 0 {
 		t.Fatalf("product closeout must not advertise tools, got %#v", contract.AllowedTools)
 	}
+
 	assertEqualSet(t, contract.HiddenTools, []string{"read_file", "search_content"})
 	assertContains(t, contract.EvidenceState.TDDObligationRefs, "tdd:missing")
 }
@@ -1815,16 +1910,20 @@ func TestDeriveTurnPhaseContractArtifactFinalAnswerNoTools(t *testing.T) {
 	if contract.PhaseID != turnPhaseArtifactFinalAnswer {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseArtifactFinalAnswer)
 	}
+
 	if len(contract.AllowedTools) != 0 || len(contract.ActionPolicy.CallableToolNames) != 0 {
 		t.Fatalf("artifact final-answer must not advertise callable tools, got allowed=%#v callable=%#v", contract.AllowedTools, contract.ActionPolicy.CallableToolNames)
 	}
+
 	assertContains(t, contract.HiddenTools, "project_lookup")
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionPerEditWrite)
+
 	if contract.RuntimeCall.ExpectedVisibleOutput != "final_answer_artifact" {
 		t.Fatalf("ExpectedVisibleOutput = %q, want final_answer_artifact", contract.RuntimeCall.ExpectedVisibleOutput)
 	}
+
 	assertEqualSet(t, contract.RuntimeCall.ExpressibleActionClasses, []string{actionFinalAnswer, actionBlocker})
 }
 
@@ -1849,10 +1948,12 @@ func TestApplyTurnPhaseContractToNextActionStateReplacesForbiddenProbeGuidance(t
 	if state.Phase != "submit_ready_textual" {
 		t.Fatalf("Phase = %q, want submit_ready_textual", state.Phase)
 	}
+
 	joinedNext := strings.Join(state.NextValidActions, "\n")
 	if !strings.Contains(joinedNext, "submit_plan") || strings.Contains(joinedNext, "read another file") {
 		t.Fatalf("next actions should come from phase contract, got %#v", state.NextValidActions)
 	}
+
 	joinedInvalid := strings.Join(state.InvalidNextActions, "\n")
 	if !strings.Contains(joinedInvalid, "read/search") {
 		t.Fatalf("invalid actions should come from phase contract, got %#v", state.InvalidNextActions)
@@ -1874,10 +1975,12 @@ func TestNextActionStateSurfaceSummaryReconcilesWithPhaseContract(t *testing.T) 
 		Phase: "generic",
 		Step:  4,
 	}, contract)
+
 	state.NextValidActions = append([]string(nil), contract.TerminalOutcomes...)
 
 	summary := turnPhaseSurfaceSummaryFromNextActionState(state, contract)
 	issues := autonomy.ReconcileTurnPhaseSurface(contract.autonomyEventPayload(), summary)
+
 	if len(issues) != 0 {
 		t.Fatalf("next-action summary should reconcile cleanly, got %#v", issues)
 	}
@@ -1886,23 +1989,30 @@ func TestNextActionStateSurfaceSummaryReconcilesWithPhaseContract(t *testing.T) 
 	if !slices.Contains(contract.ActionPolicy.InvalidActionClasses, invalidActionClass) {
 		t.Fatalf("expected %s to be invalid in submit-ready contract: %#v", invalidActionClass, contract.ActionPolicy)
 	}
+
 	state.NextValidActions = []string{phaseTestActionClassPrompt(invalidActionClass)}
 	summary = turnPhaseSurfaceSummaryFromNextActionState(state, contract)
+
 	if !slices.Contains(summary.AdvertisedActionClasses, invalidActionClass) {
 		t.Fatalf("summary did not classify rendered invalid action %s: %#v", invalidActionClass, summary)
 	}
+
 	issues = autonomy.ReconcileTurnPhaseSurface(contract.autonomyEventPayload(), summary)
 	if len(issues) == 0 {
 		t.Fatalf("next-action summary should report rendered invalid %s guidance", invalidActionClass)
 	}
+
 	foundInvalid := false
+
 	for _, issue := range issues {
 		if issue.SurfacePair == "turn_phase_contract,next_action_state" &&
 			issue.InvariantID == "turn_phase.action.invalid_advertised" &&
 			issue.ActionClass == invalidActionClass {
+
 			foundInvalid = true
 		}
 	}
+
 	if !foundInvalid {
 		t.Fatalf("expected invalid %s contradiction from rendered next-action state, got %#v", invalidActionClass, issues)
 	}
@@ -1926,14 +2036,17 @@ func TestWriteReadyNextActionStateDoesNotMarkAllowedWriteInvalid(t *testing.T) {
 	if contract.PhaseID != turnPhaseImplementationWriteReady {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseImplementationWriteReady)
 	}
+
 	state := applyTurnPhaseContractToNextActionState(runnerNextActionState{
 		Phase: "generic",
 		Step:  4,
 	}, contract)
 	summary := turnPhaseSurfaceSummaryFromNextActionState(state, contract)
+
 	if slices.Contains(summary.InvalidActionClasses, actionPerEditWrite) {
 		t.Fatalf("next-action summary must not mark allowed write invalid, got %#v from invalid text %#v", summary.InvalidActionClasses, state.InvalidNextActions)
 	}
+
 	if issues := autonomy.ReconcileTurnPhaseSurface(contract.autonomyEventPayload(), summary); len(issues) != 0 {
 		t.Fatalf("write-ready next-action summary should reconcile cleanly, got %#v", issues)
 	}
@@ -1982,15 +2095,18 @@ func TestRecoveryCardSurfaceSummaryReconcilesWithPhaseContract(t *testing.T) {
 
 	summary := card.TurnPhaseSurfaceSummary(contract)
 	issues := autonomy.ReconcileTurnPhaseSurface(contract.autonomyEventPayload(), summary)
+
 	if len(issues) != 0 {
 		t.Fatalf("recovery-card summary should reconcile cleanly, got %#v", issues)
 	}
+
 	assertNotContains(t, card.CallableActionClasses, actionReviewPass)
 	assertNotContains(t, card.TerminalOutcomes, "Decision: pass")
 }
 
 func assertContains(t *testing.T, values []string, want string) {
 	t.Helper()
+
 	if !slices.Contains(values, want) {
 		t.Fatalf("expected %q in %#v", want, values)
 	}
@@ -2015,6 +2131,7 @@ func phaseTestActionClassPrompt(actionClass string) string {
 
 func assertNotContains(t *testing.T, values []string, want string) {
 	t.Helper()
+
 	if slices.Contains(values, want) {
 		t.Fatalf("did not expect %q in %#v", want, values)
 	}
@@ -2022,9 +2139,11 @@ func assertNotContains(t *testing.T, values []string, want string) {
 
 func assertEqualSet(t *testing.T, got []string, want []string) {
 	t.Helper()
+
 	if len(got) != len(want) {
 		t.Fatalf("got %#v, want set %#v", got, want)
 	}
+
 	for _, value := range want {
 		if !slices.Contains(got, value) {
 			t.Fatalf("got %#v, want set containing %q", got, value)

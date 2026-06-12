@@ -13,9 +13,11 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 		RequireTools:   suggestedTools(records),
 		RequirePhases:  compactPhaseExpectations(metrics.Phases),
 	}
+
 	if strings.TrimSpace(metrics.LastUser) != "" {
 		scenario.PromptContains = []string{metrics.LastUser}
 	}
+
 	switch {
 	case metrics.VerificationPassed:
 		scenario.RequireVerification = "passed"
@@ -24,18 +26,23 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 	default:
 		scenario.RequireVerification = "none"
 	}
+
 	if len(metrics.ChangedFiles) > 0 {
 		scenario.RequireChangedFiles = append([]string(nil), metrics.ChangedFiles...)
 	}
+
 	if len(metrics.EvidencePaths) > 0 {
 		scenario.RequireEvidencePaths = append([]string(nil), metrics.EvidencePaths...)
 	}
+
 	if len(metrics.LanguageCapabilities) > 0 {
 		scenario.RequireLanguageCapabilities = compactLanguageCapabilityExpectations(metrics.LanguageCapabilities)
 	}
+
 	if len(metrics.VerificationPlans) > 0 {
 		latest := metrics.VerificationPlans[len(metrics.VerificationPlans)-1]
 		usesFullSuite := latest.UsesFullSuite
+
 		scenario.RequireVerificationPlan = &VerificationPlanExpectation{
 			Coverage:                latest.Coverage,
 			Confidence:              latest.Confidence,
@@ -45,10 +52,12 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			RequireExpectedFailures: append([]string(nil), latest.ExpectedFailures...),
 		}
 	}
+
 	if len(metrics.ReadinessChecks) > 0 {
 		latest := metrics.ReadinessChecks[len(metrics.ReadinessChecks)-1]
 		ready := latest.Ready
 		minEvidencePaths := len(latest.EvidencePaths)
+
 		scenario.RequireReadiness = &ReadinessExpectation{
 			Lane:             latest.Lane,
 			Ready:            &ready,
@@ -57,11 +66,13 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			MinEvidencePaths: &minEvidencePaths,
 		}
 	}
+
 	if len(metrics.DeepeningAttempts) > 0 {
 		latest := metrics.DeepeningAttempts[len(metrics.DeepeningAttempts)-1]
 		attempted := latest.Attempted
 		exhausted := latest.Exhausted
 		minEvidencePaths := len(latest.EvidencePaths)
+
 		scenario.RequireDeepening = &DeepeningExpectation{
 			Lane:             latest.Lane,
 			Attempted:        &attempted,
@@ -70,10 +81,12 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			MinEvidencePaths: &minEvidencePaths,
 		}
 	}
+
 	if len(metrics.FinalAnswerCritics) > 0 {
 		latest := metrics.FinalAnswerCritics[len(metrics.FinalAnswerCritics)-1]
 		passed := latest.Passed
 		repaired := latest.Repaired
+
 		scenario.RequireFinalAnswerCritic = &FinalAnswerCriticExpectation{
 			Contract: latest.Contract,
 			Passed:   &passed,
@@ -81,12 +94,14 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			Repaired: &repaired,
 		}
 	}
+
 	if len(metrics.EffortPolicies) > 0 {
 		latest := metrics.EffortPolicies[len(metrics.EffortPolicies)-1]
 		minAnalysis := latest.AnalysisToolBudget
 		minImplement := latest.ImplementToolBudget
 		minDeepening := latest.DeepeningPasses
 		minMaxOutput := latest.MaxOutputTokens
+
 		scenario.RequireEffortPolicy = &EffortPolicyExpectation{
 			Lane:                   latest.Lane,
 			Level:                  latest.Level,
@@ -98,10 +113,12 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			BudgetExhaustionMode:   latest.BudgetExhaustionMode,
 		}
 	}
+
 	if len(metrics.LongHorizonStates) > 0 {
 		latest := metrics.LongHorizonStates[len(metrics.LongHorizonStates)-1]
 		stage := latest.Stage
 		resumable := latest.Resumable
+
 		scenario.RequireLongHorizonState = &LongHorizonStateExpectation{
 			Action:                     latest.Action,
 			MemoryKind:                 latest.MemoryKind,
@@ -116,15 +133,18 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			RequireNextActions:         append([]string(nil), latest.NextActions...),
 			Resumable:                  &resumable,
 		}
+
 		if strings.TrimSpace(latest.NextStep) != "" {
 			scenario.RequireLongHorizonState.NextContains = []string{latest.NextStep}
 		}
 	}
+
 	if len(metrics.BudgetLedgers) > 0 {
 		latest := metrics.BudgetLedgers[len(metrics.BudgetLedgers)-1]
 		minModelCalls := latest.UsedModelCalls
 		minEvidencePaths := latest.TotalEvidencePaths
 		budgetExhausted := latest.BudgetExhausted
+
 		scenario.RequireBudgetLedger = &BudgetLedgerExpectation{
 			Lane:              latest.Lane,
 			StopReason:        latest.StopReason,
@@ -134,11 +154,13 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			UncertaintyPolicy: latest.UserVisibleUncertainty,
 		}
 	}
+
 	if len(metrics.EvidenceDeltas) > 0 {
 		latest := metrics.EvidenceDeltas[len(metrics.EvidenceDeltas)-1]
 		minNewPaths := len(latest.NewEvidencePaths)
 		minToolResults := latest.ToolResults
 		maxFailedTools := latest.FailedTools
+
 		scenario.RequireEvidenceDelta = &EvidenceDeltaExpectation{
 			Lane:           latest.Lane,
 			MinNewPaths:    &minNewPaths,
@@ -147,10 +169,12 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			MaxFailedTools: &maxFailedTools,
 		}
 	}
+
 	if len(metrics.ClaimConfidences) > 0 {
 		latest := metrics.ClaimConfidences[len(metrics.ClaimConfidences)-1]
 		minEvidencePaths := len(latest.EvidencePaths)
 		maxUnresolved := len(latest.UnresolvedUncertainty)
+
 		scenario.RequireClaimConfidence = &ClaimConfidenceExpectation{
 			Lane:             latest.Lane,
 			Confidence:       latest.Confidence,
@@ -159,11 +183,13 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			CalibrationBasis: latest.CalibrationBasis,
 		}
 	}
+
 	if len(metrics.ContextCompactions) > 0 {
 		latest := metrics.ContextCompactions[len(metrics.ContextCompactions)-1]
 		minDropped := latest.DroppedMessages
 		minRetained := latest.RetainedMessages
 		maxHistory := latest.MaxHistory
+
 		scenario.RequireContextCompaction = &ContextCompactionExpectation{
 			MinDroppedMessages:  &minDropped,
 			MinRetainedMessages: &minRetained,
@@ -173,9 +199,11 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			StrategyContains:    nonEmptySingleton(latest.Strategy),
 		}
 	}
+
 	if len(metrics.RouteAmbiguities) > 0 {
 		latest := metrics.RouteAmbiguities[len(metrics.RouteAmbiguities)-1]
 		ambiguous := latest.Ambiguous
+
 		scenario.RequireRouteAmbiguity = &RouteAmbiguityExpectation{
 			SelectedLane:     latest.SelectedLane,
 			Ambiguous:        &ambiguous,
@@ -183,8 +211,10 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			TieBreakContains: nonEmptySingleton(latest.TieBreak),
 		}
 	}
+
 	if len(metrics.VerificationFeedback) > 0 {
 		latest := metrics.VerificationFeedback[len(metrics.VerificationFeedback)-1]
+
 		scenario.RequireVerificationFeedback = &VerificationFeedbackExpectation{
 			Confidence:             latest.Confidence,
 			RequireFailedCommands:  append([]string(nil), latest.FailedCommands...),
@@ -192,17 +222,21 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			RecommendationContains: nonEmptySingleton(latest.LearnedRecommendation),
 		}
 	}
+
 	if len(metrics.ToolFailureConfidence) > 0 {
 		latest := metrics.ToolFailureConfidence[len(metrics.ToolFailureConfidence)-1]
+
 		scenario.RequireToolFailureConfidence = &ToolFailureConfidenceExpectation{
 			Lane:             latest.Lane,
 			Tool:             latest.Tool,
 			ConfidenceImpact: latest.ConfidenceImpact,
 		}
 	}
+
 	if len(metrics.ControlRails) > 0 {
 		latest := metrics.ControlRails[len(metrics.ControlRails)-1]
 		failureToEval := latest.FailureToEval
+
 		scenario.RequireControlRails = &ControlRailsExpectation{
 			Lane:                  latest.Lane,
 			FollowupLane:          latest.FollowupLane,
@@ -224,8 +258,10 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			FailureToEval:         &failureToEval,
 		}
 	}
+
 	if len(metrics.RoutePlans) > 0 {
 		latest := metrics.RoutePlans[len(metrics.RoutePlans)-1]
+
 		scenario.RequireRoutePlan = &RoutePlanExpectation{
 			InitialLane:   latest.InitialLane,
 			FollowupLane:  latest.FollowupLane,
@@ -237,9 +273,11 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			Thoroughness:  latest.Thoroughness,
 		}
 	}
+
 	if len(metrics.WorkflowStates) > 0 {
 		latest := metrics.WorkflowStates[len(metrics.WorkflowStates)-1]
 		resumable := latest.Resumable
+
 		scenario.RequireWorkflowState = &WorkflowStateExpectation{
 			Action:              latest.Action,
 			Kind:                latest.Kind,
@@ -255,34 +293,46 @@ func BuildSuggestedScenario(name string, records []Record) Scenario {
 			Resumable:           &resumable,
 		}
 	}
+
 	if len(metrics.Replans) > 0 {
 		latest := metrics.Replans[len(metrics.Replans)-1]
+
 		scenario.RequireReplan = &ReplanExpectation{
 			FromLane: latest.FromLane,
 			ToLane:   latest.ToLane,
 			Reason:   latest.Reason,
 		}
 	}
+
 	if metrics.ApprovalRequired {
 		yes := true
+
 		scenario.RequireApproval = &yes
 	}
+
 	if metrics.BroadToolRequests > 0 {
 		max := metrics.BroadToolRequests
+
 		scenario.MaxBroadToolRequests = &max
 	}
+
 	if metrics.HeavyDiscoveryRequests > 0 {
 		max := metrics.HeavyDiscoveryRequests
+
 		scenario.MaxHeavyDiscoveryRequests = &max
 	}
+
 	deadEnds := metrics.RepeatedDeadEndRejections + metrics.RepeatedToolRejections
 	if deadEnds > 0 {
 		scenario.MaxRepeatedDeadEnds = &deadEnds
 	}
+
 	if metrics.SummaryRejections > 0 {
 		max := metrics.SummaryRejections
+
 		scenario.MaxSummaryRejections = &max
 	}
+
 	return scenario
 }
 
@@ -291,6 +341,7 @@ func nonEmptySingleton(value string) []string {
 	if value == "" {
 		return nil
 	}
+
 	return []string{value}
 }
 
@@ -299,9 +350,11 @@ func suggestedTools(records []Record) []string {
 		Tool  string
 		Broad bool
 	}
+
 	requests := make(map[int]requestInfo)
 	tools := make([]string, 0, 4)
 	seen := make(map[string]struct{})
+
 	for _, record := range records {
 		switch record.Type {
 		case "tool_request":
@@ -309,6 +362,7 @@ func suggestedTools(records []Record) []string {
 			if step <= 0 {
 				continue
 			}
+
 			requests[step] = requestInfo{
 				Tool:  stringField(record.Data, "tool"),
 				Broad: boolField(record.Data, "broad"),
@@ -316,21 +370,27 @@ func suggestedTools(records []Record) []string {
 		case "tool_result":
 			step := intField(record.Data, "step")
 			req, ok := requests[step]
+
 			if !ok || req.Broad || strings.TrimSpace(stringField(record.Data, "error")) != "" {
 				continue
 			}
+
 			tool := strings.TrimSpace(req.Tool)
 			if !isSuggestedScenarioTool(tool) {
 				continue
 			}
+
 			if _, ok := seen[tool]; ok {
 				continue
 			}
+
 			seen[tool] = struct{}{}
 			tools = append(tools, tool)
 		}
 	}
+
 	slices.Sort(tools)
+
 	return tools
 }
 
@@ -349,30 +409,39 @@ func isSuggestedScenarioTool(tool string) bool {
 
 func compactLanguageCapabilityExpectations(caps []LanguageCapabilitySnapshot) []LanguageCapabilityExpectation {
 	caps = mergeLanguageCapabilities(nil, caps)
+
 	out := make([]LanguageCapabilityExpectation, 0, len(caps))
+
 	for _, cap := range caps {
 		expectation := LanguageCapabilityExpectation{Language: cap.Language}
 		if len(cap.Tools) > 0 {
 			expectation.Tool = cap.Tools[0]
 		}
+
 		if len(cap.Signals) > 0 {
 			expectation.Signal = cap.Signals[0]
 		}
+
 		out = append(out, expectation)
 	}
+
 	return out
 }
 
 func compactPhaseExpectations(phases []PhaseSnapshot) []PhaseExpectation {
 	seen := make(map[string]struct{})
 	out := make([]PhaseExpectation, 0, len(phases))
+
 	for _, phase := range phases {
 		key := strings.Join([]string{phase.Lane, phase.Phase, phase.State}, "|")
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
+
 		out = append(out, PhaseExpectation{Lane: phase.Lane, Phase: phase.Phase, State: phase.State})
 	}
+
 	return out
 }

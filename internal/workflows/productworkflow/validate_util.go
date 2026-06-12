@@ -13,21 +13,26 @@ func containsString(slice []string, target string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 func canonicalStringSet(values []string) []string {
 	seen := make(map[string]bool, len(values))
 	out := make([]string, 0, len(values))
+
 	for _, value := range values {
 		trimmed := strings.TrimSpace(value)
 		if trimmed == "" || seen[trimmed] {
 			continue
 		}
+
 		seen[trimmed] = true
 		out = append(out, trimmed)
 	}
+
 	sort.Strings(out)
+
 	return out
 }
 
@@ -53,9 +58,11 @@ func ValidateArtifactState(status string) error {
 	if status == "" {
 		return errors.New("artifact status is empty")
 	}
+
 	if !validArtifactStates[ArtifactState(status)] {
 		return fmt.Errorf("invalid artifact status %q; valid states: draft, audited, accepted, blocked, dispatched", status)
 	}
+
 	return nil
 }
 
@@ -69,11 +76,13 @@ func isValidCommitHash(s string) bool {
 	if len(s) != 40 {
 		return false
 	}
+
 	for _, c := range s {
 		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -81,11 +90,14 @@ func ClassifyReportFileName(name string) (reportType string, known bool) {
 	if strings.HasSuffix(name, "-implementation.json") {
 		return "implementation", true
 	}
+
 	if strings.HasSuffix(name, "-review.json") {
 		return "review", true
 	}
+
 	if strings.HasSuffix(name, "-investigation.json") {
 		return "investigation", true
 	}
+
 	return "", false
 }

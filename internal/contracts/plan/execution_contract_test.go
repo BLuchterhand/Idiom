@@ -51,16 +51,20 @@ func TestPlanExecutionContractNormalizesStableIDAndHash(t *testing.T) {
 	if normalized.Revision != PlanExecutionContractRevision {
 		t.Fatalf("revision = %q, want %q", normalized.Revision, PlanExecutionContractRevision)
 	}
+
 	if normalized.ContractID == "" || normalized.ContractHash == "" || normalized.ContractID == "stale" || normalized.ContractHash == "stale" {
 		t.Fatalf("contract identity was not regenerated: id=%q hash=%q", normalized.ContractID, normalized.ContractHash)
 	}
+
 	if normalized.ContractID != normalizedVariant.ContractID || normalized.ContractHash != normalizedVariant.ContractHash {
 		t.Fatalf("normalized variants produced different identities: %#v vs %#v", normalized, normalizedVariant)
 	}
+
 	atom := normalized.Atoms[0]
 	if got, want := atom.Scope.RequiredCoveragePaths, []string{"pkg/a.go", "pkg/b.go"}; !slices.Equal(got, want) {
 		t.Fatalf("required paths = %#v, want %#v", got, want)
 	}
+
 	if got, want := atom.Scope.AllowedCandidatePaths, []string{"pkg/c.go"}; !slices.Equal(got, want) {
 		t.Fatalf("allowed paths = %#v, want %#v", got, want)
 	}
@@ -172,9 +176,11 @@ func TestCompileLegacyNewFileAuthorizationProducesTypedAuthority(t *testing.T) {
 	if got, want := authorizedFilePaths(files), []string{"pkg/helper.go", "pkg/helper_test.go"}; !slices.Equal(got, want) {
 		t.Fatalf("compiled files = %#v, want %#v", got, want)
 	}
+
 	if len(roots) != 1 || roots[0].Root != "pkg/generated" {
 		t.Fatalf("compiled roots = %#v, want pkg/generated", roots)
 	}
+
 	for _, file := range files {
 		if file.Metadata.Compiler == "" || file.Metadata.InputHash == "" {
 			t.Fatalf("compiled authorization lacks metadata: %#v", file)
@@ -201,6 +207,7 @@ func TestPlanExecutionContractRejectsRequiredPathDemotion(t *testing.T) {
 	if !hasViolationCode(violations, "required_path_demoted_to_allowed") {
 		t.Fatalf("required path repeated as allowed should be rejected: %#v", violations)
 	}
+
 	if !hasViolationCode(violations, "required_path_demotion_rejected") {
 		t.Fatalf("authority delta demoting required path should be rejected: %#v", violations)
 	}
@@ -209,6 +216,7 @@ func TestPlanExecutionContractRejectsRequiredPathDemotion(t *testing.T) {
 func TestTerminalEvidenceDetectsChangedTDDCommandAndArtifact(t *testing.T) {
 	atom := tddAtom()
 	evidence := validTerminalEvidence()
+
 	evidence.TDDCommandResults = []TDDCommandEvidence{{
 		ID:            "red-test",
 		Command:       "go test ./internal/other",
@@ -221,9 +229,11 @@ func TestTerminalEvidenceDetectsChangedTDDCommandAndArtifact(t *testing.T) {
 	if !hasViolationCode(violations, "tdd_command_changed") {
 		t.Fatalf("changed TDD command was not rejected: %#v", violations)
 	}
+
 	if !hasViolationCode(violations, "required_test_artifact_missing") {
 		t.Fatalf("missing required artifact was not rejected: %#v", violations)
 	}
+
 	if !hasViolationCode(violations, "tdd_test_artifact_changed") {
 		t.Fatalf("changed TDD artifact was not rejected: %#v", violations)
 	}
@@ -232,6 +242,7 @@ func TestTerminalEvidenceDetectsChangedTDDCommandAndArtifact(t *testing.T) {
 func TestTerminalEvidenceRejectsMissingTestArtifact(t *testing.T) {
 	atom := tddAtom()
 	evidence := validTerminalEvidence()
+
 	evidence.TestArtifacts = nil
 	evidence.TDDCommandResults[0].ArtifactPaths = nil
 
@@ -311,6 +322,7 @@ func hasViolationCode(violations []PlanExecutionContractViolation, code string) 
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -319,6 +331,8 @@ func authorizedFilePaths(files []AuthorizedNewFile) []string {
 	for _, file := range files {
 		out = append(out, file.Path)
 	}
+
 	slices.Sort(out)
+
 	return out
 }

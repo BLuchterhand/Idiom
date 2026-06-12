@@ -8,84 +8,84 @@
   -> read_file {"path": "internal/runtime/agent/read_only_prefetch_test.go"}
   -> read_file {"path": "internal/capabilities/workspace/read_prefetch_test.go"}
   -> task {"prompt": "Find all files in the codebase that reference \"architecture_assessment\" as a lane/permission/wire name. Al...
-  -> grep {"pattern": "architecture_assessment", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "read_only_workspace", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "PermissionProfileIsReadOnlyWorkspace", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "MentionedWorkspacePaths", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "direct-answer-only|direct_answer_only", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/workerruntime/vocabulary.go", "offset": 65, "limit": 30}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/workerruntime/vocabulary.go", "offset": 340, "limit": 50}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/contracts/pathparse/pathparse.go", "offset": 300, "limit": 80}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom", "pattern": "direct-answer-only|direct_answer_only", "path": "/Users/ben/Do...
-  -> read_file {"limit": 30, "offset": 23285, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner_test.go"}
-  -> read_file {"limit": 15, "offset": 1425, "path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/tui/app/prompt_routing.go"}
-  -> read_file {"limit": 15, "offset": 455, "path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/tui/app/turn_planner.go"}
-  -> read_file {"limit": 20, "offset": 40, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/lane_policy_test.go"}
-  -> read_file {"limit": 15, "offset": 222, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/lane_policy.go"}
-  -> read_file {"limit": 15, "offset": 40, "path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/tui/app/model_swap.go"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom", "pattern": "direct.answer.only"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom", "pattern": "directAnswerOnly"}
-  -> read_file {"limit": 30, "offset": 78, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/read_only_prefetch.go"}
-  -> read_file {"limit": 25, "offset": 130, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/final_answer_acceptance.g...
-  -> read_file {"limit": 30, "offset": 770, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/read_only_closure.go"}
-  ⊘ read_file read /Users/ben/Documents/GitHub/idiom/internal/runtime/agent/read_only_prefetch_test.go: open /Users/ben/Documents/GitHub/idiom/internal/runtime/agent/read_only_prefetch_test.go: no such file or directory
+  -> grep {"pattern": "architecture_assessment", "path": "/workspace/idiom"}
+  -> grep {"pattern": "read_only_workspace", "path": "/workspace/idiom"}
+  -> grep {"pattern": "PermissionProfileIsReadOnlyWorkspace", "path": "/workspace/idiom"}
+  -> grep {"pattern": "MentionedWorkspacePaths", "path": "/workspace/idiom"}
+  -> grep {"pattern": "direct-answer-only|direct_answer_only", "path": "/workspace/idiom"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/workerruntime/vocabulary.go", "offset": 65, "limit": 30}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/workerruntime/vocabulary.go", "offset": 340, "limit": 50}
+  -> read_file {"path": "/workspace/idiom/internal/contracts/pathparse/pathparse.go", "offset": 300, "limit": 80}
+  -> grep {"path": "/workspace/idiom", "pattern": "direct-answer-only|direct_answer_only", "path": "/home/example/Do...
+  -> read_file {"limit": 30, "offset": 23285, "path": "/workspace/idiom/internal/runtime/agent/runner_test.go"}
+  -> read_file {"limit": 15, "offset": 1425, "path": "/workspace/idiom/internal/surfaces/tui/app/prompt_routing.go"}
+  -> read_file {"limit": 15, "offset": 455, "path": "/workspace/idiom/internal/surfaces/tui/app/turn_planner.go"}
+  -> read_file {"limit": 20, "offset": 40, "path": "/workspace/idiom/internal/runtime/agent/lane_policy_test.go"}
+  -> read_file {"limit": 15, "offset": 222, "path": "/workspace/idiom/internal/runtime/agent/lane_policy.go"}
+  -> read_file {"limit": 15, "offset": 40, "path": "/workspace/idiom/internal/surfaces/tui/app/model_swap.go"}
+  -> grep {"path": "/workspace/idiom", "pattern": "direct.answer.only"}
+  -> grep {"path": "/workspace/idiom", "pattern": "directAnswerOnly"}
+  -> read_file {"limit": 30, "offset": 78, "path": "/workspace/idiom/internal/runtime/agent/read_only_prefetch.go"}
+  -> read_file {"limit": 25, "offset": 130, "path": "/workspace/idiom/internal/runtime/agent/final_answer_acceptance.g...
+  -> read_file {"limit": 30, "offset": 770, "path": "/workspace/idiom/internal/runtime/agent/read_only_closure.go"}
+  ⊘ read_file read /workspace/idiom/internal/runtime/agent/read_only_prefetch_test.go: open /workspace/idiom/internal/runtime/agent/read_only_prefetch_test.go: no such file or directory
 [2m  ▎ thinking[0m
   · 27495 tok · in 26886 (22784 cached / 4102 new) · out 609 (395 reasoning) · ¥0.0058
-  -> grep {"pattern": "maybeApplyReadOnlyNamedPathPrefetch", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "readOnlyNamedPathPrefetchEvent", "path": "/Users/ben/Documents/GitHub/idiom"}
+  -> grep {"pattern": "maybeApplyReadOnlyNamedPathPrefetch", "path": "/workspace/idiom"}
+  -> grep {"pattern": "readOnlyNamedPathPrefetchEvent", "path": "/workspace/idiom"}
   -> read_file {"path": "internal/runtime/agent/read_only_answerability.go", "limit": 50, "offset": 1220}
 [2m  ▎ thinking[0m
   · 29043 tok · in 28869 (27392 cached / 1477 new) · out 174 (27 reasoning) · ¥0.0024
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner.go", "offset": 545, "limit": 40}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/read_only_prefetch.go"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/runner.go", "offset": 545, "limit": 40}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/read_only_prefetch.go"}
 [2m  ▎ thinking[0m
   · 31284 tok · in 31072 (28928 cached / 2144 new) · out 212 (57 reasoning) · ¥0.0031
   -> glob {"pattern": "internal/runtime/agent/*prefetch*"}
   -> glob {"pattern": "internal/runtime/agent/*prefetch*test*"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent", "pattern": "NamedPathPrefetch"}
+  -> grep {"path": "/workspace/idiom/internal/runtime/agent", "pattern": "NamedPathPrefetch"}
 [2m  ▎ thinking[0m
   · 31972 tok · in 31806 (31232 cached / 574 new) · out 166 (14 reasoning) · ¥0.0015
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/direct_answer_surface_test.go", "offset": 250, "limit...
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/direct_answer_surface_test.go", "offset": 250, "limit...
   -> glob {"pattern": "docs/evidence/read-only-prefetch-proposal/reviews/final-architecture-expansion/benchmark-readiness.md"}
 [2m  ▎ thinking[0m
   · 33826 tok · in 33645 (31872 cached / 1773 new) · out 181 (16 reasoning) · ¥0.0028
-  -> read_file {"offset": 380, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/direct_answer_surface_test.go", "limit...
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/docs/evidence/read-only-prefetch-proposal/reviews/final-architecture-expansi...
+  -> read_file {"offset": 380, "path": "/workspace/idiom/internal/runtime/agent/direct_answer_surface_test.go", "limit...
+  -> read_file {"path": "/workspace/idiom/docs/evidence/read-only-prefetch-proposal/reviews/final-architecture-expansi...
 [2m  ▎ thinking[0m
   · 36713 tok · in 36421 (33792 cached / 2629 new) · out 292 (67 reasoning) · ¥0.0039
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal", "pattern": "DirectAnswerSurfaceCapSourceBodyPrefetch"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal", "pattern": "SourceBodyPrefetch"}
-  -> read_file {"offset": 130, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/final_answer_acceptance.go", "limit": ...
+  -> grep {"path": "/workspace/idiom/internal", "pattern": "DirectAnswerSurfaceCapSourceBodyPrefetch"}
+  -> grep {"path": "/workspace/idiom/internal", "pattern": "SourceBodyPrefetch"}
+  -> read_file {"offset": 130, "path": "/workspace/idiom/internal/runtime/agent/final_answer_acceptance.go", "limit": ...
 [2m  ▎ thinking[0m
   · 38781 tok · in 37675 (36608 cached / 1067 new) · out 1106 (940 reasoning) · ¥0.0040
-  -> read_file {"limit": 50, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/direct_answer_surface.go"}
-  -> read_file {"limit": 20, "offset": 75, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/direct_answer_surface.go"}
+  -> read_file {"limit": 50, "path": "/workspace/idiom/internal/runtime/agent/direct_answer_surface.go"}
+  -> read_file {"limit": 20, "offset": 75, "path": "/workspace/idiom/internal/runtime/agent/direct_answer_surface.go"}
 [2m  ▎ thinking[0m
   · 39765 tok · in 39651 (38656 cached / 995 new) · out 114 (16 reasoning) · ¥0.0020
-  -> read_file {"limit": 50, "offset": 95, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/direct_answer_surface.go"}
+  -> read_file {"limit": 50, "offset": 95, "path": "/workspace/idiom/internal/runtime/agent/direct_answer_surface.go"}
 [2m  ▎ thinking[0m
   · 41977 tok · in 40371 (39680 cached / 691 new) · out 1606 (1425 reasoning) · ¥0.0047
-  -> read_file {"limit": 40, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/direct_answer_surface.go", "offset": 145...
-  -> read_file {"limit": 30, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/workerruntime/vocabulary.go", "offset": 65}
+  -> read_file {"limit": 40, "path": "/workspace/idiom/internal/runtime/agent/direct_answer_surface.go", "offset": 145...
+  -> read_file {"limit": 30, "path": "/workspace/idiom/internal/runtime/workerruntime/vocabulary.go", "offset": 65}
 [2m  ▎ thinking[0m
   · 43310 tok · in 43038 (41856 cached / 1182 new) · out 272 (26 reasoning) · ¥0.0026
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/workerruntime/vocabulary.go", "pattern": "func RuntimeContr...
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/workerruntime/vocabulary.go", "pattern": "func TaskFamilyIs...
-  -> read_file {"limit": 30, "offset": 345, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/workerruntime/vocabulary.go"}
+  -> grep {"path": "/workspace/idiom/internal/runtime/workerruntime/vocabulary.go", "pattern": "func RuntimeContr...
+  -> grep {"path": "/workspace/idiom/internal/runtime/workerruntime/vocabulary.go", "pattern": "func TaskFamilyIs...
+  -> read_file {"limit": 30, "offset": 345, "path": "/workspace/idiom/internal/runtime/workerruntime/vocabulary.go"}
 [2m  ▎ thinking[0m
   · 43833 tok · in 43707 (43264 cached / 443 new) · out 126 (28 reasoning) · ¥0.0016
-  -> read_file {"limit": 80, "path": "/Users/ben/Documents/GitHub/idiom/internal/contracts/pathparse/pathparse.go", "offset": 290}
+  -> read_file {"limit": 80, "path": "/workspace/idiom/internal/contracts/pathparse/pathparse.go", "offset": 290}
 [2m  ▎ thinking[0m
   · 44826 tok · in 44633 (43776 cached / 857 new) · out 193 (25 reasoning) · ¥0.0021
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/contracts/pathparse", "pattern": "func NormalizeWorkspacePathToken"...
-  -> read_file {"limit": 5, "offset": 370, "path": "/Users/ben/Documents/GitHub/idiom/internal/contracts/pathparse/pathparse.go"}
+  -> grep {"path": "/workspace/idiom/internal/contracts/pathparse", "pattern": "func NormalizeWorkspacePathToken"...
+  -> read_file {"limit": 5, "offset": 370, "path": "/workspace/idiom/internal/contracts/pathparse/pathparse.go"}
   · 45053 tok · in 44955 (44800 cached / 155 new) · out 98 · ¥0.0012
-  -> read_file {"limit": 50, "offset": 384, "path": "/Users/ben/Documents/GitHub/idiom/internal/contracts/pathparse/pathparse.go"}
+  -> read_file {"limit": 50, "offset": 384, "path": "/workspace/idiom/internal/contracts/pathparse/pathparse.go"}
 [2m  ▎ thinking[0m
   · 45766 tok · in 45660 (44928 cached / 732 new) · out 106 (18 reasoning) · ¥0.0018
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/contracts/pathparse/pathparse.go", "pattern": "func LooksLikeWorksp...
+  -> grep {"path": "/workspace/idiom/internal/contracts/pathparse/pathparse.go", "pattern": "func LooksLikeWorksp...
   · 45914 tok · in 45816 (45696 cached / 120 new) · out 98 · ¥0.0012
-  -> read_file {"limit": 35, "offset": 11, "path": "/Users/ben/Documents/GitHub/idiom/internal/contracts/pathparse/pathparse.go"}
+  -> read_file {"limit": 35, "offset": 11, "path": "/workspace/idiom/internal/contracts/pathparse/pathparse.go"}
 [2m  ▎ thinking[0m
 Now I have a thorough picture. Here's the analysis.
 

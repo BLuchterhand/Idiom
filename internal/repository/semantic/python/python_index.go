@@ -84,6 +84,7 @@ func BuildPythonIndexWithOptions(root string, opts indexsupport.IndexOptions) (*
 	if root == "" {
 		return nil, nil
 	}
+
 	scope := indexsupport.CleanIndexScope(opts.Scope)
 
 	index := &PythonIndex{
@@ -100,67 +101,87 @@ func BuildPythonIndexWithOptions(root string, opts indexsupport.IndexOptions) (*
 		if err := indexsupport.ContextErr(opts); err != nil {
 			return err
 		}
+
 		if walkErr != nil {
 			return walkErr
 		}
+
 		if d.IsDir() {
 			if !indexsupport.ShouldVisitDir(root, path, scope) {
 				return filepath.SkipDir
 			}
+
 			if discovery.ShouldSkipDirName(d.Name()) && path != root {
 				return filepath.SkipDir
 			}
+
 			if _, skip := pythonSkippedDirNames[d.Name()]; skip && path != root {
 				return filepath.SkipDir
 			}
+
 			return nil
 		}
+
 		if !isPythonPath(path) {
 			return nil
 		}
+
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return nil
 		}
+
 		rel = filepath.ToSlash(filepath.Clean(rel))
 		if discovery.ShouldSkipRelFile(rel) {
 			return nil
 		}
+
 		if !indexsupport.PathInScope(rel, scope) {
 			return nil
 		}
+
 		paths = append(paths, rel)
 		byRel[rel] = rel
+
 		for _, module := range pythonModuleNamesFor(rel) {
 			if _, exists := byModule[module]; !exists {
 				byModule[module] = rel
 			}
 		}
+
 		if opts.MaxFiles > 0 && len(paths) >= opts.MaxFiles {
 			return errStop
 		}
+
 		return nil
 	})
+
 	if err == errStop {
 		err = nil
 	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	if len(paths) == 0 {
 		return nil, nil
 	}
 
 	slices.Sort(paths)
+
 	for _, rel := range paths {
 		if err := indexsupport.ContextErr(opts); err != nil {
 			return nil, err
 		}
+
 		full := filepath.Join(root, filepath.FromSlash(rel))
+
 		contentBytes, readErr := os.ReadFile(full)
 		if readErr != nil {
 			continue
 		}
+
 		content := string(contentBytes)
 		rawImports, resolved := parsePythonImports(rel, content, byModule, byRel)
 		symbols := parsePythonSymbols(rel, content)
@@ -173,6 +194,7 @@ func BuildPythonIndexWithOptions(root string, opts indexsupport.IndexOptions) (*
 			IsInit:     filepath.Base(rel) == "__init__.py",
 			SourceDir:  indexsupport.TopLevelDir(rel),
 		}
+
 		for _, symbol := range symbols {
 			switch symbol.Kind {
 			case "function", "async_function":
@@ -183,6 +205,7 @@ func BuildPythonIndexWithOptions(root string, opts indexsupport.IndexOptions) (*
 				file.Classes++
 			}
 		}
+
 		file.HasMain = pythonHasMainBlock(content)
 		index.Files = append(index.Files, file)
 	}
@@ -190,15 +213,18 @@ func BuildPythonIndexWithOptions(root string, opts indexsupport.IndexOptions) (*
 	slices.SortFunc(index.Files, func(a, b PythonFile) int {
 		return cmp.Compare(a.Path, b.Path)
 	})
+
 	for _, file := range index.Files {
 		for _, dep := range file.Imports {
 			if dep == "" {
 				continue
 			}
+
 			index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], dep)
 			index.Reverse[dep] = util.AppendUnique(index.Reverse[dep], file.Path)
 		}
 	}
+
 	return index, nil
 }
 
@@ -218,11 +244,13 @@ func (idx *PythonIndex) Summary() string {
 	if idx == nil || len(idx.Files) == 0 {
 		return ""
 	}
+
 	return indexsupport.FormatIndexSummary(len(idx.Files), "Python", idx.DefaultFiles(4), func(path string) (string, bool) {
 		file := idx.FileByPath(path)
 		if file == nil {
 			return "", false
 		}
+
 		return indexsupport.IntString(file.Funcs+file.Methods) + " funcs/methods, " +
 			indexsupport.IntString(file.Classes) + " classes, " +
 			indexsupport.IntString(len(file.Imports)) + " imports", true
@@ -236,21 +264,27 @@ func (idx *PythonIndex) DefaultFiles(limit int) []string {
 	return idx.uniqueRankedPaths(idx.rankFiles(func(file PythonFile) int {
 		score := 0
 		base := filepath.Base(file.Path)
+
 		if file.HasMain {
 			score += 100
 		}
+
 		if base == "main.py" || base == "__main__.py" || base == "app.py" || base == "cli.py" {
 			score += 60
 		}
+
 		score += pythonSourceDirPriority(file.SourceDir)
 		if file.IsInit {
 			score -= 25
 		}
+
 		if file.IsTest {
 			score -= 30
 		}
+
 		score += min(file.Funcs+file.Methods*2, 24)
 		score += min(file.Classes*2, 16)
+
 		return score
 	}, limit), limit)
 }
@@ -261,6 +295,7 @@ func (idx *PythonIndex) RelevantFiles(terms []string, limit int) []string {
 	if len(normalized) == 0 {
 		return nil
 	}
+
 	return idx.uniqueRankedPaths(idx.rankFiles(func(file PythonFile) int {
 		return indexsupport.RelevantFileScore(normalized, file.Path, file.RawImports, pythonSymbolSearchTerms(file.Symbols), pythonSourceDirPriority(file.SourceDir), file.IsTest)
 	}, limit), limit)
@@ -271,12 +306,14 @@ func (idx *PythonIndex) FileByPath(path string) *PythonFile {
 	if idx == nil {
 		return nil
 	}
+
 	path = indexsupport.NormalizeLookupPath(path)
 	for i := range idx.Files {
 		if indexsupport.NormalizeLookupPath(idx.Files[i].Path) == path {
 			return &idx.Files[i]
 		}
 	}
+
 	return nil
 }
 
@@ -284,6 +321,7 @@ func (idx *PythonIndex) findFiles(pattern string) []string {
 	if idx == nil {
 		return nil
 	}
+
 	return indexsupport.FindFilesExactPartial(idx.Files, func(file PythonFile) string { return file.Path }, pattern)
 }
 
@@ -300,6 +338,7 @@ func pythonSymbolSearchTerms(symbols []PythonSymbol) []string {
 	for _, symbol := range symbols {
 		terms = append(terms, symbol.Name, symbol.Qualified)
 	}
+
 	return terms
 }
 
@@ -316,10 +355,12 @@ func parsePythonImports(rel string, content string, byModule map[string]string, 
 		if module == "" {
 			return
 		}
+
 		if _, ok := seenRaw[module]; !ok {
 			seenRaw[module] = struct{}{}
 			raw = append(raw, module)
 		}
+
 		if target := resolvePythonModule(rel, module, byModule, byRel); target != "" {
 			if _, ok := seenRes[target]; !ok {
 				seenRes[target] = struct{}{}
@@ -327,34 +368,42 @@ func parsePythonImports(rel string, content string, byModule map[string]string, 
 			}
 		}
 	}
+
 	for _, line := range lines {
 		clean := stripPythonComment(line)
 		if match := pythonImportRe.FindStringSubmatch(clean); len(match) >= 2 {
 			for _, module := range parsePythonImportNames(match[1]) {
 				addImport(module)
 			}
+
 			continue
 		}
+
 		if match := pythonFromImportRe.FindStringSubmatch(clean); len(match) >= 2 {
 			module := strings.TrimSpace(match[1])
 			addImport(module)
+
 			if len(match) >= 3 {
 				for _, imported := range parsePythonImportNames(match[2]) {
 					if imported == "*" {
 						continue
 					}
+
 					addImport(joinPythonImportedModule(module, imported))
 				}
 			}
 		}
+
 		for _, match := range pythonDynamicImportRe.FindAllStringSubmatch(clean, -1) {
 			if len(match) >= 2 {
 				addImport(match[1])
 			}
 		}
 	}
+
 	slices.Sort(raw)
 	slices.Sort(resolved)
+
 	return raw, resolved
 }
 
@@ -362,36 +411,45 @@ func parsePythonImportNames(spec string) []string {
 	spec = strings.TrimSpace(spec)
 	spec = strings.TrimPrefix(spec, "(")
 	spec = strings.TrimSuffix(spec, ")")
+
 	if spec == "" {
 		return nil
 	}
+
 	values := strings.Split(spec, ",")
 	out := make([]string, 0, len(values))
+
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
+
 		if idx := strings.Index(value, " as "); idx >= 0 {
 			value = strings.TrimSpace(value[:idx])
 		}
+
 		value = strings.Trim(value, " \t()")
 		if value != "" {
 			out = append(out, value)
 		}
 	}
+
 	return out
 }
 
 func joinPythonImportedModule(module string, imported string) string {
 	module = strings.TrimSpace(module)
 	imported = strings.TrimSpace(imported)
+
 	if module == "" || imported == "" {
 		return module
 	}
+
 	if strings.HasSuffix(module, ".") {
 		return module + imported
 	}
+
 	return module + "." + imported
 }
 
@@ -403,46 +461,58 @@ func resolvePythonModule(sourceRel string, module string, byModule map[string]st
 	if module == "" {
 		return ""
 	}
+
 	// Relative: strip leading dots and resolve from source file's package.
 	if strings.HasPrefix(module, ".") {
 		leading := 0
 		for leading < len(module) && module[leading] == '.' {
 			leading++
 		}
+
 		trailing := module[leading:]
 		dir := filepath.ToSlash(filepath.Dir(sourceRel))
+
 		for i := 1; i < leading; i++ {
 			dir = filepath.ToSlash(filepath.Dir(dir))
 		}
+
 		if dir == "." {
 			dir = ""
 		}
+
 		parts := []string{}
 		if dir != "" {
 			parts = append(parts, strings.Split(dir, "/")...)
 		}
+
 		if trailing != "" {
 			parts = append(parts, strings.Split(trailing, ".")...)
 		}
+
 		if len(parts) == 0 {
 			return ""
 		}
+
 		joined := strings.Join(parts, "/")
 		candidates := []string{
 			joined + ".py",
 			joined + "/__init__.py",
 		}
+
 		for _, c := range candidates {
 			if _, ok := byRel[c]; ok {
 				return c
 			}
 		}
+
 		return ""
 	}
+
 	// Absolute dotted name: check byModule.
 	if rel, ok := byModule[module]; ok {
 		return rel
 	}
+
 	// Try prefix: `from package.sub import name` — the package.sub module
 	// may be the interesting target even if its full dotted path isn't
 	// registered directly.
@@ -452,8 +522,10 @@ func resolvePythonModule(sourceRel string, module string, byModule map[string]st
 		if rel, ok := byModule[key]; ok {
 			return rel
 		}
+
 		parts = parts[:len(parts)-1]
 	}
+
 	return ""
 }
 
@@ -465,32 +537,40 @@ func pythonModuleNamesFor(rel string) []string {
 	if rel == "" {
 		return nil
 	}
+
 	parts := strings.Split(rel, "/")
 	base := parts[len(parts)-1]
 	stem := strings.TrimSuffix(base, filepath.Ext(base))
+
 	parts[len(parts)-1] = stem
+
 	names := make([]string, 0, 4)
 	add := func(segments []string) {
 		segs := append([]string{}, segments...)
 		if len(segs) == 0 {
 			return
 		}
+
 		// Drop trailing "__init__" so `package/__init__.py` registers as "package".
 		if segs[len(segs)-1] == "__init__" {
 			segs = segs[:len(segs)-1]
 		}
+
 		if len(segs) == 0 {
 			return
 		}
+
 		names = append(names, strings.Join(segs, "."))
 	}
 	add(parts)
+
 	// If the path starts with a common src root, also register without it.
 	for _, srcRoot := range []string{"src", "lib"} {
 		if len(parts) > 1 && parts[0] == srcRoot {
 			add(parts[1:])
 		}
 	}
+
 	return names
 }
 
@@ -503,6 +583,7 @@ func parsePythonSymbols(rel string, content string) []PythonSymbol {
 		indent    int
 		qualified string
 	}
+
 	stack := make([]scope, 0, 4)
 
 	popTo := func(indent int) {
@@ -513,21 +594,27 @@ func parsePythonSymbols(rel string, content string) []PythonSymbol {
 
 	for i, rawLine := range lines {
 		lineNo := i + 1
+
 		if strings.TrimSpace(rawLine) == "" {
 			continue
 		}
+
 		indent := pythonIndentWidth(rawLine)
 
 		if match := pythonClassRe.FindStringSubmatch(rawLine); len(match) == 3 {
 			popTo(indent)
+
 			name := match[2]
 			qualified := name
 			scopePath := ""
+
 			if len(stack) > 0 {
 				scopePath = stack[len(stack)-1].qualified
 				qualified = scopePath + "." + name
 			}
+
 			end := pythonBlockEnd(lines, i, indent)
+
 			symbols = append(symbols, PythonSymbol{
 				Name:       name,
 				Qualified:  qualified,
@@ -541,30 +628,38 @@ func parsePythonSymbols(rel string, content string) []PythonSymbol {
 				Indent:     indent,
 			})
 			stack = append(stack, scope{indent: indent, qualified: qualified})
+
 			continue
 		}
 
 		if match := pythonFuncRe.FindStringSubmatch(rawLine); len(match) == 4 {
 			popTo(indent)
+
 			async := strings.TrimSpace(match[2]) != ""
 			name := match[3]
 			scopePath := ""
+
 			if len(stack) > 0 {
 				scopePath = stack[len(stack)-1].qualified
 			}
+
 			kind := "function"
 			if scopePath != "" {
 				kind = "method"
 			}
+
 			if async {
 				kind = "async_" + kind
 			}
+
 			qualified := name
 			if scopePath != "" {
 				qualified = scopePath + "." + name
 			}
+
 			end := pythonBlockEnd(lines, i, indent)
 			calls := extractPythonCalls(lines, lineNo+1, end)
+
 			symbols = append(symbols, PythonSymbol{
 				Name:       name,
 				Qualified:  qualified,
@@ -578,6 +673,7 @@ func parsePythonSymbols(rel string, content string) []PythonSymbol {
 				SourceFile: rel,
 				Indent:     indent,
 			})
+
 			continue
 		}
 	}
@@ -588,6 +684,7 @@ func parsePythonSymbols(rel string, content string) []PythonSymbol {
 			cmp.Compare(a.Line, b.Line),
 		)
 	})
+
 	return symbols
 }
 
@@ -599,22 +696,28 @@ func parsePythonSymbols(rel string, content string) []PythonSymbol {
 func pythonBlockEnd(lines []string, startIdx int, baseIndent int) int {
 	end := startIdx + 1 // at minimum, the def/class line itself
 	inBody := false
+
 	for i := startIdx + 1; i < len(lines); i++ {
 		line := lines[i]
 		trim := strings.TrimSpace(line)
+
 		if trim == "" {
 			continue
 		}
+
 		indent := pythonIndentWidth(line)
 		if indent <= baseIndent {
 			break
 		}
+
 		inBody = true
 		end = i + 1
 	}
+
 	if !inBody {
 		return startIdx + 1
 	}
+
 	return end
 }
 
@@ -622,6 +725,7 @@ func pythonBlockEnd(lines []string, startIdx int, baseIndent int) int {
 // of indentation (consistent but approximate).
 func pythonIndentWidth(line string) int {
 	n := 0
+
 	for _, r := range line {
 		switch r {
 		case ' ':
@@ -632,6 +736,7 @@ func pythonIndentWidth(line string) int {
 			return n
 		}
 	}
+
 	return n
 }
 
@@ -639,20 +744,25 @@ func extractPythonCalls(lines []string, startLine, endLine int) []PythonCall {
 	if startLine <= 0 || endLine < startLine || endLine > len(lines) {
 		return nil
 	}
+
 	calls := make([]PythonCall, 0, 16)
+
 	for line := startLine; line <= endLine; line++ {
 		text := stripPythonComment(lines[line-1])
 		for _, match := range pythonCallRe.FindAllStringSubmatch(text, -1) {
 			if len(match) != 2 {
 				continue
 			}
+
 			name := match[1]
 			if isPythonKeywordName(name) {
 				continue
 			}
+
 			calls = append(calls, PythonCall{Name: name, Line: line})
 		}
 	}
+
 	return calls
 }
 
@@ -660,6 +770,7 @@ func stripPythonComment(line string) string {
 	// Walk the line char by char, tracking whether we're in a string.
 	inSingle := false
 	inDouble := false
+
 	for i := 0; i < len(line); i++ {
 		c := line[i]
 		switch {
@@ -673,6 +784,7 @@ func stripPythonComment(line string) string {
 			return line[:i]
 		}
 	}
+
 	return line
 }
 
@@ -684,15 +796,18 @@ func pythonHasMainBlock(content string) bool {
 func isPythonPath(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	_, ok := pythonFileExtensions[ext]
+
 	return ok
 }
 
 func looksLikePythonTestPath(path string) bool {
 	p := strings.ToLower(filepath.ToSlash(path))
 	base := strings.ToLower(filepath.Base(path))
+
 	if strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.py") || base == "conftest.py" {
 		return true
 	}
+
 	return strings.Contains(p, "/tests/") || strings.Contains(p, "/test/")
 }
 

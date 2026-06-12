@@ -23,18 +23,23 @@ func TestProbeLaneImplementationFamilyMatchesContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProbeLane: %v", err)
 	}
+
 	if res.InitialLane != "implement" {
 		t.Fatalf("initial_lane should be 'implement', got %q", res.InitialLane)
 	}
+
 	if res.Contract != "implementation_result" {
 		t.Fatalf("contract should be implementation_result, got %q", res.Contract)
 	}
+
 	if res.BriefTaskFam != "implementation" {
 		t.Fatalf("brief.task_family should be implementation, got %q", res.BriefTaskFam)
 	}
+
 	if res.Reason != "explicit_task_family" {
 		t.Fatalf("reason should be explicit_task_family, got %q", res.Reason)
 	}
+
 	if res.AllowedToolsN == 0 {
 		t.Fatalf("allowed_tools should not be empty")
 	}
@@ -56,12 +61,15 @@ func TestProbeLanePlanThenExecutePlannerMatchesContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProbeLane: %v", err)
 	}
+
 	if res.InitialLane != "implement" {
 		t.Fatalf("planner phase should run on the implement lane shape, got initial_lane=%q", res.InitialLane)
 	}
+
 	if res.Contract != "implementation_result" {
 		t.Fatalf("planner contract should be implementation_result, got %q", res.Contract)
 	}
+
 	if res.BriefTaskFam != "plan_then_execute_planner" {
 		t.Fatalf("brief.task_family should be plan_then_execute_planner, got %q", res.BriefTaskFam)
 	}
@@ -91,6 +99,7 @@ func TestProbeLaneDefaultsModeToBuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProbeLane: %v", err)
 	}
+
 	if res.Contract != "implementation_result" {
 		t.Fatalf("default mode should still resolve to implementation_result; got %q", res.Contract)
 	}
@@ -109,9 +118,11 @@ func TestFormatProbeResultIsSingleLineHumanReadable(t *testing.T) {
 		AllowedToolsN: 12,
 	}
 	got := FormatProbeResult("PASS implement", r)
+
 	if strings.Count(got, "\n") > 0 {
 		t.Fatalf("FormatProbeResult must be single-line: %q", got)
 	}
+
 	for _, want := range []string{"initial=implement", "contract=implementation_result", "tools=12", "followup=-"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output missing %q; got %q", want, got)

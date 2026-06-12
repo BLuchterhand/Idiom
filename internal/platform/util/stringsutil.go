@@ -8,6 +8,7 @@ func FirstNonEmpty(values ...string) string {
 			return v
 		}
 	}
+
 	return ""
 }
 
@@ -17,23 +18,28 @@ func ContainsAny(text string, needles ...string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 func UniqueNonEmpty(values []string) []string {
 	out := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
+
 	for _, v := range values {
 		v = strings.TrimSpace(v)
 		if v == "" {
 			continue
 		}
+
 		if _, ok := seen[v]; ok {
 			continue
 		}
+
 		seen[v] = struct{}{}
 		out = append(out, v)
 	}
+
 	return out
 }
 
@@ -43,13 +49,16 @@ func EqualTrimFold(a, b string) bool {
 
 func NonEmptyTrimmedLines(text string) []string {
 	var lines []string
+
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
+
 		lines = append(lines, line)
 	}
+
 	return lines
 }
 
@@ -57,6 +66,7 @@ func Fallback(value, alt string) string {
 	if strings.TrimSpace(value) == "" {
 		return alt
 	}
+
 	return value
 }
 
@@ -67,6 +77,7 @@ func TrimHeadingQualifier(heading string) string {
 			return strings.TrimSpace(heading[:idx])
 		}
 	}
+
 	return heading
 }
 
@@ -76,5 +87,6 @@ func ContainsFold(haystack, substr string) bool {
 	if strings.TrimSpace(substr) == "" {
 		return false
 	}
+
 	return strings.Contains(strings.ToLower(haystack), strings.ToLower(strings.TrimSpace(substr)))
 }

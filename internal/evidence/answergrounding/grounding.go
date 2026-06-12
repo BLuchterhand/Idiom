@@ -45,12 +45,15 @@ func Evaluate(answer string, receipts []EvidenceReceipt) AnswerGroundingResult {
 
 	extractor := ClaimExtractor{}
 	validator := NewGroundingValidator(receipts)
+
 	for _, claim := range validator.Validate(extractor.Extract(answer)) {
 		result.Claims = append(result.Claims, claim)
 		if claim.Severity == SeverityBlocking {
 			result.BlockingClaims = append(result.BlockingClaims, claim)
 		}
 	}
+
 	result.HasBlockingFindings = len(result.BlockingClaims) > 0
+
 	return result
 }

@@ -19,7 +19,9 @@ import (
 // sibling failure-log tests.
 func snapshotModel(t *testing.T, root string) *Model {
 	t.Helper()
+
 	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+
 	return &Model{
 		workspace:    ws,
 		debugLogPath: filepath.Join(root, "logs", "conversations", "sessA.jsonl"),
@@ -28,37 +30,48 @@ func snapshotModel(t *testing.T, root string) *Model {
 
 func readDiffEntries(t *testing.T, path string) []planDiffEntry {
 	t.Helper()
+
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("open diffs log: %v", err)
 	}
 	defer f.Close()
+
 	var out []planDiffEntry
+
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
+
 		var rec planDiffEntry
+
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
 			t.Fatalf("decode diff record %q: %v", line, err)
 		}
+
 		out = append(out, rec)
 	}
+
 	if err := scanner.Err(); err != nil {
 		t.Fatalf("scan diffs log: %v", err)
 	}
+
 	return out
 }
 
 func writeFile(t *testing.T, root, rel, content string) {
 	t.Helper()
+
 	abs := filepath.Join(root, rel)
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", rel, err)
 	}
@@ -72,6 +85,7 @@ func writeFile(t *testing.T, root, rel, content string) {
 func TestRecordWriteSuccessCapturesDiffAndPlanEntry(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "README.md", "hello\n")
+
 	m := snapshotModel(t, root)
 
 	req := workspace.ToolRequest{
@@ -80,6 +94,7 @@ func TestRecordWriteSuccessCapturesDiffAndPlanEntry(t *testing.T) {
 		Description: "change greeting",
 	}
 	m.capturePlanSnapshot(5, req)
+
 	if _, ok := m.plan.writeSnapshots[5]; !ok {
 		t.Fatalf("snapshot was not captured for step 5")
 	}
@@ -98,16 +113,20 @@ func TestRecordWriteSuccessCapturesDiffAndPlanEntry(t *testing.T) {
 	if len(diffs) != 1 {
 		t.Fatalf("want 1 diff record, got %d", len(diffs))
 	}
+
 	entry := diffs[0]
 	if entry.Tool != "edit_file" || entry.Path != "README.md" {
 		t.Errorf("unexpected entry metadata: %#v", entry)
 	}
+
 	if entry.Description != "change greeting" {
 		t.Errorf("description not propagated: %q", entry.Description)
 	}
+
 	if !strings.Contains(entry.Diff, "-hello") || !strings.Contains(entry.Diff, "+bye") {
 		t.Errorf("diff missing expected lines:\n%s", entry.Diff)
 	}
+
 	if entry.ID == "" {
 		t.Error("diff entry missing id")
 	}
@@ -116,13 +135,16 @@ func TestRecordWriteSuccessCapturesDiffAndPlanEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read plan: %v", err)
 	}
+
 	plan := string(planBytes)
 	if !strings.Contains(plan, "## Session sessA") {
 		t.Errorf("plan missing session heading:\n%s", plan)
 	}
+
 	if !strings.Contains(plan, "- [x] change greeting") {
 		t.Errorf("plan missing checked-off description line:\n%s", plan)
 	}
+
 	if !strings.Contains(plan, "<!-- id:"+entry.ID+" -->") {
 		t.Errorf("plan line missing id anchor for %q:\n%s", entry.ID, plan)
 	}
@@ -134,6 +156,7 @@ func TestRecordWriteSuccessCapturesDiffAndPlanEntry(t *testing.T) {
 func TestRecordWriteSuccessIgnoresFailures(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "x.go", "pkg\n")
+
 	m := snapshotModel(t, root)
 
 	req := workspace.ToolRequest{Tool: "edit_file", Path: "x.go", Description: "nope"}
@@ -144,10 +167,12 @@ func TestRecordWriteSuccessIgnoresFailures(t *testing.T) {
 	if _, err := os.Stat(diffs); !os.IsNotExist(err) {
 		t.Fatalf("failed write should not produce diff log; stat err = %v", err)
 	}
+
 	plan := filepath.Join(root, ".planning", "sessA.md")
 	if _, err := os.Stat(plan); !os.IsNotExist(err) {
 		t.Fatalf("failed write should not produce plan file; stat err = %v", err)
 	}
+
 	if _, ok := m.plan.writeSnapshots[1]; ok {
 		t.Errorf("snapshot still present after failed recordWriteSuccess — would leak into next step")
 	}
@@ -173,6 +198,7 @@ func TestRecordWriteSuccessIgnoresNonWriteTools(t *testing.T) {
 func TestRecordWriteSuccessWithNoSessionIDNoOps(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "x.go", "pkg\n")
+
 	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root})
 	m := &Model{workspace: ws} // no debugLogPath → empty session id
 
@@ -194,7 +220,9 @@ func TestRecordWriteSuccessNilModelNoop(t *testing.T) {
 			t.Fatalf("nil model must not panic; recovered: %v", r)
 		}
 	}()
+
 	var m *Model
+
 	m.capturePlanSnapshot(1, workspace.ToolRequest{Tool: "edit_file", Path: "x"})
 	m.recordWriteSuccess(1, workspace.ToolRequest{Tool: "edit_file"}, workspace.ToolResult{Summary: "ok"})
 }
@@ -207,13 +235,16 @@ func TestCapturePlanSnapshotMissingFileRecordsEmptyBaseline(t *testing.T) {
 	m := snapshotModel(t, root)
 	req := workspace.ToolRequest{Tool: "write_file", Path: "new.md", Description: "create file"}
 	m.capturePlanSnapshot(2, req)
+
 	snaps, ok := m.plan.writeSnapshots[2]
 	if !ok {
 		t.Fatalf("missing-path write should still record a snapshot")
 	}
+
 	if len(snaps) != 1 || snaps[0].Existed {
 		t.Errorf("snapshot Existed should be false for a new file: %#v", snaps)
 	}
+
 	if snaps[0].Before != "" {
 		t.Errorf("missing-file baseline should be empty, got %q", snaps[0].Before)
 	}
@@ -226,6 +257,7 @@ func TestSessionHeadingWrittenOnce(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.md", "a\n")
 	writeFile(t, root, "b.md", "b\n")
+
 	m := snapshotModel(t, root)
 
 	m.capturePlanSnapshot(1, workspace.ToolRequest{Tool: "edit_file", Path: "a.md", Description: "edit a"})
@@ -240,10 +272,12 @@ func TestSessionHeadingWrittenOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read plan: %v", err)
 	}
+
 	count := strings.Count(string(plan), "## Session sessA")
 	if count != 1 {
 		t.Errorf("want 1 session heading, got %d. plan:\n%s", count, string(plan))
 	}
+
 	if strings.Count(string(plan), "- [x]") != 2 {
 		t.Errorf("want 2 checked items, plan:\n%s", string(plan))
 	}
@@ -281,6 +315,7 @@ func TestRecordWriteSuccessMultiplePathsPerCall(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "alpha\n")
 	writeFile(t, root, "b.txt", "beta\n")
+
 	m := snapshotModel(t, root)
 
 	// Simulate capturePlanSnapshot producing two entries by bypassing
@@ -293,6 +328,7 @@ func TestRecordWriteSuccessMultiplePathsPerCall(t *testing.T) {
 			{Path: "b.txt", Before: "beta\n", Existed: true},
 		},
 	}
+
 	writeFile(t, root, "a.txt", "ALPHA\n")
 	writeFile(t, root, "b.txt", "BETA\n")
 
@@ -303,6 +339,7 @@ func TestRecordWriteSuccessMultiplePathsPerCall(t *testing.T) {
 	if len(diffs) != 2 {
 		t.Fatalf("want 2 diff records, got %d: %#v", len(diffs), diffs)
 	}
+
 	paths := map[string]bool{}
 	for _, d := range diffs {
 		paths[d.Path] = true
@@ -310,6 +347,7 @@ func TestRecordWriteSuccessMultiplePathsPerCall(t *testing.T) {
 			t.Errorf("diff entry %s missing id", d.Path)
 		}
 	}
+
 	if !paths["a.txt"] || !paths["b.txt"] {
 		t.Errorf("missing expected paths, got %v", paths)
 	}
@@ -326,11 +364,13 @@ func TestRecordWriteSuccessMultiplePathsPerCall(t *testing.T) {
 func TestNewPlanEntryIDDistinct(t *testing.T) {
 	seen := map[string]bool{}
 	hexIDRe := regexp.MustCompile(`^[0-9a-f]+$`)
+
 	for range 64 {
 		id := newPlanEntryID()
 		if seen[id] {
 			t.Fatalf("duplicate id %q after %d draws", id, len(seen))
 		}
+
 		seen[id] = true
 		if !hexIDRe.MatchString(id) {
 			t.Errorf("id %q not hex/safe", id)

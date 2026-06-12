@@ -19,12 +19,15 @@ import (
 // rest of the app's lifecycle.
 func sessionsPanelModel(t *testing.T, dir string) *Model {
 	t.Helper()
+
 	cfg := config.Config{Chat: config.Chat{DebugLogDir: dir}}
 	m := &Model{cfg: cfg}
+
 	m.history.panelOpen = true
 	m.history.focused = true
 	m.panelTab = panelTabSessions
 	m.sessions.viewport = viewport.New(40, 12)
+
 	return m
 }
 
@@ -38,12 +41,14 @@ func TestRefreshSessionsListExcludesCurrentSession(t *testing.T) {
 	writeSessionLog(t, dir, "old2.jsonl", []string{`{"type":"message","role":"user","content":"second"}`})
 
 	m := sessionsPanelModel(t, dir)
+
 	m.debugLogPath = filepath.Join(dir, "live.jsonl")
 	m.refreshSessionsList()
 
 	if len(m.sessions.list) != 2 {
 		t.Fatalf("want 2 sessions (live filtered), got %d", len(m.sessions.list))
 	}
+
 	for _, s := range m.sessions.list {
 		if s.ID == "live" {
 			t.Errorf("live session should be filtered out of the list")
@@ -69,9 +74,11 @@ func TestRenderSessionsPanelShowsSummaryNotJustID(t *testing.T) {
 	if !strings.Contains(got, "20260101-000000") {
 		t.Errorf("rendered panel missing session id:\n%s", got)
 	}
+
 	if !strings.Contains(got, "refactor the eval harness") {
 		t.Errorf("rendered panel missing summary:\n%s", got)
 	}
+
 	if !strings.Contains(got, "Sessions") {
 		t.Errorf("rendered panel missing title:\n%s", got)
 	}
@@ -94,11 +101,14 @@ func TestRenderSessionsPanelEmptyShowsPlaceholder(t *testing.T) {
 
 func TestSessionsPanelKeepsCursorVisibleWhenNavigating(t *testing.T) {
 	dir := t.TempDir()
+
 	for i := 0; i < 12; i++ {
 		name := fmt.Sprintf("20260101-0000%02d.jsonl", i)
 		writeSessionLog(t, dir, name, []string{fmt.Sprintf(`{"type":"message","role":"user","content":"session prompt %02d"}`, i)})
 	}
+
 	m := sessionsPanelModel(t, dir)
+
 	m.sessions.viewport = viewport.New(40, 5)
 	m.refreshSessionsList()
 	m.renderSessionsPanelContent()
@@ -114,6 +124,7 @@ func TestSessionsPanelKeepsCursorVisibleWhenNavigating(t *testing.T) {
 	if got := m.sessions.viewport.View(); !strings.Contains(got, selected) {
 		t.Fatalf("selected session %q scrolled off-screen:\n%s", selected, got)
 	}
+
 	if m.sessions.viewport.YOffset == 0 {
 		t.Fatal("expected sessions viewport to scroll after navigating beyond visible rows")
 	}
@@ -127,14 +138,18 @@ func TestSessionsCursorClampsAfterRefresh(t *testing.T) {
 	dir := t.TempDir()
 	writeSessionLog(t, dir, "a.jsonl", []string{`{"type":"message","role":"user","content":"x"}`})
 	writeSessionLog(t, dir, "b.jsonl", []string{`{"type":"message","role":"user","content":"y"}`})
+
 	m := sessionsPanelModel(t, dir)
 	m.refreshSessionsList()
+
 	m.sessions.cursor = 1
 
 	if err := os.Remove(filepath.Join(dir, "b.jsonl")); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
+
 	m.refreshSessionsList()
+
 	if m.sessions.cursor >= len(m.sessions.list) {
 		t.Errorf("cursor not clamped after list shrank: cursor=%d len=%d", m.sessions.cursor, len(m.sessions.list))
 	}
@@ -146,14 +161,18 @@ func TestRefreshSessionsListReusesCachedSummaryForUnchangedLog(t *testing.T) {
 	m := sessionsPanelModel(t, dir)
 
 	m.refreshSessionsList()
+
 	cached := m.sessions.summaryCache[path]
+
 	cached.info.FirstPrompt = "cached prompt"
 	m.sessions.summaryCache[path] = cached
 
 	m.refreshSessionsList()
+
 	if len(m.sessions.list) != 1 {
 		t.Fatalf("expected one session, got %d", len(m.sessions.list))
 	}
+
 	if got := m.sessions.list[0].FirstPrompt; got != "cached prompt" {
 		t.Fatalf("expected unchanged log to reuse cached summary, got %q", got)
 	}
@@ -167,15 +186,18 @@ func TestRefreshSessionsListReloadsChangedLogSummary(t *testing.T) {
 	m.refreshSessionsList()
 
 	writeSessionLog(t, dir, "a.jsonl", []string{`{"type":"message","role":"user","content":"updated prompt"}`})
+
 	modTime := time.Now().Add(2 * time.Second)
 	if err := os.Chtimes(path, modTime, modTime); err != nil {
 		t.Fatalf("chtimes: %v", err)
 	}
 
 	m.refreshSessionsList()
+
 	if len(m.sessions.list) != 1 {
 		t.Fatalf("expected one session, got %d", len(m.sessions.list))
 	}
+
 	if got := m.sessions.list[0].FirstPrompt; got != "updated prompt" {
 		t.Fatalf("expected changed log to be re-summarized, got %q", got)
 	}

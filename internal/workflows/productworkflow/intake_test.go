@@ -31,6 +31,7 @@ func makeValidPRDDocument() PRDDocument {
 func TestValidatePRDIntakePass(t *testing.T) {
 	doc := makeValidPRDDocument()
 	result := ValidatePRDIntake(doc)
+
 	if !result.Passed {
 		t.Fatalf("expected passed, got failures: %+v", result.Failures)
 	}
@@ -38,11 +39,15 @@ func TestValidatePRDIntakePass(t *testing.T) {
 
 func TestValidatePRDIntakeMissingSchemaVersion(t *testing.T) {
 	doc := makeValidPRDDocument()
+
 	doc.FrontMatter.SchemaVersion = ""
+
 	result := ValidatePRDIntake(doc)
+
 	if result.Passed {
 		t.Fatal("expected failed")
 	}
+
 	if !hasCode(result, "missing_schema_version") {
 		t.Fatalf("expected missing_schema_version, got: %+v", result.Failures)
 	}
@@ -50,11 +55,15 @@ func TestValidatePRDIntakeMissingSchemaVersion(t *testing.T) {
 
 func TestValidatePRDIntakeMissingPRDID(t *testing.T) {
 	doc := makeValidPRDDocument()
+
 	doc.FrontMatter.PRDID = ""
+
 	result := ValidatePRDIntake(doc)
+
 	if result.Passed {
 		t.Fatal("expected failed")
 	}
+
 	if !hasCode(result, "missing_prd_id") {
 		t.Fatalf("expected missing_prd_id, got: %+v", result.Failures)
 	}
@@ -62,11 +71,15 @@ func TestValidatePRDIntakeMissingPRDID(t *testing.T) {
 
 func TestValidatePRDIntakeMissingStatus(t *testing.T) {
 	doc := makeValidPRDDocument()
+
 	doc.FrontMatter.Status = ""
+
 	result := ValidatePRDIntake(doc)
+
 	if result.Passed {
 		t.Fatal("expected failed")
 	}
+
 	if !hasCode(result, "missing_status") {
 		t.Fatalf("expected missing_status, got: %+v", result.Failures)
 	}
@@ -74,11 +87,15 @@ func TestValidatePRDIntakeMissingStatus(t *testing.T) {
 
 func TestValidatePRDIntakeInvalidStatus(t *testing.T) {
 	doc := makeValidPRDDocument()
+
 	doc.FrontMatter.Status = "bogus"
+
 	result := ValidatePRDIntake(doc)
+
 	if result.Passed {
 		t.Fatal("expected failed")
 	}
+
 	if !hasCode(result, "invalid_status") {
 		t.Fatalf("expected invalid_status, got: %+v", result.Failures)
 	}
@@ -86,11 +103,15 @@ func TestValidatePRDIntakeInvalidStatus(t *testing.T) {
 
 func TestValidatePRDIntakeMissingTaskID(t *testing.T) {
 	doc := makeValidPRDDocument()
+
 	doc.FrontMatter.TaskID = ""
+
 	result := ValidatePRDIntake(doc)
+
 	if result.Passed {
 		t.Fatal("expected failed")
 	}
+
 	if !hasCode(result, "missing_task_id") {
 		t.Fatalf("expected missing_task_id, got: %+v", result.Failures)
 	}
@@ -98,11 +119,15 @@ func TestValidatePRDIntakeMissingTaskID(t *testing.T) {
 
 func TestValidatePRDIntakeMissingCreatedAt(t *testing.T) {
 	doc := makeValidPRDDocument()
+
 	doc.FrontMatter.CreatedAt = ""
+
 	result := ValidatePRDIntake(doc)
+
 	if result.Passed {
 		t.Fatal("expected failed")
 	}
+
 	if !hasCode(result, "missing_created_at") {
 		t.Fatalf("expected missing_created_at, got: %+v", result.Failures)
 	}
@@ -110,11 +135,15 @@ func TestValidatePRDIntakeMissingCreatedAt(t *testing.T) {
 
 func TestValidatePRDIntakeNoRequirements(t *testing.T) {
 	doc := makeValidPRDDocument()
+
 	doc.Requirements = nil
+
 	result := ValidatePRDIntake(doc)
+
 	if result.Passed {
 		t.Fatal("expected failed")
 	}
+
 	if !hasCode(result, "no_requirements") {
 		t.Fatalf("expected no_requirements, got: %+v", result.Failures)
 	}
@@ -140,10 +169,12 @@ func TestValidatePRDIntakeMissingRequirementFields(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			doc := makeValidPRDDocument()
 			tt.mut(&doc.Requirements[0])
+
 			result := ValidatePRDIntake(doc)
 			if result.Passed {
 				t.Fatal("expected failed")
 			}
+
 			for _, code := range tt.codes {
 				if !hasCode(result, code) {
 					t.Errorf("expected code %s, got: %+v", code, result.Failures)
@@ -166,9 +197,11 @@ func TestValidatePRDIntakeMultipleRequirements(t *testing.T) {
 		},
 	}
 	result := ValidatePRDIntake(doc)
+
 	if result.Passed {
 		t.Fatal("expected failed")
 	}
+
 	if !hasCode(result, "missing_requirement_priority") {
 		t.Fatalf("expected missing_requirement_priority, got: %+v", result.Failures)
 	}
@@ -188,12 +221,15 @@ func TestValidatePRDIntakeCombinedFailures(t *testing.T) {
 		},
 	}
 	result := ValidatePRDIntake(doc)
+
 	if result.Passed {
 		t.Fatal("expected failed with multiple failures")
 	}
+
 	if len(result.Failures) < 2 {
 		t.Fatalf("expected at least 2 failures, got %d: %+v", len(result.Failures), result.Failures)
 	}
+
 	requiredCodes := []string{"missing_prd_id", "missing_created_at", "missing_requirement_priority",
 		"missing_requirement_statement", "missing_requirement_tdd_obligations", "missing_requirement_open_questions"}
 	for _, code := range requiredCodes {
@@ -216,6 +252,7 @@ func makeValidADRIndex() ADRIndex {
 func TestValidateADRIndexIntakePass(t *testing.T) {
 	idx := makeValidADRIndex()
 	result := ValidateADRIndexIntake(idx)
+
 	if !result.Passed {
 		t.Fatalf("expected passed, got: %+v", result.Failures)
 	}
@@ -223,11 +260,15 @@ func TestValidateADRIndexIntakePass(t *testing.T) {
 
 func TestValidateADRIndexIntakeMissingSchemaVersion(t *testing.T) {
 	idx := makeValidADRIndex()
+
 	idx.SchemaVersion = ""
+
 	result := ValidateADRIndexIntake(idx)
+
 	if result.Passed {
 		t.Fatal("expected failed")
 	}
+
 	if !hasCode(result, "missing_adr_index_schema_version") {
 		t.Fatalf("expected missing_adr_index_schema_version, got: %+v", result.Failures)
 	}
@@ -235,11 +276,15 @@ func TestValidateADRIndexIntakeMissingSchemaVersion(t *testing.T) {
 
 func TestValidateADRIndexIntakeMissingEffortID(t *testing.T) {
 	idx := makeValidADRIndex()
+
 	idx.EffortID = ""
+
 	result := ValidateADRIndexIntake(idx)
+
 	if result.Passed {
 		t.Fatal("expected failed")
 	}
+
 	if !hasCode(result, "missing_adr_index_effort_id") {
 		t.Fatalf("expected missing_adr_index_effort_id, got: %+v", result.Failures)
 	}
@@ -247,11 +292,15 @@ func TestValidateADRIndexIntakeMissingEffortID(t *testing.T) {
 
 func TestValidateADRIndexIntakeNoADRs(t *testing.T) {
 	idx := makeValidADRIndex()
+
 	idx.ADRs = nil
+
 	result := ValidateADRIndexIntake(idx)
+
 	if result.Passed {
 		t.Fatal("expected failed")
 	}
+
 	if !hasCode(result, "no_adrs_in_index") {
 		t.Fatalf("expected no_adrs_in_index, got: %+v", result.Failures)
 	}
@@ -272,10 +321,12 @@ func TestValidateADRIndexIntakeMissingEntryFields(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			idx := makeValidADRIndex()
 			tt.mut(&idx.ADRs[0])
+
 			result := ValidateADRIndexIntake(idx)
 			if result.Passed {
 				t.Fatal("expected failed")
 			}
+
 			for _, code := range tt.codes {
 				if !hasCode(result, code) {
 					t.Errorf("expected code %s, got: %+v", code, result.Failures)
@@ -302,6 +353,7 @@ func makeValidADRDocument() ADRDocument {
 func TestValidateADRIntakePass(t *testing.T) {
 	doc := makeValidADRDocument()
 	result := ValidateADRIntake(doc, "ADR-001.md")
+
 	if !result.Passed {
 		t.Fatalf("expected passed, got: %+v", result.Failures)
 	}
@@ -325,10 +377,12 @@ func TestValidateADRIntakeMissingFrontMatter(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			doc := makeValidADRDocument()
 			tt.mut(&doc.FrontMatter)
+
 			result := ValidateADRIntake(doc, "ADR-001.md")
 			if result.Passed {
 				t.Fatal("expected failed")
 			}
+
 			if !hasCode(result, tt.code) {
 				t.Fatalf("expected %s, got: %+v", tt.code, result.Failures)
 			}
@@ -338,11 +392,15 @@ func TestValidateADRIntakeMissingFrontMatter(t *testing.T) {
 
 func TestValidateADRIntakeInvalidCoverageTier(t *testing.T) {
 	doc := makeValidADRDocument()
+
 	doc.FrontMatter.CoverageTier = "bogus"
+
 	result := ValidateADRIntake(doc, "ADR-001.md")
+
 	if result.Passed {
 		t.Fatal("expected failed")
 	}
+
 	if !hasCode(result, "invalid_adr_coverage_tier") {
 		t.Fatalf("expected invalid_adr_coverage_tier, got: %+v", result.Failures)
 	}
@@ -368,10 +426,12 @@ func TestValidateADRIntakeMissingSections(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			doc := makeValidADRDocument()
 			tt.mut(&doc.Sections)
+
 			result := ValidateADRIntake(doc, "ADR-001.md")
 			if result.Passed {
 				t.Fatal("expected failed")
 			}
+
 			if !hasCode(result, tt.code) {
 				t.Fatalf("expected %s, got: %+v", tt.code, result.Failures)
 			}
@@ -385,5 +445,6 @@ func hasCode(result IntakeResult, code string) bool {
 			return true
 		}
 	}
+
 	return false
 }

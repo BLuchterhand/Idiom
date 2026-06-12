@@ -24,13 +24,16 @@ func TestDirectAnswerSurfaceForBriefFiltersProtocolAndMutationTools(t *testing.T
 	}
 
 	tools := map[string]bool{}
+
 	for _, tool := range surface.ToolNames {
 		if strings.TrimSpace(tool) == "" {
 			t.Fatalf("surface contains blank tool name: %#v", surface.ToolNames)
 		}
+
 		if tools[tool] {
 			t.Fatalf("surface contains duplicate tool %q: %#v", tool, surface.ToolNames)
 		}
+
 		tools[tool] = true
 	}
 
@@ -39,6 +42,7 @@ func TestDirectAnswerSurfaceForBriefFiltersProtocolAndMutationTools(t *testing.T
 			t.Fatalf("direct-answer surface exposed write tool %q", tool)
 		}
 	}
+
 	for _, tool := range []string{"submit_plan", "task_ledger", "note", "shell"} {
 		if tools[tool] {
 			t.Fatalf("direct-answer surface exposed protocol tool %q", tool)
@@ -50,6 +54,7 @@ func TestDirectAnswerSurfaceForBriefFiltersProtocolAndMutationTools(t *testing.T
 			t.Fatalf("direct-answer surface did not expose read-only investigation tool %q; got %#v", tool, surface.ToolNames)
 		}
 	}
+
 	if !DirectAnswerSurfaceSupportsReadOnlyInvestigation(surface) {
 		t.Fatal("direct-answer surface should advertise read-only investigation")
 	}
@@ -57,6 +62,7 @@ func TestDirectAnswerSurfaceForBriefFiltersProtocolAndMutationTools(t *testing.T
 
 func TestDirectAnswerSurfaceNotReturnedForWriteBrief(t *testing.T) {
 	brief := testDirectAnswerSurfaceBrief()
+
 	brief.PermissionProfile = string(workerruntime.PermissionGuardedWorkspaceWrite)
 
 	if _, ok := DirectAnswerSurfaceForBrief(brief); ok {
@@ -65,6 +71,7 @@ func TestDirectAnswerSurfaceNotReturnedForWriteBrief(t *testing.T) {
 
 	brief = testDirectAnswerSurfaceBrief()
 	brief.TaskFamily = string(workerruntime.TaskFamilyImplementation)
+
 	if _, ok := DirectAnswerSurfaceForBrief(brief); ok {
 		t.Fatal("non-direct-answer task family must not receive lightweight direct-answer surface")
 	}
@@ -107,6 +114,7 @@ func TestDirectAnswerSurfacePrefetchEligibilityTypedMisses(t *testing.T) {
 			if eligible {
 				t.Fatal("prefetch should not be eligible")
 			}
+
 			if !strings.HasPrefix(missReason, tt.wantPrefix) {
 				t.Fatalf("miss reason = %q, want prefix %q", missReason, tt.wantPrefix)
 			}
@@ -128,6 +136,7 @@ func TestDirectAnswerSurfacePrefetchEligibilityRequiresAdvertisedCapability(t *t
 	if !eligible {
 		t.Fatalf("prefetch should be eligible when surface advertises capability, miss reason %q", missReason)
 	}
+
 	if missReason != "" {
 		t.Fatalf("eligible surface returned miss reason %q", missReason)
 	}
@@ -140,6 +149,7 @@ func TestEmitDirectAnswerSurfaceEvent(t *testing.T) {
 	}
 
 	var got []RunEvent
+
 	EmitDirectAnswerSurfaceEvent(func(event RunEvent) {
 		got = append(got, event)
 	}, surface)
@@ -147,9 +157,11 @@ func TestEmitDirectAnswerSurfaceEvent(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("events = %d, want 1", len(got))
 	}
+
 	if got[0].Role != "direct_answer_surface" {
 		t.Fatalf("event role = %q, want direct_answer_surface", got[0].Role)
 	}
+
 	var payload struct {
 		SchemaVersion  string   `json:"schema_version"`
 		Version        string   `json:"version"`
@@ -157,18 +169,23 @@ func TestEmitDirectAnswerSurfaceEvent(t *testing.T) {
 		ToolCount      int      `json:"tool_count"`
 		TerminalStates []string `json:"terminal_states"`
 	}
+
 	if err := json.Unmarshal([]byte(got[0].Content), &payload); err != nil {
 		t.Fatalf("unmarshal surface event: %v", err)
 	}
+
 	if payload.SchemaVersion != DirectAnswerSurfaceSchemaVersion {
 		t.Fatalf("schema version = %q", payload.SchemaVersion)
 	}
+
 	if payload.Version != DirectAnswerSurfaceVersion {
 		t.Fatalf("version = %q", payload.Version)
 	}
+
 	if payload.ToolCount != len(surface.ToolNames) {
 		t.Fatalf("tool count = %d, want %d", payload.ToolCount, len(surface.ToolNames))
 	}
+
 	if len(payload.TerminalStates) == 0 {
 		t.Fatal("expected terminal states in surface event")
 	}
@@ -188,12 +205,15 @@ func TestRunnerDirectAnswerSurfacePrefetchesNamedPath(t *testing.T) {
 		if requests >= len(replies) {
 			t.Fatalf("unexpected extra chat request #%d", requests)
 		}
+
 		reply := replies[requests]
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
 		})
 	}))
+
 	defer server.Close()
 
 	runner := &Runner{
@@ -209,13 +229,17 @@ func TestRunnerDirectAnswerSurfacePrefetchesNamedPath(t *testing.T) {
 		},
 	}
 
-	var surfaceEvent RunEvent
-	var prefetchEvents []RunEvent
-	var readFileResults int
+	var (
+		surfaceEvent    RunEvent
+		prefetchEvents  []RunEvent
+		readFileResults int
+	)
+
 	runner.OnEvent = func(event RunEvent) {
 		if event.Role == "direct_answer_surface" {
 			surfaceEvent = event
 		}
+
 		if strings.Contains(event.Role, "prefetch") {
 			prefetchEvents = append(prefetchEvents, event)
 		}
@@ -236,27 +260,35 @@ func TestRunnerDirectAnswerSurfacePrefetchesNamedPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if !strings.Contains(answer, "README.md") || !strings.Contains(answer, "Idiom is a local coding-agent harness") {
 		t.Fatalf("expected grounded README answer citing source and fixture content, got %q", answer)
 	}
+
 	if surfaceEvent.Role == "" {
 		t.Fatal("runner did not emit direct_answer_surface event")
 	}
+
 	var payload struct {
 		Capabilities []string `json:"capabilities"`
 	}
+
 	if err := json.Unmarshal([]byte(surfaceEvent.Content), &payload); err != nil {
 		t.Fatalf("unmarshal direct-answer surface event: %v", err)
 	}
+
 	if !slicesContainsString(payload.Capabilities, DirectAnswerSurfaceCapSourceBodyPrefetch) {
 		t.Fatalf("runner surface did not advertise source_body_prefetch: %#v", payload.Capabilities)
 	}
+
 	if len(prefetchEvents) != 1 {
 		t.Fatalf("expected one prefetch event, got %#v", prefetchEvents)
 	}
+
 	if readFileResults != 0 {
 		t.Fatalf("prefetch should avoid model-initiated read_file before final answer, got %d", readFileResults)
 	}
+
 	if requests != len(replies) {
 		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
 	}
@@ -271,10 +303,12 @@ func TestRunnerNamedPathPrefetchDoesNotRunForWriteBrief(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{"message": map[string]string{"content": "Done."}}},
 		})
 	}))
+
 	defer server.Close()
 
 	runner := &Runner{
@@ -290,11 +324,15 @@ func TestRunnerNamedPathPrefetchDoesNotRunForWriteBrief(t *testing.T) {
 		},
 	}
 
-	var prefetchResults int
-	var prefetchEvent *RunEvent
+	var (
+		prefetchResults int
+		prefetchEvent   *RunEvent
+	)
+
 	runner.OnEvent = func(event RunEvent) {
 		if event.Role == readOnlyPrefetchEventRole {
 			copy := event
+
 			prefetchEvent = &copy
 		}
 	}
@@ -310,22 +348,28 @@ func TestRunnerNamedPathPrefetchDoesNotRunForWriteBrief(t *testing.T) {
 			}
 		},
 	)
+
 	if prefetchResults != 0 {
 		t.Fatalf("write brief must not receive prefetch result, got %d", prefetchResults)
 	}
+
 	if prefetchEvent == nil {
 		t.Fatal("expected metadata prefetch event")
 	}
+
 	var payload struct {
 		Eligible   bool   `json:"eligible"`
 		MissReason string `json:"miss_reason"`
 	}
+
 	if err := json.Unmarshal([]byte(prefetchEvent.Content), &payload); err != nil {
 		t.Fatalf("unmarshal prefetch event: %v", err)
 	}
+
 	if payload.Eligible || payload.MissReason != "not_read_only_workspace" {
 		t.Fatalf("unexpected prefetch metadata: %#v", payload)
 	}
+
 	if requests == 0 {
 		t.Fatal("expected the runner to reach the model")
 	}
@@ -345,12 +389,15 @@ func TestRunnerNamedPathPrefetchRunsForReadOnlyArchitectureBrief(t *testing.T) {
 		if requests >= len(replies) {
 			t.Fatalf("unexpected extra chat request #%d", requests)
 		}
+
 		reply := replies[requests]
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
 		})
 	}))
+
 	defer server.Close()
 
 	runner := &Runner{
@@ -366,12 +413,16 @@ func TestRunnerNamedPathPrefetchRunsForReadOnlyArchitectureBrief(t *testing.T) {
 		},
 	}
 
-	var prefetchEvent *RunEvent
-	var prefetchResults int
-	var readFileResults int
+	var (
+		prefetchEvent   *RunEvent
+		prefetchResults int
+		readFileResults int
+	)
+
 	runner.OnEvent = func(event RunEvent) {
 		if event.Role == readOnlyPrefetchEventRole {
 			copy := event
+
 			prefetchEvent = &copy
 		}
 	}
@@ -394,28 +445,36 @@ func TestRunnerNamedPathPrefetchRunsForReadOnlyArchitectureBrief(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if !strings.Contains(answer, "README.md") || !strings.Contains(answer, "Idiom carries cache metrics") {
 		t.Fatalf("expected grounded README answer citing source and fixture content, got %q", answer)
 	}
+
 	if prefetchEvent == nil {
 		t.Fatal("expected prefetch metadata event")
 	}
+
 	var payload struct {
 		Eligible      bool     `json:"eligible"`
 		SelectedPaths []string `json:"selected_paths"`
 	}
+
 	if err := json.Unmarshal([]byte(prefetchEvent.Content), &payload); err != nil {
 		t.Fatalf("unmarshal prefetch event: %v", err)
 	}
+
 	if !payload.Eligible || !slicesContainsString(payload.SelectedPaths, "README.md") {
 		t.Fatalf("unexpected prefetch metadata: %#v", payload)
 	}
+
 	if prefetchResults != 1 {
 		t.Fatalf("expected one prefetch result, got %d", prefetchResults)
 	}
+
 	if readFileResults != 0 {
 		t.Fatalf("prefetch should avoid model-initiated read_file before final answer, got %d", readFileResults)
 	}
+
 	if requests != len(replies) {
 		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
 	}
@@ -437,12 +496,15 @@ func TestRunnerDirectAnswerSurfaceAllowsSearchThenBoundedRead(t *testing.T) {
 		if requests >= len(replies) {
 			t.Fatalf("unexpected extra chat request #%d", requests)
 		}
+
 		reply := replies[requests]
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
 		})
 	}))
+
 	defer server.Close()
 
 	runner := &Runner{
@@ -458,8 +520,11 @@ func TestRunnerDirectAnswerSurfaceAllowsSearchThenBoundedRead(t *testing.T) {
 		},
 	}
 
-	var searchResults int
-	var readResults int
+	var (
+		searchResults int
+		readResults   int
+	)
+
 	answer, err := runner.Run(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: runner.RuntimeBrief.Objective}},
@@ -470,6 +535,7 @@ func TestRunnerDirectAnswerSurfaceAllowsSearchThenBoundedRead(t *testing.T) {
 			if event.Result.Error != "" {
 				return
 			}
+
 			switch event.Result.Tool {
 			case "search_content":
 				searchResults++
@@ -481,12 +547,15 @@ func TestRunnerDirectAnswerSurfaceAllowsSearchThenBoundedRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if searchResults != 1 || readResults != 1 {
 		t.Fatalf("expected one search_content and one read_file result, got search=%d read=%d", searchResults, readResults)
 	}
+
 	if !strings.Contains(answer, "README.md") || !strings.Contains(answer, "Idiom sells repo memory") {
 		t.Fatalf("expected final answer grounded in README.md, got %q", answer)
 	}
+
 	if requests != len(replies) {
 		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
 	}

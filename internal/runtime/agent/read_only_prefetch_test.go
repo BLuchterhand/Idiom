@@ -82,6 +82,7 @@ func TestReadOnlyNamedPathPrefetchEventGuards(t *testing.T) {
 			if tt.mutate != nil {
 				tt.mutate(runner)
 			}
+
 			if tt.envDisabled {
 				t.Setenv("IDIOM_DISABLE_READONLY_PREFETCH", "1")
 			}
@@ -97,6 +98,7 @@ func TestReadOnlyNamedPathPrefetchEventGuards(t *testing.T) {
 func TestRunnerTruncatedPrefetchCanAnswerWithoutReadFileFollowup(t *testing.T) {
 	root := t.TempDir()
 	body := "The large fixture uses prefetch excerpts to expose answer token.\n" + strings.Repeat("padding\n", 2000)
+
 	if err := os.WriteFile(filepath.Join(root, "large.md"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write large fixture: %v", err)
 	}
@@ -104,6 +106,7 @@ func TestRunnerTruncatedPrefetchCanAnswerWithoutReadFileFollowup(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{
@@ -112,6 +115,7 @@ func TestRunnerTruncatedPrefetchCanAnswerWithoutReadFileFollowup(t *testing.T) {
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	runner := &Runner{
@@ -127,13 +131,18 @@ func TestRunnerTruncatedPrefetchCanAnswerWithoutReadFileFollowup(t *testing.T) {
 		},
 	}
 
-	var prefetchEvent *readOnlyPrefetchEvent
-	var readFileResults int
+	var (
+		prefetchEvent   *readOnlyPrefetchEvent
+		readFileResults int
+	)
+
 	runner.OnEvent = func(event RunEvent) {
 		if event.Role != readOnlyPrefetchEventRole {
 			return
 		}
+
 		var payload readOnlyPrefetchEvent
+
 		if err := json.Unmarshal([]byte(event.Content), &payload); err == nil {
 			prefetchEvent = &payload
 		}
@@ -154,15 +163,19 @@ func TestRunnerTruncatedPrefetchCanAnswerWithoutReadFileFollowup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if !strings.Contains(answer, "prefetch excerpts") || !strings.Contains(answer, "large.md") {
 		t.Fatalf("expected grounded answer from prefetched excerpt, got %q", answer)
 	}
+
 	if prefetchEvent == nil || !prefetchEvent.Eligible || prefetchEvent.TruncatedFiles != 1 {
 		t.Fatalf("expected eligible truncated prefetch event, got %#v", prefetchEvent)
 	}
+
 	if readFileResults != 0 {
 		t.Fatalf("expected no model-initiated read_file follow-up, got %d", readFileResults)
 	}
+
 	if requests != 1 {
 		t.Fatalf("expected one model request using prefetched evidence, got %d requests", requests)
 	}
@@ -173,6 +186,7 @@ func TestRunnerPrefetchSendsEvidenceToModelBeforeFollowup(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "internal", "labels"), 0o755); err != nil {
 		t.Fatalf("mkdir fixture: %v", err)
 	}
+
 	source := "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"
 	if err := os.WriteFile(filepath.Join(root, "internal", "labels", "labels.go"), []byte(source), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
@@ -182,14 +196,18 @@ func TestRunnerPrefetchSendsEvidenceToModelBeforeFollowup(t *testing.T) {
 	sawPrefetchEvidence := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Fatalf("read request body: %v", err)
 		}
+
 		if strings.Contains(string(body), "internal/labels/labels.go") &&
 			strings.Contains(string(body), "Save changes") {
+
 			sawPrefetchEvidence = true
 		}
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{
@@ -198,6 +216,7 @@ func TestRunnerPrefetchSendsEvidenceToModelBeforeFollowup(t *testing.T) {
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	runner := &Runner{
@@ -214,6 +233,7 @@ func TestRunnerPrefetchSendsEvidenceToModelBeforeFollowup(t *testing.T) {
 	}
 
 	var events []RunEvent
+
 	runner.OnEvent = func(event RunEvent) {
 		events = append(events, event)
 	}
@@ -229,15 +249,19 @@ func TestRunnerPrefetchSendsEvidenceToModelBeforeFollowup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if requests == 0 {
 		t.Fatal("expected model call with prefetched evidence")
 	}
+
 	if !sawPrefetchEvidence {
 		t.Fatal("expected at least one model request to include prefetched source evidence")
 	}
+
 	if !strings.Contains(answer, "Save changes") || !strings.Contains(answer, "internal/labels/labels.go") {
 		t.Fatalf("expected grounded prefetch-backed answer, got:\n%s", answer)
 	}
+
 	for _, event := range events {
 		if event.Role == "tool_result" && strings.Contains(event.Content, "code_navigate") {
 			t.Fatalf("prefetch-backed answer should not execute model retry, saw event %#v", event)
@@ -258,11 +282,13 @@ func TestReadOnlyNamedPathPrefetchNoPathMissIsReported(t *testing.T) {
 	}
 
 	var events []RunEvent
+
 	runner.OnEvent = func(event RunEvent) {
 		if event.Role == readOnlyPrefetchEventRole {
 			events = append(events, event)
 		}
 	}
+
 	collected := []workspace.ToolResult{}
 	turnMessages := []llama.ChatMessage{}
 	recorder := runnerTurnRecorder{
@@ -275,13 +301,17 @@ func TestReadOnlyNamedPathPrefetchNoPathMissIsReported(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("expected no prefetched results, got %#v", got)
 	}
+
 	if len(events) != 1 {
 		t.Fatalf("expected one prefetch event, got %#v", events)
 	}
+
 	var payload readOnlyPrefetchEvent
+
 	if err := json.Unmarshal([]byte(events[0].Content), &payload); err != nil {
 		t.Fatalf("unmarshal event: %v", err)
 	}
+
 	if payload.Eligible || payload.MissReason != "no_explicit_named_paths" {
 		t.Fatalf("unexpected no-path event: %#v", payload)
 	}

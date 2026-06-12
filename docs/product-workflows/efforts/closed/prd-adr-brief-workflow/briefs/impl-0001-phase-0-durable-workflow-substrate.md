@@ -37,7 +37,7 @@ session. It is recorded here as a fixture, not as a future dispatch request.
 
 ## Verified Current State
 
-- Repository: `/Users/ben/Documents/GitHub/idiom`
+- Repository: `<repo-root>`
 - HEAD: `85af477 Configure GLM OpenCode implementation workflow`
 - No prior effort folder or fixture artifacts exist
 - Design docs are at `docs/design-prd-adr-brief-research-workflow.md` and

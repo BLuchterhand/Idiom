@@ -30,6 +30,7 @@ import (
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom audit enum-mirrors", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	var (
 		enumName   string
 		root       string
@@ -37,44 +38,56 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		patternArg multiString
 		extArg     multiString
 	)
+
 	fs.StringVar(&enumName, "enum", "", "enum or symbol name to audit (required)")
 	fs.StringVar(&root, "root", "", "search root (defaults to cwd)")
 	fs.StringVar(&language, "language", "cpp", "named pattern/extension profile: cpp | go | rust | ts | any (any disables built-in patterns)")
 	fs.Var(&patternArg, "pattern", "extra mirror-pattern regex (repeatable). Use {ENUM} as a placeholder for the symbol name.")
 	fs.Var(&extArg, "ext", "file extension to consider (repeatable; overrides the profile's default extensions)")
+
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
+
 		return 2
 	}
+
 	enumName = strings.TrimSpace(enumName)
 	if enumName == "" {
 		fmt.Fprintln(stderr, "audit enum-mirrors: --enum is required")
+
 		return 2
 	}
+
 	if strings.TrimSpace(root) == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
 			fmt.Fprintln(stderr, err)
+
 			return 1
 		}
+
 		root = cwd
 	}
+
 	// Stat the search root explicitly so a typo'd path produces a
 	// clear "not a directory" diagnostic rather than the vague
 	// "no references found" the empty-walk path used to emit.
 	if info, err := os.Stat(root); err != nil {
 		fmt.Fprintf(stderr, "audit enum-mirrors: search root %q: %v\n", root, err)
+
 		return 1
 	} else if !info.IsDir() {
 		fmt.Fprintf(stderr, "audit enum-mirrors: search root %q is not a directory\n", root)
+
 		return 1
 	}
 
 	profile, ok := enumMirrorProfileFor(language)
 	if !ok {
 		fmt.Fprintf(stderr, "audit enum-mirrors: unknown --language %q (try: cpp | go | rust | ts | any)\n", language)
+
 		return 2
 	}
 
@@ -86,9 +99,11 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 			if e == "" {
 				continue
 			}
+
 			if !strings.HasPrefix(e, ".") {
 				e = "." + e
 			}
+
 			exts[strings.ToLower(e)] = true
 		}
 	}
@@ -96,11 +111,14 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	patterns := profile.patternsFor(enumName)
 	for _, p := range patternArg {
 		filled := strings.ReplaceAll(p, "{ENUM}", regexp.QuoteMeta(enumName))
+
 		re, err := regexp.Compile(filled)
 		if err != nil {
 			fmt.Fprintf(stderr, "audit enum-mirrors: invalid --pattern %q: %v\n", p, err)
+
 			return 2
 		}
+
 		patterns = append(patterns, re)
 	}
 
@@ -109,23 +127,29 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	files, err := filesReferencingSymbol(root, enumName, exts)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	if len(files) == 0 {
 		fmt.Fprintf(stdout, "[enum_mirror_audit] no references found for %s\n", enumName)
 		fmt.Fprintln(stdout, "[enum_mirror_audit] verify the spelling and that the search root contains the project source.")
+
 		return 1
 	}
 
 	rel := relativizeFiles(files, root)
 	fmt.Fprintf(stdout, "Step 1 — found %d file(s) referencing %s:\n\n", len(rel), enumName)
+
 	for _, f := range rel {
 		fmt.Fprintln(stdout, "  "+f)
 	}
+
 	fmt.Fprintln(stdout)
 
 	fmt.Fprintln(stdout, "Step 2 — scanning each file for mirror-site invariants:")
 	fmt.Fprintln(stdout)
+
 	hadHits := scanMirrorPatterns(stdout, stderr, files, patterns)
 	if !hadHits {
 		fmt.Fprintln(stdout, "  (no high-signal mirror patterns found — review every referenced file by hand)")
@@ -134,12 +158,15 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	fmt.Fprintln(stdout, "Step 3 — Files-To-Modify candidate list (review and trim before pasting into brief):")
 	fmt.Fprintln(stdout)
+
 	for _, f := range rel {
 		fmt.Fprintf(stdout, "| `%s` | <action> |\n", f)
 	}
+
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "[enum_mirror_audit] Done. Files with low reference counts (≤3) are the highest")
 	fmt.Fprintln(stdout, "[enum_mirror_audit] risk for missed mirror sites — examine those first.")
+
 	return 0
 }
 
@@ -166,12 +193,14 @@ type enumMirrorProfile struct {
 func (p enumMirrorProfile) patternsFor(enum string) []*regexp.Regexp {
 	q := regexp.QuoteMeta(enum)
 	out := make([]*regexp.Regexp, 0, len(p.templates))
+
 	for _, tmpl := range p.templates {
 		filled := strings.ReplaceAll(tmpl, "{ENUM}", q)
 		// MustCompile is safe here: the templates are author-supplied
 		// constants reviewed at compile time, never user input.
 		out = append(out, regexp.MustCompile(filled))
 	}
+
 	return out
 }
 
@@ -184,7 +213,9 @@ func enumMirrorProfileFor(language string) (enumMirrorProfile, bool) {
 	if key == "" {
 		key = "cpp"
 	}
+
 	prof, ok := enumMirrorProfiles[key]
+
 	return prof, ok
 }
 
@@ -259,8 +290,10 @@ func extensionSet(exts ...string) map[string]bool {
 		if !strings.HasPrefix(e, ".") {
 			panic("enumMirrorProfile: extension must start with '.': " + e)
 		}
+
 		out[strings.ToLower(e)] = true
 	}
+
 	return out
 }
 
@@ -270,7 +303,9 @@ func extensionSet(exts ...string) map[string]bool {
 // avoids hits on `MyEnumOther` when the operator wanted `MyEnum`.
 func filesReferencingSymbol(root, symbol string, exts map[string]bool) ([]string, error) {
 	tokenBoundary := regexp.MustCompile(`\b` + regexp.QuoteMeta(symbol) + `\b`)
+
 	var matches []string
+
 	walkErr := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			// EACCES on individual subtrees shouldn't kill the walk;
@@ -279,28 +314,36 @@ func filesReferencingSymbol(root, symbol string, exts map[string]bool) ([]string
 			// (they get a smaller file list, not an audit failure).
 			return nil
 		}
+
 		if info.IsDir() {
 			if shouldSkipDir(info.Name()) {
 				return filepath.SkipDir
 			}
+
 			return nil
 		}
+
 		if !exts[strings.ToLower(filepath.Ext(path))] {
 			return nil
 		}
+
 		body, err := os.ReadFile(path)
 		if err != nil {
 			return nil
 		}
+
 		if tokenBoundary.Match(body) {
 			matches = append(matches, path)
 		}
+
 		return nil
 	})
 	if walkErr != nil {
 		return nil, fmt.Errorf("audit enum-mirrors: walk %s: %w", root, walkErr)
 	}
+
 	slices.Sort(matches)
+
 	return matches, nil
 }
 
@@ -316,6 +359,7 @@ func shouldSkipDir(name string) bool {
 		".idiom":
 		return true
 	}
+
 	return false
 }
 
@@ -327,21 +371,28 @@ func shouldSkipDir(name string) bool {
 // knows the report may be partial.
 func scanMirrorPatterns(stdout io.Writer, stderr io.Writer, files []string, patterns []*regexp.Regexp) bool {
 	hadAny := false
+
 	for _, f := range files {
 		hits, err := scanFileForPatterns(f, patterns)
 		if err != nil {
 			fmt.Fprintf(stderr, "audit enum-mirrors: %s: %v (results may be partial)\n", f, err)
 		}
+
 		if len(hits) == 0 {
 			continue
 		}
+
 		fmt.Fprintf(stdout, "  ── %s ──\n", f)
+
 		for _, line := range hits {
 			fmt.Fprintln(stdout, "    "+line)
 		}
+
 		fmt.Fprintln(stdout)
+
 		hadAny = true
 	}
+
 	return hadAny
 }
 
@@ -359,6 +410,7 @@ func scanFileForPatterns(path string, patterns []*regexp.Regexp) ([]string, erro
 	defer f.Close()
 
 	var hits []string
+
 	scanner := bufio.NewScanner(f)
 	// 10MB cap covers vendored / minified content that the dir-skip
 	// list might not catch (e.g. a generated single-line file that
@@ -366,10 +418,13 @@ func scanFileForPatterns(path string, patterns []*regexp.Regexp) ([]string, erro
 	// human-authored code worth scanning anyway, and the caller
 	// surfaces the scanner error so the operator knows.
 	scanner.Buffer(make([]byte, 0, 1024), 10*1024*1024)
+
 	lineno := 0
 	for scanner.Scan() {
 		lineno++
+
 		line := scanner.Text()
+
 		for _, re := range patterns {
 			if re.MatchString(line) {
 				hits = append(hits, fmt.Sprintf("%d: %s", lineno, strings.TrimSpace(line)))
@@ -377,6 +432,7 @@ func scanFileForPatterns(path string, patterns []*regexp.Regexp) ([]string, erro
 			}
 		}
 	}
+
 	return hits, scanner.Err()
 }
 
@@ -391,7 +447,9 @@ func relativizeFiles(files []string, root string) []string {
 			out = append(out, f)
 			continue
 		}
+
 		out = append(out, rel)
 	}
+
 	return out
 }

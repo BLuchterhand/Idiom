@@ -8,9 +8,11 @@ func (TargetNormalizer) Normalize(target string) string {
 	target = strings.TrimSpace(target)
 	target = strings.Trim(target, "`'\".,;:()[]")
 	target = strings.ReplaceAll(target, "\\", "/")
+
 	for strings.HasPrefix(target, "./") {
 		target = strings.TrimPrefix(target, "./")
 	}
+
 	return target
 }
 

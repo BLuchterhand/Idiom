@@ -19,6 +19,7 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 	if prompt == "" {
 		prompt = strings.TrimSpace(req.Content)
 	}
+
 	if prompt == "" {
 		return workspace.ToolResult{
 			Tool:    "task",
@@ -26,13 +27,16 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 			Error:   "task prompt is required",
 		}
 	}
+
 	mode := strings.ToLower(strings.TrimSpace(req.Mode))
 	if mode == "" {
 		mode = "read_only"
 	}
+
 	if isWriteChildMode(mode) {
 		return r.runWorkbranchChildTask(ctx, req, prompt, opts)
 	}
+
 	if mode != "read_only" && mode != "readonly" && mode != "explore" {
 		return workspace.ToolResult{
 			Tool:    "task",
@@ -40,21 +44,27 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 			Error:   "only read_only child tasks are currently supported",
 		}
 	}
+
 	agentName := strings.TrimSpace(req.Agent)
 	if agentName == "" {
 		agentName = "child"
 	}
+
 	prompt = r.prepareReadOnlyChildPrompt(prompt)
+
 	childPolicy := RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3, MaxModelCalls: 5, MaxDuration: 75 * time.Second}
+
 	if workerruntime.RuntimeContractIsDirectAnswer(r.RuntimeBrief.Contract) {
 		childPolicy.MaxToolSteps = 4
 		childPolicy.MaxModelCalls = 6
 		childPolicy.MaxDuration = 45 * time.Second
 	}
+
 	if effective := r.effectivePolicy(); effective.MaxContextMessages > 0 || effective.MaxContextChars > 0 {
 		childPolicy.MaxContextMessages = effective.MaxContextMessages
 		childPolicy.MaxContextChars = effective.MaxContextChars
 	}
+
 	childBrief := workerruntime.RuntimeBriefForRole("child_read_only", "child:"+agentName, prompt)
 	if len(pathparse.MentionedWorkspacePaths(prompt)) > 0 {
 		childBrief.AllowedTools = filterOutRunnerTools(childBrief.AllowedTools,
@@ -68,6 +78,7 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 		childBrief.SearchPolicy = util.AppendUnique(childBrief.SearchPolicy, "start_from_named_paths_before_workspace_overview")
 		childBrief.Constraints = util.AppendUnique(childBrief.Constraints, "named_paths_scoped")
 	}
+
 	child := &Runner{
 		Client:           r.Client,
 		Workspace:        r.Workspace,
@@ -81,10 +92,12 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 			if strings.TrimSpace(event.Role) == "" {
 				return
 			}
+
 			r.emitEvent(RunEvent{Role: "child_" + event.Role, Content: event.Content})
 		},
 	}
 	childResults := make([]workspace.ToolResult, 0, 8)
+
 	answer, err := child.Run(
 		ctx,
 		[]llama.ChatMessage{
@@ -121,8 +134,10 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 			Error:   err.Error(),
 		}
 	}
+
 	fallbackSourceReads := 0
 	maxFallbackSourceReads := 1
+
 	for r.Workspace != nil && fallbackSourceReads < maxFallbackSourceReads && delegatedChildFallbackSourceReadNeeded(prompt, childResults) {
 		if req, result, ok := r.delegatedChildFallbackSourceRead(ctx, prompt, childResults); ok {
 			step := len(childResults) + 1
@@ -145,12 +160,16 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 				Agent:  child.agentName(),
 				Result: result,
 			}))
+
 			childResults = append(childResults, result)
 			fallbackSourceReads++
+
 			continue
 		}
+
 		break
 	}
+
 	if blockerKind, _ := child.finalAnswerBlockerKind(answer, childResults); strings.TrimSpace(answer) == "" || strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") || blockerKind != "" {
 		if synthesized, ok := synthesizeDelegatedReadOnlyAnswer(prompt, childResults); ok {
 			if blockerKind, _ := child.finalAnswerBlockerKind(synthesized, childResults); blockerKind == "" {
@@ -162,17 +181,21 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 			}
 		}
 	}
+
 	answer = augmentDelegatedReadOnlyPacket(answer, prompt, childResults)
 	answer = normalizeDelegatedReadOnlyPacket(answer)
+
 	result := workspace.ToolResult{
 		Tool:    "task",
 		Summary: "Child task completed",
 		Output:  strings.TrimSpace(answer),
 	}
+
 	if packet, ok := buildReadOnlyEvidencePacket(prompt, answer, childResults); ok {
 		result.Output = renderReadOnlyEvidencePacketForToolOutput(packet, answer)
 		result = readOnlyEvidencePacketToolResult(result, packet)
 	}
+
 	return result
 }
 
@@ -180,12 +203,14 @@ func (r *Runner) delegatedChildFallbackSourceRead(ctx context.Context, prompt st
 	if r == nil || r.Workspace == nil {
 		return workspace.ToolRequest{}, workspace.ToolResult{}, false
 	}
+
 	paths := newDelegatedDiscoveryPlan(prompt).consumableSourceBodyCandidatePaths(results, 6)
 	for _, path := range paths {
 		path = normalizeRunnerPath(path)
 		if path == "" || isNonSourceEvidenceArtifactPath(path) || concreteSourceEvidenceReadForPath(path, results) {
 			continue
 		}
+
 		req := workspace.ToolRequest{
 			Tool:            "read_file",
 			Path:            path,
@@ -195,11 +220,14 @@ func (r *Runner) delegatedChildFallbackSourceRead(ctx context.Context, prompt st
 			WhyNotAnswering: "the child has discovery evidence but needs one source-body read before a grounded answer",
 		}
 		result := r.Workspace.Execute(ctx, req)
+
 		if strings.TrimSpace(result.Error) != "" || !readFileResultHasConcreteSourceBody(result) {
 			continue
 		}
+
 		return req, result, true
 	}
+
 	return workspace.ToolRequest{}, workspace.ToolResult{}, false
 }
 
@@ -212,34 +240,44 @@ func normalizeReadOnlyChildPrompt(prompt string) string {
 	if prompt == "" {
 		return ""
 	}
+
 	lines := strings.Split(prompt, "\n")
 	kept := make([]string, 0, len(lines))
+
 	for _, raw := range lines {
 		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
 		}
+
 		if len(kept) == 0 {
 			line = normalizeReadOnlyChildLead(line)
 			kept = append(kept, line)
+
 			continue
 		}
+
 		lower := strings.ToLower(line)
 		if strings.HasPrefix(lower, "answer ") ||
 			strings.HasPrefix(lower, "named workspace scope:") ||
 			strings.HasPrefix(lower, "key terms:") {
+
 			kept = util.AppendUnique(kept, line)
 		}
 	}
+
 	if namedPaths := pathparse.MentionedWorkspacePaths(prompt); len(namedPaths) > 0 {
 		kept = util.AppendUnique(kept, "Named workspace scope: "+strings.Join(namedPaths, ", "))
 	}
+
 	if keyTerms := readOnlyChildKeyTerms(prompt); len(keyTerms) > 0 {
 		kept = util.AppendUnique(kept, "Key terms: "+strings.Join(keyTerms, ", "))
 	}
+
 	if len(kept) == 0 {
 		return prompt
 	}
+
 	return strings.Join(kept, "\n")
 }
 
@@ -248,11 +286,13 @@ func (r *Runner) prepareReadOnlyChildPrompt(prompt string) string {
 	if prompt == "" {
 		return ""
 	}
+
 	if !readOnlyChildPromptHasPrimaryNamedScope(prompt) && r != nil && r.Workspace != nil {
 		if scope := delegatedReadOnlyLikelySourceScope(prompt, r.Workspace.Root()); scope != "" {
 			prompt += "\nNamed workspace scope: " + scope
 		}
 	}
+
 	return r.augmentReadOnlyChildPrompt(prompt)
 }
 
@@ -262,7 +302,9 @@ func readOnlyChildPromptHasPrimaryNamedScope(prompt string) bool {
 
 func normalizeReadOnlyChildLead(line string) string {
 	line = strings.TrimSpace(line)
+
 	lower := strings.ToLower(line)
+
 	for _, prefix := range []string{
 		"explore this codebase and ",
 		"explore the codebase and ",
@@ -274,21 +316,26 @@ func normalizeReadOnlyChildLead(line string) string {
 			if remainder == "" {
 				return line
 			}
+
 			return strings.ToUpper(remainder[:1]) + remainder[1:]
 		}
 	}
+
 	if idx := strings.Index(line, "?"); idx >= 0 {
 		question := strings.TrimSpace(line[:idx+1])
 		if question != "" {
 			return question
 		}
 	}
+
 	if narrowed := rewriteBroadReadOnlyChildLead(line); narrowed != "" {
 		return narrowed
 	}
+
 	if trimmed := trimReadOnlyChildLeadAtBroadMarker(line); trimmed != "" {
 		return trimmed
 	}
+
 	return line
 }
 
@@ -303,23 +350,28 @@ func rewriteBroadReadOnlyChildLead(line string) string {
 		"focus on ",
 		"explore ",
 	) {
+
 		return ""
 	}
+
 	for _, marker := range []string{"explain ", "describe ", "summarize ", "how ", "what ", "why "} {
 		if idx := strings.Index(lower, marker); idx >= 0 {
 			rewritten := strings.TrimSpace(line[idx:])
 			if rewritten == "" {
 				continue
 			}
+
 			return strings.ToUpper(rewritten[:1]) + rewritten[1:]
 		}
 	}
+
 	return ""
 }
 
 func trimReadOnlyChildLeadAtBroadMarker(line string) string {
 	lower := strings.ToLower(line)
 	cut := -1
+
 	for _, marker := range []string{
 		" explore the ",
 		" explore ",
@@ -334,13 +386,16 @@ func trimReadOnlyChildLeadAtBroadMarker(line string) string {
 			cut = idx
 		}
 	}
+
 	if cut <= 0 {
 		return ""
 	}
+
 	trimmed := strings.TrimSpace(strings.TrimRight(line[:cut], ",;:- "))
 	if trimmed == "" {
 		return ""
 	}
+
 	return trimmed
 }
 
@@ -361,15 +416,19 @@ func (r *Runner) runWorkbranchChildTask(ctx context.Context, req workspace.ToolR
 	if r == nil || r.Workspace == nil || strings.TrimSpace(r.Workspace.Root()) == "" {
 		return workspace.ToolResult{Tool: "task", Summary: "Workbranch child task rejected", Error: "parent workspace root is required for isolated write child tasks"}
 	}
+
 	agentName := strings.TrimSpace(req.Agent)
 	if agentName == "" {
 		agentName = "worker"
 	}
+
 	manager := WorkbranchManager{Root: r.Workspace.Root()}
+
 	checkout, err := manager.Create(ctx, agentName)
 	if err != nil {
 		return workspace.ToolResult{Tool: "task", Summary: "Workbranch child task failed", Error: err.Error()}
 	}
+
 	defer func() {
 		if err := manager.Remove(context.Background(), checkout); err != nil {
 			r.emitEvent(marshalRunEvent("child_workbranch_cleanup_error", map[string]string{
@@ -378,6 +437,7 @@ func (r *Runner) runWorkbranchChildTask(ctx context.Context, req workspace.ToolR
 			}))
 		}
 	}()
+
 	r.emitEvent(marshalRunEvent("child_workbranch", checkout))
 
 	childWorkspace := workspace.NewManager(config.Workspace{
@@ -392,14 +452,17 @@ func (r *Runner) runWorkbranchChildTask(ctx context.Context, req workspace.ToolR
 		EnableWrites:          true,
 	})
 	childPolicy := RunPolicy{MaxToolSteps: 10, MaxNoProgressTurns: 4, MaxModelCalls: 16, MaxDuration: 4 * time.Minute}
+
 	if effective := r.effectivePolicy(); effective.MaxContextMessages > 0 || effective.MaxContextChars > 0 {
 		childPolicy.MaxContextMessages = effective.MaxContextMessages
 		childPolicy.MaxContextChars = effective.MaxContextChars
 	}
+
 	childClient := r.Client
 	if r.ImplementerClient != nil {
 		childClient = r.ImplementerClient
 	}
+
 	child := &Runner{
 		Client:           childClient,
 		Workspace:        childWorkspace,
@@ -414,6 +477,7 @@ func (r *Runner) runWorkbranchChildTask(ctx context.Context, req workspace.ToolR
 			if strings.TrimSpace(event.Role) == "" {
 				return
 			}
+
 			r.emitEvent(RunEvent{Role: "child_" + event.Role, Content: event.Content})
 		},
 	}
@@ -442,12 +506,15 @@ func (r *Runner) runWorkbranchChildTask(ctx context.Context, req workspace.ToolR
 		},
 	)
 	diff, diffErr := manager.Diff(ctx, checkout)
+
 	if runErr != nil {
 		return workspace.ToolResult{Tool: "task", Summary: "Workbranch child task failed", Error: runErr.Error(), Output: renderWorkbranchChildOutput(checkout, diff, answer)}
 	}
+
 	if diffErr != nil {
 		return workspace.ToolResult{Tool: "task", Summary: "Workbranch child diff failed", Error: diffErr.Error(), Output: strings.TrimSpace(answer)}
 	}
+
 	return workspace.ToolResult{
 		Tool:    "task",
 		Summary: fmt.Sprintf("Workbranch child task completed with %d changed path(s)", len(diff.ChangedPaths)),
@@ -457,31 +524,39 @@ func (r *Runner) runWorkbranchChildTask(ctx context.Context, req workspace.ToolR
 
 func renderWorkbranchChildOutput(checkout WorkbranchCheckout, diff WorkbranchDiff, answer string) string {
 	var b strings.Builder
+
 	b.WriteString("Isolated workbranch result\n")
 	b.WriteString("branch: " + checkout.Branch + "\n")
 	b.WriteString("base: " + checkout.BaseSHA + "\n")
+
 	if len(diff.ChangedPaths) > 0 {
 		b.WriteString("changed paths:\n")
+
 		for _, path := range diff.ChangedPaths {
 			b.WriteString("- " + path + "\n")
 		}
 	}
+
 	if strings.TrimSpace(diff.Stat) != "" {
 		b.WriteString("\nstat:\n")
 		b.WriteString(diff.Stat + "\n")
 	}
+
 	if strings.TrimSpace(answer) != "" {
 		b.WriteString("\nchild answer:\n")
 		b.WriteString(strings.TrimSpace(answer) + "\n")
 	}
+
 	if strings.TrimSpace(diff.Patch) != "" {
 		b.WriteString("\npatch:\n```diff\n")
 		b.WriteString(strings.TrimSpace(diff.Patch))
 		b.WriteString("\n```\n")
 	}
+
 	if len(diff.ChangedPaths) > 0 {
 		b.WriteString("\nParent must inspect this diff and explicitly apply or reject it; the main workspace was not mutated by the child.\n")
 	}
+
 	return strings.TrimSpace(b.String())
 }
 
@@ -493,12 +568,15 @@ func readOnlyChildTaskPermissionPolicy() ToolPermissionPolicy {
 		return ToolPermissionRule{Tool: "shell", CommandPrefix: prefix, Decision: PermissionAllow}
 	}
 	rules := make([]ToolPermissionRule, 0, len(childAllowedTools())+20)
+
 	for _, tool := range childAllowedTools() {
 		if tool == "shell" {
 			continue
 		}
+
 		rules = append(rules, allowTool(tool))
 	}
+
 	rules = append(rules,
 		allowShellPrefix("rg "),
 		allowShellPrefix("grep "),
@@ -520,6 +598,7 @@ func readOnlyChildTaskPermissionPolicy() ToolPermissionPolicy {
 		allowShellPrefix("go list"),
 		allowShellPrefix("go env"),
 	)
+
 	return ToolPermissionPolicy{
 		Default: PermissionDeny,
 		Rules:   rules,
@@ -545,24 +624,30 @@ func workbranchChildTaskPermissionPolicy() ToolPermissionPolicy {
 	spec := workerruntime.RoleSpecFor("child_write")
 	workbranchAllowPrefixes := workbranchAllowedShellPrefixes()
 	rules := make([]ToolPermissionRule, 0, len(spec.AllowedTools)+len(workbranchAllowPrefixes)+len(workbranchDeniedShellPrefixes(spec))+2)
+
 	for _, tool := range spec.AllowedTools {
 		tool = strings.TrimSpace(tool)
 		if tool == "" || tool == "task" || tool == "shell" {
 			continue
 		}
+
 		rules = append(rules, allowTool(tool))
 	}
+
 	for _, prefix := range workbranchAllowPrefixes {
 		rules = append(rules, allowShellPrefix(prefix))
 	}
+
 	rules = append(rules, deny("task"))
 	for _, prefix := range workbranchDeniedShellPrefixes(spec) {
 		rules = append(rules, denyShellPrefix(prefix))
 	}
+
 	rules = append(rules, denyShellPrefix("git -C"))
 	for _, value := range workbranchDeniedShellFragments() {
 		rules = append(rules, denyShellContains(value))
 	}
+
 	return ToolPermissionPolicy{
 		Default: PermissionDeny,
 		Rules:   rules,
@@ -589,6 +674,7 @@ func childAllowedTools() []string {
 
 func workbranchDeniedShellPrefixes(spec workerruntime.RoleSpec) []string {
 	denied := []string{"gh pr create"}
+
 	for _, forbidden := range spec.ForbiddenTools {
 		switch strings.TrimSpace(forbidden) {
 		case "git_push":
@@ -603,5 +689,6 @@ func workbranchDeniedShellPrefixes(spec workerruntime.RoleSpec) []string {
 			denied = append(denied, "kubectl ", "deploy", "release", "gh release")
 		}
 	}
+
 	return mergeRunnerStateStrings(denied)
 }

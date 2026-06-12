@@ -23,20 +23,27 @@ import (
 // its own counting stub via runLaneMainWithDeps directly.
 func TestLaneRunsBriefLintByDefault(t *testing.T) {
 	briefPath := writeBrief(t, "# Test brief\n")
+
 	var lintCalls int32
+
 	stubLaneBriefLint(t, func(args []string, _, _ io.Writer) int {
 		atomic.AddInt32(&lintCalls, 1)
+
 		// Validate the lint runner saw the brief path.
 		if len(args) != 1 || args[0] != briefPath {
 			t.Errorf("lint runner expected [%q], got %v", briefPath, args)
 		}
+
 		return 0
 	})
 
 	var stdout, stderr bytes.Buffer
+
 	fake := &laneFakeRunner{}
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
+
 	deps := laneDeps{
 		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute:   fake.plan,
@@ -44,12 +51,15 @@ func TestLaneRunsBriefLintByDefault(t *testing.T) {
 		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
 	}
 	code := runLaneMainWithDeps([]string{"plan-execute", briefPath}, &stdout, &stderr, deps)
+
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d (stderr=%s)", code, stderr.String())
 	}
+
 	if got := atomic.LoadInt32(&lintCalls); got != 1 {
 		t.Fatalf("expected lint to run exactly once, got %d calls", got)
 	}
+
 	if fake.calledMode != "plan-execute" {
 		t.Fatalf("subcommand should still dispatch after lint passes; mode=%q", fake.calledMode)
 	}
@@ -61,18 +71,24 @@ func TestLaneRunsBriefLintByDefault(t *testing.T) {
 // still dispatches normally.
 func TestLaneNoLintBypassesPreflight(t *testing.T) {
 	briefPath := writeBrief(t, "# Test brief\n")
+
 	var lintCalls int32
+
 	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int {
 		atomic.AddInt32(&lintCalls, 1)
+
 		return 0
 	})
 
 	var stdout, stderr bytes.Buffer
+
 	fake := &laneFakeRunner{}
 	code := runLaneMainTest(t, []string{"plan-execute", "--no-lint", briefPath}, &stdout, &stderr, fake)
+
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d (stderr=%s)", code, stderr.String())
 	}
+
 	if got := atomic.LoadInt32(&lintCalls); got != 0 {
 		t.Fatalf("--no-lint must skip the preflight, got %d calls", got)
 	}
@@ -88,9 +104,12 @@ func TestLaneAbortsOnLintFailure(t *testing.T) {
 	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 7 })
 
 	var stdout, stderr bytes.Buffer
+
 	fake := &laneFakeRunner{}
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
+
 	deps := laneDeps{
 		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute:   fake.plan,
@@ -98,12 +117,15 @@ func TestLaneAbortsOnLintFailure(t *testing.T) {
 		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
 	}
 	code := runLaneMainWithDeps([]string{"plan-execute", briefPath}, &stdout, &stderr, deps)
+
 	if code != 7 {
 		t.Fatalf("lint exit must propagate; expected 7, got %d", code)
 	}
+
 	if fake.calledMode != "" {
 		t.Fatalf("subcommand must NOT dispatch after lint failure; mode=%q", fake.calledMode)
 	}
+
 	if !strings.Contains(stderr.String(), "brief lint failed") {
 		t.Fatalf("stderr should explain the abort: %s", stderr.String())
 	}
@@ -115,6 +137,7 @@ func TestLaneAbortsOnLintFailure(t *testing.T) {
 // must both succeed (release happens between them).
 func TestLaneSlotMutexAcquiresAndReleases(t *testing.T) {
 	briefPath := writeBrief(t, "# Test\n")
+
 	var stdout, stderr bytes.Buffer
 
 	fake1 := &laneFakeRunner{}
@@ -147,17 +170,22 @@ func TestLaneSlotMutexRejectsHeldSlot(t *testing.T) {
 	if err := os.Mkdir(slotDir, 0o755); err != nil {
 		t.Fatalf("pre-create slot: %v", err)
 	}
+
 	t.Cleanup(func() { _ = os.Remove(slotDir) })
 
 	var stdout, stderr bytes.Buffer
+
 	fake := &laneFakeRunner{}
 	code := runLaneMainTest(t, []string{"plan-execute", "--slot", "held_slot_test", briefPath}, &stdout, &stderr, fake)
+
 	if code != 3 {
 		t.Fatalf("held slot must exit 3; got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "already held") {
 		t.Fatalf("stderr should explain the held slot: %s", stderr.String())
 	}
+
 	if fake.calledMode != "" {
 		t.Fatalf("subcommand must NOT dispatch when slot is held; mode=%q", fake.calledMode)
 	}
@@ -172,9 +200,11 @@ func TestLaneSlotMutexRejectsHeldSlot(t *testing.T) {
 func TestAnalyzeLaneOutputDetectsReadOnlyMarker(t *testing.T) {
 	out := []byte(`{"type":"route_plan","contract":"verification_only"}` + "\n" + `{"tool":"submit_plan"}`)
 	deg := analyzeLaneOutput(out, 0)
+
 	if len(deg) != 1 {
 		t.Fatalf("expected exactly one degradation, got %d: %+v", len(deg), deg)
 	}
+
 	if deg[0].kind != "read_only_lane" {
 		t.Fatalf("expected kind=read_only_lane, got %q", deg[0].kind)
 	}
@@ -189,9 +219,11 @@ func TestAnalyzeLaneOutputDetectsNoEditAttempt(t *testing.T) {
 	// Just some chatter, no edit tools, no blocker, no typed event.
 	out := []byte(`{"type":"thinking","content":"musing about the brief"}` + "\n" + `{"type":"final_answer","content":"all done"}`)
 	deg := analyzeLaneOutput(out, 0)
+
 	if len(deg) != 1 {
 		t.Fatalf("expected exactly one degradation, got %d: %+v", len(deg), deg)
 	}
+
 	if deg[0].kind != "no_edit_attempt" {
 		t.Fatalf("expected kind=no_edit_attempt, got %q", deg[0].kind)
 	}
@@ -204,6 +236,7 @@ func TestAnalyzeLaneOutputAcceptsEditAttempt(t *testing.T) {
 	for _, tool := range []string{"edit_file", "write_file", "append_file", "apply_patch", "submit_plan"} {
 		out := []byte(`{"type":"tool_call","tool":"` + tool + `"}`)
 		deg := analyzeLaneOutput(out, 0)
+
 		if len(deg) != 0 {
 			t.Fatalf("tool %q must satisfy the edit-attempt check; got %+v", tool, deg)
 		}
@@ -232,6 +265,7 @@ func TestAnalyzeLaneOutputAcceptsPlanExecuteTypedEditEvents(t *testing.T) {
 func TestAnalyzeLaneOutputAcceptsTypedBlocker(t *testing.T) {
 	out := []byte(`{"type":"completion_status","status":"blocked","reason":"tool_step_budget_exhausted"}`)
 	deg := analyzeLaneOutput(out, 0)
+
 	if len(deg) != 0 {
 		t.Fatalf("typed blocked completion must satisfy the check; got %+v", deg)
 	}
@@ -244,6 +278,7 @@ func TestAnalyzeLaneOutputAcceptsTypedBlocker(t *testing.T) {
 func TestAnalyzeLaneOutputAcceptsQuestionBlocker(t *testing.T) {
 	out := []byte("model output line\n<<QUESTION>>: what is the canonical anchor?\n")
 	deg := analyzeLaneOutput(out, 0)
+
 	if len(deg) != 0 {
 		t.Fatalf("<<QUESTION>>: blocker must satisfy the check; got %+v", deg)
 	}
@@ -252,9 +287,11 @@ func TestAnalyzeLaneOutputAcceptsQuestionBlocker(t *testing.T) {
 func TestAnalyzeLaneOutputAcceptsSourceSatisfiedEvent(t *testing.T) {
 	out := []byte(`{"type":"final","content":"Decision: source-satisfied"}` + "\n" + `{"type":"idiom.plan_execute.source_satisfied","required_edit_paths":["a.go"]}`)
 	deg := analyzeLaneOutput(out, 0)
+
 	if len(deg) != 0 {
 		t.Fatalf("source-satisfied event must satisfy the check; got %+v", deg)
 	}
+
 	if got := laneRunFinalState(0, deg, out); got != "source-satisfied" {
 		t.Fatalf("source-satisfied event should be recorded in lane history, got %q", got)
 	}
@@ -266,9 +303,11 @@ func TestLaneHistoryRecordsReviewRepairDegradedAfterExecutorEdit(t *testing.T) {
 		`{"type":"idiom.plan_execute.review_repair_degraded","status":"review_unavailable","reason_class":"backend_eof"}`,
 	}, "\n"))
 	deg := analyzeLaneOutput(out, 0)
+
 	if len(deg) != 0 {
 		t.Fatalf("review-repair availability degradation after an edit must not become a lane regression: %+v", deg)
 	}
+
 	if got := laneRunFinalState(0, deg, out); got != "degraded" {
 		t.Fatalf("review-repair degraded event should be recorded in lane history, got %q", got)
 	}
@@ -283,6 +322,7 @@ func TestLaneHistoryRecordsReviewRepairDegradedAfterExecutorEdit(t *testing.T) {
 func TestAnalyzeLaneOutputSkipsNoEditWhenSubcommandFailed(t *testing.T) {
 	out := []byte(`{"type":"final_answer","content":"crashed"}`)
 	deg := analyzeLaneOutput(out, 1)
+
 	for _, d := range deg {
 		if d.kind == "no_edit_attempt" {
 			t.Fatalf("no_edit_attempt must be suppressed when subcommand failed; got %+v", deg)
@@ -306,13 +346,17 @@ func TestRunLaneMainEmitsDegradedEventOnReadOnlyLane(t *testing.T) {
 	implement := func([]string, io.Writer, io.Writer, promptRunner) int { return 0 }
 
 	var stdout, stderr bytes.Buffer
+
 	code := runLaneMainWithCustomRunners(t, []string{"plan-execute", briefPath}, &stdout, &stderr, plan, implement)
+
 	if code != 4 {
 		t.Fatalf("read-only lane must surface as exit 4, got %d (stderr=%s)", code, stderr.String())
 	}
+
 	if !strings.Contains(stdout.String(), `"type":"idiom.lane.degraded"`) {
 		t.Fatalf("expected idiom.lane.degraded event on stdout: %s", stdout.String())
 	}
+
 	if !strings.Contains(stdout.String(), `"kind":"read_only_lane"`) {
 		t.Fatalf("event should carry the kind=read_only_lane signal: %s", stdout.String())
 	}
@@ -325,16 +369,21 @@ func TestRunLaneMainEmitsDegradedEventOnReadOnlyLane(t *testing.T) {
 // post-analyzer can scan.
 func runLaneMainWithCustomRunners(t *testing.T, args []string, stdout, stderr io.Writer,
 	plan, implement laneSubcommandRunner) int {
+
 	t.Helper()
 	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
+
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
+
 	deps := laneDeps{
 		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute:   plan,
 		runImplement:     implement,
 		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
 	}
+
 	return runLaneMainWithDeps(args, stdout, stderr, deps)
 }
 
@@ -345,29 +394,39 @@ func TestLanePostflightFlagRunsAfterDispatch(t *testing.T) {
 	// Stub git diff so the test doesn't need an actual git repo in
 	// the temp workspace; an empty diff is the postflight input.
 	origGitDiff := laneGitDiff
+
 	laneGitDiff = func(string) ([]byte, error) { return []byte(""), nil }
+
 	t.Cleanup(func() { laneGitDiff = origGitDiff })
 
 	var postflightCalls int32
+
 	stubLanePostflightRunner(t, func([]string, io.Writer, io.Writer) int {
 		atomic.AddInt32(&postflightCalls, 1)
+
 		return 3
 	})
 
 	fake := &laneFakeRunner{}
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
+
 	deps := laneDeps{
 		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute:   fake.plan,
 		runImplement:     fake.implement,
 		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
 	}
+
 	var stdout, stderr bytes.Buffer
+
 	code := runLaneMainWithDeps([]string{"plan-execute", "--postflight", briefPath}, &stdout, &stderr, deps)
+
 	if got := atomic.LoadInt32(&postflightCalls); got != 1 {
 		t.Fatalf("postflight should run exactly once when --postflight is set; got %d", got)
 	}
+
 	if code != 3 {
 		t.Fatalf("max(lane=0, postflight=3) should be 3; got %d", code)
 	}
@@ -378,10 +437,13 @@ func TestLanePostflightFlagPassesBrief(t *testing.T) {
 	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
 
 	origGitDiff := laneGitDiff
+
 	laneGitDiff = func(string) ([]byte, error) { return []byte(""), nil }
+
 	t.Cleanup(func() { laneGitDiff = origGitDiff })
 
 	var capturedArgs []string
+
 	stubLanePostflightRunner(t, func(args []string, _, _ io.Writer) int {
 		capturedArgs = append([]string(nil), args...)
 		return 0
@@ -389,25 +451,32 @@ func TestLanePostflightFlagPassesBrief(t *testing.T) {
 
 	fake := &laneFakeRunner{}
 	cfg := config.Default()
+
 	cfg.Workspace.EnableWrites = true
+
 	deps := laneDeps{
 		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute:   fake.plan,
 		runImplement:     fake.implement,
 		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
 	}
+
 	var stdout, stderr bytes.Buffer
+
 	runLaneMainWithDeps([]string{"plan-execute", "--postflight", briefPath}, &stdout, &stderr, deps)
 
 	sawBriefFlag := false
 	sawBriefPath := false
+
 	for i, a := range capturedArgs {
 		if a == "--brief" && i+1 < len(capturedArgs) && capturedArgs[i+1] == briefPath {
 			sawBriefFlag = true
 			sawBriefPath = true
+
 			break
 		}
 	}
+
 	if !sawBriefFlag || !sawBriefPath {
 		t.Fatalf("postflight should receive --brief %s; got args: %v", briefPath, capturedArgs)
 	}

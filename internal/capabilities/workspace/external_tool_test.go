@@ -15,9 +15,11 @@ func TestManagerDoesNotAdvertiseUnavailableExternalTools(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
 		t.Fatalf("mkdir scripts: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "scripts", "ok.sh"), []byte("#!/bin/sh\necho ok\n"), 0o755); err != nil {
 		t.Fatalf("write script: %v", err)
 	}
+
 	reg, err := NewExternalToolRegistry([]ExternalTool{
 		{Name: "ok_tool", Command: "./scripts/ok.sh"},
 		{Name: "stale_tool", Command: filepath.Join(root, "does-not-exist.sh")},
@@ -25,15 +27,18 @@ func TestManagerDoesNotAdvertiseUnavailableExternalTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewExternalToolRegistry: %v", err)
 	}
+
 	mgr := NewManager(config.Workspace{Root: root, CWD: root})
 	mgr.SetExternalToolsRegistry(reg)
 
 	if !hasString(mgr.AllowedTools(), "ok_tool") {
 		t.Fatalf("available external tool missing from allowed tools")
 	}
+
 	if hasString(mgr.AllowedTools(), "stale_tool") {
 		t.Fatalf("unavailable external tool should not be advertised in allowed tools")
 	}
+
 	for _, def := range mgr.BuildToolDefinitions(nil) {
 		if def.Name == "stale_tool" {
 			t.Fatalf("unavailable external tool should not be advertised in tool definitions")
@@ -52,5 +57,6 @@ func hasString(values []string, want string) bool {
 			return true
 		}
 	}
+
 	return false
 }

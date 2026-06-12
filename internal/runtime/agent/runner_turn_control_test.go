@@ -32,7 +32,9 @@ func TestToolParseErrorFeedbackExplainsSubmitPlanEditsArrayShape(t *testing.T) {
 
 func TestRunnerTurnControllerRecordParseFailureEmitsParserGuardFriction(t *testing.T) {
 	root := t.TempDir()
+
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		Workspace: workspace.NewManager(config.Workspace{
@@ -52,10 +54,13 @@ func TestRunnerTurnControllerRecordParseFailureEmitsParserGuardFriction(t *testi
 		RequiredTools:     []string{"submit_plan"},
 	}
 	autonomyRecorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, nil)
+
 	if autonomyRecorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
+
 	autonomyRecorder.emitContractStarted(brief)
+
 	collected := []workspace.ToolResult{}
 	turnMessages := []llama.ChatMessage{}
 	recorder := runnerTurnRecorder{
@@ -71,32 +76,43 @@ func TestRunnerTurnControllerRecordParseFailureEmitsParserGuardFriction(t *testi
 	controller.recordParseFailure(1, nil, `{"edits":"[]"}`, errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []workspace.PlanEdit"))
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
-	var policy *autonomy.ContractPolicyEvent
-	var policyEventID string
-	var friction *autonomy.ContractGuardFrictionEvent
+
+	var (
+		policy        *autonomy.ContractPolicyEvent
+		policyEventID string
+		friction      *autonomy.ContractGuardFrictionEvent
+	)
+
 	for _, event := range events {
 		if event.Type == autonomy.EventToolPolicyResult {
 			policy = event.Policy
 			policyEventID = event.EventID
 		}
+
 		if event.Type == autonomy.EventGuardFriction {
 			friction = event.GuardFriction
 		}
 	}
+
 	if policy == nil || policy.ParserFailure != autonomy.ParserFailureSchemaMismatch {
 		t.Fatalf("expected schema-mismatch parser policy event, got %#v", policy)
 	}
+
 	if friction == nil {
 		t.Fatalf("expected parser guard friction, got roles=%#v", eventRolesFor(runEvents))
 	}
+
 	if friction.SourceEventID != policyEventID ||
 		friction.GuardSurface != autonomy.GuardFrictionSurfaceParser ||
 		friction.FirstInvalidAction != "tool_parse" ||
 		friction.ModelContractVisible {
+
 		t.Fatalf("unexpected parser friction: source=%q friction=%#v", policyEventID, friction)
 	}
+
 	if strings.Contains(strings.Join(friction.EvidenceRefs, " "), "edits") ||
 		strings.Contains(strings.Join(friction.EvidenceRefs, " "), "raw") {
+
 		t.Fatalf("parser friction leaked raw parse details: %#v", friction.EvidenceRefs)
 	}
 }
@@ -105,7 +121,9 @@ func TestRunnerTurnControllerRejectToolRecordsRejectionState(t *testing.T) {
 	collected := []workspace.ToolResult{}
 	turnMessages := []llama.ChatMessage{}
 	lastToolKey := ""
+
 	var lastToolResult *workspace.ToolResult
+
 	consecutiveRejected := 0
 	consecutiveNoProgress := 0
 	rejectionRecoveryNudgeUsed := false
@@ -140,37 +158,48 @@ func TestRunnerTurnControllerRejectToolRecordsRejectionState(t *testing.T) {
 	}
 
 	req := workspace.ToolRequest{Tool: "read_file", Path: "internal/runtime/agent/runner.go"}
+
 	answer, err, done := controller.rejectTool(2, nil, req, "Read rejected", "bad path")
 	if err != nil {
 		t.Fatalf("rejectTool err = %v", err)
 	}
+
 	if done {
 		t.Fatalf("rejectTool done = true, want false")
 	}
+
 	if answer != "" {
 		t.Fatalf("rejectTool answer = %q, want empty", answer)
 	}
+
 	if len(collected) != 1 {
 		t.Fatalf("collected results = %d, want 1", len(collected))
 	}
+
 	if got := metrics.RejectedActions; got != 1 {
 		t.Fatalf("RejectedActions = %d, want 1", got)
 	}
+
 	if got := consecutiveRejected; got != 1 {
 		t.Fatalf("consecutiveRejected = %d, want 1", got)
 	}
+
 	if got := rejectedActions[toolActionClass(req)]; got != 1 {
 		t.Fatalf("rejectedActions[%q] = %d, want 1", toolActionClass(req), got)
 	}
+
 	if got := requestBudget.fingerprint.rejected[currentFingerprint]; got != "Read rejected" {
 		t.Fatalf("rejected fingerprint = %q, want %q", got, "Read rejected")
 	}
+
 	if lastToolKey == "" {
 		t.Fatalf("lastToolKey was not recorded")
 	}
+
 	if lastToolResult == nil || lastToolResult.Error != "bad path" {
 		t.Fatalf("lastToolResult = %#v, want recorded rejection", lastToolResult)
 	}
+
 	if len(turnMessages) != 1 {
 		t.Fatalf("turn messages = %d, want 1", len(turnMessages))
 	}
@@ -180,7 +209,9 @@ func TestRunnerTurnControllerRecordRejectedResultRecordsRejectionFingerprint(t *
 	collected := []workspace.ToolResult{}
 	turnMessages := []llama.ChatMessage{}
 	lastToolKey := ""
+
 	var lastToolResult *workspace.ToolResult
+
 	consecutiveRejected := 0
 	consecutiveNoProgress := 0
 	metrics := &runnerMetrics{}
@@ -217,7 +248,9 @@ func TestRunnerTurnControllerRejectToolDoesNotMarkMissingNamedGapAsDeadEnd(t *te
 	collected := []workspace.ToolResult{}
 	turnMessages := []llama.ChatMessage{}
 	lastToolKey := ""
+
 	var lastToolResult *workspace.ToolResult
+
 	consecutiveRejected := 0
 	consecutiveNoProgress := 0
 	rejectionRecoveryNudgeUsed := false
@@ -252,25 +285,32 @@ func TestRunnerTurnControllerRejectToolDoesNotMarkMissingNamedGapAsDeadEnd(t *te
 	}
 
 	req := workspace.ToolRequest{Tool: "read_file", Path: "internal/runtime/agent/runner.go"}
+
 	answer, err, done := controller.rejectTool(2, nil, req, "Post-readiness follow-up missing named gap", "name the exact unresolved gap first")
 	if err != nil {
 		t.Fatalf("rejectTool err = %v", err)
 	}
+
 	if done {
 		t.Fatalf("rejectTool done = true, want false")
 	}
+
 	if answer != "" {
 		t.Fatalf("rejectTool answer = %q, want empty", answer)
 	}
+
 	if got := metrics.RejectedActions; got != 1 {
 		t.Fatalf("RejectedActions = %d, want 1", got)
 	}
+
 	if got := consecutiveRejected; got != 0 {
 		t.Fatalf("consecutiveRejected = %d, want 0 for recoverable legibility rejection", got)
 	}
+
 	if got := rejectedActions[toolActionClass(req)]; got != 0 {
 		t.Fatalf("rejectedActions[%q] = %d, want 0 for recoverable legibility rejection", toolActionClass(req), got)
 	}
+
 	if got := requestBudget.fingerprint.rejected[currentFingerprint]; got != "Post-readiness follow-up missing named gap" {
 		t.Fatalf("rejected fingerprint = %q, want %q", got, "Post-readiness follow-up missing named gap")
 	}
@@ -280,7 +320,9 @@ func TestRunnerTurnControllerRejectToolDoesNotMarkInvalidPostReadinessGapAsDeadE
 	collected := []workspace.ToolResult{}
 	turnMessages := []llama.ChatMessage{}
 	lastToolKey := ""
+
 	var lastToolResult *workspace.ToolResult
+
 	consecutiveRejected := 1
 	consecutiveNoProgress := 0
 	rejectionRecoveryNudgeUsed := false
@@ -315,19 +357,24 @@ func TestRunnerTurnControllerRejectToolDoesNotMarkInvalidPostReadinessGapAsDeadE
 	}
 
 	req := workspace.ToolRequest{Tool: "read_file", Path: "internal/runtime/agent/runner.go"}
+
 	answer, err, done := controller.rejectTool(2, nil, req, "Post-readiness follow-up is not an exact probe", "use one exact symbol/body probe")
 	if err != nil {
 		t.Fatalf("rejectTool err = %v", err)
 	}
+
 	if done {
 		t.Fatalf("rejectTool done = true, want false")
 	}
+
 	if answer != "" {
 		t.Fatalf("rejectTool answer = %q, want empty", answer)
 	}
+
 	if got := consecutiveRejected; got != 1 {
 		t.Fatalf("consecutiveRejected = %d, want unchanged for recoverable post-readiness rejection", got)
 	}
+
 	if got := rejectedActions[toolActionClass(req)]; got != 0 {
 		t.Fatalf("rejectedActions[%q] = %d, want 0 for recoverable post-readiness rejection", toolActionClass(req), got)
 	}
@@ -337,7 +384,9 @@ func TestRunnerTurnControllerRejectCompletionPreservesReplyAndRecordsGate(t *tes
 	collected := []workspace.ToolResult{}
 	turnMessages := []llama.ChatMessage{}
 	lastToolKey := ""
+
 	var lastToolResult *workspace.ToolResult
+
 	consecutiveRejected := 0
 	consecutiveNoProgress := 0
 	rejectionRecoveryNudgeUsed := false
@@ -382,24 +431,31 @@ func TestRunnerTurnControllerRejectCompletionPreservesReplyAndRecordsGate(t *tes
 	if completionGateRejections != 1 {
 		t.Fatalf("completionGateRejections = %d, want 1", completionGateRejections)
 	}
+
 	if metrics.CompletionGateRejections != 1 {
 		t.Fatalf("metrics.CompletionGateRejections = %d, want 1", metrics.CompletionGateRejections)
 	}
+
 	if consecutiveNoProgress != 1 {
 		t.Fatalf("consecutiveNoProgress = %d, want 1", consecutiveNoProgress)
 	}
+
 	if lastToolKey != "" {
 		t.Fatalf("lastToolKey = %q, want empty", lastToolKey)
 	}
+
 	if lastToolResult == nil || lastToolResult.Error != "need more evidence" {
 		t.Fatalf("lastToolResult = %#v, want completion gate result", lastToolResult)
 	}
+
 	if len(collected) != 1 {
 		t.Fatalf("collected results = %d, want 1", len(collected))
 	}
+
 	if len(turnMessages) != 2 {
 		t.Fatalf("turn messages = %d, want 2", len(turnMessages))
 	}
+
 	if turnMessages[0].Role != "assistant" || turnMessages[0].Content != "partial answer" {
 		t.Fatalf("preserved reply = %#v, want assistant partial answer", turnMessages[0])
 	}
@@ -439,6 +495,7 @@ func TestRunnerTurnControllerRejectCompletionDropsReasoningWhenNotPreserving(t *
 	if len(turnMessages) == 0 {
 		t.Fatalf("expected rejected reply to be preserved in history")
 	}
+
 	if turnMessages[0].ReasoningContent != "" {
 		t.Fatalf("rejected reasoning should not be preserved when PreserveThinking=false: %#v", turnMessages[0])
 	}
@@ -448,7 +505,9 @@ func TestRunnerTurnControllerRejectCompletionCompactsLargeUnwrittenMutationAnswe
 	collected := []workspace.ToolResult{}
 	turnMessages := []llama.ChatMessage{}
 	lastToolKey := ""
+
 	var lastToolResult *workspace.ToolResult
+
 	consecutiveRejected := 0
 	consecutiveNoProgress := 0
 	rejectionRecoveryNudgeUsed := false
@@ -502,12 +561,15 @@ func TestRunnerTurnControllerRejectCompletionCompactsLargeUnwrittenMutationAnswe
 	if len(turnMessages) != 2 {
 		t.Fatalf("turn messages = %d, want 2", len(turnMessages))
 	}
+
 	if !strings.Contains(turnMessages[0].Content, "omitted rejected final answer") {
 		t.Fatalf("expected compact rejection marker, got %q", turnMessages[0].Content)
 	}
+
 	if len(turnMessages[0].Content) >= len(largeReply) {
 		t.Fatalf("expected compacted content shorter than rejected reply")
 	}
+
 	if turnMessages[0].ReasoningContent != "" {
 		t.Fatalf("expected rejected reasoning content to be dropped, got %q", turnMessages[0].ReasoningContent)
 	}

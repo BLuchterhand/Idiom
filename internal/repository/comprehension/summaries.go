@@ -33,21 +33,26 @@ func (b *graphBuilder) addSummaryIndex(repoID string, languages []string) Collec
 	filesByPackage := make(map[string]int)
 	symbolsByPackage := make(map[string]int)
 	languagesByPackage := make(map[string]map[string]struct{})
+
 	for _, node := range nodes {
 		if isSymbolKind(node.Kind) && strings.TrimSpace(node.Path) != "" {
 			symbolsByPath[node.Path] = append(symbolsByPath[node.Path], node)
 		}
+
 		if node.Kind == "file" {
 			pkg := pathDir(node.Path)
 			filesByPackage[pkg]++
+
 			if languagesByPackage[pkg] == nil {
 				languagesByPackage[pkg] = make(map[string]struct{})
 			}
+
 			if node.Language != "" {
 				languagesByPackage[pkg][node.Language] = struct{}{}
 			}
 		}
 	}
+
 	for _, edge := range edges {
 		switch edge.Kind {
 		case "imports":
@@ -60,6 +65,7 @@ func (b *graphBuilder) addSummaryIndex(repoID string, languages []string) Collec
 			}
 		}
 	}
+
 	for path, symbols := range symbolsByPath {
 		symbolsByPackage[pathDir(path)] += len(symbols)
 	}
@@ -85,7 +91,9 @@ func (b *graphBuilder) addSummaryIndex(repoID string, languages []string) Collec
 		},
 	})
 	b.addEdge("summarizes", repoSummaryID, repoID, "summary_index", "derived", map[string]any{"resolution": "repository"}, nil)
+
 	report.NodesAdded++
+
 	report.EdgesAdded++
 
 	for _, node := range nodes {
@@ -114,7 +122,9 @@ func (b *graphBuilder) addSummaryIndex(repoID string, languages []string) Collec
 				},
 			})
 			b.addEdge("summarizes", summaryID, node.ID, "summary_index", "derived", map[string]any{"resolution": "package", "path": node.Path}, nil)
+
 			report.NodesAdded++
+
 			report.EdgesAdded++
 		case "file":
 			symbols := symbolsByPath[node.Path]
@@ -142,10 +152,13 @@ func (b *graphBuilder) addSummaryIndex(repoID string, languages []string) Collec
 				},
 			})
 			b.addEdge("summarizes", summaryID, node.ID, "summary_index", "derived", map[string]any{"resolution": "file", "path": node.Path}, nil)
+
 			report.NodesAdded++
+
 			report.EdgesAdded++
 		}
 	}
+
 	return report
 }
 
@@ -158,6 +171,7 @@ func filePathForNodeID(id string) string {
 	if !strings.HasPrefix(id, "file://") {
 		return ""
 	}
+
 	return strings.TrimPrefix(id, "file://")
 }
 
@@ -168,15 +182,19 @@ func summarySymbolNames(symbols []Node, limit int) []string {
 		if name == "" {
 			name = firstStringProperty(symbol.Properties, "name", "")
 		}
+
 		if name != "" {
 			values = append(values, name)
 		}
 	}
+
 	slices.Sort(values)
+
 	values = uniqueStrings(values)
 	if limit > 0 && len(values) > limit {
 		values = values[:limit]
 	}
+
 	return values
 }
 
@@ -184,6 +202,7 @@ func firstStringProperty(properties map[string]any, key string, fallback string)
 	if value, ok := properties[key].(string); ok && strings.TrimSpace(value) != "" {
 		return value
 	}
+
 	return fallback
 }
 

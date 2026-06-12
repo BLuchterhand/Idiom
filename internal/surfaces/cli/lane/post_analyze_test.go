@@ -9,12 +9,15 @@ func TestParseSessionSummaryExtractsTokens(t *testing.T) {
 {"type":"final","content":"done"}
 `)
 	summary, ok := parseSessionSummary(out)
+
 	if !ok {
 		t.Fatal("expected session_summary to be parsed")
 	}
+
 	if summary.PromptTokens != 12345 || summary.CompletionTokens != 678 || summary.TotalTokens != 13023 {
 		t.Fatalf("got %#v", summary)
 	}
+
 	if summary.SessionID != "abc123" || summary.ModelCalls != 5 || summary.ToolCalls != 4 || summary.PeakPromptTokens != 9000 || summary.ContextSize != 262144 || summary.DurationMS != 4500 || summary.StopReason != "model_final" {
 		t.Fatalf("missing run metrics: %#v", summary)
 	}
@@ -24,13 +27,16 @@ func TestParseSessionSummaryExtractsProviderCacheUsage(t *testing.T) {
 	out := []byte(`{"type":"session_summary","prompt_tokens":13,"completion_tokens":3,"total_tokens":16,"prompt_cache_hit_tokens":8,"prompt_cache_miss_tokens":5,"prompt_cache_accounting_known":true,"reasoning_tokens":2}
 `)
 	summary, ok := parseSessionSummary(out)
+
 	if !ok {
 		t.Fatal("expected session_summary to be parsed")
 	}
+
 	if !summary.PromptCacheAccountingKnown ||
 		summary.PromptCacheHitTokens != 8 ||
 		summary.PromptCacheMissTokens != 5 ||
 		summary.ReasoningTokens != 2 {
+
 		t.Fatalf("missing cache usage: %#v", summary)
 	}
 }
@@ -52,9 +58,11 @@ func TestParseSessionSummaryPicksLastWhenMultiple(t *testing.T) {
 {"type":"session_summary","prompt_tokens":999,"completion_tokens":99,"total_tokens":1098}
 `)
 	summary, ok := parseSessionSummary(out)
+
 	if !ok {
 		t.Fatal("expected session_summary to be parsed")
 	}
+
 	if summary.TotalTokens != 1098 {
 		t.Fatalf("expected last summary's totals, got TotalTokens=%d", summary.TotalTokens)
 	}
@@ -67,9 +75,11 @@ func TestParseSessionSummaryIgnoresMalformedLines(t *testing.T) {
 also not json
 `)
 	summary, ok := parseSessionSummary(out)
+
 	if !ok {
 		t.Fatal("expected session_summary to be parsed")
 	}
+
 	if summary.TotalTokens != 50 {
 		t.Fatalf("got %#v", summary)
 	}

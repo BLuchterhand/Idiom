@@ -23,21 +23,26 @@ func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, err
 	if clangd == "" {
 		return nil, fmt.Errorf("clangd is not installed")
 	}
+
 	args := []string{"--log=error"}
 	if compileDir := m.compileCommandsDir(); compileDir != "" {
 		args = append(args, "--compile-commands-dir="+compileDir)
 	}
 
 	cmd := exec.CommandContext(ctx, clangd, args...)
+
 	cmd.Dir = m.Root()
+
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
 	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
 	}
+
 	client := &clangdLSPClient{
 		lspBaseClient: lspBaseClient{
 			serverName: "clangd",
@@ -46,7 +51,9 @@ func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, err
 			stdout:     bufio.NewReader(stdout),
 		},
 	}
+
 	cmd.Stderr = &client.stderr
+
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -67,15 +74,21 @@ func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, err
 			"fallbackFlags": []string{"-xc++", "-std=c++20"},
 		},
 	}
+
 	var initResult map[string]any
+
 	if err := client.request(ctx, "initialize", params, &initResult); err != nil {
 		client.forceClose()
+
 		return nil, fmt.Errorf("clangd initialize failed: %w", err)
 	}
+
 	if err := client.notify("initialized", map[string]any{}); err != nil {
 		client.forceClose()
+
 		return nil, fmt.Errorf("clangd initialized notification failed: %w", err)
 	}
+
 	return client, nil
 }
 
@@ -111,10 +124,12 @@ func (m *Manager) cppWorkspaceSymbolsViaClangd(ctx context.Context, pattern stri
 			if err != nil {
 				return nil, err
 			}
+
 			candidates := index.RelevantFiles(strings.Fields(pattern), budget)
 			if len(candidates) == 0 {
 				candidates = index.DefaultFiles(budget)
 			}
+
 			return candidates, nil
 		},
 		flatten: flattenDocumentSymbols,
@@ -142,21 +157,27 @@ func (m *Manager) cppLocationQueryViaClangd(ctx context.Context, match semantic.
 	if err != nil {
 		return "", err
 	}
+
 	if err := client.openFile(abs); err != nil {
 		return "", err
 	}
+
 	params := map[string]any{
 		"textDocument": map[string]any{"uri": clangdFileURI(abs)},
 		"position":     m.cppLSPPosition(abs, match),
 	}
+
 	var raw json.RawMessage
+
 	if err := client.request(ctx, method, params, &raw); err != nil {
 		return "", err
 	}
+
 	locations, err := parseClangdLocations(raw)
 	if err != nil {
 		return "", err
 	}
+
 	if declarationFallback && len(locations) == 0 {
 		raw = nil
 		if err := client.request(ctx, "textDocument/declaration", params, &raw); err == nil {
@@ -166,6 +187,7 @@ func (m *Manager) cppLocationQueryViaClangd(ctx context.Context, match semantic.
 			}
 		}
 	}
+
 	return m.formatClangdLocations(locations, "", 4, false), nil
 }
 
@@ -208,16 +230,20 @@ func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semantic.
 	if err != nil {
 		return callHierarchyResult{}, err
 	}
+
 	items, err := prepareLSPCallHierarchy(ctx, client, clangdFileURI, abs, m.cppLSPPosition(abs, match))
 	if err != nil {
 		return callHierarchyResult{}, err
 	}
+
 	if len(items) == 0 {
 		params := map[string]any{
 			"textDocument": map[string]any{"uri": clangdFileURI(abs)},
 			"position":     m.cppLSPPosition(abs, match),
 		}
+
 		var raw json.RawMessage
+
 		if err := client.request(ctx, "textDocument/declaration", params, &raw); err == nil {
 			if locations, parseErr := parseClangdLocations(raw); parseErr == nil && len(locations) > 0 {
 				for _, location := range locations {
@@ -225,9 +251,11 @@ func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semantic.
 					if pathErr != nil {
 						continue
 					}
+
 					if !m.pathWithinWorkspace(targetAbs) {
 						continue
 					}
+
 					if fallbackItems, prepErr := prepareLSPCallHierarchy(ctx, client, clangdFileURI, targetAbs, map[string]any{
 						"line":      location.Range.Start.Line,
 						"character": location.Range.Start.Character,
@@ -239,20 +267,27 @@ func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semantic.
 			}
 		}
 	}
+
 	if len(items) == 0 {
 		return callHierarchyResult{}, nil
 	}
+
 	if incoming {
 		var calls []LSPIncomingCall
+
 		if err := client.request(ctx, "callHierarchy/incomingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
 			return callHierarchyResult{}, err
 		}
+
 		return m.formatClangdIncomingCalls(calls, pathFilter, match), nil
 	}
+
 	var calls []LSPOutgoingCall
+
 	if err := client.request(ctx, "callHierarchy/outgoingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
 		return callHierarchyResult{}, err
 	}
+
 	return m.formatClangdOutgoingCalls(abs, match.Name, calls, pathFilter), nil
 }
 
@@ -261,13 +296,16 @@ func (m *Manager) cppLSPPosition(abs string, match semantic.CppSymbolMatch) map[
 	if line < 0 {
 		line = 0
 	}
+
 	character := match.Column - 1
 	if character < 0 {
 		character = 0
 	}
+
 	if resolved, ok := m.cppLSPCharacter(abs, match); ok {
 		character = resolved
 	}
+
 	return map[string]any{
 		"line":      line,
 		"character": character,
@@ -278,10 +316,12 @@ func (m *Manager) cppLSPCharacter(abs string, match semantic.CppSymbolMatch) (in
 	if abs == "" || match.Line <= 0 {
 		return 0, false
 	}
+
 	lineText := m.sourceLineText(abs, match.Line)
 	if lineText == "" {
 		return 0, false
 	}
+
 	candidates := []string{match.Name}
 	if strings.TrimSpace(match.Qualified) != "" {
 		candidates = append([]string{match.Qualified}, candidates...)
@@ -289,15 +329,18 @@ func (m *Manager) cppLSPCharacter(abs string, match semantic.CppSymbolMatch) (in
 			candidates = append([]string{match.Qualified[idx+2:]}, candidates...)
 		}
 	}
+
 	for _, candidate := range candidates {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == "" {
 			continue
 		}
+
 		if idx := strings.Index(lineText, candidate); idx >= 0 {
 			return idx, true
 		}
 	}
+
 	return 0, false
 }
 
@@ -326,7 +369,9 @@ func (m *Manager) sourceLineText(path string, line int) string {
 	if err != nil {
 		return ""
 	}
+
 	prefix := strconv.Itoa(line) + ":"
+
 	return strings.TrimPrefix(snippet, prefix)
 }
 

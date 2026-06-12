@@ -23,18 +23,23 @@ func TestNormalizeToolRequestSyntaxNativeToolCall(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected native tool call to normalize")
 	}
+
 	if result.Request.Tool != "search_content" || result.Request.Pattern != "needle" || result.Request.Path != "internal" {
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.Raw != rawArgs {
 		t.Fatalf("Raw = %q, want %q", result.Raw, rawArgs)
 	}
+
 	if result.ActiveToolCall == nil {
 		t.Fatal("expected active native tool call context")
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportNative {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -48,12 +53,15 @@ func TestNormalizeToolRequestSyntaxNestedCodeNavigateGraphResolutionDoesNotInfer
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected nested code_navigate request to normalize")
 	}
+
 	if result.Request.Tool != "code_navigate" || result.Request.Query != "task tool implementation" || result.Request.Resolution != "symbol" || !result.Request.IncludeEvidence {
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.Request.Capability != "" {
 		t.Fatalf("graph resolution must not become code_navigate capability: %#v", result.Request)
 	}
@@ -70,6 +78,7 @@ func TestParseNativeToolCallRejectsMismatchedDeclaredTool(t *testing.T) {
 	if err == nil || ok {
 		t.Fatalf("native tool mismatch should reject, ok=%t err=%v", ok, err)
 	}
+
 	if !strings.Contains(err.Error(), `arguments declared tool "context_query"`) {
 		t.Fatalf("unexpected mismatch error: %v", err)
 	}
@@ -83,15 +92,19 @@ func TestNormalizeToolRequestSyntaxTextualJSON(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected textual JSON tool request to normalize")
 	}
+
 	if result.Request.Tool != "read_file" || result.Request.Path != "README.md" || result.Request.StartLine != 1 || result.Request.EndLine != 20 {
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.ActiveToolCall != nil {
 		t.Fatal("textual normalization must not create native tool-call context")
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportTextual {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -111,17 +124,22 @@ func TestNormalizeToolRequestSyntaxDeepSeekDSMLReadFile(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected DSML read_file request to normalize")
 	}
+
 	if result.Request.Tool != "read_file" ||
 		result.Request.Path != "prompts/profiles/deepseek-v4-pro.md" ||
 		result.Request.StartLine != 1 ||
 		result.Request.EndLine != 80 {
+
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized ||
 		result.EventTransport != toolRequestNormalizerTransportXMLToolMarkup {
+
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 }
@@ -140,15 +158,19 @@ func TestNormalizeToolRequestSyntaxJanusCodeNavigate(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected janus code_navigate request to normalize")
 	}
+
 	if result.Request.Tool != "code_navigate" ||
 		result.Request.Capability != "read_symbol" ||
 		result.Request.Path != "internal/runtime/agent/runner.go" ||
 		result.Request.Symbol != "Runner" {
+
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.EventTransport != toolRequestNormalizerTransportXMLToolMarkup {
 		t.Fatalf("transport=%q, want %q", result.EventTransport, toolRequestNormalizerTransportXMLToolMarkup)
 	}
@@ -168,11 +190,14 @@ func TestNormalizeToolRequestSyntaxDeepSeekXMLWriteDoesNotNormalize(t *testing.T
 	if strings.TrimSpace(result.Request.Tool) != "" {
 		t.Fatalf("DeepSeek XML write request must not normalize: %#v", result.Request)
 	}
+
 	if result.ParseErr == nil || !strings.Contains(result.ParseErr.Error(), "not a read/search/discovery tool") {
 		t.Fatalf("expected read-only XML parser error, got %v", result.ParseErr)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer ||
 		result.EventTransport != toolRequestNormalizerTransportXMLToolMarkup {
+
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 }
@@ -185,15 +210,19 @@ func TestNormalizeToolRequestSyntaxReadFileLinesAlias(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected textual JSON tool request to normalize")
 	}
+
 	if result.Request.Tool != "read_file" || result.Request.Path != "logs/conversations/recent.jsonl" || result.Request.StartLine != 1 || result.Request.EndLine != 51 {
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if !result.Repaired {
 		t.Fatal("expected lines alias repair to be marked repaired")
 	}
+
 	for _, want := range []string{`"start_line":1`, `"end_line":51`} {
 		if !strings.Contains(result.Raw, want) {
 			t.Fatalf("raw repair missing %q:\n%s", want, result.Raw)
@@ -209,9 +238,11 @@ func TestNormalizeToolRequestSyntaxReadFileLinesAliasPreservesExplicitRange(t *t
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected textual JSON tool request to normalize")
 	}
+
 	if result.Request.StartLine != 52 || result.Request.EndLine != 131 {
 		t.Fatalf("explicit range should win, got %d-%d", result.Request.StartLine, result.Request.EndLine)
 	}
@@ -225,15 +256,19 @@ func TestNormalizeToolRequestSyntaxTextualJSONEditFile(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatalf("expected textual edit_file JSON tool request to normalize: %#v", result)
 	}
+
 	if result.Request.Tool != "edit_file" || result.Request.Path != "internal/labels/labels.go" {
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.Request.OldText != "\treturn \"Save changes\"" || result.Request.NewText != "\treturn \"Save\"" {
 		t.Fatalf("unexpected replacement text: old=%q new=%q", result.Request.OldText, result.Request.NewText)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportTextual {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -254,12 +289,15 @@ func TestNormalizeToolRequestSyntaxBareToolJSONObject(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected bare submit_plan JSON request to normalize")
 	}
+
 	if result.Request.Tool != "submit_plan" || result.Request.Rationale == "" || len(result.Request.Edits) != 1 || result.Request.Edits[0].Path != "target.txt" {
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportTextual {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -273,12 +311,15 @@ func TestNormalizeToolRequestSyntaxFencedJSON(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected exact fenced JSON tool request to normalize")
 	}
+
 	if result.Request.Tool != "read_file" || result.Request.Path != "README.md" || result.Request.StartLine != 1 || result.Request.EndLine != 20 {
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportFencedJSON {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -292,12 +333,15 @@ func TestNormalizeToolRequestSyntaxKeyValue(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected key/value tool request to normalize")
 	}
+
 	if result.Request.Tool != "read_file" || result.Request.Path != "README.md" || result.Request.StartLine != 1 || result.Request.EndLine != 20 || result.Request.NamedGap != "inspect intro" {
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportKeyValue {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -311,12 +355,15 @@ func TestNormalizeToolRequestSyntaxKeyValueSearchScopeAlias(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatalf("expected key/value search request to normalize: %#v", result)
 	}
+
 	if result.Request.Tool != "search_content" || result.Request.Pattern != "implementation detection" || result.Request.Path != "." {
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportKeyValue {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -330,12 +377,15 @@ func TestNormalizeToolRequestSyntaxKeyValueActionAlias(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected key/value tool request to normalize")
 	}
+
 	if result.Request.Tool != "code_navigate" || result.Request.Capability != "read_symbol" || result.Request.Pattern != "EvaluateCoverageGate" {
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportKeyValue {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -349,12 +399,15 @@ func TestNormalizeToolRequestSyntaxKeyValueLinesAliasOnlyAppliesToReadFile(t *te
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected key/value tool request to normalize")
 	}
+
 	if result.Request.Tool != "code_navigate" {
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.Request.StartLine != 0 || result.Request.EndLine != 0 {
 		t.Fatalf("non-read_file lines alias should not set range, got %d-%d", result.Request.StartLine, result.Request.EndLine)
 	}
@@ -365,9 +418,11 @@ func TestNormalizeToolRequestSyntaxKeyValueLinesAliasOnlyAppliesToReadFile(t *te
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected edit request to normalize")
 	}
+
 	if result.Request.StartLine != 0 || result.Request.EndLine != 0 {
 		t.Fatalf("mutation request lines alias should not set range, got %d-%d", result.Request.StartLine, result.Request.EndLine)
 	}
@@ -383,9 +438,11 @@ func TestNormalizeToolRequestSyntaxKeyValueLinesAliasOnlyAppliesToReadFile(t *te
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected native edit request to normalize")
 	}
+
 	if result.Request.StartLine != 0 || result.Request.EndLine != 0 {
 		t.Fatalf("native mutation request lines alias should not set range, got %d-%d", result.Request.StartLine, result.Request.EndLine)
 	}
@@ -409,15 +466,19 @@ func TestNormalizeToolRequestSyntaxCodeNavigateDefaultsMissingCapabilityWithSymb
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected key/value tool request to normalize")
 	}
+
 	if result.Request.Tool != "code_navigate" ||
 		result.Request.Capability != "read_symbol" ||
 		result.Request.Path != "cmd/idiom/product_workflow.go" ||
 		result.Request.Pattern != "Run" {
+
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if !result.Repaired {
 		t.Fatal("expected missing capability repair to be marked repaired")
 	}
@@ -431,16 +492,20 @@ func TestNormalizeToolRequestSyntaxCodeNavigateDefaultsMissingCapabilityWithPath
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected textual JSON tool request to normalize")
 	}
+
 	if result.Request.Tool != "code_navigate" ||
 		result.Request.Capability != "file_outline" ||
 		result.Request.Path != "cmd/idiom/product_workflow.go" ||
 		result.Request.Pattern != "" ||
 		result.Request.Symbol != "" {
+
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if !result.Repaired {
 		t.Fatal("expected missing capability repair to be marked repaired")
 	}
@@ -454,15 +519,19 @@ func TestNormalizeToolRequestSyntaxCodeReadAlias(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected textual JSON tool request to normalize")
 	}
+
 	if result.Request.Tool != "read_file" ||
 		result.Request.Path != "internal/workflows/productworkflow/coverage_gate.go" ||
 		result.Request.StartLine != 1 ||
 		result.Request.EndLine != 125 {
+
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if !result.Repaired {
 		t.Fatal("expected code_read alias repair to be marked repaired")
 	}
@@ -476,15 +545,19 @@ func TestNormalizeToolRequestSyntaxResolutionAlias(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected textual JSON tool request to normalize")
 	}
+
 	if result.Request.Tool != "code_navigate" ||
 		result.Request.Capability != "definition" ||
 		result.Request.Path != "internal/workflows/productworkflow/coverage_gate.go" ||
 		result.Request.Pattern != "func EvaluateCoverageGate" {
+
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportTextual {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -498,15 +571,19 @@ func TestNormalizeToolRequestSyntaxCodeNavigateFindReferencesAlias(t *testing.T)
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected missing-tool code_navigate request to normalize")
 	}
+
 	if result.Request.Tool != "code_navigate" ||
 		result.Request.Capability != "find_references" ||
 		result.Request.Path != "internal/surfaces/tui/app" ||
 		result.Request.Pattern != "input" {
+
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized {
 		t.Fatalf("unexpected event outcome: %q", result.EventOutcome)
 	}
@@ -530,6 +607,7 @@ func TestNormalizeToolRequestSyntaxKeyValueArgsJSON(t *testing.T) {
 	if result.OK {
 		t.Fatalf("function-call-like multi-line text should not normalize: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValueArgs {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -543,6 +621,7 @@ func TestNormalizeToolRequestSyntaxKeyValueArgsJSONRejectsToolMismatch(t *testin
 	if result.OK {
 		t.Fatalf("mismatched key/value args request must not normalize: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValueArgs {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -556,16 +635,20 @@ func TestNormalizeToolRequestSyntaxFunctionCall(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected function-call-shaped tool request to normalize")
 	}
+
 	if result.Request.Tool != "code_navigate" ||
 		result.Request.Capability != "read_symbol" ||
 		result.Request.Path != "internal/workflows/productworkflow/coverage_gate.go" ||
 		result.Request.Language != "go" ||
 		result.Request.Symbol != "EvaluateCoverageGate" {
+
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -579,15 +662,19 @@ func TestNormalizeToolRequestSyntaxFunctionCallOperationAlias(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected function-call-shaped tool request to normalize")
 	}
+
 	if result.Request.Tool != "code_navigate" ||
 		result.Request.Capability != "read_symbol" ||
 		result.Request.Path != "internal/workflows/productworkflow/coverage_gate.go" ||
 		result.Request.Pattern != "EvaluateCoverageGate" {
+
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -601,15 +688,19 @@ func TestNormalizeToolRequestSyntaxFunctionCallActionAlias(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected function-call-shaped tool request to normalize")
 	}
+
 	if result.Request.Tool != "code_navigate" ||
 		result.Request.Capability != "read_symbol" ||
 		result.Request.Path != "internal/workflows/productworkflow/coverage_gate.go" ||
 		result.Request.Pattern != "EvaluateCoverageGate" {
+
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -623,9 +714,11 @@ func TestNormalizeToolRequestSyntaxRejectsUnsafeFunctionCallFields(t *testing.T)
 	if result.OK {
 		t.Fatalf("function-call edit body shape must not normalize: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
+
 	tool, transport, ok := unsafeTextualWriteAttempt(`tool: edit_file(path="README.md", old_text="old", new_text="new")`)
 	if !ok || tool != "edit_file" || transport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("expected non-executing unsafe function-call write classification, got tool=%q transport=%q ok=%v", tool, transport, ok)
@@ -677,9 +770,11 @@ func TestNormalizeToolRequestSyntaxRejectsNonJSONTextualWriteTools(t *testing.T)
 			if result.OK {
 				t.Fatalf("non-JSON textual %s body must not normalize: %#v", tt.tool, result.Request)
 			}
+
 			if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != tt.transport {
 				t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 			}
+
 			tool, transport, ok := unsafeTextualWriteAttempt(tt.content)
 			if !ok || tool != tt.tool || transport != tt.transport {
 				t.Fatalf("expected non-executing unsafe textual write classification, got tool=%q transport=%q ok=%v", tool, transport, ok)
@@ -696,12 +791,15 @@ func TestNormalizeToolRequestSyntaxBareJSONMissingToolInferred(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
+
 	if !result.OK {
 		t.Fatal("expected safe bare JSON read shape to normalize")
 	}
+
 	if result.Request.Tool != "read_file" || result.Request.Path != "README.md" {
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeMissingToolInferred || result.EventTransport != toolRequestNormalizerTransportTextual {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -715,6 +813,7 @@ func TestNormalizeToolRequestSyntaxDoesNotInferUnsafeBareJSONEdit(t *testing.T) 
 	if result.OK {
 		t.Fatalf("unsafe missing-tool edit shape must not normalize: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -728,6 +827,7 @@ func TestNormalizeToolRequestSyntaxDoesNotInferUnsafeBareJSONShell(t *testing.T)
 	if result.OK {
 		t.Fatalf("unsafe missing-tool shell shape must not normalize: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -741,6 +841,7 @@ func TestNormalizeToolRequestSyntaxDoesNotInferUnsafeBareJSONTask(t *testing.T) 
 	if result.OK {
 		t.Fatalf("unsafe missing-tool task shape must not normalize: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -755,6 +856,7 @@ func TestNormalizeToolRequestSyntaxMalformedOutputFixtureMatrix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal stringified edits fixture: %v", err)
 	}
+
 	cases := []struct {
 		name      string
 		content   string
@@ -834,12 +936,15 @@ func TestNormalizeToolRequestSyntaxMalformedOutputFixtureMatrix(t *testing.T) {
 			if result.OK != tc.wantOK {
 				t.Fatalf("OK = %v, want %v; request=%#v parseErr=%v", result.OK, tc.wantOK, result.Request, result.ParseErr)
 			}
+
 			if tc.wantTool != "" && result.Request.Tool != tc.wantTool {
 				t.Fatalf("Tool = %q, want %q; request=%#v", result.Request.Tool, tc.wantTool, result.Request)
 			}
+
 			if result.EventOutcome != tc.outcome || result.EventTransport != tc.transport {
 				t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 			}
+
 			if result.Repaired != tc.repaired {
 				t.Fatalf("Repaired = %v, want %v", result.Repaired, tc.repaired)
 			}
@@ -855,6 +960,7 @@ func TestNormalizeToolRequestSyntaxDoesNotInferNarrativeFencedJSON(t *testing.T)
 	if result.OK {
 		t.Fatalf("narrative-wrapped fenced JSON must stay out of the syntax normalizer: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFencedJSON {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -868,12 +974,15 @@ func TestNormalizeToolRequestSyntaxAcceptsKeyValueEditFields(t *testing.T) {
 	if !result.OK {
 		t.Fatalf("key/value edit body shape should normalize: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
+
 	if result.Request.Tool != "edit_file" || result.Request.OldText != "old" || result.Request.NewText != "new" {
 		t.Fatalf("unexpected parsed edit request: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportKeyValue {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
+
 	tool, transport, ok := unsafeTextualWriteAttempt("tool: edit_file\npath: README.md\nold_text: old\nnew_text: new\ndescription: update readme")
 	if ok {
 		t.Fatalf("normalized key-value edit should not be classified unsafe, got tool=%q transport=%q", tool, transport)
@@ -882,6 +991,7 @@ func TestNormalizeToolRequestSyntaxAcceptsKeyValueEditFields(t *testing.T) {
 
 func TestRepairToolRequestSyntaxStringifiedSubmitPlanEdits(t *testing.T) {
 	inner := `[{"path":"a.go","old_text":"old","new_text":"new","purpose":"update a"}]`
+
 	payload, err := json.Marshal(map[string]any{
 		"rationale": "plan",
 		"edits":     inner,
@@ -889,6 +999,7 @@ func TestRepairToolRequestSyntaxStringifiedSubmitPlanEdits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
+
 	call := llama.ToolCall{Function: llama.ToolCallFunc{Name: "submit_plan", Arguments: string(payload)}}
 	result := repairToolRequestSyntax(toolRequestSyntaxNormalization{
 		Raw:            string(payload),
@@ -899,12 +1010,15 @@ func TestRepairToolRequestSyntaxStringifiedSubmitPlanEdits(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("repair should clear parse error: %v", result.ParseErr)
 	}
+
 	if !result.OK || !result.Repaired {
 		t.Fatalf("expected repaired normalization, got ok=%v repaired=%v", result.OK, result.Repaired)
 	}
+
 	if result.Request.Tool != "submit_plan" || len(result.Request.Edits) != 1 || result.Request.Edits[0].Path != "a.go" {
 		t.Fatalf("unexpected repaired request: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportStringifiedSubmitRepair {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -912,6 +1026,7 @@ func TestRepairToolRequestSyntaxStringifiedSubmitPlanEdits(t *testing.T) {
 
 func TestNormalizeToolRequestSyntaxRepairsTextualStringifiedSubmitPlanEditsBeforeReportingParse(t *testing.T) {
 	inner := `[{"path":"a.go","old_text":"old","new_text":"new","purpose":"update a"}]`
+
 	payload, err := json.Marshal(map[string]any{
 		"tool":      "submit_plan",
 		"rationale": "plan",
@@ -926,15 +1041,19 @@ func TestNormalizeToolRequestSyntaxRepairsTextualStringifiedSubmitPlanEditsBefor
 	if result.ParseErr != nil {
 		t.Fatalf("textual stringified edits repair should clear parse error: %v", result.ParseErr)
 	}
+
 	if !result.OK || !result.Repaired {
 		t.Fatalf("expected repaired textual normalization, got ok=%v repaired=%v", result.OK, result.Repaired)
 	}
+
 	if result.Request.Tool != "submit_plan" || len(result.Request.Edits) != 1 || result.Request.Edits[0].Path != "a.go" {
 		t.Fatalf("unexpected repaired request: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportStringifiedSubmitRepair {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
+
 	if result.ParserFailureClass != "" {
 		t.Fatalf("repaired parse failure should not remain classified, got %q", result.ParserFailureClass)
 	}
@@ -947,12 +1066,15 @@ func TestRepairToolRequestSyntaxNestedArgumentsObject(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("nested arguments repair should clear parse error: %v", result.ParseErr)
 	}
+
 	if !result.OK || !result.Repaired {
 		t.Fatalf("expected repaired normalization, got ok=%v repaired=%v", result.OK, result.Repaired)
 	}
+
 	if result.Request.Tool != "read_file" || result.Request.Path != "cmd/idiom/audit.go" || result.Request.StartLine != 1 || result.Request.EndLine != 100 {
 		t.Fatalf("unexpected repaired request: %#v", result.Request)
 	}
+
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportNestedArguments {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
@@ -976,9 +1098,11 @@ func TestParseFunctionCallToolRequestSyntaxEmptyString(t *testing.T) {
 	if ok {
 		t.Fatalf("empty string must not parse as a valid tool request")
 	}
+
 	if unsafe {
 		t.Fatalf("empty string must not be classified as unsafe: got unsafe=true, want unsafe=false")
 	}
+
 	if req.Tool != "" {
 		t.Fatalf("empty string must produce zero-value ToolRequest, got tool=%q", req.Tool)
 	}
@@ -989,9 +1113,11 @@ func TestParseFunctionCallToolRequestSyntaxWhitespaceOnly(t *testing.T) {
 	if ok {
 		t.Fatalf("whitespace-only must not parse as a valid tool request")
 	}
+
 	if unsafe {
 		t.Fatalf("whitespace-only must not be classified as unsafe: got unsafe=true, want unsafe=false")
 	}
+
 	if req.Tool != "" {
 		t.Fatalf("whitespace-only must produce zero-value ToolRequest, got tool=%q", req.Tool)
 	}

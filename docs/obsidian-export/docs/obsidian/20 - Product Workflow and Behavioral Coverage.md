@@ -1,7 +1,7 @@
 ---
-status: design-guidance
+status: current-with-open-work
 tags:
-  - harness
+  - idiom
   - product-workflow
   - tdd
   - coverage
@@ -9,42 +9,43 @@ tags:
 
 # Product Workflow and Behavioral Coverage
 
-This note is the Obsidian summary for Agent Harness's upstream product workflow:
+This note is the current Obsidian summary for Idiom's upstream product workflow:
 research evidence -> PRD -> ADR -> TDD obligations -> dispatch-ready brief.
 
-It replaces the earlier proposal and design map split. The underlying design docs
+It replaces the earlier proposal and roadmap split. The underlying design docs
 remain the canonical long-form references:
 
 - [design-prd-adr-brief-research-workflow.md](../design-prd-adr-brief-research-workflow.md)
 - [design-tdd-coverage.md](../design-tdd-coverage.md)
 
-## Target State
+## Current State
 
-The workflow should provide deterministic headless CLI surfaces, durable
-fixtures, and operator views that make product workflow state explicit without
-depending on raw chat history.
+The workflow has deterministic headless CLI surfaces and durable fixtures. The
+closed effort folder under
+`docs/product-workflows/efforts/closed/prd-adr-brief-workflow/` is a status
+bucket, not a claim that every target design* is complete.
 
-Target surfaces include:
+Implemented surfaces include:
 
-- `harness product lint`
-- `harness product audit`
-- `harness product status`
-- `harness product efforts`
-- `harness product status-migration`
-- `harness product research`
-- `harness product prd --render-prompt`
-- `harness product adr --render-prompt`
-- `harness product tdd --plan-obligations`
-- `harness product tdd --evaluate-coverage`
-- `harness product brief --render`
-- `harness product feedback`
+- `idiom product lint`
+- `idiom product audit`
+- `idiom product status`
+- `idiom product efforts`
+- `idiom product status-migration`
+- `idiom product research`
+- `idiom product prd --render-prompt`
+- `idiom product adr --render-prompt`
+- `idiom product tdd --plan-obligations`
+- `idiom product tdd --evaluate-coverage`
+- `idiom product brief --render`
+- `idiom product feedback`
 
-The specified path is intentionally conservative. Product commands render,
+The shipped path is intentionally conservative. Product commands render,
 validate, link, and summarize artifacts; they do not turn arbitrary product
-intent into write authority by themselves. Dispatch still belongs to Agent Harness lanes
+intent into write authority by themselves. Dispatch still belongs to Idiom lanes
 and their runtime contracts.
 
-`*` marks design mapped coverage, TUI, sidecar, or telemetry behavior.
+`*` marks roadmapped coverage, TUI, sidecar, or telemetry behavior.
 
 ## Product Pipeline
 
@@ -88,7 +89,7 @@ parse, audit, acceptance, coverage, and dispatch gates before it affects work.
 
 ## TDD Operator Process
 
-The specified TDD process is an obligation workflow, not a classic red-green UI
+The shipped TDD process is an obligation workflow, not a classic red-green UI
 inside the TUI. The operator uses product commands to derive test obligations
 from accepted PRD/ADR artifacts, evaluate whether those obligations are covered,
 and block brief dispatch when coverage evidence is incomplete.
@@ -96,11 +97,11 @@ and block brief dispatch when coverage evidence is incomplete.
 ```mermaid
 flowchart TD
     Accepted["Accepted PRD and ADR artifacts"]
-    Plan["Plan TDD obligations<br/>harness product tdd --plan-obligations"]
+    Plan["Plan TDD obligations<br/>idiom product tdd --plan-obligations"]
     Ledger["tdd.json<br/>obligations, owners, commands, coverage tier"]
-    Evaluate["Evaluate coverage<br/>harness product tdd --evaluate-coverage"]
+    Evaluate["Evaluate coverage<br/>idiom product tdd --evaluate-coverage"]
     Gate{"Coverage gate passes?"}
-    Brief["Render implementation brief<br/>harness product brief --render"]
+    Brief["Render implementation brief<br/>idiom product brief --render"]
     Blocker["Typed blockers<br/>missing obligations or evidence"]
     Lane["Dispatch through implement<br/>or plan-execute lane"]
     Feedback["Execution feedback<br/>tests, blockers, reconciliation"]
@@ -111,39 +112,39 @@ flowchart TD
     Feedback -. strengthens .-> Ledger
 ```
 
-Target operator sequence:
+Current operator sequence:
 
 1. Accept or update PRD/ADR artifacts through the product workflow.
-2. Run `harness product tdd --effort-root <path> --plan-obligations`.
+2. Run `idiom product tdd --effort-root <path> --plan-obligations`.
 3. Review `tdd.json` for obligation IDs, owners, commands, and coverage tier.
-4. Run `harness product tdd --effort-root <path> --evaluate-coverage --json`.
+4. Run `idiom product tdd --effort-root <path> --evaluate-coverage --json`.
 5. Resolve coverage blockers by adding or updating required tests, commands,
    evidence refs, or accepted artifact links.
 6. Render the implementation brief only after the coverage gate passes:
-   `harness product brief --effort-root <path> --render`.
+   `idiom product brief --effort-root <path> --render`.
 7. Dispatch the brief through `implement` or `plan-execute`.
 8. Feed execution results back into product workflow feedback and future TDD
    obligations when tests, blockers, or recovery show missing coverage.
 
-| TDD surface | Target role |
+| TDD surface | Current role |
 | --- | --- |
 | `tdd.json` | Durable obligation ledger for the effort |
 | `--plan-obligations` | Deterministically derives obligations from accepted PRD/ADR artifacts |
-| `--evaluate-coverage` | Evaluates active fixture coverage and reports blockers |
+| `--evaluate-coverage` | Evaluates current fixture coverage and reports blockers |
 | `brief --render` | Blocks when coverage-gate blockers remain |
 | Lane verification | Proves required commands after implementation; command names alone are not proof |
 | Product feedback | Records execution evidence that can strengthen later obligations |
 
 The important distinction is between **obligation planning** and **verification
-proof**. A command listed in `tdd.json` or a brief is optional work. It becomes
+proof**. A command listed in `tdd.json` or a brief is pending work. It becomes
 evidence only after a run records a passing result, and readiness remains open
 until required test evidence is present or a typed blocker explains why it
 cannot be produced.
 
 ## Behavioral Coverage
 
-The target behavioral coverage design* is broader than command gates alone. The
-long-form target* remains in
+The target behavioral coverage design* is broader than the current shipped
+gate. The long-form target* remains in
 [design-tdd-coverage.md](../design-tdd-coverage.md).
 
 ```mermaid
@@ -160,11 +161,11 @@ flowchart TD
     Gate --> Brief["Dispatch-ready brief"]
 ```
 
-Greenfield guidance is narrower:
+Current implementation is narrower:
 
 - TDD obligation types and ledger parsing exist.
 - Deterministic TDD obligation synthesis from accepted PRD/ADR artifacts exists.
-- A tiered coverage evaluator exists for active product-workflow fixtures.
+- A tiered coverage evaluator exists for current product-workflow fixtures.
 - Brief generation blocks on coverage-gate blockers.
 
 Remaining target work* includes EARS parsing*, example mapping*, BDD
@@ -172,9 +173,9 @@ validation*, contract schemas*, FMEA/HAZOP/FTA templates*, state-machine
 checks*, decision table enumeration*, property-based obligations*, mutation
 score calculation*, and the full nine-stage coverage gate*.
 
-## Open Design Questions
+## Open Work*
 
-High-signal open design questions*:
+High-signal remaining work*:
 
 - Reuse product lint/audit traceability, acceptance, and supersession authority*
   inside the coverage gate, or run those validators as blocking preconditions.
@@ -182,7 +183,7 @@ High-signal open design questions*:
 - Add the durable two-ADR supersession fixture* and encode the
   index-vs-markdown divergence authority rule.
 - Complete TUI continuation/handoff fixtures* for product workflow actions.
-- Expose read-only product workflow status through `harness tool` and MCP.*
+- Expose read-only product workflow status through `idiom tool` and MCP.*
 - Add `tdd_eval` research profiles* with FMEA/HAZOP sources.
 - Add runtime telemetry events* for research, evidence-card, PRD, ADR, TDD,
   coverage-gate, and dispatch-blocked transitions where durable reports are not
@@ -190,8 +191,8 @@ High-signal open design questions*:
 
 ## Operator Model*
 
-`*` means this is the target operator model; specified CLI status and read-only
-TUI presenters cover only the defined subset.
+`*` means this is the target operator model; shipped CLI status and read-only
+TUI presenters cover only the implemented subset.
 
 ```mermaid
 stateDiagram-v2

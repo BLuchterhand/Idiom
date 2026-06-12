@@ -35,20 +35,25 @@ func TestReadOnlyCloseoutRejectsLowValueSourceInventoryAcrossConsumers(t *testin
 	if closeout.AllowsSourceInventoryAnswer(answer, true) {
 		t.Fatal("closeout contract must not allow low-value source inventory as an accepted answer")
 	}
+
 	runner := &Runner{RuntimeBrief: brief}
 	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+
 	if acceptance.Decision != finalAnswerAcceptanceRejected {
 		t.Fatalf("acceptance should reject low-value source inventory through closeout contract: %#v", acceptance)
 	}
+
 	presented, ok := closeout.PresentableFallbackCandidate("main", answer)
 	if !ok {
 		t.Fatal("expected closeout contract to provide a user-facing replacement")
 	}
+
 	for _, forbidden := range []string{"truncateText", "normalizeHistoryRole"} {
 		if strings.Contains(presented, forbidden) {
 			t.Fatalf("replacement leaked low-value source inventory %q:\n%s", forbidden, presented)
 		}
 	}
+
 	if !strings.Contains(presented, "not have enough supported evidence") {
 		t.Fatalf("replacement should be an evidence-bounded uncertainty answer:\n%s", presented)
 	}
@@ -68,9 +73,11 @@ func TestReadOnlyCloseoutHostAcceptanceRequiresContractProducedAnswer(t *testing
 	}}
 	runner := &Runner{RuntimeBrief: brief}
 	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
+
 	if !ok {
 		t.Fatal("expected host-owned closeout to produce a bounded uncertainty answer")
 	}
+
 	accepted := runner.classifyTerminalAnswer(answer, "host_read_only_closeout", results)
 	if accepted.Outcome != terminalAnswerAccepted || accepted.StopReason != "host_read_only_closeout" {
 		t.Fatalf("contract-produced host closeout should be accepted, got %#v", accepted)
@@ -78,6 +85,7 @@ func TestReadOnlyCloseoutHostAcceptanceRequiresContractProducedAnswer(t *testing
 
 	mutated := answer + " The root cause was definitely in the runner."
 	rejected := runner.classifyTerminalAnswer(mutated, "host_read_only_closeout", results)
+
 	if rejected.Outcome == terminalAnswerAccepted && rejected.StopReason == "host_read_only_closeout" {
 		t.Fatalf("host closeout acceptance must not accept answers not produced by the closeout contract:\n%s", mutated)
 	}
@@ -135,6 +143,7 @@ func TestArchitectureHostOwnedAnswerRejectsOffObjectiveSourceInventoryAfterChild
 	if !closeout.Answerable() {
 		t.Fatalf("test must exercise host closeout over answerable-but-off-objective source evidence: %#v", closeout)
 	}
+
 	if answer, ok := closeout.HostOwnedAnswer("main"); ok {
 		t.Fatalf("architecture host closeout must not synthesize an off-objective source inventory:\n%s", answer)
 	}
@@ -173,6 +182,7 @@ func TestArchitectureHostOwnedDiscoveryUsefulnessFallbackFromDiscoveryToolsSourc
 	if !ok {
 		t.Fatal("expected discovery usefulness fallback from discovery_tools.go source evidence")
 	}
+
 	for _, want := range []string{"discovery", "tool", "internal/runtime/agent/answer_composer.go", "internal/runtime/agent/runner.go", "internal/capabilities/workspace/discovery_query.go"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("discovery usefulness fallback answer missing %q:\n%s", want, answer)
@@ -199,6 +209,7 @@ func TestReadOnlyHostOwnedAnswerUsesPrefetchSourceBody(t *testing.T) {
 	if !ok {
 		t.Fatal("expected host closeout to answer from prefetched source body")
 	}
+
 	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "\"Save changes\""} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("prefetch closeout answer missing %q:\n%s", want, answer)
@@ -246,14 +257,17 @@ func TestReadOnlyCloseoutHostSynthesizesDelegatedChildAnswer(t *testing.T) {
 
 	closeout := readOnlyClosureDecisionForResults(brief, results)
 	answer, ok := closeout.HostOwnedAnswer("child:explorer")
+
 	if !ok {
 		t.Fatalf("expected delegated child host closeout from answerable evidence: %#v", closeout)
 	}
+
 	for _, want := range []string{"task", "subagent", "internal/runtime/agent/runner.go", "internal/runtime/agent/runner_child_tasks.go"} {
 		if !strings.Contains(strings.ToLower(answer), strings.ToLower(want)) {
 			t.Fatalf("expected delegated host answer to contain %q, got:\n%s", want, answer)
 		}
 	}
+
 	if _, ok := closeout.HostOwnedAnswer("main"); ok {
 		t.Fatal("delegated child host closeout must stay child-only")
 	}

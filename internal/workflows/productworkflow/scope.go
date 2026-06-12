@@ -30,6 +30,7 @@ func ValidateLedgerCoverage(atoms []AtomCoverageCheck, commitChangedPaths []stri
 	var findings []LedgerCoverageFinding
 
 	unionSet := make(map[string]struct{})
+
 	for _, atom := range atoms {
 		if len(atom.ChangedPaths) == 0 {
 			findings = append(findings, LedgerCoverageFinding{
@@ -37,8 +38,10 @@ func ValidateLedgerCoverage(atoms []AtomCoverageCheck, commitChangedPaths []stri
 				Path:    "",
 				Message: "atom " + atom.TaskID + " has empty changed_paths",
 			})
+
 			continue
 		}
+
 		for _, p := range atom.ChangedPaths {
 			unionSet[normalizePath(p)] = struct{}{}
 		}
@@ -50,6 +53,7 @@ func ValidateLedgerCoverage(atoms []AtomCoverageCheck, commitChangedPaths []stri
 		norm := normalizePath(p)
 		relevant := (effortPrefix != "" && strings.HasPrefix(norm, effortPrefix+"/")) ||
 			(effortPrefix != "" && norm == effortPrefix)
+
 		if relevant {
 			if _, ok := unionSet[norm]; !ok {
 				findings = append(findings, LedgerCoverageFinding{
@@ -72,6 +76,7 @@ type AtomCommitCoverage struct {
 
 func ValidatePerAtomCoverage(atoms []AtomCommitCoverage, commitPaths map[string][]string) []LedgerCoverageFinding {
 	var findings []LedgerCoverageFinding
+
 	for _, atom := range atoms {
 		if atom.CommitHash == "" {
 			findings = append(findings, LedgerCoverageFinding{
@@ -79,8 +84,10 @@ func ValidatePerAtomCoverage(atoms []AtomCommitCoverage, commitPaths map[string]
 				Path:    "",
 				Message: "atom " + atom.TaskID + " has no commit_hash; commit_hash is required for implementation_completed, fallback_completion, and partial_implementation_recorded records",
 			})
+
 			continue
 		}
+
 		paths, ok := commitPaths[atom.CommitHash]
 		if !ok {
 			findings = append(findings, LedgerCoverageFinding{
@@ -88,12 +95,15 @@ func ValidatePerAtomCoverage(atoms []AtomCommitCoverage, commitPaths map[string]
 				Path:    "",
 				Message: "atom " + atom.TaskID + " references commit " + atom.CommitHash + " not found in commit history",
 			})
+
 			continue
 		}
+
 		atomSet := make(map[string]struct{})
 		for _, p := range atom.ChangedPaths {
 			atomSet[normalizePath(p)] = struct{}{}
 		}
+
 		for _, p := range paths {
 			if _, ok := atomSet[normalizePath(p)]; !ok {
 				findings = append(findings, LedgerCoverageFinding{
@@ -104,6 +114,7 @@ func ValidatePerAtomCoverage(atoms []AtomCommitCoverage, commitPaths map[string]
 			}
 		}
 	}
+
 	return findings
 }
 
@@ -127,6 +138,7 @@ type ScopeGateBlocker struct {
 func normalizePath(p string) string {
 	p = plancontract.NormalizeWorkspacePath(p)
 	p = normalizeMovedSourcePath(p)
+
 	return p
 }
 
@@ -137,6 +149,7 @@ func normalizeMovedSourcePath(p string) string {
 	case "cmd/idiom/product_workflow_test.go":
 		return "internal/surfaces/cli/product/product_workflow_test.go"
 	}
+
 	for _, moved := range []struct {
 		old string
 		new string
@@ -148,18 +161,22 @@ func normalizeMovedSourcePath(p string) string {
 			return moved.new + strings.TrimPrefix(p, moved.old)
 		}
 	}
+
 	return p
 }
 
 func normalizePaths(paths []string) []string {
 	var out []string
+
 	for _, p := range paths {
 		n := normalizePath(p)
 		if n == "" || n == "." {
 			continue
 		}
+
 		out = append(out, n)
 	}
+
 	return out
 }
 
@@ -167,6 +184,7 @@ func globMatch(pattern, candidate string) bool {
 	if pattern == "" || candidate == "" {
 		return false
 	}
+
 	return globMatchSegments(strings.Split(pattern, "/"), strings.Split(candidate, "/"))
 }
 
@@ -177,52 +195,68 @@ func globMatchSegments(patternParts, pathParts []string) bool {
 			if len(patternParts) == 0 {
 				return true
 			}
+
 			for i := range len(pathParts) + 1 {
 				if globMatchSegments(patternParts, pathParts[i:]) {
 					return true
 				}
 			}
+
 			return false
 		}
+
 		if len(pathParts) == 0 {
 			return false
 		}
+
 		if !segmentMatch(patternParts[0], pathParts[0]) {
 			return false
 		}
+
 		patternParts = patternParts[1:]
 		pathParts = pathParts[1:]
 	}
+
 	return len(pathParts) == 0
 }
 
 func segmentMatch(pattern, segment string) bool {
 	px := 0
 	sx := 0
+
 	for px < len(pattern) {
 		if pattern[px] == '*' {
 			px++
 			if px >= len(pattern) {
 				return true
 			}
+
 			for sx <= len(segment) {
 				if segmentMatch(pattern[px:], segment[sx:]) {
 					return true
 				}
+
 				sx++
 			}
+
 			return false
 		}
+
 		if sx >= len(segment) {
 			return false
 		}
+
 		if pattern[px] == '?' || pattern[px] == segment[sx] {
 			px++
+
 			sx++
+
 			continue
 		}
+
 		return false
 	}
+
 	return sx == len(segment)
 }
 
@@ -238,6 +272,7 @@ func EvaluateScopeGate(input ScopeGateInput) ScopeGateResult {
 	slices.Sort(forbidden)
 	slices.Sort(patterns)
 	slices.Sort(actual)
+
 	expected = slices.Compact(expected)
 	allowed = slices.Compact(allowed)
 	forbidden = slices.Compact(forbidden)
@@ -248,17 +283,21 @@ func EvaluateScopeGate(input ScopeGateInput) ScopeGateResult {
 	for _, p := range expected {
 		permittedSet[p] = struct{}{}
 	}
+
 	for _, p := range allowed {
 		permittedSet[p] = struct{}{}
 	}
+
 	forbiddenSet := make(map[string]struct{}, len(forbidden))
 	for _, p := range forbidden {
 		forbiddenSet[p] = struct{}{}
 	}
 
-	var blockers []ScopeGateBlocker
-	var forbiddenPaths []string
-	var unexpectedPaths []string
+	var (
+		blockers        []ScopeGateBlocker
+		forbiddenPaths  []string
+		unexpectedPaths []string
+	)
 
 	actualSet := make(map[string]struct{}, len(actual))
 	for _, p := range actual {
@@ -270,9 +309,12 @@ func EvaluateScopeGate(input ScopeGateInput) ScopeGateResult {
 				Path:    p,
 				Message: "forbidden path edited: " + p,
 			})
+
 			continue
 		}
+
 		matched := false
+
 		for _, pat := range patterns {
 			if globMatch(pat, p) {
 				forbiddenPaths = append(forbiddenPaths, p)
@@ -283,12 +325,15 @@ func EvaluateScopeGate(input ScopeGateInput) ScopeGateResult {
 					Message: "path " + p + " matches forbidden pattern " + pat,
 				})
 				matched = true
+
 				break
 			}
 		}
+
 		if matched {
 			continue
 		}
+
 		if _, isPermitted := permittedSet[p]; !isPermitted {
 			unexpectedPaths = append(unexpectedPaths, p)
 			blockers = append(blockers, ScopeGateBlocker{
@@ -300,6 +345,7 @@ func EvaluateScopeGate(input ScopeGateInput) ScopeGateResult {
 	}
 
 	var missingExpected []string
+
 	for _, p := range expected {
 		if _, found := actualSet[p]; !found {
 			missingExpected = append(missingExpected, p)
@@ -315,6 +361,7 @@ func EvaluateScopeGate(input ScopeGateInput) ScopeGateResult {
 		if c := strings.Compare(a.Code, b.Code); c != 0 {
 			return c
 		}
+
 		return strings.Compare(a.Path, b.Path)
 	})
 	slices.Sort(forbiddenPaths)

@@ -62,10 +62,12 @@ func ActionClassToken(value ActionClass) string {
 	if strings.TrimSpace(string(value)) == "" {
 		return ""
 	}
+
 	value = CanonicalActionClass(value)
 	if value == "" {
 		return ""
 	}
+
 	return string(value)
 }
 
@@ -73,19 +75,24 @@ func ActionClassTokens(values ...ActionClass) []string {
 	if len(values) == 0 {
 		return nil
 	}
+
 	out := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
+
 	for _, value := range values {
 		token := ActionClassToken(value)
 		if token == "" {
 			continue
 		}
+
 		if _, ok := seen[token]; ok {
 			continue
 		}
+
 		seen[token] = struct{}{}
 		out = append(out, token)
 	}
+
 	return out
 }
 
@@ -154,6 +161,7 @@ type ActionDecision struct {
 
 func CanonicalizeToolIntent(in ToolIntent) ToolIntent {
 	out := in
+
 	out.ToolName = canonicalToken(in.ToolName)
 	out.Capability = CanonicalCapability(in.Capability)
 	out.SideEffect = CanonicalSideEffect(in.SideEffect)
@@ -165,21 +173,27 @@ func CanonicalizeToolIntent(in ToolIntent) ToolIntent {
 	out.PathRoles = canonicalPathRoleMatches(in.PathRoles)
 	out.ArgumentsDigest = strings.TrimSpace(in.ArgumentsDigest)
 	out.Source = canonicalToken(in.Source)
+
 	if out.RepairSource != "" && out.RepairSource != RepairSourceNone {
 		out.Repaired = true
 	}
+
 	if out.ParserFailure == "" {
 		out.ParserFailure = ParserFailureNone
 	}
+
 	if out.RepairSource == "" {
 		out.RepairSource = RepairSourceNone
 	}
+
 	if out.Transport == "" {
 		out.Transport = ToolTransportUnknown
 	}
+
 	if out.ActionClass == "" {
 		out.ActionClass = ActionClassUnknown
 	}
+
 	return out
 }
 
@@ -188,32 +202,41 @@ func (i ToolIntent) Validate() error {
 	if i.Transport != "" && !ValidToolTransport(i.Transport) {
 		return fmt.Errorf("invalid tool transport %q", i.Transport)
 	}
+
 	if i.ParserFailure != "" && !ValidParserFailureClass(i.ParserFailure) {
 		return fmt.Errorf("invalid parser failure class %q", i.ParserFailure)
 	}
+
 	if i.RepairSource != "" && !ValidRepairSource(i.RepairSource) {
 		return fmt.Errorf("invalid repair source %q", i.RepairSource)
 	}
+
 	if i.ActionClass != "" && !ValidActionClass(i.ActionClass) {
 		return fmt.Errorf("invalid action class %q", i.ActionClass)
 	}
+
 	if i.Capability != "" && !ValidCapability(i.Capability) {
 		return fmt.Errorf("invalid capability %q", i.Capability)
 	}
+
 	if i.SideEffect != "" && !validSideEffect(i.SideEffect) {
 		return fmt.Errorf("invalid side effect %q", i.SideEffect)
 	}
+
 	if i.Repaired && i.RepairSource == RepairSourceNone {
 		return fmt.Errorf("repaired intent requires repair source")
 	}
+
 	if i.ParserFailure != ParserFailureNone && i.Transport == ToolTransportUnknown {
 		return fmt.Errorf("parser failure requires known transport")
 	}
+
 	return nil
 }
 
 func CanonicalizeNormalizedAction(in NormalizedAction) NormalizedAction {
 	out := in
+
 	out.ActionClass = CanonicalActionClass(in.ActionClass)
 	out.ActionKey = canonicalActionKey(in.ActionKey)
 	out.ToolName = canonicalToken(in.ToolName)
@@ -222,12 +245,15 @@ func CanonicalizeNormalizedAction(in NormalizedAction) NormalizedAction {
 	out.TargetRef = strings.TrimSpace(in.TargetRef)
 	out.PathRoles = canonicalPathRoleMatches(in.PathRoles)
 	out.Source = canonicalToken(in.Source)
+
 	if out.ActionClass == "" {
 		out.ActionClass = ActionClassUnknown
 	}
+
 	if out.ActionKey == "" {
 		out.ActionKey = buildActionKey(out.ActionClass, out.ToolName, out.Capability, out.TargetRef)
 	}
+
 	return out
 }
 
@@ -236,20 +262,25 @@ func (a NormalizedAction) Validate() error {
 	if !ValidActionClass(a.ActionClass) {
 		return fmt.Errorf("invalid action class %q", a.ActionClass)
 	}
+
 	if a.Capability != "" && !ValidCapability(a.Capability) {
 		return fmt.Errorf("invalid capability %q", a.Capability)
 	}
+
 	if a.SideEffect != "" && !validSideEffect(a.SideEffect) {
 		return fmt.Errorf("invalid side effect %q", a.SideEffect)
 	}
+
 	if strings.TrimSpace(a.ActionKey) == "" {
 		return fmt.Errorf("normalized action requires action key")
 	}
+
 	return nil
 }
 
 func CanonicalizeActionDecision(in ActionDecision) ActionDecision {
 	out := in
+
 	out.Decision = ToolPolicyDecision(canonicalToken(string(in.Decision)))
 	out.ActionClass = CanonicalActionClass(in.ActionClass)
 	out.Capability = CanonicalCapability(in.Capability)
@@ -257,6 +288,7 @@ func CanonicalizeActionDecision(in ActionDecision) ActionDecision {
 	out.InvariantID = canonicalDottedToken(in.InvariantID)
 	out.ReasonCode = canonicalDottedToken(in.ReasonCode)
 	out.Source = canonicalToken(in.Source)
+
 	return out
 }
 
@@ -265,24 +297,31 @@ func (d ActionDecision) Validate() error {
 	if !validDecision(d.Decision) {
 		return fmt.Errorf("invalid policy decision %q", d.Decision)
 	}
+
 	if d.ActionClass != "" && !ValidActionClass(d.ActionClass) {
 		return fmt.Errorf("invalid action class %q", d.ActionClass)
 	}
+
 	if d.Capability != "" && !ValidCapability(d.Capability) {
 		return fmt.Errorf("invalid capability %q", d.Capability)
 	}
+
 	if d.SideEffect != "" && !validSideEffect(d.SideEffect) {
 		return fmt.Errorf("invalid side effect %q", d.SideEffect)
 	}
+
 	if d.ApprovalRequired && d.Decision != PolicyAsk {
 		return fmt.Errorf("approval required decisions must use %q", PolicyAsk)
 	}
+
 	return nil
 }
 
 func ActionFromIntent(intent ToolIntent) NormalizedAction {
 	target := firstTargetRef(intent.TargetRefs)
+
 	intent = CanonicalizeToolIntent(intent)
+
 	return CanonicalizeNormalizedAction(NormalizedAction{
 		ActionClass: intent.ActionClass,
 		ToolName:    intent.ToolName,
@@ -487,28 +526,36 @@ func canonicalPathRoleMatches(matches []PathRoleMatch) []PathRoleMatch {
 	if len(matches) == 0 {
 		return nil
 	}
+
 	out := make([]PathRoleMatch, 0, len(matches))
 	seen := make(map[string]struct{}, len(matches))
+
 	for _, match := range matches {
 		match.Path = strings.TrimSpace(match.Path)
 		match.MatchedPattern = strings.TrimSpace(match.MatchedPattern)
 		match.PacketID = strings.TrimSpace(match.PacketID)
+
 		if match.Path == "" && match.Role == "" && match.MatchedPattern == "" && match.PacketID == "" {
 			continue
 		}
+
 		key := strings.Join([]string{match.Path, string(match.Role), match.MatchedPattern, match.PacketID}, "\x00")
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
+
 		out = append(out, match)
 	}
+
 	slices.SortFunc(out, func(a, b PathRoleMatch) int {
 		return strings.Compare(
 			strings.Join([]string{a.Path, string(a.Role), a.MatchedPattern, a.PacketID}, "\x00"),
 			strings.Join([]string{b.Path, string(b.Role), b.MatchedPattern, b.PacketID}, "\x00"),
 		)
 	})
+
 	return out
 }
 
@@ -516,20 +563,26 @@ func canonicalStringSet(values []string) []string {
 	if len(values) == 0 {
 		return nil
 	}
+
 	out := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
+
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -539,6 +592,7 @@ func firstTargetRef(values []string) string {
 			return value
 		}
 	}
+
 	return ""
 }
 
@@ -547,24 +601,29 @@ func buildActionKey(class ActionClass, tool string, capability Capability, targe
 	if tool != "" {
 		parts = append(parts, tool)
 	}
+
 	if capability != "" {
 		parts = append(parts, string(capability))
 	}
+
 	if strings.TrimSpace(target) != "" {
 		parts = append(parts, canonicalActionKey(target))
 	}
+
 	return strings.Join(parts, ":")
 }
 
 func canonicalActionKey(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.Join(strings.Fields(value), " ")
+
 	return value
 }
 
 func canonicalDottedToken(value string) string {
 	value = canonicalToken(value)
 	value = strings.ReplaceAll(value, "_", ".")
+
 	return value
 }
 
@@ -572,5 +631,6 @@ func canonicalToken(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.ReplaceAll(value, "-", "_")
 	value = strings.Join(strings.Fields(value), "_")
+
 	return value
 }

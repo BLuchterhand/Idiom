@@ -1,6 +1,6 @@
 ---
 tags:
-  - harness
+  - idiom
   - workspace
   - tools
   - capability-routing
@@ -58,17 +58,17 @@ what it needs:
 The harness then chooses the best available adapter based on target, language,
 precision, freshness, cost, permissions, and contract requirements.
 
-## Greenfield Design Guidance
+## Current Implementation Versus Design Target*
 
-`*` marks target behavior that may be broader than the greenfield guidance.
+`*` marks target behavior that may be broader than the current implementation.
 
-| Area | Greenfield guidance | Design target* |
+| Area | Current implementation | Design target* |
 | --- | --- | --- |
 | Direct tools | Built-in workspace tools are exported through schemas and dispatched by the workspace manager. | Keep schemas stable and normalized across CLI, runner, and sidecar/MCP surfaces.* |
-| `read_only_capability` | Target registry supports a small set of read-only capability IDs in code. | Broader capability vocabulary from the design doc, resolved by adapter scoring.* |
-| Source sanity | Defined as diagnostics or generic syntax sanity. | Remain source-aware, and stay distinct from test/build verification.* |
-| Project external tools | `.harness/external_tools/<name>.json` can define project tools with schemas and safety flags. | Treat external tools as first-class adapters behind the same permission and telemetry boundary.* |
-| MCP | CLI/MCP surfaces reuse tool schemas, with active inbound MCP filtered toward discovery/context surfaces. | Parity across transports without duplicating less-safe tool implementations.* |
+| `read_only_capability` | Current registry supports a small set of read-only capability IDs in code. | Broader capability vocabulary from the design doc, resolved by adapter scoring.* |
+| Source sanity | Implemented as diagnostics or generic syntax sanity. | Remain source-aware, and stay distinct from test/build verification.* |
+| Project external tools | `.idiom/external_tools/<name>.json` can define project tools with schemas and safety flags. | Treat external tools as first-class adapters behind the same permission and telemetry boundary.* |
+| MCP | CLI/MCP surfaces reuse tool schemas, with current inbound MCP filtered toward discovery/context surfaces. | Parity across transports without duplicating less-safe tool implementations.* |
 
 ## Capability Vocabulary
 
@@ -84,7 +84,7 @@ precision, freshness, cost, permissions, and contract requirements.
 | `source_sanity` | source sanity tool | Diagnostics or syntax sanity after edits |
 | `audit_behavior` | `harness_audit` | Diagnose agent behavior from logs/artifacts |
 
-`*` means this vocabulary includes design-target names. For the active defined
+`*` means this vocabulary includes design-target names. For the current implemented
 `read_only_capability` IDs, check `internal/capabilities/workspace/capabilities.go` before
 documenting a capability as supported.
 
@@ -107,7 +107,7 @@ Built-in tools group roughly into:
 - Git and execution: `git_status`, `git_diff`, `shell`.
 - Writes: `mkdir`, `edit_file`, `write_file`, `append_file`, `apply_patch`,
   `delegate_edit`.
-- External project tools: `.harness/external_tools/<name>.json` definitions
+- External project tools: `.idiom/external_tools/<name>.json` definitions
   loaded through the external tool registry.
 
 ## Tool Result Discipline
@@ -128,10 +128,10 @@ contract invariant requires it.
 
 ## Direct Tool CLI
 
-LLM agents can invoke tools through:
+External agents can invoke tools through:
 
 ```bash
-harness tool <tool-name> --input '<json>'
+idiom tool <tool-name> --input '<json>'
 ```
 
 Important tools include:
@@ -176,7 +176,7 @@ boundary.
 `source_sanity` is a source-aware verification route. It should be used when
 source edits require more than patch hygiene.
 
-Target scope:
+Current scope:
 
 - Language diagnostics when available.
 - Generic UTF-8 and delimiter/syntax sanity fallback.
@@ -184,7 +184,7 @@ Target scope:
 
 It is not the same as focused package tests, builds, or full semantic
 verification. Those checks can sit beside `source_sanity`, but they should not
-be described as what `source_sanity` itself performs.
+be described as what `source_sanity` itself currently performs.
 
 See [[09 - Verification Readiness and Completion]].
 
@@ -200,13 +200,13 @@ text or ad hoc command parsing.
 | --- | --- |
 | `internal/capabilities/workspace/manager.go` | `ToolRequest`, manager dispatch, external tool registry ownership |
 | `internal/capabilities/workspace/tool_schemas.go` | Built-in tool schema definitions |
-| `internal/capabilities/workspace/capabilities.go` | Target read-only capability registry and dispatch |
-| `internal/capabilities/workspace/source_sanity.go` | Target source sanity implementation |
+| `internal/capabilities/workspace/capabilities.go` | Current read-only capability registry and dispatch |
+| `internal/capabilities/workspace/source_sanity.go` | Current source sanity implementation |
 | `docs/design-capability-oriented-tooling.md` | Broader design target* |
 
 ## Related Notes
 
 - [[07 - Repository Memory and Context Graph]]
 - [[09 - Verification Readiness and Completion]]
-- [[12 - Sidecar and LLM Agent Integrations]]
+- [[12 - Sidecar and External Integrations]]
 - [[17 - Security Privacy and Data Boundaries]]

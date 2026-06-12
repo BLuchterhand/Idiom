@@ -32,14 +32,17 @@ func (m *Model) ResumeSession(id string) error {
 	if m == nil {
 		return fmt.Errorf("nil model")
 	}
+
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("session id is required")
 	}
+
 	path := ResolveSessionLogPath(m.cfg, id)
 	if path == "" {
 		return fmt.Errorf("could not resolve session log path for %q", id)
 	}
+
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("session log %q: %w", path, err)
 	}
@@ -50,6 +53,7 @@ func (m *Model) ResumeSession(id string) error {
 	if err != nil {
 		return err
 	}
+
 	if len(replayed.messages) == 0 {
 		return fmt.Errorf("session log %q contained no user/assistant messages", path)
 	}
@@ -66,8 +70,10 @@ func (m *Model) ResumeSession(id string) error {
 	if err != nil {
 		return fmt.Errorf("open resumed log: %w", err)
 	}
+
 	if m.debugLogger != nil {
 		prevPath := m.debugLogger.Path()
+
 		_ = m.debugLogger.Close()
 		// If the previous log was a brand-new startup file with no
 		// activity yet (typical resume-at-boot), remove it so the
@@ -78,6 +84,7 @@ func (m *Model) ResumeSession(id string) error {
 			}
 		}
 	}
+
 	m.debugLogger = newLogger
 	m.debugLogPath = newLogger.Path()
 
@@ -97,11 +104,13 @@ func (m *Model) ResumeSession(id string) error {
 	// messages from the current session would confuse the model.
 	m.messages = replayed.messages
 	m.history.entries = replayed.history
+
 	if len(m.history.entries) > 0 {
 		m.history.selected = len(m.history.entries) - 1
 	} else {
 		m.history.selected = 0
 	}
+
 	m.currentTurnHistoryActive = false
 	m.currentTurnHistoryIndex = 0
 	m.currentTurnTools = nil
@@ -110,6 +119,7 @@ func (m *Model) ResumeSession(id string) error {
 
 	rehydratePlanState(m)
 	m.renderPlanPanelContent()
+
 	return nil
 }
 
@@ -119,28 +129,37 @@ func (m *Model) ResumeSession(id string) error {
 // history atomically.
 func replaySessionMessages(path string) ([]llama.ChatMessage, error) {
 	var out []llama.ChatMessage
+
 	err := util.ScanFile(path, func(raw json.RawMessage) error {
 		var rec map[string]any
+
 		if err := json.Unmarshal(raw, &rec); err != nil {
 			return nil
 		}
+
 		if rec["type"] != "message" {
 			return nil
 		}
+
 		role, _ := rec["role"].(string)
 		content, _ := rec["content"].(string)
+
 		if role != "user" && role != "assistant" {
 			return nil
 		}
+
 		if strings.TrimSpace(content) == "" {
 			return nil
 		}
+
 		out = append(out, llama.ChatMessage{Role: role, Content: content})
+
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("read session log: %w", err)
 	}
+
 	return out, nil
 }
 
@@ -157,27 +176,33 @@ func rehydratePlanState(m *Model) {
 	if m == nil {
 		return
 	}
+
 	// Defensive init so callers can wipe maps to nil to simulate a
 	// fresh process and still exercise the rehydrate path.
 	if m.plan.ledgerItems == nil {
 		m.plan.ledgerItems = map[string]workspace.TaskLedgerItem{}
 	}
+
 	if m.plan.ledgerRenderedIDs == nil {
 		m.plan.ledgerRenderedIDs = map[string]bool{}
 	}
+
 	if m.plan.ledgerHits == nil {
 		m.plan.ledgerHits = map[string]map[string]bool{}
 	}
+
 	planPath := m.ensurePlanPath()
 	if planPath == "" {
 		return
 	}
+
 	data, err := os.ReadFile(planPath)
 	if err != nil {
 		// Nothing to rehydrate — a brand-new session id or a session
 		// that never triggered the autodoc. Leave the maps empty.
 		return
 	}
+
 	plan := string(data)
 
 	// Session heading — if the resumed session's own heading already
@@ -196,33 +221,42 @@ func rehydratePlanState(m *Model) {
 		Paths   []string
 		Checked bool
 	}
+
 	var lines []lineMeta
+
 	for _, raw := range strings.Split(plan, "\n") {
 		trimmed := strings.TrimLeft(raw, " \t")
 		if !strings.HasPrefix(trimmed, "- [") && !strings.HasPrefix(trimmed, "* [") {
 			continue
 		}
+
 		if len(trimmed) < 5 {
 			continue
 		}
+
 		tid := ""
 		if m := planTaskAnchorRe.FindStringSubmatch(raw); len(m) == 2 {
 			tid = m[1]
 		}
+
 		if tid == "" {
 			continue
 		}
+
 		var diffIDs []string
+
 		for _, sub := range planDiffAnchorRe.FindAllStringSubmatch(raw, -1) {
 			if len(sub) == 2 {
 				diffIDs = append(diffIDs, sub[1])
 			}
 		}
+
 		box := trimmed[3]
 		checked := box == 'x' || box == 'X'
 
 		// Extract `(paths: a, b)` if present.
 		var paths []string
+
 		if match := resumeLinePathsRe.FindStringSubmatch(raw); len(match) == 2 {
 			for _, p := range strings.Split(match[1], ",") {
 				if v := strings.TrimSpace(p); v != "" {
@@ -235,6 +269,7 @@ func rehydratePlanState(m *Model) {
 		// paths / tid anchor. Approximate it: strip anchors + paths
 		// note from the trimmed line after the checkbox.
 		content := trimmed[5:]
+
 		content = planCommentRe.ReplaceAllString(content, "")
 		content = resumeLinePathsRe.ReplaceAllString(content, "")
 		content = strings.TrimSpace(content)
@@ -259,6 +294,7 @@ func rehydratePlanState(m *Model) {
 		if lm.Checked {
 			status = "completed"
 		}
+
 		m.plan.ledgerItems[lm.TID] = workspace.TaskLedgerItem{
 			ID:      lm.TID,
 			Content: lm.Content,
@@ -266,14 +302,17 @@ func rehydratePlanState(m *Model) {
 			Paths:   lm.Paths,
 		}
 		m.plan.ledgerRenderedIDs[lm.TID] = true
+
 		if m.plan.ledgerHits[lm.TID] == nil {
 			m.plan.ledgerHits[lm.TID] = map[string]bool{}
 		}
+
 		for _, did := range lm.DiffIDs {
 			if p, ok := diffPaths[did]; ok && p != "" {
 				m.plan.ledgerHits[lm.TID][p] = true
 			}
 		}
+
 		// If the item rendered checked but we don't know any hit
 		// paths (e.g. mkdir), mark every declared path as hit so
 		// state matches what the box claims.
@@ -294,16 +333,21 @@ func loadDiffPathIndex(path string) map[string]string {
 	if strings.TrimSpace(path) == "" {
 		return out
 	}
+
 	_ = util.ScanFile(path, func(raw json.RawMessage) error {
 		var rec planDiffEntry
+
 		if err := json.Unmarshal(raw, &rec); err != nil {
 			return nil
 		}
+
 		if rec.ID != "" {
 			out[rec.ID] = rec.Path
 		}
+
 		return nil
 	})
+
 	return out
 }
 
@@ -315,12 +359,15 @@ func (m *Model) AvailableSessionIDs(limit int) []string {
 	if err != nil {
 		return nil
 	}
+
 	if limit <= 0 || limit > len(sessions) {
 		limit = len(sessions)
 	}
+
 	out := make([]string, 0, limit)
 	for i := 0; i < limit; i++ {
 		out = append(out, sessions[i].ID)
 	}
+
 	return out
 }

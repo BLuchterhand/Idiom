@@ -19,8 +19,10 @@ func PlanResearchArtifactPrompts(runPlan ResearchRunPlan, researchPromptDir stri
 	}
 	if hasErrorFinding(plan.Findings) {
 		sortProfileFindings(plan.Findings)
+
 		return plan
 	}
+
 	cleanPromptDir, ok := cleanResearchOutputDir(researchPromptDir)
 	if !ok {
 		plan.Findings = append(plan.Findings, ProfileFinding{
@@ -30,8 +32,10 @@ func PlanResearchArtifactPrompts(runPlan ResearchRunPlan, researchPromptDir stri
 			Severity: ProductWorkflowSeverityError,
 		})
 		sortProfileFindings(plan.Findings)
+
 		return plan
 	}
+
 	plan.ResearchPromptDir = cleanPromptDir
 
 	runs := make([]ResearchArtifactPromptRunSpec, 0, len(runPlan.Runs))
@@ -40,6 +44,7 @@ func PlanResearchArtifactPrompts(runPlan ResearchRunPlan, researchPromptDir stri
 		promptPath := filepath.ToSlash(filepath.Join(cleanPromptDir, base+".prompt.txt"))
 		eventsPath := filepath.ToSlash(filepath.Join(runPlan.ResearchOutputDir, base+".events.jsonl"))
 		reportPath := filepath.ToSlash(filepath.Join(runPlan.ResearchOutputDir, base+".report.json"))
+
 		runs = append(runs, ResearchArtifactPromptRunSpec{
 			ResearcherID:        run.ResearcherID,
 			Alignment:           run.Alignment,
@@ -54,9 +59,11 @@ func PlanResearchArtifactPrompts(runPlan ResearchRunPlan, researchPromptDir stri
 			Command:             artifactCommandRecipe(promptPath, run.OutputPath, eventsPath, reportPath),
 		})
 	}
+
 	plan.Runs = runs
 	plan.RunCount = len(runs)
 	sortProfileFindings(plan.Findings)
+
 	return plan
 }
 
@@ -66,6 +73,7 @@ func hasErrorFinding(findings []ProfileFinding) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -116,6 +124,7 @@ func ValidateResearchPromptPathBoundary(effortRoot, promptPath, relPath string) 
 			Severity: ProductWorkflowSeverityError,
 		}, true
 	}
+
 	return researchPromptBoundaryFinding(effortRoot, promptPath, relPath, "research_prompt_path_outside_effort", "research prompt path")
 }
 
@@ -129,15 +138,18 @@ func researchPromptBoundaryFinding(effortRoot, absPath, relPath, outsideKind, la
 			Severity: ProductWorkflowSeverityError,
 		}, true
 	}
+
 	existing := absPath
 	for {
 		eval, evalErr := filepath.EvalSymlinks(existing)
 		if evalErr == nil {
 			rootEval = filepath.Clean(rootEval)
 			eval = filepath.Clean(eval)
+
 			if eval == rootEval {
 				return ProfileFinding{}, false
 			}
+
 			rel, relErr := filepath.Rel(rootEval, eval)
 			if relErr != nil || rel == ".." || strings.HasPrefix(filepath.ToSlash(rel), "../") {
 				return ProfileFinding{
@@ -147,8 +159,10 @@ func researchPromptBoundaryFinding(effortRoot, absPath, relPath, outsideKind, la
 					Severity: ProductWorkflowSeverityError,
 				}, true
 			}
+
 			return ProfileFinding{}, false
 		}
+
 		if !os.IsNotExist(evalErr) {
 			return ProfileFinding{
 				Kind:     "read_error",
@@ -157,6 +171,7 @@ func researchPromptBoundaryFinding(effortRoot, absPath, relPath, outsideKind, la
 				Severity: ProductWorkflowSeverityError,
 			}, true
 		}
+
 		parent := filepath.Dir(existing)
 		if parent == existing {
 			return ProfileFinding{
@@ -166,6 +181,7 @@ func researchPromptBoundaryFinding(effortRoot, absPath, relPath, outsideKind, la
 				Severity: ProductWorkflowSeverityError,
 			}, true
 		}
+
 		existing = parent
 	}
 }
@@ -187,6 +203,7 @@ func artifactCommandRecipeWithValidator(promptPath, outputPath, eventsPath, repo
 	if strings.TrimSpace(validator) != "" {
 		parts = append(parts, "--validator "+shellQuoteArg(validator))
 	}
+
 	return strings.Join(parts, " ")
 }
 
@@ -201,12 +218,15 @@ func shellQuoteArg(value string) string {
 	if value == "" {
 		return "''"
 	}
+
 	for _, r := range value {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.' || r == '/' {
 			continue
 		}
+
 		return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 	}
+
 	return value
 }
 
@@ -214,12 +234,15 @@ func renderListOrNone(values []string) string {
 	if len(values) == 0 {
 		return "- none"
 	}
+
 	var b strings.Builder
+
 	for _, value := range values {
 		b.WriteString("- ")
 		b.WriteString(value)
 		b.WriteByte('\n')
 	}
+
 	return strings.TrimRight(b.String(), "\n")
 }
 

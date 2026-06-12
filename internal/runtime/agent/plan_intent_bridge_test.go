@@ -16,6 +16,7 @@ import (
 func TestCompilePlanIntentToolRequestRoutesThroughSubmitPlanShape(t *testing.T) {
 	root := t.TempDir()
 	writePlanIntentFixture(t, root, "internal/a.go", "package internal\n\nfunc label() string {\n\treturn \"old\"\n}\n")
+
 	artifact := planintent.Artifact{
 		SchemaVersion: planintent.SchemaVersion,
 		Source:        planintent.SourcePlanner,
@@ -30,7 +31,9 @@ func TestCompilePlanIntentToolRequestRoutesThroughSubmitPlanShape(t *testing.T) 
 		}},
 	}
 	body := marshalPlanIntentArtifact(t, artifact)
+
 	var events []RunEvent
+
 	runner := &Runner{
 		Workspace:    workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true}),
 		RuntimeBrief: planIntentPlannerBrief("internal/a.go"),
@@ -44,15 +47,19 @@ func TestCompilePlanIntentToolRequestRoutesThroughSubmitPlanShape(t *testing.T) 
 	if !ok {
 		t.Fatal("expected edit_intent.v1 artifact to compile")
 	}
+
 	if req.Tool != "submit_plan" || len(req.Edits) != 1 || req.Edits[0].Path != "internal/a.go" {
 		t.Fatalf("unexpected compiled request: %#v", req)
 	}
+
 	if !strings.Contains(raw, `"tool":"submit_plan"`) {
 		t.Fatalf("raw compiled request should be parser-readable submit_plan JSON: %s", raw)
 	}
+
 	if !runEventsContainRole(events, "edit_intent_validated") || !runEventsContainRole(events, "patch_compile_started") || !runEventsContainRole(events, "patch_compile_result") {
 		t.Fatalf("expected bounded plan-intent stage events, got %#v", events)
 	}
+
 	if !runEventsContainContent(events, `"compile_outcome":"accepted"`) {
 		t.Fatalf("expected compile_outcome event, got %#v", events)
 	}
@@ -61,6 +68,7 @@ func TestCompilePlanIntentToolRequestRoutesThroughSubmitPlanShape(t *testing.T) 
 func TestCompilePlanIntentToolRequestAcceptsExactFencedArtifact(t *testing.T) {
 	root := t.TempDir()
 	writePlanIntentFixture(t, root, "internal/a.go", "one\ntwo\n")
+
 	artifact := planintent.Artifact{
 		SchemaVersion: planintent.SchemaVersion,
 		Source:        planintent.SourcePlanner,
@@ -88,6 +96,7 @@ func TestCompilePlanIntentToolRequestAcceptsExactFencedArtifact(t *testing.T) {
 func TestCompilePlanIntentToolRequestRejectsScopeWidening(t *testing.T) {
 	root := t.TempDir()
 	writePlanIntentFixture(t, root, "internal/a.go", "package internal\n")
+
 	artifact := planintent.Artifact{
 		SchemaVersion: planintent.SchemaVersion,
 		Source:        planintent.SourcePlanner,
@@ -99,7 +108,9 @@ func TestCompilePlanIntentToolRequestRejectsScopeWidening(t *testing.T) {
 			NewText:   "new",
 		}},
 	}
+
 	var events []RunEvent
+
 	runner := &Runner{
 		Workspace:    workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true}),
 		RuntimeBrief: planIntentPlannerBrief("internal/a.go"),
@@ -113,6 +124,7 @@ func TestCompilePlanIntentToolRequestRejectsScopeWidening(t *testing.T) {
 	if ok || req.Tool != "" || raw != "" {
 		t.Fatalf("scope-widening edit intent must not compile: ok=%v req=%#v raw=%q", ok, req, raw)
 	}
+
 	if !runEventsContainContent(events, "required_scope_mismatch") {
 		t.Fatalf("expected scope mismatch event, got %#v", events)
 	}
@@ -120,6 +132,7 @@ func TestCompilePlanIntentToolRequestRejectsScopeWidening(t *testing.T) {
 
 func TestCompilePlanIntentToolRequestReportsMalformedIntentJSON(t *testing.T) {
 	var events []RunEvent
+
 	runner := &Runner{
 		RuntimeBrief: planIntentPlannerBrief("internal/a.go"),
 		OnEvent: func(event RunEvent) {
@@ -132,6 +145,7 @@ func TestCompilePlanIntentToolRequestReportsMalformedIntentJSON(t *testing.T) {
 	if ok || req.Tool != "" || raw != "" {
 		t.Fatalf("malformed edit intent JSON must not compile: ok=%v req=%#v raw=%q", ok, req, raw)
 	}
+
 	if !runEventsContainContent(events, "malformed_json") {
 		t.Fatalf("expected malformed_json event, got %#v", events)
 	}
@@ -150,7 +164,9 @@ func TestCompilePlanIntentToolRequestDoesNotRouteTypedBlockerToSubmitPlan(t *tes
 			EvidenceRefs: []string{"conversation:parser_failure"},
 		}},
 	}
+
 	var events []RunEvent
+
 	runner := &Runner{
 		Workspace:    workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true}),
 		RuntimeBrief: planIntentPlannerBrief("internal/a.go"),
@@ -164,6 +180,7 @@ func TestCompilePlanIntentToolRequestDoesNotRouteTypedBlockerToSubmitPlan(t *tes
 	if ok || req.Tool != "" || raw != "" {
 		t.Fatalf("typed blocker must not compile into submit_plan: ok=%v req=%#v raw=%q", ok, req, raw)
 	}
+
 	if !runEventsContainContent(events, planintent.CodeIntentBlocker) {
 		t.Fatalf("expected typed blocker compile event, got %#v", events)
 	}
@@ -181,7 +198,9 @@ func TestCompilePlanIntentToolRequestDoesNotCompileOutsidePlannerSubmitPlanSurfa
 			NewText:   "new",
 		}},
 	}
+
 	var events []RunEvent
+
 	runner := &Runner{
 		RuntimeBrief: workerruntime.RuntimeBriefForTaskFamily(workerruntime.ArtifactDistillerTaskFamily, "main", []string{"submit_plan"}),
 		OnEvent: func(event RunEvent) {
@@ -194,6 +213,7 @@ func TestCompilePlanIntentToolRequestDoesNotCompileOutsidePlannerSubmitPlanSurfa
 	if ok || req.Tool != "" || raw != "" {
 		t.Fatalf("artifact distiller output must remain a non-executable artifact: ok=%v req=%#v raw=%q", ok, req, raw)
 	}
+
 	if len(events) != 0 {
 		t.Fatalf("non-planner bridge should not emit compile events, got %#v", events)
 	}
@@ -210,19 +230,23 @@ func planIntentPlannerBrief(paths ...string) workerruntime.WorkerRuntimeBrief {
 
 func marshalPlanIntentArtifact(t *testing.T, artifact planintent.Artifact) string {
 	t.Helper()
+
 	body, err := json.Marshal(artifact)
 	if err != nil {
 		t.Fatalf("marshal artifact: %v", err)
 	}
+
 	return string(body)
 }
 
 func writePlanIntentFixture(t *testing.T, root string, path string, content string) {
 	t.Helper()
+
 	fullPath := filepath.Join(root, filepath.FromSlash(path))
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		t.Fatalf("mkdir fixture parent: %v", err)
 	}
+
 	if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
@@ -234,6 +258,7 @@ func runEventsContainRole(events []RunEvent, role string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -243,5 +268,6 @@ func runEventsContainContent(events []RunEvent, text string) bool {
 			return true
 		}
 	}
+
 	return false
 }

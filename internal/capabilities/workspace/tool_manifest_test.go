@@ -17,11 +17,13 @@ func TestBuildToolManifestSuppressesPlaceholderRequests(t *testing.T) {
 	if got := byTool["submit_plan"][0].Request; got != "" {
 		t.Fatalf("submit_plan placeholder request should be suppressed, got %q", got)
 	}
+
 	for _, entry := range byTool["edit_file"] {
 		if entry.Request != "" {
 			t.Fatalf("edit_file placeholder request should be suppressed, got %q", entry.Request)
 		}
 	}
+
 	if got := byTool["pwd"][0].Request; got == "" || strings.Contains(got, "relative/file") {
 		t.Fatalf("concrete request should remain available, got %q", got)
 	}
@@ -33,9 +35,11 @@ func TestRenderToolManifestInstructionsOmitsBlankRequestSlot(t *testing.T) {
 	if strings.Contains(rendered, "submit_plan  (") {
 		t.Fatalf("blank request should not render as a double-spaced slot:\n%s", rendered)
 	}
+
 	if strings.Contains(rendered, "relative/file") || strings.Contains(rendered, "one paragraph") {
 		t.Fatalf("placeholder request text leaked into manifest instructions:\n%s", rendered)
 	}
+
 	if !strings.Contains(rendered, "- submit_plan (") {
 		t.Fatalf("sanitized manifest should still name the tool and purpose:\n%s", rendered)
 	}
@@ -44,6 +48,7 @@ func TestRenderToolManifestInstructionsOmitsBlankRequestSlot(t *testing.T) {
 func TestRenderToolManifestInstructionsSuppressesManifestWidePlaceholderRequests(t *testing.T) {
 	rendered := strings.ToLower(RenderToolManifestInstructions(nil))
 	requestText := renderedManifestRequestText(rendered)
+
 	for _, forbidden := range []string{
 		"symbol|text",
 		`"pattern":"name"`,
@@ -75,6 +80,7 @@ func TestRenderToolManifestInstructionsSuppressesManifestWidePlaceholderRequests
 			t.Fatalf("placeholder request fragment %q leaked into rendered manifest requests:\n%s", forbidden, requestText)
 		}
 	}
+
 	if !strings.Contains(requestText, `{"tool":"pwd"}`) {
 		t.Fatalf("concrete non-placeholder request should still render:\n%s", rendered)
 	}
@@ -85,10 +91,12 @@ func TestHistoryRangeManifestDescribesPathOnlyDefault(t *testing.T) {
 	if len(manifest) != 1 {
 		t.Fatalf("expected one history_range manifest entry, got %#v", manifest)
 	}
+
 	entry := manifest[0]
 	if !strings.Contains(entry.Purpose, "file") || !strings.Contains(entry.Purpose, "paired start_line/end_line") {
 		t.Fatalf("history_range purpose should describe path-only default and paired bounds, got %q", entry.Purpose)
 	}
+
 	if strings.Contains(entry.Request, "start_line") || strings.Contains(entry.Request, "end_line") {
 		t.Fatalf("history_range manifest request should not advertise line bounds as required, got %q", entry.Request)
 	}
@@ -104,9 +112,11 @@ func TestToolManifestToolsDerivesLanguageMembershipFromRegistry(t *testing.T) {
 		IncludeJava:       true,
 	})
 	seen := make(map[string]int, len(tools))
+
 	for _, tool := range tools {
 		seen[tool]++
 	}
+
 	for _, lang := range LanguageRegistry() {
 		for capability, tool := range lang.Tools {
 			if seen[tool] != 1 {
@@ -114,6 +124,7 @@ func TestToolManifestToolsDerivesLanguageMembershipFromRegistry(t *testing.T) {
 			}
 		}
 	}
+
 	for _, specs := range supplementalLanguageToolSpecs {
 		for _, spec := range specs {
 			if seen[spec.Tool] != 1 {
@@ -183,9 +194,11 @@ func TestToolManifestToolsPreservesLanguageToolOrder(t *testing.T) {
 	for _, tc := range cases {
 		got := ToolManifestTools(tc.opts)
 		offset := len(ToolManifestTools(ToolManifestToolOptions{}))
+
 		if len(got) < offset+len(tc.want) {
 			t.Fatalf("%s manifest too short: %#v", tc.name, got)
 		}
+
 		gotLanguageTools := got[offset : offset+len(tc.want)]
 		if strings.Join(gotLanguageTools, ",") != strings.Join(tc.want, ",") {
 			t.Fatalf("%s manifest order = %#v, want %#v", tc.name, gotLanguageTools, tc.want)
@@ -200,6 +213,7 @@ func TestToolManifestWriteToolsDeriveFromSurfaceMetadata(t *testing.T) {
 			t.Fatalf("write manifest missing %s: %#v", tool, writeTools)
 		}
 	}
+
 	if slices.Contains(writeTools, "go_move_declarations") {
 		t.Fatalf("generic write manifest should not include Go-specific write tool: %#v", writeTools)
 	}
@@ -212,17 +226,21 @@ func TestToolManifestWriteToolsDeriveFromSurfaceMetadata(t *testing.T) {
 
 func renderedManifestRequestText(rendered string) string {
 	var b strings.Builder
+
 	for _, line := range strings.Split(rendered, "\n") {
 		idx := strings.Index(line, " {")
 		if idx < 0 {
 			continue
 		}
+
 		request := line[idx+1:]
 		if end := strings.Index(request, " ("); end >= 0 {
 			request = request[:end]
 		}
+
 		b.WriteString(request)
 		b.WriteByte('\n')
 	}
+
 	return b.String()
 }

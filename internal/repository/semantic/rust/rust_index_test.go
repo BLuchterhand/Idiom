@@ -9,9 +9,11 @@ import (
 
 func writeRustFixture(t *testing.T, path, content string) {
 	t.Helper()
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", path, err)
 	}
+
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
@@ -19,10 +21,12 @@ func writeRustFixture(t *testing.T, path, content string) {
 
 func TestBuildRustIndexEmpty(t *testing.T) {
 	root := t.TempDir()
+
 	idx, err := BuildRustIndex(root)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if idx != nil {
 		t.Fatalf("expected nil index when no .rs files are present, got %#v", idx)
 	}
@@ -103,9 +107,11 @@ fn it_works() {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if idx == nil {
 		t.Fatalf("expected index, got nil")
 	}
+
 	if len(idx.Files) != 3 {
 		t.Fatalf("expected 3 files, got %d", len(idx.Files))
 	}
@@ -114,12 +120,15 @@ fn it_works() {
 	if mainFile == nil {
 		t.Fatalf("src/main.rs not indexed")
 	}
+
 	if !mainFile.HasMain {
 		t.Fatalf("src/main.rs should be marked HasMain")
 	}
+
 	if !mainFile.IsBinRoot {
 		t.Fatalf("src/main.rs should be marked IsBinRoot")
 	}
+
 	if len(mainFile.Modules) != 2 {
 		t.Fatalf("expected 2 mod decls in main.rs, got %v", mainFile.Modules)
 	}
@@ -128,12 +137,15 @@ fn it_works() {
 	if workerFile == nil {
 		t.Fatalf("src/worker.rs not indexed")
 	}
+
 	if workerFile.Impls == 0 {
 		t.Fatalf("worker.rs should have impl blocks, got %d", workerFile.Impls)
 	}
+
 	if workerFile.Traits == 0 {
 		t.Fatalf("worker.rs should have trait blocks")
 	}
+
 	if workerFile.Methods == 0 {
 		t.Fatalf("worker.rs should have methods, got %d", workerFile.Methods)
 	}
@@ -142,9 +154,11 @@ fn it_works() {
 	if utilsFile == nil {
 		t.Fatalf("src/lib_utils.rs not indexed")
 	}
+
 	if utilsFile.Macros == 0 {
 		t.Fatalf("utils.rs should have at least one macro_rules!")
 	}
+
 	if !utilsFile.HasTest {
 		t.Fatalf("utils.rs should be marked HasTest")
 	}
@@ -154,24 +168,31 @@ fn it_works() {
 	if len(matches) == 0 {
 		t.Fatalf("expected FindSymbols to find Worker")
 	}
+
 	if matches := idx.FindSymbols("pub struct Worker", 8); len(matches) == 0 || matches[0].Name != "Worker" {
 		t.Fatalf("expected declaration-shaped struct search to find Worker, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("fn helper", 8); len(matches) == 0 || matches[0].Name != "helper" {
 		t.Fatalf("expected declaration-shaped function search to find helper, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("pub const fn default_worker_id", 8); len(matches) == 0 || matches[0].Name != "default_worker_id" {
 		t.Fatalf("expected declaration-shaped const fn search to find default_worker_id, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("pub unsafe trait UnsafeRunnable", 8); len(matches) == 0 || matches[0].Name != "UnsafeRunnable" {
 		t.Fatalf("expected declaration-shaped unsafe trait search to find UnsafeRunnable, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("pub type WorkerId", 8); len(matches) == 0 || matches[0].Name != "WorkerId" {
 		t.Fatalf("expected declaration-shaped type alias search to find WorkerId, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("pub static mut GLOBAL_MAX", 8); len(matches) == 0 || matches[0].Name != "GLOBAL_MAX" {
 		t.Fatalf("expected declaration-shaped static search to find GLOBAL_MAX, got %#v", matches)
 	}
+
 	if matches := idx.FindSymbols("macro_rules! bark", 8); len(matches) == 0 || matches[0].Name != "bark" {
 		t.Fatalf("expected declaration-shaped macro search to find bark, got %#v", matches)
 	}
@@ -181,6 +202,7 @@ fn it_works() {
 	if len(impls) == 0 {
 		t.Fatalf("expected Runnable trait implementer, got none")
 	}
+
 	if !strings.Contains(impls[0].Qualified, "Runnable for Worker") {
 		t.Fatalf("unexpected trait impl qualified: %q", impls[0].Qualified)
 	}
@@ -221,24 +243,30 @@ fn beta(b: &mut test::Bencher) {}
 
 fn plain() {}
 `)
+
 	idx, err := BuildRustIndex(root)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	file := idx.FileByPath("src/lib.rs")
 	if file == nil {
 		t.Fatalf("src/lib.rs not indexed")
 	}
+
 	kinds := map[string]string{}
 	for _, sym := range file.Symbols {
 		kinds[sym.Name] = sym.Kind
 	}
+
 	if kinds["alpha"] != "test" {
 		t.Fatalf("#[test] fn should be kind=test, got %q", kinds["alpha"])
 	}
+
 	if kinds["beta"] != "bench" {
 		t.Fatalf("#[bench] fn should be kind=bench, got %q", kinds["beta"])
 	}
+
 	if kinds["plain"] != "func" {
 		t.Fatalf("plain fn should be kind=func, got %q", kinds["plain"])
 	}

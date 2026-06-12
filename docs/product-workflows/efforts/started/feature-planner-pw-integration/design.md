@@ -11,7 +11,7 @@ workflow pipeline (`internal/workflows/productworkflow/`) to the feature-planner
 ## Design Authority
 
 The canonical design contract is
-[docs/design-feature-planner-product-workflow-integration.md](/Users/ben/Documents/GitHub/idiom/docs/design-feature-planner-product-workflow-integration.md).
+[docs/design-feature-planner-product-workflow-integration.md](<repo-root>/docs/design-feature-planner-product-workflow-integration.md).
 This file tracks implementation progress against that design through discrete
 atoms.
 

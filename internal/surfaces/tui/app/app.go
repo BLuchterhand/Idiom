@@ -10,6 +10,7 @@ func joinOrNone(values []string) string {
 	if len(values) == 0 {
 		return "none"
 	}
+
 	return strings.Join(values, ", ")
 }
 
@@ -29,6 +30,7 @@ func titleDisplay(value string) string {
 	if value == "" {
 		return ""
 	}
+
 	return strings.ToUpper(value[:1]) + value[1:]
 }
 
@@ -46,6 +48,8 @@ func (m *Model) waitForEventCmd() tea.Cmd {
 	if m == nil || m.eventWaitArmed {
 		return nil
 	}
+
 	m.eventWaitArmed = true
+
 	return waitForEvent(m.events)
 }

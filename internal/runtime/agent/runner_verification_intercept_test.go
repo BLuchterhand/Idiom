@@ -44,18 +44,23 @@ func TestVerificationInterceptRedirectsReadOnAlreadyEditedRequiredPath(t *testin
 		},
 		results,
 	)
+
 	if !got.Intercepted {
 		t.Fatalf("expected intercept on read of already-edited required path, got %#v", got)
 	}
+
 	if got.Result.Tool != "code_navigate" {
 		t.Fatalf("synthesized result should preserve tool name, got %q", got.Result.Tool)
 	}
+
 	if !strings.Contains(got.Result.Error, "native/src/core/constants/animals.h") {
 		t.Fatalf("redirect should name the first pending path, got: %s", got.Result.Error)
 	}
+
 	if !strings.Contains(got.Result.Error, "edit_file") || !strings.Contains(got.Result.Error, "<<QUESTION>>") {
 		t.Fatalf("redirect should name the actionable next step and the escape hatch, got: %s", got.Result.Error)
 	}
+
 	if !strings.Contains(got.Reason, "next:") {
 		t.Fatalf("telemetry reason should name the next path, got: %q", got.Reason)
 	}
@@ -82,6 +87,7 @@ func TestVerificationInterceptHonorsAllPathsCovered(t *testing.T) {
 		workspace.ToolRequest{Tool: "read_file", Path: "a.txt"},
 		results,
 	)
+
 	if got.Intercepted {
 		t.Fatalf("intercept should stand down when no ✗ paths remain, got %#v", got)
 	}
@@ -110,6 +116,7 @@ func TestVerificationInterceptLetsFirstReadAfterWriteThroughForPrep(t *testing.T
 		},
 		results,
 	)
+
 	if got.Intercepted {
 		t.Fatalf("first read after a write must pass through (prep for next ✗ path), got %#v", got)
 	}
@@ -134,6 +141,7 @@ func TestVerificationInterceptIgnoresUnrelatedReads(t *testing.T) {
 		workspace.ToolRequest{Tool: "read_file", Path: "supporting/header.h"},
 		results,
 	)
+
 	if got.Intercepted {
 		t.Fatalf("intercept must not fire on reads of paths outside required_edit_paths, got %#v", got)
 	}
@@ -163,6 +171,7 @@ func TestVerificationInterceptIgnoresWritesAndSearches(t *testing.T) {
 		{Tool: "search_files", Pattern: "FOO"},
 		{Tool: "shell", Command: "ls"},
 	}
+
 	for _, req := range cases {
 		got := runner.preflightVerificationOnAlreadyEditedPath(req, results)
 		if got.Intercepted {
@@ -190,6 +199,7 @@ func TestVerificationInterceptOnlyFiresOnVerificationCapabilitiesOfCodeNavigate(
 		{Tool: "edit_file", Summary: "Edited a.txt"},
 		{Tool: "code_navigate", Summary: "prior read"},
 	}
+
 	for _, capability := range []string{
 		"find_symbol", "workspace_symbol", "definition", "references",
 		"calls_from", "calls_into", "implementations", "related_files",
@@ -207,6 +217,7 @@ func TestVerificationInterceptOnlyFiresOnVerificationCapabilitiesOfCodeNavigate(
 			t.Fatalf("code_navigate %s must pass through (it's a lookup, not verification); got %#v", capability, got)
 		}
 	}
+
 	// Sanity check: file_outline and read_symbol DO trip the guard
 	// under the same conditions.
 	for _, capability := range []string{"file_outline", "outline", "read_symbol", "inspect_symbol", "symbol_body"} {
@@ -244,6 +255,7 @@ func TestVerificationInterceptIgnoresBriefsWithoutRequiredPaths(t *testing.T) {
 		workspace.ToolRequest{Tool: "read_file", Path: "a.txt"},
 		results,
 	)
+
 	if got.Intercepted {
 		t.Fatalf("intercept must stand down without required_edit_paths, got %#v", got)
 	}
@@ -268,6 +280,7 @@ func TestVerificationInterceptAppliesAcrossLanguageReadSymbolTools(t *testing.T)
 		// verification-spree pattern this guard targets.
 		{Tool: "code_navigate", Summary: "prior read"},
 	}
+
 	for _, tool := range []string{
 		"cpp_file_outline", "cpp_read_symbol",
 		"go_file_outline", "go_read_symbol",
@@ -284,6 +297,7 @@ func TestVerificationInterceptAppliesAcrossLanguageReadSymbolTools(t *testing.T)
 		if !got.Intercepted {
 			t.Fatalf("intercept should fire on %q against ✓ required path, got %#v", tool, got)
 		}
+
 		if !strings.Contains(got.Result.Error, "y.cpp") {
 			t.Fatalf("redirect for %q should name the pending path y.cpp, got: %s", tool, got.Result.Error)
 		}

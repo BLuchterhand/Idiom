@@ -141,14 +141,17 @@ func ReplayEvents(events []Event, opts ReplayOptions) ReplayReport {
 
 	ordered := append([]Event(nil), events...)
 	slices.SortStableFunc(ordered, compareReplayEventOrder)
+
 	state.report.TotalEvents = len(ordered)
 	for _, event := range ordered {
 		event = copyEvent(event)
 		event.Normalize()
 		state.replayEvent(event)
 	}
+
 	state.report.ReplayClassification, state.report.ReplayMetrics, state.report.PrivacyChecks = replayIntentForEvents(ordered)
 	state.finish()
+
 	return state.report
 }
 
@@ -156,6 +159,7 @@ func replayMaxRepeatedGateDecisions(opts ReplayOptions) int {
 	if opts.MaxRepeatedGateDecisions > 0 {
 		return opts.MaxRepeatedGateDecisions
 	}
+
 	return DefaultReplayMaxRepeatedGateDecisions
 }
 
@@ -164,14 +168,18 @@ func compareReplayEventOrder(a, b Event) int {
 		if a.OccurredAt.IsZero() {
 			return 1
 		}
+
 		if b.OccurredAt.IsZero() {
 			return -1
 		}
+
 		if a.OccurredAt.Before(b.OccurredAt) {
 			return -1
 		}
+
 		return 1
 	}
+
 	return cmp.Or(
 		cmp.Compare(a.ContractID, b.ContractID),
 		cmp.Compare(a.Sequence, b.Sequence),
@@ -204,6 +212,7 @@ func (s *replayState) replayPolicyEvent(event Event, policy ContractPolicyEvent)
 			Name: policy.ToolName,
 		})
 	}
+
 	for _, path := range policy.ChangedPaths {
 		s.addChangedPathAtoms(event, GateKind(""), policy.Decision, path, policyWritesPath(policy))
 	}
@@ -213,10 +222,12 @@ func policyWritesPath(policy ContractPolicyEvent) bool {
 	if policy.Decision != PolicyAllow && policy.Decision != PolicyObserve {
 		return false
 	}
+
 	switch policy.Capability {
 	case CapabilitySourceEdit, CapabilityApplyPatch, CapabilityMutatingShell, CapabilityExternalWrite:
 		return true
 	}
+
 	return policy.SideEffect == SideEffectAdditive || policy.SideEffect == SideEffectDestructive
 }
 
@@ -227,13 +238,16 @@ func (s *replayState) replayCompletionEvent(event Event, completion ContractComp
 			Gate:  GateCompletion,
 			Value: completion.VerificationStatus,
 		})
+
 		if verificationStatusIsResolved(completion.VerificationStatus) {
 			s.lastVerificationPass = event.Sequence
 		}
 	}
+
 	for _, path := range completion.ChangedPaths {
 		s.addChangedPathAtoms(event, GateCompletion, completion.Decision, path, false)
 	}
+
 	if completion.Decision == PolicyAllow && s.hasUnresolvedPostWriteVerification(completion.VerificationStatus, completion.RemainingObligations) {
 		s.addViolation(event, ReplayViolation{
 			ID:        "replay_completion_unresolved_post_write_verification",
@@ -252,6 +266,7 @@ func (s *replayState) replayGateEvent(event Event, gate ContractGateEvent) {
 		Decision: string(gate.Decision),
 		Value:    gate.ReasonCode,
 	})
+
 	if gate.ToolName != "" {
 		s.addAtom(event, ReplayAtom{
 			Kind: ReplayAtomToolCalled,
@@ -259,6 +274,7 @@ func (s *replayState) replayGateEvent(event Event, gate ContractGateEvent) {
 			Name: gate.ToolName,
 		})
 	}
+
 	if gate.PackID != "" {
 		packID := replaySafeValue(string(gate.PackID))
 		s.report.PackCounts[packID]++
@@ -276,6 +292,7 @@ func (s *replayState) replayGateEvent(event Event, gate ContractGateEvent) {
 			Evidence:  "gate decision did not identify the contract pack",
 		})
 	}
+
 	if gate.EnforcementMode != "" {
 		s.report.EnforcementModeCounts[replaySafeValue(string(gate.EnforcementMode))]++
 	} else {
@@ -287,6 +304,7 @@ func (s *replayState) replayGateEvent(event Event, gate ContractGateEvent) {
 			Evidence:  "gate decision did not identify observe/enforce mode",
 		})
 	}
+
 	if len(gate.ObservedFacts) == 0 {
 		s.addViolation(event, ReplayViolation{
 			ID:        "replay_gate_missing_observed_facts",
@@ -296,6 +314,7 @@ func (s *replayState) replayGateEvent(event Event, gate ContractGateEvent) {
 			Evidence:  "gate decision had no bounded observed facts",
 		})
 	}
+
 	for _, fact := range gate.ObservedFacts {
 		s.addAtom(event, ReplayAtom{
 			Kind:  ReplayAtomObservedFact,
@@ -303,6 +322,7 @@ func (s *replayState) replayGateEvent(event Event, gate ContractGateEvent) {
 			Value: string(fact),
 		})
 	}
+
 	if gate.EnforcementMode == EnforcementModeEnforce && isBlockingGateDecision(gate.Decision) && len(gate.SafeAlternatives) == 0 {
 		s.addViolation(event, ReplayViolation{
 			ID:        "replay_gate_missing_safe_alternatives",
@@ -312,20 +332,25 @@ func (s *replayState) replayGateEvent(event Event, gate ContractGateEvent) {
 			Evidence:  "enforced blocking gate did not expose safe alternatives",
 		})
 	}
+
 	s.checkRepeatedGateDecision(event, gate)
+
 	for _, path := range gate.ChangedPaths {
 		s.addChangedPathAtoms(event, gate.Gate, gate.Decision, path, gateWritesPath(gate))
 	}
+
 	if gate.VerificationStatus != "" {
 		s.addAtom(event, ReplayAtom{
 			Kind:  ReplayAtomVerificationStatus,
 			Gate:  gate.Gate,
 			Value: gate.VerificationStatus,
 		})
+
 		if gate.Gate == GateVerification && verificationStatusIsResolved(gate.VerificationStatus) {
 			s.lastVerificationPass = event.Sequence
 		}
 	}
+
 	if gate.Budget != nil && gate.Budget.Exhausted {
 		s.addAtom(event, ReplayAtom{
 			Kind:  ReplayAtomBudgetExhausted,
@@ -333,6 +358,7 @@ func (s *replayState) replayGateEvent(event Event, gate ContractGateEvent) {
 			Value: gate.Budget.ExhaustionReason,
 		})
 	}
+
 	if gate.Gate == GateCompletion && gate.Decision == PolicyAllow && s.hasUnresolvedPostWriteVerification(gate.VerificationStatus, gate.OpenObligations) {
 		s.addViolation(event, ReplayViolation{
 			ID:        "replay_completion_unresolved_post_write_verification",
@@ -349,21 +375,25 @@ func (s *replayState) addChangedPathAtoms(event Event, gate GateKind, decision T
 	if path == "" {
 		return
 	}
+
 	s.addAtom(event, ReplayAtom{
 		Kind:     ReplayAtomChangedPath,
 		Gate:     gate,
 		Decision: string(decision),
 		Value:    path,
 	})
+
 	if !written {
 		return
 	}
+
 	s.addAtom(event, ReplayAtom{
 		Kind:     ReplayAtomPathWritten,
 		Gate:     gate,
 		Decision: string(decision),
 		Value:    path,
 	})
+
 	s.lastWriteSequence = event.Sequence
 }
 
@@ -378,9 +408,11 @@ func isBlockingGateDecision(decision ToolPolicyDecision) bool {
 func (s *replayState) checkRepeatedGateDecision(event Event, gate ContractGateEvent) {
 	key := replayGateDecisionKey(gate)
 	s.repeatedGateDecisions[key]++
+
 	if s.repeatedGateDecisions[key] <= s.maxRepeatedGateEvents {
 		return
 	}
+
 	s.addViolation(event, ReplayViolation{
 		ID:        "replay_gate_repeated_decision",
 		Gate:      string(gate.Gate),
@@ -402,17 +434,21 @@ func (s *replayState) hasUnresolvedPostWriteVerification(status string, obligati
 	if s.lastWriteSequence == 0 || s.lastVerificationPass > s.lastWriteSequence {
 		return false
 	}
+
 	if verificationStatusIsResolved(status) {
 		return false
 	}
+
 	if verificationStatusIsUnresolved(status) {
 		return true
 	}
+
 	for _, obligation := range obligations {
 		if strings.Contains(strings.ToLower(obligation), "verify") {
 			return true
 		}
 	}
+
 	return true
 }
 
@@ -438,9 +474,11 @@ func (s *replayState) addAtom(event Event, atom ReplayAtom) {
 	atom.EventID = event.EventID
 	atom.Sequence = event.Sequence
 	atom.ContractID = event.ContractID
+
 	if looksLikeRawContractEventContent(string(atom.Gate)) {
 		atom.Gate = GateKind(replayRedactedValue)
 	}
+
 	atom.Decision = replaySafeValue(atom.Decision)
 	atom.Name = replaySafeValue(atom.Name)
 	atom.Value = replaySafeValue(atom.Value)
@@ -464,26 +502,33 @@ func replaySafeValue(value string) string {
 	if value == "" {
 		return ""
 	}
+
 	if looksLikeRawContractEventContent(value) {
 		return replayRedactedValue
 	}
+
 	return value
 }
 
 func (s *replayState) finish() {
 	finishReplayIntentReport(&s.report.ReplayClassification, &s.report.ReplayMetrics, &s.report.PrivacyChecks)
+
 	if len(s.report.AtomCounts) == 0 {
 		s.report.AtomCounts = nil
 	}
+
 	if len(s.report.PackCounts) == 0 {
 		s.report.PackCounts = nil
 	}
+
 	if len(s.report.EnforcementModeCounts) == 0 {
 		s.report.EnforcementModeCounts = nil
 	}
+
 	if len(s.report.Atoms) == 0 {
 		s.report.Atoms = nil
 	}
+
 	if len(s.report.Violations) == 0 {
 		s.report.Violations = nil
 	}
@@ -506,14 +551,18 @@ func replayIntentForEvents(events []Event) (ReplayClassificationReport, ReplayMe
 		toolDecisionCounts: map[string]int{},
 		gateDecisionCounts: map[string]int{},
 	}
+
 	ordered := append([]Event(nil), events...)
 	slices.SortStableFunc(ordered, compareReplayEventOrder)
+
 	for _, event := range ordered {
 		event = copyEvent(event)
 		event.Normalize()
 		state.addEvent(event)
 	}
+
 	state.finish()
+
 	return state.classification, state.metrics, state.privacy
 }
 
@@ -530,29 +579,37 @@ type replayIntentState struct {
 
 func (s *replayIntentState) addEvent(event Event) {
 	s.classification.StructuredEvents++
+
 	if payloadName, ok := requiredReplayPayloadName(event.Type); ok {
 		if eventHasReplayRequiredPayload(event, payloadName) {
 			s.classification.EventsWithRequiredPayload++
 		} else {
 			s.classification.MissingRequiredPayloadEvents++
+
 			s.metrics.MissingRequiredPayloadCounts[payloadName]++
 		}
 	}
+
 	if eventHasReplayHashesOrRefs(event) {
 		s.classification.EventsWithHashesOrRefs++
 	}
+
 	if eventHasReplayVerification(event) {
 		s.classification.VerificationEvents++
 	}
+
 	if eventHasReplayTracePolicy(event) {
 		s.classification.TracePolicyEvents++
 	}
+
 	if eventHasReplayRedactionState(event) {
 		s.classification.RedactedEvents++
 	}
+
 	if event.ModelExchange != nil && event.ModelExchange.TraceStorePolicy != nil {
 		incrementStringMap(&s.privacy.RedactionStatusCounts, event.ModelExchange.TraceStorePolicy.RedactionStatus)
 	}
+
 	s.addPrivacyRefs(replayPrivacyRefsForEvent(event))
 
 	switch event.Type {
@@ -593,6 +650,7 @@ func (s *replayIntentState) addPolicyMetrics(event Event, policy ContractPolicyE
 	if event.Type == EventToolPolicyDecision || event.Type == EventToolPolicyResult {
 		s.classification.DecisionEvents++
 	}
+
 	key := replayPolicyDecisionMetricKey(policy)
 	if key != "" {
 		s.toolDecisionCounts[key]++
@@ -600,20 +658,24 @@ func (s *replayIntentState) addPolicyMetrics(event Event, policy ContractPolicyE
 			s.metrics.RepeatedSameToolDecisions++
 		}
 	}
+
 	if s.readySeen && replayBroadRediscoveryTool(policy.ToolName, policy.Capability) {
 		s.metrics.BroadRediscoveryAfterReadiness++
 	}
+
 	if replayZeroHitSearchPolicy(policy) {
 		s.zeroHitStreak++
 		if s.zeroHitStreak == 2 {
 			s.metrics.ZeroHitSearchStreaks++
 		}
+
 		if s.zeroHitStreak > s.metrics.MaxZeroHitSearchStreak {
 			s.metrics.MaxZeroHitSearchStreak = s.zeroHitStreak
 		}
 	} else if replaySearchTool(policy.ToolName, policy.Capability) {
 		s.zeroHitStreak = 0
 	}
+
 	if replayCandidatePathWaste(policy) {
 		s.metrics.CandidatePathWaste++
 	}
@@ -621,10 +683,13 @@ func (s *replayIntentState) addPolicyMetrics(event Event, policy ContractPolicyE
 
 func (s *replayIntentState) addGateMetrics(event Event, gate ContractGateEvent) {
 	s.classification.DecisionEvents++
+
 	s.classification.GateDecisionEvents++
+
 	if len(gate.ObligationRefs)+len(gate.OpenObligations)+len(gate.ResolvedObligations) > 0 {
 		s.classification.ObligationEvents++
 	}
+
 	key := replayGateDecisionKey(gate)
 	if key != "" {
 		s.gateDecisionCounts[key]++
@@ -632,12 +697,14 @@ func (s *replayIntentState) addGateMetrics(event Event, gate ContractGateEvent) 
 			s.metrics.RepeatedSameGateDecisions++
 		}
 	}
+
 	phaseKey := replayPhaseGateKey(event, gate)
 	if replayGatePasses(gate) {
 		incrementStringMap(&s.metrics.PhaseGatePassCounts, phaseKey)
 	} else {
 		incrementStringMap(&s.metrics.PhaseGateFailCounts, phaseKey)
 	}
+
 	if isBlockingGateDecision(gate.Decision) || gate.Decision == PolicyNudge {
 		s.redirectStreak++
 		if s.redirectStreak == 3 {
@@ -661,11 +728,14 @@ func (s *replayIntentState) finish() {
 		s.classification.Classification = ReplayClassificationNonReplayable
 		s.classification.Reasons = append(s.classification.Reasons, "no_events")
 		finishReplayIntentReport(&s.classification, &s.metrics, &s.privacy)
+
 		return
 	}
+
 	for _, signal := range replayRequiredClassificationSignals(&s.classification) {
 		s.classification.MissingSignalCounts[signal]++
 	}
+
 	switch {
 	case s.classification.EventsWithRequiredPayload == 0 || s.classification.DecisionEvents == 0:
 		s.classification.Classification = ReplayClassificationNonReplayable
@@ -678,15 +748,19 @@ func (s *replayIntentState) finish() {
 	default:
 		s.classification.Classification = ReplayClassificationFull
 	}
+
 	if s.classification.MissingRequiredPayloadEvents > 0 {
 		s.classification.Reasons = append(s.classification.Reasons, "missing_required_payloads")
 	}
+
 	if s.privacy.ForbiddenFieldCount > 0 {
 		s.classification.Reasons = append(s.classification.Reasons, "privacy_forbidden_raw_content")
 	}
+
 	for _, key := range sortedMapKeys(s.classification.MissingSignalCounts) {
 		s.classification.Reasons = append(s.classification.Reasons, "missing_"+key)
 	}
+
 	finishReplayIntentReport(&s.classification, &s.metrics, &s.privacy)
 }
 
@@ -695,28 +769,35 @@ func finishReplayIntentReport(classification *ReplayClassificationReport, metric
 		if len(classification.MissingSignalCounts) == 0 {
 			classification.MissingSignalCounts = nil
 		}
+
 		if len(classification.Reasons) == 0 {
 			classification.Reasons = nil
 		}
 	}
+
 	if metrics != nil {
 		if len(metrics.MissingRequiredPayloadCounts) == 0 {
 			metrics.MissingRequiredPayloadCounts = nil
 		}
+
 		if len(metrics.PhaseGatePassCounts) == 0 {
 			metrics.PhaseGatePassCounts = nil
 		}
+
 		if len(metrics.PhaseGateFailCounts) == 0 {
 			metrics.PhaseGateFailCounts = nil
 		}
 	}
+
 	if privacy != nil {
 		if len(privacy.FieldCounts) == 0 {
 			privacy.FieldCounts = nil
 		}
+
 		if len(privacy.RedactionStatusCounts) == 0 {
 			privacy.RedactionStatusCounts = nil
 		}
+
 		if len(privacy.Refs) == 0 {
 			privacy.Refs = nil
 		}
@@ -725,21 +806,27 @@ func finishReplayIntentReport(classification *ReplayClassificationReport, metric
 
 func replayRequiredClassificationSignals(report *ReplayClassificationReport) []string {
 	var missing []string
+
 	if report.GateDecisionEvents == 0 {
 		missing = append(missing, "gate_decisions")
 	}
+
 	if report.EventsWithHashesOrRefs == 0 {
 		missing = append(missing, "hashes_or_refs")
 	}
+
 	if report.ObligationEvents == 0 {
 		missing = append(missing, "obligations")
 	}
+
 	if report.VerificationEvents == 0 {
 		missing = append(missing, "verification_status")
 	}
+
 	if report.TracePolicyEvents == 0 {
 		missing = append(missing, "trace_policy")
 	}
+
 	return missing
 }
 
@@ -793,40 +880,49 @@ func eventHasReplayHashesOrRefs(event Event) bool {
 	if len(event.EvidenceRefs) > 0 || event.ParentID != "" || event.Correlation.SidecarRequestID != "" || event.Correlation.ToolCallID != "" {
 		return true
 	}
+
 	if event.Lifecycle != nil {
 		return event.Lifecycle.RailsHash != "" || event.Lifecycle.ProtocolHash != "" ||
 			len(event.Lifecycle.RequiredEvidence) > 0 || len(event.Lifecycle.RemainingObligations) > 0 ||
 			(event.Lifecycle.ModelProtocol != nil && event.Lifecycle.ModelProtocol.ProtocolHash != "") ||
 			(event.Lifecycle.TurnPhaseContract != nil && event.Lifecycle.TurnPhaseContract.ProtocolHash != "")
 	}
+
 	if event.Policy != nil {
 		return event.Policy.ToolCallID != "" || event.Policy.ArgumentsDigest != "" || len(event.Policy.PathRoles) > 0 ||
 			len(event.Policy.EvidencePaths) > 0 || len(event.Policy.ObligationsOpened) > 0 || len(event.Policy.ObligationsResolved) > 0
 	}
+
 	if event.Obligation != nil {
 		return event.Obligation.SourceEvent != "" || event.Obligation.TargetRef != "" || event.Obligation.EvidenceEventID != "" ||
 			event.Obligation.EvidencePath != ""
 	}
+
 	if event.Readiness != nil {
 		return len(event.Readiness.EvidenceRefs) > 0 || len(event.Readiness.OpenObligations) > 0
 	}
+
 	if event.Completion != nil {
 		return event.Completion.ProtocolHash != "" || len(event.Completion.RemainingObligations) > 0
 	}
+
 	if event.Gate != nil {
 		return event.Gate.ProtocolHash != "" || event.Gate.ToolCallID != "" || event.Gate.LoopFingerprintDigest != "" ||
 			len(event.Gate.TargetRefs) > 0 || len(event.Gate.ObligationRefs) > 0 || len(event.Gate.OpenObligations) > 0 ||
 			len(event.Gate.ResolvedObligations) > 0
 	}
+
 	if event.GuardFriction != nil {
 		return event.GuardFriction.ProtocolHash != "" || event.GuardFriction.SourceEventID != "" || event.GuardFriction.ObligationID != "" ||
 			len(event.GuardFriction.EvidenceRefs) > 0
 	}
+
 	if event.ModelExchange != nil {
 		return event.ModelExchange.ProtocolHash != "" || event.ModelExchange.SourceEventID != "" ||
 			event.ModelExchange.InvariantID != "" || event.ModelExchange.ContextPacket != nil ||
 			event.ModelExchange.TraceStorePolicy != nil
 	}
+
 	return false
 }
 
@@ -834,18 +930,23 @@ func eventHasReplayVerification(event Event) bool {
 	if event.Completion != nil && event.Completion.VerificationStatus != "" {
 		return true
 	}
+
 	if event.Gate != nil && event.Gate.VerificationStatus != "" {
 		return true
 	}
+
 	if event.Readiness != nil && event.Readiness.ReadyToVerify {
 		return true
 	}
+
 	if event.Obligation != nil && event.Obligation.Kind == ObligationVerify {
 		return true
 	}
+
 	if event.ModelExchange != nil && event.ModelExchange.ValidationSignal != nil {
 		return true
 	}
+
 	return false
 }
 
@@ -861,16 +962,20 @@ func eventHasReplayRedactionState(event Event) bool {
 
 func replayEventContainsString(event Event, predicate func(string) bool) bool {
 	var walk func(reflect.Value) bool
+
 	walk = func(value reflect.Value) bool {
 		if !value.IsValid() {
 			return false
 		}
+
 		if value.Kind() == reflect.Pointer {
 			if value.IsNil() {
 				return false
 			}
+
 			return walk(value.Elem())
 		}
+
 		switch value.Kind() {
 		case reflect.String:
 			return predicate(value.String())
@@ -878,6 +983,7 @@ func replayEventContainsString(event Event, predicate func(string) bool) bool {
 			if value.Type().PkgPath() == "time" {
 				return false
 			}
+
 			for i := 0; i < value.NumField(); i++ {
 				if walk(value.Field(i)) {
 					return true
@@ -890,25 +996,34 @@ func replayEventContainsString(event Event, predicate func(string) bool) bool {
 				}
 			}
 		}
+
 		return false
 	}
+
 	return walk(reflect.ValueOf(event))
 }
 
 func replayPrivacyRefsForEvent(event Event) []ReplayPrivacyRef {
-	var refs []ReplayPrivacyRef
-	var walk func(reflect.Value, string)
+	var (
+		refs []ReplayPrivacyRef
+		walk func(reflect.Value, string)
+	)
+
 	walk = func(value reflect.Value, path string) {
 		if !value.IsValid() {
 			return
 		}
+
 		if value.Kind() == reflect.Pointer {
 			if value.IsNil() {
 				return
 			}
+
 			walk(value.Elem(), path)
+
 			return
 		}
+
 		switch value.Kind() {
 		case reflect.String:
 			if reason := replayPrivacyStringReason(path, value.String()); reason != "" {
@@ -918,22 +1033,27 @@ func replayPrivacyRefsForEvent(event Event) []ReplayPrivacyRef {
 			if value.Type().PkgPath() == "time" {
 				return
 			}
+
 			for i := 0; i < value.NumField(); i++ {
 				field := value.Type().Field(i)
 				if field.PkgPath != "" {
 					continue
 				}
+
 				name := replayJSONFieldName(field)
 				if name == "-" {
 					continue
 				}
+
 				fieldPath := name
 				if path != "" {
 					fieldPath = path + "." + name
 				}
+
 				if reason := replayPrivacyFieldNameReason(name); reason != "" {
 					refs = append(refs, replayPrivacyRef(event, fieldPath, reason))
 				}
+
 				walk(value.Field(i), fieldPath)
 			}
 		case reflect.Slice, reflect.Array:
@@ -943,6 +1063,7 @@ func replayPrivacyRefsForEvent(event Event) []ReplayPrivacyRef {
 		}
 	}
 	walk(reflect.ValueOf(event), "")
+
 	return refs
 }
 
@@ -962,10 +1083,12 @@ func replayJSONFieldName(field reflect.StructField) string {
 	if tag == "" {
 		return field.Name
 	}
+
 	name, _, _ := strings.Cut(tag, ",")
 	if name == "" {
 		return field.Name
 	}
+
 	return name
 }
 
@@ -984,21 +1107,26 @@ func replayPrivacyStringReason(path, value string) string {
 	if value == "" {
 		return ""
 	}
+
 	if strings.Contains(strings.ToLower(strings.TrimSpace(path)), "forbidden_fields") {
 		return ""
 	}
+
 	lower := strings.ToLower(value)
 	if len(value) > 500 {
 		return "long excerpt-like value"
 	}
+
 	if looksLikeRawContractEventContent(value) {
 		return "raw content marker"
 	}
+
 	for _, marker := range []string{"token=", "bearer ", "customer-", "customer_", "customer ", "secrets/", "/secrets/", "\\secrets\\"} {
 		if strings.Contains(lower, marker) {
 			return "secret or customer identifier marker"
 		}
 	}
+
 	return ""
 }
 
@@ -1006,6 +1134,7 @@ func replayPolicyDecisionMetricKey(policy ContractPolicyEvent) string {
 	if policy.ToolName == "" || policy.Decision == "" {
 		return ""
 	}
+
 	return strings.Join([]string{policy.ToolName, string(policy.Decision), policy.ReasonCode}, "\x00")
 }
 
@@ -1034,12 +1163,14 @@ func replayZeroHitSearchPolicy(policy ContractPolicyEvent) bool {
 	if !replaySearchTool(policy.ToolName, policy.Capability) {
 		return false
 	}
+
 	text := strings.ToLower(strings.Join([]string{policy.Result, policy.ErrorClass, policy.ArgumentsSummary, policy.ReasonCode}, " "))
 	for _, marker := range []string{"zero hits", "0 hits", "0 results", "no results", "no matches", "empty result"} {
 		if strings.Contains(text, marker) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1048,15 +1179,18 @@ func replayCandidatePathWaste(policy ContractPolicyEvent) bool {
 	if strings.Contains(text, "candidate_path_waste") || strings.Contains(text, "candidate path waste") {
 		return true
 	}
+
 	if len(policy.PathRoles) == 0 {
 		return false
 	}
+
 	for _, match := range policy.PathRoles {
 		switch match.Role {
 		case PathRoleRequiredEdit, PathRoleAllowedEdit, PathRoleEvidenceReadonly, PathRoleGeneratedArtifact, PathRoleVerificationOut:
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -1080,5 +1214,6 @@ func firstNonEmptyReplayValue(values ...string) string {
 			return trimmed
 		}
 	}
+
 	return ""
 }

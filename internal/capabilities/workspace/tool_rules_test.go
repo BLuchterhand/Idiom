@@ -45,9 +45,11 @@ func TestManagerEvaluateToolRuleConfiguredDenyOverridesModeAllow(t *testing.T) {
 func TestManagerExecuteDeniesConfiguredReadFileRule(t *testing.T) {
 	dir := t.TempDir()
 	secret := "SECRET_SENTINEL_DO_NOT_LEAK"
+
 	if err := os.WriteFile(filepath.Join(dir, "deny.txt"), []byte(secret), 0o600); err != nil {
 		t.Fatalf("write sentinel: %v", err)
 	}
+
 	mgr := NewManager(config.Workspace{
 		Root: dir,
 		CWD:  dir,
@@ -62,12 +64,15 @@ func TestManagerExecuteDeniesConfiguredReadFileRule(t *testing.T) {
 	if res.Error == "" {
 		t.Fatalf("expected deny error, got none: %+v", res)
 	}
+
 	if !strings.Contains(res.Summary, "workspace tool_rules") {
 		t.Fatalf("expected workspace tool_rules summary, got %q", res.Summary)
 	}
+
 	if !strings.Contains(res.Error, "deny read_file") {
 		t.Fatalf("expected read_file deny error, got %q", res.Error)
 	}
+
 	if strings.Contains(res.Output+res.Summary+res.Error, secret) {
 		t.Fatalf("deny result leaked file content: %+v", res)
 	}

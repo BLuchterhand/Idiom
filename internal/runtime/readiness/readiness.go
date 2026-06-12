@@ -42,6 +42,7 @@ func (e ProfileSelectionError) Error() string {
 
 func IsProfileSelectionError(err error) bool {
 	var selectionErr ProfileSelectionError
+
 	return errors.As(err, &selectionErr)
 }
 
@@ -244,6 +245,7 @@ func profileSet(names ...string) map[string]bool {
 	for _, name := range names {
 		out[name] = true
 	}
+
 	return out
 }
 
@@ -252,12 +254,14 @@ func BuildProfiles(configPath, selected string, hostChecks []HostCheck) ([]Profi
 	if selected == "" {
 		selected = "all"
 	}
+
 	specs := make([]profileSpec, 0, len(profileSpecs))
 	for _, spec := range profileSpecs {
 		if selected == "all" || selected == spec.name {
 			specs = append(specs, spec)
 		}
 	}
+
 	if len(specs) == 0 {
 		return nil, ProfileSelectionError{Selected: selected}
 	}
@@ -268,6 +272,7 @@ func BuildProfiles(configPath, selected string, hostChecks []HostCheck) ([]Profi
 			root = cwd
 		}
 	}
+
 	backendFile, backendFound, backendErr := backends.LoadFromProjectRoot(root)
 	cfg, cfgOK := loadConfig(configPath)
 	contextReady, contextDetail := contextIndexReadiness(root)
@@ -277,6 +282,7 @@ func BuildProfiles(configPath, selected string, hostChecks []HostCheck) ([]Profi
 	for _, spec := range specs {
 		reports = append(reports, buildProfile(spec, hostChecks, backendFile, backendFound, backendErr, cfg, cfgOK, contextReady, contextDetail, queueCheck, queueMetrics, queueUnavailable))
 	}
+
 	return reports, nil
 }
 
@@ -296,12 +302,14 @@ func buildProfile(spec profileSpec, hostChecks []HostCheck, backendFile backends
 		Enforcement:          string(EnforcementReportOnly),
 		RequiredForLaunch:    true,
 	}
+
 	report.Checks = append(report.Checks, Check{
 		Name:   "runtime contract",
 		State:  "pass",
 		Detail: fmt.Sprintf("%s / %s", contract.Contract, contract.PermissionProfile),
 	})
 	report.Checks = append(report.Checks, checksFromHost(hostChecks)...)
+
 	if spec.needsContext {
 		if contextReady {
 			report.Checks = append(report.Checks, Check{Name: "context index", State: "pass", Detail: contextDetail, Optional: true})
@@ -315,10 +323,12 @@ func buildProfile(spec profileSpec, hostChecks []HostCheck, backendFile backends
 			})
 		}
 	}
+
 	report.Checks = append(report.Checks, queueCheck)
 	if queueUnavailable != nil {
 		report.Unavailable = append(report.Unavailable, *queueUnavailable)
 	}
+
 	report.Checks = append(report.Checks, contextBudgetCheck(cfg, cfgOK))
 	report.Checks = append(report.Checks, routeClassifierCheck(cfg, cfgOK))
 	report.Unavailable = append(report.Unavailable, Unavailable{
@@ -332,9 +342,11 @@ func buildProfile(spec profileSpec, hostChecks []HostCheck, backendFile backends
 	report.Detail = profileDetail(report.State)
 	report.Metrics = metricsFor(report.Checks, report.Gates, queueMetrics)
 	report.RuntimeReadiness = BuildRuntimeReadiness(report)
+
 	if len(report.RoleAliases) == 0 {
 		report.RoleAliases = nil
 	}
+
 	return report
 }
 
@@ -343,11 +355,13 @@ func loadConfig(configPath string) (config.Config, bool) {
 	if err != nil {
 		return config.Config{}, false
 	}
+
 	return cfg, true
 }
 
 func queueReadiness() (Check, Metrics, *Unavailable) {
 	socket := runner.DefaultSocketPath()
+
 	snap, err := runner.Status(socket)
 	if err != nil {
 		check := Check{
@@ -362,23 +376,28 @@ func queueReadiness() (Check, Metrics, *Unavailable) {
 			Reason: "queue daemon not reachable",
 			Remedy: "start the daemon with `idiom queue serve` for live queue capacity evidence",
 		}
+
 		return check, Metrics{QueueState: "unavailable"}, &unavailable
 	}
+
 	metrics := Metrics{QueueState: "pass", QueuePools: len(snap.Pools), QueueWaiting: len(snap.Waiting), QueueInFlight: len(snap.InFlight)}
 	for _, job := range snap.InFlight {
 		if job.Idle {
 			metrics.QueueIdle++
 		}
 	}
+
 	state := "pass"
 	detail := fmt.Sprintf("reachable, pools=%d, in_flight=%d, waiting=%d", metrics.QueuePools, metrics.QueueInFlight, metrics.QueueWaiting)
 	remedy := ""
+
 	if metrics.QueueIdle > 0 {
 		state = "degraded"
 		metrics.QueueState = "degraded"
 		detail = fmt.Sprintf("%s, idle=%d", detail, metrics.QueueIdle)
 		remedy = "inspect `idiom queue status --json` and cancel or restart stale in-flight jobs if they are wedged"
 	}
+
 	return Check{Name: "queue admission", State: state, Detail: detail, Remedy: remedy, Optional: true}, metrics, nil
 }
 
@@ -392,8 +411,10 @@ func contextBudgetCheck(cfg config.Config, cfgOK bool) Check {
 			Optional: true,
 		}
 	}
+
 	ctxSize := cfg.LlamaServer.CtxSize
 	maxOutput := cfg.Chat.MaxTokens
+
 	switch {
 	case ctxSize <= 0:
 		return Check{Name: "context budget", State: "degraded", Detail: "llama_server.ctx_size is not configured", Remedy: "set llama_server.ctx_size to the backend-supported context window", Optional: true}
@@ -410,17 +431,21 @@ func routeClassifierCheck(cfg config.Config, cfgOK bool) Check {
 	if !cfgOK {
 		return Check{Name: "route classifier", State: "unavailable", Detail: "project config did not load", Remedy: "fix project config so classifier fallback state can be reported", Optional: true}
 	}
+
 	if !cfg.RouteClassifier.Enabled {
 		return Check{Name: "route classifier", State: "degraded", Detail: "disabled; deterministic routing fallback active", Remedy: "enable route_classifier when classifier-backed routing or summaries are required", Optional: true}
 	}
+
 	if strings.TrimSpace(cfg.RouteClassifier.BaseURL) == "" && cfg.RouteClassifier.Port <= 0 {
 		return Check{Name: "route classifier", State: "degraded", Detail: "enabled but no base_url or server port is configured", Remedy: "set route_classifier.base_url or route_classifier.port", Optional: true}
 	}
+
 	return Check{Name: "route classifier", State: "pass", Detail: "configured; live JSON probe is deferred to deep readiness", Optional: true}
 }
 
 func metricsFor(checks []Check, gates []GateDecision, queue Metrics) Metrics {
 	metrics := queue
+
 	for _, check := range checks {
 		switch check.State {
 		case "pass":
@@ -432,6 +457,7 @@ func metricsFor(checks []Check, gates []GateDecision, queue Metrics) Metrics {
 		case "unavailable":
 			metrics.UnavailableChecks++
 		}
+
 		switch check.Name {
 		case "backend role config":
 			metrics.BackendState = check.State
@@ -446,6 +472,7 @@ func metricsFor(checks []Check, gates []GateDecision, queue Metrics) Metrics {
 			}
 		}
 	}
+
 	for _, gate := range gates {
 		switch gate.Status {
 		case "blocked":
@@ -454,6 +481,7 @@ func metricsFor(checks []Check, gates []GateDecision, queue Metrics) Metrics {
 			metrics.SoftDegradations++
 		}
 	}
+
 	return metrics
 }
 
@@ -462,15 +490,18 @@ func applyGatePolicy(report ProfileReport) ProfileReport {
 	for _, check := range report.Checks {
 		checks[check.Name] = check
 	}
+
 	for _, policy := range gatePolicies {
 		check, ok := checks[policy.checkName]
 		if !ok {
 			continue
 		}
+
 		severity := gateSeverity(report.Name, policy)
 		if severity == "" {
 			continue
 		}
+
 		status := gateStatus(check, severity)
 		gate := GateDecision{
 			Name:              policy.name,
@@ -484,6 +515,7 @@ func applyGatePolicy(report ProfileReport) ProfileReport {
 			Reason:            gateReason(check),
 			Remedy:            check.Remedy,
 		}
+
 		if gate.Status == "pass" {
 			gate.Reason = ""
 			gate.Remedy = ""
@@ -491,6 +523,7 @@ func applyGatePolicy(report ProfileReport) ProfileReport {
 			gate.ReasonClass = gateReasonClass(policy, check)
 			gate.Fallback = gateFallback(policy, check)
 		}
+
 		report.Gates = append(report.Gates, gate)
 		switch gate.Status {
 		case "blocked":
@@ -499,6 +532,7 @@ func applyGatePolicy(report ProfileReport) ProfileReport {
 			report.SoftDegradations = append(report.SoftDegradations, gate)
 		}
 	}
+
 	return report
 }
 
@@ -515,6 +549,7 @@ func BuildRuntimeReadiness(report ProfileReport) RuntimeReadinessReport {
 		LaunchBlockingEnforced: decision == RuntimeReadinessLaunchBlocked && normalizeEnforcement(report.Enforcement) != EnforcementReportOnly,
 		Degraded:               decision == RuntimeReadinessAllowedDegraded,
 	}
+
 	for _, gate := range report.Gates {
 		invariant := RuntimeReadinessInvariant{
 			InvariantID:       firstNonEmpty(gate.InvariantID, runtimeInvariantID(gate.Name)),
@@ -527,7 +562,9 @@ func BuildRuntimeReadiness(report ProfileReport) RuntimeReadinessReport {
 			ReasonClass:       gate.ReasonClass,
 			Fallback:          gate.Fallback,
 		}
+
 		out.Invariants = append(out.Invariants, invariant)
+
 		if gate.Fallback != "" {
 			out.Fallbacks = append(out.Fallbacks, RuntimeReadinessFallbackUse{
 				InvariantID: invariant.InvariantID,
@@ -537,6 +574,7 @@ func BuildRuntimeReadiness(report ProfileReport) RuntimeReadinessReport {
 			})
 		}
 	}
+
 	return out
 }
 
@@ -545,6 +583,7 @@ func normalizeEnforcement(value string) EnforcementMode {
 	if value == "" {
 		return EnforcementReportOnly
 	}
+
 	return EnforcementMode(value)
 }
 
@@ -554,6 +593,7 @@ func runtimeDecisionForProfile(report ProfileReport) RuntimeReadinessDecision {
 			return RuntimeReadinessLaunchBlocked
 		}
 	}
+
 	switch report.State {
 	case "blocked":
 		return RuntimeReadinessLaunchBlocked
@@ -583,6 +623,7 @@ func firstRuntimeDecision(values ...RuntimeReadinessDecision) RuntimeReadinessDe
 			return value
 		}
 	}
+
 	return RuntimeReadinessAllowedDegraded
 }
 
@@ -592,6 +633,7 @@ func firstNonEmpty(values ...string) string {
 			return value
 		}
 	}
+
 	return ""
 }
 
@@ -600,6 +642,7 @@ func runtimeInvariantID(name string) string {
 	if name == "" {
 		return ""
 	}
+
 	return "runtime." + name
 }
 
@@ -611,6 +654,7 @@ func gateReasonClass(policy gatePolicy, check Check) RuntimeReadinessReasonClass
 		if check.State == "unavailable" {
 			return ReasonQueueUnavailable
 		}
+
 		if check.State == "degraded" {
 			return ReasonQueueSoftDegraded
 		}
@@ -618,13 +662,16 @@ func gateReasonClass(policy gatePolicy, check Check) RuntimeReadinessReasonClass
 		if check.State == "unavailable" {
 			return ReasonConfigUnavailable
 		}
+
 		return ReasonInvalidContextBudget
 	case "route_classifier_available_or_fallback_recorded":
 		if check.State == "unavailable" {
 			return ReasonConfigUnavailable
 		}
+
 		return ReasonRouteClassifierFallback
 	}
+
 	return ReasonReadinessCheckFailed
 }
 
@@ -640,6 +687,7 @@ func backendRoleReasonClass(check Check) RuntimeReadinessReasonClass {
 	case strings.Contains(detail, "no default or unambiguous backend profile selected"):
 		return ReasonBackendProfileUnresolved
 	}
+
 	return ReasonReadinessCheckFailed
 }
 
@@ -654,6 +702,7 @@ func gateFallback(policy gatePolicy, check Check) RuntimeReadinessFallback {
 		if check.State == "unavailable" {
 			return FallbackQueueOpportunistic
 		}
+
 		if check.State == "degraded" {
 			return FallbackQueueOperatorRepair
 		}
@@ -662,6 +711,7 @@ func gateFallback(policy gatePolicy, check Check) RuntimeReadinessFallback {
 			return FallbackDeterministicRouting
 		}
 	}
+
 	return ""
 }
 
@@ -687,11 +737,13 @@ func gateStatus(check Check, severity string) string {
 		if severity == "hard" {
 			return "blocked"
 		}
+
 		return "degraded"
 	default:
 		if severity == "hard" {
 			return "blocked"
 		}
+
 		return "degraded"
 	}
 }
@@ -700,6 +752,7 @@ func gateReason(check Check) string {
 	if strings.TrimSpace(check.Detail) != "" {
 		return check.Detail
 	}
+
 	return check.State
 }
 
@@ -707,12 +760,14 @@ func checksFromHost(hostChecks []HostCheck) []Check {
 	out := make([]Check, 0, len(hostChecks))
 	for _, check := range hostChecks {
 		state := "pass"
+
 		switch check.Status {
 		case "fail":
 			state = "blocked"
 		case "warn":
 			state = "degraded"
 		}
+
 		out = append(out, Check{
 			Name:   check.Name,
 			State:  state,
@@ -720,6 +775,7 @@ func checksFromHost(hostChecks []HostCheck) []Check {
 			Remedy: check.Remedy,
 		})
 	}
+
 	return out
 }
 
@@ -731,8 +787,10 @@ func applyBackendRoleReadiness(report ProfileReport, backendFile backends.File, 
 			Detail:   "profile does not require a dedicated backend role",
 			Optional: true,
 		})
+
 		return report
 	}
+
 	if backendErr != nil {
 		report.Checks = append(report.Checks, Check{
 			Name:   "backend role config",
@@ -740,8 +798,10 @@ func applyBackendRoleReadiness(report ProfileReport, backendFile backends.File, 
 			Detail: backendErr.Error(),
 			Remedy: "fix .idiom/backends.json so roles can be resolved before launch",
 		})
+
 		return report
 	}
+
 	if !backendFound {
 		report.Checks = append(report.Checks, Check{
 			Name:   "backend role config",
@@ -754,8 +814,10 @@ func applyBackendRoleReadiness(report ProfileReport, backendFile backends.File, 
 			Reason: ".idiom/backends.json not found",
 			Remedy: "create .idiom/backends.json to make role readiness machine-readable",
 		})
+
 		return report
 	}
+
 	profile, ok := backendFile.Profile("")
 	if !ok {
 		report.Checks = append(report.Checks, Check{
@@ -764,32 +826,41 @@ func applyBackendRoleReadiness(report ProfileReport, backendFile backends.File, 
 			Detail: "no default or unambiguous backend profile selected",
 			Remedy: "set default_profile in .idiom/backends.json or keep only one backend profile",
 		})
+
 		return report
 	}
+
 	var missing []string
+
 	for _, role := range report.RequiredRoles {
 		alias, ok := profile.AliasForRole(role)
 		if !ok {
 			missing = append(missing, role)
 			continue
 		}
+
 		report.RoleAliases[role] = alias
 	}
+
 	if len(missing) > 0 {
 		slices.Sort(missing)
+
 		report.Checks = append(report.Checks, Check{
 			Name:   "backend role config",
 			State:  "blocked",
 			Detail: "missing role aliases: " + strings.Join(missing, ", "),
 			Remedy: "add role tags or proxy.default_<role> aliases in .idiom/backends.json",
 		})
+
 		return report
 	}
+
 	report.Checks = append(report.Checks, Check{
 		Name:   "backend role config",
 		State:  "pass",
 		Detail: "resolved roles: " + strings.Join(sortedRoleAliases(report.RoleAliases), ", "),
 	})
+
 	return report
 }
 
@@ -798,11 +869,14 @@ func sortedRoleAliases(aliases map[string]string) []string {
 	for key := range aliases {
 		keys = append(keys, key)
 	}
+
 	slices.Sort(keys)
+
 	out := make([]string, 0, len(keys))
 	for _, key := range keys {
 		out = append(out, key+"="+aliases[key])
 	}
+
 	return out
 }
 
@@ -810,6 +884,7 @@ func contextIndexReadiness(root string) (bool, string) {
 	if strings.TrimSpace(root) == "" {
 		return false, "workspace root unavailable"
 	}
+
 	for _, rel := range []string{
 		filepath.Join(".idiom", "comprehension", "graph.sqlite"),
 		filepath.Join(".idiom", "comprehension", "graph.json"),
@@ -819,11 +894,13 @@ func contextIndexReadiness(root string) (bool, string) {
 			return true, rel + " present"
 		}
 	}
+
 	return false, "no local context graph found under .idiom/comprehension"
 }
 
 func profileState(checks []Check, gates []GateDecision) string {
 	state := "pass"
+
 	for _, gate := range gates {
 		switch gate.Status {
 		case "blocked":
@@ -832,6 +909,7 @@ func profileState(checks []Check, gates []GateDecision) string {
 			state = "degraded"
 		}
 	}
+
 	for _, check := range checks {
 		switch check.State {
 		case "blocked":
@@ -846,6 +924,7 @@ func profileState(checks []Check, gates []GateDecision) string {
 			}
 		}
 	}
+
 	return state
 }
 
@@ -872,21 +951,26 @@ func WorkspaceRootFromConfig(path string) string {
 			abs = filepath.Join(cwd, path)
 		}
 	}
+
 	body, err := os.ReadFile(abs)
 	if err != nil {
 		return ""
 	}
+
 	var shape struct {
 		Workspace struct {
 			Root string `json:"root"`
 		} `json:"workspace"`
 	}
+
 	if err := json.Unmarshal(body, &shape); err != nil {
 		return ""
 	}
+
 	root := strings.TrimSpace(shape.Workspace.Root)
 	if root == "" || filepath.IsAbs(root) {
 		return root
 	}
+
 	return filepath.Clean(filepath.Join(filepath.Dir(abs), root))
 }

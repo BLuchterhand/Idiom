@@ -22,6 +22,7 @@ func TestInstallToolsScriptsExposeSidecarOnlyLaunchers(t *testing.T) {
 			t.Fatalf("install-tools.sh missing %q", want)
 		}
 	}
+
 	if strings.Contains(unixScript, "${INSTALL_DIR}/idiom\"") {
 		t.Fatal("tools installer must not expose the full idiom command name")
 	}
@@ -45,14 +46,17 @@ func TestInstallToolsScriptsExposeSidecarOnlyLaunchers(t *testing.T) {
 
 func repoRootForInstallToolTest(t *testing.T) string {
 	t.Helper()
+
 	return sidecarValidationRepoRoot(t)
 }
 
 func readInstallToolFile(t *testing.T, root string, rel string) string {
 	t.Helper()
+
 	data, err := os.ReadFile(filepath.Join(root, rel))
 	if err != nil {
 		t.Fatalf("read %s: %v", rel, err)
 	}
+
 	return string(data)
 }

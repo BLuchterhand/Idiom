@@ -19,6 +19,7 @@ import (
 func TestLoadPlanContentUsesCacheUntilFileChanges(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "plan.md")
+
 	if err := os.WriteFile(path, []byte("first body"), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
@@ -36,6 +37,7 @@ func TestLoadPlanContentUsesCacheUntilFileChanges(t *testing.T) {
 	if err := os.WriteFile(path, []byte("second body"), 0o644); err != nil {
 		t.Fatalf("rewrite plan: %v", err)
 	}
+
 	modTime := time.Now().Add(2 * time.Second)
 	if err := os.Chtimes(path, modTime, modTime); err != nil {
 		t.Fatalf("chtimes: %v", err)
@@ -49,6 +51,7 @@ func TestLoadPlanContentUsesCacheUntilFileChanges(t *testing.T) {
 func TestLoadPlanContentClearsCacheWhenFileDisappears(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "plan.md")
+
 	if err := os.WriteFile(path, []byte("body"), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
@@ -61,12 +64,15 @@ func TestLoadPlanContentClearsCacheWhenFileDisappears(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
+
 	if got := m.loadPlanContent(); got != "" {
 		t.Fatalf("expected missing plan to return empty string, got %q", got)
 	}
+
 	if m.planContent != "" {
 		t.Fatalf("expected missing plan to clear cached content, got %q", m.planContent)
 	}
+
 	if !m.planMTime.IsZero() {
 		t.Fatalf("expected missing plan to clear cached mtime, got %v", m.planMTime)
 	}
@@ -94,6 +100,7 @@ func TestDocViewerRendersPlanArtifactMetadataAndCollapsedEdits(t *testing.T) {
 			t.Fatalf("doc viewer missing %q:\n%s", want, got)
 		}
 	}
+
 	if strings.Contains(got, "-old value") || strings.Contains(got, "+new value") {
 		t.Fatalf("collapsed edit should not render diff body:\n%s", got)
 	}
@@ -104,6 +111,7 @@ func TestDocViewerExpandedEditRendersDiffLikeBody(t *testing.T) {
 	writeDocViewerPlanArtifact(t, root)
 
 	m := docViewerTestModel(root)
+
 	m.docViewer.expanded = map[int]bool{0: true}
 	m.renderDocViewerPanelContent()
 
@@ -130,9 +138,11 @@ func TestDocViewerEnterTogglesSelectedEdit(t *testing.T) {
 	if handled, _ := m.handleDocViewerPanelKey(tea.KeyMsg{Type: tea.KeyEnter}); !handled {
 		t.Fatal("Enter was not handled")
 	}
+
 	if !m.docViewer.expanded[0] {
 		t.Fatal("expected selected edit to expand")
 	}
+
 	if !strings.Contains(m.docViewer.viewport.View(), "+new value") {
 		t.Fatalf("expanded viewport did not render diff:\n%s", m.docViewer.viewport.View())
 	}
@@ -140,6 +150,7 @@ func TestDocViewerEnterTogglesSelectedEdit(t *testing.T) {
 
 func TestMouseClickPanelTabSwitchesAndFocusesPanel(t *testing.T) {
 	m := docViewerTestModel(t.TempDir())
+
 	m.panelTab = panelTabHistory
 	m.viewport.Width = 60
 
@@ -154,6 +165,7 @@ func TestMouseClickPanelTabSwitchesAndFocusesPanel(t *testing.T) {
 	if m.panelTab != panelTabDocViewer {
 		t.Fatalf("panel tab = %d, want doc viewer", m.panelTab)
 	}
+
 	if !m.history.focused {
 		t.Fatal("panel click should focus the panel")
 	}
@@ -164,16 +176,19 @@ func TestMouseClickDocViewerEditTogglesExpansion(t *testing.T) {
 	writeDocViewerPlanArtifact(t, root)
 
 	m := docViewerTestModel(root)
+
 	m.viewport.Width = 60
 	m.renderDocViewerPanelContent()
 
 	row := -1
+
 	for i, line := range strings.Split(m.docViewer.viewport.View(), "\n") {
 		if strings.Contains(line, "Edit 1") {
 			row = i
 			break
 		}
 	}
+
 	if row < 0 {
 		t.Fatalf("could not find doc viewer edit row:\n%s", m.docViewer.viewport.View())
 	}
@@ -188,6 +203,7 @@ func TestMouseClickDocViewerEditTogglesExpansion(t *testing.T) {
 	if !m.docViewer.expanded[0] {
 		t.Fatal("mouse click should expand the clicked edit")
 	}
+
 	if !strings.Contains(m.docViewer.viewport.View(), "+new value") {
 		t.Fatalf("expanded viewport did not render diff:\n%s", m.docViewer.viewport.View())
 	}
@@ -214,13 +230,16 @@ func docViewerTestModel(root string) *Model {
 
 func writeDocViewerPlanArtifact(t *testing.T, root string) {
 	t.Helper()
+
 	if err := os.WriteFile(filepath.Join(root, "app.txt"), []byte("old value\n"), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
+
 	planDir := filepath.Join(root, ".idiom", "plans")
 	if err := os.MkdirAll(planDir, 0o755); err != nil {
 		t.Fatalf("mkdir plan dir: %v", err)
 	}
+
 	artifact := workspace.PlanArtifact{
 		SchemaVersion: workspace.PlanArtifactSchemaVersion,
 		PlanID:        "plan_test",
@@ -279,10 +298,12 @@ func writeDocViewerPlanArtifact(t *testing.T, root string) {
 			Purpose: "replace value",
 		}},
 	}
+
 	body, err := json.MarshalIndent(artifact, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal artifact: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(planDir, "last.plan.json"), body, 0o644); err != nil {
 		t.Fatalf("write artifact: %v", err)
 	}

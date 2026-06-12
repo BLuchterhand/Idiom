@@ -64,14 +64,18 @@ func BuildLaunchSpec(m Model) (LaunchSpec, error) {
 	if isHostedModelKind(m.Kind) {
 		return LaunchSpec{}, fmt.Errorf("backends: hosted model %q (kind=%s) cannot be launched locally", m.Alias, strings.TrimSpace(m.Kind))
 	}
+
 	if strings.TrimSpace(m.Binary) == "" {
 		return LaunchSpec{}, fmt.Errorf("backends: model %q has empty binary", m.Alias)
 	}
+
 	if m.Port <= 0 {
 		return LaunchSpec{}, fmt.Errorf("backends: model %q has invalid port %d", m.Alias, m.Port)
 	}
+
 	argv := []string{m.Binary}
 	directVmlx := launchSpecUsesDirectVmlxServe(m)
+
 	if path := strings.TrimSpace(m.ModelPath); path != "" {
 		if directVmlx {
 			argv = append(argv, "serve", expandHome(path))
@@ -79,6 +83,7 @@ func BuildLaunchSpec(m Model) (LaunchSpec, error) {
 			argv = append(argv, "--model", expandHome(path))
 		}
 	}
+
 	argv = append(argv, "--host", modelHost(m), "--port", strconv.Itoa(m.Port))
 	if m.CacheSize > 0 {
 		if directVmlx {
@@ -87,6 +92,7 @@ func BuildLaunchSpec(m Model) (LaunchSpec, error) {
 			argv = append(argv, "--prompt-cache-size", strconv.Itoa(m.CacheSize))
 		}
 	}
+
 	if m.CacheBytes > 0 {
 		if directVmlx {
 			argv = append(argv, "--prefix-cache-max-bytes", strconv.FormatInt(m.CacheBytes, 10))
@@ -94,13 +100,17 @@ func BuildLaunchSpec(m Model) (LaunchSpec, error) {
 			argv = append(argv, "--prompt-cache-bytes", strconv.FormatInt(m.CacheBytes, 10))
 		}
 	}
+
 	if m.MaxTokens > 0 {
 		argv = append(argv, "--max-tokens", strconv.Itoa(m.MaxTokens))
 	}
+
 	if m.RequestTimeoutSeconds > 0 && launchSpecSupportsRequestTimeout(m) {
 		argv = append(argv, "--timeout", strconv.Itoa(m.RequestTimeoutSeconds))
 	}
+
 	argv = append(argv, m.ExtraArgs...)
+
 	return LaunchSpec{Alias: m.Alias, Argv: argv, Port: m.Port}, nil
 }
 
@@ -109,7 +119,9 @@ func launchSpecSupportsRequestTimeout(m Model) bool {
 	if kind == "vmlx" {
 		return true
 	}
+
 	base := strings.ToLower(filepath.Base(strings.TrimSpace(m.Binary)))
+
 	return strings.Contains(base, "vmlx")
 }
 
@@ -134,6 +146,7 @@ func pidFilePath(runDir, alias string) string {
 	if strings.TrimSpace(runDir) == "" {
 		return ""
 	}
+
 	return filepath.Join(runDir, "backend-"+sanitizeAlias(alias)+".pid")
 }
 
@@ -148,12 +161,15 @@ func writePIDFile(runDir, alias string, pid int) error {
 	if path == "" {
 		return nil
 	}
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("backends: create run dir %q: %w", filepath.Dir(path), err)
 	}
+
 	if err := os.WriteFile(path, []byte(strconv.Itoa(pid)), 0o644); err != nil {
 		return fmt.Errorf("backends: write pid file %q: %w", path, err)
 	}
+
 	return nil
 }
 
@@ -167,22 +183,27 @@ func readPIDFile(runDir, alias string, isAlive func(int) bool) (int, error) {
 	if path == "" {
 		return 0, nil
 	}
+
 	body, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return 0, nil
 		}
+
 		return 0, fmt.Errorf("backends: read pid file %q: %w", path, err)
 	}
+
 	pid, parseErr := strconv.Atoi(strings.TrimSpace(string(body)))
 	if parseErr != nil || pid <= 0 {
 		_ = os.Remove(path)
 		return 0, nil
 	}
+
 	if isAlive != nil && !isAlive(pid) {
 		_ = os.Remove(path)
 		return 0, nil
 	}
+
 	return pid, nil
 }
 
@@ -194,6 +215,7 @@ func removePIDFile(runDir, alias string) {
 	if path == "" {
 		return
 	}
+
 	_ = os.Remove(path)
 }
 
@@ -205,6 +227,7 @@ func modelHost(m Model) string {
 	if h := strings.TrimSpace(m.Host); h != "" {
 		return h
 	}
+
 	return "127.0.0.1"
 }
 
@@ -215,10 +238,12 @@ func expandHome(p string) string {
 	if !strings.HasPrefix(p, "~/") {
 		return p
 	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return p
 	}
+
 	return filepath.Join(home, p[2:])
 }
 
@@ -256,16 +281,20 @@ func Launch(prof Profile, opts LauncherOptions) []LaunchResult {
 	if opts.ReadyTimeout == 0 {
 		opts.ReadyTimeout = 90 * time.Second
 	}
+
 	if opts.Spawner == nil {
 		opts.Spawner = realSpawn
 	}
+
 	if opts.PortReady == nil {
 		opts.PortReady = portTCPReady
 	}
+
 	logDir := opts.LogDir
 	if strings.TrimSpace(logDir) == "" {
 		logDir = os.TempDir()
 	}
+
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		// Surface the directory failure once, then attribute it to
 		// every model so the operator sees a clear root cause.
@@ -277,6 +306,7 @@ func Launch(prof Profile, opts LauncherOptions) []LaunchResult {
 				Err:   fmt.Errorf("backends: create log dir %q: %w", logDir, err),
 			})
 		}
+
 		return results
 	}
 
@@ -284,6 +314,7 @@ func Launch(prof Profile, opts LauncherOptions) []LaunchResult {
 	for _, m := range prof.Models {
 		results = append(results, launchOne(m, logDir, opts))
 	}
+
 	return results
 }
 
@@ -292,6 +323,7 @@ func launchOne(m Model, logDir string, opts LauncherOptions) LaunchResult {
 	if err != nil {
 		return LaunchResult{Alias: m.Alias, Port: m.Port, Err: err}
 	}
+
 	// Skip the spawn if the port already accepts traffic — we treat
 	// that as "this backend is already running" and report the
 	// existing state. The operator should run `idiom backend stop`
@@ -304,11 +336,14 @@ func launchOne(m Model, logDir string, opts LauncherOptions) LaunchResult {
 			Err:   fmt.Errorf("backends: port %d already in use; assuming %s is already running", spec.Port, spec.Alias),
 		}
 	}
+
 	logPath := filepath.Join(logDir, fmt.Sprintf("idiom-backend-%s.log", sanitizeAlias(spec.Alias)))
+
 	pid, err := opts.Spawner(spec, logPath)
 	if err != nil {
 		return LaunchResult{Alias: spec.Alias, Port: spec.Port, LogPath: logPath, Err: err}
 	}
+
 	// Best-effort PID file write. The process is already running, so a
 	// write failure shouldn't fail the spawn — Stop will fall back to
 	// lsof when the file is missing. We surface the failure on the
@@ -316,6 +351,7 @@ func launchOne(m Model, logDir string, opts LauncherOptions) LaunchResult {
 	pidFileErr := writePIDFile(opts.RunDir, spec.Alias, pid)
 	deadline := time.Now().Add(opts.ReadyTimeout)
 	ready := opts.PortReady(spec.Port, deadline)
+
 	return LaunchResult{
 		Alias:   spec.Alias,
 		PID:     pid,
@@ -330,6 +366,7 @@ func launchOne(m Model, logDir string, opts LauncherOptions) LaunchResult {
 // alphanumerics and dots/dashes only. Other chars become `_`.
 func sanitizeAlias(alias string) string {
 	var b strings.Builder
+
 	for _, r := range alias {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '.':
@@ -340,9 +377,11 @@ func sanitizeAlias(alias string) string {
 			b.WriteRune('_')
 		}
 	}
+
 	if b.Len() == 0 {
 		return "backend"
 	}
+
 	return b.String()
 }
 
@@ -358,18 +397,23 @@ func sanitizeAlias(alias string) string {
 // signal — health-check endpoints differ per backend.
 func portTCPReady(port int, deadline time.Time) bool {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
+
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 		dialer := &net.Dialer{}
 		conn, err := dialer.DialContext(ctx, "tcp", addr)
+
 		cancel()
+
 		if err == nil {
 			_ = conn.Close()
 			return true
 		}
+
 		if time.Now().After(deadline) {
 			return false
 		}
+
 		time.Sleep(200 * time.Millisecond)
 	}
 }
@@ -428,19 +472,24 @@ func Stop(prof Profile, opts StopOptions) []StopResult {
 	if opts.PIDForPort == nil {
 		opts.PIDForPort = realPIDForPort
 	}
+
 	if opts.Kill == nil {
 		opts.Kill = realStopSignal
 	}
+
 	if opts.IsAlive == nil {
 		opts.IsAlive = realIsAlive
 	}
+
 	if opts.GraceTimeout == 0 {
 		opts.GraceTimeout = 5 * time.Second
 	}
+
 	results := make([]StopResult, 0, len(prof.Models))
 	for _, m := range prof.Models {
 		results = append(results, stopOne(m, opts))
 	}
+
 	return results
 }
 
@@ -460,13 +509,16 @@ func resolvePID(m Model, runDir string, isAlive func(int) bool, pidForPort func(
 	if err != nil {
 		return resolvedPID{}, err
 	}
+
 	if pid > 0 {
 		return resolvedPID{PID: pid, FromPIDFile: true}, nil
 	}
+
 	pid, err = pidForPort(m.Port)
 	if err != nil {
 		return resolvedPID{}, err
 	}
+
 	return resolvedPID{PID: pid}, nil
 }
 
@@ -475,6 +527,7 @@ func stopOne(m Model, opts StopOptions) StopResult {
 	if err != nil {
 		return StopResult{Alias: m.Alias, Port: m.Port, Err: err}
 	}
+
 	pid := resolved.PID
 	if pid <= 0 {
 		// Nothing listening; report Stopped=true since the desired
@@ -482,11 +535,14 @@ func stopOne(m Model, opts StopOptions) StopResult {
 		// any stray PID file so a future Status doesn't report a
 		// ghost process.
 		removePIDFile(opts.RunDir, m.Alias)
+
 		return StopResult{Alias: m.Alias, Port: m.Port, Stopped: true}
 	}
+
 	if err := opts.Kill(pid, SignalTerm); err != nil {
 		return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Err: fmt.Errorf("backends: SIGTERM pid %d: %w", pid, err)}
 	}
+
 	// Poll for liveness rather than port-freeing: with the PID-file
 	// path, "is the spawned process gone" is the question we actually
 	// care about. Port-only polling could be fooled by a fast restart
@@ -495,14 +551,19 @@ func stopOne(m Model, opts StopOptions) StopResult {
 	for time.Now().Before(deadline) {
 		if !opts.IsAlive(pid) {
 			removePIDFile(opts.RunDir, m.Alias)
+
 			return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Stopped: true}
 		}
+
 		if !resolved.FromPIDFile && !portStillOwnedByPID(m.Port, pid, opts.PIDForPort) {
 			removePIDFile(opts.RunDir, m.Alias)
+
 			return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Stopped: true}
 		}
+
 		time.Sleep(100 * time.Millisecond)
 	}
+
 	// Re-verify before SIGKILL: if the original PID is already gone,
 	// we must NOT signal it — Linux can recycle the PID for an
 	// unrelated process and SIGKILL would land on whatever is now in
@@ -510,16 +571,22 @@ func stopOne(m Model, opts StopOptions) StopResult {
 	// the documented "Process kills: the pid > 0 rule" hazard.
 	if !opts.IsAlive(pid) {
 		removePIDFile(opts.RunDir, m.Alias)
+
 		return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Stopped: true}
 	}
+
 	if !resolved.FromPIDFile && !portStillOwnedByPID(m.Port, pid, opts.PIDForPort) {
 		removePIDFile(opts.RunDir, m.Alias)
+
 		return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Stopped: true}
 	}
+
 	if err := opts.Kill(pid, SignalKill); err != nil {
 		return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Err: fmt.Errorf("backends: SIGKILL pid %d: %w", pid, err)}
 	}
+
 	removePIDFile(opts.RunDir, m.Alias)
+
 	return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Stopped: true}
 }
 
@@ -535,26 +602,32 @@ func portStillOwnedByPID(port int, pid int, pidForPort func(int) (int, error)) b
 // back to the next strategy).
 func pidForPortViaLsof(port int) (int, error) {
 	cmd := exec.Command("lsof", "-ti", fmt.Sprintf(":%d", port))
+
 	out, err := cmd.Output()
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
 			return 0, errLsofUnavailable
 		}
+
 		// `lsof` exits non-zero when nothing's listening; that's the
 		// "no PID found" path, not an error.
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 			return 0, nil
 		}
+
 		return 0, fmt.Errorf("backends: lsof %d: %w", port, err)
 	}
+
 	line := strings.TrimSpace(strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0])
 	if line == "" {
 		return 0, nil
 	}
+
 	pid, err := strconv.Atoi(line)
 	if err != nil {
 		return 0, fmt.Errorf("backends: parse lsof output %q: %w", line, err)
 	}
+
 	return pid, nil
 }
 
@@ -579,13 +652,16 @@ func Status(prof Profile, opts StopOptions) []StatusResult {
 	if opts.PIDForPort == nil {
 		opts.PIDForPort = realPIDForPort
 	}
+
 	if opts.IsAlive == nil {
 		opts.IsAlive = realIsAlive
 	}
+
 	results := make([]StatusResult, 0, len(prof.Models))
 	for _, m := range prof.Models {
 		resolved, _ := resolvePID(m, opts.RunDir, opts.IsAlive, opts.PIDForPort)
 		pid := resolved.PID
+
 		results = append(results, StatusResult{
 			Alias: m.Alias,
 			Port:  m.Port,
@@ -593,5 +669,6 @@ func Status(prof Profile, opts StopOptions) []StatusResult {
 			PID:   pid,
 		})
 	}
+
 	return results
 }

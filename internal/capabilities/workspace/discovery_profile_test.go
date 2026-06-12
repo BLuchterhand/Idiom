@@ -37,6 +37,7 @@ func TestDiscoveryProfileClassifiesGenericToolsForBalance(t *testing.T) {
 			if got.Class != tc.wantClass || got.Scope != tc.wantScope || got.Cost != tc.wantCost || !got.Discovery {
 				t.Fatalf("DiscoveryProfileForRequest(%#v) = %#v, want class=%q scope=%q cost=%q discovery", tc.req, got, tc.wantClass, tc.wantScope, tc.wantCost)
 			}
+
 			if tc.req.Tool != "source_sanity" && !got.Generic {
 				t.Fatalf("DiscoveryProfileForRequest(%#v) = %#v, want generic discovery", tc.req, got)
 			}
@@ -70,6 +71,7 @@ func TestDiscoveryProfileDoesNotCountVerificationShellAsDiscovery(t *testing.T) 
 	if got.Discovery || got.Class != "other" {
 		t.Fatalf("verification shell should not count as discovery, got %#v", got)
 	}
+
 	got = DiscoveryProfileForRequest(ToolRequest{Tool: "shell", Command: "rg TODO internal"})
 	if !got.Discovery || got.Class != "shell_discovery" || got.Scope != "targeted" {
 		t.Fatalf("targeted shell search should count as discovery, got %#v", got)
@@ -78,6 +80,7 @@ func TestDiscoveryProfileDoesNotCountVerificationShellAsDiscovery(t *testing.T) 
 
 func TestGenericDiscoveryToolsCountAsNarrowingEvidence(t *testing.T) {
 	mgr := NewManager(testWorkspaceConfig(t))
+
 	for _, req := range []ToolRequest{
 		{Tool: "harness_feedback", Component: "context_pack", Expected: "x", Observed: "y", Impact: "z"},
 		{Tool: "code_navigate", Capability: "read_symbol", Path: "src/app.cpp", Pattern: "Run"},
@@ -98,6 +101,7 @@ func TestGenericDiscoveryToolsCountAsNarrowingEvidence(t *testing.T) {
 		if !IsNarrowingRequest(req) {
 			t.Fatalf("%s should count as a narrowing request", req.Tool)
 		}
+
 		if !mgr.ShouldClearBroadInspectionLock(req, ToolResult{Tool: req.Tool, Summary: "ok"}) {
 			t.Fatalf("%s should clear broad-inspection lock after a successful result", req.Tool)
 		}

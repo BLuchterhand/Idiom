@@ -17,14 +17,17 @@ func laneStartTelemetryFields(opts laneOptions, cfg config.Config) map[string]an
 		"local_ops":               cmdtelemetry.LocalOpsFields(cfg, opts.Mode),
 	}
 	profile, ok := laneDoctorReadinessProfile(opts)
+
 	if !ok {
 		fields["readiness_state"] = "unavailable"
 		fields["backend_state"] = "unavailable"
 		fields["queue_state"] = "unavailable"
 		fields["context_budget_state"] = "unavailable"
 		fields["route_classifier_state"] = "unavailable"
+
 		return fields
 	}
+
 	fields["readiness_state"] = profile.State
 	fields["enforcement"] = profile.Enforcement
 	fields["required_for_launch"] = profile.RequiredForLaunch
@@ -46,6 +49,7 @@ func laneStartTelemetryFields(opts laneOptions, cfg config.Config) map[string]an
 	fields["soft_degradations"] = profile.Metrics.SoftDegradations
 	fields["degraded"] = profile.State == "degraded"
 	fields["blocked"] = profile.State == "blocked"
+
 	return fields
 }
 
@@ -54,10 +58,12 @@ func laneDoctorReadinessProfile(opts laneOptions) (readinessProfileReport, bool)
 	if profileName == "" {
 		return readinessProfileReport{}, false
 	}
+
 	profiles, err := buildDoctorReadinessProfiles(opts.ConfigPath, profileName, nil)
 	if err != nil || len(profiles) != 1 {
 		return readinessProfileReport{}, false
 	}
+
 	return profiles[0], true
 }
 
@@ -76,9 +82,11 @@ func cloneStringMap(in map[string]string) map[string]string {
 	if len(in) == 0 {
 		return nil
 	}
+
 	out := make(map[string]string, len(in))
 	for key, value := range in {
 		out[key] = value
 	}
+
 	return out
 }

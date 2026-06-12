@@ -66,6 +66,7 @@ func (m *Manager) harnessFeedback(req ToolRequest) ToolResult {
 			Error:   err.Error(),
 		}
 	}
+
 	return ToolResult{
 		Tool:    "harness_feedback",
 		Summary: fmt.Sprintf("Recorded %s feedback for %s (%s, %s)", report.Category, report.Component, report.Confidence, report.Severity),
@@ -75,21 +76,27 @@ func (m *Manager) harnessFeedback(req ToolRequest) ToolResult {
 
 func validateHarnessFeedback(report harnessFeedbackReport) error {
 	var missing []string
+
 	if report.Component == "" {
 		missing = append(missing, "component")
 	}
+
 	if report.Expected == "" {
 		missing = append(missing, "expected")
 	}
+
 	if report.Observed == "" {
 		missing = append(missing, "observed")
 	}
+
 	if report.Impact == "" {
 		missing = append(missing, "impact")
 	}
+
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required feedback field(s): %s", strings.Join(missing, ", "))
 	}
+
 	return nil
 }
 
@@ -185,11 +192,13 @@ func cleanHarnessFeedbackEvidence(values []string) []string {
 		if value == "" {
 			continue
 		}
+
 		out = append(out, value)
 		if len(out) >= maxHarnessFeedbackEvidence {
 			break
 		}
 	}
+
 	return out
 }
 
@@ -198,5 +207,6 @@ func cleanHarnessFeedbackText(value string) string {
 	if len(value) <= maxHarnessFeedbackText {
 		return value
 	}
+
 	return value[:maxHarnessFeedbackText]
 }

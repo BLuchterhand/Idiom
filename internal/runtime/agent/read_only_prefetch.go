@@ -33,17 +33,24 @@ func (r *Runner) maybeApplyReadOnlyNamedPathPrefetch(recorder runnerTurnRecorder
 			r.emitEvent(RunEvent{Role: readOnlyPrefetchEventRole, Content: string(data)})
 		}
 	}()
+
 	if !event.Eligible || r == nil || r.Workspace == nil {
 		return collectedResults
 	}
+
 	paths := readOnlyPrefetchObjectivePaths(r.RuntimeBrief)
+
 	event.RequestedPaths = len(paths)
+
 	if len(paths) == 0 {
 		event.Eligible = false
 		event.MissReason = "no_explicit_named_paths"
+
 		return collectedResults
 	}
+
 	report := r.Workspace.PrefetchReadFiles(paths, workspace.PrefetchReadOptions{})
+
 	event.SelectedPaths = append([]string(nil), report.SelectedPaths...)
 	event.SkippedPaths = append([]workspace.PrefetchSkippedPath(nil), report.SkippedPaths...)
 	event.DuplicatePaths = report.DuplicatePaths
@@ -51,11 +58,14 @@ func (r *Runner) maybeApplyReadOnlyNamedPathPrefetch(recorder runnerTurnRecorder
 	event.Lines = report.Lines
 	event.TruncatedFiles = report.TruncatedFiles
 	event.EstimatedRoundTripsSaved = report.EstimatedRoundTripsSaved
+
 	if len(report.Results) == 0 {
 		event.Eligible = false
 		event.MissReason = "no_paths_prefetched"
+
 		return collectedResults
 	}
+
 	for i, result := range report.Results {
 		req := workspace.ToolRequest{Tool: workspace.ToolNamePrefetch, Path: report.SelectedPaths[i]}
 		recorder.recordWithOptions(0, req, result, "read_only_named_path_prefetch", runnerRecordOptions{
@@ -63,6 +73,7 @@ func (r *Runner) maybeApplyReadOnlyNamedPathPrefetch(recorder runnerTurnRecorder
 			ResetRejected: true,
 		})
 	}
+
 	return *recorder.collectedResults
 }
 
@@ -72,23 +83,29 @@ func (r *Runner) readOnlyNamedPathPrefetchEvent(collectedResults []workspace.Too
 		event.MissReason = "workspace_unavailable"
 		return event
 	}
+
 	if os.Getenv("IDIOM_DISABLE_READONLY_PREFETCH") == "1" {
 		event.MissReason = "disabled_by_env"
 		return event
 	}
+
 	if readOnlyNamedPathPrefetchChildAgent(r.agentName()) {
 		event.MissReason = "delegated_child_agent"
 		return event
 	}
+
 	if len(collectedResults) > 0 {
 		event.MissReason = "existing_evidence_present"
 		return event
 	}
+
 	if !readOnlyNamedPathPrefetchLane(r.RuntimeBrief) {
 		event.MissReason = "not_read_only_workspace"
 		return event
 	}
+
 	event.Eligible = true
+
 	return event
 }
 
@@ -111,5 +128,6 @@ func readOnlyPrefetchObjectivePaths(brief workerruntime.WorkerRuntimeBrief) []st
 	if text == "" {
 		return nil
 	}
+
 	return pathparse.MentionedWorkspacePaths(text)
 }

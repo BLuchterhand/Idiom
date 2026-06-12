@@ -95,7 +95,9 @@ func Derive(input PolicyInput) Policy {
 		TimeoutMillis:            input.TimeoutMillis,
 		ExpressibleActionClasses: UniqueStrings(input.ExpressibleActionClasses),
 	}
+
 	policy.TransportMode = transportMode(policy)
+
 	return policy
 }
 
@@ -114,9 +116,11 @@ func (policy Policy) ResponseFormatMode() string {
 	if policy.ResponseFormatJSON {
 		return "json"
 	}
+
 	if responseFormat := strings.TrimSpace(policy.ResponseFormat); responseFormat != "" {
 		return responseFormat
 	}
+
 	return "default"
 }
 
@@ -124,9 +128,11 @@ func transportMode(policy Policy) TransportMode {
 	if policy.ForceNativeTools || (policy.SupportsNativeTools && !policy.TextualToolParser && !policy.ResponseFormatJSON) {
 		return TransportModeNative
 	}
+
 	if policy.TerminalOnly || policy.ResponseFormatJSON {
 		return TransportModeTextualJSON
 	}
+
 	return TransportModeTextual
 }
 
@@ -138,7 +144,9 @@ func cloneBoolPtr(value *bool) *bool {
 	if value == nil {
 		return nil
 	}
+
 	cloned := *value
+
 	return &cloned
 }
 

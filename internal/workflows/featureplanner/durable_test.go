@@ -13,12 +13,14 @@ import (
 
 func TestValidateDurablePlanRequiresPreDispatchBaseline(t *testing.T) {
 	plan := durablePlan()
+
 	plan.Atoms[0].TestFirst.PreExecutionEventIDs = nil
 
 	err := ValidateDurablePlan(plan)
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
+
 	if !strings.Contains(err.Error(), "test_first.pre_execution_event_ids") {
 		t.Fatalf("expected pre-execution event error, got %v", err)
 	}
@@ -26,12 +28,14 @@ func TestValidateDurablePlanRequiresPreDispatchBaseline(t *testing.T) {
 
 func TestValidateDurablePlanRejectsMismatchedTDDSnapshot(t *testing.T) {
 	plan := durablePlan()
+
 	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = []string{"go test ./wrong"}
 
 	err := ValidateDurablePlan(plan)
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
+
 	if !strings.Contains(err.Error(), "planned_tdd_snapshot.test_commands") {
 		t.Fatalf("expected snapshot command mismatch, got %v", err)
 	}
@@ -39,7 +43,9 @@ func TestValidateDurablePlanRejectsMismatchedTDDSnapshot(t *testing.T) {
 
 func TestReplayRejectsStaleFeatureRevision(t *testing.T) {
 	state := durableState()
+
 	state.Revision = 3
+
 	_, err := Replay(state, []Event{
 		{
 			SchemaVersion:         FeatureEventSchemaVersion,
@@ -54,7 +60,9 @@ func TestReplayRejectsStaleFeatureRevision(t *testing.T) {
 			FeatureTo:             FeatureStateDispatching,
 		},
 	})
+
 	var replayErr ReplayError
+
 	if !errors.As(err, &replayErr) {
 		t.Fatalf("expected ReplayError, got %v", err)
 	}
@@ -62,7 +70,9 @@ func TestReplayRejectsStaleFeatureRevision(t *testing.T) {
 
 func TestReplayErrorClassifiesReplayInvariantViolations(t *testing.T) {
 	state := durableState()
+
 	state.Revision = 3
+
 	_, err := Replay(state, []Event{{
 		SchemaVersion:         FeatureEventSchemaVersion,
 		EventID:               "evt-stale",
@@ -78,16 +88,21 @@ func TestReplayErrorClassifiesReplayInvariantViolations(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected replay error")
 	}
+
 	var replayErr ReplayError
+
 	if !errors.As(err, &replayErr) {
 		t.Fatalf("expected ReplayError, got %v", err)
 	}
+
 	if got := failures.CodeOf(err); got != failures.FailedPrecondition {
 		t.Fatalf("CodeOf(err) = %v, want %v", got, failures.FailedPrecondition)
 	}
+
 	if got := failures.ReasonOf(err); got != ReplayInvariantViolation {
 		t.Fatalf("ReasonOf(err) = %v, want %v", got, ReplayInvariantViolation)
 	}
+
 	if !strings.Contains(err.Error(), "expected feature_revision_before") {
 		t.Fatalf("existing replay error message changed: %v", err)
 	}
@@ -95,6 +110,7 @@ func TestReplayErrorClassifiesReplayInvariantViolations(t *testing.T) {
 
 func TestReplayPreservesMalformedAuthorityDeltaForDurableValidation(t *testing.T) {
 	state := durableState()
+
 	bundle, err := Replay(state, []Event{{
 		SchemaVersion:         FeatureEventSchemaVersion,
 		EventID:               "evt-authority",
@@ -114,9 +130,11 @@ func TestReplayPreservesMalformedAuthorityDeltaForDurableValidation(t *testing.T
 	if err != nil {
 		t.Fatalf("replay should preserve malformed authority delta for validation, got %v", err)
 	}
+
 	if len(bundle.State.AuthorityDeltas) != 1 {
 		t.Fatalf("authority deltas were dropped: %#v", bundle.State.AuthorityDeltas)
 	}
+
 	err = ValidateDurableState(bundle.State)
 	if err == nil || !strings.Contains(err.Error(), "authority delta 0 missing question_id") {
 		t.Fatalf("expected durable authority delta validation error, got %v", err)
@@ -125,10 +143,12 @@ func TestReplayPreservesMalformedAuthorityDeltaForDurableValidation(t *testing.T
 
 func TestReplayAppliesDurableDispatchEvent(t *testing.T) {
 	state := durableState()
+
 	state.Atoms = []FeatureAtomState{{
 		FeatureAtomPlan: durablePlan().Atoms[0],
 		State:           AtomStateDispatchable,
 	}}
+
 	events := []Event{
 		{
 			SchemaVersion:         FeatureEventSchemaVersion,
@@ -173,15 +193,19 @@ func TestReplayAppliesDurableDispatchEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("replay failed: %v", err)
 	}
+
 	if bundle.State.Revision != 1 || bundle.State.Status != FeatureStateDispatching {
 		t.Fatalf("unexpected replay state: %#v", bundle.State)
 	}
+
 	if got := bundle.State.Atoms[0].State; got != AtomStateDispatching {
 		t.Fatalf("atom state = %q, want dispatching", got)
 	}
+
 	if len(bundle.State.ActiveRuns) != 1 || bundle.State.ActiveRuns[0].LaneSessionID != "lane-1" {
 		t.Fatalf("active runs not folded: %#v", bundle.State.ActiveRuns)
 	}
+
 	if len(bundle.State.Leases) != 1 || bundle.State.Leases[0].FencingRevision != 1 {
 		t.Fatalf("leases not folded: %#v", bundle.State.Leases)
 	}
@@ -189,11 +213,13 @@ func TestReplayAppliesDurableDispatchEvent(t *testing.T) {
 
 func TestReplayAppliesFeaturePlannerDispatchAndCompletionDeltas(t *testing.T) {
 	state := durableState()
+
 	state.Status = FeatureStateDispatching
 	state.Atoms = []FeatureAtomState{{
 		FeatureAtomPlan: durablePlan().Atoms[0],
 		State:           AtomStateQueued,
 	}}
+
 	events := []Event{
 		{
 			SchemaVersion: FeatureEventSchemaVersion,
@@ -236,12 +262,15 @@ func TestReplayAppliesFeaturePlannerDispatchAndCompletionDeltas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("replay failed: %v", err)
 	}
+
 	if got := bundle.State.Atoms[0].State; got != AtomStateComplete {
 		t.Fatalf("atom state = %q, want complete", got)
 	}
+
 	if bundle.State.Status != FeatureStateComplete {
 		t.Fatalf("feature state = %q, want complete", bundle.State.Status)
 	}
+
 	if len(bundle.State.ActiveRuns) != 0 {
 		t.Fatalf("active run should fold terminal: %+v", bundle.State.ActiveRuns)
 	}
@@ -249,6 +278,7 @@ func TestReplayAppliesFeaturePlannerDispatchAndCompletionDeltas(t *testing.T) {
 
 func TestReplayAppliesProductSourceSatisfiedCloseout(t *testing.T) {
 	state := durableState()
+
 	state.Status = FeatureStateDispatching
 	state.PlanningLoop.State = FeatureStateDispatching
 	state.OpenQuestions = []PlannerQuestion{{ID: "q-1", Status: "open", QuestionSummary: "stale question"}}
@@ -278,9 +308,11 @@ func TestReplayAppliesProductSourceSatisfiedCloseout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("replay failed: %v", err)
 	}
+
 	if bundle.State.Status != FeatureStateSourceSatisfied || bundle.State.PlanningLoop.State != FeatureStateSourceSatisfied {
 		t.Fatalf("expected source-satisfied replay state, got status=%q loop=%q", bundle.State.Status, bundle.State.PlanningLoop.State)
 	}
+
 	if len(bundle.State.ActiveRuns) != 0 || len(bundle.State.OpenQuestions) != 0 || len(bundle.State.OpenRecoveryPackets) != 0 || len(bundle.State.PlanningLoop.OpenQuestionIDs) != 0 {
 		t.Fatalf("source-satisfied replay should clear terminal-incompatible work: %#v", bundle.State)
 	}
@@ -288,6 +320,7 @@ func TestReplayAppliesProductSourceSatisfiedCloseout(t *testing.T) {
 
 func TestReplayRejectsMismatchedAtomDeltaFromState(t *testing.T) {
 	state := durableState()
+
 	state.Status = FeatureStateDispatching
 	state.Atoms = []FeatureAtomState{{
 		FeatureAtomPlan: durablePlan().Atoms[0],
@@ -306,9 +339,11 @@ func TestReplayRejectsMismatchedAtomDeltaFromState(t *testing.T) {
 	}})
 
 	var replayErr ReplayError
+
 	if !errors.As(err, &replayErr) {
 		t.Fatalf("expected ReplayError, got %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "got folded state") {
 		t.Fatalf("expected folded atom state mismatch, got %v", err)
 	}
@@ -316,6 +351,7 @@ func TestReplayRejectsMismatchedAtomDeltaFromState(t *testing.T) {
 
 func TestReplayRejectsMalformedPreExecutionTDDEvidence(t *testing.T) {
 	state := durableState()
+
 	state.Status = FeatureStateDispatching
 	state.Atoms = []FeatureAtomState{{
 		FeatureAtomPlan: durablePlan().Atoms[0],
@@ -333,9 +369,11 @@ func TestReplayRejectsMalformedPreExecutionTDDEvidence(t *testing.T) {
 	}})
 
 	var replayErr ReplayError
+
 	if !errors.As(err, &replayErr) {
 		t.Fatalf("expected ReplayError, got %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "invalid pre-execution TDD evidence") {
 		t.Fatalf("expected TDD evidence replay rejection, got %v", err)
 	}
@@ -343,6 +381,7 @@ func TestReplayRejectsMalformedPreExecutionTDDEvidence(t *testing.T) {
 
 func TestReplayRejectsUnknownSingularAtomEvent(t *testing.T) {
 	state := durableState()
+
 	state.Status = FeatureStateDispatching
 	state.Atoms = []FeatureAtomState{{
 		FeatureAtomPlan: durablePlan().Atoms[0],
@@ -359,9 +398,11 @@ func TestReplayRejectsUnknownSingularAtomEvent(t *testing.T) {
 	}})
 
 	var replayErr ReplayError
+
 	if !errors.As(err, &replayErr) {
 		t.Fatalf("expected ReplayError, got %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "unknown atom") {
 		t.Fatalf("expected unknown atom replay rejection, got %v", err)
 	}
@@ -369,6 +410,7 @@ func TestReplayRejectsUnknownSingularAtomEvent(t *testing.T) {
 
 func TestReplayRejectsInvalidSingularAtomTo(t *testing.T) {
 	state := durableState()
+
 	state.Status = FeatureStateDispatching
 	state.Atoms = []FeatureAtomState{{
 		FeatureAtomPlan: durablePlan().Atoms[0],
@@ -385,9 +427,11 @@ func TestReplayRejectsInvalidSingularAtomTo(t *testing.T) {
 	}})
 
 	var replayErr ReplayError
+
 	if !errors.As(err, &replayErr) {
 		t.Fatalf("expected ReplayError, got %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "invalid atom_to") {
 		t.Fatalf("expected invalid atom_to replay rejection, got %v", err)
 	}
@@ -395,6 +439,7 @@ func TestReplayRejectsInvalidSingularAtomTo(t *testing.T) {
 
 func TestValidateDurableStateRejectsUnknownStatus(t *testing.T) {
 	state := durableState()
+
 	state.Status = "invented"
 
 	err := ValidateDurableState(state)
@@ -414,10 +459,12 @@ func TestSaveLoadBundleRoundTrip(t *testing.T) {
 	if err := SaveBundle(dir, bundle); err != nil {
 		t.Fatalf("save bundle: %v", err)
 	}
+
 	loaded, err := LoadBundle(dir)
 	if err != nil {
 		t.Fatalf("load bundle: %v", err)
 	}
+
 	if !reflect.DeepEqual(bundle, loaded) {
 		t.Fatalf("round trip mismatch\nwant %#v\ngot %#v", bundle, loaded)
 	}
@@ -425,27 +472,34 @@ func TestSaveLoadBundleRoundTrip(t *testing.T) {
 
 func TestSaveStateAndAppendEventsRoundTripDurablePaths(t *testing.T) {
 	state := durableState()
+
 	state.SchemaVersion = SchemaVersion
 	state.FeatureID = ""
 	state.Status = FeatureStatePlanning
 
 	dir := t.TempDir()
+
 	eventsPath, err := AppendEvents(dir, state.SessionID, []Event{{Type: "idiom.feature.created", SessionID: state.SessionID}})
 	if err != nil {
 		t.Fatalf("append events: %v", err)
 	}
+
 	state.EventsPath = eventsPath
+
 	statePath, err := SaveState(dir, &state)
 	if err != nil {
 		t.Fatalf("save state: %v", err)
 	}
+
 	if statePath == "" || eventsPath == "" {
 		t.Fatalf("expected durable paths, state=%q events=%q", statePath, eventsPath)
 	}
+
 	events, loadedEventsPath, err := LoadEvents(dir, state.SessionID)
 	if err != nil {
 		t.Fatalf("load events: %v", err)
 	}
+
 	if loadedEventsPath != eventsPath || len(events) != 1 {
 		t.Fatalf("unexpected loaded events path=%q events=%+v", loadedEventsPath, events)
 	}
@@ -453,22 +507,27 @@ func TestSaveStateAndAppendEventsRoundTripDurablePaths(t *testing.T) {
 
 func TestLoadStateRejectsInvalidDurableStatus(t *testing.T) {
 	state := durableState()
+
 	state.SchemaVersion = SchemaVersion
 	state.FeatureID = ""
 	state.Status = "invented"
 
 	dir := t.TempDir()
+
 	fullPath, _, err := statePath(dir, state.SessionID)
 	if err != nil {
 		t.Fatalf("state path: %v", err)
 	}
+
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		t.Fatalf("mkdir state dir: %v", err)
 	}
+
 	body, err := json.Marshal(state)
 	if err != nil {
 		t.Fatalf("marshal state: %v", err)
 	}
+
 	if err := os.WriteFile(fullPath, body, 0o600); err != nil {
 		t.Fatalf("write state: %v", err)
 	}

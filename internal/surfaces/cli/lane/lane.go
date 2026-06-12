@@ -134,7 +134,9 @@ var lanePostflightRunner = func(args []string, stdout io.Writer, stderr io.Write
 // in the temp workspace; production calls into git via os/exec.
 var laneGitDiff = func(projectRoot string) ([]byte, error) {
 	cmd := exec.Command("git", "diff")
+
 	cmd.Dir = projectRoot
+
 	return cmd.Output()
 }
 
@@ -154,6 +156,7 @@ func runLaneMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 		buildContextPack: buildLaneContextPackSection,
 		telemetry:        rec,
 	}
+
 	return runLaneMainWithDeps(args, stdout, stderr, deps)
 }
 
@@ -168,18 +171,23 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	if len(args) > 0 && args[0] == "postflight" {
 		return runLanePostflight(args[1:], stdout, stderr)
 	}
+
 	opts, err := parseLaneOptions(args, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 2
 	}
+
 	cfg, err := deps.loadConfig(opts.ConfigPath)
 	if err != nil {
 		// Tests pass a stub loadConfig that never errors; production
 		// loads from disk and fails loudly if config is missing.
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	// Resolve project root for overlay lookup. Precedence:
 	//   1. --project-root flag (explicit override; rarely set)
 	//   2. config workspace.root (the canonical project root —
@@ -195,6 +203,7 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 			opts.ProjectRoot = filepath.Dir(opts.BriefPath)
 		}
 	}
+
 	// Resolve the lane model alias now that project root is known.
 	// This covers both explicit --coder and the plan-execute auto-route;
 	// an explicit --model already short-circuited coderRequested in
@@ -204,29 +213,39 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	if opts.coderRequested && strings.TrimSpace(opts.Model) == "" {
 		opts.Model = resolveLaneModelAlias(opts, stderr)
 	}
+
 	if opts.Mode == "history" {
 		filter := laneHistoryFilter{FailedOnly: opts.FailedOnly, ModeFilter: opts.ModeFilter}
 		if opts.Since != "" {
 			dur, err := time.ParseDuration(opts.Since)
 			if err != nil {
 				fmt.Fprintf(stderr, "lane: history: invalid --since value %q: %v\n", opts.Since, err)
+
 				return 2
 			}
+
 			filter.Since = time.Now().UTC().Add(-dur)
 		}
+
 		if opts.ModeFilter != "" && !isKnownLaneMode(opts.ModeFilter) {
 			fmt.Fprintf(stderr, "lane: history: unknown --lane-mode %q (valid: plan-execute, implement, refine, explain, history)\n", opts.ModeFilter)
+
 			return 2
 		}
+
 		if err := printLaneHistorySummary(opts.ProjectRoot, stdout, filter); err != nil {
 			fmt.Fprintf(stderr, "lane: history: %v\n", err)
+
 			return 1
 		}
+
 		return 0
 	}
+
 	if opts.Mode == "explain" {
 		return runLaneExplain(opts, stdout, stderr)
 	}
+
 	if opts.Mode == "refine" {
 		refineOpts := laneRefineOptions{
 			SpecPath:    opts.RefineSpecPath,
@@ -239,12 +258,15 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		dispatch := func(metaBriefPath string, stdout, stderr io.Writer) int {
 			return defaultRefineDispatchWithConfig(metaBriefPath, opts.ConfigPath, stdout, stderr)
 		}
+
 		return runLaneRefine(refineOpts, dispatch, stdout, stderr)
 	}
+
 	handled, code, atomReport := runLaneAtomIntakePreflight(opts, stdout, stderr)
 	if handled {
 		return code
 	}
+
 	// Brief lint preflight: default-on. The wrapper that used to
 	// run this in shell is now redundant — every project that uses
 	// `idiom lane` benefits from catching unsafe briefs before
@@ -253,13 +275,17 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	if !opts.NoLint {
 		if code := laneBriefLintRunner([]string{opts.BriefPath}, stdout, stderr); code != 0 {
 			fmt.Fprintf(stderr, "lane: brief lint failed (exit %d); use --no-lint to skip preflight\n", code)
+
 			return code
 		}
 	}
+
 	if err := checkBriefStaleness(opts.BriefPath, opts.ProjectRoot, opts.AllowStaleBrief, stderr); err != nil {
 		fmt.Fprintf(stderr, "lane: %v\n", err)
+
 		return 1
 	}
+
 	// Slot mutex: opt-in concurrency guard for orchestrators that
 	// dispatch lanes in parallel. The KEY (what counts as "the same
 	// lane") is project policy, so the caller chooses; idiom owns
@@ -269,17 +295,22 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		if code != 0 {
 			return code
 		}
+
 		defer release()
 	}
+
 	contextPackSection := ""
 	if deps.buildContextPack != nil && shouldAutoPreloadLaneContextPack(opts) {
 		contextPackSection = deps.buildContextPack(opts, cfg, stderr)
 	}
+
 	laneStartFields := laneStartTelemetryFields(opts, cfg)
 	logCLIPhase(deps.telemetry, "lane_start", laneStartFields)
+
 	composedPath, err := composeLanePromptToFile(opts, contextPackSection)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
 	// composeLanePromptToFile creates a temp file under os.TempDir;
@@ -303,14 +334,18 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		decision := buildLaneWriterRouteDecision(cfg, opts, requiredEditPaths)
 		emitLaneJSONEvent(stdout, "writer_route_decision", decision.EventFields())
 	}
+
 	forwardArgs := buildForwardedArgs(opts, composedPath, requiredEditPaths)
 	// Tee stdout so the post-analysis can scan the JSON event stream
 	// the subcommand emits. Without --json the subcommand still prints
 	// human-readable output that contains the same markers, so the
 	// analyzer works either way; --json just makes it machine-precise.
 	tee := newTeeBuffer(stdout)
+
 	var subcode int
+
 	sessionCapture := &lanePromptSessionCapture{}
+
 	switch opts.Mode {
 	case "plan-execute":
 		subcode = deps.runPlanExecute(forwardArgs, tee, stderr, deps.defaultPromptRun)
@@ -320,20 +355,25 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		// parseLaneOptions already rejects unknown modes; defensive
 		// belt-and-suspenders.
 		fmt.Fprintf(stderr, "lane: unknown mode %q\n", opts.Mode)
+
 		return 2
 	}
+
 	subcommandExit := subcode
 	degraded := analyzeLaneOutput(tee.Bytes(), subcode)
+
 	if opts.Postflight {
 		pfExit := runLanePostflightAfterLane(opts, stdout, stderr)
 		if pfExit > subcode {
 			subcode = pfExit
 		}
 	}
+
 	briefMtime := ""
 	if info, err := os.Stat(opts.BriefPath); err == nil {
 		briefMtime = info.ModTime().UTC().Format(time.RFC3339Nano)
 	}
+
 	historyEvt := laneHistoryEvent{
 		Mode:            opts.Mode,
 		Brief:           opts.BriefPath,
@@ -357,15 +397,19 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		historyEvt.DurationMS = summary.DurationMS
 		historyEvt.StopReason = summary.StopReason
 	}
+
 	if historyEvt.SessionID == "" {
 		historyEvt.SessionID = sessionCapture.SessionID()
 	}
+
 	if err := appendLaneHistory(opts.ProjectRoot, historyEvt); err != nil {
 		fmt.Fprintf(stderr, "lane: history append failed: %v\n", err)
 	}
+
 	if opts.JSONEvents {
 		emitLaneJSONEvent(stdout, "run_ledger", laneHistoryEventFields(historyEvt))
 	}
+
 	if opts.Mode == "implement" && subcommandExit != 0 {
 		writeLaneImplementRecovery(opts, historyEvt, subcommandExit, stderr)
 	}
@@ -383,12 +427,15 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		})
 		fmt.Fprintf(stderr, "lane: degraded kind=%s details=%s\n", d.kind, d.details)
 	}
+
 	if subcode != 0 {
 		return subcode
 	}
+
 	if len(degraded) > 0 {
 		return 4
 	}
+
 	return 0
 }
 
@@ -400,6 +447,7 @@ func isKnownLaneMode(mode string) bool {
 	case "plan-execute", "implement", "history", "refine", "explain":
 		return true
 	}
+
 	return false
 }
 
@@ -408,16 +456,20 @@ func runLaneAtomIntakePreflight(opts laneOptions, stdout io.Writer, stderr io.Wr
 	if err != nil {
 		return false, 0, nil
 	}
+
 	if !laneBriefNeedsAtomIntake(string(body)) {
 		return false, 0, nil
 	}
+
 	report := evaluateAtomIntake(string(body), opts.BriefPath, opts.ProjectRoot, opts.AllowDirtyAtomScope)
 	if opts.JSONEvents {
 		emitLaneJSONEvent(stdout, "atom_intake", laneAtomIntakeReportFields(report))
 	}
+
 	if report.Dispatchable {
 		return false, 0, &report
 	}
+
 	historyEvt := laneHistoryEvent{
 		Mode:            opts.Mode,
 		Brief:           opts.BriefPath,
@@ -430,11 +482,14 @@ func runLaneAtomIntakePreflight(opts laneOptions, stdout io.Writer, stderr io.Wr
 	if err := appendLaneHistory(opts.ProjectRoot, historyEvt); err != nil {
 		fmt.Fprintf(stderr, "lane: history append failed: %v\n", err)
 	}
+
 	if opts.JSONEvents {
 		emitLaneJSONEvent(stdout, "run_ledger", laneHistoryEventFields(historyEvt))
 	}
+
 	fmt.Fprintln(stderr, "lane: atom intake blocked dispatch")
 	printAtomIntakeReport(report, stderr)
+
 	return true, 1, &report
 }
 
@@ -442,6 +497,7 @@ func laneBriefMtime(path string) string {
 	if info, err := os.Stat(path); err == nil {
 		return info.ModTime().UTC().Format(time.RFC3339Nano)
 	}
+
 	return ""
 }
 
@@ -449,24 +505,30 @@ func laneBriefNeedsAtomIntake(body string) bool {
 	if _, ok := atomSpecStatus(body); ok {
 		return true
 	}
+
 	if _, ok := atomRefineDraftReason(body); ok {
 		return true
 	}
+
 	targets := atomcmd.DefaultScopePaths(body)
 	if len(targets) == 0 {
 		return false
 	}
+
 	if atomSpecHasAcceptedResult(body) {
 		return true
 	}
+
 	if len(atomRequiredEditSnippetsFromSpec(body, targets)) > 0 {
 		return true
 	}
+
 	for _, heading := range []string{"required edits", "edits to apply", "implementation shape"} {
 		if strings.TrimSpace(atomMarkdownSectionByHeading(body, heading)) != "" {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -475,11 +537,15 @@ func laneAtomIntakeReportFields(report atomIntakeReport) map[string]any {
 	if err != nil {
 		return map[string]any{}
 	}
+
 	var fields map[string]any
+
 	if err := json.Unmarshal(body, &fields); err != nil {
 		return map[string]any{}
 	}
+
 	delete(fields, "type")
+
 	return fields
 }
 
@@ -490,6 +556,7 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	if len(args) == 0 {
 		return laneOptions{}, fmt.Errorf("lane: usage: idiom lane <mode> [flags] <brief>")
 	}
+
 	mode := strings.TrimSpace(args[0])
 	if !isKnownLaneMode(mode) {
 		return laneOptions{}, fmt.Errorf("lane: --mode must be one of plan-execute, implement, history, refine, explain (got %q)", mode)
@@ -499,6 +566,7 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.SetOutput(stderr)
 
 	var opts laneOptions
+
 	opts.Mode = mode
 	// Default to the canonical project layout (.idiom/config.json) so
 	// `idiom lane <mode> <brief>` runs from a project root without an
@@ -511,9 +579,11 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	if envConfig := strings.TrimSpace(os.Getenv("IDIOM_CONFIG")); envConfig != "" {
 		configDefault = envConfig
 	}
+
 	fs.StringVar(&opts.ConfigPath, "config", configDefault, "path to config file (defaults to .idiom/config.json or $IDIOM_CONFIG)")
 	fs.StringVar(&opts.Title, "title", "", "atom title (carried through to telemetry)")
 	fs.StringVar(&opts.Model, "model", "", "override the model alias used for the lane")
+
 	// --coder records intent; the actual alias is resolved later in
 	// runLaneMainWithDeps from .idiom/backends.json. When no backends
 	// file declares an executor role, opts.Model stays empty and the
@@ -547,6 +617,7 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	if err := fs.Parse(args[1:]); err != nil {
 		return laneOptions{}, err
 	}
+
 	// --coder loses to --model when both are set, matching the
 	// Colony script's existing behavior. Record the intent here; the
 	// alias resolves in runLaneMainWithDeps once backends.json loads.
@@ -576,9 +647,11 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 		if len(tail) == 0 {
 			return laneOptions{}, fmt.Errorf("lane: brief path is required (positional argument after the flags)")
 		}
+
 		if len(tail) > 1 {
 			return laneOptions{}, fmt.Errorf("lane: too many positional arguments (got %v)", tail)
 		}
+
 		opts.BriefPath = tail[0]
 		if info, err := os.Stat(opts.BriefPath); err != nil {
 			return laneOptions{}, fmt.Errorf("lane: brief not readable at %q: %w", opts.BriefPath, err)
@@ -586,6 +659,7 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 			return laneOptions{}, fmt.Errorf("lane: brief path %q is a directory", opts.BriefPath)
 		}
 	}
+
 	// ProjectRoot stays empty here when --project-root isn't given;
 	// runLaneMainWithDeps fills it from config.Workspace.Root after
 	// the config loads. The brief's parent dir is the last-resort
@@ -610,22 +684,30 @@ func runLanePostflightAfterLane(opts laneOptions, stdout io.Writer, stderr io.Wr
 	out, err := laneGitDiff(opts.ProjectRoot)
 	if err != nil {
 		fmt.Fprintf(stderr, "lane: postflight: git diff failed: %v\n", err)
+
 		return 1
 	}
+
 	tmp, err := os.CreateTemp(os.TempDir(), "idiom-lane-postflight-*.diff")
 	if err != nil {
 		fmt.Fprintf(stderr, "lane: postflight: create temp file failed: %v\n", err)
+
 		return 1
 	}
 	defer os.Remove(tmp.Name())
+
 	if _, err := tmp.Write(out); err != nil {
 		fmt.Fprintf(stderr, "lane: postflight: write temp file failed: %v\n", err)
+
 		return 1
 	}
+
 	if err := tmp.Close(); err != nil {
 		fmt.Fprintf(stderr, "lane: postflight: close temp file failed: %v\n", err)
+
 		return 1
 	}
+
 	return lanePostflightRunner([]string{"--diff", tmp.Name(), "--project-root", opts.ProjectRoot, "--brief", opts.BriefPath}, stdout, stderr)
 }
 
@@ -635,6 +717,7 @@ func resolveLaneModelAlias(opts laneOptions, stderr io.Writer) string {
 			return alias
 		}
 	}
+
 	return resolveRoleAlias(opts.ProjectRoot, opts.BackendProfile, backends.RoleExecutor, stderr)
 }
 
@@ -649,11 +732,14 @@ func resolveRoleAlias(projectRoot, profileName, role string, stderr io.Writer) s
 	file, ok, err := backends.LoadFromProjectRoot(projectRoot)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return ""
 	}
+
 	if !ok {
 		return ""
 	}
+
 	prof, found := file.Profile(profileName)
 	if !found {
 		// A backends.json that exists but doesn't have the named
@@ -662,9 +748,12 @@ func resolveRoleAlias(projectRoot, profileName, role string, stderr io.Writer) s
 		if profileName != "" {
 			fmt.Fprintf(stderr, "lane: backend profile %q not found in .idiom/backends.json\n", profileName)
 		}
+
 		return ""
 	}
+
 	alias, _ := prof.AliasForRole(role)
+
 	return alias
 }
 
@@ -680,11 +769,15 @@ func acquireLaneSlot(key string, stderr io.Writer) (release func(), code int) {
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		if os.IsExist(err) {
 			fmt.Fprintf(stderr, "lane: slot %q already held at %s — another dispatch is in flight\n", key, dir)
+
 			return func() {}, 3
 		}
+
 		fmt.Fprintf(stderr, "lane: cannot acquire slot %q at %s: %v\n", key, dir, err)
+
 		return func() {}, 1
 	}
+
 	return func() { _ = os.Remove(dir) }, 0
 }
 
@@ -694,6 +787,7 @@ func acquireLaneSlot(key string, stderr io.Writer) (release func(), code int) {
 // short-lived temp dir name.
 func sanitizeSlotKey(key string) string {
 	var b strings.Builder
+
 	for _, r := range key {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '.', r == '_':
@@ -704,9 +798,11 @@ func sanitizeSlotKey(key string) string {
 			b.WriteRune('_')
 		}
 	}
+
 	if b.Len() == 0 {
 		return "default"
 	}
+
 	return b.String()
 }
 
@@ -714,9 +810,11 @@ func shouldAutoPreloadLaneContextPack(opts laneOptions) bool {
 	if opts.NoContextPack {
 		return false
 	}
+
 	if isRefineScratchpadMetaBrief(opts.BriefPath) {
 		return false
 	}
+
 	switch strings.TrimSpace(opts.Mode) {
 	case "implement", "plan-execute":
 		return strings.TrimSpace(opts.BriefPath) != ""
@@ -730,13 +828,16 @@ func isRefineScratchpadMetaBrief(briefPath string) bool {
 	if p == "" || p == "." {
 		return false
 	}
+
 	if !strings.HasPrefix(p, ".idiom/refine/") && !strings.Contains(p, "/.idiom/refine/") {
 		return false
 	}
+
 	name := p
 	if slash := strings.LastIndex(name, "/"); slash >= 0 {
 		name = name[slash+1:]
 	}
+
 	return strings.HasPrefix(name, "meta-") && strings.HasSuffix(name, ".md")
 }
 
@@ -791,21 +892,29 @@ func buildLaneContextPackSection(opts laneOptions, cfg config.Config, stderr io.
 	briefBody, err := os.ReadFile(opts.BriefPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "lane: context_pack skipped: read brief: %v\n", err)
+
 		return ""
 	}
+
 	if briefAlreadyHasContextPack(briefBody) {
 		return ""
 	}
+
 	wsCfg := cfg.Workspace
+
 	wsCfg.Root = firstNonEmptyString(strings.TrimSpace(opts.ProjectRoot), strings.TrimSpace(wsCfg.Root), filepath.Dir(opts.BriefPath))
+
 	if strings.TrimSpace(wsCfg.CWD) == "" {
 		wsCfg.CWD = wsCfg.Root
 	}
+
 	wsCfg.EnableWrites = false
+
 	mgr := workspace.NewManager(wsCfg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
+
 	result := mgr.Execute(ctx, workspace.ToolRequest{
 		Tool:              "context_pack",
 		Task:              laneContextPackTask(opts, string(briefBody)),
@@ -816,21 +925,27 @@ func buildLaneContextPackSection(opts laneOptions, cfg config.Config, stderr io.
 	})
 	if strings.TrimSpace(result.Error) != "" {
 		fmt.Fprintf(stderr, "lane: context_pack skipped: %s\n", result.Error)
+
 		return renderLaneContextDiscoveryFallbackSection(opts, result.Error)
 	}
+
 	section, err := renderLaneContextPackSection(result)
 	if err != nil {
 		fmt.Fprintf(stderr, "lane: context_pack skipped: %v\n", err)
+
 		return renderLaneContextDiscoveryFallbackSection(opts, err.Error())
 	}
+
 	if strings.TrimSpace(section) != "" {
 		fmt.Fprintf(stderr, "lane: context_pack preloaded (%s)\n", result.Summary)
 	}
+
 	return section
 }
 
 func briefAlreadyHasContextPack(body []byte) bool {
 	lower := strings.ToLower(string(body))
+
 	return strings.Contains(lower, "\n## context pack") ||
 		strings.Contains(lower, "\n## context packet") ||
 		strings.Contains(lower, "\n# context pack") ||
@@ -859,13 +974,16 @@ func laneContextPackTask(opts laneOptions, briefBody string) string {
 	if title == "" {
 		title = firstMarkdownHeading(briefBody)
 	}
+
 	if title == "" {
 		title = strings.TrimSuffix(filepath.Base(opts.BriefPath), filepath.Ext(opts.BriefPath))
 	}
+
 	body := normalizeLaneContextPackTaskBody(briefBody)
 	if len(body) > 8000 {
 		body = body[:8000]
 	}
+
 	return strings.TrimSpace(strings.Join([]string{
 		"lane: " + strings.TrimSpace(opts.Mode),
 		"title: " + title,
@@ -876,11 +994,14 @@ func laneContextPackTask(opts laneOptions, briefBody string) string {
 
 func normalizeLaneContextPackTaskBody(body string) string {
 	body = strings.ReplaceAll(body, "\r\n", "\n")
+
 	lines := strings.Split(body, "\n")
+
 	for i, line := range lines {
 		line = regexpRefineScratchpadPath.ReplaceAllString(line, ".idiom/refine/<title>/iter-N/<artifact>")
 		lines[i] = strings.TrimRight(line, " \t")
 	}
+
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
@@ -893,8 +1014,10 @@ func firstMarkdownHeading(body string) string {
 		if !strings.HasPrefix(line, "# ") {
 			continue
 		}
+
 		return strings.TrimSpace(strings.TrimPrefix(line, "# "))
 	}
+
 	return ""
 }
 
@@ -903,57 +1026,74 @@ func collapseLaneContextWhitespace(value string, limit int) string {
 	if limit > 0 && len(value) > limit {
 		return strings.TrimSpace(value[:limit-1]) + "..."
 	}
+
 	return value
 }
 
 func renderLaneContextPackSection(result workspace.ToolResult) (string, error) {
 	var view laneContextPackView
+
 	if err := json.Unmarshal([]byte(result.Output), &view); err != nil {
 		return "", fmt.Errorf("decode context_pack output: %w", err)
 	}
+
 	var b strings.Builder
+
 	b.WriteString("## Context Pack\n\n")
 	b.WriteString("Source: idiom `context_pack` automatic preload. Use this ranked packet before broad reads; treat it as cached context and verify exact anchors before source writes.\n\n")
+
 	summary := regexpContextViewArtifactPath.ReplaceAllString(strings.TrimSpace(result.Summary), "context view artifact")
 	fmt.Fprintf(&b, "- Summary: %s\n", summary)
+
 	if view.PackID != "" {
 		fmt.Fprintf(&b, "- Pack: `%s`\n", view.PackID)
 	}
+
 	if view.Freshness != nil {
 		fmt.Fprintf(&b, "- Freshness: policy=%s fresh_for_scope=%t global_fresh=%t", view.Freshness.Policy, view.Freshness.FreshForScope, view.Freshness.GlobalFresh)
+
 		if view.Freshness.Reason != "" {
 			fmt.Fprintf(&b, " reason=%s", view.Freshness.Reason)
 		}
+
 		b.WriteByte('\n')
 	} else {
 		fmt.Fprintf(&b, "- Fresh: %t\n", view.Fresh)
 	}
+
 	writeLaneContextFiles(&b, view.CandidateFiles, 8)
 	writeLaneContextSymbols(&b, view.CandidateSymbols, 8)
 	writeLaneContextTests(&b, view.Tests, 4)
 	writeLaneContextGaps(&b, view.UnresolvedGaps, 4)
+
 	if !laneContextPackHasTargets(view) {
 		b.WriteString("\n\n")
 		b.WriteString(renderLaneContextDiscoveryFallbackSection(laneOptions{}, "context_pack returned no candidate files, symbols, or tests"))
 	}
+
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
 func renderLaneContextDiscoveryFallbackSection(opts laneOptions, reason string) string {
 	var b strings.Builder
+
 	b.WriteString("## Context Discovery Fallback\n\n")
 	b.WriteString("Source: idiom context preload fallback. The ranked context packet was unavailable or did not identify a useful target. Run this bounded discovery phase before the first edit-bearing action; do not repeat the same failed `context_pack` call.\n\n")
+
 	if reason = strings.TrimSpace(reason); reason != "" {
 		fmt.Fprintf(&b, "- Context packet status: unavailable (%s)\n", collapseLaneContextWhitespace(reason, 220))
 	}
+
 	if title := strings.TrimSpace(opts.Title); title != "" {
 		fmt.Fprintf(&b, "- Objective: %s\n", collapseLaneContextWhitespace(title, 160))
 	}
+
 	b.WriteString("\n### Required Fallback Discovery Phase\n\n")
 	b.WriteString("- Start with `search_files` for likely filenames, component names, package names, or UI/domain terms from the objective.\n")
 	b.WriteString("- Then use `search_content` for stable labels, symbols, config keys, command names, or error text. If a literal phrase misses, broaden to nearby concepts instead of repeating it.\n")
 	b.WriteString("- Read only the highest-confidence candidate file or symbol range with `read_file` or a language-aware symbol tool before the first `submit_plan` or write action.\n")
 	b.WriteString("- If all bounded discovery misses, answer with `<<QUESTION>>:` and name the exact missing target evidence; do not invent an edit path.\n")
+
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -965,20 +1105,26 @@ func writeLaneContextFiles(b *strings.Builder, files []laneContextPackFile, limi
 	if len(files) == 0 {
 		return
 	}
+
 	b.WriteString("\n### Candidate Files\n\n")
+
 	for i, file := range files {
 		if i >= limit {
 			break
 		}
+
 		role := firstNonEmptyString(file.Role, "candidate")
 		score := ""
+
 		if file.Score > 0 {
 			score = fmt.Sprintf(", score=%.2f", file.Score)
 		}
+
 		hub := ""
 		if file.Hub {
 			hub = ", hub"
 		}
+
 		fmt.Fprintf(b, "- `%s` (%s%s%s): %s\n", file.Path, role, score, hub, firstNonEmptyString(file.Reason, file.Confidence, file.Language))
 	}
 }
@@ -987,16 +1133,21 @@ func writeLaneContextSymbols(b *strings.Builder, symbols []laneContextPackSymbol
 	if len(symbols) == 0 {
 		return
 	}
+
 	b.WriteString("\n### Candidate Symbols\n\n")
+
 	for i, sym := range symbols {
 		if i >= limit {
 			break
 		}
+
 		name := firstNonEmptyString(sym.QualifiedName, sym.ID)
 		loc := sym.Path
+
 		if sym.StartLine > 0 {
 			loc = fmt.Sprintf("%s:%d", loc, sym.StartLine)
 		}
+
 		fmt.Fprintf(b, "- `%s` in `%s` (%s): %s\n", name, loc, firstNonEmptyString(sym.Kind, "symbol"), firstNonEmptyString(sym.Reason, sym.Confidence))
 	}
 }
@@ -1005,15 +1156,19 @@ func writeLaneContextTests(b *strings.Builder, tests []laneContextPackTest, limi
 	if len(tests) == 0 {
 		return
 	}
+
 	b.WriteString("\n### Candidate Tests\n\n")
+
 	for i, test := range tests {
 		if i >= limit {
 			break
 		}
+
 		target := firstNonEmptyString(test.Symbol, test.Path)
 		if target != "" {
 			target = " — " + target
 		}
+
 		fmt.Fprintf(b, "- `%s`%s\n", test.Command, target)
 	}
 }
@@ -1022,11 +1177,14 @@ func writeLaneContextGaps(b *strings.Builder, gaps []string, limit int) {
 	if len(gaps) == 0 {
 		return
 	}
+
 	b.WriteString("\n### Context Gaps\n\n")
+
 	for i, gap := range gaps {
 		if i >= limit {
 			break
 		}
+
 		fmt.Fprintf(b, "- %s\n", gap)
 	}
 }
@@ -1063,15 +1221,19 @@ func composeLanePromptToFile(opts laneOptions, contextPackSection string) (strin
 	if rules := canonicalLaneRules(opts.ProjectRoot); strings.TrimSpace(rules) != "" {
 		parts = append(parts, rules)
 	}
+
 	if pre := canonicalLanePreamble(opts.Mode); strings.TrimSpace(pre) != "" {
 		parts = append(parts, pre)
 	}
+
 	if pre := readProjectLaneOverlay(opts.ProjectRoot, opts.Mode, "preamble.md"); strings.TrimSpace(pre) != "" {
 		parts = append(parts, pre)
 	}
+
 	if strings.TrimSpace(contextPackSection) != "" {
 		parts = append(parts, contextPackSection)
 	}
+
 	// Wrap the brief body in explicit boundary markers so downstream
 	// extractors (path detection, discovery handles) can scope to the
 	// brief and skip prose tokens in the surrounding preamble/postamble
@@ -1084,9 +1246,11 @@ func composeLanePromptToFile(opts laneOptions, contextPackSection string) (strin
 	if post := readProjectLaneOverlay(opts.ProjectRoot, opts.Mode, "postamble.md"); strings.TrimSpace(post) != "" {
 		parts = append(parts, post)
 	}
+
 	if post := canonicalLanePostamble(opts.Mode); strings.TrimSpace(post) != "" {
 		parts = append(parts, post)
 	}
+
 	composed := strings.Join(parts, "\n\n")
 
 	f, err := os.CreateTemp("", "idiom-lane-*.md")
@@ -1094,10 +1258,13 @@ func composeLanePromptToFile(opts laneOptions, contextPackSection string) (strin
 		return "", fmt.Errorf("lane: create composed prompt file: %w", err)
 	}
 	defer f.Close()
+
 	if _, err := f.WriteString(composed); err != nil {
 		os.Remove(f.Name())
+
 		return "", fmt.Errorf("lane: write composed prompt: %w", err)
 	}
+
 	return f.Name(), nil
 }
 
@@ -1126,10 +1293,12 @@ func readEmbeddedLanePrompt(mode, filename string) string {
 	if strings.TrimSpace(mode) == "" {
 		return ""
 	}
+
 	body, err := cliassets.LanePrompt(mode, filename)
 	if err != nil {
 		return ""
 	}
+
 	return body
 }
 
@@ -1141,11 +1310,14 @@ func readProjectLaneOverlay(projectRoot, mode, filename string) string {
 	if strings.TrimSpace(projectRoot) == "" {
 		return ""
 	}
+
 	path := filepath.Join(projectRoot, ".idiom", "prompts", "lanes", mode, filename)
+
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
+
 	return string(body)
 }
 
@@ -1162,18 +1334,23 @@ func readProjectLaneOverlay(projectRoot, mode, filename string) string {
 // haven't authored a rules layer.
 func canonicalLaneRules(projectRoot string) string {
 	canonicalSet := make(map[string]struct{}, len(canonicalRuleNames))
+
 	var blocks []string
+
 	for _, name := range canonicalRuleNames {
 		canonicalSet[name] = struct{}{}
 		if override := readProjectRulesFile(projectRoot, name); strings.TrimSpace(override) != "" {
 			blocks = append(blocks, override)
 			continue
 		}
+
 		if body := readEmbeddedRule(name); strings.TrimSpace(body) != "" {
 			blocks = append(blocks, body)
 		}
 	}
+
 	blocks = append(blocks, projectRulesExtras(projectRoot, canonicalSet)...)
+
 	return strings.Join(blocks, "\n\n")
 }
 
@@ -1186,6 +1363,7 @@ func readEmbeddedRule(name string) string {
 	if err != nil {
 		return ""
 	}
+
 	return body
 }
 
@@ -1196,10 +1374,12 @@ func readProjectRulesFile(projectRoot, name string) string {
 	if strings.TrimSpace(projectRoot) == "" {
 		return ""
 	}
+
 	body, err := os.ReadFile(filepath.Join(projectRoot, ".idiom", "prompts", "rules", name))
 	if err != nil {
 		return ""
 	}
+
 	return string(body)
 }
 
@@ -1211,34 +1391,46 @@ func projectRulesExtras(projectRoot string, canonical map[string]struct{}) []str
 	if strings.TrimSpace(projectRoot) == "" {
 		return nil
 	}
+
 	dir := filepath.Join(projectRoot, ".idiom", "prompts", "rules")
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
+
 	var names []string
+
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
+
 		name := e.Name()
 		if !strings.HasSuffix(name, ".md") {
 			continue
 		}
+
 		if _, isCanonical := canonical[name]; isCanonical {
 			continue
 		}
+
 		names = append(names, name)
 	}
+
 	slices.Sort(names)
+
 	var extras []string
+
 	for _, name := range names {
 		body, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil || strings.TrimSpace(string(body)) == "" {
 			continue
 		}
+
 		extras = append(extras, string(body))
 	}
+
 	return extras
 }
 
@@ -1246,16 +1438,20 @@ func laneForwardedRequiredEditPaths(opts laneOptions, atomReport *atomIntakeRepo
 	if opts.Mode != "plan-execute" {
 		return nil
 	}
+
 	var paths []string
+
 	body, err := os.ReadFile(opts.BriefPath)
 	if err == nil {
 		paths = append(paths, app.RequiredEditPathsFromPrompt(string(body))...)
 	} else if stderr != nil {
 		fmt.Fprintf(stderr, "lane: required_edit_paths forwarding skipped: read brief: %v\n", err)
 	}
+
 	if atomReport != nil && atomReport.Dispatchable {
 		paths = append(paths, atomReport.ScopePaths...)
 	}
+
 	return planExecuteUniqueRequiredPaths(paths)
 }
 
@@ -1264,6 +1460,7 @@ func buildLaneWriterRouteDecision(cfg config.Config, opts laneOptions, requiredE
 	taskFamily := "implementation"
 	reason := "route.local_model_default"
 	verificationOwner := "executor"
+
 	if opts.Mode == "plan-execute" {
 		mode = writerroute.ModePlanSubmission
 		taskFamily = agent.PlanThenExecutePlannerTaskFamily
@@ -1272,15 +1469,18 @@ func buildLaneWriterRouteDecision(cfg config.Config, opts laneOptions, requiredE
 	} else if opts.PlannerOwnedVerification && !opts.AllowBuildTests {
 		verificationOwner = "planner_owned"
 	}
+
 	aliases := cliWriterRouteRoleAliases(opts.ProjectRoot, opts.BackendProfile)
 	plannerModel := ""
 	executorModel := ""
+
 	switch opts.Mode {
 	case "plan-execute":
 		plannerModel = strings.TrimSpace(opts.Model)
 	case "implement":
 		executorModel = strings.TrimSpace(opts.Model)
 	}
+
 	return buildCLIWriterRouteDecision(cfg, cliWriterRouteOptions{
 		Mode:              mode,
 		Lane:              opts.Mode,
@@ -1310,27 +1510,35 @@ func buildForwardedArgs(opts laneOptions, composedPath string, requiredEditPaths
 			out = append(out, "--required-edit-path", path)
 		}
 	}
+
 	if model := strings.TrimSpace(opts.Model); model != "" {
 		out = append(out, "--model", model)
 	}
+
 	if opts.JSONEvents {
 		out = append(out, "--json")
 	}
+
 	if resume := strings.TrimSpace(opts.Resume); resume != "" {
 		out = append(out, "--resume", resume)
 	}
+
 	if opts.PlannerOwnedVerification {
 		out = append(out, "--planner-owned-verification")
 	}
+
 	if opts.AllowBuildTests {
 		out = append(out, "--allow-build-tests")
 	}
+
 	if opts.DisableThinking {
 		out = append(out, "--no-thinking")
 	}
+
 	if opts.MaxTokens > 0 {
 		out = append(out, "--max-tokens", strconv.Itoa(opts.MaxTokens))
 	}
+
 	return out
 }
 
@@ -1345,9 +1553,11 @@ func emitLaneJSONEvent(stdout io.Writer, eventType string, fields map[string]any
 		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	maps.Copy(payload, fields)
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}
+
 	fmt.Fprintln(stdout, string(body))
 }

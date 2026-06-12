@@ -15,10 +15,13 @@ import (
 // stdout so shell wrappers can grep the result.
 func TestRunProbeLanePassesForBothModesByDefault(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"lane"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("default probe must exit 0; got %d (stderr=%s)", code, stderr.String())
 	}
+
 	out := stdout.String()
 	for _, want := range []string{"PASS implement(build)", "PASS plan-execute(build)"} {
 		if !strings.Contains(out, want) {
@@ -33,14 +36,18 @@ func TestRunProbeLanePassesForBothModesByDefault(t *testing.T) {
 // be absent.
 func TestRunProbeLaneAcceptsExplicitModeFlag(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"lane", "--mode", "implement"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("implement probe must exit 0; got %d", code)
 	}
+
 	out := stdout.String()
 	if !strings.Contains(out, "PASS implement(build)") {
 		t.Fatalf("expected PASS implement(build): %s", out)
 	}
+
 	if strings.Contains(out, "plan-execute") {
 		t.Fatalf("unexpected plan-execute output: %s", out)
 	}
@@ -51,10 +58,13 @@ func TestRunProbeLaneAcceptsExplicitModeFlag(t *testing.T) {
 // silently picking a fallback. The error names the bad flag.
 func TestRunProbeLaneRejectsUnknownMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"lane", "--mode", "nonsense"}, &stdout, &stderr)
+
 	if code != 2 {
 		t.Fatalf("unknown --mode must exit 2; got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "not recognized") {
 		t.Fatalf("error should explain bad flag; got: %s", stderr.String())
 	}
@@ -68,13 +78,17 @@ func TestRunProbeLaneRejectsUnknownMode(t *testing.T) {
 // working directories where config.json may not be present.
 func TestRunProbeLaneFallsBackWhenConfigMissing(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"lane", "--config", "/definitely/no/config/here.json"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("missing config must not fail the probe; got %d (stderr=%s)", code, stderr.String())
 	}
+
 	if !strings.Contains(stderr.String(), "falling back to synthetic tool surface") {
 		t.Fatalf("stderr should explain the fallback: %s", stderr.String())
 	}
+
 	if !strings.Contains(stdout.String(), "PASS implement(build)") {
 		t.Fatalf("probe should still PASS via the synthetic surface: %s", stdout.String())
 	}
@@ -87,10 +101,13 @@ func TestRunProbeLaneFallsBackWhenConfigMissing(t *testing.T) {
 // confirming the flag landed.
 func TestRunProbeLaneAcceptsCoderFlagAsNoOp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"lane", "--coder"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("--coder must not affect exit code; got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "--coder accepted") {
 		t.Fatalf("stderr should acknowledge --coder explicitly: %s", stderr.String())
 	}
@@ -106,9 +123,11 @@ func TestRunProbeLaneAcceptsCoderFlagAsNoOp(t *testing.T) {
 func TestRunProbeLaneResolvesConfigUnderProjectRoot(t *testing.T) {
 	root := t.TempDir()
 	cfgDir := filepath.Join(root, ".idiom")
+
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	// Minimal valid config: workspace root + write enable + a
 	// shell are enough for NewManager + AllowedTools to surface
 	// non-empty.
@@ -122,16 +141,21 @@ func TestRunProbeLaneResolvesConfigUnderProjectRoot(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"lane", "--project-root", root}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("probe with project-root must exit 0; got %d (stderr=%s)", code, stderr.String())
 	}
+
 	if !strings.Contains(stderr.String(), "tool surface from project-root") {
 		t.Fatalf("stderr should report project-root resolution: %s", stderr.String())
 	}
+
 	if strings.Contains(stderr.String(), "falling back to synthetic") {
 		t.Fatalf("project-root config must NOT trigger the synthetic fallback: %s", stderr.String())
 	}
+
 	if !strings.Contains(stdout.String(), "PASS implement(build)") {
 		t.Fatalf("probe must PASS with the resolved config: %s", stdout.String())
 	}
@@ -148,16 +172,20 @@ func TestRunProbeLaneExplicitConfigOverridesProjectRoot(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, ".idiom", "config.json"),
 		[]byte(`{"workspace": {"root": "/x"}}`), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"lane", "--project-root", root, "--config", "/no/such/explicit.json"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("explicit --config must not block exit 0; got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "falling back to synthetic") {
 		t.Fatalf("explicit --config to a missing path should fall through to synthetic, proving it overrode the in-root file: %s", stderr.String())
 	}
@@ -171,10 +199,13 @@ func TestRunProbeLaneExplicitConfigOverridesProjectRoot(t *testing.T) {
 // for that family and all four cases pass.
 func TestRunProbeLaneCrossModeCoverage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"lane"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("cross-mode probe must exit 0; got %d (stderr=%s)", code, stderr.String())
 	}
+
 	out := stdout.String()
 	for _, want := range []string{
 		"PASS implement(build)",
@@ -195,7 +226,9 @@ func TestRunProbeLaneCrossModeCoverage(t *testing.T) {
 // "ok".
 func TestRunProbeLaneHelpExitsZero(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"lane", "--help"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("--help must exit 0; got %d", code)
 	}
@@ -207,10 +240,13 @@ func TestRunProbeLaneHelpExitsZero(t *testing.T) {
 // success.
 func TestRunProbeMainUnknownSubcommandExitsTwo(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"definitely-not-a-subcommand"}, &stdout, &stderr)
+
 	if code != 2 {
 		t.Fatalf("unknown subcommand must exit 2; got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "unknown subcommand") {
 		t.Fatalf("stderr should name the subcommand: %s", stderr.String())
 	}

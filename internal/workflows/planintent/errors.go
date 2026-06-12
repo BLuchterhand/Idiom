@@ -23,6 +23,7 @@ func (err *ValidationError) FailureCode() failures.Code {
 	if err == nil {
 		return failures.Unknown
 	}
+
 	switch err.Code {
 	case CodeRequiredScopeMismatch, CodeCandidateScopeRejected, CodeIntentScopeRejected:
 		return failures.FailedPrecondition
@@ -35,6 +36,7 @@ func (err *ValidationError) Reason() failures.Reason {
 	if err == nil {
 		return failures.NoReason
 	}
+
 	switch err.Code {
 	case CodeInvalidSchemaVersion:
 		return reasonPlanIntentInvalidSchema
@@ -61,6 +63,7 @@ func (err *CompileError) FailureCode() failures.Code {
 	if err == nil {
 		return failures.Unknown
 	}
+
 	switch err.Code {
 	case CodeCompilerBug:
 		return failures.Internal
@@ -77,6 +80,7 @@ func (err *CompileError) Reason() failures.Reason {
 	if err == nil {
 		return failures.NoReason
 	}
+
 	switch err.Code {
 	case CodeMissingSourceEvidence:
 		return reasonPlanIntentMissingSourceEvidence

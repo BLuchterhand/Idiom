@@ -19,18 +19,22 @@ type synthStep struct {
 
 func buildSynth(userPrompt string, ledger map[string]any, steps []synthStep) []Record {
 	var records []Record
+
 	records = append(records, Record{
 		Type: "message",
 		Data: map[string]any{"role": "user", "content": userPrompt},
 	})
+
 	for _, s := range steps {
 		if s.role != "" {
 			records = append(records, Record{
 				Type: "message",
 				Data: map[string]any{"role": s.role, "content": ""},
 			})
+
 			continue
 		}
+
 		records = append(records, Record{
 			Type: "tool_request",
 			Data: map[string]any{"tool": s.tool, "action": s.action, "raw": s.raw},
@@ -40,13 +44,16 @@ func buildSynth(userPrompt string, ledger map[string]any, steps []synthStep) []R
 			Data: map[string]any{"tool": s.tool, "summary": s.summary, "error": s.err},
 		})
 	}
+
 	if ledger != nil {
 		data, _ := json.Marshal(ledger)
+
 		records = append(records, Record{
 			Type: "message",
 			Data: map[string]any{"role": "budget_ledger", "content": string(data)},
 		})
 	}
+
 	return records
 }
 
@@ -67,12 +74,15 @@ func TestAnalyzeBudgetLedgerFields(t *testing.T) {
 		},
 	)
 	rep := analyzeRecords("test", records)
+
 	if rep.ModelCalls != 7 || rep.ToolResults != 6 || rep.PromptTokens != 12345 || rep.DurationMillis != 9000 {
 		t.Fatalf("budget ledger not parsed: %+v", rep)
 	}
+
 	if rep.StopReason != "model_final" {
 		t.Fatalf("stop reason: want model_final, got %q", rep.StopReason)
 	}
+
 	if rep.UserPrompt != "how does auth work" {
 		t.Fatalf("user prompt: want 'how does auth work', got %q", rep.UserPrompt)
 	}
@@ -104,6 +114,7 @@ func TestDetectDirWalkStreak(t *testing.T) {
 		{tool: "read_file", action: "read_file:x.go", raw: `{"path":"x.go"}`, summary: "Read x.go"},
 	})
 	rep := analyzeRecords("test", records)
+
 	if !hasPattern(rep, "dir_walk_streak") {
 		t.Fatalf("expected dir_walk_streak, got: %+v", rep.AntiPatterns)
 	}
@@ -168,30 +179,39 @@ func TestAnalyzeLogIngestsContextTelemetryFields(t *testing.T) {
 		}},
 	}
 	rep := analyzeRecords("test", records)
+
 	if rep.Context == nil {
 		t.Fatalf("expected context telemetry summary")
 	}
+
 	if rep.Context.ToolResults != 2 || rep.Context.FreshResults != 1 || rep.Context.StaleResults != 1 {
 		t.Fatalf("unexpected context freshness summary: %#v", rep.Context)
 	}
+
 	if rep.Context.MaxFilesIndexed != 3 || rep.Context.MaxSymbolsIndexed != 7 || rep.Context.MaxEdgesIndexed != 11 {
 		t.Fatalf("unexpected context graph maxima: %#v", rep.Context)
 	}
+
 	if rep.Context.NodesReturned != 2 || rep.Context.EdgesReturned != 4 {
 		t.Fatalf("unexpected context query counts: %#v", rep.Context)
 	}
+
 	if rep.Context.StoreKindCounts["sqlite-graph-v1"] != 2 || rep.Context.ActiveBackendCounts["sqlite-graph-v1"] != 1 {
 		t.Fatalf("unexpected context backend counts: %#v", rep.Context)
 	}
+
 	if rep.Context.CollectorReports != 2 || rep.Context.CollectorCoverage != 3 || rep.Context.CollectorUnavailable != 1 || rep.Context.CollectorVersionMismatches != 1 || rep.Context.EnrichmentDiagnostics != 3 || rep.Context.CollectorReportNameCounts["python_lsp"] != 1 || rep.Context.CollectorCoverageNameCounts["python_index"] != 1 {
 		t.Fatalf("unexpected context collector telemetry: %#v", rep.Context)
 	}
+
 	if rep.Context.MaxStaleSymbols != 2 || rep.Context.StaleSymbolSamples != 1 || rep.Context.RefreshedStaleSymbols != 1 || rep.Context.NormalizedRelationshipEdges != 4 {
 		t.Fatalf("unexpected context stale/relationship telemetry: %#v", rep.Context)
 	}
+
 	if rep.Context.IncrementalRefreshes != 1 || rep.Context.ReusedIndexedFiles != 2 || rep.Context.DependencyRefreshFiles != 1 || rep.Context.SummaryNodesReturned != 1 || rep.Context.ModelSummaryNodesReturned != 1 {
 		t.Fatalf("unexpected context incremental/summary telemetry: %#v", rep.Context)
 	}
+
 	if rep.Context.AutoRefreshAttempts != 1 || rep.Context.AutoRefreshFilesIndexed != 1 || rep.Context.AutoRefreshRefreshedFiles != 1 || rep.Context.AutoRefreshFreshAfter != 1 || rep.Context.AutoRefreshReasonCounts["small_stale_file_set"] != 1 {
 		t.Fatalf("unexpected context auto-refresh telemetry: %#v", rep.Context)
 	}
@@ -232,15 +252,19 @@ func TestAnalyzeLogDistinguishesStaleEvidenceStates(t *testing.T) {
 		}},
 	}
 	rep := analyzeRecords("test", records)
+
 	if rep.Context == nil {
 		t.Fatalf("expected context telemetry summary")
 	}
+
 	if rep.Context.FreshnessBlockers != 1 || rep.Context.FreshnessBudgetExceeded != 1 {
 		t.Fatalf("expected only blocked stale evidence to count as freshness blocker, got %#v", rep.Context)
 	}
+
 	if rep.Context.StaleUseBlocked != 1 || rep.Context.StaleUseReported != 1 || rep.Context.StaleUseAllowed != 1 || rep.Context.StaleUseFresh != 1 {
 		t.Fatalf("unexpected stale-evidence state counters: %#v", rep.Context)
 	}
+
 	if rep.Context.StaleUseStateCounts["blocked"] != 1 || rep.Context.StaleUseStateCounts["reported"] != 1 || rep.Context.StaleUseStateCounts["allowed_stale"] != 1 || rep.Context.StaleUseStateCounts["fresh"] != 1 {
 		t.Fatalf("unexpected stale-evidence state counts: %#v", rep.Context.StaleUseStateCounts)
 	}
@@ -272,12 +296,15 @@ func TestAnalyzeLogIngestsHarnessFeedbackTelemetryFields(t *testing.T) {
 		}},
 	}
 	rep := analyzeRecords("test", records)
+
 	if rep.Feedback == nil {
 		t.Fatalf("expected feedback telemetry summary")
 	}
+
 	if rep.Feedback.Total != 2 || rep.Feedback.Verified != 1 || rep.Feedback.Inferred != 1 || rep.Feedback.MediumSeverity != 1 || rep.Feedback.HighSeverity != 1 || rep.Feedback.EvidenceItems != 3 {
 		t.Fatalf("unexpected feedback summary: %#v", rep.Feedback)
 	}
+
 	if rep.Feedback.ByCategory["tool_gap"] != 1 || rep.Feedback.ByCategory["impact_ranking"] != 1 || rep.Feedback.ByPlanningCategory["impact_ranking"] != 1 || rep.Feedback.PlanningQualityTotal != 1 || rep.Feedback.ByComponent["context_pack"] != 1 || rep.Feedback.ByConfidence["verified"] != 1 || rep.Feedback.BySeverity["high"] != 1 {
 		t.Fatalf("unexpected feedback buckets: %#v", rep.Feedback)
 	}
@@ -310,9 +337,11 @@ func TestAnalyzeLogIngestsLocalOpsTelemetryFields(t *testing.T) {
 	if rep.LocalOps == nil {
 		t.Fatal("expected local ops telemetry summary")
 	}
+
 	if rep.LocalOps.BackendConfigured != 1 || rep.LocalOps.ContextBudgetDegraded != 1 || rep.LocalOps.ClassifierDegraded != 1 || rep.LocalOps.QueueDegraded != 1 || rep.LocalOps.QueueMaxWaitMillis != 42 || rep.LocalOps.ImplementCloseouts != 1 || rep.LocalOps.DoctorDegradedProfiles != 1 {
 		t.Fatalf("unexpected local ops telemetry: %#v", rep.LocalOps)
 	}
+
 	agg := Aggregate([]PerfReport{rep})
 	if agg.LocalOps == nil || agg.LocalOps.QueueDegraded != 1 || agg.LocalOps.ImplementCloseouts != 1 {
 		t.Fatalf("aggregate did not preserve local ops telemetry: %#v", agg.LocalOps)
@@ -340,9 +369,11 @@ func TestDetectPromptSurfaceOverlap(t *testing.T) {
 	}
 	rep := analyzeRecords("test", records)
 	ap := findPattern(rep, "prompt_surface_overlap")
+
 	if ap == nil {
 		t.Fatalf("expected prompt_surface_overlap")
 	}
+
 	if ap.Count != 2 {
 		t.Fatalf("prompt_surface_overlap count: want 2, got %d", ap.Count)
 	}
@@ -371,9 +402,11 @@ func TestDetectCompletionGateReopenedDiscovery(t *testing.T) {
 	}
 	rep := analyzeRecords("test", records)
 	ap := findPattern(rep, "completion_gate_reopened_discovery")
+
 	if ap == nil {
 		t.Fatalf("expected completion_gate_reopened_discovery, got %#v", rep.AntiPatterns)
 	}
+
 	if ap.Count != 1 || !strings.Contains(strings.Join(ap.Examples, "\n"), "read_file native/src/example.cpp") {
 		t.Fatalf("unexpected completion gate discovery pattern: %#v", ap)
 	}
@@ -399,6 +432,7 @@ func TestDetectCompletionGateReopenedDiscoveryIgnoresImmediateWrite(t *testing.T
 		}},
 	}
 	rep := analyzeRecords("test", records)
+
 	if hasPattern(rep, "completion_gate_reopened_discovery") {
 		t.Fatalf("immediate write should not count as reopened discovery: %#v", rep.AntiPatterns)
 	}
@@ -423,6 +457,7 @@ func TestDetectCompletionGateReopenedDiscoveryIgnoresRequiredPathSourceRead(t *t
 		}},
 	}
 	rep := analyzeRecords("test", records)
+
 	if hasPattern(rep, "completion_gate_reopened_discovery") {
 		t.Fatalf("required-path source read should not count as reopened discovery: %#v", rep.AntiPatterns)
 	}
@@ -460,6 +495,7 @@ func TestDetectRequiredPathsBlockedWithoutWrite(t *testing.T) {
 		}},
 	}
 	rep := analyzeRecords("test", records)
+
 	if !hasPattern(rep, "required_paths_blocked_without_write") {
 		t.Fatalf("expected required_paths_blocked_without_write, got %#v", rep.AntiPatterns)
 	}
@@ -472,6 +508,7 @@ func TestDirWalkStreakDoesNotFireOnTwoListings(t *testing.T) {
 		{tool: "search_content", action: "search_content:.:foo:_", summary: "Found 3 matching line(s)."},
 	})
 	rep := analyzeRecords("test", records)
+
 	if hasPattern(rep, "dir_walk_streak") {
 		t.Fatalf("dir_walk_streak should not fire on just 2 list_files")
 	}
@@ -484,9 +521,11 @@ func TestDetectZeroHitSearch(t *testing.T) {
 	})
 	rep := analyzeRecords("test", records)
 	ap := findPattern(rep, "zero_hit_search")
+
 	if ap == nil {
 		t.Fatalf("expected zero_hit_search pattern")
 	}
+
 	if ap.Count != 2 {
 		t.Fatalf("zero_hit_search count: want 2, got %d", ap.Count)
 	}
@@ -505,6 +544,7 @@ func TestDirectToolTelemetryDoesNotCreateBehaviorAntiPatterns(t *testing.T) {
 	if rep.ToolResults != 1 || rep.Tools.ByName["go_read_symbol"] != 1 {
 		t.Fatalf("expected direct tool stats to remain available, got %+v", rep)
 	}
+
 	if len(rep.AntiPatterns) != 0 || rep.AntiPatternScore != 0 {
 		t.Fatalf("expected direct tool telemetry to skip model behavior patterns, got %+v", rep.AntiPatterns)
 	}
@@ -524,6 +564,7 @@ func TestAnalyzeModernSummaryRecords(t *testing.T) {
 	if rep.ModelCalls != 2 || rep.ToolResults != 1 || rep.PromptTokens != 200 || rep.CompletionTokens != 20 || rep.DurationMillis != 3001 {
 		t.Fatalf("modern summary records not parsed: %+v", rep)
 	}
+
 	if rep.StopReason != "model_final" {
 		t.Fatalf("stop reason: want model_final, got %q", rep.StopReason)
 	}
@@ -536,6 +577,7 @@ func TestDetectRejectionRetry(t *testing.T) {
 		{tool: "list_files", action: "list_files:docs", raw: raw, summary: "Rejected again", err: "same"},
 	})
 	rep := analyzeRecords("test", records)
+
 	if !hasPattern(rep, "rejection_retry") {
 		t.Fatalf("expected rejection_retry, got: %+v", rep.AntiPatterns)
 	}
@@ -553,6 +595,7 @@ func TestDetectRejectionRetryFromUnpairedRejectedResults(t *testing.T) {
 	if !hasPattern(rep, "rejection_retry") {
 		t.Fatalf("expected unpaired rejected tool_result records to feed rejection_retry, got: %+v", rep.AntiPatterns)
 	}
+
 	if rep.RejectedActions != 2 {
 		t.Fatalf("expected two logical rejected actions, got %d", rep.RejectedActions)
 	}
@@ -565,15 +608,18 @@ func TestDetectSameToolRepeatOnlyAtThreeOrMore(t *testing.T) {
 		{tool: "read_file", action: "read_file:x.go", raw: raw, summary: "Read 2"},
 	})
 	rep := analyzeRecords("test", records)
+
 	if hasPattern(rep, "same_tool_repeat") {
 		t.Fatalf("same_tool_repeat should not fire at 2 identical calls")
 	}
+
 	// Now three.
 	records = append(records,
 		Record{Type: "tool_request", Data: map[string]any{"tool": "read_file", "action": "read_file:x.go", "raw": raw}},
 		Record{Type: "tool_result", Data: map[string]any{"tool": "read_file", "summary": "Read 3"}},
 	)
 	rep = analyzeRecords("test", records)
+
 	if !hasPattern(rep, "same_tool_repeat") {
 		t.Fatalf("same_tool_repeat should fire at 3 identical calls")
 	}
@@ -587,9 +633,11 @@ func TestDetectNamedGapReadWalk(t *testing.T) {
 	})
 	rep := analyzeRecords("test", records)
 	ap := findPattern(rep, "named_gap_read_walk")
+
 	if ap == nil {
 		t.Fatalf("expected named_gap_read_walk, got %#v", rep.AntiPatterns)
 	}
+
 	if ap.Count != 3 {
 		t.Fatalf("count=%d, want 3", ap.Count)
 	}
@@ -601,6 +649,7 @@ func TestAggregateRanksByLogHits(t *testing.T) {
 		for _, p := range patterns {
 			r.AntiPatterns = append(r.AntiPatterns, AntiPattern{Name: p, Count: 1})
 		}
+
 		return r
 	}
 	reports := []PerfReport{
@@ -610,12 +659,15 @@ func TestAggregateRanksByLogHits(t *testing.T) {
 		mkRep("dir_walk_streak"),
 	}
 	agg := Aggregate(reports)
+
 	if agg.LogCount != 4 {
 		t.Fatalf("log count: want 4, got %d", agg.LogCount)
 	}
+
 	if len(agg.PatternHitRate) == 0 {
 		t.Fatalf("expected pattern rows")
 	}
+
 	if agg.PatternHitRate[0].Name != "zero_hit_search" || agg.PatternHitRate[0].LogsHit != 3 {
 		t.Fatalf("expected zero_hit_search leading with 3 logs hit, got %+v", agg.PatternHitRate[0])
 	}
@@ -633,13 +685,16 @@ func TestAggregateRedactsWorstOffenderPrompt(t *testing.T) {
 	if len(agg.WorstOffenders) != 1 {
 		t.Fatalf("expected one worst offender, got %#v", agg.WorstOffenders)
 	}
+
 	if !agg.WorstOffenders[0].LogExcerptRedacted {
 		t.Fatalf("expected redaction marker, got %#v", agg.WorstOffenders[0])
 	}
+
 	encoded, err := json.Marshal(agg)
 	if err != nil {
 		t.Fatalf("marshal aggregate: %v", err)
 	}
+
 	if strings.Contains(string(encoded), "user_prompt") || strings.Contains(string(encoded), "private customer prompt") || strings.Contains(string(encoded), "secret") {
 		t.Fatalf("aggregate leaked prompt data: %s", string(encoded))
 	}
@@ -655,5 +710,6 @@ func findPattern(rep PerfReport, name string) *AntiPattern {
 			return &rep.AntiPatterns[i]
 		}
 	}
+
 	return nil
 }

@@ -42,19 +42,24 @@ func ExtractRequestedVerificationCommands(prompt string) []string {
 
 func planExecuteRequestedVerificationCommands(prompt string) []string {
 	var commands []string
+
 	seen := map[string]struct{}{}
+
 	for _, line := range strings.Split(prompt, "\n") {
 		if !planExecuteLineRequestsVerificationCommand(line) {
 			continue
 		}
+
 		for _, command := range planExecuteGoTestCommandsFromLine(line) {
 			if _, ok := seen[command]; ok {
 				continue
 			}
+
 			seen[command] = struct{}{}
 			commands = append(commands, command)
 		}
 	}
+
 	return commands
 }
 
@@ -63,6 +68,7 @@ func planExecuteLineRequestsVerificationCommand(line string) bool {
 	if lower == "" || !strings.Contains(lower, "go test") {
 		return false
 	}
+
 	return containsAnyVerificationRequestPhrase(lower,
 		"after editing, run",
 		"after edits, run",
@@ -92,51 +98,65 @@ func containsAnyVerificationRequestPhrase(text string, phrases ...string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 func planExecuteGoTestCommandsFromLine(line string) []string {
 	var commands []string
+
 	text := strings.TrimSpace(line)
+
 	for _, span := range planExecuteInlineCodeSpans(text) {
 		commands = append(commands, planExecuteGoTestCommandsFromPlainText(span)...)
 	}
+
 	text = planExecuteStripInlineCodeSpans(text)
 	commands = append(commands, planExecuteGoTestCommandsFromPlainText(text)...)
+
 	return commands
 }
 
 func planExecuteGoTestCommandsFromPlainText(text string) []string {
 	var commands []string
+
 	for {
 		idx := strings.Index(text, "go test")
 		if idx < 0 {
 			return commands
 		}
+
 		rest := strings.TrimSpace(text[idx:])
 		command := planExecuteTrimVerificationCommand(rest)
+
 		if strings.TrimSpace(command) != "" {
 			commands = append(commands, command)
 		}
+
 		if idx+len("go test") >= len(text) {
 			return commands
 		}
+
 		text = text[idx+len("go test"):]
 	}
 }
 
 func planExecuteInlineCodeSpans(text string) []string {
 	var spans []string
+
 	for {
 		start := strings.Index(text, "`")
 		if start < 0 {
 			return spans
 		}
+
 		rest := text[start+1:]
 		end := strings.Index(rest, "`")
+
 		if end < 0 {
 			return spans
 		}
+
 		spans = append(spans, rest[:end])
 		text = rest[end+1:]
 	}
@@ -144,18 +164,24 @@ func planExecuteInlineCodeSpans(text string) []string {
 
 func planExecuteStripInlineCodeSpans(text string) string {
 	var b strings.Builder
+
 	for {
 		start := strings.Index(text, "`")
 		if start < 0 {
 			b.WriteString(text)
+
 			return b.String()
 		}
+
 		b.WriteString(text[:start])
+
 		rest := text[start+1:]
 		end := strings.Index(rest, "`")
+
 		if end < 0 {
 			return b.String()
 		}
+
 		text = rest[end+1:]
 	}
 }
@@ -165,11 +191,14 @@ func planExecuteTrimVerificationCommand(text string) string {
 	if idx := strings.Index(text, "```"); idx >= 0 {
 		text = text[:idx]
 	}
+
 	text = planExecuteTrimVerificationSentence(text)
 	text = strings.TrimSpace(text)
+
 	for (strings.HasSuffix(text, ".") && !strings.HasSuffix(text, "...")) || strings.HasSuffix(text, ",") {
 		text = strings.TrimSpace(text[:len(text)-1])
 	}
+
 	return text
 }
 
@@ -181,22 +210,28 @@ func planExecuteTrimVerificationSentence(text string) string {
 				quote = r
 				continue
 			}
+
 			if r == '.' && i+1 < len(text) {
 				next := rune(text[i+1])
 				previous := rune(0)
+
 				if i > 0 {
 					previous = rune(text[i-1])
 				}
+
 				if (next == ' ' || next == '\t') && previous != '.' {
 					return text[:i]
 				}
 			}
+
 			continue
 		}
+
 		if r == quote {
 			quote = 0
 		}
 	}
+
 	return text
 }
 
@@ -210,6 +245,7 @@ func VerificationCommandArgs(command string) ([]string, bool) {
 	if !ok || !VerificationArgvAllowed(args) {
 		return nil, false
 	}
+
 	return args, true
 }
 
@@ -218,21 +254,26 @@ func VerificationArgvAllowed(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
+
 	for _, prefix := range verificationCommandAllowedPrefixes() {
 		if len(args) < len(prefix) {
 			continue
 		}
+
 		matches := true
+
 		for i := range prefix {
 			if args[i] != prefix[i] {
 				matches = false
 				break
 			}
 		}
+
 		if matches {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -243,11 +284,14 @@ func normalizeVerificationArgv(args []string) []string {
 		if arg == "" || strings.ContainsAny(arg, "\x00\n\r") {
 			return nil
 		}
+
 		if strings.Contains(arg, ";") || strings.Contains(arg, "&&") || strings.Contains(arg, "||") || strings.ContainsAny(arg, "`><") {
 			return nil
 		}
+
 		out = append(out, arg)
 	}
+
 	return out
 }
 
@@ -260,16 +304,24 @@ func planExecuteVerificationCommandArgs(command string) ([]string, bool) {
 	if command == "" || strings.ContainsAny(command, "\n\r") {
 		return nil, false
 	}
-	var args []string
-	var b strings.Builder
+
+	var (
+		args []string
+		b    strings.Builder
+	)
+
 	quote := rune(0)
 	escaped := false
+
 	for _, r := range command {
 		if escaped {
 			b.WriteRune(r)
+
 			escaped = false
+
 			continue
 		}
+
 		if quote == 0 {
 			switch r {
 			case '\\':
@@ -286,19 +338,25 @@ func planExecuteVerificationCommandArgs(command string) ([]string, bool) {
 			default:
 				b.WriteRune(r)
 			}
+
 			continue
 		}
+
 		if r == quote {
 			quote = 0
 			continue
 		}
+
 		b.WriteRune(r)
 	}
+
 	if escaped || quote != 0 {
 		return nil, false
 	}
+
 	if b.Len() > 0 {
 		args = append(args, b.String())
 	}
+
 	return args, len(args) > 0
 }

@@ -26,12 +26,15 @@ func ClassifyTool(name string) ToolCategory {
 	if metadata, ok := builtInToolSurfaceMetadata(name); ok && metadata.Category != CategoryUnknown {
 		return metadata.Category
 	}
+
 	if isLanguageToolName(name) {
 		return CategoryRead
 	}
+
 	if len(name) > 4 && name[:4] == "mcp:" {
 		return CategoryMCP
 	}
+
 	return CategoryUnknown
 }
 
@@ -47,27 +50,34 @@ func IsRuntimeInspectionRequest(req ToolRequest) bool {
 	if IsBroadInspectionRequest(req) {
 		return true
 	}
+
 	tool := strings.TrimSpace(req.Tool)
 	if tool == ToolNameShell || tool == ToolNameListFiles {
 		return IsNarrowingRequest(req)
 	}
+
 	metadata, ok := builtInToolSurfaceMetadata(tool)
 	if !ok {
 		return isLanguageToolName(tool)
 	}
+
 	actionClass := autonomy.CanonicalActionClass(autonomy.ActionClass(metadata.ActionClass))
 	if metadata.Category == CategoryWrite ||
 		metadata.Category == CategoryVerification ||
 		actionClass == autonomy.ActionClassVerify ||
 		actionClass == autonomy.ActionClassPerEditWrite ||
 		actionClass == autonomy.ActionClassSubmitPlan {
+
 		return false
 	}
+
 	if metadata.RuntimeSourceInspection ||
 		metadata.RuntimeContextDiscovery ||
 		metadata.RuntimeHistoryInspection {
+
 		return true
 	}
+
 	switch actionClass {
 	case autonomy.ActionClassRead,
 		autonomy.ActionClassSearch,

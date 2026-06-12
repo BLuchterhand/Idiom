@@ -1,6 +1,6 @@
 [2m  ▎ thinking[0m
   · 16916 tok · in 16823 (16768 cached / 55 new) · out 93 (27 reasoning) · ¥0.0006
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/docs/design-hosted-cache-cost-metrics.md"}
+  -> read_file {"path": "/workspace/idiom/docs/design-hosted-cache-cost-metrics.md"}
 [2m  ▎ thinking[0m
 ## North-Star / Architecture Review: `design-hosted-cache-cost-metrics.md`
 

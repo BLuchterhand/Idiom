@@ -19,14 +19,17 @@ func (AnswerComposer) Compose(input AnswerComposerInput) (string, bool) {
 	question := strings.TrimSpace(input.Question)
 	paths := uniqueDelegatedDiscoveryPaths(input.EvidencePaths)
 	lines := decoratedDiscoveryFindingLines(input.Summaries, 4)
+
 	if len(input.Summaries) == 0 || len(lines) == 0 {
 		return "", false
 	}
+
 	return composeGenericEvidenceAnswer(question, paths, lines), true
 }
 
 func composeGenericEvidenceAnswer(question string, paths []string, lines []string) string {
 	var b strings.Builder
+
 	if len(paths) > 0 {
 		b.WriteString("The strongest implementation evidence is in ")
 		b.WriteString(formatInlinePathList(paths, 4))
@@ -34,43 +37,52 @@ func composeGenericEvidenceAnswer(question string, paths []string, lines []strin
 	} else {
 		b.WriteString("The inspected implementation evidence is enough to give a bounded answer.")
 	}
+
 	if strings.TrimSpace(question) != "" {
 		b.WriteString(" Use those findings as the source of truth for `")
 		b.WriteString(strings.TrimSpace(question))
 		b.WriteString("`.")
 	}
+
 	b.WriteString("\n\n")
 	b.WriteString("What this establishes:\n")
+
 	for _, line := range lines {
 		b.WriteString("- ")
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
+
 	return strings.TrimSpace(b.String())
 }
 
 func decoratedDiscoveryFindingLines(summaries []delegatedDiscoverySummary, limit int) []string {
 	raw := delegatedDiscoveryFindingLines(summaries, limit)
 	lines := make([]string, 0, len(raw))
+
 	for _, line := range raw {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
+
 		name, text, ok := strings.Cut(line, ":")
 		if ok {
 			line = humanDiscoveryLayerName(name) + ": " + cleanDiscoveryFindingText(text)
 		} else {
 			line = cleanDiscoveryFindingText(line)
 		}
+
 		if line == "" || strings.Contains(strings.ToLower(line), "open a returned handle") || decoratedDiscoveryFindingLineIsToolInventory(line) {
 			continue
 		}
+
 		lines = append(lines, line)
 		if limit > 0 && len(lines) >= limit {
 			return lines
 		}
 	}
+
 	return lines
 }
 
@@ -79,19 +91,26 @@ func decoratedDiscoveryFindingLineIsToolInventory(line string) bool {
 	if lower == "" {
 		return true
 	}
+
 	if strings.HasPrefix(lower, "symbol index: indexed symbols ") ||
 		strings.HasPrefix(lower, "symbol index: no ") ||
 		strings.HasPrefix(lower, "dependency graph: dependency graph unavailable") {
+
 		return true
 	}
+
 	if strings.HasPrefix(lower, "text anchors: found ") &&
 		strings.Contains(lower, " matching line") {
+
 		return true
 	}
+
 	if strings.HasPrefix(lower, "related files: found ") &&
 		(strings.Contains(lower, " related ") || strings.Contains(lower, " file")) {
+
 		return true
 	}
+
 	return false
 }
 
@@ -131,7 +150,9 @@ func cleanDiscoveryFindingText(text string) string {
 	} {
 		text = strings.ReplaceAll(text, suffix, ".")
 	}
+
 	text = strings.ReplaceAll(text, "  ", " ")
+
 	return strings.TrimSpace(text)
 }
 
@@ -140,19 +161,23 @@ func formatInlinePathList(paths []string, max int) string {
 	if max > 0 && len(paths) > max {
 		paths = paths[:max]
 	}
+
 	parts := make([]string, 0, len(paths))
 	for _, path := range paths {
 		path = cleanInlineEvidencePath(path)
 		if path == "" {
 			continue
 		}
+
 		parts = append(parts, "`"+path+"`")
 	}
+
 	return strings.Join(parts, ", ")
 }
 
 func cleanInlineEvidencePath(path string) string {
 	path = strings.TrimSpace(strings.ReplaceAll(path, "`", ""))
 	path = strings.TrimRight(path, ".,;:")
+
 	return strings.TrimSpace(path)
 }

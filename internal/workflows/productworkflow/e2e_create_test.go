@@ -24,6 +24,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InitializeEffort: %v", err)
 	}
+
 	if result.Status != "ok" || result.CurrentPhase != PhasePRDDrafting {
 		t.Fatalf("init: status=%s phase=%s", result.Status, result.CurrentPhase)
 	}
@@ -46,6 +47,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	if err := WritePRDMarkdown(root, prd); err != nil {
 		t.Fatalf("write PRD: %v", err)
 	}
+
 	if intake := ValidatePRDIntake(prd); !intake.Passed {
 		t.Fatalf("PRD intake: %+v", intake.Failures)
 	}
@@ -55,6 +57,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("advance: %v", err)
 	}
+
 	prdResult, prdIntake, err := ApprovePRDGate(root)
 	if err != nil || !prdIntake.Passed || prdResult.Status != "ok" {
 		t.Fatalf("approve PRD: err=%v passed=%v status=%s", err, prdIntake.Passed, prdResult.Status)
@@ -72,6 +75,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	if err := WriteADRIndexJSON(root, idx); err != nil {
 		t.Fatalf("write index: %v", err)
 	}
+
 	adr := ADRDocument{
 		FrontMatter: ADRFrontMatter{
 			SchemaVersion: "idiom.adr.v1", ADRID: "ADR-001",
@@ -94,6 +98,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("advance to adr_review: %v", err)
 	}
+
 	adrResult, _, err := ApproveADRGate(root)
 	if err != nil || adrResult.Status != "ok" {
 		t.Fatalf("approve ADR: err=%v status=%s blockers=%v", err, adrResult.Status, adrResult.Blockers)
@@ -132,6 +137,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	lintResult := LintEffortFolder(root)
 	if lintResult.Status != "pass" {
 		t.Errorf("product lint failed:")
+
 		for _, f := range lintResult.Findings {
 			t.Errorf("  [%s] %s: %s", f.Code, f.Path, f.Message)
 		}
@@ -160,12 +166,15 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	diskIdx, _ := ParseADRIndexJSON(idxData)
 
 	var acceptedADRs []ParsedADR
+
 	for _, entry := range diskIdx.ADRs {
 		if entry.Status != "accepted" || entry.Path == "" {
 			continue
 		}
+
 		adrData, _ := os.ReadFile(filepath.Join(root, "adrs", entry.Path))
 		adrDoc, _ := ParseADRMarkdown(adrData)
+
 		acceptedADRs = append(acceptedADRs, ParsedADR{
 			Doc: adrDoc, RelPath: filepath.Join("adrs", entry.Path),
 			RawMarkdown: string(adrData),
@@ -178,7 +187,9 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	satisfiedTDDIDs := BuildSatisfiedTDDObligationIDs(diskTDD, ledgerRecords)
 
 	var matrix TraceabilityMatrix
+
 	matrixData, _ := os.ReadFile(filepath.Join(root, "evidence", "traceability_matrix.json"))
+
 	matrix, _ = ParseTraceabilityMatrixJSON(matrixData)
 
 	coverage := EvaluateCoverageGate(diskPRD, diskIdx, acceptedADRs, diskTDD, matrix, satisfiedTDDIDs)
@@ -192,10 +203,12 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 		ArtifactRootPath:   root,
 		FilesToModify:      []string{"internal/auth/login.go", "internal/auth/login_test.go"},
 	}
+
 	for _, req := range diskPRD.Requirements {
 		if req.ID == "" {
 			continue
 		}
+
 		brief.PRDRequirements = append(brief.PRDRequirements, featureplanner.PRDRequirementBrief{
 			ID:          req.ID,
 			Priority:    req.Priority,
@@ -205,17 +218,21 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 			Obligations: append([]string{}, req.TDDObligations...),
 		})
 	}
+
 	for _, entry := range diskIdx.ADRs {
 		if entry.Status != "accepted" {
 			continue
 		}
+
 		brief.AcceptedADRIDs = append(brief.AcceptedADRIDs, entry.ADRID)
 		brief.AcceptedADRPaths = append(brief.AcceptedADRPaths, filepath.Join("adrs", entry.Path))
 	}
+
 	for _, obl := range diskTDD.Obligations {
 		if obl.ID == "" {
 			continue
 		}
+
 		brief.TDDObligations = append(brief.TDDObligations, featureplanner.TDDObligationBrief{
 			ID:             obl.ID,
 			Behavior:       obl.Behavior,
@@ -224,6 +241,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 			Status:         obl.Status,
 		})
 	}
+
 	for _, b := range coverage.Blockers {
 		brief.CoverageBlockers = append(brief.CoverageBlockers, b.Message)
 	}
@@ -232,25 +250,32 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	if brief.EffortID != "E2E-001" {
 		t.Errorf("brief EffortID: %s", brief.EffortID)
 	}
+
 	if !brief.CoverageGatePassed {
 		t.Errorf("coverage gate should pass, blockers: %v", brief.CoverageBlockers)
 	}
+
 	if len(brief.PRDRequirements) != 1 {
 		t.Fatalf("expected 1 PRD requirement in brief, got %d", len(brief.PRDRequirements))
 	}
+
 	reqBrief := brief.PRDRequirements[0]
 	if reqBrief.ID != "REQ-001" {
 		t.Errorf("req ID: %s", reqBrief.ID)
 	}
+
 	if reqBrief.Priority != "P0" {
 		t.Errorf("req priority: %s", reqBrief.Priority)
 	}
+
 	if !strings.Contains(reqBrief.Statement, "authenticate") {
 		t.Errorf("req statement missing auth: %s", reqBrief.Statement)
 	}
+
 	if len(brief.AcceptedADRIDs) != 1 || brief.AcceptedADRIDs[0] != "ADR-001" {
 		t.Errorf("accepted ADRs: %v", brief.AcceptedADRIDs)
 	}
+
 	if len(brief.TDDObligations) != 1 || brief.TDDObligations[0].ID != "TDD-001" {
 		t.Errorf("TDD obligations: %+v", brief.TDDObligations)
 	}
@@ -259,15 +284,19 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 
 	state := featureplanner.NewState("e2e-session", "Implement email authentication", "", 3, time.Now())
 	prompt := featureplanner.BuildPlannerPrompt("Implement email authentication", state, brief)
+
 	if !strings.Contains(prompt, "REQ-001") {
 		t.Error("planner prompt missing REQ-001")
 	}
+
 	if !strings.Contains(prompt, "ADR-001") {
 		t.Error("planner prompt missing ADR-001")
 	}
+
 	if !strings.Contains(prompt, "TDD-001") {
 		t.Error("planner prompt missing TDD-001")
 	}
+
 	if !strings.Contains(prompt, "authenticate") {
 		t.Error("planner prompt missing requirement statement")
 	}
@@ -337,9 +366,11 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 		if taskFamily == "feature_planner_planner" {
 			return string(mockJSON), nil
 		}
+
 		if taskFamily == "feature_planner_implementor" {
 			return fmt.Sprintf(`{"tool":%q,"summary":"atom-1 implemented","status":"completed","review_status":"skipped","review_repair_skipped":true}`, featureplanner.ToolPlanExecuteComplete), nil
 		}
+
 		return "", fmt.Errorf("unknown task family: %s", taskFamily)
 	}
 
@@ -353,19 +384,24 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	if runErr != nil {
 		t.Fatalf("featureplanner.Run: %v", runErr)
 	}
+
 	if len(runResult.State.Atoms) != 1 {
 		t.Fatalf("expected 1 atom, got %d, state status=%s blockers=%v events=%+v", len(runResult.State.Atoms), runResult.State.Status, runResult.State.Blockers, runResult.Events)
 	}
+
 	atom := runResult.State.Atoms[0]
 	if atom.ID != "atom-1" {
 		t.Errorf("atom ID: %s", atom.ID)
 	}
+
 	if len(atom.SDDRefs) != 1 || atom.SDDRefs[0] != "REQ-001" {
 		t.Errorf("atom SDD refs: %v", atom.SDDRefs)
 	}
+
 	if len(atom.TDDObligations) != 1 || atom.TDDObligations[0] != "TDD-001" {
 		t.Errorf("atom TDD obligations: %v", atom.TDDObligations)
 	}
+
 	if !slices.Equal(atom.RequiredEditPaths, []string{"internal/auth/login.go", "internal/auth/login_test.go"}) {
 		t.Errorf("required_edit_paths: %v", atom.RequiredEditPaths)
 	}
@@ -378,9 +414,11 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 		if a.ID == "" {
 			t.Errorf("atom[%d] missing ID", i)
 		}
+
 		if len(a.RequiredEditPaths) == 0 && len(a.AllowedEditPaths) == 0 {
 			t.Errorf("atom[%d] (%s) has no edit paths", i, a.ID)
 		}
+
 		if len(a.SDDRefs) == 0 {
 			t.Errorf("atom[%d] (%s) has no SDD refs", i, a.ID)
 		}
@@ -388,6 +426,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 
 	// Verify the events contain both planning and dispatch events.
 	var planSubmitCount, dispatchCount int
+
 	for _, e := range runResult.Events {
 		switch e.Type {
 		case "idiom.feature_planner.plan_accepted":
@@ -396,9 +435,11 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 			dispatchCount++
 		}
 	}
+
 	if planSubmitCount == 0 {
 		t.Error("no plan_accepted event found")
 	}
+
 	if dispatchCount == 0 {
 		t.Error("no dispatch event found")
 	}

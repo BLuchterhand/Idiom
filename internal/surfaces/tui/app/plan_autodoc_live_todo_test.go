@@ -27,25 +27,32 @@ func TestRecordSubmittedPlanAppendsChecklist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read plan: %v", err)
 	}
+
 	got := string(plan)
 	if !strings.Contains(got, "### Plan") {
 		t.Errorf("missing Plan heading:\n%s", got)
 	}
+
 	if !strings.Contains(got, "- [ ] add the new handler (a.go)") {
 		t.Errorf("missing first edit line:\n%s", got)
 	}
+
 	if !strings.Contains(got, "- [ ] wire the route (b.go)") {
 		t.Errorf("missing second edit line:\n%s", got)
 	}
+
 	if !strings.Contains(got, "<!-- pid:pe-0 -->") {
 		t.Errorf("missing pid anchor for pe-0:\n%s", got)
 	}
+
 	if !strings.Contains(got, "<!-- pid:pe-1 -->") {
 		t.Errorf("missing pid anchor for pe-1:\n%s", got)
 	}
+
 	if m.plan.submittedEdits == nil {
 		t.Fatal("planSubmittedEdits should be initialized")
 	}
+
 	if len(m.plan.submittedEdits) != 2 {
 		t.Fatalf("want 2 submitted edits, got %d", len(m.plan.submittedEdits))
 	}
@@ -72,12 +79,15 @@ func TestRecordSubmittedPlanReplacesExistingSection(t *testing.T) {
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
+
 	if strings.Contains(got, "old.go") {
 		t.Errorf("old edit should have been replaced:\n%s", got)
 	}
+
 	if strings.Contains(got, "new edit 1") && strings.Contains(got, "new edit 2") {
 		return
 	}
+
 	t.Errorf("missing new edits after replacement:\n%s", got)
 }
 
@@ -132,6 +142,7 @@ func TestRecordSubmittedPlanUsesPlanArtifact(t *testing.T) {
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
+
 	if !strings.Contains(got, "from artifact") {
 		t.Errorf("artifact edits should populate plan:\n%s", got)
 	}
@@ -169,9 +180,11 @@ func TestAttachWriteToSubmittedEdit(t *testing.T) {
 
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
+
 	if !strings.Contains(got, "- [x] first edit (a.go) <!-- pid:pe-0 --> <!-- id:diff-abc123 -->") {
 		t.Errorf("first edit should be checked off with diff anchor:\n%s", got)
 	}
+
 	if !strings.Contains(got, "- [ ] second edit (b.go) <!-- pid:pe-1 -->") {
 		t.Errorf("second edit should remain unchecked:\n%s", got)
 	}
@@ -218,7 +231,9 @@ func TestUpdatePlanItemCheckboxInProgress(t *testing.T) {
 	m.recordTaskLedger(update, workspace.ToolResult{Tool: "task_ledger", Summary: "ok"})
 
 	plan, _ = os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
+
 	got := string(plan)
+
 	if !strings.Contains(got, "- [~] do the thing") {
 		t.Errorf("item should show in-progress [~]:\n%s", got)
 	}
@@ -244,15 +259,19 @@ func TestPlanEditLabelFallbacks(t *testing.T) {
 func TestCutPlanSection(t *testing.T) {
 	content := "## Session X\n\n### Plan\n- [ ] a\n- [ ] b\n\n### Other\nstuff\n"
 	before, found := cutPlanSection(content, "### Plan")
+
 	if !found {
 		t.Fatal("should find section")
 	}
+
 	if strings.Contains(before, "### Plan") {
 		t.Errorf("before should not contain ### Plan:\n%s", before)
 	}
+
 	if !strings.Contains(before, "## Session X") {
 		t.Errorf("before should keep heading:\n%s", before)
 	}
+
 	if !strings.Contains(before, "### Other") {
 		t.Errorf("before should keep ### Other:\n%s", before)
 	}
@@ -261,9 +280,11 @@ func TestCutPlanSection(t *testing.T) {
 func TestCutPlanSectionNoHeading(t *testing.T) {
 	content := "## Session X\n\n### Planned\n- [ ] a\n"
 	before, found := cutPlanSection(content, "### Plan")
+
 	if found {
 		t.Error("should not find section")
 	}
+
 	if before != content {
 		t.Errorf("should return content unchanged:\n%s", before)
 	}
@@ -278,6 +299,7 @@ func TestPlanCheckboxCounts(t *testing.T) {
 	if total != 4 {
 		t.Errorf("want total=4, got %d", total)
 	}
+
 	if checked != 2 {
 		t.Errorf("want checked=2, got %d", checked)
 	}
@@ -292,6 +314,7 @@ func TestPlanPanelAutoShowNeeded(t *testing.T) {
 	}
 
 	writeFile(t, root, ".planning/sessA.md", "## Session\n")
+
 	m.planContent = ""
 	m.planMTime = time.Time{}
 
@@ -300,6 +323,7 @@ func TestPlanPanelAutoShowNeeded(t *testing.T) {
 	}
 
 	writeFile(t, root, ".planning/sessA.md", "## Session\n- [ ] a task\n")
+
 	m.planContent = ""
 	m.planMTime = time.Time{}
 
@@ -311,9 +335,11 @@ func TestPlanPanelAutoShowNeeded(t *testing.T) {
 func TestPlanPanelAutoShowNeededPlanExecute(t *testing.T) {
 	root := t.TempDir()
 	m := snapshotModel(t, root)
+
 	m.forcedTaskFamily = "plan_then_execute_planner"
 
 	writeFile(t, root, ".planning/sessA.md", "## Session\n### Plan\n- [ ] do it\n")
+
 	m.planContent = ""
 	m.planMTime = time.Time{}
 

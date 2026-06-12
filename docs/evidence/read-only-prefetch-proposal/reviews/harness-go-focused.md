@@ -17,21 +17,21 @@ Now let me read the implementation files.
 [2m  ▎ thinking[0m
 Let me check the existing path extraction utility and the brief's evidence path tracking.
   · 62062 tok · in 61774 (28288 cached / 33486 new) · out 288 (65 reasoning) · ¥0.0346
-  -> explore {"task": "In the idiom codebase at /Users/ben/Documents/GitHub/idiom, find the pathparse.MentionedWorkspacePaths functio...
-  -> grep {"pattern": "pathparse\\.MentionedWorkspacePaths", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> mcp__codegraph__files {"path": "/Users/ben/Documents/GitHub/idiom"}
-  -> mcp__codegraph__search {"query": "MentionedWorkspacePaths", "projectPath": "/Users/ben/Documents/GitHub/idiom"}
-  -> mcp__codegraph__search {"query": "readOnlyObjectiveEvidencePaths", "projectPath": "/Users/ben/Documents/GitHub/idiom"}
-  -> mcp__codegraph__context {"projectPath": "/Users/ben/Documents/GitHub/idiom", "task": "pathparse.MentionedWorkspacePaths function implementation ...
-  -> mcp__codegraph__node {"projectPath": "/Users/ben/Documents/GitHub/idiom", "symbol": "MentionedWorkspacePaths", "includeCode": true}
-  -> mcp__codegraph__node {"projectPath": "/Users/ben/Documents/GitHub/idiom", "symbol": "readOnlyObjectiveEvidencePaths", "includeCode": true}
-  -> mcp__codegraph__explore {"projectPath": "/Users/ben/Documents/GitHub/idiom", "query": "pathparse.go pathparse ScopeToBriefBody mentionedWorkspac...
-  -> mcp__codegraph__callers {"projectPath": "/Users/ben/Documents/GitHub/idiom", "symbol": "readOnlyAnswerabilityForResults"}
-  -> mcp__codegraph__search {"projectPath": "/Users/ben/Documents/GitHub/idiom", "query": "final_answer_acceptance"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/final_answer_acceptance.go"}
-  -> mcp__codegraph__node {"includeCode": true, "projectPath": "/Users/ben/Documents/GitHub/idiom", "symbol": "readOnlyDirectAnswerCandidateOnlyLe...
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/read_only_answerability.go", "offset": 40, "limit": 2...
-  -> mcp__codegraph__node {"includeCode": true, "projectPath": "/Users/ben/Documents/GitHub/idiom", "symbol": "acceptedAnswerEvidencePaths"}
+  -> explore {"task": "In the idiom codebase at /workspace/idiom, find the pathparse.MentionedWorkspacePaths functio...
+  -> grep {"pattern": "pathparse\\.MentionedWorkspacePaths", "path": "/workspace/idiom"}
+  -> mcp__codegraph__files {"path": "/workspace/idiom"}
+  -> mcp__codegraph__search {"query": "MentionedWorkspacePaths", "projectPath": "/workspace/idiom"}
+  -> mcp__codegraph__search {"query": "readOnlyObjectiveEvidencePaths", "projectPath": "/workspace/idiom"}
+  -> mcp__codegraph__context {"projectPath": "/workspace/idiom", "task": "pathparse.MentionedWorkspacePaths function implementation ...
+  -> mcp__codegraph__node {"projectPath": "/workspace/idiom", "symbol": "MentionedWorkspacePaths", "includeCode": true}
+  -> mcp__codegraph__node {"projectPath": "/workspace/idiom", "symbol": "readOnlyObjectiveEvidencePaths", "includeCode": true}
+  -> mcp__codegraph__explore {"projectPath": "/workspace/idiom", "query": "pathparse.go pathparse ScopeToBriefBody mentionedWorkspac...
+  -> mcp__codegraph__callers {"projectPath": "/workspace/idiom", "symbol": "readOnlyAnswerabilityForResults"}
+  -> mcp__codegraph__search {"projectPath": "/workspace/idiom", "query": "final_answer_acceptance"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/final_answer_acceptance.go"}
+  -> mcp__codegraph__node {"includeCode": true, "projectPath": "/workspace/idiom", "symbol": "readOnlyDirectAnswerCandidateOnlyLe...
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/read_only_answerability.go", "offset": 40, "limit": 2...
+  -> mcp__codegraph__node {"includeCode": true, "projectPath": "/workspace/idiom", "symbol": "acceptedAnswerEvidencePaths"}
   ⊘ explore sub-agent: paused after 5 tool-call rounds (agent.max_steps) — the work so far is saved; send another message to continue, or set max_steps higher or to 0 for no limit
 [2m  ▎ thinking[0m
 Now let me look at the existing path extraction utility to understand the reuse surface:
@@ -43,13 +43,13 @@ Now let me look at the existing path extraction utility to understand the reuse 
 [2m  ▎ thinking[0m
 Let me also check where the initial context is assembled — the hook point for prefetch injection:
   · 76276 tok · in 76121 (71040 cached / 5081 new) · out 155 (39 reasoning) · ¥0.0068
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent", "pattern": "func.*prepareInitialContext|func.*build...
+  -> grep {"path": "/workspace/idiom/internal/runtime/agent", "pattern": "func.*prepareInitialContext|func.*build...
 [2m  ▎ thinking[0m
   · 76389 tok · in 76290 (76160 cached / 130 new) · out 99 (13 reasoning) · ¥0.0019
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent", "pattern": "buildMessages|buildRequest|initialConte...
+  -> grep {"path": "/workspace/idiom/internal/runtime/agent", "pattern": "buildMessages|buildRequest|initialConte...
 [2m  ▎ thinking[0m
   · 76519 tok · in 76403 (76288 cached / 115 new) · out 116 (29 reasoning) · ¥0.0019
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent", "pattern": "chatMessages|systemMessages|runLoop|Run...
+  -> grep {"path": "/workspace/idiom/internal/runtime/agent", "pattern": "chatMessages|systemMessages|runLoop|Run...
 [2m  ▎ thinking[0m
 I have all the evidence I need. Here is my review.
 

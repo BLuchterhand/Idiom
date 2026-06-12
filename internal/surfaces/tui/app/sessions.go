@@ -33,16 +33,20 @@ func ResolveSessionLogPath(cfg config.Config, id string) string {
 	if id == "" {
 		return ""
 	}
+
 	if strings.ContainsAny(id, string(os.PathSeparator)+"/") || strings.HasSuffix(id, ".jsonl") {
 		if !strings.HasSuffix(id, ".jsonl") {
 			id += ".jsonl"
 		}
+
 		return id
 	}
+
 	dir := cfg.Chat.DebugLogDir
 	if strings.TrimSpace(dir) == "" {
 		dir = "logs/conversations"
 	}
+
 	return filepath.Join(dir, id+".jsonl")
 }
 
@@ -53,47 +57,60 @@ func ListRecordedSessions(cfg config.Config) ([]SessionInfo, error) {
 	if strings.TrimSpace(dir) == "" {
 		dir = "logs/conversations"
 	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
+
 		return nil, fmt.Errorf("read debug log dir %q: %w", dir, err)
 	}
+
 	sessions := make([]SessionInfo, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
+
 		name := entry.Name()
 		if !strings.HasSuffix(name, ".jsonl") {
 			continue
 		}
+
 		id := strings.TrimSuffix(name, ".jsonl")
 		path := filepath.Join(dir, name)
 		info := summarizeSessionLog(path)
+
 		info.ID = id
 		info.Path = path
 		sessions = append(sessions, info)
 	}
+
 	slices.SortFunc(sessions, func(a, b SessionInfo) int {
 		return -cmp.Compare(a.ID, b.ID)
 	})
+
 	return sessions, nil
 }
 
 func summarizeSessionLog(path string) SessionInfo {
 	info := SessionInfo{}
+
 	_ = util.ScanFile(path, func(raw json.RawMessage) error {
 		var record map[string]any
+
 		if err := json.Unmarshal(raw, &record); err != nil {
 			return nil
 		}
+
 		if record["type"] != "message" {
 			return nil
 		}
+
 		role, _ := record["role"].(string)
 		content, _ := record["content"].(string)
+
 		switch role {
 		case "user":
 			info.UserMessages++
@@ -103,8 +120,10 @@ func summarizeSessionLog(path string) SessionInfo {
 		case "assistant":
 			info.AssistMessage++
 		}
+
 		return nil
 	})
+
 	return info
 }
 
@@ -113,13 +132,16 @@ func oneLineSummary(text string, max int) string {
 	if text == "" {
 		return ""
 	}
+
 	if idx := strings.IndexByte(text, '\n'); idx >= 0 {
 		text = text[:idx]
 	}
+
 	text = strings.TrimSpace(text)
 	if len(text) > max {
 		text = text[:max-1] + "…"
 	}
+
 	return text
 }
 
@@ -137,6 +159,7 @@ func (m *Model) LoadHistoryFromSession(path string) error {
 	if m == nil {
 		return fmt.Errorf("model is nil")
 	}
+
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return fmt.Errorf("session path is required")
@@ -146,21 +169,27 @@ func (m *Model) LoadHistoryFromSession(path string) error {
 	if err != nil {
 		return err
 	}
+
 	if len(replay.messages) == 0 {
 		return fmt.Errorf("session log %q contained no user/assistant messages", path)
 	}
+
 	m.messages = append(m.messages, replay.messages...)
 	m.loadInputHistoryFromSessionMessages(replay.messages)
+
 	m.history.entries = append(m.history.entries, replay.history...)
 	if len(m.history.entries) > 0 {
 		m.history.selected = len(m.history.entries) - 1
 	}
+
 	m.requestHistoryPanelRender(true, true)
+
 	return nil
 }
 
 func replaySessionLog(path string) (sessionReplay, error) {
 	var replay sessionReplay
+
 	currentAgent := -1
 
 	ensureAgent := func() *historyEntry {
@@ -170,8 +199,10 @@ func replaySessionLog(path string) (sessionReplay, error) {
 				return entry
 			}
 		}
+
 		replay.history = append(replay.history, historyEntry{sender: "agent", inProgress: true})
 		currentAgent = len(replay.history) - 1
+
 		return &replay.history[currentAgent]
 	}
 	finalizeAgent := func() {
@@ -179,13 +210,17 @@ func replaySessionLog(path string) (sessionReplay, error) {
 			currentAgent = -1
 			return
 		}
+
 		entry := &replay.history[currentAgent]
+
 		entry.inProgress = false
+
 		if len(entry.contents) == 0 && len(entry.toolCalls) == 0 && len(entry.auditEvents) == 0 {
 			replay.history = append(replay.history[:currentAgent], replay.history[currentAgent+1:]...)
 		} else {
 			entry.summary = localFallbackSummary(entry)
 		}
+
 		currentAgent = -1
 	}
 	appendAudit := func(event historyAuditEvent) {
@@ -193,41 +228,56 @@ func replaySessionLog(path string) (sessionReplay, error) {
 		if event.label == "" {
 			return
 		}
+
 		if currentAgent < 0 && len(replay.history) > 0 && replay.history[len(replay.history)-1].sender == "agent" {
 			entry := &replay.history[len(replay.history)-1]
+
 			entry.auditEvents = append(entry.auditEvents, event)
 			entry.summary = localFallbackSummary(entry)
+
 			return
 		}
+
 		entry := ensureAgent()
+
 		entry.auditEvents = append(entry.auditEvents, event)
 		entry.summary = localFallbackSummary(entry)
 	}
 
 	err := util.ScanFile(path, func(raw json.RawMessage) error {
 		var record map[string]any
+
 		if err := json.Unmarshal(raw, &record); err != nil {
 			return nil
 		}
+
 		recordType := sessionStringField(record, "type")
 		switch recordType {
 		case "message":
 			role := sessionStringField(record, "role")
 			content := strings.TrimSpace(sessionStringField(record, "content"))
+
 			if content == "" {
 				return nil
 			}
+
 			switch role {
 			case "user":
 				finalizeAgent()
+
 				replay.messages = append(replay.messages, llama.ChatMessage{Role: role, Content: content})
+
 				entry := historyEntry{sender: "user", contents: []string{content}}
+
 				entry.summary = localFallbackSummary(&entry)
 				replay.history = append(replay.history, entry)
 			case "assistant":
 				replay.messages = append(replay.messages, llama.ChatMessage{Role: role, Content: content})
+
 				entry := ensureAgent()
+
 				entry.contents = append(entry.contents, content)
+
 				finalizeAgent()
 			default:
 				if audit, ok := historyAuditEventFromRunEvent(agent.RunEvent{Role: role, Content: content}); ok {
@@ -239,6 +289,7 @@ func replaySessionLog(path string) (sessionReplay, error) {
 			event := sessionToolRequestEvent(record)
 			line := sessionToolLine(event.Request.Tool, util.FirstNonEmpty(event.Request.Description, sessionStringField(record, "action"), sessionStringField(record, "raw")))
 			entry.upsertToolCall(event.Step, line, toolRequestIntent(event), true, historyToolAuditKind(event), "")
+
 			entry.summary = localFallbackSummary(entry)
 		case "tool_result":
 			entry := ensureAgent()
@@ -247,11 +298,13 @@ func replaySessionLog(path string) (sessionReplay, error) {
 			summary := sessionStringField(record, "summary")
 			line := sessionToolLine(tool, util.FirstNonEmpty(summary, sessionStringField(record, "path"), "completed"))
 			entry.upsertToolCall(step, line, "", false, "", sessionToolResultOutcome(record))
+
 			entry.auditEvents = append(entry.auditEvents, sessionContextAuditEvents(record)...)
 			entry.summary = localFallbackSummary(entry)
 		case "run_event":
 			role := sessionStringField(record, "role")
 			content := sessionStringField(record, "content")
+
 			if audit, ok := historyAuditEventFromRunEvent(agent.RunEvent{Role: role, Content: content}); ok {
 				appendAudit(audit)
 			}
@@ -275,16 +328,20 @@ func replaySessionLog(path string) (sessionReplay, error) {
 				status: "loaded",
 			})
 		}
+
 		return nil
 	})
 	if err != nil {
 		return sessionReplay{}, fmt.Errorf("read session log: %w", err)
 	}
+
 	finalizeAgent()
+
 	for i := range replay.history {
 		replay.history[i].inProgress = false
 		replay.history[i].summary = localFallbackSummary(&replay.history[i])
 	}
+
 	return replay, nil
 }
 
@@ -293,6 +350,7 @@ func sessionToolRequestEvent(record map[string]any) agent.ToolRequestEvent {
 	if action == "" {
 		action = sessionStringField(record, "raw")
 	}
+
 	return agent.ToolRequestEvent{
 		Step:           sessionIntField(record, "step"),
 		Agent:          sessionStringField(record, "agent"),
@@ -312,10 +370,12 @@ func sessionToolLine(tool, detail string) string {
 	if tool == "" {
 		tool = "tool"
 	}
+
 	detail = truncateRunes(collapseWhitespace(strings.TrimSpace(detail)), 140)
 	if detail == "" {
 		return tool
 	}
+
 	return tool + " | " + detail
 }
 
@@ -323,48 +383,61 @@ func sessionToolResultOutcome(record map[string]any) string {
 	if errText := strings.TrimSpace(sessionStringField(record, "error")); errText != "" {
 		return "failed: " + truncateRunes(collapseWhitespace(errText), 120)
 	}
+
 	summary := strings.TrimSpace(sessionStringField(record, "summary"))
 	if summary == "" {
 		summary = "completed"
 	}
+
 	outcome := "ok: " + truncateRunes(collapseWhitespace(summary), 100)
 	lines := sessionIntField(record, "output_lines")
 	chars := sessionIntField(record, "output_chars")
+
 	if lines > 0 || chars > 0 {
 		outcome += fmt.Sprintf(" (%d line(s), %d char(s))", lines, chars)
 	}
+
 	return outcome
 }
 
 func sessionContextAuditEvents(record map[string]any) []historyAuditEvent {
 	var events []historyAuditEvent
+
 	if state := sessionStringField(record, "context_cache_state"); state != "" {
 		detail := joinNonEmpty("; ",
 			keyValue("source", sessionStringField(record, "context_cache_source")),
 			keyValue("reason", sessionStringField(record, "context_cache_reason")),
 			keyValue("pack", sessionStringField(record, "context_cache_pack_id")),
 		)
+
 		events = append(events, historyAuditEvent{kind: "cache", label: "context cache " + state, detail: detail, status: state})
 	}
+
 	if sessionBoolField(record, "context_auto_refresh_attempted") || sessionBoolField(record, "context_freshness_refresh_attempted") {
 		files := sessionIntField(record, "context_auto_refresh_files_indexed")
 		if files == 0 {
 			files = sessionIntField(record, "context_freshness_refresh_files_indexed")
 		}
+
 		reason := util.FirstNonEmpty(sessionStringField(record, "context_auto_refresh_reason"), sessionStringField(record, "context_freshness_reason"))
 		label := "context freshness refresh"
+
 		if files > 0 {
 			label = fmt.Sprintf("context freshness refresh indexed %d file(s)", files)
 		}
+
 		events = append(events, historyAuditEvent{kind: "cache", label: label, detail: keyValue("reason", reason), status: "refresh"})
 	}
+
 	if state := sessionStringField(record, "context_freshness_state"); state != "" {
 		detail := joinNonEmpty("; ",
 			keyValue("policy", sessionStringField(record, "context_freshness_policy")),
 			keyValue("reason", sessionStringField(record, "context_freshness_reason")),
 		)
+
 		events = append(events, historyAuditEvent{kind: "freshness", label: "context evidence " + state, detail: detail, status: state})
 	}
+
 	return events
 }
 
@@ -383,12 +456,15 @@ func sessionPayloadJSON(record map[string]any) string {
 		if key == "ts" || key == "type" {
 			continue
 		}
+
 		payload[key] = value
 	}
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return "{}"
 	}
+
 	return string(body)
 }
 

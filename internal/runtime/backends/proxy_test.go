@@ -38,13 +38,16 @@ func TestBuildProxyConfigAcceptsValidProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildProxyConfig: %v", err)
 	}
+
 	if cfg.Listen != 47680 || cfg.DefaultAlias != "qwen3.6-35b" {
 		t.Fatalf("listen/default mis-derived: %+v", cfg)
 	}
+
 	r, ok := cfg.Routes["qwen3-coder-30b"]
 	if !ok {
 		t.Fatalf("missing coder route in %v", cfg.Routes)
 	}
+
 	if r.BackendAddr != "127.0.0.1:47781" || r.AbsPath != "/abs/qwen3-coder-30b" {
 		t.Fatalf("coder route shape wrong: %+v", r)
 	}
@@ -58,6 +61,7 @@ func TestBuildProxyConfigAcceptsValidProfile(t *testing.T) {
 func TestBuildProxyConfigRejectsEmptyModelPath(t *testing.T) {
 	prof := Profile{Models: []Model{{Alias: "x", Binary: "x", Port: 1}}}
 	_, err := BuildProxyConfig(prof)
+
 	if err == nil || !strings.Contains(err.Error(), "model_path") {
 		t.Fatalf("expected model_path error, got %v", err)
 	}
@@ -70,8 +74,11 @@ func TestBuildProxyConfigRejectsEmptyModelPath(t *testing.T) {
 // rather than "the schema is wrong."
 func TestBuildProxyConfigRejectsUnknownDefaultAlias(t *testing.T) {
 	prof := sampleProfile(1, 2, 3)
+
 	prof.Proxy.DefaultAlias = "no-such-alias"
+
 	_, err := BuildProxyConfig(prof)
+
 	if err == nil || !strings.Contains(err.Error(), "default_alias") {
 		t.Fatalf("expected default_alias error, got %v", err)
 	}
@@ -84,6 +91,7 @@ func TestBuildProxyConfigRejectsUnknownDefaultAlias(t *testing.T) {
 func TestBuildProxyConfigRejectsInvalidPort(t *testing.T) {
 	prof := Profile{Models: []Model{{Alias: "x", Binary: "x", ModelPath: "/m", Port: 0}}}
 	_, err := BuildProxyConfig(prof)
+
 	if err == nil || !strings.Contains(err.Error(), "invalid port") {
 		t.Fatalf("expected invalid-port error, got %v", err)
 	}
@@ -106,6 +114,7 @@ func TestProxyMalformedJSONOnV1FallsBackToDefault(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("expected 200 from default backend, got %d", w.Code)
 	}
+
 	if !strings.Contains(doer.gotURL, "47780") {
 		t.Fatalf("malformed body should route to default: %s", doer.gotURL)
 	}
@@ -122,6 +131,7 @@ func TestBuildProxyConfigRejectsDuplicateAlias(t *testing.T) {
 		{Alias: "dup", Binary: "x", ModelPath: "/b", Port: 2},
 	}}
 	_, err := BuildProxyConfig(prof)
+
 	if err == nil || !strings.Contains(err.Error(), "duplicate alias") {
 		t.Fatalf("expected duplicate alias error, got %v", err)
 	}
@@ -140,24 +150,30 @@ type stubDoer struct {
 func (s *stubDoer) Do(req *http.Request) (*http.Response, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	// req.Body is nil for body-less requests (GET /healthz, etc.) —
 	// the production handler at proxy.go:181-184 leaves it unset in
 	// that case. Mirror that here so the stub doesn't panic.
 	var body []byte
+
 	if req.Body != nil {
 		body, _ = io.ReadAll(req.Body)
 	}
+
 	s.gotURL = req.URL.String()
 	s.gotBody = body
 	s.gotHdr = req.Header.Clone()
+
 	if s.respFunc != nil {
 		// Replace the consumed body so the user-supplied callback
 		// sees the request as the production transport would.
 		if body != nil {
 			req.Body = io.NopCloser(bytes.NewReader(body))
 		}
+
 		return s.respFunc(req)
 	}
+
 	return &http.Response{
 		StatusCode: 200,
 		Body:       io.NopCloser(bytes.NewReader([]byte(`{"ok":true}`))),
@@ -170,10 +186,12 @@ func (s *stubDoer) Do(req *http.Request) (*http.Response, error) {
 // bodies focused on the assertion they're making, not the boilerplate.
 func newHandlerWithStub(t *testing.T, prof Profile, doer *stubDoer) http.Handler {
 	t.Helper()
+
 	cfg, err := BuildProxyConfig(prof)
 	if err != nil {
 		t.Fatalf("BuildProxyConfig: %v", err)
 	}
+
 	return NewProxyHandler(cfg, ProxyOptions{Doer: doer})
 }
 
@@ -187,19 +205,24 @@ func TestProxyRewritesModelFieldToAbsolutePath(t *testing.T) {
 	body := `{"model":"qwen3-coder-30b","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
 	if w.Code != 200 {
 		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
 	}
+
 	if !strings.Contains(doer.gotURL, "127.0.0.1:47781") {
 		t.Fatalf("forwarded URL should target the coder backend: %s", doer.gotURL)
 	}
+
 	var payload map[string]any
+
 	if err := json.Unmarshal(doer.gotBody, &payload); err != nil {
 		t.Fatalf("forwarded body not JSON: %v (body=%s)", err, doer.gotBody)
 	}
+
 	if payload["model"] != "/abs/qwen3-coder-30b" {
 		t.Fatalf("model field should be rewritten to abs path; got %v", payload["model"])
 	}
@@ -219,6 +242,7 @@ func TestProxyToleratesProviderPrefixedAlias(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
+
 	if !strings.Contains(doer.gotURL, "47781") {
 		t.Fatalf("provider-prefixed alias should still route to coder backend: %s", doer.gotURL)
 	}
@@ -240,11 +264,15 @@ func TestProxyFallsBackToDefaultAliasOnUnknownModel(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("expected fallback to succeed, got %d", w.Code)
 	}
+
 	if !strings.Contains(doer.gotURL, "47780") {
 		t.Fatalf("fallback should hit the default backend: %s", doer.gotURL)
 	}
+
 	var payload map[string]any
+
 	_ = json.Unmarshal(doer.gotBody, &payload)
+
 	if payload["model"] != "/abs/qwen3.6-35b" {
 		t.Fatalf("model field should be rewritten to default's abs path; got %v", payload["model"])
 	}
@@ -256,7 +284,9 @@ func TestProxyFallsBackToDefaultAliasOnUnknownModel(t *testing.T) {
 // aliases so the operator can correct the request.
 func TestProxyReturns404WhenNoDefaultAndUnknownAlias(t *testing.T) {
 	prof := sampleProfile(47780, 47781, 47680)
+
 	prof.Proxy.DefaultAlias = ""
+
 	doer := &stubDoer{}
 	h := newHandlerWithStub(t, prof, doer)
 	body := `{"model":"nope"}`
@@ -267,6 +297,7 @@ func TestProxyReturns404WhenNoDefaultAndUnknownAlias(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for unknown alias with no default, got %d", w.Code)
 	}
+
 	if !strings.Contains(w.Body.String(), "qwen3.6-35b") {
 		t.Fatalf("404 body should list known aliases: %s", w.Body.String())
 	}
@@ -291,18 +322,23 @@ func TestProxyMergesMultipleSystemMessages(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
+
 	var payload map[string]any
+
 	if err := json.Unmarshal(doer.gotBody, &payload); err != nil {
 		t.Fatalf("forwarded body not JSON: %v", err)
 	}
+
 	msgs, ok := payload["messages"].([]any)
 	if !ok || len(msgs) != 2 {
 		t.Fatalf("expected exactly 2 messages after merge, got %d (%v)", len(msgs), msgs)
 	}
+
 	first, _ := msgs[0].(map[string]any)
 	if first["role"] != "system" {
 		t.Fatalf("first message must be the merged system: %v", first)
 	}
+
 	if !strings.Contains(first["content"].(string), "base rules") || !strings.Contains(first["content"].(string), "lane preamble") {
 		t.Fatalf("merged system must contain both fragments: %v", first["content"])
 	}
@@ -335,12 +371,15 @@ func TestProxyForwardsStreamingChunks(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(200)
+
 		flusher, _ := w.(http.Flusher)
 		for _, c := range chunks {
 			_, _ = w.Write([]byte(c))
+
 			if flusher != nil {
 				flusher.Flush()
 			}
+
 			time.Sleep(10 * time.Millisecond)
 		}
 	}))
@@ -351,10 +390,12 @@ func TestProxyForwardsStreamingChunks(t *testing.T) {
 	// host on the way out keeps the rest of the routing logic
 	// intact under test.
 	prof := sampleProfile(47780, 47781, 47680)
+
 	cfg, err := BuildProxyConfig(prof)
 	if err != nil {
 		t.Fatalf("BuildProxyConfig: %v", err)
 	}
+
 	doer := &redirectingDoer{target: backend.URL}
 	h := NewProxyHandler(cfg, ProxyOptions{Doer: doer})
 
@@ -382,7 +423,9 @@ func (d *redirectingDoer) Do(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	out.Header = req.Header.Clone()
+
 	return http.DefaultClient.Do(out)
 }
 
@@ -405,6 +448,7 @@ func TestProxyReturns502OnBackendError(t *testing.T) {
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502 on backend error, got %d", w.Code)
 	}
+
 	if !strings.Contains(w.Body.String(), "backend unreachable") {
 		t.Fatalf("error body should explain failure: %s", w.Body.String())
 	}
@@ -425,6 +469,7 @@ func TestProxyNonV1PathRoutesToDefault(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("expected 200 from default backend, got %d", w.Code)
 	}
+
 	if !strings.Contains(doer.gotURL, "47780") {
 		t.Fatalf("non-/v1 should route to default: %s", doer.gotURL)
 	}
@@ -449,8 +494,10 @@ func TestServeProxyBindsAndShutsDownGracefully(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	addrCh := make(chan string, 1)
 	doneCh := make(chan error, 1)
+
 	go func() {
 		doneCh <- ServeProxy(ctx, cfg, ProxyOptions{
 			Doer:     &stubDoer{},
@@ -463,18 +510,22 @@ func TestServeProxyBindsAndShutsDownGracefully(t *testing.T) {
 		if addr == "" {
 			t.Fatal("ready callback fired with empty addr")
 		}
+
 		client := &http.Client{Timeout: 2 * time.Second}
+
 		resp, err := client.Post("http://"+addr+"/v1/chat/completions",
 			"application/json", strings.NewReader(`{"model":"qwen3.6-35b"}`))
 		if err != nil {
 			t.Fatalf("dial proxy: %v", err)
 		}
+
 		_ = resp.Body.Close()
 	case <-time.After(2 * time.Second):
 		t.Fatal("ServeProxy never invoked the ready callback")
 	}
 
 	cancel()
+
 	select {
 	case err := <-doneCh:
 		if err != nil {
@@ -494,6 +545,7 @@ func TestServeProxyRequiresListenPort(t *testing.T) {
 		"x": {Alias: "x", BackendAddr: "127.0.0.1:1"},
 	}}
 	err := ServeProxy(context.Background(), cfg, ProxyOptions{}, nil)
+
 	if err == nil || !strings.Contains(err.Error(), "listen") {
 		t.Fatalf("expected listen-port error, got %v", err)
 	}

@@ -10,6 +10,7 @@ import (
 
 func TestRecorderWritesProcessTelemetryAndRedactsSensitiveArgs(t *testing.T) {
 	dir := t.TempDir()
+
 	rec, err := Open(Options{
 		Dir:           dir,
 		Command:       "implement",
@@ -19,12 +20,15 @@ func TestRecorderWritesProcessTelemetryAndRedactsSensitiveArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+
 	if rec == nil {
 		t.Fatal("recorder disabled unexpectedly")
 	}
+
 	if err := rec.Log("custom", map[string]any{"ok": true}); err != nil {
 		t.Fatalf("Log: %v", err)
 	}
+
 	if err := rec.Close(0); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -33,20 +37,25 @@ func TestRecorderWritesProcessTelemetryAndRedactsSensitiveArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
+
 	if len(entries) != 1 {
 		t.Fatalf("expected one telemetry file, got %d", len(entries))
 	}
+
 	records := readTelemetryRecords(t, filepath.Join(dir, entries[0].Name()))
 	if len(records) != 4 {
 		t.Fatalf("expected session_start, process_start, custom, process_exit; got %d records", len(records))
 	}
+
 	if records[0]["type"] != "session_start" || records[1]["type"] != "process_start" || records[3]["type"] != "process_exit" {
 		t.Fatalf("unexpected record sequence: %#v", records)
 	}
+
 	args, ok := records[1]["args"].([]any)
 	if !ok {
 		t.Fatalf("process_start args missing: %#v", records[1])
 	}
+
 	renderedArgs := strings.TrimSpace(toJSON(t, args))
 	if strings.Contains(renderedArgs, "secret thing") || !strings.Contains(renderedArgs, "redacted len=23") {
 		t.Fatalf("sensitive prompt arg was not redacted: %s", renderedArgs)
@@ -68,11 +77,13 @@ func TestSanitizeArgsKeepsShortValuesAndRedactsLongValues(t *testing.T) {
 	if !strings.Contains(rendered, "--config=config.json") {
 		t.Fatalf("short non-sensitive flag value should be preserved: %s", rendered)
 	}
+
 	for _, forbidden := range []string{longValue, "change the private thing", "write a detailed private brief"} {
 		if strings.Contains(rendered, forbidden) {
 			t.Fatalf("sensitive or oversized arg leaked %q in %s", forbidden, rendered)
 		}
 	}
+
 	if strings.Count(rendered, "redacted len=") != 3 {
 		t.Fatalf("expected three redacted arg values, got %s", rendered)
 	}
@@ -86,9 +97,11 @@ func TestOpenUsesTelemetryDirEnvAndSanitizedCommandName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+
 	if rec == nil {
 		t.Fatal("recorder disabled unexpectedly")
 	}
+
 	if err := rec.Close(0); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -96,6 +109,7 @@ func TestOpenUsesTelemetryDirEnvAndSanitizedCommandName(t *testing.T) {
 	if !strings.HasPrefix(rec.Path(), dir+string(os.PathSeparator)) {
 		t.Fatalf("expected telemetry path under env dir %q, got %q", dir, rec.Path())
 	}
+
 	if !strings.Contains(filepath.Base(rec.Path()), "my-command") {
 		t.Fatalf("expected sanitized command name in telemetry file, got %q", rec.Path())
 	}
@@ -108,6 +122,7 @@ func TestOpenUsesTelemetryDirEnvAndSanitizedCommandName(t *testing.T) {
 // binary that produced the log.
 func TestRecorderStampsVersionWhenSet(t *testing.T) {
 	dir := t.TempDir()
+
 	rec, err := Open(Options{
 		Dir:           dir,
 		Command:       "version-stamp-test",
@@ -118,6 +133,7 @@ func TestRecorderStampsVersionWhenSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+
 	if err := rec.Close(0); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -126,16 +142,20 @@ func TestRecorderStampsVersionWhenSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
+
 	records := readTelemetryRecords(t, filepath.Join(dir, entries[0].Name()))
 	if records[0]["type"] != "session_start" {
 		t.Fatalf("first record must be session_start; got %v", records[0]["type"])
 	}
+
 	if records[0]["version"] != "v9.9.9-stamp" {
 		t.Fatalf("session_start missing version=v9.9.9-stamp; got %#v", records[0])
 	}
+
 	if records[1]["type"] != "process_start" {
 		t.Fatalf("second record must be process_start; got %v", records[1]["type"])
 	}
+
 	if records[1]["version"] != "v9.9.9-stamp" {
 		t.Fatalf("process_start missing version=v9.9.9-stamp; got %#v", records[1])
 	}
@@ -147,6 +167,7 @@ func TestRecorderStampsVersionWhenSet(t *testing.T) {
 // cluttering empty values in production telemetry.
 func TestRecorderOmitsEmptyVersion(t *testing.T) {
 	dir := t.TempDir()
+
 	rec, err := Open(Options{
 		Dir:           dir,
 		Command:       "no-version-test",
@@ -157,6 +178,7 @@ func TestRecorderOmitsEmptyVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+
 	if err := rec.Close(0); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -165,10 +187,12 @@ func TestRecorderOmitsEmptyVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
+
 	records := readTelemetryRecords(t, filepath.Join(dir, entries[0].Name()))
 	if _, present := records[0]["version"]; present {
 		t.Fatalf("session_start should not carry an empty version key; got %#v", records[0])
 	}
+
 	if _, present := records[1]["version"]; present {
 		t.Fatalf("process_start should not carry an empty version key; got %#v", records[1])
 	}
@@ -176,13 +200,16 @@ func TestRecorderOmitsEmptyVersion(t *testing.T) {
 
 func TestRecorderCloseWithFieldsIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
+
 	rec, err := Open(Options{Dir: dir, Command: "implement", WorkspaceRoot: "/workspace"})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+
 	if err := rec.CloseWithFields(143, map[string]any{"reason": "signal", "signal": "terminated"}); err != nil {
 		t.Fatalf("CloseWithFields: %v", err)
 	}
+
 	if err := rec.Close(0); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
@@ -191,20 +218,26 @@ func TestRecorderCloseWithFieldsIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
+
 	if len(entries) != 1 {
 		t.Fatalf("expected one telemetry file, got %d", len(entries))
 	}
+
 	records := readTelemetryRecords(t, filepath.Join(dir, entries[0].Name()))
 	processExits := 0
+
 	for _, record := range records {
 		if record["type"] != "process_exit" {
 			continue
 		}
+
 		processExits++
+
 		if record["exit_code"] != float64(143) || record["reason"] != "signal" || record["signal"] != "terminated" {
 			t.Fatalf("unexpected process_exit record: %#v", record)
 		}
 	}
+
 	if processExits != 1 {
 		t.Fatalf("expected one process_exit, got %d in %#v", processExits, records)
 	}
@@ -215,16 +248,21 @@ func TestRecorderCloseRunsRegisteredCloseoutsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+
 	closeouts := 0
+
 	rec.RegisterCloseout(func() {
 		closeouts++
 	})
+
 	if err := rec.CloseWithFields(143, map[string]any{"reason": "signal"}); err != nil {
 		t.Fatalf("CloseWithFields: %v", err)
 	}
+
 	if err := rec.Close(0); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
+
 	if closeouts != 1 {
 		t.Fatalf("closeouts ran %d time(s), want 1", closeouts)
 	}
@@ -232,10 +270,12 @@ func TestRecorderCloseRunsRegisteredCloseoutsOnce(t *testing.T) {
 
 func TestRecorderHonorsDisabledEnv(t *testing.T) {
 	t.Setenv("IDIOM_TELEMETRY", "0")
+
 	rec, err := Open(Options{Dir: t.TempDir(), Command: "tool"})
 	if err != nil {
 		t.Fatalf("Open disabled: %v", err)
 	}
+
 	if rec != nil {
 		t.Fatal("expected nil recorder when telemetry is disabled")
 	}
@@ -243,27 +283,35 @@ func TestRecorderHonorsDisabledEnv(t *testing.T) {
 
 func readTelemetryRecords(t *testing.T, path string) []map[string]any {
 	t.Helper()
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read telemetry file: %v", err)
 	}
+
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	records := make([]map[string]any, 0, len(lines))
+
 	for _, line := range lines {
 		var record map[string]any
+
 		if err := json.Unmarshal([]byte(line), &record); err != nil {
 			t.Fatalf("parse %q: %v", line, err)
 		}
+
 		records = append(records, record)
 	}
+
 	return records
 }
 
 func toJSON(t *testing.T, value any) string {
 	t.Helper()
+
 	data, err := json.Marshal(value)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
+
 	return string(data)
 }

@@ -11,6 +11,7 @@ func TestBuildProfilesRejectsUnknownProfile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected unknown profile to fail")
 	}
+
 	if !IsProfileSelectionError(err) {
 		t.Fatalf("expected profile selection error, got %T %v", err, err)
 	}
@@ -19,9 +20,11 @@ func TestBuildProfilesRejectsUnknownProfile(t *testing.T) {
 func TestWorkspaceRootFromConfigResolvesRelativeRoot(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, ".idiom")
+
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
 	}
+
 	configPath := filepath.Join(configDir, "config.json")
 	if err := os.WriteFile(configPath, []byte(`{"workspace":{"root":".."}}`), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -46,14 +49,18 @@ func TestRuntimeReadinessSchemaMapsMissingBackendRole(t *testing.T) {
 		gate.RuntimeDecision != RuntimeReadinessLaunchBlocked ||
 		gate.ReasonClass != ReasonMissingBackendRole ||
 		gate.Fallback != FallbackLegacyConfig {
+
 		t.Fatalf("backend gate did not expose typed role failure metadata: %#v", gate)
 	}
+
 	invariant := findRuntimeInvariantForTest(t, report.RuntimeReadiness, "runtime.backend_roles_resolved")
 	if invariant.Decision != RuntimeReadinessLaunchBlocked ||
 		invariant.ReasonClass != ReasonMissingBackendRole ||
 		invariant.Fallback != FallbackLegacyConfig {
+
 		t.Fatalf("runtime readiness invariant did not mirror backend gate: %#v", invariant)
 	}
+
 	if report.RuntimeReadiness.Decision != RuntimeReadinessLaunchBlocked || !report.RuntimeReadiness.LaunchBlocked {
 		t.Fatalf("profile runtime decision = %#v, want launch_blocked", report.RuntimeReadiness)
 	}
@@ -72,8 +79,10 @@ func TestRuntimeReadinessSchemaMapsInvalidContextBudget(t *testing.T) {
 		gate.RuntimeDecision != RuntimeReadinessLaunchBlocked ||
 		gate.ReasonClass != ReasonInvalidContextBudget ||
 		gate.Fallback != "" {
+
 		t.Fatalf("context gate did not expose typed invalid-budget metadata: %#v", gate)
 	}
+
 	if report.RuntimeReadiness.Decision != RuntimeReadinessLaunchBlocked {
 		t.Fatalf("profile runtime decision = %#v, want launch_blocked", report.RuntimeReadiness)
 	}
@@ -112,15 +121,20 @@ func TestRuntimeReadinessSchemaMapsQueueUnavailableAndSoftDegraded(t *testing.T)
 				gate.RuntimeDecision != RuntimeReadinessAllowedDegraded ||
 				gate.ReasonClass != tc.reasonClass ||
 				gate.Fallback != tc.fallback {
+
 				t.Fatalf("queue gate did not expose typed degraded metadata: %#v", gate)
 			}
+
 			if report.RuntimeReadiness.Decision != RuntimeReadinessAllowedDegraded ||
 				report.RuntimeReadiness.LaunchBlocked ||
 				report.RuntimeReadiness.LaunchBlockingEnforced {
+
 				t.Fatalf("queue profile should remain allowed_degraded and non-blocking, got %#v", report.RuntimeReadiness)
 			}
+
 			if len(report.RuntimeReadiness.Fallbacks) != 1 ||
 				report.RuntimeReadiness.Fallbacks[0].Fallback != tc.fallback {
+
 				t.Fatalf("queue fallback not aggregated in runtime readiness: %#v", report.RuntimeReadiness.Fallbacks)
 			}
 		})
@@ -139,11 +153,14 @@ func TestRuntimeReadinessSchemaPreservesReportOnlyEnforcement(t *testing.T) {
 	if gate.Status != "blocked" || gate.RuntimeDecision != RuntimeReadinessLaunchBlocked {
 		t.Fatalf("eval queue gate should record launch_blocked, got %#v", gate)
 	}
+
 	if report.Enforcement != string(EnforcementReportOnly) ||
 		gate.Enforcement != string(EnforcementReportOnly) ||
 		report.RuntimeReadiness.Enforcement != EnforcementReportOnly {
+
 		t.Fatalf("readiness enforcement must remain report_only, report=%#v gate=%#v", report.RuntimeReadiness, gate)
 	}
+
 	if !report.RuntimeReadiness.LaunchBlocked || report.RuntimeReadiness.LaunchBlockingEnforced {
 		t.Fatalf("launch_blocked should be report-only metadata, got %#v", report.RuntimeReadiness)
 	}
@@ -156,32 +173,40 @@ func runtimeProfileForCheck(profileName string, check Check) ProfileReport {
 		RequiredForLaunch: true,
 		Checks:            []Check{check},
 	}
+
 	report = applyGatePolicy(report)
 	report.State = profileState(report.Checks, report.Gates)
 	report.Detail = profileDetail(report.State)
 	report.Metrics = metricsFor(report.Checks, report.Gates, Metrics{})
 	report.RuntimeReadiness = BuildRuntimeReadiness(report)
+
 	return report
 }
 
 func findReadinessGateForTest(t *testing.T, report ProfileReport, name string) GateDecision {
 	t.Helper()
+
 	for _, gate := range report.Gates {
 		if gate.Name == name {
 			return gate
 		}
 	}
+
 	t.Fatalf("missing gate %q in %#v", name, report.Gates)
+
 	return GateDecision{}
 }
 
 func findRuntimeInvariantForTest(t *testing.T, report RuntimeReadinessReport, invariantID string) RuntimeReadinessInvariant {
 	t.Helper()
+
 	for _, invariant := range report.Invariants {
 		if invariant.InvariantID == invariantID {
 			return invariant
 		}
 	}
+
 	t.Fatalf("missing runtime invariant %q in %#v", invariantID, report.Invariants)
+
 	return RuntimeReadinessInvariant{}
 }

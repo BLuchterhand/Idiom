@@ -663,22 +663,27 @@ func (m Metrics) TotalErrorEvents() int {
 	if m.ErrorCount > 0 {
 		return m.ErrorCount
 	}
+
 	return len(m.Errors)
 }
 
 func LoadRecords(path string) ([]Record, error) {
 	records := make([]Record, 0, 64)
+
 	err := util.ScanFile(filepath.Clean(path), func(raw json.RawMessage) error {
 		payload := make(map[string]any)
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return fmt.Errorf("decode log record: %w", err)
 		}
+
 		records = append(records, normalizeLogRecord(payload))
+
 		return nil
 	}, 64*1024*1024)
 	if err != nil {
 		return nil, err
 	}
+
 	return records, nil
 }
 
@@ -687,11 +692,14 @@ func normalizeLogRecord(payload map[string]any) Record {
 	if recType != "" {
 		return Record{Type: recType, Data: payload}
 	}
+
 	kind, _ := payload["kind"].(string)
 	if kind == "" {
 		return Record{Data: payload}
 	}
+
 	data := make(map[string]any)
+
 	if nested, ok := payload["payload"].(map[string]any); ok {
 		for k, v := range nested {
 			data[k] = v
@@ -699,25 +707,31 @@ func normalizeLogRecord(payload map[string]any) Record {
 	} else if value, ok := payload["payload"]; ok {
 		data["payload"] = value
 	}
+
 	for _, key := range []string{"ts", "session_id"} {
 		if v, ok := payload[key]; ok {
 			data[key] = v
 		}
 	}
+
 	data["kind"] = kind
 	data["type"] = kind
+
 	return Record{Type: kind, Data: data}
 }
 
 func LoadScenario(path string) (Scenario, error) {
 	var scenario Scenario
+
 	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return scenario, fmt.Errorf("read scenario: %w", err)
 	}
+
 	if err := json.Unmarshal(data, &scenario); err != nil {
 		return scenario, fmt.Errorf("decode scenario: %w", err)
 	}
+
 	return scenario, nil
 }
 
@@ -726,9 +740,11 @@ func WriteScenario(path string, scenario Scenario) error {
 	if err != nil {
 		return fmt.Errorf("encode scenario: %w", err)
 	}
+
 	if err := os.WriteFile(filepath.Clean(path), append(data, '\n'), 0o644); err != nil {
 		return fmt.Errorf("write scenario: %w", err)
 	}
+
 	return nil
 }
 
@@ -739,6 +755,7 @@ func containsStringFold(items []string, target string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -746,9 +763,11 @@ func stringField(data map[string]any, key string) string {
 	if data == nil {
 		return ""
 	}
+
 	if value, ok := data[key].(string); ok {
 		return value
 	}
+
 	return ""
 }
 
@@ -756,10 +775,12 @@ func boolField(data map[string]any, key string) bool {
 	if data == nil {
 		return false
 	}
+
 	value, ok := data[key]
 	if !ok {
 		return false
 	}
+
 	switch typed := value.(type) {
 	case bool:
 		return typed
@@ -772,18 +793,22 @@ func timestampField(data map[string]any, key string) time.Time {
 	if data == nil {
 		return time.Time{}
 	}
+
 	value, ok := data[key].(string)
 	if !ok {
 		return time.Time{}
 	}
+
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return time.Time{}
 	}
+
 	ts, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil {
 		return time.Time{}
 	}
+
 	return ts
 }
 
@@ -791,10 +816,12 @@ func intField(data map[string]any, key string) int {
 	if data == nil {
 		return 0
 	}
+
 	value, ok := data[key]
 	if !ok {
 		return 0
 	}
+
 	switch typed := value.(type) {
 	case float64:
 		return int(typed)

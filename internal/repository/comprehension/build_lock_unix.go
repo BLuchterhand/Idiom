@@ -17,10 +17,12 @@ func lockGraphBuildFile(ctx context.Context, root string) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create context graph lock directory: %w", err)
 	}
+
 	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open context graph lock: %w", err)
 	}
+
 	for {
 		err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
@@ -29,10 +31,12 @@ func lockGraphBuildFile(ctx context.Context, root string) (func(), error) {
 				_ = file.Close()
 			}, nil
 		}
+
 		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
 			_ = file.Close()
 			return nil, fmt.Errorf("lock context graph: %w", err)
 		}
+
 		select {
 		case <-ctx.Done():
 			_ = file.Close()

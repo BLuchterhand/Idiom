@@ -219,9 +219,12 @@ func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		printAuditUsage(stderr)
+
 		return 0
 	}
+
 	logAuditPhase(rec, "audit_start", map[string]any{"subcommand": args[0]})
+
 	switch args[0] {
 	case "watch":
 		return runAuditWatch(args[1:], stdout, stderr, rec)
@@ -230,6 +233,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec
 	default:
 		fmt.Fprintf(stderr, "unknown audit command: %s\n", args[0])
 		printAuditUsage(stderr)
+
 		return 2
 	}
 }
@@ -237,8 +241,10 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec
 func runAuditWatch(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if auditWatchHelpRequested(args) {
 		printAuditUsage(stderr)
+
 		return 0
 	}
+
 	opts := auditWatchOptions{
 		Config:   "config.json",
 		Paths:    strings.Join(defaultAuditWatchPaths, ","),
@@ -258,28 +264,36 @@ func runAuditWatch(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 	fs.BoolVar(&opts.Once, "once", false, "scan once and exit")
 	fs.BoolVar(&opts.ReviewExisting, "review-existing", false, "on first run, review existing trigger files instead of creating a baseline")
 	fs.BoolVar(&opts.Quiet, "quiet", false, "suppress status output")
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
 	if fs.NArg() != 0 {
 		fmt.Fprintf(stderr, "unexpected positional argument: %s\n", fs.Arg(0))
+
 		return 2
 	}
 
 	cfg, err := cmdconfig.Load(opts.Config)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	opts = auditWatchOptionsWithDefaults(opts, cfg)
 
 	state, err := loadAuditWatchState(opts.StatePath)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	if err := os.MkdirAll(opts.OutputDir, 0o755); err != nil {
 		fmt.Fprintf(stderr, "create audit watch output: %v\n", err)
+
 		return 1
 	}
 
@@ -287,23 +301,30 @@ func runAuditWatch(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		reviewPath, triggers, err := auditWatchScanAndReview(context.Background(), cfg, opts, &state)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
+
 			return 1
 		}
+
 		if err := saveAuditWatchState(opts.StatePath, state); err != nil {
 			fmt.Fprintln(stderr, err)
+
 			return 1
 		}
+
 		if reviewPath != "" {
 			logAuditPhase(rec, "audit_watch_review", map[string]any{"artifact": reviewPath, "trigger_files": len(triggers)})
+
 			if !opts.Quiet {
 				fmt.Fprintf(stdout, "audit review: %s\n", reviewPath)
 			}
 		} else if opts.Once && !opts.Quiet {
 			fmt.Fprintln(stdout, "audit review: no triggers")
 		}
+
 		if opts.Once {
 			return 0
 		}
+
 		time.Sleep(opts.Interval)
 	}
 }
@@ -313,22 +334,27 @@ func auditWatchOptionsWithDefaults(opts auditWatchOptions, cfg config.Config) au
 	if root == "" {
 		root = "."
 	}
+
 	if strings.TrimSpace(opts.OutputDir) == "" {
 		opts.OutputDir = filepath.Join(root, ".idiom", "audits", "watch")
 	} else if !filepath.IsAbs(opts.OutputDir) {
 		opts.OutputDir = filepath.Join(root, opts.OutputDir)
 	}
+
 	if strings.TrimSpace(opts.StatePath) == "" {
 		opts.StatePath = filepath.Join(opts.OutputDir, "state.json")
 	} else if !filepath.IsAbs(opts.StatePath) {
 		opts.StatePath = filepath.Join(root, opts.StatePath)
 	}
+
 	if opts.Limit <= 0 {
 		opts.Limit = 50
 	}
+
 	if opts.Interval <= 0 {
 		opts.Interval = 5 * time.Second
 	}
+
 	return opts
 }
 
@@ -337,38 +363,49 @@ func auditWatchScanAndReview(ctx context.Context, cfg config.Config, opts auditW
 	if err != nil {
 		return "", nil, err
 	}
+
 	if state.Files == nil {
 		state.Files = make(map[string]auditWatchSeenFile)
 	}
+
 	if !state.Initialized && !opts.ReviewExisting {
 		auditWatchMarkFilesSeen(state, files)
+
 		state.Initialized = true
+
 		return "", nil, nil
 	}
 
 	var changed []auditWatchChangedFile
+
 	for _, file := range files {
 		previous := state.Files[file.Path]
 		if previous.ModUnixNano != file.ModUnixNano || previous.Size != file.Size {
 			changed = append(changed, auditWatchChangedFile{File: file, Previous: previous})
 		}
 	}
+
 	auditWatchMarkFilesSeen(state, files)
+
 	state.Initialized = true
+
 	if len(changed) == 0 {
 		return "", nil, nil
 	}
 
 	var triggers []auditWatchTriggerFile
+
 	for _, changedFile := range changed {
 		trigger, ok := auditWatchTriggerForFile(changedFile.File, changedFile.Previous)
 		if ok {
 			triggers = append(triggers, trigger)
 		}
 	}
+
 	if len(triggers) == 0 {
 		return "", nil, nil
 	}
+
 	if opts.Debounce > 0 {
 		time.Sleep(opts.Debounce)
 	}
@@ -377,10 +414,12 @@ func auditWatchScanAndReview(ctx context.Context, cfg config.Config, opts auditW
 	if err != nil {
 		return "", triggers, err
 	}
+
 	path, err := writeAuditWatchReview(opts.OutputDir, review)
 	if err != nil {
 		return "", triggers, err
 	}
+
 	return path, triggers, nil
 }
 
@@ -396,10 +435,12 @@ func buildAuditWatchReview(ctx context.Context, cfg config.Config, opts auditWat
 		ProductSuccessGateImpacts: auditWatchProductSuccessGateImpacts(),
 		Privacy:                   auditWatchPrivacyPolicy(),
 	}
+
 	for _, path := range paths {
 		if !auditWatchPathExists(cfg.Workspace.Root, path) {
 			continue
 		}
+
 		result := mgr.Execute(ctx, workspace.ToolRequest{
 			Tool:    "harness_audit",
 			Purpose: "behavior",
@@ -411,12 +452,16 @@ func buildAuditWatchReview(ctx context.Context, cfg config.Config, opts auditWat
 			Summary: auditWatchSanitizeText(cfg.Workspace.Root, result.Summary, 400),
 			Error:   auditWatchSanitizeText(cfg.Workspace.Root, result.Error, 400),
 		}
+
 		if strings.TrimSpace(result.Output) != "" && json.Valid([]byte(result.Output)) {
 			run.Report = auditWatchSanitizeJSONReport(cfg.Workspace.Root, result.Output)
 		}
+
 		review.Audits = append(review.Audits, run)
 	}
+
 	auditWatchFinalizeReview(&review, opts, cfg.Workspace.Root)
+
 	return review, nil
 }
 
@@ -442,15 +487,18 @@ func auditWatchFinalizeReview(review *auditWatchReview, opts auditWatchOptions, 
 
 func auditWatchFindingsFromTriggers(triggers []auditWatchTriggerFile, opts auditWatchOptions, root string) []auditWatchFinding {
 	var findings []auditWatchFinding
+
 	for _, trigger := range triggers {
 		for _, reason := range trigger.Reasons {
 			category := auditWatchCategoryForReason(reason)
 			source := auditWatchSanitizeText(root, trigger.Path, 240)
 			evidence := fmt.Sprintf("trigger_file=%s; reason=%s; events=%d", source, reason, trigger.EventCount)
 			recommendation := "triage the owner surface and promote the smallest reproducible check or document a bounded non-goal"
+
 			if category == "failure_recovery" {
 				recommendation = "inspect the recovery packet, promote the smallest gated atom, and convert repeats into eval or audit fixtures"
 			}
+
 			findings = append(findings, auditWatchNewFinding(auditWatchFinding{
 				ID:             "trigger_" + auditWatchSlug(reason, 72),
 				Severity:       auditWatchSeverityForReason(reason),
@@ -462,6 +510,7 @@ func auditWatchFindingsFromTriggers(triggers []auditWatchTriggerFile, opts audit
 			}, opts))
 		}
 	}
+
 	return findings
 }
 
@@ -473,29 +522,37 @@ func auditWatchFindingsFromAuditRuns(runs []auditWatchRun, opts auditWatchOption
 		Recommendation string   `json:"recommendation"`
 		Tools          []string `json:"tools"`
 	}
+
 	type sourceReport struct {
 		Findings []sourceFinding `json:"findings"`
 	}
 
 	var findings []auditWatchFinding
+
 	for _, run := range runs {
 		if len(run.Report) == 0 {
 			continue
 		}
+
 		var report sourceReport
+
 		if err := json.Unmarshal(run.Report, &report); err != nil {
 			continue
 		}
+
 		for _, source := range report.Findings {
 			severity := auditWatchSeverity(source.Severity)
 			if severity != "high" && severity != "medium" {
 				continue
 			}
+
 			id := strings.TrimSpace(source.ID)
 			if id == "" {
 				id = "harness_audit_finding"
 			}
+
 			category := auditWatchCategoryForAuditFinding(id, source.Evidence)
+
 			findings = append(findings, auditWatchNewFinding(auditWatchFinding{
 				ID:             "audit_" + auditWatchSlug(id, 72),
 				Severity:       severity,
@@ -508,6 +565,7 @@ func auditWatchFindingsFromAuditRuns(runs []auditWatchRun, opts auditWatchOption
 			}, opts))
 		}
 	}
+
 	return findings
 }
 
@@ -520,11 +578,13 @@ func auditWatchNewFinding(finding auditWatchFinding, opts auditWatchOptions) aud
 	finding.Promotion = auditWatchPromotionForFinding(finding, opts)
 	finding.Reproducer = auditWatchFindingReproducer(finding.Source, opts)
 	finding.Closure = auditWatchClosureForStatus(finding.Status, nil, nil, "")
+
 	return finding
 }
 
 func auditWatchPromotionForFinding(finding auditWatchFinding, opts auditWatchOptions) auditWatchFindingPromotion {
 	targets := []string{"regression_test", "eval_fixture", "audit_rule", "documented_non_goal"}
+
 	switch finding.Category {
 	case "context_staleness", "ranker_miss":
 		targets = append(targets, "ranker_change")
@@ -535,7 +595,9 @@ func auditWatchPromotionForFinding(finding auditWatchFinding, opts auditWatchOpt
 	case "failure_recovery":
 		targets = append(targets, "recovery_atom", "recovery_eval_fixture", "telemetry_or_audit_rule")
 	}
+
 	slices.Sort(targets)
+
 	return auditWatchFindingPromotion{
 		Status:           "open",
 		CandidateTargets: auditWatchUniqueStrings(targets),
@@ -567,13 +629,16 @@ func auditWatchHarnessAuditCommand(path string, limit int) string {
 	if strings.TrimSpace(path) != "" {
 		input["path"] = path
 	}
+
 	if limit > 0 {
 		input["limit"] = limit
 	}
+
 	data, err := json.Marshal(input)
 	if err != nil {
 		return "idiom tool harness_audit"
 	}
+
 	return "idiom tool harness_audit --input " + auditWatchShellSingleQuote(string(data))
 }
 
@@ -582,10 +647,12 @@ func auditWatchRegressionPromotionWorkflowForFindings(findings []auditWatchFindi
 	for _, finding := range findings {
 		targets = append(targets, finding.Promotion.CandidateTargets...)
 	}
+
 	status := "not_applicable"
 	if len(findings) > 0 {
 		status = "open"
 	}
+
 	return auditWatchRegressionPromotionWorkflow{
 		Status:           status,
 		CandidateTargets: auditWatchUniqueStrings(targets),
@@ -596,6 +663,7 @@ func auditWatchRegressionPromotionWorkflowForFindings(findings []auditWatchFindi
 
 func auditWatchClosureForStatus(status string, before []auditWatchReplayEvidence, after []auditWatchReplayEvidence, noReplayReason string) auditWatchClosure {
 	status = strings.ToLower(strings.TrimSpace(status))
+
 	closure := auditWatchClosure{
 		Status:           "open",
 		Required:         true,
@@ -605,9 +673,11 @@ func auditWatchClosureForStatus(status string, before []auditWatchReplayEvidence
 		NoReplayReason:   strings.TrimSpace(noReplayReason),
 		RequiredEvidence: []string{"before_replay", "after_replay", "promotion_or_non_goal_decision"},
 	}
+
 	if status == "" || status == "open" {
 		return closure
 	}
+
 	if status == "no_action" || status == "not_applicable" {
 		return auditWatchClosure{
 			Status:   "not_required",
@@ -616,23 +686,30 @@ func auditWatchClosureForStatus(status string, before []auditWatchReplayEvidence
 			Reason:   "no_high_or_medium_findings",
 		}
 	}
+
 	if !auditWatchClosedFindingStatus(status) {
 		closure.Reason = "status_is_not_terminal"
 		return closure
 	}
+
 	if len(before) > 0 && len(after) > 0 {
 		closure.Status = "closed"
 		closure.Ready = true
 		closure.Reason = "before_after_replay_present"
+
 		return closure
 	}
+
 	if auditWatchBoundedNoReplayReason(noReplayReason) {
 		closure.Status = "closed"
 		closure.Ready = true
 		closure.Reason = "replay_not_applicable_documented"
+
 		return closure
 	}
+
 	closure.Reason = "closed_status_requires_before_after_replay_or_bounded_reason"
+
 	return closure
 }
 
@@ -657,23 +734,30 @@ func auditWatchBoundedNoReplayReason(reason string) bool {
 func auditWatchDeduplicateFindings(findings []auditWatchFinding) []auditWatchFinding {
 	seen := make(map[string]struct{}, len(findings))
 	out := make([]auditWatchFinding, 0, len(findings))
+
 	for _, finding := range findings {
 		key := finding.ID + "\x00" + finding.Source
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
+
 		out = append(out, finding)
 	}
+
 	sort.Slice(out, func(i, j int) bool {
 		if auditWatchSeverityRank(out[i].Severity) != auditWatchSeverityRank(out[j].Severity) {
 			return auditWatchSeverityRank(out[i].Severity) < auditWatchSeverityRank(out[j].Severity)
 		}
+
 		if out[i].Category != out[j].Category {
 			return out[i].Category < out[j].Category
 		}
+
 		return out[i].ID < out[j].ID
 	})
+
 	return out
 }
 
@@ -681,6 +765,7 @@ func auditWatchTopFailureClass(findings []auditWatchFinding) string {
 	if len(findings) == 0 {
 		return ""
 	}
+
 	return findings[0].Category
 }
 
@@ -688,6 +773,7 @@ func auditWatchDominantOwnerSurface(findings []auditWatchFinding) string {
 	if len(findings) == 0 {
 		return ""
 	}
+
 	return findings[0].OwnerSurface
 }
 
@@ -695,6 +781,7 @@ func auditWatchPacketStatus(findings []auditWatchFinding) string {
 	if len(findings) == 0 {
 		return "no_action"
 	}
+
 	return "open"
 }
 
@@ -702,6 +789,7 @@ func auditWatchPacketPromotionStatus(findings []auditWatchFinding) string {
 	if len(findings) == 0 {
 		return "not_applicable"
 	}
+
 	return "open"
 }
 
@@ -710,6 +798,7 @@ func auditWatchCandidateRegressionIDs(findings []auditWatchFinding) []string {
 	for _, finding := range findings {
 		out = append(out, "regression-"+auditWatchSlug(finding.ID, 80))
 	}
+
 	return auditWatchUniqueStrings(out)
 }
 
@@ -720,22 +809,27 @@ func auditWatchCandidateLearningEventIDs(findings []auditWatchFinding) []string 
 			out = append(out, "learning-"+auditWatchSlug(finding.ID, 80))
 		}
 	}
+
 	return auditWatchUniqueStrings(out)
 }
 
 func auditWatchTriggerReasonList(triggers []auditWatchTriggerFile) []string {
 	var values []string
+
 	for _, trigger := range triggers {
 		values = append(values, trigger.Reasons...)
 	}
+
 	return auditWatchUniqueStrings(values)
 }
 
 func auditWatchSessionList(triggers []auditWatchTriggerFile) []string {
 	var values []string
+
 	for _, trigger := range triggers {
 		values = append(values, trigger.Sessions...)
 	}
+
 	return auditWatchUniqueStrings(values)
 }
 
@@ -744,6 +838,7 @@ func auditWatchTriggerPaths(triggers []auditWatchTriggerFile) []string {
 	for _, trigger := range triggers {
 		values = append(values, trigger.Path)
 	}
+
 	return auditWatchUniqueStrings(values)
 }
 
@@ -751,39 +846,51 @@ func auditWatchRecoverySummaryFromTriggers(triggers []auditWatchTriggerFile) *au
 	summary := auditWatchRecoverySummary{
 		Status: "ready",
 	}
-	var classes []string
-	var actions []string
-	var sessions []string
-	var artifactPaths []string
+
+	var (
+		classes       []string
+		actions       []string
+		sessions      []string
+		artifactPaths []string
+	)
+
 	for _, trigger := range triggers {
 		for _, event := range trigger.RecoveryEvents {
 			summary.EventCount++
+
 			switch event.Type {
 			case "idiom.plan_execute.recovery_failure_record_written":
 				summary.FailureRecordCount++
 			case "idiom.plan_execute.recovery_decomposition_packet_written":
 				summary.DecompositionPacketCount++
+
 				summary.CandidateAtomCount += event.CandidateAtoms
 			case "idiom.plan_execute.recovery_failure_record_failed", "idiom.plan_execute.recovery_decomposition_packet_failed":
 				summary.FailedRecoveryEventCount++
+
 				summary.Status = "blocked"
 			}
+
 			classes = append(classes, event.FailureClass)
 			actions = append(actions, event.NextValidAction)
 			sessions = append(sessions, event.SessionID)
 			artifactPaths = append(artifactPaths, event.ArtifactPath)
 		}
 	}
+
 	if summary.EventCount == 0 {
 		return nil
 	}
+
 	if summary.Status != "blocked" && summary.DecompositionPacketCount == 0 {
 		summary.Status = "recorded"
 	}
+
 	summary.FailureClasses = auditWatchUniqueStrings(classes)
 	summary.NextValidActions = auditWatchUniqueStrings(actions)
 	summary.Sessions = auditWatchUniqueStrings(sessions)
 	summary.ArtifactPaths = auditWatchUniqueStrings(artifactPaths)
+
 	return &summary
 }
 
@@ -796,6 +903,7 @@ func auditWatchSanitizeTriggerFiles(root string, triggers []auditWatchTriggerFil
 		trigger.RecoveryEvents = auditWatchSanitizeRecoveryEvents(root, trigger.RecoveryEvents)
 		out = append(out, trigger)
 	}
+
 	return out
 }
 
@@ -813,6 +921,7 @@ func auditWatchSanitizeRecoveryEvents(root string, events []auditWatchRecoveryEv
 		event.ArtifactPath = auditWatchSanitizeText(root, event.ArtifactPath, 240)
 		out = append(out, event)
 	}
+
 	return out
 }
 
@@ -956,10 +1065,13 @@ func auditWatchPathExists(root string, path string) bool {
 	if path == "" {
 		return false
 	}
+
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(root, path)
 	}
+
 	_, err := os.Stat(path)
+
 	return err == nil
 }
 
@@ -967,66 +1079,84 @@ func writeAuditWatchReview(outputDir string, review auditWatchReview) (string, e
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return "", fmt.Errorf("create audit watch output: %w", err)
 	}
+
 	name := time.Now().UTC().Format("20060102-150405.000000000") + ".json"
 	path := filepath.Join(outputDir, name)
+
 	data, err := json.MarshalIndent(review, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal audit review: %w", err)
 	}
+
 	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
 		return "", fmt.Errorf("write audit review: %w", err)
 	}
+
 	return path, nil
 }
 
 func collectAuditWatchFiles(root string, paths []string) ([]auditWatchFile, error) {
 	var files []auditWatchFile
+
 	seen := make(map[string]struct{})
+
 	for _, raw := range paths {
 		path := strings.TrimSpace(raw)
 		if path == "" {
 			continue
 		}
+
 		abs := path
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(root, path)
 		}
+
 		info, err := os.Stat(abs)
 		if os.IsNotExist(err) {
 			continue
 		}
+
 		if err != nil {
 			return nil, fmt.Errorf("stat audit watch path %s: %w", path, err)
 		}
+
 		if !info.IsDir() {
 			if auditWatchIsJSONL(abs) {
 				files = appendAuditWatchFile(files, seen, root, abs, info)
 			}
+
 			continue
 		}
+
 		if err := filepath.WalkDir(abs, func(child string, entry os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
+
 			if entry.IsDir() || !auditWatchIsJSONL(child) {
 				return nil
 			}
+
 			info, err := entry.Info()
 			if err != nil {
 				return err
 			}
+
 			files = appendAuditWatchFile(files, seen, root, child, info)
+
 			return nil
 		}); err != nil {
 			return nil, fmt.Errorf("walk audit watch path %s: %w", path, err)
 		}
 	}
+
 	slices.SortFunc(files, func(a, b auditWatchFile) int {
 		return cmp.Or(
 			-cmp.Compare(a.ModUnixNano, b.ModUnixNano),
 			cmp.Compare(a.Path, b.Path),
 		)
 	})
+
 	return files, nil
 }
 
@@ -1039,11 +1169,15 @@ func appendAuditWatchFile(files []auditWatchFile, seen map[string]struct{}, root
 	if _, ok := seen[clean]; ok {
 		return files
 	}
+
 	seen[clean] = struct{}{}
+
 	display := clean
+
 	if rel, err := filepath.Rel(root, clean); err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		display = filepath.ToSlash(rel)
 	}
+
 	return append(files, auditWatchFile{
 		Path:        clean,
 		DisplayPath: display,
@@ -1067,32 +1201,41 @@ func auditWatchTriggerForFile(file auditWatchFile, previous auditWatchSeenFile) 
 
 	reasons := make(map[string]struct{})
 	sessions := make(map[string]struct{})
+
 	var recoveryEvents []auditWatchRecoveryEvent
+
 	eventCount := 0
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 64*1024*1024)
+
 	for scanner.Scan() {
 		var record map[string]any
+
 		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
 			continue
 		}
+
 		if sessionID := auditWatchString(record, "session_id"); sessionID != "" {
 			sessions[sessionID] = struct{}{}
 		}
+
 		if event, ok := auditWatchRecoveryEventForRecord(record); ok {
 			recoveryEvents = append(recoveryEvents, event)
 			if event.SessionID != "" {
 				sessions[event.SessionID] = struct{}{}
 			}
 		}
+
 		for _, reason := range auditWatchTriggerReasons(record) {
 			reasons[reason] = struct{}{}
 			eventCount++
 		}
 	}
+
 	if len(reasons) == 0 {
 		return auditWatchTriggerFile{}, false
 	}
+
 	out := auditWatchTriggerFile{
 		Path:           file.DisplayPath,
 		ModUnixNano:    file.ModUnixNano,
@@ -1105,11 +1248,14 @@ func auditWatchTriggerForFile(file auditWatchFile, previous auditWatchSeenFile) 
 	for reason := range reasons {
 		out.Reasons = append(out.Reasons, reason)
 	}
+
 	for sessionID := range sessions {
 		out.Sessions = append(out.Sessions, sessionID)
 	}
+
 	slices.Sort(out.Reasons)
 	slices.Sort(out.Sessions)
+
 	return out, true
 }
 
@@ -1120,6 +1266,7 @@ func auditWatchTriggerReasons(record map[string]any) []string {
 	summary := strings.ToLower(auditWatchString(record, "summary"))
 	errText := strings.ToLower(auditWatchString(record, "error"))
 	stopReason := auditWatchString(record, "stop_reason")
+
 	var reasons []string
 
 	if eventType == "process_exit" && command == "implement" {
@@ -1129,19 +1276,25 @@ func auditWatchTriggerReasons(record map[string]any) []string {
 			reasons = append(reasons, "implement_process_exit")
 		}
 	}
+
 	if eventType == "tool_result" && (tool == "harness_feedback" || tool == "idiom_feedback") {
 		reasons = append(reasons, "harness_feedback")
 	}
+
 	if eventType == "tool_result" && tool == "completion_gate" {
 		reasons = append(reasons, "completion_gate")
 	}
+
 	if eventType == "turn_summary" && auditWatchHighRiskStopReason(stopReason) {
 		reasons = append(reasons, "high_risk_stop_reason:"+stopReason)
 	}
+
 	if eventType == "completion_status" && strings.EqualFold(auditWatchString(record, "status"), "blocked") {
 		reason := firstAuditWatchString(auditWatchString(record, "reason"), auditWatchString(record, "blocker_kind"), "blocked")
+
 		reasons = append(reasons, "completion_status_blocked:"+auditWatchBoundedReasonFragment(reason))
 	}
+
 	switch eventType {
 	case "idiom.plan_execute.recovery_failure_record_written":
 		class := auditWatchString(record, "failure_class")
@@ -1150,22 +1303,27 @@ func auditWatchTriggerReasons(record map[string]any) []string {
 		} else {
 			class = auditWatchBoundedReasonFragment(class)
 		}
+
 		reasons = append(reasons, "recovery_failure_record_written:"+class)
 	case "idiom.plan_execute.recovery_decomposition_packet_written":
 		reasons = append(reasons, "recovery_decomposition_packet_written")
 	case "idiom.plan_execute.recovery_failure_record_failed", "idiom.plan_execute.recovery_decomposition_packet_failed":
 		reasons = append(reasons, "recovery_artifact_write_failed")
 	}
+
 	combined := summary + " " + errText
 	if strings.Contains(combined, "malformed") ||
 		strings.Contains(combined, "invalid input json") ||
 		strings.Contains(combined, "patch parse failed") ||
 		strings.Contains(combined, "tool_parse") {
+
 		reasons = append(reasons, "malformed_tool_input")
 	}
+
 	if strings.Contains(combined, "stale") && strings.Contains(combined, "context") {
 		reasons = append(reasons, "stale_context")
 	}
+
 	return reasons
 }
 
@@ -1173,6 +1331,7 @@ func auditWatchRecoveryEventForRecord(record map[string]any) (auditWatchRecovery
 	eventType := auditWatchString(record, "type")
 	status := ""
 	artifactPath := ""
+
 	switch eventType {
 	case "idiom.plan_execute.recovery_failure_record_written":
 		status = "recorded"
@@ -1186,6 +1345,7 @@ func auditWatchRecoveryEventForRecord(record map[string]any) (auditWatchRecovery
 	default:
 		return auditWatchRecoveryEvent{}, false
 	}
+
 	return auditWatchRecoveryEvent{
 		Type:            eventType,
 		Status:          status,
@@ -1224,6 +1384,7 @@ func firstAuditWatchString(values ...string) string {
 			return value
 		}
 	}
+
 	return ""
 }
 
@@ -1232,6 +1393,7 @@ func auditWatchNumber(record map[string]any, key string) float64 {
 	if !ok {
 		return 0
 	}
+
 	switch typed := value.(type) {
 	case float64:
 		return typed
@@ -1244,14 +1406,18 @@ func auditWatchNumber(record map[string]any, key string) float64 {
 
 func auditWatchSanitizeJSONReport(root string, output string) json.RawMessage {
 	var value any
+
 	if err := json.Unmarshal([]byte(output), &value); err != nil {
 		return nil
 	}
+
 	sanitized := auditWatchSanitizeJSONValue(root, value)
+
 	data, err := json.Marshal(sanitized)
 	if err != nil {
 		return nil
 	}
+
 	return json.RawMessage(data)
 }
 
@@ -1264,14 +1430,17 @@ func auditWatchSanitizeJSONValue(root string, value any) any {
 				out[key] = "[redacted]"
 				continue
 			}
+
 			out[key] = auditWatchSanitizeJSONValue(root, child)
 		}
+
 		return out
 	case []any:
 		out := make([]any, 0, len(typed))
 		for _, child := range typed {
 			out = append(out, auditWatchSanitizeJSONValue(root, child))
 		}
+
 		return out
 	case string:
 		return auditWatchSanitizeText(root, typed, 600)
@@ -1282,6 +1451,7 @@ func auditWatchSanitizeJSONValue(root string, value any) any {
 
 func auditWatchSensitiveJSONKey(key string) bool {
 	lower := strings.ToLower(strings.TrimSpace(key))
+
 	return strings.Contains(lower, "raw_prompt") ||
 		strings.Contains(lower, "prompt_text") ||
 		strings.Contains(lower, "transcript") ||
@@ -1295,26 +1465,33 @@ func auditWatchSensitiveJSONKey(key string) bool {
 func auditWatchSanitizeText(root string, value string, limit int) string {
 	original := strings.TrimSpace(strings.ReplaceAll(value, "\n", " "))
 	text := original
+
 	if text == "" {
 		return ""
 	}
+
 	if root = strings.TrimSpace(root); root != "" {
 		text = strings.ReplaceAll(text, root, "$WORKSPACE_ROOT")
 		text = strings.ReplaceAll(text, filepath.ToSlash(root), "$WORKSPACE_ROOT")
 	}
+
 	if kind, ok := auditWatchSensitiveTextKind(text); ok {
 		return auditWatchRedactedReference(kind, original)
 	}
+
 	if auditWatchContainsAbsoluteLocalPath(text) {
 		return auditWatchRedactedReference("path", original)
 	}
+
 	if limit <= 0 {
 		return text
 	}
+
 	runes := []rune(text)
 	if len(runes) <= limit {
 		return text
 	}
+
 	return string(runes[:limit]) + "..."
 }
 
@@ -1356,6 +1533,7 @@ func auditWatchContainsSensitivePathSegment(text string) bool {
 		if field == "" {
 			continue
 		}
+
 		normalized := strings.ReplaceAll(field, "\\", "/")
 		for _, segment := range strings.Split(normalized, "/") {
 			segment = strings.Trim(strings.ToLower(segment), ".-_ ")
@@ -1365,6 +1543,7 @@ func auditWatchContainsSensitivePathSegment(text string) bool {
 			}
 		}
 	}
+
 	return false
 }
 
@@ -1373,8 +1552,10 @@ func auditWatchContainsCustomerLikeIdentifier(lower string) bool {
 		strings.Contains(lower, "customer_") ||
 		strings.Contains(lower, "customer/") ||
 		strings.Contains(lower, "customer.")) {
+
 		return false
 	}
+
 	return strings.Contains(lower, "session") ||
 		strings.Contains(lower, "account") ||
 		strings.Contains(lower, "tenant") ||
@@ -1389,10 +1570,12 @@ func auditWatchContainsAbsoluteLocalPath(text string) bool {
 		if filepath.IsAbs(field) {
 			return true
 		}
+
 		if len(field) >= 3 && field[1] == ':' && (field[2] == '\\' || field[2] == '/') {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1401,7 +1584,9 @@ func auditWatchRedactedReference(kind string, value string) string {
 	if kind == "" {
 		kind = "value"
 	}
+
 	sum := sha256.Sum256([]byte(value))
+
 	return "[redacted_" + kind + " sha256:" + hex.EncodeToString(sum[:4]) + "]"
 }
 
@@ -1410,37 +1595,51 @@ func auditWatchBoundedReasonFragment(value string) string {
 	if value == "" {
 		return "blocked"
 	}
+
 	if _, ok := auditWatchSensitiveTextKind(value); ok {
 		return "redacted"
 	}
+
 	if auditWatchContainsAbsoluteLocalPath(value) {
 		return "redacted"
 	}
+
 	value = strings.ToLower(value)
+
 	var b strings.Builder
+
 	lastSep := false
+
 	for _, r := range value {
 		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == ':'
 		if ok {
 			b.WriteRune(r)
+
 			lastSep = false
+
 			continue
 		}
+
 		if !lastSep && b.Len() > 0 {
 			b.WriteByte('_')
+
 			lastSep = true
 		}
 	}
+
 	out := strings.Trim(b.String(), "_-:")
 	if out == "" {
 		return "redacted"
 	}
+
 	if len(out) > 80 {
 		out = strings.Trim(out[:80], "_-:")
 	}
+
 	if out == "" {
 		return "redacted"
 	}
+
 	return out
 }
 
@@ -1452,24 +1651,30 @@ func auditWatchSanitizeStrings(root string, values []string, limit int) []string
 			out = append(out, value)
 		}
 	}
+
 	return auditWatchUniqueStrings(out)
 }
 
 func auditWatchUniqueStrings(values []string) []string {
 	seen := make(map[string]struct{}, len(values))
 	out := make([]string, 0, len(values))
+
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -1481,32 +1686,43 @@ func auditWatchNonEmptyStrings(values []string) []string {
 			out = append(out, value)
 		}
 	}
+
 	return out
 }
 
 func auditWatchSlug(value string, limit int) string {
 	value = strings.ToLower(strings.TrimSpace(value))
+
 	var b strings.Builder
+
 	lastDash := false
+
 	for _, r := range value {
 		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
 		if ok {
 			b.WriteRune(r)
+
 			lastDash = false
+
 			continue
 		}
+
 		if !lastDash && b.Len() > 0 {
 			b.WriteByte('-')
+
 			lastDash = true
 		}
 	}
+
 	out := strings.Trim(b.String(), "-")
 	if out == "" {
 		out = "finding"
 	}
+
 	if limit > 0 && len(out) > limit {
 		out = strings.Trim(out[:limit], "-")
 	}
+
 	return out
 }
 
@@ -1518,17 +1734,21 @@ func auditWatchPathList(value string) []string {
 	parts := strings.Split(value, ",")
 	out := make([]string, 0, len(parts))
 	seen := make(map[string]struct{}, len(parts))
+
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
+
 		if _, ok := seen[part]; ok {
 			continue
 		}
+
 		seen[part] = struct{}{}
 		out = append(out, part)
 	}
+
 	return out
 }
 
@@ -1536,6 +1756,7 @@ func auditWatchMarkFilesSeen(state *auditWatchState, files []auditWatchFile) {
 	if state.Files == nil {
 		state.Files = make(map[string]auditWatchSeenFile, len(files))
 	}
+
 	for _, file := range files {
 		state.Files[file.Path] = auditWatchSeenFile{
 			ModUnixNano: file.ModUnixNano,
@@ -1549,28 +1770,36 @@ func auditWatchString(record map[string]any, key string) string {
 	if !ok {
 		return ""
 	}
+
 	text, ok := value.(string)
 	if !ok {
 		return ""
 	}
+
 	return strings.TrimSpace(text)
 }
 
 func loadAuditWatchState(path string) (auditWatchState, error) {
 	var state auditWatchState
+
 	data, err := os.ReadFile(path)
+
 	if os.IsNotExist(err) {
 		return state, nil
 	}
+
 	if err != nil {
 		return state, fmt.Errorf("read audit watch state: %w", err)
 	}
+
 	if len(strings.TrimSpace(string(data))) == 0 {
 		return state, nil
 	}
+
 	if err := json.Unmarshal(data, &state); err != nil {
 		return state, fmt.Errorf("decode audit watch state: %w", err)
 	}
+
 	return state, nil
 }
 
@@ -1578,13 +1807,16 @@ func saveAuditWatchState(path string, state auditWatchState) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create audit watch state dir: %w", err)
 	}
+
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal audit watch state: %w", err)
 	}
+
 	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
 		return fmt.Errorf("write audit watch state: %w", err)
 	}
+
 	return nil
 }
 
@@ -1626,15 +1858,18 @@ func auditWatchHelpRequested(args []string) bool {
 		"-limit":     true,
 		"--limit":    true,
 	}
+
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--help" || arg == "-h" || arg == "help" {
 			return true
 		}
+
 		if skipValueFor[arg] && i+1 < len(args) {
 			i++
 		}
 	}
+
 	return false
 }
 

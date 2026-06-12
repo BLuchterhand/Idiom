@@ -25,6 +25,7 @@ func readSymbolPathMissResult(tool, language, pattern, requestedPath string, can
 	if len(candidates) == 0 {
 		return ToolResult{}, false
 	}
+
 	count := len(candidates)
 	if len(candidates) > readSymbolCandidateOutputLimit {
 		candidates = candidates[:readSymbolCandidateOutputLimit]
@@ -40,6 +41,7 @@ func readSymbolPathMissResult(tool, language, pattern, requestedPath string, can
 	for _, candidate := range candidates {
 		lines = append(lines, fmt.Sprintf("- %s:%d %s %s", candidate.Path, candidate.Line, candidate.Kind, candidate.Display))
 	}
+
 	lines = append(lines, "candidate_requests:")
 	for _, candidate := range candidates {
 		lines = append(lines, fmt.Sprintf(
@@ -48,6 +50,7 @@ func readSymbolPathMissResult(tool, language, pattern, requestedPath string, can
 			pattern,
 		))
 	}
+
 	return ToolResult{
 		Tool:    tool,
 		Summary: fmt.Sprintf("%s symbol read path-filter miss; found %d candidate anchor(s) for %q", language, count, pattern),
@@ -59,27 +62,34 @@ func readSymbolPathMissFromMatches[T any](tool, language, pattern, pathFilter st
 	if strings.TrimSpace(pathFilter) == "" {
 		return ToolResult{}, false
 	}
+
 	candidates := make([]readSymbolCandidate, 0, readSymbolCandidateOutputLimit)
+
 	for _, match := range matches {
 		candidate := toCandidate(match)
 		if pathMatchesFilter(candidate.Path, pathFilter) {
 			continue
 		}
+
 		candidates = append(candidates, candidate)
 	}
+
 	return readSymbolPathMissResult(tool, language, pattern, pathFilter, candidates)
 }
 
 func readSymbolPathMissForRequest[T any](req ToolRequest, tool, language string, pathFilterForRequest func(ToolRequest) (string, error), findMatches func(string) ([]T, error), toCandidate func(T) readSymbolCandidate) (ToolResult, bool) {
 	pattern := strings.TrimSpace(req.Pattern)
 	pathFilter, err := pathFilterForRequest(req)
+
 	if err != nil || pathFilter == "" {
 		return ToolResult{}, false
 	}
+
 	matches, err := findMatches(pattern)
 	if err != nil {
 		return ToolResult{}, false
 	}
+
 	return readSymbolPathMissFromMatches(tool, language, pattern, pathFilter, matches, toCandidate)
 }
 
@@ -87,21 +97,28 @@ func prioritizeReadSymbolCandidates(candidates []readSymbolCandidate, requestedP
 	if len(candidates) == 0 {
 		return nil
 	}
+
 	seen := make(map[string]struct{}, len(candidates))
 	out := make([]readSymbolCandidate, 0, len(candidates))
+
 	for _, candidate := range candidates {
 		candidate.Path = cleanCandidatePath(candidate.Path)
 		candidate.Display = strings.TrimSpace(candidate.Display)
+
 		if candidate.Path == "" || candidate.Line <= 0 || candidate.Display == "" {
 			continue
 		}
+
 		key := fmt.Sprintf("%s:%d:%s:%s", candidate.Path, candidate.Line, candidate.Kind, candidate.Display)
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
+
 		out = append(out, candidate)
 	}
+
 	return out
 }
 
@@ -110,6 +127,7 @@ func cleanCandidatePath(path string) string {
 	if path == "" {
 		return ""
 	}
+
 	return filepath.ToSlash(filepath.Clean(path))
 }
 
@@ -117,6 +135,7 @@ func (m *Manager) goReadSymbolPathMiss(req ToolRequest, pattern, pathFilter stri
 	if strings.TrimSpace(pathFilter) == "" || index == nil {
 		return ToolResult{}, false
 	}
+
 	return readSymbolPathMissFromMatches("go_read_symbol", "Go", pattern, pathFilter, index.FindSymbols(pattern, readSymbolCandidateSearchLimit), func(match semantic.SymbolMatch) readSymbolCandidate {
 		return readSymbolCandidate{Path: match.Path, Line: match.Line, Kind: match.Kind, Display: goQualifiedSymbol(match)}
 	})
@@ -147,6 +166,7 @@ func (m *Manager) pythonReadSymbolMatches(pattern string) ([]semantic.PythonSymb
 	if err != nil {
 		return nil, err
 	}
+
 	return index.FindSymbols(pattern, readSymbolCandidateSearchLimit), nil
 }
 
@@ -155,6 +175,7 @@ func (m *Manager) cppReadSymbolMatches(pattern string) ([]semantic.CppSymbolMatc
 	if err != nil {
 		return nil, err
 	}
+
 	return index.FindSymbols(pattern, readSymbolCandidateSearchLimit), nil
 }
 
@@ -163,6 +184,7 @@ func (m *Manager) tsReadSymbolMatches(pattern string) ([]semantic.TsSymbolMatch,
 	if err != nil {
 		return nil, err
 	}
+
 	return index.FindSymbols(pattern, readSymbolCandidateSearchLimit), nil
 }
 
@@ -171,6 +193,7 @@ func (m *Manager) rustReadSymbolMatches(pattern string) ([]semantic.RustSymbolMa
 	if err != nil {
 		return nil, err
 	}
+
 	return index.FindSymbols(pattern, readSymbolCandidateSearchLimit), nil
 }
 
@@ -179,6 +202,7 @@ func (m *Manager) javaReadSymbolMatches(pattern string) ([]semantic.JavaSymbolMa
 	if err != nil {
 		return nil, err
 	}
+
 	return index.FindSymbols(pattern, readSymbolCandidateSearchLimit), nil
 }
 

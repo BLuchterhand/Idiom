@@ -33,15 +33,18 @@ func TestRunStandardPromptOnceBookkeepingProducesUserThenAssistant(t *testing.T)
 	// this test simulates that pair of appends and asserts the final
 	// m.messages shape — exactly [user, assistant], no placeholder.
 	m := &Model{}
+
 	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: "hi"})
 	m.finishPromptOnceReply("hello there")
 
 	if len(m.messages) != 2 {
 		t.Fatalf("expected 2 messages, got %d: %#v", len(m.messages), m.messages)
 	}
+
 	if m.messages[0].Role != "user" || m.messages[0].Content != "hi" {
 		t.Errorf("messages[0] = %#v, want {user, hi}", m.messages[0])
 	}
+
 	if m.messages[1].Role != "assistant" || m.messages[1].Content != "hello there" {
 		t.Errorf("messages[1] = %#v, want {assistant, hello there}", m.messages[1])
 	}
@@ -52,14 +55,17 @@ func TestSequentialTurnsDoNotAccumulateGhostPlaceholders(t *testing.T) {
 	// never 5 or 6 entries (which would indicate a ghost placeholder is
 	// being carried across turns).
 	m := &Model{}
+
 	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: "first"})
 	m.finishPromptOnceReply("one")
+
 	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: "second"})
 	m.finishPromptOnceReply("two")
 
 	if len(m.messages) != 4 {
 		t.Fatalf("expected 4 messages after two turns, got %d: %#v", len(m.messages), m.messages)
 	}
+
 	expected := []llama.ChatMessage{
 		{Role: "user", Content: "first"},
 		{Role: "assistant", Content: "one"},
@@ -79,6 +85,7 @@ func TestFinishPromptOnceReplyReturnsReplyVerbatim(t *testing.T) {
 	// value; losing it would silently break non-interactive use.
 	m := &Model{}
 	got := m.finishPromptOnceReply("final text")
+
 	if got != "final text" {
 		t.Errorf("finishPromptOnceReply = %q, want %q", got, "final text")
 	}
@@ -96,6 +103,7 @@ func TestFinishPromptOnceReplySuppressesNestedPlanExecuteTranscript(t *testing.T
 	if got != "internal planner blocker" {
 		t.Fatalf("finishPromptOnceReply = %q", got)
 	}
+
 	if len(m.messages) != 1 || m.messages[0].Content != "outer request" {
 		t.Fatalf("suppressed nested reply should not append to visible transcript: %#v", m.messages)
 	}
@@ -104,15 +112,19 @@ func TestFinishPromptOnceReplySuppressesNestedPlanExecuteTranscript(t *testing.T
 func TestFinishPromptOnceReplyRejectsToolCallXML(t *testing.T) {
 	m := &Model{}
 	got := m.finishPromptOnceReply("<invoke name=\"read_file\">\n<parameter name=\"path\">foo.go</parameter>\n</invoke>")
+
 	if got == "<invoke name=\"read_file\">\n<parameter name=\"path\">foo.go</parameter>\n</invoke>" {
 		t.Fatal("finishPromptOnceReply should replace tool-call XML with clean message")
 	}
+
 	if strings.Contains(got, "<invoke") || strings.Contains(got, "</invoke>") {
 		t.Fatalf("reply still contains invoke XML: %q", got)
 	}
+
 	if len(got) < 10 {
 		t.Fatalf("expected substantive replacement, got %q", got)
 	}
+
 	// Verify clean prose also passes through unchanged
 	clean := m.finishPromptOnceReply("The lane transitions back to main state after implementation success.")
 	if clean != "The lane transitions back to main state after implementation success." {
@@ -124,6 +136,7 @@ func TestFinishPromptOnceReplyRejectsToolCallXML(t *testing.T) {
 
 func newRenderModel(t *testing.T) *Model {
 	t.Helper()
+
 	return &Model{
 		ready:    true,
 		viewport: viewport.New(80, 20),
@@ -135,6 +148,7 @@ func TestRenderMessagesShowsSpinnerWhileStreaming(t *testing.T) {
 	// With the fix, the working affordance is rendered inline based on
 	// m.streaming — no empty-assistant placeholder required in messages.
 	m := newRenderModel(t)
+
 	m.streaming = true
 	m.messages = []llama.ChatMessage{
 		{Role: "user", Content: "what's up"},
@@ -152,6 +166,7 @@ func TestRenderMessagesHidesSpinnerWhenNotStreaming(t *testing.T) {
 	// must disappear — otherwise we'd leak a "working..." line under
 	// every completed reply.
 	m := newRenderModel(t)
+
 	m.streaming = false
 	m.messages = []llama.ChatMessage{
 		{Role: "user", Content: "done"},
@@ -172,6 +187,7 @@ func TestRenderMessagesSpinnerDoesNotDuplicateWithEmptyAssistant(t *testing.T) {
 	// Under the old code, the empty slot itself produced a spinner too,
 	// leading to a double affordance.
 	m := newRenderModel(t)
+
 	m.streaming = true
 	m.messages = []llama.ChatMessage{
 		{Role: "user", Content: "hello"},
@@ -181,6 +197,7 @@ func TestRenderMessagesSpinnerDoesNotDuplicateWithEmptyAssistant(t *testing.T) {
 
 	view := m.viewport.View()
 	count := strings.Count(view, "Qwen is preparing a response")
+
 	if count != 1 {
 		t.Fatalf("expected exactly one working affordance, got %d in:\n%s", count, view)
 	}
@@ -188,6 +205,7 @@ func TestRenderMessagesSpinnerDoesNotDuplicateWithEmptyAssistant(t *testing.T) {
 
 func TestRenderMessagesUsesActiveEvidenceInsteadOfGenericSpinner(t *testing.T) {
 	m := newRenderModel(t)
+
 	m.cfg.TUI.EvidencePanel = true
 	m.streaming = true
 	m.messages = []llama.ChatMessage{
@@ -210,6 +228,7 @@ func TestRenderMessagesUsesActiveEvidenceInsteadOfGenericSpinner(t *testing.T) {
 	if !strings.Contains(view, "rendering.go") {
 		t.Fatalf("expected live tool evidence to stay visible, got:\n%s", view)
 	}
+
 	if strings.Contains(view, "Qwen is preparing a response") {
 		t.Fatalf("generic spinner should not render below active evidence, got:\n%s", view)
 	}
@@ -221,6 +240,7 @@ func TestRenderMessagesDoesNotDuplicateAssistantReply(t *testing.T) {
 	// rendered view should contain the reply text exactly once — never
 	// wrapping the user message with two copies.
 	m := newRenderModel(t)
+
 	m.messages = []llama.ChatMessage{
 		{Role: "user", Content: "please explain"},
 		{Role: "assistant", Content: "this is a unique sentinel string xyzzy42"},
@@ -240,6 +260,7 @@ func TestRenderMessagesEmptyStateOnlyWithoutStreaming(t *testing.T) {
 	// (since the user message isn't yet appended to m.messages until
 	// runStandardPromptOnce picks up the turn).
 	m := newRenderModel(t)
+
 	m.streaming = true
 	m.renderMessages(true)
 
@@ -247,6 +268,7 @@ func TestRenderMessagesEmptyStateOnlyWithoutStreaming(t *testing.T) {
 	if strings.Contains(view, "No messages yet") {
 		t.Fatalf("empty-state hint must not render while streaming, got:\n%s", view)
 	}
+
 	if !strings.Contains(view, "Qwen is preparing a response") {
 		t.Fatalf("expected working affordance on fresh streaming turn, got:\n%s", view)
 	}

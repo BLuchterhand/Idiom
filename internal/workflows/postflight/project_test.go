@@ -14,10 +14,12 @@ import (
 // the generic-only set in that case.
 func TestLoadProjectChecksEmptyDirReturnsNil(t *testing.T) {
 	root := t.TempDir()
+
 	checks, err := LoadProjectChecks(root)
 	if err != nil {
 		t.Fatalf("missing checks dir must not error: %v", err)
 	}
+
 	if len(checks) != 0 {
 		t.Fatalf("empty project must produce no project checks, got %d", len(checks))
 	}
@@ -30,20 +32,25 @@ func TestLoadProjectChecksEmptyDirReturnsNil(t *testing.T) {
 func TestLoadProjectChecksParsesShellRule(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, ".idiom", "postflight", "checks")
+
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	body := `{"name": "lint", "kind": "shell", "command": "true"}`
 	if err := os.WriteFile(filepath.Join(dir, "lint.json"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+
 	checks, err := LoadProjectChecks(root)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
+
 	if len(checks) != 1 {
 		t.Fatalf("expected 1 project check, got %d", len(checks))
 	}
+
 	if checks[0].Name() != "lint" {
 		t.Fatalf("name decoded wrong: %q", checks[0].Name())
 	}
@@ -57,17 +64,21 @@ func TestLoadProjectChecksParsesShellRule(t *testing.T) {
 func TestLoadProjectChecksUsesFilenameWhenNameOmitted(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, ".idiom", "postflight", "checks")
+
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	body := `{"kind": "shell", "command": "true"}`
 	if err := os.WriteFile(filepath.Join(dir, "filename-fallback.json"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+
 	checks, err := LoadProjectChecks(root)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
+
 	if len(checks) != 1 || checks[0].Name() != "filename-fallback" {
 		t.Fatalf("filename fallback failed; got %+v", checks)
 	}
@@ -80,12 +91,15 @@ func TestLoadProjectChecksUsesFilenameWhenNameOmitted(t *testing.T) {
 func TestLoadProjectChecksMalformedJSONErrors(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, ".idiom", "postflight", "checks")
+
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte(`{"name":`), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+
 	if _, err := LoadProjectChecks(root); err == nil {
 		t.Fatalf("malformed JSON must error, got nil")
 	}
@@ -99,11 +113,14 @@ func TestProjectShellCheckPassesWithZeroExit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("relies on POSIX `true`")
 	}
+
 	pc := &projectCheckRunner{spec: ProjectCheck{Name: "always-ok", Kind: "shell", Command: "true"}}
+
 	findings, err := pc.Run(Diff{}, RunContext{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 0 {
 		t.Fatalf("zero-exit shell check produces no findings, got %v", findings)
 	}
@@ -117,14 +134,18 @@ func TestProjectShellCheckFailsWithNonZeroExit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("relies on POSIX `false`")
 	}
+
 	pc := &projectCheckRunner{spec: ProjectCheck{Name: "always-fail", Kind: "shell", Command: "false"}}
+
 	findings, err := pc.Run(Diff{}, RunContext{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 1 || findings[0].Severity != SeverityError {
 		t.Fatalf("non-zero exit must produce an error finding, got %v", findings)
 	}
+
 	if !strings.Contains(findings[0].Message, "exit") {
 		t.Fatalf("message should reference the exit code: %s", findings[0].Message)
 	}
@@ -138,12 +159,15 @@ func TestProjectShellCheckRespectsFailOnNonZeroFalse(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("relies on POSIX `false`")
 	}
+
 	falseVal := false
 	pc := &projectCheckRunner{spec: ProjectCheck{Name: "advisory", Kind: "shell", Command: "false", FailOnNonZero: &falseVal}}
+
 	findings, err := pc.Run(Diff{}, RunContext{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 1 || findings[0].Severity != SeverityWarning {
 		t.Fatalf("fail_on_non_zero=false must yield a warning, got %v", findings)
 	}
@@ -155,13 +179,16 @@ func TestProjectShellCheckRespectsFailOnNonZeroFalse(t *testing.T) {
 // process or silently no-op'ing.
 func TestProjectShellCheckEmptyCommandIsConfigError(t *testing.T) {
 	pc := &projectCheckRunner{spec: ProjectCheck{Name: "broken", Kind: "shell"}}
+
 	findings, err := pc.Run(Diff{}, RunContext{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 1 || findings[0].Severity != SeverityError {
 		t.Fatalf("empty command must produce a config error, got %v", findings)
 	}
+
 	if !strings.Contains(findings[0].Message, "empty") {
 		t.Fatalf("message should call out the empty command: %s", findings[0].Message)
 	}
@@ -174,10 +201,12 @@ func TestProjectShellCheckEmptyCommandIsConfigError(t *testing.T) {
 // the whole file.
 func TestProjectAstGrepKindReservedReturnsWarning(t *testing.T) {
 	pc := &projectCheckRunner{spec: ProjectCheck{Name: "future", Kind: "ast_grep"}}
+
 	findings, err := pc.Run(Diff{}, RunContext{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 1 || findings[0].Severity != SeverityWarning {
 		t.Fatalf("ast_grep must be a reserved-warning, got %v", findings)
 	}
@@ -188,10 +217,12 @@ func TestProjectAstGrepKindReservedReturnsWarning(t *testing.T) {
 // project author sees the typo immediately.
 func TestProjectUnknownKindIsConfigError(t *testing.T) {
 	pc := &projectCheckRunner{spec: ProjectCheck{Name: "typo", Kind: "shel"}}
+
 	findings, err := pc.Run(Diff{}, RunContext{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 1 || findings[0].Severity != SeverityError {
 		t.Fatalf("unknown kind must produce error finding, got %v", findings)
 	}
@@ -208,9 +239,11 @@ func TestSubstituteShellArgsExpandsKnownPlaceholders(t *testing.T) {
 	args := []string{"--root", "{project_root}", "--paths", "{paths}", "--unknown", "{not_a_placeholder}"}
 	out := substituteShellArgs(args, ctx, d)
 	want := []string{"--root", "/proj", "--paths", "a.go b.go", "--unknown", "{not_a_placeholder}"}
+
 	if len(out) != len(want) {
 		t.Fatalf("length mismatch: got %v, want %v", out, want)
 	}
+
 	for i := range out {
 		if out[i] != want[i] {
 			t.Fatalf("arg[%d] = %q, want %q", i, out[i], want[i])
@@ -230,13 +263,16 @@ func TestRunAggregatesFindingsAndComputesPass(t *testing.T) {
 	}}
 	ctx := RunContext{ProjectRoot: root, RequiredEditPaths: []string{"a.go"}}
 	res := Run(d, ctx, GenericChecks())
+
 	if res.Pass {
 		t.Fatalf("expected fail (question marker + allowlist mismatch); got Pass=true findings=%v", res.Findings)
 	}
+
 	checks := map[string]bool{}
 	for _, f := range res.Findings {
 		checks[f.Check] = true
 	}
+
 	if !checks["unresolved_question_marker"] || !checks["file_allowlist_mismatch"] {
 		t.Fatalf("expected both checks to fire, got %v", checks)
 	}
@@ -249,9 +285,11 @@ func TestRunAggregatesFindingsAndComputesPass(t *testing.T) {
 func TestFilterChecksRespectsSkipList(t *testing.T) {
 	in := GenericChecks()
 	out := FilterChecks(in, []string{"narrating_test_comments"})
+
 	if len(out) != len(in)-1 {
 		t.Fatalf("expected one fewer check, got %d (in=%d)", len(out), len(in))
 	}
+
 	for _, c := range out {
 		if c.Name() == "narrating_test_comments" {
 			t.Fatalf("skipped check leaked through: %v", out)
@@ -266,9 +304,11 @@ func TestFilterChecksRespectsSkipList(t *testing.T) {
 func TestRunRecordsCheckErrorsAsFindings(t *testing.T) {
 	check := errorCheck{}
 	res := Run(Diff{}, RunContext{}, []Check{check})
+
 	if res.Pass {
 		t.Fatalf("error-returning check must fail the pipeline")
 	}
+
 	if len(res.Findings) != 1 || res.Findings[0].Severity != SeverityError {
 		t.Fatalf("expected one error finding, got %v", res.Findings)
 	}

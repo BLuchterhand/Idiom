@@ -26,14 +26,18 @@ func tokenizeForGroundedness(text string) []string {
 	if text == "" {
 		return nil
 	}
+
 	matches := groundednessTokenPattern.FindAllString(strings.ToLower(text), -1)
 	out := make([]string, 0, len(matches))
+
 	for _, m := range matches {
 		if _, stop := groundednessStopWords[m]; stop {
 			continue
 		}
+
 		out = append(out, m)
 	}
+
 	return out
 }
 
@@ -47,19 +51,24 @@ func GroundednessScore(response, context string) float64 {
 	if len(respTokens) == 0 {
 		return 0
 	}
+
 	ctxTokenSet := make(map[string]struct{})
 	for _, t := range tokenizeForGroundedness(context) {
 		ctxTokenSet[t] = struct{}{}
 	}
+
 	if len(ctxTokenSet) == 0 {
 		return 0
 	}
+
 	matched := 0
+
 	for _, t := range respTokens {
 		if _, ok := ctxTokenSet[t]; ok {
 			matched++
 		}
 	}
+
 	return float64(matched) / float64(len(respTokens))
 }
 
@@ -98,19 +107,25 @@ func DetectGenericPhrases(response string) []string {
 	if response == "" {
 		return nil
 	}
+
 	var hits []string
+
 	seen := make(map[string]struct{})
+
 	for _, pat := range genericPhrasePatterns {
 		match := pat.FindString(response)
 		if match == "" {
 			continue
 		}
+
 		key := strings.ToLower(strings.TrimSpace(match))
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
 		hits = append(hits, key)
 	}
+
 	return hits
 }

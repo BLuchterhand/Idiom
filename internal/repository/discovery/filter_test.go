@@ -17,6 +17,7 @@ func TestShouldSkipPathSkipsIdiomAndAllowsRoot(t *testing.T) {
 	if ShouldSkipPath(root, root, true) {
 		t.Fatal("workspace root itself must never be skipped")
 	}
+
 	if !ShouldSkipPath(root, filepath.Join(root, ".idiom"), true) {
 		t.Fatal("expected .idiom directory to be skipped")
 	}

@@ -9,17 +9,21 @@ import (
 
 func TestLoadRepresentativeSWESuiteCoversFrontierFamilies(t *testing.T) {
 	suitePath := evalTestdataPath(t, "swe", "representative-suite.json")
+
 	suite, err := LoadSWESuite(suitePath)
 	if err != nil {
 		t.Fatalf("LoadSWESuite: %v", err)
 	}
+
 	coverage := AnalyzeSWESuiteCoverage(suite)
 	if !coverage.Passed {
 		t.Fatalf("representative suite coverage failed: %v", coverage.Findings)
 	}
+
 	if findings := LintSWESuite(suite); len(findings) > 0 {
 		t.Fatalf("representative suite lint failed: %v", findings)
 	}
+
 	requiredFamilies := []string{
 		"direct_question",
 		"debug_logs",
@@ -47,6 +51,7 @@ func TestLoadRepresentativeSWESuiteCoversFrontierFamilies(t *testing.T) {
 			t.Fatalf("representative suite missing family %q", family)
 		}
 	}
+
 	for _, task := range suite.Tasks {
 		// RequireRoutePlan / RequirePhases used to be mandatory, but
 		// the codebase deliberately removed the route_plan architecture
@@ -62,14 +67,17 @@ func TestLoadRepresentativeSWESuiteCoversFrontierFamilies(t *testing.T) {
 		if !hasAssertion {
 			t.Fatalf("task %q scenario has no observable assertion; add one", task.ID)
 		}
+
 		if len(task.Turns) > 0 && !task.Scenario.RequireAssistantForEachUser {
 			t.Fatalf("multi-turn task %q should require an assistant response for each user turn", task.ID)
 		}
+
 		if strings.TrimSpace(task.Fixture) != "" {
 			fixturePath := filepath.Join(filepath.Dir(suitePath), task.Fixture)
 			if _, err := filepath.Abs(fixturePath); err != nil {
 				t.Fatalf("task %q fixture path is invalid: %v", task.ID, err)
 			}
+
 			if !pathExists(fixturePath) {
 				t.Fatalf("task %q fixture does not exist: %s", task.ID, fixturePath)
 			}
@@ -82,12 +90,14 @@ func TestLiveSubsetAssertionsDoNotContradictRepresentativeSuiteForSharedTasks(t 
 	if err != nil {
 		t.Fatalf("LoadSWESuite live subset: %v", err)
 	}
+
 	representativeSuite, err := LoadSWESuite(evalTestdataPath(t, "swe", "representative-suite.json"))
 	if err != nil {
 		t.Fatalf("LoadSWESuite representative suite: %v", err)
 	}
 
 	representativeByID := map[string]SWETask{}
+
 	for _, task := range representativeSuite.Tasks {
 		id := strings.TrimSpace(task.ID)
 		if id != "" {
@@ -98,9 +108,11 @@ func TestLiveSubsetAssertionsDoNotContradictRepresentativeSuiteForSharedTasks(t 
 	for _, liveTask := range liveSuite.Tasks {
 		id := strings.TrimSpace(liveTask.ID)
 		representativeTask, ok := representativeByID[id]
+
 		if !ok {
 			continue
 		}
+
 		assertNoScenarioAssertionContradictions(t, id, "live-subset", liveTask.Scenario, "representative-suite", representativeTask.Scenario)
 		assertNoScenarioAssertionContradictions(t, id, "representative-suite", representativeTask.Scenario, "live-subset", liveTask.Scenario)
 	}
@@ -108,11 +120,13 @@ func TestLiveSubsetAssertionsDoNotContradictRepresentativeSuiteForSharedTasks(t 
 
 func assertNoScenarioAssertionContradictions(t *testing.T, taskID, requiredSuite string, requiredScenario Scenario, forbiddenSuite string, forbiddenScenario Scenario) {
 	t.Helper()
+
 	for _, required := range requiredScenario.FinalAssistantContains {
 		required = strings.TrimSpace(required)
 		if required == "" {
 			continue
 		}
+
 		if containsStringFold(forbiddenScenario.ForbidFinalAssistantContains, required) {
 			t.Fatalf("task %q assertion drift: %s requires final answer phrase %q, but %s forbids it", taskID, requiredSuite, required, forbiddenSuite)
 		}
@@ -163,9 +177,11 @@ func TestAnalyzeSWESuiteCoverageReportsMissingContractItems(t *testing.T) {
 		}},
 	}
 	coverage := AnalyzeSWESuiteCoverage(suite)
+
 	if coverage.Passed {
 		t.Fatal("expected coverage contract to fail")
 	}
+
 	joined := strings.Join(coverage.Findings, "\n")
 	for _, want := range []string{
 		"task count below coverage minimum",
@@ -198,6 +214,7 @@ func TestAnalyzeSWESuiteCoverageReportsMissingContractItems(t *testing.T) {
 			t.Fatalf("expected finding %q, got %q", want, joined)
 		}
 	}
+
 	if err := ValidateSWESuite(suite); err == nil {
 		t.Fatal("expected suite validation to reject failed coverage contract")
 	}
@@ -223,12 +240,15 @@ func TestEvaluateSWESuiteDefinitionDoesNotRequireLogs(t *testing.T) {
 		}},
 	}
 	report := EvaluateSWESuiteDefinition(suite)
+
 	if !report.Passed {
 		t.Fatalf("expected definition-only report to pass, got %v", report.Findings)
 	}
+
 	if report.Summary.TotalTasks != 1 || !report.Summary.CoveragePassed || !report.Summary.LintPassed {
 		t.Fatalf("unexpected definition summary: %#v", report.Summary)
 	}
+
 	if len(report.Tasks) != 0 {
 		t.Fatalf("definition-only report should not require task logs: %#v", report.Tasks)
 	}
@@ -248,6 +268,7 @@ func TestTaskScenarioAssertionsIncludeDiscoveryBalance(t *testing.T) {
 		},
 	}
 	assertions := taskScenarioAssertions(task)
+
 	for _, want := range []string{"discovery_tools", "discovery_classes", "heavy_discovery_budget"} {
 		if !containsStringFold(assertions, want) {
 			t.Fatalf("expected discovery assertion %q in %#v", want, assertions)
@@ -270,6 +291,7 @@ func TestTaskScenarioAssertionsIncludePlanExecution(t *testing.T) {
 		},
 	}
 	assertions := taskScenarioAssertions(task)
+
 	if !containsStringFold(assertions, "plan_execution") {
 		t.Fatalf("expected plan_execution assertion, got %#v", assertions)
 	}
@@ -290,6 +312,7 @@ func TestTaskScenarioAssertionsIncludeContractReplay(t *testing.T) {
 		},
 	}
 	assertions := taskScenarioAssertions(task)
+
 	if !containsStringFold(assertions, "contract_replay") {
 		t.Fatalf("expected contract_replay assertion, got %#v", assertions)
 	}
@@ -298,19 +321,23 @@ func TestTaskScenarioAssertionsIncludeContractReplay(t *testing.T) {
 func TestComprehensionMemorySuiteCoversContextTooling(t *testing.T) {
 	suite := ComprehensionMemorySuite()
 	report := EvaluateSWESuiteDefinition(suite)
+
 	if !report.Passed {
 		t.Fatalf("expected comprehension memory suite definition to pass, findings=%#v lint=%#v coverage=%#v", report.Findings, report.LintFindings, report.Coverage)
 	}
+
 	for _, tool := range []string{"context_status", "context_query", "context_zoom", "context_pack", "context_trace_pack", "discovery_query"} {
 		if report.Coverage.Tools[tool] == 0 {
 			t.Fatalf("expected comprehension suite coverage for tool %q, got %#v", tool, report.Coverage.Tools)
 		}
 	}
+
 	for _, family := range []string{"orientation", "localization", "planning", "failing_test"} {
 		if report.Coverage.Families[family] == 0 {
 			t.Fatalf("expected comprehension suite family %q, got %#v", family, report.Coverage.Families)
 		}
 	}
+
 	for _, assertion := range []string{"tools", "discovery_classes", "broad_tool_budget", "heavy_discovery_budget"} {
 		if report.Coverage.ScenarioAssertions[assertion] == 0 {
 			t.Fatalf("expected scenario assertion %q, got %#v", assertion, report.Coverage.ScenarioAssertions)
@@ -337,9 +364,11 @@ func TestEvaluateSWESuiteDefinitionWithFixturesReportsMissingFixture(t *testing.
 		}},
 	}
 	report := EvaluateSWESuiteDefinitionWithFixtures(suite, filepath.Join(dir, "suite.json"))
+
 	if report.Passed {
 		t.Fatal("expected suite definition with missing fixture to fail")
 	}
+
 	joined := strings.Join(report.Findings, "\n")
 	if !strings.Contains(joined, "fixture missing") {
 		t.Fatalf("expected fixture missing finding, got %q", joined)
@@ -479,11 +508,13 @@ func TestLintSWESuiteReportsWeakOracles(t *testing.T) {
 	}
 	findings := LintSWESuite(suite)
 	joined := strings.Join(findings, "\n")
+
 	for _, want := range []string{"read-only task must require no changed files", "direct implementation task must require changed files or approval", "tool-error task must bound errors", "negative-evidence task must require no changed files", "fixture path is invalid", "multi-turn task must require at least 2 user turns", "multi-turn task must require an assistant response for each user turn", "file content oracle path is invalid", "file content oracle for \"../README.md\" must assert required or forbidden text", "env key \"IDIOM_SWE_LOG\" is reserved by the live runner", "runner_mode \"surprise\" is invalid", "live task with max_errors > 0 must declare typed expected_recoveries"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected lint finding %q, got %q", want, joined)
 		}
 	}
+
 	if err := ValidateSWESuite(suite); err == nil {
 		t.Fatal("expected suite validation to reject weak oracles")
 	}
@@ -493,6 +524,7 @@ func TestValidSWERunnerModeAcceptsFeaturePlanner(t *testing.T) {
 	if !validSWERunnerMode("feature-planner") {
 		t.Fatal("feature-planner should be a valid SWE runner mode")
 	}
+
 	if !validSWERunnerMode("tui") {
 		t.Fatal("tui should be a valid SWE runner mode")
 	}
@@ -502,9 +534,11 @@ func TestValidateSWESuiteFixturesChecksRelativeExistingDirectories(t *testing.T)
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")
 	fixtureDir := filepath.Join(dir, "fixtures", "repo")
+
 	if err := os.MkdirAll(fixtureDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
+
 	suite := SWESuite{
 		Name: "fixtures",
 		Tasks: []SWETask{{
@@ -521,14 +555,17 @@ func TestValidateSWESuiteFixturesChecksRelativeExistingDirectories(t *testing.T)
 	if err := ValidateSWESuiteFixtures(suite, suitePath); err != nil {
 		t.Fatalf("expected fixture validation to pass: %v", err)
 	}
+
 	suite.Tasks[0].Fixture = "fixtures/missing"
 	if err := ValidateSWESuiteFixtures(suite, suitePath); err == nil {
 		t.Fatal("expected missing fixture validation failure")
 	}
+
 	suite.Tasks[0].Fixture = "/tmp/absolute"
 	if err := ValidateSWESuiteFixtures(suite, suitePath); err == nil {
 		t.Fatal("expected absolute fixture validation failure")
 	}
+
 	suite.Tasks[0].Fixture = `..\outside`
 	if err := ValidateSWESuiteFixtures(suite, suitePath); err == nil {
 		t.Fatal("expected backslash traversal fixture validation failure")
@@ -553,6 +590,7 @@ func TestValidateSWESuiteFixturesChecksFixtureGitRefs(t *testing.T) {
 			},
 		}},
 	}
+
 	if err := ValidateSWESuiteFixtures(suite, suitePath); err == nil {
 		t.Fatal("expected unreachable fixture_git_ref validation failure")
 	}
@@ -591,6 +629,7 @@ func TestEvaluateSWETaskAppliesOracle(t *testing.T) {
 		{Type: "message", Data: map[string]any{"role": "assistant", "content": "It masks sensitive prompt and tool payload content."}},
 	}
 	report := EvaluateSWETask("direct.jsonl", records, task)
+
 	if !report.Passed {
 		t.Fatalf("expected SWE task to pass, got %#v", report.Findings)
 	}
@@ -601,6 +640,7 @@ func TestEvaluateSWETaskAppliesFileContentOracle(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("debug logs are searchable\n"), 0o644); err != nil {
 		t.Fatalf("write readme: %v", err)
 	}
+
 	task := SWETask{
 		ID:     "docs-edit",
 		Family: "docs_edit",
@@ -623,18 +663,21 @@ func TestEvaluateSWETaskAppliesFileContentOracle(t *testing.T) {
 		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Changed files:\n- README.md"}},
 	}
 	report := EvaluateSWETask("docs.jsonl", records, task)
+
 	if !report.Passed {
 		t.Fatalf("expected file content oracle to pass, got %#v", report.Findings)
 	}
 
 	task.Oracle.RequireFileContent[0].Contains = []string{"missing text"}
 	report = EvaluateSWETask("docs.jsonl", records, task)
+
 	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), "does not contain required text") {
 		t.Fatalf("expected file content failure, got passed=%t findings=%#v", report.Passed, report.Findings)
 	}
 
 	task.Oracle.RequireFileContent[0] = SWEFileContentExpectation{Path: `..\secret.md`, Contains: []string{"secret"}}
 	report = EvaluateSWETask("docs.jsonl", records, task)
+
 	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), "escapes workspace root") {
 		t.Fatalf("expected unsafe file content path failure, got passed=%t findings=%#v", report.Passed, report.Findings)
 	}
@@ -669,6 +712,7 @@ func TestEvaluateSWETaskFileContentOracleUsesLiveSnapshot(t *testing.T) {
 		}},
 	}
 	report := EvaluateSWETask("generated-adr.jsonl", records, task)
+
 	if !report.Passed {
 		t.Fatalf("expected snapshot-backed file content oracle to pass, got %#v", report.Findings)
 	}
@@ -710,9 +754,11 @@ func TestEvaluateSWETaskReportsOracleFailures(t *testing.T) {
 		{Type: "message", Data: map[string]any{"ts": "2026-04-18T12:00:02Z", "role": "assistant", "content": "Changed files:\n- prompts/base.md"}},
 	}
 	report := EvaluateSWETask("security.jsonl", records, task)
+
 	if report.Passed {
 		t.Fatalf("expected SWE task to fail")
 	}
+
 	joined := strings.Join(report.Findings, "\n")
 	for _, want := range []string{"changed files were forbidden", "shell use was forbidden", "successful tool \"read_file\" was forbidden", "tool requests exceeded", "duration exceeded"} {
 		if !strings.Contains(joined, want) {
@@ -741,13 +787,16 @@ func TestEvaluateSWETaskForbidsSuccessfulToolWhileAllowingRejectedAttempt(t *tes
 		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Shell is unavailable."}},
 	}
 	report := EvaluateSWETask("shell-denial.jsonl", records, task)
+
 	if !report.Passed {
 		t.Fatalf("expected rejected shell attempt to satisfy denial contract, got %#v", report.Findings)
 	}
 
 	records[1] = Record{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "shell", "summary": "ran go test ./...", "error": ""}}
 	report = EvaluateSWETask("shell-success.jsonl", records, task)
+
 	joined := strings.Join(report.Findings, "\n")
+
 	if report.Passed || !strings.Contains(joined, `required rejected tool "shell" was not observed`) || !strings.Contains(joined, `successful tool "shell" was forbidden`) {
 		t.Fatalf("expected successful shell to fail both denial and success-forbid checks, passed=%t findings=%#v", report.Passed, report.Findings)
 	}
@@ -783,12 +832,14 @@ func TestEvaluateSWETaskProductWorkflowBlockerDoesNotSatisfyImplementationAccept
 	if report.Passed {
 		t.Fatal("typed blocker without executor handoff, changed files, or verification must not satisfy implementation acceptance")
 	}
+
 	joined := strings.Join(report.Findings, "\n")
 	for _, want := range []string{"changed files do not include", "plan execution handoff id was required", "executor handoff was required", "verification did not pass", "blocker-only without allow_no_write"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected finding %q, got %q", want, joined)
 		}
 	}
+
 	if strings.Contains(joined, "runner rejections were forbidden") {
 		t.Fatalf("typed blocker fixture should fail implementation acceptance, not runner-rejection oracle: %q", joined)
 	}
@@ -840,9 +891,11 @@ func TestEvaluateSWETaskCountsExplicitCompletionGateRejectAfterPostReadinessGap(
 	if report.Passed {
 		t.Fatal("explicit completion-gate rejection should still fail no-runner-rejection oracle")
 	}
+
 	if report.Metrics.TotalErrorEvents() != 0 {
 		t.Fatalf("recoverable post-readiness tool friction should not be scored as a tool error: %#v", report.Metrics)
 	}
+
 	if report.Metrics.RejectedActions != 1 || report.Metrics.CompletionGateRejections != 1 {
 		t.Fatalf("explicit completion gate rejection should remain visible: %#v", report.Metrics)
 	}
@@ -869,12 +922,14 @@ func TestEvaluateSWETaskSourceSatisfiedNeedsExplicitAllowanceForImplementationRe
 	if report.Passed {
 		t.Fatal("source-satisfied-only must not satisfy implementation-required task without explicit allowance")
 	}
+
 	joined := strings.Join(report.Findings, "\n")
 	for _, want := range []string{"source-satisfied-only without allow_source_satisfied", "changed files do not include"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected finding %q, got %q", want, joined)
 		}
 	}
+
 	if report.Metrics.SourceSatisfiedOutcomes == 0 {
 		t.Fatalf("expected source-satisfied outcome metric, got %#v", report.Metrics)
 	}
@@ -938,6 +993,7 @@ func TestEvaluateSWETaskRequiresCleanRollback(t *testing.T) {
 	if report.Passed {
 		t.Fatal("expected dirty rollback to fail")
 	}
+
 	joined := strings.Join(report.Findings, "\n")
 	if !strings.Contains(joined, "rollback status was not clean") {
 		t.Fatalf("expected rollback finding, got %q", joined)
@@ -948,12 +1004,15 @@ func TestEvaluateSWETaskGroundednessBoostsContextFiles(t *testing.T) {
 	root := t.TempDir()
 	contextPath := "internal/runtime/agent/runner.go"
 	full := filepath.Join(root, contextPath)
+
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	if err := os.WriteFile(full, []byte("the runner enforces request budget through ledger snapshot"), 0o644); err != nil {
 		t.Fatalf("write context: %v", err)
 	}
+
 	task := SWETask{
 		ID:       "grounded-task",
 		Family:   "direct_question",
@@ -972,32 +1031,41 @@ func TestEvaluateSWETaskGroundednessBoostsContextFiles(t *testing.T) {
 		{Type: "message", Data: map[string]any{"role": "assistant", "content": "the runner enforces request budget through ledger snapshot"}},
 	}
 	report := EvaluateSWETask("grounded.jsonl", records, task)
+
 	if report.LearningUpdate == nil {
 		t.Fatalf("expected learning update record, got nil; findings=%#v", report.Findings)
 	}
+
 	if report.LearningUpdate.Action != "boost" {
 		t.Fatalf("expected boost action, got %q (score=%v)", report.LearningUpdate.Action, report.LearningUpdate.Score)
 	}
+
 	if !report.LearningUpdate.Applied {
 		t.Fatalf("expected applied=true for boost band")
 	}
+
 	if report.LearningUpdate.EventID == "" || report.LearningUpdate.State != "accepted" {
 		t.Fatalf("expected accepted learning event, got %#v", report.LearningUpdate)
 	}
+
 	weightsPath := filepath.Join(root, ".idiom", "ranker", "weights.json")
 	if _, err := os.Stat(weightsPath); err != nil {
 		t.Fatalf("weights.json missing: %v", err)
 	}
+
 	logPath := filepath.Join(root, ".idiom", "ranker", "learning_log.jsonl")
+
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("learning log missing: %v", err)
 	}
+
 	if !strings.Contains(string(data), "\"source\":\"eval\"") ||
 		!strings.Contains(string(data), "\"action\":\"boost\"") ||
 		!strings.Contains(string(data), "\"state\":\"accepted\"") ||
 		!strings.Contains(string(data), "\"before_weights\"") ||
 		!strings.Contains(string(data), "\"rollback\"") {
+
 		t.Fatalf("learning log missing expected entry: %s", string(data))
 	}
 }
@@ -1005,9 +1073,11 @@ func TestEvaluateSWETaskGroundednessBoostsContextFiles(t *testing.T) {
 func TestEvaluateSWETaskGroundednessPenalizesLowScore(t *testing.T) {
 	root := t.TempDir()
 	contextPath := "spec.md"
+
 	if err := os.WriteFile(filepath.Join(root, contextPath), []byte("workspace ranker hub demotion penalty multipliers"), 0o644); err != nil {
 		t.Fatalf("write context: %v", err)
 	}
+
 	task := SWETask{
 		ID:       "ungrounded",
 		Family:   "direct_question",
@@ -1024,9 +1094,11 @@ func TestEvaluateSWETaskGroundednessPenalizesLowScore(t *testing.T) {
 		{Type: "message", Data: map[string]any{"role": "assistant", "content": "completely unrelated commentary about cats and birds"}},
 	}
 	report := EvaluateSWETask("ungrounded.jsonl", records, task)
+
 	if report.LearningUpdate == nil {
 		t.Fatalf("expected learning update, got nil")
 	}
+
 	if report.LearningUpdate.Action != "penalize" {
 		t.Fatalf("expected penalize action, got %q (score=%v)", report.LearningUpdate.Action, report.LearningUpdate.Score)
 	}
@@ -1034,11 +1106,14 @@ func TestEvaluateSWETaskGroundednessPenalizesLowScore(t *testing.T) {
 
 func TestEvaluateSWETaskGroundednessLearningHonorsDisable(t *testing.T) {
 	t.Setenv("IDIOM_RANKER_LEARNING", "0")
+
 	root := t.TempDir()
 	contextPath := "spec.md"
+
 	if err := os.WriteFile(filepath.Join(root, contextPath), []byte("runner budget ledger snapshot"), 0o644); err != nil {
 		t.Fatalf("write context: %v", err)
 	}
+
 	task := SWETask{
 		ID:       "learning-disabled",
 		Family:   "direct_question",
@@ -1054,19 +1129,24 @@ func TestEvaluateSWETaskGroundednessLearningHonorsDisable(t *testing.T) {
 		{Type: "message", Data: map[string]any{"role": "assistant", "content": "runner budget ledger snapshot"}},
 	}
 	report := EvaluateSWETask("disabled.jsonl", records, task)
+
 	if report.LearningUpdate == nil {
 		t.Fatalf("expected learning update")
 	}
+
 	if report.LearningUpdate.Applied || report.LearningUpdate.State != "rejected" || report.LearningUpdate.Reason != "learning_disabled" {
 		t.Fatalf("disabled learning should be rejected without applying: %#v", report.LearningUpdate)
 	}
+
 	if _, err := os.Stat(filepath.Join(root, ".idiom", "ranker", "weights.json")); !os.IsNotExist(err) {
 		t.Fatalf("disabled learning should not create weights.json, err=%v", err)
 	}
+
 	data, err := os.ReadFile(filepath.Join(root, ".idiom", "ranker", "learning_log.jsonl"))
 	if err != nil {
 		t.Fatalf("learning log missing: %v", err)
 	}
+
 	if !strings.Contains(string(data), "\"state\":\"rejected\"") || !strings.Contains(string(data), "\"reason\":\"learning_disabled\"") {
 		t.Fatalf("learning log missing disabled rejection: %s", string(data))
 	}
@@ -1091,10 +1171,12 @@ func TestEvaluateSWETaskRequiresNoRunnerRejections(t *testing.T) {
 	if report.Passed {
 		t.Fatal("expected runner rejection to fail")
 	}
+
 	joined := strings.Join(report.Findings, "\n")
 	if !strings.Contains(joined, "runner rejections were forbidden") {
 		t.Fatalf("expected runner rejection finding, got %q", joined)
 	}
+
 	if !containsStringFold(taskOracleAssertions(task), "no_runner_rejections") {
 		t.Fatalf("expected no_runner_rejections assertion")
 	}
@@ -1139,10 +1221,13 @@ func TestEvaluateSWETaskExpectedRecoveryCanAccountForRunnerRejection(t *testing.
 		"summary": "shell rejected",
 		"error":   "shell not in the current allowed tool surface",
 	}})
+
 	report = EvaluateSWETask("typed-recovery.jsonl", unexpected, task)
+
 	if report.Passed {
 		t.Fatal("expected unexpected runner rejection to fail")
 	}
+
 	joined := strings.Join(report.Findings, "\n")
 	if !strings.Contains(joined, "unexpected error event did not match expected_recoveries") {
 		t.Fatalf("expected unmatched recovery finding, got %q", joined)
@@ -1183,6 +1268,7 @@ func TestEvaluateSWETaskExpectedRecoveryDoesNotAccountForNonRejectionEvent(t *te
 	if report.Passed {
 		t.Fatal("matched expected_recoveries event without runner rejection flag must not account for aggregate rejected_actions")
 	}
+
 	if !strings.Contains(strings.Join(report.Findings, "\n"), "runner rejections were forbidden") {
 		t.Fatalf("expected unaccounted runner rejection finding, got %#v", report.Findings)
 	}
@@ -1231,6 +1317,7 @@ func TestEvaluateSWETaskExpectedRecoveryDoesNotDoubleAccountOverlappingMatcher(t
 	if report.Passed {
 		t.Fatal("expected one actual recovery event not to account for two aggregate runner rejections")
 	}
+
 	joined := strings.Join(report.Findings, "\n")
 	if !strings.Contains(joined, "runner rejections were forbidden but observed unexpected rejected_actions=1") {
 		t.Fatalf("expected overlapping matcher not to double-account, got %q", joined)
@@ -1279,7 +1366,9 @@ func TestEvaluateSWETaskExpectedRecoveryCanBoundGuardFamilyAcrossTools(t *testin
 	if !report.Passed {
 		t.Fatalf("expected one typed recovery family to account across tools, got %#v", report.Findings)
 	}
+
 	tooMany := append([]Record{}, records...)
+
 	tooMany = append(tooMany[:len(tooMany)-1], Record{Type: "tool_result", Data: map[string]any{
 		"tool":    "search_content",
 		"summary": "Post-readiness follow-up missing named gap",
@@ -1291,6 +1380,7 @@ func TestEvaluateSWETaskExpectedRecoveryCanBoundGuardFamilyAcrossTools(t *testin
 	if report.Passed {
 		t.Fatal("expected typed recovery family maximum to reject excess guard friction")
 	}
+
 	if !strings.Contains(strings.Join(report.Findings, "\n"), "exceeded maximum") {
 		t.Fatalf("expected max-count finding, got %#v", report.Findings)
 	}
@@ -1312,6 +1402,7 @@ func TestEvaluateSWETaskRequiresTurnSummaryForNoRunnerRejections(t *testing.T) {
 	if report.Passed {
 		t.Fatal("expected missing turn_summary to fail no-runner-rejections oracle")
 	}
+
 	joined := strings.Join(report.Findings, "\n")
 	if !strings.Contains(joined, "no turn_summary was present") {
 		t.Fatalf("expected missing turn_summary finding, got %q", joined)
@@ -1343,6 +1434,7 @@ func TestEvaluateSWETaskRequiresNoRunnerRejectionsFromGateEvents(t *testing.T) {
 	if report.Passed {
 		t.Fatal("expected gate rejection event to fail no-runner-rejections oracle")
 	}
+
 	joined := strings.Join(report.Findings, "\n")
 	if !strings.Contains(joined, "completion_gate_rejections=1") {
 		t.Fatalf("expected completion gate rejection finding, got %q", joined)
@@ -1411,12 +1503,15 @@ func TestEvaluateSWETaskContractReplayUsesAutonomyEvents(t *testing.T) {
 	if !report.Passed {
 		t.Fatalf("expected contract replay task to pass, got %#v", report.Findings)
 	}
+
 	if report.Metrics.ContractReplay == nil {
 		t.Fatal("expected contract replay metrics")
 	}
+
 	if report.Metrics.ContractReplay.TotalEvents != 2 || !report.Metrics.ContractReplay.AllClear {
 		t.Fatalf("unexpected contract replay report: %#v", report.Metrics.ContractReplay)
 	}
+
 	if report.Metrics.ContractReplay.Packs["completion/readiness"] != 1 {
 		t.Fatalf("expected replay pack count, got %#v", report.Metrics.ContractReplay.Packs)
 	}
@@ -1463,6 +1558,7 @@ func TestEvaluateSWETaskContractReplayFailsExpectations(t *testing.T) {
 	if report.Passed {
 		t.Fatal("expected contract replay violation to fail")
 	}
+
 	joined := strings.Join(report.Findings, "\n")
 	for _, want := range []string{"contract replay violations exceeded limit", "contract replay violation \"contract_event_unmatched_contract_reference\" was forbidden"} {
 		if !strings.Contains(joined, want) {
@@ -1512,9 +1608,11 @@ func TestEvaluateSWETaskContractReplayMaxViolationsIgnoresAuditDiagnostics(t *te
 	if !report.Passed {
 		t.Fatalf("expected audit-only diagnostics not to count against replay max violations, got %#v", report.Findings)
 	}
+
 	if report.Metrics.ContractReplay == nil || len(report.Metrics.ContractReplay.Violations) == 0 {
 		t.Fatalf("expected audit diagnostic to remain visible, got %#v", report.Metrics.ContractReplay)
 	}
+
 	if got := len(report.Metrics.ContractReplay.Replay.Violations); got != 0 {
 		t.Fatalf("expected no deterministic replay violations, got %d", got)
 	}
@@ -1534,12 +1632,14 @@ func TestEvaluateSWETaskWithoutAutonomyEventsKeepsReplayOptional(t *testing.T) {
 	if !report.Passed {
 		t.Fatalf("expected task without contract replay expectation to pass, got %#v", report.Findings)
 	}
+
 	if report.Metrics.ContractReplay != nil {
 		t.Fatalf("expected no contract replay metrics without autonomy events, got %#v", report.Metrics.ContractReplay)
 	}
 
 	task.Scenario.RequireContractReplay = &ContractReplayExpectation{}
 	report = EvaluateSWETask("no-contract-replay.jsonl", nil, task)
+
 	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), "required contract replay was not observed") {
 		t.Fatalf("expected missing contract replay finding, got passed=%t findings=%#v", report.Passed, report.Findings)
 	}
@@ -1571,13 +1671,16 @@ func TestEvaluateSWETaskDistinguishesLowValueActionsFromRunnerRejections(t *test
 	if report.Passed {
 		t.Fatal("expected low-value action limit to fail")
 	}
+
 	joined := strings.Join(report.Findings, "\n")
 	if !strings.Contains(joined, "low-value actions exceeded") {
 		t.Fatalf("expected low-value finding, got %q", joined)
 	}
+
 	if strings.Contains(joined, "runner rejections were forbidden") {
 		t.Fatalf("low-value action must not be treated as hard runner rejection: %q", joined)
 	}
+
 	if report.Metrics.LowValueActions != 1 || report.Metrics.RejectedActions != 0 || report.Metrics.CompletionGateRejections != 0 {
 		t.Fatalf("unexpected metrics: %#v", report.Metrics)
 	}
@@ -1600,10 +1703,12 @@ func TestEvaluateSWETaskMaxErrorsUsesErrorEventsNotUniqueMessages(t *testing.T) 
 	if report.Passed {
 		t.Fatal("expected max_errors to fail on two identical error events")
 	}
+
 	joined := strings.Join(report.Findings, "\n")
 	if !strings.Contains(joined, "unexpected errors exceeded oracle limit: got 2 want <= 1") {
 		t.Fatalf("expected error event count finding, got %q", joined)
 	}
+
 	if report.Metrics.ErrorCount != 2 || len(report.Metrics.Errors) != 1 {
 		t.Fatalf("expected event count plus deduplicated messages, got count=%d errors=%#v", report.Metrics.ErrorCount, report.Metrics.Errors)
 	}
@@ -1636,6 +1741,7 @@ func TestEvaluateSWETaskExpectedRecoveriesDoNotHideUnrelatedErrors(t *testing.T)
 	if report.Passed {
 		t.Fatal("expected unrelated error to fail despite max_errors allowance")
 	}
+
 	if !strings.Contains(strings.Join(report.Findings, "\n"), "unexpected error event did not match expected_recoveries") {
 		t.Fatalf("expected unrelated error finding, got %#v", report.Findings)
 	}
@@ -1644,6 +1750,7 @@ func TestEvaluateSWETaskExpectedRecoveriesDoNotHideUnrelatedErrors(t *testing.T)
 	if !matched.Passed {
 		t.Fatalf("expected matching recovery error to pass, got %#v", matched.Findings)
 	}
+
 	if len(matched.Metrics.ErrorEvents) != 1 || matched.Metrics.ErrorEvents[0].Tool != "read_file" {
 		t.Fatalf("expected typed error event metrics, got %#v", matched.Metrics.ErrorEvents)
 	}
@@ -1692,16 +1799,20 @@ func TestEvaluateSWETaskExpectedRecoveriesDefaultToRequired(t *testing.T) {
 		},
 	}
 	report := EvaluateSWETask("typed-recovery-required.jsonl", nil, task)
+
 	if report.Passed {
 		t.Fatal("expected missing recovery to fail by default")
 	}
+
 	if !strings.Contains(strings.Join(report.Findings, "\n"), "below minimum: got 0 want >= 1") {
 		t.Fatalf("expected missing recovery finding, got %#v", report.Findings)
 	}
 
 	optional := task
+
 	optional.Oracle.ExpectedRecoveries[0].MinCount = intPtr(0)
 	report = EvaluateSWETask("typed-recovery-optional.jsonl", nil, optional)
+
 	if !report.Passed {
 		t.Fatalf("explicit min_count=0 recovery should be optional, got %#v", report.Findings)
 	}
@@ -1723,10 +1834,12 @@ func TestEvaluateSWETaskRequiresNoTimeout(t *testing.T) {
 	if report.Passed {
 		t.Fatal("expected timeout oracle to fail")
 	}
+
 	joined := strings.Join(report.Findings, "\n")
 	if !strings.Contains(joined, "timeouts were forbidden") {
 		t.Fatalf("expected timeout finding, got %q", joined)
 	}
+
 	if strings.Contains(joined, "runner rejections were forbidden") {
 		t.Fatalf("timeout must not be treated as runner rejection: %q", joined)
 	}
@@ -1776,15 +1889,19 @@ func TestLintSWESuiteFlagsGroundednessConfigErrors(t *testing.T) {
 	}
 	findings := LintSWESuite(suite)
 	joined := strings.Join(findings, "\n")
+
 	if !strings.Contains(joined, "no-context") || !strings.Contains(joined, "context_files or context_fragments") {
 		t.Fatalf("expected no-context lint finding, got %v", findings)
 	}
+
 	if !strings.Contains(joined, "out-of-range") || !strings.Contains(joined, "must be in [0, 1]") {
 		t.Fatalf("expected out-of-range lint finding, got %v", findings)
 	}
+
 	if !strings.Contains(joined, "absolute-path") {
 		t.Fatalf("expected absolute-path lint finding, got %v", findings)
 	}
+
 	if !strings.Contains(joined, "backslash-traversal") {
 		t.Fatalf("expected backslash-traversal lint finding, got %v", findings)
 	}
@@ -1798,9 +1915,11 @@ func TestTaskOracleAssertionsCoversNewOracles(t *testing.T) {
 		},
 	}
 	got := taskOracleAssertions(task)
+
 	if !containsStr(got, "groundedness") {
 		t.Fatalf("expected groundedness in assertions, got %v", got)
 	}
+
 	if !containsStr(got, "forbid_generic_phrases") {
 		t.Fatalf("expected forbid_generic_phrases in assertions, got %v", got)
 	}
@@ -1812,6 +1931,7 @@ func containsStr(set []string, want string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1829,21 +1949,27 @@ func TestEvaluateSWESuiteReportsMissingLogs(t *testing.T) {
 		}},
 	}
 	report := EvaluateSWESuite(suite, nil, nil)
+
 	if report.Passed {
 		t.Fatal("expected missing task log to fail suite")
 	}
+
 	if !report.Coverage.Passed {
 		t.Fatalf("coverage should pass when no contract is set: %#v", report.Coverage)
 	}
+
 	if report.Summary.FailedTasks != 1 || report.Summary.MissingLogs != 1 {
 		t.Fatalf("unexpected missing-log summary: %#v", report.Summary)
 	}
+
 	if bucket := report.Summary.ByFamily["direct_question"]; bucket.Total != 1 || bucket.Failed != 1 {
 		t.Fatalf("unexpected family bucket: %#v", bucket)
 	}
+
 	if bucket := report.Summary.ByTaskShape["read_only"]; bucket.Total != 0 || bucket.Failed != 0 {
 		t.Fatalf("unexpected task-shape bucket for untagged task: %#v", bucket)
 	}
+
 	if len(report.Tasks) != 1 || report.Tasks[0].Passed {
 		t.Fatalf("unexpected suite report: %#v", report)
 	}
@@ -1868,13 +1994,16 @@ func TestEvaluateSWESuiteReportsLoadErrors(t *testing.T) {
 		map[string]string{"bad-log": "bad-log.jsonl"},
 		map[string]error{"bad-log": errSynthetic("decode log record: invalid character")},
 	)
+
 	if report.Passed {
 		t.Fatal("expected load error to fail suite")
 	}
+
 	joined := strings.Join(report.Findings, "\n")
 	if !strings.Contains(joined, "task log could not be loaded") {
 		t.Fatalf("expected load error finding, got %q", joined)
 	}
+
 	if report.Summary.LoadErrors != 1 || report.Summary.FailedTasks != 1 {
 		t.Fatalf("unexpected load-error summary: %#v", report.Summary)
 	}
@@ -1886,6 +2015,7 @@ func suiteHasFamily(suite SWESuite, family string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 

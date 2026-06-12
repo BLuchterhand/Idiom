@@ -91,10 +91,12 @@ func Ensure(root string) (string, error) {
 	if root == "" {
 		return "", nil
 	}
+
 	info, err := os.Stat(root)
 	if err != nil {
 		return "", fmt.Errorf("stat project root: %w", err)
 	}
+
 	if !info.IsDir() {
 		return "", fmt.Errorf("project root %q is not a directory", root)
 	}
@@ -106,6 +108,7 @@ func Ensure(root string) (string, error) {
 
 	fp, gitHead, gitDirty := currentFingerprint(root)
 	contextPath := filepath.Join(root, filepath.FromSlash(contextRel))
+
 	if manifest, ok := loadManifest(root); ok && manifest.SchemaVersion == SchemaVersion && manifest.Fingerprint == fp && artifactsPresent(root) {
 		return contextPath, nil
 	}
@@ -113,6 +116,7 @@ func Ensure(root string) (string, error) {
 	if err := generate(root, dir, contextPath, fp, gitHead, gitDirty); err != nil {
 		return "", err
 	}
+
 	return contextPath, nil
 }
 
@@ -138,37 +142,48 @@ func generate(root string, dir string, contextPath string, fingerprint string, g
 	if err := writeJSON(filepath.Join(dir, "manifest.json"), manifest); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
+
 	if err := writeJSONL(filepath.Join(dir, "modules.jsonl"), modules); err != nil {
 		return fmt.Errorf("write modules: %w", err)
 	}
+
 	if err := writeJSON(filepath.Join(dir, "glossary.json"), glossary); err != nil {
 		return fmt.Errorf("write glossary: %w", err)
 	}
+
 	if err := writeJSON(filepath.Join(dir, "workflows.json"), workflows); err != nil {
 		return fmt.Errorf("write workflows: %w", err)
 	}
+
 	if err := writeJSONL(filepath.Join(dir, "decisions.jsonl"), decisions); err != nil {
 		return fmt.Errorf("write decisions: %w", err)
 	}
+
 	if err := writeJSON(filepath.Join(dir, "impact", "root.json"), impact); err != nil {
 		return fmt.Errorf("write impact packet: %w", err)
 	}
+
 	if err := os.WriteFile(contextPath, []byte(renderContext(promptFiles, activeLanguages, modules, glossary, workflows, decisions)), 0o644); err != nil {
 		return fmt.Errorf("write context: %w", err)
 	}
+
 	return nil
 }
 
 func loadManifest(root string) (Manifest, bool) {
 	path := filepath.Join(root, filepath.FromSlash(discoveryDir), "manifest.json")
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Manifest{}, false
 	}
+
 	var manifest Manifest
+
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return Manifest{}, false
 	}
+
 	return manifest, true
 }
 
@@ -187,61 +202,81 @@ func artifactsPresent(root string) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
 func currentFingerprint(root string) (fingerprint string, gitHead string, gitDirty bool) {
 	headBytes, headErr := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output()
 	statusBytes, statusErr := exec.Command("git", "-C", root, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all").Output()
+
 	if headErr == nil && statusErr == nil {
 		gitHead = strings.TrimSpace(string(headBytes))
+
 		lines := filterStatusLines(strings.Split(string(statusBytes), "\n"))
+
 		gitDirty = len(lines) > 0
+
 		h := sha256.New()
+
 		_, _ = h.Write([]byte(gitHead))
 		_, _ = h.Write([]byte{'\n'})
+
 		for _, line := range lines {
 			_, _ = h.Write([]byte(line))
 			_, _ = h.Write([]byte{'\n'})
+
 			path := pathFromStatusLine(line)
+
 			if path == "" {
 				continue
 			}
+
 			if info, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); err == nil {
 				_, _ = h.Write([]byte(path))
 				_, _ = h.Write([]byte(fmt.Sprintf("|%d|%d\n", info.ModTime().UnixNano(), info.Size())))
 			}
 		}
+
 		return hex.EncodeToString(h.Sum(nil)), gitHead, gitDirty
 	}
 
 	h := sha256.New()
+
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
+
 		if d.IsDir() {
 			if discovery.ShouldSkipPath(root, path, true) && path != root {
 				return filepath.SkipDir
 			}
+
 			return nil
 		}
+
 		if discovery.ShouldSkipPath(root, path, false) {
 			return nil
 		}
+
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return nil
 		}
+
 		info, err := d.Info()
 		if err != nil {
 			return nil
 		}
+
 		rel = filepath.ToSlash(rel)
 		_, _ = h.Write([]byte(rel))
 		_, _ = h.Write([]byte(fmt.Sprintf("|%d|%d\n", info.ModTime().UnixNano(), info.Size())))
+
 		return nil
 	})
+
 	return hex.EncodeToString(h.Sum(nil)), "", false
 }
 
@@ -252,16 +287,21 @@ func filterStatusLines(lines []string) []string {
 		if line == "" {
 			continue
 		}
+
 		path := pathFromStatusLine(line)
 		if path == "" {
 			continue
 		}
+
 		if strings.HasPrefix(path, hiddenRoot+"/") || path == hiddenRoot {
 			continue
 		}
+
 		out = append(out, line)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -270,24 +310,29 @@ func pathFromStatusLine(line string) string {
 	if len(line) < 4 {
 		return ""
 	}
+
 	payload := strings.TrimSpace(line[3:])
 	if payload == "" {
 		return ""
 	}
+
 	if idx := strings.LastIndex(payload, " -> "); idx >= 0 {
 		payload = payload[idx+4:]
 	}
+
 	return filepath.ToSlash(strings.TrimSpace(payload))
 }
 
 func discoverPromptFiles(root string) []string {
 	var paths []string
+
 	for _, candidate := range projectPromptCandidates {
 		path := filepath.Join(root, candidate)
 		if info, err := os.Stat(path); err == nil && !info.IsDir() {
 			paths = append(paths, candidate)
 		}
 	}
+
 	return paths
 }
 
@@ -295,10 +340,13 @@ func detectLanguages(root string) []string {
 	manager := workspace.NewManager(config.Workspace{Root: root, CWD: root})
 	langs := manager.ActiveLanguages()
 	names := make([]string, 0, len(langs))
+
 	for _, lang := range langs {
 		names = append(names, lang.Name)
 	}
+
 	slices.Sort(names)
+
 	return names
 }
 
@@ -307,18 +355,22 @@ func discoverModules(root string) []ModulePacket {
 	if err != nil {
 		return nil
 	}
+
 	modules := make([]ModulePacket, 0, len(entries))
 	for _, entry := range entries {
 		path := filepath.Join(root, entry.Name())
 		if discovery.ShouldSkipPath(root, path, entry.IsDir()) {
 			continue
 		}
+
 		if strings.HasPrefix(entry.Name(), ".") && entry.Name() != ".qwen.md" {
 			continue
 		}
+
 		rel := filepath.ToSlash(entry.Name())
 		if entry.IsDir() {
 			count, sample, langs := summarizeDirModule(root, path)
+
 			modules = append(modules, ModulePacket{
 				Path:        rel,
 				Kind:        "directory",
@@ -327,9 +379,12 @@ func discoverModules(root string) []ModulePacket {
 				Languages:   langs,
 				Tags:        moduleTags(rel, true),
 			})
+
 			continue
 		}
+
 		langs := languagesForFiles([]string{rel})
+
 		modules = append(modules, ModulePacket{
 			Path:      rel,
 			Kind:      "file",
@@ -338,43 +393,56 @@ func discoverModules(root string) []ModulePacket {
 			Tags:      moduleTags(rel, false),
 		})
 	}
+
 	slices.SortFunc(modules, func(a, b ModulePacket) int { return cmp.Compare(a.Path, b.Path) })
+
 	if len(modules) > 24 {
 		modules = modules[:24]
 	}
+
 	return modules
 }
 
 func summarizeDirModule(root string, dir string) (count int, sample []string, langs []string) {
 	languageSet := make(map[string]struct{})
+
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
+
 		if d.IsDir() {
 			if path != dir && discovery.ShouldSkipPath(root, path, true) {
 				return filepath.SkipDir
 			}
+
 			return nil
 		}
+
 		if discovery.ShouldSkipPath(root, path, false) {
 			return nil
 		}
+
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return nil
 		}
+
 		rel = filepath.ToSlash(rel)
 		count++
+
 		if len(sample) < 6 {
 			sample = append(sample, rel)
 		}
+
 		if lang, ok := workspace.LanguageForFile(rel); ok {
 			languageSet[lang.Name] = struct{}{}
 		}
+
 		return nil
 	})
 	langs = setToSortedSlice(languageSet)
+
 	return count, sample, langs
 }
 
@@ -391,12 +459,15 @@ func summarizeFileModule(rel string) string {
 	case "pyproject.toml":
 		return "Python project metadata and tooling configuration."
 	}
+
 	return "Top-level file that likely anchors configuration, docs, or entrypoints."
 }
 
 func moduleTags(rel string, isDir bool) []string {
 	name := strings.ToLower(filepath.Base(rel))
+
 	var tags []string
+
 	if isDir {
 		switch name {
 		case "cmd":
@@ -420,6 +491,7 @@ func moduleTags(rel string, isDir bool) []string {
 			tags = append(tags, "tooling")
 		}
 	}
+
 	return tags
 }
 
@@ -428,45 +500,59 @@ func buildGlossary(root string, promptFiles []string) []GlossaryEntry {
 		term string
 		kind string
 	}
+
 	seen := make(map[key]struct{})
+
 	var out []GlossaryEntry
+
 	add := func(term string, kind string, source string) {
 		term = strings.TrimSpace(term)
 		if term == "" || len(term) < 3 {
 			return
 		}
+
 		k := key{term: term, kind: kind}
 		if _, ok := seen[k]; ok {
 			return
 		}
+
 		seen[k] = struct{}{}
+
 		out = append(out, GlossaryEntry{Term: term, Kind: kind, Source: source})
 	}
+
 	for _, rel := range promptFiles {
 		data, err := os.ReadFile(filepath.Join(root, rel))
 		if err != nil {
 			continue
 		}
+
 		text := string(data)
 		for _, match := range headingPattern.FindAllStringSubmatch(text, 8) {
 			add(strings.TrimSpace(match[1]), "heading", rel)
 		}
+
 		for _, term := range acronymPattern.FindAllString(text, 12) {
 			add(term, "acronym", rel)
 		}
+
 		for _, term := range camelPattern.FindAllString(text, 12) {
 			add(term, "symbol", rel)
 		}
 	}
+
 	slices.SortFunc(out, func(a, b GlossaryEntry) int {
 		if c := cmp.Compare(a.Source, b.Source); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Term, b.Term)
 	})
+
 	if len(out) > 20 {
 		out = out[:20]
 	}
+
 	return out
 }
 
@@ -483,6 +569,7 @@ func buildWorkflows(root string, activeLanguages []string, promptFiles []string)
 			},
 		},
 	}
+
 	for _, lang := range activeLanguages {
 		switch lang {
 		case "go":
@@ -527,6 +614,7 @@ func buildWorkflows(root string, activeLanguages []string, promptFiles []string)
 			})
 		}
 	}
+
 	if len(promptFiles) > 0 {
 		workflows = append(workflows, WorkflowRecipe{
 			ID:    "refresh_project_guidance",
@@ -538,65 +626,84 @@ func buildWorkflows(root string, activeLanguages []string, promptFiles []string)
 			},
 		})
 	}
+
 	return workflows
 }
 
 func buildDecisions(root string, promptFiles []string) []DecisionEntry {
 	seen := make(map[string]struct{})
+
 	var out []DecisionEntry
+
 	for _, rel := range promptFiles {
 		data, err := os.ReadFile(filepath.Join(root, rel))
 		if err != nil {
 			continue
 		}
+
 		for _, line := range strings.Split(string(data), "\n") {
 			line = strings.TrimSpace(strings.TrimLeft(line, "-*0123456789. "))
 			if line == "" || len(line) < 12 {
 				continue
 			}
+
 			if !decisionPattern.MatchString(line) {
 				continue
 			}
+
 			line = strings.Join(strings.Fields(line), " ")
 			if _, ok := seen[line]; ok {
 				continue
 			}
+
 			seen[line] = struct{}{}
+
 			kind := "constraint"
+
 			if strings.Contains(strings.ToLower(line), "prefer") {
 				kind = "preference"
 			}
+
 			out = append(out, DecisionEntry{Rule: line, Kind: kind, Source: rel})
 		}
 	}
+
 	slices.SortFunc(out, func(a, b DecisionEntry) int {
 		if c := cmp.Compare(a.Source, b.Source); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Rule, b.Rule)
 	})
+
 	if len(out) > 24 {
 		out = out[:24]
 	}
+
 	return out
 }
 
 func buildRootImpact(promptFiles []string, activeLanguages []string, workflows []WorkflowRecipe, modules []ModulePacket) ImpactPacket {
 	var verification []string
+
 	for _, workflow := range workflows {
 		if strings.HasPrefix(workflow.ID, "verify_") {
 			verification = append(verification, workflow.Commands...)
 		}
 	}
+
 	var hotspots []string
+
 	for _, module := range modules {
 		if len(hotspots) >= 8 {
 			break
 		}
+
 		if containsTag(module.Tags, "implementation") || containsTag(module.Tags, "entrypoints") || containsTag(module.Tags, "tooling") {
 			hotspots = append(hotspots, module.Path)
 		}
 	}
+
 	return ImpactPacket{
 		Target:             ".",
 		Kind:               "project",
@@ -609,56 +716,71 @@ func buildRootImpact(promptFiles []string, activeLanguages []string, workflows [
 
 func renderContext(promptFiles []string, activeLanguages []string, modules []ModulePacket, glossary []GlossaryEntry, workflows []WorkflowRecipe, decisions []DecisionEntry) string {
 	var b strings.Builder
+
 	b.WriteString("# Generated Project Context\n\n")
 	b.WriteString("This digest is generated into `.idiom/discovery/`. Human-authored root guidance files remain canonical; this file exists to give the model a compact, structured project map.\n")
+
 	if len(promptFiles) > 0 {
 		b.WriteString("\n## Prompt Files\n")
+
 		for _, file := range promptFiles {
 			b.WriteString("- ")
 			b.WriteString(file)
 			b.WriteString("\n")
 		}
 	}
+
 	if len(activeLanguages) > 0 {
 		b.WriteString("\n## Active Languages\n")
+
 		for _, lang := range activeLanguages {
 			b.WriteString("- ")
 			b.WriteString(lang)
 			b.WriteString("\n")
 		}
 	}
+
 	if len(modules) > 0 {
 		b.WriteString("\n## Module Map\n")
+
 		for _, module := range limitModules(modules, 8) {
 			b.WriteString("- `")
 			b.WriteString(module.Path)
 			b.WriteString("`: ")
 			b.WriteString(module.Summary)
+
 			if len(module.SampleFiles) > 0 {
 				b.WriteString(" Samples: ")
 				b.WriteString(strings.Join(limitStrings(module.SampleFiles, 3), ", "))
 				b.WriteString(".")
 			}
+
 			b.WriteString("\n")
 		}
 	}
+
 	if len(workflows) > 0 {
 		b.WriteString("\n## Workflow Recipes\n")
+
 		for _, workflow := range limitWorkflows(workflows, 4) {
 			b.WriteString("- `")
 			b.WriteString(workflow.ID)
 			b.WriteString("`: ")
 			b.WriteString(workflow.When)
+
 			if len(workflow.Commands) > 0 {
 				b.WriteString(" Command: `")
 				b.WriteString(workflow.Commands[0])
 				b.WriteString("`.")
 			}
+
 			b.WriteString("\n")
 		}
 	}
+
 	if len(decisions) > 0 {
 		b.WriteString("\n## Decision Memory\n")
+
 		for _, decision := range limitDecisions(decisions, 8) {
 			b.WriteString("- [")
 			b.WriteString(decision.Source)
@@ -667,8 +789,10 @@ func renderContext(promptFiles []string, activeLanguages []string, modules []Mod
 			b.WriteString("\n")
 		}
 	}
+
 	if len(glossary) > 0 {
 		b.WriteString("\n## Glossary Seeds\n")
+
 		for _, entry := range limitGlossary(glossary, 8) {
 			b.WriteString("- `")
 			b.WriteString(entry.Term)
@@ -679,6 +803,7 @@ func renderContext(promptFiles []string, activeLanguages []string, modules []Mod
 			b.WriteString(")\n")
 		}
 	}
+
 	return strings.TrimSpace(b.String()) + "\n"
 }
 
@@ -687,29 +812,36 @@ func writeJSON(path string, value any) error {
 	if err != nil {
 		return err
 	}
+
 	data = append(data, '\n')
+
 	return os.WriteFile(path, data, 0o644)
 }
 
 func writeJSONL[T any](path string, values []T) error {
 	var b strings.Builder
+
 	enc := json.NewEncoder(&b)
 	enc.SetEscapeHTML(false)
+
 	for _, value := range values {
 		if err := enc.Encode(value); err != nil {
 			return err
 		}
 	}
+
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
 func languagesForFiles(paths []string) []string {
 	set := make(map[string]struct{})
+
 	for _, path := range paths {
 		if lang, ok := workspace.LanguageForFile(path); ok {
 			set[lang.Name] = struct{}{}
 		}
 	}
+
 	return setToSortedSlice(set)
 }
 
@@ -718,7 +850,9 @@ func setToSortedSlice(values map[string]struct{}) []string {
 	for value := range values {
 		out = append(out, value)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -728,6 +862,7 @@ func containsTag(tags []string, want string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -735,6 +870,7 @@ func limitStrings(values []string, limit int) []string {
 	if limit <= 0 || len(values) <= limit {
 		return values
 	}
+
 	return values[:limit]
 }
 
@@ -742,6 +878,7 @@ func limitModules(values []ModulePacket, limit int) []ModulePacket {
 	if limit <= 0 || len(values) <= limit {
 		return values
 	}
+
 	return values[:limit]
 }
 
@@ -749,6 +886,7 @@ func limitWorkflows(values []WorkflowRecipe, limit int) []WorkflowRecipe {
 	if limit <= 0 || len(values) <= limit {
 		return values
 	}
+
 	return values[:limit]
 }
 
@@ -756,6 +894,7 @@ func limitDecisions(values []DecisionEntry, limit int) []DecisionEntry {
 	if limit <= 0 || len(values) <= limit {
 		return values
 	}
+
 	return values[:limit]
 }
 
@@ -763,6 +902,7 @@ func limitGlossary(values []GlossaryEntry, limit int) []GlossaryEntry {
 	if limit <= 0 || len(values) <= limit {
 		return values
 	}
+
 	return values[:limit]
 }
 

@@ -15,12 +15,15 @@ import (
 // label is used in the error message, e.g. "effort index".
 func parseAndValidate[T any](data []byte, label string, validate func(T) error) (T, error) {
 	var v T
+
 	if err := json.Unmarshal(data, &v); err != nil {
 		return v, fmt.Errorf("parse %s: %w", label, err)
 	}
+
 	if err := validate(v); err != nil {
 		return v, err
 	}
+
 	return v, nil
 }
 
@@ -38,19 +41,25 @@ func ParseTDDLedgerJSON(data []byte) (TDDLedger, error) {
 
 func ParseEvidenceCardsJSONL(data []byte) ([]EvidenceCard, error) {
 	var cards []EvidenceCard
+
 	if err := scanJSONL(data, "evidence card", func(line int, text []byte) error {
 		var card EvidenceCard
+
 		if err := json.Unmarshal(text, &card); err != nil {
 			return fmt.Errorf("parse evidence card line %d: %w", line, err)
 		}
+
 		if err := validateEvidenceCard(card, line); err != nil {
 			return err
 		}
+
 		cards = append(cards, card)
+
 		return nil
 	}); err != nil {
 		return nil, err
 	}
+
 	return cards, nil
 }
 
@@ -64,19 +73,25 @@ func ParseTraceabilityMatrixJSON(data []byte) (TraceabilityMatrix, error) {
 
 func ParseImplementationLedgerJSONL(data []byte) ([]ImplementationLedgerRecord, error) {
 	var records []ImplementationLedgerRecord
+
 	if err := scanJSONL(data, "implementation ledger record", func(line int, text []byte) error {
 		var rec ImplementationLedgerRecord
+
 		if err := json.Unmarshal(text, &rec); err != nil {
 			return fmt.Errorf("parse implementation ledger line %d: %w", line, err)
 		}
+
 		records = append(records, rec)
+
 		return nil
 	}); err != nil {
 		return nil, err
 	}
+
 	if err := validateImplementationLedger(records); err != nil {
 		return nil, err
 	}
+
 	return records, nil
 }
 
@@ -84,23 +99,31 @@ func scanJSONL(data []byte, label string, visit func(line int, text []byte) erro
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	line := 0
 	records := 0
+
 	for scanner.Scan() {
 		line++
+
 		text := strings.TrimSpace(scanner.Text())
+
 		if text == "" {
 			continue
 		}
+
 		records++
+
 		if err := visit(line, []byte(text)); err != nil {
 			return err
 		}
 	}
+
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("scan %s JSONL: %w", label, err)
 	}
+
 	if records == 0 {
 		return fmt.Errorf("%s JSONL contains no records", label)
 	}
+
 	return nil
 }
 
@@ -110,19 +133,24 @@ func scanJSONL(data []byte, label string, visit func(line int, text []byte) erro
 func UnwrapSingleMarkdownFence(value string) string {
 	trimmed := strings.TrimSpace(value)
 	lines := strings.Split(trimmed, "\n")
+
 	if len(lines) < 3 {
 		return value
 	}
+
 	if !strings.HasPrefix(strings.TrimSpace(lines[0]), "```") {
 		return value
 	}
+
 	if strings.TrimSpace(lines[len(lines)-1]) != "```" {
 		return value
 	}
+
 	body := strings.TrimSpace(strings.Join(lines[1:len(lines)-1], "\n"))
 	if body == "" {
 		return value
 	}
+
 	return body
 }
 
@@ -144,7 +172,9 @@ func RepairMarkdownFrontMatter(raw string) string {
 
 	// 3. Locate the first --- delimiter and skip any preamble text before it.
 	const delim = "---"
+
 	idx := strings.Index(raw, delim)
+
 	if idx > 0 && raw[idx-1] == '\n' {
 		raw = raw[idx:]
 	}
@@ -168,10 +198,12 @@ func RepairMarkdownFrontMatter(raw string) string {
 // failure), and any parse error.
 func TryParsePRDMarkdown(raw string) (PRDDocument, string, error) {
 	repaired := RepairMarkdownFrontMatter(raw)
+
 	doc, err := ParsePRDMarkdown([]byte(repaired))
 	if err != nil {
 		return PRDDocument{}, "", fmt.Errorf("parse PRD after repair: %w", err)
 	}
+
 	return doc, repaired, nil
 }
 
@@ -179,10 +211,12 @@ func TryParsePRDMarkdown(raw string) (PRDDocument, string, error) {
 // Returns the parsed document, the repaired text, and any parse error.
 func TryParseADRMarkdown(raw string) (ADRDocument, string, error) {
 	repaired := RepairMarkdownFrontMatter(raw)
+
 	doc, err := ParseADRMarkdown([]byte(repaired))
 	if err != nil {
 		return ADRDocument{}, "", fmt.Errorf("parse ADR after repair: %w", err)
 	}
+
 	return doc, repaired, nil
 }
 
@@ -199,26 +233,33 @@ type ADRParseFailure struct {
 // per-chunk failure details, and an error only when all chunks failed.
 func TrySplitAndParseADRs(output string, prd PRDDocument) ([]ADRDocument, []ADRIndexEntry, []ADRParseFailure, error) {
 	chunks := strings.Split(output, "===")
-	var adrDocs []ADRDocument
-	var indexEntries []ADRIndexEntry
-	var failures []ADRParseFailure
+
+	var (
+		adrDocs      []ADRDocument
+		indexEntries []ADRIndexEntry
+		failures     []ADRParseFailure
+	)
 
 	for i, chunk := range chunks {
 		chunk = RepairMarkdownFrontMatter(chunk)
 		if chunk == "" {
 			continue
 		}
+
 		if !strings.HasPrefix(chunk, "---") {
 			chunk = "---\n" + chunk
 		}
+
 		// Auto-assign adr_id if missing from front matter.
 		if !strings.Contains(chunk[:min(len(chunk), 300)], "adr_id:") {
 			// Find end of first line (the --- delimiter) and insert after it.
 			if idx := strings.Index(chunk, "\n"); idx > 0 {
 				adrID := fmt.Sprintf("ADR-%03d", len(adrDocs)+1)
+
 				chunk = chunk[:idx+1] + "adr_id: " + adrID + "\n" + chunk[idx+1:]
 			}
 		}
+
 		doc, err := ParseADRMarkdown([]byte(chunk))
 		if err != nil {
 			failures = append(failures, ADRParseFailure{
@@ -226,17 +267,21 @@ func TrySplitAndParseADRs(output string, prd PRDDocument) ([]ADRDocument, []ADRI
 				RawChunk:   util.Truncate(chunk, 200),
 				Error:      err.Error(),
 			})
+
 			continue
 		}
+
 		adrID := doc.FrontMatter.ADRID
 		if adrID == "" {
 			adrID = fmt.Sprintf("ADR-%03d", len(adrDocs)+1)
 			doc.FrontMatter.ADRID = adrID
 		}
+
 		status := "draft"
 		if doc.FrontMatter.Status != "" {
 			status = doc.FrontMatter.Status
 		}
+
 		fileName := adrID + ".md"
 		now := time.Now().UTC().Format(time.RFC3339)
 
@@ -255,6 +300,7 @@ func TrySplitAndParseADRs(output string, prd PRDDocument) ([]ADRDocument, []ADRI
 	if len(adrDocs) == 0 && len(failures) > 0 {
 		return nil, nil, failures, fmt.Errorf("all %d ADR chunks failed to parse", len(failures))
 	}
+
 	return adrDocs, indexEntries, failures, nil
 }
 
@@ -264,6 +310,7 @@ func firstNonEmptyStr(values ...string) string {
 			return strings.TrimSpace(v)
 		}
 	}
+
 	return ""
 }
 
@@ -272,6 +319,7 @@ func ParsePRDMarkdown(data []byte) (PRDDocument, error) {
 	if err != nil {
 		return PRDDocument{}, fmt.Errorf("parse PRD: %w", err)
 	}
+
 	fm := PRDFrontMatter{
 		SchemaVersion:     fields["schema_version"],
 		PRDID:             fields["prd_id"],
@@ -283,10 +331,13 @@ func ParsePRDMarkdown(data []byte) (PRDDocument, error) {
 		AcceptanceProfile: fields["acceptance_profile"],
 	}
 	doc := PRDDocument{FrontMatter: fm}
+
 	doc.Requirements = parsePRDRequirements(body)
+
 	if err := validatePRD(doc); err != nil {
 		return PRDDocument{}, err
 	}
+
 	return doc, nil
 }
 
@@ -303,6 +354,7 @@ func ParseADRMarkdown(data []byte) (ADRDocument, error) {
 	if err != nil {
 		return ADRDocument{}, fmt.Errorf("parse ADR: %w", err)
 	}
+
 	fm := ADRFrontMatter{
 		SchemaVersion:     fields["schema_version"],
 		ADRID:             fields["adr_id"],
@@ -329,9 +381,11 @@ func ParseADRMarkdown(data []byte) (ADRDocument, error) {
 		HasOpenQuestions:             strings.Contains(body, "## Open Questions"),
 	}
 	doc := ADRDocument{FrontMatter: fm, Sections: sections, BodyMarkdown: strings.TrimSpace(body)}
+
 	if err := validateADR(doc); err != nil {
 		return ADRDocument{}, err
 	}
+
 	return doc, nil
 }
 
@@ -342,6 +396,7 @@ func stripQuotes(v string) string {
 			return v[1 : len(v)-1]
 		}
 	}
+
 	return v
 }
 
@@ -350,39 +405,54 @@ func parseFrontMatterRaw(data []byte) (map[string]string, string, error) {
 	if !strings.HasPrefix(text, "---") {
 		return nil, "", errors.New("front matter delimiter --- not found at start")
 	}
+
 	end := strings.Index(text[3:], "---")
 	if end < 0 {
 		return nil, "", errors.New("closing front matter delimiter --- not found")
 	}
+
 	fmText := text[3 : end+3]
 	body := text[end+6:]
+
 	return parseYAMLFieldsMultiline(fmText), body, nil
 }
 
 func parseYAMLFieldsMultiline(text string) map[string]string {
 	result := map[string]string{}
 	lines := strings.Split(text, "\n")
-	var currentKey string
-	var listItems []string
+
+	var (
+		currentKey string
+		listItems  []string
+	)
+
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || trimmed == "---" {
 			continue
 		}
+
 		if strings.HasPrefix(trimmed, "- ") && currentKey != "" {
 			item := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+
 			listItems = append(listItems, item)
+
 			continue
 		}
+
 		if currentKey != "" && len(listItems) > 0 {
 			result[currentKey] = "[" + strings.Join(listItems, ", ") + "]"
 		}
+
 		currentKey = ""
 		listItems = nil
+
 		idx := strings.Index(trimmed, ":")
+
 		if idx < 0 {
 			continue
 		}
+
 		key := strings.TrimSpace(trimmed[:idx])
 		val := strings.TrimSpace(trimmed[idx+1:])
 		// Strip surrounding double or single quotes from scalar values.
@@ -391,11 +461,14 @@ func parseYAMLFieldsMultiline(text string) map[string]string {
 			currentKey = key
 			continue
 		}
+
 		result[key] = val
 	}
+
 	if currentKey != "" && len(listItems) > 0 {
 		result[currentKey] = "[" + strings.Join(listItems, ", ") + "]"
 	}
+
 	return result
 }
 
@@ -404,38 +477,48 @@ func parseFrontMatterList(fields map[string]string, key string) []string {
 	if val == "" {
 		return nil
 	}
+
 	val = strings.TrimSpace(val)
 	if !strings.HasPrefix(val, "[") || !strings.HasSuffix(val, "]") {
 		return nil
 	}
+
 	inner := strings.TrimSpace(val[1 : len(val)-1])
 	if inner == "" {
 		return nil
 	}
+
 	parts := strings.Split(inner, ",")
 	result := make([]string, 0, len(parts))
+
 	for _, p := range parts {
 		p = strings.Trim(strings.TrimSpace(p), `"'`)
 		if p != "" {
 			result = append(result, p)
 		}
 	}
+
 	if len(result) == 0 {
 		return nil
 	}
+
 	return result
 }
 
 func parsePRDRequirements(body string) []PRDRequirement {
 	var reqs []PRDRequirement
+
 	lines := strings.Split(body, "\n")
+
 	var current *PRDRequirement
+
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "- **id**:") {
 			if current != nil {
 				reqs = append(reqs, *current)
 			}
+
 			current = &PRDRequirement{}
 			current.ID = strings.TrimSpace(strings.TrimPrefix(trimmed, "- **id**:"))
 		} else if current != nil {
@@ -459,30 +542,38 @@ func parsePRDRequirements(body string) []PRDRequirement {
 			}
 		}
 	}
+
 	if current != nil {
 		reqs = append(reqs, *current)
 	}
+
 	return reqs
 }
 
 func parseInlineArray(line, prefix string) []string {
 	val := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+
 	val = strings.TrimSpace(val)
+
 	if !strings.HasPrefix(val, "[") || !strings.HasSuffix(val, "]") {
 		return nil
 	}
+
 	inner := strings.TrimSpace(val[1 : len(val)-1])
 	if inner == "" {
 		return nil
 	}
+
 	parts := strings.Split(inner, ",")
 	result := make([]string, 0, len(parts))
+
 	for _, p := range parts {
 		p = strings.Trim(strings.TrimSpace(p), `"'`)
 		if p != "" {
 			result = append(result, p)
 		}
 	}
+
 	return result
 }
 

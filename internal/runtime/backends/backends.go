@@ -127,10 +127,13 @@ func Load(path string) (File, error) {
 	if err != nil {
 		return File{}, fmt.Errorf("backends: read %q: %w", path, err)
 	}
+
 	var f File
+
 	if err := json.Unmarshal(body, &f); err != nil {
 		return File{}, fmt.Errorf("backends: parse %q: %w", path, err)
 	}
+
 	return f, nil
 }
 
@@ -144,12 +147,16 @@ func LoadOptional(path string) (File, bool, error) {
 		if os.IsNotExist(err) {
 			return File{}, false, nil
 		}
+
 		return File{}, false, fmt.Errorf("backends: read %q: %w", path, err)
 	}
+
 	var f File
+
 	if err := json.Unmarshal(body, &f); err != nil {
 		return File{}, false, fmt.Errorf("backends: parse %q: %w", path, err)
 	}
+
 	return f, true, nil
 }
 
@@ -160,6 +167,7 @@ func LoadFromProjectRoot(projectRoot string) (File, bool, error) {
 	if strings.TrimSpace(projectRoot) == "" {
 		return File{}, false, nil
 	}
+
 	return LoadOptional(filepath.Join(projectRoot, ".idiom", "backends.json"))
 }
 
@@ -170,15 +178,19 @@ func (f File) Profile(name string) (Profile, bool) {
 	if len(f.Profiles) == 0 {
 		return Profile{}, false
 	}
+
 	if name == "" {
 		name = strings.TrimSpace(f.DefaultProfile)
 	}
+
 	if name == "" && len(f.Profiles) == 1 {
 		for _, p := range f.Profiles {
 			return p, true
 		}
 	}
+
 	p, ok := f.Profiles[name]
+
 	return p, ok
 }
 
@@ -190,6 +202,7 @@ func (f File) ModelByAlias(alias string) (Model, bool) {
 	if alias == "" {
 		return Model{}, false
 	}
+
 	if name := strings.TrimSpace(f.DefaultProfile); name != "" {
 		if p, ok := f.Profiles[name]; ok {
 			if m, ok := p.ModelByAlias(alias); ok {
@@ -197,19 +210,23 @@ func (f File) ModelByAlias(alias string) (Model, bool) {
 			}
 		}
 	}
+
 	names := make([]string, 0, len(f.Profiles))
 	for name := range f.Profiles {
 		if name != strings.TrimSpace(f.DefaultProfile) {
 			names = append(names, name)
 		}
 	}
+
 	slices.Sort(names)
+
 	for _, name := range names {
 		p := f.Profiles[name]
 		if m, ok := p.ModelByAlias(alias); ok {
 			return m, true
 		}
 	}
+
 	return Model{}, false
 }
 
@@ -222,6 +239,7 @@ func (p Profile) CoderAlias() string {
 	if resolution.OK {
 		return resolution.Alias
 	}
+
 	return ""
 }
 
@@ -249,6 +267,7 @@ func (p Profile) AliasForRole(role string) (string, bool) {
 	if !resolution.OK {
 		return "", false
 	}
+
 	return resolution.Alias, true
 }
 
@@ -268,9 +287,11 @@ func (p Profile) resolveRoleAlias(role string, opts roleAliasOptions) RoleAliasR
 	if role == "" {
 		return RoleAliasResolution{}
 	}
+
 	if alias := strings.TrimSpace(p.proxyDefaultForRole(role)); alias != "" {
 		return RoleAliasResolution{Role: role, Alias: alias, Source: RoleAliasSourceProxyDefault, OK: true}
 	}
+
 	for _, m := range p.Models {
 		for _, r := range m.Roles {
 			if strings.ToLower(strings.TrimSpace(r)) == role {
@@ -280,11 +301,13 @@ func (p Profile) resolveRoleAlias(role string, opts roleAliasOptions) RoleAliasR
 			}
 		}
 	}
+
 	if opts.allowLoneModel && len(p.Models) == 1 {
 		if alias := strings.TrimSpace(p.Models[0].Alias); alias != "" {
 			return RoleAliasResolution{Role: role, Alias: alias, Source: RoleAliasSourceLoneModel, OK: true}
 		}
 	}
+
 	if role == RoleExecutor {
 		for _, m := range p.Models {
 			if alias := strings.TrimSpace(m.Alias); alias != "" && isHyphenBoundedToken(strings.ToLower(alias), "coder") {
@@ -292,6 +315,7 @@ func (p Profile) resolveRoleAlias(role string, opts roleAliasOptions) RoleAliasR
 			}
 		}
 	}
+
 	return RoleAliasResolution{Role: role}
 }
 
@@ -306,10 +330,12 @@ func (p Profile) proxyDefaultForRole(role string) string {
 		if alias := strings.TrimSpace(p.Proxy.DefaultExecutor); alias != "" {
 			return alias
 		}
+
 		return p.Proxy.DefaultCoder
 	case RoleClassifier:
 		return p.Proxy.DefaultClassifier
 	}
+
 	return ""
 }
 
@@ -322,11 +348,13 @@ func (p Profile) ModelByAlias(alias string) (Model, bool) {
 	if alias == "" {
 		return Model{}, false
 	}
+
 	for _, m := range p.Models {
 		if m.Alias == alias {
 			return m, true
 		}
 	}
+
 	return Model{}, false
 }
 
@@ -348,21 +376,26 @@ func ResolveRoleFromProjectRoot(projectRoot, profileName, role string) (alias st
 	if err != nil {
 		return "", Model{}, false, err
 	}
+
 	if !found {
 		return "", Model{}, false, nil
 	}
+
 	prof, profOK := file.Profile(profileName)
 	if !profOK {
 		return "", Model{}, false, nil
 	}
+
 	alias, ok = prof.AliasForRole(role)
 	if !ok {
 		return "", Model{}, false, nil
 	}
+
 	model, _ = prof.ModelByAlias(alias)
 	if strings.TrimSpace(model.Alias) == "" {
 		model.Alias = alias
 	}
+
 	return alias, model, true, nil
 }
 
@@ -375,16 +408,20 @@ func isHyphenBoundedToken(s, token string) bool {
 		if s[i:i+len(token)] != token {
 			continue
 		}
+
 		// Left boundary check: start-of-string OR non-alnum.
 		if i > 0 && isAlnum(s[i-1]) {
 			continue
 		}
+
 		// Right boundary check: end-of-string OR non-alnum.
 		if i+len(token) < len(s) && isAlnum(s[i+len(token)]) {
 			continue
 		}
+
 		return true
 	}
+
 	return false
 }
 
@@ -397,6 +434,7 @@ func isAlnum(b byte) bool {
 	case b >= '0' && b <= '9':
 		return true
 	}
+
 	return false
 }
 
@@ -406,9 +444,11 @@ func (f File) Save(path string) error {
 	if err != nil {
 		return fmt.Errorf("backends: marshal: %w", err)
 	}
+
 	body = append(body, '\n')
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		return fmt.Errorf("backends: write %q: %w", path, err)
 	}
+
 	return nil
 }

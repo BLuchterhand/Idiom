@@ -11,12 +11,15 @@ import (
 func Load(path string) (config.Config, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		cfg := config.Default()
+
 		if wd, e := os.Getwd(); e == nil {
 			wd = config.CanonicalizeExistingPath(wd)
 			cfg.Workspace.Root = wd
 			cfg.Workspace.CWD = wd
 		}
+
 		return cfg, nil
 	}
+
 	return config.Load(path)
 }

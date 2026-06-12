@@ -7,23 +7,23 @@
 [2m  ▎ thinking[0m
 Now let me inspect the runner for the A6 hook and check for existing uncommitted work:
   · 32185 tok · in 32016 (12032 cached / 19984 new) · out 169 (29 reasoning) · ¥0.0206 · cache prefix changed: tools
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD --stat"}
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD --stat"}
   -> grep {"pattern": "DirectAnswerSurface|direct_answer_surface", "path": "internal/runtime/agent/runner.go"}
 [2m  ▎ thinking[0m
   · 32551 tok · in 32396 (32128 cached / 268 new) · out 155 (18 reasoning) · ¥0.0012
   -> read_file {"path": "internal/runtime/agent/runner.go", "offset": 310, "limit": 30}
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD -- internal/runtime/agent/runner.go"}
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD -- internal/runtime/agent/runner.go"}
 [2m  ▎ thinking[0m
 Let me also check the other dirty files and get the full context around the A6 hook:
   · 34120 tok · in 33762 (32512 cached / 1250 new) · out 358 (93 reasoning) · ¥0.0026
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD -- internal/runtime/agent/runner_plan_then_execute_gu...
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD -- internal/runtime/agent/runner_plan_then_execute_gu...
   -> read_file {"path": "internal/runtime/agent/runner.go", "offset": 220, "limit": 15}
   -> read_file {"path": "internal/runtime/agent/runner.go", "offset": 500, "limit": 25}
 [2m  ▎ thinking[0m
 Let me check for the `readOnlyDirectAnswerLane` helper and verify the test works:
   · 35349 tok · in 35137 (34048 cached / 1089 new) · out 212 (56 reasoning) · ¥0.0022
   -> grep {"path": "internal/runtime/agent/", "pattern": "func readOnlyDirectAnswerLane"}
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && go test ./internal/runtime/agent -run 'DirectAnswer' -v 2>&1 | head...
+  -> bash {"command": "cd /workspace/idiom && go test ./internal/runtime/agent -run 'DirectAnswer' -v 2>&1 | head...
 [2m  ▎ thinking[0m
 Let me verify the gate and tool composition:
   · 36750 tok · in 36491 (35328 cached / 1163 new) · out 259 (49 reasoning) · ¥0.0024
@@ -36,7 +36,7 @@ Let me verify the gate and tool composition:
 [2m  ▎ thinking[0m
 Let me look at one of the new DirectAnswer tests to understand how the existing tests interact with the A6 surface:
   · 38571 tok · in 38317 (37120 cached / 1197 new) · out 254 (81 reasoning) · ¥0.0024
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && go test ./internal/runtime/agent -run 'TestRunnerDoesNotExposeNoteT...
+  -> bash {"command": "cd /workspace/idiom && go test ./internal/runtime/agent -run 'TestRunnerDoesNotExposeNoteT...
   -> grep {"path": "internal/runtime/agent", "pattern": "func TestRunnerDoesNotExposeNoteToolForDirectAnswer"}
 [2m  ▎ thinking[0m
 Let me find the test that asserts task delegation works in direct-answer mode:
@@ -45,31 +45,31 @@ Let me find the test that asserts task delegation works in direct-answer mode:
   -> grep {"path": "internal/runtime/agent", "pattern": "func Test.*DirectAnswer.*ChildPacket\\|func Test.*DirectAnswer.*Task"}
 [2m  ▎ thinking[0m
   · 38993 tok · in 38898 (38784 cached / 114 new) · out 95 (16 reasoning) · ¥0.0011
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && grep -n \"func Test.*DirectAnswer\" internal/runtime/agent/*_test.g...
+  -> bash {"command": "cd /workspace/idiom && grep -n \"func Test.*DirectAnswer\" internal/runtime/agent/*_test.g...
 [2m  ▎ thinking[0m
   · 39909 tok · in 39805 (38912 cached / 893 new) · out 104 (19 reasoning) · ¥0.0019
   -> read_file {"limit": 70, "offset": 16566, "path": "internal/runtime/agent/runner_test.go"}
 [2m  ▎ thinking[0m
 Let me check all dirty files and the full picture of the A6 diff:
   · 42106 tok · in 40989 (39808 cached / 1181 new) · out 1117 (929 reasoning) · ¥0.0042
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD --name-only && echo \"---STAGED---\" && git diff --ca...
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD -- prompts/assets.go internal/runtime/agent/lane_poli...
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD --name-only && echo \"---STAGED---\" && git diff --ca...
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD -- prompts/assets.go internal/runtime/agent/lane_poli...
 [2m  ▎ thinking[0m
 Let me now verify the complete A1-on-A6 dependency: confirming A1 prefetch is disabled when the surface doesn't advertise the capability:
   · 45491 tok · in 42344 (41984 cached / 360 new) · out 3147 (2962 reasoning) · ¥0.0075
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && grep -n \"source_body_prefetch\\|DirectAnswerSurfaceCapSourceBodyPr...
+  -> bash {"command": "cd /workspace/idiom && grep -n \"source_body_prefetch\\|DirectAnswerSurfaceCapSourceBodyPr...
   -> read_file {"limit": 15, "offset": 128, "path": "internal/runtime/agent/direct_answer_surface.go"}
 [2m  ▎ thinking[0m
 Let me check one more thing — whether the runner's allowed-tools override order could cause issues, and whether there are any existing tests that might break due to the surface override:
   · 46042 tok · in 45824 (45440 cached / 384 new) · out 218 (53 reasoning) · ¥0.0017
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && go test ./internal/runtime/agent -count=1 2>&1 | tail -10"}
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && go test ./... 2>&1 | tail -30"}
+  -> bash {"command": "cd /workspace/idiom && go test ./internal/runtime/agent -count=1 2>&1 | tail -10"}
+  -> bash {"command": "cd /workspace/idiom && go test ./... 2>&1 | tail -30"}
 [2m  ▎ thinking[0m
   · 46973 tok · in 46756 (45952 cached / 804 new) · out 217 (119 reasoning) · ¥0.0022
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git stash list && git stash && go test ./internal/runtime/agent -ru...
+  -> bash {"command": "cd /workspace/idiom && git stash list && git stash && go test ./internal/runtime/agent -ru...
 [2m  ▎ thinking[0m
   · 47326 tok · in 47232 (46848 cached / 384 new) · out 94 (35 reasoning) · ¥0.0015
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git stash pop"}
+  -> bash {"command": "cd /workspace/idiom && git stash pop"}
 [2m  ▎ thinking[0m
 Let me verify one more important detail — how the runner uses the allowed tools and whether pre-existing brief.AllowedTools interacts with the A6 override:
   · 48409 tok · in 47667 (47104 cached / 563 new) · out 742 (630 reasoning) · ¥0.0030

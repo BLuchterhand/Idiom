@@ -26,33 +26,43 @@ func TestCanonicalizeToolIntentNormalizesTransportRepairAndVocabulary(t *testing
 	if intent.ToolName != "read_file" {
 		t.Fatalf("ToolName = %q", intent.ToolName)
 	}
+
 	if intent.Capability != CapabilityBoundedRead {
 		t.Fatalf("Capability = %q", intent.Capability)
 	}
+
 	if intent.SideEffect != SideEffectReadOnly {
 		t.Fatalf("SideEffect = %q", intent.SideEffect)
 	}
+
 	if intent.ActionClass != ActionClassRead {
 		t.Fatalf("ActionClass = %q", intent.ActionClass)
 	}
+
 	if intent.Transport != ToolTransportNativeCall {
 		t.Fatalf("Transport = %q", intent.Transport)
 	}
+
 	if intent.ParserFailure != ParserFailureMalformedJSON {
 		t.Fatalf("ParserFailure = %q", intent.ParserFailure)
 	}
+
 	if intent.RepairSource != RepairSourceHostNormalizer || !intent.Repaired {
 		t.Fatalf("repair = %q repaired=%v", intent.RepairSource, intent.Repaired)
 	}
+
 	if !slices.Equal(intent.TargetRefs, []string{"docs/design.md", "internal/contracts/autonomy/action_intent.go"}) {
 		t.Fatalf("TargetRefs = %#v", intent.TargetRefs)
 	}
+
 	if len(intent.PathRoles) != 1 || intent.PathRoles[0].Path != "docs/design.md" {
 		t.Fatalf("PathRoles = %#v", intent.PathRoles)
 	}
+
 	if intent.ArgumentsDigest != "abc123" || intent.Source != "runner_tool_intent" {
 		t.Fatalf("digest/source = %q/%q", intent.ArgumentsDigest, intent.Source)
 	}
+
 	if err := intent.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
@@ -94,6 +104,7 @@ func TestActionClassTokensUseCanonicalVocabulary(t *testing.T) {
 	if !slices.Equal(tokens, []string{"read", "source_satisfied", "per_edit_write"}) {
 		t.Fatalf("ActionClassTokens() = %#v", tokens)
 	}
+
 	if ActionClassToken(ActionClass("decision_pass")) != "review_pass" {
 		t.Fatalf("ActionClassToken(decision_pass) = %q", ActionClassToken(ActionClass("decision_pass")))
 	}
@@ -115,6 +126,7 @@ func TestIsToolActionClassSeparatesToolBackedAndTerminalClasses(t *testing.T) {
 			t.Fatalf("IsToolActionClass(%q) = false, want true", class)
 		}
 	}
+
 	for _, class := range []ActionClass{ActionClassSourceSatisfied, ActionClassBlocker, ActionClassReviewPass, ActionClassFinalAnswer, ActionClassProseFinal} {
 		if IsToolActionClass(class) {
 			t.Fatalf("IsToolActionClass(%q) = true, want false", class)
@@ -135,12 +147,15 @@ func TestActionFromIntentBuildsStableNormalizedAction(t *testing.T) {
 	if action.ActionClass != ActionClassRead {
 		t.Fatalf("ActionClass = %q", action.ActionClass)
 	}
+
 	if action.ActionKey != "read:code_navigate:bounded_read:internal/contracts/autonomy/action_intent.go" {
 		t.Fatalf("ActionKey = %q", action.ActionKey)
 	}
+
 	if action.TargetRef != "internal/contracts/autonomy/action_intent.go" {
 		t.Fatalf("TargetRef = %q", action.TargetRef)
 	}
+
 	if err := action.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
@@ -159,12 +174,15 @@ func TestCanonicalizeNormalizedActionPreservesExplicitActionKey(t *testing.T) {
 	if action.ActionClass != ActionClassVerify {
 		t.Fatalf("ActionClass = %q", action.ActionClass)
 	}
+
 	if action.ActionKey != "go test ./internal/contracts/autonomy" {
 		t.Fatalf("ActionKey = %q", action.ActionKey)
 	}
+
 	if action.Capability != CapabilityShellVerification {
 		t.Fatalf("Capability = %q", action.Capability)
 	}
+
 	if action.SideEffect != SideEffectReadOnly {
 		t.Fatalf("SideEffect = %q", action.SideEffect)
 	}
@@ -185,21 +203,27 @@ func TestActionDecisionValidationUsesPolicyVocabulary(t *testing.T) {
 	if decision.Decision != PolicyAsk {
 		t.Fatalf("Decision = %q", decision.Decision)
 	}
+
 	if decision.ActionClass != ActionClassPerEditWrite {
 		t.Fatalf("ActionClass = %q", decision.ActionClass)
 	}
+
 	if decision.Capability != CapabilityApplyPatch {
 		t.Fatalf("Capability = %q", decision.Capability)
 	}
+
 	if decision.SideEffect != SideEffectAdditive {
 		t.Fatalf("SideEffect = %q", decision.SideEffect)
 	}
+
 	if decision.InvariantID != "path.required.edit" || decision.ReasonCode != "needs.approval" {
 		t.Fatalf("invariant/reason = %q/%q", decision.InvariantID, decision.ReasonCode)
 	}
+
 	if decision.Source != "write_gate" {
 		t.Fatalf("Source = %q", decision.Source)
 	}
+
 	if err := decision.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}

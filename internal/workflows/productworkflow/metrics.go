@@ -23,6 +23,7 @@ func (e ProductWorkflowMetricsError) Error() string {
 	if e.Err == nil {
 		return strings.TrimSpace(e.Op + " " + e.Path)
 	}
+
 	return fmt.Sprintf("%s %s: %s", e.Op, e.Path, metricsErrorMessage(e.Err))
 }
 
@@ -50,6 +51,7 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 	if err != nil {
 		return ProductWorkflowMetrics{}, err
 	}
+
 	ws, err := ParseWorkflowStateJSON(wsData)
 	if err != nil {
 		return ProductWorkflowMetrics{}, metricsArtifactError("parse", WorkflowStateFileName, err)
@@ -59,6 +61,7 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 	if err != nil {
 		return ProductWorkflowMetrics{}, err
 	}
+
 	tdd, err := ParseTDDLedgerJSON(tddData)
 	if err != nil {
 		return ProductWorkflowMetrics{}, metricsArtifactError("parse", "tdd.json", err)
@@ -68,6 +71,7 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 	if err != nil {
 		return ProductWorkflowMetrics{}, err
 	}
+
 	cards, err := ParseEvidenceCardsJSONL(evidenceData)
 	if err != nil {
 		return ProductWorkflowMetrics{}, metricsArtifactError("parse", filepath.Join("evidence", "evidence.jsonl"), err)
@@ -77,6 +81,7 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 	if err != nil {
 		return ProductWorkflowMetrics{}, err
 	}
+
 	matrix, err := ParseTraceabilityMatrixJSON(traceData)
 	if err != nil {
 		return ProductWorkflowMetrics{}, metricsArtifactError("parse", filepath.Join("evidence", "traceability_matrix.json"), err)
@@ -86,6 +91,7 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 	if err != nil {
 		return ProductWorkflowMetrics{}, err
 	}
+
 	ledger, err := ParseImplementationLedgerJSONL(ledgerData)
 	if err != nil {
 		return ProductWorkflowMetrics{}, metricsArtifactError("parse", "implementation_ledger.jsonl", err)
@@ -95,6 +101,7 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 	if err != nil {
 		return ProductWorkflowMetrics{}, err
 	}
+
 	prd, err := ParsePRDMarkdown(prdData)
 	if err != nil {
 		return ProductWorkflowMetrics{}, metricsArtifactError("parse", "prd.md", err)
@@ -104,6 +111,7 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 	if err != nil {
 		return ProductWorkflowMetrics{}, err
 	}
+
 	adrIndex, err := ParseADRIndexJSON(adrIndexData)
 	if err != nil {
 		return ProductWorkflowMetrics{}, metricsArtifactError("parse", filepath.Join("adrs", "index.json"), err)
@@ -118,10 +126,12 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 
 	tddStatusCounts := map[string]int{}
 	tddTypeCounts := map[string]int{}
+
 	for _, obligation := range tdd.Obligations {
 		if err := countBoundedMetricValue(tddStatusCounts, "tdd.obligations.status", obligation.Status, allowedMetricTDDStatuses); err != nil {
 			return ProductWorkflowMetrics{}, metricsArtifactError("validate", "tdd.json", err)
 		}
+
 		if err := countBoundedMetricValue(tddTypeCounts, "tdd.obligations.type", obligation.Type, allowedMetricTDDTypes); err != nil {
 			return ProductWorkflowMetrics{}, metricsArtifactError("validate", "tdd.json", err)
 		}
@@ -129,10 +139,12 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 
 	ledgerTypeCounts := map[string]int{}
 	ledgerAtomCount := 0
+
 	for _, record := range ledger {
 		if err := countBoundedMetricValue(ledgerTypeCounts, "implementation_ledger.record_type", record.RecordType, allowedMetricLedgerRecordTypes); err != nil {
 			return ProductWorkflowMetrics{}, metricsArtifactError("validate", "implementation_ledger.jsonl", err)
 		}
+
 		if strings.HasPrefix(record.RecordType, "atom_") {
 			ledgerAtomCount++
 		}
@@ -151,16 +163,20 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 	adrEvidenceRefCount := 0
 	adrPRDRefCount := 0
 	adrTDDObligationRefCount := 0
+
 	for _, entry := range adrIndex.ADRs {
 		adrRelPath := filepath.Join("adrs", entry.Path)
+
 		adrData, readErr := readMetricsArtifact(absRoot, adrRelPath)
 		if readErr != nil {
 			return ProductWorkflowMetrics{}, readErr
 		}
+
 		adrDoc, parseErr := ParseADRMarkdown(adrData)
 		if parseErr != nil {
 			return ProductWorkflowMetrics{}, metricsArtifactError("parse", adrRelPath, parseErr)
 		}
+
 		adrEvidenceRefCount += len(adrDoc.FrontMatter.EvidenceRefs)
 		adrPRDRefCount += len(adrDoc.FrontMatter.PRDRefs)
 		adrTDDObligationRefCount += len(adrDoc.FrontMatter.TDDObligations)
@@ -202,23 +218,28 @@ func readMetricsArtifact(absRoot, relPath string) ([]byte, error) {
 	if !ok {
 		return nil, metricsArtifactError("read", relPath, fmt.Errorf("artifact path must be effort-relative and must not contain traversal"))
 	}
+
 	data, err := os.ReadFile(filepath.Join(absRoot, filepath.FromSlash(cleanRelPath)))
 	if err != nil {
 		return nil, metricsArtifactError("read", cleanRelPath, err)
 	}
+
 	return data, nil
 }
 
 func cleanMetricsArtifactPath(relPath string) (string, bool) {
 	raw := strings.TrimSpace(relPath)
 	normalized := strings.ReplaceAll(filepath.ToSlash(raw), "\\", "/")
+
 	if normalized == "" || filepath.IsAbs(raw) || strings.HasPrefix(normalized, "/") || strings.Contains(normalized, ":") {
 		return "", false
 	}
+
 	clean := path.Clean(normalized)
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", false
 	}
+
 	return clean, true
 }
 
@@ -249,26 +270,32 @@ func collectReportMetrics(absRoot string) (map[string]int, map[string]int, error
 	if err != nil {
 		return nil, nil, metricsArtifactError("read", "reports/", err)
 	}
+
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
+
 		names = append(names, entry.Name())
 	}
+
 	sort.Strings(names)
 
 	for _, name := range names {
 		relPath := filepath.Join("reports", name)
+
 		data, readErr := readMetricsArtifact(absRoot, relPath)
 		if readErr != nil {
 			return nil, nil, readErr
 		}
+
 		reportType, known := ClassifyReportFileName(name)
 		if !known {
 			reportTypeCounts["other"]++
 			continue
 		}
+
 		reportTypeCounts[reportType]++
 		switch reportType {
 		case "implementation":
@@ -276,6 +303,7 @@ func collectReportMetrics(absRoot string) (map[string]int, map[string]int, error
 			if parseErr != nil {
 				return nil, nil, metricsArtifactError("parse", relPath, parseErr)
 			}
+
 			if strings.TrimSpace(report.CompletedAt) == "" {
 				reportStatusCounts["implementation_pending"]++
 			} else {
@@ -286,20 +314,24 @@ func collectReportMetrics(absRoot string) (map[string]int, map[string]int, error
 			if parseErr != nil {
 				return nil, nil, metricsArtifactError("parse", relPath, parseErr)
 			}
+
 			status := strings.TrimSpace(report.Status)
 			if !allowedMetricReviewStatuses[status] {
 				return nil, nil, metricsArtifactError("validate", relPath, fmt.Errorf("review status has unsupported value %q", status))
 			}
+
 			reportStatusCounts["review_"+status]++
 		case "investigation":
 			report, parseErr := ParseInvestigationReportJSON(data)
 			if parseErr != nil {
 				return nil, nil, metricsArtifactError("parse", relPath, parseErr)
 			}
+
 			status := strings.TrimSpace(report.Status)
 			if !allowedMetricInvestigationStatuses[status] {
 				return nil, nil, metricsArtifactError("validate", relPath, fmt.Errorf("investigation status has unsupported value %q", status))
 			}
+
 			reportStatusCounts["investigation_"+status]++
 		}
 	}
@@ -312,7 +344,9 @@ func countBoundedMetricValue(counts map[string]int, field, value string, allowed
 	if !allowed[trimmed] {
 		return fmt.Errorf("%s has unsupported value %q", field, trimmed)
 	}
+
 	counts[trimmed]++
+
 	return nil
 }
 

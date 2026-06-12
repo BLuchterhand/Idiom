@@ -138,6 +138,7 @@ type contextCandidateTest struct {
 
 func enrichPlanningPacketV2(packet *Packet, opts PlanningPacketV2Options) {
 	views := summarizeContextViews(packet.Workspace.Root, packet.Evidence)
+
 	packet.Tests = mergeCommands(packet.Tests, testsFromContextViews(views))
 	packet.Unknowns = mergeStrings(packet.Unknowns, unknownsFromContextViews(views))
 	packet.Risks = cleanRisks(append(packet.Risks, risksFromContextViews(views)...))
@@ -161,13 +162,16 @@ func buildPlanningContracts(packet Packet) *PlanningContracts {
 			}
 		}
 	}
+
 	protected := make([]string, 0)
+
 	for _, file := range packet.Files {
 		role := strings.ToLower(file.Role)
 		if strings.Contains(role, "protect") || strings.Contains(role, "forbid") || strings.Contains(role, "exclude") {
 			protected = append(protected, file.Path)
 		}
 	}
+
 	return &PlanningContracts{
 		Constraints:            append([]string(nil), packet.Constraints...),
 		ProtectedPaths:         cleanStrings(protected),
@@ -187,27 +191,34 @@ func buildRepositoryView(views []contextViewSummary) []RepositoryViewItem {
 			Fresh:   view.Fresh,
 		}
 		parts := []string{}
+
 		if view.PackID != "" {
 			parts = append(parts, "pack "+view.PackID)
 		}
+
 		if len(view.CandidateFiles) > 0 {
 			parts = append(parts, pluralCount(len(view.CandidateFiles), "candidate file"))
 		}
+
 		if len(view.CandidateSymbols) > 0 {
 			parts = append(parts, pluralCount(len(view.CandidateSymbols), "candidate symbol"))
 		}
+
 		if len(view.Tests) > 0 {
 			parts = append(parts, pluralCount(len(view.Tests), "test"))
 		}
+
 		if view.ParseError != "" {
 			parts = append(parts, "parse warning: "+view.ParseError)
 			item.Confidence = "heuristic"
 		} else {
 			item.Confidence = "exact_tool_output"
 		}
+
 		item.Summary = strings.Join(parts, "; ")
 		out = append(out, item)
 	}
+
 	return out
 }
 
@@ -218,27 +229,34 @@ func buildCandidateScope(packet Packet, views []contextViewSummary) []RankedScop
 		if key == "" {
 			return
 		}
+
 		existing, ok := items[key]
 		if !ok || item.Rank > existing.Rank {
 			items[key] = item
 			return
 		}
+
 		existing.Signals = append(existing.Signals, item.Signals...)
 		existing.Limitations = cleanStrings(append(existing.Limitations, item.Limitations...))
 		items[key] = existing
 	}
+
 	for _, file := range packet.Files {
 		role := strings.ToLower(file.Role)
 		rank := 0.82
+
 		if strings.Contains(role, "modify") || strings.Contains(role, "edit") {
 			rank = 0.95
 		}
+
 		if strings.Contains(role, "read") {
 			rank = 0.72
 		}
+
 		if strings.Contains(role, "protect") || strings.Contains(role, "forbid") || strings.Contains(role, "exclude") {
 			rank = 0.99
 		}
+
 		add(RankedScopeItem{
 			Handle:     "file://" + file.Path,
 			Path:       file.Path,
@@ -252,6 +270,7 @@ func buildCandidateScope(packet Packet, views []contextViewSummary) []RankedScop
 			}},
 		})
 	}
+
 	for _, test := range packet.Tests {
 		add(RankedScopeItem{
 			Handle:     "test://" + stableHandlePart(test.Command),
@@ -265,19 +284,23 @@ func buildCandidateScope(packet Packet, views []contextViewSummary) []RankedScop
 			}},
 		})
 	}
+
 	for _, view := range views {
 		for _, file := range view.CandidateFiles {
 			if file.Path == "" {
 				continue
 			}
+
 			limitations := []string{}
 			if file.Stale {
 				limitations = append(limitations, "candidate was marked stale by context view")
 			}
+
 			handle := "file://" + file.Path
 			if len(file.Handles) > 0 {
 				handle = file.Handles[0]
 			}
+
 			add(RankedScopeItem{
 				Handle:      handle,
 				Path:        file.Path,
@@ -292,14 +315,17 @@ func buildCandidateScope(packet Packet, views []contextViewSummary) []RankedScop
 				}},
 			})
 		}
+
 		for _, symbol := range view.CandidateSymbols {
 			if symbol.ID == "" && symbol.QualifiedName == "" {
 				continue
 			}
+
 			limitations := []string{}
 			if symbol.Stale {
 				limitations = append(limitations, "symbol was marked stale by context view")
 			}
+
 			add(RankedScopeItem{
 				Handle:      firstNonEmpty(symbol.ID, "symbol://"+symbol.Path+"#"+symbol.QualifiedName),
 				Path:        symbol.Path,
@@ -315,16 +341,19 @@ func buildCandidateScope(packet Packet, views []contextViewSummary) []RankedScop
 				}},
 			})
 		}
+
 		for _, test := range view.Tests {
 			if test.Command == "" && test.Path == "" {
 				continue
 			}
+
 			handle := ""
 			if test.Command != "" {
 				handle = "test://" + stableHandlePart(test.Command)
 			} else if test.Path != "" {
 				handle = "file://" + test.Path
 			}
+
 			add(RankedScopeItem{
 				Handle:     handle,
 				Path:       test.Path,
@@ -340,17 +369,21 @@ func buildCandidateScope(packet Packet, views []contextViewSummary) []RankedScop
 			})
 		}
 	}
+
 	out := make([]RankedScopeItem, 0, len(items))
 	for _, item := range items {
 		item.Limitations = cleanStrings(item.Limitations)
 		out = append(out, item)
 	}
+
 	slices.SortFunc(out, func(a, b RankedScopeItem) int {
 		if a.Rank == b.Rank {
 			return cmp.Compare(a.Handle, b.Handle)
 		}
+
 		return -cmp.Compare(a.Rank, b.Rank)
 	})
+
 	return out
 }
 
@@ -358,18 +391,26 @@ func buildFreshnessReport(packet Packet, views []contextViewSummary) *FreshnessR
 	report := &FreshnessReport{}
 	if packet.Workspace.Root != "" {
 		report.GitHead = gitOutput(packet.Workspace.Root, "rev-parse", "--verify", "HEAD")
+
 		status := gitOutput(packet.Workspace.Root, "status", "--porcelain")
+
 		if status != "" {
 			dirty := true
+
 			report.Dirty = &dirty
+
 			sum := sha256.Sum256([]byte(status))
+
 			report.DirtyFingerprint = hex.EncodeToString(sum[:8])
 		} else if report.GitHead != "" {
 			dirty := false
+
 			report.Dirty = &dirty
 		}
 	}
+
 	var freshValues []bool
+
 	for _, view := range views {
 		source := ContextFreshnessSource{
 			Label:          view.Label,
@@ -383,27 +424,35 @@ func buildFreshnessReport(packet Packet, views []contextViewSummary) *FreshnessR
 		if report.IndexID == "" {
 			report.IndexID = view.IndexID
 		}
+
 		if view.Fresh != nil {
 			freshValues = append(freshValues, *view.Fresh)
 		}
+
 		report.StaleNodes = append(report.StaleNodes, view.StaleNodes...)
 		report.ContextViews = append(report.ContextViews, source)
+
 		if len(view.UnresolvedGaps) > 0 {
 			report.RefreshActions = append(report.RefreshActions, view.UnresolvedGaps...)
 		}
 	}
+
 	if len(freshValues) > 0 {
 		fresh := true
 		for _, value := range freshValues {
 			fresh = fresh && value
 		}
+
 		report.Fresh = &fresh
 	}
+
 	report.StaleNodes = cleanStrings(report.StaleNodes)
 	report.RefreshActions = cleanStrings(report.RefreshActions)
+
 	if report.IndexID == "" && report.GitHead == "" && report.Dirty == nil && len(report.ContextViews) == 0 {
 		return nil
 	}
+
 	return report
 }
 
@@ -414,35 +463,44 @@ func buildLanguageCapabilities(packet Packet, views []contextViewSummary) []Lang
 		if language == "" {
 			return
 		}
+
 		row := byLanguage[language]
 		if row.Language == "" {
 			row.Language = language
 			row.Confidence = confidence
 			row.PrecisionTier = precisionTier(confidence)
 		}
+
 		if precisionRank(confidence) > precisionRank(row.Confidence) {
 			row.Confidence = confidence
 			row.PrecisionTier = precisionTier(confidence)
 		}
+
 		if stale {
 			row.Limitations = append(row.Limitations, "some facts for this language were marked stale")
 		}
+
 		byLanguage[language] = row
 	}
+
 	for _, view := range views {
 		for _, file := range view.CandidateFiles {
 			add(file.Language, file.Confidence, file.Stale)
 		}
+
 		for _, symbol := range view.CandidateSymbols {
 			add(symbol.Language, symbol.Confidence, symbol.Stale)
 		}
 	}
+
 	out := make([]LanguageCapabilityReport, 0, len(byLanguage))
 	for _, row := range byLanguage {
 		row.Limitations = cleanStrings(row.Limitations)
 		out = append(out, row)
 	}
+
 	slices.SortFunc(out, func(a, b LanguageCapabilityReport) int { return cmp.Compare(a.Language, b.Language) })
+
 	return out
 }
 
@@ -460,38 +518,50 @@ func buildPlanningHandoff(packet Packet) *PlanningHandoff {
 	if len(packet.CandidateScope) > 0 {
 		handoff.ReadinessFields = append(handoff.ReadinessFields, "candidate_scope")
 	}
+
 	if len(packet.Evidence) > 0 {
 		handoff.ReadinessFields = append(handoff.ReadinessFields, "evidence")
 	}
+
 	if len(packet.Tests) > 0 {
 		handoff.ReadinessFields = append(handoff.ReadinessFields, "validation_requirements")
 	} else {
 		handoff.Blockers = append(handoff.Blockers, "no validation command is available in the packet")
 	}
+
 	if len(packet.Unknowns) > 0 {
 		handoff.Blockers = append(handoff.Blockers, "packet contains unresolved unknowns")
 	}
+
 	handoff.ImplementationReady = len(handoff.Blockers) == 0
+
 	return handoff
 }
 
 func summarizeContextViews(root string, evidence []Evidence) []contextViewSummary {
 	out := make([]contextViewSummary, 0)
+
 	for _, ev := range evidence {
 		if ev.Kind != "context_view" || strings.TrimSpace(ev.Content) == "" || strings.TrimSpace(ev.Error) != "" {
 			continue
 		}
+
 		view := contextViewSummary{Label: evidenceName(ev), Path: ev.Path}
+
 		var payload map[string]any
+
 		if err := json.Unmarshal([]byte(ev.Content), &payload); err != nil {
 			fullPayload, fullErr := readFullContextViewPayload(root, ev.Path)
 			if fullErr != nil {
 				view.ParseError = err.Error()
 				out = append(out, view)
+
 				continue
 			}
+
 			payload = fullPayload
 		}
+
 		view.PackID = stringField(payload, "pack_id")
 		view.IndexID = stringField(payload, "index_id")
 		view.GeneratedAt = stringField(payload, "generated_at")
@@ -504,18 +574,22 @@ func summarizeContextViews(root string, evidence []Evidence) []contextViewSummar
 		view.UnresolvedGaps = stringSliceField(payload, "unresolved_gaps")
 		view.StaleNodes = append(view.StaleNodes, stringSliceField(payload, "stale_files")...)
 		view.StaleNodes = append(view.StaleNodes, stringSliceField(payload, "missing_files")...)
+
 		for _, file := range view.CandidateFiles {
 			if file.Stale {
 				view.StaleNodes = append(view.StaleNodes, file.Path)
 			}
 		}
+
 		for _, symbol := range view.CandidateSymbols {
 			if symbol.Stale {
 				view.StaleNodes = append(view.StaleNodes, firstNonEmpty(symbol.ID, symbol.Path))
 			}
 		}
+
 		out = append(out, view)
 	}
+
 	return out
 }
 
@@ -524,23 +598,29 @@ func readFullContextViewPayload(root string, path string) (map[string]any, error
 	if path == "" {
 		return nil, os.ErrNotExist
 	}
+
 	full := path
 	if !filepath.IsAbs(full) {
 		full = filepath.Join(root, full)
 	}
+
 	data, err := os.ReadFile(filepath.Clean(full))
 	if err != nil {
 		return nil, err
 	}
+
 	var payload map[string]any
+
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return nil, err
 	}
+
 	return payload, nil
 }
 
 func testsFromContextViews(views []contextViewSummary) []CommandRef {
 	out := make([]CommandRef, 0)
+
 	for _, view := range views {
 		for _, test := range view.Tests {
 			if test.Command != "" {
@@ -548,6 +628,7 @@ func testsFromContextViews(views []contextViewSummary) []CommandRef {
 			}
 		}
 	}
+
 	return out
 }
 
@@ -556,20 +637,24 @@ func unknownsFromContextViews(views []contextViewSummary) []string {
 	for _, view := range views {
 		out = append(out, view.Unknowns...)
 		out = append(out, view.UnresolvedGaps...)
+
 		if view.ParseError != "" {
 			out = append(out, "context view "+view.Label+" could not be parsed: "+view.ParseError)
 		}
 	}
+
 	return cleanStrings(out)
 }
 
 func risksFromContextViews(views []contextViewSummary) []Risk {
 	out := make([]Risk, 0)
+
 	for _, view := range views {
 		for _, risk := range view.Risks {
 			out = append(out, Risk{Name: risk})
 		}
 	}
+
 	return out
 }
 
@@ -578,12 +663,14 @@ func parseContextCandidateFiles(value any) []contextCandidateFile {
 	if !ok {
 		return nil
 	}
+
 	out := make([]contextCandidateFile, 0, len(items))
 	for _, item := range items {
 		m, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		out = append(out, contextCandidateFile{
 			Path:       stringField(m, "path"),
 			Role:       stringField(m, "role"),
@@ -594,6 +681,7 @@ func parseContextCandidateFiles(value any) []contextCandidateFile {
 			Handles:    stringSliceField(m, "handles"),
 		})
 	}
+
 	return out
 }
 
@@ -602,12 +690,14 @@ func parseContextCandidateSymbols(value any) []contextCandidateSymbol {
 	if !ok {
 		return nil
 	}
+
 	out := make([]contextCandidateSymbol, 0, len(items))
 	for _, item := range items {
 		m, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		out = append(out, contextCandidateSymbol{
 			ID:            stringField(m, "id"),
 			Path:          stringField(m, "path"),
@@ -619,6 +709,7 @@ func parseContextCandidateSymbols(value any) []contextCandidateSymbol {
 			Reason:        stringField(m, "reason"),
 		})
 	}
+
 	return out
 }
 
@@ -627,12 +718,14 @@ func parseContextCandidateTests(value any) []contextCandidateTest {
 	if !ok {
 		return nil
 	}
+
 	out := make([]contextCandidateTest, 0, len(items))
 	for _, item := range items {
 		m, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		out = append(out, contextCandidateTest{
 			Command:  stringField(m, "command"),
 			Path:     stringField(m, "path"),
@@ -641,6 +734,7 @@ func parseContextCandidateTests(value any) []contextCandidateTest {
 			Required: boolFieldValue(m, "required"),
 		})
 	}
+
 	return out
 }
 
@@ -654,6 +748,7 @@ func boolField(m map[string]any, key string) *bool {
 	if !ok {
 		return nil
 	}
+
 	return &value
 }
 
@@ -667,6 +762,7 @@ func stringSliceField(m map[string]any, key string) []string {
 	if !ok {
 		return nil
 	}
+
 	out := make([]string, 0, len(values))
 	for _, value := range values {
 		text, ok := value.(string)
@@ -674,6 +770,7 @@ func stringSliceField(m map[string]any, key string) []string {
 			out = append(out, strings.TrimSpace(text))
 		}
 	}
+
 	return out
 }
 
@@ -681,9 +778,11 @@ func contextViewHandle(view contextViewSummary) string {
 	if view.PackID != "" {
 		return "context_pack://" + view.PackID
 	}
+
 	if view.Path != "" {
 		return "file://" + view.Path
 	}
+
 	return ""
 }
 
@@ -692,17 +791,22 @@ func stableHandlePart(value string) string {
 	if value == "" {
 		return "unspecified"
 	}
+
 	sum := sha256.Sum256([]byte(value))
+
 	return hex.EncodeToString(sum[:6])
 }
 
 func gitOutput(root string, args ...string) string {
 	cmd := exec.Command("git", args...)
+
 	cmd.Dir = filepath.Clean(root)
+
 	data, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
+
 	return strings.TrimSpace(string(data))
 }
 
@@ -722,9 +826,11 @@ func precisionTier(confidence string) string {
 		if strings.Contains(strings.ToLower(confidence), "precise") {
 			return "precise_backend"
 		}
+
 		if strings.Contains(strings.ToLower(confidence), "syntax") {
 			return "syntax_backend"
 		}
+
 		return "heuristic"
 	}
 }
@@ -754,5 +860,6 @@ func pluralCount(count int, label string) string {
 	if count == 1 {
 		return "1 " + label
 	}
+
 	return strconv.Itoa(count) + " " + label + "s"
 }

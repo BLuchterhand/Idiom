@@ -17,13 +17,18 @@ func PlanResearchRuns(profiles []ResearchProfile, selector, researchOutputDir st
 		Findings:          []ProfileFinding{},
 	}
 	selectedProfile, findings := SelectResearchProfile(profiles, selector)
+
 	plan.Findings = append(plan.Findings, findings...)
+
 	if selectedProfile == nil {
 		return plan
 	}
+
 	plan.SelectedProfile = strings.TrimSpace(selectedProfile.Name)
 	plan.SelectedProfileID = selectedProfileID(*selectedProfile)
+
 	cleanRelDir, ok := cleanResearchOutputDir(researchOutputDir)
+
 	if !ok {
 		plan.Findings = append(plan.Findings, ProfileFinding{
 			Kind:     "invalid_research_output_dir",
@@ -31,8 +36,10 @@ func PlanResearchRuns(profiles []ResearchProfile, selector, researchOutputDir st
 			File:     researchOutputDir,
 			Severity: ProductWorkflowSeverityError,
 		})
+
 		return plan
 	}
+
 	plan.ResearchOutputDir = cleanRelDir
 	if !isPathSafeIdentifier(plan.SelectedProfileID) {
 		plan.Findings = append(plan.Findings, ProfileFinding{
@@ -41,23 +48,30 @@ func PlanResearchRuns(profiles []ResearchProfile, selector, researchOutputDir st
 			File:     ".idiom/research/profiles",
 			Severity: ProductWorkflowSeverityError,
 		})
+
 		return plan
 	}
+
 	runs := make([]ResearchRunSpec, 0, len(selectedProfile.Researchers))
 	hasRunPlanError := false
+
 	for _, researcher := range selectedProfile.Researchers {
 		researcherID := strings.TrimSpace(researcher.ID)
 		if !isPathSafeIdentifier(researcherID) {
 			hasRunPlanError = true
+
 			plan.Findings = append(plan.Findings, ProfileFinding{
 				Kind:     "invalid_researcher_id",
 				Message:  fmt.Sprintf("researcher id %q is not path-safe", researcherID),
 				File:     ".idiom/research/profiles",
 				Severity: ProductWorkflowSeverityError,
 			})
+
 			continue
 		}
+
 		outputFile := fmt.Sprintf("%s--%s.json", plan.SelectedProfileID, researcherID)
+
 		runs = append(runs, ResearchRunSpec{
 			ResearcherID:        researcherID,
 			Alignment:           researcher.Alignment,
@@ -71,16 +85,21 @@ func PlanResearchRuns(profiles []ResearchProfile, selector, researchOutputDir st
 			},
 		})
 	}
+
 	if hasRunPlanError {
 		sortProfileFindings(plan.Findings)
+
 		return plan
 	}
+
 	sort.SliceStable(runs, func(i, j int) bool {
 		return runs[i].ResearcherID < runs[j].ResearcherID
 	})
+
 	plan.Runs = runs
 	plan.RunCount = len(runs)
 	sortProfileFindings(plan.Findings)
+
 	return plan
 }
 
@@ -90,6 +109,7 @@ func SelectResearchProfile(profiles []ResearchProfile, selector string) (*Resear
 		if len(profiles) == 1 {
 			return &profiles[0], nil
 		}
+
 		if len(profiles) > 1 {
 			return nil, []ProfileFinding{{
 				Kind:     "ambiguous_research_profile",
@@ -98,14 +118,18 @@ func SelectResearchProfile(profiles []ResearchProfile, selector string) (*Resear
 				Severity: ProductWorkflowSeverityError,
 			}}
 		}
+
 		return nil, nil
 	}
+
 	matches := make([]int, 0, 1)
+
 	for i, profile := range profiles {
 		if selectedProfileID(profile) == selector || strings.TrimSpace(profile.Name) == selector {
 			matches = append(matches, i)
 		}
 	}
+
 	switch len(matches) {
 	case 0:
 		return nil, []ProfileFinding{{
@@ -130,6 +154,7 @@ func selectedProfileID(profile ResearchProfile) string {
 	if strings.TrimSpace(profile.ProfileID) != "" {
 		return strings.TrimSpace(profile.ProfileID)
 	}
+
 	return strings.TrimSpace(profile.Name)
 }
 
@@ -137,12 +162,15 @@ func isPathSafeIdentifier(value string) bool {
 	if value == "" || value == "." || value == ".." {
 		return false
 	}
+
 	if strings.Contains(value, "/") || strings.Contains(value, "\\") {
 		return false
 	}
+
 	if strings.Contains(value, string(filepath.Separator)) {
 		return false
 	}
+
 	return filepath.Clean(value) == value
 }
 
@@ -151,12 +179,15 @@ func sortProfileFindings(findings []ProfileFinding) {
 		if findings[i].Severity != findings[j].Severity {
 			return findings[i].Severity < findings[j].Severity
 		}
+
 		if findings[i].Kind != findings[j].Kind {
 			return findings[i].Kind < findings[j].Kind
 		}
+
 		if findings[i].File != findings[j].File {
 			return findings[i].File < findings[j].File
 		}
+
 		return findings[i].Message < findings[j].Message
 	})
 }

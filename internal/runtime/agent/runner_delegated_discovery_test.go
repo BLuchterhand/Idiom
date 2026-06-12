@@ -37,9 +37,11 @@ func TestDelegatedReadOnlyCandidateConsumptionPrefersObjectiveSemanticAnchorsOve
 	if decision.Request.Tool != "read_file" {
 		t.Fatalf("expected discovery candidate consumption read, got %#v", decision.Request)
 	}
+
 	if decision.Request.Path != "internal/runtime/agent/runner_child_tasks.go" && decision.Request.Path != "internal/runtime/agent/runner.go" {
 		t.Fatalf("expected objective-relevant semantic anchor, got %#v", decision.Request)
 	}
+
 	if decision.Request.Path == "internal/runtime/agent/errors.go" {
 		t.Fatalf("incidental listing path must not be consumed as source-body evidence: %#v", decision.Request)
 	}
@@ -68,6 +70,7 @@ func TestDelegatedReadOnlyCandidateConsumptionDoesNotForceListingOnlyPath(t *tes
 	if decision.Request.Tool == "read_file" {
 		t.Fatalf("listing-only discovery should not force a source-body read, got %#v", decision.Request)
 	}
+
 	if decision.Request.Path == "internal/runtime/agent/errors.go" {
 		t.Fatalf("listing-only discovery must not promote incidental path, got %#v", decision.Request)
 	}
@@ -118,9 +121,11 @@ func TestDelegatedDiscoveryPlanTreatsCodexAgentsAsSecondaryForSubagentMechanism(
 		"Key terms: subagent, task tool, delegate, explorer, worker, reviewer, investigate, idiom",
 	}, "\n")
 	plan := newDelegatedDiscoveryPlan(objective)
+
 	if plan.primaryScope != "internal/runtime/agent" {
 		t.Fatalf("expected implementation scope to outrank .codex/agents, got %q", plan.primaryScope)
 	}
+
 	for _, scope := range plan.detailedScopes {
 		if scope == ".codex/agents" {
 			t.Fatalf(".codex/agents should be secondary evidence, not detailed source scope: %#v", plan.detailedScopes)
@@ -141,9 +146,11 @@ func TestDelegatedDiscoveryPlanTreatsCodexAgentsAsSecondaryForSubagentMechanism(
 		Path:    ".codex/agents",
 		Pattern: "subagent|task|delegate",
 	})
+
 	if !ok {
 		t.Fatal("expected child discovery query against .codex/agents to be repaired")
 	}
+
 	if repaired.Path != "internal/runtime/agent" {
 		t.Fatalf("expected repaired discovery path to use implementation scope, got %#v", repaired)
 	}
@@ -168,9 +175,11 @@ func TestDelegatedReadOnlyDiscoveryRepairReplacesBroadNamedScope(t *testing.T) {
 		Path:    "internal",
 		Pattern: "subagent|child",
 	})
+
 	if !ok {
 		t.Fatal("expected broad internal scope to be repaired")
 	}
+
 	if repaired.Path != "internal/runtime/agent" {
 		t.Fatalf("expected broad internal scope to redirect to primary implementation scope, got %#v", repaired)
 	}
@@ -181,6 +190,7 @@ func TestDelegatedReadOnlyDiscoveryRepairReplacesMissingNamedScope(t *testing.T)
 	if err := os.MkdirAll(filepath.Join(root, "internal", "capabilities", "workspace"), 0o755); err != nil {
 		t.Fatalf("mkdir workspace scope: %v", err)
 	}
+
 	runner := &Runner{
 		AgentName: "child:explorer",
 		Workspace: workspace.NewManager(config.Workspace{
@@ -203,9 +213,11 @@ func TestDelegatedReadOnlyDiscoveryRepairReplacesMissingNamedScope(t *testing.T)
 		Path:    "internal/frontier",
 		Pattern: "discovery|tools",
 	})
+
 	if !ok {
 		t.Fatal("expected missing named scope to be repaired")
 	}
+
 	if repaired.Path != "internal/capabilities/workspace" {
 		t.Fatalf("expected missing scope to redirect to existing primary implementation scope, got %#v", repaired)
 	}
@@ -216,6 +228,7 @@ func TestDelegatedReadOnlyDiscoveryRepairUsesFirstExistingDetailedScope(t *testi
 	if err := os.MkdirAll(filepath.Join(root, "internal", "capabilities", "workspace"), 0o755); err != nil {
 		t.Fatalf("mkdir workspace scope: %v", err)
 	}
+
 	runner := &Runner{
 		AgentName: "child:explorer",
 		Workspace: workspace.NewManager(config.Workspace{
@@ -242,6 +255,7 @@ func TestDelegatedReadOnlyDiscoveryRepairUsesFirstExistingDetailedScope(t *testi
 	if !ok {
 		t.Fatal("expected missing first scope to be repaired")
 	}
+
 	if repaired.Path != "internal/capabilities/workspace" {
 		t.Fatalf("expected repair to use first existing detailed scope, got %#v", repaired)
 	}
@@ -275,8 +289,10 @@ func TestDelegatedReadOnlyPostDiscoveryInventoryConsumesCandidateSource(t *testi
 	if decision.Request.Tool != "read_file" {
 		t.Fatalf("expected post-discovery search to consume source candidate, got %#v", decision.Request)
 	}
+
 	if decision.Request.Path != "internal/capabilities/workspace/discovery_query.go" &&
 		decision.Request.Path != "internal/runtime/agent/answer_composer.go" {
+
 		t.Fatalf("expected discovered source candidate read, got %#v", decision.Request)
 	}
 
@@ -315,6 +331,7 @@ func TestMainReadOnlyBroadSearchBootstrapsContextPack(t *testing.T) {
 	if decision.Request.Tool != workspace.ToolNameContextPack {
 		t.Fatalf("expected broad first-pass search to become context_pack, got %#v", decision.Request)
 	}
+
 	if decision.Request.Task != runner.RuntimeBrief.Objective || decision.Request.Mode != "plan" {
 		t.Fatalf("expected context_pack to carry objective and plan mode, got %#v", decision.Request)
 	}
@@ -340,9 +357,11 @@ func TestDelegatedReadOnlyCandidateConsumptionPrefersDiscoveredMechanismEvidence
 	if len(paths) == 0 {
 		t.Fatal("expected discovered candidates")
 	}
+
 	if paths[0] != "internal/runtime/agent/answer_composer.go" {
 		t.Fatalf("expected discovered answer-composition mechanism to outrank inventory paths, got %#v", paths)
 	}
+
 	for _, forbidden := range []string{".idiom/discovery/queries/query.json", "Symbol index"} {
 		for _, path := range paths {
 			if strings.Contains(path, forbidden) {
@@ -372,6 +391,7 @@ func TestDelegatedReadOnlyCandidateConsumptionDoesNotInjectUndiscoveredMechanism
 			t.Fatalf("candidate ranking must not inject undiscovered mechanism path, got %#v", paths)
 		}
 	}
+
 	if len(paths) == 0 || paths[0] != "internal/capabilities/workspace/discovery_query.go" {
 		t.Fatalf("expected actual discovered discovery tool path to remain consumable, got %#v", paths)
 	}
@@ -396,6 +416,7 @@ func TestDelegatedReadOnlyCandidateConsumptionDemotesInventoryLayer(t *testing.T
 	if len(paths) == 0 || paths[0] != "internal/runtime/agent/runner_lane_policy.go" {
 		t.Fatalf("expected implementation anchor to outrank related-files inventory, got %#v", paths)
 	}
+
 	if paths[0] == "internal/runtime/agent/nearby.go" {
 		t.Fatalf("related-files inventory path should not lead candidate consumption, got %#v", paths)
 	}

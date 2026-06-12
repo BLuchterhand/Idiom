@@ -25,6 +25,7 @@ func CompletionGateChecks(r *Runner, step int, taskLedger *taskLedgerState, decl
 	if r != nil {
 		return r.completionGateChecks(step, taskLedger, declarationMovesForbidden)
 	}
+
 	return []CompletionGateCheck{
 		textualToolCallGateCheck,
 		unexecutedToolRequestGateCheck,
@@ -52,6 +53,7 @@ func (r *Runner) completionGateChecks(_ int, taskLedger *taskLedgerState, _ bool
 			if ledgerOwnedByMutationContract || taskLedger == nil {
 				return workspace.ToolResult{}, false
 			}
+
 			return taskLedger.completionRejection(reply)
 		},
 		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
@@ -85,19 +87,23 @@ func textualToolCallCompletionRejection(r *Runner, reply string, results []works
 		if r != nil && r.planThenExecutePlannerPhase() {
 			msg = "the reply contains a " + transport + " " + tool + " write attempt, but the plan-execute planner phase does not execute per-edit writes. Emit one visible JSON object for `submit_plan` with top-level `tool`, `rationale`, and `edits`. Function-call write syntax is not executable."
 		}
+
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Textual write syntax rejected as final answer",
 			Error:   msg,
 		}, true
 	}
+
 	if !looksLikeTextualToolCall(reply) {
 		return workspace.ToolResult{}, false
 	}
+
 	msg := "the reply contains textual tool-call markup instead of prose. Emit a tool call through the normal tool-call mechanism, or answer in plain prose."
 	if looksLikeXMLToolCall(reply) {
 		msg = "the reply contains XML tool-call markup (e.g. <n_tool_calls>, <invoke>, <janus_tool>) instead of prose. Emit a tool call through the normal tool-call mechanism, or answer in plain prose. Do not emit XML or HTML markup."
 	}
+
 	return workspace.ToolResult{
 		Tool:    "completion_gate",
 		Summary: "Textual tool-call markup rejected as final answer",
@@ -109,12 +115,15 @@ func (r *Runner) unsafeTextualWriteRecoverySurfaceActive(results []workspace.Too
 	if r == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) {
 		return false
 	}
+
 	if len(changedPathsFromToolResults(results)) > 0 {
 		return false
 	}
+
 	if r.planThenExecutePlannerPhase() {
 		return concreteSourceEvidenceAlreadyRead(results)
 	}
+
 	return implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results)
 }
 
@@ -122,6 +131,7 @@ var unexecutedToolRequestGateCheck CompletionGateCheck = func(reply string, _ []
 	if !looksLikeUnexecutedToolRequestAnswer(reply) {
 		return workspace.ToolResult{}, false
 	}
+
 	return workspace.ToolResult{
 		Tool:    "completion_gate",
 		Summary: "Unexecuted tool request in final answer",

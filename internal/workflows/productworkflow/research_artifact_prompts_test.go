@@ -29,17 +29,21 @@ func TestResearchArtifactPromptPlanDeterministic(t *testing.T) {
 	if canonicalArtifactPromptPlan(plan1) != canonicalArtifactPromptPlan(plan2) {
 		t.Fatalf("expected deterministic prompt plan output")
 	}
+
 	if plan1.RunCount != 1 {
 		t.Fatalf("expected one run, got %d", plan1.RunCount)
 	}
+
 	run := plan1.Runs[0]
 	if run.PromptPath != "research/prompts/test-profile--r1.prompt.txt" {
 		t.Fatalf("unexpected prompt path: %q", run.PromptPath)
 	}
+
 	wantCmd := "idiom artifact --prompt-file research/prompts/test-profile--r1.prompt.txt --output research/outputs/test-profile--r1.json --json-out research/outputs/test-profile--r1.events.jsonl --report-out research/outputs/test-profile--r1.report.json --no-tools --mechanical-repair"
 	if run.Command != wantCmd {
 		t.Fatalf("unexpected command recipe:\nwant: %s\ngot:  %s", wantCmd, run.Command)
 	}
+
 	prompt := RenderResearchArtifactPromptText(run)
 	assertContains(t, prompt, "You are r1 with alignment technical.")
 	assertContains(t, prompt, "Research question:\nWhat changed?")
@@ -62,9 +66,11 @@ func TestResearchArtifactPromptPlanRejectsInvalidPromptDir(t *testing.T) {
 	}}
 	runPlan := PlanResearchRuns(profiles, "", "research/outputs")
 	plan := PlanResearchArtifactPrompts(runPlan, "../bad")
+
 	if plan.RunCount != 0 {
 		t.Fatalf("expected no runs for invalid prompt dir, got %d", plan.RunCount)
 	}
+
 	if !hasFindingKind(plan.Findings, "invalid_research_prompt_dir") {
 		t.Fatalf("expected invalid_research_prompt_dir finding, got %#v", plan.Findings)
 	}
@@ -81,9 +87,11 @@ func TestResearchArtifactPromptCommandRecipeQuotesUnsafePaths(t *testing.T) {
 		}},
 	}
 	plan := PlanResearchArtifactPrompts(runPlan, "research prompts")
+
 	if plan.RunCount != 1 {
 		t.Fatalf("expected one run, got %d findings=%#v", plan.RunCount, plan.Findings)
 	}
+
 	command := plan.Runs[0].Command
 	assertContains(t, command, "--prompt-file 'research prompts/test-profile--r1.prompt.txt'")
 	assertContains(t, command, "--output 'research outputs/test-profile--r1.json'")
@@ -100,14 +108,18 @@ func TestResearchArtifactPromptCommandRecipeEscapesSingleQuote(t *testing.T) {
 func TestResearchArtifactPromptBoundaryRejectsSymlinkParentOutsideEffort(t *testing.T) {
 	effortRoot := t.TempDir()
 	outside := t.TempDir()
+
 	if err := os.Symlink(outside, filepath.Join(effortRoot, "linked")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
+
 	absPromptDir := filepath.Join(effortRoot, "linked", "prompts")
 	finding, blocked := ValidateResearchPromptDirBoundary(effortRoot, absPromptDir, "linked/prompts")
+
 	if !blocked {
 		t.Fatalf("expected symlink parent prompt dir to block")
 	}
+
 	if finding.Kind != "research_prompt_dir_outside_effort" {
 		t.Fatalf("expected research_prompt_dir_outside_effort, got %#v", finding)
 	}
@@ -116,16 +128,20 @@ func TestResearchArtifactPromptBoundaryRejectsSymlinkParentOutsideEffort(t *test
 func TestResearchArtifactPromptBoundaryRejectsSymlinkPromptFile(t *testing.T) {
 	effortRoot := t.TempDir()
 	outside := t.TempDir()
+
 	if err := os.MkdirAll(filepath.Join(effortRoot, "research", "prompts"), 0o755); err != nil {
 		t.Fatalf("mkdir prompts: %v", err)
 	}
+
 	if err := os.Symlink(filepath.Join(outside, "prompt.txt"), filepath.Join(effortRoot, "research", "prompts", "a.prompt.txt")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
+
 	finding, blocked := ValidateResearchPromptPathBoundary(effortRoot, filepath.Join(effortRoot, "research", "prompts", "a.prompt.txt"), "research/prompts/a.prompt.txt")
 	if !blocked {
 		t.Fatalf("expected symlink prompt file to block")
 	}
+
 	if finding.Kind != "research_prompt_symlink" {
 		t.Fatalf("expected research_prompt_symlink, got %#v", finding)
 	}
@@ -136,11 +152,13 @@ func canonicalArtifactPromptPlan(plan ResearchArtifactPromptPlan) string {
 	for _, run := range plan.Runs {
 		out += "|" + run.ResearcherID + "|" + run.PromptPath + "|" + run.OutputPath + "|" + run.EventsPath + "|" + run.ReportPath + "|" + run.Command
 	}
+
 	return out
 }
 
 func assertContains(t *testing.T, haystack, needle string) {
 	t.Helper()
+
 	if !strings.Contains(haystack, needle) {
 		t.Fatalf("expected prompt to contain %q\nprompt:\n%s", needle, haystack)
 	}

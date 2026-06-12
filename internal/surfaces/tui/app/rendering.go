@@ -27,15 +27,19 @@ func (m *Model) View() string {
 	if m.serverUp {
 		serverState = "up"
 	}
+
 	if m.bootingServer {
 		serverState = m.spinner.View() + " booting"
 	}
+
 	leftTitle := titleStyle.Render("◆ " + m.cfg.AppName)
 	rightInfo := statusStyle.Render(serverState + "  " + util.Fallback(m.activeModelDisplayID(), "unknown"))
 	headerGap := w - lipgloss.Width(leftTitle) - lipgloss.Width(rightInfo)
+
 	if headerGap < 0 {
 		headerGap = 0
 	}
+
 	header := leftTitle + strings.Repeat(" ", headerGap) + rightInfo
 
 	divider := dividerStyle.Render(strings.Repeat("─", w))
@@ -57,6 +61,7 @@ func (m *Model) View() string {
 
 	// ── Content row: main viewport + optional side panel (tabbed) ────────────
 	var contentRow string
+
 	if m.history.panelOpen {
 		h := m.viewport.Height
 		vertBar := dividerStyle.Render(strings.Repeat("│\n", h-1) + "│")
@@ -66,6 +71,7 @@ func (m *Model) View() string {
 			m.renderPanelTabs(panelWidth),
 			activeVP.View(),
 		)
+
 		contentRow = lipgloss.JoinHorizontal(lipgloss.Top,
 			m.viewport.View(),
 			vertBar,
@@ -79,6 +85,7 @@ func (m *Model) View() string {
 	if statusLine != "" {
 		parts = append(parts, statusLine)
 	}
+
 	parts = append(parts, m.input.View())
 
 	// Slash-command suggestion popup — floats above the input area.
@@ -92,10 +99,12 @@ func (m *Model) View() string {
 	if footer != "" {
 		parts = append(parts, footer)
 	}
+
 	view := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	if popup := m.renderModelPopup(w, max(0, m.height)); popup != "" {
 		view = lipgloss.JoinVertical(lipgloss.Left, view, popup)
 	}
+
 	return view
 }
 
@@ -104,6 +113,7 @@ func (m *Model) operatorStatusLine(width int) string {
 	if text == "" {
 		return ""
 	}
+
 	return statusLineStyle.Render(text)
 }
 
@@ -112,11 +122,14 @@ func (m *Model) operatorStatusText(width int) string {
 	if status == "" {
 		return ""
 	}
+
 	available := max(1, width-2)
 	hint := m.operatorHintText()
+
 	if hint != "" && available >= 72 {
 		status = status + " · " + hint
 	}
+
 	return util.Truncate(strings.TrimSpace(status), available)
 }
 
@@ -125,19 +138,24 @@ func (m *Model) operatorHintText() string {
 		if m.history.focused {
 			return "Esc unfocus · Ctrl+T tabs"
 		}
+
 		return "Tab focus · Ctrl+T tabs"
 	}
+
 	if m.streaming {
 		return "working · Ctrl+C quits"
 	}
+
 	return "/help commands · Ctrl+B panel · Ctrl+S save"
 }
 
 func (m *Model) requestMessages() []llama.ChatMessage {
 	var messages []llama.ChatMessage
+
 	if prompt := strings.TrimSpace(m.systemPrompt()); prompt != "" {
 		messages = append(messages, llama.ChatMessage{Role: "system", Content: prompt})
 	}
+
 	// OpenCode-aligned: no static workspace-overview injection. The model
 	// discovers the layout by calling list_files / glob / search tools on
 	// demand, exactly like it does in OpenCode. Injecting a static tree
@@ -151,6 +169,7 @@ func (m *Model) requestMessages() []llama.ChatMessage {
 			history = history[:len(history)-1]
 		}
 	}
+
 	history = modelPayloadHistory(history)
 	// Fix 5 (context compaction) — fold the oldest model-visible messages into
 	// a session digest before the hard-truncation below kicks in. Operator
@@ -172,12 +191,14 @@ func (m *Model) requestMessages() []llama.ChatMessage {
 	if limit := m.cfg.Chat.MaxHistory; limit > 0 && len(history) > limit {
 		start = len(history) - limit
 	}
+
 	for _, msg := range history[start:] {
 		messages = append(messages, llama.ChatMessage{
 			Role:    normalizeHistoryRole(msg.Role),
 			Content: msg.Content,
 		})
 	}
+
 	return messages
 }
 
@@ -185,13 +206,16 @@ func modelPayloadHistory(history []llama.ChatMessage) []llama.ChatMessage {
 	if len(history) == 0 {
 		return history
 	}
+
 	out := make([]llama.ChatMessage, 0, len(history))
 	for _, msg := range history {
 		if msg.Role == "operator" {
 			continue
 		}
+
 		out = append(out, msg)
 	}
+
 	return out
 }
 
@@ -205,6 +229,7 @@ func evidenceDisplayName(rawTool string) string {
 	if idx := strings.Index(tool, "_"); idx > 0 {
 		prefix := strings.ToLower(tool[:idx])
 		suffix := tool[idx+1:]
+
 		switch prefix {
 		case "go", "cpp", "rust", "python", "java", "ts":
 			// Map suffix to short display name.
@@ -239,9 +264,11 @@ func evidenceDisplayName(rawTool string) string {
 			default:
 				display = suffix
 			}
+
 			return display + " [" + prefix + "]"
 		}
 	}
+
 	// Generic tools.
 	switch tool {
 	case workspace.ToolNameReadFile:
@@ -280,10 +307,12 @@ func renderEvidenceSummary(toolCount int, catBreakdown, verifyStatus, budget str
 	if expanded {
 		indicator = "▾"
 	}
+
 	parts := []string{indicator, fmt.Sprintf("%d tools", toolCount)}
 	if catBreakdown != "" {
 		parts = append(parts, catBreakdown)
 	}
+
 	if verifyStatus != "" {
 		vs := verifyStatus
 		switch verifyStatus {
@@ -294,11 +323,14 @@ func renderEvidenceSummary(toolCount int, catBreakdown, verifyStatus, budget str
 		default:
 			vs = lipgloss.NewStyle().Foreground(colorDim).Render(verifyStatus)
 		}
+
 		parts = append(parts, vs)
 	}
+
 	if budget != "" {
 		parts = append(parts, budget)
 	}
+
 	return lipgloss.NewStyle().Foreground(colorDim).Render(strings.Join(parts, " · "))
 }
 
@@ -307,32 +339,40 @@ func renderCompletedContainer(c *completedEvidence, width, maxRows int) string {
 	if c == nil || len(c.tools) == 0 {
 		return ""
 	}
+
 	toolCount, catBreakdown, verifyStatus := evidenceStats(c.tools)
 	budget := ""
+
 	if c.budget != nil {
 		budget = formatBudgetSummary(c.budget)
 	}
 
 	var b strings.Builder
+
 	b.WriteString(renderEvidenceSummary(toolCount, catBreakdown, verifyStatus, budget, c.expanded))
 
 	if c.expanded {
 		start := c.scrollOff
 		end := start + maxRows
+
 		if end > len(c.tools) {
 			end = len(c.tools)
 		}
+
 		for _, row := range c.tools[start:end] {
 			b.WriteString("\n  ")
 			b.WriteString(renderEvidenceRow(row))
 		}
+
 		if end < len(c.tools) {
 			remaining := len(c.tools) - end
+
 			b.WriteString("\n  ")
 			b.WriteString(lipgloss.NewStyle().Foreground(colorDim).Render(
 				fmt.Sprintf("%d more…", remaining)))
 		}
 	}
+
 	return b.String()
 }
 
@@ -341,8 +381,10 @@ func renderActiveContainer(te *turnEvidence, width, maxRows int, streaming bool)
 	if te == nil || len(te.tools) == 0 {
 		return ""
 	}
+
 	toolCount, catBreakdown, verifyStatus := evidenceStats(te.tools)
 	budget := ""
+
 	if te.finalized && len(te.tools) > 0 {
 		// Budget not yet available during active rendering; comes via
 		// budgetLedgerMsg after turn ends.
@@ -354,25 +396,31 @@ func renderActiveContainer(te *turnEvidence, width, maxRows int, streaming bool)
 	}
 
 	var b strings.Builder
+
 	b.WriteString(renderEvidenceSummary(toolCount, catBreakdown, verifyStatus, budget, expanded))
 
 	if expanded {
 		start := te.scrollOff
 		end := start + maxRows
+
 		if end > len(te.tools) {
 			end = len(te.tools)
 		}
+
 		for _, row := range te.tools[start:end] {
 			b.WriteString("\n  ")
 			b.WriteString(renderEvidenceRow(row))
 		}
+
 		if end < len(te.tools) {
 			remaining := len(te.tools) - end
+
 			b.WriteString("\n  ")
 			b.WriteString(lipgloss.NewStyle().Foreground(colorDim).Render(
 				fmt.Sprintf("%d more…", remaining)))
 		}
 	}
+
 	return b.String()
 }
 
@@ -383,6 +431,7 @@ func renderEvidenceRow(row evidenceRow) string {
 	dimStyle := lipgloss.NewStyle().Foreground(colorDim)
 
 	var glyph string
+
 	switch row.glyph {
 	case "✔":
 		glyph = lipgloss.NewStyle().Foreground(colorSuccess).Render("✔")
@@ -398,12 +447,15 @@ func renderEvidenceRow(row evidenceRow) string {
 
 	name := evidenceDisplayName(row.toolName)
 	line := glyph + " " + toolStyle.Render(name)
+
 	if row.target != "" {
 		line += " " + targetStyle.Render(row.target)
 	}
+
 	if row.summary != "" && !row.running {
 		line += "  " + dimStyle.Render(row.summary)
 	}
+
 	return line
 }
 
@@ -413,6 +465,7 @@ func evidenceStats(rows []evidenceRow) (count int, catBreakdown, verifyStatus st
 	if len(rows) == 0 {
 		return 0, "", ""
 	}
+
 	catCounts := map[string]int{}
 	hasWrite := false
 	hasPass := false
@@ -423,12 +476,14 @@ func evidenceStats(rows []evidenceRow) (count int, catBreakdown, verifyStatus st
 		if r.running {
 			continue
 		}
+
 		catCounts[r.toolName]++
 		switch r.auditKind {
 		case "write":
 			hasWrite = true
 		case "verification", "shell":
 			hasVerify = true
+
 			switch {
 			case strings.HasPrefix(strings.ToLower(r.outcome), "failed"):
 				hasFail = true
@@ -437,6 +492,7 @@ func evidenceStats(rows []evidenceRow) (count int, catBreakdown, verifyStatus st
 			}
 		}
 	}
+
 	count = len(rows)
 
 	// Build category breakdown from the most common tool names.
@@ -444,12 +500,16 @@ func evidenceStats(rows []evidenceRow) (count int, catBreakdown, verifyStatus st
 		k string
 		v int
 	}
+
 	var sorted []kv
+
 	for k, v := range catCounts {
 		// Use display names for the breakdown.
 		display := evidenceDisplayName(k)
+
 		sorted = append(sorted, kv{display, v})
 	}
+
 	// Sort by count descending, then name.
 	for i := 0; i < len(sorted); i++ {
 		for j := i + 1; j < len(sorted); j++ {
@@ -458,10 +518,12 @@ func evidenceStats(rows []evidenceRow) (count int, catBreakdown, verifyStatus st
 			}
 		}
 	}
+
 	parts := make([]string, 0, len(sorted))
 	for _, s := range sorted {
 		parts = append(parts, fmt.Sprintf("%d %s", s.v, s.k))
 	}
+
 	catBreakdown = strings.Join(parts, ", ")
 
 	// Verification status.
@@ -475,6 +537,7 @@ func evidenceStats(rows []evidenceRow) (count int, catBreakdown, verifyStatus st
 	case hasWrite && !hasVerify:
 		verifyStatus = "unverified"
 	}
+
 	return count, catBreakdown, verifyStatus
 }
 
@@ -483,13 +546,16 @@ func formatBudgetSummary(b *budgetData) string {
 	if b == nil {
 		return ""
 	}
+
 	parts := []string{formatTokens(b.totalTokens)}
 	if b.maxToolSteps > 0 {
 		parts = append(parts, fmt.Sprintf("%d/%d tools", b.usedToolResults, b.maxToolSteps))
 	}
+
 	if b.maxModelCalls > 0 {
 		parts = append(parts, fmt.Sprintf("%d/%d calls", b.usedModelCalls, b.maxModelCalls))
 	}
+
 	return strings.Join(parts, " · ")
 }
 
@@ -497,6 +563,7 @@ func formatTokens(n int) string {
 	if n >= 1000 {
 		return fmt.Sprintf("%.1fk tokens", float64(n)/1000.0)
 	}
+
 	return fmt.Sprintf("%d tokens", n)
 }
 
@@ -504,57 +571,74 @@ func (m *Model) renderMessages(forceBottom bool) {
 	if !m.ready {
 		return
 	}
+
 	start := time.Now()
+
 	defer m.logUISlowPath("ui.render_messages", start, fmt.Sprintf("messages=%d streaming=%t width=%d", len(m.messages), m.streaming, m.viewport.Width))
 
 	stickBottom := forceBottom || m.viewport.AtBottom()
 	enabled := m.cfg.TUI.EvidencePanel
 	width := max(1, m.viewport.Width)
 	msgBodyStyle := bodyStyle.Width(width)
+
 	const maxContainerRows = 15
 
 	// If evidence panel is disabled, use the existing cached-body path.
 	if !enabled {
 		base := m.renderedMessageBody()
+
 		var b strings.Builder
+
 		if base != "" {
 			b.WriteString(base)
 		}
+
 		if m.streaming {
 			label := assistantLabelStyle.Render("Qwen")
 			content := m.spinner.View() + " " + m.streamingBusyText()
+
 			if b.Len() > 0 {
 				b.WriteString("\n\n")
 			}
+
 			b.WriteString(label)
 			b.WriteString("\n")
 			b.WriteString(msgBodyStyle.Render(content))
 		}
+
 		if base == "" && !m.streaming {
 			b.WriteString(msgBodyStyle.Render("No messages yet. Type a prompt below or use /help."))
 		}
+
 		m.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
+
 		if stickBottom {
 			m.viewport.GotoBottom()
 		}
+
 		return
 	}
 
 	// Evidence panel enabled: render messages iteratively, inserting
 	// evidence containers after each assistant message.
 	containerIdx := 0
+
 	var b strings.Builder
+
 	for i, msg := range m.messages {
 		if i > 0 {
 			b.WriteString("\n\n")
 		}
+
 		b.WriteString(m.cachedMessageRender(msg, msgBodyStyle))
 
 		if msg.Role == "assistant" && strings.TrimSpace(msg.Content) != "" {
 			if containerIdx < len(m.pastTurnContainers) {
 				b.WriteString("\n")
+
 				c := &m.pastTurnContainers[containerIdx]
 				b.WriteString(renderCompletedContainer(c, width, maxContainerRows))
+
 				containerIdx++
 			}
 		}
@@ -565,6 +649,7 @@ func (m *Model) renderMessages(forceBottom bool) {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
+
 		b.WriteString(renderActiveContainer(m.turnEvidence, width, maxContainerRows, m.streaming))
 	}
 
@@ -575,9 +660,11 @@ func (m *Model) renderMessages(forceBottom bool) {
 	if m.streaming && !m.activeEvidenceContainerVisible() {
 		label := assistantLabelStyle.Render("Qwen")
 		content := m.spinner.View() + " " + m.streamingBusyText()
+
 		if b.Len() > 0 {
 			b.WriteString("\n\n")
 		}
+
 		b.WriteString(label)
 		b.WriteString("\n")
 		b.WriteString(msgBodyStyle.Render(content))
@@ -588,6 +675,7 @@ func (m *Model) renderMessages(forceBottom bool) {
 	}
 
 	m.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
+
 	if stickBottom {
 		m.viewport.GotoBottom()
 	}
@@ -604,10 +692,12 @@ func (m *Model) cachedMessageRender(msg llama.ChatMessage, msgBodyStyle lipgloss
 		if i >= len(m.perMsgRenderCache) {
 			break
 		}
+
 		if existing.Role == msg.Role && existing.Content == msg.Content && m.perMsgRenderCache[i] != "" {
 			return m.perMsgRenderCache[i]
 		}
 	}
+
 	return m.renderSingleMessage(msg, msgBodyStyle)
 }
 
@@ -615,10 +705,12 @@ func (m *Model) streamingBusyText() string {
 	if strings.TrimSpace(m.planPhaseText) != "" {
 		return m.planPhaseText
 	}
+
 	status := strings.TrimSpace(m.currentTurnBusyStatus)
 	if status == "" {
 		status = defaultBusyStatus
 	}
+
 	return status + m.workingDots()
 }
 
@@ -626,6 +718,7 @@ func (m *Model) renderedMessageBody() string {
 	width := max(1, m.viewport.Width)
 	useMarkdown := m.mdRenderer != nil
 	hash := messageRenderFingerprint(m.messages)
+
 	if m.messageRenderWidth == width && m.messageRenderHash == hash && m.messageRenderMD == useMarkdown {
 		if m.messageRenderCache != "" || len(m.messages) == 0 {
 			return m.messageRenderCache
@@ -640,33 +733,42 @@ func (m *Model) renderedMessageBody() string {
 		m.messageRenderWidth = width
 		m.messageRenderHash = hash
 		m.messageRenderMD = useMarkdown
+
 		return ""
 	}
+
 	if m.perMsgRenderLen > len(m.messages) || m.messageRenderWidth != width || m.messageRenderMD != useMarkdown {
 		m.perMsgRenderCache = nil
 		m.perMsgRenderHashes = nil
 		m.perMsgRenderLen = 0
 	}
+
 	if len(m.perMsgRenderCache) < len(m.messages) {
 		m.perMsgRenderCache = append(m.perMsgRenderCache, make([]string, len(m.messages)-len(m.perMsgRenderCache))...)
 	}
+
 	if len(m.perMsgRenderHashes) < len(m.messages) {
 		m.perMsgRenderHashes = append(m.perMsgRenderHashes, make([]uint64, len(m.messages)-len(m.perMsgRenderHashes))...)
 	}
 
 	msgBodyStyle := bodyStyle.Width(width)
+
 	var b strings.Builder
+
 	for i, msg := range m.messages {
 		msgHash := messageRenderFingerprint([]llama.ChatMessage{msg})
 		if m.perMsgRenderCache[i] == "" || m.perMsgRenderHashes[i] != msgHash {
 			m.perMsgRenderCache[i] = m.renderSingleMessage(msg, msgBodyStyle)
 			m.perMsgRenderHashes[i] = msgHash
 		}
+
 		b.WriteString(m.perMsgRenderCache[i])
+
 		if i < len(m.messages)-1 {
 			b.WriteString("\n\n")
 		}
 	}
+
 	m.perMsgRenderCache = m.perMsgRenderCache[:len(m.messages)]
 	m.perMsgRenderHashes = m.perMsgRenderHashes[:len(m.messages)]
 	m.perMsgRenderLen = len(m.messages)
@@ -675,18 +777,22 @@ func (m *Model) renderedMessageBody() string {
 	m.messageRenderWidth = width
 	m.messageRenderHash = hash
 	m.messageRenderMD = useMarkdown
+
 	return m.messageRenderCache
 }
 
 func (m *Model) renderSingleMessage(msg llama.ChatMessage, msgBodyStyle lipgloss.Style) string {
 	var label string
+
 	useGlamour := false
 	content := strings.TrimSpace(msg.Content)
+
 	switch msg.Role {
 	case "user":
 		label = userLabelStyle.Render("You")
 	case "assistant":
 		label = assistantLabelStyle.Render("Qwen")
+
 		if content != "" {
 			useGlamour = true
 		}
@@ -697,14 +803,17 @@ func (m *Model) renderSingleMessage(msg llama.ChatMessage, msgBodyStyle lipgloss
 		} else if fields := strings.Fields(content); len(fields) > 0 {
 			toolName = fields[0]
 		}
+
 		label = toolLabelStyle.Render("▶ " + toolName)
 	default:
 		label = systemLabelStyle.Render(titleDisplay(msg.Role))
 	}
 
 	var b strings.Builder
+
 	b.WriteString(label)
 	b.WriteString("\n")
+
 	if useGlamour && m.mdRenderer != nil {
 		rendered, err := m.mdRenderer.Render(protectControlMarkersForMarkdown(content))
 		if err == nil {
@@ -715,6 +824,7 @@ func (m *Model) renderSingleMessage(msg llama.ChatMessage, msgBodyStyle lipgloss
 	} else {
 		b.WriteString(msgBodyStyle.Render(content))
 	}
+
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -722,6 +832,7 @@ func protectControlMarkersForMarkdown(content string) string {
 	replacer := strings.NewReplacer(
 		"<<QUESTION>>", "`<<QUESTION>>`",
 	)
+
 	return replacer.Replace(content)
 }
 
@@ -733,6 +844,7 @@ func messageRenderFingerprint(messages []llama.ChatMessage) uint64 {
 		_, _ = hasher.Write([]byte(strings.TrimSpace(msg.Content)))
 		_, _ = hasher.Write([]byte{'\n'})
 	}
+
 	return hasher.Sum64()
 }
 
@@ -742,6 +854,7 @@ func (m *Model) updateViewport(msg tea.Msg) {
 	}
 
 	var cmd tea.Cmd
+
 	m.viewport, cmd = m.viewport.Update(msg)
 	_ = cmd
 }
@@ -751,6 +864,7 @@ func scrollableViewportKey(msg tea.Msg) bool {
 	if !ok {
 		return false
 	}
+
 	switch keyMsg.Type {
 	case tea.KeyPgUp, tea.KeyPgDown:
 		return true

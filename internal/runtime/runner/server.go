@@ -84,8 +84,10 @@ func NewServer(cfg Config, socketPath string) *Server {
 		if idle <= 0 {
 			idle = DefaultIdleThresholdSeconds
 		}
+
 		pools[name] = &pool{name: name, maxInFlight: pc.MaxInFlight, idleThresholdSeconds: idle}
 	}
+
 	return &Server{
 		cfg:        cfg,
 		socketPath: socketPath,
@@ -105,9 +107,11 @@ func (s *Server) Start() error {
 	if s.socketPath == "" {
 		return errors.New("runner: empty socket path")
 	}
+
 	if err := os.MkdirAll(filepath.Dir(s.socketPath), 0o755); err != nil {
 		return fmt.Errorf("runner: create socket dir: %w", err)
 	}
+
 	// Best-effort cleanup of a leftover socket file from a prior run.
 	// Unix sockets are filesystem entries; the kernel doesn't remove
 	// them when the listening process dies, so a crashed daemon would
@@ -117,15 +121,19 @@ func (s *Server) Start() error {
 	if fi, err := os.Stat(s.socketPath); err == nil && fi.Mode()&os.ModeSocket != 0 {
 		_ = os.Remove(s.socketPath)
 	}
+
 	ln, err := net.Listen("unix", s.socketPath)
 	if err != nil {
 		return fmt.Errorf("runner: listen %q: %w", s.socketPath, err)
 	}
+
 	// Tighten permissions: this is per-user state, not shared.
 	_ = os.Chmod(s.socketPath, 0o600)
 	s.listener = ln
 	s.wg.Add(1)
+
 	go s.serve()
+
 	return nil
 }
 
@@ -139,11 +147,15 @@ func (s *Server) Stop() {
 		return
 	default:
 	}
+
 	close(s.closed)
+
 	if s.listener != nil {
 		_ = s.listener.Close()
 	}
+
 	s.wg.Wait()
+
 	if s.socketPath != "" {
 		// Best-effort: leftover socket file would block the next start.
 		_ = os.Remove(s.socketPath)
@@ -152,6 +164,7 @@ func (s *Server) Stop() {
 
 func (s *Server) serve() {
 	defer s.wg.Done()
+
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
@@ -160,12 +173,15 @@ func (s *Server) serve() {
 				return
 			default:
 			}
+
 			// Transient accept errors (e.g. EMFILE under load) are
 			// rare on a Unix socket; log-and-continue keeps the
 			// daemon alive rather than tearing down on first hiccup.
 			continue
 		}
+
 		s.wg.Add(1)
+
 		go s.handle(conn)
 	}
 }
@@ -185,15 +201,21 @@ func (s *Server) handle(conn net.Conn) {
 	// For acquire we keep the connection open and stream updates; for
 	// other actions we write one response and close.
 	_ = conn.SetReadDeadline(time.Now().Add(firstRequestTimeout))
+
 	dec := json.NewDecoder(conn)
+
 	var req Request
+
 	if err := dec.Decode(&req); err != nil {
 		writeJSON(conn, Response{Error: fmt.Sprintf("decode request: %v", err)})
+
 		return
 	}
+
 	// Clear the deadline now that we've read the action — Acquire
 	// connections legitimately stay open indefinitely.
 	_ = conn.SetReadDeadline(time.Time{})
+
 	switch req.Action {
 	case ActionAcquire:
 		s.handleAcquire(conn, req)
@@ -213,9 +235,11 @@ func (s *Server) handleAcquire(conn net.Conn, req Request) {
 	if pool == "" {
 		pool = "default"
 	}
+
 	j, position, err := s.enqueue(pool, req.Label, req.Client)
 	if err != nil {
 		writeJSON(conn, Response{Error: err.Error()})
+
 		return
 	}
 	// Always release on exit, whether granted-then-disconnect or
@@ -237,6 +261,7 @@ func (s *Server) handleAcquire(conn net.Conn, req Request) {
 	disconnect := make(chan struct{})
 	go func() {
 		defer close(disconnect)
+
 		_, _ = io.Copy(io.Discard, conn)
 	}()
 
@@ -246,11 +271,13 @@ func (s *Server) handleAcquire(conn net.Conn, req Request) {
 			if err := writeJSON(conn, Response{JobID: j.ID, Pool: j.Pool, Granted: true}); err != nil {
 				return
 			}
+
 			// Hold the slot until the client disconnects.
 			select {
 			case <-disconnect:
 			case <-s.closed:
 			}
+
 			return
 		case pos := <-j.posCh:
 			if err := writeJSON(conn, Response{JobID: j.ID, Pool: j.Pool, Position: pos}); err != nil {
@@ -266,6 +293,7 @@ func (s *Server) handleAcquire(conn net.Conn, req Request) {
 
 func (s *Server) handleStatus(conn net.Conn) {
 	snap := s.snapshot()
+
 	_ = writeJSON(conn, Response{Status: &snap})
 }
 
@@ -281,11 +309,13 @@ func (s *Server) handleCancel(conn net.Conn, req Request) {
 		_ = writeJSON(conn, Response{Error: "cancel: job_id required"})
 		return
 	}
+
 	ok, errMsg := s.cancel(req.JobID)
 	if !ok {
 		_ = writeJSON(conn, Response{Error: errMsg})
 		return
 	}
+
 	_ = writeJSON(conn, Response{JobID: req.JobID})
 }
 
@@ -305,9 +335,12 @@ func (s *Server) enqueue(poolName, label, client string) (*job, int, error) {
 		for n := range s.pools {
 			known = append(known, n)
 		}
+
 		slices.Sort(known)
+
 		return nil, 0, fmt.Errorf("unknown pool %q (known: %v)", poolName, known)
 	}
+
 	id := s.newJobID()
 	j := &job{
 		ID:          id,
@@ -320,14 +353,19 @@ func (s *Server) enqueue(poolName, label, client string) (*job, int, error) {
 		// are harmless because the next shift refreshes everyone.
 		posCh: make(chan int, 4),
 	}
+
 	s.jobs[id] = j
+
 	if len(p.inFlight) < p.maxInFlight {
 		j.StartedAt = time.Now()
 		p.inFlight = append(p.inFlight, j)
 		j.grantOnce.Do(func() { close(j.grantedCh) })
+
 		return j, 0, nil
 	}
+
 	p.waiting = append(p.waiting, j)
+
 	return j, len(p.waiting), nil
 }
 
@@ -343,24 +381,31 @@ func (s *Server) release(jobID string) {
 	if !ok {
 		return
 	}
+
 	delete(s.jobs, jobID)
+
 	p, ok := s.pools[j.Pool]
 	if !ok {
 		return
 	}
+
 	// In-flight path: free a slot, promote head of waiting.
 	if updated, found := removeJobByID(p.inFlight, jobID); found {
 		p.inFlight = updated
 		if len(p.waiting) > 0 {
 			next := p.waiting[0]
+
 			p.waiting = p.waiting[1:]
 			next.StartedAt = time.Now()
 			p.inFlight = append(p.inFlight, next)
 			next.grantOnce.Do(func() { close(next.grantedCh) })
 		}
+
 		s.broadcastPositions(p)
+
 		return
 	}
+
 	// Waiting path: drop from queue, shift everyone behind.
 	if updated, found := removeJobByID(p.waiting, jobID); found {
 		p.waiting = updated
@@ -381,21 +426,27 @@ func (s *Server) cancel(jobID string) (bool, string) {
 	if !ok {
 		return false, fmt.Sprintf("unknown job_id %q", jobID)
 	}
+
 	p, ok := s.pools[j.Pool]
 	if !ok {
 		return false, fmt.Sprintf("unknown pool %q for job %q", j.Pool, jobID)
 	}
+
 	for _, inflight := range p.inFlight {
 		if inflight.ID == jobID {
 			return false, fmt.Sprintf("job %q is in-flight; ctrl-C the holding command instead", jobID)
 		}
 	}
+
 	if updated, found := removeJobByID(p.waiting, jobID); found {
 		p.waiting = updated
+
 		delete(s.jobs, jobID)
 		s.broadcastPositions(p)
+
 		return true, ""
 	}
+
 	return false, fmt.Sprintf("job %q not found in pool %q", jobID, j.Pool)
 }
 
@@ -405,6 +456,7 @@ func removeJobByID(slice []*job, id string) ([]*job, bool) {
 			return append(slice[:i], slice[i+1:]...), true
 		}
 	}
+
 	return slice, false
 }
 
@@ -433,6 +485,7 @@ func (s *Server) snapshot() StatusPayload {
 	for name := range s.pools {
 		names = append(names, name)
 	}
+
 	slices.Sort(names)
 
 	out := StatusPayload{
@@ -442,17 +495,20 @@ func (s *Server) snapshot() StatusPayload {
 	}
 	for _, name := range names {
 		p := s.pools[name]
+
 		out.Pools = append(out.Pools, PoolStatus{
 			Name:        name,
 			MaxInFlight: p.maxInFlight,
 			InFlight:    len(p.inFlight),
 			Waiting:     len(p.waiting),
 		})
+
 		for _, j := range p.inFlight {
 			age := 0
 			if !j.StartedAt.IsZero() {
 				age = int(time.Since(j.StartedAt).Seconds())
 			}
+
 			out.InFlight = append(out.InFlight, JobStatus{
 				ID:          j.ID,
 				Pool:        j.Pool,
@@ -464,6 +520,7 @@ func (s *Server) snapshot() StatusPayload {
 				Idle:        p.idleThresholdSeconds > 0 && age >= p.idleThresholdSeconds,
 			})
 		}
+
 		for i, j := range p.waiting {
 			out.Waiting = append(out.Waiting, JobStatus{
 				ID:          j.ID,
@@ -475,6 +532,7 @@ func (s *Server) snapshot() StatusPayload {
 			})
 		}
 	}
+
 	return out
 }
 
@@ -490,8 +548,10 @@ func writeJSON(w io.Writer, v any) error {
 	if err != nil {
 		return err
 	}
+
 	data = append(data, '\n')
 	_, err = w.Write(data)
+
 	return err
 }
 
@@ -502,7 +562,9 @@ func (s *Server) Run(ctx context.Context) error {
 	if err := s.Start(); err != nil {
 		return err
 	}
+
 	<-ctx.Done()
 	s.Stop()
+
 	return nil
 }

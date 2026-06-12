@@ -60,22 +60,28 @@ func TestReplayEventsValidTrajectory(t *testing.T) {
 	if report.SchemaVersion != ReplayReportSchemaVersion || report.TotalEvents != 3 {
 		t.Fatalf("unexpected report identity: %#v", report)
 	}
+
 	if len(report.Violations) != 0 {
 		t.Fatalf("valid trajectory should not violate replay checks: %#v", report.Violations)
 	}
+
 	if report.AtomCounts[string(ReplayAtomGateDecision)] != 3 ||
 		report.AtomCounts[string(ReplayAtomPackSeen)] != 3 ||
 		report.AtomCounts[string(ReplayAtomObservedFact)] != 4 ||
 		report.AtomCounts[string(ReplayAtomPathWritten)] != 1 ||
 		report.AtomCounts[string(ReplayAtomChangedPath)] != 1 ||
 		report.AtomCounts[string(ReplayAtomVerificationStatus)] != 2 {
+
 		t.Fatalf("unexpected atom counts: %#v", report.AtomCounts)
 	}
+
 	if report.PackCounts[string(ContractPackWriteRequiredPaths)] != 1 ||
 		report.PackCounts[string(ContractPackVerificationPostWrite)] != 1 ||
 		report.PackCounts[string(ContractPackCompletionReadiness)] != 1 {
+
 		t.Fatalf("unexpected pack counts: %#v", report.PackCounts)
 	}
+
 	if report.EnforcementModeCounts[string(EnforcementModeEnforce)] != 3 {
 		t.Fatalf("unexpected enforcement mode counts: %#v", report.EnforcementModeCounts)
 	}
@@ -84,6 +90,7 @@ func TestReplayEventsValidTrajectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal report: %v", err)
 	}
+
 	for _, forbidden := range []string{"raw_prompt", "raw_transcript", "file_body", "old_text", "new_text"} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("replay report leaked raw content marker %q: %s", forbidden, encoded)
@@ -133,7 +140,9 @@ func TestReplayEventsFlagsMissingGateFields(t *testing.T) {
 func TestReplayEventsFlagsRepeatedGateDecision(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	start := time.Date(2026, 5, 24, 12, 10, 0, 0, time.UTC)
+
 	var events []Event
+
 	for i := 0; i < 3; i++ {
 		events = append(events, mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
 			Gate:             GateCompletion,
@@ -153,6 +162,7 @@ func TestReplayEventsFlagsRepeatedGateDecision(t *testing.T) {
 	if !hasReplayViolation(report, "replay_gate_repeated_decision") {
 		t.Fatalf("expected repeated gate violation, got %#v", report.Violations)
 	}
+
 	if got := countReplayViolations(report, "replay_gate_repeated_decision"); got != 1 {
 		t.Fatalf("expected one repeated gate violation, got %d: %#v", got, report.Violations)
 	}
@@ -209,15 +219,20 @@ func TestReplayEventsClassifiesFullRedactedPartialAndNonReplayable(t *testing.T)
 	redacted := ReplayEvents(replayClassificationEvents(t, "redacted"), ReplayOptions{})
 	if redacted.ReplayClassification.Classification != ReplayClassificationRedacted ||
 		redacted.ReplayClassification.RedactedEvents == 0 {
+
 		t.Fatalf("expected redacted replay classification, got %#v", redacted.ReplayClassification)
 	}
 
 	partialGate := replayClassificationEvents(t, "")[2]
+
 	partialGate.Gate.VerificationStatus = ""
 	partialGate.Gate.ObligationRefs = nil
+
 	partial := ReplayEvents([]Event{partialGate}, ReplayOptions{})
+
 	if partial.ReplayClassification.Classification != ReplayClassificationPartial ||
 		partial.ReplayClassification.MissingSignalCounts["verification_status"] == 0 {
+
 		t.Fatalf("expected partial replay classification from missing structured signals, got %#v", partial.ReplayClassification)
 	}
 
@@ -232,6 +247,7 @@ func TestReplayEventsClassifiesFullRedactedPartialAndNonReplayable(t *testing.T)
 	}}, ReplayOptions{})
 	if nonReplayable.ReplayClassification.Classification != ReplayClassificationNonReplayable ||
 		nonReplayable.ReplayMetrics.MissingRequiredPayloadCounts["gate"] != 1 {
+
 		t.Fatalf("expected non-replayable missing payload classification, got class=%#v metrics=%#v", nonReplayable.ReplayClassification, nonReplayable.ReplayMetrics)
 	}
 }
@@ -243,8 +259,11 @@ func TestReplayEventsReportsChurnAutonomyMetrics(t *testing.T) {
 		ReadyToAnswer: true,
 		EvidenceRefs:  []string{"evidence:ready"},
 	}, start, 1))
+
 	var events []Event
+
 	events = append(events, ready)
+
 	for i := 0; i < 2; i++ {
 		events = append(events, mustAutonomyEvent(NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
 			ToolCallID:       "tool-search-" + string(rune('a'+i)),
@@ -257,6 +276,7 @@ func TestReplayEventsReportsChurnAutonomyMetrics(t *testing.T) {
 			PathRoles:        []PathRoleMatch{{Path: "tmp/nope.go", Role: PathRolePublicWorld}},
 		}, start.Add(time.Duration(i+1)*time.Second), int64(i+2))))
 	}
+
 	for i := 0; i < 3; i++ {
 		events = append(events, mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
 			Gate:               GateCompletion,
@@ -276,6 +296,7 @@ func TestReplayEventsReportsChurnAutonomyMetrics(t *testing.T) {
 
 	report := ReplayEvents(events, ReplayOptions{})
 	metrics := report.ReplayMetrics
+
 	if metrics.RepeatedSameToolDecisions != 1 ||
 		metrics.RepeatedSameGateDecisions != 2 ||
 		metrics.RedirectStorms != 1 ||
@@ -283,8 +304,10 @@ func TestReplayEventsReportsChurnAutonomyMetrics(t *testing.T) {
 		metrics.ZeroHitSearchStreaks != 1 ||
 		metrics.MaxZeroHitSearchStreak != 2 ||
 		metrics.CandidatePathWaste != 2 {
+
 		t.Fatalf("unexpected replay metrics: %#v", metrics)
 	}
+
 	if metrics.PhaseGateFailCounts["execute/completion_gate"] != 3 {
 		t.Fatalf("expected phase gate fail counts, got %#v", metrics.PhaseGateFailCounts)
 	}
@@ -292,15 +315,18 @@ func TestReplayEventsReportsChurnAutonomyMetrics(t *testing.T) {
 
 func replayClassificationEvents(t *testing.T, redactedValue string) []Event {
 	t.Helper()
+
 	contract := newEventTestPhaseContract(t)
 	start := time.Date(2026, 5, 24, 12, 55, 0, 0, time.UTC)
 	observedFacts := []ContractObservedFact{
 		"path_ref:internal/contracts/autonomy/replay.go",
 		"protocol_hash:sha256:full",
 	}
+
 	if redactedValue != "" {
 		observedFacts = append(observedFacts, ContractObservedFact("status:"+redactedValue))
 	}
+
 	return []Event{
 		mustAutonomyEvent(NewContractPresentedEvent(contract, ContractLifecycleEvent{
 			Reason:       "turn_phase_contract",
@@ -369,10 +395,12 @@ func hasReplayViolation(report ReplayReport, id string) bool {
 
 func countReplayViolations(report ReplayReport, id string) int {
 	count := 0
+
 	for _, violation := range report.Violations {
 		if violation.ID == id {
 			count++
 		}
 	}
+
 	return count
 }

@@ -19,7 +19,9 @@ import (
 func fakeMCPServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
+
 		w.Header().Set("Content-Type", "text/event-stream")
+
 		switch {
 		case strings.Contains(string(body), `"method":"initialize"`):
 			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05"}}`)
@@ -36,6 +38,7 @@ func TestSetupMCPRegistry_EmptyReturnsNil(t *testing.T) {
 	if reg != nil {
 		t.Fatalf("expected nil registry, got %v", reg)
 	}
+
 	if len(fails) != 0 {
 		t.Fatalf("expected no failures, got %v", fails)
 	}
@@ -55,10 +58,13 @@ func TestSetupMCPRegistry_RegistersHTTPServer(t *testing.T) {
 	if reg == nil {
 		t.Fatalf("expected registry, got nil")
 	}
+
 	defer reg.Close()
+
 	if len(fails) != 0 {
 		t.Fatalf("expected no failures, got %v", fails)
 	}
+
 	tools := reg.Tools()
 	if _, ok := tools["mcp:fake/echo"]; !ok {
 		t.Fatalf("expected mcp:fake/echo in registry, got %v", tools)
@@ -75,10 +81,13 @@ func TestSetupMCPRegistry_SSRFBlockedReportsFailure(t *testing.T) {
 	if reg == nil {
 		t.Fatalf("expected non-nil registry even when all servers fail")
 	}
+
 	defer reg.Close()
+
 	if len(fails) != 1 {
 		t.Fatalf("expected 1 failure, got %v", fails)
 	}
+
 	if !strings.Contains(fails[0], "blocked") || !strings.Contains(fails[0], "loopback") {
 		t.Fatalf("expected failure mentioning server name and SSRF reason, got %q", fails[0])
 	}
@@ -98,10 +107,13 @@ func TestSetupMCPRegistry_OneFailDoesNotBlockOthers(t *testing.T) {
 	if reg == nil {
 		t.Fatalf("expected registry")
 	}
+
 	defer reg.Close()
+
 	if len(fails) != 1 {
 		t.Fatalf("expected exactly 1 failure (the blocked one), got %d: %v", len(fails), fails)
 	}
+
 	if _, ok := reg.Tools()["mcp:fake/echo"]; !ok {
 		t.Fatalf("expected mcp:fake/echo to be registered even though sibling failed")
 	}

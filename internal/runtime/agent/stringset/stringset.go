@@ -41,16 +41,20 @@ func AppendUnique(values []string, additions ...string) []string {
 	for _, value := range values {
 		seen[value] = struct{}{}
 	}
+
 	for _, value := range additions {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		values = append(values, value)
 		seen[value] = struct{}{}
 	}
+
 	return values
 }

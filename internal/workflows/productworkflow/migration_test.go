@@ -24,45 +24,59 @@ func TestProductStatusMigrationPlansStartedToClosedWithoutMutation(t *testing.T)
 	if plan.Status != "planned" || len(plan.Blockers) != 0 {
 		t.Fatalf("expected planned migration without blockers, got %#v", plan)
 	}
+
 	if plan.EffortID != "test-effort" || plan.SourceStatusBucket != "started" || plan.TargetStatusBucket != "closed" {
 		t.Fatalf("unexpected identity/buckets: %#v", plan)
 	}
+
 	if plan.SourceFolderPath != "started/test-effort" || plan.TargetFolderPath != "closed/test-effort" {
 		t.Fatalf("unexpected folder paths: %#v", plan)
 	}
+
 	if plan.UpdatedWorkflowState.StatusBucket != "closed" || plan.UpdatedWorkflowState.CurrentState != "closed" {
 		t.Fatalf("expected closed workflow state, got %#v", plan.UpdatedWorkflowState)
 	}
+
 	if plan.UpdatedWorkflowState.StateRevision != ws.StateRevision+1 || plan.UpdatedWorkflowState.LastEventID != "evt-migration-001" {
 		t.Fatalf("expected revision and event update, got %#v", plan.UpdatedWorkflowState)
 	}
+
 	if plan.UpdatedWorkflowState.FolderPath != "docs/product-workflows/efforts/closed/test-effort" {
 		t.Fatalf("unexpected workflow folder_path: %q", plan.UpdatedWorkflowState.FolderPath)
 	}
+
 	if got := plan.UpdatedWorkflowState.PriorFolderPaths; len(got) != 1 || got[0] != "docs/product-workflows/efforts/started/test-effort" {
 		t.Fatalf("expected prior workflow folder path, got %#v", got)
 	}
+
 	if !reflect.DeepEqual(plan.UpdatedWorkflowState.NextValidActions, []string{"inspect_closed_effort"}) {
 		t.Fatalf("closed target should have a terminal inspect action, got %#v", plan.UpdatedWorkflowState.NextValidActions)
 	}
+
 	if plan.UpdatedIndexEntry.FolderPath != "closed/test-effort" || plan.UpdatedIndexEntry.StatusBucket != "closed" || plan.UpdatedIndexEntry.CurrentState != "closed" {
 		t.Fatalf("unexpected updated index entry: %#v", plan.UpdatedIndexEntry)
 	}
+
 	if plan.UpdatedEffortIndex.UpdatedAt != "2026-05-18T21:40:00Z" {
 		t.Fatalf("expected updated effort index timestamp, got %q", plan.UpdatedEffortIndex.UpdatedAt)
 	}
+
 	if len(plan.UpdatedEffortIndex.Efforts) != 1 || !reflect.DeepEqual(plan.UpdatedEffortIndex.Efforts[0], plan.UpdatedIndexEntry) {
 		t.Fatalf("expected full updated effort index payload, got %#v", plan.UpdatedEffortIndex)
 	}
+
 	if got := plan.UpdatedIndexEntry.PriorPaths; len(got) != 1 || got[0] != "started/test-effort" {
 		t.Fatalf("expected prior index path, got %#v", got)
 	}
+
 	if got := plan.PriorFolderPaths; len(got) != 1 || got[0] != "docs/product-workflows/efforts/started/test-effort" {
 		t.Fatalf("expected top-level workflow prior folder paths, got %#v", got)
 	}
+
 	if got := plan.PriorIndexPaths; len(got) != 1 || got[0] != "started/test-effort" {
 		t.Fatalf("expected top-level index prior paths, got %#v", got)
 	}
+
 	if plan.Event.Event != "status_migration_planned" ||
 		plan.Event.EventID != "evt-migration-001" ||
 		plan.Event.EffortID != "test-effort" ||
@@ -72,8 +86,10 @@ func TestProductStatusMigrationPlansStartedToClosedWithoutMutation(t *testing.T)
 		plan.Event.Details.FromFolderPath != "started/test-effort" ||
 		plan.Event.Details.ToFolderPath != "closed/test-effort" ||
 		plan.Event.Details.StateRevision != ws.StateRevision+1 {
+
 		t.Fatalf("unexpected migration event: %#v", plan.Event)
 	}
+
 	if !reflect.DeepEqual(ws, beforeWS) || !reflect.DeepEqual(idx, beforeIndex) {
 		t.Fatalf("planner mutated inputs")
 	}
@@ -81,8 +97,11 @@ func TestProductStatusMigrationPlansStartedToClosedWithoutMutation(t *testing.T)
 
 func TestProductStatusMigrationPlansUnstartedToStartedWithPriorPaths(t *testing.T) {
 	ws := migrationTestWorkflowState("unstarted", "planned")
+
 	ws.PriorFolderPaths = []string{"docs/product-workflows/efforts/unstarted/legacy-test-effort"}
+
 	idx := migrationTestEffortIndex(ws)
+
 	idx.Efforts[0].PriorPaths = []string{"unstarted/legacy-test-effort"}
 
 	plan := PlanProductStatusMigration(ws, idx, ProductStatusMigrationOptions{
@@ -95,6 +114,7 @@ func TestProductStatusMigrationPlansUnstartedToStartedWithPriorPaths(t *testing.
 	if plan.Status != "planned" {
 		t.Fatalf("expected planned migration, got %#v", plan)
 	}
+
 	wantWorkflowPriors := []string{
 		"docs/product-workflows/efforts/unstarted/legacy-test-effort",
 		"docs/product-workflows/efforts/unstarted/test-effort",
@@ -102,16 +122,20 @@ func TestProductStatusMigrationPlansUnstartedToStartedWithPriorPaths(t *testing.
 	if !reflect.DeepEqual(plan.UpdatedWorkflowState.PriorFolderPaths, wantWorkflowPriors) {
 		t.Fatalf("unexpected workflow prior paths: %#v", plan.UpdatedWorkflowState.PriorFolderPaths)
 	}
+
 	if !reflect.DeepEqual(plan.PriorFolderPaths, wantWorkflowPriors) {
 		t.Fatalf("unexpected top-level workflow prior paths: %#v", plan.PriorFolderPaths)
 	}
+
 	wantIndexPriors := []string{"unstarted/legacy-test-effort", "unstarted/test-effort"}
 	if !reflect.DeepEqual(plan.UpdatedIndexEntry.PriorPaths, wantIndexPriors) {
 		t.Fatalf("unexpected index prior paths: %#v", plan.UpdatedIndexEntry.PriorPaths)
 	}
+
 	if !reflect.DeepEqual(plan.PriorIndexPaths, wantIndexPriors) {
 		t.Fatalf("unexpected top-level index prior paths: %#v", plan.PriorIndexPaths)
 	}
+
 	if !reflect.DeepEqual(plan.UpdatedWorkflowState.NextValidActions, []string{"submit_for_human_verification", "start_investigation"}) {
 		t.Fatalf("unexpected started/planned next valid actions: %#v", plan.UpdatedWorkflowState.NextValidActions)
 	}
@@ -151,8 +175,11 @@ func TestProductStatusMigrationFailsClosedForInvalidInputs(t *testing.T) {
 	}
 
 	dup := migrationTestEffortIndex(ws)
+
 	dup.Efforts = append(dup.Efforts, dup.Efforts[0])
+
 	plan := PlanProductStatusMigration(ws, dup, ProductStatusMigrationOptions{SourceFolderPath: "started/test-effort", TargetStatusBucket: "closed"})
+
 	if !migrationTestHasBlocker(plan, "duplicate_effort_index_entry") {
 		t.Fatalf("expected duplicate index blocker, got %#v", plan.Blockers)
 	}
@@ -172,6 +199,7 @@ func TestProductStatusMigrationPlanDoesNotLeakAbsolutePaths(t *testing.T) {
 	if plan.Status != "planned" {
 		t.Fatalf("expected planned migration, got %#v", plan)
 	}
+
 	for _, value := range []string{plan.SourceFolderPath, plan.TargetFolderPath, plan.UpdatedIndexEntry.FolderPath, plan.Event.Details.FromFolderPath, plan.Event.Details.ToFolderPath} {
 		if len(value) > 0 && value[0] == '/' {
 			t.Fatalf("plan leaked absolute path %q", value)
@@ -207,11 +235,14 @@ func TestProductStatusMigrationRejectsAbsoluteOptionPaths(t *testing.T) {
 
 func TestProductStatusMigrationRejectsAndRedactsPersistedAbsolutePaths(t *testing.T) {
 	ws := migrationTestWorkflowState("started", "reviewing")
-	ws.FolderPath = "/Users/ben/Documents/GitHub/idiom/docs/product-workflows/efforts/started/test-effort"
-	ws.PriorFolderPaths = []string{"/Users/ben/Documents/GitHub/idiom/docs/product-workflows/efforts/started/old-test-effort"}
+
+	ws.FolderPath = "/workspace/idiom/docs/product-workflows/efforts/started/test-effort"
+	ws.PriorFolderPaths = []string{"/workspace/idiom/docs/product-workflows/efforts/started/old-test-effort"}
+
 	idx := migrationTestEffortIndex(migrationTestWorkflowState("started", "reviewing"))
-	idx.Efforts[0].FolderPath = "/Users/ben/Documents/GitHub/idiom/docs/product-workflows/efforts/started/test-effort"
-	idx.Efforts[0].PriorPaths = []string{"/Users/ben/Documents/GitHub/idiom/docs/product-workflows/efforts/started/old-test-effort"}
+
+	idx.Efforts[0].FolderPath = "/workspace/idiom/docs/product-workflows/efforts/started/test-effort"
+	idx.Efforts[0].PriorPaths = []string{"/workspace/idiom/docs/product-workflows/efforts/started/old-test-effort"}
 
 	plan := PlanProductStatusMigration(ws, idx, ProductStatusMigrationOptions{
 		SourceFolderPath:   "started/test-effort",
@@ -230,9 +261,11 @@ func TestProductStatusMigrationRejectsAndRedactsPersistedAbsolutePaths(t *testin
 			t.Fatalf("expected blocker %s, got %#v", want, plan.Blockers)
 		}
 	}
-	if strings.Contains(migrationTestBlockerText(plan), "/Users/ben") {
+
+	if strings.Contains(migrationTestBlockerText(plan), "/workspace/idiom") {
 		t.Fatalf("blockers leaked raw absolute path: %#v", plan.Blockers)
 	}
+
 	if len(plan.UpdatedWorkflowState.PriorFolderPaths) != 0 {
 		t.Fatalf("blocked plan should not carry unsafe workflow prior paths, got %#v", plan.UpdatedWorkflowState.PriorFolderPaths)
 	}
@@ -275,9 +308,11 @@ func TestProductStatusMigrationContractCanDeriveSourcePathFromIndex(t *testing.T
 	if plan.Status != "planned" {
 		t.Fatalf("expected planned migration, got %#v", plan)
 	}
+
 	if plan.SourceFolderPath != "started/test-effort" {
 		t.Fatalf("expected derived source folder path started/test-effort, got %q", plan.SourceFolderPath)
 	}
+
 	if plan.TargetFolderPath != "closed/test-effort" {
 		t.Fatalf("expected target folder path closed/test-effort, got %q", plan.TargetFolderPath)
 	}
@@ -331,16 +366,19 @@ func migrationTestHasBlocker(plan ProductStatusMigrationPlan, code string) bool 
 			return true
 		}
 	}
+
 	return false
 }
 
 func migrationTestBlockerText(plan ProductStatusMigrationPlan) string {
 	var out strings.Builder
+
 	for _, blocker := range plan.Blockers {
 		out.WriteString(blocker.Path)
 		out.WriteString(" ")
 		out.WriteString(blocker.Message)
 		out.WriteString("\n")
 	}
+
 	return out.String()
 }

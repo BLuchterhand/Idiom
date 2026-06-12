@@ -191,14 +191,19 @@ func (languageEnvironmentEnricher) EnrichGraph(_ context.Context, graph Graph, o
 	if len(activeLanguages) == 0 {
 		activeLanguages = languageSet(graph.Languages)
 	}
+
 	var enrichment GraphEnrichment
+
 	seenBackendNodes := make(map[string]struct{})
 	handledLanguages := make(map[string]struct{})
+
 	for _, spec := range languageBackendSpecs {
 		if _, ok := activeLanguages[spec.Language]; !ok {
 			continue
 		}
+
 		handledLanguages[spec.Language] = struct{}{}
+
 		path, available := firstAvailableBinaryPath(spec.Binaries)
 		backendID := toolchainNodeID(spec.Language, spec.BackendName)
 		report := CollectorReport{
@@ -214,12 +219,15 @@ func (languageEnvironmentEnricher) EnrichGraph(_ context.Context, graph Graph, o
 				"impact":   spec.Impact,
 			},
 		}
+
 		if path != "" {
 			report.Properties["path"] = path
 		}
+
 		if !available && spec.Language != "gdscript" {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("%s binary unavailable; graph facts fall back to syntax/generic collectors until live tools are installed", spec.BackendName))
 		}
+
 		if _, ok := seenBackendNodes[backendID]; !ok {
 			enrichment.Nodes = append(enrichment.Nodes, Node{
 				ID:            backendID,
@@ -251,15 +259,19 @@ func (languageEnvironmentEnricher) EnrichGraph(_ context.Context, graph Graph, o
 			})
 			seenBackendNodes[backendID] = struct{}{}
 			report.NodesAdded++
+
 			report.EdgesAdded++
 		}
+
 		manifests := foundManifests(opts.Root, opts.Scope, spec.Manifests)
 		if len(manifests) == 0 && len(spec.Manifests) > 0 {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("no %s manifest/config files were found in scope; graph facts remain available, but backend precision may be limited", spec.Language))
 		}
+
 		report.Properties["manifest_count"] = len(manifests)
 		for _, manifest := range manifests {
 			manifestID := manifestNodeID(manifest.Path)
+
 			enrichment.Nodes = append(enrichment.Nodes, Node{
 				ID:            manifestID,
 				Kind:          "project_manifest",
@@ -299,15 +311,19 @@ func (languageEnvironmentEnricher) EnrichGraph(_ context.Context, graph Graph, o
 			})
 			report.Paths = append(report.Paths, manifest.Path)
 			report.NodesAdded++
+
 			report.EdgesAdded += 2
 		}
+
 		report.Paths = uniqueSortedStrings(report.Paths)
 		enrichment.Reports = append(enrichment.Reports, report)
 	}
+
 	for language := range activeLanguages {
 		if _, ok := handledLanguages[language]; ok {
 			continue
 		}
+
 		backendID := toolchainNodeID(language, "generic_language_model")
 		report := CollectorReport{
 			Name:      "generic_language_model",
@@ -325,6 +341,7 @@ func (languageEnvironmentEnricher) EnrichGraph(_ context.Context, graph Graph, o
 				"impact": "No dedicated language backend is registered; generic source indexing plus ctags/structural_search can still provide language-agnostic graph facts.",
 			},
 		}
+
 		enrichment.Nodes = append(enrichment.Nodes, Node{
 			ID:            backendID,
 			Kind:          "toolchain_backend",
@@ -353,12 +370,15 @@ func (languageEnvironmentEnricher) EnrichGraph(_ context.Context, graph Graph, o
 		})
 		enrichment.Reports = append(enrichment.Reports, report)
 	}
+
 	sort.Slice(enrichment.Reports, func(i, j int) bool {
 		if enrichment.Reports[i].Name == enrichment.Reports[j].Name {
 			return strings.Join(enrichment.Reports[i].Languages, ",") < strings.Join(enrichment.Reports[j].Languages, ",")
 		}
+
 		return enrichment.Reports[i].Name < enrichment.Reports[j].Name
 	})
+
 	return enrichment, nil
 }
 
@@ -373,10 +393,12 @@ func applyGraphEnrichers(ctx context.Context, opts BuildOptions, graph Graph, re
 	if len(enrichers) == 0 {
 		return nil, nil
 	}
+
 	coverage := make(map[string]struct{}, len(existingCoverage))
 	for _, collector := range existingCoverage {
 		coverage[collector] = struct{}{}
 	}
+
 	enrichmentOptions := EnrichmentOptions{
 		Root:      graph.Root,
 		RepoID:    repoID,
@@ -388,65 +410,87 @@ func applyGraphEnrichers(ctx context.Context, opts BuildOptions, graph Graph, re
 		GitHead:   graph.GitHead,
 		Languages: graph.Languages,
 	}
+
 	var reports []CollectorReport
+
 	for _, enricher := range enrichers {
 		if enricher == nil {
 			continue
 		}
+
 		snapshot := graph
+
 		snapshot.Nodes = sortedNodes(builder.nodes)
 		snapshot.Edges = sortedEdges(builder.edges)
+
 		enrichment, err := enricher.EnrichGraph(ctx, snapshot, enrichmentOptions)
 		if err != nil {
 			return nil, fmt.Errorf("context graph enrichment: %w", err)
 		}
+
 		nodesBefore := len(builder.nodes)
 		edgesBefore := len(builder.edges)
+
 		for _, node := range enrichment.Nodes {
 			if node.ID == "" {
 				continue
 			}
+
 			builder.addNode(node)
 		}
+
 		for _, edge := range enrichment.Edges {
 			if edge.SourceID == "" || edge.TargetID == "" || edge.Kind == "" {
 				continue
 			}
+
 			if edge.ID == "" {
 				edge.ID = edgeID(edge.Kind, edge.SourceID, edge.TargetID, edge.Evidence)
 			}
+
 			if edge.Collector == "" {
 				edge.Collector = "context_enrichment"
 			}
+
 			if edge.Confidence == "" {
 				edge.Confidence = "unknown"
 			}
+
 			if edge.CreatedAt == "" {
 				edge.CreatedAt = builder.now
 			}
+
 			if edge.UpdatedAt == "" {
 				edge.UpdatedAt = builder.now
 			}
+
 			builder.edges[edge.ID] = edge
 		}
+
 		addedNodes := len(builder.nodes) - nodesBefore
 		addedEdges := len(builder.edges) - edgesBefore
+
 		for _, report := range enrichment.Reports {
 			report = normalizeCollectorReport(report, addedNodes, addedEdges)
 			if report.Name != "" {
 				coverage[report.Name] = struct{}{}
 			}
+
 			reports = append(reports, report)
 		}
+
 		graph.Nodes = sortedNodes(builder.nodes)
 		graph.Edges = sortedEdges(builder.edges)
 	}
+
 	sort.Slice(reports, func(i, j int) bool {
 		if reports[i].Name == reports[j].Name {
 			return strings.Join(reports[i].Languages, ",") < strings.Join(reports[j].Languages, ",")
 		}
+
 		return reports[i].Name < reports[j].Name
 	})
+
 	return reports, nil
 }
 
@@ -458,12 +502,15 @@ func normalizeCollectorReport(report CollectorReport, addedNodes int, addedEdges
 	report.Capabilities = uniqueSortedStrings(report.Capabilities)
 	report.Paths = uniqueSortedStrings(report.Paths)
 	report.Warnings = uniqueSortedStrings(report.Warnings)
+
 	if report.NodesAdded == 0 {
 		report.NodesAdded = addedNodes
 	}
+
 	if report.EdgesAdded == 0 {
 		report.EdgesAdded = addedEdges
 	}
+
 	return report
 }
 
@@ -474,15 +521,21 @@ func foundManifests(root string, scope string, manifests []manifestSpec) []found
 		if rel == "" || rel == "." || !pathInScope(rel, scope) {
 			continue
 		}
+
 		abs := filepath.Join(root, filepath.FromSlash(rel))
 		info, err := os.Stat(abs)
+
 		if err != nil || info.IsDir() {
 			continue
 		}
+
 		fingerprint, _ := fileFingerprint(abs)
+
 		out = append(out, foundManifest{Path: rel, Role: manifest.Role, Fingerprint: fingerprint})
 	}
+
 	slices.SortFunc(out, func(a, b foundManifest) int { return cmp.Compare(a.Path, b.Path) })
+
 	return out
 }
 
@@ -494,6 +547,7 @@ func languageSet(languages []string) map[string]struct{} {
 			out[language] = struct{}{}
 		}
 	}
+
 	return out
 }
 
@@ -503,6 +557,7 @@ func firstAvailableBinaryPath(candidates []string) (string, bool) {
 			return path, true
 		}
 	}
+
 	return "", false
 }
 

@@ -86,28 +86,36 @@ func TestNextActionsForAllStates_TableDriven(t *testing.T) {
 				if len(blockers) == 0 {
 					t.Fatalf("expected blocker with code %q, got none", tc.wantBlockerCode)
 				}
+
 				found := false
+
 				for _, b := range blockers {
 					if b.Code == tc.wantBlockerCode {
 						found = true
 						break
 					}
 				}
+
 				if !found {
 					t.Fatalf("expected blocker code %q, got %v", tc.wantBlockerCode, blockers)
 				}
+
 				return
 			}
+
 			if len(blockers) > 0 {
 				t.Fatalf("expected no blockers, got %v", blockers)
 			}
+
 			if len(actions) != len(tc.wantActions) {
 				t.Fatalf("expected %d actions, got %d: %v", len(tc.wantActions), len(actions), actions)
 			}
+
 			for i, want := range tc.wantActions {
 				if actions[i].Action != want {
 					t.Fatalf("action[%d]: expected %q, got %q (full: %v)", i, want, actions[i].Action, actions)
 				}
+
 				if tc.wantOwners != nil && actions[i].Owner != tc.wantOwners[i] {
 					t.Fatalf("action[%d] %q: expected owner %q, got %q", i, want, tc.wantOwners[i], actions[i].Owner)
 				}
@@ -125,9 +133,11 @@ func TestInvalidStateReturnsTypedBlocker(t *testing.T) {
 	if len(result.Blockers) == 0 {
 		t.Fatal("expected blockers for invalid state")
 	}
+
 	if result.Blockers[0].Code != "invalid_state" {
 		t.Fatalf("expected blocker code invalid_state, got %q", result.Blockers[0].Code)
 	}
+
 	if !strings.Contains(result.Blockers[0].Message, "nonexistent") {
 		t.Fatalf("expected blocker message to mention state, got %q", result.Blockers[0].Message)
 	}
@@ -142,6 +152,7 @@ func TestInvalidStatusBucketReturnsTypedBlocker(t *testing.T) {
 	if len(result.Blockers) == 0 {
 		t.Fatal("expected blockers for invalid status bucket")
 	}
+
 	if result.Blockers[0].Code != "invalid_status_bucket" {
 		t.Fatalf("expected blocker code invalid_status_bucket, got %q", result.Blockers[0].Code)
 	}
@@ -156,12 +167,15 @@ func TestInvalidActionReturnsTypedBlocker(t *testing.T) {
 	if len(result.Blockers) == 0 {
 		t.Fatal("expected blockers for invalid action")
 	}
+
 	if result.Blockers[0].Code != "invalid_action" {
 		t.Fatalf("expected blocker code invalid_action, got %q", result.Blockers[0].Code)
 	}
+
 	if !strings.Contains(result.Blockers[0].Message, "teleport") {
 		t.Fatalf("expected blocker message to mention action, got %q", result.Blockers[0].Message)
 	}
+
 	if len(result.NextValidActions) == 0 {
 		t.Fatal("expected NextValidActions for invalid action")
 	}
@@ -176,6 +190,7 @@ func TestTerminalClosedStatusBucketBlocksTransitions(t *testing.T) {
 	if len(result.Blockers) == 0 {
 		t.Fatal("expected blockers for closed status bucket")
 	}
+
 	if result.Blockers[0].Code != "terminal_status_bucket" {
 		t.Fatalf("expected blocker code terminal_status_bucket, got %q", result.Blockers[0].Code)
 	}
@@ -192,16 +207,20 @@ func TestCloseTransitionBlockedByOpenBlockers(t *testing.T) {
 	if len(result.Blockers) == 0 {
 		t.Fatal("expected close blocked by open blockers")
 	}
+
 	found := false
+
 	for _, b := range result.Blockers {
 		if b.Code == "open_blockers" {
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected open_blockers blocker, got %v", result.Blockers)
 	}
+
 	if result.ToState != "" {
 		t.Fatalf("expected no state transition, got ToState %q", result.ToState)
 	}
@@ -210,9 +229,11 @@ func TestCloseTransitionBlockedByOpenBlockers(t *testing.T) {
 func TestWriteProductWorkflowTransitionRejectsSymlinkedEventsParent(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
+
 	if err := os.WriteFile(filepath.Join(root, "workflow_state.json"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatalf("write workflow_state.json: %v", err)
 	}
+
 	if err := os.Symlink(outside, filepath.Join(root, "events")); err != nil {
 		t.Fatalf("symlink events parent: %v", err)
 	}
@@ -223,9 +244,11 @@ func TestWriteProductWorkflowTransitionRejectsSymlinkedEventsParent(t *testing.T
 	if err == nil {
 		t.Fatal("expected symlinked events parent to be rejected")
 	}
+
 	if !strings.Contains(err.Error(), "events must not be a symlink") {
 		t.Fatalf("expected symlink parent error, got %v", err)
 	}
+
 	if _, statErr := os.Stat(filepath.Join(outside, "log.jsonl")); !os.IsNotExist(statErr) {
 		t.Fatalf("transition must not write through symlinked events parent, stat err=%v", statErr)
 	}
@@ -242,13 +265,16 @@ func TestCloseTransitionBlockedByOpenObligations(t *testing.T) {
 	if len(result.Blockers) == 0 {
 		t.Fatal("expected close blocked by open obligations")
 	}
+
 	found := false
+
 	for _, b := range result.Blockers {
 		if b.Code == "open_obligations" {
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected open_obligations blocker, got %v", result.Blockers)
 	}
@@ -267,13 +293,16 @@ func TestCloseTransitionBlockedByMissingVerificationGate(t *testing.T) {
 	if len(result.Blockers) == 0 {
 		t.Fatal("expected close blocked by missing verification gate")
 	}
+
 	found := false
+
 	for _, b := range result.Blockers {
 		if b.Code == "missing_gate" && strings.Contains(b.Message, "verification") {
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected missing_gate blocker for verification, got %v", result.Blockers)
 	}
@@ -293,13 +322,16 @@ func TestCloseTransitionBlockedByFailedReviewGate(t *testing.T) {
 	if len(result.Blockers) == 0 {
 		t.Fatal("expected close blocked by failed review gate")
 	}
+
 	found := false
+
 	for _, b := range result.Blockers {
 		if b.Code == "gate_not_passed" && strings.Contains(b.Message, "review") {
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected gate_not_passed blocker for review, got %v", result.Blockers)
 	}
@@ -318,13 +350,16 @@ func TestCloseTransitionBlockedByMissingInvestigationGate(t *testing.T) {
 	if len(result.Blockers) == 0 {
 		t.Fatal("expected close blocked by missing investigation gate")
 	}
+
 	found := false
+
 	for _, b := range result.Blockers {
 		if b.Code == "missing_gate" && strings.Contains(b.Message, "investigation") {
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected missing_gate blocker for investigation, got %v", result.Blockers)
 	}
@@ -342,9 +377,11 @@ func TestCloseTransitionSucceedsWithAllPreconditionsMet(t *testing.T) {
 	if len(result.Blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", result.Blockers)
 	}
+
 	if result.ToState != "closed" {
 		t.Fatalf("expected ToState closed, got %q", result.ToState)
 	}
+
 	if result.FromState != "reviewing" {
 		t.Fatalf("expected FromState reviewing, got %q", result.FromState)
 	}
@@ -360,9 +397,11 @@ func TestCloseTransitionBlockedByAllPreconditionsFailing(t *testing.T) {
 		GateResults:     []GateResult{},
 	})
 	codes := map[string]bool{}
+
 	for _, b := range result.Blockers {
 		codes[b.Code] = true
 	}
+
 	for _, want := range []string{"open_blockers", "open_obligations", "missing_gate"} {
 		if !codes[want] {
 			t.Fatalf("expected blocker code %q, got blockers: %v", want, result.Blockers)
@@ -375,6 +414,7 @@ func TestApproveActionNotListedWhenPreconditionsNotMet(t *testing.T) {
 	if len(blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", blockers)
 	}
+
 	for _, a := range actions {
 		if a.Action == "approve" {
 			t.Fatal("approve should not appear in next actions when preconditions cannot be verified")
@@ -386,15 +426,19 @@ func TestApproveActionListedWhenPreconditionsMet(t *testing.T) {
 	gates := allGatesPassed()
 	actions := nextActionsFor("reviewing", gates)
 	found := false
+
 	for _, a := range actions {
 		if a.Action == "approve" {
 			found = true
+
 			if a.Owner != "reviewer" {
 				t.Fatalf("expected approve owner reviewer, got %q", a.Owner)
 			}
+
 			break
 		}
 	}
+
 	if !found {
 		t.Fatal("expected approve action when all gates passed")
 	}
@@ -409,6 +453,7 @@ func TestValidTransitionPlannedToHumanVerification(t *testing.T) {
 	if len(result.Blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", result.Blockers)
 	}
+
 	if result.ToState != "human_verification" {
 		t.Fatalf("expected ToState human_verification, got %q", result.ToState)
 	}
@@ -423,6 +468,7 @@ func TestValidTransitionHumanVerificationToImplementing(t *testing.T) {
 	if len(result.Blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", result.Blockers)
 	}
+
 	if result.ToState != "implementing" {
 		t.Fatalf("expected ToState implementing, got %q", result.ToState)
 	}
@@ -437,6 +483,7 @@ func TestValidTransitionImplementingToVerifying(t *testing.T) {
 	if len(result.Blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", result.Blockers)
 	}
+
 	if result.ToState != "verifying" {
 		t.Fatalf("expected ToState verifying, got %q", result.ToState)
 	}
@@ -451,6 +498,7 @@ func TestValidTransitionVerifyingToReviewing(t *testing.T) {
 	if len(result.Blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", result.Blockers)
 	}
+
 	if result.ToState != "reviewing" {
 		t.Fatalf("expected ToState reviewing, got %q", result.ToState)
 	}
@@ -465,6 +513,7 @@ func TestValidTransitionReviewingToImplementing(t *testing.T) {
 	if len(result.Blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", result.Blockers)
 	}
+
 	if result.ToState != "implementing" {
 		t.Fatalf("expected ToState implementing, got %q", result.ToState)
 	}
@@ -479,6 +528,7 @@ func TestValidTransitionReviewingToInvestigating(t *testing.T) {
 	if len(result.Blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", result.Blockers)
 	}
+
 	if result.ToState != "investigating" {
 		t.Fatalf("expected ToState investigating, got %q", result.ToState)
 	}
@@ -493,6 +543,7 @@ func TestValidTransitionInvestigatingToReviewing(t *testing.T) {
 	if len(result.Blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", result.Blockers)
 	}
+
 	if result.ToState != "reviewing" {
 		t.Fatalf("expected ToState reviewing, got %q", result.ToState)
 	}
@@ -507,6 +558,7 @@ func TestValidTransitionBlockedToPlanned(t *testing.T) {
 	if len(result.Blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", result.Blockers)
 	}
+
 	if result.ToState != "planned" {
 		t.Fatalf("expected ToState planned, got %q", result.ToState)
 	}
@@ -523,6 +575,7 @@ func TestMarkBlockedFromMultipleStates(t *testing.T) {
 			if len(result.Blockers) > 0 {
 				t.Fatalf("expected no blockers, got %v", result.Blockers)
 			}
+
 			if result.ToState != "blocked" {
 				t.Fatalf("expected ToState blocked, got %q", result.ToState)
 			}
@@ -539,6 +592,7 @@ func TestUnstartedStartTransition(t *testing.T) {
 	if len(result.Blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", result.Blockers)
 	}
+
 	if result.ToState != "planned" {
 		t.Fatalf("expected ToState planned, got %q", result.ToState)
 	}
@@ -553,6 +607,7 @@ func TestUnstartedRejectsNonStartAction(t *testing.T) {
 	if len(result.Blockers) == 0 {
 		t.Fatal("expected blockers for non-start action on unstarted bucket")
 	}
+
 	if result.Blockers[0].Code != "invalid_action" {
 		t.Fatalf("expected blocker code invalid_action, got %q", result.Blockers[0].Code)
 	}
@@ -563,20 +618,25 @@ func TestTransitionPurity_NoForbiddenImports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			break
 		}
+
 		next := filepath.Dir(dir)
 		if next == dir {
 			t.Fatal("could not find repo root")
 		}
+
 		dir = next
 	}
+
 	data, err := os.ReadFile(filepath.Join(dir, "internal", "workflows", "productworkflow", "transition.go"))
 	if err != nil {
 		t.Fatalf("read transition.go: %v", err)
 	}
+
 	src := string(data)
 	forbidden := []string{
 		"os.", "io.", "net/", "http/",
@@ -588,6 +648,7 @@ func TestTransitionPurity_NoForbiddenImports(t *testing.T) {
 		"runtime.", "debug.",
 		"json.", "xml.", "yaml.",
 	}
+
 	for _, f := range forbidden {
 		if strings.Contains(src, f) {
 			t.Fatalf("transition.go must not import %q (purity constraint)", f)
@@ -600,6 +661,7 @@ func TestNextActionsForClosedStatusBucketReturnsEmpty(t *testing.T) {
 	if len(blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", blockers)
 	}
+
 	if len(actions) > 0 {
 		t.Fatalf("expected no actions for closed, got %v", actions)
 	}
@@ -610,6 +672,7 @@ func TestNextActionsStableOrder_Planned(t *testing.T) {
 	if len(blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", blockers)
 	}
+
 	want := []TransitionAction{
 		{Action: "submit_for_human_verification", Owner: "planner"},
 		{Action: "start_investigation", Owner: "investigator"},
@@ -617,6 +680,7 @@ func TestNextActionsStableOrder_Planned(t *testing.T) {
 	if len(actions) != len(want) {
 		t.Fatalf("expected %d actions, got %d: %v", len(want), len(actions), actions)
 	}
+
 	for i := range want {
 		if actions[i] != want[i] {
 			t.Fatalf("action[%d]: expected %+v, got %+v", i, want[i], actions[i])
@@ -629,6 +693,7 @@ func TestNextActionsStableOrder_HumanVerification(t *testing.T) {
 	if len(blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", blockers)
 	}
+
 	want := []TransitionAction{
 		{Action: "approve_for_implementation", Owner: "operator"},
 		{Action: "request_changes", Owner: "operator"},
@@ -637,6 +702,7 @@ func TestNextActionsStableOrder_HumanVerification(t *testing.T) {
 	if len(actions) != len(want) {
 		t.Fatalf("expected %d actions, got %d: %v", len(want), len(actions), actions)
 	}
+
 	for i := range want {
 		if actions[i] != want[i] {
 			t.Fatalf("action[%d]: expected %+v, got %+v", i, want[i], actions[i])
@@ -649,6 +715,7 @@ func TestNextActionsStableOrder_Reviewing(t *testing.T) {
 	if len(blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", blockers)
 	}
+
 	want := []TransitionAction{
 		{Action: "request_changes", Owner: "reviewer"},
 		{Action: "request_investigation", Owner: "orchestrator"},
@@ -656,6 +723,7 @@ func TestNextActionsStableOrder_Reviewing(t *testing.T) {
 	if len(actions) != len(want) {
 		t.Fatalf("expected %d actions, got %d: %v", len(want), len(actions), actions)
 	}
+
 	for i := range want {
 		if actions[i] != want[i] {
 			t.Fatalf("action[%d]: expected %+v, got %+v", i, want[i], actions[i])
@@ -668,6 +736,7 @@ func TestNextActionsStableOrder_Implementing(t *testing.T) {
 	if len(blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", blockers)
 	}
+
 	want := []TransitionAction{
 		{Action: "submit_for_verification", Owner: "implementor"},
 		{Action: "mark_blocked", Owner: "orchestrator"},
@@ -675,6 +744,7 @@ func TestNextActionsStableOrder_Implementing(t *testing.T) {
 	if len(actions) != len(want) {
 		t.Fatalf("expected %d actions, got %d: %v", len(want), len(actions), actions)
 	}
+
 	for i := range want {
 		if actions[i] != want[i] {
 			t.Fatalf("action[%d]: expected %+v, got %+v", i, want[i], actions[i])
@@ -700,6 +770,7 @@ func TestInvalidStateBucketConsistency_StartedBucketWithClosedState(t *testing.T
 	if len(result.Blockers) == 0 {
 		t.Fatal("expected blocker for started bucket with closed state")
 	}
+
 	if result.Blockers[0].Code != "invalid_state_bucket" {
 		t.Fatalf("expected blocker code invalid_state_bucket, got %q", result.Blockers[0].Code)
 	}
@@ -714,6 +785,7 @@ func TestInvalidStateBucketConsistency_ClosedBucketWithNonClosedState(t *testing
 	if len(result.Blockers) == 0 {
 		t.Fatal("expected blocker for closed bucket with non-closed state")
 	}
+
 	if result.Blockers[0].Code != "invalid_state_bucket" {
 		t.Fatalf("expected blocker code invalid_state_bucket, got %q", result.Blockers[0].Code)
 	}
@@ -728,6 +800,7 @@ func TestInvalidStateBucketConsistency_UnstartedBucketWithImplementingState(t *t
 	if len(result.Blockers) == 0 {
 		t.Fatal("expected blocker for unstarted bucket with implementing state")
 	}
+
 	if result.Blockers[0].Code != "invalid_state_bucket" {
 		t.Fatalf("expected blocker code invalid_state_bucket, got %q", result.Blockers[0].Code)
 	}
@@ -738,6 +811,7 @@ func TestInvalidStateBucketConsistency_NextActionsForState_ClosedBucketNonClosed
 	if len(blockers) == 0 {
 		t.Fatal("expected blocker for closed bucket with non-closed state via NextActionsForState")
 	}
+
 	if blockers[0].Code != "invalid_state_bucket" {
 		t.Fatalf("expected blocker code invalid_state_bucket, got %q", blockers[0].Code)
 	}
@@ -748,6 +822,7 @@ func TestInvalidStateBucketConsistency_NextActionsForState_StartedBucketClosedSt
 	if len(blockers) == 0 {
 		t.Fatal("expected blocker for started bucket with closed state via NextActionsForState")
 	}
+
 	if blockers[0].Code != "invalid_state_bucket" {
 		t.Fatalf("expected blocker code invalid_state_bucket, got %q", blockers[0].Code)
 	}
@@ -758,9 +833,11 @@ func TestInvalidStateBucketConsistency_NextActionsForState_UnstartedBucketImplem
 	if len(blockers) == 0 {
 		t.Fatal("expected blocker for unstarted bucket with implementing state via NextActionsForState")
 	}
+
 	if blockers[0].Code != "invalid_state_bucket" {
 		t.Fatalf("expected blocker code invalid_state_bucket, got %q", blockers[0].Code)
 	}
+
 	if len(actions) != 0 {
 		t.Fatalf("expected no actions, got %v", actions)
 	}
@@ -771,6 +848,7 @@ func TestValidStateBucketConsistency_UnstartedBucketEmptyState(t *testing.T) {
 	if len(blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", blockers)
 	}
+
 	if len(actions) != 1 || actions[0].Action != "start" {
 		t.Fatalf("expected [start], got %v", actions)
 	}
@@ -781,6 +859,7 @@ func TestValidStateBucketConsistency_UnstartedBucketPlannedState(t *testing.T) {
 	if len(blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", blockers)
 	}
+
 	if len(actions) != 1 || actions[0].Action != "start" {
 		t.Fatalf("expected [start], got %v", actions)
 	}

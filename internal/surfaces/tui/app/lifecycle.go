@@ -44,27 +44,34 @@ func backendsModelToLlamaServer(m backends.Model, defaults config.LlamaServer) c
 	out := defaults
 	explicitKind := strings.TrimSpace(m.Kind)
 	explicitBaseURL := strings.TrimSpace(m.BaseURL)
+
 	if explicitKind != "" {
 		if explicitBaseURL == "" && !strings.EqualFold(explicitKind, strings.TrimSpace(defaults.Kind)) {
 			out.BaseURL = ""
 		}
+
 		k := explicitKind
+
 		out.Kind = k
 	}
+
 	if b := strings.TrimSpace(m.Binary); b != "" {
 		out.Binary = b
 	}
+
 	if h := strings.TrimSpace(m.Host); h != "" {
 		out.Host = h
 	} else if strings.TrimSpace(out.Host) == "" {
 		out.Host = "127.0.0.1"
 	}
+
 	if m.Port > 0 {
 		out.Port = m.Port
 		if strings.TrimSpace(m.BaseURL) == "" {
 			out.BaseURL = ""
 		}
 	}
+
 	if model := strings.TrimSpace(m.Model); model != "" {
 		out.Model = model
 	} else if mp := strings.TrimSpace(m.ModelPath); mp != "" {
@@ -77,24 +84,31 @@ func backendsModelToLlamaServer(m backends.Model, defaults config.LlamaServer) c
 		// to the wrong backend.
 		out.Model = alias
 	}
+
 	if alias := strings.TrimSpace(m.Alias); alias != "" {
 		out.DisplayName = alias
 	}
+
 	if explicitBaseURL != "" {
 		out.BaseURL = explicitBaseURL
 	}
+
 	if apiKeyEnv := strings.TrimSpace(m.APIKeyEnv); apiKeyEnv != "" {
 		out.APIKeyEnv = apiKeyEnv
 	}
+
 	if effort := strings.TrimSpace(m.ReasoningEffort); effort != "" {
 		out.ReasoningEffort = effort
 	}
+
 	if verbosity := strings.TrimSpace(m.Verbosity); verbosity != "" {
 		out.Verbosity = verbosity
 	}
+
 	if len(m.ExtraArgs) > 0 {
 		out.ExtraArgs = append([]string(nil), m.ExtraArgs...)
 	}
+
 	return out
 }
 
@@ -114,15 +128,19 @@ func roleSpec(projectRoot, role string, defaults config.LlamaServer) (config.Lla
 	file, found, err := backends.LoadFromProjectRoot(projectRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lifecycle: backends role %q resolution failed: %v\n", role, err)
+
 		return defaults, false
 	}
+
 	if !found {
 		return defaults, false
 	}
+
 	prof, profOK := file.Profile("")
 	if !profOK {
 		return defaults, false
 	}
+
 	// Explicit-alias override: when defaults.Model names a registered
 	// backend alias, that backend wins over the role default.
 	if explicit := strings.TrimSpace(defaults.Model); explicit != "" {
@@ -131,17 +149,21 @@ func roleSpec(projectRoot, role string, defaults config.LlamaServer) (config.Lla
 				return backendsModelToLlamaServer(model, defaults), true
 			}
 		}
+
 		if model, ok := file.ModelByAlias(explicit); ok {
 			if explicitAliasCanOverrideRole(model, role) {
 				return backendsModelToLlamaServer(model, defaults), true
 			}
 		}
 	}
+
 	alias, ok := prof.AliasForRole(role)
 	if !ok {
 		return defaults, false
 	}
+
 	model, _ := prof.ModelByAlias(alias)
+
 	return backendsModelToLlamaServer(model, defaults), true
 }
 
@@ -149,11 +171,13 @@ func explicitAliasCanOverrideRole(model backends.Model, role string) bool {
 	if role != backends.RoleExecutor || len(model.Roles) == 0 {
 		return true
 	}
+
 	for _, r := range model.Roles {
 		if util.EqualTrimFold(r, backends.RoleExecutor) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -193,15 +217,19 @@ type transcriptSavedMsg struct {
 
 func New(cfg config.Config) *Model {
 	in := textarea.New()
+
 	in.Placeholder = "Type a prompt. Enter sends. /help shows commands."
 	in.Focus()
+
 	in.ShowLineNumbers = false
 	in.SetHeight(1)
 	in.KeyMap.InsertNewline.SetEnabled(false)
+
 	in.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(colorAccent)
 	in.BlurredStyle.Prompt = lipgloss.NewStyle().Foreground(colorDim)
 
 	spin := spinner.New()
+
 	spin.Spinner = spinner.Dot
 	spin.Style = lipgloss.NewStyle().Foreground(colorSpinner)
 
@@ -234,9 +262,11 @@ func New(cfg config.Config) *Model {
 	// block in config.json.
 	implementerEnabled := cfg.Implementer != nil
 	executorDefaults := cfg.LlamaServer
+
 	if implementerEnabled {
 		executorDefaults = *cfg.Implementer
 	}
+
 	executorSpec, executorFromBackends := roleSpec(projectRoot, backends.RoleExecutor, executorDefaults)
 	if executorFromBackends {
 		// Only enable the implementer client when the resolved executor
@@ -257,12 +287,17 @@ func New(cfg config.Config) *Model {
 	classifierDefaults := cfg.RouteClassifier.LlamaServerSpec()
 	classifierSpec, classifierFromBackends := roleSpec(projectRoot, backends.RoleClassifier, classifierDefaults)
 
-	var summaryClient llama.LLMClient
-	var summaryController *llama.ServerController
+	var (
+		summaryClient     llama.LLMClient
+		summaryController *llama.ServerController
+	)
+
 	classifierBaseURL := strings.TrimSpace(cfg.RouteClassifier.BaseURL)
+
 	if classifierFromBackends {
 		classifierBaseURL = llamaServerBaseURL(classifierSpec)
 	}
+
 	if classifierFromBackends && sameLlamaTarget(classifierSpec, plannerSpec) {
 		// The classifier role often aliases the active planner model in
 		// .idiom/backends.json. Reuse the already-managed planner client so
@@ -270,16 +305,23 @@ func New(cfg config.Config) *Model {
 		summaryClient = plannerClient
 	} else if classifierBaseURL != "" {
 		timeout := time.Duration(cfg.RouteClassifier.TimeoutSeconds) * time.Second
+
 		classifierSpec.BaseURL = classifierBaseURL
+
 		classifierClient := llama.NewClientForServer(classifierSpec, timeout)
+
 		summaryClient = classifierClient
+
 		if cfg.RouteClassifier.AutoStartServer && classifierSpec.IsLaunchable() && classifierSpec.Binary != "" {
 			summaryController = llama.NewServerController(classifierSpec, classifierClient)
 		}
 	}
 
-	var implementerClient *llama.Client
-	var implementerController *llama.ServerController
+	var (
+		implementerClient     *llama.Client
+		implementerController *llama.ServerController
+	)
+
 	if implementerEnabled {
 		implementerClient = llama.NewClientForServer(executorSpec, callTimeout)
 		if executorSpec.IsLaunchable() {
@@ -308,6 +350,7 @@ func New(cfg config.Config) *Model {
 	if plannerSpec.IsLaunchable() {
 		m.controller = llama.NewServerController(plannerSpec, plannerClient)
 	}
+
 	m.workspace = workspace.NewManager(cfg.Workspace)
 	if cfg.Chat.AttachInstructionFiles {
 		if candidates, explicit := instructionAttachmentCandidates(cfg.Chat); explicit {
@@ -318,23 +361,31 @@ func New(cfg config.Config) *Model {
 			m.instructionAttacher = agent.NewInstructionAttacher(m.workspace.Root())
 		}
 	}
+
 	mode := agent.ModeOrDefault(m.agentModeName)
 	m.workspace.SetPermissionRules(mode.PermissionRules)
+
 	mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	registry, mcpFailures := setupMCPRegistry(mcpCtx, cfg.MCP, cfg.Workspace.AllowPrivateNetwork)
+
 	mcpCancel()
+
 	if registry != nil {
 		m.workspace.SetMCPRegistry(registry)
+
 		m.mcpRegistry = registry
 	}
+
 	if len(mcpFailures) > 0 {
 		m.setContextError("MCP setup: " + strings.Join(mcpFailures, "; "))
 	}
+
 	if extReg, extErr := setupExternalToolsRegistry(cfg.Workspace); extErr != nil {
 		m.setContextError("External tools setup: " + extErr.Error())
 	} else if extReg != nil {
 		m.workspace.SetExternalToolsRegistry(extReg)
 	}
+
 	m.runner = &agent.Runner{
 		Client:            m.client,
 		ImplementerClient: m.implementerClient,
@@ -345,10 +396,13 @@ func New(cfg config.Config) *Model {
 	if err := m.reloadPromptStack(); err != nil {
 		m.setContextError("Prompt context failed: " + err.Error())
 	}
+
 	if err := m.loadInputHistoryFromLogs(); err != nil {
 		m.setContextError("Input history failed: " + err.Error())
 	}
+
 	m.initDebugLogger()
+
 	return m
 }
 
@@ -356,24 +410,31 @@ func instructionAttachmentCandidates(chat config.Chat) ([]string, bool) {
 	if chat.ProjectPromptCandidates == nil {
 		return nil, false
 	}
+
 	var candidates []string
+
 	seen := map[string]struct{}{}
+
 	for _, name := range chat.ProjectPromptCandidates {
 		name = strings.TrimSpace(name)
 		if name == "" || name != filepath.Base(name) {
 			continue
 		}
+
 		switch name {
 		case ".qwen.md", "QWEN.md", "IDIOM.md", "AGENTS.md", "CLAUDE.md":
 		default:
 			continue
 		}
+
 		if _, ok := seen[name]; ok {
 			continue
 		}
+
 		seen[name] = struct{}{}
 		candidates = append(candidates, name)
 	}
+
 	return candidates, true
 }
 
@@ -383,6 +444,7 @@ func modeStepCap(configured int, mode agent.Mode) int {
 	if mode.StepCap > 0 && (configured <= 0 || mode.StepCap < configured) {
 		return mode.StepCap
 	}
+
 	return configured
 }
 
@@ -391,15 +453,19 @@ func modeRunPolicy(mode agent.Mode, cfg config.Chat) agent.RunPolicy {
 	if cfg.MaxContextChars > 0 {
 		policy.MaxContextChars = cfg.MaxContextChars
 	}
+
 	if cfg.MaxContextMessages > 0 {
 		policy.MaxContextMessages = cfg.MaxContextMessages
 	}
+
 	if cfg.MaxModelCalls > 0 {
 		policy.MaxModelCalls = cfg.MaxModelCalls
 	}
+
 	if cfg.MaxDurationSeconds > 0 {
 		policy.MaxDuration = time.Duration(cfg.MaxDurationSeconds) * time.Second
 	}
+
 	return policy
 }
 
@@ -410,6 +476,7 @@ func (m *Model) Init() tea.Cmd {
 		m.waitForEventCmd(),
 		func() tea.Msg {
 			go m.bootstrap()
+
 			return nil
 		},
 	)
@@ -417,7 +484,9 @@ func (m *Model) Init() tea.Cmd {
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+
 	rearmEventWait := false
+
 	if wrapped, ok := msg.(eventMsg); ok {
 		m.eventWaitArmed = false
 		msg = wrapped.msg
@@ -430,6 +499,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -438,6 +508,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -446,6 +517,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -454,6 +526,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -462,6 +535,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -470,6 +544,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -478,6 +553,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -486,6 +562,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -494,6 +571,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -502,6 +580,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -510,6 +589,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -518,6 +598,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -526,6 +607,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -534,6 +616,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -542,6 +625,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -550,6 +634,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -558,6 +643,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -566,6 +652,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			return m, cmd
 		}
+
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -578,16 +665,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var inputCmd tea.Cmd
+
 	m.input, inputCmd = m.input.Update(msg)
 	m.updateSlashSuggestions()
+
 	oldInputHeight := m.input.Height()
 	if m.ready && m.syncInputHeight() != oldInputHeight {
 		m.resize()
 	}
+
 	cmds = append(cmds, inputCmd)
 	if rearmEventWait {
 		cmds = append(cmds, m.waitForEventCmd())
 	}
+
 	return m, tea.Batch(cmds...)
 }
 
@@ -597,49 +688,64 @@ func (m *Model) ensureServerReady(ctx context.Context) error {
 		m.modelID = resolveModelID(m.plannerSpec, m.plannerSpec.Model)
 		m.modelDisplayID = resolveModelDisplayID(m.plannerSpec, m.plannerSpec.Model)
 		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, displayID: m.modelDisplayID})
+
 		return nil
 	}
+
 	models, err := m.client.ListModels(ctx)
 	if err == nil && len(models) > 0 {
 		m.serverUp = true
 		m.modelID = resolveModelID(m.plannerSpec, models[0].ID)
 		m.modelDisplayID = resolveModelDisplayID(m.plannerSpec, models[0].ID)
 		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, displayID: m.modelDisplayID})
+
 		return nil
 	}
+
 	if m.modelSwapped {
 		if err != nil {
 			return fmt.Errorf("swapped model %q is unavailable at %s: %w", m.modelID, m.plannerSpec.EndpointBaseURL(), err)
 		}
+
 		return fmt.Errorf("swapped model %q is unavailable at %s: no models reported", m.modelID, m.plannerSpec.EndpointBaseURL())
 	}
+
 	if !m.cfg.Chat.AutoStartServer {
 		return fmt.Errorf("no llama server detected and chat.auto_start_server is false")
 	}
+
 	if m.controller == nil {
 		return fmt.Errorf("no launchable backend controller configured")
 	}
+
 	if err := m.controller.Start(ctx); err != nil {
 		m.logServerEvent(serverStatusMsg{err: err})
+
 		return err
 	}
+
 	m.managedServer = true
 	if err := m.controller.WaitUntilReady(ctx); err != nil {
 		m.logServerEvent(serverStatusMsg{err: err})
+
 		return err
 	}
+
 	models, err = m.client.ListModels(ctx)
 	if err != nil || len(models) == 0 {
 		m.serverUp = true
 		m.modelID = resolveModelID(m.plannerSpec, "local-model")
 		m.modelDisplayID = resolveModelDisplayID(m.plannerSpec, "local-model")
 		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, displayID: m.modelDisplayID, owned: true})
+
 		return nil
 	}
+
 	m.serverUp = true
 	m.modelID = resolveModelID(m.plannerSpec, models[0].ID)
 	m.modelDisplayID = resolveModelDisplayID(m.plannerSpec, models[0].ID)
 	m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, displayID: m.modelDisplayID, owned: true})
+
 	return nil
 }
 
@@ -668,6 +774,7 @@ func (m *Model) sendPromptAsync(prompt string) {
 	m.workingFrame = 0
 	m.currentTurnBusyStatus = busyStatusForPrompt(prompt)
 	m.beginAgentHistoryTurn()
+
 	go func() {
 		// The outer ctx intentionally has no deadline. Per-call HTTP timeouts
 		// live on the llama client (Chat.RequestTimeoutSeconds), and the
@@ -677,6 +784,7 @@ func (m *Model) sendPromptAsync(prompt string) {
 		// exceeded" mid-generation; see logs/conversations/20260423-163650.
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+
 		_, err := m.RunPromptOnce(ctx, prompt)
 		m.events <- streamDoneMsg{err: err}
 	}()
@@ -687,9 +795,11 @@ func (m *Model) sendPlanExecuteCommandAsync(objective string) {
 	m.workingFrame = 0
 	m.currentTurnBusyStatus = busyStatusForPrompt(objective)
 	m.beginAgentHistoryTurn()
+
 	go func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+
 		_, err := m.runPlanExecuteCommandOnce(ctx, objective)
 		m.events <- streamDoneMsg{err: err}
 	}()
@@ -700,9 +810,11 @@ func (m *Model) sendImplementCommandAsync(objective string) {
 	m.workingFrame = 0
 	m.currentTurnBusyStatus = busyStatusForPrompt(objective)
 	m.beginAgentHistoryTurn()
+
 	go func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+
 		_, err := m.runImplementCommandOnce(ctx, objective)
 		m.events <- streamDoneMsg{err: err}
 	}()
@@ -713,13 +825,16 @@ func formatToolRequestTrace(event agent.ToolRequestEvent) string {
 	if tool == "" {
 		tool = "tool"
 	}
+
 	target := toolRequestTraceTarget(event.Request)
 	if target == "" {
 		target = strings.TrimSpace(event.Action)
 	}
+
 	if target == "" {
 		return tool + " | running"
 	}
+
 	return tool + " | running " + truncateRunes(collapseWhitespace(target), 120)
 }
 
@@ -728,6 +843,7 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 	if desc := strings.TrimSpace(req.Description); desc != "" {
 		return truncateRunes(collapseWhitespace(desc), 160)
 	}
+
 	if gap := strings.TrimSpace(req.NamedGap); gap != "" {
 		return "resolve named evidence gap: " + truncateRunes(collapseWhitespace(gap), 120)
 	}
@@ -738,58 +854,70 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 		if target == "" {
 			target = strings.TrimSpace(req.Task)
 		}
+
 		if target == "" {
 			return "build a ranked context packet before choosing exact reads"
 		}
+
 		return "build a ranked context packet for " + truncateRunes(collapseWhitespace(target), 96)
 	case workspace.ToolNameContextQuery, workspace.ToolNameContextZoom, workspace.ToolNameContextImpact, workspace.ToolNameDependencyGraph:
 		if target == "" {
 			return "trace code relationships without broad file reads"
 		}
+
 		return "trace code relationships around " + target
 	case workspace.ToolNameDiscoveryQuery:
 		purpose := strings.TrimSpace(req.Purpose)
 		if purpose == "" {
 			purpose = "repository discovery"
 		}
+
 		if target == "" {
 			return "run structured " + purpose + " discovery"
 		}
+
 		return "run structured " + purpose + " discovery around " + target
 	case workspace.ToolNameListFiles:
 		if target == "" {
 			target = "the current workspace"
 		}
+
 		return "map " + target + " before choosing what to inspect"
 	case workspace.ToolNameSearchFiles:
 		if target == "" {
 			return "find candidate files for the next inspection step"
 		}
+
 		return "find candidate files matching " + target
 	case workspace.ToolNameSearchContent:
 		if target == "" {
 			return "locate references before opening files"
 		}
+
 		return "locate references to " + target
 	case workspace.ToolNameReadFile:
 		if target == "" {
 			return "inspect source context needed for this turn"
 		}
+
 		return "inspect " + target + " for the relevant context"
 	case "go_file_outline", "rust_file_outline", "ts_file_outline", "python_file_outline", "java_file_outline", "cpp_file_outline":
 		if target == "" {
 			return "scan the file structure before reading details"
 		}
+
 		return "scan " + target + " to find the right symbol or section"
 	case "go_read_symbol", "rust_read_symbol", "ts_read_symbol", "python_read_symbol", "java_read_symbol", "cpp_read_symbol":
 		if target == "" {
 			return "read the exact declaration instead of a broad file slice"
 		}
+
 		return "read the exact declaration around " + target
 	case workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameApplyPatch:
 		if target == "" {
 			return "apply the planned code change"
 		}
+
 		return "apply the planned change in " + target
 	case workspace.ToolNameTaskLedger:
 		return "keep the visible plan synchronized with the work"
@@ -797,23 +925,28 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 		if target == "" {
 			return "inspect or verify state with a command"
 		}
+
 		if historyShellCommandLooksLikeVerification(target) {
 			return "verify the current state by running " + target
 		}
+
 		return "inspect workspace state by running " + target
 	case "child_task":
 		if target == "" {
 			return "delegate a bounded subtask while continuing the main task"
 		}
+
 		return "delegate a bounded subtask about " + target
 	}
 
 	if action := strings.TrimSpace(event.Action); action != "" {
 		return "perform the requested " + truncateRunes(collapseWhitespace(action), 96) + " tool step"
 	}
+
 	if target != "" {
 		return "gather context from " + target
 	}
+
 	return "gather context needed for this turn"
 }
 
@@ -828,12 +961,14 @@ func toolRequestTraceTarget(req workspace.ToolRequest) string {
 		} else if req.EndLine > 0 {
 			target += fmt.Sprintf(":1-%d", req.EndLine)
 		}
+
 		return target
 	case strings.TrimSpace(req.Pattern) != "":
 		target := strings.TrimSpace(req.Pattern)
 		if strings.TrimSpace(req.Glob) != "" {
 			target += " in " + strings.TrimSpace(req.Glob)
 		}
+
 		return target
 	case strings.TrimSpace(req.Glob) != "":
 		return strings.TrimSpace(req.Glob)
@@ -875,9 +1010,11 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	if plan.route.Family == "conversation" || plan.route.Contract == "direct_answer" {
 		budget := NewContextBudget(m.compactionContextSize())
 		maxMsgs, maxChars := budget.ConvMaxMessages, budget.ConvMaxChars
+
 		policy.MaxContextMessages = maxMsgs
 		policy.MaxContextChars = maxChars
 	}
+
 	// Conversation and read-only lanes: do not cap tool steps or
 	// model calls. The model owns the decision of when evidence is
 	// sufficient. The doom-loop guard catches repeated identical
@@ -885,10 +1022,12 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	// budget wall.
 	if plan.route.Family == "conversation" || plan.route.Family == "direct_answer" ||
 		plan.route.Contract == "direct_answer" || plan.route.Contract == "grounded_evidence_summary" {
+
 		policy.MaxModelCalls = 0
 		policy.MaxToolSteps = 0
 		steps = 0
 	}
+
 	runner := &agent.Runner{
 		Client:              m.client,
 		ImplementerClient:   m.implementerClient,
@@ -912,10 +1051,12 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	}
 	// Collect source-body tool results from this turn to seed the next.
 	var turnSourceResults []workspace.ToolResult
+
 	collectSourceResult := func(result workspace.ToolResult) {
 		if strings.TrimSpace(result.Error) != "" {
 			return
 		}
+
 		tool := strings.TrimSpace(result.Tool)
 		switch tool {
 		case workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate, workspace.ToolNameReadOnlyCapability, workspace.ToolNameContextZoom:
@@ -928,7 +1069,9 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 			}
 		}
 	}
+
 	_ = collectSourceResult // used in the onToolResult callback below
+
 	answer, err := runner.Run(
 		ctx,
 		history,
@@ -938,6 +1081,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		},
 		func(event agent.ToolRequestEvent) {
 			m.logToolRequest(event)
+
 			if !m.planExecuteActive {
 				m.events <- toolTraceMsg{
 					step:       event.Step,
@@ -957,11 +1101,13 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 			m.recordTaskLedger(event.Request, event.Result)
 			m.recordSubmittedPlan(event.Request, event.Result)
 			collectSourceResult(event.Result)
+
 			if workspace.IsWorkspaceWriteTool(event.Request.Tool) && strings.TrimSpace(event.Result.Error) == "" {
 				if err := m.reloadPromptStack(); err != nil {
 					m.setContextError("Prompt context failed: " + err.Error())
 				}
 			}
+
 			if !m.planExecuteActive {
 				m.events <- toolTraceMsg{
 					step:        event.Step,
@@ -971,6 +1117,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 					auditEvents: historyAuditEventsForToolResult(event),
 				}
 			}
+
 			if workspace.IsWorkspaceWriteTool(event.Request.Tool) || event.Request.Tool == workspace.ToolNameTaskLedger || strings.TrimSpace(event.Result.Tool) == workspace.ToolNameSubmitPlan {
 				m.events <- planRefreshMsg{}
 			}
@@ -979,6 +1126,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	if err != nil {
 		return "", err
 	}
+
 	m.lastAssistantReasoningContent = strings.TrimSpace(runner.LastAssistantMessage.ReasoningContent)
 	// Store source-body results for follow-up turns only in conversation
 	// and direct-answer lanes — these are the routes where the user may
@@ -988,6 +1136,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	} else {
 		m.ClearLastTurnSourceResults()
 	}
+
 	return answer, err
 }
 
@@ -995,10 +1144,12 @@ func (m *Model) preExecuteToolRequest(step int, req workspace.ToolRequest, mode 
 	if m == nil || m.workspace == nil {
 		return nil
 	}
+
 	switch m.workspace.EvaluateToolRule(req) {
 	case workspace.ToolRuleAllow:
 		m.recordRollbackSnapshot(req)
 		m.capturePlanSnapshot(step, req)
+
 		return nil
 	case workspace.ToolRuleDeny:
 		return &workspace.ToolResult{
@@ -1010,14 +1161,17 @@ func (m *Model) preExecuteToolRequest(step int, req workspace.ToolRequest, mode 
 		if m.requestApproval(req, mode.Name) {
 			m.recordRollbackSnapshot(req)
 			m.capturePlanSnapshot(step, req)
+
 			return nil
 		}
+
 		return &workspace.ToolResult{
 			Tool:    req.Tool,
 			Summary: "Tool request denied by user",
 			Error:   fmt.Sprintf("user denied %s under agent mode %q", req.Tool, mode.Name),
 		}
 	}
+
 	return nil
 }
 
@@ -1027,10 +1181,12 @@ func (m *Model) pinPathsFromToolResult(result workspace.ToolResult) {
 	if m == nil || strings.TrimSpace(result.Error) != "" {
 		return
 	}
+
 	registry := m.pinnedFilesRegistry()
 	if registry == nil {
 		return
 	}
+
 	switch strings.TrimSpace(result.Tool) {
 	case workspace.ToolNameReadFile, workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile,
 		"go_read_symbol", "go_extract_body", "go_file_outline":
@@ -1048,8 +1204,10 @@ func extractPinnablePathFromSummary(summary string) string {
 	if trimmed == "" {
 		return ""
 	}
+
 	lower := strings.ToLower(trimmed)
 	prefixes := []string{"read ", "edited ", "wrote ", "appended ", "outlined ", "extracted "}
+
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(lower, prefix) {
 			rest := trimmed[len(prefix):]
@@ -1059,17 +1217,21 @@ func extractPinnablePathFromSummary(summary string) string {
 					break
 				}
 			}
+
 			rest = strings.TrimSpace(rest)
 			if rest == "" {
 				return ""
 			}
+
 			fields := strings.Fields(rest)
 			if len(fields) >= 2 && looksLikeFileHandle(fields[0]) {
 				return strings.TrimSpace(strings.Join(fields[1:], " "))
 			}
+
 			return rest
 		}
 	}
+
 	return ""
 }
 
@@ -1077,11 +1239,13 @@ func looksLikeFileHandle(token string) bool {
 	if len(token) < 2 || token[0] != 'f' {
 		return false
 	}
+
 	for _, r := range token[1:] {
 		if r < '0' || r > '9' {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -1095,6 +1259,7 @@ func (m *Model) initDebugLogger() {
 	if err != nil {
 		m.runtimeError = "Debug log failed: " + err.Error()
 		m.status = m.runtimeError
+
 		return
 	}
 
@@ -1114,6 +1279,7 @@ func (m *Model) initDebugLogger() {
 	if m.contextError != "" {
 		m.logError("context", m.contextError)
 	}
+
 	if m.runtimeError != "" {
 		m.logError("runtime", m.runtimeError)
 	}
@@ -1136,10 +1302,12 @@ func (m *Model) composedSystemPrompt() (string, []promptstack.Source) {
 	if m == nil {
 		return "", nil
 	}
+
 	key := m.composedPromptKey()
 	if m.composedPromptCacheKey == key {
 		return m.composedPrompt, append([]promptstack.Source(nil), m.composedPromptSources...)
 	}
+
 	mode := m.currentMode()
 	overlayModel := util.FirstNonEmpty(m.plannerSpec.Model, m.cfg.LlamaServer.Model)
 	stack := promptstack.AppendOverlays(
@@ -1148,18 +1316,24 @@ func (m *Model) composedSystemPrompt() (string, []promptstack.Source) {
 	)
 	sources := append([]promptstack.Source(nil), stack.Sources...)
 	parts := make([]string, 0, 4)
+
 	if base := strings.TrimSpace(stack.Text); base != "" {
 		parts = append(parts, base)
 	}
+
 	modeFragments := loadModeSystemPromptFragments(mode, m.projectRoot(), sources)
 	if extras := strings.TrimSpace(modeFragments.Text); extras != "" {
 		parts = append(parts, extras)
 		sources = append(sources, modeFragments.Sources...)
 	}
+
 	prompt := strings.Join(parts, "\n\n")
+
 	m.composedPrompt = prompt
+
 	m.composedPromptSources = append([]promptstack.Source(nil), sources...)
 	m.composedPromptCacheKey = key
+
 	return prompt, append([]promptstack.Source(nil), sources...)
 }
 
@@ -1167,6 +1341,7 @@ func (m *Model) composedPromptKey() string {
 	if m == nil {
 		return ""
 	}
+
 	return strings.Join([]string{
 		m.currentMode().Name,
 		strings.TrimSpace(m.cfg.Chat.ModelFamily),
@@ -1178,6 +1353,7 @@ func (m *Model) invalidateComposedPrompt() {
 	if m == nil {
 		return
 	}
+
 	m.composedPrompt = ""
 	m.composedPromptSources = nil
 	m.composedPromptCacheKey = ""
@@ -1190,12 +1366,15 @@ func (m *Model) projectRoot() string {
 	if m == nil {
 		return ""
 	}
+
 	if root := strings.TrimSpace(m.cfg.Chat.ProjectRoot); root != "" {
 		return root
 	}
+
 	if m.workspace != nil {
 		return m.workspace.Root()
 	}
+
 	return ""
 }
 
@@ -1208,48 +1387,60 @@ func loadModeSystemPromptFragments(mode agent.Mode, projectRoot string, existing
 	if len(mode.SystemPromptFiles) == 0 {
 		return systemPromptFragments{}
 	}
+
 	sections := make([]string, 0, len(mode.SystemPromptFiles))
 	sources := make([]promptstack.Source, 0, len(mode.SystemPromptFiles))
 	seen := make(map[string]struct{}, len(mode.SystemPromptFiles))
 	seenBodies := make(map[string]struct{}, len(existing))
+
 	for _, source := range existing {
 		path := strings.TrimSpace(source.Path)
 		if path == "" {
 			continue
 		}
+
 		if !filepath.IsAbs(path) && projectRoot != "" {
 			path = filepath.Join(projectRoot, path)
 		}
+
 		path = filepath.Clean(path)
 		seen[path] = struct{}{}
+
 		if data, err := os.ReadFile(path); err == nil {
 			if body := strings.TrimSpace(string(data)); body != "" {
 				seenBodies[body] = struct{}{}
 			}
 		}
 	}
+
 	for _, relOrAbs := range mode.SystemPromptFiles {
 		path := strings.TrimSpace(relOrAbs)
 		if path == "" {
 			continue
 		}
+
 		if !filepath.IsAbs(path) && projectRoot != "" {
 			path = filepath.Join(projectRoot, path)
 		}
+
 		path = filepath.Clean(path)
 		if _, ok := seen[path]; ok {
 			continue
 		}
+
 		seen[path] = struct{}{}
+
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
+
 		trimmed := strings.TrimSpace(string(data))
 		if trimmed != "" {
 			if _, ok := seenBodies[trimmed]; ok {
 				continue
 			}
+
 			seenBodies[trimmed] = struct{}{}
 			sections = append(sections, trimmed)
 			sources = append(sources, promptstack.Source{
@@ -1259,6 +1450,7 @@ func loadModeSystemPromptFragments(mode agent.Mode, projectRoot string, existing
 			})
 		}
 	}
+
 	return systemPromptFragments{
 		Text:    strings.Join(sections, "\n\n"),
 		Sources: sources,
@@ -1269,6 +1461,7 @@ func transcriptPromptSources(sources []promptstack.Source) []transcript.PromptSo
 	if len(sources) == 0 {
 		return nil
 	}
+
 	out := make([]transcript.PromptSource, 0, len(sources))
 	for _, source := range sources {
 		out = append(out, transcript.PromptSource{
@@ -1277,6 +1470,7 @@ func transcriptPromptSources(sources []promptstack.Source) []transcript.PromptSo
 			Path:        source.Path,
 		})
 	}
+
 	return out
 }
 
@@ -1294,22 +1488,28 @@ func (m *Model) reloadPromptStackWithProfiles(profiles []string) error {
 			return err
 		}
 	}
+
 	stack, err := promptstack.Build(chat, profiles)
 	if err != nil {
 		if !m.cfg.Chat.AllowMissingPrompts {
 			return err
 		}
+
 		lenientStack, lenientErr := promptstack.BuildLenient(chat, profiles)
 		if lenientErr != nil {
 			return err
 		}
+
 		lenientStack.Warnings = append([]string{"prompt context degraded: " + err.Error()}, lenientStack.Warnings...)
 		stack = lenientStack
 	}
+
 	m.promptStack = stack
 	m.invalidateComposedPrompt()
+
 	if len(stack.Warnings) > 0 {
 		m.setContextError(strings.Join(stack.Warnings, "; "))
 	}
+
 	return nil
 }

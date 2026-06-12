@@ -28,8 +28,10 @@ func Main() {
 		logPath  = flag.String("log", "", "path to write session JSONL (default: logs/e2e/<timestamp>.jsonl)")
 		timeout  = flag.Duration("timeout", 5*time.Minute, "overall run timeout")
 	)
+
 	flag.Var(&prompts, "turn", "user prompt for a turn (repeatable; when set, -prompt is ignored)")
 	flag.Parse()
+
 	if len(prompts) == 0 {
 		prompts = multiPrompt{*prompt}
 	}
@@ -43,11 +45,13 @@ func Main() {
 		_ = os.MkdirAll("logs/e2e", 0o755)
 		*logPath = filepath.Join("logs/e2e", time.Now().Format("20060102-150405")+".jsonl")
 	}
+
 	logFile, err := os.Create(*logPath)
 	if err != nil {
 		fatalf("create log: %v", err)
 	}
 	defer logFile.Close()
+
 	logEnc := json.NewEncoder(logFile)
 	emit := func(kind string, payload any) {
 		_ = logEnc.Encode(map[string]any{
@@ -59,6 +63,7 @@ func Main() {
 
 	client := llama.NewClient(cfg.BaseURL(), 0).WithBackend(cfg.LlamaServer.Kind)
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+
 	defer cancel()
 
 	// Ensure server is reachable + capture the model ID.
@@ -66,6 +71,7 @@ func Main() {
 	if err != nil {
 		fatalf("llama-server not reachable at %s: %v", cfg.BaseURL(), err)
 	}
+
 	modelID := ""
 	if len(models) > 0 {
 		modelID = models[0].ID
@@ -115,10 +121,12 @@ func Main() {
 		},
 		DoomLoopGate: func(req workspace.ToolRequest, count int) bool {
 			gateCalls++
+
 			emit("doom_loop_gate", map[string]any{
 				"tool":  req.Tool,
 				"count": count,
 			})
+
 			// Auto-deny in e2e to prove the path fires cleanly if a loop happens.
 			return false
 		},
@@ -144,8 +152,10 @@ func Main() {
 	start := time.Now()
 
 	var lastAnswer string
+
 	for i, userPrompt := range prompts {
 		emit("user_turn", map[string]any{"index": i, "prompt": userPrompt})
+
 		history = append(history, llama.ChatMessage{Role: "user", Content: userPrompt})
 
 		answer, rerr := runner.Run(
@@ -155,8 +165,10 @@ func Main() {
 			func(status string) { emit("status", status) },
 			func(event agent.ToolRequestEvent) {
 				toolReqs++
+
 				fp := event.Request.Tool + "|" + event.Raw
 				fingerprints[fp]++
+
 				emit("tool_request", map[string]any{
 					"turn":   i,
 					"step":   event.Step,
@@ -167,6 +179,7 @@ func Main() {
 			},
 			func(event agent.ToolResultEvent) {
 				toolResults++
+
 				emit("tool_result", map[string]any{
 					"turn":    i,
 					"step":    event.Step,
@@ -179,12 +192,16 @@ func Main() {
 		if rerr != nil {
 			err = rerr
 			emit("turn_error", map[string]any{"index": i, "error": rerr.Error()})
+
 			break
 		}
+
 		emit("assistant_turn", map[string]any{"index": i, "chars": len(answer)})
+
 		lastAnswer = answer
 		history = append(history, llama.ChatMessage{Role: "assistant", Content: answer})
 	}
+
 	answer := lastAnswer
 	elapsed := time.Since(start)
 
@@ -192,12 +209,14 @@ func Main() {
 	if err != nil {
 		runErr = err.Error()
 	}
+
 	maxFpCount := 0
 	for _, n := range fingerprints {
 		if n > maxFpCount {
 			maxFpCount = n
 		}
 	}
+
 	summary := map[string]any{
 		"elapsed_ms":          elapsed.Milliseconds(),
 		"tool_requests":       toolReqs,
@@ -221,9 +240,11 @@ func Main() {
 	fmt.Printf("max dup calls: %d\n", maxFpCount)
 	fmt.Printf("gate hits    : %d\n", gateCalls)
 	fmt.Printf("answer chars : %d\n", len(answer))
+
 	if runErr != "" {
 		fmt.Printf("run error    : %s\n", runErr)
 	}
+
 	fmt.Println("--- answer ---")
 	fmt.Println(answer)
 }
@@ -237,35 +258,44 @@ func e2eInstructionAttacher(chat config.Chat, root string) *agent.InstructionAtt
 	if !chat.AttachInstructionFiles {
 		return nil
 	}
+
 	if chat.ProjectPromptCandidates == nil {
 		return agent.NewInstructionAttacher(root)
 	}
+
 	candidates := e2eInstructionCandidates(chat.ProjectPromptCandidates)
 	if len(candidates) == 0 {
 		return nil
 	}
+
 	return agent.NewInstructionAttacher(root, candidates...)
 }
 
 func e2eInstructionCandidates(names []string) []string {
 	seen := map[string]struct{}{}
+
 	var out []string
+
 	for _, name := range names {
 		name = strings.TrimSpace(name)
 		if name == "" || name != filepath.Base(name) {
 			continue
 		}
+
 		switch name {
 		case ".qwen.md", "QWEN.md", "IDIOM.md", "AGENTS.md", "CLAUDE.md":
 		default:
 			continue
 		}
+
 		if _, ok := seen[name]; ok {
 			continue
 		}
+
 		seen[name] = struct{}{}
 		out = append(out, name)
 	}
+
 	return out
 }
 
@@ -273,6 +303,7 @@ func firstN[T any](s []T, n int) []T {
 	if len(s) <= n {
 		return s
 	}
+
 	return s[:n]
 }
 
@@ -281,6 +312,7 @@ func loadFile(path string) string {
 	if err != nil {
 		return ""
 	}
+
 	return strings.TrimSpace(string(b))
 }
 

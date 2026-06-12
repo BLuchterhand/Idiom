@@ -67,6 +67,7 @@ func InitializeEffort(opts CreateEffortOptions) (CreateResult, error) {
 	if effortID == "" {
 		effortID = filepath.Base(absRoot)
 	}
+
 	title := strings.TrimSpace(opts.Title)
 	if title == "" {
 		title = effortID
@@ -142,13 +143,16 @@ func AdvanceCreatePhase(absRoot string, nextPhase string) (CreateResult, error) 
 		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot},
 			fmt.Errorf("cannot advance from terminal phase %q", ws.CurrentPhase)
 	}
+
 	found := false
+
 	for _, p := range allowed {
 		if p == nextPhase {
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		return CreateResult{
 			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
@@ -158,8 +162,10 @@ func AdvanceCreatePhase(absRoot string, nextPhase string) (CreateResult, error) 
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
+
 	ws.UpdatedAt = now
 	ws.StateRevision++
+
 	ws.CurrentPhase = nextPhase
 	ws.LastEventID = "evt-create-phase-" + nextPhase + "-" + now
 
@@ -204,6 +210,7 @@ func ApprovePRDGate(absRoot string) (CreateResult, IntakeResult, error) {
 	if err != nil {
 		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, IntakeResult{}, fmt.Errorf("load workflow state: %w", err)
 	}
+
 	if ws.CurrentPhase != PhasePRDReview {
 		return CreateResult{
 			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
@@ -213,6 +220,7 @@ func ApprovePRDGate(absRoot string) (CreateResult, IntakeResult, error) {
 	}
 
 	prdPath := filepath.Join(absRoot, "prd.md")
+
 	data, err := os.ReadFile(prdPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -221,6 +229,7 @@ func ApprovePRDGate(absRoot string) (CreateResult, IntakeResult, error) {
 				CurrentPhase: ws.CurrentPhase, Blockers: []string{"prd.md not found"},
 			}, IntakeResult{}, nil
 		}
+
 		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, IntakeResult{}, fmt.Errorf("read prd.md: %w", err)
 	}
 
@@ -238,6 +247,7 @@ func ApprovePRDGate(absRoot string) (CreateResult, IntakeResult, error) {
 		for _, f := range intake.Failures {
 			blockers = append(blockers, f.Code+": "+f.Message)
 		}
+
 		return CreateResult{
 			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
 			CurrentPhase: ws.CurrentPhase, Blockers: blockers,
@@ -245,15 +255,18 @@ func ApprovePRDGate(absRoot string) (CreateResult, IntakeResult, error) {
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
+
 	prd.FrontMatter.Status = string(ArtifactStateAccepted)
 	prd.FrontMatter.AcceptedAt = now
 	prd.FrontMatter.AcceptedBy = "operator"
 	prd.FrontMatter.AcceptanceProfile = "product_workflow_create"
+
 	if err := WritePRDMarkdown(absRoot, prd); err != nil {
 		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, intake, fmt.Errorf("write accepted prd.md: %w", err)
 	}
 
 	result, err := AdvanceCreatePhase(absRoot, PhaseADRDrafting)
+
 	return result, intake, err
 }
 
@@ -265,6 +278,7 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 	if err != nil {
 		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, nil, fmt.Errorf("load workflow state: %w", err)
 	}
+
 	if ws.CurrentPhase != PhaseADRReview {
 		return CreateResult{
 			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
@@ -277,6 +291,7 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 
 	// Load and validate ADR index.
 	idxPath := filepath.Join(absRoot, "adrs", "index.json")
+
 	idxData, err := os.ReadFile(idxPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -285,8 +300,10 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 				CurrentPhase: ws.CurrentPhase, Blockers: []string{"adrs/index.json not found"},
 			}, nil, nil
 		}
+
 		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, nil, fmt.Errorf("read adrs/index.json: %w", err)
 	}
+
 	idx, err := ParseADRIndexJSON(idxData)
 	if err != nil {
 		return CreateResult{
@@ -294,10 +311,14 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 			CurrentPhase: ws.CurrentPhase, Blockers: []string{"adrs/index.json parse error: " + err.Error()},
 		}, nil, nil
 	}
+
 	idxIntake := ValidateADRIndexIntake(idx)
+
 	allIntakes = append(allIntakes, idxIntake)
+
 	if !idxIntake.Passed {
 		blockers := intakeFailureBlockers(idxIntake)
+
 		return CreateResult{
 			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
 			CurrentPhase: ws.CurrentPhase, Blockers: blockers,
@@ -312,12 +333,16 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 		blocked bool
 		reason  string
 	}
-	var adrResults []adrResult
-	var adrBlockers []string
+
+	var (
+		adrResults  []adrResult
+		adrBlockers []string
+	)
 
 	for _, entry := range idx.ADRs {
 		ar := adrResult{entry: entry}
 		adrPath := filepath.Join(absRoot, "adrs", entry.Path)
+
 		data, readErr := os.ReadFile(adrPath)
 		if readErr != nil {
 			ar.blocked = true
@@ -325,8 +350,10 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 			adrBlockers = append(adrBlockers, ar.reason)
 			allIntakes = append(allIntakes, IntakeResult{})
 			adrResults = append(adrResults, ar)
+
 			continue
 		}
+
 		doc, parseErr := ParseADRMarkdown(data)
 		if parseErr != nil {
 			ar.blocked = true
@@ -334,16 +361,20 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 			adrBlockers = append(adrBlockers, ar.reason)
 			allIntakes = append(allIntakes, IntakeResult{})
 			adrResults = append(adrResults, ar)
+
 			continue
 		}
+
 		ar.doc = doc
 		ar.intake = ValidateADRIntake(doc, entry.Path)
 		allIntakes = append(allIntakes, ar.intake)
+
 		if !ar.intake.Passed {
 			ar.blocked = true
 			ar.reason = entry.Path + ": " + strings.Join(intakeFailureBlockers(ar.intake), "; ")
 			adrBlockers = append(adrBlockers, intakeFailureBlockers(ar.intake)...)
 		}
+
 		adrResults = append(adrResults, ar)
 	}
 
@@ -356,11 +387,13 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 
 	// Phase 2: all passed — write accepted status to every ADR.
 	now := time.Now().UTC().Format(time.RFC3339)
+
 	for _, ar := range adrResults {
 		ar.doc.FrontMatter.Status = string(ArtifactStateAccepted)
 		ar.doc.FrontMatter.AcceptedAt = now
 		ar.doc.FrontMatter.AcceptedBy = "operator"
 		ar.doc.FrontMatter.AcceptanceProfile = "product_workflow_create"
+
 		if writeErr := WriteADRMarkdown(absRoot, ar.entry.Path, ar.doc); writeErr != nil {
 			return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, allIntakes,
 				fmt.Errorf("write %s: %w", ar.entry.Path, writeErr)
@@ -371,12 +404,14 @@ func ApproveADRGate(absRoot string) (CreateResult, []IntakeResult, error) {
 	for i := range idx.ADRs {
 		idx.ADRs[i].Status = string(ArtifactStateAccepted)
 	}
+
 	if err := WriteADRIndexJSON(absRoot, idx); err != nil {
 		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, allIntakes,
 			fmt.Errorf("write adrs/index.json: %w", err)
 	}
 
 	result, err := AdvanceCreatePhase(absRoot, PhaseTDDSynthesis)
+
 	return result, allIntakes, err
 }
 
@@ -386,6 +421,7 @@ func CompleteEffort(absRoot string) (CreateResult, error) {
 	if err != nil {
 		return CreateResult{Status: ProductWorkflowStatusError, EffortRoot: absRoot}, fmt.Errorf("load workflow state: %w", err)
 	}
+
 	if ws.CurrentPhase != PhaseTDDSynthesis {
 		return CreateResult{
 			Status: ProductWorkflowStatusBlocked, EffortRoot: absRoot, EffortID: ws.EffortID,
@@ -393,6 +429,7 @@ func CompleteEffort(absRoot string) (CreateResult, error) {
 			Blockers:     []string{"cannot complete from phase " + ws.CurrentPhase},
 		}, nil
 	}
+
 	return AdvanceCreatePhase(absRoot, PhaseComplete)
 }
 
@@ -408,7 +445,9 @@ func WriteADRMarkdown(absRoot, relPath string, doc ADRDocument) error {
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		return err
 	}
+
 	content := RenderADRMarkdown(doc)
+
 	return os.WriteFile(fullPath, []byte(content), 0o644)
 }
 
@@ -418,39 +457,51 @@ func WriteADRIndexJSON(absRoot string, idx ADRIndex) error {
 	if err != nil {
 		return fmt.Errorf("encode ADR index: %w", err)
 	}
+
 	data = append(data, '\n')
+
 	return os.WriteFile(filepath.Join(absRoot, "adrs", "index.json"), data, 0o644)
 }
 
 // RenderPRDMarkdown produces markdown matching the ParsePRDMarkdown expected format.
 func RenderPRDMarkdown(doc PRDDocument) string {
 	var b strings.Builder
+
 	b.WriteString("---\n")
+
 	fm := doc.FrontMatter
 	if fm.SchemaVersion != "" {
 		b.WriteString("schema_version: " + fm.SchemaVersion + "\n")
 	}
+
 	if fm.PRDID != "" {
 		b.WriteString("prd_id: " + fm.PRDID + "\n")
 	}
+
 	if fm.Status != "" {
 		b.WriteString("status: " + fm.Status + "\n")
 	}
+
 	if fm.TaskID != "" {
 		b.WriteString("task_id: " + fm.TaskID + "\n")
 	}
+
 	if fm.CreatedAt != "" {
 		b.WriteString("created_at: " + fm.CreatedAt + "\n")
 	}
+
 	if fm.AcceptedAt != "" {
 		b.WriteString("accepted_at: " + fm.AcceptedAt + "\n")
 	}
+
 	if fm.AcceptedBy != "" {
 		b.WriteString("accepted_by: " + fm.AcceptedBy + "\n")
 	}
+
 	if fm.AcceptanceProfile != "" {
 		b.WriteString("acceptance_profile: " + fm.AcceptanceProfile + "\n")
 	}
+
 	b.WriteString("---\n\n")
 
 	for _, req := range doc.Requirements {
@@ -462,11 +513,13 @@ func RenderPRDMarkdown(doc PRDDocument) string {
 		b.WriteString("- **owner_alignment**: " + req.OwnerAlignment + "\n")
 		b.WriteString("- **testability**: " + req.Testability + "\n")
 		b.WriteString("- **metric**: " + req.Metric + "\n")
+
 		if req.OpenQuestionsPresent && len(req.OpenQuestions) > 0 {
 			b.WriteString("- **open_questions**: [" + strings.Join(req.OpenQuestions, ", ") + "]\n")
 		} else {
 			b.WriteString("- **open_questions**: []\n")
 		}
+
 		b.WriteString("\n")
 	}
 
@@ -479,54 +532,71 @@ func RenderPRDMarkdown(doc PRDDocument) string {
 // template creation to fall back to the canonical empty section scaffold.
 func RenderADRMarkdown(doc ADRDocument) string {
 	var b strings.Builder
+
 	b.WriteString("---\n")
+
 	fm := doc.FrontMatter
 	if fm.SchemaVersion != "" {
 		b.WriteString("schema_version: " + fm.SchemaVersion + "\n")
 	}
+
 	if fm.ADRID != "" {
 		b.WriteString("adr_id: " + fm.ADRID + "\n")
 	}
+
 	if fm.Status != "" {
 		b.WriteString("status: " + fm.Status + "\n")
 	}
+
 	if len(fm.PRDRefs) > 0 {
 		b.WriteString("prd_refs:\n")
+
 		for _, ref := range fm.PRDRefs {
 			b.WriteString("  - " + ref + "\n")
 		}
 	}
+
 	if len(fm.EvidenceRefs) > 0 {
 		b.WriteString("evidence_refs:\n")
+
 		for _, ref := range fm.EvidenceRefs {
 			b.WriteString("  - " + ref + "\n")
 		}
 	}
+
 	if len(fm.TDDObligations) > 0 {
 		b.WriteString("tdd_obligations:\n")
+
 		for _, ref := range fm.TDDObligations {
 			b.WriteString("  - " + ref + "\n")
 		}
 	}
+
 	if fm.CoverageTier != "" {
 		b.WriteString("coverage_tier: " + fm.CoverageTier + "\n")
 	}
+
 	if fm.AcceptedAt != "" {
 		b.WriteString("accepted_at: " + fm.AcceptedAt + "\n")
 	}
+
 	if fm.AcceptedBy != "" {
 		b.WriteString("accepted_by: " + fm.AcceptedBy + "\n")
 	}
+
 	if fm.AcceptanceProfile != "" {
 		b.WriteString("acceptance_profile: " + fm.AcceptanceProfile + "\n")
 	}
+
 	b.WriteString("---\n\n")
 
 	if body := strings.TrimSpace(doc.BodyMarkdown); body != "" {
 		b.WriteString(body)
+
 		if !strings.HasSuffix(body, "\n") {
 			b.WriteByte('\n')
 		}
+
 		return b.String()
 	}
 
@@ -545,14 +615,17 @@ func RenderADRMarkdown(doc ADRDocument) string {
 
 func loadExistingCreatePhase(absRoot string) (CreateResult, bool) {
 	wsPath := filepath.Join(absRoot, WorkflowStateFileName)
+
 	data, err := os.ReadFile(wsPath)
 	if err != nil {
 		return CreateResult{}, false
 	}
+
 	ws, err := ParseWorkflowStateJSON(data)
 	if err != nil {
 		return CreateResult{}, false
 	}
+
 	switch ws.CurrentPhase {
 	case PhasePRDDrafting, PhasePRDReview, PhaseADRDrafting, PhaseADRReview, PhaseTDDSynthesis, PhaseComplete:
 		return CreateResult{
@@ -571,10 +644,12 @@ func loadExistingCreatePhase(absRoot string) (CreateResult, bool) {
 // and atomic rename, matching the pattern in transition_apply.go.
 func atomicWriteWorkflowState(absRoot string, ws WorkflowState) error {
 	workflowPath := filepath.Join(absRoot, WorkflowStateFileName)
+
 	data, err := json.MarshalIndent(ws, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", WorkflowStateFileName, err)
 	}
+
 	data = append(data, '\n')
 
 	tmpPath := workflowPath + ".create.tmp"
@@ -591,6 +666,7 @@ func atomicWriteWorkflowState(absRoot string, ws WorkflowState) error {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("replace %s: %w", WorkflowStateFileName, err)
 	}
+
 	return nil
 }
 
@@ -599,6 +675,7 @@ func intakeFailureBlockers(intake IntakeResult) []string {
 	for _, f := range intake.Failures {
 		blockers = append(blockers, f.Code+": "+f.Message)
 	}
+
 	return blockers
 }
 
@@ -608,5 +685,6 @@ func firstAction(actions []string) string {
 			return strings.TrimSpace(a)
 		}
 	}
+
 	return ""
 }

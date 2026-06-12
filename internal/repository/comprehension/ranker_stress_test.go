@@ -35,12 +35,15 @@ func TestRankerHandlesCyclicGraphsWithoutInfiniteLoop(t *testing.T) {
 		MatchedIDs: map[string]struct{}{"a": {}},
 		Intent:     IntentSearch,
 	})
+
 	if len(ranked) != 4 {
 		t.Fatalf("want 4 files, got %d", len(ranked))
 	}
+
 	if ranked[0].Path != "a.go" {
 		t.Fatalf("matched file should rank first, got %v", ranked[0])
 	}
+
 	// Because the cycle makes every other file a 1-hop neighbor of a (via
 	// forward or reverse edges), the strong invariant is just that the
 	// matched file outranks them all. The point of this test is termination
@@ -60,9 +63,11 @@ func TestRankerSelfLoopsAreDropped(t *testing.T) {
 		Edges: []Edge{{SourceID: "n1", TargetID: "n2"}},
 	}
 	fg := BuildFileGraph(g)
+
 	if fwd := fg.Forward["x.go"]; len(fwd) != 0 {
 		t.Fatalf("expected no forward edges from self-loop, got %v", fwd)
 	}
+
 	if rev := fg.Reverse["x.go"]; len(rev) != 0 {
 		t.Fatalf("expected no reverse edges into self-loop, got %v", rev)
 	}
@@ -81,6 +86,7 @@ func TestRankerDoubleSelfBoostBlocked(t *testing.T) {
 	}
 	matched := map[string]struct{}{"a": {}}
 	w := DefaultRankerWeights()
+
 	if got := HopBoost("a.go", BuildFileGraph(g), MatchedFilePaths(g, matched), w); got != 0 {
 		t.Fatalf("matched file boost = %v, want 0", got)
 	}
@@ -94,20 +100,26 @@ func TestRankerHubFanoutAtExactThreshold(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		files[fmt.Sprintf("f%d", i)] = struct{}{}
 	}
+
 	fg := FileGraph{
 		Files:   files,
 		Reverse: map[string]map[string]struct{}{},
 	}
+
 	fg.Reverse["edge"] = map[string]struct{}{"f0": {}}                  // 1 importer
 	fg.Reverse["onthreshold"] = map[string]struct{}{"f0": {}, "f1": {}} // 2 importers
 	fg.Reverse["over"] = map[string]struct{}{"f0": {}, "f1": {}, "f2": {}}
+
 	hubs := FanoutHubs(fg, 0.2)
+
 	if _, ok := hubs["edge"]; ok {
 		t.Fatalf("file with 1 importer should not be a hub")
 	}
+
 	if _, ok := hubs["onthreshold"]; !ok {
 		t.Fatalf("file at threshold should be a hub")
 	}
+
 	if _, ok := hubs["over"]; !ok {
 		t.Fatalf("file over threshold should be a hub")
 	}
@@ -158,6 +170,7 @@ func TestRankerPathPenaltyVariants(t *testing.T) {
 		{"README.md", w.PenaltyDocs, "README.md"},
 		{"internal/runtime/agent/runner.go", 1.0, "plain source"},
 	}
+
 	for _, tc := range cases {
 		got := PathPenalty(tc.path, w)
 		if math.Abs(got-tc.want) > 1e-9 {
@@ -184,6 +197,7 @@ func TestRankerVendoredCannotEscapeViaLearnedWeight(t *testing.T) {
 		LearnedWeights: map[string]float64{"node_modules/lib.js": LearnedWeightMax},
 		QueryTokens:    []string{"lib"},
 	})
+
 	for _, f := range ranked {
 		if f.Path == "node_modules/lib.js" && f.Score != 0 {
 			t.Fatalf("vendored file score must remain 0 even with learned weight, got %v", f.Score)
@@ -206,21 +220,27 @@ func TestRankerStaleAndHubAndPenaltyCompound(t *testing.T) {
 		}},
 		Intent: IntentSearch,
 	})
+
 	var stale, runner PackFile
+
 	for _, f := range ranked {
 		if f.Path == "src/utils.ts" {
 			stale = f
 		}
+
 		if f.Path == "internal/runtime/agent/runner.go" {
 			runner = f
 		}
 	}
+
 	if stale.Score < 0 {
 		t.Fatalf("compound demotion produced negative score: %v", stale.Score)
 	}
+
 	if !stale.Hub {
 		t.Fatalf("utils.ts should be flagged as a name hub")
 	}
+
 	if stale.Score >= runner.Score {
 		t.Fatalf("stale + hub + non-matching utils should rank below runner, got %v vs %v", stale.Score, runner.Score)
 	}
@@ -245,9 +265,11 @@ func TestRankerIntentFlipChangesOrdering(t *testing.T) {
 	rankUnder := func(intent Intent) []string {
 		out := RankPackFiles(RankInputs{Files: files, Graph: g, Intent: intent, QueryTokens: []string{"runner"}})
 		paths := make([]string, len(out))
+
 		for i, f := range out {
 			paths[i] = f.Path
 		}
+
 		return paths
 	}
 	search := rankUnder(IntentSearch)
@@ -256,16 +278,19 @@ func TestRankerIntentFlipChangesOrdering(t *testing.T) {
 	// Under IntentTest the test penalty is disabled so the test file should
 	// climb relative to its IntentSearch position.
 	posSearch, posTest := -1, -1
+
 	for i, p := range search {
 		if p == "internal/runtime/agent/runner_test.go" {
 			posSearch = i
 		}
 	}
+
 	for i, p := range testIntent {
 		if p == "internal/runtime/agent/runner_test.go" {
 			posTest = i
 		}
 	}
+
 	if posTest >= posSearch {
 		t.Fatalf("test intent should promote test file: search=%d test=%d (search=%v test=%v)", posSearch, posTest, search, testIntent)
 	}
@@ -293,9 +318,11 @@ func TestRankerIdempotenceUnderRepeatedRanking(t *testing.T) {
 	}
 	first := RankPackFiles(RankInputs{Files: files, Graph: g, MatchedIDs: map[string]struct{}{"a": {}}, Intent: IntentDebug, QueryTokens: []string{"a"}})
 	second := RankPackFiles(RankInputs{Files: files, Graph: g, MatchedIDs: map[string]struct{}{"a": {}}, Intent: IntentDebug, QueryTokens: []string{"a"}})
+
 	if len(first) != len(second) {
 		t.Fatalf("rankings differ in length")
 	}
+
 	for i := range first {
 		if first[i].Path != second[i].Path || math.Abs(first[i].Score-second[i].Score) > 1e-9 {
 			t.Fatalf("rank index %d differs: %v vs %v", i, first[i], second[i])
@@ -313,11 +340,13 @@ func TestRankerStableSortOnEqualScores(t *testing.T) {
 	}
 	first := RankPackFiles(RankInputs{Files: files, Graph: &Graph{Nodes: nodesFor(files)}, Intent: IntentSearch})
 	second := RankPackFiles(RankInputs{Files: append([]PackFile{}, files[2], files[0], files[1]), Graph: &Graph{Nodes: nodesFor(files)}, Intent: IntentSearch})
+
 	for i := range first {
 		if first[i].Path != second[i].Path {
 			t.Fatalf("equal-score sort is unstable: %v vs %v", first, second)
 		}
 	}
+
 	want := []string{"a.go", "m.go", "z.go"}
 	for i, p := range want {
 		if first[i].Path != p {
@@ -332,26 +361,34 @@ func TestRankerStableSortOnEqualScores(t *testing.T) {
 // ordering, and that the matched file ranks first.
 func TestRankerLargeRepoTerminatesAndOrders(t *testing.T) {
 	const n = 1000
+
 	files := make([]PackFile, n)
 	nodes := make([]Node, n)
+
 	for i := 0; i < n; i++ {
 		path := fmt.Sprintf("pkg/file%04d.go", i)
+
 		files[i] = PackFile{Path: path, Role: "editable"}
 		nodes[i] = Node{ID: fmt.Sprintf("n%d", i), Path: path}
 	}
+
 	// Sparse forward edges: each file imports the next two.
 	edges := make([]Edge, 0, n*2)
 	for i := 0; i < n-2; i++ {
 		edges = append(edges, Edge{SourceID: fmt.Sprintf("n%d", i), TargetID: fmt.Sprintf("n%d", i+1)})
 		edges = append(edges, Edge{SourceID: fmt.Sprintf("n%d", i), TargetID: fmt.Sprintf("n%d", i+2)})
 	}
+
 	// Add one explicit hub: file9999 imported by 250 of the others.
 	hubPath := "pkg/hub.go"
+
 	files = append(files, PackFile{Path: hubPath, Role: "editable"})
 	nodes = append(nodes, Node{ID: "hub", Path: hubPath})
+
 	for i := 0; i < 250; i++ {
 		edges = append(edges, Edge{SourceID: fmt.Sprintf("n%d", i), TargetID: "hub"})
 	}
+
 	g := &Graph{Nodes: nodes, Edges: edges}
 	ranked := RankPackFiles(RankInputs{
 		Files:      files,
@@ -359,23 +396,29 @@ func TestRankerLargeRepoTerminatesAndOrders(t *testing.T) {
 		MatchedIDs: map[string]struct{}{"n42": {}},
 		Intent:     IntentSearch,
 	})
+
 	if len(ranked) != n+1 {
 		t.Fatalf("expected %d files, got %d", n+1, len(ranked))
 	}
+
 	if ranked[0].Path != "pkg/file0042.go" {
 		t.Fatalf("matched file should rank first, got %s", ranked[0].Path)
 	}
+
 	// Hub should be present but flagged.
 	var hub PackFile
+
 	for _, f := range ranked {
 		if f.Path == hubPath {
 			hub = f
 			break
 		}
 	}
+
 	if !hub.Hub {
 		t.Fatalf("synthetic hub should be flagged: %#v", hub)
 	}
+
 	// Confirm scores are monotonically non-increasing.
 	for i := 1; i < len(ranked); i++ {
 		if ranked[i].Score > ranked[i-1].Score+1e-9 {
@@ -390,6 +433,7 @@ func TestRankerEmptyInputsDoNotPanic(t *testing.T) {
 	if got := RankPackFiles(RankInputs{}); len(got) != 0 {
 		t.Fatalf("empty input should return empty slice, got %v", got)
 	}
+
 	if got := RankPackFiles(RankInputs{Files: []PackFile{{Path: "a.go", Role: "editable"}}}); len(got) != 1 {
 		t.Fatalf("nil graph should still rank: %v", got)
 	}
@@ -406,6 +450,7 @@ func TestRankerLearnedWeightZeroIgnored(t *testing.T) {
 		Intent:         IntentSearch,
 		LearnedWeights: map[string]float64{"a.go": 0},
 	})
+
 	if ranked[0].Score == 0 {
 		t.Fatalf("zero learned weight should be treated as absent, not as score-zeroing")
 	}
@@ -416,22 +461,28 @@ func TestRankerLearnedWeightZeroIgnored(t *testing.T) {
 // fully connected 50-file graph in a fixed wall-clock time.
 func TestRankerHopTraversalBoundedByGraph(t *testing.T) {
 	const n = 50
+
 	files := make([]PackFile, n)
 	nodes := make([]Node, n)
+
 	for i := 0; i < n; i++ {
 		path := fmt.Sprintf("dense/f%d.go", i)
+
 		files[i] = PackFile{Path: path, Role: "editable"}
 		nodes[i] = Node{ID: fmt.Sprintf("n%d", i), Path: path}
 	}
+
 	edges := make([]Edge, 0, n*n)
 	for i := 0; i < n; i++ {
 		for j := 0; j < n; j++ {
 			if i == j {
 				continue
 			}
+
 			edges = append(edges, Edge{SourceID: fmt.Sprintf("n%d", i), TargetID: fmt.Sprintf("n%d", j)})
 		}
 	}
+
 	ranked := RankPackFiles(RankInputs{
 		Files:      files,
 		Graph:      &Graph{Nodes: nodes, Edges: edges},
@@ -458,6 +509,7 @@ func TestRankerHubMatchedFileNotDemoted(t *testing.T) {
 	}
 	matched := map[string]struct{}{"u": {}}
 	ranked := RankPackFiles(RankInputs{Files: files, Graph: g, MatchedIDs: matched, Intent: IntentSearch})
+
 	if ranked[0].Path != "src/utils.ts" {
 		t.Fatalf("matched name-hub should rank first, got %v", ranked)
 	}
@@ -491,12 +543,14 @@ func TestRankerScoresAreFiniteAndStable(t *testing.T) {
 	paths := []string{"a.go", "node_modules/x.js", "docs/x.md", "src/utils.ts", "internal/runtime/agent/runner_test.go", "build/x.o"}
 	files := make([]PackFile, 0, len(roles)*len(paths))
 	nodes := make([]Node, 0, len(paths))
+
 	for i, p := range paths {
 		nodes = append(nodes, Node{ID: fmt.Sprintf("n%d", i), Path: p})
 		for _, r := range roles {
 			files = append(files, PackFile{Path: p, Role: r, Stale: i%2 == 0})
 		}
 	}
+
 	g := &Graph{Nodes: nodes}
 	for _, intent := range intents {
 		ranked := RankPackFiles(RankInputs{Files: files, Graph: g, Intent: intent})
@@ -513,6 +567,8 @@ func nodesFor(files []PackFile) []Node {
 	for i, f := range files {
 		out[i] = Node{ID: fmt.Sprintf("n%d", i), Path: f.Path}
 	}
+
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+
 	return out
 }

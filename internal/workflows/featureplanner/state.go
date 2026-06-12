@@ -18,9 +18,11 @@ func NewState(sessionID string, prompt string, promptFile string, maxPlanningIte
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+
 	if maxPlanningIterations <= 0 {
 		maxPlanningIterations = 3
 	}
+
 	stamp := now.UTC().Format(time.RFC3339Nano)
 	state := FeatureState{
 		SchemaVersion: SchemaVersion,
@@ -36,7 +38,9 @@ func NewState(sessionID string, prompt string, promptFile string, maxPlanningIte
 			State:         FeatureStatePlanning,
 		},
 	}
+
 	state.DerivedNextValidActions = DeriveNextValidActions(state)
+
 	return state
 }
 
@@ -44,46 +48,59 @@ func SaveState(root string, state *FeatureState) (string, error) {
 	if state == nil {
 		return "", fmt.Errorf("feature planner state is nil")
 	}
+
 	if strings.TrimSpace(state.SessionID) == "" || !validSessionID.MatchString(state.SessionID) {
 		return "", fmt.Errorf("invalid feature planner session id %q", state.SessionID)
 	}
+
 	if state.SchemaVersion == "" {
 		state.SchemaVersion = SchemaVersion
 	}
+
 	if state.SchemaVersion != SchemaVersion {
 		return "", fmt.Errorf("unsupported feature planner schema %q", state.SchemaVersion)
 	}
+
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	state.DerivedNextValidActions = DeriveNextValidActions(*state)
+
 	if strings.TrimSpace(state.EventsPath) == "" {
 		_, relEventsPath, err := eventLogPath(root, state.SessionID)
 		if err != nil {
 			return "", err
 		}
+
 		state.EventsPath = relEventsPath
 	}
+
 	if err := ValidateDurableState(*state); err != nil {
 		return "", err
 	}
+
 	fullPath, relPath, err := statePath(root, state.SessionID)
 	if err != nil {
 		return "", err
 	}
+
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		return "", fmt.Errorf("mkdir feature planner state dir: %w", err)
 	}
+
 	body, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal feature planner state: %w", err)
 	}
+
 	tmpPath := fullPath + ".tmp"
 	if err := os.WriteFile(tmpPath, append(body, '\n'), 0o600); err != nil {
 		return "", fmt.Errorf("write feature planner state: %w", err)
 	}
+
 	if err := os.Rename(tmpPath, fullPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("replace feature planner state: %w", err)
 	}
+
 	return relPath, nil
 }
 
@@ -92,9 +109,11 @@ func LoadState(root string, sessionID string) (FeatureState, string, error) {
 	if err != nil {
 		return FeatureState{}, relPath, err
 	}
+
 	if !found {
 		return FeatureState{}, relPath, fmt.Errorf("feature planner state %s does not exist", relPath)
 	}
+
 	return state, relPath, nil
 }
 
@@ -103,33 +122,43 @@ func TryLoadState(root string, sessionID string) (FeatureState, string, bool, er
 	if err != nil {
 		return FeatureState{}, "", false, err
 	}
+
 	body, err := os.ReadFile(fullPath)
 	if os.IsNotExist(err) {
 		return FeatureState{}, relPath, false, nil
 	}
+
 	if err != nil {
 		return FeatureState{}, relPath, false, fmt.Errorf("read feature planner state %s: %w", relPath, err)
 	}
+
 	var state FeatureState
+
 	if err := json.Unmarshal(body, &state); err != nil {
 		return FeatureState{}, relPath, false, fmt.Errorf("decode feature planner state %s: %w", relPath, err)
 	}
+
 	if state.SchemaVersion != "" && state.SchemaVersion != SchemaVersion {
 		return FeatureState{}, relPath, false, fmt.Errorf("unsupported feature planner schema %q in %s", state.SchemaVersion, relPath)
 	}
+
 	if strings.TrimSpace(state.SessionID) == "" {
 		state.SessionID = strings.TrimSpace(sessionID)
 	}
+
 	if !validSessionID.MatchString(state.SessionID) {
 		return FeatureState{}, relPath, false, fmt.Errorf("invalid feature planner session id %q in %s", state.SessionID, relPath)
 	}
+
 	if state.SchemaVersion == "" {
 		state.SchemaVersion = SchemaVersion
 	}
+
 	state.DerivedNextValidActions = DeriveNextValidActions(state)
 	if err := ValidateDurableState(state); err != nil {
 		return FeatureState{}, relPath, false, err
 	}
+
 	return state, relPath, true, nil
 }
 
@@ -138,10 +167,13 @@ func statePath(root string, sessionID string) (string, string, error) {
 	if sessionID == "" || !validSessionID.MatchString(sessionID) {
 		return "", "", fmt.Errorf("invalid feature planner session id %q", sessionID)
 	}
+
 	relPath := filepath.ToSlash(filepath.Join(".idiom", "feature-planner", sessionID, "state.json"))
+
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
+
 	return filepath.Join(root, filepath.FromSlash(relPath)), relPath, nil
 }
 
@@ -154,10 +186,13 @@ func eventLogPath(root string, sessionID string) (string, string, error) {
 	if sessionID == "" || !validSessionID.MatchString(sessionID) {
 		return "", "", fmt.Errorf("invalid feature planner session id %q", sessionID)
 	}
+
 	relPath := filepath.ToSlash(filepath.Join(".idiom", "feature-planner", sessionID, "events.jsonl"))
+
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
+
 	return filepath.Join(root, filepath.FromSlash(relPath)), relPath, nil
 }
 

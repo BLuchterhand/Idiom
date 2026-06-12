@@ -32,6 +32,7 @@ func (m *MultiFlag) String() string {
 	if m == nil {
 		return ""
 	}
+
 	return strings.Join(*m, ",")
 }
 
@@ -129,7 +130,9 @@ func ExecutorSourceSanityFailed(report ExecutorPhaseReport, err error) bool {
 	if err == nil || report.Total == 0 || report.Succeeded != report.Total || report.Failed != 0 || len(report.Failures) > 0 {
 		return false
 	}
+
 	hasFailedSourceSanity := false
+
 	for _, check := range report.SourceSanity {
 		status := strings.ToLower(strings.TrimSpace(check.Status))
 		if strings.TrimSpace(check.Error) != "" || (status != "" && status != "ok" && status != "passed") {
@@ -137,9 +140,11 @@ func ExecutorSourceSanityFailed(report ExecutorPhaseReport, err error) bool {
 			break
 		}
 	}
+
 	if !hasFailedSourceSanity {
 		return false
 	}
+
 	return strings.Contains(strings.ToLower(err.Error()), "source_sanity failed")
 }
 
@@ -147,12 +152,14 @@ func ExecutorVerificationFailed(report ExecutorPhaseReport, err error) bool {
 	if err == nil || report.Total == 0 || report.Succeeded != report.Total || report.Failed != 0 || len(report.Failures) > 0 {
 		return false
 	}
+
 	for _, check := range report.Verification {
 		status := strings.ToLower(strings.TrimSpace(check.Status))
 		if strings.TrimSpace(check.Error) != "" || (status != "" && status != "ok" && status != "passed") {
 			return strings.Contains(strings.ToLower(err.Error()), "verification failed")
 		}
 	}
+
 	return false
 }
 
@@ -161,6 +168,7 @@ func (r ExecutorPhaseReport) String() string {
 	if len(r.Failures) == 0 {
 		return header
 	}
+
 	return header + "\n  " + strings.Join(r.Failures, "\n  ")
 }
 
@@ -208,19 +216,24 @@ func (r ReviewRepairPhaseReport) String() string {
 	if r.Skipped {
 		return "review-repair: skipped"
 	}
+
 	status := strings.TrimSpace(r.Status)
 	if status == "" {
 		status = "not run"
 	}
+
 	if r.Repairs == 0 {
 		if r.AutoRepairs == 0 {
 			return fmt.Sprintf("review-repair: %s", status)
 		}
+
 		return fmt.Sprintf("review-repair: %s, %d mechanical repair(s)", status, r.AutoRepairs)
 	}
+
 	if r.AutoRepairs == 0 {
 		return fmt.Sprintf("review-repair: %s, %d corrective edit(s)", status, r.Repairs)
 	}
+
 	return fmt.Sprintf("review-repair: %s, %d corrective edit(s), %d mechanical repair(s)", status, r.Repairs, r.AutoRepairs)
 }
 

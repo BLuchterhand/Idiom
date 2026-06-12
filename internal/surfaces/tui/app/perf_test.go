@@ -25,9 +25,11 @@ func TestRenderedMessageBody_PerMessageCache_AppendOnly(t *testing.T) {
 	if !strings.Contains(first, "first body") {
 		t.Fatalf("initial render missing first body:\n%s", first)
 	}
+
 	if len(m.perMsgRenderCache) != 1 {
 		t.Fatalf("expected 1 cached entry after first render, got %d", len(m.perMsgRenderCache))
 	}
+
 	if m.perMsgRenderLen != 1 {
 		t.Fatalf("expected perMsgRenderLen=1, got %d", m.perMsgRenderLen)
 	}
@@ -35,10 +37,13 @@ func TestRenderedMessageBody_PerMessageCache_AppendOnly(t *testing.T) {
 	cachedFirst := m.perMsgRenderCache[0]
 
 	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: "second body"})
+
 	updated := m.renderedMessageBody()
+
 	if !strings.Contains(updated, "first body") {
 		t.Fatalf("updated render missing first body:\n%s", updated)
 	}
+
 	if !strings.Contains(updated, "second body") {
 		t.Fatalf("updated render missing second body:\n%s", updated)
 	}
@@ -46,6 +51,7 @@ func TestRenderedMessageBody_PerMessageCache_AppendOnly(t *testing.T) {
 	if len(m.perMsgRenderCache) != 2 {
 		t.Fatalf("expected 2 cached entries after append, got %d", len(m.perMsgRenderCache))
 	}
+
 	if m.perMsgRenderCache[0] != cachedFirst {
 		t.Fatalf("first message cache entry changed after append — should have been reused")
 	}
@@ -62,11 +68,13 @@ func TestRenderedMessageBody_PerMessageCache_ClearsOnInsert(t *testing.T) {
 	}
 
 	m.renderedMessageBody()
+
 	if len(m.perMsgRenderCache) != 2 {
 		t.Fatalf("expected 2 cached entries, got %d", len(m.perMsgRenderCache))
 	}
 
 	m.insertBeforePendingAssistant(llama.ChatMessage{Role: "tool", Content: "tool_output | result"})
+
 	if len(m.messages) != 3 {
 		t.Fatalf("expected 3 messages after insert, got %d", len(m.messages))
 	}
@@ -75,9 +83,11 @@ func TestRenderedMessageBody_PerMessageCache_ClearsOnInsert(t *testing.T) {
 	if !strings.Contains(result, "tool_output") {
 		t.Fatalf("render after insert missing tool name:\n%s", result)
 	}
+
 	if !strings.Contains(result, "user msg") {
 		t.Fatalf("render after insert missing user msg:\n%s", result)
 	}
+
 	if len(m.perMsgRenderCache) != 3 {
 		t.Fatalf("expected 3 cached entries after insert rebuild, got %d", len(m.perMsgRenderCache))
 	}
@@ -93,9 +103,11 @@ func TestRenderedMessageBody_PerMessageCache_ClearsOnWidthChange(t *testing.T) {
 	}
 
 	m.renderedMessageBody()
+
 	if len(m.perMsgRenderCache) != 1 {
 		t.Fatalf("expected 1 cached entry, got %d", len(m.perMsgRenderCache))
 	}
+
 	cached := m.perMsgRenderCache[0]
 
 	m.viewport.Width = 60
@@ -104,6 +116,7 @@ func TestRenderedMessageBody_PerMessageCache_ClearsOnWidthChange(t *testing.T) {
 	if len(m.perMsgRenderCache) != 1 {
 		t.Fatalf("expected 1 cached entry after resize, got %d", len(m.perMsgRenderCache))
 	}
+
 	if m.perMsgRenderCache[0] == cached {
 		t.Fatalf("cache entry should have been re-rendered after width change")
 	}
@@ -127,6 +140,7 @@ func TestRenderedMessageBody_PerMessageCache_MultipleAppends(t *testing.T) {
 	if len(m.perMsgRenderCache) != 5 {
 		t.Fatalf("expected 5 cached entries after 5 appends, got %d", len(m.perMsgRenderCache))
 	}
+
 	if m.perMsgRenderLen != 5 {
 		t.Fatalf("expected perMsgRenderLen=5, got %d", m.perMsgRenderLen)
 	}
@@ -150,12 +164,15 @@ func TestRenderedMessageBody_PerMessageCache_ClearsOnContentMutation(t *testing.
 	}
 
 	m.renderedMessageBody()
+
 	if m.perMsgRenderLen != 2 {
 		t.Fatalf("expected perMsgRenderLen=2, got %d", m.perMsgRenderLen)
 	}
 
 	m.messages[1].Content = "updated reply"
+
 	result := m.renderedMessageBody()
+
 	if !strings.Contains(result, "updated reply") {
 		t.Fatalf("expected updated content in render:\n%s", result)
 	}
@@ -171,17 +188,21 @@ func TestInvalidateMessageRenderCache_ClearsPerMessageCache(t *testing.T) {
 	}
 
 	m.renderedMessageBody()
+
 	if len(m.perMsgRenderCache) != 1 {
 		t.Fatalf("expected 1 cached entry, got %d", len(m.perMsgRenderCache))
 	}
+
 	if m.perMsgRenderLen != 1 {
 		t.Fatalf("expected perMsgRenderLen=1, got %d", m.perMsgRenderLen)
 	}
 
 	m.invalidateMessageRenderCache()
+
 	if m.perMsgRenderCache != nil {
 		t.Fatalf("expected perMsgRenderCache to be nil after invalidation")
 	}
+
 	if m.perMsgRenderLen != 0 {
 		t.Fatalf("expected perMsgRenderLen=0 after invalidation, got %d", m.perMsgRenderLen)
 	}
@@ -208,6 +229,7 @@ func TestHandleToolTrace_CompactMode_SkipsMainRender(t *testing.T) {
 	}
 
 	m.renderMessages(true)
+
 	contentBefore := m.viewport.View()
 
 	m.handleToolTrace(toolTraceMsg{
@@ -223,12 +245,14 @@ func TestHandleToolTrace_CompactMode_SkipsMainRender(t *testing.T) {
 
 	entry := &m.history.entries[1]
 	found := false
+
 	for _, tc := range entry.toolCalls {
 		if strings.Contains(tc.line, "read_file") {
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected tool trace to be recorded in history entry in compact mode, calls: %+v", entry.toolCalls)
 	}
@@ -278,6 +302,7 @@ func TestRenderPlanLine_UsesPrecompiledStyles(t *testing.T) {
 			if !strings.Contains(result, tc.contains) {
 				t.Errorf("renderPlanLine(%q) missing %q in:\n%s", tc.input, tc.contains, result)
 			}
+
 			if strings.Contains(result, "<!--") {
 				t.Errorf("renderPlanLine should strip HTML comments, got:\n%s", result)
 			}
@@ -288,9 +313,11 @@ func TestRenderPlanLine_UsesPrecompiledStyles(t *testing.T) {
 func TestParsePlanItems(t *testing.T) {
 	content := "# Plan\n- [ ] step one\n- [x] step two\n"
 	items := parsePlanItems(content)
+
 	if len(items) != 2 {
 		t.Fatalf("expected 2 plan items, got %d", len(items))
 	}
+
 	if items[0].Checked || !items[1].Checked {
 		t.Errorf("first should be unchecked, second checked")
 	}
@@ -304,9 +331,11 @@ func TestCurrentPlanItems_CacheHitOnFileUnchanged(t *testing.T) {
 
 	m := &Model{planPath: path}
 	items1 := m.currentPlanItems()
+
 	if len(items1) != 1 {
 		t.Fatalf("first call: expected 1 item, got %d", len(items1))
 	}
+
 	if m.plan.cachedItemsContent != content {
 		t.Errorf("cache content not set")
 	}
@@ -315,6 +344,7 @@ func TestCurrentPlanItems_CacheHitOnFileUnchanged(t *testing.T) {
 	if len(items2) != 1 {
 		t.Fatalf("cached call: expected 1 item, got %d", len(items2))
 	}
+
 	if items1[0].RawText != items2[0].RawText {
 		t.Errorf("cached items should match")
 	}
@@ -327,12 +357,14 @@ func TestCurrentPlanItems_ReparsesOnFileChange(t *testing.T) {
 
 	m := &Model{planPath: path}
 	items1 := m.currentPlanItems()
+
 	if len(items1) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items1))
 	}
 
 	newContent := "# New\n- [x] done\n"
 	os.WriteFile(path, []byte(newContent), 0o644)
+
 	modTime := time.Now().Add(2 * time.Second)
 	os.Chtimes(path, modTime, modTime)
 
@@ -340,9 +372,11 @@ func TestCurrentPlanItems_ReparsesOnFileChange(t *testing.T) {
 	if len(items2) != 1 {
 		t.Fatalf("expected 1 item after change, got %d", len(items2))
 	}
+
 	if items2[0].RawText != "- [x] done" {
 		t.Errorf("expected re-parsed item, got %q", items2[0].RawText)
 	}
+
 	if !items2[0].Checked {
 		t.Errorf("expected checked item after re-parse")
 	}
@@ -370,13 +404,16 @@ func TestRenderHistoryPanelContent_PrecompiledStyles(t *testing.T) {
 	}
 
 	m.renderHistoryPanelContent()
+
 	view := m.history.viewport.View()
 	if !strings.Contains(view, "test summary") {
 		t.Fatalf("history panel should contain summary:\n%s", view)
 	}
+
 	if !strings.Contains(view, "agent response text") {
 		t.Fatalf("history panel should contain expanded content:\n%s", view)
 	}
+
 	if !strings.Contains(view, "read_file") {
 		t.Fatalf("history panel should contain tool call:\n%s", view)
 	}
@@ -394,6 +431,7 @@ func TestRenderMessages_SpinnerStillUpdatesDuringStreaming(t *testing.T) {
 	}
 
 	m.renderMessages(false)
+
 	view1 := m.viewport.View()
 	if !strings.Contains(view1, "Qwen is preparing a response") {
 		t.Fatalf("streaming view should show working indicator:\n%s", view1)
@@ -401,10 +439,12 @@ func TestRenderMessages_SpinnerStillUpdatesDuringStreaming(t *testing.T) {
 
 	m.workingFrame = 3
 	m.renderMessages(false)
+
 	view2 := m.viewport.View()
 	if !strings.Contains(view2, "Qwen is preparing a response") {
 		t.Fatalf("streaming view should still show working indicator:\n%s", view2)
 	}
+
 	if view1 == view2 {
 		t.Fatalf("spinner animation should update between frames")
 	}
@@ -429,9 +469,11 @@ func TestRenderMessages_CacheHitOnSpinnerTick(t *testing.T) {
 	if first != second {
 		t.Fatalf("same messages should produce identical cached output")
 	}
+
 	if hash1 != hash2 {
 		t.Fatalf("hash should be stable for identical input")
 	}
+
 	if m.messageRenderCache != first {
 		t.Fatalf("cache should be reused on second call")
 	}
@@ -449,6 +491,7 @@ func TestMessageRenderFingerprint_DetectsChanges(t *testing.T) {
 	if h1 == h2 {
 		t.Fatalf("fingerprints should differ when message count changes")
 	}
+
 	if h1 == h3 {
 		t.Fatalf("fingerprints should differ when content changes")
 	}
@@ -467,6 +510,7 @@ func TestRenderMessages_EmptyMessagesShowsPlaceholder(t *testing.T) {
 	}
 
 	m.renderMessages(false)
+
 	view := m.viewport.View()
 	if !strings.Contains(view, "No messages yet") {
 		t.Fatalf("empty state should show placeholder:\n%s", view)
@@ -481,16 +525,19 @@ func TestRenderMessages_ClearMessagesShowsPlaceholder(t *testing.T) {
 	}
 
 	m.renderMessages(true)
+
 	if m.perMsgRenderLen != 1 {
 		t.Fatalf("expected perMsgRenderLen=1, got %d", m.perMsgRenderLen)
 	}
 
 	m.messages = nil
 	m.renderMessages(true)
+
 	view := m.viewport.View()
 	if !strings.Contains(view, "No messages yet") {
 		t.Fatalf("cleared messages should show placeholder:\n%s", view)
 	}
+
 	if m.perMsgRenderLen != 0 {
 		t.Fatalf("expected perMsgRenderLen=0 after clear, got %d", m.perMsgRenderLen)
 	}
@@ -507,6 +554,7 @@ func TestRenderedMessageBody_AppendOnlyPreservesExistingCache(t *testing.T) {
 	}
 
 	m.renderedMessageBody()
+
 	cached0 := m.perMsgRenderCache[0]
 	cached1 := m.perMsgRenderCache[1]
 
@@ -516,9 +564,11 @@ func TestRenderedMessageBody_AppendOnlyPreservesExistingCache(t *testing.T) {
 	if m.perMsgRenderCache[0] != cached0 {
 		t.Fatalf("cache[0] should be preserved after append")
 	}
+
 	if m.perMsgRenderCache[1] != cached1 {
 		t.Fatalf("cache[1] should be preserved after append")
 	}
+
 	if len(m.perMsgRenderCache) != 3 {
 		t.Fatalf("expected 3 cache entries, got %d", len(m.perMsgRenderCache))
 	}
@@ -535,11 +585,13 @@ func TestRenderedMessageBody_InsertClearsCache(t *testing.T) {
 	}
 
 	m.renderedMessageBody()
+
 	if len(m.perMsgRenderCache) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(m.perMsgRenderCache))
 	}
 
 	m.insertBeforePendingAssistant(llama.ChatMessage{Role: "tool", Content: "tool_result"})
+
 	_ = m.renderedMessageBody()
 
 	if m.perMsgRenderLen != 3 {

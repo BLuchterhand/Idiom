@@ -57,36 +57,44 @@ func (r *Runner) preflightVerificationOnAlreadyEditedPath(req workspace.ToolRequ
 	if r == nil {
 		return verificationInterceptResult{}
 	}
+
 	required := r.RuntimeBrief.RequiredEditPaths
 	if len(required) == 0 {
 		return verificationInterceptResult{}
 	}
+
 	if !verificationInterceptToolCovered(req) {
 		return verificationInterceptResult{}
 	}
+
 	if !isReadClassTool(req) {
 		return verificationInterceptResult{}
 	}
+
 	target := normalizeRunnerPath(strings.TrimSpace(req.Path))
 	if target == "" {
 		return verificationInterceptResult{}
 	}
+
 	changed := changedPathsFromToolResults(results)
 	if _, ok := changed[target]; !ok {
 		return verificationInterceptResult{}
 	}
+
 	// Only intercept paths that are part of the required edit set —
 	// reads of unrelated already-edited files are usually legitimate
 	// (cross-file context, includes, etc.).
 	if !requiredEditPathsContains(required, target) {
 		return verificationInterceptResult{}
 	}
+
 	pending := missingRequiredEditPaths(required, changed)
 	if len(pending) == 0 {
 		// Nothing left to write; let normal completion path handle the
 		// final answer. Re-verification at this stage is harmless.
 		return verificationInterceptResult{}
 	}
+
 	if !precedingResultWasReadClass(results) {
 		// First read after a write — could be legitimate prep for the
 		// next ✗ path (mirror existing structure into the new file).
@@ -94,12 +102,14 @@ func (r *Runner) preflightVerificationOnAlreadyEditedPath(req workspace.ToolRequ
 		// reads in a row.
 		return verificationInterceptResult{}
 	}
+
 	directive := verificationInterceptDirective(req.Tool, target, pending)
 	result := workspace.ToolResult{
 		Tool:    req.Tool,
 		Summary: "Read of already-edited required path redirected to remaining write",
 		Error:   directive,
 	}
+
 	return verificationInterceptResult{
 		Intercepted: true,
 		Result:      result,
@@ -131,6 +141,7 @@ func verificationInterceptToolCovered(req workspace.ToolRequest) bool {
 		case "file_outline", "outline", "read_symbol", "inspect_symbol", "symbol_body":
 			return true
 		}
+
 		return false
 	case "cpp_file_outline", "cpp_read_symbol",
 		"go_file_outline", "go_read_symbol",
@@ -140,6 +151,7 @@ func verificationInterceptToolCovered(req workspace.ToolRequest) bool {
 		"java_file_outline", "java_read_symbol":
 		return true
 	}
+
 	return false
 }
 
@@ -152,7 +164,9 @@ func precedingResultWasReadClass(results []workspace.ToolResult) bool {
 	if len(results) == 0 {
 		return false
 	}
+
 	last := results[len(results)-1]
+
 	return isReadClassTool(workspace.ToolRequest{Tool: last.Tool})
 }
 
@@ -165,6 +179,7 @@ func requiredEditPathsContains(required []string, target string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -179,8 +194,10 @@ func verificationInterceptDirective(tool, target string, pending []string) strin
 		strings.TrimSpace(tool), target,
 	)
 	body := fmt.Sprintf("Next required path (✗ pending): %s. Write it with edit_file or apply_patch, or stop with <<QUESTION>>: naming the concrete blocker for that path.", next)
+
 	if len(pending) > 1 {
 		body += fmt.Sprintf(" %d required path(s) remain in total: %s.", len(pending), strings.Join(pending, ", "))
 	}
+
 	return header + " " + body
 }

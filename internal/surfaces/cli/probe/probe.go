@@ -28,15 +28,19 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		printProbeUsage(stderr)
+
 		return 0
 	}
+
 	logProbePhase(rec, "probe_start", map[string]any{"subcommand": args[0]})
+
 	switch args[0] {
 	case "lane":
 		return runProbeLane(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "probe: unknown subcommand %q\n", args[0])
 		printProbeUsage(stderr)
+
 		return 2
 	}
 }
@@ -51,14 +55,17 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 func runProbeLane(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom probe lane", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	var (
 		modeFlag    string
 		configPath  string
 		projectRoot string
 	)
+
 	fs.StringVar(&modeFlag, "mode", "all", "which probe(s) to run: implement | plan-execute | all")
 	fs.StringVar(&projectRoot, "project-root", "", "project root containing .idiom/config.json (defaults to cwd; matches `idiom lane` resolution)")
 	fs.StringVar(&configPath, "config", "", "explicit path to an idiom config (overrides --project-root resolution)")
+
 	// --coder is accepted for surface parity with Colony's
 	// idiom_route_probe.sh, which used it to switch the model alias.
 	// In-process the routing decision doesn't depend on which model
@@ -73,8 +80,10 @@ func runProbeLane(args []string, stdout io.Writer, stderr io.Writer) int {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
+
 		return 2
 	}
+
 	if *coderFlag {
 		fmt.Fprintln(stderr, "probe lane: --coder accepted; in-process routing doesn't depend on the model alias.")
 	}
@@ -82,8 +91,10 @@ func runProbeLane(args []string, stdout io.Writer, stderr io.Writer) int {
 	resolved, source, err := resolveProbeConfigPath(projectRoot, configPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "probe lane: %v\n", err)
+
 		return 1
 	}
+
 	allowed, loadErr := loadAllowedToolsFromConfig(resolved)
 	if loadErr != nil {
 		// Don't fail the probe just because we can't load config —
@@ -92,6 +103,7 @@ func runProbeLane(args []string, stdout io.Writer, stderr io.Writer) int {
 		// it. Fall back to a synthetic non-empty list so the routing
 		// path still gets exercised.
 		fmt.Fprintf(stderr, "probe lane: config load failed (%v); falling back to synthetic tool surface\n", loadErr)
+
 		allowed = []string{"read_file", "write_file"}
 	} else {
 		fmt.Fprintf(stderr, "probe lane: tool surface from %s=%s (n=%d)\n", source, resolved, len(allowed))
@@ -100,10 +112,12 @@ func runProbeLane(args []string, stdout io.Writer, stderr io.Writer) int {
 	probes := selectedProbes(modeFlag)
 	if len(probes) == 0 {
 		fmt.Fprintf(stderr, "probe lane: --mode %q is not recognized (use implement | plan-execute | all)\n", modeFlag)
+
 		return 2
 	}
 
 	exit := 0
+
 	for _, p := range probes {
 		res, err := app.ProbeLane(app.ProbeLaneOptions{
 			Mode:         p.mode,
@@ -112,17 +126,24 @@ func runProbeLane(args []string, stdout io.Writer, stderr io.Writer) int {
 		})
 		if err != nil {
 			fmt.Fprintf(stdout, "FAIL %s — %v\n", p.label, err)
+
 			exit = 1
+
 			continue
 		}
+
 		if violations := assertProbeShape(p, res); len(violations) > 0 {
 			fmt.Fprintf(stdout, "FAIL %s — %s\n", p.label, strings.Join(violations, "; "))
 			fmt.Fprintln(stdout, "      "+app.FormatProbeResult("got:", res))
+
 			exit = 1
+
 			continue
 		}
+
 		fmt.Fprintln(stdout, app.FormatProbeResult("PASS "+p.label, res))
 	}
+
 	return exit
 }
 
@@ -165,16 +186,21 @@ func selectedProbes(modeFlag string) []probeCase {
 			wantToolsMin: 1,
 		}
 		buildCase := base
+
 		buildCase.label = label + "(build)"
 		buildCase.mode = agent.BuildMode()
+
 		planCase := base
+
 		planCase.label = label + "(plan)"
 		planCase.mode = agent.PlanMode()
+
 		return []probeCase{buildCase, planCase}
 	}
 	implement := makeCases("implement", "implementation", "implementation")
 	planExecuteFamily := string(workerruntime.TaskFamilyPlanThenExecutePlanner)
 	planExecute := makeCases("plan-execute", planExecuteFamily, planExecuteFamily)
+
 	switch strings.TrimSpace(strings.ToLower(modeFlag)) {
 	case "implement":
 		return implement
@@ -193,24 +219,31 @@ func selectedProbes(modeFlag string) []probeCase {
 // every drift in one report.
 func assertProbeShape(want probeCase, got app.ProbeLaneResult) []string {
 	var v []string
+
 	if got.InitialLane != want.wantInitial {
 		v = append(v, fmt.Sprintf("initial=%q want %q", got.InitialLane, want.wantInitial))
 	}
+
 	if got.FollowupLane != want.wantFollowup {
 		v = append(v, fmt.Sprintf("followup=%q want %q", got.FollowupLane, want.wantFollowup))
 	}
+
 	if got.Contract != want.wantContract {
 		v = append(v, fmt.Sprintf("contract=%q want %q", got.Contract, want.wantContract))
 	}
+
 	if got.BriefTaskFam != want.wantBriefFam {
 		v = append(v, fmt.Sprintf("brief.task_family=%q want %q", got.BriefTaskFam, want.wantBriefFam))
 	}
+
 	if got.Reason != want.wantReason {
 		v = append(v, fmt.Sprintf("reason=%q want %q", got.Reason, want.wantReason))
 	}
+
 	if got.AllowedToolsN < want.wantToolsMin {
 		v = append(v, fmt.Sprintf("allowed_tools=%d want >=%d", got.AllowedToolsN, want.wantToolsMin))
 	}
+
 	return v
 }
 
@@ -224,7 +257,9 @@ func loadAllowedToolsFromConfig(configPath string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	mgr := workspace.NewManager(cfg.Workspace)
+
 	return mgr.AllowedTools(), nil
 }
 
@@ -247,14 +282,17 @@ func resolveProbeConfigPath(projectRoot, explicit string) (string, string, error
 	if p := strings.TrimSpace(explicit); p != "" {
 		return p, "--config", nil
 	}
+
 	root := strings.TrimSpace(projectRoot)
 	if root == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return "", "", err
 		}
+
 		root = cwd
 	}
+
 	for _, candidate := range []string{
 		filepath.Join(root, ".idiom", "config.json"),
 		filepath.Join(root, "config.json"),
@@ -263,6 +301,7 @@ func resolveProbeConfigPath(projectRoot, explicit string) (string, string, error
 			return candidate, "project-root", nil
 		}
 	}
+
 	// Nothing on disk; return the cwd-relative default so
 	// loadAllowedToolsFromConfig surfaces the not-found error
 	// for the synthetic-fallback path.

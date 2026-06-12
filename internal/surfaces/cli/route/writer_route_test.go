@@ -10,7 +10,9 @@ import (
 
 func TestBuildDecisionEffectiveModelPrefersDirectConfigOverRoleAlias(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.LlamaServer.Model = "deepseek-v4-flash"
+
 	decision := BuildDecision(cfg, Options{
 		Mode:        writerroute.ModeReadOnly,
 		Lane:        "main",
@@ -20,6 +22,7 @@ func TestBuildDecisionEffectiveModelPrefersDirectConfigOverRoleAlias(t *testing.
 	if decision.EffectiveModel != "deepseek-v4-flash" {
 		t.Fatalf("effective model = %q, want direct configured model", decision.EffectiveModel)
 	}
+
 	if decision.RoleAliases[backends.RoleClassifier] != "deepseek-v4-pro" {
 		t.Fatalf("role aliases should remain visible as routing context: %#v", decision.RoleAliases)
 	}
@@ -27,7 +30,9 @@ func TestBuildDecisionEffectiveModelPrefersDirectConfigOverRoleAlias(t *testing.
 
 func TestBuildDecisionEffectiveModelUsesAliasWhenNoDirectModelConfigured(t *testing.T) {
 	cfg := config.Default()
+
 	cfg.LlamaServer.Model = ""
+
 	decision := BuildDecision(cfg, Options{
 		Mode:        writerroute.ModeReadOnly,
 		Lane:        "main",

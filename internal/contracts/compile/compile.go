@@ -12,15 +12,19 @@ func CompilePlanExecutePlanner(input PlanExecutePlannerInput) (CompileResult, er
 	if err := validatePlanExecutePlannerInput(normalized); err != nil {
 		return CompileResult{}, err
 	}
+
 	runtime := compileRuntimeEnvelope(normalized)
+
 	contract, err := compileAutonomyContract(normalized, runtime)
 	if err != nil {
 		return CompileResult{}, err
 	}
+
 	protocol, err := compileProtocolProjection(normalized, runtime, contract)
 	if err != nil {
 		return CompileResult{}, err
 	}
+
 	return CompileResult{
 		SchemaVersion:   CompilerSchemaVersion,
 		Contract:        contract,
@@ -41,6 +45,7 @@ func compileActiveAuthorityBinding(contract autonomy.AutonomyContract, runtime R
 
 func compileAutonomyContract(input PlanExecutePlannerInput, runtime RuntimeEnvelope) (autonomy.AutonomyContract, error) {
 	obligations := compileObligations(input)
+
 	contract, err := autonomy.NewContract(autonomy.ContractInput{
 		ParentID: input.ParentID,
 		Scope: autonomy.ContractScope{
@@ -69,6 +74,7 @@ func compileAutonomyContract(input PlanExecutePlannerInput, runtime RuntimeEnvel
 	if err != nil {
 		return autonomy.AutonomyContract{}, fmt.Errorf("compile plan-execute planner contract: %w", err)
 	}
+
 	return contract, nil
 }
 
@@ -96,7 +102,9 @@ func compileRuntimeEnvelope(input PlanExecutePlannerInput) RuntimeEnvelope {
 		ActiveInvariantID:    InvariantActiveAuthority,
 	}
 	normalizeRuntimeEnvelope(&envelope)
+
 	envelope.RuntimeContractID = stableHashID("runtime", envelope)
+
 	return envelope
 }
 
@@ -138,15 +146,19 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 	if len(protocol.VisibleTools) == 0 {
 		protocol.VisibleTools = append([]string(nil), input.AllowedTools...)
 	}
+
 	if !input.Protocol.CallableToolsSpecified && len(protocol.CallableTools) == 0 {
 		protocol.CallableTools = append([]string(nil), protocol.VisibleTools...)
 	}
+
 	if protocol.PhaseID == "" {
 		protocol.PhaseID = "plan_execute.required_source"
 	}
+
 	if protocol.ExpectedVisibleOutput == "" {
 		protocol.ExpectedVisibleOutput = "parser_readable_tool_or_terminal_outcome"
 	}
+
 	if len(protocol.CallableActionClasses) == 0 {
 		protocol.CallableActionClasses = []string{
 			string(autonomy.ActionClassRead),
@@ -156,6 +168,7 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 			string(autonomy.ActionClassBlocker),
 		}
 	}
+
 	if len(protocol.InvalidActionClasses) == 0 {
 		protocol.InvalidActionClasses = []string{
 			string(autonomy.ActionClassPerEditWrite),
@@ -163,30 +176,40 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 			string(autonomy.ActionClassProseFinal),
 		}
 	}
+
 	if len(protocol.TerminalResponseShapes) == 0 {
 		protocol.TerminalResponseShapes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
 	}
+
 	protocol.SafeAlternatives = compileProtocolSafeAlternatives(protocol.TerminalResponseShapes, protocol.CallableActionClasses)
 	if len(protocol.StructuredSchemaNames) == 0 && protocolAllowsSubmitPlan(protocol) {
 		protocol.StructuredSchemaNames = []string{"submit_plan"}
 	}
+
 	protocol.SchemaNames = compileProtocolSchemaNames(protocol.StructuredSchemaNames)
 	protocol.CompactPacket = compileCompactPacketProjection(input, contract, protocol)
+
 	if protocol.MalformedOutputPolicy == "" {
 		protocol.MalformedOutputPolicy = "recover_with_same_protocol_projection"
 	}
+
 	if protocol.StaleAnchorPolicy == "" {
 		protocol.StaleAnchorPolicy = "bounded_source_refresh_before_submit_plan"
 	}
+
 	if protocol.RecoveryBudget == 0 {
 		protocol.RecoveryBudget = 2
 	}
+
 	normalizeProtocolProjection(&protocol)
+
 	if err := validateProtocolProjection(protocol); err != nil {
 		return ModelProtocolProjection{}, err
 	}
+
 	protocol.ProtocolHash = stableHashID("protocol", protocol)
 	protocol.CompactPacket.ProtocolHash = protocol.ProtocolHash
+
 	return protocol, nil
 }
 
@@ -201,11 +224,13 @@ func containsProtocolString(values []string, want string) bool {
 	if want == "" {
 		return false
 	}
+
 	for _, value := range values {
 		if strings.TrimSpace(value) == want {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -228,16 +253,20 @@ func compileCompactPacketProjection(input PlanExecutePlannerInput, contract auto
 		SchemaNames:      compileProtocolSchemaNames(protocol.StructuredSchemaNames),
 		RedactionMarkers: []string{"metadata_only", "prompt_omitted", "transcript_omitted", "file_content_omitted", "secrets_omitted"},
 	}
+
 	packet.PacketID = stableHashID("context_packet", packet)
+
 	return packet
 }
 
 func compileCompactPacketPathRefs(input PlanExecutePlannerInput) []string {
 	paths := append([]string(nil), input.RequiredEditPaths...)
+
 	paths = append(paths, input.AllowedEditPaths...)
 	paths = append(paths, input.EvidencePaths...)
 	paths = append(paths, input.ChangedPaths...)
 	paths = append(paths, input.Protocol.SourceBodyObligations...)
+
 	return uniquePaths(paths)
 }
 
@@ -248,10 +277,12 @@ func compileCompactPacketEvidenceRefs(input PlanExecutePlannerInput, contract au
 		if evidence.Handle != "" {
 			refs = append(refs, evidence.Handle)
 		}
+
 		if evidence.Path != "" {
 			refs = append(refs, evidence.Path)
 		}
 	}
+
 	return uniqueStrings(refs)
 }
 
@@ -261,19 +292,24 @@ func compileProtocolPathRoleSummary(roles []autonomy.PathRole) []string {
 		if role.Role == "" || strings.TrimSpace(role.PathPattern) == "" {
 			continue
 		}
+
 		out = append(out, string(role.Role)+":"+strings.TrimSpace(role.PathPattern))
 	}
+
 	return uniqueStrings(out)
 }
 
 func compileProtocolVerificationObligations(input PlanExecutePlannerInput) []string {
 	var out []string
+
 	if strings.TrimSpace(input.VerificationContract) != "" {
 		out = append(out, "contract:"+strings.TrimSpace(input.VerificationContract))
 	}
+
 	for _, command := range input.VerificationPlan {
 		out = append(out, "command:"+strings.TrimSpace(command))
 	}
+
 	return uniqueStrings(out)
 }
 
@@ -293,6 +329,7 @@ func compileProtocolSafeAlternatives(terminalShapes []string, actionClasses []st
 			}
 		}
 	}
+
 	return uniqueStrings(alternatives)
 }
 
@@ -304,33 +341,43 @@ func compileAuthority(input PlanExecutePlannerInput, runtime RuntimeEnvelope) []
 	if input.RuntimeContract != "" {
 		authority = append(authority, autonomy.AuthoritySource{Kind: "legacy_runtime_contract", Ref: input.RuntimeContract, Freshness: autonomy.FreshnessFresh})
 	}
+
 	for _, ref := range input.TargetRefs {
 		authority = append(authority, autonomy.AuthoritySource{Kind: "target_ref", Ref: ref, Freshness: autonomy.FreshnessFresh})
 	}
+
 	for _, ref := range input.TargetPacket {
 		authority = append(authority, autonomy.AuthoritySource{Kind: "target_packet", Ref: ref, Freshness: autonomy.FreshnessFresh})
 	}
+
 	for _, boundary := range input.UserBoundaries {
 		authority = append(authority, autonomy.AuthoritySource{Kind: "user_boundary", Ref: boundary, Freshness: autonomy.FreshnessFresh})
 	}
+
 	return authority
 }
 
 func compilePathRoles(input PlanExecutePlannerInput) []autonomy.PathRole {
 	var roles []autonomy.PathRole
+
 	for _, path := range input.RequiredEditPaths {
 		roles = appendPathRole(roles, autonomy.PathRoleRequiredEdit, path, "required_edit_paths")
 	}
+
 	for _, path := range input.AllowedEditPaths {
 		roles = appendPathRole(roles, autonomy.PathRoleAllowedEdit, path, "allowed_edit_paths")
 	}
+
 	for _, path := range input.EvidencePaths {
 		roles = appendPathRole(roles, autonomy.PathRoleEvidenceReadonly, path, "evidence_paths")
 	}
+
 	for _, path := range input.ChangedPaths {
 		roles = appendPathRole(roles, autonomy.PathRoleGeneratedArtifact, path, "changed_paths")
 	}
+
 	roles = appendPathRole(roles, autonomy.PathRoleProtected, ".git/**", "repository metadata boundary")
+
 	return roles
 }
 
@@ -339,6 +386,7 @@ func appendPathRole(roles []autonomy.PathRole, role autonomy.PathRoleKind, path 
 	if path == "" {
 		return roles
 	}
+
 	return append(roles, autonomy.PathRole{
 		Role:        role,
 		PathPattern: path,
@@ -350,21 +398,25 @@ func appendPathRole(roles []autonomy.PathRole, role autonomy.PathRoleKind, path 
 func compileCapabilityPolicy(input PlanExecutePlannerInput) autonomy.CapabilityPolicy {
 	allowed := map[autonomy.Capability]struct{}{}
 	forbidden := map[autonomy.Capability]struct{}{}
+
 	for _, tool := range input.AllowedTools {
 		for _, capability := range capabilitiesForTool(tool) {
 			allowed[capability] = struct{}{}
 		}
 	}
+
 	for _, tool := range input.ForbiddenTools {
 		for _, capability := range capabilitiesForTool(tool) {
 			forbidden[capability] = struct{}{}
 		}
 	}
+
 	if strings.Contains(strings.ToLower(input.PermissionProfile), "read_only") {
 		forbidden[autonomy.CapabilitySourceEdit] = struct{}{}
 		forbidden[autonomy.CapabilityApplyPatch] = struct{}{}
 		forbidden[autonomy.CapabilityMutatingShell] = struct{}{}
 	}
+
 	return autonomy.CapabilityPolicy{
 		Allowed:          capabilityKeys(allowed),
 		Forbidden:        capabilityKeys(forbidden),
@@ -376,6 +428,7 @@ func compileCapabilityPolicy(input PlanExecutePlannerInput) autonomy.CapabilityP
 
 func compileToolPolicy(input PlanExecutePlannerInput) []autonomy.ToolPolicyRule {
 	var rules []autonomy.ToolPolicyRule
+
 	for _, tool := range input.AllowedTools {
 		for _, capability := range capabilitiesForTool(tool) {
 			rules = append(rules, autonomy.ToolPolicyRule{
@@ -388,6 +441,7 @@ func compileToolPolicy(input PlanExecutePlannerInput) []autonomy.ToolPolicyRule 
 			})
 		}
 	}
+
 	for _, tool := range input.ForbiddenTools {
 		for _, capability := range capabilitiesForTool(tool) {
 			rules = append(rules, autonomy.ToolPolicyRule{
@@ -400,16 +454,19 @@ func compileToolPolicy(input PlanExecutePlannerInput) []autonomy.ToolPolicyRule 
 			})
 		}
 	}
+
 	return rules
 }
 
 func compileObligations(input PlanExecutePlannerInput) []autonomy.Obligation {
 	var obligations []autonomy.Obligation
+
 	for _, path := range input.RequiredEditPaths {
 		path = normalizePath(path)
 		if path == "" {
 			continue
 		}
+
 		obligations = append(obligations, autonomy.Obligation{
 			ObligationID: stableHashID("obl_plan_coverage", path),
 			Kind:         autonomy.ObligationEvidence,
@@ -419,11 +476,13 @@ func compileObligations(input PlanExecutePlannerInput) []autonomy.Obligation {
 			RequiredBy:   "submit_plan_required_edit_coverage",
 		})
 	}
+
 	for _, evidence := range uniqueStrings(append(append([]string(nil), input.RequiredEvidence...), input.Protocol.SourceBodyObligations...)) {
 		evidence = strings.TrimSpace(evidence)
 		if evidence == "" {
 			continue
 		}
+
 		obligations = append(obligations, autonomy.Obligation{
 			ObligationID: stableHashID("obl_evidence", evidence),
 			Kind:         autonomy.ObligationEvidence,
@@ -433,6 +492,7 @@ func compileObligations(input PlanExecutePlannerInput) []autonomy.Obligation {
 			RequiredBy:   "source_body_obligations",
 		})
 	}
+
 	if verificationRequired(input) {
 		obligations = append(obligations, autonomy.Obligation{
 			ObligationID: stableHashID("obl_verify", input.VerificationContract, input.VerificationPlan),
@@ -444,6 +504,7 @@ func compileObligations(input PlanExecutePlannerInput) []autonomy.Obligation {
 			Command:      strings.Join(input.VerificationPlan, " && "),
 		})
 	}
+
 	obligations = append(obligations, autonomy.Obligation{
 		ObligationID:           stableHashID("obl_final_answer", input.Lane, input.Phase, input.TaskFamily),
 		Kind:                   autonomy.ObligationFinalAnswer,
@@ -452,6 +513,7 @@ func compileObligations(input PlanExecutePlannerInput) []autonomy.Obligation {
 		RequiredBy:             "completion_gate",
 		FinalAnswerRequirement: "terminal planner outcome must match protocol projection",
 	})
+
 	return obligations
 }
 
@@ -480,7 +542,9 @@ func compileCompletion(input PlanExecutePlannerInput) autonomy.CompletionRequire
 		"terminal outcome conforms to model protocol projection",
 		"open obligations are resolved or explicitly blocked",
 	}, input.FinalCritic...)
+
 	criteria = append(criteria, input.StopConditions...)
+
 	return autonomy.CompletionRequirement{
 		Required:               true,
 		Criteria:               criteria,
@@ -491,11 +555,13 @@ func compileCompletion(input PlanExecutePlannerInput) autonomy.CompletionRequire
 
 func compileReadiness(input PlanExecutePlannerInput, obligations []autonomy.Obligation) autonomy.ReadinessRequirement {
 	openRefs := append([]string(nil), input.Readiness.OpenObligations...)
+
 	for _, obligation := range obligations {
 		if obligation.Status == autonomy.ObligationOpen {
 			openRefs = append(openRefs, obligation.ObligationID)
 		}
 	}
+
 	return autonomy.ReadinessRequirement{
 		ReadyToAnswer:       input.Readiness.ReadyToAnswer,
 		ReadyToWrite:        input.Readiness.ReadyToWrite,
@@ -528,11 +594,13 @@ func compileEvidence(input PlanExecutePlannerInput, runtime RuntimeEnvelope) []a
 		Source:     "internal/contracts/contractcompile",
 		Summary:    "passive model runtime envelope",
 	}}
+
 	for _, path := range input.EvidencePaths {
 		path = normalizePath(path)
 		if path == "" {
 			continue
 		}
+
 		evidence = append(evidence, autonomy.EvidenceRef{
 			EvidenceID: stableHashID("evidence_path", path),
 			Kind:       "source_path",
@@ -542,6 +610,7 @@ func compileEvidence(input PlanExecutePlannerInput, runtime RuntimeEnvelope) []a
 			Source:     "planner_input",
 		})
 	}
+
 	return evidence
 }
 

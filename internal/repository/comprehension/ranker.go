@@ -78,6 +78,7 @@ func DefaultRankerWeights() RankerWeights {
 // path penalty, and so on.
 func WeightsForIntent(intent Intent) RankerWeights {
 	w := DefaultRankerWeights()
+
 	switch intent {
 	case IntentDebug:
 		w.RoleEditable = 3.4
@@ -102,6 +103,7 @@ func WeightsForIntent(intent Intent) RankerWeights {
 	case IntentNavigate:
 		w.PathMatch = 1.2
 	}
+
 	return w
 }
 
@@ -126,6 +128,7 @@ func DetectIntent(query string) Intent {
 	if q == "" {
 		return IntentSearch
 	}
+
 	switch {
 	case intentReviewPattern.MatchString(q):
 		return IntentReview
@@ -171,6 +174,7 @@ func PathPenalty(p string, w RankerWeights) float64 {
 	case pathDocsRE.MatchString(clean):
 		return w.PenaltyDocs
 	}
+
 	return 1.0
 }
 
@@ -203,6 +207,7 @@ func BuildFileGraph(graph *Graph) FileGraph {
 	if graph == nil {
 		return out
 	}
+
 	owners := make(map[string]string, len(graph.Nodes))
 	for _, node := range graph.Nodes {
 		if node.Path != "" {
@@ -210,27 +215,34 @@ func BuildFileGraph(graph *Graph) FileGraph {
 			out.Files[node.Path] = struct{}{}
 		}
 	}
+
 	for _, edge := range graph.Edges {
 		src, ok := owners[edge.SourceID]
 		if !ok {
 			continue
 		}
+
 		dst, ok := owners[edge.TargetID]
 		if !ok {
 			continue
 		}
+
 		if src == dst {
 			continue
 		}
+
 		if out.Forward[src] == nil {
 			out.Forward[src] = make(map[string]struct{})
 		}
+
 		out.Forward[src][dst] = struct{}{}
 		if out.Reverse[dst] == nil {
 			out.Reverse[dst] = make(map[string]struct{})
 		}
+
 		out.Reverse[dst][src] = struct{}{}
 	}
+
 	return out
 }
 
@@ -242,20 +254,25 @@ func FanoutHubs(fg FileGraph, fraction float64) map[string]struct{} {
 	if fraction <= 0 {
 		return nil
 	}
+
 	total := len(fg.Files)
 	if total == 0 {
 		return nil
 	}
+
 	threshold := int(float64(total) * fraction)
 	if threshold < 2 {
 		threshold = 2
 	}
+
 	hubs := make(map[string]struct{})
+
 	for file, deps := range fg.Reverse {
 		if len(deps) >= threshold {
 			hubs[file] = struct{}{}
 		}
 	}
+
 	return hubs
 }
 
@@ -267,14 +284,17 @@ func MatchedFilePaths(graph *Graph, matchedIDs map[string]struct{}) map[string]s
 	if graph == nil {
 		return out
 	}
+
 	for _, node := range graph.Nodes {
 		if node.Path == "" {
 			continue
 		}
+
 		if _, ok := matchedIDs[node.ID]; ok {
 			out[node.Path] = struct{}{}
 		}
 	}
+
 	return out
 }
 
@@ -285,12 +305,15 @@ func HopBoost(file string, fg FileGraph, matchedFiles map[string]struct{}, w Ran
 	if _, isMatch := matchedFiles[file]; isMatch {
 		return 0
 	}
+
 	if hop1Neighbor(file, fg, matchedFiles) {
 		return w.Hop1Boost
 	}
+
 	if hop2Neighbor(file, fg, matchedFiles) {
 		return w.Hop2Boost
 	}
+
 	return 0
 }
 
@@ -300,11 +323,13 @@ func hop1Neighbor(file string, fg FileGraph, matchedFiles map[string]struct{}) b
 			return true
 		}
 	}
+
 	for neighbor := range fg.Reverse[file] {
 		if _, ok := matchedFiles[neighbor]; ok {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -313,30 +338,37 @@ func hop2Neighbor(file string, fg FileGraph, matchedFiles map[string]struct{}) b
 	for neighbor := range fg.Forward[file] {
 		visited[neighbor] = struct{}{}
 	}
+
 	for neighbor := range fg.Reverse[file] {
 		visited[neighbor] = struct{}{}
 	}
+
 	for hop1 := range visited {
 		if hop1 == file {
 			continue
 		}
+
 		for hop2 := range fg.Forward[hop1] {
 			if _, seen := visited[hop2]; seen {
 				continue
 			}
+
 			if _, ok := matchedFiles[hop2]; ok {
 				return true
 			}
 		}
+
 		for hop2 := range fg.Reverse[hop1] {
 			if _, seen := visited[hop2]; seen {
 				continue
 			}
+
 			if _, ok := matchedFiles[hop2]; ok {
 				return true
 			}
 		}
 	}
+
 	return false
 }
 
@@ -349,38 +381,48 @@ func SpecificQueryTermScores(files []PackFile, tokens []string) map[string]float
 	if len(files) == 0 || len(tokens) == 0 {
 		return out
 	}
+
 	for _, token := range tokens {
 		term := strings.TrimSpace(strings.ToLower(token))
 		if len(term) < 3 || term == "." {
 			continue
 		}
+
 		matchedFiles := make(map[string]struct{})
+
 		for _, file := range files {
 			if file.Path == "" {
 				continue
 			}
+
 			if strings.Contains(packFileQueryText(file), term) {
 				matchedFiles[file.Path] = struct{}{}
 			}
 		}
+
 		if len(matchedFiles) == 0 {
 			continue
 		}
+
 		contribution := 1 / float64(len(matchedFiles))
 		for file := range matchedFiles {
 			out[file] += contribution
 		}
 	}
+
 	return out
 }
 
 func packFileQueryText(file PackFile) string {
 	var b strings.Builder
+
 	b.WriteString(strings.ToLower(file.Path))
+
 	for _, handle := range file.Handles {
 		b.WriteByte(' ')
 		b.WriteString(strings.ToLower(handle))
 	}
+
 	return b.String()
 }
 
@@ -419,46 +461,64 @@ func RankPackFiles(in RankInputs) []PackFile {
 		bonus := 0.0
 		_, isMatch := matchedFiles[file.Path]
 		_, isRequired := in.RequiredPaths[file.Path]
+
 		if isRequired {
 			bonus += weights.RequiredEditPath
+
 			reasons = append(reasons, RankerReason{Reason: "required_edit_path", State: "declared", ScoreDelta: roundScore(weights.RequiredEditPath)})
 		}
+
 		if isMatch {
 			// A direct task-term match must outrank pure neighbors; otherwise
 			// a 1-hop neighbor of the match (which gets Hop1Boost) silently
 			// wins on tie-broken role scores.
 			bonus += weights.MatchBoost
+
 			reasons = append(reasons, RankerReason{Reason: "direct_task_match", State: "matched", ScoreDelta: roundScore(weights.MatchBoost)})
 		}
+
 		if pathMatchTokens(file.Path, in.QueryTokens) {
 			bonus += weights.PathMatch
+
 			reasons = append(reasons, RankerReason{Reason: "path_token_match", State: "matched", ScoreDelta: roundScore(weights.PathMatch)})
 		}
+
 		if specificity := specificTerms[file.Path]; specificity > 0 {
 			delta := specificity * weights.SpecificTermMatch
 			maxDelta := weights.SpecificTermMatch * 3
+
 			if delta > maxDelta {
 				delta = maxDelta
 			}
+
 			bonus += delta
+
 			reasons = append(reasons, RankerReason{Reason: "specific_query_terms", State: "matched", ScoreDelta: roundScore(delta)})
 		}
+
 		hopBoost := HopBoost(file.Path, fg, matchedFiles, weights)
 		if hopBoost > 0 {
 			reasons = append(reasons, RankerReason{Reason: "graph_hop", State: graphHopState(file.Path, fg, matchedFiles), ScoreDelta: roundScore(hopBoost)})
 		}
+
 		bonus += hopBoost
+
 		score := base + bonus
 		_, fanoutHub := fanoutHubs[file.Path]
 		isHub := fanoutHub || IsNameHub(file.Path)
+
 		if isHub && !isMatch && !isRequired {
 			score *= weights.HubDemotion
+
 			reasons = append(reasons, RankerReason{Reason: "hub_demotion", State: hubState(file.Path, fanoutHub), Multiplier: weights.HubDemotion})
 		}
+
 		if file.Stale {
 			score *= weights.StaleDemotion
+
 			reasons = append(reasons, RankerReason{Reason: "stale_demotion", State: "stale", Multiplier: weights.StaleDemotion})
 		}
+
 		pathPenalty := 1.0
 		if !isRequired {
 			pathPenalty = PathPenalty(file.Path, weights)
@@ -466,28 +526,36 @@ func RankPackFiles(in RankInputs) []PackFile {
 				reasons = append(reasons, RankerReason{Reason: "path_penalty", State: pathPenaltyState(file.Path), Multiplier: pathPenalty})
 			}
 		}
+
 		score *= pathPenalty
 		if mult, ok := in.LearnedWeights[file.Path]; ok && mult > 0 {
 			score *= mult
+
 			reasons = append(reasons, RankerReason{Reason: "learned_weight", State: "applied", Multiplier: roundScore(mult)})
 		}
+
 		file.Score = roundScore(score)
 		file.Hub = isHub
 		file.RankerReasons = reasons
 		scored[i] = file
 	}
+
 	sort.SliceStable(scored, func(i, j int) bool {
 		if scored[i].Score != scored[j].Score {
 			return scored[i].Score > scored[j].Score
 		}
+
 		if packRoleRank(scored[i].Role) != packRoleRank(scored[j].Role) {
 			return packRoleRank(scored[i].Role) > packRoleRank(scored[j].Role)
 		}
+
 		if scored[i].Stale != scored[j].Stale {
 			return !scored[i].Stale
 		}
+
 		return scored[i].Path < scored[j].Path
 	})
+
 	return scored
 }
 
@@ -495,9 +563,11 @@ func graphHopState(file string, fg FileGraph, matchedFiles map[string]struct{}) 
 	if hop1Neighbor(file, fg, matchedFiles) {
 		return "hop1"
 	}
+
 	if hop2Neighbor(file, fg, matchedFiles) {
 		return "hop2"
 	}
+
 	return "none"
 }
 
@@ -505,9 +575,11 @@ func hubState(file string, fanoutHub bool) string {
 	if fanoutHub && IsNameHub(file) {
 		return "fanout_and_name"
 	}
+
 	if fanoutHub {
 		return "fanout"
 	}
+
 	return "name"
 }
 
@@ -544,16 +616,19 @@ func pathMatchTokens(p string, tokens []string) bool {
 	if len(tokens) == 0 || p == "" {
 		return false
 	}
+
 	lower := strings.ToLower(p)
 	for _, tok := range tokens {
 		t := strings.TrimSpace(strings.ToLower(tok))
 		if len(t) < 3 {
 			continue
 		}
+
 		if strings.Contains(lower, t) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -561,6 +636,7 @@ func roundScore(score float64) float64 {
 	if score < 0 {
 		score = 0
 	}
+
 	// Keep four decimals so JSON output is stable across runs.
 	return float64(int64(score*10000+0.5)) / 10000
 }

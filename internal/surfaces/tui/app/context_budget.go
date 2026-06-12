@@ -32,14 +32,17 @@ func NewContextBudget(ctxSize int) ContextBudget {
 	if ctxSize <= 0 {
 		ctxSize = 65536
 	}
+
 	b := ContextBudget{CtxSize: ctxSize}
 
 	// --- Compaction thresholds (from compactionParams) ---
 	// Fire at ~40% of window, keep ~20% as recent verbatim.
 	thresholdTokens := ctxSize * 40 / 100
 	recentTokens := ctxSize * 20 / 100
+
 	b.CompactionThreshold = clampBudget(thresholdTokens/estTokensPerMsg, 10, 200)
 	b.CompactionRecentKeep = clampBudget(recentTokens/estTokensPerMsg, 3, 40)
+
 	if b.CompactionRecentKeep > b.CompactionThreshold/2 {
 		b.CompactionRecentKeep = b.CompactionThreshold / 2
 	}
@@ -49,7 +52,9 @@ func NewContextBudget(ctxSize int) ContextBudget {
 	if thresholdMsgs > 200 {
 		thresholdMsgs = 200
 	}
+
 	maxToolCalls := thresholdMsgs / 2
+
 	b.ConvFirstMilestone = maxInt(15, maxToolCalls*25/100)
 	b.ConvNudgeInterval = maxInt(20, maxToolCalls*35/100)
 
@@ -64,9 +69,11 @@ func clampBudget(v, min, max int) int {
 	if v < min {
 		return min
 	}
+
 	if v > max {
 		return max
 	}
+
 	return v
 }
 
@@ -74,5 +81,6 @@ func maxInt(a, b int) int {
 	if a > b {
 		return a
 	}
+
 	return b
 }

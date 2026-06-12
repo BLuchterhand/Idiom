@@ -20,7 +20,9 @@ func RenderPrompt(kind PromptKind, packet Packet, prior string) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("encode packet: %w", err)
 	}
+
 	var b bytes.Buffer
+
 	switch kind {
 	case PromptPlan:
 		renderPlanPrompt(&b, packetJSON)
@@ -31,6 +33,7 @@ func RenderPrompt(kind PromptKind, packet Packet, prior string) (string, error) 
 	default:
 		return "", fmt.Errorf("unknown architect prompt kind: %s", kind)
 	}
+
 	return strings.TrimSpace(b.String()) + "\n", nil
 }
 
@@ -115,5 +118,6 @@ func fencedText(text string) string {
 	if text == "" {
 		text = "(none provided)"
 	}
+
 	return "```text\n" + text + "\n```\n"
 }

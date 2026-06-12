@@ -120,26 +120,34 @@ type Usage struct {
 
 func (u *Usage) UnmarshalJSON(data []byte) error {
 	type usageFields Usage
+
 	var parsed struct {
 		usageFields
 		CompletionTokensDetails struct {
 			ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 		} `json:"completion_tokens_details,omitempty"`
 	}
+
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		return err
 	}
+
 	*u = Usage(parsed.usageFields)
 	if parsed.CompletionTokensDetails.ReasoningTokens > 0 {
 		u.ReasoningTokens = parsed.CompletionTokensDetails.ReasoningTokens
 	}
+
 	var raw map[string]json.RawMessage
+
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
+
 	_, hasHit := raw["prompt_cache_hit_tokens"]
 	_, hasMiss := raw["prompt_cache_miss_tokens"]
+
 	u.PromptCacheAccountingKnown = hasHit && hasMiss
+
 	return nil
 }
 
@@ -256,9 +264,11 @@ func buildChatTemplateKwargs(opts ChatOptions, backend string) *chatTemplateKwar
 	default:
 		return nil
 	}
+
 	if opts.EnableThinking == nil && !opts.PreserveThinking && opts.ThinkingBudget <= 0 {
 		return nil
 	}
+
 	return &chatTemplateKwargs{
 		EnableThinking:   util.ClonePtr(opts.EnableThinking),
 		PreserveThinking: opts.PreserveThinking,
@@ -270,6 +280,7 @@ func normalizeChatRequestForBackend(req *chatRequest, opts ChatOptions, backend 
 	if req == nil {
 		return
 	}
+
 	if !BackendSupportsNativeTools(backend) && !opts.ForceNativeTools {
 		// mlx_lm.server owns its own Qwen XML tool parser when a native
 		// OpenAI `tools` array is present. Current MLX parser failures can
@@ -309,6 +320,7 @@ func BackendStructuredOutputCapabilities(backend string) StructuredOutputCapabil
 		NativeTools: BackendSupportsNativeTools(kind),
 		JSONObject:  true,
 	}
+
 	switch kind {
 	case "", config.BackendLlama:
 		caps.ThinkingControls = true
@@ -317,6 +329,7 @@ func BackendStructuredOutputCapabilities(backend string) StructuredOutputCapabil
 	case config.BackendZAI:
 		caps.ThinkingControls = true
 	}
+
 	return caps
 }
 
@@ -386,6 +399,7 @@ func (c *Client) WithBackend(backend string) *Client {
 	default:
 		c.backend = config.BackendLlama
 	}
+
 	return c
 }
 
@@ -414,6 +428,7 @@ func (c *Client) Backend() string {
 	if c.backend == "" {
 		return config.BackendLlama
 	}
+
 	return c.backend
 }
 
@@ -421,6 +436,7 @@ func (c *Client) SupportsNativeTools() bool {
 	if c == nil {
 		return true
 	}
+
 	return BackendSupportsNativeTools(c.Backend())
 }
 
@@ -428,6 +444,7 @@ func (c *Client) modelsURL() string {
 	if c.Backend() == config.BackendZAI {
 		return c.baseURL + "/models"
 	}
+
 	return c.baseURL + "/v1/models"
 }
 
@@ -435,6 +452,7 @@ func (c *Client) chatCompletionsURL() string {
 	if c.Backend() == config.BackendZAI {
 		return c.baseURL + "/chat/completions"
 	}
+
 	return c.baseURL + "/v1/chat/completions"
 }
 
@@ -446,15 +464,19 @@ func (c *Client) applyAuth(req *http.Request) error {
 	if c == nil || req == nil || !backendRequiresAuth(c.Backend()) {
 		return nil
 	}
+
 	env := strings.TrimSpace(c.apiKeyEnv)
 	if env == "" {
 		env = defaultAPIKeyEnv(c.Backend())
 	}
+
 	key := strings.TrimSpace(os.Getenv(env))
 	if key == "" {
 		return llmAuthMissingError(env, c.Backend())
 	}
+
 	req.Header.Set("Authorization", "Bearer "+key)
+
 	return nil
 }
 
@@ -463,6 +485,7 @@ func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	if err := c.applyAuth(req); err != nil {
 		return nil, err
 	}
@@ -479,9 +502,11 @@ func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	}
 
 	var parsed modelsResponse
+
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 		return nil, llmDecodeError("decode model list", err)
 	}
+
 	return parsed.Data, nil
 }
 
@@ -508,14 +533,18 @@ func normalizeHostedTools(tools []Tool) ([]Tool, map[string]string) {
 	if len(tools) == 0 {
 		return tools, nil
 	}
+
 	reverse := make(map[string]string)
 	normalized := make([]Tool, len(tools))
+
 	for i, t := range tools {
 		orig := t.Function.Name
 		sanitized := strings.NewReplacer(":", "_", "/", "_").Replace(orig)
+
 		if sanitized != orig {
 			reverse[sanitized] = orig
 		}
+
 		normalized[i] = Tool{
 			Type: t.Type,
 			Function: ToolFunction{
@@ -525,6 +554,7 @@ func normalizeHostedTools(tools []Tool) ([]Tool, map[string]string) {
 			},
 		}
 	}
+
 	return normalized, reverse
 }
 
@@ -537,33 +567,43 @@ func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream b
 	if opts.MaxTokens > 0 {
 		payload.MaxTokens = opts.MaxTokens
 	}
+
 	if opts.Temperature > 0 {
 		payload.Temperature = opts.Temperature
 	}
+
 	if opts.TopP > 0 {
 		payload.TopP = opts.TopP
 	}
+
 	if opts.PresencePenalty != 0 {
 		payload.PresencePenalty = opts.PresencePenalty
 	}
+
 	if len(opts.Tools) > 0 && BackendSupportsNativeTools(backend) {
 		normalized, rev := normalizeHostedTools(opts.Tools)
+
 		payload.Tools = normalized
 		payload.ToolNameReverse = rev
 	}
+
 	if opts.ToolChoice != "" && BackendSupportsNativeTools(backend) {
 		payload.ToolChoice = opts.ToolChoice
 	}
+
 	if util.EqualTrimFold(backend, config.BackendZAI) && opts.EnableThinking != nil {
 		mode := "disabled"
 		if *opts.EnableThinking {
 			mode = "enabled"
 		}
+
 		payload.Thinking = map[string]string{"type": mode}
 	}
+
 	if opts.ResponseFormatJSON {
 		payload.ResponseFormat = map[string]string{"type": "json_object"}
 	}
+
 	return payload
 }
 
@@ -575,27 +615,34 @@ func repairMessageToolPairing(messages []ChatMessage) []ChatMessage {
 	if len(messages) == 0 {
 		return messages
 	}
+
 	// Build a lookup: tool_call_id -> tool response message index
 	toolRespIdx := make(map[string]int)
+
 	for i, msg := range messages {
 		if msg.Role == "tool" && msg.ToolCallID != "" {
 			toolRespIdx[msg.ToolCallID] = i
 		}
 	}
+
 	// Build the repaired array: for each assistant with tool_calls,
 	// emit the assistant, then immediately emit all matching tool
 	// responses, then emit other messages normally (skipping tool
 	// responses that were already emitted).
 	emittedTool := make(map[int]bool)
 	repaired := make([]ChatMessage, 0, len(messages))
+
 	for _, msg := range messages {
 		if msg.Role != "assistant" || len(msg.ToolCalls) == 0 {
 			if msg.Role == "tool" {
 				continue // tool responses are emitted after their assistant
 			}
+
 			repaired = append(repaired, msg)
+
 			continue
 		}
+
 		// Emit the assistant message.
 		repaired = append(repaired, msg)
 		// Emit all matching tool responses immediately after.
@@ -603,6 +650,7 @@ func repairMessageToolPairing(messages []ChatMessage) []ChatMessage {
 			if tc.ID == "" {
 				continue
 			}
+
 			if ti, ok := toolRespIdx[tc.ID]; ok && !emittedTool[ti] {
 				repaired = append(repaired, messages[ti])
 				emittedTool[ti] = true
@@ -621,6 +669,7 @@ func repairMessageToolPairing(messages []ChatMessage) []ChatMessage {
 			}
 		}
 	}
+
 	return repaired
 }
 
@@ -634,17 +683,21 @@ func hostedChatMessages(messages []ChatMessage, backend string) []ChatMessage {
 	if len(messages) == 0 {
 		return nil
 	}
+
 	// DeepSeek hosted-chat requires reasoning_content continuity in history
 	// when the prior response was in thinking mode. Preserve the field on
 	// assistant messages; other roles should not carry it.
 	preserveReasoning := util.EqualTrimFold(backend, config.BackendDeepSeek)
 	out := make([]ChatMessage, len(messages))
+
 	for i, msg := range messages {
 		if !preserveReasoning || msg.Role != "assistant" {
 			msg.ReasoningContent = ""
 		}
+
 		out[i] = msg
 	}
+
 	return out
 }
 
@@ -653,15 +706,18 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 		if isHostedChatBackend(c.Backend()) || isOpenAIResponsesBackend(c.Backend()) {
 			opts.Model = c.modelName
 		}
+
 		if opts.Model == "" {
 			opts.Model = "local-model"
 		}
 	}
+
 	if isOpenAIResponsesBackend(c.Backend()) {
 		return llmUnsupportedError(fmt.Sprintf("streaming is not implemented for %s backend", c.Backend()))
 	}
 
 	var payload any
+
 	if isHostedChatBackend(c.Backend()) {
 		payload = hostedChatRequestPayload(messages, opts, true, c.Backend())
 		if hp, ok := payload.(hostedChatPayload); ok {
@@ -669,6 +725,7 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 		}
 	} else {
 		messages = repairMessageToolPairing(messages)
+
 		reqPayload := chatRequest{
 			Model:              opts.Model,
 			Messages:           messages,
@@ -685,12 +742,16 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 			Tools:              opts.Tools,
 			ToolChoice:         opts.ToolChoice,
 		}
+
 		if opts.ResponseFormatJSON {
 			reqPayload.ResponseFormat = map[string]string{"type": "json_object"}
 		}
+
 		normalizeChatRequestForBackend(&reqPayload, opts, c.backend)
+
 		payload = reqPayload
 	}
+
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return llmDecodeError("marshal request", err)
@@ -700,7 +761,9 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 	if err != nil {
 		return err
 	}
+
 	req.Header.Set("Content-Type", "application/json")
+
 	if err := c.applyAuth(req); err != nil {
 		return err
 	}
@@ -731,6 +794,7 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 		}
 
 		var parsed chatStreamChunk
+
 		if err := json.Unmarshal([]byte(chunk), &parsed); err != nil {
 			return llmDecodeError("decode stream chunk", err)
 		}
@@ -738,6 +802,7 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 		if parsed.Error != nil {
 			return llmAPIError(parsed.Error.Message)
 		}
+
 		if len(parsed.Choices) == 0 {
 			continue
 		}
@@ -746,6 +811,7 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 		if delta == "" {
 			delta = parsed.Choices[0].Message.Content
 		}
+
 		delta = stripSpecialTokens(delta)
 
 		if delta != "" {
@@ -762,6 +828,7 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 	if err := scanner.Err(); err != nil {
 		return llmTransportError("read stream", err)
 	}
+
 	return nil
 }
 
@@ -770,6 +837,7 @@ func (c *Client) CompleteChat(ctx context.Context, messages []ChatMessage, opts 
 	if err != nil {
 		return "", err
 	}
+
 	return reply.Content, nil
 }
 
@@ -842,6 +910,7 @@ func responsesInputFromMessages(messages []ChatMessage) []map[string]any {
 				"call_id": msg.ToolCallID,
 				"output":  msg.Content,
 			}
+
 			input = append(input, item)
 		case "assistant":
 			if strings.TrimSpace(msg.Content) != "" || len(msg.ToolCalls) == 0 {
@@ -850,11 +919,13 @@ func responsesInputFromMessages(messages []ChatMessage) []map[string]any {
 					"content": msg.Content,
 				})
 			}
+
 			for _, call := range msg.ToolCalls {
 				callID := strings.TrimSpace(call.ID)
 				if callID == "" {
 					callID = "call_" + call.Function.Name
 				}
+
 				input = append(input, map[string]any{
 					"type":      "function_call",
 					"call_id":   callID,
@@ -866,12 +937,14 @@ func responsesInputFromMessages(messages []ChatMessage) []map[string]any {
 			if role == "" {
 				role = "user"
 			}
+
 			input = append(input, map[string]any{
 				"role":    role,
 				"content": msg.Content,
 			})
 		}
 	}
+
 	return input
 }
 
@@ -881,9 +954,11 @@ func responsesToolsFromChatTools(tools []Tool) []responsesTool {
 		if tool.Type != "" && tool.Type != "function" {
 			continue
 		}
+
 		if strings.TrimSpace(tool.Function.Name) == "" {
 			continue
 		}
+
 		out = append(out, responsesTool{
 			Type:        "function",
 			Name:        tool.Function.Name,
@@ -891,6 +966,7 @@ func responsesToolsFromChatTools(tools []Tool) []responsesTool {
 			Parameters:  tool.Function.Parameters,
 		})
 	}
+
 	return out
 }
 
@@ -905,15 +981,19 @@ func (c *Client) completeResponsesChatMessage(ctx context.Context, messages []Ch
 		ToolChoice:      opts.ToolChoice,
 		MaxOutputTokens: opts.MaxTokens,
 	}
+
 	if opts.Temperature > 0 {
 		payload.Temperature = &temp
 	}
+
 	if opts.TopP > 0 {
 		payload.TopP = &topP
 	}
+
 	if c.reasoningEffort != "" {
 		payload.Reasoning = &responsesReasoning{Effort: c.reasoningEffort}
 	}
+
 	if c.verbosity != "" {
 		payload.Text = &responsesText{Verbosity: c.verbosity}
 	}
@@ -922,41 +1002,53 @@ func (c *Client) completeResponsesChatMessage(ctx context.Context, messages []Ch
 	if err != nil {
 		return ChatMessage{}, llmDecodeError("marshal responses request", err)
 	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.responsesURL(), bytes.NewReader(data))
 	if err != nil {
 		return ChatMessage{}, err
 	}
+
 	req.Header.Set("Content-Type", "application/json")
+
 	if err := c.applyAuth(req); err != nil {
 		return ChatMessage{}, err
 	}
+
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return ChatMessage{}, llmTransportError("responses request transport failed", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode >= http.StatusBadRequest {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
 		return ChatMessage{}, llmHTTPStatusError("responses request failed", resp.StatusCode, string(body))
 	}
 
 	var parsed responsesResponse
+
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 		return ChatMessage{}, llmDecodeError("decode responses response", err)
 	}
+
 	if parsed.Error != nil {
 		return ChatMessage{}, llmAPIError(parsed.Error.Message)
 	}
 
-	var content strings.Builder
-	var toolCalls []ToolCall
+	var (
+		content   strings.Builder
+		toolCalls []ToolCall
+	)
+
 	role := "assistant"
+
 	for _, item := range parsed.Output {
 		switch item.Type {
 		case "message":
 			if item.Role != "" {
 				role = item.Role
 			}
+
 			for _, part := range item.Content {
 				if part.Text != "" {
 					content.WriteString(part.Text)
@@ -967,6 +1059,7 @@ func (c *Client) completeResponsesChatMessage(ctx context.Context, messages []Ch
 			if callID == "" {
 				callID = item.ID
 			}
+
 			toolCalls = append(toolCalls, ToolCall{
 				ID:   callID,
 				Type: "function",
@@ -977,16 +1070,20 @@ func (c *Client) completeResponsesChatMessage(ctx context.Context, messages []Ch
 			})
 		}
 	}
+
 	if content.Len() == 0 && parsed.OutputText != "" {
 		content.WriteString(parsed.OutputText)
 	}
+
 	finishReason := "stop"
 	if len(toolCalls) > 0 {
 		finishReason = "tool_calls"
 	}
+
 	if parsed.IncompleteDetails != nil && strings.TrimSpace(parsed.IncompleteDetails.Reason) != "" {
 		finishReason = strings.TrimSpace(parsed.IncompleteDetails.Reason)
 	}
+
 	return ChatMessage{
 		Role:      role,
 		Content:   stripSpecialTokens(content.String()),
@@ -1006,6 +1103,7 @@ func remapToolCalls(calls []ToolCall, reverse map[string]string) []ToolCall {
 	if len(reverse) == 0 || len(calls) == 0 {
 		return calls
 	}
+
 	out := make([]ToolCall, len(calls))
 	for i, call := range calls {
 		out[i] = call
@@ -1013,6 +1111,7 @@ func remapToolCalls(calls []ToolCall, reverse map[string]string) []ToolCall {
 			out[i].Function.Name = orig
 		}
 	}
+
 	return out
 }
 
@@ -1021,15 +1120,18 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 		if isHostedChatBackend(c.Backend()) || isOpenAIResponsesBackend(c.Backend()) {
 			opts.Model = c.modelName
 		}
+
 		if opts.Model == "" {
 			opts.Model = "local-model"
 		}
 	}
+
 	if isOpenAIResponsesBackend(c.Backend()) {
 		return c.completeResponsesChatMessage(ctx, messages, opts)
 	}
 
 	var payload any
+
 	if isHostedChatBackend(c.Backend()) {
 		payload = hostedChatRequestPayload(messages, opts, false, c.Backend())
 		if hp, ok := payload.(hostedChatPayload); ok {
@@ -1037,6 +1139,7 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 		}
 	} else {
 		messages = repairMessageToolPairing(messages)
+
 		reqPayload := chatRequest{
 			Model:              opts.Model,
 			Messages:           messages,
@@ -1053,10 +1156,13 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 			Tools:              opts.Tools,
 			ToolChoice:         opts.ToolChoice,
 		}
+
 		if opts.ResponseFormatJSON {
 			reqPayload.ResponseFormat = map[string]string{"type": "json_object"}
 		}
+
 		normalizeChatRequestForBackend(&reqPayload, opts, c.backend)
+
 		payload = reqPayload
 	}
 
@@ -1070,7 +1176,9 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 		if err != nil {
 			return ChatMessage{}, err
 		}
+
 		req.Header.Set("Content-Type", "application/json")
+
 		if err := c.applyAuth(req); err != nil {
 			return ChatMessage{}, err
 		}
@@ -1082,32 +1190,43 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 
 		if resp.StatusCode >= http.StatusBadRequest {
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
+
 			_ = resp.Body.Close()
+
 			bodyText := strings.TrimSpace(string(body))
+
 			if shouldRetryLoadingModel(resp.StatusCode, bodyText) {
 				if err := sleepWithContext(ctx, loadingModelRetryDelay); err != nil {
 					return ChatMessage{}, err
 				}
+
 				continue
 			}
+
 			return ChatMessage{}, llmHTTPStatusError("chat request failed", resp.StatusCode, bodyText)
 		}
 
 		var parsed chatResponse
+
 		err = json.NewDecoder(resp.Body).Decode(&parsed)
 		_ = resp.Body.Close()
+
 		if err != nil {
 			return ChatMessage{}, llmDecodeError("decode chat response", err)
 		}
+
 		if parsed.Error != nil {
 			if shouldRetryLoadingModel(http.StatusServiceUnavailable, parsed.Error.Message) {
 				if err := sleepWithContext(ctx, loadingModelRetryDelay); err != nil {
 					return ChatMessage{}, err
 				}
+
 				continue
 			}
+
 			return ChatMessage{}, llmAPIError(parsed.Error.Message)
 		}
+
 		if len(parsed.Choices) == 0 {
 			return ChatMessage{}, llmMalformedResponseError("chat response did not contain any choices")
 		}
@@ -1115,13 +1234,16 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 		choice := parsed.Choices[0]
 		message := choice.Message
 		role := strings.TrimSpace(message.Role)
+
 		if role == "" {
 			role = "assistant"
 		}
+
 		reasoning := message.ReasoningContent
 		if reasoning == "" {
 			reasoning = message.Reasoning
 		}
+
 		return ChatMessage{
 			Role:             role,
 			Content:          stripSpecialTokens(message.Content),
@@ -1137,7 +1259,9 @@ func shouldRetryLoadingModel(statusCode int, body string) bool {
 	if statusCode != http.StatusServiceUnavailable {
 		return false
 	}
+
 	body = strings.ToLower(body)
+
 	return strings.Contains(body, "loading model") || strings.Contains(body, "unavailable_error")
 }
 

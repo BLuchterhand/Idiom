@@ -33,9 +33,11 @@ func TestBuildProfileReportSummarizesReadinessGates(t *testing.T) {
 	if got.Smoke.Status != "blocked" || got.Smoke.Passed != 1 || got.Smoke.Total != 2 {
 		t.Fatalf("unexpected smoke report: %#v", got.Smoke)
 	}
+
 	if got.Capacity.Status != "blocked" || len(got.Capacity.Blockers) == 0 {
 		t.Fatalf("expected capacity blocker, got %#v", got.Capacity)
 	}
+
 	if got.Readiness.HardFailures != 1 || got.Readiness.ContextBudgetState != "blocked" {
 		t.Fatalf("readiness evidence missing: %#v", got.Readiness)
 	}
@@ -55,6 +57,7 @@ func TestSummarizeBenchmarkCountsProfileOutcomes(t *testing.T) {
 	if got.ProfileCount != 2 || got.SmokePassed != 3 || got.SmokeTotal != 4 || got.CapacityBlocked != 1 || got.ReplayLogCount != 3 || got.BlockerCount != 1 {
 		t.Fatalf("unexpected summary: %#v", got)
 	}
+
 	if got.SmokePassRate != 0.75 {
 		t.Fatalf("unexpected pass rate: %v", got.SmokePassRate)
 	}

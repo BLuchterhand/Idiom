@@ -48,14 +48,19 @@ func runVersionMain(_ []string, stdout io.Writer, _ io.Writer) int {
 			}
 		}
 	}
+
 	fmt.Fprintf(stdout, "version: %s\n", version)
+
 	if resolvedCommit != "" {
 		fmt.Fprintf(stdout, "commit:  %s\n", resolvedCommit)
 	}
+
 	if resolvedDate != "" {
 		fmt.Fprintf(stdout, "date:    %s\n", resolvedDate)
 	}
+
 	fmt.Fprintf(stdout, "go:      %s\n", runtime.Version())
 	fmt.Fprintf(stdout, "os/arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+
 	return 0
 }

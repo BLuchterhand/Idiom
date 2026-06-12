@@ -170,21 +170,26 @@ func LoadLocalizationCorpus(path string) (LocalizationCorpus, error) {
 	if err != nil {
 		return corpus, err
 	}
+
 	if err := ValidateLocalizationCorpus(corpus); err != nil {
 		return corpus, err
 	}
+
 	return corpus, nil
 }
 
 func ReadLocalizationCorpus(path string) (LocalizationCorpus, error) {
 	var corpus LocalizationCorpus
+
 	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return corpus, fmt.Errorf("read localization corpus: %w", err)
 	}
+
 	if err := json.Unmarshal(data, &corpus); err != nil {
 		return corpus, fmt.Errorf("decode localization corpus: %w", err)
 	}
+
 	return corpus, nil
 }
 
@@ -193,6 +198,7 @@ func ValidateLocalizationCorpus(corpus LocalizationCorpus) error {
 	if len(findings) > 0 {
 		return fmt.Errorf("localization corpus %q validation failed: %s", corpus.Name, strings.Join(findings, "; "))
 	}
+
 	return nil
 }
 
@@ -201,42 +207,54 @@ func LintLocalizationCorpus(corpus LocalizationCorpus) []string {
 	add := func(format string, args ...any) {
 		findings = append(findings, fmt.Sprintf(format, args...))
 	}
+
 	if strings.TrimSpace(corpus.Name) == "" {
 		add("missing name")
 	}
+
 	if corpus.Version <= 0 {
 		add("version must be positive")
 	}
+
 	if !corpus.Experimental {
 		add("corpus must be marked experimental")
 	}
+
 	if strings.TrimSpace(corpus.SourceWindow.StartedAt) == "" || strings.TrimSpace(corpus.SourceWindow.EndedAt) == "" {
 		add("source window must include started_at and ended_at")
 	}
+
 	for _, value := range []string{corpus.SourceWindow.StartedAt, corpus.SourceWindow.EndedAt, corpus.PrivacyReview.ReviewedAt} {
 		if strings.TrimSpace(value) == "" {
 			continue
 		}
+
 		if _, err := time.Parse(time.RFC3339, value); err != nil {
 			add("timestamp %q must be RFC3339", value)
 		}
 	}
+
 	if len(corpus.SourceWindow.SourceRoots) == 0 {
 		add("source window must name source roots")
 	}
+
 	if !localizationStatusIsRedacted(corpus.PrivacyReview.Status) {
 		add("privacy review status must be redacted")
 	}
+
 	if !corpus.PrivacyReview.SensitiveContentExcluded {
 		add("privacy review must confirm sensitive content exclusion")
 	}
+
 	if len(corpus.Tasks) == 0 {
 		add("corpus has no tasks")
 	}
+
 	seen := make(map[string]struct{}, len(corpus.Tasks))
 	for i, task := range corpus.Tasks {
 		lintLocalizationTask(i, task, seen, &findings)
 	}
+
 	return findings
 }
 
@@ -246,9 +264,11 @@ func lintLocalizationTask(index int, task LocalizationCorpusTask, seen map[strin
 		if id == "" {
 			id = fmt.Sprintf("<task %d>", index)
 		}
+
 		*findings = append(*findings, fmt.Sprintf("%s: %s", id, fmt.Sprintf(format, args...)))
 	}
 	id := strings.TrimSpace(task.ID)
+
 	if id == "" {
 		add("missing id")
 	} else if _, ok := seen[id]; ok {
@@ -256,84 +276,107 @@ func lintLocalizationTask(index int, task LocalizationCorpusTask, seen map[strin
 	} else {
 		seen[id] = struct{}{}
 	}
+
 	if strings.TrimSpace(task.Name) == "" {
 		add("missing name")
 	}
+
 	if strings.TrimSpace(task.Summary) == "" {
 		add("missing summary")
 	}
+
 	if len(task.Themes) == 0 {
 		add("missing themes")
 	}
+
 	if strings.TrimSpace(task.ClientProductArea) == "" {
 		add("missing client_product_area")
 	}
+
 	if len(task.SourceRefs) == 0 {
 		add("missing source_refs")
 	}
+
 	for _, ref := range task.SourceRefs {
 		if strings.TrimSpace(ref.Kind) == "" {
 			add("source ref missing kind")
 		}
+
 		if strings.TrimSpace(ref.Ref) == "" {
 			add("source ref missing ref")
 		}
+
 		if strings.TrimSpace(ref.LogPath) != "" {
 			if err := validateLocalizationRelativePath(ref.LogPath); err != nil {
 				add("source ref path %q is invalid: %v", ref.LogPath, err)
 			}
 		}
+
 		if strings.TrimSpace(ref.ObservedAt) != "" {
 			if _, err := time.Parse(time.RFC3339, ref.ObservedAt); err != nil {
 				add("source ref observed_at %q must be RFC3339", ref.ObservedAt)
 			}
 		}
+
 		if digest := strings.TrimSpace(ref.Digest); digest != "" && !strings.HasPrefix(digest, "sha256:") {
 			add("source ref digest %q must use sha256 prefix", digest)
 		}
 	}
+
 	if len(task.Expected.Files) == 0 {
 		add("expected files must not be empty")
 	}
+
 	for _, file := range task.Expected.Files {
 		if err := validateLocalizationRelativePath(file.Path); err != nil {
 			add("expected file path %q is invalid: %v", file.Path, err)
 		}
 	}
+
 	for _, symbol := range task.Expected.Symbols {
 		if err := validateLocalizationRelativePath(symbol.Path); err != nil {
 			add("expected symbol path %q is invalid: %v", symbol.Path, err)
 		}
+
 		if strings.TrimSpace(symbol.Name) == "" {
 			add("expected symbol in %q missing name", symbol.Path)
 		}
 	}
+
 	for _, test := range task.Expected.Tests {
 		if err := validateLocalizationRelativePath(test.Path); err != nil {
 			add("expected test path %q is invalid: %v", test.Path, err)
 		}
 	}
+
 	if task.Benchmark != nil {
 		lintLocalizationBenchmark(task.Benchmark, add)
 	}
+
 	if !localizationStatusIsRedacted(task.Privacy.Status) {
 		add("privacy status must be redacted")
 	}
+
 	if task.Privacy.TranscriptIncluded || task.Privacy.FileBodiesIncluded || task.Privacy.PromptTextIncluded || task.Privacy.SecretsIncluded {
 		add("privacy flags must not include transcript, file bodies, prompt text, or secrets")
 	}
+
 	if !task.Privacy.SensitiveContentExcluded {
 		add("privacy must confirm sensitive content exclusion")
 	}
+
 	if strings.TrimSpace(task.SensitiveExclusionNote) == "" {
 		add("missing sensitive exclusion note")
 	}
+
 	if strings.TrimSpace(task.Provenance.SelectionReason) == "" {
 		add("missing provenance selection reason")
 	}
+
 	if len(task.Provenance.SanitizedFields) == 0 {
 		add("missing provenance sanitized fields")
 	}
+
 	if len(task.Provenance.SourceCoverage) == 0 {
 		add("missing provenance source coverage")
 	}
@@ -346,28 +389,34 @@ func lintLocalizationBenchmark(benchmark *LocalizationBenchmarkInput, add func(s
 				add("context packet candidate file path %q is invalid: %v", file.Path, err)
 			}
 		}
+
 		for _, symbol := range benchmark.ContextPacket.Symbols {
 			if err := validateLocalizationRelativePath(symbol.Path); err != nil {
 				add("context packet candidate symbol path %q is invalid: %v", symbol.Path, err)
 			}
+
 			if strings.TrimSpace(symbol.Name) == "" {
 				add("context packet candidate symbol in %q missing name", symbol.Path)
 			}
 		}
+
 		for _, test := range benchmark.ContextPacket.Tests {
 			if err := validateLocalizationRelativePath(test.Path); err != nil {
 				add("context packet candidate test path %q is invalid: %v", test.Path, err)
 			}
 		}
 	}
+
 	if benchmark.Trajectory != nil {
 		if benchmark.Trajectory.BroadReadCount != nil && *benchmark.Trajectory.BroadReadCount < 0 {
 			add("trajectory broad_read_count must be non-negative")
 		}
+
 		if benchmark.Trajectory.ZeroHitSearchCount != nil && *benchmark.Trajectory.ZeroHitSearchCount < 0 {
 			add("trajectory zero_hit_search_count must be non-negative")
 		}
 	}
+
 	for _, condition := range benchmark.CompetitiveConditions {
 		lintLocalizationCompetitiveCondition(condition, add)
 	}
@@ -376,26 +425,31 @@ func lintLocalizationBenchmark(benchmark *LocalizationBenchmarkInput, add func(s
 func lintLocalizationCompetitiveCondition(condition LocalizationCompetitiveConditionInput, add func(string, ...any)) {
 	baseline := normalizeLocalizationCompetitiveBaseline(condition.Baseline)
 	status := normalizeLocalizationCompetitiveStatus(condition.Status)
+
 	if baseline == "" {
 		add("competitive condition missing baseline")
 	} else if !localizationCompetitiveBaselineKnown(baseline) {
 		add("competitive condition baseline %q is not recognized", condition.Baseline)
 	}
+
 	if status == "" {
 		add("competitive condition %q missing status", condition.Baseline)
 	} else if !localizationCompetitiveStatusKnown(status) {
 		add("competitive condition %q status %q is not recognized", condition.Baseline, condition.Status)
 	}
+
 	for _, file := range condition.CandidateFiles {
 		if err := validateLocalizationRelativePath(file.Path); err != nil {
 			add("competitive condition %q candidate file path %q is invalid: %v", condition.Baseline, file.Path, err)
 		}
 	}
+
 	if condition.Budget != nil {
 		if condition.Budget.TokenBudget < 0 || condition.Budget.ToolCallBudget < 0 || condition.Budget.WallClockBudgetMS < 0 || condition.Budget.UsedToolCalls < 0 || condition.Budget.ElapsedMS < 0 {
 			add("competitive condition %q budget values must be non-negative", condition.Baseline)
 		}
 	}
+
 	for _, field := range []struct {
 		name  string
 		value string
@@ -409,27 +463,33 @@ func lintLocalizationCompetitiveCondition(condition LocalizationCompetitiveCondi
 			add("competitive condition %q %s is invalid: %v", condition.Baseline, field.name, err)
 		}
 	}
+
 	if strings.TrimSpace(condition.ArtifactPath) != "" {
 		if err := validateLocalizationRelativePath(condition.ArtifactPath); err != nil {
 			add("competitive condition %q artifact path %q is invalid: %v", condition.Baseline, condition.ArtifactPath, err)
 		}
 	}
+
 	for _, classification := range condition.ClientClassifications {
 		if normalizeClientClassification(classification) == "" {
 			add("competitive condition %q client classification is not one of the approved bounded classes", condition.Baseline)
 		}
 	}
+
 	switch status {
 	case localizationCompetitiveStatusMeasured:
 		if len(condition.CandidateFiles) == 0 {
 			add("competitive condition %q measured status requires candidate_files", condition.Baseline)
 		}
+
 		if !localizationCompetitiveConditionHasBudget(condition) {
 			add("competitive condition %q measured status requires budget evidence", condition.Baseline)
 		}
+
 		if !localizationCompetitiveConditionHasReproducibility(condition) {
 			add("competitive condition %q measured status requires command_id or artifact_path", condition.Baseline)
 		}
+
 		if !localizationCompetitiveConditionHasVerificationMethod(condition) {
 			add("competitive condition %q measured status requires verification_method", condition.Baseline)
 		}
@@ -437,12 +497,15 @@ func lintLocalizationCompetitiveCondition(condition LocalizationCompetitiveCondi
 		if strings.TrimSpace(condition.InfeasibilityReason) == "" {
 			add("competitive condition %q infeasible status requires infeasibility_reason", condition.Baseline)
 		}
+
 		if strings.TrimSpace(condition.ClaimImpact) == "" {
 			add("competitive condition %q infeasible status requires claim_impact", condition.Baseline)
 		}
+
 		if !localizationCompetitiveConditionHasReproducibility(condition) {
 			add("competitive condition %q infeasible status requires command_id or artifact_path", condition.Baseline)
 		}
+
 		if !localizationCompetitiveConditionHasVerificationMethod(condition) {
 			add("competitive condition %q infeasible status requires verification_method", condition.Baseline)
 		}
@@ -451,27 +514,33 @@ func lintLocalizationCompetitiveCondition(condition LocalizationCompetitiveCondi
 
 func LintLocalizationCorpusPaths(corpus LocalizationCorpus, root string) []string {
 	findings := make([]string, 0)
+
 	root = strings.TrimSpace(root)
+
 	if root == "" {
 		root = "."
 	}
+
 	for _, task := range corpus.Tasks {
 		for _, file := range task.Expected.Files {
 			if !localizationPathExists(root, file.Path) {
 				findings = append(findings, fmt.Sprintf("%s: expected file missing: %s", task.ID, file.Path))
 			}
 		}
+
 		for _, symbol := range task.Expected.Symbols {
 			if !localizationPathExists(root, symbol.Path) {
 				findings = append(findings, fmt.Sprintf("%s: expected symbol path missing: %s", task.ID, symbol.Path))
 			}
 		}
+
 		for _, test := range task.Expected.Tests {
 			if !localizationPathExists(root, test.Path) {
 				findings = append(findings, fmt.Sprintf("%s: expected test path missing: %s", task.ID, test.Path))
 			}
 		}
 	}
+
 	return findings
 }
 
@@ -497,28 +566,35 @@ func AnalyzeLocalizationCorpusWithOptions(corpus LocalizationCorpus, options Loc
 				report.SourceCoverage[key]++
 			}
 		}
+
 		for _, theme := range task.Themes {
 			if key := normalizedLocalizationKey(theme); key != "" {
 				report.ThemeCoverage[key]++
 			}
 		}
+
 		if status := normalizedLocalizationKey(task.Privacy.Status); status != "" {
 			report.RedactionStatus[status]++
 		}
+
 		if area := normalizedLocalizationKey(task.ClientProductArea); area != "" {
 			report.ClientProductAreas[area]++
 		}
+
 		report.ExpectedFiles += len(task.Expected.Files)
 		report.ExpectedSymbols += len(task.Expected.Symbols)
 		report.ExpectedTests += len(task.Expected.Tests)
 	}
+
 	if status := normalizedLocalizationKey(corpus.PrivacyReview.Status); status != "" {
 		report.RedactionStatus["corpus_"+status]++
 	}
+
 	report.Findings = LintLocalizationCorpus(corpus)
 	if len(report.Findings) > 0 {
 		report.Passed = false
 	}
+
 	return report
 }
 
@@ -529,10 +605,12 @@ func EvaluateLocalizationCorpus(corpus LocalizationCorpus, root string) Localiza
 func EvaluateLocalizationCorpusWithOptions(corpus LocalizationCorpus, root string, options LocalizationBenchmarkOptions) LocalizationCorpusReport {
 	report := AnalyzeLocalizationCorpusWithOptions(corpus, options)
 	pathFindings := LintLocalizationCorpusPaths(corpus, root)
+
 	if len(pathFindings) > 0 {
 		report.Findings = append(report.Findings, pathFindings...)
 		report.Passed = false
 	}
+
 	return report
 }
 
@@ -541,6 +619,7 @@ func EvaluateLocalizationCorpusFileWithOptions(path string, root string, options
 	if err != nil {
 		return LocalizationCorpusReport{}, err
 	}
+
 	return EvaluateLocalizationCorpusWithOptions(corpus, root, options), nil
 }
 
@@ -554,23 +633,29 @@ func normalizeLocalizationRelativePath(path string) (string, error) {
 	if trimmed == "" {
 		return "", fmt.Errorf("empty path")
 	}
+
 	normalized := strings.ReplaceAll(filepath.ToSlash(trimmed), "\\", "/")
 	firstSegment := normalized
+
 	if slash := strings.Index(firstSegment, "/"); slash >= 0 {
 		firstSegment = firstSegment[:slash]
 	}
+
 	if filepath.IsAbs(trimmed) || strings.HasPrefix(normalized, "/") || strings.Contains(firstSegment, ":") {
 		return "", fmt.Errorf("absolute paths are not allowed")
 	}
+
 	cleaned := pathpkg.Clean(normalized)
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return "", fmt.Errorf("path must stay within the workspace")
 	}
+
 	for _, part := range strings.Split(cleaned, "/") {
 		if part == ".." {
 			return "", fmt.Errorf("path must not contain traversal")
 		}
 	}
+
 	return cleaned, nil
 }
 
@@ -579,7 +664,9 @@ func localizationPathExists(root string, path string) bool {
 	if err != nil {
 		return false
 	}
+
 	_, err = os.Stat(filepath.Join(root, filepath.FromSlash(cleaned)))
+
 	return err == nil
 }
 
@@ -593,7 +680,9 @@ func normalizedLocalizationKey(value string) string {
 	if value == "" {
 		return ""
 	}
+
 	replacer := strings.NewReplacer(" ", "_", "-", "_", "/", "_")
+
 	return replacer.Replace(value)
 }
 
@@ -602,22 +691,28 @@ func validateLocalizationBoundedToken(field string, value string) error {
 	if value == "" {
 		return nil
 	}
+
 	if len(value) > 96 {
 		return fmt.Errorf("%s must be 96 characters or fewer", field)
 	}
+
 	if localizationContainsSensitiveMarker(value) {
 		return fmt.Errorf("%s contains sensitive or raw-content marker", field)
 	}
+
 	for _, r := range value {
 		if r >= 'a' && r <= 'z' {
 			continue
 		}
+
 		if r >= 'A' && r <= 'Z' {
 			continue
 		}
+
 		if r >= '0' && r <= '9' {
 			continue
 		}
+
 		switch r {
 		case '_', '-', '.', ':':
 			continue
@@ -625,6 +720,7 @@ func validateLocalizationBoundedToken(field string, value string) error {
 			return fmt.Errorf("%s must use bounded identifier characters", field)
 		}
 	}
+
 	return nil
 }
 
@@ -648,5 +744,6 @@ func localizationContainsSensitiveMarker(value string) bool {
 			return true
 		}
 	}
+
 	return false
 }

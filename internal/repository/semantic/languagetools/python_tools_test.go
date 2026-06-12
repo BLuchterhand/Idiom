@@ -72,10 +72,12 @@ def test_tick():
 	if !languageDetects(root, "python") {
 		t.Fatal("expected temp fixture to count as Python workspace")
 	}
+
 	overview := executeTool(mgr, "python_overview", ToolRequest{})
 	if overview.Error != "" || !strings.Contains(overview.Output, "Indexed") {
 		t.Fatalf("unexpected pythonOverview result: %#v", overview)
 	}
+
 	if !strings.Contains(overview.Output, "Python files") {
 		t.Fatalf("pythonOverview output missing Python files header: %s", overview.Output)
 	}
@@ -89,6 +91,7 @@ def test_tick():
 	if find.Error != "" || !strings.Contains(find.Output, "engine.py") {
 		t.Fatalf("unexpected pythonFindSymbol result: %#v", find)
 	}
+
 	findDecl := executeTool(mgr, "python_find_symbol", ToolRequest{Tool: "python_find_symbol", Pattern: "class Engine"})
 	if findDecl.Error != "" || !strings.Contains(findDecl.Output, "Engine") {
 		t.Fatalf("expected declaration-shaped pythonFindSymbol query to find Engine, got %#v", findDecl)
@@ -113,6 +116,7 @@ def test_tick():
 	if callsFrom.Error != "" && !strings.Contains(callsFrom.Error, "no Python LSP") {
 		// Fall back is OK; we don't require calls-from to succeed if LSP is absent.
 	}
+
 	// The semantic fallback should still produce something for helper().
 	if callsFrom.Error == "" && !strings.Contains(callsFrom.Output, "tick") && !strings.Contains(callsFrom.Output, "Engine") {
 		t.Fatalf("unexpected pythonCallsFrom result (index fallback expected to mention tick/Engine): %#v", callsFrom)
@@ -138,12 +142,15 @@ def test_tick():
 	if outline.Error != "" {
 		t.Fatalf("unexpected pythonFileOutline error: %#v", outline)
 	}
+
 	if !strings.Contains(outline.Output, "file: src/demo/engine.py") {
 		t.Fatalf("pythonFileOutline missing file header: %#v", outline)
 	}
+
 	if !strings.Contains(outline.Output, "Engine") || !strings.Contains(outline.Output, "tick") {
 		t.Fatalf("pythonFileOutline missing symbols: %#v", outline)
 	}
+
 	if !strings.Contains(outline.Summary, "Outlined") {
 		t.Fatalf("pythonFileOutline summary: %#v", outline)
 	}
@@ -210,9 +217,11 @@ def run() -> str:
 
 func writePythonToolFixture(t *testing.T, path string, content string) {
 	t.Helper()
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", path, err)
 	}
+
 	// Python indentation is semantic; trimming trailing whitespace only.
 	trimmed := strings.TrimLeft(content, "\n")
 	if err := os.WriteFile(path, []byte(trimmed), 0o644); err != nil {

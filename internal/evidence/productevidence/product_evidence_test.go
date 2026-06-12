@@ -30,9 +30,11 @@ func TestSanitizeProductEvidenceTelemetryArgsRedactsPathFlags(t *testing.T) {
 			t.Fatalf("path flag leaked %q in %#v", forbidden, got)
 		}
 	}
+
 	if !strings.Contains(rendered, "<redacted_product_evidence_path id=") || !strings.Contains(rendered, "--benchmark-report <empty>") {
 		t.Fatalf("expected redacted product evidence path args, got %#v", got)
 	}
+
 	if !strings.Contains(rendered, "--mode summary") {
 		t.Fatalf("non-path flags should be preserved, got %#v", got)
 	}
@@ -43,7 +45,9 @@ func TestP98RequiredMCPParityReadinessFieldsReturnsCopy(t *testing.T) {
 	if len(fields) == 0 {
 		t.Fatal("expected P9.8 readiness fields")
 	}
+
 	fields[0] = "mutated"
+
 	if got := P98RequiredMCPParityReadinessFields()[0]; got == "mutated" {
 		t.Fatal("P98RequiredMCPParityReadinessFields should return a defensive copy")
 	}
@@ -52,9 +56,11 @@ func TestP98RequiredMCPParityReadinessFieldsReturnsCopy(t *testing.T) {
 func TestP711ProductEvidenceExportCompletenessPrivacyAndClassCoverage(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
+
 	if err := comprehension.AppendLearningLog(root, comprehension.LearningLogEntry{
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Source:    "cli",
@@ -73,71 +79,92 @@ func TestP711ProductEvidenceExportCompletenessPrivacyAndClassCoverage(t *testing
 		ValidationRecords: recordsPath,
 		BenchmarkReport:   benchmarkPath,
 	})
+
 	body, err := json.Marshal(report)
 	if err != nil {
 		t.Fatalf("marshal product evidence: %v", err)
 	}
+
 	var reparsed productEvidenceExportReport
+
 	if err := json.Unmarshal(body, &reparsed); err != nil {
 		t.Fatalf("product evidence JSON should parse: %v", err)
 	}
+
 	if reparsed.SignalCompleteness.Status != "complete" || reparsed.SignalCompleteness.CompleteCount != reparsed.SignalCompleteness.RequiredCount {
 		t.Fatalf("expected complete P7.11 signal matrix, got %#v", reparsed.SignalCompleteness)
 	}
+
 	for _, id := range []string{"activation", "retained_use", "integration_proof", "benchmark", "audit", "learning"} {
 		if !p711TestHasSignal(reparsed.Signals, id) {
 			t.Fatalf("export missing signal %q: %#v", id, reparsed.Signals)
 		}
 	}
+
 	if got := p711TestSignal(reparsed.Signals, "activation"); got.Status != "pass" || got.Counts["candidate_files"] == 0 {
 		t.Fatalf("activation signal should summarize quickstart evidence: %#v", got)
 	}
+
 	if got := p711TestSignal(reparsed.Signals, "retained_use"); got.Status != "pass" || got.Counts["adoption_signals"] == 0 {
 		t.Fatalf("retained-use signal should summarize validation records: %#v", got)
 	}
+
 	if linkage := p711TestReleaseGate(reparsed.ReleaseGateLinkage, "P9.7"); linkage.Status != "evidence_present" {
 		t.Fatalf("P9.7 linkage should require and accept complete primary-ICP demand evidence: %#v", linkage)
 	} else if linkage.Counts["complete_records"] != 9 || linkage.Counts["primary_icp_records"] != 3 ||
 		linkage.Counts["daily_user_activation_records"] != 3 || linkage.Counts["retained_use_records"] == 0 ||
 		len(linkage.EvidenceIDs) != 3 || len(linkage.Blockers) != 0 {
+
 		t.Fatalf("P9.7 linkage should expose structured counts and evidence IDs: %#v", linkage)
 	}
+
 	if reparsed.Status != "pass" {
 		t.Fatalf("top-level status should reflect complete signal evidence, got %q", reparsed.Status)
 	}
+
 	integration := p711TestSignal(reparsed.Signals, "integration_proof")
 	if integration.Status != "pass" ||
 		integration.Counts["mcp_stdio_parity_paths"] != 1 ||
 		!stringSliceContains(integration.EvidenceIDs, "p7.8-mcp-stdio") {
+
 		t.Fatalf("integration signal should include executable MCP stdio parity: %#v", integration)
 	}
+
 	if linkage := p711TestReleaseGate(reparsed.ReleaseGateLinkage, "P9.8"); linkage.Status != "evidence_present" {
 		t.Fatalf("P9.8 linkage should consume integration proof parity: %#v", reparsed.ReleaseGateLinkage)
 	} else if linkage.Counts["executable_required_paths"] != 3 ||
 		linkage.Counts["mcp_stdio_parity_paths"] != 1 ||
 		len(linkage.Blockers) != 0 ||
 		!stringSliceContains(linkage.EvidenceIDs, "p7.8-mcp-stdio") {
+
 		t.Fatalf("P9.8 linkage should expose structured counts and evidence IDs: %#v", linkage)
 	}
+
 	if linkage := p711TestReleaseGate(reparsed.ReleaseGateLinkage, "P9.10"); linkage.Status != "evidence_present" {
 		t.Fatalf("P9.10 linkage should consume external competitive benchmark coverage: %#v", linkage)
 	} else if linkage.Counts["required_external_baselines"] != 2 ||
 		linkage.Counts["covered_external_baselines"] != 2 ||
 		len(linkage.Blockers) != 0 ||
 		!stringSliceContains(linkage.EvidenceIDs, "competitive_baseline:aider_repo_map") {
+
 		t.Fatalf("P9.10 linkage should expose structured counts and evidence IDs: %#v", linkage)
 	}
+
 	if got := p711TestSignal(reparsed.Signals, "learning"); got.Status != "pass" || got.Counts["accepted"] == 0 {
 		t.Fatalf("learning signal should summarize sanitized ranker learning: %#v", got)
 	}
+
 	if reparsed.Privacy.MetadataOnly != true || reparsed.Privacy.ForbiddenFieldCheck != "pass" ||
 		reparsed.Privacy.RawPromptCaptured || reparsed.Privacy.RawFileBodyCaptured ||
 		reparsed.Privacy.SecretCaptured || reparsed.Privacy.PrivatePathCaptured {
+
 		t.Fatalf("privacy contract should be safe by default: %#v", reparsed.Privacy)
 	}
+
 	if finding := localops.ForbiddenEvidenceLeak(string(body)); finding != "" {
 		t.Fatalf("product evidence export leaked forbidden evidence class %q: %s", finding, string(body))
 	}
+
 	for _, forbidden := range []string{
 		root,
 		"/Users/",
@@ -152,6 +179,7 @@ func TestP711ProductEvidenceExportCompletenessPrivacyAndClassCoverage(t *testing
 			t.Fatalf("product evidence export leaked %q: %s", forbidden, string(body))
 		}
 	}
+
 	assertP711CoverageForEveryClassification(t, reparsed.ClassCoverage, 1)
 }
 
@@ -160,28 +188,36 @@ func TestProductEvidenceSummarizesRecoveryRollups(t *testing.T) {
 	packet := stageProductEvidenceRecoveryPacket(t, root, "open-recovery")
 
 	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+
 	body, err := json.Marshal(report)
 	if err != nil {
 		t.Fatalf("marshal product evidence: %v", err)
 	}
+
 	if report.Recovery.Status != "partial" ||
 		report.Recovery.FailureRecordCount != 1 ||
 		report.Recovery.DecompositionPacketCount != 1 ||
 		report.Recovery.OpenPacketCount != 1 ||
 		report.Recovery.CandidateAtomCount != len(packet.CandidateAtoms) ||
 		report.Recovery.RemainingAtomCount != len(packet.CandidateAtoms) {
+
 		t.Fatalf("expected open recovery rollup, got %#v", report.Recovery)
 	}
+
 	if report.Recovery.RedactionStatus != "redacted" || !report.Recovery.MetadataOnly || report.Recovery.ForbiddenFieldCheck != "pass" {
 		t.Fatalf("recovery rollup should remain metadata-only/redacted, got %#v", report.Recovery)
 	}
+
 	if report.Recovery.FailureClasses[recovery.FailureClassExecutorEdit] != 1 ||
 		report.Recovery.NextActions[recovery.NextActionReviewDecomposition] != 1 {
+
 		t.Fatalf("recovery rollup missing failure class or next action: %#v", report.Recovery)
 	}
+
 	if ref := p711TestSourceRef(report.SourceReferences, "recovery_artifacts"); ref.Status != "present" {
 		t.Fatalf("recovery source reference missing: %#v", report.SourceReferences)
 	}
+
 	if strings.Contains(string(body), "executor failed while editing a private branch") {
 		t.Fatalf("product evidence leaked recovery failure summary: %s", string(body))
 	}
@@ -191,6 +227,7 @@ func TestProductEvidenceBlocksInvalidRecoveryEvidence(t *testing.T) {
 	root := t.TempDir()
 	packet := stageProductEvidenceRecoveryPacket(t, root, "stale-reconciliation")
 	reconciliationPath := filepath.Join(root, ".idiom", "recovery", packet.FailureID, "reconciliation.json")
+
 	if err := os.WriteFile(reconciliationPath, []byte(`{"schema_version":"wrong"}`), 0o644); err != nil {
 		t.Fatalf("write invalid reconciliation: %v", err)
 	}
@@ -199,6 +236,7 @@ func TestProductEvidenceBlocksInvalidRecoveryEvidence(t *testing.T) {
 	if report.Status != "blocked" || report.Recovery.Status != "blocked" || report.Recovery.MalformedArtifactCount != 1 {
 		t.Fatalf("invalid recovery reconciliation should block product evidence, got status=%q recovery=%#v", report.Status, report.Recovery)
 	}
+
 	if !p711TestBlockerContains(report.Recovery.Blockers, "reconciliation_decode_failed") {
 		t.Fatalf("expected invalid reconciliation blocker, got %#v", report.Recovery.Blockers)
 	}
@@ -207,15 +245,20 @@ func TestProductEvidenceBlocksInvalidRecoveryEvidence(t *testing.T) {
 func TestP711ProductEvidenceKeepsActivationUsefulWithoutOverclaimingP96(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
+
 	var localOps localops.BenchmarkReport
+
 	data, err := os.ReadFile(localOpsPath)
 	if err != nil {
 		t.Fatalf("read local ops report: %v", err)
 	}
+
 	if err := json.Unmarshal(data, &localOps); err != nil {
 		t.Fatalf("parse local ops report: %v", err)
 	}
+
 	localOps.Quickstart.EnvironmentClass = "source-build"
 	localOps.Quickstart.DurationSource = "deterministic_command_step_seconds"
 	localOps.Quickstart.SetupInstallReadiness.InstallSetupPath = "source-build-or-local-binary"
@@ -230,19 +273,24 @@ func TestP711ProductEvidenceKeepsActivationUsefulWithoutOverclaimingP96(t *testi
 		LocalOpsReport: localOpsPath,
 	})
 	activation := p711TestSignal(report.Signals, "activation")
+
 	if activation.Status != "pass" || activation.Completeness != "complete" || activation.Counts["candidate_files"] == 0 {
 		t.Fatalf("source-build quickstart activation should remain useful product evidence: %#v", activation)
 	}
+
 	if report.ProductSuccessGates.Activation != "evidence_present" {
 		t.Fatalf("product activation signal should remain present without being release-ready: %#v", report.ProductSuccessGates)
 	}
+
 	if linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.6"); linkage.Status != "needs_evidence" {
 		t.Fatalf("P9.6 linkage must not overclaim source-build deterministic smoke: %#v", report.ReleaseGateLinkage)
 	}
+
 	body, err := json.Marshal(report)
 	if err != nil {
 		t.Fatalf("marshal product evidence: %v", err)
 	}
+
 	if forbidden := localops.ForbiddenEvidenceLeak(string(body)); forbidden != "" {
 		t.Fatalf("product evidence export leaked forbidden evidence class %q: %s", forbidden, string(body))
 	}
@@ -251,6 +299,7 @@ func TestP711ProductEvidenceKeepsActivationUsefulWithoutOverclaimingP96(t *testi
 func TestP96ProductEvidenceStrictActivationWithoutValidationRecordsNeedsEvidence(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 
 	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
@@ -258,13 +307,16 @@ func TestP96ProductEvidenceStrictActivationWithoutValidationRecordsNeedsEvidence
 		LocalOpsReport: localOpsPath,
 	})
 	activation := p711TestSignal(report.Signals, "activation")
+
 	if activation.Status != "pass" || activation.Completeness != "complete" {
 		t.Fatalf("fixture should keep activation useful while validation records are absent: %#v", activation)
 	}
+
 	linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.6")
 	if linkage.Status != "needs_evidence" {
 		t.Fatalf("standalone product export must not close P9.6 without current validation proof: %#v", linkage)
 	}
+
 	if !strings.Contains(linkage.Evidence, "cannot close P9.6") {
 		t.Fatalf("P9.6 linkage should explain standalone product limitation: %#v", linkage)
 	}
@@ -273,15 +325,20 @@ func TestP96ProductEvidenceStrictActivationWithoutValidationRecordsNeedsEvidence
 func TestP96ProductEvidenceZeroRankedPacketDoesNotPassActivationOrP96(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
+
 	var localOps localops.BenchmarkReport
+
 	data, err := os.ReadFile(localOpsPath)
 	if err != nil {
 		t.Fatalf("read local ops report: %v", err)
 	}
+
 	if err := json.Unmarshal(data, &localOps); err != nil {
 		t.Fatalf("parse local ops report: %v", err)
 	}
+
 	localOps.Quickstart.FirstUsefulPacket.CandidateFileCount = 0
 	localOps.Quickstart.FirstUsefulPacket.CandidateSymbolCount = 0
 	localOps.Quickstart.FirstUsefulPacket.CandidateTestCount = 0
@@ -293,12 +350,15 @@ func TestP96ProductEvidenceZeroRankedPacketDoesNotPassActivationOrP96(t *testing
 		LocalOpsReport: localOpsPath,
 	})
 	activation := p711TestSignal(report.Signals, "activation")
+
 	if activation.Status == "pass" || activation.Completeness == "complete" {
 		t.Fatalf("zero-ranked packet evidence must not pass activation signal: %#v", activation)
 	}
+
 	if activation.Counts["useful_evidence_count"] != 0 {
 		t.Fatalf("zero-ranked packet should not report useful evidence counts: %#v", activation.Counts)
 	}
+
 	if linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.6"); linkage.Status == "evidence_present" {
 		t.Fatalf("zero-ranked packet evidence must not close P9.6: %#v", linkage)
 	}
@@ -308,13 +368,17 @@ func TestP911ProductEvidenceCurrentTranscriptFixturePasses(t *testing.T) {
 	repoRoot := p711TestRepoRoot(t)
 	report := buildProductEvidenceExportReport(repoRoot, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: repoRoot})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.11")
+
 	if gate.Status != "evidence_present" {
 		t.Fatalf("current P9.11 fixture should pass runnable demo gate: %#v", gate)
 	}
+
 	if gate.Counts["covered_classifications"] != 7 || gate.Counts["runnable_command_rows"] != 7 ||
 		gate.Counts["expected_output_rows"] != 7 || gate.Counts["blockers"] != 0 {
+
 		t.Fatalf("P9.11 current fixture should expose complete counts: %#v", gate)
 	}
+
 	for _, id := range []string{"p7.10_client_demo_transcripts", "p7.10-enterprise-saas-source-sanity"} {
 		if !stringSliceContains(gate.EvidenceIDs, id) {
 			t.Fatalf("P9.11 evidence IDs missing %q: %#v", id, gate)
@@ -325,18 +389,25 @@ func TestP911ProductEvidenceCurrentTranscriptFixturePasses(t *testing.T) {
 func TestP911ProductEvidenceMissingAndDuplicateClassificationFailClosed(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	path := filepath.Join(root, "testdata", "sidecar", "client-demo-transcripts.json")
+
 	var set map[string]any
+
 	p711ReadTestJSON(t, path, &set)
+
 	transcripts := set["transcripts"].([]any)
+
 	set["transcripts"] = append(transcripts[1:], transcripts[1])
 	writeP711JSON(t, path, set)
 
 	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.11")
+
 	if gate.Status != "needs_evidence" || gate.Counts["missing_classifications"] == 0 || gate.Counts["duplicate_classifications"] == 0 {
 		t.Fatalf("P9.11 must fail closed on missing and duplicate classifications: %#v", gate)
 	}
+
 	for _, want := range []string{"missing client demo classification", "duplicate client demo classification"} {
 		if !p711TestBlockerContains(gate.Blockers, want) {
 			t.Fatalf("P9.11 blocker %q not exposed: %#v", want, gate)
@@ -360,6 +431,7 @@ func TestP911ProductEvidenceRequiredTranscriptFieldsFailClosed(t *testing.T) {
 		}, wantBlocker: "blank client demo required list item"},
 		{name: "blank expected output field", mutate: func(row map[string]any) {
 			shape := row["commands"].([]any)[0].(map[string]any)["expected_output_shape"].(map[string]any)
+
 			shape["stable_fields"] = []string{"Tool", ""}
 		}, wantBlocker: "blank client demo required list item"},
 		{name: "MVP limitation", mutate: func(row map[string]any) { row["mvp_limitation"] = "" }, wantBlocker: "missing MVP limitation"},
@@ -371,11 +443,14 @@ func TestP911ProductEvidenceRequiredTranscriptFieldsFailClosed(t *testing.T) {
 			root := t.TempDir()
 			stageP711ProductEvidenceFixtures(t, root)
 			p911MutateFirstTranscript(t, root, tc.mutate)
+
 			report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.11")
+
 			if gate.Status != "needs_evidence" {
 				t.Fatalf("P9.11 must fail closed for %s: %#v", tc.name, gate)
 			}
+
 			if !p711TestBlockerContains(gate.Blockers, tc.wantBlocker) {
 				t.Fatalf("P9.11 blocker %q not exposed: %#v", tc.wantBlocker, gate)
 			}
@@ -415,11 +490,14 @@ func TestP911ProductEvidenceRejectsFrameworkSpecificRegulatedReadinessOverclaims
 
 			report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.11")
+
 			if gate.Status != "needs_evidence" || gate.Counts["regulated_or_commercial_overclaims"] == 0 {
 				t.Fatalf("P9.11 must fail closed for %q: %#v", tc.phrase, gate)
 			}
+
 			if !p711TestBlockerContains(gate.Blockers, "unsupported regulated or commercial readiness") ||
 				!p711TestBlockerContains(gate.Blockers, strings.ToLower(tc.phrase)) {
+
 				t.Fatalf("P9.11 regulated-readiness blocker should name %q: %#v", tc.phrase, gate)
 			}
 		})
@@ -442,8 +520,10 @@ func TestP911ProductEvidenceAllowsPhraseLocalApprovalNegations(t *testing.T) {
 
 			report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.11")
+
 			if gate.Counts["regulated_or_commercial_overclaims"] != 0 ||
 				p711TestBlockerContains(gate.Blockers, "unsupported regulated or commercial readiness") {
+
 				t.Fatalf("P9.11 should allow phrase-local approval negation %q: %#v", phrase, gate)
 			}
 		})
@@ -461,6 +541,7 @@ func TestP911ProductEvidenceRequiresExecutableCommandValidation(t *testing.T) {
 			name: "shaped_nonexistent_command",
 			mutate: func(row map[string]any) {
 				command := row["commands"].([]any)[0].(map[string]any)
+
 				command["command"] = "idiom tool does_not_exist --input '{}'"
 				command["argv"] = []string{"tool", "does_not_exist", "--input", "{}"}
 			},
@@ -471,6 +552,7 @@ func TestP911ProductEvidenceRequiresExecutableCommandValidation(t *testing.T) {
 			name: "command_argv_mismatch",
 			mutate: func(row map[string]any) {
 				command := row["commands"].([]any)[0].(map[string]any)
+
 				command["command"] = "idiom tool source_sanity -config $IDIOM_CONFIG --caller-id ci-agent --request-id p710-saas --trace-id trace:p710-saas --input '{\"path\":\"pkg/payments/other.go\"}'"
 			},
 			wantBlocker: "command/argv parity mismatch",
@@ -480,6 +562,7 @@ func TestP911ProductEvidenceRequiresExecutableCommandValidation(t *testing.T) {
 			name: "unsafe_top_level_subcommand",
 			mutate: func(row map[string]any) {
 				command := row["commands"].([]any)[0].(map[string]any)
+
 				command["command"] = "idiom backend status"
 				command["argv"] = []string{"backend", "status"}
 			},
@@ -490,6 +573,7 @@ func TestP911ProductEvidenceRequiresExecutableCommandValidation(t *testing.T) {
 			name: "default_profile_shell",
 			mutate: func(row map[string]any) {
 				command := row["commands"].([]any)[0].(map[string]any)
+
 				command["command"] = "idiom tool shell -config $IDIOM_CONFIG --caller-id ci-agent --request-id p710-saas --input '{\"command\":\"printf unsafe > network-side-effect.txt\"}'"
 				command["argv"] = []string{"tool", "shell", "-config", "$IDIOM_CONFIG", "--caller-id", "ci-agent", "--request-id", "p710-saas", "--input", "{\"command\":\"printf unsafe > network-side-effect.txt\"}"}
 			},
@@ -500,6 +584,7 @@ func TestP911ProductEvidenceRequiresExecutableCommandValidation(t *testing.T) {
 			name: "default_profile_write_file",
 			mutate: func(row map[string]any) {
 				command := row["commands"].([]any)[0].(map[string]any)
+
 				command["command"] = "idiom tool write_file -config $IDIOM_CONFIG --caller-id ci-agent --request-id p710-saas --input '{\"path\":\"unsafe.txt\",\"content\":\"unsafe\"}'"
 				command["argv"] = []string{"tool", "write_file", "-config", "$IDIOM_CONFIG", "--caller-id", "ci-agent", "--request-id", "p710-saas", "--input", "{\"path\":\"unsafe.txt\",\"content\":\"unsafe\"}"}
 			},
@@ -510,6 +595,7 @@ func TestP911ProductEvidenceRequiresExecutableCommandValidation(t *testing.T) {
 			name: "unsafe_local_ops_cleanup",
 			mutate: func(row map[string]any) {
 				command := row["commands"].([]any)[0].(map[string]any)
+
 				command["command"] = "idiom local-ops benchmark --json --config $IDIOM_CONFIG --profile sidecar --quickstart-smoke --quickstart-task 'localize RetryPayment helper' --quickstart-cleanup remove-local-state"
 				command["argv"] = []string{"local-ops", "benchmark", "--json", "--config", "$IDIOM_CONFIG", "--profile", "sidecar", "--quickstart-smoke", "--quickstart-task", "localize RetryPayment helper", "--quickstart-cleanup", "remove-local-state"}
 			},
@@ -520,6 +606,7 @@ func TestP911ProductEvidenceRequiresExecutableCommandValidation(t *testing.T) {
 			name: "mismatched_command_id",
 			mutate: func(row map[string]any) {
 				command := row["commands"].([]any)[0].(map[string]any)
+
 				command["id"] = "mismatched-demo-command"
 			},
 			wantBlocker: "command ID parity mismatch",
@@ -534,9 +621,11 @@ func TestP911ProductEvidenceRequiresExecutableCommandValidation(t *testing.T) {
 
 			report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.11")
+
 			if gate.Status != "needs_evidence" || gate.Counts["runnable_command_rows"] == 7 || gate.Counts[tc.wantCount] == 0 {
 				t.Fatalf("P9.11 must fail closed for %s: %#v", tc.name, gate)
 			}
+
 			if !p711TestBlockerContains(gate.Blockers, tc.wantBlocker) {
 				t.Fatalf("P9.11 blocker %q not exposed: %#v", tc.wantBlocker, gate)
 			}
@@ -550,6 +639,7 @@ func TestP911ProductAndReleaseEvidenceRejectUnsafeCommandAfterSafeReplay(t *test
 	p911MutateTranscriptByClass(t, root, "enterprise-saas", func(row map[string]any) {
 		commands := row["commands"].([]any)
 		first := commands[0].(map[string]any)
+
 		commands = append(commands, map[string]any{
 			"id":        first["id"],
 			"command":   "idiom backend status",
@@ -568,6 +658,7 @@ func TestP911ProductAndReleaseEvidenceRejectUnsafeCommandAfterSafeReplay(t *test
 	release := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{ProjectRoot: root, CurrentDir: "current"})
 	productGate := p711TestReleaseGate(product.ReleaseGateLinkage, "P9.11")
 	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.11")
+
 	for label, gate := range map[string]struct {
 		Status   string
 		Counts   map[string]int
@@ -586,8 +677,10 @@ func TestP911ProductAndReleaseEvidenceRejectUnsafeCommandAfterSafeReplay(t *test
 	} {
 		if gate.Status != "needs_evidence" || gate.Counts["runnable_command_rows"] == 7 ||
 			gate.Counts["declared_command_rows"] != 8 || gate.Counts["command_execution_blockers"] == 0 {
+
 			t.Fatalf("%s P9.11 must reject unsafe command appended after safe replay: %#v", label, gate)
 		}
+
 		if !p711TestBlockerContains(gate.Blockers, "unsafe top-level subcommand") {
 			t.Fatalf("%s P9.11 unsafe appended-command blocker not exposed: %#v", label, gate)
 		}
@@ -615,12 +708,15 @@ func TestP911DiscoveryProfileDeniedSideEffectReplayDoesNotWrite(t *testing.T) {
 			StdoutExcludes: []string{"touched"},
 		},
 	}
+
 	if blockers := p911DemoCommandShapeBlockers(demo, command); len(blockers) != 0 {
 		t.Fatalf("discovery-profile denied side-effect command should satisfy safe shape: %#v", blockers)
 	}
+
 	if blockers := p911ExecuteDemoCommandAtRoot(root, demo, command); len(blockers) != 0 {
 		t.Fatalf("discovery-profile denied side-effect replay should pass as denied evidence: %#v", blockers)
 	}
+
 	if _, err := os.Stat(filepath.Join(root, "network-side-effect.txt")); !os.IsNotExist(err) {
 		t.Fatalf("denied discovery-profile shell replay created side-effect marker, stat err=%v", err)
 	}
@@ -629,11 +725,14 @@ func TestP911DiscoveryProfileDeniedSideEffectReplayDoesNotWrite(t *testing.T) {
 func TestP911ProductEvidenceMalformedTranscriptArtifactFailsClosed(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	path := filepath.Join(root, "testdata", "sidecar", "client-demo-transcripts.json")
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read transcript fixture: %v", err)
 	}
+
 	data = bytes.Replace(data, []byte(`"transcripts":`), []byte(`"unexpected_field": true, "transcripts":`), 1)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("write malformed transcript fixture: %v", err)
@@ -641,9 +740,11 @@ func TestP911ProductEvidenceMalformedTranscriptArtifactFailsClosed(t *testing.T)
 
 	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.11")
+
 	if gate.Status != "needs_evidence" || gate.Counts["malformed_transcripts"] == 0 {
 		t.Fatalf("P9.11 must fail closed on malformed transcript artifact: %#v", gate)
 	}
+
 	if !p711TestBlockerContains(gate.Blockers, "artifact is malformed") {
 		t.Fatalf("P9.11 malformed-artifact blocker not exposed: %#v", gate)
 	}
@@ -655,11 +756,14 @@ func TestP911ProductEvidenceOverclaimFailsClosed(t *testing.T) {
 	p911MutateTranscriptByClass(t, root, "healthcare", func(row map[string]any) {
 		row["release_claim_impact"] = "HIPAA certification and regulated sales readiness are supported by this demo."
 	})
+
 	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.11")
+
 	if gate.Status != "needs_evidence" || gate.Counts["regulated_or_commercial_overclaims"] == 0 {
 		t.Fatalf("P9.11 must fail closed on regulated/commercial overclaim: %#v", gate)
 	}
+
 	if !p711TestBlockerContains(gate.Blockers, "unsupported regulated or commercial readiness") {
 		t.Fatalf("P9.11 overclaim blocker not exposed: %#v", gate)
 	}
@@ -669,20 +773,25 @@ func TestP911ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
+
 	product := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 	release := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{ProjectRoot: root, CurrentDir: "current"})
 	productGate := p711TestReleaseGate(product.ReleaseGateLinkage, "P9.11")
 	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.11")
+
 	if productGate.Status != "evidence_present" || releaseGate.Status != productGate.Status {
 		t.Fatalf("product/release P9.11 readiness should agree for complete fixture: product=%#v release=%#v", productGate, releaseGate)
 	}
+
 	for _, key := range []string{"required_classifications", "covered_classifications", "runnable_command_rows", "expected_output_rows", "blockers"} {
 		if productGate.Counts[key] != releaseGate.Counts[key] {
 			t.Fatalf("product/release P9.11 count %q should agree: product=%#v release=%#v", key, productGate, releaseGate)
 		}
 	}
+
 	if strings.Join(productGate.Blockers, "|") != strings.Join(releaseGate.Blockers, "|") ||
 		strings.Join(productGate.EvidenceIDs, "|") != strings.Join(releaseGate.EvidenceIDs, "|") {
+
 		t.Fatalf("product/release P9.11 structured gate data should agree: product=%#v release=%#v", productGate, releaseGate)
 	}
 }
@@ -690,6 +799,7 @@ func TestP911ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
 func TestP910ProductEvidenceNeedsExternalCompetitiveBaselines(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	path := writeP910CompetitiveBenchmarkReport(t, root, []map[string]any{p910MeasuredCondition("aider_repo_map")})
 
 	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
@@ -697,9 +807,11 @@ func TestP910ProductEvidenceNeedsExternalCompetitiveBaselines(t *testing.T) {
 		BenchmarkReport: path,
 	})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.10")
+
 	if gate.Status != "needs_evidence" || gate.Counts["missing_external_baselines"] != 1 {
 		t.Fatalf("P9.10 should fail closed when an external baseline is missing: %#v", gate)
 	}
+
 	if !p711TestBlockerContains(gate.Blockers, "missing external competitive baseline") {
 		t.Fatalf("P9.10 missing-baseline blocker not exposed: %#v", gate)
 	}
@@ -708,6 +820,7 @@ func TestP910ProductEvidenceNeedsExternalCompetitiveBaselines(t *testing.T) {
 func TestP910ProductEvidenceRejectsSelfReferentialOnlyEvidence(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	path := writeP910CompetitiveBenchmarkReport(t, root, []map[string]any{
 		p910MeasuredCondition("raw_search_read"),
 		p910MeasuredCondition("context_pack"),
@@ -718,9 +831,11 @@ func TestP910ProductEvidenceRejectsSelfReferentialOnlyEvidence(t *testing.T) {
 		BenchmarkReport: path,
 	})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.10")
+
 	if gate.Status != "needs_evidence" || gate.Counts["covered_external_baselines"] != 0 {
 		t.Fatalf("P9.10 should reject self-referential-only benchmark evidence: %#v", gate)
 	}
+
 	if !p711TestBlockerContains(gate.Blockers, "self-referential only") {
 		t.Fatalf("P9.10 self-referential blocker not exposed: %#v", gate)
 	}
@@ -737,6 +852,7 @@ func TestP910ProductAndReleaseJSONIncludeZeroCountKeysForDefaultCorpus(t *testin
 	if err != nil {
 		t.Fatalf("marshal product evidence: %v", err)
 	}
+
 	releaseBody, err := json.Marshal(release)
 	if err != nil {
 		t.Fatalf("marshal release evidence: %v", err)
@@ -745,8 +861,10 @@ func TestP910ProductAndReleaseJSONIncludeZeroCountKeysForDefaultCorpus(t *testin
 	productCounts := p910JSONCountsFromProduct(t, productBody)
 	releaseCounts := p910JSONCountsFromReleaseReadiness(t, releaseBody)
 	releaseCompetitiveCounts := p910JSONCountsFromReleaseCompetitiveCoverage(t, releaseBody)
+
 	for _, counts := range []map[string]int{productCounts, releaseCounts, releaseCompetitiveCounts} {
 		assertP910RequiredCountKeys(t, counts)
+
 		for _, key := range []string{
 			"covered_external_baselines",
 			"measured_external_baselines",
@@ -761,6 +879,7 @@ func TestP910ProductAndReleaseJSONIncludeZeroCountKeysForDefaultCorpus(t *testin
 			}
 		}
 	}
+
 	if !reflect.DeepEqual(productCounts, releaseCounts) || !reflect.DeepEqual(productCounts, releaseCompetitiveCounts) {
 		t.Fatalf("P9.10 product/release JSON counts diverged: product=%#v release=%#v competitive=%#v", productCounts, releaseCounts, releaseCompetitiveCounts)
 	}
@@ -829,8 +948,10 @@ func TestP910ProductEvidenceRejectsDocumentedInfeasibilityMissingClaimImpact(t *
 
 func assertP910ConditionNeedsEvidence(t *testing.T, condition map[string]any, wantBlocker string) {
 	t.Helper()
+
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	path := writeP910CompetitiveBenchmarkReport(t, root, []map[string]any{
 		condition,
 		p910InfeasibleCondition("external_agent_native"),
@@ -841,9 +962,11 @@ func assertP910ConditionNeedsEvidence(t *testing.T, condition map[string]any, wa
 		BenchmarkReport: path,
 	})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.10")
+
 	if gate.Status != "needs_evidence" {
 		t.Fatalf("P9.10 should fail closed: %#v", gate)
 	}
+
 	if !p711TestBlockerContains(gate.Blockers, wantBlocker) {
 		t.Fatalf("P9.10 blocker %q not exposed: %#v", wantBlocker, gate)
 	}
@@ -852,6 +975,7 @@ func assertP910ConditionNeedsEvidence(t *testing.T, condition map[string]any, wa
 func TestP910ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
@@ -870,11 +994,14 @@ func TestP910ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
 	})
 	productGate := p711TestReleaseGate(product.ReleaseGateLinkage, "P9.10")
 	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.10")
+
 	if productGate.Status != releaseGate.Status ||
 		productGate.Counts["covered_external_baselines"] != releaseGate.Counts["covered_external_baselines"] ||
 		len(productGate.Blockers) != len(releaseGate.Blockers) {
+
 		t.Fatalf("P9.10 product/release structured fields diverged: product=%#v release=%#v", productGate, releaseGate)
 	}
+
 	if release.BenchmarkLocalOps.CompetitiveCoverage.Status != "evidence_present" {
 		t.Fatalf("release benchmark section should carry P9.10 coverage: %#v", release.BenchmarkLocalOps.CompetitiveCoverage)
 	}
@@ -883,11 +1010,13 @@ func TestP910ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
 func TestRunProductEvidenceExportWritesParseableJSONOutput(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
 	outputPath := filepath.Join(root, ".idiom", "product-evidence", "export.json")
 
 	var stdout, stderr bytes.Buffer
+
 	code := runProductEvidenceMainWithTelemetry([]string{
 		"export",
 		"--project-root", root,
@@ -895,20 +1024,26 @@ func TestRunProductEvidenceExportWritesParseableJSONOutput(t *testing.T) {
 		"--validation-records", recordsPath,
 		"--output", outputPath,
 	}, &stdout, &stderr, nil)
+
 	if code != 0 {
 		t.Fatalf("product evidence export failed code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
+
 	data, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatalf("read product evidence output: %v", err)
 	}
+
 	var report productEvidenceExportReport
+
 	if err := json.Unmarshal(data, &report); err != nil {
 		t.Fatalf("output JSON should parse: %v\n%s", err, string(data))
 	}
+
 	if report.ExportID == "" || report.ProductSuccessGates.LocalProductEvidenceExport != "pass" {
 		t.Fatalf("output missing export identity/gate linkage: %#v", report)
 	}
+
 	if strings.Contains(stdout.String(), outputPath) || strings.Contains(stderr.String(), outputPath) {
 		t.Fatalf("CLI output should not echo raw output path stdout=%s stderr=%s", stdout.String(), stderr.String())
 	}
@@ -972,14 +1107,17 @@ func TestP810IntegrationProofRequiresDistinctExecutablePaths(t *testing.T) {
 
 			report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 			integration := p711TestSignal(report.Signals, "integration_proof")
+
 			if integration.Status != "partial" || integration.Completeness != "partial" {
 				t.Fatalf("incomplete integration proof should stay partial: %#v", integration)
 			}
+
 			if linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.8"); linkage.Status != "needs_evidence" {
 				t.Fatalf("P9.8 should need evidence for incomplete integration paths: %#v", report.ReleaseGateLinkage)
 			} else if len(linkage.Blockers) == 0 {
 				t.Fatalf("P9.8 linkage should expose blockers for incomplete proofs: %#v", linkage)
 			}
+
 			if report.ProductSuccessGates.IntegrationProof != "needs_evidence" {
 				t.Fatalf("product integration gate should need evidence, got %q", report.ProductSuccessGates.IntegrationProof)
 			}
@@ -1047,10 +1185,12 @@ func TestP811IntegrationProofRejectsMalformedRows(t *testing.T) {
 
 			report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 			assertP811IntegrationNeedsEvidence(t, report)
+
 			integration := p711TestSignal(report.Signals, "integration_proof")
 			if integration.Counts["mcp_stdio_parity_paths"] != tc.wantMCPParityPaths {
 				t.Fatalf("unexpected MCP parity count for malformed proof rows: %#v", integration)
 			}
+
 			if integration.Counts["executable_required_path_shell_ci_script"] != tc.wantShellRequiredPathCount {
 				t.Fatalf("malformed shell/CI row must not satisfy required-path count: %#v", integration)
 			}
@@ -1114,24 +1254,31 @@ func TestP812IntegrationProofRequiresExplicitSafePrivacySemantics(t *testing.T) 
 
 			report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 			integration := p711TestSignal(report.Signals, "integration_proof")
+
 			if integration.Status != tc.wantSignalStatus {
 				t.Fatalf("unexpected integration signal status: got %q want %q: %#v", integration.Status, tc.wantSignalStatus, integration)
 			}
+
 			if linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.8"); linkage.Status != tc.wantP98Status {
 				t.Fatalf("unexpected P9.8 status: got %q want %q: %#v", linkage.Status, tc.wantP98Status, report.ReleaseGateLinkage)
 			}
+
 			if report.ProductSuccessGates.IntegrationProof == "evidence_present" {
 				t.Fatalf("privacy-invalid integration proof must not produce evidence_present gate")
 			}
+
 			if integration.Counts["mcp_stdio_parity_paths"] != tc.wantMCPParityPaths {
 				t.Fatalf("unexpected MCP parity count for privacy-invalid rows: %#v", integration)
 			}
+
 			if integration.Counts["missing_privacy"] != tc.wantMissingPrivacy {
 				t.Fatalf("unexpected missing privacy count: %#v", integration)
 			}
+
 			if integration.Counts["incomplete_privacy"] != tc.wantIncompletePrivacy {
 				t.Fatalf("unexpected incomplete privacy count: %#v", integration)
 			}
+
 			if integration.Counts["privacy_blockers"] != tc.wantPrivacyBlockers {
 				t.Fatalf("unexpected privacy blocker count: %#v", integration)
 			}
@@ -1166,7 +1313,7 @@ func TestP718ValidationRecordsRejectUnknownAndForbiddenEvidence(t *testing.T) {
 				"adoption_signal_type":  "internal_sponsor",
 				"redaction_status":      "redacted",
 				"raw_file_body":         "func LeakedBody() {}",
-				"note":                  "/Users/ben/Documents/GitHub/CustomerX-private-repo secret token=abc123 logs/telemetry/session.jsonl",
+				"note":                  "/workspace/CustomerX-private-repo secret token=abc123 logs/telemetry/session.jsonl",
 			}},
 		},
 		{
@@ -1185,6 +1332,7 @@ func TestP718ValidationRecordsRejectUnknownAndForbiddenEvidence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			stageP711ProductEvidenceFixtures(t, root)
+
 			path := filepath.Join(root, "validation-records.json")
 			writeP711JSON(t, path, tc.records)
 
@@ -1195,16 +1343,20 @@ func TestP718ValidationRecordsRejectUnknownAndForbiddenEvidence(t *testing.T) {
 			if report.Status != "blocked" || report.Privacy.ForbiddenFieldCheck != "failed:validation_records" {
 				t.Fatalf("unsafe validation records should block export evidence, got status=%q privacy=%#v", report.Status, report.Privacy)
 			}
+
 			if p711TestSourceRef(report.SourceReferences, "p0.8_validation_records").Status != "blocked" {
 				t.Fatalf("validation record source should be blocked: %#v", report.SourceReferences)
 			}
+
 			if got := p711TestSignal(report.Signals, "retained_use"); got.Counts["validation_records"] != 0 || got.Status == "pass" {
 				t.Fatalf("blocked validation records must not be counted: %#v", got)
 			}
+
 			body, err := json.Marshal(report)
 			if err != nil {
 				t.Fatalf("marshal report: %v", err)
 			}
+
 			for _, forbidden := range []string{"RAW_PROMPT_BODY", "func LeakedBody", "/Users/", "CustomerX", "token=abc123", "logs/telemetry"} {
 				if strings.Contains(string(body), forbidden) {
 					t.Fatalf("blocked export leaked %q: %s", forbidden, string(body))
@@ -1224,8 +1376,8 @@ func TestP719ValidationRecordsRejectEmbeddedAbsolutePathsInAllowedFields(t *test
 		{
 			name:                "repo_equals_users_path",
 			retainedUseStatus:   "observed",
-			adoptionSignalType:  "repo=/Users/ben/Documents/GitHub/acme",
-			forbiddenSubstrings: []string{"/Users/ben/Documents/GitHub/acme"},
+			adoptionSignalType:  "repo=/home/example/Documents/GitHub/acme",
+			forbiddenSubstrings: []string{"/home/example/Documents/GitHub/acme"},
 		},
 		{
 			name:                "path_colon_tmp_path",
@@ -1249,6 +1401,7 @@ func TestP719ValidationRecordsRejectEmbeddedAbsolutePathsInAllowedFields(t *test
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			stageP711ProductEvidenceFixtures(t, root)
+
 			path := filepath.Join(root, "validation-records.json")
 			writeP711JSON(t, path, []map[string]any{{
 				"record_id":             "record-enterprise-saas",
@@ -1266,24 +1419,29 @@ func TestP719ValidationRecordsRejectEmbeddedAbsolutePathsInAllowedFields(t *test
 			if report.Status != "blocked" || report.Privacy.RedactionStatus != "blocked" || report.Privacy.ForbiddenFieldCheck != "failed:validation_records" {
 				t.Fatalf("embedded absolute path should machine-block validation records, status=%q privacy=%#v", report.Status, report.Privacy)
 			}
+
 			if p711TestSourceRef(report.SourceReferences, "p0.8_validation_records").Status != "blocked" {
 				t.Fatalf("validation record source should be blocked: %#v", report.SourceReferences)
 			}
+
 			retained := p711TestSignal(report.Signals, "retained_use")
 			for _, key := range []string{"validation_records", "qualifying_records", "retained_use_observed", "adoption_signals"} {
 				if retained.Counts[key] != 0 {
 					t.Fatalf("blocked validation records must not contribute %q counts: %#v", key, retained)
 				}
 			}
+
 			for _, row := range report.ClassCoverage {
 				if row.ValidationRecordCount != 0 {
 					t.Fatalf("blocked validation records must not contribute class counts: %#v", row)
 				}
 			}
+
 			body, err := json.Marshal(report)
 			if err != nil {
 				t.Fatalf("marshal report: %v", err)
 			}
+
 			for _, forbidden := range tc.forbiddenSubstrings {
 				if strings.Contains(string(body), forbidden) {
 					t.Fatalf("blocked export leaked embedded path %q: %s", forbidden, string(body))
@@ -1295,7 +1453,7 @@ func TestP719ValidationRecordsRejectEmbeddedAbsolutePathsInAllowedFields(t *test
 
 func TestP719AbsolutePathScannerDetectsEmbeddedSeparators(t *testing.T) {
 	for _, value := range []string{
-		"repo=/Users/ben/Documents/GitHub/acme",
+		"repo=/home/example/Documents/GitHub/acme",
 		"path:/tmp/idiom-private",
 		"/private/var/tmp/idiom-private",
 		"/var/folders/zz/idiom-private",
@@ -1304,6 +1462,7 @@ func TestP719AbsolutePathScannerDetectsEmbeddedSeparators(t *testing.T) {
 			t.Fatalf("expected embedded absolute path to be detected in %q", value)
 		}
 	}
+
 	if localops.ContainsAbsolutePath("docs=https://example.com/idiom/path") {
 		t.Fatalf("http URLs should not be treated as local absolute paths")
 	}
@@ -1342,12 +1501,15 @@ func TestP718RetainedUseCountsOnlyQualifyingRecords(t *testing.T) {
 		},
 	}
 	retained := p711RetainedUseSignal(records)
+
 	if retained.Status != "pass" || retained.Counts["retained_use_observed"] != 1 || retained.Counts["adoption_signals"] != 1 {
 		t.Fatalf("retained-use signal should count only qualifying records: %#v", retained)
 	}
+
 	if retained.Counts["qualifying_records"] != 1 || retained.Counts["non_qualifying_records"] != 2 {
 		t.Fatalf("unexpected qualifying counts: %#v", retained.Counts)
 	}
+
 	if strings.Join(retained.EvidenceIDs, ",") != "record-good" {
 		t.Fatalf("non-qualifying record IDs should not be exported as evidence: %#v", retained.EvidenceIDs)
 	}
@@ -1381,6 +1543,7 @@ func TestP718AbsentAdoptionSignalsAreNotCounted(t *testing.T) {
 				SubstrateValueStatus: "verification_review_reused",
 			}}
 			retained := p711RetainedUseSignal(records)
+
 			if retained.Counts["adoption_signals"] != 0 {
 				t.Fatalf("absent adoption signal %q should not be counted: %#v", absent, retained)
 			}
@@ -1391,16 +1554,20 @@ func TestP718AbsentAdoptionSignalsAreNotCounted(t *testing.T) {
 func TestP97ProductEvidenceMissingValidationRecordsNeedsEvidence(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot: root,
 	})
 	linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.7")
+
 	if linkage.Status != "needs_evidence" {
 		t.Fatalf("missing validation records must keep P9.7 needs_evidence: %#v", linkage)
 	}
+
 	if !strings.Contains(linkage.Evidence, "complete:0") {
 		t.Fatalf("P9.7 linkage should expose missing complete-record count: %#v", linkage)
 	}
+
 	if linkage.Counts["complete_records"] != 0 || len(linkage.Blockers) == 0 {
 		t.Fatalf("P9.7 linkage should expose structured missing-evidence counts and blockers: %#v", linkage)
 	}
@@ -1409,9 +1576,11 @@ func TestP97ProductEvidenceMissingValidationRecordsNeedsEvidence(t *testing.T) {
 func TestP97ProductEvidenceRetainedUseWithoutCredibleAdoptionDoesNotPass(t *testing.T) {
 	records := p97PrimaryRecords("none", "none")
 	gate := p97ValidationGate(records)
+
 	if gate.Status == "evidence_present" {
 		t.Fatalf("retained use without credible paid/internal-platform signal must not satisfy P9.7: %#v", gate)
 	}
+
 	if gate.Counts["retained_use_records"] == 0 || gate.Counts["credible_primary_adoption_signals"] != 0 {
 		t.Fatalf("fixture should isolate missing adoption signal: %#v", gate)
 	}
@@ -1419,17 +1588,21 @@ func TestP97ProductEvidenceRetainedUseWithoutCredibleAdoptionDoesNotPass(t *test
 
 func TestP97ProductEvidenceOpenSourceRecordsDoNotCountAsPrimaryPaidDemand(t *testing.T) {
 	var records []p711ValidationRecord
+
 	for i := 0; i < 5; i++ {
 		record := p97Record("open-source", fmt.Sprintf("oss-%d", i), "context-oss")
+
 		record.AdoptionSignalType = "paid_pilot"
 		record.BuyerBudgetSignal = "budget_owner"
 		record.AdoptPaySponsorScore = 3
 		records = append(records, record)
 	}
+
 	gate := p97ValidationGate(records)
 	if gate.Status == "evidence_present" || gate.Counts["primary_icp_records"] != 0 {
 		t.Fatalf("open-source records must not replace enterprise-saas paid demand: %#v", gate)
 	}
+
 	if !strings.Contains(strings.Join(gate.Blockers, "|"), "open-source/supporting records") {
 		t.Fatalf("expected open-source demand blocker: %#v", gate.Blockers)
 	}
@@ -1437,13 +1610,17 @@ func TestP97ProductEvidenceOpenSourceRecordsDoNotCountAsPrimaryPaidDemand(t *tes
 
 func TestP97ProductEvidenceUnsafeDisqualifiedWithdrawnRecordsDoNotCount(t *testing.T) {
 	records := p97PrimaryRecords("paid_pilot", "budget_owner")
+
 	records[0].EvidenceStatus = "disqualified"
 	records[1].EvidenceStatus = "withdrawn"
 	records[2].RedactionStatus = "fail"
+
 	gate := p97ValidationGate(records)
+
 	if gate.Status == "evidence_present" {
 		t.Fatalf("unsafe/disqualified/withdrawn records must fail closed: %#v", gate)
 	}
+
 	if gate.Counts["non_qualifying_records"] != 3 || gate.Counts["primary_icp_records"] != 0 {
 		t.Fatalf("non-qualifying records should not count toward primary ICP: %#v", gate.Counts)
 	}
@@ -1453,24 +1630,30 @@ func TestP97ProductEvidenceRetainedUseRequiresSubstrateValue(t *testing.T) {
 	for _, value := range []string{"demo_liked", "chat_ui_interest", "failed"} {
 		t.Run(value+"_evidence", func(t *testing.T) {
 			records := p97PrimaryRecords("paid_pilot", "budget_owner")
+
 			records[0].RetainedUseEvidence = value
 			records[1].RetainedUseEvidence = value
 			records[2].RetainedUseEvidence = value
 			records[3].RetainedUseEvidence = value
 			records[4].RetainedUseEvidence = value
+
 			gate := p97ValidationGate(records)
+
 			if gate.Status == "evidence_present" || gate.Counts["retained_use_records"] != 0 {
 				t.Fatalf("non-substrate retained-use evidence %q must not satisfy P9.7: %#v", value, gate)
 			}
 		})
 		t.Run(value+"_status", func(t *testing.T) {
 			records := p97PrimaryRecords("paid_pilot", "budget_owner")
+
 			records[0].SubstrateValueStatus = value
 			records[1].SubstrateValueStatus = value
 			records[2].SubstrateValueStatus = value
 			records[3].SubstrateValueStatus = value
 			records[4].SubstrateValueStatus = value
+
 			gate := p97ValidationGate(records)
+
 			if gate.Status == "evidence_present" || gate.Counts["retained_use_records"] != 0 {
 				t.Fatalf("non-substrate value status %q must not satisfy P9.7: %#v", value, gate)
 			}
@@ -1485,18 +1668,21 @@ func TestP97ProductEvidenceDailyUserActivationRequiresValidStatus(t *testing.T) 
 			for i := range records {
 				records[i].DailyUserActivationStatus = status
 			}
+
 			gate := p97ValidationGate(records)
 			if gate.Counts["daily_user_activation_records"] != 3 {
 				t.Fatalf("valid daily-user activation status %q should count for primary records: %#v", status, gate)
 			}
 		})
 	}
+
 	for _, status := range []string{"failed", "blocked", "interest_only"} {
 		t.Run("rejects_"+status, func(t *testing.T) {
 			records := p97PrimaryRecords("paid_pilot", "budget_owner")
 			for i := range records {
 				records[i].DailyUserActivationStatus = status
 			}
+
 			gate := p97ValidationGate(records)
 			if gate.Status == "evidence_present" || gate.Counts["daily_user_activation_records"] != 0 {
 				t.Fatalf("invalid daily-user activation status %q must not satisfy P9.7: %#v", status, gate)
@@ -1508,12 +1694,15 @@ func TestP97ProductEvidenceDailyUserActivationRequiresValidStatus(t *testing.T) 
 func TestP97ProductEvidenceSufficientPrimaryICPRecordsCanPass(t *testing.T) {
 	records := p97PrimaryRecords("paid_pilot", "budget_owner")
 	gate := p97ValidationGate(records)
+
 	if gate.Status != "evidence_present" {
 		t.Fatalf("sufficient primary ICP retained-use adoption evidence should satisfy P9.7: %#v", gate)
 	}
+
 	if gate.Counts["complete_records"] != 5 || gate.Counts["primary_icp_records"] != 3 ||
 		gate.Counts["primary_contexts"] != 2 || gate.Counts["retained_use_records"] == 0 ||
 		gate.Counts["credible_primary_adoption_signals"] == 0 {
+
 		t.Fatalf("unexpected P9.7 counts: %#v", gate.Counts)
 	}
 }
@@ -1521,6 +1710,7 @@ func TestP97ProductEvidenceSufficientPrimaryICPRecordsCanPass(t *testing.T) {
 func TestP912ProductEvidenceCurrentValidThesisStatusAndCounts(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
@@ -1532,9 +1722,11 @@ func TestP912ProductEvidenceCurrentValidThesisStatusAndCounts(t *testing.T) {
 		BenchmarkReport:   benchmarkPath,
 	})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.12")
+
 	if gate.Status != "evidence_present" {
 		t.Fatalf("complete P0.11 thesis plus prior gate evidence should satisfy P9.12: %#v", gate)
 	}
+
 	for _, key := range []string{
 		"required_fields",
 		"required_fields_present",
@@ -1554,6 +1746,7 @@ func TestP912ProductEvidenceCurrentValidThesisStatusAndCounts(t *testing.T) {
 			t.Fatalf("P9.12 count %q missing: %#v", key, gate.Counts)
 		}
 	}
+
 	if gate.Counts["required_fields_present"] != gate.Counts["required_fields"] ||
 		gate.Counts["classification_stances_covered"] != 7 ||
 		gate.Counts["classification_stances_with_evidence"] != 7 ||
@@ -1563,8 +1756,10 @@ func TestP912ProductEvidenceCurrentValidThesisStatusAndCounts(t *testing.T) {
 		gate.Counts["decision_continue"] != 1 ||
 		gate.Counts["prior_gate_evidence_present"] != 5 ||
 		gate.Counts["blockers"] != 0 {
+
 		t.Fatalf("unexpected P9.12 counts: %#v", gate.Counts)
 	}
+
 	for _, id := range []string{"p0.11-packaging-support-thesis", "p0.11-icp", "p7.11-product-evidence-export", "p0.11-class-enterprise-saas"} {
 		if !stringSliceContains(gate.EvidenceIDs, id) {
 			t.Fatalf("P9.12 evidence IDs missing %q: %#v", id, gate.EvidenceIDs)
@@ -1578,6 +1773,7 @@ func TestP912ProductEvidenceMissingRequiredFieldFailsClosed(t *testing.T) {
 	p912MutateThesis(t, root, func(thesis map[string]any) {
 		delete(thesis, "pricing")
 	})
+
 	gate := p912ProductGateForCompleteEvidence(t, root)
 	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "required packaging/support field missing or empty: pricing") {
 		t.Fatalf("missing P9.12 required field must fail closed: %#v", gate)
@@ -1589,8 +1785,10 @@ func TestP912ProductEvidenceBlankStructuredFieldFailsClosed(t *testing.T) {
 	stageP711ProductEvidenceFixtures(t, root)
 	p912MutateThesis(t, root, func(thesis map[string]any) {
 		support := thesis["support"].(map[string]any)
+
 		support["boundary"] = " "
 	})
+
 	gate := p912ProductGateForCompleteEvidence(t, root)
 	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "required packaging/support field missing or empty: support") {
 		t.Fatalf("blank P9.12 structured field must fail closed: %#v", gate)
@@ -1607,6 +1805,7 @@ func TestP912ProductEvidenceSupportAdminAndCommercialOverclaimsFailClosed(t *tes
 			name: "admin_readiness",
 			mutate: func(thesis map[string]any) {
 				admin := thesis["admin"].(map[string]any)
+
 				admin["enterprise_surface_limits"] = []any{"Admin readiness is complete for billing and SSO."}
 			},
 			wantBlocker: "unsupported commercial/admin overclaim",
@@ -1615,6 +1814,7 @@ func TestP912ProductEvidenceSupportAdminAndCommercialOverclaimsFailClosed(t *tes
 			name: "final_state_support",
 			mutate: func(thesis map[string]any) {
 				packaging := thesis["packaging"].(map[string]any)
+
 				packaging["final_state"] = "Final-state enterprise support is available now."
 			},
 			wantBlocker: "unsupported commercial/admin overclaim",
@@ -1623,6 +1823,7 @@ func TestP912ProductEvidenceSupportAdminAndCommercialOverclaimsFailClosed(t *tes
 			name: "paid_demand",
 			mutate: func(thesis map[string]any) {
 				pricing := thesis["pricing"].(map[string]any)
+
 				pricing["hypothesis"] = "Paid demand proven by open-source activation."
 			},
 			wantBlocker: "unsupported commercial/admin overclaim",
@@ -1631,6 +1832,7 @@ func TestP912ProductEvidenceSupportAdminAndCommercialOverclaimsFailClosed(t *tes
 			name: "release_readiness",
 			mutate: func(thesis map[string]any) {
 				decision := thesis["decision"].(map[string]any)
+
 				decision["claim_impact"] = "Production release readiness is proven."
 			},
 			wantBlocker: "unsupported commercial/admin overclaim",
@@ -1640,6 +1842,7 @@ func TestP912ProductEvidenceSupportAdminAndCommercialOverclaimsFailClosed(t *tes
 			mutate: func(thesis map[string]any) {
 				rows := thesis["classification_stances"].([]any)
 				row := rows[0].(map[string]any)
+
 				row["support_admin_boundary"] = "HIPAA compliance is included."
 			},
 			wantBlocker: "regulated/compliance overclaim",
@@ -1650,6 +1853,7 @@ func TestP912ProductEvidenceSupportAdminAndCommercialOverclaimsFailClosed(t *tes
 			root := t.TempDir()
 			stageP711ProductEvidenceFixtures(t, root)
 			p912MutateThesis(t, root, tc.mutate)
+
 			gate := p912ProductGateForCompleteEvidence(t, root)
 			if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, tc.wantBlocker) {
 				t.Fatalf("P9.12 overclaim %s must fail closed: %#v", tc.name, gate)
@@ -1668,7 +1872,8 @@ func TestP912ProductEvidenceFullThesisPrivacyMarkersFailClosed(t *testing.T) {
 			name: "support_boundary_private_path",
 			mutate: func(thesis map[string]any) {
 				support := thesis["support"].(map[string]any)
-				support["boundary"] = "Support requires reproducer notes from /Users/ben/Documents/GitHub/CustomerX-private-repo."
+
+				support["boundary"] = "Support requires reproducer notes from /workspace/CustomerX-private-repo."
 			},
 			wantBlocker: "support.boundary: private_path",
 		},
@@ -1676,6 +1881,7 @@ func TestP912ProductEvidenceFullThesisPrivacyMarkersFailClosed(t *testing.T) {
 			name: "pricing_hypothesis_secret",
 			mutate: func(thesis map[string]any) {
 				pricing := thesis["pricing"].(map[string]any)
+
 				pricing["hypothesis"] = "Design-partner pilot captured secret token=abc123 in pricing notes."
 			},
 			wantBlocker: "pricing.hypothesis: secret_value",
@@ -1685,6 +1891,7 @@ func TestP912ProductEvidenceFullThesisPrivacyMarkersFailClosed(t *testing.T) {
 			mutate: func(thesis map[string]any) {
 				rows := thesis["classification_stances"].([]any)
 				row := rows[1].(map[string]any)
+
 				row["go_no_go_evidence"] = "GO because raw task capture from CustomerX was reviewed."
 			},
 			wantBlocker: "classification_stances[1].go_no_go_evidence: raw_task",
@@ -1694,6 +1901,7 @@ func TestP912ProductEvidenceFullThesisPrivacyMarkersFailClosed(t *testing.T) {
 			mutate: func(thesis map[string]any) {
 				rows := thesis["classification_stances"].([]any)
 				row := rows[2].(map[string]any)
+
 				row["support_admin_boundary"] = "Integration triage includes CustomerX-specific repository notes."
 			},
 			wantBlocker: "classification_stances[2].support_admin_boundary: customer_identifier",
@@ -1704,10 +1912,12 @@ func TestP912ProductEvidenceFullThesisPrivacyMarkersFailClosed(t *testing.T) {
 			root := t.TempDir()
 			stageP711ProductEvidenceFixtures(t, root)
 			p912MutateThesis(t, root, tc.mutate)
+
 			gate := p912ProductGateForCompleteEvidence(t, root)
 			if gate.Status != "needs_evidence" ||
 				gate.Counts["privacy_blockers"] == 0 ||
 				!p711TestBlockerContains(gate.Blockers, tc.wantBlocker) {
+
 				t.Fatalf("P9.12 privacy marker %s must fail closed: %#v", tc.name, gate)
 			}
 		})
@@ -1719,13 +1929,16 @@ func TestP912ProductEvidenceUnsupportedAdminCountMismatchFailsClosed(t *testing.
 	stageP711ProductEvidenceFixtures(t, root)
 	p912MutateThesis(t, root, func(thesis map[string]any) {
 		admin := thesis["admin"].(map[string]any)
+
 		admin["unsupported_request_count"] = 99
 	})
+
 	gate := p912ProductGateForCompleteEvidence(t, root)
 	if gate.Status != "needs_evidence" ||
 		gate.Counts["unsupported_admin_request_count"] != 7 ||
 		gate.Counts["admin_count_blockers"] != 1 ||
 		!p711TestBlockerContains(gate.Blockers, "unsupported_admin_request_count mismatch: thesis=99 actual=7") {
+
 		t.Fatalf("P9.12 unsupported-admin mismatch must fail closed with list-derived count: %#v", gate)
 	}
 }
@@ -1747,6 +1960,7 @@ func TestP912ProductEvidenceDecisionMissingOrUnsupportedFailsClosed(t *testing.T
 			name: "unsupported_outcome",
 			mutate: func(thesis map[string]any) {
 				decision := thesis["decision"].(map[string]any)
+
 				decision["outcome"] = "maybe"
 			},
 			wantBlocker: "decision outcome must be continue, pivot, or no_go",
@@ -1755,6 +1969,7 @@ func TestP912ProductEvidenceDecisionMissingOrUnsupportedFailsClosed(t *testing.T
 			name: "unsupported_continue",
 			mutate: func(thesis map[string]any) {
 				decision := thesis["decision"].(map[string]any)
+
 				decision["outcome"] = "continue"
 			},
 			wantBlocker: "continue decision is unsupported by prior gate evidence",
@@ -1765,8 +1980,10 @@ func TestP912ProductEvidenceDecisionMissingOrUnsupportedFailsClosed(t *testing.T
 			root := t.TempDir()
 			stageP711ProductEvidenceFixtures(t, root)
 			p912MutateThesis(t, root, tc.mutate)
+
 			report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.12")
+
 			if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, tc.wantBlocker) {
 				t.Fatalf("P9.12 decision case %s must fail closed: %#v", tc.name, gate)
 			}
@@ -1779,12 +1996,15 @@ func TestP912ProductEvidenceRequiresAllSevenClassificationStances(t *testing.T) 
 	stageP711ProductEvidenceFixtures(t, root)
 	p912MutateThesis(t, root, func(thesis map[string]any) {
 		rows := thesis["classification_stances"].([]any)
+
 		thesis["classification_stances"] = rows[:len(rows)-1]
 	})
+
 	gate := p912ProductGateForCompleteEvidence(t, root)
 	if gate.Status != "needs_evidence" ||
 		gate.Counts["classification_stances_covered"] != 6 ||
 		!p711TestBlockerContains(gate.Blockers, "missing packaging classification stance:") {
+
 		t.Fatalf("P9.12 must require all seven classification stances: %#v", gate)
 	}
 }
@@ -1792,6 +2012,7 @@ func TestP912ProductEvidenceRequiresAllSevenClassificationStances(t *testing.T) 
 func TestP912ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
@@ -1810,11 +2031,13 @@ func TestP912ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
 	})
 	productGate := p711TestReleaseGate(product.ReleaseGateLinkage, "P9.12")
 	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.12")
+
 	if productGate.Status != releaseGate.Status ||
 		productGate.ClaimImpact != releaseGate.ClaimImpact ||
 		!reflect.DeepEqual(productGate.Counts, releaseGate.Counts) ||
 		!reflect.DeepEqual(productGate.Blockers, releaseGate.Blockers) ||
 		!reflect.DeepEqual(productGate.EvidenceIDs, releaseGate.EvidenceIDs) {
+
 		t.Fatalf("product/release P9.12 structured gate data should agree: product=%#v release=%#v", productGate, releaseGate)
 	}
 }
@@ -1822,6 +2045,7 @@ func TestP912ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
 func TestP718TopLevelStatusReflectsMissingSignals(t *testing.T) {
 	root := t.TempDir()
 	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+
 	if report.Status != "partial" || report.SignalCompleteness.Status != "partial" {
 		t.Fatalf("missing evidence should produce partial top-level status, got status=%q completeness=%#v", report.Status, report.SignalCompleteness)
 	}
@@ -1838,10 +2062,12 @@ func p97PrimaryRecords(adoptionSignal string, buyerBudgetSignal string) []p711Va
 	for i := range records {
 		records[i].AdoptionSignalType = adoptionSignal
 		records[i].BuyerBudgetSignal = buyerBudgetSignal
+
 		if records[i].ClientClassification == "enterprise-saas" {
 			records[i].AdoptPaySponsorScore = 2
 		}
 	}
+
 	return records
 }
 
@@ -1872,21 +2098,26 @@ func p97Record(class string, id string, context string) p711ValidationRecord {
 
 func assertP711CoverageForEveryClassification(t *testing.T, rows []productEvidenceClassCoverage, minValidationRecords int) {
 	t.Helper()
+
 	seen := map[string]productEvidenceClassCoverage{}
 	for _, row := range rows {
 		if _, exists := seen[row.Classification]; exists {
 			t.Fatalf("duplicate classification coverage row for %q", row.Classification)
 		}
+
 		seen[row.Classification] = row
 	}
+
 	for _, class := range []string{"finance", "healthcare", "public-sector", "enterprise-saas", "tooling-vendor", "local-model", "open-source"} {
 		row, ok := seen[class]
 		if !ok {
 			t.Fatalf("missing classification coverage row for %q", class)
 		}
+
 		if row.Status != "pass" || row.P76CommandID == "" || row.ClientDemoTranscriptID == "" || !row.SecurityPostureCoverage {
 			t.Fatalf("classification %q missing executable coverage fields: %#v", class, row)
 		}
+
 		if row.ValidationRecordCount < minValidationRecords {
 			t.Fatalf("classification %q missing validation-record example coverage: %#v", class, row)
 		}
@@ -1903,11 +2134,13 @@ func p711TestSignal(signals []productEvidenceSignalSummary, id string) productEv
 			return signal
 		}
 	}
+
 	return productEvidenceSignalSummary{}
 }
 
 func writeP711LocalOpsReport(t *testing.T, root string) string {
 	t.Helper()
+
 	report := localops.BenchmarkReport{
 		SchemaVersion: localops.BenchmarkSchemaVersion,
 		GeneratedAt:   "2026-05-14T00:00:00Z",
@@ -1989,31 +2222,38 @@ func writeP711LocalOpsReport(t *testing.T, root string) string {
 	}
 	path := filepath.Join(root, ".idiom", "local-ops", "report.json")
 	writeP711JSON(t, path, report)
+
 	return path
 }
 
 func writeP910CompetitiveBenchmarkReport(t *testing.T, root string, conditions []map[string]any) string {
 	t.Helper()
+
 	path := filepath.Join(root, "testdata", "benchmarks", "localization-competitive.json")
 	writeP711JSON(t, path, map[string]any{
 		"schema_version":         "idiom.localization_benchmark.v1",
 		"status":                 "pass",
 		"competitive_conditions": conditions,
 	})
+
 	return path
 }
 
 func stageP910DefaultCorpusFixture(t *testing.T, root string) {
 	t.Helper()
+
 	sourcePath := filepath.Join(p711TestRepoRoot(t), "testdata", "localization", "recent-implementation-corpus.json")
+
 	data, err := os.ReadFile(sourcePath)
 	if err != nil {
 		t.Fatalf("read default localization corpus fixture: %v", err)
 	}
+
 	path := filepath.Join(root, "testdata", "localization", "recent-implementation-corpus.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("create default corpus fixture directory: %v", err)
 	}
+
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("write default localization corpus fixture: %v", err)
 	}
@@ -2021,46 +2261,57 @@ func stageP910DefaultCorpusFixture(t *testing.T, root string) {
 
 func p910JSONCountsFromProduct(t *testing.T, body []byte) map[string]int {
 	t.Helper()
+
 	var report struct {
 		ReleaseGateLinkage []struct {
 			Gate   string         `json:"gate"`
 			Counts map[string]int `json:"counts"`
 		} `json:"release_gate_linkage"`
 	}
+
 	if err := json.Unmarshal(body, &report); err != nil {
 		t.Fatalf("parse product evidence JSON: %v\n%s", err, string(body))
 	}
+
 	for _, gate := range report.ReleaseGateLinkage {
 		if gate.Gate == "P9.10" {
 			return gate.Counts
 		}
 	}
+
 	t.Fatalf("product evidence JSON missing P9.10 release gate: %s", string(body))
+
 	return nil
 }
 
 func p910JSONCountsFromReleaseReadiness(t *testing.T, body []byte) map[string]int {
 	t.Helper()
+
 	var report struct {
 		ReleaseReadiness []struct {
 			Gate   string         `json:"gate"`
 			Counts map[string]int `json:"counts"`
 		} `json:"release_readiness"`
 	}
+
 	if err := json.Unmarshal(body, &report); err != nil {
 		t.Fatalf("parse release evidence JSON: %v\n%s", err, string(body))
 	}
+
 	for _, gate := range report.ReleaseReadiness {
 		if gate.Gate == "P9.10" {
 			return gate.Counts
 		}
 	}
+
 	t.Fatalf("release evidence JSON missing P9.10 readiness gate: %s", string(body))
+
 	return nil
 }
 
 func p910JSONCountsFromReleaseCompetitiveCoverage(t *testing.T, body []byte) map[string]int {
 	t.Helper()
+
 	var report struct {
 		BenchmarkLocalOps struct {
 			CompetitiveCoverage struct {
@@ -2068,14 +2319,17 @@ func p910JSONCountsFromReleaseCompetitiveCoverage(t *testing.T, body []byte) map
 			} `json:"competitive_coverage"`
 		} `json:"benchmark_local_ops"`
 	}
+
 	if err := json.Unmarshal(body, &report); err != nil {
 		t.Fatalf("parse release evidence JSON: %v\n%s", err, string(body))
 	}
+
 	return report.BenchmarkLocalOps.CompetitiveCoverage.Counts
 }
 
 func assertP910RequiredCountKeys(t *testing.T, counts map[string]int) {
 	t.Helper()
+
 	for _, key := range []string{
 		"required_external_baselines",
 		"baseline_rows",
@@ -2158,16 +2412,20 @@ func p910ConditionPatch(condition map[string]any, patch map[string]any) map[stri
 	for key, value := range condition {
 		out[key] = value
 	}
+
 	for key, value := range patch {
 		out[key] = value
 	}
+
 	return out
 }
 
 func writeP711ValidationRecords(t *testing.T, root string) string {
 	t.Helper()
+
 	classes := []string{"finance", "healthcare", "public-sector", "enterprise-saas", "tooling-vendor", "local-model", "open-source"}
 	records := make([]map[string]any, 0, len(classes)+2)
+
 	for _, class := range classes {
 		record := p711ValidationRecordFixture("record-"+class, class)
 		if class == "enterprise-saas" {
@@ -2176,22 +2434,29 @@ func writeP711ValidationRecords(t *testing.T, root string) string {
 			record["buyer_budget_signal"] = "platform_owner"
 			record["adopt_pay_sponsor_score"] = 2
 		}
+
 		records = append(records, record)
 	}
+
 	extraPrimary := p711ValidationRecordFixture("record-enterprise-saas-b", "enterprise-saas")
+
 	extraPrimary["participant_context_id"] = "context-platform-b"
 	extraPrimary["adoption_signal_type"] = "budget_owner"
 	extraPrimary["buyer_budget_signal"] = "budget_discussion"
 	extraPrimary["adopt_pay_sponsor_score"] = 3
 	records = append(records, extraPrimary)
+
 	thirdPrimary := p711ValidationRecordFixture("record-enterprise-saas-c", "enterprise-saas")
+
 	thirdPrimary["participant_context_id"] = "context-platform-b"
 	thirdPrimary["adoption_signal_type"] = "none"
 	thirdPrimary["buyer_budget_signal"] = "none"
 	thirdPrimary["adopt_pay_sponsor_score"] = 1
 	records = append(records, thirdPrimary)
+
 	path := filepath.Join(root, "validation-records.json")
 	writeP711JSON(t, path, records)
+
 	return path
 }
 
@@ -2223,19 +2488,24 @@ func p711ValidationRecordFixture(recordID string, class string) map[string]any {
 func TestP99ProductEvidenceNeedsEvidenceWhenPostureMissingOrMalformed(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	matrixPath := filepath.Join(root, "docs", "security-privacy-posture.matrix.json")
 	if err := os.Remove(matrixPath); err != nil {
 		t.Fatalf("remove matrix: %v", err)
 	}
+
 	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+
 	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "missing posture matrix") {
 		t.Fatalf("missing posture matrix should fail closed: %#v", gate)
 	}
 
 	writeP711Text(t, matrixPath, "{not-json")
+
 	report = buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate = p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+
 	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "malformed posture matrix JSON") {
 		t.Fatalf("malformed posture matrix should fail closed: %#v", gate)
 	}
@@ -2248,29 +2518,38 @@ func TestP99ProductEvidenceRejectsComplianceOverclaimAndRegulatedSalesReadiness(
 
 	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+
 	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "overclaim") {
 		t.Fatalf("compliance overclaim should fail closed: %#v", gate)
 	}
 
 	stageP711ProductEvidenceFixtures(t, root)
+
 	matrixPath := filepath.Join(root, "docs", "security-privacy-posture.matrix.json")
+
 	var matrix map[string]any
+
 	data, err := os.ReadFile(matrixPath)
 	if err != nil {
 		t.Fatalf("read matrix: %v", err)
 	}
+
 	if err := json.Unmarshal(data, &matrix); err != nil {
 		t.Fatalf("decode matrix: %v", err)
 	}
+
 	rows := matrix["client_classification_coverage"].([]any)
 	row := rows[0].(map[string]any)
+
 	row["classification"] = "finance"
 	row["stance"] = "regulated sales ready"
 	row["limitation"] = "ready for finance sales"
+
 	writeP711JSON(t, matrixPath, matrix)
 
 	report = buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate = p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+
 	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "regulated client row") {
 		t.Fatalf("regulated sales-readiness row should fail closed: %#v", gate)
 	}
@@ -2296,6 +2575,7 @@ func TestP99ProductEvidenceBlocksAssertionAwareOverclaimsButAllowsNegatedLimitat
 
 			report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+
 			if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "overclaim") {
 				t.Fatalf("positive overclaim %q should fail closed: %#v", phrase, gate)
 			}
@@ -2319,8 +2599,10 @@ func TestP99ProductEvidenceBlocksAssertionAwareOverclaimsButAllowsNegatedLimitat
 		"No formal approval is claimed.",
 		"No regulated sales readiness claim.",
 	}, "\n"))
+
 	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+
 	if p711TestBlockerContains(gate.Blockers, "overclaim") {
 		t.Fatalf("negated limitations should not be treated as overclaims: %#v", gate)
 	}
@@ -2337,6 +2619,7 @@ func TestP99ProductEvidenceRejectsPostureMatrixOverclaims(t *testing.T) {
 			mutate: func(matrix map[string]any) {
 				controls := matrix["required_controls"].([]any)
 				control := controls[0].(map[string]any)
+
 				control["claim"] = "Idiom has MCP conformance."
 			},
 			pattern: "mcp conformance",
@@ -2346,6 +2629,7 @@ func TestP99ProductEvidenceRejectsPostureMatrixOverclaims(t *testing.T) {
 			mutate: func(matrix map[string]any) {
 				rows := matrix["client_classification_coverage"].([]any)
 				row := rows[3].(map[string]any)
+
 				row["limitation"] = "HIPAA certification."
 			},
 			pattern: "hipaa certification",
@@ -2356,24 +2640,31 @@ func TestP99ProductEvidenceRejectsPostureMatrixOverclaims(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			stageP711ProductEvidenceFixtures(t, root)
+
 			matrixPath := filepath.Join(root, "docs", "security-privacy-posture.matrix.json")
+
 			var matrix map[string]any
+
 			data, err := os.ReadFile(matrixPath)
 			if err != nil {
 				t.Fatalf("read matrix: %v", err)
 			}
+
 			if err := json.Unmarshal(data, &matrix); err != nil {
 				t.Fatalf("decode matrix: %v", err)
 			}
+
 			tc.mutate(matrix)
 			writeP711JSON(t, matrixPath, matrix)
 
 			report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+
 			if gate.Status != "needs_evidence" ||
 				gate.Counts["matrix_overclaim_blockers"] == 0 ||
 				!p711TestBlockerContains(gate.Blockers, "posture matrix field") ||
 				!p711TestBlockerContains(gate.Blockers, tc.pattern) {
+
 				t.Fatalf("matrix overclaim %q should fail closed with structured blocker: %#v", tc.pattern, gate)
 			}
 		})
@@ -2436,6 +2727,7 @@ func TestP99ProductEvidenceRejectsHollowSourceVerificationRecords(t *testing.T) 
 
 			report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+
 			if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, tc.blocker) {
 				t.Fatalf("source verification blocker %q missing: %#v", tc.blocker, gate)
 			}
@@ -2446,6 +2738,7 @@ func TestP99ProductEvidenceRejectsHollowSourceVerificationRecords(t *testing.T) 
 func TestP99ProductEvidencePrivacyBlockedExportNeedsEvidence(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	path := filepath.Join(root, "validation-records.json")
 	writeP711JSON(t, path, []map[string]any{{
 		"record_id":             "record-enterprise-saas",
@@ -2462,12 +2755,15 @@ func TestP99ProductEvidencePrivacyBlockedExportNeedsEvidence(t *testing.T) {
 		ValidationRecords: path,
 	})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+
 	if report.Status != "blocked" || report.Privacy.ForbiddenFieldCheck != "failed:validation_records" {
 		t.Fatalf("fixture should block product export privacy: status=%q privacy=%#v", report.Status, report.Privacy)
 	}
+
 	if gate.Status != "needs_evidence" ||
 		!p711TestBlockerContains(gate.Blockers, "product evidence export status is privacy-blocked") ||
 		!p711TestBlockerContains(gate.Blockers, "validation records failed privacy validation") {
+
 		t.Fatalf("privacy-blocked product export should block P9.9 with structured blockers: %#v", gate)
 	}
 
@@ -2476,9 +2772,11 @@ func TestP99ProductEvidencePrivacyBlockedExportNeedsEvidence(t *testing.T) {
 		ValidationRecords: path,
 	})
 	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.9")
+
 	if releaseGate.Status != gate.Status ||
 		releaseGate.Counts["product_privacy_blockers"] != gate.Counts["product_privacy_blockers"] ||
 		!p711TestBlockerContains(releaseGate.Blockers, "product evidence export status is privacy-blocked") {
+
 		t.Fatalf("privacy-blocked product/release P9.9 should remain aligned: product=%#v release=%#v", gate, releaseGate)
 	}
 }
@@ -2490,6 +2788,7 @@ func TestP99ProductEvidenceContradictoryReportMarkersFailClosed(t *testing.T) {
 
 	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+
 	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "conflicting GO/no-go markers") {
 		t.Fatalf("contradictory report markers should fail closed: %#v", gate)
 	}
@@ -2502,13 +2801,16 @@ func TestP99ProductEvidenceRequiresStructuredSourceVerificationMethod(t *testing
 
 	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+
 	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "structured source verification evidence") {
 		t.Fatalf("missing structured source verification should fail closed: %#v", gate)
 	}
 
 	writeP711Text(t, filepath.Join(root, "docs", "idiom-implementation-plan.md"), p99PlanFixtureText(false))
+
 	report = buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate = p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+
 	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "unreachable source evidence missing verification method") {
 		t.Fatalf("unreachable source without method should fail closed: %#v", gate)
 	}
@@ -2517,26 +2819,34 @@ func TestP99ProductEvidenceRequiresStructuredSourceVerificationMethod(t *testing
 func TestP99ProductEvidenceNeedsEvidenceWhenControlEvidenceOrTiebacksMissing(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	matrixPath := filepath.Join(root, "docs", "security-privacy-posture.matrix.json")
+
 	var matrix map[string]any
+
 	data, err := os.ReadFile(matrixPath)
 	if err != nil {
 		t.Fatalf("read matrix: %v", err)
 	}
+
 	if err := json.Unmarshal(data, &matrix); err != nil {
 		t.Fatalf("decode matrix: %v", err)
 	}
+
 	controls := matrix["required_controls"].([]any)
 	first := controls[0].(map[string]any)
+
 	first["evidence"] = []any{}
 	matrix["release_gate_tiebacks"] = []string{"P7.9"}
 	writeP711JSON(t, matrixPath, matrix)
 
 	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
+
 	if gate.Status != "needs_evidence" ||
 		!p711TestBlockerContains(gate.Blockers, "missing executable evidence") ||
 		!p711TestBlockerContains(gate.Blockers, "missing release-gate tieback: P8.4") {
+
 		t.Fatalf("missing control evidence/tiebacks should fail closed: %#v", gate)
 	}
 }
@@ -2544,6 +2854,7 @@ func TestP99ProductEvidenceNeedsEvidenceWhenControlEvidenceOrTiebacksMissing(t *
 func TestP99ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
 	stageReleaseEvidenceCommandBundle(t, root, "baseline", releaseEvidenceBaselineCommands())
@@ -2563,17 +2874,21 @@ func TestP99ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
 	})
 	productGate := p711TestReleaseGate(product.ReleaseGateLinkage, "P9.9")
 	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.9")
+
 	if productGate.Status != releaseGate.Status || productGate.Status != "evidence_present" {
 		t.Fatalf("product/release P9.9 status should agree: product=%#v release=%#v", productGate, releaseGate)
 	}
+
 	for _, key := range []string{"mapped_required_controls", "mapped_client_rows", "mapped_gate_tiebacks", "blockers"} {
 		if productGate.Counts[key] != releaseGate.Counts[key] {
 			t.Fatalf("product/release P9.9 count %q should agree: product=%#v release=%#v", key, productGate, releaseGate)
 		}
 	}
+
 	if len(productGate.Blockers) != 0 || len(releaseGate.Blockers) != 0 ||
 		!stringSliceContains(productGate.EvidenceIDs, "p7.9-security-privacy-posture") ||
 		!stringSliceContains(releaseGate.EvidenceIDs, "release-gate-p9.9") {
+
 		t.Fatalf("P9.9 structured fields incomplete: product=%#v release=%#v", productGate, releaseGate)
 	}
 }
@@ -2584,6 +2899,7 @@ func p711TestSourceRef(refs []productEvidenceSourceReference, id string) product
 			return ref
 		}
 	}
+
 	return productEvidenceSourceReference{}
 }
 
@@ -2593,6 +2909,7 @@ func p711TestReleaseGate(rows []productEvidenceReleaseGateLinkage, gate string) 
 			return row
 		}
 	}
+
 	return productEvidenceReleaseGateLinkage{}
 }
 
@@ -2602,12 +2919,15 @@ func p711TestBlockerContains(blockers []string, needle string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 func stageProductEvidenceRecoveryPacket(t *testing.T, root string, sessionID string) recovery.DecompositionPacket {
 	t.Helper()
+
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+
 	record, _, err := recovery.WritePlanExecuteFailureRecord(root, recovery.PlanExecuteFailureInput{
 		SessionID:         sessionID,
 		ProgressStatePath: ".idiom/plan-execute/" + sessionID + "/state.json",
@@ -2623,21 +2943,29 @@ func stageProductEvidenceRecoveryPacket(t *testing.T, root string, sessionID str
 	if err != nil {
 		t.Fatalf("write recovery failure record: %v", err)
 	}
+
 	packet, _, err := recovery.WriteDecompositionPacketForFailureRecord(root, record, now)
 	if err != nil {
 		t.Fatalf("write recovery packet: %v", err)
 	}
+
 	if len(packet.CandidateAtoms) == 0 {
 		t.Fatalf("expected candidate atom in recovery packet: %#v", packet)
 	}
+
 	return packet
 }
 
 func stageProductEvidenceRecoveredPacket(t *testing.T, root string, sessionID string) recovery.DecompositionPacket {
 	t.Helper()
+
 	packet := stageProductEvidenceRecoveryPacket(t, root, sessionID)
-	var completed []string
-	var commands []recovery.ReconciliationCommandResult
+
+	var (
+		completed []string
+		commands  []recovery.ReconciliationCommandResult
+	)
+
 	for _, atom := range packet.CandidateAtoms {
 		completed = append(completed, atom.ID)
 		for _, command := range atom.RequiredTests {
@@ -2648,6 +2976,7 @@ func stageProductEvidenceRecoveredPacket(t *testing.T, root string, sessionID st
 			})
 		}
 	}
+
 	reconciliation, err := recovery.BuildReconciliation(packet, recovery.ReconciliationOptions{
 		Now:              time.Date(2026, 5, 18, 12, 5, 0, 0, time.UTC),
 		CompletedAtomIDs: completed,
@@ -2659,21 +2988,26 @@ func stageProductEvidenceRecoveredPacket(t *testing.T, root string, sessionID st
 	if err != nil {
 		t.Fatalf("build recovery reconciliation: %v", err)
 	}
+
 	if _, _, err := recovery.WriteReconciliation(root, reconciliation, ""); err != nil {
 		t.Fatalf("write recovery reconciliation: %v", err)
 	}
+
 	return packet
 }
 
 func assertP811IntegrationNeedsEvidence(t *testing.T, report productEvidenceExportReport) {
 	t.Helper()
+
 	integration := p711TestSignal(report.Signals, "integration_proof")
 	if integration.Completeness == "complete" || integration.Status == "pass" {
 		t.Fatalf("malformed integration proofs must not complete the signal: %#v", integration)
 	}
+
 	if linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.8"); linkage.Status == "evidence_present" {
 		t.Fatalf("P9.8 should not be evidence_present for malformed proof rows: %#v", report.ReleaseGateLinkage)
 	}
+
 	if report.ProductSuccessGates.IntegrationProof == "evidence_present" {
 		t.Fatalf("product integration gate should need evidence for malformed proof rows")
 	}
@@ -2686,11 +3020,17 @@ func stageP711ProductEvidenceFixtures(t *testing.T, root string) {
 		p711IntegrationProofFixture("p7.8-external-coding-agent", "external_coding_agent_workflow", true, false),
 		p711IntegrationProofFixture("p7.8-mcp-stdio", "mcp_stdio", true, false),
 	})
-	var securityRows []map[string]any
-	var transcripts []map[string]any
+
+	var (
+		securityRows []map[string]any
+		transcripts  []map[string]any
+	)
+
 	controlIDs := p99RequiredControlIDs()
+
 	for _, class := range []string{"finance", "healthcare", "public-sector", "enterprise-saas", "tooling-vendor", "local-model", "open-source"} {
 		commandID := "p76-" + class
+
 		securityRows = append(securityRows, map[string]any{
 			"classification":      class,
 			"stance":              p711DefaultStance(class),
@@ -2700,6 +3040,7 @@ func stageP711ProductEvidenceFixtures(t *testing.T, root string) {
 		})
 		transcripts = append(transcripts, p911TranscriptFixture(class, commandID))
 	}
+
 	stageP99PostureGateFixtures(t, root, securityRows)
 	writeP912PackagingSupportThesis(t, root, "continue")
 	writeP711JSON(t, filepath.Join(root, "testdata", "sidecar", "client-demo-transcripts.json"), map[string]any{
@@ -2717,17 +3058,21 @@ func p911TranscriptFixture(class string, commandID string) map[string]any {
 	if class == "enterprise-saas" {
 		stance = "Primary buyer-facing enterprise SaaS local sidecar trust demo"
 	}
+
 	if class == "open-source" {
 		stance = "Adoption wedge and proof pool"
 	}
+
 	mvp := "MVP limitation: proof-only local sidecar demo; no paid demand, support readiness, or release readiness claim."
 	if p99RegulatedClass(class) {
 		mvp = "Proof-only: no regulated compliance, certification, attestation, sales, or release readiness claim."
 	}
+
 	releaseImpact := "Supports demo-proof only; final support, paid demand, and release readiness remain gated by later evidence."
 	if class == "enterprise-saas" {
 		releaseImpact = "Supports the primary enterprise-SaaS buyer-facing demo story only; paid demand and release readiness remain gated by P9.7/P9.12."
 	}
+
 	return map[string]any{
 		"id":                        "p7.10-" + class,
 		"classification":            class,
@@ -2766,7 +3111,9 @@ func p911TranscriptFixture(class string, commandID string) map[string]any {
 
 func stageP99PostureGateFixtures(t *testing.T, root string, securityRows []map[string]any) {
 	t.Helper()
+
 	var controls []map[string]any
+
 	for _, id := range p99RequiredControlIDs() {
 		controls = append(controls, map[string]any{
 			"id":              id,
@@ -2780,6 +3127,7 @@ func stageP99PostureGateFixtures(t *testing.T, root string, securityRows []map[s
 			}},
 		})
 	}
+
 	writeP711JSON(t, filepath.Join(root, "docs", "security-privacy-posture.matrix.json"), map[string]any{
 		"schema_version":                 "idiom.security_privacy_posture.v1",
 		"artifact_id":                    "p7.9-security-privacy-posture",
@@ -2798,6 +3146,7 @@ func stageP99PostureGateFixtures(t *testing.T, root string, securityRows []map[s
 
 func writeP912PackagingSupportThesis(t *testing.T, root string, outcome string) {
 	t.Helper()
+
 	classRows := []map[string]any{
 		p912ClassThesisRow("enterprise-saas", "primary paid beachhead", "Primary paid beachhead local CLI sidecar package for platform teams.", "Final-state platform package can add policy and evidence management after proof.", "Limited async platform-team support; no SSO, fleet policy, billing admin, hosted dashboard, or managed deployment.", "GO only with P9.7 buyer signal, P9.8 integration, P9.11 demos, and P9.12 decision evidence."),
 		p912ClassThesisRow("open-source", "adoption wedge", "Adoption wedge and proof pool with quickstart, fixture, local install, cleanup docs, and export examples.", "Community package can remain low-friction while feeding docs, demos, and retained-use evidence.", "No paid-enterprise demand credit unless a record independently satisfies primary ICP criteria.", "GO for activation, docs, and demo proof; NO-GO as paid proof without enterprise-SaaS buyer evidence."),
@@ -2809,14 +3158,17 @@ func writeP912PackagingSupportThesis(t *testing.T, root string, outcome string) 
 	}
 	decisionTrigger := "continue evidence IDs show P0.11 and P9.7 through P9.11 evidence can support bounded packaging."
 	claimImpact := "Continue evidence gathering for primary enterprise-SaaS packaging; paid claims are limited to P9.7 evidence and no production release claim is made."
+
 	if outcome == "pivot" {
 		decisionTrigger = "pivot trigger: primary enterprise-SaaS budget ownership failed while secondary sidecar evidence remained strong."
 		claimImpact = "Pivot decision limits claims to the named sidecar subset and does not claim primary enterprise-SaaS paid demand."
 	}
+
 	if outcome == "no_go" {
 		decisionTrigger = "no-go trigger: prior gates are incomplete for commercial packaging."
 		claimImpact = "No-go decision blocks commercial and production claims until the missing gate evidence is supplied."
 	}
+
 	writeP711JSON(t, filepath.Join(root, "docs", "packaging-support-thesis.json"), map[string]any{
 		"schema_version": "idiom.packaging_support_thesis.v1",
 		"artifact_id":    "p0.11-packaging-support-thesis",
@@ -2880,8 +3232,11 @@ func p912ClassThesisRow(class string, stance string, mvp string, finalState stri
 
 func p912MutateThesis(t *testing.T, root string, mutate func(map[string]any)) {
 	t.Helper()
+
 	path := filepath.Join(root, "docs", "packaging-support-thesis.json")
+
 	var thesis map[string]any
+
 	p711ReadTestJSON(t, path, &thesis)
 	mutate(thesis)
 	writeP711JSON(t, path, thesis)
@@ -2889,6 +3244,7 @@ func p912MutateThesis(t *testing.T, root string, mutate func(map[string]any)) {
 
 func p912ProductGateForCompleteEvidence(t *testing.T, root string) productEvidenceReleaseGateLinkage {
 	t.Helper()
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
@@ -2898,6 +3254,7 @@ func p912ProductGateForCompleteEvidence(t *testing.T, root string) productEviden
 		ValidationRecords: recordsPath,
 		BenchmarkReport:   benchmarkPath,
 	})
+
 	return p711TestReleaseGate(report.ReleaseGateLinkage, "P9.12")
 }
 
@@ -2906,6 +3263,7 @@ func p99PlanFixtureText(includeUnreachableMethod bool) string {
 	if includeUnreachableMethod {
 		unreachableMethod = "  unreachable_source_verification_method: browser/manual source check after CLI received 403\n"
 	}
+
 	return p99PlanFixtureWithSourceRecords("- source_id: hhs-hipaa-security-rule\n" +
 		"  checked_date: 2026-05-14\n" +
 		"  source_status: unreachable_403\n" +
@@ -2954,67 +3312,85 @@ func p711IntegrationProofFixture(id string, path string, executable bool, placeh
 	if path == "mcp_stdio" {
 		fixture["replay_fixture"] = "testdata/sidecar/mcp-stdio-integration-proof.json"
 		fixture["product_evidence_export_parity"] = true
+
 		for _, field := range p98RequiredMCPParityReadinessFields {
 			fixture["readiness"].(map[string]bool)[field] = true
 		}
 	}
+
 	return fixture
 }
 
 func p711IntegrationProofWithMCPParityOnPath(id string, path string) map[string]any {
 	fixture := p711IntegrationProofFixture(id, path, true, false)
+
 	fixture["replay_fixture"] = "testdata/sidecar/mcp-stdio-integration-proof.json"
 	fixture["product_evidence_export_parity"] = true
+
 	for _, field := range p98RequiredMCPParityReadinessFields {
 		fixture["readiness"].(map[string]bool)[field] = true
 	}
+
 	return fixture
 }
 
 func p711IntegrationProofWithoutMCPParityFixture(id string) map[string]any {
 	fixture := p711IntegrationProofFixture(id, "mcp_stdio", true, false)
 	delete(fixture, "replay_fixture")
+
 	fixture["product_evidence_export_parity"] = false
+
 	readiness := fixture["readiness"].(map[string]bool)
+
 	for _, field := range p98RequiredMCPParityReadinessFields {
 		delete(readiness, field)
 	}
+
 	return fixture
 }
 
 func p711IntegrationProofWithStatus(id string, path string, status string) map[string]any {
 	fixture := p711IntegrationProofFixture(id, path, true, false)
+
 	fixture["status"] = status
+
 	return fixture
 }
 
 func p711IntegrationProofWithoutPrivacy(id string, path string) map[string]any {
 	fixture := p711IntegrationProofFixture(id, path, true, false)
 	delete(fixture, "privacy")
+
 	return fixture
 }
 
 func p711IntegrationProofWithOmittedPrivacyField(id string, path string, field string) map[string]any {
 	fixture := p711IntegrationProofFixture(id, path, true, false)
 	delete(fixture["privacy"].(map[string]bool), field)
+
 	return fixture
 }
 
 func p711IntegrationProofWithPrivacyValue(id string, path string, field string, value bool) map[string]any {
 	fixture := p711IntegrationProofFixture(id, path, true, false)
+
 	fixture["privacy"].(map[string]bool)[field] = value
+
 	return fixture
 }
 
 func writeP711JSON(t *testing.T, path string, value any) {
 	t.Helper()
+
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal fixture: %v", err)
 	}
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir fixture: %v", err)
 	}
+
 	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
@@ -3022,10 +3398,12 @@ func writeP711JSON(t *testing.T, path string, value any) {
 
 func p711ReadTestJSON(t *testing.T, path string, value any) {
 	t.Helper()
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read json %s: %v", path, err)
 	}
+
 	if err := json.Unmarshal(data, value); err != nil {
 		t.Fatalf("parse json %s: %v\n%s", path, err, string(data))
 	}
@@ -3038,32 +3416,42 @@ func p911MutateFirstTranscript(t *testing.T, root string, mutate func(map[string
 
 func p911MutateTranscriptByClass(t *testing.T, root string, class string, mutate func(map[string]any)) {
 	t.Helper()
+
 	path := filepath.Join(root, "testdata", "sidecar", "client-demo-transcripts.json")
+
 	var set map[string]any
+
 	p711ReadTestJSON(t, path, &set)
+
 	transcripts, ok := set["transcripts"].([]any)
 	if !ok {
 		t.Fatalf("transcript fixture missing transcripts array: %#v", set)
 	}
+
 	for _, item := range transcripts {
 		row, ok := item.(map[string]any)
 		if !ok {
 			t.Fatalf("transcript row is not object: %#v", item)
 		}
+
 		if row["classification"] == class {
 			mutate(row)
 			writeP711JSON(t, path, set)
+
 			return
 		}
 	}
+
 	t.Fatalf("transcript fixture missing class %q", class)
 }
 
 func writeP711Text(t *testing.T, path string, value string) {
 	t.Helper()
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir fixture: %v", err)
 	}
+
 	if err := os.WriteFile(path, []byte(value), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}

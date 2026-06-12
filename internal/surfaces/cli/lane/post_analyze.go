@@ -31,6 +31,7 @@ func newTeeBuffer(out io.Writer) *teeBuffer {
 func (t *teeBuffer) Write(p []byte) (int, error) {
 	n, err := t.out.Write(p)
 	t.buf.Write(p[:n])
+
 	return n, err
 }
 
@@ -118,6 +119,7 @@ func containsAnyReadOnlyMarker(out []byte) (string, bool) {
 			return marker, true
 		}
 	}
+
 	return "", false
 }
 
@@ -137,15 +139,19 @@ func sawEditAttempt(out []byte) bool {
 	if bytes.Contains(out, []byte("<<QUESTION>>:")) {
 		return true
 	}
+
 	if hasBlockedCompletionEvent(out) {
 		return true
 	}
+
 	if hasSourceSatisfiedEvent(out) {
 		return true
 	}
+
 	if hasPlanExecuteEditEvent(out) {
 		return true
 	}
+
 	for _, tool := range editToolNames {
 		// Match the JSON shape `"tool":"<name>"` to avoid false
 		// positives on prose mentions. The actual emission point
@@ -156,6 +162,7 @@ func sawEditAttempt(out []byte) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -170,10 +177,13 @@ func hasPlanExecuteEditEvent(out []byte) bool {
 		if len(line) == 0 || line[0] != '{' {
 			continue
 		}
+
 		var ev map[string]any
+
 		if err := json.Unmarshal(line, &ev); err != nil {
 			continue
 		}
+
 		switch jsonString(ev["type"]) {
 		case "idiom.plan_execute.auto_exact_plan_submitted", "auto_exact_plan_submitted":
 			return true
@@ -185,6 +195,7 @@ func hasPlanExecuteEditEvent(out []byte) bool {
 			}
 		}
 	}
+
 	return false
 }
 
@@ -217,15 +228,19 @@ func hasSourceSatisfiedEvent(out []byte) bool {
 		if len(line) == 0 || line[0] != '{' {
 			continue
 		}
+
 		var ev map[string]any
+
 		if err := json.Unmarshal(line, &ev); err != nil {
 			continue
 		}
+
 		eventType := jsonString(ev["type"])
 		if eventType == "idiom.plan_execute.source_satisfied" || eventType == "source_satisfied" {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -239,15 +254,19 @@ func hasReviewRepairDegradedEvent(out []byte) bool {
 		if len(line) == 0 || line[0] != '{' {
 			continue
 		}
+
 		var ev map[string]any
+
 		if err := json.Unmarshal(line, &ev); err != nil {
 			continue
 		}
+
 		eventType := jsonString(ev["type"])
 		if eventType == "idiom.plan_execute.review_repair_degraded" || eventType == "review_repair_degraded" {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -263,18 +282,23 @@ func hasBlockedCompletionEvent(out []byte) bool {
 		if len(line) == 0 || line[0] != '{' {
 			continue
 		}
+
 		var ev map[string]any
+
 		if err := json.Unmarshal(line, &ev); err != nil {
 			continue
 		}
+
 		if ev["type"] != "completion_status" {
 			continue
 		}
+
 		status, _ := ev["status"].(string)
 		if strings.EqualFold(status, "blocked") {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -307,20 +331,27 @@ type laneSessionSummary struct {
 // deliberate: if a subcommand re-emits during error recovery, the
 // final summary is authoritative.
 func parseSessionSummary(out []byte) (laneSessionSummary, bool) {
-	var found bool
-	var result laneSessionSummary
+	var (
+		found  bool
+		result laneSessionSummary
+	)
+
 	for _, line := range bytes.Split(out, []byte("\n")) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 || line[0] != '{' {
 			continue
 		}
+
 		var ev map[string]any
+
 		if err := json.Unmarshal(line, &ev); err != nil {
 			continue
 		}
+
 		if ev["type"] != "session_summary" {
 			continue
 		}
+
 		result = laneSessionSummary{
 			SessionID:                  jsonString(ev["session_id"]),
 			ModelCalls:                 jsonInt(ev["model_calls"]),
@@ -339,28 +370,35 @@ func parseSessionSummary(out []byte) (laneSessionSummary, bool) {
 		}
 		found = true
 	}
+
 	return result, found
 }
 
 func parseLaneQueuePool(out []byte) string {
 	pool := ""
+
 	for _, line := range bytes.Split(out, []byte("\n")) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 || line[0] != '{' {
 			continue
 		}
+
 		var ev map[string]any
+
 		if err := json.Unmarshal(line, &ev); err != nil {
 			continue
 		}
+
 		eventType := jsonString(ev["type"])
 		if eventType != "idiom.plan_execute.queue_acquired" && eventType != "idiom.implement.queue_acquired" {
 			continue
 		}
+
 		if candidate := jsonString(ev["pool"]); candidate != "" {
 			pool = candidate
 		}
 	}
+
 	return pool
 }
 
@@ -373,5 +411,6 @@ func jsonInt(v any) int {
 	case int:
 		return n
 	}
+
 	return 0
 }

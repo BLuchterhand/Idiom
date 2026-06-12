@@ -19,11 +19,13 @@ func findEvent(events []RunEvent, role string) *RunEvent {
 			return &events[i]
 		}
 	}
+
 	return nil
 }
 
 func TestEmitBriefAuditCapturesContractShape(t *testing.T) {
 	var events []RunEvent
+
 	runner := &Runner{
 		OnEvent: collectRunnerEvents(&events),
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -53,25 +55,33 @@ func TestEmitBriefAuditCapturesContractShape(t *testing.T) {
 	if event == nil {
 		t.Fatal("expected brief_audit event")
 	}
+
 	var payload briefAuditEvent
+
 	if err := json.Unmarshal([]byte(event.Content), &payload); err != nil {
 		t.Fatalf("brief_audit payload not valid JSON: %v", err)
 	}
+
 	if payload.RequiredEditSnippetsCount != 3 {
 		t.Fatalf("snippet count: want 3, got %d", payload.RequiredEditSnippetsCount)
 	}
+
 	if got := payload.RequiredEditSnippetPaths; len(got) != 2 || got[0] != "a.go" || got[1] != "b.go" {
 		t.Fatalf("snippet paths should dedupe: %v", got)
 	}
+
 	if !payload.ExactAnchorImplActive {
 		t.Fatal("exact_anchor_implementation_active should be true when constraint is set")
 	}
+
 	if !payload.ReadinessReadyToWrite {
 		t.Fatal("readiness_ready_to_write should mirror brief readiness")
 	}
+
 	if payload.TargetPacketLines != 2 {
 		t.Fatalf("target_packet_lines: want 2, got %d", payload.TargetPacketLines)
 	}
+
 	if payload.TargetPacketBytes == 0 {
 		t.Fatal("target_packet_bytes should be non-zero for a populated packet")
 	}

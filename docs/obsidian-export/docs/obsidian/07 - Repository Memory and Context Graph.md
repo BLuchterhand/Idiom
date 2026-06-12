@@ -1,14 +1,14 @@
 ---
 tags:
-  - harness
+  - idiom
   - repository-memory
   - context-graph
 ---
 
 # Repository Memory and Context Graph
 
-Repository memory is one of Agent Harness's main differentiators. It exists so agents
-do not rediscover the repository from scratch on every task and do not flood prompts
+Repository memory is one of Idiom's main differentiators. It exists so agents
+do not rediscover the repo from scratch on every task and do not flood prompts
 with raw files when a bounded evidence packet would be better.
 
 The canonical design is in
@@ -26,10 +26,10 @@ The memory system separates three concepts:
 flowchart TD
     Source["Repository source"]
     Collectors["Collectors: files, packages, symbols, tests, calls, imports, diagnostics"]
-    Graph[".harness/comprehension/graph.sqlite"]
+    Graph[".idiom/comprehension/graph.sqlite"]
     Views["graph_views / exported views"]
     Packet["context_pack result"]
-    Model["Runtime brief or LLM agent"]
+    Model["Runtime brief or external agent"]
 
     Source --> Collectors --> Graph --> Views --> Packet --> Model
 ```
@@ -85,9 +85,9 @@ flowchart TD
     Result --> Agent --> Runner --> Executor
 ```
 
-## Target Graph Shape
+## Current Graph Shape
 
-The exact schema belongs in `internal/repository/comprehension`, but the graph
+The exact schema belongs in `internal/repository/comprehension`, but the graph currently
 centers on these concepts:
 
 | Concept | Examples |
@@ -95,9 +95,9 @@ centers on these concepts:
 | Node kinds | files, packages, symbols, tests, diagnostics, runtime traces, external symbols |
 | Edge kinds | defines, imports, calls, tests, references, dependency relationships |
 | Confidence tiers | syntax, heuristic, collector-specific confidence, freshness-derived confidence |
-| Storage | `.harness/comprehension/graph.sqlite` |
+| Storage | `.idiom/comprehension/graph.sqlite` |
 | View cache | `graph_views` rows inside SQLite |
-| Human-readable exports | `.harness/comprehension/views/<pack_id>.json` |
+| Human-readable exports | `.idiom/comprehension/views/<pack_id>.json` |
 | Collector coverage | Go, generic shell/file indexing, language-specific enrichment where available |
 
 The SQLite graph is the source of truth. JSON view files are inspection mirrors.
@@ -110,7 +110,7 @@ fingerprints, and ranker/runtime fingerprints.
 
 Cached packets are validated against:
 
-- Active graph index.
+- Current graph index.
 - Referenced source fingerprints.
 - Scoped freshness.
 - Runtime trace manifest state.
@@ -121,13 +121,13 @@ A failed validation is a miss or recompute, not a served stale result.
 
 Repository memory also includes learned ranking signals. `context_pack` and
 `context_impact` rank candidate files using graph/path signals plus
-per-workspace ranker weights under `.harness/ranker/weights.json`.
+per-workspace ranker weights under `.idiom/ranker/weights.json`.
 
-Learning events are recorded under `.harness/ranker/learning_log.jsonl` from eval
-groundedness outcomes, manual `harness ranker` commands, and validated recovery
+Learning events are recorded under `.idiom/ranker/learning_log.jsonl` from eval
+groundedness outcomes, manual `idiom ranker` commands, and validated recovery
 reconciliation outcomes. Recovery reconciliation writes
 `source:"recovery_reconciliation"` no-op events for audit/ranker summaries and
-does not mutate `.harness/ranker/weights.json`. This makes ranking an inspectable
+does not mutate `.idiom/ranker/weights.json`. This makes ranking an inspectable
 evidence-ordering mechanism, not a hidden model-strategy override.
 
 Packet consumers should treat ranking scores and hub demotion as evidence
@@ -149,7 +149,7 @@ Freshness checks are especially important when:
 
 ## Discovery Hierarchy
 
-For a harness project, the expected discovery order is:
+For this repo, the expected discovery order is:
 
 1. `context_pack` with a stable task string.
 2. Language-aware tools for symbol-shaped questions.
@@ -193,8 +193,8 @@ Changes to repository memory should include:
 | `internal/repository/comprehension/views.go` | `graph_views` cache/export behavior |
 | `internal/repository/comprehension/freshness.go` | Freshness and read-through repair |
 | `internal/repository/comprehension/trace.go` | Runtime trace attachment |
-| `.harness/comprehension/graph.sqlite` | Local graph store |
-| `.harness/ranker/weights.json` | Learned ranking weights |
+| `.idiom/comprehension/graph.sqlite` | Local graph store |
+| `.idiom/ranker/weights.json` | Learned ranking weights |
 
 ## Related Notes
 

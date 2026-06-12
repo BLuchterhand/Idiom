@@ -30,6 +30,7 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 	if err != nil {
 		return ToolResult{Tool: ToolNameSourceSanity, Summary: "Source sanity unavailable", Error: err.Error()}
 	}
+
 	if len(targets) == 0 {
 		return ToolResult{Tool: ToolNameSourceSanity, Summary: "Source sanity unavailable", Error: "no source files available for source sanity"}
 	}
@@ -38,11 +39,13 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 	if limit <= 0 {
 		limit = defaultSourceSanityLimit
 	}
+
 	if len(targets) > limit {
 		rel := make([]string, 0, min(limit, len(targets)))
 		for _, target := range targets[:min(limit, len(targets))] {
 			rel = append(rel, filepath.ToSlash(m.displayPath(target)))
 		}
+
 		return ToolResult{
 			Tool:    ToolNameSourceSanity,
 			Summary: "Source sanity needs narrower scope",
@@ -58,15 +61,19 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 	failures := make([]string, 0)
 	outputLines := make([]string, 0, len(outcomes))
 	fallbacks := 0
+
 	for _, outcome := range outcomes {
 		line := fmt.Sprintf("%s: %s", outcome.Path, outcome.Detail)
 		if outcome.Method != "" {
 			line = fmt.Sprintf("%s: %s via %s", outcome.Path, outcome.Detail, outcome.Method)
 		}
+
 		outputLines = append(outputLines, line)
+
 		if outcome.Method == sourceSanityMethodGeneric {
 			fallbacks++
 		}
+
 		if outcome.Error != "" {
 			failures = append(failures, fmt.Sprintf("%s: %s", outcome.Path, outcome.Error))
 		}
@@ -88,6 +95,7 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 			summary += "s"
 		}
 	}
+
 	return ToolResult{
 		Tool:    ToolNameSourceSanity,
 		Summary: summary,
@@ -99,46 +107,58 @@ func (m *Manager) sourceSanityTargets(req ToolRequest) ([]string, error) {
 	if strings.TrimSpace(req.Path) == "" {
 		return nil, fmt.Errorf("%s requires path", ToolNameSourceSanity)
 	}
+
 	target, err := m.resolvePath(req.Path, req.Workdir)
 	if err != nil {
 		return nil, err
 	}
+
 	info, err := os.Stat(target)
 	if err != nil {
 		return nil, err
 	}
+
 	if !info.IsDir() {
 		if sourceSanityCoversPath(target) {
 			return []string{target}, nil
 		}
+
 		return nil, fmt.Errorf("%s is not a supported source file", m.displayPath(target))
 	}
 
 	var targets []string
+
 	err = filepath.WalkDir(target, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
+
 		if d.IsDir() {
 			if path != target && discovery.ShouldSkipDirName(d.Name()) {
 				return filepath.SkipDir
 			}
+
 			return nil
 		}
+
 		if strings.HasPrefix(filepath.Base(path), ".") || discovery.ShouldSkipRelFile(filepath.ToSlash(m.displayPath(path))) {
 			return nil
 		}
+
 		if sourceSanityCoversPath(path) {
 			targets = append(targets, path)
 		}
+
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+
 	sort.Slice(targets, func(i, j int) bool {
 		return m.displayPath(targets[i]) < m.displayPath(targets[j])
 	})
+
 	return targets, nil
 }
 
@@ -153,6 +173,7 @@ func (m *Manager) sourceSanityOne(ctx context.Context, absPath string, workdir s
 				Detail: oneLineSourceSanityDetail(result),
 			}
 		}
+
 		if !diagnosticsUnavailable(result) {
 			return sourceSanityOutcome{
 				Path:   rel,
@@ -161,6 +182,7 @@ func (m *Manager) sourceSanityOne(ctx context.Context, absPath string, workdir s
 				Error:  util.FirstNonEmpty(strings.TrimSpace(result.Error), strings.TrimSpace(result.Output), strings.TrimSpace(result.Summary)),
 			}
 		}
+
 		fallback, err := genericSourceSanity(absPath)
 		if err != nil {
 			return sourceSanityOutcome{
@@ -170,6 +192,7 @@ func (m *Manager) sourceSanityOne(ctx context.Context, absPath string, workdir s
 				Error:  err.Error(),
 			}
 		}
+
 		if sourceSanityRequiresConcreteDiagnosticsForPath(rel) {
 			return sourceSanityOutcome{
 				Path:   rel,
@@ -178,6 +201,7 @@ func (m *Manager) sourceSanityOne(ctx context.Context, absPath string, workdir s
 				Error:  "concrete C/C++ diagnostics are unavailable; generic delimiter sanity is advisory and insufficient for terminal source_sanity",
 			}
 		}
+
 		return sourceSanityOutcome{
 			Path:   rel,
 			Method: sourceSanityMethodGeneric,
@@ -194,6 +218,7 @@ func (m *Manager) sourceSanityOne(ctx context.Context, absPath string, workdir s
 			Error:  err.Error(),
 		}
 	}
+
 	return sourceSanityOutcome{
 		Path:   rel,
 		Method: sourceSanityMethodGeneric,
@@ -206,6 +231,7 @@ func sourceSanityDiagnosticToolForPath(path string) string {
 	if !ok {
 		return ""
 	}
+
 	return lang.Tool(CapDiagnostics)
 }
 
@@ -218,6 +244,7 @@ func sourceSanityCoversPath(path string) bool {
 	if _, ok := LanguageForFile(path); ok {
 		return true
 	}
+
 	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
 	case ".gd":
 		return true
@@ -238,12 +265,15 @@ func diagnosticsUnavailable(result ToolResult) bool {
 	if result.Tool == ToolNameGoDiagnostics &&
 		strings.Contains(goDiagnosticText, "go test compile failed") &&
 		!strings.Contains(goDiagnosticText, "go.mod file not found") {
+
 		return false
 	}
+
 	text := strings.ToLower(strings.TrimSpace(result.Summary + " " + result.Error))
 	if text == "" {
 		return false
 	}
+
 	return strings.Contains(text, "unavailable") ||
 		strings.Contains(text, "not installed") ||
 		strings.Contains(text, "not found") ||
@@ -255,19 +285,24 @@ func diagnosticsUnavailableDetail(result ToolResult) string {
 	if detail == "" {
 		detail = strings.TrimSpace(result.Summary)
 	}
+
 	if detail == "" {
 		return "language diagnostics unavailable"
 	}
+
 	return fmt.Sprintf("%s unavailable: %s", strings.TrimSpace(result.Tool), detail)
 }
 
 func oneLineSourceSanityDetail(result ToolResult) string {
 	detail := util.FirstNonEmpty(strings.TrimSpace(result.Output), strings.TrimSpace(result.Summary))
+
 	detail = strings.ReplaceAll(detail, "\r\n", "\n")
 	detail = strings.TrimSpace(strings.Split(detail, "\n")[0])
+
 	if detail == "" {
 		return "completed"
 	}
+
 	return detail
 }
 
@@ -276,17 +311,21 @@ func genericSourceSanity(absPath string) (string, error) {
 	if err != nil {
 		return "generic source sanity could not read file", err
 	}
+
 	if !utf8.Valid(data) {
 		return "generic source sanity failed", fmt.Errorf("file is not valid UTF-8")
 	}
+
 	if issue := genericDelimiterSanity(filepath.Ext(absPath), string(data)); issue != "" {
 		return "generic source sanity failed", fmt.Errorf("%w: %s", ErrSourceSanityFailed, issue)
 	}
+
 	if strings.EqualFold(filepath.Ext(absPath), ".gd") {
 		if issue := gdscriptStructuralSanity(string(data)); issue != "" {
 			return "generic source sanity failed", fmt.Errorf("%w: %s", ErrSourceSanityFailed, issue)
 		}
 	}
+
 	return "generic delimiter sanity passed", nil
 }
 
@@ -296,23 +335,30 @@ func gdscriptStructuralSanity(text string) string {
 		if !gdscriptNeedsIndentedBody(line) {
 			continue
 		}
+
 		parentIndent := leadingIndentColumns(line)
 		foundBody := false
+
 		for j := i + 1; j < len(lines); j++ {
 			next := strings.TrimSpace(lines[j])
 			if next == "" || strings.HasPrefix(next, "#") {
 				continue
 			}
+
 			if leadingIndentColumns(lines[j]) <= parentIndent {
 				return fmt.Sprintf("line %d: GDScript function declaration has no indented body before line %d", i+1, j+1)
 			}
+
 			foundBody = true
+
 			break
 		}
+
 		if !foundBody {
 			return fmt.Sprintf("line %d: GDScript function declaration has no body", i+1)
 		}
 	}
+
 	return ""
 }
 
@@ -321,12 +367,15 @@ func gdscriptNeedsIndentedBody(line string) bool {
 	if !strings.HasPrefix(trimmed, "func ") && !strings.HasPrefix(trimmed, "static func ") {
 		return false
 	}
+
 	withoutComment := strings.TrimSpace(strings.SplitN(trimmed, "#", 2)[0])
+
 	return strings.HasSuffix(withoutComment, ":")
 }
 
 func leadingIndentColumns(line string) int {
 	cols := 0
+
 	for _, r := range line {
 		switch r {
 		case ' ':
@@ -337,6 +386,7 @@ func leadingIndentColumns(line string) int {
 			return cols
 		}
 	}
+
 	return cols
 }
 
@@ -348,12 +398,17 @@ type delimiterFrame struct {
 
 func genericDelimiterSanity(ext string, text string) string {
 	ext = strings.ToLower(strings.TrimSpace(ext))
+
 	runes := []rune(text)
+
 	var stack []delimiterFrame
+
 	line, col := 1, 0
 	inLineComment := false
 	inBlockComment := false
+
 	var quote rune
+
 	tripleQuote := false
 	escaped := false
 
@@ -361,47 +416,62 @@ func genericDelimiterSanity(ext string, text string) string {
 		r := runes[i]
 		if r == '\n' {
 			line++
+
 			col = 0
 			inLineComment = false
+
 			if quote != 0 && !tripleQuote && quote != '`' {
 				escaped = false
 			}
+
 			continue
 		}
+
 		col++
 
 		if inLineComment {
 			continue
 		}
+
 		if inBlockComment {
 			if r == '*' && i+1 < len(runes) && runes[i+1] == '/' {
 				i++
+
 				col++
+
 				inBlockComment = false
 			}
+
 			continue
 		}
+
 		if quote != 0 {
 			if escaped {
 				escaped = false
 				continue
 			}
+
 			if r == '\\' && quote != '`' {
 				escaped = true
 				continue
 			}
+
 			if tripleQuote {
 				if r == quote && i+2 < len(runes) && runes[i+1] == quote && runes[i+2] == quote {
 					i += 2
 					col += 2
+
 					quote = 0
 					tripleQuote = false
 				}
+
 				continue
 			}
+
 			if r == quote {
 				quote = 0
 			}
+
 			continue
 		}
 
@@ -410,27 +480,36 @@ func genericDelimiterSanity(ext string, text string) string {
 			case '/':
 				inLineComment = true
 				i++
+
 				col++
+
 				continue
 			case '*':
 				inBlockComment = true
 				i++
+
 				col++
+
 				continue
 			}
 		}
+
 		if r == '#' && hashStartsLineComment(ext) {
 			inLineComment = true
 			continue
 		}
+
 		if r == '\'' || r == '"' || r == '`' {
 			quote = r
 			if (ext == ".py" || ext == ".pyi" || ext == ".gd") && r != '`' &&
 				i+2 < len(runes) && runes[i+1] == r && runes[i+2] == r {
+
 				tripleQuote = true
+
 				i += 2
 				col += 2
 			}
+
 			continue
 		}
 
@@ -441,10 +520,12 @@ func genericDelimiterSanity(ext string, text string) string {
 			if len(stack) == 0 {
 				return fmt.Sprintf("unmatched %q at line %d column %d", r, line, col)
 			}
+
 			last := stack[len(stack)-1]
 			if !delimitersMatch(last.r, r) {
 				return fmt.Sprintf("mismatched %q at line %d column %d; opened %q at line %d column %d", r, line, col, last.r, last.line, last.col)
 			}
+
 			stack = stack[:len(stack)-1]
 		}
 	}
@@ -452,13 +533,16 @@ func genericDelimiterSanity(ext string, text string) string {
 	if inBlockComment {
 		return "unterminated block comment"
 	}
+
 	if quote != 0 {
 		return fmt.Sprintf("unterminated %q string", quote)
 	}
+
 	if len(stack) > 0 {
 		last := stack[len(stack)-1]
 		return fmt.Sprintf("unclosed %q from line %d column %d", last.r, last.line, last.col)
 	}
+
 	return ""
 }
 

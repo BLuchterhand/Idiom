@@ -30,25 +30,32 @@ func learnedWeightsPath(root string) string {
 // malformed; the caller treats every absent entry as the baseline 1.0.
 func LoadLearnedWeights(root string) (map[string]float64, error) {
 	path := learnedWeightsPath(root)
+
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return map[string]float64{}, nil
 		}
+
 		return nil, err
 	}
+
 	var parsed map[string]float64
+
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return map[string]float64{}, nil
 	}
+
 	out := make(map[string]float64, len(parsed))
 	for k, v := range parsed {
 		key := normalizeWeightKey(k)
 		if key == "" {
 			continue
 		}
+
 		out[key] = clampLearnedWeight(v)
 	}
+
 	return out, nil
 }
 
@@ -63,53 +70,68 @@ func SaveLearnedWeights(root string, weights map[string]float64) error {
 		if key == "" {
 			continue
 		}
+
 		clamped := clampLearnedWeight(v)
 		if absDiff(clamped, LearnedWeightBaseline) < 1e-9 {
 			continue
 		}
+
 		cleaned[key] = clamped
 	}
+
 	path := learnedWeightsPath(root)
 	if len(cleaned) == 0 {
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
+
 		return nil
 	}
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
+
 	keys := make([]string, 0, len(cleaned))
 	for k := range cleaned {
 		keys = append(keys, k)
 	}
+
 	slices.Sort(keys)
+
 	sorted := make(map[string]float64, len(cleaned))
 	for _, k := range keys {
 		sorted[k] = cleaned[k]
 	}
+
 	encoded, err := json.MarshalIndent(sorted, "", "  ")
 	if err != nil {
 		return err
 	}
+
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".weights-*.json.tmp")
 	if err != nil {
 		return err
 	}
+
 	tmpName := tmp.Name()
 	if _, err := tmp.Write(append(encoded, '\n')); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpName)
+
 		return err
 	}
+
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpName)
 		return err
 	}
+
 	if err := os.Rename(tmpName, path); err != nil {
 		_ = os.Remove(tmpName)
 		return err
 	}
+
 	return nil
 }
 
@@ -132,42 +154,53 @@ func UpdateLearnedWeights(root string, opts UpdateLearnedWeightsOptions) (map[st
 	if err != nil {
 		return nil, err
 	}
+
 	for k, v := range weights {
 		weights[k] = clampLearnedWeight(LearnedWeightBaseline + (v-LearnedWeightBaseline)*LearnedWeightDecay)
 	}
+
 	boostAmount := opts.BoostAmount
 	if boostAmount <= 0 {
 		boostAmount = LearnedWeightBoost
 	}
+
 	penaltyAmount := opts.PenaltyAmount
 	if penaltyAmount <= 0 {
 		penaltyAmount = LearnedWeightPenalty
 	}
+
 	for _, p := range opts.Boost {
 		key := normalizeWeightKey(p)
 		if key == "" {
 			continue
 		}
+
 		current := weights[key]
 		if current == 0 {
 			current = LearnedWeightBaseline
 		}
+
 		weights[key] = clampLearnedWeight(current + boostAmount)
 	}
+
 	for _, p := range opts.Penalty {
 		key := normalizeWeightKey(p)
 		if key == "" {
 			continue
 		}
+
 		current := weights[key]
 		if current == 0 {
 			current = LearnedWeightBaseline
 		}
+
 		weights[key] = clampLearnedWeight(current - penaltyAmount)
 	}
+
 	if err := SaveLearnedWeights(root, weights); err != nil {
 		return nil, err
 	}
+
 	return LoadLearnedWeights(root)
 }
 
@@ -175,12 +208,15 @@ func clampLearnedWeight(v float64) float64 {
 	if v != v { // NaN guard
 		return LearnedWeightBaseline
 	}
+
 	if v > LearnedWeightMax {
 		return LearnedWeightMax
 	}
+
 	if v < LearnedWeightMin {
 		return LearnedWeightMin
 	}
+
 	return v
 }
 
@@ -189,14 +225,17 @@ func normalizeWeightKey(p string) string {
 	for strings.HasPrefix(cleaned, "./") {
 		cleaned = strings.TrimPrefix(cleaned, "./")
 	}
+
 	if cleaned == "" || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "/") {
 		return ""
 	}
+
 	for _, part := range strings.Split(cleaned, "/") {
 		if part == "" || part == "." || part == ".." {
 			return ""
 		}
 	}
+
 	return cleaned
 }
 
@@ -204,5 +243,6 @@ func absDiff(a, b float64) float64 {
 	if a > b {
 		return a - b
 	}
+
 	return b - a
 }

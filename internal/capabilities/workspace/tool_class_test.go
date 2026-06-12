@@ -8,6 +8,7 @@ func TestClassifyToolUsesLanguageRegistryForReadTools(t *testing.T) {
 			if got := ClassifyTool(tool); got != CategoryRead {
 				t.Fatalf("%s tool %s for %s category = %v, want %v", lang.Name, tool, capability, got, CategoryRead)
 			}
+
 			if !IsReadTool(tool) {
 				t.Fatalf("%s tool %s for %s should be read-capable", lang.Name, tool, capability)
 			}

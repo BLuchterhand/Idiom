@@ -4,22 +4,27 @@ import "strings"
 
 func ReviewRepairAnswerDeclaresPass(answer string) bool {
 	startedWithChecklist := false
+
 	for _, raw := range strings.Split(answer, "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
 		}
+
 		if strings.EqualFold(line, "Decision: pass") {
 			return true
 		}
+
 		if !startedWithChecklist {
 			if ReviewRepairLineIsChecklistHeading(line) {
 				startedWithChecklist = true
 				continue
 			}
+
 			return false
 		}
 	}
+
 	return false
 }
 
@@ -30,6 +35,7 @@ func ReviewRepairTextHasChecklist(text string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -41,6 +47,7 @@ func ReviewRepairLineIsPlaceholderChecklist(line string) bool {
 	line = strings.ToLower(strings.TrimSpace(line))
 	line = strings.TrimLeft(line, "-*0123456789.[] x")
 	line = strings.TrimSpace(line)
+
 	return strings.Contains(line, "cite a checked fact") ||
 		strings.Contains(line, "required behavior: cite") ||
 		strings.Contains(line, "scope safety: cite") ||

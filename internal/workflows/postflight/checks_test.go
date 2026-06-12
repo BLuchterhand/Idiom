@@ -16,16 +16,20 @@ func TestUnresolvedQuestionMarkerFlagsAddedDiffLine(t *testing.T) {
 		Path:       "src/broken.go",
 		AddedLines: []AddedLine{{Line: 2, Body: "// <<QUESTION>>: did the model resolve this?"}},
 	}}}
+
 	findings, err := UnresolvedQuestionMarker{}.Run(d, RunContext{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 finding, got %d (%+v)", len(findings), findings)
 	}
+
 	if findings[0].Severity != SeverityError {
 		t.Fatalf("question marker should be SeverityError, got %s", findings[0].Severity)
 	}
+
 	if findings[0].Path != "src/broken.go" || findings[0].Line != 2 {
 		t.Fatalf("path/line wrong: %+v", findings[0])
 	}
@@ -40,10 +44,12 @@ func TestUnresolvedQuestionMarkerIgnoresPreExistingMarkerInTouchedFile(t *testin
 		Path:       "docs/protocol.md",
 		AddedLines: []AddedLine{{Line: 12, Body: "New prose about the protocol."}},
 	}}}
+
 	findings, err := UnresolvedQuestionMarker{}.Run(d, RunContext{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 0 {
 		t.Fatalf("pre-existing marker outside added lines must not trigger, got %v", findings)
 	}
@@ -54,10 +60,12 @@ func TestUnresolvedQuestionMarkerIgnoresPreExistingMarkerInTouchedFile(t *testin
 // new QUESTION marker.
 func TestUnresolvedQuestionMarkerSkipsDeletedFiles(t *testing.T) {
 	d := Diff{Files: []FileChange{{Path: "gone.go", Deleted: true}}}
+
 	findings, err := UnresolvedQuestionMarker{}.Run(d, RunContext{ProjectRoot: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 0 {
 		t.Fatalf("expected no findings for deleted file, got %v", findings)
 	}
@@ -73,6 +81,7 @@ func TestUnresolvedQuestionMarkerCleanFileNoFindings(t *testing.T) {
 		AddedLines: []AddedLine{{Line: 2, Body: "func OK() {}"}},
 	}}}
 	findings, err := UnresolvedQuestionMarker{}.Run(d, RunContext{})
+
 	if err != nil || len(findings) != 0 {
 		t.Fatalf("clean file should produce no findings; got err=%v findings=%v", err, findings)
 	}
@@ -89,13 +98,16 @@ func TestFileAllowlistMismatchFlagsOutOfScopeWrite(t *testing.T) {
 		{Path: "a/out_of_scope.go"},
 	}}
 	ctx := RunContext{RequiredEditPaths: []string{"a/in_scope.go"}}
+
 	findings, err := FileAllowlistMismatch{}.Run(d, ctx)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 finding, got %d (%+v)", len(findings), findings)
 	}
+
 	if findings[0].Path != "a/out_of_scope.go" || findings[0].Severity != SeverityError {
 		t.Fatalf("finding wrong: %+v", findings[0])
 	}
@@ -108,10 +120,12 @@ func TestFileAllowlistMismatchFlagsOutOfScopeWrite(t *testing.T) {
 // silent than wrong.
 func TestFileAllowlistMismatchNoOpsWithoutAllowlist(t *testing.T) {
 	d := Diff{Files: []FileChange{{Path: "a.go"}, {Path: "b.go"}}}
+
 	findings, err := FileAllowlistMismatch{}.Run(d, RunContext{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 0 {
 		t.Fatalf("absent allowlist must produce no findings, got %v", findings)
 	}
@@ -129,6 +143,7 @@ func TestFileAllowlistMismatchNormalizesPathSeparators(t *testing.T) {
 	// terminal output) and a trailing slash on a different entry.
 	ctx := RunContext{RequiredEditPaths: []string{"./a/b.go", "other/dir/"}}
 	findings, err := FileAllowlistMismatch{}.Run(d, ctx)
+
 	if err != nil || len(findings) != 0 {
 		t.Fatalf("normalized allowlist must accept ./ prefix; got err=%v findings=%v", err, findings)
 	}
@@ -150,16 +165,20 @@ func TestNarratingTestCommentsFlagsAddedNarration(t *testing.T) {
 			{Line: 3, Body: "\tif Foo() != 7 { t.Fatal() }"},
 		},
 	}}}
+
 	findings, err := NarratingTestComments{}.Run(d, RunContext{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 finding for the narrating comment, got %d (%+v)", len(findings), findings)
 	}
+
 	if findings[0].Severity != SeverityWarning {
 		t.Fatalf("narration is a warning, not error: %s", findings[0].Severity)
 	}
+
 	if findings[0].Line != 1 {
 		t.Fatalf("finding should carry the post-image line number: %+v", findings[0])
 	}
@@ -186,10 +205,12 @@ func TestNarratingTestCommentsBorderlinePhrasesDoNotFire(t *testing.T) {
 			{Line: 5, Body: "// TODO: add a test that handles negative input"},
 		},
 	}}}
+
 	findings, err := NarratingTestComments{}.Run(d, RunContext{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 0 {
 		t.Fatalf("borderline phrases must not trigger; got %v", findings)
 	}
@@ -209,16 +230,20 @@ func TestNarratingTestCommentsCarriesPostImageLineNumber(t *testing.T) {
 			{Line: 99, Body: "// makes sure the result is non-nil"},
 		},
 	}}}
+
 	findings, err := NarratingTestComments{}.Run(d, RunContext{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 2 {
 		t.Fatalf("expected 2 findings, got %d", len(findings))
 	}
+
 	if findings[0].Line != 42 {
 		t.Fatalf("first finding line wrong: %+v", findings[0])
 	}
+
 	if findings[1].Line != 99 {
 		t.Fatalf("second finding line wrong: %+v", findings[1])
 	}
@@ -235,10 +260,12 @@ func TestNarratingTestCommentsIgnoresNonTestFiles(t *testing.T) {
 		Path:       "foo/bar.go",
 		AddedLines: []AddedLine{{Line: 1, Body: "// This function ensures that the Foo invariant holds"}},
 	}}}
+
 	findings, err := NarratingTestComments{}.Run(d, RunContext{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 0 {
 		t.Fatalf("non-test file must not trigger narration check, got %v", findings)
 	}
@@ -258,10 +285,12 @@ func TestNarratingTestCommentsAcceptsLegitimateComments(t *testing.T) {
 			{Line: 3, Body: "// Copyright 2026 Acme"},
 		},
 	}}}
+
 	findings, err := NarratingTestComments{}.Run(d, RunContext{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 0 {
 		t.Fatalf("non-narrating comments must not trigger, got %v", findings)
 	}
@@ -275,20 +304,25 @@ func TestNarratingTestCommentsRecognizesPythonAndCppTests(t *testing.T) {
 		{Path: "tests/test_foo.py", AddedLines: []AddedLine{{Line: 1, Body: "# This test verifies parsing"}}},
 		{Path: "tests/foo_test.cpp", AddedLines: []AddedLine{{Line: 1, Body: "// Make sure the parser handles UTF-8"}}},
 	}}
+
 	findings, err := NarratingTestComments{}.Run(d, RunContext{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if len(findings) != 2 {
 		t.Fatalf("expected 2 findings (py + cpp), got %d (%+v)", len(findings), findings)
 	}
+
 	want := map[string]bool{"tests/test_foo.py": false, "tests/foo_test.cpp": false}
 	for _, f := range findings {
 		if _, ok := want[f.Path]; !ok {
 			t.Fatalf("unexpected path: %s", f.Path)
 		}
+
 		want[f.Path] = true
 	}
+
 	for path, seen := range want {
 		if !seen {
 			t.Fatalf("missing finding for %s", path)
@@ -342,14 +376,17 @@ func TestNormalizePathBehavior(t *testing.T) {
 func TestGenericChecksReturnsCanonicalSet(t *testing.T) {
 	got := GenericChecks()
 	want := []string{"unresolved_question_marker", "file_allowlist_mismatch", "narrating_test_comments", "go_build_passes"}
+
 	if len(got) != len(want) {
 		t.Fatalf("expected %d generic checks, got %d", len(want), len(got))
 	}
+
 	for i, c := range got {
 		if c.Name() != want[i] {
 			t.Fatalf("generic check[%d] = %s, want %s", i, c.Name(), want[i])
 		}
 	}
+
 	// trailing assertion for noise: ensure we don't accidentally
 	// share state across instances by verifying repeated calls
 	// produce equivalent slices.
@@ -357,6 +394,7 @@ func TestGenericChecksReturnsCanonicalSet(t *testing.T) {
 	if len(again) != len(got) {
 		t.Fatalf("GenericChecks should be deterministic across calls")
 	}
+
 	if strings.TrimSpace(got[0].Name()) == "" {
 		t.Fatalf("check name must not be empty")
 	}

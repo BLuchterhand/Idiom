@@ -96,32 +96,41 @@ func (c *Client) Start(ctx context.Context) error {
 	c.once.Do(func() {
 		go c.readLoop(ctx)
 	})
+
 	return c.startErr
 }
 
 func (c *Client) readLoop(ctx context.Context) {
 	defer close(c.readerDone)
+
 	for {
 		payload, err := c.transport.Receive(ctx)
 		if err != nil {
 			return
 		}
+
 		var resp rawResponse
+
 		if err := json.Unmarshal(payload, &resp); err != nil {
 			// Ignore garbage; the protocol doesn't define recovery so just
 			// drop the frame and keep going.
 			continue
 		}
+
 		if resp.ID == 0 {
 			// Notifications have no ID; we don't handle any today.
 			continue
 		}
+
 		c.pendingMu.Lock()
+
 		ch, ok := c.pending[resp.ID]
 		if ok {
 			delete(c.pending, resp.ID)
 		}
+
 		c.pendingMu.Unlock()
+
 		if ok {
 			ch <- resp
 		}
@@ -130,14 +139,18 @@ func (c *Client) readLoop(ctx context.Context) {
 
 func (c *Client) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	id := c.nextID.Add(1)
+
 	var paramsJSON json.RawMessage
+
 	if params != nil {
 		raw, err := json.Marshal(params)
 		if err != nil {
 			return nil, fmt.Errorf("marshal %s params: %w", method, err)
 		}
+
 		paramsJSON = raw
 	}
+
 	payload, err := json.Marshal(rawRequest{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -147,24 +160,32 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 	if err != nil {
 		return nil, fmt.Errorf("marshal %s: %w", method, err)
 	}
+
 	ch := make(chan rawResponse, 1)
+
 	c.pendingMu.Lock()
+
 	c.pending[id] = ch
 	c.pendingMu.Unlock()
 	c.writeMu.Lock()
+
 	sendErr := c.transport.Send(ctx, payload)
 	c.writeMu.Unlock()
+
 	if sendErr != nil {
 		c.pendingMu.Lock()
 		delete(c.pending, id)
 		c.pendingMu.Unlock()
+
 		return nil, fmt.Errorf("send %s: %w", method, sendErr)
 	}
+
 	select {
 	case resp := <-ch:
 		if resp.Error != nil {
 			return nil, fmt.Errorf("%s: server error %d: %s", method, resp.Error.Code, resp.Error.Message)
 		}
+
 		return resp.Result, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -185,6 +206,7 @@ func (c *Client) Initialize(ctx context.Context, clientName string) error {
 	if _, err := c.call(ctx, "initialize", params); err != nil {
 		return err
 	}
+
 	// "initialized" is a notification — MCP spec requires it after the
 	// handshake but the server doesn't reply. We use Send directly so we
 	// don't wait on a response.
@@ -192,9 +214,12 @@ func (c *Client) Initialize(ctx context.Context, clientName string) error {
 	if err != nil {
 		return err
 	}
+
 	c.writeMu.Lock()
+
 	sendErr := c.transport.Send(ctx, note)
 	c.writeMu.Unlock()
+
 	return sendErr
 }
 
@@ -204,12 +229,15 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	var reply struct {
 		Tools []Tool `json:"tools"`
 	}
+
 	if err := json.Unmarshal(raw, &reply); err != nil {
 		return nil, fmt.Errorf("decode tools/list: %w", err)
 	}
+
 	return reply.Tools, nil
 }
 
@@ -222,14 +250,18 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments json.RawMe
 	if arguments == nil {
 		params["arguments"] = map[string]any{}
 	}
+
 	raw, err := c.call(ctx, "tools/call", params)
 	if err != nil {
 		return ToolCallResult{}, err
 	}
+
 	var reply ToolCallResult
+
 	if err := json.Unmarshal(raw, &reply); err != nil {
 		return ToolCallResult{}, fmt.Errorf("decode tools/call: %w", err)
 	}
+
 	return reply, nil
 }
 
@@ -239,12 +271,15 @@ func (c *Client) ListResources(ctx context.Context) ([]Resource, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	var reply struct {
 		Resources []Resource `json:"resources"`
 	}
+
 	if err := json.Unmarshal(raw, &reply); err != nil {
 		return nil, fmt.Errorf("decode resources/list: %w", err)
 	}
+
 	return reply.Resources, nil
 }
 
@@ -255,10 +290,13 @@ func (c *Client) ReadResource(ctx context.Context, uri string) (ResourceReadResu
 	if err != nil {
 		return ResourceReadResult{}, err
 	}
+
 	var reply ResourceReadResult
+
 	if err := json.Unmarshal(raw, &reply); err != nil {
 		return ResourceReadResult{}, fmt.Errorf("decode resources/read: %w", err)
 	}
+
 	return reply, nil
 }
 
@@ -268,11 +306,13 @@ func (c *Client) Close() error {
 	if c.transport == nil {
 		return nil
 	}
+
 	err := c.transport.Close()
 	select {
 	case <-c.readerDone:
 	case <-time.After(2 * time.Second):
 	}
+
 	return err
 }
 
@@ -293,20 +333,25 @@ func StartStdio(ctx context.Context, command string, args []string, env []string
 	if len(env) > 0 {
 		cmd.Env = append(cmd.Environ(), env...)
 	}
+
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdin pipe: %w", err)
 	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		_ = stdin.Close()
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
+
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
 		_ = stdout.Close()
+
 		return nil, fmt.Errorf("start %s: %w", command, err)
 	}
+
 	return &StdioTransport{
 		cmd:    cmd,
 		stdin:  stdin,
@@ -318,22 +363,28 @@ func StartStdio(ctx context.Context, command string, args []string, env []string
 // Send writes a JSON-RPC frame followed by a newline.
 func (t *StdioTransport) Send(ctx context.Context, payload []byte) error {
 	_ = ctx
+
 	if _, err := t.stdin.Write(payload); err != nil {
 		return err
 	}
+
 	if _, err := t.stdin.Write([]byte("\n")); err != nil {
 		return err
 	}
+
 	return nil
 }
 
 // Receive reads one newline-terminated JSON-RPC frame.
 func (t *StdioTransport) Receive(ctx context.Context) ([]byte, error) {
 	_ = ctx
+
 	line, err := t.stdout.ReadBytes('\n')
+
 	if err != nil && len(line) == 0 {
 		return nil, err
 	}
+
 	return line, nil
 }
 
@@ -342,11 +393,13 @@ func (t *StdioTransport) Close() error {
 	if t == nil {
 		return nil
 	}
+
 	_ = t.closer.Close()
 	if t.cmd != nil && t.cmd.Process != nil {
 		_ = t.cmd.Process.Kill()
 		_, _ = t.cmd.Process.Wait()
 	}
+
 	return nil
 }
 
@@ -354,10 +407,12 @@ type multiCloser []io.Closer
 
 func (m multiCloser) Close() error {
 	var firstErr error
+
 	for _, c := range m {
 		if err := c.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
+
 	return firstErr
 }

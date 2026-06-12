@@ -28,9 +28,11 @@ func TestClassifyTUIRequestDoesNotUsePlanExecuteKeywordPreflight(t *testing.T) {
 func TestUpdateTUIRequestStatusDoesNotConfirmKeywordMutation(t *testing.T) {
 	m := &Model{}
 	m.updateTUIRequestStatus("Implement persistent input history.")
+
 	if len(m.messages) != 0 {
 		t.Fatalf("messages = %d, want no local confirmation messages", len(m.messages))
 	}
+
 	if m.status != "Request classified: conversation." {
 		t.Fatalf("status = %q", m.status)
 	}

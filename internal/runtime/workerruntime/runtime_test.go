@@ -26,12 +26,15 @@ func TestBuildActionGuidanceForBootstrappedReadBlocker(t *testing.T) {
 	if !slices.Contains(guidance.Constraints, "declaration_moves_forbidden") {
 		t.Fatalf("missing declaration move constraint: %#v", guidance)
 	}
+
 	if !slices.Contains(guidance.Constraints, "bootstrap_evidence_available") {
 		t.Fatalf("missing bootstrap evidence constraint: %#v", guidance)
 	}
+
 	if !slices.Contains(guidance.InvalidNext, "duplicate_read_file_on_bootstrapped_target") {
 		t.Fatalf("missing duplicate read invalid action: %#v", guidance)
 	}
+
 	joined := strings.Join(guidance.ValidNext, "\n")
 	if !strings.Contains(joined, "approved-target write capability") || !strings.Contains(joined, "narrow range read") {
 		t.Fatalf("missing expected valid next actions: %#v", guidance.ValidNext)
@@ -134,6 +137,7 @@ func TestBuildActionGuidanceForExactAnchorWriteFailure(t *testing.T) {
 	if !slices.Contains(guidance.InvalidNext, "read/search before resolving exact-anchor write failure") {
 		t.Fatalf("missing exact-anchor invalid action: %#v", guidance)
 	}
+
 	joined := strings.Join(guidance.ValidNext, "\n")
 	for _, want := range []string{
 		"retry one corrected write shape from the target packet",
@@ -154,6 +158,7 @@ func TestBuildActionGuidanceForExactAnchorWriteFailure(t *testing.T) {
 	if plan.FailureClass != "exact_anchor_write_failure" {
 		t.Fatalf("FailureClass = %q, want exact_anchor_write_failure in %#v", plan.FailureClass, plan)
 	}
+
 	recovery := strings.Join(append(append([]string{}, plan.DoNotRepeat...), plan.RequiredNext...), "\n")
 	for _, want := range []string{
 		"read/search after an exact-anchor write failed",
@@ -179,9 +184,11 @@ func TestBuildActionGuidanceForExactAnchorHiddenPrewriteTool(t *testing.T) {
 		Constraints:  []string{"exact_anchor_implementation"},
 		WriteCapable: true,
 	})
+
 	if !slices.Contains(guidance.InvalidNext, "read/search/shell before first exact-anchor write") {
 		t.Fatalf("missing exact-anchor hidden-tool invalid action: %#v", guidance)
 	}
+
 	joined := strings.Join(guidance.ValidNext, "\n")
 	for _, want := range []string{
 		"exact-anchor write capability with the supplied target-packet anchor",
@@ -202,6 +209,7 @@ func TestBuildActionGuidanceForExactAnchorHiddenPrewriteTool(t *testing.T) {
 	if plan.FailureClass != "exact_anchor_prewrite_hidden_tool" {
 		t.Fatalf("FailureClass = %q, want exact_anchor_prewrite_hidden_tool in %#v", plan.FailureClass, plan)
 	}
+
 	recovery := strings.Join(append(append([]string{}, plan.DoNotRepeat...), plan.RequiredNext...), "\n")
 	for _, want := range []string{
 		"read/search/shell before first exact-anchor write",
@@ -230,6 +238,7 @@ func TestBuildActionGuidanceForPlanExecuteSubmitReady(t *testing.T) {
 	if !slices.Contains(guidance.InvalidNext, "read/search/source-refresh after plan-execute submit_plan readiness") {
 		t.Fatalf("missing submit-ready invalid action: %#v", guidance.InvalidNext)
 	}
+
 	joined := strings.Join(guidance.ValidNext, "\n")
 	for _, want := range []string{
 		"submit_plan covering every required_edit_paths entry with a real edit or source_satisfied_paths entry",
@@ -240,6 +249,7 @@ func TestBuildActionGuidanceForPlanExecuteSubmitReady(t *testing.T) {
 			t.Fatalf("expected %q in submit-ready guidance, got %#v", want, guidance.ValidNext)
 		}
 	}
+
 	if strings.Contains(joined, "one exact tool-shaped follow-up") {
 		t.Fatalf("submit-ready guidance must not fall back to generic probe advice: %#v", guidance.ValidNext)
 	}
@@ -275,6 +285,7 @@ func TestBuildActionGuidanceForPlanExecuteSubmitReady(t *testing.T) {
 				Constraints: []string{"plan_then_execute_submit_plan_ready"},
 			})
 			joined := strings.Join(guidance.ValidNext, "\n")
+
 			for _, want := range []string{
 				"submit_plan covering every required_edit_paths entry with a real edit or source_satisfied_paths entry",
 				"Decision: source-satisfied",
@@ -284,6 +295,7 @@ func TestBuildActionGuidanceForPlanExecuteSubmitReady(t *testing.T) {
 					t.Fatalf("expected %q in submit-ready guidance, got %#v", want, guidance.ValidNext)
 				}
 			}
+
 			for _, forbidden := range []string{
 				"one exact missing claim",
 				"narrow range read",
@@ -305,9 +317,11 @@ func TestBuildActionGuidanceForPlanExecuteSubmitReady(t *testing.T) {
 		Constraints: []string{"plan_then_execute_submit_plan_ready"},
 	})
 	joinedPlan := strings.Join(plan.ValidNext, "\n")
+
 	if strings.Contains(joinedPlan, "one exact tool-shaped follow-up") {
 		t.Fatalf("submit-ready recovery must not suggest another probe: %#v", plan.ValidNext)
 	}
+
 	if !strings.Contains(joinedPlan, "submit_plan covering every required_edit_paths entry with a real edit or source_satisfied_paths entry") {
 		t.Fatalf("submit-ready recovery must keep submit_plan closeout, got %#v", plan.ValidNext)
 	}
@@ -319,12 +333,15 @@ func TestBuildActionGuidanceForPlanExecuteSubmitReady(t *testing.T) {
 		Constraints: []string{"plan_then_execute_submit_plan_ready"},
 	})
 	joinedParse := strings.Join(parseGuidance.ValidNext, "\n")
+
 	if !strings.Contains(joinedParse, "parser-readable submit_plan") {
 		t.Fatalf("submit-ready parse recovery should require parser-readable submit_plan, got %#v", parseGuidance.ValidNext)
 	}
+
 	if strings.Contains(joinedParse, "answer normally only if the task is complete") {
 		t.Fatalf("submit-ready parse recovery must not use generic parse fallback, got %#v", parseGuidance.ValidNext)
 	}
+
 	parsePlan := BuildRecoveryPlan(RecoveryInput{
 		Reason:      "tool_parse_rejected",
 		Request:     workspace.ToolRequest{Tool: "tool_parse"},
@@ -332,9 +349,11 @@ func TestBuildActionGuidanceForPlanExecuteSubmitReady(t *testing.T) {
 		Constraints: []string{"plan_then_execute_submit_plan_ready"},
 	})
 	joinedRequired := strings.Join(parsePlan.RequiredNext, "\n")
+
 	if !strings.Contains(joinedRequired, "parser-readable submit_plan") {
 		t.Fatalf("submit-ready recovery plan should require parser-readable submit_plan, got %#v", parsePlan.RequiredNext)
 	}
+
 	if strings.Contains(joinedRequired, "valid JSON tool object") {
 		t.Fatalf("submit-ready recovery plan must not use generic JSON recovery, got %#v", parsePlan.RequiredNext)
 	}
@@ -350,6 +369,7 @@ func TestBuildStepInstructionForPlanExecuteSubmitReady(t *testing.T) {
 	if !strings.Contains(inst.Directive, "source obligations are closed") {
 		t.Fatalf("expected submit-ready directive, got %q", inst.Directive)
 	}
+
 	if strings.Contains(inst.Directive, "narrow required-path source read") {
 		t.Fatalf("submit-ready directive must not advertise source reads, got %q", inst.Directive)
 	}
@@ -370,6 +390,7 @@ func TestBuildActionGuidanceForWriteReadyImplementationPacket(t *testing.T) {
 	if !slices.Contains(guidance.InvalidNext, "orientation read/search after required edit paths and packet evidence without a named missing fact") {
 		t.Fatalf("missing write-ready invalid action: %#v", guidance)
 	}
+
 	joined := strings.Join(guidance.ValidNext, "\n")
 	for _, want := range []string{
 		"required-path write capability",
@@ -381,6 +402,7 @@ func TestBuildActionGuidanceForWriteReadyImplementationPacket(t *testing.T) {
 			t.Fatalf("expected %q in write-ready guidance, got %#v", want, guidance.ValidNext)
 		}
 	}
+
 	if strings.Contains(joined, "one more targeted probe") {
 		t.Fatalf("write-ready guidance must not suggest another probe, got %#v", guidance.ValidNext)
 	}
@@ -399,9 +421,11 @@ func TestBuildActionGuidanceForRequiredPathGateDoesNotNudgeMoreReads(t *testing.
 		},
 	})
 	joined := strings.Join(guidance.ValidNext, "\n")
+
 	if strings.Contains(joined, "gather or edit the missing evidence") {
 		t.Fatalf("required-path gate should not suggest gathering more evidence, got %#v", guidance.ValidNext)
 	}
+
 	for _, want := range []string{
 		"satisfy the missing write contract with an allowed edit",
 		"answer only after the gate condition is satisfied",
@@ -425,9 +449,11 @@ func TestBuildActionGuidanceIgnoresCompletionGatePhrasesInSearchOutput(t *testin
 	if slices.Contains(guidance.Constraints, "completion_gate_active") {
 		t.Fatalf("search output should not fabricate completion-gate state: %#v", guidance)
 	}
+
 	if slices.Contains(guidance.InvalidNext, "final_answer_without_satisfying_completion_gate") {
 		t.Fatalf("search output should not block answers as if a gate fired: %#v", guidance)
 	}
+
 	if strings.Contains(strings.Join(guidance.ValidNext, "\n"), "gate") {
 		t.Fatalf("search output should not inject gate-specific follow-up guidance: %#v", guidance)
 	}
@@ -446,9 +472,11 @@ func TestBuildActionGuidancePrefersClosureAfterPostChildGapBlocker(t *testing.T)
 	if !slices.Contains(guidance.Constraints, "child_packet_available") {
 		t.Fatalf("expected child-packet closure constraint, got %#v", guidance)
 	}
+
 	if !slices.Contains(guidance.InvalidNext, "open-ended discovery after readiness without one exact missing claim and one exact probe") {
 		t.Fatalf("expected closure invalid action, got %#v", guidance)
 	}
+
 	joined := strings.Join(guidance.ValidNext, "\n")
 	for _, want := range []string{
 		"answer now from the child packet evidence",
@@ -459,6 +487,7 @@ func TestBuildActionGuidancePrefersClosureAfterPostChildGapBlocker(t *testing.T)
 			t.Fatalf("expected closure-biased valid action %q, got %#v", want, guidance.ValidNext)
 		}
 	}
+
 	for _, forbidden := range []string{"search_files", "targeted read-only shell search", "update task_ledger"} {
 		if strings.Contains(joined, forbidden) {
 			t.Fatalf("closure-biased guidance should drop generic fallback %q, got %#v", forbidden, guidance.ValidNext)
@@ -478,6 +507,7 @@ func TestBuildRecoveryPlanPreservesClosureScopeOnRepeatedAction(t *testing.T) {
 		},
 	})
 	joined := strings.Join(append(append([]string{}, plan.RequiredNext...), plan.ValidNext...), "\n")
+
 	for _, want := range []string{
 		"answer now from the evidence already gathered",
 		"one exact symbol, discovered handle, or narrow range",
@@ -487,6 +517,7 @@ func TestBuildRecoveryPlanPreservesClosureScopeOnRepeatedAction(t *testing.T) {
 			t.Fatalf("expected closure-preserving recovery guidance %q, got %#v", want, plan)
 		}
 	}
+
 	for _, forbidden := range []string{"search_files", "targeted read-only shell search"} {
 		if strings.Contains(joined, forbidden) {
 			t.Fatalf("repeated-action recovery should not reopen broad fallback %q, got %#v", forbidden, plan)
@@ -508,6 +539,7 @@ func TestBuildRecoveryPlanDoesNotPromoteEveryValidNextToRequiredNext(t *testing.
 	if len(plan.RequiredNext) != 0 {
 		t.Fatalf("expected repeated-action recovery to keep closure options in valid_next only, got %#v", plan.RequiredNext)
 	}
+
 	if len(plan.ValidNext) == 0 {
 		t.Fatalf("expected repeated-action recovery to preserve valid_next options, got %#v", plan)
 	}
@@ -528,6 +560,7 @@ func TestBuildRecoveryPlanDoesNotTreatOptionListVerificationAsRequirement(t *tes
 	if plan.FailureClass == "verification_unresolved" {
 		t.Fatalf("option-list wording should not become verification_unresolved, got %#v", plan)
 	}
+
 	if slices.Contains(plan.RequiredNext, "resolve verification status before claiming completion") {
 		t.Fatalf("option-list wording should not add verification required_next, got %#v", plan)
 	}
@@ -548,10 +581,12 @@ func TestBuildRecoveryPlanTreatsFailedSourceSanityAsRepairObligation(t *testing.
 	if plan.FailureClass != "verification_failed" {
 		t.Fatalf("failure class = %q, want verification_failed; plan=%#v", plan.FailureClass, plan)
 	}
+
 	joinedRequired := strings.Join(plan.RequiredNext, "\n")
 	if !strings.Contains(joinedRequired, "repair the failed verification") {
 		t.Fatalf("expected repair required_next, got %#v", plan.RequiredNext)
 	}
+
 	joinedValid := strings.Join(plan.ValidNext, "\n")
 	for _, want := range []string{
 		"repair the failing changed or required path",
@@ -563,6 +598,7 @@ func TestBuildRecoveryPlanTreatsFailedSourceSanityAsRepairObligation(t *testing.
 			t.Fatalf("expected valid_next to contain %q, got %#v", want, plan.ValidNext)
 		}
 	}
+
 	if strings.Contains(joinedValid, "answer from the current evidence if it already resolves the task") {
 		t.Fatalf("failed verification should not fall back to generic answer-ready guidance, got %#v", plan.ValidNext)
 	}
@@ -580,6 +616,7 @@ func TestBuildActionGuidanceClosureOmitsTextSearchFallbackAfterReadSuccess(t *te
 		},
 	})
 	joined := strings.Join(guidance.ValidNext, "\n")
+
 	for _, forbidden := range []string{
 		"edit_file using the inspected evidence",
 		"exact text search",
@@ -589,6 +626,7 @@ func TestBuildActionGuidanceClosureOmitsTextSearchFallbackAfterReadSuccess(t *te
 			t.Fatalf("closure guidance should omit %q, got %#v", forbidden, guidance.ValidNext)
 		}
 	}
+
 	for _, want := range []string{"answer now from the child packet evidence", "one exact packet-named path, symbol, discovered handle, or narrow range"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected closure guidance to keep %q, got %#v", want, guidance.ValidNext)
@@ -609,6 +647,7 @@ func TestBuildActionGuidanceClosureOmitsOutlineFollowupMenu(t *testing.T) {
 		},
 	})
 	joined := strings.Join(guidance.ValidNext, "\n")
+
 	for _, forbidden := range []string{
 		"read-symbol capability with one outlined declaration name",
 		"references or calls-into capability on a named declaration",
@@ -618,6 +657,7 @@ func TestBuildActionGuidanceClosureOmitsOutlineFollowupMenu(t *testing.T) {
 			t.Fatalf("closure guidance should omit %q, got %#v", forbidden, guidance.ValidNext)
 		}
 	}
+
 	for _, want := range []string{
 		"answer now from the child packet evidence",
 		"one exact packet-named path, symbol, discovered handle, or narrow range",
@@ -640,6 +680,7 @@ func TestBuildActionGuidanceReadSuccessOmitsEditSuggestionForExplanationObjectiv
 		},
 	})
 	joined := strings.Join(guidance.ValidNext, "\n")
+
 	if strings.Contains(joined, "edit_file using the inspected evidence") {
 		t.Fatalf("explanatory read guidance should not suggest edits, got %#v", guidance.ValidNext)
 	}
@@ -656,6 +697,7 @@ func TestBuildActionGuidanceSearchSuccessOmitsEditSuggestionWhenReadOnly(t *test
 		},
 	})
 	joined := strings.Join(guidance.ValidNext, "\n")
+
 	if strings.Contains(joined, "edit_file if the target is already clear") {
 		t.Fatalf("read-only search guidance should not suggest edits, got %#v", guidance.ValidNext)
 	}
@@ -716,6 +758,7 @@ func TestBuildRecoveryPlanClassifiesFailure(t *testing.T) {
 			if plan.FailureClass != tc.want {
 				t.Fatalf("FailureClass = %q, want %q in %#v", plan.FailureClass, tc.want, plan)
 			}
+
 			joined := strings.Join(append(append([]string{}, plan.DoNotRepeat...), plan.RequiredNext...), "\n")
 			if !strings.Contains(joined, tc.needle) {
 				t.Fatalf("expected %q in recovery guidance, got %#v", tc.needle, plan)
@@ -738,6 +781,7 @@ func TestRenderStepInstructionIncludesCurrentState(t *testing.T) {
 		InvalidActions: []string{"duplicate_read_file_on_bootstrapped_target"},
 	})
 	rendered := RenderStepInstruction(instruction)
+
 	for _, needle := range []string{
 		"[frontier step instruction]",
 		`"lane":"implement"`,
@@ -750,6 +794,7 @@ func TestRenderStepInstructionIncludesCurrentState(t *testing.T) {
 			t.Fatalf("expected %q in rendered instruction:\n%s", needle, rendered)
 		}
 	}
+
 	if strings.Count(rendered, "internal/surfaces/tui/app/app.go") != 1 {
 		t.Fatalf("expected duplicate paths to be normalized in rendered instruction:\n%s", rendered)
 	}
@@ -769,6 +814,7 @@ func TestRenderStepInstructionIncludesReadinessState(t *testing.T) {
 		},
 	})
 	rendered := RenderStepInstruction(instruction)
+
 	for _, want := range []string{
 		`"readiness":`,
 		`"ready_to_write":true`,
@@ -780,6 +826,7 @@ func TestRenderStepInstructionIncludesReadinessState(t *testing.T) {
 			t.Fatalf("expected readiness field %q in:\n%s", want, rendered)
 		}
 	}
+
 	if strings.Count(rendered, "context_packet_available") != 1 {
 		t.Fatalf("expected readiness closed claims to be deduplicated:\n%s", rendered)
 	}
@@ -798,6 +845,7 @@ func TestBuildStepInstructionPrioritizesRequiredEditPathsOverAnswerReadiness(t *
 	if !strings.Contains(instruction.Directive, "Required edit paths define the implementation scope") {
 		t.Fatalf("expected required-edit-path directive to win, got %q", instruction.Directive)
 	}
+
 	if strings.Contains(instruction.Directive, "answering is supported") {
 		t.Fatalf("answer readiness should not override required edit paths: %q", instruction.Directive)
 	}
@@ -817,6 +865,7 @@ func TestBuildStepInstructionPrioritizesVerificationOverAnswerReadiness(t *testi
 	if !strings.Contains(instruction.Directive, "verification is the open obligation") {
 		t.Fatalf("expected verification directive to win, got %q", instruction.Directive)
 	}
+
 	if strings.Contains(instruction.Directive, "answering is supported") {
 		t.Fatalf("answer readiness should not override verification: %q", instruction.Directive)
 	}
@@ -836,9 +885,11 @@ func TestBuildStepInstructionUsesClosureDirective(t *testing.T) {
 	if !strings.Contains(instruction.Directive, "Prefer answering now") {
 		t.Fatalf("expected closure-biased directive, got %q", instruction.Directive)
 	}
+
 	if !strings.Contains(instruction.Directive, "one exact missing claim") || !strings.Contains(instruction.Directive, "one exact probe") {
 		t.Fatalf("expected exact-claim/exact-probe language, got %q", instruction.Directive)
 	}
+
 	if !strings.Contains(instruction.Directive, "ranked options, not mandatory commands") {
 		t.Fatalf("expected closure directive to clarify option-vs-command, got %q", instruction.Directive)
 	}
@@ -897,6 +948,7 @@ func TestBuildStepInstructionAddsGenericGuardedMutationContractAfterNoWriteGate(
 			t.Fatalf("expected generic guarded mutation directive %q, got %q", want, instruction.Directive)
 		}
 	}
+
 	if strings.Contains(instruction.Directive, "answering is supported") {
 		t.Fatalf("generic mutation contract should not be presented as answer-only readiness: %q", instruction.Directive)
 	}
@@ -913,6 +965,7 @@ func TestPlanExecuteAllowedScopeDoesNotUseGenericGuardedMutationContract(t *test
 	})
 	if strings.Contains(initial.Directive, "guarded workspace mutation without required_edit_paths") ||
 		strings.Contains(initial.Directive, "write when the exact target") {
+
 		t.Fatalf("plan-execute planner should not receive direct mutation target contract:\n%s", initial.Directive)
 	}
 
@@ -926,6 +979,7 @@ func TestPlanExecuteAllowedScopeDoesNotUseGenericGuardedMutationContract(t *test
 	})
 	if strings.Contains(step.Directive, "guarded workspace mutation without required_edit_paths") ||
 		strings.Contains(step.Directive, "write when the exact target") {
+
 		t.Fatalf("plan-execute planner step should not receive direct mutation target contract:\n%s", step.Directive)
 	}
 }
@@ -1047,6 +1101,7 @@ func TestRenderInitialRuntimeBriefAddsGenericGuardedMutationContractWithoutRequi
 			t.Fatalf("expected generic guarded mutation contract %q in:\n%s", want, rendered)
 		}
 	}
+
 	for _, forbidden := range []string{
 		"product workflow",
 		"PRD",
@@ -1117,6 +1172,7 @@ func TestRenderInitialRuntimeBriefUsesPlanExecuteSubmitPlanDirective(t *testing.
 			t.Fatalf("plan-execute runtime brief missing %q:\n%s", want, rendered)
 		}
 	}
+
 	if strings.Contains(rendered, "in-scope required-path edit") {
 		t.Fatalf("plan-execute runtime brief must not use implementation edit wording:\n%s", rendered)
 	}
@@ -1145,9 +1201,11 @@ func TestRenderInitialRuntimeBriefAddsDeterministicDiscoveryExamples(t *testing.
 			t.Fatalf("expected %q in deterministic discovery guidance:\n%s", needle, rendered)
 		}
 	}
+
 	if strings.Contains(rendered, "architecture_boundary shape") || strings.Contains(rendered, "security_review:") {
 		t.Fatalf("runtime brief should not repeat verbose discovery_query examples:\n%s", rendered)
 	}
+
 	for _, forbidden := range []string{
 		"use one bounded discovery_query",
 		"run context_pack",
@@ -1179,12 +1237,14 @@ func TestNormalizeRuntimeBriefSummarizesCapabilitiesWithoutLanguageAdapterList(t
 	if len(brief.EvidenceCapabilities) == 0 {
 		t.Fatalf("expected compact capability summary, got %#v", brief)
 	}
+
 	joined := strings.Join(brief.EvidenceCapabilities, "\n")
 	for _, want := range []string{"inspect_file", "inspect_symbol", "find_definition", "find_references", workspace.CapabilityClassCompatibilityAdapter} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("capability summary missing %q:\n%s", want, joined)
 		}
 	}
+
 	for _, verboseAdapter := range []string{"go_definition", "go_references", "python_read_symbol", "language adapters", "tools:"} {
 		if strings.Contains(joined, verboseAdapter) {
 			t.Fatalf("capability summary should collapse language adapter %q:\n%s", verboseAdapter, joined)
@@ -1205,6 +1265,7 @@ func TestRenderInitialRuntimeBriefSuppressesDiscoveryExamplesForWriteReadyPacket
 	if strings.Contains(rendered, `"discovery_examples"`) || strings.Contains(rendered, "use one bounded discovery_query") {
 		t.Fatalf("write-ready implementation packet should not advertise discovery examples:\n%s", rendered)
 	}
+
 	if !strings.Contains(rendered, "required_edit_paths are present") {
 		t.Fatalf("expected write-ready required-path directive to remain:\n%s", rendered)
 	}
@@ -1235,8 +1296,10 @@ func TestBuildInitialStepInstructionConversationNamesDefaultReadOnlyAnswerLane(t
 		!strings.Contains(step.Directive, "every response must either") ||
 		!strings.Contains(step.Directive, "context_pack to localize") ||
 		!strings.Contains(step.Directive, "Do not return raw tool summaries") {
+
 		t.Fatalf("conversation initial directive should explain the default read-only answer contract:\n%s", step.Directive)
 	}
+
 	for _, want := range []string{
 		"Evidence contract / exit criteria are summarized in current_state.evidence_contract",
 		"localization/context packets scope candidates but do not complete evidence by themselves",
@@ -1248,6 +1311,7 @@ func TestBuildInitialStepInstructionConversationNamesDefaultReadOnlyAnswerLane(t
 			t.Fatalf("conversation initial evidence contract should include %q:\ndirective=%s\ncontract=%#v", want, step.Directive, step.CurrentState.EvidenceContract)
 		}
 	}
+
 	if strings.Contains(step.Directive, "The readiness state says answering is supported") {
 		t.Fatalf("conversation initial directive must not reintroduce premature readiness wording:\n%s", step.Directive)
 	}
@@ -1275,6 +1339,7 @@ func TestRenderInitialRuntimeBriefConversationRendersEvidenceContractBeforeFirst
 			t.Fatalf("rendered initial conversation brief should include %q:\n%s", want, rendered)
 		}
 	}
+
 	if strings.Contains(rendered, "The readiness state says answering is supported") {
 		t.Fatalf("rendered initial conversation brief must not claim answer readiness:\n%s", rendered)
 	}
@@ -1305,6 +1370,7 @@ func TestInitialActionContractAppliesUsesExactMutationContracts(t *testing.T) {
 	if initialActionContractApplies(RunState{TaskFamily: "implementation_notes", Contract: "direct_answer", Permission: "read_only_workspace"}) {
 		t.Fatal("read-only implementation-adjacent wording must not activate a mutation contract")
 	}
+
 	if !initialActionContractApplies(RunState{TaskFamily: "implementation", Contract: "implementation_result", Permission: "guarded_workspace_write"}) {
 		t.Fatal("exact implementation contract should activate mutation contract")
 	}
@@ -1320,12 +1386,15 @@ func TestNormalizeRuntimeBriefConversationOnlyClearsToolSurface(t *testing.T) {
 	if len(brief.AllowedTools) != 0 {
 		t.Fatalf("conversation-only brief should not advertise tools, got %#v", brief.AllowedTools)
 	}
+
 	if len(brief.RequiredTools) != 0 {
 		t.Fatalf("conversation-only brief should not require tools, got %#v", brief.RequiredTools)
 	}
+
 	if len(brief.ToolManifest) != 0 {
 		t.Fatalf("conversation-only brief should not emit a tool manifest, got %#v", brief.ToolManifest)
 	}
+
 	if len(brief.DiscoveryExamples) != 0 {
 		t.Fatalf("conversation-only brief should not emit discovery examples, got %#v", brief.DiscoveryExamples)
 	}
@@ -1352,9 +1421,11 @@ func TestNormalizeRuntimeBriefSuppressesPlaceholderManifestRequests(t *testing.T
 	for _, entry := range brief.ToolManifest {
 		byTool[entry.Tool] = entry
 	}
+
 	if got := byTool["submit_plan"].Request; got != "" {
 		t.Fatalf("placeholder submit_plan request should be suppressed, got %q", got)
 	}
+
 	if got := byTool["pwd"].Request; got == "" {
 		t.Fatal("concrete request should be preserved")
 	}
@@ -1367,9 +1438,11 @@ func TestBuildToolManifestSuppressesWorkspacePlaceholderRequests(t *testing.T) {
 	for _, entry := range manifest {
 		byTool[entry.Tool] = entry
 	}
+
 	if got := byTool["submit_plan"].Request; got != "" {
 		t.Fatalf("workspace placeholder request should be suppressed at runtime boundary, got %q", got)
 	}
+
 	if got := byTool["pwd"].Request; got == "" {
 		t.Fatal("concrete request should remain available")
 	}
@@ -1380,16 +1453,19 @@ func TestRoleSpecForChildWriteCarriesIsolatedContract(t *testing.T) {
 	if spec.Name != RoleChildWrite || spec.PermissionProfile != PermissionIsolatedWorkbranchWrite {
 		t.Fatalf("unexpected child write role: %#v", spec)
 	}
+
 	for _, want := range []string{"edit_file", "apply_patch", "go_move_declarations", "shell"} {
 		if !slices.Contains(spec.AllowedTools, want) {
 			t.Fatalf("expected child write role to allow %q, got %#v", want, spec.AllowedTools)
 		}
 	}
+
 	for _, want := range []string{"task", "git_history_mutation", "git_index_mutation", "git_push", "publish", "deploy"} {
 		if !slices.Contains(spec.ForbiddenTools, want) {
 			t.Fatalf("expected child write role to forbid %q, got %#v", want, spec.ForbiddenTools)
 		}
 	}
+
 	brief := RuntimeBriefForRole("child_write", "child_write:patch", "patch README")
 	if brief.Lane != "child_write:patch" || brief.ToolManifest == nil {
 		t.Fatalf("expected normalized child write runtime brief, got %#v", brief)
@@ -1401,16 +1477,19 @@ func TestRoleSpecForChildReadOnlyOmitsNestedTaskDelegation(t *testing.T) {
 	if spec.Name != RoleChildReadOnly || spec.PermissionProfile != PermissionReadOnlyWorkspace {
 		t.Fatalf("unexpected child read-only role: %#v", spec)
 	}
+
 	for _, forbidden := range []string{"task", "list_files"} {
 		if slices.Contains(spec.AllowedTools, forbidden) {
 			t.Fatalf("child read-only role must not advertise %q, got %#v", forbidden, spec.AllowedTools)
 		}
 	}
+
 	for _, want := range []string{"read_file", "search_files", "search_content", "file_stats", "code_navigate", "read_only_capability", "context_pack", "discovery_query", "structural_search"} {
 		if !slices.Contains(spec.AllowedTools, want) {
 			t.Fatalf("expected child read-only role to allow %q, got %#v", want, spec.AllowedTools)
 		}
 	}
+
 	for _, want := range []string{"answer_when_evidence_is_sufficient", "if_not_answering_name_one_exact_missing_claim_and_probe", "prefer_symbol_or_handle_probes_over_raw_path_reads"} {
 		if !runtimeLabelContains(spec.SearchPolicy, want) {
 			t.Fatalf("expected child read-only search policy to include %q, got %#v", want, spec.SearchPolicy)
@@ -1432,6 +1511,7 @@ func TestRoleSpecForMainUsesConversationOnlyFallback(t *testing.T) {
 	if spec.Name != RoleMain || spec.PermissionProfile != PermissionConversationOnly {
 		t.Fatalf("unexpected main role: %#v", spec)
 	}
+
 	if len(spec.AllowedTools) != 0 {
 		t.Fatalf("main role should not advertise tools by default, got %#v", spec.AllowedTools)
 	}

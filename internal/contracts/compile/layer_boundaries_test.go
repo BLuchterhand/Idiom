@@ -238,12 +238,15 @@ func TestArchitectureAssertionsCatchExpectedViolations(t *testing.T) {
 	if got := directInternalImportViolations(packages["idiom/internal/contracts/autonomy"], []string{"idiom/internal/platform/util"}); !containsString(got, "idiom/internal/capabilities/workspace") {
 		t.Fatalf("directInternalImportViolations = %#v, want workspace violation", got)
 	}
+
 	if got := directImportViolations(packages["idiom/internal/contracts/autonomy"], []string{"net/http"}); !containsString(got, "net/http/httptest") {
 		t.Fatalf("directImportViolations = %#v, want net/http/httptest violation", got)
 	}
+
 	if got := transitiveDependencyViolations(packages["idiom/internal/contracts/autonomy"], []string{"idiom/internal/capabilities/workspace"}); !containsString(got, "idiom/internal/capabilities/workspace") {
 		t.Fatalf("transitiveDependencyViolations = %#v, want workspace violation", got)
 	}
+
 	if got := transitiveDependencyViolationDetails(packages, "idiom/internal/runtime/agent", []string{"idiom/internal/capabilities/workspace"}); !containsString(got, "idiom/internal/capabilities/workspace via idiom/internal/runtime/agent -> idiom/internal/capabilities/workspace") {
 		t.Fatalf("transitiveDependencyViolationDetails = %#v, want import path detail", got)
 	}
@@ -268,6 +271,7 @@ func TestViolationCollectorsReturnDeduplicatedSortedResults(t *testing.T) {
 	if got, want := directImportViolations(pkg, []string{"os", "os/exec", "net/http"}), []string{"net/http/httptest", "os/exec"}; !equalStrings(got, want) {
 		t.Fatalf("directImportViolations = %#v, want %#v", got, want)
 	}
+
 	if got, want := transitiveDependencyViolations(pkg, []string{"idiom/internal/capabilities/workspace"}), []string{"idiom/internal/capabilities/workspace", "idiom/internal/capabilities/workspace/subpkg"}; !equalStrings(got, want) {
 		t.Fatalf("transitiveDependencyViolations = %#v, want %#v", got, want)
 	}
@@ -278,27 +282,35 @@ func loadPackages(t *testing.T) map[string]goPackage {
 
 	root := repoRoot(t)
 	cmd := exec.Command("go", "list", "-json", "./...")
+
 	cmd.Dir = root
+
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			t.Fatalf("go list failed: %v\n%s", err, string(exitErr.Stderr))
 		}
+
 		t.Fatalf("go list failed: %v", err)
 	}
 
 	decoder := json.NewDecoder(strings.NewReader(string(out)))
 	packages := make(map[string]goPackage)
+
 	for {
 		var pkg goPackage
+
 		if err := decoder.Decode(&pkg); err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}
+
 			t.Fatalf("decode go list package: %v", err)
 		}
+
 		packages[pkg.ImportPath] = pkg
 	}
+
 	return packages
 }
 
@@ -323,15 +335,19 @@ func directInternalImportViolations(pkg goPackage, allowed []string) []string {
 	}
 
 	var violations []string
+
 	for _, imported := range pkg.Imports {
 		if !strings.HasPrefix(imported, "idiom/") {
 			continue
 		}
+
 		if _, ok := allowedSet[imported]; ok {
 			continue
 		}
+
 		violations = append(violations, imported)
 	}
+
 	return uniqueSortedStrings(violations)
 }
 
@@ -356,6 +372,7 @@ func directImportViolations(pkg goPackage, forbidden []string) []string {
 	}
 
 	var violations []string
+
 	for _, imported := range pkg.Imports {
 		for forbidden := range forbiddenSet {
 			if dependencyMatchesPrefix(imported, forbidden) {
@@ -363,6 +380,7 @@ func directImportViolations(pkg goPackage, forbidden []string) []string {
 			}
 		}
 	}
+
 	return uniqueSortedStrings(violations)
 }
 
@@ -381,6 +399,7 @@ func assertNoDependencyOn(t *testing.T, packages map[string]goPackage, importPat
 
 func transitiveDependencyViolations(pkg goPackage, forbiddenPrefixes []string) []string {
 	var violations []string
+
 	for _, dep := range pkg.Deps {
 		for _, forbidden := range forbiddenPrefixes {
 			if dependencyMatchesPrefix(dep, forbidden) {
@@ -388,20 +407,24 @@ func transitiveDependencyViolations(pkg goPackage, forbiddenPrefixes []string) [
 			}
 		}
 	}
+
 	return uniqueSortedStrings(violations)
 }
 
 func transitiveDependencyViolationDetails(packages map[string]goPackage, importPath string, forbiddenPrefixes []string) []string {
 	violations := transitiveDependencyViolations(packages[importPath], forbiddenPrefixes)
 	details := make([]string, 0, len(violations))
+
 	for _, violation := range violations {
 		path := shortestImportPath(packages, importPath, violation)
 		if len(path) > 0 {
 			details = append(details, violation+" via "+strings.Join(path, " -> "))
 			continue
 		}
+
 		details = append(details, violation)
 	}
+
 	return uniqueSortedStrings(details)
 }
 
@@ -413,32 +436,42 @@ func shortestImportPath(packages map[string]goPackage, start string, target stri
 	type queueItem struct {
 		path []string
 	}
+
 	queue := []queueItem{{path: []string{start}}}
 	seen := map[string]struct{}{start: {}}
+
 	for len(queue) > 0 {
 		item := queue[0]
+
 		queue = queue[1:]
+
 		current := item.path[len(item.path)-1]
 		pkg, ok := packages[current]
+
 		if !ok {
 			continue
 		}
+
 		imports := append([]string(nil), pkg.Imports...)
 		sort.Strings(imports)
+
 		for _, imported := range imports {
 			if _, ok := seen[imported]; ok {
 				continue
 			}
+
 			nextPath := append(append([]string(nil), item.path...), imported)
 			if imported == target {
 				return nextPath
 			}
+
 			seen[imported] = struct{}{}
 			if _, ok := packages[imported]; ok {
 				queue = append(queue, queueItem{path: nextPath})
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -447,6 +480,7 @@ func dependencyMatchesPrefix(dep string, forbiddenPrefix string) bool {
 	if dep == forbiddenPrefix {
 		return true
 	}
+
 	return strings.HasPrefix(dep, forbiddenPrefix+"/")
 }
 
@@ -457,15 +491,18 @@ func repoRoot(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
+
 	dir := filepath.Dir(file)
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir
 		}
+
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			t.Fatalf("repo root not found from %s", file)
 		}
+
 		dir = parent
 	}
 }
@@ -473,14 +510,18 @@ func repoRoot(t *testing.T) string {
 func uniqueSortedStrings(values []string) []string {
 	seen := make(map[string]struct{}, len(values))
 	out := make([]string, 0, len(values))
+
 	for _, value := range values {
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
+
 	sort.Strings(out)
+
 	return out
 }
 
@@ -494,6 +535,7 @@ func containsString(values []string, target string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -501,10 +543,12 @@ func equalStrings(left []string, right []string) bool {
 	if len(left) != len(right) {
 		return false
 	}
+
 	for i := range left {
 		if left[i] != right[i] {
 			return false
 		}
 	}
+
 	return true
 }

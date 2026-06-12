@@ -24,6 +24,7 @@ func (p *pendingApproval) summary() string {
 	if p == nil {
 		return ""
 	}
+
 	req := p.request
 	switch strings.TrimSpace(req.Tool) {
 	case "shell", "bash":
@@ -37,6 +38,7 @@ func (p *pendingApproval) summary() string {
 		if target == "" {
 			return req.Tool
 		}
+
 		return fmt.Sprintf("%s: %s", req.Tool, util.Truncate(strings.TrimSpace(target), 120))
 	}
 }
@@ -54,6 +56,7 @@ func (m *Model) requestApproval(req workspace.ToolRequest, modeName string) bool
 	if m == nil {
 		return false
 	}
+
 	// In headless mode (idiom --prompt --json, idiom artifact, idiom
 	// implement) there is no TUI thread to call resolveApproval, so
 	// blocking on the response channel hangs the lane forever. Auto-deny
@@ -64,9 +67,11 @@ func (m *Model) requestApproval(req workspace.ToolRequest, modeName string) bool
 		if m.eventStream == nil {
 			reason = "headless prompt runner; no TUI available to approve"
 		}
+
 		if m.eventStream == nil {
 			return false
 		}
+
 		m.emitJSONEvent(map[string]any{
 			"event":   "approval_auto_denied",
 			"tool":    req.Tool,
@@ -74,8 +79,10 @@ func (m *Model) requestApproval(req workspace.ToolRequest, modeName string) bool
 			"reason":  reason,
 			"session": m.eventStream.sessionID,
 		})
+
 		return false
 	}
+
 	m.approvalSerial.Lock()
 	defer m.approvalSerial.Unlock()
 
@@ -85,10 +92,14 @@ func (m *Model) requestApproval(req workspace.ToolRequest, modeName string) bool
 		mode:     modeName,
 		response: resp,
 	}
+
 	m.approvalMu.Lock()
+
 	m.approvalPending = pending
 	m.approvalMu.Unlock()
+
 	m.events <- infoMsg{text: fmt.Sprintf("Awaiting approval (%s mode): /approve or /deny", modeName)}
+
 	return <-resp
 }
 
@@ -99,14 +110,20 @@ func (m *Model) resolveApproval(allow bool) (string, bool) {
 	if m == nil {
 		return "", false
 	}
+
 	m.approvalMu.Lock()
+
 	pending := m.approvalPending
+
 	m.approvalPending = nil
 	m.approvalMu.Unlock()
+
 	if pending == nil {
 		return "", false
 	}
+
 	pending.response <- allow
+
 	return pending.summary(), true
 }
 
@@ -116,8 +133,10 @@ func (m *Model) currentApproval() *pendingApproval {
 	if m == nil {
 		return nil
 	}
+
 	m.approvalMu.Lock()
 	defer m.approvalMu.Unlock()
+
 	return m.approvalPending
 }
 

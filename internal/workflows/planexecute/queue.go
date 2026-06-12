@@ -26,7 +26,9 @@ func AcquireQueueSlot(cfg config.Config, opts QueueAcquireOptions, rec *telemetr
 	if label == "" {
 		label = "plan-execute:" + strings.TrimSpace(opts.SessionID)
 	}
+
 	client := fmt.Sprintf("idiom-plan-execute/%d", os.Getpid())
+
 	return queueadmission.Acquire(cfg, queueadmission.Options{
 		Command:        "plan_execute",
 		EventPrefix:    "idiom.plan_execute",

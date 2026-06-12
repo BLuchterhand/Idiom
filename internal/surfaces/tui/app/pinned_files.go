@@ -44,13 +44,17 @@ func (r *PinnedFileRegistry) Pin(path string) {
 	if normalized == "" {
 		return
 	}
+
 	normalized = filepath.ToSlash(filepath.Clean(normalized))
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	if existing, ok := r.pins[normalized]; ok {
 		existing.lastSeen = time.Now()
 		return
 	}
+
 	r.pins[normalized] = &pinnedFile{path: normalized, lastSeen: time.Now()}
 	r.order = append(r.order, normalized)
 	r.evictLRU(pinnedFileMaxEntries)
@@ -60,15 +64,18 @@ func (r *PinnedFileRegistry) Pin(path string) {
 func (r *PinnedFileRegistry) Pins() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	out := make([]string, 0, len(r.pins))
 	for _, path := range r.order {
 		if _, ok := r.pins[path]; ok {
 			out = append(out, path)
 		}
 	}
+
 	sort.SliceStable(out, func(i, j int) bool {
 		return r.pins[out[i]].lastSeen.After(r.pins[out[j]].lastSeen)
 	})
+
 	return out
 }
 
@@ -80,9 +87,12 @@ func (r *PinnedFileRegistry) Forget(path string) {
 	if normalized == "" {
 		return
 	}
+
 	normalized = filepath.ToSlash(filepath.Clean(normalized))
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	delete(r.pins, normalized)
 }
 
@@ -90,26 +100,33 @@ func (r *PinnedFileRegistry) evictLRU(cap int) {
 	if cap <= 0 || len(r.pins) <= cap {
 		return
 	}
+
 	// Find LRU by scanning. Small N, no need for a heap.
 	type entry struct {
 		path string
 		t    time.Time
 	}
+
 	entries := make([]entry, 0, len(r.pins))
+
 	for path, pin := range r.pins {
 		entries = append(entries, entry{path: path, t: pin.lastSeen})
 	}
+
 	slices.SortFunc(entries, func(a, b entry) int { return a.t.Compare(b.t) })
+
 	toDrop := len(entries) - cap
 	for i := 0; i < toDrop; i++ {
 		delete(r.pins, entries[i].path)
 	}
+
 	kept := make([]string, 0, len(r.pins))
 	for _, path := range r.order {
 		if _, ok := r.pins[path]; ok {
 			kept = append(kept, path)
 		}
 	}
+
 	r.order = kept
 }
 
@@ -128,45 +145,58 @@ func (r *PinnedFileRegistry) BuildSnapshot(root string) string {
 	if r == nil {
 		return ""
 	}
+
 	pins := r.Pins()
 	if len(pins) == 0 {
 		return ""
 	}
+
 	var b strings.Builder
+
 	b.WriteString(pinnedFileSnapshotHeaderTag)
 	b.WriteByte('\n')
+
 	budget := pinnedFileSnapshotMaxBytes - b.Len()
 	for _, rel := range pins {
 		if budget <= 0 {
 			break
 		}
+
 		abs := rel
 		if !filepath.IsAbs(abs) && strings.TrimSpace(root) != "" {
 			abs = filepath.Join(root, rel)
 		}
+
 		data, err := os.ReadFile(abs)
 		if err != nil {
 			continue
 		}
+
 		snippet := string(data)
 		if len(snippet) > pinnedFileMaxBytesPerFile {
 			snippet = snippet[:pinnedFileMaxBytesPerFile] + "\n… (truncated)"
 		}
+
 		entry := fmt.Sprintf("--- %s ---\n%s\n", rel, snippet)
 		if len(entry) > budget {
 			if budget < 128 {
 				break
 			}
+
 			entry = entry[:budget] + "\n… (truncated for pin-snapshot budget)"
 		}
+
 		b.WriteString(entry)
+
 		budget -= len(entry)
 	}
+
 	out := strings.TrimRight(b.String(), "\n")
 	// If the header is all we wrote, emit nothing so the caller doesn't
 	// inject a useless empty block.
 	if out == pinnedFileSnapshotHeaderTag {
 		return ""
 	}
+
 	return out
 }

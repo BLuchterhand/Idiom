@@ -49,6 +49,7 @@ func TestValidateSourceSatisfiedPathCoverageRejectsPendingPartialApproval(t *tes
 	if len(got) != 2 {
 		t.Fatalf("expected pending and outside-approved violations, got %#v", got)
 	}
+
 	if got[0].Code != "pending_approval" || got[1].Code != "outside_approved_scope" {
 		t.Fatalf("unexpected violation ordering/content: %#v", got)
 	}

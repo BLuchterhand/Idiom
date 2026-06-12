@@ -422,10 +422,13 @@ func NewContract(input ContractInput) (AutonomyContract, error) {
 		Metadata:        copyMetadata(input.Metadata),
 	}
 	contract.Normalize()
+
 	if err := contract.Validate(); err != nil {
 		return AutonomyContract{}, err
 	}
+
 	contract.ContractID = contract.stableID()
+
 	return contract, nil
 }
 
@@ -433,27 +436,35 @@ func (c *AutonomyContract) Normalize() {
 	if c.SchemaVersion == "" {
 		c.SchemaVersion = SchemaVersion
 	}
+
 	c.ContractID = strings.TrimSpace(c.ContractID)
 	c.ParentID = strings.TrimSpace(c.ParentID)
 	c.Scope.normalize()
+
 	for i := range c.Authority {
 		c.Authority[i].normalize()
 	}
+
 	for i := range c.PathRoles {
 		c.PathRoles[i].normalize()
 	}
+
 	for i := range c.ToolPolicy {
 		c.ToolPolicy[i].normalize()
 	}
+
 	for i := range c.Obligations {
 		c.Obligations[i].normalize()
 	}
+
 	for i := range c.PolicyDecisions {
 		c.PolicyDecisions[i].normalize()
 	}
+
 	for i := range c.Evidence {
 		c.Evidence[i].normalize()
 	}
+
 	c.Capabilities.normalize()
 	c.Verification.normalize()
 	c.Completion.normalize()
@@ -469,12 +480,15 @@ func (c *AutonomyContract) Normalize() {
 
 func (c AutonomyContract) Validate() error {
 	var problems []string
+
 	if c.SchemaVersion != SchemaVersion {
 		problems = append(problems, "schema_version must be "+SchemaVersion)
 	}
+
 	if !validInvocationKind(c.Scope.InvocationKind) {
 		problems = append(problems, "scope.invocation_kind is required and must be lane, phase, or sidecar_call")
 	}
+
 	switch c.Scope.InvocationKind {
 	case InvocationLane:
 		if c.Scope.Lane == "" {
@@ -491,88 +505,111 @@ func (c AutonomyContract) Validate() error {
 			problems = append(problems, "scope.sidecar.tool is required for sidecar_call contracts")
 		}
 	}
+
 	if c.Scope.ToolCall != nil && c.Scope.ToolCall.SideEffect != "" && !validSideEffect(c.Scope.ToolCall.SideEffect) {
 		problems = append(problems, "scope.tool_call.side_effect is invalid")
 	}
+
 	for i, source := range c.Authority {
 		if source.Freshness != "" && !validFreshness(source.Freshness) {
 			problems = append(problems, fmt.Sprintf("authority_sources[%d].freshness is invalid", i))
 		}
 	}
+
 	for i, role := range c.PathRoles {
 		if !validPathRole(role.Role) {
 			problems = append(problems, fmt.Sprintf("path_roles[%d].role is invalid", i))
 		}
+
 		if role.PathPattern == "" && role.SymbolHandle == "" && role.PacketID == "" {
 			problems = append(problems, fmt.Sprintf("path_roles[%d] must identify a path_pattern, symbol_handle, or packet_id", i))
 		}
+
 		if role.Freshness != "" && !validFreshness(role.Freshness) {
 			problems = append(problems, fmt.Sprintf("path_roles[%d].freshness is invalid", i))
 		}
 	}
+
 	validateCapabilityPolicy(c.Capabilities, &problems)
+
 	for i, rule := range c.ToolPolicy {
 		if rule.Decision != "" && !validDecision(rule.Decision) {
 			problems = append(problems, fmt.Sprintf("tool_policy[%d].decision is invalid", i))
 		}
+
 		if rule.SideEffect != "" && !validSideEffect(rule.SideEffect) {
 			problems = append(problems, fmt.Sprintf("tool_policy[%d].side_effect is invalid", i))
 		}
 	}
+
 	for i, obligation := range c.Obligations {
 		if obligation.ObligationID == "" {
 			problems = append(problems, fmt.Sprintf("obligations[%d].obligation_id is required", i))
 		}
+
 		if !validObligationKind(obligation.Kind) {
 			problems = append(problems, fmt.Sprintf("obligations[%d].kind is invalid", i))
 		}
+
 		if !validObligationStatus(obligation.Status) {
 			problems = append(problems, fmt.Sprintf("obligations[%d].status is invalid", i))
 		}
+
 		if obligation.Owner != "" && !validObligationOwner(obligation.Owner) {
 			problems = append(problems, fmt.Sprintf("obligations[%d].owner is invalid", i))
 		}
 	}
+
 	validateBudget(c.Budget, &problems)
+
 	for i, effect := range c.Capabilities.AllowedEffects {
 		if !validSideEffect(effect) {
 			problems = append(problems, fmt.Sprintf("capabilities.allowed_effects[%d] is invalid", i))
 		}
 	}
+
 	for i, effect := range c.Capabilities.ForbiddenEffects {
 		if !validSideEffect(effect) {
 			problems = append(problems, fmt.Sprintf("capabilities.forbidden_effects[%d] is invalid", i))
 		}
 	}
+
 	for i, decision := range c.PolicyDecisions {
 		if !validDecision(decision.Decision) {
 			problems = append(problems, fmt.Sprintf("policy_decisions[%d].decision is invalid", i))
 		}
+
 		if decision.SideEffect != "" && !validSideEffect(decision.SideEffect) {
 			problems = append(problems, fmt.Sprintf("policy_decisions[%d].side_effect is invalid", i))
 		}
 	}
+
 	for i, evidence := range c.Evidence {
 		if evidence.EvidenceID == "" {
 			problems = append(problems, fmt.Sprintf("evidence_refs[%d].evidence_id is required", i))
 		}
+
 		if evidence.Freshness != "" && !validFreshness(evidence.Freshness) {
 			problems = append(problems, fmt.Sprintf("evidence_refs[%d].freshness is invalid", i))
 		}
 	}
+
 	for i, client := range c.Metadata.ClientClassifications {
 		if !validClientClassification(client) {
 			problems = append(problems, fmt.Sprintf("metadata.client_classifications[%d] is invalid", i))
 		}
 	}
+
 	for i, signal := range c.Metadata.ProductSignals {
 		if !validProductSignal(signal) {
 			problems = append(problems, fmt.Sprintf("metadata.product_signals[%d] is invalid", i))
 		}
 	}
+
 	if len(problems) > 0 {
 		return ValidationError{Problems: problems}
 	}
+
 	return nil
 }
 
@@ -598,21 +635,26 @@ type ContractSummary struct {
 func (c AutonomyContract) Summary() ContractSummary {
 	roleCounts := make(map[string]int)
 	protectedCount := 0
+
 	for _, role := range c.PathRoles {
 		roleCounts[string(role.Role)]++
 		if role.Role == PathRoleProtected {
 			protectedCount++
 		}
 	}
+
 	obligationCounts := make(map[string]int)
+
 	for _, obligation := range c.Obligations {
 		key := string(obligation.Status) + ":" + string(obligation.Kind)
 		obligationCounts[key]++
 	}
+
 	authority := make([]string, 0, len(c.Authority))
 	for _, source := range c.Authority {
 		authority = append(authority, source.Ref)
 	}
+
 	return ContractSummary{
 		ContractID:             c.ContractID,
 		ParentID:               c.ParentID,
@@ -643,12 +685,16 @@ func (e ValidationError) Error() string {
 
 func (c AutonomyContract) stableID() string {
 	copy := c
+
 	copy.ContractID = ""
+
 	encoded, err := json.Marshal(copy)
 	if err != nil {
 		panic(err)
 	}
+
 	sum := sha256.Sum256(encoded)
+
 	return "contract_" + hex.EncodeToString(sum[:])[:16]
 }
 
@@ -660,9 +706,11 @@ func (s *ContractScope) normalize() {
 	s.TaskFamily = strings.TrimSpace(s.TaskFamily)
 	s.RuntimeContract = strings.TrimSpace(s.RuntimeContract)
 	s.PermissionProfile = strings.TrimSpace(s.PermissionProfile)
+
 	if s.Sidecar != nil {
 		s.Sidecar.normalize()
 	}
+
 	if s.ToolCall != nil {
 		s.ToolCall.normalize()
 	}
@@ -792,12 +840,16 @@ func copyContractScope(in ContractScope) ContractScope {
 	out := in
 	if in.Sidecar != nil {
 		sidecar := *in.Sidecar
+
 		out.Sidecar = &sidecar
 	}
+
 	if in.ToolCall != nil {
 		toolCall := *in.ToolCall
+
 		out.ToolCall = &toolCall
 	}
+
 	return out
 }
 
@@ -814,6 +866,7 @@ func copyCapabilityPolicy(in CapabilityPolicy) CapabilityPolicy {
 func copyVerification(in VerificationRequirement) VerificationRequirement {
 	in.AcceptedCommands = append([]string(nil), in.AcceptedCommands...)
 	in.EvidenceRefs = append([]string(nil), in.EvidenceRefs...)
+
 	return in
 }
 
@@ -821,6 +874,7 @@ func copyCompletion(in CompletionRequirement) CompletionRequirement {
 	in.Criteria = append([]string(nil), in.Criteria...)
 	in.AllowedNoopReasons = append([]string(nil), in.AllowedNoopReasons...)
 	in.EvidenceRefs = append([]string(nil), in.EvidenceRefs...)
+
 	return in
 }
 
@@ -828,6 +882,7 @@ func copyReadiness(in ReadinessRequirement) ReadinessRequirement {
 	in.ClosedClaims = append([]string(nil), in.ClosedClaims...)
 	in.OpenObligationRefs = append([]string(nil), in.OpenObligationRefs...)
 	in.EvidenceRefs = append([]string(nil), in.EvidenceRefs...)
+
 	return in
 }
 
@@ -951,16 +1006,20 @@ func validContractLabel(value string, maxLen int) bool {
 	if value == "" || len(value) > maxLen {
 		return false
 	}
+
 	for _, r := range value {
 		if r >= 'a' && r <= 'z' {
 			continue
 		}
+
 		if r >= 'A' && r <= 'Z' {
 			continue
 		}
+
 		if r >= '0' && r <= '9' {
 			continue
 		}
+
 		switch r {
 		case '_', '-', '/', '.', ':', '=', '@':
 			continue
@@ -968,6 +1027,7 @@ func validContractLabel(value string, maxLen int) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -1020,19 +1080,25 @@ func uniqueCapabilities(values []Capability) []Capability {
 	if len(values) == 0 {
 		return nil
 	}
+
 	seen := make(map[Capability]struct{}, len(values))
 	out := make([]Capability, 0, len(values))
+
 	for _, value := range values {
 		if strings.TrimSpace(string(value)) == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -1040,19 +1106,25 @@ func uniqueSideEffects(values []SideEffectClass) []SideEffectClass {
 	if len(values) == 0 {
 		return nil
 	}
+
 	seen := make(map[SideEffectClass]struct{}, len(values))
 	out := make([]SideEffectClass, 0, len(values))
+
 	for _, value := range values {
 		if strings.TrimSpace(string(value)) == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -1060,19 +1132,25 @@ func uniqueClientClassifications(values []ClientClassification) []ClientClassifi
 	if len(values) == 0 {
 		return nil
 	}
+
 	seen := make(map[ClientClassification]struct{}, len(values))
 	out := make([]ClientClassification, 0, len(values))
+
 	for _, value := range values {
 		if strings.TrimSpace(string(value)) == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -1080,19 +1158,25 @@ func uniqueProductSignals(values []ProductSignal) []ProductSignal {
 	if len(values) == 0 {
 		return nil
 	}
+
 	seen := make(map[ProductSignal]struct{}, len(values))
 	out := make([]ProductSignal, 0, len(values))
+
 	for _, value := range values {
 		if strings.TrimSpace(string(value)) == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -1100,20 +1184,26 @@ func compactStrings(values []string) []string {
 	if len(values) == 0 {
 		return nil
 	}
+
 	seen := make(map[string]struct{}, len(values))
 	out := make([]string, 0, len(values))
+
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -1121,5 +1211,6 @@ func emptyMapAsNil(values map[string]int) map[string]int {
 	if len(values) == 0 {
 		return nil
 	}
+
 	return values
 }

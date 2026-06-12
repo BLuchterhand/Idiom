@@ -13,6 +13,7 @@ import (
 func NormalizePath(path string) string {
 	path = strings.TrimSpace(path)
 	path = strings.ReplaceAll(path, "\\", "/")
+
 	return filepath.ToSlash(filepath.Clean(path))
 }
 
@@ -23,12 +24,15 @@ func NormalizeRelPath(root, relPath string) (string, error) {
 	if root == "" || root == "." {
 		return "", fmt.Errorf("normalize rel path: root must be non-empty")
 	}
+
 	relPath = NormalizePath(relPath)
 	if relPath == "" {
 		return "", fmt.Errorf("normalize rel path: path is empty")
 	}
+
 	if filepath.IsAbs(relPath) {
 		return "", fmt.Errorf("normalize rel path: path must be relative: %s", relPath)
 	}
+
 	return NormalizePath(filepath.Join(root, relPath)), nil
 }

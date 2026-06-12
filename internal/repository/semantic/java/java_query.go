@@ -41,13 +41,16 @@ func (idx *JavaIndex) FindSymbols(pattern string, limit int) []JavaSymbolMatch {
 	if idx == nil || pattern == "" {
 		return nil
 	}
+
 	matches := make([]JavaSymbolMatch, 0)
+
 	for _, file := range idx.Files {
 		for _, sym := range file.Symbols {
 			score := scoreJavaSymbolMatch(pattern, file, sym)
 			if score <= 0 {
 				continue
 			}
+
 			matches = append(matches, JavaSymbolMatch{
 				Path:        file.Path,
 				Name:        sym.Name,
@@ -66,18 +69,23 @@ func (idx *JavaIndex) FindSymbols(pattern string, limit int) []JavaSymbolMatch {
 			})
 		}
 	}
+
 	slices.SortFunc(matches, func(a, b JavaSymbolMatch) int {
 		if c := -cmp.Compare(a.Score, b.Score); c != 0 {
 			return c
 		}
+
 		if c := cmp.Compare(a.Path, b.Path); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Line, b.Line)
 	})
+
 	if limit > 0 && len(matches) > limit {
 		matches = matches[:limit]
 	}
+
 	return matches
 }
 
@@ -97,6 +105,7 @@ func normalizeJavaSymbolPattern(pattern string) string {
 			return m[1]
 		}
 	}
+
 	return pattern
 }
 
@@ -107,16 +116,20 @@ func (idx *JavaIndex) FindCallsFrom(pattern string, limit int) []JavaCallMatch {
 	if len(symbols) == 0 {
 		return nil
 	}
+
 	out := make([]JavaCallMatch, 0, 16)
+
 	for _, match := range symbols {
 		file := idx.FileByPath(match.Path)
 		if file == nil {
 			continue
 		}
+
 		for _, sym := range file.Symbols {
 			if sym.Line != match.Line || sym.Name != match.Name {
 				continue
 			}
+
 			for _, call := range sym.Calls {
 				out = append(out, JavaCallMatch{
 					Caller:     match,
@@ -127,9 +140,11 @@ func (idx *JavaIndex) FindCallsFrom(pattern string, limit int) []JavaCallMatch {
 			}
 		}
 	}
+
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
+
 	return out
 }
 
@@ -141,6 +156,7 @@ func (idx *JavaIndex) FindCallsInto(pattern string, limit int) []JavaCallMatch {
 	if len(targets) == 0 {
 		return nil
 	}
+
 	names := make(map[string]JavaSymbolMatch, len(targets)*2)
 	for _, target := range targets {
 		names[strings.ToLower(target.Name)] = target
@@ -148,7 +164,9 @@ func (idx *JavaIndex) FindCallsInto(pattern string, limit int) []JavaCallMatch {
 			names[strings.ToLower(target.Qualified)] = target
 		}
 	}
+
 	out := make([]JavaCallMatch, 0, 16)
+
 	for _, file := range idx.Files {
 		for _, sym := range file.Symbols {
 			for _, call := range sym.Calls {
@@ -156,6 +174,7 @@ func (idx *JavaIndex) FindCallsInto(pattern string, limit int) []JavaCallMatch {
 				if !ok {
 					continue
 				}
+
 				out = append(out, JavaCallMatch{
 					Caller: JavaSymbolMatch{
 						Path:      file.Path,
@@ -175,15 +194,19 @@ func (idx *JavaIndex) FindCallsInto(pattern string, limit int) []JavaCallMatch {
 			}
 		}
 	}
+
 	slices.SortFunc(out, func(a, b JavaCallMatch) int {
 		if c := cmp.Compare(a.Caller.Path, b.Caller.Path); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Line, b.Line)
 	})
+
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
+
 	return out
 }
 
@@ -195,6 +218,7 @@ func (idx *JavaIndex) Implementations(pattern string, limit int) []JavaSymbolMat
 	if len(targets) == 0 {
 		return nil
 	}
+
 	names := make(map[string]struct{}, len(targets)*2)
 	for _, target := range targets {
 		names[target.Name] = struct{}{}
@@ -202,18 +226,23 @@ func (idx *JavaIndex) Implementations(pattern string, limit int) []JavaSymbolMat
 			names[target.Qualified] = struct{}{}
 		}
 	}
+
 	out := make([]JavaSymbolMatch, 0)
+
 	for _, file := range idx.Files {
 		for _, sym := range file.Symbols {
 			if sym.Kind != "class" && sym.Kind != "record" && sym.Kind != "enum" {
 				continue
 			}
+
 			hit := false
+
 			if sym.Extends != "" {
 				if _, ok := names[sym.Extends]; ok {
 					hit = true
 				}
 			}
+
 			if !hit {
 				for _, impl := range sym.Implements {
 					if _, ok := names[impl]; ok {
@@ -222,9 +251,11 @@ func (idx *JavaIndex) Implementations(pattern string, limit int) []JavaSymbolMat
 					}
 				}
 			}
+
 			if !hit {
 				continue
 			}
+
 			out = append(out, JavaSymbolMatch{
 				Path:      file.Path,
 				Name:      sym.Name,
@@ -238,15 +269,19 @@ func (idx *JavaIndex) Implementations(pattern string, limit int) []JavaSymbolMat
 			})
 		}
 	}
+
 	slices.SortFunc(out, func(a, b JavaSymbolMatch) int {
 		if c := cmp.Compare(a.Path, b.Path); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Line, b.Line)
 	})
+
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
+
 	return out
 }
 
@@ -255,6 +290,7 @@ func scoreJavaSymbolMatch(pattern string, file JavaFile, sym JavaSymbol) int {
 	qualifiedLower := strings.ToLower(firstJavaQualified(sym))
 	pathLower := strings.ToLower(file.Path)
 	score := 0
+
 	switch {
 	case nameLower == pattern || qualifiedLower == pattern:
 		score += 48
@@ -263,15 +299,18 @@ func scoreJavaSymbolMatch(pattern string, file JavaFile, sym JavaSymbol) int {
 	case strings.Contains(nameLower, pattern):
 		score += 20
 	}
+
 	if strings.Contains(pathLower, pattern) {
 		score += 8
 	}
+
 	switch sym.Kind {
 	case "class", "interface", "record", "enum":
 		score += 2
 	case "method", "constructor":
 		score += 1
 	}
+
 	return score
 }
 
@@ -279,8 +318,10 @@ func firstJavaQualified(sym JavaSymbol) string {
 	if strings.TrimSpace(sym.Qualified) != "" {
 		return sym.Qualified
 	}
+
 	if strings.TrimSpace(sym.Scope) != "" {
 		return sym.Scope + "." + sym.Name
 	}
+
 	return sym.Name
 }

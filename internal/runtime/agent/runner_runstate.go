@@ -72,6 +72,7 @@ func (r *Runner) setCurrentAllowedTools(state *runnerRunState, tools []string) {
 	if state != nil {
 		state.currentAllowedTools = append(state.currentAllowedTools[:0], tools...)
 	}
+
 	r.currentAllowedTools = append(r.currentAllowedTools[:0], tools...)
 }
 
@@ -84,6 +85,7 @@ func (r *Runner) syncCurrentAllowedToolsFromOptions(state *runnerRunState) {
 			state.currentAllowedTools = append(state.currentAllowedTools, name)
 		}
 	}
+
 	r.setCurrentAllowedTools(state, state.currentAllowedTools)
 }
 
@@ -96,9 +98,11 @@ func (r *Runner) terminalSubmitPlanNativeTools(state *runnerRunState) bool {
 // overrides with plan-execute recovery surface callable tools.
 func (r *Runner) syncPlanThenExecuteRecoveryAllowedTools(state *runnerRunState) {
 	r.syncCurrentAllowedToolsFromOptions(state)
+
 	if !state.opts.ForceNativeTools &&
 		r.planThenExecutePlannerPhase() &&
 		len(state.opts.Tools) == 0 {
+
 		surface := DerivePlanExecuteRecoverySurface(r.RuntimeBrief, state.collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
 		switch surface.Kind {
 		case PlanExecuteRecoverySurfaceAnchorRefresh:
@@ -108,6 +112,7 @@ func (r *Runner) syncPlanThenExecuteRecoveryAllowedTools(state *runnerRunState) 
 		case PlanExecuteRecoverySurfaceSubmitReady, PlanExecuteRecoverySurfaceSubmitCorrection:
 			state.currentAllowedTools = append(state.currentAllowedTools[:0], "submit_plan")
 		}
+
 		r.setCurrentAllowedTools(state, state.currentAllowedTools)
 	}
 }
@@ -119,31 +124,38 @@ func (r *Runner) rebuildRunTools(state *runnerRunState) {
 	if r.Workspace == nil {
 		return
 	}
+
 	allowed := r.advertisedAllowedTools(r.Workspace.AllowedTools())
 	writeOnlySurface := state.implementationWriteOnlyRecoveryActive ||
 		state.requiredPathCompletionRecoveryActive ||
 		implementationPreWriteToolSurfaceActive(r.RuntimeBrief, state.collectedResults)
 	scopedEditSurface := !writeOnlySurface && implementationScopedEditSurfaceActive(r.RuntimeBrief, state.collectedResults)
+
 	if scopedEditSurface {
 		hideImplementationScopedToolsForTurn(state.turnHiddenTools, state.implementationScopedHiddenTools, r.Workspace)
 	} else {
 		releaseHiddenTools(state.turnHiddenTools, state.implementationScopedHiddenTools)
 	}
+
 	if workerruntime.PermissionProfileIsReadOnlyVerificationShell(r.RuntimeBrief.PermissionProfile) && !state.executionState.verificationAttempted {
 		filtered := make([]string, 0, 1)
+
 		for _, t := range allowed {
 			if t == "shell" {
 				filtered = append(filtered, t)
 			}
 		}
+
 		allowed = filtered
 	}
+
 	if runnerBriefAllowsExternalToolAppend(r.RuntimeBrief) && !writeOnlySurface && !scopedEditSurface {
 		if extReg := r.Workspace.ExternalToolsRegistry(); extReg != nil {
 			seen := make(map[string]struct{}, len(allowed))
 			for _, name := range allowed {
 				seen[name] = struct{}{}
 			}
+
 			for _, name := range r.Workspace.AvailableExternalToolNames() {
 				if _, ok := seen[name]; !ok {
 					allowed = append(allowed, name)
@@ -152,6 +164,7 @@ func (r *Runner) rebuildRunTools(state *runnerRunState) {
 			}
 		}
 	}
+
 	if writeOnlySurface {
 		allowed = implementationPreWriteAllowedTools(allowed)
 	} else if scopedEditSurface {
@@ -160,7 +173,9 @@ func (r *Runner) rebuildRunTools(state *runnerRunState) {
 			Results:          state.collectedResults,
 			BaseAllowedTools: allowed,
 		})
+
 		allowed = append([]string(nil), contract.AllowedTools...)
+
 		if extReg := r.Workspace.ExternalToolsRegistry(); extReg != nil {
 			for _, name := range r.Workspace.AvailableExternalToolNames() {
 				if extReg.IsReadOnlyDiscovery(name) && !containsRunnerTool(allowed, name) {
@@ -175,17 +190,22 @@ func (r *Runner) rebuildRunTools(state *runnerRunState) {
 	}); contract.PhaseID == turnPhaseImplementationTargetSource ||
 		contract.PhaseID == turnPhaseImplementationVerifyReady ||
 		contract.PhaseID == turnPhaseImplementationWriteReady {
+
 		allowed = append([]string(nil), contract.AllowedTools...)
 	}
+
 	if surfaceTools := DirectAnswerSurfaceForBriefTools(r.RuntimeBrief); surfaceTools != nil {
 		allowed = append([]string(nil), surfaceTools...)
+
 		if !state.directAnswerSurfaceEmitted {
 			if surface, ok := DirectAnswerSurfaceForBrief(r.RuntimeBrief); ok {
 				EmitDirectAnswerSurfaceEvent(r.emitEvent, surface)
+
 				state.directAnswerSurfaceEmitted = true
 			}
 		}
 	}
+
 	if len(state.turnHiddenTools) > 0 {
 		filtered := make([]string, 0, len(allowed))
 		for _, t := range allowed {
@@ -193,27 +213,34 @@ func (r *Runner) rebuildRunTools(state *runnerRunState) {
 				filtered = append(filtered, t)
 			}
 		}
+
 		allowed = filtered
 	}
+
 	var tools []llama.Tool
+
 	if len(allowed) > 0 || !workerruntime.PermissionProfileIsConversationOnly(r.RuntimeBrief.PermissionProfile) {
 		tools = buildLlamaTools(r.Workspace.BuildToolDefinitions(allowed))
 		if !workerruntime.RuntimeContractIsDirectAnswer(r.RuntimeBrief.Contract) &&
 			r.lanePolicy().ShouldHaveNoteTool(r.RuntimeBrief.Contract) {
+
 			tools = append(tools, noteToolDefinition())
 			if !slices.Contains(r.RuntimeBrief.AllowedTools, noteToolName) {
 				r.RuntimeBrief.AllowedTools = append(r.RuntimeBrief.AllowedTools, noteToolName)
 			}
 		}
 	}
+
 	if contract := postReadinessToolContractForBrief(r.RuntimeBrief, state.collectedResults, state.delegatedReadOnlyAnswerReady, state.postChildPacketActive); contract.AnswerOnly {
 		tools = nil
 	} else if contract.RequireSourceRefreshContract {
 		tools = stripPostReadinessBroadTools(tools)
 		tools = applyPostReadinessSchemaRequirements(tools)
 	}
+
 	state.opts.Tools = tools
 	r.syncCurrentAllowedToolsFromOptions(state)
+
 	if len(state.opts.Tools) == 0 {
 		state.opts.ToolChoice = ""
 	} else if strings.TrimSpace(state.opts.ToolChoice) == "" {
@@ -227,19 +254,25 @@ func (r *Runner) refreshPlanThenExecuteTerminalSurface(state *runnerRunState, re
 	switch surface.Kind {
 	case PlanExecuteRecoverySurfaceAnchorRefresh:
 		r.refreshPlanThenExecuteAnchorRefreshSurface(&state.turnMessages, state.collectedResults, reason)
+
 		return
 	case PlanExecuteRecoverySurfaceSourceSatisfiedTerminal:
 		r.refreshPlanThenExecuteTerminalOutcomeSurface(&state.turnMessages, state.collectedResults, reason)
+
 		return
 	case PlanExecuteRecoverySurfaceSubmitReady, PlanExecuteRecoverySurfaceSubmitCorrection:
 	default:
 		r.prunePlanThenExecuteTerminalSurfaceHistory(&state.turnMessages, reason)
+
 		return
 	}
+
 	if state.planThenExecuteNativeSubmitPlanDisabled {
 		r.refreshPlanThenExecuteTerminalTextualFallbackSurface(&state.turnMessages, state.collectedResults, reason)
+
 		return
 	}
+
 	r.refreshPlanThenExecuteTerminalToolSurface(&state.turnMessages, state.collectedResults, reason)
 }
 
@@ -247,8 +280,10 @@ func (r *Runner) refreshPlanThenExecuteTerminalSurface(state *runnerRunState, re
 func (r *Runner) forcePlanThenExecuteTerminalSurface(state *runnerRunState, reason string) {
 	if state.planThenExecuteNativeSubmitPlanDisabled {
 		r.refreshPlanThenExecuteTerminalTextualFallbackSurface(&state.turnMessages, state.collectedResults, reason)
+
 		return
 	}
+
 	r.refreshPlanThenExecuteTerminalToolSurface(&state.turnMessages, state.collectedResults, reason)
 }
 
@@ -256,8 +291,10 @@ func (r *Runner) forcePlanThenExecuteTerminalSurface(state *runnerRunState, reas
 // of every plan-execute recovery injection.
 func (r *Runner) injectPlanThenExecuteRecoveryTail(state *runnerRunState, prompt string, eventRole string, surfaceKey string) {
 	r.refreshPlanThenExecuteTerminalSurface(state, surfaceKey)
+
 	state.turnMessages = append(state.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 	r.rebuildRunTools(state)
+
 	state.opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(state.opts, r.RuntimeBrief, state.collectedResults, r.terminalSubmitPlanNativeTools(state))
 	r.syncPlanThenExecuteRecoveryAllowedTools(state)
 	r.emitEvent(RunEvent{Role: eventRole, Content: prompt})
@@ -276,6 +313,7 @@ func (r *Runner) emitTerminalAnswerSignalsOnce(state *runnerRunState, decision t
 	if state.acceptedAnswerSignalsEmitted || strings.TrimSpace(decision.RawAnswer) == "" {
 		return
 	}
+
 	switch decision.Outcome {
 	case terminalAnswerAccepted:
 		if state.autonomyRecorder != nil {
@@ -283,19 +321,24 @@ func (r *Runner) emitTerminalAnswerSignalsOnce(state *runnerRunState, decision t
 			if r.planThenExecutePlannerPhase() && planThenExecuteSourceSatisfiedAnswerIntent(decision.RawAnswer) {
 				reasonCode = "plan_source_satisfied_short_circuit"
 			}
+
 			state.autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyAllow, reasonCode, state.collectedResults, state.completionGateRejections)
 		}
+
 		r.emitFinalAnswerTelemetry(decision.RawAnswer, state.collectedResults, decision.Acceptance)
 	case terminalAnswerBlocked, terminalAnswerTransportBlocked:
 		blockerKind := util.FirstNonEmpty(strings.TrimSpace(decision.Acceptance.BlockerKind), strings.TrimSpace(decision.StopReason))
 		if state.autonomyRecorder != nil {
 			state.autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, blockerKind, state.collectedResults, state.completionGateRejections)
 		}
+
 		r.emitFinalAnswerTelemetry(decision.RawAnswer, state.collectedResults, decision.Acceptance)
+
 		if terminalBlockedStatusShouldEmit(state.completionStatusEmitted, state.completionStatusLastStatus, state.completionStatusLastBlockerKind, blockerKind) {
 			r.emitStateCompletionStatus(state, "blocked", decision.Acceptance.Reason, blockerKind, state.collectedResults, true)
 		}
 	}
+
 	state.acceptedAnswerSignalsEmitted = true
 }
 
@@ -304,24 +347,32 @@ func (r *Runner) finish(state *runnerRunState, value string, finishErr error, re
 	if strings.TrimSpace(reason) != "" {
 		state.stopReason = reason
 	}
+
 	state.budgetExhausted = exhausted
 	if finishErr == nil {
 		decision := r.classifyTerminalAnswer(value, state.stopReason, state.collectedResults)
 		presentedBeforeDecoration := decision.PresentedAnswer
+
 		decision.PresentedAnswer = r.decorateTerminalAnswerDecision(decision, state.collectedResults)
+
 		if strings.TrimSpace(decision.PresentedAnswer) != strings.TrimSpace(presentedBeforeDecoration) {
 			r.emitFinalAnswerDecorationEvent(decision.StopReason, presentedBeforeDecoration, decision.PresentedAnswer)
+
 			if strings.TrimSpace(r.LastAssistantMessage.Role) != "" || strings.TrimSpace(r.LastAssistantMessage.Content) != "" {
 				r.LastAssistantMessage.Content = decision.PresentedAnswer
 			}
 		}
+
 		value = decision.PresentedAnswer
 		state.stopReason = decision.StopReason
+
 		if decision.OverrideSource != "" {
 			r.emitFinalAnswerBlockerOverride(decision.Acceptance, decision.StopReason, decision.OverrideSource)
 		}
+
 		r.emitTerminalAnswerSignalsOnce(state, decision)
 	}
+
 	return value, finishErr
 }
 
@@ -330,20 +381,29 @@ func (r *Runner) retryRejectedFinalAnswer(state *runnerRunState, stepNumber int,
 	if !r.retryableFinalAnswerAcceptanceRejection(acceptance, state.collectedResults, state.completionGateRejections, state.currentAllowedTools) {
 		return false, ""
 	}
+
 	priorGateRejections := state.completionGateRejections
+
 	result.Error = escalateCompletionGateMessage(result.Error, priorGateRejections)
+
 	if state.autonomyRecorder != nil {
 		state.autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, runnerAutonomyReasonCode(result.Summary), state.collectedResults, priorGateRejections)
 	}
+
 	state.controller.rejectCompletion(stepNumber, activeToolCall, assistantMessage, result)
+
 	state.completionGateRejections = priorGateRejections + 1
+
 	var recoveryPrompt string
+
 	if prompt, _, ok := r.completionGateRecoveryPrompt(state.collectedResults); ok {
 		if card := r.renderRecoveryCardForRejectedAction(workspace.ToolRequest{Tool: "completion_gate"}, result, state.collectedResults, state.currentAllowedTools); card != "" {
 			prompt = appendRecoveryCardToMessage(prompt, card)
 		}
+
 		recoveryPrompt = prompt
 		r.emitEvent(RunEvent{Role: "completion_gate_recovery", Content: prompt})
 	}
+
 	return true, recoveryPrompt
 }

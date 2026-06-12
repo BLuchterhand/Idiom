@@ -81,10 +81,12 @@ func toolFailureFromErrorResult(tool string, summary string, err error, code fai
 	if err != nil {
 		errorText = err.Error()
 	}
+
 	result := toolFailureResult(tool, summary, errorText, code, reason)
 	if err != nil {
 		result.Failure = failures.Wrap(code, reason, strings.TrimSpace(summary), err)
 	}
+
 	return result
 }
 
@@ -92,13 +94,18 @@ func toolFailureFromTypedErrorResult(tool string, summary string, err error) Too
 	if err == nil {
 		return toolFailureResult(tool, summary, "", failures.Internal, reasonToolInternalFailure)
 	}
+
 	code := failures.CodeOf(err)
 	reason := failures.ReasonOf(err)
+
 	if code == failures.Unknown {
 		code = failures.Internal
 	}
+
 	result := toolFailureResult(tool, summary, err.Error(), code, reason)
+
 	result.Failure = err
+
 	return result
 }
 
@@ -106,9 +113,11 @@ func toolFailureFromMaybeTypedErrorResult(tool string, summary string, err error
 	if err == nil {
 		return toolFailureResult(tool, summary, "", defaultCode, defaultReason)
 	}
+
 	if failures.CodeOf(err) != failures.Unknown {
 		return toolFailureFromTypedErrorResult(tool, summary, err)
 	}
+
 	return toolFailureFromErrorResult(tool, summary, err, defaultCode, defaultReason)
 }
 
@@ -117,6 +126,7 @@ func toolFailureResult(tool string, summary string, errorText string, code failu
 	if message == "" {
 		message = strings.TrimSpace(summary)
 	}
+
 	return ToolResult{
 		Tool:    tool,
 		Summary: summary,
@@ -129,14 +139,18 @@ func withToolFailure(result ToolResult, code failures.Code, reason failures.Reas
 	if result.Failure != nil {
 		return result
 	}
+
 	message := strings.TrimSpace(result.Error)
 	if message == "" {
 		message = strings.TrimSpace(result.Summary)
 	}
+
 	if message == "" {
 		return result
 	}
+
 	result.Failure = failures.New(code, reason, message)
+
 	return result
 }
 
@@ -144,6 +158,7 @@ func annotateToolFailure(result ToolResult) ToolResult {
 	if result.Failure != nil || strings.TrimSpace(result.Error) == "" {
 		return result
 	}
+
 	text := strings.ToLower(strings.Join([]string{result.Code, result.Summary, result.Error}, " "))
 	switch {
 	case strings.Contains(text, "freshness_blocker") || strings.Contains(text, "stale context"):

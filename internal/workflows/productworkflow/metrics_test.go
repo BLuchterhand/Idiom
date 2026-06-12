@@ -10,40 +10,52 @@ import (
 func TestProductWorkflowMetrics(t *testing.T) {
 	t.Run("collects deterministic counts", func(t *testing.T) {
 		root := writeMetricsFixture(t)
+
 		metrics, err := BuildProductWorkflowMetrics(root)
 		if err != nil {
 			t.Fatalf("BuildProductWorkflowMetrics() error = %v", err)
 		}
+
 		if metrics.CurrentPhase != "phase-5" || metrics.CurrentState != "implementing" {
 			t.Fatalf("unexpected phase/state: %s/%s", metrics.CurrentPhase, metrics.CurrentState)
 		}
+
 		if metrics.StateRevision != 7 {
 			t.Fatalf("StateRevision = %d, want 7", metrics.StateRevision)
 		}
+
 		if metrics.GateStatusCounts["pass"] != 1 || metrics.GateStatusCounts["fail"] != 1 {
 			t.Fatalf("unexpected gate counts: %#v", metrics.GateStatusCounts)
 		}
+
 		if metrics.TDDObligationTotal != 2 || metrics.TDDStatusCounts["pending"] != 1 || metrics.TDDStatusCounts["done"] != 1 {
 			t.Fatalf("unexpected TDD counts: total=%d status=%#v", metrics.TDDObligationTotal, metrics.TDDStatusCounts)
 		}
+
 		if metrics.TDDTypeCounts["acceptance"] != 1 || metrics.TDDTypeCounts["contract"] != 1 {
 			t.Fatalf("unexpected TDD type counts: %#v", metrics.TDDTypeCounts)
 		}
+
 		if metrics.LedgerRecordCount != 2 || metrics.LedgerAtomRecordCount != 1 {
 			t.Fatalf("unexpected ledger counts: %#v", metrics)
 		}
+
 		if metrics.ReportTypeCounts["implementation"] != 1 || metrics.ReportTypeCounts["review"] != 1 || metrics.ReportTypeCounts["investigation"] != 1 {
 			t.Fatalf("unexpected report type counts: %#v", metrics.ReportTypeCounts)
 		}
+
 		if metrics.ReportStatusCounts["implementation_completed"] != 1 || metrics.ReportStatusCounts["review_pending"] != 1 || metrics.ReportStatusCounts["investigation_pending"] != 1 {
 			t.Fatalf("unexpected report status counts: %#v", metrics.ReportStatusCounts)
 		}
+
 		if metrics.ArtifactPathCount != 2 || metrics.EvidenceCardCount != 1 || metrics.TraceabilityRowCount != 1 || metrics.PRDRequirementCount != 1 || metrics.ADRCount != 1 {
 			t.Fatalf("unexpected artifact/evidence counts: %#v", metrics)
 		}
+
 		if metrics.EvidenceLinkCounts["prd_requirement_evidence_refs"] != 1 || metrics.EvidenceLinkCounts["adr_evidence_refs"] != 1 || metrics.EvidenceLinkCounts["traceability_evidence_links"] != 1 {
 			t.Fatalf("unexpected evidence link counts: %#v", metrics.EvidenceLinkCounts)
 		}
+
 		if metrics.NextValidActionCount != 2 || metrics.BlockerCount != 1 || metrics.OpenObligationCount != 2 {
 			t.Fatalf("unexpected progress counts: %#v", metrics)
 		}
@@ -52,6 +64,7 @@ func TestProductWorkflowMetrics(t *testing.T) {
 	t.Run("fails closed on malformed artifacts", func(t *testing.T) {
 		root := writeMetricsFixture(t)
 		writeFixtureFile(t, root, "tdd.json", "{bad")
+
 		if _, err := BuildProductWorkflowMetrics(root); err == nil {
 			t.Fatal("expected error for malformed tdd.json")
 		} else if strings.Contains(err.Error(), root) {
@@ -66,6 +79,7 @@ func TestProductWorkflowMetrics(t *testing.T) {
 		if err := os.Remove(filepath.Join(root, "tdd.json")); err != nil {
 			t.Fatalf("remove tdd.json: %v", err)
 		}
+
 		if _, err := BuildProductWorkflowMetrics(root); err == nil {
 			t.Fatal("expected error for missing tdd.json")
 		} else if strings.Contains(err.Error(), root) {
@@ -78,6 +92,7 @@ func TestProductWorkflowMetrics(t *testing.T) {
 	t.Run("rejects unsafe artifact paths", func(t *testing.T) {
 		root := writeMetricsFixture(t)
 		writeFixtureFile(t, root, "adrs/index.json", `{"schema_version":"v1","effort_id":"metrics-effort","adrs":[{"adr_id":"ADR-1","title":"A","status":"accepted","path":"../../outside.md","coverage_tier":"unit","prd_refs":["REQ-1"],"created_at":"2026-05-17T00:00:00Z"}]}`)
+
 		if _, err := BuildProductWorkflowMetrics(root); err == nil {
 			t.Fatal("expected unsafe ADR path to fail closed")
 		} else if strings.Contains(err.Error(), root) {
@@ -130,26 +145,32 @@ func TestProductWorkflowMetrics(t *testing.T) {
 				root := writeMetricsFixture(t)
 				abs := filepath.Join(root, tt.path)
 				updated := tt.content
+
 				if updated == "" {
 					data, err := os.ReadFile(abs)
 					if err != nil {
 						t.Fatalf("read fixture: %v", err)
 					}
+
 					updated = strings.Replace(string(data), tt.oldText, tt.newText, 1)
 					if updated == string(data) {
 						t.Fatalf("fixture replacement %q not found", tt.oldText)
 					}
 				}
+
 				if err := os.WriteFile(abs, []byte(updated), 0o644); err != nil {
 					t.Fatalf("write fixture: %v", err)
 				}
+
 				_, err := BuildProductWorkflowMetrics(root)
 				if err == nil {
 					t.Fatal("expected metrics to fail closed")
 				}
+
 				if !strings.Contains(err.Error(), "unsupported") {
 					t.Fatalf("expected unsupported-value error, got %v", err)
 				}
+
 				if strings.Contains(err.Error(), root) {
 					t.Fatalf("metrics error should not leak absolute root path, got %q", err.Error())
 				}
@@ -160,6 +181,7 @@ func TestProductWorkflowMetrics(t *testing.T) {
 
 func writeMetricsFixture(t *testing.T) string {
 	t.Helper()
+
 	root := t.TempDir()
 	writeFixtureFile(t, root, "workflow_state.json", `{
   "schema_version":"idiom.product_workflow_state.v0.fixture",
@@ -258,16 +280,20 @@ x
 	writeFixtureFile(t, root, "reports/test-implementation.json", `{"schema_version":"idiom.implementation_report.v1.fixture","task_id":"impl-metrics","effort_id":"metrics-effort","implementor_id":"impl","runtime":"opencode","model":"m","completed_at":"2026-05-17T00:00:00Z","complexity_tier":"C1","scope_statement":"s","code_changes":false,"changed_paths":[],"verification":{"run_by_implementor":false,"commands":[],"status":"pending"},"privacy_note":"No raw prompts stored.","open_blockers":[],"reviewer_id":"rev"}`)
 	writeFixtureFile(t, root, "reports/test-review.json", `{"schema_version":"idiom.review_report.v1.fixture","effort_id":"metrics-effort","task_id":"impl-metrics","reviewer":{"agent_id":"rev","model":"m","reasoning_effort":"medium","independent_from_implementor":true},"status":"pending","findings":[],"checks":{},"reviewed_at":"","commands_reviewed":[],"created_at":"2026-05-17T00:00:00Z"}`)
 	writeFixtureFile(t, root, "reports/test-investigation.json", `{"schema_version":"idiom.investigation_report.v1.fixture","effort_id":"metrics-effort","task_id":"impl-metrics","status":"pending","created_at":"2026-05-17T00:00:00Z","scope":{"files":["a.go"]},"tests":{"focused":"go test"},"coverage":{"tier":"unit"},"traceability":{"checked":false},"privacy_audit":{"no_raw_prompts":true},"reviewer_findings":[],"blockers":[],"next_valid_action":"","completed_at":""}`)
+
 	return root
 }
 
 func writeFixtureFile(t *testing.T, root, relPath, content string) {
 	t.Helper()
+
 	abs := filepath.Join(root, relPath)
 	mkdirPath := filepath.Dir(abs)
+
 	if err := os.MkdirAll(mkdirPath, 0o755); err != nil {
 		t.Fatalf("MkdirAll(%s): %v", mkdirPath, err)
 	}
+
 	if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile(%s): %v", abs, err)
 	}

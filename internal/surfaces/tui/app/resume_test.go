@@ -22,6 +22,7 @@ func TestRehydratePlanStateRecoversLedgerAndHits(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.go", "a\n")
 	writeFile(t, root, "b.go", "b\n")
+
 	m := snapshotModel(t, root)
 
 	// Seed: ledger with a multi-path item, one path written, plan and
@@ -53,15 +54,19 @@ func TestRehydratePlanStateRecoversLedgerAndHits(t *testing.T) {
 	if !m.plan.sessionHeadingWritten {
 		t.Errorf("session heading flag should be restored")
 	}
+
 	if !m.plan.ledgerRenderedIDs["t1"] {
 		t.Errorf("rendered id set should include t1")
 	}
+
 	if got := m.plan.ledgerItems["t1"]; got.ID != "t1" || len(got.Paths) != 2 {
 		t.Errorf("ledger item not rebuilt: %#v", got)
 	}
+
 	if !m.plan.ledgerHits["t1"]["a.go"] {
 		t.Errorf("a.go should remain marked hit after rehydrate")
 	}
+
 	if m.plan.ledgerHits["t1"]["b.go"] {
 		t.Errorf("b.go was not written pre-restart — should not be hit")
 	}
@@ -77,6 +82,7 @@ func TestRehydratePlanStateRecoversLedgerAndHits(t *testing.T) {
 	if strings.Contains(string(planAfter), "### Unplanned") {
 		t.Errorf("post-rehydrate write fell to Unplanned:\nbefore=%s\nafter=%s", planBefore, planAfter)
 	}
+
 	if !strings.Contains(string(planAfter), "- [x] rename across files") {
 		t.Errorf("box should flip after final path is hit:\n%s", planAfter)
 	}
@@ -88,6 +94,7 @@ func TestRehydratePlanStateRecoversLedgerAndHits(t *testing.T) {
 func TestRehydratePlanStatePreservesCheckedItems(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.go", "a\n")
+
 	m := snapshotModel(t, root)
 
 	m.recordTaskLedger(workspace.ToolRequest{
@@ -96,6 +103,7 @@ func TestRehydratePlanStatePreservesCheckedItems(t *testing.T) {
 			{ID: "t1", Content: "touch a", Status: "pending", Paths: []string{"a.go"}},
 		},
 	}, workspace.ToolResult{Summary: "ok"})
+
 	req := workspace.ToolRequest{Tool: "edit_file", Path: "a.go", Description: "touch"}
 	m.capturePlanSnapshot(1, req)
 	writeFile(t, root, "a.go", "a; v2\n")
@@ -111,6 +119,7 @@ func TestRehydratePlanStatePreservesCheckedItems(t *testing.T) {
 	if !ok {
 		t.Fatalf("t1 missing from rehydrated ledger")
 	}
+
 	if strings.ToLower(item.Status) != "completed" {
 		t.Errorf("checked item should rehydrate with status=completed, got %q", item.Status)
 	}
@@ -125,6 +134,7 @@ func TestRehydratePlanStateMissingFileIsSilent(t *testing.T) {
 	// Don't create .planning/. Call rehydrate and verify no panic,
 	// no state populated.
 	rehydratePlanState(m)
+
 	if len(m.plan.ledgerItems) != 0 || len(m.plan.ledgerRenderedIDs) != 0 {
 		t.Errorf("rehydrate without plan file should leave maps empty")
 	}
@@ -146,6 +156,7 @@ func TestReplaySessionMessagesReadsUserAssistantOnly(t *testing.T) {
 		`{"type":"message","role":"user","content":"   "}`,
 		`{"type":"message","role":"user","content":"second question"}`,
 	}, "\n")
+
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
@@ -154,15 +165,19 @@ func TestReplaySessionMessagesReadsUserAssistantOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("replay: %v", err)
 	}
+
 	if len(msgs) != 3 {
 		t.Fatalf("want 3 replayed messages (user, assistant, user), got %d: %#v", len(msgs), msgs)
 	}
+
 	if msgs[0].Role != "user" || msgs[0].Content != "hello" {
 		t.Errorf("msgs[0] wrong: %#v", msgs[0])
 	}
+
 	if msgs[1].Role != "assistant" || msgs[1].Content != "hi there" {
 		t.Errorf("msgs[1] wrong: %#v", msgs[1])
 	}
+
 	if msgs[2].Role != "user" || msgs[2].Content != "second question" {
 		t.Errorf("msgs[2] wrong: %#v", msgs[2])
 	}
@@ -181,6 +196,7 @@ func TestResumeSessionRestoresHistoryPanelGovernance(t *testing.T) {
 	})
 
 	m := snapshotModel(t, root)
+
 	m.cfg = config.Config{Chat: config.Chat{DebugLogDir: logDir, DebugLogMode: "redacted"}}
 	m.history.panelOpen = true
 	m.history.viewport = viewport.New(96, 24)
@@ -190,12 +206,15 @@ func TestResumeSessionRestoresHistoryPanelGovernance(t *testing.T) {
 	if err := m.ResumeSession("governed"); err != nil {
 		t.Fatalf("ResumeSession: %v", err)
 	}
+
 	if len(m.messages) != 2 {
 		t.Fatalf("expected resumed model messages, got %d: %#v", len(m.messages), m.messages)
 	}
+
 	if len(m.history.entries) != 2 {
 		t.Fatalf("expected resumed history entries, got %d: %#v", len(m.history.entries), m.history.entries)
 	}
+
 	view := collapseWhitespace(m.history.viewport.View())
 	for _, want := range []string{
 		"Route: explore -> implement (implementation_result)",

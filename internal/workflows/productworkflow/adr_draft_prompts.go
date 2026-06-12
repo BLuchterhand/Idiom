@@ -34,6 +34,7 @@ func PlanADRDraftPrompt(effortRoot, promptPath, adrOutputPath string, evidence [
 	} else {
 		plan.Findings = append(plan.Findings, ProfileFinding{Kind: "invalid_adr_prompt_path", Message: fmt.Sprintf("ADR prompt path %q must be effort-relative and must not contain path traversal", plan.PromptPath), File: plan.PromptPath, Severity: ProductWorkflowSeverityError})
 	}
+
 	if cleanOutput, ok := cleanResearchOutputDir(plan.ADROutputPath); ok {
 		plan.ADROutputPath = filepath.ToSlash(cleanOutput)
 	} else {
@@ -45,6 +46,7 @@ func PlanADRDraftPrompt(effortRoot, promptPath, adrOutputPath string, evidence [
 		if finding, outside := ValidateResearchPromptPathBoundary(effortRoot, promptAbs, plan.PromptPath); outside {
 			plan.Findings = append(plan.Findings, finding)
 		}
+
 		validateADRPath := func(relPath, outsideKind, label string) {
 			absPath := filepath.Join(effortRoot, relPath)
 			if finding, outside := researchPromptBoundaryFinding(effortRoot, absPath, relPath, outsideKind, label); outside {
@@ -61,6 +63,7 @@ func PlanADRDraftPrompt(effortRoot, promptPath, adrOutputPath string, evidence [
 		if id == "" {
 			continue
 		}
+
 		plan.EvidenceCardIDs = append(plan.EvidenceCardIDs, id)
 		plan.EvidenceSummaries = append(plan.EvidenceSummaries, ADREvidenceCardSummary{
 			CardID:      id,
@@ -71,11 +74,13 @@ func PlanADRDraftPrompt(effortRoot, promptPath, adrOutputPath string, evidence [
 			Uncertainty: shorten(card.Uncertainty, 140),
 		})
 	}
+
 	for _, req := range prd.Requirements {
 		id := strings.TrimSpace(req.ID)
 		if id == "" {
 			continue
 		}
+
 		plan.PRDRequirementIDs = append(plan.PRDRequirementIDs, id)
 		plan.PRDRequirementSummary = append(plan.PRDRequirementSummary, ADRPRDRequirementSummary{
 			ID:                id,
@@ -87,19 +92,23 @@ func PlanADRDraftPrompt(effortRoot, promptPath, adrOutputPath string, evidence [
 			TDDObligationRefs: stableUniqueStrings(req.TDDObligations),
 		})
 	}
+
 	sort.Slice(plan.EvidenceSummaries, func(i, j int) bool { return plan.EvidenceSummaries[i].CardID < plan.EvidenceSummaries[j].CardID })
 	sort.Slice(plan.PRDRequirementSummary, func(i, j int) bool { return plan.PRDRequirementSummary[i].ID < plan.PRDRequirementSummary[j].ID })
 	sort.Strings(plan.EvidenceCardIDs)
 	sort.Strings(plan.PRDRequirementIDs)
+
 	plan.EvidenceCardCount = len(plan.EvidenceCardIDs)
 	plan.PRDRequirementCount = len(plan.PRDRequirementIDs)
 	plan.Command = artifactCommandRecipeWithValidator(plan.PromptPath, plan.ADROutputPath, plan.EventsPath, plan.ReportPath, productArtifactValidatorCommand("adr")+" --prd prd.md --tdd-ledger tdd.json")
 	sortProfileFindings(plan.Findings)
+
 	return plan
 }
 
 func RenderADRDraftPromptText(plan ADRDraftPromptPlan) string {
 	var b strings.Builder
+
 	b.WriteString("Draft an Architecture Decision Record (ADR) markdown document from the PRD requirements and evidence summaries below.\n\n")
 	b.WriteString("ADR contract requirements:\n")
 	b.WriteString("- Follow the existing ADR parser/audit contract.\n")
@@ -122,24 +131,32 @@ func RenderADRDraftPromptText(plan ADRDraftPromptPlan) string {
 	b.WriteString("- Command recipe: " + plan.Command + "\n\n")
 
 	b.WriteString(fmt.Sprintf("PRD requirements (%d total):\n", plan.PRDRequirementCount))
+
 	for _, req := range plan.PRDRequirementSummary {
 		b.WriteString(fmt.Sprintf("- %s | priority=%s | statement=%s | evidence_refs=%v | tdd_obligations=%v\n", req.ID, orUnknown(req.Priority), req.Statement, req.EvidenceRefs, req.TDDObligationRefs))
 	}
+
 	if len(plan.PRDRequirementSummary) == 0 {
 		b.WriteString("- none\n")
 	}
+
 	b.WriteByte('\n')
 
 	b.WriteString(fmt.Sprintf("Evidence cards (%d total):\n", plan.EvidenceCardCount))
+
 	for _, summary := range plan.EvidenceSummaries {
 		b.WriteString(fmt.Sprintf("- %s | kind=%s | confidence=%s | freshness=%s | claim=%s", summary.CardID, orUnknown(summary.Kind), orUnknown(summary.Confidence), orUnknown(summary.Freshness), summary.Claim))
+
 		if strings.TrimSpace(summary.Uncertainty) != "" {
 			b.WriteString(fmt.Sprintf(" | uncertainty=%s", summary.Uncertainty))
 		}
+
 		b.WriteByte('\n')
 	}
+
 	if len(plan.EvidenceSummaries) == 0 {
 		b.WriteString("- none\n")
 	}
+
 	return b.String()
 }

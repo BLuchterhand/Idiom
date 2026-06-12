@@ -23,21 +23,27 @@ func (s *jsonEventStream) emit(record map[string]any) {
 	if s == nil || s.w == nil {
 		return
 	}
+
 	if record == nil {
 		return
 	}
+
 	if _, ok := record["ts"]; !ok {
 		record["ts"] = time.Now().Format(time.RFC3339Nano)
 	}
+
 	if s.sessionID != "" {
 		record["session_id"] = s.sessionID
 	}
+
 	data, err := json.Marshal(record)
 	if err != nil {
 		return
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	_, _ = s.w.Write(append(data, '\n'))
 }
 
@@ -49,10 +55,12 @@ func (m *Model) SetJSONEventStream(w io.Writer, sessionID string) {
 	if m == nil {
 		return
 	}
+
 	if w == nil {
 		m.eventStream = nil
 		return
 	}
+
 	m.eventStream = newJSONEventStream(w, sessionID)
 }
 
@@ -62,6 +70,7 @@ func (m *Model) DebugLogPath() string {
 	if m == nil {
 		return ""
 	}
+
 	return m.debugLogPath
 }
 
@@ -69,6 +78,7 @@ func (m *Model) emitJSONEvent(record map[string]any) {
 	if m == nil || m.eventStream == nil {
 		return
 	}
+
 	m.eventStream.emit(record)
 }
 
@@ -78,6 +88,7 @@ func (m *Model) emitJSONMessage(role, content string) {
 	default:
 		return
 	}
+
 	m.emitJSONEvent(map[string]any{
 		"type":    "message",
 		"role":    role,
@@ -100,12 +111,15 @@ func (m *Model) emitJSONToolRequest(event agent.ToolRequestEvent) {
 	if event.DiscoveryClass != "" {
 		record["discovery_class"] = event.DiscoveryClass
 	}
+
 	if event.DiscoveryScope != "" {
 		record["discovery_scope"] = event.DiscoveryScope
 	}
+
 	if event.DiscoveryCost != "" {
 		record["discovery_cost"] = event.DiscoveryCost
 	}
+
 	m.emitJSONEvent(record)
 }
 
@@ -120,6 +134,7 @@ func (m *Model) emitJSONToolResult(event agent.ToolResultEvent) {
 	if event.Result.Error != "" {
 		record["error"] = event.Result.Error
 	}
+
 	m.emitJSONEvent(record)
 }
 
@@ -147,6 +162,7 @@ func (m *Model) emitJSONStart(prompt string) {
 		record["workspace_root"] = m.workspace.Root()
 		record["workspace_mode"] = string(m.workspace.Mode())
 	}
+
 	record["agent_mode"] = m.currentMode().Name
 	m.emitJSONEvent(record)
 }

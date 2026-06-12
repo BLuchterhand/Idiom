@@ -42,9 +42,11 @@ func TestCoverageGatePassesBehaviorStandardWithCompleteCoverage(t *testing.T) {
 		},
 		map[string]bool{"TDD-1": true},
 	)
+
 	if eval.Status != "pass" {
 		t.Fatalf("expected pass, got %q: %#v", eval.Status, eval.Findings)
 	}
+
 	if CoverageGateHasBlockers(eval) {
 		t.Fatalf("expected no blockers, got %#v", eval.Blockers)
 	}
@@ -90,6 +92,7 @@ func TestBuildCoverageGateEvaluatedEventReportsCoveragePercentages(t *testing.T)
 	if event.Event != "coverage_gate_evaluated" || event.EffortID != "effort-1" || event.TaskID != "task-1" || event.GateResult != "pass" {
 		t.Fatalf("unexpected event identity: %#v", event)
 	}
+
 	assertCoveragePct(t, "ears", event.Coverage.EARSCoveragePct, 50)
 	assertCoveragePct(t, "bdd", event.Coverage.BDDCoveragePct, 50)
 	assertCoveragePct(t, "fmea", event.Coverage.FMEAMitigationPct, 75)
@@ -102,9 +105,11 @@ func TestBuildCoverageGateEvaluatedEventReportsCoveragePercentages(t *testing.T)
 	assertCoveragePct(t, "post_mortem", event.Coverage.PostMortemCoveragePct, 40)
 	assertCoveragePct(t, "formal_verification", event.Coverage.FormalVerificationPct, 50)
 	assertCoveragePct(t, "mutation", event.Coverage.MutationScore, 85)
+
 	if len(event.BlockedReasons) != 0 {
 		t.Fatalf("passing event should have no blocked reasons, got %#v", event.BlockedReasons)
 	}
+
 	if event.Waivers == nil {
 		t.Fatal("waivers should be an empty list, not nil")
 	}
@@ -126,10 +131,12 @@ func TestBuildCoverageGateEvaluatedEventReportsBlockedReasons(t *testing.T) {
 	if event.EffortID != "ledger-effort" || event.TaskID != "ledger-task" {
 		t.Fatalf("expected ledger identity fallback, got %#v", event)
 	}
+
 	want := []string{"authority_preflight:parse_error", "mutation:coverage_mutation_incomplete"}
 	if len(event.BlockedReasons) != len(want) {
 		t.Fatalf("expected blocked reasons %#v, got %#v", want, event.BlockedReasons)
 	}
+
 	for i := range want {
 		if event.BlockedReasons[i] != want[i] {
 			t.Fatalf("expected blocked reasons %#v, got %#v", want, event.BlockedReasons)
@@ -139,9 +146,11 @@ func TestBuildCoverageGateEvaluatedEventReportsBlockedReasons(t *testing.T) {
 
 func assertCoveragePct(t *testing.T, name string, got *float64, want float64) {
 	t.Helper()
+
 	if got == nil {
 		t.Fatalf("%s coverage should be reported", name)
 	}
+
 	if *got != want {
 		t.Fatalf("%s coverage = %v, want %v", name, *got, want)
 	}
@@ -191,16 +200,20 @@ func TestCoverageGateBlocksContractHighWhenMutationBelowMin(t *testing.T) {
 			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1"}},
 		},
 	)
+
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", eval.Status)
 	}
+
 	foundMutation := false
+
 	for _, blocker := range eval.Blockers {
 		if blocker.Criterion == "mutation" {
 			foundMutation = true
 			break
 		}
 	}
+
 	if !foundMutation {
 		t.Fatalf("expected mutation blocker, got %#v", eval.Blockers)
 	}
@@ -234,13 +247,16 @@ func TestCoverageGateBlocksWhenEvidenceAcceptanceCoverageMissing(t *testing.T) {
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", eval.Status)
 	}
+
 	found := false
+
 	for _, blocker := range eval.Blockers {
 		if blocker.Criterion == "evidence_acceptance" {
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected evidence_acceptance blocker, got %#v", eval.Blockers)
 	}
@@ -313,6 +329,7 @@ func TestCoverageGateDoesNotBlockWhenNonMustPRDReferencesUnknownTDDObligation(t 
 	if eval.Status != "pass" {
 		t.Fatalf("expected pass, got %q", eval.Status)
 	}
+
 	for _, blocker := range eval.Blockers {
 		if blocker.Kind == "coverage_prd_tdd_obligation_unknown" {
 			t.Fatalf("non-must PRD unknown TDD ref must not produce PRD TDD blocker: %#v", eval.Blockers)
@@ -351,27 +368,35 @@ func TestCoverageGateBlocksWhenMustPRDReferencesUnknownTDDObligation(t *testing.
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", eval.Status)
 	}
+
 	found := false
+
 	for _, blocker := range eval.Blockers {
 		if blocker.Kind == "coverage_prd_tdd_obligation_unknown" &&
 			strings.Contains(blocker.Message, "REQ-1") &&
 			strings.Contains(blocker.Message, "TDD-MISSING") {
+
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected typed PRD TDD blocker naming requirement and obligation, got %#v", eval.Blockers)
 	}
+
 	found = false
+
 	for _, finding := range eval.Findings {
 		if finding.Kind == "coverage_prd_tdd_obligation_unknown" &&
 			strings.Contains(finding.Message, "REQ-1") &&
 			strings.Contains(finding.Message, "TDD-MISSING") {
+
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected typed PRD TDD finding naming requirement and obligation, got %#v", eval.Findings)
 	}
@@ -412,15 +437,19 @@ func TestCoverageGateBlocksWhenAcceptedADRReferencesUnknownTDDObligation(t *test
 
 	foundBlocker := false
 	foundFinding := false
+
 	for _, blocker := range eval.Blockers {
 		if blocker.Kind == "coverage_adr_tdd_obligation_unknown" {
 			foundBlocker = true
+
 			if !strings.Contains(blocker.Message, "ADR-1") || !strings.Contains(blocker.Message, "TDD-MISSING") {
 				t.Fatalf("blocker message should contain ADR and TDD ID, got: %s", blocker.Message)
 			}
+
 			break
 		}
 	}
+
 	if !foundBlocker {
 		t.Fatalf("expected typed ADR TDD blocker, got %#v", eval.Blockers)
 	}
@@ -428,12 +457,15 @@ func TestCoverageGateBlocksWhenAcceptedADRReferencesUnknownTDDObligation(t *test
 	for _, finding := range eval.Findings {
 		if finding.Kind == "coverage_adr_tdd_obligation_unknown" {
 			foundFinding = true
+
 			if !strings.Contains(finding.Message, "ADR-1") || !strings.Contains(finding.Message, "TDD-MISSING") {
 				t.Fatalf("finding message should contain ADR and TDD ID, got: %s", finding.Message)
 			}
+
 			break
 		}
 	}
+
 	if !foundFinding {
 		t.Fatalf("expected typed ADR TDD finding, got %#v", eval.Findings)
 	}
@@ -477,6 +509,7 @@ func TestCoverageGateRegressionForADRWithoutRelPath(t *testing.T) {
 
 	foundBlocker := false
 	foundFinding := false
+
 	for _, blocker := range eval.Blockers {
 		if blocker.Kind == "coverage_adr_tdd_obligation_unknown" {
 			foundBlocker = true
@@ -484,9 +517,11 @@ func TestCoverageGateRegressionForADRWithoutRelPath(t *testing.T) {
 			if !strings.Contains(blocker.Message, "ADR-1") || !strings.Contains(blocker.Message, "TDD-MISSING") {
 				t.Fatalf("blocker message should contain ADR and TDD ID, got: %s", blocker.Message)
 			}
+
 			break
 		}
 	}
+
 	if !foundBlocker {
 		t.Fatalf("expected typed ADR TDD blocker, got %#v", eval.Blockers)
 	}
@@ -498,9 +533,11 @@ func TestCoverageGateRegressionForADRWithoutRelPath(t *testing.T) {
 			if !strings.Contains(finding.Message, "ADR-1") || !strings.Contains(finding.Message, "TDD-MISSING") {
 				t.Fatalf("finding message should contain ADR and TDD ID, got: %s", finding.Message)
 			}
+
 			break
 		}
 	}
+
 	if !foundFinding {
 		t.Fatalf("expected typed ADR TDD finding, got %#v", eval.Findings)
 	}
@@ -580,13 +617,16 @@ func TestCoverageGateBlocksWhenTDDEvidenceMissing(t *testing.T) {
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q: %#v", eval.Status, eval.Findings)
 	}
+
 	found := false
+
 	for _, f := range eval.Findings {
 		if f.Criterion == "tdd_evidence" && f.Kind == "coverage_tdd_evidence_missing" {
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected tdd_evidence finding, got: %#v", eval.Findings)
 	}
@@ -611,6 +651,7 @@ func TestBuildKnownTDDObligationIDsScopesHistoricalRecords(t *testing.T) {
 			t.Fatalf("expected known ID %q in %#v", want, ids)
 		}
 	}
+
 	for _, unexpected := range []string{"TDD-OTHER", "TDD-WRONG-RECORD", "TDD-WRONG-EFFORT"} {
 		if ids[unexpected] {
 			t.Fatalf("did not expect known ID %q in %#v", unexpected, ids)
@@ -620,31 +661,39 @@ func TestBuildKnownTDDObligationIDsScopesHistoricalRecords(t *testing.T) {
 
 func TestCoverageGateAuthorityPreflightCarriesLintFindings(t *testing.T) {
 	eval := CoverageGateEvaluation{Status: "pass"}
+
 	eval = ApplyCoverageGateAuthorityPreflight(eval, []LintSummaryFinding{
 		{Code: "adr_supersession_non_reciprocal", Path: "adrs/ADR-001-test.md", Message: "ADR-001 supersedes ADR-002 without reciprocal metadata"},
 		{Code: "adr_index_frontmatter_mismatch", Path: "adrs/index.json", Message: "ADR index entry ADR-001 field prd_refs diverges from ADR markdown"},
 		{Code: "obsidian_stale_status", Path: ObsidianProductWorkflowPath, Message: "not coverage-gate authority"},
 	})
+
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked status, got %q", eval.Status)
 	}
+
 	foundAuthorityCriterion := false
+
 	for _, criterion := range eval.Criteria {
 		if criterion.Key == "authority_preflight" && criterion.Status == "blocked" {
 			foundAuthorityCriterion = true
 			break
 		}
 	}
+
 	if !foundAuthorityCriterion {
 		t.Fatalf("expected blocked authority_preflight criterion, got %#v", eval.Criteria)
 	}
+
 	if len(eval.Blockers) != 2 {
 		t.Fatalf("expected only ADR authority blockers, got %#v", eval.Blockers)
 	}
+
 	kinds := map[string]bool{}
 	for _, blocker := range eval.Blockers {
 		kinds[blocker.Kind] = true
 	}
+
 	for _, want := range []string{"adr_supersession_non_reciprocal", "adr_index_frontmatter_mismatch"} {
 		if !kinds[want] {
 			t.Fatalf("expected authority blocker %q, got %#v", want, eval.Blockers)
@@ -693,15 +742,19 @@ func TestCoverageGateBlocksContractTiersWhenPBTInvariantTotalIsZero(t *testing.T
 			}
 
 			foundPBT := false
+
 			for _, blocker := range eval.Blockers {
 				if blocker.Criterion == "pbt" {
 					foundPBT = true
+
 					if !strings.Contains(blocker.Message, "invariants_total is zero") {
 						t.Fatalf("blocker message should mention invariants_total is zero, got: %s", blocker.Message)
 					}
+
 					break
 				}
 			}
+
 			if !foundPBT {
 				t.Fatalf("expected pbt blocker, got %#v", eval.Blockers)
 			}
@@ -733,6 +786,7 @@ func TestCoverageGateBlocksContractTiersWhenStateMachineInventoryMissing(t *test
 			if eval.Status != "blocked" {
 				t.Fatalf("expected blocked, got %q", eval.Status)
 			}
+
 			assertCoverageGateBlocker(t, eval, "state_machine", "coverage_state_machine_incomplete", "state_machines_total is zero")
 		})
 	}
@@ -743,6 +797,7 @@ func TestCoverageGateBlocksContractTiersWhenStateMachineCoveragePartial(t *testi
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", eval.Status)
 	}
+
 	assertCoverageGateBlocker(t, eval, "state_machine", "coverage_state_machine_incomplete", "state_machines_covered == state_machines_total (2/3)")
 }
 
@@ -753,6 +808,7 @@ func TestCoverageGateDoesNotRequireStateMachineCoverageBelowContractTiers(t *tes
 			if eval.Status != "pass" {
 				t.Fatalf("expected pass, got %q: %#v", eval.Status, eval.Blockers)
 			}
+
 			for _, blocker := range eval.Blockers {
 				if blocker.Criterion == "state_machine" {
 					t.Fatalf("expected no state_machine blocker in %s tier, got %#v", tier, eval.Blockers)
@@ -767,6 +823,7 @@ func TestCoverageGateBlocksContractTiersWhenBoundaryValueCoveragePartial(t *test
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", eval.Status)
 	}
+
 	assertCoverageGateBlocker(t, eval, "boundary_value", "coverage_boundary_value_incomplete", "boundary_values_tested == boundary_values_total (3/4)")
 }
 
@@ -775,6 +832,7 @@ func TestCoverageGateBlocksContractTiersWhenBoundaryValueGateConfiguredWithoutCo
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", eval.Status)
 	}
+
 	assertCoverageGateBlocker(t, eval, "boundary_value", "coverage_boundary_value_incomplete", "boundary_values_total is zero")
 }
 
@@ -783,6 +841,7 @@ func TestCoverageGateDoesNotRequireBoundaryValueCoverageWhenNoNumericBoundsDecla
 	if eval.Status != "pass" {
 		t.Fatalf("expected pass, got %q: %#v", eval.Status, eval.Blockers)
 	}
+
 	for _, blocker := range eval.Blockers {
 		if blocker.Criterion == "boundary_value" {
 			t.Fatalf("expected no boundary_value blocker, got %#v", eval.Blockers)
@@ -795,6 +854,7 @@ func TestCoverageGateBlocksContractTiersWhenFaultTreeCoveragePartial(t *testing.
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", eval.Status)
 	}
+
 	assertCoverageGateBlocker(t, eval, "fault_tree", "coverage_fault_tree_incomplete", "fault_tree_leaves_tested == fault_tree_leaves_total (3/4)")
 }
 
@@ -803,6 +863,7 @@ func TestCoverageGateBlocksContractTiersWhenFaultTreeGateConfiguredWithoutCounte
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", eval.Status)
 	}
+
 	assertCoverageGateBlocker(t, eval, "fault_tree", "coverage_fault_tree_incomplete", "fault_tree_leaves_total is zero")
 }
 
@@ -811,6 +872,7 @@ func TestCoverageGateDoesNotRequireFaultTreeCoverageWhenNoFaultTreeDeclared(t *t
 	if eval.Status != "pass" {
 		t.Fatalf("expected pass, got %q: %#v", eval.Status, eval.Blockers)
 	}
+
 	for _, blocker := range eval.Blockers {
 		if blocker.Criterion == "fault_tree" {
 			t.Fatalf("expected no fault_tree blocker, got %#v", eval.Blockers)
@@ -823,6 +885,7 @@ func TestCoverageGateBlocksContractTiersWhenPostMortemCoveragePartial(t *testing
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", eval.Status)
 	}
+
 	assertCoverageGateBlocker(t, eval, "post_mortem", "coverage_post_mortem_incomplete", "post_mortem_catching_tests == post_mortem_incidents_total (3/4)")
 }
 
@@ -831,6 +894,7 @@ func TestCoverageGateBlocksContractTiersWhenPostMortemGateConfiguredWithoutCount
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", eval.Status)
 	}
+
 	assertCoverageGateBlocker(t, eval, "post_mortem", "coverage_post_mortem_incomplete", "post_mortem_incidents_total is zero")
 }
 
@@ -839,6 +903,7 @@ func TestCoverageGateDoesNotRequirePostMortemCoverageWhenNoIncidentsDeclared(t *
 	if eval.Status != "pass" {
 		t.Fatalf("expected pass, got %q: %#v", eval.Status, eval.Blockers)
 	}
+
 	for _, blocker := range eval.Blockers {
 		if blocker.Criterion == "post_mortem" {
 			t.Fatalf("expected no post_mortem blocker, got %#v", eval.Blockers)
@@ -851,6 +916,7 @@ func TestCoverageGateBlocksFormalOptionalWhenFormalCoveragePartial(t *testing.T)
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", eval.Status)
 	}
+
 	assertCoverageGateBlocker(t, eval, "formal_verification", "coverage_formal_verification_incomplete", "formal_models_verified == formal_models_total (2/3)")
 }
 
@@ -859,6 +925,7 @@ func TestCoverageGateBlocksFormalOptionalWhenFormalGateConfiguredWithoutCounters
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", eval.Status)
 	}
+
 	assertCoverageGateBlocker(t, eval, "formal_verification", "coverage_formal_verification_incomplete", "formal_models_total is zero")
 }
 
@@ -867,6 +934,7 @@ func TestCoverageGateDoesNotRequireFormalCoverageForOrdinaryContractHigh(t *test
 	if eval.Status != "pass" {
 		t.Fatalf("expected pass, got %q: %#v", eval.Status, eval.Blockers)
 	}
+
 	for _, blocker := range eval.Blockers {
 		if blocker.Criterion == "formal_verification" {
 			t.Fatalf("expected no formal_verification blocker, got %#v", eval.Blockers)
@@ -934,6 +1002,7 @@ func coverageGateEvalWithBoundaryCoverage(tier string, total int, tested int, ga
 	if len(gatesPassed) == 0 {
 		gatesPassed = []string{"contract"}
 	}
+
 	return coverageGateEvalWithCoverage(tier, TDDCoverage{
 		EARSTotal:                1,
 		EARSMapped:               1,
@@ -965,6 +1034,7 @@ func coverageGateEvalWithFaultTreeCoverage(tier string, total int, tested int, g
 	if len(gatesPassed) == 0 {
 		gatesPassed = []string{"contract"}
 	}
+
 	return coverageGateEvalWithCoverage(tier, TDDCoverage{
 		EARSTotal:                1,
 		EARSMapped:               1,
@@ -996,6 +1066,7 @@ func coverageGateEvalWithPostMortemCoverage(tier string, total int, catchingTest
 	if len(gatesPassed) == 0 {
 		gatesPassed = []string{"contract"}
 	}
+
 	return coverageGateEvalWithCoverage(tier, TDDCoverage{
 		EARSTotal:                1,
 		EARSMapped:               1,
@@ -1027,6 +1098,7 @@ func coverageGateEvalWithFormalCoverage(tier string, total int, verified int, ga
 	if len(gatesPassed) == 0 {
 		gatesPassed = []string{"contract"}
 	}
+
 	return coverageGateEvalWithCoverage(tier, TDDCoverage{
 		EARSTotal:                1,
 		EARSMapped:               1,
@@ -1086,14 +1158,18 @@ func coverageGateEvalWithCoverage(tier string, coverage TDDCoverage) CoverageGat
 
 func assertCoverageGateBlocker(t *testing.T, eval CoverageGateEvaluation, criterion string, kind string, messageSubstring string) {
 	t.Helper()
+
 	for _, blocker := range eval.Blockers {
 		if blocker.Criterion != criterion || blocker.Kind != kind {
 			continue
 		}
+
 		if messageSubstring != "" && !strings.Contains(blocker.Message, messageSubstring) {
 			t.Fatalf("blocker message should contain %q, got: %s", messageSubstring, blocker.Message)
 		}
+
 		return
 	}
+
 	t.Fatalf("expected blocker criterion=%q kind=%q, got %#v", criterion, kind, eval.Blockers)
 }

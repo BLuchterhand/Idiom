@@ -42,9 +42,11 @@ func TestDecorateFinalAnswerStripsCompletedMutationSelfBlocker(t *testing.T) {
 	if strings.Contains(strings.ToLower(got), "blocker") {
 		t.Fatalf("decorator should strip self-inflicted Blocker section, got:\n%s", got)
 	}
+
 	if !strings.Contains(got, "Changed paths") {
 		t.Fatalf("decorator should preserve Changed paths summary, got:\n%s", got)
 	}
+
 	if !strings.Contains(got, "planner-owned") {
 		t.Fatalf("decorator should preserve Verification line, got:\n%s", got)
 	}
@@ -105,9 +107,11 @@ func TestDecorateFinalAnswerKeepsPlanExecuteSourceSatisfiedAnswer(t *testing.T) 
 		Results:    results,
 		UserFacing: true,
 	})
+
 	if strings.Contains(got, "Required edit path") {
 		t.Fatalf("decorator must not rewrite source-satisfied plan-execute answer into a blocker, got:\n%s", got)
 	}
+
 	if !strings.Contains(got, "source-satisfied") {
 		t.Fatalf("decorator should preserve source-satisfied answer, got:\n%s", got)
 	}
@@ -138,6 +142,7 @@ func TestDecorateFinalAnswerKeepsBlockerWhenVerificationNotPlannerOwned(t *testi
 		Results:    results,
 		UserFacing: true,
 	})
+
 	if !strings.Contains(strings.ToLower(got), "blocker") {
 		t.Fatalf("decorator should preserve Blocker when verification isn't planner-owned, got:\n%s", got)
 	}
@@ -169,6 +174,7 @@ func TestDecorateFinalAnswerKeepsBlockerWhenLastFailureIsNonWriteTool(t *testing
 		Results:    results,
 		UserFacing: true,
 	})
+
 	if !strings.Contains(strings.ToLower(got), "blocker") {
 		t.Fatalf("decorator should preserve Blocker when last failure was non-write tool, got:\n%s", got)
 	}
@@ -196,11 +202,13 @@ func TestDecorateFinalAnswerSynthesizesReadOnlySourceReturnAnswer(t *testing.T) 
 		Results:    results,
 		UserFacing: true,
 	})
+
 	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "\"Save changes\""} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("decorated answer missing %q:\n%s", want, got)
 		}
 	}
+
 	for _, forbidden := range []string{"Changing that returned string", "would be the source edit", "No files were changed", "contains `func ShortLabel"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("decorated answer should not infer edit advice %q:\n%s", forbidden, got)
@@ -232,11 +240,13 @@ func TestFinalAnswerDecoratorComposesFromTypedDelegatedPacketWithoutProseHeading
 		Results:    results,
 		UserFacing: true,
 	})
+
 	for _, want := range []string{"task", "runChildTask", "`internal/runtime/agent/runner.go`", "`internal/runtime/agent/runner_child_tasks.go`"} {
 		if !strings.Contains(strings.ToLower(got), strings.ToLower(want)) {
 			t.Fatalf("decorated typed packet answer missing %q:\n%s", want, got)
 		}
 	}
+
 	for _, forbidden := range []string{"Partial findings", "Discovery packet", "Evidence used", "Inspected paths:", "Source-body evidence paths:", "Key findings:"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("decorated typed packet answer leaked %q:\n%s", forbidden, got)
@@ -270,11 +280,13 @@ func TestFinalAnswerDecoratorReplacesLineOrientedSourceSnippetWithTypedPacket(t 
 		Results:    results,
 		UserFacing: true,
 	})
+
 	for _, want := range []string{"task", "runChildTask", "`internal/runtime/agent/runner.go`", "`internal/runtime/agent/runner_child_tasks.go`"} {
 		if !strings.Contains(strings.ToLower(got), strings.ToLower(want)) {
 			t.Fatalf("decorated typed packet answer missing %q:\n%s", want, got)
 		}
 	}
+
 	for _, forbidden := range []string{"1:package", "2:.", "3:import"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("decorated answer leaked line-oriented source snippet %q:\n%s", forbidden, got)
@@ -333,11 +345,13 @@ func TestDecorateFinalAnswerBudgetStopDoesNotPreserveRetainedContextScaffold(t *
 		Results:    results,
 		UserFacing: true,
 	})
+
 	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "\"Save changes\""} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("decorated budget-stop answer missing %q:\n%s", want, got)
 		}
 	}
+
 	if strings.Contains(got, "retained source context identifies") {
 		t.Fatalf("budget-stop scaffold should not bypass decoration:\n%s", got)
 	}
@@ -355,6 +369,7 @@ func TestPresentableReadFileSourceAnswerSkipsGeneratedArtifacts(t *testing.T) {
 		Summary: "Read f1 .idiom/comprehension/views/context.json lines 1-5 (total lines: 5)",
 		Output:  "1:{\"candidate_files\":[{\"path\":\"internal/runtime/agent/runner.go\"}]}\n",
 	}}
+
 	if answer, ok := presentableReadFileSourceAnswer(brief, results); ok {
 		t.Fatalf("generated artifacts must not be converted into source-body answers, got %q", answer)
 	}
@@ -382,6 +397,7 @@ func TestDecorateFinalAnswerDoesNotPromoteGeneratedArtifactGarbage(t *testing.T)
 		Results:    results,
 		UserFacing: true,
 	})
+
 	if strings.Contains(got, ".idiom/comprehension/views/context.json") || strings.Contains(got, "candidate_files") {
 		t.Fatalf("generated context artifact must not become a user-facing grounded answer:\n%s", got)
 	}
@@ -409,14 +425,17 @@ func TestDecorateFinalAnswerAnswersReadOnlyTextChangeQuestion(t *testing.T) {
 		Results:    results,
 		UserFacing: true,
 	})
+
 	for _, want := range []string{"At the source level, yes", "internal/labels/labels.go", "\"Save changes\""} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("decorated answer missing %q:\n%s", want, got)
 		}
 	}
+
 	if strings.Contains(got, "No files were changed") || strings.Contains(got, "contains `func ShortLabel") {
 		t.Fatalf("decorated answer should not echo source-body transcript:\n%s", got)
 	}
+
 	if strings.Contains(got, "tool: read_file") || strings.Contains(got, `{"tool"`) {
 		t.Fatalf("decorated answer leaked internal tool request:\n%s", got)
 	}
@@ -443,14 +462,17 @@ func TestDecorateFinalAnswerTreatsLineOrientedJSONToolAsInternal(t *testing.T) {
 		Results:    results,
 		UserFacing: true,
 	})
+
 	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "\"Save changes\""} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("decorated answer missing %q:\n%s", want, got)
 		}
 	}
+
 	if strings.Contains(got, "No files were changed") || strings.Contains(got, "contains `func ShortLabel") {
 		t.Fatalf("decorated answer should not echo source-body transcript:\n%s", got)
 	}
+
 	if strings.Contains(got, "tool: read_file") || strings.Contains(got, `{"tool"`) {
 		t.Fatalf("decorated answer leaked internal tool request:\n%s", got)
 	}
@@ -490,6 +512,7 @@ func TestDecorateFinalAnswerSynthesizesRoutedCodeNavigateSourceBodyAnswer(t *tes
 		Results:    results,
 		UserFacing: true,
 	})
+
 	for _, want := range []string{
 		"Runner.launchReadOnlyChild",
 		"internal/runtime/agent/runner.go",
@@ -500,6 +523,7 @@ func TestDecorateFinalAnswerSynthesizesRoutedCodeNavigateSourceBodyAnswer(t *tes
 			t.Fatalf("decorated answer missing %q:\n%s", want, got)
 		}
 	}
+
 	for _, forbidden := range []string{
 		"bounded execution policy",
 		"child-scoped runtime context",
@@ -510,6 +534,7 @@ func TestDecorateFinalAnswerSynthesizesRoutedCodeNavigateSourceBodyAnswer(t *tes
 			t.Fatalf("decorated answer used scenario-specific phrase %q:\n%s", forbidden, got)
 		}
 	}
+
 	if strings.HasPrefix(got, "<<QUESTION>>") || strings.Contains(got, "did not retain a concrete user-facing finding") {
 		t.Fatalf("routed source-body evidence should synthesize a concrete answer, got:\n%s", got)
 	}
@@ -538,6 +563,7 @@ func TestPresentableExactProbeAnswerAcceptsReadOnlyCapabilitySourceBody(t *testi
 	if !ok {
 		t.Fatal("expected routed read_only_capability source body to be presentable")
 	}
+
 	for _, want := range []string{"Runner.childPolicy", "internal/runtime/agent/runner.go", "returns `RunPolicy{MaxToolSteps: 4, MaxModelCalls: 2}`"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("presentable answer missing %q:\n%s", want, got)
@@ -565,6 +591,7 @@ func TestExactProbeObservationsUseGenericSourceFacts(t *testing.T) {
 			t.Fatalf("generic exact-probe observations missing %q:\n%s", want, got)
 		}
 	}
+
 	for _, forbidden := range []string{
 		"delegated prompt",
 		"bounded execution policy",
@@ -596,6 +623,7 @@ func TestExactProbeObservationsDoNotInferChildRuntimeSemantics(t *testing.T) {
 	if !strings.Contains(got, "calls ") {
 		t.Fatalf("expected generic call observation, got:\n%s", got)
 	}
+
 	for _, want := range []string{
 		"normalizeReadOnlyChildPrompt",
 		"RuntimeBriefForRole",
@@ -605,6 +633,7 @@ func TestExactProbeObservationsDoNotInferChildRuntimeSemantics(t *testing.T) {
 			t.Fatalf("generic call observation missing %q:\n%s", want, got)
 		}
 	}
+
 	for _, forbidden := range []string{
 		"rewrites the delegated prompt",
 		"bounded execution policy",
@@ -669,6 +698,7 @@ func TestExactEvidenceSymbolSetAcceptsRoutedCodeNavigateSourceBody(t *testing.T)
 	}}
 
 	symbols := exactEvidenceSymbolSet(results)
+
 	for _, want := range []string{"Model.renderMessages", "SetContent"} {
 		key := normalizedAnswerSymbol(want)
 		if _, ok := symbols[key]; !ok {
@@ -712,13 +742,17 @@ func TestPresentableNoToolsFallbackDoesNotUseSearchHitAsSourceBody(t *testing.T)
 	if !ok {
 		t.Fatal("expected fallback to convert unsupported scaffold into presentable uncertainty")
 	}
+
 	if strings.HasPrefix(got, "<<QUESTION>>:") {
 		t.Fatalf("direct-answer search-only evidence must not expose blocker protocol, got:\n%s", got)
 	}
+
 	if !strings.Contains(got, "not have enough supported evidence") ||
 		!strings.Contains(got, "internal/labels/labels.go") {
+
 		t.Fatalf("expected presentable uncertainty with candidate context, got:\n%s", got)
 	}
+
 	if strings.Contains(got, "\"Save changes\"") {
 		t.Fatalf("search hit text must not be promoted to source-body evidence:\n%s", got)
 	}
@@ -746,11 +780,13 @@ func TestDecorateFinalAnswerSanitizesReadOnlyQuestionBlocker(t *testing.T) {
 	if strings.Contains(got, "<<QUESTION>>") {
 		t.Fatalf("user-facing decorator leaked internal blocker protocol:\n%s", got)
 	}
+
 	for _, want := range []string{"not have enough supported evidence", "internal/surfaces/tui/app/rendering.go"} {
 		if !strings.Contains(strings.ToLower(got), strings.ToLower(want)) {
 			t.Fatalf("decorated blocker missing %q:\n%s", want, got)
 		}
 	}
+
 	for _, forbidden := range []string{"<<question>>", "completion gate", "missing completion evidence", "answer with the exact", "required next evidence"} {
 		if strings.Contains(strings.ToLower(got), forbidden) {
 			t.Fatalf("decorated blocker leaked internal phrase %q:\n%s", forbidden, got)
@@ -770,6 +806,7 @@ func TestDecorateFinalAnswerDoesNotRewriteNormalReadOnlyAnswer(t *testing.T) {
 		},
 		UserFacing: true,
 	})
+
 	if got != answer {
 		t.Fatalf("normal read-only answer should pass through unchanged, got:\n%s", got)
 	}
@@ -786,6 +823,7 @@ func TestDecorateFinalAnswerSanitizesConversationOnlyQuestionBlocker(t *testing.
 		},
 		UserFacing: true,
 	})
+
 	if got != "Cannot answer because the requested external fact is unavailable." {
 		t.Fatalf("conversation-only blocker should be presentable without protocol marker, got:\n%s", got)
 	}
@@ -814,6 +852,7 @@ func TestDecorateFinalAnswerPreservesExternalQuestionBlockerEvidenceTerms(t *tes
 			want:   "Cannot answer until diagnostic evidence from the failed job is attached.",
 		},
 	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
@@ -841,6 +880,7 @@ func TestCombinedReadFileSourceBodiesIncludesPrefetchEvidence(t *testing.T) {
 	if len(bodies) != 1 {
 		t.Fatalf("expected one source body from prefetch, got %#v", bodies)
 	}
+
 	if bodies[0].path != "README.md" || !strings.Contains(bodies[0].output, "local coding-agent harness") {
 		t.Fatalf("unexpected prefetch source body: %#v", bodies[0])
 	}
@@ -867,11 +907,13 @@ func TestDecorateFinalAnswerSanitizesInternalReadOnlyRemediationQuestionBlocker(
 	if strings.Contains(got, "<<QUESTION>>") {
 		t.Fatalf("decorator leaked internal blocker protocol:\n%s", got)
 	}
+
 	for _, forbidden := range []string{"current read-only answer", "gather one source-body read", "exact missing claim"} {
 		if strings.Contains(strings.ToLower(got), forbidden) {
 			t.Fatalf("decorated blocker leaked internal remediation phrase %q:\n%s", forbidden, got)
 		}
 	}
+
 	if !strings.Contains(got, "not have enough supported evidence") || !strings.Contains(got, "logs/conversations/session.jsonl") {
 		t.Fatalf("decorated blocker should keep user-facing stop context and evidence path, got:\n%s", got)
 	}
@@ -889,6 +931,7 @@ func TestDecorateFinalAnswerPreservesPlanExecuteReviewRepairQuestionBlocker(t *t
 		},
 		UserFacing: true,
 	})
+
 	if got != answer {
 		t.Fatalf("plan-execute review-repair blocker must remain machine-readable, got:\n%s", got)
 	}
@@ -915,9 +958,11 @@ func TestDecorateFinalAnswerSanitizesSynthesizedReadOnlyQuestionBlocker(t *testi
 	if strings.Contains(got, "<<QUESTION>>") {
 		t.Fatalf("decorator leaked synthesized internal blocker protocol:\n%s", got)
 	}
+
 	if !strings.Contains(got, "not have enough supported evidence") || !strings.Contains(got, "internal/labels/labels.go") {
 		t.Fatalf("decorated synthesized blocker lost useful context:\n%s", got)
 	}
+
 	for _, forbidden := range []string{"required next evidence", "answer with the exact"} {
 		if strings.Contains(strings.ToLower(got), forbidden) {
 			t.Fatalf("decorated synthesized blocker leaked internal phrase %q:\n%s", forbidden, got)
@@ -947,9 +992,11 @@ func TestDecorateFinalAnswerLabelsCandidateOnlyReadOnlyBlocker(t *testing.T) {
 	if strings.Contains(got, "<<QUESTION>>") {
 		t.Fatalf("decorator leaked internal blocker protocol:\n%s", got)
 	}
+
 	if !strings.Contains(got, "Candidate paths surfaced") || !strings.Contains(got, "internal/labels/labels.go") {
 		t.Fatalf("candidate-only blocker should retain candidate context with honest label:\n%s", got)
 	}
+
 	if strings.Contains(got, "Inspected evidence") {
 		t.Fatalf("candidate-only blocker must not claim inspected evidence:\n%s", got)
 	}
@@ -1020,6 +1067,7 @@ func TestPresentableNoToolsFallbackPreservesSubstantiveAnswerAfterStrippingAppen
 	if !ok {
 		t.Fatal("expected fallback to preserve substantive answer")
 	}
+
 	if !strings.Contains(got, "internal/surfaces/tui/app/history.go") {
 		t.Fatalf("fallback dropped content from substantive answer:\n%s", got)
 	}
@@ -1033,6 +1081,7 @@ func TestStripInternalEvidenceAppendixStripsSourceLine(t *testing.T) {
 	if strings.Contains(stripped, "Source:") {
 		t.Fatalf("stripInternalEvidenceAppendix should strip lines starting with Source:\ngot: %s", stripped)
 	}
+
 	if !strings.Contains(stripped, "internal/surfaces/tui/app/history.go") {
 		t.Fatalf("stripInternalEvidenceAppendix dropped substantive content:\ngot: %s", stripped)
 	}
@@ -1044,15 +1093,19 @@ func TestStripBlockerSectionPreservesEverythingBeforeBlocker(t *testing.T) {
 		"Verification: planner-owned.\n\n" +
 		"Blocker:\n- failure detail one\n- failure detail two\n"
 	cleaned, stripped := stripBlockerSection(answer)
+
 	if !stripped {
 		t.Fatal("expected stripBlockerSection to report a strip")
 	}
+
 	if strings.Contains(strings.ToLower(cleaned), "blocker") {
 		t.Fatalf("cleaned answer should not contain Blocker section, got:\n%s", cleaned)
 	}
+
 	if !strings.Contains(cleaned, "foo.go") || !strings.Contains(cleaned, "Verification") {
 		t.Fatalf("cleaned answer dropped earlier prose:\n%s", cleaned)
 	}
+
 	if strings.HasSuffix(cleaned, "\n") {
 		t.Fatalf("cleaned answer should not have trailing newline, got %q", cleaned)
 	}
@@ -1108,28 +1161,37 @@ func TestSynthesizeBriefConversationFallback(t *testing.T) {
 		{Tool: "context_query", Summary: "Context query returned 12 nodes"},
 	}
 	got := synthesizeBriefConversationFallback(brief, results)
+
 	if strings.HasPrefix(got, "<<QUESTION>>:") {
 		t.Errorf("read-only conversation fallback must not expose typed blocker protocol, got: %q", got)
 	}
+
 	if !strings.Contains(got, "Evidence paths") {
 		t.Errorf("fallback should mention evidence paths: %q", got)
 	}
+
 	if !strings.Contains(got, "Read Model.resize in internal/surfaces/tui/app/model_state.go lines 774-820") {
 		t.Errorf("fallback should retain source anchors without dumping source body: %q", got)
 	}
+
 	if strings.Contains(got, "func (m *Model) resize") {
 		t.Errorf("fallback should not dump source body: %q", got)
 	}
+
 	if strings.Contains(strings.ToLower(got), "files were changed") ||
 		strings.Contains(strings.ToLower(got), "did not change any files") {
+
 		t.Errorf("fallback should not contain source-body extraction garbage: %q", got)
 	}
+
 	if strings.Contains(strings.ToLower(got), "budget") {
 		t.Errorf("fallback must not claim budget exhaustion without a budget-exhausted stop reason: %q", got)
 	}
+
 	if !strings.Contains(got, "did not retain a concrete user-facing finding") {
 		t.Errorf("fallback should identify the actual failure class: %q", got)
 	}
+
 	if !strings.Contains(got, "not have enough supported evidence") {
 		t.Errorf("fallback should present uncertainty as normal prose: %q", got)
 	}
@@ -1159,11 +1221,13 @@ func TestSynthesizeBriefConversationFallbackAnswersFromMarkdownEvidence(t *testi
 	if strings.HasPrefix(got, "<<QUESTION>>") {
 		t.Fatalf("answerable markdown evidence should synthesize an answer, got:\n%s", got)
 	}
+
 	for _, forbidden := range []string{"did not retain a concrete user-facing finding", "func ", "No files were changed"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("prose answer leaked forbidden fallback text %q:\n%s", forbidden, got)
 		}
 	}
+
 	for _, want := range []string{"docs/idiom-strategic-thesis.md", "evidence-first", "contracts", "runtime brief"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("prose answer missing %q:\n%s", want, got)
@@ -1191,6 +1255,7 @@ func TestSynthesizeBriefConversationFallbackAnswersFromInspectedExplainerSymbol(
 	if strings.HasPrefix(got, "<<QUESTION>>") {
 		t.Fatalf("answerable inspected symbol should synthesize an answer, got:\n%s", got)
 	}
+
 	for _, want := range []string{"internal/runtime/agent/runner.go", "Runner.Run"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("symbol answer missing %q:\n%s", want, got)
@@ -1210,9 +1275,11 @@ func TestSynthesizeBriefConversationFallbackAnswersFromInspectedExplainerSymbol(
 		},
 	)
 	got = synthesizeBriefConversationFallback(brief, results)
+
 	if strings.HasPrefix(got, "<<QUESTION>>") {
 		t.Fatalf("post-readiness rejections must not hide answerable source evidence, got:\n%s", got)
 	}
+
 	for _, want := range []string{"internal/runtime/agent/runner.go", "Runner.Run"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("post-rejection symbol answer missing %q:\n%s", want, got)
@@ -1261,11 +1328,13 @@ func TestSynthesizeBriefConversationFallbackAnswersWhatWouldItTakeFromKeyHandler
 	if strings.HasPrefix(got, "<<QUESTION>>") {
 		t.Fatalf("answerable TUI key-handler evidence should synthesize an answer, got:\n%s", got)
 	}
+
 	for _, want := range []string{"internal/surfaces/tui/app/update_handlers.go", "Model.handleKeyPress", "tea.KeyUp", "tea.KeyDown", "appendHistoryMessage"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("TUI fallback answer missing %q:\n%s", want, got)
 		}
 	}
+
 	runner := &Runner{RuntimeBrief: brief}
 	if kind, reason := runner.finalAnswerBlockerKind(got, results); kind != "" || reason != "" {
 		t.Fatalf("TUI fallback answer blocked: kind=%q reason=%q\n%s", kind, reason, got)
@@ -1289,15 +1358,19 @@ func TestSynthesizeBriefConversationFallbackAnswersWhatWouldItTakeFromKeyHandler
 			"151:\t\tm.appendHistoryMessage(\"user\", text, nil)",
 		}, "\n"),
 	}}
+
 	got = synthesizeBriefConversationFallback(brief, codeNavigateResults)
+
 	if strings.HasPrefix(got, "<<QUESTION>>") {
 		t.Fatalf("answerable code_navigate key-handler evidence should synthesize an answer, got:\n%s", got)
 	}
+
 	for _, want := range []string{"internal/surfaces/tui/app/update_handlers.go", "Model.handleKeyPress", "tea.KeyUp", "tea.KeyDown", "appendHistoryMessage"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("code_navigate fallback answer missing %q:\n%s", want, got)
 		}
 	}
+
 	if kind, reason := runner.finalAnswerBlockerKind(got, codeNavigateResults); kind != "" || reason != "" {
 		t.Fatalf("code_navigate TUI fallback answer blocked: kind=%q reason=%q\n%s", kind, reason, got)
 	}
@@ -1354,6 +1427,7 @@ func TestSynthesizeBriefConversationFallbackPrefersObjectiveRelevantExactProbe(t
 	if !strings.Contains(got, "Model.handleKeyPress") {
 		t.Fatalf("expected key handler to win source-owner selection, got:\n%s", got)
 	}
+
 	if strings.Contains(got, "Model.handleHistoryAudit") {
 		t.Fatalf("off-objective history audit handler should not win source-owner selection:\n%s", got)
 	}
@@ -1408,6 +1482,7 @@ func TestFinalAnswerDecoratorDoesNotUseDelegatedPacketWithoutImplementationOwner
 		Results:    results,
 		UserFacing: true,
 	})
+
 	if strings.Contains(got, "handleHelpOverlayKey") || strings.Contains(got, "handles up/down") || !strings.Contains(got, "not have enough supported evidence") {
 		t.Fatalf("implementation-shape delegated packet without owner evidence should not synthesize answer:\n%s", got)
 	}
@@ -1428,6 +1503,7 @@ func TestFallbackHelpersDoNotUseDelegatedPacketWithoutImplementationOwner(t *tes
 			t.Fatalf("budget fallback should not synthesize off-owner delegated packet:\n%s", got)
 		}
 	}
+
 	if got, ok := synthesizeNoToolsFallbackAnswer("main", brief, results); ok {
 		if strings.Contains(got, "handleHelpOverlayKey") || strings.Contains(got, "handles up/down") {
 			t.Fatalf("no-tools fallback should not synthesize off-owner delegated packet:\n%s", got)
@@ -1474,6 +1550,7 @@ func TestFallbackHelpersDoNotLeakLegacyDelegatedTaskWithoutImplementationOwner(t
 		if !ok {
 			continue
 		}
+
 		if strings.Contains(got, "handleHelpOverlayKey") || strings.Contains(got, "handles up/down") {
 			t.Fatalf("%s fallback leaked off-owner delegated task output:\n%s", name, got)
 		}
@@ -1515,6 +1592,7 @@ func TestDecorateFinalAnswerConversationFallbackDoesNotInventBudgetExhaustion(t 
 			t.Fatalf("model_final fallback must not invent budget exhaustion phrase %q:\n%s", forbidden, got)
 		}
 	}
+
 	if !strings.Contains(got, "internal/workflows/architect/packet.go") {
 		t.Fatalf("fallback should retain inspected path context, got:\n%s", got)
 	}
@@ -1537,9 +1615,11 @@ func TestPresentableNoToolsFallbackSkipsSourceBodyForConversationFallback(t *tes
 	if !ok {
 		t.Fatalf("expected fallback to return ok=true")
 	}
+
 	if strings.Contains(got, "No files were changed") {
 		t.Errorf("source-body extraction garbage leaked into conversation fallback: %q", got)
 	}
+
 	if !strings.Contains(got, "Evidence paths") {
 		t.Errorf("fallback should provide useful evidence context: %q", got)
 	}
@@ -1559,11 +1639,13 @@ func TestPresentableNoToolsFallbackSkipsSourceBodyAnswerForConversation(t *testi
 	if !ok {
 		t.Fatalf("expected fallback to return ok=true")
 	}
+
 	for _, forbidden := range []string{"No files were changed", "func ShortLabel"} {
 		if strings.Contains(got, forbidden) {
 			t.Errorf("source-body fallback leaked %q into conversation answer: %q", forbidden, got)
 		}
 	}
+
 	if !strings.Contains(got, "internal/labels/labels.go") {
 		t.Errorf("fallback should retain inspected path context: %q", got)
 	}
@@ -1578,14 +1660,17 @@ func TestDeterministicNoToolsAnswerSkipsSourceBodyForReadOnlyConversation(t *tes
 		{Tool: "read_file", Summary: "Read file: internal/labels/labels.go", Output: "func ShortLabel() string {\n\treturn \"Save changes\"\n}"},
 	}
 	got, ok := deterministicNoToolsAnswer("main", brief, results)
+
 	if !ok {
 		t.Fatal("expected deterministic answer")
 	}
+
 	for _, forbidden := range []string{"No files were changed", "func ShortLabel"} {
 		if strings.Contains(got, forbidden) {
 			t.Errorf("deterministic answer leaked %q into conversation answer: %q", forbidden, got)
 		}
 	}
+
 	if !strings.Contains(got, "internal/labels/labels.go") {
 		t.Errorf("fallback should retain inspected path context: %q", got)
 	}
@@ -1614,11 +1699,13 @@ func TestDeterministicNoToolsAnswerUsesSourceBodyWhenObjectiveIsConcrete(t *test
 	if !ok {
 		t.Fatal("expected deterministic source-body answer")
 	}
+
 	for _, want := range []string{"debug log redacted mode", "internal/evidence/transcript/debuglog.go", "DebugLogModeRedacted", "DebugLogModeFull"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("deterministic answer missing %q:\n%s", want, got)
 		}
 	}
+
 	if strings.HasPrefix(got, "<<QUESTION>>") || strings.Contains(got, "did not retain a concrete user-facing finding") {
 		t.Fatalf("concrete objective and source body should not collapse to blocker:\n%s", got)
 	}
@@ -1663,6 +1750,7 @@ func TestDeterministicNoToolsAnswerCombinesReadFileFactsForRedactedMetadata(t *t
 	if !ok {
 		t.Fatal("expected deterministic source-body answer")
 	}
+
 	for _, want := range []string{"redacted", "debug log", "internal/evidence/transcript/debuglog.go", "secret", "path", "metadata"} {
 		if !strings.Contains(strings.ToLower(got), strings.ToLower(want)) {
 			t.Fatalf("deterministic answer missing %q:\n%s", want, got)

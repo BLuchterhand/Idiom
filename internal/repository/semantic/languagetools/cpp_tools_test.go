@@ -100,62 +100,78 @@ void WorkerSystem::process_cycle() {}
 	if !languageDetects(root, "cpp") {
 		t.Fatal("expected temp fixture to count as C++ workspace")
 	}
+
 	if result := executeTool(mgr, "cpp_overview", ToolRequest{}); result.Error != "" || !strings.Contains(result.Output, "Indexed 7 C/C++ files") {
 		t.Fatalf("unexpected cppOverview result: %#v", result)
 	}
+
 	find := executeTool(mgr, "cpp_find_symbol", ToolRequest{Tool: "cpp_find_symbol", Pattern: "tick"})
 	if find.Error != "" || !strings.Contains(find.Output, "entity_manager.cpp") {
 		t.Fatalf("unexpected cppFindSymbol result: %#v", find)
 	}
+
 	findDecl := executeTool(mgr, "cpp_find_symbol", ToolRequest{Tool: "cpp_find_symbol", Pattern: "struct EntityManager"})
 	if findDecl.Error != "" || !strings.Contains(findDecl.Output, "EntityManager") {
 		t.Fatalf("expected declaration-shaped cppFindSymbol query to find EntityManager, got %#v", findDecl)
 	}
+
 	readDecl := executeTool(mgr, "cpp_read_symbol", ToolRequest{Tool: "cpp_read_symbol", Pattern: "struct EntityManager"})
 	if readDecl.Error != "" || !strings.Contains(readDecl.Output, "struct EntityManager") {
 		t.Fatalf("expected declaration-shaped cppReadSymbol to return EntityManager snippet, got %#v", readDecl)
 	}
+
 	findUnion := executeTool(mgr, "cpp_find_symbol", ToolRequest{Tool: "cpp_find_symbol", Pattern: "union EntityValue"})
 	if findUnion.Error != "" || !strings.Contains(findUnion.Output, "EntityValue") {
 		t.Fatalf("expected declaration-shaped cppFindSymbol query to find EntityValue union, got %#v", findUnion)
 	}
+
 	readUnion := executeTool(mgr, "cpp_read_symbol", ToolRequest{Tool: "cpp_read_symbol", Pattern: "union EntityValue"})
 	if readUnion.Error != "" || !strings.Contains(readUnion.Output, "union EntityValue") {
 		t.Fatalf("expected declaration-shaped cppReadSymbol to return EntityValue union, got %#v", readUnion)
 	}
+
 	findTemplate := executeTool(mgr, "cpp_find_symbol", ToolRequest{Tool: "cpp_find_symbol", Pattern: "template <typename T> class EntityBox"})
 	if findTemplate.Error != "" || !strings.Contains(findTemplate.Output, "EntityBox") {
 		t.Fatalf("expected declaration-shaped cppFindSymbol query to find EntityBox template, got %#v", findTemplate)
 	}
+
 	readTemplate := executeTool(mgr, "cpp_read_symbol", ToolRequest{Tool: "cpp_read_symbol", Pattern: "template <typename T> class EntityBox"})
 	if readTemplate.Error != "" || !strings.Contains(readTemplate.Output, "class EntityBox") {
 		t.Fatalf("expected declaration-shaped cppReadSymbol to return EntityBox template, got %#v", readTemplate)
 	}
+
 	body := executeTool(mgr, "cpp_extract_body", ToolRequest{Tool: "cpp_extract_body", Pattern: "EntityManager::tick"})
 	if body.Error != "" || !strings.Contains(body.Output, "helper();") {
 		t.Fatalf("unexpected cppExtractBody result: %#v", body)
 	}
+
 	blast := executeTool(mgr, "cpp_blast_radius", ToolRequest{Tool: "cpp_blast_radius", Pattern: "entity_manager.h"})
 	if blast.Error != "" || !strings.Contains(blast.Output, "entity_manager.cpp") || !strings.Contains(blast.Output, "main.cpp") {
 		t.Fatalf("unexpected cppBlastRadius result: %#v", blast)
 	}
+
 	refs := executeToolCtx(context.Background(), mgr, "cpp_references", ToolRequest{Tool: "cpp_references", Pattern: "helper", Path: "."})
 	if refs.Error != "" || !strings.Contains(refs.Output, "entity_manager.cpp") || !strings.Contains(refs.Output, "helper();") {
 		t.Fatalf("unexpected cppReferences result: %#v", refs)
 	}
+
 	outline := executeTool(mgr, "cpp_file_outline", ToolRequest{Tool: "cpp_file_outline", Path: filepath.Join("src", "entity_manager.cpp")})
 	if outline.Error != "" {
 		t.Fatalf("unexpected cppFileOutline error: %#v", outline)
 	}
+
 	if !strings.Contains(outline.Output, "file: src/entity_manager.cpp") {
 		t.Fatalf("cppFileOutline missing file header: %#v", outline)
 	}
+
 	if !strings.Contains(outline.Output, `entity_manager.h`) {
 		t.Fatalf("cppFileOutline missing include: %#v", outline)
 	}
+
 	if !strings.Contains(outline.Output, "helper") || !strings.Contains(outline.Output, "tick") {
 		t.Fatalf("cppFileOutline missing symbols: %#v", outline)
 	}
+
 	if !strings.Contains(outline.Summary, "Outlined") {
 		t.Fatalf("cppFileOutline summary: %#v", outline)
 	}
@@ -271,9 +287,11 @@ void WorkerSystem::process_cycle() {}
 
 func writeCppFixture(t *testing.T, path string, content string) {
 	t.Helper()
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", path, err)
 	}
+
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
@@ -281,19 +299,23 @@ func writeCppFixture(t *testing.T, path string, content string) {
 
 func writeCppCompileCommands(t *testing.T, root string, files []string) {
 	t.Helper()
+
 	entries := make([]map[string]string, 0, len(files))
 	for _, rel := range files {
 		abs := filepath.Join(root, rel)
+
 		entries = append(entries, map[string]string{
 			"directory": root,
 			"command":   "clang++ -Iinclude -std=c++20 -c " + filepath.ToSlash(abs),
 			"file":      filepath.ToSlash(abs),
 		})
 	}
+
 	data, err := json.Marshal(entries)
 	if err != nil {
 		t.Fatalf("marshal compile_commands: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "compile_commands.json"), append(data, '\n'), 0o644); err != nil {
 		t.Fatalf("write compile_commands.json: %v", err)
 	}

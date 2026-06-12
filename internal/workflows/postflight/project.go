@@ -36,6 +36,7 @@ func (p ProjectCheck) shouldFailOnNonZero() bool {
 	if p.FailOnNonZero == nil {
 		return true
 	}
+
 	return *p.FailOnNonZero
 }
 
@@ -48,36 +49,49 @@ func LoadProjectChecks(projectRoot string) ([]Check, error) {
 	if strings.TrimSpace(projectRoot) == "" {
 		return nil, nil
 	}
+
 	dir := filepath.Join(projectRoot, ".idiom", "postflight", "checks")
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
+
 		return nil, fmt.Errorf("postflight: read %q: %w", dir, err)
 	}
+
 	var checks []Check
+
 	// Sort so the run order is deterministic across operating
 	// systems (os.ReadDir order is platform-dependent).
 	slices.SortFunc(entries, func(a, b os.DirEntry) int { return cmp.Compare(a.Name(), b.Name()) })
+
 	for _, ent := range entries {
 		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".json") {
 			continue
 		}
+
 		path := filepath.Join(dir, ent.Name())
+
 		body, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("postflight: read project check %q: %w", path, err)
 		}
+
 		var pc ProjectCheck
+
 		if err := json.Unmarshal(body, &pc); err != nil {
 			return nil, fmt.Errorf("postflight: parse project check %q: %w", path, err)
 		}
+
 		if strings.TrimSpace(pc.Name) == "" {
 			pc.Name = strings.TrimSuffix(ent.Name(), ".json")
 		}
+
 		checks = append(checks, &projectCheckRunner{spec: pc})
 	}
+
 	return checks, nil
 }
 
@@ -136,6 +150,7 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 			Message:  "shell project check has empty `command`",
 		}}, nil
 	}
+
 	// 60-second hard cap on shell checks: this matches Colony's
 	// default check timeout. If a project rule legitimately needs
 	// longer it can spawn its own background work and report
@@ -145,11 +160,14 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 
 	args := substituteShellArgs(r.spec.Args, ctx, d)
 	c := exec.CommandContext(cctx, cmd, args...)
+
 	if strings.TrimSpace(ctx.ProjectRoot) != "" {
 		c.Dir = ctx.ProjectRoot
 	}
+
 	out, err := c.CombinedOutput()
 	exitErr, _ := err.(*exec.ExitError)
+
 	if cctx.Err() == context.DeadlineExceeded {
 		return []Finding{{
 			Check:    r.Name(),
@@ -157,6 +175,7 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 			Message:  "shell project check exceeded 60s timeout",
 		}}, nil
 	}
+
 	if err != nil && exitErr == nil {
 		// non-exit error: command not found, can't spawn, etc.
 		return []Finding{{
@@ -165,10 +184,12 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 			Message:  fmt.Sprintf("shell project check failed to run: %v", err),
 		}}, nil
 	}
+
 	exitCode := 0
 	if exitErr != nil {
 		exitCode = exitErr.ExitCode()
 	}
+
 	if exitCode != 0 && r.spec.shouldFailOnNonZero() {
 		return []Finding{{
 			Check:    r.Name(),
@@ -176,6 +197,7 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 			Message:  fmt.Sprintf("exit %d: %s", exitCode, truncateOutput(out)),
 		}}, nil
 	}
+
 	if exitCode != 0 {
 		return []Finding{{
 			Check:    r.Name(),
@@ -183,6 +205,7 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 			Message:  fmt.Sprintf("exit %d (non-blocking): %s", exitCode, truncateOutput(out)),
 		}}, nil
 	}
+
 	return nil, nil
 }
 
@@ -195,6 +218,7 @@ func truncateOutput(out []byte) string {
 	if len(s) <= shellOutputCap {
 		return s
 	}
+
 	return s[:shellOutputCap] + "... (truncated; rerun the check for full output)"
 }
 
@@ -217,8 +241,10 @@ func substituteShellArgs(args []string, ctx RunContext, d Diff) []string {
 		"{project_root}", ctx.ProjectRoot,
 		"{paths}", paths,
 	)
+
 	for i, a := range args {
 		out[i] = replacer.Replace(a)
 	}
+
 	return out
 }

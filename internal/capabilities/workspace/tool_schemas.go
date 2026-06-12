@@ -34,17 +34,21 @@ func BuildToolDefinitions(allowedTools []string) []ToolDefinition {
 			allowed[tool] = struct{}{}
 		}
 	}
+
 	includeAll := len(allowed) == 0
 	defs := mergeLanguageToolDefinitions(baseToolDefinitions())
 	out := make([]ToolDefinition, 0, len(defs))
+
 	for _, def := range defs {
 		if !includeAll {
 			if _, ok := allowed[def.Name]; !ok {
 				continue
 			}
 		}
+
 		out = append(out, def)
 	}
+
 	return out
 }
 
@@ -53,18 +57,25 @@ func schemaObj(required []string, properties string) string {
 	if properties != "" {
 		properties += ","
 	}
+
 	properties += `"named_gap":` + strProp("optional: after answer-readiness or a child packet, name one exact unresolved claim this follow-up will verify or falsify; make it specific enough that the next probe is obvious") + `,"why_not_answering":` + strProp("optional: short reason describing what would be materially wrong or missing if you answered now")
+
 	req := ""
+
 	if len(required) > 0 {
 		req = `,"required":[`
+
 		for i, name := range required {
 			if i > 0 {
 				req += ","
 			}
+
 			req += `"` + name + `"`
 		}
+
 		req += `]`
 	}
+
 	return `{"type":"object","properties":{` + properties + `}` + req + `}`
 }
 
@@ -83,15 +94,18 @@ func stringEnumJSON(values []string) string {
 	if err != nil {
 		return "[]"
 	}
+
 	return string(encoded)
 }
 
 func readOnlyCapabilityIDsForSchema() []string {
 	registry := BuildReadOnlyCapabilityRegistry()
 	ids := make([]string, 0, len(registry.Capabilities))
+
 	for _, capability := range registry.Capabilities {
 		ids = append(ids, capability.ID)
 	}
+
 	return ids
 }
 
@@ -100,21 +114,27 @@ func mergeLanguageToolDefinitions(defs []ToolDefinition) []ToolDefinition {
 	if len(catalog) == 0 {
 		return defs
 	}
+
 	out := make([]ToolDefinition, 0, len(defs)+len(catalog))
 	inserted := false
+
 	for _, def := range defs {
 		if isLanguageToolName(def.Name) {
 			if !inserted {
 				out = append(out, catalog...)
 				inserted = true
 			}
+
 			continue
 		}
+
 		out = append(out, def)
 	}
+
 	if !inserted {
 		out = append(out, catalog...)
 	}
+
 	return out
 }
 
@@ -130,6 +150,7 @@ func submitPlanEditSchema() string {
 		`,"insert_after_line":` + intProp("existing 1-based line after which to insert small inline non-empty content; insertion-only shape, not a replacement range, not valid for new files, and not valid with content_ref") +
 		`,"replace_all":` + boolProp("with old_text set: replace every occurrence; with old_text empty: write new_text as the entire file body (creates the file if missing)") +
 		`,"purpose":` + strProp("one sentence: what this edit does and why")
+
 	return `{"type":"object","properties":{` + properties + `},"required":["path"],"anyOf":[{"required":["old_text","new_text"]},{"required":["start_line","end_line","content"]},{"required":["start_line","end_line","content_ref"]},{"required":["insert_after_line","content"]},{"required":["replace_all","new_text"]},{"required":["replace_all","new_text_ref"]}]}`
 }
 
@@ -142,6 +163,7 @@ func submitPlanParametersSchema() string {
 		`,"edits":{"type":"array","minItems":1,"description":"ordered JSON array of edits the executor will dispatch; required unless plan_artifact.edits is provided; do not emit this array as a quoted string","items":` + editSchema + `}` +
 		`,"named_gap":` + strProp("optional: after answer-readiness or a child packet, name one exact unresolved claim this follow-up will verify or falsify; make it specific enough that the next probe is obvious") +
 		`,"why_not_answering":` + strProp("optional: short reason describing what would be materially wrong or missing if you answered now")
+
 	return `{"type":"object","properties":{` + properties + `},"anyOf":[{"required":["edits"]},{"required":["plan_artifact"]}]}`
 }
 

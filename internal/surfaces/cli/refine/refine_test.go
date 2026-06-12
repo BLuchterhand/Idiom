@@ -45,13 +45,16 @@ func TestRefinePhaseRoutingUsesPrimary35B(t *testing.T) {
 	if pool != "qwen-35b" || model != "qwen3.6-35b" {
 		t.Fatalf("refine should share primary 35B backend, got pool=%q model=%q", pool, model)
 	}
+
 	if maxTokens != 16384 {
 		t.Fatalf("draft max tokens = %d, want 16384", maxTokens)
 	}
+
 	_, _, patchTokens := refinePhaseRouting(filepath.Join("iter-2", "meta-patch.md"))
 	if patchTokens != 16384 {
 		t.Fatalf("patch max tokens = %d, want 16384", patchTokens)
 	}
+
 	_, _, reviewTokens := refinePhaseRouting(filepath.Join("iter-1", "meta-review.md"))
 	if reviewTokens != 4096 {
 		t.Fatalf("review max tokens = %d, want 4096", reviewTokens)
@@ -75,6 +78,7 @@ func TestDefaultRefineDispatchRoutesDraftThroughArtifactCommand(t *testing.T) {
 			t.Fatalf("draft dispatch args missing %q:\n%#v", want, args)
 		}
 	}
+
 	if strings.Contains(joined, "lane\x00implement") {
 		t.Fatalf("draft dispatch should not use implementation lane args:\n%#v", args)
 	}
@@ -97,9 +101,11 @@ func TestDefaultRefineDispatchRoutesPatchThroughArtifactCommand(t *testing.T) {
 			t.Fatalf("patch dispatch args missing %q:\n%#v", want, args)
 		}
 	}
+
 	if strings.Contains(joined, "--no-thinking") {
 		t.Fatalf("patch dispatch should preserve model thinking config for local Qwen artifact generation:\n%#v", args)
 	}
+
 	if strings.Contains(joined, "lane\x00implement") {
 		t.Fatalf("patch dispatch should not depend on implementation-lane tool use, got:\n%#v", args)
 	}
@@ -114,19 +120,26 @@ func TestDefaultRefineDispatchRoutesPatchThroughArtifactCommand(t *testing.T) {
 // confuse the simple line-by-line scanner.
 func stripFencedBlocksForStub(body string) string {
 	var out strings.Builder
+
 	inFence := false
+
 	for _, line := range strings.Split(body, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
 			inFence = !inFence
+
 			out.WriteString("\n")
+
 			continue
 		}
+
 		if inFence {
 			continue
 		}
+
 		out.WriteString(line)
 		out.WriteString("\n")
 	}
+
 	return out.String()
 }
 
@@ -141,26 +154,32 @@ func firstBacktickMDPath(line string) string {
 		if start < 0 {
 			return ""
 		}
+
 		end := strings.Index(rest[start+1:], "`")
 		if end < 0 {
 			return ""
 		}
+
 		candidate := rest[start+1 : start+1+end]
 		if strings.HasSuffix(candidate, ".md") {
 			return candidate
 		}
+
 		rest = rest[start+1+end+1:]
 	}
 }
 
 func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
 	t.Helper()
+
 	calls := 0
+
 	return func(metaBriefPath string, stdout, stderr io.Writer) int {
 		body, err := os.ReadFile(metaBriefPath)
 		if err != nil {
 			t.Fatalf("stub: read meta %s: %v", metaBriefPath, err)
 		}
+
 		// Find the output path the meta-brief targets. Resolution
 		// order, most authoritative first:
 		//   1. `Path: `<X.md>` under `## Artifact Output` or
@@ -171,39 +190,51 @@ func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
 		//   3. Any other backtick-quoted `.md` outside the meta-brief
 		//      itself (last-resort fallback).
 		scanText := stripFencedBlocksForStub(string(body))
+
 		var outPath, stopAndWritePath, filesToModifyPath, fallbackPath string
+
 		inFilesToModify := false
 		inStopAndWrite := false
 		inArtifactOutput := false
+
 		for _, line := range strings.Split(scanText, "\n") {
 			trimmed := strings.TrimSpace(line)
 			lower := strings.ToLower(trimmed)
+
 			if strings.HasPrefix(lower, "## artifact output") {
 				inArtifactOutput = true
 				inFilesToModify = false
 				inStopAndWrite = false
+
 				continue
 			}
+
 			if strings.HasPrefix(lower, "## files to modify") {
 				inFilesToModify = true
 				inStopAndWrite = false
 				inArtifactOutput = false
+
 				continue
 			}
+
 			if strings.HasPrefix(lower, "## stop and write now") {
 				inStopAndWrite = true
 				inFilesToModify = false
 				inArtifactOutput = false
+
 				continue
 			}
+
 			if (inArtifactOutput || inFilesToModify || inStopAndWrite) && strings.HasPrefix(trimmed, "## ") {
 				inArtifactOutput = false
 				inFilesToModify = false
 				inStopAndWrite = false
 			}
+
 			if !strings.Contains(trimmed, ".md") {
 				continue
 			}
+
 			// Pick the FIRST backtick-quoted .md path on this line.
 			// Some lines have multiple backtick spans (e.g. `path`:
 			// `<file.md>`); scan span by span until we find one that
@@ -212,19 +243,24 @@ func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
 			if candidate == "" {
 				continue
 			}
+
 			if candidate == metaBriefPath || strings.HasSuffix(candidate, "/"+filepath.Base(metaBriefPath)) {
 				continue
 			}
+
 			if (inArtifactOutput || inStopAndWrite) && stopAndWritePath == "" {
 				stopAndWritePath = candidate
 			}
+
 			if inFilesToModify && filesToModifyPath == "" {
 				filesToModifyPath = candidate
 			}
+
 			if fallbackPath == "" {
 				fallbackPath = candidate
 			}
 		}
+
 		switch {
 		case stopAndWritePath != "":
 			outPath = stopAndWritePath
@@ -233,9 +269,11 @@ func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
 		default:
 			outPath = fallbackPath
 		}
+
 		if outPath == "" {
 			t.Fatalf("stub: could not parse output path from meta %s", metaBriefPath)
 		}
+
 		// Resolve workspace-relative paths against the project root.
 		// The refine templates now substitute relative paths so the
 		// runner's RequiredEditPathsFromPrompt picks them up (#86
@@ -244,16 +282,21 @@ func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
 		if !filepath.IsAbs(outPath) {
 			outPath = filepath.Join(refineProjectRootFromIterDir(filepath.Dir(metaBriefPath)), outPath)
 		}
+
 		if calls >= len(responses) {
 			t.Fatalf("stub: more dispatch calls than canned responses (%d)", calls)
 		}
+
 		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 			t.Fatalf("stub: mkdir for %s: %v", outPath, err)
 		}
+
 		if err := os.WriteFile(outPath, []byte(responses[calls]), 0o644); err != nil {
 			t.Fatalf("stub: write %s: %v", outPath, err)
 		}
+
 		calls++
+
 		return 0
 	}, &calls
 }
@@ -264,11 +307,11 @@ func TestRefineWorkspaceRelConvertsAbsoluteToRelative(t *testing.T) {
 		path string
 		want string
 	}{
-		{"/Users/ben/proj", "/Users/ben/proj/.idiom/refine/atom/iter-1/draft.md", ".idiom/refine/atom/iter-1/draft.md"},
-		{"/Users/ben/proj", "/Users/ben/proj/cmd/idiom/lane.go", "cmd/idiom/lane.go"},
-		{"/Users/ben/proj", "/Users/ben/proj/..data/scratch.md", "..data/scratch.md"},
+		{"/workspace/proj", "/workspace/proj/.idiom/refine/atom/iter-1/draft.md", ".idiom/refine/atom/iter-1/draft.md"},
+		{"/workspace/proj", "/workspace/proj/cmd/idiom/lane.go", "cmd/idiom/lane.go"},
+		{"/workspace/proj", "/workspace/proj/..data/scratch.md", "..data/scratch.md"},
 		// Different ancestor — refuse to coerce, return input.
-		{"/Users/ben/proj", "/elsewhere/file.md", "/elsewhere/file.md"},
+		{"/workspace/proj", "/elsewhere/file.md", "/elsewhere/file.md"},
 		// Empty projectRoot — pass through.
 		{"", "/some/path.md", "/some/path.md"},
 		// Empty path — pass through.
@@ -284,7 +327,7 @@ func TestRefineWorkspaceRelConvertsAbsoluteToRelative(t *testing.T) {
 
 func TestRefineProjectRootFromIterDirWalksUpFourLevels(t *testing.T) {
 	cases := map[string]string{
-		"/Users/ben/proj/.idiom/refine/my-atom/iter-1": "/Users/ben/proj",
+		"/workspace/proj/.idiom/refine/my-atom/iter-1": "/workspace/proj",
 		"/a/b/c/d/.idiom/refine/x/iter-7":              "/a/b/c/d",
 	}
 	for in, want := range cases {
@@ -297,11 +340,14 @@ func TestRefineProjectRootFromIterDirWalksUpFourLevels(t *testing.T) {
 
 func TestRunLaneRefineDoesNotAcceptStaleDraftOutput(t *testing.T) {
 	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Write docs/out.md.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -310,38 +356,52 @@ func TestRunLaneRefineDoesNotAcceptStaleDraftOutput(t *testing.T) {
 		ProjectRoot: root,
 	}
 	staleDraft := filepath.Join(refineStateDir(root, opts.Title), "iter-1", "draft.md")
+
 	if err := os.MkdirAll(filepath.Dir(staleDraft), 0o755); err != nil {
 		t.Fatalf("mkdir stale draft: %v", err)
 	}
+
 	if err := os.WriteFile(staleDraft, []byte(nonTrivialDraftBody("stale")), 0o644); err != nil {
 		t.Fatalf("seed stale draft: %v", err)
 	}
+
 	dispatch := func(metaBriefPath string, stdout, stderr io.Writer) int {
 		return 0
 	}
+
 	var stdout, stderr bytes.Buffer
+
 	code := runLaneRefine(opts, dispatch, &stdout, &stderr)
+
 	if code == 0 {
 		t.Fatalf("expected stale draft to be rejected, stdout=%s stderr=%s", stdout.String(), stderr.String())
 	}
+
 	if _, err := os.Stat(staleDraft); !os.IsNotExist(err) {
 		t.Fatalf("stale draft should have been removed and not accepted, stat err=%v", err)
 	}
+
 	if _, err := os.Stat(opts.OutputPath); !os.IsNotExist(err) {
 		t.Fatalf("final output should not be written from stale draft, stat err=%v", err)
 	}
+
 	if !strings.Contains(stderr.String(), "cleared stale output") {
 		t.Fatalf("expected stale-output cleanup log, got: %s", stderr.String())
 	}
+
 	metricsPath := filepath.Join(refineStateDir(root, opts.Title), "iter-1", "metrics.json")
+
 	metricsBody, err := os.ReadFile(metricsPath)
 	if err != nil {
 		t.Fatalf("read metrics: %v", err)
 	}
+
 	var m refineIterMetrics
+
 	if err := json.Unmarshal(metricsBody, &m); err != nil {
 		t.Fatalf("unmarshal metrics: %v", err)
 	}
+
 	if m.DraftState != "missing" || m.Action != "failsoft-draft-missing" {
 		t.Fatalf("metrics should record typed missing draft state, got %#v", m)
 	}
@@ -354,31 +414,40 @@ func TestWriteRefineReviewMetaUsesWorkspaceRelativePaths(t *testing.T) {
 	// populate the runtime brief so auto-salvage (#86) can fire.
 	root := t.TempDir()
 	iterDir := filepath.Join(root, ".idiom", "refine", "atom", "iter-1")
+
 	if err := os.MkdirAll(iterDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	metaPath := filepath.Join(iterDir, "meta-review.md")
 	draftPath := filepath.Join(iterDir, "draft.md")
 	reviewPath := filepath.Join(iterDir, "review.md")
+
 	if err := os.WriteFile(draftPath, []byte("# Drafted brief\n\n## Problem\n\nReview me.\n"), 0o644); err != nil {
 		t.Fatalf("write draft: %v", err)
 	}
+
 	if err := writeRefineReviewMeta(metaPath, draftPath, reviewPath, root, "(no findings)"); err != nil {
 		t.Fatalf("writeRefineReviewMeta: %v", err)
 	}
+
 	body, err := os.ReadFile(metaPath)
 	if err != nil {
 		t.Fatalf("read meta: %v", err)
 	}
+
 	if strings.Contains(string(body), root+"/") {
 		t.Fatalf("meta should not contain absolute project root path; body contains %q\n%s", root+"/", body)
 	}
+
 	if !strings.Contains(string(body), ".idiom/refine/atom/iter-1/review.md") {
 		t.Fatalf("expected workspace-relative review path in meta body:\n%s", body)
 	}
+
 	if !strings.Contains(string(body), "## Pre-loaded drafted brief") ||
 		!strings.Contains(string(body), "Path: `.idiom/refine/atom/iter-1/draft.md`") ||
 		!strings.Contains(string(body), "> # Drafted brief") {
+
 		t.Fatalf("expected review meta to inline drafted brief as artifact evidence:\n%s", body)
 	}
 }
@@ -386,9 +455,11 @@ func TestWriteRefineReviewMetaUsesWorkspaceRelativePaths(t *testing.T) {
 func TestWriteRefineDraftMetaDoesNotLeakSpecRequiredEditPaths(t *testing.T) {
 	root := t.TempDir()
 	iterDir := filepath.Join(root, ".idiom", "refine", "atom", "iter-1")
+
 	if err := os.MkdirAll(iterDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	metaPath := filepath.Join(iterDir, "meta-draft.md")
 	draftPath := filepath.Join(iterDir, "draft.md")
 	spec := `# Implementation atom
@@ -409,25 +480,33 @@ Change the real implementation file.
 		Title:       "atom",
 		ProjectRoot: root,
 	}
+
 	var stderr bytes.Buffer
+
 	if err := writeRefineDraftMeta(metaPath, draftPath, opts, spec, refineModeAnchored, &stderr); err != nil {
 		t.Fatalf("writeRefineDraftMeta: %v", err)
 	}
+
 	body, err := os.ReadFile(metaPath)
 	if err != nil {
 		t.Fatalf("read meta: %v", err)
 	}
+
 	wantDraft := ".idiom/refine/atom/iter-1/draft.md"
 	paths := app.RequiredEditPathsFromPrompt(string(body))
+
 	if len(paths) != 0 {
 		t.Fatalf("artifact draft prompt should not expose implementation required edit paths: got %#v\nmeta:\n%s", paths, body)
 	}
+
 	if !strings.Contains(string(body), "## Artifact Output") || !strings.Contains(string(body), "`"+wantDraft+"`") {
 		t.Fatalf("expected artifact output path %q in meta body:\n%s", wantDraft, body)
 	}
+
 	if !strings.Contains(string(body), "> ## Files To Modify") {
 		t.Fatalf("embedded spec should be quoted so its headings are inert, got:\n%s", body)
 	}
+
 	if strings.Contains(string(body), "write_file") {
 		t.Fatalf("artifact draft prompt must not ask for write_file, got:\n%s", body)
 	}
@@ -456,9 +535,11 @@ func TestParseRefineBugTitles(t *testing.T) {
 	body := "## Bugs found\n\n1. **Off-by-one in loop**: blah blah\n2. **Missing import**: blah\n3. ** Whitespace title  **: blah\n\n## OK\n- thing\n"
 	got := parseRefineBugTitles(body)
 	want := []string{"missing import", "off-by-one in loop", "whitespace title"}
+
 	if len(got) != len(want) {
 		t.Fatalf("got %d titles, want %d: %v", len(got), len(want), got)
 	}
+
 	for i := range want {
 		if got[i] != want[i] {
 			t.Errorf("title[%d] = %q, want %q", i, got[i], want[i])
@@ -484,6 +565,7 @@ func TestParseRefineBugTitlesSkipsNoFixNeededEntries(t *testing.T) {
 ship-as-is
 `
 	got := parseRefineBugTitles(body)
+
 	if len(got) != 0 {
 		t.Fatalf("all 6 entries are verifications (no fix needed); want 0 bugs, got %d: %v", len(got), got)
 	}
@@ -502,9 +584,11 @@ fix-bugs-then-ship
 `
 	got := parseRefineBugTitles(body)
 	want := []string{"real bug a", "real bug c"}
+
 	if len(got) != len(want) {
 		t.Fatalf("expected %d real bugs, got %d: %v", len(want), len(got), got)
 	}
+
 	for i := range want {
 		if got[i] != want[i] {
 			t.Errorf("bug[%d] = %q, want %q", i, got[i], want[i])
@@ -515,17 +599,21 @@ fix-bugs-then-ship
 func TestRefineLoopDivergingDetectsRepeatBugs(t *testing.T) {
 	prev := []string{"bug a", "bug b"}
 	current := []string{"bug a", "bug b"}
+
 	if !refineLoopDiverging(prev, current) {
 		t.Fatalf("identical bug sets should signal divergence")
 	}
+
 	current = []string{"bug a", "new bug"}
 	if refineLoopDiverging(prev, current) {
 		t.Fatalf("a new bug appearing should NOT signal divergence")
 	}
+
 	current = []string{"bug a"}
 	if refineLoopDiverging(prev, current) {
 		t.Fatalf("a smaller bug set is improvement, not divergence")
 	}
+
 	if refineLoopDiverging(prev, []string{}) {
 		t.Fatalf("clean review (no bugs) is the success case, not divergence")
 	}
@@ -535,12 +623,15 @@ func TestRefineDraftScorePrefersLintCleanOverBugCount(t *testing.T) {
 	if !refineDraftScoreBetter(0, 5, 1, 1) {
 		t.Fatalf("lint-clean draft should beat lint-failing draft even with more review bugs")
 	}
+
 	if refineDraftScoreBetter(1, 1, 0, 5) {
 		t.Fatalf("lint-failing draft should not beat lint-clean draft")
 	}
+
 	if !refineDraftScoreBetter(0, 2, 0, 3) {
 		t.Fatalf("with equal lint status, fewer bugs should win")
 	}
+
 	if refineDraftScoreBetter(0, 4, 0, 3) {
 		t.Fatalf("with equal lint status, more bugs should not win")
 	}
@@ -549,9 +640,11 @@ func TestRefineDraftScorePrefersLintCleanOverBugCount(t *testing.T) {
 func TestRunLaneRefineConvergesOnShipAsIsVerdict(t *testing.T) {
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	outPath := filepath.Join(root, "brief.md")
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
@@ -564,41 +657,55 @@ func TestRunLaneRefineConvergesOnShipAsIsVerdict(t *testing.T) {
 		nonTrivialDraftBody("Drafted brief"),
 		"# Review\n\n## Bugs found\n\n## OK\n\n## Verdict\n\nship-as-is\n",
 	})
+
 	var stderr bytes.Buffer
+
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	if code != 0 {
 		t.Fatalf("expected exit 0 on convergence, got %d; stderr=%s", code, stderr.String())
 	}
+
 	if *calls != 2 {
 		t.Fatalf("expected 2 dispatches (draft + review), got %d", *calls)
 	}
+
 	body, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
+
 	if !strings.Contains(string(body), "# Drafted brief") {
 		t.Fatalf("output should contain the drafted brief content, got: %s", body)
 	}
+
 	// Confirm #79 per-iter metrics landed on disk for the iter that
 	// produced a ship-as-is verdict.
 	metricsPath := filepath.Join(refineStateDir(root, "test-atom"), "iter-1", "metrics.json")
+
 	metricsBody, err := os.ReadFile(metricsPath)
 	if err != nil {
 		t.Fatalf("read iter-1 metrics: %v", err)
 	}
+
 	var m refineIterMetrics
+
 	if err := json.Unmarshal(metricsBody, &m); err != nil {
 		t.Fatalf("unmarshal metrics: %v\nbody=%s", err, metricsBody)
 	}
+
 	if m.Iter != 1 || m.Phase != "draft" {
 		t.Fatalf("metrics iter/phase = %d/%q, want 1/draft", m.Iter, m.Phase)
 	}
+
 	if m.Action != "ship-as-is" {
 		t.Fatalf("metrics action = %q, want ship-as-is", m.Action)
 	}
+
 	if m.Verdict != "ship-as-is" {
 		t.Fatalf("metrics verdict = %q, want ship-as-is", m.Verdict)
 	}
+
 	if m.StartedAt == "" || m.EndedAt == "" {
 		t.Fatalf("metrics ts fields missing: started=%q ended=%q", m.StartedAt, m.EndedAt)
 	}
@@ -608,9 +715,11 @@ func TestRunLaneRefineRefusesCompletedSpecStatus(t *testing.T) {
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
 	spec := "# Done atom\n\nStatus: accepted\n\n## Scope\n\n- `foo.go`\n"
+
 	if err := os.WriteFile(specPath, []byte(spec), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -623,14 +732,19 @@ func TestRunLaneRefineRefusesCompletedSpecStatus(t *testing.T) {
 		calls++
 		return 0
 	}
+
 	var stderr bytes.Buffer
+
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	if code == 0 {
 		t.Fatalf("expected completed spec to fail closed")
 	}
+
 	if calls != 0 {
 		t.Fatalf("dispatcher should not run for completed specs, calls=%d", calls)
 	}
+
 	if !strings.Contains(stderr.String(), "refusing spec") || !strings.Contains(stderr.String(), "accepted") {
 		t.Fatalf("expected refusal to name completed status, got: %s", stderr.String())
 	}
@@ -649,6 +763,7 @@ func TestAtomSpecDispatchBlockerStatusParsing(t *testing.T) {
 			t.Fatalf("expected status blocker for %q", spec)
 		}
 	}
+
 	allowed := []string{
 		"Status: planned",
 		"Status: pending",
@@ -667,9 +782,11 @@ func TestAtomSpecDispatchBlockerStatusParsing(t *testing.T) {
 func TestRunLaneRefineWritesMetricsOnDraftDispatchFailure(t *testing.T) {
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	outPath := filepath.Join(root, "brief.md")
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
@@ -679,28 +796,38 @@ func TestRunLaneRefineWritesMetricsOnDraftDispatchFailure(t *testing.T) {
 		ProjectRoot: root,
 	}
 	dispatch := func(_ string, _, _ io.Writer) int { return 7 }
+
 	var stderr bytes.Buffer
+
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	if code != 7 {
 		t.Fatalf("expected hard fail exit=7 (iter-1 dispatch failure with no fallback), got %d", code)
 	}
+
 	// Metrics file must still land even though dispatch failed —
 	// downstream tools should be able to diagnose why iter-1 broke.
 	metricsPath := filepath.Join(refineStateDir(root, "fail-atom"), "iter-1", "metrics.json")
+
 	body, err := os.ReadFile(metricsPath)
 	if err != nil {
 		t.Fatalf("metrics should be written even on dispatch failure: %v", err)
 	}
+
 	var m refineIterMetrics
+
 	if err := json.Unmarshal(body, &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
+
 	if m.DraftDispatchExit != 7 {
 		t.Fatalf("DraftDispatchExit = %d, want 7", m.DraftDispatchExit)
 	}
+
 	if m.Action != "failsoft-draft-dispatch" {
 		t.Fatalf("Action = %q, want failsoft-draft-dispatch", m.Action)
 	}
+
 	if m.FailsoftReason != "draft-dispatch" {
 		t.Fatalf("FailsoftReason = %q", m.FailsoftReason)
 	}
@@ -712,9 +839,11 @@ func TestRunLaneRefineShipsBestDraftOnDivergingLoop(t *testing.T) {
 	// instead of throwing away the work.
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -729,7 +858,9 @@ func TestRunLaneRefineShipsBestDraftOnDivergingLoop(t *testing.T) {
 		nonTrivialDraftBody("Draft v2 (patch failed to fix)"),
 		sameReview,
 	})
+
 	var stderr bytes.Buffer
+
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
 	// Colony Q4 (2026-05-11): save best draft AND exit non-zero on
 	// non-ship-as-is convergence; orchestrator must inspect before
@@ -737,13 +868,16 @@ func TestRunLaneRefineShipsBestDraftOnDivergingLoop(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("expected non-zero exit on diverging convergence; got 0. stderr=%s", stderr.String())
 	}
+
 	if !strings.Contains(stderr.String(), "loop diverging") {
 		t.Fatalf("expected diverging-loop message in stderr, got: %s", stderr.String())
 	}
+
 	body, _ := os.ReadFile(opts.OutputPath)
 	if !strings.HasPrefix(string(body), "> WARNING:") {
 		t.Fatalf("expected saved best-draft to lead with WARNING blockquote header, got: %s", body)
 	}
+
 	if !strings.Contains(string(body), "# Draft v1 (best") {
 		t.Fatalf("expected iter-1 draft to be saved on divergence, got: %s", body)
 	}
@@ -756,9 +890,11 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 	// with no brief. New behavior: ship iter-1's reviewed draft.
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -775,63 +911,81 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 	calls := 0
 	dispatch := refineDispatchFn(func(metaBriefPath string, stdout, stderr io.Writer) int {
 		calls++
+
 		body, err := os.ReadFile(metaBriefPath)
 		if err != nil {
 			t.Fatalf("read meta: %v", err)
 		}
+
 		// Find the output path the meta refers to using the same
 		// stop-and-write-first / files-to-modify / fallback chain
 		// stubDispatcher uses. Kept inline (not extracted into a
 		// helper) because this test exercises a 4th-call wedge
 		// scenario stubDispatcher doesn't support.
 		scanText := stripFencedBlocksForStub(string(body))
+
 		var outPath, stopAndWritePath, filesToModifyPath, fallbackPath string
+
 		inFilesToModify := false
 		inStopAndWrite := false
 		inArtifactOutput := false
+
 		for _, line := range strings.Split(scanText, "\n") {
 			trimmed := strings.TrimSpace(line)
 			lower := strings.ToLower(trimmed)
+
 			if strings.HasPrefix(lower, "## artifact output") {
 				inArtifactOutput = true
 				inFilesToModify = false
 				inStopAndWrite = false
+
 				continue
 			}
+
 			if strings.HasPrefix(lower, "## files to modify") {
 				inFilesToModify = true
 				inStopAndWrite = false
 				inArtifactOutput = false
+
 				continue
 			}
+
 			if strings.HasPrefix(lower, "## stop and write now") {
 				inStopAndWrite = true
 				inFilesToModify = false
 				inArtifactOutput = false
+
 				continue
 			}
+
 			if (inArtifactOutput || inFilesToModify || inStopAndWrite) && strings.HasPrefix(trimmed, "## ") {
 				inArtifactOutput = false
 				inFilesToModify = false
 				inStopAndWrite = false
 			}
+
 			if !strings.Contains(trimmed, ".md") {
 				continue
 			}
+
 			candidate := firstBacktickMDPath(trimmed)
 			if candidate == "" || candidate == metaBriefPath || strings.HasSuffix(candidate, "/"+filepath.Base(metaBriefPath)) {
 				continue
 			}
+
 			if (inArtifactOutput || inStopAndWrite) && stopAndWritePath == "" {
 				stopAndWritePath = candidate
 			}
+
 			if inFilesToModify && filesToModifyPath == "" {
 				filesToModifyPath = candidate
 			}
+
 			if fallbackPath == "" {
 				fallbackPath = candidate
 			}
 		}
+
 		switch {
 		case stopAndWritePath != "":
 			outPath = stopAndWritePath
@@ -840,17 +994,20 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 		default:
 			outPath = fallbackPath
 		}
+
 		// Resolve workspace-relative paths against the project root
 		// — meta-brief paths are now relative (see stubDispatcher
 		// rationale).
 		if !filepath.IsAbs(outPath) {
 			outPath = filepath.Join(refineProjectRootFromIterDir(filepath.Dir(metaBriefPath)), outPath)
 		}
+
 		// Simulate iter-2 review wedge: don't write the output file
 		// and return non-zero exit (matches real wedge shape).
 		if calls == 4 {
 			return 1
 		}
+
 		responses := []string{
 			nonTrivialDraftBody("Draft v1 (will be shipped via failsoft)"),
 			"# Review\n\n## Bugs found\n\n1. **Bug A**: x\n2. **Bug B**: y\n3. **Bug C**: z\n\n## Verdict\n\nfix-bugs-then-ship\n",
@@ -859,25 +1016,31 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 		if calls > len(responses) {
 			t.Fatalf("more calls than responses: %d", calls)
 		}
+
 		_ = os.MkdirAll(filepath.Dir(outPath), 0o755)
 		_ = os.WriteFile(outPath, []byte(responses[calls-1]), 0o644)
+
 		return 0
 	})
 
 	var stderr bytes.Buffer
+
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
 	// Failsoft saves the best draft AND exits non-zero — orchestrator
 	// inspects before piping (Colony Q4, 2026-05-11).
 	if code == 0 {
 		t.Fatalf("expected non-zero exit on iter-2 review wedge failsoft; got 0. stderr=%s", stderr.String())
 	}
+
 	if !strings.Contains(stderr.String(), "failsoft at iter 2") {
 		t.Fatalf("expected failsoft message in stderr, got: %s", stderr.String())
 	}
+
 	body, _ := os.ReadFile(opts.OutputPath)
 	if !strings.HasPrefix(string(body), "> WARNING:") {
 		t.Fatalf("expected saved failsoft draft to lead with WARNING blockquote, got: %s", body)
 	}
+
 	if !strings.Contains(string(body), "# Draft v1 (will be shipped via failsoft)") {
 		t.Fatalf("expected iter-1 draft saved via failsoft, got: %s", body)
 	}
@@ -888,9 +1051,11 @@ func TestRunLaneRefineFailsHardWhenIter1HasNoReviewedDraft(t *testing.T) {
 	// failsoft has nothing to fall back on — must return non-zero.
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -902,11 +1067,15 @@ func TestRunLaneRefineFailsHardWhenIter1HasNoReviewedDraft(t *testing.T) {
 	dispatch := refineDispatchFn(func(metaBriefPath string, stdout, stderr io.Writer) int {
 		return 2
 	})
+
 	var stderr bytes.Buffer
+
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	if code == 0 {
 		t.Fatalf("expected non-zero exit when iter-1 fails with no fallback, got 0")
 	}
+
 	if !strings.Contains(stderr.String(), "no previously-reviewed draft to fall back on") {
 		t.Fatalf("expected no-fallback message in stderr, got: %s", stderr.String())
 	}
@@ -915,9 +1084,11 @@ func TestRunLaneRefineFailsHardWhenIter1HasNoReviewedDraft(t *testing.T) {
 func TestRunLaneRefineExhaustsMaxItersAndShipsLatest(t *testing.T) {
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -934,20 +1105,25 @@ func TestRunLaneRefineExhaustsMaxItersAndShipsLatest(t *testing.T) {
 		nonTrivialDraftBody("Draft v2 (final, fewer bugs)"),
 		"# Review\n\n## Bugs found\n\n1. **Different bug**: blah\n\n## Verdict\n\nfix-bugs-then-ship\n",
 	})
+
 	var stderr bytes.Buffer
+
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
 	// max-iters-exhausted is non-zero (Colony Q4): unresolved bugs
 	// remained, orchestrator must inspect.
 	if code == 0 {
 		t.Fatalf("expected non-zero exit on max-iters exhaust; got 0. stderr=%s", stderr.String())
 	}
+
 	body, _ := os.ReadFile(opts.OutputPath)
 	if !strings.HasPrefix(string(body), "> WARNING:") {
 		t.Fatalf("expected saved best-draft to lead with WARNING, got: %s", body)
 	}
+
 	if !strings.Contains(string(body), "# Draft v2 (final, fewer bugs)") {
 		t.Fatalf("output should be the best draft (v2, 1 bug), got: %s", body)
 	}
+
 	if !strings.Contains(stderr.String(), "max iters") {
 		t.Fatalf("expected max-iters notice in stderr, got: %s", stderr.String())
 	}
@@ -956,9 +1132,11 @@ func TestRunLaneRefineExhaustsMaxItersAndShipsLatest(t *testing.T) {
 func TestRunLaneRefineContinuesThroughChangedBugSetUntilMaxIters(t *testing.T) {
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -978,19 +1156,24 @@ func TestRunLaneRefineContinuesThroughChangedBugSetUntilMaxIters(t *testing.T) {
 		nonTrivialDraftBody("Draft v3"),
 		"# Review\n\n## Bugs found\n\n1. **Bug E**: z\n\n## Verdict\n\nfix-bugs-then-ship\n",
 	})
+
 	var stderr bytes.Buffer
+
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
 	// max-iters saves best AND exits non-zero — orchestrator inspects.
 	if code == 0 {
 		t.Fatalf("expected non-zero exit on max-iters convergence; got 0. stderr=%s", stderr.String())
 	}
+
 	if !strings.Contains(stderr.String(), "max iters") {
 		t.Fatalf("expected max-iters message in stderr, got: %s", stderr.String())
 	}
+
 	body, _ := os.ReadFile(opts.OutputPath)
 	if !strings.HasPrefix(string(body), "> WARNING:") {
 		t.Fatalf("expected saved best-draft to lead with WARNING, got: %s", body)
 	}
+
 	if !strings.Contains(string(body), "# Draft v3") {
 		t.Fatalf("expected best draft to be latest improved candidate, got: %s", body)
 	}
@@ -999,9 +1182,11 @@ func TestRunLaneRefineContinuesThroughChangedBugSetUntilMaxIters(t *testing.T) {
 func TestRunLaneRefineFinalizesBestDraftNotLatest(t *testing.T) {
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -1017,19 +1202,24 @@ func TestRunLaneRefineFinalizesBestDraftNotLatest(t *testing.T) {
 		nonTrivialDraftBody("Draft v2 (REGRESSED — 5 bugs)"),
 		"# Review\n\n## Bugs found\n\n1. **Bug A**: x\n2. **Bug B**: y\n3. **Bug C**: z\n4. **Bug D**: w\n5. **Bug E**: v\n\n## Verdict\n\nfix-bugs-then-ship\n",
 	})
+
 	var stderr bytes.Buffer
+
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
 	// max-iters with regressed final → non-zero exit (Colony Q4).
 	if code == 0 {
 		t.Fatalf("expected non-zero exit on max-iters with no ship-as-is; got 0. stderr=%s", stderr.String())
 	}
+
 	body, err := os.ReadFile(opts.OutputPath)
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
+
 	if !strings.HasPrefix(string(body), "> WARNING:") {
 		t.Fatalf("expected saved best-draft to lead with WARNING, got: %s", body)
 	}
+
 	if !strings.Contains(string(body), "# Draft v1 (BEST") {
 		t.Fatalf("output should be the best draft (v1), not the regressed latest (v2). Got: %s", body)
 	}
@@ -1134,8 +1324,10 @@ func TestParseTrapFrontmatterExtractsAppliesTo(t *testing.T) {
 			if !util.EqualSlice(applies, tc.wantApplies) {
 				t.Fatalf("applies_to: got %v, want %v", applies, tc.wantApplies)
 			}
+
 			gotBody := strings.TrimSpace(string(body))
 			wantBody := strings.TrimSpace(tc.wantBody)
+
 			if gotBody != wantBody {
 				t.Fatalf("body: got %q, want %q", gotBody, wantBody)
 			}
@@ -1149,32 +1341,40 @@ func TestParseTrapFrontmatterExtractsAppliesTo(t *testing.T) {
 // (no overlay dir) see zero behavior change.
 func TestRunLaneRefineAppliesProjectOverlay(t *testing.T) {
 	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+
 	root := t.TempDir()
 	overlayDir := filepath.Join(root, refineOverlayDir)
 	trapsDir := filepath.Join(overlayDir, "traps")
+
 	if err := os.MkdirAll(trapsDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	hardProhibitions := "## HARD PROHIBITIONS (project)\n\n- No interactive question tool — use `<<QUESTION>>:` markers.\n- No builds, tests, or commits.\n"
 	if err := os.WriteFile(filepath.Join(overlayDir, "hard-prohibitions.md"), []byte(hardProhibitions), 0o644); err != nil {
 		t.Fatalf("seed prohibitions: %v", err)
 	}
+
 	testTrap := "---\napplies_to: [test-code]\n---\n\n## Trap — test-code\n\nWatch for goroutine leaks in t.Cleanup.\n"
 	if err := os.WriteFile(filepath.Join(trapsDir, "test-code.md"), []byte(testTrap), 0o644); err != nil {
 		t.Fatalf("seed trap: %v", err)
 	}
+
 	multiFileTrap := "---\napplies_to: [multi-file]\n---\n\n## Trap — multi-file\n\nOrder edits so callers ship before callees.\n"
 	if err := os.WriteFile(filepath.Join(trapsDir, "multi-file.md"), []byte(multiFileTrap), 0o644); err != nil {
 		t.Fatalf("seed trap: %v", err)
 	}
+
 	saveLoadTrap := "---\napplies_to: [save-load]\n---\n\n## Trap — save-load\n\nProject-specific tag; should NOT fire on this brief.\n"
 	if err := os.WriteFile(filepath.Join(trapsDir, "save-load.md"), []byte(saveLoadTrap), 0o644); err != nil {
 		t.Fatalf("seed trap: %v", err)
 	}
+
 	specPath := filepath.Join(root, "spec.md")
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -1189,27 +1389,36 @@ func TestRunLaneRefineAppliesProjectOverlay(t *testing.T) {
 		draftBody,
 		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
 	})
+
 	var stderr bytes.Buffer
+
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	if code != 0 {
 		t.Fatalf("expected exit 0 (ship-as-is), got %d; stderr=%s", code, stderr.String())
 	}
+
 	body, err := os.ReadFile(opts.OutputPath)
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
+
 	if !strings.Contains(string(body), "HARD PROHIBITIONS (project)") {
 		t.Fatalf("expected hard-prohibitions overlay in output, got:\n%s", body)
 	}
+
 	if !strings.Contains(string(body), "Trap — test-code") {
 		t.Fatalf("expected test-code trap inlined, got:\n%s", body)
 	}
+
 	if !strings.Contains(string(body), "Trap — multi-file") {
 		t.Fatalf("expected multi-file trap inlined, got:\n%s", body)
 	}
+
 	if strings.Contains(string(body), "Trap — save-load") {
 		t.Fatalf("save-load trap should NOT fire (not in canonical tags for this brief), got:\n%s", body)
 	}
+
 	if !strings.Contains(stderr.String(), "atom-shape tags") {
 		t.Fatalf("expected stderr to log atom-shape tags, got: %s", stderr.String())
 	}
@@ -1219,38 +1428,50 @@ func TestRefineLintIgnoresProjectOverlayGuidance(t *testing.T) {
 	root := t.TempDir()
 	overlayDir := filepath.Join(root, refineOverlayDir)
 	trapsDir := filepath.Join(overlayDir, "traps")
+
 	if err := os.MkdirAll(trapsDir, 0o755); err != nil {
 		t.Fatalf("mkdir traps: %v", err)
 	}
+
 	trap := "---\napplies_to: [test-code]\n---\n\n## Trap — example\n\n```cpp\nCHECK(example());\n```\n"
 	if err := os.WriteFile(filepath.Join(trapsDir, "test-code.md"), []byte(trap), 0o644); err != nil {
 		t.Fatalf("seed trap: %v", err)
 	}
+
 	draftPath := filepath.Join(root, "draft.md")
 	draft := "# Draft\n\n## Problem\n\nChange `native/test_example.cpp`.\n\n" +
 		refineDeliverableMarker +
 		"\n\n## Required Behavior\n\nDo the edit.\n\n## Acceptance\n\n- Run tests.\n"
+
 	if err := os.WriteFile(draftPath, []byte(draft), 0o644); err != nil {
 		t.Fatalf("seed draft: %v", err)
 	}
 
 	var lintInput string
+
 	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
 		body, err := os.ReadFile(args[0])
 		if err != nil {
 			t.Fatalf("read lint input: %v", err)
 		}
+
 		lintInput = string(body)
+
 		return 0
 	})
+
 	var stderr bytes.Buffer
+
 	code, _ := captureRefineLintOutput(draftPath, "", root, refineModeAnchored, []string{"native/test_example.cpp"}, &stderr)
+
 	if code != 0 {
 		t.Fatalf("stub lint should pass, got %d", code)
 	}
+
 	if !strings.Contains(lintInput, "## Files To Modify") || !strings.Contains(lintInput, "## Acceptance") {
 		t.Fatalf("lint input should include canonical brief sections after marker injection, got:\n%s", lintInput)
 	}
+
 	if strings.Contains(lintInput, "Trap — example") || strings.Contains(lintInput, "```cpp") {
 		t.Fatalf("project overlay guidance should not be part of structural lint input, got:\n%s", lintInput)
 	}
@@ -1266,11 +1487,14 @@ func TestRunLaneRefinePatchPhaseSeesLintPreload(t *testing.T) {
 		_, _ = stdout.Write([]byte("BLOCK: unfilled <placeholder> in Files To Modify row\nWARN: append-to-end-of-file edit shape\n"))
 		return 1
 	})
+
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -1284,16 +1508,22 @@ func TestRunLaneRefinePatchPhaseSeesLintPreload(t *testing.T) {
 		nonTrivialDraftBody("Draft v2"),
 		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
 	})
+
 	var stderr bytes.Buffer
+
 	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	metaPatchPath := filepath.Join(refineStateDir(root, "patch-lint"), "iter-2", "meta-patch.md")
+
 	body, err := os.ReadFile(metaPatchPath)
 	if err != nil {
 		t.Fatalf("read meta-patch: %v", err)
 	}
+
 	if !strings.Contains(string(body), "BLOCK: unfilled <placeholder>") {
 		t.Fatalf("expected lint BLOCK inlined in patch meta-brief, got:\n%s", body)
 	}
+
 	if !strings.Contains(string(body), "Pre-loaded lint findings") {
 		t.Fatalf("expected 'Pre-loaded lint findings' section in patch meta-brief, got:\n%s", body)
 	}
@@ -1302,9 +1532,11 @@ func TestRunLaneRefinePatchPhaseSeesLintPreload(t *testing.T) {
 func TestWriteRefinePatchMetaPreloadsSourceEvidenceAnchors(t *testing.T) {
 	root := t.TempDir()
 	srcPath := filepath.Join(root, "native", "src", "simulation", "creatures", "formative_events.h")
+
 	if err := os.MkdirAll(filepath.Dir(srcPath), 0o755); err != nil {
 		t.Fatalf("mkdir source dir: %v", err)
 	}
+
 	source := strings.Join([]string{
 		"enum class FormativeEventType : uint8_t {",
 		"    SURVIVED_BATTLE,",
@@ -1320,29 +1552,36 @@ func TestWriteRefinePatchMetaPreloadsSourceEvidenceAnchors(t *testing.T) {
 	if err := os.WriteFile(srcPath, []byte(source), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
+
 	prevDraft := filepath.Join(root, ".idiom", "refine", "example", "iter-1", "draft.md")
 	prevReview := filepath.Join(root, ".idiom", "refine", "example", "iter-1", "review.md")
 	metaPath := filepath.Join(root, ".idiom", "refine", "example", "iter-2", "meta-patch.md")
 	newDraft := filepath.Join(root, ".idiom", "refine", "example", "iter-2", "draft.md")
+
 	for _, path := range []string{prevDraft, prevReview, metaPath} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", path, err)
 		}
 	}
+
 	if err := os.WriteFile(prevDraft, []byte("Add FormativeEventType and MemoryType anchors.\n"), 0o644); err != nil {
 		t.Fatalf("write draft: %v", err)
 	}
+
 	if err := os.WriteFile(prevReview, []byte("Missing anchor in formative_events.h for FormativeEventType, MemoryType, and COUNT.\n"), 0o644); err != nil {
 		t.Fatalf("write review: %v", err)
 	}
+
 	lintOutput := "- [BLOCK] (anchor-specificity) exact-anchor specificity failed for required edit path(s): native/src/simulation/creatures/formative_events.h"
 	if err := writeRefinePatchMeta(metaPath, prevDraft, prevReview, newDraft, lintOutput, []string{"native/src/simulation/creatures/formative_events.h"}); err != nil {
 		t.Fatalf("write patch meta: %v", err)
 	}
+
 	body, err := os.ReadFile(metaPath)
 	if err != nil {
 		t.Fatalf("read patch meta: %v", err)
 	}
+
 	text := string(body)
 	for _, want := range []string{
 		"Pre-loaded source evidence",
@@ -1360,34 +1599,44 @@ func TestRefinePatchSourceEvidenceStaysCompactAndSkipsBoilerplate(t *testing.T) 
 	root := t.TempDir()
 	relPath := filepath.ToSlash(filepath.Join("native", "src", "simulation", "creatures", "formative_events.h"))
 	srcPath := filepath.Join(root, filepath.FromSlash(relPath))
+
 	if err := os.MkdirAll(filepath.Dir(srcPath), 0o755); err != nil {
 		t.Fatalf("mkdir source dir: %v", err)
 	}
+
 	var source strings.Builder
+
 	source.WriteString("#include \"appraisal.h\"\n")
 	source.WriteString("namespace Colony {\n")
 	source.WriteString("enum class FormativeEventType : uint8_t {\n")
+
 	for i := 0; i < 20; i++ {
 		source.WriteString("    EVENT_")
 		source.WriteString(string(rune('A' + i)))
 		source.WriteString(",\n")
 	}
+
 	source.WriteString("    COUNT,\n")
 	source.WriteString("};\n")
 	source.WriteString("}\n")
+
 	if err := os.WriteFile(srcPath, []byte(source.String()), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
+
 	prevDraft := filepath.Join(root, ".idiom", "refine", "example", "iter-1", "draft.md")
 	prevReview := filepath.Join(root, ".idiom", "refine", "example", "iter-1", "review.md")
+
 	for _, path := range []string{prevDraft, prevReview} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", path, err)
 		}
 	}
+
 	if err := os.WriteFile(prevDraft, []byte("Use FormativeEventType EVENT_A EVENT_B EVENT_C EVENT_D EVENT_E EVENT_F EVENT_G EVENT_H EVENT_I EVENT_J EVENT_K EVENT_L EVENT_M EVENT_N EVENT_O EVENT_P EVENT_Q EVENT_R EVENT_S EVENT_T COUNT anchors.\n"), 0o644); err != nil {
 		t.Fatalf("write draft: %v", err)
 	}
+
 	if err := os.WriteFile(prevReview, []byte("Missing compact anchors in native/src/simulation/creatures/formative_events.h.\n"), 0o644); err != nil {
 		t.Fatalf("write review: %v", err)
 	}
@@ -1396,12 +1645,15 @@ func TestRefinePatchSourceEvidenceStaysCompactAndSkipsBoilerplate(t *testing.T) 
 	if strings.Contains(evidence, "#include") || strings.Contains(evidence, "namespace Colony") {
 		t.Fatalf("source evidence should skip boilerplate, got:\n%s", evidence)
 	}
+
 	count := 0
+
 	for _, line := range strings.Split(evidence, "\n") {
 		if strings.HasPrefix(line, "- `"+relPath+":") {
 			count++
 		}
 	}
+
 	if count == 0 || count > refinePatchSourceEvidenceAnchorsPerPath {
 		t.Fatalf("expected 1..%d anchors, got %d:\n%s", refinePatchSourceEvidenceAnchorsPerPath, count, evidence)
 	}
@@ -1411,23 +1663,29 @@ func TestRefinePatchSourceEvidencePreservesCompleteAnchorLines(t *testing.T) {
 	root := t.TempDir()
 	relPath := filepath.ToSlash(filepath.Join("internal", "writerroute", "decision.go"))
 	srcPath := filepath.Join(root, filepath.FromSlash(relPath))
+
 	if err := os.MkdirAll(filepath.Dir(srcPath), 0o755); err != nil {
 		t.Fatalf("mkdir source dir: %v", err)
 	}
+
 	longLine := "func NewDecision(mode WriterMode, lane string, plannerModel string, executorModel string, reviewerModel string, classifierModel string, riskTier string, costTier string, scopeTier string, verificationOwner string, reviewPolicy string, requiredEditPaths []string, evidencePacketIDs []string, reasonCodes []string, escalationTriggers []string, userOverride bool, taskFamily string) Decision {"
 	if err := os.WriteFile(srcPath, []byte("package writerroute\n\n"+longLine+"\n\treturn Decision{}\n}\n"), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
+
 	prevDraft := filepath.Join(root, ".idiom", "refine", "example", "iter-1", "draft.md")
 	prevReview := filepath.Join(root, ".idiom", "refine", "example", "iter-1", "review.md")
+
 	for _, path := range []string{prevDraft, prevReview} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", path, err)
 		}
 	}
+
 	if err := os.WriteFile(prevDraft, []byte("Review NewDecision in internal/contracts/writerroute/decision.go.\n"), 0o644); err != nil {
 		t.Fatalf("write draft: %v", err)
 	}
+
 	if err := os.WriteFile(prevReview, []byte("Patch must use the complete NewDecision anchor from internal/contracts/writerroute/decision.go.\n"), 0o644); err != nil {
 		t.Fatalf("write review: %v", err)
 	}
@@ -1436,6 +1694,7 @@ func TestRefinePatchSourceEvidencePreservesCompleteAnchorLines(t *testing.T) {
 	if !strings.Contains(evidence, longLine) {
 		t.Fatalf("source evidence lost complete anchor line:\n%s", evidence)
 	}
+
 	if strings.Contains(evidence, "...") {
 		t.Fatalf("source evidence must not truncate actionable anchor lines:\n%s", evidence)
 	}
@@ -1445,14 +1704,19 @@ func TestRefinePatchSourceEvidencePrioritizesBoundaryAnchors(t *testing.T) {
 	root := t.TempDir()
 	relPath := filepath.ToSlash(filepath.Join("native", "src", "simulation", "creatures", "memory_helpers.cpp"))
 	srcPath := filepath.Join(root, filepath.FromSlash(relPath))
+
 	if err := os.MkdirAll(filepath.Dir(srcPath), 0o755); err != nil {
 		t.Fatalf("mkdir source dir: %v", err)
 	}
+
 	var source strings.Builder
+
 	source.WriteString("enum class MemoryType : uint8_t {\n")
+
 	for i := 0; i < 30; i++ {
 		fmt.Fprintf(&source, "    DISTRACTOR_%02d,\n", i)
 	}
+
 	source.WriteString("    FIRST_KILL,\n")
 	source.WriteString("    COUNT,\n")
 	source.WriteString("};\n\n")
@@ -1463,20 +1727,25 @@ func TestRefinePatchSourceEvidencePrioritizesBoundaryAnchors(t *testing.T) {
 	source.WriteString("    }\n")
 	source.WriteString("    return 0.0f;\n")
 	source.WriteString("}\n")
+
 	if err := os.WriteFile(srcPath, []byte(source.String()), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
+
 	prevDraft := filepath.Join(root, ".idiom", "refine", "example", "iter-1", "draft.md")
 	prevReview := filepath.Join(root, ".idiom", "refine", "example", "iter-1", "review.md")
+
 	for _, path := range []string{prevDraft, prevReview} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", path, err)
 		}
 	}
+
 	draft := "Source verification pending: confirm the MemoryType COUNT sentinel and default_memory_mood() switch closing boundary in native/src/simulation/creatures/memory_helpers.cpp.\n"
 	if err := os.WriteFile(prevDraft, []byte(draft), 0o644); err != nil {
 		t.Fatalf("write draft: %v", err)
 	}
+
 	review := "Missing exact anchors for COUNT, default_memory_mood(), and case MemoryType::COUNT.\n"
 	if err := os.WriteFile(prevReview, []byte(review), 0o644); err != nil {
 		t.Fatalf("write review: %v", err)
@@ -1511,15 +1780,19 @@ func TestRenderRefineLintFindingsFromJSONEnvelope(t *testing.T) {
   ]
 }`
 	out, ok := renderRefineLintFindings([]byte(envelope))
+
 	if !ok {
 		t.Fatalf("expected ok=true on well-formed envelope")
 	}
+
 	if !strings.Contains(out, "[BLOCK] (anchor-specificity) exact-anchor failed for x.go") {
 		t.Fatalf("expected BLOCK rendered with severity+category+message, got:\n%s", out)
 	}
+
 	if !strings.Contains(out, "[WARN] (missing-current-state) no verified state") {
 		t.Fatalf("expected WARN rendered, got:\n%s", out)
 	}
+
 	if strings.Contains(out, "INFO") || strings.Contains(out, "informational") {
 		t.Fatalf("expected INFO filtered out, got:\n%s", out)
 	}
@@ -1532,9 +1805,11 @@ func TestRenderRefineLintFindingsFromJSONEnvelope(t *testing.T) {
 func TestRenderRefineLintFindingsCleanPassEmitsClearNote(t *testing.T) {
 	envelope := `{"brief": "/tmp/test.md", "exit": 0, "findings": []}`
 	out, ok := renderRefineLintFindings([]byte(envelope))
+
 	if !ok {
 		t.Fatalf("expected ok=true")
 	}
+
 	if !strings.Contains(out, "no BLOCK/WARN findings") {
 		t.Fatalf("expected clean-pass note, got: %s", out)
 	}
@@ -1552,21 +1827,26 @@ func TestWriteFallbackRefineReviewFromLintBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("write fallback review: %v", err)
 	}
+
 	if !wrote {
 		t.Fatal("expected fallback review to be written for lint BLOCKs")
 	}
+
 	bodyBytes, err := os.ReadFile(reviewPath)
 	if err != nil {
 		t.Fatalf("read fallback review: %v", err)
 	}
+
 	body := string(bodyBytes)
 	if got := parseRefineVerdict(body); got != "fix-bugs-then-ship" {
 		t.Fatalf("fallback verdict = %q, want fix-bugs-then-ship\n%s", got, body)
 	}
+
 	bugs := parseRefineBugTitles(body)
 	if len(bugs) != 1 || !strings.Contains(bugs[0], "anchor-specificity") {
 		t.Fatalf("fallback bugs = %#v, want one anchor-specificity lint block\n%s", bugs, body)
 	}
+
 	if !strings.Contains(body, "[WARN] (other) test-anchor preload missing") {
 		t.Fatalf("fallback review should preserve WARN findings for patch context:\n%s", body)
 	}
@@ -1580,9 +1860,11 @@ func TestWriteFallbackRefineReviewSkipsWithoutLintBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("write fallback review: %v", err)
 	}
+
 	if wrote {
 		t.Fatal("fallback review should not synthesize a review without a lint BLOCK")
 	}
+
 	if _, err := os.Stat(reviewPath); !os.IsNotExist(err) {
 		t.Fatalf("review path should not exist, stat err=%v", err)
 	}
@@ -1640,6 +1922,7 @@ func TestParseBriefLintFindingsCategorizesByKeyword(t *testing.T) {
 			if len(got) != 1 {
 				t.Fatalf("expected 1 finding, got %d: %+v", len(got), got)
 			}
+
 			if got[0] != tc.want {
 				t.Fatalf("finding mismatch:\n got=%+v\nwant=%+v", got[0], tc.want)
 			}
@@ -1655,23 +1938,31 @@ func TestRunBriefLintJSONFlagEmitsEnvelope(t *testing.T) {
 	root := t.TempDir()
 	briefPath := filepath.Join(root, "tiny.md")
 	body := "# Title\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `x.go` | MODIFY |\n"
+
 	if err := os.WriteFile(briefPath, []byte(body), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	var stdout, stderr bytes.Buffer
+
 	exit := runBriefLint([]string{briefPath, "--json"}, &stdout, &stderr, nil)
 	// The python preflight is expected to return non-zero on this
 	// minimal brief (missing anchors etc.) — we don't care about the
 	// exact exit, just that the JSON envelope is well-formed.
 	_ = exit
+
 	out := stdout.String()
+
 	if !strings.HasPrefix(strings.TrimSpace(out), "{") {
 		t.Fatalf("expected JSON envelope on stdout, got: %s", out)
 	}
+
 	var report briefLintReport
+
 	if err := json.Unmarshal([]byte(out), &report); err != nil {
 		t.Fatalf("expected valid JSON envelope, got: %v\n%s", err, out)
 	}
+
 	if report.Brief != briefPath {
 		t.Fatalf("expected brief field = %q, got %q", briefPath, report.Brief)
 	}
@@ -1716,25 +2007,30 @@ func TestRefineCanonicalTagsCoverAllClassifierEmissions(t *testing.T) {
 		},
 	}
 	emitted := map[string]bool{}
+
 	for _, p := range probes {
 		for _, tag := range classifyBriefAtomShape([]byte(p.body)) {
 			emitted[tag] = true
 		}
+
 		// Each probe must produce its target tag.
 		if !slices.Contains(classifyBriefAtomShape([]byte(p.body)), p.want) {
 			t.Fatalf("probe %s: classifier did not emit %q for body:\n%s\nemitted=%v", p.name, p.want, p.body, classifyBriefAtomShape([]byte(p.body)))
 		}
 	}
+
 	canonical := map[string]bool{}
 	for _, t := range refineCanonicalTags {
 		canonical[t] = true
 	}
+
 	// Every classifier-emitted tag must be in canonical.
 	for tag := range emitted {
 		if !canonical[tag] {
 			t.Fatalf("classifier emits %q but refineCanonicalTags does not include it; the orphan-tag warning would fire falsely. Add %q to refineCanonicalTags.", tag, tag)
 		}
 	}
+
 	// Every canonical tag must be reachable from some classifier path.
 	for tag := range canonical {
 		if !emitted[tag] {
@@ -1750,13 +2046,18 @@ func TestRefineCanonicalTagsCoverAllClassifierEmissions(t *testing.T) {
 func TestPersistRefineLintJSONWritesEnvelopeToIterDir(t *testing.T) {
 	iterDir := t.TempDir()
 	raw := []byte(`{"brief":"/tmp/x.md","exit":1,"findings":[{"severity":"BLOCK","category":"anchor-specificity","brief":"/tmp/x.md","message":"missing anchor"}]}`)
+
 	var stderr bytes.Buffer
+
 	persistRefineLintJSON(iterDir, raw, &stderr)
+
 	gotPath := filepath.Join(iterDir, "lint.json")
+
 	body, err := os.ReadFile(gotPath)
 	if err != nil {
 		t.Fatalf("expected lint.json written, got: %v", err)
 	}
+
 	if string(body) != string(raw) {
 		t.Fatalf("expected raw envelope persisted verbatim:\n got=%s\nwant=%s", body, raw)
 	}
@@ -1770,8 +2071,11 @@ func TestPersistRefineLintJSONWritesEnvelopeToIterDir(t *testing.T) {
 func TestPersistRefineLintJSONLogsButContinuesOnError(t *testing.T) {
 	// Use a path that can't be written (parent doesn't exist).
 	iterDir := "/nonexistent-path-for-test/iter-1"
+
 	var stderr bytes.Buffer
+
 	persistRefineLintJSON(iterDir, []byte(`{}`), &stderr)
+
 	if !strings.Contains(stderr.String(), "WARN cannot persist") {
 		t.Fatalf("expected best-effort write failure to log WARN, got: %s", stderr.String())
 	}
@@ -1788,11 +2092,14 @@ func TestRunLaneRefinePersistLintJSONAlongMetricsJSON(t *testing.T) {
 		_, _ = stdout.Write([]byte(`{"brief":"x.md","exit":0,"findings":[]}`))
 		return 0
 	})
+
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -1804,15 +2111,20 @@ func TestRunLaneRefinePersistLintJSONAlongMetricsJSON(t *testing.T) {
 		nonTrivialDraftBody("Drafted brief"),
 		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
 	})
+
 	var stderr bytes.Buffer
+
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
 	}
+
 	iterDir := filepath.Join(refineStateDir(root, "persist-lint"), "iter-1")
 	if _, err := os.Stat(filepath.Join(iterDir, "lint.json")); err != nil {
 		t.Fatalf("expected lint.json persisted alongside metrics.json, got: %v\nstderr=%s", err, stderr.String())
 	}
+
 	if _, err := os.Stat(filepath.Join(iterDir, "metrics.json")); err != nil {
 		t.Fatalf("expected metrics.json (regression check), got: %v", err)
 	}
@@ -1913,6 +2225,7 @@ Add ` + "`valence > 0.0f`" + ` handling and populate ` + "`EventClass`" + ` mapp
 		"native/src/core/constants/individuated_mood.h",
 		"native/tests/test_individuated_mood.cpp",
 	}
+
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("extractDeliverableTargets() = %#v, want %#v", got, want)
 	}
@@ -1938,6 +2251,7 @@ func TestExtractDeliverableTargetsPrefersExpectedFileScope(t *testing.T) {
 		"internal/surfaces/tui/app/prompt_routing.go",
 		"internal/surfaces/tui/app/writer_route.go",
 	}
+
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("extractDeliverableTargets() = %#v, want %#v", got, want)
 	}
@@ -1960,6 +2274,7 @@ Acceptance-only context:
 `
 	got := extractDeliverableTargets(spec, refineModeAnchored)
 	want := []string{"scripts/test_anomaly_scan.py"}
+
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("extractDeliverableTargets() = %#v, want %#v", got, want)
 	}
@@ -1980,6 +2295,7 @@ func TestExtractDeliverableTargetsPrefersFilesTableOverScope(t *testing.T) {
 `
 	got := extractDeliverableTargets(spec, refineModeAnchored)
 	want := []string{"src/real.go"}
+
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("extractDeliverableTargets() = %#v, want %#v", got, want)
 	}
@@ -2004,6 +2320,7 @@ func TestExtractDeliverableTargetsRejectsSlashSeparatedProseAndCommands(t *testi
 		"native/src/simulation/hazards/collapse_event.cpp",
 		"docs/research/collapse-event.md",
 	}
+
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("extractDeliverableTargets() = %#v, want %#v", got, want)
 	}
@@ -2025,14 +2342,18 @@ func TestRefineDeliverableTargetMismatchSurfacesAsBlock(t *testing.T) {
 	if err := os.WriteFile(draftPath, []byte(body), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	specTarget := "docs/research/lane-postflight-check-inventory.md"
 	got := refineDeliverableTargetMismatch(draftPath, []string{specTarget})
+
 	if got == "" {
 		t.Fatalf("expected BLOCK on path mismatch, got empty")
 	}
+
 	if !strings.Contains(got, "[BLOCK]") || !strings.Contains(got, "deliverable-target-mismatch") {
 		t.Fatalf("expected BLOCK with deliverable-target-mismatch category, got: %s", got)
 	}
+
 	if !strings.Contains(got, specTarget) {
 		t.Fatalf("expected BLOCK to name the expected target, got: %s", got)
 	}
@@ -2045,9 +2366,11 @@ func TestRefineDeliverableTargetMatchReturnsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	draftPath := filepath.Join(dir, "draft.md")
 	body := "# Brief\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `docs/research/inventory.md` | NEW FILE |\n\n## Acceptance\n\n- test\n"
+
 	if err := os.WriteFile(draftPath, []byte(body), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	got := refineDeliverableTargetMismatch(draftPath, []string{"docs/research/inventory.md"})
 	if got != "" {
 		t.Fatalf("expected silent success on match, got: %s", got)
@@ -2058,13 +2381,16 @@ func TestRefineDeliverableTargetMismatchRequiresAllAnchoredTargets(t *testing.T)
 	dir := t.TempDir()
 	draftPath := filepath.Join(dir, "draft.md")
 	body := "# Brief\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `native/a.cpp` | MODIFY |\n\n## Acceptance\n\n- test\n"
+
 	if err := os.WriteFile(draftPath, []byte(body), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	got := refineDeliverableTargetMismatch(draftPath, []string{"native/a.cpp", "native/b.cpp"})
 	if got == "" {
 		t.Fatalf("expected BLOCK when one required target is missing")
 	}
+
 	if !strings.Contains(got, "native/b.cpp") {
 		t.Fatalf("expected missing target in BLOCK, got: %s", got)
 	}
@@ -2078,9 +2404,11 @@ func TestRefineDeliverableTargetEmptyTargetSkipsCheck(t *testing.T) {
 	dir := t.TempDir()
 	draftPath := filepath.Join(dir, "draft.md")
 	body := "# Brief\n\n## Files To Modify\n\n| File | Change |\n|------|--------|\n| `whatever.md` | NEW FILE |\n"
+
 	if err := os.WriteFile(draftPath, []byte(body), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	if got := refineDeliverableTargetMismatch(draftPath, nil); got != "" {
 		t.Fatalf("expected no-op when target is empty, got: %s", got)
 	}
@@ -2097,9 +2425,11 @@ func TestRefineDeliverableContextBlockRendersExtractedTarget(t *testing.T) {
 	if !strings.Contains(got, "docs/research/x.md") {
 		t.Fatalf("expected block to name the target, got: %s", got)
 	}
+
 	if !strings.Contains(got, "harness will inject") {
 		t.Fatalf("expected harness-injection framing, got: %s", got)
 	}
+
 	if !strings.Contains(got, "idiom:harness-deliverable-block") {
 		t.Fatalf("expected reference to harness marker, got: %s", got)
 	}
@@ -2123,15 +2453,19 @@ func TestRefineInjectDeliverableBlockAnchored(t *testing.T) {
 	body := []byte("# T\n\n## Problem\n\nspec.\n\n<!-- idiom:harness-deliverable-block -->\n\n## Verified Current State\n\nbody\n")
 	out := refineInjectDeliverableBlock(body, "anchored", []string{"docs/research/x.md", "native/foo.cpp"}, "", io.Discard)
 	got := string(out)
+
 	if strings.Contains(got, "<!-- idiom:harness-deliverable-block -->") {
 		t.Fatalf("marker should be replaced, got: %s", got)
 	}
+
 	if !strings.Contains(got, "## Files To Modify") {
 		t.Fatalf("anchored injection should emit Files To Modify, got: %s", got)
 	}
+
 	if !strings.Contains(got, "`docs/research/x.md`") {
 		t.Fatalf("injection should name the extracted target, got: %s", got)
 	}
+
 	if !strings.Contains(got, "`native/foo.cpp`") {
 		t.Fatalf("injection should name every extracted target, got: %s", got)
 	}
@@ -2142,6 +2476,7 @@ func TestRefineInjectDeliverableBlockAnchoredMarksMissingTargetsAsNewFiles(t *te
 	if err := os.MkdirAll(filepath.Join(root, "cmd", "idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir existing target dir: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "cmd", "idiom", "lane.go"), []byte("package main\n"), 0o644); err != nil {
 		t.Fatalf("seed existing target: %v", err)
 	}
@@ -2149,9 +2484,11 @@ func TestRefineInjectDeliverableBlockAnchoredMarksMissingTargetsAsNewFiles(t *te
 	body := []byte("# T\n\n## Problem\n\nspec.\n\n<!-- idiom:harness-deliverable-block -->\n\n## Verified Current State\n\nbody\n")
 	out := refineInjectDeliverableBlock(body, "anchored", []string{"internal/contracts/writerroute/decision.go", "cmd/idiom/lane.go"}, root, io.Discard)
 	got := string(out)
+
 	if !strings.Contains(got, "| `internal/contracts/writerroute/decision.go` | NEW FILE: harness-injected target (extracted from spec) |") {
 		t.Fatalf("missing target should be injected as NEW FILE, got:\n%s", got)
 	}
+
 	if !strings.Contains(got, "| `cmd/idiom/lane.go` | MODIFY: harness-injected target (extracted from spec) |") {
 		t.Fatalf("existing target should be injected as MODIFY, got:\n%s", got)
 	}
@@ -2164,12 +2501,15 @@ func TestRefineInjectDeliverableBlockMarkdown(t *testing.T) {
 	body := []byte("# T\n\n## Problem\n\nspec.\n\n<!-- idiom:harness-deliverable-block -->\n\n## Inline content\n\nbody\n")
 	out := refineInjectDeliverableBlock(body, "markdown", []string{"docs/research/x.md"}, "", io.Discard)
 	got := string(out)
+
 	if strings.Contains(got, "<!-- idiom:harness-deliverable-block -->") {
 		t.Fatalf("marker should be replaced, got: %s", got)
 	}
+
 	if !strings.Contains(got, "## Deliverable") {
 		t.Fatalf("markdown injection should emit Deliverable, got: %s", got)
 	}
+
 	if !strings.Contains(got, "Path: `docs/research/x.md`") {
 		t.Fatalf("injection should name the extracted target with Path: prefix, got: %s", got)
 	}
@@ -2182,6 +2522,7 @@ func TestRefineInjectDeliverableBlockMarkdown(t *testing.T) {
 func TestRefineInjectDeliverableBlockSkipsWhenMarkerAbsent(t *testing.T) {
 	body := []byte("# T\n\n## Problem\n\nspec.\n\n## Files To Modify\n\n| a | b |\n")
 	out := refineInjectDeliverableBlock(body, "anchored", []string{"docs/research/x.md"}, "", io.Discard)
+
 	if !bytes.Equal(body, out) {
 		t.Fatalf("body should be unchanged when marker absent, got: %s", string(out))
 	}
@@ -2194,6 +2535,7 @@ func TestRefineInjectDeliverableBlockSkipsWhenMarkerAbsent(t *testing.T) {
 func TestRefineInjectDeliverableBlockSkipsWhenTargetEmpty(t *testing.T) {
 	body := []byte("# T\n\n## Problem\n\n<!-- idiom:harness-deliverable-block -->\n\n## X\n")
 	out := refineInjectDeliverableBlock(body, "anchored", nil, "", io.Discard)
+
 	if !bytes.Equal(body, out) {
 		t.Fatalf("body should be unchanged when target empty, got: %s", string(out))
 	}
@@ -2204,31 +2546,40 @@ func TestFinalizeRefineLintsInjectedFinalBody(t *testing.T) {
 	draftPath := filepath.Join(dir, "draft.md")
 	outputPath := filepath.Join(dir, "out.md")
 	body := "# Draft\n\n## Problem\n\nThis is a non-trivial refine draft with enough content to pass the minimum-size guard.\n\n<!-- idiom:harness-deliverable-block -->\n\n## Verified Current State\n\nSource verification pending.\n\n## Required Behavior\n\n1. Preserve the marker until finalize.\n\n## Acceptance\n\n- `go test ./cmd/idiom`\n"
+
 	if err := os.WriteFile(draftPath, []byte(body), 0o644); err != nil {
 		t.Fatalf("seed draft: %v", err)
 	}
 
 	var lintedBody string
+
 	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
 		if len(args) != 1 {
 			t.Fatalf("expected lint temp path only, got args=%v", args)
 		}
+
 		blob, err := os.ReadFile(args[0])
 		if err != nil {
 			t.Fatalf("read lint temp: %v", err)
 		}
+
 		lintedBody = string(blob)
+
 		return 0
 	})
 
 	var stderr bytes.Buffer
+
 	code := finalizeRefineWithTitleAndOverlay(draftPath, outputPath, "final-lint", 1, "ship-as-is", "", refineModeAnchored, []string{"native/foo.cpp"}, &stderr)
+
 	if code != 0 {
 		t.Fatalf("finalize exit=%d stderr=%s", code, stderr.String())
 	}
+
 	if !strings.Contains(lintedBody, "## Files To Modify") || !strings.Contains(lintedBody, "`native/foo.cpp`") {
 		t.Fatalf("lint should see injected Files To Modify block, got:\n%s", lintedBody)
 	}
+
 	if strings.Contains(lintedBody, refineDeliverableMarker) {
 		t.Fatalf("lint should not see raw deliverable marker, got:\n%s", lintedBody)
 	}
@@ -2238,50 +2589,63 @@ func TestFinalizeRefineFailsShipAsIsWhenProjectOverlayBreaksLint(t *testing.T) {
 	root := t.TempDir()
 	overlayDir := filepath.Join(root, refineOverlayDir)
 	trapsDir := filepath.Join(overlayDir, "traps")
+
 	if err := os.MkdirAll(trapsDir, 0o755); err != nil {
 		t.Fatalf("mkdir traps: %v", err)
 	}
+
 	trap := "---\napplies_to: [test-code]\n---\n\n## Trap — example\n\n```cpp\nCHECK(example());\n```\n"
 	if err := os.WriteFile(filepath.Join(trapsDir, "test-code.md"), []byte(trap), 0o644); err != nil {
 		t.Fatalf("seed trap: %v", err)
 	}
+
 	draftPath := filepath.Join(root, "draft.md")
 	outputPath := filepath.Join(root, "out.md")
 	body := "# Draft\n\n## Problem\n\nThis is a non-trivial refine draft for `native/test_example.cpp`.\n\n" +
 		refineDeliverableMarker +
 		"\n\n## Verified Current State\n\nSource verification pending.\n\n## Required Behavior\n\n1. Preserve the marker until finalize.\n\n## Acceptance\n\n- `go test ./cmd/idiom`\n"
+
 	if err := os.WriteFile(draftPath, []byte(body), 0o644); err != nil {
 		t.Fatalf("seed draft: %v", err)
 	}
 
 	var lintedBody string
+
 	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
 		blob, err := os.ReadFile(args[0])
 		if err != nil {
 			t.Fatalf("read lint temp: %v", err)
 		}
+
 		lintedBody = string(blob)
 		if strings.Contains(lintedBody, "```cpp") {
 			return 1
 		}
+
 		return 0
 	})
 
 	var stderr bytes.Buffer
+
 	code := finalizeRefineWithTitleAndOverlay(draftPath, outputPath, "overlay-lint", 1, "ship-as-is", root, refineModeAnchored, []string{"native/test_example.cpp"}, &stderr)
+
 	if code == 0 {
 		t.Fatalf("expected final overlay lint failure to force non-zero exit; stderr=%s", stderr.String())
 	}
+
 	if !strings.Contains(lintedBody, "Trap — example") || !strings.Contains(lintedBody, "```cpp") {
 		t.Fatalf("final lint should inspect project overlay content, got:\n%s", lintedBody)
 	}
+
 	out, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
+
 	if !strings.HasPrefix(string(out), "> WARNING:") {
 		t.Fatalf("expected warning artifact after final lint failure, got:\n%s", out)
 	}
+
 	if !strings.Contains(string(out), "reason=final-lint-failed") {
 		t.Fatalf("expected provenance to record final-lint-failed, got:\n%s", out)
 	}
@@ -2309,28 +2673,34 @@ func TestFinalizeRefineFailsShipAsIsWhenProjectOverlayBreaksLint(t *testing.T) {
 func TestMarkdownDraftTemplateClarifiesTwoPaths(t *testing.T) {
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Create .planning/inventory.md.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	metaPath := filepath.Join(root, "meta-draft.md")
 	draftPath := filepath.Join(root, "draft.md")
 	opts := laneRefineOptions{
 		Title:       "two-path-test",
 		ProjectRoot: root,
 	}
+
 	if err := writeRefineDraftMeta(metaPath, draftPath, opts, "Create a markdown inventory.", refineModeMarkdown, io.Discard); err != nil {
 		t.Fatalf("writeRefineDraftMeta: %v", err)
 	}
+
 	body, err := os.ReadFile(metaPath)
 	if err != nil {
 		t.Fatalf("read meta: %v", err)
 	}
+
 	bodyStr := string(body)
 	// DRAFT_PATH must be substituted; the workspace-relative form.
 	expectedDraftPath := refineWorkspaceRel(root, draftPath)
 	if !strings.Contains(bodyStr, expectedDraftPath) {
 		t.Fatalf("expected substituted DRAFT_PATH %q in meta-draft, got:\n%s", expectedDraftPath, bodyStr)
 	}
+
 	// Gap 8 (2026-05-12) inverted the contract: model no longer
 	// authors the `Deliverable Path` field. Instead, the template
 	// instructs the model to emit the harness marker, and refine's
@@ -2340,12 +2710,14 @@ func TestMarkdownDraftTemplateClarifiesTwoPaths(t *testing.T) {
 	if !strings.Contains(bodyStr, "<!-- idiom:harness-deliverable-block -->") {
 		t.Fatalf("expected harness deliverable marker in markdown template, got:\n%s", bodyStr)
 	}
+
 	// The template must explain that the harness owns the substitution.
 	// Whitespace-flexible match — the prose may wrap "harness" and
 	// "substitutes" across a newline.
 	if !regexp.MustCompile(`(?i)harness\s+substitutes`).MatchString(bodyStr) {
 		t.Fatalf("expected harness-substitution framing in template, got:\n%s", bodyStr)
 	}
+
 	if !strings.Contains(bodyStr, "scratchpad") {
 		t.Fatalf("expected 'scratchpad' framing for refine's draft path, got:\n%s", bodyStr)
 	}
@@ -2363,10 +2735,12 @@ func TestBriefLintJSONEnvelopeSchemaIsStable(t *testing.T) {
 			{Severity: "BLOCK", Category: "anchor-specificity", Brief: "/x.md", Message: "test"},
 		},
 	}
+
 	blob, err := json.Marshal(report)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
+
 	wantSubstrings := []string{
 		`"brief":"/x.md"`,
 		`"exit":1`,
@@ -2376,6 +2750,7 @@ func TestBriefLintJSONEnvelopeSchemaIsStable(t *testing.T) {
 		`"message":"test"`,
 	}
 	got := string(blob)
+
 	for _, want := range wantSubstrings {
 		if !strings.Contains(got, want) {
 			t.Fatalf("schema field missing or renamed: expected %q in JSON, got:\n%s", want, got)
@@ -2390,27 +2765,34 @@ func TestBriefLintJSONEnvelopeSchemaIsStable(t *testing.T) {
 // uses the custom template body AND carries the prohibitions block.
 func TestRunLaneRefineOverlayAndOverrideTemplateInteract(t *testing.T) {
 	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+
 	root := t.TempDir()
 	refineOverride := filepath.Join(root, ".idiom", "prompts", "refine")
 	briefOverlay := filepath.Join(root, ".idiom", "prompts", "brief")
+
 	if err := os.MkdirAll(refineOverride, 0o755); err != nil {
 		t.Fatalf("mkdir refine override: %v", err)
 	}
+
 	if err := os.MkdirAll(briefOverlay, 0o755); err != nil {
 		t.Fatalf("mkdir brief overlay: %v", err)
 	}
+
 	overrideBody := "# {{TITLE}}\n\n## Custom-mode body marker\n\nSPEC: {{SPEC_BODY}}\n\nReturn the filled brief as the final answer for {{DRAFT_PATH}}.\n"
 	if err := os.WriteFile(filepath.Join(refineOverride, "draft-notebook.md"), []byte(overrideBody), 0o644); err != nil {
 		t.Fatalf("seed override: %v", err)
 	}
+
 	prohibitions := "## HARD PROHIBITIONS (project overlay marker)\n\n- Do not interact.\n"
 	if err := os.WriteFile(filepath.Join(briefOverlay, "hard-prohibitions.md"), []byte(prohibitions), 0o644); err != nil {
 		t.Fatalf("seed prohibitions: %v", err)
 	}
+
 	specPath := filepath.Join(root, "spec.md")
 	if err := os.WriteFile(specPath, []byte("Notebook experiment.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -2423,25 +2805,33 @@ func TestRunLaneRefineOverlayAndOverrideTemplateInteract(t *testing.T) {
 		nonTrivialDraftBody("Drafted brief"),
 		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
 	})
+
 	var stderr bytes.Buffer
+
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	if code != 0 {
 		t.Fatalf("expected exit 0 on clean ship-as-is, got %d; stderr=%s", code, stderr.String())
 	}
+
 	body, err := os.ReadFile(opts.OutputPath)
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
+
 	// The custom mode body markers should appear in the iter-1
 	// meta-draft (substituted from override).
 	metaDraftPath := filepath.Join(refineStateDir(root, "interact-test"), "iter-1", "meta-draft.md")
+
 	metaBody, err := os.ReadFile(metaDraftPath)
 	if err != nil {
 		t.Fatalf("read meta-draft: %v", err)
 	}
+
 	if !strings.Contains(string(metaBody), "Custom-mode body marker") {
 		t.Fatalf("expected custom mode template in meta-draft, got:\n%s", metaBody)
 	}
+
 	// The overlay should appear in the FINAL output (post-finalize).
 	if !strings.Contains(string(body), "HARD PROHIBITIONS (project overlay marker)") {
 		t.Fatalf("expected hard-prohibitions overlay in output, got:\n%s", body)
@@ -2455,19 +2845,24 @@ func TestRunLaneRefineOverlayAndOverrideTemplateInteract(t *testing.T) {
 // version (with WARNING header on top).
 func TestRunLaneRefineFailsoftPreservesOverlay(t *testing.T) {
 	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+
 	root := t.TempDir()
 	overlayDir := filepath.Join(root, refineOverlayDir)
+
 	if err := os.MkdirAll(overlayDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	prohibitions := "## HARD PROHIBITIONS (overlay)\n\n- Marker line for the assertion.\n"
 	if err := os.WriteFile(filepath.Join(overlayDir, "hard-prohibitions.md"), []byte(prohibitions), 0o644); err != nil {
 		t.Fatalf("seed prohibitions: %v", err)
 	}
+
 	specPath := filepath.Join(root, "spec.md")
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -2482,18 +2877,24 @@ func TestRunLaneRefineFailsoftPreservesOverlay(t *testing.T) {
 		nonTrivialDraftBody("Draft v2"),
 		"# Review\n\n## Bugs found\n\n1. **C bug**: z\n2. **D bug**: w\n\n## Verdict\n\nfix-bugs-then-ship\n",
 	})
+
 	var stderr bytes.Buffer
+
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	if code == 0 {
 		t.Fatalf("expected non-zero on no-improvement failsoft, got 0; stderr=%s", stderr.String())
 	}
+
 	body, err := os.ReadFile(opts.OutputPath)
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
+
 	if !strings.HasPrefix(string(body), "> WARNING:") {
 		t.Fatalf("expected WARNING header on failsoft output, got:\n%s", body)
 	}
+
 	if !strings.Contains(string(body), "HARD PROHIBITIONS (overlay)") {
 		t.Fatalf("expected overlay applied even on failsoft path, got:\n%s", body)
 	}
@@ -2508,34 +2909,43 @@ func TestLoadProjectTrapsWarnsOnOrphanAppliesToTag(t *testing.T) {
 	root := t.TempDir()
 	overlayDir := filepath.Join(root, refineOverlayDir)
 	trapsDir := filepath.Join(overlayDir, "traps")
+
 	if err := os.MkdirAll(trapsDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	orphanTrap := "---\napplies_to: [save-load]\n---\n\n# Save-load trap (project-specific)\n"
 	if err := os.WriteFile(filepath.Join(trapsDir, "save-load.md"), []byte(orphanTrap), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	canonicalTrap := "---\napplies_to: [test-code]\n---\n\n# Canonical trap (no warning expected)\n"
 	if err := os.WriteFile(filepath.Join(trapsDir, "test-code.md"), []byte(canonicalTrap), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	var stderr bytes.Buffer
+
 	// Classify against test-code only — save-load is orphan; canonical
 	// trap (test-code) should fire and emit no warning.
 	matched := loadProjectTraps(overlayDir, []string{refineTagTestCode}, &stderr)
 	if len(matched) != 1 || matched[0].name != "test-code.md" {
 		t.Fatalf("expected only the test-code trap to fire, got %d traps: %+v", len(matched), matched)
 	}
+
 	out := stderr.String()
 	if !strings.Contains(out, "save-load.md") {
 		t.Fatalf("expected warning to name the orphan trap file, got: %s", out)
 	}
+
 	if !strings.Contains(out, "save-load") {
 		t.Fatalf("expected warning to name the orphan tag, got: %s", out)
 	}
+
 	if !strings.Contains(out, "atom-shapes.yaml") {
 		t.Fatalf("expected warning to point at atom-shapes.yaml convention, got: %s", out)
 	}
+
 	if !strings.Contains(out, "Gap 3") {
 		t.Fatalf("expected warning to reference Gap 3 in design doc for traceability, got: %s", out)
 	}
@@ -2545,11 +2955,14 @@ func TestLoadProjectTrapsWarnsOnOrphanAppliesToTag(t *testing.T) {
 // change for projects without an .idiom/prompts/brief/ directory.
 func TestRunLaneRefineBareRepoSkipsOverlay(t *testing.T) {
 	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+
 	root := t.TempDir() // bare — no overlay dir
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -2561,11 +2974,15 @@ func TestRunLaneRefineBareRepoSkipsOverlay(t *testing.T) {
 		nonTrivialDraftBody("Drafted brief"),
 		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
 	})
+
 	var stderr bytes.Buffer
+
 	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	if strings.Contains(stderr.String(), "appended hard-prohibitions") {
 		t.Fatalf("bare repo should not log overlay activity, got: %s", stderr.String())
 	}
+
 	if strings.Contains(stderr.String(), "inlined trap") {
 		t.Fatalf("bare repo should not inline traps, got: %s", stderr.String())
 	}
@@ -2584,21 +3001,27 @@ func TestRunLaneRefineBareRepoSkipsOverlay(t *testing.T) {
 func TestResolveRefineDraftTemplateProjectOverrideWins(t *testing.T) {
 	root := t.TempDir()
 	overrideDir := filepath.Join(root, ".idiom", "prompts", "refine")
+
 	if err := os.MkdirAll(overrideDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	overrideBody := "# {{TITLE}}\n\n## Custom mode body\n\n{{SPEC_BODY}}\n\nReturn the final answer for {{DRAFT_PATH}}.\n"
 	overridePath := filepath.Join(overrideDir, "draft-notebook.md")
+
 	if err := os.WriteFile(overridePath, []byte(overrideBody), 0o644); err != nil {
 		t.Fatalf("seed override: %v", err)
 	}
+
 	tmpl, source, err := resolveRefineDraftTemplate(root, "notebook")
 	if err != nil {
 		t.Fatalf("resolveRefineDraftTemplate: %v", err)
 	}
+
 	if tmpl != overrideBody {
 		t.Fatalf("expected override body, got:\n%s", tmpl)
 	}
+
 	if !strings.HasPrefix(source, "project-override:") {
 		t.Fatalf("expected project-override source tag, got %q", source)
 	}
@@ -2609,23 +3032,29 @@ func TestResolveRefineDraftTemplateProjectOverrideWins(t *testing.T) {
 // for a canonical mode. Bare repos see no behavior change.
 func TestResolveRefineDraftTemplateFallsBackToEmbedded(t *testing.T) {
 	root := t.TempDir() // no overrides
+
 	tmpl, source, err := resolveRefineDraftTemplate(root, refineModeAnchored)
 	if err != nil {
 		t.Fatalf("resolveRefineDraftTemplate anchored: %v", err)
 	}
+
 	if source != "embedded:anchored" {
 		t.Fatalf("expected embedded:anchored source, got %q", source)
 	}
+
 	if !strings.Contains(tmpl, "Verified Current State") {
 		t.Fatalf("expected anchored template body, got:\n%s", tmpl)
 	}
+
 	tmpl, source, err = resolveRefineDraftTemplate(root, refineModeMarkdown)
 	if err != nil {
 		t.Fatalf("resolveRefineDraftTemplate markdown: %v", err)
 	}
+
 	if source != "embedded:markdown" {
 		t.Fatalf("expected embedded:markdown source, got %q", source)
 	}
+
 	if !strings.Contains(tmpl, "Inline content") {
 		t.Fatalf("expected markdown template body, got:\n%s", tmpl)
 	}
@@ -2636,10 +3065,12 @@ func TestResolveRefineDraftTemplateFallsBackToEmbedded(t *testing.T) {
 // pointing at the override convention path.
 func TestResolveRefineDraftTemplateUnknownModeErrors(t *testing.T) {
 	root := t.TempDir()
+
 	_, _, err := resolveRefineDraftTemplate(root, "phantom")
 	if err == nil {
 		t.Fatalf("expected error for unknown mode, got nil")
 	}
+
 	expectedPath := filepath.Join(root, ".idiom/prompts/refine/draft-phantom.md")
 	if !strings.Contains(err.Error(), expectedPath) {
 		t.Fatalf("expected error to mention override path %q, got: %v", expectedPath, err)
@@ -2653,9 +3084,11 @@ func TestResolveRefineDraftTemplateUnknownModeErrors(t *testing.T) {
 func TestResolveRefineDraftTemplateMalformedOverrideRejected(t *testing.T) {
 	root := t.TempDir()
 	overrideDir := filepath.Join(root, ".idiom", "prompts", "refine")
+
 	if err := os.MkdirAll(overrideDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	cases := []struct {
 		name string
 		body string
@@ -2683,10 +3116,12 @@ func TestResolveRefineDraftTemplateMalformedOverrideRejected(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.body), 0o644); err != nil {
 				t.Fatalf("seed: %v", err)
 			}
+
 			_, _, err := resolveRefineDraftTemplate(root, tc.name)
 			if err == nil {
 				t.Fatalf("expected validation error for %s, got nil", tc.name)
 			}
+
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("expected error mentioning %q, got: %v", tc.want, err)
 			}
@@ -2730,19 +3165,24 @@ func TestEnsureRefineDraftArtifactClosureAppendsWhenMissing(t *testing.T) {
 			if tc.wantUntouched && got != tc.body {
 				t.Fatalf("expected body untouched, got delta:\n%s", got)
 			}
+
 			if tc.wantAppended {
 				if got == tc.body {
 					t.Fatalf("expected closure appended, body unchanged")
 				}
+
 				if !strings.Contains(got, "## Artifact Closeout") {
 					t.Fatalf("expected canonical artifact closure heading, got:\n%s", got)
 				}
+
 				if !strings.Contains(got, "final answer") {
 					t.Fatalf("expected appended closure to mention final answer, got:\n%s", got)
 				}
+
 				if !strings.Contains(got, "{{DRAFT_PATH}}") {
 					t.Fatalf("expected appended closure to reference {{DRAFT_PATH}} for later substitution, got:\n%s", got)
 				}
+
 				if strings.Contains(got, "write_file") {
 					t.Fatalf("artifact closure must not mention write_file, got:\n%s", got)
 				}
@@ -2770,10 +3210,12 @@ func TestRefineMetaTemplatesDoNotSuggestScratchpadShellChecks(t *testing.T) {
 			if strings.Contains(tc.body, scratchpadCheck) {
 				t.Fatalf("template must not suggest shell-checking scratchpad writes with %q:\n%s", scratchpadCheck, tc.body)
 			}
+
 			if tc.artifact {
 				if strings.Contains(tc.body, "write_file") {
 					t.Fatalf("artifact draft template must not ask for write_file, got:\n%s", tc.body)
 				}
+
 				if !strings.Contains(tc.body, "The artifact command writing") {
 					t.Fatalf("artifact template should name artifact command completion proof, got:\n%s", tc.body)
 				}
@@ -2799,6 +3241,7 @@ func TestRefineDraftTemplatesUseEvidenceContractInsteadOfBudget(t *testing.T) {
 					t.Fatalf("draft template should contain %q, got:\n%s", want, tc.body)
 				}
 			}
+
 			if tc.name == "draft" {
 				for _, want := range []string{"source-satisfied - do not dispatch", "old_text`/`new_text"} {
 					if !strings.Contains(tc.body, want) {
@@ -2806,6 +3249,7 @@ func TestRefineDraftTemplatesUseEvidenceContractInsteadOfBudget(t *testing.T) {
 					}
 				}
 			}
+
 			for _, forbidden := range []string{"## Draft phase tool budget", "Zero source reads", "Zero searches", "Zero code-navigation calls", "Do not read files. Do not search."} {
 				if strings.Contains(tc.body, forbidden) {
 					t.Fatalf("draft template should not contain budget-shaped wording %q:\n%s", forbidden, tc.body)
@@ -2830,6 +3274,7 @@ func TestRefineReviewTemplateClosesSourceUncertaintyIntoReview(t *testing.T) {
 			t.Fatalf("review template should contain %q, got:\n%s", want, refineReviewTemplate)
 		}
 	}
+
 	for _, forbidden := range []string{
 		"## Hard tool budget",
 		"At most ONE additional `read_file`",
@@ -2857,6 +3302,7 @@ func TestRefinePatchTemplateClosesSourceUncertaintyIntoDraft(t *testing.T) {
 			t.Fatalf("patch template should contain %q, got:\n%s", want, refinePatchTemplate)
 		}
 	}
+
 	for _, forbidden := range []string{
 		"Maximum 4 additional source reads total",
 		"No searches, shell commands, code-navigation tools",
@@ -2877,20 +3323,25 @@ func TestRefinePatchTemplateClosesSourceUncertaintyIntoDraft(t *testing.T) {
 // substituted in.
 func TestRunLaneRefineAutoAppendsArtifactClosureToOverride(t *testing.T) {
 	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+
 	root := t.TempDir()
 	overrideDir := filepath.Join(root, ".idiom", "prompts", "refine")
+
 	if err := os.MkdirAll(overrideDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	// Note: no artifact closeout. Author focused on the body.
 	overrideBody := "# {{TITLE}}\n\n## Notebook deliverable\n\nSPEC: {{SPEC_BODY}}\n\nDescribe the experiment at {{DRAFT_PATH}}.\n"
 	if err := os.WriteFile(filepath.Join(overrideDir, "draft-notebook.md"), []byte(overrideBody), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	specPath := filepath.Join(root, "spec.md")
 	if err := os.WriteFile(specPath, []byte("Sweep hyperparams.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -2903,22 +3354,30 @@ func TestRunLaneRefineAutoAppendsArtifactClosureToOverride(t *testing.T) {
 		nonTrivialDraftBody("Drafted brief"),
 		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
 	})
+
 	var stderr bytes.Buffer
+
 	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	if !strings.Contains(stderr.String(), "no artifact closeout; appending canonical artifact closure") {
 		t.Fatalf("expected stderr to log auto-append, got: %s", stderr.String())
 	}
+
 	metaDraftPath := filepath.Join(refineStateDir(root, "closure-test"), "iter-1", "meta-draft.md")
+
 	body, err := os.ReadFile(metaDraftPath)
 	if err != nil {
 		t.Fatalf("read meta-draft: %v", err)
 	}
+
 	if !strings.Contains(string(body), "## Artifact Closeout") {
 		t.Fatalf("expected canonical artifact closure in substituted meta-draft, got:\n%s", body)
 	}
+
 	if strings.Contains(string(body), "write_file") {
 		t.Fatalf("artifact meta-draft must not mention write_file, got:\n%s", body)
 	}
+
 	// The {{DRAFT_PATH}} in the closure must have been substituted
 	// with a real path during the standard substitution pipeline.
 	if strings.Contains(string(body), "{{DRAFT_PATH}}") {
@@ -2932,20 +3391,26 @@ func TestRunLaneRefineAutoAppendsArtifactClosureToOverride(t *testing.T) {
 // --mode notebook, produces a meta-draft built from the override.
 func TestRunLaneRefineUsesProjectOverrideTemplate(t *testing.T) {
 	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+
 	root := t.TempDir()
 	overrideDir := filepath.Join(root, ".idiom", "prompts", "refine")
+
 	if err := os.MkdirAll(overrideDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	overrideBody := "# {{TITLE}}\n\n## Notebook deliverable\n\nSPEC: {{SPEC_BODY}}\n\nReturn the final answer for {{DRAFT_PATH}} with the experiment.\n"
 	overridePath := filepath.Join(overrideDir, "draft-notebook.md")
+
 	if err := os.WriteFile(overridePath, []byte(overrideBody), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	specPath := filepath.Join(root, "spec.md")
 	if err := os.WriteFile(specPath, []byte("Sweep hyperparameters and pick best F1.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -2958,19 +3423,26 @@ func TestRunLaneRefineUsesProjectOverrideTemplate(t *testing.T) {
 		nonTrivialDraftBody("Drafted brief"),
 		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
 	})
+
 	var stderr bytes.Buffer
+
 	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	if !strings.Contains(stderr.String(), "project-override:") {
 		t.Fatalf("expected stderr to log project-override source, got: %s", stderr.String())
 	}
+
 	metaDraftPath := filepath.Join(refineStateDir(root, "override-test"), "iter-1", "meta-draft.md")
+
 	body, err := os.ReadFile(metaDraftPath)
 	if err != nil {
 		t.Fatalf("read meta-draft: %v", err)
 	}
+
 	if !strings.Contains(string(body), "## Notebook deliverable") {
 		t.Fatalf("expected override template body in meta-draft, got:\n%s", body)
 	}
+
 	if !strings.Contains(string(body), "SPEC: > Sweep hyperparameters") {
 		t.Fatalf("expected substitutions to happen, got:\n%s", body)
 	}
@@ -3017,11 +3489,14 @@ func TestRefineDetectModeClassifiesSpecShape(t *testing.T) {
 // (containing "## Verified Current State" + "## Required Behavior").
 func TestRunLaneRefineRoutesMarkdownSpecToMarkdownTemplate(t *testing.T) {
 	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Create .planning/inventory.md with all postflight checks.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -3033,19 +3508,26 @@ func TestRunLaneRefineRoutesMarkdownSpecToMarkdownTemplate(t *testing.T) {
 		nonTrivialDraftBody("Drafted brief"),
 		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
 	})
+
 	var stderr bytes.Buffer
+
 	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	if !strings.Contains(stderr.String(), "mode=markdown") {
 		t.Fatalf("expected stderr to log markdown mode detection, got: %s", stderr.String())
 	}
+
 	metaDraftPath := filepath.Join(refineStateDir(root, "markdown-spec"), "iter-1", "meta-draft.md")
+
 	body, err := os.ReadFile(metaDraftPath)
 	if err != nil {
 		t.Fatalf("read meta-draft: %v", err)
 	}
+
 	if !strings.Contains(string(body), "## Deliverable") || !strings.Contains(string(body), "## Inline content") {
 		t.Fatalf("expected markdown-deliverable template headings in meta-draft, got:\n%s", body)
 	}
+
 	if strings.Contains(string(body), "## Verified Current State") {
 		t.Fatalf("markdown mode should NOT include anchored-mode headings, got:\n%s", body)
 	}
@@ -3056,11 +3538,14 @@ func TestRunLaneRefineRoutesMarkdownSpecToMarkdownTemplate(t *testing.T) {
 // spec with opts.Mode="anchored" routes to the anchored template.
 func TestRunLaneRefineModeOverrideForcesAnchored(t *testing.T) {
 	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int { return 0 })
+
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Create .planning/inventory.md.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -3073,13 +3558,18 @@ func TestRunLaneRefineModeOverrideForcesAnchored(t *testing.T) {
 		nonTrivialDraftBody("Drafted brief"),
 		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
 	})
+
 	var stderr bytes.Buffer
+
 	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	metaDraftPath := filepath.Join(refineStateDir(root, "override-anchored"), "iter-1", "meta-draft.md")
+
 	body, err := os.ReadFile(metaDraftPath)
 	if err != nil {
 		t.Fatalf("read meta-draft: %v", err)
 	}
+
 	if !strings.Contains(string(body), "## Verified Current State") {
 		t.Fatalf("expected anchored template (forced via opts.Mode), got:\n%s", body)
 	}
@@ -3097,11 +3587,14 @@ func TestRunLaneRefineInlinesLintOutputIntoReviewMeta(t *testing.T) {
 		_, _ = stdout.Write([]byte("BLOCK: anchor at foo.go:42 doesn't match source\nWARN: append-to-end-of-file edit is wedge-prone\n"))
 		return 1
 	})
+
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -3113,28 +3606,39 @@ func TestRunLaneRefineInlinesLintOutputIntoReviewMeta(t *testing.T) {
 		nonTrivialDraftBody("Drafted brief"),
 		"# Review\n\n## Bugs found\n\nnone\n\n## Lint findings\n\nBLOCK: anchor at foo.go:42 doesn't match source\n\n## OK\n\n- nice\n\n## Verdict\n\nship-as-is\n",
 	})
+
 	var stderr bytes.Buffer
+
 	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	metaReviewPath := filepath.Join(refineStateDir(root, "lint-preload"), "iter-1", "meta-review.md")
+
 	body, err := os.ReadFile(metaReviewPath)
 	if err != nil {
 		t.Fatalf("read meta-review: %v", err)
 	}
+
 	if !strings.Contains(string(body), "BLOCK: anchor at foo.go:42 doesn't match source") {
 		t.Fatalf("expected lint BLOCK to be inlined in review meta, got:\n%s", body)
 	}
+
 	if !strings.Contains(string(body), "Pre-loaded lint findings") {
 		t.Fatalf("expected 'Pre-loaded lint findings' section in review meta, got:\n%s", body)
 	}
+
 	metricsPath := filepath.Join(refineStateDir(root, "lint-preload"), "iter-1", "metrics.json")
+
 	metricsBody, err := os.ReadFile(metricsPath)
 	if err != nil {
 		t.Fatalf("read metrics: %v", err)
 	}
+
 	var m refineIterMetrics
+
 	if err := json.Unmarshal(metricsBody, &m); err != nil {
 		t.Fatalf("unmarshal metrics: %v\n%s", err, metricsBody)
 	}
+
 	if m.LintExit != 1 {
 		t.Fatalf("expected metrics.lint_exit=1, got %d", m.LintExit)
 	}
@@ -3142,29 +3646,37 @@ func TestRunLaneRefineInlinesLintOutputIntoReviewMeta(t *testing.T) {
 
 func TestRunLaneRefinePreloadsFinalShapeLintFindings(t *testing.T) {
 	var lintedCandidate string
+
 	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
 		isJSON := len(args) > 1 && args[1] == "--json"
 		if !isJSON {
 			return 0
 		}
+
 		body, err := os.ReadFile(args[0])
 		if err != nil {
 			t.Fatalf("read lint input: %v", err)
 		}
+
 		lintedCandidate = string(body)
 		if strings.Contains(lintedCandidate, "native/foo.cpp") && !strings.Contains(lintedCandidate, refineDeliverableMarker) {
 			_, _ = stdout.Write([]byte(`{"brief":"candidate.md","exit":1,"findings":[{"severity":"BLOCK","category":"exact-anchor","brief":"candidate.md","message":"exact-anchor specificity failed for native/foo.cpp"}]}`))
 			return 1
 		}
+
 		_, _ = stdout.Write([]byte(`{"brief":"candidate.md","exit":0,"findings":[]}`))
+
 		return 0
 	})
+
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
 	spec := "# Spec\n\n## Files To Modify\n\n| File | Change |\n|---|---|\n| `native/foo.cpp` | Modify the feature. |\n"
+
 	if err := os.WriteFile(specPath, []byte(spec), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	draft := "# Drafted brief\n\n## Problem\n\nFinal-shape lint must see the harness-injected deliverable block.\n\n" +
 		refineDeliverableMarker + "\n\n## Verified Current State\n\nSource verification pending.\n\n" +
 		"## Required Behavior\n\n1. Modify the feature using source anchors once verified.\n\n" +
@@ -3180,18 +3692,24 @@ func TestRunLaneRefinePreloadsFinalShapeLintFindings(t *testing.T) {
 		draft,
 		"# Review\n\n## Bugs found\n\n1. **Lint BLOCK**: fix it.\n\n## Lint findings\n\nBLOCK present\n\n## OK\n\n- shape reviewed\n\n## Verdict\n\nfix-bugs-then-ship\n",
 	})
+
 	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &bytes.Buffer{})
+
 	if !strings.Contains(lintedCandidate, "native/foo.cpp") {
 		t.Fatalf("lint should run against final-shape candidate with injected target, got:\n%s", lintedCandidate)
 	}
+
 	if strings.Contains(lintedCandidate, refineDeliverableMarker) {
 		t.Fatalf("lint candidate should have marker substituted before lint, got:\n%s", lintedCandidate)
 	}
+
 	metaReviewPath := filepath.Join(refineStateDir(root, "final-shape-lint"), "iter-1", "meta-review.md")
+
 	body, err := os.ReadFile(metaReviewPath)
 	if err != nil {
 		t.Fatalf("read meta-review: %v", err)
 	}
+
 	if !strings.Contains(string(body), "exact-anchor specificity failed for native/foo.cpp") {
 		t.Fatalf("expected final-shape lint BLOCK in review meta, got:\n%s", body)
 	}
@@ -3205,11 +3723,14 @@ func TestRunLaneRefineHandlesCleanLintGracefully(t *testing.T) {
 	stubLaneBriefLint(t, func(args []string, stdout, stderr io.Writer) int {
 		return 0
 	})
+
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -3221,16 +3742,22 @@ func TestRunLaneRefineHandlesCleanLintGracefully(t *testing.T) {
 		nonTrivialDraftBody("Drafted brief"),
 		"# Review\n\n## Bugs found\n\nnone\n\n## Verdict\n\nship-as-is\n",
 	})
+
 	var stderr bytes.Buffer
+
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	if code != 0 {
 		t.Fatalf("expected exit 0 on clean lint + ship-as-is, got %d; stderr=%s", code, stderr.String())
 	}
+
 	metaReviewPath := filepath.Join(refineStateDir(root, "lint-clean"), "iter-1", "meta-review.md")
+
 	body, err := os.ReadFile(metaReviewPath)
 	if err != nil {
 		t.Fatalf("read meta-review: %v", err)
 	}
+
 	if !strings.Contains(string(body), "no findings") {
 		t.Fatalf("expected 'no findings' fallback in review meta, got:\n%s", body)
 	}
@@ -3249,12 +3776,14 @@ func TestRefineDraftIsTrivialRejectsSmallAndStructurelessBodies(t *testing.T) {
 		{"no-section-heading", strings.Repeat("padding line above the size floor.\n", 12), true},
 		{"valid-draft", nonTrivialDraftBody("test"), false},
 	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(root, tc.name+".md")
 			if err := os.WriteFile(path, []byte(tc.body), 0o644); err != nil {
 				t.Fatalf("seed: %v", err)
 			}
+
 			got, reason := refineDraftIsTrivial(path)
 			if got != tc.wantTrivial {
 				t.Fatalf("refineDraftIsTrivial(%q) = (%v, %q), want trivial=%v", tc.name, got, reason, tc.wantTrivial)
@@ -3271,9 +3800,11 @@ func TestRefineDraftIsTrivialRejectsSmallAndStructurelessBodies(t *testing.T) {
 func TestRunLaneRefineFailsOnTrivialDraft(t *testing.T) {
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.md")
+
 	if err := os.WriteFile(specPath, []byte("Add a feature.\n"), 0o644); err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}
+
 	opts := laneRefineOptions{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
@@ -3285,17 +3816,24 @@ func TestRunLaneRefineFailsOnTrivialDraft(t *testing.T) {
 	// draft path — the silent-failure shape.
 	dispatch := refineDispatchFn(func(metaBriefPath string, stdout, stderr io.Writer) int {
 		iterDir := filepath.Dir(metaBriefPath)
+
 		_ = os.WriteFile(filepath.Join(iterDir, "draft.md"), []byte("# stub\n"), 0o644)
+
 		return 0
 	})
+
 	var stderr bytes.Buffer
+
 	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+
 	if code == 0 {
 		t.Fatalf("expected non-zero exit on trivially-empty draft, got 0; stderr=%s", stderr.String())
 	}
+
 	if !strings.Contains(stderr.String(), "trivially-empty draft") {
 		t.Fatalf("expected trivially-empty-draft message in stderr, got: %s", stderr.String())
 	}
+
 	if _, err := os.Stat(opts.OutputPath); err == nil {
 		t.Fatalf("expected no output brief on trivial-draft failure, but %s exists", opts.OutputPath)
 	}

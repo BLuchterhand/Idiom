@@ -37,16 +37,20 @@ func TestPlanExecutePlannerToolMetadataNamesAllowedSurface(t *testing.T) {
 		if !slices.Contains(allowed, tc.tool) {
 			t.Fatalf("planner allowed tool names missing %q: %#v", tc.tool, allowed)
 		}
+
 		entry, ok := LookupPlanExecutePlannerToolMetadata(tc.tool)
 		if !ok {
 			t.Fatalf("planner metadata missing allowed tool %q", tc.tool)
 		}
+
 		if !entry.PlannerAllowed {
 			t.Fatalf("planner metadata marks allowed tool %q as forbidden: %#v", tc.tool, entry)
 		}
+
 		if !slices.Equal(entry.Capabilities, []Capability{tc.capability}) {
 			t.Fatalf("planner allowed tool %q capabilities = %#v, want %q", tc.tool, entry.Capabilities, tc.capability)
 		}
+
 		if entry.SideEffect != tc.sideEffect {
 			t.Fatalf("planner allowed tool %q side effect = %q, want %q", tc.tool, entry.SideEffect, tc.sideEffect)
 		}
@@ -73,9 +77,11 @@ func TestPlanExecutePlannerToolMetadataMarksRejectedPlannerTools(t *testing.T) {
 		if !ok {
 			t.Fatalf("planner metadata missing rejected tool %q", tool)
 		}
+
 		if entry.PlannerAllowed {
 			t.Fatalf("planner metadata allows rejected tool %q: %#v", tool, entry)
 		}
+
 		if slices.Contains(PlanExecutePlannerToolNames(), tool) {
 			t.Fatalf("planner allowed tool names contain rejected tool %q", tool)
 		}
@@ -87,12 +93,14 @@ func TestPlanExecutePlannerToolMetadataReturnsDefensiveCopies(t *testing.T) {
 	if len(entries) == 0 || len(entries[0].Capabilities) == 0 {
 		t.Fatalf("planner metadata fixture unexpectedly empty: %#v", entries)
 	}
+
 	submitPlanIndex := slices.IndexFunc(entries, func(entry PlanExecutePlannerToolMetadata) bool {
 		return entry.Tool == "submit_plan"
 	})
 	if submitPlanIndex < 0 {
 		t.Fatalf("planner metadata missing submit_plan: %#v", entries)
 	}
+
 	entries[submitPlanIndex].Tool = "mutated"
 	entries[submitPlanIndex].Capabilities[0] = CapabilitySourceEdit
 
@@ -105,11 +113,15 @@ func TestPlanExecutePlannerToolMetadataReturnsDefensiveCopies(t *testing.T) {
 	if !ok || len(entry.Capabilities) == 0 {
 		t.Fatalf("submit_plan metadata missing: %#v", entry)
 	}
+
 	entry.Capabilities[0] = CapabilitySourceEdit
+
 	freshEntry, ok := LookupPlanExecutePlannerToolMetadata("submit_plan")
+
 	if !ok {
 		t.Fatal("submit_plan metadata missing after mutation")
 	}
+
 	if freshEntry.Capabilities[0] != CapabilityPlanSubmission {
 		t.Fatalf("lookup metadata was mutated through caller-owned slice: %#v", freshEntry)
 	}

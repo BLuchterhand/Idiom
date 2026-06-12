@@ -20,6 +20,7 @@ var commandTelemetryDir string
 
 func RunMain(args []string, stdout io.Writer, stderr io.Writer, opts Options) int {
 	applyBuildInfo(opts)
+
 	return runMainWithTelemetryDir(args, stdout, stderr, opts.TelemetryDir)
 }
 
@@ -33,6 +34,7 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 		stopTelemetrySignalHandler := cmdtelemetry.InstallSignalHandler(rec)
 		defer func() {
 			stopTelemetrySignalHandler()
+
 			if recovered := recover(); recovered != nil {
 				_ = rec.CloseWithFields(2, map[string]any{
 					"reason": "panic",
@@ -40,12 +42,15 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 				})
 				panic(recovered)
 			}
+
 			_ = rec.Close(code)
 		}()
 	}
+
 	if len(args) > 0 {
 		subcommand := args[0]
 		subcommandArgs := args[1:]
+
 		switch subcommand {
 		case "tool":
 			return runToolMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
@@ -101,6 +106,7 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 			return runDoctorMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		}
 	}
+
 	return runWithTelemetry(args, stdout, stderr, runPromptOnce, runPromptsOnce, runTUI, runServerOnly, runListSessions, rec)
 }
 
@@ -108,6 +114,7 @@ func applyBuildInfo(opts Options) {
 	if opts.Version != "" {
 		version = opts.Version
 	}
+
 	commit = opts.Commit
 	date = opts.Date
 }

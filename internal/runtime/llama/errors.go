@@ -44,12 +44,14 @@ func llmUnsupportedError(message string) error {
 
 func llmTransportError(message string, err error) error {
 	code := failures.Unavailable
+
 	switch {
 	case errors.Is(err, context.Canceled):
 		code = failures.Canceled
 	case errors.Is(err, context.DeadlineExceeded):
 		code = failures.DeadlineExceeded
 	}
+
 	return failures.Wrap(code, reasonLLMTransportFailed, strings.TrimSpace(message), err)
 }
 
@@ -58,6 +60,7 @@ func llmHTTPStatusError(message string, statusCode int, body string) error {
 	if body != "" {
 		message = strings.TrimSpace(message) + ": " + body
 	}
+
 	return failures.Wrap(llmFailureCodeForHTTPStatus(statusCode), reasonLLMHTTPError, strings.TrimSpace(message), ErrAPIError)
 }
 
@@ -70,6 +73,7 @@ func llmAPIError(message string) error {
 	if message == "" {
 		message = "llm api returned an error"
 	}
+
 	return failures.Wrap(failures.Internal, reasonLLMAPIError, message, ErrAPIError)
 }
 
@@ -88,6 +92,7 @@ func llmServerModelUnavailableError(message string, err error) error {
 	} else if errors.Is(err, os.ErrPermission) {
 		code = failures.PermissionDenied
 	}
+
 	return failures.Wrap(code, reasonLLMServerModelUnavailable, strings.TrimSpace(message), err)
 }
 
@@ -96,6 +101,7 @@ func llmServerStartError(message string, err error) error {
 	if errors.Is(err, os.ErrPermission) {
 		code = failures.PermissionDenied
 	}
+
 	return failures.Wrap(code, reasonLLMServerStartFailed, strings.TrimSpace(message), err)
 }
 
@@ -106,6 +112,7 @@ func llmServerStopError(message string, err error) error {
 	} else if errors.Is(err, context.DeadlineExceeded) {
 		code = failures.DeadlineExceeded
 	}
+
 	return failures.Wrap(code, reasonLLMServerStopFailed, strings.TrimSpace(message), err)
 }
 
@@ -133,6 +140,7 @@ func llmFailureCodeForHTTPStatus(statusCode int) failures.Code {
 		if statusCode >= http.StatusInternalServerError {
 			return failures.Unavailable
 		}
+
 		return failures.Internal
 	}
 }

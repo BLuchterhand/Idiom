@@ -1,15 +1,15 @@
 ---
 tags:
-  - harness
+  - idiom
   - development-pattern
   - evidence
   - deterministic
 ---
 # Deterministic Evidence-Based Development
 
-This is the most important working pattern for the harness implementation.
+This is the most important working pattern in the repo.
 
-Agent Harness development should be deterministic around the model, not deterministic
+Idiom development should be deterministic around the model, not deterministic
 inside the model. The model may explore, infer, and choose strategy. The
 harness and maintainers must require concrete evidence before changing behavior
 and concrete verification before claiming success.
@@ -39,7 +39,7 @@ flowchart TD
 This means every non-trivial change should answer these questions:
 
 - What behavior is being changed or preserved?
-- What evidence proves the target behavior?
+- What evidence proves the current behavior?
 - Which contract, lane, prompt, tool, or package owns that behavior?
 - What test or audit fixture fails before the fix or protects against
   regression?
@@ -60,8 +60,8 @@ obligation, not at a vague need to "look more."
 
 ## Deterministic Does Not Mean Over-Controlling The Model
 
-The design repeatedly warns against replacing model judgment with brittle harness
-scripts. Agent Harness should avoid hard-picking the model's next step unless a real
+The repo repeatedly warns against replacing model judgment with brittle harness
+scripts. Idiom should avoid hard-picking the model's next step unless a real
 invariant is at risk.
 
 Prefer:
@@ -87,7 +87,7 @@ See [[05 - Runner Contracts and Control Rails]] for the runtime mechanics.
 
 ## Evidence Classes
 
-Agent Harness treats different evidence classes differently. They are not
+Idiom treats different evidence classes differently. They are not
 interchangeable.
 
 | Evidence class | Examples | What it proves | What it does not prove |
@@ -97,19 +97,20 @@ interchangeable.
 | Command evidence | `go test`, `go vet`, `make build`, `source_sanity` | Toolchain, test, build, diagnostic, or syntax sanity checks passed | Correctness outside checked scope |
 | Runtime evidence | Logs, traces, telemetry, harness audit | Observed behavior in an agent/session flow | Static source intent |
 | Artifact evidence | Plans, atom reports, architect packets, phase evidence | Workflow state and handoff context | Source validity unless verified |
-| Documentation evidence | Design docs, design map, north-star docs | Intended architecture and constraints | Defined behavior unless source/test backs it |
+| Documentation evidence | Design docs, roadmap, north-star docs | Intended architecture and constraints | Implemented behavior unless source/test backs it |
 
 When behavior and docs disagree, source, tests, and telemetry identify the
-active system; docs identify desired intent or stale guidance to update.
+current system; docs identify desired intent or stale guidance to update.
 
 ## Before Refactoring
 
-For implementation work, interpret "test first, refactor second, verify again"
+The user's original requirement for this cleanup effort was: behavior tests
+first, then refactor, then verify again. In this repo that should be interpreted
 as:
 1. Localize the behavior with `context_pack` or a more specific discovery tool.
 2. Read the canonical design docs for that subsystem.
 3. Find existing tests that cover the behavior.
-4. Add focused tests if the behavior is not protected.
+4. Add focused tests if the behavior is not already protected.
 5. Make the refactor in the owning package.
 6. Run the focused test package first.
 7. Run broader tests if the change crosses package, prompt, lane, or tool
@@ -133,7 +134,7 @@ For a code change this normally means:
 
 For a docs-only change this normally means:
 - The documentation is grounded in source files and canonical docs.
-- Links are usable from the consuming project.
+- Links are usable from the repo.
 - Diagrams reflect actual package or workflow boundaries.
 - `git diff --check` has no whitespace errors.
 
@@ -158,7 +159,7 @@ stateDiagram-v2
 
 ## Anti-Patterns
 
-The design calls out several recurring traps:
+The repo calls out several recurring traps:
 
 - Adding another prompt reminder instead of encoding a typed contract.
 - Treating `git diff --check` as proof for source behavior.
@@ -205,9 +206,9 @@ the modules coherent.
 
 ## Practical Checklist
 
-Use this checklist for meaningful harness work:
+Use this checklist for meaningful repo work:
 
-- Start with the primary rule set and the project AGENTS instructions.
+- Start with the primary rule set and the repo AGENTS instructions.
 - Use `context_pack` for localization unless the task is a literal string
   search.
 - Read subsystem docs before editing subsystem behavior.

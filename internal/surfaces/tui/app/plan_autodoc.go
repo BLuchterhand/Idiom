@@ -22,8 +22,11 @@ func mutatePlanLines(path string, fn func(lines []string) []string) error {
 	if err != nil {
 		return err
 	}
+
 	lines := strings.Split(string(data), "\n")
+
 	lines = fn(lines)
+
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
@@ -56,6 +59,7 @@ func truncateForLog(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
+
 	return s[:max] + "…[truncated]"
 }
 
@@ -81,10 +85,12 @@ func (m *Model) diffsPath() string {
 	if id == "" {
 		return ""
 	}
+
 	dir := planDirName
 	if root := m.workspace.Root(); root != "" {
 		dir = filepath.Join(root, planDirName)
 	}
+
 	return filepath.Join(dir, id+".diffs.jsonl")
 }
 
@@ -110,10 +116,12 @@ func (m *Model) failuresPath() string {
 	if id == "" {
 		return ""
 	}
+
 	dir := planDirName
 	if root := m.workspace.Root(); root != "" {
 		dir = filepath.Join(root, planDirName)
 	}
+
 	return filepath.Join(dir, id+".failures.jsonl")
 }
 
@@ -130,19 +138,24 @@ func (m *Model) recordWriteFailure(step int, req workspace.ToolRequest, result w
 	if m == nil {
 		return
 	}
+
 	if strings.TrimSpace(result.Error) == "" {
 		return
 	}
+
 	if !workspace.IsWorkspaceWriteTool(req.Tool) {
 		return
 	}
+
 	path := m.failuresPath()
 	if path == "" {
 		return
 	}
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return
 	}
+
 	argsJSON, _ := json.Marshal(req)
 	rec := failureRecord{
 		Timestamp:   time.Now().UTC().Format(time.RFC3339Nano),
@@ -154,15 +167,18 @@ func (m *Model) recordWriteFailure(step int, req workspace.ToolRequest, result w
 		Error:       result.Error,
 		Args:        truncateForLog(string(argsJSON), maxFailureArgsLen),
 	}
+
 	line, err := json.Marshal(rec)
 	if err != nil {
 		return
 	}
+
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
+
 	if _, err := fmt.Fprintln(f, string(line)); err != nil {
 		return
 	}
@@ -181,17 +197,22 @@ func (m *Model) capturePlanSnapshot(step int, req workspace.ToolRequest) {
 	if m == nil || m.workspace == nil {
 		return
 	}
+
 	paths := rollbackPathsForRequest(req)
 	if len(paths) == 0 {
 		return
 	}
+
 	root := m.workspace.CWD()
+
 	var snaps []planWriteSnapshot
+
 	for _, p := range paths {
 		abs := p
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(root, abs)
 		}
+
 		snap := planWriteSnapshot{Path: p, Request: req}
 		if data, err := os.ReadFile(abs); err == nil {
 			snap.Before = string(data)
@@ -204,14 +225,18 @@ func (m *Model) capturePlanSnapshot(step int, req workspace.ToolRequest) {
 			// baseline.
 			continue
 		}
+
 		snaps = append(snaps, snap)
 	}
+
 	if len(snaps) == 0 {
 		return
 	}
+
 	if m.plan.writeSnapshots == nil {
 		m.plan.writeSnapshots = map[int][]planWriteSnapshot{}
 	}
+
 	m.plan.writeSnapshots[step] = snaps
 }
 
@@ -225,20 +250,25 @@ func (m *Model) recordWriteSuccess(step int, req workspace.ToolRequest, result w
 	if m == nil || m.workspace == nil {
 		return
 	}
+
 	snaps, ok := m.plan.writeSnapshots[step]
 	if ok {
 		delete(m.plan.writeSnapshots, step)
 	}
+
 	// Only land success cases; failures are captured by recordWriteFailure.
 	if strings.TrimSpace(result.Error) != "" {
 		return
 	}
+
 	if !workspace.IsWorkspaceWriteTool(req.Tool) {
 		return
 	}
+
 	if m.sessionID() == "" {
 		return
 	}
+
 	// Write the session heading once per live session.
 	m.ensurePlanSessionHeading()
 
@@ -257,22 +287,30 @@ func (m *Model) recordWriteSuccess(step int, req workspace.ToolRequest, result w
 			Summary:     result.Summary,
 			Diff:        "",
 		})
+
 		if !m.attachWriteToPlannedItem(req, strings.TrimSpace(req.Path), id) &&
 			!m.attachWriteToSubmittedEdit(strings.TrimSpace(req.Path), id) {
+
 			m.appendUnplannedCheckedLine(planLineLabel(req, ""), id)
 		}
+
 		return
 	}
+
 	root := m.workspace.CWD()
+
 	for _, snap := range snaps {
 		abs := snap.Path
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(root, abs)
 		}
+
 		var after string
+
 		if data, err := os.ReadFile(abs); err == nil {
 			after = string(data)
 		}
+
 		diff := planexecute.UnifiedDiff(snap.Path, snap.Before, after)
 		id := newPlanEntryID()
 		m.appendPlanDiffEntry(planDiffEntry{
@@ -285,8 +323,10 @@ func (m *Model) recordWriteSuccess(step int, req workspace.ToolRequest, result w
 			Summary:     result.Summary,
 			Diff:        diff,
 		})
+
 		if !m.attachWriteToPlannedItem(req, snap.Path, id) &&
 			!m.attachWriteToSubmittedEdit(snap.Path, id) {
+
 			m.appendUnplannedCheckedLine(planLineLabel(req, snap.Path), id)
 		}
 	}
@@ -303,19 +343,24 @@ func (m *Model) appendUnplannedCheckedLine(label, id string) {
 	if path == "" {
 		return
 	}
+
 	existing, _ := os.ReadFile(path)
 	needsHeader := !strings.Contains(string(existing), "### Unplanned")
+
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
+
 	if needsHeader {
 		if _, err := f.WriteString("### Unplanned\n"); err != nil {
 			return
 		}
 	}
+
 	line := fmt.Sprintf("- [x] %s <!-- id:%s -->\n", label, id)
+
 	_, _ = f.WriteString(line)
 }
 
@@ -327,24 +372,31 @@ func planLineLabel(req workspace.ToolRequest, path string) string {
 	if path == "" {
 		path = strings.TrimSpace(req.Path)
 	}
+
 	if desc != "" && path != "" {
 		return fmt.Sprintf("%s (%s)", desc, path)
 	}
+
 	if desc != "" {
 		return desc
 	}
+
 	if workspace.IsWorkspaceWriteTool(req.Tool) {
 		if s := toolIntent(req.Tool, path); s != "" {
 			return s
 		}
+
 		if path != "" {
 			return fmt.Sprintf("%s %s", req.Tool, path)
 		}
+
 		return req.Tool
 	}
+
 	if path != "" {
 		return fmt.Sprintf("%s %s", req.Tool, path)
 	}
+
 	return req.Tool
 }
 
@@ -356,35 +408,44 @@ func (m *Model) ensurePlanSessionHeading() {
 	if m == nil || m.plan.sessionHeadingWritten {
 		return
 	}
+
 	path := m.ensurePlanPath()
 	if path == "" {
 		return
 	}
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return
 	}
+
 	// Read existing content so we don't duplicate the heading across
 	// process restarts that resumed into the same session id.
 	existing, _ := os.ReadFile(path)
 	heading := fmt.Sprintf("## Session %s — %s\n\n", m.sessionID(), time.Now().UTC().Format("2006-01-02 15:04"))
+
 	if strings.Contains(string(existing), "## Session "+m.sessionID()) {
 		m.plan.sessionHeadingWritten = true
 		return
 	}
+
 	var prelude string
+
 	if len(existing) == 0 {
 		prelude = fmt.Sprintf("# Plan — %s\n\n", m.sessionID())
 	} else if !strings.HasSuffix(string(existing), "\n") {
 		prelude = "\n"
 	}
+
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
+
 	if _, err := f.WriteString(prelude + heading); err != nil {
 		return
 	}
+
 	m.plan.sessionHeadingWritten = true
 }
 
@@ -396,18 +457,22 @@ func (m *Model) appendPlanDiffEntry(entry planDiffEntry) {
 	if path == "" {
 		return
 	}
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return
 	}
+
 	line, err := json.Marshal(entry)
 	if err != nil {
 		return
 	}
+
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
+
 	_, _ = fmt.Fprintln(f, string(line))
 }
 
@@ -417,9 +482,11 @@ func (m *Model) appendPlanDiffEntry(entry planDiffEntry) {
 // the HTML comment marker.
 func newPlanEntryID() string {
 	var buf [8]byte
+
 	if _, err := rand.Read(buf[:]); err != nil {
 		return fmt.Sprintf("ts%d", time.Now().UnixNano())
 	}
+
 	return hex.EncodeToString(buf[:])
 }
 
@@ -436,27 +503,34 @@ func (m *Model) recordTaskLedger(req workspace.ToolRequest, result workspace.Too
 	if m == nil {
 		return
 	}
+
 	if strings.TrimSpace(req.Tool) != "task_ledger" {
 		return
 	}
+
 	if strings.TrimSpace(result.Error) != "" {
 		return
 	}
+
 	if m.sessionID() == "" {
 		return
 	}
+
 	items := req.Todos
 	if len(items) == 0 {
 		items = req.Items
 	}
+
 	if len(items) == 0 {
 		return
 	}
+
 	m.ensurePlanSessionHeading()
 
 	if m.plan.ledgerItems == nil {
 		m.plan.ledgerItems = map[string]workspace.TaskLedgerItem{}
 	}
+
 	if m.plan.ledgerRenderedIDs == nil {
 		m.plan.ledgerRenderedIDs = map[string]bool{}
 	}
@@ -464,25 +538,30 @@ func (m *Model) recordTaskLedger(req workspace.ToolRequest, result workspace.Too
 	renderedSnapshot := m.renderedLedgerSnapshot()
 
 	var newItems []workspace.TaskLedgerItem
+
 	for _, item := range items {
 		if strings.TrimSpace(item.ID) == "" {
 			continue
 		}
+
 		m.plan.ledgerItems[item.ID] = item
 		if !m.plan.ledgerRenderedIDs[item.ID] {
 			if m.findDuplicateLedgerItemID(item.Content, renderedSnapshot) != "" {
 				m.plan.ledgerRenderedIDs[item.ID] = true
 				continue
 			}
+
 			newItems = append(newItems, item)
 			m.plan.ledgerRenderedIDs[item.ID] = true
 		} else {
 			m.updatePlanItemCheckbox(item)
 		}
 	}
+
 	if len(newItems) == 0 {
 		return
 	}
+
 	m.appendPlannedItems(newItems)
 }
 
@@ -496,18 +575,22 @@ func (m *Model) appendPlannedItems(items []workspace.TaskLedgerItem) {
 	if path == "" {
 		return
 	}
+
 	existing, _ := os.ReadFile(path)
 	needsHeader := !strings.Contains(string(existing), "### Planned")
+
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
+
 	if needsHeader {
 		if _, err := f.WriteString("### Planned\n"); err != nil {
 			return
 		}
 	}
+
 	for _, item := range items {
 		_, _ = f.WriteString(plannedItemLine(item))
 	}
@@ -519,12 +602,14 @@ func (m *Model) renderedLedgerSnapshot() map[string]workspace.TaskLedgerItem {
 	if len(m.plan.ledgerRenderedIDs) == 0 {
 		return nil
 	}
+
 	out := make(map[string]workspace.TaskLedgerItem, len(m.plan.ledgerRenderedIDs))
 	for id := range m.plan.ledgerRenderedIDs {
 		if item, ok := m.plan.ledgerItems[id]; ok {
 			out[id] = item
 		}
 	}
+
 	return out
 }
 
@@ -544,6 +629,7 @@ func (m *Model) findDuplicateLedgerItemID(newContent string, rendered map[string
 	if len(rendered) == 0 {
 		return ""
 	}
+
 	norm := normalizeLedgerContent(newContent)
 	for id, item := range rendered {
 		if normalizeLedgerContent(item.Content) == norm {
@@ -556,12 +642,15 @@ func (m *Model) findDuplicateLedgerItemID(newContent string, rendered map[string
 	for id := range rendered {
 		ids = append(ids, id)
 	}
+
 	slices.Sort(ids)
 
 	var sb strings.Builder
+
 	sb.WriteString("Given a new task and a list of existing tasks, reply with the ID of the semantically equivalent existing task, or \"none\". Reply with the ID only — no explanation.\n\nNew task: ")
 	sb.WriteString(newContent)
 	sb.WriteString("\n\nExisting tasks:\n")
+
 	for _, id := range ids {
 		sb.WriteString(id)
 		sb.WriteString(": ")
@@ -573,6 +662,7 @@ func (m *Model) findDuplicateLedgerItemID(newContent string, rendered map[string
 	defer cancel()
 
 	thinkingOff := false
+
 	reply, err := m.completeChatWithFallback(ctx, []llama.ChatMessage{
 		{Role: "user", Content: sb.String()},
 	}, llama.ChatOptions{
@@ -584,13 +674,16 @@ func (m *Model) findDuplicateLedgerItemID(newContent string, rendered map[string
 	if err != nil {
 		return ""
 	}
+
 	reply = strings.TrimSpace(reply)
 	if reply == "" || strings.EqualFold(reply, "none") {
 		return ""
 	}
+
 	if _, ok := rendered[reply]; ok {
 		return reply
 	}
+
 	return ""
 }
 
@@ -599,20 +692,25 @@ func (m *Model) findDuplicateLedgerItemID(newContent string, rendered map[string
 // show the already-done portion of prior work accurately.
 func plannedItemLine(item workspace.TaskLedgerItem) string {
 	box := "[ ]"
+
 	switch strings.ToLower(strings.TrimSpace(item.Status)) {
 	case "completed", "cancelled":
 		box = "[x]"
 	case "in_progress":
 		box = "[~]"
 	}
+
 	content := strings.TrimSpace(item.Content)
 	if content == "" {
 		content = item.ID
 	}
+
 	var pathsNote string
+
 	if len(item.Paths) > 0 {
 		pathsNote = fmt.Sprintf(" (paths: %s)", strings.Join(item.Paths, ", "))
 	}
+
 	return fmt.Sprintf("- %s %s%s <!-- tid:%s -->\n", box, content, pathsNote, item.ID)
 }
 
@@ -641,10 +739,12 @@ func (m *Model) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID
 	if m == nil || len(m.plan.ledgerItems) == 0 {
 		return false
 	}
+
 	planPath := m.ensurePlanPath()
 	if planPath == "" {
 		return false
 	}
+
 	// Iterate in sorted id order so that when multiple items are
 	// candidates (e.g. share a path, or multiple paths-less items
 	// exist for the heuristic) the choice is deterministic.
@@ -652,6 +752,7 @@ func (m *Model) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID
 	for id := range m.plan.ledgerItems {
 		ids = append(ids, id)
 	}
+
 	slices.Sort(ids)
 
 	pending := func(item workspace.TaskLedgerItem) bool {
@@ -679,22 +780,28 @@ func (m *Model) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID
 			if !pending(item) {
 				continue
 			}
+
 			hits := m.plan.ledgerHits[id]
+
 			for _, p := range item.Paths {
 				trimmed := strings.TrimSpace(p)
 				if trimmed != path {
 					continue
 				}
+
 				if hits[trimmed] {
 					// This path already attached on a previous write; skip
 					// so a second write to the same path lands as Unplanned
 					// rather than silently overwriting.
 					continue
 				}
+
 				matchID = id
 				matchItem = item
+
 				break
 			}
+
 			if matchID != "" {
 				break
 			}
@@ -712,21 +819,26 @@ func (m *Model) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID
 			candidateItem workspace.TaskLedgerItem
 			candidates    int
 		)
+
 		for _, id := range ids {
 			item := m.plan.ledgerItems[id]
 			if !pending(item) {
 				continue
 			}
+
 			if len(item.Paths) != 0 {
 				continue
 			}
+
 			candidateID = id
 			candidateItem = item
 			candidates++
+
 			if candidates > 1 {
 				break
 			}
 		}
+
 		if candidates == 1 {
 			matchID = candidateID
 			matchItem = candidateItem
@@ -736,12 +848,14 @@ func (m *Model) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID
 	if matchID == "" {
 		return false
 	}
+
 	anchor := "<!-- tid:" + matchID + " -->"
 
 	raw, err := os.ReadFile(planPath)
 	if err != nil {
 		return false
 	}
+
 	if !strings.Contains(string(raw), anchor) {
 		return false
 	}
@@ -751,14 +865,17 @@ func (m *Model) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID
 	if m.plan.ledgerHits == nil {
 		m.plan.ledgerHits = map[string]map[string]bool{}
 	}
+
 	if m.plan.ledgerHits[matchID] == nil {
 		m.plan.ledgerHits[matchID] = map[string]bool{}
 	}
+
 	m.plan.ledgerHits[matchID][path] = true
 
 	// Only flip to [x] once every listed path for the item has been
 	// written. Multi-path items stay [ ] until the final path lands.
 	allHit := true
+
 	for _, p := range matchItem.Paths {
 		if !m.plan.ledgerHits[matchID][strings.TrimSpace(p)] {
 			allHit = false
@@ -767,30 +884,38 @@ func (m *Model) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID
 	}
 
 	var changed bool
+
 	if err := mutatePlanLines(planPath, func(lines []string) []string {
 		for i, line := range lines {
 			if !strings.Contains(line, anchor) {
 				continue
 			}
+
 			newLine := line
 			if allHit {
 				newLine = strings.Replace(newLine, "- [ ]", "- [x]", 1)
 				newLine = strings.Replace(newLine, "* [ ]", "* [x]", 1)
 			}
+
 			newLine = strings.TrimRight(newLine, " ") + " <!-- id:" + diffID + " -->"
 			lines[i] = newLine
 			changed = true
+
 			break
 		}
+
 		return lines
 	}); err != nil || !changed {
 		return false
 	}
+
 	if allHit {
 		item := m.plan.ledgerItems[matchID]
+
 		item.Status = "completed"
 		m.plan.ledgerItems[matchID] = item
 	}
+
 	return true
 }
 
@@ -801,6 +926,7 @@ func (m *Model) attachWriteToSubmittedEdit(path, diffID string) bool {
 	if m == nil || len(m.plan.submittedEdits) == 0 {
 		return false
 	}
+
 	planPath := m.ensurePlanPath()
 	if planPath == "" {
 		return false
@@ -810,19 +936,24 @@ func (m *Model) attachWriteToSubmittedEdit(path, diffID string) bool {
 	for id := range m.plan.submittedEdits {
 		ids = append(ids, id)
 	}
+
 	slices.Sort(ids)
 
 	var matchID string
+
 	for _, id := range ids {
 		edit := m.plan.submittedEdits[id]
 		if strings.TrimSpace(edit.Path) != path {
 			continue
 		}
+
 		anchor := "<!-- pid:" + id + " -->"
 		data, err := os.ReadFile(planPath)
+
 		if err != nil || !strings.Contains(string(data), anchor) {
 			continue
 		}
+
 		// Check it isn't already checked.
 		if strings.Contains(string(data), "- [x]") {
 			for _, line := range strings.Split(string(data), "\n") {
@@ -831,31 +962,41 @@ func (m *Model) attachWriteToSubmittedEdit(path, diffID string) bool {
 				}
 			}
 		}
+
 		matchID = id
+
 		break
 	}
+
 	if matchID == "" {
 		return false
 	}
 
 	anchor := "<!-- pid:" + matchID + " -->"
+
 	var changed bool
+
 	if err := mutatePlanLines(planPath, func(lines []string) []string {
 		for i, line := range lines {
 			if !strings.Contains(line, anchor) {
 				continue
 			}
+
 			newLine := strings.Replace(line, "- [ ]", "- [x]", 1)
+
 			newLine = strings.Replace(newLine, "- [~]", "- [x]", 1)
 			newLine = strings.TrimRight(newLine, " ") + " <!-- id:" + diffID + " -->"
 			lines[i] = newLine
 			changed = true
+
 			break
 		}
+
 		return lines
 	}); err != nil || !changed {
 		return false
 	}
+
 	return true
 }
 
@@ -867,16 +1008,21 @@ func (m *Model) updatePlanItemCheckbox(item workspace.TaskLedgerItem) {
 	if m == nil {
 		return
 	}
+
 	planPath := m.ensurePlanPath()
 	if planPath == "" {
 		return
 	}
+
 	anchor := "<!-- tid:" + item.ID + " -->"
 	status := strings.ToLower(strings.TrimSpace(item.Status))
+
 	if status == "pending" || status == "" {
 		return
 	}
+
 	var targetBox string
+
 	switch status {
 	case "completed", "cancelled":
 		targetBox = "[x]"
@@ -885,27 +1031,34 @@ func (m *Model) updatePlanItemCheckbox(item workspace.TaskLedgerItem) {
 	default:
 		return
 	}
+
 	data, err := os.ReadFile(planPath)
 	if err != nil {
 		return
 	}
+
 	if !strings.Contains(string(data), anchor) {
 		return
 	}
+
 	_ = mutatePlanLines(planPath, func(lines []string) []string {
 		for i, line := range lines {
 			if !strings.Contains(line, anchor) {
 				continue
 			}
+
 			newLine := line
 			for _, oldBox := range []string{"[ ]", "[~]", "[x]", "[X]"} {
 				newLine = strings.Replace(newLine, oldBox, targetBox, 1)
 			}
+
 			if newLine != line {
 				lines[i] = newLine
 			}
+
 			break
 		}
+
 		return lines
 	})
 }
@@ -921,28 +1074,37 @@ func (m *Model) recordSubmittedPlan(req workspace.ToolRequest, result workspace.
 	if m == nil {
 		return
 	}
+
 	if strings.TrimSpace(req.Tool) != "submit_plan" {
 		return
 	}
+
 	if strings.TrimSpace(result.Tool) != "submit_plan" {
 		return
 	}
+
 	if strings.TrimSpace(result.Error) != "" {
 		return
 	}
+
 	if m.sessionID() == "" {
 		return
 	}
+
 	var edits []workspace.PlanEdit
+
 	if req.PlanArtifact != nil {
 		edits = req.PlanArtifact.Edits
 	}
+
 	if len(edits) == 0 {
 		edits = req.Edits
 	}
+
 	if len(edits) == 0 {
 		return
 	}
+
 	m.ensurePlanSessionHeading()
 
 	if m.plan.submittedEdits == nil {
@@ -958,18 +1120,24 @@ func (m *Model) recordSubmittedPlan(req workspace.ToolRequest, result workspace.
 	content := string(existing)
 
 	var b strings.Builder
+
 	rest, _ := cutPlanSection(content, "### Plan")
 	b.WriteString(rest)
+
 	if !strings.HasSuffix(rest, "\n") {
 		b.WriteString("\n")
 	}
+
 	b.WriteString("### Plan\n")
+
 	for i, edit := range edits {
 		peID := fmt.Sprintf("pe-%d", i)
 		label := planEditLabel(edit)
 		b.WriteString(fmt.Sprintf("- [ ] %s <!-- pid:%s -->\n", label, peID))
+
 		m.plan.submittedEdits[peID] = edit
 	}
+
 	_ = os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
@@ -981,13 +1149,16 @@ func cutPlanSection(content, heading string) (string, bool) {
 	if idx < 0 {
 		return content, false
 	}
+
 	before := content[:idx]
 	after := content[idx:]
 	nextHeading := strings.Index(after[len(heading)+1:], "\n### ")
+
 	if nextHeading >= 0 {
 		cut := nextHeading + len(heading) + 1
 		return before + after[cut+1:], true
 	}
+
 	return before, true
 }
 
@@ -996,6 +1167,7 @@ func cutPlanSection(content, heading string) (string, bool) {
 func planEditLabel(edit workspace.PlanEdit) string {
 	desc := strings.TrimSpace(edit.Purpose)
 	p := strings.TrimSpace(edit.Path)
+
 	switch {
 	case desc != "" && p != "":
 		return fmt.Sprintf("%s (%s)", desc, p)

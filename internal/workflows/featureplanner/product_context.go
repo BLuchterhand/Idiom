@@ -42,14 +42,17 @@ func ProductWriteEnvelopePaths(brief *ProductWorkflowBrief) []string {
 	if brief == nil {
 		return nil
 	}
+
 	paths := plancontract.UniqueScopePaths(brief.FilesToModify)
 	for _, rawRoot := range brief.AuthorizedNewPackageRoots {
 		root := plancontract.NormalizeScopePath(strings.TrimSuffix(strings.TrimSpace(rawRoot), "/"))
 		if root == "" {
 			continue
 		}
+
 		paths = append(paths, root+"/**")
 	}
+
 	return plancontract.UniqueScopePaths(paths)
 }
 
@@ -74,12 +77,15 @@ func (brief ProductWorkflowBrief) AllowsFeaturePlanDispatch() bool {
 	if brief.IsClosedSourceSatisfied() {
 		return false
 	}
+
 	if len(brief.Blockers) > 0 {
 		return false
 	}
+
 	if brief.CoverageGatePassed && len(brief.CoverageBlockers) == 0 {
 		return true
 	}
+
 	return brief.coveragePendingImplementationVerification()
 }
 
@@ -93,6 +99,7 @@ func (brief ProductWorkflowBrief) coveragePendingImplementationVerification() bo
 	if brief.CoverageGatePassed || len(brief.CoverageBlockers) == 0 || len(brief.TDDObligations) == 0 {
 		return false
 	}
+
 	if len(brief.CoverageBlockerKinds) > 0 {
 		for _, kind := range brief.CoverageBlockerKinds {
 			if strings.TrimSpace(kind) != "coverage_tdd_evidence_missing" {
@@ -107,11 +114,13 @@ func (brief ProductWorkflowBrief) coveragePendingImplementationVerification() bo
 			}
 		}
 	}
+
 	for _, obligation := range brief.TDDObligations {
 		if !obligation.isDispatchReadyPendingImplementationTDD() {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -119,9 +128,11 @@ func (obligation TDDObligationBrief) isDispatchReadyPendingImplementationTDD() b
 	if strings.TrimSpace(obligation.ID) == "" || !looksExecutableCommand(obligation.Command) {
 		return false
 	}
+
 	if !requiredBeforeImplementation(obligation.RequiredBefore) {
 		return false
 	}
+
 	switch strings.ToLower(strings.TrimSpace(obligation.Status)) {
 	case "", "pending", "planned", "open":
 		return true

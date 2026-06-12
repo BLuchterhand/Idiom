@@ -113,26 +113,34 @@ A narrow read_file range can supply exact context when semantic routes do not la
 			if info, err := os.Stat(filepath.Join(root, "compile_commands.json")); err == nil && !info.IsDir() {
 				return true
 			}
+
 			found := false
+
 			_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 				if err != nil {
 					return nil
 				}
+
 				if d.IsDir() {
 					if discovery.ShouldSkipDirName(d.Name()) && path != root {
 						return filepath.SkipDir
 					}
+
 					return nil
 				}
+
 				if strings.HasPrefix(filepath.Base(path), ".") {
 					return nil
 				}
+
 				if isCppExtension(filepath.Ext(path)) {
 					found = true
 					return filepath.SkipAll
 				}
+
 				return nil
 			})
+
 			return found
 		},
 	},
@@ -179,15 +187,19 @@ A narrow read_file range can supply exact context when semantic routes do not la
 					return true
 				}
 			}
+
 			found := false
+
 			_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 				if err != nil {
 					return nil
 				}
+
 				if d.IsDir() {
 					if discovery.ShouldSkipDirName(d.Name()) && path != root {
 						return filepath.SkipDir
 					}
+
 					switch d.Name() {
 					case ".venv", "venv", "__pycache__", ".mypy_cache",
 						".pytest_cache", ".tox", "site-packages", ".eggs":
@@ -195,18 +207,23 @@ A narrow read_file range can supply exact context when semantic routes do not la
 							return filepath.SkipDir
 						}
 					}
+
 					return nil
 				}
+
 				if strings.HasPrefix(filepath.Base(path), ".") {
 					return nil
 				}
+
 				switch strings.ToLower(filepath.Ext(path)) {
 				case ".py", ".pyi":
 					found = true
 					return filepath.SkipAll
 				}
+
 				return nil
 			})
+
 			return found
 		},
 	},
@@ -245,29 +262,38 @@ The same route covers .js/.jsx/.mjs/.cjs. A narrow read_file range can supply ex
 					return true
 				}
 			}
+
 			found := false
+
 			_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 				if err != nil {
 					return nil
 				}
+
 				if d.IsDir() {
 					if discovery.ShouldSkipDirName(d.Name()) && path != root {
 						return filepath.SkipDir
 					}
+
 					if name := d.Name(); name == ".next" || name == "node_modules" {
 						return filepath.SkipDir
 					}
+
 					return nil
 				}
+
 				if strings.HasPrefix(filepath.Base(path), ".") {
 					return nil
 				}
+
 				if isTsExtension(filepath.Ext(path)) {
 					found = true
 					return filepath.SkipAll
 				}
+
 				return nil
 			})
+
 			return found
 		},
 	},
@@ -304,27 +330,35 @@ A narrow read_file range can supply exact context when semantic routes do not la
 			if info, err := os.Stat(filepath.Join(root, "Cargo.toml")); err == nil && !info.IsDir() {
 				return true
 			}
+
 			found := false
+
 			_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 				if err != nil {
 					return nil
 				}
+
 				if d.IsDir() {
 					name := d.Name()
 					if discovery.ShouldSkipDirName(name) && path != root {
 						return filepath.SkipDir
 					}
+
 					return nil
 				}
+
 				if strings.HasPrefix(filepath.Base(path), ".") {
 					return nil
 				}
+
 				if strings.EqualFold(filepath.Ext(path), ".rs") {
 					found = true
 					return filepath.SkipAll
 				}
+
 				return nil
 			})
+
 			return found
 		},
 	},
@@ -363,32 +397,41 @@ A narrow read_file range can supply exact context when semantic routes do not la
 					return true
 				}
 			}
+
 			found := false
+
 			_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 				if err != nil {
 					return nil
 				}
+
 				if d.IsDir() {
 					if discovery.ShouldSkipDirName(d.Name()) && path != root {
 						return filepath.SkipDir
 					}
+
 					switch d.Name() {
 					case "target", "build", ".gradle", ".mvn":
 						if path != root {
 							return filepath.SkipDir
 						}
 					}
+
 					return nil
 				}
+
 				if strings.HasPrefix(filepath.Base(path), ".") {
 					return nil
 				}
+
 				if strings.EqualFold(filepath.Ext(path), ".java") {
 					found = true
 					return filepath.SkipAll
 				}
+
 				return nil
 			})
+
 			return found
 		},
 	},
@@ -399,6 +442,7 @@ A narrow read_file range can supply exact context when semantic routes do not la
 func LanguageRegistry() []LanguageSupport {
 	out := make([]LanguageSupport, len(languageRegistry))
 	copy(out, languageRegistry)
+
 	return out
 }
 
@@ -409,6 +453,7 @@ func LanguageForExtension(ext string) (LanguageSupport, bool) {
 	if ext == "" {
 		return LanguageSupport{}, false
 	}
+
 	for _, lang := range languageRegistry {
 		for _, candidate := range lang.Extensions {
 			if strings.ToLower(candidate) == ext {
@@ -416,6 +461,7 @@ func LanguageForExtension(ext string) (LanguageSupport, bool) {
 			}
 		}
 	}
+
 	return LanguageSupport{}, false
 }
 
@@ -430,6 +476,7 @@ func LanguageForFile(path string) (LanguageSupport, bool) {
 func LanguageForName(name string) (LanguageSupport, bool) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	name = strings.TrimPrefix(name, ".")
+
 	switch name {
 	case "golang":
 		name = "go"
@@ -442,11 +489,13 @@ func LanguageForName(name string) (LanguageSupport, bool) {
 	case "rs":
 		name = "rust"
 	}
+
 	for _, lang := range languageRegistry {
 		if strings.EqualFold(lang.Name, name) {
 			return lang, true
 		}
 	}
+
 	return LanguageSupport{}, false
 }
 
@@ -457,6 +506,7 @@ func DiagnosticToolForLanguage(language string) string {
 	if lang, ok := LanguageForName(language); ok {
 		return lang.Tool(CapDiagnostics)
 	}
+
 	return ""
 }
 
@@ -465,17 +515,21 @@ func DiagnosticToolForLanguage(language string) string {
 func DiagnosticToolNames() []string {
 	seen := make(map[string]struct{}, len(languageRegistry))
 	out := make([]string, 0, len(languageRegistry))
+
 	for _, lang := range languageRegistry {
 		tool := strings.TrimSpace(lang.Tool(CapDiagnostics))
 		if tool == "" {
 			continue
 		}
+
 		if _, ok := seen[tool]; ok {
 			continue
 		}
+
 		seen[tool] = struct{}{}
 		out = append(out, tool)
 	}
+
 	return out
 }
 
@@ -484,11 +538,13 @@ func IsDiagnosticToolName(tool string) bool {
 	if tool == "" {
 		return false
 	}
+
 	for _, candidate := range DiagnosticToolNames() {
 		if candidate == tool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -499,12 +555,14 @@ func ActiveLanguages(root string) []LanguageSupport {
 	if root == "" {
 		return nil
 	}
+
 	out := make([]LanguageSupport, 0, len(languageRegistry))
 	for _, lang := range languageRegistry {
 		if lang.Detect != nil && lang.Detect(root) {
 			out = append(out, lang)
 		}
 	}
+
 	return out
 }
 
@@ -514,6 +572,7 @@ func (l LanguageSupport) Tool(cap Capability) string {
 	if l.Tools == nil {
 		return ""
 	}
+
 	return l.Tools[cap]
 }
 
@@ -522,6 +581,7 @@ func isCppExtension(ext string) bool {
 		".c": {}, ".cc": {}, ".cpp": {}, ".cxx": {},
 		".h": {}, ".hh": {}, ".hpp": {}, ".hxx": {}, ".ipp": {}, ".inl": {}, ".tpp": {},
 	}[strings.ToLower(ext)]
+
 	return ok
 }
 

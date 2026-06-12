@@ -123,6 +123,7 @@ func TestPlanExecuteCompletionFieldsDerivesSourceSatisfiedOutcome(t *testing.T) 
 	if got := CompletionFieldString(fields, "status"); got != "source-satisfied" {
 		t.Fatalf("status = %q, want source-satisfied; fields=%+v", got, fields)
 	}
+
 	if got := CompletionFieldString(fields, "outcome"); got != "source_satisfied" {
 		t.Fatalf("outcome = %q, want source_satisfied; fields=%+v", got, fields)
 	}
@@ -148,6 +149,7 @@ func TestPlanExecuteCompletionFieldsPrefersLaterConcreteReviewRepairState(t *tes
 			t.Fatalf("%s = %q, want %q; fields=%+v", key, got, want, fields)
 		}
 	}
+
 	changed, _ := fields["changed_paths"].([]string)
 	if len(changed) != 1 || changed[0] != "internal/surfaces/tui/app/feature.go" {
 		t.Fatalf("changed_paths = %#v, want active changed path; fields=%+v", fields["changed_paths"], fields)
@@ -188,12 +190,15 @@ func TestPlanExecuteCompletionFieldsLaterCompletedStateClearsEarlierFailure(t *t
 	if got := fmt.Sprint(fields["status"]); got != "completed" {
 		t.Fatalf("status = %q, want completed; fields=%+v", got, fields)
 	}
+
 	if got := CompletionFieldString(fields, "failure_kind"); got != "" {
 		t.Fatalf("failure_kind = %q, want cleared earlier planning failure; fields=%+v", got, fields)
 	}
+
 	if got := fmt.Sprint(fields["progress_path"]); got != ".idiom/plan-execute/sessions/active.json" {
 		t.Fatalf("progress_path = %q, want active progress path; fields=%+v", got, fields)
 	}
+
 	if got := PlanExecuteCompletionTerminalClass(fields); got != PlanExecuteTerminalCompleted {
 		t.Fatalf("terminal class = %q, want completed; fields=%+v", got, fields)
 	}
@@ -210,6 +215,7 @@ func TestPlanExecuteCompletionFieldsKeepsNestedSourceSatisfiedTerminal(t *testin
 	if got := CompletionFieldString(fields, "status"); got != "source-satisfied" {
 		t.Fatalf("status = %q, want source-satisfied; fields=%+v", got, fields)
 	}
+
 	if got := PlanExecuteCompletionTerminalClass(fields); got != PlanExecuteTerminalCompleted {
 		t.Fatalf("terminal class = %q, want completed; fields=%+v", got, fields)
 	}
@@ -228,9 +234,11 @@ func TestPlanExecuteCompletionFieldsPreservesScopeContractWithoutGenericAlias(t 
 			t.Fatalf("%s = %q, want %q; fields=%+v", key, got, want, fields)
 		}
 	}
+
 	if got := CompletionFieldString(fields, "contract_id"); got != "" {
 		t.Fatalf("contract_id = %q, want empty generic contract id for scope-only record; fields=%+v", got, fields)
 	}
+
 	if got := CompletionFieldString(fields, "contract_hash"); got != "" {
 		t.Fatalf("contract_hash = %q, want empty generic contract hash for scope-only record; fields=%+v", got, fields)
 	}
@@ -243,12 +251,15 @@ func TestPlanExecuteCompletionFieldsPreservesScopeContractWithoutGenericAlias(t 
 	if got := CompletionFieldString(fromFields, "contract_id"); got != "" {
 		t.Fatalf("contract_id = %q, want empty generic contract id for scope-only fields; fields=%+v", got, fromFields)
 	}
+
 	if got := CompletionFieldString(fromFields, "contract_hash"); got != "" {
 		t.Fatalf("contract_hash = %q, want empty generic contract hash for scope-only fields; fields=%+v", got, fromFields)
 	}
+
 	if got := CompletionFieldString(fromFields, "scope_contract_id"); got != "scope-fields" {
 		t.Fatalf("scope_contract_id = %q, want scope-fields; fields=%+v", got, fromFields)
 	}
+
 	if got := CompletionFieldString(fromFields, "scope_contract_hash"); got != "scope-fields-hash" {
 		t.Fatalf("scope_contract_hash = %q, want scope-fields-hash; fields=%+v", got, fromFields)
 	}
@@ -260,9 +271,11 @@ func TestPlanExecuteCompletionFieldsNormalizesLegacyContractHashToSnapshot(t *te
 	if got := CompletionFieldString(fields, "contract_id"); got != "parent-contract" {
 		t.Fatalf("contract_id = %q, want parent-contract; fields=%+v", got, fields)
 	}
+
 	if got := CompletionFieldString(fields, "snapshot_hash"); got != "snapshot-hash-1" {
 		t.Fatalf("snapshot_hash = %q, want legacy contract_hash normalized; fields=%+v", got, fields)
 	}
+
 	if got := CompletionFieldString(fields, "contract_hash"); got != "" {
 		t.Fatalf("contract_hash = %q, want no parallel contract_hash authority; fields=%+v", got, fields)
 	}
@@ -289,9 +302,11 @@ func TestPlanExecuteCompletionMergeAndOverlayPreserveScopeContractFields(t *test
 			t.Fatalf("merged %s = %q, want %q; fields=%+v", key, got, want, merged)
 		}
 	}
+
 	if got := CompletionFieldString(merged, "contract_id"); got != "" {
 		t.Fatalf("merged contract_id = %q, want empty generic contract id; fields=%+v", got, merged)
 	}
+
 	if got := CompletionFieldString(merged, "contract_hash"); got != "" {
 		t.Fatalf("merged contract_hash = %q, want empty generic contract hash; fields=%+v", got, merged)
 	}
@@ -304,15 +319,19 @@ func TestPlanExecuteCompletionMergeAndOverlayPreserveScopeContractFields(t *test
 		"scope_contract_id":   "scope-overlay",
 		"scope_contract_hash": "scope-overlay-hash",
 	})
+
 	if got := CompletionFieldString(fields, "scope_contract_id"); got != "scope-overlay" {
 		t.Fatalf("overlaid scope_contract_id = %q, want scope-overlay; fields=%+v", got, fields)
 	}
+
 	if got := CompletionFieldString(fields, "scope_contract_hash"); got != "scope-overlay-hash" {
 		t.Fatalf("overlaid scope_contract_hash = %q, want scope-overlay-hash; fields=%+v", got, fields)
 	}
+
 	if got := CompletionFieldString(fields, "contract_id"); got != "" {
 		t.Fatalf("overlaid contract_id = %q, want empty generic contract id; fields=%+v", got, fields)
 	}
+
 	if got := CompletionFieldString(fields, "contract_hash"); got != "" {
 		t.Fatalf("overlaid contract_hash = %q, want empty generic contract hash; fields=%+v", got, fields)
 	}
@@ -339,6 +358,7 @@ func TestTrustPlanExecuteCompletionFieldsDoesNotMintTrustForHarnessReturnSource(
 	if got := fields["acceptance_evidence_trusted"]; got == true {
 		t.Fatalf("consumer-side trust should not be minted from completion_source alone; fields=%+v", fields)
 	}
+
 	if planExecuteAcceptanceEvidenceTrustRegistered(fields) {
 		t.Fatalf("completion_source-only trust should not be registered; fields=%+v", fields)
 	}
@@ -357,6 +377,7 @@ func TestTrustObservedPlanExecuteCompletionFieldsRegistersProducerTrust(t *testi
 	if got := fields["acceptance_evidence_trusted"]; got != true {
 		t.Fatalf("observed terminal completion should trust acceptance evidence; fields=%+v", fields)
 	}
+
 	if !planExecuteAcceptanceEvidenceTrustRegistered(fields) {
 		t.Fatalf("observed terminal completion was not registered; fields=%+v", fields)
 	}
@@ -374,6 +395,7 @@ func TestTrustObservedPlanExecuteCompletionFieldsDoesNotRegisterFailedTerminal(t
 	if got := fields["acceptance_evidence_trusted"]; got == true {
 		t.Fatalf("failed terminal completion should not trust acceptance evidence; fields=%+v", fields)
 	}
+
 	if planExecuteAcceptanceEvidenceTrustRegistered(fields) {
 		t.Fatalf("failed terminal completion should not be registered; fields=%+v", fields)
 	}
@@ -425,6 +447,7 @@ func TestOverlayPlanExecuteCompletionFieldsReplacesAcceptanceEvidence(t *testing
 	if _, ok := fields["acceptance_evidence_ids"]; ok {
 		t.Fatalf("stale acceptance_evidence_ids survived overlay: fields=%+v", fields)
 	}
+
 	if _, ok := fields["acceptance_evidence_trusted"]; ok {
 		t.Fatalf("stale acceptance_evidence_trusted survived overlay: fields=%+v", fields)
 	}
@@ -455,6 +478,7 @@ func TestOverlayPlanExecuteCompletionFieldsNestedFailureOverridesWrapperComplete
 			t.Fatalf("%s = %q, want %q; fields=%+v", key, got, want, fields)
 		}
 	}
+
 	if got := PlanExecuteCompletionTerminalClass(fields); got != PlanExecuteTerminalBlocked {
 		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, fields)
 	}
@@ -471,10 +495,12 @@ func TestPlanExecuteCompletionFieldsDegradedInheritsEarlierProgressPath(t *testi
 	if got := fmt.Sprint(fields["progress_path"]); got != ".idiom/plan-execute/sessions/active.json" {
 		t.Fatalf("progress_path = %q, want inherited path; fields=%+v", got, fields)
 	}
+
 	changed, _ := fields["changed_paths"].([]string)
 	if len(changed) != 1 || changed[0] != "internal/surfaces/tui/app/feature.go" {
 		t.Fatalf("changed_paths = %#v, want inherited changed path; fields=%+v", fields["changed_paths"], fields)
 	}
+
 	if got := fmt.Sprint(fields["failure_kind"]); got != "review_model_error" {
 		t.Fatalf("failure_kind = %q, want review_model_error; fields=%+v", got, fields)
 	}

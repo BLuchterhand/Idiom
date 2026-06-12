@@ -32,18 +32,23 @@ func TestBuildPacketLoadsProfileRulesAndPendingCollectors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildPacket: %v", err)
 	}
+
 	if packet.SchemaVersion != SchemaVersion || packet.Profile.Name != "demo" {
 		t.Fatalf("unexpected packet identity: %#v", packet)
 	}
+
 	if len(packet.Evidence) != 2 {
 		t.Fatalf("expected rule + pending collector evidence, got %#v", packet.Evidence)
 	}
+
 	if packet.Evidence[0].Kind != "rule" || !strings.Contains(packet.Evidence[0].Content, "Use exact tests") {
 		t.Fatalf("rule evidence not loaded: %#v", packet.Evidence[0])
 	}
+
 	if packet.Evidence[1].Kind != "collector_pending" {
 		t.Fatalf("collector should be pending without RunCollectors: %#v", packet.Evidence[1])
 	}
+
 	if len(LintPacket(packet).Findings) != 0 {
 		t.Fatalf("packet should pass lint: %#v", LintPacket(packet))
 	}
@@ -55,6 +60,7 @@ func TestBuildPacketRunsCollectorsWhenRequested(t *testing.T) {
   "name": "demo",
   "collectors": [{"name": "echo", "command": "/bin/sh", "args": ["-c", "printf '\\033[31mcollector-output\\033[0m\\n'"]}]
 }`)
+
 	packet, err := BuildPacket(context.Background(), BuildOptions{
 		Root:          root,
 		Task:          "Collect facts",
@@ -64,12 +70,15 @@ func TestBuildPacketRunsCollectorsWhenRequested(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildPacket: %v", err)
 	}
+
 	if len(packet.Evidence) != 1 || packet.Evidence[0].Kind != "collector" {
 		t.Fatalf("collector evidence missing: %#v", packet.Evidence)
 	}
+
 	if !strings.Contains(packet.Evidence[0].Content, "collector-output") {
 		t.Fatalf("collector output missing: %#v", packet.Evidence[0])
 	}
+
 	if strings.Contains(packet.Evidence[0].Content, "\x1b[") {
 		t.Fatalf("collector output should be ANSI-stripped: %#v", packet.Evidence[0])
 	}
@@ -79,6 +88,7 @@ func TestBuildPacketIncludesContextViewEvidence(t *testing.T) {
 	root := t.TempDir()
 	viewPath := filepath.Join(root, ".idiom", "comprehension", "views", "pack.json")
 	writeFile(t, viewPath, `{"pack_id":"abc","candidate_files":[{"path":"pkg/pkg.go"}]}`+"\n")
+
 	packet, err := BuildPacket(context.Background(), BuildOptions{
 		Root:         root,
 		Task:         "Use context",
@@ -87,12 +97,15 @@ func TestBuildPacketIncludesContextViewEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildPacket: %v", err)
 	}
+
 	if len(packet.Evidence) != 1 || packet.Evidence[0].Kind != "context_view" {
 		t.Fatalf("context view evidence missing: %#v", packet.Evidence)
 	}
+
 	if !strings.Contains(packet.Evidence[0].Content, "candidate_files") {
 		t.Fatalf("context view content missing: %#v", packet.Evidence[0])
 	}
+
 	packet.Gates = []Gate{{Name: "evidence_required", Required: true}}
 	if result := LintPacket(packet); !result.OK {
 		t.Fatalf("context view should satisfy material evidence gate: %#v", result)
@@ -128,28 +141,36 @@ func TestBuildPlanningPacketV2IncludesBudgetFreshnessAndScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildPacket: %v", err)
 	}
+
 	if packet.SchemaVersion != PlanningPacketV2Version {
 		t.Fatalf("expected planning v2 schema, got %q", packet.SchemaVersion)
 	}
+
 	if packet.ContextBudget == nil || packet.ContextBudget.BudgetTier != "brief" || packet.ContextBudget.EstimatedTokens == 0 {
 		t.Fatalf("missing budget report: %#v", packet.ContextBudget)
 	}
+
 	if packet.Contracts == nil || len(packet.Contracts.ValidationRequirements) != 2 {
 		t.Fatalf("validation requirements were not preserved in contracts: %#v", packet.Contracts)
 	}
+
 	if packet.Freshness == nil || packet.Freshness.Fresh == nil || *packet.Freshness.Fresh {
 		t.Fatalf("expected stale freshness metadata: %#v", packet.Freshness)
 	}
+
 	if !hasCandidateScope(packet, "file://internal/capabilities/workspace/context_tools.go") || !hasCandidateScope(packet, "symbol://internal/capabilities/workspace/context_tools.go#contextPack") {
 		t.Fatalf("candidate scope missing context handles: %#v", packet.CandidateScope)
 	}
+
 	if len(packet.LanguageCapabilities) != 1 || packet.LanguageCapabilities[0].Language != "go" || packet.LanguageCapabilities[0].PrecisionTier != "precise_backend" {
 		t.Fatalf("language capabilities missing precision: %#v", packet.LanguageCapabilities)
 	}
+
 	result := LintPacket(packet)
 	if !result.OK {
 		t.Fatalf("planning v2 packet should lint without errors: %#v", result)
 	}
+
 	if !hasLintFinding(result, "planning_v2_freshness", "warning") {
 		t.Fatalf("expected stale freshness warning, got %#v", result.Findings)
 	}
@@ -181,12 +202,15 @@ func TestBuildPlanningPacketV2ParsesTruncatedContextViewFromPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildPacket: %v", err)
 	}
+
 	if !strings.Contains(packet.Evidence[0].Content, "[truncated]") {
 		t.Fatalf("test setup expected truncated evidence content: %#v", packet.Evidence[0])
 	}
+
 	if !hasCandidateScope(packet, "file://cmd/idiom/architect.go") {
 		t.Fatalf("candidate scope should be parsed from full context view path, got %#v", packet.CandidateScope)
 	}
+
 	if len(packet.Unknowns) != 0 {
 		t.Fatalf("full context view fallback should avoid parse unknowns, got %#v", packet.Unknowns)
 	}
@@ -224,11 +248,13 @@ func TestBuildPlanningPacketV2IncludesMultiLanguageFixtureScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildPacket: %v", err)
 	}
+
 	for _, want := range []string{"go", "cpp", "gdscript"} {
 		if !hasLanguageCapability(packet, want) {
 			t.Fatalf("expected language capability %q, got %#v", want, packet.LanguageCapabilities)
 		}
 	}
+
 	for _, want := range []string{
 		"file://internal/runtime/agent/runner.go",
 		"file://native/tests/test_production_graph.cpp",
@@ -239,6 +265,7 @@ func TestBuildPlanningPacketV2IncludesMultiLanguageFixtureScope(t *testing.T) {
 			t.Fatalf("expected candidate scope %q, got %#v", want, packet.CandidateScope)
 		}
 	}
+
 	if packet.ContextBudget == nil || packet.ContextBudget.BudgetTier != "brief" {
 		t.Fatalf("expected brief context budget, got %#v", packet.ContextBudget)
 	}
@@ -255,9 +282,11 @@ func TestLintPacketEnforcesRequiredGates(t *testing.T) {
 		},
 	}
 	result := LintPacket(packet)
+
 	if result.OK {
 		t.Fatalf("expected lint failure")
 	}
+
 	if len(result.Findings) != 3 {
 		t.Fatalf("expected 3 findings, got %#v", result.Findings)
 	}
@@ -270,9 +299,11 @@ func TestLintPacketEnforcesContextViewRequiredGate(t *testing.T) {
 		Gates:         []Gate{{Name: "context_view_required", Required: true}},
 	}
 	result := LintPacket(packet)
+
 	if result.OK {
 		t.Fatalf("expected missing context view to fail")
 	}
+
 	if !hasLintFinding(result, "context_view_required", "error") {
 		t.Fatalf("expected context_view_required error, got %#v", result.Findings)
 	}
@@ -289,9 +320,11 @@ func TestLintPacketWarnsOnStaleContextView(t *testing.T) {
 		}},
 	}
 	result := LintPacket(packet)
+
 	if !result.OK {
 		t.Fatalf("stale optional context view should warn, not fail: %#v", result)
 	}
+
 	if !hasLintFinding(result, "stale_context_view", "warning") || !hasLintFinding(result, "context_view_gaps", "warning") {
 		t.Fatalf("expected stale and gap warnings, got %#v", result.Findings)
 	}
@@ -309,9 +342,11 @@ func TestLintPacketEnforcesFreshContextGate(t *testing.T) {
 		}},
 	}
 	result := LintPacket(packet)
+
 	if result.OK {
 		t.Fatalf("expected stale context view to fail freshness gate")
 	}
+
 	if !hasLintFinding(result, "fresh_context_required", "error") {
 		t.Fatalf("expected fresh_context_required error, got %#v", result.Findings)
 	}
@@ -328,9 +363,11 @@ func TestLintPacketWarnsOnMalformedContextView(t *testing.T) {
 		}},
 	}
 	result := LintPacket(packet)
+
 	if !result.OK {
 		t.Fatalf("malformed optional context view should warn, not fail: %#v", result)
 	}
+
 	if !hasLintFinding(result, "context_view_parse", "warning") {
 		t.Fatalf("expected parse warning, got %#v", result.Findings)
 	}
@@ -348,9 +385,11 @@ func TestLintPacketFailsRequiredEvidenceErrors(t *testing.T) {
 		}},
 	}
 	result := LintPacket(packet)
+
 	if result.OK {
 		t.Fatalf("expected lint failure")
 	}
+
 	if len(result.Findings) != 1 || !strings.Contains(result.Findings[0].Message, "missing rules") {
 		t.Fatalf("unexpected findings: %#v", result.Findings)
 	}
@@ -366,9 +405,11 @@ func TestLintPacketWarnsOnEmptyEvidence(t *testing.T) {
 		}},
 	}
 	result := LintPacket(packet)
+
 	if !result.OK {
 		t.Fatalf("empty optional evidence should warn, not fail: %#v", result)
 	}
+
 	if len(result.Findings) != 1 || result.Findings[0].Gate != "empty_evidence" || result.Findings[0].Level != "warning" {
 		t.Fatalf("unexpected findings: %#v", result.Findings)
 	}
@@ -384,9 +425,11 @@ func TestContextBudgetWarnsOnDuplicateEvidence(t *testing.T) {
 		},
 	}
 	report := BuildContextBudget(packet, ContextBudgetOptions{Tier: "standard"})
+
 	if report == nil || len(report.Warnings) == 0 {
 		t.Fatalf("expected duplicate evidence warning, got %#v", report)
 	}
+
 	if !containsWarning(report.Warnings, "duplicate evidence") {
 		t.Fatalf("expected duplicate evidence warning, got %#v", report.Warnings)
 	}
@@ -395,6 +438,7 @@ func TestContextBudgetWarnsOnDuplicateEvidence(t *testing.T) {
 func TestAuditPlanFindsMissingFile(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "internal/workflows/architect/packet.go"), "package architect\n")
+
 	packet := Packet{
 		SchemaVersion: PlanningPacketV2Version,
 		Task:          "Implement packet work",
@@ -402,9 +446,11 @@ func TestAuditPlanFindsMissingFile(t *testing.T) {
 		Files:         []FileRef{{Path: "internal/workflows/architect/packet.go", Role: "modify"}},
 	}
 	result := AuditPlan(packet, "Modify internal/workflows/architect/packet.go and internal/workflows/architect/missing.go.")
+
 	if result.OK {
 		t.Fatalf("expected audit failure")
 	}
+
 	if !hasAuditFinding(result, "missing_file", "error") {
 		t.Fatalf("expected missing_file error, got %#v", result.Findings)
 	}
@@ -420,15 +466,18 @@ func TestAuditPlanDoesNotTruncateLongerExtensions(t *testing.T) {
 	} {
 		writeFile(t, filepath.Join(root, path), "fixture\n")
 	}
+
 	packet := Packet{
 		SchemaVersion: PlanningPacketV2Version,
 		Task:          "Review plan paths",
 		Workspace:     WorkspaceSummary{Root: root},
 	}
 	result := AuditPlan(packet, "Review traces/run.json, src/feature.cpp, scenes/main.tscn, and web/view.jsx.")
+
 	if !result.OK {
 		t.Fatalf("expected existing long-extension paths to pass, got %#v", result.Findings)
 	}
+
 	if hasAuditFinding(result, "missing_file", "error") {
 		t.Fatalf("path extraction truncated longer extension: %#v", result.Findings)
 	}
@@ -443,9 +492,11 @@ func TestAuditPlanWarnsOnMissingValidationAndStaleFacts(t *testing.T) {
 		Freshness:     &FreshnessReport{Fresh: &stale, StaleNodes: []string{"internal/workflows/architect/packet.go"}},
 	}
 	result := AuditPlan(packet, "Update the packet builder in a bounded atom.")
+
 	if !result.OK {
 		t.Fatalf("warnings should not fail audit: %#v", result)
 	}
+
 	if !hasAuditFinding(result, "validation_gap", "warning") || !hasAuditFinding(result, "stale_fact", "warning") {
 		t.Fatalf("expected validation and stale warnings, got %#v", result.Findings)
 	}
@@ -454,6 +505,7 @@ func TestAuditPlanWarnsOnMissingValidationAndStaleFacts(t *testing.T) {
 func TestAuditPlanRejectsMissingCommandPath(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "internal/workflows/architect/packet.go"), "package architect\n")
+
 	packet := Packet{
 		SchemaVersion: PlanningPacketV2Version,
 		Task:          "Implement packet work",
@@ -461,9 +513,11 @@ func TestAuditPlanRejectsMissingCommandPath(t *testing.T) {
 		Tests:         []CommandRef{{Command: "bash scripts/missing.sh", Reason: "script smoke"}},
 	}
 	result := AuditPlan(packet, "Validate with `bash scripts/missing.sh` after editing internal/workflows/architect/packet.go.")
+
 	if result.OK {
 		t.Fatalf("expected missing command path failure")
 	}
+
 	if !hasAuditFinding(result, "unknown_command_path", "error") {
 		t.Fatalf("expected unknown_command_path error, got %#v", result.Findings)
 	}
@@ -472,12 +526,14 @@ func TestAuditPlanRejectsMissingCommandPath(t *testing.T) {
 func TestAuditPlanDoesNotTreatAbsoluteCommandPathAsWorkspacePath(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "internal/workflows/architect/packet.go"), "package architect\n")
+
 	packet := Packet{
 		SchemaVersion: PlanningPacketV2Version,
 		Task:          "Validate external helper",
 		Workspace:     WorkspaceSummary{Root: root},
 	}
 	result := AuditPlan(packet, "Validate with `bash /tmp/idiom-missing-helper.sh` after checking internal/workflows/architect/packet.go.")
+
 	if hasAuditFinding(result, "unknown_command_path", "error") {
 		t.Fatalf("absolute external command path should not be audited as workspace path: %#v", result.Findings)
 	}
@@ -489,9 +545,11 @@ func TestAuditPlanRejectsUnresolvedPlaceholder(t *testing.T) {
 		Task:          "Draft an atom",
 	}
 	result := AuditPlan(packet, "Update `<path>` and replace `<count>` once evidence is available.")
+
 	if result.OK {
 		t.Fatalf("expected unresolved placeholder failure")
 	}
+
 	if !hasAuditFinding(result, "unresolved_placeholder", "error") {
 		t.Fatalf("expected unresolved_placeholder error, got %#v", result.Findings)
 	}
@@ -500,6 +558,7 @@ func TestAuditPlanRejectsUnresolvedPlaceholder(t *testing.T) {
 func TestAuditPlanRejectsProtectedPathEdit(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "internal/secret.go"), "package internal\n")
+
 	packet := Packet{
 		SchemaVersion: PlanningPacketV2Version,
 		Task:          "Implement a change",
@@ -507,9 +566,11 @@ func TestAuditPlanRejectsProtectedPathEdit(t *testing.T) {
 		Contracts:     &PlanningContracts{ProtectedPaths: []string{"internal/secret.go"}},
 	}
 	result := AuditPlan(packet, "Modify internal/secret.go to expose the value.")
+
 	if result.OK {
 		t.Fatalf("expected protected path failure")
 	}
+
 	if !hasAuditFinding(result, "protected_path", "error") {
 		t.Fatalf("expected protected_path error, got %#v", result.Findings)
 	}
@@ -519,6 +580,7 @@ func TestAuditPlanReportsPacketScopeAndIdentityMismatches(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "internal/workflows/architect/packet.go"), "package architect\n")
 	writeFile(t, filepath.Join(root, "internal/workflows/architect/outside.go"), "package architect\n")
+
 	fresh := true
 	packet := Packet{
 		SchemaVersion: PlanningPacketV2Version,
@@ -533,12 +595,15 @@ func TestAuditPlanReportsPacketScopeAndIdentityMismatches(t *testing.T) {
 		Freshness: &FreshnessReport{Fresh: &fresh, ContextViews: []ContextFreshnessSource{{PackID: "feedfacecafebeef"}}},
 	}
 	result := AuditPlan(packet, "Modify internal/workflows/architect/outside.go using context_pack://deadbeefdeadbeef.")
+
 	if result.OK {
 		t.Fatalf("expected packet/scope mismatch failure")
 	}
+
 	if !hasAuditFinding(result, "packet_identity_mismatch", "error") || !hasAuditFinding(result, "scope_path_mismatch", "error") {
 		t.Fatalf("expected packet identity and scope findings, got %#v", result.Findings)
 	}
+
 	if result.MismatchMetrics.PacketIdentityMismatches == 0 || result.MismatchMetrics.ScopePathMismatches == 0 {
 		t.Fatalf("expected mismatch metrics, got %#v", result.MismatchMetrics)
 	}
@@ -601,18 +666,22 @@ func TestAuditPlanArtifactComparesSubmittedFieldsPrivately(t *testing.T) {
 		Handoff:  PlanArtifactHandoffAuditSubject{ID: "handoff-1", Status: "ready", Ready: true},
 		Edits:    []PlanArtifactEditAuditSubject{{Path: "internal/workflows/architect/outside.go"}},
 	})
+
 	if result.OK {
 		t.Fatalf("expected artifact audit failure")
 	}
+
 	for _, want := range []string{"packet_identity_mismatch", "packet_freshness_mismatch", "scope_path_mismatch", "unresolved_question_mismatch", "validation_gap"} {
 		if !hasAuditFinding(result, want, "") {
 			t.Fatalf("expected finding kind %q, got %#v", want, result.Findings)
 		}
 	}
+
 	encoded, err := json.Marshal(result)
 	if err != nil {
 		t.Fatalf("marshal result: %v", err)
 	}
+
 	for _, leaked := range []string{"customer-acme", "customer_acme", "raw_prompt", "transcript", "logs/telemetry/secrets"} {
 		if strings.Contains(string(encoded), leaked) {
 			t.Fatalf("artifact audit leaked sensitive marker %q: %s", leaked, encoded)
@@ -647,28 +716,37 @@ func TestAuditPlanArtifactReportsPacketStateMetrics(t *testing.T) {
 		Edits:    []PlanArtifactEditAuditSubject{{Path: "internal/workflows/architect/packet.go"}},
 	}
 	inherited := base
+
 	inherited.PackID = "feedfacecafebeef"
 	inherited.Packet = PlanArtifactPacketAuditSubject{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh", IndexID: "idx-current"}
+
 	if result := AuditPlanArtifact(packet, inherited); result.MismatchMetrics.PacketState != "inherited" {
 		t.Fatalf("expected inherited packet state, got %#v", result.MismatchMetrics)
 	}
+
 	missing := base
 	if result := AuditPlanArtifact(packet, missing); result.MismatchMetrics.PacketState != "missing" {
 		t.Fatalf("expected missing packet state, got %#v", result.MismatchMetrics)
 	}
+
 	overridden := inherited
+
 	overridden.Packet.PackID = "deadc0decafef00d"
+
 	if result := AuditPlanArtifact(packet, overridden); result.MismatchMetrics.PacketState != "overridden" || result.MismatchMetrics.PacketReason != "packet_id_mirror" {
 		t.Fatalf("expected overridden packet state, got %#v", result.MismatchMetrics)
 	}
+
 	staleFresh := false
 	stalePacket := packet
+
 	stalePacket.Freshness = &FreshnessReport{
 		IndexID:      "idx-current",
 		Fresh:        &staleFresh,
 		StaleNodes:   []string{"internal/workflows/architect/packet.go"},
 		ContextViews: []ContextFreshnessSource{{PackID: "feedfacecafebeef", IndexID: "idx-current", Fresh: &staleFresh}},
 	}
+
 	if result := AuditPlanArtifact(stalePacket, inherited); result.MismatchMetrics.PacketState != "stale" {
 		t.Fatalf("expected stale packet state, got %#v", result.MismatchMetrics)
 	}
@@ -703,19 +781,24 @@ func TestAuditPlanArtifactBlocksReadyHandoffWithoutRequiredApproval(t *testing.T
 		},
 		Edits: []PlanArtifactEditAuditSubject{{Path: "internal/workflows/architect/packet.go"}},
 	})
+
 	if result.OK {
 		t.Fatalf("expected ready handoff with unsatisfied required approval to fail")
 	}
+
 	if !hasAuditFinding(result, "approval_handoff_mismatch", "error") {
 		t.Fatalf("expected blocking approval handoff finding, got %#v", result.Findings)
 	}
+
 	if result.MismatchMetrics.ApprovalHandoffMismatches != 1 {
 		t.Fatalf("expected approval handoff metric, got %#v", result.MismatchMetrics)
 	}
+
 	encoded, err := json.Marshal(result)
 	if err != nil {
 		t.Fatalf("marshal result: %v", err)
 	}
+
 	for _, leaked := range []string{"customer-acme", "customer_acme", "raw_prompt", "transcript"} {
 		if strings.Contains(string(encoded), leaked) {
 			t.Fatalf("approval handoff audit leaked sensitive marker %q: %s", leaked, encoded)
@@ -743,15 +826,19 @@ func TestAuditPlanArtifactAllowsPendingApprovalWhenHandoffNotReady(t *testing.T)
 		Handoff:  PlanArtifactHandoffAuditSubject{ID: "handoff-1", Status: "blocked", Ready: false},
 		Edits:    []PlanArtifactEditAuditSubject{{Path: "internal/workflows/architect/packet.go"}},
 	})
+
 	if !result.OK {
 		t.Fatalf("pending approval should remain non-blocking while handoff is not ready: %#v", result)
 	}
+
 	if result.MismatchMetrics.ApprovalHandoffMismatches != 1 {
 		t.Fatalf("expected visible approval handoff metric, got %#v", result.MismatchMetrics)
 	}
+
 	if hasAuditFinding(result, "approval_handoff_mismatch", "error") {
 		t.Fatalf("non-ready handoff should not emit blocking approval finding: %#v", result.Findings)
 	}
+
 	if !hasAuditFinding(result, "approval_handoff_mismatch", "warning") {
 		t.Fatalf("non-ready handoff should keep warning signal visible: %#v", result.Findings)
 	}
@@ -783,12 +870,15 @@ func TestAuditPlanArtifactBlocksPartialApprovalDrift(t *testing.T) {
 		Handoff: PlanArtifactHandoffAuditSubject{ID: "handoff-partial", Status: "ready", Ready: true},
 		Edits:   []PlanArtifactEditAuditSubject{{Path: "internal/workflows/architect/pending.go"}},
 	})
+
 	if result.OK {
 		t.Fatalf("partial approval should block edits outside approved scope")
 	}
+
 	if !hasAuditFinding(result, "approval_scope_mismatch", "error") {
 		t.Fatalf("expected approval scope mismatch, got %#v", result.Findings)
 	}
+
 	if result.MismatchMetrics.ApprovalScopeMismatches == 0 {
 		t.Fatalf("expected approval scope mismatch metric, got %#v", result.MismatchMetrics)
 	}
@@ -796,10 +886,12 @@ func TestAuditPlanArtifactBlocksPartialApprovalDrift(t *testing.T) {
 
 func TestRenderPromptIncludesPacketAndPrior(t *testing.T) {
 	packet := Packet{SchemaVersion: SchemaVersion, Task: "x", Profile: ProfileSummary{Name: "demo"}}
+
 	prompt, err := RenderPrompt(PromptCritique, packet, "candidate plan")
 	if err != nil {
 		t.Fatalf("RenderPrompt: %v", err)
 	}
+
 	if !strings.Contains(prompt, "Architect Critique Task") || !strings.Contains(prompt, "candidate plan") || !strings.Contains(prompt, SchemaVersion) {
 		t.Fatalf("prompt missing expected content:\n%s", prompt)
 	}
@@ -807,9 +899,11 @@ func TestRenderPromptIncludesPacketAndPrior(t *testing.T) {
 
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
@@ -821,6 +915,7 @@ func hasLintFinding(result LintResult, gate string, level string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -830,6 +925,7 @@ func hasCandidateScope(packet Packet, handle string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -839,6 +935,7 @@ func hasLanguageCapability(packet Packet, language string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -848,6 +945,7 @@ func containsWarning(warnings []string, pattern string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -857,5 +955,6 @@ func hasAuditFinding(result PlanAuditResult, kind string, severity string) bool 
 			return true
 		}
 	}
+
 	return false
 }

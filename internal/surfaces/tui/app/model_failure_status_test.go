@@ -25,6 +25,7 @@ func TestFormatModelFailureStatusClassifiesNonRetryable(t *testing.T) {
 	if !strings.Contains(got, "Classification: non-retryable model failure") {
 		t.Fatalf("expected non-retryable status, got %q", got)
 	}
+
 	if strings.Contains(got, "existing product artifacts were preserved") {
 		t.Fatalf("non-retryable status should not offer blind retry guidance: %s", got)
 	}

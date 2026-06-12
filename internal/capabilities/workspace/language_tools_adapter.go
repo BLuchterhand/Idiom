@@ -22,6 +22,7 @@ func (h languageToolHost) Root() string {
 	if h.manager == nil {
 		return ""
 	}
+
 	return h.manager.cfg.Root
 }
 
@@ -29,6 +30,7 @@ func (h languageToolHost) CWD() string {
 	if h.manager == nil {
 		return ""
 	}
+
 	return h.manager.cfg.CWD
 }
 
@@ -36,6 +38,7 @@ func (h languageToolHost) MaxDirectoryEntries() int {
 	if h.manager == nil {
 		return 0
 	}
+
 	return h.manager.cfg.MaxDirectoryEntries
 }
 
@@ -43,6 +46,7 @@ func (h languageToolHost) MaxFileBytes() int64 {
 	if h.manager == nil {
 		return 0
 	}
+
 	return int64(h.manager.cfg.MaxFileBytes)
 }
 
@@ -50,6 +54,7 @@ func (h languageToolHost) MaxOutputBytes() int {
 	if h.manager == nil {
 		return 0
 	}
+
 	return h.manager.cfg.MaxOutputBytes
 }
 
@@ -105,6 +110,7 @@ func (m *Manager) executeLanguageTool(ctx context.Context, req ToolRequest) Tool
 	if m.languageTools == nil {
 		m.languageTools = languagetools.NewManager(languageToolHost{manager: m})
 	}
+
 	return fromLanguageToolResult(m.languageTools.Dispatch(ctx, toLanguageToolRequest(req)))
 }
 
@@ -148,7 +154,9 @@ func (m *Manager) languageDetects(name string) bool {
 	if !m.Enabled() {
 		return false
 	}
+
 	lang, ok := LanguageForName(name)
+
 	return ok && lang.Detect != nil && lang.Detect(m.cfg.Root)
 }
 
@@ -156,14 +164,17 @@ func (m *Manager) currentWorkspaceIndexToken() string {
 	if !m.Enabled() {
 		return ""
 	}
+
 	head, err := exec.Command("git", "-C", m.cfg.Root, "rev-parse", "HEAD").Output()
 	if err != nil {
 		return ""
 	}
+
 	status, err := exec.Command("git", "-C", m.cfg.Root, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all").Output()
 	if err != nil {
 		return ""
 	}
+
 	return strings.TrimSpace(string(head)) + "\n" + strings.TrimSpace(string(status))
 }
 
@@ -194,6 +205,7 @@ func codeNavigationSpecFor(value string) (codeNavigationSpec, error) {
 	if err != nil {
 		return codeNavigationSpec{}, err
 	}
+
 	return codeNavigationSpec{
 		Name:            spec.Name,
 		Capability:      Capability(spec.Capability),
@@ -212,6 +224,7 @@ func (m *Manager) setGoplsBinaryForTesting(path string) {
 	if m.languageTools == nil {
 		m.languageTools = languagetools.NewManager(languageToolHost{manager: m})
 	}
+
 	m.languageTools.SetGoplsBinaryForTesting(path)
 }
 
@@ -219,7 +232,9 @@ func (m *Manager) formatPylspOutgoingCalls(callerPath string, callerName string,
 	if m.languageTools == nil {
 		m.languageTools = languagetools.NewManager(languageToolHost{manager: m})
 	}
+
 	result := m.languageTools.FormatPylspOutgoingCalls(callerPath, callerName, calls, pathFilter)
+
 	return callHierarchyResult{
 		Output:        result.Output,
 		Relationships: fromLanguageToolRelationships(result.Relationships),
@@ -230,6 +245,7 @@ func (m *Manager) goDiagnosticTargets(req ToolRequest) ([]string, error) {
 	if m.languageTools == nil {
 		m.languageTools = languagetools.NewManager(languageToolHost{manager: m})
 	}
+
 	return m.languageTools.GoDiagnosticTargets(toLanguageToolRequest(req))
 }
 
@@ -242,6 +258,7 @@ func toLanguageToolRequest(req ToolRequest) languagetools.ToolRequest {
 			Declarations: append([]string(nil), move.Declarations...),
 		})
 	}
+
 	return languagetools.ToolRequest{
 		Tool:              req.Tool,
 		ID:                req.ID,
@@ -373,6 +390,7 @@ func fromLanguageToolRelationships(in []languagetools.ToolRelationship) []ToolRe
 			Evidence:     rel.Evidence,
 		})
 	}
+
 	return out
 }
 
@@ -390,5 +408,6 @@ func toLanguageToolRelationships(in []ToolRelationship) []languagetools.ToolRela
 			Evidence:     rel.Evidence,
 		})
 	}
+
 	return out
 }

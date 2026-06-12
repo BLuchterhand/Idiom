@@ -1,15 +1,15 @@
 # Persistent Repository Memory And Context Graph
 
-Status: design guidance
+Status: project-defining pillar design, drafted 2026-05-12
 
-This is one pillar in the coordinated design map:
-[harness-design-map.md](harness-design-map.md). It supplies the evidence
+This is one pillar in the coordinated roadmap:
+[idiom-design-roadmap.md](idiom-design-roadmap.md). It supplies the evidence
 substrate for contract-first autonomy, capability routing, auditable planning,
 local-model context budgets, eval/ranker learning, and sidecar APIs.
 
 ## Purpose
 
-Persistent repository memory is one of Agent Harness's defining pillars. It is the
+Persistent repository memory is one of Idiom's defining pillars. It is the
 substrate that lets a local or smaller model work in a real repository without
 reconstructing the same map through repeated `rg`, raw file reads, and prompt
 stuffing.
@@ -17,7 +17,7 @@ stuffing.
 The target is not an autonomous graph planner. The target is a local,
 inspectable, evidence-linked repository memory that can answer graph-shaped
 questions, generate bounded views, feed architect packets, inform verification,
-and learn from completed runs while preserving Agent Harness's north star:
+and learn from completed runs while preserving Idiom's north star:
 
 - The model owns strategy.
 - The harness owns contracts.
@@ -27,44 +27,46 @@ This document sits above
 and [architect-packets.md](architect-packets.md). Those documents describe
 implementation mechanics and packet flow. This document defines the product
 pillar: why the memory exists, how it differs from competitive baselines, which
-contracts it must expose, and how Agent Harness will measure whether the pillar is
+contracts it must expose, and how Idiom will measure whether the pillar is
 working.
 
 ## Pillar Claim
 
-Agent Harness should make repository context durable, fresh, queryable, and auditable.
+Idiom should make repository context durable, fresh, queryable, and auditable.
 The same graph facts should be usable by:
 
-- an Agent Harness lane before the first model call
+- an Idiom lane before the first model call
 - `context_pack` during planning and implementation
 - `context_query` and `context_zoom` during model-directed exploration
 - `context_trace_pack` after a failing command or runtime trace
 - architect packets and deterministic plan audit
 - `harness_audit`, evals, and ranker learning after the run
-- LLM agents through `harness tool`
+- external agents through `idiom tool`
 
-The differentiator is not "Agent Harness also parses symbols." LLM agent does that
+The differentiator is not "Idiom also parses symbols." Aider already does that
 well. The differentiator is that repository knowledge becomes a durable local
 contract surface: source-linked, freshness-aware, confidence-labeled,
 ranker-improvable, trace-integrated, and replayable from logs.
 
 ## Competitive Baseline
 
-### LLM Agent Repo Maps
+### Aider
 
-LLM-agent repo maps are the baseline Agent Harness must respect. Mature
-repo maps send the model important classes, functions, types, signatures, and
-critical definition lines from the whole git repository, then use graph ranking
-to select the most relevant map content inside the active token budget. Modern
-implementations use syntax-aware indexing so they can extract definitions and
-references across many languages.
+Aider is the baseline Idiom must respect. Its repository map is concise, useful,
+and mature: it sends the model important classes, functions, types, signatures,
+and critical definition lines from the whole git repository, then uses graph
+ranking to select the most relevant map content inside the active token budget
+(<https://aider.chat/docs/repomap.html>). The implementation moved from ctags
+to tree-sitter so it can extract definitions and references across many
+languages and build a richer map (<https://aider.chat/2023/10/22/repomap.html>).
+Aider also has practical product features around ask/code/architect modes
+(<https://aider.chat/docs/usage/modes.html>), lint/test repair loops
+(<https://aider.chat/docs/usage/lint-test.html>), and broad language support
+(<https://aider.chat/docs/languages.html>).
 
-LLM agents also have practical product features around ask/code/architect
-modes, lint/test repair loops, and broad language support.
-
-Implication for Agent Harness: a token-budgeted repo map is table stakes. Agent Harness should
+Implication for Idiom: a token-budgeted repo map is table stakes. Idiom should
 not claim differentiation merely because it can list symbols or rank files.
-Agent Harness must go further by persisting graph facts across runs, exposing freshness
+Idiom must go further by persisting graph facts across runs, exposing freshness
 and confidence, connecting context to contracts, and measuring localization
 quality in evals.
 
@@ -81,7 +83,7 @@ AutoCodeRover, and SWE-agent: for example, Agentless improves from 27.33% to
 same arXiv preprint). RepoGraph also improves file/function/line localization
 coverage across the same baselines.
 
-Implication for Agent Harness: graph retrieval should be available as an optional model
+Implication for Idiom: graph retrieval should be available as an optional model
 action and as deterministic packet context. The graph should help localization,
 but it must not become a hidden edit plan.
 
@@ -93,17 +95,17 @@ persistent tree-sitter knowledge graph over 66 languages, served through MCP,
 evaluated across 31 repositories with 83% answer quality versus 92% for a
 file-exploration agent, at 10x fewer tokens and 2.1x fewer tool calls
 (<https://arxiv.org/abs/2603.27277>). The linked GitHub project documentation is
-mutable and must be re-checked in the release-evidence bundle before any
-product claim should treat it only as provisional evidence
+mutable and must be re-checked in the P9.1 release-evidence bundle before any
+release claim uses it; this draft treats it only as provisional product evidence
 for operational claims about a SQLite-backed graph, auto-sync, CLI invocation of
 every MCP tool, graph schema introspection, call-path tracing, change-impact
 mapping, runtime trace ingestion, and a 99.2% token-reduction benchmark for five
 structural queries compared with file-by-file grep exploration
 (<https://github.com/DeusData/codebase-memory-mcp>).
 
-Implication for Agent Harness: persistent graph tools are becoming a product category.
-Agent Harness should not compete as a generic MCP server alone. Its graph must be bound
-to Agent Harness-specific contracts: target roles, packet freshness, verification,
+Implication for Idiom: persistent graph tools are becoming a product category.
+Idiom should not compete as a generic MCP server alone. Its graph must be bound
+to Idiom-specific contracts: target roles, packet freshness, verification,
 audit logs, local-model budgets, and ranker feedback.
 
 ### CodePlan
@@ -117,8 +119,8 @@ context type get none
 (<https://www.microsoft.com/en-us/research/publication/codeplan-repository-level-coding-using-llms-and-planning/>,
 <https://arxiv.org/abs/2309.12499>).
 
-Implication for Agent Harness: memory should support multi-step planning and blast
-radius analysis, but Agent Harness should keep the final plan model-owned and the
+Implication for Idiom: memory should support multi-step planning and blast
+radius analysis, but Idiom should keep the final plan model-owned and the
 dependency/may-impact facts harness-owned.
 
 ### Code Property Graphs, Kythe, And SCIP
@@ -127,7 +129,7 @@ Joern's code property graph is a directed, edge-labeled, attributed multigraph
 that merges syntax, control-flow, and data-flow representations into one
 queryable structure (<https://docs.joern.io/code-property-graph/>,
 <https://cpg.joern.io/>). That is the right mental model for deep semantic
-analysis, but it is too heavy to make mandatory for Agent Harness's first-class local
+analysis, but it is too heavy to make mandatory for Idiom's first-class local
 experience.
 
 Kythe provides a language-agnostic graph for source-code facts, cross-references,
@@ -135,19 +137,19 @@ type information, and build/compiler metadata. Two Kythe principles are directly
 applicable: tools should degrade gracefully with incomplete data, and incomplete
 data is preferable to incorrect data (<https://kythe.io/docs/kythe-overview.html>).
 Kythe's schema also separates file anchors, semantic nodes, facts, and directed
-edges, which maps well to Agent Harness's handle/provenance needs
+edges, which maps well to Idiom's handle/provenance needs
 (<https://kythe.io/docs/schema-overview.html>).
 
 Sourcegraph precise code navigation uses the SCIP Code Intelligence Protocol as
 a language-agnostic index format and falls back to search-based navigation when
 precise indexes are unavailable
 (<https://sourcegraph.com/docs/code-navigation/precise-code-navigation>). That
-fallback story is important: Agent Harness should use exact language indexes when
+fallback story is important: Idiom should use exact language indexes when
 available and make lower-confidence fallback explicit when they are not.
 
-Implication for Agent Harness: use a graph vocabulary that can absorb richer
-CPG, Kythe, SCIP, LSP, and compiler facts without pretending all relationships
-are equally exact.
+Implication for Idiom: use a graph vocabulary that can absorb richer CPG, Kythe,
+SCIP, LSP, and compiler facts later without pretending all relationships are
+equally exact today.
 
 ## Research Findings To Carry Forward
 
@@ -155,9 +157,9 @@ are equally exact.
   argues that the
   agent-computer interface materially affects agents' ability to navigate repos,
   edit files, and run tests (<https://arxiv.org/abs/2405.15793>).
-- Compact repo maps are expected. An LLM agent's default `--map-tokens` value
+- Compact repo maps are already expected. Aider's default `--map-tokens` value
   is 1k tokens, with dynamic expansion when no files are in chat
- .
+  (<https://aider.chat/docs/repomap.html>).
 - Graph context improves localization and resolve rates, but can increase token
   use if agents over-call it. RepoGraph's arXiv-preprint table reports higher
   average token use after adding graph context for all four tested baselines,
@@ -180,12 +182,12 @@ are equally exact.
   reported LLM reaches only 18.9% repair success
   (<https://arxiv.org/abs/2604.27148>).
 
-The practical lesson is that Agent Harness's memory cannot be judged only by whether a
+The practical lesson is that Idiom's memory cannot be judged only by whether a
 single answer sounds right. It must be evaluated on localization, token/tool
 cost, stale-context prevention, required-test discovery, structural correctness,
 and verification outcomes.
 
-## Agent Harness Target Architecture
+## Idiom Target Architecture
 
 The persistent memory pillar has six layers:
 
@@ -195,7 +197,7 @@ source workspace
   -> repository graph store
   -> view builders
   -> packets and tools
-  -> lanes, audits, evals, and LLM agents
+  -> lanes, audits, evals, and external agents
   -> ranker and feedback loop
 ```
 
@@ -215,7 +217,7 @@ Collector families:
 - diagnostics and source sanity results
 - git history, blame, co-change, and ownership signals
 - runtime traces, stack traces, coverage, and command output
-- Agent Harness conversation logs, telemetry, and `harness_audit` findings for harness
+- Idiom conversation logs, telemetry, and `harness_audit` findings for harness
   behavior tasks
 
 Collectors must emit confidence and coverage. Unsupported relationships should
@@ -223,7 +225,7 @@ show up as explicit gaps, not as silent empty results.
 
 ### 2. Repository Graph Store
 
-The store is the durable local index under `.harness/comprehension/`,
+The store is the durable local index under `.idiom/comprehension/`, currently
 centered on `graph.sqlite` with `graph.json` as an inspectable export. It owns:
 
 - graph metadata and schema compatibility
@@ -234,8 +236,8 @@ centered on `graph.sqlite` with `graph.json` as an inspectable export. It owns:
 - materialized `graph_views` cache rows
 - stale markers for nodes, edges, summaries, views, and traces
 
-SQLite is the right default. It is local, inspectable, easy to define, and good
-enough for Agent Harness graph queries. The schema should remain
+SQLite is the right default. It is local, inspectable, easy to ship, and good
+enough for the graph queries Idiom needs now. The schema should remain
 migration-friendly rather than optimize prematurely for a graph database.
 
 ### 3. View Builders
@@ -270,7 +272,7 @@ Packets are task-scoped envelopes that combine selected views with contracts:
 - handoff state such as `pack_id`
 
 Architect packets remain the planning boundary. `context_pack` supplies better
-evidence; `harness architect packet` owns the packet schema and gates.
+evidence; `idiom architect packet` owns the packet schema and gates.
 
 ### 5. Lanes, Audits, And Evals
 
@@ -278,7 +280,7 @@ The runner consumes tools and packets. It should not own graph policy.
 
 The graph feeds:
 
-- `harness lane implement` and `plan-execute` preloaded `context_pack`
+- `idiom lane implement` and `plan-execute` preloaded `context_pack`
 - deterministic `architect lint`, `budget`, `plan-audit`, `packet-compare`, and
   `replay-compare`
 - `discovery_query` orientation and cache reuse
@@ -298,7 +300,7 @@ These three terms must stay distinct.
 
 | Concept | Scope | Source of truth | Model-facing role | Must include |
 | --- | --- | --- | --- | --- |
-| Index | Broad repository memory | `.harness/comprehension/graph.sqlite` | Not normally injected directly | facts, fingerprints, collector provenance, confidence, freshness |
+| Index | Broad repository memory | `.idiom/comprehension/graph.sqlite` | Not normally injected directly | facts, fingerprints, collector provenance, confidence, freshness |
 | View | Bounded resolution-specific slice | `graph_views` row plus exported JSON | Observation the model can read or zoom from | handles, claims, evidence, uncertainty, stale state, token budget |
 | Packet | Task-scoped planning/execution envelope | architect packet artifact | Contract the model plans or executes within | selected views, target roles, constraints, validation, gates, handoff |
 
@@ -315,7 +317,7 @@ Failure modes when the boundary blurs:
 
 ## Graph Schema
 
-Agent Harness's graph should stay simple enough to inspect and broad enough to absorb
+Idiom's graph should stay simple enough to inspect and broad enough to absorb
 future precision. The canonical shape is a property graph with typed nodes,
 typed edges, JSON properties, evidence records, confidence tiers, and
 fingerprints.
@@ -476,7 +478,7 @@ View outputs should avoid strategy:
 ## Freshness Model
 
 Freshness is a first-class contract. The graph is useful only if callers can
-tell whether it matches the active workspace.
+tell whether it matches the current workspace.
 
 Invalidate or mark stale when any of these change:
 
@@ -500,7 +502,7 @@ Freshness policies:
 - `require_fresh`: fail if the graph or referenced view cannot be made fresh.
   Required for gated architect packets and high-confidence verification claims.
 
-The active `graph_views` cache contract should remain content-addressed over
+The current `graph_views` cache contract should remain content-addressed over
 the active graph ID, canonical query inputs, mode, budget, scope, required tests,
 forbidden paths, intent, ranker workspace-state fingerprint, and trace state.
 The exported `views/<pack_id>.json` file is an inspection artifact; SQLite is
@@ -511,7 +513,7 @@ Freshness must be visible at use time. A model should not need to call
 
 ## Ranker Learning
 
-The ranker is Agent Harness's memory-improvement loop. It should learn which graph facts
+The ranker is Idiom's memory-improvement loop. It should learn which graph facts
 were useful without collapsing into a self-fulfilling popularity contest.
 
 ### Signals
@@ -538,7 +540,7 @@ Negative signals:
 ### Update Contract
 
 Every learning update should be written to
-`.harness/ranker/learning_log.jsonl` with:
+`.idiom/ranker/learning_log.jsonl` with:
 
 - timestamp
 - source event type
@@ -550,7 +552,7 @@ Every learning update should be written to
 - verification outcome
 - whether the signal is training, eval, or manual
 
-Manual controls such as `harness ranker boost` and `harness ranker penalize` should
+Manual controls such as `idiom ranker boost` and `idiom ranker penalize` should
 stay available, but automatic updates should be gated by verified outcomes or
 explicit eval labels.
 
@@ -579,7 +581,7 @@ Initial trace sources:
 - generic stack frames with file:line anchors
 - Python, JavaScript/TypeScript, JVM, C/C++, and GDScript path formats where
   parseable
-- Agent Harness conversation JSONL and telemetry JSONL for harness behavior debugging
+- Idiom conversation JSONL and telemetry JSONL for harness behavior debugging
 
 Trace nodes and edges:
 
@@ -616,26 +618,26 @@ Every command must work without starting an inference session.
 ### Core Commands
 
 ```bash
-harness context build --path . --mode standard
-harness context status --json
-harness context query --query "what calls LoadView?" --resolution symbol --json
-harness context zoom --handle symbol://internal/repository/comprehension/views.go#LoadView --resolution symbol --json
-harness context pack --task-file /tmp/task.md --mode plan --output /tmp/context-view.json
-harness context impact --path internal/repository/comprehension/views.go --json
-harness context trace-pack --command "go test ./internal/repository/comprehension/..." --path . --json
-harness architect packet --task-file /tmp/task.md --schema planning_v2 --context-view /tmp/context-view.json --output /tmp/packet.json
+idiom context build --path . --mode standard
+idiom context status --json
+idiom context query --query "what calls LoadView?" --resolution symbol --json
+idiom context zoom --handle symbol://internal/repository/comprehension/views.go#LoadView --resolution symbol --json
+idiom context pack --task-file /tmp/task.md --mode plan --output /tmp/context-view.json
+idiom context impact --path internal/repository/comprehension/views.go --json
+idiom context trace-pack --command "go test ./internal/repository/comprehension/..." --path . --json
+idiom architect packet --task-file /tmp/task.md --schema planning_v2 --context-view /tmp/context-view.json --output /tmp/packet.json
 ```
 
-### LLM Agent API
+### External Agent API
 
-LLM agents should be able to call the same functions through `harness tool`:
+External agents should be able to call the same functions through `idiom tool`:
 
 ```bash
-harness tool context_pack --input '{"task":"localize graph view cache invalidation","mode":"plan","limit":8}'
-harness tool context_query --input '{"query":"tests for internal/repository/comprehension/views.go","resolution":"symbol"}'
-harness tool context_zoom --input '{"handle":"file://internal/repository/comprehension/views.go","resolution":"file"}'
-harness tool context_trace_pack --input '{"command":"go test ./internal/repository/comprehension/...","path":"."}'
-harness tool harness_audit --input '{"purpose":"behavior"}'
+idiom tool context_pack --input '{"task":"localize graph view cache invalidation","mode":"plan","limit":8}'
+idiom tool context_query --input '{"query":"tests for internal/repository/comprehension/views.go","resolution":"symbol"}'
+idiom tool context_zoom --input '{"handle":"file://internal/repository/comprehension/views.go","resolution":"file"}'
+idiom tool context_trace_pack --input '{"command":"go test ./internal/repository/comprehension/...","path":"."}'
+idiom tool harness_audit --input '{"purpose":"behavior"}'
 ```
 
 ### Result Contract
@@ -674,7 +676,7 @@ Errors should distinguish:
 ## Eval Benchmark Design
 
 The memory pillar needs its own benchmark, not only end-to-end SWE pass rates.
-The benchmark should answer whether persistent graph memory makes Agent Harness more
+The benchmark should answer whether persistent graph memory makes Idiom more
 reliable, cheaper, and more auditable.
 
 ### Scenario Families
@@ -692,10 +694,10 @@ reliable, cheaper, and more auditable.
 
 ### Data Sources
 
-- Recent Agent Harness conversation logs with known changed paths and verification
+- Recent Idiom conversation logs with known changed paths and verification
   outcomes.
-- `.harness/comprehension` graph snapshots and view cache rows.
-- Existing Agent Harness eval fixtures.
+- `.idiom/comprehension` graph snapshots and view cache rows.
+- Existing Idiom eval fixtures.
 - Small synthetic fixture repos with known graph relationships.
 - Real internal tasks replayed at fixed commits.
 - Selected public benchmark shapes inspired by SWE-bench, CodePlan,
@@ -772,11 +774,11 @@ Auditability:
 
 ### Acceptance Thresholds For Promotion
 
-Before persistent memory is treated as a default pillar, it should meet these
-thresholds on a fixed benchmark slice:
+Before persistent memory is treated as a default pillar rather than an
+experimental helper, it should meet these thresholds on a fixed benchmark slice:
 
 - Top-5 changed-path localization improves by at least 15 percentage points over
-  raw search/read and does not regress versus active `discovery_query`.
+  raw search/read and does not regress versus current `discovery_query`.
 - Broad raw file reads before first edit drop by at least 30%.
 - Tool-observation token volume drops by at least 40% for orientation tasks.
 - Required-test top-5 hit rate reaches at least 80% on tasks with known tests.
@@ -794,12 +796,12 @@ should remain quantitative. "Feels better" is not a pillar acceptance criterion.
 
 ### Phase 0: Reality Baseline
 
-- Record active `context_pack`, `context_query`, `context_zoom`,
+- Record current `context_pack`, `context_query`, `context_zoom`,
   `context_trace_pack`, `harness_audit`, and ranker behavior.
 - Build a 30 to 50 task localization slice from recent logs.
 - Add a `memory_benchmark` report that can compare raw tools, discovery, packs,
   and trace-backed packs.
-- Document active gaps as facts, not design map optimism.
+- Document current gaps as facts, not roadmap optimism.
 
 Exit criteria:
 
@@ -869,20 +871,20 @@ Exit criteria:
 - Behavior-debugging packets can cite conversation and telemetry evidence
   without hand-reconstructing raw JSONL.
 
-### Phase 5: LLM Agent Sidecar
+### Phase 5: External Agent Sidecar
 
-- Stabilize `harness tool` JSON schemas for context, trace, audit, and packet
+- Stabilize `idiom tool` JSON schemas for context, trace, audit, and packet
   commands.
-- Add examples for LLM-agent workflows.
+- Add examples for Codex, Claude Code, OpenCode, and Aider workflows.
 - Expose machine-readable capability discovery: languages, collectors, graph
   freshness, contracts, supported trace parsers, and recommended verification.
 - Keep sidecar behavior local-first and inspectable.
 
 Exit criteria:
 
-- An LLM agent can call `context_pack`, zoom a handle, run trace pack, and
-  run `harness_audit` without starting an Agent Harness model session.
-- The sidecar workflow preserves Agent Harness contracts instead of becoming a generic
+- An external agent can call `context_pack`, zoom a handle, run trace pack, and
+  run `harness_audit` without starting an Idiom model session.
+- The sidecar workflow preserves Idiom contracts instead of becoming a generic
   graph search daemon.
 
 ## Risks
@@ -902,12 +904,12 @@ Exit criteria:
   and explicit learning logs.
 - Privacy and log retention. Mitigation: local storage, redaction status,
   configurable retention, and no cloud graph service as a default.
-- Binary graph artifacts. Mitigation: keep `.harness/comprehension` ignored by
+- Binary graph artifacts. Mitigation: keep `.idiom/comprehension` ignored by
   default; if shared artifacts are ever introduced, make them opt-in and
   integrity-checked.
 - CPG overreach. Mitigation: use Joern/CPG-style depth as optional enrichment,
   not as a baseline dependency.
-- Competitive drift. Mitigation: benchmark against LLM-agent-style maps,
+- Competitive drift. Mitigation: benchmark against Aider-style maps,
   graph-memory MCP tools, and direct exploration instead of comparing against a
   stale mental model.
 
@@ -921,7 +923,7 @@ Exit criteria:
   available.
 - Do not require Joern, Kythe, SCIP, or every LSP before the memory is useful.
 - Do not centralize repository memory in a hosted service.
-- Do not commit `.harness/comprehension` artifacts by default.
+- Do not commit `.idiom/comprehension` artifacts by default.
 - Do not optimize for maximum graph complexity before evals prove value.
 
 ## Acceptance Criteria
@@ -947,10 +949,10 @@ The persistent repository memory pillar is accepted when all of these are true:
   verification, and auditability metrics.
 - A fixed benchmark slice shows lower raw exploration cost and better
   localization without increasing unsafe writes or unverified final answers.
-- LLM agents can use `harness tool` to call context, trace, and audit
-  commands without starting an Agent Harness inference session.
+- External agents can use `idiom tool` to call context, trace, and audit
+  commands without starting an Idiom inference session.
 
 If these criteria are met, persistent repository memory becomes more than a repo
-map. It becomes Agent Harness's local evidence substrate: the graph remembers, packets
+map. It becomes Idiom's local evidence substrate: the graph remembers, packets
 bound the work, traces explain behavior, evals measure progress, and the model
 keeps strategy where it belongs.

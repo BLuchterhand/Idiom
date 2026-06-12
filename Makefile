@@ -23,8 +23,10 @@ CLASSIFIER_THREADS ?= 0
 CLASSIFIER_GPU_LAYERS ?= 0
 CLASSIFIER_LOG ?= logs/route-classifier.log
 CLASSIFIER_EXTRA_ARGS ?=
+GOLANGCI_LINT_VERSION ?= v2.12.2
+GOLANGCI_LINT ?= $(CURDIR)/bin/golangci-lint
 
-.PHONY: run server opencode classifier-server route-classifier build install-path refresh-queue-daemon fmt tidy test test-install-docker test-install-tools coverage coverage-report eval swe-eval swe-suite swe-live swe-live-subset live-contract-suite live-contracts scripted-contract-suite scripted-contracts lint lint-vet
+.PHONY: run server opencode classifier-server route-classifier build install-path refresh-queue-daemon fmt tidy test test-install-docker test-install-tools coverage coverage-report eval swe-eval swe-suite swe-live swe-live-subset live-contract-suite live-contracts scripted-contract-suite scripted-contracts lint lint-vet lint-style install-golangci-lint
 
 run:
 	go run ./cmd/idiom -config $(CONFIG)
@@ -158,7 +160,17 @@ scripted-contract-suite:
 scripted-contracts: build
 	IDIOM_BIN="$(CANONICAL_APP)" go run ./cmd/idiom-swe-eval -suite $(SCRIPTED_CONTRACT_SUITE) -run-live -run-live-continue-on-error -generated-logs $(SCRIPTED_CONTRACT_LOGS) -runner-command "$(CURDIR)/scripts/scripted-contract-runner.sh"
 
-lint: lint-vet
+lint: lint-vet lint-style
 
 lint-vet:
 	go vet ./...
+
+lint-style: install-golangci-lint
+	"$(GOLANGCI_LINT)" run ./...
+
+install-golangci-lint:
+	@if [ -x "$(GOLANGCI_LINT)" ]; then \
+		exit 0; \
+	fi; \
+	mkdir -p "$(dir $(GOLANGCI_LINT))"; \
+	curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b "$(dir $(GOLANGCI_LINT))" "$(GOLANGCI_LINT_VERSION)"

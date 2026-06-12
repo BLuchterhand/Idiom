@@ -44,6 +44,7 @@ func TestHasReadableWorkspaceFilesDetectsProjectEvidence(t *testing.T) {
 			for _, file := range tt.files {
 				writePromptRoutingTestFile(t, root, file)
 			}
+
 			if got := hasReadableWorkspaceFiles(root); got != tt.want {
 				t.Fatalf("hasReadableWorkspaceFiles()=%t, want %t", got, tt.want)
 			}
@@ -53,10 +54,12 @@ func TestHasReadableWorkspaceFilesDetectsProjectEvidence(t *testing.T) {
 
 func writePromptRoutingTestFile(t *testing.T, root string, rel string) {
 	t.Helper()
+
 	path := filepath.Join(root, rel)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
+
 	if err := os.WriteFile(path, []byte("test\n"), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}

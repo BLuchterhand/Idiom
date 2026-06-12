@@ -30,23 +30,29 @@ func (m *Model) recordRollbackSnapshot(req workspace.ToolRequest) {
 	if m == nil || m.workspace == nil {
 		return
 	}
+
 	paths := rollbackPathsForRequest(req)
 	if len(paths) == 0 {
 		return
 	}
+
 	root := m.workspace.CWD()
+
 	for _, path := range paths {
 		abs := path
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(root, abs)
 		}
+
 		data, err := os.ReadFile(abs)
 		if err != nil {
 			if os.IsNotExist(err) {
 				m.rollbackHistory = append(m.rollbackHistory, rollbackEntry{path: abs, existed: false})
 			}
+
 			continue
 		}
+
 		m.rollbackHistory = append(m.rollbackHistory, rollbackEntry{
 			path:     abs,
 			contents: append([]byte(nil), data...),
@@ -68,8 +74,10 @@ func rollbackPathsForRequest(req workspace.ToolRequest) []string {
 		if err != nil {
 			return nil
 		}
+
 		return workspace.PatchOpPaths(ops)
 	}
+
 	return nil
 }
 
@@ -80,23 +88,29 @@ func (m *Model) recordRollbackSnapshotsForPaths(paths []string) {
 	if m == nil || m.workspace == nil || len(paths) == 0 {
 		return
 	}
+
 	root := m.workspace.CWD()
+
 	for _, path := range paths {
 		path = strings.TrimSpace(path)
 		if path == "" {
 			continue
 		}
+
 		abs := path
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(root, abs)
 		}
+
 		data, err := os.ReadFile(abs)
 		if err != nil {
 			if os.IsNotExist(err) {
 				m.rollbackHistory = append(m.rollbackHistory, rollbackEntry{path: abs, existed: false})
 			}
+
 			continue
 		}
+
 		m.rollbackHistory = append(m.rollbackHistory, rollbackEntry{
 			path:     abs,
 			contents: append([]byte(nil), data...),
@@ -112,19 +126,26 @@ func (m *Model) undoLast() (string, error) {
 	if m == nil {
 		return "", fmt.Errorf("no active session")
 	}
+
 	if len(m.rollbackHistory) == 0 {
 		return "", fmt.Errorf("no rollback history — nothing to undo")
 	}
+
 	entry := m.rollbackHistory[len(m.rollbackHistory)-1]
+
 	m.rollbackHistory = m.rollbackHistory[:len(m.rollbackHistory)-1]
+
 	if !entry.existed {
 		if err := os.Remove(entry.path); err != nil && !os.IsNotExist(err) {
 			return "", fmt.Errorf("remove %s: %w", entry.path, err)
 		}
+
 		return "Undone: removed " + m.displayPath(entry.path), nil
 	}
+
 	if err := os.WriteFile(entry.path, entry.contents, 0o644); err != nil {
 		return "", fmt.Errorf("write %s: %w", entry.path, err)
 	}
+
 	return "Undone: restored " + m.displayPath(entry.path), nil
 }

@@ -34,6 +34,7 @@ func TestLanguageFindFilesNormalizePathSeparators(t *testing.T) {
 			if got := FindFilesExactPartial(tt.files, `src\`); len(got) != 1 {
 				t.Fatalf("expected backslash path prefix to match one slash-normalized path, got %#v", got)
 			}
+
 			if got := FindFilesExactPartial(tt.files, "worker"); len(got) != 1 {
 				t.Fatalf("expected basename match for backslash-indexed path, got %#v", got)
 			}
@@ -46,6 +47,7 @@ func TestFileByPathNormalizesPathSeparators(t *testing.T) {
 	if got := goIndex.FileByPath(` internal\surfaces\tui\app\app.go `); got == nil || got.Path != "internal/surfaces/tui/app/app.go" {
 		t.Fatalf("Go FileByPath should normalize caller path separators, got %#v", got)
 	}
+
 	if got := goIndex.FileByPath(`.\internal\surfaces\tui\app\app.go`); got == nil || got.Path != "internal/surfaces/tui/app/app.go" {
 		t.Fatalf("Go FileByPath should normalize caller current-directory prefix, got %#v", got)
 	}

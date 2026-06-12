@@ -12,6 +12,7 @@ func TestInstructionAttacherDefaultsToAgentsOnly(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "src"), 0o755); err != nil {
 		t.Fatalf("mkdir src: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte("Claude-specific guidance\n"), 0o644); err != nil {
 		t.Fatalf("write CLAUDE.md: %v", err)
 	}
@@ -26,6 +27,7 @@ func TestInstructionAttacherCanOptIntoClaudeCandidate(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "src"), 0o755); err != nil {
 		t.Fatalf("mkdir src: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte("Claude-specific guidance\n"), 0o644); err != nil {
 		t.Fatalf("write CLAUDE.md: %v", err)
 	}

@@ -14,9 +14,11 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 	if len(results) == 0 || runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
 		return "", false
 	}
+
 	if len(changedPathsFromToolResults(results)) > 0 {
 		return "", false
 	}
+
 	lowerReason := strings.ToLower(strings.TrimSpace(reason))
 	if !containsAny(lowerReason,
 		"budget",
@@ -25,31 +27,39 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 		"run duration",
 		"model-call budget",
 	) {
+
 		return "", false
 	}
+
 	if !hasSuccessfulTaskResult(results) && !strings.HasPrefix(agentName, "child:") {
 		return "", false
 	}
+
 	delegatedOwnerReady := delegatedImplementationShapeSynthesisAllowed(brief, results)
 	if delegatedOwnerReady {
 		if output, ok := bestObjectiveAnswerableTaskResultOutput(brief.Objective, results); ok {
 			return presentableFallbackCandidate(agentName, brief, results, annotateBudgetLimitedAnswer(output))
 		}
 	}
+
 	if delegatedOwnerReady {
 		if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {
 			return presentableFallbackCandidate(agentName, brief, results, annotateBudgetLimitedAnswer(answer))
 		}
 	}
+
 	if implementationShapeOwnerContractApplies(brief) && !delegatedOwnerReady {
 		return presentableFallbackCandidate(agentName, brief, results, synthesizeBriefConversationFallback(brief, results))
 	}
+
 	if usefulFallbackResultCount(results) < 2 {
 		return "", false
 	}
+
 	if answer, ok := synthesizeFallbackAnswer(agentName, results); ok {
 		return presentableFallbackCandidate(agentName, brief, results, answer)
 	}
+
 	return "", false
 }
 
@@ -57,18 +67,23 @@ func (r *Runner) modelErrorAfterReadOnlyEvidenceAnswer(err error, results []work
 	if r == nil || runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
 		return "", false
 	}
+
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "", false
 	}
+
 	if !modelErrorFallbackHasGroundedReadOnlyEvidence(r.RuntimeBrief, results) {
 		return "", false
 	}
+
 	if conversationFallbackShouldAvoidSourceBody(r.RuntimeBrief) {
 		if answer, ok := presentableBriefConversationFallbackCandidate(r.agentName(), r.RuntimeBrief, results); ok {
 			return answer, true
 		}
+
 		return deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, results)
 	}
+
 	return deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, results)
 }
 
@@ -76,24 +91,31 @@ func modelErrorFallbackHasGroundedReadOnlyEvidence(brief workerruntime.WorkerRun
 	if len(results) == 0 {
 		return false
 	}
+
 	if genericReadOnlyAnswerEvidenceReady(brief, results) {
 		return true
 	}
+
 	useful := 0
+
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" {
 			continue
 		}
+
 		if concreteSourceEvidenceResult(result) {
 			return true
 		}
+
 		if isResultUsefulForFallback(normalizeFallbackResult(result)) {
 			useful++
 		}
+
 		if useful >= 2 {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -101,12 +123,15 @@ func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.Worke
 	if len(results) == 0 {
 		return "", false
 	}
+
 	if answer, ok := synthesizePlanThenExecutePlannerFallbackAnswer(brief, results); ok {
 		return answer, true
 	}
+
 	if runnerBriefRequiresMutation(brief) {
 		return synthesizeMutationFallbackAnswer(brief, results), true
 	}
+
 	if !runnerBriefRequiresMutation(brief) && !runnerVerificationRequired(brief) {
 		closeout := readOnlyClosureDecisionForResults(brief, results)
 		if readOnlyDirectAnswerLane(brief) {
@@ -114,6 +139,7 @@ func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.Worke
 				return answer, true
 			}
 		}
+
 		delegatedOwnerReady := delegatedImplementationShapeSynthesisAllowed(brief, results)
 		if delegatedOwnerReady {
 			if output, ok := bestObjectiveAnswerableTaskResultOutput(brief.Objective, results); ok {
@@ -122,15 +148,18 @@ func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.Worke
 				}
 			}
 		}
+
 		if delegatedOwnerReady {
 			if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {
 				return answer, true
 			}
 		}
+
 		if implementationShapeOwnerContractApplies(brief) && !delegatedOwnerReady {
 			return synthesizeBriefConversationFallback(brief, results), true
 		}
 	}
+
 	return synthesizeFallbackAnswer(agentName, results)
 }
 
@@ -139,24 +168,29 @@ func synthesizePlanThenExecutePlannerFallbackAnswer(brief workerruntime.WorkerRu
 	if !ok {
 		return "", false
 	}
+
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
 	if state.Mode == PlanExecutePlanningModeAnchorRefresh && len(state.RefreshPaths) > 0 {
 		return strings.TrimSpace("<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n\n" +
 			"Remaining bounded refresh paths:\n" + bulletList(state.RefreshPaths) + "\n" +
 			"Next valid action: re-run with enough budget and issue exactly one bounded read_file or code_navigate source-body request for a remaining refresh path; do not answer source-satisfied or blocker before that refresh returns."), true
 	}
+
 	if planThenExecuteSubmitCorrectionActive(brief, results) {
 		return strings.TrimSpace("<<QUESTION>>: Plan-execute submit correction is still required; no valid plan artifact has been accepted.\n\n" +
 			"Next valid action: emit one parser-readable submit_plan covering every required edit path with real executable edits or top-level source_satisfied_paths for already-final paths."), true
 	}
+
 	if pending := planThenExecuteHistoryPendingPaths(brief, results, nil); len(pending) > 0 {
 		return strings.TrimSpace("<<QUESTION>>: Plan-execute git history evidence is still required before submit_plan.\n\n" +
 			"Remaining history paths:\n" + bulletList(pending)), true
 	}
+
 	if unread := planThenExecuteUnreadRequiredPaths(brief, results); len(unread) > 0 {
 		return strings.TrimSpace("<<QUESTION>>: Plan-execute source-body evidence is still required before submit_plan.\n\n" +
 			"Remaining source paths:\n" + bulletList(mapKeys(unread))), true
 	}
+
 	return "", false
 }
 
@@ -164,11 +198,15 @@ func planThenExecuteFallbackBrief(brief workerruntime.WorkerRuntimeBrief, result
 	if strings.TrimSpace(brief.TaskFamily) == PlanThenExecutePlannerTaskFamily {
 		return brief, true
 	}
+
 	if !planThenExecuteFallbackEvidenceSeen(brief, results) {
 		return brief, false
 	}
+
 	copy := brief
+
 	copy.TaskFamily = PlanThenExecutePlannerTaskFamily
+
 	return copy, true
 }
 
@@ -177,79 +215,99 @@ func planThenExecuteFallbackEvidenceSeen(brief workerruntime.WorkerRuntimeBrief,
 	case "plan_then_execute", "plan-execute":
 		return true
 	}
+
 	for _, result := range results {
 		tool := strings.TrimSpace(result.Tool)
 		if tool != "submit_plan" {
 			continue
 		}
+
 		text := strings.ToLower(strings.Join([]string{result.Summary, result.Error}, "\n"))
 		if strings.Contains(text, "source_satisfied_paths") ||
 			strings.Contains(text, "required edit path") ||
 			strings.Contains(text, "bounded source-body refresh") ||
 			strings.Contains(text, "plan-execute") {
+
 			return true
 		}
 	}
+
 	return false
 }
 
 func bulletList(values []string) string {
 	var b strings.Builder
+
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
+
 		b.WriteString("- ")
 		b.WriteString(value)
 		b.WriteString("\n")
 	}
+
 	return strings.TrimRight(b.String(), "\n")
 }
 
 func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
 	changedPaths := mapKeys(changedPathsFromToolResults(results))
 	missingRequiredPaths := missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results))
+
 	var lastError *workspace.ToolResult
+
 	latestProgressIndex := -1
+
 	for i := range results {
 		result := results[i]
 		if strings.TrimSpace(result.Error) != "" {
 			continue
 		}
+
 		if workspace.IsWorkspaceWriteTool(result.Tool) || resultCountsAsSuccessfulVerification(result) {
 			latestProgressIndex = i
 		}
 	}
+
 	for i := range results {
 		if i <= latestProgressIndex {
 			continue
 		}
+
 		result := normalizeFallbackResult(results[i])
 		if strings.TrimSpace(result.Error) == "" {
 			continue
 		}
+
 		if isHarnessRejectionSummary(result.Summary) || isHarnessRejectionErrorText(result.Error) {
 			continue
 		}
+
 		copy := result
+
 		lastError = &copy
 	}
 
 	var b strings.Builder
+
 	if len(missingRequiredPaths) > 0 {
 		b.WriteString("<<QUESTION>>: Implementation incomplete; required edit path(s) remain unchanged.\n\n")
 	} else if len(changedPaths) > 0 {
 		b.WriteString(mutationFallbackCompletionLead(brief, changedPaths))
 		b.WriteString("\n\n")
 	}
+
 	if len(changedPaths) > 0 {
 		b.WriteString("Changed paths:\n")
+
 		for _, path := range changedPaths {
 			b.WriteString("- ")
 			b.WriteString(path)
 			b.WriteString("\n")
 		}
+
 		b.WriteString("\n")
 	} else {
 		b.WriteString("Changed paths: none\n\n")
@@ -257,20 +315,24 @@ func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 
 	if len(missingRequiredPaths) > 0 {
 		b.WriteString("Required edit paths not changed:\n")
+
 		for _, path := range missingRequiredPaths {
 			b.WriteString("- ")
 			b.WriteString(path)
 			b.WriteString("\n")
 		}
+
 		b.WriteString("\n")
 	}
 
 	if latestSourceVerification, ok := latestVerificationAfterLatestSourceWrite(results); sourceEditsNeedSemanticVerification(brief, results) && ok && verificationResultIsPatchHygieneOnly(latestSourceVerification) {
 		b.WriteString("Verification: ")
+
 		if summary, ok := latestSuccessfulVerificationSummary(results); ok {
 			b.WriteString(summary)
 			b.WriteString(" (patch hygiene only); ")
 		}
+
 		if plannerOwnsVerification(brief) {
 			b.WriteString("source-aware lane sanity still pending; planner-owned build/test verification not run by lane.\n")
 		} else {
@@ -293,10 +355,12 @@ func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	if lastError != nil {
 		b.WriteString("\nBlocker:\n- ")
 		b.WriteString(lastError.Summary)
+
 		if errText := strings.TrimSpace(lastError.Error); errText != "" {
 			b.WriteString(": ")
 			b.WriteString(errText)
 		}
+
 		b.WriteString("\n")
 	} else if len(changedPaths) == 0 {
 		b.WriteString("\nBlocker:\n- The implementation lane ended before a successful workspace edit was recorded.\n")
@@ -312,9 +376,11 @@ func mutationFallbackCompletionLead(brief workerruntime.WorkerRuntimeBrief, chan
 			return "Implemented the label change."
 		}
 	}
+
 	if strings.Contains(objective, "label") {
 		return "Implemented the label change."
 	}
+
 	return "Implemented the requested change."
 }
 
@@ -322,13 +388,16 @@ func (r *Runner) modelErrorAfterPartialEditBlockerAnswer(modelErr error, results
 	if r == nil || modelErr == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) {
 		return "", false
 	}
+
 	if len(changedPathsFromToolResults(results)) == 0 {
 		return "", false
 	}
+
 	detail := strings.TrimSpace(modelErr.Error())
 	if detail == "" {
 		detail = "model transport failed"
 	}
+
 	fallback := strings.TrimSpace(synthesizeMutationFallbackAnswer(r.RuntimeBrief, results))
 	if strings.HasPrefix(fallback, "<<QUESTION>>:") {
 		if _, remainder, ok := strings.Cut(fallback, "\n\n"); ok {
@@ -337,13 +406,17 @@ func (r *Runner) modelErrorAfterPartialEditBlockerAnswer(modelErr error, results
 			fallback = ""
 		}
 	}
+
 	var b strings.Builder
+
 	b.WriteString("<<QUESTION>>: Local model endpoint failed after workspace edits before implementation closeout: ")
 	b.WriteString(detail)
 	b.WriteString("\n\n")
+
 	if fallback != "" {
 		b.WriteString(fallback)
 	}
+
 	return strings.TrimSpace(b.String()), true
 }
 
@@ -353,17 +426,22 @@ func latestSuccessfulVerificationSummary(results []workspace.ToolResult) (string
 		if !resultCountsAsSuccessfulVerification(result) {
 			continue
 		}
+
 		if command := shellCommandFromToolResult(result); command != "" {
 			return command + " passed", true
 		}
+
 		if summary := strings.TrimSpace(result.Summary); summary != "" {
 			if strings.Contains(strings.ToLower(summary), "passed") {
 				return summary, true
 			}
+
 			return summary + " passed", true
 		}
+
 		return "verification passed", true
 	}
+
 	return "", false
 }
 
@@ -372,20 +450,27 @@ func synthesizeFallbackAnswer(agentName string, results []workspace.ToolResult) 
 		return "", false
 	}
 
-	var firstSuccessful *workspace.ToolResult
-	var lastError *workspace.ToolResult
-	var successfulNarrowing []workspace.ToolResult
+	var (
+		firstSuccessful     *workspace.ToolResult
+		lastError           *workspace.ToolResult
+		successfulNarrowing []workspace.ToolResult
+	)
+
 	for i := range results {
 		result := normalizeFallbackResult(results[i])
 		if result.Error == "" && strings.TrimSpace(result.Output) != "" && firstSuccessful == nil {
 			copy := result
+
 			firstSuccessful = &copy
 		}
+
 		if result.Error == "" && strings.TrimSpace(result.Output) != "" && isResultUsefulForFallback(result) {
 			successfulNarrowing = append(successfulNarrowing, result)
 		}
+
 		if result.Error != "" && !isHarnessRejectionSummary(result.Summary) && !isHarnessRejectionErrorText(result.Error) {
 			copy := result
+
 			lastError = &copy
 		}
 	}
@@ -398,6 +483,7 @@ func synthesizeFallbackAnswer(agentName string, results []workspace.ToolResult) 
 	// gathered") read as a system error to users; this reframes the same
 	// content as an honest "partial findings" report.
 	var b strings.Builder
+
 	if agentName == "explore" {
 		b.WriteString("Partial findings from this turn (explore lane reached its budget before synthesizing):\n\n")
 	} else {
@@ -406,18 +492,23 @@ func synthesizeFallbackAnswer(agentName string, results []workspace.ToolResult) 
 
 	if len(successfulNarrowing) > 0 || firstSuccessful != nil {
 		b.WriteString("Verified context:\n")
+
 		if len(successfulNarrowing) == 0 && firstSuccessful != nil {
 			successfulNarrowing = append(successfulNarrowing, *firstSuccessful)
 		}
+
 		for _, result := range limitFallbackResults(successfulNarrowing, 3) {
 			b.WriteString("- ")
 			b.WriteString(result.Summary)
+
 			if output := compactOutput(sanitizeFallbackResultOutput(result), fallbackLineBudgetForTool(result.Tool)); output != "" {
 				b.WriteString("\n")
 				b.WriteString(output)
 			}
+
 			b.WriteString("\n")
 		}
+
 		b.WriteString("\n")
 	}
 
@@ -425,10 +516,12 @@ func synthesizeFallbackAnswer(agentName string, results []workspace.ToolResult) 
 		b.WriteString("Final blocker:\n")
 		b.WriteString("- ")
 		b.WriteString(lastError.Summary)
+
 		if errText := strings.TrimSpace(lastError.Error); errText != "" {
 			b.WriteString(": ")
 			b.WriteString(errText)
 		}
+
 		b.WriteString("\n\n")
 	}
 
@@ -438,14 +531,18 @@ func synthesizeFallbackAnswer(agentName string, results []workspace.ToolResult) 
 	// when the user's original prompt looked like a review / cleanup ask.
 	if observations := inferFallbackObservations(successfulNarrowing); len(observations) > 0 {
 		b.WriteString("Best-effort observations from what was read:\n")
+
 		for _, obs := range observations {
 			b.WriteString("- ")
 			b.WriteString(obs)
 			b.WriteString("\n")
 		}
+
 		b.WriteString("\n")
 	}
+
 	b.WriteString("Recommended next step:\n")
+
 	if agentName == "explore" {
 		b.WriteString("- answer from the verified evidence above; if resuming later, start from one exact missing claim and one exact probe rather than reopening broad discovery")
 	} else {
@@ -460,6 +557,7 @@ func annotateBudgetLimitedAnswer(answer string) string {
 	if answer == "" {
 		return ""
 	}
+
 	return answer
 }
 
@@ -471,30 +569,39 @@ func inferFallbackObservations(results []workspace.ToolResult) []string {
 	if len(results) == 0 {
 		return nil
 	}
+
 	observations := make([]string, 0, 3)
 	seen := make(map[string]struct{})
+
 	for _, result := range results {
 		if result.Tool != "read_file" {
 			continue
 		}
+
 		path := extractReadFilePath(result.Summary)
 		if path == "" {
 			continue
 		}
+
 		if _, ok := seen[path]; ok {
 			continue
 		}
+
 		seen[path] = struct{}{}
+
 		lines := strings.Count(result.Output, "\n")
+
 		if lines >= 600 {
 			observations = append(observations, fmt.Sprintf("%s is unusually large (%d lines) -- a plausible refactor candidate on its own, even without deeper evidence.", path, lines))
 		} else if lines >= 250 {
 			observations = append(observations, fmt.Sprintf("%s (%d lines) was read; scan for functions exceeding one screen or mixed responsibilities as a small follow-up target.", path, lines))
 		}
+
 		if len(observations) >= 3 {
 			break
 		}
 	}
+
 	return observations
 }
 
@@ -506,11 +613,14 @@ func extractReadFilePath(summary string) string {
 	if !strings.HasPrefix(trimmed, "Read ") {
 		return ""
 	}
+
 	rest := strings.TrimPrefix(trimmed, "Read ")
 	idx := strings.Index(rest, " lines ")
+
 	if idx <= 0 {
 		return ""
 	}
+
 	return strings.TrimSpace(rest[:idx])
 }
 
@@ -525,10 +635,12 @@ func normalizeFallbackResult(result workspace.ToolResult) workspace.ToolResult {
 	if strings.TrimSpace(result.Tool) != "task" {
 		return result
 	}
+
 	stripped := stripNestedFallbackTemplate(result.Output)
 	if stripped != result.Output {
 		result.Output = stripped
 	}
+
 	return result
 }
 
@@ -541,16 +653,19 @@ func stripNestedFallbackTemplate(s string) string {
 	if trimmed == "" || !strings.HasPrefix(trimmed, "Partial findings from this turn") {
 		return s
 	}
+
 	// Drop the leading "Partial findings from this turn (...):" line plus
 	// the immediately-following blank line, leaving just the substance.
 	if idx := strings.Index(trimmed, "\n"); idx >= 0 {
 		trimmed = strings.TrimLeft(trimmed[idx+1:], "\n")
 	}
+
 	// Drop the trailing "Recommended next step:" footer; that's
 	// scaffolding for the user, not evidence.
 	if idx := strings.Index(trimmed, "\nRecommended next step:"); idx >= 0 {
 		trimmed = strings.TrimSpace(trimmed[:idx])
 	}
+
 	// Drop the inner "Verified context:" header. The outer fallback adds
 	// its own header; nested verified-context labels make the answer read
 	// like two stacked reports.
@@ -566,6 +681,7 @@ func stripNestedFallbackTemplate(s string) string {
 			trimmed = head
 		}
 	}
+
 	return trimmed
 }
 
@@ -579,9 +695,11 @@ func firstBulletText(s string) string {
 			if idx := strings.Index(line, ":"); idx >= 0 {
 				return strings.TrimSpace(line[:idx])
 			}
+
 			return line
 		}
 	}
+
 	return ""
 }
 
@@ -595,6 +713,7 @@ func isHarnessRejectionSummary(summary string) bool {
 	if postReadinessContinuationRejectionSummary(summary) {
 		return true
 	}
+
 	switch summary {
 	case "Post-child broad inspection blocked",
 		"Post-child unrelated discovery blocked",
@@ -608,6 +727,7 @@ func isHarnessRejectionSummary(summary string) bool {
 		"Chained search rejected":
 		return true
 	}
+
 	return false
 }
 
@@ -619,6 +739,7 @@ func isHarnessRejectionErrorText(text string) bool {
 	if lower == "" {
 		return false
 	}
+
 	return containsAny(lower,
 		"include `named_gap`",
 		"include named_gap",
@@ -635,12 +756,15 @@ func isHarnessRejectionErrorText(text string) bool {
 func isResultUsefulForFallback(result workspace.ToolResult) bool {
 	lowerSummary := strings.ToLower(strings.TrimSpace(result.Summary))
 	lowerOutput := strings.ToLower(strings.TrimSpace(result.Output))
+
 	if strings.HasPrefix(lowerSummary, "redirected to ") || containsAny(lowerOutput,
 		"try: {\"tool\":",
 		"retry your original request and it will execute",
 	) {
+
 		return false
 	}
+
 	switch result.Tool {
 	case "task", "discovery_query", "read_file", "search_content", "search_files",
 		"go_read_symbol", "go_file_outline",
@@ -657,12 +781,15 @@ func isResultUsefulForFallback(result workspace.ToolResult) bool {
 
 func usefulFallbackResultCount(results []workspace.ToolResult) int {
 	count := 0
+
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" || !isResultUsefulForFallback(result) {
 			continue
 		}
+
 		count++
 	}
+
 	return count
 }
 
@@ -670,6 +797,7 @@ func limitFallbackResults(results []workspace.ToolResult, max int) []workspace.T
 	if max <= 0 || len(results) <= max {
 		return results
 	}
+
 	return results[:max]
 }
 

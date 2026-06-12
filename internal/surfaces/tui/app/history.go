@@ -21,11 +21,14 @@ func wrapLines(s string, width int) []string {
 	if width < 1 {
 		width = 1
 	}
+
 	wrapped := wordwrap.String(s, width)
 	lines := strings.Split(wrapped, "\n")
+
 	if len(lines) == 0 {
 		return []string{""}
 	}
+
 	return lines
 }
 
@@ -80,11 +83,13 @@ func (m *Model) appendHistoryMessage(sender, content string, toolCalls []string)
 	}
 
 	grouped := false
+
 	if n := len(m.history.entries); n > 0 && m.history.entries[n-1].sender == sender && !m.history.entries[n-1].inProgress {
 		entry := &m.history.entries[n-1]
 		if content != "" {
 			entry.contents = append(entry.contents, content)
 		}
+
 		entry.toolCalls = append(entry.toolCalls, historyToolCallsFromLines(toolCalls)...)
 		entry.summary = localFallbackSummary(entry)
 		grouped = true
@@ -95,6 +100,7 @@ func (m *Model) appendHistoryMessage(sender, content string, toolCalls []string)
 		if content != "" {
 			entry.contents = []string{content}
 		}
+
 		entry.summary = localFallbackSummary(&entry)
 		m.history.entries = append(m.history.entries, entry)
 		m.history.selected = len(m.history.entries) - 1
@@ -112,14 +118,17 @@ func historyToolCallsFromLines(lines []string) []historyToolCall {
 	if len(lines) == 0 {
 		return nil
 	}
+
 	out := make([]historyToolCall, 0, len(lines))
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
+
 		out = append(out, historyToolCall{line: line})
 	}
+
 	return out
 }
 
@@ -132,6 +141,7 @@ func (m *Model) beginAgentHistoryTurn() {
 	if privacy := m.historyPrivacyAuditEvent(); privacy.label != "" {
 		entry.auditEvents = append(entry.auditEvents, privacy)
 	}
+
 	entry.summary = localFallbackSummary(&entry)
 	m.history.entries = append(m.history.entries, entry)
 	m.history.selected = len(m.history.entries) - 1
@@ -153,14 +163,17 @@ func (m *Model) activeAgentHistoryEntry() (int, *historyEntry, bool) {
 	if !m.currentTurnHistoryActive {
 		return 0, nil, false
 	}
+
 	idx := m.currentTurnHistoryIndex
 	if idx < 0 || idx >= len(m.history.entries) {
 		return 0, nil, false
 	}
+
 	entry := &m.history.entries[idx]
 	if entry.sender != "agent" || !entry.inProgress {
 		return 0, nil, false
 	}
+
 	return idx, entry, true
 }
 
@@ -169,12 +182,15 @@ func (m *Model) recordToolTraceInHistory(step int, text, intent string, running 
 	if line == "" && len(auditEvents) == 0 {
 		return
 	}
+
 	if _, entry, ok := m.activeAgentHistoryEntry(); ok {
 		if line != "" {
 			entry.upsertToolCall(step, line, intent, running, kind, outcome)
 		}
+
 		entry.auditEvents = append(entry.auditEvents, auditEvents...)
 		entry.summary = localFallbackSummary(entry)
+
 		m.requestHistoryPanelRender(false, true)
 	} else {
 		m.currentTurnTools = append(m.currentTurnTools, line)
@@ -185,6 +201,7 @@ func (m *Model) recordToolTraceInHistory(step int, text, intent string, running 
 	if m.turnEvidence == nil {
 		return
 	}
+
 	if running {
 		// Tool request: create a new evidence row.
 		row := evidenceRow{
@@ -196,7 +213,9 @@ func (m *Model) recordToolTraceInHistory(step int, text, intent string, running 
 			running:   true,
 			glyph:     "…",
 		}
+
 		m.turnEvidence.tools = append(m.turnEvidence.tools, row)
+
 		if m.turnEvidence.autoTail {
 			m.turnEvidence.scrollOff = max(0, len(m.turnEvidence.tools)-15)
 		}
@@ -208,6 +227,7 @@ func (m *Model) recordToolTraceInHistory(step int, text, intent string, running 
 				m.turnEvidence.tools[i].summary = line
 				m.turnEvidence.tools[i].running = false
 				m.turnEvidence.tools[i].glyph = resolveEvidenceGlyph(outcome, false)
+
 				break
 			}
 		}
@@ -222,17 +242,22 @@ func (entry *historyEntry) upsertToolCall(step int, line, intent string, running
 				if strings.TrimSpace(intent) != "" {
 					entry.toolCalls[i].intent = strings.TrimSpace(intent)
 				}
+
 				if strings.TrimSpace(kind) != "" {
 					entry.toolCalls[i].kind = strings.TrimSpace(kind)
 				}
+
 				if strings.TrimSpace(outcome) != "" {
 					entry.toolCalls[i].outcome = strings.TrimSpace(outcome)
 				}
+
 				entry.toolCalls[i].running = running
+
 				return
 			}
 		}
 	}
+
 	entry.toolCalls = append(entry.toolCalls, historyToolCall{
 		step:    step,
 		line:    line,
@@ -248,9 +273,11 @@ func (m *Model) recordHistoryAuditEvent(event historyAuditEvent) {
 	if event.label == "" {
 		return
 	}
+
 	if _, entry, ok := m.activeAgentHistoryEntry(); ok {
 		entry.auditEvents = append(entry.auditEvents, event)
 		entry.summary = localFallbackSummary(entry)
+
 		m.requestHistoryPanelRender(false, true)
 	}
 }
@@ -260,12 +287,14 @@ func (m *Model) recordHistoryAuditEvent(event historyAuditEvent) {
 // into the history panel, then clears the tool-call buffer.
 func (m *Model) recordAgentTurn() {
 	var response string
+
 	for i := len(m.messages) - 1; i >= 0; i-- {
 		if m.messages[i].Role == "assistant" {
 			response = strings.TrimSpace(m.messages[i].Content)
 			break
 		}
 	}
+
 	m.finishAgentHistoryTurn(response)
 }
 
@@ -275,27 +304,38 @@ func (m *Model) finishAgentHistoryTurn(response string) {
 		if response != "" {
 			entry.contents = append(entry.contents, response)
 		}
+
 		entry.inProgress = false
 		m.currentTurnHistoryActive = false
 		m.currentTurnTools = nil
+
 		if response == "" && len(entry.toolCalls) == 0 {
 			m.removeEmptyCurrentHistoryEntry()
+
 			return
 		}
+
 		entry.summary = localFallbackSummary(entry)
+
 		idx := m.currentTurnHistoryIndex
+
 		if m.cfg.RouteClassifier.Enabled && m.summaryClient != nil {
 			go m.summarizeEntry(idx, *entry)
 		}
+
 		m.requestHistoryPanelRender(true, true)
+
 		return
 	}
 
 	tools := append([]string(nil), m.currentTurnTools...)
+
 	m.currentTurnTools = nil
+
 	if response == "" && len(tools) == 0 {
 		return
 	}
+
 	m.appendHistoryMessage("agent", response, tools)
 }
 
@@ -303,15 +343,20 @@ func (m *Model) failAgentHistoryTurn(err error) {
 	if err == nil {
 		return
 	}
+
 	if _, entry, ok := m.activeAgentHistoryEntry(); ok {
 		entry.inProgress = false
 		m.currentTurnHistoryActive = false
 		m.currentTurnTools = nil
+
 		entry.contents = append(entry.contents, "Chat failed: "+err.Error())
 		entry.summary = localFallbackSummary(entry)
+
 		m.requestHistoryPanelRender(true, true)
+
 		return
 	}
+
 	m.currentTurnTools = nil
 }
 
@@ -320,13 +365,16 @@ func (m *Model) removeEmptyCurrentHistoryEntry() {
 	if idx < 0 || idx >= len(m.history.entries) {
 		return
 	}
+
 	m.history.entries = append(m.history.entries[:idx], m.history.entries[idx+1:]...)
 	if m.history.selected >= len(m.history.entries) {
 		m.history.selected = len(m.history.entries) - 1
 	}
+
 	if m.history.selected < 0 {
 		m.history.selected = 0
 	}
+
 	m.requestHistoryPanelRender(true, false)
 }
 
@@ -334,30 +382,42 @@ func (m *Model) requestHistoryPanelRender(force bool, stickBottom bool) {
 	if m == nil {
 		return
 	}
+
 	if stickBottom {
 		m.history.renderScrollBottom = true
 	}
+
 	if !m.history.panelOpen || m.panelTab != panelTabHistory {
 		return
 	}
+
 	if force || !m.streaming || !m.currentTurnHistoryActive || m.history.focused {
 		m.flushHistoryPanelRender()
+
 		return
 	}
+
 	if m.history.renderLast.IsZero() || time.Since(m.history.renderLast) >= historyPanelRenderThrottle {
 		m.flushHistoryPanelRender()
+
 		return
 	}
+
 	if m.history.renderPending {
 		return
 	}
+
 	m.history.renderPending = true
+
 	delay := historyPanelRenderThrottle - time.Since(m.history.renderLast)
+
 	if delay < 0 {
 		delay = historyPanelRenderThrottle
 	}
+
 	go func() {
 		time.Sleep(delay)
+
 		m.events <- historyPanelRefreshMsg{}
 	}()
 }
@@ -366,11 +426,14 @@ func (m *Model) flushHistoryPanelRender() {
 	if m == nil {
 		return
 	}
+
 	m.history.renderPending = false
 	m.renderHistoryPanelContent()
+
 	if m.history.panelOpen && m.history.renderScrollBottom {
 		m.history.viewport.GotoBottom()
 	}
+
 	m.history.renderScrollBottom = false
 	m.history.renderLast = time.Now()
 }
@@ -379,44 +442,57 @@ func (m *Model) flushHistoryPanelRender() {
 // model. Used as the initial summary so the panel never shows bare "…".
 func localFallbackSummary(entry *historyEntry) string {
 	const maxSummary = 60
+
 	if entry.inProgress && len(entry.contents) == 0 && len(entry.toolCalls) == 0 {
 		if summary := historyAuditSummary(entry.auditEvents); summary != "" {
 			return truncateRunes(summary, maxSummary)
 		}
+
 		return "working…"
 	}
+
 	if len(entry.contents) > 0 {
 		first := strings.TrimSpace(entry.contents[0])
+
 		first = collapseWhitespace(first)
+
 		if first != "" {
 			return truncateRunes(first, maxSummary)
 		}
 	}
+
 	if len(entry.toolCalls) > 0 {
 		names := make([]string, 0, len(entry.toolCalls))
 		seen := make(map[string]struct{}, len(entry.toolCalls))
+
 		for _, tc := range entry.toolCalls {
 			name := tc.line
 			if i := strings.Index(name, " | "); i > 0 {
 				name = name[:i]
 			}
+
 			name = strings.TrimSpace(name)
 			if name == "" {
 				continue
 			}
+
 			if _, dup := seen[name]; dup {
 				continue
 			}
+
 			seen[name] = struct{}{}
 			names = append(names, name)
 		}
+
 		if len(names) > 0 {
 			return truncateRunes("tools: "+strings.Join(names, ", "), maxSummary)
 		}
 	}
+
 	if summary := historyAuditSummary(entry.auditEvents); summary != "" {
 		return truncateRunes(summary, maxSummary)
 	}
+
 	return "…"
 }
 
@@ -425,16 +501,20 @@ func historyAuditSummary(events []historyAuditEvent) string {
 		if util.EqualTrimFold(event.kind, "privacy") {
 			continue
 		}
+
 		label := strings.TrimSpace(event.label)
 		if label == "" {
 			continue
 		}
+
 		kind := strings.TrimSpace(event.kind)
 		if kind == "" {
 			return label
 		}
+
 		return kind + ": " + label
 	}
+
 	return ""
 }
 
@@ -443,6 +523,7 @@ func resolveEvidenceGlyph(outcome string, hasError bool) string {
 	if hasError {
 		return "✘"
 	}
+
 	o := strings.ToLower(strings.TrimSpace(outcome))
 	switch {
 	case o == "":
@@ -465,6 +546,7 @@ func parseToolNameFromTrace(text string) string {
 	if idx := strings.Index(text, " | "); idx > 0 {
 		return strings.TrimSpace(text[:idx])
 	}
+
 	return text
 }
 
@@ -475,9 +557,11 @@ func parseTargetFromTrace(text string) string {
 	if idx := strings.Index(text, " | running "); idx > 0 {
 		return strings.TrimSpace(text[idx+len(" | running "):])
 	}
+
 	if idx := strings.Index(text, " | "); idx > 0 {
 		return strings.TrimSpace(text[idx+len(" | "):])
 	}
+
 	return text
 }
 
@@ -495,13 +579,16 @@ func stripThinkTags(s string) string {
 		if start < 0 {
 			break
 		}
+
 		end := strings.Index(s[start:], "</think>")
 		if end < 0 {
 			s = s[:start]
 			break
 		}
+
 		s = s[:start] + s[start+end+len("</think>"):]
 	}
+
 	return s
 }
 
@@ -513,16 +600,21 @@ func (m *Model) summarizeEntry(idx int, entry historyEntry) {
 	_ = m.ensureSummaryServer() // auto-start if configured; completeChatWithFallback routes to m.client on failure
 
 	var sb strings.Builder
+
 	label := "User said"
+
 	if entry.sender == "agent" {
 		label = "Agent responded"
 	}
+
 	sb.WriteString(label)
 	sb.WriteString(":\n")
+
 	for _, c := range entry.contents {
 		sb.WriteString(truncateRunes(c, 400))
 		sb.WriteString("\n")
 	}
+
 	if len(entry.toolCalls) > 0 {
 		names := make([]string, 0, len(entry.toolCalls))
 		for _, tc := range entry.toolCalls {
@@ -530,23 +622,28 @@ func (m *Model) summarizeEntry(idx int, entry historyEntry) {
 			if i := strings.Index(name, " | "); i > 0 {
 				name = name[:i]
 			}
+
 			names = append(names, strings.TrimSpace(name))
 		}
+
 		sb.WriteString("Tools: ")
 		sb.WriteString(strings.Join(names, ", "))
 		sb.WriteString("\n")
+
 		intents := make([]string, 0, len(entry.toolCalls))
 		for _, tc := range entry.toolCalls {
 			if strings.TrimSpace(tc.intent) != "" {
 				intents = append(intents, strings.TrimSpace(tc.intent))
 			}
 		}
+
 		if len(intents) > 0 {
 			sb.WriteString("Why: ")
 			sb.WriteString(strings.Join(intents, "; "))
 			sb.WriteString("\n")
 		}
 	}
+
 	if len(entry.auditEvents) > 0 {
 		events := make([]string, 0, len(entry.auditEvents))
 		for _, event := range entry.auditEvents {
@@ -554,6 +651,7 @@ func (m *Model) summarizeEntry(idx int, entry historyEntry) {
 				events = append(events, text)
 			}
 		}
+
 		if len(events) > 0 {
 			sb.WriteString("Audit: ")
 			sb.WriteString(strings.Join(events, "; "))
@@ -575,7 +673,9 @@ func (m *Model) summarizeEntry(idx int, entry historyEntry) {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+
 	defer cancel()
 
 	maxTokens := m.cfg.RouteClassifier.MaxTokens
@@ -592,10 +692,12 @@ func (m *Model) summarizeEntry(idx int, entry historyEntry) {
 	if err != nil {
 		return
 	}
+
 	summary := strings.TrimSpace(stripThinkTags(text))
 	if summary == "" {
 		return
 	}
+
 	summary = truncateRunes(collapseWhitespace(summary), 60)
 	m.events <- historySummaryMsg{index: idx, summary: summary}
 }
@@ -622,7 +724,9 @@ func (m *Model) ensureSummaryServer() error {
 	// Fast path: endpoint already responds.
 	pingCtx, pingCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	_, err := m.summaryClient.ListModels(pingCtx)
+
 	pingCancel()
+
 	if err == nil {
 		return nil
 	}
@@ -632,11 +736,14 @@ func (m *Model) ensureSummaryServer() error {
 	}
 
 	summaryServerOnce.Lock()
+
 	if !summaryServerOnce.started {
 		summaryServerOnce.started = true
 		summaryServerOnce.ready = make(chan struct{})
+
 		go m.launchSummaryServer()
 	}
+
 	ready := summaryServerOnce.ready
 	summaryServerOnce.Unlock()
 
@@ -654,7 +761,9 @@ func (m *Model) ensureSummaryServer() error {
 	// Verify the endpoint actually responds post-launch.
 	verifyCtx, verifyCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer verifyCancel()
+
 	_, err = m.summaryClient.ListModels(verifyCtx)
+
 	return err
 }
 
@@ -664,6 +773,7 @@ func (m *Model) ensureSummaryServer() error {
 func (m *Model) launchSummaryServer() {
 	defer func() {
 		summaryServerOnce.Lock()
+
 		if summaryServerOnce.ready != nil {
 			// Always close so waiters unblock; they'll verify the endpoint.
 			select {
@@ -672,6 +782,7 @@ func (m *Model) launchSummaryServer() {
 				close(summaryServerOnce.ready)
 			}
 		}
+
 		summaryServerOnce.Unlock()
 	}()
 
@@ -683,13 +794,17 @@ func (m *Model) launchSummaryServer() {
 	if startTimeout <= 0 {
 		startTimeout = 120 * time.Second
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), startTimeout)
+
 	defer cancel()
 
 	if err := m.summaryController.Start(ctx); err != nil {
 		m.logError("route_classifier", "start failed: "+err.Error())
+
 		return
 	}
+
 	if err := m.summaryController.WaitUntilReady(ctx); err != nil {
 		m.logError("route_classifier", "ready wait failed: "+err.Error())
 	}
@@ -701,9 +816,11 @@ func truncateRunes(s string, max int) string {
 	if len(r) <= max {
 		return s
 	}
+
 	if max <= 1 {
 		return "…"
 	}
+
 	return string(r[:max-1]) + "…"
 }
 

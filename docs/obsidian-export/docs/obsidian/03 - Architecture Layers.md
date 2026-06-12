@@ -1,13 +1,13 @@
 ---
 tags:
-  - harness
+  - idiom
   - architecture
   - layers
 ---
 
 # Architecture Layers
 
-Agent Harness follows a contract-centered architecture. The outer surfaces accept user
+Idiom follows a contract-centered architecture. The outer surfaces accept user
 tasks and external tool calls. The inner systems normalize those requests into
 typed contracts, repository evidence, model interactions, tool execution,
 verification, and audit records.
@@ -21,7 +21,7 @@ flowchart TB
         TUI["TUI sessions"]
         Sidecar["CLI sidecar"]
         InboundMCP["Inbound MCP server"]
-        Agents["LLM agents"]
+        Agents["External agents"]
     end
 
     subgraph Orchestration["Orchestration Layer"]
@@ -88,16 +88,16 @@ Examples:
 
 | Layer | Packages | Ownership |
 | --- | --- | --- |
-| Surface | `cmd/harness`, `internal/surfaces/tui/app`, inbound MCP in `cmd/harness/mcp.go` | User commands, TUI lifecycle, external protocol surfaces |
-| Orchestration | `cmd/harness/lane.go`, `cmd/harness/plan_execute.go`, `internal/runtime/promptstack`, `internal/workflows/projectartifacts` | Lane setup, plan-execute orchestration, prompt assembly, artifact workflow |
-| Contract | `internal/runtime/agent`, `internal/contracts/autonomy`, `internal/runtime/workerruntime` | Runtime contracts, role profiles, tool profile rules |
+| Surface | `cmd/idiom`, `internal/surfaces/cli/root`, `internal/surfaces/tui/app`, inbound MCP in `internal/surfaces/cli/mcp` | User commands, TUI lifecycle, external protocol surfaces |
+| Orchestration | `internal/lanecmd`, `internal/surfaces/cli/planexecute`, `internal/runtime/promptstack`, `internal/workflows/projectartifacts` | Lane setup, plan-execute orchestration, prompt assembly, artifact workflow |
+| Contract | `internal/contracts/autonomy`, `internal/contracts/contractcompile`, `internal/runtime/agent`, `internal/runtime/workerruntime` | Contract schema, report-only contract compilation, runtime contracts, role profiles, tool profile rules |
 | Execution | `internal/runtime/agent`, `internal/capabilities/workspace`, `internal/runtime/runner` | Model loop, tool dispatch, process execution |
 | Evidence | `internal/repository/comprehension`, `internal/repository/discovery`, `internal/evidence/telemetry`, `internal/evidence/eval`, `internal/evidence/transcript` | Context graph, discovery, logs, audit, evaluation |
-| Adapters | `internal/runtime/backends`, `internal/platform/autodetect`, `internal/runtime/llama`, `internal/repository/semantic`, outbound MCP in `internal/capabilities/mcp`, shell/git adapters in workspace | Local inference, host discovery, LLM-agent clients, and environment-specific tool execution |
+| Adapters | `internal/runtime/backends`, `internal/platform/autodetect`, `internal/runtime/llama`, `internal/repository/semantic`, outbound MCP in `internal/capabilities/mcp`, shell/git adapters in workspace | Local inference, host discovery, external clients, and environment-specific tool execution |
 
 ## Clean Boundary Expectations
 
-The architecture docs emphasize these constraints:
+The repo's architecture docs emphasize these constraints:
 
 - Contract changes must state the invariant and the audit or eval proof.
 - Memory changes must expose freshness, provenance, confidence, and uncertainty.
@@ -110,7 +110,7 @@ The architecture docs emphasize these constraints:
 
 ## Why Boundaries Matter
 
-Agent Harness's value depends on trust. Trust breaks when a subsystem silently takes
+Idiom's value depends on trust. Trust breaks when a subsystem silently takes
 authority from another subsystem:
 
 - A prompt that quietly becomes a contract is brittle.
@@ -125,6 +125,21 @@ authority from another subsystem:
 
 The architecture therefore keeps explicit ownership for evidence, strategy,
 contracts, and verification.
+
+Current contract consolidation starts with a pure `internal/contracts/contractcompile`
+package. It compiles plan-execute planner inputs into a passive
+`AutonomyContract`, runtime envelope, and model-facing protocol projection
+without importing runner, app, workspace, backend, or CLI packages. That keeps
+phase 1 observable before enforcement moves out of the existing runner gates.
+
+## Design Implementation Workflow
+
+Broad architecture work must not move from design prose directly into source
+edits. Use
+[Design Doc Implementation Workflow](../design-doc-implementation-workflow.md)
+to run the full reviewer bench, record reviewer evidence, atomize phases into
+dispatchable units, parallelize only disjoint write scopes, refresh docs, and
+send the complete deliverable through final review before commit and push.
 
 ## System Interfaces
 
@@ -158,6 +173,6 @@ test that owns the invariant.
 
 - [[01 - System Map]]
 - [[04 - Runtime Lanes]]
-- [[12 - Sidecar and LLM Agent Integrations]]
+- [[12 - Sidecar and External Integrations]]
 - [[18 - Prompt Stack and Profiles]]
 - [[22 - Ground-Up Implementation Plan]]

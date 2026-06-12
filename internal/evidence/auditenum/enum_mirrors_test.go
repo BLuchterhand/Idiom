@@ -13,6 +13,7 @@ import (
 // test bodies focused on the assertion they're making.
 func makeEnumMirrorFixture(t *testing.T) string {
 	t.Helper()
+
 	root := t.TempDir()
 	files := map[string]string{
 		"enums.h": "enum class AnimalType { Cat, Dog, COUNT };\n",
@@ -33,15 +34,18 @@ void handle(AnimalType t) {
 		// Should be ignored: in skip-listed dir
 		"node_modules/index.js": "AnimalType\n",
 	}
+
 	for rel, body := range files {
 		full := filepath.Join(root, rel)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
+
 		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
 			t.Fatalf("write %s: %v", rel, err)
 		}
 	}
+
 	return root
 }
 
@@ -55,22 +59,28 @@ func TestAuditEnumMirrorsListsReferencingFiles(t *testing.T) {
 	root := makeEnumMirrorFixture(t)
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"--enum", "AnimalType", "--root", root}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("audit must exit 0 on a clean run; got %d (stderr=%s)", code, stderr.String())
 	}
+
 	out := stdout.String()
 	for _, want := range []string{"diagnostic_logger.cpp", "behavior.cpp", "enums.h", "Step 1", "Step 2", "Step 3"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in output: %s", want, out)
 		}
 	}
+
 	if strings.Contains(out, "notes.txt") {
 		t.Fatalf("non-source extension must be skipped: %s", out)
 	}
+
 	if strings.Contains(out, "node_modules") {
 		t.Fatalf("skip-listed dir must be excluded: %s", out)
 	}
+
 	// At least one of the high-signal patterns should fire. We don't
 	// pin the exact line text so future regex tweaks don't break the
 	// test, but the section header proves the scan ran.
@@ -85,10 +95,13 @@ func TestAuditEnumMirrorsListsReferencingFiles(t *testing.T) {
 // than walking the tree to no purpose.
 func TestAuditEnumMirrorsRejectsMissingEnumFlag(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"--root", t.TempDir()}, &stdout, &stderr)
+
 	if code != 2 {
 		t.Fatalf("missing --enum must exit 2; got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "--enum is required") {
 		t.Fatalf("stderr should name the missing flag: %s", stderr.String())
 	}
@@ -100,10 +113,13 @@ func TestAuditEnumMirrorsRejectsMissingEnumFlag(t *testing.T) {
 // error) so shell pipelines can react differently.
 func TestAuditEnumMirrorsReportsZeroReferences(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"--enum", "NoSuchSymbol", "--root", t.TempDir()}, &stdout, &stderr)
+
 	if code != 1 {
 		t.Fatalf("zero-reference audit should exit 1; got %d", code)
 	}
+
 	if !strings.Contains(stdout.String(), "no references found") {
 		t.Fatalf("output should explain the empty result: %s", stdout.String())
 	}
@@ -122,20 +138,25 @@ func TestAuditEnumMirrorsTokenBoundaryRejectsSubstringMatch(t *testing.T) {
 		[]byte("MyEnumOther x; // unrelated symbol\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "real.cpp"),
 		[]byte("MyEnum y;\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"--enum", "MyEnum", "--root", root}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("audit must exit 0; got %d (stderr=%s)", code, stderr.String())
 	}
+
 	out := stdout.String()
 	if !strings.Contains(out, "real.cpp") {
 		t.Fatalf("token-bounded match should land on real.cpp: %s", out)
 	}
+
 	if strings.Contains(out, "different.cpp") {
 		t.Fatalf("token boundary must reject MyEnumOther; got: %s", out)
 	}
@@ -152,23 +173,29 @@ func TestAuditEnumMirrorsLanguageProfileSelection(t *testing.T) {
 		[]byte("State\nvar _State_name = \"running\"\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "y.cpp"),
 		[]byte("State\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"--enum", "State", "--language", "go", "--root", root}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("--language go must exit 0; got %d (stderr=%s)", code, stderr.String())
 	}
+
 	out := stdout.String()
 	if !strings.Contains(out, "x.go") {
 		t.Fatalf("go profile should match x.go: %s", out)
 	}
+
 	if strings.Contains(out, "y.cpp") {
 		t.Fatalf("go profile must not match .cpp file: %s", out)
 	}
+
 	if !strings.Contains(out, "_State_name") {
 		t.Fatalf("go profile should fire the stringer pattern: %s", out)
 	}
@@ -180,10 +207,13 @@ func TestAuditEnumMirrorsLanguageProfileSelection(t *testing.T) {
 // output.
 func TestAuditEnumMirrorsRejectsUnknownLanguage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"--enum", "X", "--language", "klingon", "--root", t.TempDir()}, &stdout, &stderr)
+
 	if code != 2 {
 		t.Fatalf("unknown --language must exit 2; got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "unknown --language") {
 		t.Fatalf("stderr should name the bad flag: %s", stderr.String())
 	}
@@ -196,10 +226,13 @@ func TestAuditEnumMirrorsRejectsUnknownLanguage(t *testing.T) {
 // hid the real cause from operators.
 func TestAuditEnumMirrorsReportsMissingSearchRoot(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"--enum", "X", "--root", "/definitely-does-not-exist-xyz"}, &stdout, &stderr)
+
 	if code != 1 {
 		t.Fatalf("missing root must exit 1; got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "search root") {
 		t.Fatalf("stderr should explain the missing root: %s", stderr.String())
 	}
@@ -216,20 +249,25 @@ func TestAuditEnumMirrorsExtOverrideExcludesProfileExtensions(t *testing.T) {
 		[]byte("Symbol\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "y.cpp"),
 		[]byte("Symbol\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"--enum", "Symbol", "--root", root, "--ext", "go"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("override audit must exit 0; got %d (stderr=%s)", code, stderr.String())
 	}
+
 	out := stdout.String()
 	if !strings.Contains(out, "x.go") {
 		t.Fatalf("--ext go should match x.go: %s", out)
 	}
+
 	if strings.Contains(out, "y.cpp") {
 		t.Fatalf("--ext go must EXCLUDE y.cpp (override is replacing, not additive): %s", out)
 	}
@@ -248,16 +286,20 @@ func TestAuditEnumMirrorsAnyProfileWorksWithoutPatterns(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"--enum", "MySymbol", "--root", root, "--language", "any"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("any profile must exit 0; got %d (stderr=%s)", code, stderr.String())
 	}
+
 	out := stdout.String()
 	for _, want := range []string{"Step 1", "Step 2", "Step 3", "src.go"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q: %s", want, out)
 		}
 	}
+
 	// The patternless any profile means Step 2 should print the
 	// "no high-signal mirror patterns" hint.
 	if !strings.Contains(out, "no high-signal mirror patterns") {
@@ -271,7 +313,9 @@ func TestAuditEnumMirrorsAnyProfileWorksWithoutPatterns(t *testing.T) {
 // surfaces by default.
 func TestAuditEnumMirrorsHelpExitsZero(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"--help"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("--help must exit 0; got %d", code)
 	}
@@ -290,15 +334,18 @@ func TestAuditEnumMirrorsHonorsCustomPattern(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{
 		"--enum", "State",
 		"--root", root,
 		"--pattern", "_{ENUM}Name_",
 		"--ext", "go",
 	}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("custom-pattern audit must exit 0; got %d (stderr=%s)", code, stderr.String())
 	}
+
 	if !strings.Contains(stdout.String(), "_StateName_0") {
 		t.Fatalf("custom pattern should match the stringer-style name: %s", stdout.String())
 	}

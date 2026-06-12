@@ -11,6 +11,7 @@ import (
 func TestAcquireReportsDisabledWhenNoPoolResolves(t *testing.T) {
 	t.Setenv("IDIOM_QUEUE_POOL", "")
 	t.Setenv("IDIOM_QUEUE_SOCKET", "")
+
 	var stdout, stderr bytes.Buffer
 
 	release := Acquire(config.Config{}, Options{
@@ -26,9 +27,11 @@ func TestAcquireReportsDisabledWhenNoPoolResolves(t *testing.T) {
 	if !strings.Contains(out, `"type":"idiom.plan_execute.queue_disabled"`) {
 		t.Fatalf("disabled queue event missing, got %q", out)
 	}
+
 	if !strings.Contains(out, `"reason_class":"pool_disabled"`) {
 		t.Fatalf("disabled queue event should classify reason, got %q", out)
 	}
+
 	if stderr.Len() != 0 {
 		t.Fatalf("disabled queue should not emit stderr, got %q", stderr.String())
 	}

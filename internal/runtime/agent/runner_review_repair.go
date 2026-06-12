@@ -12,12 +12,15 @@ func (r *Runner) planThenExecuteReviewRepairCompletionRejection(reply string, re
 	if r == nil || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != PlanThenExecuteReviewRepairTaskFamily {
 		return workspace.ToolResult{}, false
 	}
+
 	if successfulSubmitPlanResultCount(results) > 0 {
 		return workspace.ToolResult{}, false
 	}
+
 	if planThenExecuteReviewRepairAnswerDeclaresBlocker(reply) {
 		return workspace.ToolResult{}, false
 	}
+
 	if plancontract.ReviewRepairAnswerDeclaresPass(reply) && plancontract.ReviewRepairTextHasChecklist(reply) {
 		if failed := planThenExecuteReviewRepairFailedPhaseObligations(r.RuntimeBrief); len(failed) > 0 {
 			return workspace.ToolResult{
@@ -26,8 +29,10 @@ func (r *Runner) planThenExecuteReviewRepairCompletionRejection(reply string, re
 				Error:   "review-repair phase evidence still has failed obligations " + quotedRunnerStrings(failed) + "; choose a corrective submit_plan inside allowed paths or `<<QUESTION>>:` with the exact blocker instead of `Decision: pass`.",
 			}, true
 		}
+
 		return workspace.ToolResult{}, false
 	}
+
 	return workspace.ToolResult{
 		Tool:    "completion_gate",
 		Summary: "Review-repair completion gate rejected final answer",
@@ -44,7 +49,9 @@ func planThenExecuteReviewRepairFailedPhaseObligations(brief workerruntime.Worke
 	if brief.Readiness == nil {
 		return nil
 	}
+
 	out := make([]string, 0)
+
 	for _, obligation := range brief.Readiness.OpenObligations {
 		obligation = strings.TrimSpace(obligation)
 		switch {
@@ -58,6 +65,7 @@ func planThenExecuteReviewRepairFailedPhaseObligations(brief workerruntime.Worke
 			out = append(out, obligation)
 		}
 	}
+
 	return out
 }
 
@@ -65,9 +73,11 @@ func (r *Runner) reviewRepairDoomLoopTerminalCloseout(results []workspace.ToolRe
 	if r == nil || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != PlanThenExecuteReviewRepairTaskFamily {
 		return "", "", false, false
 	}
+
 	if reviewRepairCompletionGateRejectionCount(results) == 0 {
 		return "", "", false, false
 	}
+
 	answer = reviewRepairNoopSubmitPlanDeterministicCloseout(r.RuntimeBrief, workspace.ToolResult{
 		Tool:    "completion_gate",
 		Summary: "Review-repair completion gate rejected final answer",
@@ -76,9 +86,11 @@ func (r *Runner) reviewRepairDoomLoopTerminalCloseout(results []workspace.ToolRe
 	if strings.HasPrefix(strings.TrimSpace(answer), "Decision: pass") {
 		return answer, "review_repair_terminal_doom_loop_pass", false, true
 	}
+
 	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>:") {
 		return answer, "review_repair_terminal_doom_loop_blocker", true, true
 	}
+
 	return "", "", false, false
 }
 
@@ -87,6 +99,7 @@ func reviewRepairPhaseEvidencePacket(objective string) []string {
 	if evidence == "" {
 		return nil
 	}
+
 	return []string{"phase_evidence_bundle:\n" + evidence}
 }
 
@@ -94,49 +107,63 @@ func reviewRepairTrustedPhaseEvidence(brief workerruntime.WorkerRuntimeBrief) st
 	if evidence := reviewRepairPhaseEvidenceFromObjective(brief.Objective); evidence != "" {
 		return evidence
 	}
+
 	for _, packet := range brief.TargetPacket {
 		packet = strings.TrimSpace(packet)
 		if !strings.HasPrefix(packet, "phase_evidence_bundle:") {
 			continue
 		}
+
 		evidence := strings.TrimSpace(strings.TrimPrefix(packet, "phase_evidence_bundle:"))
 		if evidence == "" {
 			continue
 		}
+
 		if len(evidence) > 12000 {
 			evidence = evidence[:12000]
 		}
+
 		return evidence
 	}
+
 	return ""
 }
 
 func reviewRepairPhaseEvidenceFromObjective(objective string) string {
 	const heading = "## Phase Evidence Bundle"
+
 	idx := strings.Index(objective, heading)
+
 	if idx < 0 {
 		return ""
 	}
+
 	afterHeading := objective[idx+len(heading):]
 	fenceStart := strings.Index(afterHeading, "```")
+
 	if fenceStart < 0 {
 		return ""
 	}
+
 	afterFence := afterHeading[fenceStart+len("```"):]
 	if lineEnd := strings.Index(afterFence, "\n"); lineEnd >= 0 {
 		afterFence = afterFence[lineEnd+1:]
 	}
+
 	fenceEnd := strings.Index(afterFence, "```")
 	if fenceEnd < 0 {
 		return ""
 	}
+
 	evidence := strings.TrimSpace(afterFence[:fenceEnd])
 	if evidence == "" {
 		return ""
 	}
+
 	if len(evidence) > 12000 {
 		evidence = evidence[:12000]
 	}
+
 	return evidence
 }
 

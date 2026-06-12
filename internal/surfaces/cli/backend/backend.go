@@ -42,10 +42,13 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	logBackendPhase(rec, "backend_start", map[string]any{"argc": len(args)})
+
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		printBackendUsage(stderr)
+
 		return 0
 	}
+
 	switch args[0] {
 	case "list":
 		return runBackendList(args[1:], stdout, stderr)
@@ -60,6 +63,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	default:
 		fmt.Fprintf(stderr, "backend: unknown subcommand %q\n", args[0])
 		printBackendUsage(stderr)
+
 		return 2
 	}
 }
@@ -77,11 +81,14 @@ func resolveProjectRoot(projectRoot string, stderr io.Writer) (string, int) {
 	if root != "" {
 		return root, 0
 	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return "", 1
 	}
+
 	return cwd, 0
 }
 
@@ -100,15 +107,20 @@ func loadProfileFromFlags(projectRoot, profileName string, stderr io.Writer) (ba
 	if code != 0 {
 		return backends.Profile{}, "", code
 	}
+
 	file, ok, err := backends.LoadFromProjectRoot(root)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return backends.Profile{}, root, 1
 	}
+
 	if !ok {
 		fmt.Fprintf(stderr, "backend: no .idiom/backends.json under %s\n", root)
+
 		return backends.Profile{}, root, 1
 	}
+
 	prof, found := file.Profile(profileName)
 	if !found {
 		if profileName == "" {
@@ -116,8 +128,10 @@ func loadProfileFromFlags(projectRoot, profileName string, stderr io.Writer) (ba
 		} else {
 			fmt.Fprintf(stderr, "backend: profile %q not found\n", profileName)
 		}
+
 		return backends.Profile{}, root, 2
 	}
+
 	return prof, root, 0
 }
 
@@ -128,16 +142,19 @@ func loadProfileFromFlags(projectRoot, profileName string, stderr io.Writer) (ba
 func runBackendStart(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom backend start", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	var (
 		projectRoot string
 		profileName string
 		logDir      string
 		readyTO     time.Duration
 	)
+
 	fs.StringVar(&projectRoot, "project-root", "", "project root containing .idiom/backends.json (defaults to cwd)")
 	fs.StringVar(&profileName, "profile", "", "named profile to launch (omit to use the lone profile)")
 	fs.StringVar(&logDir, "log-dir", "", "directory for backend logs (defaults to OS temp dir)")
 	fs.DurationVar(&readyTO, "ready-timeout", 90*time.Second, "how long to wait for each backend to start accepting connections")
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -146,8 +163,10 @@ func runBackendStart(args []string, stdout io.Writer, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
+
 	if len(prof.Models) == 0 {
 		fmt.Fprintln(stderr, "backend: profile declares no models")
+
 		return 1
 	}
 
@@ -157,21 +176,25 @@ func runBackendStart(args []string, stdout io.Writer, stderr io.Writer) int {
 		ReadyTimeout: readyTO,
 	})
 	exit := 0
+
 	for _, r := range results {
 		switch {
 		case r.Err != nil && !r.Ready:
 			fmt.Fprintf(stdout, "FAIL %s :%d — %v\n", r.Alias, r.Port, r.Err)
+
 			exit = 1
 		case r.Err != nil && r.Ready:
 			// "already running" path: report as note, not failure.
 			fmt.Fprintf(stdout, "NOTE %s :%d — %v\n", r.Alias, r.Port, r.Err)
 		case !r.Ready:
 			fmt.Fprintf(stdout, "TIMEOUT %s :%d (pid=%d) — log=%s\n", r.Alias, r.Port, r.PID, r.LogPath)
+
 			exit = 1
 		default:
 			fmt.Fprintf(stdout, "READY %s :%d (pid=%d) — log=%s\n", r.Alias, r.Port, r.PID, r.LogPath)
 		}
 	}
+
 	return exit
 }
 
@@ -181,30 +204,37 @@ func runBackendStart(args []string, stdout io.Writer, stderr io.Writer) int {
 func runBackendStop(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom backend stop", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	var (
 		projectRoot string
 		profileName string
 		grace       time.Duration
 	)
+
 	fs.StringVar(&projectRoot, "project-root", "", "project root containing .idiom/backends.json (defaults to cwd)")
 	fs.StringVar(&profileName, "profile", "", "named profile to stop (omit to use the lone profile)")
 	fs.DurationVar(&grace, "grace", 5*time.Second, "wait between SIGTERM and SIGKILL")
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
 	prof, root, code := loadProfileFromFlags(projectRoot, profileName, stderr)
 	if code != 0 {
 		return code
 	}
+
 	results := backendStop(prof, backends.StopOptions{
 		RunDir:       runDirFor(root),
 		GraceTimeout: grace,
 	})
 	exit := 0
+
 	for _, r := range results {
 		switch {
 		case r.Err != nil:
 			fmt.Fprintf(stdout, "FAIL %s :%d — %v\n", r.Alias, r.Port, r.Err)
+
 			exit = 1
 		case r.PID == 0:
 			fmt.Fprintf(stdout, "FREE %s :%d\n", r.Alias, r.Port)
@@ -212,6 +242,7 @@ func runBackendStop(args []string, stdout io.Writer, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "STOPPED %s :%d (pid=%d)\n", r.Alias, r.Port, r.PID)
 		}
 	}
+
 	return exit
 }
 
@@ -220,19 +251,24 @@ func runBackendStop(args []string, stdout io.Writer, stderr io.Writer) int {
 func runBackendStatus(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom backend status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	var (
 		projectRoot string
 		profileName string
 	)
+
 	fs.StringVar(&projectRoot, "project-root", "", "project root containing .idiom/backends.json (defaults to cwd)")
 	fs.StringVar(&profileName, "profile", "", "named profile to inspect (omit to use the lone profile)")
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
 	prof, root, code := loadProfileFromFlags(projectRoot, profileName, stderr)
 	if code != 0 {
 		return code
 	}
+
 	results := backendStatus(prof, backends.StopOptions{RunDir: runDirFor(root)})
 	for _, r := range results {
 		if r.Up {
@@ -241,6 +277,7 @@ func runBackendStatus(args []string, stdout io.Writer, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "DOWN %s :%d\n", r.Alias, r.Port)
 		}
 	}
+
 	return 0
 }
 
@@ -256,16 +293,19 @@ func runBackendStatus(args []string, stdout io.Writer, stderr io.Writer) int {
 func runBackendProxy(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom backend proxy", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	var (
 		projectRoot string
 		profileName string
 		listenFlag  int
 		defaultFlag string
 	)
+
 	fs.StringVar(&projectRoot, "project-root", "", "project root containing .idiom/backends.json (defaults to cwd)")
 	fs.StringVar(&profileName, "profile", "", "named profile to serve (omit to use the lone profile)")
 	fs.IntVar(&listenFlag, "listen", 0, "override profile.proxy.listen with an explicit port")
 	fs.StringVar(&defaultFlag, "default", "", "override profile.proxy.default_alias with this alias")
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -274,23 +314,31 @@ func runBackendProxy(args []string, stdout io.Writer, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
+
 	cfg, err := backends.BuildProxyConfig(prof)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	if listenFlag > 0 {
 		cfg.Listen = listenFlag
 	}
+
 	if strings.TrimSpace(defaultFlag) != "" {
 		if _, ok := cfg.Routes[defaultFlag]; !ok {
 			fmt.Fprintf(stderr, "backend proxy: --default %q is not a registered alias\n", defaultFlag)
+
 			return 2
 		}
+
 		cfg.DefaultAlias = defaultFlag
 	}
+
 	if cfg.Listen <= 0 {
 		fmt.Fprintln(stderr, "backend proxy: profile has no proxy.listen; pass --listen <port>")
+
 		return 2
 	}
 
@@ -309,9 +357,12 @@ func runBackendProxy(args []string, stdout io.Writer, stderr io.Writer) int {
 		LogFunc: func(format string, a ...any) { fmt.Fprintf(stderr, format+"\n", a...) },
 	}, ready); err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	fmt.Fprintln(stdout, "STOPPED proxy")
+
 	return 0
 }
 
@@ -324,17 +375,22 @@ func runBackendProxy(args []string, stdout io.Writer, stderr io.Writer) int {
 func runBackendList(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom backend list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	var (
 		projectRoot string
 		path        string
 	)
+
 	fs.StringVar(&projectRoot, "project-root", "", "project root containing .idiom/backends.json (defaults to cwd)")
 	fs.StringVar(&path, "file", "", "explicit path to a backends.json (mutually exclusive with --project-root)")
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
 	if strings.TrimSpace(path) != "" && strings.TrimSpace(projectRoot) != "" {
 		fmt.Fprintln(stderr, "backend list: pass --file OR --project-root, not both")
+
 		return 2
 	}
 
@@ -344,9 +400,11 @@ func runBackendList(args []string, stdout io.Writer, stderr io.Writer) int {
 		err  error
 		src  string
 	)
+
 	switch {
 	case strings.TrimSpace(path) != "":
 		src = path
+
 		file, err = backends.Load(path)
 		if err == nil {
 			ok = true
@@ -357,24 +415,31 @@ func runBackendList(args []string, stdout io.Writer, stderr io.Writer) int {
 			cwd, cwdErr := os.Getwd()
 			if cwdErr != nil {
 				fmt.Fprintln(stderr, cwdErr)
+
 				return 1
 			}
+
 			root = cwd
 		}
+
 		src = filepath.Join(root, ".idiom", "backends.json")
 		file, ok, err = backends.LoadFromProjectRoot(root)
 	}
 
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	if !ok {
 		fmt.Fprintf(stderr, "backend: no backends.json at %s\n", src)
+
 		return 1
 	}
 
 	formatBackendsList(stdout, src, file)
+
 	return 0
 }
 
@@ -383,24 +448,32 @@ func runBackendList(args []string, stdout io.Writer, stderr io.Writer) int {
 // stable across runs (Go map iteration is randomized).
 func formatBackendsList(stdout io.Writer, src string, file backends.File) {
 	fmt.Fprintf(stdout, "%s\n", src)
+
 	if len(file.Profiles) == 0 {
 		fmt.Fprintln(stdout, "  (no profiles declared)")
+
 		return
 	}
+
 	names := make([]string, 0, len(file.Profiles))
 	for name := range file.Profiles {
 		names = append(names, name)
 	}
+
 	slices.Sort(names)
+
 	for _, name := range names {
 		prof := file.Profiles[name]
 		fmt.Fprintf(stdout, "profile %q\n", name)
+
 		if prof.Proxy.Listen != 0 || prof.Proxy.DefaultAlias != "" || prof.Proxy.DefaultCoder != "" {
 			fmt.Fprintf(stdout, "  proxy listen=%d default=%q default_coder=%q\n", prof.Proxy.Listen, prof.Proxy.DefaultAlias, prof.Proxy.DefaultCoder)
 		}
+
 		if resolution := prof.ResolveRoleAlias(backends.RoleExecutor); resolution.OK {
 			fmt.Fprintf(stdout, "  coder_alias=%q\n", resolution.Alias)
 		}
+
 		for _, m := range prof.Models {
 			fmt.Fprintf(stdout, "  model alias=%q binary=%q port=%d max_tokens=%d\n", m.Alias, m.Binary, m.Port, m.MaxTokens)
 		}

@@ -196,20 +196,25 @@ func (contract PlanExecutionContract) Normalized() PlanExecutionContract {
 	if contract.Revision == "" {
 		contract.Revision = PlanExecutionContractRevision
 	}
+
 	contract.PlanID = NormalizeStableContractIDPart(contract.PlanID)
 	contract.AuthorizedNewFiles = normalizeAuthorizedNewFiles(contract.AuthorizedNewFiles)
 	contract.AuthorizedNewRoots = normalizeAuthorizedNewRoots(contract.AuthorizedNewRoots)
 	contract.AuthorityDeltas = normalizeAuthorityDeltas(contract.AuthorityDeltas)
 	contract.RecoveryInvariantFailures = normalizeRecoveryInvariantFailures(contract.RecoveryInvariantFailures)
+
 	for i := range contract.Atoms {
 		contract.Atoms[i] = contract.Atoms[i].normalized(contract.PlanID)
 	}
+
 	sort.SliceStable(contract.Atoms, func(i, j int) bool {
 		return contract.Atoms[i].AtomID < contract.Atoms[j].AtomID
 	})
+
 	contract.ContractID = ""
 	contract.ContractHash = StablePlanExecutionContractHash(contract)
 	contract.ContractID = StablePlanExecutionContractID(contract)
+
 	return contract
 }
 
@@ -231,11 +236,14 @@ func (atom AtomExecutionContract) normalized(planID string) AtomExecutionContrac
 	atom.AuthorizedNewRoots = normalizeAuthorizedNewRoots(atom.AuthorizedNewRoots)
 	atom.AuthorityDeltas = normalizeAuthorityDeltas(atom.AuthorityDeltas)
 	atom.RecoveryInvariantFailures = normalizeRecoveryInvariantFailures(atom.RecoveryInvariantFailures)
+
 	if atom.AtomID == "" {
 		seed := atom
+
 		seed.AtomID = ""
 		atom.AtomID = StableAtomExecutionContractID(planID, seed)
 	}
+
 	return atom
 }
 
@@ -253,16 +261,21 @@ func (atom AtomExecutionContract) WriteEnvelopePaths() []string {
 
 func StablePlanExecutionContractHash(contract PlanExecutionContract) string {
 	canonical := contract
+
 	canonical.ContractID = ""
 	canonical.ContractHash = ""
+
 	for i := range canonical.Atoms {
 		canonical.Atoms[i].AtomID = NormalizeStableContractIDPart(canonical.Atoms[i].AtomID)
 	}
+
 	body, err := json.Marshal(canonical)
 	if err != nil {
 		return ""
 	}
+
 	sum := sha256.Sum256(body)
+
 	return hex.EncodeToString(sum[:])
 }
 
@@ -271,11 +284,13 @@ func StablePlanExecutionContractID(contract PlanExecutionContract) string {
 	if len(hash) < 16 {
 		return ""
 	}
+
 	return "planexec_" + hash[:16]
 }
 
 func StableAtomExecutionContractID(planID string, atom AtomExecutionContract) string {
 	atom.AtomID = ""
+
 	body, err := json.Marshal(struct {
 		Revision string                `json:"revision"`
 		PlanID   string                `json:"plan_id,omitempty"`
@@ -288,7 +303,9 @@ func StableAtomExecutionContractID(planID string, atom AtomExecutionContract) st
 	if err != nil {
 		return ""
 	}
+
 	sum := sha256.Sum256(body)
+
 	return "atomexec_" + hex.EncodeToString(sum[:])[:16]
 }
 
@@ -297,37 +314,51 @@ func NormalizeStableContractIDPart(value string) string {
 	if value == "" {
 		return ""
 	}
+
 	var b strings.Builder
+
 	lastSep := false
+
 	for _, r := range value {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
 			b.WriteRune(r)
+
 			lastSep = false
+
 			continue
 		}
+
 		if r == '_' || r == '-' || r == '.' {
 			if !lastSep {
 				b.WriteRune(r)
+
 				lastSep = true
 			}
+
 			continue
 		}
+
 		if !lastSep {
 			b.WriteByte('-')
+
 			lastSep = true
 		}
 	}
+
 	return strings.Trim(b.String(), "-_.")
 }
 
 func CompileLegacyNewFileAuthorization(contextText string, candidatePaths []string, candidateRoots []string) ([]AuthorizedNewFile, []AuthorizedNewRoot) {
 	inputHash := stableTextHash(contextText)
+
 	var files []AuthorizedNewFile
+
 	for _, path := range UniqueScopePaths(candidatePaths) {
 		authorized, rule := legacyNewFileAuthorizationRule(contextText, path)
 		if !authorized {
 			continue
 		}
+
 		files = append(files, AuthorizedNewFile{
 			Path:   path,
 			Reason: "compiled from legacy prose authorization",
@@ -339,17 +370,22 @@ func CompileLegacyNewFileAuthorization(contextText string, candidatePaths []stri
 			},
 		})
 	}
+
 	var roots []AuthorizedNewRoot
+
 	if ExplicitNewFileBodyContext(contextText) {
 		seenRoots := map[string]struct{}{}
+
 		for _, rawRoot := range candidateRoots {
 			root := normalizeAuthorizedRoot(rawRoot)
 			if root == "" {
 				continue
 			}
+
 			if _, ok := seenRoots[root]; ok {
 				continue
 			}
+
 			seenRoots[root] = struct{}{}
 			roots = append(roots, AuthorizedNewRoot{
 				Root:   root,
@@ -363,66 +399,81 @@ func CompileLegacyNewFileAuthorization(contextText string, candidatePaths []stri
 			})
 		}
 	}
+
 	return normalizeAuthorizedNewFiles(files), normalizeAuthorizedNewRoots(roots)
 }
 
 func ValidatePlanExecutionContractInput(contract PlanExecutionContract) []PlanExecutionContractViolation {
 	var violations []PlanExecutionContractViolation
+
 	if strings.TrimSpace(contract.Revision) != "" && strings.TrimSpace(contract.Revision) != PlanExecutionContractRevision {
 		violations = append(violations, contractViolation("unsupported_contract_revision", "", "", "", fmt.Sprintf("unsupported plan execution contract revision %q", contract.Revision)))
 	}
+
 	if len(contract.Atoms) == 0 {
 		violations = append(violations, contractViolation("missing_atoms", "", "", "", "plan execution contract must contain at least one atom"))
 	}
+
 	for _, file := range contract.AuthorizedNewFiles {
 		if NormalizeScopePath(file.Path) == "" {
 			violations = append(violations, contractViolation("invalid_authorized_new_file", "", file.Path, "", "authorized new file path must be repo-relative"))
 		}
 	}
+
 	for _, root := range contract.AuthorizedNewRoots {
 		if normalizeAuthorizedRoot(root.Root) == "" {
 			violations = append(violations, contractViolation("invalid_authorized_new_root", "", root.Root, "", "authorized new root must be repo-relative"))
 		}
 	}
+
 	for _, delta := range contract.AuthorityDeltas {
 		violations = append(violations, validateAuthorityDelta("", delta)...)
 	}
+
 	for _, atom := range contract.Atoms {
 		violations = append(violations, ValidateAtomExecutionContractInput(atom)...)
 	}
+
 	return violations
 }
 
 func ValidateAtomExecutionContractInput(atom AtomExecutionContract) []PlanExecutionContractViolation {
 	var violations []PlanExecutionContractViolation
+
 	rawRequired := atom.Scope.RequiredCoveragePaths
 	rawAllowed := atom.Scope.AllowedCandidatePaths
 	rawAtomID := NormalizeStableContractIDPart(atom.AtomID)
+
 	for _, path := range rawRequired {
 		if strings.TrimSpace(path) != "" && NormalizeScopePath(path) == "" {
 			violations = append(violations, contractViolation("invalid_required_edit_path", rawAtomID, path, "", "required edit path must be repo-relative"))
 		}
 	}
+
 	for _, path := range rawAllowed {
 		if strings.TrimSpace(path) != "" && NormalizeScopePath(path) == "" {
 			violations = append(violations, contractViolation("invalid_allowed_edit_path", rawAtomID, path, "", "allowed edit path must be repo-relative"))
 		}
 	}
+
 	for _, path := range atom.Scope.WriteAllowedPaths {
 		if strings.TrimSpace(path) != "" && NormalizeScopePath(strings.TrimSuffix(strings.TrimSpace(path), "/**")) == "" {
 			violations = append(violations, contractViolation("invalid_write_envelope_path", rawAtomID, path, "", "write envelope path must be repo-relative"))
 		}
 	}
+
 	for _, file := range atom.AuthorizedNewFiles {
 		if strings.TrimSpace(file.Path) != "" && NormalizeScopePath(file.Path) == "" {
 			violations = append(violations, contractViolation("invalid_authorized_new_file", rawAtomID, file.Path, "", "authorized new file path must be repo-relative"))
 		}
 	}
+
 	for _, root := range atom.AuthorizedNewRoots {
 		if strings.TrimSpace(root.Root) != "" && normalizeAuthorizedRoot(root.Root) == "" {
 			violations = append(violations, contractViolation("invalid_authorized_new_root", rawAtomID, root.Root, "", "authorized new root must be repo-relative"))
 		}
 	}
+
 	for _, obligation := range atom.TDDObligations {
 		for _, path := range obligation.TestArtifactPaths {
 			if strings.TrimSpace(path) != "" && NormalizeScopePath(path) == "" {
@@ -430,20 +481,24 @@ func ValidateAtomExecutionContractInput(atom AtomExecutionContract) []PlanExecut
 			}
 		}
 	}
+
 	for _, obligation := range atom.SourceEvidenceObligations {
 		if obligation.Required && strings.TrimSpace(obligation.Path) != "" && NormalizeScopePath(obligation.Path) == "" {
 			violations = append(violations, contractViolation("invalid_source_evidence_path", rawAtomID, obligation.Path, obligation.ID, "required source evidence path must be repo-relative"))
 		}
 	}
+
 	atom = atom.Normalized()
 	if !atom.Scope.HasContent() {
 		violations = append(violations, contractViolation("missing_scope", atom.AtomID, "", "", "atom execution contract must declare scope"))
 	}
+
 	for _, path := range UniqueScopePaths(rawRequired) {
 		if containsScopePath(rawAllowed, path) {
 			violations = append(violations, contractViolation("required_path_demoted_to_allowed", atom.AtomID, path, "", "required edit paths must not be repeated as allowed edit paths"))
 		}
 	}
+
 	if atom.Scope.WriteAllowedExplicit {
 		for _, path := range atom.Scope.RequiredCoveragePaths {
 			if !pathAllowedByPatterns(path, atom.Scope.WriteAllowedPaths) {
@@ -451,36 +506,45 @@ func ValidateAtomExecutionContractInput(atom AtomExecutionContract) []PlanExecut
 			}
 		}
 	}
+
 	for _, test := range atom.RequiredTests {
 		if strings.TrimSpace(test.Command) == "" {
 			violations = append(violations, contractViolation("missing_required_test_command", atom.AtomID, "", test.ID, "required test must declare a command"))
 		}
 	}
+
 	for _, obligation := range atom.TDDObligations {
 		if strings.TrimSpace(obligation.Command) == "" {
 			violations = append(violations, contractViolation("missing_tdd_command", atom.AtomID, "", obligation.ID, "TDD obligation must declare the required command"))
 		}
 	}
+
 	for _, delta := range atom.AuthorityDeltas {
 		violations = append(violations, validateAuthorityDelta(atom.AtomID, delta)...)
 	}
+
 	return violations
 }
 
 func ValidatePlanTerminalEvidenceInput(contract PlanExecutionContract, evidence TerminalEvidenceInput) []PlanExecutionContractViolation {
 	contract = contract.Normalized()
+
 	var violations []PlanExecutionContractViolation
+
 	for _, atom := range contract.Atoms {
 		if evidence.AtomID != "" && NormalizeStableContractIDPart(evidence.AtomID) != atom.AtomID {
 			continue
 		}
+
 		atom.AuthorizedNewFiles = append(append([]AuthorizedNewFile(nil), contract.AuthorizedNewFiles...), atom.AuthorizedNewFiles...)
 		atom.AuthorizedNewRoots = append(append([]AuthorizedNewRoot(nil), contract.AuthorizedNewRoots...), atom.AuthorizedNewRoots...)
 		violations = append(violations, ValidateAtomTerminalEvidenceInput(atom, evidence)...)
 	}
+
 	if evidence.AtomID != "" && len(violations) == 0 && !contractHasAtom(contract, evidence.AtomID) {
 		violations = append(violations, contractViolation("unknown_terminal_evidence_atom", NormalizeStableContractIDPart(evidence.AtomID), "", "", "terminal evidence references an atom outside the plan execution contract"))
 	}
+
 	return violations
 }
 
@@ -489,28 +553,37 @@ func ValidateAtomTerminalEvidenceInput(atom AtomExecutionContract, evidence Term
 	if evidence.AtomID != "" && NormalizeStableContractIDPart(evidence.AtomID) != atom.AtomID {
 		return nil
 	}
+
 	if !terminalStatusIsSuccess(evidence.TerminalStatus) {
 		return nil
 	}
+
 	requirements := atom.TerminalEvidence.normalized(atom)
+
 	var violations []PlanExecutionContractViolation
+
 	changedPaths := UniqueScopePaths(evidence.ChangedPaths)
+
 	if len(changedPaths) == 0 &&
 		len(evidence.SourceEvidence) == 0 &&
 		len(evidence.RequiredTestResults) == 0 &&
 		len(evidence.TDDCommandResults) == 0 &&
 		len(evidence.TestArtifacts) == 0 &&
 		!evidence.SourceSatisfied {
+
 		violations = append(violations, contractViolation("terminal_success_missing_evidence", atom.AtomID, "", "", "terminal success requires structured evidence"))
 	}
+
 	if requirements.RequireChangedPathCoverage && len(changedPaths) == 0 && !evidence.SourceSatisfied {
 		violations = append(violations, contractViolation("changed_path_coverage_missing", atom.AtomID, "", "", "terminal success lacks changed-path coverage"))
 	}
+
 	for _, path := range changedPaths {
 		if !atom.pathAuthorizedForWrite(path) {
 			violations = append(violations, contractViolation("changed_path_outside_write_envelope", atom.AtomID, path, "", "changed path is outside the typed write envelope"))
 		}
 	}
+
 	requiredCoverage := terminalRequiredPathCoverage(atom, evidence)
 	if requirements.RequireRequiredPathCoverage {
 		for _, path := range atom.Scope.RequiredCoveragePaths {
@@ -519,26 +592,34 @@ func ValidateAtomTerminalEvidenceInput(atom AtomExecutionContract, evidence Term
 			}
 		}
 	}
+
 	if requirements.RequireSourceEvidence {
 		violations = append(violations, validateTerminalSourceEvidence(atom, evidence)...)
 	}
+
 	if requirements.RequireSourceSanity && !evidence.SourceSanityPassed {
 		violations = append(violations, contractViolation("source_sanity_failed_or_missing", atom.AtomID, "", "", "terminal success requires passing source sanity evidence"))
 	}
+
 	if requirements.RequireVerification && !evidence.VerificationPassed {
 		violations = append(violations, contractViolation("verification_failed_or_missing", atom.AtomID, "", "", "terminal success requires passing verification evidence"))
 	}
+
 	if requirements.RequireReview && !evidence.ReviewPassed {
 		violations = append(violations, contractViolation("review_failed_or_missing", atom.AtomID, "", "", "terminal success requires passing review evidence"))
 	}
+
 	if requirements.RequireRequiredTests {
 		violations = append(violations, validateRequiredTestEvidence(atom, evidence)...)
 	}
+
 	if requirements.RequireTestArtifacts {
 		violations = append(violations, validateTDDObligationEvidence(atom, evidence)...)
 	}
+
 	violations = append(violations, validateAcceptanceEvidence(atom, evidence)...)
 	violations = append(violations, validateSourceSatisfiedEvidence(atom, evidence)...)
+
 	return violations
 }
 
@@ -546,6 +627,7 @@ func (requirements TerminalEvidenceRequirements) normalized(atom AtomExecutionCo
 	if requirements.Explicit {
 		return requirements
 	}
+
 	requirements.RequireSourceEvidence = len(atom.Scope.RequiredCoveragePaths) > 0 || len(atom.SourceEvidenceObligations) > 0
 	requirements.RequireChangedPathCoverage = true
 	requirements.RequireRequiredPathCoverage = len(atom.Scope.RequiredCoveragePaths) > 0
@@ -554,6 +636,7 @@ func (requirements TerminalEvidenceRequirements) normalized(atom AtomExecutionCo
 	requirements.RequireReview = true
 	requirements.RequireRequiredTests = len(atom.RequiredTests) > 0 || len(atom.TDDObligations) > 0
 	requirements.RequireTestArtifacts = atomHasRequiredTestArtifacts(atom)
+
 	return requirements
 }
 
@@ -561,10 +644,12 @@ func (requirements SourceSatisfiedRequirements) normalized() SourceSatisfiedRequ
 	if requirements.Explicit {
 		return requirements
 	}
+
 	requirements.Allowed = true
 	requirements.RequireCurrentStateEvidence = true
 	requirements.RequireRequiredScope = true
 	requirements.RequireNoChangedPaths = true
+
 	return requirements
 }
 
@@ -578,92 +663,120 @@ func normalizeExecutionScope(scope PlanScopeContract) PlanScopeContract {
 		if scope.EditSetObligations[i].Kind == scope.EditSetObligations[j].Kind {
 			return scope.EditSetObligations[i].Source < scope.EditSetObligations[j].Source
 		}
+
 		return scope.EditSetObligations[i].Kind < scope.EditSetObligations[j].Kind
 	})
+
 	scope.ContractID = ""
 	if scope.HasContent() {
 		scope.ContractID = planScopeContractID(scope)
 	}
+
 	return scope
 }
 
 func normalizeRequiredTests(tests []RequiredTest) []RequiredTest {
 	out := make([]RequiredTest, 0, len(tests))
 	seen := map[string]struct{}{}
+
 	for _, test := range tests {
 		test.ID = NormalizeStableContractIDPart(test.ID)
 		test.Command = normalizeCommand(test.Command)
 		test.Source = strings.TrimSpace(test.Source)
+
 		key := test.ID + "\x00" + test.Command
+
 		if test.Command == "" {
 			key = test.ID
 		}
+
 		if key == "" {
 			continue
 		}
+
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
+
 		out = append(out, test)
 	}
+
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].ID+"\x00"+out[i].Command < out[j].ID+"\x00"+out[j].Command
 	})
+
 	return out
 }
 
 func normalizeTDDObligations(obligations []TDDObligation) []TDDObligation {
 	out := make([]TDDObligation, 0, len(obligations))
 	seen := map[string]struct{}{}
+
 	for _, obligation := range obligations {
 		obligation.ID = NormalizeStableContractIDPart(obligation.ID)
 		obligation.Command = normalizeCommand(obligation.Command)
 		obligation.Behavior = strings.TrimSpace(obligation.Behavior)
 		obligation.Source = strings.TrimSpace(obligation.Source)
 		obligation.TestArtifactPaths = uniqueSortedScopePaths(obligation.TestArtifactPaths)
+
 		if obligation.ID == "" && obligation.Command == "" && obligation.Behavior == "" {
 			continue
 		}
+
 		key := obligation.ID + "\x00" + obligation.Command + "\x00" + obligation.Behavior
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
+
 		out = append(out, obligation)
 	}
+
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].ID+"\x00"+out[i].Command < out[j].ID+"\x00"+out[j].Command
 	})
+
 	return out
 }
 
 func normalizeAcceptanceObligations(obligations []AcceptanceEvidenceRequired) []AcceptanceEvidenceRequired {
 	out := make([]AcceptanceEvidenceRequired, 0, len(obligations))
 	seen := map[string]struct{}{}
+
 	for _, obligation := range obligations {
 		obligation.ID = NormalizeStableContractIDPart(obligation.ID)
 		obligation.Description = strings.TrimSpace(obligation.Description)
 		obligation.Source = strings.TrimSpace(obligation.Source)
+
 		if obligation.ID == "" {
 			obligation.ID = stableAcceptanceEvidenceID(obligation)
 		}
+
 		if obligation.ID == "" && obligation.Description == "" {
 			continue
 		}
+
 		if !obligation.Required {
 			obligation.Required = true
 		}
+
 		key := obligation.ID + "\x00" + obligation.Description
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
+
 		out = append(out, obligation)
 	}
+
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].ID+"\x00"+out[i].Description < out[j].ID+"\x00"+out[j].Description
 	})
+
 	return out
 }
 
@@ -672,107 +785,137 @@ func stableAcceptanceEvidenceID(obligation AcceptanceEvidenceRequired) string {
 	if seed == "" {
 		return ""
 	}
+
 	if normalized := NormalizeStableContractIDPart(seed); normalized != "" && len(normalized) <= 48 {
 		return normalized
 	}
+
 	sum := sha256.Sum256([]byte(strings.Join([]string{
 		strings.TrimSpace(obligation.Source),
 		seed,
 	}, "\x00")))
+
 	return "acceptance-" + hex.EncodeToString(sum[:])[:12]
 }
 
 func normalizeSourceEvidenceObligations(obligations []SourceEvidenceObligation) []SourceEvidenceObligation {
 	out := make([]SourceEvidenceObligation, 0, len(obligations))
 	seen := map[string]struct{}{}
+
 	for _, obligation := range obligations {
 		obligation.ID = NormalizeStableContractIDPart(obligation.ID)
 		obligation.Path = NormalizeScopePath(obligation.Path)
 		obligation.Kind = normalizeEvidenceKind(obligation.Kind)
 		obligation.Source = strings.TrimSpace(obligation.Source)
+
 		if obligation.Path == "" && obligation.ID == "" {
 			continue
 		}
+
 		if !obligation.Required {
 			obligation.Required = true
 		}
+
 		key := obligation.ID + "\x00" + obligation.Path + "\x00" + obligation.Kind
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
+
 		out = append(out, obligation)
 	}
+
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].ID+"\x00"+out[i].Path+"\x00"+out[i].Kind < out[j].ID+"\x00"+out[j].Path+"\x00"+out[j].Kind
 	})
+
 	return out
 }
 
 func normalizeAuthorizedNewFiles(files []AuthorizedNewFile) []AuthorizedNewFile {
 	out := make([]AuthorizedNewFile, 0, len(files))
 	seen := map[string]struct{}{}
+
 	for _, file := range files {
 		file.Path = NormalizeScopePath(file.Path)
 		file.Reason = strings.TrimSpace(file.Reason)
 		file.Source = strings.TrimSpace(file.Source)
 		file.Metadata = normalizeAuthorizationMetadata(file.Metadata)
+
 		if file.Path == "" {
 			continue
 		}
+
 		if _, ok := seen[file.Path]; ok {
 			continue
 		}
+
 		seen[file.Path] = struct{}{}
 		out = append(out, file)
 	}
+
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+
 	return out
 }
 
 func normalizeAuthorizedNewRoots(roots []AuthorizedNewRoot) []AuthorizedNewRoot {
 	out := make([]AuthorizedNewRoot, 0, len(roots))
 	seen := map[string]struct{}{}
+
 	for _, root := range roots {
 		root.Root = normalizeAuthorizedRoot(root.Root)
 		root.Reason = strings.TrimSpace(root.Reason)
 		root.Source = strings.TrimSpace(root.Source)
 		root.Metadata = normalizeAuthorizationMetadata(root.Metadata)
+
 		if root.Root == "" {
 			continue
 		}
+
 		if _, ok := seen[root.Root]; ok {
 			continue
 		}
+
 		seen[root.Root] = struct{}{}
 		out = append(out, root)
 	}
+
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Root < out[j].Root })
+
 	return out
 }
 
 func normalizeAuthorityDeltas(deltas []AuthorityDelta) []AuthorityDelta {
 	out := make([]AuthorityDelta, 0, len(deltas))
 	seen := map[string]struct{}{}
+
 	for _, delta := range deltas {
 		delta.Path = NormalizeScopePath(delta.Path)
 		delta.From = strings.TrimSpace(delta.From)
 		delta.To = strings.TrimSpace(delta.To)
 		delta.Reason = strings.TrimSpace(delta.Reason)
 		delta.Source = strings.TrimSpace(delta.Source)
+
 		if delta.Kind == "" && delta.Path == "" {
 			continue
 		}
+
 		key := string(delta.Kind) + "\x00" + delta.Path + "\x00" + delta.From + "\x00" + delta.To
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
+
 		out = append(out, delta)
 	}
+
 	sort.SliceStable(out, func(i, j int) bool {
 		return string(out[i].Kind)+"\x00"+out[i].Path < string(out[j].Kind)+"\x00"+out[j].Path
 	})
+
 	return out
 }
 
@@ -785,17 +928,22 @@ func normalizeRecoveryInvariantFailures(failures []RecoveryInvariantFailure) []R
 		failure.AtomID = NormalizeStableContractIDPart(failure.AtomID)
 		failure.Paths = uniqueSortedScopePaths(failure.Paths)
 		failure.Evidence = uniqueSortedStrings(failure.Evidence)
+
 		if failure.Code == "" {
 			continue
 		}
+
 		out = append(out, failure)
 	}
+
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Code == out[j].Code {
 			return out[i].AtomID < out[j].AtomID
 		}
+
 		return out[i].Code < out[j].Code
 	})
+
 	return out
 }
 
@@ -803,6 +951,7 @@ func normalizeAuthorizationMetadata(metadata NewFileAuthorizationMetadata) NewFi
 	metadata.Compiler = strings.TrimSpace(metadata.Compiler)
 	metadata.Rule = NormalizeStableContractIDPart(metadata.Rule)
 	metadata.InputHash = strings.TrimSpace(metadata.InputHash)
+
 	return metadata
 }
 
@@ -810,10 +959,12 @@ func validateAuthorityDelta(atomID string, delta AuthorityDelta) []PlanExecution
 	if strings.TrimSpace(delta.Path) != "" && NormalizeScopePath(delta.Path) == "" {
 		return []PlanExecutionContractViolation{contractViolation("invalid_authority_delta_path", atomID, delta.Path, "", "authority delta path must be repo-relative")}
 	}
+
 	normalized := normalizeAuthorityDeltas([]AuthorityDelta{delta})
 	if len(normalized) == 0 {
 		return []PlanExecutionContractViolation{contractViolation("invalid_authority_delta", atomID, "", "", "authority delta must declare a kind")}
 	}
+
 	delta = normalized[0]
 	switch delta.Kind {
 	case AuthorityDeltaKindDemoteRequiredPath:
@@ -829,74 +980,93 @@ func validateAuthorityDelta(atomID string, delta AuthorityDelta) []PlanExecution
 
 func validateTerminalSourceEvidence(atom AtomExecutionContract, evidence TerminalEvidenceInput) []PlanExecutionContractViolation {
 	var violations []PlanExecutionContractViolation
+
 	evidenceByPath := sourceSatisfiedCurrentStateEvidenceSet(evidence.SourceEvidence)
+
 	if len(atom.SourceEvidenceObligations) > 0 {
 		for _, obligation := range atom.SourceEvidenceObligations {
 			if !obligation.Required {
 				continue
 			}
+
 			if _, ok := evidenceByPath[obligation.Path]; !ok {
 				violations = append(violations, contractViolation("required_source_evidence_missing", atom.AtomID, obligation.Path, obligation.ID, "terminal success lacks required source evidence"))
 			}
 		}
+
 		return violations
 	}
+
 	if len(atom.Scope.RequiredCoveragePaths) == 0 {
 		return nil
 	}
+
 	for _, path := range atom.Scope.RequiredCoveragePaths {
 		if _, ok := evidenceByPath[path]; ok {
 			return nil
 		}
 	}
+
 	violations = append(violations, contractViolation("required_source_evidence_missing", atom.AtomID, "", "", "terminal success lacks source evidence for required scope"))
+
 	return violations
 }
 
 func validateRequiredTestEvidence(atom AtomExecutionContract, evidence TerminalEvidenceInput) []PlanExecutionContractViolation {
 	var violations []PlanExecutionContractViolation
+
 	for _, test := range atom.RequiredTests {
 		result, ok := findRequiredTestEvidence(test, evidence.RequiredTestResults)
 		if !ok {
 			violations = append(violations, contractViolation("required_test_missing", atom.AtomID, "", test.ID, "terminal success lacks required test result"))
 			continue
 		}
+
 		if normalizeCommand(result.Command) != normalizeCommand(test.Command) {
 			violations = append(violations, contractViolation("required_test_command_changed", atom.AtomID, "", test.ID, "terminal evidence changed the required test command"))
 		}
+
 		if !result.Passed {
 			violations = append(violations, contractViolation("required_test_failed", atom.AtomID, "", test.ID, "required test did not pass"))
 		}
 	}
+
 	return violations
 }
 
 func validateTDDObligationEvidence(atom AtomExecutionContract, evidence TerminalEvidenceInput) []PlanExecutionContractViolation {
 	var violations []PlanExecutionContractViolation
+
 	artifactSet := scopePathSet(evidence.TestArtifacts)
+
 	for _, result := range evidence.TDDCommandResults {
 		for _, path := range UniqueScopePaths(result.ArtifactPaths) {
 			artifactSet[path] = struct{}{}
 		}
 	}
+
 	for _, obligation := range atom.TDDObligations {
 		result, ok := findTDDCommandEvidence(obligation, evidence.TDDCommandResults)
 		if !ok {
 			violations = append(violations, contractViolation("required_tdd_command_missing", atom.AtomID, "", obligation.ID, "terminal success lacks required TDD command result"))
 			continue
 		}
+
 		if normalizeCommand(result.Command) != normalizeCommand(obligation.Command) {
 			violations = append(violations, contractViolation("tdd_command_changed", atom.AtomID, "", obligation.ID, "terminal evidence changed the required TDD command"))
 		}
+
 		if !result.Passed {
 			violations = append(violations, contractViolation("required_tdd_command_failed", atom.AtomID, "", obligation.ID, "required TDD command did not pass"))
 		}
+
 		requiredArtifacts := scopePathSet(obligation.TestArtifactPaths)
 		for _, path := range obligation.TestArtifactPaths {
 			if _, ok := artifactSet[path]; !ok {
 				violations = append(violations, contractViolation("required_test_artifact_missing", atom.AtomID, path, obligation.ID, "terminal success lacks required TDD test artifact"))
 			}
 		}
+
 		for _, path := range UniqueScopePaths(result.ArtifactPaths) {
 			if len(requiredArtifacts) > 0 {
 				if _, ok := requiredArtifacts[path]; !ok {
@@ -905,20 +1075,25 @@ func validateTDDObligationEvidence(atom AtomExecutionContract, evidence Terminal
 			}
 		}
 	}
+
 	return violations
 }
 
 func validateAcceptanceEvidence(atom AtomExecutionContract, evidence TerminalEvidenceInput) []PlanExecutionContractViolation {
 	accepted := normalizedStringSet(evidence.AcceptanceEvidenceIDs)
+
 	var violations []PlanExecutionContractViolation
+
 	for _, obligation := range atom.AcceptanceObligations {
 		if !obligation.Required || obligation.ID == "" {
 			continue
 		}
+
 		if _, ok := accepted[obligation.ID]; !ok {
 			violations = append(violations, contractViolation("acceptance_evidence_missing", atom.AtomID, "", obligation.ID, "terminal success lacks required acceptance evidence"))
 		}
 	}
+
 	return violations
 }
 
@@ -927,17 +1102,23 @@ func validateSourceSatisfiedEvidence(atom AtomExecutionContract, evidence Termin
 	if evidence.SourceSatisfied && len(paths) == 0 {
 		paths = append([]string(nil), atom.Scope.RequiredCoveragePaths...)
 	}
+
 	if len(paths) == 0 {
 		return nil
 	}
+
 	requirements := atom.SourceSatisfied.normalized()
+
 	var violations []PlanExecutionContractViolation
+
 	if !requirements.Allowed {
 		violations = append(violations, contractViolation("source_satisfied_not_authorized", atom.AtomID, "", "", "terminal evidence used source-satisfied without contract authorization"))
 	}
+
 	if requirements.RequireNoChangedPaths && len(evidence.ChangedPaths) > 0 {
 		violations = append(violations, contractViolation("source_satisfied_has_changed_paths", atom.AtomID, "", "", "source-satisfied terminal evidence must not include changed paths"))
 	}
+
 	sourceViolations := ValidateSourceSatisfiedPathCoverage(SourceSatisfiedPathCoverageInput{
 		RequiredPaths:        atom.Scope.RequiredCoveragePaths,
 		SourceSatisfiedPaths: paths,
@@ -948,6 +1129,7 @@ func validateSourceSatisfiedEvidence(atom AtomExecutionContract, evidence Termin
 	for _, violation := range sourceViolations {
 		violations = append(violations, contractViolation("source_satisfied_"+violation.Code, atom.AtomID, violation.Path, "", violation.Reason))
 	}
+
 	return violations
 }
 
@@ -956,10 +1138,12 @@ func terminalRequiredPathCoverage(atom AtomExecutionContract, evidence TerminalE
 	for _, path := range UniqueScopePaths(evidence.RequiredPathCoveragePaths) {
 		out[path] = struct{}{}
 	}
+
 	sourceSatisfiedPaths := UniqueScopePaths(evidence.SourceSatisfiedPaths)
 	if evidence.SourceSatisfied && len(sourceSatisfiedPaths) == 0 {
 		sourceSatisfiedPaths = append([]string(nil), atom.Scope.RequiredCoveragePaths...)
 	}
+
 	sourceViolations := ValidateSourceSatisfiedPathCoverage(SourceSatisfiedPathCoverageInput{
 		RequiredPaths:        atom.Scope.RequiredCoveragePaths,
 		SourceSatisfiedPaths: sourceSatisfiedPaths,
@@ -970,6 +1154,7 @@ func terminalRequiredPathCoverage(atom AtomExecutionContract, evidence TerminalE
 	for path := range SourceSatisfiedCoveragePathSet(sourceSatisfiedPaths, sourceViolations) {
 		out[path] = struct{}{}
 	}
+
 	return out
 }
 
@@ -978,17 +1163,22 @@ func (atom AtomExecutionContract) pathAuthorizedForWrite(path string) bool {
 	if path == "" {
 		return false
 	}
+
 	if atom.Scope.WriteAllowedExplicit {
 		return pathAllowedByPatterns(path, atom.Scope.WriteAllowedPaths) ||
 			authorizedNewFilePath(path, atom.AuthorizedNewFiles, atom.AuthorizedNewRoots)
 	}
+
 	allowed := append([]string(nil), atom.Scope.RequiredCoveragePaths...)
+
 	allowed = append(allowed, atom.Scope.AllowedCandidatePaths...)
+
 	return containsScopePath(allowed, path) || authorizedNewFilePath(path, atom.AuthorizedNewFiles, atom.AuthorizedNewRoots)
 }
 
 func pathAllowedByPatterns(path string, patterns []string) bool {
 	path = NormalizeScopePath(path)
+
 	for _, raw := range patterns {
 		pattern := strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
 		if strings.HasSuffix(pattern, "/**") {
@@ -996,12 +1186,15 @@ func pathAllowedByPatterns(path string, patterns []string) bool {
 			if root != "" && pathWithinRoot(path, root) {
 				return true
 			}
+
 			continue
 		}
+
 		if NormalizeScopePath(pattern) == path {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1012,20 +1205,24 @@ func authorizedNewFilePath(path string, files []AuthorizedNewFile, roots []Autho
 			return true
 		}
 	}
+
 	for _, root := range roots {
 		if pathWithinRoot(path, root.Root) {
 			return true
 		}
 	}
+
 	return false
 }
 
 func pathWithinRoot(path string, root string) bool {
 	path = NormalizeScopePath(path)
 	root = normalizeAuthorizedRoot(root)
+
 	if path == "" || root == "" {
 		return false
 	}
+
 	return path == root || strings.HasPrefix(path, root+"/")
 }
 
@@ -1034,10 +1231,12 @@ func findRequiredTestEvidence(test RequiredTest, results []RequiredTestEvidence)
 		if test.ID != "" && NormalizeStableContractIDPart(result.ID) == test.ID {
 			return result, true
 		}
+
 		if normalizeCommand(result.Command) == normalizeCommand(test.Command) {
 			return result, true
 		}
 	}
+
 	return RequiredTestEvidence{}, false
 }
 
@@ -1046,10 +1245,12 @@ func findTDDCommandEvidence(obligation TDDObligation, results []TDDCommandEviden
 		if obligation.ID != "" && NormalizeStableContractIDPart(result.ID) == obligation.ID {
 			return result, true
 		}
+
 		if normalizeCommand(result.Command) == normalizeCommand(obligation.Command) {
 			return result, true
 		}
 	}
+
 	return TDDCommandEvidence{}, false
 }
 
@@ -1060,6 +1261,7 @@ func contractHasAtom(contract PlanExecutionContract, atomID string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1078,6 +1280,7 @@ func atomHasRequiredTestArtifacts(atom AtomExecutionContract) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1085,10 +1288,12 @@ func legacyNewFileAuthorizationRule(contextText string, path string) (bool, stri
 	if ExplicitNewFileBodyContext(contextText) {
 		return true, "explicit_new_file_body_context"
 	}
+
 	lower := strings.ToLower(contextText)
 	if PathLooksLikeTest(path) && strings.Contains(lower, "add") && strings.Contains(lower, "test") {
 		return true, "add_test_file_context"
 	}
+
 	return false, ""
 }
 
@@ -1096,6 +1301,7 @@ func normalizeAuthorizedRoot(root string) string {
 	root = strings.TrimSpace(strings.ReplaceAll(root, "\\", "/"))
 	root = strings.TrimSuffix(root, "/**")
 	root = strings.TrimSuffix(root, "/")
+
 	return NormalizeScopePath(root)
 }
 
@@ -1111,24 +1317,31 @@ func normalizeEvidenceKind(kind string) string {
 func uniqueSortedScopePaths(paths []string) []string {
 	out := UniqueScopePaths(paths)
 	sort.Strings(out)
+
 	return out
 }
 
 func uniqueSortedStrings(values []string) []string {
 	seen := map[string]struct{}{}
+
 	var out []string
+
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
+
 	sort.Strings(out)
+
 	return out
 }
 
@@ -1139,17 +1352,20 @@ func containsScopePath(paths []string, path string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 func normalizedStringSet(values []string) map[string]struct{} {
 	out := map[string]struct{}{}
+
 	for _, value := range values {
 		value = NormalizeStableContractIDPart(value)
 		if value != "" {
 			out[value] = struct{}{}
 		}
 	}
+
 	return out
 }
 

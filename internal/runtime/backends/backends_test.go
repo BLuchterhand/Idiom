@@ -44,24 +44,30 @@ const sampleBackendsJSON = `{
 // "happy path" smoke test for the schema.
 func TestLoadParsesSampleBackends(t *testing.T) {
 	path := writeTempJSON(t, sampleBackendsJSON)
+
 	f, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
+
 	prof, ok := f.Profile("qwen-pair")
 	if !ok {
 		t.Fatalf("expected profile qwen-pair, got profiles=%v", f.Profiles)
 	}
+
 	if len(prof.Models) != 2 {
 		t.Fatalf("expected 2 models, got %d", len(prof.Models))
 	}
+
 	m35 := prof.Models[0]
 	if m35.Alias != "qwen3.6-35b" || m35.Port != 47780 || m35.CacheSize != 4 || m35.CacheBytes != 21474836480 || m35.MaxTokens != 8192 {
 		t.Fatalf("model[0] decoded incorrectly: %+v", m35)
 	}
+
 	if len(m35.ExtraArgs) != 2 || m35.ExtraArgs[0] != "--temp" || m35.ExtraArgs[1] != "1.0" {
 		t.Fatalf("extra_args round-trip lost: %v", m35.ExtraArgs)
 	}
+
 	if prof.Proxy.Listen != 47680 || prof.Proxy.DefaultAlias != "qwen3.6-35b" || prof.Proxy.DefaultCoder != "qwen3-coder-30b" {
 		t.Fatalf("proxy decoded incorrectly: %+v", prof.Proxy)
 	}
@@ -73,13 +79,16 @@ func TestLoadParsesSampleBackends(t *testing.T) {
 // to their hardcoded defaults without spamming stderr.
 func TestLoadOptionalMissingFileReturnsNoErr(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "does-not-exist.json")
+
 	f, ok, err := LoadOptional(missing)
 	if err != nil {
 		t.Fatalf("LoadOptional should not error on missing file: %v", err)
 	}
+
 	if ok {
 		t.Fatalf("LoadOptional should report ok=false for missing file")
 	}
+
 	if len(f.Profiles) != 0 {
 		t.Fatalf("zero-value file expected for missing path, got %+v", f)
 	}
@@ -92,13 +101,16 @@ func TestLoadOptionalMissingFileReturnsNoErr(t *testing.T) {
 // the bug behind a hardcoded default.
 func TestLoadOptionalMalformedFileSurfacesError(t *testing.T) {
 	path := writeTempJSON(t, `{"profiles": {`) // truncated JSON
+
 	_, ok, err := LoadOptional(path)
 	if err == nil {
 		t.Fatalf("malformed JSON must surface an error, got nil")
 	}
+
 	if ok {
 		t.Fatalf("ok must be false on parse error")
 	}
+
 	if !strings.Contains(err.Error(), "backends:") {
 		t.Fatalf("error should be tagged with package name: %v", err)
 	}
@@ -113,13 +125,16 @@ func TestLoadFromProjectRootResolvesCanonicalPath(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir .idiom: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(sampleBackendsJSON), 0o644); err != nil {
 		t.Fatalf("write backends.json: %v", err)
 	}
+
 	f, ok, err := LoadFromProjectRoot(root)
 	if err != nil || !ok {
 		t.Fatalf("LoadFromProjectRoot ok=%v err=%v", ok, err)
 	}
+
 	if _, found := f.Profile("qwen-pair"); !found {
 		t.Fatalf("expected qwen-pair profile loaded from canonical path")
 	}
@@ -133,6 +148,7 @@ func TestLoadFromProjectRootEmptyProjectRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("empty root must not error: %v", err)
 	}
+
 	if ok {
 		t.Fatalf("empty root must report ok=false")
 	}
@@ -147,10 +163,12 @@ func TestProfileSelectsLoneProfileWhenUnnamed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
+
 	prof, ok := f.Profile("")
 	if !ok {
 		t.Fatalf("expected lone profile to be returned with empty name")
 	}
+
 	if len(prof.Models) != 2 {
 		t.Fatalf("expected qwen-pair models, got %d", len(prof.Models))
 	}
@@ -166,13 +184,16 @@ func TestProfileEmptyNameAmbiguousWithMultipleProfiles(t *testing.T) {
 		"a": {"models": []},
 		"b": {"models": []}
 	}}`
+
 	f, err := Load(writeTempJSON(t, body))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
+
 	if _, ok := f.Profile(""); ok {
 		t.Fatalf("empty name with multiple profiles must be ambiguous (ok=false)")
 	}
+
 	if _, ok := f.Profile("a"); !ok {
 		t.Fatalf("named lookup must still work")
 	}
@@ -186,14 +207,17 @@ func TestProfileUsesDefaultProfileWithMultipleProfiles(t *testing.T) {
 			"b": {"models": [{"alias": "bravo"}]}
 		}
 	}`
+
 	f, err := Load(writeTempJSON(t, body))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
+
 	prof, ok := f.Profile("")
 	if !ok {
 		t.Fatalf("expected empty profile lookup to use default_profile")
 	}
+
 	if len(prof.Models) != 1 || prof.Models[0].Alias != "bravo" {
 		t.Fatalf("default profile resolved wrong model: %+v", prof.Models)
 	}
@@ -204,14 +228,17 @@ func TestFileModelByAliasSearchesAllProfiles(t *testing.T) {
 		"qwen-pair": {"models": [{"alias": "qwen3.6-35b", "port": 47780}]},
 		"qwen-27b-pair": {"models": [{"alias": "qwen3.6-27b", "port": 47783}]}
 	}}`
+
 	f, err := Load(writeTempJSON(t, body))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
+
 	model, ok := f.ModelByAlias("qwen3.6-27b")
 	if !ok {
 		t.Fatalf("expected alias in non-default profile to resolve")
 	}
+
 	if model.Port != 47783 {
 		t.Fatalf("port = %d, want 47783", model.Port)
 	}
@@ -256,6 +283,7 @@ func TestCoderAliasCompatibilitySkipsLoneModelFallback(t *testing.T) {
 	if got := prof.CoderAlias(); got != "" {
 		t.Fatalf("CoderAlias must retain no-lone-model compatibility, got %q", got)
 	}
+
 	resolution := prof.ResolveRoleAlias(RoleExecutor)
 	if !resolution.OK || resolution.Alias != "only-model" || resolution.Source != RoleAliasSourceLoneModel {
 		t.Fatalf("ResolveRoleAlias executor = %#v, want lone model resolution", resolution)
@@ -286,6 +314,7 @@ func TestCoderAliasHeuristicSkipsEncoderAndDecoder(t *testing.T) {
 			for i, a := range tc.aliases {
 				models[i] = Model{Alias: a}
 			}
+
 			prof := Profile{Models: models}
 			if got := prof.CoderAlias(); got != tc.want {
 				t.Fatalf("CoderAlias for %v = %q, want %q", tc.aliases, got, tc.want)
@@ -342,6 +371,7 @@ func TestAliasForRolePrefersExplicitDefaults(t *testing.T) {
 		RoleExecutor:   "explicit-executor",
 		RoleClassifier: "explicit-classifier",
 	}
+
 	for role, want := range cases {
 		got, ok := prof.AliasForRole(role)
 		if !ok || got != want {
@@ -413,13 +443,16 @@ func TestAliasForRoleFindsRoleTaggedModel(t *testing.T) {
 		},
 	}
 	got, ok := prof.AliasForRole(RolePlanner)
+
 	if !ok || got != "beta" {
 		t.Fatalf("planner: got (%q,%v), want (beta,true)", got, ok)
 	}
+
 	got, ok = prof.AliasForRole(RoleExecutor)
 	if !ok || got != "beta" {
 		t.Fatalf("executor: got (%q,%v), want (beta,true)", got, ok)
 	}
+
 	got, ok = prof.AliasForRole(RoleClassifier)
 	if !ok || got != "alpha" {
 		t.Fatalf("classifier: got (%q,%v), want (alpha,true)", got, ok)
@@ -451,14 +484,17 @@ func TestAliasForRoleExecutorHeuristicMultiModel(t *testing.T) {
 		{Alias: "qwen3-coder-30b"},
 	}}
 	got, ok := prof.AliasForRole(RoleExecutor)
+
 	if !ok || got != "qwen3-coder-30b" {
 		t.Fatalf("executor heuristic: got (%q,%v), want (qwen3-coder-30b,true)", got, ok)
 	}
+
 	// Planner and classifier do NOT have an alias-token heuristic, so
 	// in a multi-model profile with no tags they return ok=false.
 	if alias, ok := prof.AliasForRole(RolePlanner); ok {
 		t.Fatalf("planner heuristic should not exist; got (%q,%v)", alias, ok)
 	}
+
 	if alias, ok := prof.AliasForRole(RoleClassifier); ok {
 		t.Fatalf("classifier heuristic should not exist; got (%q,%v)", alias, ok)
 	}
@@ -476,6 +512,7 @@ func TestAliasForRoleEmptyOnMiss(t *testing.T) {
 	if alias, ok := prof.AliasForRole(RoleExecutor); ok {
 		t.Fatalf("executor on no-coder multi-model profile should miss; got (%q,%v)", alias, ok)
 	}
+
 	if alias, ok := prof.AliasForRole(""); ok {
 		t.Fatalf("empty role must report ok=false; got (%q,%v)", alias, ok)
 	}
@@ -490,6 +527,7 @@ func TestAliasForRoleLegacyDefaultCoderAliasesExecutor(t *testing.T) {
 		Proxy:  Proxy{DefaultCoder: "model-a"},
 	}
 	got, ok := prof.AliasForRole(RoleExecutor)
+
 	if !ok || got != "model-a" {
 		t.Fatalf("legacy DefaultCoder must alias executor; got (%q,%v)", got, ok)
 	}
@@ -503,12 +541,15 @@ func TestModelByAliasFindsAndMissesCleanly(t *testing.T) {
 		{Alias: "beta", Port: 200},
 	}}
 	got, ok := prof.ModelByAlias("beta")
+
 	if !ok || got.Port != 200 {
 		t.Fatalf("ModelByAlias(beta): got (%+v,%v)", got, ok)
 	}
+
 	if _, ok := prof.ModelByAlias("missing"); ok {
 		t.Fatalf("ModelByAlias should miss for unknown alias")
 	}
+
 	if _, ok := prof.ModelByAlias("  "); ok {
 		t.Fatalf("ModelByAlias should miss for blank alias")
 	}
@@ -522,6 +563,7 @@ func TestResolveRoleFromProjectRootHappyPath(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	body := `{"profiles": {"only": {"models": [
 		{"alias": "exec-model", "binary": "mlx_lm.server", "port": 9001, "roles": ["executor"]},
 		{"alias": "plan-model", "binary": "mlx_lm.server", "port": 9000, "roles": ["planner"]}
@@ -529,10 +571,12 @@ func TestResolveRoleFromProjectRootHappyPath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+
 	alias, model, ok, err := ResolveRoleFromProjectRoot(root, "", RoleExecutor)
 	if err != nil || !ok {
 		t.Fatalf("resolve: ok=%v err=%v", ok, err)
 	}
+
 	if alias != "exec-model" || model.Port != 9001 {
 		t.Fatalf("resolved (%q, port=%d), want (exec-model, 9001)", alias, model.Port)
 	}
@@ -549,6 +593,7 @@ func TestResolveRoleFromProjectRootAliasOnlyPropagatesAlias(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	body := `{"profiles": {"only": {
 		"models": [{"alias": "planner-model", "port": 1000}],
 		"proxy": {"default_executor": "remote-coder"}
@@ -556,13 +601,16 @@ func TestResolveRoleFromProjectRootAliasOnlyPropagatesAlias(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+
 	alias, model, ok, err := ResolveRoleFromProjectRoot(root, "", RoleExecutor)
 	if err != nil || !ok {
 		t.Fatalf("resolve: ok=%v err=%v", ok, err)
 	}
+
 	if alias != "remote-coder" {
 		t.Fatalf("alias = %q, want remote-coder", alias)
 	}
+
 	if model.Alias != "remote-coder" {
 		t.Fatalf("model.Alias must echo the resolved alias for proxy-only setups; got %q", model.Alias)
 	}
@@ -574,6 +622,7 @@ func TestResolveRoleFromProjectRootAliasOnlyPropagatesAlias(t *testing.T) {
 func TestResolveRoleFromProjectRootMissingFile(t *testing.T) {
 	root := t.TempDir()
 	alias, _, ok, err := ResolveRoleFromProjectRoot(root, "", RoleExecutor)
+
 	if err != nil || ok || alias != "" {
 		t.Fatalf("missing file: alias=%q ok=%v err=%v", alias, ok, err)
 	}
@@ -587,13 +636,16 @@ func TestResolveRoleFromProjectRootProfileNotFound(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(sampleBackendsJSON), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+
 	alias, _, ok, err := ResolveRoleFromProjectRoot(root, "missing-profile", RoleExecutor)
 	if err != nil {
 		t.Fatalf("missing profile must not error: %v", err)
 	}
+
 	if ok || alias != "" {
 		t.Fatalf("missing profile must report ok=false; got alias=%q ok=%v", alias, ok)
 	}
@@ -607,9 +659,11 @@ func TestResolveRoleFromProjectRootMalformedFileSurfacesError(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(`{"profiles": {`), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+
 	if _, _, _, err := ResolveRoleFromProjectRoot(root, "", RoleExecutor); err == nil {
 		t.Fatalf("malformed backends.json must surface an error")
 	}
@@ -617,10 +671,13 @@ func TestResolveRoleFromProjectRootMalformedFileSurfacesError(t *testing.T) {
 
 func writeTempJSON(t *testing.T, body string) string {
 	t.Helper()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "backends.json")
+
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+
 	return path
 }

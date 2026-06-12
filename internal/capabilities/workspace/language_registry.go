@@ -58,5 +58,6 @@ func (m *Manager) ActiveLanguages() []LanguageSupport {
 	if !m.Enabled() {
 		return nil
 	}
+
 	return language.ActiveLanguages(m.cfg.Root)
 }

@@ -121,7 +121,9 @@ var (
 
 func AuditPlan(packet Packet, plan string) PlanAuditResult {
 	plan = strings.TrimSpace(plan)
+
 	findings := make([]PlanAuditFinding, 0)
+
 	if plan == "" {
 		findings = append(findings, PlanAuditFinding{
 			Severity:            "error",
@@ -129,8 +131,10 @@ func AuditPlan(packet Packet, plan string) PlanAuditResult {
 			Message:             "candidate plan is empty",
 			SuggestedResolution: "Provide the model-authored plan text before running plan audit.",
 		})
+
 		return finalizePlanAuditResult(findings)
 	}
+
 	findings = append(findings, auditPlanPacketIdentity(packet, plan)...)
 	findings = append(findings, auditPlanPaths(packet, plan)...)
 	findings = append(findings, auditPlanScopeEvidence(packet, plan)...)
@@ -142,18 +146,23 @@ func AuditPlan(packet Packet, plan string) PlanAuditResult {
 	findings = append(findings, auditProtectedPaths(packet, plan)...)
 	findings = append(findings, auditPlanReadiness(packet, plan)...)
 	findings = append(findings, auditPlanPlaceholders(plan)...)
+
 	return finalizePlanAuditResult(findings)
 }
 
 func AuditPlanArtifact(packet Packet, artifact PlanArtifactAuditSubject) PlanAuditResult {
 	var findings []PlanAuditFinding
+
 	findings = append(findings, auditArtifactPacketIdentity(packet, artifact)...)
 	findings = append(findings, auditArtifactScopeEvidence(packet, artifact)...)
 	findings = append(findings, auditArtifactUnresolvedQuestions(artifact)...)
 	findings = append(findings, auditArtifactVerificationObligations(packet, artifact)...)
 	findings = append(findings, auditArtifactApprovalHandoff(artifact)...)
+
 	result := finalizePlanAuditResult(findings)
+
 	result.MismatchMetrics.PacketState, result.MismatchMetrics.PacketReason = auditArtifactPacketState(packet, artifact, result.Findings)
+
 	return result
 }
 
@@ -162,12 +171,15 @@ func auditPlanCommandReferences(packet Packet, plan string) []PlanAuditFinding {
 	if root == "" {
 		return nil
 	}
+
 	var findings []PlanAuditFinding
+
 	for _, command := range extractPlanCommands(plan) {
 		for _, rel := range commandReferencePaths(command) {
 			if pathExistsUnderRoot(root, rel) {
 				continue
 			}
+
 			findings = append(findings, PlanAuditFinding{
 				Severity:            "error",
 				Kind:                "unknown_command_path",
@@ -177,6 +189,7 @@ func auditPlanCommandReferences(packet Packet, plan string) []PlanAuditFinding {
 			})
 		}
 	}
+
 	return findings
 }
 
@@ -185,16 +198,21 @@ func auditPlanPacketIdentity(packet Packet, plan string) []PlanAuditFinding {
 	if len(knownPackIDs) == 0 {
 		return nil
 	}
+
 	raw := planHandlePattern.FindAllString(plan, -1)
+
 	var findings []PlanAuditFinding
+
 	for _, handle := range cleanStrings(raw) {
 		if !strings.HasPrefix(handle, "context_pack://") {
 			continue
 		}
+
 		packID := strings.TrimPrefix(handle, "context_pack://")
 		if _, ok := knownPackIDs[packID]; ok {
 			continue
 		}
+
 		findings = append(findings, PlanAuditFinding{
 			Severity:            "error",
 			Kind:                "packet_identity_mismatch",
@@ -203,6 +221,7 @@ func auditPlanPacketIdentity(packet Packet, plan string) []PlanAuditFinding {
 			SuggestedResolution: "Use the packet-backed context id, remove the unsupported packet claim, or mark the packet identity as unresolved.",
 		})
 	}
+
 	return findings
 }
 
@@ -211,16 +230,21 @@ func auditPlanScopeEvidence(packet Packet, plan string) []PlanAuditFinding {
 	if len(scopePaths) == 0 {
 		return nil
 	}
+
 	var findings []PlanAuditFinding
+
 	lines := strings.Split(plan, "\n")
+
 	for _, path := range extractPlanPaths(plan) {
 		cleanPath := trimPlanPathLineSuffix(path)
 		if cleanPath == "" || pathAllowedAsNew(cleanPath, packetFileRoles(packet), lines) {
 			continue
 		}
+
 		if _, ok := scopePaths[cleanPath]; ok {
 			continue
 		}
+
 		if lineFor(plan, cleanPath, mentionsEditVerb) {
 			findings = append(findings, PlanAuditFinding{
 				Severity:            "error",
@@ -231,6 +255,7 @@ func auditPlanScopeEvidence(packet Packet, plan string) []PlanAuditFinding {
 			})
 		}
 	}
+
 	return findings
 }
 
@@ -238,15 +263,20 @@ func auditPlanUnresolvedQuestions(packet Packet, plan string) []PlanAuditFinding
 	if len(packet.Unknowns) == 0 && (packet.Handoff == nil || len(packet.Handoff.Blockers) == 0) {
 		return nil
 	}
+
 	lower := strings.ToLower(plan)
 	if mentionsUnresolved(lower) || strings.Contains(lower, "unknown") {
 		return nil
 	}
+
 	var evidence []string
+
 	evidence = append(evidence, packet.Unknowns...)
+
 	if packet.Handoff != nil {
 		evidence = append(evidence, packet.Handoff.Blockers...)
 	}
+
 	return []PlanAuditFinding{{
 		Severity:            "warning",
 		Kind:                "unresolved_question_mismatch",
@@ -261,7 +291,9 @@ func auditPlanPlaceholders(plan string) []PlanAuditFinding {
 	if len(raw) == 0 {
 		return nil
 	}
+
 	placeholders := cleanStrings(raw)
+
 	return []PlanAuditFinding{{
 		Severity:            "error",
 		Kind:                "unresolved_placeholder",
@@ -276,9 +308,13 @@ func auditPlanPaths(packet Packet, plan string) []PlanAuditFinding {
 	if len(paths) == 0 {
 		return nil
 	}
+
 	roles := packetFileRoles(packet)
+
 	var findings []PlanAuditFinding
+
 	lines := strings.Split(plan, "\n")
+
 	for _, path := range paths {
 		cleanPath := strings.TrimSuffix(path, ":")
 		if idx := strings.LastIndex(cleanPath, ":"); idx > 1 {
@@ -286,12 +322,15 @@ func auditPlanPaths(packet Packet, plan string) []PlanAuditFinding {
 				cleanPath = cleanPath[:idx]
 			}
 		}
+
 		if pathAllowedAsNew(cleanPath, roles, lines) {
 			continue
 		}
+
 		if fileExistsUnderRoot(packet.Workspace.Root, cleanPath) {
 			continue
 		}
+
 		findings = append(findings, PlanAuditFinding{
 			Severity:            "error",
 			Kind:                "missing_file",
@@ -300,26 +339,33 @@ func auditPlanPaths(packet Packet, plan string) []PlanAuditFinding {
 			SuggestedResolution: "Mark the file as new/create in the plan, correct the path, or remove the unsupported reference.",
 		})
 	}
+
 	return findings
 }
 
 func auditPlanHandles(packet Packet, plan string) []PlanAuditFinding {
 	known := packetHandles(packet)
 	raw := planHandlePattern.FindAllString(plan, -1)
+
 	if len(raw) == 0 {
 		return nil
 	}
+
 	var findings []PlanAuditFinding
+
 	for _, handle := range cleanStrings(raw) {
 		if _, ok := known[handle]; ok {
 			continue
 		}
+
 		if strings.HasPrefix(handle, "context_pack://") {
 			continue
 		}
+
 		if lineFor(plan, handle, mentionsUnresolved) {
 			continue
 		}
+
 		findings = append(findings, PlanAuditFinding{
 			Severity:            "warning",
 			Kind:                "unresolved_handle",
@@ -328,20 +374,25 @@ func auditPlanHandles(packet Packet, plan string) []PlanAuditFinding {
 			SuggestedResolution: "Use a packet handle, mark the handle unresolved, or remove the unsupported citation.",
 		})
 	}
+
 	return findings
 }
 
 func auditPlanValidation(packet Packet, plan string) []PlanAuditFinding {
 	var findings []PlanAuditFinding
+
 	commands := packetValidationCommands(packet)
+
 	if len(commands) > 0 {
 		mentioned := false
+
 		for _, command := range commands {
 			if strings.Contains(plan, command) {
 				mentioned = true
 				break
 			}
 		}
+
 		if !mentioned {
 			findings = append(findings, PlanAuditFinding{
 				Severity:            "warning",
@@ -352,6 +403,7 @@ func auditPlanValidation(packet Packet, plan string) []PlanAuditFinding {
 			})
 		}
 	}
+
 	for _, command := range extractPlanCommands(plan) {
 		if !looksScopedCommand(command) {
 			findings = append(findings, PlanAuditFinding{
@@ -363,6 +415,7 @@ func auditPlanValidation(packet Packet, plan string) []PlanAuditFinding {
 			})
 		}
 	}
+
 	return findings
 }
 
@@ -370,10 +423,12 @@ func auditPlanFreshness(packet Packet, plan string) []PlanAuditFinding {
 	if packet.Freshness == nil || packet.Freshness.Fresh == nil || *packet.Freshness.Fresh {
 		return nil
 	}
+
 	lower := strings.ToLower(plan)
 	if strings.Contains(lower, "stale") || strings.Contains(lower, "refresh") {
 		return nil
 	}
+
 	return []PlanAuditFinding{{
 		Severity:            "warning",
 		Kind:                "stale_fact",
@@ -387,11 +442,14 @@ func auditProtectedPaths(packet Packet, plan string) []PlanAuditFinding {
 	if packet.Contracts == nil || len(packet.Contracts.ProtectedPaths) == 0 {
 		return nil
 	}
+
 	var findings []PlanAuditFinding
+
 	for _, protected := range packet.Contracts.ProtectedPaths {
 		if protected == "" {
 			continue
 		}
+
 		if lineFor(plan, protected, mentionsEditVerb) {
 			findings = append(findings, PlanAuditFinding{
 				Severity:            "error",
@@ -402,12 +460,15 @@ func auditProtectedPaths(packet Packet, plan string) []PlanAuditFinding {
 			})
 		}
 	}
+
 	return findings
 }
 
 func auditPlanReadiness(packet Packet, plan string) []PlanAuditFinding {
 	lower := strings.ToLower(plan)
+
 	var findings []PlanAuditFinding
+
 	if taskSuggestsImplementation(packet.Task) && len(extractPlanPaths(plan)) == 0 && len(packet.Files) > 0 {
 		findings = append(findings, PlanAuditFinding{
 			Severity:            "warning",
@@ -416,6 +477,7 @@ func auditPlanReadiness(packet Packet, plan string) []PlanAuditFinding {
 			SuggestedResolution: "Add a bounded implementation atom with the file path, or state the concrete blocker.",
 		})
 	}
+
 	if (strings.Contains(lower, "inspect more") || strings.Contains(lower, "look into more") || strings.Contains(lower, "need more context")) && !mentionsUnresolved(lower) {
 		findings = append(findings, PlanAuditFinding{
 			Severity:            "warning",
@@ -424,13 +486,16 @@ func auditPlanReadiness(packet Packet, plan string) []PlanAuditFinding {
 			SuggestedResolution: "Name the missing claim and the evidence category that would resolve it.",
 		})
 	}
+
 	return findings
 }
 
 func auditArtifactPacketIdentity(packet Packet, artifact PlanArtifactAuditSubject) []PlanAuditFinding {
 	knownPackIDs := packetPackIDs(packet)
 	packID := firstNonEmpty(artifact.Packet.PackID, artifact.PackID)
+
 	var findings []PlanAuditFinding
+
 	if len(knownPackIDs) > 0 {
 		if packID == "" {
 			findings = append(findings, PlanAuditFinding{
@@ -449,6 +514,7 @@ func auditArtifactPacketIdentity(packet Packet, artifact PlanArtifactAuditSubjec
 			})
 		}
 	}
+
 	if artifact.Packet.PackID != "" && artifact.PackID != "" && artifact.Packet.PackID != artifact.PackID {
 		findings = append(findings, PlanAuditFinding{
 			Severity:            "error",
@@ -458,6 +524,7 @@ func auditArtifactPacketIdentity(packet Packet, artifact PlanArtifactAuditSubjec
 			SuggestedResolution: "Keep one packet identity across the artifact.",
 		})
 	}
+
 	if packet.Freshness != nil {
 		if artifact.Packet.IndexID != "" && packet.Freshness.IndexID != "" && artifact.Packet.IndexID != packet.Freshness.IndexID {
 			findings = append(findings, PlanAuditFinding{
@@ -468,6 +535,7 @@ func auditArtifactPacketIdentity(packet Packet, artifact PlanArtifactAuditSubjec
 				SuggestedResolution: "Re-submit the plan from the current packet or mark stale evidence explicitly.",
 			})
 		}
+
 		if artifactClaimsFresh(artifact.Packet) && packet.Freshness.Fresh != nil && !*packet.Freshness.Fresh {
 			findings = append(findings, PlanAuditFinding{
 				Severity:            "error",
@@ -478,10 +546,12 @@ func auditArtifactPacketIdentity(packet Packet, artifact PlanArtifactAuditSubjec
 			})
 		}
 	}
+
 	for _, evidence := range artifact.Evidence {
 		if !strings.HasPrefix(evidence.Handle, "context_pack://") {
 			continue
 		}
+
 		evidencePackID := strings.TrimPrefix(evidence.Handle, "context_pack://")
 		if packID == "" || evidencePackID != packID {
 			findings = append(findings, PlanAuditFinding{
@@ -493,6 +563,7 @@ func auditArtifactPacketIdentity(packet Packet, artifact PlanArtifactAuditSubjec
 			})
 		}
 	}
+
 	return findings
 }
 
@@ -501,11 +572,15 @@ func auditArtifactScopeEvidence(packet Packet, artifact PlanArtifactAuditSubject
 	editPaths := cleanStrings(planArtifactAuditEditPaths(artifact.Edits))
 	required := stringSetFromStrings(artifact.Paths.Required)
 	editable := stringSetFromStrings(artifact.Paths.Editable)
+
 	for _, path := range artifact.Paths.Changed {
 		editable[path] = struct{}{}
 	}
+
 	forbidden := stringSetFromStrings(artifact.Paths.Forbidden)
+
 	var findings []PlanAuditFinding
+
 	for _, path := range editPaths {
 		if _, ok := forbidden[path]; ok {
 			findings = append(findings, PlanAuditFinding{
@@ -516,6 +591,7 @@ func auditArtifactScopeEvidence(packet Packet, artifact PlanArtifactAuditSubject
 				SuggestedResolution: "Remove the forbidden-path edit or update the packet contract before planning.",
 			})
 		}
+
 		if len(required) > 0 {
 			if _, ok := required[path]; !ok {
 				findings = append(findings, PlanAuditFinding{
@@ -527,6 +603,7 @@ func auditArtifactScopeEvidence(packet Packet, artifact PlanArtifactAuditSubject
 				})
 			}
 		}
+
 		if len(editable) > 0 {
 			if _, ok := editable[path]; !ok {
 				findings = append(findings, PlanAuditFinding{
@@ -538,6 +615,7 @@ func auditArtifactScopeEvidence(packet Packet, artifact PlanArtifactAuditSubject
 				})
 			}
 		}
+
 		if len(scopePaths) > 0 {
 			if _, ok := scopePaths[path]; !ok {
 				findings = append(findings, PlanAuditFinding{
@@ -550,6 +628,7 @@ func auditArtifactScopeEvidence(packet Packet, artifact PlanArtifactAuditSubject
 			}
 		}
 	}
+
 	for path := range required {
 		if !stringSliceContains(editPaths, path) {
 			findings = append(findings, PlanAuditFinding{
@@ -561,16 +640,20 @@ func auditArtifactScopeEvidence(packet Packet, artifact PlanArtifactAuditSubject
 			})
 		}
 	}
+
 	for _, evidence := range artifact.Evidence {
 		if evidence.Path == "" {
 			continue
 		}
+
 		if _, ok := scopePaths[evidence.Path]; ok {
 			continue
 		}
+
 		if stringSliceContains(editPaths, evidence.Path) {
 			continue
 		}
+
 		findings = append(findings, PlanAuditFinding{
 			Severity:            "warning",
 			Kind:                "evidence_scope_mismatch",
@@ -579,15 +662,18 @@ func auditArtifactScopeEvidence(packet Packet, artifact PlanArtifactAuditSubject
 			SuggestedResolution: "Keep plan evidence references packet-backed, edit-scoped, or explicitly unresolved.",
 		})
 	}
+
 	return findings
 }
 
 func auditArtifactUnresolvedQuestions(artifact PlanArtifactAuditSubject) []PlanAuditFinding {
 	var findings []PlanAuditFinding
+
 	for _, question := range artifact.UnresolvedQuestions {
 		if !question.RequiredBeforeHandoff || artifactQuestionClosed(question.Status) || !artifact.Handoff.Ready {
 			continue
 		}
+
 		findings = append(findings, PlanAuditFinding{
 			Severity:            "error",
 			Kind:                "unresolved_question_mismatch",
@@ -596,16 +682,20 @@ func auditArtifactUnresolvedQuestions(artifact PlanArtifactAuditSubject) []PlanA
 			SuggestedResolution: "Close the question with evidence or mark the handoff blocked.",
 		})
 	}
+
 	return findings
 }
 
 func auditArtifactVerificationObligations(packet Packet, artifact PlanArtifactAuditSubject) []PlanAuditFinding {
 	packetCommands := packetValidationCommands(packet)
+
 	var findings []PlanAuditFinding
+
 	for _, command := range packetCommands {
 		if artifactVerificationMentionsCommand(artifact.VerificationObligations, command) {
 			continue
 		}
+
 		findings = append(findings, PlanAuditFinding{
 			Severity:            "warning",
 			Kind:                "validation_gap",
@@ -614,6 +704,7 @@ func auditArtifactVerificationObligations(packet Packet, artifact PlanArtifactAu
 			SuggestedResolution: "Carry packet validation into verification_obligations or mark validation blocked.",
 		})
 	}
+
 	for _, obligation := range artifact.VerificationObligations {
 		if obligation.Required && !artifactVerificationClosed(obligation.Status) {
 			findings = append(findings, PlanAuditFinding{
@@ -625,15 +716,19 @@ func auditArtifactVerificationObligations(packet Packet, artifact PlanArtifactAu
 			})
 		}
 	}
+
 	return findings
 }
 
 func auditArtifactApprovalHandoff(artifact PlanArtifactAuditSubject) []PlanAuditFinding {
 	var findings []PlanAuditFinding
+
 	scopeSeverity := "warning"
+
 	if artifact.Handoff.Ready {
 		scopeSeverity = "error"
 	}
+
 	if strings.TrimSpace(artifact.Approval.ScopeID) == "" {
 		findings = append(findings, PlanAuditFinding{
 			Severity:            scopeSeverity,
@@ -643,6 +738,7 @@ func auditArtifactApprovalHandoff(artifact PlanArtifactAuditSubject) []PlanAudit
 			SuggestedResolution: "Carry a stable approval scope id on the submitted plan artifact.",
 		})
 	}
+
 	if strings.TrimSpace(artifact.Handoff.ID) == "" {
 		findings = append(findings, PlanAuditFinding{
 			Severity:            scopeSeverity,
@@ -652,15 +748,18 @@ func auditArtifactApprovalHandoff(artifact PlanArtifactAuditSubject) []PlanAudit
 			SuggestedResolution: "Carry a stable handoff id before executor dispatch.",
 		})
 	}
+
 	if artifact.Approval.Required && artifactApprovalPartial(artifact.Approval.Status) {
 		findings = append(findings, auditArtifactPartialApproval(artifact)...)
 	} else if artifact.Approval.Required && !artifactApprovalSatisfied(artifact.Approval.Status) {
 		severity := "warning"
 		message := "submitted plan approval is required but not satisfied"
+
 		if artifact.Handoff.Ready {
 			severity = "error"
 			message = "submitted plan handoff is ready while required approval is not satisfied"
 		}
+
 		findings = append(findings, PlanAuditFinding{
 			Severity:            severity,
 			Kind:                "approval_handoff_mismatch",
@@ -669,6 +768,7 @@ func auditArtifactApprovalHandoff(artifact PlanArtifactAuditSubject) []PlanAudit
 			SuggestedResolution: "Approve the bounded scope or mark the handoff blocked.",
 		})
 	}
+
 	if artifact.Handoff.Ready && strings.TrimSpace(artifact.Approval.ExecutionPermission) == "blocked" {
 		findings = append(findings, PlanAuditFinding{
 			Severity:            "error",
@@ -678,6 +778,7 @@ func auditArtifactApprovalHandoff(artifact PlanArtifactAuditSubject) []PlanAudit
 			SuggestedResolution: "Mark handoff blocked or change execution permission only after approval evidence exists.",
 		})
 	}
+
 	if artifact.Handoff.Ready && len(artifact.Handoff.Blockers) > 0 {
 		findings = append(findings, PlanAuditFinding{
 			Severity:            "error",
@@ -687,15 +788,19 @@ func auditArtifactApprovalHandoff(artifact PlanArtifactAuditSubject) []PlanAudit
 			SuggestedResolution: "Clear blockers with evidence or mark handoff not ready.",
 		})
 	}
+
 	return findings
 }
 
 func auditArtifactPartialApproval(artifact PlanArtifactAuditSubject) []PlanAuditFinding {
 	var findings []PlanAuditFinding
+
 	severity := "warning"
+
 	if artifact.Handoff.Ready {
 		severity = "error"
 	}
+
 	if len(artifact.Approval.ApprovedPaths) == 0 {
 		findings = append(findings, PlanAuditFinding{
 			Severity:            severity,
@@ -705,6 +810,7 @@ func auditArtifactPartialApproval(artifact PlanArtifactAuditSubject) []PlanAudit
 			SuggestedResolution: "List the workspace-relative paths approved for execution.",
 		})
 	}
+
 	if len(artifact.Approval.PendingPaths) == 0 {
 		findings = append(findings, PlanAuditFinding{
 			Severity:            severity,
@@ -714,6 +820,7 @@ func auditArtifactPartialApproval(artifact PlanArtifactAuditSubject) []PlanAudit
 			SuggestedResolution: "List the workspace-relative paths that still require approval.",
 		})
 	}
+
 	switch strings.TrimSpace(artifact.Approval.ExecutionPermission) {
 	case "execute_approved_scope":
 	case "blocked":
@@ -735,6 +842,7 @@ func auditArtifactPartialApproval(artifact PlanArtifactAuditSubject) []PlanAudit
 			SuggestedResolution: "Use execute_approved_scope for executable partial approvals or blocked for non-executable approvals.",
 		})
 	}
+
 	if !artifact.Handoff.Ready {
 		findings = append(findings, PlanAuditFinding{
 			Severity:            "warning",
@@ -743,10 +851,13 @@ func auditArtifactPartialApproval(artifact PlanArtifactAuditSubject) []PlanAudit
 			Evidence:            []string{firstNonEmpty(artifact.Approval.ScopeID, "missing_approval_scope_id")},
 			SuggestedResolution: "Keep the handoff blocked until approved scope can execute.",
 		})
+
 		return findings
 	}
+
 	approved := stringSetFromStrings(artifact.Approval.ApprovedPaths)
 	pending := stringSetFromStrings(artifact.Approval.PendingPaths)
+
 	for _, path := range planArtifactAuditEditPaths(artifact.Edits) {
 		if _, ok := pending[path]; ok {
 			findings = append(findings, PlanAuditFinding{
@@ -756,8 +867,10 @@ func auditArtifactPartialApproval(artifact PlanArtifactAuditSubject) []PlanAudit
 				Evidence:            []string{path},
 				SuggestedResolution: "Remove pending paths from executable edits or obtain approval for them.",
 			})
+
 			continue
 		}
+
 		if len(approved) > 0 {
 			if _, ok := approved[path]; !ok {
 				findings = append(findings, PlanAuditFinding{
@@ -770,32 +883,38 @@ func auditArtifactPartialApproval(artifact PlanArtifactAuditSubject) []PlanAudit
 			}
 		}
 	}
+
 	return findings
 }
 
 func extractPlanPaths(plan string) []string {
 	matches := planPathPattern.FindAllStringSubmatch(plan, -1)
 	out := make([]string, 0, len(matches))
+
 	for _, match := range matches {
 		if len(match) < 2 {
 			continue
 		}
+
 		path := strings.Trim(match[1], " \t\n\r'\"`()[]{}.,;")
 		if path != "" {
 			out = append(out, path)
 		}
 	}
+
 	return cleanStrings(out)
 }
 
 func extractPlanCommands(plan string) []string {
 	matches := planCommandPattern.FindAllStringSubmatch(plan, -1)
 	out := make([]string, 0, len(matches))
+
 	for _, match := range matches {
 		if len(match) >= 2 {
 			out = append(out, strings.TrimSpace(match[1]))
 		}
 	}
+
 	return cleanStrings(out)
 }
 
@@ -804,42 +923,51 @@ func packetFileRoles(packet Packet) map[string]string {
 	for _, file := range packet.Files {
 		out[file.Path] = strings.ToLower(file.Role)
 	}
+
 	return out
 }
 
 func packetHandles(packet Packet) map[string]struct{} {
 	out := map[string]struct{}{}
+
 	for _, file := range packet.Files {
 		if file.Path != "" {
 			out["file://"+file.Path] = struct{}{}
 		}
 	}
+
 	for _, ev := range packet.Evidence {
 		if ev.Handle != "" {
 			out[ev.Handle] = struct{}{}
 		}
+
 		if ev.Path != "" {
 			out["file://"+ev.Path] = struct{}{}
 		}
 	}
+
 	for _, item := range packet.CandidateScope {
 		if item.Handle != "" {
 			out[item.Handle] = struct{}{}
 		}
+
 		if item.Path != "" {
 			out["file://"+item.Path] = struct{}{}
 		}
 	}
+
 	if packet.Freshness != nil {
 		for _, view := range packet.Freshness.ContextViews {
 			if view.PackID != "" {
 				out["context_pack://"+view.PackID] = struct{}{}
 			}
+
 			if view.Path != "" {
 				out["file://"+view.Path] = struct{}{}
 			}
 		}
 	}
+
 	return out
 }
 
@@ -848,15 +976,18 @@ func pathAllowedAsNew(path string, roles map[string]string, lines []string) bool
 	if strings.Contains(role, "create") || strings.Contains(role, "new") || strings.Contains(role, "add") {
 		return true
 	}
+
 	for _, line := range lines {
 		if !strings.Contains(line, path) {
 			continue
 		}
+
 		lower := strings.ToLower(line)
 		if strings.Contains(lower, "create") || strings.Contains(lower, "new file") || strings.Contains(lower, "add ") {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -864,11 +995,14 @@ func fileExistsUnderRoot(root string, path string) bool {
 	if strings.TrimSpace(root) == "" || strings.TrimSpace(path) == "" {
 		return false
 	}
+
 	full, ok := pathUnderRoot(root, path)
 	if !ok {
 		return false
 	}
+
 	info, err := os.Stat(full)
+
 	return err == nil && !info.IsDir()
 }
 
@@ -876,11 +1010,14 @@ func pathExistsUnderRoot(root string, path string) bool {
 	if strings.TrimSpace(root) == "" || strings.TrimSpace(path) == "" {
 		return false
 	}
+
 	full, ok := pathUnderRoot(root, path)
 	if !ok {
 		return false
 	}
+
 	_, err := os.Stat(full)
+
 	return err == nil
 }
 
@@ -889,40 +1026,49 @@ func pathUnderRoot(root string, path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
+
 	full := path
 	if !filepath.IsAbs(full) {
 		full = filepath.Join(cleanRoot, path)
 	}
+
 	cleanFull, err := filepath.Abs(filepath.Clean(full))
 	if err != nil {
 		return "", false
 	}
+
 	rel, err := filepath.Rel(cleanRoot, cleanFull)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", false
 	}
+
 	return cleanFull, true
 }
 
 func commandReferencePaths(command string) []string {
 	fields := strings.Fields(command)
 	out := make([]string, 0, len(fields))
+
 	for _, field := range fields {
 		token := strings.Trim(field, " \t\n\r'\"`")
 		if token == "" || strings.HasPrefix(token, "-") || strings.Contains(token, "...") {
 			continue
 		}
+
 		if strings.Contains(token, "=") && !strings.HasPrefix(token, "./") && !strings.HasPrefix(token, "scripts/") {
 			continue
 		}
+
 		token = strings.TrimPrefix(token, "./")
 		if token == "" || token == "." || token == ".." || filepath.IsAbs(token) || strings.HasPrefix(token, "../") || strings.Contains(token, "://") {
 			continue
 		}
+
 		if commandTokenIsWorkspaceReference(token) {
 			out = append(out, token)
 		}
 	}
+
 	return cleanStrings(out)
 }
 
@@ -930,18 +1076,22 @@ func commandTokenIsWorkspaceReference(token string) bool {
 	if strings.HasPrefix(token, "scripts/") {
 		return true
 	}
+
 	for _, prefix := range []string{"cmd/", "internal/", "pkg/", "native/", "test/", "tests/"} {
 		if strings.HasPrefix(token, prefix) {
 			return true
 		}
 	}
+
 	if !strings.Contains(token, "/") {
 		return false
 	}
+
 	switch strings.ToLower(filepath.Ext(token)) {
 	case ".bash", ".gd", ".go", ".js", ".json", ".md", ".py", ".rs", ".sh", ".ts", ".yaml", ".yml":
 		return true
 	}
+
 	return false
 }
 
@@ -951,6 +1101,7 @@ func lineFor(plan string, needle string, predicate func(string) bool) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -961,6 +1112,7 @@ func mentionsEditVerb(line string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -976,6 +1128,7 @@ func taskSuggestsImplementation(task string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -984,26 +1137,32 @@ func looksScopedCommand(command string) bool {
 	if command == "" {
 		return false
 	}
+
 	if strings.Contains(command, "./...") {
 		return false
 	}
+
 	for _, scoped := range []string{" ./", " /", " internal/", " cmd/", " pkg/", " --run ", " -run ", " TEST=", " LOG="} {
 		if strings.Contains(command, scoped) {
 			return true
 		}
 	}
+
 	return strings.HasPrefix(command, "make ")
 }
 
 func finalizePlanAuditResult(findings []PlanAuditFinding) PlanAuditResult {
 	findings = sanitizePlanAuditFindings(findings)
+
 	ok := true
+
 	for _, finding := range findings {
 		if finding.Severity == "error" {
 			ok = false
 			break
 		}
 	}
+
 	return PlanAuditResult{
 		OK:              ok,
 		MismatchMetrics: planAuditMismatchMetrics(findings),
@@ -1013,6 +1172,7 @@ func finalizePlanAuditResult(findings []PlanAuditFinding) PlanAuditResult {
 
 func planAuditMismatchMetrics(findings []PlanAuditFinding) PlanAuditMismatchMetrics {
 	var metrics PlanAuditMismatchMetrics
+
 	for _, finding := range findings {
 		switch finding.Kind {
 		case "packet_identity_mismatch", "evidence_packet_mismatch":
@@ -1033,11 +1193,13 @@ func planAuditMismatchMetrics(findings []PlanAuditFinding) PlanAuditMismatchMetr
 			metrics.ApprovalScopeMismatches++
 		}
 	}
+
 	return metrics
 }
 
 func packetPackIDs(packet Packet) map[string]struct{} {
 	out := map[string]struct{}{}
+
 	if packet.Freshness != nil {
 		for _, view := range packet.Freshness.ContextViews {
 			if view.PackID != "" {
@@ -1045,41 +1207,49 @@ func packetPackIDs(packet Packet) map[string]struct{} {
 			}
 		}
 	}
+
 	for _, ev := range packet.Evidence {
 		if strings.HasPrefix(ev.Handle, "context_pack://") {
 			out[strings.TrimPrefix(ev.Handle, "context_pack://")] = struct{}{}
 		}
 	}
+
 	return out
 }
 
 func packetScopePaths(packet Packet) map[string]struct{} {
 	out := map[string]struct{}{}
+
 	for _, file := range packet.Files {
 		if file.Path != "" {
 			out[file.Path] = struct{}{}
 		}
 	}
+
 	for _, item := range packet.CandidateScope {
 		if item.Path != "" {
 			out[item.Path] = struct{}{}
 		}
 	}
+
 	for _, ev := range packet.Evidence {
 		if ev.Path != "" {
 			out[ev.Path] = struct{}{}
 		}
 	}
+
 	return out
 }
 
 func packetValidationCommands(packet Packet) []string {
 	out := make([]string, 0)
+
 	for _, test := range packet.Tests {
 		if strings.TrimSpace(test.Command) != "" {
 			out = append(out, test.Command)
 		}
 	}
+
 	if packet.Contracts != nil {
 		for _, test := range packet.Contracts.ValidationRequirements {
 			if strings.TrimSpace(test.Command) != "" {
@@ -1087,8 +1257,10 @@ func packetValidationCommands(packet Packet) []string {
 			}
 		}
 	}
+
 	out = cleanStrings(out)
 	slices.Sort(out)
+
 	return out
 }
 
@@ -1097,12 +1269,14 @@ func trimPlanPathLineSuffix(path string) string {
 	if idx := strings.LastIndex(cleanPath, ":"); idx > 1 && allDigits(cleanPath[idx+1:]) {
 		return cleanPath[:idx]
 	}
+
 	return cleanPath
 }
 
 func artifactClaimsFresh(packet PlanArtifactPacketAuditSubject) bool {
 	status := strings.ToLower(strings.TrimSpace(packet.Status))
 	freshness := strings.ToLower(strings.TrimSpace(packet.Freshness))
+
 	return status == "fresh" || freshness == "fresh"
 }
 
@@ -1111,29 +1285,37 @@ func auditArtifactPacketState(packet Packet, artifact PlanArtifactAuditSubject, 
 	if artifact.Packet.PackID != "" && artifact.PackID != "" && artifact.Packet.PackID != artifact.PackID {
 		return "overridden", "packet_id_mirror"
 	}
+
 	for _, finding := range findings {
 		if finding.Kind == "packet_identity_mismatch" || finding.Kind == "evidence_packet_mismatch" {
 			if packID == "" {
 				return "missing", "missing_packet_id"
 			}
+
 			return "missing", "packet_identity_mismatch"
 		}
+
 		if finding.Kind == "packet_freshness_mismatch" || finding.Kind == "stale_fact" {
 			return "stale", "packet_freshness_mismatch"
 		}
 	}
+
 	if packID == "" {
 		if len(packetPackIDs(packet)) > 0 {
 			return "missing", "missing_packet_id"
 		}
+
 		return "missing", "not_provided"
 	}
+
 	if artifactClaimsFresh(artifact.Packet) {
 		return "inherited", "fresh_claim"
 	}
+
 	if strings.TrimSpace(artifact.Packet.Freshness) != "" || strings.TrimSpace(artifact.Packet.Status) != "" {
 		return "stale", "freshness_not_claimed"
 	}
+
 	return "inherited", "packet_id_present"
 }
 
@@ -1144,6 +1326,7 @@ func planArtifactAuditEditPaths(edits []PlanArtifactEditAuditSubject) []string {
 			out = append(out, edit.Path)
 		}
 	}
+
 	return out
 }
 
@@ -1154,6 +1337,7 @@ func stringSetFromStrings(values []string) map[string]struct{} {
 			out[value] = struct{}{}
 		}
 	}
+
 	return out
 }
 
@@ -1163,6 +1347,7 @@ func stringSliceContains(values []string, want string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1208,6 +1393,7 @@ func artifactVerificationMentionsCommand(obligations []PlanArtifactVerifyAuditSu
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1221,8 +1407,10 @@ func sanitizePlanAuditFindings(findings []PlanAuditFinding) []PlanAuditFinding {
 			Evidence:            sanitizePlanAuditEvidence(finding.Evidence),
 			SuggestedResolution: sanitizePlanAuditText(finding.SuggestedResolution, 240),
 		}
+
 		out = append(out, item)
 	}
+
 	return out
 }
 
@@ -1233,11 +1421,13 @@ func sanitizePlanAuditEvidence(values []string) []string {
 		if text == "" {
 			continue
 		}
+
 		out = append(out, text)
 		if len(out) >= 8 {
 			break
 		}
 	}
+
 	return cleanStrings(out)
 }
 
@@ -1246,13 +1436,16 @@ func sanitizePlanAuditText(value string, limit int) string {
 	if value == "" {
 		return ""
 	}
+
 	if planAuditTextLooksSensitive(value) {
 		return "redacted:" + planAuditHash(value)
 	}
+
 	value = strings.Join(strings.Fields(value), " ")
 	if limit > 0 && len(value) > limit {
 		value = value[:limit] + "...(truncated)"
 	}
+
 	return value
 }
 
@@ -1261,23 +1454,30 @@ func sanitizePlanAuditToken(value string) string {
 	if value == "" || planAuditTextLooksSensitive(value) {
 		return ""
 	}
+
 	var b strings.Builder
+
 	lastUnderscore := false
+
 	for _, r := range value {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
 			b.WriteRune(r)
+
 			lastUnderscore = false
 		case r == '-' || r == '_' || r == '.' || r == ':':
 			if !lastUnderscore {
 				b.WriteRune('_')
+
 				lastUnderscore = true
 			}
 		}
+
 		if b.Len() >= 120 {
 			break
 		}
 	}
+
 	return strings.Trim(b.String(), "_")
 }
 
@@ -1290,11 +1490,13 @@ func planAuditTextLooksSensitive(value string) bool {
 		"secret=", "api_key", "api-key", "password=", "bearer ", "customer-",
 		"customer_", "secrets/", "/secrets/", "\\secrets\\",
 	}
+
 	for _, marker := range markers {
 		if strings.Contains(lower, marker) {
 			return true
 		}
 	}
+
 	for _, token := range strings.FieldsFunc(lower, func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
 	}) {
@@ -1302,12 +1504,14 @@ func planAuditTextLooksSensitive(value string) bool {
 			return true
 		}
 	}
+
 	normalized := strings.ReplaceAll(lower, "\\", "/")
 	for _, marker := range []string{"/users/", "/home/", "/volumes/", "/private/", "c:/users/"} {
 		if strings.Contains(normalized, marker) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1320,10 +1524,12 @@ func allDigits(value string) bool {
 	if value == "" {
 		return false
 	}
+
 	for _, r := range value {
 		if r < '0' || r > '9' {
 			return false
 		}
 	}
+
 	return true
 }

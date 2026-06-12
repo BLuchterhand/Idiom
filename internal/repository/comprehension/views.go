@@ -56,6 +56,7 @@ type ViewKey struct {
 func (k ViewKey) ID() string {
 	canon := canonicalQueryJSON(k.Query)
 	sum := sha256.Sum256([]byte(k.IndexID + "\x00" + k.Task + "\x00" + k.Mode + "\x00" + canon))
+
 	return hex.EncodeToString(sum[:8])
 }
 
@@ -66,7 +67,9 @@ func canonicalQueryJSON(q ViewQueryInputs) string {
 	q.RequiredTests = canonicalStringSlice(q.RequiredTests)
 	q.RequiredEditPaths = canonicalStringSlice(q.RequiredEditPaths)
 	q.ForbiddenPaths = canonicalStringSlice(q.ForbiddenPaths)
+
 	data, _ := json.Marshal(q)
+
 	return string(data)
 }
 
@@ -74,20 +77,26 @@ func canonicalStringSlice(in []string) []string {
 	if len(in) == 0 {
 		return nil
 	}
+
 	seen := make(map[string]struct{}, len(in))
 	out := make([]string, 0, len(in))
+
 	for _, v := range in {
 		v = strings.TrimSpace(v)
 		if v == "" {
 			continue
 		}
+
 		if _, ok := seen[v]; ok {
 			continue
 		}
+
 		seen[v] = struct{}{}
 		out = append(out, v)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -168,6 +177,7 @@ func recordRediscoveryTokensAvoided(result PackResult) {
 	proj := NewCompactPackProjection(result)
 	fullOut, _ := RenderCompactPackProjection(proj, 0)
 	avoided := estimateTokens(fullOut)
+
 	if avoided > 0 {
 		estimatedRediscoveryTokensAvoided.Add(int64(avoided))
 	}
@@ -193,45 +203,60 @@ func LoadView(root string, key ViewKey) (PackResult, bool, error) {
 	if _, err := os.Stat(sqlitePath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			viewCacheMisses.Add(1)
+
 			return PackResult{}, false, nil
 		}
+
 		return PackResult{}, false, err
 	}
+
 	db, err := openSQLite(sqlitePath)
 	if err != nil {
 		return PackResult{}, false, err
 	}
 	defer db.Close()
+
 	if err := ensureGraphViewsTable(db); err != nil {
 		return PackResult{}, false, err
 	}
+
 	row, err := loadCachedViewRow(db, key.ID())
 	if errors.Is(err, sql.ErrNoRows) {
 		recordStaleRowMiss(db, key.ID())
 		viewCacheMisses.Add(1)
+
 		return PackResult{}, false, nil
 	}
+
 	if err != nil {
 		return PackResult{}, false, err
 	}
+
 	var result PackResult
+
 	if err := json.Unmarshal([]byte(row.OutputJSON), &result); err != nil {
 		return PackResult{}, false, fmt.Errorf("decode cached view %s: %w", key.ID(), err)
 	}
+
 	result, fresh, err := validateCachedViewFreshness(root, row, result, "load_view")
 	if err != nil {
 		return PackResult{}, false, err
 	}
+
 	if !fresh {
 		viewCacheStalePreventions.Add(1)
 		viewCacheMisses.Add(1)
+
 		return PackResult{}, false, nil
 	}
+
 	viewCacheFreshnessHits.Add(1)
 	viewCacheHits.Add(1)
 	recordRediscoveryTokensAvoided(result)
+
 	result.Cache = GraphViewCacheStateForKey(key, util.FirstNonEmpty(result.StoreKind, result.Provenance.StoreKind), "hit", "fresh_cached_row")
 	AttachPackResultContract(&result)
+
 	return result, true, nil
 }
 
@@ -245,9 +270,11 @@ func LoadViewByID(root string, packID string) (PackResult, bool, error) {
 	if err != nil {
 		return PackResult{}, false, err
 	}
+
 	if status.State != ViewLoadStateFresh {
 		return PackResult{}, false, nil
 	}
+
 	return result, true, nil
 }
 
@@ -257,74 +284,99 @@ func LoadViewByID(root string, packID string) (PackResult, bool, error) {
 // stale evidence without relying on legacy JSON view files.
 func LoadViewByIDStatus(root string, packID string) (PackResult, ViewLoadStatus, error) {
 	packID = strings.TrimSpace(packID)
+
 	status := ViewLoadStatus{
 		State:  ViewLoadStateMissing,
 		Reason: "cache_miss",
 		PackID: packID,
 	}
+
 	if packID == "" {
 		status.Reason = "missing_packet_id"
 		return PackResult{}, status, nil
 	}
+
 	sqlitePath := sqliteGraphPath(root)
 	if _, err := os.Stat(sqlitePath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			viewCacheMisses.Add(1)
+
 			return PackResult{}, status, nil
 		}
+
 		return PackResult{}, status, err
 	}
+
 	db, err := openSQLite(sqlitePath)
 	if err != nil {
 		return PackResult{}, status, err
 	}
 	defer db.Close()
+
 	if err := ensureGraphViewsTable(db); err != nil {
 		return PackResult{}, status, err
 	}
+
 	row, err := loadCachedViewRowAnyState(db, packID)
 	if errors.Is(err, sql.ErrNoRows) {
 		viewCacheMisses.Add(1)
+
 		return PackResult{}, status, nil
 	}
+
 	if err != nil {
 		return PackResult{}, status, err
 	}
+
 	var result PackResult
+
 	if err := json.Unmarshal([]byte(row.OutputJSON), &result); err != nil {
 		return PackResult{}, status, fmt.Errorf("decode cached view %s: %w", packID, err)
 	}
+
 	status.RowIndexID = util.FirstNonEmpty(row.IndexID, result.IndexID)
 	status.CurrentIndexID = cachedViewCurrentIndexID(root)
+
 	if row.Stale != 0 {
 		viewCacheStaleRowMisses.Add(1)
 		viewCacheStalePreventions.Add(1)
 		viewCacheMisses.Add(1)
+
 		status.State = ViewLoadStateStale
 		status.Reason = "stale_row"
+
 		return staleCachedViewResult(result, status), status, nil
 	}
+
 	result, fresh, reason, err := validateCachedViewFreshnessStatus(root, row, result, "load_view_by_id")
 	if err != nil {
 		return PackResult{}, status, err
 	}
+
 	if !fresh {
 		viewCacheStalePreventions.Add(1)
 		viewCacheMisses.Add(1)
+
 		status.State = ViewLoadStateStale
 		status.Reason = cachedViewStaleReason(reason)
+
 		return staleCachedViewResult(result, status), status, nil
 	}
+
 	viewCacheFreshnessHits.Add(1)
 	viewCacheHits.Add(1)
 	recordRediscoveryTokensAvoided(result)
+
 	key := cachedViewKeyFromRow(row, packID)
+
 	result.Cache = GraphViewCacheStateForKey(key, util.FirstNonEmpty(result.StoreKind, result.Provenance.StoreKind), "hit", "fresh_cached_row")
 	result.Cache.CacheKey = packID
 	result.Cache.PackID = packID
 	AttachPackResultContract(&result)
+
 	status.State = ViewLoadStateFresh
 	status.Reason = "fresh_cached_row"
+
 	return result, status, nil
 }
 
@@ -337,14 +389,18 @@ func SaveView(root string, key ViewKey, result PackResult) error {
 		if !isSQLiteCorruptionError(err) {
 			return err
 		}
+
 		if recoverErr := recoverSQLiteGraphStore(root); recoverErr != nil {
 			return fmt.Errorf("recover SQLite graph store after graph_views write failure: %w (original error: %v)", recoverErr, err)
 		}
+
 		if retryErr := saveViewOnce(root, key, result); retryErr != nil {
 			return fmt.Errorf("retry graph_views write after SQLite graph recovery: %w (original error: %v)", retryErr, err)
 		}
 	}
+
 	viewCacheWrites.Add(1)
+
 	return nil
 }
 
@@ -353,47 +409,61 @@ func saveViewOnce(root string, key ViewKey, result PackResult) error {
 	if err := os.MkdirAll(filepath.Dir(sqlitePath), 0o755); err != nil {
 		return err
 	}
+
 	db, err := openSQLite(sqlitePath)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+
 	if err := validateSQLiteIntegrity(db); err != nil {
 		return err
 	}
+
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
+
 	committed := false
+
 	defer func() {
 		if !committed {
 			_ = tx.Rollback()
 		}
 	}()
+
 	if err := createSQLiteSchema(tx); err != nil {
 		return err
 	}
+
 	queryJSON := canonicalQueryJSON(key.Query)
+
 	outputJSON, err := json.Marshal(result)
 	if err != nil {
 		return err
 	}
+
 	references := referencedPaths(result)
+
 	referencesJSON, err := json.Marshal(references)
 	if err != nil {
 		return err
 	}
+
 	sourceFingerprintsJSON, err := json.Marshal(sourceFingerprintsForPaths(root, references))
 	if err != nil {
 		return err
 	}
+
 	fingerprint := viewFingerprint(result)
 	rootNodeID := strings.TrimSpace(key.Query.Path)
 	resolution := strings.TrimSpace(key.Mode)
+
 	if resolution == "" {
 		resolution = "plan"
 	}
+
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := tx.Exec(`INSERT INTO graph_views (
 		id, root_node_id, resolution, query_json, output_json,
@@ -430,10 +500,13 @@ func saveViewOnce(root string, key ViewKey, result PackResult) error {
 	); err != nil {
 		return err
 	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+
 	committed = true
+
 	return nil
 }
 
@@ -444,10 +517,12 @@ func viewFingerprint(result PackResult) string {
 	sum := sha256.New()
 	sum.Write([]byte(result.IndexID))
 	sum.Write([]byte("\x00"))
+
 	for _, p := range referencedPaths(result) {
 		sum.Write([]byte(p))
 		sum.Write([]byte("\x00"))
 	}
+
 	return hex.EncodeToString(sum.Sum(nil))
 }
 
@@ -461,28 +536,36 @@ func referencedPaths(result PackResult) []string {
 		if p == "" {
 			return
 		}
+
 		seen[p] = struct{}{}
 	}
+
 	for _, f := range result.CandidateFiles {
 		add(f.Path)
 	}
+
 	for _, s := range result.CandidateSymbols {
 		add(s.Path)
 	}
+
 	for _, t := range result.Tests {
 		add(t.Path)
 	}
+
 	for _, e := range result.Evidence {
 		switch e.Kind {
 		case "context_file", "context_symbol", "runtime_anchor", "runtime_file":
 			add(e.Path)
 		}
 	}
+
 	out := make([]string, 0, len(seen))
 	for p := range seen {
 		out = append(out, p)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -491,11 +574,13 @@ func sourceReferencePath(path string) string {
 	if path == "" {
 		return ""
 	}
+
 	for _, prefix := range []string{".idiom/", ".git/"} {
 		if strings.HasPrefix(path, prefix) {
 			return ""
 		}
 	}
+
 	return path
 }
 
@@ -504,18 +589,22 @@ func sourceFingerprintsForPaths(root string, paths []string) map[string]string {
 	if err != nil {
 		return map[string]string{}
 	}
+
 	fingerprints := fingerprintsByPath(graph.Nodes)
 	out := make(map[string]string)
+
 	for _, path := range cleanFreshnessPaths(paths) {
 		if fingerprint := strings.TrimSpace(fingerprints[path]); fingerprint != "" {
 			out[path] = fingerprint
 		}
 	}
+
 	return out
 }
 
 func loadCachedViewRow(db *sql.DB, id string) (cachedViewRow, error) {
 	var row cachedViewRow
+
 	err := db.QueryRow(
 		`SELECT output_json,
 			COALESCE(index_id, ''),
@@ -539,11 +628,13 @@ func loadCachedViewRow(db *sql.DB, id string) (cachedViewRow, error) {
 		&row.SourceFingerprintsJSON,
 		&row.Stale,
 	)
+
 	return row, err
 }
 
 func loadCachedViewRowAnyState(db *sql.DB, id string) (cachedViewRow, error) {
 	var row cachedViewRow
+
 	err := db.QueryRow(
 		`SELECT output_json,
 			COALESCE(index_id, ''),
@@ -567,17 +658,21 @@ func loadCachedViewRowAnyState(db *sql.DB, id string) (cachedViewRow, error) {
 		&row.SourceFingerprintsJSON,
 		&row.Stale,
 	)
+
 	return row, err
 }
 
 func cachedViewKeyFromRow(row cachedViewRow, packID string) ViewKey {
 	var query ViewQueryInputs
+
 	if strings.TrimSpace(row.QueryJSON) != "" {
 		_ = json.Unmarshal([]byte(row.QueryJSON), &query)
 	}
+
 	if query.WorkspaceStateFingerprint == "" {
 		query.WorkspaceStateFingerprint = row.WorkspaceStateFingerprint
 	}
+
 	key := ViewKey{
 		IndexID: strings.TrimSpace(row.IndexID),
 		Task:    strings.TrimSpace(row.Task),
@@ -587,11 +682,13 @@ func cachedViewKeyFromRow(row cachedViewRow, packID string) ViewKey {
 	if key.ID() == strings.TrimSpace(packID) {
 		return key
 	}
+
 	return key
 }
 
 func recordStaleRowMiss(db *sql.DB, id string) {
 	var stale int
+
 	if err := db.QueryRow(`SELECT stale FROM graph_views WHERE id = ?`, id).Scan(&stale); err == nil && stale != 0 {
 		viewCacheStaleRowMisses.Add(1)
 	}
@@ -604,6 +701,7 @@ func validateCachedViewFreshness(root string, row cachedViewRow, result PackResu
 
 func validateCachedViewFreshnessStatus(root string, row cachedViewRow, result PackResult, operation string) (PackResult, bool, string, error) {
 	references := cachedViewReferencedPaths(row, result)
+
 	decision, err := EnsureFresh(context.Background(), FreshnessRequest{
 		Root:              root,
 		Operation:         operation,
@@ -616,33 +714,41 @@ func validateCachedViewFreshnessStatus(root string, row cachedViewRow, result Pa
 	if err != nil {
 		return PackResult{}, false, "", err
 	}
+
 	if !decision.FreshForScope {
 		return result, false, util.FirstNonEmpty(decision.Reason, decision.Blocker, FreshnessReasonStaleGraph), nil
 	}
+
 	if decision.Refresh != nil && decision.Refresh.Attempted {
 		return result, false, "refreshed_referenced_paths", nil
 	}
+
 	if !cachedViewIndexMatchesCurrent(root, row, result) {
 		return result, false, "non_current_index", nil
 	}
+
 	if !cachedViewFingerprintsMatch(root, row) {
 		return result, false, "source_fingerprint_mismatch", nil
 	}
+
 	result.Freshness = &decision
 	result.AutoRefresh = decision.Refresh
 	result.Confidence = GraphResultConfidenceForFreshness(result.Fresh, &decision)
 	result.Provenance = graphResultProvenanceFromFreshness(operation, decision, result.ArtifactPath)
+
 	return result, true, "", nil
 }
 
 func cachedViewReferencedPaths(row cachedViewRow, result PackResult) []string {
 	var references []string
+
 	if strings.TrimSpace(row.ReferencedPathsJSON) != "" && json.Unmarshal([]byte(row.ReferencedPathsJSON), &references) == nil {
 		references = filterSourceReferencePaths(references)
 		if len(references) > 0 {
 			return references
 		}
 	}
+
 	return referencedPaths(result)
 }
 
@@ -653,11 +759,14 @@ func filterSourceReferencePaths(paths []string) []string {
 			seen[path] = struct{}{}
 		}
 	}
+
 	out := make([]string, 0, len(seen))
 	for path := range seen {
 		out = append(out, path)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -666,6 +775,7 @@ func cachedViewIndexMatchesCurrent(root string, row cachedViewRow, result PackRe
 	if rowIndexID == "" {
 		return false
 	}
+
 	return rowIndexID == cachedViewCurrentIndexID(root)
 }
 
@@ -674,6 +784,7 @@ func cachedViewCurrentIndexID(root string) string {
 	if err != nil {
 		return ""
 	}
+
 	return strings.TrimSpace(status.IndexID)
 }
 
@@ -682,17 +793,20 @@ func cachedViewFingerprintsMatch(root string, row cachedViewRow) bool {
 	if len(stored) == 0 {
 		return true
 	}
+
 	current := sourceFingerprintsForPaths(root, mapKeys(stored))
 	for path, fingerprint := range stored {
 		if current[path] != fingerprint {
 			return false
 		}
 	}
+
 	return true
 }
 
 func staleCachedViewResult(result PackResult, status ViewLoadStatus) PackResult {
 	reason := cachedViewStaleReason(status.Reason)
+
 	result.PackID = util.FirstNonEmpty(strings.TrimSpace(result.PackID), strings.TrimSpace(status.PackID))
 	result.IndexID = util.FirstNonEmpty(strings.TrimSpace(result.IndexID), strings.TrimSpace(status.RowIndexID))
 	result.Fresh = false
@@ -719,6 +833,7 @@ func staleCachedViewResult(result PackResult, status ViewLoadStatus) PackResult 
 		},
 	}
 	AttachPackResultContract(&result)
+
 	return result
 }
 
@@ -747,18 +862,23 @@ func cachedViewSourceFingerprints(row cachedViewRow) map[string]string {
 	if strings.TrimSpace(row.SourceFingerprintsJSON) == "" {
 		return nil
 	}
+
 	var stored map[string]string
+
 	if err := json.Unmarshal([]byte(row.SourceFingerprintsJSON), &stored); err != nil {
 		return nil
 	}
+
 	out := make(map[string]string, len(stored))
 	for path, fingerprint := range stored {
 		path = sourceReferencePath(path)
 		fingerprint = strings.TrimSpace(fingerprint)
+
 		if path != "" && fingerprint != "" {
 			out[path] = fingerprint
 		}
 	}
+
 	return out
 }
 
@@ -767,7 +887,9 @@ func mapKeys(values map[string]string) []string {
 	for key := range values {
 		out = append(out, key)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -779,48 +901,62 @@ func MarkViewsStale(root string, paths []string) (int, error) {
 	if len(paths) == 0 {
 		return 0, nil
 	}
+
 	sqlitePath := sqliteGraphPath(root)
 	if _, err := os.Stat(sqlitePath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return 0, nil
 		}
+
 		return 0, err
 	}
+
 	db, err := openSQLite(sqlitePath)
 	if err != nil {
 		return 0, err
 	}
 	defer db.Close()
+
 	if err := ensureGraphViewsTable(db); err != nil {
 		return 0, err
 	}
+
 	pathSet := make(map[string]struct{}, len(paths))
 	for _, p := range paths {
 		p = strings.TrimSpace(p)
 		if p == "" {
 			continue
 		}
+
 		pathSet[p] = struct{}{}
 	}
+
 	if len(pathSet) == 0 {
 		return 0, nil
 	}
+
 	rows, err := db.Query(`SELECT id, output_json, COALESCE(referenced_paths_json, '') FROM graph_views WHERE stale = 0`)
 	if err != nil {
 		return 0, err
 	}
+
 	var staleIDs []string
+
 	for rows.Next() {
 		var id, output, referencesJSON string
+
 		if err := rows.Scan(&id, &output, &referencesJSON); err != nil {
 			rows.Close()
+
 			return 0, err
 		}
+
 		references, ok := viewRowReferences(output, referencesJSON)
 		if !ok {
 			staleIDs = append(staleIDs, id)
 			continue
 		}
+
 		for _, ref := range references {
 			if _, hit := pathSet[ref]; hit {
 				staleIDs = append(staleIDs, id)
@@ -828,49 +964,64 @@ func MarkViewsStale(root string, paths []string) (int, error) {
 			}
 		}
 	}
+
 	rows.Close()
+
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
+
 	if len(staleIDs) == 0 {
 		return 0, nil
 	}
+
 	tx, err := db.Begin()
 	if err != nil {
 		return 0, err
 	}
+
 	committed := false
+
 	defer func() {
 		if !committed {
 			_ = tx.Rollback()
 		}
 	}()
+
 	stmt, err := tx.Prepare(`UPDATE graph_views SET stale = 1 WHERE id = ?`)
 	if err != nil {
 		return 0, err
 	}
 	defer stmt.Close()
+
 	for _, id := range staleIDs {
 		if _, err := stmt.Exec(id); err != nil {
 			return 0, err
 		}
 	}
+
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
+
 	committed = true
+
 	return len(staleIDs), nil
 }
 
 func viewRowReferences(outputJSON string, referencesJSON string) ([]string, bool) {
 	var references []string
+
 	if strings.TrimSpace(referencesJSON) != "" && json.Unmarshal([]byte(referencesJSON), &references) == nil {
 		return filterSourceReferencePaths(references), true
 	}
+
 	var pr PackResult
+
 	if err := json.Unmarshal([]byte(outputJSON), &pr); err != nil {
 		return nil, false
 	}
+
 	return referencedPaths(pr), true
 }
 
@@ -883,24 +1034,30 @@ func MarkAllViewsStale(root string) (int, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return 0, nil
 		}
+
 		return 0, err
 	}
+
 	db, err := openSQLite(sqlitePath)
 	if err != nil {
 		return 0, err
 	}
 	defer db.Close()
+
 	if err := ensureGraphViewsTable(db); err != nil {
 		return 0, err
 	}
+
 	res, err := db.Exec(`UPDATE graph_views SET stale = 1 WHERE stale = 0`)
 	if err != nil {
 		return 0, err
 	}
+
 	rows, err := res.RowsAffected()
 	if err != nil {
 		return 0, err
 	}
+
 	return int(rows), nil
 }
 
@@ -957,25 +1114,33 @@ func ReadViewStats(root string) (ViewStats, error) {
 		EstimatedRediscoveryTokensAvoided: rediscoveryTokensAvoided,
 	}
 	sqlitePath := sqliteGraphPath(root)
+
 	if _, err := os.Stat(sqlitePath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return stats, nil
 		}
+
 		return stats, err
 	}
+
 	db, err := openSQLite(sqlitePath)
 	if err != nil {
 		return stats, err
 	}
 	defer db.Close()
+
 	if err := ensureGraphViewsTable(db); err != nil {
 		return stats, err
 	}
+
 	if meta, err := readSQLiteGraphMetadata(db); err == nil {
 		stats.CurrentIndexID = strings.TrimSpace(meta["index_id"])
 	}
+
 	currentWorkspaceFingerprint := ComprehensionStateFingerprint(root)
+
 	var oldest, newest sql.NullString
+
 	err = db.QueryRow(`SELECT
 		COUNT(*),
 		COALESCE(SUM(CASE WHEN stale = 0 THEN 1 ELSE 0 END), 0),
@@ -988,25 +1153,32 @@ func ReadViewStats(root string) (ViewStats, error) {
 	if err != nil {
 		return stats, err
 	}
+
 	if oldest.Valid {
 		stats.OldestCreated = oldest.String
 	}
+
 	if newest.Valid {
 		stats.NewestCreated = newest.String
 	}
+
 	if stats.CurrentIndexID != "" {
 		workspaceCurrentSQL := `COALESCE(workspace_state_fingerprint, '') = ''`
 		if currentWorkspaceFingerprint != "" {
 			workspaceCurrentSQL = `COALESCE(workspace_state_fingerprint, '') = ?`
 		}
+
 		args := []any{stats.CurrentIndexID}
 		if currentWorkspaceFingerprint != "" {
 			args = append(args, currentWorkspaceFingerprint)
 		}
+
 		queryArgs := append([]any{}, args...)
+
 		queryArgs = append(queryArgs, args...)
 		queryArgs = append(queryArgs, args...)
 		queryArgs = append(queryArgs, args...)
+
 		err := db.QueryRow(`SELECT
 			COALESCE(SUM(CASE WHEN NOT (COALESCE(index_id, '') = ? AND `+workspaceCurrentSQL+`) THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN COALESCE(index_id, '') = ? AND `+workspaceCurrentSQL+` THEN 1 ELSE 0 END), 0),
@@ -1016,14 +1188,17 @@ func ReadViewStats(root string) (ViewStats, error) {
 		if err != nil {
 			return stats, err
 		}
+
 		stats.HistoricalRows = stats.Rows - stats.CurrentRows
 	} else {
 		stats.HistoricalRows = stats.Rows
 	}
+
 	contractStats, err := readViewContractStats(db, stats.CurrentIndexID, currentWorkspaceFingerprint)
 	if err != nil {
 		return stats, err
 	}
+
 	stats.ContractRows = contractStats.ContractRows
 	stats.CurrentContractRows = contractStats.CurrentContractRows
 	stats.UnresolvedGapRows = contractStats.UnresolvedGapRows
@@ -1034,6 +1209,7 @@ func ReadViewStats(root string) (ViewStats, error) {
 	stats.UnresolvedGapReasonCounts = contractStats.UnresolvedGapReasonCounts
 	stats.CurrentUnresolvedGapReasonCounts = contractStats.CurrentUnresolvedGapReasonCounts
 	stats.CurrentFreshUnresolvedGapReasonCounts = contractStats.CurrentFreshUnresolvedGapReasonCounts
+
 	return stats, nil
 }
 
@@ -1052,90 +1228,114 @@ type viewContractStats struct {
 
 func readViewContractStats(db *sql.DB, currentIndexID string, currentWorkspaceFingerprint string) (viewContractStats, error) {
 	var stats viewContractStats
+
 	currentIndexID = strings.TrimSpace(currentIndexID)
 	currentWorkspaceFingerprint = strings.TrimSpace(currentWorkspaceFingerprint)
+
 	rows, err := db.Query(`SELECT output_json, stale, COALESCE(index_id, ''), COALESCE(workspace_state_fingerprint, '') FROM graph_views`)
 	if err != nil {
 		return stats, err
 	}
 	defer rows.Close()
+
 	for rows.Next() {
-		var output string
-		var stale int
-		var rowIndexID string
-		var rowWorkspaceFingerprint string
+		var (
+			output                  string
+			stale                   int
+			rowIndexID              string
+			rowWorkspaceFingerprint string
+		)
+
 		if err := rows.Scan(&output, &stale, &rowIndexID, &rowWorkspaceFingerprint); err != nil {
 			return stats, err
 		}
+
 		var decoded struct {
 			Contract             *GraphViewResultContract `json:"contract"`
 			UnresolvedGapDetails []GraphUnresolvedGap     `json:"unresolved_gap_details"`
 			UnresolvedGaps       []string                 `json:"unresolved_gaps"`
 		}
+
 		if err := json.Unmarshal([]byte(output), &decoded); err != nil {
 			continue
 		}
+
 		current := currentIndexID != "" &&
 			rowIndexID == currentIndexID &&
 			((currentWorkspaceFingerprint == "" && rowWorkspaceFingerprint == "") ||
 				(currentWorkspaceFingerprint != "" && rowWorkspaceFingerprint == currentWorkspaceFingerprint))
+
 		if decoded.Contract != nil && decoded.Contract.SchemaVersion == GraphViewResultContractVersion {
 			stats.ContractRows++
 			if current {
 				stats.CurrentContractRows++
 			}
 		}
+
 		gaps := decoded.UnresolvedGapDetails
 		if decoded.Contract != nil {
 			gaps = append(gaps, decoded.Contract.UnresolvedGaps...)
 		}
+
 		gaps = normalizedGapDetails(gaps, decoded.UnresolvedGaps)
 		if len(gaps) == 0 {
 			continue
 		}
+
 		stats.UnresolvedGapRows++
 		if stale == 0 {
 			stats.FreshUnresolvedGapRows++
 		} else {
 			stats.StaleUnresolvedGapRows++
 		}
+
 		if current {
 			stats.CurrentUnresolvedGapRows++
 			if stale == 0 {
 				stats.CurrentFreshUnresolvedGapRows++
 			}
 		}
+
 		for _, reason := range uniqueViewGapReasons(gaps) {
 			incrementViewGapReason(&stats.UnresolvedGapReasonCounts, reason)
+
 			if current {
 				incrementViewGapReason(&stats.CurrentUnresolvedGapReasonCounts, reason)
+
 				if stale == 0 {
 					incrementViewGapReason(&stats.CurrentFreshUnresolvedGapReasonCounts, reason)
 				}
 			}
 		}
 	}
+
 	if err := rows.Err(); err != nil {
 		return stats, err
 	}
+
 	return stats, nil
 }
 
 func uniqueViewGapReasons(gaps []GraphUnresolvedGap) []string {
 	seen := make(map[string]struct{}, len(gaps))
 	reasons := make([]string, 0, len(gaps))
+
 	for _, gap := range gaps {
 		reason := strings.TrimSpace(gap.Reason)
 		if reason == "" {
 			reason = "unknown"
 		}
+
 		if _, ok := seen[reason]; ok {
 			continue
 		}
+
 		seen[reason] = struct{}{}
 		reasons = append(reasons, reason)
 	}
+
 	slices.Sort(reasons)
+
 	return reasons
 }
 
@@ -1143,6 +1343,7 @@ func incrementViewGapReason(counts *map[string]int, reason string) {
 	if *counts == nil {
 		*counts = make(map[string]int)
 	}
+
 	(*counts)[reason]++
 }
 
@@ -1168,6 +1369,7 @@ func ensureGraphViewsTable(db *sql.DB) error {
 	)`); err != nil {
 		return err
 	}
+
 	return ensureGraphViewsColumns(db)
 }
 
@@ -1182,21 +1384,29 @@ func ensureGraphViewsColumns(target graphViewsSchemaTarget) error {
 		return err
 	}
 	defer rows.Close()
+
 	existing := make(map[string]struct{})
+
 	for rows.Next() {
-		var cid int
-		var name, columnType string
-		var notNull int
-		var defaultValue sql.NullString
-		var pk int
+		var (
+			cid              int
+			name, columnType string
+			notNull          int
+			defaultValue     sql.NullString
+			pk               int
+		)
+
 		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
 			return err
 		}
+
 		existing[name] = struct{}{}
 	}
+
 	if err := rows.Err(); err != nil {
 		return err
 	}
+
 	for _, column := range []struct {
 		name string
 		sql  string
@@ -1211,10 +1421,12 @@ func ensureGraphViewsColumns(target graphViewsSchemaTarget) error {
 		if _, ok := existing[column.name]; ok {
 			continue
 		}
+
 		if _, err := target.Exec(column.sql); err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -1226,21 +1438,26 @@ func ChangedPathsBetween(previous Graph, current Graph) []string {
 	prev := fingerprintsByPath(previous.Nodes)
 	curr := fingerprintsByPath(current.Nodes)
 	seen := make(map[string]struct{})
+
 	for path, fp := range curr {
 		if prev[path] != fp {
 			seen[path] = struct{}{}
 		}
 	}
+
 	for path := range prev {
 		if _, stillThere := curr[path]; !stillThere {
 			seen[path] = struct{}{}
 		}
 	}
+
 	out := make([]string, 0, len(seen))
 	for p := range seen {
 		out = append(out, p)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -1261,12 +1478,14 @@ func ComprehensionStateFingerprint(root string) string {
 func ComprehensionStateFingerprints(root string) ComprehensionStateFingerprintSet {
 	ranker := rankerWeightsStateFingerprint(root)
 	runtime := runtimeTracesStateFingerprint(root)
+
 	return comprehensionStateFingerprintSet(ranker, runtime)
 }
 
 func comprehensionStateFingerprintSet(rankerFingerprint string, runtimeFingerprint string) ComprehensionStateFingerprintSet {
 	rankerFingerprint = strings.TrimSpace(rankerFingerprint)
 	runtimeFingerprint = strings.TrimSpace(runtimeFingerprint)
+
 	return ComprehensionStateFingerprintSet{
 		WorkspaceStateFingerprint: composeWorkspaceStateFingerprint(rankerFingerprint, runtimeFingerprint),
 		RankerWeightsFingerprint:  rankerFingerprint,
@@ -1277,21 +1496,26 @@ func comprehensionStateFingerprintSet(rankerFingerprint string, runtimeFingerpri
 func composeWorkspaceStateFingerprint(rankerFingerprint string, runtimeFingerprint string) string {
 	rankerFingerprint = strings.TrimSpace(rankerFingerprint)
 	runtimeFingerprint = strings.TrimSpace(runtimeFingerprint)
+
 	if rankerFingerprint == "" && runtimeFingerprint == "" {
 		return ""
 	}
+
 	h := sha256.New()
 	if rankerFingerprint != "" {
 		h.Write([]byte("ranker_weights\x00"))
 		h.Write([]byte(rankerFingerprint))
 		h.Write([]byte("\x00"))
 	}
+
 	if runtimeFingerprint != "" {
 		h.Write([]byte("runtime_traces\x00"))
 		h.Write([]byte(runtimeFingerprint))
 		h.Write([]byte("\x00"))
 	}
+
 	sum := h.Sum(nil)
+
 	return hex.EncodeToString(sum[:8])
 }
 
@@ -1300,6 +1524,7 @@ func rankerWeightsStateFingerprint(root string) string {
 	if data, err := os.ReadFile(weightsPath); err == nil {
 		return shortSHA256Hex(data)
 	}
+
 	return ""
 }
 
@@ -1310,11 +1535,14 @@ func shortSHA256Hex(data []byte) string {
 
 func fingerprintsByPath(nodes []Node) map[string]string {
 	out := make(map[string]string)
+
 	for _, node := range nodes {
 		if node.Kind != "file" || node.Path == "" {
 			continue
 		}
+
 		out[node.Path] = node.Fingerprint
 	}
+
 	return out
 }

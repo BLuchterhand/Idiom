@@ -35,24 +35,32 @@ func Build(root string, packetPath string) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
+
 	packet, relPath, found, err := recovery.TryLoadDecompositionPacket(packetPath)
 	if err != nil {
 		return Report{}, err
 	}
+
 	if !found {
 		return Report{}, fmt.Errorf("recovery decomposition packet not found: %s", packetPath)
 	}
+
 	reconciliation, reconciliationPath, reconciliationFound, err := tryLoadReconciliation(root, packetPath, packet)
 	if err != nil {
 		return Report{}, err
 	}
+
 	var reconciliationRef *recovery.Reconciliation
+
 	reconciliationDisplayPath := ""
+
 	if reconciliationFound {
 		reconciliationRef = &reconciliation
 		reconciliationDisplayPath = relDisplayPath(root, reconciliationPath)
 	}
+
 	projection := recovery.ProjectPacketStatus(packet, reconciliationRef)
+
 	return Report{
 		Type:               ReportType,
 		Status:             string(projection.Status),
@@ -81,7 +89,9 @@ func ErrorReport(message string) Report {
 
 func FormatText(report Report) string {
 	var buf bytes.Buffer
+
 	WriteText(&buf, report)
+
 	return buf.String()
 }
 
@@ -89,37 +99,50 @@ func WriteText(w io.Writer, report Report) {
 	if report.Error != "" {
 		fmt.Fprintln(w, report.Error)
 		fmt.Fprintf(w, "next_valid_action: %s\n", report.NextAction)
+
 		return
 	}
+
 	fmt.Fprintf(w, "recover status: %s\n", report.Status)
 	fmt.Fprintf(w, "packet: %s\n", report.PacketPath)
+
 	if report.ReconciliationPath != "" {
 		fmt.Fprintf(w, "reconciliation: %s\n", report.ReconciliationPath)
 	}
+
 	fmt.Fprintf(w, "failure_id: %s\n", report.FailureID)
 	fmt.Fprintf(w, "dirty_status: %s\n", report.PartialState.DirtyStatus)
+
 	for _, blocker := range report.Blockers {
 		fmt.Fprintf(w, "blocker: %s\n", blocker)
 	}
+
 	printProductLinks(w, report.ProductLinks)
 	fmt.Fprintf(w, "next_valid_action: %s\n", report.NextAction)
+
 	for _, residual := range report.ResidualWork {
 		fmt.Fprintf(w, "- %s: %s\n", residual.ID, residual.Title)
+
 		if residual.Reason != "" {
 			fmt.Fprintf(w, "  reason: %s\n", residual.Reason)
 		}
+
 		if len(residual.Paths) > 0 {
 			fmt.Fprintf(w, "  paths: %s\n", strings.Join(residual.Paths, ", "))
 		}
+
 		if len(residual.EvidenceRefs) > 0 {
 			fmt.Fprintf(w, "  evidence_refs: %s\n", strings.Join(EvidenceRefLabels(residual.EvidenceRefs), "; "))
 		}
 	}
+
 	for _, atom := range report.CandidateAtoms {
 		fmt.Fprintf(w, "- %s: %s\n", atom.ID, atom.Title)
+
 		if len(atom.Gates) > 0 {
 			fmt.Fprintf(w, "  gates: %s\n", strings.Join(atom.Gates, ", "))
 		}
+
 		if len(atom.RequiredTests) > 0 {
 			fmt.Fprintf(w, "  required_tests: %s\n", strings.Join(atom.RequiredTests, "; "))
 		}
@@ -133,14 +156,17 @@ func EvidenceRefLabels(refs []recovery.EvidenceRef) []string {
 		if kind == "" {
 			continue
 		}
+
 		label := kind
 		if path := strings.TrimSpace(ref.Path); path != "" {
 			label += ":" + path
 		} else if id := strings.TrimSpace(ref.ID); id != "" {
 			label += ":" + id
 		}
+
 		labels = append(labels, label)
 	}
+
 	return labels
 }
 
@@ -148,11 +174,13 @@ func sanitizeResidualWork(residuals []recovery.ResidualWork) []recovery.Residual
 	if len(residuals) == 0 {
 		return nil
 	}
+
 	out := make([]recovery.ResidualWork, 0, len(residuals))
 	for _, residual := range residuals {
 		residual.EvidenceRefs = sanitizeEvidenceRefs(residual.EvidenceRefs)
 		out = append(out, residual)
 	}
+
 	return out
 }
 
@@ -160,22 +188,29 @@ func sanitizeEvidenceRefs(refs []recovery.EvidenceRef) []recovery.EvidenceRef {
 	if len(refs) == 0 {
 		return nil
 	}
+
 	out := make([]recovery.EvidenceRef, 0, len(refs))
 	seen := map[recovery.EvidenceRef]bool{}
+
 	for _, ref := range refs {
 		ref.Kind = strings.TrimSpace(ref.Kind)
 		ref.Path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(ref.Path)))
+
 		if ref.Path == "." {
 			ref.Path = ""
 		}
+
 		ref.ID = strings.TrimSpace(ref.ID)
 		ref.Summary = ""
+
 		if ref.Kind == "" || seen[ref] {
 			continue
 		}
+
 		seen[ref] = true
 		out = append(out, ref)
 	}
+
 	return out
 }
 
@@ -197,19 +232,23 @@ func tryLoadReconciliation(root string, packetPath string, packet recovery.Decom
 		if err := rejectSymlinkedFile(siblingPath, "recovery reconciliation path"); err != nil {
 			return recovery.Reconciliation{}, "", false, err
 		}
+
 		reconciliation, _, found, err := recovery.TryLoadReconciliation(siblingPath)
 		if err != nil || found {
 			return reconciliation, siblingRel, found, err
 		}
 	}
+
 	defaultPath, defaultRel, err := safeDefaultReconciliationPath(root, packet.FailureID)
 	if err != nil {
 		return recovery.Reconciliation{}, "", false, err
 	}
+
 	reconciliation, _, found, err := recovery.TryLoadReconciliation(defaultPath)
 	if err != nil || !found {
 		return reconciliation, defaultRel, found, err
 	}
+
 	return reconciliation, defaultRel, true, nil
 }
 
@@ -218,24 +257,30 @@ func safeDefaultReconciliationPath(root string, failureID string) (string, strin
 	if err != nil {
 		return "", "", err
 	}
+
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve workspace root: %w", err)
 	}
+
 	absPath, err := filepath.Abs(fullPath)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve recovery reconciliation path: %w", err)
 	}
+
 	rel, err := filepath.Rel(absRoot, absPath)
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", "", fmt.Errorf("recovery reconciliation path must stay under workspace root")
 	}
+
 	if hasSymlinkAncestor(absRoot, absPath) {
 		return "", "", fmt.Errorf("recovery reconciliation path must not traverse symlinked directories")
 	}
+
 	if err := rejectSymlinkedFile(absPath, "recovery reconciliation path"); err != nil {
 		return "", "", err
 	}
+
 	return absPath, relPath, nil
 }
 
@@ -245,6 +290,7 @@ func rejectSymlinkedFile(path string, label string) error {
 	} else if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("inspect %s: %w", label, err)
 	}
+
 	return nil
 }
 
@@ -253,54 +299,70 @@ func defaultReconciliationSiblingPath(root string, packetPath string) (string, s
 	if err != nil {
 		return "", "", false
 	}
+
 	absPacketPath, err := filepath.Abs(packetPath)
 	if err != nil {
 		return "", "", false
 	}
+
 	relPacketPath, err := filepath.Rel(absRoot, absPacketPath)
 	if err != nil || relPacketPath == "." || strings.HasPrefix(relPacketPath, ".."+string(filepath.Separator)) || relPacketPath == ".." || filepath.IsAbs(relPacketPath) {
 		return "", "", false
 	}
+
 	fullPath := filepath.Join(filepath.Dir(absPacketPath), "reconciliation.json")
+
 	relPath, err := filepath.Rel(absRoot, fullPath)
 	if err != nil {
 		return "", "", false
 	}
+
 	relPath = filepath.ToSlash(filepath.Clean(relPath))
 	if isProtectedReconciliationOutputPath(relPath) {
 		return "", "", false
 	}
+
 	if hasSymlinkAncestor(absRoot, fullPath) {
 		return "", "", false
 	}
+
 	return fullPath, relPath, true
 }
 
 func hasSymlinkAncestor(absRoot string, absPath string) bool {
 	absRoot = filepath.Clean(absRoot)
 	absPath = filepath.Clean(absPath)
+
 	rel, err := filepath.Rel(absRoot, absPath)
+
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return true
 	}
+
 	parentRel := filepath.Dir(rel)
 	if parentRel == "." {
 		return false
 	}
+
 	current := absRoot
 	for _, part := range strings.Split(parentRel, string(filepath.Separator)) {
 		current = filepath.Join(current, part)
+
 		info, err := os.Lstat(current)
+
 		if os.IsNotExist(err) {
 			return false
 		}
+
 		if err != nil {
 			return true
 		}
+
 		if info.Mode()&os.ModeSymlink != 0 {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -309,10 +371,12 @@ func isProtectedReconciliationOutputPath(rel string) bool {
 	if rel == "" || rel == "." {
 		return true
 	}
+
 	canonical := strings.ToLower(rel)
 	if canonical == ".idiom" || strings.HasPrefix(canonical, ".idiom/") {
 		return canonical != ".idiom/recovery" && !strings.HasPrefix(canonical, ".idiom/recovery/")
 	}
+
 	protectedPrefixes := []string{
 		".git/",
 		"logs/",
@@ -322,10 +386,12 @@ func isProtectedReconciliationOutputPath(rel string) bool {
 			return true
 		}
 	}
+
 	switch canonical {
 	case ".env", "config.json":
 		return true
 	}
+
 	return false
 }
 
@@ -334,33 +400,41 @@ func resolvePacketPath(root string, path string) (string, error) {
 	if root == "" {
 		return "", fmt.Errorf("workspace root is empty")
 	}
+
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return "", fmt.Errorf("resolve workspace root: %w", err)
 	}
+
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", fmt.Errorf("recovery packet path is empty")
 	}
+
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(absRoot, path)
 	}
+
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("resolve recovery packet path: %w", err)
 	}
+
 	rel, err := filepath.Rel(absRoot, absPath)
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", fmt.Errorf("recovery packet path must stay under workspace root")
 	}
+
 	if hasSymlinkAncestor(absRoot, absPath) {
 		return "", fmt.Errorf("recovery packet path must not traverse symlinked directories")
 	}
+
 	if info, err := os.Lstat(absPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return "", fmt.Errorf("recovery packet path must not be a symlink")
 	} else if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("inspect recovery packet path: %w", err)
 	}
+
 	return filepath.Clean(absPath), nil
 }
 
@@ -369,11 +443,14 @@ func relDisplayPath(root string, path string) string {
 	if path == "" {
 		return ""
 	}
+
 	if !filepath.IsAbs(path) {
 		return filepath.ToSlash(path)
 	}
+
 	if rel, err := filepath.Rel(root, path); err == nil && !strings.HasPrefix(rel, "..") {
 		return filepath.ToSlash(rel)
 	}
+
 	return filepath.ToSlash(path)
 }

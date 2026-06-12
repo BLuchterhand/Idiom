@@ -1,0 +1,21 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - nlreturn
+    - whitespace
+    - wsl_v5
+  settings:
+    nlreturn:
+      block-size: 2
+    whitespace:
+      multi-if: true
+      multi-func: true
+    wsl_v5:
+      default: all
+      allow-first-in-block: true
+      allow-whole-block: false
+      branch-max-lines: 2
+      case-max-lines: 0
+      cuddle-max-statements: 1

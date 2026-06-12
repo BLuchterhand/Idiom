@@ -163,22 +163,27 @@ func BuildPacket(ctx context.Context, opts BuildOptions) (Packet, error) {
 	if err != nil {
 		return Packet{}, err
 	}
+
 	cwd := strings.TrimSpace(opts.CWD)
 	if cwd == "" {
 		cwd = root
 	}
+
 	profile, profilePath, err := LoadProfile(root, opts.ProfilePath)
 	if err != nil {
 		return Packet{}, err
 	}
+
 	now := opts.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+
 	schemaVersion, err := normalizePacketSchema(opts.Schema)
 	if err != nil {
 		return Packet{}, err
 	}
+
 	packet := Packet{
 		SchemaVersion: schemaVersion,
 		CreatedAt:     now,
@@ -199,8 +204,10 @@ func BuildPacket(ctx context.Context, opts BuildOptions) (Packet, error) {
 		Roles:       cleanRoles(profile.Roles),
 		Metadata:    mergeMetadata(profile.Metadata, opts.Metadata),
 	}
+
 	packet.Evidence = append(packet.Evidence, readRuleEvidence(root, profile.Rules, opts.MaxRuleBytes)...)
 	packet.Evidence = append(packet.Evidence, readContextViewEvidence(root, opts.ContextViews, opts.MaxOutputBytes)...)
+
 	if opts.RunCollectors {
 		packet.Evidence = append(packet.Evidence, runCollectorEvidence(ctx, root, profile.Collectors, opts.MaxOutputBytes)...)
 	} else {
@@ -214,15 +221,19 @@ func BuildPacket(ctx context.Context, opts BuildOptions) (Packet, error) {
 			})
 		}
 	}
+
 	if packet.Profile.Name == "" {
 		packet.Profile.Name = "default"
 	}
+
 	if packet.Task == "" {
 		return Packet{}, fmt.Errorf("task is required")
 	}
+
 	if packet.SchemaVersion == PlanningPacketV2Version {
 		enrichPlanningPacketV2(&packet, PlanningPacketV2Options{BudgetTier: opts.BudgetTier, Now: now})
 	}
+
 	return packet, nil
 }
 
@@ -249,6 +260,7 @@ func LoadProfile(root string, profilePath string) (Profile, string, error) {
 				break
 			}
 		}
+
 		if path == "" {
 			return Profile{Name: "default"}, "", nil
 		}
@@ -260,17 +272,22 @@ func LoadProfile(root string, profilePath string) (Profile, string, error) {
 			path = filepath.Join(root, path)
 		}
 	}
+
 	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return Profile{}, "", fmt.Errorf("read architect profile: %w", err)
 	}
+
 	var profile Profile
+
 	if err := json.Unmarshal(data, &profile); err != nil {
 		return Profile{}, "", fmt.Errorf("parse architect profile %s: %w", path, err)
 	}
+
 	if profile.Name == "" {
 		profile.Name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
+
 	return profile, path, nil
 }
 
@@ -281,28 +298,36 @@ func readRuleEvidence(root string, rules []RuleSource, defaultMaxBytes int) []Ev
 		if path == "" {
 			continue
 		}
+
 		full := path
 		if !filepath.IsAbs(full) {
 			full = filepath.Join(root, full)
 		}
+
 		label := strings.TrimSpace(rule.Label)
 		if label == "" {
 			label = path
 		}
+
 		data, err := os.ReadFile(filepath.Clean(full))
 		ev := Evidence{Kind: "rule", Label: label, Path: path, Required: rule.Required}
+
 		if err != nil {
 			ev.Error = err.Error()
 			out = append(out, ev)
+
 			continue
 		}
+
 		limit := rule.MaxBytes
 		if limit <= 0 {
 			limit = defaultMaxBytes
 		}
+
 		ev.Content = util.TruncateBytes(string(data), limit, "\n[truncated]")
 		out = append(out, ev)
 	}
+
 	return out
 }
 
@@ -313,20 +338,26 @@ func readContextViewEvidence(root string, paths []string, defaultMaxBytes int) [
 		if path == "" {
 			continue
 		}
+
 		full := path
 		if !filepath.IsAbs(full) {
 			full = filepath.Join(root, full)
 		}
+
 		ev := Evidence{Kind: "context_view", Label: strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)), Path: path}
+
 		data, err := os.ReadFile(filepath.Clean(full))
 		if err != nil {
 			ev.Error = err.Error()
 			out = append(out, ev)
+
 			continue
 		}
+
 		ev.Content = util.TruncateBytes(string(data), defaultMaxBytes, "\n[truncated]")
 		out = append(out, ev)
 	}
+
 	return out
 }
 
@@ -337,18 +368,23 @@ func runCollectorEvidence(ctx context.Context, root string, collectors []Collect
 		if name == "" {
 			name = strings.TrimSpace(collector.Command)
 		}
+
 		ev := Evidence{Kind: "collector", Label: name, Command: renderCommand(collector.Command, collector.Args), Required: collector.Required}
 		if strings.TrimSpace(collector.Command) == "" {
 			ev.Error = "collector command is required"
 			out = append(out, ev)
+
 			continue
 		}
+
 		timeout := time.Duration(collector.TimeoutSeconds) * time.Second
 		if timeout <= 0 {
 			timeout = 30 * time.Second
 		}
+
 		runCtx, cancel := context.WithTimeout(ctx, timeout)
 		cmd := exec.CommandContext(runCtx, collector.Command, collector.Args...)
+
 		if collector.Cwd != "" {
 			if filepath.IsAbs(collector.Cwd) {
 				cmd.Dir = collector.Cwd
@@ -358,13 +394,18 @@ func runCollectorEvidence(ctx context.Context, root string, collectors []Collect
 		} else {
 			cmd.Dir = root
 		}
+
 		outBytes, err := cmd.CombinedOutput()
+
 		cancel()
+
 		limit := collector.MaxBytes
 		if limit <= 0 {
 			limit = defaultMaxBytes
 		}
+
 		ev.Content = util.TruncateBytes(stripANSI(string(outBytes)), limit, "\n[truncated]")
+
 		if err != nil {
 			if runCtx.Err() == context.DeadlineExceeded {
 				ev.Error = fmt.Sprintf("collector timed out after %s", timeout)
@@ -372,8 +413,10 @@ func runCollectorEvidence(ctx context.Context, root string, collectors []Collect
 				ev.Error = err.Error()
 			}
 		}
+
 		out = append(out, ev)
 	}
+
 	return out
 }
 
@@ -387,24 +430,29 @@ func resolveRoot(root string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("get workspace root: %w", err)
 		}
+
 		root = wd
 	}
+
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return "", fmt.Errorf("resolve workspace root: %w", err)
 	}
+
 	return filepath.Clean(abs), nil
 }
 
 func renderCommand(command string, args []string) string {
 	parts := append([]string{strings.TrimSpace(command)}, args...)
 	cleaned := make([]string, 0, len(parts))
+
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part != "" {
 			cleaned = append(cleaned, part)
 		}
 	}
+
 	return strings.Join(cleaned, " ")
 }
 
@@ -415,17 +463,21 @@ func mergeStrings(a []string, b []string) []string {
 func cleanStrings(values []string) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, len(values))
+
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
+
 	return out
 }
 
@@ -436,20 +488,26 @@ func mergeFiles(a []FileRef, b []FileRef) []FileRef {
 func cleanFiles(values []FileRef) []FileRef {
 	seen := map[string]struct{}{}
 	out := make([]FileRef, 0, len(values))
+
 	for _, value := range values {
 		value.Path = strings.TrimSpace(value.Path)
 		value.Role = strings.TrimSpace(value.Role)
 		value.Reason = strings.TrimSpace(value.Reason)
+
 		if value.Path == "" {
 			continue
 		}
+
 		key := value.Path + "\x00" + value.Role
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
+
 		out = append(out, value)
 	}
+
 	return out
 }
 
@@ -460,18 +518,23 @@ func mergeCommands(a []CommandRef, b []CommandRef) []CommandRef {
 func cleanCommands(values []CommandRef) []CommandRef {
 	seen := map[string]struct{}{}
 	out := make([]CommandRef, 0, len(values))
+
 	for _, value := range values {
 		value.Command = strings.TrimSpace(value.Command)
 		value.Reason = strings.TrimSpace(value.Reason)
+
 		if value.Command == "" {
 			continue
 		}
+
 		if _, ok := seen[value.Command]; ok {
 			continue
 		}
+
 		seen[value.Command] = struct{}{}
 		out = append(out, value)
 	}
+
 	return out
 }
 
@@ -482,11 +545,14 @@ func cleanAnchors(values []Anchor) []Anchor {
 		value.Symbol = strings.TrimSpace(value.Symbol)
 		value.Lines = strings.TrimSpace(value.Lines)
 		value.Why = strings.TrimSpace(value.Why)
+
 		if value.Path == "" && value.Symbol == "" {
 			continue
 		}
+
 		out = append(out, value)
 	}
+
 	return out
 }
 
@@ -495,11 +561,14 @@ func cleanRisks(values []Risk) []Risk {
 	for _, value := range values {
 		value.Name = strings.TrimSpace(value.Name)
 		value.Mitigation = strings.TrimSpace(value.Mitigation)
+
 		if value.Name == "" {
 			continue
 		}
+
 		out = append(out, value)
 	}
+
 	return out
 }
 
@@ -508,12 +577,16 @@ func cleanGates(values []Gate) []Gate {
 	for _, value := range values {
 		value.Name = strings.TrimSpace(value.Name)
 		value.Description = strings.TrimSpace(value.Description)
+
 		if value.Name == "" {
 			continue
 		}
+
 		out = append(out, value)
 	}
+
 	slices.SortFunc(out, func(a, b Gate) int { return cmp.Compare(a.Name, b.Name) })
+
 	return out
 }
 
@@ -523,11 +596,14 @@ func cleanRoles(values []Role) []Role {
 		value.Name = strings.TrimSpace(value.Name)
 		value.Description = strings.TrimSpace(value.Description)
 		value.Model = strings.TrimSpace(value.Model)
+
 		if value.Name == "" {
 			continue
 		}
+
 		out = append(out, value)
 	}
+
 	return out
 }
 
@@ -535,21 +611,26 @@ func mergeMetadata(a map[string]string, b map[string]string) map[string]string {
 	if len(a) == 0 && len(b) == 0 {
 		return nil
 	}
+
 	out := make(map[string]string, len(a)+len(b))
 	for k, v := range a {
 		k = strings.TrimSpace(k)
 		v = strings.TrimSpace(v)
+
 		if k != "" && v != "" {
 			out[k] = v
 		}
 	}
+
 	for k, v := range b {
 		k = strings.TrimSpace(k)
 		v = strings.TrimSpace(v)
+
 		if k != "" && v != "" {
 			out[k] = v
 		}
 	}
+
 	return out
 }
 
@@ -558,5 +639,6 @@ func EncodePacket(packet Packet) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return append(data, '\n'), nil
 }

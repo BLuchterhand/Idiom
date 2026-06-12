@@ -28,35 +28,46 @@ func Acquire(cfg config.Config, opts Options, rec *telemetry.Recorder, stdout io
 	if pool == "" {
 		pool = runner.PoolForModelAlias(cfg.LlamaServer.Model)
 	}
+
 	if pool == "" {
 		emit(rec, stdout, opts, "disabled", "", 0, "pool_disabled", false)
+
 		return func() {}
 	}
+
 	socket := strings.TrimSpace(os.Getenv("IDIOM_QUEUE_SOCKET"))
 	label := strings.TrimSpace(opts.Label)
 	client := strings.TrimSpace(opts.Client)
+
 	if client == "" {
 		command := strings.TrimSpace(opts.Command)
 		if command == "" {
 			command = "idiom"
 		}
+
 		client = fmt.Sprintf("%s/%d", command, os.Getpid())
 	}
+
 	startedAt := time.Now()
 	result := runner.MaybeAcquireWithResult(context.Background(), socket, pool, label, client, stderr)
 	waitMillis := time.Since(startedAt).Milliseconds()
+
 	if result.Err != nil {
 		fmt.Fprintf(stderr, "[idiom queue %s] acquire failed: %v - proceeding un-gated\n", pool, result.Err)
 	}
+
 	state := string(result.State)
 	if state == "" {
 		state = "error"
 	}
+
 	degraded := state == "unavailable" || state == "degraded" || state == "error"
 	emit(rec, stdout, opts, state, pool, waitMillis, result.Reason, degraded)
+
 	if result.Release == nil {
 		return func() {}
 	}
+
 	return result.Release
 }
 
@@ -71,12 +82,15 @@ func emit(rec *telemetry.Recorder, stdout io.Writer, opts Options, state string,
 	if strings.TrimSpace(opts.Label) != "" {
 		fields["label"] = strings.TrimSpace(opts.Label)
 	}
+
 	emitJSONEvent(stdout, opts, EventName(state), fields)
+
 	if rec != nil {
 		eventType := strings.TrimSpace(opts.TelemetryEvent)
 		if eventType == "" {
 			eventType = strings.TrimSpace(opts.Command) + "_queue"
 		}
+
 		if eventType != "_queue" {
 			_ = rec.Log(eventType, fields)
 		}
@@ -102,10 +116,12 @@ func emitJSONEvent(stdout io.Writer, opts Options, eventType string, fields map[
 	if !opts.JSONEvents {
 		return
 	}
+
 	prefix := strings.TrimSpace(opts.EventPrefix)
 	if prefix == "" {
 		prefix = "idiom." + strings.TrimSpace(opts.Command)
 	}
+
 	payload := map[string]any{
 		"type": prefix + "." + eventType,
 		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
@@ -113,10 +129,12 @@ func emitJSONEvent(stdout io.Writer, opts Options, eventType string, fields map[
 	for key, value := range fields {
 		payload[key] = value
 	}
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}
+
 	fmt.Fprintln(stdout, string(body))
 }
 

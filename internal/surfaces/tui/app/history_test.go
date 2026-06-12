@@ -34,41 +34,52 @@ func TestLiveAgentHistoryEntryUpdatesToolCallInPlace(t *testing.T) {
 	if len(m.history.entries) != 2 {
 		t.Fatalf("expected user entry plus live agent entry, got %d", len(m.history.entries))
 	}
+
 	agentEntry := &m.history.entries[1]
 	if !agentEntry.inProgress {
 		t.Fatal("agent history entry should be marked in progress")
 	}
+
 	if agentEntry.summary != "working…" {
 		t.Fatalf("placeholder summary = %q, want working…", agentEntry.summary)
 	}
 
 	m.recordToolTraceInHistory(1, "read_file | running internal/surfaces/tui/app/history.go", "inspect the history model", true, "read", "", nil)
+
 	if len(agentEntry.toolCalls) != 1 {
 		t.Fatalf("expected one live tool line, got %d", len(agentEntry.toolCalls))
 	}
+
 	if !agentEntry.toolCalls[0].running {
 		t.Fatal("tool line should be marked running")
 	}
+
 	if !strings.Contains(m.history.viewport.View(), "Tools: 1 call(s) (1 read); 1 running") {
 		t.Fatalf("history viewport did not render compact tool summary:\n%s", m.history.viewport.View())
 	}
+
 	if !strings.Contains(m.history.viewport.View(), "Latest: read_file running - inspect the history model") {
 		t.Fatalf("history viewport did not render latest tool intent:\n%s", m.history.viewport.View())
 	}
 
 	m.recordToolTraceInHistory(1, "read_file | Read internal/surfaces/tui/app/history.go lines 1-40", "", false, "", "ok: read 40 lines", nil)
+
 	if len(agentEntry.toolCalls) != 1 {
 		t.Fatalf("tool result should update existing step, got %d lines", len(agentEntry.toolCalls))
 	}
+
 	if agentEntry.toolCalls[0].running {
 		t.Fatal("tool line should no longer be marked running")
 	}
+
 	if strings.Contains(agentEntry.toolCalls[0].line, "running") {
 		t.Fatalf("tool line was not replaced with result: %q", agentEntry.toolCalls[0].line)
 	}
+
 	if agentEntry.toolCalls[0].intent != "inspect the history model" {
 		t.Fatalf("tool result should preserve intent, got %q", agentEntry.toolCalls[0].intent)
 	}
+
 	if agentEntry.toolCalls[0].kind != "read" || agentEntry.toolCalls[0].outcome != "ok: read 40 lines" {
 		t.Fatalf("tool audit metadata not preserved: %#v", agentEntry.toolCalls[0])
 	}
@@ -79,6 +90,7 @@ func TestRecordAgentTurnFinalizesLiveHistoryEntry(t *testing.T) {
 	m.appendHistoryMessage("user", "fix the panel", nil)
 	m.beginAgentHistoryTurn()
 	m.recordToolTraceInHistory(1, "search_content | Found 2 matching lines", "locate references before editing", false, "discovery / text_search", "ok: found matches", nil)
+
 	m.messages = []llama.ChatMessage{{Role: "assistant", Content: "Updated the history panel."}}
 
 	m.recordAgentTurn()
@@ -86,16 +98,20 @@ func TestRecordAgentTurnFinalizesLiveHistoryEntry(t *testing.T) {
 	if len(m.history.entries) != 2 {
 		t.Fatalf("expected two history entries, got %d", len(m.history.entries))
 	}
+
 	agentEntry := m.history.entries[1]
 	if agentEntry.inProgress {
 		t.Fatal("agent history entry should be finalized")
 	}
+
 	if m.currentTurnHistoryActive {
 		t.Fatal("current turn history should be inactive after finalization")
 	}
+
 	if len(agentEntry.toolCalls) != 1 {
 		t.Fatalf("expected one retained tool line, got %d", len(agentEntry.toolCalls))
 	}
+
 	if len(agentEntry.contents) != 1 || agentEntry.contents[0] != "Updated the history panel." {
 		t.Fatalf("final assistant response not attached to live entry: %#v", agentEntry.contents)
 	}
@@ -110,6 +126,7 @@ func TestToolRequestIntentUsesDescriptionWhenAvailable(t *testing.T) {
 		},
 	})
 	want := "Add inferred tool intent to the live history panel."
+
 	if got != want {
 		t.Fatalf("toolRequestIntent = %q, want %q", got, want)
 	}
@@ -124,6 +141,7 @@ func TestToolRequestIntentInfersSearchPurpose(t *testing.T) {
 		},
 	})
 	want := "locate references to recordToolTraceInHistory in internal/surfaces/tui/app/*.go"
+
 	if got != want {
 		t.Fatalf("toolRequestIntent = %q, want %q", got, want)
 	}
@@ -161,6 +179,7 @@ func TestHistoryRendersCompactAuditDigest(t *testing.T) {
 			t.Fatalf("history viewport missing %q:\n%s", want, view)
 		}
 	}
+
 	for _, noisy := range []string{
 		"lane [explore]: route selected",
 		"type=discovery / context",
@@ -175,6 +194,7 @@ func TestHistoryRendersCompactAuditDigest(t *testing.T) {
 
 func TestHistoryTraceDetailRendersRawAuditEventsAndToolMetadata(t *testing.T) {
 	m := newHistoryPanelModel()
+
 	m.traceMode = traceDisplayDetail
 	m.appendHistoryMessage("user", "inspect audit trail", nil)
 	m.beginAgentHistoryTurn()
@@ -218,6 +238,7 @@ func TestHistoryAuditEventFromRunEventSummarizesContractSignals(t *testing.T) {
 	if !ok {
 		t.Fatal("expected completion_status to produce a history audit event")
 	}
+
 	if event.kind != "contract" || event.label != "contract blocked: implementation_result" || !strings.Contains(event.detail, "blocker=required_edit_paths_remaining") {
 		t.Fatalf("unexpected completion audit event: %#v", event)
 	}
@@ -231,6 +252,7 @@ func TestHistoryAuditEventFromAutonomyObligation(t *testing.T) {
 	if !ok {
 		t.Fatal("expected autonomy event to produce a history audit event")
 	}
+
 	if event.kind != "obligation" || event.status != "resolved" || !strings.Contains(event.auditLine(), "source_evidence") {
 		t.Fatalf("unexpected autonomy audit event: %#v", event)
 	}
@@ -247,9 +269,11 @@ func TestHistoryAuditEventFromChildToolEvents(t *testing.T) {
 		},
 	})
 	requestEvent, ok := historyAuditEventFromRunEvent(agent.RunEvent{Role: "child_tool_request", Content: requestPayload})
+
 	if !ok {
 		t.Fatal("expected child tool request audit event")
 	}
+
 	if requestEvent.kind != "delegation" || requestEvent.status != "requested" || !strings.Contains(requestEvent.detail, "reason=locate references") {
 		t.Fatalf("unexpected child request audit event: %#v", requestEvent)
 	}
@@ -263,9 +287,11 @@ func TestHistoryAuditEventFromChildToolEvents(t *testing.T) {
 		Result: workspace.ToolResult{Tool: "search_content", Summary: "Found 3 lines", Output: "a\nb\nc\n"},
 	})
 	resultEvent, ok := historyAuditEventFromRunEvent(agent.RunEvent{Role: "child_tool_result", Content: resultPayload})
+
 	if !ok {
 		t.Fatal("expected child tool result audit event")
 	}
+
 	if resultEvent.kind != "delegation" || resultEvent.status != "ok" || !strings.Contains(resultEvent.detail, "3 line(s)") {
 		t.Fatalf("unexpected child result audit event: %#v", resultEvent)
 	}
@@ -280,10 +306,12 @@ func TestFailAgentHistoryTurnFinalizesPlaceholder(t *testing.T) {
 	if len(m.history.entries) != 1 {
 		t.Fatalf("expected failed placeholder to remain as history entry, got %d", len(m.history.entries))
 	}
+
 	entry := m.history.entries[0]
 	if entry.inProgress {
 		t.Fatal("failed history entry should not remain in progress")
 	}
+
 	if !strings.Contains(entry.summary, "Chat failed: server unavailable") {
 		t.Fatalf("failure summary missing error: %q", entry.summary)
 	}
@@ -293,6 +321,7 @@ func TestRecordToolTraceInHistoryThrottlesLiveHistoryRender(t *testing.T) {
 	m := newHistoryPanelModel()
 	m.appendHistoryMessage("user", "inspect the app", nil)
 	m.beginAgentHistoryTurn()
+
 	m.streaming = true
 	m.history.focused = false
 	m.history.renderLast = time.Now()
@@ -302,6 +331,7 @@ func TestRecordToolTraceInHistoryThrottlesLiveHistoryRender(t *testing.T) {
 	if !m.history.renderPending {
 		t.Fatal("expected live history render to be throttled while streaming")
 	}
+
 	if strings.Contains(m.history.viewport.View(), "read_file | running internal/surfaces/tui/app/history.go") {
 		t.Fatalf("expected throttled render to defer viewport update, got:\n%s", m.history.viewport.View())
 	}
@@ -325,9 +355,11 @@ func TestCtrlBOpensHistoryTabAndSetsStatusWhileStreaming(t *testing.T) {
 	if !updated.history.panelOpen {
 		t.Fatal("expected Ctrl+B to open the panel")
 	}
+
 	if updated.panelTab != panelTabHistory {
 		t.Fatalf("expected Ctrl+B to switch to history tab, got %d", updated.panelTab)
 	}
+
 	if !strings.Contains(updated.status, "History panel open") {
 		t.Fatalf("expected status to acknowledge panel open, got %q", updated.status)
 	}

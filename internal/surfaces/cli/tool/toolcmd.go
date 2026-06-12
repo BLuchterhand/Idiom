@@ -24,29 +24,39 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		printUsage(stderr)
+
 		return 0
 	}
+
 	if args[0] == "schemas" {
 		code := RunSchemas(stdout, stderr)
 		LogCLIPhase(rec, "tool_schema_export", map[string]any{"exit_code": code})
+
 		return code
 	}
+
 	if args[0] == "list" {
 		// Allow `--config` after `list` to honour project-local externals.
 		listFs := flag.NewFlagSet("idiom tool list", flag.ContinueOnError)
 		listFs.SetOutput(stderr)
+
 		listConfigPath := listFs.String("config", "config.json", "path to config file")
 		listProfile := listFs.String("profile", workspace.ToolProfileDefault, "tool permission profile: default or discovery")
+
 		if err := listFs.Parse(args[1:]); err != nil {
 			return 2
 		}
+
 		profile, err := workspace.NormalizeToolProfile(*listProfile)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
+
 			return 2
 		}
+
 		code := RunListWithConfig(stdout, *listConfigPath, profile)
 		LogCLIPhase(rec, "tool_list", map[string]any{"exit_code": code})
+
 		return code
 	}
 
@@ -54,27 +64,35 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	if HelpRequested(args[1:]) {
 		printHelp(stdout, toolName)
 		LogCLIPhase(rec, "tool_help", map[string]any{"tool": toolName, "exit_code": 0})
+
 		return 0
 	}
+
 	toolFs := flag.NewFlagSet("idiom tool "+toolName, flag.ContinueOnError)
 	toolFs.SetOutput(stderr)
+
 	configPath := toolFs.String("config", "config.json", "path to config file")
 	profileFlag := toolFs.String("profile", workspace.ToolProfileDefault, "tool permission profile: default or discovery")
 	callerID := toolFs.String("caller-id", "", "opaque caller identifier for sidecar.caller metadata")
 	requestID := toolFs.String("request-id", "", "opaque request identifier for sidecar.caller metadata")
 	traceID := toolFs.String("trace-id", "", "opaque trace identifier for sidecar.caller metadata")
 	inputJSON := toolFs.String("input", "", "JSON object with tool request parameters (reads from stdin if omitted and not a terminal)")
+
 	if err := toolFs.Parse(args[1:]); err != nil {
 		return 2
 	}
+
 	profile, err := workspace.NormalizeToolProfile(*profileFlag)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 2
 	}
+
 	caller, err := workspace.NewToolSidecarCaller(*callerID, *requestID, *traceID)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 2
 	}
 
@@ -85,7 +103,9 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		if requestLogged {
 			return
 		}
+
 		LogDirectToolRequest(rec, req, rawInputBytes, profile, caller)
+
 		requestLogged = true
 	}
 	logFailureResult := func(summary string, errText string) {
@@ -101,10 +121,12 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		logRequest(0)
 		logFailureResult("Direct tool setup failed", err.Error())
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
 
 	var rawInput []byte
+
 	if *inputJSON != "" {
 		rawInput = []byte(*inputJSON)
 	} else {
@@ -113,30 +135,39 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 			data, err := io.ReadAll(os.Stdin)
 			if err != nil {
 				errText := fmt.Sprintf("read stdin: %v", err)
+
 				logRequest(0)
 				logFailureResult("Direct tool input failed", errText)
 				fmt.Fprintln(stderr, errText)
+
 				return 1
 			}
+
 			rawInput = data
 		}
 	}
+
 	if len(rawInput) > 0 {
 		decoded, err := workspace.DecodeToolRequestJSON(rawInput)
 		if err != nil {
 			errText := fmt.Sprintf("invalid input JSON: %v", err)
+
 			logRequest(len(rawInput))
 			logFailureResult("Direct tool input rejected", errText)
 			fmt.Fprintln(stderr, errText)
+
 			return 1
 		}
+
 		req = decoded
 		// Preserve the full input as Args so external tools (and any
 		// future MCP-shaped tools) can pull arbitrary fields, not just
 		// the ones declared on ToolRequest.
 		req.Args = json.RawMessage(rawInput)
 	}
+
 	req.Tool = toolName
+
 	logRequest(len(rawInput))
 
 	extReg, extErr := LoadExternalToolsRegistry(cfg.Workspace)
@@ -144,13 +175,17 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		errText := fmt.Sprintf("external tools setup: %v", extErr)
 		logFailureResult("Direct tool setup failed", errText)
 		fmt.Fprintln(stderr, errText)
+
 		return 1
 	}
+
 	if decision := toolAllowedForCLIProfile(req, profile, extReg); !decision.Allowed {
 		result := workspace.ToolProfileDeniedResult(req.Tool, profile, decision)
 		LogDirectToolResult(rec, req, result, 0, profile, caller)
+
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
+
 		payload := struct {
 			workspace.ToolResult
 			Sidecar workspace.ToolSidecarEnvelope `json:"sidecar"`
@@ -160,13 +195,16 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		}
 		if err := enc.Encode(payload); err != nil {
 			fmt.Fprintf(stderr, "encode result: %v\n", err)
+
 			return 1
 		}
+
 		return 1
 	}
 
 	mgr := workspace.NewManager(cfg.Workspace)
 	mgr.SetBypassReadBeforeEdit(true)
+
 	if extReg != nil {
 		mgr.SetExternalToolsRegistry(extReg)
 	}
@@ -180,6 +218,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
+
 	payload := struct {
 		workspace.ToolResult
 		Sidecar workspace.ToolSidecarEnvelope `json:"sidecar"`
@@ -189,12 +228,14 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	}
 	if err := enc.Encode(payload); err != nil {
 		fmt.Fprintf(stderr, "encode result: %v\n", err)
+
 		return 1
 	}
 
 	if result.Error != "" {
 		return 1
 	}
+
 	return 0
 }
 
@@ -203,9 +244,11 @@ func toolAllowedForCLIProfile(req workspace.ToolRequest, profile string, extReg 
 	if decision.Allowed || profile != workspace.ToolProfileDiscovery || workspace.IsBuiltInToolName(req.Tool) {
 		return decision
 	}
+
 	if extReg != nil && extReg.IsReadOnlyDiscovery(req.Tool) {
 		return workspace.ToolProfileDecision{Allowed: true}
 	}
+
 	return decision
 }
 
@@ -216,6 +259,7 @@ func HelpRequested(args []string) bool {
 			skipValue = false
 			continue
 		}
+
 		arg = strings.TrimSpace(arg)
 		switch strings.TrimSpace(arg) {
 		case "help", "--help", "-h":
@@ -224,6 +268,7 @@ func HelpRequested(args []string) bool {
 			skipValue = true
 		}
 	}
+
 	return false
 }
 
@@ -235,26 +280,33 @@ func printHelp(stdout io.Writer, toolName string) {
 	fmt.Fprintln(stdout, "  The sidecar envelope carries profile, caller metadata, contract, freshness, warnings, audit_event_ids, structured_output, and typed error fields.")
 	fmt.Fprintln(stdout, "  --profile discovery is read-only and denies mutation, shell, destructive, and unknown side-effect tools before execution.")
 	fmt.Fprintln(stdout)
+
 	defs := workspace.BuildToolDefinitions([]string{toolName})
 	if len(defs) > 0 {
 		def := defs[0]
 		fmt.Fprintf(stdout, "%s\n\n", def.Description)
 		fmt.Fprintln(stdout, "Schema:")
 		fmt.Fprintln(stdout, def.ParametersJSON)
+
 		if example, ok := toolManifestExample(toolName); ok {
 			fmt.Fprintln(stdout)
 			fmt.Fprintln(stdout, "Example:")
 			fmt.Fprintln(stdout, example.Request)
+
 			if strings.TrimSpace(example.Purpose) != "" {
 				fmt.Fprintf(stdout, "Purpose: %s\n", example.Purpose)
 			}
 		}
+
 		return
 	}
+
 	if example, ok := toolManifestExample(toolName); ok {
 		fmt.Fprintf(stdout, "%s\n\nExample:\n%s\n", example.Purpose, example.Request)
+
 		return
 	}
+
 	fmt.Fprintf(stdout, "No built-in schema found for %q. If this is a project external tool, run `idiom tool list --config <path>` and inspect the project tool docs.\n", toolName)
 }
 
@@ -264,6 +316,7 @@ func toolManifestExample(toolName string) (workspace.ToolManifestEntry, bool) {
 			return entry, true
 		}
 	}
+
 	return workspace.ToolManifestEntry{}, false
 }
 
@@ -283,8 +336,10 @@ func RunListWithConfig(stdout io.Writer, configPath string, profile string) int 
 		if decision := workspace.ToolAllowedForProfile(t, profile); !decision.Allowed {
 			continue
 		}
+
 		fmt.Fprintln(stdout, t)
 	}
+
 	// Append project-defined external tools when a config is loadable.
 	// Silent on errors: `idiom tool list` is informational; if the
 	// config is missing or malformed the user will see the same error
@@ -295,16 +350,20 @@ func RunListWithConfig(stdout io.Writer, configPath string, profile string) int 
 			if strings.TrimSpace(baseDir) == "" {
 				baseDir = cfg.Workspace.Root
 			}
+
 			names := reg.AvailableNames(baseDir)
 			slices.Sort(names)
+
 			for _, name := range names {
 				if profile == workspace.ToolProfileDiscovery && !reg.IsReadOnlyDiscovery(name) {
 					continue
 				}
+
 				fmt.Fprintln(stdout, name)
 			}
 		}
 	}
+
 	return 0
 }
 
@@ -312,27 +371,35 @@ func RunSchemas(stdout io.Writer, stderr io.Writer) int {
 	export, err := workspace.BuildToolSchemaExport(nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "export tool schemas: %v\n", err)
+
 		return 1
 	}
+
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
+
 	if err := enc.Encode(export); err != nil {
 		fmt.Fprintf(stderr, "encode schema export: %v\n", err)
+
 		return 1
 	}
+
 	return 0
 }
 
 func LoadConfig(path string) (config.Config, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		cfg := config.Default()
+
 		if wd, e := os.Getwd(); e == nil {
 			wd = config.CanonicalizeExistingPath(wd)
 			cfg.Workspace.Root = wd
 			cfg.Workspace.CWD = wd
 		}
+
 		return cfg, nil
 	}
+
 	return config.Load(path)
 }
 
@@ -382,9 +449,11 @@ func LogCLIPhase(rec *telemetry.Recorder, eventType string, fields map[string]an
 	if rec == nil {
 		return
 	}
+
 	if fields == nil {
 		fields = map[string]any{}
 	}
+
 	_ = rec.Log(eventType, fields)
 }
 
@@ -392,6 +461,7 @@ func LogDirectToolRequest(rec *telemetry.Recorder, req workspace.ToolRequest, ra
 	if rec == nil {
 		return
 	}
+
 	fields := map[string]any{
 		"step":            1,
 		"agent":           "direct",
@@ -411,12 +481,14 @@ func LogDirectToolRequest(rec *telemetry.Recorder, req workspace.ToolRequest, ra
 		"recursive":       req.Recursive,
 	}
 	AddToolAttributionTelemetry(fields, workspace.ToolSidecarEnvelopeVersion, "cli", strings.TrimSpace(profile), caller, strings.TrimSpace(req.Tool))
+
 	discoveryProfile := workspace.DiscoveryProfileForRequest(req)
 	if discoveryProfile.Discovery {
 		fields["discovery_class"] = discoveryProfile.Class
 		fields["discovery_scope"] = discoveryProfile.Scope
 		fields["discovery_cost"] = discoveryProfile.Cost
 	}
+
 	_ = rec.Log("tool_request", fields)
 }
 
@@ -424,6 +496,7 @@ func LogDirectToolResult(rec *telemetry.Recorder, req workspace.ToolRequest, res
 	if rec == nil {
 		return
 	}
+
 	outputChars := len(result.Output)
 	tool := FirstNonEmptyString(result.Tool, req.Tool)
 	fields := map[string]any{
@@ -435,22 +508,27 @@ func LogDirectToolResult(rec *telemetry.Recorder, req workspace.ToolRequest, res
 		"duration_ms": durationMillis,
 	}
 	AddToolAttributionTelemetry(fields, workspace.ToolSidecarEnvelopeVersion, "cli", strings.TrimSpace(profile), caller, tool)
+
 	if outputChars > 0 {
 		fields["output_chars"] = outputChars
 		fields["output_lines"] = OutputLineCount(result.Output)
 	}
+
 	if result.PrecisionTier != "" {
 		fields["precision_tier"] = result.PrecisionTier
 	}
+
 	discoveryProfile := workspace.DiscoveryProfileForRequest(req)
 	if discoveryProfile.Discovery {
 		fields["discovery_class"] = discoveryProfile.Class
 		fields["discovery_scope"] = discoveryProfile.Scope
 		fields["discovery_cost"] = discoveryProfile.Cost
 	}
+
 	for key, value := range workspace.ToolTelemetryFields(tool, result.Output) {
 		fields[key] = value
 	}
+
 	_ = rec.Log("tool_result", fields)
 }
 
@@ -461,12 +539,15 @@ func AddToolAttributionTelemetry(fields map[string]any, sidecarSchemaVersion str
 	fields["contract_id"] = "idiom.tool.v1:" + strings.TrimSpace(tool)
 	fields["contract_kind"] = "workspace_tool_result"
 	fields["contract_schema_version"] = workspace.ToolSchemaExportVersion
+
 	if caller.CallerID != "" {
 		fields["caller_id"] = caller.CallerID
 	}
+
 	if caller.RequestID != "" {
 		fields["request_id"] = caller.RequestID
 	}
+
 	if caller.TraceID != "" {
 		fields["trace_id"] = caller.TraceID
 	}
@@ -476,10 +557,12 @@ func OutputLineCount(output string) int {
 	if output == "" {
 		return 0
 	}
+
 	lines := strings.Count(output, "\n")
 	if !strings.HasSuffix(output, "\n") {
 		lines++
 	}
+
 	return lines
 }
 
@@ -489,6 +572,7 @@ func FirstNonEmptyString(values ...string) string {
 			return value
 		}
 	}
+
 	return ""
 }
 
@@ -510,28 +594,36 @@ func LoadExternalToolsRegistry(ws config.Workspace) (*workspace.ExternalToolRegi
 			Discovery:      def.Discovery,
 		})
 	}
+
 	if dir := ws.ExternalToolsDir; dir != "" {
 		dirPath := dir
 		if !filepath.IsAbs(dirPath) && ws.Root != "" {
 			dirPath = filepath.Join(ws.Root, dirPath)
 		}
+
 		entries, err := os.ReadDir(dirPath)
 		if err != nil && !os.IsNotExist(err) {
 			return nil, fmt.Errorf("external_tools_dir %q: %w", dirPath, err)
 		}
+
 		for _, entry := range entries {
 			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 				continue
 			}
+
 			path := filepath.Join(dirPath, entry.Name())
+
 			raw, err := os.ReadFile(path)
 			if err != nil {
 				return nil, fmt.Errorf("external tool file %q: %w", path, err)
 			}
+
 			var def config.ExternalToolDef
+
 			if err := json.Unmarshal(raw, &def); err != nil {
 				return nil, fmt.Errorf("external tool file %q: parse: %w", path, err)
 			}
+
 			tools = append(tools, workspace.ExternalTool{
 				Name:           def.Name,
 				Description:    def.Description,
@@ -545,8 +637,10 @@ func LoadExternalToolsRegistry(ws config.Workspace) (*workspace.ExternalToolRegi
 			})
 		}
 	}
+
 	if len(tools) == 0 {
 		return nil, nil
 	}
+
 	return workspace.NewExternalToolRegistry(tools)
 }

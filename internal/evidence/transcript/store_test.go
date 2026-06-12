@@ -11,6 +11,7 @@ import (
 
 func TestSaveMarkdownWritesTranscriptWithRoleHeadings(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "transcripts")
+
 	path, err := SaveMarkdown(dir, []llama.ChatMessage{
 		{Role: "user", Content: "Please inspect evidence."},
 		{Role: "assistant", Content: "The evidence is grounded."},
@@ -19,6 +20,7 @@ func TestSaveMarkdownWritesTranscriptWithRoleHeadings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveMarkdown: %v", err)
 	}
+
 	if !strings.HasPrefix(path, dir+string(os.PathSeparator)) || !strings.HasSuffix(path, ".md") {
 		t.Fatalf("unexpected transcript path: %q", path)
 	}
@@ -27,6 +29,7 @@ func TestSaveMarkdownWritesTranscriptWithRoleHeadings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read transcript: %v", err)
 	}
+
 	body := string(data)
 	for _, want := range []string{
 		"# Idiom Transcript",
@@ -44,6 +47,7 @@ func TestTranscriptTitleNormalizesRoles(t *testing.T) {
 	if got := transcriptTitle(" assistant"); got != "Assistant" {
 		t.Fatalf("transcriptTitle trimmed role = %q, want Assistant", got)
 	}
+
 	if got := transcriptTitle(""); got != "" {
 		t.Fatalf("transcriptTitle empty role = %q, want empty", got)
 	}

@@ -14,9 +14,11 @@ import (
 // list`. If the skill isn't listed, install will also fail.
 func TestRunSkillsListIncludesOrchestratorWorkflow(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	if code := RunMain([]string{"list"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("skills list must exit 0; got %d (stderr=%s)", code, stderr.String())
 	}
+
 	if !strings.Contains(stdout.String(), "orchestrator-workflow") {
 		t.Fatalf("skills list should include orchestrator-workflow: %s", stdout.String())
 	}
@@ -27,19 +29,26 @@ func TestRunSkillsListIncludesOrchestratorWorkflow(t *testing.T) {
 // to <project-root>/<target>/<name>/SKILL.md and exits 0.
 func TestRunSkillsInstallCopiesSkillToProjectRoot(t *testing.T) {
 	root := t.TempDir()
+
 	var stdout, stderr bytes.Buffer
+
 	code := RunMain([]string{"install", "--project-root", root, "orchestrator-workflow"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("install must exit 0; got %d (stderr=%s)", code, stderr.String())
 	}
+
 	dest := filepath.Join(root, ".claude", "skills", "orchestrator-workflow", "SKILL.md")
+
 	body, err := os.ReadFile(dest)
 	if err != nil {
 		t.Fatalf("read installed SKILL.md: %v", err)
 	}
+
 	if len(bytes.TrimSpace(body)) == 0 {
 		t.Fatalf("installed SKILL.md is empty — embed produced nothing")
 	}
+
 	if !bytes.Contains(body, []byte("Orchestrator Workflow")) {
 		t.Fatalf("installed SKILL.md missing canonical content header: %s", body[:min(200, len(body))])
 	}
@@ -51,11 +60,15 @@ func TestRunSkillsInstallCopiesSkillToProjectRoot(t *testing.T) {
 // content is unchanged; only the destination shifts.
 func TestRunSkillsInstallRespectsCustomTarget(t *testing.T) {
 	root := t.TempDir()
+
 	var stdout, stderr bytes.Buffer
+
 	code := RunMain([]string{"install", "--project-root", root, "--target", ".codex/skills", "orchestrator-workflow"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("install with --target must exit 0; got %d", code)
 	}
+
 	if _, err := os.Stat(filepath.Join(root, ".codex", "skills", "orchestrator-workflow", "SKILL.md")); err != nil {
 		t.Fatalf("custom target should land file at .codex/skills/...: %v", err)
 	}
@@ -68,22 +81,28 @@ func TestRunSkillsInstallRespectsCustomTarget(t *testing.T) {
 func TestRunSkillsInstallRefusesOverwriteWithoutForce(t *testing.T) {
 	root := t.TempDir()
 	skillDir := filepath.Join(root, ".claude", "skills", "orchestrator-workflow")
+
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	sentinel := []byte("CUSTOMIZED-BY-OPERATOR")
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), sentinel, 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := RunMain([]string{"install", "--project-root", root, "orchestrator-workflow"}, &stdout, &stderr)
+
 	if code != 2 {
 		t.Fatalf("existing SKILL.md without --force must exit 2; got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "--force") {
 		t.Fatalf("stderr should suggest --force: %s", stderr.String())
 	}
+
 	preserved, _ := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
 	if !bytes.Equal(preserved, sentinel) {
 		t.Fatalf("file should be untouched on refusal; got %q", preserved)
@@ -95,18 +114,23 @@ func TestRunSkillsInstallRefusesOverwriteWithoutForce(t *testing.T) {
 func TestRunSkillsInstallForceOverwrites(t *testing.T) {
 	root := t.TempDir()
 	skillDir := filepath.Join(root, ".claude", "skills", "orchestrator-workflow")
+
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("OLD"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := RunMain([]string{"install", "--project-root", root, "--force", "orchestrator-workflow"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("--force install must exit 0; got %d (stderr=%s)", code, stderr.String())
 	}
+
 	body, _ := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
 	if bytes.Equal(body, []byte("OLD")) {
 		t.Fatalf("--force should overwrite; file still has old content")
@@ -118,11 +142,15 @@ func TestRunSkillsInstallForceOverwrites(t *testing.T) {
 // found) distinguishes from exit 2 (flag/usage).
 func TestRunSkillsInstallRejectsUnknownSkill(t *testing.T) {
 	root := t.TempDir()
+
 	var stdout, stderr bytes.Buffer
+
 	code := RunMain([]string{"install", "--project-root", root, "no-such-skill"}, &stdout, &stderr)
+
 	if code != 1 {
 		t.Fatalf("unknown skill must exit 1; got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "unknown skill") {
 		t.Fatalf("stderr should explain: %s", stderr.String())
 	}
@@ -133,9 +161,12 @@ func TestRunSkillsInstallRejectsUnknownSkill(t *testing.T) {
 // the install dir. Reject before any filesystem read.
 func TestRunSkillsInstallRejectsPathTraversalName(t *testing.T) {
 	root := t.TempDir()
+
 	for _, bad := range []string{"../../etc/passwd", "a/b", "..", "x\x00y"} {
 		var stdout, stderr bytes.Buffer
+
 		code := RunMain([]string{"install", "--project-root", root, bad}, &stdout, &stderr)
+
 		if code != 2 {
 			t.Errorf("bad name %q must exit 2; got %d", bad, code)
 		}

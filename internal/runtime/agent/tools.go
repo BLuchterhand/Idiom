@@ -23,12 +23,14 @@ func buildLlamaTools(defs []workspace.ToolDefinition) []llama.Tool {
 	if len(defs) == 0 {
 		return nil
 	}
+
 	out := make([]llama.Tool, 0, len(defs))
 	for _, def := range defs {
 		params := json.RawMessage(def.ParametersJSON)
 		if len(params) == 0 {
 			params = json.RawMessage(`{"type":"object","properties":{}}`)
 		}
+
 		out = append(out, llama.Tool{
 			Type: "function",
 			Function: llama.ToolFunction{
@@ -38,6 +40,7 @@ func buildLlamaTools(defs []workspace.ToolDefinition) []llama.Tool {
 			},
 		})
 	}
+
 	return out
 }
 
@@ -66,17 +69,20 @@ func applyPostReadinessSchemaRequirements(tools []llama.Tool) []llama.Tool {
 	if len(tools) == 0 {
 		return tools
 	}
+
 	out := make([]llama.Tool, len(tools))
 	for i, tool := range tools {
 		if !isPostReadinessGapTool(tool.Function.Name) {
 			out[i] = tool
 			continue
 		}
+
 		mutated, ok := mutateSchemaRequireFields(tool.Function.Parameters, postReadinessRequiredFields)
 		if !ok {
 			out[i] = tool
 			continue
 		}
+
 		if tool.Function.Name == "read_file" {
 			if narrowed, narrowOK := mutateSchemaRequireLineRange(mutated); narrowOK {
 				mutated = narrowed
@@ -86,9 +92,11 @@ func applyPostReadinessSchemaRequirements(tools []llama.Tool) []llama.Tool {
 				mutated = exposed
 			}
 		}
+
 		tool.Function.Parameters = mutated
 		out[i] = tool
 	}
+
 	return out
 }
 
@@ -101,14 +109,17 @@ func stripPostReadinessBroadTools(tools []llama.Tool) []llama.Tool {
 	if len(tools) == 0 {
 		return tools
 	}
+
 	out := make([]llama.Tool, 0, len(tools))
 	for _, t := range tools {
 		name := strings.TrimSpace(t.Function.Name)
 		if name == "search_files" || name == "list_files" {
 			continue
 		}
+
 		out = append(out, t)
 	}
+
 	return out
 }
 
@@ -116,14 +127,18 @@ func mutateSchemaExposeLineRange(raw json.RawMessage) (json.RawMessage, bool) {
 	if len(raw) == 0 {
 		return nil, false
 	}
+
 	var schema map[string]any
+
 	if err := json.Unmarshal(raw, &schema); err != nil {
 		return nil, false
 	}
+
 	props, _ := schema["properties"].(map[string]any)
 	if props == nil {
 		props = make(map[string]any)
 	}
+
 	for _, name := range []string{"start_line", "end_line"} {
 		entry, _ := props[name].(map[string]any)
 		if entry == nil {
@@ -132,14 +147,18 @@ func mutateSchemaExposeLineRange(raw json.RawMessage) (json.RawMessage, bool) {
 				"description": "optional 1-indexed line number for an exact follow-up range after readiness",
 			}
 		}
+
 		entry["minimum"] = 1
 		props[name] = entry
 	}
+
 	schema["properties"] = props
+
 	updated, err := json.Marshal(schema)
 	if err != nil {
 		return nil, false
 	}
+
 	return json.RawMessage(updated), true
 }
 
@@ -147,20 +166,25 @@ func mutateSchemaRequireLineRange(raw json.RawMessage) (json.RawMessage, bool) {
 	if len(raw) == 0 {
 		return nil, false
 	}
+
 	var schema map[string]any
+
 	if err := json.Unmarshal(raw, &schema); err != nil {
 		return nil, false
 	}
+
 	props, _ := schema["properties"].(map[string]any)
 	if props == nil {
 		props = make(map[string]any)
 	}
+
 	if _, ok := props["path"]; !ok {
 		props["path"] = map[string]any{
 			"type":        "string",
 			"description": "repository-relative file path; required after readiness so read_file has a concrete target",
 		}
 	}
+
 	for _, name := range []string{"start_line", "end_line"} {
 		entry, _ := props[name].(map[string]any)
 		if entry == nil {
@@ -169,12 +193,15 @@ func mutateSchemaRequireLineRange(raw json.RawMessage) (json.RawMessage, bool) {
 				"description": "1-indexed line number; required after readiness so read_file remains a narrow probe",
 			}
 		}
+
 		entry["minimum"] = 1
 		props[name] = entry
 	}
+
 	schema["properties"] = props
 
 	requiredSet := make(map[string]struct{})
+
 	if existing, ok := schema["required"].([]any); ok {
 		for _, v := range existing {
 			if s, ok := v.(string); ok {
@@ -182,10 +209,13 @@ func mutateSchemaRequireLineRange(raw json.RawMessage) (json.RawMessage, bool) {
 			}
 		}
 	}
+
 	for _, name := range []string{"path", "start_line", "end_line"} {
 		requiredSet[name] = struct{}{}
 	}
+
 	required := make([]string, 0, len(requiredSet))
+
 	if existing, ok := schema["required"].([]any); ok {
 		for _, v := range existing {
 			if s, ok := v.(string); ok {
@@ -196,18 +226,21 @@ func mutateSchemaRequireLineRange(raw json.RawMessage) (json.RawMessage, bool) {
 			}
 		}
 	}
+
 	for _, name := range []string{"path", "start_line", "end_line"} {
 		if _, ok := requiredSet[name]; ok {
 			required = append(required, name)
 			delete(requiredSet, name)
 		}
 	}
+
 	schema["required"] = required
 
 	updated, err := json.Marshal(schema)
 	if err != nil {
 		return nil, false
 	}
+
 	return json.RawMessage(updated), true
 }
 
@@ -258,17 +291,22 @@ func mutateSchemaRequireFields(raw json.RawMessage, fields []string) (json.RawMe
 	if len(raw) == 0 {
 		raw = json.RawMessage(`{"type":"object","properties":{}}`)
 	}
+
 	var schema map[string]any
+
 	if err := json.Unmarshal(raw, &schema); err != nil {
 		return nil, false
 	}
+
 	if t, _ := schema["type"].(string); t != "" && t != "object" {
 		return nil, false
 	}
+
 	props, _ := schema["properties"].(map[string]any)
 	if props == nil {
 		props = make(map[string]any)
 	}
+
 	for _, name := range fields {
 		if _, exists := props[name]; !exists || props[name].(map[string]any)["minLength"] == nil {
 			props[name] = map[string]any{
@@ -278,9 +316,11 @@ func mutateSchemaRequireFields(raw json.RawMessage, fields []string) (json.RawMe
 			}
 		}
 	}
+
 	schema["properties"] = props
 
 	requiredSet := make(map[string]struct{})
+
 	if existing, ok := schema["required"].([]any); ok {
 		for _, v := range existing {
 			if s, ok := v.(string); ok {
@@ -288,10 +328,13 @@ func mutateSchemaRequireFields(raw json.RawMessage, fields []string) (json.RawMe
 			}
 		}
 	}
+
 	for _, name := range fields {
 		requiredSet[name] = struct{}{}
 	}
+
 	required := make([]string, 0, len(requiredSet))
+
 	if existing, ok := schema["required"].([]any); ok {
 		for _, v := range existing {
 			if s, ok := v.(string); ok {
@@ -302,18 +345,21 @@ func mutateSchemaRequireFields(raw json.RawMessage, fields []string) (json.RawMe
 			}
 		}
 	}
+
 	for _, name := range fields {
 		if _, ok := requiredSet[name]; ok {
 			required = append(required, name)
 			delete(requiredSet, name)
 		}
 	}
+
 	schema["required"] = required
 
 	updated, err := json.Marshal(schema)
 	if err != nil {
 		return nil, false
 	}
+
 	return json.RawMessage(updated), true
 }
 
@@ -348,6 +394,7 @@ func toolResultMessage(call *llama.ToolCall, result workspace.ToolResult) llama.
 			// a native-tool history shape).
 			id = fmt.Sprintf("rejected_%s_%d", call.Function.Name, time.Now().UnixNano())
 		}
+
 		return llama.ChatMessage{
 			Role:       "tool",
 			ToolCallID: id,
@@ -355,6 +402,7 @@ func toolResultMessage(call *llama.ToolCall, result workspace.ToolResult) llama.
 			Content:    workspace.FormatToolResultForModel(result),
 		}
 	}
+
 	return llama.ChatMessage{
 		Role:    "system",
 		Content: workspace.FormatToolResultForModel(result),
@@ -377,8 +425,10 @@ func toolResultTouchedPaths(req workspace.ToolRequest, _ workspace.ToolResult) [
 		if err != nil {
 			return nil
 		}
+
 		return workspace.PatchOpPaths(ops)
 	}
+
 	return nil
 }
 
@@ -395,6 +445,7 @@ func parseToolCall(call llama.ToolCall) (workspace.ToolRequest, bool, error) {
 	if call.Function.Name == "" {
 		return workspace.ToolRequest{}, false, nil
 	}
+
 	req := workspace.ToolRequest{Tool: call.Function.Name}
 	if strings.HasPrefix(call.Function.Name, "mcp:") {
 		if call.Function.Arguments != "" {
@@ -402,18 +453,22 @@ func parseToolCall(call llama.ToolCall) (workspace.ToolRequest, bool, error) {
 		} else {
 			req.Args = json.RawMessage(`{}`)
 		}
+
 		return req, true, nil
 	}
+
 	if call.Function.Arguments != "" {
 		decoded, err := workspace.DecodeToolRequestJSON([]byte(call.Function.Arguments))
 		if err != nil {
 			return workspace.ToolRequest{}, false, err
 		}
+
 		req = decoded
 		req.Args = json.RawMessage(call.Function.Arguments)
 	} else {
 		req.Args = json.RawMessage(`{}`)
 	}
+
 	if strings.TrimSpace(req.Tool) == "" {
 		req.Tool = call.Function.Name
 	} else if strings.TrimSpace(req.Tool) != call.Function.Name {
@@ -422,11 +477,15 @@ func parseToolCall(call llama.ToolCall) (workspace.ToolRequest, bool, error) {
 				if strings.TrimSpace(req.Capability) == "" {
 					req.Capability = capability
 				}
+
 				req.Tool = call.Function.Name
+
 				return req, true, nil
 			}
 		}
+
 		return workspace.ToolRequest{}, false, fmt.Errorf("native tool call %q arguments declared tool %q", call.Function.Name, req.Tool)
 	}
+
 	return req, true, nil
 }

@@ -47,13 +47,16 @@ func ParseToolRequestFromTokenizer(t ToolRequestTokenizer, raw string) ParseResu
 	if tokens.Unsafe {
 		return ParseResult{Unsafe: true}
 	}
+
 	if !tokens.OK {
 		return ParseResult{}
 	}
+
 	req, ok := toolRequestFromSyntaxValues(tokens.Tool, tokens.Fields)
 	if !ok {
 		return ParseResult{Unsafe: true}
 	}
+
 	return ParseResult{
 		Request: req,
 		Raw:     marshalToolRequestRaw(req),
@@ -68,28 +71,34 @@ func (keyValueToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizatio
 	if trimmed == "" {
 		return ToolRequestTokenization{}
 	}
+
 	lines := strings.Split(trimmed, "\n")
 	toolLineIdx := -1
 	proseLines := 0
+
 	for i, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
+
 		key, _, ok := strings.Cut(line, ":")
 		if ok && util.EqualTrimFold(key, "tool") {
 			toolLineIdx = i
 			break
 		}
+
 		proseLines++
 		if proseLines > 5 {
 			return ToolRequestTokenization{Unsafe: true}
 		}
 	}
+
 	if toolLineIdx < 0 {
 		if keyValueNoToolUnsafe(lines) {
 			return ToolRequestTokenization{Unsafe: true}
 		}
+
 		return ToolRequestTokenization{}
 	}
 
@@ -101,77 +110,100 @@ func (keyValueToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizatio
 		if !keyValueContinuationField(lastKey) {
 			return true
 		}
+
 		continuationLines++
 		if continuationLines > 8 || len(values[lastKey])+len(line)+1 > 8192 {
 			return false
 		}
+
 		values[lastKey] += "\n" + line
+
 		return true
 	}
+
 	for _, rawLine := range lines[toolLineIdx:] {
 		line := strings.TrimRight(rawLine, "\r")
 		trimmedLine := strings.TrimSpace(line)
+
 		if trimmedLine == "" {
 			if sawKeyValue && keyValueBlankContinuationField(lastKey) {
 				if !appendContinuation(line) {
 					return ToolRequestTokenization{Unsafe: true}
 				}
+
 				continue
 			}
+
 			if sawKeyValue && strings.TrimSpace(values["tool"]) != "" {
 				break
 			}
+
 			continue
 		}
+
 		key, value, ok := strings.Cut(line, ":")
 		if !ok {
 			if sawKeyValue {
 				if !appendContinuation(line) {
 					return ToolRequestTokenization{Unsafe: true}
 				}
+
 				continue
 			}
+
 			return ToolRequestTokenization{Unsafe: true}
 		}
+
 		key = strings.ToLower(strings.TrimSpace(key))
 		if sawKeyValue && keyValueRawValueField(lastKey) && !keyValueRawFieldStructuralTransition(lastKey, key) {
 			if !appendContinuation(line) {
 				return ToolRequestTokenization{Unsafe: true}
 			}
+
 			continue
 		}
+
 		if keyValueRawValueField(key) {
 			value = normalizeRawKeyValueField(value)
 		} else {
 			value = trimMatchingSyntaxQuotes(strings.TrimSpace(value))
 		}
+
 		if key == "" || (value == "" && !keyValueAllowsEmptyValue(key, values)) {
 			return ToolRequestTokenization{Unsafe: true}
 		}
+
 		if key == "tool" && strings.TrimSpace(values["tool"]) != "" {
 			break
 		}
+
 		if !keyValueToolRequestFieldAllowed(key) {
 			if sawKeyValue && keyValueContinuationField(lastKey) {
 				if !appendContinuation(line) {
 					return ToolRequestTokenization{Unsafe: true}
 				}
+
 				continue
 			}
+
 			return ToolRequestTokenization{Unsafe: true}
 		}
+
 		sawKeyValue = true
 		continuationLines = 0
 		values[key] = value
 		lastKey = key
 	}
+
 	if !sawKeyValue {
 		return ToolRequestTokenization{Unsafe: true}
 	}
+
 	tool := strings.TrimSpace(values["tool"])
 	if tool == "" {
 		return ToolRequestTokenization{Unsafe: true}
 	}
+
 	return ToolRequestTokenization{Tool: tool, Fields: values, OK: true}
 }
 
@@ -181,10 +213,12 @@ func keyValueNoToolUnsafe(lines []string) bool {
 		if !ok {
 			continue
 		}
+
 		if keyValueMissingToolActionField(strings.ToLower(strings.TrimSpace(key))) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -206,6 +240,7 @@ func normalizeRawKeyValueField(value string) string {
 	if strings.HasPrefix(value, " ") || strings.HasPrefix(value, "\t") {
 		value = value[1:]
 	}
+
 	return trimMatchingSyntaxQuotes(value)
 }
 
@@ -213,11 +248,14 @@ func trimMatchingSyntaxQuotes(value string) string {
 	if len(value) < 2 {
 		return value
 	}
+
 	first := value[0]
 	last := value[len(value)-1]
+
 	if (first == '"' || first == '\'') && first == last {
 		return value[1 : len(value)-1]
 	}
+
 	return value
 }
 

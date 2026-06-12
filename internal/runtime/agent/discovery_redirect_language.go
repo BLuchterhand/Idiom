@@ -13,6 +13,7 @@ func searchContentTargetsConcreteFile(req workspace.ToolRequest) bool {
 	if path == "" || strings.ContainsAny(path, "*?[]{}") {
 		return false
 	}
+
 	return filepath.Ext(filepath.Base(path)) != ""
 }
 
@@ -24,9 +25,11 @@ func languageForSearchRequest(req workspace.ToolRequest, ws *workspace.Manager) 
 	if lang, ok := languageFromConcretePath(req.Path); ok && patternCompatibleWithLanguage(req.Pattern, lang) {
 		return lang, true
 	}
+
 	if lang, ok := languageFromGlob(req.Glob); ok && patternCompatibleWithLanguage(req.Pattern, lang) {
 		return lang, true
 	}
+
 	return languageFromSyntaxPattern(req.Pattern, ws)
 }
 
@@ -39,10 +42,12 @@ func languageFromConcretePath(path string) (workspace.LanguageSupport, bool) {
 	if path == "" {
 		return workspace.LanguageSupport{}, false
 	}
+
 	ext := filepath.Ext(path)
 	if ext == "" {
 		return workspace.LanguageSupport{}, false
 	}
+
 	return workspace.LanguageForExtension(ext)
 }
 
@@ -52,6 +57,7 @@ func languageActive(ws *workspace.Manager, lang workspace.LanguageSupport) bool 
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -62,6 +68,7 @@ func looksLikeIdentifier(pattern string) bool {
 	if len(pattern) < 2 {
 		return false
 	}
+
 	for _, r := range pattern {
 		switch {
 		case r == '_' || r == ':':
@@ -72,6 +79,7 @@ func looksLikeIdentifier(pattern string) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -79,7 +87,9 @@ func looksLikeSymbolIdentifier(pattern string) bool {
 	if !looksLikeIdentifier(pattern) {
 		return false
 	}
+
 	hasSymbolShape := false
+
 	for _, r := range pattern {
 		switch {
 		case r == '_' || r == ':':
@@ -90,6 +100,7 @@ func looksLikeSymbolIdentifier(pattern string) bool {
 			hasSymbolShape = true
 		}
 	}
+
 	return hasSymbolShape
 }
 
@@ -101,11 +112,13 @@ func languageFromGlob(glob string) (workspace.LanguageSupport, bool) {
 	if glob == "" {
 		return workspace.LanguageSupport{}, false
 	}
+
 	base := filepath.Base(glob)
 	// Handle brace-expansion patterns like "*.{cpp,h}".
 	if strings.Contains(base, "{") && strings.Contains(base, "}") {
 		open := strings.Index(base, "{")
 		close := strings.Index(base, "}")
+
 		if open >= 0 && close > open {
 			inner := base[open+1 : close]
 			for _, ext := range strings.Split(inner, ",") {
@@ -113,20 +126,25 @@ func languageFromGlob(glob string) (workspace.LanguageSupport, bool) {
 				if ext == "" {
 					continue
 				}
+
 				if !strings.HasPrefix(ext, ".") {
 					ext = "." + ext
 				}
+
 				if lang, ok := workspace.LanguageForExtension(ext); ok {
 					return lang, true
 				}
 			}
+
 			return workspace.LanguageSupport{}, false
 		}
 	}
+
 	ext := filepath.Ext(base)
 	if ext == "" {
 		return workspace.LanguageSupport{}, false
 	}
+
 	return workspace.LanguageForExtension(ext)
 }
 
@@ -135,15 +153,19 @@ func languageFromSyntaxPattern(pattern string, ws *workspace.Manager) (workspace
 	if pattern == "" || ws == nil {
 		return workspace.LanguageSupport{}, false
 	}
+
 	var matches []workspace.LanguageSupport
+
 	for _, lang := range ws.ActiveLanguages() {
 		if languageSyntaxMatches(lang.Name, pattern) {
 			matches = append(matches, lang)
 		}
 	}
+
 	if len(matches) != 1 {
 		return workspace.LanguageSupport{}, false
 	}
+
 	return matches[0], true
 }
 
@@ -158,6 +180,7 @@ func extractSyntaxIdentifierForLanguage(language string, pattern string) (string
 			return m[1], true
 		}
 	}
+
 	return "", false
 }
 
@@ -222,26 +245,32 @@ func isStructuredTool(tool string) bool {
 	if t == "" {
 		return false
 	}
+
 	for _, prefix := range structuredToolPrefixes() {
 		if strings.HasPrefix(t, prefix) {
 			return true
 		}
 	}
+
 	return false
 }
 
 func structuredToolPrefixes() []string {
 	seen := make(map[string]bool)
+
 	var prefixes []string
+
 	for _, lang := range workspace.LanguageRegistry() {
 		for _, tool := range lang.Tools {
 			prefix, _, ok := strings.Cut(strings.ToLower(strings.TrimSpace(tool)), "_")
 			if !ok || prefix == "" || seen[prefix+"_"] {
 				continue
 			}
+
 			seen[prefix+"_"] = true
 			prefixes = append(prefixes, prefix+"_")
 		}
 	}
+
 	return prefixes
 }

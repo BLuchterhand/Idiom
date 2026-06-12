@@ -37,13 +37,16 @@ func (idx *RustIndex) FindSymbols(pattern string, limit int) []RustSymbolMatch {
 	if idx == nil || pattern == "" {
 		return nil
 	}
+
 	matches := make([]RustSymbolMatch, 0)
+
 	for _, file := range idx.Files {
 		for _, symbol := range file.Symbols {
 			score := scoreRustSymbolMatch(pattern, file, symbol)
 			if score <= 0 {
 				continue
 			}
+
 			matches = append(matches, RustSymbolMatch{
 				Path:      file.Path,
 				Name:      symbol.Name,
@@ -58,18 +61,23 @@ func (idx *RustIndex) FindSymbols(pattern string, limit int) []RustSymbolMatch {
 			})
 		}
 	}
+
 	slices.SortFunc(matches, func(a, b RustSymbolMatch) int {
 		if c := -cmp.Compare(a.Score, b.Score); c != 0 {
 			return c
 		}
+
 		if c := cmp.Compare(a.Path, b.Path); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Line, b.Line)
 	})
+
 	if limit > 0 && len(matches) > limit {
 		matches = matches[:limit]
 	}
+
 	return matches
 }
 
@@ -91,6 +99,7 @@ func normalizeRustSymbolPattern(pattern string) string {
 			return m[1]
 		}
 	}
+
 	return pattern
 }
 
@@ -99,19 +108,24 @@ func (idx *RustIndex) FindCallsFrom(pattern string, limit int) []RustCallMatch {
 	if len(symbols) == 0 {
 		return nil
 	}
+
 	out := make([]RustCallMatch, 0, 16)
+
 	for _, match := range symbols {
 		file := idx.FileByPath(match.Path)
 		if file == nil {
 			continue
 		}
+
 		for _, symbol := range file.Symbols {
 			if symbol.Line != match.Line || symbol.Name != match.Name {
 				continue
 			}
+
 			if firstRustQualified(symbol) != match.Qualified && symbol.Qualified != match.Qualified {
 				continue
 			}
+
 			for _, call := range symbol.Calls {
 				out = append(out, RustCallMatch{
 					Caller:     match,
@@ -122,9 +136,11 @@ func (idx *RustIndex) FindCallsFrom(pattern string, limit int) []RustCallMatch {
 			}
 		}
 	}
+
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
+
 	return out
 }
 
@@ -133,6 +149,7 @@ func (idx *RustIndex) FindCallsInto(pattern string, limit int) []RustCallMatch {
 	if len(targets) == 0 {
 		return nil
 	}
+
 	names := make(map[string]RustSymbolMatch, len(targets)*2)
 	for _, target := range targets {
 		names[strings.ToLower(target.Name)] = target
@@ -140,7 +157,9 @@ func (idx *RustIndex) FindCallsInto(pattern string, limit int) []RustCallMatch {
 			names[strings.ToLower(target.Qualified)] = target
 		}
 	}
+
 	out := make([]RustCallMatch, 0, 16)
+
 	for _, file := range idx.Files {
 		for _, symbol := range file.Symbols {
 			for _, call := range symbol.Calls {
@@ -148,6 +167,7 @@ func (idx *RustIndex) FindCallsInto(pattern string, limit int) []RustCallMatch {
 				if !ok {
 					continue
 				}
+
 				out = append(out, RustCallMatch{
 					Caller: RustSymbolMatch{
 						Path:      file.Path,
@@ -167,15 +187,19 @@ func (idx *RustIndex) FindCallsInto(pattern string, limit int) []RustCallMatch {
 			}
 		}
 	}
+
 	slices.SortFunc(out, func(a, b RustCallMatch) int {
 		if c := cmp.Compare(a.Caller.Path, b.Caller.Path); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Line, b.Line)
 	})
+
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
+
 	return out
 }
 
@@ -188,21 +212,26 @@ func (idx *RustIndex) TraitImplementers(traitName string, limit int) []RustSymbo
 	if idx == nil || traitName == "" {
 		return nil
 	}
+
 	out := make([]RustSymbolMatch, 0)
+
 	for _, file := range idx.Files {
 		for _, symbol := range file.Symbols {
 			if symbol.Kind != "impl" {
 				continue
 			}
+
 			// Qualified is "TraitName for Type" for trait impls; bare
 			// "Type" for inherent impls. Only trait impls count here.
 			if !strings.Contains(symbol.Qualified, " for ") {
 				continue
 			}
+
 			parts := strings.SplitN(symbol.Qualified, " for ", 2)
 			if len(parts) != 2 {
 				continue
 			}
+
 			if !util.EqualTrimFold(parts[0], traitName) {
 				// Allow fuzzy match on the leading segment (e.g.
 				// `MyTrait<'a>` should match `MyTrait`).
@@ -210,6 +239,7 @@ func (idx *RustIndex) TraitImplementers(traitName string, limit int) []RustSymbo
 					continue
 				}
 			}
+
 			out = append(out, RustSymbolMatch{
 				Path:      file.Path,
 				Name:      strings.TrimSpace(parts[1]),
@@ -222,15 +252,19 @@ func (idx *RustIndex) TraitImplementers(traitName string, limit int) []RustSymbo
 			})
 		}
 	}
+
 	slices.SortFunc(out, func(a, b RustSymbolMatch) int {
 		if c := cmp.Compare(a.Path, b.Path); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Line, b.Line)
 	})
+
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
+
 	return out
 }
 
@@ -242,6 +276,7 @@ func (idx *RustIndex) ModuleSiblings(path string, limit int) []string {
 	if idx == nil || path == "" {
 		return nil
 	}
+
 	out := make([]string, 0)
 	seen := make(map[string]struct{})
 
@@ -252,22 +287,27 @@ func (idx *RustIndex) ModuleSiblings(path string, limit int) []string {
 	} else {
 		dir = ""
 	}
+
 	for _, file := range idx.Files {
 		if file.Path == path {
 			continue
 		}
+
 		fileDir := file.Path
 		if idx := strings.LastIndex(fileDir, "/"); idx >= 0 {
 			fileDir = fileDir[:idx]
 		} else {
 			fileDir = ""
 		}
+
 		if fileDir != dir {
 			continue
 		}
+
 		if _, ok := seen[file.Path]; ok {
 			continue
 		}
+
 		seen[file.Path] = struct{}{}
 		out = append(out, file.Path)
 	}
@@ -293,9 +333,11 @@ func (idx *RustIndex) ModuleSiblings(path string, limit int) []string {
 	}
 
 	slices.Sort(out)
+
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
+
 	return out
 }
 
@@ -304,6 +346,7 @@ func scoreRustSymbolMatch(pattern string, file RustFile, symbol RustSymbol) int 
 	qualifiedLower := strings.ToLower(firstRustQualified(symbol))
 	pathLower := strings.ToLower(file.Path)
 	score := 0
+
 	switch {
 	case nameLower == pattern || qualifiedLower == pattern:
 		score += 48
@@ -312,9 +355,11 @@ func scoreRustSymbolMatch(pattern string, file RustFile, symbol RustSymbol) int 
 	case strings.Contains(nameLower, pattern):
 		score += 20
 	}
+
 	if strings.Contains(pathLower, pattern) {
 		score += 8
 	}
+
 	switch symbol.Kind {
 	case "method":
 		score += 2
@@ -325,6 +370,7 @@ func scoreRustSymbolMatch(pattern string, file RustFile, symbol RustSymbol) int 
 		// struct/enum/trait declarations surface first.
 		score -= 2
 	}
+
 	return score
 }
 
@@ -332,8 +378,10 @@ func firstRustQualified(symbol RustSymbol) string {
 	if strings.TrimSpace(symbol.Qualified) != "" {
 		return symbol.Qualified
 	}
+
 	if strings.TrimSpace(symbol.Scope) != "" {
 		return symbol.Scope + "::" + symbol.Name
 	}
+
 	return symbol.Name
 }

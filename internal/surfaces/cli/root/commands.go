@@ -18,8 +18,10 @@ func runAtomMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 	if len(args) > 0 {
 		subcommand = args[0]
 	}
+
 	code := atomcmd.RunMain(args, stdout, stderr, atomcmd.Dependencies{})
 	logCLIPhase(rec, "atom", map[string]any{"subcommand": subcommand, "exit_code": code})
+
 	return code
 }
 

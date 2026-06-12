@@ -86,9 +86,11 @@ public class AppTest {
 	if err != nil {
 		t.Fatalf("BuildJavaIndex: %v", err)
 	}
+
 	if index == nil {
 		t.Fatal("expected non-nil index")
 	}
+
 	if len(index.Files) != 7 {
 		t.Fatalf("expected 7 files, got %d", len(index.Files))
 	}
@@ -97,12 +99,15 @@ public class AppTest {
 	if app == nil {
 		t.Fatal("App.java not indexed")
 	}
+
 	if !app.HasMain {
 		t.Fatal("App.java should have main detected")
 	}
+
 	if app.Package != "com.example" {
 		t.Fatalf("App.java package: %q", app.Package)
 	}
+
 	if !slices.Contains(app.Imports, "com.example.util.Helper") {
 		t.Fatalf("App.java imports: %v", app.Imports)
 	}
@@ -111,31 +116,40 @@ public class AppTest {
 	if len(matches) == 0 {
 		t.Fatal("expected Helper matches")
 	}
+
 	foundHelper := false
+
 	for _, m := range matches {
 		if m.Name == "Helper" && m.Kind == "class" {
 			foundHelper = true
 			break
 		}
 	}
+
 	if !foundHelper {
 		t.Fatalf("Helper class not among matches: %+v", matches)
 	}
+
 	if matches := index.FindSymbols("public class Helper", 4); len(matches) == 0 || matches[0].Name != "Helper" {
 		t.Fatalf("expected declaration-shaped class search to find Helper, got %#v", matches)
 	}
+
 	if matches := index.FindSymbols("public interface Service", 4); len(matches) == 0 || matches[0].Name != "Service" {
 		t.Fatalf("expected declaration-shaped interface search to find Service, got %#v", matches)
 	}
+
 	if matches := index.FindSymbols("public @interface FeatureFlag", 4); len(matches) == 0 || matches[0].Name != "FeatureFlag" {
 		t.Fatalf("expected declaration-shaped annotation search to find FeatureFlag, got %#v", matches)
 	}
+
 	if matches := index.FindSymbols("public sealed interface SealedService", 4); len(matches) == 0 || matches[0].Name != "SealedService" {
 		t.Fatalf("expected declaration-shaped sealed interface search to find SealedService, got %#v", matches)
 	}
+
 	if matches := index.FindSymbols("public void run()", 4); len(matches) == 0 || matches[0].Name != "run" || !strings.HasSuffix(matches[0].Path, "Helper.java") {
 		t.Fatalf("expected declaration-shaped method search to find run, got %#v", matches)
 	}
+
 	if matches := index.FindSymbols("private int compute()", 4); len(matches) == 0 || matches[0].Name != "compute" || !strings.HasSuffix(matches[0].Path, "Helper.java") {
 		t.Fatalf("expected declaration-shaped private method search to find compute, got %#v", matches)
 	}
@@ -144,27 +158,33 @@ public class AppTest {
 	if len(impls) == 0 {
 		t.Fatal("expected at least one Service implementation")
 	}
+
 	foundImpl := false
+
 	for _, impl := range impls {
 		if impl.Name == "ServiceImpl" {
 			foundImpl = true
 			break
 		}
 	}
+
 	if !foundImpl {
 		t.Fatalf("ServiceImpl not flagged as Service implementation: %+v", impls)
 	}
 
 	entries := index.Entrypoints(4)
 	foundApp, foundTest := false, false
+
 	for _, e := range entries {
 		if strings.HasSuffix(e, "App.java") {
 			foundApp = true
 		}
+
 		if strings.HasSuffix(e, "AppTest.java") {
 			foundTest = true
 		}
 	}
+
 	if !foundApp || !foundTest {
 		t.Fatalf("entrypoints missing expected files: %v", entries)
 	}
@@ -181,13 +201,16 @@ public class AppTest {
 
 	// Reverse edges: App.java imports Helper.java.
 	importers := index.Reverse["src/main/java/com/example/util/Helper.java"]
+
 	foundApp = false
+
 	for _, imp := range importers {
 		if strings.HasSuffix(imp, "App.java") {
 			foundApp = true
 			break
 		}
 	}
+
 	if !foundApp {
 		t.Fatalf("App.java should directly import Helper.java: %v", importers)
 	}
@@ -205,15 +228,19 @@ public class Outer {
     public void outerMethod() {}
 }
 `)
+
 	index, err := BuildJavaIndex(root)
 	if err != nil || index == nil {
 		t.Fatalf("BuildJavaIndex: %v", err)
 	}
+
 	file := index.FileByPath("src/Outer.java")
 	if file == nil {
 		t.Fatal("Outer.java not indexed")
 	}
+
 	var outer, inner, innerMethod, outerMethod *JavaSymbol
+
 	for i := range file.Symbols {
 		s := &file.Symbols[i]
 		switch s.Name {
@@ -227,17 +254,21 @@ public class Outer {
 			outerMethod = s
 		}
 	}
+
 	if outer == nil || inner == nil || innerMethod == nil || outerMethod == nil {
 		t.Fatalf("missing one of Outer/Inner/innerMethod/outerMethod: %+v", file.Symbols)
 	}
+
 	// Inner should be scoped under Outer.
 	if inner.Scope != "Outer" {
 		t.Fatalf("Inner.Scope = %q, want Outer", inner.Scope)
 	}
+
 	// innerMethod should be scoped under Outer.Inner.
 	if innerMethod.Scope != "Outer.Inner" {
 		t.Fatalf("innerMethod.Scope = %q, want Outer.Inner", innerMethod.Scope)
 	}
+
 	// outerMethod should be scoped under Outer (not Inner).
 	if outerMethod.Scope != "Outer" {
 		t.Fatalf("outerMethod.Scope = %q, want Outer", outerMethod.Scope)
@@ -246,9 +277,11 @@ public class Outer {
 
 func writeJavaFixture(t *testing.T, path string, content string) {
 	t.Helper()
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", path, err)
 	}
+
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}

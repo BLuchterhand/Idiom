@@ -105,7 +105,9 @@ func looksLikeRustTestPath(path string) bool {
 	if strings.Contains(p, "/tests/") || strings.HasSuffix(p, "/tests.rs") {
 		return true
 	}
+
 	base := strings.ToLower(filepath.Base(path))
+
 	return strings.Contains(base, "test") || strings.HasPrefix(base, "bench")
 }
 
@@ -138,6 +140,7 @@ func BuildRustIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Ru
 	if root == "" {
 		return nil, nil
 	}
+
 	scope := indexsupport.CleanIndexScope(opts.Scope)
 
 	index := &RustIndex{
@@ -152,59 +155,76 @@ func BuildRustIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Ru
 		if err := indexsupport.ContextErr(opts); err != nil {
 			return err
 		}
+
 		if walkErr != nil {
 			return walkErr
 		}
+
 		if d.IsDir() {
 			if !indexsupport.ShouldVisitDir(root, path, scope) {
 				return filepath.SkipDir
 			}
+
 			name := d.Name()
 			if discovery.ShouldSkipDirName(name) && path != root {
 				return filepath.SkipDir
 			}
+
 			return nil
 		}
+
 		if !isRustPath(path) {
 			return nil
 		}
+
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return nil
 		}
+
 		rel = filepath.ToSlash(filepath.Clean(rel))
 		if discovery.ShouldSkipRelFile(rel) {
 			return nil
 		}
+
 		if !indexsupport.PathInScope(rel, scope) {
 			return nil
 		}
+
 		paths = append(paths, rel)
 		if opts.MaxFiles > 0 && len(paths) >= opts.MaxFiles {
 			return errStop
 		}
+
 		return nil
 	})
+
 	if err == errStop {
 		err = nil
 	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	if len(paths) == 0 {
 		return nil, nil
 	}
 
 	slices.Sort(paths)
+
 	for _, rel := range paths {
 		if err := indexsupport.ContextErr(opts); err != nil {
 			return nil, err
 		}
+
 		full := filepath.Join(root, filepath.FromSlash(rel))
+
 		contentBytes, err := os.ReadFile(full)
 		if err != nil {
 			continue
 		}
+
 		content := string(contentBytes)
 		modules, uses := parseRustUsesAndMods(content)
 		symbols := parseRustSymbols(rel, content)
@@ -242,6 +262,7 @@ func BuildRustIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Ru
 				file.HasBench = true
 			}
 		}
+
 		index.Files = append(index.Files, file)
 	}
 
@@ -258,6 +279,7 @@ func BuildRustIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Ru
 			index.Reverse[mod] = util.AppendUnique(index.Reverse[mod], file.Path)
 		}
 	}
+
 	return index, nil
 }
 
@@ -265,18 +287,23 @@ func (idx *RustIndex) Summary() string {
 	if idx == nil || len(idx.Files) == 0 {
 		return ""
 	}
+
 	var b strings.Builder
+
 	b.WriteString("Indexed ")
 	b.WriteString(indexsupport.IntString(len(idx.Files)))
 	b.WriteString(" Rust files\n")
+
 	anchors := idx.DefaultFiles(4)
 	if len(anchors) > 0 {
 		b.WriteString("Likely anchors:\n")
+
 		for _, path := range anchors {
 			file := idx.FileByPath(path)
 			if file == nil {
 				continue
 			}
+
 			b.WriteString("- ")
 			b.WriteString(path)
 			b.WriteString(" (")
@@ -290,6 +317,7 @@ func (idx *RustIndex) Summary() string {
 			b.WriteString(" impls)\n")
 		}
 	}
+
 	return strings.TrimSpace(b.String())
 }
 
@@ -299,16 +327,20 @@ func (idx *RustIndex) DefaultFiles(limit int) []string {
 		if file.HasMain || file.IsBinRoot {
 			score += 100
 		}
+
 		if file.IsLibRoot {
 			score += 60
 		}
+
 		score += rustSourceDirPriority(file.SourceDir)
 		if file.IsTest {
 			score -= 30
 		}
+
 		score += min(file.Funcs+file.Methods*2, 24)
 		score += min(file.Types*2, 16)
 		score += min(file.Traits*3, 12)
+
 		return score
 	}, limit), limit)
 }
@@ -318,33 +350,40 @@ func (idx *RustIndex) RelevantFiles(terms []string, limit int) []string {
 	if len(normalized) == 0 {
 		return nil
 	}
+
 	return idx.uniqueRankedPaths(idx.rankFiles(func(file RustFile) int {
 		score := 0
 		pathLower := strings.ToLower(file.Path)
+
 		for _, term := range normalized {
 			if strings.Contains(pathLower, term) {
 				score += 16
 			}
+
 			for _, mod := range file.Modules {
 				if strings.EqualFold(mod, term) {
 					score += 12
 				}
 			}
+
 			for _, use := range file.Uses {
 				if strings.Contains(strings.ToLower(use), term) {
 					score += 4
 				}
 			}
+
 			for _, symbol := range file.Symbols {
 				if strings.Contains(strings.ToLower(symbol.Name), term) || strings.Contains(strings.ToLower(symbol.Qualified), term) {
 					score += 10
 				}
 			}
 		}
+
 		score += rustSourceDirPriority(file.SourceDir)
 		if file.IsTest {
 			score -= 20
 		}
+
 		return score
 	}, limit), limit)
 }
@@ -353,12 +392,14 @@ func (idx *RustIndex) FileByPath(path string) *RustFile {
 	if idx == nil {
 		return nil
 	}
+
 	path = indexsupport.NormalizeLookupPath(path)
 	for i := range idx.Files {
 		if indexsupport.NormalizeLookupPath(idx.Files[i].Path) == path {
 			return &idx.Files[i]
 		}
 	}
+
 	return nil
 }
 
@@ -376,43 +417,56 @@ func (idx *RustIndex) EntrypointFiles(limit int) []string {
 	if idx == nil {
 		return nil
 	}
+
 	type scored struct {
 		path  string
 		score int
 	}
+
 	entries := make([]scored, 0)
+
 	for _, file := range idx.Files {
 		score := 0
 		if file.HasMain || file.IsBinRoot {
 			score += 50
 		}
+
 		if file.IsLibRoot {
 			score += 30
 		}
+
 		if file.HasTest {
 			score += 10
 		}
+
 		if file.HasBench {
 			score += 8
 		}
+
 		if score == 0 {
 			continue
 		}
+
 		entries = append(entries, scored{path: file.Path, score: score})
 	}
+
 	slices.SortFunc(entries, func(a, b scored) int {
 		if c := -cmp.Compare(a.score, b.score); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.path, b.path)
 	})
+
 	if limit > 0 && len(entries) > limit {
 		entries = entries[:limit]
 	}
+
 	out := make([]string, 0, len(entries))
 	for _, item := range entries {
 		out = append(out, item.path)
 	}
+
 	return out
 }
 
@@ -420,17 +474,21 @@ func parseRustUsesAndMods(content string) ([]string, []string) {
 	lines := strings.Split(content, "\n")
 	mods := make([]string, 0, 4)
 	uses := make([]string, 0, 8)
+
 	for _, line := range lines {
 		if match := rustModRe.FindStringSubmatch(line); len(match) == 2 {
 			mods = util.AppendUnique(mods, match[1])
 			continue
 		}
+
 		if match := rustUseRe.FindStringSubmatch(line); len(match) == 2 {
 			uses = util.AppendUnique(uses, match[1])
 		}
 	}
+
 	slices.Sort(mods)
 	slices.Sort(uses)
+
 	return mods, uses
 }
 
@@ -444,6 +502,7 @@ func parseRustSymbols(rel string, content string) []RustSymbol {
 		name    string // e.g. "Foo" for `impl Foo` or "Bar for Foo" descriptor
 		endLine int
 	}
+
 	var scopes []scope
 
 	// Track pending attributes so #[test]/#[bench] promote the next fn.
@@ -477,11 +536,14 @@ func parseRustSymbols(rel string, content string) []RustSymbol {
 		// impl blocks
 		if match := rustImplRe.FindStringSubmatch(trimmed); len(match) == 3 {
 			end := findRustBraceEnd(lines, i)
+
 			var name string
+
 			if strings.TrimSpace(match[1]) != "" {
 				// trait impl: `impl Trait for Type`
 				trait := strings.TrimSpace(match[1])
 				target := strings.TrimSpace(match[2])
+
 				name = trait + " for " + target
 				symbols = append(symbols, RustSymbol{
 					Name:       target,
@@ -511,15 +573,18 @@ func parseRustSymbols(rel string, content string) []RustSymbol {
 					Attrs:      takeAttrs(&pendingAttrs),
 				})
 			}
+
 			if strings.Contains(trimmed, "{") {
 				scopes = append(scopes, scope{kind: "impl", name: name, endLine: end})
 			}
+
 			continue
 		}
 
 		// trait blocks
 		if match := rustTraitRe.FindStringSubmatch(trimmed); len(match) == 2 {
 			end := findRustBraceEnd(lines, i)
+
 			symbols = append(symbols, RustSymbol{
 				Name:       match[1],
 				Qualified:  match[1],
@@ -532,9 +597,11 @@ func parseRustSymbols(rel string, content string) []RustSymbol {
 				Scope:      currentScope,
 				Attrs:      takeAttrs(&pendingAttrs),
 			})
+
 			if strings.Contains(trimmed, "{") {
 				scopes = append(scopes, scope{kind: "trait", name: match[1], endLine: end})
 			}
+
 			continue
 		}
 
@@ -546,59 +613,73 @@ func parseRustSymbols(rel string, content string) []RustSymbol {
 			} else if strings.HasSuffix(trimmed, ";") {
 				end = lineNo
 			}
+
 			symbols = append(symbols, RustSymbol{
 				Name: match[1], Qualified: match[1], Kind: "struct",
 				Line: lineNo, Column: 1, StartLine: lineNo, EndLine: end,
 				SourceFile: rel, Scope: currentScope, Attrs: takeAttrs(&pendingAttrs),
 			})
+
 			continue
 		}
+
 		if match := rustEnumRe.FindStringSubmatch(trimmed); len(match) == 2 {
 			end := lineNo
 			if strings.Contains(trimmed, "{") {
 				end = findRustBraceEnd(lines, i)
 			}
+
 			symbols = append(symbols, RustSymbol{
 				Name: match[1], Qualified: match[1], Kind: "enum",
 				Line: lineNo, Column: 1, StartLine: lineNo, EndLine: end,
 				SourceFile: rel, Scope: currentScope, Attrs: takeAttrs(&pendingAttrs),
 			})
+
 			continue
 		}
+
 		if match := rustTypeAliasRe.FindStringSubmatch(trimmed); len(match) == 2 {
 			symbols = append(symbols, RustSymbol{
 				Name: match[1], Qualified: match[1], Kind: "type",
 				Line: lineNo, Column: 1, StartLine: lineNo, EndLine: lineNo,
 				SourceFile: rel, Scope: currentScope, Attrs: takeAttrs(&pendingAttrs),
 			})
+
 			continue
 		}
+
 		if match := rustConstRe.FindStringSubmatch(trimmed); len(match) == 2 {
 			symbols = append(symbols, RustSymbol{
 				Name: match[1], Qualified: match[1], Kind: "const",
 				Line: lineNo, Column: 1, StartLine: lineNo, EndLine: lineNo,
 				SourceFile: rel, Scope: currentScope, Attrs: takeAttrs(&pendingAttrs),
 			})
+
 			continue
 		}
+
 		if match := rustStaticRe.FindStringSubmatch(trimmed); len(match) == 2 {
 			symbols = append(symbols, RustSymbol{
 				Name: match[1], Qualified: match[1], Kind: "static",
 				Line: lineNo, Column: 1, StartLine: lineNo, EndLine: lineNo,
 				SourceFile: rel, Scope: currentScope, Attrs: takeAttrs(&pendingAttrs),
 			})
+
 			continue
 		}
+
 		if match := rustMacroRe.FindStringSubmatch(trimmed); len(match) == 2 {
 			end := lineNo
 			if strings.Contains(trimmed, "{") {
 				end = findRustBraceEnd(lines, i)
 			}
+
 			symbols = append(symbols, RustSymbol{
 				Name: match[1], Qualified: match[1], Kind: "macro",
 				Line: lineNo, Column: 1, StartLine: lineNo, EndLine: end,
 				SourceFile: rel, Scope: currentScope, Attrs: takeAttrs(&pendingAttrs),
 			})
+
 			continue
 		}
 
@@ -606,13 +687,16 @@ func parseRustSymbols(rel string, content string) []RustSymbol {
 		if match := rustFnRe.FindStringSubmatch(trimmed); len(match) == 2 {
 			name := match[1]
 			end := lineNo
+
 			if strings.Contains(trimmed, "{") {
 				end = findRustBraceEnd(lines, i)
 			} else {
 				end = findRustFnBodyEnd(lines, i)
 			}
+
 			kind := "func"
 			qualified := name
+
 			if len(scopes) > 0 {
 				top := scopes[len(scopes)-1]
 				if top.kind == "impl" || top.kind == "trait" {
@@ -620,6 +704,7 @@ func parseRustSymbols(rel string, content string) []RustSymbol {
 					qualified = top.name + "::" + name
 				}
 			}
+
 			attrs := takeAttrs(&pendingAttrs)
 			if kind == "func" {
 				for _, attr := range attrs {
@@ -628,18 +713,22 @@ func parseRustSymbols(rel string, content string) []RustSymbol {
 						kind = "test"
 						break
 					}
+
 					if strings.Contains(lower, "#[bench") {
 						kind = "bench"
 						break
 					}
 				}
 			}
+
 			calls := extractRustCalls(lines, lineNo, end)
+
 			symbols = append(symbols, RustSymbol{
 				Name: name, Qualified: qualified, Kind: kind, Scope: currentScope,
 				Line: lineNo, Column: 1, StartLine: lineNo, EndLine: end,
 				SourceFile: rel, Calls: calls, Attrs: attrs,
 			})
+
 			continue
 		}
 
@@ -651,11 +740,14 @@ func parseRustSymbols(rel string, content string) []RustSymbol {
 				fields := strings.FieldsFunc(rest, func(r rune) bool {
 					return !(r == '_' || r >= '0' && r <= '9' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z')
 				})
+
 				if len(fields) > 0 {
 					end := findRustBraceEnd(lines, i)
+
 					scopes = append(scopes, scope{kind: "mod", name: fields[0], endLine: end})
 				}
 			}
+
 			// non-fatal; do not clear pendingAttrs here.
 			continue
 		}
@@ -672,8 +764,10 @@ func parseRustSymbols(rel string, content string) []RustSymbol {
 		if c := cmp.Compare(a.SourceFile, b.SourceFile); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Line, b.Line)
 	})
+
 	return symbols
 }
 
@@ -681,9 +775,12 @@ func takeAttrs(pending *[]string) []string {
 	if pending == nil || len(*pending) == 0 {
 		return nil
 	}
+
 	out := make([]string, len(*pending))
 	copy(out, *pending)
+
 	*pending = nil
+
 	return out
 }
 
@@ -691,20 +788,25 @@ func extractRustCalls(lines []string, startLine int, endLine int) []RustCall {
 	if startLine <= 0 || endLine < startLine || endLine > len(lines) {
 		return nil
 	}
+
 	calls := make([]RustCall, 0, 16)
+
 	for line := startLine; line <= endLine; line++ {
 		text := stripRustLineComment(lines[line-1])
 		for _, match := range rustCallRe.FindAllStringSubmatch(text, -1) {
 			if len(match) != 2 {
 				continue
 			}
+
 			name := match[1]
 			if _, keyword := rustKeywordNames[name]; keyword {
 				continue
 			}
+
 			calls = append(calls, RustCall{Name: name, Line: line})
 		}
 	}
+
 	return calls
 }
 
@@ -714,60 +816,77 @@ func findRustBraceEnd(lines []string, startIdx int) int {
 	inString := false
 	inRawString := false
 	rawHashes := 0
+
 	for i := startIdx; i < len(lines); i++ {
 		line := stripRustLineComment(lines[i])
 		runes := []rune(line)
+
 		for j := 0; j < len(runes); j++ {
 			r := runes[j]
 			if inRawString {
 				if r == '"' {
 					// close if followed by the right number of #
 					closing := true
+
 					for k := 1; k <= rawHashes; k++ {
 						if j+k >= len(runes) || runes[j+k] != '#' {
 							closing = false
 							break
 						}
 					}
+
 					if closing {
 						j += rawHashes
+
 						inRawString = false
 						rawHashes = 0
 					}
 				}
+
 				continue
 			}
+
 			if inString {
 				if r == '\\' && j+1 < len(runes) {
 					j++
 					continue
 				}
+
 				if r == '"' {
 					inString = false
 				}
+
 				continue
 			}
+
 			if r == 'r' {
 				// detect raw string: r#*"
 				k := j + 1
 				hashes := 0
+
 				for k < len(runes) && runes[k] == '#' {
 					hashes++
+
 					k++
 				}
+
 				if k < len(runes) && runes[k] == '"' {
 					inRawString = true
 					rawHashes = hashes
 					j = k
+
 					continue
 				}
 			}
+
 			if r == '"' {
 				inString = true
 				continue
 			}
+
 			if r == '{' {
 				depth++
+
 				seen = true
 			} else if r == '}' {
 				if seen {
@@ -779,6 +898,7 @@ func findRustBraceEnd(lines []string, startIdx int) int {
 			}
 		}
 	}
+
 	return startIdx + 1
 }
 
@@ -792,10 +912,12 @@ func findRustFnBodyEnd(lines []string, startIdx int) int {
 		if strings.HasSuffix(trimmed, ";") {
 			return i + 1
 		}
+
 		if strings.Contains(trimmed, "{") {
 			return findRustBraceEnd(lines, i)
 		}
 	}
+
 	return startIdx + 1
 }
 
@@ -803,5 +925,6 @@ func stripRustLineComment(line string) string {
 	if idx := strings.Index(line, "//"); idx >= 0 {
 		return line[:idx]
 	}
+
 	return line
 }

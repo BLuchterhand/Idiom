@@ -92,9 +92,11 @@ func TestNewPhaseContractBuildsStableSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewContract returned error: %v", err)
 	}
+
 	if contract.SchemaVersion != SchemaVersion {
 		t.Fatalf("schema version = %q, want %q", contract.SchemaVersion, SchemaVersion)
 	}
+
 	if !strings.HasPrefix(contract.ContractID, "contract_") {
 		t.Fatalf("contract id = %q, want contract_ prefix", contract.ContractID)
 	}
@@ -116,6 +118,7 @@ func TestNewPhaseContractBuildsStableSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reconstructed contract returned error: %v", err)
 	}
+
 	if reconstructed.ContractID != contract.ContractID {
 		t.Fatalf("contract id is not stable: got %q want %q", reconstructed.ContractID, contract.ContractID)
 	}
@@ -124,12 +127,15 @@ func TestNewPhaseContractBuildsStableSummary(t *testing.T) {
 	if summary.Lane != "implement" || summary.Phase != "execute" || summary.TaskFamily != "implementation" {
 		t.Fatalf("summary identity mismatch: %#v", summary)
 	}
+
 	if summary.TargetRoleCounts[string(PathRoleRequiredEdit)] != 1 || summary.TargetRoleCounts[string(PathRoleEvidenceReadonly)] != 1 {
 		t.Fatalf("unexpected path role counts: %#v", summary.TargetRoleCounts)
 	}
+
 	if summary.ObligationCounts[string(ObligationOpen)+":"+string(ObligationVerify)] != 1 {
 		t.Fatalf("unexpected obligation counts: %#v", summary.ObligationCounts)
 	}
+
 	if summary.ProtectedPathCount != 1 || summary.ToolPolicyCount != 2 || summary.PolicyDecisionCount != 1 || summary.EvidenceReferenceCount != 1 {
 		t.Fatalf("unexpected summary counts: %#v", summary)
 	}
@@ -200,6 +206,7 @@ func TestSidecarReadOnlyContractRoundTripsWithoutStrategyFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal contract: %v", err)
 	}
+
 	jsonText := string(encoded)
 	for _, forbidden := range []string{"next_action", "safe_alternatives", "must_call_tool"} {
 		if strings.Contains(jsonText, forbidden) {
@@ -208,18 +215,23 @@ func TestSidecarReadOnlyContractRoundTripsWithoutStrategyFields(t *testing.T) {
 	}
 
 	var roundTrip AutonomyContract
+
 	if err := json.Unmarshal(encoded, &roundTrip); err != nil {
 		t.Fatalf("unmarshal contract: %v", err)
 	}
+
 	if err := roundTrip.Validate(); err != nil {
 		t.Fatalf("round-tripped contract should validate: %v", err)
 	}
+
 	if roundTrip.Scope.Sidecar == nil || roundTrip.Scope.Sidecar.Profile != "discovery" || roundTrip.Scope.Sidecar.Tool != "context_pack" {
 		t.Fatalf("round-tripped sidecar context mismatch: %#v", roundTrip.Scope.Sidecar)
 	}
+
 	if containsCapability(roundTrip.Capabilities.Allowed, CapabilitySourceEdit) {
 		t.Fatalf("read-only sidecar contract allowed source edits: %#v", roundTrip.Capabilities.Allowed)
 	}
+
 	if !containsCapability(roundTrip.Capabilities.Forbidden, CapabilityExternalWrite) {
 		t.Fatalf("read-only sidecar contract should forbid external writes: %#v", roundTrip.Capabilities.Forbidden)
 	}
@@ -254,17 +266,21 @@ func TestNewContractCopiesScopePointerContexts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewContract returned error: %v", err)
 	}
+
 	if contract.Scope.Sidecar == sidecar {
 		t.Fatalf("contract sidecar context aliases caller-owned pointer")
 	}
+
 	if contract.Scope.ToolCall == toolCall {
 		t.Fatalf("contract tool call context aliases caller-owned pointer")
 	}
+
 	if sidecar.Tool != " context_pack " || toolCall.ArgumentsDigest != " digest-before " {
 		t.Fatalf("caller-owned scope pointers were normalized through aliasing: sidecar=%#v tool_call=%#v", sidecar, toolCall)
 	}
 
 	originalID := contract.ContractID
+
 	sidecar.Tool = "apply_patch"
 	sidecar.Profile = "write"
 	toolCall.ToolName = "apply_patch"
@@ -274,11 +290,14 @@ func TestNewContractCopiesScopePointerContexts(t *testing.T) {
 	if contract.Scope.Sidecar.Tool != "context_pack" || contract.Scope.Sidecar.Profile != "discovery" {
 		t.Fatalf("post-construction sidecar mutation changed contract body: %#v", contract.Scope.Sidecar)
 	}
+
 	if contract.Scope.ToolCall.ToolName != "context_pack" ||
 		contract.Scope.ToolCall.SideEffect != SideEffectReadOnly ||
 		contract.Scope.ToolCall.ArgumentsDigest != "digest-before" {
+
 		t.Fatalf("post-construction tool call mutation changed contract body: %#v", contract.Scope.ToolCall)
 	}
+
 	if got := contract.stableID(); got != originalID {
 		t.Fatalf("post-construction input mutation changed stable id: got %q want %q", got, originalID)
 	}
@@ -341,6 +360,7 @@ func TestContractValidationRejectsInvalidShapes(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected validation error")
 			}
+
 			if !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("expected error containing %q, got %v", tt.want, err)
 			}
@@ -411,11 +431,13 @@ func TestContractMetadataCoversClientClassificationAndProductSignals(t *testing.
 			t.Fatalf("missing client classification %q in %#v", want, contract.Metadata.ClientClassifications)
 		}
 	}
+
 	for _, want := range allProductSignals() {
 		if !containsProductSignal(contract.Metadata.ProductSignals, want) {
 			t.Fatalf("missing product signal %q in %#v", want, contract.Metadata.ProductSignals)
 		}
 	}
+
 	if len(contract.PathRoles) < len(allClientClassifications()) {
 		t.Fatalf("expected at least one path-role fixture per client class, got %#v", contract.PathRoles)
 	}
@@ -427,6 +449,7 @@ func containsCapability(values []Capability, want Capability) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -436,6 +459,7 @@ func containsClientClassification(values []ClientClassification, want ClientClas
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -445,6 +469,7 @@ func containsProductSignal(values []ProductSignal, want ProductSignal) bool {
 			return true
 		}
 	}
+
 	return false
 }
 

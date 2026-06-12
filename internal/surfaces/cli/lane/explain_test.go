@@ -25,30 +25,39 @@ func TestBuildLaneExplainSummaryParsesSyntheticLog(t *testing.T) {
 	if s.SessionID != "abc123" {
 		t.Errorf("SessionID = %q, want abc123", s.SessionID)
 	}
+
 	if s.ModelCalls != 3 || s.ToolCalls != 3 || s.Turns != 1 {
 		t.Errorf("call counts = %d/%d/%d, want 3/3/1", s.ModelCalls, s.ToolCalls, s.Turns)
 	}
+
 	if s.TotalTokens != 1500 || s.PromptTokens != 1000 || s.CompletionTokens != 500 {
 		t.Errorf("tokens = %d/%d/%d, want 1500/1000/500", s.TotalTokens, s.PromptTokens, s.CompletionTokens)
 	}
+
 	if s.CtxSize != 8192 || s.PeakPromptTokens != 800 {
 		t.Errorf("ctx/peak = %d/%d, want 8192/800", s.CtxSize, s.PeakPromptTokens)
 	}
+
 	if !s.PromptCacheAccountingKnown || s.PromptCacheHitTokens != 700 || s.PromptCacheMissTokens != 300 || s.ReasoningTokens != 25 {
 		t.Errorf("cache usage = known:%v hit:%d miss:%d reasoning:%d", s.PromptCacheAccountingKnown, s.PromptCacheHitTokens, s.PromptCacheMissTokens, s.ReasoningTokens)
 	}
+
 	if s.StopReason != "completion_gate_required_paths_remaining_repeated" || !s.BudgetExhausted {
 		t.Errorf("stop_reason=%q budget_exhausted=%v", s.StopReason, s.BudgetExhausted)
 	}
+
 	if len(s.ToolRejections) != 2 {
 		t.Errorf("ToolRejections len = %d, want 2: %v", len(s.ToolRejections), s.ToolRejections)
 	}
+
 	if len(s.ToolsByCount) == 0 || s.ToolsByCount[0].Tool != "read_file" || s.ToolsByCount[0].Count != 2 {
 		t.Errorf("ToolsByCount[0] = %+v, want read_file=2", s.ToolsByCount[0])
 	}
+
 	if !strings.Contains(s.Question, "<<QUESTION>>:") {
 		t.Errorf("Question not captured: %q", s.Question)
 	}
+
 	if s.CompletionStatus["status"] != "blocked" {
 		t.Errorf("CompletionStatus[status] = %v, want blocked", s.CompletionStatus["status"])
 	}
@@ -72,9 +81,11 @@ func TestBuildLaneExplainSummaryIgnoresMalformedAndUnknownTypes(t *testing.T) {
 func TestSelectLaneExplainSessionPicksNewestByDefault(t *testing.T) {
 	dir := t.TempDir()
 	logsDir := filepath.Join(dir, ".idiom", "logs", "conversations")
+
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	// Lexicographic ordering of YYYYMMDD-HHMMSS-prefixed filenames
 	// is chronological. The newest wins.
 	for _, name := range []string{
@@ -86,10 +97,12 @@ func TestSelectLaneExplainSessionPicksNewestByDefault(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
+
 	got, err := selectLaneExplainSession(logsDir, "", "", dir)
 	if err != nil {
 		t.Fatalf("select: %v", err)
 	}
+
 	if !strings.HasSuffix(got, "20260511-100000.000-cccc.jsonl") {
 		t.Errorf("got %q, want suffix cccc", got)
 	}
@@ -98,9 +111,11 @@ func TestSelectLaneExplainSessionPicksNewestByDefault(t *testing.T) {
 func TestSelectLaneExplainSessionFiltersBySessionID(t *testing.T) {
 	dir := t.TempDir()
 	logsDir := filepath.Join(dir, ".idiom", "logs", "conversations")
+
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	for _, name := range []string{
 		"20260510-100000.000-aaaa.jsonl",
 		"20260511-080000.000-bbbb.jsonl",
@@ -109,10 +124,12 @@ func TestSelectLaneExplainSessionFiltersBySessionID(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
+
 	got, err := selectLaneExplainSession(logsDir, "aaaa", "", dir)
 	if err != nil {
 		t.Fatalf("select: %v", err)
 	}
+
 	if !strings.HasSuffix(got, "-aaaa.jsonl") {
 		t.Errorf("got %q, want suffix aaaa.jsonl", got)
 	}
@@ -141,18 +158,24 @@ func TestRenderLaneExplainOmitsEmptySections(t *testing.T) {
 		TotalTokens:  100,
 		ToolsByCount: nil, // no tools section
 	}
+
 	var buf bytes.Buffer
+
 	renderLaneExplain(s, &buf)
+
 	out := buf.String()
 	if !strings.Contains(out, "session=minimal") {
 		t.Fatalf("missing session header: %s", out)
 	}
+
 	if strings.Contains(out, "tools called") {
 		t.Fatalf("empty tools section should be omitted: %s", out)
 	}
+
 	if strings.Contains(out, "tool rejections") {
 		t.Fatalf("empty rejections section should be omitted: %s", out)
 	}
+
 	if strings.Contains(out, "errors:") {
 		t.Fatalf("empty errors section should be omitted: %s", out)
 	}
@@ -163,12 +186,17 @@ func TestRunLaneExplainNoLogsReturnsErrorExit(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, ".idiom", "logs", "conversations"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	opts := laneOptions{Mode: "explain", ProjectRoot: dir}
+
 	var stdout, stderr bytes.Buffer
+
 	exit := runLaneExplain(opts, &stdout, &stderr)
+
 	if exit != 1 {
 		t.Fatalf("expected exit=1 when no logs present, got %d", exit)
 	}
+
 	if !strings.Contains(stderr.String(), "no matching session log found") {
 		t.Fatalf("expected 'no matching session' message, got: %s", stderr.String())
 	}

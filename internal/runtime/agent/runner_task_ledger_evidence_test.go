@@ -15,6 +15,7 @@ func TestTaskLedgerRejectsNewCompletedItemWithoutEvidenceWhenRequired(t *testing
 			{ID: "edit", Content: "Edit README", Status: "completed"},
 		},
 	})
+
 	if result.Error == "" || !strings.Contains(result.Error, "has no evidence") {
 		t.Fatalf("expected missing evidence rejection, got %#v", result)
 	}
@@ -35,6 +36,7 @@ func TestTaskLedgerAcceptsCompletedItemWithWriteReadAndVerifyReceipts(t *testing
 			{ID: "verify", Content: "Run tests", Status: "completed", Evidence: "verify:go test ./..."},
 		},
 	}, receipts)
+
 	if result.Error != "" {
 		t.Fatalf("expected ledger update, got %#v", result)
 	}
@@ -52,6 +54,7 @@ func TestTaskLedgerRejectsEvidenceNotBackedBySuccessfulReceipts(t *testing.T) {
 			{ID: "edit", Content: "Edit README", Status: "completed", Evidence: "write:README.md"},
 		},
 	}, receipts)
+
 	if result.Error == "" || !strings.Contains(result.Error, "not backed") {
 		t.Fatalf("expected unsupported evidence rejection, got %#v", result)
 	}
@@ -65,6 +68,7 @@ func TestTaskLedgerDoesNotRequireNewEvidenceForAlreadyCompletedItems(t *testing.
 			{ID: "edit", Content: "Edit README", Status: "completed", Evidence: "write:README.md"},
 		},
 	}, []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited README.md"}})
+
 	if initial.Error != "" {
 		t.Fatalf("initial ledger update rejected: %#v", initial)
 	}

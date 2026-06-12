@@ -12,9 +12,12 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "create test telemetry dir: %v\n", err)
 		os.Exit(1)
 	}
+
 	commandTelemetryDir = telemetryDir
 
 	code := m.Run()
+
 	_ = os.RemoveAll(telemetryDir)
+
 	os.Exit(code)
 }

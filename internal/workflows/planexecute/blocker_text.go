@@ -17,7 +17,9 @@ func reviewRepairBlockerSummary(answer string) string {
 
 func planExecuteAnswerDeclaresBlocker(answer string) bool {
 	answer = strings.TrimSpace(answer)
+
 	lower := strings.ToLower(answer)
+
 	return strings.Contains(answer, "<<QUESTION>>") ||
 		strings.Contains(lower, "decision: block") ||
 		strings.HasPrefix(lower, "blocker:") ||
@@ -34,12 +36,16 @@ func planExecuteBlockerSummary(answer string) string {
 		if line == "" {
 			continue
 		}
+
 		const max = 240
+
 		if len(line) > max {
 			return line[:max] + "..."
 		}
+
 		return line
 	}
+
 	return "planner stopped with a blocker"
 }
 

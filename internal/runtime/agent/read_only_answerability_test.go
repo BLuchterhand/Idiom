@@ -24,6 +24,7 @@ func typedReadOnlyTaskResult(packet ReadOnlyEvidencePacket) workspace.ToolResult
 		Summary: "Child task completed",
 		Output:  "Grounded answer:\nThe child reported a concise answer without legacy packet section headings.",
 	}
+
 	return readOnlyEvidencePacketToolResult(result, packet)
 }
 
@@ -39,12 +40,15 @@ func TestReadOnlyAnswerabilityContextPacketOnlyLocalizes(t *testing.T) {
 	if ledger.Answerable() {
 		t.Fatalf("context_pack alone must not make direct answer ready: %#v", ledger)
 	}
+
 	if !ledger.HasKind(readOnlyEvidenceContextPacket) {
 		t.Fatalf("expected context packet item, got %#v", ledger.Items)
 	}
+
 	if !slices.Contains(ledger.CandidatePaths, "internal/runtime/agent/runner.go") {
 		t.Fatalf("expected context candidate path, got %#v", ledger.CandidatePaths)
 	}
+
 	if conversationEvidenceSatisfied(brief, results) {
 		t.Fatal("direct-answer readiness must not be satisfied by context packet localization only")
 	}
@@ -69,9 +73,11 @@ func TestReadOnlyAnswerabilityHighCardinalitySearchRequiresReturnedCandidateRead
 	if !ledger.HighCardinalitySearch {
 		t.Fatalf("expected high-cardinality search to be recorded: %#v", ledger)
 	}
+
 	if ledger.Answerable() {
 		t.Fatalf("unrelated source body must not satisfy high-cardinality search evidence: %#v", ledger)
 	}
+
 	if conversationEvidenceSatisfied(brief, results) {
 		t.Fatal("direct-answer readiness must remain false until a returned candidate is read")
 	}
@@ -82,12 +88,15 @@ func TestReadOnlyAnswerabilityHighCardinalitySearchRequiresReturnedCandidateRead
 		Output:  "package agent\nfunc completionGateBehavior() {}\n",
 	}
 	ledger = readOnlyAnswerabilityForResults(brief, results)
+
 	if !ledger.Answerable() {
 		t.Fatalf("source body from returned candidate should make answer ready: %#v", ledger)
 	}
+
 	if !slices.Contains(ledger.RelevantSourceBodyPaths, "internal/runtime/agent/runner.go") {
 		t.Fatalf("expected candidate source body to be relevant, got %#v", ledger.RelevantSourceBodyPaths)
 	}
+
 	if !conversationEvidenceSatisfied(brief, results) {
 		t.Fatal("direct-answer readiness should be satisfied by source body from returned candidate")
 	}
@@ -112,10 +121,12 @@ func TestReadOnlyAnswerabilityHighCardinalitySearchRequiresObjectiveRelevantCand
 	if ledger.Answerable() {
 		t.Fatalf("one weakly related candidate from a high-cardinality search must not satisfy readiness: %#v", ledger)
 	}
+
 	closure := readOnlyClosureDecisionForResults(brief, results)
 	if blocker := closure.BlockerText(); !slices.Contains(closure.PrioritizedCandidatePaths(), "internal/evidence/transcript/debuglog.go") ||
 		!strings.Contains(blocker, "debug log redacted mode") ||
 		!strings.Contains(blocker, "internal/evidence/transcript/debuglog.go") {
+
 		t.Fatalf("expected blocker to prioritize objective-relevant candidate, blocker=%q candidates=%#v", blocker, closure.PrioritizedCandidatePaths())
 	}
 
@@ -125,6 +136,7 @@ func TestReadOnlyAnswerabilityHighCardinalitySearchRequiresObjectiveRelevantCand
 		Output:  "m.status = \"Debug log mode set to redacted\"\nm.debugLogger.SetMode(transcript.DebugLogMode(fields[2]))\n",
 	}
 	ledger = readOnlyAnswerabilityForResults(brief, results)
+
 	if ledger.Answerable() {
 		t.Fatalf("scattered objective words in a UI/control surface must not satisfy noisy-search readiness: %#v", ledger)
 	}
@@ -135,6 +147,7 @@ func TestReadOnlyAnswerabilityHighCardinalitySearchRequiresObjectiveRelevantCand
 		Output:  "DebugLogDir: \"logs/conversations\"\nDebugLogMode: \"redacted\"\n",
 	}
 	ledger = readOnlyAnswerabilityForResults(brief, results)
+
 	if ledger.Answerable() {
 		t.Fatalf("noisy-search source body must also be on an objective-relevant path before readiness: %#v", ledger)
 	}
@@ -145,9 +158,11 @@ func TestReadOnlyAnswerabilityHighCardinalitySearchRequiresObjectiveRelevantCand
 		Output:  "package transcript\nconst DebugLogModeRedacted = \"redacted\"\n",
 	}
 	ledger = readOnlyAnswerabilityForResults(brief, results)
+
 	if !ledger.Answerable() {
 		t.Fatalf("candidate body with objective overlap should satisfy readiness: %#v", ledger)
 	}
+
 	if !slices.Contains(ledger.RelevantSourceBodyPaths, "internal/evidence/transcript/debuglog.go") {
 		t.Fatalf("expected debuglog source body to be relevant, got %#v", ledger.RelevantSourceBodyPaths)
 	}
@@ -172,9 +187,11 @@ func TestReadOnlyAnswerabilityOutlinesAndGeneratedArtifactsDoNotAnswer(t *testin
 	if ledger.Answerable() {
 		t.Fatalf("outline plus generated artifact should not be answerable: %#v", ledger)
 	}
+
 	if !ledger.HasKind(readOnlyEvidenceOutline) {
 		t.Fatalf("expected outline evidence item, got %#v", ledger.Items)
 	}
+
 	if !ledger.HasKind(readOnlyEvidenceGeneratedArtifact) {
 		t.Fatalf("expected generated artifact evidence item, got %#v", ledger.Items)
 	}
@@ -208,9 +225,11 @@ func TestReadOnlyAnswerabilityContextPackCandidateRequiresObjectiveRelevantSourc
 	if ledger.Answerable() {
 		t.Fatalf("context_pack candidate membership alone must not make unrelated source body answerable: %#v", ledger)
 	}
+
 	if conversationEvidenceSatisfied(brief, results) {
 		t.Fatal("direct-answer readiness must remain false for source body that lacks objective relevance")
 	}
+
 	if slices.Contains(ledger.RelevantSourceBodyPaths, "internal/surfaces/tui/app/rendering.go") {
 		t.Fatalf("unrelated context candidate source body should not be relevant, got %#v", ledger.RelevantSourceBodyPaths)
 	}
@@ -231,6 +250,7 @@ func TestReadOnlyAnswerabilityContextPackCandidateRequiresObjectiveRelevantSourc
 		}, "\n"),
 	}
 	ledger = readOnlyAnswerabilityForResults(brief, results)
+
 	if !ledger.Answerable() {
 		t.Fatalf("objective-relevant source body from context candidate should be answerable: %#v", ledger)
 	}
@@ -250,6 +270,7 @@ func TestReadOnlyAnswerabilityPromotesCollectiveSourceBodyObjectiveSupport(t *te
 	}
 
 	partialResults := append([]workspace.ToolResult{}, contextOnly...)
+
 	partialResults = append(partialResults,
 		workspace.ToolResult{
 			Tool:    "read_file",
@@ -277,14 +298,17 @@ func TestReadOnlyAnswerabilityPromotesCollectiveSourceBodyObjectiveSupport(t *te
 		},
 	)
 	ledger = readOnlyAnswerabilityForResults(brief, partialResults)
+
 	if ledger.Answerable() {
 		t.Fatalf("source bodies missing one objective term must not satisfy collective relevance: %#v", ledger)
 	}
+
 	if conversationEvidenceSatisfied(brief, partialResults) {
 		t.Fatal("conversation readiness must remain false until source bodies collectively cover the objective")
 	}
 
 	completeResults := append([]workspace.ToolResult{}, contextOnly...)
+
 	completeResults = append(completeResults, partialResults[1])
 	completeResults[1].Output = strings.ReplaceAll(completeResults[1].Output, "m.navigateHistory(-1)", "m.navigateHistory(-1) // arrow-key history")
 	completeResults = append(completeResults, workspace.ToolResult{
@@ -301,15 +325,19 @@ func TestReadOnlyAnswerabilityPromotesCollectiveSourceBodyObjectiveSupport(t *te
 	if !ledger.Answerable() {
 		t.Fatalf("collective source-body objective coverage should be answerable: %#v", ledger)
 	}
+
 	if !slices.Contains(ledger.SourceBodyObjectivePaths, "internal/surfaces/tui/app/update_handlers.go") {
 		t.Fatalf("expected substantive collective objective path, got %#v", ledger.SourceBodyObjectivePaths)
 	}
+
 	if slices.Contains(ledger.SourceBodyObjectivePaths, "internal/surfaces/tui/app/rendering.go") {
 		t.Fatalf("one-term companion source body must not be promoted as objective support, got %#v", ledger.SourceBodyObjectivePaths)
 	}
+
 	if !slices.Contains(ledger.RelevantSourceBodyPaths, "internal/surfaces/tui/app/update_handlers.go") {
 		t.Fatalf("expected relevant source body path, got %#v", ledger.RelevantSourceBodyPaths)
 	}
+
 	if !conversationEvidenceSatisfied(brief, completeResults) {
 		t.Fatal("conversation readiness should be satisfied by collective source-body objective coverage")
 	}
@@ -399,13 +427,16 @@ func TestFinalAnswerAcceptanceAllowsWhatWouldItTakeAnswerFromDiscoveredTUISource
 	if kind != "" || reason != "" {
 		t.Fatalf("what-would-it-take answer from discovered TUI source bodies blocked: kind=%q reason=%q", kind, reason)
 	}
+
 	paths := acceptedAnswerEvidencePaths(answer, results, brief)
 	if !slices.Contains(paths, "internal/surfaces/tui/app/update_handlers.go") {
 		t.Fatalf("expected accepted evidence path from the strongest source-body support, got %#v", paths)
 	}
+
 	if slices.Contains(paths, "internal/surfaces/tui/app/rendering.go") {
 		t.Fatalf("accepted evidence paths should not promote one-term companion citation, got %#v", paths)
 	}
+
 	if slices.Contains(paths, "internal/runtime/agent/runner.go") {
 		t.Fatalf("accepted evidence paths must not retain weak context-pack candidate, got %#v", paths)
 	}
@@ -459,6 +490,7 @@ func TestFinalAnswerAcceptanceRejectsEchoedObjectivePathInventoryFromLiveTUIQues
 	if kind != "answer_objective_unmet" {
 		t.Fatalf("echoed-objective path inventory got (%q, %q), want answer_objective_unmet", kind, reason)
 	}
+
 	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
 	if len(acceptance.AnswerObjectiveTerms) > 0 {
 		t.Fatalf("echoed objective must not satisfy answer objective terms, got %#v", acceptance.AnswerObjectiveTerms)
@@ -485,6 +517,7 @@ func TestFinalAnswerAcceptanceAllowsExplainerAnswerWithInspectedSymbol(t *testin
 
 	answer = "For `Explain the harness control flow.`, `internal/runtime/agent/runner.go` shows defines `Runner.Run`."
 	kind, reason = runner.finalAnswerBlockerKind(answer, results)
+
 	if kind != "" || reason != "" {
 		t.Fatalf("deterministic explainer symbol answer blocked: kind=%q reason=%q", kind, reason)
 	}
@@ -522,6 +555,7 @@ func TestReadOnlyAnswerabilityDoesNotPromoteUnrelatedCollectiveSourceBodies(t *t
 	if ledger.Answerable() {
 		t.Fatalf("unrelated source bodies must not become answerable through scattered objective words: %#v", ledger)
 	}
+
 	if len(ledger.SourceBodyObjectivePaths) > 0 {
 		t.Fatalf("unrelated source bodies must not be promoted to objective paths: %#v", ledger.SourceBodyObjectivePaths)
 	}
@@ -531,6 +565,7 @@ func TestObjectiveAsksImplementationShapeDoesNotCatchPlainHowToUse(t *testing.T)
 	if objectiveAsksImplementationShape("How to run the unit tests in this repository?") {
 		t.Fatal("plain how-to usage question must not require implementation-owner readiness")
 	}
+
 	if !objectiveAsksImplementationShape("What would it take to change the runner readiness behavior?") {
 		t.Fatal("change-shape question should require implementation-owner readiness")
 	}
@@ -644,7 +679,9 @@ func TestReadOnlyAnswerabilityDoesNotTreatSessionsPanelAsChatRecallOwner(t *test
 	}
 
 	sessionsPlusStateResults := append([]workspace.ToolResult{}, sessionsResults...)
+
 	sessionsPlusStateResults = append(sessionsPlusStateResults, stateOnlyResults[1])
+
 	if ledger := readOnlyAnswerabilityForResults(brief, sessionsPlusStateResults); ledger.Answerable() {
 		t.Fatalf("sessions navigation plus state support must not close without a mechanism owner: %#v", ledger)
 	}
@@ -703,9 +740,11 @@ func TestReadOnlyAnswerabilityDoesNotTreatRegressionFixtureAsImplementationOwner
 	if ledger.Answerable() {
 		t.Fatalf("test fixture body must not satisfy implementation-owner readiness: %#v", ledger)
 	}
+
 	if got := ledger.ImplementationOwnerPaths(); len(got) > 0 {
 		t.Fatalf("test fixture must not become implementation owner path, got %#v", got)
 	}
+
 	if role := sourceOwnerRoleForTest(ledger, "internal/runtime/agent/final_answer_decorator_test.go"); role != readOnlySourceOwnerTestSupport {
 		t.Fatalf("test fixture should be classified as test support, got %q in %#v", role, ledger.SourceOwnerEvidence)
 	}
@@ -718,6 +757,7 @@ func sourceOwnerRoleForTest(ledger readOnlyAnswerabilityLedger, path string) rea
 			return evidence.Role
 		}
 	}
+
 	return readOnlySourceOwnerUnknown
 }
 
@@ -766,16 +806,22 @@ func TestFinalAnswerAcceptanceRejectsSessionsPanelAsChatRecallOwner(t *testing.T
 	if decision.BlockerKind != "answer_objective_unmet" {
 		t.Fatalf("shared final-answer decision got blocker kind=%q", decision.BlockerKind)
 	}
+
 	if slices.Contains(decision.AcceptedEvidencePaths, "internal/surfaces/tui/app/sessions_panel.go") {
 		t.Fatalf("shared final-answer decision promoted conflicting navigation owner, got %#v", decision.AcceptedEvidencePaths)
 	}
+
 	aliasBrief := brief
+
 	aliasBrief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+
 	aliasDecision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(aliasBrief), results).
 		FinalAnswerDecision(answer)
+
 	if aliasDecision.BlockerKind != "answer_objective_unmet" {
 		t.Fatalf("direct_answer alias shared decision got blocker kind=%q", aliasDecision.BlockerKind)
 	}
+
 	if slices.Contains(aliasDecision.AcceptedEvidencePaths, "internal/surfaces/tui/app/sessions_panel.go") {
 		t.Fatalf("direct_answer alias promoted conflicting navigation owner, got %#v", aliasDecision.AcceptedEvidencePaths)
 	}
@@ -784,13 +830,16 @@ func TestFinalAnswerAcceptanceRejectsSessionsPanelAsChatRecallOwner(t *testing.T
 	if kind != "answer_objective_unmet" {
 		t.Fatalf("sessions-panel-owned final answer got blocker kind=%q reason=%q", kind, reason)
 	}
+
 	if paths := acceptedAnswerEvidencePaths(answer, results, brief); slices.Contains(paths, "internal/surfaces/tui/app/sessions_panel.go") {
 		t.Fatalf("accepted evidence paths must not promote conflicting navigation owner, got %#v", paths)
 	}
+
 	aliasRunner := &Runner{RuntimeBrief: aliasBrief}
 	if kind, reason := aliasRunner.finalAnswerBlockerKind(answer, results); kind != "answer_objective_unmet" {
 		t.Fatalf("direct_answer alias final answer got blocker kind=%q reason=%q", kind, reason)
 	}
+
 	if paths := acceptedAnswerEvidencePaths(answer, results, aliasBrief); slices.Contains(paths, "internal/surfaces/tui/app/sessions_panel.go") {
 		t.Fatalf("direct_answer alias accepted evidence paths promoted conflicting navigation owner, got %#v", paths)
 	}
@@ -818,15 +867,18 @@ func TestReadOnlyAnswerabilityAcceptsDelegatedInspectedPathPacket(t *testing.T) 
 	if !ledger.Answerable() {
 		t.Fatalf("grounded delegated inspected-path packet should be answerable: %#v", ledger)
 	}
+
 	for _, want := range []string{"internal/runtime/agent/runner.go", "internal/runtime/agent/runner_child_tasks.go"} {
 		if !slices.Contains(ledger.RelevantSourceBodyPaths, want) {
 			t.Fatalf("expected delegated packet path %q to be relevant, got %#v", want, ledger.RelevantSourceBodyPaths)
 		}
 	}
+
 	answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results)
 	if !ok {
 		t.Fatal("expected deterministic synthesis from grounded delegated packet")
 	}
+
 	for _, want := range []string{"task", "child runner", "`internal/runtime/agent/runner.go`", "`internal/runtime/agent/runner_child_tasks.go`"} {
 		if !strings.Contains(strings.ToLower(answer), strings.ToLower(want)) {
 			t.Fatalf("expected synthesized answer to contain %q, got:\n%s", want, answer)
@@ -851,6 +903,7 @@ func TestPostChildSourceBodyPacketEvidenceAvailableAcceptsDelegatedNegativeFindi
 	if ledger.Answerable() {
 		t.Fatalf("source-body packet availability alone should not satisfy answerability: %#v", ledger)
 	}
+
 	if !postChildSourceBodyPacketEvidenceAvailable(results) {
 		t.Fatal("delegated source-body packet with a bounded negative finding should trigger parent model synthesis")
 	}
@@ -875,24 +928,30 @@ func TestReadOnlyAnswerabilityAcceptsTypedDelegatedEvidencePacket(t *testing.T) 
 	if !ledger.Answerable() {
 		t.Fatalf("typed delegated source-body packet should be answerable: %#v", ledger)
 	}
+
 	for _, want := range []string{"internal/runtime/agent/runner.go", "internal/runtime/agent/runner_child_tasks.go"} {
 		if !slices.Contains(ledger.RelevantSourceBodyPaths, want) {
 			t.Fatalf("expected typed packet path %q to be relevant, got %#v", want, ledger.RelevantSourceBodyPaths)
 		}
 	}
+
 	if slices.Contains(ledger.CandidatePaths, ".idiom/discovery/queries/query.json") ||
 		slices.Contains(ledger.SourceBodyPaths, ".idiom/discovery/queries/query.json") {
+
 		t.Fatalf("generated artifacts must not survive packet normalization: %#v", ledger)
 	}
+
 	answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results)
 	if !ok {
 		t.Fatal("expected deterministic synthesis from typed delegated packet")
 	}
+
 	for _, want := range []string{"task", "runChildTask", "`internal/runtime/agent/runner.go`", "`internal/runtime/agent/runner_child_tasks.go`"} {
 		if !strings.Contains(strings.ToLower(answer), strings.ToLower(want)) {
 			t.Fatalf("expected synthesized answer to contain %q, got:\n%s", want, answer)
 		}
 	}
+
 	for _, forbidden := range []string{"Inspected paths:", "Source-body evidence paths:", "Key findings:"} {
 		if strings.Contains(answer, forbidden) {
 			t.Fatalf("typed synthesis should not depend on legacy heading %q:\n%s", forbidden, answer)
@@ -918,9 +977,11 @@ func TestReadOnlyAnswerabilityRejectsOffObjectiveTypedDelegatedEvidencePacket(t 
 	if ledger.Answerable() {
 		t.Fatalf("off-objective typed delegated packet must not satisfy answerability: %#v", ledger)
 	}
+
 	if len(ledger.SourceBodyPaths) > 0 || len(ledger.SourceBodyTaskPaths) > 0 || len(ledger.RelevantSourceBodyPaths) > 0 {
 		t.Fatalf("off-objective typed packet paths must not be promoted to source-body readiness: %#v", ledger)
 	}
+
 	if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {
 		t.Fatalf("off-objective typed packet should not synthesize an answer, got:\n%s", answer)
 	}
@@ -947,9 +1008,11 @@ func TestReadOnlyAnswerabilityAcceptsTypedImplementationOwnerPacketWithoutAgentP
 	if !ledger.Answerable() {
 		t.Fatalf("typed implementation-owner packet should satisfy direct-answer readiness without an internal/runtime/agent path: %#v", ledger)
 	}
+
 	if got := ledger.ImplementationOwnerPaths(); !slices.Contains(got, "internal/surfaces/tui/app/update_handlers.go") {
 		t.Fatalf("expected typed packet source owner path, got %#v", got)
 	}
+
 	if role := sourceOwnerRoleForTest(ledger, "internal/surfaces/tui/app/update_handlers.go"); role != readOnlySourceOwnerMechanism {
 		t.Fatalf("typed packet source should be mechanism owner, got %q in %#v", role, ledger.SourceOwnerEvidence)
 	}
@@ -978,12 +1041,15 @@ func TestReadOnlyAnswerabilityRejectsGenericToolSchemaPacketForUsefulnessObjecti
 	if ledger.Answerable() {
 		t.Fatalf("generic tool/schema packet must not satisfy usefulness answerability: %#v", ledger)
 	}
+
 	if postChildReadOnlyPacketAvailable(brief, results) {
 		t.Fatal("generic tool/schema packet must not activate child packet closure")
 	}
+
 	if paths := postChildClosureEvidencePaths(brief.Objective, results, 4); len(paths) > 0 {
 		t.Fatalf("generic tool/schema packet must not populate post-child evidence paths, got %#v", paths)
 	}
+
 	if paths := acceptedAnswerEvidencePaths("Discovery tool schema details are available.", results, brief); len(paths) > 0 {
 		t.Fatalf("generic tool/schema packet must not leak accepted evidence paths, got %#v", paths)
 	}
@@ -1049,9 +1115,11 @@ func TestReadOnlyAnswerabilityRejectsTypedDelegatedArtifactOnlyPacket(t *testing
 	if ledger.Answerable() {
 		t.Fatalf("artifact-only typed packet must not satisfy answerability: %#v", ledger)
 	}
+
 	if postChildReadOnlyPacketAvailable(brief, results) {
 		t.Fatalf("artifact-only typed packet must not activate child packet closure")
 	}
+
 	if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {
 		t.Fatalf("artifact-only typed packet should not synthesize an answer, got:\n%s", answer)
 	}
@@ -1069,21 +1137,27 @@ func TestReadOnlyAnswerabilityAcceptsExplicitDiagnosticEvidence(t *testing.T) {
 	if !ledger.Answerable() {
 		t.Fatalf("explicit diagnostic evidence should make read-only explanation answerable: %#v", ledger)
 	}
+
 	if !ledger.DiagnosticEvidence {
 		t.Fatalf("expected diagnostic evidence flag: %#v", ledger)
 	}
+
 	if !slices.Contains(ledger.DiagnosticPaths, "internal/runtime/agent/runner.go") {
 		t.Fatalf("expected diagnostic source path, got %#v", ledger.DiagnosticPaths)
 	}
+
 	answer := "Diagnostics fail in `internal/runtime/agent/runner.go` because source_sanity reports `undefined: Foo`."
 	decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).
 		FinalAnswerDecision(answer)
+
 	if decision.BlockerKind != "" {
 		t.Fatalf("diagnostic final-answer decision rejected relevant evidence: %#v", decision)
 	}
+
 	if !slices.Contains(decision.AcceptedEvidencePaths, "internal/runtime/agent/runner.go") {
 		t.Fatalf("diagnostic final-answer decision missed accepted diagnostic path: %#v", decision.AcceptedEvidencePaths)
 	}
+
 	if paths := acceptedAnswerEvidencePaths(answer, results, brief); !slices.Contains(paths, "internal/runtime/agent/runner.go") {
 		t.Fatalf("accepted evidence paths missed relevant diagnostic path: %#v", paths)
 	}
@@ -1101,18 +1175,23 @@ func TestReadOnlyAnswerabilityRejectsUnrelatedDiagnosticEvidence(t *testing.T) {
 	if ledger.Answerable() || ledger.DiagnosticRelevant {
 		t.Fatalf("unrelated diagnostic evidence must not satisfy broad failure objectives: %#v", ledger)
 	}
+
 	if !ledger.DiagnosticEvidence {
 		t.Fatalf("diagnostic evidence should still be recorded as weak evidence: %#v", ledger)
 	}
+
 	if !slices.Contains(ledger.DiagnosticPaths, "internal/platform/config/config.go") {
 		t.Fatalf("expected diagnostic source path to be recorded, got %#v", ledger.DiagnosticPaths)
 	}
+
 	answer := "The runner build failed because `internal/platform/config/config.go` has `undefined: ConfigValue`."
 	decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).
 		FinalAnswerDecision(answer)
+
 	if len(decision.AcceptedEvidencePaths) > 0 {
 		t.Fatalf("unrelated diagnostic evidence must not become accepted evidence: %#v", decision.AcceptedEvidencePaths)
 	}
+
 	if paths := acceptedAnswerEvidencePaths(answer, results, brief); len(paths) > 0 {
 		t.Fatalf("accepted evidence paths promoted unrelated diagnostic evidence: %#v", paths)
 	}
@@ -1172,6 +1251,7 @@ func TestReadOnlyAnswerabilityDoesNotTreatCompleteDiagnosticLogAsSourceEvidence(
 	if ledger.Answerable() || ledger.DiagnosticRelevant {
 		t.Fatalf("complete diagnostic logs must not satisfy source-code failure questions without a typed diagnostic evidence contract: %#v", ledger)
 	}
+
 	if len(ledger.SourceBodyPaths) > 0 {
 		t.Fatalf("diagnostic logs must not become source-body paths: %#v", ledger.SourceBodyPaths)
 	}
@@ -1191,6 +1271,7 @@ func TestReadOnlyAnswerabilityRejectsRetainedContextFinalWithoutSourceBody(t *te
 	if kind != "source_grounding_unmet" {
 		t.Fatalf("retained-context final should be rejected, got (%q, %q)", kind, reason)
 	}
+
 	if reason == "" {
 		t.Fatal("expected rejection reason")
 	}
@@ -1210,6 +1291,7 @@ func TestReadOnlyAnswerabilityRejectsScaffoldFinalEvenWithRelevantSourceBody(t *
 	if kind != "source_grounding_unmet" {
 		t.Fatalf("source-backed scaffold final should still be rejected, got (%q, %q)", kind, reason)
 	}
+
 	if reason == "" {
 		t.Fatal("expected scaffold rejection reason")
 	}
@@ -1236,6 +1318,7 @@ func TestFinalAnswerAcceptanceRejectsOffObjectiveSourceBackedAnswer(t *testing.T
 	if kind != "answer_objective_unmet" {
 		t.Fatalf("off-objective source-backed answer got (%q, %q), want answer_objective_unmet", kind, reason)
 	}
+
 	if !strings.Contains(reason, "does not establish the user's objective") {
 		t.Fatalf("blocker reason should describe objective mismatch, got %q", reason)
 	}
@@ -1282,7 +1365,9 @@ func TestFinalAnswerAcceptanceRejectsCitationlessObjectiveParrotWithUnrelatedRea
 
 func TestFinalAnswerAcceptanceAppliesToDirectAnswerTaskFamilyAlias(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+
 	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+
 	results := []workspace.ToolResult{
 		{
 			Tool:    "context_pack",
@@ -1306,7 +1391,9 @@ func TestFinalAnswerAcceptanceAppliesToDirectAnswerTaskFamilyAlias(t *testing.T)
 
 func TestFinalAnswerAcceptanceRejectsAliasInsufficientEvidenceWithoutSourceBody(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+
 	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+
 	results := []workspace.ToolResult{{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote packet",
@@ -1319,6 +1406,7 @@ func TestFinalAnswerAcceptanceRejectsAliasInsufficientEvidenceWithoutSourceBody(
 	if kind != "answer_objective_unmet" {
 		t.Fatalf("premature insufficient-evidence alias answer got (%q, %q), want answer_objective_unmet", kind, reason)
 	}
+
 	if !strings.Contains(reason, "before inspecting source-body or diagnostic evidence") {
 		t.Fatalf("expected source-body insufficiency reason, got %q", reason)
 	}
@@ -1326,7 +1414,9 @@ func TestFinalAnswerAcceptanceRejectsAliasInsufficientEvidenceWithoutSourceBody(
 
 func TestFinalAnswerAcceptanceAllowsAliasInsufficientEvidenceAfterSourceBody(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+
 	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+
 	results := []workspace.ToolResult{{
 		Tool:    "read_file",
 		Summary: "Read internal/surfaces/tui/app/rendering.go lines 1-9",
@@ -1343,7 +1433,9 @@ func TestFinalAnswerAcceptanceAllowsAliasInsufficientEvidenceAfterSourceBody(t *
 
 func TestFinalAnswerAcceptanceRejectsAliasObjectiveParrotWithWrongSource(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+
 	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+
 	results := []workspace.ToolResult{
 		{
 			Tool:    "context_pack",
@@ -1367,7 +1459,9 @@ func TestFinalAnswerAcceptanceRejectsAliasObjectiveParrotWithWrongSource(t *test
 
 func TestGenericReadOnlyEvidenceReadyRejectsAliasWrongSource(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+
 	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+
 	results := []workspace.ToolResult{
 		{
 			Tool:    "context_pack",
@@ -1388,7 +1482,9 @@ func TestGenericReadOnlyEvidenceReadyRejectsAliasWrongSource(t *testing.T) {
 
 func TestConversationEvidenceSatisfiedNormalizesDirectAnswerAlias(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+
 	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+
 	results := []workspace.ToolResult{
 		{
 			Tool:    "context_pack",
@@ -1401,6 +1497,7 @@ func TestConversationEvidenceSatisfiedNormalizesDirectAnswerAlias(t *testing.T) 
 			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
 		},
 	}
+
 	if conversationEvidenceSatisfied(brief, results) {
 		t.Fatal("direct_answer alias should use objective-relevant source-body evidence, not any candidate body")
 	}
@@ -1417,7 +1514,9 @@ func TestConversationEvidenceSatisfiedNormalizesDirectAnswerAlias(t *testing.T) 
 
 func TestRunnerReadinessStateNormalizesDirectAnswerAlias(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+
 	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+
 	results := []workspace.ToolResult{{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote packet",
@@ -1428,6 +1527,7 @@ func TestRunnerReadinessStateNormalizesDirectAnswerAlias(t *testing.T) {
 	if readiness.ReadyToAnswer {
 		t.Fatalf("direct_answer alias should not be answer-ready from localization only: %#v", readiness)
 	}
+
 	if !slices.Contains(readiness.OpenObligations, "read_only_source_body_evidence_pending") {
 		t.Fatalf("expected source-body obligation for direct_answer alias, got %#v", readiness.OpenObligations)
 	}
@@ -1523,6 +1623,7 @@ func TestAcceptedAnswerEvidencePathsPreferObjectiveRelevantSourceBody(t *testing
 	if len(paths) == 0 {
 		t.Fatal("expected evidence paths")
 	}
+
 	if paths[0] != "internal/surfaces/tui/app/chat_input.go" {
 		t.Fatalf("expected objective-relevant source body first, got %v", paths)
 	}
@@ -1530,7 +1631,9 @@ func TestAcceptedAnswerEvidencePathsPreferObjectiveRelevantSourceBody(t *testing
 
 func TestAcceptedAnswerEvidencePathsAliasIgnoresUnrelatedCandidateBody(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+
 	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+
 	results := []workspace.ToolResult{
 		{
 			Tool:    "context_pack",
@@ -1570,12 +1673,17 @@ func TestReadOnlyPrefetchEvidenceDedupsWithModelReadAndKeepsSource(t *testing.T)
 	if got := ledger.SourceBodyPaths; !slices.Equal(got, []string{"README.md"}) {
 		t.Fatalf("expected deduped source body paths, got %#v", got)
 	}
-	var prefetchItems int
-	var readItems int
+
+	var (
+		prefetchItems int
+		readItems     int
+	)
+
 	for _, item := range ledger.Items {
 		if item.Kind != readOnlyEvidenceSourceBody || item.Path != "README.md" {
 			continue
 		}
+
 		switch item.Source {
 		case "prefetch":
 			prefetchItems++
@@ -1583,6 +1691,7 @@ func TestReadOnlyPrefetchEvidenceDedupsWithModelReadAndKeepsSource(t *testing.T)
 			readItems++
 		}
 	}
+
 	if prefetchItems != 1 || readItems != 1 {
 		t.Fatalf("expected distinct source attribution for prefetch/read_file, got prefetch=%d read=%d items=%#v", prefetchItems, readItems, ledger.Items)
 	}

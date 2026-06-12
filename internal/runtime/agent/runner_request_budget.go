@@ -96,14 +96,18 @@ func (d runnerRequestBudgetDecision) apply(ctx budgetDecisionContext) budgetDeci
 	if !d.Handled {
 		return budgetDecisionResult{}
 	}
+
 	if d.Nudge != "" {
 		*ctx.controller.turnMessages = append(*ctx.controller.turnMessages, llama.ChatMessage{Role: "system", Content: d.Nudge})
 	}
+
 	if d.EventRole != "" {
 		ctx.controller.runner.emitEvent(RunEvent{Role: d.EventRole, Content: util.FirstNonEmpty(d.EventContent, d.Nudge)})
 	}
+
 	if d.ForceAnswerPrompt != "" {
 		answer, err := ctx.controller.completeWithoutMoreToolsWithReason(d.ForceAnswerPrompt)
+
 		return budgetDecisionResult{
 			shouldFinish: true,
 			answer:       answer,
@@ -111,6 +115,7 @@ func (d runnerRequestBudgetDecision) apply(ctx budgetDecisionContext) budgetDeci
 			reason:       d.ForceAnswerReason,
 		}
 	}
+
 	if d.RejectSummary != "" {
 		answer, err, done := ctx.controller.rejectTool(ctx.stepNumber, ctx.activeToolCall, ctx.req, d.RejectSummary, d.RejectError)
 		if done {
@@ -121,8 +126,10 @@ func (d runnerRequestBudgetDecision) apply(ctx budgetDecisionContext) budgetDeci
 				reason:       d.RejectStopReason,
 			}
 		}
+
 		return budgetDecisionResult{shouldContinue: true}
 	}
+
 	return budgetDecisionResult{}
 }
 
@@ -157,7 +164,9 @@ func samePathFingerprint(req workspace.ToolRequest) string {
 	if path == "" {
 		return ""
 	}
+
 	path = filepath.ToSlash(filepath.Clean(path))
+
 	return req.Tool + "|path:" + path
 }
 
@@ -168,9 +177,11 @@ func (s *runnerRequestBudgetState) noteFingerprint(currentFingerprint string) in
 		s.fingerprint.identicalRun = 1
 		s.fingerprint.lastFingerprint = currentFingerprint
 	}
+
 	if currentFingerprint != "" {
 		s.fingerprint.counts[currentFingerprint]++
 	}
+
 	return s.fingerprint.identicalRun
 }
 
@@ -179,8 +190,11 @@ func (s *runnerRequestBudgetState) samePathFixationDecision(req workspace.ToolRe
 	if fp == "" || isDiagnosticLogArtifactPath(req.Path) {
 		return runnerRequestBudgetDecision{}
 	}
+
 	s.fingerprint.samePathCounts[fp]++
+
 	count := s.fingerprint.samePathCounts[fp]
+
 	if count < samePathFixationNudgeAt {
 		return runnerRequestBudgetDecision{}
 	}
@@ -198,12 +212,14 @@ func (s *runnerRequestBudgetState) samePathFixationDecision(req workspace.ToolRe
 			EventRole: "same_path_fixation_tool_hidden",
 		}
 	}
+
 	s.fingerprint.samePathNudged[fp] = true
 
 	action := "switch to a materially different evidence path, use one structured source-body probe for a named missing claim, or answer with the evidence already gathered"
 	if evidenceAvailable {
 		action = "answer from the evidence already gathered, or use one structured source-body probe only if you can name the exact missing claim it will resolve"
 	}
+
 	return runnerRequestBudgetDecision{
 		Handled: true,
 		Nudge: fmt.Sprintf(
@@ -221,20 +237,25 @@ func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req wor
 	if currentFingerprint == "" {
 		return runnerRequestBudgetDecision{}
 	}
+
 	if decision := s.terminalArtifactRejectedRetryDecision(req, currentFingerprint); decision.Handled {
 		return decision
 	}
+
 	if policy.FingerprintNudgeAt > 0 {
 		count := s.fingerprint.counts[currentFingerprint]
 		nudgeFired := s.fingerprint.nudgeFired[currentFingerprint]
+
 		if count >= policy.FingerprintNudgeAt && !nudgeFired {
 			s.fingerprint.nudgeFired[currentFingerprint] = true
+
 			return runnerRequestBudgetDecision{
 				Handled:   true,
 				Nudge:     fmt.Sprintf("You have called %s with the same arguments %d times this turn (not consecutively). Summarize what you learned from those calls and pick a materially different next step, or answer with the evidence you already have. Any further identical call will be blocked.", req.Tool, count),
 				EventRole: "fingerprint_nudge",
 			}
 		}
+
 		if count > policy.FingerprintNudgeAt && nudgeFired {
 			return runnerRequestBudgetDecision{
 				Handled:           true,
@@ -245,6 +266,7 @@ func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req wor
 			}
 		}
 	}
+
 	if priorSummary, seen := s.fingerprint.zeroHit[currentFingerprint]; seen {
 		return runnerRequestBudgetDecision{
 			Handled:          true,
@@ -253,12 +275,15 @@ func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req wor
 			RejectStopReason: "zero_hit_retry_budget_exhausted",
 		}
 	}
+
 	if decision := s.zeroHitFamilyDecision(req); decision.Handled {
 		return decision
 	}
+
 	if decision := s.rejectedFingerprintDecision(req, currentFingerprint); decision.Handled {
 		return decision
 	}
+
 	return runnerRequestBudgetDecision{}
 }
 
@@ -267,12 +292,15 @@ func (s *runnerRequestBudgetState) noteZeroHitSearch(req workspace.ToolRequest, 
 	if strings.TrimSpace(currentFingerprint) != "" {
 		s.fingerprint.zeroHit[currentFingerprint] = summary
 	}
+
 	family := zeroHitSearchFamilyKey(req)
 	if family == "" {
 		return
 	}
+
 	state := s.fingerprint.zeroHitFamily[family]
 	state.Count++
+
 	state.Summary = summary
 	s.fingerprint.zeroHitFamily[family] = state
 }
@@ -282,10 +310,12 @@ func (s *runnerRequestBudgetState) zeroHitFamilyDecision(req workspace.ToolReque
 	if family == "" {
 		return runnerRequestBudgetDecision{}
 	}
+
 	state, seen := s.fingerprint.zeroHitFamily[family]
 	if !seen {
 		return runnerRequestBudgetDecision{}
 	}
+
 	if state.Count >= 2 {
 		return runnerRequestBudgetDecision{
 			Handled:          true,
@@ -294,9 +324,11 @@ func (s *runnerRequestBudgetState) zeroHitFamilyDecision(req workspace.ToolReque
 			RejectStopReason: "zero_hit_family_budget_exhausted",
 		}
 	}
+
 	if !state.NudgeFired {
 		state.NudgeFired = true
 		s.fingerprint.zeroHitFamily[family] = state
+
 		return runnerRequestBudgetDecision{
 			Handled:      true,
 			EventRole:    "zero_hit_family_nudge",
@@ -306,6 +338,7 @@ func (s *runnerRequestBudgetState) zeroHitFamilyDecision(req workspace.ToolReque
 				req.Tool, state.Summary),
 		}
 	}
+
 	return runnerRequestBudgetDecision{}
 }
 
@@ -315,11 +348,14 @@ func zeroHitSearchFamilyKey(req workspace.ToolRequest) string {
 	default:
 		return ""
 	}
+
 	terms := zeroHitSearchFamilyTerms(strings.Join([]string{req.Pattern, req.Query, req.Command}, " "))
 	if len(terms) < 2 {
 		return ""
 	}
+
 	path := normalizePostChildPath(req.Path)
+
 	return strings.TrimSpace(req.Tool) + ":" + path + ":" + strings.Join(terms, ":")
 }
 
@@ -328,63 +364,89 @@ func zeroHitSearchFamilyTerms(text string) []string {
 	if len(words) == 0 {
 		return nil
 	}
+
 	hasKey := requestBudgetContainsString(words, "key")
 	hasArrow := requestBudgetContainsString(words, "arrow")
+
 	if hasKey && hasArrow {
 		return []string{"key", "arrow"}
 	}
+
 	var terms []string
+
 	for _, word := range words {
 		switch word {
 		case "up", "down", "left", "right", "true", "false":
 			continue
 		}
+
 		terms = util.AppendUnique(terms, word)
 		if len(terms) >= 3 {
 			break
 		}
 	}
+
 	return terms
 }
 
 func splitZeroHitSearchWords(text string) []string {
-	var words []string
-	var b strings.Builder
+	var (
+		words []string
+		b     strings.Builder
+	)
+
 	flush := func() {
 		if b.Len() == 0 {
 			return
 		}
+
 		word := strings.ToLower(b.String())
 		b.Reset()
+
 		if len(word) < 3 {
 			return
 		}
+
 		words = util.AppendUnique(words, word)
 	}
 	prevLower := false
+
 	for _, r := range text {
 		if r >= 'A' && r <= 'Z' {
 			if prevLower {
 				flush()
 			}
+
 			b.WriteRune(r + ('a' - 'A'))
+
 			prevLower = false
+
 			continue
 		}
+
 		if r >= 'a' && r <= 'z' {
 			b.WriteRune(r)
+
 			prevLower = true
+
 			continue
 		}
+
 		if r >= '0' && r <= '9' {
 			b.WriteRune(r)
+
 			prevLower = false
+
 			continue
 		}
+
 		flush()
+
 		prevLower = false
 	}
+
 	flush()
+
 	return words
 }
 
@@ -394,6 +456,7 @@ func requestBudgetContainsString(values []string, want string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -401,19 +464,24 @@ func (s *runnerRequestBudgetState) rejectedFingerprintDecision(req workspace.Too
 	if s == nil || strings.TrimSpace(currentFingerprint) == "" {
 		return runnerRequestBudgetDecision{}
 	}
+
 	if decision := s.terminalArtifactRejectedRetryDecision(req, currentFingerprint); decision.Handled {
 		return decision
 	}
+
 	if priorSummary, ok := s.fingerprint.rejected[currentFingerprint]; ok {
 		if isRecoverablePostReadinessGapRejection(priorSummary) {
 			delete(s.fingerprint.rejected, currentFingerprint)
 			delete(s.fingerprint.rejectedRetries, currentFingerprint)
+
 			return runnerRequestBudgetDecision{}
 		}
+
 		// When write-ready nudge escalation is active, defer to that
 		// contract rather than force-answering on rejection retry.
 		if s.writeReadyNudgeActive {
 			s.fingerprint.rejectedRetries[currentFingerprint]++
+
 			return runnerRequestBudgetDecision{
 				Handled:   true,
 				EventRole: "rejection_retry_deferred_to_write_ready",
@@ -422,8 +490,11 @@ func (s *runnerRequestBudgetState) rejectedFingerprintDecision(req workspace.Too
 					req.Tool),
 			}
 		}
+
 		retries := s.fingerprint.rejectedRetries[currentFingerprint] + 1
+
 		s.fingerprint.rejectedRetries[currentFingerprint] = retries
+
 		if retries == 1 {
 			return runnerRequestBudgetDecision{
 				Handled:      true,
@@ -434,6 +505,7 @@ func (s *runnerRequestBudgetState) rejectedFingerprintDecision(req workspace.Too
 					req.Tool, priorSummary),
 			}
 		}
+
 		return runnerRequestBudgetDecision{
 			Handled:           true,
 			EventRole:         "rejection_retry_blocked",
@@ -442,6 +514,7 @@ func (s *runnerRequestBudgetState) rejectedFingerprintDecision(req workspace.Too
 			ForceAnswerPrompt: fmt.Sprintf("You retried a %s request that was already rejected %d times this turn and were warned. Further tools are not available. Provide your final answer from the evidence already gathered.", req.Tool, retries),
 		}
 	}
+
 	return runnerRequestBudgetDecision{}
 }
 
@@ -449,14 +522,17 @@ func (s *runnerRequestBudgetState) terminalArtifactRejectedRetryDecision(req wor
 	if s == nil || strings.TrimSpace(currentFingerprint) == "" {
 		return runnerRequestBudgetDecision{}
 	}
+
 	priorSummary, seen := s.fingerprint.rejected[currentFingerprint]
 	if !seen || !terminalArtifactRequiredRejectionSummary(priorSummary) {
 		return runnerRequestBudgetDecision{}
 	}
+
 	tool := strings.TrimSpace(req.Tool)
 	if tool == "" {
 		tool = "the requested tool"
 	}
+
 	return runnerRequestBudgetDecision{
 		Handled:      true,
 		EventRole:    "terminal_artifact_retry_recovery",
@@ -472,6 +548,7 @@ func terminalArtifactRejectedRetryNudge(tool string, priorSummary string) string
 			tool,
 		)
 	}
+
 	return fmt.Sprintf(
 		"The repeated %s request was already rejected because the current planner phase requires a terminal plan artifact. Do not report that rejected request as a blocker. Emit the currently allowed terminal artifact (`submit_plan`) now, or use `Decision: source-satisfied` / `<<QUESTION>>:` only for a true terminal exception grounded in the evidence already gathered.",
 		tool,
@@ -494,10 +571,12 @@ func (s *runnerRequestBudgetState) earlyRejectedFingerprintDecision(req workspac
 	if s == nil || strings.TrimSpace(currentFingerprint) == "" {
 		return runnerRequestBudgetDecision{}
 	}
+
 	priorSummary, seen := s.fingerprint.rejected[currentFingerprint]
 	if !seen || !earlyRejectedFingerprintSummary(priorSummary) {
 		return runnerRequestBudgetDecision{}
 	}
+
 	return s.rejectedFingerprintDecision(req, currentFingerprint)
 }
 
@@ -527,6 +606,7 @@ func normalizedHarnessRejectionSummary(summary string) string {
 
 func postReadinessContinuationRejectionSummary(summary string) bool {
 	summary = normalizedHarnessRejectionSummary(summary)
+
 	return strings.HasPrefix(summary, "Post-readiness follow-up ") ||
 		strings.HasPrefix(summary, "Post-readiness named_gap ") ||
 		strings.HasPrefix(summary, "Post-readiness search ") ||
@@ -536,6 +616,7 @@ func postReadinessContinuationRejectionSummary(summary string) bool {
 
 func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.ToolRequest, results []workspace.ToolResult) runnerRequestBudgetDecision {
 	var decision runnerRequestBudgetDecision
+
 	if !s.broadEvidenceDelegationRequired {
 		if nudge := r.explorationDelegationNudge(s.readCallsSinceWrite, results); nudge != "" {
 			s.broadEvidenceDelegationRequired = true
@@ -546,6 +627,7 @@ func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.
 			}
 		}
 	}
+
 	if s.broadEvidenceDelegationRequired && !s.broadEvidenceDelegationSatisfied && workspace.IsBroadInspectionRequest(req) {
 		return runnerRequestBudgetDecision{
 			Handled:          true,
@@ -554,6 +636,7 @@ func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.
 			RejectStopReason: "exploration_broad_inspection_after_nudge_blocked",
 		}
 	}
+
 	mutationParent := runnerExplorationParentIsMutation(r)
 	if s.postChildActive() && workspace.IsBroadInspectionRequest(req) && !mutationParent {
 		return runnerRequestBudgetDecision{
@@ -563,6 +646,7 @@ func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.
 			RejectStopReason: "post_child_broad_inspection_blocked",
 		}
 	}
+
 	if s.readOnlyChildTaskSatisfied && strings.TrimSpace(req.Tool) == "task" && !isWriteChildMode(req.Mode) {
 		return runnerRequestBudgetDecision{
 			Handled:          true,
@@ -571,11 +655,13 @@ func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.
 			RejectStopReason: "duplicate_read_only_child_task_blocked",
 		}
 	}
+
 	if s.postChildActive() {
 		if decision := s.postChildGuidanceDecision(req, mutationParent); decision.Handled {
 			return decision
 		}
 	}
+
 	return decision
 }
 
@@ -593,31 +679,39 @@ func runnerExplorationParentIsMutation(r *Runner) bool {
 	if r == nil {
 		return false
 	}
+
 	if strings.HasPrefix(strings.TrimSpace(r.agentName()), "child:") {
 		return false
 	}
+
 	return runnerBriefRequiresMutation(r.RuntimeBrief)
 }
 
 func (s *runnerRequestBudgetState) synthesisDecision(policy RunPolicy, toolCalls int, mutation bool) runnerRequestBudgetDecision {
 	if policy.SynthesisNudgeAt > 0 && toolCalls >= policy.SynthesisNudgeAt && !s.synthesisNudgeFired {
 		s.synthesisNudgeFired = true
+
 		nudgeText := fmt.Sprintf("You have used %d tool calls this turn. Before more tool calls, pause: summarize what you've learned so far, state the specific question that remains, and commit to the minimal next step. If the remaining gap is small, answer now with what you have.", toolCalls)
+
 		if mutation {
 			nudgeText = fmt.Sprintf("You have used %d tool calls this turn. Pause: name the exact edit target you've identified (file and line range), and commit to the smallest necessary edit. If you know the target and the change, write it now — do not keep reading. If you're uncertain, state the exact blocker.", toolCalls)
 		}
+
 		return runnerRequestBudgetDecision{
 			Handled:   true,
 			Nudge:     nudgeText,
 			EventRole: "synthesis_nudge",
 		}
 	}
+
 	return runnerRequestBudgetDecision{}
 }
 
 func (s *runnerRequestBudgetState) noteReadClassRequest(req workspace.ToolRequest) {
 	s.readCallCount++
+
 	s.readCallsSinceWrite++
+
 	if s.postChildActive() {
 		s.postChild.readCalls++
 		if family := postChildRequestFamilyKey(req); family != "" {
@@ -670,14 +764,17 @@ func (s *runnerRequestBudgetState) postChildGuidanceDecision(req workspace.ToolR
 			RejectStopReason: "post_child_unrelated_discovery_blocked",
 		}
 	}
+
 	family := postChildRequestFamilyKey(req)
 	if family == "" {
 		return runnerRequestBudgetDecision{}
 	}
+
 	label := postChildRequestFamilyLabel(req)
 	if label == "" {
 		label = "the same evidence path"
 	}
+
 	// The post-child reread BLOCK was a bandaid budget that fired after
 	// the model re-read the same file family 2× post-packet. Per the
 	// no-bandaid memory, the structural enforcers (doom_loop_guard for
@@ -686,12 +783,14 @@ func (s *runnerRequestBudgetState) postChildGuidanceDecision(req workspace.ToolR
 	// below (educational, fires once) is kept; the hard block is gone.
 	if count := s.postChild.readFamilies[family]; count >= 1 && !s.postChild.familyNudgeFired[family] {
 		s.postChild.familyNudgeFired[family] = true
+
 		return runnerRequestBudgetDecision{
 			Handled:   true,
 			Nudge:     fmt.Sprintf("you already inspected %s after the child packet. Either answer now, or take one narrow probe that names the exact missing claim; the same path is fine if you can name what new line you expect.", label),
 			EventRole: "post_child_reread_nudge",
 		}
 	}
+
 	return runnerRequestBudgetDecision{}
 }
 
@@ -712,19 +811,23 @@ func requestAnchoredToEvidencePaths(req workspace.ToolRequest, evidencePaths []s
 		req.Query,
 		req.Command,
 	}, "\n"))
+
 	for _, evidencePath := range evidencePaths {
 		if evidencePath == "" {
 			continue
 		}
+
 		if reqPath != "" && postChildPathsOverlap(reqPath, evidencePath) {
 			return true
 		}
+
 		for _, token := range evidenceAnchorTokens(evidencePath) {
 			if token != "" && strings.Contains(queryText, token) {
 				return true
 			}
 		}
 	}
+
 	return false
 }
 
@@ -741,6 +844,7 @@ func postChildRequestFamilyKey(req workspace.ToolRequest) string {
 			return strings.TrimSpace(req.Tool) + ":" + path
 		}
 	}
+
 	return ""
 }
 
@@ -748,23 +852,28 @@ func postChildRequestFamilyLabel(req workspace.ToolRequest) string {
 	if path := normalizePostChildPath(req.Path); path != "" && path != "." {
 		return path
 	}
+
 	return strings.TrimSpace(req.Tool)
 }
 
 func normalizePostChildEvidencePaths(paths []string) []string {
 	seen := make(map[string]struct{}, len(paths))
 	normalized := make([]string, 0, len(paths))
+
 	for _, path := range paths {
 		cleaned := normalizePostChildPath(path)
 		if cleaned == "" {
 			continue
 		}
+
 		if _, ok := seen[cleaned]; ok {
 			continue
 		}
+
 		seen[cleaned] = struct{}{}
 		normalized = append(normalized, cleaned)
 	}
+
 	return normalized
 }
 
@@ -772,17 +881,21 @@ func summarizePostChildEvidencePaths(paths []string, max int) string {
 	if len(paths) == 0 {
 		return "the child packet paths"
 	}
+
 	limit := len(paths)
 	if max > 0 && limit > max {
 		limit = max
 	}
+
 	quoted := make([]string, 0, limit+1)
 	for _, path := range paths[:limit] {
 		quoted = append(quoted, "`"+path+"`")
 	}
+
 	if len(paths) > limit {
 		quoted = append(quoted, "and related nearby files")
 	}
+
 	return strings.Join(quoted, ", ")
 }
 
@@ -791,11 +904,14 @@ func normalizePostChildPath(path string) string {
 	if cleaned == "" {
 		return ""
 	}
+
 	cleaned = filepath.ToSlash(filepath.Clean(cleaned))
 	cleaned = strings.TrimPrefix(cleaned, "./")
+
 	if cleaned == "" {
 		return ""
 	}
+
 	return cleaned
 }
 
@@ -803,9 +919,11 @@ func postChildPathsOverlap(reqPath string, evidencePath string) bool {
 	if reqPath == evidencePath {
 		return true
 	}
+
 	if strings.HasPrefix(reqPath+"/", evidencePath+"/") || strings.HasPrefix(evidencePath+"/", reqPath+"/") {
 		return true
 	}
+
 	return filepath.ToSlash(filepath.Dir(evidencePath)) == reqPath
 }
 
@@ -816,26 +934,34 @@ func evidenceAnchorTokens(path string) []string {
 		if len(token) < 4 {
 			return tokens
 		}
+
 		switch token {
 		case "internal", "scripts", "script", "tests", "docs", "vendor":
 			return tokens
 		}
+
 		if _, ok := seen[token]; ok {
 			return tokens
 		}
+
 		seen[token] = struct{}{}
+
 		return append(tokens, token)
 	}
 
 	var tokens []string
+
 	base := filepath.Base(path)
 	stem := strings.TrimSuffix(base, filepath.Ext(base))
+
 	for _, candidate := range []string{base, stem} {
 		tokens = add(tokens, candidate)
 	}
+
 	replacer := strings.NewReplacer("/", " ", "_", " ", "-", " ", ".", " ")
 	for _, part := range strings.Fields(replacer.Replace(path)) {
 		tokens = add(tokens, part)
 	}
+
 	return tokens
 }

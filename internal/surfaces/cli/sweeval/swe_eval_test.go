@@ -14,18 +14,22 @@ import (
 
 func sweEvalTestRepoRoot(t *testing.T) string {
 	t.Helper()
+
 	dir, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
 	}
+
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir
 		}
+
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			t.Fatalf("repo root not found from cwd")
 		}
+
 		dir = parent
 	}
 }
@@ -36,10 +40,13 @@ func TestRunSuiteOnlyPassesValidSuite(t *testing.T) {
 	writeSWESmokeSuite(t, suitePath, "")
 
 	var stdout, stderr bytes.Buffer
+
 	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
+
 	if !strings.Contains(stdout.String(), "PASS cli-smoke-suite") || !strings.Contains(stdout.String(), "Lint: PASS") {
 		t.Fatalf("expected passing suite report, got %s", stdout.String())
 	}
@@ -49,17 +56,22 @@ func TestRunEvaluatesLogsDirectory(t *testing.T) {
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")
 	logsDir := filepath.Join(dir, "logs")
+
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		t.Fatalf("mkdir logs: %v", err)
 	}
+
 	writeSWESmokeSuite(t, suitePath, "")
 	writeSWESmokeLog(t, filepath.Join(logsDir, "direct.jsonl"))
 
 	var stdout, stderr bytes.Buffer
+
 	code := run([]string{"-suite", suitePath, "-logs", logsDir}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
+
 	for _, want := range []string{"PASS cli-smoke-suite", "Results: passed=1 failed=0", "Control rails dashboard:", "- PASS direct"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("expected suite output to contain %q, got %s", want, stdout.String())
@@ -71,6 +83,7 @@ func TestRunLiveGeneratesLogsAndScoresThem(t *testing.T) {
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")
 	logsDir := filepath.Join(dir, "generated")
+
 	writeSWESmokeSuite(t, suitePath, "")
 
 	command := strings.Join([]string{
@@ -80,11 +93,15 @@ func TestRunLiveGeneratesLogsAndScoresThem(t *testing.T) {
 		`'{"type":"message","role":"assistant","content":"Routing is direct for this smoke test."}'`,
 		`> {log_path}`,
 	}, " ")
+
 	var stdout, stderr bytes.Buffer
+
 	code := run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
+
 	if _, err := os.Stat(filepath.Join(logsDir, "direct.jsonl")); err != nil {
 		t.Fatalf("expected generated log: %v", err)
 	}
@@ -94,6 +111,7 @@ func TestRunLivePassesMultiTurnMetadata(t *testing.T) {
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")
 	logsDir := filepath.Join(dir, "generated")
+
 	writeSWEMultiTurnSmokeSuite(t, suitePath)
 
 	command := strings.Join([]string{
@@ -108,11 +126,15 @@ func TestRunLivePassesMultiTurnMetadata(t *testing.T) {
 		`'{"type":"message","role":"assistant","content":"second answer"}'`,
 		`> {log_path}`,
 	}, " ")
+
 	var stdout, stderr bytes.Buffer
+
 	code := run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
+
 	if !strings.Contains(stdout.String(), "PASS cli-smoke-suite") {
 		t.Fatalf("expected passing suite, got stdout=%s stderr=%s", stdout.String(), stderr.String())
 	}
@@ -141,6 +163,7 @@ func TestRunLivePassesRunnerModeMetadata(t *testing.T) {
 			},
 		}},
 	}
+
 	if err := writeSWESuite(suitePath, suite); err != nil {
 		t.Fatalf("write suite: %v", err)
 	}
@@ -154,8 +177,11 @@ func TestRunLivePassesRunnerModeMetadata(t *testing.T) {
 		`'{"type":"message","role":"assistant","content":"Changed files:\n- README.md"}'`,
 		`> {log_path}`,
 	}, " ")
+
 	var stdout, stderr bytes.Buffer
+
 	code := run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -165,6 +191,7 @@ func TestRunLiveContinueOnErrorRunsRemainingTasksAndWritesJSONLFailure(t *testin
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")
 	logsDir := filepath.Join(dir, "generated")
+
 	writeSWETwoTaskSmokeSuite(t, suitePath)
 
 	command := strings.Join([]string{
@@ -178,24 +205,32 @@ func TestRunLiveContinueOnErrorRunsRemainingTasksAndWritesJSONLFailure(t *testin
 		`> {log_path};`,
 		`fi`,
 	}, " ")
+
 	var stdout, stderr bytes.Buffer
+
 	code := run([]string{"-suite", suitePath, "-run-live", "-run-live-continue-on-error", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+
 	if code != 1 {
 		t.Fatalf("expected failing suite exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
+
 	if !strings.Contains(stderr.String(), "failed first") || !strings.Contains(stderr.String(), "[2/2] finished second") {
 		t.Fatalf("expected continue-on-error progress, got stderr=%s", stderr.String())
 	}
+
 	firstLog, err := os.ReadFile(filepath.Join(logsDir, "first.jsonl"))
 	if err != nil {
 		t.Fatalf("read first log: %v", err)
 	}
+
 	if !strings.Contains(string(firstLog), `"type":"error"`) || !strings.Contains(string(firstLog), "live runner task failed") {
 		t.Fatalf("expected synthetic JSONL error log, got %s", firstLog)
 	}
+
 	if _, err := eval.LoadRecords(filepath.Join(logsDir, "first.jsonl")); err != nil {
 		t.Fatalf("synthetic error log must be loadable JSONL: %v", err)
 	}
+
 	if _, err := os.Stat(filepath.Join(logsDir, "second.jsonl")); err != nil {
 		t.Fatalf("expected second task log after first failure: %v", err)
 	}
@@ -205,6 +240,7 @@ func TestRunLiveScoresNonzeroRunnerWhenLogIsLoadable(t *testing.T) {
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")
 	logsDir := filepath.Join(dir, "generated")
+
 	writeSWESmokeSuite(t, suitePath, "")
 
 	command := strings.Join([]string{
@@ -215,11 +251,15 @@ func TestRunLiveScoresNonzeroRunnerWhenLogIsLoadable(t *testing.T) {
 		`> {log_path};`,
 		`exit 1`,
 	}, " ")
+
 	var stdout, stderr bytes.Buffer
+
 	code := run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("expected scoreable nonzero runner log to pass, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
+
 	if !strings.Contains(stderr.String(), "runner exited nonzero") {
 		t.Fatalf("expected nonzero runner notice, got stderr=%s", stderr.String())
 	}
@@ -229,16 +269,20 @@ func TestLiveContractRunnerRollsBackWorkspaceWithFakeBinary(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skipf("bash not available: %v", err)
 	}
+
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git not available: %v", err)
 	}
+
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
 	logPath := filepath.Join(dir, "contract.jsonl")
 	fakeBin := filepath.Join(dir, "fake-idiom")
+
 	if err := os.WriteFile(configPath, []byte(`{"chat":{"system_prompt_files":[]},"workspace":{},"llama_server":{},"implementer":{},"route_classifier":{}}`), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+
 	fake := `#!/usr/bin/env bash
 set -euo pipefail
 config=""
@@ -277,13 +321,18 @@ PY
 	if err != nil {
 		t.Fatalf("script path: %v", err)
 	}
+
 	fixturePath, err := filepath.Abs(filepath.Join(sweEvalTestRepoRoot(t), "testdata", "live-contracts", "fixtures", "frozen-label-repo"))
 	if err != nil {
 		t.Fatalf("fixture path: %v", err)
 	}
+
 	fixtureLeak := filepath.Join(fixturePath, "logs", "telemetry", "cwd-leak.jsonl")
+
 	_ = os.Remove(fixtureLeak)
+
 	cmd := exec.Command("bash", scriptPath)
+
 	cmd.Dir = fixturePath
 	cmd.Env = append(os.Environ(),
 		"IDIOM_BIN="+fakeBin,
@@ -293,14 +342,17 @@ PY
 		"IDIOM_SWE_PROMPT=Implement this feature",
 		"IDIOM_SWE_TASK_TIMEOUT=15",
 	)
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("live contract runner failed: %v\n%s", err, output)
 	}
+
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
+
 	for _, want := range []string{
 		`"type": "idiom.live_contract.workspace_prepared"`,
 		`"type": "idiom.live_contract.rollback"`,
@@ -312,21 +364,26 @@ PY
 			t.Fatalf("expected log to contain %q, got:\n%s", want, data)
 		}
 	}
+
 	records, err := eval.LoadRecords(logPath)
 	if err != nil {
 		t.Fatalf("load records: %v", err)
 	}
+
 	metrics := eval.Analyze(records)
 	foundChanged := false
+
 	for _, path := range metrics.ChangedFiles {
 		if strings.EqualFold(strings.TrimSpace(path), "internal/labels/labels.go") {
 			foundChanged = true
 			break
 		}
 	}
+
 	if !foundChanged {
 		t.Fatalf("expected rollback changed-file evidence, got %#v", metrics.ChangedFiles)
 	}
+
 	if _, err := os.Stat(fixtureLeak); !os.IsNotExist(err) {
 		t.Fatalf("live runner leaked cwd telemetry into fixture source: %v", err)
 	}
@@ -336,16 +393,20 @@ func TestLiveContractRunnerSkipsStaleWriteWhenLogOwnershipChanges(t *testing.T) 
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skipf("bash not available: %v", err)
 	}
+
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git not available: %v", err)
 	}
+
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
 	logPath := filepath.Join(dir, "contract.jsonl")
 	fakeBin := filepath.Join(dir, "fake-idiom")
+
 	if err := os.WriteFile(configPath, []byte(`{"chat":{"system_prompt_files":[]},"workspace":{},"llama_server":{},"implementer":{},"route_classifier":{}}`), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+
 	fake := `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' '{"type":"message","role":"user","content":"newer run owns this log"}' > "$IDIOM_SWE_LOG"
@@ -371,15 +432,19 @@ PY
 	if err := os.WriteFile(fakeBin, []byte(fake), 0o755); err != nil {
 		t.Fatalf("write fake binary: %v", err)
 	}
+
 	scriptPath, err := filepath.Abs(filepath.Join(sweEvalTestRepoRoot(t), "scripts", "live-contract-runner.sh"))
 	if err != nil {
 		t.Fatalf("script path: %v", err)
 	}
+
 	fixturePath, err := filepath.Abs(filepath.Join(sweEvalTestRepoRoot(t), "testdata", "live-contracts", "fixtures", "frozen-label-repo"))
 	if err != nil {
 		t.Fatalf("fixture path: %v", err)
 	}
+
 	cmd := exec.Command("bash", scriptPath)
+
 	cmd.Dir = fixturePath
 	cmd.Env = append(os.Environ(),
 		"IDIOM_BIN="+fakeBin,
@@ -389,17 +454,21 @@ PY
 		"IDIOM_SWE_PROMPT=Implement this feature",
 		"IDIOM_SWE_TASK_TIMEOUT=15",
 	)
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("live contract runner failed: %v\n%s", err, output)
 	}
+
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
+
 	if !strings.Contains(string(data), "newer run owns this log") {
 		t.Fatalf("expected newer owner log to remain, got:\n%s", data)
 	}
+
 	for _, stale := range []string{"stale run", "idiom.live_contract.rollback", "idiom.live_contract.workspace_prepared"} {
 		if strings.Contains(string(data), stale) {
 			t.Fatalf("stale runner wrote %q into newer log:\n%s", stale, data)
@@ -411,19 +480,25 @@ func TestLiveContractRunnerArchivesGitRefFixture(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skipf("bash not available: %v", err)
 	}
+
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git not available: %v", err)
 	}
+
 	dir := t.TempDir()
 	sourceRepo := filepath.Join(dir, "source")
+
 	if err := os.MkdirAll(filepath.Join(sourceRepo, "internal", "labels"), 0o755); err != nil {
 		t.Fatalf("mkdir source repo: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(sourceRepo, "internal", "labels", "labels.go"), []byte("package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"), 0o644); err != nil {
 		t.Fatalf("write source file: %v", err)
 	}
+
 	runGit := func(args ...string) {
 		t.Helper()
+
 		cmd := exec.Command("git", append([]string{"-C", sourceRepo}, args...)...)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v failed: %v\n%s", args, err, output)
@@ -434,6 +509,7 @@ func TestLiveContractRunnerArchivesGitRefFixture(t *testing.T) {
 	runGit("config", "user.name", "Idiom Live Contracts")
 	runGit("add", "-A")
 	runGit("commit", "-q", "-m", "frozen source")
+
 	commit := strings.TrimSpace(string(mustCommandOutput(t, "git", "-C", sourceRepo, "rev-parse", "HEAD")))
 	if err := os.WriteFile(filepath.Join(sourceRepo, "dirty-untracked.txt"), []byte("must not enter archived fixture\n"), 0o644); err != nil {
 		t.Fatalf("write untracked source file: %v", err)
@@ -442,9 +518,11 @@ func TestLiveContractRunnerArchivesGitRefFixture(t *testing.T) {
 	configPath := filepath.Join(dir, "config.json")
 	logPath := filepath.Join(dir, "contract.jsonl")
 	fakeBin := filepath.Join(dir, "fake-idiom")
+
 	if err := os.WriteFile(configPath, []byte(`{"chat":{"system_prompt_files":[]},"workspace":{},"llama_server":{},"implementer":{},"route_classifier":{}}`), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+
 	fake := `#!/usr/bin/env bash
 set -euo pipefail
 config=""
@@ -480,7 +558,9 @@ PY
 	if err != nil {
 		t.Fatalf("script path: %v", err)
 	}
+
 	cmd := exec.Command("bash", scriptPath)
+
 	cmd.Dir = sourceRepo
 	cmd.Env = append(os.Environ(),
 		"IDIOM_BIN="+fakeBin,
@@ -491,14 +571,17 @@ PY
 		"IDIOM_SWE_PROMPT=Implement this feature",
 		"IDIOM_SWE_TASK_TIMEOUT=15",
 	)
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("live contract git-ref runner failed: %v\n%s", err, output)
 	}
+
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
+
 	for _, want := range []string{
 		`"fixture_source_kind": "git_ref"`,
 		`"fixture_git_ref": "` + commit + `"`,
@@ -514,10 +597,12 @@ PY
 
 func mustCommandOutput(t *testing.T, name string, args ...string) []byte {
 	t.Helper()
+
 	output, err := exec.Command(name, args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s %v failed: %v\n%s", name, args, err, output)
 	}
+
 	return output
 }
 
@@ -552,6 +637,7 @@ func TestRunLiveDerivesTaskTimeoutFromOracleAndReportsProgress(t *testing.T) {
 			},
 		}},
 	}
+
 	if err := writeSWESuite(suitePath, suite); err != nil {
 		t.Fatalf("write suite: %v", err)
 	}
@@ -564,14 +650,19 @@ func TestRunLiveDerivesTaskTimeoutFromOracleAndReportsProgress(t *testing.T) {
 		`'{"type":"message","role":"assistant","content":"Routing is direct for this smoke test."}'`,
 		`> {log_path}`,
 	}, " ")
+
 	var stdout, stderr bytes.Buffer
+
 	code := run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
+
 	if !strings.Contains(stderr.String(), "[1/1] running direct (timeout=75s)") {
 		t.Fatalf("expected task start progress in stderr, got %s", stderr.String())
 	}
+
 	if !strings.Contains(stderr.String(), "[1/1] finished direct in ") {
 		t.Fatalf("expected task finish progress in stderr, got %s", stderr.String())
 	}
@@ -585,9 +676,11 @@ func TestTaskEnvEntriesFilterRunnerOwnedEnv(t *testing.T) {
 		" IDIOM_SWE_TASK ": "ignored",
 	})
 	joined := strings.Join(entries, "\n")
+
 	if strings.Contains(joined, "IDIOM_SWE_LOG=") || strings.Contains(joined, "IDIOM_BIN=") || strings.Contains(joined, "IDIOM_SWE_TASK=") {
 		t.Fatalf("runner-owned env keys must be filtered, got %#v", entries)
 	}
+
 	if !strings.Contains(joined, "CUSTOM_ENV=visible") {
 		t.Fatalf("custom env should remain, got %#v", entries)
 	}
@@ -600,6 +693,7 @@ func TestLiveTaskTimeoutAllowsLongPlanExecuteAtoms(t *testing.T) {
 		Family: "plan_then_execute_planner",
 		Oracle: eval.SWEOracle{MaxDurationMillis: &maxDurationMillis},
 	})
+
 	if got != 930 {
 		t.Fatalf("timeout = %d, want 930", got)
 	}
@@ -610,10 +704,13 @@ func TestRunWritesFailingScenarioSuite(t *testing.T) {
 	suitePath := filepath.Join(dir, "suite.json")
 	logsDir := filepath.Join(dir, "logs")
 	outPath := filepath.Join(dir, "regressions.json")
+
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		t.Fatalf("mkdir logs: %v", err)
 	}
+
 	writeSWESmokeSuite(t, suitePath, "")
+
 	if err := os.WriteFile(filepath.Join(logsDir, "direct.jsonl"), []byte(`{"type":"message","role":"user","content":"Explain routing."}
 {"type":"message","role":"assistant","content":"No route plan here."}
 `), 0o644); err != nil {
@@ -621,14 +718,18 @@ func TestRunWritesFailingScenarioSuite(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := run([]string{"-suite", suitePath, "-logs", logsDir, "-write-failing-scenarios", outPath}, &stdout, &stderr)
+
 	if code != 1 {
 		t.Fatalf("expected failing eval exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
+
 	data, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("read generated suite: %v", err)
 	}
+
 	if !strings.Contains(string(data), "direct-regression") || !strings.Contains(string(data), "generated-regression") {
 		t.Fatalf("expected generated regression task, got %s", data)
 	}
@@ -642,6 +743,7 @@ func TestRenderRunnerCommandDoesNotReplacePlaceholdersInsideValues(t *testing.T)
 	if !strings.Contains(rendered, `'literal {log_path} in prompt'`) {
 		t.Fatalf("expected prompt placeholder text to remain literal, got %s", rendered)
 	}
+
 	if !strings.Contains(rendered, `'/tmp/out.jsonl'`) {
 		t.Fatalf("expected log path replacement, got %s", rendered)
 	}
@@ -660,10 +762,13 @@ func TestRunReportsMissingLogs(t *testing.T) {
 	writeSWESmokeSuite(t, suitePath, "")
 
 	var stdout, stderr bytes.Buffer
+
 	code := run([]string{"-suite", suitePath}, &stdout, &stderr)
+
 	if code != 1 {
 		t.Fatalf("expected exit 1 for missing logs, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
+
 	if !strings.Contains(stdout.String(), "missing_logs=1") {
 		t.Fatalf("expected missing log summary, got %s", stdout.String())
 	}
@@ -674,10 +779,12 @@ func TestTaskLogPathUsesExplicitAndLogsDirPaths(t *testing.T) {
 	if got := taskLogPath("/tmp/suite.json", "/tmp/logs", task); got != filepath.Join("/tmp/logs", "direct.jsonl") {
 		t.Fatalf("unexpected logs-dir path: %q", got)
 	}
+
 	task.LogPath = "custom/direct.jsonl"
 	if got := taskLogPath("/tmp/suites/suite.json", "/tmp/logs", task); got != filepath.Clean("/tmp/suites/custom/direct.jsonl") {
 		t.Fatalf("unexpected relative explicit path: %q", got)
 	}
+
 	task.LogPath = filepath.Join(string(filepath.Separator), "var", "tmp", "direct.jsonl")
 	if got := taskLogPath("/tmp/suites/suite.json", "/tmp/logs", task); got != filepath.Clean(task.LogPath) {
 		t.Fatalf("unexpected absolute explicit path: %q", got)
@@ -686,6 +793,7 @@ func TestTaskLogPathUsesExplicitAndLogsDirPaths(t *testing.T) {
 
 func writeSWEMultiTurnSmokeSuite(t *testing.T, path string) {
 	t.Helper()
+
 	suite := `{
   "name": "cli-smoke-suite",
   "tasks": [{
@@ -723,6 +831,7 @@ func writeSWEMultiTurnSmokeSuite(t *testing.T, path string) {
 
 func writeSWETwoTaskSmokeSuite(t *testing.T, path string) {
 	t.Helper()
+
 	suite := `{
   "name": "cli-two-task-suite",
   "tasks": [
@@ -780,10 +889,12 @@ func writeSWETwoTaskSmokeSuite(t *testing.T, path string) {
 
 func writeSWESmokeSuite(t *testing.T, path string, logPath string) {
 	t.Helper()
+
 	taskLog := ""
 	if strings.TrimSpace(logPath) != "" {
 		taskLog = `, "log_path": ` + quoteJSON(logPath)
 	}
+
 	suite := `{
   "name": "cli-smoke-suite",
   "tasks": [{
@@ -817,11 +928,13 @@ func writeSWESmokeSuite(t *testing.T, path string, logPath string) {
 
 func writeSWESmokeLog(t *testing.T, path string) {
 	t.Helper()
+
 	const log = `{"type":"message","role":"user","content":"Explain routing."}
 {"type":"message","role":"route_plan","content":"initial=main reason=direct_conversation contract=direct_answer"}
 {"type":"message","role":"control_rails","content":"{\"task_family\":\"conversation\",\"permission_profile\":\"conversation_only\"}"}
 {"type":"message","role":"assistant","content":"Routing is direct for this smoke test."}
 `
+
 	if err := os.WriteFile(path, []byte(log), 0o644); err != nil {
 		t.Fatalf("write log: %v", err)
 	}
@@ -847,10 +960,13 @@ func TestRepresentativeSuiteLintsClean(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("representative suite failed -suite-only lint (exit %d).\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
+
 	if !strings.Contains(stdout.String(), "Lint: PASS") {
 		t.Fatalf("expected `Lint: PASS` in suite report, got:\n%s", stdout.String())
 	}
@@ -863,10 +979,13 @@ func TestCLIParityRegressionSuiteLintsClean(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("cli parity regression suite failed -suite-only lint (exit %d).\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
+
 	if !strings.Contains(stdout.String(), "Lint: PASS") {
 		t.Fatalf("expected `Lint: PASS` in suite report, got:\n%s", stdout.String())
 	}
@@ -879,10 +998,13 @@ func TestLiveContractSuiteLintsClean(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("live contract suite failed -suite-only lint (exit %d).\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
+
 	if !strings.Contains(stdout.String(), "Lint: PASS") {
 		t.Fatalf("expected `Lint: PASS` in suite report, got:\n%s", stdout.String())
 	}
@@ -895,10 +1017,13 @@ func TestScriptedContractSuiteLintsClean(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("scripted contract suite failed -suite-only lint (exit %d).\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
+
 	if !strings.Contains(stdout.String(), "Lint: PASS") {
 		t.Fatalf("expected `Lint: PASS` in suite report, got:\n%s", stdout.String())
 	}
@@ -906,6 +1031,7 @@ func TestScriptedContractSuiteLintsClean(t *testing.T) {
 
 func TestScriptedContractGenericHarnessClassTasksPinned(t *testing.T) {
 	suitePath := filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "suite.json")
+
 	suite, err := eval.LoadSWESuite(suitePath)
 	if err != nil {
 		t.Fatalf("load scripted contract suite: %v", err)
@@ -920,6 +1046,7 @@ func TestScriptedContractGenericHarnessClassTasksPinned(t *testing.T) {
 	if !ok {
 		t.Fatalf("generic no-tool chat task missing")
 	}
+
 	assertTaskHasTags(t, chat, "chat", "no-tool", "read-only", "rollback")
 	assertTaskHasRunEvents(t, chat,
 		"idiom.live_contract.workspace_prepared",
@@ -927,9 +1054,11 @@ func TestScriptedContractGenericHarnessClassTasksPinned(t *testing.T) {
 		"idiom.live_contract.rollback",
 		"idiom.scripted_model.requests",
 	)
+
 	if chat.Family != "general_chat" || chat.Oracle.MaxToolRequests == nil || *chat.Oracle.MaxToolRequests != 0 || !chat.Oracle.RequireNoChangedFiles {
 		t.Fatalf("generic chat task must assert zero workspace-tool use and no mutation, family=%q oracle=%#v", chat.Family, chat.Oracle)
 	}
+
 	for _, forbidden := range []string{"read_file", "shell", "edit_file", "submit_plan"} {
 		if !slices.Contains(chat.Scenario.ForbidTools, forbidden) {
 			t.Fatalf("generic chat task must forbid %q, got %#v", forbidden, chat.Scenario.ForbidTools)
@@ -940,25 +1069,34 @@ func TestScriptedContractGenericHarnessClassTasksPinned(t *testing.T) {
 	if !ok {
 		t.Fatalf("workspace tool_rules deny read_file task missing")
 	}
+
 	assertTaskHasTags(t, deniedRead, "information", "tool-rules", "typed-blocker", "read-only", "rollback")
 	assertTaskHasRunEvents(t, deniedRead, "permission_decision", "tool_policy_result", "completion_status")
+
 	if deniedRead.Family != "information_request" {
 		t.Fatalf("workspace tool_rules deny task must be an information request, got %q", deniedRead.Family)
 	}
+
 	if !strings.Contains(deniedRead.Env["IDIOM_WORKSPACE_TOOL_RULES_JSON"], `"decision":"deny"`) ||
 		!strings.Contains(deniedRead.Env["IDIOM_WORKSPACE_EXTRA_FILES_JSON"], "SECRET_SENTINEL_DO_NOT_LEAK") {
+
 		t.Fatalf("workspace tool_rules deny task must configure a denied sentinel file, env=%#v", deniedRead.Env)
 	}
+
 	if !slices.Contains(deniedRead.Scenario.RequireTools, "read_file") ||
 		!slices.Contains(deniedRead.Scenario.ForbidTools, "completion_gate") {
+
 		t.Fatalf("workspace tool_rules deny task must require one read and forbid completion-gate recovery, scenario=%#v", deniedRead.Scenario)
 	}
+
 	if !slices.Contains(deniedRead.Scenario.ForbidFinalAssistantContains, "SECRET_SENTINEL_DO_NOT_LEAK") {
 		t.Fatalf("workspace tool_rules deny task must forbid sentinel leakage, scenario=%#v", deniedRead.Scenario)
 	}
+
 	if deniedRead.Oracle.MaxToolRequests == nil || *deniedRead.Oracle.MaxToolRequests != 1 ||
 		deniedRead.Oracle.MaxErrors == nil || *deniedRead.Oracle.MaxErrors != 1 ||
 		!deniedRead.Oracle.RequireNoChangedFiles {
+
 		t.Fatalf("workspace tool_rules deny task must pin one denied tool request and no mutation, oracle=%#v", deniedRead.Oracle)
 	}
 
@@ -966,10 +1104,13 @@ func TestScriptedContractGenericHarnessClassTasksPinned(t *testing.T) {
 	if !ok {
 		t.Fatalf("grounded information task missing")
 	}
+
 	assertTaskHasTags(t, info, "information", "grounded-answer", "read-only", "rollback")
+
 	if info.Family != "information_request" || info.Oracle.Groundedness == nil || !slices.Contains(info.Scenario.RequireEvidencePaths, "README.md") {
 		t.Fatalf("information task must require README evidence and groundedness, family=%q scenario=%#v oracle=%#v", info.Family, info.Scenario, info.Oracle)
 	}
+
 	if !slices.Contains(info.Scenario.RequireTools, "read_file") || slices.Contains(info.Scenario.ForbidTools, "read_file") {
 		t.Fatalf("information task must allow exactly source-backed read behavior, scenario=%#v", info.Scenario)
 	}
@@ -978,18 +1119,23 @@ func TestScriptedContractGenericHarnessClassTasksPinned(t *testing.T) {
 	if !ok {
 		t.Fatalf("read-only coding-help task missing")
 	}
+
 	assertTaskHasTags(t, help, "coding-help", "grounded-answer", "read-only", "rollback")
+
 	if help.Oracle.Groundedness == nil {
 		t.Fatalf("coding-help task must require groundedness, oracle=%#v", help.Oracle)
 	}
+
 	for _, want := range []string{"internal/labels/labels.go", "internal/labels/labels_test.go"} {
 		if !slices.Contains(help.Scenario.RequireEvidencePaths, want) {
 			t.Fatalf("coding-help task must require grounded evidence path %q, scenario=%#v oracle=%#v", want, help.Scenario, help.Oracle)
 		}
 	}
+
 	if len(help.Oracle.Groundedness.ContextFragments) == 0 {
 		t.Fatalf("coding-help task must include fixture-local groundedness fragments, oracle=%#v", help.Oracle)
 	}
+
 	if help.Family != "coding_help" || help.Scenario.RequireVerification != "none" || !help.Oracle.RequireNoShell || !help.Oracle.RequireNoChangedFiles {
 		t.Fatalf("coding-help task must stay read-only, family=%q scenario=%#v oracle=%#v", help.Family, help.Scenario, help.Oracle)
 	}
@@ -997,6 +1143,7 @@ func TestScriptedContractGenericHarnessClassTasksPinned(t *testing.T) {
 
 func TestScriptedContractReplayCoverageTasksPinned(t *testing.T) {
 	suitePath := filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "suite.json")
+
 	suite, err := eval.LoadSWESuite(suitePath)
 	if err != nil {
 		t.Fatalf("load scripted contract suite: %v", err)
@@ -1011,8 +1158,10 @@ func TestScriptedContractReplayCoverageTasksPinned(t *testing.T) {
 	if !ok {
 		t.Fatalf("blocked contract replay task missing")
 	}
+
 	assertTaskHasTags(t, blocked, "contract-replay", "gate-decision", "post-write-verification", "recovery")
 	assertTaskHasRunEvents(t, blocked, "autonomy_event", "post_write_verification_required", "completion_gate_recovery")
+
 	if blocked.Scenario.RequireVerification != "passed" || blocked.Oracle.MaxErrors == nil || *blocked.Oracle.MaxErrors != 1 {
 		t.Fatalf("blocked replay task must recover after one gate rejection, scenario=%#v oracle=%#v", blocked.Scenario, blocked.Oracle)
 	}
@@ -1021,11 +1170,14 @@ func TestScriptedContractReplayCoverageTasksPinned(t *testing.T) {
 	if !ok {
 		t.Fatalf("valid contract replay task missing")
 	}
+
 	assertTaskHasTags(t, valid, "contract-replay", "gate-decision", "post-write-verification")
 	assertTaskHasRunEvents(t, valid, "autonomy_event", "post_write_verification_required")
+
 	if slices.Contains(valid.Scenario.RequireRunEvents, "completion_gate_recovery") {
 		t.Fatalf("valid replay task should not require a completion-gate recovery event")
 	}
+
 	if valid.Scenario.RequireVerification != "passed" || !valid.Oracle.RequireNoRunnerRejections {
 		t.Fatalf("valid replay task must require clean post-write verification, scenario=%#v oracle=%#v", valid.Scenario, valid.Oracle)
 	}
@@ -1033,6 +1185,7 @@ func TestScriptedContractReplayCoverageTasksPinned(t *testing.T) {
 
 func TestScriptedContractTDDExpansionTasksExerciseSuiteBehavior(t *testing.T) {
 	suitePath := filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "suite.json")
+
 	suite, err := eval.LoadSWESuite(suitePath)
 	if err != nil {
 		t.Fatalf("load scripted contract suite: %v", err)
@@ -1090,6 +1243,7 @@ func TestScriptedContractTDDExpansionTasksExerciseSuiteBehavior(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s task missing", tc.id)
 		}
+
 		assertTaskHasTags(t, task, "feature-planner", "tui", "tdd", "sdd", "slash-command", tc.tag)
 		assertTaskHasRunEvents(t, task,
 			"idiom.feature_planner.start",
@@ -1101,11 +1255,13 @@ func TestScriptedContractTDDExpansionTasksExerciseSuiteBehavior(t *testing.T) {
 			"idiom.feature_planner.complete",
 			"idiom.live_contract.rollback",
 		)
+
 		for _, want := range []string{"feature-planner: complete", tc.atom, tc.tdd, tc.sdd} {
 			if !slices.Contains(task.Scenario.FinalAssistantContains, want) {
 				t.Fatalf("%s final assistant assertions must include %q, got %#v", tc.id, want, task.Scenario.FinalAssistantContains)
 			}
 		}
+
 		if task.Scenario.RequireVerification != "none" || !task.Oracle.RequireCleanRollback || !task.Oracle.RequireNoChangedFiles {
 			t.Fatalf("%s must be a no-edit TUI regression with clean rollback oracle, scenario=%#v oracle=%#v", tc.id, task.Scenario, task.Oracle)
 		}
@@ -1114,18 +1270,21 @@ func TestScriptedContractTDDExpansionTasksExerciseSuiteBehavior(t *testing.T) {
 
 func TestScriptedContractRedisCloneTestbedTaskExercisesRealFixture(t *testing.T) {
 	suitePath := filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "suite.json")
+
 	suite, err := eval.LoadSWESuite(suitePath)
 	if err != nil {
 		t.Fatalf("load scripted contract suite: %v", err)
 	}
 
 	var task eval.SWETask
+
 	for _, candidate := range suite.Tasks {
 		if candidate.ID == "scripted-feature-planner-tui-redis-clone-mget" {
 			task = candidate
 			break
 		}
 	}
+
 	if task.ID == "" {
 		t.Fatal("redis clone feature-planner testbed task missing")
 	}
@@ -1133,6 +1292,7 @@ func TestScriptedContractRedisCloneTestbedTaskExercisesRealFixture(t *testing.T)
 	if task.Fixture != "fixtures/redis-clone-repo" {
 		t.Fatalf("redis clone task fixture = %q, want fixtures/redis-clone-repo", task.Fixture)
 	}
+
 	assertTaskHasTags(t, task, "feature-planner", "tui", "tdd", "sdd", "slash-command", "plan-execute", "redis-clone", "large-testbed")
 	assertTaskHasRunEvents(t, task,
 		"idiom.feature_planner.start",
@@ -1144,16 +1304,19 @@ func TestScriptedContractRedisCloneTestbedTaskExercisesRealFixture(t *testing.T)
 		"idiom.feature_planner.complete",
 		"idiom.live_contract.rollback",
 	)
+
 	for _, want := range []string{"feature-planner: complete", "atom-redis-clone-mget", "TDD-RedisCloneMGET", "SDD-RedisCloneMGET"} {
 		if !slices.Contains(task.Scenario.FinalAssistantContains, want) {
 			t.Fatalf("redis clone task final assistant assertions must include %q, got %#v", want, task.Scenario.FinalAssistantContains)
 		}
 	}
+
 	for _, want := range []string{"internal/server/server.go", "internal/server/server_test.go"} {
 		if !slices.Contains(task.Scenario.RequireChangedFiles, want) || !slices.Contains(task.Oracle.RequireChangedFiles, want) {
 			t.Fatalf("redis clone task must require changed file %q, scenario=%#v oracle=%#v", want, task.Scenario.RequireChangedFiles, task.Oracle.RequireChangedFiles)
 		}
 	}
+
 	if task.Scenario.RequireVerification != "none" || !task.Oracle.RequireCleanRollback || task.Oracle.RequireNoChangedFiles {
 		t.Fatalf("redis clone task must be a rollback-scored TUI mutation regression, scenario=%#v oracle=%#v", task.Scenario, task.Oracle)
 	}
@@ -1161,6 +1324,7 @@ func TestScriptedContractRedisCloneTestbedTaskExercisesRealFixture(t *testing.T)
 
 func TestScriptedContractFeaturePlannerDirectAndProductWorkflowCoverageSeparated(t *testing.T) {
 	suitePath := filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "suite.json")
+
 	suite, err := eval.LoadSWESuite(suitePath)
 	if err != nil {
 		t.Fatalf("load scripted contract suite: %v", err)
@@ -1170,6 +1334,7 @@ func TestScriptedContractFeaturePlannerDirectAndProductWorkflowCoverageSeparated
 	for _, task := range suite.Tasks {
 		taskByID[task.ID] = task
 	}
+
 	if _, ok := taskByID["scripted-feature-planner-tui-product-workflow-e2e"]; ok {
 		t.Fatal("plain /feature-planner product-workflow coverage task should be relabeled as direct plan-execute coverage")
 	}
@@ -1178,17 +1343,21 @@ func TestScriptedContractFeaturePlannerDirectAndProductWorkflowCoverageSeparated
 	if !ok {
 		t.Fatal("direct /feature-planner nested plan-execute task missing")
 	}
+
 	assertTaskHasTags(t, direct, "feature-planner", "tui", "slash-command", "plan-execute")
 	assertTaskLacksTags(t, direct, "product-workflow", "prd", "adr")
+
 	if !strings.HasPrefix(direct.Prompt, "/feature-planner ") || !strings.Contains(direct.Prompt, "nested plan-execute") {
 		t.Fatalf("direct task prompt should remain plain /feature-planner nested plan-execute coverage, got %q", direct.Prompt)
 	}
+
 	assertTaskHasRunEvents(t, direct,
 		"idiom.feature_planner.start",
 		"idiom.feature_planner.atom_dispatched",
 		"internal_idiom.plan_execute.completed",
 		"idiom.feature_planner.complete",
 	)
+
 	for _, want := range []string{"atom-direct-greeting-package", "TDD-DirectGreetingHello", "SDD-DirectGreetingPackage"} {
 		if !slices.Contains(direct.Scenario.FinalAssistantContains, want) {
 			t.Fatalf("direct feature-planner task final assistant assertions must include %q, got %#v", want, direct.Scenario.FinalAssistantContains)
@@ -1199,8 +1368,10 @@ func TestScriptedContractFeaturePlannerDirectAndProductWorkflowCoverageSeparated
 	if !ok {
 		t.Fatal("explicit /product-create PRD workflow task missing")
 	}
+
 	assertTaskHasTags(t, prd, "product-workflow", "tui", "prd", "slash-command")
 	assertTaskLacksTags(t, prd, "feature-planner", "plan-execute", "adr")
+
 	if !strings.HasPrefix(prd.Prompt, "/product-create ") {
 		t.Fatalf("PRD workflow coverage must use /product-create, got %q", prd.Prompt)
 	}
@@ -1209,8 +1380,10 @@ func TestScriptedContractFeaturePlannerDirectAndProductWorkflowCoverageSeparated
 	if !ok {
 		t.Fatal("explicit /product-approve ADR workflow task missing")
 	}
+
 	assertTaskHasTags(t, adr, "product-workflow", "tui", "prd", "adr", "slash-command")
 	assertTaskLacksTags(t, adr, "feature-planner", "plan-execute")
+
 	if !strings.HasPrefix(adr.Prompt, "/product-approve ") {
 		t.Fatalf("ADR workflow coverage must use /product-approve, got %q", adr.Prompt)
 	}
@@ -1218,6 +1391,7 @@ func TestScriptedContractFeaturePlannerDirectAndProductWorkflowCoverageSeparated
 
 func assertTaskHasTags(t *testing.T, task eval.SWETask, tags ...string) {
 	t.Helper()
+
 	for _, tag := range tags {
 		if !slices.Contains(task.Tags, tag) {
 			t.Fatalf("%s missing tag %q in %#v", task.ID, tag, task.Tags)
@@ -1227,6 +1401,7 @@ func assertTaskHasTags(t *testing.T, task eval.SWETask, tags ...string) {
 
 func assertTaskLacksTags(t *testing.T, task eval.SWETask, tags ...string) {
 	t.Helper()
+
 	for _, tag := range tags {
 		if slices.Contains(task.Tags, tag) {
 			t.Fatalf("%s should not have tag %q in %#v", task.ID, tag, task.Tags)
@@ -1236,6 +1411,7 @@ func assertTaskLacksTags(t *testing.T, task eval.SWETask, tags ...string) {
 
 func assertTaskHasRunEvents(t *testing.T, task eval.SWETask, events ...string) {
 	t.Helper()
+
 	for _, event := range events {
 		if !slices.Contains(task.Scenario.RequireRunEvents, event) {
 			t.Fatalf("%s missing required run event %q in %#v", task.ID, event, task.Scenario.RequireRunEvents)

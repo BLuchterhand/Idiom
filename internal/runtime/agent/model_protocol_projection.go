@@ -18,6 +18,7 @@ func (r *Runner) compileModelProtocolProjection(brief workerruntime.WorkerRuntim
 	if !ok {
 		return contractcompile.ModelProtocolProjection{}, false
 	}
+
 	compiled, err := contractcompile.CompilePlanExecutePlanner(input)
 	if err != nil {
 		if r != nil {
@@ -27,8 +28,10 @@ func (r *Runner) compileModelProtocolProjection(brief workerruntime.WorkerRuntim
 				"error":    err.Error(),
 			}))
 		}
+
 		return contractcompile.ModelProtocolProjection{}, false
 	}
+
 	return protocolWithActiveAuthority(compiled.Protocol, compiled.ActiveAuthority), true
 }
 
@@ -37,10 +40,12 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily {
 		return contractcompile.PlanExecutePlannerInput{}, false
 	}
+
 	phaseSpecified := runnerPlanExecutePlannerPhaseSpecified(phase)
 	visibleTools := modelProtocolVisibleTools(phase)
 	callableTools := modelProtocolProjectionTools(phase.ActionPolicy.CallableToolNames)
 	allowedTools := modelProtocolProjectionTools(phase.AllowedTools, phase.ActionPolicy.CallableToolNames)
+
 	if phaseSpecified && (len(visibleTools) == 0 || len(callableTools) == 0) {
 		state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{
 			TextualToolParser: util.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "textual") ||
@@ -53,24 +58,31 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 		if len(visibleTools) == 0 {
 			visibleTools = modelProtocolProjectionTools(state.ParserVisibleTools)
 		}
+
 		if len(callableTools) == 0 {
 			callableTools = modelProtocolProjectionTools(state.CallableTools)
 		}
+
 		if len(allowedTools) == 0 {
 			allowedTools = modelProtocolProjectionTools(visibleTools, callableTools)
 		}
 	}
+
 	if !phaseSpecified && len(allowedTools) == 0 {
 		allowedTools = modelProtocolProjectionTools(brief.AllowedTools)
 	}
+
 	if !phaseSpecified && len(visibleTools) == 0 {
 		visibleTools = append([]string(nil), allowedTools...)
 	}
+
 	if !phaseSpecified && len(callableTools) == 0 {
 		callableTools = append([]string(nil), allowedTools...)
 	}
+
 	callableActionClasses := actionClassesAllowedByPolicy(phase.ActionPolicy.AllowedActionClasses, phase.ActionPolicy.InvalidActionClasses)
 	invalidActionClasses := uniquePhaseStrings(phase.ActionPolicy.InvalidActionClasses)
+
 	return contractcompile.PlanExecutePlannerInput{
 		ParentID:             strings.TrimSpace(parentID),
 		Lane:                 util.FirstNonEmpty(strings.TrimSpace(brief.Lane), contractcompile.DefaultPlanExecuteLane),
@@ -159,6 +171,7 @@ func modelProtocolReadinessInput(brief workerruntime.WorkerRuntimeBrief) contrac
 	if brief.Readiness == nil {
 		return contractcompile.ReadinessInput{}
 	}
+
 	return contractcompile.ReadinessInput{
 		ReadyToAnswer:       brief.Readiness.ReadyToAnswer,
 		ReadyToWrite:        brief.Readiness.ReadyToWrite,
@@ -172,15 +185,18 @@ func modelProtocolReadinessInput(brief workerruntime.WorkerRuntimeBrief) contrac
 
 func modelProtocolProjectionTools(groups ...[]string) []string {
 	var tools []string
+
 	for _, group := range groups {
 		for _, value := range group {
 			value = strings.TrimSpace(value)
 			if value == "" || !modelProtocolKnownReadOnlyPlannerTool(value) {
 				continue
 			}
+
 			tools = append(tools, value)
 		}
 	}
+
 	return uniquePhaseStrings(tools)
 }
 
@@ -193,17 +209,22 @@ func modelProtocolKnownPlannerTools(values []string) []string {
 	for _, entry := range contractcompile.PlanExecutePlannerToolVocabulary() {
 		known[strings.TrimSpace(entry.Tool)] = struct{}{}
 	}
+
 	var tools []string
+
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
+
 		if _, ok := known[value]; !ok {
 			continue
 		}
+
 		tools = append(tools, value)
 	}
+
 	return uniquePhaseStrings(tools)
 }
 
@@ -212,6 +233,7 @@ func modelProtocolRequiredTools(required []string, phase TurnPhaseContract) []st
 	if containsPhaseString(phase.ActionPolicy.CallableToolNames, "submit_plan") {
 		tools = append(tools, "submit_plan")
 	}
+
 	return uniquePhaseStrings(tools)
 }
 
@@ -219,16 +241,20 @@ func modelProtocolVisibleTools(phase TurnPhaseContract) []string {
 	tools := modelProtocolProjectionTools(phase.AllowedTools, phase.ActionPolicy.CallableToolNames)
 	if containsPhaseString(phase.ActionPolicy.TerminalResponseShapes, "submit_plan") ||
 		containsPhaseString(phase.ActionPolicy.CallableToolNames, "submit_plan") {
+
 		tools = append(tools, "submit_plan")
 	}
+
 	return uniquePhaseStrings(tools)
 }
 
 func modelProtocolStructuredSchemas(phase TurnPhaseContract) []string {
 	if containsPhaseString(phase.ActionPolicy.TerminalResponseShapes, "submit_plan") ||
 		containsPhaseString(phase.ActionPolicy.CallableToolNames, "submit_plan") {
+
 		return []string{"submit_plan"}
 	}
+
 	return nil
 }
 
@@ -237,11 +263,13 @@ func containsPhaseString(values []string, want string) bool {
 	if want == "" {
 		return false
 	}
+
 	for _, value := range values {
 		if strings.TrimSpace(value) == want {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -249,14 +277,18 @@ func modelProtocolSourceBodyObligations(brief workerruntime.WorkerRuntimeBrief, 
 	if phase.PhaseID != turnPhaseRequiredSource && phase.PhaseID != turnPhaseStaleAnchorRefresh {
 		return nil
 	}
+
 	var paths []string
+
 	for _, path := range brief.RequiredEditPaths {
 		normalized := normalizeRunnerPath(path)
 		if normalized == "" || concreteSourceEvidenceReadForPath(normalized, results) {
 			continue
 		}
+
 		paths = append(paths, normalized)
 	}
+
 	return uniqueSortedRunnerPaths(paths)
 }
 
@@ -273,9 +305,11 @@ func modelProtocolParserTransportMode(phase TurnPhaseContract) string {
 	if util.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native") {
 		return "native_tools"
 	}
+
 	if util.EqualTrimFold(phase.RuntimeCall.ResponseFormat, "json") {
 		return "textual_json_terminal"
 	}
+
 	return "textual_tools"
 }
 
@@ -283,6 +317,7 @@ func modelProtocolToolTransportMode(phase TurnPhaseContract) string {
 	if mode := strings.TrimSpace(phase.RuntimeCall.ToolTransportMode); mode != "" {
 		return mode
 	}
+
 	return "textual"
 }
 
@@ -290,9 +325,11 @@ func modelProtocolNativeToolPolicy(phase TurnPhaseContract, supportsNativeTools 
 	if util.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native") {
 		return "native_required"
 	}
+
 	if supportsNativeTools {
 		return "textual_unless_forced"
 	}
+
 	return "textual_only"
 }
 
@@ -300,6 +337,7 @@ func modelProtocolToolChoice(toolChoice string) string {
 	if strings.TrimSpace(toolChoice) == "" {
 		return "none"
 	}
+
 	return strings.TrimSpace(toolChoice)
 }
 
@@ -341,17 +379,22 @@ func modelMessagesWithProtocolProjection(messages []llama.ChatMessage, protocol 
 	if card == "" {
 		return append([]llama.ChatMessage(nil), messages...)
 	}
+
 	out := make([]llama.ChatMessage, 0, len(messages)+1)
 	inserted := false
+
 	for _, message := range messages {
 		if !inserted && message.Role == "system" && strings.Contains(message.Content, "[frontier step instruction]") {
 			out = append(out, llama.ChatMessage{Role: "system", Content: card})
 			inserted = true
 		}
+
 		out = append(out, message)
 	}
+
 	if !inserted {
 		out = append(out, llama.ChatMessage{Role: "system", Content: card})
 	}
+
 	return out
 }

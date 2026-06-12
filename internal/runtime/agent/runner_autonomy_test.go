@@ -47,6 +47,7 @@ func TestRunnerAutonomyContractMapsMutationGatesToObligations(t *testing.T) {
 	if !ok {
 		t.Fatal("runnerAutonomyContract returned ok=false")
 	}
+
 	for _, want := range []autonomy.ObligationKind{
 		autonomy.ObligationWrite,
 		autonomy.ObligationVerify,
@@ -58,26 +59,35 @@ func TestRunnerAutonomyContractMapsMutationGatesToObligations(t *testing.T) {
 			t.Fatalf("missing obligation kind %q in %#v", want, obligations)
 		}
 	}
+
 	if !hasPathRole(contract.PathRoles, autonomy.PathRoleRequiredEdit, "internal/runtime/agent/runner.go") ||
 		!hasPathRole(contract.PathRoles, autonomy.PathRoleEvidenceReadonly, "docs/decisioning-north-star.md") ||
 		!hasPathRole(contract.PathRoles, autonomy.PathRoleProtected, ".git/**") {
+
 		t.Fatalf("contract path roles did not map required/evidence/protected paths: %#v", contract.PathRoles)
 	}
+
 	if !containsAutonomyCapability(contract.Capabilities.Allowed, autonomy.CapabilityApplyPatch) ||
 		!containsAutonomyCapability(contract.Capabilities.Allowed, autonomy.CapabilityShellVerification) {
+
 		t.Fatalf("contract capabilities did not map write/verification tools: %#v", contract.Capabilities)
 	}
+
 	if contract.Verification.RequiredAfterWrite != true || contract.Completion.BlockOnOpenObligations != true {
 		t.Fatalf("contract did not encode verification/completion gates: verification=%#v completion=%#v", contract.Verification, contract.Completion)
 	}
+
 	if len(contract.Metadata.ClientClassifications) != len(autonomy.DefaultClientClassifications()) ||
 		len(contract.Metadata.ProductSignals) != len(autonomy.DefaultProductSignals()) {
+
 		t.Fatalf("contract should carry generic client/product metadata: %#v", contract.Metadata)
 	}
+
 	writeID := runnerAutonomyObligationID(autonomy.ObligationWrite, "internal/runtime/agent/runner.go")
 	if !slices.Contains(contract.Readiness.OpenObligationRefs, writeID) {
 		t.Fatalf("readiness should map abstract write obligation to typed obligation id %q: %#v", writeID, contract.Readiness.OpenObligationRefs)
 	}
+
 	if slices.Contains(contract.Readiness.OpenObligationRefs, "write") {
 		t.Fatalf("readiness must not expose abstract obligation names as refs: %#v", contract.Readiness.OpenObligationRefs)
 	}
@@ -96,6 +106,7 @@ func TestRunnerAutonomyPlanExecutePlannerUsesSharedToolMetadata(t *testing.T) {
 			if got := runnerAutonomyCapabilitiesForTool(brief, entry.Tool); !slices.Equal(got, entry.Capabilities) {
 				t.Fatalf("runner capabilities = %#v, want metadata capabilities %#v", got, entry.Capabilities)
 			}
+
 			req := workspace.ToolRequest{
 				Tool:    entry.Tool,
 				Command: "go test ./internal/runtime/agent",
@@ -129,6 +140,7 @@ func TestRunnerAutonomyPlanExecutePlannerPolicyEventsUseSharedToolMetadata(t *te
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {
 			var runEvents []RunEvent
+
 			runner := &Runner{
 				AgentName: "main",
 				OnEvent: func(event RunEvent) {
@@ -143,6 +155,7 @@ func TestRunnerAutonomyPlanExecutePlannerPolicyEventsUseSharedToolMetadata(t *te
 				AllowedTools:      []string{tt.tool},
 			}
 			recorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, nil)
+
 			if recorder == nil {
 				t.Fatal("newRunnerAutonomyRecorder returned nil")
 			}
@@ -155,6 +168,7 @@ func TestRunnerAutonomyPlanExecutePlannerPolicyEventsUseSharedToolMetadata(t *te
 
 			events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 			intent := mustAutonomyPolicyEvent(t, events, autonomy.EventToolIntentClassified, tt.tool, "")
+
 			if intent.Policy.Capability != tt.capability || intent.Policy.SideEffect != tt.effect {
 				t.Fatalf("policy event classification = capability %q side_effect %q, want %q/%q", intent.Policy.Capability, intent.Policy.SideEffect, tt.capability, tt.effect)
 			}
@@ -173,9 +187,11 @@ func TestRunnerAutonomySharedPlannerMetadataDoesNotChangeNonPlannerFallback(t *t
 	if got := runnerAutonomyCapabilitiesForTool(brief, "code_navigate"); len(got) != 0 {
 		t.Fatalf("non-planner code_navigate should keep legacy fallback capabilities, got %#v", got)
 	}
+
 	if got := runnerAutonomySideEffectForBrief(brief, workspace.ToolRequest{Tool: "shell", Command: "go test ./internal/runtime/agent"}); got != autonomy.SideEffectReadOnly {
 		t.Fatalf("non-planner shell verification side effect = %q, want legacy read_only", got)
 	}
+
 	if got := runnerAutonomySideEffectForBrief(brief, workspace.ToolRequest{
 		Tool:    "apply_patch",
 		Content: "*** Begin Patch\n*** Delete File: doomed.txt\n*** End Patch\n",
@@ -186,7 +202,9 @@ func TestRunnerAutonomySharedPlannerMetadataDoesNotChangeNonPlannerFallback(t *t
 
 func TestRunnerAutonomyRecorderPolicyEventsMapAllowedAndNoApprovalNeeded(t *testing.T) {
 	root := t.TempDir()
+
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		Workspace: workspace.NewManager(config.Workspace{
@@ -208,11 +226,13 @@ func TestRunnerAutonomyRecorderPolicyEventsMapAllowedAndNoApprovalNeeded(t *test
 		AllowedTools:      []string{"read_file", "apply_patch"},
 	}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, nil)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
 
 	req := workspace.ToolRequest{Tool: "read_file", Path: "docs/decisioning-north-star.md"}
+
 	recorder.emitContractStarted(brief)
 	recorder.emitIntentClassified(req)
 	recorder.emitPathRolesResolved(req)
@@ -225,19 +245,24 @@ func TestRunnerAutonomyRecorderPolicyEventsMapAllowedAndNoApprovalNeeded(t *test
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 	intent := mustAutonomyPolicyEvent(t, events, autonomy.EventToolIntentClassified, "read_file", "")
+
 	if intent.Policy.SideEffect != autonomy.SideEffectReadOnly || intent.Policy.Capability != autonomy.CapabilityBoundedRead {
 		t.Fatalf("intent event did not classify read-only bounded read: %#v", intent.Policy)
 	}
+
 	if intent.Policy.ActionClass != autonomy.ActionClassRead || intent.Policy.Transport != autonomy.ToolTransportTextualCall {
 		t.Fatalf("intent event did not classify canonical read/textual action: %#v", intent.Policy)
 	}
+
 	if intent.Policy.ActionKey == "" || !strings.Contains(intent.Policy.ActionKey, "read_file") {
 		t.Fatalf("intent event should carry stable normalized action key: %#v", intent.Policy)
 	}
+
 	paths := mustAutonomyPolicyEvent(t, events, autonomy.EventPathRolesResolved, "read_file", "")
 	if !slices.Contains(policyEventPaths(paths.Policy), "docs/decisioning-north-star.md") {
 		t.Fatalf("path resolution event should include evidence path match: %#v", paths.Policy)
 	}
+
 	result := mustAutonomyPolicyEvent(t, events, autonomy.EventToolPolicyResult, "read_file", "no_approval_needed")
 	if result.Policy.Decision != autonomy.PolicyAllow || result.Policy.ApprovalRequired {
 		t.Fatalf("allow result should preserve no-approval-needed outcome: %#v", result.Policy)
@@ -246,6 +271,7 @@ func TestRunnerAutonomyRecorderPolicyEventsMapAllowedAndNoApprovalNeeded(t *test
 
 func TestRunnerAutonomyRecorderEmitsTurnPhaseContractPresentation(t *testing.T) {
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		OnEvent: func(event RunEvent) {
@@ -262,9 +288,11 @@ func TestRunnerAutonomyRecorderEmitsTurnPhaseContractPresentation(t *testing.T) 
 	}
 	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"}}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, results)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
+
 	recorder.emitContractStarted(brief)
 
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
@@ -278,38 +306,49 @@ func TestRunnerAutonomyRecorderEmitsTurnPhaseContractPresentation(t *testing.T) 
 		VerificationStatus: "not_required",
 	})
 	modelProtocol, ok := runner.compileModelProtocolProjection(brief, results, contract, RunPolicy{}, true)
+
 	if !ok {
 		t.Fatal("expected model protocol projection")
 	}
+
 	modelProtocol = recorder.bindModelProtocolProjection(modelProtocol)
 	recorder.emitTurnPhaseContract(contract, modelProtocol)
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+
 	var presented autonomy.Event
+
 	for _, event := range events {
 		if event.Type == autonomy.EventContractPresented &&
 			event.Lifecycle != nil &&
 			event.Lifecycle.TurnPhaseContract != nil {
+
 			presented = event
 			break
 		}
 	}
+
 	if presented.EventID == "" {
 		t.Fatalf("expected contract_presented turn phase event, got %#v", events)
 	}
+
 	phase := presented.Lifecycle.TurnPhaseContract
 	if phase.SchemaVersion != turnPhaseContractSchemaVersion ||
 		phase.PhaseID != turnPhaseSubmitReadyTextual ||
 		phase.ProtocolHash != modelProtocol.ProtocolHash ||
 		!slices.Contains(phase.ActionPolicy.AllowedActionClasses, actionSubmitPlan) ||
 		!slices.Contains(phase.RuntimeCall.ExpressibleActionClasses, actionSourceSatisfied) {
+
 		t.Fatalf("unexpected turn phase payload: %#v", phase)
 	}
+
 	if presented.Lifecycle.ProtocolHash != modelProtocol.ProtocolHash ||
 		presented.Lifecycle.ModelProtocol == nil ||
 		presented.Lifecycle.ModelProtocol.ProtocolHash != modelProtocol.ProtocolHash {
+
 		t.Fatalf("contract_presented missing model protocol hash: %#v", presented.Lifecycle)
 	}
+
 	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
 	if report.TurnPhaseCoverage.Total != 1 || len(report.TurnPhaseCoverage.Contradictions) != 0 {
 		t.Fatalf("expected clean turn phase audit coverage, got %#v", report.TurnPhaseCoverage)
@@ -318,6 +357,7 @@ func TestRunnerAutonomyRecorderEmitsTurnPhaseContractPresentation(t *testing.T) 
 
 func TestRunnerAutonomyPlannerContractProtocolAndGatesShareCompiledAuthority(t *testing.T) {
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		OnEvent: func(event RunEvent) {
@@ -336,24 +376,31 @@ func TestRunnerAutonomyPlannerContractProtocolAndGatesShareCompiledAuthority(t *
 	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"}}
 	policy := RunPolicy{MaxToolSteps: 2, MaxModelCalls: 1}
 	recorder := newRunnerAutonomyRecorder(runner, policy, brief, results)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
+
 	if !recorder.hasPlannerCompile {
 		t.Fatal("plan-execute planner recorder should retain compiled contractcompile result")
 	}
+
 	binding := recorder.activeAuthority
 	if binding.ContractID != recorder.plannerCompile.ActiveAuthority.ContractID ||
 		binding.RuntimeContractID != recorder.plannerCompile.ActiveAuthority.RuntimeContractID ||
 		binding.ProtocolHash != recorder.plannerCompile.ActiveAuthority.ProtocolHash ||
 		binding.ActiveInvariantID != contractcompile.InvariantActiveAuthority {
+
 		t.Fatalf("recorder should expose compile result active authority, got %#v want %#v", binding, recorder.plannerCompile.ActiveAuthority)
 	}
+
 	if recorder.contract.Scope.InvocationKind != autonomy.InvocationPhase ||
 		recorder.contract.Scope.TaskFamily != contractcompile.InvocationPlanExecutePlanner ||
 		recorder.contract.Scope.Phase != contractcompile.DefaultPlannerPhase {
+
 		t.Fatalf("planner recorder should use compiled phase contract scope, got %#v", recorder.contract.Scope)
 	}
+
 	recorder.emitContractStarted(brief)
 
 	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
@@ -367,19 +414,24 @@ func TestRunnerAutonomyPlannerContractProtocolAndGatesShareCompiledAuthority(t *
 		VerificationStatus: "not_required",
 	})
 	protocol, ok := runner.compileModelProtocolProjection(brief, results, phase, policy, true)
+
 	if !ok {
 		t.Fatal("expected model protocol projection")
 	}
+
 	protocol = recorder.bindModelProtocolProjection(protocol)
 	if protocol.ContractID != recorder.contract.ContractID {
 		t.Fatalf("model protocol should cite compiled recorder contract %q, got %q", recorder.contract.ContractID, protocol.ContractID)
 	}
+
 	recorder.emitTurnPhaseContract(phase, protocol)
 	recorder.markModelProtocolPresented(protocol)
 	recorder.emitCompletionGate(autonomy.PolicyReject, "required_obligations_open", results)
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+
 	var compiledID, compiledRuntimeID, compiledProtocolHash, compiledInvariantID, presentedID, presentedProtocolID, presentedProtocolHash, presentedInvariantID, gateID, gateProtocolHash, gateInvariantID string
+
 	for _, event := range events {
 		switch event.Type {
 		case autonomy.EventContractCompiled:
@@ -387,8 +439,10 @@ func TestRunnerAutonomyPlannerContractProtocolAndGatesShareCompiledAuthority(t *
 			if event.Lifecycle == nil || event.Lifecycle.Summary == nil || event.Lifecycle.Summary.ContractID != recorder.contract.ContractID {
 				t.Fatalf("contract_compiled summary should carry compiled contract id: %#v", event.Lifecycle)
 			}
+
 			compiledProtocolHash = event.Lifecycle.ProtocolHash
 			compiledInvariantID = event.Lifecycle.InvariantID
+
 			for _, source := range event.Lifecycle.Summary.AuthoritySources {
 				if source == binding.RuntimeContractID {
 					compiledRuntimeID = source
@@ -409,14 +463,18 @@ func TestRunnerAutonomyPlannerContractProtocolAndGatesShareCompiledAuthority(t *
 			}
 		}
 	}
+
 	if compiledID == "" || presentedID == "" || gateID == "" {
 		t.Fatalf("missing compiled/presented/gate events: compiled=%q presented=%q gate=%q events=%#v", compiledID, presentedID, gateID, events)
 	}
+
 	if compiledRuntimeID != binding.RuntimeContractID ||
 		compiledProtocolHash != binding.ProtocolHash ||
 		compiledInvariantID != binding.ActiveInvariantID {
+
 		t.Fatalf("contract_started did not expose active authority binding: runtime=%q protocol=%q invariant=%q binding=%#v", compiledRuntimeID, compiledProtocolHash, compiledInvariantID, binding)
 	}
+
 	for label, got := range map[string]string{
 		"contract_compiled":        compiledID,
 		"contract_presented":       presentedID,
@@ -427,12 +485,15 @@ func TestRunnerAutonomyPlannerContractProtocolAndGatesShareCompiledAuthority(t *
 			t.Fatalf("%s contract id = %q, want compiled recorder id %q", label, got, recorder.contract.ContractID)
 		}
 	}
+
 	if presentedProtocolHash == "" ||
 		compiledProtocolHash != presentedProtocolHash ||
 		gateProtocolHash != presentedProtocolHash ||
 		gateProtocolHash != protocol.ProtocolHash {
+
 		t.Fatalf("protocol hash drift: compiled=%q presented=%q gate=%q protocol=%q", compiledProtocolHash, presentedProtocolHash, gateProtocolHash, protocol.ProtocolHash)
 	}
+
 	if presentedInvariantID != binding.ActiveInvariantID || gateInvariantID == "" {
 		t.Fatalf("model protocol/gate events should carry active authority invariant, presented=%q gate=%q binding=%#v", presentedInvariantID, gateInvariantID, binding)
 	}
@@ -440,6 +501,7 @@ func TestRunnerAutonomyPlannerContractProtocolAndGatesShareCompiledAuthority(t *
 
 func TestRunnerAutonomyPlannerAuthorityIgnoresStalePhaseContractID(t *testing.T) {
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		OnEvent: func(event RunEvent) {
@@ -456,10 +518,13 @@ func TestRunnerAutonomyPlannerAuthorityIgnoresStalePhaseContractID(t *testing.T)
 	}
 	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"}}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, results)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
+
 	recorder.emitContractStarted(brief)
+
 	staleID := "contract_stale_phase"
 	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
 		ContractID:         staleID,
@@ -472,9 +537,11 @@ func TestRunnerAutonomyPlannerAuthorityIgnoresStalePhaseContractID(t *testing.T)
 		VerificationStatus: "not_required",
 	})
 	protocol, ok := runner.compileModelProtocolProjection(brief, results, phase, RunPolicy{}, true)
+
 	if !ok {
 		t.Fatal("expected model protocol projection")
 	}
+
 	protocol = recorder.bindModelProtocolProjection(protocol)
 	recorder.emitTurnPhaseContract(phase, protocol)
 	recorder.markModelProtocolPresented(protocol)
@@ -487,12 +554,15 @@ func TestRunnerAutonomyPlannerAuthorityIgnoresStalePhaseContractID(t *testing.T)
 			if event.ContractID != recorder.contract.ContractID {
 				t.Fatalf("presented event adopted stale contract id %q, want %q", event.ContractID, recorder.contract.ContractID)
 			}
+
 			if event.Lifecycle == nil || event.Lifecycle.ModelProtocol == nil {
 				continue
 			}
+
 			if event.Lifecycle.ModelProtocol.ContractID != recorder.contract.ContractID {
 				t.Fatalf("model protocol adopted stale contract id %q, want %q", event.Lifecycle.ModelProtocol.ContractID, recorder.contract.ContractID)
 			}
+
 			if event.Lifecycle.ModelProtocol.ProtocolHash != recorder.activeAuthority.ProtocolHash {
 				t.Fatalf("model protocol hash = %q, want compiled binding %q", event.Lifecycle.ModelProtocol.ProtocolHash, recorder.activeAuthority.ProtocolHash)
 			}
@@ -501,6 +571,7 @@ func TestRunnerAutonomyPlannerAuthorityIgnoresStalePhaseContractID(t *testing.T)
 				if event.ContractID != recorder.contract.ContractID {
 					t.Fatalf("gate event adopted stale contract id %q, want %q", event.ContractID, recorder.contract.ContractID)
 				}
+
 				if event.Gate.ProtocolHash != recorder.activeAuthority.ProtocolHash {
 					t.Fatalf("gate protocol hash = %q, want compiled binding %q", event.Gate.ProtocolHash, recorder.activeAuthority.ProtocolHash)
 				}
@@ -511,6 +582,7 @@ func TestRunnerAutonomyPlannerAuthorityIgnoresStalePhaseContractID(t *testing.T)
 
 func TestRunnerAutonomyRecorderEmitsNextActionSurfaceSummary(t *testing.T) {
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		OnEvent: func(event RunEvent) {
@@ -527,10 +599,13 @@ func TestRunnerAutonomyRecorderEmitsNextActionSurfaceSummary(t *testing.T) {
 	}
 	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"}}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, results)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
+
 	recorder.emitContractStarted(brief)
+
 	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
 		ContractID:         recorder.contract.ContractID,
 		ModelCallID:        recorder.contract.ContractID + ":model_call_1",
@@ -542,11 +617,14 @@ func TestRunnerAutonomyRecorderEmitsNextActionSurfaceSummary(t *testing.T) {
 		VerificationStatus: "not_required",
 	})
 	protocol, ok := runner.compileModelProtocolProjection(brief, results, phase, RunPolicy{}, true)
+
 	if !ok {
 		t.Fatal("expected model protocol projection")
 	}
+
 	protocol = recorder.bindModelProtocolProjection(protocol)
 	recorder.emitTurnPhaseContract(phase, protocol)
+
 	state := applyTurnPhaseContractToNextActionState(runnerNextActionState{
 		Lane:   "main",
 		Phase:  "generic",
@@ -558,9 +636,11 @@ func TestRunnerAutonomyRecorderEmitsNextActionSurfaceSummary(t *testing.T) {
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+
 	if report.TurnPhaseCoverage.SurfaceCounts["next_action_state"] != 1 {
 		t.Fatalf("expected next_action_state surface coverage, got %#v", report.TurnPhaseCoverage.SurfaceCounts)
 	}
+
 	if len(report.TurnPhaseCoverage.Contradictions) != 0 {
 		t.Fatalf("expected clean emitted next-action surface, got %#v", report.TurnPhaseCoverage.Contradictions)
 	}
@@ -597,35 +677,46 @@ func TestPlanExecuteHistoryPendingModelProtocolUsesCanonicalReadAction(t *testin
 		TextualToolParser: true,
 		ToolTransportMode: "textual",
 	})
+
 	if phase.PhaseID != turnPhaseHistoryPending {
 		t.Fatalf("phase = %q, want %q", phase.PhaseID, turnPhaseHistoryPending)
 	}
+
 	phase.AllowedTools = uniquePhaseStrings(append(phase.AllowedTools, "blame_range", "context_impact", "harness_feedback"))
 	phase.ActionPolicy.CallableToolNames = uniquePhaseStrings(append(phase.ActionPolicy.CallableToolNames, "blame_range", "context_impact", "harness_feedback"))
+
 	protocol, ok := runner.compileModelProtocolProjection(brief, results, phase, RunPolicy{}, true)
+
 	if !ok {
 		t.Fatal("expected history-pending model protocol projection to compile")
 	}
+
 	if !slices.Contains(protocol.CallableActionClasses, actionRead) {
 		t.Fatalf("history-pending protocol should expose history tools as read actions: %#v", protocol.CallableActionClasses)
 	}
+
 	for _, tool := range []string{"blame_range", "context_impact", "harness_feedback", "history_range", "history_symbol"} {
 		if !slices.Contains(protocol.VisibleTools, tool) {
 			t.Fatalf("history-pending protocol should preserve visible planner tool %s: %#v", tool, protocol.VisibleTools)
 		}
+
 		if !slices.Contains(protocol.CallableTools, tool) {
 			t.Fatalf("history-pending protocol should preserve callable planner tool %s: %#v", tool, protocol.CallableTools)
 		}
 	}
+
 	if slices.Contains(protocol.VisibleTools, "submit_plan") || slices.Contains(protocol.CallableTools, "submit_plan") {
 		t.Fatalf("history-pending protocol must not expose submit_plan before history evidence, visible=%#v callable=%#v", protocol.VisibleTools, protocol.CallableTools)
 	}
+
 	if slices.Contains(protocol.StructuredSchemaNames, "submit_plan") {
 		t.Fatalf("history-pending protocol must not expose submit_plan schema before history evidence: %#v", protocol.StructuredSchemaNames)
 	}
+
 	if slices.Contains(protocol.CallableActionClasses, "history") {
 		t.Fatalf("history-pending protocol should not expose non-canonical history action class: %#v", protocol.CallableActionClasses)
 	}
+
 	if slices.Contains(protocol.InvalidActionClasses, actionRead) {
 		t.Fatalf("history-pending protocol should not invalidate read action class: %#v", protocol.InvalidActionClasses)
 	}
@@ -657,6 +748,7 @@ func TestPlanExecuteModelProtocolDropsContradictoryCallableActionClasses(t *test
 		ToolTransportMode: "textual",
 		ResponseFormat:    "json",
 	})
+
 	phase.ActionPolicy.AllowedActionClasses = []string{actionSubmitPlan, actionBlocker}
 	phase.ActionPolicy.InvalidActionClasses = uniquePhaseStrings(append(phase.ActionPolicy.InvalidActionClasses, actionBlocker))
 
@@ -664,12 +756,15 @@ func TestPlanExecuteModelProtocolDropsContradictoryCallableActionClasses(t *test
 	if !ok {
 		t.Fatal("contradictory phase action classes should be sanitized before model protocol compile")
 	}
+
 	if slices.Contains(protocol.CallableActionClasses, actionBlocker) {
 		t.Fatalf("invalid blocker action must not remain callable in submit-correction protocol: %#v", protocol.CallableActionClasses)
 	}
+
 	if !slices.Contains(protocol.CallableActionClasses, actionSubmitPlan) {
 		t.Fatalf("submit_plan must remain callable: %#v", protocol.CallableActionClasses)
 	}
+
 	if !slices.Contains(protocol.InvalidActionClasses, actionBlocker) {
 		t.Fatalf("blocker must remain invalid for submit-correction: %#v", protocol.InvalidActionClasses)
 	}
@@ -691,19 +786,24 @@ func TestPlanExecuteRequiredSourceModelProtocolDoesNotLeakSubmitPlan(t *testing.
 		TextualToolParser: true,
 		ToolTransportMode: "textual",
 	})
+
 	if phase.PhaseID != turnPhaseRequiredSource {
 		t.Fatalf("phase = %q, want %q", phase.PhaseID, turnPhaseRequiredSource)
 	}
+
 	protocol, ok := runner.compileModelProtocolProjection(brief, nil, phase, RunPolicy{}, true)
 	if !ok {
 		t.Fatal("expected required-source model protocol projection to compile")
 	}
+
 	if slices.Contains(protocol.VisibleTools, "submit_plan") || slices.Contains(protocol.CallableTools, "submit_plan") {
 		t.Fatalf("required-source protocol must not expose submit_plan before source evidence, visible=%#v callable=%#v", protocol.VisibleTools, protocol.CallableTools)
 	}
+
 	if slices.Contains(protocol.StructuredSchemaNames, "submit_plan") {
 		t.Fatalf("required-source protocol must not expose submit_plan schema before source evidence: %#v", protocol.StructuredSchemaNames)
 	}
+
 	for _, want := range []string{"read_file", "code_navigate"} {
 		if !slices.Contains(protocol.VisibleTools, want) || !slices.Contains(protocol.CallableTools, want) {
 			t.Fatalf("required-source protocol missing read tool %s, visible=%#v callable=%#v", want, protocol.VisibleTools, protocol.CallableTools)
@@ -716,19 +816,25 @@ func TestRunnerRunEmitsTurnPhaseContractBeforeModelCallAndPolicyEvents(t *testin
 	if err := writeTestFile(root, "a.go", "package main\nfunc A() {}\n"); err != nil {
 		t.Fatalf("write seed: %v", err)
 	}
+
 	var requests int
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": `{"tool":"read_file","path":"a.go","start_line":1,"end_line":1}`},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		Client:    llama.NewClient(server.URL, time.Second),
 		Workspace: mgr,
@@ -745,7 +851,9 @@ func TestRunnerRunEmitsTurnPhaseContractBeforeModelCallAndPolicyEvents(t *testin
 			runEvents = append(runEvents, event)
 		},
 	}
+
 	_, _ = runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edit"}}, llama.ChatOptions{}, nil, nil, nil)
+
 	if requests != 1 {
 		t.Fatalf("expected one model request, got %d", requests)
 	}
@@ -754,6 +862,7 @@ func TestRunnerRunEmitsTurnPhaseContractBeforeModelCallAndPolicyEvents(t *testin
 	contextPacketIndex := -1
 	modelCallIndex := -1
 	postModelIndex := -1
+
 	for i, event := range runEvents {
 		switch event.Role {
 		case "model_call":
@@ -766,26 +875,33 @@ func TestRunnerRunEmitsTurnPhaseContractBeforeModelCallAndPolicyEvents(t *testin
 			}
 		case runnerAutonomyEventRole:
 			var decoded autonomy.Event
+
 			if err := json.Unmarshal([]byte(event.Content), &decoded); err != nil {
 				t.Fatalf("decode autonomy event: %v", err)
 			}
+
 			if decoded.Type == autonomy.EventContractPresented &&
 				decoded.Lifecycle != nil &&
 				decoded.Lifecycle.TurnPhaseContract != nil &&
 				turnPhaseIndex == -1 {
+
 				turnPhaseIndex = i
 			}
+
 			if decoded.Type == autonomy.EventModelExchange &&
 				decoded.ModelExchange != nil &&
 				decoded.ModelExchange.Kind == "context_packet" &&
 				contextPacketIndex == -1 {
+
 				contextPacketIndex = i
 			}
 		}
 	}
+
 	if turnPhaseIndex == -1 || contextPacketIndex == -1 || modelCallIndex == -1 || postModelIndex == -1 {
 		t.Fatalf("missing expected event order markers: turn_phase=%d context_packet=%d model_call=%d post_model=%d roles=%#v", turnPhaseIndex, contextPacketIndex, modelCallIndex, postModelIndex, eventRolesFor(runEvents))
 	}
+
 	if !(turnPhaseIndex < contextPacketIndex && contextPacketIndex < modelCallIndex && modelCallIndex < postModelIndex) {
 		t.Fatalf("expected turn phase/context packet before model_call before post-model events, got turn_phase=%d context_packet=%d model_call=%d post_model=%d", turnPhaseIndex, contextPacketIndex, modelCallIndex, postModelIndex)
 	}
@@ -796,12 +912,14 @@ func TestRunnerRunCompletionFrictionDoesNotClaimUnpresentedModelProtocol(t *test
 	if err := writeTestFile(root, "a.go", "package main\nfunc A() {}\n"); err != nil {
 		t.Fatalf("write seed: %v", err)
 	}
+
 	var requestBodies []struct {
 		Messages []struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"messages"`
 	}
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			Messages []struct {
@@ -809,9 +927,11 @@ func TestRunnerRunCompletionFrictionDoesNotClaimUnpresentedModelProtocol(t *test
 				Content string `json:"content"`
 			} `json:"messages"`
 		}
+
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
+
 		requestBodies = append(requestBodies, payload)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
@@ -819,9 +939,11 @@ func TestRunnerRunCompletionFrictionDoesNotClaimUnpresentedModelProtocol(t *test
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -842,39 +964,53 @@ func TestRunnerRunCompletionFrictionDoesNotClaimUnpresentedModelProtocol(t *test
 			runEvents = append(runEvents, event)
 		},
 	}
+
 	_, _ = runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edit"}}, llama.ChatOptions{}, nil, nil, nil)
+
 	if len(requestBodies) == 0 {
 		t.Fatalf("expected model request")
 	}
+
 	if !slices.ContainsFunc(requestBodies[0].Messages, func(message struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	}) bool {
+
 		return message.Role == "system" &&
 			strings.Contains(message.Content, "[active contract protocol]") &&
 			strings.Contains(message.Content, "protocol_hash=")
 	}) {
+
 		t.Fatalf("expected model-visible protocol card with hash: %#v", requestBodies)
 	}
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
-	var protocolHash string
-	var friction *autonomy.ContractGuardFrictionEvent
+
+	var (
+		protocolHash string
+		friction     *autonomy.ContractGuardFrictionEvent
+	)
+
 	for _, event := range events {
 		if event.Type == autonomy.EventContractPresented && event.Lifecycle != nil && event.Lifecycle.ModelProtocol != nil {
 			protocolHash = event.Lifecycle.ModelProtocol.ProtocolHash
 		}
+
 		if event.Type == autonomy.EventGuardFriction && event.GuardFriction != nil &&
 			event.GuardFriction.GuardSurface == autonomy.GuardFrictionSurfaceCompletionGate {
+
 			friction = event.GuardFriction
 		}
 	}
+
 	if friction == nil {
 		t.Fatalf("expected completion guard friction, got roles=%#v", eventRolesFor(runEvents))
 	}
+
 	if protocolHash == "" {
 		t.Fatalf("expected lifecycle model protocol hash, got events=%#v", events)
 	}
+
 	if friction.ProtocolHash != protocolHash || !friction.ModelContractVisible {
 		t.Fatalf("completion friction must cite presented model protocol %q: %#v", protocolHash, friction)
 	}
@@ -885,27 +1021,34 @@ func TestRunnerRunRepeatedCompletionRejectionEmitsRetryFriction(t *testing.T) {
 	if err := writeTestFile(root, "a.go", "package main\nfunc A() {}\n"); err != nil {
 		t.Fatalf("write seed: %v", err)
 	}
+
 	replies := []string{
 		"Done.",
 		"Still done.",
 		"<<QUESTION>>: a.go cannot be edited because the exact requested change is missing from the brief.",
 	}
+
 	var requests int
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
 			t.Fatalf("unexpected request %d", requests+1)
 		}
+
 		reply := replies[requests]
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": reply},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		Client:    llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
@@ -923,32 +1066,44 @@ func TestRunnerRunRepeatedCompletionRejectionEmitsRetryFriction(t *testing.T) {
 			runEvents = append(runEvents, event)
 		},
 	}
+
 	_, _ = runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edit"}}, llama.ChatOptions{}, nil, nil, nil)
+
 	if requests < 3 {
 		t.Fatalf("expected retry through accepted blocker, got %d request(s); roles=%#v", requests, eventRolesFor(runEvents))
 	}
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
-	var sawSameFailure bool
-	var protocolHash string
+
+	var (
+		sawSameFailure bool
+		protocolHash   string
+	)
+
 	for _, event := range events {
 		if event.Type == autonomy.EventContractPresented && event.Lifecycle != nil && event.Lifecycle.ModelProtocol != nil {
 			protocolHash = event.Lifecycle.ModelProtocol.ProtocolHash
 		}
+
 		if event.Type != autonomy.EventGuardFriction || event.GuardFriction == nil ||
 			event.GuardFriction.GuardSurface != autonomy.GuardFrictionSurfaceCompletionGate {
+
 			continue
 		}
+
 		friction := event.GuardFriction
 		if friction.RetryNumber == 1 &&
 			friction.RetryOutcome == autonomy.GuardFrictionRetrySameFailure &&
 			friction.FirstInvalidAction == actionFinalAnswer {
+
 			sawSameFailure = true
 		}
+
 		if friction.ProtocolHash != protocolHash || !friction.ModelContractVisible {
 			t.Fatalf("completion retry friction must cite presented protocol %q: %#v", protocolHash, friction)
 		}
 	}
+
 	if !sawSameFailure {
 		t.Fatalf("missing repeated same-failure completion friction; events=%#v", events)
 	}
@@ -956,7 +1111,9 @@ func TestRunnerRunRepeatedCompletionRejectionEmitsRetryFriction(t *testing.T) {
 
 func TestRunnerAutonomyRecorderPolicyEventsMapProtectedForbiddenAndApprovalOutcomes(t *testing.T) {
 	root := t.TempDir()
+
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		Workspace: workspace.NewManager(config.Workspace{
@@ -977,6 +1134,7 @@ func TestRunnerAutonomyRecorderPolicyEventsMapProtectedForbiddenAndApprovalOutco
 		AllowedTools:      []string{"apply_patch"},
 	}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, nil)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
@@ -984,6 +1142,7 @@ func TestRunnerAutonomyRecorderPolicyEventsMapProtectedForbiddenAndApprovalOutco
 	protectedReq := workspace.ToolRequest{Tool: "apply_patch", Content: "*** Begin Patch\n*** Update File: .git/config\n@@\n-[core]\n+[core]\n*** End Patch\n"}
 	forbiddenReq := workspace.ToolRequest{Tool: "write_file", Path: "README.md"}
 	approvalReq := workspace.ToolRequest{Tool: "apply_patch", Path: "internal/runtime/agent/runner.go", Content: "*** Begin Patch\n*** Update File: internal/runtime/agent/runner.go\n@@\n-foo\n+bar\n*** End Patch\n"}
+
 	recorder.emitContractStarted(brief)
 	recorder.emitPathRolesResolved(protectedReq)
 	recorder.emitPolicyResult(protectedReq, runnerAutonomyPolicyEventInput{
@@ -1018,17 +1177,21 @@ func TestRunnerAutonomyRecorderPolicyEventsMapProtectedForbiddenAndApprovalOutco
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 	protected := mustAutonomyPolicyEvent(t, events, autonomy.EventToolPolicyResult, "apply_patch", "denied")
+
 	if protected.Policy.InvariantID != string(autonomy.InvariantProtectedPath) || !slices.Contains(protected.Policy.ProtectedMatches, ".git/config") {
 		t.Fatalf("protected path denial did not normalize to protected invariant: %#v", protected.Policy)
 	}
+
 	forbidden := mustAutonomyPolicyEventByInvariant(t, events, autonomy.EventToolPolicyResult, string(autonomy.InvariantForbiddenPath), "denied")
 	if forbidden.Policy.Decision != autonomy.PolicyDeny || forbidden.Policy.ReasonCode != "forbidden_path" {
 		t.Fatalf("forbidden path denial did not preserve deny outcome: %#v", forbidden.Policy)
 	}
+
 	approvalRequired := mustAutonomyPolicyEvent(t, events, autonomy.EventToolPolicyResult, "apply_patch", "approval_required")
 	if approvalRequired.Policy.Decision != autonomy.PolicyAsk || !approvalRequired.Policy.ApprovalRequired {
 		t.Fatalf("approval-required event mismatch: %#v", approvalRequired.Policy)
 	}
+
 	approved := mustAutonomyPolicyEvent(t, events, autonomy.EventToolPolicyResult, "apply_patch", "approved")
 	if approved.Policy.Decision != autonomy.PolicyAllow || !approved.Policy.ApprovalRequired {
 		t.Fatalf("approved event mismatch: %#v", approved.Policy)
@@ -1037,7 +1200,9 @@ func TestRunnerAutonomyRecorderPolicyEventsMapProtectedForbiddenAndApprovalOutco
 
 func TestRunnerAutonomyRecorderDeniedPolicyEmitsGuardFriction(t *testing.T) {
 	root := t.TempDir()
+
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		Workspace: workspace.NewManager(config.Workspace{
@@ -1057,10 +1222,13 @@ func TestRunnerAutonomyRecorderDeniedPolicyEmitsGuardFriction(t *testing.T) {
 		AllowedTools:      []string{"read_file", "apply_patch"},
 	}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, nil)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
+
 	recorder.emitContractStarted(brief)
+
 	req := workspace.ToolRequest{Tool: "read_file", Path: ".git/config"}
 	recorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
 		Decision:   autonomy.PolicyDeny,
@@ -1071,32 +1239,43 @@ func TestRunnerAutonomyRecorderDeniedPolicyEmitsGuardFriction(t *testing.T) {
 	})
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
-	var policyEventID string
-	var friction *autonomy.ContractGuardFrictionEvent
+
+	var (
+		policyEventID string
+		friction      *autonomy.ContractGuardFrictionEvent
+	)
+
 	for _, event := range events {
 		if event.Type == autonomy.EventToolPolicyResult {
 			policyEventID = event.EventID
 		}
+
 		if event.Type == autonomy.EventGuardFriction {
 			friction = event.GuardFriction
 		}
 	}
+
 	if friction == nil {
 		t.Fatalf("expected policy guard friction, got roles=%#v", eventRolesFor(runEvents))
 	}
+
 	if friction.SourceEventID != policyEventID || friction.GuardSurface != autonomy.GuardFrictionSurfaceToolPolicy {
 		t.Fatalf("unexpected policy friction source/surface: source=%q friction=%#v", policyEventID, friction)
 	}
+
 	if friction.Decision != autonomy.GuardFrictionDecisionReject ||
 		friction.FirstInvalidAction != "read_file" ||
 		friction.ModelContractVisible {
+
 		t.Fatalf("unexpected policy friction classification: %#v", friction)
 	}
 }
 
 func TestRunnerAutonomyRecorderEmitsModelExchangeByDefault(t *testing.T) {
 	t.Setenv(runnerAutonomyDisableModelExchangeEnv, "")
+
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		OnEvent: func(event RunEvent) {
@@ -1114,10 +1293,13 @@ func TestRunnerAutonomyRecorderEmitsModelExchangeByDefault(t *testing.T) {
 	}
 	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read a.go lines 1-5"}}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 2}, runner.RuntimeBrief, results)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
+
 	recorder.emitContractStarted(runner.RuntimeBrief)
+
 	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
 		ContractID:         recorder.contract.ContractID,
 		ModelCallID:        recorder.contract.ContractID + ":model_call_1",
@@ -1129,14 +1311,18 @@ func TestRunnerAutonomyRecorderEmitsModelExchangeByDefault(t *testing.T) {
 		VerificationStatus: "not_required",
 	})
 	protocol, ok := runner.compileModelProtocolProjection(runner.RuntimeBrief, results, phase, RunPolicy{MaxToolSteps: 2}, false)
+
 	if !ok {
 		t.Fatal("expected plan-execute model protocol projection")
 	}
+
 	recorder.emitTurnPhaseContract(phase, protocol)
 
 	_ = decodeRunnerAutonomyEventsForTest(t, runEvents)
+
 	exchange := mustRunnerAutonomyModelExchangeForTest(t, runEvents, "context_packet")
 	packet := exchange.ModelExchange.ContextPacket
+
 	if exchange.ContractID != recorder.contract.ContractID ||
 		exchange.ModelExchange.ProtocolHash != protocol.ProtocolHash ||
 		exchange.ModelExchange.PhaseID != phase.PhaseID ||
@@ -1144,11 +1330,14 @@ func TestRunnerAutonomyRecorderEmitsModelExchangeByDefault(t *testing.T) {
 		packet == nil ||
 		packet.ContractID != recorder.contract.ContractID ||
 		packet.ProtocolHash != protocol.ProtocolHash {
+
 		t.Fatalf("context packet should cite active contract/protocol refs: %#v", exchange.ModelExchange)
 	}
+
 	if exchange.Effect != autonomy.EventEffectObserveOnly {
 		t.Fatalf("context packet should be observe-only: %#v", exchange)
 	}
+
 	if len(packet.SchemaNames) == 0 || len(packet.RedactionMarkers) == 0 {
 		t.Fatalf("context packet should carry compact schema/redaction refs: %#v", packet)
 	}
@@ -1156,7 +1345,9 @@ func TestRunnerAutonomyRecorderEmitsModelExchangeByDefault(t *testing.T) {
 
 func TestRunnerAutonomyRecorderModelExchangeCanBeDisabledWithoutDisablingAutonomyEvents(t *testing.T) {
 	t.Setenv(runnerAutonomyDisableModelExchangeEnv, "true")
+
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		OnEvent: func(event RunEvent) {
@@ -1172,10 +1363,13 @@ func TestRunnerAutonomyRecorderModelExchangeCanBeDisabledWithoutDisablingAutonom
 		AllowedTools:      []string{"read_file", "submit_plan"},
 	}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 2}, brief, nil)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
+
 	recorder.emitContractStarted(brief)
+
 	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
 		ContractID:       recorder.contract.ContractID,
 		ModelCallID:      recorder.contract.ContractID + ":model_call_1",
@@ -1195,19 +1389,24 @@ func TestRunnerAutonomyRecorderModelExchangeCanBeDisabledWithoutDisablingAutonom
 	if len(events) == 0 {
 		t.Fatal("expected existing autonomy events to remain enabled")
 	}
+
 	exchangeEvents := runnerAutonomyModelExchangeEventsForTest(t, runEvents)
 	if len(exchangeEvents) != 1 ||
 		exchangeEvents[0].ModelExchange == nil ||
 		exchangeEvents[0].ModelExchange.RollbackControl == nil ||
 		exchangeEvents[0].ModelExchange.RollbackControl.Decision != "model_exchange_disabled" {
+
 		t.Fatalf("rollback switch should emit only rollback control audit event: %#v", exchangeEvents)
 	}
 }
 
 func TestRunnerAutonomyRecorderModelExchangePermissionAndFailureRefs(t *testing.T) {
 	t.Setenv(runnerAutonomyDisableModelExchangeEnv, "")
+
 	root := t.TempDir()
+
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		Workspace: workspace.NewManager(config.Workspace{
@@ -1227,10 +1426,13 @@ func TestRunnerAutonomyRecorderModelExchangePermissionAndFailureRefs(t *testing.
 		AllowedTools:      []string{"read_file", "apply_patch"},
 	}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 2}, brief, nil)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
+
 	recorder.emitContractStarted(brief)
+
 	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
 		ContractID:       recorder.contract.ContractID,
 		ModelCallID:      recorder.contract.ContractID + ":model_call_1",
@@ -1252,14 +1454,17 @@ func TestRunnerAutonomyRecorderModelExchangePermissionAndFailureRefs(t *testing.
 	policyEvent := mustAutonomyPolicyEvent(t, events, autonomy.EventToolPolicyResult, "read_file", "denied")
 	snapshot := mustRunnerAutonomyModelExchangeForTest(t, runEvents, "permission_snapshot")
 	intent := mustRunnerAutonomyModelExchangeForTest(t, runEvents, "failure_delta")
+
 	for _, exchange := range []autonomy.Event{snapshot, intent} {
 		if exchange.ContractID != recorder.contract.ContractID ||
 			exchange.ModelExchange == nil ||
 			exchange.ModelExchange.InvariantID != string(autonomy.InvariantProtectedPath) ||
 			exchange.ModelExchange.SourceEventID != policyEvent.EventID {
+
 			t.Fatalf("model-exchange event should cite active policy refs: %#v policy=%#v", exchange.ModelExchange, policyEvent)
 		}
 	}
+
 	if intent.ModelExchange.FailureDelta == nil || intent.ModelExchange.FailureDelta.GeneratedBy != "harness" {
 		t.Fatalf("failure delta must be harness-generated typed payload: %#v", intent.ModelExchange)
 	}
@@ -1267,7 +1472,9 @@ func TestRunnerAutonomyRecorderModelExchangePermissionAndFailureRefs(t *testing.
 
 func TestRunnerAutonomyRecorderModelExchangeClassifiesModelResponseAsNonAuthoritativeAndPrivacySafe(t *testing.T) {
 	t.Setenv(runnerAutonomyDisableModelExchangeEnv, "")
+
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		OnEvent: func(event RunEvent) {
@@ -1284,9 +1491,11 @@ func TestRunnerAutonomyRecorderModelExchangeClassifiesModelResponseAsNonAuthorit
 		Objective:         "Do not leak SECRET_CUSTOMER_123 or this raw prompt text.",
 	}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 2}, brief, nil)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
+
 	recorder.emitContractStarted(brief)
 	recorder.emitTurnPhaseContract(deriveTurnPhaseContract(TurnPhaseContractInput{
 		ContractID:       recorder.contract.ContractID,
@@ -1312,17 +1521,21 @@ func TestRunnerAutonomyRecorderModelExchangeClassifiesModelResponseAsNonAuthorit
 	if observation.ModelExchange.ValidationSignal == nil ||
 		observation.ModelExchange.ValidationSignal.CapturedBy != "harness" ||
 		observation.ModelExchange.ValidationSignal.Status != "model_response_observed_non_authoritative" {
+
 		t.Fatalf("model response observation must be harness validation telemetry: %#v", observation.ModelExchange)
 	}
+
 	if observation.ContractID != recorder.contract.ContractID || observation.ModelExchange.ProtocolHash == "" || observation.ModelExchange.InvariantID != "parser.tool_request" {
 		t.Fatalf("observation should cite active contract/protocol refs: %#v", observation.ModelExchange)
 	}
+
 	for _, event := range runnerAutonomyModelExchangeEventsForTest(t, runEvents) {
 		for _, forbidden := range []string{"SECRET_CUSTOMER_123", "raw malformed transcript body", "raw prompt text"} {
 			data, err := json.Marshal(event)
 			if err != nil {
 				t.Fatalf("marshal event: %v", err)
 			}
+
 			if strings.Contains(string(data), forbidden) {
 				t.Fatalf("model-exchange payload leaked sensitive/raw text %q: %s", forbidden, string(data))
 			}
@@ -1386,6 +1599,7 @@ func TestRunnerAutonomyActionClassForRequestUsesCanonicalVocabulary(t *testing.T
 
 func TestRunnerAutonomyRecorderPolicyEventsClassifyPatchSideEffects(t *testing.T) {
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		OnEvent: func(event RunEvent) {
@@ -1401,6 +1615,7 @@ func TestRunnerAutonomyRecorderPolicyEventsClassifyPatchSideEffects(t *testing.T
 		AllowedTools:      []string{"apply_patch"},
 	}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, nil)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
@@ -1413,6 +1628,7 @@ func TestRunnerAutonomyRecorderPolicyEventsClassifyPatchSideEffects(t *testing.T
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 	intent := mustAutonomyPolicyEvent(t, events, autonomy.EventToolIntentClassified, "apply_patch", "")
+
 	if intent.Policy.SideEffect != autonomy.SideEffectDestructive {
 		t.Fatalf("delete patch should classify as destructive, got %#v", intent.Policy)
 	}
@@ -1433,15 +1649,19 @@ func TestRunnerAutonomyContractMapsReadOnlyLaneToEvidenceObligation(t *testing.T
 	if !ok {
 		t.Fatal("runnerAutonomyContract returned ok=false")
 	}
+
 	if countObligationKind(obligations, autonomy.ObligationEvidence) != 1 ||
 		countObligationKind(obligations, autonomy.ObligationWrite) != 0 {
+
 		t.Fatalf("read-only lane should map to evidence obligation without write obligation: %#v", obligations)
 	}
+
 	for _, forbidden := range []autonomy.Capability{autonomy.CapabilitySourceEdit, autonomy.CapabilityApplyPatch, autonomy.CapabilityMutatingShell} {
 		if !containsAutonomyCapability(contract.Capabilities.Forbidden, forbidden) {
 			t.Fatalf("read-only lane should forbid %q: %#v", forbidden, contract.Capabilities)
 		}
 	}
+
 	if len(contract.Capabilities.AllowedEffects) != 1 || contract.Capabilities.AllowedEffects[0] != autonomy.SideEffectReadOnly {
 		t.Fatalf("read-only lane should only allow read-only effects: %#v", contract.Capabilities.AllowedEffects)
 	}
@@ -1449,6 +1669,7 @@ func TestRunnerAutonomyContractMapsReadOnlyLaneToEvidenceObligation(t *testing.T
 
 func TestRunnerAutonomyRecorderEmitsGateEventsForExistingGates(t *testing.T) {
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		OnEvent: func(event RunEvent) {
@@ -1471,6 +1692,7 @@ func TestRunnerAutonomyRecorderEmitsGateEventsForExistingGates(t *testing.T) {
 	}
 	policy := RunPolicy{MaxToolSteps: 5, MaxModelCalls: 2}
 	recorder := newRunnerAutonomyRecorder(runner, policy, brief, nil)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
@@ -1487,19 +1709,24 @@ func TestRunnerAutonomyRecorderEmitsGateEventsForExistingGates(t *testing.T) {
 	gateObligationRefs := map[autonomy.GateKind][]string{}
 	eventTypes := map[autonomy.EventType]int{}
 	obligationKinds := map[autonomy.ObligationKind]int{}
+
 	for _, event := range events {
 		eventTypes[event.Type]++
 		if event.Gate != nil {
 			gateKinds[event.Gate.Gate]++
+
 			gateObligationRefs[event.Gate.Gate] = append(gateObligationRefs[event.Gate.Gate], event.Gate.ObligationRefs...)
+
 			if event.Gate.Gate == autonomy.GateBudget && (event.Gate.Budget == nil || !event.Gate.Budget.Exhausted) {
 				t.Fatalf("budget gate should carry exhausted budget state: %#v", event.Gate)
 			}
 		}
+
 		if event.Type == autonomy.EventObligationOpened && event.Obligation != nil {
 			obligationKinds[event.Obligation.Kind]++
 		}
 	}
+
 	for _, want := range []autonomy.GateKind{
 		autonomy.GateWrite,
 		autonomy.GateVerification,
@@ -1511,9 +1738,11 @@ func TestRunnerAutonomyRecorderEmitsGateEventsForExistingGates(t *testing.T) {
 			t.Fatalf("missing gate event %q in %#v", want, gateKinds)
 		}
 	}
+
 	if eventTypes[autonomy.EventReadinessStateUpdated] != 1 || eventTypes[autonomy.EventCompletionGateDecision] != 1 {
 		t.Fatalf("completion/readiness typed events missing: %#v", eventTypes)
 	}
+
 	for _, want := range []autonomy.ObligationKind{
 		autonomy.ObligationWrite,
 		autonomy.ObligationVerify,
@@ -1525,6 +1754,7 @@ func TestRunnerAutonomyRecorderEmitsGateEventsForExistingGates(t *testing.T) {
 			t.Fatalf("missing opened obligation kind %q in %#v", want, obligationKinds)
 		}
 	}
+
 	if !slices.Contains(gateObligationRefs[autonomy.GateVerification], "obl-verify-post-write") {
 		t.Fatalf("verification gate should reference typed verify obligation: %#v", gateObligationRefs)
 	}
@@ -1532,6 +1762,7 @@ func TestRunnerAutonomyRecorderEmitsGateEventsForExistingGates(t *testing.T) {
 
 func TestRunnerAutonomyRecorderGateDecisionPayloadIncludesPackModeFactsAndAlternatives(t *testing.T) {
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		OnEvent: func(event RunEvent) {
@@ -1553,11 +1784,13 @@ func TestRunnerAutonomyRecorderGateDecisionPayloadIncludesPackModeFactsAndAltern
 	}
 	policy := RunPolicy{MaxToolSteps: 5, MaxModelCalls: 2}
 	recorder := newRunnerAutonomyRecorder(runner, policy, brief, nil)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
 
 	recorder.emitContractStarted(brief)
+
 	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
 		ContractID:         recorder.contract.ContractID,
 		ModelCallID:        recorder.contract.ContractID + ":model_call_1",
@@ -1581,6 +1814,7 @@ func TestRunnerAutonomyRecorderGateDecisionPayloadIncludesPackModeFactsAndAltern
 	})
 
 	_ = decodeRunnerAutonomyEventsForTest(t, runEvents)
+
 	rawGates := decodeRunnerAutonomyGatePayloadsForTest(t, runEvents)
 	expectedPacks := map[autonomy.GateKind]string{
 		autonomy.GateWrite:        "write/required_paths",
@@ -1590,25 +1824,31 @@ func TestRunnerAutonomyRecorderGateDecisionPayloadIncludesPackModeFactsAndAltern
 		autonomy.GateBudget:       "budget/run_policy",
 		autonomy.GateReadOnly:     "completion/readiness",
 	}
+
 	for gateKind, packID := range expectedPacks {
 		gate := mustRunnerAutonomyRawGateForTest(t, rawGates, gateKind)
 		if got := rawGateString(gate, "pack_id"); got != packID {
 			t.Fatalf("%s pack_id = %q, want %q in %#v", gateKind, got, packID, gate)
 		}
+
 		mode := "enforce"
 		if gateKind == autonomy.GateReadOnly {
 			mode = "observe_only"
 		}
+
 		if got := rawGateString(gate, "enforcement_mode"); got != mode {
 			t.Fatalf("%s enforcement_mode = %q, want %q in %#v", gateKind, got, mode, gate)
 		}
+
 		facts := rawGateObservedFacts(gate)
 		if len(facts) == 0 ||
 			!rawObservedFactsContainPrefix(facts, "reason_code:reason_code=") ||
 			!rawObservedFactsContainPrefix(facts, "status:decision=") {
+
 			t.Fatalf("%s missing bounded observed facts: %#v", gateKind, gate["observed_facts"])
 		}
 	}
+
 	for _, gateKind := range []autonomy.GateKind{
 		autonomy.GateWrite,
 		autonomy.GateVerification,
@@ -1621,11 +1861,14 @@ func TestRunnerAutonomyRecorderGateDecisionPayloadIncludesPackModeFactsAndAltern
 			t.Fatalf("%s should include safe alternatives for blocked decision: %#v", gateKind, gate)
 		}
 	}
+
 	writeGate := mustRunnerAutonomyRawGateForTest(t, rawGates, autonomy.GateWrite)
 	writeFacts := rawGateObservedFacts(writeGate)
+
 	if !rawObservedFactsContain(writeFacts, "tool_name:tool=apply_patch") {
 		t.Fatalf("write observed facts should include apply_patch tool in %#v", writeFacts)
 	}
+
 	if strings.Contains(mustRunnerAutonomyRawGateJSONForTest(t, runEvents, autonomy.GateWrite), "*** Begin Patch") {
 		t.Fatalf("gate payload leaked raw patch content")
 	}
@@ -1642,6 +1885,7 @@ func TestRunnerAutonomyRecorderLifecycleEventsCloseSuccessfulGateObligations(t *
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var runEvents []RunEvent
+
 			runner := &Runner{
 				AgentName: "main",
 				OnEvent: func(event RunEvent) {
@@ -1659,6 +1903,7 @@ func TestRunnerAutonomyRecorderLifecycleEventsCloseSuccessfulGateObligations(t *
 			}
 			policy := RunPolicy{MaxToolSteps: 5, MaxModelCalls: 2}
 			recorder := newRunnerAutonomyRecorder(runner, policy, brief, nil)
+
 			if recorder == nil {
 				t.Fatal("newRunnerAutonomyRecorder returned nil")
 			}
@@ -1672,9 +1917,11 @@ func TestRunnerAutonomyRecorderLifecycleEventsCloseSuccessfulGateObligations(t *
 
 			events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 			report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+
 			if !report.AllClear || len(report.ObligationCoverage.UnresolvedObligations) != 0 {
 				t.Fatalf("expected all-clear lifecycle audit, all_clear=%v obligation=%#v findings=%#v", report.AllClear, report.ObligationCoverage, report.Findings)
 			}
+
 			for _, want := range []string{
 				runnerAutonomyObligationID(autonomy.ObligationWrite, "internal/runtime/agent/runner.go"),
 				"obl-verify-post-write",
@@ -1685,6 +1932,7 @@ func TestRunnerAutonomyRecorderLifecycleEventsCloseSuccessfulGateObligations(t *
 				if !hasAutonomyObligationEvent(events, autonomy.EventObligationResolved, want) {
 					t.Fatalf("expected obligation_resolved for %q in %#v", want, events)
 				}
+
 				if !slices.Contains(report.GateCoverage.ResolvedObligationRefs, want) {
 					t.Fatalf("expected gate resolved_obligations to include %q: %#v", want, report.GateCoverage.ResolvedObligationRefs)
 				}
@@ -1695,6 +1943,7 @@ func TestRunnerAutonomyRecorderLifecycleEventsCloseSuccessfulGateObligations(t *
 
 func TestRunnerAutonomyRecorderOpensBeforeInitialResolvedObligations(t *testing.T) {
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		OnEvent: func(event RunEvent) {
@@ -1712,11 +1961,14 @@ func TestRunnerAutonomyRecorderOpensBeforeInitialResolvedObligations(t *testing.
 		{Tool: "read_file", Summary: "Read README.md lines 1-20", Output: "README.md"},
 		{Tool: "read_file", Summary: "Read docs/decisioning-north-star.md lines 1-20", Output: "docs/decisioning-north-star.md"},
 	}
+
 	if !readOnlyAnalysisReadyFromEvidence(results) {
 		t.Fatal("read-only evidence fixture should start with the evidence obligation resolved")
 	}
+
 	policy := RunPolicy{MaxToolSteps: 5, MaxModelCalls: 2}
 	recorder := newRunnerAutonomyRecorder(runner, policy, brief, results)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
@@ -1727,12 +1979,16 @@ func TestRunnerAutonomyRecorderOpensBeforeInitialResolvedObligations(t *testing.
 	recorder.emitBudgetGate(policy, runnerMetrics{ToolCalls: 2, ModelCalls: 1}, "completed", false)
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+
 	const evidenceID = "obl-evidence-read-only"
+
 	openedSeq, resolvedSeq := int64(0), int64(0)
+
 	for _, event := range events {
 		if event.Obligation == nil || event.Obligation.ObligationID != evidenceID {
 			continue
 		}
+
 		switch event.Type {
 		case autonomy.EventObligationOpened:
 			openedSeq = event.Sequence
@@ -1740,13 +1996,16 @@ func TestRunnerAutonomyRecorderOpensBeforeInitialResolvedObligations(t *testing.
 			resolvedSeq = event.Sequence
 		}
 	}
+
 	if openedSeq == 0 || resolvedSeq == 0 || openedSeq >= resolvedSeq {
 		t.Fatalf("initially resolved obligation must emit opened before resolved, opened=%d resolved=%d events=%#v", openedSeq, resolvedSeq, events)
 	}
+
 	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
 	if len(report.ObligationCoverage.UnmatchedObligations) != 0 {
 		t.Fatalf("initially resolved obligation should have a matching opened event: %#v", report.ObligationCoverage.UnmatchedObligations)
 	}
+
 	if !report.AllClear {
 		t.Fatalf("expected all-clear read-only lifecycle audit, all_clear=%v obligations=%#v findings=%#v", report.AllClear, report.ObligationCoverage, report.Findings)
 	}
@@ -1754,7 +2013,9 @@ func TestRunnerAutonomyRecorderOpensBeforeInitialResolvedObligations(t *testing.
 
 func TestRunnerAutonomyRecorderWriteGateResolvesOnlyChangedRequiredPath(t *testing.T) {
 	root := t.TempDir()
+
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		Workspace: workspace.NewManager(config.Workspace{
@@ -1776,6 +2037,7 @@ func TestRunnerAutonomyRecorderWriteGateResolvesOnlyChangedRequiredPath(t *testi
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 5}, brief, nil)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
@@ -1787,18 +2049,23 @@ func TestRunnerAutonomyRecorderWriteGateResolvesOnlyChangedRequiredPath(t *testi
 	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
 	firstWriteID := runnerAutonomyObligationID(autonomy.ObligationWrite, "a.txt")
 	secondWriteID := runnerAutonomyObligationID(autonomy.ObligationWrite, "b.txt")
+
 	if !hasAutonomyObligationEvent(events, autonomy.EventObligationResolved, firstWriteID) {
 		t.Fatalf("expected changed path write obligation %q to resolve", firstWriteID)
 	}
+
 	if hasAutonomyObligationEvent(events, autonomy.EventObligationResolved, secondWriteID) {
 		t.Fatalf("unchanged required path write obligation %q must remain unresolved", secondWriteID)
 	}
+
 	if !hasUnresolvedAutonomyObligation(report, secondWriteID) {
 		t.Fatalf("expected audit to preserve unresolved write obligation %q, got %#v", secondWriteID, report.ObligationCoverage.UnresolvedObligations)
 	}
+
 	if !slices.Contains(report.GateCoverage.ResolvedObligationRefs, firstWriteID) {
 		t.Fatalf("write gate should report resolved changed-path obligation %q: %#v", firstWriteID, report.GateCoverage.ResolvedObligationRefs)
 	}
+
 	if !slices.Contains(report.GateCoverage.OpenObligationRefs, secondWriteID) {
 		t.Fatalf("write gate should report open unchanged-path obligation %q: %#v", secondWriteID, report.GateCoverage.OpenObligationRefs)
 	}
@@ -1806,6 +2073,7 @@ func TestRunnerAutonomyRecorderWriteGateResolvesOnlyChangedRequiredPath(t *testi
 
 func TestRunnerAutonomyRecorderWriteGateResolvesWorkspaceChangeWithoutRequiredPaths(t *testing.T) {
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		OnEvent: func(event RunEvent) {
@@ -1821,6 +2089,7 @@ func TestRunnerAutonomyRecorderWriteGateResolvesWorkspaceChangeWithoutRequiredPa
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 5}, brief, nil)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
@@ -1830,13 +2099,17 @@ func TestRunnerAutonomyRecorderWriteGateResolvesWorkspaceChangeWithoutRequiredPa
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+
 	const workspaceWriteID = "obl-write-workspace-change"
+
 	if !hasAutonomyObligationEvent(events, autonomy.EventObligationResolved, workspaceWriteID) {
 		t.Fatalf("expected no-required-path workspace write obligation %q to resolve", workspaceWriteID)
 	}
+
 	if hasUnresolvedAutonomyObligation(report, workspaceWriteID) {
 		t.Fatalf("workspace write obligation %q should not remain unresolved: %#v", workspaceWriteID, report.ObligationCoverage.UnresolvedObligations)
 	}
+
 	if !slices.Contains(report.GateCoverage.ResolvedObligationRefs, workspaceWriteID) {
 		t.Fatalf("write gate should report resolved workspace write obligation %q: %#v", workspaceWriteID, report.GateCoverage.ResolvedObligationRefs)
 	}
@@ -1844,6 +2117,7 @@ func TestRunnerAutonomyRecorderWriteGateResolvesWorkspaceChangeWithoutRequiredPa
 
 func TestRunnerAutonomyRecorderRejectedGateKeepsObligationUnresolved(t *testing.T) {
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		OnEvent: func(event RunEvent) {
@@ -1860,6 +2134,7 @@ func TestRunnerAutonomyRecorderRejectedGateKeepsObligationUnresolved(t *testing.
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 5}, brief, nil)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
@@ -1870,12 +2145,15 @@ func TestRunnerAutonomyRecorderRejectedGateKeepsObligationUnresolved(t *testing.
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
 	writeObligationID := runnerAutonomyObligationID(autonomy.ObligationWrite, "internal/runtime/agent/runner.go")
+
 	if report.AllClear {
 		t.Fatal("expected rejected write gate to leave audit non-clear")
 	}
+
 	if !hasUnresolvedAutonomyObligation(report, writeObligationID) {
 		t.Fatalf("expected unresolved write obligation %q, got %#v", writeObligationID, report.ObligationCoverage.UnresolvedObligations)
 	}
+
 	if hasAutonomyObligationEvent(events, autonomy.EventObligationResolved, writeObligationID) {
 		t.Fatalf("rejected write gate must not emit obligation_resolved for %q", writeObligationID)
 	}
@@ -1883,7 +2161,9 @@ func TestRunnerAutonomyRecorderRejectedGateKeepsObligationUnresolved(t *testing.
 
 func TestRunnerAutonomyRecorderRejectedCompletionReportsOnlyCurrentlyOpenObligations(t *testing.T) {
 	root := t.TempDir()
+
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		Workspace: workspace.NewManager(config.Workspace{
@@ -1905,6 +2185,7 @@ func TestRunnerAutonomyRecorderRejectedCompletionReportsOnlyCurrentlyOpenObligat
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 5}, brief, nil)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
@@ -1918,9 +2199,11 @@ func TestRunnerAutonomyRecorderRejectedCompletionReportsOnlyCurrentlyOpenObligat
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
 	writeID := runnerAutonomyObligationID(autonomy.ObligationWrite, "internal/runtime/agent/runner.go")
+
 	if slices.Contains(report.GateCoverage.OpenObligationRefs, writeID) {
 		t.Fatalf("completion gate must not report resolved write obligation %q as open: %#v", writeID, report.GateCoverage.OpenObligationRefs)
 	}
+
 	if len(report.GateCoverage.InconsistentOpenObligationRefs) != 0 {
 		t.Fatalf("completion gate reported non-open obligations as open: %#v", report.GateCoverage.InconsistentOpenObligationRefs)
 	}
@@ -1928,6 +2211,7 @@ func TestRunnerAutonomyRecorderRejectedCompletionReportsOnlyCurrentlyOpenObligat
 
 func TestRunnerAutonomyRecorderRejectedCompletionEmitsGuardFriction(t *testing.T) {
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		OnEvent: func(event RunEvent) {
@@ -1945,10 +2229,13 @@ func TestRunnerAutonomyRecorderRejectedCompletionEmitsGuardFriction(t *testing.T
 	}
 	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"}}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 2}, runner.RuntimeBrief, results)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
+
 	recorder.emitContractStarted(runner.RuntimeBrief)
+
 	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
 		ContractID:         recorder.contract.ContractID,
 		ModelCallID:        recorder.contract.ContractID + ":model_call_1",
@@ -1960,60 +2247,80 @@ func TestRunnerAutonomyRecorderRejectedCompletionEmitsGuardFriction(t *testing.T
 		VerificationStatus: "not_required",
 	})
 	protocol, ok := runner.compileModelProtocolProjection(runner.RuntimeBrief, results, phase, RunPolicy{MaxToolSteps: 2}, false)
+
 	if !ok {
 		t.Fatal("expected plan-execute model protocol projection")
 	}
+
 	recorder.emitTurnPhaseContract(phase, protocol)
 	recorder.emitCompletionGate(autonomy.PolicyReject, "required_obligations_open", results)
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
-	var friction *autonomy.ContractGuardFrictionEvent
-	var completionGate *autonomy.ContractGateEvent
-	var completionDecision *autonomy.ContractCompletionEvent
+
+	var (
+		friction           *autonomy.ContractGuardFrictionEvent
+		completionGate     *autonomy.ContractGateEvent
+		completionDecision *autonomy.ContractCompletionEvent
+	)
+
 	for _, event := range events {
 		if event.Type == autonomy.EventGuardFriction {
 			friction = event.GuardFriction
 		}
+
 		if event.Type == autonomy.EventGateDecision && event.Gate != nil && event.Gate.Gate == autonomy.GateCompletion {
 			completionGate = event.Gate
 		}
+
 		if event.Type == autonomy.EventCompletionGateDecision {
 			completionDecision = event.Completion
 		}
 	}
+
 	if friction == nil {
 		t.Fatalf("expected guard friction event, got event roles=%#v", eventRolesFor(runEvents))
 	}
+
 	if completionGate == nil || completionGate.ProtocolHash != "" {
 		t.Fatalf("completion gate must not claim a model-visible protocol hash without prompt presentation: %#v", completionGate)
 	}
+
 	if completionDecision == nil || completionDecision.ProtocolHash != "" {
 		t.Fatalf("completion decision must not claim a model-visible protocol hash without prompt presentation: %#v", completionDecision)
 	}
+
 	if friction.GuardSurface != autonomy.GuardFrictionSurfaceCompletionGate ||
 		friction.Decision != autonomy.GuardFrictionDecisionReject ||
 		friction.FirstInvalidAction != actionFinalAnswer {
+
 		t.Fatalf("unexpected completion friction classification: %#v", friction)
 	}
+
 	if friction.ProtocolHash != "" || friction.ModelContractVisible {
 		t.Fatalf("friction must not claim model-visible protocol without prompt presentation: %#v", friction)
 	}
+
 	if !slices.Contains(friction.SafeAlternatives, "Decision: source-satisfied") ||
 		!slices.Contains(friction.SafeAlternatives, "<<QUESTION>>:") {
+
 		t.Fatalf("friction should carry safe terminal alternatives: %#v", friction.SafeAlternatives)
 	}
+
 	if strings.Contains(strings.Join(friction.EvidenceRefs, " "), "raw_prompt") {
 		t.Fatalf("friction evidence refs leaked raw prompt marker: %#v", friction.EvidenceRefs)
 	}
+
 	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
 	if report.GuardFrictionCoverage.Total != 1 ||
 		report.GuardFrictionCoverage.GuardSurfaceCounts[string(autonomy.GuardFrictionSurfaceCompletionGate)] != 1 {
+
 		t.Fatalf("expected audit to group completion-gate friction, got %#v", report.GuardFrictionCoverage)
 	}
 }
 
 func TestRunnerAutonomyRecorderRejectedWriteGateEmitsGuardFriction(t *testing.T) {
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		OnEvent: func(event RunEvent) {
@@ -2029,10 +2336,13 @@ func TestRunnerAutonomyRecorderRejectedWriteGateEmitsGuardFriction(t *testing.T)
 		},
 	}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 5}, runner.RuntimeBrief, nil)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
+
 	recorder.emitContractStarted(runner.RuntimeBrief)
+
 	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
 		ContractID:       recorder.contract.ContractID,
 		ModelCallID:      recorder.contract.ContractID + ":model_call_1",
@@ -2044,27 +2354,37 @@ func TestRunnerAutonomyRecorderRejectedWriteGateEmitsGuardFriction(t *testing.T)
 	recorder.emitWriteGate(workspace.ToolRequest{Tool: "apply_patch", Content: "*** Begin Patch\n*** Update File: README.md\n@@\n-x\n+y\n*** End Patch\n"}, autonomy.PolicyReject, "required_edit_scope_rejected", nil)
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
-	var gateEventID string
-	var friction *autonomy.ContractGuardFrictionEvent
+
+	var (
+		gateEventID string
+		friction    *autonomy.ContractGuardFrictionEvent
+	)
+
 	for _, event := range events {
 		if event.Type == autonomy.EventGateDecision && event.Gate != nil && event.Gate.Gate == autonomy.GateWrite {
 			gateEventID = event.EventID
 		}
+
 		if event.Type == autonomy.EventGuardFriction {
 			friction = event.GuardFriction
 		}
 	}
+
 	if friction == nil {
 		t.Fatalf("expected write gate friction event, got roles=%#v", eventRolesFor(runEvents))
 	}
+
 	if friction.SourceEventID != gateEventID || gateEventID == "" {
 		t.Fatalf("friction should reference source gate event %q: %#v", gateEventID, friction)
 	}
+
 	if friction.GuardSurface != autonomy.GuardFrictionSurfaceWriteGate ||
 		friction.Subject != autonomy.GuardFrictionSubjectToolCall ||
 		friction.FirstInvalidAction != "apply_patch" {
+
 		t.Fatalf("unexpected write friction classification: %#v", friction)
 	}
+
 	if friction.ProtocolHash != "" || friction.ModelContractVisible {
 		t.Fatalf("write friction should not claim model-visible protocol without a projection: %#v", friction)
 	}
@@ -2072,7 +2392,9 @@ func TestRunnerAutonomyRecorderRejectedWriteGateEmitsGuardFriction(t *testing.T)
 
 func TestRunnerAutonomyRecorderCompletionAllowDoesNotResolveFailedVerification(t *testing.T) {
 	root := t.TempDir()
+
 	var runEvents []RunEvent
+
 	runner := &Runner{
 		AgentName: "main",
 		Workspace: workspace.NewManager(config.Workspace{
@@ -2094,6 +2416,7 @@ func TestRunnerAutonomyRecorderCompletionAllowDoesNotResolveFailedVerification(t
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 5}, brief, nil)
+
 	if recorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
@@ -2102,27 +2425,34 @@ func TestRunnerAutonomyRecorderCompletionAllowDoesNotResolveFailedVerification(t
 		{Tool: "write_file", Summary: "Wrote internal/runtime/agent/runner.go"},
 		{Tool: "source_sanity", Summary: "Source sanity failed", Error: "internal/runtime/agent/runner.go:12: undefined: missingSymbol"},
 	}
+
 	recorder.emitContractStarted(brief)
 	recorder.emitWriteGate(workspace.ToolRequest{Tool: "write_file", Path: "internal/runtime/agent/runner.go"}, autonomy.PolicyAllow, "write_result_completed", []string{"internal/runtime/agent/runner.go"})
 	recorder.emitCompletionGate(autonomy.PolicyAllow, "final_answer_accepted", results)
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+
 	if hasAutonomyObligationEvent(events, autonomy.EventObligationResolved, "obl-verify-post-write") {
 		t.Fatalf("failed verification must not emit resolved obligation for verify: %#v", events)
 	}
+
 	if !hasUnresolvedAutonomyObligation(report, "obl-verify-post-write") {
 		t.Fatalf("failed verification should remain unresolved: %#v", report.ObligationCoverage)
 	}
+
 	foundFailedCompletion := false
+
 	for _, event := range events {
 		if event.Type == autonomy.EventCompletionGateDecision &&
 			event.Completion != nil &&
 			event.Completion.VerificationStatus == "failed" &&
 			slices.Contains(event.Completion.RemainingObligations, "obl-verify-post-write") {
+
 			foundFailedCompletion = true
 		}
 	}
+
 	if !foundFailedCompletion {
 		t.Fatalf("completion gate decision should carry failed verification and open verify obligation: %#v", events)
 	}
@@ -2130,115 +2460,151 @@ func TestRunnerAutonomyRecorderCompletionAllowDoesNotResolveFailedVerification(t
 
 func decodeRunnerAutonomyEventsForTest(t *testing.T, runEvents []RunEvent) []autonomy.Event {
 	t.Helper()
+
 	var events []autonomy.Event
+
 	for _, runEvent := range runEvents {
 		if runEvent.Role != runnerAutonomyEventRole {
 			continue
 		}
+
 		var event autonomy.Event
+
 		if err := json.Unmarshal([]byte(runEvent.Content), &event); err != nil {
 			t.Fatalf("decode autonomy event: %v\n%s", err, runEvent.Content)
 		}
+
 		if err := event.Validate(); err != nil {
 			t.Fatalf("invalid autonomy event: %v\n%#v", err, event)
 		}
+
 		events = append(events, event)
 	}
+
 	if len(events) == 0 {
 		t.Fatal("expected autonomy events")
 	}
+
 	return events
 }
 
 func runnerAutonomyModelExchangeEventsForTest(t *testing.T, runEvents []RunEvent) []autonomy.Event {
 	t.Helper()
+
 	var events []autonomy.Event
+
 	for _, runEvent := range runEvents {
 		if runEvent.Role != runnerAutonomyEventRole {
 			continue
 		}
+
 		var decoded autonomy.Event
+
 		if err := json.Unmarshal([]byte(runEvent.Content), &decoded); err != nil {
 			t.Fatalf("decode model-exchange event: %v\n%s", err, runEvent.Content)
 		}
+
 		if decoded.Type != autonomy.EventModelExchange {
 			continue
 		}
+
 		if decoded.Effect != autonomy.EventEffectObserveOnly ||
 			strings.TrimSpace(decoded.ContractID) == "" ||
 			decoded.ModelExchange == nil ||
 			strings.TrimSpace(decoded.ModelExchange.Kind) == "" {
+
 			t.Fatalf("invalid model-exchange event: %#v", decoded)
 		}
+
 		events = append(events, decoded)
 	}
+
 	return events
 }
 
 func mustRunnerAutonomyModelExchangeForTest(t *testing.T, runEvents []RunEvent, kind string) autonomy.Event {
 	t.Helper()
+
 	for _, event := range runnerAutonomyModelExchangeEventsForTest(t, runEvents) {
 		if event.ModelExchange != nil && event.ModelExchange.Kind == kind {
 			return event
 		}
 	}
+
 	t.Fatalf("missing model-exchange event kind=%q roles=%#v", kind, eventRolesFor(runEvents))
+
 	return autonomy.Event{}
 }
 
 func decodeRunnerAutonomyGatePayloadsForTest(t *testing.T, runEvents []RunEvent) []map[string]any {
 	t.Helper()
+
 	var gates []map[string]any
+
 	for _, runEvent := range runEvents {
 		if runEvent.Role != runnerAutonomyEventRole {
 			continue
 		}
+
 		var event struct {
 			Type autonomy.EventType `json:"type"`
 			Gate map[string]any     `json:"gate"`
 		}
+
 		if err := json.Unmarshal([]byte(runEvent.Content), &event); err != nil {
 			t.Fatalf("decode raw autonomy event: %v\n%s", err, runEvent.Content)
 		}
+
 		if event.Type == autonomy.EventGateDecision && event.Gate != nil {
 			gates = append(gates, event.Gate)
 		}
 	}
+
 	if len(gates) == 0 {
 		t.Fatal("expected raw gate events")
 	}
+
 	return gates
 }
 
 func mustRunnerAutonomyRawGateForTest(t *testing.T, gates []map[string]any, gateKind autonomy.GateKind) map[string]any {
 	t.Helper()
+
 	for _, gate := range gates {
 		if rawGateString(gate, "gate") == string(gateKind) {
 			return gate
 		}
 	}
+
 	t.Fatalf("missing raw gate %q in %#v", gateKind, gates)
+
 	return nil
 }
 
 func mustRunnerAutonomyRawGateJSONForTest(t *testing.T, runEvents []RunEvent, gateKind autonomy.GateKind) string {
 	t.Helper()
+
 	for _, runEvent := range runEvents {
 		if runEvent.Role != runnerAutonomyEventRole {
 			continue
 		}
+
 		var event struct {
 			Type autonomy.EventType `json:"type"`
 			Gate map[string]any     `json:"gate"`
 		}
+
 		if err := json.Unmarshal([]byte(runEvent.Content), &event); err != nil {
 			t.Fatalf("decode raw autonomy event: %v\n%s", err, runEvent.Content)
 		}
+
 		if event.Type == autonomy.EventGateDecision && rawGateString(event.Gate, "gate") == string(gateKind) {
 			return runEvent.Content
 		}
 	}
+
 	t.Fatalf("missing raw gate JSON %q", gateKind)
+
 	return ""
 }
 
@@ -2246,7 +2612,9 @@ func rawGateString(values map[string]any, key string) string {
 	if values == nil {
 		return ""
 	}
+
 	value, _ := values[key].(string)
+
 	return strings.TrimSpace(value)
 }
 
@@ -2254,13 +2622,16 @@ func rawGateStringSlice(values map[string]any, key string) []string {
 	if values == nil {
 		return nil
 	}
+
 	raw, _ := values[key].([]any)
 	out := make([]string, 0, len(raw))
+
 	for _, value := range raw {
 		if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
 			out = append(out, strings.TrimSpace(text))
 		}
 	}
+
 	return out
 }
 
@@ -2268,13 +2639,16 @@ func rawGateObservedFacts(values map[string]any) []string {
 	if values == nil {
 		return nil
 	}
+
 	raw, _ := values["observed_facts"].([]any)
 	out := make([]string, 0, len(raw))
+
 	for _, value := range raw {
 		if fact, ok := value.(string); ok && strings.TrimSpace(fact) != "" {
 			out = append(out, strings.TrimSpace(fact))
 		}
 	}
+
 	return out
 }
 
@@ -2284,6 +2658,7 @@ func rawObservedFactsContain(facts []string, want string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -2293,16 +2668,19 @@ func rawObservedFactsContainPrefix(facts []string, prefix string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 func countObligationKind(obligations []autonomy.Obligation, kind autonomy.ObligationKind) int {
 	count := 0
+
 	for _, obligation := range obligations {
 		if obligation.Kind == kind {
 			count++
 		}
 	}
+
 	return count
 }
 
@@ -2312,6 +2690,7 @@ func hasPathRole(roles []autonomy.PathRole, kind autonomy.PathRoleKind, pattern 
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -2321,6 +2700,7 @@ func containsAutonomyCapability(values []autonomy.Capability, want autonomy.Capa
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -2330,6 +2710,7 @@ func hasAutonomyObligationEvent(events []autonomy.Event, eventType autonomy.Even
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -2339,38 +2720,49 @@ func hasUnresolvedAutonomyObligation(report autonomy.EventAuditReport, obligatio
 			return true
 		}
 	}
+
 	return false
 }
 
 func mustAutonomyPolicyEvent(t *testing.T, events []autonomy.Event, eventType autonomy.EventType, toolName string, result string) autonomy.Event {
 	t.Helper()
+
 	for _, event := range events {
 		if event.Type != eventType || event.Policy == nil {
 			continue
 		}
+
 		if toolName != "" && event.Policy.ToolName != toolName {
 			continue
 		}
+
 		if result != "" && event.Policy.Result != result {
 			continue
 		}
+
 		return event
 	}
+
 	t.Fatalf("missing policy event type=%q tool=%q result=%q in %#v", eventType, toolName, result, events)
+
 	return autonomy.Event{}
 }
 
 func mustAutonomyPolicyEventByInvariant(t *testing.T, events []autonomy.Event, eventType autonomy.EventType, invariantID string, result string) autonomy.Event {
 	t.Helper()
+
 	for _, event := range events {
 		if event.Type != eventType || event.Policy == nil {
 			continue
 		}
+
 		if event.Policy.InvariantID == invariantID && (result == "" || event.Policy.Result == result) {
 			return event
 		}
 	}
+
 	t.Fatalf("missing policy event type=%q invariant=%q result=%q in %#v", eventType, invariantID, result, events)
+
 	return autonomy.Event{}
 }
 
@@ -2378,14 +2770,19 @@ func policyEventPaths(policy *autonomy.ContractPolicyEvent) []string {
 	if policy == nil {
 		return nil
 	}
+
 	seen := make(map[string]struct{}, len(policy.PathRoles))
+
 	var paths []string
+
 	for _, match := range policy.PathRoles {
 		if _, ok := seen[match.Path]; ok || match.Path == "" {
 			continue
 		}
+
 		seen[match.Path] = struct{}{}
 		paths = append(paths, match.Path)
 	}
+
 	return paths
 }

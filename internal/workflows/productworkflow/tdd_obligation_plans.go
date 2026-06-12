@@ -19,13 +19,16 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 	if plan.CoverageTier == "" {
 		plan.CoverageTier = "unit"
 	}
+
 	obligationByID := map[string]TDDObligation{}
+
 	for _, obligation := range ledger.Obligations {
 		id := strings.TrimSpace(obligation.ID)
 		if id != "" {
 			obligationByID[id] = obligation
 		}
 	}
+
 	if !isAcceptedArtifact(prd.FrontMatter.Status) {
 		plan.Findings = append(plan.Findings, TDDObligationPlanFinding{
 			Kind:     "unaccepted_prd",
@@ -34,12 +37,14 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 			Severity: ProductWorkflowSeverityError,
 		})
 	}
+
 	acceptedADRs := make([]ParsedADR, 0, len(adrs))
 	for _, adr := range adrs {
 		if isAcceptedArtifact(adr.Doc.FrontMatter.Status) {
 			acceptedADRs = append(acceptedADRs, adr)
 		}
 	}
+
 	if len(adrs) > 0 && len(acceptedADRs) == 0 {
 		plan.Findings = append(plan.Findings, TDDObligationPlanFinding{
 			Kind:     "no_accepted_adrs",
@@ -50,12 +55,14 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 	}
 
 	adrByReq := map[string][]ParsedADR{}
+
 	for _, adr := range acceptedADRs {
 		for _, reqRef := range adr.Doc.FrontMatter.PRDRefs {
 			ref := strings.TrimSpace(reqRef)
 			if ref == "" {
 				continue
 			}
+
 			adrByReq[ref] = append(adrByReq[ref], adr)
 		}
 	}
@@ -64,6 +71,7 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 		if strings.TrimSpace(req.ID) == "" {
 			continue
 		}
+
 		candidates := adrByReq[req.ID]
 		if len(candidates) == 0 {
 			plan.Obligations = append(plan.Obligations, TDDObligationPlanItem{
@@ -82,27 +90,35 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 				File:     "prd.md",
 				Severity: ProductWorkflowSeverityError,
 			})
+
 			continue
 		}
+
 		sort.Slice(candidates, func(i, j int) bool {
 			return candidates[i].Doc.FrontMatter.ADRID < candidates[j].Doc.FrontMatter.ADRID
 		})
+
 		for _, adr := range candidates {
 			coverageTier := strings.TrimSpace(adr.Doc.FrontMatter.CoverageTier)
 			if coverageTier == "" {
 				coverageTier = plan.CoverageTier
 			}
+
 			if coverageTier == "" {
 				coverageTier = "unit"
 			}
+
 			ownerPath := adrPathByID[adr.Doc.FrontMatter.ADRID]
 			if ownerPath == "" {
 				ownerPath = adr.RelPath
 			}
+
 			existingRefs := stableUniqueStrings(append(req.TDDObligations, adr.Doc.FrontMatter.TDDObligations...))
 			suggestedType, command := suggestedTDDPlanForTier(coverageTier)
+
 			if isContractTier(coverageTier) && len(existingRefs) == 0 {
 				message := fmt.Sprintf("PRD requirement %q and ADR %q do not name any tdd_obligations; contract-tier obligations must not be silently produced without TDD obligation references", req.ID, adr.Doc.FrontMatter.ADRID)
+
 				plan.Obligations = append(plan.Obligations, TDDObligationPlanItem{
 					PRDRequirementRef:      req.ID,
 					ADRRef:                 adr.Doc.FrontMatter.ADRID,
@@ -120,14 +136,18 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 					File:     "prd.md",
 					Severity: ProductWorkflowSeverityError,
 				})
+
 				continue
 			}
+
 			if existingType, existingCommand := existingTDDPlan(existingRefs, obligationByID); existingCommand != "" {
 				if existingType != "" {
 					suggestedType = existingType
 				}
+
 				command = existingCommand
 			}
+
 			plan.Obligations = append(plan.Obligations, TDDObligationPlanItem{
 				PRDRequirementRef:      req.ID,
 				ADRRef:                 adr.Doc.FrontMatter.ADRID,
@@ -140,10 +160,12 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 			})
 		}
 	}
+
 	sort.Slice(plan.Obligations, func(i, j int) bool {
 		if plan.Obligations[i].PRDRequirementRef == plan.Obligations[j].PRDRequirementRef {
 			return plan.Obligations[i].ADRRef < plan.Obligations[j].ADRRef
 		}
+
 		return plan.Obligations[i].PRDRequirementRef < plan.Obligations[j].PRDRequirementRef
 	})
 	sort.Slice(plan.Findings, func(i, j int) bool {
@@ -151,10 +173,13 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 			if plan.Findings[i].File == plan.Findings[j].File {
 				return plan.Findings[i].Kind < plan.Findings[j].Kind
 			}
+
 			return plan.Findings[i].File < plan.Findings[j].File
 		}
+
 		return plan.Findings[i].Severity > plan.Findings[j].Severity
 	})
+
 	return plan
 }
 
@@ -164,12 +189,15 @@ func existingTDDPlan(refs []string, obligationByID map[string]TDDObligation) (st
 		if !ok {
 			continue
 		}
+
 		command := strings.TrimSpace(obligation.Command)
 		if command == "" {
 			continue
 		}
+
 		return strings.TrimSpace(obligation.Type), command
 	}
+
 	return "", ""
 }
 
@@ -177,11 +205,13 @@ func TDDObligationPlanHasBlockers(plan TDDObligationSynthesisPlan) bool {
 	if len(plan.Findings) > 0 {
 		return true
 	}
+
 	for _, obligation := range plan.Obligations {
 		if strings.TrimSpace(obligation.BlockerReason) != "" {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -217,19 +247,25 @@ func stableUniqueStrings(values []string) []string {
 	if len(values) == 0 {
 		return nil
 	}
+
 	seen := make(map[string]bool, len(values))
 	result := make([]string, 0, len(values))
+
 	for _, v := range values {
 		trimmed := strings.TrimSpace(v)
 		if trimmed == "" || seen[trimmed] {
 			continue
 		}
+
 		seen[trimmed] = true
 		result = append(result, trimmed)
 	}
+
 	sort.Strings(result)
+
 	if len(result) == 0 {
 		return nil
 	}
+
 	return result
 }

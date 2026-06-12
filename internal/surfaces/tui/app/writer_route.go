@@ -13,15 +13,19 @@ import (
 func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecutionPlan) writerroute.Decision {
 	mode := writerroute.ModeReadOnly
 	lane := strings.TrimSpace(plan.route.InitialLane)
+
 	if lane == "" {
 		if m.debugLogger != nil {
 			_ = m.debugLogger.LogRunEvent("writer_route_empty_initial_lane", fmt.Sprintf("route classifier produced no InitialLane for task family %q; falling back to \"main\". A normalizeTurnRoutePlan call may have been skipped.", plan.route.Family))
 		}
+
 		lane = "main"
 	}
+
 	taskFamily := strings.TrimSpace(plan.route.Family)
 	reasonCodes := []string{"route.read_only_question"}
 	verificationOwner := ""
+
 	if routeRequiresMutationConfirmation(plan) {
 		lane = "main"
 		reasonCodes = []string{"route.mutation_confirmation_required"}
@@ -39,19 +43,23 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 		mode = writerroute.ModeAgenticGuarded
 		lane = "implement"
 		reasonCodes = []string{"route.local_model_default"}
+
 		if strings.TrimSpace(plan.route.Reason) == "typed_implement_command" {
 			reasonCodes = []string{"route.typed_implement_command"}
 		}
+
 		if m.plannerOwnedVerification {
 			verificationOwner = "planner_owned"
 		} else {
 			verificationOwner = "executor"
 		}
 	}
+
 	aliases := appWriterRouteRoleAliases(m.projectRoot())
 	plannerModel := m.writerRouteModelForRole(aliases, backends.RolePlanner)
 	executorModel := m.writerRouteModelForRole(aliases, backends.RoleExecutor)
 	classifierModel := m.writerRouteModelForRole(aliases, backends.RoleClassifier)
+
 	return writerroute.NewDecisionFromParams(writerroute.DecisionParams{
 		Mode:              mode,
 		Lane:              lane,
@@ -70,8 +78,10 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 
 func (m *Model) emitWriterRouteDecision(decision writerroute.Decision) {
 	fields := decision.EventFields()
+
 	fields["type"] = "writer_route_decision"
 	m.emitJSONEvent(fields)
+
 	if body, err := json.Marshal(fields); err == nil {
 		m.logMessage("writer_route_decision", string(body))
 	}
@@ -82,19 +92,24 @@ func appWriterRouteRoleAliases(projectRoot string) map[string]string {
 	if err != nil || !ok {
 		return nil
 	}
+
 	profile, found := file.Profile("")
 	if !found {
 		return nil
 	}
+
 	aliases := make(map[string]string, 3)
+
 	for _, role := range []string{backends.RolePlanner, backends.RoleExecutor, backends.RoleClassifier} {
 		if alias, ok := profile.AliasForRole(role); ok && strings.TrimSpace(alias) != "" {
 			aliases[role] = strings.TrimSpace(alias)
 		}
 	}
+
 	if len(aliases) == 0 {
 		return nil
 	}
+
 	return aliases
 }
 
@@ -104,6 +119,7 @@ func (m *Model) writerRouteModelForRole(aliases map[string]string, role string) 
 		if model := strings.TrimSpace(m.executorSpec.Model); model != "" {
 			return model
 		}
+
 		if m.cfg.Implementer != nil && strings.TrimSpace(m.cfg.Implementer.Model) != "" {
 			return strings.TrimSpace(m.cfg.Implementer.Model)
 		}
@@ -116,11 +132,14 @@ func (m *Model) writerRouteModelForRole(aliases map[string]string, role string) 
 			return model
 		}
 	}
+
 	if model := strings.TrimSpace(m.cfg.LlamaServer.Model); model != "" {
 		return model
 	}
+
 	if alias := strings.TrimSpace(aliases[role]); alias != "" {
 		return alias
 	}
+
 	return ""
 }

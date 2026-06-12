@@ -50,11 +50,14 @@ func DetectModels() []Model {
 	if err != nil || strings.TrimSpace(home) == "" {
 		return []Model{}
 	}
+
 	found := []Model{}
+
 	found = append(found, scanHuggingFaceCache(filepath.Join(home, ".cache", "huggingface", "hub"))...)
 	found = append(found, scanModelsDir(filepath.Join(home, "models"))...)
 	found = append(found, scanOllamaModels(filepath.Join(home, ".ollama", "models", "manifests"))...)
 	slices.SortFunc(found, func(a, b Model) int { return cmp.Compare(a.Alias, b.Alias) })
+
 	return found
 }
 
@@ -66,22 +69,28 @@ func scanHuggingFaceCache(dir string) []Model {
 	if err != nil {
 		return nil
 	}
+
 	var out []Model
+
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
+
 		name := e.Name()
 		if !strings.HasPrefix(name, "models--") {
 			continue
 		}
+
 		// HF format: models--<org>--<name> → alias is <name>.
 		parts := strings.SplitN(strings.TrimPrefix(name, "models--"), "--", 2)
 		if len(parts) != 2 {
 			continue
 		}
+
 		alias := normalizeAlias(parts[1])
 		path := filepath.Join(dir, name)
+
 		out = append(out, Model{
 			Alias:     alias,
 			Path:      path,
@@ -89,6 +98,7 @@ func scanHuggingFaceCache(dir string) []Model {
 			SizeBytes: dirSize(path),
 		})
 	}
+
 	return out
 }
 
@@ -112,33 +122,43 @@ func scanModelsDir(dir string) []Model {
 	if err != nil {
 		return nil
 	}
+
 	var out []Model
+
 	for _, e := range entries {
 		name := e.Name()
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
+
 		path := filepath.Join(dir, name)
 		if e.IsDir() {
 			if !looksLikeModelDir(path) {
 				continue
 			}
+
 			out = append(out, Model{
 				Alias:     normalizeAlias(name),
 				Path:      path,
 				Source:    "models-dir",
 				SizeBytes: dirSize(path),
 			})
+
 			continue
 		}
+
 		if !strings.HasSuffix(name, ".gguf") {
 			continue
 		}
+
 		info, err := e.Info()
+
 		var size int64
+
 		if err == nil {
 			size = info.Size()
 		}
+
 		out = append(out, Model{
 			Alias:     normalizeAlias(strings.TrimSuffix(name, ".gguf")),
 			Path:      path,
@@ -146,6 +166,7 @@ func scanModelsDir(dir string) []Model {
 			SizeBytes: size,
 		})
 	}
+
 	return out
 }
 
@@ -178,20 +199,24 @@ func looksLikeModelDir(dir string) bool {
 	if err != nil {
 		return false
 	}
+
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
+
 		name := e.Name()
 		if modelMarkerFiles[name] {
 			return true
 		}
+
 		for _, suffix := range modelMarkerSuffixes {
 			if strings.HasSuffix(name, suffix) {
 				return true
 			}
 		}
 	}
+
 	return false
 }
 
@@ -206,20 +231,26 @@ func scanOllamaModels(dir string) []Model {
 	if err != nil {
 		return nil
 	}
+
 	var out []Model
+
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
+
 		modelDir := filepath.Join(dir, e.Name())
+
 		tags, err := os.ReadDir(modelDir)
 		if err != nil {
 			continue
 		}
+
 		for _, tag := range tags {
 			if tag.IsDir() {
 				continue
 			}
+
 			out = append(out, Model{
 				Alias:  normalizeAlias(e.Name() + ":" + tag.Name()),
 				Path:   filepath.Join(modelDir, tag.Name()),
@@ -229,6 +260,7 @@ func scanOllamaModels(dir string) []Model {
 			})
 		}
 	}
+
 	return out
 }
 
@@ -240,6 +272,7 @@ func normalizeAlias(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = strings.ReplaceAll(s, "/", "-")
 	s = strings.ReplaceAll(s, " ", "-")
+
 	return s
 }
 
@@ -248,16 +281,21 @@ func normalizeAlias(s string) string {
 // "permission denied" — the size is a heuristic, not load-bearing.
 func dirSize(root string) int64 {
 	var total int64
+
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
+
 		info, err := d.Info()
 		if err != nil {
 			return nil
 		}
+
 		total += info.Size()
+
 		return nil
 	})
+
 	return total
 }

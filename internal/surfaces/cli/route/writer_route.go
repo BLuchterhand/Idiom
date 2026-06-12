@@ -27,22 +27,27 @@ func BuildDecision(cfg config.Config, opts Options) writerroute.Decision {
 	if len(aliases) == 0 {
 		aliases = RoleAliases(cfg.Workspace.Root, "")
 	}
+
 	plannerModel := strings.TrimSpace(opts.PlannerModel)
 	if plannerModel == "" {
 		plannerModel = ModelForRole(cfg, aliases, backends.RolePlanner)
 	}
+
 	executorModel := strings.TrimSpace(opts.ExecutorModel)
 	if executorModel == "" {
 		executorModel = ModelForRole(cfg, aliases, backends.RoleExecutor)
 	}
+
 	classifierModel := strings.TrimSpace(opts.ClassifierModel)
 	if classifierModel == "" {
 		classifierModel = ModelForRole(cfg, aliases, backends.RoleClassifier)
 	}
+
 	reviewerModel := strings.TrimSpace(opts.ReviewerModel)
 	if reviewerModel == "" {
 		reviewerModel = executorModel
 	}
+
 	return writerroute.NewDecisionFromParams(writerroute.DecisionParams{
 		Mode:              opts.Mode,
 		Lane:              opts.Lane,
@@ -68,19 +73,24 @@ func RoleAliases(projectRoot string, profileName string) map[string]string {
 	if err != nil || !ok {
 		return nil
 	}
+
 	profile, found := file.Profile(profileName)
 	if !found {
 		return nil
 	}
+
 	aliases := make(map[string]string, 3)
+
 	for _, role := range []string{backends.RolePlanner, backends.RoleExecutor, backends.RoleClassifier} {
 		if alias, ok := profile.AliasForRole(role); ok && strings.TrimSpace(alias) != "" {
 			aliases[role] = strings.TrimSpace(alias)
 		}
 	}
+
 	if len(aliases) == 0 {
 		return nil
 	}
+
 	return aliases
 }
 
@@ -90,6 +100,7 @@ func ModelForRole(cfg config.Config, aliases map[string]string, role string) str
 		if cfg.Implementer != nil && strings.TrimSpace(cfg.Implementer.Model) != "" {
 			return strings.TrimSpace(cfg.Implementer.Model)
 		}
+
 		if model := strings.TrimSpace(cfg.LlamaServer.Model); model != "" {
 			return model
 		}
@@ -97,6 +108,7 @@ func ModelForRole(cfg config.Config, aliases map[string]string, role string) str
 		if strings.TrimSpace(cfg.RouteClassifier.Model) != "" {
 			return strings.TrimSpace(cfg.RouteClassifier.Model)
 		}
+
 		if model := strings.TrimSpace(cfg.LlamaServer.Model); model != "" {
 			return model
 		}
@@ -105,8 +117,10 @@ func ModelForRole(cfg config.Config, aliases map[string]string, role string) str
 			return model
 		}
 	}
+
 	if alias := strings.TrimSpace(aliases[role]); alias != "" {
 		return alias
 	}
+
 	return ""
 }

@@ -17,8 +17,10 @@ import (
 func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		printSkillsUsage(stderr)
+
 		return 0
 	}
+
 	switch args[0] {
 	case "list":
 		return runSkillsList(args[1:], stdout, stderr)
@@ -27,6 +29,7 @@ func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	default:
 		fmt.Fprintf(stderr, "skills: unknown subcommand %q\n", args[0])
 		printSkillsUsage(stderr)
+
 		return 2
 	}
 }
@@ -38,17 +41,22 @@ func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
 func runSkillsList(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom skills list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
 	names, err := canonicalSkillNames()
 	if err != nil {
 		fmt.Fprintf(stderr, "skills list: %v\n", err)
+
 		return 1
 	}
+
 	for _, n := range names {
 		fmt.Fprintln(stdout, n)
 	}
+
 	return 0
 }
 
@@ -63,32 +71,40 @@ func runSkillsList(args []string, stdout io.Writer, stderr io.Writer) int {
 func runSkillsInstall(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom skills install", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	var (
 		target      string
 		projectRoot string
 		force       bool
 	)
+
 	fs.StringVar(&target, "target", ".claude/skills", "directory under project root to install into (e.g. .claude/skills, .codex/skills)")
 	fs.StringVar(&projectRoot, "project-root", "", "project root (defaults to cwd)")
 	fs.BoolVar(&force, "force", false, "overwrite an existing SKILL.md (default: refuse and exit 2)")
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
 	tail := fs.Args()
 	if len(tail) != 1 {
 		fmt.Fprintln(stderr, "skills install: exactly one skill name is required")
 		printSkillsUsage(stderr)
+
 		return 2
 	}
+
 	name := strings.TrimSpace(tail[0])
 	if name == "" || strings.ContainsAny(name, `/\`+"\x00") || strings.Contains(name, "..") {
 		fmt.Fprintf(stderr, "skills install: invalid skill name %q (must be a single name without path separators)\n", name)
+
 		return 2
 	}
 
 	body, err := cliassets.Skill(name)
 	if err != nil {
 		fmt.Fprintf(stderr, "skills install: unknown skill %q (run `idiom skills list` to see available)\n", name)
+
 		return 1
 	}
 
@@ -97,26 +113,36 @@ func runSkillsInstall(args []string, stdout io.Writer, stderr io.Writer) int {
 		cwd, err := os.Getwd()
 		if err != nil {
 			fmt.Fprintf(stderr, "skills install: %v\n", err)
+
 			return 1
 		}
+
 		root = cwd
 	}
+
 	dest := filepath.Join(root, target, name, "SKILL.md")
 
 	if _, err := os.Stat(dest); err == nil && !force {
 		fmt.Fprintf(stderr, "skills install: %s already exists (use --force to overwrite)\n", dest)
+
 		return 2
 	}
+
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		fmt.Fprintf(stderr, "skills install: mkdir: %v\n", err)
+
 		return 1
 	}
+
 	if err := os.WriteFile(dest, body, 0o644); err != nil {
 		fmt.Fprintf(stderr, "skills install: write: %v\n", err)
+
 		return 1
 	}
+
 	fmt.Fprintf(stdout, "installed %s\n", dest)
 	fmt.Fprintf(stdout, "Customize for this project, then commit alongside any orchestrator config.\n")
+
 	return 0
 }
 

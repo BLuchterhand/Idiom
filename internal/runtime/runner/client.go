@@ -24,16 +24,21 @@ func roundTrip(socketPath string, req Request) (Response, error) {
 		return Response{}, err
 	}
 	defer conn.Close()
+
 	if err := writeRequest(conn, req); err != nil {
 		return Response{}, err
 	}
+
 	var resp Response
+
 	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
 		return Response{}, fmt.Errorf("decode %s: %w", req.Action, err)
 	}
+
 	if resp.Error != "" {
 		return Response{}, daemonResponseError(resp.Error)
 	}
+
 	return resp, nil
 }
 
@@ -42,9 +47,11 @@ func Status(socketPath string) (StatusPayload, error) {
 	if err != nil {
 		return StatusPayload{}, err
 	}
+
 	if resp.Status == nil {
 		return StatusPayload{}, daemonProtocolError("status response missing payload")
 	}
+
 	return *resp.Status, nil
 }
 
@@ -56,6 +63,7 @@ func Ping(socketPath string) (uptime time.Duration, err error) {
 	if err != nil {
 		return 0, err
 	}
+
 	return time.Duration(resp.Uptime * float64(time.Second)), nil
 }
 
@@ -104,10 +112,13 @@ func (l *Lease) Err() <-chan error { return l.errCh }
 // closes, even if the caller has already finished its work.
 func (l *Lease) Close() error {
 	var err error
+
 	l.closeOnce.Do(func() {
 		close(l.closed)
+
 		err = l.conn.Close()
 	})
+
 	return err
 }
 
@@ -122,10 +133,12 @@ func Acquire(ctx context.Context, socketPath, pool, label, client string) (*Leas
 	if pool == "" {
 		pool = "default"
 	}
+
 	conn, err := dial(socketPath)
 	if err != nil {
 		return nil, err
 	}
+
 	if err := writeRequest(conn, Request{
 		Action: ActionAcquire,
 		Pool:   pool,
@@ -133,18 +146,26 @@ func Acquire(ctx context.Context, socketPath, pool, label, client string) (*Leas
 		Client: client,
 	}); err != nil {
 		conn.Close()
+
 		return nil, err
 	}
+
 	dec := json.NewDecoder(conn)
+
 	var first Response
+
 	if err := dec.Decode(&first); err != nil {
 		conn.Close()
+
 		return nil, fmt.Errorf("decode acquire reply: %w", err)
 	}
+
 	if first.Error != "" {
 		conn.Close()
+
 		return nil, daemonResponseError(first.Error)
 	}
+
 	lease := &Lease{
 		JobID:   first.JobID,
 		Pool:    first.Pool,
@@ -173,13 +194,16 @@ func Acquire(ctx context.Context, socketPath, pool, label, client string) (*Leas
 		case <-lease.closed:
 		}
 	}()
+
 	return lease, nil
 }
 
 func (l *Lease) readLoop(dec *json.Decoder) {
 	defer close(l.updates)
+
 	for {
 		var resp Response
+
 		if err := dec.Decode(&resp); err != nil {
 			select {
 			case <-l.closed:
@@ -190,26 +214,32 @@ func (l *Lease) readLoop(dec *json.Decoder) {
 				default:
 				}
 			}
+
 			return
 		}
+
 		if resp.Error != "" {
 			select {
 			case l.errCh <- daemonResponseError(resp.Error):
 			default:
 			}
+
 			return
 		}
+
 		if resp.Granted {
 			select {
 			case <-l.granted:
 			default:
 				close(l.granted)
 			}
+
 			// Daemon won't send more frames after Granted; the
 			// connection just stays open until Close. Returning here
 			// is fine — readLoop is done.
 			return
 		}
+
 		if resp.Position > 0 {
 			select {
 			case l.updates <- resp.Position:
@@ -224,10 +254,12 @@ func dial(socketPath string) (net.Conn, error) {
 	if socketPath == "" {
 		return nil, fmt.Errorf("%w: empty socket path", ErrDaemonUnreachable)
 	}
+
 	conn, err := net.DialTimeout("unix", socketPath, dialTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrDaemonUnreachable, err)
 	}
+
 	return conn, nil
 }
 

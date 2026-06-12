@@ -141,11 +141,14 @@ func sanitizeToolSidecarInspectionMetadata(value any) any {
 			if key == "" || toolSidecarInspectionMetadataKeyForbidden(key) {
 				continue
 			}
+
 			out[key] = sanitizeToolSidecarInspectionMetadata(child)
 		}
+
 		if len(out) == 0 {
 			return nil
 		}
+
 		return out
 	case map[string]string:
 		out := make(map[string]string, len(typed))
@@ -154,11 +157,14 @@ func sanitizeToolSidecarInspectionMetadata(value any) any {
 			if key == "" || toolSidecarInspectionMetadataKeyForbidden(key) {
 				continue
 			}
+
 			out[key] = strings.TrimSpace(child)
 		}
+
 		if len(out) == 0 {
 			return nil
 		}
+
 		return out
 	case []any:
 		out := make([]any, 0, len(typed))
@@ -167,9 +173,11 @@ func sanitizeToolSidecarInspectionMetadata(value any) any {
 				out = append(out, sanitized)
 			}
 		}
+
 		if len(out) == 0 {
 			return nil
 		}
+
 		return out
 	default:
 		return value
@@ -190,6 +198,7 @@ func normalizeToolSidecarInspectionArtifact(artifact ToolSidecarInspectionArtifa
 	artifact.Kind = util.FirstNonEmpty(strings.TrimSpace(artifact.Kind), "artifact")
 	artifact.Path = strings.TrimSpace(artifact.Path)
 	artifact.Status = util.FirstNonEmpty(strings.TrimSpace(artifact.Status), "unknown")
+
 	return artifact
 }
 
@@ -208,6 +217,7 @@ func normalizeToolSidecarInspectionFindings(findings []ToolSidecarInspectionFind
 		if message == "" {
 			continue
 		}
+
 		normalized = append(normalized, ToolSidecarInspectionFinding{
 			Code:         strings.TrimSpace(finding.Code),
 			Severity:     strings.TrimSpace(finding.Severity),
@@ -216,6 +226,7 @@ func normalizeToolSidecarInspectionFindings(findings []ToolSidecarInspectionFind
 			AuditEventID: strings.TrimSpace(finding.AuditEventID),
 		})
 	}
+
 	return normalized
 }
 
@@ -226,29 +237,36 @@ func normalizeToolSidecarWarnings(warnings []ToolSidecarWarning) []ToolSidecarWa
 		if message == "" {
 			continue
 		}
+
 		normalized = append(normalized, ToolSidecarWarning{
 			Code:    util.FirstNonEmpty(strings.TrimSpace(warning.Code), "tool_warning"),
 			Message: message,
 		})
 	}
+
 	return normalized
 }
 
 func normalizeToolSidecarAuditEventIDs(values []string) []string {
 	seen := map[string]struct{}{}
 	normalized := make([]string, 0, len(values))
+
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		normalized = append(normalized, value)
 	}
+
 	slices.Sort(normalized)
+
 	return normalized
 }
 
@@ -259,16 +277,20 @@ func normalizeToolSidecarStringList(values []string) []string {
 			normalized = append(normalized, value)
 		}
 	}
+
 	return normalized
 }
 
 func BuildToolSidecarEnvelopeWithOptions(req ToolRequest, result ToolResult, profile string, opts ToolSidecarOptions) ToolSidecarEnvelope {
 	tool := util.FirstNonEmpty(strings.TrimSpace(result.Tool), strings.TrimSpace(req.Tool))
+
 	profile = util.FirstNonEmpty(strings.TrimSpace(profile), "default")
+
 	structuredOutput := toolSidecarStructuredOutput(result.Output)
 	outputObject := toolSidecarOutputObject(structuredOutput)
 	metadata := autonomy.DefaultContractMetadata("p7.1", "tool_sidecar_envelope")
 	transport := normalizeToolSidecarTransport(opts.Transport)
+
 	return ToolSidecarEnvelope{
 		SchemaVersion:    ToolSidecarEnvelopeVersion,
 		Tool:             tool,
@@ -286,16 +308,21 @@ func BuildToolSidecarEnvelopeWithOptions(req ToolRequest, result ToolResult, pro
 
 func NewToolSidecarCaller(callerID string, requestID string, traceID string) (ToolSidecarCaller, error) {
 	caller := ToolSidecarCaller{}
+
 	var err error
+
 	if caller.CallerID, err = normalizeSidecarCallerField("caller-id", callerID); err != nil {
 		return ToolSidecarCaller{}, err
 	}
+
 	if caller.RequestID, err = normalizeSidecarCallerField("request-id", requestID); err != nil {
 		return ToolSidecarCaller{}, err
 	}
+
 	if caller.TraceID, err = normalizeSidecarCallerField("trace-id", traceID); err != nil {
 		return ToolSidecarCaller{}, err
 	}
+
 	return caller, nil
 }
 
@@ -304,34 +331,42 @@ func normalizeSidecarCallerField(name string, value string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
+
 	if len(value) > 128 {
 		return "", fmt.Errorf("%s must be 128 bytes or fewer", name)
 	}
+
 	lower := strings.ToLower(value)
 	for _, prefix := range []string{"sk-", "sk_", "ghp_", "github_pat_", "xoxb-"} {
 		if strings.HasPrefix(lower, prefix) {
 			return "", fmt.Errorf("%s must be a short opaque identifier, not a credential-shaped value", name)
 		}
 	}
+
 	for _, forbidden := range []string{"secret", "token", "password", "passwd", "api_key", "apikey", "private_key", "credential"} {
 		if strings.Contains(lower, forbidden) {
 			return "", fmt.Errorf("%s must be an opaque non-secret identifier", name)
 		}
 	}
+
 	if looksLikePathOrPrivateLocator(value) {
 		return "", fmt.Errorf("%s must be a short opaque identifier, not a path-shaped value", name)
 	}
+
 	if strings.Contains(value, "@") {
 		return "", fmt.Errorf("%s must be a short opaque identifier, not an email address", name)
 	}
+
 	if looksLikeJWT(value) || looksLikeLongHexOrBase64Blob(value) {
 		return "", fmt.Errorf("%s must be a short opaque identifier, not a token-shaped value", name)
 	}
+
 	for _, r := range value {
 		if r > unicode.MaxASCII || !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == '.' || r == ':') {
 			return "", fmt.Errorf("%s may contain only ASCII letters, digits, '.', '-', '_', or ':'", name)
 		}
 	}
+
 	return value, nil
 }
 
@@ -340,14 +375,17 @@ func looksLikePathOrPrivateLocator(value string) bool {
 	if strings.HasPrefix(value, "~") || strings.Contains(value, "/") || strings.Contains(value, `\`) {
 		return true
 	}
+
 	if strings.Contains(value, "..") {
 		return true
 	}
+
 	for _, marker := range []string{".ssh", ".aws", ".config", ".env", "id_rsa", "id_ed25519"} {
 		if strings.Contains(lower, marker) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -356,11 +394,13 @@ func looksLikeJWT(value string) bool {
 	if len(parts) != 3 || len(value) < 24 {
 		return false
 	}
+
 	for _, part := range parts {
 		if len(part) < 6 || !allRunesInSet(part, isBase64URLRune) {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -368,9 +408,11 @@ func looksLikeLongHexOrBase64Blob(value string) bool {
 	if len(value) >= 32 && allRunesInSet(value, isHexRune) {
 		return true
 	}
+
 	if len(value) >= 48 && allRunesInSet(value, isBase64LikeRune) {
 		return true
 	}
+
 	return false
 }
 
@@ -380,6 +422,7 @@ func allRunesInSet(value string, allowed func(rune) bool) bool {
 			return false
 		}
 	}
+
 	return value != ""
 }
 
@@ -400,11 +443,13 @@ func normalizeToolSidecarTransport(transport string) string {
 	if transport == "" {
 		return "cli"
 	}
+
 	return transport
 }
 
 func toolSidecarContract(tool string, profile string, metadata autonomy.ContractMetadata, transport string) ToolSidecarContract {
 	policy := toolSchemaPolicyForTool(tool)
+
 	return ToolSidecarContract{
 		ID:                "idiom.tool.v1:" + tool,
 		Kind:              "workspace_tool_result",
@@ -420,12 +465,15 @@ func toolSidecarContract(tool string, profile string, metadata autonomy.Contract
 
 func toolSidecarStructuredOutput(output string) any {
 	trimmed := strings.TrimSpace(output)
+
 	var decoded any
+
 	if trimmed != "" {
 		if err := json.Unmarshal([]byte(trimmed), &decoded); err == nil {
 			return decoded
 		}
 	}
+
 	return map[string]any{
 		"format": "text",
 		"text":   output,
@@ -437,9 +485,11 @@ func toolSidecarOutputObject(structuredOutput any) map[string]any {
 	if !ok {
 		return nil
 	}
+
 	if format, _ := object["format"].(string); format == "text" {
 		return nil
 	}
+
 	return object
 }
 
@@ -447,16 +497,19 @@ func toolSidecarFreshness(output map[string]any) any {
 	if output == nil {
 		return nil
 	}
+
 	for _, key := range []string{"freshness", "context_freshness"} {
 		if value, ok := output[key]; ok {
 			return value
 		}
 	}
+
 	if contract, ok := output["contract"].(map[string]any); ok {
 		if value, ok := contract["freshness"]; ok {
 			return value
 		}
 	}
+
 	return nil
 }
 
@@ -465,6 +518,7 @@ func toolSidecarWarnings(output map[string]any) []ToolSidecarWarning {
 	if output == nil {
 		return warnings
 	}
+
 	if rawWarnings, ok := output["warnings"].([]any); ok {
 		for _, raw := range rawWarnings {
 			switch value := raw.(type) {
@@ -483,17 +537,21 @@ func toolSidecarWarnings(output map[string]any) []ToolSidecarWarning {
 			}
 		}
 	}
+
 	return warnings
 }
 
 func toolSidecarAuditEventIDs(output map[string]any) []string {
 	seen := map[string]struct{}{}
 	ids := make([]string, 0)
+
 	var walk func(any)
+
 	walk = func(value any) {
 		if len(ids) >= 100 {
 			return
 		}
+
 		switch typed := value.(type) {
 		case map[string]any:
 			for key, child := range typed {
@@ -505,9 +563,11 @@ func toolSidecarAuditEventIDs(output map[string]any) []string {
 						}
 					}
 				}
+
 				if key == "audit_event_ids" {
 					appendAuditEventIDStrings(child, seen, &ids)
 				}
+
 				walk(child)
 			}
 		case []any:
@@ -518,18 +578,22 @@ func toolSidecarAuditEventIDs(output map[string]any) []string {
 	}
 	walk(output)
 	slices.Sort(ids)
+
 	return ids
 }
 
 func toolSidecarError(result ToolResult) *ToolSidecarError {
 	message := strings.TrimSpace(result.Error)
 	code := classifyToolSidecarError(result)
+
 	if message == "" && classifyTypedToolSidecarFailure(result.Failure) != "" {
 		message = strings.TrimSpace(result.Failure.Error())
 	}
+
 	if message == "" || code == "" {
 		return nil
 	}
+
 	return &ToolSidecarError{
 		Class:   code,
 		Code:    code,
@@ -542,17 +606,21 @@ func appendAuditEventIDStrings(value any, seen map[string]struct{}, ids *[]strin
 	if !ok {
 		return
 	}
+
 	for _, raw := range values {
 		if len(*ids) >= 100 {
 			return
 		}
+
 		id := stringFromAny(raw)
 		if id == "" {
 			continue
 		}
+
 		if _, ok := seen[id]; ok {
 			continue
 		}
+
 		seen[id] = struct{}{}
 		*ids = append(*ids, id)
 	}
@@ -562,13 +630,17 @@ func boundedToolSidecarErrorMessage(message string) string {
 	if len(message) <= maxToolSidecarErrorMessageBytes {
 		return message
 	}
+
 	var builder strings.Builder
+
 	for _, r := range message {
 		if builder.Len()+len(string(r)) > maxToolSidecarErrorMessageBytes {
 			break
 		}
+
 		builder.WriteRune(r)
 	}
+
 	return strings.TrimSpace(builder.String()) + "...(truncated)"
 }
 
@@ -576,9 +648,11 @@ func classifyToolSidecarError(result ToolResult) string {
 	if code := classifyToolSidecarResultCode(result.Code); code != "" {
 		return code
 	}
+
 	if code := classifyTypedToolSidecarFailure(result.Failure); code != "" {
 		return code
 	}
+
 	text := strings.ToLower(strings.Join([]string{result.Summary, result.Error}, " "))
 	switch {
 	case strings.Contains(text, "profile_denied"):
@@ -617,6 +691,7 @@ func classifyTypedToolSidecarFailure(failure error) string {
 	if failure == nil {
 		return ""
 	}
+
 	switch failures.ReasonOf(failure) {
 	case reasonContextFreshnessBlocker:
 		return "stale_context"
@@ -629,6 +704,7 @@ func classifyTypedToolSidecarFailure(failure error) string {
 	case reasonToolUnavailable, reasonPythonLSPUnavailable, reasonGitHistoryUnavailable:
 		return "backend_unavailable"
 	}
+
 	switch failures.CodeOf(failure) {
 	case failures.Unknown:
 		return ""

@@ -19,10 +19,13 @@ func (m *Model) enqueueHistoryAuditEvent(event historyAuditEvent) {
 	if event.label == "" {
 		return
 	}
+
 	if m.events == nil {
 		m.recordHistoryAuditEvent(event)
+
 		return
 	}
+
 	select {
 	case m.events <- historyAuditMsg{event: event}:
 	default:
@@ -33,13 +36,16 @@ func (m *Model) historyPrivacyAuditEvent() historyAuditEvent {
 	if m == nil || m.debugLogger == nil {
 		return historyAuditEvent{}
 	}
+
 	mode := strings.TrimSpace(m.cfg.Chat.DebugLogMode)
 	if mode == "" {
 		mode = "redacted"
 	}
+
 	if !strings.EqualFold(mode, "redacted") {
 		return historyAuditEvent{}
 	}
+
 	return historyAuditEvent{
 		kind:   "privacy",
 		label:  "debug log redaction active",
@@ -52,28 +58,36 @@ func historyToolAuditKind(event agent.ToolRequestEvent) string {
 	req := event.Request
 	tool := strings.TrimSpace(req.Tool)
 	profile := workspace.DiscoveryProfileForRequest(req)
+
 	if event.DiscoveryClass != "" {
 		profile.Class = event.DiscoveryClass
 	}
+
 	if event.DiscoveryScope != "" {
 		profile.Scope = event.DiscoveryScope
 	}
+
 	if event.DiscoveryCost != "" {
 		profile.Cost = event.DiscoveryCost
 	}
+
 	if profile.Discovery {
 		parts := []string{"discovery"}
 		if strings.TrimSpace(profile.Class) != "" {
 			parts = append(parts, profile.Class)
 		}
+
 		if strings.TrimSpace(profile.Scope) != "" {
 			parts = append(parts, profile.Scope)
 		}
+
 		if strings.TrimSpace(profile.Cost) != "" {
 			parts = append(parts, profile.Cost)
 		}
+
 		return strings.Join(parts, " / ")
 	}
+
 	switch {
 	case workspace.IsWorkspaceWriteTool(tool):
 		return "write"
@@ -87,6 +101,7 @@ func historyToolAuditKind(event agent.ToolRequestEvent) string {
 		if historyShellCommandLooksLikeVerification(req.Command) {
 			return "verification"
 		}
+
 		return "shell"
 	case strings.HasPrefix(tool, "context_"):
 		return "context"
@@ -102,21 +117,26 @@ func historyToolAuditOutcome(event agent.ToolResultEvent) string {
 	if strings.TrimSpace(result.Error) != "" {
 		return "failed: " + truncateRunes(collapseWhitespace(result.Error), 120)
 	}
+
 	summary := strings.TrimSpace(result.Summary)
 	if summary == "" {
 		summary = "completed"
 	}
+
 	chars := len(result.Output)
 	lines := 0
+
 	if chars > 0 {
 		lines = strings.Count(result.Output, "\n")
 		if !strings.HasSuffix(result.Output, "\n") {
 			lines++
 		}
 	}
+
 	if lines > 0 {
 		return fmt.Sprintf("ok: %s (%d line(s), %d char(s))", truncateRunes(collapseWhitespace(summary), 100), lines, chars)
 	}
+
 	return "ok: " + truncateRunes(collapseWhitespace(summary), 120)
 }
 
@@ -125,34 +145,44 @@ func historyAuditEventsForToolResult(event agent.ToolResultEvent) []historyAudit
 	if len(fields) == 0 {
 		return nil
 	}
+
 	events := make([]historyAuditEvent, 0, 3)
+
 	if state := stringMapValue(fields, "context_cache_state"); state != "" {
 		detail := joinNonEmpty("; ",
 			keyValue("source", stringMapValue(fields, "context_cache_source")),
 			keyValue("reason", stringMapValue(fields, "context_cache_reason")),
 			keyValue("pack", stringMapValue(fields, "context_cache_pack_id")),
 		)
+
 		events = append(events, historyAuditEvent{kind: "cache", label: "context cache " + state, detail: detail, status: state})
 	}
+
 	if refreshAttempted := boolMapValue(fields, "context_auto_refresh_attempted") || boolMapValue(fields, "context_freshness_refresh_attempted"); refreshAttempted {
 		files := intMapValue(fields, "context_auto_refresh_files_indexed")
 		if files == 0 {
 			files = intMapValue(fields, "context_freshness_refresh_files_indexed")
 		}
+
 		reason := util.FirstNonEmpty(stringMapValue(fields, "context_auto_refresh_reason"), stringMapValue(fields, "context_freshness_refresh_reason"))
 		label := "context freshness refresh"
+
 		if files > 0 {
 			label = fmt.Sprintf("context freshness refresh indexed %d file(s)", files)
 		}
+
 		events = append(events, historyAuditEvent{kind: "cache", label: label, detail: keyValue("reason", reason), status: "refresh"})
 	}
+
 	if state := stringMapValue(fields, "context_freshness_state"); state != "" {
 		detail := joinNonEmpty("; ",
 			keyValue("policy", stringMapValue(fields, "context_freshness_policy")),
 			keyValue("reason", stringMapValue(fields, "context_freshness_reason")),
 		)
+
 		events = append(events, historyAuditEvent{kind: "freshness", label: "context evidence " + state, detail: detail, status: state})
 	}
+
 	return events
 }
 
@@ -161,6 +191,7 @@ func historyAuditEventFromRunEvent(event agent.RunEvent) (historyAuditEvent, boo
 	if role == "" {
 		return historyAuditEvent{}, false
 	}
+
 	switch role {
 	case "model_call":
 		return historyAuditModelCall(event.Content)
@@ -189,46 +220,58 @@ func historyAuditEventFromRunEvent(event agent.RunEvent) (historyAuditEvent, boo
 	case "child_tool_result":
 		return historyAuditChildToolResult(event.Content)
 	}
+
 	if audit, ok := historyAuditTextEvent(role, event.Content); ok {
 		return audit, true
 	}
+
 	return historyAuditEvent{}, false
 }
 
 func historyAuditChildToolRequest(content string) (historyAuditEvent, bool) {
 	var payload agent.ToolRequestEvent
+
 	if json.Unmarshal([]byte(content), &payload) != nil {
 		return historyAuditEvent{}, false
 	}
+
 	tool := strings.TrimSpace(payload.Request.Tool)
 	if tool == "" {
 		return historyAuditEvent{}, false
 	}
+
 	label := "child tool requested " + tool
 	if payload.Agent != "" {
 		label = payload.Agent + " requested " + tool
 	}
+
 	detail := joinNonEmpty("; ", keyValue("type", historyToolAuditKind(payload)), keyValue("reason", toolRequestIntent(payload)))
+
 	return historyAuditEvent{kind: "delegation", label: label, detail: detail, status: "requested", step: payload.Step}, true
 }
 
 func historyAuditChildToolResult(content string) (historyAuditEvent, bool) {
 	var payload agent.ToolResultEvent
+
 	if json.Unmarshal([]byte(content), &payload) != nil {
 		return historyAuditEvent{}, false
 	}
+
 	tool := strings.TrimSpace(util.FirstNonEmpty(payload.Result.Tool, payload.Request.Tool))
 	if tool == "" {
 		return historyAuditEvent{}, false
 	}
+
 	label := "child tool completed " + tool
 	if payload.Agent != "" {
 		label = payload.Agent + " completed " + tool
 	}
+
 	status := "ok"
 	if strings.TrimSpace(payload.Result.Error) != "" {
 		status = "failed"
 	}
+
 	return historyAuditEvent{kind: "delegation", label: label, detail: historyToolAuditOutcome(payload), status: status, step: payload.Step}, true
 }
 
@@ -240,14 +283,18 @@ func historyAuditModelCall(content string) (historyAuditEvent, bool) {
 		ChosenTool  string `json:"chosen_tool"`
 		TotalTokens int    `json:"total_tokens"`
 	}
+
 	if json.Unmarshal([]byte(content), &payload) != nil {
 		return historyAuditEvent{}, false
 	}
+
 	label := "model call"
 	if payload.ChosenTool != "" {
 		label = "model selected tool " + payload.ChosenTool
 	}
+
 	detail := joinNonEmpty("; ", keyValue("agent", util.FirstNonEmpty(payload.Agent, payload.Label)), intKeyValue("tokens", payload.TotalTokens))
+
 	return historyAuditEvent{kind: "model", label: label, detail: detail, step: payload.Step}, true
 }
 
@@ -258,13 +305,16 @@ func historyAuditPhase(content string) (historyAuditEvent, bool) {
 		State  string `json:"state"`
 		Detail string `json:"detail"`
 	}
+
 	if json.Unmarshal([]byte(content), &payload) != nil {
 		return historyAuditEvent{}, false
 	}
+
 	label := joinNonEmpty(" ", payload.Lane, payload.Phase, payload.State)
 	if label == "" {
 		label = "phase changed"
 	}
+
 	return historyAuditEvent{kind: "lane", label: label, detail: payload.Detail, status: payload.State}, true
 }
 
@@ -278,14 +328,18 @@ func historyAuditCompletionStatus(content string) (historyAuditEvent, bool) {
 		EditAttempted    bool   `json:"edit_attempted"`
 		VerificationSeen bool   `json:"verification_seen"`
 	}
+
 	if json.Unmarshal([]byte(content), &payload) != nil {
 		return historyAuditEvent{}, false
 	}
+
 	status := util.FirstNonEmpty(payload.Status, "updated")
 	label := "contract " + status
+
 	if payload.Contract != "" {
 		label += ": " + payload.Contract
 	}
+
 	detail := joinNonEmpty("; ",
 		keyValue("lane", payload.Lane),
 		keyValue("blocker", payload.BlockerKind),
@@ -293,6 +347,7 @@ func historyAuditCompletionStatus(content string) (historyAuditEvent, bool) {
 		boolKeyValue("edit_attempted", payload.EditAttempted),
 		boolKeyValue("verification_seen", payload.VerificationSeen),
 	)
+
 	return historyAuditEvent{kind: "contract", label: label, detail: detail, status: status}, true
 }
 
@@ -306,9 +361,11 @@ func historyAuditBudget(content string) (historyAuditEvent, bool) {
 		StopReason      string `json:"stop_reason"`
 		BudgetExhausted bool   `json:"budget_exhausted"`
 	}
+
 	if json.Unmarshal([]byte(content), &payload) != nil {
 		return historyAuditEvent{}, false
 	}
+
 	label := fmt.Sprintf("budget used %d/%d tool step(s)", payload.UsedToolResults, payload.MaxToolSteps)
 	detail := joinNonEmpty("; ",
 		keyValue("lane", payload.Lane),
@@ -316,6 +373,7 @@ func historyAuditBudget(content string) (historyAuditEvent, bool) {
 		keyValue("stop", payload.StopReason),
 		boolKeyValue("exhausted", payload.BudgetExhausted),
 	)
+
 	return historyAuditEvent{kind: "budget", label: label, detail: detail}, true
 }
 
@@ -326,13 +384,16 @@ func historyAuditPermissionDecision(content string) (historyAuditEvent, bool) {
 		ReasonCode string `json:"reason_code"`
 		Source     string `json:"source"`
 	}
+
 	if json.Unmarshal([]byte(content), &payload) != nil {
 		return historyAuditEvent{}, false
 	}
+
 	label := joinNonEmpty(" ", payload.Decision, payload.Tool)
 	if label == "" {
 		label = "permission decision"
 	}
+
 	return historyAuditEvent{kind: "permission", label: label, detail: joinNonEmpty("; ", keyValue("reason", payload.ReasonCode), keyValue("source", payload.Source)), status: payload.Decision}, true
 }
 
@@ -342,13 +403,16 @@ func historyAuditToolRewrite(content string) (historyAuditEvent, bool) {
 		RewrittenTool string `json:"rewritten_tool"`
 		Agent         string `json:"agent"`
 	}
+
 	if json.Unmarshal([]byte(content), &payload) != nil {
 		return historyAuditEvent{}, false
 	}
+
 	label := "tool redirected"
 	if payload.OriginalTool != "" || payload.RewrittenTool != "" {
 		label = fmt.Sprintf("tool redirected %s -> %s", payload.OriginalTool, payload.RewrittenTool)
 	}
+
 	return historyAuditEvent{kind: "routing", label: label, detail: keyValue("agent", payload.Agent), status: "redirected"}, true
 }
 
@@ -361,15 +425,19 @@ func historyAuditReadiness(content string) (historyAuditEvent, bool) {
 		Confidence    string   `json:"confidence"`
 		EvidencePaths []string `json:"evidence_paths"`
 	}
+
 	if json.Unmarshal([]byte(content), &payload) != nil {
 		return historyAuditEvent{}, false
 	}
+
 	status := "blocked"
 	if payload.Ready {
 		status = "satisfied"
 	}
+
 	label := "evidence gate " + status
 	detail := joinNonEmpty("; ", keyValue("lane", payload.Lane), keyValue("confidence", payload.Confidence), keyValue("action", payload.Action), keyValue("reason", payload.Reason), countKeyValue("evidence_paths", len(payload.EvidencePaths)))
+
 	return historyAuditEvent{kind: "evidence", label: label, detail: detail, status: status}, true
 }
 
@@ -383,19 +451,24 @@ func historyAuditGate(role string, content string) (historyAuditEvent, bool) {
 		BlockerKind string   `json:"blocker_kind"`
 		Evidence    []string `json:"evidence_paths"`
 	}
+
 	if json.Unmarshal([]byte(content), &payload) != nil {
 		return historyAuditEvent{}, false
 	}
+
 	status := "blocked"
 	if payload.Passed {
 		status = "accepted"
 	}
+
 	kind := "contract"
 	if role == "control_rails_enforcement" {
 		kind = "control rails"
 	}
+
 	label := kind + " " + status
 	detail := joinNonEmpty("; ", keyValue("lane", payload.Lane), keyValue("contract", payload.Contract), keyValue("action", payload.Action), keyValue("reason", payload.Reason), keyValue("blocker", payload.BlockerKind), countKeyValue("evidence_paths", len(payload.Evidence)))
+
 	return historyAuditEvent{kind: kind, label: label, detail: detail, status: status}, true
 }
 
@@ -404,9 +477,11 @@ func historyAuditPostReadinessGap(content string) (historyAuditEvent, bool) {
 		NamedGap        string `json:"named_gap"`
 		WhyNotAnswering string `json:"why_not_answering"`
 	}
+
 	if json.Unmarshal([]byte(content), &payload) != nil {
 		return historyAuditEvent{}, false
 	}
+
 	return historyAuditEvent{kind: "evidence", label: "post-readiness gap declared", detail: joinNonEmpty("; ", keyValue("gap", payload.NamedGap), keyValue("why", payload.WhyNotAnswering)), status: "open"}, true
 }
 
@@ -447,33 +522,41 @@ func historyAuditAutonomyEvent(content string) (historyAuditEvent, bool) {
 			OpenObligations []string `json:"open_obligations"`
 		} `json:"gate"`
 	}
+
 	if json.Unmarshal([]byte(content), &payload) != nil {
 		return historyAuditEvent{}, false
 	}
+
 	switch payload.Type {
 	case "contract_compiled", "contract_presented", "contract_recompiled", "contract_stopped":
 		label := strings.ReplaceAll(payload.Type, "_", " ")
 		detail := joinNonEmpty("; ", keyValue("lane", payload.Correlation.Lane), keyValue("phase", payload.Correlation.Phase), keyValue("contract", payload.Correlation.RuntimeContract), keyValue("id", payload.ContractID))
+
 		return historyAuditEvent{kind: "contract", label: label, detail: detail}, true
 	case "tool_policy_decision", "tool_policy_result":
 		if payload.Policy == nil {
 			return historyAuditEvent{}, false
 		}
+
 		tool := util.FirstNonEmpty(payload.Policy.ToolName, payload.Correlation.ToolName)
 		label := joinNonEmpty(" ", "tool policy", payload.Policy.Decision, tool)
 		detail := joinNonEmpty("; ", keyValue("reason", payload.Policy.ReasonCode), keyValue("result", payload.Policy.Result))
+
 		return historyAuditEvent{kind: "policy", label: label, detail: detail, status: payload.Policy.Decision}, true
 	case "obligation_opened", "obligation_resolved", "obligation_waived":
 		if payload.Obligation == nil {
 			return historyAuditEvent{}, false
 		}
+
 		label := strings.ReplaceAll(payload.Type, "_", " ") + ": " + util.FirstNonEmpty(payload.Obligation.Kind, payload.Obligation.ObligationID)
 		detail := joinNonEmpty("; ", keyValue("target", payload.Obligation.TargetRef), keyValue("resolution", payload.Obligation.Resolution))
+
 		return historyAuditEvent{kind: "obligation", label: label, detail: detail, status: payload.Obligation.Status}, true
 	case "readiness_state_updated":
 		if payload.Readiness == nil {
 			return historyAuditEvent{}, false
 		}
+
 		label := "contract readiness updated"
 		detail := joinNonEmpty("; ",
 			boolKeyValue("answer", payload.Readiness.ReadyToAnswer),
@@ -482,13 +565,16 @@ func historyAuditAutonomyEvent(content string) (historyAuditEvent, bool) {
 			countKeyValue("open_obligations", len(payload.Readiness.OpenObligations)),
 			keyValue("further_reads_require", payload.Readiness.FurtherReadsRequire),
 		)
+
 		return historyAuditEvent{kind: "evidence", label: label, detail: detail}, true
 	case "completion_gate_decision", "gate_decision":
 		if payload.Gate == nil {
 			return historyAuditEvent{}, false
 		}
+
 		label := joinNonEmpty(" ", payload.Gate.Gate, payload.Gate.Decision)
 		detail := joinNonEmpty("; ", keyValue("reason", payload.Gate.ReasonCode), countKeyValue("open_obligations", len(payload.Gate.OpenObligations)))
+
 		return historyAuditEvent{kind: "gate", label: label, detail: detail, status: payload.Gate.Decision}, true
 	default:
 		return historyAuditEvent{kind: "event", label: strings.ReplaceAll(payload.Type, "_", " "), detail: keyValue("contract", payload.ContractID)}, payload.Type != ""
@@ -537,6 +623,7 @@ func historyAuditTextEvent(role string, content string) (historyAuditEvent, bool
 	case "auto_salvage", "visible_tool_salvage", "reasoning_tool_salvage":
 		return historyAuditEvent{kind: "recovery", label: strings.ReplaceAll(role, "_", " "), detail: safeHistoryAuditDetail(content), status: "salvaged"}, true
 	}
+
 	return historyAuditEvent{}, false
 }
 
@@ -549,9 +636,11 @@ func cleanHistoryAuditEvent(event historyAuditEvent) historyAuditEvent {
 	event.label = truncateRunes(collapseWhitespace(strings.TrimSpace(event.label)), 120)
 	event.detail = safeHistoryAuditDetail(event.detail)
 	event.status = truncateRunes(collapseWhitespace(strings.TrimSpace(event.status)), 40)
+
 	if event.kind == "" && event.label != "" {
 		event.kind = "event"
 	}
+
 	return event
 }
 
@@ -560,14 +649,17 @@ func (event historyAuditEvent) auditLine() string {
 	if event.label == "" {
 		return ""
 	}
+
 	prefix := event.kind
 	if event.status != "" {
 		prefix = joinNonEmpty(" ", prefix, "["+event.status+"]")
 	}
+
 	line := joinNonEmpty(": ", prefix, event.label)
 	if event.detail != "" {
 		line += " - " + event.detail
 	}
+
 	return line
 }
 
@@ -576,18 +668,23 @@ func historyAuditDigestLines(entry historyEntry) []string {
 	if route := historyAuditRouteDigest(entry.auditEvents); route != "" {
 		lines = append(lines, route)
 	}
+
 	if tools := historyToolDigest(entry.toolCalls); tools != "" {
 		lines = append(lines, tools)
 	}
+
 	if latest := historyLatestToolDigest(entry.toolCalls); latest != "" {
 		lines = append(lines, latest)
 	}
+
 	if contracts := historyContractDigest(entry.auditEvents); contracts != "" {
 		lines = append(lines, contracts)
 	}
+
 	if signals := historySignalDigest(entry.auditEvents); signals != "" {
 		lines = append(lines, signals)
 	}
+
 	return lines
 }
 
@@ -597,30 +694,39 @@ func historyAuditRouteDigest(events []historyAuditEvent) string {
 		if event.kind != "lane" {
 			continue
 		}
+
 		if strings.EqualFold(event.label, "route selected") {
 			initial := util.FirstNonEmpty(auditDetailValue(event.detail, "initial"), event.status)
 			followup := auditDetailValue(event.detail, "followup")
 			contract := auditDetailValue(event.detail, "contract")
 			route := initial
+
 			if followup != "" {
 				route = joinNonEmpty(" -> ", route, followup)
 			}
+
 			if route == "" {
 				route = event.label
 			}
+
 			if contract != "" {
 				return "Route: " + route + " (" + contract + ")"
 			}
+
 			return "Route: " + route
 		}
+
 		if strings.HasPrefix(event.label, "plan-execute ") {
 			return "Plan-execute: " + strings.TrimPrefix(event.label, "plan-execute ")
 		}
+
 		if event.status != "" {
 			return "Lane: " + event.status
 		}
+
 		return "Lane: " + event.label
 	}
+
 	return ""
 }
 
@@ -628,22 +734,28 @@ func historyToolDigest(toolCalls []historyToolCall) string {
 	if len(toolCalls) == 0 {
 		return ""
 	}
+
 	counts := make(map[string]int)
 	running := 0
 	failed := 0
+
 	for _, tc := range toolCalls {
 		kind := primaryHistoryToolKind(tc.kind)
 		if kind == "" {
 			kind = "tool"
 		}
+
 		counts[kind]++
+
 		if tc.running {
 			running++
 		}
+
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(tc.outcome)), "failed") {
 			failed++
 		}
 	}
+
 	parts := make([]string, 0, len(counts))
 	for _, kind := range []string{"discovery", "read", "write", "verification", "contract", "delegation", "recovery", "shell", "context", "tool"} {
 		if count := counts[kind]; count > 0 {
@@ -651,19 +763,24 @@ func historyToolDigest(toolCalls []historyToolCall) string {
 			delete(counts, kind)
 		}
 	}
+
 	for kind, count := range counts {
 		parts = append(parts, fmt.Sprintf("%d %s", count, kind))
 	}
+
 	line := fmt.Sprintf("Tools: %d call(s)", len(toolCalls))
 	if len(parts) > 0 {
 		line += " (" + strings.Join(parts, ", ") + ")"
 	}
+
 	if running > 0 {
 		line += fmt.Sprintf("; %d running", running)
 	}
+
 	if failed > 0 {
 		line += fmt.Sprintf("; %d failed", failed)
 	}
+
 	return line
 }
 
@@ -671,29 +788,36 @@ func historyLatestToolDigest(toolCalls []historyToolCall) string {
 	for i := len(toolCalls) - 1; i >= 0; i-- {
 		tc := toolCalls[i]
 		name := historyToolName(tc.line)
+
 		if name == "" {
 			continue
 		}
+
 		state := "running"
 		if !tc.running {
 			state = "completed"
 		}
+
 		outcome := compactToolOutcome(tc.outcome)
 		if outcome != "" {
 			state = outcome
 		}
+
 		reason := truncateRunes(collapseWhitespace(strings.TrimSpace(tc.intent)), 100)
 		if reason != "" {
 			return "Latest: " + name + " " + state + " - " + reason
 		}
+
 		return "Latest: " + name + " " + state
 	}
+
 	return ""
 }
 
 func historyContractDigest(events []historyAuditEvent) string {
 	seen := map[string]struct{}{}
 	parts := make([]string, 0, 2)
+
 	for i := len(events) - 1; i >= 0 && len(parts) < 2; i-- {
 		event := cleanHistoryAuditEvent(events[i])
 		switch event.kind {
@@ -701,20 +825,26 @@ func historyContractDigest(events []historyAuditEvent) string {
 		default:
 			continue
 		}
+
 		text := compactAuditEventLabel(event)
 		if text == "" {
 			continue
 		}
+
 		if _, ok := seen[text]; ok {
 			continue
 		}
+
 		seen[text] = struct{}{}
 		parts = append(parts, text)
 	}
+
 	if len(parts) == 0 {
 		return ""
 	}
+
 	reverseStrings(parts)
+
 	return "Contracts: " + strings.Join(parts, "; ")
 }
 
@@ -726,12 +856,15 @@ func historySignalDigest(events []historyAuditEvent) string {
 		if signal == "" {
 			return
 		}
+
 		if _, ok := seen[signal]; ok {
 			return
 		}
+
 		seen[signal] = struct{}{}
 		signals = append(signals, signal)
 	}
+
 	for _, event := range events {
 		event = cleanHistoryAuditEvent(event)
 		switch event.kind {
@@ -757,12 +890,15 @@ func historySignalDigest(events []historyAuditEvent) string {
 			add("tool surface changed")
 		}
 	}
+
 	if len(signals) == 0 {
 		return ""
 	}
+
 	if len(signals) > 4 {
 		signals = signals[:4]
 	}
+
 	return "Signals: " + strings.Join(signals, ", ")
 }
 
@@ -771,9 +907,11 @@ func primaryHistoryToolKind(kind string) string {
 	if kind == "" {
 		return ""
 	}
+
 	if idx := strings.Index(kind, "/"); idx >= 0 {
 		kind = kind[:idx]
 	}
+
 	return strings.TrimSpace(kind)
 }
 
@@ -782,13 +920,16 @@ func historyToolName(line string) string {
 	if line == "" {
 		return ""
 	}
+
 	if idx := strings.Index(line, " | "); idx > 0 {
 		return strings.TrimSpace(line[:idx])
 	}
+
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
 		return ""
 	}
+
 	return fields[0]
 }
 
@@ -811,6 +952,7 @@ func compactAuditEventLabel(event historyAuditEvent) string {
 	if label == "" {
 		return ""
 	}
+
 	switch event.kind {
 	case "evidence":
 		if event.status != "" {
@@ -833,17 +975,21 @@ func compactAuditEventLabel(event historyAuditEvent) string {
 			return "control rails " + event.status
 		}
 	}
+
 	return truncateRunes(label, 80)
 }
 
 func auditDetailValue(detail string, key string) string {
 	for _, field := range strings.Fields(detail) {
 		field = strings.Trim(field, ";,")
+
 		prefix := key + "="
+
 		if strings.HasPrefix(field, prefix) {
 			return strings.TrimSpace(strings.TrimPrefix(field, prefix))
 		}
 	}
+
 	return ""
 }
 
@@ -858,11 +1004,13 @@ func safeHistoryAuditDetail(text string) string {
 	if text == "" {
 		return ""
 	}
+
 	return truncateRunes(text, 220)
 }
 
 func historyShellCommandLooksLikeVerification(command string) bool {
 	command = strings.TrimSpace(command)
+
 	return strings.HasPrefix(command, "go test") ||
 		strings.HasPrefix(command, "go build") ||
 		strings.HasPrefix(command, "make test") ||
@@ -901,6 +1049,7 @@ func joinNonEmpty(sep string, parts ...string) string {
 			out = append(out, part)
 		}
 	}
+
 	return strings.Join(out, sep)
 }
 
@@ -909,6 +1058,7 @@ func keyValue(key string, value string) string {
 	if value == "" {
 		return ""
 	}
+
 	return key + "=" + value
 }
 
@@ -920,6 +1070,7 @@ func intKeyValue(key string, value int) string {
 	if value == 0 {
 		return ""
 	}
+
 	return fmt.Sprintf("%s=%d", key, value)
 }
 
@@ -927,5 +1078,6 @@ func countKeyValue(key string, value int) string {
 	if value == 0 {
 		return ""
 	}
+
 	return fmt.Sprintf("%s=%d", key, value)
 }

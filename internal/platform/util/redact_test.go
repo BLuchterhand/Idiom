@@ -61,6 +61,7 @@ func TestRedactedValue(t *testing.T) {
 	t.Run("consistent output for same input", func(t *testing.T) {
 		a := RedactedValue("my-secret-key")
 		b := RedactedValue("my-secret-key")
+
 		if a != b {
 			t.Errorf("RedactedValue not consistent: %q != %q", a, b)
 		}
@@ -69,6 +70,7 @@ func TestRedactedValue(t *testing.T) {
 	t.Run("different inputs produce different outputs", func(t *testing.T) {
 		a := RedactedValue("secret-a")
 		b := RedactedValue("secret-b")
+
 		if a == b {
 			t.Errorf("different inputs should produce different outputs, both got %q", a)
 		}
@@ -91,6 +93,7 @@ func TestRedactedValue(t *testing.T) {
 	t.Run("trims input before hashing", func(t *testing.T) {
 		a := RedactedValue("secret")
 		b := RedactedValue("  secret  ")
+
 		if a != b {
 			t.Errorf("RedactedValue should trim whitespace: %q != %q", a, b)
 		}

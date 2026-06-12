@@ -33,6 +33,7 @@ func (m *Model) refreshSessionsList() {
 	if dir == "" {
 		dir = "logs/conversations"
 	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -42,34 +43,46 @@ func (m *Model) refreshSessionsList() {
 			m.sessions.rawCacheMTime = time.Time{}
 			m.sessions.rawCacheValid = true
 			m.sessions.summaryCache = nil
+
 			return
 		}
+
 		m.sessions.list = nil
+
 		return
 	}
+
 	if m.sessions.summaryCache == nil {
 		m.sessions.summaryCache = make(map[string]sessionSummaryCacheEntry, len(entries))
 	}
+
 	nextCache := make(map[string]sessionSummaryCacheEntry, len(entries))
 	sessions := make([]SessionInfo, 0, len(entries))
+
 	var dirMTime time.Time
+
 	if info, err := os.Stat(dir); err == nil {
 		dirMTime = info.ModTime()
 	}
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
+
 		name := entry.Name()
 		if !strings.HasSuffix(name, ".jsonl") {
 			continue
 		}
+
 		path := filepath.Join(dir, name)
 		id := strings.TrimSuffix(name, ".jsonl")
+
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
+
 		size := info.Size()
 		modTime := info.ModTime()
 
@@ -81,6 +94,7 @@ func (m *Model) refreshSessionsList() {
 			session.ID = id
 			session.Path = path
 		}
+
 		nextCache[path] = sessionSummaryCacheEntry{
 			modTime: modTime,
 			size:    size,
@@ -88,9 +102,11 @@ func (m *Model) refreshSessionsList() {
 		}
 		sessions = append(sessions, session)
 	}
+
 	slices.SortFunc(sessions, func(a, b SessionInfo) int {
 		return -cmp.Compare(a.ID, b.ID)
 	})
+
 	m.sessions.summaryCache = nextCache
 	m.sessions.rawCache = append(m.sessions.rawCache[:0], sessions...)
 	m.sessions.rawCacheDir = dir
@@ -101,16 +117,20 @@ func (m *Model) refreshSessionsList() {
 	// race) falls through harmlessly.
 	currentID := m.sessionID()
 	filtered := make([]SessionInfo, 0, len(sessions))
+
 	for _, s := range sessions {
 		if s.ID == currentID {
 			continue
 		}
+
 		filtered = append(filtered, s)
 	}
+
 	m.sessions.list = filtered
 	if m.sessions.cursor < 0 {
 		m.sessions.cursor = 0
 	}
+
 	if m.sessions.cursor >= len(m.sessions.list) {
 		m.sessions.cursor = max(0, len(m.sessions.list)-1)
 	}
@@ -124,18 +144,23 @@ func (m *Model) renderSessionsPanelContent() {
 	if !m.history.panelOpen {
 		return
 	}
+
 	w := max(8, m.sessions.viewport.Width)
 	selectedStart := -1
 	selectedEnd := -1
 	line := 0
 
 	var b strings.Builder
+
 	title := "◇ Sessions"
+
 	if m.history.focused && m.panelTab == panelTabSessions {
 		title = "◇ Sessions · ↑/↓ select · Enter resume"
 	}
+
 	b.WriteString(panelTitleStyle.Width(w).Render(title))
 	b.WriteString("\n")
+
 	line++
 
 	if len(m.sessions.list) == 0 {
@@ -144,8 +169,10 @@ func (m *Model) renderSessionsPanelContent() {
 			b.WriteString(panelDetailStyle.Width(w).Render(wl))
 			b.WriteString("\n")
 		}
+
 		m.sessions.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
 		m.sessions.viewport.SetYOffset(0)
+
 		return
 	}
 
@@ -154,6 +181,7 @@ func (m *Model) renderSessionsPanelContent() {
 		if summary == "" {
 			summary = "(no user prompt recorded)"
 		}
+
 		msgCount := fmt.Sprintf("%d msg", s.UserMessages+s.AssistMessage)
 		header := fmt.Sprintf("%s · %s", s.ID, msgCount)
 		body := "  " + summary
@@ -165,18 +193,25 @@ func (m *Model) renderSessionsPanelContent() {
 		} else {
 			b.WriteString(lipgloss.NewStyle().Bold(true).Width(w).Render("  " + header))
 		}
+
 		b.WriteString("\n")
+
 		line++
+
 		wrappedBody := wrapLines(body, max(1, w-2))
+
 		for _, wl := range wrappedBody {
 			if focused {
 				b.WriteString(panelFocusedStyle.Width(w).Render(wl))
 			} else {
 				b.WriteString(panelDetailStyle.Width(w).Render(wl))
 			}
+
 			b.WriteString("\n")
 		}
+
 		line += len(wrappedBody)
+
 		if i == m.sessions.cursor {
 			selectedStart = rowStart
 			selectedEnd = max(rowStart, line-1)
@@ -191,9 +226,11 @@ func (m *Model) ensureSessionsCursorVisible(start, end int) {
 	if start < 0 || end < start {
 		return
 	}
+
 	height := max(1, m.sessions.viewport.Height)
 	top := m.sessions.viewport.YOffset
 	bottom := top + height - 1
+
 	switch {
 	case start < top:
 		m.sessions.viewport.SetYOffset(start)
@@ -212,23 +249,30 @@ func (m *Model) handleSessionsPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		// disappears, signalling the panel is no longer interactive.
 		m.history.focused = false
 		m.renderSessionsPanelContent()
+
 		return true, m.waitForEventCmd()
 	case tea.KeyUp:
 		if m.sessions.cursor > 0 {
 			m.sessions.cursor--
 		}
+
 		m.renderSessionsPanelContent()
+
 		return true, m.waitForEventCmd()
 	case tea.KeyDown:
 		if m.sessions.cursor < len(m.sessions.list)-1 {
 			m.sessions.cursor++
 		}
+
 		m.renderSessionsPanelContent()
+
 		return true, m.waitForEventCmd()
 	case tea.KeyEnter:
 		m.resumeSelectedSession()
+
 		return true, m.waitForEventCmd()
 	}
+
 	return false, nil
 }
 
@@ -236,9 +280,11 @@ func (m *Model) resumeSelectedSession() {
 	if len(m.sessions.list) == 0 {
 		return
 	}
+
 	if m.sessions.cursor < 0 || m.sessions.cursor >= len(m.sessions.list) {
 		return
 	}
+
 	id := m.sessions.list[m.sessions.cursor].ID
 	if err := m.ResumeSession(id); err != nil {
 		m.status = "Resume failed: " + err.Error()

@@ -25,6 +25,7 @@ func classifyTUIRequest(text string) tuiRequestClassification {
 	if text == "" {
 		return tuiRequestClassification{Class: tuiRequestClassConversation}
 	}
+
 	if strings.HasPrefix(text, "/") {
 		return tuiRequestClassification{Class: tuiRequestClassCommand}
 	}
@@ -33,20 +34,26 @@ func classifyTUIRequest(text string) tuiRequestClassification {
 	if tuiRequestHasReadOnlyConstraint(words) {
 		return tuiRequestClassification{Class: tuiRequestClassConversation}
 	}
+
 	if plannerWordsContainAnyWholePhrase(words, "run tests", "run the tests", "go test", "verify", "check whether") {
 		return tuiRequestClassification{Class: tuiRequestClassVerification}
 	}
+
 	if plannerWordsContainAnyWholePhrase(words, "review", "security review", "performance review", "code review") {
 		return tuiRequestClassification{Class: tuiRequestClassReview}
 	}
+
 	if plannerWordsContainDirectiveVerb(words, "find", "locate") {
 		return tuiRequestClassification{Class: tuiRequestClassLocate}
 	}
+
 	if plannerWordsContainAnyWholePhrase(words,
 		"debug", "diagnose", "investigate", "root cause", "why did", "what happened", "explain",
 	) {
+
 		return tuiRequestClassification{Class: tuiRequestClassInvestigation}
 	}
+
 	return tuiRequestClassification{Class: tuiRequestClassConversation}
 }
 
@@ -79,5 +86,6 @@ func (m *Model) updateTUIRequestStatus(text string) {
 	if classification.Class == tuiRequestClassCommand {
 		return
 	}
+
 	m.status = classification.statusText()
 }

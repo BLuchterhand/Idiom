@@ -118,6 +118,7 @@ func ToolActionClass(tool string) string {
 	if !ok || spec.ActionClass == "" {
 		return ""
 	}
+
 	return spec.ActionClass
 }
 
@@ -128,36 +129,43 @@ func BuiltInToolSurfaceMetadata(tool string) (builtInToolSurfaceSpec, bool) {
 			return spec, true
 		}
 	}
+
 	return builtInToolSurfaceSpec{}, false
 }
 
 func defaultToolManifestTools() []string {
 	var tools []string
+
 	for _, spec := range builtInToolSurfaceSpecs {
 		if spec.DefaultManifest {
 			tools = append(tools, spec.Tool)
 		}
 	}
+
 	return tools
 }
 
 func builtInToolSurfaceToolsByCategory(category ToolCategory) []string {
 	var tools []string
+
 	for _, spec := range builtInToolSurfaceSpecs {
 		if spec.Category == category {
 			tools = append(tools, spec.Tool)
 		}
 	}
+
 	return tools
 }
 
 func builtInToolSurfaceToolsByCategoryWithoutLanguageSpecific(category ToolCategory) []string {
 	var tools []string
+
 	for _, spec := range builtInToolSurfaceSpecs {
 		if spec.Category == category && strings.TrimSpace(spec.Language) == "" {
 			tools = append(tools, spec.Tool)
 		}
 	}
+
 	return tools
 }
 
@@ -166,6 +174,7 @@ func builtInToolSurfaceEvidenceCapabilities(tool string) []string {
 	if !ok || len(spec.EvidenceCapabilities) == 0 {
 		return nil
 	}
+
 	return slices.Clone(spec.EvidenceCapabilities)
 }
 
@@ -174,6 +183,7 @@ func builtInToolSurfacePolicyCapabilities(tool string) []autonomy.Capability {
 	if !ok || len(spec.PolicyCapabilities) == 0 {
 		return nil
 	}
+
 	return slices.Clone(spec.PolicyCapabilities)
 }
 
@@ -182,6 +192,7 @@ func builtInToolSurfaceSideEffects(tool string) []autonomy.SideEffectClass {
 	if !ok || len(spec.SideEffects) == 0 {
 		return nil
 	}
+
 	return slices.Clone(spec.SideEffects)
 }
 
@@ -197,11 +208,13 @@ func builtInToolSurfaceDiscoveryLocalArtifacts(tool string) bool {
 
 func builtInToolSurfaceDiscoveryLocalArtifactTools() []string {
 	var tools []string
+
 	for _, spec := range builtInToolSurfaceSpecs {
 		if spec.DiscoveryLocalArtifacts {
 			tools = append(tools, spec.Tool)
 		}
 	}
+
 	return tools
 }
 
@@ -217,30 +230,36 @@ func builtInToolSurfaceMCPDiscoveryReadModelTool(tool string) bool {
 
 func RuntimeSourceInspectionToolNames() []string {
 	var tools []string
+
 	for _, spec := range builtInToolSurfaceSpecs {
 		if spec.RuntimeSourceInspection {
 			tools = append(tools, spec.Tool)
 		}
 	}
+
 	return tools
 }
 
 func RuntimeContextDiscoveryToolNames() []string {
 	var tools []string
+
 	for _, spec := range builtInToolSurfaceSpecs {
 		if spec.RuntimeContextDiscovery {
 			tools = append(tools, spec.Tool)
 		}
 	}
+
 	return tools
 }
 
 func RuntimeHistoryInspectionToolNames() []string {
 	var tools []string
+
 	for _, spec := range builtInToolSurfaceSpecs {
 		if spec.RuntimeHistoryInspection {
 			tools = append(tools, spec.Tool)
 		}
 	}
+
 	return tools
 }

@@ -1,28 +1,28 @@
 ---
 tags:
-  - harness
+  - idiom
   - sidecar
   - mcp
   - integrations
 ---
 
-# Sidecar and LLM Agent Integrations
+# Sidecar and External Integrations
 
-Agent Harness exposes repository-aware capabilities to LLM agents through CLI tool
+Idiom exposes repository-aware capabilities to external agents through CLI tool
 commands, tool schemas, inbound MCP, outbound MCP client tools, and project
 external tools.
 
-The integration principle is reuse: LLM-agent surfaces should share the same
-schemas, permissions, freshness checks, telemetry, and audit paths as the
-harness runner.
+The integration principle is reuse: external surfaces should share the same
+schemas, permissions, freshness checks, telemetry, and audit paths as the local
+runner.
 
 ## Integration Shape
 
 ```mermaid
 flowchart TD
-    External["LLM agent"]
-    CLI["harness tool <name>"]
-    Schemas["harness tool schemas"]
+    External["External agent"]
+    CLI["idiom tool <name>"]
+    Schemas["idiom tool schemas"]
     InboundMCP["Inbound MCP discovery server"]
     OutboundMCP["Outbound MCP client registry"]
     ExternalTools["Project external tools"]
@@ -44,7 +44,7 @@ flowchart TD
 
 ## Why Sidecar Matters
 
-LLM agents often lack durable repository context. Agent Harness can act as
+External coding agents often lack durable repository context. Idiom can act as
 the local substrate that gives those agents:
 
 - Fresh context packets.
@@ -55,17 +55,17 @@ the local substrate that gives those agents:
 - Verification routes.
 - Audit evidence.
 
-This turns Agent Harness from a single chat surface into reusable agent infrastructure.
+This turns Idiom from a single chat surface into reusable agent infrastructure.
 
 ## CLI Tool Surface
 
 The CLI tool surface uses:
 
 ```bash
-harness tool list
-harness tool help
-harness tool schemas
-harness tool <tool-name> --input '<json>'
+idiom tool list
+idiom tool help
+idiom tool schemas
+idiom tool <tool-name> --input '<json>'
 ```
 
 The result envelope contains the tool name, summary, output, and error fields.
@@ -75,7 +75,7 @@ error.
 Recovery inspection is part of the read-only sidecar surface. Use
 `recovery_inspect` and `recovery_status` in the `discovery` profile to inspect
 failure records and decomposition packets without dispatching, promoting, or
-reconciling additional extension points. `recovery_decompose` writes `.harness/recovery`
+reconciling follow-up work. `recovery_decompose` writes `.idiom/recovery`
 artifacts, rejects symlinked output parents and recovery control artifact
 targets, and therefore requires the default profile; `recover promote` and
 `recover reconcile` remain first-party CLI write surfaces. Product/operator
@@ -89,8 +89,8 @@ authority.
 
 There are two MCP-related boundaries:
 
-- Inbound MCP server: `cmd/harness mcp serve` exposes selected Agent Harness tools to
-  LLM-agent clients. Target inbound MCP requires stdio and is filtered toward
+- Inbound MCP server: `cmd/idiom mcp serve` exposes selected Idiom tools to
+  external clients. Current inbound MCP requires stdio and is filtered toward
   discovery/context profile surfaces.
 - Outbound MCP client registry: `internal/capabilities/mcp` owns clients and registry
   behavior for calling configured external MCP tools, surfaced as
@@ -108,28 +108,30 @@ The MCP surface should mirror the same contract:
 - Tool result normalization.
 - Telemetry and audit correlation.
 
-Avoid implementing a second, less-safe version of a tool just for LLM-agent
+Avoid implementing a second, less-safe version of a tool just for external
 clients.
 
-## MCP Scope And Limits
+## Current MCP Status And Limits
 
-The inbound MCP server should support stdio requests such as `initialize`,
-`tools/list`, `tools/call`, `roots/list`, `resources/list`, and metadata-only
-`resources/read`.
+The inbound MCP server is experimental. Current docs describe support for stdio
+requests such as `initialize`, `tools/list`, `tools/call`, `roots/list`,
+`resources/list`, and metadata-only `resources/read`.
 
-Scope limits include:
+Current limitations include:
 
-- Resource file bodies remain outside the default discovery profile.
+- Resource file bodies are not returned yet.*
 - Resource paths are root-clamped and protected locations are denied.
-- Full resource/freshness parity requires explicit protocol and privacy tests.
+- Full resource/freshness parity remains later work.*
 - Tool exposure is filtered by profile, with discovery/context and read-only
   recovery status surfaces favored for MCP.
 - Telemetry and permission behavior should be checked against the CLI sidecar
   path when changing MCP behavior.
 
+`*` marks roadmapped MCP/resource parity work.
+
 ## Project External Tools
 
-Projects can define external tools under `.harness/external_tools/<name>.json`.
+Projects can define external tools under `.idiom/external_tools/<name>.json`.
 These definitions include schema and safety metadata and are loaded by the
 workspace external tool registry.
 
@@ -140,9 +142,9 @@ Treat project external tools as an integration boundary:
 - Their schemas should be reviewable.
 - Their side effects should be explicit.
 
-## LLM Agent Guidance
+## External Agent Guidance
 
-LLM agents should:
+External agents should:
 
 - Start with `context_pack` for repo localization.
 - Use stable task strings to reuse cache.
@@ -157,7 +159,7 @@ LLM agents should:
 Sidecar and audit surfaces should be careful with raw content:
 
 - Do not publish raw transcripts by default.
-- Redact secrets and deployment-identifying data.
+- Redact secrets and customer-identifying data.
 - Prefer aggregate counts, paths, command IDs, session IDs, and structured
   findings for shared diagnostics.
 - Preserve enough evidence for reproduction without leaking sensitive text.
@@ -177,7 +179,7 @@ When adding or changing an integration:
 
 | Source | Why it matters |
 | --- | --- |
-| `cmd/harness/mcp.go` | Inbound MCP server command |
+| `cmd/idiom/mcp.go` | Inbound MCP server command |
 | `internal/capabilities/mcp/client.go` | Outbound MCP client behavior |
 | `internal/capabilities/mcp/registry.go` | Outbound MCP registry |
 | `internal/capabilities/workspace/tool_schema_export.go` | Tool schema export and MCP/profile filtering |

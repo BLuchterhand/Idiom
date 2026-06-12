@@ -1,84 +1,84 @@
 [2m  ▎ thinking[0m
   · 17054 tok · in 16900 (16640 cached / 260 new) · out 154 (35 reasoning) · ¥0.0009
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/docs/proposal-read-only-named-path-evidence-prefetch.md"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/docs/debugging-reviewer-bench.md"}
+  -> read_file {"path": "/workspace/idiom/docs/proposal-read-only-named-path-evidence-prefetch.md"}
+  -> read_file {"path": "/workspace/idiom/docs/debugging-reviewer-bench.md"}
 [2m  ▎ thinking[0m
 Let me gather the benchmark evidence cited in the proposal and understand the current runtime configuration.
   · 21871 tok · in 21606 (17152 cached / 4454 new) · out 265 (100 reasoning) · ¥0.0053 · cache prefix changed: tools
   -> glob {"pattern": "**/benchmark/**/summary.json"}
   -> glob {"pattern": "**/benchmark/**/conversations/*.jsonl"}
-  -> grep {"pattern": "prefetch", "path": "/Users/ben/Documents/GitHub/idiom"}
+  -> grep {"pattern": "prefetch", "path": "/workspace/idiom"}
   · tool output truncated: 8468 of 41236 bytes elided
 [2m  ▎ thinking[0m
   · 30966 tok · in 30549 (21760 cached / 8789 new) · out 417 (108 reasoning) · ¥0.0101
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/.idiom/benchmark/20260611-154037-large-fixcheck/summary.json"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/.idiom/benchmark/20260611-152410-large/summary.json"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/.idiom/benchmark/20260611-141654/summary.json"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/.idiom/benchmark/20260611-142351/summary.json"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/.idiom/benchmark/20260611-145729/summary.json"}
+  -> read_file {"path": "/workspace/idiom/.idiom/benchmark/20260611-154037-large-fixcheck/summary.json"}
+  -> read_file {"path": "/workspace/idiom/.idiom/benchmark/20260611-152410-large/summary.json"}
+  -> read_file {"path": "/workspace/idiom/.idiom/benchmark/20260611-141654/summary.json"}
+  -> read_file {"path": "/workspace/idiom/.idiom/benchmark/20260611-142351/summary.json"}
+  -> read_file {"path": "/workspace/idiom/.idiom/benchmark/20260611-145729/summary.json"}
 [2m  ▎ thinking[0m
   · 44035 tok · in 43753 (30848 cached / 12905 new) · out 282 (26 reasoning) · ¥0.0141
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom", "pattern": "deepseek-v4-flash|deepseek-v4-pro|deepseek-chat", "glob": "con...
-  -> explore {"task": "In /Users/ben/Documents/GitHub/idiom, find the runtime configuration that maps model aliases (deepseek-v4-flas...
-  -> mcp__codegraph__files {"pattern": "**/*.go", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> glob {"pattern": "**/config/**", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "deepseek", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/backends.example.json"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/platform/config/config.go", "offset": 100, "limit": 200}
-  -> glob {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/backends", "recursive": true}
+  -> grep {"path": "/workspace/idiom", "pattern": "deepseek-v4-flash|deepseek-v4-pro|deepseek-chat", "glob": "con...
+  -> explore {"task": "In /workspace/idiom, find the runtime configuration that maps model aliases (deepseek-v4-flas...
+  -> mcp__codegraph__files {"pattern": "**/*.go", "path": "/workspace/idiom"}
+  -> glob {"pattern": "**/config/**", "path": "/workspace/idiom"}
+  -> grep {"pattern": "deepseek", "path": "/workspace/idiom"}
+  -> read_file {"path": "/workspace/idiom/backends.example.json"}
+  -> read_file {"path": "/workspace/idiom/internal/platform/config/config.go", "offset": 100, "limit": 200}
+  -> glob {"path": "/workspace/idiom/internal/runtime/backends", "recursive": true}
   ⊘ glob pattern is required
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/platform/config/config.go", "offset": 300, "limit": 200}
-  -> ls {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/backends"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/tui/app/hosted_backend_test.go"}
-  -> read_file {"limit": 200, "offset": 0, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/backends/backends.go"}
-  -> read_file {"limit": 200, "offset": 100, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/backends/launcher.go"}
-  -> read_file {"limit": 300, "offset": 200, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/backends/backends.go"}
+  -> read_file {"path": "/workspace/idiom/internal/platform/config/config.go", "offset": 300, "limit": 200}
+  -> ls {"path": "/workspace/idiom/internal/runtime/backends"}
+  -> read_file {"path": "/workspace/idiom/internal/surfaces/tui/app/hosted_backend_test.go"}
+  -> read_file {"limit": 200, "offset": 0, "path": "/workspace/idiom/internal/runtime/backends/backends.go"}
+  -> read_file {"limit": 200, "offset": 100, "path": "/workspace/idiom/internal/runtime/backends/launcher.go"}
+  -> read_file {"limit": 300, "offset": 200, "path": "/workspace/idiom/internal/runtime/backends/backends.go"}
   -> codegraph_search {"query": "AliasForRole"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime", "pattern": "AliasForRole|roleSpec|backendsModelToLlamaSer...
+  -> grep {"path": "/workspace/idiom/internal/runtime", "pattern": "AliasForRole|roleSpec|backendsModelToLlamaSer...
   ⊘ codegraph_search unknown tool "codegraph_search"
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/tui/app", "pattern": "func roleSpec"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama", "pattern": "ToolCall|tool_call|TextualTool|native.*...
+  -> grep {"path": "/workspace/idiom/internal/surfaces/tui/app", "pattern": "func roleSpec"}
+  -> grep {"path": "/workspace/idiom/internal/runtime/llama", "pattern": "ToolCall|tool_call|TextualTool|native.*...
   -> codegraph_search {"query": "deepseek", "kind": "function"}
   ⊘ codegraph_search unknown tool "codegraph_search"
-  -> read_file {"limit": 100, "offset": 110, "path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/tui/app/lifecycle.go"}
-  -> read_file {"limit": 120, "offset": 80, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/client.go"}
-  -> read_file {"limit": 200, "offset": 270, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/client.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/deepseek_test.go", "limit": 100}
-  -> read_file {"limit": 100, "offset": 1050, "path": "/Users/ben/Documents/GitHub/idiom/internal/platform/config/config.go"}
-  -> read_file {"limit": 100, "offset": 1050, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/client.go"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/platform/config", "pattern": "BuiltinChatPresets|qwen3-coding"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama", "pattern": "prompt_cache|Cache"}
-  -> read_file {"limit": 80, "offset": 974, "path": "/Users/ben/Documents/GitHub/idiom/internal/platform/config/config.go"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/tui/app", "pattern": "backendsModelToLlamaServer"}
+  -> read_file {"limit": 100, "offset": 110, "path": "/workspace/idiom/internal/surfaces/tui/app/lifecycle.go"}
+  -> read_file {"limit": 120, "offset": 80, "path": "/workspace/idiom/internal/runtime/llama/client.go"}
+  -> read_file {"limit": 200, "offset": 270, "path": "/workspace/idiom/internal/runtime/llama/client.go"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/llama/deepseek_test.go", "limit": 100}
+  -> read_file {"limit": 100, "offset": 1050, "path": "/workspace/idiom/internal/platform/config/config.go"}
+  -> read_file {"limit": 100, "offset": 1050, "path": "/workspace/idiom/internal/runtime/llama/client.go"}
+  -> grep {"path": "/workspace/idiom/internal/platform/config", "pattern": "BuiltinChatPresets|qwen3-coding"}
+  -> grep {"path": "/workspace/idiom/internal/runtime/llama", "pattern": "prompt_cache|Cache"}
+  -> read_file {"limit": 80, "offset": 974, "path": "/workspace/idiom/internal/platform/config/config.go"}
+  -> grep {"path": "/workspace/idiom/internal/surfaces/tui/app", "pattern": "backendsModelToLlamaServer"}
   ⊘ explore sub-agent: paused after 10 tool-call rounds (agent.max_steps) — the work so far is saved; send another message to continue, or set max_steps higher or to 0 for no limit
 [2m  ▎ thinking[0m
 Let me directly check the runtime configuration files.
   · 53565 tok · in 53314 (44032 cached / 9282 new) · out 251 (14 reasoning) · ¥0.0107
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/backends.example.json", "offset": 85, "limit": 40}
+  -> read_file {"path": "/workspace/idiom/backends.example.json", "offset": 85, "limit": 40}
   -> glob {"pattern": "**/.idiom/backends.json"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama", "pattern": "tool_choice|ToolChoice|TextualTools|Nat...
+  -> grep {"path": "/workspace/idiom/internal/runtime/llama", "pattern": "tool_choice|ToolChoice|TextualTools|Nat...
 [2m  ▎ thinking[0m
   · 56011 tok · in 55732 (53504 cached / 2228 new) · out 279 (42 reasoning) · ¥0.0039
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/client.go", "pattern": "BackendSupportsNativeTools|de...
-  -> grep {"glob": "*.go", "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime", "pattern": "BackendSupportsNativeTools"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/.idiom/backends.json", "limit": 80}
+  -> grep {"path": "/workspace/idiom/internal/runtime/llama/client.go", "pattern": "BackendSupportsNativeTools|de...
+  -> grep {"glob": "*.go", "path": "/workspace/idiom/internal/runtime", "pattern": "BackendSupportsNativeTools"}
+  -> read_file {"path": "/workspace/idiom/.idiom/backends.json", "limit": 80}
 [2m  ▎ thinking[0m
   · 57716 tok · in 57519 (55936 cached / 1583 new) · out 197 (24 reasoning) · ¥0.0031
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/client.go", "offset": 280, "limit": 30}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/client.go", "pattern": "Content|content.*=.*Text|Text...
+  -> read_file {"path": "/workspace/idiom/internal/runtime/llama/client.go", "offset": 280, "limit": 30}
+  -> grep {"path": "/workspace/idiom/internal/runtime/llama/client.go", "pattern": "Content|content.*=.*Text|Text...
 [2m  ▎ thinking[0m
   · 59397 tok · in 59170 (57600 cached / 1570 new) · out 227 (131 reasoning) · ¥0.0032
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/docs/design-direct-answer-efficiency.md", "limit": 80, "offset": 0}
+  -> read_file {"path": "/workspace/idiom/docs/design-direct-answer-efficiency.md", "limit": 80, "offset": 0}
 [2m  ▎ thinking[0m
   · 60572 tok · in 60459 (59392 cached / 1067 new) · out 113 (40 reasoning) · ¥0.0025
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/docs/evidence/idiom-efficiency-optimization/reviews/model-runtime-config.md"...
+  -> read_file {"path": "/workspace/idiom/docs/evidence/idiom-efficiency-optimization/reviews/model-runtime-config.md"...
 [2m  ▎ thinking[0m
   · 64927 tok · in 64681 (60544 cached / 4137 new) · out 246 (69 reasoning) · ¥0.0058
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/docs/evidence/read-only-prefetch-proposal/reviews/model-runtime-config.md", ...
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/docs/evidence/read-only-prefetch-proposal/reviews/model-runtime-config.md", ...
+  -> read_file {"path": "/workspace/idiom/docs/evidence/read-only-prefetch-proposal/reviews/model-runtime-config.md", ...
+  -> grep {"path": "/workspace/idiom/docs/evidence/read-only-prefetch-proposal/reviews/model-runtime-config.md", ...
 [2m  ▎ thinking[0m
   · 65228 tok · in 65095 (64896 cached / 199 new) · out 133 (28 reasoning) · ¥0.0018
-  -> read_file {"limit": 50, "offset": 5, "path": "/Users/ben/Documents/GitHub/idiom/docs/evidence/read-only-prefetch-proposal/reviews/...
+  -> read_file {"limit": 50, "offset": 5, "path": "/workspace/idiom/docs/evidence/read-only-prefetch-proposal/reviews/...
 [2m  ▎ thinking[0m
 Now I have all the evidence needed. Here is my review.
 

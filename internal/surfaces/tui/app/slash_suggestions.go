@@ -74,6 +74,7 @@ func (m *Model) updateSlashSuggestions() {
 	if m == nil || !m.ready {
 		return
 	}
+
 	value := m.input.Value()
 
 	// Check if the current input (possibly multi-line) has a line starting with /
@@ -92,6 +93,7 @@ func (m *Model) updateSlashSuggestions() {
 	if idx := strings.Index(query, " "); idx >= 0 {
 		query = query[:idx]
 	}
+
 	query = strings.TrimSpace(query)
 
 	matches := filterSuggestions(query)
@@ -132,25 +134,31 @@ func (m *Model) renderSlashSuggestions() string {
 	}
 
 	const maxEntries = 6
+
 	entries := s.matches
 	startOffset := 0
+
 	if len(entries) > maxEntries {
 		// Show a window around the current selection.
 		start := s.selected - maxEntries/2
 		if start < 0 {
 			start = 0
 		}
+
 		if start+maxEntries > len(entries) {
 			start = len(entries) - maxEntries
 		}
+
 		if start < 0 {
 			start = 0
 		}
+
 		startOffset = start
 		entries = entries[start : start+maxEntries]
 	}
 
 	var lines []string
+
 	// Compute the max command width for alignment.
 	maxCmd := 0
 	for _, e := range entries {
@@ -162,25 +170,32 @@ func (m *Model) renderSlashSuggestions() string {
 	for i, e := range entries {
 		cmdStyle := slashSuggestInactiveStyle
 		usageStyle := slashSuggestUsageStyle
+
 		if startOffset+i == s.selected {
 			cmdStyle = slashSuggestActiveStyle
 			usageStyle = slashSuggestActiveStyle
 		}
+
 		cmd := cmdStyle.Render(e.command)
+
 		var usage string
+
 		if e.usage != "" {
 			usage = " " + usageStyle.Render(e.usage)
 		}
+
 		// Pad to align usages.
 		pad := maxCmd - len(e.command)
 		if pad > 0 {
 			cmd += strings.Repeat(" ", pad)
 		}
+
 		lines = append(lines, cmd+usage)
 	}
 
 	// Add a hint line at the bottom.
 	hint := slashSuggestHintStyle.Render("Tab to complete · ↑↓ to navigate · Esc to dismiss")
+
 	lines = append(lines, hint)
 
 	return slashSuggestBoxStyle.Render(strings.Join(lines, "\n"))
@@ -192,12 +207,16 @@ func filterSuggestions(query string) []slashSuggestionEntry {
 	if query == "" {
 		return allSlashSuggestions()
 	}
+
 	lower := strings.ToLower(query)
+
 	var matches []slashSuggestionEntry
+
 	for _, s := range allSlashSuggestions() {
 		if strings.Contains(strings.ToLower(s.command), lower) {
 			matches = append(matches, s)
 		}
 	}
+
 	return matches
 }

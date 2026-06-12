@@ -4,30 +4,30 @@
 [2m  ▎ thinking[0m
 Let me gather context around the existing prefetch implementation to ground this review in actual code.
   · 18750 tok · in 17790 (17152 cached / 638 new) · out 960 (814 reasoning) · ¥0.0029 · cache prefix changed: tools
-  -> explore {"task": "In the idiom codebase at /Users/ben/Documents/GitHub/idiom, find all code related to \"prefetch\" — especially...
-  -> mcp__codegraph__context {"projectPath": "/Users/ben/Documents/GitHub/idiom", "task": "prefetch read_only_named_path_prefetch prefetch adapter tr...
-  -> grep {"pattern": "prefetch", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "TruncatedFiles", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "truncat", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/read_only_prefetch.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/capabilities/workspace/read_prefetch.go"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom", "pattern": "maybeApplyReadOnlyNamedPathPrefetch"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom", "pattern": "ToolNamePrefetch"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom", "pattern": "DirectAnswerSurfacePrefetchEligibility"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom", "pattern": "FormatToolResultForModel"}
-  -> read_file {"offset": 410, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner.go", "limit": 30}
-  -> read_file {"offset": 2200, "path": "/Users/ben/Documents/GitHub/idiom/internal/capabilities/workspace/manager.go", "limit": 120}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/direct_answer_surface.go", "limit": 160}
-  -> read_file {"offset": 270, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/read_only_answerability.go", "limit": ...
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/read_only_prefetch_test.go"}
-  -> read_file {"offset": 330, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/tools.go", "limit": 50}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/capabilities/workspace/read_prefetch_test.go"}
-  -> read_file {"offset": 13070, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner.go", "limit": 30}
-  -> read_file {"limit": 30, "offset": 1745, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner_plan_then_execute...
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent", "pattern": "requiredPathsHaveSourceBodyEvidence"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent", "pattern": "func readOnlyDirectAnswerLane"}
-  -> read_file {"offset": 1540, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/read_only_answerability_test.go", "li...
-  -> read_file {"limit": 20, "offset": 130, "path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/final_answer_acceptance.g...
+  -> explore {"task": "In the idiom codebase at /workspace/idiom, find all code related to \"prefetch\" — especially...
+  -> mcp__codegraph__context {"projectPath": "/workspace/idiom", "task": "prefetch read_only_named_path_prefetch prefetch adapter tr...
+  -> grep {"pattern": "prefetch", "path": "/workspace/idiom"}
+  -> grep {"pattern": "TruncatedFiles", "path": "/workspace/idiom"}
+  -> grep {"pattern": "truncat", "path": "/workspace/idiom"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/read_only_prefetch.go"}
+  -> read_file {"path": "/workspace/idiom/internal/capabilities/workspace/read_prefetch.go"}
+  -> grep {"path": "/workspace/idiom", "pattern": "maybeApplyReadOnlyNamedPathPrefetch"}
+  -> grep {"path": "/workspace/idiom", "pattern": "ToolNamePrefetch"}
+  -> grep {"path": "/workspace/idiom", "pattern": "DirectAnswerSurfacePrefetchEligibility"}
+  -> grep {"path": "/workspace/idiom", "pattern": "FormatToolResultForModel"}
+  -> read_file {"offset": 410, "path": "/workspace/idiom/internal/runtime/agent/runner.go", "limit": 30}
+  -> read_file {"offset": 2200, "path": "/workspace/idiom/internal/capabilities/workspace/manager.go", "limit": 120}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/direct_answer_surface.go", "limit": 160}
+  -> read_file {"offset": 270, "path": "/workspace/idiom/internal/runtime/agent/read_only_answerability.go", "limit": ...
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/read_only_prefetch_test.go"}
+  -> read_file {"offset": 330, "path": "/workspace/idiom/internal/runtime/agent/tools.go", "limit": 50}
+  -> read_file {"path": "/workspace/idiom/internal/capabilities/workspace/read_prefetch_test.go"}
+  -> read_file {"offset": 13070, "path": "/workspace/idiom/internal/runtime/agent/runner.go", "limit": 30}
+  -> read_file {"limit": 30, "offset": 1745, "path": "/workspace/idiom/internal/runtime/agent/runner_plan_then_execute...
+  -> grep {"path": "/workspace/idiom/internal/runtime/agent", "pattern": "requiredPathsHaveSourceBodyEvidence"}
+  -> grep {"path": "/workspace/idiom/internal/runtime/agent", "pattern": "func readOnlyDirectAnswerLane"}
+  -> read_file {"offset": 1540, "path": "/workspace/idiom/internal/runtime/agent/read_only_answerability_test.go", "li...
+  -> read_file {"limit": 20, "offset": 130, "path": "/workspace/idiom/internal/runtime/agent/final_answer_acceptance.g...
 [2m  ▎ thinking[0m
 Good, I have the landscape. Let me read the core files to understand exact current behavior before evaluating drift.
   · 21296 tok · in 21111 (18688 cached / 2423 new) · out 185 (27 reasoning) · ¥0.0032

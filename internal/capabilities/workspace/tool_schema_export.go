@@ -63,19 +63,25 @@ func BuildMCPDiscoveryToolSchemas(profile string) ([]ExportedToolSchema, error) 
 	if err != nil {
 		return nil, err
 	}
+
 	var tools []ExportedToolSchema
+
 	for _, tool := range export.Tools {
 		if !exportedToolSchemaHasProfile(tool, profile) {
 			continue
 		}
+
 		if !exportedToolSchemaHasCapability(tool, autonomy.CapabilitySemanticDiscovery) && !builtInToolSurfaceMCPDiscoveryReadModelTool(tool.Name) {
 			continue
 		}
+
 		if profile == ToolProfileDiscovery && !mcpDiscoveryProfileTool(tool.Name) {
 			continue
 		}
+
 		tools = append(tools, tool)
 	}
+
 	return tools, nil
 }
 
@@ -85,11 +91,13 @@ func mcpDiscoveryProfileTool(tool string) bool {
 
 func buildToolSchemaExportFromSources(manifest []ToolManifestEntry, defs []ToolDefinition, profiles map[string][]string) (ToolSchemaExport, error) {
 	purposesByTool := make(map[string][]string)
+
 	for _, entry := range manifest {
 		tool := strings.TrimSpace(entry.Tool)
 		if tool == "" {
 			continue
 		}
+
 		if purpose := strings.TrimSpace(entry.Purpose); purpose != "" {
 			purposesByTool[tool] = append(purposesByTool[tool], purpose)
 		} else if _, ok := purposesByTool[tool]; !ok {
@@ -98,21 +106,26 @@ func buildToolSchemaExportFromSources(manifest []ToolManifestEntry, defs []ToolD
 	}
 
 	defsByTool := make(map[string]ToolDefinition, len(defs))
+
 	var problems []string
+
 	for _, def := range defs {
 		name := strings.TrimSpace(def.Name)
 		if name == "" {
 			problems = append(problems, "schema definition has empty name")
 			continue
 		}
+
 		if _, exists := defsByTool[name]; exists {
 			problems = append(problems, fmt.Sprintf("duplicate schema definition for %q", name))
 			continue
 		}
+
 		if !json.Valid([]byte(def.ParametersJSON)) {
 			problems = append(problems, fmt.Sprintf("schema for %q is not valid JSON", name))
 			continue
 		}
+
 		def.Name = name
 		defsByTool[name] = def
 	}
@@ -121,17 +134,21 @@ func buildToolSchemaExportFromSources(manifest []ToolManifestEntry, defs []ToolD
 		if _, ok := defsByTool[tool]; !ok {
 			problems = append(problems, fmt.Sprintf("manifest tool %q has no schema definition", tool))
 		}
+
 		if len(profiles[tool]) == 0 {
 			problems = append(problems, fmt.Sprintf("manifest tool %q has no exported profile", tool))
 		}
 	}
+
 	for name := range defsByTool {
 		if _, ok := purposesByTool[name]; !ok {
 			problems = append(problems, fmt.Sprintf("schema definition %q is not in the manifest", name))
 		}
 	}
+
 	if len(problems) > 0 {
 		slices.Sort(problems)
+
 		return ToolSchemaExport{}, fmt.Errorf("tool schema export drift: %s", strings.Join(problems, "; "))
 	}
 
@@ -139,6 +156,7 @@ func buildToolSchemaExportFromSources(manifest []ToolManifestEntry, defs []ToolD
 	for name := range purposesByTool {
 		names = append(names, name)
 	}
+
 	slices.Sort(names)
 
 	out := ToolSchemaExport{
@@ -149,6 +167,7 @@ func buildToolSchemaExportFromSources(manifest []ToolManifestEntry, defs []ToolD
 	}
 	for _, name := range names {
 		def := defsByTool[name]
+
 		out.Tools = append(out.Tools, ExportedToolSchema{
 			Name:                     name,
 			Description:              strings.TrimSpace(def.Description),
@@ -160,6 +179,7 @@ func buildToolSchemaExportFromSources(manifest []ToolManifestEntry, defs []ToolD
 			Policy:                   toolSchemaPolicyForTool(name),
 		})
 	}
+
 	return out, nil
 }
 
@@ -184,11 +204,13 @@ func toolSchemaExportProfiles() map[string][]string {
 		{name: "java", opts: ToolManifestToolOptions{IncludeJava: true}},
 	}
 	profiles := make(map[string][]string)
+
 	for _, surface := range surfaces {
 		for _, tool := range ToolManifestTools(surface.opts) {
 			profiles[tool] = append(profiles[tool], surface.name)
 		}
 	}
+
 	for _, tool := range ToolManifestTools(ToolManifestToolOptions{
 		IncludeTaskLedger: true,
 		IncludeTask:       true,
@@ -203,18 +225,22 @@ func toolSchemaExportProfiles() map[string][]string {
 		if ToolAllowedForProfile(tool, ToolProfileDiscovery).Allowed {
 			profiles[tool] = append(profiles[tool], ToolProfileDiscovery)
 		}
+
 		if ToolAllowedForProfile(tool, ToolProfileMCPDiscovery).Allowed {
 			profiles[tool] = append(profiles[tool], ToolProfileMCPDiscovery)
 		}
 	}
+
 	for tool, names := range profiles {
 		profiles[tool] = compactToolExportStrings(names)
 	}
+
 	return profiles
 }
 
 func toolSchemaPolicyForTool(tool string) ToolSchemaPolicyExport {
 	sideEffects := toolSchemaSideEffects(tool)
+
 	return ToolSchemaPolicyExport{
 		Source:            "derived_from_manifest_and_autonomy_contract_vocabulary",
 		Capabilities:      toolSchemaCapabilities(tool),
@@ -229,6 +255,7 @@ func toolSchemaCapabilities(tool string) []autonomy.Capability {
 	if capabilities := builtInToolSurfacePolicyCapabilities(tool); len(capabilities) > 0 {
 		return capabilities
 	}
+
 	switch {
 	case isToolSchemaDiagnosticTool(tool):
 		return []autonomy.Capability{autonomy.CapabilityShellVerification}
@@ -243,6 +270,7 @@ func toolSchemaSideEffects(tool string) []autonomy.SideEffectClass {
 	if sideEffects := builtInToolSurfaceSideEffects(tool); len(sideEffects) > 0 {
 		return sideEffects
 	}
+
 	switch {
 	case isToolSchemaDiagnosticTool(tool):
 		return []autonomy.SideEffectClass{autonomy.SideEffectReadOnly, autonomy.SideEffectUnknown}
@@ -256,17 +284,21 @@ func toolSchemaEnforcement(tool string, sideEffects []autonomy.SideEffectClass) 
 	if hasToolSchemaSideEffect(sideEffects, autonomy.SideEffectUnknown) || tool == "shell" {
 		enforcement = append(enforcement, "command_classification", "approval_guard")
 	}
+
 	if tool == "task" || tool == "delegate_edit" {
 		enforcement = append(enforcement, "delegation_scope")
 	}
+
 	if tool == "submit_plan" {
 		enforcement = append(enforcement, "planner_phase_contract")
 	}
+
 	if IsWorkspaceWriteTool(tool) || hasToolSchemaSideEffect(sideEffects, autonomy.SideEffectDestructive) {
 		enforcement = append(enforcement, "write_policy", "path_roles", "protected_paths", "approval_guard")
 	} else {
 		enforcement = append(enforcement, "path_roles_when_configured")
 	}
+
 	return compactToolExportStrings(enforcement)
 }
 
@@ -275,18 +307,23 @@ func toolSchemaErrorClasses(tool string, sideEffects []autonomy.SideEffectClass)
 	if IsWorkspaceWriteTool(tool) || hasToolSchemaSideEffect(sideEffects, autonomy.SideEffectDestructive) {
 		classes = append(classes, "permission_policy", "required_edit_scope", "approval_guard", "protected_path", "write_policy")
 	}
+
 	if hasToolSchemaSideEffect(sideEffects, autonomy.SideEffectUnknown) || tool == "shell" {
 		classes = append(classes, "permission_policy", "approval_guard", "command_failed", "timeout")
 	}
+
 	if isToolSchemaDiagnosticTool(tool) || isToolSchemaLanguageTool(tool) || tool == "source_sanity" {
 		classes = append(classes, "unsupported_language", "symbol_not_found", "diagnostics_failed")
 	}
+
 	if tool == readOnlyCapabilityToolName {
 		classes = append(classes, "capability_deferred", "capability_unmapped", "adapter_unavailable", "resolver_disabled", "route_disabled")
 	}
+
 	if builtInToolSurfaceStaleContextErrors(tool) {
 		classes = append(classes, "backend_unavailable", "stale_context")
 	}
+
 	return compactToolExportStrings(classes)
 }
 
@@ -296,6 +333,7 @@ func isToolSchemaSemanticDiscoveryTool(tool string) bool {
 			return true
 		}
 	}
+
 	return isToolSchemaLanguageTool(tool)
 }
 
@@ -308,11 +346,13 @@ func isToolSchemaDiagnosticTool(tool string) bool {
 	if !strings.HasSuffix(tool, "_diagnostics") {
 		return false
 	}
+
 	for _, lang := range LanguageRegistry() {
 		if strings.EqualFold(tool, strings.TrimSpace(lang.Tools[CapDiagnostics])) {
 			return true
 		}
 	}
+
 	switch tool {
 	case "go_diagnostics", "cpp_diagnostics":
 		return true
@@ -327,6 +367,7 @@ func hasToolSchemaSideEffect(values []autonomy.SideEffectClass, want autonomy.Si
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -336,6 +377,7 @@ func exportedToolSchemaHasProfile(tool ExportedToolSchema, want string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -345,6 +387,7 @@ func exportedToolSchemaHasCapability(tool ExportedToolSchema, want autonomy.Capa
 			return true
 		}
 	}
+
 	return false
 }
 

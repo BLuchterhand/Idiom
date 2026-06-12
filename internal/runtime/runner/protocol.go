@@ -148,23 +148,30 @@ func LoadConfig(path string) (Config, error) {
 		if os.IsNotExist(err) {
 			return DefaultConfig(), nil
 		}
+
 		return Config{}, fmt.Errorf("read runner config %q: %w", path, err)
 	}
+
 	var cfg Config
+
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse runner config %q: %w", path, err)
 	}
+
 	if len(cfg.Pools) == 0 {
 		cfg = DefaultConfig()
 	}
+
 	for name, pc := range cfg.Pools {
 		if strings.TrimSpace(name) == "" {
 			return Config{}, fmt.Errorf("runner config %q: pool with empty name", path)
 		}
+
 		if pc.MaxInFlight <= 0 {
 			return Config{}, fmt.Errorf("runner config %q: pool %q has max_in_flight=%d (must be > 0)", path, name, pc.MaxInFlight)
 		}
 	}
+
 	return cfg, nil
 }
 
@@ -186,16 +193,20 @@ func DefaultSocketPath() string {
 	if env := strings.TrimSpace(os.Getenv("IDIOM_RUNNER_SOCKET")); env != "" {
 		return env
 	}
+
 	if home := strings.TrimSpace(os.Getenv("HOME")); home != "" {
 		return filepath.Join(home, ".idiom", "runner.sock")
 	}
+
 	if dir := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR")); dir != "" {
 		return filepath.Join(dir, "idiom-runner.sock")
 	}
+
 	tmp := strings.TrimSpace(os.Getenv("TMPDIR"))
 	if tmp == "" {
 		tmp = "/tmp"
 	}
+
 	return filepath.Join(tmp, "idiom-runner.sock")
 }
 
@@ -207,10 +218,12 @@ func DefaultConfigPath() string {
 	if env := strings.TrimSpace(os.Getenv("IDIOM_RUNNER_CONFIG")); env != "" {
 		return env
 	}
+
 	home, err := os.UserHomeDir()
 	if err != nil || strings.TrimSpace(home) == "" {
 		return ""
 	}
+
 	return filepath.Join(home, ".idiom", "runner.json")
 }
 
@@ -221,5 +234,6 @@ func FormatTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
+
 	return t.UTC().Format(time.RFC3339)
 }

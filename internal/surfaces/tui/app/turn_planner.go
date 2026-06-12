@@ -67,16 +67,21 @@ func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode agent
 	if prompt == "" {
 		return fallbackTurnRoute(prompt, mode)
 	}
+
 	fallback := fallbackTurnRoute(prompt, mode)
 	if planned, ok := m.classifyTurnRouteWithModel(ctx, prompt, mode); ok {
 		classified := planned
+
 		planned = correctTurnRoutePlanForPrompt(planned, prompt, mode)
 		m.logTurnRouteCorrection(classified, planned)
+
 		if shouldPreferFallbackRoute(fallback, planned, prompt) {
 			return fallback
 		}
+
 		return planned
 	}
+
 	return fallback
 }
 
@@ -84,10 +89,13 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 	if m == nil {
 		return turnRoutePlan{}, false
 	}
+
 	if !m.cfg.RouteClassifier.Enabled {
 		m.logRouteClassifierDecision(map[string]any{"status": "disabled"})
+
 		return turnRoutePlan{}, false
 	}
+
 	history := renderRecentConversationForRouting(m.messages, 6)
 	classifierPrompt := routeClassifierPromptForModel(prompt)
 	messages := []llama.ChatMessage{
@@ -130,11 +138,15 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 		},
 	}
 	timeout := 10 * time.Second
+
 	if m.cfg.RouteClassifier.TimeoutSeconds > 0 {
 		timeout = time.Duration(m.cfg.RouteClassifier.TimeoutSeconds) * time.Second
 	}
+
 	classifyCtx, cancel := context.WithTimeout(ctx, timeout)
+
 	defer cancel()
+
 	thinkingOff := false
 	opts := llama.ChatOptions{
 		MaxTokens:          256,
@@ -144,20 +156,27 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 		ChatTemplateKwargs: true,
 	}
 	client := m.routeClassifierChatClient()
+
 	if client == nil {
 		m.logRouteClassifierDecision(map[string]any{"status": "unavailable", "reason": "no_client"})
+
 		return turnRoutePlan{}, false
 	}
+
 	effectiveClient := client
 	text, err := client.CompleteChat(classifyCtx, messages, opts)
+
 	if err != nil && client != m.client && m.client != nil {
 		effectiveClient = m.client
 		text, err = effectiveClient.CompleteChat(classifyCtx, messages, opts)
 	}
+
 	if err != nil {
 		m.logRouteClassifierDecision(map[string]any{"status": "unavailable", "reason": "completion_error", "error": truncateImplementationDispatchText(err.Error(), 240)})
+
 		return turnRoutePlan{}, false
 	}
+
 	plan, err := parseTurnRoutePlan(text)
 	if err != nil {
 		repaired, repairErr := m.repairTurnRouteClassification(ctx, effectiveClient, mode, classifierPrompt, text, err)
@@ -167,10 +186,13 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 				"error":        truncateImplementationDispatchText(err.Error(), 240),
 				"repair_error": truncateImplementationDispatchText(repairErr.Error(), 240),
 			})
+
 			return turnRoutePlan{}, false
 		}
+
 		plan = repaired
 	}
+
 	plan.RouteSource = routeSourceClassifier
 	plan = normalizeTurnRoutePlan(plan, mode)
 	m.logRouteClassifierDecision(map[string]any{
@@ -186,6 +208,7 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 		"continuation_target":  plan.ContinuationTarget,
 		"reason_codes":         plan.ReasonCodes,
 	})
+
 	return plan, plan.Family != ""
 }
 
@@ -193,13 +216,18 @@ func (m *Model) repairTurnRouteClassification(ctx context.Context, client llama.
 	if client == nil {
 		return turnRoutePlan{}, fmt.Errorf("no classifier client")
 	}
+
 	timeout := 10 * time.Second
 	if m != nil && m.cfg.RouteClassifier.TimeoutSeconds > 0 {
 		timeout = time.Duration(m.cfg.RouteClassifier.TimeoutSeconds) * time.Second
 	}
+
 	repairCtx, cancel := context.WithTimeout(ctx, timeout)
+
 	defer cancel()
+
 	thinkingOff := false
+
 	text, err := client.CompleteChat(repairCtx, []llama.ChatMessage{
 		{
 			Role: "system",
@@ -226,6 +254,7 @@ func (m *Model) repairTurnRouteClassification(ctx context.Context, client llama.
 	if err != nil {
 		return turnRoutePlan{}, err
 	}
+
 	return parseTurnRoutePlan(text)
 }
 
@@ -233,9 +262,11 @@ func (m *Model) logRouteClassifierDecision(fields map[string]any) {
 	if m == nil {
 		return
 	}
+
 	if fields == nil {
 		fields = map[string]any{}
 	}
+
 	fields["schema_version"] = "idiom.route_classifier_decision.v1"
 	if body, err := json.Marshal(fields); err == nil {
 		m.logMessage("route_classifier_decision", string(body))
@@ -246,6 +277,7 @@ func (m *Model) logTurnRouteCorrection(before, after turnRoutePlan) {
 	if m == nil || !routePlanCorrectionChanged(before, after) {
 		return
 	}
+
 	fields := map[string]any{
 		"schema_version":       "idiom.route_classifier_correction.v1",
 		"before_family":        before.Family,
@@ -282,16 +314,22 @@ func (m *Model) routeClassifierChatClient() llama.LLMClient {
 	if m == nil {
 		return nil
 	}
+
 	if m.summaryClient == nil || m.summaryClient == m.client {
 		return m.client
 	}
+
 	pingCtx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
 	_, err := m.summaryClient.ListModels(pingCtx)
+
 	cancel()
+
 	if err == nil {
 		return m.summaryClient
 	}
+
 	m.logError("route_classifier", "unreachable; falling back to active planner model: "+err.Error())
+
 	return m.client
 }
 
@@ -300,30 +338,40 @@ func routeClassifierPromptForModel(prompt string) string {
 	if prompt == "" {
 		return ""
 	}
+
 	var out []string
+
 	inFence := false
 	omittedFence := false
+
 	for _, line := range strings.Split(prompt, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") {
 			if !inFence {
 				inFence = true
+
 				if !omittedFence {
 					out = append(out, "```")
 					out = append(out, "[code block omitted for route classification]")
 					out = append(out, "```")
 					omittedFence = true
 				}
+
 				continue
 			}
+
 			inFence = false
+
 			continue
 		}
+
 		if inFence {
 			continue
 		}
+
 		out = append(out, line)
 	}
+
 	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
@@ -333,15 +381,20 @@ func parseTurnRoutePlan(text string) (turnRoutePlan, error) {
 	text = strings.TrimPrefix(text, "```")
 	text = strings.TrimSuffix(text, "```")
 	text = strings.TrimSpace(text)
+
 	start := strings.IndexByte(text, '{')
 	end := strings.LastIndexByte(text, '}')
+
 	if start >= 0 && end > start {
 		text = text[start : end+1]
 	}
+
 	var plan turnRoutePlan
+
 	if err := json.Unmarshal([]byte(text), &plan); err != nil {
 		return turnRoutePlan{}, err
 	}
+
 	return plan, nil
 }
 
@@ -349,32 +402,42 @@ func renderRecentConversationForRouting(messages []llama.ChatMessage, max int) s
 	if max <= 0 {
 		max = 6
 	}
+
 	var filtered []llama.ChatMessage
+
 	for _, msg := range messages {
 		role := strings.TrimSpace(strings.ToLower(msg.Role))
 		if role != "user" && role != "assistant" {
 			continue
 		}
+
 		content := strings.TrimSpace(msg.Content)
 		if content == "" {
 			continue
 		}
+
 		filtered = append(filtered, llama.ChatMessage{Role: role, Content: content})
 	}
+
 	if len(filtered) > max {
 		filtered = filtered[len(filtered)-max:]
 	}
+
 	if len(filtered) == 0 {
 		return "(none)"
 	}
+
 	var b strings.Builder
+
 	for _, msg := range filtered {
 		content := collapseWhitespace(msg.Content)
 		if len(content) > 240 {
 			content = content[:240] + "..."
 		}
+
 		fmt.Fprintf(&b, "[%s] %s\n", msg.Role, content)
 	}
+
 	return strings.TrimSpace(b.String())
 }
 
@@ -383,6 +446,7 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 	if source != "" {
 		source = normalizeRouteSource(source)
 	}
+
 	plan.InitialLane = normalizeRouteValue(plan.InitialLane)
 	plan.FollowupLane = normalizeRouteValue(plan.FollowupLane)
 	plan.Reason = normalizeRouteValue(plan.Reason)
@@ -395,16 +459,20 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 	plan.ContinuationTarget = normalizeRouteContinuationTarget(plan.ContinuationTarget)
 	plan.ReasonCodes = normalizeRouteReasonCodes(plan.ReasonCodes)
 	plan.RouteSource = source
+
 	switch plan.Family {
 	case "plan_execute", "plan_execute_planner", "plan_then_execute":
 		plan.Family = string(workerruntime.TaskFamilyPlanThenExecutePlanner)
 	}
+
 	if plan.Family == "" {
 		plan.Family = familyForRouteOutcome(plan.RequestedOutcome, plan.WriteIntent)
 	}
+
 	if plan.Family == "" {
 		return fallbackTurnRoute("", mode)
 	}
+
 	switch plan.Family {
 	case workerruntime.ArtifactFinalAnswerTaskFamily:
 		plan.InitialLane = "main"
@@ -502,6 +570,7 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 	default:
 		return fallbackTurnRoute("", mode)
 	}
+
 	return plan
 }
 
@@ -518,20 +587,25 @@ func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent
 		normalized.ReasonCodes = appendUniqueBriefStrings(normalized.ReasonCodes, "route_prompt_requests_architecture_evidence")
 		normalized = normalizeTurnRoutePlan(normalized, mode)
 	}
+
 	if promptRequestsReadOnlyEvidenceReport(prompt) {
 		normalized.RequestedOutcome = "diagnose"
 		normalized.WriteIntent = "no"
 		normalized.ReadOnlyConstraint = true
 		normalized.Reason = util.FirstNonEmpty(normalized.Reason, "route_prompt_requests_evidence_report")
 		normalized.ReasonCodes = appendUniqueBriefStrings(normalized.ReasonCodes, "route_prompt_requests_evidence_report")
+
 		if isImplementationLikeFamily(normalized.Family) {
 			return readOnlyRouteForOutcome(normalized, mode, "route_prompt_requests_evidence_report")
 		}
+
 		normalized = normalizeTurnRoutePlan(normalized, mode)
 	}
+
 	if corrected, ok := routePlanCorrectedByOutcomeContract(normalized, mode); ok {
 		normalized = corrected
 	}
+
 	return normalized
 }
 
@@ -540,6 +614,7 @@ func promptRequestsRepositoryArchitectureEvidence(prompt string) bool {
 	if words == " " || plannerPromptHasExplicitMutationIntent(words) {
 		return false
 	}
+
 	if plannerWordsContainAnyWholePhrase(words,
 		"how do i run",
 		"how do we run",
@@ -547,8 +622,10 @@ func promptRequestsRepositoryArchitectureEvidence(prompt string) bool {
 		"run the tests",
 		"run tests",
 	) {
+
 		return false
 	}
+
 	internalSurface := plannerWordsContainAny(words,
 		"answer composer",
 		"control rail",
@@ -567,6 +644,7 @@ func promptRequestsRepositoryArchitectureEvidence(prompt string) bool {
 	if !internalSurface {
 		return false
 	}
+
 	return plannerWordsContainAny(words,
 		"architecture",
 		"boundary",
@@ -585,8 +663,10 @@ func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode agent.Mode) (t
 		if isImplementationLikeFamily(plan.Family) {
 			return readOnlyRouteForOutcome(plan, mode, "route_outcome_read_only_constraint"), true
 		}
+
 		return plan, false
 	}
+
 	switch plan.RequestedOutcome {
 	case "change_workspace":
 		if !isImplementationLikeFamily(plan.Family) && plan.WriteIntent != "no" {
@@ -597,6 +677,7 @@ func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode agent.Mode) (t
 			plan.WriteIntent = "yes"
 			plan.Reason = util.FirstNonEmpty(plan.Reason, "route_outcome_change_workspace")
 			plan.ReasonCodes = appendUniqueBriefStrings(plan.ReasonCodes, "route_outcome_change_workspace")
+
 			return normalizeTurnRoutePlan(plan, mode), true
 		}
 	case "diagnose_then_change":
@@ -608,6 +689,7 @@ func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode agent.Mode) (t
 			plan.WriteIntent = "yes"
 			plan.Reason = util.FirstNonEmpty(plan.Reason, "route_outcome_diagnose_then_change")
 			plan.ReasonCodes = appendUniqueBriefStrings(plan.ReasonCodes, "route_outcome_diagnose_then_change")
+
 			return normalizeTurnRoutePlan(plan, mode), true
 		}
 	case "verify":
@@ -618,9 +700,11 @@ func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode agent.Mode) (t
 			plan.Contract = "direct_answer"
 			plan.Reason = util.FirstNonEmpty(plan.Reason, "route_outcome_verify")
 			plan.ReasonCodes = appendUniqueBriefStrings(plan.ReasonCodes, "route_outcome_verify")
+
 			return normalizeTurnRoutePlan(plan, mode), true
 		}
 	}
+
 	if plan.WriteIntent == "yes" && !isImplementationLikeFamily(plan.Family) {
 		plan.Family = "implementation"
 		plan.InitialLane = "implement"
@@ -629,8 +713,10 @@ func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode agent.Mode) (t
 		plan.RequestedOutcome = util.FirstNonEmpty(plan.RequestedOutcome, "change_workspace")
 		plan.Reason = util.FirstNonEmpty(plan.Reason, "route_write_intent_yes")
 		plan.ReasonCodes = appendUniqueBriefStrings(plan.ReasonCodes, "route_write_intent_yes")
+
 		return normalizeTurnRoutePlan(plan, mode), true
 	}
+
 	return plan, false
 }
 
@@ -645,12 +731,14 @@ func readOnlyRouteForOutcome(plan turnRoutePlan, mode agent.Mode, reasonCode str
 	default:
 		plan.Family = "conversation"
 	}
+
 	plan.InitialLane = ""
 	plan.FollowupLane = ""
 	plan.Contract = ""
 	plan.WriteIntent = "no"
 	plan.Reason = util.FirstNonEmpty(plan.Reason, reasonCode)
 	plan.ReasonCodes = appendUniqueBriefStrings(plan.ReasonCodes, reasonCode)
+
 	return normalizeTurnRoutePlan(plan, mode)
 }
 
@@ -659,9 +747,11 @@ func promptRequestsReadOnlyEvidenceReport(prompt string) bool {
 	if words == " " {
 		return false
 	}
+
 	if plannerPromptHasExplicitMutationIntent(words) {
 		return false
 	}
+
 	hasDiagnosisVerb := plannerWordsContainAny(words,
 		"debug", "diagnose", "investigate", "research", "look into", "root cause",
 	)
@@ -677,6 +767,7 @@ func promptRequestsReadOnlyEvidenceReport(prompt string) bool {
 		"root cause analysis",
 		"research assistant",
 	)
+
 	return hasDiagnosisVerb && hasReportContract
 }
 
@@ -693,16 +784,20 @@ func plannerPromptHasExplicitMutationIntent(words string) bool {
 		"make change", "make changes", "make the change", "make the changes",
 		"make code change", "make code changes",
 	) {
+
 		return true
 	}
+
 	if plannerWordsContainVerbObjectWithin(words, "add", 5,
 		"test", "tests",
 		"doc", "docs",
 		"config", "configs",
 		"file", "files",
 	) {
+
 		return true
 	}
+
 	if plannerWordsContainVerbObjectWithin(words, "write", 5,
 		"test", "tests",
 		"doc", "docs",
@@ -711,8 +806,10 @@ func plannerPromptHasExplicitMutationIntent(words string) bool {
 		"code",
 		"patch", "patches",
 	) {
+
 		return true
 	}
+
 	if plannerWordsContainDirectiveVerb(words,
 		"fix", "fixing",
 		"repair", "repairing",
@@ -731,8 +828,10 @@ func plannerPromptHasExplicitMutationIntent(words string) bool {
 		"apply", "applying",
 		"add", "adding",
 	) {
+
 		return true
 	}
+
 	return false
 }
 
@@ -740,6 +839,7 @@ func plannerWordsContainDirectiveVerb(words string, verbs ...string) bool {
 	if len(verbs) == 0 {
 		return false
 	}
+
 	verbSet := make(map[string]struct{}, len(verbs))
 	for _, verb := range verbs {
 		verb = strings.TrimSpace(plannerWordText(verb))
@@ -747,15 +847,18 @@ func plannerWordsContainDirectiveVerb(words string, verbs ...string) bool {
 			verbSet[verb] = struct{}{}
 		}
 	}
+
 	fields := strings.Fields(plannerWordText(words))
 	for i, field := range fields {
 		if _, ok := verbSet[field]; !ok {
 			continue
 		}
+
 		if plannerWordAtDirectiveBoundary(fields, i) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -763,28 +866,33 @@ func plannerWordAtDirectiveBoundary(fields []string, idx int) bool {
 	if idx == 0 {
 		return true
 	}
+
 	switch fields[idx-1] {
 	case "please", "pls", "then", "also", "now", "start", "begin":
 		return true
 	}
+
 	if idx >= 2 && fields[idx-1] == "and" {
 		switch fields[idx-2] {
 		case "debug", "diagnose", "investigate", "research", "find", "locate", "identify", "inspect":
 			return true
 		}
 	}
+
 	if idx >= 3 && fields[idx-2] == "you" && fields[idx-1] == "to" {
 		switch fields[idx-3] {
 		case "need", "want", "ask":
 			return true
 		}
 	}
+
 	if idx >= 2 && fields[idx-1] == "you" {
 		switch fields[idx-2] {
 		case "can", "could", "would", "will":
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -792,6 +900,7 @@ func plannerWordsContainVerbObjectWithin(words, verb string, maxDistance int, ob
 	if strings.TrimSpace(verb) == "" || maxDistance < 1 || len(objects) == 0 {
 		return false
 	}
+
 	objectSet := make(map[string]struct{}, len(objects))
 	for _, object := range objects {
 		object = strings.TrimSpace(plannerWordText(object))
@@ -799,15 +908,20 @@ func plannerWordsContainVerbObjectWithin(words, verb string, maxDistance int, ob
 			objectSet[object] = struct{}{}
 		}
 	}
+
 	if len(objectSet) == 0 {
 		return false
 	}
+
 	fields := strings.Fields(plannerWordText(words))
+
 	verb = strings.TrimSpace(plannerWordText(verb))
+
 	for i, field := range fields {
 		if field != verb {
 			continue
 		}
+
 		limit := min(len(fields), i+maxDistance+1)
 		for _, candidate := range fields[i+1 : limit] {
 			if _, ok := objectSet[candidate]; ok {
@@ -815,6 +929,7 @@ func plannerWordsContainVerbObjectWithin(words, verb string, maxDistance int, ob
 			}
 		}
 	}
+
 	return false
 }
 
@@ -825,17 +940,20 @@ func plannerWordsContainAnyWholePhrase(words string, phrases ...string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 func plannerWordsContainAny(words string, phrases ...string) bool {
 	words = strings.ToLower(words)
+
 	for _, phrase := range phrases {
 		phraseWords := plannerWordText(phrase)
 		if strings.Contains(words, strings.TrimSpace(phraseWords)) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -905,6 +1023,7 @@ func normalizeRouteReasonCodes(values []string) []string {
 	if len(values) == 0 {
 		return nil
 	}
+
 	out := make([]string, 0, len(values))
 	for _, value := range values {
 		value = normalizeRouteValue(value)
@@ -912,6 +1031,7 @@ func normalizeRouteReasonCodes(values []string) []string {
 			out = append(out, value)
 		}
 	}
+
 	return out
 }
 
@@ -919,6 +1039,7 @@ func familyForRouteOutcome(outcome, writeIntent string) string {
 	if writeIntent == "yes" {
 		return "implementation"
 	}
+
 	switch outcome {
 	case "answer":
 		return "conversation"
@@ -944,9 +1065,11 @@ func familyForRouteOutcome(outcome, writeIntent string) string {
 func shouldPreferFallbackRoute(fallback turnRoutePlan, planned turnRoutePlan, prompt string) bool {
 	fallbackFamily := strings.TrimSpace(fallback.Family)
 	plannedFamily := strings.TrimSpace(planned.Family)
+
 	if fallbackFamily == "" || plannedFamily == "" || fallbackFamily == plannedFamily {
 		return false
 	}
+
 	return fallbackFamily != "conversation" && plannedFamily == "conversation"
 }
 
@@ -958,6 +1081,7 @@ func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 	if strings.EqualFold(mode.Name, "plan") {
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture", RouteSource: routeSourceConservativeFallback}, mode)
 	}
+
 	return normalizeTurnRoutePlan(turnRoutePlan{Family: "conversation", RouteSource: routeSourceConservativeFallback}, mode)
 }
 
@@ -988,81 +1112,109 @@ func plannerWordText(prompt string) string {
 	if prompt == "" {
 		return " "
 	}
+
 	var b strings.Builder
+
 	b.Grow(len(prompt) + 2)
 	b.WriteByte(' ')
+
 	lastSpace := true
+
 	for _, r := range prompt {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
 			b.WriteRune(r)
+
 			lastSpace = false
+
 			continue
 		}
+
 		if !lastSpace {
 			b.WriteByte(' ')
+
 			lastSpace = true
 		}
 	}
+
 	if !lastSpace {
 		b.WriteByte(' ')
 	}
+
 	return b.String()
 }
 
 func renderTurnRoutePlan(plan turnRoutePlan) string {
 	var parts []string
+
 	if plan.InitialLane != "" {
 		parts = append(parts, "initial="+plan.InitialLane)
 	}
+
 	if plan.FollowupLane != "" {
 		parts = append(parts, "followup="+plan.FollowupLane)
 	}
+
 	if plan.Reason != "" {
 		parts = append(parts, "reason="+plan.Reason)
 	}
+
 	if plan.Contract != "" {
 		parts = append(parts, "contract="+plan.Contract)
 	}
+
 	if plan.Family != "" {
 		parts = append(parts, "task_family="+plan.Family)
 	}
+
 	if plan.Thoroughness != "" {
 		parts = append(parts, "thoroughness="+plan.Thoroughness)
 	}
+
 	if plan.RequestedOutcome != "" {
 		parts = append(parts, "requested_outcome="+plan.RequestedOutcome)
 	}
+
 	if plan.WriteIntent != "" {
 		parts = append(parts, "write_intent="+plan.WriteIntent)
 	}
+
 	if plan.ReadOnlyConstraint {
 		parts = append(parts, "read_only_constraint=true")
 	}
+
 	if plan.EvidenceIntent != "" {
 		parts = append(parts, "evidence_intent="+plan.EvidenceIntent)
 	}
+
 	if plan.ContinuationTarget != "" {
 		parts = append(parts, "continuation_target="+plan.ContinuationTarget)
 	}
+
 	if len(plan.ReasonCodes) > 0 {
 		parts = append(parts, "reason_codes="+strings.Join(plan.ReasonCodes, ","))
 	}
+
 	return strings.Join(parts, " ")
 }
 
 func turnRoutePlanRuntimeBrief(plan turnRoutePlan, mode agent.Mode, workspaceAllowed []string) workerruntime.WorkerRuntimeBrief {
 	plan = normalizeTurnRoutePlan(plan, mode)
+
 	brief := workerruntime.RuntimeBriefForTaskFamily(plan.Family, util.FirstNonEmpty(plan.InitialLane, "main"), workspaceAllowed)
+
 	if plan.FollowupLane != "" {
 		brief.Constraints = append(brief.Constraints, "followup_lane="+plan.FollowupLane)
 	}
+
 	if plan.Thoroughness != "" {
 		brief.Constraints = append(brief.Constraints, "thoroughness="+plan.Thoroughness)
 	}
+
 	brief.RequestedOutcome = plan.RequestedOutcome
 	brief.WriteIntent = plan.WriteIntent
 	brief.ReadOnlyConstraint = plan.ReadOnlyConstraint
 	brief.EvidenceIntent = plan.EvidenceIntent
+
 	return workerruntime.NormalizeRuntimeBrief(brief)
 }
 
@@ -1070,6 +1222,7 @@ func (m *Model) workspaceAllowedTools() []string {
 	if m == nil || m.workspace == nil {
 		return nil
 	}
+
 	return m.workspace.AllowedTools()
 }
 
@@ -1077,5 +1230,6 @@ func normalizeRouteValue(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.ReplaceAll(value, "-", "_")
 	value = strings.ReplaceAll(value, " ", "_")
+
 	return value
 }

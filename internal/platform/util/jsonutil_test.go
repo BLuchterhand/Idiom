@@ -20,17 +20,21 @@ func TestWriteJSONAndReadJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(data) == 0 {
 		t.Fatal("empty file")
 	}
+
 	if data[len(data)-1] != '\n' {
 		t.Error("no trailing newline")
 	}
 
 	var got map[string]any
+
 	if err := ReadJSON(path, &got); err != nil {
 		t.Fatalf("ReadJSON: %v", err)
 	}
+
 	if got["key"] != "value" || int(got["num"].(float64)) != 42 {
 		t.Errorf("unexpected content: %v", got)
 	}
@@ -41,7 +45,9 @@ func TestReadJSON_EmptyFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	var v any
+
 	if err := ReadJSON(path, &v); err == nil {
 		t.Error("expected error for empty file")
 	}
@@ -50,6 +56,7 @@ func TestReadJSON_EmptyFile(t *testing.T) {
 func TestWriteJSON_InvalidJSON(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "invalid.json")
 	ch := make(chan int)
+
 	if err := WriteJSON(path, ch); err == nil {
 		t.Error("expected error for non-marshalable value")
 	}
@@ -60,7 +67,9 @@ func TestReadJSON_InvalidJSON(t *testing.T) {
 	if err := os.WriteFile(path, []byte("not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	var v json.RawMessage
+
 	if err := ReadJSON(path, &v); err == nil {
 		t.Error("expected error for invalid JSON")
 	}

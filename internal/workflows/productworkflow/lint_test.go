@@ -10,9 +10,11 @@ import (
 func TestLintEffortFolderRejectsSymlinkedRequiredFile(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "workflow_state.json")
+
 	if err := os.WriteFile(outside, []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := os.Symlink(outside, filepath.Join(root, "workflow_state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -26,13 +28,16 @@ func TestLintEffortFolderRejectsSymlinkedRequiredFile(t *testing.T) {
 func TestLintEffortFolderRejectsSymlinkedReportFile(t *testing.T) {
 	root := t.TempDir()
 	reportsDir := filepath.Join(root, "reports")
+
 	if err := os.MkdirAll(reportsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+
 	outside := filepath.Join(t.TempDir(), "review.report.json")
 	if err := os.WriteFile(outside, []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := os.Symlink(outside, filepath.Join(reportsDir, "review.report.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -71,15 +76,18 @@ func lintSummaryHasFinding(result LintSummaryResult, code, path string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 func writeLintFixtureFile(t *testing.T, root, relPath, body string) {
 	t.Helper()
+
 	fullPath := filepath.Join(root, relPath)
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", relPath, err)
 	}
+
 	if err := os.WriteFile(fullPath, []byte(body), 0o644); err != nil {
 		t.Fatalf("write %s: %v", relPath, err)
 	}

@@ -14,6 +14,7 @@ func TestResolveTaskRejectsTaskAndTaskFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected task/task-file conflict")
 	}
+
 	if !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -29,6 +30,7 @@ func TestResolveTaskReadsTaskFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve task: %v", err)
 	}
+
 	if got != "inspect context graph" {
 		t.Fatalf("resolveTask() = %q", got)
 	}
@@ -42,6 +44,7 @@ func TestResultBytesPrefersToolOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resultBytes: %v", err)
 	}
+
 	if string(got) != "{\"fresh\":true}\n" {
 		t.Fatalf("unexpected output bytes: %q", string(got))
 	}

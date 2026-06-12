@@ -18,7 +18,9 @@ import (
 // focused on the failure-log behavior.
 func modelForFailureLog(t *testing.T, root string) *Model {
 	t.Helper()
+
 	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+
 	return &Model{
 		workspace:    ws,
 		debugLogPath: filepath.Join(root, "logs", "conversations", "sessA.jsonl"),
@@ -27,28 +29,37 @@ func modelForFailureLog(t *testing.T, root string) *Model {
 
 func readFailureLines(t *testing.T, path string) []failureRecord {
 	t.Helper()
+
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("open failures log: %v", err)
 	}
 	defer f.Close()
+
 	var out []failureRecord
+
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
+
 		var rec failureRecord
+
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
 			t.Fatalf("decode failure record %q: %v", line, err)
 		}
+
 		out = append(out, rec)
 	}
+
 	if err := scanner.Err(); err != nil {
 		t.Fatalf("scan failures log: %v", err)
 	}
+
 	return out
 }
 
@@ -71,33 +82,42 @@ func TestRecordWriteFailureAppendsForWriteTools(t *testing.T) {
 
 	path := filepath.Join(root, ".planning", "sessA.failures.jsonl")
 	recs := readFailureLines(t, path)
+
 	if len(recs) != 1 {
 		t.Fatalf("want 1 record, got %d: %#v", len(recs), recs)
 	}
+
 	got := recs[0]
 	if got.Tool != "edit_file" {
 		t.Errorf("Tool = %q", got.Tool)
 	}
+
 	if got.Path != "README.md" {
 		t.Errorf("Path = %q", got.Path)
 	}
+
 	if got.Description != "change greeting" {
 		t.Errorf("Description = %q", got.Description)
 	}
+
 	if got.Error != "line range out of bounds" {
 		t.Errorf("Error = %q", got.Error)
 	}
+
 	if got.Step != 7 {
 		t.Errorf("Step = %d", got.Step)
 	}
+
 	if got.Timestamp == "" {
 		t.Errorf("Timestamp should be populated")
 	}
+
 	// Args should be the full ToolRequest serialization — useful for
 	// reproducing the failed call from the log alone.
 	if !strings.Contains(got.Args, `"tool":"edit_file"`) {
 		t.Errorf("Args should round-trip the request, got: %q", got.Args)
 	}
+
 	if !strings.Contains(got.Args, `"description":"change greeting"`) {
 		t.Errorf("Args should include description, got: %q", got.Args)
 	}
@@ -145,9 +165,11 @@ func TestRecordWriteFailureAppendsMultipleRecords(t *testing.T) {
 
 	path := filepath.Join(root, ".planning", "sessA.failures.jsonl")
 	recs := readFailureLines(t, path)
+
 	if len(recs) != 3 {
 		t.Fatalf("want 3 records, got %d", len(recs))
 	}
+
 	if recs[0].Error != "first" || recs[1].Error != "second" || recs[2].Error != "third" {
 		t.Fatalf("records out of order: %#v", recs)
 	}
@@ -163,6 +185,7 @@ func TestRecordWriteFailureSafeWithoutSessionID(t *testing.T) {
 	m := &Model{workspace: ws}
 	// Must not panic.
 	m.recordWriteFailure(1, workspace.ToolRequest{Tool: "edit_file", Path: "x"}, workspace.ToolResult{Tool: "edit_file", Error: "boom"})
+
 	// .planning dir should not exist since no session id meant no path.
 	if _, err := os.Stat(filepath.Join(root, ".planning")); !os.IsNotExist(err) {
 		t.Fatalf("no session id should not create .planning; stat err = %v", err)
@@ -175,7 +198,9 @@ func TestRecordWriteFailureNilModelNoop(t *testing.T) {
 			t.Fatalf("nil model must not panic; recovered: %v", r)
 		}
 	}()
+
 	var m *Model
+
 	m.recordWriteFailure(1, workspace.ToolRequest{Tool: "edit_file"}, workspace.ToolResult{Error: "boom"})
 }
 
@@ -194,12 +219,15 @@ func TestRecordWriteFailureTruncatesLargeArgs(t *testing.T) {
 
 	path := filepath.Join(root, ".planning", "sessA.failures.jsonl")
 	recs := readFailureLines(t, path)
+
 	if len(recs) != 1 {
 		t.Fatalf("want 1 record, got %d", len(recs))
 	}
+
 	if len(recs[0].Args) > maxFailureArgsLen+len("…[truncated]") {
 		t.Errorf("Args not truncated, len = %d", len(recs[0].Args))
 	}
+
 	if !strings.HasSuffix(recs[0].Args, "…[truncated]") {
 		t.Errorf("truncated Args should end with marker, got suffix: %q", recs[0].Args[max(0, len(recs[0].Args)-32):])
 	}
@@ -238,9 +266,11 @@ func TestRecordWriteFailureIncludesGuardSyntheticResult(t *testing.T) {
 
 	path := filepath.Join(root, ".planning", "sessA.failures.jsonl")
 	recs := readFailureLines(t, path)
+
 	if len(recs) != 1 {
 		t.Fatalf("want 1 record, got %d", len(recs))
 	}
+
 	if !strings.Contains(recs[0].Summary, "Missing write description") {
 		t.Errorf("guard summary not preserved: %q", recs[0].Summary)
 	}

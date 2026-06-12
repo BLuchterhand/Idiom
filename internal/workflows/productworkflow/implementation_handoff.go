@@ -60,6 +60,7 @@ func LoadImplementationHandoff(effortRoot string) (ImplementationHandoff, error)
 	if err != nil {
 		return ImplementationHandoff{}, fmt.Errorf("load workflow state: %w", err)
 	}
+
 	workflowState, err := ParseWorkflowStateJSON(stateData)
 	if err != nil {
 		return ImplementationHandoff{}, fmt.Errorf("parse workflow state: %w", err)
@@ -69,6 +70,7 @@ func LoadImplementationHandoff(effortRoot string) (ImplementationHandoff, error)
 	if err != nil {
 		return ImplementationHandoff{}, fmt.Errorf("load prd.md: %w", err)
 	}
+
 	prd, err := ParsePRDMarkdown(prdData)
 	if err != nil {
 		return ImplementationHandoff{}, fmt.Errorf("parse prd.md: %w", err)
@@ -78,6 +80,7 @@ func LoadImplementationHandoff(effortRoot string) (ImplementationHandoff, error)
 	if err != nil {
 		return ImplementationHandoff{}, fmt.Errorf("load tdd.json: %w", err)
 	}
+
 	tdd, err := ParseTDDLedgerJSON(tddData)
 	if err != nil {
 		return ImplementationHandoff{}, fmt.Errorf("parse tdd.json: %w", err)
@@ -87,6 +90,7 @@ func LoadImplementationHandoff(effortRoot string) (ImplementationHandoff, error)
 	if err != nil {
 		return ImplementationHandoff{}, err
 	}
+
 	traceability := loadImplementationHandoffTraceability(root)
 	implementationRecords := loadImplementationHandoffLedger(root)
 
@@ -110,9 +114,11 @@ func LoadImplementationHandoff(effortRoot string) (ImplementationHandoff, error)
 func BuildImplementationHandoff(input BriefGenerationInput) ImplementationHandoff {
 	generated := GenerateImplementationBrief(input)
 	coverageTier := strings.TrimSpace(input.CoverageEvaluation.CoverageTier)
+
 	if coverageTier == "" {
 		coverageTier = strings.TrimSpace(input.TDD.CoverageTier)
 	}
+
 	handoff := ImplementationHandoff{
 		EffortID:             firstNonEmptyHandoffString(input.WorkflowState.EffortID, input.TDD.EffortID, input.CoverageEvaluation.EffortID),
 		TaskID:               firstNonEmptyHandoffString(input.WorkflowState.TaskID, input.TDD.TaskID, input.PRD.FrontMatter.TaskID, input.CoverageEvaluation.TaskID),
@@ -140,6 +146,7 @@ func BuildImplementationHandoff(input BriefGenerationInput) ImplementationHandof
 		if id == "" {
 			continue
 		}
+
 		handoff.PRDRequirements = append(handoff.PRDRequirements, ImplementationHandoffPRDRequirement{
 			ID:          id,
 			Priority:    strings.TrimSpace(req.Priority),
@@ -149,25 +156,31 @@ func BuildImplementationHandoff(input BriefGenerationInput) ImplementationHandof
 			Obligations: briefUniqueSortedStrings(req.TDDObligations),
 		})
 	}
+
 	for _, entry := range input.ADRIndex.ADRs {
 		if !isAcceptedArtifact(entry.Status) {
 			continue
 		}
+
 		adrID := strings.TrimSpace(entry.ADRID)
 		if adrID != "" {
 			handoff.AcceptedADRIDs = append(handoff.AcceptedADRIDs, adrID)
 		}
+
 		if path := strings.TrimSpace(entry.Path); path != "" {
 			handoff.AcceptedADRPaths = append(handoff.AcceptedADRPaths, filepath.ToSlash(filepath.Join("adrs", path)))
 		}
 	}
+
 	handoff.AcceptedADRIDs = briefUniqueSortedStrings(handoff.AcceptedADRIDs)
 	handoff.AcceptedADRPaths = briefUniqueSortedStrings(handoff.AcceptedADRPaths)
+
 	for _, obl := range input.TDD.Obligations {
 		id := strings.TrimSpace(obl.ID)
 		if id == "" {
 			continue
 		}
+
 		handoff.TDDObligations = append(handoff.TDDObligations, ImplementationHandoffTDDObligation{
 			ID:             id,
 			Behavior:       strings.TrimSpace(obl.Behavior),
@@ -176,6 +189,7 @@ func BuildImplementationHandoff(input BriefGenerationInput) ImplementationHandof
 			Status:         strings.TrimSpace(obl.Status),
 		})
 	}
+
 	return handoff
 }
 
@@ -184,29 +198,36 @@ func loadImplementationHandoffADRs(root string) (ADRIndex, []ParsedADR, error) {
 	if err != nil {
 		return ADRIndex{}, nil, nil
 	}
+
 	adrIndex, err := ParseADRIndexJSON(adrIndexData)
 	if err != nil {
 		return ADRIndex{}, nil, fmt.Errorf("parse adrs/index.json: %w", err)
 	}
+
 	var parsedADRs []ParsedADR
+
 	for _, entry := range adrIndex.ADRs {
 		if !isAcceptedArtifact(entry.Status) || strings.TrimSpace(entry.Path) == "" {
 			continue
 		}
+
 		adrData, adrErr := os.ReadFile(filepath.Join(root, "adrs", entry.Path))
 		if adrErr != nil {
 			continue
 		}
+
 		adrDoc, adrErr := ParseADRMarkdown(adrData)
 		if adrErr != nil {
 			continue
 		}
+
 		parsedADRs = append(parsedADRs, ParsedADR{
 			Doc:         adrDoc,
 			RelPath:     filepath.ToSlash(filepath.Join("adrs", entry.Path)),
 			RawMarkdown: string(adrData),
 		})
 	}
+
 	return adrIndex, parsedADRs, nil
 }
 
@@ -215,10 +236,12 @@ func loadImplementationHandoffTraceability(root string) TraceabilityMatrix {
 	if err != nil {
 		return TraceabilityMatrix{}
 	}
+
 	traceability, err := ParseTraceabilityMatrixJSON(matrixData)
 	if err != nil {
 		return TraceabilityMatrix{}
 	}
+
 	return traceability
 }
 
@@ -227,10 +250,12 @@ func loadImplementationHandoffLedger(root string) []ImplementationLedgerRecord {
 	if err != nil {
 		return nil
 	}
+
 	records, err := ParseImplementationLedgerJSONL(data)
 	if err != nil {
 		return nil
 	}
+
 	return records
 }
 
@@ -239,6 +264,7 @@ func coverageBlockerMessages(evaluation CoverageGateEvaluation) []string {
 	for _, blocker := range evaluation.Blockers {
 		messages = append(messages, blocker.Message)
 	}
+
 	return briefUniqueSortedStrings(messages)
 }
 
@@ -249,6 +275,7 @@ func coverageBlockerKinds(evaluation CoverageGateEvaluation) []string {
 			kinds = append(kinds, kind)
 		}
 	}
+
 	return briefUniqueSortedStrings(kinds)
 }
 
@@ -258,5 +285,6 @@ func firstNonEmptyHandoffString(values ...string) string {
 			return trimmed
 		}
 	}
+
 	return ""
 }

@@ -21,48 +21,62 @@ type nativeLanguageIndexes struct {
 
 func buildNativeLanguageIndexes(ctx context.Context, root string, language string, scope string, maxFiles int, allowMissingScope bool) (nativeLanguageIndexes, error) {
 	language = normalizeLanguage(language)
+
 	out := nativeLanguageIndexes{requested: language}
 	indexOpts := semantic.IndexOptions{Scope: scope, MaxFiles: maxFiles, Context: ctx}
+
 	if shouldUsePythonCollector(language) {
 		index, err := semantic.BuildPythonIndexWithOptions(root, indexOpts)
 		if err != nil {
 			return out, fmt.Errorf("build Python index: %w", err)
 		}
+
 		if language == "python" && index == nil && !allowMissingScope {
 			return out, fmt.Errorf("no Python files found under %s", root)
 		}
+
 		out.python = index
 	}
+
 	if shouldUseTypeScriptCollector(language) {
 		index, err := semantic.BuildTsIndexWithOptions(root, indexOpts)
 		if err != nil {
 			return out, fmt.Errorf("build TypeScript/JavaScript index: %w", err)
 		}
+
 		if (language == "typescript" || language == "javascript") && index == nil && !allowMissingScope {
 			return out, fmt.Errorf("no TypeScript/JavaScript files found under %s", root)
 		}
+
 		out.typescript = index
 	}
+
 	if shouldUseRustCollector(language) {
 		index, err := semantic.BuildRustIndexWithOptions(root, indexOpts)
 		if err != nil {
 			return out, fmt.Errorf("build Rust index: %w", err)
 		}
+
 		if language == "rust" && index == nil && !allowMissingScope {
 			return out, fmt.Errorf("no Rust files found under %s", root)
 		}
+
 		out.rust = index
 	}
+
 	if shouldUseJavaCollector(language) {
 		index, err := semantic.BuildJavaIndexWithOptions(root, indexOpts)
 		if err != nil {
 			return out, fmt.Errorf("build Java index: %w", err)
 		}
+
 		if language == "java" && index == nil && !allowMissingScope {
 			return out, fmt.Errorf("no Java files found under %s", root)
 		}
+
 		out.java = index
 	}
+
 	return out, nil
 }
 
@@ -71,44 +85,58 @@ func (idx nativeLanguageIndexes) addToGraph(root string, repoID string, scope st
 	symbolsIndexed := 0
 	languagesSeen := make(map[string]struct{})
 	collectorsSeen := make(map[string]struct{})
+
 	if idx.python != nil && hasNativeRemaining(maxFiles, filesIndexed) {
 		addedFiles, addedSymbols := builder.addPythonIndex(root, repoID, scope, idx.python, nativeRemaining(maxFiles, filesIndexed), indexedFiles)
+
 		filesIndexed += addedFiles
 		symbolsIndexed += addedSymbols
+
 		if addedFiles > 0 {
 			languagesSeen["python"] = struct{}{}
 			collectorsSeen["python_index"] = struct{}{}
 		}
 	}
+
 	if idx.typescript != nil && hasNativeRemaining(maxFiles, filesIndexed) {
 		addedFiles, addedSymbols, languages := builder.addTypeScriptIndex(root, repoID, scope, idx.requested, idx.typescript, nativeRemaining(maxFiles, filesIndexed), indexedFiles)
+
 		filesIndexed += addedFiles
 		symbolsIndexed += addedSymbols
+
 		for _, language := range languages {
 			languagesSeen[language] = struct{}{}
 		}
+
 		if addedFiles > 0 {
 			collectorsSeen["typescript_index"] = struct{}{}
 		}
 	}
+
 	if idx.rust != nil && hasNativeRemaining(maxFiles, filesIndexed) {
 		addedFiles, addedSymbols := builder.addRustIndex(root, repoID, scope, idx.rust, nativeRemaining(maxFiles, filesIndexed), indexedFiles)
+
 		filesIndexed += addedFiles
 		symbolsIndexed += addedSymbols
+
 		if addedFiles > 0 {
 			languagesSeen["rust"] = struct{}{}
 			collectorsSeen["rust_index"] = struct{}{}
 		}
 	}
+
 	if idx.java != nil && hasNativeRemaining(maxFiles, filesIndexed) {
 		addedFiles, addedSymbols := builder.addJavaIndex(root, repoID, scope, idx.java, nativeRemaining(maxFiles, filesIndexed), indexedFiles)
+
 		filesIndexed += addedFiles
 		symbolsIndexed += addedSymbols
+
 		if addedFiles > 0 {
 			languagesSeen["java"] = struct{}{}
 			collectorsSeen["java_index"] = struct{}{}
 		}
 	}
+
 	return filesIndexed, symbolsIndexed, sortedStringSet(languagesSeen), sortedStringSet(collectorsSeen)
 }
 
@@ -116,10 +144,12 @@ func nativeRemaining(maxFiles int, added int) int {
 	if maxFiles <= 0 {
 		return 0
 	}
+
 	remaining := maxFiles - added
 	if remaining < 0 {
 		return 0
 	}
+
 	return remaining
 }
 
@@ -129,24 +159,30 @@ func hasNativeRemaining(maxFiles int, added int) bool {
 
 func (b *graphBuilder) addPythonIndex(root string, repoID string, scope string, index *semantic.PythonIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int) {
 	table := newNativeSymbolTable()
+
 	for _, file := range index.Files {
 		if !pathInScope(file.Path, scope) {
 			continue
 		}
+
 		for _, symbol := range file.Symbols {
 			table.add(file.Path, qualifiedPythonSymbolName(symbol), symbol.Name, pythonSymbolKind(symbol.Kind))
 		}
 	}
+
 	existingFiles := nativeIndexFiles(index.Files, func(file semantic.PythonFile) string { return file.Path })
 	filesIndexed := 0
 	symbolsIndexed := 0
+
 	for _, file := range index.Files {
 		if !pathInScope(file.Path, scope) {
 			continue
 		}
+
 		if maxFiles > 0 && filesIndexed >= maxFiles {
 			break
 		}
+
 		fingerprint, _ := fileFingerprint(filepath.Join(root, filepath.FromSlash(file.Path)))
 		fileID, packageID := b.addNativeFile(repoID, file.Path, "python", "python_index", fingerprint, map[string]any{
 			"imports":     file.Imports,
@@ -160,16 +196,20 @@ func (b *graphBuilder) addPythonIndex(root string, repoID string, scope string, 
 			"source_dir":  file.SourceDir,
 		})
 		imported := make(map[string]struct{})
+
 		for _, dep := range file.Imports {
 			if _, ok := existingFiles[dep]; ok {
 				b.addEdge("imports", fileID, fileNodeID(dep), "python_index", "syntax", map[string]any{"path": file.Path, "import": dep}, nil)
+
 				imported[dep] = struct{}{}
 			}
 		}
+
 		for _, raw := range file.RawImports {
 			if pythonRawImportResolved(raw, file.Imports) {
 				continue
 			}
+
 			depID := externalDependencyNodeID("python:" + raw)
 			b.addNode(Node{
 				ID:            depID,
@@ -181,13 +221,16 @@ func (b *graphBuilder) addPythonIndex(root string, repoID string, scope string, 
 			})
 			b.addEdge("imports", fileID, depID, "python_index", "syntax", map[string]any{"path": file.Path, "import": raw}, nil)
 		}
+
 		localSymbols := pythonLocalSymbols(file)
 		for _, symbol := range file.Symbols {
 			qualified := qualifiedPythonSymbolName(symbol)
 			kind := pythonSymbolKind(symbol.Kind)
+
 			if file.IsTest && kind == "func" && isGenericTestSymbol("python", symbol.Name) {
 				kind = "test"
 			}
+
 			symbolID := symbolNodeID(file.Path, qualified)
 			b.addNode(Node{
 				ID:            symbolID,
@@ -209,50 +252,63 @@ func (b *graphBuilder) addPythonIndex(root string, repoID string, scope string, 
 				},
 			})
 			b.addEdge("defines", fileID, symbolID, "python_index", "syntax", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
+
 			if parentID := nativeParentSymbolID(file.Path, symbol.Scope, localSymbols); parentID != "" && parentID != symbolID {
 				b.addEdge("contains", parentID, symbolID, "python_index", "syntax", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
 			}
+
 			if kind == "test" {
 				b.addEdge("tests", symbolID, packageID, "python_index", "heuristic", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
 			}
+
 			for _, call := range symbol.Calls {
 				targetID := table.target(file.Path, call.Name, imported)
 				if targetID == "" || targetID == symbolID {
 					continue
 				}
+
 				b.addEdge("calls", symbolID, targetID, "python_index", "heuristic", map[string]any{"path": file.Path, "line": call.Line}, map[string]any{"call": call.Name})
 			}
+
 			symbolsIndexed++
 		}
+
 		indexedFiles[file.Path] = struct{}{}
 		filesIndexed++
 	}
+
 	return filesIndexed, symbolsIndexed
 }
 
 func (b *graphBuilder) addTypeScriptIndex(root string, repoID string, scope string, requested string, index *semantic.TsIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int, []string) {
 	table := newNativeSymbolTable()
+
 	for _, file := range index.Files {
 		language := sourceLanguageForPath(file.Path)
 		if !pathInScope(file.Path, scope) || !languageMatches(requested, language) {
 			continue
 		}
+
 		for _, symbol := range file.Symbols {
 			table.add(file.Path, qualifiedTsSymbolName(symbol), symbol.Name, tsSymbolKind(symbol.Kind))
 		}
 	}
+
 	existingFiles := nativeIndexFiles(index.Files, func(file semantic.TsFile) string { return file.Path })
 	filesIndexed := 0
 	symbolsIndexed := 0
 	languagesSeen := make(map[string]struct{})
+
 	for _, file := range index.Files {
 		language := sourceLanguageForPath(file.Path)
 		if !pathInScope(file.Path, scope) || !languageMatches(requested, language) {
 			continue
 		}
+
 		if maxFiles > 0 && filesIndexed >= maxFiles {
 			break
 		}
+
 		fingerprint, _ := fileFingerprint(filepath.Join(root, filepath.FromSlash(file.Path)))
 		fileID, packageID := b.addNativeFile(repoID, file.Path, language, "typescript_index", fingerprint, map[string]any{
 			"imports":         file.Imports,
@@ -269,12 +325,16 @@ func (b *graphBuilder) addTypeScriptIndex(root string, repoID string, scope stri
 			"collector_model": "typescript_javascript",
 		})
 		imported := make(map[string]struct{})
+
 		for _, dep := range file.Imports {
 			if _, ok := existingFiles[dep]; ok {
 				b.addEdge("imports", fileID, fileNodeID(dep), "typescript_index", "syntax", map[string]any{"path": file.Path, "import": dep}, nil)
+
 				imported[dep] = struct{}{}
+
 				continue
 			}
+
 			depID := externalDependencyNodeID(language + ":" + dep)
 			b.addNode(Node{
 				ID:            depID,
@@ -286,13 +346,16 @@ func (b *graphBuilder) addTypeScriptIndex(root string, repoID string, scope stri
 			})
 			b.addEdge("imports", fileID, depID, "typescript_index", "syntax", map[string]any{"path": file.Path, "import": dep}, nil)
 		}
+
 		localSymbols := tsLocalSymbols(file)
 		for _, symbol := range file.Symbols {
 			qualified := qualifiedTsSymbolName(symbol)
 			kind := tsSymbolKind(symbol.Kind)
+
 			if file.IsTest && kind == "func" && isGenericTestSymbol(language, symbol.Name) {
 				kind = "test"
 			}
+
 			symbolID := symbolNodeID(file.Path, qualified)
 			b.addNode(Node{
 				ID:            symbolID,
@@ -314,48 +377,61 @@ func (b *graphBuilder) addTypeScriptIndex(root string, repoID string, scope stri
 				},
 			})
 			b.addEdge("defines", fileID, symbolID, "typescript_index", "syntax", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
+
 			if parentID := nativeParentSymbolID(file.Path, symbol.Scope, localSymbols); parentID != "" && parentID != symbolID {
 				b.addEdge("contains", parentID, symbolID, "typescript_index", "syntax", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
 			}
+
 			if kind == "test" {
 				b.addEdge("tests", symbolID, packageID, "typescript_index", "heuristic", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
 			}
+
 			for _, call := range symbol.Calls {
 				targetID := table.target(file.Path, call.Name, imported)
 				if targetID == "" || targetID == symbolID {
 					continue
 				}
+
 				b.addEdge("calls", symbolID, targetID, "typescript_index", "heuristic", map[string]any{"path": file.Path, "line": call.Line}, map[string]any{"call": call.Name})
 			}
+
 			symbolsIndexed++
 		}
+
 		indexedFiles[file.Path] = struct{}{}
 		languagesSeen[language] = struct{}{}
 		filesIndexed++
 	}
+
 	return filesIndexed, symbolsIndexed, sortedStringSet(languagesSeen)
 }
 
 func (b *graphBuilder) addRustIndex(root string, repoID string, scope string, index *semantic.RustIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int) {
 	table := newNativeSymbolTable()
 	existingFiles := nativeIndexFiles(index.Files, func(file semantic.RustFile) string { return file.Path })
+
 	for _, file := range index.Files {
 		if !pathInScope(file.Path, scope) {
 			continue
 		}
+
 		for _, symbol := range file.Symbols {
 			table.add(file.Path, qualifiedRustSymbolName(symbol), symbol.Name, rustSymbolKind(symbol.Kind))
 		}
 	}
+
 	filesIndexed := 0
 	symbolsIndexed := 0
+
 	for _, file := range index.Files {
 		if !pathInScope(file.Path, scope) {
 			continue
 		}
+
 		if maxFiles > 0 && filesIndexed >= maxFiles {
 			break
 		}
+
 		fingerprint, _ := fileFingerprint(filepath.Join(root, filepath.FromSlash(file.Path)))
 		fileID, packageID := b.addNativeFile(repoID, file.Path, "rust", "rust_index", fingerprint, map[string]any{
 			"modules":    file.Modules,
@@ -375,12 +451,16 @@ func (b *graphBuilder) addRustIndex(root string, repoID string, scope string, in
 			"source_dir": file.SourceDir,
 		})
 		imported := make(map[string]struct{})
+
 		for _, module := range file.Modules {
 			if target := rustModuleTargetPath(file.Path, module, existingFiles); target != "" {
 				b.addEdge("imports", fileID, fileNodeID(target), "rust_index", "syntax", map[string]any{"path": file.Path, "module": module}, nil)
+
 				imported[target] = struct{}{}
+
 				continue
 			}
+
 			depID := externalDependencyNodeID("rust:mod:" + module)
 			b.addNode(Node{
 				ID:            depID,
@@ -392,12 +472,16 @@ func (b *graphBuilder) addRustIndex(root string, repoID string, scope string, in
 			})
 			b.addEdge("imports", fileID, depID, "rust_index", "heuristic", map[string]any{"path": file.Path, "module": module}, nil)
 		}
+
 		for _, usePath := range file.Uses {
 			if target := rustUseTargetPath(file.Path, usePath, existingFiles); target != "" {
 				b.addEdge("imports", fileID, fileNodeID(target), "rust_index", "heuristic", map[string]any{"path": file.Path, "use": usePath}, nil)
+
 				imported[target] = struct{}{}
+
 				continue
 			}
+
 			depID := externalDependencyNodeID("rust:" + usePath)
 			b.addNode(Node{
 				ID:            depID,
@@ -409,6 +493,7 @@ func (b *graphBuilder) addRustIndex(root string, repoID string, scope string, in
 			})
 			b.addEdge("imports", fileID, depID, "rust_index", "syntax", map[string]any{"path": file.Path, "use": usePath}, nil)
 		}
+
 		localSymbols := rustLocalSymbols(file)
 		for _, symbol := range file.Symbols {
 			qualified := qualifiedRustSymbolName(symbol)
@@ -434,46 +519,59 @@ func (b *graphBuilder) addRustIndex(root string, repoID string, scope string, in
 				},
 			})
 			b.addEdge("defines", fileID, symbolID, "rust_index", "syntax", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
+
 			if parentID := nativeParentSymbolID(file.Path, symbol.Scope, localSymbols); parentID != "" && parentID != symbolID {
 				b.addEdge("contains", parentID, symbolID, "rust_index", "syntax", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
 			}
+
 			if kind == "test" || kind == "bench" {
 				b.addEdge("tests", symbolID, packageID, "rust_index", "heuristic", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
 			}
+
 			for _, call := range symbol.Calls {
 				targetID := table.target(file.Path, call.Name, imported)
 				if targetID == "" || targetID == symbolID {
 					continue
 				}
+
 				b.addEdge("calls", symbolID, targetID, "rust_index", "heuristic", map[string]any{"path": file.Path, "line": call.Line}, map[string]any{"call": call.Name})
 			}
+
 			symbolsIndexed++
 		}
+
 		indexedFiles[file.Path] = struct{}{}
 		filesIndexed++
 	}
+
 	return filesIndexed, symbolsIndexed
 }
 
 func (b *graphBuilder) addJavaIndex(root string, repoID string, scope string, index *semantic.JavaIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int) {
 	table := newNativeSymbolTable()
+
 	for _, file := range index.Files {
 		if !pathInScope(file.Path, scope) {
 			continue
 		}
+
 		for _, symbol := range file.Symbols {
 			table.add(file.Path, qualifiedJavaSymbolName(symbol), symbol.Name, javaSymbolKind(symbol.Kind))
 		}
 	}
+
 	filesIndexed := 0
 	symbolsIndexed := 0
+
 	for _, file := range index.Files {
 		if !pathInScope(file.Path, scope) {
 			continue
 		}
+
 		if maxFiles > 0 && filesIndexed >= maxFiles {
 			break
 		}
+
 		fingerprint, _ := fileFingerprint(filepath.Join(root, filepath.FromSlash(file.Path)))
 		fileID, packageID := b.addNativeFile(repoID, file.Path, "java", "java_index", fingerprint, map[string]any{
 			"package":    file.Package,
@@ -488,14 +586,18 @@ func (b *graphBuilder) addJavaIndex(root string, repoID string, scope string, in
 			"source_dir": file.SourceDir,
 		})
 		imported := make(map[string]struct{})
+
 		for _, target := range javaImportTargetPaths(index, file) {
 			b.addEdge("imports", fileID, fileNodeID(target), "java_index", "syntax", map[string]any{"path": file.Path, "import": target}, nil)
+
 			imported[target] = struct{}{}
 		}
+
 		for _, raw := range file.Imports {
 			if javaRawImportResolved(index, raw) {
 				continue
 			}
+
 			depID := externalDependencyNodeID("java:" + raw)
 			b.addNode(Node{
 				ID:            depID,
@@ -507,13 +609,16 @@ func (b *graphBuilder) addJavaIndex(root string, repoID string, scope string, in
 			})
 			b.addEdge("imports", fileID, depID, "java_index", "syntax", map[string]any{"path": file.Path, "import": raw}, nil)
 		}
+
 		localSymbols := javaLocalSymbols(file)
 		for _, symbol := range file.Symbols {
 			qualified := qualifiedJavaSymbolName(symbol)
 			kind := javaSymbolKind(symbol.Kind)
+
 			if file.IsTest && kind == "method" && (isGenericTestSymbol("java", symbol.Name) || hasShortJavaAnnotation(symbol.Annotations, "Test")) {
 				kind = "test"
 			}
+
 			symbolID := symbolNodeID(file.Path, qualified)
 			b.addNode(Node{
 				ID:            symbolID,
@@ -538,34 +643,43 @@ func (b *graphBuilder) addJavaIndex(root string, repoID string, scope string, in
 				},
 			})
 			b.addEdge("defines", fileID, symbolID, "java_index", "syntax", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
+
 			if parentID := nativeParentSymbolID(file.Path, symbol.Scope, localSymbols); parentID != "" && parentID != symbolID {
 				b.addEdge("contains", parentID, symbolID, "java_index", "syntax", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
 			}
+
 			if kind == "test" {
 				b.addEdge("tests", symbolID, packageID, "java_index", "heuristic", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
 			}
+
 			if symbol.Extends != "" {
 				if targetID := table.target(file.Path, symbol.Extends, imported); targetID != "" && targetID != symbolID {
 					b.addEdge("extends", symbolID, targetID, "java_index", "heuristic", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
 				}
 			}
+
 			for _, impl := range symbol.Implements {
 				if targetID := table.target(file.Path, impl, imported); targetID != "" && targetID != symbolID {
 					b.addEdge("implements", symbolID, targetID, "java_index", "heuristic", map[string]any{"path": file.Path, "line": symbol.Line}, nil)
 				}
 			}
+
 			for _, call := range symbol.Calls {
 				targetID := table.target(file.Path, call.Name, imported)
 				if targetID == "" || targetID == symbolID {
 					continue
 				}
+
 				b.addEdge("calls", symbolID, targetID, "java_index", "heuristic", map[string]any{"path": file.Path, "line": call.Line}, map[string]any{"call": call.Name})
 			}
+
 			symbolsIndexed++
 		}
+
 		indexedFiles[file.Path] = struct{}{}
 		filesIndexed++
 	}
+
 	return filesIndexed, symbolsIndexed
 }
 
@@ -599,6 +713,7 @@ func (b *graphBuilder) addNativeFile(repoID string, path string, language string
 		Properties:  properties,
 	})
 	b.addEdge("contains", packageID, fileID, collector, "syntax", map[string]any{"path": path}, nil)
+
 	return fileID, packageID
 }
 
@@ -625,9 +740,11 @@ func newNativeSymbolTable() nativeSymbolTable {
 func (t nativeSymbolTable) add(path string, qualified string, name string, kind string) {
 	qualified = strings.TrimSpace(qualified)
 	name = strings.TrimSpace(name)
+
 	if path == "" || qualified == "" {
 		return
 	}
+
 	ref := nativeSymbolRef{
 		ID:        symbolNodeID(path, qualified),
 		Path:      path,
@@ -638,6 +755,7 @@ func (t nativeSymbolTable) add(path string, qualified string, name string, kind 
 	for _, key := range nativeSymbolLookupKeys(name, qualified) {
 		t.byName[key] = append(t.byName[key], ref)
 	}
+
 	t.byQualified[nativeSymbolKey(qualified)] = append(t.byQualified[nativeSymbolKey(qualified)], ref)
 }
 
@@ -646,80 +764,101 @@ func (t nativeSymbolTable) target(sourcePath string, callName string, importedPa
 	if callName == "" {
 		return ""
 	}
+
 	candidates := t.byQualified[nativeSymbolKey(callName)]
 	for _, key := range nativeSymbolLookupKeys(callName, callName) {
 		candidates = append(candidates, t.byName[key]...)
 	}
+
 	candidates = uniqueNativeSymbolRefs(candidates)
 	if len(candidates) == 0 {
 		return ""
 	}
+
 	sourceDir := pathDir(sourcePath)
 	bestID := ""
 	bestScore := -1
 	ties := 0
+
 	for _, candidate := range candidates {
 		score := 0
 		if candidate.Path == sourcePath {
 			score += 80
 		}
+
 		if _, ok := importedPaths[candidate.Path]; ok {
 			score += 60
 		}
+
 		if pathDir(candidate.Path) == sourceDir {
 			score += 30
 		}
+
 		switch candidate.Kind {
 		case "func", "method", "constructor", "type", "interface", "test":
 			score += 5
 		}
+
 		if score > bestScore {
 			bestScore = score
 			bestID = candidate.ID
 			ties = 1
+
 			continue
 		}
+
 		if score == bestScore {
 			ties++
+
 			if candidate.ID < bestID {
 				bestID = candidate.ID
 			}
 		}
 	}
+
 	if bestScore <= 0 && len(candidates) != 1 {
 		return ""
 	}
+
 	if ties > 1 && bestScore < 80 {
 		return ""
 	}
+
 	return bestID
 }
 
 func uniqueNativeSymbolRefs(in []nativeSymbolRef) []nativeSymbolRef {
 	seen := make(map[string]struct{}, len(in))
 	out := make([]nativeSymbolRef, 0, len(in))
+
 	for _, ref := range in {
 		if ref.ID == "" {
 			continue
 		}
+
 		if _, ok := seen[ref.ID]; ok {
 			continue
 		}
+
 		seen[ref.ID] = struct{}{}
 		out = append(out, ref)
 	}
+
 	slices.SortFunc(out, func(a, b nativeSymbolRef) int { return cmp.Compare(a.ID, b.ID) })
+
 	return out
 }
 
 func nativeSymbolLookupKeys(name string, qualified string) []string {
 	var keys []string
+
 	for _, value := range []string{name, qualified, nativeShortName(qualified)} {
 		key := nativeSymbolKey(value)
 		if key != "" {
 			keys = append(keys, key)
 		}
 	}
+
 	return uniqueStrings(keys)
 }
 
@@ -732,11 +871,13 @@ func nativeShortName(value string) string {
 	if value == "" {
 		return ""
 	}
+
 	for _, sep := range []string{"#", ".", "::"} {
 		if idx := strings.LastIndex(value, sep); idx >= 0 && idx+len(sep) < len(value) {
 			value = value[idx+len(sep):]
 		}
 	}
+
 	return value
 }
 
@@ -745,11 +886,13 @@ func nativeParentSymbolID(path string, scope string, localSymbols map[string]str
 	if scope == "" {
 		return ""
 	}
+
 	for _, key := range nativeSymbolLookupKeys(scope, scope) {
 		if id := localSymbols[key]; id != "" {
 			return id
 		}
 	}
+
 	return ""
 }
 
@@ -760,57 +903,71 @@ func nativeIndexFiles[T any](files []T, pathFn func(T) string) map[string]struct
 			out[path] = struct{}{}
 		}
 	}
+
 	return out
 }
 
 func pythonLocalSymbols(file semantic.PythonFile) map[string]string {
 	out := make(map[string]string)
+
 	for _, symbol := range file.Symbols {
 		qualified := qualifiedPythonSymbolName(symbol)
 		id := symbolNodeID(file.Path, qualified)
+
 		for _, key := range nativeSymbolLookupKeys(symbol.Name, qualified) {
 			out[key] = id
 		}
 	}
+
 	return out
 }
 
 func tsLocalSymbols(file semantic.TsFile) map[string]string {
 	out := make(map[string]string)
+
 	for _, symbol := range file.Symbols {
 		qualified := qualifiedTsSymbolName(symbol)
 		id := symbolNodeID(file.Path, qualified)
+
 		for _, key := range nativeSymbolLookupKeys(symbol.Name, qualified) {
 			out[key] = id
 		}
 	}
+
 	return out
 }
 
 func rustLocalSymbols(file semantic.RustFile) map[string]string {
 	out := make(map[string]string)
+
 	for _, symbol := range file.Symbols {
 		qualified := qualifiedRustSymbolName(symbol)
 		id := symbolNodeID(file.Path, qualified)
+
 		for _, key := range nativeSymbolLookupKeys(symbol.Name, qualified) {
 			out[key] = id
 		}
 	}
+
 	return out
 }
 
 func javaLocalSymbols(file semantic.JavaFile) map[string]string {
 	out := make(map[string]string)
+
 	for _, symbol := range file.Symbols {
 		qualified := qualifiedJavaSymbolName(symbol)
 		id := symbolNodeID(file.Path, qualified)
+
 		for _, key := range nativeSymbolLookupKeys(symbol.Name, qualified) {
 			out[key] = id
 		}
+
 		if symbol.Scope != "" {
 			out[nativeSymbolKey(symbol.Scope)] = symbolNodeID(file.Path, qualifiedJavaScope(file.Package, symbol.Scope))
 		}
 	}
+
 	return out
 }
 
@@ -818,9 +975,11 @@ func qualifiedPythonSymbolName(symbol semantic.PythonSymbol) string {
 	if strings.TrimSpace(symbol.Qualified) != "" {
 		return symbol.Qualified
 	}
+
 	if strings.TrimSpace(symbol.Scope) != "" {
 		return symbol.Scope + "." + symbol.Name
 	}
+
 	return symbol.Name
 }
 
@@ -842,12 +1001,14 @@ func pythonRawImportResolved(raw string, resolved []string) bool {
 	if raw == "" {
 		return false
 	}
+
 	modulePath := strings.ReplaceAll(raw, ".", "/")
 	for _, path := range resolved {
 		if path == modulePath+".py" || path == modulePath+"/__init__.py" || strings.HasSuffix(path, "/"+modulePath+".py") || strings.HasSuffix(path, "/"+modulePath+"/__init__.py") {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -855,9 +1016,11 @@ func qualifiedTsSymbolName(symbol semantic.TsSymbol) string {
 	if strings.TrimSpace(symbol.Qualified) != "" {
 		return symbol.Qualified
 	}
+
 	if strings.TrimSpace(symbol.Scope) != "" {
 		return symbol.Scope + "." + symbol.Name
 	}
+
 	return symbol.Name
 }
 
@@ -878,9 +1041,11 @@ func qualifiedRustSymbolName(symbol semantic.RustSymbol) string {
 	if strings.TrimSpace(symbol.Qualified) != "" {
 		return symbol.Qualified
 	}
+
 	if strings.TrimSpace(symbol.Scope) != "" {
 		return symbol.Scope + "::" + symbol.Name
 	}
+
 	return symbol.Name
 }
 
@@ -900,6 +1065,7 @@ func rustModuleTargetPath(sourcePath string, module string, existing map[string]
 	if module == "" {
 		return ""
 	}
+
 	dir := pathDir(sourcePath)
 	candidates := []string{
 		filepath.ToSlash(filepath.Join(dir, module+".rs")),
@@ -907,6 +1073,7 @@ func rustModuleTargetPath(sourcePath string, module string, existing map[string]
 		filepath.ToSlash(filepath.Join("src", module+".rs")),
 		filepath.ToSlash(filepath.Join("src", module, "mod.rs")),
 	}
+
 	return firstExistingPath(candidates, existing)
 }
 
@@ -915,6 +1082,7 @@ func rustUseTargetPath(sourcePath string, usePath string, existing map[string]st
 	if module == "" {
 		return ""
 	}
+
 	return rustModuleTargetPath(sourcePath, module, existing)
 }
 
@@ -922,9 +1090,11 @@ func qualifiedJavaSymbolName(symbol semantic.JavaSymbol) string {
 	if strings.TrimSpace(symbol.Qualified) != "" {
 		return symbol.Qualified
 	}
+
 	if strings.TrimSpace(symbol.Scope) != "" {
 		return symbol.Scope + "." + symbol.Name
 	}
+
 	return symbol.Name
 }
 
@@ -943,13 +1113,16 @@ func javaSymbolKind(kind string) string {
 
 func javaImportTargetPaths(index *semantic.JavaIndex, file semantic.JavaFile) []string {
 	out := make(map[string]struct{})
+
 	for _, raw := range file.Imports {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			continue
 		}
+
 		wildcard := strings.HasSuffix(raw, ".*")
 		prefix := strings.TrimSuffix(raw, ".*")
+
 		for _, candidate := range index.Files {
 			for _, symbol := range candidate.Symbols {
 				qualified := qualifiedJavaSymbolName(symbol)
@@ -957,14 +1130,17 @@ func javaImportTargetPaths(index *semantic.JavaIndex, file semantic.JavaFile) []
 					if strings.HasPrefix(qualified, prefix+".") {
 						out[candidate.Path] = struct{}{}
 					}
+
 					continue
 				}
+
 				if qualified == prefix {
 					out[candidate.Path] = struct{}{}
 				}
 			}
 		}
 	}
+
 	return sortedStringSet(out)
 }
 
@@ -973,19 +1149,23 @@ func javaRawImportResolved(index *semantic.JavaIndex, raw string) bool {
 	if raw == "" || index == nil {
 		return false
 	}
+
 	wildcard := strings.HasSuffix(raw, ".*")
 	prefix := strings.TrimSuffix(raw, ".*")
+
 	for _, file := range index.Files {
 		for _, symbol := range file.Symbols {
 			qualified := qualifiedJavaSymbolName(symbol)
 			if wildcard && strings.HasPrefix(qualified, prefix+".") {
 				return true
 			}
+
 			if qualified == prefix {
 				return true
 			}
 		}
 	}
+
 	return false
 }
 
@@ -994,9 +1174,11 @@ func qualifiedJavaScope(pkg string, scope string) string {
 	if scope == "" {
 		return ""
 	}
+
 	if pkg != "" && !strings.HasPrefix(scope, pkg+".") {
 		return pkg + "." + scope
 	}
+
 	return scope
 }
 
@@ -1006,10 +1188,12 @@ func hasShortJavaAnnotation(values []string, want string) bool {
 		if idx := strings.LastIndex(value, "."); idx >= 0 {
 			value = value[idx+1:]
 		}
+
 		if strings.TrimSuffix(value, "()") == want {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1020,6 +1204,7 @@ func firstExistingPath(candidates []string, existing map[string]struct{}) string
 			return candidate
 		}
 	}
+
 	return ""
 }
 

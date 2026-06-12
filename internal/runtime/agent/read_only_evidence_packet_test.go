@@ -24,6 +24,7 @@ func TestReadOnlyEvidencePacketParsesTypedPayloadWithoutProseHeadings(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	result := workspace.ToolResult{
 		Tool:        "task",
 		Summary:     "Child task completed",
@@ -36,9 +37,11 @@ func TestReadOnlyEvidencePacketParsesTypedPayloadWithoutProseHeadings(t *testing
 	if !ok {
 		t.Fatal("expected typed payload to parse without relying on prose headings")
 	}
+
 	if !readOnlyEvidencePacketAnswerable(packet) {
 		t.Fatalf("expected source-backed typed packet to be answerable: %#v", packet)
 	}
+
 	ledger := readOnlyAnswerabilityForResults(workerruntime.WorkerRuntimeBrief{
 		Objective:         "Explain runner readiness.",
 		PermissionProfile: "read_only_workspace",
@@ -49,6 +52,7 @@ func TestReadOnlyEvidencePacketParsesTypedPayloadWithoutProseHeadings(t *testing
 			readOnlyObjectivePromotionTerms("Explain runner readiness."),
 			ledger)
 	}
+
 	rendered := renderReadOnlyEvidencePacketForToolOutput(packet, result.Output)
 	if !strings.Contains(rendered, "`internal/runtime/agent/runner.go`") || !strings.Contains(rendered, "runner.go computes") {
 		t.Fatalf("rendered typed packet should expose paths and findings, got:\n%s", rendered)
@@ -84,12 +88,15 @@ func TestReadOnlyEvidencePacketFiltersAndNormalizesSourceBodyPaths(t *testing.T)
 	if got, want := packet.SourceBodyPaths, []string{"internal/runtime/agent/runner.go"}; !slices.Equal(got, want) {
 		t.Fatalf("SourceBodyPaths = %#v, want %#v", got, want)
 	}
+
 	if got, want := packet.InspectedPaths, []string{"internal/runtime/agent/read_only_answerability.go"}; !slices.Equal(got, want) {
 		t.Fatalf("InspectedPaths = %#v, want %#v", got, want)
 	}
+
 	if got, want := packet.CandidatePaths, []string{"internal/capabilities/workspace/manager.go"}; !slices.Equal(got, want) {
 		t.Fatalf("CandidatePaths = %#v, want %#v", got, want)
 	}
+
 	if packet.Findings[0].Path != "" {
 		t.Fatalf("artifact finding path should be cleared during normalization: %#v", packet.Findings[0])
 	}
@@ -107,6 +114,7 @@ func TestReadOnlyEvidencePacketArtifactOnlyIsNotAnswerableAtPacketLevel(t *testi
 	if readOnlyEvidencePacketAnswerable(packet) {
 		t.Fatalf("artifact-only packet must not be answerable: %#v", packet)
 	}
+
 	if len(packet.SourceBodyPaths) != 0 || len(packet.InspectedPaths) != 0 {
 		t.Fatalf("artifact paths should be filtered out at packet level: %#v", packet)
 	}
@@ -129,12 +137,14 @@ func TestReadOnlyEvidencePacketDoesNotRenderGeneratedArtifactRedirectAsAnswer(t 
 	if !ok {
 		t.Fatal("expected packet to retain source paths even when redirect answer text is stripped")
 	}
+
 	rendered := renderReadOnlyEvidencePacketForToolOutput(packet, answer)
 	for _, forbidden := range []string{"Grounded answer:", "Generated evidence artifact", "Next exact source probe example"} {
 		if strings.Contains(rendered, forbidden) {
 			t.Fatalf("redirect guidance should not render as grounded answer %q:\n%s", forbidden, rendered)
 		}
 	}
+
 	if readOnlyEvidencePacketAnswerable(packet) {
 		t.Fatalf("redirect-only packet must not be answerable: %#v", packet)
 	}
@@ -164,18 +174,23 @@ func TestBuildReadOnlyEvidencePacketFromChildResultsAndAnswerText(t *testing.T) 
 	if !ok {
 		t.Fatal("expected child result packet to be built")
 	}
+
 	if packet.SchemaVersion != ReadOnlyEvidencePacketSchema {
 		t.Fatalf("schema version = %q", packet.SchemaVersion)
 	}
+
 	if got, want := packet.SourceBodyPaths, []string{"internal/runtime/agent/runner.go"}; !slices.Equal(got, want) {
 		t.Fatalf("SourceBodyPaths = %#v, want %#v", got, want)
 	}
+
 	if slices.Contains(packet.SourceBodyPaths, ".idiom/comprehension/views/pack.json") {
 		t.Fatalf("artifact path leaked into source-body paths: %#v", packet.SourceBodyPaths)
 	}
+
 	if !slices.Contains(packet.CandidatePaths, "internal/runtime/agent/read_only_answerability.go") {
 		t.Fatalf("expected search candidate path, got %#v", packet.CandidatePaths)
 	}
+
 	if !readOnlyEvidencePacketAnswerable(packet) {
 		t.Fatalf("source-backed built packet should be answerable: %#v", packet)
 	}
@@ -199,6 +214,7 @@ func TestBuildReadOnlyEvidencePacketKeepsFoundFindingBullets(t *testing.T) {
 	if !ok {
 		t.Fatal("expected packet from child answer")
 	}
+
 	if !readOnlyEvidencePacketAnswerableForObjective(packet, "Explain how delegated child runners are created in this harness.") {
 		t.Fatalf("expected found finding bullet to support objective answerability: %#v", packet)
 	}
@@ -221,12 +237,15 @@ func TestBuildReadOnlyEvidencePacketDropsLineOrientedSourceFindings(t *testing.T
 	if !ok {
 		t.Fatal("expected packet to retain source-body path context")
 	}
+
 	if readOnlyEvidencePacketAnswerable(packet) {
 		t.Fatalf("raw line-oriented source snippets must not become answerable findings: %#v", packet)
 	}
+
 	if len(packet.Findings) != 0 {
 		t.Fatalf("line-oriented source snippets leaked into packet findings: %#v", packet.Findings)
 	}
+
 	if got, want := packet.SourceBodyPaths, []string{"internal/runtime/agent/runner.go"}; !slices.Equal(got, want) {
 		t.Fatalf("SourceBodyPaths = %#v, want %#v", got, want)
 	}
@@ -247,6 +266,7 @@ func TestReadOnlyEvidencePacketAnswerableForObjectiveAcceptsSubagentWorkPacket(t
 	body := strings.Join([]string{packet.Findings[0].Text, packet.Findings[1].Text}, "\n")
 	objectiveText := answerTextWithoutPathCitations(substantiveAnswerWithoutEchoedObjective(body, objective))
 	mechanismText := strings.ToLower(answerProseForObjectiveMatching(objectiveText))
+
 	if !readOnlyEvidencePacketAnswerableForObjective(packet, objective) {
 		t.Fatalf("expected subagent packet to support objective answerability: terms=%#v objectiveText=%q mechanism=%t packet=%#v",
 			readOnlyObjectivePromotionTerms(objective),
@@ -254,10 +274,12 @@ func TestReadOnlyEvidencePacketAnswerableForObjectiveAcceptsSubagentWorkPacket(t
 			readOnlyExplanationHasMechanismVerb(mechanismText),
 			packet)
 	}
+
 	answer, ok := synthesizeReadOnlyEvidencePacketAnswer(objective, []ReadOnlyEvidencePacket{packet})
 	if !ok {
 		t.Fatal("expected synthesis from subagent packet")
 	}
+
 	for _, want := range []string{"delegates subagent read-only exploration", "returns the typed evidence packet"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected synthesized answer to contain %q, got:\n%s", want, answer)
@@ -268,9 +290,11 @@ func TestReadOnlyEvidencePacketAnswerableForObjectiveAcceptsSubagentWorkPacket(t
 func TestReadOnlyObjectiveAnswerEvidenceSupportedAcceptsRunnerReadiness(t *testing.T) {
 	text := "runner.go computes read-only readiness from grounded source evidence."
 	objective := "Explain runner readiness."
+
 	if readOnlyObjectiveAnswerEvidenceSupported(text, objective) {
 		t.Fatal("path-like source name alone should not satisfy generic objective support")
 	}
+
 	if !readOnlyObjectiveAnswerEvidenceSupportedByNamedSource(text, objective) {
 		t.Fatalf("expected named-source runner readiness text to support objective: terms=%#v text=%q",
 			readOnlyObjectivePromotionTerms(objective), text)
@@ -305,6 +329,7 @@ func TestReadOnlyTaskResultAnswerableForObjectiveUsesTypedPacketAsAuthority(t *t
 			"- The harness uses subagents through delegated child runners.",
 		}, "\n"),
 	}
+
 	result = readOnlyEvidencePacketToolResult(result, ReadOnlyEvidencePacket{
 		SchemaVersion:   ReadOnlyEvidencePacketSchema,
 		Objective:       "Explain how subagents work.",
@@ -319,6 +344,7 @@ func TestReadOnlyTaskResultAnswerableForObjectiveUsesTypedPacketAsAuthority(t *t
 	if readOnlyTaskResultAnswerableForObjective(result, "Explain how subagents work.") {
 		t.Fatal("typed packet rejection must not fall back to legacy rendered text promotion")
 	}
+
 	if paths := postChildClosureEvidencePaths("Explain how subagents work.", []workspace.ToolResult{result}, 4); len(paths) != 0 {
 		t.Fatalf("non-answerable typed packet must not promote closure evidence paths: %#v", paths)
 	}

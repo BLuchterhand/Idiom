@@ -33,6 +33,7 @@ func TestSourceEditsNeedSemanticVerificationAfterPatchHygieneOnly(t *testing.T) 
 	if !sourceEditsNeedSemanticVerification(brief, results) {
 		t.Fatal("patch hygiene alone should leave source edits needing semantic verification")
 	}
+
 	if sourceEditsAreSemanticallyVerified(brief, results) {
 		t.Fatal("patch hygiene alone should not satisfy source edit verification")
 	}
@@ -53,12 +54,15 @@ func TestSourceEditsAreSemanticallyVerifiedAfterCompilerBackedSourceSanity(t *te
 	if !ok {
 		t.Fatal("expected source_sanity to be the latest verification after source write")
 	}
+
 	if latest.Tool != "source_sanity" {
 		t.Fatalf("latest verification: want source_sanity, got %s", latest.Tool)
 	}
+
 	if sourceEditsNeedSemanticVerification(brief, results) {
 		t.Fatal("compiler-backed source_sanity should satisfy source edit semantic verification")
 	}
+
 	if !sourceEditsAreSemanticallyVerified(brief, results) {
 		t.Fatal("compiler-backed source_sanity should mark source edits as semantically verified")
 	}
@@ -77,9 +81,11 @@ func TestSourceEditsStillNeedVerificationAfterGenericSourceSanityFallback(t *tes
 	if _, ok := latestVerificationAfterLatestSourceWrite(results); ok {
 		t.Fatal("generic source_sanity fallback must not count as source verification")
 	}
+
 	if !sourceEditsNeedSemanticVerification(brief, results) {
 		t.Fatal("generic source_sanity fallback should leave source edits needing language-aware verification")
 	}
+
 	if sourceEditsAreSemanticallyVerified(brief, results) {
 		t.Fatal("generic source_sanity fallback should not mark source edits as semantically verified")
 	}
@@ -98,6 +104,7 @@ func TestSourceEditsAreSemanticallyVerifiedAfterLanguageCommand(t *testing.T) {
 	if sourceEditsNeedSemanticVerification(brief, results) {
 		t.Fatal("language/project verification command should satisfy source edit verification")
 	}
+
 	if !sourceEditsAreSemanticallyVerified(brief, results) {
 		t.Fatal("language/project verification command should mark source edits as semantically verified")
 	}
@@ -122,6 +129,7 @@ func TestRewriteVerificationShellReadToSourceSanityForPlannerOwnedChangedSource(
 	if !ok {
 		t.Fatal("expected shell cat of changed source to rewrite to source_sanity")
 	}
+
 	if req.Tool != "source_sanity" || req.Path != "internal/labels/labels.go" {
 		t.Fatalf("unexpected rewritten request: %#v", req)
 	}
@@ -145,6 +153,7 @@ func TestRewriteVerificationShellReadToSourceSanityRequiresAllowedToolAndChanged
 	); ok {
 		t.Fatal("must not rewrite when source_sanity is not currently allowed")
 	}
+
 	if _, ok := rewriteVerificationShellReadToSourceSanity(
 		workspace.ToolRequest{Tool: "shell", Command: "cat internal/other.go"},
 		brief,
@@ -192,6 +201,7 @@ func TestFillSourceSanityPathFromSingleChangedSource(t *testing.T) {
 	if !ok {
 		t.Fatal("expected pathless source_sanity to inherit the single changed source path")
 	}
+
 	if redirected.Tool != "source_sanity" || redirected.Path != "internal/labels/labels.go" {
 		t.Fatalf("unexpected source_sanity repair: %#v", redirected)
 	}
@@ -215,6 +225,7 @@ func TestFillSourceSanityPathFromSingleChangedSourceRequiresUnambiguousTarget(t 
 	); ok {
 		t.Fatal("must not choose between multiple changed source paths")
 	}
+
 	if _, ok := fillSourceSanityPathFromSingleChangedSource(
 		workspace.ToolRequest{Tool: "source_sanity"},
 		brief,
@@ -244,9 +255,11 @@ func TestPostWriteSourceSanityRedirectsPlannerOwnedReadOfChangedSource(t *testin
 	if !ok {
 		t.Fatal("expected read_file of changed source to redirect to source_sanity")
 	}
+
 	if redirected.Tool != "source_sanity" || redirected.Path != "internal/labels/labels.go" {
 		t.Fatalf("unexpected redirect: %#v", redirected)
 	}
+
 	redirected, ok = postWriteSourceSanityRedirect(
 		workspace.ToolRequest{Tool: "edit_file", Path: "internal/labels/labels.go", OldText: "Save changes", NewText: "Save"},
 		brief,
@@ -256,6 +269,7 @@ func TestPostWriteSourceSanityRedirectsPlannerOwnedReadOfChangedSource(t *testin
 	if !ok {
 		t.Fatal("expected verification-phase write retry on changed source to redirect to source_sanity")
 	}
+
 	if redirected.Tool != "source_sanity" || redirected.Path != "internal/labels/labels.go" {
 		t.Fatalf("unexpected write redirect: %#v", redirected)
 	}
@@ -271,6 +285,7 @@ func TestPostWriteSourceSanityRedirectRequiresPlannerOwnedPendingSourceVerificat
 		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
 		{Tool: "source_sanity", Summary: "source sanity passed", Output: "internal/labels/labels.go: no warnings or errors via go_diagnostics"},
 	}
+
 	if _, ok := postWriteSourceSanityRedirect(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/labels/labels.go"},
 		brief,
@@ -279,6 +294,7 @@ func TestPostWriteSourceSanityRedirectRequiresPlannerOwnedPendingSourceVerificat
 	); ok {
 		t.Fatal("must not redirect after source_sanity has already satisfied source verification")
 	}
+
 	if _, ok := postWriteSourceSanityRedirect(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/labels/labels.go"},
 		brief,
@@ -307,9 +323,11 @@ func TestPostWriteSourceSanityRedirectsNormalImplementationReadOfChangedSource(t
 	if !ok {
 		t.Fatal("expected changed-source read in verification phase to redirect to source_sanity")
 	}
+
 	if redirected.Tool != "source_sanity" || redirected.Path != "internal/labels/labels.go" {
 		t.Fatalf("unexpected redirect: %#v", redirected)
 	}
+
 	if _, ok := postWriteSourceSanityRedirect(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/other.go"},
 		brief,
@@ -338,6 +356,7 @@ func TestPostWriteSourceSanityRedirectsNormalImplementationDiscoveryDrift(t *tes
 	if !ok {
 		t.Fatal("expected post-write discovery drift to redirect to source_sanity")
 	}
+
 	if redirected.Tool != workspace.ToolNameSourceSanity || redirected.Path != "internal/labels/labels.go" {
 		t.Fatalf("unexpected redirect: %#v", redirected)
 	}
@@ -411,6 +430,7 @@ func TestPostWriteSourceSanityRedirectRecoversNormalImplementationAfterInvalidVe
 	if !ok {
 		t.Fatal("expected repeated invalid verification-phase tool to recover through source_sanity")
 	}
+
 	if redirected.Tool != "source_sanity" || redirected.Path != "internal/labels/labels.go" {
 		t.Fatalf("unexpected redirect: %#v", redirected)
 	}
@@ -424,6 +444,7 @@ func TestPostWriteSourceSanityRedirectRecoversNormalImplementationAfterInvalidVe
 	if !ok {
 		t.Fatal("expected repeated invalid verification-phase write to recover through source_sanity")
 	}
+
 	if redirected.Tool != "source_sanity" || redirected.Path != "internal/labels/labels.go" {
 		t.Fatalf("unexpected write redirect: %#v", redirected)
 	}

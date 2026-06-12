@@ -41,6 +41,7 @@ func (s *ServerController) Start(ctx context.Context) error {
 	if s.isRunningLocked() {
 		return nil
 	}
+
 	if err := s.validateLaunchConfig(); err != nil {
 		return err
 	}
@@ -56,6 +57,7 @@ func (s *ServerController) Start(ctx context.Context) error {
 
 	args := s.buildArgs()
 	cmd := exec.Command(s.cfg.Binary, args...)
+
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 
@@ -72,6 +74,7 @@ func (s *ServerController) Start(ctx context.Context) error {
 
 		s.mu.Lock()
 		defer s.mu.Unlock()
+
 		if s.cmd == cmd {
 			s.cmd = nil
 		}
@@ -84,21 +87,26 @@ func (s *ServerController) validateLaunchConfig() error {
 	if strings.TrimSpace(s.cfg.Binary) == "" {
 		return llmServerConfigError("server binary is required")
 	}
+
 	model := strings.TrimSpace(s.cfg.Model)
 	if model == "" {
 		return llmServerConfigError("server model is required")
 	}
+
 	if s.cfg.IsMLX() {
 		return nil
 	}
+
 	if _, err := os.Stat(model); err != nil {
 		return llmServerModelUnavailableError(fmt.Sprintf("llama model path %q is not readable", model), err)
 	}
+
 	return nil
 }
 
 func (s *ServerController) Stop(ctx context.Context) error {
 	s.mu.Lock()
+
 	cmd := s.cmd
 	s.mu.Unlock()
 
@@ -135,6 +143,7 @@ func (s *ServerController) Restart(ctx context.Context) error {
 	if err := s.Stop(stopCtx); err != nil && err != context.Canceled && err != context.DeadlineExceeded {
 		return err
 	}
+
 	return s.Start(ctx)
 }
 
@@ -151,6 +160,7 @@ func (s *ServerController) WaitUntilReady(ctx context.Context) error {
 			if err == nil && len(models) > 0 {
 				return nil
 			}
+
 			if !s.IsRunning() {
 				return llmServerReadinessError("llama-server exited before becoming ready")
 			}
@@ -161,6 +171,7 @@ func (s *ServerController) WaitUntilReady(ctx context.Context) error {
 func (s *ServerController) IsRunning() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	return s.isRunningLocked()
 }
 
@@ -168,6 +179,7 @@ func (s *ServerController) buildArgs() []string {
 	if s.cfg.IsMLX() {
 		return s.buildMLXArgs()
 	}
+
 	return s.buildLlamaArgs()
 }
 
@@ -182,20 +194,26 @@ func (s *ServerController) buildLlamaArgs() []string {
 	if s.cfg.GPULayers > 0 {
 		args = append(args, "-ngl", strconv.Itoa(s.cfg.GPULayers))
 	}
+
 	if s.cfg.Jinja {
 		args = append(args, "--jinja")
 	}
+
 	if s.cfg.FlashAttention {
 		args = append(args, "--flash-attn", "on")
 	}
+
 	if s.cfg.Reasoning != "" {
 		args = append(args, "--reasoning", s.cfg.Reasoning)
 	}
+
 	if s.cfg.ReasoningFormat != "" {
 		args = append(args, "--reasoning-format", s.cfg.ReasoningFormat)
 	}
+
 	args = append(args, "--reasoning-budget", strconv.Itoa(s.cfg.ReasoningBudget))
 	args = append(args, s.cfg.ExtraArgs...)
+
 	return args
 }
 
@@ -210,7 +228,9 @@ func (s *ServerController) buildMLXArgs() []string {
 		"--host", s.cfg.Host,
 		"--port", strconv.Itoa(s.cfg.Port),
 	}
+
 	args = append(args, s.cfg.ExtraArgs...)
+
 	return args
 }
 
@@ -222,6 +242,8 @@ func processAlive(p *os.Process) bool {
 	if p == nil {
 		return false
 	}
+
 	err := p.Signal(syscall.Signal(0))
+
 	return err == nil
 }

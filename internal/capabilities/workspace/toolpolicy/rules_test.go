@@ -18,6 +18,7 @@ func TestMatchShellPatterns(t *testing.T) {
 		{"git status", Allow},
 		{"ls -la", Allow},
 	}
+
 	for _, c := range cases {
 		got := Match("shell", Request{Command: c.command}, rules)
 		if got != c.want {
@@ -44,6 +45,7 @@ func TestMatchPathPatternsWithRecursiveGlob(t *testing.T) {
 		{"internal/secrets/token.txt", Deny},
 		{"internal/surfaces/tui/app/app.go", Ask},
 	}
+
 	for _, c := range cases {
 		got := Match("edit_file", Request{Path: c.path}, rules)
 		if got != c.want {
@@ -56,6 +58,7 @@ func TestMatchAbsentRulesReturnsNone(t *testing.T) {
 	if got := Match("edit_file", Request{Path: "app.go"}, nil); got != None {
 		t.Fatalf("empty rules should return none, got %s", got)
 	}
+
 	rules := map[string][]Rule{
 		"shell": {{Pattern: "*", Decision: Allow}},
 	}
@@ -72,6 +75,7 @@ func TestMatchFirstMatchWins(t *testing.T) {
 		},
 	}
 	got := Match("edit_file", Request{Path: "internal/surfaces/tui/app/app.go"}, rules)
+
 	if got != Allow {
 		t.Fatalf("first-match-wins broken: got %s", got)
 	}

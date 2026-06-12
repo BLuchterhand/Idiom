@@ -46,6 +46,7 @@ func BuildProxyConfig(prof Profile) (ProxyConfig, error) {
 	if len(prof.Models) == 0 {
 		return ProxyConfig{}, errors.New("backends: profile has no models for proxy to route")
 	}
+
 	cfg := ProxyConfig{
 		Listen:       prof.Proxy.Listen,
 		DefaultAlias: strings.TrimSpace(prof.Proxy.DefaultAlias),
@@ -56,27 +57,33 @@ func BuildProxyConfig(prof Profile) (ProxyConfig, error) {
 		if alias == "" {
 			return ProxyConfig{}, errors.New("backends: model with empty alias cannot be routed")
 		}
+
 		path := expandHome(strings.TrimSpace(m.ModelPath))
 		if path == "" {
 			return ProxyConfig{}, fmt.Errorf("backends: model %q has empty model_path; proxy cannot rewrite without it", alias)
 		}
+
 		if m.Port <= 0 {
 			return ProxyConfig{}, fmt.Errorf("backends: model %q has invalid port %d", alias, m.Port)
 		}
+
 		if _, dup := cfg.Routes[alias]; dup {
 			return ProxyConfig{}, fmt.Errorf("backends: duplicate alias %q in profile", alias)
 		}
+
 		cfg.Routes[alias] = ProxyRoute{
 			Alias:       alias,
 			BackendAddr: net.JoinHostPort(modelHost(m), strconv.Itoa(m.Port)),
 			AbsPath:     path,
 		}
 	}
+
 	if cfg.DefaultAlias != "" {
 		if _, ok := cfg.Routes[cfg.DefaultAlias]; !ok {
 			return ProxyConfig{}, fmt.Errorf("backends: proxy default_alias %q is not a registered model", cfg.DefaultAlias)
 		}
 	}
+
 	return cfg, nil
 }
 
@@ -111,10 +118,12 @@ func NewProxyHandler(cfg ProxyConfig, opts ProxyOptions) http.Handler {
 	if doer == nil {
 		doer = defaultProxyClient()
 	}
+
 	logf := opts.LogFunc
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
+
 	return &proxyHandler{cfg: cfg, doer: doer, logf: logf}
 }
 
@@ -133,6 +142,7 @@ func defaultProxyClient() *http.Client {
 		ExpectContinueTimeout: 1 * time.Second,
 		IdleConnTimeout:       90 * time.Second,
 	}
+
 	return &http.Client{
 		Timeout:   15 * time.Minute,
 		Transport: transport,
@@ -179,14 +189,19 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// to have a non-nil Body, httptest.NewRequest paths and some
 	// middleware can leave it nil, which would crash io.ReadAll.
 	var body []byte
+
 	if r.Body != nil {
 		limited := http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+
 		var err error
+
 		body, err = io.ReadAll(limited)
 		if err != nil {
 			h.writeJSONError(w, http.StatusBadRequest, "read body: "+err.Error())
+
 			return
 		}
+
 		_ = r.Body.Close()
 	}
 
@@ -195,23 +210,30 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		aliases := sortedAliases(h.cfg.Routes)
 		h.logf("[proxy] 404 path=%s no matching route (known: %v)", r.URL.Path, aliases)
 		h.writeJSONError(w, http.StatusNotFound, fmt.Sprintf("no route for model; known aliases: %v", aliases))
+
 		return
 	}
 
 	target := "http://" + route.BackendAddr + r.URL.RequestURI()
+
 	var reqBody io.Reader
+
 	if len(body) > 0 {
 		reqBody = bytes.NewReader(body)
 	}
+
 	upstream, err := http.NewRequestWithContext(r.Context(), r.Method, target, reqBody)
 	if err != nil {
 		h.writeJSONError(w, http.StatusInternalServerError, "build upstream request: "+err.Error())
+
 		return
 	}
+
 	for k, vs := range r.Header {
 		if _, drop := hopByHopHeaders[strings.ToLower(k)]; drop {
 			continue
 		}
+
 		for _, v := range vs {
 			upstream.Header.Add(k, v)
 		}
@@ -221,6 +243,7 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.logf("[proxy] 502 alias=%s backend=%s err=%v", route.Alias, route.BackendAddr, err)
 		h.writeJSONError(w, http.StatusBadGateway, "backend unreachable: "+err.Error())
+
 		return
 	}
 	defer resp.Body.Close()
@@ -229,10 +252,12 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if _, drop := hopByHopHeaders[strings.ToLower(k)]; drop {
 			continue
 		}
+
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}
 	}
+
 	w.WriteHeader(resp.StatusCode)
 
 	// Stream chunks straight through. Flushing after each read
@@ -241,22 +266,28 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// and break clients that depend on per-token delivery.
 	flusher, _ := w.(http.Flusher)
 	buf := make([]byte, 8192)
+
 	for {
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, werr := w.Write(buf[:n]); werr != nil {
 				h.logf("[proxy] client write error alias=%s err=%v", route.Alias, werr)
+
 				return
 			}
+
 			if flusher != nil {
 				flusher.Flush()
 			}
 		}
+
 		if rerr == io.EOF {
 			return
 		}
+
 		if rerr != nil {
 			h.logf("[proxy] backend read error alias=%s err=%v", route.Alias, rerr)
+
 			return
 		}
 	}
@@ -271,12 +302,15 @@ func (h *proxyHandler) pickRoute(path string, body []byte) (*ProxyRoute, []byte)
 	if !strings.HasPrefix(path, "/v1/") || len(body) == 0 {
 		return h.lookupDefault(), body
 	}
+
 	var payload map[string]any
+
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return h.lookupDefault(), body
 	}
 
 	alias, _ := payload["model"].(string)
+
 	alias = strings.TrimSpace(alias)
 	// Tolerate "mlx/qwen3.6-35b" style provider-prefixed names so
 	// callers that pass a provider-tagged alias still land on the
@@ -284,23 +318,28 @@ func (h *proxyHandler) pickRoute(path string, body []byte) (*ProxyRoute, []byte)
 	if i := strings.Index(alias, "/"); i >= 0 {
 		alias = alias[i+1:]
 	}
+
 	if alias == "" {
 		alias = h.cfg.DefaultAlias
 	}
+
 	route, ok := h.cfg.Routes[alias]
 	if !ok {
 		if h.cfg.DefaultAlias == "" {
 			return nil, body
 		}
+
 		def, defOK := h.cfg.Routes[h.cfg.DefaultAlias]
 		if !defOK {
 			return nil, body
 		}
+
 		// Operators debugging "why did my request go to the wrong
 		// model" need to see the silent rewrite happen. One line
 		// per fallback is enough — chatty enough to trace, quiet
 		// enough not to dominate the log.
 		h.logf("[proxy] alias=%q not registered; falling back to default=%q", alias, h.cfg.DefaultAlias)
+
 		route = def
 	}
 
@@ -313,16 +352,19 @@ func (h *proxyHandler) pickRoute(path string, body []byte) (*ProxyRoute, []byte)
 		payload["model"] = route.AbsPath
 		changed = true
 	}
+
 	if strings.HasPrefix(path, "/v1/chat/completions") {
 		if normalizeChatPayload(payload) {
 			changed = true
 		}
 	}
+
 	if changed {
 		if rewritten, err := json.Marshal(payload); err == nil {
 			body = rewritten
 		}
 	}
+
 	return &route, body
 }
 
@@ -330,10 +372,12 @@ func (h *proxyHandler) lookupDefault() *ProxyRoute {
 	if h.cfg.DefaultAlias == "" {
 		return nil
 	}
+
 	r, ok := h.cfg.Routes[h.cfg.DefaultAlias]
 	if !ok {
 		return nil
 	}
+
 	return &r
 }
 
@@ -351,27 +395,34 @@ func normalizeChatPayload(payload map[string]any) bool {
 	if !ok || len(raw) == 0 {
 		return false
 	}
+
 	systems := make([]string, 0, 2)
 	others := make([]any, 0, len(raw))
+
 	for _, item := range raw {
 		msg, ok := item.(map[string]any)
 		if !ok {
 			others = append(others, item)
 			continue
 		}
+
 		role, _ := msg["role"].(string)
 		if role == "system" {
 			text := strings.TrimSpace(contentAsText(msg["content"]))
 			if text != "" {
 				systems = append(systems, text)
 			}
+
 			continue
 		}
+
 		others = append(others, item)
 	}
+
 	if len(systems) == 0 {
 		return false
 	}
+
 	// Single system already at the head with intact content stays
 	// as-is so steady-state streaming requests don't pay the
 	// remarshal cost. Anything else (multiple systems, system not
@@ -386,11 +437,14 @@ func normalizeChatPayload(payload map[string]any) bool {
 			}
 		}
 	}
+
 	merged := map[string]any{"role": "system", "content": strings.Join(systems, "\n\n")}
 	normalized := make([]any, 0, len(others)+1)
+
 	normalized = append(normalized, merged)
 	normalized = append(normalized, others...)
 	payload["messages"] = normalized
+
 	return true
 }
 
@@ -405,22 +459,26 @@ func contentAsText(v any) string {
 		return c
 	case []any:
 		var b strings.Builder
+
 		for i, item := range c {
 			switch part := item.(type) {
 			case string:
 				if i > 0 {
 					b.WriteString("\n")
 				}
+
 				b.WriteString(part)
 			case map[string]any:
 				if text, ok := part["text"].(string); ok {
 					if i > 0 {
 						b.WriteString("\n")
 					}
+
 					b.WriteString(text)
 				}
 			}
 		}
+
 		return b.String()
 	case nil:
 		return ""
@@ -434,7 +492,9 @@ func sortedAliases(routes map[string]ProxyRoute) []string {
 	for a := range routes {
 		out = append(out, a)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -444,6 +504,7 @@ func sortedAliases(routes map[string]ProxyRoute) []string {
 func (h *proxyHandler) writeJSONError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
+
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
@@ -462,34 +523,44 @@ func ServeProxy(ctx context.Context, cfg ProxyConfig, opts ProxyOptions, ready f
 		if cfg.Listen <= 0 {
 			return errors.New("backends: proxy listen port is required")
 		}
+
 		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(cfg.Listen))
+
 		l, err := net.Listen("tcp", addr)
 		if err != nil {
 			return fmt.Errorf("backends: bind proxy port %d: %w", cfg.Listen, err)
 		}
+
 		listener = l
 	}
+
 	handler := NewProxyHandler(cfg, opts)
 	srv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 30 * time.Second,
 	}
+
 	if ready != nil {
 		ready(listener.Addr().String())
 	}
+
 	serveErr := make(chan error, 1)
+
 	go func() { serveErr <- srv.Serve(listener) }()
 
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+
 		_ = srv.Shutdown(shutdownCtx)
+
 		return nil
 	case err := <-serveErr:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
+
 		return err
 	}
 }

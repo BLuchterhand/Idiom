@@ -3,7 +3,7 @@
 This directory stores the P0.2 baseline bundle for context freshness, tool
 surface, behavior audit, and representative SWE suite coverage.
 
-The commands were run from `/Users/ben/Documents/GitHub/idiom`. Each command
+The commands were run from `/workspace/idiom`. Each command
 has a metadata file with UTC timestamps, exit status, stdout/stderr artifact
 names, and failure/blocker status.
 

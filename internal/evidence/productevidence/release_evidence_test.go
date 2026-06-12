@@ -28,9 +28,11 @@ func TestSanitizeReleaseEvidenceTelemetryArgsRedactsPathFlags(t *testing.T) {
 			t.Fatalf("path flag leaked %q in %#v", forbidden, got)
 		}
 	}
+
 	if !strings.Contains(rendered, "<redacted_release_evidence_path id=") || !strings.Contains(rendered, "--sidecar-smoke <empty>") {
 		t.Fatalf("expected redacted release evidence path args, got %#v", got)
 	}
+
 	if !strings.Contains(rendered, "--mode summary") {
 		t.Fatalf("non-path flags should be preserved, got %#v", got)
 	}
@@ -39,6 +41,7 @@ func TestSanitizeReleaseEvidenceTelemetryArgsRedactsPathFlags(t *testing.T) {
 func TestP91ReleaseEvidenceBundleIncludesRequiredSectionsAndClassifications(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
 	stageReleaseEvidenceCommandBundle(t, root, "baseline", releaseEvidenceBaselineCommands())
@@ -47,6 +50,7 @@ func TestP91ReleaseEvidenceBundleIncludesRequiredSectionsAndClassifications(t *t
 		"schema_version": "idiom.sidecar_smoke_transcript.v1",
 		"name":           "p9.1-smoke",
 	})
+
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 	if err := comprehension.AppendLearningLog(root, comprehension.LearningLogEntry{
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -68,67 +72,87 @@ func TestP91ReleaseEvidenceBundleIncludesRequiredSectionsAndClassifications(t *t
 		BenchmarkReport:    benchmarkPath,
 		SidecarSmokeReport: filepath.Join("testdata", "sidecar", "discovery-smoke.transcript.json"),
 	})
+
 	body, err := json.Marshal(report)
 	if err != nil {
 		t.Fatalf("marshal release evidence: %v", err)
 	}
+
 	if report.SchemaVersion != releaseEvidenceSchemaVersion || report.BundleID == "" || report.ArtifactHash == "" {
 		t.Fatalf("release evidence missing identity fields: %#v", report)
 	}
+
 	if report.Status != "pass" {
 		t.Fatalf("complete fixtures should produce pass bundle, got status=%q blockers=%#v", report.Status, report.Blockers)
 	}
+
 	if report.BaselineCurrent.Baseline.CommandCount == 0 || report.BaselineCurrent.Current.CommandCount == 0 {
 		t.Fatalf("baseline/current command evidence missing: %#v", report.BaselineCurrent)
 	}
+
 	if report.Validation.Status != "pass" || len(report.Validation.Commands) == 0 {
 		t.Fatalf("validation section missing commands/statuses: %#v", report.Validation)
 	}
+
 	if report.AuditSecurity.Status != "evidence_present" || len(report.AuditSecurity.HarnessAuditInputs) == 0 {
 		t.Fatalf("audit/security section missing current audit proof: %#v", report.AuditSecurity)
 	}
+
 	if report.BenchmarkLocalOps.Status != "pass" || report.BenchmarkLocalOps.LocalOps.SmokeTotal == 0 || len(report.BenchmarkLocalOps.CompetitiveSignals) == 0 {
 		t.Fatalf("benchmark/local-ops section incomplete: %#v", report.BenchmarkLocalOps)
 	}
+
 	if report.SidecarIntegration.Status != "pass" || !releaseEvidenceHasIntegrationPath(report.SidecarIntegration.Paths, "shell_ci_script") ||
 		!releaseEvidenceHasIntegrationPath(report.SidecarIntegration.Paths, "external_coding_agent_workflow") ||
 		!releaseEvidenceHasIntegrationPath(report.SidecarIntegration.Paths, "mcp_stdio") {
+
 		t.Fatalf("sidecar section should include all required integration paths: %#v", report.SidecarIntegration)
 	}
+
 	if report.ProductEvidence.Status != "pass" || report.ProductEvidence.SignalCompleteness.Status != "complete" {
 		t.Fatalf("product evidence section should consume P7/P8 inputs: %#v", report.ProductEvidence)
 	}
+
 	if gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.7"); gate.Status != "evidence_present" {
 		t.Fatalf("complete P9.7 validation fixture should satisfy release readiness: %#v", gate)
 	} else if gate.Counts["complete_records"] == 0 || gate.Counts["primary_icp_records"] != 3 ||
 		gate.Counts["daily_user_activation_records"] != 3 || len(gate.EvidenceIDs) != 3 || len(gate.Blockers) != 0 {
+
 		t.Fatalf("complete P9.7 release readiness should expose structured gate data: %#v", gate)
 	}
+
 	if gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.8"); gate.Status != "evidence_present" {
 		t.Fatalf("complete integration fixture should satisfy P9.8 release readiness: %#v", gate)
 	} else if gate.Counts["executable_required_paths"] != 3 ||
 		gate.Counts["mcp_stdio_parity_paths"] != 1 ||
 		len(gate.Blockers) != 0 ||
 		!stringSliceContains(gate.EvidenceIDs, "p7.8-mcp-stdio") {
+
 		t.Fatalf("P9.8 release readiness should expose structured gate data: %#v", gate)
 	}
+
 	if gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.10"); gate.Status != "evidence_present" {
 		t.Fatalf("complete competitive benchmark fixture should satisfy P9.10 release readiness: %#v", gate)
 	} else if gate.Counts["required_external_baselines"] != 2 ||
 		gate.Counts["covered_external_baselines"] != 2 ||
 		len(gate.Blockers) != 0 ||
 		!stringSliceContains(gate.EvidenceIDs, "competitive_baseline:aider_repo_map") {
+
 		t.Fatalf("P9.10 release readiness should expose structured gate data: %#v", gate)
 	}
+
 	if gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.11"); gate.Status != "evidence_present" {
 		t.Fatalf("complete client demo fixture should satisfy P9.11 release readiness: %#v", gate)
 	} else if gate.Counts["covered_classifications"] != 7 ||
 		gate.Counts["runnable_command_rows"] != 7 ||
 		len(gate.Blockers) != 0 ||
 		!stringSliceContains(gate.EvidenceIDs, "p7.10-enterprise-saas") {
+
 		t.Fatalf("P9.11 release readiness should expose structured gate data: %#v", gate)
 	}
+
 	assertReleaseEvidenceClassifications(t, report.ClientReadiness)
+
 	if forbidden := localops.ForbiddenEvidenceLeak(string(body)); forbidden != "" {
 		t.Fatalf("release evidence leaked forbidden class %q: %s", forbidden, string(body))
 	}
@@ -146,11 +170,14 @@ func TestReleaseEvidenceSummarizesOpenRecoveryRollup(t *testing.T) {
 		report.Recovery.OpenPacketCount != 1 ||
 		report.Recovery.CandidateAtomCount == 0 ||
 		report.Recovery.RemainingAtomCount == 0 {
+
 		t.Fatalf("expected open recovery rollup in release evidence, got %#v", report.Recovery)
 	}
+
 	if report.Status == "pass" || report.Status == "blocked" {
 		t.Fatalf("open recovery should be release-impact partial evidence, got status=%q blockers=%#v", report.Status, report.Blockers)
 	}
+
 	if !releaseEvidenceHasBlockerReason(report.Blockers, "recovery", "open recovery packets") {
 		t.Fatalf("release blockers should include open recovery impact, got %#v", report.Blockers)
 	}
@@ -168,8 +195,10 @@ func TestReleaseEvidenceRecoveredRollupDoesNotAddRecoveryBlocker(t *testing.T) {
 		report.Recovery.RecoveredPacketCount != 1 ||
 		report.Recovery.OpenPacketCount != 0 ||
 		report.Recovery.RemainingAtomCount != 0 {
+
 		t.Fatalf("expected recovered recovery rollup in release evidence, got %#v", report.Recovery)
 	}
+
 	if releaseEvidenceHasBlocker(report.Blockers, "recovery") {
 		t.Fatalf("recovered packet should not add a release recovery blocker: %#v", report.Blockers)
 	}
@@ -180,15 +209,18 @@ func TestP911ReleaseEvidenceRequiresExecutableCommandValidation(t *testing.T) {
 	stageP711ProductEvidenceFixtures(t, root)
 	p911MutateTranscriptByClass(t, root, "enterprise-saas", func(row map[string]any) {
 		command := row["commands"].([]any)[0].(map[string]any)
+
 		command["id"] = "mismatched-demo-command"
 	})
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
 
 	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{ProjectRoot: root, CurrentDir: "current"})
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.11")
+
 	if gate.Status != "needs_evidence" || gate.Counts["runnable_command_rows"] == 7 || gate.Counts["command_id_mismatch_rows"] == 0 {
 		t.Fatalf("release P9.11 must fail closed on command ID mismatch: %#v", gate)
 	}
+
 	if !p711TestBlockerContains(gate.Blockers, "command ID parity mismatch") {
 		t.Fatalf("release P9.11 command parity blocker not exposed: %#v", gate)
 	}
@@ -202,26 +234,32 @@ func TestP91ReleaseEvidenceMarksPartialWhenEvidenceMissing(t *testing.T) {
 		CurrentDir:         "missing-current",
 		SidecarSmokeReport: "missing-smoke.json",
 	})
+
 	if report.Status != "partial" {
 		t.Fatalf("missing evidence should produce partial status, got %q", report.Status)
 	}
+
 	for _, section := range []string{"baseline", "current", "validation", "benchmark_local_ops", "sidecar_integration", "product_evidence"} {
 		if !releaseEvidenceHasBlocker(report.Blockers, section) {
 			t.Fatalf("expected blocker for %q, got %#v", section, report.Blockers)
 		}
 	}
+
 	if report.BaselineCurrent.Baseline.Status != "missing" || report.BaselineCurrent.Current.Status != "missing" {
 		t.Fatalf("baseline/current missing status not recorded: %#v", report.BaselineCurrent)
 	}
+
 	if report.Validation.Status != "partial" {
 		t.Fatalf("validation should be partial when current command artifacts are absent: %#v", report.Validation)
 	}
+
 	assertReleaseEvidenceClassifications(t, report.ClientReadiness)
 }
 
 func TestP913ReleaseEvidenceDowngradesClientRowsWhenValidationRecordsMissing(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 
@@ -235,9 +273,11 @@ func TestP913ReleaseEvidenceDowngradesClientRowsWhenValidationRecordsMissing(t *
 		if !releaseEvidenceStringSliceContains(row.MissingEvidence, "validation record") {
 			t.Fatalf("classification %q should list missing validation evidence: %#v", row.Classification, row)
 		}
+
 		if row.Status == "pass" {
 			t.Fatalf("classification %q with missing evidence must not pass: %#v", row.Classification, row)
 		}
+
 		if !releaseEvidenceHasClientReadinessBlocker(report.Blockers, row.Classification) {
 			t.Fatalf("classification %q missing per-class blocker: %#v", row.Classification, report.Blockers)
 		}
@@ -247,6 +287,7 @@ func TestP913ReleaseEvidenceDowngradesClientRowsWhenValidationRecordsMissing(t *
 func TestP913ReleaseReadinessNeedsEvidenceWhenClientValidationMissing(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 
@@ -256,16 +297,20 @@ func TestP913ReleaseReadinessNeedsEvidenceWhenClientValidationMissing(t *testing
 		BenchmarkReport: benchmarkPath,
 	})
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.12")
+
 	if gate.Status == "evidence_present" {
 		t.Fatalf("P9.12 must not be evidence_present while client validation evidence is missing: %#v", report.ReleaseReadiness)
 	}
+
 	if gate.Status != "needs_evidence" {
 		t.Fatalf("P9.12 should need evidence when client validation records are absent, got %#v", gate)
 	}
+
 	p97 := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.7")
 	if p97.Status != "needs_evidence" {
 		t.Fatalf("P9.7 should need validation evidence when records are absent, got %#v", p97)
 	}
+
 	if !releaseEvidenceHasBlockerReason(report.Blockers, "release_readiness", "P9.7") {
 		t.Fatalf("release blockers should include P9.7 demand evidence gap: %#v", report.Blockers)
 	}
@@ -274,15 +319,20 @@ func TestP913ReleaseReadinessNeedsEvidenceWhenClientValidationMissing(t *testing
 func TestP96ReleaseReadinessNeedsMeasuredCleanInstallAndCleanupEvidence(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
+
 	var localOps localops.BenchmarkReport
+
 	data, err := os.ReadFile(localOpsPath)
 	if err != nil {
 		t.Fatalf("read local ops report: %v", err)
 	}
+
 	if err := json.Unmarshal(data, &localOps); err != nil {
 		t.Fatalf("parse local ops report: %v", err)
 	}
+
 	localOps.Quickstart.EnvironmentClass = "source-build"
 	localOps.Quickstart.DurationSource = "deterministic_command_step_seconds"
 	localOps.Quickstart.SetupInstallReadiness.InstallSetupPath = "source-build-or-local-binary"
@@ -296,13 +346,16 @@ func TestP96ReleaseReadinessNeedsMeasuredCleanInstallAndCleanupEvidence(t *testi
 	if report.ActivationOnboarding.Status != "needs_evidence" || report.ActivationOnboarding.Classification != "no-go" {
 		t.Fatalf("source-build deterministic activation evidence must fail closed for P9.6: %#v", report.ActivationOnboarding)
 	}
+
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.6")
 	if gate.Status != "needs_evidence" {
 		t.Fatalf("P9.6 must not be evidence_present without measured clean-install proof: %#v", gate)
 	}
+
 	if !releaseEvidenceHasBlockerReason(report.ActivationOnboarding.Blockers, "activation_onboarding", "release binary clean-install proof") {
 		t.Fatalf("activation section missing clean-install blocker: %#v", report.ActivationOnboarding.Blockers)
 	}
+
 	if !releaseEvidenceHasBlockerReason(report.ActivationOnboarding.Blockers, "activation_onboarding", "measured wall-clock") {
 		t.Fatalf("activation section missing measured timing blocker: %#v", report.ActivationOnboarding.Blockers)
 	}
@@ -311,15 +364,20 @@ func TestP96ReleaseReadinessNeedsMeasuredCleanInstallAndCleanupEvidence(t *testi
 func TestP96ReleaseActivationMalformedMandatoryFieldsFailClosed(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
+
 	var localOps localops.BenchmarkReport
+
 	data, err := os.ReadFile(localOpsPath)
 	if err != nil {
 		t.Fatalf("read local ops report: %v", err)
 	}
+
 	if err := json.Unmarshal(data, &localOps); err != nil {
 		t.Fatalf("parse local ops report: %v", err)
 	}
+
 	localOps.Quickstart.EnvironmentClass = ""
 	localOps.Quickstart.SetupInstallReadiness.InstallSetupPath = ""
 	localOps.Quickstart.SetupInstallReadiness.ReleaseInstallProof = ""
@@ -335,10 +393,12 @@ func TestP96ReleaseActivationMalformedMandatoryFieldsFailClosed(t *testing.T) {
 	if report.ActivationOnboarding.Status == "pass" || report.ActivationOnboarding.Classification == "pass" {
 		t.Fatalf("malformed activation evidence must fail closed: %#v", report.ActivationOnboarding)
 	}
+
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.6")
 	if gate.Status == "evidence_present" {
 		t.Fatalf("malformed activation evidence must not satisfy P9.6: %#v", gate)
 	}
+
 	for _, fragment := range []string{
 		"environment class",
 		"clean-install proof or scoped clean-setup proof",
@@ -355,6 +415,7 @@ func TestP96ReleaseActivationMalformedMandatoryFieldsFailClosed(t *testing.T) {
 func TestP96ReleaseReadinessNeedsValidationRecordsForStrictActivation(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
 
@@ -366,10 +427,12 @@ func TestP96ReleaseReadinessNeedsValidationRecordsForStrictActivation(t *testing
 	if report.ActivationOnboarding.Status != "needs_evidence" || report.ActivationOnboarding.Classification != "no-go" {
 		t.Fatalf("activation readiness must fail closed without validation records: %#v", report.ActivationOnboarding)
 	}
+
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.6")
 	if gate.Status != "needs_evidence" {
 		t.Fatalf("strict activation without validation records must not close P9.6: %#v", gate)
 	}
+
 	if !releaseEvidenceHasBlockerReason(report.ActivationOnboarding.Blockers, "activation_onboarding", "current validation records") {
 		t.Fatalf("activation section missing validation-record blocker: %#v", report.ActivationOnboarding.Blockers)
 	}
@@ -378,18 +441,23 @@ func TestP96ReleaseReadinessNeedsValidationRecordsForStrictActivation(t *testing
 func TestP96ReleaseActivationRetainedStatePolicyMustBeReviewed(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
 	stageP711LearningEvidence(t, root, "p96-retained-state")
+
 	var localOps localops.BenchmarkReport
+
 	data, err := os.ReadFile(localOpsPath)
 	if err != nil {
 		t.Fatalf("read local ops report: %v", err)
 	}
+
 	if err := json.Unmarshal(data, &localOps); err != nil {
 		t.Fatalf("parse local ops report: %v", err)
 	}
+
 	localOps.Quickstart.Cleanup.Mode = "remove-smoke-artifacts"
 	localOps.Quickstart.Cleanup.RemainingState = "context_graph_retained_by_policy"
 	localOps.Quickstart.Cleanup.RetainedStatePolicy = "quickstart smoke retains local context graph by policy"
@@ -402,9 +470,11 @@ func TestP96ReleaseActivationRetainedStatePolicyMustBeReviewed(t *testing.T) {
 		ValidationRecords: recordsPath,
 	})
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.6")
+
 	if gate.Status == "evidence_present" || report.ActivationOnboarding.Status == "pass" {
 		t.Fatalf("unreviewed retained-state policy must not close P9.6: gate=%#v activation=%#v", gate, report.ActivationOnboarding)
 	}
+
 	if !releaseEvidenceHasBlockerReason(report.ActivationOnboarding.Blockers, "activation_onboarding", "reviewed retained-state semantics") {
 		t.Fatalf("activation section missing retained-state policy blocker: %#v", report.ActivationOnboarding.Blockers)
 	}
@@ -413,18 +483,23 @@ func TestP96ReleaseActivationRetainedStatePolicyMustBeReviewed(t *testing.T) {
 func TestP96ReleaseActivationZeroRankedPacketFailsClosed(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
 	stageP711LearningEvidence(t, root, "p96-zero-packet")
+
 	var localOps localops.BenchmarkReport
+
 	data, err := os.ReadFile(localOpsPath)
 	if err != nil {
 		t.Fatalf("read local ops report: %v", err)
 	}
+
 	if err := json.Unmarshal(data, &localOps); err != nil {
 		t.Fatalf("parse local ops report: %v", err)
 	}
+
 	localOps.Quickstart.FirstUsefulPacket.CandidateFileCount = 0
 	localOps.Quickstart.FirstUsefulPacket.CandidateSymbolCount = 0
 	localOps.Quickstart.FirstUsefulPacket.CandidateTestCount = 0
@@ -438,9 +513,11 @@ func TestP96ReleaseActivationZeroRankedPacketFailsClosed(t *testing.T) {
 		ValidationRecords: recordsPath,
 	})
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.6")
+
 	if gate.Status == "evidence_present" || report.ActivationOnboarding.Status == "pass" {
 		t.Fatalf("zero-ranked first packet must not close P9.6: gate=%#v activation=%#v", gate, report.ActivationOnboarding)
 	}
+
 	if !releaseEvidenceHasBlockerReason(report.ActivationOnboarding.Blockers, "activation_onboarding", "first useful packet") {
 		t.Fatalf("activation section missing first-packet blocker: %#v", report.ActivationOnboarding.Blockers)
 	}
@@ -449,6 +526,7 @@ func TestP96ReleaseActivationZeroRankedPacketFailsClosed(t *testing.T) {
 func TestP97ReleaseAndProductEvidenceReadinessAgree(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
@@ -467,16 +545,20 @@ func TestP97ReleaseAndProductEvidenceReadinessAgree(t *testing.T) {
 	})
 	productGate := p711TestReleaseGate(product.ReleaseGateLinkage, "P9.7")
 	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.7")
+
 	if productGate.Status != "evidence_present" || releaseGate.Status != productGate.Status {
 		t.Fatalf("product/release P9.7 readiness should agree and pass for complete fixture: product=%#v release=%#v", productGate, releaseGate)
 	}
+
 	for _, key := range []string{"validation_records", "complete_records", "primary_icp_records", "primary_contexts", "daily_user_activation_records", "retained_use_records", "credible_primary_adoption_signals"} {
 		if productGate.Counts[key] != releaseGate.Counts[key] {
 			t.Fatalf("product/release P9.7 count %q should agree: product=%#v release=%#v", key, productGate, releaseGate)
 		}
 	}
+
 	if strings.Join(productGate.Blockers, "|") != strings.Join(releaseGate.Blockers, "|") ||
 		strings.Join(productGate.EvidenceIDs, "|") != strings.Join(releaseGate.EvidenceIDs, "|") {
+
 		t.Fatalf("product/release P9.7 structured gate data should agree: product=%#v release=%#v", productGate, releaseGate)
 	}
 }
@@ -495,16 +577,20 @@ func TestP98ReleaseAndProductEvidenceReadinessAgree(t *testing.T) {
 	})
 	productGate := p711TestReleaseGate(product.ReleaseGateLinkage, "P9.8")
 	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.8")
+
 	if productGate.Status != "evidence_present" || releaseGate.Status != productGate.Status {
 		t.Fatalf("product/release P9.8 readiness should agree and pass for complete fixture: product=%#v release=%#v", productGate, releaseGate)
 	}
+
 	for _, key := range []string{"proof_rows", "executable_required_paths", "executable_required_path_shell_ci_script", "executable_required_path_external_coding_agent_workflow", "executable_required_path_mcp_stdio", "mcp_stdio_parity_paths"} {
 		if productGate.Counts[key] != releaseGate.Counts[key] {
 			t.Fatalf("product/release P9.8 count %q should agree: product=%#v release=%#v", key, productGate, releaseGate)
 		}
 	}
+
 	if strings.Join(productGate.Blockers, "|") != strings.Join(releaseGate.Blockers, "|") ||
 		strings.Join(productGate.EvidenceIDs, "|") != strings.Join(releaseGate.EvidenceIDs, "|") {
+
 		t.Fatalf("product/release P9.8 structured gate data should agree: product=%#v release=%#v", productGate, releaseGate)
 	}
 }
@@ -516,16 +602,20 @@ func TestP98ReleaseReadinessNeedsEvidenceWhenIntegrationProofsIncomplete(t *test
 		p711IntegrationProofFixture("p7.8-shell-ci", "shell_ci_script", true, false),
 		p711IntegrationProofWithMCPParityOnPath("p7.8-external-coding-agent", "external_coding_agent_workflow"),
 	})
+
 	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot: root,
 	})
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.8")
+
 	if gate.Status != "needs_evidence" {
 		t.Fatalf("P9.8 must not pass when MCP parity is on the wrong path: %#v", gate)
 	}
+
 	if gate.Counts["executable_required_paths"] >= 3 || len(gate.Blockers) == 0 {
 		t.Fatalf("P9.8 release readiness should expose missing-path counts and blockers: %#v", gate)
 	}
+
 	if !releaseEvidenceHasBlockerReason(report.Blockers, "release_readiness", "P9.8") {
 		t.Fatalf("release blockers should include P9.8 integration evidence gap: %#v", report.Blockers)
 	}
@@ -534,8 +624,10 @@ func TestP98ReleaseReadinessNeedsEvidenceWhenIntegrationProofsIncomplete(t *test
 func TestP97ReleaseRetainedUseWithoutCredibleAdoptionSignalDoesNotPass(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
+
 	records := p97PrimaryRecords("none", "none")
 	recordsPath := filepath.Join(root, "validation-records.json")
 	writeP711JSON(t, recordsPath, records)
@@ -547,12 +639,15 @@ func TestP97ReleaseRetainedUseWithoutCredibleAdoptionSignalDoesNotPass(t *testin
 		ValidationRecords: recordsPath,
 	})
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.7")
+
 	if gate.Status == "evidence_present" {
 		t.Fatalf("P9.7 must not pass without credible paid/internal-platform adoption signal: %#v", gate)
 	}
+
 	if !strings.Contains(gate.Evidence, "adoption:0") {
 		t.Fatalf("P9.7 evidence should expose missing adoption count: %#v", gate)
 	}
+
 	if gate.Counts["credible_primary_adoption_signals"] != 0 || len(gate.Blockers) == 0 || len(gate.EvidenceIDs) != 3 {
 		t.Fatalf("P9.7 release readiness should expose structured adoption blocker data: %#v", gate)
 	}
@@ -561,6 +656,7 @@ func TestP97ReleaseRetainedUseWithoutCredibleAdoptionSignalDoesNotPass(t *testin
 func TestP914ReleaseBundleDowngradesEveryP912ObjectWhenClientValidationMissing(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 
@@ -577,14 +673,18 @@ func TestP914ReleaseBundleDowngradesEveryP912ObjectWhenClientValidationMissing(t
 	if err != nil {
 		t.Fatalf("marshal release evidence: %v", err)
 	}
+
 	var decoded any
+
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		t.Fatalf("unmarshal release evidence: %v", err)
 	}
+
 	statuses := releaseEvidenceP912Statuses(decoded)
 	if len(statuses) < 2 {
 		t.Fatalf("expected top-level and embedded P9.12 objects, got statuses=%#v body=%s", statuses, string(body))
 	}
+
 	for _, status := range statuses {
 		if status == "evidence_present" {
 			t.Fatalf("no P9.12 object may be evidence_present while client evidence is missing: statuses=%#v body=%s", statuses, string(body))
@@ -595,6 +695,7 @@ func TestP914ReleaseBundleDowngradesEveryP912ObjectWhenClientValidationMissing(t
 func TestP913ReleaseBenchmarkNeedsCompetitiveEvidenceWithPassingLocalOps(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
 
@@ -607,12 +708,15 @@ func TestP913ReleaseBenchmarkNeedsCompetitiveEvidenceWithPassingLocalOps(t *test
 	if report.BenchmarkLocalOps.LocalOps.Status != "pass" {
 		t.Fatalf("fixture should keep local-ops replay passing: %#v", report.BenchmarkLocalOps.LocalOps)
 	}
+
 	if report.BenchmarkLocalOps.Status == "pass" {
 		t.Fatalf("benchmark section must not pass without competitive benchmark evidence: %#v", report.BenchmarkLocalOps)
 	}
+
 	if !releaseEvidenceHasBlockerReason(report.BenchmarkLocalOps.Blockers, "benchmark_local_ops", "competitive benchmark") {
 		t.Fatalf("benchmark section missing competitive evidence blocker: %#v", report.BenchmarkLocalOps.Blockers)
 	}
+
 	if gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.10"); gate.Status != "needs_evidence" {
 		t.Fatalf("P9.10 release readiness must fail closed without competitive evidence: %#v", gate)
 	}
@@ -621,10 +725,12 @@ func TestP913ReleaseBenchmarkNeedsCompetitiveEvidenceWithPassingLocalOps(t *test
 func TestP91ReleaseEvidencePreservesPrivacy(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	current := filepath.Join(root, "current")
 	if err := os.MkdirAll(current, 0o755); err != nil {
 		t.Fatalf("mkdir current: %v", err)
 	}
+
 	metadata := "# sanitized\n\n" +
 		"Command: `idiom tool context_status --profile discovery`\n\n" +
 		"Exit status: `0`\n\n" +
@@ -634,6 +740,7 @@ func TestP91ReleaseEvidencePreservesPrivacy(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(current, "01-context-status.metadata.md"), []byte(metadata), 0o644); err != nil {
 		t.Fatalf("write metadata: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(current, "01-context-status.stdout.json"), []byte(`{"status":"pass","metadata_only":true}`), 0o644); err != nil {
 		t.Fatalf("write fixture artifact: %v", err)
 	}
@@ -642,15 +749,18 @@ func TestP91ReleaseEvidencePreservesPrivacy(t *testing.T) {
 		ProjectRoot: root,
 		CurrentDir:  "current",
 	})
+
 	body, err := json.Marshal(report)
 	if err != nil {
 		t.Fatalf("marshal release evidence: %v", err)
 	}
+
 	for _, forbidden := range []string{root} {
 		if strings.Contains(string(body), forbidden) {
 			t.Fatalf("release evidence leaked %q: %s", forbidden, string(body))
 		}
 	}
+
 	if report.Privacy.ForbiddenFieldCheck != "pass" || !report.Privacy.MetadataOnly {
 		t.Fatalf("privacy contract should remain metadata-only/pass: %#v", report.Privacy)
 	}
@@ -667,20 +777,24 @@ func TestReleaseEvidencePrivacyBlockRecomputesIdentityAfterRedaction(t *testing.
 			ForbiddenFieldCheck: "pass",
 		},
 		Metadata: map[string]any{
-			"debug_path": "/Users/ben/private-repo",
+			"debug_path": "/home/example/private-repo",
 		},
 	}
 	blockReleaseEvidencePrivacy(&report, "absolute_path")
+
 	body, err := json.Marshal(report)
 	if err != nil {
 		t.Fatalf("marshal release evidence: %v", err)
 	}
-	if strings.Contains(string(body), "/Users/ben/private-repo") {
+
+	if strings.Contains(string(body), "/home/example/private-repo") {
 		t.Fatalf("privacy-blocked bundle should redact forbidden values: %s", string(body))
 	}
+
 	if report.Status != "blocked" || report.Privacy.ForbiddenFieldCheck != "failed:absolute_path" {
 		t.Fatalf("privacy block not reflected in report: %#v", report)
 	}
+
 	if want := releaseEvidenceHash(report); report.ArtifactHash != want || report.BundleID != "release-evidence-"+want {
 		t.Fatalf("privacy-blocked identity should describe final body, got hash=%q bundle=%q want=%q", report.ArtifactHash, report.BundleID, want)
 	}
@@ -689,6 +803,7 @@ func TestReleaseEvidencePrivacyBlockRecomputesIdentityAfterRedaction(t *testing.
 func TestRunReleaseEvidenceWritesParseableJSONOutput(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
+
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
 	stageReleaseEvidenceCommandBundle(t, root, "baseline", releaseEvidenceBaselineCommands())
@@ -696,9 +811,11 @@ func TestRunReleaseEvidenceWritesParseableJSONOutput(t *testing.T) {
 	writeP711JSON(t, filepath.Join(root, "testdata", "sidecar", "discovery-smoke.transcript.json"), map[string]any{
 		"schema_version": "idiom.sidecar_smoke_transcript.v1",
 	})
+
 	outputPath := filepath.Join(root, ".idiom", "release", "bundle.json")
 
 	var stdout, stderr bytes.Buffer
+
 	code := runReleaseMainWithTelemetry([]string{
 		"evidence",
 		"--project-root", root,
@@ -709,20 +826,26 @@ func TestRunReleaseEvidenceWritesParseableJSONOutput(t *testing.T) {
 		"--sidecar-smoke", filepath.Join("testdata", "sidecar", "discovery-smoke.transcript.json"),
 		"--output", outputPath,
 	}, &stdout, &stderr, nil)
+
 	if code != 0 {
 		t.Fatalf("release evidence command failed code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
+
 	data, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
+
 	var report releaseEvidenceBundle
+
 	if err := json.Unmarshal(data, &report); err != nil {
 		t.Fatalf("release output should parse: %v\n%s", err, string(data))
 	}
+
 	if report.BundleID == "" || report.SchemaVersion != releaseEvidenceSchemaVersion {
 		t.Fatalf("output missing release identity: %#v", report)
 	}
+
 	if strings.Contains(stdout.String(), outputPath) || strings.Contains(stderr.String(), outputPath) {
 		t.Fatalf("CLI should not echo raw output path stdout=%s stderr=%s", stdout.String(), stderr.String())
 	}
@@ -730,10 +853,12 @@ func TestRunReleaseEvidenceWritesParseableJSONOutput(t *testing.T) {
 
 func stageReleaseEvidenceCommandBundle(t *testing.T, root string, dir string, commands []string) {
 	t.Helper()
+
 	fullDir := filepath.Join(root, dir)
 	if err := os.MkdirAll(fullDir, 0o755); err != nil {
 		t.Fatalf("mkdir release bundle: %v", err)
 	}
+
 	for i, command := range commands {
 		name := releaseEvidenceCommandArtifactName(i, command)
 		stdoutName := name + ".stdout.json"
@@ -747,10 +872,13 @@ func stageReleaseEvidenceCommandBundle(t *testing.T, root string, dir string, co
 			"Stdout artifact: `" + stdoutName + "`\n\n" +
 			"Stderr artifact: `" + stderrName + "`\n\n" +
 			"Failure/blocker: none recorded.\n"
+
 		if err := os.WriteFile(filepath.Join(fullDir, name+".metadata.md"), []byte(metadata), 0o644); err != nil {
 			t.Fatalf("write metadata: %v", err)
 		}
+
 		writeP711JSON(t, filepath.Join(fullDir, stdoutName), map[string]any{"command_id": name, "status": "pass"})
+
 		if err := os.WriteFile(filepath.Join(fullDir, stderrName), []byte("(no stderr)\n"), 0o644); err != nil {
 			t.Fatalf("write stderr: %v", err)
 		}
@@ -759,6 +887,7 @@ func stageReleaseEvidenceCommandBundle(t *testing.T, root string, dir string, co
 
 func stageP711LearningEvidence(t *testing.T, root string, resultID string) {
 	t.Helper()
+
 	if err := comprehension.AppendLearningLog(root, comprehension.LearningLogEntry{
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Source:    "test",
@@ -793,23 +922,28 @@ func releaseEvidenceCommandArtifactName(index int, command string) string {
 	if strings.Contains(command, "harness_audit") && strings.Contains(command, "tool_surface") {
 		id = "harness-audit-tool-surface"
 	}
+
 	if strings.Contains(command, "harness_audit") && strings.Contains(command, "behavior") {
 		id = "harness-audit-behavior"
 	}
+
 	return strings.ReplaceAll(strings.ReplaceAll(fmt.Sprintf("%02d-%s", index+1, id), "_", "-"), ".", "-")
 }
 
 func assertReleaseEvidenceClassifications(t *testing.T, rows []releaseEvidenceClientReadiness) {
 	t.Helper()
+
 	seen := map[string]releaseEvidenceClientReadiness{}
 	for _, row := range rows {
 		seen[row.Classification] = row
 	}
+
 	for _, class := range releaseEvidenceClientClassifications {
 		row, ok := seen[class]
 		if !ok {
 			t.Fatalf("missing client readiness row %q", class)
 		}
+
 		if len(row.ArchitecturePrimitives) == 0 {
 			t.Fatalf("client row %q missing architecture primitives: %#v", class, row)
 		}
@@ -822,6 +956,7 @@ func releaseEvidenceHasIntegrationPath(rows []releaseEvidenceIntegrationPath, pa
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -831,6 +966,7 @@ func releaseEvidenceHasBlocker(blockers []releaseEvidenceBlocker, section string
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -840,6 +976,7 @@ func releaseEvidenceHasBlockerReason(blockers []releaseEvidenceBlocker, section 
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -849,6 +986,7 @@ func releaseEvidenceHasClientReadinessBlocker(blockers []releaseEvidenceBlocker,
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -858,6 +996,7 @@ func releaseEvidenceReadinessGate(rows []releaseEvidenceGateReadiness, gate stri
 			return row
 		}
 	}
+
 	return releaseEvidenceGateReadiness{}
 }
 
@@ -867,6 +1006,7 @@ func releaseEvidenceStringSliceContains(values []string, target string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -876,17 +1016,21 @@ func releaseEvidenceAnyClientMissingEvidence(rows []releaseEvidenceClientReadine
 			return true
 		}
 	}
+
 	return false
 }
 
 func releaseEvidenceP912Statuses(value any) []string {
 	var statuses []string
+
 	switch typed := value.(type) {
 	case map[string]any:
 		if gate, _ := typed["gate"].(string); gate == "P9.12" {
 			status, _ := typed["status"].(string)
+
 			statuses = append(statuses, status)
 		}
+
 		for _, child := range typed {
 			statuses = append(statuses, releaseEvidenceP912Statuses(child)...)
 		}
@@ -895,6 +1039,7 @@ func releaseEvidenceP912Statuses(value any) []string {
 			statuses = append(statuses, releaseEvidenceP912Statuses(child)...)
 		}
 	}
+
 	return statuses
 }
 
@@ -1091,6 +1236,7 @@ func TestReleaseEvidenceCompactBlockers(t *testing.T) {
 			{Section: "s2", Reason: "r2"},
 		}
 		got := releaseEvidenceCompactBlockers(blockers)
+
 		if len(got) != 2 {
 			t.Fatalf("expected 2 unique entries, got %d", len(got))
 		}
@@ -1103,6 +1249,7 @@ func TestReleaseEvidenceCompactBlockers(t *testing.T) {
 			{Section: "s2", Reason: "r2"},
 		}
 		got := releaseEvidenceCompactBlockers(blockers)
+
 		if len(got) != 2 {
 			t.Fatalf("expected 2 after dedup, got %d: %#v", len(got), got)
 		}
@@ -1131,13 +1278,16 @@ func TestReleaseEvidencePath(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(subPath), 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
+
 		if err := os.WriteFile(subPath, []byte("{}"), 0o644); err != nil {
 			t.Fatalf("write file: %v", err)
 		}
+
 		ref := releaseEvidencePath(root, subPath)
 		if ref.RelativePath == "" {
 			t.Fatalf("expected relative path for path under root, got %#v", ref)
 		}
+
 		if filepath.IsAbs(ref.RelativePath) {
 			t.Fatalf("relative path should not be absolute: %q", ref.RelativePath)
 		}
@@ -1182,6 +1332,7 @@ func TestRedactedReleaseEvidencePathArg(t *testing.T) {
 		if !strings.HasPrefix(got, "<redacted_release_evidence_path id=") {
 			t.Fatalf("expected redacted prefix, got %q", got)
 		}
+
 		if strings.Contains(got, "/private/data") {
 			t.Fatalf("raw path must not appear: %q", got)
 		}
@@ -1413,6 +1564,7 @@ func TestReleaseBenchmarkSectionStatus(t *testing.T) {
 	t.Run("blockers cause partial not blocked", func(t *testing.T) {
 		blockers := []releaseEvidenceBlocker{{Section: "benchmark", Reason: "missing"}}
 		got := releaseBenchmarkSectionStatus(true, "pass", blockers)
+
 		if got != "partial" {
 			t.Fatalf("expected partial with blockers, got %q", got)
 		}
@@ -1425,6 +1577,7 @@ func TestReleaseArchitecturePrimitives(t *testing.T) {
 		if !releaseEvidenceSliceContains(got, "protected_path_posture") {
 			t.Fatalf("finance missing protected_path_posture: %#v", got)
 		}
+
 		if !releaseEvidenceSliceContains(got, "control_mapping") {
 			t.Fatalf("finance missing control_mapping: %#v", got)
 		}
@@ -1474,6 +1627,7 @@ func TestReleaseP912ReadinessStatus(t *testing.T) {
 	t.Run("P9.11 not present is needs_evidence", func(t *testing.T) {
 		clients := []releaseEvidenceClientReadiness{{Status: "pass"}}
 		got := releaseP912ReadinessStatus(clients, "needs_evidence")
+
 		if got != "needs_evidence" {
 			t.Fatalf("expected needs_evidence, got %q", got)
 		}
@@ -1485,6 +1639,7 @@ func TestReleaseP912ReadinessStatus(t *testing.T) {
 			{Status: "needs_evidence"},
 		}
 		got := releaseP912ReadinessStatus(clients, "evidence_present")
+
 		if got != "needs_evidence" {
 			t.Fatalf("expected needs_evidence for non-pass client, got %q", got)
 		}
@@ -1495,6 +1650,7 @@ func TestReleaseP912ReadinessStatus(t *testing.T) {
 			{Status: "pass", MissingEvidence: []string{"missing"}},
 		}
 		got := releaseP912ReadinessStatus(clients, "evidence_present")
+
 		if got != "needs_evidence" {
 			t.Fatalf("expected needs_evidence for missing evidence, got %q", got)
 		}
@@ -1506,6 +1662,7 @@ func TestReleaseP912ReadinessStatus(t *testing.T) {
 			{Status: "pass"},
 		}
 		got := releaseP912ReadinessStatus(clients, "evidence_present")
+
 		if got != "evidence_present" {
 			t.Fatalf("expected evidence_present, got %q", got)
 		}
@@ -1539,6 +1696,7 @@ func TestP96ActivationStatusFromBlockers(t *testing.T) {
 		for _, reason := range reasons {
 			blockers := []releaseEvidenceBlocker{{Reason: reason}}
 			got := p96ActivationStatusFromBlockers(blockers)
+
 			if got != "blocked" {
 				t.Fatalf("expected blocked for reason %q, got %q", reason, got)
 			}
@@ -1548,6 +1706,7 @@ func TestP96ActivationStatusFromBlockers(t *testing.T) {
 	t.Run("generic blocker reason is needs_evidence", func(t *testing.T) {
 		blockers := []releaseEvidenceBlocker{{Section: "activation", Reason: "incomplete"}}
 		got := p96ActivationStatusFromBlockers(blockers)
+
 		if got != "needs_evidence" {
 			t.Fatalf("expected needs_evidence for generic blocker, got %q", got)
 		}
@@ -1565,12 +1724,15 @@ func TestReleaseEvidenceBuildInfoWithDeps(t *testing.T) {
 	if info.Version != "1.0.0" {
 		t.Fatalf("version: got %q, want 1.0.0", info.Version)
 	}
+
 	if info.Commit != "abc123" {
 		t.Fatalf("commit: got %q, want abc123", info.Commit)
 	}
+
 	if info.Date != "2026-05-15" {
 		t.Fatalf("date: got %q, want 2026-05-15", info.Date)
 	}
+
 	if info.Go == "" || info.OSArch == "" {
 		t.Fatalf("Go/OSArch should be auto-populated: %#v", info)
 	}
@@ -1587,9 +1749,11 @@ func TestReleaseEvidenceHash(t *testing.T) {
 	}
 	hash1 := releaseEvidenceHash(bundle1)
 	hash2 := releaseEvidenceHash(bundle2)
+
 	if hash1 != hash2 {
 		t.Fatalf("identical bundles should produce same hash: %q vs %q", hash1, hash2)
 	}
+
 	if hash1 == "" {
 		t.Fatal("hash should not be empty")
 	}
@@ -1600,6 +1764,7 @@ func TestReleaseP96GateLinkage(t *testing.T) {
 		row := productEvidenceReleaseGateLinkage{Gate: "P9.6", Status: "needs_evidence"}
 		activation := releaseEvidenceActivationSection{Status: "pass"}
 		result := releaseP96GateLinkage(row, activation)
+
 		if result.Status != "evidence_present" {
 			t.Fatalf("expected evidence_present, got %q", result.Status)
 		}
@@ -1609,6 +1774,7 @@ func TestReleaseP96GateLinkage(t *testing.T) {
 		row := productEvidenceReleaseGateLinkage{Gate: "P9.6", Status: "needs_evidence"}
 		activation := releaseEvidenceActivationSection{Status: "blocked"}
 		result := releaseP96GateLinkage(row, activation)
+
 		if result.Status != "blocked" {
 			t.Fatalf("expected blocked, got %q", result.Status)
 		}
@@ -1618,6 +1784,7 @@ func TestReleaseP96GateLinkage(t *testing.T) {
 		row := productEvidenceReleaseGateLinkage{Gate: "P9.6", Status: "needs_evidence"}
 		activation := releaseEvidenceActivationSection{Status: "partial"}
 		result := releaseP96GateLinkage(row, activation)
+
 		if result.Status != "needs_evidence" {
 			t.Fatalf("expected needs_evidence, got %q", result.Status)
 		}
@@ -1633,6 +1800,7 @@ func TestReleaseP912GateLinkage(t *testing.T) {
 			Blockers: nil,
 		}
 		result := releaseP912GateLinkage(row, "evidence_present")
+
 		if result.Status != "evidence_present" {
 			t.Fatalf("expected evidence_present, got %q", result.Status)
 		}
@@ -1646,9 +1814,11 @@ func TestReleaseP912GateLinkage(t *testing.T) {
 			Blockers: nil,
 		}
 		result := releaseP912GateLinkage(row, "needs_evidence")
+
 		if result.Status != "needs_evidence" {
 			t.Fatalf("expected needs_evidence, got %q", result.Status)
 		}
+
 		if result.Counts["release_client_readiness_blockers"] != 1 {
 			t.Fatalf("expected release_client_readiness_blockers count, got %#v", result.Counts)
 		}
@@ -1661,6 +1831,7 @@ func TestReleaseP912GateLinkage(t *testing.T) {
 			Counts: map[string]int{},
 		}
 		result := releaseP912GateLinkage(row, "evidence_present")
+
 		if result.Status != "needs_evidence" {
 			t.Fatalf("expected needs_evidence to stay, got %q", result.Status)
 		}
@@ -1711,6 +1882,7 @@ func TestReleaseGateLinkageByGate(t *testing.T) {
 		if got.Status != "needs_evidence" {
 			t.Fatalf("expected needs_evidence default, got %#v", got)
 		}
+
 		if len(got.Blockers) == 0 || !strings.Contains(got.Blockers[0], "P9.99") {
 			t.Fatalf("expected blocker mentioning missing gate, got %#v", got.Blockers)
 		}

@@ -25,6 +25,7 @@ func TestJavaWorkspaceTools(t *testing.T) {
 	if !languageDetects(root, "java") {
 		t.Fatal("expected temp fixture to count as Java workspace")
 	}
+
 	overview := executeTool(mgr, "java_overview", ToolRequest{})
 	if overview.Error != "" || !strings.Contains(overview.Output, "Indexed") {
 		t.Fatalf("unexpected javaOverview result: %#v", overview)
@@ -34,22 +35,27 @@ func TestJavaWorkspaceTools(t *testing.T) {
 	if find.Error != "" || !strings.Contains(find.Output, "Helper.java") {
 		t.Fatalf("unexpected javaFindSymbol result: %#v", find)
 	}
+
 	findDecl := executeTool(mgr, "java_find_symbol", ToolRequest{Tool: "java_find_symbol", Pattern: "public class Helper"})
 	if findDecl.Error != "" || !strings.Contains(findDecl.Output, "Helper") {
 		t.Fatalf("expected declaration-shaped javaFindSymbol query to find Helper, got %#v", findDecl)
 	}
+
 	findAnnotation := executeTool(mgr, "java_find_symbol", ToolRequest{Tool: "java_find_symbol", Pattern: "public @interface FeatureFlag"})
 	if findAnnotation.Error != "" || !strings.Contains(findAnnotation.Output, "FeatureFlag") {
 		t.Fatalf("expected declaration-shaped javaFindSymbol query to find FeatureFlag annotation, got %#v", findAnnotation)
 	}
+
 	findSealed := executeTool(mgr, "java_find_symbol", ToolRequest{Tool: "java_find_symbol", Pattern: "public sealed interface SealedService"})
 	if findSealed.Error != "" || !strings.Contains(findSealed.Output, "SealedService") {
 		t.Fatalf("expected declaration-shaped javaFindSymbol query to find SealedService interface, got %#v", findSealed)
 	}
+
 	findMethod := executeTool(mgr, "java_find_symbol", ToolRequest{Tool: "java_find_symbol", Pattern: "public void run()"})
 	if findMethod.Error != "" || !strings.Contains(findMethod.Output, "run") {
 		t.Fatalf("expected declaration-shaped javaFindSymbol query to find run method, got %#v", findMethod)
 	}
+
 	findPrivateMethod := executeTool(mgr, "java_find_symbol", ToolRequest{Tool: "java_find_symbol", Pattern: "private int compute()"})
 	if findPrivateMethod.Error != "" || !strings.Contains(findPrivateMethod.Output, "compute") {
 		t.Fatalf("expected declaration-shaped javaFindSymbol query to find compute method, got %#v", findPrivateMethod)
@@ -59,12 +65,15 @@ func TestJavaWorkspaceTools(t *testing.T) {
 	if outline.Error != "" {
 		t.Fatalf("unexpected javaFileOutline error: %#v", outline)
 	}
+
 	if !strings.Contains(outline.Output, "package: com.example") {
 		t.Fatalf("javaFileOutline missing package line: %#v", outline)
 	}
+
 	if !strings.Contains(outline.Output, "com.example.util.Helper") {
 		t.Fatalf("javaFileOutline missing import: %#v", outline)
 	}
+
 	if !strings.Contains(outline.Output, "main") || !strings.Contains(outline.Output, "App") {
 		t.Fatalf("javaFileOutline missing symbols: %#v", outline)
 	}
@@ -93,22 +102,27 @@ func TestJavaWorkspaceTools(t *testing.T) {
 	if read.Error != "" {
 		t.Fatalf("unexpected javaReadSymbol error: %#v", read)
 	}
+
 	// Fall back: allow either Helper#run or plain Helper match.
 	if !strings.Contains(read.Output, "Helper") && !strings.Contains(read.Output, "run") {
 		t.Fatalf("unexpected javaReadSymbol result: %#v", read)
 	}
+
 	readDecl := executeTool(mgr, "java_read_symbol", ToolRequest{Tool: "java_read_symbol", Pattern: "public class Helper"})
 	if readDecl.Error != "" || !strings.Contains(readDecl.Output, "public class Helper") {
 		t.Fatalf("expected declaration-shaped javaReadSymbol to return Helper class, got %#v", readDecl)
 	}
+
 	readAnnotation := executeTool(mgr, "java_read_symbol", ToolRequest{Tool: "java_read_symbol", Pattern: "public @interface FeatureFlag"})
 	if readAnnotation.Error != "" || !strings.Contains(readAnnotation.Output, "public @interface FeatureFlag") {
 		t.Fatalf("expected declaration-shaped javaReadSymbol to return FeatureFlag annotation, got %#v", readAnnotation)
 	}
+
 	readMethod := executeTool(mgr, "java_read_symbol", ToolRequest{Tool: "java_read_symbol", Pattern: "public void run()"})
 	if readMethod.Error != "" || !strings.Contains(readMethod.Output, "public void run()") {
 		t.Fatalf("expected declaration-shaped javaReadSymbol to return run method, got %#v", readMethod)
 	}
+
 	readPrivateMethod := executeTool(mgr, "java_read_symbol", ToolRequest{Tool: "java_read_symbol", Pattern: "private int compute()"})
 	if readPrivateMethod.Error != "" || !strings.Contains(readPrivateMethod.Output, "private int compute()") {
 		t.Fatalf("expected declaration-shaped javaReadSymbol to return compute method, got %#v", readPrivateMethod)
@@ -134,6 +148,7 @@ func TestJavaWorkspaceToolsWithJdtls(t *testing.T) {
 	if _, err := exec.LookPath("jdtls"); err != nil {
 		t.Skip("jdtls not installed")
 	}
+
 	root := buildJavaTempWorkspace(t)
 	mgr := NewManager(config.Workspace{
 		Root:                  root,
@@ -188,6 +203,7 @@ func TestJavaDiagnosticsRequiresBuildSystem(t *testing.T) {
 // used by multiple tests. Returns the root path.
 func buildJavaTempWorkspace(t *testing.T) string {
 	t.Helper()
+
 	root := t.TempDir()
 	writeJavaFile(t, filepath.Join(root, "pom.xml"), `<?xml version="1.0"?>
 <project>
@@ -268,14 +284,17 @@ public class AppTest {
     }
 }
 `)
+
 	return root
 }
 
 func writeJavaFile(t *testing.T, path string, content string) {
 	t.Helper()
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", path, err)
 	}
+
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}

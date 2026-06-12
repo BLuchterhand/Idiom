@@ -16,10 +16,12 @@ import (
 // redirect tests without pulling in the full cpp_tools_test fixtures.
 func newCppTestWorkspace(t *testing.T) *workspace.Manager {
 	t.Helper()
+
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "src"), 0o755); err != nil {
 		t.Fatalf("mkdir src: %v", err)
 	}
+
 	// Pad past the small-file redirect threshold so the outline redirect
 	// actually fires. The redirect deliberately skips files that are
 	// cheap to read whole; tests that exercise the redirect path need
@@ -27,9 +29,11 @@ func newCppTestWorkspace(t *testing.T) *workspace.Manager {
 	if err := os.WriteFile(filepath.Join(root, "src", "main.cpp"), []byte("int main(){return 0;}\n"+strings.Repeat("\n", 500)), 0o644); err != nil {
 		t.Fatalf("main.cpp: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, "compile_commands.json"), []byte("[]\n"), 0o644); err != nil {
 		t.Fatalf("compile_commands.json: %v", err)
 	}
+
 	return workspace.NewManager(config.Workspace{Root: root, CWD: root})
 }
 
@@ -38,10 +42,12 @@ func newCppTestWorkspace(t *testing.T) *workspace.Manager {
 // compile_commands.json or a C/C++ source file — neither is present.
 func newEmptyWorkspace(t *testing.T) *workspace.Manager {
 	t.Helper()
+
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# empty\n"), 0o644); err != nil {
 		t.Fatalf("README.md: %v", err)
 	}
+
 	return workspace.NewManager(config.Workspace{Root: root, CWD: root})
 }
 
@@ -50,10 +56,12 @@ func newEmptyWorkspace(t *testing.T) *workspace.Manager {
 // below to drive matchRedirectRule against a real Manager.
 func newGoTestWorkspace(t *testing.T) *workspace.Manager {
 	t.Helper()
+
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.test\n"), 0o644); err != nil {
 		t.Fatalf("go.mod: %v", err)
 	}
+
 	// Pad past the small-file redirect threshold so the outline redirect
 	// actually fires. The redirect deliberately skips files that are
 	// cheap to read whole; tests that exercise the redirect path need
@@ -61,38 +69,46 @@ func newGoTestWorkspace(t *testing.T) *workspace.Manager {
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc main(){}\n"+strings.Repeat("\n", 500)), 0o644); err != nil {
 		t.Fatalf("main.go: %v", err)
 	}
+
 	return workspace.NewManager(config.Workspace{Root: root, CWD: root})
 }
 
 func newGoWorkspaceWithLargeTestFile(t *testing.T) *workspace.Manager {
 	t.Helper()
+
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.test\n"), 0o644); err != nil {
 		t.Fatalf("go.mod: %v", err)
 	}
+
 	testPath := filepath.Join(root, "cmd", "idiom", "product_workflow_test.go")
 	if err := os.MkdirAll(filepath.Dir(testPath), 0o755); err != nil {
 		t.Fatalf("mkdir test dir: %v", err)
 	}
+
 	body := "package main\n\nfunc TestProductWorkflow(t *testing.T) {}\n" + strings.Repeat("\n", smallFileRedirectThreshold+25)
 	if err := os.WriteFile(testPath, []byte(body), 0o644); err != nil {
 		t.Fatalf("product_workflow_test.go: %v", err)
 	}
+
 	return workspace.NewManager(config.Workspace{Root: root, CWD: root})
 }
 
 func newTestWorkspaceWithFiles(t *testing.T, files map[string]string) *workspace.Manager {
 	t.Helper()
+
 	root := t.TempDir()
 	for name, content := range files {
 		path := filepath.Join(root, name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 		}
+
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
+
 	return workspace.NewManager(config.Workspace{Root: root, CWD: root})
 }
 
@@ -107,9 +123,11 @@ func TestReadFileRedirectsLargeTestFileToOutline(t *testing.T) {
 	if !decision.ShouldRedirect {
 		t.Fatal("expected large unbounded test-file read to redirect")
 	}
+
 	if decision.Capability != workspace.CapFileOutline {
 		t.Fatalf("capability: want %s, got %s", workspace.CapFileOutline, decision.Capability)
 	}
+
 	if !strings.Contains(decision.Result.Output, `"tool":"go_file_outline"`) {
 		t.Fatalf("expected outline candidate request, got:\n%s", decision.Result.Output)
 	}
@@ -145,9 +163,11 @@ func TestSearchContentRoutesByPathScope(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			d := NewDiscoveryRedirect()
 			decision := d.Consider(tc.req, ws)
+
 			if !decision.ShouldRedirect {
 				t.Fatalf("expected redirect, got none")
 			}
+
 			if decision.Capability != tc.wantCap {
 				t.Fatalf("capability: want %s, got %s", tc.wantCap, decision.Capability)
 			}
@@ -169,6 +189,7 @@ func TestSearchContentRedirectStaysSoftAfterRepeatedClass(t *testing.T) {
 		if !decision.ShouldRedirect {
 			t.Fatalf("request %d: expected redirect", i+1)
 		}
+
 		if decision.HardReject {
 			t.Fatalf("request %d: search_content redirect should remain a soft nudge", i+1)
 		}
@@ -190,17 +211,21 @@ func TestReadFileOutlineRedirectStaysSoftAfterRepeatedClass(t *testing.T) {
 		{Tool: "read_file", Path: "c.go"},
 		{Tool: "read_file", Path: "extra.go"},
 	}
+
 	for i, req := range requests {
 		decision := d.Consider(req, ws)
 		if !decision.ShouldRedirect {
 			t.Fatalf("request %d: expected redirect", i+1)
 		}
+
 		if decision.HardReject {
 			t.Fatalf("request %d: read_file redirect should remain a soft nudge", i+1)
 		}
+
 		if strings.TrimSpace(decision.Result.Error) != "" {
 			t.Fatalf("request %d: soft redirect should not surface as an error: %#v", i+1, decision.Result)
 		}
+
 		if i >= 1 && !strings.Contains(strings.ToLower(decision.Result.Output), "this exact call has been redirected") {
 			t.Fatalf("request %d: repeated redirect should still carry explicit guidance:\n%s", i+1, decision.Result.Output)
 		}
@@ -216,6 +241,7 @@ func TestRedirectSkipsInactiveLanguage(t *testing.T) {
 	ws := newEmptyWorkspace(t)
 	d := NewDiscoveryRedirect()
 	decision := d.Consider(workspace.ToolRequest{Tool: "read_file", Path: "main.go"}, ws)
+
 	if decision.ShouldRedirect {
 		t.Fatalf("expected no redirect in a non-Go workspace, got one for %s", decision.Language)
 	}
@@ -225,6 +251,7 @@ func TestReadFileRedirectSkipsMissingPath(t *testing.T) {
 	ws := newGoTestWorkspace(t)
 	d := NewDiscoveryRedirect()
 	decision := d.Consider(workspace.ToolRequest{Tool: "read_file", Path: "internal/workflows/productworkflow/gate.go"}, ws)
+
 	if decision.ShouldRedirect {
 		t.Fatalf("missing read_file path should flow to path resolution, got redirect to %s", decision.Capability)
 	}
@@ -238,6 +265,7 @@ func TestRedirectSkipsUnknownExtension(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			d := NewDiscoveryRedirect()
 			decision := d.Consider(workspace.ToolRequest{Tool: "read_file", Path: path}, ws)
+
 			if decision.ShouldRedirect {
 				t.Fatalf("%s should not redirect, got one to %s", path, decision.Capability)
 			}
@@ -264,6 +292,7 @@ func TestRedirectSkipsNonIdentifierPattern(t *testing.T) {
 		t.Run(p, func(t *testing.T) {
 			d := NewDiscoveryRedirect()
 			decision := d.Consider(workspace.ToolRequest{Tool: "search_content", Pattern: p, Glob: "*.go"}, ws)
+
 			if decision.ShouldRedirect {
 				t.Fatalf("pattern %q should not redirect", p)
 			}
@@ -289,6 +318,7 @@ func TestSearchContentRedirectsSymbolShapedBareIdentifier(t *testing.T) {
 	if !decision.ShouldRedirect {
 		t.Fatalf("symbol-shaped identifier should redirect to structured symbol search")
 	}
+
 	if decision.Capability != workspace.CapFindSymbol {
 		t.Fatalf("capability: want find_symbol, got %s", decision.Capability)
 	}
@@ -303,6 +333,7 @@ func TestRedirectSkipsGenericGlob(t *testing.T) {
 		t.Run("glob="+glob, func(t *testing.T) {
 			d := NewDiscoveryRedirect()
 			decision := d.Consider(workspace.ToolRequest{Tool: "search_content", Pattern: "Runner", Glob: glob}, ws)
+
 			if decision.ShouldRedirect {
 				t.Fatalf("glob %q should not redirect", glob)
 			}
@@ -326,9 +357,11 @@ func TestRedirectHandlesBraceExpansionGlob(t *testing.T) {
 	ws := newCppTestWorkspace(t)
 	d := NewDiscoveryRedirect()
 	decision := d.Consider(workspace.ToolRequest{Tool: "search_content", Pattern: "EntityManager", Glob: "*.{cpp,h}"}, ws)
+
 	if !decision.ShouldRedirect {
 		t.Fatalf("brace-expansion glob should redirect to cpp")
 	}
+
 	if decision.Language != "cpp" {
 		t.Fatalf("language: want cpp, got %s", decision.Language)
 	}
@@ -341,12 +374,15 @@ func TestRedirectRoutesCppReadFile(t *testing.T) {
 	ws := newCppTestWorkspace(t)
 	d := NewDiscoveryRedirect()
 	decision := d.Consider(workspace.ToolRequest{Tool: "read_file", Path: "src/main.cpp"}, ws)
+
 	if !decision.ShouldRedirect {
 		t.Fatalf("expected redirect for .cpp read")
 	}
+
 	if decision.Language != "cpp" {
 		t.Fatalf("language: want cpp, got %s", decision.Language)
 	}
+
 	if decision.Capability != workspace.CapFileOutline {
 		t.Fatalf("capability: want file_outline, got %s", decision.Capability)
 	}
@@ -365,6 +401,7 @@ func TestRedirectSkipsSmallTestLikeReadFileOutline(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			d := NewDiscoveryRedirect()
 			decision := d.Consider(workspace.ToolRequest{Tool: "read_file", Path: path}, ws)
+
 			if decision.ShouldRedirect {
 				t.Fatalf("small test-like source read should execute directly, got redirect to %s", decision.Capability)
 			}
@@ -375,18 +412,22 @@ func TestRedirectSkipsSmallTestLikeReadFileOutline(t *testing.T) {
 func TestRedirectRoutesReadFileHandle(t *testing.T) {
 	ws := newGoTestWorkspace(t)
 	ws.PrimeDiscoveredPaths([]string{"main.go"})
+
 	d := NewDiscoveryRedirect()
 
 	decision := d.Consider(workspace.ToolRequest{Tool: "read_file", ID: "f1"}, ws)
 	if !decision.ShouldRedirect {
 		t.Fatalf("expected redirect for unbounded handle read")
 	}
+
 	if decision.Language != "go" {
 		t.Fatalf("language: want go, got %s", decision.Language)
 	}
+
 	if decision.Capability != workspace.CapFileOutline {
 		t.Fatalf("capability: want file_outline, got %s", decision.Capability)
 	}
+
 	if !strings.Contains(decision.Result.Output, `"path":"main.go"`) {
 		t.Fatalf("result should resolve the handle to a path: %q", decision.Result.Output)
 	}
@@ -399,19 +440,24 @@ func TestRedirectResultNamesReplacementTool(t *testing.T) {
 	ws := newGoTestWorkspace(t)
 	d := NewDiscoveryRedirect()
 	decision := d.Consider(workspace.ToolRequest{Tool: "read_file", Path: "main.go"}, ws)
+
 	if !decision.ShouldRedirect {
 		t.Fatalf("expected redirect")
 	}
+
 	output := decision.Result.Output
 	if !strings.Contains(output, "go_file_outline") {
 		t.Fatalf("result output missing replacement tool name: %q", output)
 	}
+
 	if !strings.Contains(output, `"path":"main.go"`) {
 		t.Fatalf("result output missing example request path: %q", output)
 	}
+
 	if !strings.Contains(output, "structured route remains available") {
 		t.Fatalf("result output should mention not retrying: %q", output)
 	}
+
 	if strings.Contains(output, "Try:") || strings.Contains(output, "Next step:") {
 		t.Fatalf("redirect output should avoid imperative strategy menu text: %q", output)
 	}
@@ -426,10 +472,12 @@ func TestRedirectResultUsesCodeNavigateWhenDirectToolHidden(t *testing.T) {
 	if !decision.ShouldRedirect {
 		t.Fatalf("expected redirect")
 	}
+
 	output := decision.Result.Output
 	if !strings.Contains(output, `"tool":"code_navigate"`) || !strings.Contains(output, `"capability":"file_outline"`) {
 		t.Fatalf("redirect should point at code_navigate file_outline candidate, got: %q", output)
 	}
+
 	if strings.Contains(output, `"tool":"go_file_outline"`) || strings.Contains(output, "via go_read_symbol") {
 		t.Fatalf("redirect leaked hidden direct Go tools into candidate guidance: %q", output)
 	}
@@ -454,13 +502,16 @@ func TestSearchContentRedirectsGoSyntaxPattern(t *testing.T) {
 		{"const_decl", `const DefaultLimit`},
 		{"var_decl", `var globalRunner`},
 	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			d := NewDiscoveryRedirect()
 			decision := d.Consider(workspace.ToolRequest{Tool: "search_content", Pattern: tc.pattern}, ws)
+
 			if !decision.ShouldRedirect {
 				t.Fatalf("pattern %q should redirect", tc.pattern)
 			}
+
 			if decision.Language != "go" {
 				t.Fatalf("language: want go, got %s", decision.Language)
 			}
@@ -476,12 +527,15 @@ func TestSearchContentRedirectExtractsDeclarationIdentifier(t *testing.T) {
 	if !decision.ShouldRedirect {
 		t.Fatalf("declaration search should redirect")
 	}
+
 	if !strings.Contains(decision.Result.Output, `"pattern":"ToolRequest"`) {
 		t.Fatalf("redirect should pass only the symbol identifier, got: %q", decision.Result.Output)
 	}
+
 	if !strings.Contains(decision.Result.Output, `"path":"internal/capabilities/workspace"`) {
 		t.Fatalf("redirect should preserve path scope for find_symbol, got: %q", decision.Result.Output)
 	}
+
 	if strings.Contains(decision.Result.Output, `"type ToolRequest struct"`) {
 		t.Fatalf("redirect should not pass the whole declaration as the symbol pattern: %q", decision.Result.Output)
 	}
@@ -495,12 +549,15 @@ func TestSearchContentWorkspaceSymbolRedirectExtractsDeclarationIdentifier(t *te
 	if !decision.ShouldRedirect {
 		t.Fatalf("declaration search should redirect")
 	}
+
 	if decision.Capability != workspace.CapWorkspaceSymbol {
 		t.Fatalf("capability: want workspace_symbol, got %s", decision.Capability)
 	}
+
 	if !strings.Contains(decision.Result.Output, `"pattern":"ToolRequest"`) {
 		t.Fatalf("redirect should pass only the symbol identifier, got: %q", decision.Result.Output)
 	}
+
 	if strings.Contains(decision.Result.Output, `"type ToolRequest struct"`) {
 		t.Fatalf("redirect should not pass the whole declaration as the symbol pattern: %q", decision.Result.Output)
 	}
@@ -526,13 +583,16 @@ func TestSearchContentRedirectsCppSyntaxPattern(t *testing.T) {
 		{"union_wildcard", `union.*EntityValue`},
 		{"template_class", `template<typename T> class Container`},
 	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			d := NewDiscoveryRedirect()
 			decision := d.Consider(workspace.ToolRequest{Tool: "search_content", Pattern: tc.pattern}, ws)
+
 			if !decision.ShouldRedirect {
 				t.Fatalf("pattern %q should redirect", tc.pattern)
 			}
+
 			if decision.Language != "cpp" {
 				t.Fatalf("language: want cpp, got %s", decision.Language)
 			}
@@ -549,6 +609,7 @@ func TestSearchContentSkipsAmbiguousSyntaxInPolyglotWorkspace(t *testing.T) {
 	})
 	d := NewDiscoveryRedirect()
 	decision := d.Consider(workspace.ToolRequest{Tool: "search_content", Pattern: "class Widget"}, ws)
+
 	if decision.ShouldRedirect {
 		t.Fatalf("ambiguous class syntax should not redirect, got %s", decision.Language)
 	}
@@ -563,9 +624,11 @@ func TestSearchContentPathDisambiguatesAmbiguousSyntax(t *testing.T) {
 	})
 	d := NewDiscoveryRedirect()
 	decision := d.Consider(workspace.ToolRequest{Tool: "search_content", Pattern: "class Widget", Path: "src/Widget.java"}, ws)
+
 	if !decision.ShouldRedirect {
 		t.Fatalf("path-scoped Java class search should redirect")
 	}
+
 	if decision.Language != "java" {
 		t.Fatalf("language: want java, got %s", decision.Language)
 	}
@@ -591,6 +654,7 @@ func TestConversationReadFileRedirectSkipsDiagnosticLogs(t *testing.T) {
 		Tool: "read_file",
 		Path: "logs/conversations/20260531-180611.101.jsonl",
 	}
+
 	for i := 0; i < 5; i++ {
 		if decision := d.considerConversationReadFileRedirect(req, brief); decision.ShouldRedirect {
 			t.Fatalf("diagnostic log read %d should not redirect to symbol navigation: %+v", i+1, decision)
@@ -608,12 +672,15 @@ func TestConversationReadFileRedirectKeepsSourceRedirect(t *testing.T) {
 		Tool: "read_file",
 		Path: "internal/runtime/agent/runner.go",
 	}
+
 	if decision := d.considerConversationReadFileRedirect(req, brief); decision.ShouldRedirect {
 		t.Fatalf("first source read should remain normal exploration: %+v", decision)
 	}
+
 	if decision := d.considerConversationReadFileRedirect(req, brief); decision.ShouldRedirect {
 		t.Fatalf("second source read should remain normal exploration: %+v", decision)
 	}
+
 	if decision := d.considerConversationReadFileRedirect(req, brief); !decision.ShouldRedirect {
 		t.Fatalf("third repeated source read should redirect to symbol navigation")
 	}
@@ -635,6 +702,7 @@ func TestSearchContentIdenticalFingerprintFallsBackOnce(t *testing.T) {
 	if !d1.ShouldRedirect {
 		t.Fatal("call 1: expected redirect for first occurrence")
 	}
+
 	t.Logf("call 1: redirect, Language=%s Capability=%s", d1.Language, d1.Capability)
 
 	// Call 2: same fingerprint → should FALLTHROUGH (model honored the retry)
@@ -642,6 +710,7 @@ func TestSearchContentIdenticalFingerprintFallsBackOnce(t *testing.T) {
 	if d2.ShouldRedirect {
 		t.Fatalf("call 2: expected fallthrough (no redirect), got ShouldRedirect=%v", d2.ShouldRedirect)
 	}
+
 	t.Log("call 2: fallthrough (correct)")
 
 	// Call 3: same fingerprint again → should redirect (escalated, model keeps repeating)
@@ -649,6 +718,7 @@ func TestSearchContentIdenticalFingerprintFallsBackOnce(t *testing.T) {
 	if !d3.ShouldRedirect {
 		t.Fatalf("call 3: expected redirect (escalated), got ShouldRedirect=%v", d3.ShouldRedirect)
 	}
+
 	t.Logf("call 3: redirect, Language=%s Capability=%s (escalated)", d3.Language, d3.Capability)
 
 	// Call 4: still same → should still redirect
@@ -656,6 +726,7 @@ func TestSearchContentIdenticalFingerprintFallsBackOnce(t *testing.T) {
 	if !d4.ShouldRedirect {
 		t.Fatalf("call 4: expected redirect, got ShouldRedirect=%v", d4.ShouldRedirect)
 	}
+
 	t.Logf("call 4: redirect, Language=%s Capability=%s (escalated)", d4.Language, d4.Capability)
 }
 
@@ -674,6 +745,7 @@ func TestSearchContentDifferentFingerprintsDontCrossExhaust(t *testing.T) {
 	if !d.Consider(reqA, ws).ShouldRedirect {
 		t.Fatal("reqA call 1: expected redirect")
 	}
+
 	// reqA call 2: fallthrough
 	if d.Consider(reqA, ws).ShouldRedirect {
 		t.Fatal("reqA call 2: expected fallthrough")
@@ -683,6 +755,7 @@ func TestSearchContentDifferentFingerprintsDontCrossExhaust(t *testing.T) {
 	if !d.Consider(reqB, ws).ShouldRedirect {
 		t.Fatal("reqB call 1: expected redirect (different fp, not exhausted)")
 	}
+
 	// reqB call 2: should fallthrough (own independent cycle)
 	if d.Consider(reqB, ws).ShouldRedirect {
 		t.Fatal("reqB call 2: expected fallthrough")

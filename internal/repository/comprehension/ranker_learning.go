@@ -231,9 +231,11 @@ func ApplyVerifiedRankerLearning(root string, req VerifiedRankerLearningRequest)
 	source := sanitizeLearningSource(req.Source)
 	action := normalizeLearningAction(req.Action)
 	logAction := action
+
 	if logAction == "" {
 		logAction = "no_op"
 	}
+
 	taskID := sanitizeLearningCorrelationID("task", req.TaskID)
 	corpusID := sanitizeLearningCorrelationID("corpus", req.CorpusID)
 	resultID := sanitizeLearningCorrelationID("result", req.ResultID)
@@ -243,6 +245,7 @@ func ApplyVerifiedRankerLearning(root string, req VerifiedRankerLearningRequest)
 	if err != nil {
 		return LearningLogEntry{}, nil, err
 	}
+
 	beforeCopy := cloneWeights(before)
 	afterCopy := cloneWeights(before)
 	entry := LearningLogEntry{
@@ -257,6 +260,7 @@ func ApplyVerifiedRankerLearning(root string, req VerifiedRankerLearningRequest)
 		ResultID:  resultID,
 		Evidence:  learningEvidenceRef(req, files, invalidPathCount),
 	}
+
 	entry.BeforeWeights = &beforeCopy
 	entry.AfterWeights = &afterCopy
 	entry.Rollback = &LearningRollbackData{Weights: cloneWeights(before)}
@@ -291,14 +295,17 @@ func ApplyVerifiedRankerLearning(root string, req VerifiedRankerLearningRequest)
 			} else {
 				updateOpts.Penalty = files
 			}
+
 			after, updateErr := UpdateLearnedWeights(root, updateOpts)
 			if updateErr != nil {
 				entry.Reason = LearningReasonUpdateFailed
 				if appendErr := appendLearningDecision(root, &entry); appendErr != nil {
 					return entry, before, appendErr
 				}
+
 				return entry, before, updateErr
 			}
+
 			afterCopy = cloneWeights(after)
 			entry.AfterWeights = &afterCopy
 			entry.State = LearningStateAccepted
@@ -316,11 +323,14 @@ func ApplyVerifiedRankerLearning(root string, req VerifiedRankerLearningRequest)
 		if entry.State == LearningStateAccepted && (entry.Action == "boost" || entry.Action == "penalize") {
 			_ = SaveLearnedWeights(root, before)
 		}
+
 		return entry, before, err
 	}
+
 	if entry.AfterWeights != nil {
 		return entry, cloneWeights(*entry.AfterWeights), nil
 	}
+
 	return entry, before, nil
 }
 
@@ -364,9 +374,11 @@ func RecordVerifiedRankerEvidence(root string, req VerifiedRankerLearningRequest
 		entry.State = LearningStateAccepted
 		entry.Reason = sanitizeVerifiedLearningReason(req.Reason)
 	}
+
 	if err := appendLearningDecision(root, &entry); err != nil {
 		return entry, err
 	}
+
 	return entry, nil
 }
 
@@ -375,45 +387,59 @@ func RecordVerifiedRankerEvidence(root string, req VerifiedRankerLearningRequest
 func RestoreLearnedWeightsFromLearningLog(root string, eventID string) (map[string]float64, LearningLogEntry, error) {
 	root = strings.TrimSpace(root)
 	eventID = strings.TrimSpace(eventID)
+
 	if root == "" {
 		return nil, LearningLogEntry{}, errors.New("workspace root is required for ranker rollback")
 	}
+
 	if eventID == "" {
 		return nil, LearningLogEntry{}, errors.New("learning event id is required for ranker rollback")
 	}
+
 	if !learningGeneratedEventIDPattern.MatchString(eventID) {
 		return nil, LearningLogEntry{}, fmt.Errorf("learning event %q has invalid generated-id shape", eventID)
 	}
+
 	entries, err := ReadLearningLog(root)
 	if err != nil {
 		return nil, LearningLogEntry{}, err
 	}
+
 	var target *LearningLogEntry
+
 	for i := len(entries) - 1; i >= 0; i-- {
 		if entries[i].EventID == eventID {
 			entry := entries[i]
+
 			target = &entry
+
 			break
 		}
 	}
+
 	if target == nil {
 		return nil, LearningLogEntry{}, fmt.Errorf("learning event %q not found", eventID)
 	}
+
 	restoreWeights, ok := rollbackWeightsForEntry(*target)
 	if !ok {
 		return nil, LearningLogEntry{}, fmt.Errorf("learning event %q has no rollback weights", eventID)
 	}
+
 	before, err := LoadLearnedWeights(root)
 	if err != nil {
 		return nil, LearningLogEntry{}, err
 	}
+
 	if err := SaveLearnedWeights(root, restoreWeights); err != nil {
 		return nil, LearningLogEntry{}, err
 	}
+
 	after, err := LoadLearnedWeights(root)
 	if err != nil {
 		return nil, LearningLogEntry{}, err
 	}
+
 	beforeCopy := cloneWeights(before)
 	afterCopy := cloneWeights(after)
 	restoreEntry := LearningLogEntry{
@@ -432,9 +458,11 @@ func RestoreLearnedWeightsFromLearningLog(root string, eventID string) (map[stri
 			ResultID: eventID,
 		},
 	}
+
 	if err := appendLearningDecision(root, &restoreEntry); err != nil {
 		return after, restoreEntry, err
 	}
+
 	return after, restoreEntry, nil
 }
 
@@ -451,29 +479,39 @@ func appendLearningDecision(root string, entry *LearningLogEntry) error {
 	if entry == nil {
 		return errors.New("learning decision entry is nil")
 	}
+
 	if entry.EventID == "" {
 		entry.EventID = learningEventID(*entry)
 	}
+
 	return AppendLearningLog(root, *entry)
 }
 
 func learningEvidenceRef(req VerifiedRankerLearningRequest, files []string, invalidPathCount int) *LearningEvidenceRef {
 	evidence := req.Evidence
+
 	evidence.Kind = sanitizeLearningEvidenceKind(evidence.Kind)
+
 	if evidence.Kind == "" {
 		evidence.Kind = LearningReasonVerifiedFeedback
 	}
+
 	evidence.Verified = evidence.Verified || req.Verified
 	evidence.TaskID = util.FirstNonEmpty(sanitizeLearningCorrelationID("task", evidence.TaskID), sanitizeLearningCorrelationID("task", req.TaskID))
 	evidence.CorpusID = util.FirstNonEmpty(sanitizeLearningCorrelationID("corpus", evidence.CorpusID), sanitizeLearningCorrelationID("corpus", req.CorpusID))
 	evidence.ResultID = util.FirstNonEmpty(sanitizeLearningCorrelationID("result", evidence.ResultID), sanitizeLearningCorrelationID("result", req.ResultID))
 	evidence.Files = sanitizeLearningPathList(firstNonEmptyStrings(evidence.Files, files))
+
 	evidence.InvalidPathCount += invalidPathCount
+
 	evidence.Metrics = sanitizeLearningMetrics(evidence.Metrics)
+
 	if evidence.Metrics == nil {
 		evidence.Metrics = make(map[string]float64)
 	}
+
 	evidence.Metrics["score"] = req.Score
+
 	return &evidence
 }
 
@@ -482,6 +520,7 @@ func sanitizeVerifiedLearningReason(value string) string {
 	if reason == "" || reason == "unknown" {
 		return LearningReasonVerifiedFeedback
 	}
+
 	return reason
 }
 
@@ -489,9 +528,11 @@ func rollbackWeightsForEntry(entry LearningLogEntry) (map[string]float64, bool) 
 	if entry.Rollback != nil {
 		return cloneWeights(entry.Rollback.Weights), true
 	}
+
 	if entry.BeforeWeights != nil {
 		return cloneWeights(*entry.BeforeWeights), true
 	}
+
 	return nil, false
 }
 
@@ -512,19 +553,24 @@ func sanitizeLearningPaths(paths []string) ([]string, int) {
 	out := make([]string, 0, len(paths))
 	seen := make(map[string]struct{}, len(paths))
 	invalid := 0
+
 	for _, path := range paths {
 		key := normalizeWeightKey(path)
 		if key == "" {
 			invalid++
 			continue
 		}
+
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
 		out = append(out, key)
 	}
+
 	slices.Sort(out)
+
 	return out, invalid
 }
 
@@ -537,25 +583,32 @@ func sanitizeLearningMetrics(metrics map[string]float64) map[string]float64 {
 	if len(metrics) == 0 {
 		return nil
 	}
+
 	out := make(map[string]float64, len(metrics))
 	unknownCount := 0
+
 	for key, value := range metrics {
 		if value != value {
 			continue
 		}
+
 		safeKey := sanitizeLearningMetricKey(key)
 		if safeKey == "" {
 			continue
 		}
+
 		if safeKey == "unknown" {
 			unknownCount++
 			continue
 		}
+
 		out[safeKey] = value
 	}
+
 	if unknownCount > 0 {
 		out["unknown"] = float64(unknownCount)
 	}
+
 	return out
 }
 
@@ -566,8 +619,10 @@ func cloneWeights(in map[string]float64) map[string]float64 {
 		if clean == "" {
 			continue
 		}
+
 		out[clean] = value
 	}
+
 	return out
 }
 
@@ -583,17 +638,22 @@ func learningEventID(entry LearningLogEntry) string {
 	h.Write([]byte{0})
 	h.Write([]byte(entry.Reason))
 	h.Write([]byte{0})
+
 	for _, value := range []string{entry.TaskID, entry.CorpusID, entry.ResultID} {
 		h.Write([]byte(value))
 		h.Write([]byte{0})
 	}
+
 	files := append([]string(nil), entry.Files...)
 	slices.Sort(files)
+
 	for _, file := range files {
 		h.Write([]byte(file))
 		h.Write([]byte{0})
 	}
+
 	sum := h.Sum(nil)
+
 	return "ranker_" + hex.EncodeToString(sum[:8])
 }
 
@@ -601,6 +661,7 @@ func firstNonEmptyStrings(primary []string, fallback []string) []string {
 	if len(primary) > 0 {
 		return primary
 	}
+
 	return fallback
 }
 
@@ -613,12 +674,14 @@ func hasProtectedEditPath(editPaths []string) bool {
 		if p == "" {
 			continue
 		}
+
 		// Normalize the path first (strips ./, normalises \ to /, rejects
 		// absolute paths, ../ escapes, and segment . or .. tokens).
 		normalized := normalizeWeightKey(p)
 		if normalized == "" {
 			return true
 		}
+
 		// Reject paths within or exactly equal to the harness state directory.
 		// Normalization has already stripped any ./ prefix so bypasses such as
 		// ./.idiom/ranker/weights.json are caught here.
@@ -626,6 +689,7 @@ func hasProtectedEditPath(editPaths []string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -637,15 +701,18 @@ func hasEditPathFileOverlap(editPaths []string, files []string) bool {
 	for _, f := range files {
 		fileSet[f] = struct{}{}
 	}
+
 	for _, p := range editPaths {
 		key := normalizeWeightKey(strings.TrimSpace(p))
 		if key == "" {
 			continue
 		}
+
 		if _, ok := fileSet[key]; ok {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -658,6 +725,7 @@ func learningLogVerificationEvidence(ve *VerificationEvidence) *LearningLogVerif
 	if ve == nil {
 		return nil
 	}
+
 	return &LearningLogVerificationEvidence{
 		EditPaths:           append([]string(nil), ve.EditPaths...),
 		VerificationCommand: ve.VerificationCommand,

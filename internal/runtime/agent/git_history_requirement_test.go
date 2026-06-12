@@ -25,12 +25,15 @@ func TestWriteBeforeGitHistoryEvidenceRejectsExistingLogic(t *testing.T) {
 		Description: "change existing logic",
 	}
 	summary, errorText, reject := runner.writeBeforeGitHistoryEvidenceRejection(req, nil)
+
 	if !reject {
 		t.Fatalf("expected existing-file write to require git history evidence")
 	}
+
 	if summary != "Write rejected before git history evidence" {
 		t.Fatalf("unexpected summary %q", summary)
 	}
+
 	if !strings.Contains(errorText, "history_range") || !strings.Contains(errorText, "history_symbol") || !strings.Contains(errorText, "commit descriptions") {
 		t.Fatalf("rejection should tell the model to read commit descriptions via history tools, got %q", errorText)
 	}
@@ -50,6 +53,7 @@ func TestWriteBeforeGitHistoryEvidenceAcceptsHistoryRange(t *testing.T) {
 		Description: "change existing logic",
 	}
 	results := []workspace.ToolResult{gitHistoryRangeResult("pkg/logic.go")}
+
 	if _, _, reject := runner.writeBeforeGitHistoryEvidenceRejection(req, results); reject {
 		t.Fatalf("did not expect write rejection after successful history_range evidence")
 	}
@@ -69,6 +73,7 @@ func TestWriteBeforeGitHistoryEvidenceAcceptsPathScopedNotApplicable(t *testing.
 		Description: "change existing logic",
 	}
 	results := []workspace.ToolResult{gitHistoryNotApplicableResult("pkg/logic.go")}
+
 	if _, _, reject := runner.writeBeforeGitHistoryEvidenceRejection(req, results); reject {
 		t.Fatalf("did not expect write rejection after path-scoped history_not_applicable evidence")
 	}
@@ -89,6 +94,7 @@ func TestWriteBeforeGitHistoryEvidenceDoesNotUseNotApplicableAcrossPaths(t *test
 		Description: "change existing logic",
 	}
 	results := []workspace.ToolResult{gitHistoryNotApplicableResult("pkg/other.go")}
+
 	if _, _, reject := runner.writeBeforeGitHistoryEvidenceRejection(req, results); !reject {
 		t.Fatalf("expected path-scoped history_not_applicable for another path not to satisfy pkg/logic.go")
 	}
@@ -103,6 +109,7 @@ func TestWriteBeforeGitHistoryEvidenceSkipsNewFile(t *testing.T) {
 		Content:     "package pkg\n",
 		Description: "add new logic",
 	}
+
 	if _, _, reject := runner.writeBeforeGitHistoryEvidenceRejection(req, nil); reject {
 		t.Fatalf("new-file writes should not require prior git history")
 	}
@@ -120,6 +127,7 @@ func TestWriteBeforeGitHistoryEvidenceSkipsWorkspaceWithoutGitMetadata(t *testin
 		NewText:     "return \"new\"",
 		Description: "change existing logic in a fixture workspace",
 	}
+
 	if _, _, reject := runner.writeBeforeGitHistoryEvidenceRejection(req, nil); reject {
 		t.Fatalf("workspace without git metadata should not be blocked on unavailable history evidence")
 	}
@@ -140,9 +148,11 @@ func TestSubmitPlanHistoryGuardRejectsExistingEditWithoutHistory(t *testing.T) {
 		}},
 	}
 	guard := runner.preflightPlanThenExecuteSubmitPlanHistoryGuard(req, nil)
+
 	if !guard.Intercepted {
 		t.Fatalf("expected submit_plan to be rejected without git history evidence")
 	}
+
 	if !strings.Contains(guard.Result.Error, "history_range") || !strings.Contains(guard.Result.Error, "commit-description") {
 		t.Fatalf("guard should require commit-description history evidence, got %q", guard.Result.Error)
 	}
@@ -167,6 +177,7 @@ func TestSubmitPlanHistoryGuardAcceptsHistorySymbol(t *testing.T) {
 		Summary: "Read git history for Apply in pkg/logic.go",
 		Output:  "commit 1234567\nAuthor: Example\n\n    Preserve Apply behavior for compatibility\n",
 	}}
+
 	if guard := runner.preflightPlanThenExecuteSubmitPlanHistoryGuard(req, results); guard.Intercepted {
 		t.Fatalf("did not expect submit_plan rejection after history_symbol evidence: %#v", guard.Result)
 	}
@@ -174,10 +185,13 @@ func TestSubmitPlanHistoryGuardAcceptsHistorySymbol(t *testing.T) {
 
 func gitHistoryRequirementRunner(root string, family string) *Runner {
 	brief := workerruntime.RuntimeBriefForTaskFamily(family, "main", []string{"read_file", "history_range", "history_symbol", "blame_range", "edit_file", "write_file", "apply_patch", "submit_plan"})
+
 	brief.RequiredEvidence = append([]string(nil), brief.RequiredEvidence...)
+
 	if !runnerContainsString(brief.RequiredEvidence, requiredEvidenceGitHistoryRationale) {
 		brief.RequiredEvidence = append(brief.RequiredEvidence, requiredEvidenceGitHistoryRationale)
 	}
+
 	return &Runner{
 		Workspace:    workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true}),
 		RuntimeBrief: brief,
@@ -203,10 +217,12 @@ func gitHistoryNotApplicableResult(path string) workspace.ToolResult {
 
 func writeGitHistoryRequirementTestFile(t *testing.T, root string, rel string, body string) {
 	t.Helper()
+
 	full := filepath.Join(root, filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(full), err)
 	}
+
 	if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
 		t.Fatalf("write %s: %v", full, err)
 	}
@@ -214,6 +230,7 @@ func writeGitHistoryRequirementTestFile(t *testing.T, root string, rel string, b
 
 func markGitHistoryRequirementWorkspace(t *testing.T, root string) {
 	t.Helper()
+
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("create .git marker: %v", err)
 	}
@@ -225,5 +242,6 @@ func runnerContainsString(values []string, want string) bool {
 			return true
 		}
 	}
+
 	return false
 }

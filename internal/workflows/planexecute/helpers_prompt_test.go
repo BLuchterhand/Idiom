@@ -40,6 +40,7 @@ func TestPlanExecutePlannerSystemAddendumFrontloadsPlannerProtocol(t *testing.T)
 			t.Fatalf("planner addendum missing %q:\n%s", want, got)
 		}
 	}
+
 	for _, stale := range []string{
 		"Prefer numeric line-range edits for existing source/test changes",
 		"line-range shape) for non-trivial existing-path edits",
@@ -89,6 +90,7 @@ func TestPlanExecuteReviewRepairPromptCarriesSubmitPlanQualityBar(t *testing.T) 
 			t.Fatalf("review-repair prompt missing %q:\n%s", want, got)
 		}
 	}
+
 	for _, stale := range []string{
 		"Prefer line-range `content` for non-trivial source/test repairs",
 		"Line-range `content` for non-trivial source/test repairs",

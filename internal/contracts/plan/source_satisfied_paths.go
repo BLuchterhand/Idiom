@@ -27,11 +27,14 @@ func ValidateSourceSatisfiedPathCoverage(input SourceSatisfiedPathCoverageInput)
 	if len(sourceSatisfied) == 0 {
 		return nil
 	}
+
 	required := scopePathSet(input.RequiredPaths)
 	approved := scopePathSet(input.ApprovedPaths)
 	pending := scopePathSet(input.PendingPaths)
 	evidence := sourceSatisfiedCurrentStateEvidenceSet(input.Evidence)
+
 	var violations []SourceSatisfiedPathViolation
+
 	for _, path := range sourceSatisfied {
 		if len(required) == 0 {
 			violations = append(violations, SourceSatisfiedPathViolation{
@@ -46,6 +49,7 @@ func ValidateSourceSatisfiedPathCoverage(input SourceSatisfiedPathCoverageInput)
 				Reason: "source-satisfied path is outside declared required scope",
 			})
 		}
+
 		if _, ok := pending[path]; ok {
 			violations = append(violations, SourceSatisfiedPathViolation{
 				Path:   path,
@@ -53,6 +57,7 @@ func ValidateSourceSatisfiedPathCoverage(input SourceSatisfiedPathCoverageInput)
 				Reason: "source-satisfied path is still pending approval",
 			})
 		}
+
 		if len(approved) > 0 {
 			if _, ok := approved[path]; !ok {
 				violations = append(violations, SourceSatisfiedPathViolation{
@@ -62,6 +67,7 @@ func ValidateSourceSatisfiedPathCoverage(input SourceSatisfiedPathCoverageInput)
 				})
 			}
 		}
+
 		if input.RequireEvidence {
 			if _, ok := evidence[path]; !ok {
 				violations = append(violations, SourceSatisfiedPathViolation{
@@ -72,6 +78,7 @@ func ValidateSourceSatisfiedPathCoverage(input SourceSatisfiedPathCoverageInput)
 			}
 		}
 	}
+
 	return violations
 }
 
@@ -82,31 +89,38 @@ func SourceSatisfiedCoveragePathSet(paths []string, violations []SourceSatisfied
 			blocked[path] = struct{}{}
 		}
 	}
+
 	out := make(map[string]struct{}, len(paths))
 	for _, path := range UniqueScopePaths(paths) {
 		if _, ok := blocked[path]; ok {
 			continue
 		}
+
 		out[path] = struct{}{}
 	}
+
 	return out
 }
 
 func sourceSatisfiedCurrentStateEvidenceSet(evidence []SourceSatisfiedEvidenceRef) map[string]struct{} {
 	out := map[string]struct{}{}
+
 	for _, ref := range evidence {
 		path := NormalizeScopePath(ref.Path)
 		if path == "" || !sourceSatisfiedEvidenceKindProvesCurrentState(ref.Kind) {
 			continue
 		}
+
 		out[path] = struct{}{}
 	}
+
 	return out
 }
 
 func sourceSatisfiedEvidenceKindProvesCurrentState(kind string) bool {
 	kind = strings.ToLower(strings.TrimSpace(kind))
 	kind = strings.ReplaceAll(kind, "-", "_")
+
 	switch kind {
 	case "harness_observed_source":
 		return true
@@ -124,5 +138,6 @@ func scopePathSet(paths []string) map[string]struct{} {
 	for _, path := range UniqueScopePaths(paths) {
 		out[path] = struct{}{}
 	}
+
 	return out
 }

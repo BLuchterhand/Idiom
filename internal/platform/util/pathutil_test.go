@@ -26,6 +26,7 @@ func TestNormalizeRelPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if got != "/root/foo/bar" {
 		t.Errorf("got %q, want %q", got, "/root/foo/bar")
 	}

@@ -92,13 +92,16 @@ func RoleSpecFor(name string) RoleSpec {
 func readOnlyChildAllowedTools() []string {
 	tools := readOnlyDiscoveryToolNames()
 	filtered := make([]string, 0, len(tools))
+
 	for _, tool := range tools {
 		switch strings.TrimSpace(tool) {
 		case "task", "list_files":
 			continue
 		}
+
 		filtered = append(filtered, tool)
 	}
+
 	return filtered
 }
 
@@ -107,6 +110,7 @@ func RuntimeBriefForRole(role string, lane string, objective string) WorkerRunti
 	if lane == "" {
 		lane = string(spec.Name)
 	}
+
 	return NormalizeRuntimeBrief(WorkerRuntimeBrief{
 		Lane:                 lane,
 		TaskFamily:           string(spec.TaskFamily),

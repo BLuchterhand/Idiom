@@ -11,9 +11,11 @@ func TestPlanDocumentsWithDirtyAllowanceMarksOnlyNamedScopedDocument(t *testing.
 		"implement atom and explicitly allow dirty scoped path internal/contracts/writerroute/decision_test.go for this run",
 		docs,
 	)
+
 	if !got[0].AllowDirtyAtomScope {
 		t.Fatalf("expected named dirty scoped path to allow matching document: %#v", got)
 	}
+
 	if got[1].AllowDirtyAtomScope {
 		t.Fatalf("dirty scoped path allowance must not apply to unrelated document: %#v", got)
 	}
@@ -43,6 +45,7 @@ func TestPlanDocumentsWithDirtyAllowanceBroadFlagAllowsAllScopedDocuments(t *tes
 		{Path: "atom-b.md", EditPaths: []string{"internal/contracts/writerroute/decision.go"}},
 	}
 	got := PlanDocumentsWithDirtyAllowance("rerun with --allow-dirty for these atom scopes", docs)
+
 	if !got[0].AllowDirtyAtomScope || !got[1].AllowDirtyAtomScope {
 		t.Fatalf("--allow-dirty should explicitly allow all atom documents in the turn: %#v", got)
 	}
@@ -56,6 +59,7 @@ func TestPlanDocumentsWithDirtyAllowanceRejectsEscapedPath(t *testing.T) {
 		"explicitly allow dirty scoped path ../internal/contracts/writerroute/decision_test.go",
 		docs,
 	)
+
 	if got[0].AllowDirtyAtomScope {
 		t.Fatalf("escaped dirty path allowance must not authorize document scope: %#v", got)
 	}

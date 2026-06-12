@@ -156,6 +156,7 @@ func NamedPathInvariants() map[PathInvariantID]PathInvariant {
 	for id, invariant := range pathInvariantMap {
 		out[id] = invariant
 	}
+
 	return out
 }
 
@@ -167,7 +168,9 @@ func PathInvariantForRole(role PathRoleKind) (PathInvariant, bool) {
 	if !ok {
 		return PathInvariant{}, false
 	}
+
 	invariant, ok := pathInvariantMap[invariantID]
+
 	return invariant, ok
 }
 
@@ -188,6 +191,7 @@ func ResolvePlanScopePathRoleObligations(input PlanScopePathRoleObligationInput)
 			Reason:      "required edit path coverage",
 		})
 	}
+
 	for _, path := range allowed {
 		roles = append(roles, PathRole{
 			Role:        PathRoleAllowedEdit,
@@ -197,6 +201,7 @@ func ResolvePlanScopePathRoleObligations(input PlanScopePathRoleObligationInput)
 	}
 
 	resolvePaths := compactStrings(append(append(append([]string(nil), required...), allowed...), candidates...))
+
 	resolutions, err := ResolvePathRoles(PathRoleResolverInput{
 		WorkspaceRoot: input.WorkspaceRoot,
 		PathRoles:     roles,
@@ -222,12 +227,15 @@ func ResolvePlanScopePathRoleObligations(input PlanScopePathRoleObligationInput)
 	for _, candidate := range candidates {
 		resolution := pathRoleResolutionByPath(resolutions, candidate)
 		item := planScopePathRoleCoverage(candidate, resolution)
+
 		coverage.CandidateCoverage = append(coverage.CandidateCoverage, item)
+
 		if item.SatisfiesRequiredCoverage {
 			for _, role := range resolution.Roles {
 				if role.Role != PathRoleRequiredEdit {
 					continue
 				}
+
 				for _, pattern := range role.MatchedPatterns {
 					coveredRequired[pattern] = struct{}{}
 				}
@@ -235,21 +243,25 @@ func ResolvePlanScopePathRoleObligations(input PlanScopePathRoleObligationInput)
 		} else if len(required) > 0 {
 			coverage.CandidatePathsOutsideRequired = append(coverage.CandidatePathsOutsideRequired, item.Path)
 		}
+
 		if len(allowed) > 0 && !item.WithinAllowedCandidatePath {
 			coverage.CandidatePathsOutsideAllowed = append(coverage.CandidatePathsOutsideAllowed, item.Path)
 		}
 	}
+
 	for _, path := range required {
 		if _, ok := coveredRequired[path]; !ok {
 			coverage.MissingRequiredCoveragePaths = append(coverage.MissingRequiredCoveragePaths, path)
 		}
 	}
+
 	coverage.CandidatePathsOutsideRequired = compactStrings(coverage.CandidatePathsOutsideRequired)
 	coverage.CandidatePathsOutsideAllowed = compactStrings(coverage.CandidatePathsOutsideAllowed)
 	coverage.MissingRequiredCoveragePaths = compactStrings(coverage.MissingRequiredCoveragePaths)
 	slices.SortFunc(coverage.CandidateCoverage, func(a, b PlanScopePathRoleCoverage) int {
 		return cmp.Compare(a.Path, b.Path)
 	})
+
 	return coverage, nil
 }
 
@@ -274,6 +286,7 @@ func ResolvePathRoles(input PathRoleResolverInput, paths ...string) (PathRoleRes
 	if err != nil {
 		return PathRoleResolutionSet{}, err
 	}
+
 	roles := normalizeResolverPathRoles(input.PathRoles, workspaceRoot)
 	evidenceRefs := evidenceRefIndex(input.Evidence)
 	result := PathRoleResolutionSet{
@@ -283,26 +296,35 @@ func ResolvePathRoles(input PathRoleResolverInput, paths ...string) (PathRoleRes
 		Invariants:    namedPathInvariantsByString(),
 	}
 	result.Metadata.normalize()
+
 	for _, rawPath := range paths {
 		candidate, err := normalizeResolverPath(rawPath, workspaceRoot)
 		if err != nil {
 			return PathRoleResolutionSet{}, err
 		}
+
 		resolution := resolveOnePath(candidate, roles, evidenceRefs)
+
 		result.Resolutions = append(result.Resolutions, resolution)
+
 		for _, role := range resolution.Roles {
 			if result.RoleCounts == nil {
 				result.RoleCounts = make(map[string]int)
 			}
+
 			result.RoleCounts[string(role.Role)]++
+
 			result.EvidenceRefs = append(result.EvidenceRefs, role.EvidenceRefs...)
 		}
+
 		result.EvidenceRefs = append(result.EvidenceRefs, resolution.EvidenceRefs...)
 	}
+
 	result.EvidenceRefs = compactStrings(result.EvidenceRefs)
 	slices.SortFunc(result.Resolutions, func(a, b PathRoleResolution) int {
 		return cmp.Compare(a.Path, b.Path)
 	})
+
 	return result, nil
 }
 
@@ -310,10 +332,13 @@ func ResolvePathRoles(input PathRoleResolverInput, paths ...string) (PathRoleRes
 // used by autonomy policy events.
 func (s PathRoleResolutionSet) PolicyPathMatches() []PathRoleMatch {
 	var out []PathRoleMatch
+
 	for _, resolution := range s.Resolutions {
 		out = append(out, resolution.Matches...)
 	}
+
 	slices.SortFunc(out, func(a, b PathRoleMatch) int { return cmp.Compare(a.sortKey(), b.sortKey()) })
+
 	return out
 }
 
@@ -403,15 +428,19 @@ type normalizedResolverPath struct {
 
 func resolveOnePath(candidate normalizedResolverPath, roles []normalizedResolverPathRole, evidenceRefs map[string][]string) PathRoleResolution {
 	byRole := make(map[PathRoleKind]*ResolvedPathRole)
+
 	var matches []PathRoleMatch
+
 	for _, role := range roles {
 		if !pathRoleMatches(role, candidate) {
 			continue
 		}
+
 		invariant, ok := PathInvariantForRole(role.role.Role)
 		if !ok {
 			continue
 		}
+
 		resolved := byRole[role.role.Role]
 		if resolved == nil {
 			resolved = &ResolvedPathRole{
@@ -426,6 +455,7 @@ func resolveOnePath(candidate normalizedResolverPath, roles []normalizedResolver
 			}
 			byRole[role.role.Role] = resolved
 		}
+
 		resolved.MatchedPatterns = append(resolved.MatchedPatterns, role.pathPattern)
 		resolved.PacketIDs = append(resolved.PacketIDs, role.role.PacketID)
 		resolved.Reasons = append(resolved.Reasons, role.role.Reason)
@@ -440,6 +470,7 @@ func resolveOnePath(candidate normalizedResolverPath, roles []normalizedResolver
 			OutsideWorkspace: candidate.outsideWorkspace,
 		})
 	}
+
 	resolution := PathRoleResolution{
 		OriginalPath:     candidate.original,
 		Path:             candidate.path,
@@ -448,6 +479,7 @@ func resolveOnePath(candidate normalizedResolverPath, roles []normalizedResolver
 		OutsideWorkspace: candidate.outsideWorkspace,
 		Matches:          compactPathRoleMatches(matches),
 	}
+
 	for _, role := range byRole {
 		role.MatchedPatterns = compactStrings(role.MatchedPatterns)
 		role.PacketIDs = compactStrings(role.PacketIDs)
@@ -456,18 +488,23 @@ func resolveOnePath(candidate normalizedResolverPath, roles []normalizedResolver
 		resolution.Roles = append(resolution.Roles, *role)
 		resolution.EvidenceRefs = append(resolution.EvidenceRefs, role.EvidenceRefs...)
 	}
+
 	slices.SortFunc(resolution.Roles, func(a, b ResolvedPathRole) int {
 		if c := -cmp.Compare(a.Precedence, b.Precedence); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Role, b.Role)
 	})
+
 	if len(resolution.Roles) > 0 {
 		effective := resolution.Roles[0]
+
 		resolution.EffectiveRole = effective.Role
 		resolution.EffectiveInvariantID = effective.InvariantID
 		resolution.Decision = effective.Decision
 		resolution.ReasonCode = effective.ReasonCode
+
 		for _, suppressed := range resolution.Roles[1:] {
 			resolution.Conflicts = append(resolution.Conflicts, PathRoleConflict{
 				Path:                resolution.Path,
@@ -479,10 +516,12 @@ func resolveOnePath(candidate normalizedResolverPath, roles []normalizedResolver
 			})
 		}
 	}
+
 	resolution.EvidenceRefs = compactStrings(resolution.EvidenceRefs)
 	slices.SortFunc(resolution.Conflicts, func(a, b PathRoleConflict) int {
 		return cmp.Compare(string(a.SuppressedRole), string(b.SuppressedRole))
 	})
+
 	return resolution
 }
 
@@ -491,40 +530,52 @@ func normalizeWorkspaceRoot(root string) (string, error) {
 	if root == "" {
 		return "", nil
 	}
+
 	absolute, err := filepath.Abs(root)
 	if err != nil {
 		return "", fmt.Errorf("normalize workspace root: %w", err)
 	}
+
 	return filepath.Clean(absolute), nil
 }
 
 func normalizeResolverPathRoles(roles []PathRole, workspaceRoot string) []normalizedResolverPathRole {
 	out := make([]normalizedResolverPathRole, 0, len(roles))
 	seen := make(map[string]struct{}, len(roles))
+
 	for _, role := range roles {
 		role.normalize()
+
 		if _, ok := PathInvariantForRole(role.Role); !ok {
 			continue
 		}
+
 		if role.PathPattern == "" {
 			continue
 		}
+
 		normalizedPattern, absolutePattern := normalizeRolePattern(role.PathPattern, workspaceRoot)
 		if normalizedPattern == "" && absolutePattern == "" {
 			continue
 		}
+
 		key := strings.Join([]string{string(role.Role), normalizedPattern, absolutePattern, role.PacketID, role.Reason}, "\x00")
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
+
 		out = append(out, normalizedResolverPathRole{role: role, pathPattern: normalizedPattern, absolutePattern: absolutePattern})
 	}
+
 	slices.SortFunc(out, func(a, b normalizedResolverPathRole) int {
 		keyA := strings.Join([]string{string(a.role.Role), a.pathPattern, a.absolutePattern}, "\x00")
 		keyB := strings.Join([]string{string(b.role.Role), b.pathPattern, b.absolutePattern}, "\x00")
+
 		return cmp.Compare(keyA, keyB)
 	})
+
 	return out
 }
 
@@ -533,16 +584,20 @@ func normalizeRolePattern(pattern string, workspaceRoot string) (string, string)
 	if pattern == "" {
 		return "", ""
 	}
+
 	if filepath.IsAbs(filepath.FromSlash(pattern)) {
 		cleanPattern := filepath.Clean(filepath.FromSlash(pattern))
 		absolutePattern := filepath.ToSlash(cleanPattern)
+
 		if workspaceRoot != "" {
 			if rel, ok := relativeToWorkspace(cleanPattern, workspaceRoot); ok {
 				return rel, absolutePattern
 			}
 		}
+
 		return "", absolutePattern
 	}
+
 	return strings.TrimPrefix(pattern, "./"), ""
 }
 
@@ -551,14 +606,17 @@ func normalizeResolverPath(path string, workspaceRoot string) (normalizedResolve
 	if original == "" {
 		return normalizedResolverPath{}, fmt.Errorf("path role resolver path is empty")
 	}
+
 	cleanPath := filepath.Clean(filepath.FromSlash(original))
 	candidate := normalizedResolverPath{original: original}
+
 	if workspaceRoot != "" {
 		if filepath.IsAbs(cleanPath) {
 			candidate.absolutePath = filepath.Clean(cleanPath)
 		} else {
 			candidate.absolutePath = filepath.Clean(filepath.Join(workspaceRoot, cleanPath))
 		}
+
 		if rel, ok := relativeToWorkspace(candidate.absolutePath, workspaceRoot); ok {
 			candidate.relativePath = rel
 			candidate.path = rel
@@ -573,42 +631,53 @@ func normalizeResolverPath(path string, workspaceRoot string) (normalizedResolve
 		candidate.relativePath = normalizeSlashPath(original)
 		candidate.path = candidate.relativePath
 	}
+
 	candidate.absolutePath = filepath.ToSlash(candidate.absolutePath)
 	candidate.matchCandidates = compactStrings([]string{candidate.path, candidate.relativePath, candidate.absolutePath})
+
 	return candidate, nil
 }
 
 func uniquePlanScopeObligationPaths(paths []string) []string {
 	var out []string
+
 	seen := make(map[string]struct{}, len(paths))
+
 	for _, path := range paths {
 		path = normalizePlanScopeObligationPath(path)
 		if path == "" {
 			continue
 		}
+
 		if _, ok := seen[path]; ok {
 			continue
 		}
+
 		seen[path] = struct{}{}
 		out = append(out, path)
 	}
+
 	return out
 }
 
 func normalizePlanScopeObligationPath(path string) string {
 	path = strings.TrimSpace(path)
 	path = strings.ReplaceAll(path, "\\", "/")
+
 	for strings.HasPrefix(path, "./") {
 		path = strings.TrimPrefix(path, "./")
 	}
+
 	if path == "" || path == "." || path == ".." || filepath.IsAbs(path) || strings.HasPrefix(path, "../") {
 		return ""
 	}
+
 	for _, part := range strings.Split(path, "/") {
 		if part == "" || part == "." || part == ".." {
 			return ""
 		}
 	}
+
 	return path
 }
 
@@ -619,6 +688,7 @@ func pathRoleResolutionByPath(set PathRoleResolutionSet, path string) PathRoleRe
 			return resolution
 		}
 	}
+
 	return PathRoleResolution{OriginalPath: path, Path: normalized}
 }
 
@@ -633,6 +703,7 @@ func planScopePathRoleCoverage(path string, resolution PathRoleResolution) PlanS
 	if item.OriginalPath == "" {
 		item.OriginalPath = path
 	}
+
 	for _, role := range resolution.Roles {
 		item.Roles = append(item.Roles, role.Role)
 		switch role.Role {
@@ -642,7 +713,9 @@ func planScopePathRoleCoverage(path string, resolution PathRoleResolution) PlanS
 			item.WithinAllowedCandidatePath = true
 		}
 	}
+
 	slices.Sort(item.Roles)
+
 	return item
 }
 
@@ -650,16 +723,20 @@ func relativeToWorkspace(path string, workspaceRoot string) (string, bool) {
 	if workspaceRoot == "" {
 		return "", false
 	}
+
 	rel, err := filepath.Rel(workspaceRoot, path)
 	if err != nil {
 		return "", false
 	}
+
 	if rel == "." {
 		return "", true
 	}
+
 	if strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
 		return "", false
 	}
+
 	return filepath.ToSlash(rel), true
 }
 
@@ -668,39 +745,50 @@ func pathRoleMatches(role normalizedResolverPathRole, candidate normalizedResolv
 		if value == "" {
 			continue
 		}
+
 		if role.pathPattern != "" && pathPatternMatches(role.pathPattern, value) {
 			return true
 		}
+
 		if role.absolutePattern != "" && pathPatternMatches(role.absolutePattern, value) {
 			return true
 		}
 	}
+
 	return false
 }
 
 func pathPatternMatches(pattern string, candidate string) bool {
 	pattern = normalizeSlashPath(pattern)
 	candidate = normalizeSlashPath(candidate)
+
 	if pattern == "" || candidate == "" {
 		return false
 	}
+
 	if pattern == candidate {
 		return true
 	}
+
 	matched, err := regexp.MatchString("^"+globPatternToRegex(pattern)+"$", candidate)
+
 	return err == nil && matched
 }
 
 func globPatternToRegex(pattern string) string {
 	var b strings.Builder
+
 	for i := 0; i < len(pattern); i++ {
 		switch pattern[i] {
 		case '*':
 			if i+1 < len(pattern) && pattern[i+1] == '*' {
 				b.WriteString(".*")
+
 				i++
+
 				continue
 			}
+
 			b.WriteString(`[^/]*`)
 		case '?':
 			b.WriteString(`[^/]`)
@@ -708,6 +796,7 @@ func globPatternToRegex(pattern string) string {
 			b.WriteString(regexp.QuoteMeta(string(pattern[i])))
 		}
 	}
+
 	return b.String()
 }
 
@@ -716,44 +805,55 @@ func normalizeSlashPath(path string) string {
 	if path == "" {
 		return ""
 	}
+
 	path = filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
 	if path == "." {
 		return ""
 	}
+
 	return strings.TrimPrefix(path, "./")
 }
 
 func evidenceRefIndex(evidence []EvidenceRef) map[string][]string {
 	out := make(map[string][]string)
+
 	for _, ref := range evidence {
 		ref.normalize()
+
 		if ref.EvidenceID == "" {
 			continue
 		}
+
 		for _, key := range []string{ref.EvidenceID, ref.Handle, normalizeSlashPath(ref.Path)} {
 			key = strings.TrimSpace(key)
 			if key == "" {
 				continue
 			}
+
 			out[key] = append(out[key], ref.EvidenceID)
 		}
 	}
+
 	for key := range out {
 		out[key] = compactStrings(out[key])
 	}
+
 	return out
 }
 
 func evidenceRefsForRole(role PathRole, evidenceRefs map[string][]string) []string {
 	var refs []string
+
 	for _, key := range []string{role.PacketID, "context_pack://" + role.PacketID, role.PathPattern} {
 		key = strings.TrimSpace(key)
 		if key == "" {
 			continue
 		}
+
 		refs = append(refs, evidenceRefs[key]...)
 		refs = append(refs, evidenceRefs[normalizeSlashPath(key)]...)
 	}
+
 	return compactStrings(refs)
 }
 
@@ -761,12 +861,15 @@ func mergeFreshness(current Freshness, next Freshness) Freshness {
 	if current == "" {
 		return next
 	}
+
 	if next == "" || next == current {
 		return current
 	}
+
 	if current == FreshnessStale || next == FreshnessStale {
 		return FreshnessStale
 	}
+
 	return FreshnessUnknown
 }
 
@@ -774,26 +877,35 @@ func compactPathRoleMatches(matches []PathRoleMatch) []PathRoleMatch {
 	if len(matches) == 0 {
 		return nil
 	}
+
 	seen := make(map[string]struct{}, len(matches))
 	out := make([]PathRoleMatch, 0, len(matches))
+
 	for _, match := range matches {
 		match.normalize()
+
 		key := match.sortKey()
 		if _, ok := seen[key]; ok {
 			continue
 		}
+
 		seen[key] = struct{}{}
+
 		out = append(out, match)
 	}
+
 	slices.SortFunc(out, func(a, b PathRoleMatch) int { return cmp.Compare(a.sortKey(), b.sortKey()) })
+
 	return out
 }
 
 func namedPathInvariantsByString() map[string]PathInvariant {
 	invariants := NamedPathInvariants()
 	out := make(map[string]PathInvariant, len(invariants))
+
 	for id, invariant := range invariants {
 		out[string(id)] = invariant
 	}
+
 	return out
 }

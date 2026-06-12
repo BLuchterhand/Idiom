@@ -29,7 +29,7 @@ Let me read the actual structured review documents.
   -> read_file {"path": "docs/evidence/read-only-prefetch-proposal/reviews/prefetch-excerpt-intent-v3/north-star.md", "offset": 30}
   -> read_file {"path": "docs/evidence/read-only-prefetch-proposal/reviews/prefetch-excerpt-intent-v3/harness-correctness.md", "offset"...
   -> read_file {"path": "docs/evidence/read-only-prefetch-proposal/PREFETCH-EXCERPT-DECISION-LOG.md"}
-  ⊘ read_file read /Users/ben/Documents/GitHub/idiom/docs/evidence/read-only-prefetch-proposal/PREFETCH-EXCERPT-DECISION-LOG.md: open /Users/ben/Documents/GitHub/idiom/docs/evidence/read-only-prefetch-proposal/PREFETCH-EXCERPT-DECISION-LOG.md: no such file or directory
+  ⊘ read_file read /workspace/idiom/docs/evidence/read-only-prefetch-proposal/PREFETCH-EXCERPT-DECISION-LOG.md: open /workspace/idiom/docs/evidence/read-only-prefetch-proposal/PREFETCH-EXCERPT-DECISION-LOG.md: no such file or directory
 [2m  ▎ thinking[0m
 Let me also check the final-architecture-expansion reviews for any remaining blockers.
   · 30380 tok · in 29821 (29312 cached / 509 new) · out 559 (443 reasoning) · ¥0.0022

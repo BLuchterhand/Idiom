@@ -52,15 +52,18 @@ func ProbeLane(opts ProbeLaneOptions) (ProbeLaneResult, error) {
 	if family == "" {
 		return ProbeLaneResult{}, errors.New("probe: TaskFamily is required")
 	}
+
 	mode := opts.Mode
 	if strings.TrimSpace(mode.Name) == "" {
 		mode = agent.BuildMode()
 	}
+
 	route := normalizeTurnRoutePlan(turnRoutePlan{
 		Family: family,
 		Reason: "explicit_task_family",
 	}, mode)
 	brief := turnRoutePlanRuntimeBrief(route, mode, append([]string(nil), opts.AllowedTools...))
+
 	return ProbeLaneResult{
 		InitialLane:   route.InitialLane,
 		FollowupLane:  route.FollowupLane,
@@ -86,5 +89,6 @@ func dashIfEmpty(s string) string {
 	if s == "" {
 		return "-"
 	}
+
 	return s
 }

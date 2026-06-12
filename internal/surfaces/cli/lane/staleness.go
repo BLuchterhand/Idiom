@@ -28,34 +28,45 @@ func checkBriefStaleness(briefPath, projectRoot string, allowStale bool, stderr 
 	if err != nil {
 		return nil
 	}
+
 	briefMtime := info.ModTime()
+
 	body, err := os.ReadFile(briefPath)
 	if err != nil {
 		return nil
 	}
+
 	scoped := pathparse.ScopeToBriefBody(string(body))
 	paths := pathparse.MentionedWorkspacePathsUnderHeadings(scoped, "Files To Modify", "Files You May Edit")
 	root := strings.TrimSpace(projectRoot)
+
 	if root == "" {
 		root = filepath.Dir(briefPath)
 	}
+
 	var stale []string
+
 	for _, p := range paths {
 		changeTime, ok := mostRecentChangeTime(root, p)
 		if !ok {
 			continue
 		}
+
 		if changeTime.After(briefMtime) {
 			stale = append(stale, fmt.Sprintf("%s (last change %s, brief mtime %s)", p, changeTime.Format(time.RFC3339), briefMtime.Format(time.RFC3339)))
 		}
 	}
+
 	if len(stale) == 0 {
 		return nil
 	}
+
 	if allowStale {
 		fmt.Fprintf(stderr, "lane: WARN brief is stale (allowed by --allow-stale-brief):\n  %s\n", strings.Join(stale, "\n  "))
+
 		return nil
 	}
+
 	return fmt.Errorf("brief is stale relative to %d required path(s); pass --allow-stale-brief to override:\n  %s", len(stale), strings.Join(stale, "\n  "))
 }
 
@@ -69,34 +80,43 @@ func checkBriefStaleness(briefPath, projectRoot string, allowStale bool, stderr 
 // the brief is about to create).
 func mostRecentChangeTime(repoRoot, path string) (time.Time, bool) {
 	var newest time.Time
+
 	if commitTime, ok := lastCommitTime(repoRoot, path); ok {
 		newest = commitTime
 	}
+
 	if info, err := os.Stat(filepath.Join(repoRoot, path)); err == nil {
 		if mtime := info.ModTime(); mtime.After(newest) {
 			newest = mtime
 		}
 	}
+
 	if newest.IsZero() {
 		return time.Time{}, false
 	}
+
 	return newest, true
 }
 
 func lastCommitTime(repoRoot, path string) (time.Time, bool) {
 	cmd := exec.Command("git", "log", "-1", "--format=%ct", "--", path)
+
 	cmd.Dir = repoRoot
+
 	out, err := cmd.Output()
 	if err != nil {
 		return time.Time{}, false
 	}
+
 	trimmed := strings.TrimSpace(string(out))
 	if trimmed == "" {
 		return time.Time{}, false
 	}
+
 	ts, err := strconv.ParseInt(trimmed, 10, 64)
 	if err != nil {
 		return time.Time{}, false
 	}
+
 	return time.Unix(ts, 0), true
 }

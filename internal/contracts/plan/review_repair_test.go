@@ -45,9 +45,11 @@ func TestReviewRepairTextHasChecklist(t *testing.T) {
 	if !ReviewRepairTextHasChecklist("Decision: pass\n\nVerification Checklist:\n- ok") {
 		t.Fatalf("expected checklist heading to be recognized")
 	}
+
 	if !ReviewRepairTextHasChecklist("Verification Checklist: - checked fact") {
 		t.Fatalf("expected serialized checklist prefix to be recognized")
 	}
+
 	if ReviewRepairTextHasChecklist("Checklist:\n- ok") {
 		t.Fatalf("generic checklist heading must not satisfy review-repair contract")
 	}
@@ -65,6 +67,7 @@ func TestReviewRepairTerminalTemplatesStayParserReadable(t *testing.T) {
 			t.Fatalf("terminal templates missing %q:\n%s", required, templates)
 		}
 	}
+
 	if strings.Contains(templates, "cite a checked fact") {
 		t.Fatalf("terminal templates must not expose copyable checklist placeholders:\n%s", templates)
 	}
@@ -81,6 +84,7 @@ func TestReviewRepairLineIsPlaceholderChecklist(t *testing.T) {
 			t.Fatalf("expected placeholder checklist line to be detected: %q", tc)
 		}
 	}
+
 	if ReviewRepairLineIsPlaceholderChecklist("- Required behavior: src/app.go now returns the requested label in line 12.") {
 		t.Fatalf("concrete checklist fact must not be treated as placeholder text")
 	}

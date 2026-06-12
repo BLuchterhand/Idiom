@@ -48,21 +48,25 @@ func DetectMode(specBody string) string {
 	lower := strings.ToLower(specBody)
 	hasSource := false
 	hasMarkdown := false
+
 	for _, ext := range sourceExtensions {
 		if ExtensionMentioned(lower, ext) {
 			hasSource = true
 			break
 		}
 	}
+
 	for _, ext := range markdownExtensions {
 		if ExtensionMentioned(lower, ext) {
 			hasMarkdown = true
 			break
 		}
 	}
+
 	if hasMarkdown && !hasSource {
 		return ModeMarkdown
 	}
+
 	return ModeAnchored
 }
 
@@ -73,6 +77,7 @@ func PathLooksLikeSource(path string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -81,20 +86,26 @@ func PathLooksLikeFile(path string) bool {
 	if path == "" {
 		return false
 	}
+
 	if strings.ContainsAny(path, "\n\r\t <>|*?\"{}:") {
 		return false
 	}
+
 	slashed := filepath.ToSlash(path)
 	base := filepath.Base(slashed)
+
 	if strings.ContainsAny(path, "/\\") {
 		return filepath.Ext(base) != "" || knownFileBasenames[base]
 	}
+
 	if strings.HasPrefix(path, ".") {
 		return true
 	}
+
 	if ext := filepath.Ext(path); ext != "" {
 		return KnownFileExtension(ext)
 	}
+
 	return knownFileBasenames[path]
 }
 
@@ -103,16 +114,19 @@ func KnownFileExtension(ext string) bool {
 	if ext == "" {
 		return false
 	}
+
 	for _, known := range sourceExtensions {
 		if ext == known {
 			return true
 		}
 	}
+
 	for _, known := range markdownExtensions {
 		if ext == known {
 			return true
 		}
 	}
+
 	switch ext {
 	case ".jsonl", ".mdx", ".markdown", ".html", ".htm", ".css", ".scss", ".sass",
 		".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico",
@@ -135,14 +149,17 @@ func ExtensionMentioned(text, ext string) bool {
 		if idx < 0 {
 			return false
 		}
+
 		pos := start + idx + len(ext)
 		if pos >= len(text) {
 			return true
 		}
+
 		next := rune(text[pos])
 		if next < 'a' || next > 'z' {
 			return true
 		}
+
 		start += idx + len(ext)
 	}
 }

@@ -20,9 +20,11 @@ func TestAssessPackQualityDistinguishesFreshnessFromWeakSourceOwner(t *testing.T
 	if quality.SourceOwnerFound {
 		t.Fatalf("test-only relevance must not claim a source owner: %#v", quality)
 	}
+
 	if quality.LocalizationConfidence != "low" {
 		t.Fatalf("localization confidence = %q, want low: %#v", quality.LocalizationConfidence, quality)
 	}
+
 	if len(quality.EvidencePaths) == 0 || quality.EvidencePaths[0] != "internal/surfaces/tui/app/rendering_test.go" {
 		t.Fatalf("expected strongest test evidence first, got %#v", quality.EvidencePaths)
 	}
@@ -47,9 +49,11 @@ func TestAssessPackQualityTreatsGenericSourceOverlapAsWeak(t *testing.T) {
 	if quality.SourceOwnerFound {
 		t.Fatalf("generic chat/text source overlap must not claim source ownership: %#v", quality)
 	}
+
 	if quality.LocalizationConfidence != "low" {
 		t.Fatalf("localization confidence = %q, want low: %#v", quality.LocalizationConfidence, quality)
 	}
+
 	if len(quality.EvidencePaths) == 0 || quality.EvidencePaths[0] != "internal/surfaces/tui/app/rendering_test.go" {
 		t.Fatalf("expected relevant test evidence to outrank generic source overlap, got %#v", quality.EvidencePaths)
 	}
@@ -74,9 +78,11 @@ func TestAssessPackQualityFindsSourceOwner(t *testing.T) {
 	if !quality.SourceOwnerFound {
 		t.Fatalf("expected source owner, got %#v", quality)
 	}
+
 	if quality.LocalizationConfidence != "high" {
 		t.Fatalf("localization confidence = %q, want high: %#v", quality.LocalizationConfidence, quality)
 	}
+
 	if len(quality.EvidencePaths) == 0 || quality.EvidencePaths[0] != "internal/surfaces/tui/app/model_state.go" {
 		t.Fatalf("expected source owner first, got %#v", quality.EvidencePaths)
 	}

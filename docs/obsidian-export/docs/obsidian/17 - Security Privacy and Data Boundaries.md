@@ -1,6 +1,6 @@
 ---
 tags:
-  - harness
+  - idiom
   - security
   - privacy
   - data-boundaries
@@ -8,9 +8,9 @@ tags:
 
 # Security Privacy and Data Boundaries
 
-Agent Harness's security and privacy posture is local, contract-first, and
+Idiom's security and privacy posture is local, contract-first, and
 evidence-based. It is not a compliance certification. It is a set of reviewable
-controls and bounded evidence products for LLM-agent work in a local workspace.
+controls and bounded evidence products for local agent work.
 
 The canonical posture artifact is
 [docs/security-privacy-posture.md](../security-privacy-posture.md).
@@ -80,9 +80,9 @@ flowchart TD
 - Raw file bodies.
 - Secrets.
 - Credentials.
-- Protected workspace URLs.
-- Deployment identifiers.
-- Personal names.
+- Private repo URLs.
+- Customer identifiers.
+- Patient names.
 - Account numbers.
 - Unredacted log excerpts.
 - Private absolute paths.
@@ -100,7 +100,7 @@ flowchart TD
 
 ## Regulated And Enterprise Claims
 
-The posture distinguishes proof from certification:
+The repo distinguishes proof from certification:
 
 - Finance rows are regulated proof-only, not FINRA or banking compliance claims.
 - Healthcare rows are regulated proof-only, not HIPAA compliance or PHI
@@ -138,7 +138,7 @@ When changing security, privacy, telemetry, audit, sidecar, or evidence export:
 - Check protected-path and forbidden-path behavior.
 - Verify unknown fields or raw-content fields are rejected where schemas require
   strictness.
-- Run relevant focused tests under `cmd/harness`, `internal/contracts/autonomy`,
+- Run relevant focused tests under `cmd/idiom`, `internal/contracts/autonomy`,
   `internal/capabilities/workspace`, and `internal/evidence/telemetry`.
 - Run `git diff --check`.
 - Update this note if the durable evidence boundary changes.
@@ -147,5 +147,5 @@ When changing security, privacy, telemetry, audit, sidecar, or evidence export:
 
 - [[06 - Workspace Tools and Capability Routing]]
 - [[10 - Telemetry Audit Eval and Learning]]
-- [[12 - Sidecar and LLM Agent Integrations]]
+- [[12 - Sidecar and External Integrations]]
 - [[16 - Operational Commands and Evidence Products]]

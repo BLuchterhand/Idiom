@@ -240,9 +240,11 @@ func EvaluateLocalizationUnifiedReportFile(path string, root string, options Loc
 	if err != nil {
 		return LocalizationUnifiedReport{}, err
 	}
+
 	if strings.TrimSpace(root) != "" && strings.TrimSpace(options.WorkspaceRoot) == "" {
 		options.WorkspaceRoot = root
 	}
+
 	return BuildLocalizationUnifiedReport(corpus, options), nil
 }
 
@@ -250,10 +252,12 @@ func BuildLocalizationUnifiedReport(corpus LocalizationCorpus, options Localizat
 	if options.Now.IsZero() {
 		options.Now = time.Now().UTC()
 	}
+
 	benchmarkOptions := options.Benchmark
 	if len(benchmarkOptions.TopK) == 0 {
 		benchmarkOptions = DefaultLocalizationBenchmarkOptions()
 	}
+
 	corpusReport := AnalyzeLocalizationCorpusWithOptions(corpus, benchmarkOptions)
 	if strings.TrimSpace(options.WorkspaceRoot) != "" {
 		pathFindings := LintLocalizationCorpusPaths(corpus, options.WorkspaceRoot)
@@ -262,6 +266,7 @@ func BuildLocalizationUnifiedReport(corpus LocalizationCorpus, options Localizat
 			corpusReport.Passed = false
 		}
 	}
+
 	cache := buildLocalizationCacheFreshnessReport(options.WorkspaceRoot)
 	ranker := buildLocalizationRankerReport(options.WorkspaceRoot)
 	verification := buildLocalizationVerificationReport(options.VerificationLogPath)
@@ -270,6 +275,7 @@ func BuildLocalizationUnifiedReport(corpus LocalizationCorpus, options Localizat
 	audit := buildLocalizationAuditMetricsReport(cache, ranker, verification, options.VerificationLogPath)
 	clientProduct := buildLocalizationClientProductReport(corpusReport.ClientProductAreas)
 	privacy := buildLocalizationReportPrivacy()
+
 	return LocalizationUnifiedReport{
 		SchemaVersion:  LocalizationUnifiedReportSchemaVersion,
 		GeneratedAt:    options.Now.UTC().Format(time.RFC3339Nano),
@@ -318,6 +324,7 @@ func buildLocalizationTrajectoryReport(benchmark LocalizationBenchmarkReport) Lo
 		current.State = "not_available"
 		current.Reason = "trajectory_input_missing"
 	}
+
 	return LocalizationTrajectoryReport{
 		Baseline: LocalizationAvailability{Available: false, State: "not_available", Reason: "baseline_not_recorded"},
 		Current:  current,
@@ -329,7 +336,9 @@ func buildLocalizationCacheFreshnessReport(root string) LocalizationCacheFreshne
 	if strings.TrimSpace(root) == "" {
 		return LocalizationCacheFreshnessReport{Available: false, State: "not_available", Reason: "workspace_root_not_available"}
 	}
+
 	report := LocalizationCacheFreshnessReport{Available: true, State: "available"}
+
 	status, err := comprehension.Status(root)
 	if err != nil {
 		report.Available = false
@@ -345,18 +354,22 @@ func buildLocalizationCacheFreshnessReport(root string) LocalizationCacheFreshne
 		report.MissingFileCount = status.MissingFileCount
 		report.StalePathCount = status.StalePathCount
 		report.FreshnessProvenanceSource = status.Provenance.Source
+
 		if !status.Indexed {
 			report.State = "not_available"
 			report.Reason = "context_index_missing"
 		}
 	}
+
 	stats, err := comprehension.ReadViewStats(root)
 	if err != nil {
 		if report.Reason == "" {
 			report.Reason = "context_cache_stats_error"
 		}
+
 		return report
 	}
+
 	report.Rows = stats.Rows
 	report.FreshRows = stats.Fresh
 	report.StaleRows = stats.Stale
@@ -370,6 +383,7 @@ func buildLocalizationCacheFreshnessReport(root string) LocalizationCacheFreshne
 	report.FreshnessHits = stats.FreshnessHits
 	report.StalePreventions = stats.StalePreventions
 	report.StaleRowMisses = stats.StaleRowMisses
+
 	return report
 }
 
@@ -377,33 +391,43 @@ func buildLocalizationRankerReport(root string) LocalizationRankerReport {
 	if strings.TrimSpace(root) == "" {
 		return LocalizationRankerReport{Available: false, State: "not_available", Reason: "workspace_root_not_available"}
 	}
+
 	report := LocalizationRankerReport{Available: true, State: "available"}
+
 	weights, err := comprehension.LoadLearnedWeights(root)
 	if err != nil {
 		report.Available = false
 		report.State = "not_available"
 		report.Reason = "ranker_weights_error"
+
 		return report
 	}
+
 	report.WeightCount = len(weights)
 	report.WeightsPresent = report.WeightCount > 0 || localizationPathExistsOnDisk(localizationRankerWeightsPath(root))
 	report.LearningLogPresent = localizationPathExistsOnDisk(localizationLearningLogPath(root))
+
 	entries, err := comprehension.ReadLearningLog(root)
 	if err != nil {
 		report.Available = false
 		report.State = "not_available"
 		report.Reason = "ranker_learning_log_error"
+
 		return report
 	}
+
 	if len(entries) > 0 {
 		summary := localizationLearningSummaryReport(comprehension.SummarizeLearningLog(entries))
+
 		report.LearningSummary = &summary
 	}
+
 	if !report.WeightsPresent && !report.LearningLogPresent {
 		report.Available = false
 		report.State = "not_available"
 		report.Reason = "ranker_learning_not_observed"
 	}
+
 	return report
 }
 
@@ -430,10 +454,12 @@ func buildLocalizationVerificationReport(logPath string) LocalizationVerificatio
 	if strings.TrimSpace(logPath) == "" {
 		return LocalizationVerificationReport{Available: false, State: "not_available", Reason: "verification_log_not_provided", Status: "not_available"}
 	}
+
 	records, err := LoadRecords(logPath)
 	if err != nil {
 		return LocalizationVerificationReport{Available: false, State: "not_available", Reason: "verification_log_unreadable", Status: "not_available"}
 	}
+
 	metrics := Analyze(records)
 	status := VerificationStatus(metrics)
 	report := LocalizationVerificationReport{
@@ -446,12 +472,14 @@ func buildLocalizationVerificationReport(logPath string) LocalizationVerificatio
 		VerificationPlanCount:     len(metrics.VerificationPlans),
 		VerificationFeedbackCount: len(metrics.VerificationFeedback),
 	}
+
 	for _, plan := range metrics.VerificationPlans {
 		if plan.UsesFullSuite {
 			report.FullSuitePlanObserved = true
 			break
 		}
 	}
+
 	return report
 }
 
@@ -485,24 +513,29 @@ func buildLocalizationAuditMetricsReport(cache LocalizationCacheFreshnessReport,
 		metrics.RankerLearning.RejectedCount = ranker.LearningSummary.RejectedCount
 		metrics.RankerLearning.ReasonCountKeys = len(ranker.LearningSummary.ReasonCounts)
 	}
+
 	if strings.TrimSpace(logPath) != "" {
 		if perf, err := AnalyzeLog(logPath); err == nil {
 			metrics.BehaviorPatternCounts = map[string]int{}
+
 			for _, pattern := range perf.AntiPatterns {
 				if pattern.Name == "" || pattern.Count <= 0 {
 					continue
 				}
+
 				metrics.BehaviorPatternCounts[pattern.Name] += pattern.Count
 				metrics.BehaviorFindingCount += pattern.Count
 			}
 		}
 	}
+
 	return metrics
 }
 
 func buildLocalizationFreshnessHealthMetric() LocalizationFreshnessHealthMetric {
 	stats := comprehension.FreshnessHealthStats()
 	_, stalePreventions, staleRowMisses := comprehension.ViewFreshnessCounters()
+
 	return LocalizationFreshnessHealthMetric{
 		ReadThroughAttempts:        stats.ReadThroughAttempts,
 		Blockers:                   stats.Blockers,
@@ -523,11 +556,13 @@ func buildLocalizationClientProductReport(areas map[string]int) LocalizationClie
 		ClientSpecificBranches:  false,
 	}
 	normalizedCounts := make(map[string]int, len(areas))
+
 	for area, count := range areas {
 		if normalized := normalizeClientClassification(area); normalized != "" {
 			normalizedCounts[normalized] += count
 		}
 	}
+
 	for _, classification := range localizationClientClassifications {
 		count := normalizedCounts[classification]
 		row := LocalizationClientClassificationRow{
@@ -535,20 +570,26 @@ func buildLocalizationClientProductReport(areas map[string]int) LocalizationClie
 			Label:       localizationClientClassificationLabel(classification),
 			SampleCount: count,
 		}
+
 		if count > 0 {
 			row.Status = "pass"
 			row.Reason = "classification_sample_present"
 			row.Evidence = fmt.Sprintf("sample_count=%d", count)
+
 			report.CoveredClassifications = append(report.CoveredClassifications, classification)
 			report.ClassificationRows = append(report.ClassificationRows, row)
+
 			continue
 		}
+
 		row.Status = "not_available"
 		row.Reason = "classification_sample_missing"
 		row.Evidence = "required_classification_enumerated"
+
 		report.MissingClassifications = append(report.MissingClassifications, classification)
 		report.ClassificationRows = append(report.ClassificationRows, row)
 	}
+
 	return report
 }
 
@@ -563,7 +604,9 @@ func buildLocalizationProductSuccessGates(
 	privacy LocalizationReportPrivacy,
 	corpusPassed bool,
 ) []LocalizationProductSuccessGate {
+
 	covered, missing := localizationClientCoverageCounts(clientProduct)
+
 	return []LocalizationProductSuccessGate{
 		localizationICPGate(clientProduct, covered, missing),
 		localizationActivationGate(outcome, corpusPassed),
@@ -582,9 +625,11 @@ func localizationICPGate(clientProduct LocalizationClientProductReport, covered 
 	if len(clientProduct.ClassificationRows) == 0 {
 		return localizationGate("icp", "ICP", "not_available", evidence, "classification_rows_missing")
 	}
+
 	if missing == 0 {
 		return localizationGate("icp", "ICP", "pass", evidence, "all_required_classifications_have_samples")
 	}
+
 	return localizationGate("icp", "ICP", "partial", evidence, "classification_statuses_enumerate_missing_coverage")
 }
 
@@ -593,9 +638,11 @@ func localizationActivationGate(outcome LocalizationOutcomeReport, corpusPassed 
 	if outcome.SampleCount == 0 {
 		return localizationGate("activation", "Activation", "not_available", evidence, "localization_corpus_empty")
 	}
+
 	if !corpusPassed {
 		return localizationGate("activation", "Activation", "partial", evidence, "corpus_findings_present")
 	}
+
 	return localizationGate("activation", "Activation", "pass", evidence, "localization_corpus_available")
 }
 
@@ -604,12 +651,15 @@ func localizationRetainedUseGate(cache LocalizationCacheFreshnessReport, ranker 
 	cacheSignal := cache.Available && cache.Fresh && cacheReason == ""
 	rankerSignal := ranker.Available && (ranker.WeightsPresent || ranker.LearningLogPresent || ranker.LearningSummary != nil)
 	evidence := fmt.Sprintf("cache_available=%t; cache_fresh=%t; fresh_rows=%d; cache_stale_paths=%d; cache_stale=%d; cache_non_current=%d; ranker_state=%s; ranker_events=%d", cache.Available, cache.Fresh, cache.FreshRows, cache.StalePathCount, cache.StaleRows, cache.NonCurrentRows, ranker.State, localizationRankerEventCount(ranker))
+
 	if cacheReason != "" {
 		if rankerSignal {
 			return localizationGate("retained_use", "Retained use", "partial", evidence, cacheReason)
 		}
+
 		return localizationGate("retained_use", "Retained use", "not_available", evidence, cacheReason)
 	}
+
 	switch {
 	case cacheSignal && rankerSignal:
 		return localizationGate("retained_use", "Retained use", "pass", evidence, "cache_and_ranker_learning_available")
@@ -623,18 +673,23 @@ func localizationRetainedUseGate(cache LocalizationCacheFreshnessReport, ranker 
 func localizationIntegrationProofGate(cache LocalizationCacheFreshnessReport, verification LocalizationVerificationReport, audit LocalizationAuditMetricsReport) LocalizationProductSuccessGate {
 	cacheReason := localizationCacheDegradationReason(cache)
 	evidence := fmt.Sprintf("audit_state=%s; cache_state=%s; cache_rows=%d; cache_stale_paths=%d; cache_stale=%d; cache_non_current=%d; verification_state=%s", audit.State, cache.State, cache.Rows, cache.StalePathCount, cache.StaleRows, cache.NonCurrentRows, verification.State)
+
 	if cacheReason != "" {
 		if audit.Available || cache.Available || verification.Available {
 			return localizationGate("integration_proof", "Integration proof", "partial", evidence, cacheReason)
 		}
+
 		return localizationGate("integration_proof", "Integration proof", "not_available", evidence, cacheReason)
 	}
+
 	if audit.Available && cache.Available {
 		return localizationGate("integration_proof", "Integration proof", "pass", evidence, "report_joins_audit_and_cache_evidence")
 	}
+
 	if audit.Available || cache.Available || verification.Available {
 		return localizationGate("integration_proof", "Integration proof", "partial", evidence, "integration_evidence_partial")
 	}
+
 	return localizationGate("integration_proof", "Integration proof", "not_available", evidence, "integration_evidence_not_available")
 }
 
@@ -643,6 +698,7 @@ func localizationSecurityPrivacyGate(privacy LocalizationReportPrivacy) Localiza
 	if privacy.PromptTextIncluded || privacy.FileBodiesIncluded || privacy.LogExcerptsIncluded || privacy.SecretsIncluded {
 		return localizationGate("security_privacy", "Security/privacy", "fail", evidence, "raw_content_flagged")
 	}
+
 	return localizationGate("security_privacy", "Security/privacy", "pass", evidence, "raw_content_excluded")
 }
 
@@ -665,9 +721,11 @@ func localizationCompetitiveProofGate(outcome LocalizationOutcomeReport, traject
 		conditionSummary.InfeasibleTasks,
 		conditionSummary.InvalidClientClasses,
 	)
+
 	if allBenchmarkSignals && conditionSummary.AllRequiredCovered {
 		return localizationGate("competitive_proof", "Competitive proof", "pass", evidence, "competitive_conditions_covered")
 	}
+
 	if anyBenchmarkSignal || conditionSummary.AnyConditionEvidence {
 		reason := "competitive_conditions_partial"
 		if conditionSummary.TotalConditions == 0 {
@@ -675,8 +733,10 @@ func localizationCompetitiveProofGate(outcome LocalizationOutcomeReport, traject
 		} else if conditionSummary.InvalidClientClasses > 0 {
 			reason = "competitive_condition_client_classification_invalid"
 		}
+
 		return localizationGate("competitive_proof", "Competitive proof", "partial", evidence, reason)
 	}
+
 	return localizationGate("competitive_proof", "Competitive proof", "not_available", evidence, "localization_efficiency_metrics_missing")
 }
 
@@ -685,12 +745,15 @@ func localizationClientDemoProofGate(clientProduct LocalizationClientProductRepo
 	if len(clientProduct.ClassificationRows) == 0 {
 		return localizationGate("client_demo_proof", "Client demo proof", "not_available", evidence, "classification_rows_missing")
 	}
+
 	if missing == 0 {
 		return localizationGate("client_demo_proof", "Client demo proof", "pass", evidence, "all_required_client_samples_available")
 	}
+
 	if covered > 0 {
 		return localizationGate("client_demo_proof", "Client demo proof", "partial", evidence, "client_sample_coverage_partial")
 	}
+
 	return localizationGate("client_demo_proof", "Client demo proof", "not_available", evidence, "client_classification_samples_missing")
 }
 
@@ -701,18 +764,23 @@ func localizationPackagingSupportGate() LocalizationProductSuccessGate {
 func localizationLocalEvidenceExportGate(outcome LocalizationOutcomeReport, cache LocalizationCacheFreshnessReport, audit LocalizationAuditMetricsReport, privacy LocalizationReportPrivacy) LocalizationProductSuccessGate {
 	cacheReason := localizationCacheDegradationReason(cache)
 	evidence := fmt.Sprintf("schema=%s; sample_count=%d; audit_metrics=%t; cache_rows=%d; cache_stale_paths=%d; cache_stale=%d; cache_non_current=%d; evidence_policy=%s", LocalizationUnifiedReportSchemaVersion, outcome.SampleCount, audit.Available, cache.Rows, cache.StalePathCount, cache.StaleRows, cache.NonCurrentRows, privacy.EvidencePolicy)
+
 	if privacy.PromptTextIncluded || privacy.FileBodiesIncluded || privacy.LogExcerptsIncluded || privacy.SecretsIncluded {
 		return localizationGate("local_product_evidence_export", "Local product-evidence export", "fail", evidence, "unsafe_evidence_export_flags")
 	}
+
 	if cacheReason != "" {
 		if audit.Available || outcome.SampleCount > 0 {
 			return localizationGate("local_product_evidence_export", "Local product-evidence export", "partial", evidence, cacheReason)
 		}
+
 		return localizationGate("local_product_evidence_export", "Local product-evidence export", "not_available", evidence, cacheReason)
 	}
+
 	if audit.Available {
 		return localizationGate("local_product_evidence_export", "Local product-evidence export", "pass", evidence, "bounded_json_report_export_available")
 	}
+
 	return localizationGate("local_product_evidence_export", "Local product-evidence export", "partial", evidence, "bounded_json_report_without_audit_metrics")
 }
 
@@ -720,19 +788,24 @@ func localizationCacheDegradationReason(cache LocalizationCacheFreshnessReport) 
 	if !cache.Available {
 		return "cache_metrics_not_available"
 	}
+
 	reasons := make([]string, 0, 3)
 	if !cache.Fresh || cache.StalePathCount > 0 || cache.StaleRows > 0 {
 		reasons = append(reasons, "cache_stale")
 	}
+
 	if cache.Rows == 0 {
 		reasons = append(reasons, "cache_rows_missing")
 	}
+
 	if cache.NonCurrentRows > 0 {
 		reasons = append(reasons, "cache_non_current")
 	}
+
 	if len(reasons) == 0 {
 		return ""
 	}
+
 	return strings.Join(reasons, ",")
 }
 
@@ -749,13 +822,16 @@ func localizationGate(gate string, label string, status string, evidence string,
 func localizationClientCoverageCounts(report LocalizationClientProductReport) (int, int) {
 	covered := 0
 	missing := 0
+
 	for _, row := range report.ClassificationRows {
 		if row.SampleCount > 0 {
 			covered++
 			continue
 		}
+
 		missing++
 	}
+
 	return covered, missing
 }
 
@@ -763,6 +839,7 @@ func localizationRankerEventCount(ranker LocalizationRankerReport) int {
 	if ranker.LearningSummary == nil {
 		return 0
 	}
+
 	return ranker.LearningSummary.TotalEvents
 }
 
@@ -772,6 +849,7 @@ func localizationAnyTopKAvailable(metrics []LocalizationTopKCoverageMetric) bool
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -790,38 +868,50 @@ type localizationCompetitiveConditionGateSummary struct {
 func localizationCompetitiveConditionSummary(conditions []LocalizationCompetitiveConditionMetric) localizationCompetitiveConditionGateSummary {
 	summary := localizationCompetitiveConditionGateSummary{AllRequiredCovered: len(conditions) > 0}
 	requiredExternal := 0
+
 	for _, condition := range conditions {
 		if !condition.Required {
 			continue
 		}
+
 		summary.TotalConditions++
+
 		if condition.External {
 			requiredExternal++
 		}
+
 		summary.MissingTasks += condition.MissingTasks
 		summary.MeasuredTasks += condition.MeasuredTasks
 		summary.InfeasibleTasks += condition.InfeasibleTasks
 		summary.InvalidClientClasses += condition.InvalidClientClasses
+
 		if condition.MeasuredTasks > 0 || condition.InfeasibleTasks > 0 {
 			summary.AnyConditionEvidence = true
 		}
+
 		coveredTasks := condition.MeasuredTasks + condition.InfeasibleTasks
 		conditionCovered := condition.TotalTasks > 0 && coveredTasks == condition.TotalTasks && condition.MissingTasks == 0 && len(condition.FailureReasons) == 0
+
 		if conditionCovered {
 			summary.CoveredConditions++
 			if condition.External {
 				summary.ExternalCoveredConditions++
 			}
+
 			continue
 		}
+
 		summary.AllRequiredCovered = false
 	}
+
 	if summary.TotalConditions == 0 {
 		summary.AllRequiredCovered = false
 	}
+
 	if requiredExternal > 0 && summary.ExternalCoveredConditions < requiredExternal {
 		summary.AllRequiredCovered = false
 	}
+
 	return summary
 }
 
@@ -881,12 +971,14 @@ func cloneIntMap(source map[string]int) map[string]int {
 	if len(source) == 0 {
 		return nil
 	}
+
 	out := make(map[string]int, len(source))
 	for key, value := range source {
 		if key = strings.TrimSpace(key); key != "" {
 			out[key] = value
 		}
 	}
+
 	return out
 }
 
@@ -894,12 +986,14 @@ func cloneInt64Map(source map[string]int64) map[string]int64 {
 	if len(source) == 0 {
 		return nil
 	}
+
 	out := make(map[string]int64, len(source))
 	for key, value := range source {
 		if key = strings.TrimSpace(key); key != "" {
 			out[key] = value
 		}
 	}
+
 	return out
 }
 

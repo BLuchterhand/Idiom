@@ -35,8 +35,11 @@ func TestPrintAggregateIncludesContextTelemetry(t *testing.T) {
 			CollectorReportNameCounts:   map[string]int{"summary_index": 2},
 		},
 	}
+
 	var out bytes.Buffer
+
 	printAggregate(agg, 10, &out)
+
 	text := out.String()
 	for _, want := range []string{
 		"context graph:",
@@ -74,8 +77,11 @@ func TestPrintAggregateIncludesHarnessFeedbackTelemetry(t *testing.T) {
 			BySeverity:    map[string]int{"high": 1, "low": 1},
 		},
 	}
+
 	var out bytes.Buffer
+
 	printAggregate(agg, 10, &out)
+
 	text := out.String()
 	for _, want := range []string{
 		"feedback:",
@@ -99,11 +105,14 @@ func TestPrintReportRedactsUserPrompt(t *testing.T) {
 	}
 
 	var out bytes.Buffer
+
 	printReport(report, &out)
+
 	text := out.String()
 	if !strings.Contains(text, "user:         [redacted]") {
 		t.Fatalf("expected redacted prompt marker, got:\n%s", text)
 	}
+
 	if strings.Contains(text, "private customer prompt") || strings.Contains(text, "secret") {
 		t.Fatalf("perf report leaked prompt data:\n%s", text)
 	}
@@ -120,11 +129,14 @@ func TestPrintAggregateRedactsWorstOffenderPrompt(t *testing.T) {
 	}})
 
 	var out bytes.Buffer
+
 	printAggregate(agg, 10, &out)
+
 	text := out.String()
 	if !strings.Contains(text, "prompt excerpt redacted") {
 		t.Fatalf("expected redacted worst-offender marker, got:\n%s", text)
 	}
+
 	if strings.Contains(text, "user_prompt") || strings.Contains(text, "private customer prompt") || strings.Contains(text, "secret") {
 		t.Fatalf("perf aggregate output leaked prompt data:\n%s", text)
 	}
@@ -139,21 +151,27 @@ func TestEmitJSONRedactsReportUserPrompt(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
+
 	if code := emitJSON(reports, false, &out); code != 0 {
 		t.Fatalf("emitJSON exit code: got %d", code)
 	}
+
 	text := out.String()
 	if strings.Contains(text, "user_prompt") ||
 		strings.Contains(text, "private customer prompt") ||
 		strings.Contains(text, "secret") {
+
 		t.Fatalf("perf JSON leaked prompt data:\n%s", text)
 	}
+
 	var payload struct {
 		PromptRedacted bool `json:"prompt_redacted"`
 	}
+
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatalf("parse perf JSON: %v\n%s", err, text)
 	}
+
 	if !payload.PromptRedacted {
 		t.Fatalf("expected prompt redaction marker in JSON, got:\n%s", text)
 	}

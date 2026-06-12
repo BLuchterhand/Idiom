@@ -77,6 +77,7 @@ func (d *DiscoveryRedirect) SetAllowedTools(tools []string) {
 	if d == nil {
 		return
 	}
+
 	d.allowedTools = append(d.allowedTools[:0], tools...)
 }
 
@@ -115,28 +116,36 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 	if d == nil || ws == nil {
 		return RedirectDecision{}
 	}
+
 	if isStructuredTool(req.Tool) {
 		return RedirectDecision{}
 	}
+
 	// Shell has its own handler because some replacements (sed -n → read_file)
 	// aren't language-specific — they don't fit the LanguageSupport pipeline.
 	if util.EqualTrimFold(req.Tool, "shell") {
 		return d.considerShell(req, ws)
 	}
+
 	lang, cap, ok := matchRedirectRule(req, ws)
 	if !ok {
 		return RedirectDecision{}
 	}
+
 	if cap == workspace.CapFileOutline && strings.TrimSpace(req.Path) == "" {
 		if path, ok := redirectReadFilePath(req, ws); ok {
 			req.Path = path
 		}
 	}
+
 	req = normalizeRedirectRequest(req, lang, cap)
+
 	replacement := lang.Tool(cap)
+
 	if replacement == "" {
 		return RedirectDecision{}
 	}
+
 	adapter := d.redirectAdapter(replacement)
 	fp := redirectFingerprint(req)
 	kind := lang.Name + "|" + string(cap)
@@ -147,15 +156,19 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 	// Call 2 (fpFires=2): fall through — honor the model's retry.
 	// Calls 3+ (fpFires>=3): redirect again with escalated messaging.
 	fpFires := d.fingerprintFireCount[fp] + 1
+
 	d.fingerprintFireCount[fp] = fpFires
+
 	if fpFires == 2 {
 		// Model retried the same call after one redirect — honor it.
 		return RedirectDecision{}
 	}
+
 	d.firedRedirects[fp] = true
 	d.kindFireCount[kind] = priorKindFires + 1
 
 	guide := ""
+
 	if !d.decisionTablesShown[lang.Name] {
 		d.decisionTablesShown[lang.Name] = true
 		guide = lang.DecisionGuide
@@ -166,14 +179,17 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 	// populates rejectedFingerprints and a retry terminates the churn. Gated
 	summary := redirectSummary(req, adapter.Tool)
 	msg := redirectMessage(req, lang, cap, replacement, adapter)
+
 	if priorKindFires >= 1 {
 		msg = escalateRedirectMessage(msg, lang, cap, adapter.Label(), priorKindFires+1)
 	}
+
 	result := workspace.ToolResult{
 		Tool:    req.Tool,
 		Summary: summary,
 		Output:  msg,
 	}
+
 	return RedirectDecision{
 		ShouldRedirect: true,
 		Result:         result,
@@ -192,21 +208,27 @@ func (a redirectAdapter) Label() string {
 	if strings.TrimSpace(a.Tool) == "code_navigate" {
 		return "code_navigate"
 	}
+
 	if strings.TrimSpace(a.Underlying) != "" && strings.TrimSpace(a.Underlying) != strings.TrimSpace(a.Tool) {
 		return fmt.Sprintf("%s (underlying %s)", strings.TrimSpace(a.Tool), strings.TrimSpace(a.Underlying))
 	}
+
 	return strings.TrimSpace(a.Tool)
 }
 
 func (d *DiscoveryRedirect) redirectAdapter(replacement string) redirectAdapter {
 	replacement = strings.TrimSpace(replacement)
+
 	adapter := redirectAdapter{Tool: replacement}
+
 	if replacement == "" || len(d.allowedTools) == 0 || redirectToolAllowed(d.allowedTools, replacement) {
 		return adapter
 	}
+
 	if redirectToolAllowed(d.allowedTools, "code_navigate") {
 		return redirectAdapter{Tool: "code_navigate", Underlying: replacement}
 	}
+
 	return adapter
 }
 
@@ -215,20 +237,25 @@ func redirectToolAllowed(tools []string, tool string) bool {
 	if tool == "" {
 		return false
 	}
+
 	for _, candidate := range tools {
 		if strings.TrimSpace(candidate) == tool {
 			return true
 		}
 	}
+
 	return false
 }
 
 func redirectSummary(req workspace.ToolRequest, replacement string) string {
 	replacement = strings.TrimSpace(replacement)
+
 	path := strings.TrimSpace(req.Path)
+
 	if path != "" {
 		return fmt.Sprintf("Redirected %s to %s", path, replacement)
 	}
+
 	return fmt.Sprintf("Redirected to %s", replacement)
 }
 
@@ -241,22 +268,27 @@ func escalateRedirectMessage(base string, lang workspace.LanguageSupport, cap wo
 		"This exact call has been redirected %d times this turn. The structured tool route via %s for %s code queries remains available. If the structured tool already returned results for this symbol, those results are your answer.\n\n",
 		fireNumber, replacement, lang.Name,
 	)
+
 	return preface + base
 }
 
 func redirectMessage(req workspace.ToolRequest, lang workspace.LanguageSupport, cap workspace.Capability, replacement string, adapter redirectAdapter) string {
 	var b strings.Builder
+
 	fmt.Fprintf(&b, "This %s code query is answered through the %s capability via %s.\n",
 		lang.Name, cap, adapter.Label())
+
 	switch cap {
 	case workspace.CapFileOutline:
 		writeRedirectCandidateRequest(&b, adapter, cap, lang.Name, req.Path, "")
+
 		readSym := lang.Tool(workspace.CapReadSymbol)
 		fmt.Fprintf(&b, "related_capability: read_symbol via %s returns one declaration body by name.\n", relatedRedirectAdapterLabel(adapter, readSym))
 		b.WriteString("raw_range_fallback: read_file with start_line/end_line remains appropriate for ranges a single declaration cannot cover.\n")
 	case workspace.CapWorkspaceSymbol, workspace.CapFindSymbol:
 		writeRedirectCandidateRequest(&b, adapter, cap, lang.Name, req.Path, req.Pattern)
 		b.WriteString("The structured result includes file, line, kind, and qualified name.\n")
+
 		readSym := lang.Tool(workspace.CapReadSymbol)
 		if readSym != "" {
 			fmt.Fprintf(&b, "related_capability: read_symbol via %s returns a hit's body by pattern and path; raw range fallback remains for context beyond a single declaration.\n", relatedRedirectAdapterLabel(adapter, readSym))
@@ -266,7 +298,9 @@ func redirectMessage(req workspace.ToolRequest, lang workspace.LanguageSupport, 
 		if strings.TrimSpace(path) == "" {
 			path = "."
 		}
+
 		writeRedirectCandidateRequest(&b, adapter, cap, lang.Name, path, req.Pattern)
+
 		readSym := lang.Tool(workspace.CapReadSymbol)
 		if readSym != "" {
 			fmt.Fprintf(&b, "related_capability: read_symbol via %s can inspect each hit's enclosing declaration; raw range fallback remains for surrounding context.\n", relatedRedirectAdapterLabel(adapter, readSym))
@@ -278,7 +312,9 @@ func redirectMessage(req workspace.ToolRequest, lang workspace.LanguageSupport, 
 		// model can construct the call from its schema.
 		fmt.Fprintf(&b, "candidate_adapter: %s with equivalent arguments from the rejected request.\n", adapter.Label())
 	}
+
 	b.WriteString("The structured route remains available. This redirect has fired for this exact fingerprint this turn.")
+
 	return strings.TrimSpace(b.String())
 }
 
@@ -286,6 +322,7 @@ func relatedRedirectAdapterLabel(primary redirectAdapter, directRelated string) 
 	if strings.TrimSpace(primary.Tool) == "code_navigate" {
 		return "code_navigate"
 	}
+
 	return strings.TrimSpace(directRelated)
 }
 
@@ -293,27 +330,37 @@ func writeRedirectCandidateRequest(b *strings.Builder, adapter redirectAdapter, 
 	if b == nil {
 		return
 	}
+
 	if strings.TrimSpace(adapter.Tool) == "code_navigate" {
 		fmt.Fprintf(b, "candidate_request: {\"tool\":\"code_navigate\",\"capability\":%q", string(cap))
+
 		if strings.TrimSpace(path) != "" {
 			fmt.Fprintf(b, ",\"path\":%q", path)
 		}
+
 		if strings.TrimSpace(pattern) != "" {
 			fmt.Fprintf(b, ",\"pattern\":%q", pattern)
 		}
+
 		if strings.TrimSpace(language) != "" {
 			fmt.Fprintf(b, ",\"language\":%q", language)
 		}
+
 		b.WriteString("}\n")
+
 		return
 	}
+
 	fmt.Fprintf(b, "candidate_request: {\"tool\":%q", adapter.Tool)
+
 	if strings.TrimSpace(pattern) != "" {
 		fmt.Fprintf(b, ",\"pattern\":%q", pattern)
 	}
+
 	if strings.TrimSpace(path) != "" {
 		fmt.Fprintf(b, ",\"path\":%q", path)
 	}
+
 	b.WriteString("}\n")
 }
 
@@ -324,6 +371,7 @@ func normalizeRedirectRequest(req workspace.ToolRequest, lang workspace.Language
 			req.Pattern = ident
 		}
 	}
+
 	return req
 }
 
@@ -336,17 +384,21 @@ func redirectReadFilePath(req workspace.ToolRequest, ws *workspace.Manager) (str
 	if path != "" {
 		return path, true
 	}
+
 	id := strings.TrimSpace(req.ID)
 	if id == "" || ws == nil {
 		return "", false
 	}
+
 	resolved, err := ws.ResolveHandlePath(id)
 	if err != nil {
 		return "", false
 	}
+
 	if rel, err := filepath.Rel(ws.Root(), resolved); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
 		return filepath.ToSlash(rel), true
 	}
+
 	return resolved, true
 }
 
@@ -364,24 +416,30 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 		if req.StartLine > 0 || req.EndLine > 0 {
 			return workspace.LanguageSupport{}, "", false
 		}
+
 		path, ok := redirectReadFilePath(req, ws)
 		if !ok {
 			return workspace.LanguageSupport{}, "", false
 		}
+
 		lang, ok := workspace.LanguageForFile(path)
 		if !ok {
 			return workspace.LanguageSupport{}, "", false
 		}
+
 		if !languageActive(ws, lang) {
 			return workspace.LanguageSupport{}, "", false
 		}
+
 		if lang.Tool(workspace.CapFileOutline) == "" {
 			return workspace.LanguageSupport{}, "", false
 		}
+
 		lineCount, ok := ws.FileLineCount(path)
 		if !ok {
 			return workspace.LanguageSupport{}, "", false
 		}
+
 		// Small files short-circuit the outline detour. A typical
 		// outline+read_symbol loop costs two tool calls plus a chunk
 		// of prompt context for the outline table; below this
@@ -395,22 +453,27 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 		if lineCount > 0 && lineCount <= smallFileRedirectThreshold {
 			return workspace.LanguageSupport{}, "", false
 		}
+
 		return lang, workspace.CapFileOutline, true
 	case "search_content":
 		pattern := strings.TrimSpace(req.Pattern)
 		if pattern == "" {
 			return workspace.LanguageSupport{}, "", false
 		}
+
 		if searchContentTargetsConcreteFile(req) && looksLikeIdentifier(pattern) {
 			return workspace.LanguageSupport{}, "", false
 		}
+
 		lang, ok := languageForSearchRequest(req, ws)
 		if !ok {
 			return workspace.LanguageSupport{}, "", false
 		}
+
 		if !languageActive(ws, lang) {
 			return workspace.LanguageSupport{}, "", false
 		}
+
 		// Choose between workspace-wide and path-scoped symbol search
 		// based on request intent, not purely on which tool the language
 		// exposes. When the model already scoped the request to a path,
@@ -423,6 +486,7 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 		if strings.TrimSpace(req.Path) != "" {
 			primary, secondary = workspace.CapFindSymbol, workspace.CapWorkspaceSymbol
 		}
+
 		cap := primary
 		if lang.Tool(cap) == "" {
 			cap = secondary
@@ -430,8 +494,10 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 				return workspace.LanguageSupport{}, "", false
 			}
 		}
+
 		return lang, cap, true
 	}
+
 	return workspace.LanguageSupport{}, "", false
 }
 
@@ -443,19 +509,24 @@ func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.T
 	if d == nil {
 		return RedirectDecision{}
 	}
+
 	if !conversationDiscoveryRedirectApplies(brief) {
 		return RedirectDecision{}
 	}
+
 	if !util.EqualTrimFold(req.Tool, "read_file") {
 		return RedirectDecision{}
 	}
+
 	path := normalizeRunnerPath(req.Path)
 	if path == "" {
 		return RedirectDecision{}
 	}
+
 	if isDiagnosticLogArtifactPath(path) {
 		return RedirectDecision{}
 	}
+
 	// Don't redirect to code_navigate if it's been hidden by turn-level
 	// tool hiding (e.g., same-path fixation). Redirecting to a hidden tool
 	// creates a dead end — the model follows the redirect only to get a
@@ -464,14 +535,18 @@ func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.T
 	if !codeNavigateVisible {
 		return RedirectDecision{}
 	}
+
 	// Only redirect after the model has already read this file at
 	// least twice this turn. First read is legitimate exploration.
 	fp := "read_file|" + path + "|conversation"
 	fpFires := d.fingerprintFireCount[fp] + 1
+
 	d.fingerprintFireCount[fp] = fpFires
+
 	if fpFires < 3 {
 		return RedirectDecision{}
 	}
+
 	d.firedRedirects[fp] = true
 
 	summary := "Redirected repeated read_file to " + workspace.CodeNavigateToolName
@@ -501,5 +576,6 @@ func conversationDiscoveryRedirectApplies(brief workerruntime.WorkerRuntimeBrief
 	if workerruntime.TaskFamilyIsConversation(brief.TaskFamily) {
 		return true
 	}
+
 	return workerruntime.RuntimeContractIsConversationDiscovery(brief.Contract)
 }

@@ -22,6 +22,7 @@ func (m *mockClient) CompleteChat(ctx context.Context, messages []ChatMessage, o
 	if m.completeChatFn != nil {
 		return m.completeChatFn(ctx, messages, opts)
 	}
+
 	return "", nil
 }
 
@@ -29,6 +30,7 @@ func (m *mockClient) CompleteChatMessage(ctx context.Context, messages []ChatMes
 	if m.completeChatMessageFn != nil {
 		return m.completeChatMessageFn(ctx, messages, opts)
 	}
+
 	return ChatMessage{}, nil
 }
 
@@ -36,6 +38,7 @@ func (m *mockClient) StreamChat(ctx context.Context, messages []ChatMessage, opt
 	if m.streamChatFn != nil {
 		return m.streamChatFn(ctx, messages, opts, onDelta)
 	}
+
 	return nil
 }
 
@@ -43,6 +46,7 @@ func (m *mockClient) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	if m.listModelsFn != nil {
 		return m.listModelsFn(ctx)
 	}
+
 	return nil, nil
 }
 
@@ -50,6 +54,7 @@ func (m *mockClient) Backend() string {
 	if m.backendFn != nil {
 		return m.backendFn()
 	}
+
 	return ""
 }
 
@@ -57,6 +62,7 @@ func (m *mockClient) SupportsNativeTools() bool {
 	if m.supportsNativeToolsFn != nil {
 		return m.supportsNativeToolsFn()
 	}
+
 	return true
 }
 
@@ -70,11 +76,14 @@ func TestMockClientCompleteChat(t *testing.T) {
 			return "mock response", nil
 		},
 	}
+
 	var lc LLMClient = client
+
 	reply, err := lc.CompleteChat(context.Background(), nil, ChatOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if reply != "mock response" {
 		t.Fatalf("expected %q, got %q", "mock response", reply)
 	}
@@ -86,11 +95,14 @@ func TestMockClientListModels(t *testing.T) {
 			return []ModelInfo{{ID: "test-model"}}, nil
 		},
 	}
+
 	var lc LLMClient = client
+
 	models, err := lc.ListModels(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if len(models) != 1 || models[0].ID != "test-model" {
 		t.Fatalf("expected [test-model], got %v", models)
 	}

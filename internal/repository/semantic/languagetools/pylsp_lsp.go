@@ -41,9 +41,11 @@ func (m *Manager) pythonLSPBinary() (path string, server string) {
 	if p, err := exec.LookPath("pyright-langserver"); err == nil {
 		return p, "pyright"
 	}
+
 	if p, err := exec.LookPath("pylsp"); err == nil {
 		return p, "pylsp"
 	}
+
 	return "", ""
 }
 
@@ -57,7 +59,9 @@ func (m *Manager) newPylspLSPClient(ctx context.Context) (*pylspLSPClient, error
 	if binary == "" {
 		return nil, fmt.Errorf("%w: %s", ErrPythonLSPUnavailable, pythonLSPInstallHint())
 	}
+
 	var args []string
+
 	switch server {
 	case "pyright":
 		args = []string{"--stdio"}
@@ -66,16 +70,21 @@ func (m *Manager) newPylspLSPClient(ctx context.Context) (*pylspLSPClient, error
 	}
 
 	cmd := exec.CommandContext(ctx, binary, args...)
+
 	cmd.Dir = m.Root()
+
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
 	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
 	}
+
 	client := &pylspLSPClient{server: server}
+
 	client.lspBaseClient = lspBaseClient{
 		serverName: "Python LSP",
 		cmd:        cmd,
@@ -83,6 +92,7 @@ func (m *Manager) newPylspLSPClient(ctx context.Context) (*pylspLSPClient, error
 		stdout:     bufio.NewReader(stdout),
 	}
 	cmd.Stderr = &client.stderr
+
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -102,15 +112,21 @@ func (m *Manager) newPylspLSPClient(ctx context.Context) (*pylspLSPClient, error
 			"name": filepath.Base(m.Root()),
 		}},
 	}
+
 	var initResult map[string]any
+
 	if err := client.request(ctx, "initialize", params, &initResult); err != nil {
 		client.forceClose()
+
 		return nil, fmt.Errorf("%s initialize failed: %w", server, err)
 	}
+
 	if err := client.notify("initialized", map[string]any{}); err != nil {
 		client.forceClose()
+
 		return nil, fmt.Errorf("%s initialized notification failed: %w", server, err)
 	}
+
 	return client, nil
 }
 
@@ -141,10 +157,12 @@ func (m *Manager) pythonWorkspaceSymbolsViaLSP(ctx context.Context, pattern stri
 			if err != nil {
 				return nil, err
 			}
+
 			candidates := index.RelevantFiles(strings.Fields(pattern), budget)
 			if len(candidates) == 0 {
 				candidates = index.DefaultFiles(budget)
 			}
+
 			return candidates, nil
 		},
 		flatten: flattenPylspDocumentSymbols,
@@ -209,24 +227,32 @@ func (m *Manager) pythonCallHierarchyViaLSP(ctx context.Context, match semantic.
 	if err != nil {
 		return callHierarchyResult{}, err
 	}
+
 	items, err := prepareLSPCallHierarchy(ctx, client, pylspFileURI, abs, m.pythonLSPPosition(abs, match))
 	if err != nil {
 		return callHierarchyResult{}, err
 	}
+
 	if len(items) == 0 {
 		return callHierarchyResult{}, nil
 	}
+
 	if incoming {
 		var calls []LSPIncomingCall
+
 		if err := client.request(ctx, "callHierarchy/incomingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
 			return callHierarchyResult{}, err
 		}
+
 		return m.formatPylspIncomingCalls(calls, pathFilter, match), nil
 	}
+
 	var calls []LSPOutgoingCall
+
 	if err := client.request(ctx, "callHierarchy/outgoingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
 		return callHierarchyResult{}, err
 	}
+
 	return m.formatPylspOutgoingCalls(abs, match.Name, calls, pathFilter), nil
 }
 
@@ -246,33 +272,43 @@ func (m *Manager) pythonDiagnosticsViaLSP(ctx context.Context, abs string) ([]py
 	// short deadline and stop when nothing comes for a beat.
 	deadline := time.Now().Add(3 * time.Second)
 	collected := make([]pylspDiagnostic, 0)
+
 	for time.Now().Before(deadline) {
 		// Bounded per-read context so we don't block forever.
 		readCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 		body, err := pylspReadWithTimeout(readCtx, client)
+
 		cancel()
+
 		if err != nil {
 			break
 		}
+
 		var env LSPEnvelope
+
 		if err := json.Unmarshal(body, &env); err != nil {
 			continue
 		}
+
 		if env.Method != "textDocument/publishDiagnostics" {
 			continue
 		}
+
 		var payload struct {
 			URI         string            `json:"uri"`
 			Diagnostics []pylspDiagnostic `json:"diagnostics"`
 		}
+
 		if err := json.Unmarshal(env.Params, &payload); err != nil {
 			continue
 		}
+
 		if path, err := pylspPathFromURI(payload.URI); err == nil && filepath.Clean(path) == filepath.Clean(abs) {
 			collected = append(collected, payload.Diagnostics...)
 			break
 		}
 	}
+
 	return collected, nil
 }
 
@@ -282,12 +318,18 @@ func (m *Manager) pythonDiagnosticsViaLSP(ctx context.Context, abs string) ([]py
 // beat".
 func pylspReadWithTimeout(ctx context.Context, client *pylspLSPClient) ([]byte, error) {
 	done := make(chan struct{})
-	var body []byte
-	var readErr error
+
+	var (
+		body    []byte
+		readErr error
+	)
+
 	go func() {
 		body, readErr = client.readMessage()
+
 		close(done)
 	}()
+
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -301,13 +343,16 @@ func (m *Manager) pythonLSPPosition(abs string, match semantic.PythonSymbolMatch
 	if line < 0 {
 		line = 0
 	}
+
 	character := match.Column - 1
 	if character < 0 {
 		character = 0
 	}
+
 	if resolved, ok := m.pythonLSPCharacter(abs, match); ok {
 		character = resolved
 	}
+
 	return map[string]any{
 		"line":      line,
 		"character": character,
@@ -318,13 +363,16 @@ func (m *Manager) pythonLSPCharacter(abs string, match semantic.PythonSymbolMatc
 	if abs == "" || match.Line <= 0 {
 		return 0, false
 	}
+
 	lineText := m.sourceLineText(abs, match.Line)
 	if lineText == "" {
 		return 0, false
 	}
+
 	if idx := strings.Index(lineText, match.Name); idx >= 0 {
 		return idx, true
 	}
+
 	return 0, false
 }
 

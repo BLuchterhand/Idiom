@@ -31,16 +31,21 @@ func (m *Manager) newJdtlsLSPClient(ctx context.Context) (*jdtlsLSPClient, error
 	if jdtls == "" {
 		return nil, fmt.Errorf("jdtls is not installed")
 	}
+
 	cmd := exec.CommandContext(ctx, jdtls)
+
 	cmd.Dir = m.Root()
+
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
 	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
 	}
+
 	client := &jdtlsLSPClient{
 		lspBaseClient: lspBaseClient{
 			serverName: "jdtls",
@@ -49,7 +54,9 @@ func (m *Manager) newJdtlsLSPClient(ctx context.Context) (*jdtlsLSPClient, error
 			stdout:     bufio.NewReader(stdout),
 		},
 	}
+
 	cmd.Stderr = &client.stderr
+
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -82,17 +89,23 @@ func (m *Manager) newJdtlsLSPClient(ctx context.Context) (*jdtlsLSPClient, error
 		},
 	}
 	initCtx, cancel := context.WithTimeout(ctx, jdtlsInitializeTimeout)
+
 	defer cancel()
 
 	var initResult map[string]any
+
 	if err := client.request(initCtx, "initialize", params, &initResult); err != nil {
 		client.forceClose()
+
 		return nil, fmt.Errorf("jdtls initialize failed: %w", err)
 	}
+
 	if err := client.notify("initialized", map[string]any{}); err != nil {
 		client.forceClose()
+
 		return nil, fmt.Errorf("jdtls initialized notification failed: %w", err)
 	}
+
 	// Readiness probe: jdtls may still be importing projects when it
 	// acknowledges `initialize`. We give it a short settle window
 	// before returning to the caller. A real workspace/symbol probe
@@ -102,6 +115,7 @@ func (m *Manager) newJdtlsLSPClient(ctx context.Context) (*jdtlsLSPClient, error
 	case <-time.After(500 * time.Millisecond):
 	case <-ctx.Done():
 	}
+
 	return client, nil
 }
 
@@ -122,13 +136,16 @@ func (m *Manager) javaLSPPosition(abs string, match semantic.JavaSymbolMatch) ma
 	if line < 0 {
 		line = 0
 	}
+
 	character := match.Column - 1
 	if character < 0 {
 		character = 0
 	}
+
 	if resolved, ok := m.javaLSPCharacter(abs, match); ok {
 		character = resolved
 	}
+
 	return map[string]any{
 		"line":      line,
 		"character": character,
@@ -139,13 +156,16 @@ func (m *Manager) javaLSPCharacter(abs string, match semantic.JavaSymbolMatch) (
 	if abs == "" || match.Line <= 0 {
 		return 0, false
 	}
+
 	lineText := m.sourceLineText(abs, match.Line)
 	if lineText == "" {
 		return 0, false
 	}
+
 	if idx := strings.Index(lineText, match.Name); idx >= 0 {
 		return idx, true
 	}
+
 	return 0, false
 }
 
@@ -212,10 +232,12 @@ func (m *Manager) javaWorkspaceSymbolsViaJdtls(ctx context.Context, pattern stri
 			if err != nil {
 				return nil, err
 			}
+
 			candidates := index.RelevantFiles(strings.Fields(pattern), budget)
 			if len(candidates) == 0 {
 				candidates = index.DefaultFiles(budget)
 			}
+
 			return candidates, nil
 		},
 		flatten: flattenJdtlsDocumentSymbols,
@@ -280,23 +302,31 @@ func (m *Manager) javaCallHierarchyViaJdtls(ctx context.Context, match semantic.
 	if err != nil {
 		return callHierarchyResult{}, err
 	}
+
 	items, err := prepareLSPCallHierarchy(ctx, client, jdtlsFileURI, abs, m.javaLSPPosition(abs, match))
 	if err != nil {
 		return callHierarchyResult{}, err
 	}
+
 	if len(items) == 0 {
 		return callHierarchyResult{}, nil
 	}
+
 	if incoming {
 		var calls []LSPIncomingCall
+
 		if err := client.request(ctx, "callHierarchy/incomingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
 			return callHierarchyResult{}, err
 		}
+
 		return m.formatJdtlsIncomingCalls(calls, pathFilter, match), nil
 	}
+
 	var calls []LSPOutgoingCall
+
 	if err := client.request(ctx, "callHierarchy/outgoingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
 		return callHierarchyResult{}, err
 	}
+
 	return m.formatJdtlsOutgoingCalls(abs, match.Name, calls, pathFilter), nil
 }

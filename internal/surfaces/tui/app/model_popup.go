@@ -32,14 +32,17 @@ func (m *Model) openModelPopup() {
 		m.status = "No models discovered. Check .idiom/backends.json or server status."
 		return
 	}
+
 	modelIdx := make(map[string]int, len(roles))
 	for _, r := range roles {
 		idx := slices.Index(r.aliases, r.current)
 		if idx < 0 {
 			idx = 0
 		}
+
 		modelIdx[r.name] = idx
 	}
+
 	m.modelPopup = modelPopupState{
 		open:     true,
 		roles:    roles,
@@ -66,8 +69,10 @@ func (m *Model) buildPopupRoles() []modelPopupRole {
 	}
 
 	var roles []modelPopupRole
+
 	for _, rn := range roleNames {
 		current := m.currentAliasForRole(rn)
+
 		roles = append(roles, modelPopupRole{
 			name:        rn,
 			current:     current,
@@ -75,6 +80,7 @@ func (m *Model) buildPopupRoles() []modelPopupRole {
 			description: roleDescs[rn],
 		})
 	}
+
 	return roles
 }
 
@@ -86,11 +92,13 @@ func (m *Model) currentAliasForRole(role string) string {
 			}
 		}
 	}
+
 	return m.activeModelDisplayID()
 }
 
 func (m *Model) collectAllAliases() []string {
 	seen := make(map[string]bool)
+
 	var names []string
 
 	if file, found, err := backends.LoadFromProjectRoot(m.workspace.Root()); err == nil && found {
@@ -102,6 +110,7 @@ func (m *Model) collectAllAliases() []string {
 				}
 			}
 		}
+
 		for _, prof := range file.Profiles {
 			for _, model := range prof.Models {
 				if alias := strings.TrimSpace(model.Alias); alias != "" && !seen[alias] {
@@ -114,6 +123,7 @@ func (m *Model) collectAllAliases() []string {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+
 	if models, err := m.client.ListModels(ctx); err == nil {
 		for _, mi := range models {
 			id := strings.TrimSpace(mi.ID)
@@ -129,43 +139,54 @@ func (m *Model) collectAllAliases() []string {
 
 func (m *Model) handleModelPopupKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	p := &m.modelPopup
+
 	switch msg.Type {
 	case tea.KeyEsc:
 		m.closeModelPopup()
+
 		return nil, true
 	case tea.KeyUp:
 		if p.cursor > 0 {
 			p.cursor--
 		}
+
 		return nil, true
 	case tea.KeyDown:
 		if p.cursor < len(p.roles)-1 {
 			p.cursor++
 		}
+
 		return nil, true
 	case tea.KeyTab:
 		role := p.roles[p.cursor]
 		idx := p.modelIdx[role.name]
+
 		idx = (idx + 1) % len(role.aliases)
 		p.modelIdx[role.name] = idx
+
 		return nil, true
 	case tea.KeyShiftTab:
 		role := p.roles[p.cursor]
 		idx := p.modelIdx[role.name]
+
 		idx = (idx - 1 + len(role.aliases)) % len(role.aliases)
 		p.modelIdx[role.name] = idx
+
 		return nil, true
 	case tea.KeyEnter:
 		m.applyPopupSelections()
 		m.closeModelPopup()
+
 		return nil, true
 	}
+
 	return nil, false
 }
 
 func (m *Model) applyPopupSelections() {
 	plannerRole := &m.modelPopup.roles[0]
 	idx, ok := m.modelPopup.modelIdx[plannerRole.name]
+
 	if ok && idx < len(plannerRole.aliases) {
 		chosen := plannerRole.aliases[idx]
 		if chosen != plannerRole.current {
@@ -182,6 +203,7 @@ func (m *Model) renderModelPopup(width, height int) string {
 
 	popupW := min(52, max(36, width*2/3))
 	maxModels := 0
+
 	if len(p.roles) > 0 {
 		for _, r := range p.roles {
 			if len(r.aliases) > maxModels {
@@ -189,9 +211,11 @@ func (m *Model) renderModelPopup(width, height int) string {
 			}
 		}
 	}
+
 	popupH := len(p.roles)*3 + maxModels + 4
 
 	var b strings.Builder
+
 	b.WriteString(popupTitleStyle.Width(popupW).Render("◆ Models"))
 	b.WriteString("\n")
 	b.WriteString(popupHintStyle.Width(popupW).Render("↑↓ navigate · Tab cycle · Enter confirm · Esc cancel"))
@@ -201,11 +225,13 @@ func (m *Model) renderModelPopup(width, height int) string {
 		selected := i == p.cursor
 		modelIdx := p.modelIdx[role.name]
 		chosenAlias := ""
+
 		if modelIdx < len(role.aliases) {
 			chosenAlias = role.aliases[modelIdx]
 		}
 
 		var nameStyle lipgloss.Style
+
 		if selected {
 			nameStyle = popupRoleActiveStyle
 		} else {
@@ -224,12 +250,14 @@ func (m *Model) renderModelPopup(width, height int) string {
 			for j, alias := range role.aliases {
 				marker := "  "
 				label := alias
+
 				if j == modelIdx {
 					marker = "▸▸"
 					label = popupModelActiveStyle.Render(alias)
 				} else {
 					label = popupModelInactiveStyle.Render(alias)
 				}
+
 				b.WriteString(popupModelRowStyle.Width(popupW).Render(marker + " " + label))
 				b.WriteString("\n")
 			}
@@ -244,8 +272,10 @@ func (m *Model) renderModelPopup(width, height int) string {
 
 	content := b.String()
 	lines := strings.Split(content, "\n")
+
 	for len(lines) < popupH {
 		lines = append(lines, "")
+
 		content += "\n"
 	}
 
@@ -253,6 +283,7 @@ func (m *Model) renderModelPopup(width, height int) string {
 	popupBox := popupBoxStyle.Width(boxW).Render(content)
 
 	lines = strings.Split(popupBox, "\n")
+
 	boxH := len(lines)
 
 	padTop := max(0, (height-boxH)/2)
@@ -262,11 +293,14 @@ func (m *Model) renderModelPopup(width, height int) string {
 	vertPad := strings.Repeat("\n", padTop)
 
 	var overlay strings.Builder
+
 	overlay.WriteString(vertPad)
+
 	for _, line := range lines {
 		overlay.WriteString(indent)
 		overlay.WriteString(line)
 		overlay.WriteString("\n")
 	}
+
 	return overlay.String()
 }

@@ -21,6 +21,7 @@ func TestDiscoveryConsumptionCandidateOnlyContextQueryAllowsFollowup(t *testing.
 		nil,
 		nil,
 	)
+
 	if !state.pendingDiscoveryConsumption || state.pendingDiscoveryStrength != discoveryConsumptionCandidateOnly {
 		t.Fatalf("expected candidate-only pending discovery, got pending=%v strength=%v", state.pendingDiscoveryConsumption, state.pendingDiscoveryStrength)
 	}
@@ -49,9 +50,11 @@ func TestDiscoveryConsumptionWeakContextPackAllowsCorrectiveFollowup(t *testing.
 		nil,
 		nil,
 	)
+
 	if !state.pendingDiscoveryConsumption || state.pendingDiscoveryStrength != discoveryConsumptionCandidateOnly {
 		t.Fatalf("expected weak context_pack to be candidate-only, got pending=%v strength=%v", state.pendingDiscoveryConsumption, state.pendingDiscoveryStrength)
 	}
+
 	for _, req := range []workspace.ToolRequest{
 		{Tool: "context_query", Query: "what handles TUI key input for conversation messages", Resolution: "symbol", IncludeEvidence: true},
 		{Tool: "search_files", Path: ".", Pattern: "update_handlers"},
@@ -65,8 +68,10 @@ func TestDiscoveryConsumptionWeakContextPackAllowsCorrectiveFollowup(t *testing.
 
 func TestReadOnlyWeakDiscoveryNextActionNamesMissingSourceOwner(t *testing.T) {
 	brief := directAnswerReadOnlyBrief()
+
 	brief.Objective = "what would it take to enable arrow-key history recall in the TUI chat box?"
 	brief.AllowedTools = []string{"context_pack", "context_query", "search_content", "read_file", "code_navigate"}
+
 	req := workspace.ToolRequest{Tool: "context_pack", Task: "implement arrow-key history recall in TUI chat input", Mode: "plan"}
 	result := workspace.ToolResult{
 		Tool:    "context_pack",
@@ -78,10 +83,12 @@ func TestReadOnlyWeakDiscoveryNextActionNamesMissingSourceOwner(t *testing.T) {
 	if len(state.EvidencePaths) != 0 {
 		t.Fatalf("candidate-only discovery must not be promoted to source-body evidence paths: %#v", state.EvidencePaths)
 	}
+
 	joinedStatus := strings.Join(state.EvidenceStatus, "\n")
 	if !strings.Contains(joinedStatus, "candidate-only") || !strings.Contains(joinedStatus, "source owner") {
 		t.Fatalf("weak discovery status should name the missing source-owner evidence, got %#v", state.EvidenceStatus)
 	}
+
 	joinedNext := strings.Join(state.NextValidActions, "\n")
 	for _, want := range []string{
 		"source owner was not established by context_pack",
@@ -92,6 +99,7 @@ func TestReadOnlyWeakDiscoveryNextActionNamesMissingSourceOwner(t *testing.T) {
 			t.Fatalf("weak discovery next-action guidance missing %q: %#v", want, state.NextValidActions)
 		}
 	}
+
 	joinedInvalid := strings.Join(state.InvalidNextActions, "\n")
 	if !strings.Contains(joinedInvalid, "exact replay of the same weak discovery request") {
 		t.Fatalf("weak discovery should mark exact replay invalid, got %#v", state.InvalidNextActions)
@@ -100,8 +108,10 @@ func TestReadOnlyWeakDiscoveryNextActionNamesMissingSourceOwner(t *testing.T) {
 
 func TestReadOnlySourceOwnerDiscoveryNextActionRequiresSourceBody(t *testing.T) {
 	brief := directAnswerReadOnlyBrief()
+
 	brief.Objective = "explain discovery consumption state"
 	brief.AllowedTools = []string{"context_pack", "context_query", "search_content", "read_file", "code_navigate"}
+
 	req := workspace.ToolRequest{Tool: "context_pack", Task: "runner discovery consumption"}
 	result := workspace.ToolResult{
 		Tool:    "context_pack",
@@ -113,10 +123,12 @@ func TestReadOnlySourceOwnerDiscoveryNextActionRequiresSourceBody(t *testing.T) 
 	if len(state.EvidencePaths) != 0 {
 		t.Fatalf("source-owner discovery still must not become source-body evidence paths: %#v", state.EvidencePaths)
 	}
+
 	joinedNext := strings.Join(state.NextValidActions, "\n")
 	if !strings.Contains(joinedNext, "inspect one returned path or handle with source-body evidence") {
 		t.Fatalf("source-owner discovery should direct source-body consumption, got %#v", state.NextValidActions)
 	}
+
 	joinedInvalid := strings.Join(state.InvalidNextActions, "\n")
 	if !strings.Contains(joinedInvalid, "repeated broad or identical rediscovery") {
 		t.Fatalf("source-owner discovery should warn against broad rediscovery, got %#v", state.InvalidNextActions)
@@ -125,17 +137,21 @@ func TestReadOnlySourceOwnerDiscoveryNextActionRequiresSourceBody(t *testing.T) 
 
 func TestReadOnlyCompletionGateCandidateOnlyRecoveryNamesSourceBody(t *testing.T) {
 	brief := directAnswerReadOnlyBrief()
+
 	brief.Objective = "What does ShortLabel return?"
 	brief.AllowedTools = []string{"search_content", "read_file", "code_navigate"}
+
 	runner := &Runner{RuntimeBrief: brief}
 	result, rejected := runner.readOnlyEvidenceCompletionRejection("ShortLabel returns Save changes.", []workspace.ToolResult{{
 		Tool:    "search_content",
 		Summary: "Found 1 matching line(s).",
 		Output:  "internal/labels/labels.go:4:\treturn \"Save changes\"",
 	}})
+
 	if !rejected {
 		t.Fatal("expected candidate-only read-only answer to be rejected")
 	}
+
 	for _, want := range []string{
 		"Candidate/search/context paths are not source-body evidence",
 		"internal/labels/labels.go",
@@ -145,6 +161,7 @@ func TestReadOnlyCompletionGateCandidateOnlyRecoveryNamesSourceBody(t *testing.T
 			t.Fatalf("candidate-only recovery missing %q:\n%s", want, result.Error)
 		}
 	}
+
 	if strings.Contains(result.Error, "Use one targeted read/search/discovery tool") {
 		t.Fatalf("candidate-only recovery should not fall back to generic discovery advice:\n%s", result.Error)
 	}
@@ -171,9 +188,11 @@ func TestDiscoveryConsumptionStrongContextPackStillBlocksBroadRediscovery(t *tes
 		nil,
 		nil,
 	)
+
 	if state.pendingDiscoveryStrength != discoveryConsumptionSourceOwner {
 		t.Fatalf("expected source-owner pending discovery after strong context_pack, got %v", state.pendingDiscoveryStrength)
 	}
+
 	state.applyResult(
 		workspace.ToolRequest{Tool: "context_query", Query: "related runner discovery candidates", Resolution: "symbol"},
 		workspace.ToolResult{
@@ -185,6 +204,7 @@ func TestDiscoveryConsumptionStrongContextPackStillBlocksBroadRediscovery(t *tes
 		nil,
 		nil,
 	)
+
 	if state.pendingDiscoveryStrength != discoveryConsumptionSourceOwner {
 		t.Fatalf("candidate-only context_query downgraded strong pending discovery to %v", state.pendingDiscoveryStrength)
 	}
@@ -258,6 +278,7 @@ func TestDiscoveryConsumptionSourceBodyReadClearsPendingDiscovery(t *testing.T) 
 		nil,
 		nil,
 	)
+
 	if !state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(workspace.ToolRequest{Tool: "context_pack", Task: "runner discovery consumption"}, directAnswerReadOnlyBrief()) {
 		t.Fatal("expected strong discovery to block broad rediscovery before source body evidence")
 	}
@@ -277,6 +298,7 @@ func TestDiscoveryConsumptionSourceBodyReadClearsPendingDiscovery(t *testing.T) 
 	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(workspace.ToolRequest{Tool: "context_pack", Task: "runner discovery consumption"}, directAnswerReadOnlyBrief()) {
 		t.Fatal("source-body read should clear pending discovery consumption")
 	}
+
 	if state.pendingDiscoveryConsumption {
 		t.Fatal("source-body read should clear pending discovery state")
 	}
@@ -306,9 +328,11 @@ func TestDiscoveryConsumptionFailedGuessedReadDoesNotReopenBroadRediscovery(t *t
 		nil,
 		nil,
 	)
+
 	if !state.pendingDiscoveryFailedAttempt {
 		t.Fatal("failed guessed read should mark the pending discovery attempt as failed")
 	}
+
 	if !state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(workspace.ToolRequest{Tool: "context_pack", Task: "runner discovery consumption"}, directAnswerReadOnlyBrief()) {
 		t.Fatal("failed guessed read after strong packet must not reopen broad rediscovery")
 	}

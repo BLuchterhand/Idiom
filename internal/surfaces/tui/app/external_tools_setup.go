@@ -32,10 +32,12 @@ func setupExternalToolsRegistry(ws config.Workspace) (*workspace.ExternalToolReg
 		if !filepath.IsAbs(dirPath) && ws.Root != "" {
 			dirPath = filepath.Join(ws.Root, dirPath)
 		}
+
 		dirTools, err := loadExternalToolsDir(dirPath)
 		if err != nil {
 			return nil, err
 		}
+
 		tools = append(tools, dirTools...)
 	}
 
@@ -45,6 +47,7 @@ func setupExternalToolsRegistry(ws config.Workspace) (*workspace.ExternalToolReg
 
 	// Stable order makes startup logging + tool-spec ordering deterministic.
 	slices.SortFunc(tools, func(a, b workspace.ExternalTool) int { return cmp.Compare(a.Name, b.Name) })
+
 	return workspace.NewExternalToolRegistry(tools)
 }
 
@@ -71,26 +74,36 @@ func loadExternalToolsDir(dir string) ([]workspace.ExternalTool, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
+
 		return nil, fmt.Errorf("external_tools_dir %q: %w", dir, err)
 	}
+
 	out := make([]workspace.ExternalTool, 0)
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
+
 		if filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
+
 		path := filepath.Join(dir, entry.Name())
+
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("external tool file %q: %w", path, err)
 		}
+
 		var def config.ExternalToolDef
+
 		if err := json.Unmarshal(raw, &def); err != nil {
 			return nil, fmt.Errorf("external tool file %q: parse: %w", path, err)
 		}
+
 		out = append(out, externalToolFromConfig(def))
 	}
+
 	return out, nil
 }

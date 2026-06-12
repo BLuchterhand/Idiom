@@ -1,6 +1,6 @@
 ---
 tags:
-  - harness
+  - idiom
   - glossary
 ---
 
@@ -26,7 +26,7 @@ buckets, but the stable identity is the effort ID.
 
 ## Atom Tracker Doc
 
-A materialized markdown atom under `.harness/atoms/<title>/atom-NNN.md`. It is a
+A materialized markdown atom under `.idiom/atoms/<title>/atom-NNN.md`. It is a
 dispatchable slice of a design doc plus local persisted status and result
 evidence.
 
@@ -53,7 +53,7 @@ closed obligations, evidence, and verification.
 
 ## Context Graph
 
-The persistent repository memory graph stored under `.harness/comprehension`.
+The persistent repository memory graph stored under `.idiom/comprehension`.
 It records files, packages, symbols, imports, calls, tests, diagnostics,
 freshness, views, and packet cache state.
 
@@ -75,7 +75,7 @@ without granting additional authority by itself.
 
 ## Freshness
 
-The relationship between evidence and the active workspace state. Freshness
+The relationship between evidence and the current workspace state. Freshness
 answers whether a packet, graph view, or runtime trace still reflects the files
 and context being used.
 
@@ -112,7 +112,7 @@ final claims.
 
 ## Sidecar
 
-The integration surface that lets LLM agents use Agent Harness's repository-aware
+The integration surface that lets external agents use Idiom's repository-aware
 tools, schemas, memory, verification, and audit systems.
 
 ## Source Sanity
@@ -122,14 +122,14 @@ beyond patch hygiene. It is separate from focused tests and builds.
 
 ## Source-Satisfied
 
-A valid no-op closeout state when active source should contain the requested
+A valid no-op closeout state when current source already contains the requested
 behavior. It requires per-path evidence and any required test evidence; it must
 not be simulated with placeholder edits.
 
 ## Terminal Atom
 
 An atom tracker doc whose status says the work should not be dispatched again.
-Target terminal statuses include completed, complete, accepted, closed,
+Current terminal statuses include completed, complete, accepted, closed,
 source-satisfied, source satisfied, and statuses containing `do not dispatch`.
 
 ## Tool Profile

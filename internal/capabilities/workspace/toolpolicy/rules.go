@@ -37,14 +37,17 @@ func Match(tool string, req Request, rules map[string][]Rule) Decision {
 	if len(rules) == 0 {
 		return None
 	}
+
 	if decision := matchByKey(tool, req, rules, tool); decision != None {
 		return decision
 	}
+
 	if strings.HasPrefix(tool, "mcp:") && tool != "mcp:*" {
 		if decision := matchByKey(tool, req, rules, "mcp:*"); decision != None {
 			return decision
 		}
 	}
+
 	return None
 }
 
@@ -53,15 +56,18 @@ func matchByKey(tool string, req Request, rules map[string][]Rule, key string) D
 	if !ok || len(toolRules) == 0 {
 		return None
 	}
+
 	target := ExtractTarget(tool, req)
 	for _, rule := range toolRules {
 		if matchPattern(tool, rule.Pattern, target) {
 			if rule.Decision == None {
 				return Allow
 			}
+
 			return rule.Decision
 		}
 	}
+
 	return None
 }
 
@@ -74,9 +80,11 @@ func ExtractTarget(tool string, req Request) string {
 		if q := stringFieldFromRawJSON(req.Args, "query"); q != "" {
 			return q
 		}
+
 		if u := stringFieldFromRawJSON(req.Args, "url"); u != "" {
 			return u
 		}
+
 		return ""
 	default:
 		return strings.TrimSpace(req.Path)
@@ -87,18 +95,24 @@ func stringFieldFromRawJSON(raw json.RawMessage, key string) string {
 	if len(raw) == 0 {
 		return ""
 	}
+
 	var probe map[string]json.RawMessage
+
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return ""
 	}
+
 	rawVal, ok := probe[key]
 	if !ok {
 		return ""
 	}
+
 	var s string
+
 	if err := json.Unmarshal(rawVal, &s); err != nil {
 		return ""
 	}
+
 	return s
 }
 
@@ -107,9 +121,11 @@ func matchPattern(tool string, pattern string, target string) bool {
 	if pattern == "" || pattern == "*" {
 		return true
 	}
+
 	if target == "" {
 		return false
 	}
+
 	switch tool {
 	case "shell", "bash":
 		return matchShell(pattern, target)
@@ -124,31 +140,40 @@ func matchShell(pattern string, command string) bool {
 		if prefix == "" {
 			return true
 		}
+
 		if command == prefix {
 			return true
 		}
+
 		return strings.HasPrefix(command, prefix+" ")
 	}
+
 	return command == pattern
 }
 
 func matchPath(pattern string, path string) bool {
 	pat := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(pattern), "\\", "/"))
 	tgt := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(path), "\\", "/"))
+
 	if pat == "" {
 		return false
 	}
+
 	regex := "^" + globToRegex(pat) + "$"
+
 	compiled, err := regexp.Compile(regex)
 	if err != nil {
 		return false
 	}
+
 	return compiled.MatchString(tgt)
 }
 
 func globToRegex(pattern string) string {
 	var b strings.Builder
+
 	i := 0
+
 	for i < len(pattern) {
 		ch := pattern[i]
 		switch ch {
@@ -156,26 +181,37 @@ func globToRegex(pattern string) string {
 			if i+1 < len(pattern) && pattern[i+1] == '*' {
 				if i+2 < len(pattern) && pattern[i+2] == '/' {
 					b.WriteString(`(?:.*/)?`)
+
 					i += 3
+
 					continue
 				}
+
 				b.WriteString(`.*`)
+
 				i += 2
+
 				continue
 			}
+
 			b.WriteString(`[^/]*`)
+
 			i++
 		case '?':
 			b.WriteString(`[^/]`)
+
 			i++
 		case '.', '+', '(', ')', '|', '^', '$', '{', '}', '[', ']', '\\':
 			b.WriteByte('\\')
 			b.WriteByte(ch)
+
 			i++
 		default:
 			b.WriteByte(ch)
+
 			i++
 		}
 	}
+
 	return b.String()
 }

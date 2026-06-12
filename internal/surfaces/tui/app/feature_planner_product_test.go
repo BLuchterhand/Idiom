@@ -38,14 +38,17 @@ func TestFeaturePlannerTUIDirectCommandUsesProductContextFromMentionedEffortRoot
 	if err != nil {
 		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
 	}
+
 	if !strings.Contains(answer, "feature-planner: "+featureplanner.FeatureStatePlanningRepair) {
 		t.Fatalf("expected planning-repair answer, got:\n%s", answer)
 	}
+
 	for _, want := range []string{"internal/qcb/binding.go", "TDD-1"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected blocker to mention %q, got:\n%s", want, answer)
 		}
 	}
+
 	if m.lastPlanExecuteRunResult != nil {
 		t.Fatalf("plan-execute should not be dispatched after product context rejection")
 	}
@@ -70,6 +73,7 @@ func TestFeaturePlannerTUIDirectPlanValidatesBeforeProductNormalization(t *testi
 	if err != nil {
 		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
 	}
+
 	for _, want := range []string{
 		"feature-planner: " + featureplanner.FeatureStatePlanningRepair,
 		"native/tests/test_quality_inventory_bindings.cpp",
@@ -79,6 +83,7 @@ func TestFeaturePlannerTUIDirectPlanValidatesBeforeProductNormalization(t *testi
 			t.Fatalf("expected answer to contain %q, got:\n%s", want, answer)
 		}
 	}
+
 	if m.lastPlanExecuteRunResult != nil {
 		t.Fatalf("plan-execute should not be dispatched after raw product scope rejection")
 	}
@@ -95,15 +100,19 @@ func TestFeaturePlannerTUITurnRetriesEmptyPlannerResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runFeaturePlannerTUITurn: %v", err)
 	}
+
 	if answer != `{"tool":"submit_feature_plan","summary":"ok"}` {
 		t.Fatalf("answer = %q", answer)
 	}
+
 	if client.callCount != 2 {
 		t.Fatalf("model calls = %d, want 2", client.callCount)
 	}
+
 	if len(client.options) != 2 || !client.options[0].ResponseFormatJSON || client.options[1].ResponseFormatJSON {
 		t.Fatalf("unexpected response format options: %#v", client.options)
 	}
+
 	if len(client.messages) != 2 || !strings.Contains(client.messages[1][0].Content, "empty visible content") {
 		t.Fatalf("retry prompt did not explain empty response: %#v", client.messages)
 	}
@@ -122,9 +131,11 @@ func TestFeaturePlannerProductWriteEnvelopeExcludesContextEvidencePaths(t *testi
 			t.Fatalf("write envelope missing authorized mutation path %q: %#v", want, got)
 		}
 	}
+
 	if slices.Contains(got, "docs/product-workflows/efforts/started/native-quality/prd.md") {
 		t.Fatalf("context evidence path must not become write authority: %#v", got)
 	}
+
 	for _, forbidden := range []string{"./native/src/core/colony_sim.h", "../outside/**"} {
 		if slices.Contains(got, forbidden) {
 			t.Fatalf("write envelope should normalize or drop invalid path %q: %#v", forbidden, got)
@@ -134,6 +145,7 @@ func TestFeaturePlannerProductWriteEnvelopeExcludesContextEvidencePaths(t *testi
 
 func TestFeaturePlannerTUIAnswerIncludesOpenQuestionDetails(t *testing.T) {
 	state := featureplanner.NewState("question-session", "need scope", "", 3, time.Unix(1, 0).UTC())
+
 	state.Status = featureplanner.FeatureStatePlanningQuestion
 	state.OpenQuestions = []featureplanner.PlannerQuestion{{
 		Status:          "open",
@@ -151,10 +163,12 @@ func TestFeaturePlannerTUIDirectCommandSkipsClosedSourceSatisfiedEffort(t *testi
 	effortRel := filepath.Join("docs", "product-workflows", "efforts", "started", "native-quality")
 	effortRoot := filepath.Join(projectRoot, effortRel)
 	writeNativeQualityEffort(t, effortRoot)
+
 	workflowState, err := productworkflow.LoadWorkflowState(effortRoot)
 	if err != nil {
 		t.Fatalf("load workflow state: %v", err)
 	}
+
 	workflowState.StatusBucket = "closed"
 	workflowState.CurrentPhase = "source-satisfied-closeout"
 	workflowState.CurrentState = "closed"
@@ -174,16 +188,20 @@ func TestFeaturePlannerTUIDirectCommandSkipsClosedSourceSatisfiedEffort(t *testi
 	if err != nil {
 		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
 	}
+
 	if !strings.Contains(answer, "feature-planner: "+featureplanner.FeatureStateSourceSatisfied) {
 		t.Fatalf("expected source-satisfied answer, got:\n%s", answer)
 	}
+
 	if m.lastPlanExecuteRunResult != nil {
 		t.Fatalf("plan-execute should not be dispatched for closed/source-satisfied effort")
 	}
+
 	statePath := featurePlannerCommandAnswerStatePath(answer)
 	if statePath == "" {
 		t.Fatalf("answer missing state path:\n%s", answer)
 	}
+
 	state := loadFeaturePlannerCommandStateFile(t, filepath.Join(projectRoot, filepath.FromSlash(statePath)))
 	if state.Status != featureplanner.FeatureStateSourceSatisfied || state.EffortID != "native-quality" {
 		t.Fatalf("unexpected saved state: %#v", state)
@@ -197,19 +215,24 @@ func featurePlannerCommandAnswerStatePath(answer string) string {
 			return strings.TrimSpace(strings.TrimPrefix(line, "state:"))
 		}
 	}
+
 	return ""
 }
 
 func loadFeaturePlannerCommandStateFile(t *testing.T, path string) featureplanner.FeatureState {
 	t.Helper()
+
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read saved feature planner state: %v", err)
 	}
+
 	var state featureplanner.FeatureState
+
 	if err := json.Unmarshal(body, &state); err != nil {
 		t.Fatalf("decode saved feature planner state: %v", err)
 	}
+
 	return state
 }
 
@@ -236,8 +259,10 @@ func TestSanitizeEffortSlug(t *testing.T) {
 				if got == "" {
 					t.Error("empty input should produce a timestamp-based slug")
 				}
+
 				return
 			}
+
 			if got != tt.expected {
 				t.Errorf("sanitizeEffortSlug(%q) = %q, want %q", tt.input, got, tt.expected)
 			}
@@ -247,12 +272,15 @@ func TestSanitizeEffortSlug(t *testing.T) {
 
 func writeNativeQualityEffort(t *testing.T, effortRoot string) {
 	t.Helper()
+
 	if err := os.MkdirAll(filepath.Join(effortRoot, "adrs"), 0o755); err != nil {
 		t.Fatalf("mkdir adrs: %v", err)
 	}
+
 	if err := os.MkdirAll(filepath.Join(effortRoot, "evidence"), 0o755); err != nil {
 		t.Fatalf("mkdir evidence: %v", err)
 	}
+
 	writeFeaturePlannerCommandJSON(t, filepath.Join(effortRoot, "workflow_state.json"), productworkflow.WorkflowState{
 		SchemaVersion: "idiom.product_workflow_state.v1",
 		EffortID:      "native-quality",
@@ -275,6 +303,7 @@ func writeNativeQualityEffort(t *testing.T, effortRoot string) {
 		DurabilityLevel:  "source_controlled",
 		NextValidActions: []string{"feature-planner"},
 	})
+
 	if err := productworkflow.WritePRDMarkdown(effortRoot, productworkflow.PRDDocument{
 		FrontMatter: productworkflow.PRDFrontMatter{
 			SchemaVersion:     "idiom.prd.v1",
@@ -299,6 +328,7 @@ func writeNativeQualityEffort(t *testing.T, effortRoot string) {
 	}); err != nil {
 		t.Fatalf("write prd.md: %v", err)
 	}
+
 	writeFeaturePlannerCommandJSON(t, filepath.Join(effortRoot, "adrs", "index.json"), productworkflow.ADRIndex{
 		SchemaVersion: "idiom.adr_index.v1",
 		EffortID:      "native-quality",
@@ -311,6 +341,7 @@ func writeNativeQualityEffort(t *testing.T, effortRoot string) {
 			PRDRefs:      []string{"REQ-NATIVE"},
 		}},
 	})
+
 	if err := productworkflow.WriteADRMarkdown(effortRoot, "001-native-binding.md", productworkflow.ADRDocument{
 		FrontMatter: productworkflow.ADRFrontMatter{
 			SchemaVersion:     "idiom.adr.v1",
@@ -347,6 +378,7 @@ func writeNativeQualityEffort(t *testing.T, effortRoot string) {
 	}); err != nil {
 		t.Fatalf("write ADR: %v", err)
 	}
+
 	writeFeaturePlannerCommandJSON(t, filepath.Join(effortRoot, "tdd.json"), productworkflow.TDDLedger{
 		SchemaVersion: "idiom.tdd_ledger.v1",
 		EffortID:      "native-quality",
@@ -383,6 +415,7 @@ func writeNativeQualityEffort(t *testing.T, effortRoot string) {
 			Report:         "reports/mwe-1.3b.json",
 		}},
 	})
+
 	records := []productworkflow.ImplementationLedgerRecord{{
 		RecordType:     "atom_planned",
 		TaskID:         "mwe-1.3b-native-quality",
@@ -418,6 +451,7 @@ func featurePlannerCommandFloatPtr(value float64) *float64 {
 
 func featurePlannerCommandBadGoPlanJSON(t *testing.T) string {
 	t.Helper()
+
 	plan := featureplanner.FeaturePlan{
 		Tool:          featureplanner.ToolSubmitFeaturePlan,
 		SchemaVersion: featureplanner.FeaturePlanSchemaVersion,
@@ -474,14 +508,18 @@ func featurePlannerCommandBadGoPlanJSON(t *testing.T) string {
 			Prompt: "Implement the binding in Go.",
 		}},
 	}
+
 	return featurePlannerCommandPlanJSON(t, plan)
 }
 
 func featurePlannerCommandDemotedFilesPlanJSON(t *testing.T) string {
 	t.Helper()
+
 	plan := featurePlannerCommandNativePlan()
+
 	plan.Atoms[0].RequiredEditPaths = []string{"native/src/core/colony_sim.h"}
 	plan.Atoms[0].AllowedEditPaths = []string{"native/tests/test_quality_inventory_bindings.cpp"}
+
 	return featurePlannerCommandPlanJSON(t, plan)
 }
 
@@ -549,19 +587,23 @@ func featurePlannerCommandNativeAtom() featureplanner.FeatureAtomPlan {
 
 func featurePlannerCommandPlanJSON(t *testing.T, plan featureplanner.FeaturePlan) string {
 	t.Helper()
+
 	data, err := json.Marshal(plan)
 	if err != nil {
 		t.Fatalf("marshal feature plan: %v", err)
 	}
+
 	return string(data)
 }
 
 func writeFeaturePlannerCommandJSON(t *testing.T, path string, value any) {
 	t.Helper()
+
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal %s: %v", path, err)
 	}
+
 	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
@@ -569,14 +611,18 @@ func writeFeaturePlannerCommandJSON(t *testing.T, path string, value any) {
 
 func writeFeaturePlannerCommandJSONL(t *testing.T, path string, records []productworkflow.ImplementationLedgerRecord) {
 	t.Helper()
+
 	var lines []string
+
 	for _, record := range records {
 		data, err := json.Marshal(record)
 		if err != nil {
 			t.Fatalf("marshal ledger record: %v", err)
 		}
+
 		lines = append(lines, string(data))
 	}
+
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
@@ -627,25 +673,32 @@ Revert the auth module changes.
 ## Open Questions
 - None
 `
+
 		docs, entries, err := splitAndParseADRs(output, prd)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
+
 		if len(docs) != 1 {
 			t.Fatalf("expected 1 doc, got %d", len(docs))
 		}
+
 		if docs[0].FrontMatter.ADRID != "ADR-001" {
 			t.Errorf("expected ADR-001, got %s", docs[0].FrontMatter.ADRID)
 		}
+
 		if !docs[0].Sections.HasContext {
 			t.Error("expected HasContext to be true")
 		}
+
 		if !docs[0].Sections.HasDecision {
 			t.Error("expected HasDecision to be true")
 		}
+
 		if len(entries) != 1 {
 			t.Fatalf("expected 1 index entry, got %d", len(entries))
 		}
+
 		if entries[0].Path != "ADR-001.md" {
 			t.Errorf("expected ADR-001.md, got %s", entries[0].Path)
 		}
@@ -724,19 +777,24 @@ Rollback 2.
 ## Open Questions
 None.
 `
+
 		docs, entries, err := splitAndParseADRs(output, prd)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
+
 		if len(docs) != 2 {
 			t.Fatalf("expected 2 docs, got %d", len(docs))
 		}
+
 		if docs[0].FrontMatter.ADRID != "ADR-001" {
 			t.Errorf("expected ADR-001 first, got %s", docs[0].FrontMatter.ADRID)
 		}
+
 		if docs[1].FrontMatter.ADRID != "ADR-002" {
 			t.Errorf("expected ADR-002 second, got %s", docs[1].FrontMatter.ADRID)
 		}
+
 		if len(entries) != 2 {
 			t.Fatalf("expected 2 entries, got %d", len(entries))
 		}
@@ -778,10 +836,12 @@ Test.
 ## Open Questions
 Test.
 `
+
 		docs, _, err := splitAndParseADRs(output, prd)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
+
 		if docs[0].FrontMatter.ADRID != "ADR-001" {
 			t.Errorf("expected auto-assigned ADR-001, got %s", docs[0].FrontMatter.ADRID)
 		}
@@ -862,10 +922,12 @@ Second.
 ## Open Questions
 Second.
 `
+
 		docs, _, err := splitAndParseADRs(output, prd)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
+
 		if len(docs) != 2 {
 			t.Fatalf("expected 2 valid docs (skipping garbage), got %d", len(docs))
 		}
@@ -882,6 +944,7 @@ func TestPlanExecuteAnswerIsBlocked(t *testing.T) {
 			t.Fatalf("expected blocked plan-execute answer for %q", input)
 		}
 	}
+
 	if planExecuteAnswerIsBlocked("Decision: source-satisfied\n- internal/example/example.go: already satisfied") {
 		t.Fatal("source-satisfied answer should remain eligible for completion wrapper")
 	}
@@ -889,6 +952,7 @@ func TestPlanExecuteAnswerIsBlocked(t *testing.T) {
 
 func TestProductWorkflowFeaturePlannerRecoveryBlocksCompletion(t *testing.T) {
 	state := featureplanner.NewState("feature-session", "prompt", "", 3, time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC))
+
 	state.Status = featureplanner.FeatureStateDispatching
 	state.Atoms = []featureplanner.FeatureAtomState{{
 		FeatureAtomPlan: featureplanner.FeatureAtomPlan{
@@ -904,6 +968,7 @@ func TestProductWorkflowFeaturePlannerRecoveryBlocksCompletion(t *testing.T) {
 	if !blocked {
 		t.Fatal("recovery-open child must block product completion")
 	}
+
 	for _, want := range []string{
 		"feature-planner: recovery_open",
 		"session_id: feature-session",
@@ -919,6 +984,7 @@ func TestProductWorkflowFeaturePlannerRecoveryBlocksCompletion(t *testing.T) {
 
 func TestProductWorkflowFeaturePlannerRecoverySurfacesOpenQuestionDetails(t *testing.T) {
 	state := featureplanner.NewState("feature-session", "prompt", "", 3, time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC))
+
 	state.Status = featureplanner.FeatureStatePlanningQuestion
 	state.Atoms = []featureplanner.FeatureAtomState{{
 		FeatureAtomPlan: featureplanner.FeatureAtomPlan{
@@ -941,6 +1007,7 @@ func TestProductWorkflowFeaturePlannerRecoverySurfacesOpenQuestionDetails(t *tes
 	if !blocked {
 		t.Fatal("open child question must block product completion")
 	}
+
 	for _, want := range []string{
 		"progress_state: .idiom/plan-execute/pe-session/state.json",
 		"source_sanity: internal/surfaces/tui/app/product_status.go failed compile failed",
@@ -954,6 +1021,7 @@ func TestProductWorkflowFeaturePlannerRecoverySurfacesOpenQuestionDetails(t *tes
 
 func TestProductWorkflowFeaturePlannerRecoveryAllowsCompleteState(t *testing.T) {
 	state := featureplanner.NewState("feature-session", "prompt", "", 3, time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC))
+
 	state.Status = featureplanner.FeatureStateComplete
 	state.Atoms = []featureplanner.FeatureAtomState{{
 		FeatureAtomPlan: featureplanner.FeatureAtomPlan{ID: "atom-1"},
@@ -969,6 +1037,7 @@ func TestFeaturePlannerReconcilesStaleActiveRunFromTerminalPlanExecuteProgress(t
 	root := t.TempDir()
 	startedAt := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
 	state := featureplanner.NewState("feature-session", "prompt", "", 3, startedAt)
+
 	state.Status = featureplanner.FeatureStateDispatching
 	state.Atoms = []featureplanner.FeatureAtomState{{
 		FeatureAtomPlan: featureplanner.FeatureAtomPlan{
@@ -986,11 +1055,14 @@ func TestFeaturePlannerReconcilesStaleActiveRunFromTerminalPlanExecuteProgress(t
 		State:         "running",
 		StartedAt:     startedAt.Format(time.RFC3339Nano),
 	}}
+
 	progress := planexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, startedAt.Add(time.Minute))
+
 	progress.Phase = planexecute.ProgressPhasePlanning
 	progress.Status = planexecute.ProgressStatusFailed
 	progress.FailureKind = planexecute.RunFailurePlannerBlocked
 	progress.FailureReason = "<<QUESTION>>: pkg/feature.go source evidence unavailable"
+
 	progressPath, err := planexecute.SaveProgressState(root, &progress)
 	if err != nil {
 		t.Fatalf("SaveProgressState: %v", err)
@@ -1002,15 +1074,19 @@ func TestFeaturePlannerReconcilesStaleActiveRunFromTerminalPlanExecuteProgress(t
 	if state.Status != featureplanner.FeatureStateRecoveryOpen {
 		t.Fatalf("feature state = %q, want recovery-open", state.Status)
 	}
+
 	if state.Atoms[0].State != featureplanner.AtomStateRecoveryOpen {
 		t.Fatalf("atom state = %q, want recovery-open", state.Atoms[0].State)
 	}
+
 	if len(state.ActiveRuns) != 0 {
 		t.Fatalf("active run should be folded after durable terminal progress: %+v", state.ActiveRuns)
 	}
+
 	if len(events) != 1 || events[0].Type != "idiom.feature_planner.plan_execute_completion_rejected" {
 		t.Fatalf("unexpected events: %+v", events)
 	}
+
 	for _, want := range []string{
 		"nested plan-execute reported failure details",
 		"planner_blocked",
@@ -1020,9 +1096,11 @@ func TestFeaturePlannerReconcilesStaleActiveRunFromTerminalPlanExecuteProgress(t
 			t.Fatalf("event message missing %q: %+v", want, events[0])
 		}
 	}
+
 	if got := events[0].Fields["completion_source"]; got != "durable_plan_execute_progress" {
 		t.Fatalf("completion_source = %v, want durable_plan_execute_progress; fields=%+v", got, events[0].Fields)
 	}
+
 	if got := events[0].Fields["progress_path"]; got != progressPath {
 		t.Fatalf("progress_path = %v, want %s; fields=%+v", got, progressPath, events[0].Fields)
 	}
@@ -1041,6 +1119,7 @@ func TestFeaturePlannerReconcilesSkippedReviewProgressAsComplete(t *testing.T) {
 	}
 	contract := featureplanner.StampPlanAuthorityContract(&plan, nil)
 	state := featureplanner.NewState("feature-session", "prompt", "", 3, startedAt)
+
 	state.Status = featureplanner.FeatureStateDispatching
 	state.Plan = plan
 	state.Atoms = []featureplanner.FeatureAtomState{{
@@ -1058,7 +1137,9 @@ func TestFeaturePlannerReconcilesSkippedReviewProgressAsComplete(t *testing.T) {
 		State:                "running",
 		StartedAt:            startedAt.Format(time.RFC3339Nano),
 	}}
+
 	progress := planexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, startedAt.Add(time.Minute))
+
 	progress.Phase = planexecute.ProgressPhaseComplete
 	progress.Status = planexecute.ProgressStatusCompleted
 	progress.ChangedPaths = []string{"pkg/feature.go"}
@@ -1068,6 +1149,7 @@ func TestFeaturePlannerReconcilesSkippedReviewProgressAsComplete(t *testing.T) {
 		Status: "ok",
 	}}
 	progress.Review.Status = planexecute.ProgressStatusSkipped
+
 	progressPath, err := planexecute.SaveProgressState(root, &progress)
 	if err != nil {
 		t.Fatalf("SaveProgressState: %v", err)
@@ -1079,18 +1161,23 @@ func TestFeaturePlannerReconcilesSkippedReviewProgressAsComplete(t *testing.T) {
 	if state.Status != featureplanner.FeatureStateComplete {
 		t.Fatalf("feature state = %q, want complete; events=%+v blockers=%+v", state.Status, events, state.Blockers)
 	}
+
 	if state.Atoms[0].State != featureplanner.AtomStateComplete {
 		t.Fatalf("atom state = %q, want complete; events=%+v blockers=%+v", state.Atoms[0].State, events, state.Atoms[0].Blockers)
 	}
+
 	if len(state.ActiveRuns) != 0 {
 		t.Fatalf("active run should be folded after durable terminal progress: %+v", state.ActiveRuns)
 	}
+
 	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_completed" {
 		t.Fatalf("unexpected events: %+v", events)
 	}
+
 	if got := events[0].Fields["review_repair_skipped"]; got != true {
 		t.Fatalf("review_repair_skipped = %v, want true; fields=%+v", got, events[0].Fields)
 	}
+
 	if got := events[0].Fields["progress_path"]; got != progressPath {
 		t.Fatalf("progress_path = %v, want %s; fields=%+v", got, progressPath, events[0].Fields)
 	}
@@ -1099,6 +1186,7 @@ func TestFeaturePlannerReconcilesSkippedReviewProgressAsComplete(t *testing.T) {
 func TestPlanExecuteExecutionRecoveryOpenMessageSurfacesSourceSanity(t *testing.T) {
 	root := t.TempDir()
 	state := planexecute.NewProgressState("pe-session", "prompt", "", []string{"internal/surfaces/tui/app/product_status.go"}, nil, time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC))
+
 	state.Phase = planexecute.ProgressPhaseReviewRepair
 	state.Status = planexecute.ProgressStatusFailed
 	state.FailureKind = planexecute.RunFailureSourceSanityFailed
@@ -1109,6 +1197,7 @@ func TestPlanExecuteExecutionRecoveryOpenMessageSurfacesSourceSanity(t *testing.
 		Status: "failed",
 		Error:  "compile failed",
 	}}
+
 	statePath, err := planexecute.SaveProgressState(root, &state)
 	if err != nil {
 		t.Fatalf("SaveProgressState: %v", err)
@@ -1124,6 +1213,7 @@ func TestPlanExecuteExecutionRecoveryOpenMessageSurfacesSourceSanity(t *testing.
 	if !ok {
 		t.Fatal("expected source-sanity failure to surface as recovery-open")
 	}
+
 	for _, want := range []string{
 		"plan-execute: recovery_open",
 		"session_id: pe-session",
@@ -1219,14 +1309,17 @@ func TestBuildProductWorkflowBriefAllowsResolvedImplementationEvidence(t *testin
 func TestInferProductWorkflowFilesToModifyFromADRBody(t *testing.T) {
 	body := "## Consequences\n- New package internal/greeting with greeting.go and greeting_test.go\n"
 	got := inferProductWorkflowFilesToModify(body)
+
 	for _, want := range []string{"internal/greeting/greeting.go", "internal/greeting/greeting_test.go"} {
 		found := false
+
 		for _, path := range got {
 			if path == want {
 				found = true
 				break
 			}
 		}
+
 		if !found {
 			t.Fatalf("missing inferred path %q from %#v", want, got)
 		}
@@ -1261,17 +1354,22 @@ func TestMergeADRIndex(t *testing.T) {
 			},
 		}
 		newDocs := []productworkflow.ADRDocument{makeDoc("ADR-001")}
+
 		newDocs[0].FrontMatter.Status = "updated"
+
 		newEntries := []productworkflow.ADRIndexEntry{makeEntry("ADR-001", "ADR-001.md")}
+
 		newEntries[0].Status = "updated"
 
 		docs, entries := mergeADRIndex(existing, newDocs, newEntries)
 		if len(entries) != 1 {
 			t.Fatalf("expected 1, got %d", len(entries))
 		}
+
 		if entries[0].Status != "updated" {
 			t.Errorf("expected status updated, got %s", entries[0].Status)
 		}
+
 		_ = docs
 	})
 
@@ -1288,10 +1386,12 @@ func TestMergeADRIndex(t *testing.T) {
 		if len(entries) != 2 {
 			t.Fatalf("expected 2, got %d", len(entries))
 		}
+
 		found := map[string]bool{}
 		for _, e := range entries {
 			found[e.ADRID] = true
 		}
+
 		if !found["ADR-001"] || !found["ADR-002"] {
 			t.Errorf("expected both ADR-001 and ADR-002, got %v", found)
 		}
@@ -1303,12 +1403,15 @@ func TestBuildPRDGenerationPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "build user authentication") {
 		t.Error("prompt should contain feature description")
 	}
+
 	if !strings.Contains(prompt, "idiom.prd.v1") {
 		t.Error("prompt should contain schema version")
 	}
+
 	if !strings.Contains(prompt, "**id**: REQ-001") {
 		t.Error("prompt should contain example requirement format")
 	}
+
 	if !strings.Contains(prompt, "open_questions") {
 		t.Error("prompt should contain open_questions field")
 	}
@@ -1319,12 +1422,15 @@ func TestBuildADRGenerationPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "PRD content here") {
 		t.Error("prompt should contain PRD content")
 	}
+
 	if !strings.Contains(prompt, "===") {
 		t.Error("prompt should mention === separator")
 	}
+
 	if !strings.Contains(prompt, "## Context") {
 		t.Error("prompt should list required sections")
 	}
+
 	if !strings.Contains(prompt, "idiom.adr.v1") {
 		t.Error("prompt should contain schema version")
 	}
@@ -1334,9 +1440,11 @@ func TestFirstNonEmpty(t *testing.T) {
 	if got := firstNonEmpty("", "b", "c"); got != "b" {
 		t.Errorf("expected b, got %s", got)
 	}
+
 	if got := firstNonEmpty("a", "b"); got != "a" {
 		t.Errorf("expected a, got %s", got)
 	}
+
 	if got := firstNonEmpty("", "", ""); got != "" {
 		t.Errorf("expected empty, got %s", got)
 	}
@@ -1346,9 +1454,11 @@ func TestTruncate(t *testing.T) {
 	if got := util.Truncate("hello", 10); got != "hello" {
 		t.Errorf("expected hello, got %s", got)
 	}
+
 	if got := util.Truncate("hello world", 5); got != "he..." {
 		t.Errorf("expected he..., got %s", got)
 	}
+
 	if got := util.Truncate("hello world", 11); got != "hello world" {
 		t.Errorf("expected hello world, got %s", got)
 	}

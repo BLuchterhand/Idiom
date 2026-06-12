@@ -10,10 +10,12 @@ func TestClaimExtractor_ExtractsClaimsWithoutReceipts(t *testing.T) {
 	if len(claims) != 3 {
 		t.Fatalf("claims length = %d, want 3: %#v", len(claims), claims)
 	}
+
 	commandClaim := mustFindClaim(t, claims, ClaimCommandResult)
 	if commandClaim.Supported || len(commandClaim.EvidenceIDs) != 0 {
 		t.Fatalf("command claim should be extracted without support: %#v", commandClaim)
 	}
+
 	if commandClaim.Severity != SeverityBlocking {
 		t.Fatalf("command claim severity = %q, want blocking", commandClaim.Severity)
 	}
@@ -27,12 +29,15 @@ func TestClaimExtractor_ExtractsClaimsWithoutReceipts(t *testing.T) {
 	if sourceClaim.Supported {
 		t.Fatalf("source claim should be extracted before support lookup: %#v", sourceClaim)
 	}
+
 	if sourceClaim.Target != "internal/labels/labels.go" {
 		t.Fatalf("source claim target = %q, want normalized target", sourceClaim.Target)
 	}
+
 	if sourceClaim.Line != 3 {
 		t.Fatalf("source claim line = %d, want cited start line 3", sourceClaim.Line)
 	}
+
 	if sourceClaim.Text != "internal/labels/labels.go:3-5" {
 		t.Fatalf("source claim text = %q, want cited span", sourceClaim.Text)
 	}
@@ -170,6 +175,7 @@ func TestGroundingValidator_SourceClaimRangeFallbacks(t *testing.T) {
 	if got := validator.ValidateClaim(notSource); got.Supported {
 		t.Fatalf("path claim should not be supported by a different target: %#v", got)
 	}
+
 	assertSupportedBy(t, validator.ValidateClaim(sourceWithoutCitation), SourceLocation, "s1")
 }
 
@@ -196,11 +202,13 @@ func TestTargetNormalizer_PreservesLegacyCompatibility(t *testing.T) {
 			want:   "",
 		},
 	}
+
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := normalizer.Normalize(tt.target); got != tt.want {
 				t.Fatalf("TargetNormalizer.Normalize(%q) = %q, want %q", tt.target, got, tt.want)
 			}
+
 			if got := normalizeTarget(tt.target); got != tt.want {
 				t.Fatalf("normalizeTarget(%q) = %q, want %q", tt.target, got, tt.want)
 			}
@@ -214,26 +222,33 @@ func TestTargetNormalizer_PreservesLegacyCompatibility(t *testing.T) {
 
 func mustFindClaim(t *testing.T, claims []AnswerClaim, kind ClaimKind) AnswerClaim {
 	t.Helper()
+
 	for _, claim := range claims {
 		if claim.Kind == kind {
 			return claim
 		}
 	}
+
 	t.Fatalf("missing %s claim in %#v", kind, claims)
+
 	return AnswerClaim{}
 }
 
 func assertSupportedBy(t *testing.T, claim AnswerClaim, kind ClaimKind, evidenceID string) {
 	t.Helper()
+
 	if claim.Kind != kind {
 		t.Fatalf("claim kind = %s, want %s: %#v", claim.Kind, kind, claim)
 	}
+
 	if !claim.Supported {
 		t.Fatalf("claim should be supported: %#v", claim)
 	}
+
 	if claim.Severity != "" || claim.Reason != "" {
 		t.Fatalf("supported claim should clear severity and reason: %#v", claim)
 	}
+
 	if len(claim.EvidenceIDs) != 1 || claim.EvidenceIDs[0] != evidenceID {
 		t.Fatalf("claim evidence = %#v, want [%s]", claim.EvidenceIDs, evidenceID)
 	}
@@ -241,12 +256,15 @@ func assertSupportedBy(t *testing.T, claim AnswerClaim, kind ClaimKind, evidence
 
 func assertUnsupported(t *testing.T, claim AnswerClaim, kind ClaimKind) {
 	t.Helper()
+
 	if claim.Kind != kind {
 		t.Fatalf("claim kind = %s, want %s: %#v", claim.Kind, kind, claim)
 	}
+
 	if claim.Supported {
 		t.Fatalf("claim should be unsupported: %#v", claim)
 	}
+
 	if claim.Severity != SeverityBlocking {
 		t.Fatalf("claim severity = %q, want blocking: %#v", claim.Severity, claim)
 	}

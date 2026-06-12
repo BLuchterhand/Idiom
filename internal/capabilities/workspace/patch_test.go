@@ -12,6 +12,7 @@ import (
 
 func patchWorkspaceConfig(t *testing.T) (*Manager, string) {
 	t.Helper()
+
 	dir := t.TempDir()
 	cfg := config.Workspace{
 		Root:                  dir,
@@ -24,6 +25,7 @@ func patchWorkspaceConfig(t *testing.T) (*Manager, string) {
 		EnableShell:           true,
 		EnableWrites:          true,
 	}
+
 	return NewManager(cfg), dir
 }
 
@@ -32,6 +34,7 @@ func TestApplyPatchAddUpdateDelete(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("alpha\nbeta\ngamma\n"), 0o644); err != nil {
 		t.Fatalf("seed existing.txt: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(dir, "doomed.txt"), []byte("bye\n"), 0o644); err != nil {
 		t.Fatalf("seed doomed.txt: %v", err)
 	}
@@ -53,6 +56,7 @@ func TestApplyPatchAddUpdateDelete(t *testing.T) {
 	if result.Error != "" {
 		t.Fatalf("apply_patch failed: %#v", result)
 	}
+
 	if !strings.Contains(result.Summary, "Applied patch") {
 		t.Fatalf("unexpected summary: %q", result.Summary)
 	}
@@ -60,9 +64,11 @@ func TestApplyPatchAddUpdateDelete(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(dir, "created", "note.md")); err != nil || string(data) != "# Note\nbody\n" {
 		t.Fatalf("created file mismatch: data=%q err=%v", string(data), err)
 	}
+
 	if data, err := os.ReadFile(filepath.Join(dir, "existing.txt")); err != nil || string(data) != "alpha\nBETA\ngamma\n" {
 		t.Fatalf("updated file mismatch: data=%q err=%v", string(data), err)
 	}
+
 	if _, err := os.Stat(filepath.Join(dir, "doomed.txt")); !os.IsNotExist(err) {
 		t.Fatalf("doomed.txt should be removed, stat err=%v", err)
 	}
@@ -85,6 +91,7 @@ func TestApplyPatchRepairsMissingEnvelopeForFileSectionPatch(t *testing.T) {
 	if result.Error != "" {
 		t.Fatalf("apply_patch should repair unambiguous missing envelope, got %#v", result)
 	}
+
 	if data, err := os.ReadFile(filepath.Join(dir, "existing.txt")); err != nil || string(data) != "alpha\nBETA\ngamma\n" {
 		t.Fatalf("updated file mismatch: data=%q err=%v", string(data), err)
 	}
@@ -127,9 +134,11 @@ func TestApplyPatchMoveTo(t *testing.T) {
 	if result.Error != "" {
 		t.Fatalf("apply_patch failed: %#v", result)
 	}
+
 	if _, err := os.Stat(filepath.Join(dir, "src.txt")); !os.IsNotExist(err) {
 		t.Fatalf("src.txt should be removed, stat err=%v", err)
 	}
+
 	if data, err := os.ReadFile(filepath.Join(dir, "dst.txt")); err != nil || string(data) != "goodbye\n" {
 		t.Fatalf("dst.txt mismatch: data=%q err=%v", string(data), err)
 	}
@@ -140,14 +149,17 @@ func TestApplyPatchRejectsExistingAddTarget(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "exists.txt"), []byte("a\n"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	patch := "*** Begin Patch\n" +
 		"*** Add File: exists.txt\n" +
 		"+x\n" +
 		"*** End Patch"
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: "apply_patch", Content: patch})
+
 	if result.Error == "" {
 		t.Fatal("expected error for Add File on existing target")
 	}
+
 	if data, _ := os.ReadFile(filepath.Join(dir, "exists.txt")); string(data) != "a\n" {
 		t.Fatalf("file should be untouched: %q", string(data))
 	}
@@ -158,6 +170,7 @@ func TestApplyPatchAmbiguousHunkRejected(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x\nx\nx\n"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	patch := "*** Begin Patch\n" +
 		"*** Update File: f.txt\n" +
 		"@@\n" +
@@ -165,9 +178,11 @@ func TestApplyPatchAmbiguousHunkRejected(t *testing.T) {
 		"+y\n" +
 		"*** End Patch"
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: "apply_patch", Content: patch})
+
 	if result.Error == "" {
 		t.Fatal("expected ambiguous-hunk error")
 	}
+
 	if data, _ := os.ReadFile(filepath.Join(dir, "f.txt")); string(data) != "x\nx\nx\n" {
 		t.Fatalf("file should be untouched: %q", string(data))
 	}
@@ -177,9 +192,11 @@ func TestApplyPatchRejectsInvalidGoBeforeWrite(t *testing.T) {
 	mgr, dir := patchWorkspaceConfig(t)
 	path := filepath.Join(dir, "analysis_agents.go")
 	original := "package app\n\nfunc ok() {}\n"
+
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	patch := "*** Begin Patch\n" +
 		"*** Update File: analysis_agents.go\n" +
 		"@@\n" +
@@ -193,6 +210,7 @@ func TestApplyPatchRejectsInvalidGoBeforeWrite(t *testing.T) {
 	if result.Error == "" || !strings.Contains(result.Error, "preflight syntax validation failed") {
 		t.Fatalf("expected invalid Go patch rejection, got %#v", result)
 	}
+
 	if data, _ := os.ReadFile(path); string(data) != original {
 		t.Fatalf("file should be untouched: %q", string(data))
 	}
@@ -203,8 +221,10 @@ func TestApplyPatchExploreModeRejected(t *testing.T) {
 	if err := mgr.SetMode(ModeExplore); err != nil {
 		t.Fatalf("set explore mode: %v", err)
 	}
+
 	patch := "*** Begin Patch\n*** Add File: x.txt\n+y\n*** End Patch"
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: "apply_patch", Content: patch})
+
 	if result.Error == "" {
 		t.Fatal("expected explore-mode rejection")
 	}

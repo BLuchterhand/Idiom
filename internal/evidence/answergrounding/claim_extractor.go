@@ -15,18 +15,22 @@ type ClaimExtractor struct{}
 
 func (ClaimExtractor) Extract(answer string) []AnswerClaim {
 	var claims []AnswerClaim
+
 	for lineNumber, rawLine := range strings.Split(answer, "\n") {
 		line := strings.TrimSpace(rawLine)
 		if line == "" {
 			continue
 		}
+
 		claims = append(claims, extractClaimsFromLine(line, lineNumber+1)...)
 	}
+
 	return claims
 }
 
 func extractClaimsFromLine(line string, lineNumber int) []AnswerClaim {
 	var claims []AnswerClaim
+
 	if verificationClaim(line) {
 		claims = append(claims, AnswerClaim{
 			Text:     line,
@@ -37,6 +41,7 @@ func extractClaimsFromLine(line string, lineNumber int) []AnswerClaim {
 			Reason:   "verification claim requires command_result evidence",
 		})
 	}
+
 	if changeClaim(line) {
 		claims = append(claims, AnswerClaim{
 			Text:     line,
@@ -47,9 +52,11 @@ func extractClaimsFromLine(line string, lineNumber int) []AnswerClaim {
 			Reason:   "change claim requires diff_write evidence",
 		})
 	}
+
 	if match := sourceLocationPattern.FindStringSubmatch(line); match != nil {
 		target := normalizeTarget(match[2])
 		startLine, _ := strconv.Atoi(match[3])
+
 		claims = append(claims, AnswerClaim{
 			Text:     strings.TrimSpace(match[0]),
 			Kind:     SourceLocation,
@@ -58,10 +65,13 @@ func extractClaimsFromLine(line string, lineNumber int) []AnswerClaim {
 			Severity: SeverityBlocking,
 			Reason:   "source location claim requires source_body or symbol_body evidence covering the cited line",
 		})
+
 		return claims
 	}
+
 	if match := pathPattern.FindStringSubmatch(line); match != nil {
 		target := normalizeTarget(match[2])
+
 		claims = append(claims, AnswerClaim{
 			Text:     strings.TrimSpace(match[0]),
 			Kind:     Path,
@@ -71,11 +81,13 @@ func extractClaimsFromLine(line string, lineNumber int) []AnswerClaim {
 			Reason:   "path reference requires path or packet evidence",
 		})
 	}
+
 	return claims
 }
 
 func verificationClaim(line string) bool {
 	lower := strings.ToLower(line)
+
 	return strings.Contains(lower, "verification passed") ||
 		strings.Contains(lower, "tests passed") ||
 		strings.Contains(lower, "test passed") ||
@@ -84,6 +96,7 @@ func verificationClaim(line string) bool {
 
 func changeClaim(line string) bool {
 	lower := strings.ToLower(line)
+
 	return strings.Contains(lower, "changed") ||
 		strings.Contains(lower, "modified") ||
 		strings.Contains(lower, "implemented") ||

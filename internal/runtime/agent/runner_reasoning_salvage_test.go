@@ -29,15 +29,19 @@ func TestExtractStructuredMarkdownFromReasoningHappyPath(t *testing.T) {
 		"- Test file naming is correct\n\n" +
 		"## Verdict\n\nfix-bugs-then-ship\n"
 	out := extractStructuredMarkdownFromReasoning(reasoning)
+
 	if out == "" {
 		t.Fatal("expected extraction to succeed")
 	}
+
 	if !strings.Contains(out, "## Bugs found") {
 		t.Fatalf("output missing Bugs found section: %s", out)
 	}
+
 	if !strings.Contains(out, "## Verdict") {
 		t.Fatalf("output missing Verdict section: %s", out)
 	}
+
 	if strings.Contains(out, "OK so the brief") {
 		t.Fatalf("output should not include pre-title chatter: %s", out)
 	}
@@ -78,18 +82,23 @@ func TestExtractStructuredMarkdownFromReasoningRecognizesDraftShape(t *testing.T
 		"2. Skip events whose Mode doesn't match.\n\n" +
 		"## Acceptance\n\n`go test ./cmd/idiom/` passes.\n"
 	out := extractStructuredMarkdownFromReasoning(reasoning)
+
 	if out == "" {
 		t.Fatal("expected draft-shape extraction to succeed")
 	}
+
 	if !strings.Contains(out, "## Files To Modify") {
 		t.Fatalf("output missing Files To Modify: %s", out)
 	}
+
 	if !strings.Contains(out, "## Required Behavior") {
 		t.Fatalf("output missing Required Behavior: %s", out)
 	}
+
 	if !strings.Contains(out, "# Task lane-history-mode") {
 		t.Fatalf("output should include the # title from look-back: %s", out)
 	}
+
 	if strings.Contains(out, "OK so the spec asks") {
 		t.Fatalf("output should not include pre-title chatter: %s", out)
 	}
@@ -110,12 +119,15 @@ func TestExtractStructuredMarkdownFromReasoningRecognizesRequiredEditsDraftShape
 		"## Acceptance\n\n" +
 		"- focused tests pass\n"
 	out := extractStructuredMarkdownFromReasoning(reasoning)
+
 	if out == "" {
 		t.Fatal("expected required-edits draft-shape extraction to succeed")
 	}
+
 	if strings.Contains(out, "Now I have both inputs") {
 		t.Fatalf("output should not include prose preface: %s", out)
 	}
+
 	if !strings.Contains(out, "## Required Edits") || !strings.Contains(out, "# Corrected implementation brief") {
 		t.Fatalf("output missing corrected brief sections: %s", out)
 	}
@@ -127,12 +139,15 @@ func TestExtractStructuredMarkdownFromReasoningPicksLastReviewWhenIterated(t *te
 		"Actually wait, let me reconsider. Hmm.\n\n" +
 		"# Review (revised)\n\n## Bugs found\n\n1. Better bug A\n2. Better bug B\n\n## OK\n- Anchors look right\n\n## Verdict\n\nfix-bugs-then-ship\n"
 	out := extractStructuredMarkdownFromReasoning(reasoning)
+
 	if out == "" {
 		t.Fatal("expected extraction")
 	}
+
 	if !strings.Contains(out, "# Review (revised)") {
 		t.Fatalf("output should pick the revised pass: %s", out)
 	}
+
 	if strings.Contains(out, "First attempt bug") {
 		t.Fatalf("output should not include the earlier iteration: %s", out)
 	}
@@ -166,16 +181,20 @@ func TestAutoSalvageRecoversFromReasoningWhenReplyIsEmpty(t *testing.T) {
 	if !r.tryAutoSalvageMarkdownDeliverable("") {
 		t.Fatal("expected auto-salvage to succeed from reasoning content")
 	}
+
 	body, err := os.ReadFile(filepath.Join(dir, required))
 	if err != nil {
 		t.Fatalf("read salvaged file: %v", err)
 	}
+
 	if !strings.Contains(string(body), "## Bugs found") {
 		t.Fatalf("salvaged file should contain Bugs found: %s", body)
 	}
+
 	if !strings.Contains(string(body), "## Verdict") {
 		t.Fatalf("salvaged file should contain Verdict: %s", body)
 	}
+
 	_ = context.Background()
 }
 
@@ -203,14 +222,17 @@ func TestAutoSalvageExtractsStructuredMarkdownFromReplyProse(t *testing.T) {
 	if !r.tryAutoSalvageMarkdownDeliverable(reply) {
 		t.Fatal("expected auto-salvage to extract structured markdown from reply prose")
 	}
+
 	body, err := os.ReadFile(filepath.Join(dir, required))
 	if err != nil {
 		t.Fatalf("read salvaged file: %v", err)
 	}
+
 	text := string(body)
 	if strings.Contains(text, "Now I have both inputs") {
 		t.Fatalf("salvage should omit pre-deliverable prose: %s", text)
 	}
+
 	if !strings.Contains(text, "# Corrected atom brief") || !strings.Contains(text, "## Problem") || !strings.Contains(text, "## Required Edits") {
 		t.Fatalf("salvaged file missing corrected draft shape: %s", text)
 	}
@@ -229,15 +251,18 @@ func TestRunAutoSalvageRecordsMarkdownDeliverableWrite(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": reply},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	var completion runnerCompletionStatus
+
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -273,19 +298,24 @@ func TestRunAutoSalvageRecordsMarkdownDeliverableWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
 		t.Fatalf("auto-salvage should satisfy required path blocker, got: %s", answer)
 	}
+
 	body, err := os.ReadFile(filepath.Join(dir, required))
 	if err != nil {
 		t.Fatalf("read salvaged file: %v", err)
 	}
+
 	if !strings.Contains(string(body), "## Required Edits") {
 		t.Fatalf("salvaged file missing expected body: %s", body)
 	}
+
 	if completion.Status != "completed" || completion.Reason != "auto_salvage_markdown_deliverable" {
 		t.Fatalf("expected completed auto-salvage status, got %#v", completion)
 	}
+
 	if requests != 1 {
 		t.Fatalf("expected one model request, got %d", requests)
 	}
@@ -294,6 +324,7 @@ func TestRunAutoSalvageRecordsMarkdownDeliverableWrite(t *testing.T) {
 func TestRunSalvagesHiddenReasoningWriteInsideRequiredScope(t *testing.T) {
 	dir := t.TempDir()
 	required := "a.txt"
+
 	if err := os.WriteFile(filepath.Join(dir, required), []byte("before\n"), 0o644); err != nil {
 		t.Fatalf("write required file: %v", err)
 	}
@@ -304,20 +335,27 @@ func TestRunSalvagesHiddenReasoningWriteInsideRequiredScope(t *testing.T) {
 		{"content": "Done.\nChanged paths:\n- a.txt\nVerification: not required for this text mutation."},
 	}
 	requests := 0
-	var salvageEvent string
-	var eventLog []string
+
+	var (
+		salvageEvent string
+		eventLog     []string
+	)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
 			t.Fatalf("unexpected extra chat request")
 		}
+
 		reply := replies[requests]
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": reply,
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	runner := &Runner{
@@ -354,19 +392,24 @@ func TestRunSalvagesHiddenReasoningWriteInsideRequiredScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v\nevents:\n%s", err, strings.Join(eventLog, "\n"))
 	}
+
 	if !strings.Contains(answer, "Done") {
 		t.Fatalf("unexpected answer: %s\nevents:\n%s", answer, strings.Join(eventLog, "\n"))
 	}
+
 	if !strings.Contains(salvageEvent, "edit_file") {
 		t.Fatalf("expected reasoning_tool_salvage event for edit_file, got %q", salvageEvent)
 	}
+
 	body, err := os.ReadFile(filepath.Join(dir, required))
 	if err != nil {
 		t.Fatalf("read required file: %v", err)
 	}
+
 	if string(body) != "after\n" {
 		t.Fatalf("required file = %q, want after", string(body))
 	}
+
 	if requests > len(replies) {
 		t.Fatalf("expected bounded model requests, got %d", requests)
 	}
@@ -401,9 +444,11 @@ func TestAutoSalvageSkipsQuestionBlockerEvenWithMarkdownShape(t *testing.T) {
 	reply := "<<QUESTION>>: blocked on missing evidence.\n\n" +
 		"## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | MODIFY |\n\n" +
 		"## Required Edits\n\n1. Cannot write safely.\n"
+
 	if r.tryAutoSalvageMarkdownDeliverable(reply) {
 		t.Fatal("question blockers must not be salvaged into deliverable files")
 	}
+
 	if _, err := os.Stat(filepath.Join(dir, "draft.md")); !os.IsNotExist(err) {
 		t.Fatalf("draft.md should not exist after skipped salvage, stat err=%v", err)
 	}
@@ -418,12 +463,15 @@ func TestMutationCompletionRejectionRequiresQuestionForMissingPathBlocker(t *tes
 		},
 	}
 	result, rejected := runner.mutationCompletionRejection("blocked because draft.md needs more evidence", nil)
+
 	if !rejected {
 		t.Fatalf("missing required path should reject blocker-like prose without <<QUESTION>>, got %#v", result)
 	}
+
 	if !strings.Contains(result.Error, "no successful write tool result") {
 		t.Fatalf("expected no-write gate error, got: %s", result.Error)
 	}
+
 	result, rejected = runner.mutationCompletionRejection("<<QUESTION>>: blocked because draft.md needs more evidence", nil)
 	if rejected {
 		t.Fatalf("path-specific <<QUESTION>> blocker should be accepted, got %#v", result)
@@ -437,9 +485,11 @@ func TestCompletionGateRecoveryKeepsScratchpadDeliverableOutputBudget(t *testing
 		RequiredEditPaths: []string{".idiom/refine/example/iter-3/draft.md"},
 	}
 	opts := completionGateRecoveryChatOptions(llama.ChatOptions{MaxTokens: 16384}, brief, nil)
+
 	if opts.MaxTokens != 16384 {
 		t.Fatalf("scratchpad recovery must preserve full deliverable budget, got %d", opts.MaxTokens)
 	}
+
 	opts = completionGateRecoveryChatOptions(llama.ChatOptions{}, brief, nil)
 	if opts.MaxTokens != 16384 {
 		t.Fatalf("scratchpad recovery should default to full deliverable budget, got %d", opts.MaxTokens)
@@ -460,9 +510,11 @@ func TestAutoSalvageSkipsPlanExecutePlannerPhase(t *testing.T) {
 		"## Files To Modify\n\n| File | Change |\n|------|--------|\n| `draft.md` | NEW FILE |\n\n" +
 		"## Required Edits\n\n1. Write this markdown file.\n\n" +
 		"## Acceptance\n\n- Review the generated content.\n"
+
 	if r.tryAutoSalvageMarkdownDeliverable(reply) {
 		t.Fatal("plan-execute planner phase must not run markdown deliverable auto-salvage")
 	}
+
 	if _, err := os.Stat(filepath.Join(dir, "draft.md")); !os.IsNotExist(err) {
 		t.Fatalf("draft.md should not exist after skipped plan-execute salvage, stat err=%v", err)
 	}
@@ -482,6 +534,7 @@ func TestExtractStructuredMarkdownFromReasoningRejectsUnfilledTemplate(t *testin
 		"## Required Behavior\n\n1. <numbered step with EXACT old_text/new_text or full new-file content in ```text fences>\n2. <next step>\n\n" +
 		"## Acceptance\n\n- `<shell command that verifies the change>`\n\nI need to fill in the placeholders.\n"
 	got := extractStructuredMarkdownFromReasoning(reasoning)
+
 	if got != "" {
 		t.Fatalf("expected salvage to refuse unfilled-template content; got %d chars: %q", len(got), got)
 	}

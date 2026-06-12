@@ -210,17 +210,21 @@ func (contract *SDDContract) UnmarshalJSON(data []byte) error {
 		PRDRequirementRefs []string        `json:"prd_requirement_refs,omitempty"`
 		ADRRefs            []string        `json:"adr_refs,omitempty"`
 	}
+
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
+
 	acceptance, err := decodeAcceptanceList(raw.Acceptance)
 	if err != nil {
 		return err
 	}
+
 	contract.Refs = raw.Refs
 	contract.Acceptance = acceptance
 	contract.PRDRequirementRefs = raw.PRDRequirementRefs
 	contract.ADRRefs = raw.ADRRefs
+
 	return nil
 }
 
@@ -228,14 +232,19 @@ func decodeAcceptanceList(raw json.RawMessage) ([]string, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
 	}
+
 	var list []string
+
 	if err := json.Unmarshal(raw, &list); err == nil {
 		return nonEmptyFeaturePlannerStrings(list), nil
 	}
+
 	var scalar string
+
 	if err := json.Unmarshal(raw, &scalar); err == nil {
 		return splitFeaturePlannerAcceptance(scalar), nil
 	}
+
 	return nil, fmt.Errorf("sdd_contract.acceptance must be an array of strings or a scalar acceptance string")
 }
 
@@ -244,16 +253,20 @@ func splitFeaturePlannerAcceptance(value string) []string {
 	if value == "" {
 		return nil
 	}
+
 	parts := strings.Split(value, ";")
 	out := make([]string, 0, len(parts))
+
 	for _, part := range parts {
 		if trimmed := strings.TrimSpace(part); trimmed != "" {
 			out = append(out, trimmed)
 		}
 	}
+
 	if len(out) == 0 {
 		return nil
 	}
+
 	return out
 }
 
@@ -261,12 +274,14 @@ func nonEmptyFeaturePlannerStrings(values []string) []string {
 	if len(values) == 0 {
 		return nil
 	}
+
 	out := make([]string, 0, len(values))
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
 			out = append(out, trimmed)
 		}
 	}
+
 	return out
 }
 
@@ -291,17 +306,21 @@ func (obligation *TDDObligation) UnmarshalJSON(data []byte) error {
 		Command        string          `json:"command"`
 		RequiredBefore json.RawMessage `json:"required_before"`
 	}
+
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
+
 	requiredBefore, err := decodeRequiredBefore(raw.RequiredBefore)
 	if err != nil {
 		return err
 	}
+
 	obligation.ID = raw.ID
 	obligation.Behavior = raw.Behavior
 	obligation.Command = raw.Command
 	obligation.RequiredBefore = requiredBefore
+
 	return nil
 }
 
@@ -309,14 +328,19 @@ func decodeRequiredBefore(raw json.RawMessage) (string, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return "", nil
 	}
+
 	var scalar string
+
 	if err := json.Unmarshal(raw, &scalar); err == nil {
 		return scalar, nil
 	}
+
 	var singleton []string
+
 	if err := json.Unmarshal(raw, &singleton); err == nil && len(singleton) == 1 {
 		return singleton[0], nil
 	}
+
 	return "", fmt.Errorf("required_before must be the scalar string \"implementation\"")
 }
 

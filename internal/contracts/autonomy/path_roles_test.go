@@ -28,9 +28,11 @@ func TestNamedPathInvariantsCoverCorePathRoles(t *testing.T) {
 			if !ok {
 				t.Fatalf("missing invariant for role %q", tt.role)
 			}
+
 			if invariant.InvariantID != tt.invariant || invariant.Decision != tt.decision {
 				t.Fatalf("unexpected invariant: %#v", invariant)
 			}
+
 			if invariant.Precedence <= 0 || invariant.ReasonCode == "" {
 				t.Fatalf("invariant should carry precedence and reason code: %#v", invariant)
 			}
@@ -43,18 +45,23 @@ func TestNamedPathInvariantsCoverCorePathRoles(t *testing.T) {
 	required, _ := PathInvariantForRole(PathRoleRequiredEdit)
 	allowed, _ := PathInvariantForRole(PathRoleAllowedEdit)
 	evidence, _ := PathInvariantForRole(PathRoleEvidenceReadonly)
+
 	if !(forbidden.Precedence > protected.Precedence &&
 		protected.Precedence > sideEffect.Precedence &&
 		sideEffect.Precedence > required.Precedence &&
 		required.Precedence > allowed.Precedence &&
 		allowed.Precedence > evidence.Precedence) {
+
 		t.Fatalf("unexpected precedence order: forbidden=%d protected=%d side-effect=%d required=%d allowed=%d evidence=%d",
 			forbidden.Precedence, protected.Precedence, sideEffect.Precedence, required.Precedence, allowed.Precedence, evidence.Precedence)
 	}
 
 	invariants := NamedPathInvariants()
+
 	invariants[InvariantForbiddenPath] = PathInvariant{}
+
 	invariant, ok := PathInvariantForRole(PathRoleForbidden)
+
 	if !ok || invariant.InvariantID != InvariantForbiddenPath {
 		t.Fatalf("NamedPathInvariants returned aliased mutable state: %#v", invariant)
 	}
@@ -74,22 +81,28 @@ func TestResolvePlanScopePathRoleObligationsSeparatesRequiredAndAllowedCandidate
 	if want := []string{"pkg/required.go"}; !slices.Equal(coverage.RequiredCoveragePaths, want) {
 		t.Fatalf("required coverage paths = %#v, want %#v", coverage.RequiredCoveragePaths, want)
 	}
+
 	if want := []string{"pkg/candidate.go"}; !slices.Equal(coverage.AllowedCandidatePaths, want) {
 		t.Fatalf("allowed candidate paths = %#v, want %#v", coverage.AllowedCandidatePaths, want)
 	}
+
 	if want := []string{"pkg/required.go"}; !slices.Equal(coverage.MissingRequiredCoveragePaths, want) {
 		t.Fatalf("candidate path must not satisfy required coverage, missing=%#v want %#v", coverage.MissingRequiredCoveragePaths, want)
 	}
+
 	if want := []string{"pkg/candidate.go"}; !slices.Equal(coverage.CandidatePathsOutsideRequired, want) {
 		t.Fatalf("candidate outside required = %#v, want %#v", coverage.CandidatePathsOutsideRequired, want)
 	}
+
 	if len(coverage.CandidateCoverage) != 1 {
 		t.Fatalf("candidate coverage = %#v", coverage.CandidateCoverage)
 	}
+
 	candidate := coverage.CandidateCoverage[0]
 	if candidate.SatisfiesRequiredCoverage || !candidate.WithinAllowedCandidatePath {
 		t.Fatalf("allowed candidate must remain scope-only, got %#v", candidate)
 	}
+
 	if !slices.Contains(candidate.Roles, PathRoleAllowedEdit) || slices.Contains(candidate.Roles, PathRoleRequiredEdit) {
 		t.Fatalf("candidate roles should be allowed-only, got %#v", candidate.Roles)
 	}
@@ -97,6 +110,7 @@ func TestResolvePlanScopePathRoleObligationsSeparatesRequiredAndAllowedCandidate
 
 func TestResolvePathRolesCoversRequiredEvidenceProtectedForbiddenAndSideEffect(t *testing.T) {
 	root := t.TempDir()
+
 	resolved, err := ResolvePathRoles(PathRoleResolverInput{
 		WorkspaceRoot: root,
 		PathRoles: []PathRole{
@@ -132,11 +146,13 @@ func TestResolvePathRolesCoversRequiredEvidenceProtectedForbiddenAndSideEffect(t
 	if !slices.Contains(required.EvidenceRefs, "ev-required") {
 		t.Fatalf("required role should carry evidence ref, got %#v", required.EvidenceRefs)
 	}
+
 	if resolved.RoleCounts[string(PathRoleRequiredEdit)] != 1 ||
 		resolved.RoleCounts[string(PathRoleEvidenceReadonly)] != 1 ||
 		resolved.RoleCounts[string(PathRoleProtected)] != 1 ||
 		resolved.RoleCounts[string(PathRoleForbidden)] != 1 ||
 		resolved.RoleCounts[string(PathRoleExternalEffect)] != 1 {
+
 		t.Fatalf("unexpected role counts: %#v", resolved.RoleCounts)
 	}
 }
@@ -160,13 +176,16 @@ func TestResolvePathRolesAppliesConflictPrecedenceAndDeduplicatesRoles(t *testin
 	if resolution.EffectiveRole != PathRoleForbidden || resolution.EffectiveInvariantID != InvariantForbiddenPath {
 		t.Fatalf("forbidden role should win conflict, got %#v", resolution)
 	}
+
 	if got := countResolvedRole(resolution.Roles, PathRoleRequiredEdit); got != 1 {
 		t.Fatalf("required role should be deduplicated, got %d role entries in %#v", got, resolution.Roles)
 	}
+
 	required := resolvedRole(t, resolution.Roles, PathRoleRequiredEdit)
 	if len(required.MatchedPatterns) != 2 {
 		t.Fatalf("required role should aggregate exact and glob matches once, got %#v", required.MatchedPatterns)
 	}
+
 	if len(resolution.Conflicts) != 3 {
 		t.Fatalf("expected conflicts for protected, required, and evidence roles, got %#v", resolution.Conflicts)
 	}
@@ -175,6 +194,7 @@ func TestResolvePathRolesAppliesConflictPrecedenceAndDeduplicatesRoles(t *testin
 func TestResolvePathRolesNormalizesRelativeAndAbsolutePaths(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(root, "..", "outside", "secrets.env")
+
 	resolved, err := ResolvePathRoles(PathRoleResolverInput{
 		WorkspaceRoot: root,
 		PathRoles: []PathRole{
@@ -195,9 +215,11 @@ func TestResolvePathRolesNormalizesRelativeAndAbsolutePaths(t *testing.T) {
 	if required.RelativePath != "internal/contracts/autonomy/path_roles.go" || required.OutsideWorkspace {
 		t.Fatalf("required path not canonicalized as workspace-relative: %#v", required)
 	}
+
 	if required.AbsolutePath != filepath.ToSlash(filepath.Join(root, "internal", "contracts", "autonomy", "path_roles.go")) {
 		t.Fatalf("absolute path mismatch: got %q", required.AbsolutePath)
 	}
+
 	assertEffectivePathRole(t, resolved, "docs/decisioning-north-star.md", PathRoleEvidenceReadonly, PolicyObserve, InvariantEvidenceReadonly)
 
 	protected := findPathResolution(t, resolved, filepath.ToSlash(filepath.Clean(outside)))
@@ -250,12 +272,15 @@ func TestResolveContractPathRolesSupportsReadOnlySidecarExample(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveContractPathRoles returned error: %v", err)
 	}
+
 	if !strings.Contains(resolved.Source, contract.ContractID) {
 		t.Fatalf("expected source to reference contract id, got %q", resolved.Source)
 	}
+
 	assertEffectivePathRole(t, resolved, "internal/contracts/autonomy/contract.go", PathRoleEvidenceReadonly, PolicyObserve, InvariantEvidenceReadonly)
 	assertEffectivePathRole(t, resolved, ".git/config", PathRoleForbidden, PolicyDeny, InvariantForbiddenPath)
 	assertEffectivePathRole(t, resolved, "publish/release.json", PathRoleExternalEffect, PolicyAsk, InvariantExternalEffectPath)
+
 	if len(resolved.PolicyPathMatches()) != 3 {
 		t.Fatalf("expected policy-ready path matches, got %#v", resolved.PolicyPathMatches())
 	}
@@ -264,6 +289,7 @@ func TestResolveContractPathRolesSupportsReadOnlySidecarExample(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal resolver output: %v", err)
 	}
+
 	for _, forbidden := range []string{"next_action", "safe_alternatives", "must_call_tool"} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("passive resolver output should not prescribe strategy field %q: %s", forbidden, encoded)
@@ -272,10 +298,14 @@ func TestResolveContractPathRolesSupportsReadOnlySidecarExample(t *testing.T) {
 }
 
 func TestResolverCarriesClientClassificationAndProductMetadataWithoutBranches(t *testing.T) {
-	var roles []PathRole
-	var paths []string
+	var (
+		roles []PathRole
+		paths []string
+	)
+
 	for _, classification := range allClientClassifications() {
 		path := "clients/" + string(classification) + "/evidence.json"
+
 		paths = append(paths, path)
 		roles = append(roles, PathRole{
 			Role:        PathRoleEvidenceReadonly,
@@ -283,8 +313,10 @@ func TestResolverCarriesClientClassificationAndProductMetadataWithoutBranches(t 
 			Reason:      "client classification fixture",
 		})
 	}
+
 	for _, signal := range allProductSignals() {
 		path := "signals/" + string(signal) + "/proof.json"
+
 		paths = append(paths, path)
 		roles = append(roles, PathRole{
 			Role:        PathRoleEvidenceReadonly,
@@ -308,16 +340,19 @@ func TestResolverCarriesClientClassificationAndProductMetadataWithoutBranches(t 
 	if len(resolved.Resolutions) != len(paths) {
 		t.Fatalf("expected one resolution per metadata fixture path, got %d want %d", len(resolved.Resolutions), len(paths))
 	}
+
 	for _, resolution := range resolved.Resolutions {
 		if resolution.EffectiveRole != PathRoleEvidenceReadonly || resolution.Decision != PolicyObserve {
 			t.Fatalf("metadata fixture path should resolve generically as evidence, got %#v", resolution)
 		}
 	}
+
 	for _, want := range allClientClassifications() {
 		if !containsClientClassification(resolved.Metadata.ClientClassifications, want) {
 			t.Fatalf("missing client classification %q in %#v", want, resolved.Metadata.ClientClassifications)
 		}
 	}
+
 	for _, want := range allProductSignals() {
 		if !containsProductSignal(resolved.Metadata.ProductSignals, want) {
 			t.Fatalf("missing product signal %q in %#v", want, resolved.Metadata.ProductSignals)
@@ -327,6 +362,7 @@ func TestResolverCarriesClientClassificationAndProductMetadataWithoutBranches(t 
 
 func assertEffectivePathRole(t *testing.T, set PathRoleResolutionSet, path string, role PathRoleKind, decision ToolPolicyDecision, invariant PathInvariantID) {
 	t.Helper()
+
 	resolution := findPathResolution(t, set, path)
 	if resolution.EffectiveRole != role || resolution.Decision != decision || resolution.EffectiveInvariantID != invariant {
 		t.Fatalf("resolution for %q = role %q decision %q invariant %q, want role %q decision %q invariant %q: %#v",
@@ -336,33 +372,41 @@ func assertEffectivePathRole(t *testing.T, set PathRoleResolutionSet, path strin
 
 func findPathResolution(t *testing.T, set PathRoleResolutionSet, path string) PathRoleResolution {
 	t.Helper()
+
 	normalized := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(filepath.FromSlash(path))), "./")
 	for _, resolution := range set.Resolutions {
 		if resolution.Path == normalized || resolution.RelativePath == normalized || resolution.AbsolutePath == normalized {
 			return resolution
 		}
 	}
+
 	t.Fatalf("missing resolution for %q in %#v", normalized, set.Resolutions)
+
 	return PathRoleResolution{}
 }
 
 func countResolvedRole(roles []ResolvedPathRole, role PathRoleKind) int {
 	count := 0
+
 	for _, resolved := range roles {
 		if resolved.Role == role {
 			count++
 		}
 	}
+
 	return count
 }
 
 func resolvedRole(t *testing.T, roles []ResolvedPathRole, role PathRoleKind) ResolvedPathRole {
 	t.Helper()
+
 	for _, resolved := range roles {
 		if resolved.Role == role {
 			return resolved
 		}
 	}
+
 	t.Fatalf("missing role %q in %#v", role, roles)
+
 	return ResolvedPathRole{}
 }

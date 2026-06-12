@@ -10,6 +10,7 @@ func (m *MultiFlag) String() string {
 	if m == nil || len(*m) == 0 {
 		return ""
 	}
+
 	return strings.Join(*m, ",")
 }
 

@@ -4,35 +4,35 @@
   -> mcp__codegraph__files {"format": "grouped", "includeMetadata": false}
   -> glob {"pattern": "internal/telemetry/**/*"}
   -> glob {"pattern": "internal/runtime/agent/**/*"}
-  ⊘ glob glob "/Users/ben/Documents/GitHub/idiom/internal/telemetry/**/*": stat /Users/ben/Documents/GitHub/idiom/internal/telemetry: no such file or directory
-  -> grep {"pattern": "\\bA3\\b", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "\\bA4\\b", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "\\bA6\\b", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "efficiency optimization", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "risk closeout", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "\\bretained\\b", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "writer_route_decision", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "effective_model", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "role_alias", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"pattern": "role_aliases", "path": "/Users/ben/Documents/GitHub/idiom"}
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent", "pattern": "routing|model.*select|telemetry|writer....
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/cli/route", "pattern": "EffectiveModel|effective_model|rou...
-  -> grep {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/cli/lane", "pattern": "EffectiveModel|effective_model|writ...
+  ⊘ glob glob "/workspace/idiom/internal/telemetry/**/*": stat /workspace/idiom/internal/telemetry: no such file or directory
+  -> grep {"pattern": "\\bA3\\b", "path": "/workspace/idiom"}
+  -> grep {"pattern": "\\bA4\\b", "path": "/workspace/idiom"}
+  -> grep {"pattern": "\\bA6\\b", "path": "/workspace/idiom"}
+  -> grep {"pattern": "efficiency optimization", "path": "/workspace/idiom"}
+  -> grep {"pattern": "risk closeout", "path": "/workspace/idiom"}
+  -> grep {"pattern": "\\bretained\\b", "path": "/workspace/idiom"}
+  -> grep {"pattern": "writer_route_decision", "path": "/workspace/idiom"}
+  -> grep {"pattern": "effective_model", "path": "/workspace/idiom"}
+  -> grep {"pattern": "role_alias", "path": "/workspace/idiom"}
+  -> grep {"pattern": "role_aliases", "path": "/workspace/idiom"}
+  -> grep {"path": "/workspace/idiom/internal/runtime/agent", "pattern": "routing|model.*select|telemetry|writer....
+  -> grep {"path": "/workspace/idiom/internal/surfaces/cli/route", "pattern": "EffectiveModel|effective_model|rou...
+  -> grep {"path": "/workspace/idiom/internal/surfaces/cli/lane", "pattern": "EffectiveModel|effective_model|writ...
   -> glob {"pattern": "internal/surfaces/cli/route/**/*"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/contracts/writerroute/decision.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/contracts/writerroute/decision_test.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/cli/route/writer_route.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/cli/route/writer_route_test.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/tui/app/writer_route.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/direct_answer_surface.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/direct_answer_surface_test.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/evidence/telemetry/recorder.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/evidence/telemetry/recorder_test.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/surfaces/cli/lane/telemetry.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/llama/deepseek_test.go", "offset": 300, "limit": 150}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/evidence_telemetry_regression_test.go"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner_prefix_diagnostics.go", "limit": 50}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/internal/runtime/agent/runner_recording.go", "limit": 80}
+  -> read_file {"path": "/workspace/idiom/internal/contracts/writerroute/decision.go"}
+  -> read_file {"path": "/workspace/idiom/internal/contracts/writerroute/decision_test.go"}
+  -> read_file {"path": "/workspace/idiom/internal/surfaces/cli/route/writer_route.go"}
+  -> read_file {"path": "/workspace/idiom/internal/surfaces/cli/route/writer_route_test.go"}
+  -> read_file {"path": "/workspace/idiom/internal/surfaces/tui/app/writer_route.go"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/direct_answer_surface.go"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/direct_answer_surface_test.go"}
+  -> read_file {"path": "/workspace/idiom/internal/evidence/telemetry/recorder.go"}
+  -> read_file {"path": "/workspace/idiom/internal/evidence/telemetry/recorder_test.go"}
+  -> read_file {"path": "/workspace/idiom/internal/surfaces/cli/lane/telemetry.go"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/llama/deepseek_test.go", "offset": 300, "limit": 150}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/evidence_telemetry_regression_test.go"}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/runner_prefix_diagnostics.go", "limit": 50}
+  -> read_file {"path": "/workspace/idiom/internal/runtime/agent/runner_recording.go", "limit": 80}
 [2m  ▎ thinking[0m
   · 21735 tok · in 21453 (12032 cached / 9421 new) · out 282 (104 reasoning) · ¥0.0102 · cache prefix changed: tools
   -> read_file {"path": "internal/surfaces/cli/route/writer_route.go"}
@@ -56,32 +56,32 @@
   -> read_file {"path": "docs/evidence/idiom-efficiency-optimization/ledger.md"}
 [2m  ▎ thinking[0m
   · 56502 tok · in 56311 (42752 cached / 13559 new) · out 191 (71 reasoning) · ¥0.0148
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git log --oneline -15"}
+  -> bash {"command": "cd /workspace/idiom && git log --oneline -15"}
   -> read_file {"offset": 170, "path": "internal/runtime/agent/direct_answer_surface_test.go"}
 [2m  ▎ thinking[0m
   · 58984 tok · in 58826 (56448 cached / 2378 new) · out 158 (51 reasoning) · ¥0.0038
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD --stat"}
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git status --short"}
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD --stat"}
+  -> bash {"command": "cd /workspace/idiom && git status --short"}
 [2m  ▎ thinking[0m
 Now let me run the verification tests.
   · 59795 tok · in 59453 (58880 cached / 573 new) · out 342 (136 reasoning) · ¥0.0024
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && go test ./internal/runtime/llama ./internal/contracts/writerroute ....
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && go test ./internal/runtime/agent -run 'DirectAnswerSurface|DirectAn...
+  -> bash {"command": "cd /workspace/idiom && go test ./internal/runtime/llama ./internal/contracts/writerroute ....
+  -> bash {"command": "cd /workspace/idiom && go test ./internal/runtime/agent -run 'DirectAnswerSurface|DirectAn...
 [2m  ▎ thinking[0m
   · 62828 tok · in 62750 (59776 cached / 2974 new) · out 78 (14 reasoning) · ¥0.0043
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && go build ./... 2>&1"}
+  -> bash {"command": "cd /workspace/idiom && go build ./... 2>&1"}
 [2m  ▎ thinking[0m
   · 63766 tok · in 62839 (62720 cached / 119 new) · out 927 (730 reasoning) · ¥0.0032
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && grep -rn 'EvidenceCitationsOnly\\|citationClassifier\\|HostedUsage\...
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && grep -rn 'source_body_prefetch' --include='*.go' internal/ 2>&1"}
+  -> bash {"command": "cd /workspace/idiom && grep -rn 'EvidenceCitationsOnly\\|citationClassifier\\|HostedUsage\...
+  -> bash {"command": "cd /workspace/idiom && grep -rn 'source_body_prefetch' --include='*.go' internal/ 2>&1"}
 [2m  ▎ thinking[0m
   · 64289 tok · in 63993 (63744 cached / 249 new) · out 296 (144 reasoning) · ¥0.0021
   -> read_file {"offset": 215, "path": "internal/runtime/agent/runner.go", "limit": 20}
   -> read_file {"offset": 310, "path": "internal/runtime/agent/runner.go", "limit": 25}
 [2m  ▎ thinking[0m
   · 65124 tok · in 64915 (64256 cached / 659 new) · out 209 (63 reasoning) · ¥0.0024
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD -- internal/runtime/agent/runner_plan_then_execute_gu...
-  -> bash {"command": "cd /Users/ben/Documents/GitHub/idiom && git diff HEAD -- internal/runtime/agent/runner.go 2>&1 | head -80"}
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD -- internal/runtime/agent/runner_plan_then_execute_gu...
+  -> bash {"command": "cd /workspace/idiom && git diff HEAD -- internal/runtime/agent/runner.go 2>&1 | head -80"}
 [2m  ▎ thinking[0m
   · 66469 tok · in 66089 (65024 cached / 1065 new) · out 380 (324 reasoning) · ¥0.0031
   -> read_file {"path": "internal/surfaces/tui/app/writer_route_test.go"}

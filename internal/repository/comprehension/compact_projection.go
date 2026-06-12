@@ -86,6 +86,7 @@ func NewCompactPackProjection(result PackResult) CompactPackProjection {
 			Reason: f.Reason,
 		}
 	}
+
 	symbols := make([]CompactPackSymbol, len(result.CandidateSymbols))
 	for i, s := range result.CandidateSymbols {
 		symbols[i] = CompactPackSymbol{
@@ -97,6 +98,7 @@ func NewCompactPackProjection(result PackResult) CompactPackProjection {
 			Reason:        s.Reason,
 		}
 	}
+
 	tests := make([]CompactPackTest, len(result.Tests))
 	for i, t := range result.Tests {
 		tests[i] = CompactPackTest{
@@ -106,10 +108,12 @@ func NewCompactPackProjection(result PackResult) CompactPackProjection {
 			Reason:  t.Reason,
 		}
 	}
+
 	gaps := make([]string, len(result.UnresolvedGaps))
 	copy(gaps, result.UnresolvedGaps)
 
 	total := len(files) + len(symbols) + len(tests)
+
 	return CompactPackProjection{
 		PackID: result.PackID,
 		Fresh:  result.Fresh,
@@ -154,9 +158,11 @@ func RenderCompactPackProjection(p CompactPackProjection, budgetTokens int) (str
 
 	// Mandatory header: summary line, pack_id, fresh, quality.
 	b.WriteString("context_pack_summary:\n")
+
 	if strings.TrimSpace(p.PackID) != "" {
 		b.WriteString("pack_id: " + strings.TrimSpace(p.PackID) + "\n")
 	}
+
 	fmt.Fprintf(&b, "fresh: %t\n", p.Fresh)
 	writeCompactQuality(&b, p.Quality)
 
@@ -165,15 +171,19 @@ func RenderCompactPackProjection(p CompactPackProjection, budgetTokens int) (str
 		writeCompactFileList(&b, "candidate_files", p.CandidateFiles, len(p.CandidateFiles))
 		writeCompactSymbolList(&b, p.CandidateSymbols, len(p.CandidateSymbols))
 		writeCompactTestList(&b, p.Tests, len(p.Tests))
+
 		if len(p.UnresolvedGaps) > 0 {
 			writeCompactGaps(&b, p.UnresolvedGaps, len(p.UnresolvedGaps))
 		}
+
 		b.WriteString("evidence_note: context_pack is localization evidence, not source-body evidence.\n")
+
 		return strings.TrimSpace(b.String()), p
 	}
 
 	// evidenceNote is a fixed mandatory trailer.
 	const evidenceNote = "evidence_note: context_pack is localization evidence, not source-body evidence.\n"
+
 	evidenceTokens := estimateTokens(evidenceNote)
 
 	// omittedMinReserve reserves budget for at least a minimal omitted
@@ -188,14 +198,17 @@ func RenderCompactPackProjection(p CompactPackProjection, budgetTokens int) (str
 	if estimateTokens(b.String())+evidenceTokens+omittedMinReserve > budgetTokens {
 		b.WriteString("truncation_note: budget exhausted by header; all candidates omitted.\n")
 		b.WriteString(evidenceNote)
+
 		p.OmittedFiles = len(p.CandidateFiles)
 		p.OmittedSymbols = len(p.CandidateSymbols)
 		p.OmittedTests = len(p.Tests)
+
 		out := strings.TrimSpace(b.String())
 		// Record token savings: compute full unbounded rendering
 		// and add the delta to the atomic counter.
 		fullOut, _ := RenderCompactPackProjection(p, 0)
 		recordEstimatedFullTokensSaved(out, fullOut)
+
 		return out, p
 	}
 
@@ -219,6 +232,7 @@ func RenderCompactPackProjection(p CompactPackProjection, budgetTokens int) (str
 	// remaining budget.
 	if p.OmittedFiles > 0 || p.OmittedSymbols > 0 || p.OmittedTests > 0 || renderedGaps < len(p.UnresolvedGaps) {
 		b.WriteString("omitted:\n")
+
 		remaining := budgetTokens - estimateTokens(b.String()) - evidenceTokens
 		if remaining < 0 {
 			remaining = 0
@@ -229,25 +243,31 @@ func RenderCompactPackProjection(p CompactPackProjection, budgetTokens int) (str
 				p.OmittedFiles, renderedFiles, len(p.CandidateFiles))
 			if remaining <= 0 || estimateTokens(line) <= remaining {
 				b.WriteString(line)
+
 				remaining -= estimateTokens(line)
 			}
 		}
+
 		if p.OmittedSymbols > 0 {
 			line := fmt.Sprintf("- candidate_symbols: %d omitted (rendered %d of %d)\n",
 				p.OmittedSymbols, renderedSymbols, len(p.CandidateSymbols))
 			if remaining <= 0 || estimateTokens(line) <= remaining {
 				b.WriteString(line)
+
 				remaining -= estimateTokens(line)
 			}
 		}
+
 		if p.OmittedTests > 0 {
 			line := fmt.Sprintf("- tests: %d omitted (rendered %d of %d)\n",
 				p.OmittedTests, renderedTests, len(p.Tests))
 			if remaining <= 0 || estimateTokens(line) <= remaining {
 				b.WriteString(line)
+
 				remaining -= estimateTokens(line)
 			}
 		}
+
 		gapOmitted := len(p.UnresolvedGaps) - renderedGaps
 		if gapOmitted > 0 {
 			line := fmt.Sprintf("- context_gaps: %d omitted (rendered %d of %d)\n",
@@ -259,11 +279,13 @@ func RenderCompactPackProjection(p CompactPackProjection, budgetTokens int) (str
 	}
 
 	b.WriteString(evidenceNote)
+
 	out := strings.TrimSpace(b.String())
 	// Record token savings: compute full unbounded rendering
 	// and add the delta to the atomic counter.
 	fullOut, _ := RenderCompactPackProjection(p, 0)
 	recordEstimatedFullTokensSaved(out, fullOut)
+
 	return out, p
 }
 
@@ -272,25 +294,36 @@ func renderFileSection(b *strings.Builder, files []CompactPackFile, budgetTokens
 	if len(files) == 0 {
 		return 0
 	}
+
 	if budgetTokens < 1 {
 		budgetTokens = 1
 	}
+
 	var sectionBuf strings.Builder
+
 	sectionBuf.WriteString("candidate_files:\n")
+
 	rendered := 0
+
 	for _, f := range files {
 		var itemBuf strings.Builder
+
 		renderOneCompactFile(&itemBuf, f)
+
 		candidate := b.String() + sectionBuf.String() + itemBuf.String()
 		if estimateTokens(candidate) > budgetTokens {
 			break
 		}
+
 		sectionBuf.WriteString(itemBuf.String())
+
 		rendered++
 	}
+
 	if rendered > 0 {
 		b.WriteString(sectionBuf.String())
 	}
+
 	return rendered
 }
 
@@ -300,25 +333,36 @@ func renderSymbolSection(b *strings.Builder, symbols []CompactPackSymbol, budget
 	if len(symbols) == 0 {
 		return 0
 	}
+
 	if budgetTokens < 1 {
 		budgetTokens = 1
 	}
+
 	var sectionBuf strings.Builder
+
 	sectionBuf.WriteString("candidate_symbols:\n")
+
 	rendered := 0
+
 	for _, s := range symbols {
 		var itemBuf strings.Builder
+
 		renderOneCompactSymbol(&itemBuf, s)
+
 		candidate := b.String() + sectionBuf.String() + itemBuf.String()
 		if estimateTokens(candidate) > budgetTokens {
 			break
 		}
+
 		sectionBuf.WriteString(itemBuf.String())
+
 		rendered++
 	}
+
 	if rendered > 0 {
 		b.WriteString(sectionBuf.String())
 	}
+
 	return rendered
 }
 
@@ -328,25 +372,36 @@ func renderTestSection(b *strings.Builder, tests []CompactPackTest, budgetTokens
 	if len(tests) == 0 {
 		return 0
 	}
+
 	if budgetTokens < 1 {
 		budgetTokens = 1
 	}
+
 	var sectionBuf strings.Builder
+
 	sectionBuf.WriteString("tests:\n")
+
 	rendered := 0
+
 	for _, t := range tests {
 		var itemBuf strings.Builder
+
 		renderOneCompactTest(&itemBuf, t)
+
 		candidate := b.String() + sectionBuf.String() + itemBuf.String()
 		if estimateTokens(candidate) > budgetTokens {
 			break
 		}
+
 		sectionBuf.WriteString(itemBuf.String())
+
 		rendered++
 	}
+
 	if rendered > 0 {
 		b.WriteString(sectionBuf.String())
 	}
+
 	return rendered
 }
 
@@ -356,29 +411,41 @@ func renderGapSection(b *strings.Builder, gaps []string, budgetTokens int) int {
 	if len(gaps) == 0 {
 		return 0
 	}
+
 	if budgetTokens < 1 {
 		budgetTokens = 1
 	}
+
 	var sectionBuf strings.Builder
+
 	sectionBuf.WriteString("context_gaps:\n")
+
 	rendered := 0
+
 	for _, g := range gaps {
 		g = strings.TrimSpace(g)
 		if g == "" {
 			continue
 		}
+
 		var itemBuf strings.Builder
+
 		itemBuf.WriteString("- " + g + "\n")
+
 		candidate := b.String() + sectionBuf.String() + itemBuf.String()
 		if estimateTokens(candidate) > budgetTokens {
 			break
 		}
+
 		sectionBuf.WriteString(itemBuf.String())
+
 		rendered++
 	}
+
 	if rendered > 0 {
 		b.WriteString(sectionBuf.String())
 	}
+
 	return rendered
 }
 
@@ -388,6 +455,7 @@ func renderOneCompactFile(b *strings.Builder, f CompactPackFile) {
 	if path == "" {
 		return
 	}
+
 	detail := firstNonEmptyCompactString(f.Role, f.Reason)
 	if detail != "" {
 		fmt.Fprintf(b, "- %s: %s\n", path, truncateCompactLine(detail, 180))
@@ -400,13 +468,16 @@ func renderOneCompactFile(b *strings.Builder, f CompactPackFile) {
 func renderOneCompactSymbol(b *strings.Builder, s CompactPackSymbol) {
 	path := strings.TrimSpace(s.Path)
 	name := firstNonEmptyCompactString(s.Name, s.QualifiedName, s.Kind)
+
 	if path == "" && name == "" {
 		return
 	}
+
 	lineSuffix := ""
 	if s.StartLine > 0 {
 		lineSuffix = fmt.Sprintf(" line %d", s.StartLine)
 	}
+
 	reason := strings.TrimSpace(s.Reason)
 	if name != "" {
 		if reason != "" {
@@ -428,6 +499,7 @@ func renderOneCompactTest(b *strings.Builder, t CompactPackTest) {
 	if path == "" {
 		return
 	}
+
 	detail := firstNonEmptyCompactString(t.Command, t.Reason)
 	if detail != "" {
 		fmt.Fprintf(b, "- %s: %s\n", path, truncateCompactLine(detail, 180))
@@ -443,6 +515,7 @@ func estimateTokens(text string) int {
 	if len(text) == 0 {
 		return 0
 	}
+
 	return int(float64(len(text)) / tokenEstimateDivisor)
 }
 
@@ -453,6 +526,7 @@ func estimateTokens(text string) int {
 func recordEstimatedFullTokensSaved(actualOutput, fullOutput string) {
 	fullTokens := estimateTokens(fullOutput)
 	actualTokens := estimateTokens(actualOutput)
+
 	if fullTokens > actualTokens {
 		estimatedFullTokensSaved.Add(int64(fullTokens - actualTokens))
 	}
@@ -460,23 +534,29 @@ func recordEstimatedFullTokensSaved(actualOutput, fullOutput string) {
 
 func writeCompactQuality(b *strings.Builder, q CompactPackQuality) {
 	b.WriteString("packet_quality:\n")
+
 	confidence := strings.TrimSpace(q.LocalizationConfidence)
 	if confidence != "" {
 		b.WriteString("- localization_confidence: " + confidence + "\n")
 	} else {
 		b.WriteString("- localization_confidence: unknown\n")
 	}
+
 	fmt.Fprintf(b, "- source_owner_found: %t\n", q.SourceOwnerFound)
+
 	if len(q.EvidencePaths) > 0 {
 		b.WriteString("- strongest_evidence_paths:\n")
+
 		for _, path := range q.EvidencePaths {
 			path = strings.TrimSpace(path)
 			if path == "" {
 				continue
 			}
+
 			b.WriteString("  - " + path + "\n")
 		}
 	}
+
 	if len(q.Reasons) > 0 {
 		b.WriteString("- reasons: " + truncateCompactLine(strings.Join(q.Reasons, ", "), 180) + "\n")
 	}
@@ -486,15 +566,19 @@ func writeCompactFileList(b *strings.Builder, label string, files []CompactPackF
 	if len(files) == 0 {
 		return
 	}
+
 	b.WriteString(label + ":\n")
+
 	for i, file := range files {
 		if i >= max {
 			break
 		}
+
 		path := strings.TrimSpace(file.Path)
 		if path == "" {
 			continue
 		}
+
 		detail := firstNonEmptyCompactString(file.Role, file.Reason)
 		if detail != "" {
 			fmt.Fprintf(b, "- %s: %s\n", path, truncateCompactLine(detail, 180))
@@ -508,20 +592,26 @@ func writeCompactSymbolList(b *strings.Builder, symbols []CompactPackSymbol, max
 	if len(symbols) == 0 {
 		return
 	}
+
 	b.WriteString("candidate_symbols:\n")
+
 	for i, sym := range symbols {
 		if i >= max {
 			break
 		}
+
 		path := strings.TrimSpace(sym.Path)
 		name := firstNonEmptyCompactString(sym.Name, sym.QualifiedName, sym.Kind)
+
 		if path == "" && name == "" {
 			continue
 		}
+
 		lineSuffix := ""
 		if sym.StartLine > 0 {
 			lineSuffix = fmt.Sprintf(" line %d", sym.StartLine)
 		}
+
 		reason := strings.TrimSpace(sym.Reason)
 		if name != "" {
 			if reason != "" {
@@ -542,15 +632,19 @@ func writeCompactTestList(b *strings.Builder, tests []CompactPackTest, max int) 
 	if len(tests) == 0 {
 		return
 	}
+
 	b.WriteString("tests:\n")
+
 	for i, test := range tests {
 		if i >= max {
 			break
 		}
+
 		path := strings.TrimSpace(test.Path)
 		if path == "" {
 			continue
 		}
+
 		detail := firstNonEmptyCompactString(test.Command, test.Reason)
 		if detail != "" {
 			fmt.Fprintf(b, "- %s: %s\n", path, truncateCompactLine(detail, 180))
@@ -564,15 +658,19 @@ func writeCompactGaps(b *strings.Builder, gaps []string, limit int) {
 	if len(gaps) == 0 {
 		return
 	}
+
 	b.WriteString("context_gaps:\n")
+
 	for i, gap := range gaps {
 		if i >= limit {
 			break
 		}
+
 		gap = strings.TrimSpace(gap)
 		if gap == "" {
 			continue
 		}
+
 		b.WriteString("- " + gap + "\n")
 	}
 }
@@ -583,6 +681,7 @@ func firstNonEmptyCompactString(values ...string) string {
 			return strings.TrimSpace(v)
 		}
 	}
+
 	return ""
 }
 
@@ -590,5 +689,6 @@ func truncateCompactLine(value string, limit int) string {
 	if limit > 0 && len(value) > limit {
 		return value[:limit] + "..."
 	}
+
 	return value
 }

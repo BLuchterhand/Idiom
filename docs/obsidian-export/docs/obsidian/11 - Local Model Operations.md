@@ -1,13 +1,13 @@
 ---
 tags:
-  - harness
+  - idiom
   - local-models
   - operations
 ---
 
 # Local Model Operations
 
-Agent Harness is designed for local coding-agent operation around models such as local model
+Idiom is designed for local coding-agent operation around models such as Qwen
 served through local backends including llama.cpp, MLX, and Ollama-style
 interfaces.
 
@@ -19,7 +19,7 @@ around it: contracts, memory, tools, verification, telemetry, and evals.
 ```mermaid
 flowchart TD
     User["User"]
-    Doctor["harness doctor"]
+    Doctor["idiom doctor"]
     Backend["Backend manager"]
     Queue["Queue/local ops"]
     Prompt["Prompt stack"]
@@ -48,7 +48,7 @@ Local model operations include:
 - Reporting readiness and degraded modes.
 - Managing context budgets.
 - Gating concurrent work through the local queue daemon.
-- Keeping model weights, caches, and logs out of the target repository.
+- Keeping model weights, caches, and logs out of the target repo.
 - Preserving privacy by default through local execution.
 - Capturing enough telemetry for debugging without leaking sensitive content.
 
@@ -66,23 +66,23 @@ differences should be surfaced as capability or readiness differences:
 
 ## Doctor And Backend Readiness
 
-`harness doctor` checks local prerequisites and readiness profiles for workflows
+`idiom doctor` checks local prerequisites and readiness profiles for workflows
 such as discovery, plan, implement, eval, and sidecar. Profiles report
 `pass`, `degraded`, or `blocked` status, plus remedies.
 
-Target readiness gates are partly report-only in the quickstart path. Treat a
+Current readiness gates are partly report-only in the quickstart path. Treat a
 doctor report as operator evidence and lane-start guidance, not as proof that a
 later model run will succeed.
 
-`*` marks design mapped model roles.
+`*` marks roadmapped model roles.
 
 Backend commands:
 
-- `harness backend start`
-- `harness backend stop`
-- `harness backend status`
-- `harness backend list`
-- `harness backend proxy`
+- `idiom backend start`
+- `idiom backend stop`
+- `idiom backend status`
+- `idiom backend list`
+- `idiom backend proxy`
 
 ## Prompt Stack
 
@@ -117,15 +117,15 @@ protecting scarce local GPU/Metal resources when configured.
 
 Queue commands include:
 
-- `harness queue serve`
-- `harness queue run`
-- `harness queue status`
-- `harness queue ping`
-- `harness queue cancel`
+- `idiom queue serve`
+- `idiom queue run`
+- `idiom queue status`
+- `idiom queue ping`
+- `idiom queue cancel`
 
 ## Degraded Mode
 
-When a backend or capability is missing, Agent Harness should make that state explicit
+When a backend or capability is missing, Idiom should make that state explicit
 instead of failing silently.
 
 Examples:
@@ -143,9 +143,9 @@ notice, depending on the contract.
 
 | Source | Why it matters |
 | --- | --- |
-| `cmd/harness/doctor.go` | Host readiness and doctor command |
-| `cmd/harness/backend.go` | Backend command surface |
-| `cmd/harness/queue.go` | Queue command surface |
+| `internal/surfaces/cli/doctor` | Host readiness and doctor command |
+| `internal/surfaces/cli/backend` | Backend command surface |
+| `internal/surfaces/cli/queue` | Queue command surface |
 | `internal/runtime/backends` | Backend profiles, aliases, launcher, proxy |
 | `internal/platform/autodetect` | Host/model/backend discovery |
 | `internal/runtime/runner` | Queue lease acquisition helpers |

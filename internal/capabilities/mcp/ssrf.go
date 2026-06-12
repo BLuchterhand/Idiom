@@ -22,30 +22,37 @@ func ValidateHTTPURL(rawURL string, allowPrivate bool) (*url.URL, []net.IP, erro
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse url: %w", err)
 	}
+
 	switch strings.ToLower(parsed.Scheme) {
 	case "http", "https":
 	default:
 		return nil, nil, fmt.Errorf("unsupported scheme %q (only http and https are allowed)", parsed.Scheme)
 	}
+
 	host := parsed.Hostname()
 	if host == "" {
 		return nil, nil, fmt.Errorf("url has no host")
 	}
+
 	ips, err := net.LookupIP(host)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve %q: %w", host, err)
 	}
+
 	if len(ips) == 0 {
 		return nil, nil, fmt.Errorf("no IPs resolved for %q", host)
 	}
+
 	if allowPrivate {
 		return parsed, ips, nil
 	}
+
 	for _, ip := range ips {
 		if reason, blocked := classifyBlockedIP(ip); blocked {
 			return nil, nil, fmt.Errorf("host %q resolves to %s (%s); set Workspace.AllowPrivateNetwork to override", host, ip, reason)
 		}
 	}
+
 	return parsed, ips, nil
 }
 
@@ -57,18 +64,23 @@ func classifyBlockedIP(ip net.IP) (string, bool) {
 	if ip.IsUnspecified() {
 		return "unspecified", true
 	}
+
 	if ip.IsLoopback() {
 		return "loopback", true
 	}
+
 	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return "link-local", true
 	}
+
 	if ip.IsMulticast() {
 		return "multicast", true
 	}
+
 	if ip.IsPrivate() {
 		return "private (RFC1918 or unique-local)", true
 	}
+
 	return "", false
 }
 
@@ -81,7 +93,9 @@ func RedactURL(rawURL string) string {
 	if err != nil {
 		return "<unparseable url>"
 	}
+
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
+
 	return parsed.String()
 }

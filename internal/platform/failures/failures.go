@@ -73,6 +73,7 @@ func (c Code) String() string {
 			return name
 		}
 	}
+
 	return "unknown"
 }
 
@@ -119,26 +120,33 @@ func (e *Error) Error() string {
 	}
 
 	var b strings.Builder
+
 	if e.Op != "" {
 		b.WriteString(e.Op)
 		b.WriteString(": ")
 	}
+
 	b.WriteString(e.Code.String())
+
 	if e.Reason != NoReason {
 		fmt.Fprintf(&b, "[%d]", e.Reason)
 	}
+
 	if e.Path != "" {
 		b.WriteString(" ")
 		b.WriteString(e.Path)
 	}
+
 	if e.Message != "" {
 		b.WriteString(": ")
 		b.WriteString(e.Message)
 	}
+
 	if e.Cause != nil {
 		b.WriteString(": ")
 		b.WriteString(e.Cause.Error())
 	}
+
 	return b.String()
 }
 
@@ -146,6 +154,7 @@ func (e *Error) Unwrap() error {
 	if e == nil {
 		return nil
 	}
+
 	return e.Cause
 }
 
@@ -153,10 +162,13 @@ func (e *Error) Is(target error) bool {
 	if e == nil || target == nil {
 		return false
 	}
+
 	var failure *Error
+
 	if !errors.As(target, &failure) || failure == nil {
 		return false
 	}
+
 	return e.Code == failure.Code && e.Reason == failure.Reason
 }
 
@@ -176,18 +188,25 @@ func CodeOf(err error) Code {
 	if err == nil {
 		return Unknown
 	}
+
 	var failure *Error
+
 	if errors.As(err, &failure) && failure != nil {
 		return failure.Code
 	}
+
 	var provider codeProvider
+
 	if errors.As(err, &provider) {
 		return provider.Code()
 	}
+
 	var failureProvider failureCodeProvider
+
 	if errors.As(err, &failureProvider) {
 		return failureProvider.FailureCode()
 	}
+
 	return Unknown
 }
 
@@ -195,14 +214,19 @@ func ReasonOf(err error) Reason {
 	if err == nil {
 		return NoReason
 	}
+
 	var failure *Error
+
 	if errors.As(err, &failure) && failure != nil {
 		return failure.Reason
 	}
+
 	var provider reasonProvider
+
 	if errors.As(err, &provider) {
 		return provider.Reason()
 	}
+
 	return NoReason
 }
 

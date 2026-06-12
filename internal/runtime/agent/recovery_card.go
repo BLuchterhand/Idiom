@@ -62,6 +62,7 @@ func BuildRecoveryCard(input RecoveryCardInput) RecoveryCard {
 		recoveryCardSafeNextActionFromPhaseContract(contract),
 		recoveryCardStrategyNextActionFromPhaseContract(contract),
 	)
+
 	return NormalizeRecoveryCard(RecoveryCard{
 		ContractID:  contract.ContractID,
 		PhaseID:     contract.PhaseID,
@@ -93,6 +94,7 @@ func RenderRecoveryCard(card RecoveryCard) string {
 func appendRecoveryCardToMessage(message string, card string) string {
 	message = strings.TrimSpace(message)
 	card = strings.TrimSpace(card)
+
 	switch {
 	case message == "":
 		return card
@@ -107,6 +109,7 @@ func (r *Runner) renderRecoveryCardForRejectedAction(req workspace.ToolRequest, 
 	if r == nil {
 		return ""
 	}
+
 	brief := r.visibleBriefForToolSurface(r.RuntimeBrief, results)
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief:            runnerBriefWithPhaseHints(brief, results),
@@ -115,6 +118,7 @@ func (r *Runner) renderRecoveryCardForRejectedAction(req workspace.ToolRequest, 
 		LastResult:       result,
 		BaseAllowedTools: currentAllowedTools,
 	})
+
 	return RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
 		PhaseContract:               contract,
 		CurrentAllowedTools:         effectiveRecoveryCardAllowedTools(currentAllowedTools, brief, results, contract),
@@ -129,6 +133,7 @@ func NormalizeRecoveryCard(card RecoveryCard) RecoveryCard {
 	if strings.TrimSpace(card.SchemaVersion) == "" {
 		card.SchemaVersion = recoveryCardSchemaVersion
 	}
+
 	card.ContractID = strings.TrimSpace(card.ContractID)
 	card.PhaseID = strings.TrimSpace(card.PhaseID)
 	card.InvariantID = strings.TrimSpace(card.InvariantID)
@@ -141,6 +146,7 @@ func NormalizeRecoveryCard(card RecoveryCard) RecoveryCard {
 	card.TerminalOutcomes = uniqueRecoveryCardStrings(card.TerminalOutcomes)
 	card.DeterministicSafeNextAction = strings.TrimSpace(card.DeterministicSafeNextAction)
 	card.ExactBlockerShape = sanitizeRecoveryCardBlockerShape(card.ExactBlockerShape)
+
 	return card
 }
 
@@ -148,6 +154,7 @@ func (card RecoveryCard) Render() string {
 	card = NormalizeRecoveryCard(card)
 
 	var b strings.Builder
+
 	b.WriteString("Recovery card")
 	writeRecoveryCardLine(&b, "schema", card.SchemaVersion)
 	writeRecoveryCardLine(&b, "contract", recoveryCardContractLabel(card))
@@ -159,11 +166,13 @@ func (card RecoveryCard) Render() string {
 	writeRecoveryCardLine(&b, "currently callable action classes", recoveryCardListLabel(card.CallableActionClasses, "none"))
 	writeRecoveryCardLine(&b, "deterministic safe next action", recoveryCardOptionalLabel(card.DeterministicSafeNextAction, "none available"))
 	writeRecoveryCardLine(&b, "exact blocker shape", recoveryCardOptionalLabel(card.ExactBlockerShape, "none available"))
+
 	return strings.TrimRight(b.String(), "\n")
 }
 
 func (card RecoveryCard) TurnPhaseSurfaceSummary(contract TurnPhaseContract) autonomy.TurnPhaseSurfaceSummaryEvent {
 	card = NormalizeRecoveryCard(card)
+
 	return autonomy.TurnPhaseSurfaceSummaryEvent{
 		SchemaVersion:           autonomy.TurnPhaseSurfaceSummarySchemaVersion,
 		SurfaceID:               "recovery_card",
@@ -185,9 +194,11 @@ func sanitizeRecoveryCardBlockerShape(shape string) string {
 	if shape == "" {
 		return ""
 	}
+
 	if strings.Contains(shape, "<") && strings.Contains(shape, ">") {
 		return "<<QUESTION>>: State the exact blocker and cite the concrete evidence source, path, command, or capability that is unavailable or failed."
 	}
+
 	return shape
 }
 
@@ -196,49 +207,62 @@ func normalizeRecoveryRejectedAction(action RecoveryRejectedAction) RecoveryReje
 	action.ActionClass = strings.TrimSpace(action.ActionClass)
 	action.Target = strings.TrimSpace(action.Target)
 	action.Reason = strings.TrimSpace(action.Reason)
+
 	if action.Tool == "completion_gate" {
 		action.Tool = ""
 		if action.ActionClass == "" {
 			action.ActionClass = actionFinalAnswer
 		}
 	}
+
 	return action
 }
 
 func (action RecoveryRejectedAction) label() string {
 	var parts []string
+
 	if action.Tool != "" {
 		parts = append(parts, "tool="+quoteRecoveryCardValue(action.Tool))
 	}
+
 	if action.ActionClass != "" {
 		parts = append(parts, "action_class="+quoteRecoveryCardValue(action.ActionClass))
 	}
+
 	if action.Target != "" {
 		parts = append(parts, "target="+quoteRecoveryCardValue(action.Target))
 	}
+
 	if action.Reason != "" {
 		parts = append(parts, "reason="+quoteRecoveryCardValue(action.Reason))
 	}
+
 	if len(parts) == 0 {
 		return "unspecified"
 	}
+
 	return strings.Join(parts, " ")
 }
 
 func recoveryCardContractLabel(card RecoveryCard) string {
 	var parts []string
+
 	if card.ContractID != "" {
 		parts = append(parts, "contract_id="+quoteRecoveryCardValue(card.ContractID))
 	}
+
 	if card.PhaseID != "" {
 		parts = append(parts, "phase_id="+quoteRecoveryCardValue(card.PhaseID))
 	}
+
 	if card.InvariantID != "" {
 		parts = append(parts, "invariant_id="+quoteRecoveryCardValue(card.InvariantID))
 	}
+
 	if len(parts) == 0 {
 		return "unspecified"
 	}
+
 	return strings.Join(parts, " ")
 }
 
@@ -246,9 +270,11 @@ func recoveryCardInvariantLabel(card RecoveryCard) string {
 	if card.Invariant == "" {
 		return recoveryCardOptionalLabel(card.InvariantID, "unspecified")
 	}
+
 	if card.InvariantID == "" {
 		return card.Invariant
 	}
+
 	return fmt.Sprintf("%s: %s", card.InvariantID, card.Invariant)
 }
 
@@ -256,6 +282,7 @@ func recoveryCardOptionalLabel(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback
 	}
+
 	return strings.TrimSpace(value)
 }
 
@@ -263,6 +290,7 @@ func recoveryCardListLabel(values []string, fallback string) string {
 	if len(values) == 0 {
 		return fallback
 	}
+
 	return strings.Join(values, ", ")
 }
 
@@ -270,6 +298,7 @@ func writeRecoveryCardLine(b *strings.Builder, label, value string) {
 	if strings.TrimSpace(value) == "" {
 		return
 	}
+
 	b.WriteString("\n- ")
 	b.WriteString(label)
 	b.WriteString(": ")
@@ -281,9 +310,11 @@ func quoteRecoveryCardValue(value string) string {
 	if value == "" {
 		return ""
 	}
+
 	if strings.ContainsAny(value, " \t\n\r,:") {
 		return fmt.Sprintf("%q", value)
 	}
+
 	return value
 }
 
@@ -295,6 +326,7 @@ func recoveryCardInvariantID(input RecoveryCardInput) string {
 	if len(input.PhaseContract.InvariantIDs) > 0 {
 		return input.PhaseContract.InvariantIDs[0]
 	}
+
 	lower := strings.ToLower(strings.TrimSpace(input.RejectedResult.Summary + "\n" + input.RejectedResult.Error))
 	switch {
 	case strings.Contains(lower, "zero-hit") || strings.Contains(lower, "zero hit") || strings.Contains(lower, "no results"):
@@ -313,6 +345,7 @@ func recoveryCardInvariantID(input RecoveryCardInput) string {
 		if strings.TrimSpace(input.PhaseContract.PhaseID) != "" && input.PhaseContract.PhaseID != turnPhaseGeneric {
 			return "phase.current_contract"
 		}
+
 		return "recovery.current_evidence"
 	}
 }
@@ -331,6 +364,7 @@ func recoveryCardInvariantText(invariantID string, contract TurnPhaseContract) s
 		if !recoveryCardBlockerAllowed(contract) {
 			return "The active phase requires one parser-readable submit_plan action that satisfies the current phase contract."
 		}
+
 		return "The active phase requires one parser-readable submit_plan action or a supported terminal blocker."
 	case "surface.current_phase_tools":
 		return "Only the tools and action classes exposed by the current phase contract are callable."
@@ -340,6 +374,7 @@ func recoveryCardInvariantText(invariantID string, contract TurnPhaseContract) s
 		if next := firstRecoveryCardString(contract.RequiredNext...); next != "" {
 			return "The next action must satisfy the active phase contract: " + next
 		}
+
 		return "Use the gathered evidence, current tool surface, and exact blocker shape to recover."
 	}
 }
@@ -348,6 +383,7 @@ func recoveryCardSafeNextActionForRejectedAction(brief workerruntime.WorkerRunti
 	if contract.PhaseID != turnPhaseImplementationWriteReady && contract.PhaseID != turnPhaseImplementationTargetSource {
 		return ""
 	}
+
 	if pending := sourceEvidencePendingRedirectsForBrief(brief, results); len(pending) > 0 {
 		if recoveryCardActionClassAllowed(contract, actionRead) {
 			callablePending := recoveryCardCallablePendingRedirects(contract, pending)
@@ -356,12 +392,15 @@ func recoveryCardSafeNextActionForRejectedAction(brief workerruntime.WorkerRunti
 			}
 		}
 	}
+
 	if sourcedSummary := implementationTargetWriteReadySourcedPathSummary(results, 3); sourcedSummary != "" {
 		return "Emit one parser-readable write to the already-sourced path(s): " + sourcedSummary + ". For textual write transport, use one visible JSON object or apply_patch envelope, not key/value edit-body notes; or answer <<QUESTION>> with the exact edit blocker/no-op evidence."
 	}
+
 	if contract.PhaseID == turnPhaseImplementationTargetSource {
 		return "Make one bounded source-body read for the concrete edit target with named_gap, then emit one parser-readable write. For textual write transport, use one visible JSON object or apply_patch envelope, not key/value edit-body notes; or answer <<QUESTION>> with the exact edit blocker/no-op evidence."
 	}
+
 	return ""
 }
 
@@ -370,6 +409,7 @@ func recoveryCardSafeNextActionFromPhaseContract(contract TurnPhaseContract) str
 	if next == "" {
 		return ""
 	}
+
 	switch contract.PhaseID {
 	case turnPhaseImplementationWriteReady:
 		return "Follow the active write-ready requirement: " + next
@@ -377,6 +417,7 @@ func recoveryCardSafeNextActionFromPhaseContract(contract TurnPhaseContract) str
 		if contract.Phase != "verification" || !recoveryCardActionClassesExactly(contract, actionVerify, actionBlocker) {
 			return ""
 		}
+
 		return "Run one focused verification action from the active verification requirement: " + next
 	case turnPhaseSubmitReadyNativeRequired, turnPhaseSubmitReadyTextual, turnPhaseMalformedSubmitPlanRecovery:
 		return "Emit one parser-readable planner outcome: " + next
@@ -388,6 +429,7 @@ func recoveryCardSafeNextActionFromPhaseContract(contract TurnPhaseContract) str
 		if contract.Phase == "read_only_evidence_ready" && recoveryCardActionClassesExactly(contract, actionFinalAnswer, actionBlocker) {
 			return "Answer from the gathered bounded evidence now, or answer <<QUESTION>> only with the exact unsupported claim."
 		}
+
 		return ""
 	}
 }
@@ -400,11 +442,14 @@ func recoveryCardStrategyNextActionFromPhaseContract(contract TurnPhaseContract)
 	if !slicesContainRecoveryCardString(classes, actionFinalAnswer) {
 		return ""
 	}
+
 	phase := strings.TrimSpace(contract.Phase)
 	if strings.HasPrefix(phase, "read_only_") ||
 		slicesContainRecoveryCardString(recoveryCardTerminalOutcomes(contract), actionFinalAnswer) {
+
 		return "Let the model choose strategy: answer from gathered evidence now, or state uncertainty with the exact unsupported claim and evidence source."
 	}
+
 	return ""
 }
 
@@ -413,6 +458,7 @@ func recoveryCardActionClassAllowed(contract TurnPhaseContract, class string) bo
 		contract.RuntimeCall.ExpressibleActionClasses,
 		contract.ActionPolicy.AllowedActionClasses,
 	)
+
 	return slicesContainRecoveryCardString(classes, class)
 }
 
@@ -421,16 +467,20 @@ func recoveryCardActionClassesExactly(contract TurnPhaseContract, expected ...st
 		contract.RuntimeCall.ExpressibleActionClasses,
 		contract.ActionPolicy.AllowedActionClasses,
 	)
+
 	classes = uniqueRecoveryCardStrings(classes)
 	expected = uniqueRecoveryCardStrings(expected)
+
 	if len(classes) != len(expected) {
 		return false
 	}
+
 	for _, class := range expected {
 		if !slicesContainRecoveryCardString(classes, class) {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -442,23 +492,27 @@ func recoveryCardCallablePendingRedirects(contract TurnPhaseContract, pending []
 	if len(callableTools) == 0 || len(pending) == 0 {
 		return nil
 	}
+
 	callable := make(map[string]struct{}, len(callableTools))
 	for _, tool := range callableTools {
 		if tool = strings.TrimSpace(tool); tool != "" {
 			callable[tool] = struct{}{}
 		}
 	}
+
 	filtered := make([]sourceEvidenceObligation, 0, len(pending))
 	for _, obligation := range pending {
 		if _, ok := callable[strings.TrimSpace(obligation.PendingTool)]; ok {
 			filtered = append(filtered, obligation)
 		}
 	}
+
 	return filtered
 }
 
 func recoveryCardInvalidRepeats(invariantID string, contract TurnPhaseContract) []string {
 	var repeats []string
+
 	switch invariantID {
 	case "evidence.zero_hit_not_absence":
 		repeats = append(repeats, "repeat the same zero-hit search", "broaden the query without naming one missing claim")
@@ -469,33 +523,42 @@ func recoveryCardInvalidRepeats(invariantID string, contract TurnPhaseContract) 
 	case "parser.submit_plan_required":
 		repeats = append(repeats, "prose-only final answer", "non-parser-readable action")
 	}
+
 	return mergeRecoveryCardStrings(repeats, contract.InvalidNext)
 }
 
 func recoveryCardCallableTools(contract TurnPhaseContract, currentAllowedTools []string) []string {
 	phaseTools := firstNonEmptyRecoveryCardStrings(contract.ActionPolicy.CallableToolNames, contract.AllowedTools)
 	current := uniqueRecoveryCardStrings(currentAllowedTools)
+
 	phaseTools = removeRecoveryCardStrings(phaseTools, contract.HiddenTools)
 	current = removeRecoveryCardStrings(current, contract.HiddenTools)
+
 	if len(phaseTools) == 0 && recoveryCardActionPolicyHasNoToolClasses(contract.ActionPolicy.AllowedActionClasses) {
 		return nil
 	}
+
 	if len(current) == 0 {
 		return uniqueRecoveryCardStrings(phaseTools)
 	}
+
 	if len(phaseTools) == 0 {
 		return current
 	}
+
 	phaseSet := make(map[string]struct{}, len(phaseTools))
 	for _, tool := range phaseTools {
 		phaseSet[strings.TrimSpace(tool)] = struct{}{}
 	}
+
 	var out []string
+
 	for _, tool := range current {
 		if _, ok := phaseSet[tool]; ok {
 			out = append(out, tool)
 		}
 	}
+
 	return uniqueRecoveryCardStrings(out)
 }
 
@@ -508,12 +571,14 @@ func recoveryCardActionPolicyHasNoToolClasses(classes []string) bool {
 	if len(classes) == 0 {
 		return false
 	}
+
 	for _, class := range classes {
 		switch strings.TrimSpace(class) {
 		case actionRead, actionSearch, actionPerEditWrite, actionVerify, actionSubmitPlan, actionGenericProbe:
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -522,11 +587,15 @@ func recoveryCardCallableActionClasses(contract TurnPhaseContract, currentAllowe
 		contract.RuntimeCall.ExpressibleActionClasses,
 		contract.ActionPolicy.AllowedActionClasses,
 	)
+
 	contractClasses = actionClassesAllowedByPolicy(contractClasses, contract.ActionPolicy.InvalidActionClasses)
+
 	toolClasses := recoveryCardCallableActionClassesForTools(recoveryCardCallableTools(contract, currentAllowedTools), contractClasses)
+
 	if len(toolClasses) == 0 {
 		return contractClasses
 	}
+
 	return actionClassesAllowedByPolicy(mergeRecoveryCardStrings(toolClasses, contractClasses), contract.ActionPolicy.InvalidActionClasses)
 }
 
@@ -539,6 +608,7 @@ func recoveryCardTerminalOutcomes(contract TurnPhaseContract) []string {
 
 func recoveryCardCallableActionClassesForTools(tools []string, contractClasses []string) []string {
 	var classes []string
+
 	for _, tool := range tools {
 		switch tool = strings.TrimSpace(tool); {
 		case tool == "":
@@ -568,6 +638,7 @@ func recoveryCardCallableActionClassesForTools(tools []string, contractClasses [
 			}
 		}
 	}
+
 	return uniqueRecoveryCardStrings(classes)
 }
 
@@ -575,6 +646,7 @@ func recoveryCardBlockerShape(contract TurnPhaseContract) string {
 	if !recoveryCardBlockerAllowed(contract) {
 		return ""
 	}
+
 	classes := firstNonEmptyRecoveryCardStrings(
 		contract.RuntimeCall.ExpressibleActionClasses,
 		contract.ActionPolicy.AllowedActionClasses,
@@ -589,6 +661,7 @@ func recoveryCardBlockerShape(contract TurnPhaseContract) string {
 			return "<<QUESTION>>: Cannot resolve the named claim because the needed source range, candidate path, or capability is unavailable."
 		}
 	}
+
 	return "<<QUESTION>>: State the exact unsupported claim and the concrete evidence source that is unavailable or failed."
 }
 
@@ -596,6 +669,7 @@ func recoveryCardExactBlockerShape(shape string, contract TurnPhaseContract) str
 	if !recoveryCardBlockerAllowed(contract) {
 		return ""
 	}
+
 	return firstRecoveryCardString(shape, recoveryCardBlockerShape(contract))
 }
 
@@ -603,19 +677,24 @@ func recoveryCardBlockerAllowed(contract TurnPhaseContract) bool {
 	if slicesContainRecoveryCardString(contract.ActionPolicy.InvalidActionClasses, actionBlocker) {
 		return false
 	}
+
 	classes := firstNonEmptyRecoveryCardStrings(
 		contract.RuntimeCall.ExpressibleActionClasses,
 		contract.ActionPolicy.AllowedActionClasses,
 	)
+
 	classes = actionClassesAllowedByPolicy(classes, contract.ActionPolicy.InvalidActionClasses)
+
 	if slicesContainRecoveryCardString(classes, actionBlocker) {
 		return true
 	}
+
 	for _, outcome := range recoveryCardTerminalOutcomes(contract) {
 		if strings.Contains(outcome, "<<QUESTION>>") {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -632,6 +711,7 @@ func recoveryCardRejectedTool(req workspace.ToolRequest, result workspace.ToolRe
 	if tool := strings.TrimSpace(req.Tool); tool != "" {
 		return tool
 	}
+
 	return strings.TrimSpace(result.Tool)
 }
 
@@ -669,6 +749,7 @@ func firstRecoveryCardString(values ...string) string {
 			return trimmed
 		}
 	}
+
 	return ""
 }
 
@@ -678,6 +759,7 @@ func firstNonEmptyRecoveryCardStrings(groups ...[]string) []string {
 			return uniqueRecoveryCardStrings(group)
 		}
 	}
+
 	return nil
 }
 
@@ -692,5 +774,6 @@ func slicesContainRecoveryCardString(values []string, needle string) bool {
 			return true
 		}
 	}
+
 	return false
 }

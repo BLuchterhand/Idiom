@@ -137,6 +137,7 @@ func summarizeProductEvidenceLaneHistory(root string) (productevidence.LaneHisto
 	if err != nil {
 		return productevidence.LaneHistorySummary{}, err
 	}
+
 	return productevidence.LaneHistorySummary{
 		Total:                 summary.Total,
 		ByMode:                summary.ByMode,

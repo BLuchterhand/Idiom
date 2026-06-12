@@ -24,6 +24,7 @@ func TestIsDescribedWriteToolCoversDiffProducingSubset(t *testing.T) {
 			t.Errorf("expected %q to require a description, got false", tool)
 		}
 	}
+
 	// mkdir and go_move_declarations are write tools but not diff-producing
 	// in a way a prose description would help — the first creates an empty
 	// directory, the second's intent is already structured in its args.
@@ -40,6 +41,7 @@ func TestCheckWriteDescriptionSkipsNonDescribedTools(t *testing.T) {
 	if got := checkWriteDescription(req); got != nil {
 		t.Fatalf("read_file should be skipped, got guard result: %#v", got)
 	}
+
 	req = workspace.ToolRequest{Tool: "mkdir", Path: "foo"}
 	if got := checkWriteDescription(req); got != nil {
 		t.Fatalf("mkdir should be skipped, got guard result: %#v", got)
@@ -56,9 +58,11 @@ func TestCheckWriteDescriptionPassesWhenDescriptionPresent(t *testing.T) {
 func TestCheckWriteDescriptionTreatsWhitespaceAsMissing(t *testing.T) {
 	req := workspace.ToolRequest{Tool: "edit_file", Path: "x.go", Description: "   \t\n "}
 	got := checkWriteDescription(req)
+
 	if got == nil {
 		t.Fatal("whitespace-only description should be rejected")
 	}
+
 	if !strings.Contains(got.Error, "requires a \"description\"") {
 		t.Errorf("guard error should explain requirement, got: %q", got.Error)
 	}
@@ -68,24 +72,31 @@ func TestCheckWriteDescriptionRejectsEachDescribedTool(t *testing.T) {
 	for _, tool := range []string{"edit_file", "write_file", "append_file", "apply_patch"} {
 		req := workspace.ToolRequest{Tool: tool, Path: "x.go"}
 		got := checkWriteDescription(req)
+
 		if got == nil {
 			t.Errorf("%s without description should be rejected", tool)
+
 			continue
 		}
+
 		if got.Tool != tool {
 			t.Errorf("%s: guard Tool = %q, want %q", tool, got.Tool, tool)
 		}
+
 		if got.Summary != "Missing write description" {
 			t.Errorf("%s: guard Summary = %q", tool, got.Summary)
 		}
+
 		// The redirect-style nudge must name the offending tool and include
 		// a non-copyable "Try:" reshaping so the model can fix and retry.
 		if !strings.Contains(got.Error, tool) {
 			t.Errorf("%s: guard error should mention the tool name, got: %q", tool, got.Error)
 		}
+
 		if !strings.Contains(got.Error, "Try:") {
 			t.Errorf("%s: guard error should include a 'Try:' example, got: %q", tool, got.Error)
 		}
+
 		if !strings.Contains(got.Error, "executes normally") {
 			t.Errorf("%s: guard error should promise normal execution after retry, got: %q", tool, got.Error)
 		}
@@ -95,9 +106,11 @@ func TestCheckWriteDescriptionRejectsEachDescribedTool(t *testing.T) {
 func TestCheckWriteDescriptionTryGuidanceAvoidsCopyablePlaceholders(t *testing.T) {
 	req := workspace.ToolRequest{Tool: "apply_patch"}
 	got := checkWriteDescription(req)
+
 	if got == nil {
 		t.Fatal("apply_patch without description should be rejected")
 	}
+
 	for _, forbidden := range []string{`"path":""`, `"<one sentence`, `"description":"`} {
 		if strings.Contains(got.Error, forbidden) {
 			t.Errorf("write description Try guidance must not include copyable placeholder %q, got: %q", forbidden, got.Error)
@@ -108,9 +121,11 @@ func TestCheckWriteDescriptionTryGuidanceAvoidsCopyablePlaceholders(t *testing.T
 func TestCheckWriteDescriptionEditFileGuidanceNamesSameArguments(t *testing.T) {
 	req := workspace.ToolRequest{Tool: "edit_file", Path: "pkg/foo.go"}
 	got := checkWriteDescription(req)
+
 	if got == nil {
 		t.Fatal("edit_file without description should be rejected")
 	}
+
 	if !strings.Contains(got.Error, "same concrete tool arguments") {
 		t.Errorf("edit_file Try guidance should tell the model to preserve concrete arguments, got: %q", got.Error)
 	}
@@ -123,28 +138,35 @@ func TestRunnerRejectsEditWithoutDescription(t *testing.T) {
 	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	replies := []string{
 		"```tool\n{\"tool\":\"edit_file\",\"path\":\"README.md\",\"old_text\":\"hello\",\"new_text\":\"bye\"}\n```",
 		"Stopped without description.",
 	}
+
 	var requests int
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reply := replies[requests]
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": reply},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	var guarded *workspace.ToolResult
+
 	runner := &Runner{
 		Client:    llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
 		Policy:    RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
 	}
+
 	_, err := runner.Run(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "edit without description"}},
@@ -153,6 +175,7 @@ func TestRunnerRejectsEditWithoutDescription(t *testing.T) {
 		func(ev ToolResultEvent) {
 			if strings.Contains(ev.Result.Error, "requires a \"description\"") {
 				copy := ev.Result
+
 				guarded = &copy
 			}
 		},
@@ -160,17 +183,21 @@ func TestRunnerRejectsEditWithoutDescription(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if guarded == nil {
 		t.Fatal("expected guard to fire as a ToolResultEvent")
 	}
+
 	if guarded.Tool != "edit_file" {
 		t.Errorf("guard ToolResult.Tool = %q", guarded.Tool)
 	}
+
 	// The file must NOT have been mutated — the guard fires before Execute.
 	data, err := os.ReadFile(filepath.Join(root, "README.md"))
 	if err != nil {
 		t.Fatalf("read readme: %v", err)
 	}
+
 	if string(data) != "hello\n" {
 		t.Fatalf("file was mutated despite rejected write: %q", data)
 	}
@@ -181,28 +208,36 @@ func TestScopedImplementationConcreteMissingWriteDescriptionSynthesizesBeforeRet
 	if err := writeTestFile(root, "a.txt", "before\n"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	replies := []string{
 		`{"tool":"edit_file","path":"a.txt","old_text":"before","new_text":"after"}`,
 		"Changed paths:\n- a.txt\nVerification: not required for this test fixture.",
 	}
+
 	var requests int
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
 			t.Fatalf("unexpected extra chat request")
 		}
+
 		reply := replies[requests]
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": reply},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true})
 	ws.MarkPathObserved("a.txt")
+
 	var sawValidatorDecision, sawSynthesized bool
+
 	runner := &Runner{
 		Client:    llama.NewClient(server.URL, time.Second),
 		Workspace: ws,
@@ -219,11 +254,13 @@ func TestScopedImplementationConcreteMissingWriteDescriptionSynthesizesBeforeRet
 			if event.Role == "dynamic_validator_decision" {
 				sawValidatorDecision = true
 			}
+
 			if event.Role == "write_description_repair_synthesized" {
 				sawSynthesized = true
 			}
 		},
 	}
+
 	answer, err := runner.Run(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "Update a.txt."}},
@@ -235,19 +272,24 @@ func TestScopedImplementationConcreteMissingWriteDescriptionSynthesizesBeforeRet
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if !strings.Contains(answer, "a.txt") {
 		t.Fatalf("expected final answer to report repaired write, got %q", answer)
 	}
+
 	if requests != len(replies) {
 		t.Fatalf("expected corrected write and final answer, got %d requests", requests)
 	}
+
 	data, err := os.ReadFile(filepath.Join(root, "a.txt"))
 	if err != nil {
 		t.Fatalf("read a.txt: %v", err)
 	}
+
 	if string(data) != "after\n" {
 		t.Fatalf("synthesized missing-description write should mutate file, got %q", data)
 	}
+
 	if !sawValidatorDecision || !sawSynthesized {
 		t.Fatalf("expected validator and synthesized events, saw decision=%v synthesized=%v", sawValidatorDecision, sawSynthesized)
 	}
@@ -258,28 +300,36 @@ func TestScopedImplementationMissingWriteDescriptionSynthesizesDescription(t *te
 	if err := writeTestFile(root, "a.txt", "before\n"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	replies := []string{
 		`{"tool":"edit_file","path":"a.txt","old_text":"before","new_text":"after"}`,
 		"Changed paths:\n- a.txt\nVerification: not required for this test fixture.",
 	}
+
 	var requests int
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
 			t.Fatalf("unexpected extra chat request")
 		}
+
 		reply := replies[requests]
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": reply},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true})
 	ws.MarkPathObserved("a.txt")
+
 	var sawSynthesized bool
+
 	runner := &Runner{
 		Client:    llama.NewClient(server.URL, time.Second),
 		Workspace: ws,
@@ -298,6 +348,7 @@ func TestScopedImplementationMissingWriteDescriptionSynthesizesDescription(t *te
 			}
 		},
 	}
+
 	answer, err := runner.Run(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "Update a.txt."}},
@@ -309,16 +360,20 @@ func TestScopedImplementationMissingWriteDescriptionSynthesizesDescription(t *te
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if !strings.Contains(answer, "a.txt") {
 		t.Fatalf("expected final answer to report repaired write, got %q", answer)
 	}
+
 	data, err := os.ReadFile(filepath.Join(root, "a.txt"))
 	if err != nil {
 		t.Fatalf("read a.txt: %v", err)
 	}
+
 	if string(data) != "after\n" {
 		t.Fatalf("synthesized-description write should mutate file, got %q", data)
 	}
+
 	if !sawSynthesized {
 		t.Fatal("expected write_description_repair_synthesized event")
 	}
@@ -368,6 +423,7 @@ func TestWriteDescriptionRepairSynthesisRejectsUnsafeOrOutOfScopeWrites(t *testi
 			req:          workspace.ToolRequest{Tool: "edit_file", Path: "other.txt", OldText: "before", NewText: "after"},
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if repaired, raw, ok := runner.writeDescriptionRepairSynthesizedRequest(tt.req, tt.repairActive); ok {
@@ -375,12 +431,14 @@ func TestWriteDescriptionRepairSynthesisRejectsUnsafeOrOutOfScopeWrites(t *testi
 			}
 		})
 	}
+
 	nonMutationRunner := &Runner{}
 	for _, repairActive := range []bool{false, true} {
 		if repaired, raw, ok := nonMutationRunner.writeDescriptionRepairSynthesizedRequest(workspace.ToolRequest{Tool: "edit_file", Path: "allowed.txt", OldText: "before", NewText: "after"}, repairActive); ok {
 			t.Fatalf("unexpected non-mutation synthesis with repairActive=%v: repaired=%#v raw=%q", repairActive, repaired, raw)
 		}
 	}
+
 	if _, _, ok := runner.writeDescriptionRepairSynthesizedRequest(workspace.ToolRequest{Tool: "edit_file", Path: "allowed.txt", OldText: "before", NewText: "after"}, false); !ok {
 		t.Fatal("expected implementation-lane concrete write to synthesize missing description on first pass")
 	}
@@ -391,26 +449,33 @@ func TestScopedImplementationSynthesizedWriteStillRequiresSourceEvidence(t *test
 	if err := writeTestFile(root, "a.txt", "before\n"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	replies := []string{
 		`{"tool":"edit_file","path":"a.txt","old_text":"before","new_text":"after"}`,
 		"<<QUESTION>>: Cannot edit a.txt before source-body evidence is available.",
 	}
+
 	var requests int
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
 			t.Fatalf("unexpected extra chat request")
 		}
+
 		reply := replies[requests]
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": reply},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	var sawSynthesized, sawSourceRead bool
+
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -431,6 +496,7 @@ func TestScopedImplementationSynthesizedWriteStillRequiresSourceEvidence(t *test
 			}
 		},
 	}
+
 	if _, err := runner.Run(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "Update a.txt."}},
@@ -445,13 +511,16 @@ func TestScopedImplementationSynthesizedWriteStillRequiresSourceEvidence(t *test
 	); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if !sawSynthesized || !sawSourceRead {
 		t.Fatalf("expected synthesized write then source-evidence read redirect, synthesized=%v sourceRead=%v", sawSynthesized, sawSourceRead)
 	}
+
 	data, err := os.ReadFile(filepath.Join(root, "a.txt"))
 	if err != nil {
 		t.Fatalf("read a.txt: %v", err)
 	}
+
 	if string(data) != "before\n" {
 		t.Fatalf("write should not execute before source evidence, got %q", data)
 	}
@@ -462,28 +531,36 @@ func TestScopedImplementationSynthesizedWriteStillHonorsPermissionDeny(t *testin
 	if err := writeTestFile(root, "a.txt", "before\n"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	replies := []string{
 		`{"tool":"edit_file","path":"a.txt","old_text":"before","new_text":"after"}`,
 		"<<QUESTION>>: Cannot edit a.txt because the permission policy denied edit_file for that path.",
 	}
+
 	var requests int
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
 			t.Fatalf("unexpected extra chat request")
 		}
+
 		reply := replies[requests]
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": reply},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true})
 	ws.MarkPathObserved("a.txt")
+
 	var sawSynthesized, sawPermissionDeny bool
+
 	runner := &Runner{
 		Client:    llama.NewClient(server.URL, time.Second),
 		Workspace: ws,
@@ -508,21 +585,26 @@ func TestScopedImplementationSynthesizedWriteStillHonorsPermissionDeny(t *testin
 			if event.Role == "write_description_repair_synthesized" {
 				sawSynthesized = true
 			}
+
 			if event.Role == "permission_decision" && strings.Contains(event.Content, `"decision":"deny"`) {
 				sawPermissionDeny = true
 			}
 		},
 	}
+
 	if _, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "Update a.txt."}}, llama.ChatOptions{}, nil, nil, nil); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if !sawSynthesized || !sawPermissionDeny {
 		t.Fatalf("expected synthesized write then permission denial, synthesized=%v permissionDeny=%v", sawSynthesized, sawPermissionDeny)
 	}
+
 	data, err := os.ReadFile(filepath.Join(root, "a.txt"))
 	if err != nil {
 		t.Fatalf("read a.txt: %v", err)
 	}
+
 	if string(data) != "before\n" {
 		t.Fatalf("permission-denied synthesized write should not mutate file, got %q", data)
 	}
@@ -533,6 +615,7 @@ func TestScopedImplementationMissingWriteDescriptionRepeatedDetourReturnsTypedBl
 	if err := writeTestFile(root, "a.txt", "before\n"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	replies := []string{
 		`{"tool":"edit_file","path":"a.txt"}`,
 		`{"tool":"search_content","path":".","pattern":"before"}`,
@@ -540,23 +623,29 @@ func TestScopedImplementationMissingWriteDescriptionRepeatedDetourReturnsTypedBl
 		`{"tool":"edit_file","path":"a.txt","old_text":"before","new_text":"after","description":"write after passive missing-description rejection"}`,
 		"Changed paths:\n- a.txt\nVerification: not required for this test fixture.",
 	}
+
 	var requests int
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
 			t.Fatalf("unexpected extra chat request")
 		}
+
 		reply := replies[requests]
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": reply},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true})
 	ws.MarkPathObserved("a.txt")
+
 	runner := &Runner{
 		Client:    llama.NewClient(server.URL, time.Second),
 		Workspace: ws,
@@ -571,6 +660,7 @@ func TestScopedImplementationMissingWriteDescriptionRepeatedDetourReturnsTypedBl
 		},
 		OnEvent: func(event RunEvent) {},
 	}
+
 	answer, err := runner.Run(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "Update a.txt."}},
@@ -582,16 +672,20 @@ func TestScopedImplementationMissingWriteDescriptionRepeatedDetourReturnsTypedBl
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if !strings.Contains(answer, "write-description repair rejected repeated non-write detours") {
 		t.Fatalf("expected typed detour blocker, got %q", answer)
 	}
+
 	if requests != 3 {
 		t.Fatalf("expected blocker before corrected write, got %d requests", requests)
 	}
+
 	data, err := os.ReadFile(filepath.Join(root, "a.txt"))
 	if err != nil {
 		t.Fatalf("read a.txt: %v", err)
 	}
+
 	if string(data) != "before\n" {
 		t.Fatalf("detour blocker should not mutate file, got %q", data)
 	}
@@ -602,34 +696,45 @@ func TestScopedImplementationWriteDescriptionRepairClearsForTargetPath(t *testin
 	if err := writeTestFile(root, "a.txt", "alpha\n"); err != nil {
 		t.Fatalf("seed a.txt: %v", err)
 	}
+
 	if err := writeTestFile(root, "b.txt", "before\n"); err != nil {
 		t.Fatalf("seed b.txt: %v", err)
 	}
+
 	replies := []string{
 		`{"tool":"edit_file","path":"b.txt","old_text":"before","new_text":"after"}`,
 		`{"tool":"read_file","path":"a.txt","named_gap":"confirm first required file before writing it"}`,
 		`{"tool":"edit_file","path":"a.txt","old_text":"alpha","new_text":"done","description":"update the first required file after the second file repair is complete"}`,
 		"Changed paths:\n- a.txt\n- b.txt\nVerification: not required for this test fixture.",
 	}
+
 	var requests int
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
 			t.Fatalf("unexpected extra chat request")
 		}
+
 		reply := replies[requests]
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": reply},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
-	var sawReadSuccess bool
-	var readResult workspace.ToolResult
+	var (
+		sawReadSuccess bool
+		readResult     workspace.ToolResult
+	)
+
 	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true})
 	ws.MarkPathObserved("b.txt")
+
 	runner := &Runner{
 		Client:    llama.NewClient(server.URL, time.Second),
 		Workspace: ws,
@@ -644,6 +749,7 @@ func TestScopedImplementationWriteDescriptionRepairClearsForTargetPath(t *testin
 		},
 		OnEvent: func(event RunEvent) {},
 	}
+
 	answer, err := runner.Run(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "Update both files."}},
@@ -662,21 +768,26 @@ func TestScopedImplementationWriteDescriptionRepairClearsForTargetPath(t *testin
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if !sawReadSuccess {
 		t.Fatalf("expected scoped read for another required path after target repair to succeed, got result %#v", readResult)
 	}
+
 	if !strings.Contains(answer, "a.txt") || !strings.Contains(answer, "b.txt") {
 		t.Fatalf("expected final answer to report both paths, got %q", answer)
 	}
+
 	for path, want := range map[string]string{"a.txt": "done\n", "b.txt": "after\n"} {
 		data, err := os.ReadFile(filepath.Join(root, path))
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
 		}
+
 		if string(data) != want {
 			t.Fatalf("%s = %q, want %q", path, data, want)
 		}
 	}
+
 	if requests != len(replies) {
 		t.Fatalf("expected full synth/read/edit/final sequence, got %d requests", requests)
 	}
@@ -689,34 +800,44 @@ func TestRunnerAllowsEditWithDescription(t *testing.T) {
 	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	replies := []string{
 		"```tool\n{\"tool\":\"edit_file\",\"path\":\"README.md\",\"old_text\":\"hello\",\"new_text\":\"bye\",\"description\":\"change greeting\"}\n```",
 		"Done.",
 	}
+
 	var requests int
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reply := replies[requests]
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": reply},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	var lastReq workspace.ToolRequest
+
 	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true})
+
 	if err := ws.SetWritePolicy(workspace.WritePolicyAuto); err != nil {
 		t.Fatalf("set write policy: %v", err)
 	}
+
 	// Satisfy the read-before-edit invariant for edit_file.
 	ws.MarkPathObserved("README.md")
+
 	runner := &Runner{
 		Client:    llama.NewClient(server.URL, time.Second),
 		Workspace: ws,
 		Policy:    RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
 	}
+
 	_, err := runner.Run(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "edit"}},
@@ -731,13 +852,16 @@ func TestRunnerAllowsEditWithDescription(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if lastReq.Description != "change greeting" {
 		t.Fatalf("Request.Description not propagated through event: %#v", lastReq)
 	}
+
 	data, err := os.ReadFile(filepath.Join(root, "README.md"))
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
+
 	if string(data) != "bye\n" {
 		t.Fatalf("file not mutated: %q", data)
 	}
@@ -752,25 +876,31 @@ func TestRunnerGuardFiresAfterPermissionDeny(t *testing.T) {
 	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	replies := []string{
 		// No description — if the guard ran first, the result would be a
 		// description-missing error instead of a permission denial.
 		"```tool\n{\"tool\":\"edit_file\",\"path\":\"README.md\",\"old_text\":\"hello\",\"new_text\":\"bye\"}\n```",
 		"Denied.",
 	}
+
 	var requests int
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reply := replies[requests]
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": reply},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	var firstResult workspace.ToolResult
+
 	runner := &Runner{
 		Client:    llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
@@ -784,6 +914,7 @@ func TestRunnerGuardFiresAfterPermissionDeny(t *testing.T) {
 			}},
 		},
 	}
+
 	_, err := runner.Run(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "edit"}},
@@ -798,6 +929,7 @@ func TestRunnerGuardFiresAfterPermissionDeny(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	if strings.Contains(firstResult.Error, "requires a \"description\"") {
 		t.Fatalf("description guard fired before permission check: %q", firstResult.Error)
 	}
@@ -813,9 +945,11 @@ func TestRunnerBailsAfterTwoNonConcreteMissingDescriptions(t *testing.T) {
 	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
 	if err := writeTestFile(root, "OTHER.md", "hello\n"); err != nil {
 		t.Fatalf("seed other: %v", err)
 	}
+
 	// Use distinct args on each call so the "repeated tool request" guard
 	// doesn't pre-empt the description guard.
 	replies := []string{
@@ -824,22 +958,28 @@ func TestRunnerBailsAfterTwoNonConcreteMissingDescriptions(t *testing.T) {
 		// If the bail never triggers, the loop will ask for a third reply.
 		"Gave up on description.",
 	}
+
 	var requests int
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
 			t.Fatalf("unexpected extra chat request: bail did not fire")
 		}
+
 		reply := replies[requests]
 		requests++
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]string{"content": reply},
 			}},
 		})
 	}))
+
 	defer server.Close()
 
 	var budgetEvent string
+
 	runner := &Runner{
 		Client:    llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
@@ -850,6 +990,7 @@ func TestRunnerBailsAfterTwoNonConcreteMissingDescriptions(t *testing.T) {
 			}
 		},
 	}
+
 	_, err := runner.Run(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "edit without description"}},
@@ -859,13 +1000,17 @@ func TestRunnerBailsAfterTwoNonConcreteMissingDescriptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	var ledger runnerBudgetLedger
+
 	if err := json.Unmarshal([]byte(budgetEvent), &ledger); err != nil {
 		t.Fatalf("decode budget ledger %q: %v", budgetEvent, err)
 	}
+
 	if ledger.StopReason != "write_description_budget_exhausted" {
 		t.Fatalf("expected stop_reason=write_description_budget_exhausted, got %#v", ledger)
 	}
+
 	if !ledger.BudgetExhausted {
 		t.Fatalf("expected budget_exhausted=true on write-description bail, got %#v", ledger)
 	}
@@ -880,6 +1025,7 @@ func TestWriteDescriptionNoEllipsisInTryExamples(t *testing.T) {
 			req := workspace.ToolRequest{Tool: tool}
 			got := checkWriteDescription(req)
 			t.Log(got.Error)
+
 			if strings.Contains(got.Error, "...") {
 				t.Errorf("Try example should not contain ellipsis, got: %q", got.Error)
 			}
@@ -896,6 +1042,7 @@ func TestWriteDescriptionGuidancePreservesConcreteArgumentsInProse(t *testing.T)
 	}
 	got := checkWriteDescription(req)
 	t.Log(got.Error)
+
 	if !strings.Contains(got.Error, "same concrete tool arguments") {
 		t.Errorf("Try guidance should preserve existing concrete arguments by instruction, got: %q", got.Error)
 	}
@@ -910,6 +1057,7 @@ func TestWriteDescriptionTryGuidanceIsNotCopyableJSON(t *testing.T) {
 	}
 	got := checkWriteDescription(req)
 	t.Log(got.Error)
+
 	for _, forbidden := range []string{`{"tool"`, `"old_text"`, `"new_text"`, `"description":`} {
 		if strings.Contains(got.Error, forbidden) {
 			t.Errorf("Try guidance should not include copyable JSON field %q: %q", forbidden, got.Error)

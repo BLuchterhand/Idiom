@@ -140,6 +140,7 @@ func Pack(opts PackOptions) (PackResult, error) {
 	if err != nil {
 		return PackResult{}, err
 	}
+
 	if cached, hit := loadCachedPack(ctx); hit {
 		return cached, nil
 	}
@@ -153,17 +154,21 @@ func Pack(opts PackOptions) (PackResult, error) {
 	// share one canonical projection with consistent omitted-item counts.
 	proj := NewCompactPackProjection(result)
 	_, compactProj := RenderCompactPackProjection(proj, result.BudgetTokens)
+
 	result.CompactProjection = compactProj
 	addPackResultGaps(ctx, candidates, &result)
 	addPackResultEvidence(&result)
 
 	AttachPackResultContract(&result)
+
 	if err := SaveView(ctx.root, ctx.cacheKey, result); err != nil {
 		return PackResult{}, fmt.Errorf("save graph_views row: %w", err)
 	}
+
 	if err := savePack(ctx.root, result); err != nil {
 		return PackResult{}, err
 	}
+
 	return result, nil
 }
 
@@ -207,23 +212,29 @@ func preparePackContext(opts PackOptions) (*packContext, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	task := strings.TrimSpace(opts.Task)
 	if task == "" {
 		return nil, fmt.Errorf("task is required")
 	}
+
 	graph, err := LoadGraph(root)
 	if err != nil {
 		return nil, err
 	}
+
 	status, _ := Status(root)
 	now := opts.Now
+
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+
 	mode := strings.TrimSpace(opts.Mode)
 	if mode == "" {
 		mode = "plan"
 	}
+
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = defaultPackLimit
@@ -282,12 +293,17 @@ func loadCachedPack(ctx *packContext) (PackResult, bool) {
 		if cached.CompactProjection.PackID == "" {
 			cp := NewCompactPackProjection(cached)
 			_, compactProj := RenderCompactPackProjection(cp, cached.BudgetTokens)
+
 			cached.CompactProjection = compactProj
 		}
+
 		AttachPackResultContract(&cached)
+
 		_ = savePack(ctx.root, cached)
+
 		return cached, true
 	}
+
 	return PackResult{}, false
 }
 
@@ -302,6 +318,7 @@ func collectPackCandidates(ctx *packContext) packCandidates {
 	addMatchedPackNodes(ctx, files, symbols)
 	addPackRelationshipEvidence(ctx, files, symbols, tests)
 	addInferredPackTests(files, tests)
+
 	runtimeOverlay := addRuntimeOverlayToPack(ctx, files, tests)
 
 	rankInputs := packRankInputs(ctx)
@@ -323,12 +340,14 @@ func preparePackDiscovery(ctx *packContext) {
 	ctx.requiredEditPaths = cleanPackPaths(ctx.opts.RequiredEditPaths)
 	ctx.requiredPathSet = packPathSet(ctx.requiredEditPaths)
 	ctx.terms = queryTerms(QueryOptions{Query: ctx.task, Path: ctx.opts.Path, Scope: ctx.opts.Scope})
+
 	if len(ctx.terms) == 0 {
 		ctx.terms = []string{"."}
 	}
 
 	ctx.matched = matchNodes(ctx.graph.Nodes, ctx.terms, ctx.opts.Path, "any", ctx.limit*4)
 	ctx.matchedIDs = make(map[string]struct{}, len(ctx.matched))
+
 	for _, node := range ctx.matched {
 		ctx.matchedIDs[node.ID] = struct{}{}
 	}
@@ -337,6 +356,7 @@ func preparePackDiscovery(ctx *packContext) {
 	for _, node := range ctx.requiredNodes {
 		ctx.matchedIDs[node.ID] = struct{}{}
 	}
+
 	ctx.relationships = relatedEdges(ctx.graph.Edges, ctx.matchedIDs, packRelationshipLimit(ctx.limit))
 }
 
@@ -363,6 +383,7 @@ func addRequiredPackInputs(ctx *packContext, files *packFileBuilder, symbols *pa
 func addMatchedPackNodes(ctx *packContext, files *packFileBuilder, symbols *packSymbolBuilder) {
 	for _, node := range ctx.matched {
 		addPackNode(node, true, "matched task terms", files, symbols)
+
 		if node.Kind == "package" {
 			addPackageContainedFiles(ctx.graph, node.ID, ctx.nodesByID, files, ctx.limit)
 		}
@@ -373,9 +394,11 @@ func addPackRelationshipEvidence(ctx *packContext, files *packFileBuilder, symbo
 	for _, edge := range ctx.relationships {
 		source := ctx.nodesByID[edge.SourceID]
 		target := ctx.nodesByID[edge.TargetID]
+
 		if edge.Kind == "tests" {
 			addPackTestFromNode(source, target, tests)
 		}
+
 		addPackRelatedNode(source, edge, files, symbols)
 		addPackRelatedNode(target, edge, files, symbols)
 	}
@@ -392,9 +415,11 @@ func addRuntimeOverlayToPack(ctx *packContext, files *packFileBuilder, tests *pa
 	for _, file := range runtimeOverlay.Files {
 		files.addPackFile(file)
 	}
+
 	for _, test := range runtimeOverlay.Tests {
 		tests.add(test)
 	}
+
 	return runtimeOverlay
 }
 
@@ -402,8 +427,10 @@ func packRankInputs(ctx *packContext) RankInputs {
 	learnedWeights := ctx.opts.LearnedWeights
 	if learnedWeights == nil {
 		loaded, _ := LoadLearnedWeights(ctx.root)
+
 		learnedWeights = loaded
 	}
+
 	return RankInputs{
 		Graph:          &ctx.graph,
 		MatchedIDs:     ctx.matchedIDs,
@@ -439,11 +466,13 @@ func buildPackResult(ctx *packContext, candidates packCandidates) PackResult {
 		Tests:             tests,
 		Relationships:     summarizeEdges(ctx.relationships, true),
 	}
+
 	result.PackID = ctx.cacheKey.ID()
 	result.ArtifactPath = filepath.ToSlash(filepath.Join(".idiom", "comprehension", "views", result.PackID+".json"))
 	result.Provenance.ArtifactPath = result.ArtifactPath
 	result.Cache.PackID = result.PackID
 	result.Cache.StoreKind = util.FirstNonEmpty(result.Cache.StoreKind, result.StoreKind)
+
 	return result
 }
 
@@ -452,11 +481,14 @@ func addPackResultGaps(ctx *packContext, candidates packCandidates, result *Pack
 		if gap := GraphGapForStatus(ctx.status); gap != "" {
 			result.UnresolvedGaps = append(result.UnresolvedGaps, gap)
 		}
+
 		if gap, ok := GraphGapDetailForStatus(ctx.status); ok {
 			result.UnresolvedGapDetails = append(result.UnresolvedGapDetails, gap)
 		}
+
 		result.Risks = append(result.Risks, "Stale graph facts may point at outdated symbols or tests.")
 	}
+
 	if len(result.CandidateFiles) == 0 {
 		result.Unknowns = append(result.Unknowns, "No candidate files matched the task terms in the context graph.")
 		result.UnresolvedGaps = append(result.UnresolvedGaps, "reason=no_graph_matches candidate_file_count=0")
@@ -466,12 +498,15 @@ func addPackResultGaps(ctx *packContext, candidates packCandidates, result *Pack
 			CandidateFileCount: 0,
 		})
 	}
+
 	if len(result.CandidateSymbols) == 0 {
 		result.Unknowns = append(result.Unknowns, "No candidate symbols matched the task terms in the context graph.")
 	}
+
 	if len(result.Tests) == 0 {
 		result.Unknowns = append(result.Unknowns, "No exact validation command was inferred from the context graph.")
 	}
+
 	if result.Quality.LocalizationConfidence == "low" && !result.Quality.SourceOwnerFound {
 		result.Unknowns = append(result.Unknowns, "Context packet localized related evidence but did not identify a source-owner file.")
 		result.UnresolvedGaps = append(result.UnresolvedGaps, "reason=weak_source_owner localization_confidence=low")
@@ -481,6 +516,7 @@ func addPackResultGaps(ctx *packContext, candidates packCandidates, result *Pack
 			CandidateFileCount: len(result.CandidateFiles),
 		})
 	}
+
 	for _, path := range ctx.forbidden {
 		if candidates.files.omittedForbidden[path] {
 			result.Risks = append(result.Risks, fmt.Sprintf("Forbidden path %q was omitted from candidate files.", path))
@@ -513,6 +549,7 @@ func addPackResultEvidence(result *PackResult) {
 			Stale:      file.Stale,
 		})
 	}
+
 	for _, symbol := range result.CandidateSymbols {
 		result.Evidence = append(result.Evidence, PackEvidence{
 			Kind:       "context_symbol",

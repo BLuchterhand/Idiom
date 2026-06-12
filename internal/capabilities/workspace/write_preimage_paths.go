@@ -13,26 +13,32 @@ func WritePreimagePaths(req ToolRequest) ([]string, bool, error) {
 		if strings.TrimSpace(req.Path) == "" {
 			return nil, true, nil
 		}
+
 		return []string{req.Path}, true, nil
 	case ToolNameApplyPatch:
 		ops, err := ParsePatch(req.Content)
 		if err != nil {
 			return nil, true, err
 		}
+
 		return PatchOpPaths(ops), true, nil
 	case ToolNameGoMoveDeclarations:
 		var paths []string
+
 		if strings.TrimSpace(req.Path) != "" {
 			paths = appendUniqueWorkspaceStrings(paths, req.Path)
 		}
+
 		if strings.TrimSpace(req.Destination) != "" {
 			paths = appendUniqueWorkspaceStrings(paths, req.Destination)
 		}
+
 		for _, move := range req.Moves {
 			if strings.TrimSpace(move.Destination) != "" {
 				paths = appendUniqueWorkspaceStrings(paths, move.Destination)
 			}
 		}
+
 		return paths, true, nil
 	case ToolNameMkdir:
 		return nil, true, nil
@@ -43,28 +49,36 @@ func WritePreimagePaths(req ToolRequest) ([]string, bool, error) {
 
 func appendUniqueWorkspaceStrings(values []string, additions ...string) []string {
 	seen := make(map[string]struct{}, len(values)+len(additions))
+
 	var out []string
+
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
+
 	for _, value := range additions {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
+
 	return out
 }

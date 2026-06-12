@@ -81,11 +81,13 @@ func EffectiveModelForMode(mode WriterMode, plannerModel, executorModel, classif
 		if model := strings.TrimSpace(classifierModel); model != "" {
 			return model
 		}
+
 		return strings.TrimSpace(plannerModel)
 	default:
 		if model := strings.TrimSpace(executorModel); model != "" {
 			return model
 		}
+
 		return strings.TrimSpace(plannerModel)
 	}
 }
@@ -94,17 +96,21 @@ func EffectiveModelForMode(mode WriterMode, plannerModel, executorModel, classif
 func NewDecisionFromParams(params DecisionParams) Decision {
 	normalizedRequiredEditPaths := normalizeAndSort(params.RequiredEditPaths)
 	costTier := strings.TrimSpace(params.CostTier)
+
 	if costTier == "" {
 		costTier = "local_first"
 	}
+
 	reviewPolicy := strings.TrimSpace(params.ReviewPolicy)
 	if reviewPolicy == "" {
 		reviewPolicy = "local_first"
 	}
+
 	scopeTier := strings.TrimSpace(params.ScopeTier)
 	if scopeTier == "" && len(normalizedRequiredEditPaths) > 0 {
 		scopeTier = "single_atom"
 	}
+
 	d := Decision{
 		SchemaVersion:      SchemaVersion,
 		WriterMode:         string(params.Mode),
@@ -127,7 +133,9 @@ func NewDecisionFromParams(params DecisionParams) Decision {
 		UserOverride:       params.UserOverride,
 		TaskFamily:         strings.TrimSpace(params.TaskFamily),
 	}
+
 	d.RouteID = d.computeRouteID()
+
 	return d
 }
 
@@ -136,8 +144,11 @@ func normalizeAndSort(items []string) []string {
 	if items == nil {
 		return nil
 	}
+
 	seen := make(map[string]bool)
+
 	var unique []string
+
 	for _, item := range items {
 		normalized := strings.ToLower(strings.TrimSpace(item))
 		if normalized != "" && !seen[normalized] {
@@ -145,7 +156,9 @@ func normalizeAndSort(items []string) []string {
 			unique = append(unique, normalized)
 		}
 	}
+
 	sort.Strings(unique)
+
 	return unique
 }
 
@@ -153,30 +166,39 @@ func normalizeStringMap(items map[string]string) map[string]string {
 	if len(items) == 0 {
 		return nil
 	}
+
 	out := make(map[string]string, len(items))
 	for key, value := range items {
 		key = strings.ToLower(strings.TrimSpace(key))
 		value = strings.TrimSpace(value)
+
 		if key == "" || value == "" {
 			continue
 		}
+
 		out[key] = value
 	}
+
 	if len(out) == 0 {
 		return nil
 	}
+
 	return out
 }
 
 // computeRouteID computes a stable hash of the decision, excluding RouteID itself.
 func (d *Decision) computeRouteID() string {
 	payload := *d
+
 	payload.RouteID = ""
+
 	data, err := json.Marshal(payload)
 	if err != nil {
 		data = []byte(fmt.Sprintf("%#v", payload))
 	}
+
 	hash := sha256.Sum256(data)
+
 	return fmt.Sprintf("%x", hash[:8])
 }
 

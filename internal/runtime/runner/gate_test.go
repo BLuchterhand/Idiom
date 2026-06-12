@@ -15,19 +15,25 @@ func TestMaybeAcquireNoOpWhenDaemonAbsent(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "definitely-not-a-socket.sock")
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+
 	defer cancel()
+
 	start := time.Now()
+
 	release, err := MaybeAcquire(ctx, missing, "qwen-35b", "label", "test", nil)
 	if err != nil {
 		t.Fatalf("expected no error when daemon absent, got %v", err)
 	}
+
 	if release == nil {
 		t.Fatalf("release must be non-nil even on no-op path")
 	}
+
 	// Must return well under the dial timeout (200ms).
 	if elapsed := time.Since(start); elapsed > 400*time.Millisecond {
 		t.Fatalf("no-op path took too long: %v", elapsed)
 	}
+
 	release() // idempotent on no-op
 }
 
@@ -35,45 +41,59 @@ func TestMaybeAcquireWithResultReportsUnavailableWhenDaemonAbsent(t *testing.T) 
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "definitely-not-a-socket.sock")
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+
 	defer cancel()
 
 	result := MaybeAcquireWithResult(ctx, missing, "qwen-35b", "label", "test", nil)
 	if result.State != MaybeAcquireStateUnavailable {
 		t.Fatalf("State = %q, want %q", result.State, MaybeAcquireStateUnavailable)
 	}
+
 	if result.Err != nil {
 		t.Fatalf("unavailable opportunistic queue should not return an error, got %v", result.Err)
 	}
+
 	if result.Release == nil {
 		t.Fatal("Release must be non-nil for unavailable no-op path")
 	}
+
 	result.Release()
 }
 
 func TestMaybeAcquireGrantsImmediatelyWhenSlotFree(t *testing.T) {
 	_, sock := startTestServer(t, DefaultConfig())
+
 	var statusBuf bytes.Buffer
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+
 	defer cancel()
+
 	release, err := MaybeAcquire(ctx, sock, "default", "test-label", "test-client", &statusBuf)
 	if err != nil {
 		t.Fatalf("MaybeAcquire: %v", err)
 	}
+
 	if release == nil {
 		t.Fatalf("release must be non-nil")
 	}
+
 	// Confirm the daemon sees us in flight.
 	snap, err := Status(sock)
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
+
 	if len(snap.InFlight) != 1 {
 		t.Fatalf("expected 1 in-flight job, got %d", len(snap.InFlight))
 	}
+
 	if snap.InFlight[0].Label != "test-label" {
 		t.Fatalf("label not propagated: got %q", snap.InFlight[0].Label)
 	}
+
 	release()
+
 	// After release, daemon should show no in-flight jobs.
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
@@ -81,29 +101,36 @@ func TestMaybeAcquireGrantsImmediatelyWhenSlotFree(t *testing.T) {
 		if err != nil {
 			t.Fatalf("status post-release: %v", err)
 		}
+
 		if len(snap.InFlight) == 0 {
 			return
 		}
+
 		time.Sleep(20 * time.Millisecond)
 	}
+
 	t.Fatalf("expected release to drop in-flight count to 0; snap=%+v", snap)
 }
 
 func TestMaybeAcquireWithResultReportsAcquiredWhenSlotGranted(t *testing.T) {
 	_, sock := startTestServer(t, DefaultConfig())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+
 	defer cancel()
 
 	result := MaybeAcquireWithResult(ctx, sock, "default", "typed-label", "typed-client", nil)
 	if result.Err != nil {
 		t.Fatalf("MaybeAcquireWithResult: %v", result.Err)
 	}
+
 	if result.State != MaybeAcquireStateAcquired {
 		t.Fatalf("State = %q, want %q", result.State, MaybeAcquireStateAcquired)
 	}
+
 	if result.Release == nil {
 		t.Fatal("Release must be non-nil")
 	}
+
 	result.Release()
 }
 
@@ -117,6 +144,7 @@ func TestMaybeAcquireSerializesUnderPoolCap(t *testing.T) {
 		Pools: map[string]PoolConfig{"default": {MaxInFlight: 1}},
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+
 	defer cancel()
 
 	firstReleased := make(chan struct{})
@@ -134,6 +162,7 @@ func TestMaybeAcquireSerializesUnderPoolCap(t *testing.T) {
 		if err != nil {
 			return
 		}
+
 		close(secondGranted)
 		release2()
 	}()
@@ -170,27 +199,35 @@ func TestMaybeAcquireSkipsWhenAncestorHoldsPool(t *testing.T) {
 	// outstanding lease.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+
 	parent, err := Acquire(ctx, sock, "qwen-coder", "parent", "test-parent")
 	if err != nil {
 		t.Fatalf("parent Acquire: %v", err)
 	}
 	defer parent.Close()
+
 	<-parent.Granted()
 
 	// Child sees IDIOM_QUEUE_HELD_POOLS in env and must NOT dial.
 	t.Setenv(HeldPoolsEnv, "qwen-coder")
+
 	childCtx, childCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+
 	defer childCancel()
+
 	start := time.Now()
+
 	release, err := MaybeAcquire(childCtx, sock, "qwen-coder", "child", "test-child", nil)
 	if err != nil {
 		t.Fatalf("child MaybeAcquire: %v", err)
 	}
+
 	// Sub-millisecond return; if it tried to dial the busy pool it
 	// would block until the context cancels (~500ms) or longer.
 	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
 		t.Fatalf("reentrant skip took too long (%v); did it actually dial?", elapsed)
 	}
+
 	release()
 
 	// The parent's slot is still held — confirms the child did NOT
@@ -199,9 +236,11 @@ func TestMaybeAcquireSkipsWhenAncestorHoldsPool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
+
 	if len(snap.InFlight) != 1 || snap.InFlight[0].Label != "parent" {
 		t.Fatalf("expected only parent in flight, got %+v", snap.InFlight)
 	}
+
 	if len(snap.Waiting) != 0 {
 		t.Fatalf("child must not appear as a waiter; got %+v", snap.Waiting)
 	}
@@ -224,23 +263,30 @@ func TestMaybeAcquireSkipsCrossPoolNestedAcquire(t *testing.T) {
 		},
 	})
 	t.Setenv(HeldPoolsEnv, "qwen-35b")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+
 	defer cancel()
+
 	start := time.Now()
+
 	release, err := MaybeAcquire(ctx, sock, "qwen-coder", "nested", "test-nested", nil)
 	if err != nil {
 		t.Fatalf("MaybeAcquire on cross-pool nested: %v", err)
 	}
 	defer release()
+
 	// Sub-millisecond return; if it tried to dial the daemon it
 	// would take longer than 50ms even on a localhost socket.
 	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
 		t.Fatalf("cross-pool reentrant skip took too long (%v); did it actually dial?", elapsed)
 	}
+
 	snap, err := Status(sock)
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
+
 	// The daemon must show ZERO in-flight — the nested call did not
 	// acquire qwen-coder. Pool accounting is intentionally permissive
 	// for nested calls; the outer wrapper is responsible for picking
@@ -248,6 +294,7 @@ func TestMaybeAcquireSkipsCrossPoolNestedAcquire(t *testing.T) {
 	if len(snap.InFlight) != 0 {
 		t.Fatalf("expected zero in-flight (nested call must not acquire), got %+v", snap.InFlight)
 	}
+
 	if len(snap.Waiting) != 0 {
 		t.Fatalf("nested call must not appear as a waiter; got %+v", snap.Waiting)
 	}

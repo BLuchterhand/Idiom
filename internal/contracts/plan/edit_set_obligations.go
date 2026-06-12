@@ -32,6 +32,7 @@ func (obligations EditSetObligations) Has(kind EditSetObligationKind) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -41,8 +42,10 @@ func (obligations EditSetObligations) Kinds() []string {
 		if obligation.Kind == "" {
 			continue
 		}
+
 		out = append(out, string(obligation.Kind))
 	}
+
 	return out
 }
 
@@ -56,6 +59,7 @@ func (obligations EditSetObligations) WithDefaultSource(defaultSource string) Ed
 
 func (obligations EditSetObligations) normalizedWithDefaultSource(defaultSource string) EditSetObligations {
 	var out EditSetObligations
+
 	for _, obligation := range obligations {
 		kind := obligation.Kind
 		switch kind {
@@ -63,6 +67,7 @@ func (obligations EditSetObligations) normalizedWithDefaultSource(defaultSource 
 		default:
 			continue
 		}
+
 		source := strings.TrimSpace(obligation.Source)
 		if source == "" {
 			source = strings.TrimSpace(defaultSource)
@@ -70,18 +75,22 @@ func (obligations EditSetObligations) normalizedWithDefaultSource(defaultSource 
 				source = "prompt"
 			}
 		}
+
 		out = out.with(kind, source)
 	}
+
 	return out
 }
 
 func MergeEditSetObligations(groups ...EditSetObligations) EditSetObligations {
 	var out EditSetObligations
+
 	for _, group := range groups {
 		for _, obligation := range group.Normalized() {
 			out = out.with(obligation.Kind, obligation.Source)
 		}
 	}
+
 	return out.Normalized()
 }
 
@@ -93,20 +102,25 @@ func (obligations EditSetObligations) RejectionReason(changedPaths []string) str
 	if obligations.Has(EditSetObligationKindTestEdit) && !ChangedPathsIncludeTest(changedPaths) {
 		return EditSetFailureMissingRequestedTestEdit
 	}
+
 	if obligations.Has(EditSetObligationKindImplementationEdit) && !ChangedPathsIncludeImplementation(changedPaths) {
 		return EditSetFailureMissingRequestedImplementationEdit
 	}
+
 	return ""
 }
 
 func (obligations EditSetObligations) MissingOpenObligations(changedPaths []string) []string {
 	var out []string
+
 	if obligations.Has(EditSetObligationKindTestEdit) && !ChangedPathsIncludeTest(changedPaths) {
 		out = append(out, "requested_test_edit_missing")
 	}
+
 	if obligations.Has(EditSetObligationKindImplementationEdit) && !ChangedPathsIncludeImplementation(changedPaths) {
 		out = append(out, "requested_implementation_edit_missing")
 	}
+
 	return out
 }
 
@@ -127,9 +141,11 @@ func (obligations EditSetObligations) with(kind EditSetObligationKind, source st
 			if strings.TrimSpace(obligations[i].Source) == "" {
 				obligations[i].Source = source
 			}
+
 			return obligations
 		}
 	}
+
 	return append(obligations, EditSetObligation{Kind: kind, Source: source})
 }
 
@@ -139,6 +155,7 @@ func ChangedPathsIncludeTest(paths []string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -148,6 +165,7 @@ func ChangedPathsIncludeImplementation(paths []string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -156,20 +174,25 @@ func PathLooksLikeImplementation(path string) bool {
 	if lower == "" || PathLooksLikeTest(lower) {
 		return false
 	}
+
 	base := filepath.Base(lower)
 	ext := filepath.Ext(base)
+
 	if strings.HasPrefix(lower, "docs/") ||
 		strings.Contains(lower, "/docs/") ||
 		strings.HasPrefix(lower, "doc/") ||
 		strings.Contains(lower, "/doc/") ||
 		strings.HasPrefix(lower, "examples/") ||
 		strings.Contains(lower, "/examples/") {
+
 		return false
 	}
+
 	switch strings.ToLower(base) {
 	case "readme.md", "changelog.md", "license", "license.md":
 		return false
 	}
+
 	switch ext {
 	case ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java", ".kt", ".swift",
 		".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".sh", ".bash",
@@ -192,6 +215,7 @@ func PathLooksLikeTest(path string) bool {
 	if lower == "" {
 		return false
 	}
+
 	base := filepath.Base(lower)
 	switch {
 	case strings.HasSuffix(base, "_test.go"),

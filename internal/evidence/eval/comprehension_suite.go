@@ -3,6 +3,7 @@ package eval
 func ComprehensionMemorySuite() SWESuite {
 	maxBroad := 0
 	maxHeavy := 0
+
 	return SWESuite{
 		Name:    "codebase-comprehension-memory",
 		Version: 1,

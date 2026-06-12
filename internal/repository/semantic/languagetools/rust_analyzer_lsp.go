@@ -32,17 +32,23 @@ func (m *Manager) newRustAnalyzerLSPClient(ctx context.Context) (*rustAnalyzerLS
 	if ra == "" {
 		return nil, fmt.Errorf("rust-analyzer is not installed")
 	}
+
 	cmd := exec.CommandContext(ctx, ra)
+
 	cmd.Dir = m.Root()
+
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
 	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
 	}
+
 	client := &rustAnalyzerLSPClient{}
+
 	client.lspBaseClient = lspBaseClient{
 		serverName: "rust-analyzer",
 		cmd:        cmd,
@@ -50,6 +56,7 @@ func (m *Manager) newRustAnalyzerLSPClient(ctx context.Context) (*rustAnalyzerLS
 		stdout:     bufio.NewReader(stdout),
 	}
 	cmd.Stderr = &client.stderr
+
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -70,15 +77,21 @@ func (m *Manager) newRustAnalyzerLSPClient(ctx context.Context) (*rustAnalyzerLS
 			"checkOnSave": map[string]any{"enable": false},
 		},
 	}
+
 	var initResult map[string]any
+
 	if err := client.request(ctx, "initialize", params, &initResult); err != nil {
 		client.forceClose()
+
 		return nil, fmt.Errorf("rust-analyzer initialize failed: %w", err)
 	}
+
 	if err := client.notify("initialized", map[string]any{}); err != nil {
 		client.forceClose()
+
 		return nil, fmt.Errorf("rust-analyzer initialized notification failed: %w", err)
 	}
+
 	return client, nil
 }
 
@@ -104,9 +117,11 @@ func (m *Manager) rustWorkspaceSymbolsViaRustAnalyzer(ctx context.Context, patte
 	defer client.close()
 
 	var symbols []raSymbolInfo
+
 	if err := client.request(ctx, "workspace/symbol", map[string]any{"query": pattern}, &symbols); err != nil {
 		return "", err
 	}
+
 	return m.formatRAWorkspaceSymbols(symbols, pathFilter, limit), nil
 }
 
@@ -162,27 +177,36 @@ func (m *Manager) rustCallHierarchyViaRustAnalyzer(ctx context.Context, match se
 	if err != nil {
 		return callHierarchyResult{}, err
 	}
+
 	if err := client.openFile(abs); err != nil {
 		return callHierarchyResult{}, err
 	}
+
 	items, err := m.rustAnalyzerPrepareCallHierarchy(ctx, client, abs, m.rustLSPPosition(abs, match))
 	if err != nil {
 		return callHierarchyResult{}, err
 	}
+
 	if len(items) == 0 {
 		return callHierarchyResult{}, nil
 	}
+
 	if incoming {
 		var calls []raIncomingCall
+
 		if err := client.request(ctx, "callHierarchy/incomingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
 			return callHierarchyResult{}, err
 		}
+
 		return m.formatRAIncomingCalls(calls, pathFilter, match), nil
 	}
+
 	var calls []raOutgoingCall
+
 	if err := client.request(ctx, "callHierarchy/outgoingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
 		return callHierarchyResult{}, err
 	}
+
 	return m.formatRAOutgoingCalls(abs, match.Name, calls, pathFilter), nil
 }
 
@@ -191,10 +215,13 @@ func (m *Manager) rustAnalyzerPrepareCallHierarchy(ctx context.Context, client *
 		"textDocument": map[string]any{"uri": raFileURI(abs)},
 		"position":     position,
 	}
+
 	var items []raCallHierarchyItem
+
 	if err := client.request(ctx, "textDocument/prepareCallHierarchy", params, &items); err != nil {
 		return nil, err
 	}
+
 	return items, nil
 }
 
@@ -203,13 +230,16 @@ func (m *Manager) rustLSPPosition(abs string, match semantic.RustSymbolMatch) ma
 	if line < 0 {
 		line = 0
 	}
+
 	character := match.Column - 1
 	if character < 0 {
 		character = 0
 	}
+
 	if resolved, ok := m.rustLSPCharacter(abs, match); ok {
 		character = resolved
 	}
+
 	return map[string]any{"line": line, "character": character}
 }
 
@@ -217,10 +247,12 @@ func (m *Manager) rustLSPCharacter(abs string, match semantic.RustSymbolMatch) (
 	if abs == "" || match.Line <= 0 {
 		return 0, false
 	}
+
 	lineText := m.sourceLineText(abs, match.Line)
 	if lineText == "" {
 		return 0, false
 	}
+
 	candidates := []string{match.Name}
 	if q := strings.TrimSpace(match.Qualified); q != "" {
 		candidates = append([]string{q}, candidates...)
@@ -228,15 +260,18 @@ func (m *Manager) rustLSPCharacter(abs string, match semantic.RustSymbolMatch) (
 			candidates = append([]string{q[idx+2:]}, candidates...)
 		}
 	}
+
 	for _, candidate := range candidates {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == "" {
 			continue
 		}
+
 		if idx := strings.Index(lineText, candidate); idx >= 0 {
 			return idx, true
 		}
 	}
+
 	return 0, false
 }
 

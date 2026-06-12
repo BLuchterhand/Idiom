@@ -52,11 +52,14 @@ type refineIterMetrics struct {
 // iter didn't write a record" rather than a hard failure.
 func writeRefineIterMetrics(iterDir string, m refineIterMetrics, stderr io.Writer) {
 	path := filepath.Join(iterDir, "metrics.json")
+
 	body, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		fmt.Fprintf(stderr, "refine: marshal iter metrics: %v\n", err)
+
 		return
 	}
+
 	body = append(body, '\n')
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		fmt.Fprintf(stderr, "refine: write iter metrics %s: %v\n", path, err)
@@ -163,23 +166,30 @@ func defaultRefineDispatchWithConfig(metaBriefPath string, configPath string, st
 	binary, err := os.Executable()
 	if err != nil {
 		fmt.Fprintf(stderr, "refine: cannot locate idiom binary: %v\n", err)
+
 		return 2
 	}
+
 	args := defaultRefineDispatchArgs(binary, configPath, metaBriefPath)
 	cmd := exec.Command(args[0], args[1:]...)
+
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode()
 		}
+
 		return 1
 	}
+
 	return 0
 }
 
 func defaultRefineDispatchArgs(binary, configPath, metaBriefPath string) []string {
 	configPath = defaultRefineConfigPath(configPath)
+
 	pool, model, maxTokens := refinePhaseRouting(metaBriefPath)
 	// Route through the local queue daemon so concurrent refine
 	// sessions serialize access to whichever MLX backend the phase
@@ -188,6 +198,7 @@ func defaultRefineDispatchArgs(binary, configPath, metaBriefPath string) []strin
 	// correctly to the caller via this function's exit code.
 	if inferRefinePhase(metaBriefPath) == "draft" {
 		outputPath, jsonOut, reportOut := refineDraftArtifactPaths(metaBriefPath)
+
 		return []string{binary,
 			"queue", "run",
 			"--pool", pool,
@@ -206,7 +217,9 @@ func defaultRefineDispatchArgs(binary, configPath, metaBriefPath string) []strin
 			"--report-out", reportOut,
 		}
 	}
+
 	outputPath, jsonOut, reportOut := refineReviewPatchArtifactPaths(metaBriefPath)
+
 	return []string{binary,
 		"queue", "run",
 		"--pool", pool,
@@ -230,14 +243,17 @@ func defaultRefineConfigPath(configPath string) string {
 	if strings.TrimSpace(configPath) != "" {
 		return configPath
 	}
+
 	if envConfig := strings.TrimSpace(os.Getenv("IDIOM_CONFIG")); envConfig != "" {
 		return envConfig
 	}
+
 	return ".idiom/config.json"
 }
 
 func refineDraftArtifactPaths(metaBriefPath string) (outputPath, jsonOut, reportOut string) {
 	iterDir := filepath.Dir(metaBriefPath)
+
 	return filepath.Join(iterDir, "draft.md"),
 		filepath.Join(iterDir, "draft.artifact.jsonl"),
 		filepath.Join(iterDir, "draft.report.json")
@@ -262,8 +278,10 @@ func refineReviewPatchArtifactPaths(metaBriefPath string) (outputPath, jsonOut, 
 func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, stderr io.Writer) int {
 	if err := validateRefineOptions(&opts); err != nil {
 		fmt.Fprintf(stderr, "refine: %v\n", err)
+
 		return 2
 	}
+
 	// Sweep stale per-title refine state at session START (#73) and END
 	// (#77 — defer). Threshold matches plan-execute's 7-day window so
 	// recent debug-worthy state survives but long-forgotten title dirs
@@ -275,21 +293,28 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 	stateDir := refineStateDir(opts.ProjectRoot, opts.Title)
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		fmt.Fprintf(stderr, "refine: cannot create state dir %s: %v\n", stateDir, err)
+
 		return 1
 	}
+
 	specBody, err := os.ReadFile(opts.SpecPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "refine: cannot read spec %s: %v\n", opts.SpecPath, err)
+
 		return 1
 	}
+
 	if blocker := atomSpecDispatchBlocker(string(specBody)); blocker != "" {
 		fmt.Fprintf(stderr, "refine: refusing spec %s: %s\n", opts.SpecPath, blocker)
+
 		return 1
 	}
+
 	mode := strings.TrimSpace(opts.Mode)
 	if mode == "" {
 		mode = refineDetectMode(string(specBody))
 	}
+
 	fmt.Fprintf(stderr, "refine: mode=%s (auto-detected from spec)\n", mode)
 
 	// §6.1 Gap 6 (Colony harness-side fix): extract the deliverable
@@ -305,19 +330,25 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		targetBody := strings.Join(specDeliverableTargets, "\n") + "\n"
 		if err := os.WriteFile(filepath.Join(stateDir, "deliverable_targets.txt"), []byte(targetBody), 0o644); err != nil {
 			fmt.Fprintf(stderr, "refine: cannot write deliverable_targets sidecar: %v\n", err)
+
 			// Non-fatal: the sidecar is observability, not behavior.
 		}
+
 		// Compatibility sidecar for older readers that only expect one
 		// target. Multi-file anchored specs read deliverable_targets.txt.
 		sidecarPath := filepath.Join(stateDir, "deliverable_target.txt")
 		if err := os.WriteFile(sidecarPath, []byte(specDeliverableTargets[0]+"\n"), 0o644); err != nil {
 			fmt.Fprintf(stderr, "refine: cannot write deliverable_target sidecar %s: %v\n", sidecarPath, err)
+
 			// Non-fatal: the sidecar is observability, not behavior.
 		}
 	}
 
-	var prevReviewBugs []string
-	var lastDraftPath string
+	var (
+		prevReviewBugs []string
+		lastDraftPath  string
+	)
+
 	bestDraftPath := ""
 	bestLintExit := -1
 	bestBugCount := -1 // -1 = "no draft scored yet"
@@ -332,27 +363,37 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 	// activeMetrics points at the in-flight iter's record so
 	// failsoft / verdict branches can stamp Action/FailsoftReason
 	// before returning. Reset at the top of each iter.
-	var activeMetrics *refineIterMetrics
-	var activeIterDir string
+	var (
+		activeMetrics *refineIterMetrics
+		activeIterDir string
+	)
+
 	stampMetricsAction := func(action, failsoftReason string) {
 		if activeMetrics == nil {
 			return
 		}
+
 		activeMetrics.Action = action
 		activeMetrics.FailsoftReason = failsoftReason
 		activeMetrics.EndedAt = time.Now().UTC().Format(time.RFC3339Nano)
+
 		if t, err := time.Parse(time.RFC3339Nano, activeMetrics.StartedAt); err == nil {
 			activeMetrics.DurationMS = time.Since(t).Milliseconds()
 		}
+
 		writeRefineIterMetrics(activeIterDir, *activeMetrics, stderr)
 	}
 	failsoft := func(iter int, reason string, failExit int) int {
 		stampMetricsAction("failsoft-"+reason, reason)
+
 		if bestDraftPath == "" {
 			fmt.Fprintf(stderr, "refine: failed at iter %d (%s) with no previously-reviewed draft to fall back on\n", iter, reason)
+
 			return failExit
 		}
+
 		fmt.Fprintf(stderr, "refine: failsoft at iter %d (%s) — shipping last-reviewed draft (%d bugs)\n", iter, reason, bestBugCount)
+
 		return finalizeRefineWithTitleAndOverlay(bestDraftPath, opts.OutputPath, opts.Title, iter, "failsoft-"+reason, opts.ProjectRoot, mode, specDeliverableTargets, stderr)
 	}
 
@@ -360,27 +401,36 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		iterDir := filepath.Join(stateDir, fmt.Sprintf("iter-%d", iter))
 		if err := os.MkdirAll(iterDir, 0o755); err != nil {
 			fmt.Fprintf(stderr, "refine: cannot create iter dir %s: %v\n", iterDir, err)
+
 			return failsoft(iter, "iter-dir-mkdir", 1)
 		}
+
 		draftPath := filepath.Join(iterDir, "draft.md")
 		reviewPath := filepath.Join(iterDir, "review.md")
+
 		if err := clearRefineOutputPath(draftPath, stderr); err != nil {
 			fmt.Fprintf(stderr, "refine: cannot clear stale draft %s: %v\n", draftPath, err)
+
 			return failsoft(iter, "draft-clear", 1)
 		}
+
 		if err := clearRefineOutputPath(reviewPath, stderr); err != nil {
 			fmt.Fprintf(stderr, "refine: cannot clear stale review %s: %v\n", reviewPath, err)
+
 			return failsoft(iter, "review-clear", 1)
 		}
 
 		metrics := refineIterMetrics{Iter: iter, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 		if iter == 1 {
 			metrics.Phase = "draft"
+
 			_, _, reportOut := refineDraftArtifactPaths(filepath.Join(iterDir, "meta-draft.md"))
+
 			metrics.ArtifactReportPath = refineWorkspaceRel(opts.ProjectRoot, reportOut)
 		} else {
 			metrics.Phase = "patch"
 		}
+
 		metrics.DraftPath = refineWorkspaceRel(opts.ProjectRoot, draftPath)
 		metrics.DraftState = "pending"
 		activeMetrics = &metrics
@@ -390,13 +440,19 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 			metaPath := filepath.Join(iterDir, "meta-draft.md")
 			if err := writeRefineDraftMeta(metaPath, draftPath, opts, string(specBody), mode, stderr); err != nil {
 				fmt.Fprintf(stderr, "refine: write draft meta: %v\n", err)
+
 				return failsoft(iter, "draft-meta-write", 1)
 			}
+
 			fmt.Fprintf(stderr, "refine: iter %d — drafting (subprocess)\n", iter)
+
 			code := dispatch(metaPath, stdout, stderr)
+
 			metrics.DraftDispatchExit = code
+
 			if code != 0 {
 				fmt.Fprintf(stderr, "refine: draft dispatch exited %d at iter %d\n", code, iter)
+
 				return failsoft(iter, "draft-dispatch", code)
 			}
 		} else {
@@ -410,28 +466,41 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 			// depended on.
 			prevIterDir := filepath.Join(stateDir, fmt.Sprintf("iter-%d", iter-1))
 			_, prevLintOutput := captureRefineLintOutput(lastDraftPath, prevIterDir, opts.ProjectRoot, mode, specDeliverableTargets, stderr)
+
 			if err := writeRefinePatchMeta(metaPath, lastDraftPath, prevReviewPath, draftPath, prevLintOutput, specDeliverableTargets); err != nil {
 				fmt.Fprintf(stderr, "refine: write patch meta: %v\n", err)
+
 				return failsoft(iter, "patch-meta-write", 1)
 			}
+
 			fmt.Fprintf(stderr, "refine: iter %d — patching (subprocess)\n", iter)
+
 			code := dispatch(metaPath, stdout, stderr)
+
 			metrics.DraftDispatchExit = code
+
 			if code != 0 {
 				fmt.Fprintf(stderr, "refine: patch dispatch exited %d at iter %d\n", code, iter)
+
 				return failsoft(iter, "patch-dispatch", code)
 			}
 		}
+
 		if _, err := os.Stat(draftPath); err != nil {
 			metrics.DraftState = "missing"
+
 			fmt.Fprintf(stderr, "refine: iter %d produced no draft at %s: %v\n", iter, draftPath, err)
+
 			return failsoft(iter, "draft-missing", 1)
 		}
+
 		if trivial, reason := refineDraftIsTrivial(draftPath); trivial {
 			metrics.DraftState = "trivial:" + reason
 			fmt.Fprintf(stderr, "refine: iter %d produced a trivially-empty draft at %s (%s); treating as draft-missing\n", iter, draftPath, reason)
+
 			return failsoft(iter, "draft-trivial", 1)
 		}
+
 		metrics.DraftState = "ready"
 		lastDraftPath = draftPath
 
@@ -443,25 +512,36 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		// reviewer + patcher both see it as a required edit target.
 		if mismatch := refineDeliverableTargetMismatch(draftPath, specDeliverableTargets); mismatch != "" {
 			lintOutput = mismatch + "\n" + lintOutput
+
 			if lintExit == 0 {
 				lintExit = 1
 			}
+
 			fmt.Fprintf(stderr, "refine: iter %d — deliverable-target mismatch detected; prepending BLOCK to review preload\n", iter)
 		}
+
 		metrics.LintExit = lintExit
 		fmt.Fprintf(stderr, "refine: iter %d — lint exit=%d (preloaded to reviewer)\n", iter, lintExit)
+
 		metaReviewPath := filepath.Join(iterDir, "meta-review.md")
 		if err := writeRefineReviewMeta(metaReviewPath, draftPath, reviewPath, opts.ProjectRoot, lintOutput); err != nil {
 			fmt.Fprintf(stderr, "refine: write review meta: %v\n", err)
+
 			return failsoft(iter, "review-meta-write", 1)
 		}
+
 		fmt.Fprintf(stderr, "refine: iter %d — reviewing (subprocess)\n", iter)
+
 		reviewCode := dispatch(metaReviewPath, stdout, stderr)
+
 		metrics.ReviewDispatchExit = reviewCode
+
 		if reviewCode != 0 {
 			fmt.Fprintf(stderr, "refine: review dispatch exited %d at iter %d\n", reviewCode, iter)
+
 			return failsoft(iter, "review-dispatch", reviewCode)
 		}
+
 		if _, err := os.Stat(reviewPath); err != nil {
 			if wrote, fallbackErr := writeFallbackRefineReview(reviewPath, lintOutput, "review-missing", stderr); fallbackErr != nil {
 				fmt.Fprintf(stderr, "refine: fallback review write failed at iter %d: %v\n", iter, fallbackErr)
@@ -469,47 +549,63 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 				fmt.Fprintf(stderr, "refine: iter %d reviewer wrote no file; synthesized review from lint BLOCKs at %s\n", iter, reviewPath)
 			} else {
 				fmt.Fprintf(stderr, "refine: iter %d produced no review at %s: %v\n", iter, reviewPath, err)
+
 				return failsoft(iter, "review-missing", 1)
 			}
 		}
+
 		if _, err := os.Stat(reviewPath); err != nil {
 			fmt.Fprintf(stderr, "refine: iter %d produced no review at %s: %v\n", iter, reviewPath, err)
+
 			return failsoft(iter, "review-missing", 1)
 		}
 
 		reviewBody, err := os.ReadFile(reviewPath)
 		if err != nil {
 			fmt.Fprintf(stderr, "refine: read review: %v\n", err)
+
 			return failsoft(iter, "review-read", 1)
 		}
+
 		verdict := parseRefineVerdict(string(reviewBody))
 		bugs := parseRefineBugTitles(string(reviewBody))
 		fmt.Fprintf(stderr, "refine: iter %d verdict=%s bugs=%d\n", iter, verdict, len(bugs))
+
 		metrics.Verdict = verdict
 		metrics.BugCount = len(bugs)
+
 		if refineDraftScoreBetter(lintExit, len(bugs), bestLintExit, bestBugCount) {
 			bestDraftPath = lastDraftPath
 			bestLintExit = lintExit
 			bestBugCount = len(bugs)
 		}
+
 		if verdict == "ship-as-is" {
 			stampMetricsAction("ship-as-is", "")
+
 			return finalizeRefineWithTitleAndOverlay(lastDraftPath, opts.OutputPath, opts.Title, iter, "ship-as-is", opts.ProjectRoot, mode, specDeliverableTargets, stderr)
 		}
+
 		if iter > 1 && refineLoopDiverging(prevReviewBugs, bugs) {
 			fmt.Fprintf(stderr, "refine: loop diverging at iter %d (same bugs as iter %d); shipping best draft\n", iter, iter-1)
 			stampMetricsAction("diverging", "")
+
 			return finalizeRefineWithTitleAndOverlay(bestDraftPath, opts.OutputPath, opts.Title, iter, "diverging", opts.ProjectRoot, mode, specDeliverableTargets, stderr)
 		}
+
 		stampMetricsAction("continue", "")
+
 		prevReviewBugs = bugs
 	}
+
 	fmt.Fprintf(stderr, "refine: max iters (%d) reached without ship-as-is verdict; shipping best draft (lint exit=%d, %d bugs)\n", opts.MaxIters, bestLintExit, bestBugCount)
 	stampMetricsAction("max-iters-exhausted", "")
+
 	finalDraft := bestDraftPath
 	if finalDraft == "" {
 		finalDraft = lastDraftPath
 	}
+
 	return finalizeRefineWithTitleAndOverlay(finalDraft, opts.OutputPath, opts.Title, opts.MaxIters, "max-iters-exhausted", opts.ProjectRoot, mode, specDeliverableTargets, stderr)
 }
 
@@ -517,19 +613,25 @@ func validateRefineOptions(opts *laneRefineOptions) error {
 	if strings.TrimSpace(opts.SpecPath) == "" {
 		return fmt.Errorf("--spec is required")
 	}
+
 	if strings.TrimSpace(opts.OutputPath) == "" {
 		return fmt.Errorf("--output is required")
 	}
+
 	if strings.TrimSpace(opts.Title) == "" {
 		base := filepath.Base(opts.SpecPath)
+
 		opts.Title = strings.TrimSuffix(base, filepath.Ext(base))
 	}
+
 	if opts.MaxIters <= 0 {
 		opts.MaxIters = 3
 	}
+
 	if strings.TrimSpace(opts.ProjectRoot) == "" {
 		opts.ProjectRoot = filepath.Dir(opts.SpecPath)
 	}
+
 	return nil
 }
 
@@ -541,15 +643,19 @@ func clearRefineOutputPath(path string, stderr io.Writer) error {
 	if strings.TrimSpace(path) == "" {
 		return nil
 	}
+
 	if err := os.Remove(path); err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
+
 		return err
 	}
+
 	if stderr != nil {
 		fmt.Fprintf(stderr, "refine: cleared stale output %s\n", path)
 	}
+
 	return nil
 }
 
@@ -557,10 +663,13 @@ var refineUnsafeTitleChars = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
 func refineSanitizeTitle(title string) string {
 	cleaned := refineUnsafeTitleChars.ReplaceAllString(title, "-")
+
 	cleaned = strings.Trim(cleaned, "-")
+
 	if cleaned == "" {
 		return "untitled"
 	}
+
 	return cleaned
 }
 
@@ -569,10 +678,13 @@ func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, sp
 	if err != nil {
 		return err
 	}
+
 	if strings.HasPrefix(source, "project-override:") {
 		fmt.Fprintf(stderr, "refine: draft template = %s\n", source)
+
 		template = ensureRefineDraftArtifactClosure(template, stderr, source)
 	}
+
 	// §6.1 Gap 6 (Colony harness-side fix): extract deliverable
 	// targets from the spec text and inline them as pre-filled context
 	// so the model doesn't have to re-parse the spec. Anchored specs
@@ -581,9 +693,11 @@ func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, sp
 	targets := extractDeliverableTargets(specBody, mode)
 	target := firstRefineDeliverableTarget(targets)
 	deliverableContext := refineDeliverableContextBlock(targets)
+
 	if len(targets) > 0 {
 		fmt.Fprintf(stderr, "refine: extracted deliverable target(s) from spec: %s\n", strings.Join(targets, ", "))
 	}
+
 	body := strings.NewReplacer(
 		"{{SPEC_BODY}}", refineQuotedSpecBody(specBody),
 		"{{DRAFT_PATH}}", refineWorkspaceRel(opts.ProjectRoot, draftPath),
@@ -591,7 +705,9 @@ func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, sp
 		"{{DELIVERABLE_TARGET}}", target,
 		"{{DELIVERABLE_TARGET_CONTEXT}}", deliverableContext,
 	).Replace(template)
+
 	body = ensureRefineDraftArtifactOutput(body, refineWorkspaceRel(opts.ProjectRoot, draftPath))
+
 	return os.WriteFile(metaPath, []byte(body), 0o644)
 }
 
@@ -608,14 +724,17 @@ func refineQuotedSpecBody(specBody string) string {
 	if specBody == "" {
 		return "> (empty spec)"
 	}
+
 	lines := strings.Split(specBody, "\n")
 	for i, line := range lines {
 		if strings.TrimSpace(line) == "" {
 			lines[i] = ">"
 			continue
 		}
+
 		lines[i] = "> " + line
 	}
+
 	return strings.Join(lines, "\n")
 }
 
@@ -624,13 +743,16 @@ func ensureRefineDraftArtifactOutput(body, draftPath string) string {
 	if draftPath == "" {
 		return body
 	}
+
 	if strings.Contains(strings.ToLower(body), "## artifact output") && strings.Contains(body, "`"+draftPath+"`") {
 		return body
 	}
+
 	block := refineDraftArtifactOutputBlock(draftPath)
 	if idx := strings.Index(body, "\n\n"); idx >= 0 {
 		return body[:idx] + "\n\n" + block + "\n\n" + body[idx+2:]
 	}
+
 	return strings.TrimRight(body, "\n") + "\n\n" + block + "\n"
 }
 
@@ -652,9 +774,11 @@ func refineDeliverableContextBlock(targets []string) string {
 	if len(targets) == 0 {
 		return "(no deliverable target detected in spec — harness will not pre-fill the deliverable block; model still owns content sections only)"
 	}
+
 	if len(targets) == 1 {
 		return fmt.Sprintf("Deliverable target extracted from spec by harness: `%s`. The harness will inject the canonical `## Files To Modify` / `## Deliverable` block at finalize time — emit the `<!-- idiom:harness-deliverable-block -->` marker verbatim, do NOT author the block yourself.", targets[0])
 	}
+
 	return fmt.Sprintf("Deliverable targets extracted from spec by harness: %s. The harness will inject the canonical `## Files To Modify` block at finalize time — emit the `<!-- idiom:harness-deliverable-block -->` marker verbatim, do NOT author the block yourself.", refineFormatBacktickList(targets))
 }
 
@@ -690,19 +814,26 @@ func refineInjectDeliverableBlock(body []byte, mode string, targets []string, pr
 	targets = normalizeRefineTargets(targets)
 	if len(targets) == 0 {
 		fmt.Fprintf(stderr, "refine: deliverable injection skipped (no target extracted from spec)\n")
+
 		return body
 	}
+
 	if !bytes.Contains(body, []byte(refineDeliverableMarker)) {
 		fmt.Fprintf(stderr, "refine: deliverable injection skipped (marker %q absent from draft — model may have authored its own block; lint will validate)\n", refineDeliverableMarker)
+
 		return body
 	}
+
 	block := refineRenderDeliverableBlock(mode, targets, projectRoot)
 	if block == "" {
 		fmt.Fprintf(stderr, "refine: deliverable injection skipped (unknown mode %q)\n", mode)
+
 		return body
 	}
+
 	out := bytes.Replace(body, []byte(refineDeliverableMarker), []byte(block), 1)
 	fmt.Fprintf(stderr, "refine: injected deliverable block (mode=%s, targets=%s, %d bytes)\n", mode, strings.Join(targets, ", "), len(block))
+
 	return out
 }
 
@@ -715,17 +846,22 @@ func refineRenderDeliverableBlock(mode string, targets []string, projectRoot str
 	if len(targets) == 0 {
 		return ""
 	}
+
 	switch mode {
 	case refineModeAnchored:
 		var b strings.Builder
+
 		b.WriteString("## Files To Modify\n\n| File | Change |\n|------|--------|\n")
+
 		for _, target := range targets {
 			action := "MODIFY: harness-injected target (extracted from spec)"
 			if refineTargetIsMissing(projectRoot, target) {
 				action = "NEW FILE: harness-injected target (extracted from spec)"
 			}
+
 			fmt.Fprintf(&b, "| `%s` | %s |\n", target, action)
 		}
+
 		return strings.TrimRight(b.String(), "\n")
 	case refineModeMarkdown:
 		return fmt.Sprintf("## Deliverable\n\nPath: `%s`\nFormat: markdown", targets[0])
@@ -738,10 +874,12 @@ func refineTargetIsMissing(projectRoot, target string) bool {
 	if strings.TrimSpace(projectRoot) == "" || strings.TrimSpace(target) == "" || filepath.IsAbs(target) {
 		return false
 	}
+
 	fullPath := filepath.Join(projectRoot, filepath.FromSlash(target))
 	if _, err := os.Stat(fullPath); err == nil {
 		return false
 	}
+
 	return true
 }
 
@@ -757,22 +895,27 @@ func resolveRefineDraftTemplate(projectRoot, mode string) (template, source stri
 	if strings.TrimSpace(mode) == "" {
 		return "", "", fmt.Errorf("resolveRefineDraftTemplate: mode is required")
 	}
+
 	if projectRoot != "" {
 		overridePath := filepath.Join(projectRoot, refineOverrideDir, "draft-"+mode+".md")
 		if body, readErr := os.ReadFile(overridePath); readErr == nil {
 			if lintErr := validateRefineDraftOverride(string(body), overridePath); lintErr != nil {
 				return "", "", lintErr
 			}
+
 			return string(body), "project-override:" + overridePath, nil
 		}
 	}
+
 	switch mode {
 	case refineModeAnchored:
 		return refineDraftTemplate, "embedded:anchored", nil
 	case refineModeMarkdown:
 		return refineDraftMarkdownTemplate, "embedded:markdown", nil
 	}
+
 	overrideHint := filepath.Join(projectRoot, refineOverrideDir, "draft-"+mode+".md")
+
 	return "", "", fmt.Errorf("unknown refine mode %q: no project override at %s and not in canonical set [%s, %s]", mode, overrideHint, refineModeAnchored, refineModeMarkdown)
 }
 
@@ -816,24 +959,29 @@ func refineApplyProjectOverlay(body []byte, projectRoot string, stderr io.Writer
 	if strings.TrimSpace(projectRoot) == "" {
 		return body
 	}
+
 	overlayDir := filepath.Join(projectRoot, refineOverlayDir)
 	if _, err := os.Stat(overlayDir); err != nil {
 		return body
 	}
+
 	augmented := body
 	if hp, ok := loadHardProhibitions(overlayDir); ok {
 		augmented = append(augmented, '\n', '\n')
 		augmented = append(augmented, hp...)
 		fmt.Fprintf(stderr, "refine: appended hard-prohibitions overlay (%d bytes)\n", len(hp))
 	}
+
 	tags := classifyBriefAtomShape(body)
 	fmt.Fprintf(stderr, "refine: atom-shape tags = %v\n", tags)
+
 	traps := loadProjectTraps(overlayDir, tags, stderr)
 	for _, trap := range traps {
 		augmented = append(augmented, '\n', '\n')
 		augmented = append(augmented, trap.body...)
 		fmt.Fprintf(stderr, "refine: inlined trap %s (applies_to=%v)\n", trap.name, trap.appliesTo)
 	}
+
 	return augmented
 }
 
@@ -842,13 +990,16 @@ func refineApplyProjectOverlay(body []byte, projectRoot string, stderr io.Writer
 // verbatim — no substitution, no parsing. Projects own the wording.
 func loadHardProhibitions(overlayDir string) ([]byte, bool) {
 	path := filepath.Join(overlayDir, "hard-prohibitions.md")
+
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return nil, false
 	}
+
 	if len(bytes.TrimSpace(body)) == 0 {
 		return nil, false
 	}
+
 	return body, true
 }
 
@@ -876,37 +1027,47 @@ type trapEntry struct {
 // declaration or accept the deferral.
 func loadProjectTraps(overlayDir string, tags []string, stderr io.Writer) []trapEntry {
 	trapsDir := filepath.Join(overlayDir, "traps")
+
 	entries, err := os.ReadDir(trapsDir)
 	if err != nil {
 		return nil
 	}
+
 	tagSet := map[string]bool{}
 	for _, t := range tags {
 		tagSet[t] = true
 	}
+
 	canonicalSet := map[string]bool{}
 	for _, t := range refineCanonicalTags {
 		canonicalSet[t] = true
 	}
+
 	var matched []trapEntry
+
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
+
 		path := filepath.Join(trapsDir, entry.Name())
+
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
+
 		appliesTo, body := parseTrapFrontmatter(raw)
 		if len(appliesTo) == 0 {
 			appliesTo = []string{refineTagGeneric}
 		}
+
 		// Orphan-tag detection (§6.1 Gap 3 loud-warning).
 		for _, tag := range appliesTo {
 			if canonicalSet[tag] {
 				continue
 			}
+
 			if stderr != nil {
 				fmt.Fprintf(stderr,
 					"refine: WARN trap %s declares applies_to=[%s] but no atom-shape classifier emits %q. Trap will never fire unless added to .idiom/prompts/brief/atom-shapes.yaml (deferred — see docs/refine-end-to-end-loop.md §6.1 Gap 3) or its applies_to is updated to a canonical tag [%s].\n",
@@ -914,16 +1075,20 @@ func loadProjectTraps(overlayDir string, tags []string, stderr io.Writer) []trap
 				)
 			}
 		}
+
 		if !tagsIntersect(appliesTo, tagSet) {
 			continue
 		}
+
 		matched = append(matched, trapEntry{
 			name:      entry.Name(),
 			appliesTo: appliesTo,
 			body:      bytes.TrimSpace(body),
 		})
 	}
+
 	slices.SortFunc(matched, func(a, b trapEntry) int { return cmp.Compare(a.name, b.name) })
+
 	return matched
 }
 
@@ -949,34 +1114,45 @@ func parseTrapFrontmatter(raw []byte) ([]string, []byte) {
 	if !strings.HasPrefix(strings.TrimLeft(text, "\n"), "---") {
 		return nil, raw
 	}
+
 	// Skip leading newlines.
 	stripped := strings.TrimLeft(text, "\n")
 	// Find the closing `---` after the opening one.
 	rest := stripped[3:]
 	endIdx := strings.Index(rest, "\n---")
+
 	if endIdx < 0 {
 		return nil, raw
 	}
+
 	frontmatter := rest[:endIdx]
 	body := strings.TrimLeft(rest[endIdx+4:], "\n")
+
 	var appliesTo []string
+
 	for _, line := range strings.Split(frontmatter, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "applies_to:") {
 			continue
 		}
+
 		value := strings.TrimSpace(strings.TrimPrefix(line, "applies_to:"))
+
 		value = strings.TrimPrefix(value, "[")
 		value = strings.TrimSuffix(value, "]")
+
 		for _, tok := range strings.Split(value, ",") {
 			tok = strings.TrimSpace(tok)
 			tok = strings.Trim(tok, `"'`)
+
 			if tok != "" {
 				appliesTo = append(appliesTo, tok)
 			}
 		}
+
 		break
 	}
+
 	return appliesTo, []byte(body)
 }
 
@@ -986,6 +1162,7 @@ func tagsIntersect(want []string, have map[string]bool) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1006,18 +1183,23 @@ func classifyBriefAtomShape(body []byte) []string {
 			seen[t] = true
 		}
 	}
+
 	if filesContainTestCode(files) {
 		add(refineTagTestCode)
 	}
+
 	if filesSpanMultipleDirs(files) {
 		add(refineTagMultiFile)
 	}
+
 	if filesAreAllMarkdownDeliverables(files) {
 		add(refineTagMarkdownDeliverable)
 	}
+
 	if len(tags) == 0 {
 		add(refineTagGeneric)
 	}
+
 	return tags
 }
 
@@ -1040,13 +1222,16 @@ func filesContainTestCode(files []string) bool {
 	for _, f := range files {
 		base := strings.ToLower(filepath.Base(f))
 		dir := strings.ToLower(filepath.ToSlash(filepath.Dir(f)))
+
 		if strings.Contains(base, "_test.") || strings.HasPrefix(base, "test_") || strings.HasSuffix(base, ".test.ts") || strings.HasSuffix(base, ".test.js") || strings.HasSuffix(base, ".spec.ts") || strings.HasSuffix(base, ".spec.js") {
 			return true
 		}
+
 		if strings.Contains(dir, "/tests/") || strings.Contains(dir, "/__tests__/") || strings.HasSuffix(dir, "/test") || strings.HasSuffix(dir, "/tests") {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1058,6 +1243,7 @@ func filesSpanMultipleDirs(files []string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1065,12 +1251,14 @@ func filesAreAllMarkdownDeliverables(files []string) bool {
 	if len(files) == 0 {
 		return false
 	}
+
 	for _, f := range files {
 		ext := strings.ToLower(filepath.Ext(f))
 		if ext != ".md" && ext != ".txt" && ext != ".rst" && ext != ".adoc" {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -1096,9 +1284,11 @@ func validateRefineDraftOverride(body, path string) error {
 			return fmt.Errorf("refine override template %s is missing required placeholder %s", path, ph)
 		}
 	}
+
 	if !strings.Contains(body, "\n## ") && !strings.HasPrefix(strings.TrimSpace(body), "## ") {
 		return fmt.Errorf("refine override template %s has no `## ` section heading", path)
 	}
+
 	return nil
 }
 
@@ -1130,10 +1320,13 @@ func ensureRefineDraftArtifactClosure(body string, stderr io.Writer, source stri
 	if strings.Contains(lower, "## artifact closeout") || strings.Contains(lower, "final answer") {
 		return body
 	}
+
 	if stderr != nil && source != "" {
 		fmt.Fprintf(stderr, "refine: %s has no artifact closeout; appending canonical artifact closure\n", source)
 	}
+
 	trimmed := strings.TrimRight(body, "\n") + refineCanonicalArtifactClosure
+
 	return trimmed
 }
 
@@ -1198,16 +1391,19 @@ func refineDeliverableTargetMismatch(draftPath string, specTargets []string) str
 	if len(specTargets) == 0 {
 		return ""
 	}
+
 	body, err := os.ReadFile(draftPath)
 	if err != nil {
 		return ""
 	}
+
 	// Gap 8: marker present → harness owns the path at finalize.
 	// Skip the mismatch check entirely; the model correctly deferred
 	// to the harness instead of authoring the block.
 	if bytes.Contains(body, []byte(refineDeliverableMarker)) {
 		return ""
 	}
+
 	files := extractFilesToModify(string(body))
 	if len(files) == 0 {
 		// Markdown-deliverable mode often has no Files To Modify;
@@ -1217,12 +1413,15 @@ func refineDeliverableTargetMismatch(draftPath string, specTargets []string) str
 		if bodyContainsAnyRefineTarget(string(body), specTargets) {
 			return ""
 		}
+
 		return fmt.Sprintf("- [BLOCK] (deliverable-target-mismatch) spec asks for deliverable target(s) %s but the brief body does not reference any of those paths. The canonical templates emit a `%s` marker after `## Problem` so the harness owns the path — emit the marker verbatim instead of authoring the block yourself.", refineFormatBacktickList(specTargets), refineDeliverableMarker)
 	}
+
 	missing := missingRefineTargets(files, specTargets)
 	if len(missing) == 0 {
 		return ""
 	}
+
 	return fmt.Sprintf("- [BLOCK] (deliverable-target-mismatch) brief's Files To Modify lists %v but spec asks for deliverable target(s) %s; missing %s. The canonical templates emit a `%s` marker after `## Problem` so the harness owns the path — emit the marker verbatim instead of authoring the block yourself.", files, refineFormatBacktickList(specTargets), refineFormatBacktickList(missing), refineDeliverableMarker)
 }
 
@@ -1240,23 +1439,28 @@ func bodyContainsAnyRefineTarget(body string, targets []string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 func missingRefineTargets(files, targets []string) []string {
 	var missing []string
+
 	for _, target := range targets {
 		found := false
+
 		for _, file := range files {
 			if pathsEquivalent(file, target) {
 				found = true
 				break
 			}
 		}
+
 		if !found {
 			missing = append(missing, target)
 		}
 	}
+
 	return missing
 }
 
@@ -1265,10 +1469,12 @@ func refineFormatBacktickList(targets []string) string {
 	if len(targets) == 0 {
 		return "(none)"
 	}
+
 	quoted := make([]string, 0, len(targets))
 	for _, target := range targets {
 		quoted = append(quoted, "`"+target+"`")
 	}
+
 	return strings.Join(quoted, ", ")
 }
 
@@ -1285,10 +1491,12 @@ func writeRefineReviewMeta(metaPath, draftPath, reviewPath, projectRoot, lintOut
 	if strings.TrimSpace(lintOutput) == "" {
 		lintOutput = "(no findings — lint pass was clean)"
 	}
+
 	draftBody, err := os.ReadFile(draftPath)
 	if err != nil {
 		return err
 	}
+
 	body := strings.NewReplacer(
 		"{{DRAFT_PATH}}", refineWorkspaceRel(projectRoot, draftPath),
 		"{{REVIEW_PATH}}", refineWorkspaceRel(projectRoot, reviewPath),
@@ -1296,6 +1504,7 @@ func writeRefineReviewMeta(metaPath, draftPath, reviewPath, projectRoot, lintOut
 		"{{LINT_OUTPUT}}", lintOutput,
 		"{{DRAFT_BODY}}", refineQuotedSpecBody(string(draftBody)),
 	).Replace(refineReviewTemplate)
+
 	return os.WriteFile(metaPath, []byte(body), 0o644)
 }
 
@@ -1313,30 +1522,41 @@ func writeRefineReviewMeta(metaPath, draftPath, reviewPath, projectRoot, lintOut
 // envelope so the reviewer never silently treats lint as clean.
 func captureRefineLintOutput(draftPath, persistDir, projectRoot, mode string, deliverableTargets []string, stderr io.Writer) (int, string) {
 	var out bytes.Buffer
+
 	lintPath, cleanup := refineLintInputPath(draftPath, projectRoot, mode, deliverableTargets, stderr)
+
 	defer cleanup()
+
 	code := laneBriefLintRunner([]string{lintPath, "--json"}, &out, stderr)
 	rawJSON := bytes.TrimSpace(out.Bytes())
 	rendered, ok := renderRefineLintFindings(rawJSON)
+
 	if !ok {
 		// Fall back: try plain-text capture so the reviewer at least
 		// sees something. If even that is empty, emit the fallback
 		// "treat as BLOCK" message so empty + exit-non-zero doesn't
 		// look like "clean lint" to downstream consumers.
 		var plain bytes.Buffer
+
 		_ = laneBriefLintRunner([]string{lintPath}, &plain, stderr)
+
 		text := plain.String()
+
 		if code != 0 && strings.TrimSpace(text) == "" {
 			text = fmt.Sprintf("(lint exited %d with no parseable findings — treat as BLOCK)", code)
 		}
+
 		return code, text
 	}
+
 	if persistDir != "" && len(rawJSON) > 0 {
 		persistRefineLintJSON(persistDir, rawJSON, stderr)
 	}
+
 	if code != 0 && strings.TrimSpace(rendered) == "" {
 		rendered = "(lint exited non-zero but emitted zero BLOCK/WARN findings — investigate manually)"
 	}
+
 	return code, rendered
 }
 
@@ -1348,17 +1568,23 @@ func refineLintInputPath(draftPath, projectRoot string, mode string, deliverable
 	if strings.TrimSpace(mode) == "" && len(deliverableTargets) == 0 {
 		return draftPath, func() {}
 	}
+
 	body, err := os.ReadFile(draftPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "refine: WARN cannot render final-shape lint input from %s: %v (linting raw draft)\n", draftPath, err)
+
 		return draftPath, func() {}
 	}
+
 	body = refineInjectDeliverableBlock(body, mode, deliverableTargets, projectRoot, stderr)
+
 	tmpPath, cleanup, err := writeRefineTempBody(body, "idiom-refine-lint-*.md")
 	if err != nil {
 		fmt.Fprintf(stderr, "refine: WARN cannot create final-shape lint input: %v (linting raw draft)\n", err)
+
 		return draftPath, func() {}
 	}
+
 	return tmpPath, cleanup
 }
 
@@ -1367,30 +1593,39 @@ func writeFallbackRefineReview(reviewPath, lintOutput, reason string, stderr io.
 	if len(blockLines) == 0 {
 		return false, nil
 	}
+
 	allLines := refineLintFindingLines(lintOutput)
 	if len(allLines) == 0 {
 		allLines = blockLines
 	}
 
 	var body strings.Builder
+
 	body.WriteString("# Review of brief\n\n")
 	body.WriteString("## Bugs found\n\n")
+
 	for i, line := range blockLines {
 		category, message := parseRefineLintLine(line)
 		title := "Lint BLOCK"
+
 		if category != "" {
 			title += ": " + category
 		}
+
 		if message == "" {
 			message = strings.TrimSpace(line)
 		}
+
 		fmt.Fprintf(&body, "%d. **%s**: %s. Fix the drafted brief so this lint BLOCK is resolved.\n", i+1, title, strings.TrimRight(message, "."))
 	}
+
 	body.WriteString("\n## Lint findings\n\n")
+
 	for _, line := range allLines {
 		body.WriteString(line)
 		body.WriteByte('\n')
 	}
+
 	body.WriteString("\n## OK\n\n")
 	fmt.Fprintf(&body, "- Synthetic review generated because the review lane produced no file (%s); lint BLOCKs remain authoritative.\n", reason)
 	body.WriteString("\n## Verdict\n\nfix-bugs-then-ship\n")
@@ -1398,12 +1633,15 @@ func writeFallbackRefineReview(reviewPath, lintOutput, reason string, stderr io.
 	if err := os.MkdirAll(filepath.Dir(reviewPath), 0o755); err != nil {
 		return false, err
 	}
+
 	if err := os.WriteFile(reviewPath, []byte(body.String()), 0o644); err != nil {
 		return false, err
 	}
+
 	if stderr != nil {
 		fmt.Fprintf(stderr, "refine: WARN synthesized review from %d lint BLOCK(s) after %s\n", len(blockLines), reason)
 	}
+
 	return true, nil
 }
 
@@ -1411,24 +1649,29 @@ var refineRenderedLintLineRe = regexp.MustCompile(`^\s*-\s+\[(BLOCK|WARN)\]\s*(?
 
 func refineLintFindingLines(lintOutput string) []string {
 	var out []string
+
 	for _, line := range strings.Split(lintOutput, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if refineRenderedLintLineRe.MatchString(trimmed) {
 			out = append(out, trimmed)
 		}
 	}
+
 	return out
 }
 
 func refineLintLinesBySeverity(lintOutput, severity string) []string {
 	severity = strings.ToUpper(strings.TrimSpace(severity))
+
 	var out []string
+
 	for _, line := range refineLintFindingLines(lintOutput) {
 		m := refineRenderedLintLineRe.FindStringSubmatch(line)
 		if len(m) > 1 && strings.EqualFold(m[1], severity) {
 			out = append(out, line)
 		}
 	}
+
 	return out
 }
 
@@ -1437,6 +1680,7 @@ func parseRefineLintLine(line string) (category, message string) {
 	if len(m) == 0 {
 		return "", strings.TrimSpace(line)
 	}
+
 	return strings.TrimSpace(m[2]), strings.TrimSpace(m[3])
 }
 
@@ -1461,37 +1705,49 @@ func persistRefineLintJSON(iterDir string, raw []byte, stderr io.Writer) {
 // the caller can fall back gracefully.
 func renderRefineLintFindings(raw []byte) (string, bool) {
 	var report briefLintReport
+
 	if err := json.Unmarshal(bytes.TrimSpace(raw), &report); err != nil {
 		return "", false
 	}
+
 	var out strings.Builder
+
 	count := 0
+
 	for _, f := range report.Findings {
 		if f.Severity == "INFO" {
 			continue
 		}
+
 		count++
+
 		fmt.Fprintf(&out, "- [%s] (%s) %s\n", f.Severity, f.Category, f.Message)
 	}
+
 	if count == 0 && report.Exit == 0 {
 		out.WriteString("(no BLOCK/WARN findings; lint pass clean)\n")
 	}
+
 	return strings.TrimRight(out.String(), "\n"), true
 }
 
 func writeRefinePatchMeta(metaPath, prevDraftPath, prevReviewPath, newDraftPath, lintOutput string, evidencePaths []string) error {
 	projectRoot := refineProjectRootFromIterDir(filepath.Dir(metaPath))
+
 	if strings.TrimSpace(lintOutput) == "" {
 		lintOutput = "(no findings — lint pass was clean on the previous draft)"
 	}
+
 	prevDraftBody, err := os.ReadFile(prevDraftPath)
 	if err != nil {
 		return err
 	}
+
 	prevReviewBody, err := os.ReadFile(prevReviewPath)
 	if err != nil {
 		return err
 	}
+
 	body := strings.NewReplacer(
 		"{{PREV_DRAFT_PATH}}", refineWorkspaceRel(projectRoot, prevDraftPath),
 		"{{PREV_REVIEW_PATH}}", refineWorkspaceRel(projectRoot, prevReviewPath),
@@ -1502,6 +1758,7 @@ func writeRefinePatchMeta(metaPath, prevDraftPath, prevReviewPath, newDraftPath,
 		"{{EVIDENCE_PATHS}}", refineEvidencePathList(evidencePaths),
 		"{{SOURCE_EVIDENCE}}", refinePatchSourceEvidence(projectRoot, prevDraftPath, prevReviewPath, lintOutput, evidencePaths),
 	).Replace(refinePatchTemplate)
+
 	return os.WriteFile(metaPath, []byte(body), 0o644)
 }
 
@@ -1510,10 +1767,13 @@ func refineEvidencePathList(paths []string) string {
 	if len(paths) == 0 {
 		return "- (none)\n"
 	}
+
 	var b strings.Builder
+
 	for _, path := range paths {
 		fmt.Fprintf(&b, "- `%s`\n", path)
 	}
+
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -1526,47 +1786,64 @@ func refinePatchSourceEvidence(projectRoot, prevDraftPath, prevReviewPath, lintO
 	if len(paths) == 0 {
 		return "- (none)\n"
 	}
+
 	promptText := refinePatchEvidencePromptText(prevDraftPath, prevReviewPath, lintOutput)
 	globalTerms := refineEvidenceTerms(promptText)
+
 	var b strings.Builder
+
 	emitted := 0
+
 	for _, path := range paths {
 		full := path
 		if !filepath.IsAbs(full) {
 			full = filepath.Join(projectRoot, path)
 		}
+
 		data, err := os.ReadFile(filepath.Clean(full))
 		if err != nil {
 			fmt.Fprintf(&b, "- `%s`: source evidence unavailable: %v\n", path, err)
+
 			emitted++
+
 			continue
 		}
+
 		anchors := refineEvidenceAnchorsForPath(path, string(data), promptText, globalTerms)
 		if len(anchors) == 0 {
 			fmt.Fprintf(&b, "- `%s`: no identifier anchors matched the draft/review/lint terms\n", path)
+
 			emitted++
+
 			continue
 		}
+
 		for _, anchor := range anchors {
 			fmt.Fprintf(&b, "- `%s:%d`: `%s`\n", path, anchor.line, anchor.text)
+
 			emitted++
 		}
 	}
+
 	if emitted == 0 {
 		return "- (none)\n"
 	}
+
 	return strings.TrimRight(b.String(), "\n")
 }
 
 func refinePatchEvidencePromptText(prevDraftPath, prevReviewPath, lintOutput string) string {
 	var b strings.Builder
+
 	for _, path := range []string{prevDraftPath, prevReviewPath} {
 		if data, err := os.ReadFile(filepath.Clean(path)); err == nil {
 			b.Write(data)
 			b.WriteByte('\n')
 		}
 	}
+
 	b.WriteString(lintOutput)
+
 	return b.String()
 }
 
@@ -1579,111 +1856,142 @@ type refineEvidenceAnchor struct {
 func refineEvidenceAnchorsForPath(path, source, promptText string, globalTerms []string) []refineEvidenceAnchor {
 	localTerms := refineEvidenceTerms(refinePromptLinesForPath(promptText, path))
 	terms := mergeRefineEvidenceTerms(localTerms, globalTerms)
+
 	if len(terms) == 0 {
 		return nil
 	}
+
 	local := map[string]bool{}
 	for _, term := range localTerms {
 		local[term] = true
 	}
+
 	lines := strings.Split(source, "\n")
+
 	var anchors []refineEvidenceAnchor
+
 	for i, line := range lines {
 		if refineEvidenceLineLooksNoisy(line) {
 			continue
 		}
+
 		score := refineEvidenceLineShapeWeight(line)
+
 		score += refineEvidenceBoundaryWeight(line, promptText, terms)
+
 		for _, term := range terms {
 			if !strings.Contains(line, term) {
 				continue
 			}
+
 			score += refineEvidenceTermWeight(term)
 			if local[term] {
 				score += 4
 			}
 		}
+
 		if score <= 0 {
 			continue
 		}
+
 		anchors = append(anchors, refineEvidenceAnchor{
 			line:  i + 1,
 			text:  refineEvidenceLineText(line),
 			score: score,
 		})
 	}
+
 	slices.SortStableFunc(anchors, func(a, b refineEvidenceAnchor) int {
 		if c := -cmp.Compare(a.score, b.score); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.line, b.line)
 	})
+
 	if len(anchors) > refinePatchSourceEvidenceAnchorsPerPath {
 		anchors = anchors[:refinePatchSourceEvidenceAnchorsPerPath]
 	}
+
 	slices.SortStableFunc(anchors, func(a, b refineEvidenceAnchor) int {
 		return cmp.Compare(a.line, b.line)
 	})
+
 	return anchors
 }
 
 func refinePromptLinesForPath(text, path string) string {
 	base := filepath.Base(path)
+
 	var b strings.Builder
+
 	lines := strings.Split(text, "\n")
+
 	for i, line := range lines {
 		if strings.Contains(line, path) || (base != "" && strings.Contains(line, base)) {
 			start := i - 1
 			if start < 0 {
 				start = 0
 			}
+
 			end := i + 2
 			if end >= len(lines) {
 				end = len(lines) - 1
 			}
+
 			for j := start; j <= end; j++ {
 				b.WriteString(lines[j])
 				b.WriteByte('\n')
 			}
 		}
 	}
+
 	return b.String()
 }
 
 func refineEvidenceTerms(text string) []string {
 	seen := map[string]int{}
+
 	for _, match := range refineEvidenceTermRe.FindAllString(text, -1) {
 		term := strings.TrimSpace(match)
 		if !refineEvidenceTermUseful(term) {
 			continue
 		}
+
 		seen[term] += refineEvidenceTermWeight(term)
 	}
+
 	terms := make([]string, 0, len(seen))
 	for term := range seen {
 		terms = append(terms, term)
 	}
+
 	slices.SortStableFunc(terms, func(a, b string) int {
 		if c := -cmp.Compare(seen[a], seen[b]); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a, b)
 	})
+
 	return terms
 }
 
 func mergeRefineEvidenceTerms(primary, fallback []string) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(primary)+len(fallback))
+
 	for _, terms := range [][]string{primary, fallback} {
 		for _, term := range terms {
 			if seen[term] {
 				continue
 			}
+
 			seen[term] = true
 			out = append(out, term)
 		}
 	}
+
 	return out
 }
 
@@ -1691,6 +1999,7 @@ func refineEvidenceTermUseful(term string) bool {
 	if len(term) < 3 || strings.ContainsAny(term, `/\.`) {
 		return false
 	}
+
 	switch strings.ToLower(term) {
 	case "the", "and", "for", "with", "that", "this", "from", "line", "lines", "path", "file", "source", "review", "draft", "brief", "block", "warn", "required", "edit", "existing", "add", "new", "case", "return", "enum", "class", "struct", "function", "native", "tests", "include", "namespace", "using", "const", "auto", "void", "bool", "int", "string", "colony", "core", "simulation", "appraisal":
 		return false
@@ -1704,18 +2013,23 @@ func refineEvidenceTermWeight(term string) int {
 	if strings.Contains(term, "::") {
 		weight += 8
 	}
+
 	if strings.Contains(term, "_") {
 		weight += 6
 	}
+
 	if term == strings.ToUpper(term) {
 		weight += 6
 	}
+
 	if r := rune(term[0]); r >= 'A' && r <= 'Z' {
 		weight += 4
 	}
+
 	if strings.HasSuffix(term, "()") {
 		weight += 3
 	}
+
 	return weight
 }
 
@@ -1724,25 +2038,32 @@ func refineEvidenceLineLooksNoisy(line string) bool {
 	if trimmed == "" {
 		return true
 	}
+
 	switch trimmed {
 	case "{", "}", "};", "},", ");":
 		return true
 	}
+
 	if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") {
 		return true
 	}
+
 	if strings.HasPrefix(trimmed, "#include") || strings.HasPrefix(trimmed, "#pragma once") || strings.HasPrefix(trimmed, "#ifndef") || strings.HasPrefix(trimmed, "#endif") {
 		return true
 	}
+
 	if strings.HasPrefix(trimmed, "#define") && strings.HasSuffix(trimmed, "_H") {
 		return true
 	}
+
 	if strings.HasPrefix(trimmed, "using namespace ") {
 		return true
 	}
+
 	if strings.HasPrefix(trimmed, "namespace ") && strings.HasSuffix(trimmed, "{") {
 		return true
 	}
+
 	return false
 }
 
@@ -1754,21 +2075,27 @@ func refineEvidenceBoundaryWeight(line, promptText string, terms []string) int {
 		strings.Contains(promptLower, "boundary") ||
 		strings.Contains(promptLower, "closing") ||
 		strings.Contains(promptLower, "top-of-file")
+
 	if needsBoundary && strings.Contains(trimmed, "COUNT") {
 		return 32
 	}
+
 	if refineEvidenceLooksLikeFunctionBoundary(trimmed, terms) {
 		return 24
 	}
+
 	if refineEvidenceLooksLikeCaseBoundary(trimmed, terms, promptLower) {
 		return 18
 	}
+
 	if (strings.Contains(promptLower, "end-of-file") ||
 		strings.Contains(promptLower, "last existing") ||
 		strings.Contains(promptLower, "last test")) &&
 		(strings.Contains(trimmed, "TEST") || strings.Contains(trimmed, "Describe(") || strings.Contains(trimmed, "it(")) {
+
 		return 10
 	}
+
 	return 0
 }
 
@@ -1776,21 +2103,26 @@ func refineEvidenceLooksLikeFunctionBoundary(trimmed string, terms []string) boo
 	if !strings.Contains(trimmed, "(") || !strings.Contains(trimmed, ")") {
 		return false
 	}
+
 	if strings.HasPrefix(trimmed, "if ") ||
 		strings.HasPrefix(trimmed, "for ") ||
 		strings.HasPrefix(trimmed, "while ") ||
 		strings.HasPrefix(trimmed, "switch ") ||
 		strings.HasPrefix(trimmed, "catch ") {
+
 		return false
 	}
+
 	for _, term := range terms {
 		if strings.Contains(term, "::") || strings.ToUpper(term) == term {
 			continue
 		}
+
 		if strings.Contains(trimmed, term) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1798,43 +2130,55 @@ func refineEvidenceLooksLikeCaseBoundary(trimmed string, terms []string, promptL
 	if !strings.HasPrefix(trimmed, "case ") && !strings.HasPrefix(trimmed, "default:") {
 		return false
 	}
+
 	if !strings.Contains(promptLower, "switch") &&
 		!strings.Contains(promptLower, "case") &&
 		!strings.Contains(promptLower, "closing") {
+
 		return false
 	}
+
 	for _, term := range terms {
 		if strings.Contains(trimmed, term) {
 			return true
 		}
 	}
+
 	return false
 }
 
 func refineEvidenceLineShapeWeight(line string) int {
 	trimmed := strings.TrimSpace(line)
 	score := 0
+
 	if strings.Contains(trimmed, "enum ") || strings.Contains(trimmed, "enum class ") {
 		score += 5
 	}
+
 	if strings.Contains(trimmed, "struct ") || strings.Contains(trimmed, "class ") || strings.Contains(trimmed, "interface ") || strings.Contains(trimmed, "type ") {
 		score += 4
 	}
+
 	if strings.HasPrefix(trimmed, "func ") || strings.Contains(trimmed, " func(") || strings.Contains(trimmed, "function ") || strings.Contains(trimmed, "def ") {
 		score += 4
 	}
+
 	if strings.Contains(trimmed, "TEST") || strings.Contains(trimmed, "Describe(") || strings.Contains(trimmed, "it(") || strings.Contains(trimmed, "test(") {
 		score += 4
 	}
+
 	if strings.Contains(trimmed, "=") || strings.Contains(trimmed, ":=") || strings.Contains(trimmed, "case ") {
 		score++
 	}
+
 	return score
 }
 
 func refineEvidenceLineText(line string) string {
 	text := strings.TrimSpace(line)
+
 	text = strings.ReplaceAll(text, "`", "'")
+
 	return text
 }
 
@@ -1853,10 +2197,12 @@ func refineWorkspaceRel(projectRoot, p string) string {
 	if strings.TrimSpace(projectRoot) == "" || strings.TrimSpace(p) == "" {
 		return p
 	}
+
 	rel, err := filepath.Rel(projectRoot, p)
 	if err != nil || refineRelEscapesWorkspace(rel) {
 		return p
 	}
+
 	return rel
 }
 
@@ -1877,6 +2223,7 @@ func refineProjectRootFromIterDir(iterDir string) string {
 	for i := 0; i < 4; i++ {
 		dir = filepath.Dir(dir)
 	}
+
 	return dir
 }
 
@@ -1887,20 +2234,26 @@ func parseRefineVerdict(reviewBody string) string {
 	if idx == nil {
 		return "unknown"
 	}
+
 	tail := reviewBody[idx[1]:]
 	for _, line := range strings.Split(tail, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
+
 		token := strings.ToLower(strings.Fields(trimmed)[0])
+
 		token = strings.TrimRight(token, ".,;:")
+
 		switch token {
 		case "ship-as-is", "fix-bugs-then-ship", "reject-and-redraft":
 			return token
 		}
+
 		return "unknown"
 	}
+
 	return "unknown"
 }
 
@@ -1949,42 +2302,55 @@ func parseRefineBugTitles(reviewBody string) []string {
 	if len(indices) == 0 {
 		return nil
 	}
+
 	out := make([]string, 0, len(indices))
 	for i, idx := range indices {
 		title := strings.TrimSpace(reviewBody[idx[2]:idx[3]])
+
 		title = strings.TrimRight(title, ":")
+
 		if title == "" {
 			continue
 		}
+
 		// Title-shape filter: "All X verified", "No X needed", etc.
 		if refineVerificationTitleRe.MatchString(title) {
 			continue
 		}
+
 		// Body is from end-of-title to start-of-next-entry (or 400
 		// chars, whichever is shorter — long bodies past 400 chars
 		// rarely contain a "no fix needed" stinger).
 		bodyStart := idx[1]
 		bodyEnd := len(reviewBody)
+
 		if i+1 < len(indices) {
 			bodyEnd = indices[i+1][0]
 		}
+
 		if bodyEnd-bodyStart > 400 {
 			bodyEnd = bodyStart + 400
 		}
+
 		body := strings.ToLower(reviewBody[bodyStart:bodyEnd])
 		skip := false
+
 		for _, phrase := range refineNoFixPhrases {
 			if strings.Contains(body, phrase) {
 				skip = true
 				break
 			}
 		}
+
 		if skip {
 			continue
 		}
+
 		out = append(out, strings.ToLower(title))
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -1992,18 +2358,22 @@ func refineLoopDiverging(previous, current []string) bool {
 	if len(current) == 0 {
 		return false
 	}
+
 	if len(previous) != len(current) {
 		return false
 	}
+
 	prev := make(map[string]struct{}, len(previous))
 	for _, b := range previous {
 		prev[b] = struct{}{}
 	}
+
 	for _, b := range current {
 		if _, ok := prev[b]; !ok {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -2011,14 +2381,18 @@ func refineDraftScoreBetter(lintExit, bugCount, bestLintExit, bestBugCount int) 
 	if bestLintExit < 0 || bestBugCount < 0 {
 		return true
 	}
+
 	lintClean := lintExit == 0
 	bestLintClean := bestLintExit == 0
+
 	if lintClean != bestLintClean {
 		return lintClean
 	}
+
 	if bugCount != bestBugCount {
 		return bugCount < bestBugCount
 	}
+
 	return false
 }
 
@@ -2042,19 +2416,24 @@ func refineDraftIsTrivial(path string) (bool, string) {
 	if err != nil {
 		return true, "stat-failed"
 	}
+
 	if info.Size() < refineMinDraftBytes {
 		return true, fmt.Sprintf("size=%dB<%dB", info.Size(), refineMinDraftBytes)
 	}
+
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return true, "read-failed"
 	}
+
 	if strings.TrimSpace(string(body)) == "" {
 		return true, "whitespace-only"
 	}
+
 	if !strings.Contains(string(body), "\n## ") && !strings.HasPrefix(strings.TrimSpace(string(body)), "## ") {
 		return true, "no-section-heading"
 	}
+
 	return false, ""
 }
 
@@ -2076,50 +2455,69 @@ func refineDraftIsTrivial(path string) (bool, string) {
 func finalizeRefineWithTitleAndOverlay(draftPath, outputPath, title string, iter int, reason, projectRoot, mode string, deliverableTargets []string, stderr io.Writer) int {
 	if trivial, why := refineDraftIsTrivial(draftPath); trivial {
 		fmt.Fprintf(stderr, "refine: refusing to finalize trivial draft %s (%s); exiting non-zero rather than writing a silent-failure output\n", draftPath, why)
+
 		return 1
 	}
+
 	body, err := os.ReadFile(draftPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "refine: cannot read final draft %s: %v\n", draftPath, err)
+
 		return 1
 	}
+
 	body = refineInjectDeliverableBlock(body, mode, deliverableTargets, projectRoot, stderr)
 	body = refineApplyProjectOverlay(body, projectRoot, stderr)
+
 	isShipAsIs := reason == "ship-as-is"
 	outputReason := reason
 	finalBody := buildRefineFinalBody(body, title, iter, outputReason, !isShipAsIs)
+
 	if code := lintRefineFinalBody(finalBody, stderr); code != 0 {
 		fmt.Fprintf(stderr, "refine: final output brief failed lint after finalize (exit %d); refusing ship-as-is dispatch\n", code)
+
 		if isShipAsIs {
 			isShipAsIs = false
 			outputReason = "final-lint-failed"
 			finalBody = buildRefineFinalBody(body, title, iter, outputReason, true)
 		}
 	}
+
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		fmt.Fprintf(stderr, "refine: cannot create output dir: %v\n", err)
+
 		return 1
 	}
+
 	if err := os.WriteFile(outputPath, finalBody, 0o644); err != nil {
 		fmt.Fprintf(stderr, "refine: cannot write output %s: %v\n", outputPath, err)
+
 		return 1
 	}
+
 	if isShipAsIs {
 		fmt.Fprintf(stderr, "refine: converged ship-as-is after %d iter(s); wrote %s (%d bytes) at %s\n", iter, outputPath, len(finalBody), time.Now().Format(time.RFC3339))
+
 		return 0
 	}
+
 	fmt.Fprintf(stderr, "refine: did NOT reach ship-as-is (%s) after %d iter(s); wrote best-draft to %s (%d bytes) with WARNING header — exiting non-zero so orchestrator inspects before piping\n", outputReason, iter, outputPath, len(finalBody))
+
 	return 1
 }
 
 func buildRefineFinalBody(body []byte, title string, iter int, reason string, warning bool) []byte {
 	var prefix []byte
+
 	if warning {
 		prefix = []byte(fmt.Sprintf("> WARNING: refine exited non-zero — reason=%s after iter %d. The brief below is the best draft the loop produced; review for unresolved bugs/BLOCKs before dispatching to plan-execute. Inspect `.idiom/refine/%s/iter-%d/{review.md,metrics.json}` for findings.\n\n", reason, iter, refineSanitizeTitle(title), iter))
 	}
+
 	marker := fmt.Sprintf("<!-- idiom:refine-drafted title=%s iter=%d reason=%s -->\n", refineSanitizeTitle(title), iter, reason)
 	finalBody := append(prefix, []byte(marker)...)
+
 	finalBody = append(finalBody, body...)
+
 	return finalBody
 }
 
@@ -2127,9 +2525,11 @@ func lintRefineFinalBody(body []byte, stderr io.Writer) int {
 	tmpPath, cleanup, err := writeRefineTempBody(body, "idiom-refine-final-*.md")
 	if err != nil {
 		fmt.Fprintf(stderr, "refine: WARN cannot create temp final brief for lint: %v\n", err)
+
 		return 0
 	}
 	defer cleanup()
+
 	return laneBriefLintRunner([]string{tmpPath}, io.Discard, stderr)
 }
 
@@ -2138,16 +2538,23 @@ func writeRefineTempBody(body []byte, pattern string) (string, func(), error) {
 	if err != nil {
 		return "", func() {}, err
 	}
+
 	tmpPath := tmp.Name()
 	cleanup := func() { _ = os.Remove(tmpPath) }
+
 	if _, err := tmp.Write(body); err != nil {
 		_ = tmp.Close()
+
 		cleanup()
+
 		return "", func() {}, err
 	}
+
 	if err := tmp.Close(); err != nil {
 		cleanup()
+
 		return "", func() {}, err
 	}
+
 	return tmpPath, cleanup, nil
 }

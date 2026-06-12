@@ -39,6 +39,7 @@ func PlanPRDDraftPrompt(effortRoot, promptPath, prdOutputPath string, evidence [
 			Severity: ProductWorkflowSeverityError,
 		})
 	}
+
 	if cleanOutput, ok := cleanResearchOutputDir(plan.PRDOutputPath); ok {
 		plan.PRDOutputPath = filepath.ToSlash(cleanOutput)
 	} else {
@@ -55,6 +56,7 @@ func PlanPRDDraftPrompt(effortRoot, promptPath, prdOutputPath string, evidence [
 		if finding, outside := ValidateResearchPromptPathBoundary(effortRoot, promptAbs, plan.PromptPath); outside {
 			plan.Findings = append(plan.Findings, finding)
 		}
+
 		validatePRDPath := func(relPath, outsideKind, label string) {
 			absPath := filepath.Join(effortRoot, relPath)
 			if finding, outside := researchPromptBoundaryFinding(effortRoot, absPath, relPath, outsideKind, label); outside {
@@ -71,6 +73,7 @@ func PlanPRDDraftPrompt(effortRoot, promptPath, prdOutputPath string, evidence [
 		if id == "" {
 			continue
 		}
+
 		plan.EvidenceCardIDs = append(plan.EvidenceCardIDs, id)
 		plan.EvidenceSummaries = append(plan.EvidenceSummaries, PRDEvidenceCardSummary{
 			CardID:      id,
@@ -81,14 +84,18 @@ func PlanPRDDraftPrompt(effortRoot, promptPath, prdOutputPath string, evidence [
 			Uncertainty: shorten(card.Uncertainty, 140),
 		})
 	}
+
 	sort.Slice(plan.EvidenceSummaries, func(i, j int) bool { return plan.EvidenceSummaries[i].CardID < plan.EvidenceSummaries[j].CardID })
 	sort.Strings(plan.EvidenceCardIDs)
+
 	plan.EvidenceCardCount = len(plan.EvidenceCardIDs)
+
 	for _, obligation := range tdd.Obligations {
 		id := strings.TrimSpace(obligation.ID)
 		if id == "" {
 			continue
 		}
+
 		plan.TDDObligationIDs = append(plan.TDDObligationIDs, id)
 		plan.TDDObligations = append(plan.TDDObligations, PRDTDDObligationSummary{
 			ID:       id,
@@ -98,15 +105,19 @@ func PlanPRDDraftPrompt(effortRoot, promptPath, prdOutputPath string, evidence [
 			Command:  strings.TrimSpace(obligation.Command),
 		})
 	}
+
 	sort.Slice(plan.TDDObligations, func(i, j int) bool { return plan.TDDObligations[i].ID < plan.TDDObligations[j].ID })
 	sort.Strings(plan.TDDObligationIDs)
+
 	plan.Command = artifactCommandRecipeWithValidator(plan.PromptPath, plan.PRDOutputPath, plan.EventsPath, plan.ReportPath, productArtifactValidatorCommand("prd")+" --tdd-ledger tdd.json")
 	sortProfileFindings(plan.Findings)
+
 	return plan
 }
 
 func RenderPRDDraftPromptText(plan PRDDraftPromptPlan) string {
 	var b strings.Builder
+
 	b.WriteString("Draft a Product Requirements Document (PRD) from the evidence ledger summaries below.\n\n")
 	b.WriteString("PRD contract requirements:\n")
 	b.WriteString("- Follow the existing PRD parser/audit contract.\n")
@@ -128,24 +139,32 @@ func RenderPRDDraftPromptText(plan PRDDraftPromptPlan) string {
 	b.WriteString("- Command recipe: " + plan.Command + "\n\n")
 
 	b.WriteString(fmt.Sprintf("Evidence cards (%d total):\n", plan.EvidenceCardCount))
+
 	for _, summary := range plan.EvidenceSummaries {
 		b.WriteString(fmt.Sprintf("- %s | kind=%s | confidence=%s | freshness=%s | claim=%s", summary.CardID, orUnknown(summary.Kind), orUnknown(summary.Confidence), orUnknown(summary.Freshness), summary.Claim))
+
 		if strings.TrimSpace(summary.Uncertainty) != "" {
 			b.WriteString(fmt.Sprintf(" | uncertainty=%s", summary.Uncertainty))
 		}
+
 		b.WriteByte('\n')
 	}
+
 	if len(plan.EvidenceSummaries) == 0 {
 		b.WriteString("- none\n")
 	}
+
 	b.WriteByte('\n')
 	b.WriteString(fmt.Sprintf("Known TDD obligations (%d total):\n", len(plan.TDDObligations)))
+
 	for _, obligation := range plan.TDDObligations {
 		b.WriteString(fmt.Sprintf("- %s | type=%s | owner=%s | command=%s | behavior=%s\n", obligation.ID, orUnknown(obligation.Type), orUnknown(obligation.Owner), orUnknown(obligation.Command), obligation.Behavior))
 	}
+
 	if len(plan.TDDObligations) == 0 {
 		b.WriteString("- none\n")
 	}
+
 	return b.String()
 }
 
@@ -153,6 +172,7 @@ func defaultIfBlank(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback
 	}
+
 	return value
 }
 
@@ -161,9 +181,11 @@ func shorten(value string, limit int) string {
 	if limit <= 0 || len(text) <= limit {
 		return text
 	}
+
 	if limit <= 3 {
 		return text[:limit]
 	}
+
 	return text[:limit-3] + "..."
 }
 
@@ -171,5 +193,6 @@ func orUnknown(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return "unknown"
 	}
+
 	return value
 }

@@ -2,7 +2,7 @@
 
 Architect packets externalize planning context before a model writes a plan,
 critique, or executor brief. The goal is to move reusable capability into
-Agent Harness's harness contracts while keeping project-specific knowledge in a local
+Idiom's harness contracts while keeping project-specific knowledge in a local
 profile.
 
 This mirrors proven patterns from other agent tools:
@@ -15,15 +15,15 @@ This mirrors proven patterns from other agent tools:
 ## Flow
 
 ```bash
-harness context impact \
+idiom context impact \
   --task-file /tmp/task.md \
   --output /tmp/impact.json
 
-harness context pack \
+idiom context pack \
   --task-file /tmp/task.md \
   --output /tmp/context-view.json
 
-harness architect packet \
+idiom architect packet \
   --task-file /tmp/task.md \
   --schema planning_v2 \
   --budget-tier standard \
@@ -34,14 +34,14 @@ harness architect packet \
   --constraint "Stop with <<QUESTION>> if a required symbol is missing." \
   --output /tmp/packet.json
 
-harness architect lint --packet /tmp/packet.json
+idiom architect lint --packet /tmp/packet.json
 
-harness architect budget --packet /tmp/packet.json
+idiom architect budget --packet /tmp/packet.json
 
-harness architect plan --packet /tmp/packet.json \
+idiom architect plan --packet /tmp/packet.json \
   --output /tmp/plan.prompt.md
 
-harness artifact \
+idiom artifact \
   --prompt-file /tmp/plan.prompt.md \
   --output /tmp/plan.md \
   --json-out /tmp/plan.events.jsonl \
@@ -49,20 +49,20 @@ harness artifact \
   --mechanical-repair \
   --no-tools
 
-harness architect plan-audit \
+idiom architect plan-audit \
   --packet /tmp/packet.json \
   --plan-file /tmp/plan.md
 
-harness architect critique \
+idiom architect critique \
   --packet /tmp/packet.json \
   --prior-file /tmp/plan.md \
   --output /tmp/critique.prompt.md
 
-harness architect packet-compare \
+idiom architect packet-compare \
   --base /tmp/packet-v1.json \
   --candidate /tmp/packet.json
 
-harness architect replay-compare \
+idiom architect replay-compare \
   --base /tmp/packet-v1.json \
   --candidate /tmp/packet.json \
   --base-plan /tmp/plan-v1.md \
@@ -71,9 +71,9 @@ harness architect replay-compare \
 
 `context impact`, `context pack`, `packet`, `lint`, `budget`,
 `packet-compare`, `replay-compare`, and `plan-audit` are deterministic. They do
-not require a model. `--context-view` accepts a saved `harness context pack` JSON
+not require a model. `--context-view` accepts a saved `idiom context pack` JSON
 view and records it as `context_view` evidence. `plan`, `critique`, and `brief`
-also only render prompts; use `harness artifact` or another model runner to
+also only render prompts; use `idiom artifact` or another model runner to
 generate the actual plan, critique, or brief.
 
 When `artifact` is used as the model runner, prefer `--json-out` plus
@@ -84,13 +84,13 @@ deterministic repair source, and `dispatch_ready`. Use `--mechanical-repair`
 for Markdown plan/spec artifacts so one accidental outer fence is unwrapped
 deterministically before validation.
 
-`harness context pack` results are cached under
-`.harness/comprehension/graph.sqlite` in the `graph_views` table, keyed by
+`idiom context pack` results are cached under
+`.idiom/comprehension/graph.sqlite` in the `graph_views` table, keyed by
 content fingerprint (active graph `index_id` + canonical task/mode/query
 inputs). Re-running `context pack` with identical inputs returns the cached
 view without recomputation; scoped `context build --refresh` only invalidates
 the rows whose referenced paths changed. The `views/<pack_id>.json` files
-under `.harness/comprehension/` are human-readable mirrors of the SQLite rows
+under `.idiom/comprehension/` are human-readable mirrors of the SQLite rows
 for inspection — they are not the source of truth.
 
 `--schema planning_v2` keeps the v1 packet fields and adds planner-quality
@@ -113,13 +113,13 @@ packets so V2 planning changes can be compared on the same task and model.
 
 ## Profile
 
-By default, Agent Harness looks for:
+By default, Idiom looks for:
 
-- `.harness/architect/profile.json`
-- `.harness/architecture/profile.json`
+- `.idiom/architect/profile.json`
+- `.idiom/architecture/profile.json`
 
 You can also pass `--profile <path>` or `--profile <name>`, where names resolve
-under `.harness/architect/profiles/<name>.json`.
+under `.idiom/architect/profiles/<name>.json`.
 
 Example:
 
@@ -162,7 +162,7 @@ Example:
 ```
 
 Collectors are not run unless `--run-collectors` is provided. Without that flag,
-the packet records them as optional evidence so the planner can see what the
+the packet records them as pending evidence so the planner can see what the
 profile would collect without executing project commands.
 
 ## Built-In Gates
@@ -170,7 +170,7 @@ profile would collect without executing project commands.
 - `exact_tests_required`: packet must list at least one exact validation command.
 - `file_allowlist_required`: packet must list at least one file entry.
 - `question_stop_required`: packet constraints or evidence must include
-  `<<QUESTION>>`. `local-model_question_stop_required` is accepted as a compatibility
+  `<<QUESTION>>`. `qwen_question_stop_required` is accepted as a compatibility
   alias for existing local profiles.
 - `evidence_required`: packet must include rule, collector, or context-view
   evidence.
@@ -185,4 +185,4 @@ unresolved gaps produce warnings by default. They become errors only when a
 required freshness/context gate asks the harness to enforce that invariant.
 
 Unknown required gates are warnings. That keeps project-specific gates visible
-without pretending Agent Harness can validate rules it does not understand.
+without pretending Idiom can validate rules it does not understand.

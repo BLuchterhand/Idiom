@@ -1,6 +1,6 @@
 ---
 tags:
-  - harness
+  - idiom
   - telemetry
   - audit
   - eval
@@ -33,9 +33,9 @@ flowchart TD
 
 Important evidence sources include:
 
-- `.harness/logs/conversations/*.jsonl`
+- `.idiom/logs/conversations/*.jsonl`
 - `logs/telemetry/*.jsonl`
-- `.harness/lane-history.jsonl`
+- `.idiom/lane-history.jsonl`
 - Lane stdout JSONL event streams.
 - Harness audit output.
 - Phase evidence from lanes.
@@ -47,12 +47,8 @@ Important evidence sources include:
 - Audit-watch review packets.
 - Product-evidence and release-evidence bundle identifiers.
 
-For behavior bugs, logs and audit output are the source of truth. Start from
-the newest relevant conversation JSONL, telemetry JSONL, lane stdout JSONL, and
-`harness_audit` before changing prompts or control rails. A diagnosis should
-name the exact session/log ids, stop reason, rejected-action counts,
-completion-gate or recovery events, and the tool sequence that proves the
-failure class.
+For behavior bugs, start from logs and audit output before changing prompts or
+control rails.
 
 ## Event Stream Map
 
@@ -61,7 +57,7 @@ failure class.
 | Conversation logs | Prompt context, user/assistant/tool messages, tool requests/results, server/session events | Process-level command lifecycle |
 | Telemetry logs | Process start/exit, command telemetry, redacted tool summaries, timing, audit/feedback context | Raw tool output or full prompt bodies |
 | Lane stdout JSONL | Lane phase events intended for callers and scripts | All internal telemetry fields |
-| `.harness/lane-history.jsonl` | Compact lane diagnostics and history | Full transcript bodies |
+| `.idiom/lane-history.jsonl` | Compact lane diagnostics and history | Full transcript bodies |
 | Phase evidence | Planner/executor/review proof for a specific lane run | General process telemetry |
 | `graph_views` / context packet exports | Packet IDs, ranked evidence, freshness, provenance | Permission to edit those paths |
 | Audit-watch packets | Debounced review packets from behavior triggers | Raw private transcript dumps by default |
@@ -85,7 +81,7 @@ session IDs, sidecar metadata, lane phase IDs, and artifact IDs.
 
 Audit output should be treated as local diagnostic evidence. Before storing,
 sharing, or committing audit artifacts, redact raw prompts, transcripts, log
-excerpts, file bodies, secrets, and deployment-identifying fields.
+excerpts, file bodies, secrets, and customer-identifying fields.
 
 ## Audit Is Not A Single Boolean
 
@@ -119,23 +115,14 @@ flowchart TD
     Failure["Observed behavior failure"]
     Logs["Inspect newest relevant logs"]
     Audit["Run harness_audit"]
-    Compare["Compare prior similar failures"]
     Localize["Map to prompt, runner, tool, lane, memory, or eval"]
     Test["Add regression fixture"]
     Fix["Implement smallest owner-level fix"]
     Verify["Run focused tests and audit/eval"]
     Docs["Update docs if contract changed"]
 
-    Failure --> Logs --> Audit --> Compare --> Localize --> Test --> Fix --> Verify --> Docs
+    Failure --> Logs --> Audit --> Localize --> Test --> Fix --> Verify --> Docs
 ```
-
-Minimum evidence before patching:
-
-- Newest relevant conversation log and telemetry log paths.
-- Stop reason, completion status, and budget/rejection counts.
-- Tool request/result sequence around the failure, including rejected tools.
-- Recovery and completion-gate events that shaped the next model-visible turn.
-- Prior similar sessions or audit pattern counts, when any exist.
 
 ## Ownership Of Fixes
 
@@ -167,24 +154,24 @@ the class of failure unobservable.
 ## Ranker Learning
 
 `context_pack` and `context_impact` rank candidate files with graph/path signals
-plus per-workspace ranker weights under `.harness/ranker/weights.json`.
+plus per-workspace ranker weights under `.idiom/ranker/weights.json`.
 
 Learning signals can come from:
 
 - SWE/eval groundedness outcomes.
-- Manual `harness ranker boost` and `harness ranker penalize` commands.
-- Valid `harness recover reconcile` outcomes, recorded as
+- Manual `idiom ranker boost` and `idiom ranker penalize` commands.
+- Valid `idiom recover reconcile` outcomes, recorded as
   `source:"recovery_reconciliation"` no-op events with packet-quality,
   localization, completed/remaining atom, and verification metrics.
 - Future verified edit, audit watch learning, and feedback promotion paths.*
 
 Every update should write a bounded event to
-`.harness/ranker/learning_log.jsonl`. `harness_audit` reports the merged learning
+`.idiom/ranker/learning_log.jsonl`. `harness_audit` reports the merged learning
 state so operators can see whether ranking is live, idle, or missing evidence.
 Recovery reconciliation events are evidence-only and do not create or mutate
-`.harness/ranker/weights.json`.
+`.idiom/ranker/weights.json`.
 
-`*` marks learning sources that are design mapped rather than active weight
+`*` marks learning sources that are roadmapped rather than current weight
 mutation paths.
 
 Ranker learning is not a hidden strategy override. It changes evidence ordering

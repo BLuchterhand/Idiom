@@ -13,24 +13,30 @@ import (
 // postflight integration tests.
 func setupPostflightProject(t *testing.T, briefBody, diffBody string, files map[string]string) (root, briefPath, diffPath string) {
 	t.Helper()
+
 	root = t.TempDir()
 	briefPath = filepath.Join(root, "brief.md")
+
 	if err := os.WriteFile(briefPath, []byte(briefBody), 0o644); err != nil {
 		t.Fatalf("write brief: %v", err)
 	}
+
 	diffPath = filepath.Join(root, "lane.diff")
 	if err := os.WriteFile(diffPath, []byte(diffBody), 0o644); err != nil {
 		t.Fatalf("write diff: %v", err)
 	}
+
 	for relpath, body := range files {
 		full := filepath.Join(root, relpath)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
+
 		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
 			t.Fatalf("write %s: %v", relpath, err)
 		}
 	}
+
 	return root, briefPath, diffPath
 }
 
@@ -67,10 +73,13 @@ func TestLanePostflightCleanDiffPasses(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
+
 	code := runLaneMainTest(t, []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root}, &stdout, &stderr, &laneFakeRunner{})
+
 	if code != 0 {
 		t.Fatalf("clean diff must exit 0, got %d (stderr=%s, stdout=%s)", code, stderr.String(), stdout.String())
 	}
+
 	if !strings.Contains(stdout.String(), "PASS") {
 		t.Fatalf("output should announce PASS, got: %s", stdout.String())
 	}
@@ -87,10 +96,13 @@ func TestLanePostflightUnresolvedQuestionMarkerFailsExitThree(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
+
 	code := runLaneMainTest(t, []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root}, &stdout, &stderr, &laneFakeRunner{})
+
 	if code != 3 {
 		t.Fatalf("question marker must exit 3, got %d (stdout=%s)", code, stdout.String())
 	}
+
 	if !strings.Contains(stdout.String(), "unresolved_question_marker") {
 		t.Fatalf("output should name the check that failed: %s", stdout.String())
 	}
@@ -115,11 +127,15 @@ Files To Modify
 	root, briefPath, diffPath := setupPostflightProject(t, briefBody, diffBody, map[string]string{
 		"src/wrong.go": "package src\n// out of scope\n",
 	})
+
 	var stdout, stderr bytes.Buffer
+
 	code := runLaneMainTest(t, []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root}, &stdout, &stderr, &laneFakeRunner{})
+
 	if code != 3 {
 		t.Fatalf("allowlist mismatch must exit 3, got %d (stdout=%s)", code, stdout.String())
 	}
+
 	if !strings.Contains(stdout.String(), "file_allowlist_mismatch") {
 		t.Fatalf("output should name the check: %s", stdout.String())
 	}
@@ -145,9 +161,12 @@ Files To Modify
 	root, briefPath, diffPath := setupPostflightProject(t, briefBody, diffBody, map[string]string{
 		"src/foo.go": "package src\n// fix\n",
 	})
+
 	var stdout, stderr bytes.Buffer
+
 	args := []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--required-edit-paths", "src/foo.go", "--project-root", root}
 	code := runLaneMainTest(t, args, &stdout, &stderr, &laneFakeRunner{})
+
 	if code != 0 {
 		t.Fatalf("explicit required_edit_paths must beat brief; got code=%d stdout=%s", code, stdout.String())
 	}
@@ -164,12 +183,16 @@ func TestLanePostflightSkipFlagDisablesNamedCheck(t *testing.T) {
 		// The diff introduces a question marker, but we'll skip that check.
 		"src/foo.go": "package src\n// <<QUESTION>>: skip me\nfunc Foo() {}\n",
 	})
+
 	var stdout, stderr bytes.Buffer
+
 	args := []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root, "--skip", "unresolved_question_marker"}
 	code := runLaneMainTest(t, args, &stdout, &stderr, &laneFakeRunner{})
+
 	if code != 0 {
 		t.Fatalf("--skip must drop the named check; got code=%d stdout=%s", code, stdout.String())
 	}
+
 	if strings.Contains(stdout.String(), "unresolved_question_marker") {
 		t.Fatalf("skipped check leaked into output: %s", stdout.String())
 	}
@@ -183,22 +206,32 @@ func TestLanePostflightJSONEmitsFindingsAndSummary(t *testing.T) {
 	root, briefPath, diffPath := setupPostflightProject(t, cleanBrief, questionMarkerDiff, map[string]string{
 		"src/foo.go": "package src\n// <<QUESTION>>: trigger\nfunc Foo() {}\n",
 	})
+
 	var stdout, stderr bytes.Buffer
+
 	args := []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root, "--json"}
 	code := runLaneMainTest(t, args, &stdout, &stderr, &laneFakeRunner{})
+
 	if code != 3 {
 		t.Fatalf("expected exit 3, got %d (stdout=%s)", code, stdout.String())
 	}
-	var summary map[string]any
-	var sawFinding bool
+
+	var (
+		summary    map[string]any
+		sawFinding bool
+	)
+
 	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
+
 		var event map[string]any
+
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			t.Fatalf("non-JSON line in --json mode: %q (err=%v)", line, err)
 		}
+
 		switch event["type"] {
 		case "idiom.lane.postflight.finding":
 			sawFinding = true
@@ -206,12 +239,15 @@ func TestLanePostflightJSONEmitsFindingsAndSummary(t *testing.T) {
 			summary = event
 		}
 	}
+
 	if !sawFinding {
 		t.Fatalf("expected at least one finding event in JSON output: %s", stdout.String())
 	}
+
 	if summary == nil {
 		t.Fatalf("expected a summary event: %s", stdout.String())
 	}
+
 	if pass, _ := summary["pass"].(bool); pass {
 		t.Fatalf("summary.pass should be false when error findings exist: %v", summary)
 	}
@@ -223,10 +259,13 @@ func TestLanePostflightJSONEmitsFindingsAndSummary(t *testing.T) {
 // crashing or silently no-op'ing.
 func TestLanePostflightMissingDiffFlagExitsTwo(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := runLaneMainTest(t, []string{"postflight"}, &stdout, &stderr, &laneFakeRunner{})
+
 	if code != 2 {
 		t.Fatalf("missing --diff must exit 2, got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "--diff is required") {
 		t.Fatalf("error must explain the missing flag: %s", stderr.String())
 	}
@@ -239,11 +278,14 @@ func TestLanePostflightMissingDiffFlagExitsTwo(t *testing.T) {
 // able to tell them apart.
 func TestLanePostflightMissingDiffFileExitsOne(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	args := []string{"postflight", "--diff", "/does/not/exist.diff"}
 	code := runLaneMainTest(t, args, &stdout, &stderr, &laneFakeRunner{})
+
 	if code != 1 {
 		t.Fatalf("missing diff file must exit 1 (IO), got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "read diff") {
 		t.Fatalf("error must reference the diff read: %s", stderr.String())
 	}
@@ -260,19 +302,24 @@ func TestLanePostflightProjectCheckLoadsAndFails(t *testing.T) {
 		"src/foo.go": "package src\n// real fix\nfunc Foo() {}\n",
 	})
 	dir := filepath.Join(root, ".idiom", "postflight", "checks")
+
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	rule := `{"name": "always-fail", "kind": "shell", "command": "false"}`
 	if err := os.WriteFile(filepath.Join(dir, "always-fail.json"), []byte(rule), 0o644); err != nil {
 		t.Fatalf("write rule: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := runLaneMainTest(t, []string{"postflight", "--diff", diffPath, "--brief", briefPath, "--project-root", root}, &stdout, &stderr, &laneFakeRunner{})
+
 	if code != 3 {
 		t.Fatalf("project check failure must exit 3, got %d (stdout=%s)", code, stdout.String())
 	}
+
 	if !strings.Contains(stdout.String(), "always-fail") {
 		t.Fatalf("output should mention the project check that failed: %s", stdout.String())
 	}

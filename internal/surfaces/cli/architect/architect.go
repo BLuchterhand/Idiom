@@ -47,11 +47,14 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		printArchitectUsage(stderr)
+
 		return 0
 	}
+
 	logArchitectPhase(rec, "architect_start", map[string]any{
 		"subcommand": args[0],
 	})
+
 	switch args[0] {
 	case "packet":
 		return runArchitectPacket(args[1:], stdout, stderr)
@@ -76,6 +79,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	default:
 		fmt.Fprintf(stderr, "unknown architect command: %s\n", args[0])
 		printArchitectUsage(stderr)
+
 		return 2
 	}
 }
@@ -86,7 +90,9 @@ func logArchitectPhase(rec *telemetry.Recorder, eventType string, fields map[str
 
 func withPromptKind(kind string, args []string) []string {
 	out := []string{"--kind", kind}
+
 	out = append(out, args...)
+
 	return out
 }
 
@@ -95,20 +101,28 @@ func runArchitectPacket(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom architect packet", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	addArchitectPacketFlags(fs, &opts)
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
 	if fs.NArg() != 0 {
 		fmt.Fprintf(stderr, "unexpected positional argument: %s\n", fs.Arg(0))
+
 		return 2
 	}
+
 	task, err := resolveTask(opts.Task, opts.TaskFile)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+
 	defer cancel()
+
 	packet, err := architect.BuildPacket(ctx, architect.BuildOptions{
 		Root:           opts.Root,
 		CWD:            opts.CWD,
@@ -130,62 +144,85 @@ func runArchitectPacket(args []string, stdout io.Writer, stderr io.Writer) int {
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	data, err := architect.EncodePacket(packet)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	if err := writeArchitectOutput(opts.OutputPath, data, stdout); err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	return 0
 }
 
 func runArchitectPlanAudit(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom architect plan-audit", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	packetPath := fs.String("packet", "", "path to architect packet JSON; reads stdin when omitted")
 	planText := fs.String("plan", "", "candidate plan text")
 	planFile := fs.String("plan-file", "", "read candidate plan text from file")
 	planArtifact := fs.String("plan-artifact", "", "read submitted idiom.plan artifact JSON from file")
 	outputPath := fs.String("output", "", "write audit JSON to path; default stdout")
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
 	if fs.NArg() != 0 {
 		fmt.Fprintf(stderr, "unexpected positional argument: %s\n", fs.Arg(0))
+
 		return 2
 	}
+
 	planInputs := 0
+
 	for _, value := range []string{*planText, *planFile, *planArtifact} {
 		if strings.TrimSpace(value) != "" {
 			planInputs++
 		}
 	}
+
 	if planInputs > 1 {
 		fmt.Fprintln(stderr, "--plan, --plan-file, and --plan-artifact are mutually exclusive")
+
 		return 2
 	}
+
 	packet, err := readPacket(*packetPath, os.Stdin)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	var result architect.PlanAuditResult
+
 	if strings.TrimSpace(*planArtifact) != "" {
 		data, err := os.ReadFile(filepath.Clean(*planArtifact))
 		if err != nil {
 			fmt.Fprintf(stderr, "read plan artifact: %v\n", err)
+
 			return 1
 		}
+
 		var artifact architect.PlanArtifactAuditSubject
+
 		if err := json.Unmarshal(data, &artifact); err != nil {
 			fmt.Fprintf(stderr, "parse plan artifact: %v\n", err)
+
 			return 1
 		}
+
 		result = architect.AuditPlanArtifact(packet, artifact)
 	} else {
 		plan := strings.TrimSpace(*planText)
@@ -193,225 +230,308 @@ func runArchitectPlanAudit(args []string, stdout io.Writer, stderr io.Writer) in
 			data, err := os.ReadFile(filepath.Clean(*planFile))
 			if err != nil {
 				fmt.Fprintf(stderr, "read plan file: %v\n", err)
+
 				return 1
 			}
+
 			plan = string(data)
 		}
+
 		result = architect.AuditPlan(packet, plan)
 	}
+
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	data = append(data, '\n')
 	if err := writeArchitectOutput(*outputPath, data, stdout); err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	if !result.OK {
 		return 1
 	}
+
 	return 0
 }
 
 func runArchitectBudget(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom architect budget", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	packetPath := fs.String("packet", "", "path to architect packet JSON; reads stdin when omitted")
 	tiersValue := fs.String("tiers", "brief,standard,deep,max-local", "comma-separated budget tiers to evaluate")
 	outputPath := fs.String("output", "", "write budget experiment JSON to path; default stdout")
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
 	if fs.NArg() != 0 {
 		fmt.Fprintf(stderr, "unexpected positional argument: %s\n", fs.Arg(0))
+
 		return 2
 	}
+
 	packet, err := readPacket(*packetPath, os.Stdin)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	result := architect.BuildBudgetExperiment(packet, splitCSV(*tiersValue))
+
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	data = append(data, '\n')
 	if err := writeArchitectOutput(*outputPath, data, stdout); err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	return 0
 }
 
 func runArchitectPacketCompare(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom architect packet-compare", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	basePath := fs.String("base", "", "baseline/current architect packet JSON")
 	candidatePath := fs.String("candidate", "", "candidate architect packet JSON, usually --schema planning_v2")
 	outputPath := fs.String("output", "", "write comparison JSON to path; default stdout")
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
 	if fs.NArg() != 0 {
 		fmt.Fprintf(stderr, "unexpected positional argument: %s\n", fs.Arg(0))
+
 		return 2
 	}
+
 	if strings.TrimSpace(*basePath) == "" || strings.TrimSpace(*candidatePath) == "" {
 		fmt.Fprintln(stderr, "--base and --candidate are required")
+
 		return 2
 	}
+
 	base, err := readPacket(*basePath, os.Stdin)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	candidate, err := readPacket(*candidatePath, os.Stdin)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	result := architect.ComparePacketVariants(base, candidate)
+
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	data = append(data, '\n')
 	if err := writeArchitectOutput(*outputPath, data, stdout); err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	return 0
 }
 
 func runArchitectReplayCompare(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom architect replay-compare", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	basePath := fs.String("base", "", "baseline/current architect packet JSON")
 	candidatePath := fs.String("candidate", "", "candidate architect packet JSON, usually --schema planning_v2")
 	basePlanPath := fs.String("base-plan", "", "plan produced from the base packet by the replay model")
 	candidatePlanPath := fs.String("candidate-plan", "", "plan produced from the candidate packet by the same replay model")
 	outputPath := fs.String("output", "", "write replay comparison JSON to path; default stdout")
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
 	if fs.NArg() != 0 {
 		fmt.Fprintf(stderr, "unexpected positional argument: %s\n", fs.Arg(0))
+
 		return 2
 	}
+
 	if strings.TrimSpace(*basePath) == "" || strings.TrimSpace(*candidatePath) == "" || strings.TrimSpace(*basePlanPath) == "" || strings.TrimSpace(*candidatePlanPath) == "" {
 		fmt.Fprintln(stderr, "--base, --candidate, --base-plan, and --candidate-plan are required")
+
 		return 2
 	}
+
 	base, err := readPacket(*basePath, os.Stdin)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	candidate, err := readPacket(*candidatePath, os.Stdin)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	basePlan, err := readTextFile(*basePlanPath, "base plan")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	candidatePlan, err := readTextFile(*candidatePlanPath, "candidate plan")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	result := architect.ComparePacketReplay(base, candidate, basePlan, candidatePlan)
+
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	data = append(data, '\n')
 	if err := writeArchitectOutput(*outputPath, data, stdout); err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	return 0
 }
 
 func runArchitectLint(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom architect lint", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	packetPath := fs.String("packet", "", "path to architect packet JSON; reads stdin when omitted")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
 	if fs.NArg() != 0 {
 		fmt.Fprintf(stderr, "unexpected positional argument: %s\n", fs.Arg(0))
+
 		return 2
 	}
+
 	packet, err := readPacket(*packetPath, os.Stdin)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	result := architect.LintPacket(packet)
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
+
 	if err := enc.Encode(result); err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	if !result.OK {
 		return 1
 	}
+
 	return 0
 }
 
 func runArchitectPrompt(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("idiom architect prompt", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	packetPath := fs.String("packet", "", "path to architect packet JSON; reads stdin when omitted")
 	kind := fs.String("kind", "plan", "prompt kind: plan, critique, or brief")
 	prior := fs.String("prior", "", "candidate plan or approved plan text")
 	priorFile := fs.String("prior-file", "", "read candidate/approved plan text from file")
 	outputPath := fs.String("output", "", "write prompt to path; default stdout")
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
 	if fs.NArg() != 0 {
 		fmt.Fprintf(stderr, "unexpected positional argument: %s\n", fs.Arg(0))
+
 		return 2
 	}
+
 	if strings.TrimSpace(*prior) != "" && strings.TrimSpace(*priorFile) != "" {
 		fmt.Fprintln(stderr, "--prior and --prior-file are mutually exclusive")
+
 		return 2
 	}
+
 	packet, err := readPacket(*packetPath, os.Stdin)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	priorText := strings.TrimSpace(*prior)
 	if strings.TrimSpace(*priorFile) != "" {
 		data, err := os.ReadFile(filepath.Clean(*priorFile))
 		if err != nil {
 			fmt.Fprintf(stderr, "read prior file: %v\n", err)
+
 			return 1
 		}
+
 		priorText = string(data)
 	}
+
 	prompt, err := architect.RenderPrompt(architect.PromptKind(*kind), packet, priorText)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	if err := writeArchitectOutput(*outputPath, []byte(prompt), stdout); err != nil {
 		fmt.Fprintln(stderr, err)
+
 		return 1
 	}
+
 	return 0
 }
 
@@ -441,13 +561,16 @@ func resolveTask(task string, taskFile string) (string, error) {
 	if strings.TrimSpace(task) != "" && strings.TrimSpace(taskFile) != "" {
 		return "", fmt.Errorf("--task and --task-file are mutually exclusive")
 	}
+
 	if strings.TrimSpace(taskFile) == "" {
 		return strings.TrimSpace(task), nil
 	}
+
 	data, err := os.ReadFile(filepath.Clean(taskFile))
 	if err != nil {
 		return "", fmt.Errorf("read task file: %w", err)
 	}
+
 	return strings.TrimSpace(string(data)), nil
 }
 
@@ -456,14 +579,18 @@ func parseFileRefs(values []string) []architect.FileRef {
 	for _, value := range values {
 		if strings.HasPrefix(strings.TrimSpace(value), "{") {
 			var ref architect.FileRef
+
 			if json.Unmarshal([]byte(value), &ref) == nil {
 				out = append(out, ref)
 				continue
 			}
 		}
+
 		parts := splitColon(value, 3)
+
 		out = append(out, architect.FileRef{Path: part(parts, 0), Role: part(parts, 1), Reason: part(parts, 2)})
 	}
+
 	return out
 }
 
@@ -472,14 +599,18 @@ func parseCommandRefs(values []string) []architect.CommandRef {
 	for _, value := range values {
 		if strings.HasPrefix(strings.TrimSpace(value), "{") {
 			var ref architect.CommandRef
+
 			if json.Unmarshal([]byte(value), &ref) == nil {
 				out = append(out, ref)
 				continue
 			}
 		}
+
 		parts := splitColon(value, 2)
+
 		out = append(out, architect.CommandRef{Command: part(parts, 0), Reason: part(parts, 1)})
 	}
+
 	return out
 }
 
@@ -488,14 +619,18 @@ func parseAnchors(values []string) []architect.Anchor {
 	for _, value := range values {
 		if strings.HasPrefix(strings.TrimSpace(value), "{") {
 			var anchor architect.Anchor
+
 			if json.Unmarshal([]byte(value), &anchor) == nil {
 				out = append(out, anchor)
 				continue
 			}
 		}
+
 		parts := splitColon(value, 4)
+
 		out = append(out, architect.Anchor{Path: part(parts, 0), Symbol: part(parts, 1), Lines: part(parts, 2), Why: part(parts, 3)})
 	}
+
 	return out
 }
 
@@ -504,44 +639,55 @@ func parseRisks(values []string) []architect.Risk {
 	for _, value := range values {
 		if strings.HasPrefix(strings.TrimSpace(value), "{") {
 			var risk architect.Risk
+
 			if json.Unmarshal([]byte(value), &risk) == nil {
 				out = append(out, risk)
 				continue
 			}
 		}
+
 		parts := splitColon(value, 2)
+
 		out = append(out, architect.Risk{Name: part(parts, 0), Mitigation: part(parts, 1)})
 	}
+
 	return out
 }
 
 func parseMetadata(values []string) map[string]string {
 	out := map[string]string{}
+
 	for _, value := range values {
 		key, val, ok := strings.Cut(value, "=")
 		if !ok {
 			continue
 		}
+
 		key = strings.TrimSpace(key)
 		val = strings.TrimSpace(val)
+
 		if key != "" && val != "" {
 			out[key] = val
 		}
 	}
+
 	if len(out) == 0 {
 		return nil
 	}
+
 	return out
 }
 
 func splitCSV(value string) []string {
 	var out []string
+
 	for _, part := range strings.Split(value, ",") {
 		part = strings.TrimSpace(part)
 		if part != "" {
 			out = append(out, part)
 		}
 	}
+
 	return out
 }
 
@@ -550,6 +696,7 @@ func splitColon(value string, limit int) []string {
 	for i := range parts {
 		parts[i] = strings.TrimSpace(parts[i])
 	}
+
 	return parts
 }
 
@@ -557,12 +704,16 @@ func part(parts []string, idx int) string {
 	if idx >= len(parts) {
 		return ""
 	}
+
 	return parts[idx]
 }
 
 func readPacket(path string, stdin io.Reader) (architect.Packet, error) {
-	var data []byte
-	var err error
+	var (
+		data []byte
+		err  error
+	)
+
 	if strings.TrimSpace(path) != "" {
 		data, err = os.ReadFile(filepath.Clean(path))
 		if err != nil {
@@ -574,10 +725,13 @@ func readPacket(path string, stdin io.Reader) (architect.Packet, error) {
 			return architect.Packet{}, fmt.Errorf("read packet from stdin: %w", err)
 		}
 	}
+
 	var packet architect.Packet
+
 	if err := json.Unmarshal(data, &packet); err != nil {
 		return architect.Packet{}, fmt.Errorf("parse packet: %w", err)
 	}
+
 	return packet, nil
 }
 
@@ -586,6 +740,7 @@ func readTextFile(path string, label string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", label, err)
 	}
+
 	return string(data), nil
 }
 
@@ -598,13 +753,16 @@ func WriteOutput(path string, data []byte, stdout io.Writer) error {
 		_, err := stdout.Write(data)
 		return err
 	}
+
 	clean := filepath.Clean(path)
 	if err := os.MkdirAll(filepath.Dir(clean), 0o755); err != nil {
 		return fmt.Errorf("create parent directory for %s: %w", clean, err)
 	}
+
 	if err := os.WriteFile(clean, data, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", clean, err)
 	}
+
 	return nil
 }
 

@@ -7,14 +7,17 @@ import (
 
 func TestValidateRequiresContractRequiredPathsExactly(t *testing.T) {
 	artifact := validReplaceArtifact()
+
 	artifact.Scope.RequiredEditPaths = []string{"internal/b.go"}
 
 	err := Validate(artifact, Contract{RequiredEditPaths: []string{"internal/a.go"}})
 
 	var validationErr *ValidationError
+
 	if !errors.As(err, &validationErr) {
 		t.Fatalf("expected validation error, got %v", err)
 	}
+
 	if validationErr.Code != CodeRequiredScopeMismatch {
 		t.Fatalf("Code = %q, want %q", validationErr.Code, CodeRequiredScopeMismatch)
 	}
@@ -22,14 +25,17 @@ func TestValidateRequiresContractRequiredPathsExactly(t *testing.T) {
 
 func TestValidateRejectsCandidateOutsideContract(t *testing.T) {
 	artifact := validReplaceArtifact()
+
 	artifact.Scope.CandidateEditPaths = []string{"internal/other.go"}
 
 	err := Validate(artifact, Contract{RequiredEditPaths: []string{"internal/a.go"}})
 
 	var validationErr *ValidationError
+
 	if !errors.As(err, &validationErr) {
 		t.Fatalf("expected validation error, got %v", err)
 	}
+
 	if validationErr.Code != CodeCandidateScopeRejected {
 		t.Fatalf("Code = %q, want %q", validationErr.Code, CodeCandidateScopeRejected)
 	}
@@ -37,14 +43,17 @@ func TestValidateRejectsCandidateOutsideContract(t *testing.T) {
 
 func TestValidateRejectsIntentOutsideContractScope(t *testing.T) {
 	artifact := validReplaceArtifact()
+
 	artifact.Intents[0].Path = "internal/other.go"
 
 	err := Validate(artifact, Contract{RequiredEditPaths: []string{"internal/a.go"}})
 
 	var validationErr *ValidationError
+
 	if !errors.As(err, &validationErr) {
 		t.Fatalf("expected validation error, got %v", err)
 	}
+
 	if validationErr.Code != CodeIntentScopeRejected {
 		t.Fatalf("Code = %q, want %q", validationErr.Code, CodeIntentScopeRejected)
 	}
@@ -71,6 +80,7 @@ func TestValidateAllowsTypedBlockerWithoutIntent(t *testing.T) {
 
 func TestValidateRejectsMixedIntentAndBlockerArtifact(t *testing.T) {
 	artifact := validReplaceArtifact()
+
 	artifact.Blockers = []Blocker{{
 		Code:    CodeInvalidBlocker,
 		Message: "source evidence is missing",
@@ -80,9 +90,11 @@ func TestValidateRejectsMixedIntentAndBlockerArtifact(t *testing.T) {
 	err := Validate(artifact, Contract{RequiredEditPaths: []string{"internal/a.go"}})
 
 	var validationErr *ValidationError
+
 	if !errors.As(err, &validationErr) {
 		t.Fatalf("expected validation error, got %v", err)
 	}
+
 	if validationErr.Code != CodeInvalidBlocker {
 		t.Fatalf("Code = %q, want %q", validationErr.Code, CodeInvalidBlocker)
 	}
@@ -90,14 +102,17 @@ func TestValidateRejectsMixedIntentAndBlockerArtifact(t *testing.T) {
 
 func TestValidateRejectsMalformedOperationShape(t *testing.T) {
 	artifact := validReplaceArtifact()
+
 	artifact.Intents[0].OldText = ""
 
 	err := Validate(artifact, Contract{RequiredEditPaths: []string{"internal/a.go"}})
 
 	var validationErr *ValidationError
+
 	if !errors.As(err, &validationErr) {
 		t.Fatalf("expected validation error, got %v", err)
 	}
+
 	if validationErr.Code != CodeInvalidIntentShape {
 		t.Fatalf("Code = %q, want %q", validationErr.Code, CodeInvalidIntentShape)
 	}
@@ -105,14 +120,17 @@ func TestValidateRejectsMalformedOperationShape(t *testing.T) {
 
 func TestValidateRejectsMalformedEvidenceRefs(t *testing.T) {
 	artifact := validReplaceArtifact()
+
 	artifact.Scope.EvidenceRefs = []string{"source:read_file\nraw body"}
 
 	err := Validate(artifact, Contract{RequiredEditPaths: []string{"internal/a.go"}})
 
 	var validationErr *ValidationError
+
 	if !errors.As(err, &validationErr) {
 		t.Fatalf("expected validation error, got %v", err)
 	}
+
 	if validationErr.Code != CodeInvalidEvidenceRef {
 		t.Fatalf("Code = %q, want %q", validationErr.Code, CodeInvalidEvidenceRef)
 	}

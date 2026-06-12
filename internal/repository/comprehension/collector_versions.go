@@ -29,6 +29,7 @@ var currentCollectorVersions = map[string]string{
 func currentCollectorVersion() string {
 	entries := currentCollectorVersionEntries()
 	sum := sha256.Sum256([]byte(strings.Join(entries, "\n")))
+
 	return hex.EncodeToString(sum[:8])
 }
 
@@ -37,6 +38,7 @@ func currentCollectorVersionMap() map[string]string {
 	for key, value := range currentCollectorVersions {
 		out[key] = value
 	}
+
 	return out
 }
 
@@ -45,6 +47,8 @@ func currentCollectorVersionEntries() []string {
 	for key, value := range currentCollectorVersions {
 		entries = append(entries, key+"="+value)
 	}
+
 	slices.Sort(entries)
+
 	return entries
 }

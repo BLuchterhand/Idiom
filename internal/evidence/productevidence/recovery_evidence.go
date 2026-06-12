@@ -52,58 +52,84 @@ func loadProductEvidenceRecovery(root string) (productEvidenceRecovery, productE
 		NextActions:         map[string]int{},
 		ReleaseImpact:       "no local recovery artifacts found",
 	}
+
 	entries, err := os.ReadDir(recoveryDir)
 	if err != nil {
 		return summary, ref
 	}
+
 	ref.Status = "present"
+
 	var aggregateHashParts []string
+
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
+
 		failureID := entry.Name()
 		record, recordRel, found, err := recovery.TryLoadFailureRecord(root, failureID)
+
 		recordRel = firstNonEmptyString(recordRel, filepath.ToSlash(filepath.Join(".idiom", "recovery", failureID, "failure.json")))
 		aggregateHashParts = append(aggregateHashParts, recoveryEvidenceArtifactHashPart(root, recordRel))
+
 		if err != nil {
 			summary.addMalformedRecoveryArtifact("failure_record_decode_failed", recordRel)
+
 			continue
 		}
+
 		if !found {
 			continue
 		}
+
 		summary.FailureRecordCount++
+
 		summary.ArtifactIDs = append(summary.ArtifactIDs, recoveryEvidenceArtifactID("failure_record", recordRel))
 		summary.FailureClasses[localops.SafeToken(record.Failure.Class)]++
 
 		packetFull, packetRel, err := recovery.DecompositionPacketPath(root, record.FailureID, "")
 		if err != nil {
 			summary.addMalformedRecoveryArtifact("packet_path_invalid", recordRel)
+
 			continue
 		}
+
 		packet, _, packetFound, err := recovery.TryLoadDecompositionPacket(packetFull)
+
 		aggregateHashParts = append(aggregateHashParts, recoveryEvidenceArtifactHashPart(root, packetRel))
+
 		if err != nil {
 			summary.addMalformedRecoveryArtifact("decomposition_packet_decode_failed", packetRel)
+
 			continue
 		}
+
 		if !packetFound {
 			summary.BlockedPacketCount++
+
 			summary.Blockers = append(summary.Blockers, "missing decomposition packet:"+recoveryEvidenceArtifactID("failure_record", recordRel))
 			summary.addNextAction(record.NextAction)
+
 			continue
 		}
+
 		summary.DecompositionPacketCount++
+
 		summary.CandidateAtomCount += len(packet.CandidateAtoms)
+
 		summary.ArtifactIDs = append(summary.ArtifactIDs, recoveryEvidenceArtifactID("decomposition_packet", packetRel))
 		summary.summarizeRecoveryPacket(root, packet)
 	}
+
 	summary.finishRecoveryEvidenceStatus()
+
 	if len(aggregateHashParts) > 0 {
 		slices.Sort(aggregateHashParts)
+
 		ref.ArtifactHash = localops.ContentHash([]byte(strings.Join(aggregateHashParts, "\n")))
 	}
+
 	return summary, ref
 }
 
@@ -111,47 +137,64 @@ func (summary *productEvidenceRecovery) summarizeRecoveryPacket(root string, pac
 	reconciliation, reconciliationRel, found, err := recovery.TryLoadReconciliationForPacket(root, packet)
 	if err != nil {
 		summary.addMalformedRecoveryArtifact("reconciliation_decode_failed", reconciliationRel)
+
 		return
 	}
+
 	if !found {
 		summary.OpenPacketCount++
+
 		summary.RemainingAtomCount += len(packet.CandidateAtoms)
 		summary.addNextAction(packet.NextAction)
+
 		if blockers := recoveryEvidencePacketBlockers(packet); len(blockers) > 0 {
 			summary.BlockedPacketCount++
+
 			summary.UnresolvedBlockerCount += len(blockers)
+
 			summary.Blockers = append(summary.Blockers, blockers...)
 		}
+
 		return
 	}
+
 	summary.ArtifactIDs = append(summary.ArtifactIDs, recoveryEvidenceArtifactID("reconciliation", reconciliationRel))
 	summary.ReconciliationCount++
+
 	findings := recovery.ValidateReconciliation(packet, reconciliation)
+
 	if len(findings) > 0 {
 		summary.BlockedPacketCount++
 		for _, finding := range findings {
 			summary.Blockers = append(summary.Blockers, "invalid reconciliation:"+localops.SafeToken(finding.Code))
 		}
+
 		return
 	}
+
 	summary.CompletedAtomCount += len(reconciliation.CompletedAtoms)
 	summary.RemainingAtomCount += len(reconciliation.RemainingAtoms)
 	summary.addNextAction(reconciliation.NextAction)
+
 	switch reconciliation.Status {
 	case recovery.ReconciliationStatusRecovered:
 		summary.RecoveredPacketCount++
 	case recovery.ReconciliationStatusPartial:
 		summary.PartialPacketCount++
+
 		summary.OpenPacketCount++
 	default:
 		summary.BlockedPacketCount++
+
 		summary.Blockers = append(summary.Blockers, "unsupported reconciliation status:"+localops.SafeToken(reconciliation.Status))
 	}
 }
 
 func (summary *productEvidenceRecovery) addMalformedRecoveryArtifact(code string, relPath string) {
 	summary.MalformedArtifactCount++
+
 	summary.BlockedPacketCount++
+
 	summary.Blockers = append(summary.Blockers, localops.SafeToken(code)+":"+localops.PathEvidence(relPath))
 }
 
@@ -160,18 +203,22 @@ func (summary *productEvidenceRecovery) addNextAction(action string) {
 	if action == "" {
 		action = "unknown"
 	}
+
 	summary.NextActions[action]++
 }
 
 func (summary *productEvidenceRecovery) finishRecoveryEvidenceStatus() {
 	summary.ArtifactIDs = localops.CompactStrings(summary.ArtifactIDs...)
 	summary.Blockers = localops.CompactStrings(summary.Blockers...)
+
 	if len(summary.FailureClasses) == 0 {
 		summary.FailureClasses = nil
 	}
+
 	if len(summary.NextActions) == 0 {
 		summary.NextActions = nil
 	}
+
 	switch {
 	case summary.MalformedArtifactCount > 0 || summary.BlockedPacketCount > 0:
 		summary.Status = "blocked"
@@ -192,14 +239,17 @@ func recoveryEvidenceArtifactHashPart(root string, relPath string) string {
 	if strings.TrimSpace(relPath) == "" {
 		return ""
 	}
+
 	fullPath := relPath
 	if !filepath.IsAbs(fullPath) {
 		fullPath = filepath.Join(root, filepath.FromSlash(relPath))
 	}
+
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		return relPath + ":missing"
 	}
+
 	return relPath + ":" + localops.ContentHash(data)
 }
 
@@ -209,17 +259,22 @@ func recoveryEvidenceArtifactID(kind string, relPath string) string {
 
 func recoveryEvidencePacketBlockers(packet recovery.DecompositionPacket) []string {
 	var blockers []string
+
 	if packet.NextAction != recovery.NextActionReviewDecomposition {
 		blockers = append(blockers, "packet next action requires operator:"+localops.SafeToken(packet.NextAction))
 	}
+
 	if len(packet.CandidateAtoms) == 0 {
 		blockers = append(blockers, "packet has no candidate recovery atoms")
 	}
+
 	if packet.PartialState.DirtyStatus == recovery.DirtyStatusDirtyOutScope {
 		blockers = append(blockers, "partial state includes out-of-scope dirty paths")
 	}
+
 	if packet.PartialState.ScopeStatus == recovery.ScopeStatusOutOfScope {
 		blockers = append(blockers, "partial state is out of recovery scope")
 	}
+
 	return localops.CompactStrings(blockers...)
 }

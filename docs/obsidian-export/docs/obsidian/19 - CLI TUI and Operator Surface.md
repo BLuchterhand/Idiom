@@ -1,6 +1,6 @@
 ---
 tags:
-  - harness
+  - idiom
   - cli
   - tui
   - operator
@@ -8,20 +8,20 @@ tags:
 
 # CLI TUI and Operator Surface
 
-Agent Harness exposes both an interactive TUI and structured CLI commands. The TUI is
+Idiom exposes both an interactive TUI and structured CLI commands. The TUI is
 for live local sessions. The CLI is for repeatable lanes, tools, evidence
 exports, sidecar use, and automation.
 
-## Target State
+## Current State
 
-The actively maintained repeatable path is the CLI: `harness lane`, direct
-`harness plan-execute`, sidecar `harness tool`, and evidence/audit commands. These
+The actively maintained repeatable path is the CLI: `idiom lane`, direct
+`idiom plan-execute`, sidecar `idiom tool`, and evidence/audit commands. These
 surfaces emit structured events and are the right fit for automation,
 regression repros, and externally orchestrated runs.
 
 The TUI remains an interactive operator surface, not a separate workflow engine.
 Interactive sends call the same `RunPromptOnce` path used by prompt-mode CLI
-runs, so active prompt routing, writer-route decisions, debug logs, and
+runs, so current prompt routing, writer-route decisions, debug logs, and
 implementation dispatch behavior are shared. The TUI should still be treated as
 less automation-friendly than the CLI because it is optimized for live local
 sessions.
@@ -46,21 +46,21 @@ and a retained Redis-clone fixture at
 write code and tests through nested plan-execute with clean rollback scoring.
 
 This is pre-dispatch decomposition. The post-failure plan-execute loop described
-in [[21 - Recovery and Decomposition]] should write a durable failure record,
+in [[21 - Recovery and Decomposition]] now writes a durable failure record,
 classified failure shape, and decomposition packet automatically when a
-plan-execute session fails; failed `harness lane implement` subprocesses should
+plan-execute session fails; failed `idiom lane implement` subprocesses now
 write the same recovery artifact pair from bounded lane/session evidence. The
-CLI surface is `harness recover inspect`, `harness recover status`,
-`harness recover decompose`, `harness recover promote`, and
-`harness recover reconcile`. Product operator status should project referenced
+CLI surface is `idiom recover inspect`, `idiom recover status`,
+`idiom recover decompose`, `idiom recover promote`, and
+`idiom recover reconcile`. Product operator status now projects referenced
 recovery packets, blocks normal workflow dispatch while recovery is open, and
-unblocks only after a validated reconciliation artifact covers the active
+unblocks only after a validated reconciliation artifact covers the current
 packet's candidate atom manifest with passing required-test evidence. The TUI
 `/product-status [--effort-root <path>]` command renders that same shared
 operator status text from the same lint, metrics, workflow-state, and recovery
 inputs. The TUI `/recover-status [--packet <path>|<path>]` command renders the
-same packet-level presenter as `harness recover status` and resolves relative
-packet paths from the active workspace directory while keeping packet reads
+same packet-level presenter as `idiom recover status` and resolves relative
+packet paths from the current workspace directory while keeping packet reads
 inside the workspace boundary. `/product-status` appends a TUI-local
 `/recover-status --packet ...` handoff hint when recovery packet state is
 present. Both status commands are read-only, operator-authored, filtered before
@@ -104,10 +104,10 @@ verification, and recovery state are shared with CLI lane machinery.
 ```mermaid
 flowchart TD
     User["User"]
-    CLI["cmd/harness CLI"]
+    CLI["cmd/idiom CLI"]
     TUI["Bubble Tea TUI"]
-    Tools["harness tool"]
-    Lanes["harness lane"]
+    Tools["idiom tool"]
+    Lanes["idiom lane"]
     Ops["backend / queue / doctor"]
     Evidence["audit / product / release evidence"]
     Logs["transcripts, debug logs, telemetry"]
@@ -131,22 +131,22 @@ read-only presenters during an interactive run.
 
 | Command family | Purpose |
 | --- | --- |
-| `harness doctor` | Host and workflow readiness evidence |
-| `harness lane` | Structured lane execution |
-| `harness plan-execute` | Direct planner/executor orchestration with durable progress state |
-| `harness tool` | Sidecar/tool invocation and schemas |
-| `harness backend` | Local backend process/profile operations |
-| `harness queue` | Concurrency leases for local model resources |
-| `harness atom` | Atom/spec intake and classification |
-| `harness brief lint` | Pre-dispatch brief linting |
-| `harness lane postflight` | Diff QC after lane output |
-| `harness recover` | Failure-record inspection, packet status, decomposition, promotion into a gated brief, and packet reconciliation |
-| `harness local-ops benchmark` | Activation and local readiness evidence |
-| `harness product-evidence export` | Product go/no-go evidence |
-| `harness release evidence` | Release evidence bundle |
-| `harness audit watch` | Local behavior monitoring, including recovery event summaries, and review packets |
-| `harness ranker` | Ranker learning inspection and manual adjustment |
-| `harness mcp serve` | Inbound MCP stdio server |
+| `idiom doctor` | Host and workflow readiness evidence |
+| `idiom lane` | Structured lane execution |
+| `idiom plan-execute` | Direct planner/executor orchestration with durable progress state |
+| `idiom tool` | Sidecar/tool invocation and schemas |
+| `idiom backend` | Local backend process/profile operations |
+| `idiom queue` | Concurrency leases for local model resources |
+| `idiom atom` | Atom/spec intake and classification |
+| `idiom brief lint` | Pre-dispatch brief linting |
+| `idiom lane postflight` | Diff QC after lane output |
+| `idiom recover` | Failure-record inspection, packet status, decomposition, promotion into a gated brief, and packet reconciliation |
+| `idiom local-ops benchmark` | Activation and local readiness evidence |
+| `idiom product-evidence export` | Product go/no-go evidence |
+| `idiom release evidence` | Release evidence bundle |
+| `idiom audit watch` | Local behavior monitoring, including recovery event summaries, and review packets |
+| `idiom ranker` | Ranker learning inspection and manual adjustment |
+| `idiom mcp serve` | Experimental inbound MCP stdio server |
 
 ## TUI Controls
 
@@ -159,7 +159,7 @@ Common controls include:
 - `/trace [compact|detail]`: compact or detailed visible tool trace.
 - `/profile list|add|remove`: manage active profiles.
 - `/product-status [--effort-root <path>]`: render the shared product operator
-  status view for an explicit effort root, or for the active workspace
+  status view for an explicit effort root, or for the current workspace
   directory only when that directory contains `workflow_state.json`.
 - `/recover-status [--packet <path>|<path>]`: render the shared recovery packet
   status view without granting recovery write authority. Packet paths must stay
@@ -173,20 +173,20 @@ can retain sensitive content.
 
 ## TUI Design-Doc Dispatch
 
-The TUI should handle a prompt such as "start implementing docs/plan.md" as a
+The TUI can now handle a prompt such as "start implementing docs/plan.md" as a
 first-class workflow when implementation dispatch is enabled:
 
 1. Resolve the referenced markdown file unambiguously.
 2. Run deterministic preflight through atom intake and brief lint.
 3. Refine non-dispatchable briefs when refine can produce a lint-clean accepted
    brief.
-4. Atomize broad design docs into `.harness/atoms/<title>/atom-NNN.md`.
-5. Add active-state anchors for existing files and mark missing-path atoms as
+4. Atomize broad design docs into `.idiom/atoms/<title>/atom-NNN.md`.
+5. Add current-state anchors for existing files and mark missing-path atoms as
    `NEW FILE`.
 6. Dispatch each non-terminal atom through plan-execute.
 7. Mark atom docs complete or source-satisfied only when the answer is not a
    blocker and verification obligations are proven.
-8. Skip atom docs whose status is terminal.
+8. Skip atom docs whose status is already terminal.
 
 Terminal atom statuses include `completed`, `complete`, `accepted`, `closed`,
 `source-satisfied`, `source satisfied`, and any status containing
@@ -204,23 +204,23 @@ cases as the CLI. The CLI has a shared operator status view model, effort
 browsing, and status migration; the TUI has a read-only `/product-status`
 projection over that operator view, including recovery packet state, plus a
 read-only `/recover-status` projection over decomposition packets.
-A write-capable TUI continuation/handoff action* such as capture, start,
-continue, promote, dispatch, or close
+Write-capable TUI continuation/handoff fixtures* remain open delivery work. A
+future TUI action* such as capture, start, continue, promote, dispatch, or close
 should resolve a stable effort ID, render the shared status view model, advance
 exactly one valid action, reconcile state from artifacts and evidence, and then
 render the next valid action.
 
-`*` marks product-workflow TUI behavior that is design mapped rather than specified.
+`*` marks product-workflow TUI behavior that is roadmapped rather than shipped.
 
 Efforts should be browsable by coarse status folders:
 
-- `.harness/product/efforts/unstarted/<effort-id>/...`
-- `.harness/product/efforts/started/<effort-id>/...`
-- `.harness/product/efforts/closed/<effort-id>/...`
+- `.idiom/product/efforts/unstarted/<effort-id>/...`
+- `.idiom/product/efforts/started/<effort-id>/...`
+- `.idiom/product/efforts/closed/<effort-id>/...`
 
 Accepted effort artifacts may be promoted to matching durable folders under
 `docs/product-workflows/efforts/<status>/<effort-id>/...`. The effort ID, not the
-active folder path, is the stable identity. Status migration should update the
+current folder path, is the stable identity. Status migration should update the
 effort index and move the whole effort folder so reviewers can browse by status
 without scattering one design doc's artifacts.
 
@@ -243,8 +243,8 @@ run's history. Workspace plan, workflow, and task-memory state can resume from
 their own persisted stores. Do not assume resuming the transcript alone
 recreates every workspace artifact or lane state.
 
-Direct `harness plan-execute --resume <session-id>` is stricter. It loads the
-progress file at `.harness/plan-execute/sessions/<session-id>.json`, verifies the
+Direct `idiom plan-execute --resume <session-id>` is stricter. It loads the
+progress file at `.idiom/plan-execute/sessions/<session-id>.json`, verifies the
 prompt hash against the supplied prompt or prompt file, and resumes only
 review-resumable state. Missing progress state is a hard error rather than a
 silent fresh run.
@@ -260,10 +260,11 @@ default.
 
 | Source | Why it matters |
 | --- | --- |
-| `cmd/harness/main.go` | Main CLI routing and telemetry naming |
-| `cmd/harness/lane.go` | Lane command surface |
-| `cmd/harness/plan_execute.go` | Direct plan-execute orchestration and resume-state handling |
-| `cmd/harness/mcp.go` | Inbound MCP command |
+| `cmd/idiom/main.go` | Thin binary entrypoint |
+| `internal/surfaces/cli/root` | Main CLI routing and telemetry naming |
+| `internal/lanecmd` | Lane command surface |
+| `internal/surfaces/cli/planexecute` | Direct plan-execute orchestration and resume-state handling |
+| `internal/surfaces/cli/mcp` | Inbound MCP command |
 | `internal/surfaces/tui/app/model_state.go` | Slash command handling |
 | `internal/surfaces/tui/app/implementation_dispatch.go` | TUI/prompt design-doc dispatch, atomization, source-satisfied closeout |
 | `internal/surfaces/tui/app/lifecycle.go` | TUI lifecycle, transcripts, debug logs |
@@ -275,7 +276,7 @@ default.
 - [[04 - Runtime Lanes]]
 - [[08 - Planning Packets and Handoff]]
 - [[09 - Verification Readiness and Completion]]
-- [[12 - Sidecar and LLM Agent Integrations]]
+- [[12 - Sidecar and External Integrations]]
 - [[14 - Maintenance Playbooks]]
 - [[16 - Operational Commands and Evidence Products]]
 - [[18 - Prompt Stack and Profiles]]

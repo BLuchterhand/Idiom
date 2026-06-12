@@ -11,11 +11,14 @@ func jsonValueAtDottedPath(root any, path string) (any, bool) {
 		if !ok {
 			return nil, false
 		}
+
 		value, ok := object[part]
 		if !ok {
 			return nil, false
 		}
+
 		current = value
 	}
+
 	return current, true
 }

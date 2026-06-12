@@ -23,6 +23,7 @@ func TestEvaluate_AcceptsPathOnlyEvidence(t *testing.T) {
 
 	// Find the path claim
 	var pathClaim *AnswerClaim
+
 	for i, c := range result.Claims {
 		if c.Kind == Path {
 			pathClaim = &result.Claims[i]
@@ -59,6 +60,7 @@ func TestEvaluate_AcceptsSourceBodyEvidence(t *testing.T) {
 	}
 
 	var sourceClaim *AnswerClaim
+
 	for i, c := range result.Claims {
 		if c.Kind == SourceLocation {
 			sourceClaim = &result.Claims[i]
@@ -93,6 +95,7 @@ func TestEvaluate_RejectsSourceLocationWithOnlyPathSeen(t *testing.T) {
 	}
 
 	var sourceClaim *AnswerClaim
+
 	for i, c := range result.Claims {
 		if c.Kind == SourceLocation {
 			sourceClaim = &result.Claims[i]
@@ -134,6 +137,7 @@ func TestEvaluate_RejectsNonexistentSourceCitation(t *testing.T) {
 	}
 
 	var sourceClaim *AnswerClaim
+
 	for i, c := range result.Claims {
 		if c.Kind == SourceLocation {
 			sourceClaim = &result.Claims[i]
@@ -176,6 +180,7 @@ func TestEvaluate_RejectsVerificationPassedWithoutCommandResult(t *testing.T) {
 	}
 
 	var cmdClaim *AnswerClaim
+
 	for i, c := range result.Claims {
 		if c.Kind == ClaimCommandResult {
 			cmdClaim = &result.Claims[i]
@@ -207,6 +212,7 @@ func TestEvaluate_RejectsChangeWithoutDiffWrite(t *testing.T) {
 	}
 
 	var changeClaim *AnswerClaim
+
 	for i, c := range result.Claims {
 		if c.Kind == Change {
 			changeClaim = &result.Claims[i]

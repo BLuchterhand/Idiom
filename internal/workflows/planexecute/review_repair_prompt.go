@@ -7,6 +7,7 @@ func planExecuteReviewRepairRejectedPassRetryPrompt(basePrompt string, reason st
 	if reason == "" {
 		reason = "phase evidence contradicted the pass decision"
 	}
+
 	return strings.Join([]string{
 		basePrompt,
 		"",

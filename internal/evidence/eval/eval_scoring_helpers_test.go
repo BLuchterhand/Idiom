@@ -34,6 +34,7 @@ func TestAutonomyEventFromDataNormalizesStructuredEvent(t *testing.T) {
 	if !ok {
 		t.Fatal("expected structured autonomy event")
 	}
+
 	if event.Type != autonomy.EventContractCompiled || event.SchemaVersion != autonomy.EventSchemaVersion {
 		t.Fatalf("unexpected normalized event: %#v", event)
 	}
@@ -61,6 +62,7 @@ func TestPlanExecutionPacketNotUsedDetection(t *testing.T) {
 	if !planExecutionHasPacketNotUsed(handoffs) {
 		t.Fatalf("expected normalized not-used packet freshness to count: %#v", handoffs)
 	}
+
 	if !planExecutionHasPacketNotUsed([]PlanExecutionHandoffSnapshot{{PacketNotUsed: true}}) {
 		t.Fatal("expected explicit PacketNotUsed flag to count")
 	}
@@ -88,6 +90,7 @@ func TestWorkflowStateMatchesExpectedFields(t *testing.T) {
 		Resumable:           true,
 	}
 	resumable := true
+
 	if !workflowStateMatches(actual, WorkflowStateExpectation{
 		Action:              "persist",
 		Kind:                "feature",
@@ -102,8 +105,10 @@ func TestWorkflowStateMatchesExpectedFields(t *testing.T) {
 		RequireNextActions:  []string{"wait for approval"},
 		Resumable:           &resumable,
 	}) {
+
 		t.Fatalf("expected workflow state to match")
 	}
+
 	if workflowStateMatches(actual, WorkflowStateExpectation{RequireEditable: []string{"missing.go"}}) {
 		t.Fatal("workflow state should reject missing required editable target")
 	}

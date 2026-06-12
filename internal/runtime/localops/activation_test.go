@@ -17,9 +17,11 @@ func TestActivationPacketUsefulEvidenceCountCombinesStructuredAndFallbackCounts(
 	if got := ActivationPacketUsefulEvidenceCount(packet); got != 6 {
 		t.Fatalf("useful evidence count = %d, want 6", got)
 	}
+
 	if !ActivationPacketHasUsefulEvidence(packet) {
 		t.Fatalf("packet with positive evidence should be useful")
 	}
+
 	if ActivationPacketHasUsefulEvidence(ActivationPacketEvidence{UsefulEvidence: []string{"candidate_files:0"}}) {
 		t.Fatalf("zero-only evidence should not be useful")
 	}

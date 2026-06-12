@@ -375,6 +375,7 @@ func (m *Manager) harnessAudit(req ToolRequest) ToolResult {
 
 	if purpose == "all" || purpose == "tool_surface" {
 		toolSurface := m.auditToolSurface()
+
 		report.ToolSurface = &toolSurface
 		report.LanguageTooling = m.auditLanguageTooling()
 		report.BackendAvailability = m.auditBackendAvailability(report.LanguageTooling)
@@ -388,34 +389,41 @@ func (m *Manager) harnessAudit(req ToolRequest) ToolResult {
 		if err != nil {
 			return ToolResult{Tool: "harness_audit", Summary: "Harness audit rejected", Error: err.Error()}
 		}
+
 		report.LogBehavior = behavior
 		report.ContractCoverage = contractCoverage
 		report.Findings = append(report.Findings, findings...)
 		report.Findings = append(report.Findings, contractCoverageFindings(contractCoverage)...)
 		report.ImprovementQuestions = append(report.ImprovementQuestions, questions...)
+
 		if purpose == "all" || purpose == "planning_quality" {
 			report.PlanningQuality = planningQualityFromFeedback(behavior.Aggregate.Feedback)
 			report.Findings = append(report.Findings, planningQualityFindings(report.PlanningQuality)...)
 			report.ImprovementQuestions = append(report.ImprovementQuestions, planningQualityQuestions(report.PlanningQuality)...)
 		}
 	}
+
 	if purpose == "all" || purpose == "behavior" || purpose == "planning_quality" {
 		learning := buildRankerLearningAudit(m.cfg.Root)
+
 		report.RankerLearning = learning
 		report.Findings = append(report.Findings, rankerLearningFindings(learning)...)
 		report.ImprovementQuestions = append(report.ImprovementQuestions, rankerLearningQuestions(learning)...)
 	}
+
 	if purpose == "all" || purpose == "behavior" {
 		cache := buildContextCacheAudit(m.cfg.Root)
 		if cache != nil {
 			report.ContextCache = cache
 			report.Findings = append(report.Findings, contextCacheFindings(cache)...)
 		}
+
 		freshness := buildFreshnessHealthAudit(
 			logBehaviorContextStats(report.LogBehavior),
 			logBehaviorFreshnessResolution(report.LogBehavior),
 			logBehaviorContextStatsHistoricalOnly(report.LogBehavior),
 		)
+
 		report.FreshnessHealth = &freshness
 		report.Findings = append(report.Findings, freshnessHealthFindings(&freshness)...)
 	}
@@ -454,6 +462,7 @@ func (m *Manager) auditToolSurface() harnessAuditToolSurface {
 	manifest := toolManifestToolsAcrossBuiltInSurfaces()
 	schemaDefs := BuildToolDefinitions(nil)
 	export, exportErr := BuildToolSchemaExport(nil)
+
 	return auditToolSurfaceFromSources(manifest, schemaDefs, builtinToolNamesForSuggest(), export, exportErr)
 }
 
@@ -488,28 +497,36 @@ func auditToolSurfaceFromSources(manifest []string, schemaDefs []ToolDefinition,
 		CapabilityClassCounts:         auditCapabilityClassCounts(export),
 	}
 	capabilityCoverage := ReadOnlyCapabilityCoverageForTools(manifest)
+
 	surface.CapabilityRegistry = &capabilityCoverage
+
 	if exportErr != nil {
 		surface.ExportError = exportErr.Error()
 	}
+
 	surface.DriftFindingCount = toolSurfaceDriftFindingCount(surface)
+
 	return surface
 }
 
 func auditSchemaDefinitionNames(defs []ToolDefinition) ([]string, []string) {
 	names := make([]string, 0, len(defs))
 	invalid := make([]string, 0)
+
 	for _, def := range defs {
 		name := strings.TrimSpace(def.Name)
 		if name == "" {
 			continue
 		}
+
 		names = append(names, name)
 		if !json.Valid([]byte(def.ParametersJSON)) {
 			invalid = append(invalid, name)
 		}
 	}
+
 	slices.Sort(invalid)
+
 	return names, invalid
 }
 
@@ -520,38 +537,47 @@ func auditExportedToolNames(export ToolSchemaExport) []string {
 			names = append(names, name)
 		}
 	}
+
 	return names
 }
 
 func auditCapabilityToolCounts(export ToolSchemaExport) map[string]int {
 	counts := make(map[string]int)
+
 	for _, tool := range export.Tools {
 		for _, capability := range tool.EvidenceCapabilities {
 			capability = strings.TrimSpace(capability)
 			if capability == "" {
 				continue
 			}
+
 			counts[capability]++
 		}
 	}
+
 	if len(counts) == 0 {
 		return nil
 	}
+
 	return counts
 }
 
 func auditCapabilityClassCounts(export ToolSchemaExport) map[string]int {
 	counts := make(map[string]int)
+
 	for _, tool := range export.Tools {
 		class := strings.TrimSpace(tool.CapabilityClassification)
 		if class == "" {
 			continue
 		}
+
 		counts[class]++
 	}
+
 	if len(counts) == 0 {
 		return nil
 	}
+
 	return counts
 }
 
@@ -562,25 +588,35 @@ func auditStaleUseBlockerCoverage(export ToolSchemaExport) ([]harnessAuditStaleU
 			exported[name] = tool
 		}
 	}
-	var coverage []harnessAuditStaleUseCoverage
-	var missing []string
-	var reportOnly []string
+
+	var (
+		coverage   []harnessAuditStaleUseCoverage
+		missing    []string
+		reportOnly []string
+	)
+
 	for _, expectation := range staleUseCoverageExpectations() {
 		tool, ok := exported[expectation.Tool]
 		row := expectation
+
 		if ok && slices.Contains(tool.Policy.ErrorClasses, "stale_context") {
 			row.SchemaErrorClass = true
 		}
+
 		if !ok || !row.SchemaErrorClass || (!row.RuntimeBlocker && !row.ReportOnly && !row.LiveFallbackOnStale) {
 			missing = append(missing, row.Tool)
 		}
+
 		if row.ReportOnly {
 			reportOnly = append(reportOnly, row.Tool)
 		}
+
 		coverage = append(coverage, row)
 	}
+
 	slices.Sort(missing)
 	slices.Sort(reportOnly)
+
 	return coverage, missing, reportOnly
 }
 
@@ -600,6 +636,7 @@ func toolSurfaceDriftFindingCount(surface harnessAuditToolSurface) int {
 	if surface.CapabilityRegistry != nil {
 		capabilityUnsafeCount = surface.CapabilityRegistry.UnsafeMappedAdapterCount
 	}
+
 	return len(surface.DuplicateManifestTools) +
 		len(surface.ManifestWithoutSchema) +
 		len(surface.SchemaWithoutManifest) +
@@ -619,6 +656,7 @@ func boolToAuditCount(value bool) int {
 	if value {
 		return 1
 	}
+
 	return 0
 }
 
@@ -636,9 +674,11 @@ func (m *Manager) auditLanguageTooling() []harnessAuditLanguage {
 	}))
 	defs := BuildToolDefinitions(nil)
 	schemas := make(map[string]struct{}, len(defs))
+
 	for _, def := range defs {
 		schemas[def.Name] = struct{}{}
 	}
+
 	active := make(map[string]bool)
 	for _, lang := range m.ActiveLanguages() {
 		active[lang.Name] = true
@@ -657,22 +697,28 @@ func (m *Manager) auditLanguageTooling() []harnessAuditLanguage {
 				Capability: string(cap),
 				Tool:       tool,
 			}
+
 			if tool == "" {
 				row.Gaps = append(row.Gaps, "missing tool for capability "+string(cap))
 			} else {
 				_, item.InManifest = manifest[tool]
 				_, item.HasSchema = schemas[tool]
+
 				if !item.InManifest {
 					row.Gaps = append(row.Gaps, tool+" missing from manifest")
 				}
+
 				if !item.HasSchema {
 					row.Gaps = append(row.Gaps, tool+" missing schema")
 				}
 			}
+
 			row.Capabilities = append(row.Capabilities, item)
 		}
+
 		out = append(out, row)
 	}
+
 	return out
 }
 
@@ -681,6 +727,7 @@ func (m *Manager) auditBackendAvailability(languages []harnessAuditLanguage) []h
 	for _, lang := range languages {
 		active[lang.Language] = lang.Active
 	}
+
 	backends := []harnessAuditBackend{
 		{
 			Name:     "content_search",
@@ -787,21 +834,27 @@ func (m *Manager) auditBackendAvailability(languages []harnessAuditLanguage) []h
 				backends[i].Available = true
 				backends[i].Path = backend.bin
 			}
+
 			continue
 		}
+
 		if backends[i].Name == "universal_ctags" {
 			if path := auditUniversalCtagsPath(); path != "" {
 				backends[i].Available = true
 				backends[i].Path = path
 			}
+
 			continue
 		}
+
 		if path := firstAvailableBinary(backends[i].Binaries...); path != "" {
 			backends[i].Available = true
 			backends[i].Path = path
 		}
 	}
+
 	backends = append(backends, m.auditContextGraphBackend())
+
 	return backends
 }
 
@@ -813,23 +866,28 @@ func (m *Manager) auditContextGraphBackend() harnessAuditBackend {
 		Active:   true,
 		Binaries: []string{"embedded:modernc.org/sqlite"},
 	}
+
 	status, err := comprehension.Status(m.cfg.Root)
 	if err != nil {
 		backend.Impact = backend.Impact + " context_status currently errors: " + err.Error()
 		return backend
 	}
+
 	for _, storage := range status.StorageBackends {
 		if storage.Active {
 			backend.Path = storage.Path
 			backend.Available = status.Indexed && storage.Compatible
 			backend.Impact = fmt.Sprintf("%s Active backend %s is %s.", backend.Impact, storage.Kind, storage.Status)
+
 			return backend
 		}
 	}
+
 	backend.Available = false
 	if !status.Indexed {
 		backend.Impact = backend.Impact + " No context index is currently present."
 	}
+
 	return backend
 }
 
@@ -838,22 +896,27 @@ func auditUniversalCtagsPath() string {
 	if path == "" {
 		return ""
 	}
+
 	output, err := exec.Command(path, "--version").CombinedOutput()
 	if err != nil {
 		return ""
 	}
+
 	if !strings.Contains(strings.ToLower(string(output)), "universal ctags") {
 		return ""
 	}
+
 	return path
 }
 
 func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *autonomy.EventAuditReport, []harnessAuditFinding, []harnessAuditQuestion, error) {
 	limit := harnessAuditLogLimit(req.Limit)
+
 	paths, sources, warnings, err := m.auditLogPaths(req, limit)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
+
 	reports := make([]eval.PerfReport, 0, len(paths))
 	for _, path := range paths {
 		report, err := eval.AnalyzeLog(path)
@@ -861,18 +924,26 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 			warnings = append(warnings, fmt.Sprintf("%s: %v", m.displayPath(path), err))
 			continue
 		}
+
 		report.SessionID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 		report.LogPath = m.displayPath(path)
 		reports = append(reports, report)
 	}
+
 	incompleteSessions, inProgressSessions, lifecycleWarnings := m.auditIncompleteImplementSessions(paths)
+
 	warnings = append(warnings, lifecycleWarnings...)
+
 	contractCoverage, contractWarnings := m.auditContractEventCoverage(paths)
+
 	warnings = append(warnings, contractWarnings...)
+
 	malformedOutput, malformedWarnings := auditMalformedOutputStages(paths)
+
 	for _, warning := range malformedWarnings {
 		warnings = append(warnings, fmt.Sprintf("malformed output stages: %s", warning))
 	}
+
 	aggregate := eval.Aggregate(reports)
 	currentReports := currentHarnessAuditPerfReports(m.cfg.Root, reports)
 	currentAggregate := eval.Aggregate(currentReports)
@@ -899,9 +970,11 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 		IncompleteSessions:  incompleteSessions,
 	}
 	findings := logBehaviorFindings(currentAggregate, incompleteSessions)
+
 	findings = append(findings, historicalLogBehaviorFindings(aggregate, currentAggregate)...)
 	findings = append(findings, historicalTurnPhaseProjectionFindings(paths)...)
 	findings = append(findings, contractCoverageWarningFindings(contractWarnings)...)
+
 	return behavior, contractCoverage, findings, logBehaviorQuestions(aggregate), nil
 }
 
@@ -909,7 +982,9 @@ func harnessAuditGuardFrictionCoverage(report *autonomy.EventAuditReport) *auton
 	if report == nil || report.GuardFrictionCoverage.Total == 0 {
 		return nil
 	}
+
 	coverage := report.GuardFrictionCoverage
+
 	return &coverage
 }
 
@@ -934,55 +1009,72 @@ func auditMalformedOutputStages(paths []string) (*harnessAuditMalformedOutput, [
 		RecoveryOutcomeCounts:  map[string]int{},
 		SchemaVersionCounts:    map[string]int{},
 	}
+
 	var warnings []string
+
 	logsHit := map[string]struct{}{}
+
 	for _, path := range paths {
 		body, err := os.ReadFile(path)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: %v", filepath.Base(path), err))
 			continue
 		}
+
 		for _, line := range strings.Split(string(body), "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue
 			}
+
 			role, content, ok := auditRunEventRoleAndContent([]byte(line))
 			if !ok {
 				continue
 			}
+
 			if _, tracked := malformedOutputAuditRoles[role]; !tracked {
 				continue
 			}
+
 			out.EventCounts[role]++
+
 			logsHit[path] = struct{}{}
+
 			auditMalformedOutputContent(out, role, content)
 		}
 	}
+
 	out.LogsHit = len(logsHit)
 	if out.LogsHit == 0 {
 		return nil, warnings
 	}
+
 	pruneEmptyAuditCounts(out)
+
 	return out, warnings
 }
 
 func auditRunEventRoleAndContent(line []byte) (string, string, bool) {
 	var row map[string]any
+
 	if err := json.Unmarshal(line, &row); err != nil {
 		return "", "", false
 	}
+
 	role := auditString(row["role"])
 	content := auditString(row["content"])
+
 	if role == "" {
 		if data, ok := row["data"].(map[string]any); ok {
 			role = auditString(data["role"])
 			content = auditString(data["content"])
 		}
 	}
+
 	if role == "" {
 		return "", "", false
 	}
+
 	return role, content, true
 }
 
@@ -991,36 +1083,44 @@ func auditMalformedOutputContent(out *harnessAuditMalformedOutput, role string, 
 	if content == "" {
 		return
 	}
+
 	var payload map[string]any
+
 	if err := json.Unmarshal([]byte(content), &payload); err != nil {
 		return
 	}
+
 	validationKeys := []string{"validation_result"}
 	if role == "edit_intent_validated" {
 		validationKeys = append(validationKeys, "result")
 	}
+
 	for _, key := range validationKeys {
 		if value := auditString(payload[key]); value != "" {
 			out.ValidationResultCounts[value]++
 			break
 		}
 	}
+
 	for _, key := range []string{"failure_class", "parser_failure_class", "error_code"} {
 		if value := auditString(payload[key]); value != "" {
 			out.FailureClassCounts[value]++
 			break
 		}
 	}
+
 	if role == "patch_compile_started" || role == "patch_compile_result" {
 		if value := auditString(payload["compile_outcome"]); value != "" {
 			out.CompileOutcomeCounts[value]++
 		}
 	}
+
 	if role == "malformed_output_recovery_exhausted" {
 		if value := auditString(payload["recovery_outcome"]); value != "" {
 			out.RecoveryOutcomeCounts[value]++
 		}
 	}
+
 	if value := auditString(payload["schema_version"]); value != "" {
 		out.SchemaVersionCounts[value]++
 	}
@@ -1035,18 +1135,23 @@ func pruneEmptyAuditCounts(out *harnessAuditMalformedOutput) {
 	if len(out.EventCounts) == 0 {
 		out.EventCounts = nil
 	}
+
 	if len(out.ValidationResultCounts) == 0 {
 		out.ValidationResultCounts = nil
 	}
+
 	if len(out.FailureClassCounts) == 0 {
 		out.FailureClassCounts = nil
 	}
+
 	if len(out.CompileOutcomeCounts) == 0 {
 		out.CompileOutcomeCounts = nil
 	}
+
 	if len(out.RecoveryOutcomeCounts) == 0 {
 		out.RecoveryOutcomeCounts = nil
 	}
+
 	if len(out.SchemaVersionCounts) == 0 {
 		out.SchemaVersionCounts = nil
 	}
@@ -1056,6 +1161,7 @@ func buildHarnessAuditLaneHistory(root string, recentLimit int) *harnessAuditLan
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
+
 	out := &harnessAuditLaneHistory{
 		Path:         ".idiom/lane-history.jsonl",
 		ByMode:       map[string]int{},
@@ -1063,47 +1169,63 @@ func buildHarnessAuditLaneHistory(root string, recentLimit int) *harnessAuditLan
 		ByExitCode:   map[string]int{},
 	}
 	path := filepath.Join(root, ".idiom", "lane-history.jsonl")
+
 	body, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("read lane history: %v", err))
 		}
+
 		return out
 	}
+
 	out.Exists = true
+
 	var recent []harnessAuditLaneHistoryRun
+
 	for _, line := range strings.Split(string(body), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
+
 		var run harnessAuditLaneHistoryRun
+
 		if err := json.Unmarshal([]byte(line), &run); err != nil {
 			out.Warnings = append(out.Warnings, "skipped malformed lane-history row")
 			continue
 		}
+
 		out.Runs++
 		if run.Mode != "" {
 			out.ByMode[run.Mode]++
 		}
+
 		if run.FinalState != "" {
 			out.ByFinalState[run.FinalState]++
 		}
+
 		out.ByExitCode[fmt.Sprintf("%d", run.ExitCode)]++
+
 		out.TotalModelCalls += run.ModelCalls
 		out.TotalToolCalls += run.ToolCalls
 		out.TotalTokens += run.TotalTokens
 		out.TotalDurationMS += run.DurationMS
+
 		run.Brief = harnessAuditDisplayPath(root, run.Brief)
 		recent = append(recent, run)
 	}
+
 	if recentLimit <= 0 {
 		recentLimit = 8
 	}
+
 	if len(recent) > recentLimit {
 		recent = recent[len(recent)-recentLimit:]
 	}
+
 	out.Recent = recent
+
 	return out
 }
 
@@ -1112,19 +1234,24 @@ func harnessAuditDisplayPath(root, path string) string {
 	if path == "" {
 		return ""
 	}
+
 	if !filepath.IsAbs(path) {
 		return filepath.ToSlash(path)
 	}
+
 	if rel, ok := harnessAuditRelativePath(root, path); ok {
 		return rel
 	}
+
 	realRoot, rootErr := filepath.EvalSymlinks(root)
 	realPath, pathErr := filepath.EvalSymlinks(path)
+
 	if rootErr == nil && pathErr == nil {
 		if rel, ok := harnessAuditRelativePath(realRoot, realPath); ok {
 			return rel
 		}
 	}
+
 	return filepath.ToSlash(path)
 }
 
@@ -1133,24 +1260,33 @@ func harnessAuditRelativePath(root, path string) (string, bool) {
 	if err != nil || rel == "." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
 		return "", false
 	}
+
 	return filepath.ToSlash(rel), true
 }
 
 func (m *Manager) auditContractEventCoverage(paths []string) (*autonomy.EventAuditReport, []string) {
-	var warnings []string
-	var events []autonomy.Event
+	var (
+		warnings []string
+		events   []autonomy.Event
+	)
+
 	for _, path := range paths {
 		pathEvents, pathWarnings := readHarnessAuditAutonomyEvents(path)
 		for _, warning := range pathWarnings {
 			warnings = append(warnings, fmt.Sprintf("%s contract coverage: %s", m.displayPath(path), warning))
 		}
+
 		events = append(events, pathEvents...)
 	}
+
 	if len(events) == 0 {
 		return nil, warnings
 	}
+
 	events = dedupeAndSortHarnessAuditAutonomyEvents(events)
+
 	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+
 	return &report, warnings
 }
 
@@ -1158,45 +1294,59 @@ func dedupeAndSortHarnessAuditAutonomyEvents(events []autonomy.Event) []autonomy
 	if len(events) < 2 {
 		return events
 	}
+
 	out := make([]autonomy.Event, 0, len(events))
 	seen := make(map[string]struct{}, len(events))
+
 	for _, event := range events {
 		eventID := strings.TrimSpace(event.EventID)
 		if eventID != "" {
 			if _, ok := seen[eventID]; ok {
 				continue
 			}
+
 			seen[eventID] = struct{}{}
 		}
+
 		out = append(out, event)
 	}
+
 	slices.SortStableFunc(out, func(a, b autonomy.Event) int {
 		if !a.OccurredAt.Equal(b.OccurredAt) {
 			if a.OccurredAt.IsZero() {
 				return 1
 			}
+
 			if b.OccurredAt.IsZero() {
 				return -1
 			}
+
 			if a.OccurredAt.Before(b.OccurredAt) {
 				return -1
 			}
+
 			return 1
 		}
+
 		if cmp := strings.Compare(a.ContractID, b.ContractID); cmp != 0 {
 			return cmp
 		}
+
 		if a.Sequence < b.Sequence {
 			return -1
 		}
+
 		if a.Sequence > b.Sequence {
 			return 1
 		}
+
 		if cmp := strings.Compare(string(a.Type), string(b.Type)); cmp != 0 {
 			return cmp
 		}
+
 		return strings.Compare(a.EventID, b.EventID)
 	})
+
 	return out
 }
 
@@ -1215,14 +1365,18 @@ type harnessAuditLogFacts struct {
 }
 
 func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAuditIncompleteSession, []harnessAuditInProgressSession, []string) {
-	var incomplete []harnessAuditIncompleteSession
-	var inProgress []harnessAuditInProgressSession
-	var warnings []string
+	var (
+		incomplete []harnessAuditIncompleteSession
+		inProgress []harnessAuditInProgressSession
+		warnings   []string
+	)
+
 	type auditedLog struct {
 		path        string
 		displayPath string
 		facts       harnessAuditLogFacts
 	}
+
 	logs := make([]auditedLog, 0, len(paths))
 	activeConversationLogs := make(map[string]harnessAuditInProgressSession)
 	telemetryByConversationLog := make(map[string]auditedLog)
@@ -1233,16 +1387,21 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 			warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: %v", m.displayPath(path), err))
 			continue
 		}
+
 		displayPath := m.displayPath(path)
 		log := auditedLog{path: path, displayPath: displayPath, facts: facts}
+
 		logs = append(logs, log)
+
 		conversationPath := ""
+
 		if facts.HasModelSession {
 			conversationPath = m.auditConversationPathFromTelemetry(facts)
 			if conversationPath != "" {
 				if _, ok := telemetryByConversationLog[filepath.Clean(conversationPath)]; !ok {
 					telemetryByConversationLog[filepath.Clean(conversationPath)] = log
 				}
+
 				if displayConversation := m.displayPath(conversationPath); displayConversation != "" {
 					if _, ok := telemetryByConversationLog[displayConversation]; !ok {
 						telemetryByConversationLog[displayConversation] = log
@@ -1250,6 +1409,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 				}
 			}
 		}
+
 		if facts.HasProcessStart && facts.HasModelSession && !facts.HasProcessExit && processIDAppearsRunning(facts.PID) {
 			if conversationPath != "" {
 				session := harnessAuditInProgressSession{
@@ -1259,6 +1419,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 					Command:         strings.TrimSpace(facts.Command),
 					PID:             facts.PID,
 				}
+
 				activeConversationLogs[filepath.Clean(conversationPath)] = session
 				activeConversationLogs[session.ConversationLog] = session
 			}
@@ -1272,7 +1433,9 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 		if _, ok := seenInProgress[key]; ok {
 			return
 		}
+
 		seenInProgress[key] = struct{}{}
+
 		inProgress = append(inProgress, session)
 	}
 	lookupTelemetryForConversation := func(conversationPath string, conversationFacts harnessAuditLogFacts) (auditedLog, bool) {
@@ -1280,16 +1443,22 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 		if prefix == "" {
 			prefix = harnessAuditSessionTimestampPrefix(strings.TrimSuffix(filepath.Base(conversationPath), filepath.Ext(conversationPath)))
 		}
+
 		if prefix == "" {
 			return auditedLog{}, false
 		}
+
 		prefixes := []string{prefix}
 		if len(prefix) > len("20060102-1504") {
 			prefixes = append(prefixes, prefix[:len("20060102-1504")])
 		}
+
 		prefixes = util.UniqueNonEmpty(prefixes)
+
 		displayConversationPath := m.displayPath(conversationPath)
+
 		var candidates []string
+
 		for _, base := range util.UniqueNonEmpty([]string{m.cfg.CWD, m.cfg.Root}) {
 			for _, dir := range []string{
 				filepath.Join(base, "logs", "telemetry"),
@@ -1301,39 +1470,49 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 						warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: telemetry lookup failed: %v", displayConversationPath, err))
 						continue
 					}
+
 					candidates = append(candidates, matches...)
 				}
 			}
 		}
+
 		candidates = util.UniqueNonEmpty(candidates)
 		sortAuditLogPaths(candidates)
+
 		cleanConversationPath := filepath.Clean(conversationPath)
+
 		for _, candidate := range candidates {
 			candidateFacts, err := readHarnessAuditLogFacts(candidate)
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: %v", m.displayPath(candidate), err))
 				continue
 			}
+
 			if !candidateFacts.HasModelSession {
 				continue
 			}
+
 			candidateConversationPath := m.auditConversationPathFromTelemetry(candidateFacts)
 			sameConversation := candidateConversationPath != "" &&
 				(filepath.Clean(candidateConversationPath) == cleanConversationPath ||
 					m.displayPath(candidateConversationPath) == displayConversationPath)
 			sameSession := strings.TrimSpace(conversationFacts.SessionID) != "" &&
 				strings.TrimSpace(conversationFacts.SessionID) == strings.TrimSpace(candidateFacts.SessionID)
+
 			if !sameConversation && !sameSession {
 				continue
 			}
+
 			return auditedLog{path: candidate, displayPath: m.displayPath(candidate), facts: candidateFacts}, true
 		}
+
 		return auditedLog{}, false
 	}
 
 	for _, log := range logs {
 		facts := log.facts
 		displayPath := log.displayPath
+
 		if facts.HasProcessStart && util.EqualTrimFold(facts.Command, "implement") {
 			if !facts.HasProcessExit && processIDAppearsRunning(facts.PID) {
 				session := harnessAuditInProgressSession{
@@ -1347,9 +1526,12 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 						session.ConversationLog = m.displayPath(conversationPath)
 					}
 				}
+
 				appendInProgress(session)
+
 				continue
 			}
+
 			session := harnessAuditIncompleteSession{
 				TelemetryLog: displayPath,
 				SessionID:    strings.TrimSpace(facts.SessionID),
@@ -1358,9 +1540,11 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 			if !facts.HasProcessExit {
 				session.Missing = append(session.Missing, "process_exit")
 			}
+
 			if facts.HasModelSession {
 				if conversationPath := m.auditConversationPathFromTelemetry(facts); conversationPath != "" {
 					session.ConversationLog = m.displayPath(conversationPath)
+
 					conversationFacts, err := readHarnessAuditLogFacts(conversationPath)
 					if err != nil {
 						warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: %v", session.ConversationLog, err))
@@ -1373,34 +1557,44 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 					session.Missing = append(session.Missing, "session_summary")
 				}
 			}
+
 			if len(session.Missing) > 0 {
 				key := session.TelemetryLog + "|" + session.ConversationLog
 				if _, ok := seenIncomplete[key]; !ok {
 					seenIncomplete[key] = struct{}{}
+
 					incomplete = append(incomplete, session)
 				}
 			}
+
 			continue
 		}
+
 		if facts.IsImplementConversation && !facts.HasSessionSummary {
 			activeSession, ok := activeConversationLogs[filepath.Clean(log.path)]
 			if !ok {
 				activeSession, ok = activeConversationLogs[displayPath]
 			}
+
 			if ok {
 				if strings.TrimSpace(activeSession.Command) == "" {
 					activeSession.Command = "tui"
 				}
+
 				appendInProgress(activeSession)
+
 				continue
 			}
+
 			telemetryLog, ok := telemetryByConversationLog[filepath.Clean(log.path)]
 			if !ok {
 				telemetryLog, ok = telemetryByConversationLog[displayPath]
 			}
+
 			if !ok {
 				telemetryLog, ok = lookupTelemetryForConversation(log.path, facts)
 			}
+
 			if ok {
 				telemetryFacts := telemetryLog.facts
 				if telemetryFacts.HasProcessStart && !telemetryFacts.HasProcessExit && processIDAppearsRunning(telemetryFacts.PID) {
@@ -1411,18 +1605,23 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 						Command:         util.FirstNonEmpty(strings.TrimSpace(telemetryFacts.Command), "tui"),
 						PID:             telemetryFacts.PID,
 					})
+
 					continue
 				}
+
 				missing := make([]string, 0, 2)
 				if telemetryFacts.HasProcessStart && !telemetryFacts.HasProcessExit {
 					missing = append(missing, "process_exit")
 				}
+
 				if !telemetryFacts.HasModelSessionCloseout {
 					missing = append(missing, "session_summary")
 				}
+
 				if len(missing) == 0 {
 					continue
 				}
+
 				session := harnessAuditIncompleteSession{
 					TelemetryLog:    telemetryLog.displayPath,
 					ConversationLog: displayPath,
@@ -1431,12 +1630,16 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 					Missing:         missing,
 				}
 				key := session.TelemetryLog + "|" + session.ConversationLog
+
 				if _, ok := seenIncomplete[key]; !ok {
 					seenIncomplete[key] = struct{}{}
+
 					incomplete = append(incomplete, session)
 				}
+
 				continue
 			}
+
 			session := harnessAuditIncompleteSession{
 				ConversationLog: displayPath,
 				SessionID:       strings.TrimSpace(facts.SessionID),
@@ -1444,8 +1647,10 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 				Missing:         []string{"session_summary"},
 			}
 			key := session.TelemetryLog + "|" + session.ConversationLog
+
 			if _, ok := seenIncomplete[key]; !ok {
 				seenIncomplete[key] = struct{}{}
+
 				incomplete = append(incomplete, session)
 			}
 		}
@@ -1454,13 +1659,16 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 	sort.Slice(incomplete, func(i, j int) bool {
 		left := firstNonEmptyAuditSessionPath(incomplete[i])
 		right := firstNonEmptyAuditSessionPath(incomplete[j])
+
 		return left < right
 	})
 	sort.Slice(inProgress, func(i, j int) bool {
 		left := firstNonEmptyAuditInProgressSessionPath(inProgress[i])
 		right := firstNonEmptyAuditInProgressSessionPath(inProgress[j])
+
 		return left < right
 	})
+
 	return incomplete, inProgress, warnings
 }
 
@@ -1469,16 +1677,20 @@ func (m *Manager) auditConversationPathFromTelemetry(facts harnessAuditLogFacts)
 	if path == "" {
 		return ""
 	}
+
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(m.cfg.CWD, path)
 	}
+
 	path = filepath.Clean(path)
 	if _, err := os.Stat(path); err != nil {
 		return ""
 	}
+
 	if m.pathWithinWorkspace(path) || auditPathWithinRoot(path, facts.WorkspaceRoot) {
 		return path
 	}
+
 	return ""
 }
 
@@ -1487,17 +1699,21 @@ func harnessAuditSessionTimestampPrefix(sessionID string) string {
 	if idx := strings.Index(sessionID, "."); idx > 0 {
 		sessionID = sessionID[:idx]
 	}
+
 	if len(sessionID) != len("20060102-150405") || sessionID[8] != '-' {
 		return ""
 	}
+
 	for i, r := range sessionID {
 		if i == 8 {
 			continue
 		}
+
 		if r < '0' || r > '9' {
 			return ""
 		}
 	}
+
 	return sessionID
 }
 
@@ -1506,18 +1722,24 @@ func readHarnessAuditLogFacts(path string) (harnessAuditLogFacts, error) {
 	if err != nil {
 		return harnessAuditLogFacts{}, err
 	}
+
 	var facts harnessAuditLogFacts
+
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
+
 		var record map[string]any
+
 		if err := json.Unmarshal([]byte(line), &record); err != nil {
 			continue
 		}
+
 		eventType := auditStringField(record, "type")
 		role := auditStringField(record, "role")
+
 		switch eventType {
 		case "process_start":
 			facts.HasProcessStart = true
@@ -1540,18 +1762,22 @@ func readHarnessAuditLogFacts(path string) (harnessAuditLogFacts, error) {
 			facts.SessionID = util.FirstNonEmpty(facts.SessionID, auditStringField(record, "session_id"))
 			facts.DebugLogPath = util.FirstNonEmpty(facts.DebugLogPath, auditStringField(record, "debug_log_path"))
 		}
+
 		if role == "control_rails" || eventType == "control_rails" {
 			if auditControlRailsIndicateImplementation(record) {
 				facts.IsImplementConversation = true
 			}
 		}
+
 		if eventType == "session_start" && strings.EqualFold(auditStringField(record, "command"), "implement") {
 			facts.IsImplementConversation = true
 		}
 	}
+
 	if facts.SessionID == "" {
 		facts.SessionID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
+
 	return facts, nil
 }
 
@@ -1568,19 +1794,26 @@ func readHarnessAuditAutonomyEventsWithOptions(path string, opts harnessAuditAut
 	if err != nil {
 		return nil, []string{err.Error()}
 	}
-	var events []autonomy.Event
-	var warnings []string
+
+	var (
+		events   []autonomy.Event
+		warnings []string
+	)
+
 	for lineNumber, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
+
 		lineEvents, lineWarnings := decodeHarnessAuditAutonomyEventsWithOptions([]byte(line), opts)
 		for _, warning := range lineWarnings {
 			warnings = append(warnings, fmt.Sprintf("line %d: %s", lineNumber+1, warning))
 		}
+
 		events = append(events, lineEvents...)
 	}
+
 	return events, warnings
 }
 
@@ -1589,8 +1822,11 @@ func decodeHarnessAuditAutonomyEvents(line []byte) ([]autonomy.Event, []string) 
 }
 
 func decodeHarnessAuditAutonomyEventsWithOptions(line []byte, opts harnessAuditAutonomyDecodeOptions) ([]autonomy.Event, []string) {
-	var events []autonomy.Event
-	var warnings []string
+	var (
+		events   []autonomy.Event
+		warnings []string
+	)
+
 	if auditRawAutonomyEvent(line) {
 		event, err := unmarshalHarnessAuditAutonomyEventWithOptions(line, opts)
 		if err != nil {
@@ -1599,24 +1835,31 @@ func decodeHarnessAuditAutonomyEventsWithOptions(line []byte, opts harnessAuditA
 			events = append(events, event)
 		}
 	}
+
 	var record map[string]json.RawMessage
+
 	if err := json.Unmarshal(line, &record); err != nil {
 		return events, warnings
 	}
+
 	for _, key := range []string{"autonomy_event", "contract_event", "event"} {
 		raw, ok := record[key]
 		if !ok || !auditRawAutonomyEvent(raw) {
 			continue
 		}
+
 		event, err := unmarshalHarnessAuditAutonomyEventWithOptions(raw, opts)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: %v", key, err))
 			continue
 		}
+
 		events = append(events, event)
 	}
+
 	if auditStringFromRaw(record["role"]) == "autonomy_event" {
 		var content string
+
 		if err := json.Unmarshal(record["content"], &content); err == nil && auditRawAutonomyEvent([]byte(content)) {
 			event, err := unmarshalHarnessAuditAutonomyEventWithOptions([]byte(content), opts)
 			if err != nil {
@@ -1626,6 +1869,7 @@ func decodeHarnessAuditAutonomyEventsWithOptions(line []byte, opts harnessAuditA
 			}
 		}
 	}
+
 	return events, warnings
 }
 
@@ -1633,33 +1877,43 @@ func auditRawAutonomyEvent(raw []byte) bool {
 	var probe struct {
 		SchemaVersion string `json:"schema_version"`
 	}
+
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return false
 	}
+
 	return probe.SchemaVersion == autonomy.EventSchemaVersion
 }
 
 func auditStringFromRaw(raw json.RawMessage) string {
 	var value string
+
 	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
 		return ""
 	}
+
 	return strings.TrimSpace(value)
 }
 
 func unmarshalHarnessAuditAutonomyEventWithOptions(raw []byte, opts harnessAuditAutonomyDecodeOptions) (autonomy.Event, error) {
 	var event autonomy.Event
+
 	if err := json.Unmarshal(raw, &event); err != nil {
 		return autonomy.Event{}, err
 	}
+
 	normalizeHarnessAuditLegacyGateFields(raw, &event)
+
 	if !opts.PreserveLegacyTurnPhaseProjection {
 		normalizeHarnessAuditLegacyTurnPhaseProjection(&event)
 	}
+
 	event.Normalize()
+
 	if err := event.Validate(); err != nil {
 		return autonomy.Event{}, err
 	}
+
 	return event, nil
 }
 
@@ -1667,11 +1921,14 @@ func normalizeHarnessAuditLegacyTurnPhaseProjection(event *autonomy.Event) {
 	if event == nil || event.Lifecycle == nil || !event.OccurredAt.Before(harnessAuditTurnPhaseProjectionIntroducedAt) {
 		return
 	}
+
 	if event.Lifecycle.TurnPhaseContract == nil &&
 		event.Lifecycle.ModelProtocol == nil &&
 		len(event.Lifecycle.SurfaceSummaries) == 0 {
+
 		return
 	}
+
 	event.Lifecycle.TurnPhaseContract = nil
 	event.Lifecycle.ModelProtocol = nil
 	event.Lifecycle.SurfaceSummaries = nil
@@ -1681,26 +1938,35 @@ func normalizeHarnessAuditLegacyGateFields(raw []byte, event *autonomy.Event) {
 	if event == nil || event.Type != autonomy.EventGateDecision || event.Gate == nil {
 		return
 	}
+
 	if !event.OccurredAt.Before(harnessAuditGateMetadataIntroducedAt) {
 		return
 	}
+
 	var record map[string]json.RawMessage
+
 	if err := json.Unmarshal(raw, &record); err != nil {
 		return
 	}
+
 	var gateFields map[string]json.RawMessage
+
 	if err := json.Unmarshal(record["gate"], &gateFields); err != nil {
 		return
 	}
+
 	if _, ok := gateFields["pack_id"]; !ok && event.Gate.PackID == "" {
 		event.Gate.PackID = harnessAuditLegacyGatePackID(event.Gate.Gate, event.Gate.InvariantID)
 	}
+
 	if _, ok := gateFields["enforcement_mode"]; !ok && event.Gate.EnforcementMode == "" {
 		event.Gate.EnforcementMode = harnessAuditLegacyGateEnforcementMode(event.Gate.Decision)
 	}
+
 	if _, ok := gateFields["safe_alternatives"]; !ok &&
 		harnessAuditLegacyGateNeedsSafeAlternatives(event.Gate.Decision, event.Gate.EnforcementMode) &&
 		len(event.Gate.SafeAlternatives) == 0 {
+
 		event.Gate.SafeAlternatives = harnessAuditLegacyGateSafeAlternatives(event.Gate.Gate)
 	}
 }
@@ -1720,6 +1986,7 @@ func harnessAuditLegacyGatePackID(gate autonomy.GateKind, invariantID string) au
 	case "read_only.readiness":
 		return autonomy.ContractPackCompletionReadiness
 	}
+
 	switch gate {
 	case autonomy.GateCompletion:
 		return autonomy.ContractPackCompletionReadiness
@@ -1742,6 +2009,7 @@ func harnessAuditLegacyGateEnforcementMode(decision autonomy.ToolPolicyDecision)
 	if decision == autonomy.PolicyObserve {
 		return autonomy.EnforcementModeObserveOnly
 	}
+
 	return autonomy.EnforcementModeEnforce
 }
 
@@ -1749,6 +2017,7 @@ func harnessAuditLegacyGateNeedsSafeAlternatives(decision autonomy.ToolPolicyDec
 	if mode != autonomy.EnforcementModeEnforce {
 		return false
 	}
+
 	switch decision {
 	case autonomy.PolicyReject, autonomy.PolicyDeny, autonomy.PolicyStop:
 		return true
@@ -1780,10 +2049,12 @@ func processIDAppearsRunning(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
+
 	process, err := os.FindProcess(pid)
 	if err != nil {
 		return false
 	}
+
 	return process.Signal(syscall.Signal(0)) == nil
 }
 
@@ -1791,22 +2062,27 @@ func auditControlRailsIndicateImplementation(record map[string]any) bool {
 	if strings.Contains(strings.ToLower(auditStringField(record, "content")), "implementation_result") {
 		return true
 	}
+
 	for _, key := range []string{"contract", "task_family", "lane", "permission_profile"} {
 		value := strings.ToLower(auditStringField(record, key))
 		if strings.Contains(value, "implementation") || strings.Contains(value, "implement") {
 			return true
 		}
 	}
+
 	return false
 }
 
 func auditPathWithinRoot(path string, root string) bool {
 	path = filepath.Clean(strings.TrimSpace(path))
 	root = filepath.Clean(strings.TrimSpace(root))
+
 	if path == "" || root == "" {
 		return false
 	}
+
 	rel, err := filepath.Rel(root, path)
+
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../") && !strings.HasPrefix(rel, `..\`)
 }
 
@@ -1816,6 +2092,7 @@ func auditStringField(record map[string]any, key string) string {
 			return strings.TrimSpace(s)
 		}
 	}
+
 	return ""
 }
 
@@ -1824,6 +2101,7 @@ func auditIntField(record map[string]any, key string) int {
 	if !ok {
 		return 0
 	}
+
 	switch typed := value.(type) {
 	case float64:
 		return int(typed)
@@ -1833,6 +2111,7 @@ func auditIntField(record map[string]any, key string) int {
 		n, _ := typed.Int64()
 		return int(n)
 	}
+
 	return 0
 }
 
@@ -1840,6 +2119,7 @@ func firstNonEmptyAuditInProgressSessionPath(session harnessAuditInProgressSessi
 	if strings.TrimSpace(session.TelemetryLog) != "" {
 		return strings.TrimSpace(session.TelemetryLog)
 	}
+
 	return strings.TrimSpace(session.ConversationLog)
 }
 
@@ -1847,21 +2127,28 @@ func firstNonEmptyAuditSessionPath(session harnessAuditIncompleteSession) string
 	if strings.TrimSpace(session.TelemetryLog) != "" {
 		return strings.TrimSpace(session.TelemetryLog)
 	}
+
 	return strings.TrimSpace(session.ConversationLog)
 }
 
 func (m *Manager) auditLogPaths(req ToolRequest, limit int) ([]string, []harnessAuditLogSource, []string, error) {
-	var warnings []string
-	var sources []harnessAuditLogSource
-	var paths []string
+	var (
+		warnings []string
+		sources  []harnessAuditLogSource
+		paths    []string
+	)
+
 	defaultScope := false
+
 	switch {
 	case strings.TrimSpace(req.Glob) != "":
 		pattern := strings.TrimSpace(req.Glob)
+
 		matches, err := m.auditGlob(pattern)
 		if err != nil {
 			return nil, nil, nil, err
 		}
+
 		sources = append(sources, harnessAuditLogSource{Pattern: pattern, Matched: len(matches), Selected: len(matches)})
 		paths = append(paths, matches...)
 	case strings.TrimSpace(req.Path) != "":
@@ -1871,23 +2158,29 @@ func (m *Manager) auditLogPaths(req ToolRequest, limit int) ([]string, []harness
 			if err != nil {
 				return nil, nil, nil, err
 			}
+
 			sources = append(sources, harnessAuditLogSource{Pattern: path, Matched: len(matches), Selected: len(matches)})
 			paths = append(paths, matches...)
+
 			break
 		}
+
 		target, err := m.resolvePath(path, req.Workdir)
 		if err != nil {
 			return nil, nil, nil, err
 		}
+
 		info, err := os.Stat(target)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("audit log path %q: %w", path, err)
 		}
+
 		if info.IsDir() {
 			matches, err := auditJSONLFilesUnder(target)
 			if err != nil {
 				return nil, nil, nil, err
 			}
+
 			sources = append(sources, harnessAuditLogSource{Pattern: path, Matched: len(matches), Selected: len(matches)})
 			paths = append(paths, matches...)
 		} else {
@@ -1896,6 +2189,7 @@ func (m *Manager) auditLogPaths(req ToolRequest, limit int) ([]string, []harness
 		}
 	default:
 		defaultScope = true
+
 		for _, pattern := range []string{
 			".idiom/logs/conversations/*.jsonl",
 			"logs/conversations/*.jsonl",
@@ -1908,8 +2202,10 @@ func (m *Manager) auditLogPaths(req ToolRequest, limit int) ([]string, []harness
 				warnings = append(warnings, err.Error())
 				continue
 			}
+
 			matches = auditUniqueExistingFiles(matches)
 			sortAuditLogPaths(matches)
+
 			source := harnessAuditLogSource{Pattern: pattern, Matched: len(matches), Selected: len(matches)}
 			if len(matches) > limit {
 				warnings = append(warnings, fmt.Sprintf("log scan capped at %d newest file(s) out of %d matched for %s", limit, len(matches), pattern))
@@ -1917,57 +2213,72 @@ func (m *Manager) auditLogPaths(req ToolRequest, limit int) ([]string, []harness
 				source.Selected = len(matches)
 				source.Capped = true
 			}
+
 			sources = append(sources, source)
 			paths = append(paths, matches...)
 		}
 	}
+
 	paths = auditUniqueExistingFiles(paths)
 	sortAuditLogPaths(paths)
+
 	if len(paths) == 0 {
 		warnings = append(warnings, "no JSONL behavior logs matched the audit scope")
 		return paths, sources, warnings, nil
 	}
+
 	if len(paths) > limit && !defaultScope {
 		warnings = append(warnings, fmt.Sprintf("log scan capped at %d newest file(s) out of %d matched", limit, len(paths)))
 		paths = paths[:limit]
+
 		if len(sources) > 0 {
 			sources[len(sources)-1].Selected = len(paths)
 			sources[len(sources)-1].Capped = true
 		}
 	}
+
 	return paths, sources, warnings, nil
 }
 
 func (m *Manager) auditDefaultJSONLGlob(pattern string) ([]string, error) {
 	const suffix = "/*.jsonl"
+
 	if !strings.HasSuffix(strings.ToLower(pattern), suffix) {
 		return m.auditGlob(pattern)
 	}
+
 	dirPattern := pattern[:len(pattern)-len(suffix)]
 	if strings.TrimSpace(dirPattern) == "" {
 		return m.auditGlob(pattern)
 	}
+
 	if hasAuditGlobMagic(dirPattern) {
 		return m.auditGlob(pattern)
 	}
+
 	dir, err := m.resolvePath(dirPattern, "")
 	if err != nil {
 		return nil, fmt.Errorf("audit glob %q: %w", pattern, err)
 	}
+
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
+
 	if err != nil {
 		return nil, fmt.Errorf("audit glob %q: %w", pattern, err)
 	}
+
 	paths := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".jsonl") {
 			continue
 		}
+
 		paths = append(paths, filepath.Join(dir, entry.Name()))
 	}
+
 	return paths, nil
 }
 
@@ -1975,21 +2286,26 @@ func (m *Manager) auditGlob(pattern string) ([]string, error) {
 	if strings.TrimSpace(pattern) == "" {
 		return nil, nil
 	}
+
 	var absPattern string
+
 	if filepath.IsAbs(pattern) {
 		absPattern = filepath.Clean(pattern)
 	} else {
 		absPattern = filepath.Clean(filepath.Join(m.cfg.CWD, pattern))
 	}
+
 	matches, err := filepath.Glob(absPattern)
 	if err != nil {
 		return nil, fmt.Errorf("audit glob %q: %w", pattern, err)
 	}
+
 	for _, match := range matches {
 		if err := m.ensureAuditPathInWorkspace(match); err != nil {
 			return nil, err
 		}
 	}
+
 	return matches, nil
 }
 
@@ -1998,29 +2314,37 @@ func (m *Manager) ensureAuditPathInWorkspace(path string) error {
 	if err != nil {
 		return fmt.Errorf("resolve audit path: %w", err)
 	}
+
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("audit path %q escapes workspace root", path)
 	}
+
 	return nil
 }
 
 func auditJSONLFilesUnder(root string) ([]string, error) {
 	var paths []string
+
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
+
 		if d.IsDir() {
 			if path != root && discovery.ShouldSkipDirName(d.Name()) {
 				return filepath.SkipDir
 			}
+
 			return nil
 		}
+
 		if strings.EqualFold(filepath.Ext(path), ".jsonl") {
 			paths = append(paths, path)
 		}
+
 		return nil
 	})
+
 	return paths, err
 }
 
@@ -2028,9 +2352,11 @@ func harnessAuditLogLimit(limit int) int {
 	if limit <= 0 {
 		return harnessAuditDefaultLogLimit
 	}
+
 	if limit > harnessAuditMaxLogLimit {
 		return harnessAuditMaxLogLimit
 	}
+
 	return limit
 }
 
@@ -2041,18 +2367,22 @@ func hasAuditGlobMagic(s string) bool {
 func auditUniqueExistingFiles(paths []string) []string {
 	seen := make(map[string]struct{}, len(paths))
 	out := make([]string, 0, len(paths))
+
 	for _, path := range paths {
 		path = filepath.Clean(path)
 		if _, dup := seen[path]; dup {
 			continue
 		}
+
 		info, err := os.Stat(path)
 		if err != nil || info.IsDir() {
 			continue
 		}
+
 		seen[path] = struct{}{}
 		out = append(out, path)
 	}
+
 	return out
 }
 
@@ -2060,15 +2390,18 @@ func sortAuditLogPaths(paths []string) {
 	sort.Slice(paths, func(i, j int) bool {
 		infoI, errI := os.Stat(paths[i])
 		infoJ, errJ := os.Stat(paths[j])
+
 		if errI == nil && errJ == nil && !infoI.ModTime().Equal(infoJ.ModTime()) {
 			return infoI.ModTime().After(infoJ.ModTime())
 		}
+
 		return paths[i] < paths[j]
 	})
 }
 
 func toolSurfaceFindings(surface harnessAuditToolSurface) []harnessAuditFinding {
 	var findings []harnessAuditFinding
+
 	if len(surface.ManifestWithoutSchema) > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "manifest_without_schema",
@@ -2078,6 +2411,7 @@ func toolSurfaceFindings(surface harnessAuditToolSurface) []harnessAuditFinding 
 			Tools:          surface.ManifestWithoutSchema,
 		})
 	}
+
 	if len(surface.SchemaWithoutManifest) > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "schema_without_manifest",
@@ -2087,15 +2421,20 @@ func toolSurfaceFindings(surface harnessAuditToolSurface) []harnessAuditFinding 
 			Tools:          surface.SchemaWithoutManifest,
 		})
 	}
+
 	if len(surface.ManifestWithoutExportedSchema) > 0 || len(surface.ExportedSchemaWithoutManifest) > 0 || len(surface.SchemaWithoutExportedSchema) > 0 || len(surface.ExportedSchemaWithoutSchema) > 0 || surface.ExportError != "" {
 		tools := append(append([]string(nil), surface.ManifestWithoutExportedSchema...), surface.ExportedSchemaWithoutManifest...)
+
 		tools = append(tools, surface.SchemaWithoutExportedSchema...)
 		tools = append(tools, surface.ExportedSchemaWithoutSchema...)
 		tools = util.UniqueNonEmpty(tools)
+
 		evidence := fmt.Sprintf("%d exported-schema drift item(s) detected", len(tools))
+
 		if surface.ExportError != "" {
 			evidence = "schema export failed: " + surface.ExportError
 		}
+
 		findings = append(findings, harnessAuditFinding{
 			ID:             "exported_schema_drift",
 			Severity:       "high",
@@ -2104,6 +2443,7 @@ func toolSurfaceFindings(surface harnessAuditToolSurface) []harnessAuditFinding 
 			Tools:          tools,
 		})
 	}
+
 	if len(surface.InvalidSchemas) > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "invalid_tool_schema",
@@ -2113,6 +2453,7 @@ func toolSurfaceFindings(surface harnessAuditToolSurface) []harnessAuditFinding 
 			Tools:          surface.InvalidSchemas,
 		})
 	}
+
 	if len(surface.SuggestionMissingTools) > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "unsupported_tool_suggestion_gap",
@@ -2122,6 +2463,7 @@ func toolSurfaceFindings(surface harnessAuditToolSurface) []harnessAuditFinding 
 			Tools:          surface.SuggestionMissingTools,
 		})
 	}
+
 	if len(surface.SuggestionWithoutManifest) > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "stale_tool_suggestion",
@@ -2131,6 +2473,7 @@ func toolSurfaceFindings(surface harnessAuditToolSurface) []harnessAuditFinding 
 			Tools:          surface.SuggestionWithoutManifest,
 		})
 	}
+
 	if len(surface.StaleUseBlockerMissingTools) > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "stale_use_blocker_gap",
@@ -2140,8 +2483,10 @@ func toolSurfaceFindings(surface harnessAuditToolSurface) []harnessAuditFinding 
 			Tools:          surface.StaleUseBlockerMissingTools,
 		})
 	}
+
 	if surface.CapabilityRegistry != nil && surface.CapabilityRegistry.UnsafeMappedAdapterCount > 0 {
 		tools := unsafeCapabilityAdapterTools(surface.CapabilityRegistry.UnsafeMappedAdapters)
+
 		findings = append(findings, harnessAuditFinding{
 			ID:             "unsafe_read_only_capability_mapping",
 			Severity:       "high",
@@ -2150,6 +2495,7 @@ func toolSurfaceFindings(surface harnessAuditToolSurface) []harnessAuditFinding 
 			Tools:          tools,
 		})
 	}
+
 	return findings
 }
 
@@ -2160,19 +2506,23 @@ func unsafeCapabilityAdapterTools(adapters []ReadOnlyCapabilityUnsafeAdapterSpec
 			tools = append(tools, tool)
 		}
 	}
+
 	return util.UniqueNonEmpty(tools)
 }
 
 func backendFindings(backends []harnessAuditBackend) []harnessAuditFinding {
 	var findings []harnessAuditFinding
+
 	for _, backend := range backends {
 		if backend.Available || !backend.Active {
 			continue
 		}
+
 		severity := "medium"
 		if backend.Name == "content_search" || backend.Name == "git" {
 			severity = "high"
 		}
+
 		findings = append(findings, harnessAuditFinding{
 			ID:             "backend_unavailable_" + backend.Name,
 			Severity:       severity,
@@ -2181,25 +2531,30 @@ func backendFindings(backends []harnessAuditBackend) []harnessAuditFinding {
 			Tools:          backend.Tools,
 		})
 	}
+
 	return findings
 }
 
 func logBehaviorFindings(aggregate eval.PerfAggregate, incompleteSessions []harnessAuditIncompleteSession) []harnessAuditFinding {
 	var findings []harnessAuditFinding
+
 	for _, pattern := range aggregate.PatternHitRate {
 		if pattern.LogsHit == 0 {
 			continue
 		}
+
 		severity := "low"
 		if pattern.HitRate >= 0.5 || pattern.TotalCount >= 5 {
 			severity = "medium"
 		}
+
 		findings = append(findings, harnessAuditFinding{
 			ID:       "behavior_" + pattern.Name,
 			Severity: severity,
 			Evidence: fmt.Sprintf("%s appeared in %d log(s), %d total hit(s)", pattern.Name, pattern.LogsHit, pattern.TotalCount),
 		})
 	}
+
 	if aggregate.Feedback != nil && aggregate.Feedback.Total > 0 {
 		severity := "low"
 		if aggregate.Feedback.HighSeverity > 0 {
@@ -2207,6 +2562,7 @@ func logBehaviorFindings(aggregate eval.PerfAggregate, incompleteSessions []harn
 		} else if aggregate.Feedback.MediumSeverity > 0 || aggregate.Feedback.Total >= 3 {
 			severity = "medium"
 		}
+
 		findings = append(findings, harnessAuditFinding{
 			ID:             "agent_harness_feedback_reported",
 			Severity:       severity,
@@ -2215,6 +2571,7 @@ func logBehaviorFindings(aggregate eval.PerfAggregate, incompleteSessions []harn
 			Tools:          []string{"harness_feedback", "harness_audit"},
 		})
 	}
+
 	if aggregate.LocalOps != nil {
 		if aggregate.LocalOps.QueueDegraded > 0 || aggregate.LocalOps.ContextBudgetDegraded > 0 || aggregate.LocalOps.ClassifierDegraded > 0 || aggregate.LocalOps.DoctorDegradedProfiles > 0 || aggregate.LocalOps.DoctorBlockedProfiles > 0 {
 			severity := "low"
@@ -2223,6 +2580,7 @@ func logBehaviorFindings(aggregate eval.PerfAggregate, incompleteSessions []harn
 			} else if aggregate.LocalOps.QueueDegraded > 0 || aggregate.LocalOps.ContextBudgetDegraded > 0 {
 				severity = "medium"
 			}
+
 			findings = append(findings, harnessAuditFinding{
 				ID:             "local_ops_degraded_mode_reported",
 				Severity:       severity,
@@ -2232,6 +2590,7 @@ func logBehaviorFindings(aggregate eval.PerfAggregate, incompleteSessions []harn
 			})
 		}
 	}
+
 	if len(incompleteSessions) > 0 {
 		currentIncompleteSessions := currentHarnessAuditIncompleteSessions(incompleteSessions)
 		if len(currentIncompleteSessions) == 0 {
@@ -2242,8 +2601,10 @@ func logBehaviorFindings(aggregate eval.PerfAggregate, incompleteSessions []harn
 				Recommendation: "Historical lifecycle gaps are retained in log_behavior.incomplete_sessions; current sessions still raise incomplete_implement_session_lifecycle.",
 				Tools:          []string{"harness_audit"},
 			})
+
 			return findings
 		}
+
 		findings = append(findings, harnessAuditFinding{
 			ID:             "incomplete_implement_session_lifecycle",
 			Severity:       "high",
@@ -2252,17 +2613,20 @@ func logBehaviorFindings(aggregate eval.PerfAggregate, incompleteSessions []harn
 			Tools:          []string{"harness_audit"},
 		})
 	}
+
 	return findings
 }
 
 func currentHarnessAuditPerfReports(root string, reports []eval.PerfReport) []eval.PerfReport {
 	var current []eval.PerfReport
+
 	for _, report := range reports {
 		occurredAt, ok := harnessAuditPerfReportTime(root, report)
 		if !ok || !occurredAt.Before(harnessAuditBehaviorFindingsIntroducedAt) {
 			current = append(current, report)
 		}
 	}
+
 	return current
 }
 
@@ -2272,60 +2636,79 @@ func auditCurrentFreshnessWindow(root string, reports []eval.PerfReport) *harnes
 		occurredAt time.Time
 		knownTime  bool
 	}
+
 	timed := make([]timedReport, 0, len(reports))
+
 	for _, report := range reports {
 		if report.Context == nil {
 			continue
 		}
+
 		occurredAt, ok := harnessAuditPerfReportTime(root, report)
+
 		timed = append(timed, timedReport{report: report, occurredAt: occurredAt, knownTime: ok})
 	}
+
 	if len(timed) == 0 {
 		return nil
 	}
+
 	sort.SliceStable(timed, func(i, j int) bool {
 		left, right := timed[i], timed[j]
 		if left.knownTime && right.knownTime {
 			return left.occurredAt.Before(right.occurredAt)
 		}
+
 		if left.knownTime != right.knownTime {
 			return !left.knownTime
 		}
+
 		return left.report.LogPath < right.report.LogPath
 	})
 
 	var window harnessAuditFreshnessWindow
+
 	for _, item := range timed {
 		ctx := item.report.Context
 		blockers := ctx.FreshnessBlockers
 		staleUse := ctx.StaleUseBlocked
 		refreshFailures := ctx.FreshnessRefreshFailures
+
 		if blockers > 0 || staleUse > 0 || refreshFailures > 0 {
 			window.UnresolvedBlockers += blockers
 			window.UnresolvedStaleUse += staleUse
 			window.UnresolvedRefreshFailures += refreshFailures
+
 			window.LatestState = "blocked"
+
 			continue
 		}
+
 		if !harnessAuditContextReportIsFresh(ctx) {
 			continue
 		}
+
 		if window.UnresolvedBlockers > 0 || window.UnresolvedStaleUse > 0 || window.UnresolvedRefreshFailures > 0 {
 			window.FreshResultsAfterBlocker++
 		}
+
 		window.ResolvedBlockers += window.UnresolvedBlockers
 		window.ResolvedStaleUse += window.UnresolvedStaleUse
 		window.ResolvedRefreshFailures += window.UnresolvedRefreshFailures
+
 		window.UnresolvedBlockers = 0
 		window.UnresolvedStaleUse = 0
 		window.UnresolvedRefreshFailures = 0
 		window.LatestState = "fresh"
 	}
+
 	if window.LatestState == "" && window.ResolvedBlockers == 0 && window.UnresolvedBlockers == 0 &&
 		window.ResolvedStaleUse == 0 && window.UnresolvedStaleUse == 0 &&
 		window.ResolvedRefreshFailures == 0 && window.UnresolvedRefreshFailures == 0 {
+
 		return nil
 	}
+
 	return &window
 }
 
@@ -2333,6 +2716,7 @@ func harnessAuditContextReportIsFresh(ctx *eval.ContextStats) bool {
 	if ctx == nil {
 		return false
 	}
+
 	return ctx.FreshnessReadThroughResults > 0 &&
 		(ctx.FreshResults > 0 || ctx.StaleUseFresh > 0 || ctx.AutoRefreshFreshAfter > 0)
 }
@@ -2342,9 +2726,11 @@ func harnessAuditPerfReportTime(root string, report eval.PerfReport) (time.Time,
 	if path != "" && !filepath.IsAbs(path) {
 		path = filepath.Join(root, filepath.FromSlash(path))
 	}
+
 	if parsed, ok := harnessAuditLogFirstTimestamp(path); ok {
 		return parsed, true
 	}
+
 	for _, value := range []string{
 		report.SessionID,
 		strings.TrimSuffix(filepath.Base(report.LogPath), filepath.Ext(report.LogPath)),
@@ -2353,9 +2739,11 @@ func harnessAuditPerfReportTime(root string, report eval.PerfReport) (time.Time,
 			return parsed, true
 		}
 	}
+
 	if info, err := os.Stat(path); err == nil {
 		return info.ModTime().UTC(), true
 	}
+
 	return time.Time{}, false
 }
 
@@ -2363,45 +2751,56 @@ func harnessAuditLogFirstTimestamp(path string) (time.Time, bool) {
 	if strings.TrimSpace(path) == "" {
 		return time.Time{}, false
 	}
+
 	file, err := os.Open(path)
 	if err != nil {
 		return time.Time{}, false
 	}
 	defer file.Close()
+
 	scanner := bufio.NewScanner(file)
 	for lines := 0; scanner.Scan() && lines < 25; lines++ {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
+
 		var record map[string]json.RawMessage
+
 		if err := json.Unmarshal([]byte(line), &record); err != nil {
 			continue
 		}
+
 		if parsed, ok := harnessAuditTimestampFromRaw(record["ts"]); ok {
 			return parsed, true
 		}
+
 		if parsed, ok := harnessAuditTimestampFromRaw(record["timestamp"]); ok {
 			return parsed, true
 		}
 	}
+
 	return time.Time{}, false
 }
 
 func harnessAuditTimestampFromRaw(raw json.RawMessage) (time.Time, bool) {
 	var value string
+
 	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
 		return time.Time{}, false
 	}
+
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return time.Time{}, false
 	}
+
 	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
 		if parsed, err := time.Parse(layout, value); err == nil {
 			return parsed.UTC(), true
 		}
 	}
+
 	return time.Time{}, false
 }
 
@@ -2409,18 +2808,26 @@ func historicalLogBehaviorFindings(aggregate eval.PerfAggregate, currentAggregat
 	if len(aggregate.PatternHitRate) == 0 || len(currentAggregate.PatternHitRate) > 0 {
 		return nil
 	}
-	var patternCount int
-	var totalHits int
+
+	var (
+		patternCount int
+		totalHits    int
+	)
+
 	for _, pattern := range aggregate.PatternHitRate {
 		if pattern.LogsHit == 0 {
 			continue
 		}
+
 		patternCount++
+
 		totalHits += pattern.TotalCount
 	}
+
 	if patternCount == 0 {
 		return nil
 	}
+
 	return []harnessAuditFinding{{
 		ID:             "historical_behavior_patterns",
 		Severity:       "info",
@@ -2432,12 +2839,15 @@ func historicalLogBehaviorFindings(aggregate eval.PerfAggregate, currentAggregat
 
 func historicalTurnPhaseProjectionFindings(paths []string) []harnessAuditFinding {
 	var events []autonomy.Event
+
 	for _, path := range paths {
 		pathEvents, _ := readHarnessAuditAutonomyEventsWithOptions(path, harnessAuditAutonomyDecodeOptions{
 			PreserveLegacyTurnPhaseProjection: true,
 		})
+
 		events = append(events, pathEvents...)
 	}
+
 	return historicalTurnPhaseProjectionFindingsFromEvents(events)
 }
 
@@ -2447,24 +2857,32 @@ func historicalTurnPhaseProjectionFindingsFromEvents(events []autonomy.Event) []
 		if !event.OccurredAt.Before(harnessAuditTurnPhaseProjectionIntroducedAt) || event.Lifecycle == nil {
 			continue
 		}
+
 		if event.Lifecycle.TurnPhaseContract == nil &&
 			event.Lifecycle.ModelProtocol == nil &&
 			len(event.Lifecycle.SurfaceSummaries) == 0 {
+
 			continue
 		}
+
 		historicalEvents = append(historicalEvents, event)
 	}
+
 	if len(historicalEvents) == 0 {
 		return nil
 	}
+
 	report := autonomy.AuditEvents(dedupeAndSortHarnessAuditAutonomyEvents(historicalEvents), autonomy.EventAuditOptions{})
 	contradictions := len(report.TurnPhaseCoverage.Contradictions)
+
 	if contradictions == 0 {
 		contradictions = legacyTurnPhaseProjectionContradictions(historicalEvents)
 	}
+
 	if contradictions == 0 {
 		return nil
 	}
+
 	return []harnessAuditFinding{{
 		ID:             "historical_turn_phase_contract_contradiction",
 		Severity:       "info",
@@ -2476,22 +2894,28 @@ func historicalTurnPhaseProjectionFindingsFromEvents(events []autonomy.Event) []
 
 func legacyTurnPhaseProjectionContradictions(events []autonomy.Event) int {
 	count := 0
+
 	for _, event := range events {
 		if event.Lifecycle == nil || event.Lifecycle.TurnPhaseContract == nil {
 			continue
 		}
+
 		phase := *event.Lifecycle.TurnPhaseContract
 		if !strings.EqualFold(phase.RuntimeCall.ToolTransportMode, "textual") {
 			continue
 		}
+
 		for _, tool := range phase.AllowedTools {
 			tool = strings.TrimSpace(tool)
 			if tool == "" || stringSetContainsWorkspaceAudit(phase.RuntimeCall.ExpressibleActionClasses, tool) {
 				continue
 			}
+
 			count++
+
 			break
 		}
+
 		if count == 0 {
 			for _, surface := range event.Lifecycle.SurfaceSummaries {
 				if strings.EqualFold(surface.RuntimeCall.ToolTransportMode, "textual") && legacySurfaceSummaryHasUnexpressibleTool(surface) {
@@ -2501,6 +2925,7 @@ func legacyTurnPhaseProjectionContradictions(events []autonomy.Event) int {
 			}
 		}
 	}
+
 	return count
 }
 
@@ -2510,8 +2935,10 @@ func legacySurfaceSummaryHasUnexpressibleTool(surface autonomy.TurnPhaseSurfaceS
 		if tool == "" || stringSetContainsWorkspaceAudit(surface.RuntimeCall.ExpressibleActionClasses, tool) {
 			continue
 		}
+
 		return true
 	}
+
 	return false
 }
 
@@ -2520,22 +2947,26 @@ func stringSetContainsWorkspaceAudit(values []string, want string) bool {
 	if want == "" {
 		return false
 	}
+
 	for _, value := range values {
 		if strings.TrimSpace(value) == want {
 			return true
 		}
 	}
+
 	return false
 }
 
 func currentHarnessAuditIncompleteSessions(sessions []harnessAuditIncompleteSession) []harnessAuditIncompleteSession {
 	var current []harnessAuditIncompleteSession
+
 	for _, session := range sessions {
 		occurredAt, ok := harnessAuditIncompleteSessionTime(session)
 		if !ok || !occurredAt.Before(harnessAuditLifecycleCloseoutIntroducedAt) {
 			current = append(current, session)
 		}
 	}
+
 	return current
 }
 
@@ -2549,6 +2980,7 @@ func harnessAuditIncompleteSessionTime(session harnessAuditIncompleteSession) (t
 			return parsed, true
 		}
 	}
+
 	return time.Time{}, false
 }
 
@@ -2558,16 +2990,19 @@ func harnessAuditTimestampFromLabel(value string) (time.Time, bool) {
 			return parsed.UTC(), true
 		}
 	}
+
 	for i := 0; i+len("20060102") <= len(value); i++ {
 		candidate := value[i : i+len("20060102")]
 		if !harnessAuditAllDigits(candidate) {
 			continue
 		}
+
 		parsed, err := time.Parse("20060102", candidate)
 		if err == nil {
 			return parsed.UTC(), true
 		}
 	}
+
 	return time.Time{}, false
 }
 
@@ -2575,24 +3010,29 @@ func harnessAuditAllDigits(value string) bool {
 	if value == "" {
 		return false
 	}
+
 	for _, r := range value {
 		if r < '0' || r > '9' {
 			return false
 		}
 	}
+
 	return true
 }
 
 func contractCoverageWarningFindings(warnings []string) []harnessAuditFinding {
 	invalidEvents := 0
+
 	for _, warning := range warnings {
 		if strings.Contains(warning, "invalid autonomy event") {
 			invalidEvents++
 		}
 	}
+
 	if invalidEvents == 0 {
 		return nil
 	}
+
 	return []harnessAuditFinding{{
 		ID:             "contract_event_invalid",
 		Severity:       "medium",
@@ -2606,6 +3046,7 @@ func contractCoverageFindings(report *autonomy.EventAuditReport) []harnessAuditF
 	if report == nil {
 		return nil
 	}
+
 	findings := make([]harnessAuditFinding, 0, len(report.Findings))
 	for _, finding := range report.Findings {
 		findings = append(findings, harnessAuditFinding{
@@ -2615,19 +3056,25 @@ func contractCoverageFindings(report *autonomy.EventAuditReport) []harnessAuditF
 			Tools:    []string{"harness_audit"},
 		})
 	}
+
 	return findings
 }
 
 func splitHistoricalHarnessAuditFindings(findings []harnessAuditFinding) ([]harnessAuditFinding, []harnessAuditFinding) {
-	var current []harnessAuditFinding
-	var historical []harnessAuditFinding
+	var (
+		current    []harnessAuditFinding
+		historical []harnessAuditFinding
+	)
+
 	for _, finding := range findings {
 		if harnessAuditFindingIsHistorical(finding) {
 			historical = append(historical, finding)
 			continue
 		}
+
 		current = append(current, finding)
 	}
+
 	return current, historical
 }
 
@@ -2636,6 +3083,7 @@ func harnessAuditFindingIsHistorical(finding harnessAuditFinding) bool {
 	if strings.EqualFold(strings.TrimSpace(finding.Severity), "info") {
 		return true
 	}
+
 	return strings.HasPrefix(id, "historical_") ||
 		id == "context_cache_historical_stale_rows" ||
 		id == "context_cache_historical_unresolved_gaps"
@@ -2648,18 +3096,23 @@ func planningQualityFromFeedback(feedback *eval.FeedbackStats) *harnessAuditPlan
 	if feedback == nil {
 		return report
 	}
+
 	report.FeedbackTotal = feedback.Total
 	report.PlanningFeedback = feedback.PlanningQualityTotal
 	report.VerifiedFeedback = feedback.Verified
 	report.HighSeverity = feedback.HighSeverity
+
 	for category, count := range feedback.ByPlanningCategory {
 		report.PlanningCategories[category] = count
 	}
+
 	report.TopComponents = auditTopCounts(feedback.ByComponent, 6)
 	report.RecommendedSurfaces = planningQualityRecommendedSurfaces(report)
+
 	if len(report.PlanningCategories) == 0 {
 		report.PlanningCategories = nil
 	}
+
 	return report
 }
 
@@ -2667,10 +3120,12 @@ func planningQualityFindings(report *harnessAuditPlanningQuality) []harnessAudit
 	if report == nil || report.PlanningFeedback == 0 {
 		return nil
 	}
+
 	severity := "medium"
 	if report.HighSeverity > 0 {
 		severity = "high"
 	}
+
 	return []harnessAuditFinding{{
 		ID:             "planning_quality_feedback_reported",
 		Severity:       severity,
@@ -2684,6 +3139,7 @@ func planningQualityQuestions(report *harnessAuditPlanningQuality) []harnessAudi
 	if report == nil || report.PlanningFeedback == 0 {
 		return nil
 	}
+
 	return []harnessAuditQuestion{{
 		Area:      "planning_quality",
 		Question:  "Which planning-quality feedback category should become the next deterministic packet, ranking, audit, or eval contract?",
@@ -2696,38 +3152,49 @@ func planningQualityRecommendedSurfaces(report *harnessAuditPlanningQuality) []s
 	if report == nil {
 		return nil
 	}
+
 	var surfaces []string
+
 	if report.PlanningCategories["packet_quality"] > 0 || report.PlanningCategories["planning_quality"] > 0 {
 		surfaces = append(surfaces, "architect packet --schema planning_v2")
 	}
+
 	if report.PlanningCategories["impact_ranking"] > 0 || report.PlanningCategories["missing_affordance"] > 0 || report.PlanningCategories["bad_scope_rank"] > 0 || report.PlanningCategories["read_loop"] > 0 {
 		surfaces = append(surfaces, "context_impact")
 	}
+
 	if report.PlanningCategories["plan_audit_gap"] > 0 || report.PlanningCategories["edit_readiness_failure"] > 0 || report.PlanningCategories["unsupported_plan_claim"] > 0 || report.PlanningCategories["validation_gap"] > 0 {
 		surfaces = append(surfaces, "architect plan-audit")
 	}
+
 	if report.PlanningCategories["budget_gap"] > 0 || report.PlanningCategories["packet_bloat"] > 0 {
 		surfaces = append(surfaces, "architect budget")
 	}
+
 	if report.PlanningCategories["replay_eval_gap"] > 0 {
 		surfaces = append(surfaces, "architect replay-compare")
 	}
+
 	if report.PlanningCategories["stale_fact"] > 0 || report.PlanningCategories["backend_gap"] > 0 || report.PlanningCategories["language_precision_gap"] > 0 {
 		surfaces = append(surfaces, "context_status", "context_pack")
 	}
+
 	if len(surfaces) == 0 && report.PlanningFeedback > 0 {
 		surfaces = append(surfaces, "harness_feedback")
 	}
+
 	return util.UniqueNonEmpty(surfaces)
 }
 
 func staticImprovementQuestions(report harnessAuditReport) []harnessAuditQuestion {
 	var questions []harnessAuditQuestion
+
 	if report.ToolSurface != nil &&
 		len(report.ToolSurface.ManifestWithoutSchema) == 0 &&
 		len(report.ToolSurface.SchemaWithoutManifest) == 0 &&
 		len(report.ToolSurface.InvalidSchemas) == 0 &&
 		report.ToolSurface.ManifestToolCount > 0 {
+
 		questions = append(questions, harnessAuditQuestion{
 			Area:      "tool_surface",
 			Question:  "Should tool manifest, schema, and recovery inventories be generated from one source of truth?",
@@ -2735,12 +3202,15 @@ func staticImprovementQuestions(report harnessAuditReport) []harnessAuditQuestio
 			Candidate: "Keep the audit as the drift detector first; generate only after repeated drift shows up.",
 		})
 	}
+
 	activeLanguages := 0
+
 	for _, lang := range report.LanguageTooling {
 		if lang.Active {
 			activeLanguages++
 		}
 	}
+
 	if len(report.LanguageTooling) > 0 {
 		questions = append(questions, harnessAuditQuestion{
 			Area:      "language_tooling",
@@ -2749,6 +3219,7 @@ func staticImprovementQuestions(report harnessAuditReport) []harnessAuditQuestio
 			Candidate: "Use behavior logs plus precision_tier results to prioritize one language/backend at a time.",
 		})
 	}
+
 	return questions
 }
 
@@ -2758,17 +3229,22 @@ func auditTopCounts(values map[string]int, limit int) []harnessAuditCount {
 		if strings.TrimSpace(name) == "" || count <= 0 {
 			continue
 		}
+
 		out = append(out, harnessAuditCount{Name: name, Count: count})
 	}
+
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Count == out[j].Count {
 			return out[i].Name < out[j].Name
 		}
+
 		return out[i].Count > out[j].Count
 	})
+
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
+
 	return out
 }
 
@@ -2783,6 +3259,7 @@ func staticConsolidationCandidates(root string) []harnessAuditQuestion {
 	}
 	if fileExists(filepath.Join(root, "cmd", "idiom-analyze", "main.go")) &&
 		fileExists(filepath.Join(root, "cmd", "idiom-perf-eval", "main.go")) {
+
 		candidates = append(candidates, harnessAuditQuestion{
 			Area:      "behavior_logs",
 			Question:  "Should legacy log-shape mining and perf anti-pattern reporting converge behind one audit command?",
@@ -2790,6 +3267,7 @@ func staticConsolidationCandidates(root string) []harnessAuditQuestion {
 			Candidate: "Keep specialized CLIs while harness_audit becomes the shared evidence packet for agents.",
 		})
 	}
+
 	return candidates
 }
 
@@ -2802,7 +3280,9 @@ func logBehaviorQuestions(aggregate eval.PerfAggregate) []harnessAuditQuestion {
 			Candidate: "Capture representative tasks with JSONL logging, then inspect the behavior-audit signal again.",
 		}}
 	}
+
 	var questions []harnessAuditQuestion
+
 	if hit := auditPatternHit(aggregate, "zero_hit_search"); hit.TotalCount > 0 {
 		questions = append(questions, harnessAuditQuestion{
 			Area:      "discovery_tooling",
@@ -2811,6 +3291,7 @@ func logBehaviorQuestions(aggregate eval.PerfAggregate) []harnessAuditQuestion {
 			Candidate: "Cluster the raw failed patterns before adding a new tool; if they share shape, add one bounded deterministic probe.",
 		})
 	}
+
 	if hit := auditPatternHit(aggregate, "dir_walk_streak"); hit.TotalCount > 0 {
 		questions = append(questions, harnessAuditQuestion{
 			Area:      "discovery_behavior",
@@ -2819,6 +3300,7 @@ func logBehaviorQuestions(aggregate eval.PerfAggregate) []harnessAuditQuestion {
 			Candidate: "Prefer nudges and manifest shaping before hard-blocking safe reads.",
 		})
 	}
+
 	if hit := auditPatternHit(aggregate, "rejection_retry"); hit.TotalCount > 0 {
 		questions = append(questions, harnessAuditQuestion{
 			Area:      "control_rails",
@@ -2827,6 +3309,7 @@ func logBehaviorQuestions(aggregate eval.PerfAggregate) []harnessAuditQuestion {
 			Candidate: "Keep at least one safe model-directed path open; hide only repeated wasteful shapes.",
 		})
 	}
+
 	if hit := auditPatternHit(aggregate, "malformed_edit_args"); hit.TotalCount > 0 {
 		questions = append(questions, harnessAuditQuestion{
 			Area:      "tool_schema",
@@ -2835,6 +3318,7 @@ func logBehaviorQuestions(aggregate eval.PerfAggregate) []harnessAuditQuestion {
 			Candidate: "Tighten schema/examples first; add repair only for unambiguous transformations.",
 		})
 	}
+
 	if hit := auditPatternHit(aggregate, "completion_gate_reopened_discovery"); hit.TotalCount > 0 {
 		questions = append(questions, harnessAuditQuestion{
 			Area:      "completion_recovery",
@@ -2843,6 +3327,7 @@ func logBehaviorQuestions(aggregate eval.PerfAggregate) []harnessAuditQuestion {
 			Candidate: "Expose the recovery contract outcomes explicitly: required-artifact write, recorded uncertainty, or concrete blocker.",
 		})
 	}
+
 	if hit := auditPatternHit(aggregate, "required_paths_blocked_without_write"); hit.TotalCount > 0 {
 		questions = append(questions, harnessAuditQuestion{
 			Area:      "write_contract",
@@ -2851,6 +3336,7 @@ func logBehaviorQuestions(aggregate eval.PerfAggregate) []harnessAuditQuestion {
 			Candidate: "Inspect the preceding completion_gate_recovery and next_action_state events before changing prompts; this is usually a contract-surface issue.",
 		})
 	}
+
 	if hit := auditPatternHit(aggregate, "named_gap_read_walk"); hit.TotalCount > 0 {
 		questions = append(questions, harnessAuditQuestion{
 			Area:      "evidence_closure",
@@ -2859,6 +3345,7 @@ func logBehaviorQuestions(aggregate eval.PerfAggregate) []harnessAuditQuestion {
 			Candidate: "Audit whether the packet already contained the answer, whether a terminal/source-satisfied transition was missed, or whether the gap needs a deterministic closeout affordance.",
 		})
 	}
+
 	if aggregate.Feedback != nil && aggregate.Feedback.Total > 0 {
 		questions = append(questions, harnessAuditQuestion{
 			Area:      "agent_feedback",
@@ -2867,6 +3354,7 @@ func logBehaviorQuestions(aggregate eval.PerfAggregate) []harnessAuditQuestion {
 			Candidate: "Cluster by component and fix the smallest generic contract that removes the workaround.",
 		})
 	}
+
 	if hit := auditPatternHit(aggregate, "prompt_surface_overlap"); hit.TotalCount > 0 {
 		questions = append(questions, harnessAuditQuestion{
 			Area:      "prompt_surface",
@@ -2875,8 +3363,10 @@ func logBehaviorQuestions(aggregate eval.PerfAggregate) []harnessAuditQuestion {
 			Candidate: "Move repeated obligations into typed runtime briefs, deterministic checks, or one canonical prompt owner; delete duplicate prose before adding a new rule.",
 		})
 	}
+
 	genericReads := auditToolCalls(aggregate, "list_files", "search_files", "search_content", "read_file")
 	languageReads := auditToolPrefixCalls(aggregate, "go_", "cpp_", "python_", "ts_", "rust_", "java_")
+
 	if genericReads >= 10 && genericReads > languageReads*2 {
 		questions = append(questions, harnessAuditQuestion{
 			Area:      "language_tool_selection",
@@ -2885,6 +3375,7 @@ func logBehaviorQuestions(aggregate eval.PerfAggregate) []harnessAuditQuestion {
 			Candidate: "Sample logs with high generic-read share and inspect precision_tier/unavailable results before adding tools.",
 		})
 	}
+
 	return questions
 }
 
@@ -2894,36 +3385,49 @@ func harnessAuditSummary(report harnessAuditReport) string {
 		parts = append(parts, fmt.Sprintf("tool_surface=%d tools/%d drift", report.ToolSurface.ManifestToolCount, report.ToolSurface.DriftFindingCount))
 		if report.ToolSurface.CapabilityRegistry != nil {
 			coverage := report.ToolSurface.CapabilityRegistry
+
 			parts = append(parts, fmt.Sprintf("capability_coverage=%d/%d routed=%d disabled=%d fallback_reasons=%d unmapped=%d unsafe=%d deferred=%d", coverage.MappedReadOnlyAdapterCount, coverage.ReadOnlyAdapterCount, coverage.RoutedCapabilityCount, coverage.DisabledCapabilityCount, coverage.FallbackReasonCount, coverage.UnmappedAdapterCount, coverage.UnsafeMappedAdapterCount, coverage.DeferredAdapterCount))
 		}
 	}
+
 	if report.LogBehavior != nil {
 		parts = append(parts, fmt.Sprintf("logs=%d scanned", report.LogBehavior.LogsScanned))
 	}
+
 	if report.ContractCoverage != nil {
 		parts = append(parts, fmt.Sprintf("contract_events=%d", report.ContractCoverage.TotalEvents))
+
 		gate := report.ContractCoverage.GateCoverage
+
 		if gate.DecisionEvents > 0 {
 			missingGateFields := len(gate.MissingPackIDRefs) + len(gate.MissingEnforcementModeRefs) + len(gate.MissingSafeAlternativesRefs)
+
 			parts = append(parts, fmt.Sprintf("gate_decisions=%d packs=%d enforcement_modes=%d observed_facts=%d safe_alternatives=%d missing_gate_fields=%d", gate.DecisionEvents, len(gate.DecisionCountsByPackID), len(gate.DecisionCountsByEnforcementMode), gate.EventsWithObservedFacts, gate.EventsWithSafeAlternatives, missingGateFields))
 		}
 	}
+
 	if report.RankerLearning != nil && report.RankerLearning.LearningSummary != nil {
 		learning := report.RankerLearning.LearningSummary
+
 		parts = append(parts, fmt.Sprintf("ranker_learning_events=%d accepted=%d rejected=%d reasons=%d", learning.TotalEvents, learning.AcceptedCount, learning.RejectedCount, len(learning.ReasonCounts)))
 	}
+
 	if report.ContextCache != nil {
 		parts = append(parts, fmt.Sprintf("context_cache_rows=%d hits=%d hit_rate=%.0f%% tokens_saved=%d rediscovery_avoided=%d", report.ContextCache.Rows, report.ContextCache.SessionHits, report.ContextCache.HitRate*100, report.ContextCache.EstimatedFullTokensSaved, report.ContextCache.EstimatedRediscoveryTokensAvoided))
 	}
+
 	if len(report.Findings) > 0 {
 		parts = append(parts, fmt.Sprintf("findings=%d", len(report.Findings)))
 	}
+
 	if len(report.HistoricalFindings) > 0 {
 		parts = append(parts, fmt.Sprintf("historical_findings=%d", len(report.HistoricalFindings)))
 	}
+
 	if len(report.ImprovementQuestions) > 0 {
 		parts = append(parts, fmt.Sprintf("questions=%d", len(report.ImprovementQuestions)))
 	}
+
 	return strings.Join(parts, "; ")
 }
 
@@ -2931,6 +3435,7 @@ func firstAuditPatterns(in []eval.PerfPatternHit, n int) []eval.PerfPatternHit {
 	if len(in) <= n {
 		return append([]eval.PerfPatternHit(nil), in...)
 	}
+
 	return append([]eval.PerfPatternHit(nil), in[:n]...)
 }
 
@@ -2938,12 +3443,14 @@ func firstAuditTools(in []eval.PerfToolMix, n int) []eval.PerfToolMix {
 	if len(in) <= n {
 		return append([]eval.PerfToolMix(nil), in...)
 	}
+
 	return append([]eval.PerfToolMix(nil), in[:n]...)
 }
 
 func auditObservedCapabilityMix(paths []string, logCount int, warnings *[]string, displayPath func(string) string) []harnessAuditCapabilityMix {
 	callsByCapability := make(map[string]int)
 	total := 0
+
 	for _, path := range paths {
 		records, err := eval.LoadRecords(path)
 		if err != nil {
@@ -2952,23 +3459,30 @@ func auditObservedCapabilityMix(paths []string, logCount int, warnings *[]string
 				if displayPath != nil {
 					label = displayPath(path)
 				}
+
 				*warnings = append(*warnings, fmt.Sprintf("%s: capability mix scan: %v", label, err))
 			}
+
 			continue
 		}
+
 		for _, record := range records {
 			if record.Type != "tool_request" {
 				continue
 			}
+
 			for _, capability := range auditObservedCapabilitiesForToolRequest(record) {
 				callsByCapability[capability]++
+
 				total++
 			}
 		}
 	}
+
 	if len(callsByCapability) == 0 {
 		return nil
 	}
+
 	out := make([]harnessAuditCapabilityMix, 0, len(callsByCapability))
 	for capability, calls := range callsByCapability {
 		row := harnessAuditCapabilityMix{
@@ -2978,17 +3492,22 @@ func auditObservedCapabilityMix(paths []string, logCount int, warnings *[]string
 		if total > 0 {
 			row.Share = float64(calls) / float64(total)
 		}
+
 		if logCount > 0 {
 			row.AvgPerLog = float64(calls) / float64(logCount)
 		}
+
 		out = append(out, row)
 	}
+
 	slices.SortFunc(out, func(a, b harnessAuditCapabilityMix) int {
 		if c := cmp.Compare(b.Calls, a.Calls); c != 0 {
 			return c
 		}
+
 		return cmp.Compare(a.Capability, b.Capability)
 	})
+
 	return out
 }
 
@@ -2997,20 +3516,25 @@ func auditObservedCapabilitiesForToolRequest(record eval.Record) []string {
 	raw := auditRecordString(record.Data, "raw")
 	rawFields := auditRawToolRequestFields(raw)
 	capability := auditRecordString(record.Data, "capability")
+
 	if capability == "" {
 		capability = auditRecordString(rawFields, "capability")
 	}
+
 	if capability == "" {
 		capability = auditRecordString(rawFields, "operation")
 	}
+
 	if capability == "" {
 		capability = auditRecordString(rawFields, "resolution")
 	}
+
 	if capability != "" {
 		if mapped := auditObservedCapabilityForToolCapability(tool, capability); mapped != "" {
 			return []string{mapped}
 		}
 	}
+
 	if tool == "read_only_capability" {
 		for _, key := range []string{"id", "action", "query"} {
 			if mapped := auditObservedCapabilityForToolCapability(tool, auditRecordString(rawFields, key)); mapped != "" {
@@ -3018,10 +3542,12 @@ func auditObservedCapabilitiesForToolRequest(record eval.Record) []string {
 			}
 		}
 	}
+
 	static := EvidenceCapabilitiesForTool(tool)
 	if len(static) == 1 && strings.TrimSpace(static[0]) != "" {
 		return []string{strings.TrimSpace(static[0])}
 	}
+
 	return nil
 }
 
@@ -3030,10 +3556,12 @@ func auditRawToolRequestFields(raw string) map[string]any {
 	if raw == "" {
 		return nil
 	}
+
 	fields := make(map[string]any)
 	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
 		return nil
 	}
+
 	return fields
 }
 
@@ -3041,6 +3569,7 @@ func auditRecordString(data map[string]any, key string) string {
 	if len(data) == 0 {
 		return ""
 	}
+
 	switch value := data[key].(type) {
 	case string:
 		return strings.TrimSpace(value)
@@ -3056,24 +3585,29 @@ func auditObservedCapabilityForToolCapability(tool, capability string) string {
 	if capability == "" {
 		return ""
 	}
+
 	if mapped := evidenceCapabilityForLanguageCapability(Capability(capability)); mapped != "" {
 		return mapped
 	}
+
 	if tool == "read_only_capability" {
 		if mapped := ReadOnlyCapabilityEvidenceCapability(capability); mapped != "" {
 			return mapped
 		}
+
 		switch normalizeReadOnlyCapabilityID(capability) {
 		case "source-sanity":
 			return "source_diagnostics"
 		}
 	}
+
 	switch strings.ReplaceAll(strings.ToLower(capability), "-", "_") {
 	case "inspect_file", "inspect_symbol", "find_definition", "find_references",
 		"calls_from", "calls_into", "related_files", "query_context",
 		"source_diagnostics", "verify_edit", "history_context", "security_scan":
 		return strings.ReplaceAll(strings.ToLower(capability), "-", "_")
 	}
+
 	return ""
 }
 
@@ -3081,21 +3615,25 @@ func firstAuditCapabilities(in []harnessAuditCapabilityMix, n int) []harnessAudi
 	if len(in) <= n {
 		return append([]harnessAuditCapabilityMix(nil), in...)
 	}
+
 	return append([]harnessAuditCapabilityMix(nil), in[:n]...)
 }
 
 func auditTopCount(values map[string]int) string {
 	bestKey := "none"
 	bestValue := 0
+
 	for key, value := range values {
 		if value > bestValue || value == bestValue && key < bestKey {
 			bestKey = key
 			bestValue = value
 		}
 	}
+
 	if bestValue == 0 {
 		return "none"
 	}
+
 	return fmt.Sprintf("%s=%d", bestKey, bestValue)
 }
 
@@ -3105,6 +3643,7 @@ func auditPatternHit(aggregate eval.PerfAggregate, name string) eval.PerfPattern
 			return hit
 		}
 	}
+
 	return eval.PerfPatternHit{Name: name}
 }
 
@@ -3113,17 +3652,21 @@ func auditToolCalls(aggregate eval.PerfAggregate, names ...string) int {
 	for _, name := range names {
 		want[name] = struct{}{}
 	}
+
 	total := 0
+
 	for _, tool := range aggregate.ToolMix {
 		if _, ok := want[tool.Tool]; ok {
 			total += tool.Calls
 		}
 	}
+
 	return total
 }
 
 func auditToolPrefixCalls(aggregate eval.PerfAggregate, prefixes ...string) int {
 	total := 0
+
 	for _, tool := range aggregate.ToolMix {
 		for _, prefix := range prefixes {
 			if strings.HasPrefix(tool.Tool, prefix) {
@@ -3132,6 +3675,7 @@ func auditToolPrefixCalls(aggregate eval.PerfAggregate, prefixes ...string) int 
 			}
 		}
 	}
+
 	return total
 }
 
@@ -3143,39 +3687,49 @@ func auditSet(values []string) map[string]struct{} {
 			out[value] = struct{}{}
 		}
 	}
+
 	return out
 }
 
 func auditSetDiff(left map[string]struct{}, right map[string]struct{}) []string {
 	var out []string
+
 	for value := range left {
 		if _, ok := right[value]; !ok {
 			out = append(out, value)
 		}
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
 func auditDuplicates(values []string) []string {
 	seen := make(map[string]struct{}, len(values))
 	dups := make(map[string]struct{})
+
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
+
 		if _, ok := seen[value]; ok {
 			dups[value] = struct{}{}
 			continue
 		}
+
 		seen[value] = struct{}{}
 	}
+
 	out := make([]string, 0, len(dups))
 	for value := range dups {
 		out = append(out, value)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -3226,36 +3780,50 @@ func buildRankerLearningAudit(root string) *harnessAuditRankerLearning {
 	if _, err := os.Stat(out.WeightsPath); err == nil {
 		out.WeightsFileExists = true
 	}
+
 	if _, err := os.Stat(out.LearningLogPath); err == nil {
 		out.LearningLogExists = true
 	}
+
 	weights, _ := comprehension.LoadLearnedWeights(root)
+
 	out.WeightCount = len(weights)
+
 	if out.WeightCount > 0 {
 		var minMult, maxMult float64
+
 		first := true
+
 		for _, v := range weights {
 			if first {
 				minMult, maxMult = v, v
 				first = false
+
 				continue
 			}
+
 			if v < minMult {
 				minMult = v
 			}
+
 			if v > maxMult {
 				maxMult = v
 			}
 		}
+
 		out.MinMultiplier = minMult
 		out.MaxMultiplier = maxMult
 	}
+
 	entries, _ := comprehension.ReadLearningLog(root)
 	if len(entries) > 0 {
 		summary := comprehension.SummarizeLearningLog(entries)
+
 		out.LearningSummary = &summary
 	}
+
 	out.WiredSources, out.DormantSources, out.TriggerRecommendations = classifyRankerTriggers(out.LearningSummary)
+
 	return out
 }
 
@@ -3268,9 +3836,11 @@ func classifyRankerTriggers(summary *comprehension.LearningLogSummary) (wired, d
 	if summary != nil {
 		bySource = summary.BySource
 	}
+
 	for _, base := range rankerLearningKnownTriggers {
 		t := base
 		count := bySource[t.Name]
+
 		switch {
 		case count > 0:
 			t.Status = "wired"
@@ -3279,9 +3849,11 @@ func classifyRankerTriggers(summary *comprehension.LearningLogSummary) (wired, d
 			t.Status = "dormant"
 			dormant = append(dormant, t.Name)
 		}
+
 		t.Suggested = rankerTriggerSuggestion(t.Name, t.Status, count)
 		triggers = append(triggers, t)
 	}
+
 	return wired, dormant, triggers
 }
 
@@ -3289,6 +3861,7 @@ func rankerTriggerSuggestion(name, status string, count int) string {
 	if status == "wired" {
 		return fmt.Sprintf("observed %d entry(ies) from %s; keep monitoring decay and weight drift", count, name)
 	}
+
 	switch name {
 	case "eval":
 		return "SWE oracle Groundedness coverage on at least one task would produce eval-driven boost/penalize signals"
@@ -3311,7 +3884,9 @@ func rankerLearningFindings(learning *harnessAuditRankerLearning) []harnessAudit
 	if learning == nil {
 		return nil
 	}
+
 	var findings []harnessAuditFinding
+
 	if !learning.WeightsFileExists && !learning.LearningLogExists {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "ranker_learning_idle",
@@ -3319,8 +3894,10 @@ func rankerLearningFindings(learning *harnessAuditRankerLearning) []harnessAudit
 			Evidence:       "ranker learning is idle: no .idiom/ranker/weights.json or learning_log.jsonl present; expected before an eval, CLI, feedback, or recovery trigger records evidence",
 			Recommendation: "no action needed unless learned ranker state was expected; run or wire an observed trigger source before expecting weight signals",
 		})
+
 		return findings
 	}
+
 	if learningSummaryMostlyMutableNoop(learning.LearningSummary) {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "ranker_learning_mostly_noop",
@@ -3329,6 +3906,7 @@ func rankerLearningFindings(learning *harnessAuditRankerLearning) []harnessAudit
 			Recommendation: "raise oracle MinScore so high-quality runs cross the 0.75 boost threshold, or supply richer Groundedness ContextFiles",
 		})
 	}
+
 	return findings
 }
 
@@ -3336,18 +3914,22 @@ func learningSummaryMostlyMutableNoop(summary *comprehension.LearningLogSummary)
 	if summary == nil || summary.TotalEntries == 0 {
 		return false
 	}
+
 	evidenceOnly := 0
 	if summary.BySource != nil {
 		evidenceOnly += summary.BySource[comprehension.LearningSourceRecoveryReconciliation]
 	}
+
 	mutableEntries := summary.TotalEntries - evidenceOnly
 	if mutableEntries <= 0 {
 		return false
 	}
+
 	mutableNoOps := summary.NoOpCount - evidenceOnly
 	if mutableNoOps < 0 {
 		mutableNoOps = 0
 	}
+
 	return mutableNoOps*4 > mutableEntries*3
 }
 
@@ -3355,11 +3937,14 @@ func rankerLearningQuestions(learning *harnessAuditRankerLearning) []harnessAudi
 	if learning == nil {
 		return nil
 	}
+
 	var questions []harnessAuditQuestion
+
 	for _, t := range learning.TriggerRecommendations {
 		if t.Status == "wired" {
 			continue
 		}
+
 		questions = append(questions, harnessAuditQuestion{
 			Area:      "ranker_learning",
 			Question:  fmt.Sprintf("Should the %s trigger be wired to feed the learning loop?", t.Name),
@@ -3367,6 +3952,7 @@ func rankerLearningQuestions(learning *harnessAuditRankerLearning) []harnessAudi
 			Candidate: t.Component,
 		})
 	}
+
 	return questions
 }
 
@@ -3380,6 +3966,7 @@ func buildContextCacheAudit(root string) *harnessAuditContextCache {
 	if err != nil {
 		return nil
 	}
+
 	cache := &harnessAuditContextCache{
 		Rows:                                  stats.Rows,
 		Fresh:                                 stats.Fresh,
@@ -3416,12 +4003,15 @@ func buildContextCacheAudit(root string) *harnessAuditContextCache {
 	if total := stats.Hits + stats.Misses; total > 0 {
 		cache.HitRate = float64(stats.Hits) / float64(total)
 	}
+
 	if stats.Rows > 0 {
 		cache.StaleRatio = float64(stats.Stale) / float64(stats.Rows)
 	}
+
 	if stats.CurrentRows > 0 {
 		cache.CurrentStaleRatio = float64(stats.CurrentStale) / float64(stats.CurrentRows)
 	}
+
 	return cache
 }
 
@@ -3438,6 +4028,7 @@ func buildFreshnessHealthAudit(logContext *eval.ContextStats, resolution *harnes
 		RootRebuilds:               stats.RootRebuilds,
 		AllowStaleInvocations:      stats.AllowStaleInvocations,
 	}
+
 	if logContext != nil {
 		health.TelemetryHistoricalOnly = telemetryHistoricalOnly
 		health.TelemetryReadThrough = int64(logContext.FreshnessReadThroughResults)
@@ -3455,6 +4046,7 @@ func buildFreshnessHealthAudit(logContext *eval.ContextStats, resolution *harnes
 		health.StaleUseFresh = int64(logContext.StaleUseFresh)
 		health.StaleUseStateCounts = auditIntCountsToInt64(logContext.StaleUseStateCounts)
 	}
+
 	if resolution != nil {
 		health.TelemetryBlockers = int64(resolution.UnresolvedBlockers)
 		health.TelemetryResolvedBlockers = int64(resolution.ResolvedBlockers)
@@ -3464,6 +4056,7 @@ func buildFreshnessHealthAudit(logContext *eval.ContextStats, resolution *harnes
 		health.ResolvedStaleUseBlocked = int64(resolution.ResolvedStaleUse)
 		health.TelemetryLatestState = resolution.LatestState
 	}
+
 	return health
 }
 
@@ -3471,9 +4064,11 @@ func logBehaviorContextStats(logBehavior *harnessAuditLogBehavior) *eval.Context
 	if logBehavior == nil {
 		return nil
 	}
+
 	if logBehavior.CurrentAggregate.LogCount > 0 {
 		return logBehavior.CurrentAggregate.Context
 	}
+
 	return logBehavior.Aggregate.Context
 }
 
@@ -3485,6 +4080,7 @@ func logBehaviorFreshnessResolution(logBehavior *harnessAuditLogBehavior) *harne
 	if logBehavior == nil {
 		return nil
 	}
+
 	return logBehavior.FreshnessResolution
 }
 
@@ -3492,10 +4088,12 @@ func auditIntCountsToInt64(source map[string]int) map[string]int64 {
 	if len(source) == 0 {
 		return nil
 	}
+
 	out := make(map[string]int64, len(source))
 	for key, value := range source {
 		out[key] = int64(value)
 	}
+
 	return out
 }
 
@@ -3503,13 +4101,17 @@ func freshnessHealthFindings(health *harnessAuditFreshnessHealth) []harnessAudit
 	if health == nil {
 		return nil
 	}
+
 	var findings []harnessAuditFinding
+
 	telemetryAllowStale := health.TelemetryAllowStale
 	telemetryRefreshFailures := health.TelemetryRefreshFailures
+
 	if health.TelemetryHistoricalOnly {
 		telemetryAllowStale = 0
 		telemetryRefreshFailures = 0
 	}
+
 	if health.AllowStaleInvocations+telemetryAllowStale > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "freshness_allow_stale_invoked",
@@ -3518,6 +4120,7 @@ func freshnessHealthFindings(health *harnessAuditFreshnessHealth) []harnessAudit
 			Recommendation: "reason=allow_stale_invoked model_facing_policies=read_through,require_fresh",
 		})
 	}
+
 	if health.RefreshFailures+telemetryRefreshFailures > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "freshness_refresh_failures",
@@ -3526,6 +4129,7 @@ func freshnessHealthFindings(health *harnessAuditFreshnessHealth) []harnessAudit
 			Recommendation: "reason=refresh_failed source=freshness_health",
 		})
 	}
+
 	if !health.TelemetryHistoricalOnly && health.TelemetryBlockers > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "freshness_log_blockers",
@@ -3534,6 +4138,7 @@ func freshnessHealthFindings(health *harnessAuditFreshnessHealth) []harnessAudit
 			Recommendation: "reason=freshness_blockers_observed source=log_behavior.current_aggregate.context",
 		})
 	}
+
 	if !health.TelemetryHistoricalOnly && health.StaleUseBlocked > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "stale_use_blockers_observed",
@@ -3542,6 +4147,7 @@ func freshnessHealthFindings(health *harnessAuditFreshnessHealth) []harnessAudit
 			Recommendation: "reason=stale_use_blocked source=log_behavior.current_aggregate.context",
 		})
 	}
+
 	return findings
 }
 
@@ -3552,7 +4158,9 @@ func contextCacheFindings(cache *harnessAuditContextCache) []harnessAuditFinding
 	if cache == nil {
 		return nil
 	}
+
 	var findings []harnessAuditFinding
+
 	if cache.Rows == 0 && cache.SessionMisses == 0 && cache.SessionWrites == 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "context_cache_idle",
@@ -3560,8 +4168,10 @@ func contextCacheFindings(cache *harnessAuditContextCache) []harnessAuditFinding
 			Evidence:       "graph_views table is empty and no Pack() calls have run this session",
 			Recommendation: "reason=context_cache_idle rows=0 session_misses=0 session_writes=0",
 		})
+
 		return findings
 	}
+
 	if cache.CurrentRows > 0 && cache.CurrentStaleRatio > 0.5 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "context_cache_mostly_stale",
@@ -3577,6 +4187,7 @@ func contextCacheFindings(cache *harnessAuditContextCache) []harnessAuditFinding
 			Recommendation: fmt.Sprintf("reason=context_cache_historical_stale_rows stale_ratio=%.2f active_cache_state=current_fresh=%d,current_stale=%d", cache.StaleRatio, cache.CurrentFresh, cache.CurrentStale),
 		})
 	}
+
 	if cache.CurrentRows > 0 && cache.CurrentContractRows < cache.CurrentRows {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "context_cache_contract_gap",
@@ -3585,6 +4196,7 @@ func contextCacheFindings(cache *harnessAuditContextCache) []harnessAuditFinding
 			Recommendation: fmt.Sprintf("reason=context_cache_contract_gap current_contract_rows=%d current_rows=%d", cache.CurrentContractRows, cache.CurrentRows),
 		})
 	}
+
 	if cache.CurrentFreshUnresolvedGapRows > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "context_cache_unresolved_gaps",
@@ -3600,6 +4212,7 @@ func contextCacheFindings(cache *harnessAuditContextCache) []harnessAuditFinding
 			Recommendation: fmt.Sprintf("reason=context_cache_historical_unresolved_gaps rows=%d gap_reasons=%s", cache.UnresolvedGapRows, auditCountSummary(cache.UnresolvedGapReasonCounts, 3)),
 		})
 	}
+
 	if cache.SessionHits+cache.SessionMisses >= 5 && cache.HitRate < 0.1 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "context_cache_low_hit_rate",
@@ -3608,6 +4221,7 @@ func contextCacheFindings(cache *harnessAuditContextCache) []harnessAuditFinding
 			Recommendation: fmt.Sprintf("reason=context_cache_low_hit_rate hit_rate=%.2f cache_key_includes=task", cache.HitRate),
 		})
 	}
+
 	// Surface accumulated token/cost savings from compact projection and
 	// cache-hit rediscovery avoidance. These counters are per-session
 	// aggregates; the finding reports them so operators can observe whether
@@ -3615,6 +4229,7 @@ func contextCacheFindings(cache *harnessAuditContextCache) []harnessAuditFinding
 	if cache.EstimatedFullTokensSaved > 0 || cache.EstimatedRediscoveryTokensAvoided > 0 {
 		evidence := ""
 		rec := ""
+
 		if cache.EstimatedFullTokensSaved > 0 && cache.EstimatedRediscoveryTokensAvoided > 0 {
 			evidence = fmt.Sprintf("compact projection saved ~%d tokens; cache hits avoided ~%d tokens of rediscovery", cache.EstimatedFullTokensSaved, cache.EstimatedRediscoveryTokensAvoided)
 			rec = fmt.Sprintf("reason=context_cache_savings tokens_saved=%d rediscovery_avoided=%d hit_rate=%.2f", cache.EstimatedFullTokensSaved, cache.EstimatedRediscoveryTokensAvoided, cache.HitRate)
@@ -3625,6 +4240,7 @@ func contextCacheFindings(cache *harnessAuditContextCache) []harnessAuditFinding
 			evidence = fmt.Sprintf("cache hits avoided ~%d tokens of rediscovery", cache.EstimatedRediscoveryTokensAvoided)
 			rec = fmt.Sprintf("reason=context_cache_savings rediscovery_avoided=%d hit_rate=%.2f", cache.EstimatedRediscoveryTokensAvoided, cache.HitRate)
 		}
+
 		findings = append(findings, harnessAuditFinding{
 			ID:             "context_cache_savings",
 			Severity:       "info",
@@ -3632,6 +4248,7 @@ func contextCacheFindings(cache *harnessAuditContextCache) []harnessAuditFinding
 			Recommendation: rec,
 		})
 	}
+
 	return findings
 }
 
@@ -3640,6 +4257,7 @@ func auditCountSummarySuffix(values map[string]int, limit int) string {
 	if summary == "" {
 		return ""
 	}
+
 	return "; reasons=" + summary
 }
 
@@ -3648,9 +4266,11 @@ func auditCountSummary(values map[string]int, limit int) string {
 	if len(counts) == 0 {
 		return ""
 	}
+
 	parts := make([]string, 0, len(counts))
 	for _, count := range counts {
 		parts = append(parts, fmt.Sprintf("%s=%d", count.Name, count.Count))
 	}
+
 	return strings.Join(parts, ",")
 }

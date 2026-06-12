@@ -1,7 +1,7 @@
 [2m  ▎ thinking[0m
   · 17069 tok · in 16920 (16640 cached / 280 new) · out 149 (29 reasoning) · ¥0.0009
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/docs/design-direct-answer-efficiency.md"}
-  -> read_file {"path": "/Users/ben/Documents/GitHub/idiom/docs/evidence/idiom-efficiency-optimization/ledger.md"}
+  -> read_file {"path": "/workspace/idiom/docs/design-direct-answer-efficiency.md"}
+  -> read_file {"path": "/workspace/idiom/docs/evidence/idiom-efficiency-optimization/ledger.md"}
 [2m  ▎ thinking[0m
 As Prompt/Protocol Reviewer, I've verified the design against the conditions folded in from the full bench. Here's my assessment:
 

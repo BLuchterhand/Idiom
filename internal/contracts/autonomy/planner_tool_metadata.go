@@ -73,19 +73,23 @@ func PlanExecutePlannerToolMetadataEntries() []PlanExecutePlannerToolMetadata {
 	for _, entry := range planExecutePlannerToolMetadata {
 		entries = append(entries, copyPlanExecutePlannerToolMetadata(entry))
 	}
+
 	slices.SortFunc(entries, func(a, b PlanExecutePlannerToolMetadata) int {
 		return cmp.Compare(a.Tool, b.Tool)
 	})
+
 	return entries
 }
 
 func PlanExecutePlannerToolNames() []string {
 	var tools []string
+
 	for _, entry := range PlanExecutePlannerToolMetadataEntries() {
 		if entry.PlannerAllowed {
 			tools = append(tools, entry.Tool)
 		}
 	}
+
 	return tools
 }
 
@@ -94,6 +98,7 @@ func LookupPlanExecutePlannerToolMetadata(tool string) (PlanExecutePlannerToolMe
 	if !ok {
 		return PlanExecutePlannerToolMetadata{}, false
 	}
+
 	return copyPlanExecutePlannerToolMetadata(entry), true
 }
 

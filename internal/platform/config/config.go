@@ -69,6 +69,7 @@ func (r RouteClassifier) LlamaServerSpec() LlamaServer {
 	if strings.TrimSpace(model) == "" {
 		model = r.Model
 	}
+
 	return LlamaServer{
 		Kind:            r.Kind,
 		Binary:          r.Binary,
@@ -207,6 +208,7 @@ func (l LlamaServer) EndpointBaseURL() string {
 	if baseURL := strings.TrimRight(strings.TrimSpace(l.BaseURL), "/"); baseURL != "" {
 		return baseURL
 	}
+
 	switch {
 	case l.IsOpenAIResponses():
 		return "https://api.openai.com"
@@ -225,6 +227,7 @@ func (l LlamaServer) APIKeyEnvName() string {
 	if env := strings.TrimSpace(l.APIKeyEnv); env != "" {
 		return env
 	}
+
 	switch {
 	case l.IsOpenAIResponses():
 		return "OPENAI_API_KEY"
@@ -470,12 +473,16 @@ func Load(path string) (Config, error) {
 // example config files can carry disabled blocks such as "_mcp".
 func UnknownJSONKeys(data []byte, target any) ([]string, error) {
 	var decoded any
+
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return nil, err
 	}
+
 	var unknown []string
+
 	collectUnknownJSONKeys(decoded, reflect.TypeOf(target), "", &unknown)
 	slices.Sort(unknown)
+
 	return unknown, nil
 }
 
@@ -485,28 +492,35 @@ func collectUnknownJSONKeys(value any, typ reflect.Type, path string, unknown *[
 	if typ == nil || value == nil {
 		return
 	}
+
 	for typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
+
 	if typ == rawMessageType {
 		return
 	}
+
 	switch typ.Kind() {
 	case reflect.Struct:
 		object, ok := value.(map[string]any)
 		if !ok {
 			return
 		}
+
 		fields := jsonFieldTypes(typ)
+
 		for key, child := range object {
 			if strings.HasPrefix(key, "_") {
 				continue
 			}
+
 			fieldType, ok := fields[key]
 			if !ok {
 				*unknown = append(*unknown, joinConfigPath(path, key))
 				continue
 			}
+
 			collectUnknownJSONKeys(child, fieldType, joinConfigPath(path, key), unknown)
 		}
 	case reflect.Slice, reflect.Array:
@@ -514,6 +528,7 @@ func collectUnknownJSONKeys(value any, typ reflect.Type, path string, unknown *[
 		if !ok {
 			return
 		}
+
 		for i, item := range items {
 			collectUnknownJSONKeys(item, typ.Elem(), fmt.Sprintf("%s[%d]", path, i), unknown)
 		}
@@ -522,6 +537,7 @@ func collectUnknownJSONKeys(value any, typ reflect.Type, path string, unknown *[
 		if !ok {
 			return
 		}
+
 		elem := typ.Elem()
 		for key, child := range object {
 			collectUnknownJSONKeys(child, elem, joinConfigPath(path, key), unknown)
@@ -531,21 +547,27 @@ func collectUnknownJSONKeys(value any, typ reflect.Type, path string, unknown *[
 
 func jsonFieldTypes(typ reflect.Type) map[string]reflect.Type {
 	fields := make(map[string]reflect.Type)
+
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
 		if field.PkgPath != "" {
 			continue
 		}
+
 		tag := field.Tag.Get("json")
 		name, _, _ := strings.Cut(tag, ",")
+
 		if name == "-" {
 			continue
 		}
+
 		if name == "" {
 			name = field.Name
 		}
+
 		fields[name] = field.Type
 	}
+
 	return fields
 }
 
@@ -554,9 +576,11 @@ func joinConfigPath(base string, key string) string {
 	if base == "" {
 		return key
 	}
+
 	if key == "" {
 		return base
 	}
+
 	return base + "." + key
 }
 
@@ -564,93 +588,118 @@ func (c Config) Validate() error {
 	if err := validateBackend("llama_server", c.LlamaServer); err != nil {
 		return err
 	}
+
 	if c.Implementer != nil {
 		if err := validateBackend("implementer", *c.Implementer); err != nil {
 			return err
 		}
+
 		if c.Implementer.IsLaunchable() && c.LlamaServer.IsLaunchable() && c.Implementer.Port == c.LlamaServer.Port && c.Implementer.Host == c.LlamaServer.Host {
 			return fmt.Errorf("implementer.port must differ from llama_server.port on the same host")
 		}
 	}
+
 	if k := strings.TrimSpace(c.RouteClassifier.Kind); k != "" && !isKnownBackendKind(k) {
 		return fmt.Errorf("route_classifier.kind must be one of %s (got %q)", backendKindList(), c.RouteClassifier.Kind)
 	}
+
 	if c.Chat.SaveDir == "" {
 		return fmt.Errorf("chat.save_dir is required")
 	}
+
 	if c.Chat.MaxTokens <= 0 {
 		return fmt.Errorf("chat.max_tokens must be positive")
 	}
+
 	if c.Chat.DebugLogMode != "" && !slices.Contains([]string{"redacted", "full"}, c.Chat.DebugLogMode) {
 		return fmt.Errorf("chat.debug_log_mode must be one of redacted, full")
 	}
+
 	if c.Chat.Preset != "" && c.Chat.Preset != "custom" {
 		if _, ok := lookupBuiltinChatPreset(c.Chat.Preset); !ok {
 			return fmt.Errorf("chat.preset %q is not a known built-in preset", c.Chat.Preset)
 		}
 	}
+
 	if c.Chat.TopK < 0 {
 		return fmt.Errorf("chat.top_k must be non-negative")
 	}
+
 	if c.Chat.MaxToolSteps < 0 {
 		return fmt.Errorf("chat.max_tool_steps must be non-negative (0 means unbounded)")
 	}
+
 	if c.Chat.MaxContextChars < 0 {
 		return fmt.Errorf("chat.max_context_chars must be non-negative (0 disables compaction)")
 	}
+
 	if c.Chat.MaxContextMessages < 0 {
 		return fmt.Errorf("chat.max_context_messages must be non-negative (0 disables compaction)")
 	}
+
 	if c.Chat.MaxModelCalls < 0 {
 		return fmt.Errorf("chat.max_model_calls must be non-negative (0 disables the soft budget)")
 	}
+
 	if c.Chat.MaxDurationSeconds < 0 {
 		return fmt.Errorf("chat.max_duration_seconds must be non-negative (0 disables the soft budget)")
 	}
+
 	if c.Chat.RequestTimeoutSeconds <= 0 {
 		return fmt.Errorf("chat.request_timeout_seconds must be positive")
 	}
+
 	if c.Chat.ServerStartTimeoutSecs <= 0 {
 		return fmt.Errorf("chat.server_start_timeout_seconds must be positive")
 	}
+
 	if trimmed := strings.TrimSpace(c.Chat.AgentMode); trimmed != "" {
 		known := map[string]struct{}{"build": {}, "plan": {}, "general": {}}
 		if _, ok := known[strings.ToLower(trimmed)]; !ok {
 			return fmt.Errorf("chat.agent_mode must be one of build, plan, general (got %q)", trimmed)
 		}
 	}
+
 	if trimmed := strings.TrimSpace(c.Chat.ModelFamily); trimmed != "" {
 		known := map[string]struct{}{"auto": {}, "qwen": {}, "generic": {}, "none": {}}
 		if _, ok := known[strings.ToLower(trimmed)]; !ok {
 			return fmt.Errorf("chat.model_family must be one of auto, qwen, generic, none (got %q)", trimmed)
 		}
 	}
+
 	if c.Workspace.CommandTimeoutSeconds <= 0 {
 		return fmt.Errorf("workspace.command_timeout_seconds must be positive")
 	}
+
 	if c.Workspace.MaxOutputBytes <= 0 {
 		return fmt.Errorf("workspace.max_output_bytes must be positive")
 	}
+
 	if c.Workspace.MaxFileBytes <= 0 {
 		return fmt.Errorf("workspace.max_file_bytes must be positive")
 	}
+
 	if c.Workspace.MaxDirectoryEntries <= 0 {
 		return fmt.Errorf("workspace.max_directory_entries must be positive")
 	}
+
 	if c.Workspace.Root != "" {
 		rel, err := filepath.Rel(c.Workspace.Root, c.Workspace.CWD)
 		if err != nil {
 			return fmt.Errorf("workspace.cwd must be inside workspace.root: %w", err)
 		}
+
 		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return fmt.Errorf("workspace.cwd must be inside workspace.root")
 		}
 	}
+
 	for i, srv := range c.MCP {
 		if err := srv.Validate(); err != nil {
 			return fmt.Errorf("mcp[%d]: %w", i, err)
 		}
 	}
+
 	return nil
 }
 
@@ -661,20 +710,25 @@ func (m MCPServer) Validate() error {
 	if strings.TrimSpace(m.Name) == "" {
 		return fmt.Errorf("name is required")
 	}
+
 	hasStdio := m.IsStdio()
 	hasHTTP := m.IsHTTP()
+
 	switch {
 	case hasStdio && hasHTTP:
 		return fmt.Errorf("server %q sets both command and url; pick one", m.Name)
 	case !hasStdio && !hasHTTP:
 		return fmt.Errorf("server %q must set either command (stdio) or url (http)", m.Name)
 	}
+
 	if hasHTTP && m.TimeoutSeconds < 0 {
 		return fmt.Errorf("server %q: timeout_seconds must be non-negative", m.Name)
 	}
+
 	if hasStdio && (len(m.Headers) > 0) {
 		return fmt.Errorf("server %q: headers only apply to http transport", m.Name)
 	}
+
 	return nil
 }
 
@@ -690,6 +744,7 @@ func (c Config) ImplementerBaseURL() string {
 	if c.Implementer == nil {
 		return ""
 	}
+
 	return c.Implementer.EndpointBaseURL()
 }
 
@@ -697,24 +752,30 @@ func (c *Config) resolvePaths(baseDir string) {
 	if c.LlamaServer.UsesModelPath() {
 		c.LlamaServer.Model = resolvePath(baseDir, c.LlamaServer.Model)
 	}
+
 	c.LlamaServer.LogFile = resolvePath(baseDir, c.LlamaServer.LogFile)
 	if c.Implementer != nil {
 		if c.Implementer.UsesModelPath() {
 			c.Implementer.Model = resolvePath(baseDir, c.Implementer.Model)
 		}
+
 		c.Implementer.LogFile = resolvePath(baseDir, c.Implementer.LogFile)
 	}
+
 	c.Chat.SaveDir = resolvePath(baseDir, c.Chat.SaveDir)
 	c.Chat.DebugLogDir = resolvePath(baseDir, c.Chat.DebugLogDir)
 	c.Chat.SystemPromptFiles = resolvePathSlice(baseDir, c.Chat.SystemPromptFiles)
 	c.Chat.ProfilesDir = resolvePath(baseDir, c.Chat.ProfilesDir)
+
 	if c.Chat.ProjectRoot != "" {
 		c.Chat.ProjectRoot = resolvePath(baseDir, c.Chat.ProjectRoot)
 	}
+
 	c.Chat.ProjectPromptFiles = resolveProjectPathSlice(baseDir, c.Chat.ProjectRoot, c.Chat.ProjectPromptFiles)
 	if c.Workspace.Root != "" {
 		c.Workspace.Root = resolvePath(baseDir, c.Workspace.Root)
 	}
+
 	if c.Workspace.CWD != "" {
 		if c.Workspace.Root != "" && !filepath.IsAbs(c.Workspace.CWD) {
 			c.Workspace.CWD = filepath.Clean(filepath.Join(c.Workspace.Root, c.Workspace.CWD))
@@ -728,99 +789,130 @@ func (c *Config) applyRuntimeDefaults() {
 	if c.AppName == "" {
 		c.AppName = "Idiom"
 	}
+
 	if c.LlamaServer.Kind == "" {
 		c.LlamaServer.Kind = BackendLlama
 	}
+
 	applyBackendRuntimeDefaults(&c.LlamaServer, nil, "logs/llama-server.log")
+
 	if c.Implementer != nil {
 		if c.Implementer.Kind == "" {
 			c.Implementer.Kind = BackendLlama
 		}
+
 		if c.Implementer.IsHosted() {
 			if c.Implementer.BaseURL == "" && c.LlamaServer.IsHosted() {
 				c.Implementer.BaseURL = c.LlamaServer.BaseURL
 			}
+
 			if c.Implementer.APIKeyEnv == "" && c.LlamaServer.IsHosted() {
 				c.Implementer.APIKeyEnv = c.LlamaServer.APIKeyEnv
 			}
 		}
+
 		if c.Implementer.Binary == "" {
 			c.Implementer.Binary = c.LlamaServer.Binary
 		}
+
 		if c.Implementer.Host == "" {
 			c.Implementer.Host = c.LlamaServer.Host
 		}
+
 		applyBackendRuntimeDefaults(c.Implementer, &c.LlamaServer, "logs/implementer-server.log")
 	}
+
 	if c.Chat.SaveDir == "" {
 		c.Chat.SaveDir = "transcripts"
 	}
+
 	if c.Chat.DebugLogDir == "" {
 		c.Chat.DebugLogDir = "logs/conversations"
 	}
+
 	if c.Chat.DebugLogMode == "" {
 		c.Chat.DebugLogMode = "redacted"
 	}
+
 	if len(c.Chat.SystemPromptFiles) == 0 {
 		c.Chat.SystemPromptFiles = []string{"prompts/base.md"}
 	}
+
 	if c.Chat.ProfilesDir == "" {
 		c.Chat.ProfilesDir = "prompts/profiles"
 	}
+
 	if len(c.Chat.DefaultProfiles) == 0 {
 		c.Chat.DefaultProfiles = []string{"coding"}
 	}
+
 	if c.Chat.Preset == "" {
 		c.Chat.Preset = "qwen3-coding-preserve"
 	}
+
 	if c.Chat.TopK == 0 {
 		c.Chat.TopK = 20
 	}
+
 	if c.Chat.RepetitionPenalty == 0 {
 		c.Chat.RepetitionPenalty = 1.0
 	}
+
 	if c.Chat.MaxHistory <= 0 {
 		c.Chat.MaxHistory = 20
 	}
+
 	// MaxToolSteps: 0 means unbounded (OpenCode-aligned). Don't auto-bump.
 	if c.Chat.MaxContextMessages < 0 {
 		c.Chat.MaxContextMessages = 0
 	}
+
 	if c.Chat.MaxContextChars < 0 {
 		c.Chat.MaxContextChars = 0
 	}
+
 	if c.Chat.MaxModelCalls < 0 {
 		c.Chat.MaxModelCalls = 0
 	}
+
 	if c.Chat.MaxDurationSeconds < 0 {
 		c.Chat.MaxDurationSeconds = 0
 	}
+
 	if c.Chat.RequestTimeoutSeconds <= 0 {
 		c.Chat.RequestTimeoutSeconds = 900
 	}
+
 	if c.Chat.ServerStartTimeoutSecs <= 0 {
 		c.Chat.ServerStartTimeoutSecs = 240
 	}
+
 	if strings.TrimSpace(c.Chat.AgentMode) == "" {
 		c.Chat.AgentMode = "build"
 	}
+
 	if c.Chat.Preset != "custom" {
 		if preset, ok := lookupBuiltinChatPreset(c.Chat.Preset); ok {
 			applyChatPreset(&c.Chat, preset)
 		}
 	}
+
 	if c.Workspace.Shell == "" {
 		c.Workspace.Shell = "/bin/zsh"
 	}
+
 	if c.Workspace.CommandTimeoutSeconds <= 0 {
 		c.Workspace.CommandTimeoutSeconds = 120
 	}
+
 	if c.Workspace.MaxOutputBytes <= 0 {
 		c.Workspace.MaxOutputBytes = 65536
 	}
+
 	if c.Workspace.MaxFileBytes <= 0 {
 		c.Workspace.MaxFileBytes = 65536
 	}
+
 	if c.Workspace.MaxDirectoryEntries <= 0 {
 		c.Workspace.MaxDirectoryEntries = 400
 	}
@@ -833,12 +925,15 @@ func (c *Config) applyWorkspaceDefaults() {
 			launchDir = wd
 		}
 	}
+
 	if c.Workspace.Root == "" {
 		c.Workspace.Root = launchDir
 	}
+
 	if c.Workspace.CWD == "" {
 		c.Workspace.CWD = c.Workspace.Root
 	}
+
 	if c.Chat.ProjectRoot == "" {
 		c.Chat.ProjectRoot = c.Workspace.Root
 	}
@@ -855,10 +950,12 @@ func canonicalizePathSlice(paths []string) []string {
 	if len(paths) == 0 {
 		return paths
 	}
+
 	out := make([]string, len(paths))
 	for i, path := range paths {
 		out[i] = CanonicalizeExistingPath(path)
 	}
+
 	return out
 }
 
@@ -871,30 +968,38 @@ func CanonicalizeExistingPath(path string) string {
 	if path == "" {
 		return ""
 	}
+
 	abs := path
 	if !filepath.IsAbs(abs) {
 		if resolved, err := filepath.Abs(abs); err == nil {
 			abs = resolved
 		}
 	}
+
 	abs = filepath.Clean(abs)
 	if real, err := filepath.EvalSymlinks(abs); err == nil {
 		return canonicalizeExistingPathCase(real)
 	}
+
 	current := abs
+
 	var suffix []string
+
 	for {
 		parent := filepath.Dir(current)
 		if parent == current {
 			break
 		}
+
 		suffix = append([]string{filepath.Base(current)}, suffix...)
 		current = parent
+
 		if real, err := filepath.EvalSymlinks(current); err == nil {
 			parts := append([]string{canonicalizeExistingPathCase(real)}, suffix...)
 			return filepath.Join(parts...)
 		}
 	}
+
 	return abs
 }
 
@@ -903,32 +1008,41 @@ func canonicalizeExistingPathCase(abs string) string {
 	if cleaned == "." || cleaned == "" {
 		return cleaned
 	}
+
 	volume := filepath.VolumeName(cleaned)
 	rest := strings.TrimPrefix(cleaned[len(volume):], string(filepath.Separator))
+
 	if rest == "" {
 		if volume != "" {
 			return volume + string(filepath.Separator)
 		}
+
 		return string(filepath.Separator)
 	}
+
 	current := volume + string(filepath.Separator)
 	for _, part := range strings.Split(rest, string(filepath.Separator)) {
 		if part == "" {
 			continue
 		}
+
 		matched := part
+
 		entries, err := os.ReadDir(current)
 		if err != nil {
 			return cleaned
 		}
+
 		for _, entry := range entries {
 			if strings.EqualFold(entry.Name(), part) {
 				matched = entry.Name()
 				break
 			}
 		}
+
 		current = filepath.Join(current, matched)
 	}
+
 	return current
 }
 
@@ -936,6 +1050,7 @@ func resolvePath(baseDir, path string) string {
 	if path == "" || filepath.IsAbs(path) {
 		return path
 	}
+
 	return filepath.Clean(filepath.Join(baseDir, path))
 }
 
@@ -944,6 +1059,7 @@ func resolvePathSlice(baseDir string, paths []string) []string {
 	for _, path := range paths {
 		resolved = append(resolved, resolvePath(baseDir, path))
 	}
+
 	return resolved
 }
 
@@ -954,12 +1070,15 @@ func resolveProjectPathSlice(baseDir, projectRoot string, paths []string) []stri
 			resolved = append(resolved, path)
 			continue
 		}
+
 		if projectRoot != "" {
 			resolved = append(resolved, filepath.Clean(filepath.Join(projectRoot, path)))
 			continue
 		}
+
 		resolved = append(resolved, resolvePath(baseDir, path))
 	}
+
 	return resolved
 }
 
@@ -968,6 +1087,7 @@ func defaultThreads() int {
 	if n < 1 {
 		return 1
 	}
+
 	return n
 }
 
@@ -1039,10 +1159,13 @@ func BuiltinChatPresets() map[string]ChatPreset {
 func BuiltinChatPresetNames() []string {
 	presets := BuiltinChatPresets()
 	names := make([]string, 0, len(presets))
+
 	for name := range presets {
 		names = append(names, name)
 	}
+
 	slices.Sort(names)
+
 	return names
 }
 
@@ -1051,7 +1174,9 @@ func ApplyBuiltinChatPreset(chat *Chat, name string) error {
 	if !ok {
 		return fmt.Errorf("unknown preset %q", name)
 	}
+
 	applyChatPreset(chat, preset)
+
 	return nil
 }
 
@@ -1070,6 +1195,7 @@ func applyChatPreset(chat *Chat, preset ChatPreset) {
 	chat.RepetitionPenalty = preset.RepetitionPenalty
 	chat.EnableThinking = util.ClonePtr(preset.EnableThinking)
 	chat.PreserveThinking = preset.PreserveThinking
+
 	if preset.MaxTokens > 0 {
 		chat.MaxTokens = preset.MaxTokens
 	}
@@ -1095,18 +1221,23 @@ func applyBackendRuntimeDefaults(b *LlamaServer, parent *LlamaServer, defaultLog
 	if b.IsHosted() {
 		return
 	}
+
 	if b.LogFile == "" {
 		b.LogFile = defaultLogFile
 	}
+
 	if b.IsMLX() {
 		return
 	}
+
 	if b.Threads <= 0 {
 		b.Threads = defaultThreads()
 	}
+
 	if b.CtxSize <= 0 {
 		b.CtxSize = 262144
 	}
+
 	if b.Reasoning == "" {
 		if parent != nil && parent.Reasoning != "" {
 			b.Reasoning = parent.Reasoning
@@ -1114,6 +1245,7 @@ func applyBackendRuntimeDefaults(b *LlamaServer, parent *LlamaServer, defaultLog
 			b.Reasoning = "auto"
 		}
 	}
+
 	if b.ReasoningFormat == "" {
 		if parent != nil && parent.ReasoningFormat != "" {
 			b.ReasoningFormat = parent.ReasoningFormat
@@ -1121,6 +1253,7 @@ func applyBackendRuntimeDefaults(b *LlamaServer, parent *LlamaServer, defaultLog
 			b.ReasoningFormat = "deepseek"
 		}
 	}
+
 	if b.ReasoningBudget == 0 {
 		if parent != nil {
 			b.ReasoningBudget = parent.ReasoningBudget
@@ -1135,40 +1268,52 @@ func validateBackend(name string, b LlamaServer) error {
 	if kind != "" && !isKnownBackendKind(kind) {
 		return fmt.Errorf("%s.kind must be one of %s (got %q)", name, backendKindList(), b.Kind)
 	}
+
 	if b.IsHosted() {
 		if b.Model == "" {
 			return fmt.Errorf("%s.model is required", name)
 		}
+
 		if b.EndpointBaseURL() == "" {
 			return fmt.Errorf("%s.base_url is required", name)
 		}
+
 		if b.APIKeyEnvName() == "" {
 			return fmt.Errorf("%s.api_key_env is required", name)
 		}
+
 		return nil
 	}
+
 	if b.Binary == "" {
 		return fmt.Errorf("%s.binary is required", name)
 	}
+
 	if b.Host == "" {
 		return fmt.Errorf("%s.host is required", name)
 	}
+
 	if b.Port <= 0 {
 		return fmt.Errorf("%s.port must be positive", name)
 	}
+
 	if b.Model == "" {
 		return fmt.Errorf("%s.model is required", name)
 	}
+
 	if !b.IsMLX() {
 		if b.CtxSize <= 0 {
 			return fmt.Errorf("%s.ctx_size must be positive", name)
 		}
+
 		if b.Reasoning != "" && !slices.Contains([]string{"on", "off", "auto"}, b.Reasoning) {
 			return fmt.Errorf("%s.reasoning must be one of on, off, auto", name)
 		}
+
 		if b.ReasoningFormat != "" && !slices.Contains([]string{"auto", "none", "deepseek", "deepseek-legacy"}, b.ReasoningFormat) {
 			return fmt.Errorf("%s.reasoning_format must be one of auto, none, deepseek, deepseek-legacy", name)
 		}
 	}
+
 	return nil
 }

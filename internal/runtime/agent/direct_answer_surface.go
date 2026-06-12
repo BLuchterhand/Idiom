@@ -71,6 +71,7 @@ func DirectAnswerSurfaceForBrief(brief workerruntime.WorkerRuntimeBrief) (Direct
 	if !readOnlyDirectAnswerLane(brief) {
 		return DirectAnswerSurface{}, false
 	}
+
 	return DirectAnswerSurface{
 		SchemaVersion: DirectAnswerSurfaceSchemaVersion,
 		Version:       DirectAnswerSurfaceVersion,
@@ -97,12 +98,15 @@ func DirectAnswerSurfacePrefetchEligibility(surface DirectAnswerSurface) (eligib
 	if surface.SchemaVersion == "" || surface.Version == "" {
 		return false, "direct_answer_surface_missing"
 	}
+
 	if surface.Version != DirectAnswerSurfaceVersion {
 		return false, "direct_answer_surface_stale: version=" + surface.Version + " expected=" + DirectAnswerSurfaceVersion
 	}
+
 	if !surfaceSupportsCapability(surface, DirectAnswerSurfaceCapSourceBodyPrefetch) {
 		return false, "direct_answer_surface_no_source_body_prefetch_capability"
 	}
+
 	return true, ""
 }
 
@@ -120,6 +124,7 @@ func surfaceSupportsCapability(surface DirectAnswerSurface, cap string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -196,20 +201,25 @@ func defaultDirectAnswerSurfaceTools() []string {
 	excluded := directAnswerSurfaceExcludedTools()
 	filtered := make([]string, 0, len(tools))
 	seen := make(map[string]struct{}, len(tools))
+
 	for _, tool := range tools {
 		tool = strings.TrimSpace(tool)
 		if tool == "" {
 			continue
 		}
+
 		if _, ex := excluded[tool]; ex {
 			continue
 		}
+
 		if _, ok := seen[tool]; ok {
 			continue
 		}
+
 		seen[tool] = struct{}{}
 		filtered = append(filtered, tool)
 	}
+
 	return filtered
 }
 
@@ -220,10 +230,12 @@ func directAnswerSurfaceExcludedTools() map[string]struct{} {
 	for _, name := range workspace.WorkspaceWriteToolNames() {
 		excluded[name] = struct{}{}
 	}
+
 	excluded["submit_plan"] = struct{}{}
 	excluded["note"] = struct{}{}
 	excluded["task_ledger"] = struct{}{}
 	excluded["shell"] = struct{}{}
+
 	return excluded
 }
 
@@ -234,6 +246,7 @@ func EmitDirectAnswerSurfaceEvent(emitFn func(event RunEvent), surface DirectAns
 	if emitFn == nil {
 		return
 	}
+
 	emitFn(marshalRunEvent("direct_answer_surface", map[string]any{
 		"schema_version":  surface.SchemaVersion,
 		"version":         surface.Version,
@@ -251,5 +264,6 @@ func DirectAnswerSurfaceForBriefTools(brief workerruntime.WorkerRuntimeBrief) []
 	if !ok {
 		return nil
 	}
+
 	return surface.ToolNames
 }

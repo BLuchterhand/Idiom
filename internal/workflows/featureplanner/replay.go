@@ -14,22 +14,28 @@ type ReplayBundle struct {
 func Replay(initial FeatureState, events []Event) (ReplayBundle, error) {
 	state := initial
 	seenIdempotency := map[string]bool{}
+
 	for _, event := range events {
 		if event.IdempotencyKey != "" {
 			if seenIdempotency[event.IdempotencyKey] {
 				continue
 			}
+
 			seenIdempotency[event.IdempotencyKey] = true
 		}
+
 		if err := validateReplayEvent(state, event); err != nil {
 			return ReplayBundle{}, err
 		}
+
 		if event.SessionID != "" && state.SessionID != "" && event.SessionID != state.SessionID {
 			return ReplayBundle{}, fmt.Errorf("feature event session_id %q does not match state session_id %q", event.SessionID, state.SessionID)
 		}
+
 		if event.FeatureRevisionAfter > 0 {
 			state.Revision = event.FeatureRevisionAfter
 		}
+
 		switch event.Type {
 		case "idiom.feature_planner.planner_question_answered":
 			if delta, ok := replayPlanAuthorityDelta(event); ok {
@@ -67,6 +73,7 @@ func Replay(initial FeatureState, events []Event) (ReplayBundle, error) {
 		case "idiom.feature_planner.planning_stuck":
 			state.Status = FeatureStatePlanningStuck
 		}
+
 		state.Status = firstNonEmpty(event.FeatureTo, state.Status)
 		for _, delta := range event.AtomDeltas {
 			switch delta.Op {
@@ -74,18 +81,23 @@ func Replay(initial FeatureState, events []Event) (ReplayBundle, error) {
 				markReplayAtomState(&state, delta.AtomID, delta.AtomTo)
 			}
 		}
+
 		applyActiveRunDeltas(&state, event)
 		applyLeaseDeltas(&state, event)
+
 		if state.Status == FeatureStateDispatching && allAtomsTerminal(state.Atoms) && len(state.ActiveRuns) == 0 {
 			state.Status = FeatureStateComplete
 		}
 	}
+
 	state.DerivedNextValidActions = DeriveNextValidActions(state)
+
 	return ReplayBundle{State: state, Events: events}, nil
 }
 
 func replayTDDEvidence(event Event) TDDPreExecutionEvidence {
 	fields := event.Fields
+
 	return TDDPreExecutionEvidence{
 		EventID:                    strings.TrimSpace(event.EventID),
 		AtomID:                     strings.TrimSpace(event.AtomID),
@@ -104,18 +116,23 @@ func replayPlanAuthorityDelta(event Event) (PlanAuthorityDelta, bool) {
 	if event.Fields == nil {
 		return PlanAuthorityDelta{}, false
 	}
+
 	value, ok := event.Fields["authority_delta"]
 	if !ok || value == nil {
 		return PlanAuthorityDelta{}, false
 	}
+
 	body, err := json.Marshal(value)
 	if err != nil {
 		return PlanAuthorityDelta{}, false
 	}
+
 	var delta PlanAuthorityDelta
+
 	if err := json.Unmarshal(body, &delta); err != nil {
 		return PlanAuthorityDelta{}, false
 	}
+
 	return delta, true
 }
 
@@ -123,16 +140,19 @@ func replayUpsertPlanAuthorityDelta(state *FeatureState, delta PlanAuthorityDelt
 	if state == nil {
 		return
 	}
+
 	if strings.TrimSpace(delta.QuestionID) == "" {
 		state.AuthorityDeltas = append(state.AuthorityDeltas, delta)
 		return
 	}
+
 	for i := range state.AuthorityDeltas {
 		if state.AuthorityDeltas[i].QuestionID == delta.QuestionID && state.AuthorityDeltas[i].Revision == delta.Revision {
 			state.AuthorityDeltas[i] = delta
 			return
 		}
 	}
+
 	state.AuthorityDeltas = append(state.AuthorityDeltas, delta)
 }
 
@@ -140,6 +160,7 @@ func replayStringField(value any) string {
 	if s, ok := value.(string); ok {
 		return strings.TrimSpace(s)
 	}
+
 	return ""
 }
 
@@ -149,11 +170,13 @@ func replayStringSlice(value any) []string {
 		return normalizedStringList(typed)
 	case []any:
 		var out []string
+
 		for _, item := range typed {
 			if s, ok := item.(string); ok {
 				out = append(out, s)
 			}
 		}
+
 		return normalizedStringList(out)
 	default:
 		return nil
@@ -164,58 +187,72 @@ func validateReplayEvent(state FeatureState, event Event) error {
 	if event.SchemaVersion != "" && event.SchemaVersion != FeatureEventSchemaVersion {
 		return fmt.Errorf("unsupported feature event schema %q", event.SchemaVersion)
 	}
+
 	if event.FeatureID != "" && state.FeatureID != "" && event.FeatureID != state.FeatureID {
 		return fmt.Errorf("feature event feature_id %q does not match state feature_id %q", event.FeatureID, state.FeatureID)
 	}
+
 	if event.FeatureRevisionBefore > 0 || event.FeatureRevisionAfter > 0 {
 		if event.FeatureRevisionBefore != state.Revision {
 			return ReplayError{Message: fmt.Sprintf("event %q expected feature_revision_before %d got folded revision %d", event.EventID, event.FeatureRevisionBefore, state.Revision)}
 		}
+
 		if event.FeatureRevisionAfter != event.FeatureRevisionBefore+1 {
 			return ReplayError{Message: fmt.Sprintf("event %q feature_revision_after must increment by one", event.EventID)}
 		}
 	}
+
 	if event.FeatureFrom != "" && event.FeatureFrom != state.Status {
 		return ReplayError{Message: fmt.Sprintf("event %q expected feature_from %q got folded state %q", event.EventID, event.FeatureFrom, state.Status)}
 	}
+
 	if len(event.AtomDeltas) > 0 && event.AtomID != "" {
 		first := event.AtomDeltas[0]
 		if first.AtomID != event.AtomID || first.AtomFrom != event.AtomFrom || first.AtomTo != event.AtomTo {
 			return ReplayError{Message: fmt.Sprintf("event %q singular atom fields do not match first atom delta", event.EventID)}
 		}
 	}
+
 	if event.AtomID != "" && len(event.AtomDeltas) == 0 {
 		current, found := replayAtomState(state, event.AtomID)
 		if !found {
 			return ReplayError{Message: fmt.Sprintf("event %q references unknown atom %q", event.EventID, event.AtomID)}
 		}
+
 		if event.AtomFrom != "" && current != event.AtomFrom {
 			return ReplayError{Message: fmt.Sprintf("event %q expected atom %q from %q got folded state %q", event.EventID, event.AtomID, event.AtomFrom, current)}
 		}
+
 		if event.AtomTo != "" && !isValidAtomState(event.AtomTo) {
 			return ReplayError{Message: fmt.Sprintf("event %q has invalid atom_to %q", event.EventID, event.AtomTo)}
 		}
 	}
+
 	for _, delta := range event.AtomDeltas {
 		if strings.TrimSpace(delta.AtomID) == "" {
 			return ReplayError{Message: fmt.Sprintf("event %q has atom delta with empty atom_id", event.EventID)}
 		}
+
 		current, found := replayAtomState(state, delta.AtomID)
 		if !found {
 			return ReplayError{Message: fmt.Sprintf("event %q references unknown atom %q", event.EventID, delta.AtomID)}
 		}
+
 		if delta.AtomFrom != "" && current != delta.AtomFrom {
 			return ReplayError{Message: fmt.Sprintf("event %q expected atom %q from %q got folded state %q", event.EventID, delta.AtomID, delta.AtomFrom, current)}
 		}
+
 		if delta.AtomTo != "" && !isValidAtomState(delta.AtomTo) {
 			return ReplayError{Message: fmt.Sprintf("event %q has invalid atom_to %q", event.EventID, delta.AtomTo)}
 		}
 	}
+
 	if event.Type == "idiom.feature_planner.tdd_pre_execution_checked" {
 		if err := validateReplayTDDEvidence(replayTDDEvidence(event)); err != nil {
 			return ReplayError{Message: fmt.Sprintf("event %q invalid pre-execution TDD evidence: %v", event.EventID, err)}
 		}
 	}
+
 	return nil
 }
 
@@ -225,41 +262,53 @@ func replayAtomState(state FeatureState, atomID string) (string, bool) {
 			return atom.State, true
 		}
 	}
+
 	return "", false
 }
 
 func validateReplayTDDEvidence(evidence TDDPreExecutionEvidence) error {
 	var missing []string
+
 	if strings.TrimSpace(evidence.EventID) == "" {
 		missing = append(missing, "event_id")
 	}
+
 	if strings.TrimSpace(evidence.AtomID) == "" {
 		missing = append(missing, "atom_id")
 	}
+
 	if len(evidence.ObligationRefs) == 0 {
 		missing = append(missing, "obligation_refs")
 	}
+
 	if len(evidence.Commands) == 0 {
 		missing = append(missing, "commands")
 	}
+
 	if len(evidence.TestArtifactPaths) == 0 {
 		missing = append(missing, "test_artifact_paths")
 	}
+
 	if strings.TrimSpace(evidence.ExpectedPreExecutionResult) == "" {
 		missing = append(missing, "expected_pre_execution_result")
 	}
+
 	if strings.TrimSpace(evidence.CoverageGateEventID) == "" {
 		missing = append(missing, "coverage_gate_event_id")
 	}
+
 	if strings.TrimSpace(evidence.SnapshotID) == "" {
 		missing = append(missing, "snapshot_id")
 	}
+
 	if strings.TrimSpace(evidence.SnapshotDigest) == "" {
 		missing = append(missing, "snapshot_digest")
 	}
+
 	if len(missing) > 0 {
 		return fmt.Errorf("missing %s", strings.Join(missing, ", "))
 	}
+
 	return nil
 }
 
@@ -267,12 +316,15 @@ func markReplayAtomState(state *FeatureState, atomID string, next string) {
 	if state == nil || atomID == "" {
 		return
 	}
+
 	for i := range state.Atoms {
 		if state.Atoms[i].ID == atomID {
 			if next == "" {
 				return
 			}
+
 			state.Atoms[i].State = next
+
 			return
 		}
 	}
@@ -349,21 +401,27 @@ func updateActiveRun(state *FeatureState, delta ActiveRunDelta) {
 		if state.ActiveRuns[i].AtomID != delta.AtomID {
 			continue
 		}
+
 		if delta.LaneSessionID != "" && state.ActiveRuns[i].LaneSessionID != "" && state.ActiveRuns[i].LaneSessionID != delta.LaneSessionID {
 			continue
 		}
+
 		if delta.AfterState != "" {
 			state.ActiveRuns[i].State = delta.AfterState
 		}
+
 		if delta.AfterProgressRevision != 0 {
 			state.ActiveRuns[i].ProgressRevision = delta.AfterProgressRevision
 		}
+
 		if delta.AfterProgressSHA256 != "" {
 			state.ActiveRuns[i].ProgressSHA256 = delta.AfterProgressSHA256
 		}
+
 		if delta.HeartbeatAt != "" {
 			state.ActiveRuns[i].HeartbeatAt = delta.HeartbeatAt
 		}
+
 		return
 	}
 }
@@ -374,5 +432,6 @@ func firstNonEmpty(values ...string) string {
 			return value
 		}
 	}
+
 	return ""
 }

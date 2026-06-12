@@ -20,9 +20,6 @@ var briefPreloadFS embed.FS
 //go:embed lanes
 var lanesFS embed.FS
 
-//go:embed profiles/*.md
-var profilesFS embed.FS
-
 //go:embed skills/*/SKILL.md
 var skillsFS embed.FS
 
@@ -41,6 +38,7 @@ func BriefPreload(kind string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	return string(body), nil
 }
 
@@ -57,6 +55,7 @@ func LanePrompt(mode, filename string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	return string(body), nil
 }
 
@@ -65,6 +64,7 @@ func LaneRule(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	return string(body), nil
 }
 
@@ -73,22 +73,7 @@ func MustRefineTemplate(name string) string {
 	if err != nil {
 		panic(fmt.Sprintf("missing embedded refine template %s: %v", name, err))
 	}
-	return body
-}
 
-func Profile(name string) (string, error) {
-	body, err := profilesFS.ReadFile("profiles/" + name)
-	if err != nil {
-		return "", err
-	}
-	return string(body), nil
-}
-
-func MustProfile(name string) string {
-	body, err := Profile(name)
-	if err != nil {
-		panic(fmt.Sprintf("missing embedded profile %s: %v", name, err))
-	}
 	return body
 }
 
@@ -97,6 +82,7 @@ func Skill(name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return body, nil
 }
 
@@ -105,17 +91,23 @@ func SkillNames() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read embedded skills/: %w", err)
 	}
+
 	var names []string
+
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
+
 		if _, err := fs.Stat(skillsFS, "skills/"+e.Name()+"/SKILL.md"); err != nil {
 			continue
 		}
+
 		names = append(names, e.Name())
 	}
+
 	slices.Sort(names)
+
 	return names, nil
 }
 
@@ -124,17 +116,23 @@ func markdownBasenames(fsys fs.ReadDirFS, dir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	var names []string
+
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
+
 		name := strings.TrimSuffix(e.Name(), ".md")
 		if name == e.Name() {
 			continue
 		}
+
 		names = append(names, name)
 	}
+
 	slices.Sort(names)
+
 	return names, nil
 }

@@ -34,15 +34,19 @@ func TestRunBackendListPrintsProfilesFromProjectRoot(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir .idiom: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(sampleBackendsForCLI), 0o644); err != nil {
 		t.Fatalf("write backends.json: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"list", "--project-root", root}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("backend list expected exit 0, got %d (stderr=%s)", code, stderr.String())
 	}
+
 	out := stdout.String()
 	for _, marker := range []string{
 		`profile "qwen-pair"`,
@@ -62,16 +66,20 @@ func TestRunBackendListUsesExecutorRoleResolver(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir .idiom: %v", err)
 	}
+
 	body := `{"profiles":{"single":{"models":[{"alias":"solo-model","binary":"llama-server","port":47780}]}}}`
 	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write backends.json: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"list", "--project-root", root}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("backend list expected exit 0, got %d (stderr=%s)", code, stderr.String())
 	}
+
 	want := `coder_alias="solo-model"`
 	if !strings.Contains(stdout.String(), want) {
 		t.Fatalf("backend list must use shared executor resolver; want %q in:\n%s", want, stdout.String())
@@ -83,23 +91,29 @@ func TestRunBackendListKeepsProxyLineShapeForDefaultExecutor(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir .idiom: %v", err)
 	}
+
 	body := `{"profiles":{"pair":{"proxy":{"listen":47770,"default_alias":"base","default_executor":"exec"},"models":[{"alias":"base"},{"alias":"exec"}]}}}`
 	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write backends.json: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"list", "--project-root", root}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("backend list expected exit 0, got %d (stderr=%s)", code, stderr.String())
 	}
+
 	out := stdout.String()
 	if !strings.Contains(out, `proxy listen=47770 default="base" default_coder=""`) {
 		t.Fatalf("backend list must keep legacy proxy line shape, got:\n%s", out)
 	}
+
 	if strings.Contains(out, "default_executor") {
 		t.Fatalf("backend list must not emit default_executor in compatibility output, got:\n%s", out)
 	}
+
 	if !strings.Contains(out, `coder_alias="exec"`) {
 		t.Fatalf("backend list must still resolve default_executor through coder_alias compatibility, got:\n%s", out)
 	}
@@ -112,11 +126,15 @@ func TestRunBackendListKeepsProxyLineShapeForDefaultExecutor(t *testing.T) {
 // special-case list — which Phase 4/5 review flagged as a UX bug.
 func TestRunBackendListMissingFileExitsOne(t *testing.T) {
 	root := t.TempDir()
+
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"list", "--project-root", root}, &stdout, &stderr)
+
 	if code != 1 {
 		t.Fatalf("missing backends.json must exit 1 (parity with start/stop/status), got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "no backends.json at") {
 		t.Fatalf("stderr should explain the missing file; got: %s", stderr.String())
 	}
@@ -130,10 +148,13 @@ func TestRunBackendListMissingFileExitsOne(t *testing.T) {
 // flag won.
 func TestRunBackendListRejectsBothFileAndProjectRoot(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"list", "--file", "/x.json", "--project-root", "/y"}, &stdout, &stderr)
+
 	if code != 2 {
 		t.Fatalf("--file + --project-root must exit 2, got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "not both") {
 		t.Fatalf("error should explain the conflict; got: %s", stderr.String())
 	}
@@ -148,14 +169,19 @@ func TestRunBackendListMalformedFileExitsOne(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(`{`), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"list", "--project-root", root}, &stdout, &stderr)
+
 	if code != 1 {
 		t.Fatalf("malformed backends.json must exit 1, got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "backends:") {
 		t.Fatalf("error must be tagged with package name; got: %s", stderr.String())
 	}
@@ -167,10 +193,13 @@ func TestRunBackendListMalformedFileExitsOne(t *testing.T) {
 // the unknown-subcommand probe uses a clearly-bogus name.
 func TestRunBackendUnknownSubcommandExitsTwo(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"definitely-not-a-subcommand"}, &stdout, &stderr)
+
 	if code != 2 {
 		t.Fatalf("unknown subcommand must exit 2, got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "unknown subcommand") {
 		t.Fatalf("error must name the subcommand as unknown; got: %s", stderr.String())
 	}
@@ -184,14 +213,19 @@ func TestRunBackendUnknownSubcommandExitsTwo(t *testing.T) {
 func TestRunBackendListExplicitFileFlag(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "custom-backends.json")
+
 	if err := os.WriteFile(path, []byte(sampleBackendsForCLI), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"list", "--file", path}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("--file form expected exit 0, got %d (stderr=%s)", code, stderr.String())
 	}
+
 	if !strings.Contains(stdout.String(), `profile "qwen-pair"`) {
 		t.Fatalf("expected profile header in output: %s", stdout.String())
 	}
@@ -204,16 +238,20 @@ func TestRunBackendListExplicitFileFlag(t *testing.T) {
 // across test cases.
 func withStubbedBackendOps(t *testing.T, launch func(backends.Profile, backends.LauncherOptions) []backends.LaunchResult, stop func(backends.Profile, backends.StopOptions) []backends.StopResult, status func(backends.Profile, backends.StopOptions) []backends.StatusResult) {
 	t.Helper()
+
 	origLaunch, origStop, origStatus := backendLaunch, backendStop, backendStatus
 	if launch != nil {
 		backendLaunch = launch
 	}
+
 	if stop != nil {
 		backendStop = stop
 	}
+
 	if status != nil {
 		backendStatus = status
 	}
+
 	t.Cleanup(func() {
 		backendLaunch, backendStop, backendStatus = origLaunch, origStop, origStatus
 	})
@@ -226,8 +264,11 @@ func withStubbedBackendOps(t *testing.T, launch func(backends.Profile, backends.
 // DefaultAlias / Routes after the call.
 func withStubbedProxyServe(t *testing.T, serve func(context.Context, backends.ProxyConfig, backends.ProxyOptions, func(string)) error) {
 	t.Helper()
+
 	orig := backendServeProxy
+
 	backendServeProxy = serve
+
 	t.Cleanup(func() { backendServeProxy = orig })
 }
 
@@ -237,9 +278,11 @@ func withStubbedProxyServe(t *testing.T, serve func(context.Context, backends.Pr
 // the stub schema in one spot.
 func writeBackendsForRoot(t *testing.T, root, body string) {
 	t.Helper()
+
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -260,11 +303,15 @@ func TestRunBackendStartReportsReadyForEachModel(t *testing.T) {
 				{Alias: "qwen3-coder-30b", PID: 1002, Port: 47781, Ready: true, LogPath: "/tmp/b.log"},
 			}
 		}, nil, nil)
+
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"start", "--project-root", root}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("clean start must exit 0, got %d (stderr=%s)", code, stderr.String())
 	}
+
 	out := stdout.String()
 	for _, want := range []string{"READY qwen3.6-35b", "READY qwen3-coder-30b", "pid=1001", "pid=1002"} {
 		if !strings.Contains(out, want) {
@@ -287,11 +334,15 @@ func TestRunBackendStartFailsWhenAnyModelTimesOut(t *testing.T) {
 				{Alias: "qwen3-coder-30b", PID: 1002, Port: 47781, Ready: false, LogPath: "/tmp/b.log"},
 			}
 		}, nil, nil)
+
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"start", "--project-root", root}, &stdout, &stderr)
+
 	if code != 1 {
 		t.Fatalf("partial failure must exit 1, got %d", code)
 	}
+
 	if !strings.Contains(stdout.String(), "TIMEOUT qwen3-coder-30b") {
 		t.Fatalf("output should explain the timing-out backend: %s", stdout.String())
 	}
@@ -312,11 +363,15 @@ func TestRunBackendStartTreatsAlreadyRunningAsNonFailure(t *testing.T) {
 				{Alias: "qwen3-coder-30b", Port: 47781, Ready: true, PID: 999, LogPath: "/tmp/x.log"},
 			}
 		}, nil, nil)
+
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"start", "--project-root", root}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("already-running must not fail; got code=%d stdout=%s", code, stdout.String())
 	}
+
 	if !strings.Contains(stdout.String(), "NOTE qwen3.6-35b") {
 		t.Fatalf("already-running should report NOTE: %s", stdout.String())
 	}
@@ -329,7 +384,9 @@ func TestRunBackendStartTreatsAlreadyRunningAsNonFailure(t *testing.T) {
 // flag-parse errors at exit 2).
 func TestRunBackendStartMissingBackendsJSONExitsOne(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"start", "--project-root", t.TempDir()}, &stdout, &stderr)
+
 	if code != 1 {
 		t.Fatalf("missing backends.json must exit 1, got %d", code)
 	}
@@ -343,11 +400,15 @@ func TestRunBackendStartMultiProfileWithoutFlagExitsTwo(t *testing.T) {
 	root := t.TempDir()
 	body := `{"profiles": {"a": {"models": []}, "b": {"models": []}}}`
 	writeBackendsForRoot(t, root, body)
+
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"start", "--project-root", root}, &stdout, &stderr)
+
 	if code != 2 {
 		t.Fatalf("multi-profile without --profile must exit 2, got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "multiple profiles") {
 		t.Fatalf("error should explain ambiguity: %s", stderr.String())
 	}
@@ -363,20 +424,26 @@ func TestRunBackendStartUsesDefaultProfileWhenConfigured(t *testing.T) {
 		}
 	}`
 	writeBackendsForRoot(t, root, body)
+
 	var got []string
+
 	withStubbedBackendOps(t,
 		func(p backends.Profile, _ backends.LauncherOptions) []backends.LaunchResult {
 			for _, m := range p.Models {
 				got = append(got, m.Alias)
 			}
+
 			return []backends.LaunchResult{{Alias: "qwen3.6-35b", PID: 1001, Port: 47780, Ready: true}}
 		}, nil, nil)
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"start", "--project-root", root}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("default-profile start must exit 0, got %d stderr=%s", code, stderr.String())
 	}
+
 	if len(got) != 1 || got[0] != "qwen3.6-35b" {
 		t.Fatalf("launched aliases = %v, want default qwen-pair only", got)
 	}
@@ -395,11 +462,15 @@ func TestRunBackendStopReportsResultsPerModel(t *testing.T) {
 				{Alias: "qwen3-coder-30b", Port: 47781, PID: 0, Stopped: true},
 			}
 		}, nil)
+
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"stop", "--project-root", root}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("clean stop must exit 0, got %d (stderr=%s)", code, stderr.String())
 	}
+
 	out := stdout.String()
 	if !strings.Contains(out, "STOPPED qwen3.6-35b") || !strings.Contains(out, "FREE qwen3-coder-30b") {
 		t.Fatalf("output should distinguish stopped vs already-free: %s", out)
@@ -420,15 +491,20 @@ func TestRunBackendStatusFormatsUpAndDownLines(t *testing.T) {
 				{Alias: "qwen3-coder-30b", Port: 47781, Up: false},
 			}
 		})
+
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"status", "--project-root", root}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("status must exit 0, got %d (stderr=%s)", code, stderr.String())
 	}
+
 	out := stdout.String()
 	if !strings.Contains(out, "UP   qwen3.6-35b") || !strings.Contains(out, "pid=5555") {
 		t.Fatalf("UP line missing or malformed: %s", out)
 	}
+
 	if !strings.Contains(out, "DOWN qwen3-coder-30b") {
 		t.Fatalf("DOWN line missing: %s", out)
 	}
@@ -460,14 +536,18 @@ type proxyCapturedConfig struct {
 
 func captureProxyServe(t *testing.T) *proxyCapturedConfig {
 	cap := &proxyCapturedConfig{}
+
 	withStubbedProxyServe(t, func(_ context.Context, cfg backends.ProxyConfig, _ backends.ProxyOptions, ready func(string)) error {
 		cap.cfg = cfg
 		cap.called = true
+
 		if ready != nil {
 			ready("127.0.0.1:fake")
 		}
+
 		return nil
 	})
+
 	return cap
 }
 
@@ -489,19 +569,25 @@ func TestRunBackendProxyServesProfileWithReadyLine(t *testing.T) {
   }
 }`
 	writeBackendsForRoot(t, root, body)
+
 	cap := captureProxyServe(t)
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"proxy", "--project-root", root}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("proxy must exit 0 on clean shutdown, got %d (stderr=%s)", code, stderr.String())
 	}
+
 	if !cap.called {
 		t.Fatal("ServeProxy stub was not invoked")
 	}
+
 	if cap.cfg.Listen != 47680 || cap.cfg.DefaultAlias != "qwen3.6-35b" || len(cap.cfg.Routes) != 2 {
 		t.Fatalf("resolved ProxyConfig wrong: %+v", cap.cfg)
 	}
+
 	if !strings.Contains(stdout.String(), "LISTEN 127.0.0.1:fake") || !strings.Contains(stdout.String(), "STOPPED proxy") {
 		t.Fatalf("stdout missing LISTEN/STOPPED markers: %s", stdout.String())
 	}
@@ -514,13 +600,17 @@ func TestRunBackendProxyServesProfileWithReadyLine(t *testing.T) {
 func TestRunBackendProxyListenFlagOverridesSchema(t *testing.T) {
 	root := t.TempDir()
 	writeBackendsForRoot(t, root, `{"profiles":{"p":{"models":[{"alias":"a","binary":"b","model_path":"/m","port":1000}],"proxy":{"listen":47680,"default_alias":"a"}}}}`)
+
 	cap := captureProxyServe(t)
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"proxy", "--project-root", root, "--listen", "55555"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("expected 0, got %d (stderr=%s)", code, stderr.String())
 	}
+
 	if cap.cfg.Listen != 55555 {
 		t.Fatalf("--listen override should win: got %d", cap.cfg.Listen)
 	}
@@ -534,11 +624,15 @@ func TestRunBackendProxyDefaultFlagOverridesSchema(t *testing.T) {
 	writeBackendsForRoot(t, root, `{"profiles":{"p":{"models":[{"alias":"a","binary":"b","model_path":"/m","port":1},{"alias":"c","binary":"b","model_path":"/n","port":2}],"proxy":{"listen":1234,"default_alias":"a"}}}}`)
 
 	cap := captureProxyServe(t)
+
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"proxy", "--project-root", root, "--default", "c"}, &stdout, &stderr)
+
 	if code != 0 {
 		t.Fatalf("expected 0, got %d (stderr=%s)", code, stderr.String())
 	}
+
 	if cap.cfg.DefaultAlias != "c" {
 		t.Fatalf("--default override should win: got %q", cap.cfg.DefaultAlias)
 	}
@@ -546,14 +640,17 @@ func TestRunBackendProxyDefaultFlagOverridesSchema(t *testing.T) {
 	// Bogus override path — must reject before serving.
 	withStubbedProxyServe(t, func(context.Context, backends.ProxyConfig, backends.ProxyOptions, func(string)) error {
 		t.Fatal("ServeProxy must not be called with a bogus --default")
+
 		return nil
 	})
 	stdout.Reset()
 	stderr.Reset()
+
 	code = Run([]string{"proxy", "--project-root", root, "--default", "no-such"}, &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("bogus --default must exit 2, got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "not a registered alias") {
 		t.Fatalf("error must explain mismatch: %s", stderr.String())
 	}
@@ -567,14 +664,18 @@ func TestRunBackendProxyMissingListenExitsTwo(t *testing.T) {
 	writeBackendsForRoot(t, root, `{"profiles":{"p":{"models":[{"alias":"a","binary":"b","model_path":"/m","port":1}]}}}`)
 	withStubbedProxyServe(t, func(context.Context, backends.ProxyConfig, backends.ProxyOptions, func(string)) error {
 		t.Fatal("ServeProxy must not be called when listen is unconfigured")
+
 		return nil
 	})
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"proxy", "--project-root", root}, &stdout, &stderr)
+
 	if code != 2 {
 		t.Fatalf("missing listen must exit 2, got %d (stderr=%s)", code, stderr.String())
 	}
+
 	if !strings.Contains(stderr.String(), "proxy.listen") {
 		t.Fatalf("error must point at proxy.listen: %s", stderr.String())
 	}
@@ -587,10 +688,14 @@ func TestRunBackendProxyMissingListenExitsTwo(t *testing.T) {
 func TestRunBackendProxyMissingBackendsJSONExitsOne(t *testing.T) {
 	withStubbedProxyServe(t, func(context.Context, backends.ProxyConfig, backends.ProxyOptions, func(string)) error {
 		t.Fatal("ServeProxy must not be called when backends.json is missing")
+
 		return nil
 	})
+
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"proxy", "--project-root", t.TempDir()}, &stdout, &stderr)
+
 	if code != 1 {
 		t.Fatalf("missing backends.json must exit 1, got %d", code)
 	}
@@ -605,14 +710,18 @@ func TestRunBackendProxyBuildConfigFailureExitsOne(t *testing.T) {
 	writeBackendsForRoot(t, root, `{"profiles":{"p":{"models":[{"alias":"a","binary":"b","port":1}],"proxy":{"listen":1}}}}`)
 	withStubbedProxyServe(t, func(context.Context, backends.ProxyConfig, backends.ProxyOptions, func(string)) error {
 		t.Fatal("ServeProxy must not be called when BuildProxyConfig fails")
+
 		return nil
 	})
 
 	var stdout, stderr bytes.Buffer
+
 	code := Run([]string{"proxy", "--project-root", root}, &stdout, &stderr)
+
 	if code != 1 {
 		t.Fatalf("BuildProxyConfig failure must exit 1, got %d", code)
 	}
+
 	if !strings.Contains(stderr.String(), "model_path") {
 		t.Fatalf("error must explain the validation failure: %s", stderr.String())
 	}

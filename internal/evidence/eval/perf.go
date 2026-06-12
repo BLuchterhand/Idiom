@@ -177,6 +177,7 @@ func AnalyzeLog(path string) (PerfReport, error) {
 	if err != nil {
 		return PerfReport{}, err
 	}
+
 	return analyzeRecords(path, records), nil
 }
 
@@ -202,23 +203,28 @@ func analyzeRecords(path string, records []Record) PerfReport {
 	}
 
 	var steps []toolStep
+
 	agentBehavior := false
 	countedStepKeys := make(map[string]struct{})
 	// Walk records once, collecting what every pattern needs.
 	for _, rec := range records {
 		ingestLocalOpsTelemetry(&rep, rec.Type, rec.Data)
+
 		switch rec.Type {
 		case "session_start":
 			if v, ok := rec.Data["workspace_root"].(string); ok && v != "" {
 				_ = v
 			}
+
 		// The log file name is the session id surrogate.
 		case "message":
 			role, _ := rec.Data["role"].(string)
 			content, _ := rec.Data["content"].(string)
+
 			if strings.TrimSpace(role) != "" {
 				agentBehavior = true
 			}
+
 			switch role {
 			case "user":
 				if rep.UserPrompt == "" {
@@ -233,14 +239,17 @@ func analyzeRecords(path string, records []Record) PerfReport {
 		case "run_event":
 			role, _ := rec.Data["role"].(string)
 			content, _ := rec.Data["content"].(string)
+
 			if strings.TrimSpace(role) != "" {
 				agentBehavior = true
 			}
+
 			if role == "budget_ledger" {
 				parseBudgetLedgerIntoPerfReport(content, &rep)
 			}
 		case "user_turn":
 			agentBehavior = true
+
 			if rep.UserPrompt == "" {
 				if prompt, ok := rec.Data["prompt"].(string); ok {
 					rep.UserPrompt = firstLine(prompt)
@@ -248,30 +257,37 @@ func analyzeRecords(path string, records []Record) PerfReport {
 			}
 		case "assistant_turn":
 			agentBehavior = true
+
 			if chars := intField(rec.Data, "chars"); chars > 0 {
 				rep.FinalAnswerChars = chars
 			}
 		case "model_call":
 			agentBehavior = true
 			rep.ModelCalls++
+
 			rep.PromptTokens += intField(rec.Data, "prompt_tokens")
 			rep.CompletionTokens += intField(rec.Data, "completion_tokens")
 		case "turn_summary":
 			agentBehavior = true
+
 			parseSummaryRecordIntoPerfReport(rec.Data, &rep)
 		case "session_summary":
 			agentBehavior = true
+
 			parseSessionSummaryIntoPerfReport(rec.Data, &rep)
 		case "tool_request":
 			tool, _ := rec.Data["tool"].(string)
 			action, _ := rec.Data["action"].(string)
 			raw, _ := rec.Data["raw"].(string)
+
 			if key := perfToolStepKey(rec.Data); key != "" {
 				if _, ok := countedStepKeys[key]; ok {
 					continue
 				}
+
 				countedStepKeys[key] = struct{}{}
 			}
+
 			steps = append(steps, toolStep{
 				index:   len(steps) + 1,
 				tool:    tool,
@@ -284,6 +300,7 @@ func analyzeRecords(path string, records []Record) PerfReport {
 			tool, _ := rec.Data["tool"].(string)
 			errMsg, _ := rec.Data["error"].(string)
 			summary, _ := rec.Data["summary"].(string)
+
 			if len(steps) > 0 && steps[len(steps)-1].tool == tool && !steps[len(steps)-1].hasError && !steps[len(steps)-1].isReject {
 				idx := len(steps) - 1
 				if errMsg != "" {
@@ -308,8 +325,10 @@ func analyzeRecords(path string, records []Record) PerfReport {
 					if _, ok := countedStepKeys[key]; ok {
 						continue
 					}
+
 					countedStepKeys[key] = struct{}{}
 				}
+
 				step := toolStep{
 					index:    len(steps) + 1,
 					tool:     tool,
@@ -320,13 +339,16 @@ func analyzeRecords(path string, records []Record) PerfReport {
 					errText:  errMsg,
 				}
 				lowered := strings.ToLower(summary)
+
 				if strings.Contains(lowered, "rejected") || strings.Contains(lowered, "retry blocked") || strings.Contains(lowered, "preempted") {
 					step.isReject = true
 					step.rejectWhy = summary
 					rep.RejectedActions++
 				}
+
 				steps = append(steps, step)
 			}
+
 			countTool(&rep.Tools, tool, summary)
 			ingestContextTelemetry(&rep, rec.Data)
 			ingestFeedbackTelemetry(&rep, rec.Data)
@@ -334,9 +356,11 @@ func analyzeRecords(path string, records []Record) PerfReport {
 			if rep.DurationMillis == 0 {
 				rep.DurationMillis = intField(rec.Data, "elapsed_ms")
 			}
+
 			if rep.ToolResults == 0 {
 				rep.ToolResults = intField(rec.Data, "tool_results")
 			}
+
 			if rep.FinalAnswerChars == 0 {
 				rep.FinalAnswerChars = intField(rec.Data, "answer_chars")
 			}
@@ -373,6 +397,7 @@ func analyzeRecords(path string, records []Record) PerfReport {
 	for _, ap := range rep.AntiPatterns {
 		score += ap.Count
 	}
+
 	rep.AntiPatternScore = score
 
 	// If a budget_ledger record wasn't present, infer from messages.
@@ -388,6 +413,7 @@ func analyzeRecords(path string, records []Record) PerfReport {
 			}
 		}
 	}
+
 	rep.PromptRedacted = rep.UserPrompt != ""
 
 	return rep
@@ -396,9 +422,11 @@ func analyzeRecords(path string, records []Record) PerfReport {
 func perfToolStepKey(data map[string]any) string {
 	tool := strings.TrimSpace(stringField(data, "tool"))
 	step := intField(data, "step")
+
 	if tool == "" || step <= 0 {
 		return ""
 	}
+
 	return fmt.Sprintf("step:%d:%s", step, tool)
 }
 
@@ -407,6 +435,7 @@ func ingestContextTelemetry(rep *PerfReport, data map[string]any) {
 	if !strings.HasPrefix(tool, "context_") && stringField(data, "context_store_kind") == "" && stringField(data, "context_active_backend") == "" {
 		return
 	}
+
 	if rep.Context == nil {
 		rep.Context = &ContextStats{
 			ActiveBackendCounts:         make(map[string]int),
@@ -422,11 +451,14 @@ func ingestContextTelemetry(rep *PerfReport, data map[string]any) {
 			StaleUseStateCounts:         make(map[string]int),
 		}
 	}
+
 	ctx := rep.Context
 	ctx.ToolResults++
+
 	if boolField(data, "context_indexed") {
 		ctx.IndexedResults++
 	}
+
 	if _, ok := data["context_fresh"]; ok {
 		if boolField(data, "context_fresh") {
 			ctx.FreshResults++
@@ -434,23 +466,30 @@ func ingestContextTelemetry(rep *PerfReport, data map[string]any) {
 			ctx.StaleResults++
 		}
 	}
+
 	if intField(data, "context_incompatible_backends") > 0 {
 		ctx.IncompatibleBackendResults++
 	}
+
 	if _, ok := data["context_trace_success"]; ok && !boolField(data, "context_trace_success") {
 		ctx.TraceFailures++
 	}
+
 	ctx.MaxFilesIndexed = max(ctx.MaxFilesIndexed, intField(data, "context_files_indexed"))
 	ctx.MaxSymbolsIndexed = max(ctx.MaxSymbolsIndexed, intField(data, "context_symbols_indexed"))
 	ctx.MaxEdgesIndexed = max(ctx.MaxEdgesIndexed, intField(data, "context_edges_indexed"))
 	ctx.MaxStaleSymbols = max(ctx.MaxStaleSymbols, intField(data, "context_stale_symbols"))
+
 	ctx.RefreshedStaleSymbols += intField(data, "context_refreshed_stale_symbols")
 	ctx.StaleSymbolSamples += intField(data, "context_stale_symbol_samples")
+
 	if boolField(data, "context_incremental") {
 		ctx.IncrementalRefreshes++
 	}
+
 	ctx.ReusedIndexedFiles += intField(data, "context_reused_indexed_files")
 	ctx.DependencyRefreshFiles += intField(data, "context_dependency_refresh_files")
+
 	if _, ok := data["context_auto_refresh_attempted"]; ok {
 		if boolField(data, "context_auto_refresh_attempted") {
 			ctx.AutoRefreshAttempts++
@@ -458,47 +497,62 @@ func ingestContextTelemetry(rep *PerfReport, data map[string]any) {
 			ctx.AutoRefreshSkips++
 		}
 	}
+
 	if stringField(data, "context_auto_refresh_error") != "" {
 		ctx.AutoRefreshFailures++
 	}
+
 	if boolField(data, "context_auto_refresh_fresh_after") {
 		ctx.AutoRefreshFreshAfter++
 	}
+
 	ctx.AutoRefreshFilesIndexed += intField(data, "context_auto_refresh_files_indexed")
 	ctx.AutoRefreshRefreshedFiles += intField(data, "context_auto_refresh_refreshed_files")
+
 	if stringField(data, "context_freshness_policy") != "" {
 		incrementStringCount(ctx.FreshnessPolicyCounts, stringField(data, "context_freshness_policy"))
+
 		if stringField(data, "context_freshness_policy") == "read_through" {
 			ctx.FreshnessReadThroughResults++
 		}
 	}
+
 	if boolField(data, "context_freshness_blocked") {
 		ctx.FreshnessBlockers++
 	}
+
 	if boolField(data, "context_freshness_budget_exceeded") {
 		ctx.FreshnessBudgetExceeded++
 	}
+
 	if boolField(data, "context_freshness_refresh_attempted") {
 		ctx.FreshnessRefreshAttempts++
 	}
+
 	if stringField(data, "context_freshness_refresh_error") != "" {
 		ctx.FreshnessRefreshFailures++
 	}
+
 	ctx.FreshnessRefreshFilesIndexed += intField(data, "context_freshness_refresh_files_indexed")
 	incrementStringCount(ctx.FreshnessReasonCounts, stringField(data, "context_freshness_reason"))
 	incrementStringCount(ctx.StaleUseStateCounts, stringField(data, "context_stale_evidence_state"))
+
 	if boolField(data, "context_stale_use_blocked") {
 		ctx.StaleUseBlocked++
 	}
+
 	if boolField(data, "context_stale_use_reported") {
 		ctx.StaleUseReported++
 	}
+
 	if boolField(data, "context_stale_use_allowed") {
 		ctx.StaleUseAllowed++
 	}
+
 	if boolField(data, "context_stale_use_fresh") {
 		ctx.StaleUseFresh++
 	}
+
 	ctx.NodesReturned += intField(data, "context_nodes")
 	ctx.EdgesReturned += intField(data, "context_edges")
 	ctx.SummaryNodesReturned += intField(data, "context_summary_nodes")
@@ -512,23 +566,29 @@ func ingestContextTelemetry(rep *PerfReport, data map[string]any) {
 	ctx.CollectorCoverage += intField(data, "context_collector_coverage")
 	ctx.CollectorUnavailable += intField(data, "context_collector_unavailable")
 	ctx.CollectorWarnings += intField(data, "context_collector_warnings")
+
 	if boolField(data, "context_collector_version_mismatch") {
 		ctx.CollectorVersionMismatches++
 	}
+
 	ctx.EnrichmentDiagnostics += intField(data, "context_enrichment_diagnostics")
 	ctx.NormalizedRelationshipEdges += intField(data, "context_normalized_relationship_edges")
 	incrementStringCount(ctx.ActiveBackendCounts, stringField(data, "context_active_backend"))
 	incrementStringCount(ctx.ActiveBackendStatusCounts, stringField(data, "context_active_backend_status"))
 	incrementStringCount(ctx.StoreKindCounts, stringField(data, "context_store_kind"))
+
 	for _, status := range stringSliceField(data, "context_storage_backends") {
 		incrementStringCount(ctx.StorageBackendStatusCounts, status)
 	}
+
 	for _, name := range stringSliceField(data, "context_collector_report_names") {
 		incrementStringCount(ctx.CollectorReportNameCounts, name)
 	}
+
 	for _, name := range stringSliceField(data, "context_collector_coverage_names") {
 		incrementStringCount(ctx.CollectorCoverageNameCounts, name)
 	}
+
 	incrementStringCount(ctx.AutoRefreshReasonCounts, stringField(data, "context_auto_refresh_reason"))
 	incrementStringCount(ctx.AutoRefreshSkippedCounts, stringField(data, "context_auto_refresh_skipped_reason"))
 }
@@ -536,31 +596,40 @@ func ingestContextTelemetry(rep *PerfReport, data map[string]any) {
 func ingestFeedbackTelemetry(rep *PerfReport, data map[string]any) {
 	tool := stringField(data, "tool")
 	category := stringField(data, "feedback_category")
+
 	if tool != "harness_feedback" && tool != "idiom_feedback" && category == "" {
 		return
 	}
+
 	if rep.Feedback == nil {
 		rep.Feedback = newFeedbackStats()
 	}
+
 	feedback := rep.Feedback
 	feedback.Total++
+
 	feedback.EvidenceItems += intField(data, "feedback_evidence_count")
+
 	confidence := stringField(data, "feedback_confidence")
 	severity := stringField(data, "feedback_severity")
+
 	incrementStringCount(feedback.ByCategory, category)
 	incrementStringCount(feedback.ByComponent, stringField(data, "feedback_component"))
 	incrementStringCount(feedback.ByConfidence, confidence)
 	incrementStringCount(feedback.BySeverity, severity)
+
 	if feedbackCategoryIsPlanningQuality(category) {
 		feedback.PlanningQualityTotal++
 		incrementStringCount(feedback.ByPlanningCategory, category)
 	}
+
 	switch confidence {
 	case "verified":
 		feedback.Verified++
 	case "inferred":
 		feedback.Inferred++
 	}
+
 	switch severity {
 	case "high":
 		feedback.HighSeverity++
@@ -575,61 +644,82 @@ func ingestLocalOpsTelemetry(rep *PerfReport, eventType string, data map[string]
 	if data == nil {
 		return
 	}
+
 	localOpsPayload, _ := data["local_ops"].(map[string]any)
 	hasLocalOps := localOpsPayload != nil
 	isQueue := eventType == "implement_queue" || eventType == "queue_admission" || strings.HasPrefix(eventType, "idiom.implement.queue_")
 	isDoctor := eventType == "doctor_readiness_profile"
 	isCloseout := eventType == "implement_session_closeout"
+
 	if !hasLocalOps && !isQueue && !isDoctor && !isCloseout {
 		return
 	}
+
 	if rep.LocalOps == nil {
 		rep.LocalOps = newLocalOpsStats()
 	}
+
 	stats := rep.LocalOps
 	if hasLocalOps {
 		stats.BackendEvents++
 		if boolField(localOpsPayload, "backend_configured") {
 			stats.BackendConfigured++
 		}
+
 		incrementStringCount(stats.ByBackendState, stringField(localOpsPayload, "backend_kind"))
+
 		stats.ContextBudgetEvents++
+
 		contextState := stringField(localOpsPayload, "context_budget_state")
 		incrementStringCount(stats.ByContextBudgetState, contextState)
+
 		if contextState != "" && contextState != "pass" {
 			stats.ContextBudgetDegraded++
 		}
+
 		stats.ClassifierEvents++
+
 		classifierState := stringField(localOpsPayload, "classifier_state")
 		incrementStringCount(stats.ByClassifierState, classifierState)
+
 		if classifierState != "configured" && classifierState != "pass" && classifierState != "" {
 			stats.ClassifierDegraded++
 		}
 	}
+
 	if isQueue {
 		stats.QueueEvents++
+
 		state := stringField(data, "state")
 		incrementStringCount(stats.ByQueueState, state)
+
 		if boolField(data, "degraded") || (state != "" && state != "granted" && state != "acquired" && state != "disabled" && state != "nested_same_pool") {
 			stats.QueueDegraded++
 		}
+
 		stats.QueueMaxWaitMillis = max(stats.QueueMaxWaitMillis, intField(data, "wait_ms"))
 	}
+
 	if isDoctor {
 		stats.DoctorReadinessProfiles++
+
 		state := stringField(data, "state")
 		incrementStringCount(stats.ByReadinessProfileState, state)
+
 		if boolField(data, "degraded") || state == "degraded" {
 			stats.DoctorDegradedProfiles++
 		}
+
 		if boolField(data, "blocked") || state == "blocked" {
 			stats.DoctorBlockedProfiles++
 		}
+
 		incrementStringCount(stats.ByBackendState, stringField(data, "backend_state"))
 		incrementStringCount(stats.ByQueueState, stringField(data, "queue_state"))
 		incrementStringCount(stats.ByContextBudgetState, stringField(data, "context_budget_state"))
 		incrementStringCount(stats.ByClassifierState, stringField(data, "route_classifier_state"))
 	}
+
 	if isCloseout {
 		stats.ImplementCloseouts++
 	}
@@ -677,6 +767,7 @@ func stringSliceField(data map[string]any, key string) []string {
 	if data == nil {
 		return nil
 	}
+
 	switch typed := data[key].(type) {
 	case []string:
 		return typed
@@ -688,6 +779,7 @@ func stringSliceField(data map[string]any, key string) []string {
 				out = append(out, value)
 			}
 		}
+
 		return out
 	default:
 		return nil
@@ -704,17 +796,21 @@ func parseBudgetLedgerIntoPerfReport(content string, rep *PerfReport) {
 		RejectedActions  int    `json:"rejected_actions"`
 		StopReason       string `json:"stop_reason"`
 	}
+
 	if err := json.Unmarshal([]byte(content), &payload); err != nil {
 		return
 	}
+
 	rep.ModelCalls = payload.UsedModelCalls
 	rep.ToolResults = payload.UsedToolResults
 	rep.PromptTokens = payload.PromptTokens
 	rep.CompletionTokens = payload.CompletionTokens
 	rep.DurationMillis = payload.DurationMillis
+
 	if payload.RejectedActions > 0 {
 		rep.RejectedActions = payload.RejectedActions
 	}
+
 	rep.StopReason = payload.StopReason
 }
 
@@ -722,23 +818,29 @@ func parseSummaryRecordIntoPerfReport(data map[string]any, rep *PerfReport) {
 	if v := intField(data, "used_model_calls"); v > 0 {
 		rep.ModelCalls = v
 	}
+
 	if v := intField(data, "used_tool_results"); v > 0 {
 		rep.ToolResults = v
 	}
+
 	if v := intField(data, "prompt_tokens"); v > 0 {
 		rep.PromptTokens = v
 	}
+
 	if v := intField(data, "completion_tokens"); v > 0 {
 		rep.CompletionTokens = v
 	}
+
 	if v := intField(data, "duration_millis"); v > 0 {
 		rep.DurationMillis = v
 	} else if v := intField(data, "duration_ms"); v > 0 {
 		rep.DurationMillis = v
 	}
+
 	if v := intField(data, "rejected_actions"); v > 0 {
 		rep.RejectedActions = v
 	}
+
 	if stopReason, _ := data["stop_reason"].(string); strings.TrimSpace(stopReason) != "" {
 		rep.StopReason = stopReason
 	}
@@ -748,15 +850,19 @@ func parseSessionSummaryIntoPerfReport(data map[string]any, rep *PerfReport) {
 	if v := intField(data, "model_calls"); v > 0 {
 		rep.ModelCalls = v
 	}
+
 	if v := intField(data, "tool_calls"); v > 0 {
 		rep.ToolResults = v
 	}
+
 	if v := intField(data, "prompt_tokens"); v > 0 {
 		rep.PromptTokens = v
 	}
+
 	if v := intField(data, "completion_tokens"); v > 0 {
 		rep.CompletionTokens = v
 	}
+
 	if v := intField(data, "duration_millis"); v > 0 {
 		rep.DurationMillis = v
 	} else if v := intField(data, "duration_ms"); v > 0 {
@@ -769,8 +875,11 @@ func countTool(t *ToolCounts, tool, summary string) {
 	if tool == "" {
 		return
 	}
+
 	t.Total++
+
 	t.ByName[tool]++
+
 	switch tool {
 	case "list_files":
 		t.ListFiles++
@@ -779,6 +888,7 @@ func countTool(t *ToolCounts, tool, summary string) {
 		if strings.Contains(strings.ToLower(summary), ".md") ||
 			strings.Contains(strings.ToLower(summary), "readme") ||
 			strings.Contains(strings.ToLower(summary), ".txt") {
+
 			t.DocClassReads++
 		} else {
 			t.SourceClassReads++
@@ -810,10 +920,12 @@ func targetFromAction(action string) string {
 	if action == "" {
 		return ""
 	}
+
 	parts := strings.SplitN(action, ":", 3)
 	if len(parts) < 2 {
 		return parts[0]
 	}
+
 	return parts[1]
 }
 
@@ -825,31 +937,42 @@ func detectDirWalk(rep *PerfReport, steps []toolStep) {
 	// if it's 6 long — the metric is "how often did this happen",
 	// not "how many calls did it cost".
 	streaks := 0
+
 	var examples []string
+
 	run := 0
 	runStart := 0
+
 	for i, s := range steps {
 		if s.tool == "list_files" {
 			if run == 0 {
 				runStart = s.index
 			}
+
 			run++
+
 			continue
 		}
+
 		if run >= 3 {
 			streaks++
+
 			if len(examples) < 3 {
 				examples = append(examples, fmt.Sprintf("steps %d-%d (%d list_files)", runStart, steps[i-1].index, run))
 			}
 		}
+
 		run = 0
 	}
+
 	if run >= 3 {
 		streaks++
+
 		if len(examples) < 3 {
 			examples = append(examples, fmt.Sprintf("steps %d-%d (%d list_files)", runStart, steps[len(steps)-1].index, run))
 		}
 	}
+
 	if streaks > 0 {
 		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
 			Name:        "dir_walk_streak",
@@ -866,24 +989,31 @@ func detectZeroHitSearch(rep *PerfReport, records []Record) {
 	// that the model guessed instead of searching content.
 	needles := []string{"no file matches", "no matches", "no content matches", "no go symbols matched", "no c++ symbols matched"}
 	count := 0
+
 	var examples []string
+
 	for _, rec := range records {
 		if rec.Type != "tool_result" {
 			continue
 		}
+
 		tool, _ := rec.Data["tool"].(string)
 		summary, _ := rec.Data["summary"].(string)
 		lowered := strings.ToLower(summary)
+
 		for _, n := range needles {
 			if strings.Contains(lowered, n) {
 				count++
+
 				if len(examples) < 3 {
 					examples = append(examples, fmt.Sprintf("%s: %s", tool, summary))
 				}
+
 				break
 			}
 		}
 	}
+
 	if count > 0 {
 		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
 			Name:        "zero_hit_search",
@@ -896,19 +1026,24 @@ func detectZeroHitSearch(rep *PerfReport, records []Record) {
 
 func detectTruncatedSearch(rep *PerfReport, records []Record) {
 	count := 0
+
 	var examples []string
+
 	for _, rec := range records {
 		if rec.Type != "tool_result" {
 			continue
 		}
+
 		summary, _ := rec.Data["summary"].(string)
 		if strings.Contains(strings.ToLower(summary), "showing first") {
 			count++
+
 			if len(examples) < 3 {
 				examples = append(examples, summary)
 			}
 		}
 	}
+
 	if count > 0 {
 		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
 			Name:        "search_content_truncated",
@@ -922,6 +1057,7 @@ func detectTruncatedSearch(rep *PerfReport, records []Record) {
 func detectRedirectStorm(rep *PerfReport, records []Record) {
 	softRedirects := 0
 	hardRedirects := 0
+
 	for _, rec := range records {
 		role, _ := rec.Data["role"].(string)
 		if role == "discovery_redirect" {
@@ -933,6 +1069,7 @@ func detectRedirectStorm(rep *PerfReport, records []Record) {
 			}
 		}
 	}
+
 	redirects := softRedirects + hardRedirects
 	if hardRedirects > 0 || redirects >= 3 {
 		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
@@ -945,23 +1082,29 @@ func detectRedirectStorm(rep *PerfReport, records []Record) {
 
 func detectSameToolRepeat(rep *PerfReport, steps []toolStep) {
 	counts := make(map[string]int)
+
 	for _, s := range steps {
 		key := s.tool + "|" + s.rawArgs
 		counts[key]++
 	}
+
 	worst := 0
+
 	var worstKey string
+
 	for k, c := range counts {
 		if c > worst {
 			worst = c
 			worstKey = k
 		}
 	}
+
 	if worst >= 3 {
 		display := worstKey
 		if len(display) > 80 {
 			display = display[:80] + "..."
 		}
+
 		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
 			Name:        "same_tool_repeat",
 			Count:       worst,
@@ -977,45 +1120,61 @@ func detectNamedGapReadWalk(rep *PerfReport, steps []toolStep) {
 		first int
 		last  int
 	}
+
 	walks := make(map[string]readWalk)
+
 	for _, s := range steps {
 		if s.tool != "read_file" {
 			continue
 		}
+
 		gap := perfRawJSONStringField(s.rawArgs, "named_gap")
 		if gap == "" {
 			continue
 		}
+
 		path := util.FirstNonEmpty(perfRawJSONStringField(s.rawArgs, "path"), s.target)
 		if path == "" {
 			continue
 		}
+
 		key := path + "\x00" + gap
 		walk := walks[key]
+
 		if walk.count == 0 {
 			walk.first = s.index
 		}
+
 		walk.count++
+
 		walk.last = s.index
 		walks[key] = walk
 	}
+
 	total := 0
+
 	var examples []string
+
 	for key, walk := range walks {
 		if walk.count < 3 {
 			continue
 		}
+
 		total += walk.count
+
 		if len(examples) < 3 {
 			parts := strings.SplitN(key, "\x00", 2)
 			path := parts[0]
 			gap := ""
+
 			if len(parts) == 2 {
 				gap = parts[1]
 			}
+
 			examples = append(examples, fmt.Sprintf("steps %d-%d: %d reads of %s for named_gap=%s", walk.first, walk.last, walk.count, path, gap))
 		}
 	}
+
 	if total > 0 {
 		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
 			Name:        "named_gap_read_walk",
@@ -1032,14 +1191,18 @@ func detectDocWander(rep *PerfReport, steps []toolStep) {
 	// instead of looking at the code.
 	docs := 0
 	src := 0
+
 	var docExamples []string
+
 	for _, s := range steps {
 		if s.tool != "read_file" {
 			continue
 		}
+
 		t := strings.ToLower(s.target)
 		if strings.HasSuffix(t, ".md") || strings.Contains(t, "readme") || strings.HasSuffix(t, ".txt") {
 			docs++
+
 			if len(docExamples) < 3 {
 				docExamples = append(docExamples, fmt.Sprintf("step %d: %s", s.index, s.target))
 			}
@@ -1047,6 +1210,7 @@ func detectDocWander(rep *PerfReport, steps []toolStep) {
 			src++
 		}
 	}
+
 	if docs >= 3 && src <= 1 {
 		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
 			Name:        "doc_wander",
@@ -1059,13 +1223,17 @@ func detectDocWander(rep *PerfReport, steps []toolStep) {
 
 func detectPromptSurfaceOverlap(rep *PerfReport, records []Record) {
 	count := 0
+
 	var examples []string
+
 	addExample := func(example string) {
 		count++
+
 		if len(examples) < 3 {
 			examples = append(examples, example)
 		}
 	}
+
 	for _, rec := range records {
 		switch rec.Type {
 		case "session_start", "context_update":
@@ -1078,15 +1246,19 @@ func detectPromptSurfaceOverlap(rep *PerfReport, records []Record) {
 			if role != "control_rails" {
 				continue
 			}
+
 			content := stringField(rec.Data, "content")
+
 			var payload struct {
 				DynamicInstructions bool `json:"dynamic_instruction_attachment"`
 			}
+
 			if json.Unmarshal([]byte(content), &payload) == nil && payload.DynamicInstructions {
 				addExample("control_rails reports dynamic instruction attachment enabled")
 			}
 		}
 	}
+
 	if count > 0 {
 		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
 			Name:        "prompt_surface_overlap",
@@ -1109,34 +1281,43 @@ func detectMalformedEditArgs(rep *PerfReport, records []Record) {
 		"start_line/end_line",
 	}
 	count := 0
+
 	var examples []string
+
 	for _, rec := range records {
 		if rec.Type != "tool_result" {
 			continue
 		}
+
 		tool, _ := rec.Data["tool"].(string)
 		if tool != "edit_file" && tool != "write_file" && tool != "append_file" {
 			continue
 		}
+
 		errMsg, _ := rec.Data["error"].(string)
 		if errMsg == "" {
 			continue
 		}
+
 		lowered := strings.ToLower(errMsg)
 		matched := false
+
 		for _, n := range needles {
 			if strings.Contains(lowered, n) {
 				matched = true
 				break
 			}
 		}
+
 		if matched {
 			count++
+
 			if len(examples) < 3 {
 				examples = append(examples, fmt.Sprintf("%s: %s", tool, firstLine(errMsg)))
 			}
 		}
 	}
+
 	if count > 0 {
 		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
 			Name:        "malformed_edit_args",
@@ -1156,22 +1337,28 @@ func detectMalformedEditArgs(rep *PerfReport, records []Record) {
 func detectToolErrorStreak(rep *PerfReport, steps []toolStep, records []Record) {
 	// We need the path stem per step; derive from action target.
 	var examples []string
+
 	streaks := 0
 	run := 0
 	runStart := 0
 	lastKey := ""
+
 	for i, s := range steps {
 		if !s.hasError || s.isReject {
 			if run >= 3 {
 				streaks++
+
 				if len(examples) < 3 {
 					examples = append(examples, fmt.Sprintf("steps %d-%d (%d failures on %s)", runStart, steps[i-1].index, run, lastKey))
 				}
 			}
+
 			run = 0
 			lastKey = ""
+
 			continue
 		}
+
 		key := s.tool + "|" + pathStemOf(s.target)
 		if key == lastKey && key != "" {
 			run++
@@ -1181,12 +1368,15 @@ func detectToolErrorStreak(rep *PerfReport, steps []toolStep, records []Record) 
 			lastKey = key
 		}
 	}
+
 	if run >= 3 {
 		streaks++
+
 		if len(examples) < 3 {
 			examples = append(examples, fmt.Sprintf("steps %d-%d (%d failures on %s)", runStart, steps[len(steps)-1].index, run, lastKey))
 		}
 	}
+
 	if streaks > 0 {
 		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
 			Name:        "tool_error_streak",
@@ -1200,13 +1390,16 @@ func detectToolErrorStreak(rep *PerfReport, steps []toolStep, records []Record) 
 func pathStemOf(p string) string {
 	p = strings.TrimSpace(strings.ReplaceAll(p, "\\", "/"))
 	p = strings.Trim(p, "/")
+
 	if p == "" {
 		return ""
 	}
+
 	parts := strings.Split(p, "/")
 	if len(parts) >= 2 {
 		return parts[0] + "/" + parts[1]
 	}
+
 	return parts[0]
 }
 
@@ -1215,15 +1408,19 @@ func detectRejectionRetry(rep *PerfReport, steps []toolStep) {
 	// immediately after? That's a pure waste signal: the model
 	// ignored the rejection message.
 	retries := 0
+
 	var examples []string
+
 	for i := 1; i < len(steps); i++ {
 		if steps[i-1].isReject && steps[i].rawArgs == steps[i-1].rawArgs {
 			retries++
+
 			if len(examples) < 3 {
 				examples = append(examples, fmt.Sprintf("step %d retried %s after rejection", steps[i].index, steps[i].tool))
 			}
 		}
 	}
+
 	if retries > 0 {
 		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
 			Name:        "rejection_retry",
@@ -1236,9 +1433,13 @@ func detectRejectionRetry(rep *PerfReport, steps []toolStep) {
 
 func detectCompletionGateReopenedDiscovery(rep *PerfReport, records []Record) {
 	reopened := 0
+
 	var examples []string
+
 	armedStep := 0
+
 	var armedGate map[string]any
+
 	for _, rec := range records {
 		switch rec.Type {
 		case "tool_result":
@@ -1248,9 +1449,12 @@ func detectCompletionGateReopenedDiscovery(rep *PerfReport, records []Record) {
 				if armedStep == 0 {
 					armedStep = 1
 				}
+
 				armedGate = rec.Data
+
 				continue
 			}
+
 			if armedStep > 0 && workspaceWriteToolName(tool) && stringField(rec.Data, "error") == "" {
 				armedStep = 0
 				armedGate = nil
@@ -1259,29 +1463,39 @@ func detectCompletionGateReopenedDiscovery(rep *PerfReport, records []Record) {
 			if armedStep == 0 {
 				continue
 			}
+
 			tool := stringField(rec.Data, "tool")
 			if workspaceWriteToolName(tool) {
 				armedStep = 0
 				armedGate = nil
+
 				continue
 			}
+
 			if !toolLooksLikeReadOrDiscovery(tool) {
 				continue
 			}
+
 			if completionGateExpectedSourceRecovery(armedGate, rec.Data) {
 				armedStep = 0
 				armedGate = nil
+
 				continue
 			}
+
 			reopened++
+
 			if len(examples) < 3 {
 				target := util.FirstNonEmpty(stringField(rec.Data, "path"), targetFromAction(stringField(rec.Data, "action")), stringField(rec.Data, "tool"))
+
 				examples = append(examples, fmt.Sprintf("after completion gate step %d: %s %s", armedStep, tool, target))
 			}
+
 			armedStep = 0
 			armedGate = nil
 		}
 	}
+
 	if reopened > 0 {
 		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
 			Name:        "completion_gate_reopened_discovery",
@@ -1302,45 +1516,59 @@ func completionGateExpectedSourceRecovery(gateData map[string]any, requestData m
 		!strings.Contains(gateText, "required_edit_path") &&
 		!strings.Contains(gateText, "source evidence") &&
 		!strings.Contains(gateText, "source-body") {
+
 		return false
 	}
+
 	tool := strings.TrimSpace(stringField(requestData, "tool"))
 	if tool != "read_file" && tool != "code_navigate" && tool != "read_only_capability" &&
 		!strings.HasSuffix(tool, "_read_symbol") && !strings.HasSuffix(tool, "_extract_body") {
+
 		return false
 	}
+
 	target := strings.ToLower(strings.TrimSpace(util.FirstNonEmpty(
 		stringField(requestData, "path"),
 		targetFromAction(stringField(requestData, "action")),
 		stringField(requestData, "handle"),
 		stringField(requestData, "id"),
 	)))
+
 	target = strings.TrimPrefix(target, "file://")
+
 	if target == "" || target == "." {
 		return false
 	}
+
 	return strings.Contains(gateText, target)
 }
 
 func detectRequiredPathsBlockedWithoutWrite(rep *PerfReport, records []Record) {
 	count := 0
+
 	var examples []string
+
 	for _, rec := range records {
 		if rec.Type != "completion_status" {
 			continue
 		}
+
 		reason := strings.ToLower(util.FirstNonEmpty(stringField(rec.Data, "reason"), stringField(rec.Data, "blocker_kind")))
 		if !strings.Contains(reason, "required_edit_paths_remaining") {
 			continue
 		}
+
 		if boolField(rec.Data, "edit_attempted") {
 			continue
 		}
+
 		count++
+
 		if len(examples) < 3 {
 			examples = append(examples, fmt.Sprintf("session blocked with %s and edit_attempted=false", reason))
 		}
 	}
+
 	if count > 0 {
 		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
 			Name:        "required_paths_blocked_without_write",
@@ -1357,6 +1585,7 @@ func completionGateNoWriteRejection(data map[string]any) bool {
 			stringField(data, "error") + " " +
 			stringField(data, "content"),
 	))
+
 	return strings.Contains(text, "no successful write") ||
 		strings.Contains(text, "workspace change") ||
 		strings.Contains(text, "required edit path") ||
@@ -1377,6 +1606,7 @@ func toolLooksLikeReadOrDiscovery(tool string) bool {
 	if tool == "" {
 		return false
 	}
+
 	switch tool {
 	case "read_file", "list_files", "search_files", "search_content",
 		"code_navigate", "structural_search", "dependency_graph",
@@ -1386,9 +1616,11 @@ func toolLooksLikeReadOrDiscovery(tool string) bool {
 		"ast_grep":
 		return true
 	}
+
 	if strings.HasPrefix(tool, "context_") {
 		return true
 	}
+
 	for _, suffix := range []string{
 		"_overview",
 		"_entrypoints",
@@ -1408,6 +1640,7 @@ func toolLooksLikeReadOrDiscovery(tool string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1416,10 +1649,13 @@ func perfRawJSONStringField(raw string, key string) string {
 	if raw == "" || key == "" {
 		return ""
 	}
+
 	var payload map[string]any
+
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return ""
 	}
+
 	return stringField(payload, key)
 }
 
@@ -1428,9 +1664,11 @@ func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
 	}
+
 	if len(s) > 160 {
 		s = s[:157] + "..."
 	}
+
 	return s
 }
 
@@ -1501,19 +1739,24 @@ func Aggregate(reports []PerfReport) PerfAggregate {
 	patternCounts := make(map[string]int)
 	toolCalls := make(map[string]int)
 	totalCalls := 0
+
 	for _, r := range reports {
 		toolResults = append(toolResults, r.ToolResults)
 		if r.PromptTokens > 0 {
 			promptTokens = append(promptTokens, r.PromptTokens)
 		}
+
 		if r.DurationMillis > 0 {
 			durations = append(durations, r.DurationMillis)
 		}
+
 		agg.TotalRejectedActions += r.RejectedActions
 		if r.StopReason != "" {
 			agg.StopReasonCounts[r.StopReason]++
 		}
+
 		seen := make(map[string]bool)
+
 		for _, ap := range r.AntiPatterns {
 			patternCounts[ap.Name] += ap.Count
 			if !seen[ap.Name] {
@@ -1521,14 +1764,17 @@ func Aggregate(reports []PerfReport) PerfAggregate {
 				patternLogs[ap.Name]++
 			}
 		}
+
 		for tool, calls := range r.Tools.ByName {
 			toolCalls[tool] += calls
 			totalCalls += calls
 		}
+
 		mergeContextStats(&agg.Context, r.Context)
 		mergeFeedbackStats(&agg.Feedback, r.Feedback)
 		mergeLocalOpsStats(&agg.LocalOps, r.LocalOps)
 	}
+
 	agg.MedianToolResults = median(toolResults)
 	agg.MaxToolResults = maxOf(toolResults)
 	agg.MedianPromptTokens = median(promptTokens)
@@ -1543,6 +1789,7 @@ func Aggregate(reports []PerfReport) PerfAggregate {
 			HitRate:    float64(logsHit) / float64(len(reports)),
 		})
 	}
+
 	slices.SortFunc(agg.PatternHitRate, func(a, b PerfPatternHit) int {
 		return -cmp.Compare(a.LogsHit, b.LogsHit)
 	})
@@ -1552,6 +1799,7 @@ func Aggregate(reports []PerfReport) PerfAggregate {
 		if totalCalls > 0 {
 			share = float64(calls) / float64(totalCalls)
 		}
+
 		agg.ToolMix = append(agg.ToolMix, PerfToolMix{
 			Tool:      tool,
 			Calls:     calls,
@@ -1559,6 +1807,7 @@ func Aggregate(reports []PerfReport) PerfAggregate {
 			AvgPerLog: float64(calls) / float64(len(reports)),
 		})
 	}
+
 	slices.SortFunc(agg.ToolMix, func(a, b PerfToolMix) int {
 		return -cmp.Compare(a.Calls, b.Calls)
 	})
@@ -1568,14 +1817,17 @@ func Aggregate(reports []PerfReport) PerfAggregate {
 	slices.SortFunc(offenders, func(a, b PerfReport) int {
 		return -cmp.Compare(a.AntiPatternScore, b.AntiPatternScore)
 	})
+
 	keep := 5
 	if len(offenders) < keep {
 		keep = len(offenders)
 	}
+
 	for _, r := range offenders[:keep] {
 		if r.AntiPatternScore == 0 {
 			break
 		}
+
 		agg.WorstOffenders = append(agg.WorstOffenders, PerfWorstOffender{
 			LogPath:            r.LogPath,
 			SessionID:          r.SessionID,
@@ -1592,6 +1844,7 @@ func mergeContextStats(target **ContextStats, source *ContextStats) {
 	if source == nil {
 		return
 	}
+
 	if *target == nil {
 		*target = &ContextStats{
 			ActiveBackendCounts:         make(map[string]int),
@@ -1607,17 +1860,21 @@ func mergeContextStats(target **ContextStats, source *ContextStats) {
 			StaleUseStateCounts:         make(map[string]int),
 		}
 	}
+
 	dst := *target
+
 	dst.ToolResults += source.ToolResults
 	dst.IndexedResults += source.IndexedResults
 	dst.FreshResults += source.FreshResults
 	dst.StaleResults += source.StaleResults
 	dst.IncompatibleBackendResults += source.IncompatibleBackendResults
 	dst.TraceFailures += source.TraceFailures
+
 	dst.MaxFilesIndexed = max(dst.MaxFilesIndexed, source.MaxFilesIndexed)
 	dst.MaxSymbolsIndexed = max(dst.MaxSymbolsIndexed, source.MaxSymbolsIndexed)
 	dst.MaxEdgesIndexed = max(dst.MaxEdgesIndexed, source.MaxEdgesIndexed)
 	dst.MaxStaleSymbols = max(dst.MaxStaleSymbols, source.MaxStaleSymbols)
+
 	dst.RefreshedStaleSymbols += source.RefreshedStaleSymbols
 	dst.StaleSymbolSamples += source.StaleSymbolSamples
 	dst.IncrementalRefreshes += source.IncrementalRefreshes
@@ -1672,10 +1929,13 @@ func mergeFeedbackStats(target **FeedbackStats, source *FeedbackStats) {
 	if source == nil {
 		return
 	}
+
 	if *target == nil {
 		*target = newFeedbackStats()
 	}
+
 	dst := *target
+
 	dst.Total += source.Total
 	dst.Verified += source.Verified
 	dst.Inferred += source.Inferred
@@ -1695,15 +1955,20 @@ func mergeLocalOpsStats(target **LocalOpsStats, source *LocalOpsStats) {
 	if source == nil {
 		return
 	}
+
 	if *target == nil {
 		*target = newLocalOpsStats()
 	}
+
 	dst := *target
+
 	dst.BackendEvents += source.BackendEvents
 	dst.BackendConfigured += source.BackendConfigured
 	dst.QueueEvents += source.QueueEvents
 	dst.QueueDegraded += source.QueueDegraded
+
 	dst.QueueMaxWaitMillis = max(dst.QueueMaxWaitMillis, source.QueueMaxWaitMillis)
+
 	dst.ContextBudgetEvents += source.ContextBudgetEvents
 	dst.ContextBudgetDegraded += source.ContextBudgetDegraded
 	dst.ClassifierEvents += source.ClassifierEvents
@@ -1729,12 +1994,15 @@ func median(values []int) int {
 	if len(values) == 0 {
 		return 0
 	}
+
 	sorted := append([]int(nil), values...)
 	slices.Sort(sorted)
+
 	mid := len(sorted) / 2
 	if len(sorted)%2 == 1 {
 		return sorted[mid]
 	}
+
 	return (sorted[mid-1] + sorted[mid]) / 2
 }
 
@@ -1745,5 +2013,6 @@ func maxOf(values []int) int {
 			best = v
 		}
 	}
+
 	return best
 }

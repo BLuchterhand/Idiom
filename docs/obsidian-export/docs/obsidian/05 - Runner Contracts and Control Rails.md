@@ -1,6 +1,6 @@
 ---
 tags:
-  - harness
+  - idiom
   - runner
   - contracts
   - control-rails
@@ -119,7 +119,7 @@ that computes missing obligations, the last failed invariant, valid next action
 classes, invalid next action classes, tool hiding, and typed blocker escalation
 from the active contract and result history.
 
-See [dynamic-harness-validator-design.md](../../../dynamic-harness-validator-design.md)
+See [dynamic-harness-validator-design.md](../dynamic-harness-validator-design.md)
 for the implementation design. The first atom is implemented for
 missing-description repair on in-scope required-path writes: the runner emits a
 typed `dynamic_validator_decision`, renders a compact validator card, rejects

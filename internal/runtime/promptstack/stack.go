@@ -31,10 +31,12 @@ func userConfigDir() string {
 	if dir := strings.TrimSpace(os.Getenv("IDIOM_CONFIG_DIR")); dir != "" {
 		return dir
 	}
+
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return ""
 	}
+
 	return filepath.Join(home, ".config", "idiom")
 }
 
@@ -78,6 +80,7 @@ func build(chat config.Chat, profiles []string, requireExplicit bool) (Stack, er
 		if profile == "" {
 			continue
 		}
+
 		profilePath := filepath.Join(chat.ProfilesDir, profile+".md")
 		if err := builder.addFile("profile", "profile:"+profile, profilePath, requireExplicit, !requireExplicit); err != nil {
 			return Stack{}, err
@@ -119,14 +122,17 @@ func projectPromptCandidates(chat config.Chat) []string {
 	if chat.ProjectPromptCandidates != nil {
 		return chat.ProjectPromptCandidates
 	}
+
 	return autoProjectPromptCandidates
 }
 
 func projectPromptKind(path string) string {
 	if strings.EqualFold(filepath.ToSlash(filepath.Clean(path)), ".idiom/discovery/context.md") ||
 		strings.HasSuffix(filepath.ToSlash(filepath.Clean(path)), "/.idiom/discovery/context.md") {
+
 		return "project_context"
 	}
+
 	return "project"
 }
 
@@ -141,14 +147,17 @@ func ListProfiles(dir string) ([]string, error) {
 		if entry.IsDir() {
 			continue
 		}
+
 		name := entry.Name()
 		if filepath.Ext(name) != ".md" {
 			continue
 		}
+
 		profiles = append(profiles, strings.TrimSuffix(name, ".md"))
 	}
 
 	slices.Sort(profiles)
+
 	return profiles, nil
 }
 
@@ -164,6 +173,7 @@ func (b *stackBuilder) addInline(kind, name, body string) {
 	if body == "" {
 		return
 	}
+
 	b.sources = append(b.sources, Source{
 		Kind:        kind,
 		DisplayName: name,
@@ -178,11 +188,14 @@ func (b *stackBuilder) addFile(kind, name, path string, required bool, warnMissi
 		if required {
 			return fmt.Errorf("%s prompt path is empty", kind)
 		}
+
 		if warnMissing {
 			b.warnings = append(b.warnings, fmt.Sprintf("skipped empty %s prompt path", kind))
 		}
+
 		return nil
 	}
+
 	path = filepath.Clean(path)
 	if _, seen := b.seen[path]; seen {
 		return nil
@@ -199,15 +212,19 @@ func (b *stackBuilder) addFile(kind, name, path string, required bool, warnMissi
 					Path:        sourcePath,
 				})
 				b.sections = append(b.sections, renderSection(kind, name, body))
+
 				return nil
 			}
 		}
+
 		if !required && os.IsNotExist(err) {
 			if warnMissing {
 				b.warnings = append(b.warnings, fmt.Sprintf("skipped missing %s prompt %q", kind, path))
 			}
+
 			return nil
 		}
+
 		return fmt.Errorf("load %s prompt %q: %w", kind, path, err)
 	}
 
@@ -216,9 +233,11 @@ func (b *stackBuilder) addFile(kind, name, path string, required bool, warnMissi
 		if required {
 			return fmt.Errorf("%s prompt %q is empty", kind, path)
 		}
+
 		if warnMissing {
 			b.warnings = append(b.warnings, fmt.Sprintf("skipped empty %s prompt %q", kind, path))
 		}
+
 		return nil
 	}
 
@@ -229,11 +248,13 @@ func (b *stackBuilder) addFile(kind, name, path string, required bool, warnMissi
 		Path:        path,
 	})
 	b.sections = append(b.sections, renderSection(kind, name, body))
+
 	return nil
 }
 
 func embeddedCanonicalPrompt(kind, name, path string) (string, string, bool) {
 	slashPath := filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
+
 	switch kind {
 	case "baseline":
 		if canonicalBaselinePromptPath(slashPath) {
@@ -247,15 +268,18 @@ func embeddedCanonicalPrompt(kind, name, path string) (string, string, bool) {
 				if display == "" {
 					display = profileName
 				}
+
 				return body, "embedded:prompts/profiles/" + display + ".md", true
 			}
 		}
 	}
+
 	return "", "", false
 }
 
 func canonicalBaselinePromptPath(path string) bool {
 	path = strings.TrimPrefix(path, "./")
+
 	return path == "prompts/base.md" ||
 		path == ".idiom/prompts/base.md" ||
 		strings.HasSuffix(path, "/prompts/base.md") ||
@@ -272,6 +296,7 @@ func canonicalProfilePromptName(path string) (string, bool) {
 			}
 		}
 	}
+
 	for _, marker := range []string{"/prompts/profiles/", "/.idiom/prompts/profiles/"} {
 		if idx := strings.LastIndex(path, marker); idx >= 0 && strings.HasSuffix(path, ".md") {
 			name := strings.TrimSuffix(path[idx+len(marker):], ".md")
@@ -280,6 +305,7 @@ func canonicalProfilePromptName(path string) (string, bool) {
 			}
 		}
 	}
+
 	return "", false
 }
 
@@ -302,5 +328,6 @@ func renderSection(kind, name, body string) string {
 	case "model_overlay":
 		label = "model compatibility"
 	}
+
 	return fmt.Sprintf("[%s: %s]\n%s", label, name, body)
 }

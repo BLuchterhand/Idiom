@@ -51,8 +51,10 @@ func DetectBackends() []Backend {
 		if err != nil {
 			continue
 		}
+
 		found = append(found, Backend{Kind: c.kind, BinaryPath: path, BinaryName: c.bin})
 	}
+
 	return found
 }
 
@@ -65,6 +67,8 @@ func KnownBackendNames() []string {
 	for _, c := range backendCandidates {
 		out = append(out, c.bin)
 	}
+
 	slices.Sort(out)
+
 	return out
 }

@@ -38,7 +38,9 @@ func TestContractEnvelopeCarriesCompactAllowlistedContextPacket(t *testing.T) {
 	if err := envelope.Validate(); err != nil {
 		t.Fatalf("envelope should validate: %v", err)
 	}
+
 	envelope.Normalize()
+
 	if envelope.SchemaVersion != ContractEnvelopeSchemaVersion {
 		t.Fatalf("Normalize should default schema version, got %q", envelope.SchemaVersion)
 	}
@@ -47,6 +49,7 @@ func TestContractEnvelopeCarriesCompactAllowlistedContextPacket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal envelope: %v", err)
 	}
+
 	for _, forbidden := range []string{"raw_prompt", "raw_transcript", "file_body", "secret="} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("envelope leaked forbidden marker %q: %s", forbidden, encoded)

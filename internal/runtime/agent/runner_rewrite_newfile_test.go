@@ -23,15 +23,19 @@ func TestRewriteReadFileForPlannedNewFileFiresOnRequiredPath(t *testing.T) {
 		RequiredEditPaths: []string{"cmd/idiom/init.go", "cmd/idiom/main.go"},
 	}
 	got := rewriteMissingRequiredNewFileProbe(req, result, brief)
+
 	if !strings.Contains(got.Error, "NEW FILE") {
 		t.Fatalf("rewrite should call out the new-file shape; got: %s", got.Error)
 	}
+
 	if !strings.Contains(got.Error, "replace_all") {
 		t.Fatalf("rewrite should mention replace_all; got: %s", got.Error)
 	}
+
 	if !strings.Contains(got.Error, "submit_plan") {
 		t.Fatalf("rewrite should point at submit_plan; got: %s", got.Error)
 	}
+
 	if !strings.Contains(got.Error, "missing body evidence") {
 		t.Fatalf("rewrite should point at the new-file body evidence contract; got: %s", got.Error)
 	}
@@ -48,6 +52,7 @@ func TestRewriteReadFileForPlannedNewFileLeavesUnrelatedErrorsAlone(t *testing.T
 		RequiredEditPaths: []string{"cmd/idiom/init.go"},
 	}
 	got := rewriteMissingRequiredNewFileProbe(req, original, brief)
+
 	if got.Error != original.Error {
 		t.Fatalf("error on unrelated path should pass through; got rewrite: %s", got.Error)
 	}
@@ -64,6 +69,7 @@ func TestRewriteMissingRequiredNewFileProbeFiresOnMissingParentOutline(t *testin
 		},
 	}
 	got := rewriteMissingRequiredNewFileProbe(req, original, brief)
+
 	for _, want := range []string{
 		"Required new-file directory does not exist yet",
 		"internal/contracts/writerroute/decision.go",
@@ -76,6 +82,7 @@ func TestRewriteMissingRequiredNewFileProbeFiresOnMissingParentOutline(t *testin
 			t.Fatalf("rewritten result missing %q:\n%#v", want, got)
 		}
 	}
+
 	if strings.Contains(got.Error, "internal/surfaces/tui/app/writer_route.go") {
 		t.Fatalf("rewrite should only list required paths under the missing probe target, got: %s", got.Error)
 	}
@@ -97,6 +104,7 @@ func TestUnavailableRequiredNewFileProbeNudgesMissingParent(t *testing.T) {
 	if !ok {
 		t.Fatal("expected unavailable required new-file probe nudge")
 	}
+
 	for _, want := range []string{
 		"Required new-file directory does not exist yet",
 		"internal/contracts/writerroute/decision.go",
@@ -108,6 +116,7 @@ func TestUnavailableRequiredNewFileProbeNudgesMissingParent(t *testing.T) {
 			t.Fatalf("nudge missing %q:\nsummary=%s\nerror=%s", want, summary, errorText)
 		}
 	}
+
 	if strings.Contains(errorText, "internal/surfaces/tui/app/writer_route.go") {
 		t.Fatalf("nudge should only list required paths under the missing probe target, got: %s", errorText)
 	}
@@ -118,6 +127,7 @@ func TestUnavailableRequiredNewFileProbeDoesNotMaskExistingTarget(t *testing.T) 
 	if err := os.MkdirAll(filepath.Join(root, "internal", "contracts", "writerroute"), 0o755); err != nil {
 		t.Fatalf("mkdir target: %v", err)
 	}
+
 	manager := workspace.NewManager(config.Workspace{Root: root, CWD: root})
 	req := workspace.ToolRequest{Tool: "go_file_outline", Path: "./internal/contracts/writerroute"}
 	brief := workerruntime.WorkerRuntimeBrief{
@@ -140,6 +150,7 @@ func TestRewriteMissingRequiredNewFileProbeIgnoresUnrelatedTools(t *testing.T) {
 		RequiredEditPaths: []string{"cmd/idiom/init.go"},
 	}
 	got := rewriteMissingRequiredNewFileProbe(req, original, brief)
+
 	if got.Error != original.Error {
 		t.Fatalf("non-read_file tools should pass through; got: %s", got.Error)
 	}

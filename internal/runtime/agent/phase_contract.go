@@ -262,18 +262,22 @@ func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
 	}
 
 	applyTurnPhase(&contract, input, brief, baseTools)
+
 	if phaseContractTextualOnly(input, contract) {
 		contract.AllowedTools = nil
 		contract.ActionPolicy.CallableToolNames = nil
 	}
+
 	if len(input.HiddenTools) > 0 {
 		contract.AllowedTools = removePhaseTools(contract.AllowedTools, input.HiddenTools)
 		contract.ActionPolicy.CallableToolNames = removePhaseTools(contract.ActionPolicy.CallableToolNames, input.HiddenTools)
 	}
+
 	if len(input.HiddenTools) > 0 || len(contract.ActionPolicy.CallableToolNames) > 0 {
 		contract.ActionPolicy.AllowedActionClasses = pruneToolActionClassesWithoutCallableTool(contract.ActionPolicy.AllowedActionClasses, contract.ActionPolicy.CallableToolNames)
 		contract.RuntimeCall.ExpressibleActionClasses = pruneToolActionClassesWithoutCallableTool(contract.RuntimeCall.ExpressibleActionClasses, contract.ActionPolicy.CallableToolNames)
 	}
+
 	contract.AllowedTools = uniquePhaseStrings(contract.AllowedTools)
 	contract.HiddenTools = uniquePhaseStrings(append(contract.HiddenTools, hiddenPhaseTools(baseTools, contract.AllowedTools)...))
 	contract.RequiredNext = uniquePhaseStrings(contract.RequiredNext)
@@ -288,6 +292,7 @@ func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
 	contract.ActionPolicy.CallableToolNames = uniquePhaseStrings(contract.ActionPolicy.CallableToolNames)
 	contract.RuntimeCall.ExpressibleActionClasses = uniquePhaseStrings(contract.RuntimeCall.ExpressibleActionClasses)
 	contract.RuntimeCall.ExpressibleActionClasses = actionClassesAllowedByPolicy(contract.RuntimeCall.ExpressibleActionClasses, contract.ActionPolicy.InvalidActionClasses)
+
 	return contract
 }
 
@@ -299,17 +304,21 @@ func actionClassesAllowedByPolicy(allowed []string, invalid []string) []string {
 			invalidSet[value] = struct{}{}
 		}
 	}
+
 	out := make([]string, 0, len(allowed))
 	for _, value := range allowed {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
+
 		if _, blocked := invalidSet[value]; blocked {
 			continue
 		}
+
 		out = append(out, value)
 	}
+
 	return uniquePhaseStrings(out)
 }
 
@@ -317,6 +326,7 @@ func applyTurnPhase(contract *TurnPhaseContract, input TurnPhaseContractInput, b
 	planningTransport := planExecutePlanningTransportFromPhaseInput(input)
 	recoverySurface := DerivePlanExecuteRecoverySurface(brief, input.Results, planningTransport)
 	planningState := recoverySurface.State
+
 	switch {
 	case strings.TrimSpace(input.PhaseHint) == turnPhaseProductAcceptanceCloseout:
 		applyProductAcceptanceCloseout(contract)
@@ -408,11 +418,13 @@ func applyCandidateSource(contract *TurnPhaseContract, baseTools []string, state
 	contract.RequiredNext = []string{"current typed state: " + string(state.Mode) + "; valid terminal actions: Decision: source-satisfied with observed current-state evidence or <<QUESTION>> with the exact blocker; if no source-body evidence exists yet, use one bounded localization/read action"}
 	contract.InvalidNext = []string{"submit_plan before source-body evidence for each planned edit path", "per-edit write in planner phase", "verify/build/test in planner phase"}
 	contract.TerminalOutcomes = planExecuteTerminalSourceSatisfiedOrQuestion()
+
 	if slices.Contains(state.AllowedActionClasses, actionSubmitPlan) {
 		contract.RequiredNext = []string{"current typed state: " + string(state.Mode) + "; valid terminal actions: submit_plan, Decision: source-satisfied, or <<QUESTION>> with the exact blocker; textual submit_plan must be one visible JSON object with real rationale and executable edits, not placeholders; continue targeted source/test localization only for a named missing edit-safety fact"}
 		contract.InvalidNext = []string{"submit_plan edits without source-body evidence for each edited path", "per-edit write in planner phase", "verify/build/test in planner phase"}
 		contract.TerminalOutcomes = append(contract.TerminalOutcomes, "submit_plan")
 	}
+
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   append([]string(nil), state.AllowedActionClasses...),
 		InvalidActionClasses:   append([]string(nil), state.InvalidActionClasses...),
@@ -421,9 +433,11 @@ func applyCandidateSource(contract *TurnPhaseContract, baseTools []string, state
 	}
 	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "source_refresh")
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSearch, actionBlocker}
+
 	if slices.Contains(state.AllowedActionClasses, actionSubmitPlan) {
 		contract.RuntimeCall.ExpressibleActionClasses = append(contract.RuntimeCall.ExpressibleActionClasses, actionSubmitPlan, actionSourceSatisfied)
 	}
+
 	if len(contract.AllowedTools) == 1 && contract.AllowedTools[0] == "submit_plan" {
 		contract.RequiredNext = []string{"read/search/navigation tools are disabled for this recovery turn; the next visible action must be exactly one terminal planner outcome: submit_plan, Decision: source-satisfied, or <<QUESTION>> with the exact blocker"}
 		contract.InvalidNext = []string{"read/search/source-refresh after terminal recovery", "non-parser-readable action", "per-edit write in planner phase", "verify/build/test in planner phase"}
@@ -441,11 +455,14 @@ func planExecutePlanningTransportFromPhaseInput(input TurnPhaseContractInput) Pl
 
 func applySubmitReady(contract *TurnPhaseContract, input TurnPhaseContractInput, baseTools []string, state PlanExecutePlanningState) {
 	transport := planExecutePlanningTransportFromPhaseInput(input)
+
 	if state.Mode != PlanExecutePlanningModeSubmitReady && state.Mode != PlanExecutePlanningModeSubmitCorrection {
 		state = PlanExecutePlanningState{Mode: PlanExecutePlanningModeSubmitReady}
 		state.applyProjection(transport)
 	}
+
 	nativeRequired := planExecuteSubmitReadyNativeRequired(transport)
+
 	contract.PhaseID = firstPhaseString(state.PhaseID, turnPhaseSubmitReadyTextual)
 	contract.Phase = firstPhaseString(state.Phase, "submit_ready_textual")
 	contract.DerivationReason = firstPhaseString(state.DerivationReason, "plan_execute_source_ready")
@@ -453,11 +470,13 @@ func applySubmitReady(contract *TurnPhaseContract, input TurnPhaseContractInput,
 	contract.RequiredNext = []string{"submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
 	contract.InvalidNext = []string{"read/search/source-refresh after plan-execute submit_plan readiness", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
 	contract.TerminalOutcomes = planExecuteTerminalSubmitPlanSourceSatisfiedQuestion()
+
 	if state.Mode == PlanExecutePlanningModeSubmitCorrection {
 		contract.RequiredNext = []string{"corrected submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths"}
 		contract.InvalidNext = []string{"read/search/source-refresh after submit_plan correction is ready", "terminal Decision: source-satisfied after an incomplete submit_plan; use submit_plan.source_satisfied_paths for already-final paths instead", "<<QUESTION>> after source evidence is sufficient for correction", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
 		contract.TerminalOutcomes = planExecuteTerminalSubmitPlanOnly()
 	}
+
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   append([]string(nil), state.AllowedActionClasses...),
 		InvalidActionClasses:   append([]string(nil), state.InvalidActionClasses...),
@@ -467,9 +486,11 @@ func applySubmitReady(contract *TurnPhaseContract, input TurnPhaseContractInput,
 	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "submit_plan_json")
 	contract.RuntimeCall.ResponseFormat = firstPhaseString(contract.RuntimeCall.ResponseFormat, "json")
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker}
+
 	if state.Mode == PlanExecutePlanningModeSubmitCorrection {
 		contract.RuntimeCall.ExpressibleActionClasses = []string{actionSubmitPlan}
 	}
+
 	if nativeRequired {
 		contract.PhaseID = turnPhaseSubmitReadyNativeRequired
 		contract.Phase = "submit_ready_native"
@@ -486,6 +507,7 @@ func applySubmitReady(contract *TurnPhaseContract, input TurnPhaseContractInput,
 
 func applyMalformedSubmitPlanRecovery(contract *TurnPhaseContract, input TurnPhaseContractInput, baseTools []string) {
 	applySubmitReady(contract, TurnPhaseContractInput{TextualToolParser: true, ParserContract: input.ParserContract}, baseTools, PlanExecutePlanningState{})
+
 	contract.PhaseID = turnPhaseMalformedSubmitPlanRecovery
 	contract.Phase = "malformed_submit_plan_recovery"
 	contract.DerivationReason = "submit_ready_parse_failure"
@@ -511,10 +533,12 @@ func applySourceSatisfiedTerminal(contract *TurnPhaseContract, state PlanExecute
 		TerminalResponseShapes: planExecuteTerminalSourceSatisfiedOrQuestion(),
 		CallableToolNames:      nil,
 	}
+
 	if len(state.TerminalResponseShapes) > 0 {
 		contract.ActionPolicy.TerminalResponseShapes = filterPhaseTerminalShapes(state.TerminalResponseShapes, "Decision: source-satisfied", "<<QUESTION>>:")
 		contract.TerminalOutcomes = append([]string(nil), contract.ActionPolicy.TerminalResponseShapes...)
 	}
+
 	contract.RuntimeCall.ParserContract = "source_satisfied_terminal"
 	contract.RuntimeCall.ResponseFormat = ""
 	contract.RuntimeCall.ToolChoice = ""
@@ -528,16 +552,20 @@ func applyStaleAnchorRefresh(contract *TurnPhaseContract, input TurnPhaseContrac
 		state = PlanExecutePlanningState{Mode: PlanExecutePlanningModeAnchorRefresh}
 		state.applyProjection(planExecutePlanningTransportFromPhaseInput(input))
 	}
+
 	contract.PhaseID = firstPhaseString(state.PhaseID, turnPhaseStaleAnchorRefresh)
 	contract.Phase = firstPhaseString(state.Phase, "anchor_refresh")
 	contract.DerivationReason = firstPhaseString(state.DerivationReason, "rejected_submit_plan_needs_source_refresh")
 	contract.AllowedTools = filterPhaseTools(baseTools, state.CallableTools...)
 	contract.RequiredNext = []string{"bounded source-body refresh for the stale or missing anchor before any terminal planner outcome"}
+
 	if len(state.RefreshPaths) > 0 {
 		contract.RequiredNext = []string{"bounded source-body refresh for: " + strings.Join(nonEmptyRunnerStrings(state.RefreshPaths, 4), ", ") + "; do not submit_plan until that refresh returns"}
 	}
+
 	contract.InvalidNext = []string{"submit_plan before bounded anchor refresh", "broad search", "per-edit write in planner phase"}
 	contract.StopConditions = []string{"bounded_source_refresh_returned"}
+
 	contract.TerminalOutcomes = append([]string(nil), state.TerminalResponseShapes...)
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   append([]string(nil), state.AllowedActionClasses...),
@@ -546,6 +574,7 @@ func applyStaleAnchorRefresh(contract *TurnPhaseContract, input TurnPhaseContrac
 		CallableToolNames:      contract.AllowedTools,
 	}
 	contract.RuntimeCall.ParserContract = firstPhaseString(input.ParserContract, "source_refresh")
+
 	contract.RuntimeCall.ExpressibleActionClasses = append([]string(nil), state.AllowedActionClasses...)
 }
 
@@ -555,6 +584,7 @@ func applyReviewRepairTerminal(contract *TurnPhaseContract, brief workerruntime.
 	contract.DerivationReason = "plan_execute_review_repair_terminal"
 	contract.AllowedTools = filterPhaseTools(baseTools, "submit_plan")
 	contract.InvalidNext = []string{"read/search/verify after review-repair terminal readiness", "generic probe", "prose-only final answer"}
+
 	if len(planThenExecuteReviewRepairFailedPhaseObligations(brief)) > 0 {
 		contract.RequiredNext = []string{"corrective submit_plan, or <<QUESTION>> with the exact failed obligation blocker"}
 		contract.InvalidNext = append(contract.InvalidNext, "Decision: pass while failed phase obligations remain")
@@ -566,8 +596,10 @@ func applyReviewRepairTerminal(contract *TurnPhaseContract, brief workerruntime.
 			CallableToolNames:      contract.AllowedTools,
 		}
 		contract.RuntimeCall.ExpressibleActionClasses = []string{actionSubmitPlan, actionBlocker}
+
 		return
 	}
+
 	contract.RequiredNext = []string{"Decision: pass with checklist, corrective submit_plan, or <<QUESTION>>"}
 	contract.TerminalOutcomes = []string{"Decision: pass", "submit_plan", "<<QUESTION>>:"}
 	contract.ActionPolicy = TurnActionClassPolicy{
@@ -602,6 +634,7 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 	pending := sourceEvidencePendingRedirectsForBrief(brief, results)
 	pendingTools := sourceEvidencePendingRedirectTools(baseTools, pending)
 	sourceRefresh := len(pending) == 0 && implementationTargetWriteReadySourceRefreshProjectionActive(brief, results, baseTools)
+
 	contract.PhaseID = turnPhaseImplementationWriteReady
 	contract.Phase = "target_write_ready"
 	contract.DerivationReason = "guarded_mutation_target_source_ready"
@@ -618,6 +651,7 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "target_write_or_blocker")
 	contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_write_or_blocker"
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionPerEditWrite, actionBlocker}
+
 	if sourceRefresh {
 		contract.RequiredNext = []string{"git history lookup for the intended established logic if not already observed, parser-readable write to the sourced target path, bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
 		contract.InvalidNext = []string{"broad read/search after source-body and git history evidence", "read/search for already-sourced paths unless the request adds a bounded missing range, exact named_gap, or required history lookup", "verification before a successful write", "generic probe", "prose-only final answer"}
@@ -629,9 +663,11 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 		contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker}
 		contract.Constraints = uniquePhaseStrings(append([]string{"bounded_source_refresh_allowance: read_file/search_content require named_gap and exact scope"}, contract.Constraints...))
 	}
+
 	if len(pendingTools) > 0 {
 		pendingSummary := sourceEvidencePendingRedirectSummary(pending, 3)
 		pendingActionSummary := sourceEvidencePendingRedirectActionSummary(pending, 3)
+
 		contract.RequiredNext = []string{"resolve the pending redirected source-body obligation (" + pendingActionSummary + "), then make one parser-readable write to a sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
 		contract.InvalidNext = []string{"broad read/search while a redirected source-body obligation is pending", "read/navigation for any path except the exact pending redirected source-body follow-up: " + pendingActionSummary, "verification before a successful write", "generic probe", "prose-only final answer"}
 		contract.ActionPolicy.AllowedActionClasses = []string{actionRead, actionPerEditWrite, actionBlocker}
@@ -733,11 +769,13 @@ func applyProductAcceptanceCloseout(contract *TurnPhaseContract) {
 		TerminalResponseShapes: []string{"final answer", "<<QUESTION>>:"},
 		CallableToolNames:      nil,
 	}
+
 	if phaseEvidenceHasOpenObligation(contract.EvidenceState) {
 		contract.ActionPolicy.AllowedActionClasses = []string{actionBlocker}
 		contract.ActionPolicy.InvalidActionClasses = []string{actionFinalAnswer}
 		contract.RuntimeCall.ExpressibleActionClasses = []string{actionBlocker}
 	}
+
 	if len(contract.RuntimeCall.ExpressibleActionClasses) == 0 {
 		contract.RuntimeCall.ExpressibleActionClasses = []string{actionFinalAnswer, actionBlocker}
 	}
@@ -747,7 +785,9 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 	contract.PhaseID = turnPhaseGeneric
 	contract.Phase = "generic"
 	contract.DerivationReason = "no_specialized_phase_matched"
+
 	allowedClasses := genericAllowedActionClasses(contract.AllowedTools)
+
 	contract.TerminalOutcomes = []string{"final answer", "<<QUESTION>>:"}
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   allowedClasses,
@@ -755,16 +795,20 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 		TerminalResponseShapes: []string{"final answer", "<<QUESTION>>:"},
 		CallableToolNames:      contract.AllowedTools,
 	}
+
 	if phaseEvidenceHasOpenObligation(contract.EvidenceState) {
 		contract.ActionPolicy.AllowedActionClasses = removePhaseActionClass(contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
 		contract.ActionPolicy.InvalidActionClasses = append(contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
 	}
+
 	if brief.Readiness != nil && brief.Readiness.ReadyToVerify {
 		contract.ActionPolicy.AllowedActionClasses = []string{actionVerify, actionBlocker}
 		contract.ActionPolicy.InvalidActionClasses = []string{actionFinalAnswer}
 	}
+
 	if genericReadOnlyEvidenceReady(brief, results) {
 		evidenceTools := genericReadOnlyEvidenceTools(contract.AllowedTools)
+
 		contract.Phase = "read_only_evidence_available"
 		contract.DerivationReason = "read_only_workspace_evidence_available"
 		contract.AllowedTools = evidenceTools
@@ -777,12 +821,15 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 			CallableToolNames:      evidenceTools,
 		}
 		contract.RuntimeCall.ExpressibleActionClasses = append([]string(nil), contract.ActionPolicy.AllowedActionClasses...)
+
 		return
 	}
+
 	if genericReadOnlyEvidencePending(brief, contract.AllowedTools, results) {
 		contract.Phase = "read_only_evidence_pending"
 		contract.DerivationReason = "read_only_workspace_evidence_pending"
 		contract.AllowedTools = genericReadOnlyEvidenceTools(contract.AllowedTools)
+
 		if readOnlyDirectAnswerLane(brief) {
 			contract.RequiredNext = []string{"final answer from gathered evidence or explicit uncertainty, one bounded read/search for an exact unsupported claim, or <<QUESTION>> with the exact blocker"}
 			contract.InvalidNext = []string{"workspace write", "shell/mutating command", "unsupported factual final answer"}
@@ -805,16 +852,19 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 			}
 		}
 	}
+
 	contract.RuntimeCall.ExpressibleActionClasses = append([]string(nil), contract.ActionPolicy.AllowedActionClasses...)
 }
 
 func genericAllowedActionClasses(tools []string) []string {
 	classes := []string{actionFinalAnswer, actionBlocker}
+
 	for _, tool := range tools {
 		if actionClass := autonomy.TurnPhaseActionClassForTool(tool); actionClass != "" {
 			classes = append(classes, actionClass)
 		}
 	}
+
 	return uniquePhaseStrings(classes)
 }
 
@@ -822,25 +872,32 @@ func pruneToolActionClassesWithoutCallableTool(classes []string, callableTools [
 	if len(classes) == 0 {
 		return nil
 	}
+
 	callableClasses := make(map[string]struct{})
+
 	for _, tool := range callableTools {
 		if actionClass := autonomy.TurnPhaseActionClassForTool(tool); actionClass != "" {
 			callableClasses[actionClass] = struct{}{}
 		}
 	}
+
 	var out []string
+
 	for _, class := range classes {
 		class = strings.TrimSpace(class)
 		if class == "" {
 			continue
 		}
+
 		if isToolActionClass(class) {
 			if _, ok := callableClasses[class]; !ok {
 				continue
 			}
 		}
+
 		out = append(out, class)
 	}
+
 	return uniquePhaseStrings(out)
 }
 
@@ -850,12 +907,15 @@ func isToolActionClass(class string) bool {
 
 func removePhaseActionClass(classes []string, remove string) []string {
 	var out []string
+
 	for _, class := range classes {
 		if strings.TrimSpace(class) == remove {
 			continue
 		}
+
 		out = append(out, class)
 	}
+
 	return uniquePhaseStrings(out)
 }
 
@@ -863,12 +923,15 @@ func genericReadOnlyEvidenceReady(brief workerruntime.WorkerRuntimeBrief, result
 	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return false
 	}
+
 	if slices.Contains(brief.Constraints, "answer_readiness_reached") {
 		return true
 	}
+
 	if readOnlyDirectAnswerLane(brief) {
 		return conversationEvidenceSatisfiedForObjective(brief, results)
 	}
+
 	return genericReadOnlyAnswerEvidenceReady(brief, results)
 }
 
@@ -876,13 +939,16 @@ func genericReadOnlyEvidencePending(brief workerruntime.WorkerRuntimeBrief, allo
 	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return false
 	}
+
 	isReadOnlyConversation := readOnlyDirectAnswerLane(brief)
 	if brief.Readiness == nil && !isReadOnlyConversation {
 		return false
 	}
+
 	if brief.Readiness != nil && brief.Readiness.ReadyToAnswer {
 		return false
 	}
+
 	if isReadOnlyConversation {
 		if genericReadOnlyEvidenceReady(brief, results) {
 			return false
@@ -890,6 +956,7 @@ func genericReadOnlyEvidencePending(brief workerruntime.WorkerRuntimeBrief, allo
 	} else if genericReadOnlyAnswerEvidenceReady(brief, results) {
 		return false
 	}
+
 	return len(genericReadOnlyEvidenceTools(allowedTools)) > 0
 }
 
@@ -897,11 +964,14 @@ func genericReadOnlyAnswerEvidenceReady(brief workerruntime.WorkerRuntimeBrief, 
 	if conversationBroadDiscoveryRejectionRecorded(results) {
 		return true
 	}
+
 	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDirectAnswer) &&
 		workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) &&
 		strings.TrimSpace(brief.Objective) != "" {
+
 		brief = readOnlyDirectAnswerAcceptanceLedgerBrief(brief)
 	}
+
 	return readOnlyClosureDecisionForResults(brief, results).Answerable()
 }
 
@@ -924,34 +994,44 @@ func implementationTargetSourcePending(brief workerruntime.WorkerRuntimeBrief, r
 	if strings.TrimSpace(brief.TaskFamily) == PlanThenExecutePlannerTaskFamily {
 		return false
 	}
+
 	if !guardedMutationBriefRequiresTargetSourceContract(brief) {
 		return false
 	}
+
 	if len(brief.RequiredEditPaths) > 0 || len(brief.RequiredEditSnippets) > 0 {
 		return false
 	}
+
 	if len(changedPathsFromToolResults(results)) > 0 {
 		return false
 	}
+
 	if implementationTargetSourceEvidenceReady(brief, results) {
 		return false
 	}
+
 	return brief.Readiness == nil || !brief.Readiness.ReadyToWrite
 }
 
 func implementationTargetWriteReadyAllowedTools(baseTools []string) []string {
 	allowed := []string{"edit_file", "write_file", "append_file", "apply_patch", "mkdir", "go_move_declarations", "delegate_edit"}
+
 	allowed = append(allowed, gitHistoryLookupToolNames()...)
+
 	return filterPhaseTools(baseTools, allowed...)
 }
 
 func implementationTargetWriteReadyAllowedToolsForBrief(baseTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
 	allowed := implementationTargetWriteReadyAllowedTools(baseTools)
 	pending := sourceEvidencePendingRedirectsForBrief(brief, results)
+
 	allowed = append(allowed, sourceEvidencePendingRedirectTools(baseTools, pending)...)
+
 	if len(pending) == 0 && implementationTargetWriteReadySourceRefreshProjectionActive(brief, results, baseTools) {
 		allowed = append(allowed, implementationTargetWriteReadySourceRefreshTools(baseTools)...)
 	}
+
 	return uniquePhaseStrings(allowed)
 }
 
@@ -971,15 +1051,19 @@ func implementationTargetSourceWriteReady(brief workerruntime.WorkerRuntimeBrief
 	if strings.TrimSpace(brief.TaskFamily) == PlanThenExecutePlannerTaskFamily {
 		return false
 	}
+
 	if !guardedMutationBriefRequiresTargetSourceContract(brief) {
 		return false
 	}
+
 	if len(brief.RequiredEditPaths) > 0 || len(brief.RequiredEditSnippets) > 0 {
 		return false
 	}
+
 	if len(changedPathsFromToolResults(results)) > 0 {
 		return false
 	}
+
 	return implementationTargetSourceEvidenceReady(brief, results)
 }
 
@@ -989,10 +1073,12 @@ func implementationTargetSourceEvidenceReady(brief workerruntime.WorkerRuntimeBr
 		if strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, ".mdx") {
 			continue
 		}
+
 		if implementationTargetSourceEvidencePathPlausible(brief, path) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1001,15 +1087,19 @@ func implementationTargetSourceEvidencePathPlausible(brief workerruntime.WorkerR
 	if path == "" {
 		return false
 	}
+
 	if implementationTargetSourceExplicitPathMatch(brief, path) {
 		return true
 	}
+
 	if implementationTargetPacketEditablePathMatch(brief, path) {
 		return true
 	}
+
 	if !implementationTargetSourceHasScopeHints(brief) {
 		return true
 	}
+
 	return implementationSourcePathOverlapsObjective(path, brief.Objective)
 }
 
@@ -1025,20 +1115,25 @@ func implementationTargetSourceExplicitPathMatch(brief workerruntime.WorkerRunti
 	if path == "" {
 		return false
 	}
+
 	candidates := append([]string{}, brief.RequiredEditPaths...)
+
 	candidates = append(candidates, brief.TargetRefs...)
 	candidates = append(candidates, brief.EvidencePaths...)
 	candidates = append(candidates, brief.ChangedPaths...)
 	candidates = append(candidates, pathparse.MentionedWorkspacePaths(strings.Join(brief.UserBoundaries, "\n"))...)
 	candidates = append(candidates, pathparse.MentionedWorkspacePaths(brief.Objective)...)
+
 	if targetPacketSupportsWrite(brief) {
 		candidates = append(candidates, targetPacketWritableMentionedPaths(brief.TargetPacket)...)
 	}
+
 	for _, candidate := range candidates {
 		if normalizeRunnerPath(candidate) == path {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1047,16 +1142,19 @@ func implementationTargetPacketEditablePathMatch(brief workerruntime.WorkerRunti
 	if path == "" {
 		return false
 	}
+
 	for _, candidate := range targetPacketWritableMentionedPaths(brief.TargetPacket) {
 		if normalizeRunnerPath(candidate) == path {
 			return true
 		}
 	}
+
 	return false
 }
 
 func targetPacketWritableMentionedPaths(lines []string) []string {
 	var paths []string
+
 	for _, line := range lines {
 		normalizedLine := strings.ToLower(strings.TrimSpace(line))
 		switch {
@@ -1070,6 +1168,7 @@ func targetPacketWritableMentionedPaths(lines []string) []string {
 			paths = append(paths, pathparse.MentionedWorkspacePaths(line)...)
 		}
 	}
+
 	return uniquePhaseStrings(paths)
 }
 
@@ -1078,43 +1177,54 @@ func implementationSourcePathOverlapsObjective(path string, objective string) bo
 	if len(terms) == 0 {
 		return false
 	}
+
 	objectiveTerms := make(map[string]struct{}, len(terms))
 	for _, term := range terms {
 		objectiveTerms[singularObjectiveWord(term)] = struct{}{}
 	}
+
 	matches := 0
+
 	for _, term := range implementationPathTerms(path) {
 		if _, ok := objectiveTerms[term]; ok {
 			matches++
 		}
 	}
+
 	return matches >= 2
 }
 
 func implementationPathTerms(path string) []string {
 	path = strings.TrimSuffix(normalizeRunnerPath(path), ".go")
+
 	parts := strings.FieldsFunc(path, func(r rune) bool {
 		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
 	})
 	seen := map[string]struct{}{}
+
 	var terms []string
+
 	for _, part := range parts {
 		for _, token := range splitImplementationPathToken(part) {
 			token = singularObjectiveWord(token)
 			if len(token) < 4 {
 				continue
 			}
+
 			switch token {
 			case "internal", "pkg", "cmd", "test", "tests":
 				continue
 			}
+
 			if _, ok := seen[token]; ok {
 				continue
 			}
+
 			seen[token] = struct{}{}
 			terms = append(terms, token)
 		}
 	}
+
 	return terms
 }
 
@@ -1123,18 +1233,23 @@ func splitImplementationPathToken(token string) []string {
 	if token == "" {
 		return nil
 	}
+
 	var out []string
+
 	start := 0
+
 	for i, r := range token {
 		if i > start && r >= 'A' && r <= 'Z' {
 			out = append(out, token[start:i])
 			start = i
 		}
 	}
+
 	out = append(out, token[start:])
 	for i, value := range out {
 		out[i] = strings.ToLower(value)
 	}
+
 	return out
 }
 
@@ -1142,7 +1257,9 @@ func guardedMutationBriefRequiresTargetSourceContract(brief workerruntime.Worker
 	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDelegatedIsolatedImpl) {
 		return false
 	}
+
 	permission := strings.ToLower(strings.TrimSpace(brief.PermissionProfile))
+
 	return workerruntime.PermissionProfileMatches(permission, workerruntime.PermissionGuardedWorkspaceWrite) ||
 		permission == "workspace_write" ||
 		permission == "write_enabled" ||
@@ -1153,6 +1270,7 @@ func phaseContractBaseTools(input TurnPhaseContractInput, brief workerruntime.Wo
 	if len(input.BaseAllowedTools) > 0 {
 		return uniquePhaseStrings(input.BaseAllowedTools)
 	}
+
 	return uniquePhaseStrings(brief.AllowedTools)
 }
 
@@ -1160,6 +1278,7 @@ func filterPhaseTools(tools []string, allowed ...string) []string {
 	if len(tools) == 0 || len(allowed) == 0 {
 		return nil
 	}
+
 	allowedSet := make(map[string]struct{}, len(allowed))
 	for _, tool := range allowed {
 		tool = strings.TrimSpace(tool)
@@ -1167,13 +1286,16 @@ func filterPhaseTools(tools []string, allowed ...string) []string {
 			allowedSet[tool] = struct{}{}
 		}
 	}
+
 	var out []string
+
 	for _, tool := range tools {
 		tool = strings.TrimSpace(tool)
 		if _, ok := allowedSet[tool]; ok {
 			out = append(out, tool)
 		}
 	}
+
 	return uniquePhaseStrings(out)
 }
 
@@ -1181,6 +1303,7 @@ func filterPhaseTerminalShapes(values []string, allowed ...string) []string {
 	if len(values) == 0 || len(allowed) == 0 {
 		return nil
 	}
+
 	allowedSet := make(map[string]struct{}, len(allowed))
 	for _, value := range allowed {
 		value = strings.TrimSpace(value)
@@ -1188,13 +1311,16 @@ func filterPhaseTerminalShapes(values []string, allowed ...string) []string {
 			allowedSet[value] = struct{}{}
 		}
 	}
+
 	var out []string
+
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if _, ok := allowedSet[value]; ok {
 			out = append(out, value)
 		}
 	}
+
 	return uniquePhaseStrings(out)
 }
 
@@ -1202,6 +1328,7 @@ func removePhaseTools(tools []string, hidden []string) []string {
 	if len(tools) == 0 || len(hidden) == 0 {
 		return tools
 	}
+
 	hiddenSet := make(map[string]struct{}, len(hidden))
 	for _, tool := range hidden {
 		tool = strings.TrimSpace(tool)
@@ -1209,17 +1336,22 @@ func removePhaseTools(tools []string, hidden []string) []string {
 			hiddenSet[tool] = struct{}{}
 		}
 	}
+
 	var out []string
+
 	for _, tool := range tools {
 		tool = strings.TrimSpace(tool)
 		if tool == "" {
 			continue
 		}
+
 		if _, ok := hiddenSet[tool]; ok {
 			continue
 		}
+
 		out = append(out, tool)
 	}
+
 	return uniquePhaseStrings(out)
 }
 
@@ -1233,6 +1365,7 @@ func implementationTargetSourceAllowedTools(baseTools []string) []string {
 		"read_file", "code_navigate", "read_only_capability",
 		"history_range", "history_symbol", "blame_range",
 	)
+
 	return uniquePhaseStrings(append(writes, reads...))
 }
 
@@ -1244,16 +1377,20 @@ func hiddenPhaseTools(baseTools []string, allowedTools []string) []string {
 			allowed[tool] = struct{}{}
 		}
 	}
+
 	var hidden []string
+
 	for _, tool := range baseTools {
 		tool = strings.TrimSpace(tool)
 		if tool == "" {
 			continue
 		}
+
 		if _, ok := allowed[tool]; !ok {
 			hidden = append(hidden, tool)
 		}
 	}
+
 	return hidden
 }
 
@@ -1263,6 +1400,7 @@ func firstPhaseString(values ...string) string {
 			return trimmed
 		}
 	}
+
 	return ""
 }
 
@@ -1281,9 +1419,11 @@ func phaseContractTextualOnly(input TurnPhaseContractInput, contract TurnPhaseCo
 	if !input.TextualToolParser && !util.EqualTrimFold(input.ToolTransportMode, "textual") {
 		return false
 	}
+
 	if phaseContractKeepsTextualCallableTools(input, contract) {
 		return false
 	}
+
 	return contract.PhaseID != ""
 }
 
@@ -1291,15 +1431,19 @@ func phaseContractKeepsTextualCallableTools(input TurnPhaseContractInput, contra
 	if strings.TrimSpace(contract.PhaseID) == turnPhaseHistoryPending {
 		return true
 	}
+
 	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(contract.PermissionProfile) {
 		return false
 	}
+
 	if !workerruntime.RuntimeContractIsDirectAnswer(input.Brief.Contract) {
 		return false
 	}
+
 	if !readOnlyDirectAnswerTaskFamily(input.Brief.TaskFamily) {
 		return false
 	}
+
 	switch strings.TrimSpace(contract.Phase) {
 	case "generic", "read_only_evidence_pending", "read_only_evidence_available":
 		return true
@@ -1310,6 +1454,7 @@ func phaseContractKeepsTextualCallableTools(input TurnPhaseContractInput, contra
 
 func phaseEvidenceHasOpenObligation(state PhaseEvidenceState) bool {
 	verificationStatus := strings.ToLower(strings.TrimSpace(state.VerificationStatus))
+
 	return len(state.TDDObligationRefs) > 0 ||
 		len(state.ResidualBlockers) > 0 ||
 		len(state.RecoveryPacketRefs) > 0 ||

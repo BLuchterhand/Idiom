@@ -87,11 +87,14 @@ func TestParseLSPLocations(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error, got nil")
 				}
+
 				return
 			}
+
 			if err != nil {
 				t.Fatalf("parseLSPLocations error: %v", err)
 			}
+
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("parseLSPLocations() = %#v, want %#v", got, tt.want)
 			}
@@ -101,9 +104,11 @@ func TestParseLSPLocations(t *testing.T) {
 
 func marshalTestJSON(t *testing.T, value any) string {
 	t.Helper()
+
 	raw, err := json.Marshal(value)
 	if err != nil {
 		t.Fatalf("marshal test json: %v", err)
 	}
+
 	return string(raw)
 }

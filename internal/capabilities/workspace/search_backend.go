@@ -35,6 +35,7 @@ func resolveContentSearchBackend() (contentSearchBackend, error) {
 			}
 		}
 	}
+
 	return contentSearchBackend{}, fmt.Errorf("no supported content search backend found (rg or ggrep)")
 }
 
@@ -59,13 +60,16 @@ func findGNUStyleGrep(name string) (string, bool) {
 	if err != nil || path == "" {
 		return "", false
 	}
+
 	output, err := exec.Command(path, "--version").CombinedOutput()
 	if err != nil {
 		return "", false
 	}
+
 	if !strings.Contains(strings.ToLower(string(output)), "gnu grep") {
 		return "", false
 	}
+
 	return path, true
 }
 
@@ -83,10 +87,13 @@ func ripgrepContentSearchArgs(req ToolRequest, excludes []string) []string {
 	if req.Glob != "" {
 		args = append(args, "-g", req.Glob)
 	}
+
 	for _, glob := range excludes {
 		args = append(args, "-g", glob)
 	}
+
 	args = append(args, strings.TrimSpace(req.Pattern), defaultString(req.Path, "."))
+
 	return args
 }
 
@@ -95,8 +102,10 @@ func grepContentSearchArgs(req ToolRequest, excludes []string) []string {
 	if glob := strings.TrimSpace(req.Glob); glob != "" {
 		args = append(args, "--include="+glob)
 	}
+
 	args = append(args, grepExcludeArgs(excludes)...)
 	args = append(args, "-E", strings.TrimSpace(req.Pattern), defaultString(req.Path, "."))
+
 	return args
 }
 
@@ -104,22 +113,29 @@ func grepExcludeArgs(excludes []string) []string {
 	seenDir := map[string]struct{}{}
 	seenFile := map[string]struct{}{}
 	args := make([]string, 0, len(excludes))
+
 	for _, exclude := range excludes {
 		pattern := strings.TrimPrefix(strings.TrimSpace(exclude), "!")
+
 		pattern = filepath.ToSlash(strings.TrimSpace(pattern))
+
 		if pattern == "" {
 			continue
 		}
+
 		switch {
 		case strings.HasSuffix(pattern, "/**"):
 			dir := strings.TrimSuffix(pattern, "/**")
 			base := filepath.Base(dir)
+
 			if base == "" || base == "." || base == "/" {
 				continue
 			}
+
 			if _, ok := seenDir[base]; ok {
 				continue
 			}
+
 			seenDir[base] = struct{}{}
 			args = append(args, "--exclude-dir="+base)
 		default:
@@ -127,12 +143,15 @@ func grepExcludeArgs(excludes []string) []string {
 			if base == "" || base == "." || base == "/" {
 				continue
 			}
+
 			if _, ok := seenFile[base]; ok {
 				continue
 			}
+
 			seenFile[base] = struct{}{}
 			args = append(args, "--exclude="+base)
 		}
 	}
+
 	return args
 }

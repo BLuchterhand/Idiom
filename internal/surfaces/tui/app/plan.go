@@ -42,16 +42,20 @@ func (m *Model) ensurePlanPath() string {
 	if m.planPath != "" {
 		return m.planPath
 	}
+
 	id := m.sessionID()
 	if id == "" {
 		return ""
 	}
+
 	dir := planDirName
 	if root := m.workspace.Root(); root != "" {
 		dir = filepath.Join(root, planDirName)
 	}
+
 	_ = os.MkdirAll(dir, 0o755)
 	m.planPath = filepath.Join(dir, id+".md")
+
 	return m.planPath
 }
 
@@ -62,7 +66,9 @@ func (m *Model) sessionID() string {
 	if path == "" {
 		return ""
 	}
+
 	base := filepath.Base(path)
+
 	return strings.TrimSuffix(base, ".jsonl")
 }
 
@@ -73,6 +79,7 @@ func (m *Model) loadPlanContent() string {
 	if path == "" {
 		return ""
 	}
+
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -80,13 +87,17 @@ func (m *Model) loadPlanContent() string {
 		} else {
 			m.planLoadError = err.Error()
 		}
+
 		m.planMTime = time.Time{}
 		m.planContent = ""
+
 		return ""
 	}
+
 	if info.ModTime().Equal(m.planMTime) && m.planLoadError == "" {
 		return m.planContent
 	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -94,13 +105,17 @@ func (m *Model) loadPlanContent() string {
 		} else {
 			m.planLoadError = err.Error()
 		}
+
 		m.planMTime = time.Time{}
 		m.planContent = ""
+
 		return ""
 	}
+
 	m.planLoadError = ""
 	m.planMTime = info.ModTime()
 	m.planContent = string(data)
+
 	return m.planContent
 }
 
@@ -109,6 +124,7 @@ func (m *Model) renderPlanPanelContent() {
 	if !m.history.panelOpen {
 		return
 	}
+
 	w := max(8, m.planViewport.Width)
 
 	// Diff overlay takes precedence — when the user picks an entry,
@@ -116,22 +132,27 @@ func (m *Model) renderPlanPanelContent() {
 	// familiar j/k scrolling applies to the diff payload directly.
 	if m.plan.overlayID != "" && m.plan.overlayBody != "" {
 		var b strings.Builder
+
 		title := "◇ Plan · diff · Esc to close"
 		b.WriteString(panelTitleStyle.Width(w).Render(title))
 		b.WriteString("\n")
 		b.WriteString(m.plan.overlayBody)
 		m.planViewport.SetContent(strings.TrimRight(b.String(), "\n"))
+
 		return
 	}
 
 	var b strings.Builder
+
 	title := "◇ Plan"
+
 	if m.history.focused && m.panelTab == panelTabPlan {
 		// When the panel has focus, surface the keybinds so the user
 		// knows ↑/↓ navigates and Enter opens a diff. Without this hint
 		// the interactivity is invisible.
 		title = "◇ Plan · ↑/↓ select · Enter view diff"
 	}
+
 	b.WriteString(panelTitleStyle.Width(w).Render(title))
 	b.WriteString("\n")
 
@@ -154,13 +175,16 @@ func (m *Model) renderPlanPanelContent() {
 		if m.planLoadError != "" {
 			lines = append(lines, "", "Load error: "+m.planLoadError)
 		}
+
 		for _, line := range lines {
 			for _, wl := range wrapLines(line, max(1, w-2)) {
 				b.WriteString(panelDetailStyle.Width(w).Render(wl))
 				b.WriteString("\n")
 			}
 		}
+
 		m.planViewport.SetContent(strings.TrimRight(b.String(), "\n"))
+
 		return
 	}
 
@@ -169,21 +193,27 @@ func (m *Model) renderPlanPanelContent() {
 	// panel has focus and there are clickable items, we highlight the
 	// cursor row so the user sees which Enter will open.
 	items := parsePlanItems(content)
+
 	var cursorLineIdx = -1
+
 	if m.panelTab == panelTabPlan && m.history.focused && len(items) > 0 {
 		if m.plan.cursor < 0 {
 			m.plan.cursor = 0
 		}
+
 		if m.plan.cursor >= len(items) {
 			m.plan.cursor = len(items) - 1
 		}
+
 		cursorLineIdx = items[m.plan.cursor].LineIdx
 	}
+
 	for i, raw := range strings.Split(content, "\n") {
 		rendered := renderPlanLine(raw, w)
 		if i == cursorLineIdx {
 			rendered = panelFocusedStyle.Width(w).Render("▸ " + strings.TrimLeft(planCommentRe.ReplaceAllString(raw, ""), " \t"))
 		}
+
 		b.WriteString(rendered)
 		b.WriteString("\n")
 	}
@@ -199,9 +229,12 @@ func (m *Model) currentPlanItems() []planItemMeta {
 	if content == m.plan.cachedItemsContent && m.plan.cachedItems != nil {
 		return m.plan.cachedItems
 	}
+
 	items := parsePlanItems(content)
+
 	m.plan.cachedItemsContent = content
 	m.plan.cachedItems = items
+
 	return items
 }
 
@@ -214,18 +247,23 @@ func (m *Model) openPlanDiffOverlay() bool {
 	if len(items) == 0 || m.plan.cursor < 0 || m.plan.cursor >= len(items) {
 		return false
 	}
+
 	item := items[m.plan.cursor]
 	if item.DiffID == "" {
 		return false
 	}
+
 	entry, err := m.loadPlanDiffEntry(item.DiffID)
 	if err != nil {
 		m.plan.overlayID = item.DiffID
 		m.plan.overlayBody = diffHeaderStyle.Render(fmt.Sprintf("(could not load diff %s: %v)", item.DiffID, err))
+
 		return true
 	}
+
 	m.plan.overlayID = item.DiffID
 	m.plan.overlayBody = renderPlanDiffOverlay(entry)
+
 	return true
 }
 
@@ -249,16 +287,20 @@ func (m *Model) handlePlanPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		if msg.Type == tea.KeyEsc {
 			m.closePlanDiffOverlay()
 			m.renderPlanPanelContent()
+
 			return true, m.waitForEventCmd()
 		}
+
 		return false, nil
 	}
+
 	switch msg.Type {
 	case tea.KeyUp:
 		if m.plan.cursor > 0 {
 			m.plan.cursor--
 			m.renderPlanPanelContent()
 		}
+
 		return true, m.waitForEventCmd()
 	case tea.KeyDown:
 		items := m.currentPlanItems()
@@ -266,18 +308,23 @@ func (m *Model) handlePlanPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 			m.plan.cursor++
 			m.renderPlanPanelContent()
 		}
+
 		return true, m.waitForEventCmd()
 	case tea.KeyEnter:
 		if m.openPlanDiffOverlay() {
 			m.renderPlanPanelContent()
 			m.planViewport.GotoTop()
+
 			return true, m.waitForEventCmd()
 		}
+
 		m.status = "No diff attached to this item."
+
 		return true, m.waitForEventCmd()
 	case tea.KeyEsc:
 		m.history.focused = false
 		m.renderPlanPanelContent()
+
 		return true, m.waitForEventCmd()
 	case tea.KeyRunes:
 		switch string(msg.Runes) {
@@ -287,15 +334,18 @@ func (m *Model) handlePlanPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 				m.plan.cursor++
 				m.renderPlanPanelContent()
 			}
+
 			return true, m.waitForEventCmd()
 		case "k":
 			if m.plan.cursor > 0 {
 				m.plan.cursor--
 				m.renderPlanPanelContent()
 			}
+
 			return true, m.waitForEventCmd()
 		}
 	}
+
 	return false, nil
 }
 
@@ -314,11 +364,13 @@ func renderPlanLine(raw string, w int) string {
 		rest := strings.TrimSpace(trimmed[5:])
 		box := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("[~]")
 		line := indent + box + " " + rest
+
 		return planInProgressStyle.Width(w).Render(line)
 	case strings.HasPrefix(trimmed, "- [ ]") || strings.HasPrefix(trimmed, "* [ ]"):
 		rest := strings.TrimSpace(trimmed[5:])
 		box := lipgloss.NewStyle().Foreground(colorMuted).Render("[ ]")
 		line := indent + box + " " + rest
+
 		return planTodoStyle.Width(w).Render(line)
 	case strings.HasPrefix(trimmed, "- [x]") || strings.HasPrefix(trimmed, "- [X]") ||
 		strings.HasPrefix(trimmed, "* [x]") || strings.HasPrefix(trimmed, "* [X]"):
@@ -330,6 +382,7 @@ func renderPlanLine(raw string, w int) string {
 		box := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("[x]")
 		text := planDoneStyle.Render(strings.TrimRight(rest, " "))
 		line := indent + box + " " + text
+
 		return lipgloss.NewStyle().Width(w).Render(line)
 	case strings.HasPrefix(trimmed, "# "):
 		return planH1Style.Width(w).Render(strings.TrimPrefix(trimmed, "# "))
@@ -351,6 +404,7 @@ func (m *Model) prepareEditPlanCmd() (tea.Cmd, string, error) {
 	if path == "" {
 		return nil, "", fmt.Errorf("plan path is not available (debug log not initialized)")
 	}
+
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		template := fmt.Sprintf("# Plan — %s\n\n## Goals\n- [ ] \n\n## Steps\n- [ ] \n\n## Notes\n\n", m.sessionID())
 		if err := os.WriteFile(path, []byte(template), 0o644); err != nil {
@@ -363,6 +417,7 @@ func (m *Model) prepareEditPlanCmd() (tea.Cmd, string, error) {
 	teaCmd := tea.ExecProcess(c, func(err error) tea.Msg {
 		return planEditorDoneMsg{err: err}
 	})
+
 	return teaCmd, "Opening plan in editor: " + m.displayPath(path), nil
 }
 
@@ -376,6 +431,7 @@ type planEditorDoneMsg struct {
 // content. Active tab is highlighted; inactive tabs render dim.
 func (m *Model) renderPanelTabs(width int) string {
 	var rendered []string
+
 	for _, t := range m.panelTabLabels() {
 		label := " " + t.label + " "
 		if t.idx == m.panelTab {
@@ -384,11 +440,14 @@ func (m *Model) renderPanelTabs(width int) string {
 			rendered = append(rendered, panelTabInactiveStyle.Render(label))
 		}
 	}
+
 	bar := lipgloss.JoinHorizontal(lipgloss.Top, rendered...)
 	pad := width - lipgloss.Width(bar)
+
 	if pad > 0 {
 		bar = bar + strings.Repeat(" ", pad)
 	}
+
 	return bar
 }
 
@@ -432,15 +491,19 @@ func (m *Model) planPanelAutoShowNeeded() bool {
 	if m == nil {
 		return false
 	}
+
 	family := strings.TrimSpace(m.forcedTaskFamily)
 	isPlanExecute := workerruntime.TaskFamilyIsPlanThenExecutePlanner(family) || workerruntime.TaskFamilyIsPlanThenExecuteReview(family)
 	content := m.loadPlanContent()
+
 	if strings.TrimSpace(content) == "" {
 		return false
 	}
+
 	if isPlanExecute {
 		return true
 	}
+
 	return planCheckboxRe.MatchString(content)
 }
 
@@ -451,19 +514,25 @@ func (m *Model) planCheckboxCounts() (checked, total int) {
 	if strings.TrimSpace(content) == "" {
 		return 0, 0
 	}
+
 	for _, line := range strings.Split(content, "\n") {
 		trimmed := strings.TrimLeft(line, " \t")
 		if !strings.HasPrefix(trimmed, "- [") && !strings.HasPrefix(trimmed, "* [") {
 			continue
 		}
+
 		if len(trimmed) < 5 {
 			continue
 		}
+
 		total++
+
 		box := trimmed[3]
+
 		if box == 'x' || box == 'X' {
 			checked++
 		}
 	}
+
 	return
 }

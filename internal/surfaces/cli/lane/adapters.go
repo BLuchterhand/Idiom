@@ -139,15 +139,19 @@ func laneRunFinalState(exitCode int, degradations []laneDegradation, out []byte)
 	if exitCode != 0 {
 		return "failed"
 	}
+
 	if len(degradations) > 0 {
 		return "degraded"
 	}
+
 	if hasReviewRepairDegradedEvent(out) {
 		return "degraded"
 	}
+
 	if hasSourceSatisfiedEvent(out) {
 		return "source-satisfied"
 	}
+
 	return "success"
 }
 
@@ -155,15 +159,19 @@ func laneDegradationKinds(degradations []laneDegradation) []string {
 	if len(degradations) == 0 {
 		return nil
 	}
+
 	kinds := make([]string, 0, len(degradations))
 	for _, degradation := range degradations {
 		if strings.TrimSpace(degradation.kind) == "" {
 			continue
 		}
+
 		kinds = append(kinds, degradation.kind)
 	}
+
 	if len(kinds) == 0 {
 		return nil
 	}
+
 	return kinds
 }

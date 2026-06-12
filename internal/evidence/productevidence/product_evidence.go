@@ -160,17 +160,21 @@ func runProductEvidenceMainWithTelemetry(args []string, stdout io.Writer, stderr
 func RunProductEvidenceMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, deps Dependencies) int {
 	if len(args) == 0 {
 		printProductEvidenceUsage(stderr)
+
 		return 2
 	}
+
 	switch args[0] {
 	case "export":
 		return runProductEvidenceExportWithDeps(args[1:], stdout, stderr, rec, deps)
 	case "-h", "--help", "help":
 		printProductEvidenceUsage(stdout)
+
 		return 0
 	default:
 		fmt.Fprintf(stderr, "product-evidence: unknown subcommand %q\n", args[0])
 		printProductEvidenceUsage(stderr)
+
 		return 2
 	}
 }
@@ -178,62 +182,82 @@ func RunProductEvidenceMainWithTelemetry(args []string, stdout io.Writer, stderr
 func runProductEvidenceExportWithDeps(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, deps Dependencies) int {
 	fs := flag.NewFlagSet("idiom product-evidence export", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	opts := productEvidenceExportOptions{}
 	fs.StringVar(&opts.ProjectRoot, "project-root", ".", "workspace root whose local evidence should be summarized")
 	fs.StringVar(&opts.OutputPath, "output", "", "optional path to write the JSON export")
 	fs.StringVar(&opts.LocalOpsReport, "local-ops-report", "", "optional local-ops benchmark JSON report to fold into the export")
 	fs.StringVar(&opts.ValidationRecords, "validation-records", "", "optional privacy-safe P0.8 validation records JSON or JSONL")
 	fs.StringVar(&opts.BenchmarkReport, "benchmark-report", "", "optional localization benchmark or corpus JSON report to fold into P9.10")
+
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
 		}
+
 		return 2
 	}
 
 	root, err := filepath.Abs(opts.ProjectRoot)
 	if err != nil {
 		fmt.Fprintf(stderr, "product-evidence export: resolve project root: %v\n", err)
+
 		return 1
 	}
+
 	summary, err := deps.summarizeLaneHistory(root)
 	if err != nil {
 		fmt.Fprintf(stderr, "product-evidence export: summarize lane history: %v\n", err)
+
 		return 1
 	}
+
 	report := buildProductEvidenceExportReportWithDeps(root, summary, opts, deps)
+
 	body, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		fmt.Fprintf(stderr, "product-evidence export: marshal report: %v\n", err)
+
 		return 1
 	}
+
 	if forbidden := localops.ForbiddenEvidenceLeak(string(body)); forbidden != "" {
 		localops.RedactForbiddenStrings(&report)
+
 		report.Status = "blocked"
 		report.Privacy.RedactionStatus = "blocked"
 		report.Privacy.ForbiddenFieldCheck = "failed:" + forbidden
 		refreshProductEvidenceP99Gate(root, &report)
 		finalizeProductEvidenceIdentity(&report)
+
 		body, err = json.MarshalIndent(report, "", "  ")
 		if err != nil {
 			fmt.Fprintf(stderr, "product-evidence export: marshal blocked report: %v\n", err)
+
 			return 1
 		}
 	}
+
 	body = append(body, '\n')
+
 	if strings.TrimSpace(opts.OutputPath) != "" {
 		if err := os.MkdirAll(filepath.Dir(filepath.Clean(opts.OutputPath)), 0o755); err != nil {
 			fmt.Fprintf(stderr, "product-evidence export: create output directory: %v\n", err)
+
 			return 1
 		}
+
 		if err := os.WriteFile(opts.OutputPath, body, 0o644); err != nil {
 			fmt.Fprintf(stderr, "product-evidence export: write output: %v\n", err)
+
 			return 1
 		}
+
 		fmt.Fprintf(stdout, "product-evidence export wrote output_id:%s\n", localops.StableID(opts.OutputPath))
 	} else {
 		_, _ = stdout.Write(body)
 	}
+
 	deps.logCLIPhase(rec, "product_evidence_export", map[string]any{
 		"status":                        report.Status,
 		"export_id":                     report.ExportID,
@@ -250,6 +274,7 @@ func runProductEvidenceExportWithDeps(args []string, stdout io.Writer, stderr io
 		"recovery_status":               report.Recovery.Status,
 		"recovery_open":                 report.Recovery.OpenPacketCount,
 	})
+
 	return 0
 }
 
@@ -259,10 +284,13 @@ func buildProductEvidenceExportReport(root string, summary LaneHistorySummary, o
 
 func buildProductEvidenceExportReportWithDeps(root string, summary LaneHistorySummary, opts productEvidenceExportOptions, deps Dependencies) productEvidenceExportReport {
 	deps = currentDependencies(deps)
+
 	laneStatus := "not_available"
+
 	if summary.Total > 0 {
 		laneStatus = "available"
 	}
+
 	localOps, localOpsRef := loadP711LocalOpsReport(root, opts.LocalOpsReport)
 	integration, integrationRef := loadP711IntegrationProofs(root)
 	security, securityRef := loadP711SecurityPosture(root)
@@ -277,7 +305,9 @@ func buildProductEvidenceExportReportWithDeps(root string, summary LaneHistorySu
 	classCoverage := buildP711ClassCoverage(demos, security, integration, records)
 	completeness := summarizeP711Signals(signals)
 	status := p711ExportStatus(completeness)
+
 	status = productEvidenceStatusWithRecovery(status, recoverySummary.Status)
+
 	privacy := productEvidencePrivacy{
 		RedactionStatus:        "redacted",
 		ForbiddenFieldCheck:    "pass",
@@ -289,11 +319,13 @@ func buildProductEvidenceExportReportWithDeps(root string, summary LaneHistorySu
 		HostedTelemetryDefault: false,
 		RedactedFields:         []string{"project_root", "lane_history_path", "output_path"},
 	}
+
 	if recordsRef.Status == "blocked" {
 		status = "blocked"
 		privacy.RedactionStatus = "blocked"
 		privacy.ForbiddenFieldCheck = "failed:validation_records"
 	}
+
 	p99 := p99SecurityPrivacyGate(root, p99ProductPrivacyState{
 		ExportStatus:            status,
 		RedactionStatus:         privacy.RedactionStatus,
@@ -358,6 +390,7 @@ func buildProductEvidenceExportReportWithDeps(root string, summary LaneHistorySu
 		},
 	}
 	finalizeProductEvidenceIdentity(&report)
+
 	return report
 }
 
@@ -370,6 +403,7 @@ func productEvidenceStatusWithRecovery(status string, recoveryStatus string) str
 			return "partial"
 		}
 	}
+
 	return status
 }
 
@@ -379,15 +413,18 @@ func productEvidenceExportLimitations(integration p711IntegrationProofSet, recov
 		"prompt bodies, file bodies, and transcript bodies are not loaded",
 		"retained-use and adoption signals are not claimed unless validation records are supplied",
 	}
+
 	switch recovery.Status {
 	case "partial":
 		limitations = append(limitations, "open recovery packets are release-impact evidence until reconciliation closes them")
 	case "blocked":
 		limitations = append(limitations, "recovery artifacts are malformed or stale; release impact is blocked until recovery evidence is repaired")
 	}
+
 	if p711MCPStdioParityPresent(integration) {
 		return append(limitations, "MCP resources are metadata-only; resource file bodies are not exported")
 	}
+
 	return append(limitations, "MCP stdio parity remains P8.6 scope when only the P7.8 placeholder is present")
 }
 
@@ -398,6 +435,7 @@ func p711MCPStdioParityPresent(integration p711IntegrationProofSet) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -477,9 +515,11 @@ func (proof *p711IntegrationProof) UnmarshalJSON(data []byte) error {
 		Readiness                   map[string]bool `json:"readiness"`
 		Privacy                     json.RawMessage `json:"privacy"`
 	}
+
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
+
 	proof.ID = raw.ID
 	proof.Path = raw.Path
 	proof.Status = raw.Status
@@ -487,34 +527,46 @@ func (proof *p711IntegrationProof) UnmarshalJSON(data []byte) error {
 	proof.ProductEvidenceExportParity = raw.ProductEvidenceExportParity
 	proof.Readiness = raw.Readiness
 	proof.Privacy, proof.privacySemantics = p711IntegrationProofPrivacyFromRaw(raw.Privacy)
+
 	return nil
 }
 
 func p711IntegrationProofPrivacyFromRaw(raw json.RawMessage) (p711IntegrationProofPrivacy, p711IntegrationProofPrivacySemantics) {
 	semantics := p711IntegrationProofPrivacySemantics{fieldsPresent: map[string]bool{}}
+
 	var privacy p711IntegrationProofPrivacy
+
 	if len(raw) == 0 {
 		return privacy, semantics
 	}
+
 	var fields map[string]json.RawMessage
+
 	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
 		semantics.malformed = true
 		return privacy, semantics
 	}
+
 	semantics.objectPresent = true
+
 	for _, field := range p711RequiredIntegrationPrivacyFields {
 		value, ok := fields[field]
 		if !ok {
 			continue
 		}
+
 		semantics.fieldsPresent[field] = true
+
 		var decoded bool
+
 		if err := json.Unmarshal(value, &decoded); err != nil {
 			semantics.malformed = true
 			continue
 		}
+
 		p711SetIntegrationProofPrivacyField(&privacy, field, decoded)
 	}
+
 	return privacy, semantics
 }
 
@@ -733,69 +785,93 @@ type p912PackagingSupportDecision struct {
 
 func loadP711LocalOpsReport(root string, path string) (*localops.BenchmarkReport, productEvidenceSourceReference) {
 	ref := productEvidenceSourceReference{ID: "local_ops_benchmark", Kind: "local_ops", Status: "not_available"}
+
 	if strings.TrimSpace(path) == "" {
 		path = filepath.Join(root, ".idiom", "local-ops", "report.json")
 	}
+
 	ref.PathID = localops.PathEvidence(path)
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, ref
 	}
+
 	ref.ArtifactHash = localops.ContentHash(data)
+
 	var report localops.BenchmarkReport
+
 	if err := json.Unmarshal(data, &report); err != nil {
 		ref.Status = "blocked"
 		return nil, ref
 	}
+
 	ref.Status = "present"
+
 	return &report, ref
 }
 
 func loadP711IntegrationProofs(root string) (p711IntegrationProofSet, productEvidenceSourceReference) {
 	path := filepath.Join(root, "testdata", "sidecar", "integration-proofs.json")
 	ref := p711FileRef("p7.8_integration_proofs", "integration_proofs", path)
+
 	var out p711IntegrationProofSet
+
 	if util.ReadJSON(path, &out) != nil {
 		return out, ref
 	}
+
 	ref.Status = "present"
+
 	return out, ref
 }
 
 func loadP711SecurityPosture(root string) (p711SecurityPosture, productEvidenceSourceReference) {
 	path := filepath.Join(root, "docs", "security-privacy-posture.matrix.json")
 	ref := p711FileRef("p7.9_security_privacy_posture", "security_privacy", path)
+
 	var out p711SecurityPosture
+
 	if util.ReadJSON(path, &out) != nil {
 		return out, ref
 	}
+
 	ref.Status = "present"
 	if out.ArtifactID != "" {
 		ref.ID = out.ArtifactID
 	}
+
 	return out, ref
 }
 
 func loadP711ClientDemoTranscripts(root string) (p711DemoTranscriptSet, productEvidenceSourceReference) {
 	path := filepath.Join(root, "testdata", "sidecar", "client-demo-transcripts.json")
 	ref := p711FileRef("p7.10_client_demo_transcripts", "client_demo_transcripts", path)
+
 	var out p711DemoTranscriptSet
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return out, ref
 	}
+
 	ref.ArtifactHash = localops.ContentHash(data)
+
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
+
 	if err := dec.Decode(&out); err != nil {
 		ref.Status = "blocked"
 		return out, ref
 	}
+
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		ref.Status = "blocked"
 		return out, ref
 	}
+
 	ref.Status = "present"
+
 	return out, ref
 }
 
@@ -804,22 +880,28 @@ func loadP711ValidationRecords(path string) ([]p711ValidationRecord, productEvid
 	if strings.TrimSpace(path) == "" {
 		return nil, ref
 	}
+
 	ref.PathID = localops.PathEvidence(path)
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, ref
 	}
+
 	ref.ArtifactHash = localops.ContentHash(data)
 	if forbidden := p711ForbiddenValidationEvidence(data); forbidden != "" {
 		ref.Status = "blocked"
 		return nil, ref
 	}
+
 	records, err := decodeP711ValidationRecords(data)
 	if err != nil {
 		ref.Status = "blocked"
 		return nil, ref
 	}
+
 	ref.Status = "present"
+
 	for i := range records {
 		records[i].RecordID = p711SafeID(records[i].RecordID, "record")
 		records[i].ClientClassification = p711ApprovedClassification(records[i].ClientClassification)
@@ -838,6 +920,7 @@ func loadP711ValidationRecords(path string) ([]p711ValidationRecord, productEvid
 		records[i].BuyerBudgetSignal = localops.SafeToken(records[i].BuyerBudgetSignal)
 		records[i].DisqualifierStatus = localops.SafeToken(records[i].DisqualifierStatus)
 	}
+
 	return records, ref
 }
 
@@ -845,38 +928,50 @@ func loadP711LearningSummary(root string) (*comprehension.LearningLogSummary, pr
 	path := filepath.Join(root, ".idiom", "ranker", "learning_log.jsonl")
 	ref := productEvidenceSourceReference{ID: "ranker_learning_log", Kind: "learning", Status: "not_available", PathID: localops.PathEvidence(path)}
 	entries, err := comprehension.ReadLearningLog(root)
+
 	if err != nil || len(entries) == 0 {
 		return nil, ref
 	}
+
 	summary := comprehension.SummarizeLearningLog(entries)
+
 	ref.Status = "present"
 	ref.ArtifactHash = localops.StableID(fmt.Sprintf("%d:%d:%d", summary.TotalEntries, summary.AcceptedCount, summary.RejectedCount))
+
 	return &summary, ref
 }
 
 func loadP912PackagingSupportThesis(root string) (p912PackagingSupportThesis, productEvidenceSourceReference) {
 	path := filepath.Join(root, "docs", "packaging-support-thesis.json")
 	ref := p711FileRef("p0.11_packaging_support_thesis", "packaging_support_thesis", path)
+
 	var out p912PackagingSupportThesis
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return out, ref
 	}
+
 	ref.ArtifactHash = localops.ContentHash(data)
+
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
+
 	if err := dec.Decode(&out); err != nil {
 		ref.Status = "blocked"
 		return out, ref
 	}
+
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		ref.Status = "blocked"
 		return out, ref
 	}
+
 	ref.Status = "present"
 	if strings.TrimSpace(out.ArtifactID) != "" {
 		ref.ID = out.ArtifactID
 	}
+
 	return out, ref
 }
 
@@ -897,7 +992,9 @@ func p711ActivationSignal(localOps *localops.BenchmarkReport) productEvidenceSig
 		s.Limitations = []string{"quickstart activation smoke not supplied"}
 		return s
 	}
+
 	q := localOps.Quickstart
+
 	s.Status = q.Status
 	s.Completeness = p711Completeness(q.Status)
 	s.EvidenceIDs = localops.CompactStrings(q.SmokeID, q.ProductEvidenceSafeOutput.ExportID, q.FirstUsefulPacket.PacketID, q.FirstUsefulPacket.IndexID)
@@ -905,15 +1002,18 @@ func p711ActivationSignal(localOps *localops.BenchmarkReport) productEvidenceSig
 	s.Counts["candidate_symbols"] = q.FirstUsefulPacket.CandidateSymbolCount
 	s.Counts["candidate_tests"] = q.FirstUsefulPacket.CandidateTestCount
 	s.Counts["useful_evidence_count"] = localops.ActivationPacketUsefulEvidenceCount(q.FirstUsefulPacket)
+
 	if !localops.ActivationPacketHasUsefulEvidence(q.FirstUsefulPacket) {
 		s.Status = "partial"
 		s.Completeness = "partial"
 		s.Limitations = []string{"first useful packet evidence has no ranked files, symbols, tests, or equivalent useful-evidence counts"}
 	}
+
 	if q.ProductEvidenceSafeOutput.ForbiddenFieldCheck != "pass" {
 		s.Status = "blocked"
 		s.Completeness = "blocked"
 	}
+
 	return s
 }
 
@@ -924,17 +1024,21 @@ func p711RetainedUseSignal(records []p711ValidationRecord) productEvidenceSignal
 			s.Counts["non_qualifying_records"]++
 			continue
 		}
+
 		s.Counts["qualifying_records"]++
 		if record.RecordID != "" {
 			s.EvidenceIDs = append(s.EvidenceIDs, record.RecordID)
 		}
+
 		if p97RecordHasRetainedSubstrateUse(record) {
 			s.Counts["retained_use_observed"]++
 		}
+
 		if p711HasAdoptionSignal(record.AdoptionSignalType) {
 			s.Counts["adoption_signals"]++
 		}
 	}
+
 	if s.Counts["retained_use_observed"] > 0 {
 		s.Status = "pass"
 		s.Completeness = "complete"
@@ -944,6 +1048,7 @@ func p711RetainedUseSignal(records []p711ValidationRecord) productEvidenceSignal
 	} else if len(records) > 0 {
 		s.Limitations = []string{"validation records supplied but none qualified for retained-use counting"}
 	}
+
 	return s
 }
 
@@ -984,12 +1089,15 @@ func p97ValidationGate(records []p711ValidationRecord) p97ValidationGateResult {
 		},
 	}
 	contexts := map[string]bool{}
+
 	for _, record := range records {
 		if record.ClientClassification == "open-source" {
 			out.Counts["open_source_records"]++
 		}
+
 		if !p711ValidationRecordQualifies(record) {
 			out.Counts["non_qualifying_records"]++
+
 			switch record.EvidenceStatus {
 			case "disqualified":
 				out.Counts["disqualified_records"]++
@@ -998,54 +1106,72 @@ func p97ValidationGate(records []p711ValidationRecord) p97ValidationGateResult {
 			case "draft":
 				out.Counts["draft_records"]++
 			}
+
 			continue
 		}
+
 		out.Counts["complete_records"]++
 		if p97RecordHasRetainedSubstrateUse(record) {
 			out.Counts["retained_use_records"]++
 		}
+
 		if !p97PrimaryICPRecord(record) {
 			continue
 		}
+
 		out.Counts["primary_icp_records"]++
+
 		out.EvidenceIDs = append(out.EvidenceIDs, record.RecordID)
+
 		if record.ParticipantContextID != "" {
 			contexts[record.ParticipantContextID] = true
 		}
+
 		if p97PrimaryScoresPass(record) {
 			out.Counts["primary_scored_records"]++
 		}
+
 		if p97DailyUserActivationQualifies(record.DailyUserActivationStatus) {
 			out.Counts["daily_user_activation_records"]++
 		}
+
 		if p97CrediblePrimaryAdoptionSignal(record) {
 			out.Counts["credible_primary_adoption_signals"]++
 		}
 	}
+
 	out.Counts["primary_contexts"] = len(contexts)
 
 	var blockers []string
+
 	if out.Counts["complete_records"] < 5 {
 		blockers = append(blockers, "fewer than five complete privacy-safe P0.8 validation records")
 	}
+
 	if out.Counts["primary_icp_records"] < 3 {
 		blockers = append(blockers, "fewer than three complete primary enterprise-saas records")
 	}
+
 	if out.Counts["primary_contexts"] < 2 {
 		blockers = append(blockers, "primary records do not span at least two contexts")
 	}
+
 	if out.Counts["primary_scored_records"] < 2 {
 		blockers = append(blockers, "fewer than two primary records meet activation, trust/security, and workflow-value score thresholds")
 	}
+
 	if out.Counts["daily_user_activation_records"] < 2 {
 		blockers = append(blockers, "fewer than two primary records include daily-user activation attempts")
 	}
+
 	if out.Counts["retained_use_records"] < 1 {
 		blockers = append(blockers, "retained use is missing or not tied to substrate value")
 	}
+
 	if out.Counts["credible_primary_adoption_signals"] < 1 {
 		blockers = append(blockers, "credible paid, budget-owner, or internal-platform adoption signal is missing")
 	}
+
 	if out.Counts["open_source_records"] > 0 && out.Counts["primary_icp_records"] < 3 {
 		blockers = append(blockers, "open-source/supporting records do not replace primary enterprise-saas demand")
 	}
@@ -1055,9 +1181,12 @@ func p97ValidationGate(records []p711ValidationRecord) p97ValidationGateResult {
 		out.Status = "evidence_present"
 		out.Evidence = p97EvidenceSummary(out.Counts)
 		out.ClaimImpact = "P9.7 can cite primary-ICP design-partner validation, retained use, and credible paid/internal-platform adoption evidence"
+
 		return out
 	}
+
 	out.Evidence = p97EvidenceSummary(out.Counts) + "; blockers:" + strings.Join(blockers, "|")
+
 	return out
 }
 
@@ -1125,9 +1254,11 @@ func p97CrediblePrimaryAdoptionSignal(record p711ValidationRecord) bool {
 	if !p97PrimaryICPRecord(record) || record.AdoptPaySponsorScore < 2 {
 		return false
 	}
+
 	if p97CredibleAdoptionToken(record.AdoptionSignalType) {
 		return true
 	}
+
 	return p97CredibleAdoptionToken(record.BuyerBudgetSignal)
 }
 
@@ -1183,55 +1314,71 @@ func p711IntegrationSignal(proofs p711IntegrationProofSet) productEvidenceSignal
 	s := productEvidenceSignalSummary{ID: "integration_proof", Status: "not_available", Completeness: "missing", SourceRefs: []string{"p7.8_integration_proofs"}, RedactionStatus: "redacted", ReleaseGates: []string{"P7.8", "P8.6", "P9.8"}, Counts: map[string]int{}}
 	validity := p711ProofValidityFor(proofs)
 	requiredExecutable := map[string]bool{}
+
 	for _, proof := range proofs.Proofs {
 		s.Counts["proof_rows"]++
 		if proof.Readiness["reviewed_placeholder"] {
 			s.Counts["reviewed_placeholders"]++
 		}
+
 		if p711IntegrationProofHasPrivacyBlocker(proof) {
 			s.Counts["privacy_blockers"]++
 		}
+
 		if !p711IntegrationProofPrivacyObjectPresent(proof) {
 			s.Counts["missing_privacy"]++
 		}
+
 		if !p711IntegrationProofPrivacyFieldsPresent(proof) {
 			s.Counts["incomplete_privacy"]++
 		}
+
 		if proof.privacySemantics.malformed {
 			s.Counts["malformed_privacy"]++
 		}
+
 		if strings.TrimSpace(proof.ID) == "" {
 			s.Counts["missing_ids"]++
 		}
+
 		if validity.duplicateID(proof.ID) {
 			s.Counts["duplicate_ids"]++
 		}
+
 		if !p711IntegrationProofHasValidatedStatus(proof) {
 			s.Counts["non_validated_statuses"]++
 		}
+
 		if !validity.validProof(proof) {
 			continue
 		}
+
 		s.EvidenceIDs = append(s.EvidenceIDs, proof.ID)
 		s.Counts["proof_paths"]++
+
 		if proof.Path != "" {
 			s.Counts["path_"+localops.SafeToken(proof.Path)]++
 		}
+
 		s.Counts["executable_paths"]++
+
 		if p711IsRequiredIntegrationPath(proof.Path) {
 			requiredExecutable[proof.Path] = true
 			s.Counts["executable_required_paths"] = len(requiredExecutable)
 			s.Counts["executable_required_path_"+localops.SafeToken(proof.Path)] = 1
 		}
+
 		if p711MCPStdioProofHasParity(proof, validity) {
 			s.Counts["mcp_stdio_parity_paths"]++
 		}
 	}
+
 	if s.Counts["privacy_blockers"] > 0 {
 		s.Status = "blocked"
 		s.Completeness = "blocked"
 	} else if p711AllRequiredIntegrationPathsExecutable(requiredExecutable) &&
 		s.Counts["mcp_stdio_parity_paths"] > 0 {
+
 		s.Status = "pass"
 		s.Completeness = "complete"
 		s.Limitations = []string{"MCP resources are metadata-only; resource file bodies are not exported."}
@@ -1240,9 +1387,11 @@ func p711IntegrationSignal(proofs p711IntegrationProofSet) productEvidenceSignal
 		s.Completeness = "partial"
 		s.Limitations = []string{"MCP stdio remains incomplete until P8.6 supplies replayable parity evidence"}
 	}
+
 	if s.Counts["reviewed_placeholders"] > 0 {
 		s.Limitations = localops.CompactStrings(append(s.Limitations, "one or more integration paths are reviewed placeholders")...)
 	}
+
 	return s
 }
 
@@ -1264,24 +1413,30 @@ type p711ProofValidityIndex struct {
 
 func p711ProofValidityFor(proofs p711IntegrationProofSet) p711ProofValidityIndex {
 	counts := map[string]int{}
+
 	for _, proof := range proofs.Proofs {
 		id := strings.TrimSpace(proof.ID)
 		if id == "" {
 			continue
 		}
+
 		counts[id]++
 	}
+
 	duplicates := map[string]bool{}
+
 	for id, count := range counts {
 		if count > 1 {
 			duplicates[id] = true
 		}
 	}
+
 	return p711ProofValidityIndex{duplicateIDs: duplicates}
 }
 
 func (idx p711ProofValidityIndex) validProof(proof p711IntegrationProof) bool {
 	id := strings.TrimSpace(proof.ID)
+
 	return id != "" &&
 		!idx.duplicateIDs[id] &&
 		p711IntegrationProofHasValidatedStatus(proof) &&
@@ -1322,6 +1477,7 @@ func p711IntegrationProofPrivacyFieldsPresent(proof p711IntegrationProof) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -1330,13 +1486,16 @@ func p711MCPStdioProofHasParity(proof p711IntegrationProof, validity p711ProofVa
 		proof.Path != "mcp_stdio" ||
 		!proof.ProductEvidenceExportParity ||
 		proof.ReplayFixture == "" {
+
 		return false
 	}
+
 	for _, field := range p98RequiredMCPParityReadinessFields {
 		if !proof.Readiness[field] {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -1346,6 +1505,7 @@ func p711IsRequiredIntegrationPath(path string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1355,6 +1515,7 @@ func p711AllRequiredIntegrationPathsExecutable(paths map[string]bool) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -1363,6 +1524,7 @@ func p711BenchmarkSignal(localOps *localops.BenchmarkReport) productEvidenceSign
 	if localOps == nil {
 		return s
 	}
+
 	s.Status = "partial"
 	s.Completeness = "partial"
 	s.Counts["profiles"] = localOps.Summary.ProfileCount
@@ -1370,10 +1532,12 @@ func p711BenchmarkSignal(localOps *localops.BenchmarkReport) productEvidenceSign
 	s.Counts["smoke_total"] = localOps.Summary.SmokeTotal
 	s.Counts["replay_logs"] = localOps.Summary.ReplayLogCount
 	s.Counts["blockers"] = localOps.Summary.BlockerCount
+
 	if localOps.Replay.Status == "pass" {
 		s.Status = "pass"
 		s.Completeness = "complete"
 	}
+
 	return s
 }
 
@@ -1388,30 +1552,39 @@ func loadP910CompetitiveBenchmarkEvidence(root string, path string) (p910Competi
 	} else {
 		path = resolveReleaseEvidencePath(root, path)
 	}
+
 	ref := p711FileRef("p4.6_localization_competitive_benchmark", "competitive_benchmark", path)
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return p910CompetitiveBenchmarkEvidence{}, ref
 	}
+
 	ref.Status = "present"
 	ref.ArtifactHash = localops.ContentHash(data)
+
 	evidence, err := decodeP910CompetitiveBenchmarkEvidence(data)
 	if err != nil {
 		ref.Status = "blocked"
+
 		evidence.Findings = append(evidence.Findings, err.Error())
 	}
+
 	return evidence, ref
 }
 
 func decodeP910CompetitiveBenchmarkEvidence(data []byte) (p910CompetitiveBenchmarkEvidence, error) {
 	var corpus idiomeval.LocalizationCorpus
+
 	if err := json.Unmarshal(data, &corpus); err == nil && strings.TrimSpace(corpus.Name) != "" && len(corpus.Tasks) > 0 {
 		report := idiomeval.AnalyzeLocalizationCorpusWithOptions(corpus, idiomeval.LocalizationBenchmarkOptions{TopK: []int{1}})
+
 		return p910CompetitiveBenchmarkEvidence{
 			Conditions: report.Benchmark.CompetitiveConditions,
 			Findings:   idiomeval.LintLocalizationCorpus(corpus),
 		}, nil
 	}
+
 	var report struct {
 		Status                string                                             `json:"status"`
 		SchemaVersion         string                                             `json:"schema_version"`
@@ -1423,33 +1596,42 @@ func decodeP910CompetitiveBenchmarkEvidence(data []byte) (p910CompetitiveBenchma
 			CompetitiveConditions []idiomeval.LocalizationCompetitiveConditionMetric `json:"competitive_conditions"`
 		} `json:"benchmark"`
 	}
+
 	if err := json.Unmarshal(data, &report); err != nil {
 		return p910CompetitiveBenchmarkEvidence{}, fmt.Errorf("malformed competitive benchmark JSON")
 	}
+
 	conditions := report.Outcome.CompetitiveConditions
 	if len(conditions) == 0 {
 		conditions = report.Benchmark.CompetitiveConditions
 	}
+
 	if len(conditions) == 0 {
 		conditions = report.CompetitiveConditions
 	}
+
 	evidence := p910CompetitiveBenchmarkEvidence{Conditions: conditions}
+
 	switch localops.SafeToken(report.Status) {
 	case "stale", "no_go", "nogo", "incomplete", "blocked", "fail", "failed":
 		evidence.Findings = append(evidence.Findings, "competitive benchmark result status is "+localops.SafeToken(report.Status))
 	}
+
 	if len(conditions) == 0 {
 		evidence.Findings = append(evidence.Findings, "competitive benchmark conditions missing")
 	}
+
 	return evidence, nil
 }
 
 func p910CompetitiveBenchmarkGate(evidence p910CompetitiveBenchmarkEvidence, ref productEvidenceSourceReference) productEvidenceReleaseGateLinkage {
 	required := idiomeval.RequiredLocalizationExternalCompetitiveBaselineIDs()
 	known := map[string]bool{}
+
 	for _, baseline := range idiomeval.LocalizationCompetitiveBaselineIDs() {
 		known[baseline] = true
 	}
+
 	counts := map[string]int{
 		"required_external_baselines":              len(required),
 		"baseline_rows":                            len(evidence.Conditions),
@@ -1466,8 +1648,12 @@ func p910CompetitiveBenchmarkGate(evidence p910CompetitiveBenchmarkEvidence, ref
 		"external_invalid_client_classifications":  0,
 		"target_client_coverage_baselines":         0,
 	}
-	var blockers []string
-	var evidenceIDs []string
+
+	var (
+		blockers    []string
+		evidenceIDs []string
+	)
+
 	if ref.Status == "present" {
 		evidenceIDs = append(evidenceIDs, ref.ID)
 	} else if ref.Status == "blocked" {
@@ -1475,64 +1661,89 @@ func p910CompetitiveBenchmarkGate(evidence p910CompetitiveBenchmarkEvidence, ref
 	} else {
 		blockers = append(blockers, "competitive benchmark artifact not available")
 	}
+
 	for _, finding := range evidence.Findings {
 		blockers = append(blockers, "benchmark evidence finding: "+localops.SafeText(finding))
 	}
+
 	byBaseline := map[string]idiomeval.LocalizationCompetitiveConditionMetric{}
 	selfReferentialEvidence := 0
+
 	for _, condition := range evidence.Conditions {
 		baseline := localops.SafeToken(condition.Baseline)
 		if baseline == "" || !known[baseline] {
 			counts["malformed_baseline_rows"]++
+
 			blockers = append(blockers, "malformed or unsupported competitive baseline row")
+
 			continue
 		}
+
 		if !p910RequiredBaseline(required, baseline) {
 			if condition.MeasuredTasks+condition.InfeasibleTasks > 0 {
 				selfReferentialEvidence++
 			}
+
 			continue
 		}
+
 		byBaseline[baseline] = condition
 	}
+
 	counts["self_referential_baselines"] = selfReferentialEvidence
+
 	for _, baseline := range required {
 		condition, ok := byBaseline[baseline]
 		if !ok {
 			counts["missing_external_baselines"]++
+
 			blockers = append(blockers, "missing external competitive baseline: "+baseline)
+
 			continue
 		}
+
 		counts["external_baseline_rows"]++
+
 		counts["external_measured_tasks"] += condition.MeasuredTasks
 		counts["external_infeasible_tasks"] += condition.InfeasibleTasks
 		counts["external_missing_tasks"] += condition.MissingTasks
 		counts["external_invalid_client_classifications"] += condition.InvalidClientClasses + p910UnsupportedClientCoverageCount(condition.ClientCoverage)
+
 		if p910CompetitiveConditionHasTargetClientCoverage(condition) {
 			counts["target_client_coverage_baselines"]++
 		}
+
 		if condition.MeasuredTasks > 0 {
 			counts["measured_external_baselines"]++
 		}
+
 		if condition.InfeasibleTasks > 0 {
 			counts["documented_infeasible_external_baselines"]++
 		}
+
 		if p910CompetitiveConditionCovered(condition) {
 			counts["covered_external_baselines"]++
+
 			evidenceIDs = append(evidenceIDs, "competitive_baseline:"+baseline)
+
 			continue
 		}
+
 		blockers = append(blockers, p910CompetitiveConditionBlocker(condition))
 	}
+
 	if counts["covered_external_baselines"] == 0 && selfReferentialEvidence > 0 {
 		blockers = append(blockers, "competitive benchmark evidence is self-referential only; external baselines are required")
 	}
+
 	status := "needs_evidence"
 	claimImpact := "competitive readiness and productivity claims remain no-go until each external baseline is measured or documented infeasible with claim impact"
+
 	if len(blockers) == 0 && counts["covered_external_baselines"] == len(required) {
 		status = "evidence_present"
 		claimImpact = "competitive claims may cite only the covered external-baseline evidence and documented limitations"
 	}
+
 	return productEvidenceReleaseGateLinkage{
 		Gate:        "P9.10",
 		Status:      status,
@@ -1549,31 +1760,38 @@ func p910CompetitiveConditionCovered(condition idiomeval.LocalizationCompetitive
 	if covered == 0 || condition.TotalTasks == 0 || condition.MissingTasks > 0 || condition.InvalidClientClasses > 0 || p910UnsupportedClientCoverageCount(condition.ClientCoverage) > 0 {
 		return false
 	}
+
 	if !p910CompetitiveConditionHasTargetClientCoverage(condition) {
 		return false
 	}
+
 	if condition.CommandedTasks < covered || condition.ArtifactedTasks < covered || condition.VerifiedTasks < covered || condition.ReproducibleTasks < covered {
 		return false
 	}
+
 	if condition.MeasuredTasks > 0 {
 		if condition.BudgetedTasks < condition.MeasuredTasks || len(condition.TopKEditPathCoverage) == 0 {
 			return false
 		}
+
 		for _, coverage := range condition.TopKEditPathCoverage {
 			if !coverage.Available {
 				return false
 			}
 		}
 	}
+
 	if condition.InfeasibleTasks > 0 && (len(condition.InfeasibilityReasons) == 0 || len(condition.ClaimImpacts) == 0) {
 		return false
 	}
+
 	return len(condition.FailureReasons) == 0 && p910CompetitiveStatusCovers(condition.Status)
 }
 
 func p910CompetitiveConditionBlocker(condition idiomeval.LocalizationCompetitiveConditionMetric) string {
 	baseline := localops.SafeToken(condition.Baseline)
 	covered := condition.MeasuredTasks + condition.InfeasibleTasks
+
 	switch {
 	case covered == 0:
 		return "external competitive baseline has no measured result or documented infeasibility: " + baseline
@@ -1623,6 +1841,7 @@ func p910CompetitiveConditionHasTargetClientCoverage(condition idiomeval.Localiz
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1639,11 +1858,13 @@ func p910UnsupportedClientCoverageCount(coverage map[string]int) int {
 		"open_source":              true,
 	}
 	unsupported := 0
+
 	for class := range coverage {
 		if !allowed[localops.SafeToken(class)] {
 			unsupported++
 		}
 	}
+
 	return unsupported
 }
 
@@ -1653,11 +1874,13 @@ func p910RequiredBaseline(required []string, baseline string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 func p911ClientDemoGateWithDeps(demos p711DemoTranscriptSet, ref productEvidenceSourceReference, deps Dependencies) productEvidenceReleaseGateLinkage {
 	deps = currentDependencies(deps)
+
 	required := p711Classifications()
 	counts := map[string]int{
 		"required_classifications":           len(required),
@@ -1685,29 +1908,40 @@ func p911ClientDemoGateWithDeps(demos p711DemoTranscriptSet, ref productEvidence
 		"privacy_or_forbidden_blockers":      0,
 		"regulated_or_commercial_overclaims": 0,
 	}
-	var blockers []string
-	var evidenceIDs []string
+
+	var (
+		blockers    []string
+		evidenceIDs []string
+	)
+
 	addBlocker := func(reason string) {
 		reason = strings.TrimSpace(reason)
 		if reason == "" {
 			return
 		}
+
 		blockers = append(blockers, reason)
 	}
+
 	if ref.Status == "present" {
 		evidenceIDs = append(evidenceIDs, ref.ID)
 	} else if ref.Status == "blocked" {
 		addBlocker("client demo transcript artifact is malformed")
+
 		counts["malformed_transcripts"]++
 	} else {
 		addBlocker("client demo transcript artifact not available")
 	}
+
 	if demos.SchemaVersion != "idiom.client_demo_transcripts.v1" || demos.Name != "p7.10-client-demo-transcripts" {
 		addBlocker("client demo transcript identity is missing or unexpected")
+
 		counts["malformed_transcripts"]++
 	}
+
 	if demos.Shared.SidecarSchemaVersion != "" && demos.Shared.SidecarSchemaVersion != "idiom.tool.v1" {
 		addBlocker("client demo shared sidecar schema version is unexpected")
+
 		counts["malformed_transcripts"]++
 	}
 
@@ -1715,39 +1949,54 @@ func p911ClientDemoGateWithDeps(demos p711DemoTranscriptSet, ref productEvidence
 	for _, class := range required {
 		requiredSet[class] = true
 	}
+
 	seen := map[string]int{}
+
 	for _, demo := range demos.Transcripts {
 		class := strings.TrimSpace(demo.Classification)
 		if !requiredSet[class] {
 			counts["unsupported_classifications"]++
+
 			addBlocker("unsupported client demo classification: " + firstNonEmptyString(class, "missing"))
+
 			continue
 		}
+
 		seen[class]++
 		if seen[class] > 1 {
 			counts["duplicate_classifications"]++
+
 			addBlocker("duplicate client demo classification: " + class)
+
 			continue
 		}
+
 		evidenceIDs = append(evidenceIDs, demo.ID, demo.P76CommandID)
 		p911EvaluateDemoTranscript(demo, counts, addBlocker, deps)
 	}
+
 	for _, class := range required {
 		if seen[class] == 0 {
 			counts["missing_classifications"]++
+
 			addBlocker("missing client demo classification: " + class)
+
 			continue
 		}
+
 		counts["covered_classifications"]++
 	}
 
 	status := "needs_evidence"
 	claimImpact := "client demo and release claims remain no-go until every classification has runnable, privacy-safe transcript evidence with MVP and final-state limits"
+
 	if len(blockers) == 0 && counts["covered_classifications"] == counts["required_classifications"] {
 		status = "evidence_present"
 		claimImpact = "client demo claims may cite runnable transcript evidence with explicit MVP limits and final-state expansion; regulated and commercial readiness claims remain bounded by their proof-only or primary-ICP gates"
 	}
+
 	counts["blockers"] = len(blockers)
+
 	return productEvidenceReleaseGateLinkage{
 		Gate:        "P9.11",
 		Status:      status,
@@ -1767,7 +2016,9 @@ func p911EvaluateDemoTranscript(demo p711DemoTranscript, counts map[string]int, 
 			counts[countKey]++
 			return
 		}
+
 		malformed = true
+
 		addBlocker(blocker + ": " + class)
 	}
 	require(strings.TrimSpace(demo.ValueClaim) != "", "value_claim_rows", "missing value claim")
@@ -1777,67 +2028,91 @@ func p911EvaluateDemoTranscript(demo p711DemoTranscript, counts map[string]int, 
 	require(p911PrivacyPostureExplicit(demo.PrivacyPosture), "privacy_posture_rows", "missing privacy/no-forbidden-field posture")
 	require(p911NonBlankList(demo.PassNoGoCriteria.Pass) && p911NonBlankList(demo.PassNoGoCriteria.NoGo), "go_no_go_criteria_rows", "missing go/no-go criteria")
 	require(strings.TrimSpace(demo.ReleaseClaimImpact) != "", "release_claim_impact_rows", "missing release claim impact")
+
 	commandEvidence := p911DemoRunnableCommandEvidenceWithDeps(demo, deps)
+
 	counts["declared_command_rows"] += commandEvidence.DeclaredCommandCount
+
 	if commandEvidence.Runnable {
 		counts["runnable_command_rows"]++
+
 		counts["safe_replayed_command_rows"] += commandEvidence.SafeCommandCount
+
 		if commandEvidence.CommandID != "" {
 			counts["executable_command_evidence_rows"]++
 		}
 	} else {
 		malformed = true
+
 		if len(commandEvidence.Blockers) == 0 {
 			addBlocker("missing runnable command: " + class)
 		}
+
 		for _, blocker := range commandEvidence.Blockers {
 			lower := strings.ToLower(blocker)
 			if strings.Contains(lower, "command id parity") {
 				counts["command_id_mismatch_rows"]++
 			} else {
 				counts["command_execution_blockers"]++
+
 				blocker = "command executable validation failed: " + blocker
 			}
+
 			addBlocker("missing runnable command: " + class + ":" + blocker)
 		}
 	}
+
 	if p911DemoHasExpectedOutput(demo) {
 		counts["expected_output_rows"]++
 	} else {
 		malformed = true
+
 		addBlocker("missing expected output: " + class)
 	}
+
 	if blank := p911BlankRequiredListItem(demo); blank != "" {
 		malformed = true
+
 		addBlocker("blank client demo required list item: " + class + ":" + blank)
 	}
+
 	combined := p911DemoText(demo)
 	if forbidden := p911ForbiddenDemoEvidence(combined); forbidden != "" {
 		counts["privacy_or_forbidden_blockers"]++
+
 		malformed = true
+
 		addBlocker("client demo contains forbidden evidence marker: " + class + ":" + forbidden)
 	}
+
 	if overclaim := p911DemoOverclaim(combined); overclaim != "" {
 		counts["regulated_or_commercial_overclaims"]++
+
 		malformed = true
+
 		addBlocker("client demo implies unsupported regulated or commercial readiness: " + class + ":" + overclaim)
 	}
+
 	if p99RegulatedClass(class) {
 		if p911RegulatedDemoProofOnly(demo) {
 			counts["regulated_proof_only_rows"]++
 		} else {
 			malformed = true
+
 			addBlocker("regulated client demo is not explicitly proof-only: " + class)
 		}
 	}
+
 	if class == "enterprise-saas" {
 		if p911EnterpriseSaaSPrimaryStory(demo) {
 			counts["primary_enterprise_saas_rows"]++
 		} else {
 			malformed = true
+
 			addBlocker("enterprise-saas demo does not preserve primary buyer story")
 		}
 	}
+
 	if malformed {
 		counts["malformed_transcripts"]++
 	}
@@ -1845,21 +2120,29 @@ func p911EvaluateDemoTranscript(demo p711DemoTranscript, counts map[string]int, 
 
 func p911DemoRunnableCommandEvidenceWithDeps(demo p711DemoTranscript, deps Dependencies) p911RunnableCommandEvidence {
 	deps = currentDependencies(deps)
+
 	key := p911DemoCommandValidationCacheKey(demo, deps)
+
 	if key != "" {
 		p911DemoCommandValidationCache.Lock()
+
 		cached, ok := p911DemoCommandValidationCache.rows[key]
 		p911DemoCommandValidationCache.Unlock()
+
 		if ok {
 			return cached
 		}
 	}
+
 	result := p911DemoRunnableCommandEvidenceUncached(demo, deps)
+
 	if key != "" {
 		p911DemoCommandValidationCache.Lock()
+
 		p911DemoCommandValidationCache.rows[key] = result
 		p911DemoCommandValidationCache.Unlock()
 	}
+
 	return result
 }
 
@@ -1868,27 +2151,35 @@ func p911DemoCommandValidationCacheKey(demo p711DemoTranscript, deps Dependencie
 	if err != nil {
 		return ""
 	}
+
 	runnerID := deps.DemoCommandRunnerID
 	if runnerID == "" {
 		runnerID = "default"
 	}
+
 	return localops.ContentHash(append(data, []byte("\nrunner:"+runnerID)...))
 }
 
 func p911DemoRunnableCommandEvidenceUncached(demo p711DemoTranscript, deps Dependencies) p911RunnableCommandEvidence {
-	var blockers []string
-	var safeCommandIDs []string
+	var (
+		blockers       []string
+		safeCommandIDs []string
+	)
+
 	for _, command := range demo.Commands {
 		if shapeBlockers := p911DemoCommandShapeBlockers(demo, command); len(shapeBlockers) > 0 {
 			blockers = append(blockers, p911DemoCommandScopedBlockers(command, shapeBlockers)...)
 			continue
 		}
+
 		if runBlockers := p911ExecuteDemoCommandWithDeps(demo, command, deps); len(runBlockers) > 0 {
 			blockers = append(blockers, p911DemoCommandScopedBlockers(command, runBlockers)...)
 			continue
 		}
+
 		safeCommandIDs = append(safeCommandIDs, strings.TrimSpace(command.ID))
 	}
+
 	result := p911RunnableCommandEvidence{
 		DeclaredCommandCount: len(demo.Commands),
 		SafeCommandCount:     len(safeCommandIDs),
@@ -1898,29 +2189,36 @@ func p911DemoRunnableCommandEvidenceUncached(demo p711DemoTranscript, deps Depen
 		result.Runnable = true
 		result.CommandID = safeCommandIDs[0]
 	}
+
 	return result
 }
 
 func p911DemoCommandScopedBlockers(command p711DemoCommand, blockers []string) []string {
 	commandID := firstNonEmptyString(strings.TrimSpace(command.ID), "missing_command_id")
 	out := make([]string, 0, len(blockers))
+
 	for _, blocker := range blockers {
 		out = append(out, "command "+commandID+": "+blocker)
 	}
+
 	return out
 }
 
 func p911DemoCommandShapeBlockers(demo p711DemoTranscript, command p711DemoCommand) []string {
 	var blockers []string
+
 	commandID := strings.TrimSpace(command.ID)
+
 	if commandID == "" {
 		blockers = append(blockers, "command ID missing")
 	}
+
 	if want := strings.TrimSpace(demo.P76CommandID); want == "" {
 		blockers = append(blockers, "p7_6 command ID missing")
 	} else if commandID != "" && commandID != want {
 		blockers = append(blockers, "command ID parity mismatch: command "+commandID+" does not match p7_6_command_id "+want)
 	}
+
 	if text := strings.TrimSpace(command.Command); text == "" {
 		blockers = append(blockers, "command text missing")
 	} else if !strings.HasPrefix(text, "idiom ") {
@@ -1928,17 +2226,21 @@ func p911DemoCommandShapeBlockers(demo p711DemoTranscript, command p711DemoComma
 	} else if parityBlocker := p911CommandArgvParityBlocker(text, command.Argv); parityBlocker != "" {
 		blockers = append(blockers, parityBlocker)
 	}
+
 	if !p911NonBlankList(command.Argv) {
 		blockers = append(blockers, "argv missing or contains blank item")
 	}
+
 	if p911ExpectedOutputHasBlankItem(command.ExpectedOutputShape) {
 		blockers = append(blockers, "expected output shape contains blank item")
 	} else if !p911ExpectedOutputHasField(command.ExpectedOutputShape) {
 		blockers = append(blockers, "expected output shape missing")
 	}
+
 	if allowBlockers := p911DemoCommandAllowlistBlockers(command); len(allowBlockers) > 0 {
 		blockers = append(blockers, allowBlockers...)
 	}
+
 	return blockers
 }
 
@@ -1947,25 +2249,32 @@ func p911CommandArgvParityBlocker(command string, argv []string) string {
 	if err != nil {
 		return "command/argv parity mismatch: command string is not parseable: " + err.Error()
 	}
+
 	if len(tokens) == 0 || tokens[0] != "idiom" {
 		return "command/argv parity mismatch: command must start with idiom executable"
 	}
+
 	actual := tokens[1:]
 	if len(actual) != len(argv) {
 		return fmt.Sprintf("command/argv parity mismatch: command has %d args but argv has %d", len(actual), len(argv))
 	}
+
 	for i := range actual {
 		if actual[i] != argv[i] {
 			return fmt.Sprintf("command/argv parity mismatch: arg %d command=%q argv=%q", i, actual[i], argv[i])
 		}
 	}
+
 	return ""
 }
 
 func p911SplitDemoCommand(command string) ([]string, error) {
-	var tokens []string
-	var current strings.Builder
-	var quote rune
+	var (
+		tokens  []string
+		current strings.Builder
+		quote   rune
+	)
+
 	escaped := false
 	flush := func() {
 		if current.Len() > 0 {
@@ -1973,24 +2282,32 @@ func p911SplitDemoCommand(command string) ([]string, error) {
 			current.Reset()
 		}
 	}
+
 	for _, r := range strings.TrimSpace(command) {
 		if escaped {
 			current.WriteRune(r)
+
 			escaped = false
+
 			continue
 		}
+
 		if quote != '\'' && r == '\\' {
 			escaped = true
 			continue
 		}
+
 		if quote != 0 {
 			if r == quote {
 				quote = 0
 				continue
 			}
+
 			current.WriteRune(r)
+
 			continue
 		}
+
 		switch {
 		case r == '\'' || r == '"':
 			quote = r
@@ -2000,13 +2317,17 @@ func p911SplitDemoCommand(command string) ([]string, error) {
 			current.WriteRune(r)
 		}
 	}
+
 	if escaped {
 		return nil, fmt.Errorf("trailing escape")
 	}
+
 	if quote != 0 {
 		return nil, fmt.Errorf("unterminated quote")
 	}
+
 	flush()
+
 	return tokens, nil
 }
 
@@ -2015,6 +2336,7 @@ func p911DemoCommandAllowlistBlockers(command p711DemoCommand) []string {
 	if len(argv) == 0 {
 		return nil
 	}
+
 	switch argv[0] {
 	case "tool":
 		return p911ToolDemoCommandAllowlistBlockers(command, argv[1:])
@@ -2029,13 +2351,16 @@ func p911ToolDemoCommandAllowlistBlockers(command p711DemoCommand, args []string
 	if len(args) == 0 {
 		return []string{"command allowlist rejected missing tool name"}
 	}
+
 	tool := args[0]
 	flags := args[1:]
+
 	switch tool {
 	case "schemas":
 		if len(flags) != 0 {
 			return []string{"command allowlist rejected schemas flags"}
 		}
+
 		return nil
 	case "context_pack":
 		return p911RequireExactToolFlags(tool, flags, map[string]string{
@@ -2057,6 +2382,7 @@ func p911ToolDemoCommandAllowlistBlockers(command p711DemoCommand, args []string
 		if command.ExitCode == 0 {
 			return []string{"command allowlist rejected side-effect example without denied exit"}
 		}
+
 		blockers := p911RequireExactToolFlags(tool, flags, map[string]string{
 			"-config":      "$IDIOM_CONFIG",
 			"--profile":    "discovery",
@@ -2067,6 +2393,7 @@ func p911ToolDemoCommandAllowlistBlockers(command p711DemoCommand, args []string
 		if p911FlagValue(flags, "--profile") != "discovery" {
 			blockers = append(blockers, "command allowlist rejected "+tool+" outside discovery-profile denial")
 		}
+
 		return blockers
 	default:
 		return []string{"command allowlist rejected unsafe tool: " + tool}
@@ -2075,33 +2402,42 @@ func p911ToolDemoCommandAllowlistBlockers(command p711DemoCommand, args []string
 
 func p911RequireExactToolFlags(tool string, flags []string, allowed map[string]string) []string {
 	var blockers []string
+
 	seen := map[string]bool{}
+
 	for i := 0; i < len(flags); i++ {
 		flag := flags[i]
 		want, ok := allowed[flag]
+
 		if !ok {
 			blockers = append(blockers, "command allowlist rejected unsafe flag for "+tool+": "+flag)
 			continue
 		}
+
 		if seen[flag] {
 			blockers = append(blockers, "command allowlist rejected duplicate flag for "+tool+": "+flag)
 		}
+
 		seen[flag] = true
 		if i+1 >= len(flags) {
 			blockers = append(blockers, "command allowlist rejected missing value for "+tool+": "+flag)
 			continue
 		}
+
 		value := flags[i+1]
 		i++
+
 		if want != "" && value != want {
 			blockers = append(blockers, "command allowlist rejected unsafe value for "+tool+": "+flag)
 		}
 	}
+
 	for flag, want := range allowed {
 		if want != "" && !seen[flag] {
 			blockers = append(blockers, "command allowlist rejected missing required flag for "+tool+": "+flag)
 		}
 	}
+
 	return blockers
 }
 
@@ -2109,14 +2445,19 @@ func p911LocalOpsDemoCommandAllowlistBlockers(args []string) []string {
 	if len(args) == 0 || args[0] != "benchmark" {
 		return []string{"command allowlist rejected unsafe local-ops subcommand"}
 	}
+
 	flags := args[1:]
 	profile := p911FlagValue(flags, "--profile")
+
 	if profile != "implement" && profile != "sidecar" {
 		return []string{"command allowlist rejected local-ops without bounded P7.10 profile"}
 	}
+
 	var blockers []string
+
 	seenBool := map[string]bool{}
 	seenValue := map[string]bool{}
+
 	for i := 0; i < len(flags); i++ {
 		flag := flags[i]
 		switch flag {
@@ -2124,18 +2465,22 @@ func p911LocalOpsDemoCommandAllowlistBlockers(args []string) []string {
 			if seenBool[flag] {
 				blockers = append(blockers, "command allowlist rejected duplicate flag for local-ops: "+flag)
 			}
+
 			seenBool[flag] = true
 		case "--config", "--profile", "--quickstart-task", "--quickstart-cleanup":
 			if seenValue[flag] {
 				blockers = append(blockers, "command allowlist rejected duplicate flag for local-ops: "+flag)
 			}
+
 			seenValue[flag] = true
 			if i+1 >= len(flags) {
 				blockers = append(blockers, "command allowlist rejected missing value for local-ops: "+flag)
 				continue
 			}
+
 			value := flags[i+1]
 			i++
+
 			switch flag {
 			case "--config":
 				if value != "$IDIOM_CONFIG" {
@@ -2150,12 +2495,15 @@ func p911LocalOpsDemoCommandAllowlistBlockers(args []string) []string {
 			blockers = append(blockers, "command allowlist rejected unsafe flag for local-ops: "+flag)
 		}
 	}
+
 	if !seenBool["--json"] || !seenValue["--config"] || !seenValue["--profile"] {
 		blockers = append(blockers, "command allowlist rejected incomplete local-ops benchmark shape")
 	}
+
 	if profile == "sidecar" && (!seenBool["--quickstart-smoke"] || !seenValue["--quickstart-task"] || !seenValue["--quickstart-cleanup"]) {
 		blockers = append(blockers, "command allowlist rejected incomplete quickstart smoke shape")
 	}
+
 	return blockers
 }
 
@@ -2165,6 +2513,7 @@ func p911FlagValue(args []string, flag string) string {
 			return args[i+1]
 		}
 	}
+
 	return ""
 }
 
@@ -2174,6 +2523,7 @@ func p911ExecuteDemoCommandWithDeps(demo p711DemoTranscript, command p711DemoCom
 		return []string{"demo workspace unavailable"}
 	}
 	defer os.RemoveAll(root)
+
 	return p911ExecuteDemoCommandAtRootWithDeps(root, demo, command, deps)
 }
 
@@ -2185,20 +2535,28 @@ func p911ExecuteDemoCommandAtRootWithDeps(root string, demo p711DemoTranscript, 
 	if err := p911StageDemoWorkspace(root); err != nil {
 		return []string{"demo workspace setup failed"}
 	}
+
 	configPath, err := p911WriteDemoConfig(root, demo.Classification)
 	if err != nil {
 		return []string{"demo config setup failed"}
 	}
+
 	args := p911DemoArgs(command.Argv, configPath)
+
 	var stdout, stderr bytes.Buffer
+
 	code := p911RunMainNoTelemetryWithDeps(args, &stdout, &stderr, deps)
+
 	var blockers []string
+
 	if code != command.ExitCode {
 		blockers = append(blockers, fmt.Sprintf("exit code %d did not match expected %d for command %s", code, command.ExitCode, command.ID))
 	}
+
 	if strings.TrimSpace(stderr.String()) != "" {
 		blockers = append(blockers, "stderr was not empty for command "+command.ID)
 	}
+
 	for _, stream := range []struct {
 		name string
 		body string
@@ -2210,7 +2568,9 @@ func p911ExecuteDemoCommandAtRootWithDeps(root string, demo p711DemoTranscript, 
 			blockers = append(blockers, "forbidden "+stream.name+" evidence "+forbidden+" for command "+command.ID)
 		}
 	}
+
 	blockers = append(blockers, p911CommandOutputBlockers(command, stdout.Bytes())...)
+
 	return blockers
 }
 
@@ -2218,9 +2578,11 @@ func p911StageDemoWorkspace(root string) error {
 	if err := os.MkdirAll(filepath.Join(root, "pkg", "payments"), 0o755); err != nil {
 		return err
 	}
+
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		return err
 	}
+
 	files := map[string]string{
 		"go.mod":                "module example.com/p911\n\ngo 1.22\n",
 		"pkg/payments/retry.go": "package payments\n\nfunc RetryPayment(attempts int) bool {\n\treturn attempts < 3\n}\n",
@@ -2231,6 +2593,7 @@ func p911StageDemoWorkspace(root string) error {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -2239,13 +2602,16 @@ func p911WriteDemoConfig(root string, class string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return "", err
 	}
+
 	body := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q,"enable_shell":false,"enable_writes":false,"command_timeout_seconds":10,"max_output_bytes":32768}}`, root, root)
 	if strings.TrimSpace(class) == "local-model" {
 		body = fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q,"enable_shell":false,"enable_writes":false,"command_timeout_seconds":10,"max_output_bytes":32768},"llama_server":{"ctx_size":4096},"chat":{"max_tokens":512}}`, root, root)
 	}
+
 	if err := os.WriteFile(configPath, []byte(body+"\n"), 0o644); err != nil {
 		return "", err
 	}
+
 	return configPath, nil
 }
 
@@ -2256,69 +2622,85 @@ func p911DemoArgs(args []string, configPath string) []string {
 			copied[index] = configPath
 		}
 	}
+
 	return copied
 }
 
 func p911CommandOutputBlockers(command p711DemoCommand, stdout []byte) []string {
 	var blockers []string
+
 	text := string(stdout)
+
 	for _, want := range command.ExpectedOutputShape.StdoutIncludes {
 		if !strings.Contains(text, want) {
 			blockers = append(blockers, "stdout missing expected text "+want+" for command "+command.ID)
 		}
 	}
+
 	for _, forbidden := range command.ExpectedOutputShape.StdoutExcludes {
 		if strings.Contains(text, forbidden) {
 			blockers = append(blockers, "stdout contained forbidden text "+forbidden+" for command "+command.ID)
 		}
 	}
+
 	if !command.JSON {
 		return blockers
 	}
+
 	var payload any
+
 	if err := json.Unmarshal(stdout, &payload); err != nil {
 		return append(blockers, "stdout was not valid JSON for command "+command.ID)
 	}
+
 	for _, path := range command.ExpectedOutputShape.StableFields {
 		if _, ok := p911JSONValueAtDottedPath(payload, path); !ok {
 			blockers = append(blockers, "stdout missing stable field "+path+" for command "+command.ID)
 		}
 	}
+
 	for path, want := range command.ExpectedOutputShape.JSONString {
 		got, ok := p911JSONValueAtDottedPath(payload, path)
 		if !ok {
 			blockers = append(blockers, "stdout missing string field "+path+" for command "+command.ID)
 			continue
 		}
+
 		if fmt.Sprint(got) != want {
 			blockers = append(blockers, "stdout field "+path+" did not match expected value for command "+command.ID)
 		}
 	}
+
 	for _, path := range command.ExpectedOutputShape.JSONPresent {
 		if _, ok := p911JSONValueAtDottedPath(payload, path); !ok {
 			blockers = append(blockers, "stdout missing JSON field "+path+" for command "+command.ID)
 		}
 	}
+
 	for _, path := range command.ExpectedOutputShape.JSONNonEmpty {
 		got, ok := p911JSONValueAtDottedPath(payload, path)
 		if !ok {
 			blockers = append(blockers, "stdout missing non-empty field "+path+" for command "+command.ID)
 			continue
 		}
+
 		if p911JSONValueEmpty(got) {
 			blockers = append(blockers, "stdout field "+path+" was empty for command "+command.ID)
 		}
 	}
+
 	for _, path := range command.ExpectedOutputShape.JSONNull {
 		got, ok := p911JSONValueAtDottedPath(payload, path)
 		if !ok {
 			blockers = append(blockers, "stdout missing null field "+path+" for command "+command.ID)
 			continue
 		}
+
 		if got != nil {
 			blockers = append(blockers, "stdout field "+path+" was not null for command "+command.ID)
 		}
 	}
+
 	return blockers
 }
 
@@ -2329,11 +2711,13 @@ func p911JSONValueAtDottedPath(root any, path string) (any, bool) {
 		if !ok {
 			return nil, false
 		}
+
 		current, ok = object[part]
 		if !ok {
 			return nil, false
 		}
 	}
+
 	return current, true
 }
 
@@ -2341,6 +2725,7 @@ func p911JSONValueEmpty(value any) bool {
 	if value == nil {
 		return true
 	}
+
 	switch typed := value.(type) {
 	case string:
 		return strings.TrimSpace(typed) == ""
@@ -2359,10 +2744,12 @@ func p911DemoHasExpectedOutput(demo p711DemoTranscript) bool {
 		if p911ExpectedOutputHasBlankItem(shape) {
 			continue
 		}
+
 		if p911ExpectedOutputHasField(shape) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -2370,11 +2757,13 @@ func p911NonBlankList(values []string) bool {
 	if len(values) == 0 {
 		return false
 	}
+
 	for _, value := range values {
 		if strings.TrimSpace(value) == "" {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -2393,15 +2782,18 @@ func p911BlankRequiredListItem(demo p711DemoTranscript) string {
 			return list.name
 		}
 	}
+
 	for _, command := range demo.Commands {
 		commandID := firstNonEmptyString(strings.TrimSpace(command.ID), "missing_command_id")
 		if p911BlankListItem(command.Argv) {
 			return "commands." + commandID + ".argv"
 		}
+
 		if blank := p911BlankExpectedOutputItem(command.ExpectedOutputShape); blank != "" {
 			return "commands." + commandID + ".expected_output_shape." + blank
 		}
 	}
+
 	return ""
 }
 
@@ -2411,6 +2803,7 @@ func p911BlankListItem(values []string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -2430,6 +2823,7 @@ func p911AnyNonBlank(values []string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -2439,6 +2833,7 @@ func p911JSONStringHasField(values map[string]string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -2462,16 +2857,19 @@ func p911BlankExpectedOutputItem(shape p711ExpectedOutputShape) string {
 			return list.name
 		}
 	}
+
 	for key, value := range shape.JSONString {
 		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
 			return "json_string"
 		}
 	}
+
 	return ""
 }
 
 func p911PrivacyPostureExplicit(value string) bool {
 	lower := strings.ToLower(value)
+
 	return strings.TrimSpace(value) != "" &&
 		strings.Contains(lower, "no raw prompt") &&
 		strings.Contains(lower, "no raw file") &&
@@ -2481,6 +2879,7 @@ func p911PrivacyPostureExplicit(value string) bool {
 
 func p911RegulatedDemoProofOnly(demo p711DemoTranscript) bool {
 	lower := strings.ToLower(p911DemoText(demo))
+
 	return (strings.Contains(lower, "proof-only") || strings.Contains(lower, "proof only") || strings.Contains(lower, "deferred")) &&
 		(strings.Contains(lower, "no regulated") || strings.Contains(lower, "no formal") || strings.Contains(lower, "no public-sector") || strings.Contains(lower, "no hipaa") || strings.Contains(lower, "no finra"))
 }
@@ -2494,6 +2893,7 @@ func p911DemoOverclaim(text string) string {
 	if overclaim := p99ComplianceOverclaim(text); overclaim != "" {
 		return overclaim
 	}
+
 	for _, pattern := range []string{
 		"production ready",
 		"production-ready",
@@ -2515,6 +2915,7 @@ func p911DemoOverclaim(text string) string {
 			}
 		}
 	}
+
 	return ""
 }
 
@@ -2522,6 +2923,7 @@ func p911ForbiddenDemoEvidence(text string) string {
 	if localops.ContainsAbsolutePath(text) {
 		return "absolute_path"
 	}
+
 	for _, marker := range []string{
 		"CustomerX",
 		"private-repo",
@@ -2545,20 +2947,24 @@ func p911ForbiddenDemoEvidence(text string) string {
 			return marker
 		}
 	}
+
 	for _, field := range strings.Fields(text) {
 		token := strings.Trim(field, " \t\r\n.,:;()[]{}\"'`")
 		lower := strings.ToLower(token)
+
 		for _, prefix := range []string{"sk-", "sk_", "ghp_", "github_pat_", "xoxb-"} {
 			if strings.HasPrefix(lower, prefix) && len(token) > len(prefix) {
 				return "secret_value"
 			}
 		}
 	}
+
 	return ""
 }
 
 func p911DemoText(demo p711DemoTranscript) string {
 	var parts []string
+
 	parts = append(parts,
 		demo.ID,
 		demo.Classification,
@@ -2577,19 +2983,23 @@ func p911DemoText(demo p711DemoTranscript) string {
 	parts = append(parts, demo.EvidenceFields...)
 	parts = append(parts, demo.PassNoGoCriteria.Pass...)
 	parts = append(parts, demo.PassNoGoCriteria.NoGo...)
+
 	for _, command := range demo.Commands {
 		parts = append(parts, command.ID, command.Command)
 		parts = append(parts, command.Argv...)
 		parts = append(parts, command.ExpectedOutputShape.StableFields...)
+
 		for key, value := range command.ExpectedOutputShape.JSONString {
 			parts = append(parts, key, value)
 		}
+
 		parts = append(parts, command.ExpectedOutputShape.JSONPresent...)
 		parts = append(parts, command.ExpectedOutputShape.JSONNonEmpty...)
 		parts = append(parts, command.ExpectedOutputShape.JSONNull...)
 		parts = append(parts, command.ExpectedOutputShape.StdoutIncludes...)
 		parts = append(parts, command.ExpectedOutputShape.StdoutExcludes...)
 	}
+
 	return strings.Join(parts, "\n")
 }
 
@@ -2599,10 +3009,12 @@ func p711AuditSignal(localOps *localops.BenchmarkReport, security p711SecurityPo
 		s.EvidenceIDs = append(s.EvidenceIDs, localOps.Quickstart.AuditReport.AuditReportID)
 		s.Counts["quickstart_audit_findings"] = localOps.Quickstart.AuditReport.FindingCount
 	}
+
 	if len(security.RequiredControls) > 0 {
 		s.Status = "pass"
 		s.Completeness = "complete"
 	}
+
 	return s
 }
 
@@ -2611,41 +3023,52 @@ func p711LearningSignal(summary *comprehension.LearningLogSummary) productEviden
 	if summary == nil {
 		return s
 	}
+
 	s.Status = "pass"
 	s.Completeness = "complete"
 	s.Counts["total_entries"] = summary.TotalEntries
 	s.Counts["accepted"] = summary.AcceptedCount
 	s.Counts["rejected"] = summary.RejectedCount
 	s.Counts["sources"] = len(summary.BySource)
+
 	return s
 }
 
 func buildP711ClassCoverage(demos p711DemoTranscriptSet, security p711SecurityPosture, integration p711IntegrationProofSet, records []p711ValidationRecord) []productEvidenceClassCoverage {
 	classes := []string{"finance", "healthcare", "public-sector", "enterprise-saas", "tooling-vendor", "local-model", "open-source"}
 	demoByClass := map[string]p711DemoTranscript{}
+
 	for _, demo := range demos.Transcripts {
 		demoByClass[demo.Classification] = demo
 	}
+
 	securityByClass := map[string]p711SecurityClassRow{}
 	for _, row := range security.ClientClassificationCoverage {
 		securityByClass[row.Classification] = row
 	}
+
 	recordCounts := map[string]int{}
+
 	for _, record := range records {
 		if !p711ValidationRecordQualifies(record) {
 			continue
 		}
+
 		recordCounts[record.ClientClassification]++
 	}
+
 	proofIDs := p711IntegrationProofIDs(integration)
 	rows := make([]productEvidenceClassCoverage, 0, len(classes))
+
 	for _, class := range classes {
 		demo := demoByClass[class]
 		sec := securityByClass[class]
 		status := "partial"
+
 		if demo.ID != "" && sec.Classification != "" {
 			status = "pass"
 		}
+
 		rows = append(rows, productEvidenceClassCoverage{
 			Classification:          class,
 			Status:                  status,
@@ -2658,23 +3081,28 @@ func buildP711ClassCoverage(demos p711DemoTranscriptSet, security p711SecurityPo
 			Limitations:             localops.CompactStrings(localops.SafeText(demo.MVPLimitation), localops.SafeText(sec.Limitation)),
 		})
 	}
+
 	return rows
 }
 
 func buildP711ReleaseGateLinkage(signals []productEvidenceSignalSummary, classes []productEvidenceClassCoverage, localOps *localops.BenchmarkReport, records []p711ValidationRecord, p99 productEvidenceReleaseGateLinkage, p910 productEvidenceReleaseGateLinkage, p911 productEvidenceReleaseGateLinkage, packaging p912PackagingSupportThesis, packagingRef productEvidenceSourceReference) []productEvidenceReleaseGateLinkage {
 	classStatus := "evidence_present"
+
 	for _, row := range classes {
 		if row.Status != "pass" {
 			classStatus = "needs_evidence"
 			break
 		}
 	}
+
 	if p911.Status != "evidence_present" {
 		classStatus = "needs_evidence"
 	}
+
 	p97 := p97ValidationGate(records)
 	p98 := p98IntegrationGateFromSignals(signals)
 	p912 := p912PackagingSupportGate(packaging, packagingRef, p97, p98, p99, p910, p911)
+
 	return []productEvidenceReleaseGateLinkage{
 		{Gate: "P9.1", Status: p711GateFromSignal(signals, "benchmark"), Evidence: "benchmark,audit,learning summaries", ClaimImpact: "release bundle input; not a release decision"},
 		{Gate: "P9.6", Status: p96ActivationReleaseGateStatus(localOps), Evidence: "standalone product export cannot close P9.6 without current release validation evidence", ClaimImpact: "release activation claims are no-go until the release bundle consumes activation plus validation evidence"},
@@ -2691,13 +3119,18 @@ func p912WithClassCoverageStatus(row productEvidenceReleaseGateLinkage, classSta
 	if classStatus == "evidence_present" {
 		return row
 	}
+
 	row.Status = "needs_evidence"
 	row.Blockers = localops.CompactStrings(append(row.Blockers, "classification coverage rows or P9.11 demo evidence incomplete")...)
+
 	if row.Counts == nil {
 		row.Counts = map[string]int{}
 	}
+
 	row.Counts["classification_coverage_blockers"]++
+
 	row.Counts["blockers"] = len(row.Blockers)
+
 	return row
 }
 
@@ -2723,8 +3156,12 @@ func p912PackagingSupportGate(thesis p912PackagingSupportThesis, ref productEvid
 		"contradiction_blockers":               0,
 		"admin_count_blockers":                 0,
 	}
-	var blockers []string
-	var evidenceIDs []string
+
+	var (
+		blockers    []string
+		evidenceIDs []string
+	)
+
 	addBlocker := func(reason string) {
 		reason = strings.TrimSpace(reason)
 		if reason != "" {
@@ -2736,10 +3173,12 @@ func p912PackagingSupportGate(thesis p912PackagingSupportThesis, ref productEvid
 		evidenceIDs = append(evidenceIDs, ref.ID)
 	} else if ref.Status == "blocked" {
 		counts["privacy_blockers"]++
+
 		addBlocker("packaging/support thesis artifact is malformed or privacy-blocked")
 	} else {
 		addBlocker("packaging/support thesis artifact not available")
 	}
+
 	if thesis.SchemaVersion != "idiom.packaging_support_thesis.v1" || thesis.ArtifactID == "" {
 		addBlocker("packaging/support thesis identity is missing or unexpected")
 	}
@@ -2774,19 +3213,25 @@ func p912PackagingSupportGate(thesis p912PackagingSupportThesis, ref productEvid
 	if p912PackagingSupportFieldsComplete(counts) {
 		counts["packaging_support_complete"] = 1
 	}
+
 	counts["blockers"] = len(blockers)
+
 	status := "needs_evidence"
 	claimImpact := "packaging, pricing, support, admin, and ICP claims remain no-go until the P0.11 thesis is complete, evidence-linked, and aligned with prior gates"
+
 	if len(blockers) == 0 {
 		status = "evidence_present"
 		claimImpact = "P9.12 may cite the evidence-linked P0.11 thesis and bounded continue decision; commercial claims remain limited to proven prior gates"
+
 		if localops.SafeToken(thesis.Decision.Outcome) == "pivot" {
 			claimImpact = "P9.12 may cite the evidence-linked pivot decision without claiming primary enterprise-SaaS paid demand"
 		}
+
 		if localops.SafeToken(thesis.Decision.Outcome) == "no_go" {
 			claimImpact = "P9.12 records an evidence-linked no-go decision for commercial or production release claims"
 		}
 	}
+
 	return productEvidenceReleaseGateLinkage{
 		Gate:        "P9.12",
 		Status:      status,
@@ -2815,6 +3260,7 @@ func p912RequireField(name string, present bool, evidenceLinked bool, counts map
 	} else {
 		addBlocker("required packaging/support field missing or empty: " + name)
 	}
+
 	if evidenceLinked {
 		counts["required_fields_with_evidence_ids"]++
 	} else {
@@ -2869,6 +3315,7 @@ func p912ClassificationEvidencePresent(rows []p912ClassificationStance) bool {
 			return false
 		}
 	}
+
 	return len(rows) > 0
 }
 
@@ -2876,8 +3323,10 @@ func p912UnsupportedAdminRequestCount(admin p912AdminThesis, counts map[string]i
 	actual := len(localops.CompactStrings(admin.UnsupportedRequests...))
 	if admin.UnsupportedRequestCount != actual {
 		counts["admin_count_blockers"]++
+
 		addBlocker(fmt.Sprintf("unsupported_admin_request_count mismatch: thesis=%d actual=%d", admin.UnsupportedRequestCount, actual))
 	}
+
 	return actual
 }
 
@@ -2895,19 +3344,26 @@ func p912CountPricingQuality(value string, counts map[string]int) {
 func p912EvaluateNorthStarStance(thesis p912PackagingSupportThesis, counts map[string]int, addBlocker func(string)) {
 	if thesis.ICP.PrimaryBuyer != "enterprise-saas" {
 		counts["contradiction_blockers"]++
+
 		addBlocker("ICP primary buyer must remain enterprise-saas unless a supported pivot is recorded")
 	}
+
 	if thesis.ICP.AdoptionWedge != "open-source" {
 		counts["contradiction_blockers"]++
+
 		addBlocker("ICP adoption wedge must remain open-source")
 	}
+
 	if !p912StringSetContains(thesis.ICP.Secondary, "tooling-vendor") || !p912StringSetContains(thesis.ICP.Secondary, "local-model") {
 		counts["contradiction_blockers"]++
+
 		addBlocker("ICP secondary lanes must include tooling-vendor and local-model")
 	}
+
 	for _, class := range []string{"finance", "healthcare", "public-sector"} {
 		if !p912StringSetContains(thesis.ICP.DeferredProofOnly, class) {
 			counts["contradiction_blockers"]++
+
 			addBlocker("regulated ICP row must be deferred/proof-only: " + class)
 		}
 	}
@@ -2918,39 +3374,52 @@ func p912EvaluateClassificationStances(rows []p912ClassificationStance, counts m
 	for _, class := range p711Classifications() {
 		required[class] = true
 	}
+
 	seen := map[string]int{}
+
 	for _, row := range rows {
 		class := strings.TrimSpace(row.Classification)
 		if !required[class] {
 			counts["unsupported_classification_stances"]++
+
 			addBlocker("unsupported packaging classification stance: " + firstNonEmptyString(class, "missing"))
+
 			continue
 		}
+
 		seen[class]++
 		if seen[class] > 1 {
 			counts["duplicate_classification_stances"]++
+
 			addBlocker("duplicate packaging classification stance: " + class)
+
 			continue
 		}
+
 		*evidenceIDs = append(*evidenceIDs, row.EvidenceIDs...)
 		if p912ClassificationStanceComplete(row) {
 			counts["classification_stances_covered"]++
 		} else {
 			addBlocker("packaging classification stance missing required fields: " + class)
 		}
+
 		if p912EvidenceIDsPresent(row.EvidenceIDs) {
 			counts["classification_stances_with_evidence"]++
 		} else {
 			addBlocker("packaging classification stance lacks evidence IDs: " + class)
 		}
+
 		if !p912ClassificationStanceAligned(row) {
 			counts["contradiction_blockers"]++
+
 			addBlocker("packaging classification stance contradicts north-star priority: " + class)
 		}
 	}
+
 	for class := range required {
 		if seen[class] == 0 {
 			counts["missing_classification_stances"]++
+
 			addBlocker("missing packaging classification stance: " + class)
 		}
 	}
@@ -2985,12 +3454,16 @@ func p912EvaluateLocalEvidenceExport(value p912LocalEvidenceExportThesis, counts
 	text := strings.ToLower(value.Status + " " + value.PrivacyPosture)
 	if !strings.Contains(text, "local") || !strings.Contains(text, "metadata") {
 		counts["privacy_blockers"]++
+
 		addBlocker("local evidence export must be local and metadata-only")
 	}
+
 	for _, forbidden := range []string{"raw prompt", "raw_prompt", "raw file", "raw_file", "secret", "credential", "hosted telemetry"} {
 		if strings.Contains(text, forbidden) && !p99NegatesPattern(text, forbidden) {
 			counts["privacy_blockers"]++
+
 			addBlocker("local evidence export contains privacy-blocked posture: " + forbidden)
+
 			return
 		}
 	}
@@ -3005,6 +3478,7 @@ func p912ScanThesisPrivacy(thesis p912PackagingSupportThesis, counts map[string]
 	for _, field := range p912ThesisPrivacyFields(thesis) {
 		if marker := p912PrivacyMarker(field.text); marker != "" {
 			counts["privacy_blockers"]++
+
 			addBlocker("packaging/support thesis contains privacy-blocked field " + field.path + ": " + marker)
 		}
 	}
@@ -3030,6 +3504,7 @@ func p912ThesisPrivacyFields(thesis p912PackagingSupportThesis) []p912ThesisPriv
 		{path: "decision.trigger", text: thesis.Decision.Trigger},
 		{path: "decision.claim_impact", text: thesis.Decision.ClaimImpact},
 	}
+
 	fields = append(fields, p912SlicePrivacyFields("icp.secondary", thesis.ICP.Secondary)...)
 	fields = append(fields, p912SlicePrivacyFields("icp.deferred_proof_only", thesis.ICP.DeferredProofOnly)...)
 	fields = append(fields, p912SlicePrivacyFields("icp.evidence_ids", thesis.ICP.EvidenceIDs)...)
@@ -3042,8 +3517,10 @@ func p912ThesisPrivacyFields(thesis p912PackagingSupportThesis) []p912ThesisPriv
 	fields = append(fields, p912SlicePrivacyFields("admin.evidence_ids", thesis.Admin.EvidenceIDs)...)
 	fields = append(fields, p912SlicePrivacyFields("local_evidence_export.evidence_ids", thesis.LocalEvidenceExport.EvidenceIDs)...)
 	fields = append(fields, p912SlicePrivacyFields("decision.evidence_ids", thesis.Decision.EvidenceIDs)...)
+
 	for i, row := range thesis.ClassificationStance {
 		prefix := fmt.Sprintf("classification_stances[%d]", i)
+
 		fields = append(fields,
 			p912ThesisPrivacyField{path: prefix + ".classification", text: row.Classification},
 			p912ThesisPrivacyField{path: prefix + ".packaging_stance", text: row.PackagingStance},
@@ -3054,6 +3531,7 @@ func p912ThesisPrivacyFields(thesis p912PackagingSupportThesis) []p912ThesisPriv
 		)
 		fields = append(fields, p912SlicePrivacyFields(prefix+".evidence_ids", row.EvidenceIDs)...)
 	}
+
 	return fields
 }
 
@@ -3062,6 +3540,7 @@ func p912SlicePrivacyFields(path string, values []string) []p912ThesisPrivacyFie
 	for i, value := range values {
 		fields = append(fields, p912ThesisPrivacyField{path: fmt.Sprintf("%s[%d]", path, i), text: value})
 	}
+
 	return fields
 }
 
@@ -3071,6 +3550,7 @@ func p912PrivacyMarker(text string) string {
 			return marker
 		}
 	}
+
 	return ""
 }
 
@@ -3078,10 +3558,13 @@ func p912PrivacyAssertionMarker(assertion string) string {
 	if localops.ContainsAbsolutePath(assertion) {
 		return "private_path"
 	}
+
 	if p912ContainsSecretValue(assertion) {
 		return "secret_value"
 	}
+
 	lower := strings.ToLower(assertion)
+
 	for _, entry := range p912PrivacyPhrasePatterns() {
 		for _, pattern := range entry.patterns {
 			if strings.Contains(lower, pattern) && !p99NegatesPattern(lower, pattern) {
@@ -3089,9 +3572,11 @@ func p912PrivacyAssertionMarker(assertion string) string {
 			}
 		}
 	}
+
 	if p912NamedCustomerIdentifier(assertion) {
 		return "customer_identifier"
 	}
+
 	return ""
 }
 
@@ -3099,12 +3584,14 @@ func p912ContainsSecretValue(assertion string) bool {
 	if !localops.ContainsSecretValue(assertion) {
 		return false
 	}
+
 	lower := strings.ToLower(assertion)
 	for _, pattern := range []string{"secret", "token", "credential", "password", "api key", "api_key"} {
 		if strings.Contains(lower, pattern) && !p99NegatesPattern(lower, pattern) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -3144,6 +3631,7 @@ func p912EvaluatePriorGateEvidence(p97 p97ValidationGateResult, p98 p98Integrati
 			counts["prior_gate_evidence_present"]++
 			continue
 		}
+
 		addBlocker(gate.Gate + " evidence incomplete for P9.12 packaging/support decision: " + firstNonEmptyString(gate.Status, "missing"))
 	}
 }
@@ -3159,18 +3647,23 @@ func p912EvaluateDecision(decision p912PackagingSupportDecision, p97 p97Validati
 		counts["decision_no_go"] = 1
 	default:
 		addBlocker("P9.12 decision outcome must be continue, pivot, or no_go")
+
 		return
 	}
+
 	if outcome == "pivot" && !p912DecisionEvidenceMentions(decision, "pivot") {
 		addBlocker("P9.12 pivot decision must name pivot evidence and failed assumption")
 	}
+
 	if (outcome == "no_go" || outcome == "nogo") && !p912DecisionEvidenceMentions(decision, "no-go") && !p912DecisionEvidenceMentions(decision, "no_go") {
 		addBlocker("P9.12 no-go decision must name no-go evidence")
 	}
+
 	if outcome == "continue" {
 		for _, status := range []string{p97.Status, p98.Status, p99.Status, p910.Status, p911.Status} {
 			if status != "evidence_present" {
 				addBlocker("P9.12 continue decision is unsupported by prior gate evidence")
+
 				return
 			}
 		}
@@ -3197,13 +3690,17 @@ func p912ScanThesisClaims(thesis p912PackagingSupportThesis, counts map[string]i
 	for _, row := range thesis.ClassificationStance {
 		texts = append(texts, row.PackagingStance, row.MVPPackagingStance, row.FinalStateHypothesis, row.SupportAdminBoundary, row.GoNoGoEvidence)
 	}
+
 	for _, text := range texts {
 		if overclaim := p99ComplianceOverclaim(text); overclaim != "" {
 			counts["overclaim_blockers"]++
+
 			addBlocker("packaging/support thesis contains regulated/compliance overclaim language: " + overclaim)
 		}
+
 		if overclaim := p912CommercialOverclaim(text); overclaim != "" {
 			counts["overclaim_blockers"]++
+
 			addBlocker("packaging/support thesis contains unsupported commercial/admin overclaim language: " + overclaim)
 		}
 	}
@@ -3228,6 +3725,7 @@ func p912CommercialOverclaim(text string) string {
 		"dedicated support engineer",
 		"regulated readiness",
 	}
+
 	for _, assertion := range p99ClaimAssertions(text) {
 		lower := strings.ToLower(assertion)
 		for _, pattern := range patterns {
@@ -3236,6 +3734,7 @@ func p912CommercialOverclaim(text string) string {
 			}
 		}
 	}
+
 	return ""
 }
 
@@ -3259,6 +3758,7 @@ func p912StringSetContains(values []string, want string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -3270,8 +3770,12 @@ func p99SecurityPrivacyGate(root string, privacy p99ProductPrivacyState) product
 		"required_gate_tiebacks":   len(p99RequiredTiebacks()),
 		"required_forbidden_terms": len(p99ForbiddenEvidenceFields()),
 	}
-	var blockers []string
-	var evidenceIDs []string
+
+	var (
+		blockers    []string
+		evidenceIDs []string
+	)
+
 	addBlocker := func(reason string) {
 		if strings.TrimSpace(reason) != "" {
 			blockers = append(blockers, reason)
@@ -3280,7 +3784,9 @@ func p99SecurityPrivacyGate(root string, privacy p99ProductPrivacyState) product
 
 	matrixPath := filepath.Join(root, "docs", "security-privacy-posture.matrix.json")
 	matrixData, err := os.ReadFile(matrixPath)
+
 	var matrix p711SecurityPosture
+
 	if err != nil {
 		addBlocker("missing posture matrix: docs/security-privacy-posture.matrix.json")
 	} else if err := json.Unmarshal(matrixData, &matrix); err != nil {
@@ -3294,12 +3800,15 @@ func p99SecurityPrivacyGate(root string, privacy p99ProductPrivacyState) product
 	if !postureOK {
 		addBlocker("missing posture artifact: docs/security-privacy-posture.md")
 	}
+
 	planText, planOK := p99ReadText(filepath.Join(root, "docs", "idiom-implementation-plan.md"))
 	if !planOK {
 		addBlocker("missing P0.9 threat model/data-flow/control mapping artifact")
 	}
+
 	p09Text := p99P09Section(planText)
 	reportText, reportOK := p99ReadText(filepath.Join(root, "docs", "release-gate-p9.9.md"))
+
 	if !reportOK {
 		addBlocker("missing P9.9 release-gate report")
 	} else {
@@ -3315,9 +3824,11 @@ func p99SecurityPrivacyGate(root string, privacy p99ProductPrivacyState) product
 			addBlocker(label + " contains regulated/compliance overclaim language: " + overclaim)
 		}
 	}
+
 	if planOK {
 		p99EvaluateP09Plan(p09Text, counts, addBlocker)
 	}
+
 	if postureOK {
 		if strings.Contains(postureText, "Reviewer Command") {
 			counts["repro_evidence_sections"]++
@@ -3325,9 +3836,11 @@ func p99SecurityPrivacyGate(root string, privacy p99ProductPrivacyState) product
 			addBlocker("posture artifact missing reviewer command/repro evidence")
 		}
 	}
+
 	if reportOK {
 		p99EvaluateReviewReport(reportText, counts, addBlocker)
 	}
+
 	p99EvaluateDependentGateDoc(root, "P9.3", "docs/release-gate-p9.3.md", counts, addBlocker)
 	p99EvaluateDependentGateDoc(root, "P9.8", "docs/release-gate-p9.8.md", counts, addBlocker)
 	p99EvaluateDependentGateDoc(root, "P9.1", "docs/release-decision-p9.2.md", counts, addBlocker)
@@ -3337,7 +3850,9 @@ func p99SecurityPrivacyGate(root string, privacy p99ProductPrivacyState) product
 	if len(blockers) > 0 {
 		status = "needs_evidence"
 	}
+
 	counts["blockers"] = len(blockers)
+
 	return productEvidenceReleaseGateLinkage{
 		Gate:        "P9.9",
 		Status:      status,
@@ -3352,29 +3867,37 @@ func p99SecurityPrivacyGate(root string, privacy p99ProductPrivacyState) product
 func p99EvaluateProductPrivacy(privacy p99ProductPrivacyState, counts map[string]int, addBlocker func(string)) {
 	addPrivacyBlocker := func(reason string) {
 		counts["product_privacy_blockers"]++
+
 		addBlocker(reason)
 	}
 	if privacy.ExportStatus == "blocked" {
 		addPrivacyBlocker("product evidence export status is privacy-blocked")
 	}
+
 	if privacy.RedactionStatus == "blocked" {
 		addPrivacyBlocker("product evidence redaction status is blocked")
 	}
+
 	if privacy.ForbiddenFieldCheck != "" && privacy.ForbiddenFieldCheck != "pass" {
 		addPrivacyBlocker("product evidence forbidden-field check failed: " + privacy.ForbiddenFieldCheck)
 	}
+
 	if privacy.RawPromptCaptured {
 		addPrivacyBlocker("product evidence raw prompt capture flag is true")
 	}
+
 	if privacy.RawFileBodyCaptured {
 		addPrivacyBlocker("product evidence raw file body capture flag is true")
 	}
+
 	if privacy.SecretCaptured {
 		addPrivacyBlocker("product evidence secret capture flag is true")
 	}
+
 	if privacy.PrivatePathCaptured {
 		addPrivacyBlocker("product evidence private path capture flag is true")
 	}
+
 	if privacy.ValidationRecordsStatus == "blocked" {
 		addPrivacyBlocker("P0.8 validation records failed privacy validation")
 	}
@@ -3384,36 +3907,47 @@ func p99EvaluateMatrix(matrix p711SecurityPosture, counts map[string]int, addBlo
 	if matrix.SchemaVersion != "idiom.security_privacy_posture.v1" {
 		addBlocker("posture matrix schema_version is missing or unexpected")
 	}
+
 	if matrix.ArtifactID != "p7.9-security-privacy-posture" {
 		addBlocker("posture matrix artifact_id is missing or unexpected")
 	}
+
 	controlIDs := map[string]bool{}
 	for i, control := range matrix.RequiredControls {
 		controlIDs[control.ID] = true
 		p99CheckPostureFieldOverclaim(fmt.Sprintf("required_controls[%d].claim", i), control.Claim, counts, addBlocker)
 		p99CheckPostureFieldOverclaim(fmt.Sprintf("required_controls[%d].mvp_limitations", i), control.MVPLimitations, counts, addBlocker)
+
 		if strings.TrimSpace(control.Claim) == "" || strings.TrimSpace(control.MVPLimitations) == "" {
 			addBlocker("control row missing claim or limitation: " + control.ID)
 		}
+
 		if len(control.Evidence) == 0 {
 			addBlocker("control row missing executable evidence: " + control.ID)
+
 			continue
 		}
+
 		for _, evidence := range control.Evidence {
 			if evidence.Kind != "go_test" || !strings.HasPrefix(evidence.Command, "go test ") ||
 				strings.TrimSpace(evidence.Path) == "" || strings.TrimSpace(evidence.CheckID) == "" ||
 				filepath.IsAbs(evidence.Path) || strings.Contains(evidence.Path, "/Users/") {
+
 				addBlocker("control row has invalid or privacy-unsafe evidence: " + control.ID)
+
 				break
 			}
 		}
 	}
+
 	counts["control_rows"] = len(matrix.RequiredControls)
+
 	for _, id := range p99RequiredControlIDs() {
 		if controlIDs[id] {
 			counts["mapped_required_controls"]++
 			continue
 		}
+
 		addBlocker("posture matrix missing required control: " + id)
 	}
 
@@ -3422,24 +3956,30 @@ func p99EvaluateMatrix(matrix p711SecurityPosture, counts map[string]int, addBlo
 		rows[row.Classification] = row
 		p99CheckPostureFieldOverclaim(fmt.Sprintf("client_classification_coverage[%d].stance", i), row.Stance, counts, addBlocker)
 		p99CheckPostureFieldOverclaim(fmt.Sprintf("client_classification_coverage[%d].limitation", i), row.Limitation, counts, addBlocker)
+
 		if strings.TrimSpace(row.P76CommandID) == "" || len(row.CoveredControlIDs) == 0 {
 			addBlocker("client row missing P7.6 command or control mapping: " + row.Classification)
 		}
+
 		for _, controlID := range row.CoveredControlIDs {
 			if !controlIDs[controlID] {
 				addBlocker("client row maps unknown control: " + row.Classification + "/" + controlID)
 			}
 		}
+
 		if p99RegulatedClass(row.Classification) && !p99RegulatedRowProofOnly(row) {
 			addBlocker("regulated client row is not explicitly proof-only/deferred: " + row.Classification)
 		}
 	}
+
 	counts["client_rows"] = len(matrix.ClientClassificationCoverage)
+
 	for _, class := range p711Classifications() {
 		if _, ok := rows[class]; ok {
 			counts["mapped_client_rows"]++
 			continue
 		}
+
 		addBlocker("posture matrix missing client row: " + class)
 	}
 
@@ -3447,22 +3987,27 @@ func p99EvaluateMatrix(matrix p711SecurityPosture, counts map[string]int, addBlo
 	for _, tieback := range matrix.ReleaseGateTiebacks {
 		tiebacks[strings.TrimSpace(tieback)] = true
 	}
+
 	for _, tieback := range p99RequiredTiebacks() {
 		if tiebacks[tieback] {
 			counts["mapped_gate_tiebacks"]++
 			continue
 		}
+
 		addBlocker("posture matrix missing release-gate tieback: " + tieback)
 	}
+
 	forbidden := map[string]bool{}
 	for _, field := range matrix.ForbiddenEvidenceFields {
 		forbidden[field] = true
 	}
+
 	for _, field := range p99ForbiddenEvidenceFields() {
 		if forbidden[field] {
 			counts["mapped_forbidden_terms"]++
 			continue
 		}
+
 		addBlocker("posture matrix missing forbidden evidence field: " + field)
 	}
 }
@@ -3470,6 +4015,7 @@ func p99EvaluateMatrix(matrix p711SecurityPosture, counts map[string]int, addBlo
 func p99CheckPostureFieldOverclaim(fieldPath string, text string, counts map[string]int, addBlocker func(string)) {
 	if overclaim := p99ComplianceOverclaim(text); overclaim != "" {
 		counts["matrix_overclaim_blockers"]++
+
 		addBlocker("posture matrix field " + fieldPath + " contains regulated/compliance overclaim language: " + overclaim)
 	}
 }
@@ -3486,16 +4032,21 @@ func p99EvaluateP09Plan(text string, counts map[string]int, addBlocker func(stri
 	for key, marker := range required {
 		if strings.Contains(text, marker) {
 			counts["present_sections"]++
+
 			counts[key] = 1
+
 			continue
 		}
+
 		addBlocker("P0.9 artifact missing section: " + key)
 	}
+
 	for _, marker := range []string{"P7.9", "P8.4", "P9.1", "P9.3", "P9.9"} {
 		if !strings.Contains(text, marker) {
 			addBlocker("P0.9 artifact missing dependent gate reference: " + marker)
 		}
 	}
+
 	p99EvaluateP09SourceVerification(text, counts, addBlocker)
 }
 
@@ -3503,12 +4054,15 @@ func p99EvaluateReviewReport(text string, counts map[string]int, addBlocker func
 	lower := strings.ToLower(text)
 	hasGo := strings.Contains(lower, "reviewer signoff: go") || strings.Contains(lower, "decision: go")
 	hasNoGo := strings.Contains(lower, "decision: no-go") || strings.Contains(lower, "reviewer signoff: no-go")
+
 	if hasGo {
 		counts["reviewer_go"] = 1
 	}
+
 	if hasNoGo {
 		counts["reviewer_no_go"] = 1
 	}
+
 	switch {
 	case hasGo && hasNoGo:
 		addBlocker("P9.9 report has conflicting GO/no-go markers")
@@ -3519,11 +4073,13 @@ func p99EvaluateReviewReport(text string, counts map[string]int, addBlocker func
 	default:
 		addBlocker("P9.9 report lacks reviewer GO or explicit no-go")
 	}
+
 	for _, marker := range []string{"Threat model", "Data-flow", "Privacy", "Control mapping", "Reproduction Commands"} {
 		if strings.Contains(lower, strings.ToLower(marker)) {
 			counts["report_sections"]++
 			continue
 		}
+
 		addBlocker("P9.9 report missing section marker: " + marker)
 	}
 }
@@ -3532,44 +4088,57 @@ func p99EvaluateP09SourceVerification(text string, counts map[string]int, addBlo
 	records, ok := p99ParseSourceVerificationRecords(text)
 	if !ok {
 		addBlocker("P0.9 artifact missing structured source verification evidence")
+
 		return
 	}
+
 	if len(records) == 0 {
 		addBlocker("P0.9 source verification evidence missing source_id records")
+
 		return
 	}
 
 	for _, record := range records {
 		recordOK := true
 		label := firstNonEmptyString(record.SourceID, "unlabeled")
+
 		if strings.TrimSpace(record.SourceID) == "" {
 			addBlocker("P0.9 source verification record source_id is empty")
+
 			recordOK = false
 		}
+
 		checkedDate := strings.TrimSpace(record.CheckedDate)
 		switch {
 		case checkedDate == "":
 			addBlocker("P0.9 source verification record checked_date is empty: " + label)
+
 			recordOK = false
 		default:
 			parsed, err := time.Parse("2006-01-02", checkedDate)
 			if err != nil || parsed.Format("2006-01-02") != checkedDate {
 				addBlocker("P0.9 source verification record checked_date must be YYYY-MM-DD: " + label)
+
 				recordOK = false
 			}
 		}
+
 		if strings.TrimSpace(record.VerificationMethod) == "" {
 			addBlocker("P0.9 source verification record verification_method is empty: " + label)
+
 			recordOK = false
 		}
+
 		if record.unreachable() {
 			if strings.TrimSpace(record.UnreachableSourceVerificationMethod) == "" {
 				addBlocker("P0.9 unreachable source evidence missing verification method for source_id: " + label)
+
 				recordOK = false
 			} else {
 				counts["unreachable_source_verification_methods"]++
 			}
 		}
+
 		if recordOK {
 			counts["source_verification_records"]++
 		}
@@ -3593,42 +4162,58 @@ func p99ParseSourceVerificationRecords(text string) ([]p99SourceVerificationReco
 	marker := "source verification evidence:"
 	lower := strings.ToLower(text)
 	start := strings.Index(lower, marker)
+
 	if start < 0 {
 		return nil, false
 	}
+
 	body := text[start+len(marker):]
-	var records []p99SourceVerificationRecord
-	var current *p99SourceVerificationRecord
+
+	var (
+		records []p99SourceVerificationRecord
+		current *p99SourceVerificationRecord
+	)
+
 	flush := func() {
 		if current != nil {
 			records = append(records, *current)
 			current = nil
 		}
 	}
+
 	for _, line := range strings.Split(body, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
+
 		if strings.HasPrefix(trimmed, "- ") {
 			trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
 		}
+
 		key, value, ok := p99SourceVerificationField(trimmed)
 		if !ok {
 			if current != nil {
 				current.raw += "\n" + trimmed
 			}
+
 			continue
 		}
+
 		if key == "source_id" {
 			flush()
+
 			current = &p99SourceVerificationRecord{SourceID: value, raw: trimmed}
+
 			continue
 		}
+
 		if current == nil {
 			continue
 		}
+
 		current.raw += "\n" + trimmed
+
 		switch key {
 		case "checked_date":
 			current.CheckedDate = value
@@ -3640,7 +4225,9 @@ func p99ParseSourceVerificationRecords(text string) ([]p99SourceVerificationReco
 			current.UnreachableSourceVerificationMethod = value
 		}
 	}
+
 	flush()
+
 	return records, true
 }
 
@@ -3649,6 +4236,7 @@ func p99SourceVerificationField(line string) (string, string, bool) {
 	if !ok {
 		return "", "", false
 	}
+
 	key = strings.ToLower(strings.TrimSpace(key))
 	switch key {
 	case "source_id", "checked_date", "verification_method", "source_status", "unreachable_source_verification_method":
@@ -3664,6 +4252,7 @@ func p99MentionsUnreachableSource(lower string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -3671,10 +4260,14 @@ func p99EvaluateDependentGateDoc(root, gate, rel string, counts map[string]int, 
 	text, ok := p99ReadText(filepath.Join(root, filepath.FromSlash(rel)))
 	if !ok {
 		addBlocker(gate + " dependent evidence missing: " + rel)
+
 		return
 	}
+
 	counts["dependent_gate_docs"]++
+
 	lower := strings.ToLower(text)
+
 	if strings.Contains(lower, "decision: no-go") || strings.Contains(lower, "status:partial") {
 		addBlocker(gate + " dependent evidence is not GO/complete")
 	}
@@ -3685,6 +4278,7 @@ func p99ReadText(path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
+
 	return string(data), true
 }
 
@@ -3693,10 +4287,12 @@ func p99P09Section(text string) string {
 	if start < 0 {
 		return p99P09LedgerRow(text)
 	}
+
 	section := text[start:]
 	if next := strings.Index(section[len("### "):], "\n### "); next >= 0 {
 		return section[:len("### ")+next]
 	}
+
 	return section
 }
 
@@ -3707,6 +4303,7 @@ func p99P09LedgerRow(text string) string {
 			return trimmed
 		}
 	}
+
 	return text
 }
 
@@ -3747,8 +4344,10 @@ func p99RegulatedRowProofOnly(row p711SecurityClassRow) bool {
 	if strings.Contains(text, "sales ready") || strings.Contains(text, "sales-ready") ||
 		strings.Contains(text, "regulated sales readiness") || strings.Contains(text, "release ready") ||
 		strings.Contains(text, "commercially ready") {
+
 		return false
 	}
+
 	return strings.Contains(text, "proof-only") || strings.Contains(text, "proof only") ||
 		strings.Contains(text, "deferred") || strings.Contains(text, "no ") && strings.Contains(text, "compliance")
 }
@@ -3876,6 +4475,7 @@ func p99ComplianceOverclaim(text string) string {
 		"release ready",
 		"commercially ready",
 	}
+
 	for _, assertion := range p99ClaimAssertions(text) {
 		lower := strings.ToLower(assertion)
 		for _, pattern := range patterns {
@@ -3884,11 +4484,13 @@ func p99ComplianceOverclaim(text string) string {
 			}
 		}
 	}
+
 	return ""
 }
 
 func p99ClaimAssertions(text string) []string {
 	text = strings.ReplaceAll(text, "\n", " ")
+
 	fields := strings.FieldsFunc(text, func(r rune) bool {
 		switch r {
 		case '.', ';', '!', '?':
@@ -3897,13 +4499,16 @@ func p99ClaimAssertions(text string) []string {
 			return false
 		}
 	})
+
 	var out []string
+
 	for _, field := range fields {
 		field = strings.TrimSpace(field)
 		if field != "" {
 			out = append(out, field)
 		}
 	}
+
 	return out
 }
 
@@ -3912,8 +4517,10 @@ func p99NegatesPattern(assertion string, pattern string) bool {
 	if idx < 0 {
 		return false
 	}
+
 	prefix := strings.TrimSpace(assertion[:idx])
 	suffix := strings.TrimSpace(assertion[idx+len(pattern):])
+
 	return p99LocalNegationPrefix(prefix) || p99LocalNegationSuffix(suffix)
 }
 
@@ -3937,11 +4544,13 @@ func p99LocalNegationPrefix(prefix string) bool {
 			return true
 		}
 	}
+
 	for _, negator := range []string{"no", "not", "not a", "not an", "does not prove", "does not support", "doesn't prove", "doesn't support", "do not claim", "does not claim", "must not claim", "cannot claim", "can't claim"} {
 		if p99ContainsLocalListNegation(prefix, negator) {
 			return true
 		}
 	}
+
 	return p99ContainsNoAssertionNegation(prefix)
 }
 
@@ -3950,10 +4559,12 @@ func p99ContainsLocalListNegation(prefix string, negator string) bool {
 	if idx < 0 {
 		return false
 	}
+
 	afterNegator := strings.TrimSpace(prefix[idx+len(negator):])
 	if len(afterNegator) > 180 || p99ContainsPositiveClaimCue(afterNegator) {
 		return false
 	}
+
 	return true
 }
 
@@ -3962,11 +4573,14 @@ func p99ContainsNoAssertionNegation(prefix string) bool {
 	if idx < 0 {
 		return false
 	}
+
 	afterNo := strings.TrimSpace(prefix[idx:])
 	if len(afterNo) > 180 {
 		return false
 	}
+
 	padded := " " + afterNo + " "
+
 	return strings.Contains(padded, " asserts ") || strings.Contains(padded, " assert ") ||
 		strings.Contains(padded, " claims ") || strings.Contains(padded, " claim ")
 }
@@ -3976,10 +4590,12 @@ func p99LastPhraseIndex(text string, phrase string) int {
 		beforeOK := idx == 0 || p99PhraseBoundary(text[idx-1])
 		after := idx + len(phrase)
 		afterOK := after == len(text) || p99PhraseBoundary(text[after])
+
 		if beforeOK && afterOK {
 			return idx
 		}
 	}
+
 	return -1
 }
 
@@ -4016,6 +4632,7 @@ func p99ContainsPositiveClaimCue(text string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -4035,6 +4652,7 @@ func p99LocalNegationSuffix(suffix string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -4043,6 +4661,7 @@ func p99EndsWithPhrase(text string, phrase string) bool {
 	if text == phrase {
 		return true
 	}
+
 	return strings.HasSuffix(text, " "+phrase)
 }
 
@@ -4058,6 +4677,7 @@ func p99ClaimImpact(status string) string {
 	if status == "evidence_present" {
 		return "security/privacy posture may be cited as reviewed control-mapping evidence, not compliance, certification, attestation, or regulated sales readiness"
 	}
+
 	return "regulated, compliance-adjacent, and security/privacy readiness claims remain proof-only/no-go until P9.9 blockers close"
 }
 
@@ -4066,6 +4686,7 @@ func p98IntegrationGateFromSignals(signals []productEvidenceSignalSummary) p98In
 		if signal.ID != "integration_proof" {
 			continue
 		}
+
 		out := p98IntegrationGateResult{
 			Status:      p711GateFromSignal(signals, "integration_proof"),
 			Evidence:    p98IntegrationEvidenceSummary(signal.Counts),
@@ -4077,10 +4698,13 @@ func p98IntegrationGateFromSignals(signals []productEvidenceSignalSummary) p98In
 			out.ClaimImpact = "P9.8 can cite three executable integration proof paths with MCP stdio parity"
 			return out
 		}
+
 		out.Blockers = p98IntegrationBlockersFromSignal(signal)
 		out.Evidence = out.Evidence + "; blockers:" + strings.Join(out.Blockers, "|")
+
 		return out
 	}
+
 	return p98IntegrationGateResult{
 		Status:      "needs_evidence",
 		Evidence:    "integration proof signal missing",
@@ -4092,41 +4716,53 @@ func p98IntegrationGateFromSignals(signals []productEvidenceSignalSummary) p98In
 
 func p98IntegrationBlockersFromSignal(signal productEvidenceSignalSummary) []string {
 	var blockers []string
+
 	if signal.Counts["executable_required_path_shell_ci_script"] == 0 {
 		blockers = append(blockers, "missing executable integration proof path: shell_ci_script")
 	}
+
 	if signal.Counts["executable_required_path_external_coding_agent_workflow"] == 0 {
 		blockers = append(blockers, "missing executable integration proof path: external_coding_agent_workflow")
 	}
+
 	if signal.Counts["executable_required_path_mcp_stdio"] == 0 {
 		blockers = append(blockers, "missing executable integration proof path: mcp_stdio")
 	}
+
 	if signal.Counts["mcp_stdio_parity_paths"] == 0 {
 		blockers = append(blockers, "MCP stdio proof is missing required parity fields on the mcp_stdio path")
 	}
+
 	if signal.Counts["duplicate_ids"] > 0 {
 		blockers = append(blockers, "duplicate proof IDs cannot satisfy required integration paths")
 	}
+
 	if signal.Counts["missing_ids"] > 0 {
 		blockers = append(blockers, "proof rows without IDs cannot satisfy required integration paths")
 	}
+
 	if signal.Counts["non_validated_statuses"] > 0 {
 		blockers = append(blockers, "non-test-validated proof rows cannot satisfy required integration paths")
 	}
+
 	if signal.Counts["missing_privacy"] > 0 || signal.Counts["incomplete_privacy"] > 0 || signal.Counts["malformed_privacy"] > 0 {
 		blockers = append(blockers, "proof rows require explicit safe privacy semantics")
 	}
+
 	if signal.Counts["privacy_blockers"] > 0 {
 		blockers = append(blockers, "proof rows report forbidden privacy leakage")
 	}
+
 	if len(blockers) == 0 && signal.Completeness != "complete" {
 		blockers = append(blockers, "integration proof signal is incomplete")
 	}
+
 	return localops.CompactStrings(blockers...)
 }
 
 func summarizeP711Signals(signals []productEvidenceSignalSummary) productEvidenceSignalCompleteness {
 	out := productEvidenceSignalCompleteness{Required: []string{"activation", "retained_use", "integration_proof", "benchmark", "audit", "learning"}, RequiredCount: 6}
+
 	for _, signal := range signals {
 		switch signal.Completeness {
 		case "complete":
@@ -4139,6 +4775,7 @@ func summarizeP711Signals(signals []productEvidenceSignalSummary) productEvidenc
 			out.NotAvailable = append(out.NotAvailable, signal.ID)
 		}
 	}
+
 	out.CompleteCount = len(out.Present)
 	if len(out.Blocked) > 0 {
 		out.Status = "blocked"
@@ -4147,6 +4784,7 @@ func summarizeP711Signals(signals []productEvidenceSignalSummary) productEvidenc
 	} else {
 		out.Status = "partial"
 	}
+
 	return out
 }
 
@@ -4166,50 +4804,68 @@ func p711FileRef(id string, kind string, path string) productEvidenceSourceRefer
 	if data, err := os.ReadFile(path); err == nil {
 		ref.ArtifactHash = localops.ContentHash(data)
 	}
+
 	return ref
 }
 
 func decodeP711ValidationRecords(data []byte) ([]p711ValidationRecord, error) {
 	var records []p711ValidationRecord
+
 	trimmed := strings.TrimSpace(string(data))
+
 	if trimmed == "" {
 		return nil, nil
 	}
+
 	if strings.HasPrefix(trimmed, "[") {
 		dec := json.NewDecoder(strings.NewReader(trimmed))
 		dec.DisallowUnknownFields()
+
 		if err := dec.Decode(&records); err != nil {
 			return nil, err
 		}
+
 		var trailing any
+
 		if err := dec.Decode(&trailing); err != io.EOF {
 			if err == nil {
 				return nil, fmt.Errorf("validation records contain trailing JSON values")
 			}
+
 			return nil, err
 		}
+
 		return records, nil
 	}
+
 	for _, line := range strings.Split(trimmed, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
+
 		var record p711ValidationRecord
+
 		dec := json.NewDecoder(strings.NewReader(line))
 		dec.DisallowUnknownFields()
+
 		if err := dec.Decode(&record); err != nil {
 			return nil, err
 		}
+
 		var trailing any
+
 		if err := dec.Decode(&trailing); err != io.EOF {
 			if err == nil {
 				return nil, fmt.Errorf("validation record contains trailing JSON values")
 			}
+
 			return nil, err
 		}
+
 		records = append(records, record)
 	}
+
 	return records, nil
 }
 
@@ -4218,27 +4874,34 @@ func p711ForbiddenValidationEvidence(data []byte) string {
 	if trimmed == "" {
 		return ""
 	}
+
 	if !strings.HasPrefix(trimmed, "[") && strings.Contains(trimmed, "\n") {
 		for _, line := range strings.Split(trimmed, "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue
 			}
+
 			if forbidden := p711ForbiddenValidationJSONValue([]byte(line)); forbidden != "" {
 				return forbidden
 			}
 		}
+
 		return localops.ForbiddenStringEvidence(trimmed)
 	}
+
 	return p711ForbiddenValidationJSONValue([]byte(trimmed))
 }
 
 func p711ForbiddenValidationJSONValue(data []byte) string {
 	var value any
+
 	dec := json.NewDecoder(bytes.NewReader(data))
+
 	if err := dec.Decode(&value); err == nil {
 		return p711ForbiddenValidationValue(value)
 	}
+
 	return localops.ForbiddenStringEvidence(string(data))
 }
 
@@ -4249,14 +4912,18 @@ func p711ForbiddenValidationValue(value any) string {
 		for key := range typed {
 			keys = append(keys, key)
 		}
+
 		slices.Sort(keys)
+
 		for _, key := range keys {
 			if forbidden := p711ForbiddenValidationKey(key); forbidden != "" {
 				return forbidden
 			}
+
 			if boolValue, ok := typed[key].(bool); ok && boolValue && localops.ForbiddenBooleanEvidenceKey(key) {
 				return key
 			}
+
 			if forbidden := p711ForbiddenValidationValue(typed[key]); forbidden != "" {
 				return forbidden
 			}
@@ -4270,6 +4937,7 @@ func p711ForbiddenValidationValue(value any) string {
 	case string:
 		return p711ForbiddenValidationString(typed)
 	}
+
 	return ""
 }
 
@@ -4293,6 +4961,7 @@ func p711ForbiddenValidationString(value string) string {
 	if forbidden := localops.ForbiddenStringEvidence(value); forbidden != "" {
 		return forbidden
 	}
+
 	lower := strings.ToLower(value)
 	switch {
 	case strings.Contains(lower, "raw_prompt"), strings.Contains(lower, "raw prompt"):
@@ -4313,9 +4982,11 @@ func p711ValidationRecordQualifies(record p711ValidationRecord) bool {
 	if record.RecordID == "" || record.ClientClassification == "" || record.ClientClassification == "unclassified" {
 		return false
 	}
+
 	if record.EvidenceStatus != "complete" {
 		return false
 	}
+
 	switch record.RedactionStatus {
 	case "pass", "redacted":
 		return true
@@ -4340,6 +5011,7 @@ func p711ApprovedClassification(value string) string {
 			return value
 		}
 	}
+
 	return "unclassified"
 }
 
@@ -4348,10 +5020,12 @@ func p711SafeID(value string, prefix string) string {
 	if value == "" {
 		return ""
 	}
+
 	token := localops.SafeToken(value)
 	if token != "" && len(token) <= 80 && !localops.TokenNeedsRedaction(token) {
 		return token
 	}
+
 	return prefix + "_id:" + localops.StableID(value)
 }
 
@@ -4364,6 +5038,7 @@ func p711SafeStatus(value string) string {
 		if value == "" {
 			return "not_available"
 		}
+
 		return "redacted"
 	}
 }
@@ -4386,6 +5061,7 @@ func p711GateFromSignal(signals []productEvidenceSignalSummary, id string) strin
 		if signal.ID != id {
 			continue
 		}
+
 		switch signal.Completeness {
 		case "complete":
 			return "evidence_present"
@@ -4395,18 +5071,23 @@ func p711GateFromSignal(signals []productEvidenceSignalSummary, id string) strin
 			return "needs_evidence"
 		}
 	}
+
 	return "needs_evidence"
 }
 
 func p711IntegrationProofIDs(proofs p711IntegrationProofSet) []string {
 	validity := p711ProofValidityFor(proofs)
+
 	var ids []string
+
 	for _, proof := range proofs.Proofs {
 		if validity.validProof(proof) {
 			ids = append(ids, proof.ID)
 		}
 	}
+
 	slices.Sort(ids)
+
 	return ids
 }
 
@@ -4429,10 +5110,12 @@ func productEvidenceReportHash(report productEvidenceExportReport) string {
 	report.GeneratedAt = ""
 	report.ExportID = ""
 	report.ArtifactHash = ""
+
 	body, err := json.Marshal(report)
 	if err != nil {
 		return localops.StableID("product-evidence-report")
 	}
+
 	return localops.ContentHash(body)
 }
 
@@ -4443,13 +5126,16 @@ func finalizeProductEvidenceIdentity(report *productEvidenceExportReport) {
 
 func refreshProductEvidenceP99Gate(root string, report *productEvidenceExportReport) {
 	p99 := p99SecurityPrivacyGate(root, p99ProductPrivacyStateFromReport(*report))
+
 	report.ProductSuccessGates.SecurityPrivacy = p99.Status
+
 	for i, gate := range report.ReleaseGateLinkage {
 		if gate.Gate == "P9.9" {
 			report.ReleaseGateLinkage[i] = p99
 			return
 		}
 	}
+
 	report.ReleaseGateLinkage = append(report.ReleaseGateLinkage, p99)
 }
 
@@ -4469,6 +5155,7 @@ func p99ProductPrivacyStateFromReport(report productEvidenceExportReport) p99Pro
 			break
 		}
 	}
+
 	return state
 }
 
@@ -4481,16 +5168,20 @@ func SanitizeProductEvidenceTelemetryArgs(args []string) []string {
 			case "--project-root", "--output", "--local-ops-report", "--validation-records", "--benchmark-report":
 				out[i] = flag + "=" + redactedProductEvidencePathArg(value)
 			}
+
 			continue
 		}
+
 		switch arg {
 		case "--project-root", "--output", "--local-ops-report", "--validation-records", "--benchmark-report":
 			if i+1 < len(out) {
 				i++
+
 				out[i] = redactedProductEvidencePathArg(out[i])
 			}
 		}
 	}
+
 	return out
 }
 
@@ -4499,6 +5190,7 @@ func redactedProductEvidencePathArg(value string) string {
 	if value == "" {
 		return "<empty>"
 	}
+
 	return "<redacted_product_evidence_path id=" + localops.StableID(value) + ">"
 }
 
