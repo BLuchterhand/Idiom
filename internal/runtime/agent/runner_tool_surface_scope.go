@@ -600,7 +600,7 @@ func isReadClassTool(req workspace.ToolRequest) bool {
 	return workspace.IsReadTool(strings.TrimSpace(req.Tool))
 }
 
-const narrowToolFamilyNudgeAt = 10
+const narrowToolFamilyNudgeAt = 5
 
 // narrowToolFamily returns a stable family name for narrow/specific tools
 // that the model might over-use in a loop. Returns "" for broad tools
