@@ -2072,11 +2072,10 @@ func (r *Runner) Run(
 				r.emitEvent(RunEvent{Role: "narrow_tool_repetition_nudge", Content: prompt})
 			}
 
-			// Auto-redirect: if the nudge has fired but the model made
-			// another same-family call, redirect it to a broader discovery
-			// tool. On the NEXT attempt of the original call, let it
-			// through — the model can override the redirect by repeating.
-			if narrowToolFamilyNudgeFired && !narrowToolFamilyRedirectIssued {
+			// Auto-redirect: only for code_navigate families. Redirecting
+			// read_file or search away from their target breaks legitimate
+			// evidence gathering. The model can override by repeating.
+			if narrowToolFamilyNudgeFired && !narrowToolFamilyRedirectIssued && narrowToolFamilyAutoRedirect(narrowFamily) {
 				narrowToolFamilyRedirectIssued = true
 				narrowToolFamilyRedirectedOriginal = req.Tool + "|" + narrowFamily
 
@@ -2235,7 +2234,7 @@ func (r *Runner) Run(
 		// calls (not just replays/rejections) because the pathology is the
 		// model getting stuck even when the harness doesn't push back.
 		identicalCallRun := requestBudget.noteFingerprint(currentFingerprint)
-		if r.lanePolicy().SkipFingerprintHardBlock() && isReadClassTool(req) {
+		if isReadClassTool(req) {
 			if decision := requestBudget.samePathFixationDecision(req, genericReadOnlyEvidenceReady(r.RuntimeBrief, collectedResults)); decision.Handled {
 				if tool := strings.TrimSpace(decision.HideTool); tool != "" && !turnHiddenTools[tool] {
 					turnHiddenTools[tool] = true

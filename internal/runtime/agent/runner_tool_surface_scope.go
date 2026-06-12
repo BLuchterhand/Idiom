@@ -622,8 +622,17 @@ func narrowToolFamily(tool string) string {
 	case workspace.ToolNameShell:
 		return "shell"
 	default:
-		return "" // broad/discovery tools reset the counter
+		return ""
 	}
+}
+
+// narrowToolFamilyAutoRedirect reports whether a narrow tool family
+// should be auto-redirected to a broader discovery tool after the
+// repetition nudge fires. Only code_navigate enumeration benefits
+// from this redirect; read_file and search are legitimate evidence
+// tools that should never be redirected away.
+func narrowToolFamilyAutoRedirect(family string) bool {
+	return family == "code_navigate"
 }
 
 func toolActionClass(req workspace.ToolRequest) string {
