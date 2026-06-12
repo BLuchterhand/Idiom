@@ -111,13 +111,18 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	writeAllowedPaths := scopeContract.WriteAllowedPaths
 	writeAllowedExplicit := scopeContract.WriteAllowedExplicit
 	editSetObligations := scopeContract.EditSetObligations
+	allowedEditPaths, candidateRepairs := repairMissingAllowedCandidatePaths(cfg.Workspace.Root, allowedEditPaths)
+	if len(candidateRepairs) > 0 {
+		scopeContract = planExecuteContractWithWriteEnvelope(NewPlanScopeContract(requiredEditPaths, allowedEditPaths, editSetObligations), writeAllowedPaths, writeAllowedExplicit)
+	}
+	plannerPromptSource := applyCandidatePathRepairsToPrompt(prompt, candidateRepairs)
 	authorizedNewFiles := mergePlanExecutePaths(append(
 		append([]string(nil), opts.AuthorizedNewFiles...),
-		planExecuteCompileLegacyAuthorizedNewFiles(prompt, append(append([]string(nil), requiredEditPaths...), allowedEditPaths...))...,
+		planExecuteCompileLegacyAuthorizedNewFiles(plannerPromptSource, append(append([]string(nil), requiredEditPaths...), allowedEditPaths...))...,
 	))
 	verificationPlan := PlanVerification(VerificationPlannerInput{
 		WorkspaceRoot: cfg.Workspace.Root,
-		Prompt:        prompt,
+		Prompt:        plannerPromptSource,
 	})
 	verificationCommands := verificationPlan.CommandStrings()
 
@@ -132,6 +137,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		"explicit_count":            len(explicitRequiredEditPaths),
 		"prompt_count":              len(promptRequiredEditPaths),
 		"allowed_count":             len(allowedEditPaths),
+		"candidate_repairs":         candidateRepairs,
 		"scope_contract_id":         scopeContract.ContractID,
 		"edit_set_obligation_count": len(editSetObligations),
 	})
@@ -142,6 +148,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		"allowed_count":             len(allowedEditPaths),
 		"required_edit_paths":       requiredEditPaths,
 		"allowed_edit_paths":        allowedEditPaths,
+		"candidate_repairs":         candidateRepairs,
 		"verification_commands":     verificationCommands,
 		"scope_contract_id":         scopeContract.ContractID,
 		"edit_set_obligations":      editSetObligations,
@@ -170,10 +177,10 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		return RunResult{ExitCode: 1, SessionID: sessionID}
 	}
 
-	plannerBrief := appendPlanExecuteScopeToBriefBody(prompt, requiredEditPaths, allowedEditPaths)
+	plannerBrief := appendPlanExecuteScopeToBriefBody(plannerPromptSource, requiredEditPaths, allowedEditPaths)
 	contextPackSection := BuildPromptContextPackSection(cfg, PromptContextPackOptions{
 		Mode:              "plan",
-		Title:             prompt,
+		Title:             plannerPromptSource,
 		Brief:             plannerBrief,
 		ProjectRoot:       cfg.Workspace.Root,
 		RequiredEditPaths: requiredEditPaths,
@@ -197,7 +204,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		autoExactScopePaths = allowedEditPaths
 	}
 
-	autoExact := planExecuteTryAutoExactPlan(cfg, prompt, autoExactScopePaths)
+	autoExact := planExecuteTryAutoExactPlan(cfg, plannerPromptSource, autoExactScopePaths)
 	if autoExact.SourceSatisfied {
 		if reason := editSetObligations.RejectionReason(autoExact.AppliedPaths); reason != "" {
 			message := EditSetObligationFailureMessage(reason)
@@ -679,7 +686,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 					progress.FailureKind = RunFailureSourceSanityFailed
 					progress.FailureReason = sanitizeProgressReason(sourceErr.Error())
 				} else {
-					_, verificationEvidence, verificationErr := runPlanExecuteVerificationPlan(cfg.Workspace.Root, verificationPlan, opts.JSONEvents, stdout)
+					_, verificationEvidence, verificationErr := runPlanExecuteVerificationPlanWithParentContract(cfg.Workspace.Root, verificationPlan, progress.ScopeContractID, opts.JSONEvents, stdout)
 
 					report.Verification = verificationEvidence
 					progress.Executor.Verification = append([]PhaseEvidenceCheck(nil), verificationEvidence...)
@@ -864,7 +871,7 @@ func runResumeReviewRepair(cfg config.Config, opts Options, prompt string, state
 			state.FailureKind = RunFailureSourceSanityFailed
 			state.FailureReason = sanitizeProgressReason(sourceErr.Error())
 		} else {
-			_, verificationEvidence, verificationErr := runPlanExecuteVerificationPlan(cfg.Workspace.Root, verificationPlan, opts.JSONEvents, stdout)
+			_, verificationEvidence, verificationErr := runPlanExecuteVerificationPlanWithParentContract(cfg.Workspace.Root, verificationPlan, state.ScopeContractID, opts.JSONEvents, stdout)
 
 			state.Executor.Verification = append([]PhaseEvidenceCheck(nil), verificationEvidence...)
 			state.Executor.VerificationCommands = append([]VerificationCommand(nil), verificationPlan.Commands...)

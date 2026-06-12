@@ -84,6 +84,7 @@ type Manager struct {
 	handleToPath               map[string]string
 	observedPaths              map[string]struct{}
 	permissionRules            map[string][]ToolRule
+	protectedWritePaths         map[string]struct{}
 	mcpRegistry                *mcp.Registry
 	externalToolsRegistry      *ExternalToolRegistry
 	languageTools              *languagetools.Manager

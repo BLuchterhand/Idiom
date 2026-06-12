@@ -47,6 +47,25 @@ func TestRequestApprovalAutoDeniesInHeadlessMode(t *testing.T) {
 	}
 }
 
+func TestRequestApprovalAutoDeniesInNonInteractivePromptRunner(t *testing.T) {
+	model := &Model{}
+	model.SetNonInteractive(true)
+
+	done := make(chan bool, 1)
+	go func() {
+		done <- model.requestApproval(workspace.ToolRequest{Tool: "edit_file", Path: "a.txt"}, "implement")
+	}()
+
+	select {
+	case got := <-done:
+		if got {
+			t.Fatalf("expected auto-deny in non-interactive mode, got true")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("requestApproval blocked in non-interactive mode")
+	}
+}
+
 func TestPreExecuteToolRequestConfigDenyOverridesModeAllow(t *testing.T) {
 	model := &Model{
 		workspace: workspace.NewManager(config.Workspace{
@@ -81,5 +100,29 @@ func TestPreExecuteToolRequestConfigDenyOverridesModeAllow(t *testing.T) {
 
 	if !strings.Contains(result.Error, "deny read_file") {
 		t.Fatalf("unexpected deny error %q", result.Error)
+	}
+}
+
+func TestPreExecuteToolRequestReportsUnapprovedAskAsWriteApprovalRequired(t *testing.T) {
+	model := &Model{
+		workspace: workspace.NewManager(config.Workspace{Root: t.TempDir()}),
+	}
+	model.SetJSONEventStream(&bytes.Buffer{}, "approval-required-test")
+	model.workspace.SetProtectedWritePaths([]string{"prompts/base.md"})
+
+	result := model.preExecuteToolRequest(1, workspace.ToolRequest{
+		Tool: "edit_file",
+		Path: "prompts/base.md",
+	}, agent.Mode{Name: "build"})
+	if result == nil {
+		t.Fatal("expected TUI pre-execute hook to require approval")
+	}
+
+	if !strings.Contains(result.Summary, "Write approval required") {
+		t.Fatalf("unexpected approval summary %q", result.Summary)
+	}
+
+	if !strings.Contains(result.Error, "write approval required") {
+		t.Fatalf("unexpected approval error %q", result.Error)
 	}
 }

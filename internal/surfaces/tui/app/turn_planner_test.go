@@ -1008,7 +1008,7 @@ func TestPlanExecuteSlashCommandExecutionPlanUsesPlannerMetadata(t *testing.T) {
 	}
 }
 
-func TestClassifierSelectedPlanExecuteFamilyRequiresConfirmation(t *testing.T) {
+func TestClassifierSelectedPlanExecuteFamilyActivatesPlanSubmission(t *testing.T) {
 	cfg := config.Default()
 
 	cfg.Workspace.EnableWrites = true
@@ -1048,12 +1048,12 @@ func TestClassifierSelectedPlanExecuteFamilyRequiresConfirmation(t *testing.T) {
 				t.Fatalf("normalized route lost planner execution contract: %#v", route)
 			}
 
-			if decision.WriterMode != string(writerroute.ModeReadOnly) || decision.Lane != "main" {
-				t.Fatalf("classifier-selected planner family should wait for confirmation, got %#v", decision)
+			if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
+				t.Fatalf("classifier-selected planner family should activate plan submission, got %#v", decision)
 			}
 
-			if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily || !slices.Contains(decision.ReasonCodes, "route.mutation_confirmation_required") {
-				t.Fatalf("classifier-selected planner route missing confirmation metadata, got %#v", decision)
+			if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily || !slices.Contains(decision.ReasonCodes, "route.plan_execute_planner") {
+				t.Fatalf("classifier-selected planner route missing plan submission metadata, got %#v", decision)
 			}
 		})
 	}
@@ -1100,12 +1100,12 @@ func TestBuildPromptExecutionPlanPreservesClassifierSelectedPlanExecuteFamily(t 
 		t.Fatalf("runtime brief task family = %q, want %s", plan.runtimeBrief.TaskFamily, agent.PlanThenExecutePlannerTaskFamily)
 	}
 
-	if decision.WriterMode != string(writerroute.ModeReadOnly) || decision.Lane != "main" {
-		t.Fatalf("classifier-selected planner should wait for confirmation, got %#v", decision)
+	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
+		t.Fatalf("classifier-selected planner should activate plan submission, got %#v", decision)
 	}
 
-	if !slices.Contains(decision.ReasonCodes, "route.mutation_confirmation_required") {
-		t.Fatalf("confirmation reason missing: %#v", decision.ReasonCodes)
+	if !slices.Contains(decision.ReasonCodes, "route.plan_execute_planner") {
+		t.Fatalf("plan submission reason missing: %#v", decision.ReasonCodes)
 	}
 }
 
@@ -2260,7 +2260,7 @@ func TestWriterRouteDecisionForPromptReportsDirectImplementation(t *testing.T) {
 	}
 }
 
-func TestWriterRouteDecisionForClassifierImplementationRequiresConfirmation(t *testing.T) {
+func TestWriterRouteDecisionForClassifierImplementationUsesGuardedWriter(t *testing.T) {
 	cfg := config.Default()
 
 	cfg.Workspace.EnableWrites = true
@@ -2274,12 +2274,12 @@ func TestWriterRouteDecisionForClassifierImplementationRequiresConfirmation(t *t
 
 	decision := m.writerRouteDecisionForPrompt("update target.txt", plan)
 
-	if decision.WriterMode != string(writerroute.ModeReadOnly) || decision.Lane != "main" {
-		t.Fatalf("classifier implementation should wait for confirmation, got %#v", decision)
+	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
+		t.Fatalf("classifier implementation should use guarded writer, got %#v", decision)
 	}
 
-	if !slices.Contains(decision.ReasonCodes, "route.mutation_confirmation_required") {
-		t.Fatalf("confirmation reason missing: %#v", decision.ReasonCodes)
+	if !slices.Contains(decision.ReasonCodes, "route.local_model_default") {
+		t.Fatalf("guarded writer reason missing: %#v", decision.ReasonCodes)
 	}
 }
 
@@ -2625,7 +2625,7 @@ func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfig
 	}
 }
 
-func TestRunPromptOnceNaturalLanguageTDDFeatureAsksBeforeClassifierImplementLane(t *testing.T) {
+func TestRunPromptOnceNaturalLanguageTDDFeatureUsesClassifierImplementLane(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
 
@@ -2701,14 +2701,34 @@ func TestRunPromptOnceNaturalLanguageTDDFeatureAsksBeforeClassifierImplementLane
 				"data": []map[string]any{{"id": "executor-model"}},
 			})
 		case "/v1/chat/completions":
-			executorChatRequests.Add(1)
-
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Fatalf("read executor request: %v", err)
 			}
 
-			t.Fatalf("natural-language detected implementation should ask for confirmation before executor chat:\n%s", string(body))
+			requestText := string(body)
+			if strings.Contains(requestText, "Plan-then-execute (planner phase)") {
+				t.Fatalf("natural-language implementation should not enter plan-execute planner:\n%s", requestText)
+			}
+
+			reply := "Updated pkg/feature.go and pkg/feature_test.go."
+			switch executorChatRequests.Add(1) {
+			case 1:
+				reply = `<tool_call>
+{"tool":"read_file","path":"docs/tdd-feature.md","named_gap":"feature atom requirements before editing","why_not_answering":"need source-body evidence from referenced atom"}`
+			case 2:
+				reply = `<tool_call>
+{"tool":"edit_file","path":"pkg/feature.go","old_text":"return false","new_text":"return true","description":"enable feature behavior"}`
+			case 3:
+				reply = `<tool_call>
+{"tool":"edit_file","path":"pkg/feature_test.go","old_text":"Covered = false","new_text":"Covered = true","description":"add regression coverage marker"}`
+			}
+
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{
+					"message": map[string]string{"content": reply},
+				}},
+			})
 		default:
 			http.NotFound(w, r)
 		}
@@ -2761,21 +2781,16 @@ func TestRunPromptOnceNaturalLanguageTDDFeatureAsksBeforeClassifierImplementLane
 		t.Fatalf("unexpected planner requests: %d", unexpectedPlannerRequests.Load())
 	}
 
-	if executorChatRequests.Load() != 0 {
-		t.Fatalf("unexpected executor chat before confirmation: %d", executorChatRequests.Load())
+	if executorChatRequests.Load() == 0 {
+		t.Fatalf("expected executor chat for classifier-routed implementation")
 	}
 
-	if !strings.Contains(answer, "Do you want me to switch") || !strings.Contains(answer, "/implement") {
-		t.Fatalf("answer should ask for explicit implementation confirmation, got %q", answer)
+	if strings.Contains(answer, "Do you want me to switch") || strings.Contains(answer, "/implement") {
+		t.Fatalf("answer should not ask for implementation confirmation, got %q", answer)
 	}
 
-	gotSource, err := os.ReadFile(filepath.Join(root, "pkg", "feature.go"))
-	if err != nil {
-		t.Fatalf("read source: %v", err)
-	}
-
-	if !strings.Contains(string(gotSource), "return false") {
-		t.Fatalf("source should stay unchanged before confirmation, answer=%q events=%s:\n%s", answer, eventBuf.String(), string(gotSource))
+	if !strings.Contains(eventBuf.String(), `"writer_mode":"agentic_guarded"`) {
+		t.Fatalf("natural-language implementation should reach guarded writer route, answer=%q events=%s", answer, eventBuf.String())
 	}
 }
 

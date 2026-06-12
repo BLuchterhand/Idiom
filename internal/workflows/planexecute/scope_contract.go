@@ -2,6 +2,7 @@ package planexecute
 
 import (
 	"idiom/internal/contracts/autonomy"
+	"idiom/internal/contracts/pathparse"
 	"idiom/internal/contracts/plan"
 )
 
@@ -24,6 +25,9 @@ func planExecuteScopeContract(opts Options, prompt string) PlanScopeContract {
 
 	allowed = append(allowed, []string(opts.AllowedEditPaths)...)
 	allowed = append(allowed, AllowedEditPathsFromPrompt(prompt)...)
+	if len(required) == 0 && len(allowed) == 0 {
+		allowed = append(allowed, pathparse.FilterWorkspaceFilePaths(pathparse.MentionedWorkspacePaths(prompt))...)
+	}
 
 	obligations := plancontract.MergeEditSetObligations(
 		scope.EditSetObligations.WithDefaultSource("scope_contract"),

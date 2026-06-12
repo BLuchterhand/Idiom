@@ -235,6 +235,85 @@ func TestPlanExecuteEditableFilesHeadingIsCandidateScopeOnly(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteUnscopedObjectiveMentionedPathsBecomeCandidateScope(t *testing.T) {
+	prompt := "Add the atom_spec lane to cmd/idiom/lane.go and the registry in internal/runtime/agent/runner_plan_then_execute_guard.go."
+
+	if required := planExecuteRequiredEditPaths(Options{}, prompt); len(required) != 0 {
+		t.Fatalf("plain objective path mentions must not define required coverage, got %#v", required)
+	}
+
+	allowed := planExecuteAllowedEditPaths(Options{}, prompt)
+	for _, want := range []string{"cmd/idiom/lane.go", "internal/runtime/agent/runner_plan_then_execute_guard.go"} {
+		if !slices.Contains(allowed, want) {
+			t.Fatalf("missing objective-mentioned candidate path %q, got %#v", want, allowed)
+		}
+	}
+}
+
+func TestRepairMissingAllowedCandidatePathsUsesUniqueCodeBasename(t *testing.T) {
+	root := t.TempDir()
+	mustWritePlanExecuteTestFile(t, root, "internal/surfaces/cli/lane/lane.go", "package lane\n")
+
+	got, repairs := repairMissingAllowedCandidatePaths(root, []string{"cmd/idiom/lane.go"})
+	if len(got) != 1 || got[0] != "internal/surfaces/cli/lane/lane.go" {
+		t.Fatalf("repaired paths = %#v, want unique lane.go target", got)
+	}
+
+	if len(repairs) != 1 || repairs[0].Original != "cmd/idiom/lane.go" || repairs[0].Resolved != "internal/surfaces/cli/lane/lane.go" {
+		t.Fatalf("repair metadata = %#v", repairs)
+	}
+}
+
+func TestRepairMissingAllowedCandidatePathsKeepsAmbiguousBasename(t *testing.T) {
+	root := t.TempDir()
+	mustWritePlanExecuteTestFile(t, root, "internal/a/lane.go", "package a\n")
+	mustWritePlanExecuteTestFile(t, root, "internal/b/lane.go", "package b\n")
+
+	got, repairs := repairMissingAllowedCandidatePaths(root, []string{"cmd/idiom/lane.go"})
+	if len(got) != 1 || got[0] != "cmd/idiom/lane.go" {
+		t.Fatalf("ambiguous path should remain unchanged, got %#v", got)
+	}
+
+	if len(repairs) != 0 {
+		t.Fatalf("ambiguous path should not produce repair metadata, got %#v", repairs)
+	}
+}
+
+func TestApplyCandidatePathRepairsToPromptRemovesStaleAlias(t *testing.T) {
+	prompt := "Add the atom_spec lane to cmd/idiom/lane.go and update docs mentioning cmd/idiom/lane.go."
+	got := applyCandidatePathRepairsToPrompt(prompt, []candidatePathRepair{{
+		Original: "cmd/idiom/lane.go",
+		Resolved: "internal/surfaces/cli/lane/lane.go",
+		Reason:   "missing_candidate_unique_basename_match",
+	}})
+
+	body, metadata, ok := strings.Cut(got, "Path repair metadata:")
+	if !ok {
+		t.Fatalf("repair metadata missing from prompt:\n%s", got)
+	}
+	if strings.Contains(body, "cmd/idiom/lane.go") {
+		t.Fatalf("stale alias leaked into repaired prompt body:\n%s", got)
+	}
+	if !strings.Contains(metadata, "cmd/idiom/lane.go -> internal/surfaces/cli/lane/lane.go") {
+		t.Fatalf("repair metadata should preserve original-to-resolved mapping:\n%s", got)
+	}
+	if strings.Count(body, "internal/surfaces/cli/lane/lane.go") != 2 {
+		t.Fatalf("resolved path not substituted everywhere:\n%s", got)
+	}
+}
+
+func mustWritePlanExecuteTestFile(t *testing.T, root string, rel string, body string) {
+	t.Helper()
+
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create parent dirs for %s: %v", rel, err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+}
+
 func TestPlanScopeContractIDTracksNormalizedContent(t *testing.T) {
 	contract := NewPlanScopeContract([]string{"pkg/a.go"}, nil, nil)
 	originalID := contract.ContractID

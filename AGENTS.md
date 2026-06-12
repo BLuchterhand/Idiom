@@ -22,6 +22,36 @@ This repository builds `idiom`, a local coding-agent harness around Qwen, `llama
 - Evidence tools and summaries should report findings, paths, symbols, counts, and uncertainty. They should not prescribe the next tool call.
 - All work and answers must be grounded in factual analysis from the codebase, tool output, tests, logs, or cited docs. Distinguish verified facts from inference, and do not present guesses as findings.
 
+### Behavior-Fix Decision Procedure
+
+Before changing prompts, routing, readiness, recovery, delegated discovery, or
+final-answer shaping, classify the fix using this checklist:
+
+1. **Harness-owned invariant:** Is the harness enforcing permissions,
+   protected paths, tool/protocol shape, evidence freshness, source-body
+   support, readiness/completion, verification, loop bounds, or budget
+   exhaustion? If not, the proposed fix is probably model-strategy steering.
+2. **Model-owned strategy:** Does the change hard-pick the next probe, answer
+   outline, file path, or synthesis for a topic when multiple valid strategies
+   remain? If yes, redesign it as a typed contract, evidence predicate, or
+   advisory nudge, or remove it.
+3. **Exact anchors vs composite scope:** If the model or user has an exact
+   source file/symbol/body anchor, preserve that narrow path by default.
+   Redirect to broad/composite discovery only when the question is inherently
+   cross-cutting or the exact anchor has been proven off-objective.
+4. **Evidence integrity:** Do not accept candidate paths, listings, summaries,
+   or off-objective packets as source-body evidence. Promote a packet only when
+   its findings support the user's objective and name source-owner evidence
+   where the contract requires source ownership.
+5. **Generic ownership:** A special case is allowed only when it names a real
+   domain boundary and is covered by positive and negative tests. Prefer shared
+   predicates such as objective relevance, source ownership, exact-anchor
+   preservation, and composite-scope classification over topic templates.
+
+If the patch cannot pass this checklist in writing, do not land it. Gather more
+log evidence or move the fix to the contract boundary that actually owns the
+failure.
+
 ## Engineering Quality Baseline
 
 For code changes, reviews, refactors, and tests, apply the local

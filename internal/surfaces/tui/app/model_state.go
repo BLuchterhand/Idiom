@@ -230,6 +230,7 @@ type Model struct {
 	agentModeName                  string
 	forcedTaskFamily               string
 	suppressPromptTranscript       bool
+	nonInteractive                 bool
 	plannerOwnedVerification       bool
 	lastPlanExecuteRunResult       *planexecute.RunResult
 	maxTokensOverride              int
@@ -1141,7 +1142,16 @@ func (m *Model) applyModePermissions(mode agent.Mode) {
 		return
 	}
 
+	m.workspace.SetProtectedWritePaths(protectedPromptWritePaths(m.cfg, mode))
 	m.workspace.SetPermissionRules(mode.PermissionRules)
+}
+
+func (m *Model) SetNonInteractive(nonInteractive bool) {
+	if m == nil {
+		return
+	}
+
+	m.nonInteractive = nonInteractive
 }
 
 func firstToolTraceLine(text string) string {

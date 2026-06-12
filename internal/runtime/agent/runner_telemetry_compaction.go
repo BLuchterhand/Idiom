@@ -917,6 +917,7 @@ func mutationEvidenceScope(brief workerruntime.WorkerRuntimeBrief, results []wor
 
 func postChildClosureEvidencePaths(objective string, results []workspace.ToolResult, max int) []string {
 	paths := make([]string, 0, max)
+	followupAnchors := make([]string, 0, max)
 	acceptedPacket := false
 
 	for _, result := range results {
@@ -931,6 +932,7 @@ func postChildClosureEvidencePaths(objective string, results []workspace.ToolRes
 			}
 
 			if !packetAnswerable {
+				followupAnchors = append(followupAnchors, readOnlyChildPacketFollowupAnchors(objective, packet)...)
 				continue
 			}
 
@@ -949,12 +951,14 @@ func postChildClosureEvidencePaths(objective string, results []workspace.ToolRes
 		}
 
 		if len(sourcePaths) == 0 {
+			followupAnchors = append(followupAnchors, delegatedChildPacketFollowupAnchors(objective, result.Output)...)
 			continue
 		}
 
 		if !childPacketContainsGroundedAnswerEvidence(objective, result.Output) &&
 			!delegatedPacketAddressesObjective(objective, result.Output) {
 
+			followupAnchors = append(followupAnchors, delegatedChildPacketFollowupAnchors(objective, result.Output)...)
 			continue
 		}
 
@@ -967,7 +971,74 @@ func postChildClosureEvidencePaths(objective string, results []workspace.ToolRes
 		paths = append(paths, pinnedPathsFromToolResults(results, max*4)...)
 	}
 
+	if len(paths) == 0 {
+		paths = append(paths, followupAnchors...)
+	}
+
 	paths = prioritizedClosureEvidencePaths(delegatedDiscoveryAnswerEvidencePaths(objective, paths), results, max)
 
 	return closurePromptEvidencePaths(paths, max)
+}
+
+func readOnlyChildPacketFollowupAnchors(objective string, packet ReadOnlyEvidencePacket) []string {
+	if !weakChildPacketFollowupAnchorsAllowed(objective) {
+		return nil
+	}
+
+	packet = normalizeReadOnlyEvidencePacket(packet)
+
+	var paths []string
+	paths = append(paths, packet.InspectedPaths...)
+	paths = append(paths, packet.CandidatePaths...)
+
+	return filterChildPacketFollowupAnchors(objective, paths)
+}
+
+func delegatedChildPacketFollowupAnchors(objective string, output string) []string {
+	if !weakChildPacketFollowupAnchorsAllowed(objective) {
+		return nil
+	}
+
+	if !delegatedChildPacketNamesFollowupEvidence(output) {
+		return nil
+	}
+
+	return filterChildPacketFollowupAnchors(objective, groundedChildPacketEvidencePaths(objective, output))
+}
+
+func weakChildPacketFollowupAnchorsAllowed(objective string) bool {
+	return objectiveAsksImplementationShape(objective) || delegatedReadOnlyChildMechanismQuestion(objective)
+}
+
+func delegatedChildPacketNamesFollowupEvidence(output string) bool {
+	lower := strings.ToLower(strings.TrimSpace(output))
+	if lower == "" || readOnlyToolControlGuidanceText(lower) {
+		return false
+	}
+
+	return containsAny(lower,
+		"inspected paths:",
+		"inspected evidence:",
+		"candidate paths:",
+		"candidate files:",
+		"evidence paths:",
+		"relevant paths:",
+		"relevant files:",
+		"key findings:",
+	)
+}
+
+func filterChildPacketFollowupAnchors(objective string, paths []string) []string {
+	filtered := make([]string, 0, len(paths))
+
+	for _, raw := range paths {
+		path := normalizeDelegatedDiscoveryEvidencePath(raw)
+		if !isGroundedChildPacketEvidencePath(objective, path) {
+			continue
+		}
+
+		filtered = append(filtered, path)
+	}
+
+	return delegatedDiscoveryAnswerEvidencePaths(objective, filtered)
 }

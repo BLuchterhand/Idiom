@@ -35,31 +35,7 @@ const (
 const maxObligationResolutionAttempts = 3
 
 func sourceEvidenceForPath(results []workspace.ToolResult, path string) planThenExecuteSourceEvidence {
-	path = normalizeRunnerPath(path)
-	if path == "" || isNonSourceEvidenceArtifactPath(path) {
-		return planThenExecuteSourceEvidence{}
-	}
-
-	best := planThenExecuteSourceEvidence{Path: path}
-	for _, result := range results {
-		evidence := planThenExecuteToolResultSourceEvidence(result, path)
-		if redirectPath := implementationTargetWriteReadyRedirectedReadPath(result); redirectPath == path {
-			if tool, ok := implementationTargetWriteReadyRedirectedReadTool(result); ok {
-				evidence = planThenExecuteSourceEvidence{
-					Path:   path,
-					Level:  sourceEvidenceSourceBodyPending,
-					Source: strings.TrimSpace(result.Tool),
-					Detail: "redirected to " + tool,
-				}
-			}
-		}
-
-		if planThenExecuteEvidenceRank(evidence.Level) > planThenExecuteEvidenceRank(best.Level) {
-			best = evidence
-		}
-	}
-
-	return best
+	return newToolResultEvidenceView(results).SourceEvidenceForPath(path)
 }
 
 func sourceEvidenceHasBody(evidence planThenExecuteSourceEvidence) bool {
@@ -67,43 +43,11 @@ func sourceEvidenceHasBody(evidence planThenExecuteSourceEvidence) bool {
 }
 
 func sourceEvidenceBodyReadForPath(path string, results []workspace.ToolResult) bool {
-	return sourceEvidenceHasBody(sourceEvidenceForPath(results, path))
+	return newToolResultEvidenceView(results).HasSourceBody(path)
 }
 
 func sourceEvidenceBodyPaths(results []workspace.ToolResult) []string {
-	seen := make(map[string]struct{})
-
-	var paths []string
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		for _, path := range readPathsFromToolResult(result) {
-			normalized := normalizeRunnerPath(path)
-			if normalized == "" {
-				continue
-			}
-
-			if isNonSourceEvidenceArtifactPath(normalized) {
-				continue
-			}
-
-			if !sourceEvidenceBodyReadForPath(normalized, results) {
-				continue
-			}
-
-			if _, ok := seen[normalized]; ok {
-				continue
-			}
-
-			seen[normalized] = struct{}{}
-			paths = append(paths, normalized)
-		}
-	}
-
-	return paths
+	return newToolResultEvidenceView(results).SourceBodyPaths()
 }
 
 func sourceEvidencePendingRedirects(results []workspace.ToolResult) []sourceEvidenceObligation {

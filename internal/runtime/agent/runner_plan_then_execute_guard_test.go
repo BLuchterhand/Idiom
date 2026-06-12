@@ -371,6 +371,70 @@ func TestPlanThenExecuteUngroundedSubmitPlanAllowsSourceReadEdit(t *testing.T) {
 	}
 }
 
+func TestPlanThenExecuteSubmitPlanAllowsValidatedInsertionAnchorAfterPathEvidence(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "target.txt", "line 1\nline 2\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+
+	got := runner.preflightPlanThenExecuteSubmitPlanGroundingGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{{
+			Path:            "target.txt",
+			InsertAfterLine: 2,
+			Content:         "inserted\n",
+			Purpose:         "insert target line",
+		}},
+	}, []workspace.ToolResult{{
+		Tool:    "search_content",
+		Summary: "Found 1 matching line(s).",
+		Output:  "target.txt:2:line 2\n",
+	}})
+
+	if got.Intercepted {
+		t.Fatalf("validated insertion anchor with path evidence should be executable, got %#v", got)
+	}
+}
+
+func TestPlanThenExecuteSubmitPlanRejectsInsertionAnchorWithoutPathEvidence(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "target.txt", "line 1\nline 2\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+
+	got := runner.preflightPlanThenExecuteSubmitPlanGroundingGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{{
+			Path:            "target.txt",
+			InsertAfterLine: 2,
+			Content:         "inserted\n",
+			Purpose:         "insert target line",
+		}},
+	}, nil)
+
+	if !got.Intercepted {
+		t.Fatal("validated insertion anchor must still require prior path evidence")
+	}
+}
+
 func TestPlanThenExecuteScopedSubmitPlanRequiresGroundingBeyondPathScope(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "target.txt", "old\n"); err != nil {

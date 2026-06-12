@@ -179,6 +179,52 @@ func TestArchitectureToolBudgetCountsOnlySuccessfulResults(t *testing.T) {
 	}
 }
 
+func TestReadOnlyDirectAnswerReplayCloseoutAppliesForSourceProbe(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		Contract:          string(workerruntime.ContractDirectAnswer),
+		TaskFamily:        string(workerruntime.TaskFamilyConversation),
+		PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+		Objective:         "Can we shorten the save label in internal/labels/labels.go?",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/labels/labels.go lines 1-5",
+		Output: strings.Join([]string{
+			"package labels",
+			"",
+			"func ShortLabel() string {",
+			"\treturn \"Save changes\"",
+			"}",
+		}, "\n"),
+	}}
+	req := workspace.ToolRequest{
+		Tool:       workspace.ToolNameCodeNavigate,
+		Capability: "find_references",
+		Path:       "internal/labels/labels.go",
+		Symbol:     "ShortLabel",
+	}
+	replayed := workspace.ToolResult{
+		Tool:    workspace.ToolNameCodeNavigate,
+		Summary: "Code navigation routed references via go_references (replayed prior evidence)",
+		Output:  "internal/labels/labels.go:4: ShortLabel",
+	}
+
+	if !readOnlyReplayedEvidenceCloseoutApplies("main", brief, results, req, replayed) {
+		t.Fatal("expected direct-answer source probe replay to close out from host-owned evidence")
+	}
+}
+
+func TestUnsupportedReadOnlyCloseoutAnswerOnlyMatchesSentinelLead(t *testing.T) {
+	if !unsupportedReadOnlyCloseoutAnswer(presentableUnsupportedFinalAnswerLead() + " Source-body evidence is still missing.") {
+		t.Fatal("expected unsupported closeout sentinel to be recognized")
+	}
+
+	legitimate := "The audit found that no concrete user-facing finding was retained in the old run log, but the current source body explains the cause."
+	if unsupportedReadOnlyCloseoutAnswer(legitimate) {
+		t.Fatalf("legitimate content must not be rejected as unsupported closeout: %q", legitimate)
+	}
+}
+
 func TestPostChildReadBudgetForDirectAnswerIsZero(t *testing.T) {
 	if got := postChildReadBudgetForBrief(workerruntime.WorkerRuntimeBrief{Contract: "direct_answer"}); got != 0 {
 		t.Fatalf("direct-answer post-child budget = %d, want 0", got)

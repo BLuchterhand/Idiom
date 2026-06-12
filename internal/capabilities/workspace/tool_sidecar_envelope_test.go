@@ -50,6 +50,81 @@ func TestBuildToolSidecarEnvelopeIncludesStructuredFreshness(t *testing.T) {
 	}
 }
 
+func TestBuildToolSidecarEnvelopeOmitsChildContextByDefault(t *testing.T) {
+	envelope := BuildToolSidecarEnvelope(
+		ToolRequest{Tool: "context_pack"},
+		ToolResult{Tool: "context_pack", Summary: "Context pack", Output: `{"files":[]}`},
+		"default",
+	)
+	if envelope.ChildContext != nil {
+		t.Fatalf("child context should be omitted by default: %#v", envelope.ChildContext)
+	}
+
+	data, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if strings.Contains(string(data), "child_context") {
+		t.Fatalf("default envelope should not serialize child_context: %s", data)
+	}
+}
+
+func TestBuildToolSidecarEnvelopeIncludesChildContextWhenSupplied(t *testing.T) {
+	envelope := BuildToolSidecarEnvelopeWithOptions(
+		ToolRequest{Tool: "context_pack"},
+		ToolResult{Tool: "context_pack", Summary: "Context pack", Output: `{"files":[]}`},
+		"discovery",
+		ToolSidecarOptions{
+			ChildContext: &ToolSidecarChildContext{
+				SchemaVersion:    "legacy.child_context",
+				ParentContractID: "parent-1",
+				ChildContractID:  "child-1",
+				InvocationID:     "inv-1",
+				TerminalID:       "term-1",
+				Role:             "child_read_only:explorer",
+				Lane:             "implement",
+				Phase:            "child_read_only",
+				WorkspaceMode:    "no_write",
+				PackID:           "pack-1",
+			},
+		},
+	)
+	if envelope.ChildContext == nil {
+		t.Fatal("expected child context")
+	}
+	if envelope.ChildContext.SchemaVersion != ToolSidecarChildContextVersion {
+		t.Fatalf("child context schema version = %q", envelope.ChildContext.SchemaVersion)
+	}
+	if envelope.ChildContext.InvocationID != "inv-1" || envelope.ChildContext.Role != "child_read_only:explorer" {
+		t.Fatalf("child context metadata not preserved: %#v", envelope.ChildContext)
+	}
+
+	data, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if !strings.Contains(string(data), `"child_context"`) || !strings.Contains(string(data), ToolSidecarChildContextVersion) {
+		t.Fatalf("serialized envelope missing child_context: %s", data)
+	}
+}
+
+func TestBuildToolSidecarEnvelopeDropsUnsafeChildContext(t *testing.T) {
+	envelope := BuildToolSidecarEnvelopeWithOptions(
+		ToolRequest{Tool: "context_pack"},
+		ToolResult{Tool: "context_pack", Summary: "Context pack", Output: `{"files":[]}`},
+		"discovery",
+		ToolSidecarOptions{
+			ChildContext: &ToolSidecarChildContext{
+				ParentContractID: "/Users/alice/private/repo",
+				InvocationID:     "inv-1",
+			},
+		},
+	)
+	if envelope.ChildContext != nil {
+		t.Fatalf("unsafe child context should be omitted: %#v", envelope.ChildContext)
+	}
+}
+
 func TestBuildToolSidecarEnvelopeIncludesAllowlistedCallerMetadata(t *testing.T) {
 	caller, err := NewToolSidecarCaller("codex-cli", "req-123", "trace:abc")
 	if err != nil {

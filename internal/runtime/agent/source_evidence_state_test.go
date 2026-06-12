@@ -63,6 +63,25 @@ func TestSourceEvidenceStateTracksRedirectPendingUntilBodyEvidence(t *testing.T)
 	}
 }
 
+func TestRedirectOnlyEvidenceDoesNotBecomeSourceSatisfiedAnchorReady(t *testing.T) {
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Redirected internal/surfaces/tui/app/sessions.go to code_navigate",
+			Output:  "Use code_navigate for source-body evidence in internal/surfaces/tui/app/sessions.go.",
+		},
+	}
+
+	evidence := planThenExecuteObservedSourceEvidenceForPath(results, "internal/surfaces/tui/app/sessions.go")
+	if evidence.Level != sourceEvidenceSourceBodyPending {
+		t.Fatalf("Level = %q, want %q", evidence.Level, sourceEvidenceSourceBodyPending)
+	}
+
+	if planThenExecuteEvidenceRank(evidence.Level) >= planThenExecuteEvidenceRank(sourceEvidenceAnchorReady) {
+		t.Fatalf("redirect-only evidence must not satisfy source_satisfied_paths anchor threshold: %#v", evidence)
+	}
+}
+
 func TestSourceEvidenceIgnoresGeneratedArtifacts(t *testing.T) {
 	results := []workspace.ToolResult{{
 		Tool:    "read_file",

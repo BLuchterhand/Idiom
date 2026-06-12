@@ -770,34 +770,34 @@ func (e *Event) Normalize() {
 }
 
 func (e Event) Validate() error {
-	var problems []string
+	var problems validationProblems
 
 	if e.SchemaVersion != EventSchemaVersion {
-		problems = append(problems, "schema_version must be "+EventSchemaVersion)
+		problems.Add("schema_version must be " + EventSchemaVersion)
 	}
 
 	if e.EventID == "" {
-		problems = append(problems, "event_id is required")
+		problems.Add("event_id is required")
 	}
 
 	if !validEventType(e.Type) {
-		problems = append(problems, "type is required and must be a known autonomy event type")
+		problems.Add("type is required and must be a known autonomy event type")
 	}
 
 	if e.Effect != EventEffectObserveOnly {
-		problems = append(problems, "effect must be observe_only")
+		problems.Add("effect must be observe_only")
 	}
 
 	if e.OccurredAt.IsZero() {
-		problems = append(problems, "occurred_at is required")
+		problems.Add("occurred_at is required")
 	}
 
 	if e.Sequence <= 0 {
-		problems = append(problems, "sequence must be positive")
+		problems.Add("sequence must be positive")
 	}
 
 	if e.ContractID == "" {
-		problems = append(problems, "contract_id is required")
+		problems.Add("contract_id is required")
 	}
 
 	e.validatePayload(&problems)
@@ -805,18 +805,18 @@ func (e Event) Validate() error {
 
 	for i, client := range e.Metadata.ClientClassifications {
 		if !validClientClassification(client) {
-			problems = append(problems, fmt.Sprintf("metadata.client_classifications[%d] is invalid", i))
+			problems.Addf("metadata.client_classifications[%d] is invalid", i)
 		}
 	}
 
 	for i, signal := range e.Metadata.ProductSignals {
 		if !validProductSignal(signal) {
-			problems = append(problems, fmt.Sprintf("metadata.product_signals[%d] is invalid", i))
+			problems.Addf("metadata.product_signals[%d] is invalid", i)
 		}
 	}
 
-	if len(problems) > 0 {
-		return EventValidationError{Problems: problems}
+	if problems.Any() {
+		return EventValidationError{Problems: problems.Messages()}
 	}
 
 	return nil
@@ -845,7 +845,7 @@ func (e Event) stableID() string {
 	return "event_" + hex.EncodeToString(sum[:])[:16]
 }
 
-func (e Event) validatePayload(problems *[]string) {
+func (e Event) validatePayload(problems *validationProblems) {
 	payloads := 0
 	if e.Lifecycle != nil {
 		payloads++
@@ -880,116 +880,116 @@ func (e Event) validatePayload(problems *[]string) {
 	}
 
 	if payloads != 1 {
-		*problems = append(*problems, "exactly one event payload is required")
+		problems.Add("exactly one event payload is required")
 	}
 
 	switch e.Type {
 	case EventContractCompiled, EventContractPresented, EventContractRecompiled, EventContractStopped:
 		if e.Lifecycle == nil {
-			*problems = append(*problems, "lifecycle payload is required for "+string(e.Type))
+			problems.Add("lifecycle payload is required for " + string(e.Type))
 			return
 		}
 
 		if e.Lifecycle.Summary != nil && e.Lifecycle.Summary.ContractID != "" && e.Lifecycle.Summary.ContractID != e.ContractID {
-			*problems = append(*problems, "lifecycle.summary.contract_id must match event contract_id")
+			problems.Add("lifecycle.summary.contract_id must match event contract_id")
 		}
 
 		if e.Type == EventContractRecompiled && (e.Lifecycle.OldContractID == "" || e.Lifecycle.NewContractID == "") {
-			*problems = append(*problems, "contract_recompiled requires old_contract_id and new_contract_id")
+			problems.Add("contract_recompiled requires old_contract_id and new_contract_id")
 		}
 	case EventToolIntentClassified, EventPathRolesResolved, EventToolPolicyDecision, EventToolPolicyResult:
 		if e.Policy == nil {
-			*problems = append(*problems, "policy payload is required for "+string(e.Type))
+			problems.Add("policy payload is required for " + string(e.Type))
 			return
 		}
 
 		if e.Type == EventToolPolicyDecision && !validDecision(e.Policy.Decision) {
-			*problems = append(*problems, "policy.decision is required for tool_policy_decision")
+			problems.Add("policy.decision is required for tool_policy_decision")
 		}
 
 		if e.Policy.SideEffect != "" && !validSideEffect(e.Policy.SideEffect) {
-			*problems = append(*problems, "policy.side_effect is invalid")
+			problems.Add("policy.side_effect is invalid")
 		}
 
 		for i, match := range e.Policy.PathRoles {
 			if match.Role != "" && !validPathRole(match.Role) {
-				*problems = append(*problems, fmt.Sprintf("policy.path_roles[%d].role is invalid", i))
+				problems.Addf("policy.path_roles[%d].role is invalid", i)
 			}
 
 			if match.Freshness != "" && !validFreshness(match.Freshness) {
-				*problems = append(*problems, fmt.Sprintf("policy.path_roles[%d].freshness is invalid", i))
+				problems.Addf("policy.path_roles[%d].freshness is invalid", i)
 			}
 		}
 	case EventObligationOpened, EventObligationResolved, EventObligationWaived:
 		if e.Obligation == nil {
-			*problems = append(*problems, "obligation payload is required for "+string(e.Type))
+			problems.Add("obligation payload is required for " + string(e.Type))
 			return
 		}
 
 		if e.Obligation.ObligationID == "" {
-			*problems = append(*problems, "obligation.obligation_id is required")
+			problems.Add("obligation.obligation_id is required")
 		}
 
 		if !validObligationKind(e.Obligation.Kind) {
-			*problems = append(*problems, "obligation.kind is invalid")
+			problems.Add("obligation.kind is invalid")
 		}
 
 		if !validObligationStatus(e.Obligation.Status) {
-			*problems = append(*problems, "obligation.status is invalid")
+			problems.Add("obligation.status is invalid")
 		}
 
 		if e.Obligation.Owner != "" && !validObligationOwner(e.Obligation.Owner) {
-			*problems = append(*problems, "obligation.owner is invalid")
+			problems.Add("obligation.owner is invalid")
 		}
 
 		if e.Type == EventObligationOpened && e.Obligation.Status != ObligationOpen {
-			*problems = append(*problems, "obligation_opened requires status open")
+			problems.Add("obligation_opened requires status open")
 		}
 
 		if e.Type == EventObligationResolved && e.Obligation.Status != ObligationResolved {
-			*problems = append(*problems, "obligation_resolved requires status resolved")
+			problems.Add("obligation_resolved requires status resolved")
 		}
 
 		if e.Type == EventObligationWaived && e.Obligation.Status != ObligationWaived {
-			*problems = append(*problems, "obligation_waived requires status waived")
+			problems.Add("obligation_waived requires status waived")
 		}
 	case EventReadinessStateUpdated:
 		if e.Readiness == nil {
-			*problems = append(*problems, "readiness payload is required for readiness_state_updated")
+			problems.Add("readiness payload is required for readiness_state_updated")
 		}
 	case EventCompletionGateDecision:
 		if e.Completion == nil {
-			*problems = append(*problems, "completion payload is required for completion_gate_decision")
+			problems.Add("completion payload is required for completion_gate_decision")
 			return
 		}
 
 		if !validDecision(e.Completion.Decision) {
-			*problems = append(*problems, "completion.decision is required")
+			problems.Add("completion.decision is required")
 		}
 	case EventGateDecision:
 		if e.Gate == nil {
-			*problems = append(*problems, "gate payload is required for gate_decision")
+			problems.Add("gate payload is required for gate_decision")
 			return
 		}
 
 		if !validGateKind(e.Gate.Gate) {
-			*problems = append(*problems, "gate.gate is invalid")
+			problems.Add("gate.gate is invalid")
 		}
 
 		if e.Gate.PackID != "" && !validContractPackID(e.Gate.PackID) {
-			*problems = append(*problems, "gate.pack_id is invalid")
+			problems.Add("gate.pack_id is invalid")
 		}
 
 		if e.Gate.EnforcementMode != "" && !validEnforcementMode(e.Gate.EnforcementMode) {
-			*problems = append(*problems, "gate.enforcement_mode is invalid")
+			problems.Add("gate.enforcement_mode is invalid")
 		}
 
 		if !validDecision(e.Gate.Decision) {
-			*problems = append(*problems, "gate.decision is required")
+			problems.Add("gate.decision is required")
 		}
 
 		if e.Gate.Attempts < 0 {
-			*problems = append(*problems, "gate.attempts cannot be negative")
+			problems.Add("gate.attempts cannot be negative")
 		}
 
 		if e.Gate.Budget != nil {
@@ -1000,14 +1000,14 @@ func (e Event) validatePayload(problems *[]string) {
 		e.Gate.validateRedactedFields(problems)
 	case EventGuardFriction:
 		if e.GuardFriction == nil {
-			*problems = append(*problems, "guard_friction payload is required for guard_friction")
+			problems.Add("guard_friction payload is required for guard_friction")
 			return
 		}
 
 		e.GuardFriction.validate(e.ContractID, problems)
 	case EventModelExchange:
 		if e.ModelExchange == nil {
-			*problems = append(*problems, "model_exchange payload is required for model_exchange")
+			problems.Add("model_exchange payload is required for model_exchange")
 			return
 		}
 
@@ -1032,14 +1032,14 @@ func modelExchangeEvidenceRefs(exchange ContractModelExchangeEvent) []string {
 	return compactStrings(refs)
 }
 
-func (e Event) validateCorrelation(problems *[]string) {
+func (e Event) validateCorrelation(problems *validationProblems) {
 	if e.Policy != nil {
 		if e.Correlation.ToolCallID != "" && e.Policy.ToolCallID != "" && e.Correlation.ToolCallID != e.Policy.ToolCallID {
-			*problems = append(*problems, "correlation.tool_call_id must match policy.tool_call_id")
+			problems.Add("correlation.tool_call_id must match policy.tool_call_id")
 		}
 
 		if e.Correlation.ToolName != "" && e.Policy.ToolName != "" && e.Correlation.ToolName != e.Policy.ToolName {
-			*problems = append(*problems, "correlation.tool_name must match policy.tool_name")
+			problems.Add("correlation.tool_name must match policy.tool_name")
 		}
 	}
 }
@@ -1326,59 +1326,59 @@ func (g *ContractGuardFrictionEvent) normalize() {
 	g.EvidenceRefs = compactStrings(g.EvidenceRefs)
 }
 
-func (g ContractGuardFrictionEvent) validate(eventContractID string, problems *[]string) {
+func (g ContractGuardFrictionEvent) validate(eventContractID string, problems *validationProblems) {
 	if g.Schema != GuardFrictionSchemaVersion {
-		*problems = append(*problems, "guard_friction.schema must be "+GuardFrictionSchemaVersion)
+		problems.Add("guard_friction.schema must be " + GuardFrictionSchemaVersion)
 	}
 
 	if g.ContractID != "" && eventContractID != "" && g.ContractID != eventContractID {
-		*problems = append(*problems, "guard_friction.contract_id must match event contract_id")
+		problems.Add("guard_friction.contract_id must match event contract_id")
 	}
 
 	if !validGuardFrictionSubject(g.Subject) {
-		*problems = append(*problems, "guard_friction.subject is invalid")
+		problems.Add("guard_friction.subject is invalid")
 	}
 
 	if !validGuardFrictionDecision(g.Decision) {
-		*problems = append(*problems, "guard_friction.decision is invalid")
+		problems.Add("guard_friction.decision is invalid")
 	}
 
 	if !validGuardFrictionSurface(g.GuardSurface) {
-		*problems = append(*problems, "guard_friction.guard_surface is invalid")
+		problems.Add("guard_friction.guard_surface is invalid")
 	}
 
 	if !validGuardFrictionRetryOutcome(g.RetryOutcome) {
-		*problems = append(*problems, "guard_friction.retry_outcome is invalid")
+		problems.Add("guard_friction.retry_outcome is invalid")
 	}
 
 	if !validGuardFrictionAvoidability(g.Avoidability) {
-		*problems = append(*problems, "guard_friction.avoidability is invalid")
+		problems.Add("guard_friction.avoidability is invalid")
 	}
 
 	if g.RetryNumber < 0 {
-		*problems = append(*problems, "guard_friction.retry_number cannot be negative")
+		problems.Add("guard_friction.retry_number cannot be negative")
 	}
 
 	if g.InvariantID == "" {
-		*problems = append(*problems, "guard_friction.invariant_id is required")
+		problems.Add("guard_friction.invariant_id is required")
 	}
 
 	if g.ModelContractVisible && g.ProtocolHash == "" {
-		*problems = append(*problems, "guard_friction.protocol_hash is required when model_contract_visible is true")
+		problems.Add("guard_friction.protocol_hash is required when model_contract_visible is true")
 	}
 
 	g.validateRedactedFields(problems)
 }
 
-func (g ContractGateEvent) validateObservedFacts(problems *[]string) {
+func (g ContractGateEvent) validateObservedFacts(problems *validationProblems) {
 	for i, fact := range g.ObservedFacts {
 		if !validObservedFactLabel(string(fact)) {
-			*problems = append(*problems, fmt.Sprintf("gate.observed_facts[%d] is invalid", i))
+			problems.Addf("gate.observed_facts[%d] is invalid", i)
 		}
 	}
 }
 
-func (g ContractGateEvent) validateRedactedFields(problems *[]string) {
+func (g ContractGateEvent) validateRedactedFields(problems *validationProblems) {
 	values := []string{
 		string(g.PackID),
 		string(g.EnforcementMode),
@@ -1400,27 +1400,27 @@ func (g ContractGateEvent) validateRedactedFields(problems *[]string) {
 
 	for _, value := range values {
 		if looksLikeRawContractEventContent(value) {
-			*problems = append(*problems, "gate fields must contain redaction-safe metadata only")
+			problems.Add("gate fields must contain redaction-safe metadata only")
 			return
 		}
 	}
 
 	for _, fact := range g.ObservedFacts {
 		if looksLikeRawContractEventContent(string(fact)) {
-			*problems = append(*problems, "gate.observed_facts must contain redaction-safe metadata only")
+			problems.Add("gate.observed_facts must contain redaction-safe metadata only")
 			return
 		}
 	}
 
 	for _, alternative := range g.SafeAlternatives {
 		if looksLikeRawContractEventContent(alternative) {
-			*problems = append(*problems, "gate.safe_alternatives must contain redaction-safe recovery options only")
+			problems.Add("gate.safe_alternatives must contain redaction-safe recovery options only")
 			return
 		}
 	}
 }
 
-func (g ContractGuardFrictionEvent) validateRedactedFields(problems *[]string) {
+func (g ContractGuardFrictionEvent) validateRedactedFields(problems *validationProblems) {
 	values := []string{
 		g.SessionID,
 		g.Lane,
@@ -1443,7 +1443,7 @@ func (g ContractGuardFrictionEvent) validateRedactedFields(problems *[]string) {
 
 	for _, value := range values {
 		if looksLikeRawGuardFrictionContent(value) {
-			*problems = append(*problems, "guard_friction fields must contain redaction-safe metadata only")
+			problems.Add("guard_friction fields must contain redaction-safe metadata only")
 			return
 		}
 	}

@@ -334,6 +334,15 @@ func (r *Runner) submitPlanEditPathGrounding(path string, edit workspace.PlanEdi
 		}
 	}
 
+	if planThenExecuteEditHasValidatedInsertionAnchor(edit, root, path, results) {
+		return planThenExecuteSourceEvidence{
+			Path:   path,
+			Level:  planThenExecuteEvidenceExactAnchorContract,
+			Source: "submit_plan",
+			Detail: "validated current-source insertion anchor",
+		}
+	}
+
 	if planThenExecuteCompleteNewFileEdit(edit, root, path) {
 		return planThenExecuteSourceEvidence{
 			Path:   path,
@@ -344,6 +353,43 @@ func (r *Runner) submitPlanEditPathGrounding(path string, edit workspace.PlanEdi
 	}
 
 	return planThenExecuteSourceEvidence{Path: path}
+}
+
+func planThenExecuteEditHasValidatedInsertionAnchor(edit workspace.PlanEdit, root string, path string, results []workspace.ToolResult) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" || strings.TrimSpace(root) == "" || filepath.IsAbs(path) {
+		return false
+	}
+
+	if edit.InsertAfterLine <= 0 || strings.TrimSpace(edit.Content) == "" {
+		return false
+	}
+
+	if strings.TrimSpace(edit.OldText) != "" ||
+		strings.TrimSpace(edit.NewText) != "" ||
+		edit.StartLine > 0 ||
+		edit.EndLine > 0 ||
+		edit.ReplaceAll {
+
+		return false
+	}
+
+	evidence := planThenExecuteRequiredSourceEvidenceForPath(workerruntime.WorkerRuntimeBrief{}, results, path)
+	if planThenExecuteEvidenceRank(evidence.Level) < planThenExecuteEvidenceRank(planThenExecuteEvidencePathSeen) {
+		return false
+	}
+
+	current := readPlanProjectionBase(root, path)
+	if current == "" {
+		return false
+	}
+
+	lines := strings.Split(current, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+
+	return edit.InsertAfterLine <= len(lines)
 }
 
 func planThenExecuteEditHasExactAnchorContract(edit workspace.PlanEdit, root string, path string) bool {
@@ -889,20 +935,7 @@ func (r *Runner) planThenExecuteAttachSubmitPlanSourceSatisfiedEvidence(req work
 }
 
 func planThenExecuteObservedSourceEvidenceForPath(results []workspace.ToolResult, path string) planThenExecuteSourceEvidence {
-	path = normalizeRunnerPath(path)
-	if path == "" {
-		return planThenExecuteSourceEvidence{}
-	}
-
-	best := planThenExecuteSourceEvidence{Path: path}
-	for _, result := range results {
-		evidence := planThenExecuteToolResultSourceEvidence(result, path)
-		if planThenExecuteEvidenceRank(evidence.Level) > planThenExecuteEvidenceRank(best.Level) {
-			best = evidence
-		}
-	}
-
-	return best
+	return newToolResultEvidenceView(results).SourceEvidenceForPath(path)
 }
 
 func readPlanProjectionBase(root string, path string) string {
@@ -3519,6 +3552,28 @@ func planThenExecuteCandidatePostReadinessDiscoveryRejection(req workspace.ToolR
 	}
 
 	target := normalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	if target != "" {
+		if summary, errorText, reject := planThenExecutePostGateOutOfScopeCandidateReadRejection(target, brief, results); reject {
+			return summary, errorText, true
+		}
+	}
+
+	allowedCandidateSet := normalizedRequiredEditPathSet(brief.AllowedEditPaths)
+	if len(allowedCandidateSet) > 0 {
+		if target == "" {
+			return "Plan-execute candidate scope required",
+				"plan-execute already has source evidence for an explicit allowed candidate path. Further discovery must target an exact allowed candidate file, call `submit_plan`, answer `Decision: source-satisfied`, or answer `<<QUESTION>>:` with the exact blocker; broad candidate discovery is no longer executable edit evidence.",
+				true
+		}
+
+		if _, allowed := allowedCandidateSet[target]; !allowed {
+			candidates := sortedRunnerPathKeys(allowedCandidateSet)
+			return "Plan-execute read outside allowed candidate scope",
+				target + " is not an explicit allowed candidate path for this plan-execute planner turn. Use a bounded source-body read on one allowed candidate path if one concrete edit-safety fact is still missing (" + strings.Join(candidates, ", ") + "), or call `submit_plan`, `Decision: source-satisfied`, or `<<QUESTION>>:` with the exact blocker.",
+				true
+		}
+	}
+
 	if target != "" && planThenExecuteCandidateRejectedPlanSourceRefreshTarget(brief, results, target) && planThenExecuteCodeNavigateMissingAnchorCapability(req) {
 		return "Anchor refresh capability required",
 			"the previous `submit_plan` named an invalid edit anchor on " + target + ". `" + workspace.CodeNavigateToolName + "` anchor refresh requires an explicit source-body capability such as " + strings.Join(workspace.CodeNavigateSourceBodyCapabilityNames(), " or ") + " on the same path and concrete symbol/pattern. Alternatively use `read_file` with explicit start_line/end_line copied from current source evidence.",
@@ -3530,10 +3585,6 @@ func planThenExecuteCandidatePostReadinessDiscoveryRejection(req workspace.ToolR
 	}
 
 	if target != "" {
-		if summary, errorText, reject := planThenExecutePostGateOutOfScopeCandidateReadRejection(target, brief, results); reject {
-			return summary, errorText, true
-		}
-
 		if gitHistoryEvidenceTool(req.Tool) && len(planThenExecuteHistoryPendingPaths(brief, results, []string{target})) > 0 {
 			return "", "", false
 		}
@@ -3550,9 +3601,12 @@ func planThenExecuteCandidatePostReadinessDiscoveryRejection(req workspace.ToolR
 			return "", "", false
 		}
 
-		if _, alreadyReady := anchorReady[target]; alreadyReady && strings.TrimSpace(req.Tool) != "read_file" && !planThenExecuteSourceBodyReadRequest(req) {
+		if readyPath, alreadyReady := planThenExecuteReadyCandidateForRequestTarget(target, anchorReady); alreadyReady &&
+			strings.TrimSpace(req.Tool) != "read_file" &&
+			!planThenExecuteSourceBodyReadRequest(req) {
+
 			return "Plan-execute candidate source already ready",
-				target + " already has source-body evidence for this planner turn. Non-body navigation/search on the same candidate is not executable edit evidence. Use `submit_plan` with the gathered source evidence, use a bounded source-body continuation with a concrete named edit-safety gap, read a different candidate path only for one concrete missing edit-safety fact, answer `Decision: source-satisfied`, or answer `<<QUESTION>>:` with the exact blocker.",
+				readyPath + " already has source-body evidence for this planner turn. Non-body navigation/search on the same candidate or containing directory is not executable edit evidence. Use `submit_plan` with the gathered source evidence, use a bounded source-body continuation with a concrete named edit-safety gap, read a different candidate path only for one concrete missing edit-safety fact, answer `Decision: source-satisfied`, or answer `<<QUESTION>>:` with the exact blocker.",
 				true
 		}
 	}
@@ -3565,6 +3619,37 @@ func planThenExecuteCandidatePostReadinessDiscoveryRejection(req workspace.ToolR
 	sort.Strings(paths)
 
 	return "", "", false
+}
+
+func planThenExecuteReadyCandidateForRequestTarget(target string, anchorReady map[string]struct{}) (string, bool) {
+	target = normalizeRunnerPath(target)
+	if target == "" {
+		return "", false
+	}
+
+	if _, ok := anchorReady[target]; ok {
+		return target, true
+	}
+
+	var matches []string
+	targetPrefix := strings.TrimSuffix(target, "/") + "/"
+	for path := range anchorReady {
+		normalized := normalizeRunnerPath(path)
+		if normalized == "" {
+			continue
+		}
+
+		if strings.HasPrefix(normalized, targetPrefix) {
+			matches = append(matches, normalized)
+		}
+	}
+
+	sort.Strings(matches)
+	if len(matches) == 0 {
+		return "", false
+	}
+
+	return matches[0], true
 }
 
 func planThenExecutePostGateOutOfScopeCandidateReadRejection(target string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, bool) {
@@ -4012,18 +4097,7 @@ func planThenExecuteAnchorReadyPaths(brief workerruntime.WorkerRuntimeBrief, res
 // *_file_outline / *_read_symbol, etc.). Used by the planner readiness
 // nudge to check whether every required path has been touched.
 func readPathsFromResults(results []workspace.ToolResult) map[string]struct{} {
-	paths := make(map[string]struct{}, len(results))
-	for _, r := range results {
-		if strings.TrimSpace(r.Error) != "" {
-			continue
-		}
-
-		for _, path := range readPathsFromToolResult(r) {
-			paths[normalizeRunnerPath(path)] = struct{}{}
-		}
-	}
-
-	return paths
+	return newToolResultEvidenceView(results).ReadPaths()
 }
 
 func readPathsFromToolResult(r workspace.ToolResult) []string {

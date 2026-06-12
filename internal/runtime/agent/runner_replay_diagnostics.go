@@ -44,6 +44,12 @@ func readOnlyReplayedEvidenceCloseoutApplies(agent string, brief workerruntime.W
 	}
 
 	directAnswerExactSearchReplay := readOnlyDirectAnswerExactSearchReplayCloseoutCandidate(brief, req)
+	closure := readOnlyClosureDecisionForResults(brief, results)
+	if readOnlyDirectAnswerLane(brief) && !directAnswerExactSearchReplay && readOnlyDirectAnswerSourceNavigationReplay(req) {
+		_, ok := closure.HostOwnedAnswer(agent)
+		return ok
+	}
+
 	if LanePolicyForBrief(brief).ShouldSkipRecoveryNudge() && !directAnswerExactSearchReplay && readOnlyDirectAnswerLane(brief) {
 		return false
 	}
@@ -52,7 +58,6 @@ func readOnlyReplayedEvidenceCloseoutApplies(agent string, brief workerruntime.W
 		return false
 	}
 
-	closure := readOnlyClosureDecisionForResults(brief, results)
 	if directAnswerExactSearchReplay {
 		_, ok := closure.HostOwnedAnswer(agent)
 		return ok
@@ -63,6 +68,10 @@ func readOnlyReplayedEvidenceCloseoutApplies(agent string, brief workerruntime.W
 
 func readOnlyDirectAnswerExactSearchReplayCloseoutCandidate(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest) bool {
 	return readOnlyDirectAnswerLane(brief) && shouldRejectExactReplayBeforeLoopGate(req)
+}
+
+func readOnlyDirectAnswerSourceNavigationReplay(req workspace.ToolRequest) bool {
+	return strings.TrimSpace(req.Tool) == workspace.ToolNameCodeNavigate
 }
 
 func readOnlyReplayedEvidenceCloseoutPrompt(brief workerruntime.WorkerRuntimeBrief) string {

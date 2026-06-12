@@ -1129,7 +1129,7 @@ func RunReviewRepairPhase(
 	stdout io.Writer,
 	promptRun PromptRunner,
 	rec *telemetry.Recorder,
-) (ReviewRepairPhaseReport, error) {
+) (report ReviewRepairPhaseReport, err error) {
 
 	changedPaths := planChangedPaths(plan)
 	if len(changedPaths) == 0 {
@@ -1175,6 +1175,10 @@ func RunReviewRepairPhase(
 	reviewCfg.Workspace.SessionID = reviewSessionID
 
 	reviewStart := time.Now().Add(-1 * time.Second)
+	reviewLifecycle := beginPlanExecuteReviewRepairLifecycle(cfg, opts, reviewSessionID, changedPaths, allowedRepairPaths, stdout)
+	defer func() {
+		emitPlanExecuteReviewRepairLifecycleCloseout(stdout, opts.JSONEvents, reviewLifecycle, report, err)
+	}()
 
 	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_start", map[string]any{
 		"session_id":                reviewSessionID,
@@ -1547,6 +1551,142 @@ func quotePlanExecuteReference(text string) string {
 	}
 
 	return strings.Join(lines, "\n") + "\n"
+}
+
+type planExecuteReviewRepairLifecycle struct {
+	Invocation autonomy.ParentChildInvocationRecord
+}
+
+func beginPlanExecuteReviewRepairLifecycle(cfg config.Config, opts Options, reviewSessionID string, changedPaths []string, allowedRepairPaths []string, stdout io.Writer) planExecuteReviewRepairLifecycle {
+	parentContractID := strings.TrimSpace(opts.ScopeContract.ContractID)
+	if parentContractID == "" {
+		parentContractID = "plan_execute_" + planExecuteShortHash(cfg.Workspace.Root, reviewSessionID)
+	}
+
+	childContractID := "child_contract_" + planExecuteShortHash(parentContractID, reviewSessionID, "review_repair")
+	invocationID := "child_invocation_" + planExecuteShortHash(childContractID, strings.Join(changedPaths, "\x00"), strings.Join(allowedRepairPaths, "\x00"))
+	modelAlias := firstNonEmptyString(strings.TrimSpace(opts.Model), strings.TrimSpace(cfg.LlamaServer.Model), "default")
+	record := autonomy.ParentChildInvocationRecord{
+		InvocationID:     invocationID,
+		ParentContractID: parentContractID,
+		ChildContractID:  childContractID,
+		Role:             "review_repair",
+		Lane:             "plan_execute",
+		Phase:            "review_repair",
+		WorkspaceMode:    autonomy.ChildWorkspaceNoWrite,
+		ContractSummary: autonomy.ChildContractSummary{
+			PathRoleDigest:   "sha256:" + planExecuteFullHash(strings.Join(allowedRepairPaths, "\x00"), "path_roles"),
+			ToolPolicyDigest: "sha256:" + planExecuteFullHash("review_repair_no_write", "tool_policy"),
+			ObligationDigest: "sha256:" + planExecuteFullHash(strings.Join(changedPaths, "\x00"), "review_obligations"),
+		},
+		RuntimeEnvelope: autonomy.ChildRuntimeEnvelope{
+			BackendKind: "prompt_runner",
+			ModelAlias:  modelAlias,
+			ModelRole:   "review_repair",
+			RoleResolution: autonomy.ChildRoleResolution{
+				RequestedRole: "review_repair",
+				ResolvedRole:  "review_repair",
+				Alias:         modelAlias,
+				Source:        autonomy.RoleResolutionSourceRoleTag,
+				OK:            true,
+			},
+			CapacityAdmission: autonomy.ChildCapacityAdmission{
+				State:       autonomy.CapacityAdmissionAcquired,
+				ModelAlias:  modelAlias,
+				Enforcement: autonomy.CapacityAdmissionOpportunistic,
+			},
+			ToolTransportMode:   autonomy.ChildTransportTextual,
+			ParserTransportMode: autonomy.ChildTransportTextual,
+			ParserContract:      "review_repair_terminal",
+			MaxTokens:           opts.MaxTokens,
+		},
+		CreatedAt: time.Now().UTC(),
+	}
+	emitPlanExecuteAutonomyRecord(stdout, opts.JSONEvents, "parent_child_invocation", &record)
+
+	return planExecuteReviewRepairLifecycle{Invocation: record}
+}
+
+func emitPlanExecuteReviewRepairLifecycleCloseout(stdout io.Writer, jsonEvents bool, lifecycle planExecuteReviewRepairLifecycle, report ReviewRepairPhaseReport, err error) {
+	if strings.TrimSpace(lifecycle.Invocation.InvocationID) == "" {
+		return
+	}
+
+	terminal := planExecuteReviewRepairTerminalRecord(lifecycle, report, err)
+	emitPlanExecuteAutonomyRecord(stdout, jsonEvents, "child_terminal", &terminal)
+
+	acceptance := planExecuteReviewRepairAcceptanceRecord(lifecycle, terminal, report, err)
+	emitPlanExecuteAutonomyRecord(stdout, jsonEvents, "child_acceptance", &acceptance)
+}
+
+func planExecuteReviewRepairTerminalRecord(lifecycle planExecuteReviewRepairLifecycle, report ReviewRepairPhaseReport, err error) autonomy.ChildTerminalRecord {
+	status := autonomy.ChildTerminalCompleted
+	objective := autonomy.ChildObjectiveAccepted
+	resultKind := autonomy.ChildResultFindings
+	if strings.TrimSpace(report.ReviewPlan) != "" {
+		resultKind = autonomy.ChildResultPlanArtifact
+	}
+	if err != nil {
+		status = autonomy.ChildTerminalFailed
+		objective = autonomy.ChildObjectiveWeak
+		resultKind = autonomy.ChildResultTypedBlocker
+	} else if strings.HasPrefix(strings.TrimSpace(report.Status), "blocked") || strings.HasPrefix(strings.TrimSpace(report.Status), "degraded") {
+		status = autonomy.ChildTerminalBlocked
+		objective = autonomy.ChildObjectiveWeak
+		resultKind = autonomy.ChildResultTypedBlocker
+	}
+
+	evidenceRefs := []string{"review_status:" + planExecuteShortHash(report.Status)}
+	if strings.TrimSpace(report.ReviewPlan) != "" {
+		evidenceRefs = append(evidenceRefs, "review_plan:"+planExecuteShortHash(report.ReviewPlan))
+	}
+
+	return autonomy.ChildTerminalRecord{
+		TerminalID:         "child_terminal_" + planExecuteShortHash(lifecycle.Invocation.InvocationID, report.Status, firstNonEmptyString(report.ReviewPlan, "no_plan")),
+		InvocationID:       lifecycle.Invocation.InvocationID,
+		ChildContractID:    lifecycle.Invocation.ChildContractID,
+		ResultKind:         resultKind,
+		Status:             status,
+		EvidenceRefs:       planExecuteUniqueRefStrings(evidenceRefs),
+		ChangedPaths:       nil,
+		ObjectiveAlignment: objective,
+	}
+}
+
+func planExecuteReviewRepairAcceptanceRecord(lifecycle planExecuteReviewRepairLifecycle, terminal autonomy.ChildTerminalRecord, report ReviewRepairPhaseReport, err error) autonomy.ChildAcceptanceRecord {
+	decision := autonomy.ChildAcceptanceAccepted
+	reasonCode := "review_repair_accepted"
+	if err != nil {
+		decision = autonomy.ChildAcceptanceRepairRequired
+		reasonCode = "review_repair_failed"
+	} else if terminal.Status == autonomy.ChildTerminalBlocked {
+		decision = autonomy.ChildAcceptanceBlocked
+		reasonCode = "review_repair_blocked"
+	}
+
+	acceptedEvidenceRefs := []string(nil)
+	if decision == autonomy.ChildAcceptanceAccepted {
+		acceptedEvidenceRefs = append([]string(nil), terminal.EvidenceRefs...)
+	}
+
+	return autonomy.ChildAcceptanceRecord{
+		AcceptanceID:         "child_acceptance_" + planExecuteShortHash(terminal.TerminalID, string(decision)),
+		ParentContractID:     lifecycle.Invocation.ParentContractID,
+		ChildContractID:      lifecycle.Invocation.ChildContractID,
+		InvocationID:         lifecycle.Invocation.InvocationID,
+		TerminalID:           terminal.TerminalID,
+		ResultKind:           terminal.ResultKind,
+		Decision:             decision,
+		AcceptedEvidenceRefs: acceptedEvidenceRefs,
+		RuntimeEnvelopeRef:   "runtime_envelope:" + lifecycle.Invocation.InvocationID,
+		AlignmentBasis: autonomy.ChildAlignmentBasis{
+			DelegatedObjectiveRef:  "objective:" + planExecuteShortHash(lifecycle.Invocation.InvocationID),
+			EffectiveScopeRefs:     []string{"lane:plan_execute", "phase:review_repair"},
+			AcceptedSourceBodyRefs: acceptedEvidenceRefs,
+			Evaluator:              autonomy.AlignmentEvaluatorHostContract,
+		},
+		ReasonCode: reasonCode,
+	}
 }
 
 func collectReviewRepairEvidence(root string, paths []string, baseline *ReviewRepairBaseline) ReviewRepairEvidence {
@@ -2474,6 +2614,10 @@ func RunVerificationPlan(root string, plan VerificationPlan, jsonEvents bool, st
 }
 
 func runPlanExecuteVerificationPlan(root string, plan VerificationPlan, jsonEvents bool, stdout io.Writer) (int, []PhaseEvidenceCheck, error) {
+	return runPlanExecuteVerificationPlanWithParentContract(root, plan, "", jsonEvents, stdout)
+}
+
+func runPlanExecuteVerificationPlanWithParentContract(root string, plan VerificationPlan, parentContractID string, jsonEvents bool, stdout io.Writer) (int, []PhaseEvidenceCheck, error) {
 	evidence := make([]PhaseEvidenceCheck, 0, len(plan.Commands)+len(plan.Rejects))
 	if len(plan.Rejects) > 0 {
 		reject := plan.Rejects[0]
@@ -2499,6 +2643,14 @@ func runPlanExecuteVerificationPlan(root string, plan VerificationPlan, jsonEven
 		}
 
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "verification", event)
+		emitPlanExecuteVerificationAcceptance(stdout, jsonEvents, planExecuteVerificationAcceptanceInput{
+			Root:             root,
+			ParentContractID: parentContractID,
+			Check:            check,
+			Decision:         autonomy.VerificationAcceptanceRejected,
+			ReasonCode:       "command_rejected",
+			Source:           reject.Source,
+		})
 
 		if !jsonEvents {
 			fmt.Fprintf(stdout, "  verification %s ... failed\n", check.Command)
@@ -2528,6 +2680,15 @@ func runPlanExecuteVerificationPlan(root string, plan VerificationPlan, jsonEven
 		}
 
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "verification", event)
+		emitPlanExecuteVerificationAcceptance(stdout, jsonEvents, planExecuteVerificationAcceptanceInput{
+			Root:             root,
+			ParentContractID: parentContractID,
+			Check:            check,
+			Command:          command,
+			Decision:         planExecuteVerificationAcceptanceDecision(check),
+			ReasonCode:       planExecuteVerificationAcceptanceReason(check),
+			Source:           command.Source,
+		})
 
 		if !jsonEvents {
 			location := ""
@@ -2544,6 +2705,191 @@ func runPlanExecuteVerificationPlan(root string, plan VerificationPlan, jsonEven
 	}
 
 	return len(evidence), evidence, nil
+}
+
+type planExecuteVerificationAcceptanceInput struct {
+	Root             string
+	ParentContractID string
+	Check            PhaseEvidenceCheck
+	Command          VerificationCommand
+	Decision         autonomy.VerificationAcceptanceDecision
+	ReasonCode       string
+	Source           string
+}
+
+func emitPlanExecuteVerificationAcceptance(stdout io.Writer, jsonEvents bool, input planExecuteVerificationAcceptanceInput) {
+	if !jsonEvents {
+		return
+	}
+
+	record := planExecuteVerificationAcceptanceRecord(input)
+	emitPlanExecuteAutonomyRecord(stdout, jsonEvents, "verification_acceptance", &record)
+}
+
+type planExecuteAutonomyRecord interface {
+	Normalize()
+	Validate() error
+}
+
+func emitPlanExecuteAutonomyRecord(stdout io.Writer, jsonEvents bool, eventType string, record planExecuteAutonomyRecord) {
+	if !jsonEvents || record == nil {
+		return
+	}
+
+	record.Normalize()
+	if err := record.Validate(); err != nil {
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, eventType+"_invalid", map[string]any{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	fields := map[string]any{}
+	body, err := json.Marshal(record)
+	if err != nil {
+		return
+	}
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return
+	}
+
+	emitPlanExecuteJSONEvent(stdout, jsonEvents, eventType, fields)
+}
+
+func planExecuteVerificationAcceptanceRecord(input planExecuteVerificationAcceptanceInput) autonomy.VerificationAcceptanceRecord {
+	command := strings.TrimSpace(firstNonEmptyString(input.Check.Command, input.Command.Command, "verification"))
+	resultText := strings.Join([]string{
+		input.Check.Kind,
+		input.Check.Command,
+		input.Check.WorkingDir,
+		input.Check.Status,
+		input.Check.Summary,
+		input.Check.Error,
+	}, "\x00")
+	commandRef := "command:" + planExecuteShortHash(command)
+	resultRef := "verification_result:" + planExecuteShortHash(resultText)
+	headSHA := planExecuteGitSHAOrUnknown(input.Root)
+	parentContractID := strings.TrimSpace(input.ParentContractID)
+	if parentContractID == "" {
+		parentContractID = "plan_execute_verification:" + planExecuteShortHash(input.Root)
+	}
+
+	return autonomy.VerificationAcceptanceRecord{
+		VerificationAcceptanceID: "verification_acceptance_" + planExecuteShortHash(parentContractID, commandRef, resultRef, string(input.Decision)),
+		ParentContractID:         parentContractID,
+		ObligationRefs:           planExecuteVerificationObligationRefs(input),
+		CommandRef:               commandRef,
+		CommandFingerprint:       "sha256:" + planExecuteFullHash(command),
+		WorkspaceRef:             "workspace:" + planExecuteShortHash(input.Root),
+		BaseSHA:                  headSHA,
+		HeadSHA:                  headSHA,
+		ExitStatus:               planExecuteVerificationExitStatus(input.Check),
+		ResultRef:                resultRef,
+		ScopeRefs:                planExecuteVerificationScopeRefs(input),
+		Decision:                 input.Decision,
+		ReasonCode:               strings.TrimSpace(firstNonEmptyString(input.ReasonCode, "verification_recorded")),
+	}
+}
+
+func planExecuteVerificationAcceptanceDecision(check PhaseEvidenceCheck) autonomy.VerificationAcceptanceDecision {
+	switch strings.TrimSpace(strings.ToLower(check.Status)) {
+	case "ok", "passed":
+		return autonomy.VerificationAcceptanceAccepted
+	default:
+		return autonomy.VerificationAcceptanceRepairRequired
+	}
+}
+
+func planExecuteVerificationAcceptanceReason(check PhaseEvidenceCheck) string {
+	switch strings.TrimSpace(strings.ToLower(check.Status)) {
+	case "ok", "passed":
+		return "verification_passed"
+	default:
+		return "verification_failed"
+	}
+}
+
+func planExecuteVerificationExitStatus(check PhaseEvidenceCheck) int {
+	switch strings.TrimSpace(strings.ToLower(check.Status)) {
+	case "ok", "passed":
+		return 0
+	default:
+		return 1
+	}
+}
+
+func planExecuteVerificationObligationRefs(input planExecuteVerificationAcceptanceInput) []string {
+	source := strings.TrimSpace(firstNonEmptyString(input.Source, input.Command.Source, "planner_owned_verification"))
+	return []string{"obligation:" + normalizePlanExecuteRefToken(source)}
+}
+
+func planExecuteVerificationScopeRefs(input planExecuteVerificationAcceptanceInput) []string {
+	refs := make([]string, 0, 3)
+	for _, value := range []string{input.Command.Path, input.Check.Path, input.Check.WorkingDir} {
+		value = normalizePlanExecutePath(value)
+		if value != "" && value != "." {
+			refs = append(refs, "scope:"+value)
+		}
+	}
+	return planExecuteUniqueRefStrings(refs)
+}
+
+func planExecuteUniqueRefStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func planExecuteGitSHAOrUnknown(root string) string {
+	out := strings.TrimSpace(runGitEvidence(root, "rev-parse", "HEAD"))
+	if len(out) >= 7 && !strings.ContainsAny(out, " \t\r\n:") {
+		return out
+	}
+	return "unknown"
+}
+
+func normalizePlanExecuteRefToken(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return "unknown"
+	}
+
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			b.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+
+	return strings.Trim(strings.TrimSpace(b.String()), "_")
+}
+
+func planExecuteShortHash(values ...string) string {
+	return planExecuteFullHash(values...)[:16]
+}
+
+func planExecuteFullHash(values ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(values, "\x00")))
+	return hex.EncodeToString(sum[:])
 }
 
 func runPlanExecuteVerificationCommand(root string, command VerificationCommand) PhaseEvidenceCheck {

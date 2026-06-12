@@ -445,6 +445,14 @@ For `<<QUESTION>>` specifically:
   the first broken invariant, owner boundary, proving evidence, tempting smaller
   patch, and reason the chosen fix is generic. If any item is unknown, gather
   more evidence or ask reviewers before patching.
+- **Treating north-star failures as missing slogans**: the repo already says the
+  model owns strategy and the harness owns contracts. Most repeat violations
+  happen at the conflict boundary: exact source anchors get overwritten by broad
+  routing, composite questions get treated like single-file lookups,
+  off-objective packets get accepted as evidence, or a live-run symptom gets a
+  topic-specific patch. Before editing behavior code, run the
+  `AGENTS.md` behavior-fix checklist and name which harness-owned invariant the
+  patch enforces.
 - **Fixing only the late symptom**: completion gates and recovery controllers
   are often where a bug becomes visible, but the cause may be an earlier prompt
   that sounded advisory, omitted the executable action sequence, or contradicted

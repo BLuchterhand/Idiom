@@ -70,12 +70,6 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 
 	plan := m.buildPromptExecutionPlan(ctx, prompt)
 
-	if routeRequiresMutationConfirmation(plan) {
-		m.recordPromptRouteWithoutExecution(prompt, plan)
-
-		return m.finishPromptOnceReply(mutationRouteConfirmationQuestion(plan)), nil
-	}
-
 	plan = m.recoverDirectImplementationContext(prompt, plan)
 	if m.greenfieldCreationRequiresConfirmation(plan) {
 		m.recordPromptRouteWithoutExecution(prompt, plan)
@@ -143,18 +137,6 @@ func (m *Model) recordPromptRouteWithoutExecution(prompt string, plan promptExec
 
 	m.logMessage("route_confirmation", renderRouteContractProjection(projectRouteContract(plan.route, plan.mode)))
 	m.emitWriterRouteDecision(m.writerRouteDecisionForPrompt(prompt, plan))
-}
-
-func mutationRouteConfirmationQuestion(plan promptExecutionPlan) string {
-	command := "/implement"
-	lane := "implement"
-
-	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(plan.route.Family) {
-		command = "/plan-execute"
-		lane = "plan-execute"
-	}
-
-	return fmt.Sprintf("This looks like a workspace-changing request. Do you want me to switch to the write-capable %s lane for it? Reply with `%s <objective>` to confirm, or tell me to keep this read-only.", lane, command)
 }
 
 func (m *Model) applyDirectImplementationPromptRoute(ctx context.Context, prompt string, plan promptExecutionPlan) func() {

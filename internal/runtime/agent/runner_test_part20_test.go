@@ -910,6 +910,28 @@ func TestPostChildClosureEvidencePathsPreservesMultiFilePacketCoverage(t *testin
 	}
 }
 
+func TestPostChildClosureEvidencePathsUsesWeakPacketAnchorsForFollowup(t *testing.T) {
+	got := postChildClosureEvidencePaths("Can you tell me how this harness uses subagents?", []workspace.ToolResult{{
+		Tool: "task",
+		Output: strings.Join([]string{
+			"I could not produce a final grounded answer yet.",
+			"",
+			"Inspected evidence:",
+			"- `internal/runtime/agent/runner_child_tasks.go`",
+			"- `internal/runtime/agent/runner_task_ledger.go`",
+			"- `docs/debugging-reviewer-bench.md`",
+		}, "\n"),
+	}}, 4)
+	want := []string{
+		"internal/runtime/agent/runner_child_tasks.go",
+		"internal/runtime/agent/runner_task_ledger.go",
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected weak child packet to constrain source follow-up paths %#v, got %#v", want, got)
+	}
+}
+
 func TestDelegatedClosureEvidencePathsRetainsDiscoveryPacketAfterExactProbe(t *testing.T) {
 	got := delegatedClosureEvidencePaths("How does this harness utilize sub-agents?", []workspace.ToolResult{
 		{

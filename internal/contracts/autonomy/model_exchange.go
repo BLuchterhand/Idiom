@@ -1,9 +1,6 @@
 package autonomy
 
-import (
-	"fmt"
-	"strings"
-)
+import "strings"
 
 const (
 	ContractEnvelopeSchemaVersion     = "idiom.contract_envelope.v1"
@@ -250,7 +247,7 @@ func (e *ContractEnvelope) Normalize() {
 func (e ContractEnvelope) Validate() error {
 	e.Normalize()
 
-	var problems []string
+	var problems validationProblems
 
 	validateModelExchangeSchemaID("contract_envelope.schema_version", e.SchemaVersion, ContractEnvelopeSchemaVersion, &problems)
 	validateModelExchangeContractRefs(e.ContractID, e.ProtocolHash, &problems)
@@ -259,20 +256,20 @@ func (e ContractEnvelope) Validate() error {
 
 	if e.ContextPacket != nil {
 		if err := e.ContextPacket.Validate(); err != nil {
-			problems = append(problems, err.Error())
+			problems.AddError(err)
 		}
 
 		if e.ContextPacket.ContractID != "" && e.ContextPacket.ContractID != e.ContractID {
-			problems = append(problems, "context_packet.contract_id must match contract_envelope.contract_id")
+			problems.Add("context_packet.contract_id must match contract_envelope.contract_id")
 		}
 
 		if e.ContextPacket.ProtocolHash != "" && e.ContextPacket.ProtocolHash != e.ProtocolHash {
-			problems = append(problems, "context_packet.protocol_hash must match contract_envelope.protocol_hash")
+			problems.Add("context_packet.protocol_hash must match contract_envelope.protocol_hash")
 		}
 	}
 
-	if len(problems) > 0 {
-		return ModelExchangeValidationError{Problems: problems}
+	if problems.Any() {
+		return ModelExchangeValidationError{Problems: problems.Messages()}
 	}
 
 	return nil
@@ -296,14 +293,14 @@ func (p *ContextPacket) Normalize() {
 func (p ContextPacket) Validate() error {
 	p.Normalize()
 
-	var problems []string
+	var problems validationProblems
 
 	validateModelExchangeSchemaID("context_packet.schema_version", p.SchemaVersion, ContextPacketSchemaVersion, &problems)
 	validateOptionalModelExchangeContractRefs(p.ContractID, p.ProtocolHash, &problems)
 	validateModelExchangeRedactionMarkers("context_packet", contextPacketValues(p), &problems)
 
-	if len(problems) > 0 {
-		return ModelExchangeValidationError{Problems: problems}
+	if problems.Any() {
+		return ModelExchangeValidationError{Problems: problems.Messages()}
 	}
 
 	return nil
@@ -339,15 +336,15 @@ func (r *ModelResponse) Normalize() {
 func (r ModelResponse) Validate() error {
 	r.Normalize()
 
-	var problems []string
+	var problems validationProblems
 
 	validateModelExchangeSchemaID("model_response.schema_version", r.SchemaVersion, ModelResponseSchemaVersion, &problems)
 	validateModelExchangeContractRefs(r.ContractID, r.ProtocolHash, &problems)
 	validateModelResponsePayloadPresence(r, &problems)
 	validateModelExchangeRedactionMarkers("model_response", modelResponseValues(r), &problems)
 
-	if len(problems) > 0 {
-		return ModelExchangeValidationError{Problems: problems}
+	if problems.Any() {
+		return ModelExchangeValidationError{Problems: problems.Messages()}
 	}
 
 	return nil
@@ -536,46 +533,46 @@ func (e *ContractModelExchangeEvent) Normalize() {
 func (e ContractModelExchangeEvent) Validate() error {
 	e.Normalize()
 
-	var problems []string
+	var problems validationProblems
 
 	e.validate("", &problems)
 
-	if len(problems) > 0 {
-		return ModelExchangeValidationError{Problems: problems}
+	if problems.Any() {
+		return ModelExchangeValidationError{Problems: problems.Messages()}
 	}
 
 	return nil
 }
 
-func validateModelExchangeSchemaID(field, got, want string, problems *[]string) {
+func validateModelExchangeSchemaID(field, got, want string, problems *validationProblems) {
 	if strings.TrimSpace(got) != want {
-		*problems = append(*problems, fmt.Sprintf("%s must be %s", field, want))
+		problems.Addf("%s must be %s", field, want)
 	}
 }
 
-func validateModelExchangeContractRefs(contractID, protocolHash string, problems *[]string) {
+func validateModelExchangeContractRefs(contractID, protocolHash string, problems *validationProblems) {
 	if strings.TrimSpace(contractID) == "" {
-		*problems = append(*problems, "contract_id is required")
+		problems.Add("contract_id is required")
 	}
 
 	if strings.TrimSpace(protocolHash) == "" {
-		*problems = append(*problems, "protocol_hash is required")
+		problems.Add("protocol_hash is required")
 	}
 
 	validateOptionalModelExchangeContractRefs(contractID, protocolHash, problems)
 }
 
-func validateOptionalModelExchangeContractRefs(contractID, protocolHash string, problems *[]string) {
+func validateOptionalModelExchangeContractRefs(contractID, protocolHash string, problems *validationProblems) {
 	if contractID != "" && !validContractLabel(contractID, 128) {
-		*problems = append(*problems, "contract_id must be a compact contract reference")
+		problems.Add("contract_id must be a compact contract reference")
 	}
 
 	if protocolHash != "" && !validContractLabel(protocolHash, 128) {
-		*problems = append(*problems, "protocol_hash must be a compact protocol reference")
+		problems.Add("protocol_hash must be a compact protocol reference")
 	}
 }
 
-func validateModelResponsePayloadPresence(response ModelResponse, problems *[]string) {
+func validateModelResponsePayloadPresence(response ModelResponse, problems *validationProblems) {
 	payloads := 0
 	if response.ProposedAction != nil {
 		payloads++
@@ -598,47 +595,47 @@ func validateModelResponsePayloadPresence(response ModelResponse, problems *[]st
 	}
 
 	if payloads != 1 {
-		*problems = append(*problems, "exactly one model response payload is required")
+		problems.Add("exactly one model response payload is required")
 	}
 
 	switch response.Kind {
 	case ModelResponseProposeAction:
 		if response.ProposedAction == nil {
-			*problems = append(*problems, "proposed_action payload is required for propose_action")
+			problems.Add("proposed_action payload is required for propose_action")
 		}
 	case ModelResponseRequestContext:
 		if response.ContextRequest == nil {
-			*problems = append(*problems, "context_request payload is required for request_context")
+			problems.Add("context_request payload is required for request_context")
 		}
 	case ModelResponseChallengeContext:
 		if response.ContextChallenge == nil {
-			*problems = append(*problems, "context_challenge payload is required for challenge_context")
+			problems.Add("context_challenge payload is required for challenge_context")
 		}
 	case ModelResponseProposeValidation:
 		if response.ValidationProposal == nil {
-			*problems = append(*problems, "validation_proposal payload is required for propose_validation")
+			problems.Add("validation_proposal payload is required for propose_validation")
 		}
 	case ModelResponseEscalate:
 		if response.Escalation == nil {
-			*problems = append(*problems, "escalation payload is required for escalate")
+			problems.Add("escalation payload is required for escalate")
 		}
 	default:
-		*problems = append(*problems, "kind must be a known model-authored response variant")
+		problems.Add("kind must be a known model-authored response variant")
 	}
 }
 
-func validateModelExchangeProtocolShape(shape ProtocolShape, problems *[]string) {
+func validateModelExchangeProtocolShape(shape ProtocolShape, problems *validationProblems) {
 	validateModelExchangeRedactionMarkers("protocol_shape", protocolShapeValues(shape), problems)
 
 	for i, value := range append(append([]string(nil), shape.CallableActionClasses...), shape.TerminalResponseKinds...) {
 		if !validModelExchangeLabel(value, 160) {
-			*problems = append(*problems, fmt.Sprintf("protocol_shape action/terminal entry %d must be a compact label", i))
+			problems.Addf("protocol_shape action/terminal entry %d must be a compact label", i)
 		}
 	}
 
 	for i, value := range shape.SchemaNames {
 		if !validModelExchangeLabel(value, 128) {
-			*problems = append(*problems, fmt.Sprintf("protocol_shape.schema_names[%d] must be a compact schema id", i))
+			problems.Addf("protocol_shape.schema_names[%d] must be a compact schema id", i)
 		}
 	}
 }
@@ -673,42 +670,42 @@ func validModelExchangeLabel(value string, maxLen int) bool {
 	return true
 }
 
-func validateModelExchangeRedactionMarkers(field string, values []string, problems *[]string) {
+func validateModelExchangeRedactionMarkers(field string, values []string, problems *validationProblems) {
 	for _, value := range values {
 		if looksLikeRawGuardFrictionContent(value) {
-			*problems = append(*problems, field+" must contain compact redaction-safe metadata only")
+			problems.Add(field + " must contain compact redaction-safe metadata only")
 			return
 		}
 	}
 }
 
 func validateHarnessAuthorityRecord(wantSchema, gotSchema, contractID, protocolHash string, values []string, provenanceField, provenance string) error {
-	var problems []string
+	var problems validationProblems
 
 	validateModelExchangeSchemaID("schema_version", gotSchema, wantSchema, &problems)
 	validateModelExchangeContractRefs(contractID, protocolHash, &problems)
 	validateModelExchangeRedactionMarkers("harness authority record", values, &problems)
 
 	if strings.TrimSpace(provenance) != "harness" {
-		problems = append(problems, provenanceField+" must be harness")
+		problems.Add(provenanceField + " must be harness")
 	}
 
-	if len(problems) > 0 {
-		return ModelExchangeValidationError{Problems: problems}
+	if problems.Any() {
+		return ModelExchangeValidationError{Problems: problems.Messages()}
 	}
 
 	return nil
 }
 
-func (e ContractModelExchangeEvent) validate(eventContractID string, problems *[]string) {
+func (e ContractModelExchangeEvent) validate(eventContractID string, problems *validationProblems) {
 	if e.Kind == "" {
-		*problems = append(*problems, "model_exchange.kind is required")
+		problems.Add("model_exchange.kind is required")
 	}
 
 	validateModelExchangeContractRefs(e.ContractID, e.ProtocolHash, problems)
 
 	if eventContractID != "" && e.ContractID != eventContractID {
-		*problems = append(*problems, "model_exchange.contract_id must match event contract_id")
+		problems.Add("model_exchange.contract_id must match event contract_id")
 	}
 
 	payloads := 0
@@ -749,14 +746,14 @@ func (e ContractModelExchangeEvent) validate(eventContractID string, problems *[
 	}
 
 	if payloads != 1 {
-		*problems = append(*problems, "exactly one model_exchange payload is required")
+		problems.Add("exactly one model_exchange payload is required")
 	}
 
 	e.validateNestedModelExchangeRefs(problems)
 	e.validateNestedModelExchangePayload(problems)
 }
 
-func (e ContractModelExchangeEvent) validateNestedModelExchangeRefs(problems *[]string) {
+func (e ContractModelExchangeEvent) validateNestedModelExchangeRefs(problems *validationProblems) {
 	for _, refs := range []modelExchangeRefs{
 		modelExchangeContextPacketRefs(e.ContextPacket),
 		modelExchangePermissionSnapshotRefs(e.PermissionSnapshot),
@@ -773,16 +770,16 @@ func (e ContractModelExchangeEvent) validateNestedModelExchangeRefs(problems *[]
 		}
 
 		if refs.contractID != "" && refs.contractID != e.ContractID {
-			*problems = append(*problems, refs.name+".contract_id must match model_exchange.contract_id")
+			problems.Add(refs.name + ".contract_id must match model_exchange.contract_id")
 		}
 
 		if refs.protocolHash != "" && refs.protocolHash != e.ProtocolHash {
-			*problems = append(*problems, refs.name+".protocol_hash must match model_exchange.protocol_hash")
+			problems.Add(refs.name + ".protocol_hash must match model_exchange.protocol_hash")
 		}
 	}
 }
 
-func (e ContractModelExchangeEvent) validateNestedModelExchangePayload(problems *[]string) {
+func (e ContractModelExchangeEvent) validateNestedModelExchangePayload(problems *validationProblems) {
 	errs := []error{}
 	if e.ContextPacket != nil {
 		errs = append(errs, e.ContextPacket.Validate())
@@ -821,9 +818,7 @@ func (e ContractModelExchangeEvent) validateNestedModelExchangePayload(problems 
 	}
 
 	for _, err := range errs {
-		if err != nil {
-			*problems = append(*problems, err.Error())
-		}
+		problems.AddError(err)
 	}
 }
 
