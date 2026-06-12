@@ -350,6 +350,8 @@ func (r *Runner) Run(
 	consecutiveNarrowToolCalls := 0
 	lastNarrowToolFamily := ""
 	narrowToolFamilyNudgeFired := false
+	narrowToolFamilyRedirectIssued := false
+	narrowToolFamilyRedirectedOriginal := ""
 
 	var preimageStore *PreimageCheckpointStore
 
@@ -389,6 +391,18 @@ func (r *Runner) Run(
 
 	if bootstrap := r.initialBootstrapInstruction(); strings.TrimSpace(bootstrap) != "" {
 		turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: bootstrap})
+	}
+
+	// Investigation lane: recommended strategy to avoid exhaustive
+	// symbol-by-symbol enumeration. One-shot at session start.
+	if _, ok := r.lanePolicy().(ReadOnlyInvestigationLanePolicy); ok {
+		turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: "## Investigation Strategy\n\n" +
+			"For read-only investigation questions, an efficient approach:\n\n" +
+			"1. Broad orientation (1 call): Start with context_pack or context_query for a ranked map of relevant files and symbols. One call replaces 20+ individual symbol lookups.\n" +
+			"2. Bundled probe (1 call): Use discovery_query with purpose=\"architecture_trace\" or \"impact_analysis\" to orchestrate multiple probes at once. One call replaces 10+ separate searches.\n" +
+			"3. Targeted reads (2-3 calls): Read only the 1-3 key files or symbols identified above. Do not enumerate every symbol in a file.\n" +
+			"4. Answer: Once the evidence answers the question, stop. You do not need to exhaustively verify every related function.\n\n" +
+			"If you are reading a file symbols one by one, pause and use context_query or discovery_query instead."})
 	}
 
 	r.emitControlRailsForBrief(turnMessages, visibleRuntimeBrief)
@@ -2057,12 +2071,44 @@ func (r *Runner) Run(
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 				r.emitEvent(RunEvent{Role: "narrow_tool_repetition_nudge", Content: prompt})
 			}
+
+			// Auto-redirect: if the nudge has fired but the model made
+			// another same-family call, redirect it to a broader discovery
+			// tool. On the NEXT attempt of the original call, let it
+			// through — the model can override the redirect by repeating.
+			if narrowToolFamilyNudgeFired && !narrowToolFamilyRedirectIssued {
+				narrowToolFamilyRedirectIssued = true
+				narrowToolFamilyRedirectedOriginal = req.Tool + "|" + narrowFamily
+
+				redirected := req
+				redirected.Tool = workspace.ToolNameContextQuery
+				redirected.Query = r.RuntimeBrief.Objective
+				redirected.Pattern = ""
+				redirected.Path = ""
+				redirected.Capability = ""
+				redirected.Purpose = ""
+
+				req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, "", "narrow_tool_redirect_to_context_query")
+				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
+				r.emitEvent(RunEvent{Role: "narrow_tool_redirect", Content: fmt.Sprintf("redirected %s to context_query after %d consecutive same-family calls", lastNarrowToolFamily, consecutiveNarrowToolCalls)})
+			} else if narrowToolFamilyNudgeFired && narrowToolFamilyRedirectIssued {
+				// Model repeated the original call after redirect:
+				// let it through. Reset redirect tracking so the
+				// pattern can be observed again if needed.
+				redirectKey := req.Tool + "|" + narrowFamily
+				if redirectKey == narrowToolFamilyRedirectedOriginal {
+					narrowToolFamilyRedirectIssued = false
+					narrowToolFamilyRedirectedOriginal = ""
+				}
+			}
 		} else {
 			// Reset on any broad/non-narrow tool — the model tried
 			// something different, so clear the repetition tracking.
 			consecutiveNarrowToolCalls = 0
 			lastNarrowToolFamily = ""
 			narrowToolFamilyNudgeFired = false
+			narrowToolFamilyRedirectIssued = false
+			narrowToolFamilyRedirectedOriginal = ""
 		}
 
 		actionClass := toolActionClass(req)
