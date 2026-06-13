@@ -727,7 +727,7 @@ func planThenExecuteRejectedPlanRefreshPathsForResult(brief workerruntime.Worker
 		}
 
 		if _, invalid := submitPlanInvalidAnchorPaths(rejected)[path]; invalid {
-			if successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, path) {
+			if successfulInvalidAnchorCorrectionEvidenceForRejection(results, rejectedAt, path) {
 				continue
 			}
 		} else if successfulSourceEvidencePathAfter(results, rejectedAt, path) {

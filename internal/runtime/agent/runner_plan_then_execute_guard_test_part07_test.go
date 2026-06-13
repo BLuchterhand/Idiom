@@ -872,6 +872,15 @@ func TestPlanExecuteSubmitPlanDiagnosticsKeepExtensionlessPathsAndDropProtocolTo
 		t.Fatalf("whole-file existing source rewrite should become an anchor-refresh path, got %#v", got)
 	}
 
+	lineRangeWholeBodyRejected := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected",
+		Error:   "edits[0]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h lines 1-63 would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors",
+	}
+	if got := sortedRunnerPathKeys(submitPlanInvalidAnchorPaths(lineRangeWholeBodyRejected)); !slices.Equal(got, []string{"native/src/simulation/world/collapse_event.h"}) {
+		t.Fatalf("whole-file line-range existing source rewrite should become an anchor-refresh path, got %#v", got)
+	}
+
 	groundingRejected := workspace.ToolResult{
 		Tool:    "submit_plan",
 		Summary: "submit_plan rejected: edit paths lack source grounding",
@@ -904,6 +913,47 @@ func TestPlanExecuteSubmitPlanDiagnosticsKeepExtensionlessPathsAndDropProtocolTo
 
 	if !slices.Equal(refreshScope, []string{".dockerignore", ".gitignore", "Brewfile", "Pipfile", "Rakefile", "yarn.lock"}) {
 		t.Fatalf("rejected-plan refresh scope should retain extensionless diagnostic paths, got %#v", refreshScope)
+	}
+}
+
+func TestPlanExecuteRepeatedExistingSourceRewriteAfterRefreshStaysSubmitCorrection(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{
+			"native/src/core/colony_sim_tick.cpp",
+			"native/src/simulation/world/collapse_event.cpp",
+			"native/src/simulation/world/collapse_event.h",
+			"native/tests/test_collapse_event.cpp",
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[0]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h lines 1-63 would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors",
+		},
+		{Tool: "read_file", Summary: "Read f2 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content",
+		},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitCorrection {
+		t.Fatalf("mode = %q, want submit_correction after refreshed repeated invalid rewrite; state=%+v", state.Mode, state)
+	}
+	if len(state.RefreshPaths) != 0 {
+		t.Fatalf("repeated invalid rewrite after refresh should not reopen anchor refresh, got %#v", state.RefreshPaths)
+	}
+
+	req := workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "native/src/simulation/world/collapse_event.h", StartLine: 1, EndLine: 63}
+	if planThenExecuteRejectedPlanSourceRefreshAllowed(req, brief.RequiredEditPaths, results) {
+		t.Fatalf("anchor refresh should not be allowed after corrected evidence already refreshed the invalid anchor")
 	}
 }
 

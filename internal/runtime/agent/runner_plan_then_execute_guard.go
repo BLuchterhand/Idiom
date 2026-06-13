@@ -1065,7 +1065,7 @@ func planThenExecuteRequiredPathDiscoveryRejection(req workspace.ToolRequest, br
 
 			if submitPlanInvalidAnchorPathsAllowsRead(invalidAnchorPaths, target) &&
 				planThenExecuteInvalidAnchorRefreshRequestAllowed(req, target, results) &&
-				!successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, target) {
+				!successfulInvalidAnchorCorrectionEvidenceForRejection(results, rejectedAt, target) {
 
 				return "", "", false
 			}
@@ -1309,7 +1309,7 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 			inRequiredScope &&
 			submitPlanInvalidAnchorPathsAllowsRead(invalidAnchorPaths, target) &&
 			planThenExecuteInvalidAnchorRefreshRequestAllowed(req, target, results) &&
-			!successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, target) {
+			!successfulInvalidAnchorCorrectionEvidenceForRejection(results, rejectedAt, target) {
 
 			return "", "", false
 		}
@@ -1403,7 +1403,7 @@ func planThenExecutePostSubmitRejectionRefreshNote(brief workerruntime.WorkerRun
 			continue
 		}
 
-		if _, invalid := invalidAnchorPaths[path]; invalid && !successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, path) {
+		if _, invalid := invalidAnchorPaths[path]; invalid && !successfulInvalidAnchorCorrectionEvidenceForRejection(results, rejectedAt, path) {
 			refreshable = append(refreshable, path)
 			continue
 		}
@@ -1445,7 +1445,7 @@ func planThenExecuteRejectedPlanSourceRefreshAllowedForScope(req workspace.ToolR
 	}
 
 	if _, invalidAnchor := submitPlanInvalidAnchorPaths(rejected)[target]; invalidAnchor {
-		if successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, target) {
+		if successfulInvalidAnchorCorrectionEvidenceForRejection(results, rejectedAt, target) {
 			return false
 		}
 	} else if successfulSourceEvidencePathAfter(results, rejectedAt, target) {
@@ -1486,6 +1486,7 @@ func submitPlanRejectionHasInvalidAnchor(result workspace.ToolResult) bool {
 	return strings.Contains(text, "invalid edit anchor") ||
 		strings.Contains(text, "old_text not found") ||
 		strings.Contains(text, "whole-file replace_all edit would rewrite existing source file") ||
+		strings.Contains(text, "would rewrite the entire existing source file") ||
 		strings.Contains(text, "line range outside current source") ||
 		strings.Contains(text, "preflight syntax validation failed")
 }
@@ -1515,8 +1516,10 @@ func submitPlanWholeFileExistingSourceRewritePaths(result workspace.ToolResult) 
 	out := make(map[string]struct{})
 	text := strings.Join([]string{result.Summary, result.Error, result.Output}, "\n")
 	lower := strings.ToLower(text)
-	marker := "whole-file replace_all edit would rewrite existing source file"
-	if !strings.Contains(lower, marker) {
+	replaceAllMarker := "whole-file replace_all edit would rewrite existing source file"
+	lineRangeMarker := "line-range replacement for "
+	lineRangeWholeBodyMarker := "would rewrite the entire existing source file"
+	if !strings.Contains(lower, replaceAllMarker) && !(strings.Contains(lower, lineRangeMarker) && strings.Contains(lower, lineRangeWholeBodyMarker)) {
 		return out
 	}
 
@@ -1530,12 +1533,29 @@ func submitPlanWholeFileExistingSourceRewritePaths(result workspace.ToolResult) 
 
 	for _, line := range strings.Split(text, "\n") {
 		lineLower := strings.ToLower(line)
-		idx := strings.Index(lineLower, marker)
+		if idx := strings.Index(lineLower, replaceAllMarker); idx >= 0 {
+			rawPath := strings.TrimSpace(line[idx+len(replaceAllMarker):])
+			if cut := strings.IndexAny(rawPath, ";\n\r\t "); cut >= 0 {
+				rawPath = rawPath[:cut]
+			}
+			path := normalizeSubmitPlanDiagnosticPath(rawPath)
+			if path != "" {
+				out[path] = struct{}{}
+			}
+		}
+
+		if !strings.Contains(lineLower, lineRangeWholeBodyMarker) {
+			continue
+		}
+		idx := strings.Index(lineLower, lineRangeMarker)
 		if idx < 0 {
 			continue
 		}
-		rawPath := strings.TrimSpace(line[idx+len(marker):])
-		if cut := strings.IndexAny(rawPath, ";\n\r\t "); cut >= 0 {
+		rawPath := strings.TrimSpace(line[idx+len(lineRangeMarker):])
+		rawPathLower := strings.ToLower(rawPath)
+		if cut := strings.Index(rawPathLower, " lines "); cut >= 0 {
+			rawPath = rawPath[:cut]
+		} else if cut := strings.IndexAny(rawPath, ";\n\r\t "); cut >= 0 {
 			rawPath = rawPath[:cut]
 		}
 		path := normalizeSubmitPlanDiagnosticPath(rawPath)
@@ -1777,6 +1797,44 @@ func successfulInvalidAnchorCorrectionEvidencePathAfter(results []workspace.Tool
 	for i := index + 1; i < len(results); i++ {
 		if invalidAnchorCorrectionEvidenceResult(results[i], path, results[:i+1]) {
 			return true
+		}
+	}
+
+	return false
+}
+
+func successfulInvalidAnchorCorrectionEvidenceForRejection(results []workspace.ToolResult, rejectedAt int, path string) bool {
+	if successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, path) {
+		return true
+	}
+
+	return successfulInvalidAnchorCorrectionEvidenceAfterPriorRejection(results, rejectedAt, path)
+}
+
+func successfulInvalidAnchorCorrectionEvidenceAfterPriorRejection(results []workspace.ToolResult, rejectedAt int, path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" || rejectedAt <= 0 || rejectedAt > len(results) {
+		return false
+	}
+
+	for i := rejectedAt - 1; i >= 0; i-- {
+		result := results[i]
+		if strings.TrimSpace(result.Tool) != workspace.ToolNameSubmitPlan {
+			continue
+		}
+		if strings.TrimSpace(result.Error) == "" {
+			return false
+		}
+		if planThenExecuteSourceSatisfiedSubmitPlanRejectedResult(result) || !planThenExecuteSubmitPlanRejectedResult(result) {
+			continue
+		}
+		if _, invalid := submitPlanInvalidAnchorPaths(result)[path]; !invalid {
+			continue
+		}
+		for j := i + 1; j < rejectedAt; j++ {
+			if invalidAnchorCorrectionEvidenceResult(results[j], path, results[:j+1]) {
+				return true
+			}
 		}
 	}
 
@@ -2081,7 +2139,7 @@ func planThenExecuteRequiredPathState(brief workerruntime.WorkerRuntimeBrief, re
 	}
 
 	if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
-		if _, stale := submitPlanInvalidAnchorPaths(rejected)[path]; stale && !successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, path) {
+		if _, stale := submitPlanInvalidAnchorPaths(rejected)[path]; stale && !successfulInvalidAnchorCorrectionEvidenceForRejection(results, rejectedAt, path) {
 			return planThenExecuteRequiredPathStaleAnchor
 		}
 	}

@@ -362,7 +362,7 @@ func planThenExecuteInvalidAnchorRefreshAllowed(req workspace.ToolRequest, targe
 
 	return submitPlanInvalidAnchorPathsAllowsRead(invalidAnchorPaths, target) &&
 		planThenExecuteInvalidAnchorRefreshRequestAllowed(req, target, results) &&
-		!successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, target)
+		!successfulInvalidAnchorCorrectionEvidenceForRejection(results, rejectedAt, target)
 }
 
 const planThenExecuteReadySourceRefreshLimit = 4
