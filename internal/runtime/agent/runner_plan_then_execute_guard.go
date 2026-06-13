@@ -1435,6 +1435,10 @@ func planThenExecuteRejectedPlanSourceRefreshAllowedForScope(req workspace.ToolR
 		return false
 	}
 
+	if planThenExecuteAnchorRefreshReadRangeAlreadyTried(req, target, results[rejectedAt+1:]) {
+		return false
+	}
+
 	scope := normalizedRequiredEditPathSet(scopePaths)
 	if _, ok := scope[target]; !ok {
 		return false
@@ -1451,6 +1455,25 @@ func planThenExecuteRejectedPlanSourceRefreshAllowedForScope(req workspace.ToolR
 	invalidAnchorPaths := submitPlanInvalidAnchorPaths(rejected)
 
 	return submitPlanInvalidAnchorPathsAllowsRead(invalidAnchorPaths, target)
+}
+
+func planThenExecuteAnchorRefreshReadRangeAlreadyTried(req workspace.ToolRequest, target string, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(req.Tool) != workspace.ToolNameReadFile {
+		return false
+	}
+
+	target = normalizeRunnerPath(target)
+	if target == "" || req.StartLine <= 0 || req.EndLine < req.StartLine {
+		return false
+	}
+
+	for _, readRange := range readRangesForPathFromResults(results, target) {
+		if planThenExecuteRequestedRangeCoveredByRead(req.StartLine, req.EndLine, readRange) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func submitPlanRejectionHasInvalidAnchor(result workspace.ToolResult) bool {

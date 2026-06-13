@@ -785,6 +785,10 @@ func planThenExecuteAnchorRefreshFallbackRange(path string, results []workspace.
 			end = ranges[i].total
 		}
 
+		if ranges[i].total <= 0 || end < ranges[i].total {
+			return planThenExecuteClampAnchorRefreshRange(end+1, end+180)
+		}
+
 		return planThenExecuteClampAnchorRefreshRange(ranges[i].start, end)
 	}
 

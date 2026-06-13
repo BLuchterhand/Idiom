@@ -431,7 +431,7 @@ func (r *Runner) planThenExecuteRejectedPlanRefreshReadRedirect(req workspace.To
 		return workspace.ToolRequest{}, "", false
 	}
 
-	rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results)
+	rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results)
 	if !ok {
 		return workspace.ToolRequest{}, "", false
 	}
@@ -441,7 +441,9 @@ func (r *Runner) planThenExecuteRejectedPlanRefreshReadRedirect(req workspace.To
 		return workspace.ToolRequest{}, "", false
 	}
 
-	if !ok && planThenExecuteAnchorRefreshRequestAllowed(req) {
+	if !ok &&
+		planThenExecuteAnchorRefreshRequestAllowed(req) &&
+		!planThenExecuteAnchorRefreshReadRangeAlreadyTried(req, target, results[rejectedAt+1:]) {
 		return workspace.ToolRequest{}, "", false
 	}
 

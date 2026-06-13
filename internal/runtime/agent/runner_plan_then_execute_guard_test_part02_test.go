@@ -883,6 +883,45 @@ func TestPlanExecuteRequiredAnchorRefreshRedirectsUnboundedReadFile(t *testing.T
 	}
 }
 
+func TestPlanExecuteRequiredAnchorRefreshRedirectsRepeatedBoundedReadFile(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp"},
+	}}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f3 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "invalid edit anchor(s): `native/src/core/colony_sim_tick.cpp: old_text not found in current source`.",
+		},
+		{Tool: "read_file", Summary: "Read f3 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)"},
+	}
+	req := workspace.ToolRequest{
+		Tool:      workspace.ToolNameReadFile,
+		Path:      "native/src/core/colony_sim_tick.cpp",
+		StartLine: 1,
+		EndLine:   120,
+	}
+
+	if planThenExecuteRejectedPlanSourceRefreshAllowed(req, runner.RuntimeBrief.RequiredEditPaths, results) {
+		t.Fatal("repeated bounded anchor-refresh window should not be accepted as new refresh evidence")
+	}
+
+	redirected, _, ok := runner.planThenExecuteRejectedPlanRefreshReadRedirect(req, results)
+	if !ok {
+		t.Fatal("expected repeated bounded anchor-refresh read_file to redirect to the next bounded window")
+	}
+
+	if redirected.Path != "native/src/core/colony_sim_tick.cpp" || redirected.StartLine <= 120 || redirected.EndLine < redirected.StartLine || redirected.EndLine-redirected.StartLine+1 > 400 {
+		t.Fatalf("redirect should advance to a later bounded window, got %#v", redirected)
+	}
+
+	if !planThenExecuteRejectedPlanSourceRefreshAllowed(redirected, runner.RuntimeBrief.RequiredEditPaths, results) {
+		t.Fatalf("advanced refresh window should be allowed after repeated bounded read: %#v", redirected)
+	}
+}
+
 func TestPlanThenExecuteRequiredPathDiscoveryRejectsOutOfScopeInvalidAnchorRefresh(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
