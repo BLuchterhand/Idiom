@@ -1168,6 +1168,9 @@ func plannerCallNeedsSignatureEvidence(name string, args string) bool {
 	if plannerCallLooksLikeParentheticalProse(lowerArgs) {
 		return false
 	}
+	if plannerCallLooksLikeInstructionalParenthetical(lowerArgs) {
+		return false
+	}
 	if strings.Contains(lowerArgs, "...") || strings.Contains(lowerArgs, "placeholder") || strings.Contains(lowerArgs, "existing") {
 		return false
 	}
@@ -1225,6 +1228,34 @@ func plannerCallLooksLikeParentheticalProse(lowerArgs string) bool {
 	lowerArgs = strings.TrimSpace(lowerArgs)
 	return strings.HasPrefix(lowerArgs, "e.g.") ||
 		strings.HasPrefix(lowerArgs, "i.e.")
+}
+
+func plannerCallLooksLikeInstructionalParenthetical(lowerArgs string) bool {
+	lowerArgs = strings.TrimSpace(lowerArgs)
+	if !strings.Contains(lowerArgs, " ") {
+		return false
+	}
+	for _, marker := range []string{
+		"assume ",
+		"verify in ",
+		"verified in ",
+		"if present",
+		"source-verified ",
+		"source verified ",
+		"using source-",
+		" field",
+		" fields",
+		" method",
+		" methods",
+		" semantics",
+		"do not ",
+		"not authorized",
+	} {
+		if strings.Contains(lowerArgs, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateStandaloneVerificationCommands(root string, atom FeatureAtomPlan) error {

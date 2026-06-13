@@ -931,10 +931,14 @@ func TestValidatePlanAllowsFieldDescriptorParentheticalsInAtomPrompt(t *testing.
 		"Use the source-verified helper, declared const(in native/src/simulation/economy/fluid_network_system.h), and deduct stored water.",
 		"Deduct the required water from the existing stored volume field(CisternComponent) without editing components.h.",
 		"Deduct the required water volume(CisternComponent stored volume field, do not edit components.h) without naming a new helper.",
+		"Deduct from stored_volume(assume cistern component has stored_volume field; verify in source) after selecting a source-verified cistern.",
+		"If a cistern EntityID is returned(using source-verified validity semantics, e.g., INVALID_ENTITY if present), preserve fallback behavior on no match.",
+		"Deduct the required water volume using source-verified storage fields or methods(verify in native/src/core/components.h and fluid network source).",
 	} {
 		plan := validPlan()
 		plan.Atoms[0].Prompt = prompt
 		plan.Atoms[0].EvidencePaths = append(plan.Atoms[0].EvidencePaths, "native/src/simulation/economy/fluid_network_system.h")
+		plan.Atoms[0].EvidencePaths = append(plan.Atoms[0].EvidencePaths, "native/src/core/components.h")
 
 		if err := ValidatePlan(plan); err != nil {
 			t.Fatalf("field descriptor parenthetical should not require helper signature evidence, got %v for prompt %q", err, prompt)
