@@ -1074,6 +1074,62 @@ func TestRunRejectsStandaloneMissingWorkspacePathBeforeDispatch(t *testing.T) {
 	}
 }
 
+func TestRunOpensLocalizationQuestionForPreparedAtomSelectionWithInventedPaths(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	plan.Summary = "Implement Atom 1.1: Add CollapseEvent handling to ColonyService with TDD and SDD contracts."
+	plan.TopLevelScope.Objective = "Implement CollapseEvent handling in ColonyService."
+	plan.Atoms[0].Title = "Implement CollapseEvent handling in ColonyService"
+	plan.Atoms[0].RequiredEditPaths = []string{
+		"src/services/colony_service.py",
+		"tests/services/test_colony_service.py",
+	}
+	plan.Atoms[0].AllowedEditPaths = nil
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"tests/services/test_colony_service.py"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"tests/services/test_colony_service.py"}
+
+	state := NewState("session", "pick a prepared atom", "", 3, time.Unix(1, 0).UTC())
+	prompt := "As product owner: pick one genuinely unsatisfied, bounded Colony atom from the prepared next-atom candidates. Before dispatching implementation, verify current source and planning state. Favor small source-backed atoms with explicit tests."
+
+	result, err := Run(state, RunOptions{
+		Prompt:                prompt,
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
+			t.Fatal("standalone workspace validation must block before dispatch")
+		}
+
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningQuestion {
+		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if len(result.Events) != 2 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" || result.Events[1].Type != "idiom.feature_planner.planner_question_opened" {
+		t.Fatalf("expected rejected-plan then localization question events, got %+v", result.Events)
+	}
+	if len(result.State.OpenQuestions) != 1 {
+		t.Fatalf("expected one localization question, got %+v", result.State.OpenQuestions)
+	}
+
+	question := result.State.OpenQuestions[0]
+	if question.AuthorityRequired != "accepted_source" || containsString(question.AffectedFields, "new_file_authorization") {
+		t.Fatalf("localization question must not authorize invented files: %+v", question)
+	}
+	if !containsString(question.AffectedFields, "source_localization") {
+		t.Fatalf("localization question missing source_localization field: %+v", question)
+	}
+	if !strings.Contains(question.RequestedDecision, "source-verified atom candidate") ||
+		!strings.Contains(question.RequestedDecision, "src/services/colony_service.py") {
+		t.Fatalf("question should request real source localization and preserve rejected paths diagnostically: %+v", question)
+	}
+}
+
 func TestRunOpensQuestionForExplicitMissingNewFileAuthorizationPrompt(t *testing.T) {
 	root := t.TempDir()
 	plan := validPlan()
