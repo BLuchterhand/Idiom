@@ -446,6 +446,18 @@ func TestValidateProductPlanRequiresFilesToModifyCoverageAcrossAtoms(t *testing.
 	}
 }
 
+func TestValidateProductPlanRejectsCommandNotAuthorizedByProductTDD(t *testing.T) {
+	root, plan, brief := workspaceRootProductPlanFixture(t)
+
+	plan.Atoms[0].TestFirst.Commands = []string{"cd native && cmake --build . && ctest -R test_fluid_brewery_cascade --output-on-failure"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
+
+	err := ValidatePlanProductWorkflowContext(plan, brief, root)
+	if err == nil || !strings.Contains(err.Error(), "not one of the source/product TDD commands") {
+		t.Fatalf("expected product TDD command provenance rejection, got %v", err)
+	}
+}
+
 func TestValidateProductPlanRejectsDemotedFilesToModifyBeforeNormalization(t *testing.T) {
 	plan := validProductContextPlan()
 
@@ -699,6 +711,31 @@ func TestBuildPlannerPromptForbidsStandaloneVerificationAndSignatureInvention(t 
 	}
 }
 
+func TestValidatePlanRejectsPromptPathOutsideDeclaredScope(t *testing.T) {
+	plan := validPlan()
+	plan.Atoms[0].Prompt = "Edit internal/labels/labels.go and wire native/src/simulation/machines/machine.cpp for recipe start."
+
+	err := ValidatePlan(plan)
+	if err == nil || !strings.Contains(err.Error(), "native/src/simulation/machines/machine.cpp") || !strings.Contains(err.Error(), "outside required_edit_paths") {
+		t.Fatalf("expected prompt path scope rejection, got %v", err)
+	}
+}
+
+func TestValidatePlanRejectsGuessedHelperCallWithoutSignatureEvidence(t *testing.T) {
+	plan := validPlan()
+	plan.Atoms[0].Prompt = "Call find_connected_cistern_with_volume(eid) before posting fallback water haul."
+
+	err := ValidatePlan(plan)
+	if err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume(eid)") || !strings.Contains(err.Error(), "source-verified signature") {
+		t.Fatalf("expected guessed helper-call rejection, got %v", err)
+	}
+
+	plan.Atoms[0].Prompt = "Current source evidence: exact signature is EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required). Call it only with verified arguments."
+	if err := ValidatePlan(plan); err != nil {
+		t.Fatalf("source-verified signature prompt should pass: %v", err)
+	}
+}
+
 func TestParsePlannerOutputCoercesSingletonRequiredBeforeArray(t *testing.T) {
 	raw := strings.Replace(mustPlanJSON(t, validPlan()), `"required_before":"implementation"`, `"required_before":["implementation"]`, 1)
 
@@ -930,6 +967,7 @@ func TestRunRejectsSourceSatisfiedMissingAnchorText(t *testing.T) {
 
 func TestRunPreservesSourceSatisfiedGateInDispatchedAtomPrompt(t *testing.T) {
 	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
 	mkdirAndWriteFile(t, filepath.Join(root, "scripts/ui/ui_helpers.gd"), "Quality contributors:\n")
 
 	plan := validPlan()
@@ -1025,6 +1063,8 @@ func TestValidatePlanStandaloneWorkspaceContextAllowsExplicitNewFileAndTestCreat
 	root := t.TempDir()
 	plan := validPlan()
 
+	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
+
 	plan.Atoms[0].RequiredEditPaths = []string{"pkg/new_helper.go"}
 	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"pkg/new_helper_test.go"}
 	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"pkg/new_helper_test.go"}
@@ -1069,6 +1109,7 @@ func TestCompilePlanAuthorityContractDoesNotAuthorizeNewFileFromPathOnlyDelta(t 
 
 func TestValidatePlanStandaloneWorkspaceContextDoesNotExistenceGateTDDMetadata(t *testing.T) {
 	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
 	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
 
 	plan := validPlan()
@@ -1183,6 +1224,47 @@ func TestRunOpensLocalizationQuestionForPreparedAtomSelectionWithInventedPaths(t
 	if !strings.Contains(question.RequestedDecision, "source-verified atom candidate") ||
 		!strings.Contains(question.RequestedDecision, "src/services/colony_service.py") {
 		t.Fatalf("question should request real source localization and preserve rejected paths diagnostically: %+v", question)
+	}
+}
+
+func TestValidateStandaloneWorkspaceRejectsInventedCMakeVerificationCommand(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/storage/stockpile_system.cpp"), "void scan() {}\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/SConstruct"), "# scons project\n")
+
+	plan.Atoms[0].RequiredEditPaths = []string{
+		"native/src/simulation/storage/stockpile_system.cpp",
+		"native/tests/test_fluid_brewery_cascade.cpp",
+	}
+	plan.Atoms[0].TestFirst.Commands = []string{"cd native && cmake --build . && ctest -R test_fluid_brewery_cascade --output-on-failure"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
+	if err == nil || !strings.Contains(err.Error(), "no CMake project evidence") {
+		t.Fatalf("expected invented CMake command rejection, got %v", err)
+	}
+}
+
+func TestValidateStandaloneWorkspaceRejectsSkippedCommentOnlyRedConfirmedTest(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels_test.go"), `package labels
+
+// Tests are SKIP-marked pending FET 3.3c.
+// TODO: assert cistern decrement.
+`)
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
+	if err == nil || !strings.Contains(err.Error(), "comment-only") || !strings.Contains(err.Error(), "red-confirmed") {
+		t.Fatalf("expected skipped/comment-only red-confirmed test rejection, got %v", err)
 	}
 }
 
@@ -1773,6 +1855,7 @@ func TestRunDispatchesAtomAfterAcceptedTDDPlan(t *testing.T) {
 
 func TestRunUsesAnsweredPlannerQuestionForStandaloneNewFileAuthorization(t *testing.T) {
 	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
 	plan := validPlan()
 
 	plan.Atoms[0].RequiredEditPaths = []string{"pkg/new_helper.go", "pkg/new_helper_test.go"}
@@ -1863,6 +1946,7 @@ func TestRunUsesAnsweredPlannerQuestionForStandaloneNewFileAuthorization(t *test
 
 func TestRunUsesAnsweredNewFileAuthorizationWithStandaloneAcceptanceID(t *testing.T) {
 	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
 	plan := validPlan()
 
 	plan.SDDContract.Refs = nil
@@ -1903,6 +1987,7 @@ func TestRunUsesAnsweredNewFileAuthorizationWithStandaloneAcceptanceID(t *testin
 
 func TestRunRecordsRejectedCandidateForMissingSDDRefsAfterAuthorization(t *testing.T) {
 	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
 	plan := validPlan()
 
 	plan.SDDContract.Refs = nil

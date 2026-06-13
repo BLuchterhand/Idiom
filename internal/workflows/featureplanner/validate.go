@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -318,6 +319,9 @@ func ValidatePlan(plan FeaturePlan) error {
 			}
 		}
 
+		errs = append(errs, validateAtomPromptPathScope(prefix, atom)...)
+		errs = append(errs, validateAtomPromptVerifiedCalls(prefix, atom)...)
+
 		for _, ref := range atom.TestFirst.ObligationRefs {
 			ref = strings.TrimSpace(ref)
 			if ref == "" {
@@ -627,7 +631,16 @@ func ValidatePlanStandaloneWorkspaceContext(plan FeaturePlan, context Standalone
 			path := plancontract.NormalizeScopePath(scopedPath)
 			if path == "" {
 				errs = append(errs, fmt.Errorf("atom %d test artifact path %q is not a valid repo-relative workspace path; use ask_planner_question for localization repair", i, scopedPath))
+				continue
 			}
+
+			if err := validateStandaloneTestArtifactReadiness(root, atom, path); err != nil {
+				errs = append(errs, fmt.Errorf("atom %d test artifact path %q %w", i, path, err))
+			}
+		}
+
+		if err := validateStandaloneVerificationCommands(root, atom); err != nil {
+			errs = append(errs, fmt.Errorf("atom %d %w", i, err))
 		}
 	}
 
@@ -644,6 +657,317 @@ func standaloneAtomWorkspaceScopePaths(atom FeatureAtomPlan) []string {
 
 func standaloneAtomTestArtifactPaths(atom FeatureAtomPlan) []string {
 	return append(append([]string(nil), atom.TestFirst.TestArtifactPaths...), atom.PlannedTDDSnapshot.TestArtifactPaths...)
+}
+
+var featurePlannerRepoPathPattern = regexp.MustCompile(`(?:^|[\s"'` + "`" + `([])((?:\.?/)?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+)(?::\d+)?`)
+
+func validateAtomPromptPathScope(prefix string, atom FeatureAtomPlan) []error {
+	prompt := strings.TrimSpace(atom.Prompt)
+	if prompt == "" {
+		return nil
+	}
+
+	declared := normalizedStringSet(append(append(append(append([]string(nil), atom.RequiredEditPaths...), atom.AllowedEditPaths...), atom.TestFirst.TestArtifactPaths...), atom.PlannedTDDSnapshot.TestArtifactPaths...))
+	for _, path := range atom.EvidencePaths {
+		if normalized := plancontract.NormalizeScopePath(path); normalized != "" {
+			declared[normalized] = true
+		}
+	}
+
+	var errs []error
+	for _, path := range repoPathsMentionedInText(prompt) {
+		if declared[path] || promptPathCanRemainContextOnly(path) {
+			continue
+		}
+		errs = append(errs, fmt.Errorf("%s prompt mentions repo path %q outside required_edit_paths, allowed_edit_paths, test artifact paths, or evidence_paths; declare it as scope/evidence or ask_planner_question for scope repair", prefix, path))
+	}
+
+	return errs
+}
+
+func repoPathsMentionedInText(text string) []string {
+	var paths []string
+	seen := map[string]bool{}
+	for _, match := range featurePlannerRepoPathPattern.FindAllStringSubmatch(text, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		path := plancontract.NormalizeScopePath(strings.Trim(match[1], ".,;:)>]}'\"`"))
+		if path == "" || !strings.Contains(path, "/") || seen[path] {
+			continue
+		}
+		seen[path] = true
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func promptPathCanRemainContextOnly(path string) bool {
+	if path == "source/test" {
+		return true
+	}
+
+	return strings.HasPrefix(path, "docs/") ||
+		strings.HasPrefix(path, ".planning/") ||
+		strings.HasPrefix(path, ".claude/") ||
+		strings.HasPrefix(path, ".codex/")
+}
+
+var featurePlannerCallPattern = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_:.\->]*)\s*\(([^)]{1,160})\)`)
+
+func validateAtomPromptVerifiedCalls(prefix string, atom FeatureAtomPlan) []error {
+	prompt := strings.TrimSpace(atom.Prompt)
+	if prompt == "" || promptCarriesVerifiedSignatureEvidence(prompt) {
+		return nil
+	}
+
+	var errs []error
+	seen := map[string]bool{}
+	for _, match := range featurePlannerCallPattern.FindAllStringSubmatch(prompt, -1) {
+		if len(match) < 3 {
+			continue
+		}
+		name := strings.TrimSpace(match[1])
+		args := strings.TrimSpace(match[2])
+		if !plannerCallNeedsSignatureEvidence(name, args) {
+			continue
+		}
+		call := name + "(" + args + ")"
+		if seen[call] {
+			continue
+		}
+		seen[call] = true
+		errs = append(errs, fmt.Errorf("%s prompt includes concrete helper call %q without source-verified signature evidence; require exact signature/source verification or ask_planner_question before dispatch", prefix, call))
+	}
+
+	return errs
+}
+
+func promptCarriesVerifiedSignatureEvidence(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	for _, marker := range []string{"verified signature", "source-verified signature", "exact signature", "signature verified", "source evidence:", "current source evidence:"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func plannerCallNeedsSignatureEvidence(name string, args string) bool {
+	name = strings.TrimSpace(name)
+	args = strings.TrimSpace(args)
+	if name == "" || args == "" {
+		return false
+	}
+	lowerName := strings.ToLower(name)
+	for _, keyword := range []string{"if", "for", "while", "switch", "return", "sizeof", "static_cast", "strings.contains"} {
+		if lowerName == keyword || strings.HasPrefix(lowerName, keyword+"<") {
+			return false
+		}
+	}
+	lowerArgs := strings.ToLower(args)
+	if strings.Contains(lowerArgs, "...") || strings.Contains(lowerArgs, "placeholder") || strings.Contains(lowerArgs, "existing") {
+		return false
+	}
+	return strings.Contains(args, ",") ||
+		strings.Contains(args, "_") ||
+		strings.Contains(args, ".") ||
+		strings.Contains(args, "->") ||
+		strings.Contains(args, "::") ||
+		len(strings.Fields(args)) == 1
+}
+
+func validateStandaloneVerificationCommands(root string, atom FeatureAtomPlan) error {
+	for _, command := range nonEmptyFeaturePlannerStrings(append(append([]string(nil), atom.TestFirst.Commands...), atom.PlannedTDDSnapshot.TestCommands...)) {
+		if err := validateWorkspaceCommand(root, command); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateWorkspaceCommand(root string, command string) error {
+	command = strings.TrimSpace(command)
+	if command == "" || root == "" {
+		return nil
+	}
+
+	currentDir := ""
+	for _, segment := range commandSegments(command) {
+		if nextDir, ok := commandSegmentCD(segment); ok {
+			currentDir = plancontract.NormalizeScopePath(filepath.Join(currentDir, nextDir))
+			continue
+		}
+
+		first := commandFirstToken(segment)
+		switch first {
+		case "cmake", "ctest":
+			if !workspaceHasAny(root, currentDir, "CMakeLists.txt") {
+				return fmt.Errorf("test_first command %q has no CMake project evidence in workspace; use ask_planner_question for the verified project command", command)
+			}
+		case "make", "gmake":
+			if !workspaceHasAny(root, currentDir, "Makefile", "makefile", "GNUmakefile") {
+				return fmt.Errorf("test_first command %q has no Makefile evidence in workspace; use ask_planner_question for the verified project command", command)
+			}
+		case "go":
+			if !workspaceHasAny(root, currentDir, "go.mod", "go.work") {
+				return fmt.Errorf("test_first command %q has no Go module/workspace evidence in workspace; use ask_planner_question for the verified project command", command)
+			}
+		case "npm", "yarn", "pnpm":
+			if !workspaceHasAny(root, currentDir, "package.json") {
+				return fmt.Errorf("test_first command %q has no package.json evidence in workspace; use ask_planner_question for the verified project command", command)
+			}
+		case "pytest":
+			if !workspaceHasAny(root, currentDir, "pyproject.toml", "pytest.ini", "tox.ini", "setup.cfg", "setup.py") {
+				return fmt.Errorf("test_first command %q has no pytest project evidence in workspace; use ask_planner_question for the verified project command", command)
+			}
+		case "python", "python3":
+			if script := commandPythonScript(segment); script != "" && !pathExists(repoRelativePath(root, filepath.Join(currentDir, script))) {
+				return fmt.Errorf("test_first command %q references missing script %q; use ask_planner_question for the verified project command", command, script)
+			}
+		case "sh", "bash", "./":
+			if script := commandScriptPath(segment); script != "" && !pathExists(repoRelativePath(root, filepath.Join(currentDir, script))) {
+				return fmt.Errorf("test_first command %q references missing script %q; use ask_planner_question for the verified project command", command, script)
+			}
+		}
+	}
+
+	return nil
+}
+
+func commandSegments(command string) []string {
+	splitter := strings.NewReplacer("&&", "\n", ";", "\n")
+	raw := strings.Split(splitter.Replace(command), "\n")
+	out := make([]string, 0, len(raw))
+	for _, segment := range raw {
+		if segment = strings.TrimSpace(segment); segment != "" {
+			out = append(out, segment)
+		}
+	}
+	return out
+}
+
+func commandSegmentCD(segment string) (string, bool) {
+	fields := strings.Fields(segment)
+	if len(fields) != 2 || fields[0] != "cd" {
+		return "", false
+	}
+	dir := strings.Trim(fields[1], "'\"")
+	if dir == "" || dir == "." {
+		return "", true
+	}
+	return dir, true
+}
+
+func commandFirstToken(command string) string {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return ""
+	}
+	token := strings.TrimSpace(fields[0])
+	if strings.HasPrefix(token, "./") {
+		return "./"
+	}
+	return strings.ToLower(token)
+}
+
+func commandPythonScript(command string) string {
+	fields := strings.Fields(command)
+	if len(fields) < 2 {
+		return ""
+	}
+	script := strings.Trim(fields[1], "'\"")
+	if strings.HasSuffix(script, ".py") {
+		return plancontract.NormalizeScopePath(script)
+	}
+	return ""
+}
+
+func commandScriptPath(command string) string {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return ""
+	}
+	candidate := strings.Trim(fields[0], "'\"")
+	if candidate == "sh" || candidate == "bash" {
+		if len(fields) < 2 {
+			return ""
+		}
+		candidate = strings.Trim(fields[1], "'\"")
+	}
+	if strings.HasPrefix(candidate, "./") {
+		return plancontract.NormalizeScopePath(strings.TrimPrefix(candidate, "./"))
+	}
+	return ""
+}
+
+func workspaceHasAny(root string, dir string, names ...string) bool {
+	for _, name := range names {
+		if pathExists(filepath.Join(root, dir, name)) {
+			return true
+		}
+	}
+	return false
+}
+
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func validateStandaloneTestArtifactReadiness(root string, atom FeatureAtomPlan, path string) error {
+	if !atomClaimsRedConfirmed(atom) || !plancontract.PathLooksLikeTest(path) {
+		return nil
+	}
+
+	body, err := os.ReadFile(repoRelativePath(root, path))
+	if err != nil {
+		return nil
+	}
+
+	if testArtifactLooksSkippedOrCommentOnly(string(body)) {
+		return errors.New("is skipped, assertion-free, or comment-only but is claimed as red-confirmed; add executable assertions or ask_planner_question for a real test body")
+	}
+	return nil
+}
+
+func atomClaimsRedConfirmed(atom FeatureAtomPlan) bool {
+	if util.EqualTrimFold(atom.TestFirst.ExpectedPreExecutionResult, "red-confirmed") {
+		return true
+	}
+	for _, value := range atom.PlannedTDDSnapshot.ExpectedPreExecutionResults {
+		if util.EqualTrimFold(value, "red-confirmed") {
+			return true
+		}
+	}
+	return false
+}
+
+func testArtifactLooksSkippedOrCommentOnly(text string) bool {
+	lower := strings.ToLower(text)
+	hasSkip := strings.Contains(lower, "skip") || strings.Contains(lower, "pending") || strings.Contains(lower, "todo")
+	hasAssertion := strings.Contains(text, "CHECK(") ||
+		strings.Contains(text, "CHECK_") ||
+		strings.Contains(text, "REQUIRE(") ||
+		strings.Contains(text, "REQUIRE_") ||
+		strings.Contains(text, "ASSERT_") ||
+		strings.Contains(text, "EXPECT_") ||
+		strings.Contains(text, "t.Fatal") ||
+		strings.Contains(text, "t.Error") ||
+		strings.Contains(text, "assert ") ||
+		strings.Contains(text, "assert(")
+
+	codeLines := 0
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") {
+			continue
+		}
+		codeLines++
+	}
+
+	return !hasAssertion || (hasSkip && codeLines <= 12)
 }
 
 func demotedRequiredImplementationPaths(plan FeaturePlan, atom FeatureAtomPlan) []string {
@@ -1548,6 +1872,7 @@ func validateProductTDDReadiness(atomIndex int, atom FeatureAtomPlan, productTDD
 	var errs []error
 
 	refs := normalizedStringList(append(atom.TDDObligations, atom.TestFirst.ObligationRefs...))
+	allowedCommands := map[string]bool{}
 
 	for _, ref := range refs {
 		obligation, ok := productTDD[ref]
@@ -1557,6 +1882,8 @@ func validateProductTDDReadiness(atomIndex int, atom FeatureAtomPlan, productTDD
 
 		if !looksExecutableCommand(obligation.Command) {
 			errs = append(errs, fmt.Errorf("atom %d product TDD obligation %q is required before implementation but lacks an executable command", atomIndex, ref))
+		} else {
+			allowedCommands[strings.TrimSpace(obligation.Command)] = true
 		}
 
 		if len(atom.TestFirst.TestArtifactPaths) == 0 {
@@ -1567,6 +1894,11 @@ func validateProductTDDReadiness(atomIndex int, atom FeatureAtomPlan, productTDD
 	for _, command := range atom.TestFirst.Commands {
 		if !looksExecutableCommand(command) {
 			errs = append(errs, fmt.Errorf("atom %d test_first command %q is not an executable command artifact", atomIndex, command))
+			continue
+		}
+
+		if len(allowedCommands) > 0 && !allowedCommands[strings.TrimSpace(command)] {
+			errs = append(errs, fmt.Errorf("atom %d test_first command %q is not one of the source/product TDD commands authorized for obligation refs %s", atomIndex, command, strings.Join(refs, ", ")))
 		}
 	}
 

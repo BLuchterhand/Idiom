@@ -228,8 +228,9 @@ func TestFeaturePlannerMainDispatchesThroughAdapter(t *testing.T) {
 func TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute(t *testing.T) {
 	root := t.TempDir()
 	configPath := writeMainConfigRoot(t, root)
+	writeFeaturePlannerFixtureFile(t, filepath.Join(root, "go.mod"), "module idiom.test\n")
 	writeFeaturePlannerFixtureFile(t, filepath.Join(root, "docs", "feature-planner-plan-execute.txt"), "existing feature planner dispatch doc\n")
-	writeFeaturePlannerFixtureFile(t, filepath.Join(root, "cmd", "idiom", "feature_planner_test.go"), "package idiom\n")
+	writeFeaturePlannerFixtureFile(t, filepath.Join(root, "cmd", "idiom", "feature_planner_test.go"), "package idiom\n\nimport \"testing\"\n\nfunc TestFixture(t *testing.T) {\n\tif 1 != 1 {\n\t\tt.Fatal(\"unreachable\")\n\t}\n}\n")
 
 	originalModelTurn := runFeaturePlannerModelTurn
 	originalPlanExecute := runFeaturePlannerPlanExecute
