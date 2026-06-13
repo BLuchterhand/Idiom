@@ -413,6 +413,7 @@ func TestDefaultFeaturePlannerPlanExecutePassesProductWriteEnvelope(t *testing.T
 	req := featurePlannerRequest{
 		ConfigPath:                   "config.json",
 		SessionID:                    "feature-session",
+		Config:                       config.Config{LlamaServer: config.LlamaServer{Model: "deepseek-v4-flash"}},
 		ProductWriteEnvelope:         []string{"native/src/core/colony_sim.h", "native/tests/generated/**"},
 		ProductWriteEnvelopeExplicit: true,
 		Deps: Dependencies{
@@ -441,6 +442,32 @@ func TestDefaultFeaturePlannerPlanExecutePassesProductWriteEnvelope(t *testing.T
 
 	if !featurePlannerArgsContainFlag(gotArgs, "-write-allowed-paths-explicit") {
 		t.Fatalf("product write envelope must be marked explicit: %#v", gotArgs)
+	}
+}
+
+func TestDefaultFeaturePlannerPlanExecuteForwardsResolvedModelOverride(t *testing.T) {
+	var gotArgs []string
+
+	req := featurePlannerRequest{
+		ConfigPath: "config.json",
+		SessionID:  "feature-session",
+		Config:     config.Config{LlamaServer: config.LlamaServer{Model: "deepseek-v4-flash"}},
+		Deps: Dependencies{
+			RunPlanExecute: func(args []string, stdout io.Writer, _ io.Writer) int {
+				gotArgs = append([]string(nil), args...)
+				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete"}` + "\n"))
+
+				return 0
+			},
+		},
+	}
+
+	if _, err := defaultFeaturePlannerPlanExecute(context.Background(), req, "implement atom", io.Discard); err != nil {
+		t.Fatalf("defaultFeaturePlannerPlanExecute returned error: %v", err)
+	}
+
+	if !featurePlannerArgsContainPair(gotArgs, "-model", "deepseek-v4-flash") {
+		t.Fatalf("resolved feature-planner model must be forwarded to nested plan-execute: %#v", gotArgs)
 	}
 }
 

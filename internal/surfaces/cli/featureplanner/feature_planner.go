@@ -407,6 +407,9 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 		"-prompt-file", promptPath,
 		"-json",
 	}
+	if model := strings.TrimSpace(req.Config.LlamaServer.Model); model != "" {
+		args = append(args, "-model", model)
+	}
 	if sessionID := featureplanner.PlanExecuteSessionIDFromImplementorPrompt(prompt); sessionID != "" {
 		args = append(args, "-session", sessionID)
 	}
