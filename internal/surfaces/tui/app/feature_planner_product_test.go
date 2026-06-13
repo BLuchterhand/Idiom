@@ -91,6 +91,7 @@ func TestFeaturePlannerTUIDirectPlanValidatesBeforeProductNormalization(t *testi
 
 func TestFeaturePlannerTUIDirectAnswerResumesOpenQuestionSession(t *testing.T) {
 	projectRoot := t.TempDir()
+	writeFile(t, projectRoot, "go.mod", "module example.com/tui\n")
 	plan := featurePlannerCommandStandaloneCollapsePlan()
 	plan.Atoms[0].SDDRefs = nil
 
