@@ -1130,6 +1130,94 @@ func TestRunOpensLocalizationQuestionForPreparedAtomSelectionWithInventedPaths(t
 	}
 }
 
+func TestRunDoesNotTreatOrdinaryCandidateFeatureAsLocalizationRepair(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	plan.Summary = "Add candidate scoring"
+	plan.TopLevelScope.Objective = "Add candidate scoring"
+	plan.Atoms[0].Title = "Add candidate scoring"
+	plan.Atoms[0].RequiredEditPaths = []string{"src/recruiting/candidate_scoring.py"}
+	plan.Atoms[0].AllowedEditPaths = nil
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"tests/test_candidate_scoring.py"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"tests/test_candidate_scoring.py"}
+
+	state := NewState("session", "add candidate scoring", "", 3, time.Unix(1, 0).UTC())
+
+	result, err := Run(state, RunOptions{
+		Prompt:                "Add candidate scoring to the recruiting workflow.",
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
+			t.Fatal("standalone workspace validation must block before dispatch")
+		}
+
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningRepair {
+		t.Fatalf("state.Status = %q, want planning-repair; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if len(result.Events) != 1 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" {
+		t.Fatalf("expected standalone context blocked only, got %+v", result.Events)
+	}
+	if len(result.State.OpenQuestions) != 0 {
+		t.Fatalf("ordinary candidate feature must not open localization question: %+v", result.State.OpenQuestions)
+	}
+}
+
+func TestRunPrefersExplicitNewFileAuthorizationOverLocalizationQuestion(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	plan.Atoms[0].RequiredEditPaths = []string{
+		"native/src/core/colony_sim_tick.cpp",
+		"native/src/simulation/world/collapse_event.cpp",
+		"native/tests/test_collapse_event.cpp",
+	}
+	plan.Atoms[0].AllowedEditPaths = nil
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_collapse_event.cpp"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_collapse_event.cpp"}
+
+	mkdirAndWriteFile(t, filepath.Join(root, "native/src/core/colony_sim_tick.cpp"), "// tick\n")
+
+	state := NewState("session", "pick a prepared atom", "", 3, time.Unix(1, 0).UTC())
+	prompt := "Pick one prepared next-atom candidate. If any required new source or test file is missing, ask me for explicit product-owner authorization with the exact affected paths before dispatching implementation."
+
+	result, err := Run(state, RunOptions{
+		Prompt:                prompt,
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
+			t.Fatal("standalone workspace validation must block before dispatch")
+		}
+
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningQuestion {
+		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if len(result.State.OpenQuestions) != 1 {
+		t.Fatalf("expected one open question, got %+v", result.State.OpenQuestions)
+	}
+	question := result.State.OpenQuestions[0]
+	if question.AuthorityRequired != "operator_approval" || !containsString(question.AffectedFields, "new_file_authorization") {
+		t.Fatalf("explicit new-file prompt should keep new-file authorization precedence: %+v", question)
+	}
+	if containsString(question.AffectedFields, "source_localization") {
+		t.Fatalf("explicit new-file prompt should not become localization question: %+v", question)
+	}
+}
+
 func TestRunOpensQuestionForExplicitMissingNewFileAuthorizationPrompt(t *testing.T) {
 	root := t.TempDir()
 	plan := validPlan()
