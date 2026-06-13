@@ -25,7 +25,7 @@ func SaveBundle(dir string, bundle Bundle) error {
 		return err
 	}
 
-	if err := ValidateDurablePlan(bundle.Plan); err != nil {
+	if err := ValidateDurablePlanWithContract(bundle.Plan, CompilePlanAuthorityContract(bundle.Plan, bundle.State.AuthorityDeltas)); err != nil {
 		return err
 	}
 
@@ -69,7 +69,7 @@ func LoadBundle(dir string) (Bundle, error) {
 		return Bundle{}, err
 	}
 
-	if err := ValidateDurablePlan(bundle.Plan); err != nil {
+	if err := ValidateDurablePlanWithContract(bundle.Plan, CompilePlanAuthorityContract(bundle.Plan, bundle.State.AuthorityDeltas)); err != nil {
 		return Bundle{}, err
 	}
 

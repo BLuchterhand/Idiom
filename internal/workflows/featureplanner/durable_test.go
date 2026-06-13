@@ -187,6 +187,38 @@ func TestReplayPreservesNewFileAuthorityForContractRecompile(t *testing.T) {
 	}
 }
 
+func TestSaveLoadBundleUsesStateAuthorityForAcceptedSourceSignatures(t *testing.T) {
+	plan := durablePlan()
+	plan.Atoms[0].Prompt = "Use FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) before posting fallback water haul."
+
+	state := durableState()
+	state.Plan = plan
+	state.AuthorityDeltas = []PlanAuthorityDelta{{
+		QuestionID:     "q-001",
+		AuthorityKind:  "accepted_source",
+		EvidenceRefs:   []string{"native/src/simulation/economy/fluid_network_system.h"},
+		AffectedPaths:  []string{"native/src/simulation/economy/fluid_network_system.h"},
+		AffectedFields: []string{"source_localization"},
+		Expected:       "helper signature needs accepted source evidence",
+		Actual:         "source-verified signature in native/src/simulation/economy/fluid_network_system.h is EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const.",
+		Revision:       1,
+		CreatedAt:      "2026-06-13T12:36:17Z",
+	}}
+
+	dir := t.TempDir()
+	if err := SaveBundle(dir, Bundle{State: state, Plan: plan}); err != nil {
+		t.Fatalf("SaveBundle should use state authority deltas for durable plan validation: %v", err)
+	}
+
+	loaded, err := LoadBundle(dir)
+	if err != nil {
+		t.Fatalf("LoadBundle should use state authority deltas for durable plan validation: %v", err)
+	}
+	if len(loaded.State.AuthorityDeltas) != 1 {
+		t.Fatalf("authority deltas were not preserved: %+v", loaded.State.AuthorityDeltas)
+	}
+}
+
 func TestReplayAppliesDurableDispatchEvent(t *testing.T) {
 	state := durableState()
 

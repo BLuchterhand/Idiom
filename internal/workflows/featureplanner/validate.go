@@ -212,6 +212,10 @@ func plannerQuestionFromAliasFields(raw string, question PlannerQuestion) Planne
 }
 
 func ValidatePlan(plan FeaturePlan) error {
+	return validatePlan(plan, plancontract.PlanExecutionContract{})
+}
+
+func validatePlan(plan FeaturePlan, contract plancontract.PlanExecutionContract) error {
 	var errs []error
 
 	require(&errs, plan.Summary, "feature plan missing summary")
@@ -321,6 +325,7 @@ func ValidatePlan(plan FeaturePlan) error {
 		}
 
 		grounding := newAtomPromptGrounding(atom, nil)
+		grounding.addContractSourceAuthority(contract)
 		errs = append(errs, validateAtomPromptPathScope(prefix, atom, grounding)...)
 		errs = append(errs, validateAtomPromptVerifiedCalls(prefix, atom, grounding)...)
 
@@ -450,13 +455,21 @@ func featurePlanHash(plan FeaturePlan) string {
 }
 
 func ValidateDurablePlan(plan FeaturePlan) error {
+	return validateDurablePlan(plan, plancontract.PlanExecutionContract{})
+}
+
+func ValidateDurablePlanWithContract(plan FeaturePlan, contract plancontract.PlanExecutionContract) error {
+	return validateDurablePlan(plan, contract)
+}
+
+func validateDurablePlan(plan FeaturePlan, contract plancontract.PlanExecutionContract) error {
 	var errs []error
 
 	if plan.SchemaVersion != "" && plan.SchemaVersion != FeaturePlanSchemaVersion && plan.SchemaVersion != "idiom.feature_plan.v1" {
 		errs = append(errs, fmt.Errorf("unsupported feature plan schema %q", plan.SchemaVersion))
 	}
 
-	if err := ValidatePlan(plan); err != nil {
+	if err := validatePlan(plan, contract); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -2616,9 +2629,9 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 		return []Event{{Type: EventPlannerSourceSatisfied, SessionID: state.SessionID, FeatureTo: FeatureStateSourceSatisfied, Message: closeout.Summary, Fields: fields}}
 	case ToolSubmitFeaturePlan:
 		hydrateDurablePlanDefaults(&parsed.Plan, state, now)
-		StampPlanAuthorityContract(&parsed.Plan, state.AuthorityDeltas)
+		contract := StampPlanAuthorityContract(&parsed.Plan, state.AuthorityDeltas)
 
-		if err := ValidateDurablePlan(parsed.Plan); err != nil {
+		if err := ValidateDurablePlanWithContract(parsed.Plan, contract); err != nil {
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())

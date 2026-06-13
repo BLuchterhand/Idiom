@@ -2215,6 +2215,32 @@ func TestApplyPlannerOutputInvalidDurablePlanDoesNotReplaceCommittedPlan(t *test
 	}
 }
 
+func TestApplyPlannerOutputUsesAcceptedSourceAuthorityForDurablePromptCalls(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	state.AuthorityDeltas = []PlanAuthorityDelta{{
+		QuestionID:     "q-001",
+		AuthorityKind:  "accepted_source",
+		EvidenceRefs:   []string{"native/src/simulation/economy/fluid_network_system.h"},
+		AffectedPaths:  []string{"native/src/simulation/economy/fluid_network_system.h"},
+		AffectedFields: []string{"source_localization"},
+		Expected:       "helper signature needs accepted source evidence",
+		Actual:         "source-verified signature in native/src/simulation/economy/fluid_network_system.h is EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const.",
+		Revision:       1,
+		CreatedAt:      time.Unix(2, 0).UTC().Format(time.RFC3339Nano),
+	}}
+
+	plan := validPlan()
+	plan.Atoms[0].Prompt = "Use FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) before posting fallback water haul."
+
+	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, time.Unix(3, 0).UTC())
+	if len(events) == 1 && events[0].Type == "idiom.feature_planner.tdd_pre_execution_blocked" {
+		t.Fatalf("durable validation ignored accepted source authority: %+v", events[0])
+	}
+	if state.Status != FeatureStateDispatching {
+		t.Fatalf("status = %q, want dispatching; events=%+v blockers=%+v", state.Status, events, state.Blockers)
+	}
+}
+
 func TestApplyPlannerOutputRejectsDemotedImplementationScopeBeforeDispatch(t *testing.T) {
 	state := NewState("session", "build collapse event helper", "", 1, time.Unix(1, 0).UTC())
 	plan := validPlan()
