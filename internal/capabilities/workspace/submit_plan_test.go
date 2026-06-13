@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -393,6 +394,74 @@ func TestSubmitPlanAllowsSourceLineRangeReplacementWithoutGrowth(t *testing.T) {
 	})
 	if strings.TrimSpace(result.Error) != "" {
 		t.Fatalf("ordinary same-size source line-range replacement should remain valid: %s", result.Error)
+	}
+}
+
+func TestSubmitPlanRejectsLineRangeWholeExistingSourceRewrite(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	path := "native/src/simulation/world/collapse_event.h"
+	writeSubmitPlanFixture(t, root, path, strings.Join([]string{
+		"#pragma once",
+		"",
+		"namespace colony {",
+		"struct CollapseEvent {",
+		"    int trigger = 0;",
+		"};",
+		"}",
+		"",
+	}, "\n"))
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Rewrite collapse event header.",
+		Edits: []PlanEdit{{
+			Path:      path,
+			StartLine: 1,
+			EndLine:   7,
+			Content:   "#ifndef NEW_HEADER\n#define NEW_HEADER\nclass CollapseEvent {};\n#endif\n",
+			Purpose:   "replace existing source header",
+		}},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatal("line-range rewrite of an entire existing source file should be rejected")
+	}
+
+	for _, want := range []string{"line-range replacement", "entire existing source file", "bounded old_text/new_text"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected submit_plan rejection to mention %q, got: %s", want, result.Error)
+		}
+	}
+}
+
+func TestSubmitPlanRejectsLargeSourceLineRangeCollapse(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	lines := make([]string, 0, 90)
+	lines = append(lines, "#include \"core/colony_sim.h\"")
+	for i := 0; i < 80; i++ {
+		lines = append(lines, fmt.Sprintf("static int helper_%02d() { return %d; }", i, i))
+	}
+	lines = append(lines, "int keep() { return helper_00(); }", "")
+	writeSubmitPlanFixture(t, root, "native/src/core/colony_sim_tick.cpp", strings.Join(lines, "\n"))
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Add collapse helper integration.",
+		Edits: []PlanEdit{{
+			Path:      "native/src/core/colony_sim_tick.cpp",
+			StartLine: 1,
+			EndLine:   80,
+			Content:   "#include \"core/colony_sim_tick.h\"\n#include \"simulation/world/collapse_event.h\"\n\nstatic CollapseEvent g_collapse_event;\n",
+			Purpose:   "add collapse event include and static helper",
+		}},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatal("large source line-range collapse should be rejected")
+	}
+
+	for _, want := range []string{"would collapse", "non-empty source lines", "smaller bounded anchors"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected submit_plan rejection to mention %q, got: %s", want, result.Error)
+		}
 	}
 }
 

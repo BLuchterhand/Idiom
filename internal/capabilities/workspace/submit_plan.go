@@ -1278,6 +1278,10 @@ func validateSourceLineRangePlanEdit(path string, current string, edit PlanEdit)
 	endOffset := spans[edit.EndLine-1].end
 	selected := current[startOffset:endOffset]
 
+	if err := RejectExistingSourceDestructiveLineRangeRewrite(path, current, edit); err != nil {
+		return err
+	}
+
 	if lineRangeReplacementDuplicatesPrecedingContext(current, spans, edit.StartLine, edit.Content) {
 		return fmt.Errorf("line-range replacement for %s lines %d-%d appears to duplicate context immediately before the selected range; use old_text/new_text with a unique current-source anchor for insertions", filepath.ToSlash(path), edit.StartLine, edit.EndLine)
 	}
@@ -1298,6 +1302,38 @@ func validateSourceLineRangePlanEdit(path string, current string, edit PlanEdit)
 	}
 
 	return fmt.Errorf("source line-range edit for %s lines %d-%d expands the selected range but does not preserve any selected anchor line; for insertions, use old_text/new_text or replace the anchor line(s) with unchanged anchor line(s) plus new content", filepath.ToSlash(path), edit.StartLine, edit.EndLine)
+}
+
+// RejectExistingSourceDestructiveLineRangeRewrite rejects line-range edits that
+// smuggle a whole-file or broad destructive rewrite through an anchored range.
+// Small replacements are valid; broad source changes need smaller anchors or an
+// explicit blocker because they can silently erase unrelated code.
+func RejectExistingSourceDestructiveLineRangeRewrite(path string, current string, edit PlanEdit) error {
+	if !isSourceLikePath(path) || strings.TrimSpace(current) == "" ||
+		strings.TrimSpace(edit.Content) == "" ||
+		edit.StartLine <= 0 || edit.EndLine < edit.StartLine {
+
+		return nil
+	}
+
+	spans := lineSpans(current)
+	if len(spans) == 0 || edit.StartLine > len(spans) || edit.EndLine > len(spans) {
+		return nil
+	}
+
+	selectedLineCount := edit.EndLine - edit.StartLine + 1
+	if selectedLineCount >= len(spans) {
+		return fmt.Errorf("line-range replacement for %s lines %d-%d would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors, or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path), edit.StartLine, edit.EndLine)
+	}
+
+	selectedNonEmpty := len(util.NonEmptyTrimmedLines(current[spans[edit.StartLine-1].start:spans[edit.EndLine-1].end]))
+	replacementNonEmpty := len(util.NonEmptyTrimmedLines(edit.Content))
+
+	if selectedLineCount >= 40 && selectedNonEmpty >= 20 && replacementNonEmpty*2 < selectedNonEmpty {
+		return fmt.Errorf("line-range replacement for %s lines %d-%d would collapse %d non-empty source lines to %d; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path), edit.StartLine, edit.EndLine, selectedNonEmpty, replacementNonEmpty)
+	}
+
+	return nil
 }
 
 func sourceEditContentDuplicatesExistingBlock(current string, edit PlanEdit) bool {

@@ -1855,6 +1855,65 @@ func TestRunExecutorPhaseRejectsExistingSourceWholeFileRewriteBeforeDispatch(t *
 	}
 }
 
+func TestRunExecutorPhaseRejectsLargeExistingSourceLineRangeCollapseBeforeDispatch(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := "native/src/core/colony_sim_tick.cpp"
+	abs := filepath.Join(root, filepath.FromSlash(sourcePath))
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+
+	lines := []string{"#include \"core/colony_sim.h\""}
+	for i := 0; i < 80; i++ {
+		lines = append(lines, fmt.Sprintf("static int helper_%02d() { return %d; }", i, i))
+	}
+	lines = append(lines, "int keep() { return helper_00(); }", "")
+	original := strings.Join(lines, "\n")
+	if err := os.WriteFile(abs, []byte(original), 0o644); err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{{
+			Path:      sourcePath,
+			StartLine: 1,
+			EndLine:   80,
+			Content:   "#include \"core/colony_sim_tick.h\"\n#include \"simulation/world/collapse_event.h\"\n\nstatic CollapseEvent g_collapse_event;\n",
+			Purpose:   "collapse source prefix to a static helper",
+		}},
+	}
+
+	var stdout bytes.Buffer
+	_, err := RunExecutorPhaseScopedWithVerificationPlanAndWriteScope(
+		cfg,
+		plan,
+		[]string{sourcePath},
+		nil,
+		[]string{sourcePath},
+		true,
+		VerificationPlan{},
+		true,
+		&stdout,
+	)
+	if err == nil {
+		t.Fatal("expected large source line-range collapse preflight rejection")
+	}
+
+	if !strings.Contains(err.Error(), "would collapse") {
+		t.Fatalf("expected destructive line-range rejection, got %v stdout=%s", err, stdout.String())
+	}
+
+	if got := readFileStringForRunTest(t, abs); got != original {
+		t.Fatalf("source file must remain unchanged, got:\n%s", got)
+	}
+}
+
 func TestParseOptionsAcceptsAuthorizedNewFileFlag(t *testing.T) {
 	var stderr bytes.Buffer
 
