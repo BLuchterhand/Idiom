@@ -427,7 +427,7 @@ func (r *Runner) planThenExecuteRejectedPlanRefreshReadRedirect(req workspace.To
 	}
 
 	state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
-	if state.Mode != PlanExecutePlanningModeAnchorRefresh || !slices.Contains(state.RefreshPaths, target) {
+	if state.Mode != PlanExecutePlanningModeAnchorRefresh || len(state.RefreshPaths) == 0 {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -436,12 +436,19 @@ func (r *Runner) planThenExecuteRejectedPlanRefreshReadRedirect(req workspace.To
 		return workspace.ToolRequest{}, "", false
 	}
 
+	retargeted := false
+	if !slices.Contains(state.RefreshPaths, target) {
+		target = normalizeRunnerPath(state.RefreshPaths[0])
+		retargeted = true
+	}
+
 	line, ok := submitPlanSyntaxValidationLineForPath(rejected, target)
-	if ok && req.StartLine <= line && line <= req.EndLine && planThenExecuteAnchorRefreshRequestAllowed(req) {
+	if !retargeted && ok && req.StartLine <= line && line <= req.EndLine && planThenExecuteAnchorRefreshRequestAllowed(req) {
 		return workspace.ToolRequest{}, "", false
 	}
 
-	if !ok &&
+	if !retargeted &&
+		!ok &&
 		planThenExecuteAnchorRefreshRequestAllowed(req) &&
 		!planThenExecuteAnchorRefreshReadRangeAlreadyTried(req, target, results[rejectedAt+1:]) {
 		return workspace.ToolRequest{}, "", false

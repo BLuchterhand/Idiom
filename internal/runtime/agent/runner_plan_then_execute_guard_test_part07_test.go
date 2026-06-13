@@ -1180,6 +1180,56 @@ func TestPlanExecuteRepeatedBoundedCppReadAfterRejectionCountsAsFresh(t *testing
 	}
 }
 
+func TestPlanExecuteWrongPathAnchorRefreshRedirectsToPendingPath(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{
+			"native/src/simulation/economy/fluid_network_system.h",
+			"native/src/simulation/economy/fluid_network_system.cpp",
+			"native/src/simulation/machines/machine.cpp",
+			"native/tests/test_fluid_brewery_cascade.cpp",
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 native/src/simulation/economy/fluid_network_system.h lines 1-82 (total lines: 82)", Output: "1:#pragma once\n82:};\n"},
+		{Tool: "read_file", Summary: "Read f2 native/src/simulation/economy/fluid_network_system.cpp lines 1-230 (total lines: 230)", Output: "1:#include <x>\n230:}\n"},
+		{Tool: "read_file", Summary: "Read f3 native/src/simulation/machines/machine.cpp lines 1-300 (total lines: 600)", Output: "1:#include <x>\n300:}\n"},
+		{Tool: "read_file", Summary: "Read f4 native/tests/test_fluid_brewery_cascade.cpp lines 1-110 (total lines: 110)", Output: "1:#include <x>\n110:}\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "invalid edit anchor(s): `native/src/simulation/economy/fluid_network_system.h: old_text not found in current source`, `native/src/simulation/economy/fluid_network_system.cpp: old_text not found in current source`, `native/src/simulation/machines/machine.cpp: old_text not found in current source`, `native/tests/test_fluid_brewery_cascade.cpp: old_text not found in current source`.",
+		},
+		{Tool: "read_file", Summary: "Read f5 native/src/simulation/economy/fluid_network_system.h lines 1-82 (total lines: 82)", Output: "1:#pragma once\n82:};\n"},
+	}
+	runner := &Runner{RuntimeBrief: brief}
+
+	redirected, _, ok := runner.planThenExecuteRejectedPlanRefreshReadRedirect(
+		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "native/src/simulation/economy/fluid_network_system.h", StartLine: 1, EndLine: 120},
+		results,
+	)
+	if !ok {
+		t.Fatal("wrong-path anchor refresh should redirect instead of consuming a rejected tool turn")
+	}
+	if redirected.Path != "native/src/simulation/economy/fluid_network_system.cpp" || redirected.StartLine != 1 || redirected.EndLine != 230 {
+		t.Fatalf("redirect = %#v, want next pending cpp refresh from known source extent", redirected)
+	}
+
+	results = append(results, workspace.ToolResult{Tool: "read_file", Summary: "Read f6 native/src/simulation/economy/fluid_network_system.cpp lines 1-230 (total lines: 230)", Output: "1:#include <x>\n230:}\n"})
+	redirected, _, ok = runner.planThenExecuteRejectedPlanRefreshReadRedirect(
+		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "native/src/simulation/economy/fluid_network_system.cpp", StartLine: 101, EndLine: 230},
+		results,
+	)
+	if !ok {
+		t.Fatal("continuation read for a completed refresh path should redirect to next pending path")
+	}
+	if redirected.Path != "native/src/simulation/machines/machine.cpp" || redirected.StartLine != 301 || redirected.EndLine != 480 {
+		t.Fatalf("redirect = %#v, want next pending machine refresh continuation", redirected)
+	}
+}
+
 func TestPlanExecuteRepeatedNoopProofCorrectionAllowsPathBlocker(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
