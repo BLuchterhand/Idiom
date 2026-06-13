@@ -964,6 +964,9 @@ func plannerCallNeedsSignatureEvidence(name string, args string) bool {
 		return false
 	}
 	lowerName := strings.ToLower(name)
+	if plannerCallLooksLikeTDDResultProse(lowerName, args) {
+		return false
+	}
 	for _, keyword := range []string{"if", "for", "while", "switch", "return", "sizeof", "static_cast", "strings.contains"} {
 		if lowerName == keyword || strings.HasPrefix(lowerName, keyword+"<") {
 			return false
@@ -979,6 +982,22 @@ func plannerCallNeedsSignatureEvidence(name string, args string) bool {
 		strings.Contains(args, "->") ||
 		strings.Contains(args, "::") ||
 		len(strings.Fields(args)) == 1
+}
+
+func plannerCallLooksLikeTDDResultProse(lowerName string, args string) bool {
+	switch lowerName {
+	case "fail", "fails", "pass", "passes":
+	default:
+		return false
+	}
+
+	normalizedArgs := strings.TrimSpace(strings.ToLower(args))
+	switch normalizedArgs {
+	case "red", "green":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateStandaloneVerificationCommands(root string, atom FeatureAtomPlan) error {

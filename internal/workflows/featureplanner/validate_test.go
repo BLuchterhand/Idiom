@@ -791,6 +791,15 @@ func TestProductSourceFactRequiresAcceptedSourceAuthority(t *testing.T) {
 	}
 }
 
+func TestFeaturePlannerDoesNotTreatFailsRedAsHelperCall(t *testing.T) {
+	if plannerCallNeedsSignatureEvidence("fails", "red") {
+		t.Fatal("plain prose fails(red) must not require source signature evidence")
+	}
+	if !plannerCallNeedsSignatureEvidence("fail", "reason") {
+		t.Fatal("real fail(reason) helper call should still require source signature evidence")
+	}
+}
+
 func TestBuildPlannerPromptRendersSourceFactAnchors(t *testing.T) {
 	brief := validProductWorkflowBrief()
 	brief.SourceFacts = []SourceFactBrief{{
@@ -1368,6 +1377,50 @@ func TestRunOpensLocalizationQuestionForPreparedAtomSelectionWithInventedPaths(t
 	if !strings.Contains(question.RequestedDecision, "source-verified atom candidate") ||
 		!strings.Contains(question.RequestedDecision, "src/services/colony_service.py") {
 		t.Fatalf("question should request real source localization and preserve rejected paths diagnostically: %+v", question)
+	}
+}
+
+func TestStandaloneUnverifiedHelperCallOpensAcceptedSourceQuestion(t *testing.T) {
+	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels_test.go"), "package labels\n")
+
+	plan := validPlan()
+	plan.Atoms[0].Prompt = "Use accepted source localization: call find_connected_cistern_with_volume(network_id, volume_required) from internal/labels/labels.go before dispatch."
+	plan.Atoms[0].EvidencePaths = []string{"internal/labels/labels.go"}
+
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	result, err := Run(state, RunOptions{
+		Prompt:                "Build the atom from accepted source localization and source verification. If helper signatures are not source-verified, ask for accepted source facts before dispatch.",
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
+			t.Fatal("standalone source-signature validation must block before dispatch")
+		}
+
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningQuestion {
+		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if len(result.Events) != 2 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" || result.Events[1].Type != "idiom.feature_planner.planner_question_opened" {
+		t.Fatalf("expected rejected-plan then source question events, got %+v", result.Events)
+	}
+	if len(result.State.OpenQuestions) != 1 {
+		t.Fatalf("expected one open question, got %+v", result.State.OpenQuestions)
+	}
+
+	question := result.State.OpenQuestions[0]
+	if question.AuthorityRequired != "accepted_source" || !containsString(question.AffectedFields, "source_localization") {
+		t.Fatalf("signature question must request accepted source localization: %+v", question)
+	}
+	if !strings.Contains(question.RequestedDecision, "exact current helper signatures") {
+		t.Fatalf("question should request source-verified signatures: %+v", question)
 	}
 }
 

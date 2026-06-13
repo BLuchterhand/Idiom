@@ -177,6 +177,11 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 					Kind:     ToolAskPlannerQuestion,
 					Question: question,
 				}, opts.Now)...)
+			} else if question, ok := sourceSignatureVerificationQuestion(err, opts.Prompt); ok {
+				events = append(events, ApplyPlannerOutput(&state, ParsedPlannerOutput{
+					Kind:     ToolAskPlannerQuestion,
+					Question: question,
+				}, opts.Now)...)
 			}
 
 			return RunResult{
@@ -2142,6 +2147,33 @@ func missingPathLocalizationQuestion(err error, prompt string) (PlannerQuestion,
 	}, true
 }
 
+func sourceSignatureVerificationQuestion(err error, prompt string) (PlannerQuestion, bool) {
+	errText := ""
+	if err != nil {
+		errText = strings.TrimSpace(err.Error())
+	}
+	if !strings.Contains(errText, "without source-verified signature evidence") {
+		return PlannerQuestion{}, false
+	}
+
+	if !promptRequestsSourceLocalizationQuestion(prompt) {
+		return PlannerQuestion{}, false
+	}
+
+	paths := normalizeEditScopeList(append(repoPathsMentionedInText(prompt), repoPathsMentionedInText(errText)...))
+
+	return PlannerQuestion{
+		QuestionSummary:   "Provide accepted source facts for helper signatures",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "The submitted standalone feature plan encoded concrete helper calls without accepted source signature evidence.",
+		RequestedDecision: "Provide accepted source facts with exact current helper signatures and source anchors for the intended atom, or explicitly say the signatures are not source-verified and the atom must be rebased before dispatch.",
+		AuthorityRequired: "accepted_source",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     paths,
+		AffectedFields:    []string{"source_localization"},
+	}, true
+}
+
 func promptRequestsNewFileAuthorizationQuestion(prompt string) bool {
 	lower := strings.ToLower(strings.TrimSpace(prompt))
 	if lower == "" {
@@ -2171,7 +2203,11 @@ func promptRequestsSourceLocalizationQuestion(prompt string) bool {
 		"pick one",
 		"select one",
 		"source-backed",
+		"source localization",
+		"source-localization",
 		"source verification",
+		"source-verified",
+		"accepted source",
 		"verify current source",
 		"verify current",
 		"genuinely unsatisfied",
