@@ -173,7 +173,7 @@ func planThenExecuteSubmitPlanParseRecoveryPlan(stringifiedEdits bool, requiredP
 // submit-plan correction path after a rejected submit_plan.
 func planThenExecuteSubmitCorrectionRecoveryPlan(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult, refreshNote string) PlanExecuteRecoveryPlan {
 	required := nonEmptyRunnerStrings(brief.RequiredEditPaths, 12)
-	terminal := planExecuteTerminalSubmitPlanSourceSatisfiedQuestion()
+	terminal := planExecuteTerminalSubmitPlanOnly()
 	summary := "The previous `submit_plan` was rejected before it became a valid plan artifact."
 
 	if brief := lastSubmitPlanCorrectionRejectionBrief(result); brief != "" {
@@ -183,8 +183,8 @@ func planThenExecuteSubmitCorrectionRecoveryPlan(brief workerruntime.WorkerRunti
 	instructions := []string{
 		"The next visible action must be a corrected parser-readable `submit_plan` request.",
 		planThenExecuteSubmitPlanCoverageSentence(),
-		"Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not call read/search/discovery in submit-correction mode.",
 		planThenExecuteSubmitPlanCorrectionInstructionForBrief(brief, result),
+		"Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not call read/search/discovery in submit-correction mode.",
 	}
 	if refreshNote != "" {
 		instructions = append(instructions, refreshNote)

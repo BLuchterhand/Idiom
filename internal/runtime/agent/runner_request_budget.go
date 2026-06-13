@@ -8,6 +8,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/workerruntime"
 )
 
 type fingerprintTrackingState struct {
@@ -58,10 +59,20 @@ type runnerRequestBudgetState struct {
 	readCallCount                    int
 	readCallsSinceWrite              int
 	scopedReadRejections             map[string]int
+	recoveryBrief                    workerruntime.WorkerRuntimeBrief
+	recoveryResults                  []workspace.ToolResult
 }
 
 func (s runnerRequestBudgetState) postChildActive() bool {
 	return s.readOnlyChildTaskSatisfied || s.broadEvidenceDelegationSatisfied
+}
+
+func (s *runnerRequestBudgetState) setRecoveryContext(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) {
+	if s == nil {
+		return
+	}
+	s.recoveryBrief = brief
+	s.recoveryResults = append([]workspace.ToolResult(nil), results...)
 }
 
 type runnerRequestBudgetDecision struct {
@@ -528,12 +539,18 @@ func (s *runnerRequestBudgetState) terminalArtifactRejectedRetryDecision(req wor
 		Handled:      true,
 		EventRole:    "terminal_artifact_retry_recovery",
 		EventContent: fmt.Sprintf("model retried %s after terminal artifact recovery rejected it", tool),
-		Nudge:        terminalArtifactRejectedRetryNudge(tool, priorSummary),
+		Nudge:        terminalArtifactRejectedRetryNudge(tool, priorSummary, s.recoveryBrief, s.recoveryResults),
 	}
 }
 
-func terminalArtifactRejectedRetryNudge(tool string, priorSummary string) string {
+func terminalArtifactRejectedRetryNudge(tool string, priorSummary string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
 	if strings.TrimSpace(priorSummary) == "Corrected submit_plan required" {
+		if planThenExecuteSubmitCorrectionBlockerAllowed(brief, results) {
+			return fmt.Sprintf(
+				"The repeated %s request was already rejected because submit-correction mode requires a corrected terminal plan artifact. Emit the currently allowed terminal artifact (`submit_plan`) now, or answer `<<QUESTION>>:` only with the exact path-specific missing body/anchor blocker after repeated rejected submit_plan attempts. Do not answer `Decision: source-satisfied` and do not report the rejected request as a blocker.",
+				tool,
+			)
+		}
 		return fmt.Sprintf(
 			"The repeated %s request was already rejected because submit-correction mode requires a corrected terminal plan artifact. Emit the currently allowed terminal artifact (`submit_plan`) now. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not report the rejected request as a blocker.",
 			tool,

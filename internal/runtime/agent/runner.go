@@ -951,7 +951,7 @@ func (r *Runner) Run(
 						opts = forceVisibleActionChatOptions(opts)
 
 						if planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, collectedResults) {
-							prompt = planThenExecuteSubmitCorrectionHiddenOnlyVisiblePrompt(prompt)
+							prompt = planThenExecuteSubmitCorrectionHiddenOnlyVisiblePromptForState(prompt, r.RuntimeBrief, collectedResults)
 
 							r.emitEvent(RunEvent{Role: "plan_then_execute_submit_correction_visible_mode", Content: "submit-correction recovery produced hidden-only output; retrying once with hidden thinking disabled for the terminal submit_plan action"})
 						} else {
@@ -1241,6 +1241,7 @@ func (r *Runner) Run(
 		}
 
 		if !exactAnchorWriteOnlyActive {
+			requestBudget.setRecoveryContext(r.RuntimeBrief, collectedResults)
 			decision := requestBudget.earlyRejectedFingerprintDecision(req, currentFingerprint)
 			if result, prompt, ok := r.mutationRejectedRetryWriteRecovery(decision, req, collectedResults); ok {
 				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
@@ -2375,6 +2376,7 @@ func (r *Runner) Run(
 			}
 		}
 
+		requestBudget.setRecoveryContext(r.RuntimeBrief, collectedResults)
 		fingerprintDecision := requestBudget.fingerprintDecision(policy, req, currentFingerprint)
 		if !planThenExecuteLoopBudgetRecoveryUsed && fingerprintDecision.ForceAnswerReason == "fingerprint_hard_block_exhausted" {
 			if recovery, ok := r.planThenExecuteLoopBudgetRecoveryPrompt(req, collectedResults, fingerprintDecision.ForceAnswerPrompt, chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan)); ok {
@@ -3692,7 +3694,7 @@ func (r *Runner) Run(
 
 			rejectedAt := len(collectedResults) - 1
 			refreshNote := planThenExecutePostSubmitRejectionRefreshNote(r.RuntimeBrief, collectedResults, result, rejectedAt)
-			prompt := "The previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanCorrectionRejectionBrief(result) + "The next visible action must be a corrected parser-readable `submit_plan` request. " + planThenExecuteSubmitPlanCoverageSentence() + " Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not call read/search/discovery in submit-correction mode. " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, result) + " " + refreshNote
+			prompt := "The previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanCorrectionRejectionBrief(result) + planThenExecuteSubmitCorrectionOutcomeInstruction(r.RuntimeBrief, collectedResults) + " " + planThenExecuteSubmitPlanCoverageSentence() + " " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, result) + " " + refreshNote
 			eventRole := "plan_then_execute_submit_plan_required"
 
 			if planThenExecuteUnscopedEmptySubmitPlanRejected(r.RuntimeBrief, collectedResults) {
@@ -3777,7 +3779,7 @@ func (r *Runner) Run(
 
 				planThenExecuteCorrectionAfterRefreshNudged = true
 
-				prompt := "The bounded source refresh after the rejected `submit_plan` is complete. The next visible action must be a corrected parser-readable `submit_plan` request. " + planThenExecuteSubmitPlanCoverageSentence() + " Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not call read/search/discovery in submit-correction mode. " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, rejectedResult)
+				prompt := "The bounded source refresh after the rejected `submit_plan` is complete. " + planThenExecuteSubmitCorrectionOutcomeInstruction(r.RuntimeBrief, collectedResults) + " " + planThenExecuteSubmitPlanCoverageSentence() + " " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, rejectedResult)
 
 				refreshPlanThenExecuteTerminalSurface("submit_plan_after_refresh")
 

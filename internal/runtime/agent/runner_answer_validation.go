@@ -21,7 +21,10 @@ func (r *Runner) requiredPathCompletionRecoveryRejection(reply string, results [
 		anchorRefresh = anchorRefreshState.Mode == PlanExecutePlanningModeAnchorRefresh && len(anchorRefreshState.RefreshPaths) > 0
 	}
 
-	if len(missing) == 0 || (!submitCorrection && !anchorRefresh && requiredPathBlockerAnswerCovers(reply, missing)) {
+	submitCorrectionBlockerAllowed := submitCorrection && planThenExecuteSubmitCorrectionBlockerAllowed(r.RuntimeBrief, results)
+	if len(missing) == 0 ||
+		(!submitCorrection && !anchorRefresh && requiredPathBlockerAnswerCovers(reply, missing)) ||
+		(submitCorrectionBlockerAllowed && !anchorRefresh && submitCorrectionMissingBodyAnchorBlockerCovers(reply, missing)) {
 		return workspace.ToolResult{}, false
 	}
 
@@ -50,6 +53,13 @@ func (r *Runner) requiredPathCompletionRecoveryRejection(reply string, results [
 		}
 
 		if submitCorrection {
+			if submitCorrectionBlockerAllowed {
+				return workspace.ToolResult{
+					Tool:    "completion_gate",
+					Summary: "Completion gate rejected non-specific submit_plan blocker",
+					Error:   "required edit path(s) remain uncovered by corrected submit_plan: " + quotedRunnerStrings(missing) + "." + correction + " Submit a corrected parser-readable submit_plan, or answer <<QUESTION>> with one path-specific missing body/anchor blocker reason for every remaining required path. " + planThenExecuteSubmitPlanCoverageSentence() + " Do not answer `Decision: source-satisfied` and do not reply in prose.",
+				}, true
+			}
 			return workspace.ToolResult{
 				Tool:    "completion_gate",
 				Summary: "Completion gate rejected non-submit_plan correction",
@@ -98,6 +108,51 @@ func requiredPathBlockerAnswerCovers(reply string, missing []string) bool {
 
 	for _, path := range missing {
 		if !strings.Contains(trimmed, path) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func submitCorrectionMissingBodyAnchorBlockerCovers(reply string, missing []string) bool {
+	if !requiredPathBlockerAnswerCovers(reply, missing) {
+		return false
+	}
+
+	lower := strings.ToLower(reply)
+	if !containsAny(lower,
+		"missing body",
+		"body evidence",
+		"missing anchor",
+		"anchor blocker",
+		"body/anchor",
+		"safe edit body",
+		"no safe edit",
+		"unsafe edit",
+		"cannot produce a safe",
+		"can't produce a safe",
+		"cannot draft a safe",
+		"can't draft a safe",
+	) {
+		return false
+	}
+
+	for _, path := range missing {
+		idx := strings.Index(reply, path)
+		if idx < 0 {
+			return false
+		}
+		windowStart := idx - 160
+		if windowStart < 0 {
+			windowStart = 0
+		}
+		windowEnd := idx + len(path) + 240
+		if windowEnd > len(reply) {
+			windowEnd = len(reply)
+		}
+		window := strings.ToLower(reply[windowStart:windowEnd])
+		if !containsAny(window, "missing body", "body evidence", "missing anchor", "anchor blocker", "body/anchor", "safe edit body", "no safe edit", "unsafe edit") {
 			return false
 		}
 	}
@@ -202,6 +257,12 @@ func (r *Runner) planThenExecuteRepeatedSubmitPlanCorrectionPrompt(req workspace
 		lastSubmitPlanCorrectionRejectionBrief(*lastResult) +
 		"Submit a corrected parser-readable `submit_plan` now. " + planThenExecuteSubmitPlanCoverageSentence() + " Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not read/search/discovery again, and do not reply in prose. " +
 		planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, *lastResult)
+	if planThenExecuteSubmitCorrectionBlockerAllowed(r.RuntimeBrief, results) {
+		prompt = "The last request repeated the same invalid `submit_plan`; it was not executed again. " +
+			lastSubmitPlanCorrectionRejectionBrief(*lastResult) +
+			"Submit a corrected parser-readable `submit_plan` now. " + planThenExecuteSubmitPlanCoverageSentence() + " Do not answer `Decision: source-satisfied`, do not read/search/discovery again, and do not reply in prose. If no safe executable edit body can be produced from the gathered evidence after these rejected submit_plan attempts, answer `<<QUESTION>>:` with the exact path-specific missing body/anchor blocker. " +
+			planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, *lastResult)
+	}
 
 	return prompt, true
 }
@@ -216,6 +277,12 @@ func (r *Runner) planThenExecuteRepeatedSubmitPlanCorrectionExhaustedRejection(r
 		reason = lastSubmitPlanCorrectionRejectionBrief(*lastResult)
 	}
 
+	if planThenExecuteSubmitCorrectionBlockerAllowed(r.RuntimeBrief, results) {
+		return "Repeated invalid submit_plan rejected",
+			"this exact invalid `submit_plan` was repeated after submit-correction prompts. " + reason + "The valid next action is a corrected parser-readable `submit_plan`. " + planThenExecuteSubmitPlanCoverageSentence() + " If no safe executable edit body can be produced from gathered evidence, answer `<<QUESTION>>:` with the exact path-specific missing body/anchor blocker. Do not answer `Decision: source-satisfied`, do not call read/search/discovery, and do not choose a different tool.",
+			true
+	}
+
 	return "Repeated invalid submit_plan rejected",
 		"this exact invalid `submit_plan` was repeated after submit-correction prompts. " + reason + "The only valid next action is a corrected parser-readable `submit_plan`. " + planThenExecuteSubmitPlanCoverageSentence() + " Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not call read/search/discovery, and do not choose a different tool.",
 		true
@@ -223,6 +290,14 @@ func (r *Runner) planThenExecuteRepeatedSubmitPlanCorrectionExhaustedRejection(r
 
 func planThenExecuteSubmitCorrectionHiddenOnlyVisiblePrompt(base string) string {
 	return "The previous retry produced hidden-only output with no parser-readable action. Hidden thinking is disabled for this retry; produce exactly one visible parser-readable `submit_plan` request now. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not call read/search/discovery.\n\n" + base
+}
+
+func planThenExecuteSubmitCorrectionHiddenOnlyVisiblePromptForState(base string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
+	if planThenExecuteSubmitCorrectionBlockerAllowed(brief, results) {
+		return "The previous retry produced hidden-only output with no parser-readable action. Hidden thinking is disabled for this retry; produce exactly one visible parser-readable `submit_plan` request now, or answer `<<QUESTION>>:` only with the exact path-specific missing body/anchor blocker after repeated rejected submit_plan attempts. Do not answer `Decision: source-satisfied`, and do not call read/search/discovery.\n\n" + base
+	}
+
+	return planThenExecuteSubmitCorrectionHiddenOnlyVisiblePrompt(base)
 }
 
 func (r *Runner) hostOwnedReadOnlyCloseoutAnswer(results []workspace.ToolResult) (string, bool) {

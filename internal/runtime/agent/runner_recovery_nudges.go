@@ -142,9 +142,15 @@ func missingRequiredEditPathsRecoveryNudge(in recoveryNudgeInputs) (string, bool
 		b.WriteString(".\n")
 
 		if planThenExecuteSubmitCorrectionActive(in.brief, in.results) {
-			b.WriteString("Do not answer with partial findings. Submit-correction mode has exactly one valid outcome: parser-readable `submit_plan`. ")
-			b.WriteString(planThenExecuteSubmitPlanCoverageSentence())
-			b.WriteString(" Do not answer `Decision: source-satisfied`, do not answer <<QUESTION>>, and do not repeat the rejected tool call.\n")
+			if planThenExecuteSubmitCorrectionBlockerAllowed(in.brief, in.results) {
+				b.WriteString("Do not answer with partial findings. Submit-correction mode accepts a parser-readable `submit_plan`, or `<<QUESTION>>` only with the exact path-specific missing body/anchor blocker after repeated rejected submit_plan attempts. ")
+				b.WriteString(planThenExecuteSubmitPlanCoverageSentence())
+				b.WriteString(" Do not answer `Decision: source-satisfied` and do not repeat the rejected tool call.\n")
+			} else {
+				b.WriteString("Do not answer with partial findings. Submit-correction mode has exactly one valid outcome: parser-readable `submit_plan`. ")
+				b.WriteString(planThenExecuteSubmitPlanCoverageSentence())
+				b.WriteString(" Do not answer `Decision: source-satisfied`, do not answer <<QUESTION>>, and do not repeat the rejected tool call.\n")
+			}
 
 			return b.String(), true
 		}

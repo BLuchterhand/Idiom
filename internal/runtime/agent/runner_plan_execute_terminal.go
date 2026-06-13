@@ -338,6 +338,13 @@ func (r *Runner) planThenExecuteTerminalToolBrief(results []workspace.ToolResult
 		brief.ReadinessGate = []string{"submit_plan_correction_required"}
 		brief.StopConditions = []string{"submit_plan_returned_ok"}
 		brief.FinalCritic = []string{"answers_actual_user_request", "submit_plan_called", "edits_or_source_satisfied_paths_cover_required_paths"}
+		if planThenExecuteSubmitCorrectionBlockerAllowed(r.RuntimeBrief, results) {
+			brief.RequiredNext = []string{"corrected submit_plan using edits[] for changed paths, or <<QUESTION>> with the exact path-specific missing body/anchor blocker after repeated rejected submit_plan attempts"}
+			brief.InvalidActions = []string{"read/search/source-refresh after submit_plan correction is ready", "Decision: source-satisfied after an incomplete submit_plan", "generic <<QUESTION>> without exact path-specific missing body/anchor blocker", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
+			brief.ReadinessGate = []string{"submit_plan_correction_or_exact_body_anchor_blocker_required"}
+			brief.StopConditions = []string{"submit_plan_returned_ok", "exact_missing_body_anchor_blocker_returned"}
+			brief.FinalCritic = []string{"answers_actual_user_request", "submit_plan_called_or_exact_body_anchor_blocker", "edits_or_source_satisfied_paths_cover_required_paths_unless_exact_blocker"}
+		}
 	} else {
 		brief.ReadinessGate = mergeRunnerStateStrings([]string{string(workerruntime.ReadinessSubmitPlanOrSourceSatisfiedOrBlocker)}, brief.ReadinessGate)
 		brief.StopConditions = mergeRunnerStateStrings([]string{string(workerruntime.StopSubmitPlanReturnedOrSourceSatisfiedOrBlocker), string(workerruntime.StopBlockedByMissingPermissionOrInformation)}, brief.StopConditions)

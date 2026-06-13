@@ -150,9 +150,13 @@ func completionGateResultCount(results []workspace.ToolResult) int {
 
 func (r *Runner) planThenExecuteSubmitReadyTerminalPrompt(errorText string, results []workspace.ToolResult, native bool) string {
 	if r != nil && planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, results) {
+		outcome := "The previous read/search request was rejected because plan-execute submit-correction mode is already ready. Do not read, search, inspect, verify, answer `Decision: source-satisfied`, answer `<<QUESTION>>:`, or describe the plan in prose. The next visible action must be exactly one parser-readable `submit_plan`. " + planThenExecuteSubmitPlanCoverageSentence()
+		if planThenExecuteSubmitCorrectionBlockerAllowed(r.RuntimeBrief, results) {
+			outcome = "The previous read/search request was rejected because plan-execute submit-correction mode is already ready. Do not read, search, inspect, verify, answer `Decision: source-satisfied`, or describe the plan in prose. The next visible action must be a parser-readable `submit_plan`, unless no safe executable edit body can be produced from the gathered evidence after repeated rejected submit_plan attempts; in that case answer `<<QUESTION>>:` with the exact path-specific missing body/anchor blocker. " + planThenExecuteSubmitPlanCoverageSentence()
+		}
 		parts := []string{
 			strings.TrimSpace(errorText),
-			"The previous read/search request was rejected because plan-execute submit-correction mode is already ready. Do not read, search, inspect, verify, answer `Decision: source-satisfied`, answer `<<QUESTION>>:`, or describe the plan in prose. The next visible action must be exactly one parser-readable `submit_plan`. " + planThenExecuteSubmitPlanCoverageSentence(),
+			outcome,
 			planThenExecuteTerminalSubmitPlanSkeleton(r.RuntimeBrief, results, native),
 			"Fill the skeleton with real source text from the reads already in this turn. Do not copy placeholders and do not request another tool.",
 		}

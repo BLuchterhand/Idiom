@@ -142,6 +142,28 @@ func TestRunnerRequestBudgetSubmitCorrectionRetryDoesNotAdvertiseTerminalExcepti
 	}
 }
 
+func TestTerminalArtifactRejectedRetryNudgeAllowsExactBlockerWhenSubmitCorrectionExhausted(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.txt"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-2 (total lines: 2)", Output: "1:before\n"},
+		{Tool: "submit_plan", Summary: "submit_plan rejected", Error: "invalid edit anchor(s): `a.txt: old_text not found in current source`."},
+		{Tool: "read_file", Summary: "Read f2 a.txt lines 1-2 (total lines: 2)", Output: "1:before\n"},
+		{Tool: "submit_plan", Summary: "submit_plan rejected", Error: "invalid edit anchor(s): `a.txt: old_text not found in current source`."},
+		{Tool: "submit_plan", Summary: "submit_plan rejected", Error: "invalid edit anchor(s): `a.txt: old_text not found in current source`."},
+	}
+
+	nudge := terminalArtifactRejectedRetryNudge("read_file", "Corrected submit_plan required", brief, results)
+	if !strings.Contains(nudge, "<<QUESTION>>") || !strings.Contains(nudge, "missing body/anchor blocker") {
+		t.Fatalf("exhausted submit-correction nudge should allow exact blocker:\n%s", nudge)
+	}
+	if strings.Contains(nudge, "Do not answer `<<QUESTION>>") {
+		t.Fatalf("exhausted submit-correction nudge still forbids question:\n%s", nudge)
+	}
+}
+
 func TestRunnerRequestBudgetEarlyBlocksRepeatedRangeLessReadRetry(t *testing.T) {
 	for _, summary := range []string{
 		"Repeated range-less read_file redirected to bounded source request",

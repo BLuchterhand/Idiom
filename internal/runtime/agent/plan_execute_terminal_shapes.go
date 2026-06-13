@@ -16,6 +16,10 @@ func planExecuteTerminalSubmitPlanSourceSatisfiedQuestion() []string {
 	return []string{planExecuteTerminalSubmitPlan, planExecuteTerminalSourceSatisfied, planExecuteTerminalQuestion}
 }
 
+func planExecuteTerminalSubmitPlanQuestion() []string {
+	return []string{planExecuteTerminalSubmitPlan, planExecuteTerminalQuestion}
+}
+
 func planExecuteTerminalSubmitPlanOnly() []string {
 	return []string{planExecuteTerminalSubmitPlan}
 }

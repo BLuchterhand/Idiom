@@ -491,6 +491,11 @@ func applySubmitReady(contract *TurnPhaseContract, input TurnPhaseContractInput,
 		contract.RequiredNext = []string{"corrected submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths"}
 		contract.InvalidNext = []string{"read/search/source-refresh after submit_plan correction is ready", "terminal Decision: source-satisfied after an incomplete submit_plan; use submit_plan.source_satisfied_paths for already-final paths instead", "<<QUESTION>> after source evidence is sufficient for correction", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
 		contract.TerminalOutcomes = planExecuteTerminalSubmitPlanOnly()
+		if state.SubmitCorrectionBlockerAllowed {
+			contract.RequiredNext = []string{"corrected submit_plan using edits[] for changed paths, or <<QUESTION>> with the exact path-specific missing body/anchor blocker after repeated rejected submit_plan attempts"}
+			contract.InvalidNext = []string{"read/search/source-refresh after submit_plan correction is ready", "terminal Decision: source-satisfied after an incomplete submit_plan; use submit_plan.source_satisfied_paths for already-final paths instead", "generic <<QUESTION>> without exact path-specific missing body/anchor blocker", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
+			contract.TerminalOutcomes = planExecuteTerminalSubmitPlanQuestion()
+		}
 	}
 
 	contract.ActionPolicy = TurnActionClassPolicy{
@@ -505,6 +510,9 @@ func applySubmitReady(contract *TurnPhaseContract, input TurnPhaseContractInput,
 
 	if state.Mode == PlanExecutePlanningModeSubmitCorrection {
 		contract.RuntimeCall.ExpressibleActionClasses = []string{actionSubmitPlan}
+		if state.SubmitCorrectionBlockerAllowed {
+			contract.RuntimeCall.ExpressibleActionClasses = []string{actionSubmitPlan, actionBlocker}
+		}
 	}
 
 	if nativeRequired {

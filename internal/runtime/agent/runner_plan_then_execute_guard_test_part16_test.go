@@ -266,7 +266,7 @@ func TestPlanExecuteSubmitCorrectionHiddenOnlyPromptIsSubmitPlanOnly(t *testing.
 }
 
 func TestPlanExecuteSubmitCorrectionWrongToolRejectionHasNoFallbackExits(t *testing.T) {
-	summary, errorText, prompt := planThenExecuteSubmitCorrectionWrongToolRejection("read_file")
+	summary, errorText, prompt := planThenExecuteSubmitCorrectionWrongToolRejection("read_file", false)
 	joined := strings.Join([]string{summary, errorText, prompt}, "\n")
 
 	for _, want := range []string{

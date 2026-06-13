@@ -1083,6 +1083,109 @@ func TestRunOpensQuestionForExplicitMissingNewFileAuthorizationPrompt(t *testing
 	}
 }
 
+func TestAnswerOpenQuestionClearsAuthorizedNewFileBlockers(t *testing.T) {
+	blocker := "atom 0 edit path \"native/src/simulation/world/collapse_event.cpp\" is missing from the workspace and is not authorized as a new file; use ask_planner_question or source-satisfied evidence with existing paths instead of inventing paths: missing standalone new-file authorization\natom 0 edit path \"native/tests/test_collapse_event.cpp\" is missing from the workspace and is not authorized as a new file; use ask_planner_question or source-satisfied evidence with existing paths instead of inventing paths: missing standalone new-file authorization\nmissing new-file authorization for: native/src/simulation/world/collapse_event.cpp, native/tests/test_collapse_event.cpp"
+	other := "nested plan-execute reported failure details: planner_blocked"
+	state := FeatureState{
+		SessionID: "feature-session",
+		Status:    FeatureStatePlanningQuestion,
+		Blockers:  []string{blocker, other},
+		Atoms: []FeatureAtomState{{
+			FeatureAtomPlan: FeatureAtomPlan{ID: "atom-1"},
+			State:           AtomStateRecoveryOpen,
+			Blockers:        []string{blocker, other},
+		}},
+		OpenQuestions: []PlannerQuestion{{
+			ID:                "q-001",
+			QuestionSummary:   "Authorize new files",
+			BlockingClaim:     "new files need approval",
+			QuestionKind:      "external_answer_required",
+			AuthorityRequired: "operator_approval",
+			AffectedPaths:     []string{"native/src/simulation/world/collapse_event.cpp", "native/tests/test_collapse_event.cpp"},
+			AffectedFields:    []string{"new_file_authorization"},
+			Status:            "open",
+		}},
+	}
+
+	events := answerOpenQuestion(&state, "Approved. You may create native/src/simulation/world/collapse_event.cpp and native/tests/test_collapse_event.cpp.")
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.planner_question_answered" {
+		t.Fatalf("unexpected answer events: %+v", events)
+	}
+	if slices.Contains(state.Blockers, blocker) || slices.Contains(state.Atoms[0].Blockers, blocker) {
+		t.Fatalf("authorized new-file blocker should be cleared, state=%#v atom=%#v", state.Blockers, state.Atoms[0].Blockers)
+	}
+	if !slices.Contains(state.Blockers, other) || !slices.Contains(state.Atoms[0].Blockers, other) {
+		t.Fatalf("unrelated blockers should remain, state=%#v atom=%#v", state.Blockers, state.Atoms[0].Blockers)
+	}
+}
+
+func TestAnswerOpenQuestionDenialDoesNotClearNewFileBlockers(t *testing.T) {
+	blocker := "missing new-file authorization for: native/src/simulation/world/collapse_event.cpp, native/tests/test_collapse_event.cpp"
+	state := FeatureState{
+		SessionID: "feature-session",
+		Status:    FeatureStatePlanningQuestion,
+		Blockers:  []string{blocker},
+		Atoms: []FeatureAtomState{{
+			FeatureAtomPlan: FeatureAtomPlan{ID: "atom-1"},
+			State:           AtomStateRecoveryOpen,
+			Blockers:        []string{blocker},
+		}},
+		OpenQuestions: []PlannerQuestion{{
+			ID:                "q-001",
+			QuestionSummary:   "Authorize new files",
+			BlockingClaim:     "new files need approval",
+			QuestionKind:      "external_answer_required",
+			AuthorityRequired: "operator_approval",
+			AffectedPaths:     []string{"native/src/simulation/world/collapse_event.cpp", "native/tests/test_collapse_event.cpp"},
+			AffectedFields:    []string{"new_file_authorization"},
+			Status:            "open",
+		}},
+	}
+
+	events := answerOpenQuestion(&state, "No, do not create native/src/simulation/world/collapse_event.cpp or native/tests/test_collapse_event.cpp.")
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.planner_question_answered" {
+		t.Fatalf("unexpected answer events: %+v", events)
+	}
+	if !slices.Contains(state.Blockers, blocker) || !slices.Contains(state.Atoms[0].Blockers, blocker) {
+		t.Fatalf("denied new-file blocker should remain, state=%#v atom=%#v", state.Blockers, state.Atoms[0].Blockers)
+	}
+	if deltaAuthorizesNewFile(state.AuthorityDeltas[0]) {
+		t.Fatalf("denial answer must not compile as new-file authorization: %+v", state.AuthorityDeltas[0])
+	}
+}
+
+func TestNewFileAuthorizationDenialPhrasesWinOverApprovalWords(t *testing.T) {
+	base := PlanAuthorityDelta{
+		QuestionID:     "q-001",
+		AuthorityKind:  "operator_approval",
+		AffectedPaths:  []string{"native/src/simulation/world/collapse_event.cpp"},
+		AffectedFields: []string{"new_file_authorization"},
+		Revision:       1,
+		CreatedAt:      time.Unix(1, 0).UTC().Format(time.RFC3339Nano),
+	}
+
+	for _, actual := range []string{
+		"No authorization is approved for these files.",
+		"This is not allowed.",
+		"No approval; do not create the files.",
+		"Do not approve creating native/src/simulation/world/collapse_event.cpp.",
+		"Don't approve creating native/src/simulation/world/collapse_event.cpp.",
+		"Don't authorize native/src/simulation/world/collapse_event.cpp.",
+	} {
+		delta := base
+		delta.Actual = actual
+		if deltaAuthorizesNewFile(delta) {
+			t.Fatalf("denial phrase compiled as authorization: %q", actual)
+		}
+	}
+
+	approved := base
+	approved.Actual = "Approved. You may create exactly native/src/simulation/world/collapse_event.cpp."
+	if !deltaAuthorizesNewFile(approved) {
+		t.Fatalf("explicit approval should compile as new-file authorization")
+	}
+}
+
 func TestApplyImplementorOutputPreservesRecoveryPacketForMissingPathFailure(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
 

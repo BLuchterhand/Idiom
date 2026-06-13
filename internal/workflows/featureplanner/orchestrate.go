@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"idiom/internal/contracts/autonomy"
+	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/util"
 	coreplanexecute "idiom/internal/workflows/planexecute"
@@ -1885,6 +1886,7 @@ func answerOpenQuestion(state *FeatureState, answer string) []Event {
 			}
 
 			upsertPlanAuthorityDelta(state, delta)
+			clearAnsweredNewFileAuthorizationBlockers(state, delta)
 
 			state.OpenQuestions[i].Status = "answered"
 			state.Status = FeatureStatePlanning
@@ -2061,6 +2063,66 @@ func upsertPlanAuthorityDelta(state *FeatureState, delta PlanAuthorityDelta) {
 	}
 
 	state.AuthorityDeltas = append(state.AuthorityDeltas, delta)
+}
+
+func clearAnsweredNewFileAuthorizationBlockers(state *FeatureState, delta PlanAuthorityDelta) {
+	if state == nil || !deltaAuthorizesNewFile(delta) {
+		return
+	}
+
+	authorized := normalizedEditScopeSet(delta.AffectedPaths)
+	if len(authorized) == 0 {
+		return
+	}
+
+	state.Blockers = filterStaleNewFileAuthorizationBlockers(state.Blockers, authorized)
+	for i := range state.Atoms {
+		state.Atoms[i].Blockers = filterStaleNewFileAuthorizationBlockers(state.Atoms[i].Blockers, authorized)
+	}
+}
+
+func filterStaleNewFileAuthorizationBlockers(blockers []string, authorized map[string]struct{}) []string {
+	if len(blockers) == 0 || len(authorized) == 0 {
+		return blockers
+	}
+
+	out := blockers[:0]
+	for _, blocker := range blockers {
+		if staleNewFileAuthorizationBlockerCovered(blocker, authorized) {
+			continue
+		}
+		out = append(out, blocker)
+	}
+
+	return out
+}
+
+func staleNewFileAuthorizationBlockerCovered(blocker string, authorized map[string]struct{}) bool {
+	lower := strings.ToLower(blocker)
+	if !strings.Contains(lower, "missing new-file authorization") && !strings.Contains(lower, "missing standalone new-file authorization") {
+		return false
+	}
+
+	mentioned := normalizedEditScopeSet(pathparse.MentionedWorkspaceFiles(blocker))
+	if len(mentioned) == 0 {
+		return false
+	}
+
+	for path := range mentioned {
+		if _, ok := authorized[path]; !ok {
+			return false
+		}
+	}
+
+	return true
+}
+
+func normalizedEditScopeSet(paths []string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, path := range normalizeEditScopeList(paths) {
+		out[path] = struct{}{}
+	}
+	return out
 }
 
 func shouldResumeDispatch(state FeatureState) bool {

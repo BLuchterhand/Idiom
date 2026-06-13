@@ -881,6 +881,15 @@ func TestPlanExecuteSubmitPlanDiagnosticsKeepExtensionlessPathsAndDropProtocolTo
 		t.Fatalf("whole-file line-range existing source rewrite should become an anchor-refresh path, got %#v", got)
 	}
 
+	headerGuardRejected := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected",
+		Error:   "edits[0]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h lines 1-1 starts a header guard before selecting the existing file prologue/include guard; use a bounded anchor that includes the current guard/include line",
+	}
+	if got := sortedRunnerPathKeys(submitPlanInvalidAnchorPaths(headerGuardRejected)); !slices.Equal(got, []string{"native/src/simulation/world/collapse_event.h"}) {
+		t.Fatalf("header-guard line-range rejection should become an anchor-refresh path, got %#v", got)
+	}
+
 	groundingRejected := workspace.ToolResult{
 		Tool:    "submit_plan",
 		Summary: "submit_plan rejected: edit paths lack source grounding",
@@ -954,6 +963,98 @@ func TestPlanExecuteRepeatedExistingSourceRewriteAfterRefreshStaysSubmitCorrecti
 	req := workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "native/src/simulation/world/collapse_event.h", StartLine: 1, EndLine: 63}
 	if planThenExecuteRejectedPlanSourceRefreshAllowed(req, brief.RequiredEditPaths, results) {
 		t.Fatalf("anchor refresh should not be allowed after corrected evidence already refreshed the invalid anchor")
+	}
+}
+
+func TestPlanExecutePartialPriorRefreshDoesNotCloseLaterInvalidAnchor(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim_tick.cpp lines 1-180 (total lines: 2616)", Output: "1:#include <x>\n180:void a();\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "invalid edit anchor(s): `native/src/core/colony_sim_tick.cpp: old_text not found in current source`.",
+		},
+		{Tool: "read_file", Summary: "Read f2 native/src/core/colony_sim_tick.cpp lines 880-1050 (total lines: 2616)", Output: "880:void tick() {}\n1050:}\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "invalid edit anchor(s): `native/src/core/colony_sim_tick.cpp: old_text not found in current source`.",
+		},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeAnchorRefresh {
+		t.Fatalf("mode = %q, want anchor_refresh after later invalid anchor with only partial prior refresh; state=%+v", state.Mode, state)
+	}
+	if !slices.Equal(state.RefreshPaths, []string{"native/src/core/colony_sim_tick.cpp"}) {
+		t.Fatalf("refresh paths = %#v, want core source path", state.RefreshPaths)
+	}
+}
+
+func TestPlanExecuteRepeatedUnsafeSubmitCorrectionAllowsPathBlocker(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/simulation/world/collapse_event.h"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[0]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h lines 1-63 would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors, or answer <<QUESTION>> with the exact missing body/anchor blocker",
+		},
+		{Tool: "read_file", Summary: "Read f2 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[0]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h lines 1-63 would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors, or answer <<QUESTION>> with the exact missing body/anchor blocker",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker",
+		},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitCorrection {
+		t.Fatalf("mode = %q, want submit_correction; state=%+v", state.Mode, state)
+	}
+	if !state.SubmitCorrectionBlockerAllowed {
+		t.Fatalf("expected repeated unsafe submit correction to allow exact blocker: %+v", state)
+	}
+	if !slices.Equal(state.AllowedActionClasses, []string{actionSubmitPlan, actionBlocker}) {
+		t.Fatalf("allowed actions = %#v, want submit_plan + blocker", state.AllowedActionClasses)
+	}
+	if !slices.Equal(state.TerminalResponseShapes, planExecuteTerminalSubmitPlanQuestion()) {
+		t.Fatalf("terminal shapes = %#v, want submit_plan/question", state.TerminalResponseShapes)
+	}
+
+	runner := &Runner{RuntimeBrief: brief}
+	terminalBrief := runner.planThenExecuteTerminalToolBrief(results)
+	if !slices.Contains(terminalBrief.StopConditions, "exact_missing_body_anchor_blocker_returned") {
+		t.Fatalf("terminal brief should allow exact body/anchor blocker stop condition, got %#v", terminalBrief.StopConditions)
+	}
+	if slices.Contains(terminalBrief.InvalidActions, "<<QUESTION>> after source evidence is sufficient for correction") {
+		t.Fatalf("terminal brief still forbids all question blockers: %#v", terminalBrief.InvalidActions)
+	}
+
+	generic := "<<QUESTION>>: blocked for native/src/simulation/world/collapse_event.h."
+	if got, rejected := runner.requiredPathCompletionRecoveryRejection(generic, results); !rejected || !strings.Contains(got.Error, "missing body/anchor") {
+		t.Fatalf("generic submit-correction blocker should be rejected with body/anchor guidance, got rejected=%v result=%+v", rejected, got)
+	}
+
+	exact := "<<QUESTION>>: native/src/simulation/world/collapse_event.h is blocked because no safe edit body or missing anchor evidence is available for a bounded header update."
+	if got, rejected := runner.requiredPathCompletionRecoveryRejection(exact, results); rejected {
+		t.Fatalf("exact submit-correction body/anchor blocker should be accepted, got %+v", got)
 	}
 }
 

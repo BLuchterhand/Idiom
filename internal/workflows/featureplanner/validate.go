@@ -859,8 +859,59 @@ func deltaAuthorizesNewFile(delta PlanAuthorityDelta) bool {
 
 	return len(delta.AffectedPaths) > 0 &&
 		len(delta.AffectedFields) > 0 &&
+		authorityDeltaActualApprovesCreation(delta) &&
 		(deltaAllowsField(delta, "new_file_authorization") ||
 			deltaAllowsField(delta, "required_edit_paths"))
+}
+
+func authorityDeltaActualApprovesCreation(delta PlanAuthorityDelta) bool {
+	text := strings.ToLower(strings.TrimSpace(strings.Join([]string{delta.Actual, delta.Expected}, "\n")))
+	if text == "" {
+		return false
+	}
+	for _, denied := range []string{
+		"no authorization",
+		"no approval",
+		"do not approve",
+		"don't approve",
+		"do not authorize",
+		"don't authorize",
+		"not allowed",
+		"do not create",
+		"don't create",
+		"not approved",
+		"not authorize",
+		"not authorized",
+		"deny",
+		"denied",
+		"reject",
+		"rejected",
+		"no,",
+		"no.",
+		"no ",
+	} {
+		if strings.Contains(text, denied) {
+			return false
+		}
+	}
+	for _, approved := range []string{
+		"approved",
+		"approve",
+		"authorized",
+		"authorize",
+		"you may create",
+		"may create",
+		"allowed",
+		"allow",
+		"create exactly",
+		"yes",
+	} {
+		if strings.Contains(text, approved) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func planContractAuthorityDeltas(deltas []PlanAuthorityDelta) []plancontract.AuthorityDelta {

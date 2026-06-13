@@ -1333,7 +1333,7 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 		refreshNote := planThenExecutePostSubmitRejectionRefreshNote(brief, results, rejected, rejectedAt)
 
 		return "Corrected submit_plan required",
-			"every required_edit_path has satisfied its source-body obligation, but the previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanCorrectionRejectionBrief(rejected) + "Submit a corrected parser-readable `submit_plan` request whose coverage includes every required_edit_path with either valid executable edits from existing source-body evidence or `source_satisfied_paths` for paths already at final state. Do not answer `Decision: source-satisfied`, do not answer <<QUESTION>>, and do not call read/search/discovery in submit-correction mode. " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(brief, rejected) + " " + refreshNote,
+			"every required_edit_path has satisfied its source-body obligation, but the previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanCorrectionRejectionBrief(rejected) + planThenExecuteSubmitCorrectionOutcomeInstruction(brief, results) + " " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(brief, rejected) + " " + refreshNote,
 			true
 	}
 
@@ -1487,6 +1487,7 @@ func submitPlanRejectionHasInvalidAnchor(result workspace.ToolResult) bool {
 		strings.Contains(text, "old_text not found") ||
 		strings.Contains(text, "whole-file replace_all edit would rewrite existing source file") ||
 		strings.Contains(text, "would rewrite the entire existing source file") ||
+		strings.Contains(text, "starts a header guard before selecting") ||
 		strings.Contains(text, "line range outside current source") ||
 		strings.Contains(text, "preflight syntax validation failed")
 }
@@ -1503,6 +1504,9 @@ func submitPlanInvalidAnchorPaths(result workspace.ToolResult) map[string]struct
 
 	text := result.Summary + "\n" + result.Error
 	for path := range submitPlanPathMapFromDiagnostics(backtickedSubmitPlanDiagnostics(text), true) {
+		out[path] = struct{}{}
+	}
+	for path := range submitPlanLineRangeInvalidAnchorPaths(result) {
 		out[path] = struct{}{}
 	}
 	for path := range submitPlanWholeFileExistingSourceRewritePaths(result) {
@@ -1545,6 +1549,44 @@ func submitPlanWholeFileExistingSourceRewritePaths(result workspace.ToolResult) 
 		}
 
 		if !strings.Contains(lineLower, lineRangeWholeBodyMarker) {
+			continue
+		}
+		idx := strings.Index(lineLower, lineRangeMarker)
+		if idx < 0 {
+			continue
+		}
+		rawPath := strings.TrimSpace(line[idx+len(lineRangeMarker):])
+		rawPathLower := strings.ToLower(rawPath)
+		if cut := strings.Index(rawPathLower, " lines "); cut >= 0 {
+			rawPath = rawPath[:cut]
+		} else if cut := strings.IndexAny(rawPath, ";\n\r\t "); cut >= 0 {
+			rawPath = rawPath[:cut]
+		}
+		path := normalizeSubmitPlanDiagnosticPath(rawPath)
+		if path == "" {
+			continue
+		}
+		out[path] = struct{}{}
+	}
+
+	return out
+}
+
+func submitPlanLineRangeInvalidAnchorPaths(result workspace.ToolResult) map[string]struct{} {
+	out := make(map[string]struct{})
+	text := strings.Join([]string{result.Summary, result.Error, result.Output}, "\n")
+	lower := strings.ToLower(text)
+	lineRangeMarker := "line-range replacement for "
+	if !strings.Contains(lower, lineRangeMarker) {
+		return out
+	}
+
+	for _, line := range strings.Split(text, "\n") {
+		lineLower := strings.ToLower(line)
+		if !strings.Contains(lineLower, "would rewrite the entire existing source file") &&
+			!strings.Contains(lineLower, "starts a header guard before selecting") &&
+			!strings.Contains(lineLower, "old_text not found") &&
+			!strings.Contains(lineLower, "invalid edit anchor") {
 			continue
 		}
 		idx := strings.Index(lineLower, lineRangeMarker)
@@ -1832,13 +1874,40 @@ func successfulInvalidAnchorCorrectionEvidenceAfterPriorRejection(results []work
 			continue
 		}
 		for j := i + 1; j < rejectedAt; j++ {
-			if invalidAnchorCorrectionEvidenceResult(results[j], path, results[:j+1]) {
+			if invalidAnchorCompleteCorrectionEvidenceResult(results[j], path, results[:j+1]) {
 				return true
 			}
 		}
 	}
 
 	return false
+}
+
+func invalidAnchorCompleteCorrectionEvidenceResult(result workspace.ToolResult, path string, results []workspace.ToolResult) bool {
+	evidence := planThenExecuteToolResultSourceEvidence(result, path)
+	if evidence.Level != planThenExecuteEvidenceAnchorReady {
+		return false
+	}
+
+	if strings.TrimSpace(result.Tool) != "read_file" {
+		return true
+	}
+
+	_, end, hasRange := planThenExecuteReadSummaryLineRange(result.Summary)
+	total, hasTotal := planThenExecuteReadSummaryTotalLines(result.Summary)
+	if hasRange && hasTotal && end >= total {
+		return true
+	}
+
+	return planThenExecuteReadFileCoversRejectedSyntaxLine(workspace.ToolRequest{
+		Tool: "read_file",
+		Path: path,
+		StartLine: func() int {
+			start, _, _ := planThenExecuteReadSummaryLineRange(result.Summary)
+			return start
+		}(),
+		EndLine: end,
+	}, path, results)
 }
 
 func invalidAnchorCorrectionEvidenceResult(result workspace.ToolResult, path string, results []workspace.ToolResult) bool {
@@ -3412,6 +3481,63 @@ func planThenExecuteSubmitCorrectionActive(brief workerruntime.WorkerRuntimeBrie
 	return DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true}).Mode == PlanExecutePlanningModeSubmitCorrection
 }
 
+func planThenExecuteSubmitCorrectionBlockerAllowed(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily || successfulSubmitPlanResultCount(results) > 0 {
+		return false
+	}
+
+	rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results)
+	if !ok {
+		return false
+	}
+	if len(planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt)) > 0 {
+		return false
+	}
+
+	streak := planThenExecuteRejectedSubmitPlanStreak(results)
+	if len(streak) < planThenExecuteRejectedSubmitPlanStreakThreshold {
+		return false
+	}
+
+	return len(submitPlanRefreshPathCandidates(rejected)) > 0 || planThenExecuteSubmitPlanMissingBodyOrUnsafeAnchor(rejected)
+}
+
+func planThenExecuteSubmitPlanMissingBodyOrUnsafeAnchor(result workspace.ToolResult) bool {
+	text := strings.ToLower(strings.Join([]string{result.Summary, result.Error, result.Output}, "\n"))
+	for _, marker := range []string{
+		"missing body evidence",
+		"missing body/anchor blocker",
+		"no safe edit body",
+		"would rewrite existing source file",
+		"would rewrite the entire existing source file",
+		"old_text not found",
+		"starts a header guard before selecting",
+		"invalid edit anchor",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func planThenExecuteSubmitCorrectionOutcomeInstruction(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
+	if planThenExecuteSubmitCorrectionBlockerAllowed(brief, results) {
+		return "Submit a corrected parser-readable `submit_plan` request whose coverage includes every required_edit_path with valid executable edits from existing source-body evidence. If the available evidence still cannot support a safe executable edit body, answer `<<QUESTION>>:` with the exact path-specific missing body/anchor blocker. Do not answer `Decision: source-satisfied`, and do not call read/search/discovery in submit-correction mode."
+	}
+
+	return "Submit a corrected parser-readable `submit_plan` request whose coverage includes every required_edit_path with either valid executable edits from existing source-body evidence or `source_satisfied_paths` for paths already at final state. Do not answer `Decision: source-satisfied`, do not answer <<QUESTION>>, and do not call read/search/discovery in submit-correction mode."
+}
+
+func planThenExecuteSubmitCorrectionReadyNudgeOutcomeInstruction(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
+	if planThenExecuteSubmitCorrectionBlockerAllowed(brief, results) {
+		return "Do not answer `Decision: source-satisfied`, do not read/search/discovery again, and do not describe the correction in prose outside the parser-readable action. If no safe executable edit body can be produced from the gathered evidence after these rejected submit_plan attempts, answer `<<QUESTION>>:` with the exact path-specific missing body/anchor blocker."
+	}
+
+	return "Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not read/search/discovery again, and do not describe the correction in prose outside the parser-readable action."
+}
+
 func planThenExecuteSourceSatisfiedResultsCoverPaths(requiredPaths []string, results []workspace.ToolResult) bool {
 	if len(results) == 0 {
 		return false
@@ -3527,7 +3653,7 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 			"The next visible action MUST be exactly one parser-readable `submit_plan` request. " + planThenExecuteSubmitPlanCoverageSentence(),
 			planThenExecuteSubmitPlanCorrectionInstructionForBrief(brief, rejected),
 			"",
-			"Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not read/search/discovery again, and do not describe the correction in prose outside the parser-readable action.",
+			planThenExecuteSubmitCorrectionReadyNudgeOutcomeInstruction(brief, results),
 		}, "\n")
 	}
 

@@ -63,26 +63,27 @@ type PlanExecuteRuntimePolicy struct {
 }
 
 type PlanExecutePlanningState struct {
-	Mode                   PlanExecutePlanningMode
-	PhaseID                string
-	Phase                  string
-	DerivationReason       string
-	RequiredCoveragePaths  []string
-	RequiredPathStates     []string
-	AllowedCandidatePaths  []string
-	EvidencePaths          []string
-	SelectedEditPaths      []string
-	RefreshPaths           []string
-	TerminalOptions        []string
-	LowValueActions        []string
-	ParserVisibleTools     []string
-	CallableTools          []string
-	AllowedActionClasses   []string
-	InvalidActionClasses   []string
-	TerminalResponseShapes []string
-	TransportMode          PlanExecuteTransportMode
-	RuntimePolicy          PlanExecuteRuntimePolicy
-	LastInvalidPaths       []string
+	Mode                           PlanExecutePlanningMode
+	PhaseID                        string
+	Phase                          string
+	DerivationReason               string
+	RequiredCoveragePaths          []string
+	RequiredPathStates             []string
+	AllowedCandidatePaths          []string
+	EvidencePaths                  []string
+	SelectedEditPaths              []string
+	RefreshPaths                   []string
+	TerminalOptions                []string
+	LowValueActions                []string
+	ParserVisibleTools             []string
+	CallableTools                  []string
+	AllowedActionClasses           []string
+	InvalidActionClasses           []string
+	TerminalResponseShapes         []string
+	TransportMode                  PlanExecuteTransportMode
+	RuntimePolicy                  PlanExecuteRuntimePolicy
+	LastInvalidPaths               []string
+	SubmitCorrectionBlockerAllowed bool
 }
 
 type PlanExecuteRecoverySurface struct {
@@ -223,6 +224,7 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	}
 
 	state.SelectedEditPaths = planThenExecuteSelectedEditPaths(brief, results, state)
+	state.SubmitCorrectionBlockerAllowed = planThenExecuteSubmitCorrectionBlockerAllowed(brief, results)
 	if len(state.RefreshPaths) == 0 && !unscopedEmptySubmitRecovery && planThenExecuteHistoryPendingEligible(brief, results, state) {
 		if pending := planThenExecuteHistoryPendingPaths(brief, results, state.SelectedEditPaths); len(pending) > 0 {
 			state.Mode = PlanExecutePlanningModeHistoryPending
@@ -317,9 +319,15 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		state.TerminalResponseShapes = planExecuteTerminalSubmitPlanSourceSatisfiedQuestion()
 
 		if state.Mode == PlanExecutePlanningModeSubmitCorrection {
-			state.AllowedActionClasses = []string{actionSubmitPlan}
-			state.InvalidActionClasses = []string{actionRead, actionSearch, actionSourceSatisfied, actionBlocker, actionVerify, actionPerEditWrite, actionGenericProbe, actionProseFinal}
-			state.TerminalResponseShapes = planExecuteTerminalSubmitPlanOnly()
+			if state.SubmitCorrectionBlockerAllowed {
+				state.AllowedActionClasses = []string{actionSubmitPlan, actionBlocker}
+				state.InvalidActionClasses = []string{actionRead, actionSearch, actionSourceSatisfied, actionVerify, actionPerEditWrite, actionGenericProbe, actionProseFinal}
+				state.TerminalResponseShapes = planExecuteTerminalSubmitPlanQuestion()
+			} else {
+				state.AllowedActionClasses = []string{actionSubmitPlan}
+				state.InvalidActionClasses = []string{actionRead, actionSearch, actionSourceSatisfied, actionBlocker, actionVerify, actionPerEditWrite, actionGenericProbe, actionProseFinal}
+				state.TerminalResponseShapes = planExecuteTerminalSubmitPlanOnly()
+			}
 		}
 
 		if planExecuteSubmitReadyNativeRequired(transport) {
