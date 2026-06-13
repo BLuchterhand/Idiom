@@ -550,6 +550,7 @@ func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowB
 			}
 		}
 	}
+	errs = append(errs, validateProductTDDContractCommands(plan, productTDD)...)
 
 	for i, atom := range plan.Atoms {
 		if len(normalizedStringList(atom.RequiredEditPaths)) == 0 &&
@@ -718,7 +719,7 @@ var featurePlannerCallPattern = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_:.\->
 
 func validateAtomPromptVerifiedCalls(prefix string, atom FeatureAtomPlan) []error {
 	prompt := strings.TrimSpace(atom.Prompt)
-	if prompt == "" || promptCarriesVerifiedSignatureEvidence(prompt) {
+	if prompt == "" {
 		return nil
 	}
 
@@ -733,6 +734,9 @@ func validateAtomPromptVerifiedCalls(prefix string, atom FeatureAtomPlan) []erro
 		if !plannerCallNeedsSignatureEvidence(name, args) {
 			continue
 		}
+		if promptCarriesVerifiedSignatureEvidenceForCall(prompt, name) {
+			continue
+		}
 		call := name + "(" + args + ")"
 		if seen[call] {
 			continue
@@ -744,10 +748,25 @@ func validateAtomPromptVerifiedCalls(prefix string, atom FeatureAtomPlan) []erro
 	return errs
 }
 
-func promptCarriesVerifiedSignatureEvidence(prompt string) bool {
+func promptCarriesVerifiedSignatureEvidenceForCall(prompt string, name string) bool {
 	lower := strings.ToLower(prompt)
-	for _, marker := range []string{"verified signature", "source-verified signature", "exact signature", "signature verified", "source evidence:", "current source evidence:"} {
-		if strings.Contains(lower, marker) {
+	needle := strings.ToLower(strings.TrimSpace(name))
+	if needle == "" {
+		return false
+	}
+	if idx := strings.LastIndexAny(needle, ":>."); idx >= 0 && idx+1 < len(needle) {
+		needle = needle[idx+1:]
+	}
+	for _, marker := range []string{"verified signature", "source-verified signature", "exact signature", "signature verified"} {
+		idx := strings.Index(lower, marker)
+		if idx < 0 {
+			continue
+		}
+		windowEnd := idx + len(marker) + 260
+		if windowEnd > len(lower) {
+			windowEnd = len(lower)
+		}
+		if strings.Contains(lower[idx:windowEnd], needle) {
 			return true
 		}
 	}
@@ -800,6 +819,7 @@ func validateWorkspaceCommand(root string, command string) error {
 			continue
 		}
 
+		segment = commandPayloadSegment(segment)
 		first := commandFirstToken(segment)
 		switch first {
 		case "cmake", "ctest":
@@ -822,6 +842,14 @@ func validateWorkspaceCommand(root string, command string) error {
 			if !workspaceHasAny(root, currentDir, "pyproject.toml", "pytest.ini", "tox.ini", "setup.cfg", "setup.py") {
 				return fmt.Errorf("test_first command %q has no pytest project evidence in workspace; use ask_planner_question for the verified project command", command)
 			}
+		case "cargo":
+			if !workspaceHasAny(root, currentDir, "Cargo.toml") {
+				return fmt.Errorf("test_first command %q has no Cargo project evidence in workspace; use ask_planner_question for the verified project command", command)
+			}
+		case "scons":
+			if !workspaceHasAny(root, currentDir, "SConstruct", "SConstruct.py") {
+				return fmt.Errorf("test_first command %q has no SCons project evidence in workspace; use ask_planner_question for the verified project command", command)
+			}
 		case "python", "python3":
 			if script := commandPythonScript(segment); script != "" && !pathExists(repoRelativePath(root, filepath.Join(currentDir, script))) {
 				return fmt.Errorf("test_first command %q references missing script %q; use ask_planner_question for the verified project command", command, script)
@@ -830,10 +858,32 @@ func validateWorkspaceCommand(root string, command string) error {
 			if script := commandScriptPath(segment); script != "" && !pathExists(repoRelativePath(root, filepath.Join(currentDir, script))) {
 				return fmt.Errorf("test_first command %q references missing script %q; use ask_planner_question for the verified project command", command, script)
 			}
+		default:
+			if first != "" {
+				return fmt.Errorf("test_first command %q uses unsupported command family %q; use ask_planner_question for the verified project command", command, first)
+			}
 		}
 	}
 
 	return nil
+}
+
+func commandPayloadSegment(segment string) string {
+	fields := strings.Fields(segment)
+	if len(fields) == 0 {
+		return segment
+	}
+	i := 0
+	if fields[i] == "env" {
+		i++
+	}
+	for i < len(fields) && strings.Contains(fields[i], "=") && !strings.HasPrefix(fields[i], "=") {
+		i++
+	}
+	if i >= len(fields) {
+		return segment
+	}
+	return strings.Join(fields[i:], " ")
 }
 
 func commandSegments(command string) []string {
@@ -947,25 +997,35 @@ func atomClaimsRedConfirmed(atom FeatureAtomPlan) bool {
 func testArtifactLooksSkippedOrCommentOnly(text string) bool {
 	lower := strings.ToLower(text)
 	hasSkip := strings.Contains(lower, "skip") || strings.Contains(lower, "pending") || strings.Contains(lower, "todo")
-	hasAssertion := strings.Contains(text, "CHECK(") ||
-		strings.Contains(text, "CHECK_") ||
-		strings.Contains(text, "REQUIRE(") ||
-		strings.Contains(text, "REQUIRE_") ||
-		strings.Contains(text, "ASSERT_") ||
-		strings.Contains(text, "EXPECT_") ||
-		strings.Contains(text, "t.Fatal") ||
-		strings.Contains(text, "t.Error") ||
-		strings.Contains(text, "assert ") ||
-		strings.Contains(text, "assert(")
 
 	codeLines := 0
+	var codeText strings.Builder
 	for _, line := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") {
 			continue
 		}
+		if idx := strings.Index(trimmed, "//"); idx >= 0 {
+			trimmed = strings.TrimSpace(trimmed[:idx])
+		}
+		if trimmed == "" {
+			continue
+		}
 		codeLines++
+		codeText.WriteString(trimmed)
+		codeText.WriteByte('\n')
 	}
+	code := codeText.String()
+	hasAssertion := strings.Contains(code, "CHECK(") ||
+		strings.Contains(code, "CHECK_") ||
+		strings.Contains(code, "REQUIRE(") ||
+		strings.Contains(code, "REQUIRE_") ||
+		strings.Contains(code, "ASSERT_") ||
+		strings.Contains(code, "EXPECT_") ||
+		strings.Contains(code, "t.Fatal") ||
+		strings.Contains(code, "t.Error") ||
+		strings.Contains(code, "assert ") ||
+		strings.Contains(code, "assert(")
 
 	return !hasAssertion || (hasSkip && codeLines <= 12)
 }
@@ -1899,6 +1959,28 @@ func validateProductTDDReadiness(atomIndex int, atom FeatureAtomPlan, productTDD
 
 		if len(allowedCommands) > 0 && !allowedCommands[strings.TrimSpace(command)] {
 			errs = append(errs, fmt.Errorf("atom %d test_first command %q is not one of the source/product TDD commands authorized for obligation refs %s", atomIndex, command, strings.Join(refs, ", ")))
+		}
+	}
+
+	return errs
+}
+
+func validateProductTDDContractCommands(plan FeaturePlan, productTDD map[string]TDDObligationBrief) []error {
+	var errs []error
+
+	for i, obligation := range plan.TDDContract.Obligations {
+		id := strings.TrimSpace(obligation.ID)
+		if id == "" {
+			continue
+		}
+
+		source, ok := productTDD[id]
+		if !ok || !requiredBeforeImplementation(source.RequiredBefore) || strings.TrimSpace(source.Command) == "" {
+			continue
+		}
+
+		if strings.TrimSpace(obligation.Command) != strings.TrimSpace(source.Command) {
+			errs = append(errs, fmt.Errorf("tdd_contract.obligations[%d] command %q is not the source/product TDD command %q for obligation %q", i, obligation.Command, source.Command, id))
 		}
 	}
 

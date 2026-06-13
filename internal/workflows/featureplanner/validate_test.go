@@ -458,6 +458,17 @@ func TestValidateProductPlanRejectsCommandNotAuthorizedByProductTDD(t *testing.T
 	}
 }
 
+func TestValidateProductPlanRejectsTopLevelTDDCommandNotAuthorizedByProductTDD(t *testing.T) {
+	root, plan, brief := workspaceRootProductPlanFixture(t)
+
+	plan.TDDContract.Obligations[0].Command = "cd native && cmake --build . && ctest -R test_fluid_brewery_cascade --output-on-failure"
+
+	err := ValidatePlanProductWorkflowContext(plan, brief, root)
+	if err == nil || !strings.Contains(err.Error(), "not the source/product TDD command") {
+		t.Fatalf("expected top-level product TDD command provenance rejection, got %v", err)
+	}
+}
+
 func TestValidateProductPlanRejectsDemotedFilesToModifyBeforeNormalization(t *testing.T) {
 	plan := validProductContextPlan()
 
@@ -733,6 +744,16 @@ func TestValidatePlanRejectsGuessedHelperCallWithoutSignatureEvidence(t *testing
 	plan.Atoms[0].Prompt = "Current source evidence: exact signature is EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required). Call it only with verified arguments."
 	if err := ValidatePlan(plan); err != nil {
 		t.Fatalf("source-verified signature prompt should pass: %v", err)
+	}
+}
+
+func TestValidatePlanRejectsGuessedHelperCallDespiteUnrelatedSourceEvidence(t *testing.T) {
+	plan := validPlan()
+	plan.Atoms[0].Prompt = "Current source evidence: labels.go contains render_label(). Then call find_connected_cistern_with_volume(eid) before posting fallback water haul."
+
+	err := ValidatePlan(plan)
+	if err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume(eid)") {
+		t.Fatalf("expected unrelated source evidence to not authorize guessed helper call, got %v", err)
 	}
 }
 
@@ -1250,6 +1271,38 @@ func TestValidateStandaloneWorkspaceRejectsInventedCMakeVerificationCommand(t *t
 	}
 }
 
+func TestValidateStandaloneWorkspaceRejectsUnsupportedVerificationCommandFamily(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels_test.go"), "package labels\n\nimport \"testing\"\n\nfunc TestLabels(t *testing.T) { t.Fatal(\"red\") }\n")
+
+	plan.Atoms[0].TestFirst.Commands = []string{"custom-test-runner ./internal/labels"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
+	if err == nil || !strings.Contains(err.Error(), "unsupported command family") {
+		t.Fatalf("expected unsupported command family rejection, got %v", err)
+	}
+}
+
+func TestValidateStandaloneWorkspaceAcceptsRepoBackedSConsVerificationCommand(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	mkdirAndWriteFile(t, filepath.Join(root, "SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels_test.go"), "package labels\n\nimport \"testing\"\n\nfunc TestLabels(t *testing.T) { t.Fatal(\"red\") }\n")
+
+	plan.Atoms[0].TestFirst.Commands = []string{"scons tests=yes target=template_debug"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
+
+	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root}); err != nil {
+		t.Fatalf("repo-backed scons command should pass: %v", err)
+	}
+}
+
 func TestValidateStandaloneWorkspaceRejectsSkippedCommentOnlyRedConfirmedTest(t *testing.T) {
 	root := t.TempDir()
 	plan := validPlan()
@@ -1265,6 +1318,23 @@ func TestValidateStandaloneWorkspaceRejectsSkippedCommentOnlyRedConfirmedTest(t 
 	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
 	if err == nil || !strings.Contains(err.Error(), "comment-only") || !strings.Contains(err.Error(), "red-confirmed") {
 		t.Fatalf("expected skipped/comment-only red-confirmed test rejection, got %v", err)
+	}
+}
+
+func TestValidateStandaloneWorkspaceIgnoresAssertionTokensInComments(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels_test.go"), `package labels
+
+// add t.Fatal here when this is implemented
+`)
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
+	if err == nil || !strings.Contains(err.Error(), "comment-only") {
+		t.Fatalf("expected comment assertion token to be ignored, got %v", err)
 	}
 }
 
