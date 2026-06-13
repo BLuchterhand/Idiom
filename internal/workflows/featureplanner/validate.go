@@ -674,6 +674,9 @@ func validateAtomPromptPathScope(prefix string, atom FeatureAtomPlan) []error {
 			declared[normalized] = true
 		}
 	}
+	for _, path := range standaloneAtomCommandContextPaths(atom) {
+		declared[path] = true
+	}
 
 	var errs []error
 	for _, path := range repoPathsMentionedInText(prompt) {
@@ -684,6 +687,22 @@ func validateAtomPromptPathScope(prefix string, atom FeatureAtomPlan) []error {
 	}
 
 	return errs
+}
+
+func standaloneAtomCommandContextPaths(atom FeatureAtomPlan) []string {
+	commands := append(append([]string(nil), atom.TestFirst.Commands...), atom.PlannedTDDSnapshot.TestCommands...)
+	seen := map[string]bool{}
+	var paths []string
+	for _, command := range commands {
+		for _, path := range repoPathsMentionedInText(command) {
+			if !seen[path] {
+				seen[path] = true
+				paths = append(paths, path)
+			}
+		}
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 func repoPathsMentionedInText(text string) []string {

@@ -732,6 +732,18 @@ func TestValidatePlanRejectsPromptPathOutsideDeclaredScope(t *testing.T) {
 	}
 }
 
+func TestValidatePlanAllowsPromptPathDeclaredByVerificationCommand(t *testing.T) {
+	plan := validPlan()
+	command := "cd native/tests && scons -j10 && bin/colony_tests -sf=test_fluid_brewery_cascade.cpp"
+	plan.Atoms[0].Prompt = "Verify with: " + command
+	plan.Atoms[0].TestFirst.Commands = []string{command}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = []string{command}
+
+	if err := ValidatePlan(plan); err != nil {
+		t.Fatalf("prompt command paths declared by test commands should pass: %v", err)
+	}
+}
+
 func TestValidatePlanRejectsGuessedHelperCallWithoutSignatureEvidence(t *testing.T) {
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Call find_connected_cistern_with_volume(eid) before posting fallback water haul."
