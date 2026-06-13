@@ -120,6 +120,10 @@ func synthesizePlanThenExecutePlannerFallbackAnswer(brief workerruntime.WorkerRu
 
 	if state.Mode == PlanExecutePlanningModeSubmitCorrection {
 		if state.SubmitCorrectionBlockerAllowed {
+			if blocker := synthesizePlanThenExecuteSubmitCorrectionBlocker(brief, results); blocker != "" {
+				return blocker, true
+			}
+
 			return strings.TrimSpace("<<QUESTION>>: Plan-execute submit correction is still required; no valid plan artifact has been accepted.\n\n" +
 				"Next valid action: emit one parser-readable submit_plan covering every required edit path with real executable edits, or answer <<QUESTION>> with the exact path-specific missing body/anchor blocker if gathered evidence cannot support a safe executable edit body."), true
 		}
@@ -139,6 +143,66 @@ func synthesizePlanThenExecutePlannerFallbackAnswer(brief workerruntime.WorkerRu
 	}
 
 	return "", false
+}
+
+func synthesizePlanThenExecuteSubmitCorrectionBlocker(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
+	rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results)
+	if !ok || !planThenExecuteSubmitPlanMissingBodyOrUnsafeAnchor(rejected) {
+		return ""
+	}
+
+	paths := submitPlanRefreshPathCandidates(rejected)
+	if len(paths) == 0 {
+		paths = planThenExecuteRejectedSubmitPlanStreakInvalidPaths(results)
+	}
+
+	rejectedPathList := sortedRunnerPathKeys(paths)
+	if len(rejectedPathList) == 0 {
+		return ""
+	}
+	rejectedPathSet := make(map[string]struct{}, len(rejectedPathList))
+	for _, path := range rejectedPathList {
+		rejectedPathSet[path] = struct{}{}
+	}
+
+	requiredCoverage := planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")
+	missing := missingRequiredEditPaths(requiredCoverage, changedPathsFromToolResults(results))
+	if len(missing) == 0 {
+		missing = rejectedPathList
+	}
+	missingSet := make(map[string]struct{}, len(missing)+len(rejectedPathList))
+	for _, path := range missing {
+		missingSet[path] = struct{}{}
+	}
+	for _, path := range rejectedPathList {
+		if _, ok := missingSet[path]; ok {
+			continue
+		}
+		missing = append(missing, path)
+		missingSet[path] = struct{}{}
+	}
+
+	reason := strings.TrimSpace(rejected.Error)
+	if reason == "" {
+		reason = strings.TrimSpace(rejected.Summary)
+	}
+
+	var b strings.Builder
+	b.WriteString("<<QUESTION>>: Plan-execute submit correction is blocked because repeated submit_plan attempts did not produce a safe executable edit body or bounded anchor for every remaining required path.\n\n")
+	b.WriteString("Path-level blockers:\n")
+	for _, path := range missing {
+		b.WriteString("- ")
+		b.WriteString(path)
+		if _, ok := rejectedPathSet[path]; ok {
+			b.WriteString(": repeated submit_plan attempts did not produce a safe executable edit body or bounded anchor for this path.\n")
+		} else {
+			b.WriteString(": no accepted submit_plan artifact has covered this required path; a safe executable edit body or exact path-specific body/anchor blocker is still required.\n")
+		}
+	}
+	b.WriteString("\nLast rejected submit_plan: ")
+	b.WriteString(reason)
+
+	return strings.TrimSpace(b.String())
 }
 
 func planThenExecuteFallbackBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (workerruntime.WorkerRuntimeBrief, bool) {

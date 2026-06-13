@@ -564,14 +564,58 @@ func TestPlanThenExecuteFallbackAllowsExactBlockerWhenCorrectionBodiesUnsafe(t *
 		t.Fatal("expected deterministic plan-execute fallback")
 	}
 
-	for _, want := range []string{"Plan-execute submit correction is still required", "exact path-specific missing body/anchor blocker", "safe executable edit body"} {
+	for _, want := range []string{"<<QUESTION>>:", "Path-level blockers:", "native/src/core/colony_sim_tick.cpp", "native/tests/test_collapse_event.cpp", "safe executable edit body", "bounded anchor"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("plan-execute unsafe-correction fallback missing %q:\n%s", want, answer)
 		}
 	}
 
-	if strings.Contains(answer, "source_satisfied_paths") {
+	for _, forbidden := range []string{"source_satisfied_paths", "Next valid action"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("unsafe-correction fallback should produce a concrete blocker, got stale fallback text %q:\n%s", forbidden, answer)
+		}
+	}
+
+	if !strings.Contains(answer, "Last rejected submit_plan:") {
 		t.Fatalf("unsafe-correction fallback should not advertise source_satisfied_paths as the fallback terminal option:\n%s", answer)
+	}
+}
+
+func TestPlanThenExecuteFallbackBlockerUsesCoveragePathsNotDirectoryScopes(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "plan_then_execute",
+		RequiredEditPaths: []string{"cmd/idiom", "cmd/idiom/product_workflow.go"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read cmd/idiom/product_workflow.go lines 1-120 (total lines: 240)"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[0]: line-range replacement for /repo/cmd/idiom/product_workflow.go lines 1-240 would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors, or answer <<QUESTION>> with the exact missing body/anchor blocker",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /repo/cmd/idiom/product_workflow.go; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /repo/cmd/idiom/product_workflow.go; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker",
+		},
+	}
+
+	answer, ok := deterministicNoToolsAnswer("main", brief, results)
+	if !ok {
+		t.Fatal("expected deterministic plan-execute fallback")
+	}
+
+	if !strings.Contains(answer, "cmd/idiom/product_workflow.go") {
+		t.Fatalf("fallback should name concrete rejected child path:\n%s", answer)
+	}
+	if strings.Contains(answer, "- cmd/idiom:") {
+		t.Fatalf("fallback must not report directory scope as file blocker:\n%s", answer)
 	}
 }
 
