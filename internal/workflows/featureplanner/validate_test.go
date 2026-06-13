@@ -1056,14 +1056,49 @@ func TestBuildPlannerPromptRendersSourceFactAnchors(t *testing.T) {
 }
 
 func TestRepoPathsMentionedInTextIgnoresLabelsAndShorthand(t *testing.T) {
-	text := "Write/Update MachineSystem using fluid_network_system.h/.cpp and native/src/core/components.h."
+	text := "Write/Update MachineSystem using fluid_network_system.h/.cpp, fluid_network_system.h/cpp, native/src/simulation/economy/fluid_network_system.h/cpp, and native/src/core/components.h."
 
 	got := repoPathsMentionedInText(text)
-	if slices.Contains(got, "Write/Update") || slices.Contains(got, "fluid_network_system.h/.cpp") {
+	if slices.Contains(got, "Write/Update") || slices.Contains(got, "fluid_network_system.h/.cpp") || slices.Contains(got, "fluid_network_system.h/cpp") {
 		t.Fatalf("fake or shorthand paths should be ignored, got %#v", got)
 	}
-	if !slices.Contains(got, "native/src/core/components.h") {
-		t.Fatalf("real repo path should be retained, got %#v", got)
+	for _, want := range []string{
+		"native/src/core/components.h",
+		"native/src/simulation/economy/fluid_network_system.h",
+		"native/src/simulation/economy/fluid_network_system.cpp",
+	} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("real repo path should be retained: want %q in %#v", want, got)
+		}
+	}
+}
+
+func TestValidateAtomPromptPathScopeExpandsQualifiedHeaderSourceShorthand(t *testing.T) {
+	atom := FeatureAtomPlan{
+		Prompt: "Modify native/src/simulation/economy/fluid_network_system.h/cpp.",
+		RequiredEditPaths: []string{
+			"native/src/simulation/economy/fluid_network_system.h",
+			"native/src/simulation/economy/fluid_network_system.cpp",
+		},
+	}
+
+	if errs := validateAtomPromptPathScope("atom 0", atom, newAtomPromptGrounding(atom, nil)); len(errs) != 0 {
+		t.Fatalf("scoped shorthand should pass validation, got %v", errs)
+	}
+
+	atom.RequiredEditPaths = nil
+	errs := validateAtomPromptPathScope("atom 0", atom, newAtomPromptGrounding(atom, nil))
+	if len(errs) != 2 {
+		t.Fatalf("unscoped shorthand should require both concrete paths, got %v", errs)
+	}
+	joined := fmt.Sprint(errs)
+	for _, want := range []string{
+		`native/src/simulation/economy/fluid_network_system.h`,
+		`native/src/simulation/economy/fluid_network_system.cpp`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("unscoped shorthand error missing %q: %s", want, joined)
+		}
 	}
 }
 

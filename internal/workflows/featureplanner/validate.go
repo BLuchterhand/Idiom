@@ -1036,26 +1036,67 @@ func repoPathsMentionedInText(text string) []string {
 	var paths []string
 	seen := map[string]bool{}
 	for _, raw := range pathparse.MentionedWorkspacePaths(text) {
-		path := normalizeFeaturePlannerMentionedPath(raw)
-		if path == "" || seen[path] {
-			continue
+		for _, path := range normalizeFeaturePlannerMentionedPaths(raw) {
+			if path == "" || seen[path] {
+				continue
+			}
+			seen[path] = true
+			paths = append(paths, path)
 		}
-		seen[path] = true
-		paths = append(paths, path)
 	}
 	sort.Strings(paths)
 	return paths
 }
 
-func normalizeFeaturePlannerMentionedPath(raw string) string {
+func normalizeFeaturePlannerMentionedPaths(raw string) []string {
 	path := plancontract.NormalizeScopePath(strings.Trim(raw, ".,;:)>]}'\"`"))
 	if path == "" || !strings.Contains(path, "/") {
-		return ""
+		return nil
+	}
+	if expanded, shorthand := expandFeaturePlannerExtensionShorthand(path); shorthand {
+		return expanded
 	}
 	if strings.Contains(path, "/.") || strings.Contains(path, "/<") || strings.Contains(path, "/>") {
+		return nil
+	}
+	return []string{path}
+}
+
+func normalizeFeaturePlannerMentionedPath(raw string) string {
+	paths := normalizeFeaturePlannerMentionedPaths(raw)
+	if len(paths) == 0 {
 		return ""
 	}
-	return path
+	return paths[0]
+}
+
+func expandFeaturePlannerExtensionShorthand(path string) ([]string, bool) {
+	lower := strings.ToLower(strings.TrimSpace(path))
+	for _, marker := range []string{".h/cpp", ".h/cc", ".h/cxx", ".hpp/cpp", ".hpp/cc", ".hpp/cxx", ".h/.cpp", ".h/.cc", ".h/.cxx", ".hpp/.cpp", ".hpp/.cc", ".hpp/.cxx"} {
+		if strings.HasSuffix(lower, marker) {
+			header := strings.TrimSpace(path[:len(path)-len(marker)+strings.Index(marker, "/")])
+			sourceExt := strings.TrimPrefix(marker[strings.Index(marker, "/")+1:], ".")
+			if header == "" || sourceExt == "" {
+				return nil, true
+			}
+			sourceBase := header
+			if strings.HasSuffix(strings.ToLower(sourceBase), ".hpp") {
+				sourceBase = sourceBase[:len(sourceBase)-len(".hpp")]
+			} else if strings.HasSuffix(strings.ToLower(sourceBase), ".h") {
+				sourceBase = sourceBase[:len(sourceBase)-len(".h")]
+			}
+
+			headerPath := plancontract.NormalizeScopePath(header)
+			sourcePath := plancontract.NormalizeScopePath(sourceBase + "." + sourceExt)
+			if !strings.Contains(headerPath, "/") || !strings.Contains(sourcePath, "/") {
+				return nil, true
+			}
+
+			return []string{headerPath, sourcePath}, true
+		}
+	}
+
+	return nil, false
 }
 
 func promptPathCanRemainContextOnly(path string) bool {

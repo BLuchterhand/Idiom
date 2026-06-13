@@ -155,6 +155,43 @@ func TestFeaturePlannerTUIDirectAnswerResumesOpenQuestionSession(t *testing.T) {
 	}
 }
 
+func TestFeaturePlannerTUIDirectPlanningRepairAcceptsPlainOperatorInput(t *testing.T) {
+	projectRoot := t.TempDir()
+	state := featureplanner.NewState("repair-session", "Implement brewery cistern atom.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningRepair
+	state.PlanningLoop.State = featureplanner.FeatureStatePlanningRepair
+	state.Blockers = []string{`atom 0 prompt mentions repo path "fluid_network_system.h/cpp" outside scope`}
+	if _, err := featureplanner.SaveState(projectRoot, &state); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	m := &Model{
+		cfg: config.Config{
+			Chat:      config.Chat{ProjectRoot: projectRoot},
+			Workspace: config.Workspace{Root: projectRoot, CWD: projectRoot},
+		},
+		directFeaturePlannerSessionID: state.SessionID,
+	}
+
+	if m.directFeaturePlannerHasOpenQuestion() {
+		t.Fatal("repair-only state should not masquerade as an open planner question")
+	}
+	if !m.directFeaturePlannerAcceptsOperatorInput() {
+		t.Fatal("plain typed input should resume direct feature-planner planning-repair state")
+	}
+
+	resumePrompt := directFeaturePlannerResumePrompt(state, "Treat fluid_network_system.h/cpp as the two explicit scoped files.")
+	for _, want := range []string{
+		"Implement brewery cistern atom.",
+		"Operator repair instruction:",
+		"Treat fluid_network_system.h/cpp as the two explicit scoped files.",
+	} {
+		if !strings.Contains(resumePrompt, want) {
+			t.Fatalf("repair resume prompt missing %q:\n%s", want, resumePrompt)
+		}
+	}
+}
+
 func TestFeaturePlannerTUIDirectAcceptedSourceAnswerCarriesAuthorityIntoResumePrompt(t *testing.T) {
 	projectRoot := t.TempDir()
 	writeFile(t, projectRoot, "go.mod", "module example.com/tui\n")

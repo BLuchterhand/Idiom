@@ -319,16 +319,22 @@ func (m *Model) runDirectFeaturePlannerAnswerOnce(ctx context.Context, answer st
 }
 
 func directFeaturePlannerResumePrompt(state featureplanner.FeatureState, answer string) string {
+	prompt := ""
 	if summary := strings.TrimSpace(state.PromptSummary); summary != "" {
-		return summary
+		prompt = summary
+	} else if summary := strings.TrimSpace(state.Plan.SourceTask.Summary); summary != "" {
+		prompt = summary
+	} else if summary := strings.TrimSpace(state.Plan.Summary); summary != "" {
+		prompt = summary
+	} else {
+		prompt = strings.TrimSpace(answer)
 	}
-	if summary := strings.TrimSpace(state.Plan.SourceTask.Summary); summary != "" {
-		return summary
+
+	if strings.TrimSpace(answer) != "" && directFeaturePlannerStateNeedsRepairInstruction(state) {
+		return strings.TrimSpace(prompt + "\n\nOperator repair instruction:\n" + strings.TrimSpace(answer))
 	}
-	if summary := strings.TrimSpace(state.Plan.Summary); summary != "" {
-		return summary
-	}
-	return strings.TrimSpace(answer)
+
+	return prompt
 }
 
 func (m *Model) productBriefForFeaturePlannerState(state featureplanner.FeatureState) (*featureplanner.ProductWorkflowBrief, string, error) {
@@ -360,9 +366,32 @@ func (m *Model) directFeaturePlannerHasOpenQuestion() bool {
 	return featureplanner.CountOpenPlannerQuestions(state) > 0
 }
 
+func (m *Model) directFeaturePlannerAcceptsOperatorInput() bool {
+	sessionID := strings.TrimSpace(m.directFeaturePlannerSessionID)
+	if sessionID == "" {
+		return false
+	}
+
+	state, _, err := featureplanner.LoadState(m.projectRoot(), sessionID)
+	if err != nil {
+		return false
+	}
+
+	return featureplanner.CountOpenPlannerQuestions(state) > 0 || directFeaturePlannerStateNeedsRepairInstruction(state)
+}
+
+func directFeaturePlannerStateNeedsRepairInstruction(state featureplanner.FeatureState) bool {
+	switch state.Status {
+	case featureplanner.FeatureStatePlanningRepair, featureplanner.FeatureStateStaleEditAnchor:
+		return true
+	default:
+		return false
+	}
+}
+
 func (m *Model) updateDirectFeaturePlannerSession(state featureplanner.FeatureState) {
 	switch state.Status {
-	case featureplanner.FeatureStatePlanningQuestion, featureplanner.FeatureStatePlanningRepair, featureplanner.FeatureStateDispatching:
+	case featureplanner.FeatureStatePlanningQuestion, featureplanner.FeatureStatePlanningRepair, featureplanner.FeatureStateStaleEditAnchor, featureplanner.FeatureStateDispatching:
 		m.directFeaturePlannerSessionID = strings.TrimSpace(state.SessionID)
 	default:
 		m.directFeaturePlannerSessionID = ""
