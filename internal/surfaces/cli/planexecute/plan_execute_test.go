@@ -2187,6 +2187,66 @@ func TestCollectPlanExecutePhaseEvidenceReportsEvidenceGaps(t *testing.T) {
 	}
 }
 
+func TestCollectPlanExecutePhaseEvidenceReportsUncoveredRequiredPath(t *testing.T) {
+	evidence := collectPlanExecutePhaseEvidence(
+		t.TempDir(),
+		"review_repair",
+		workspace.PlanArtifact{SchemaVersion: workspace.PlanArtifactSchemaVersion},
+		[]string{"a.go"},
+		[]string{"a.go", "b.go"},
+		[]string{"a.go", "b.go"},
+		reviewRepairEvidence{DiffCheckExit: 0},
+		executorPhaseReport{},
+	)
+
+	if !slicesContainString(evidence.OpenObligations, "required_path_uncovered:b.go") {
+		t.Fatalf("expected uncovered required path obligation, got %#v", evidence.OpenObligations)
+	}
+}
+
+func TestCollectPlanExecutePhaseEvidenceRequiresTypedSourceSatisfiedEvidence(t *testing.T) {
+	withoutEvidence := collectPlanExecutePhaseEvidence(
+		t.TempDir(),
+		"review_repair",
+		workspace.PlanArtifact{
+			SchemaVersion: workspace.PlanArtifactSchemaVersion,
+			Paths: workspace.PlanArtifactPaths{
+				SourceSatisfied: []string{"b.go"},
+			},
+		},
+		[]string{"a.go"},
+		[]string{"a.go", "b.go"},
+		[]string{"a.go", "b.go"},
+		reviewRepairEvidence{DiffCheckExit: 0},
+		executorPhaseReport{},
+	)
+	if !slicesContainString(withoutEvidence.OpenObligations, "required_path_uncovered:b.go") {
+		t.Fatalf("source-satisfied path without evidence should remain uncovered, got %#v", withoutEvidence.OpenObligations)
+	}
+
+	withEvidence := collectPlanExecutePhaseEvidence(
+		t.TempDir(),
+		"review_repair",
+		workspace.PlanArtifact{
+			SchemaVersion: workspace.PlanArtifactSchemaVersion,
+			Paths: workspace.PlanArtifactPaths{
+				SourceSatisfied: []string{"b.go"},
+			},
+			Evidence: []workspace.PlanArtifactEvidence{
+				{Path: "b.go", Kind: "harness_observed_source", Summary: "current source already satisfies required path"},
+			},
+		},
+		[]string{"a.go"},
+		[]string{"a.go", "b.go"},
+		[]string{"a.go", "b.go"},
+		reviewRepairEvidence{DiffCheckExit: 0},
+		executorPhaseReport{},
+	)
+	if slicesContainString(withEvidence.OpenObligations, "required_path_uncovered:b.go") {
+		t.Fatalf("typed source-satisfied evidence should cover required path, got %#v", withEvidence.OpenObligations)
+	}
+}
+
 func TestLoadPlanExecutePacketEvidenceRejectsInvalidPackID(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".idiom", "comprehension", "views"), 0o755); err != nil {
@@ -2296,8 +2356,8 @@ func TestPlanExecuteReviewRepairPromptTreatsFailedSourceSanityAsTerminalEvidence
 		},
 	)
 	for _, want := range []string{
-		"failed verification or source_sanity obligations",
-		"Treat that failure as sufficient post-edit evidence",
+		"failed or open obligations",
+		"Treat that obligation as sufficient post-edit evidence",
 		"do not perform additional reads, searches, or context refreshes",
 		"Submit a corrective plan",
 		"<<QUESTION>>",

@@ -2392,6 +2392,114 @@ func TestRunReviewRepairPhaseRejectsRecoveryTemplateAsPass(t *testing.T) {
 	}
 }
 
+func TestReviewRepairPhaseEvidenceReportsUncoveredRequiredPath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("after\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("already final\n"), 0o644); err != nil {
+		t.Fatalf("seed b.txt: %v", err)
+	}
+
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "before", NewText: "after", Purpose: "change a"},
+		},
+	}
+
+	evidence := collectPlanExecutePhaseEvidence(
+		root,
+		"review_repair",
+		plan,
+		[]string{"a.txt"},
+		[]string{"a.txt", "b.txt"},
+		[]string{"a.txt", "b.txt"},
+		ReviewRepairEvidence{},
+		ExecutorPhaseReport{Total: 1, Succeeded: 1},
+	)
+
+	if !slices.Contains(evidence.OpenObligations, "required_path_uncovered:b.txt") {
+		t.Fatalf("phase evidence should report uncovered required path, got %#v", evidence.OpenObligations)
+	}
+	if reason := phaseEvidencePassRejectionReason(evidence); reason != "required_path_uncovered:b.txt" {
+		t.Fatalf("uncovered required path should reject pass, got %q", reason)
+	}
+}
+
+func TestReviewRepairPhaseEvidenceAcceptsTypedSourceSatisfiedRequiredPath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("after\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("already final\n"), 0o644); err != nil {
+		t.Fatalf("seed b.txt: %v", err)
+	}
+
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Paths: workspace.PlanArtifactPaths{
+			SourceSatisfied: []string{"b.txt"},
+		},
+		Evidence: []workspace.PlanArtifactEvidence{
+			{Path: "b.txt", Kind: "harness_observed_source", Summary: "current source already satisfies required path"},
+		},
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "before", NewText: "after", Purpose: "change a"},
+		},
+	}
+
+	evidence := collectPlanExecutePhaseEvidence(
+		root,
+		"review_repair",
+		plan,
+		[]string{"a.txt"},
+		[]string{"a.txt", "b.txt"},
+		[]string{"a.txt", "b.txt"},
+		ReviewRepairEvidence{},
+		ExecutorPhaseReport{Total: 1, Succeeded: 1},
+	)
+
+	if slices.Contains(evidence.OpenObligations, "required_path_uncovered:b.txt") {
+		t.Fatalf("typed source_satisfied_paths should cover required path, got %#v", evidence.OpenObligations)
+	}
+}
+
+func TestReviewRepairPhaseEvidenceRejectsSourceSatisfiedRequiredPathWithoutEvidence(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("after\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("already final\n"), 0o644); err != nil {
+		t.Fatalf("seed b.txt: %v", err)
+	}
+
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Paths: workspace.PlanArtifactPaths{
+			SourceSatisfied: []string{"b.txt"},
+		},
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "before", NewText: "after", Purpose: "change a"},
+		},
+	}
+
+	evidence := collectPlanExecutePhaseEvidence(
+		root,
+		"review_repair",
+		plan,
+		[]string{"a.txt"},
+		[]string{"a.txt", "b.txt"},
+		[]string{"a.txt", "b.txt"},
+		ReviewRepairEvidence{},
+		ExecutorPhaseReport{Total: 1, Succeeded: 1},
+	)
+
+	if !slices.Contains(evidence.OpenObligations, "required_path_uncovered:b.txt") {
+		t.Fatalf("source_satisfied path without current-state evidence should remain uncovered, got %#v", evidence.OpenObligations)
+	}
+}
+
 func TestRunReviewRepairPhaseRejectsPassWhenRequestedImplementationEditMissing(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "feature_test.go"), []byte("package demo\n\nfunc TestEnabled(t *testing.T) {\n\tif !Enabled() {\n\t\tt.Fatal(\"disabled\")\n\t}\n}\n"), 0o644); err != nil {
@@ -2669,6 +2777,161 @@ func TestRunReviewRepairPhaseRetriesContradictoryPassIntoCorrectivePlan(t *testi
 	events := planExecuteJSONEventsForRunTest(t, stdout.String())
 	if _, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.review_repair_retry"); !ok {
 		t.Fatalf("expected review_repair_retry event, got %s", stdout.String())
+	}
+}
+
+func TestRunReviewRepairPhaseRetriesInvalidTerminalAnswerIntoCorrectivePlan(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "a.txt")
+
+	if err := os.WriteFile(path, []byte("value=bad\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "value=good", NewText: "value=bad", Purpose: "introduce bad value"},
+		},
+	}
+
+	var stdout bytes.Buffer
+	attempts := 0
+
+	report, err := RunReviewRepairPhase(
+		cfg,
+		"Keep a.txt good.",
+		plan,
+		[]string{"a.txt"},
+		nil,
+		ExecutorPhaseReport{Total: 1, Succeeded: 1, Verification: []PhaseEvidenceCheck{{
+			Kind:    "verification",
+			Command: "check a.txt",
+			Status:  "failed",
+			Error:   "value was bad",
+		}}},
+		Options{JSONEvents: true},
+		&stdout,
+		func(cfg config.Config, prompt string, opts RunOptions, _ io.Writer) (string, error) {
+			attempts++
+
+			if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
+				t.Fatalf("unexpected task family %q", opts.TaskFamily)
+			}
+
+			if attempts == 1 {
+				return "For the review-repair prompt, the answer is grounded in `a.txt`: it references value and returns bad.", nil
+			}
+
+			if !strings.Contains(prompt, "Rejected Previous Review Outcome") ||
+				!strings.Contains(prompt, "did not produce a machine-readable terminal outcome") ||
+				!strings.Contains(prompt, "Do not answer with a read-only explanation") {
+				t.Fatalf("retry prompt should reject read-only review answer, got:\n%s", prompt)
+			}
+
+			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
+				{Path: "a.txt", OldText: "value=bad", NewText: "value=good", Purpose: "repair failed verification"},
+			}, "Verification Checklist:\n- Failing item: check a.txt reported value was bad.\n- Scope safety: edit only a.txt.")
+
+			return "submitted repair plan", nil
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("expected retry corrective plan to repair invalid terminal answer, got %v", err)
+	}
+
+	if attempts != 2 {
+		t.Fatalf("expected one retry after invalid terminal answer, got %d attempts", attempts)
+	}
+
+	if report.Status != "repaired" || report.Repairs != 1 {
+		t.Fatalf("expected repaired report, got %#v", report)
+	}
+
+	if got := readFileStringForRunTest(t, path); got != "value=good\n" {
+		t.Fatalf("expected repair to apply, got %q", got)
+	}
+
+	events := planExecuteJSONEventsForRunTest(t, stdout.String())
+	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.review_repair_retry")
+	if !ok {
+		t.Fatalf("expected review_repair_retry event, got %s", stdout.String())
+	}
+	if event["reason"] != "invalid_terminal_outcome" {
+		t.Fatalf("retry event reason = %#v, want invalid_terminal_outcome", event)
+	}
+}
+
+func TestRunReviewRepairPhaseFailsAfterRepeatedInvalidTerminalAnswer(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("value=bad\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "value=good", NewText: "value=bad", Purpose: "introduce bad value"},
+		},
+	}
+
+	var stdout bytes.Buffer
+	attempts := 0
+
+	report, err := RunReviewRepairPhase(
+		cfg,
+		"Keep a.txt good.",
+		plan,
+		[]string{"a.txt"},
+		nil,
+		ExecutorPhaseReport{Total: 1, Succeeded: 1, Verification: []PhaseEvidenceCheck{{
+			Kind:    "verification",
+			Command: "check a.txt",
+			Status:  "failed",
+			Error:   "value was bad",
+		}}},
+		Options{JSONEvents: true},
+		&stdout,
+		func(_ config.Config, prompt string, _ RunOptions, _ io.Writer) (string, error) {
+			attempts++
+			if attempts == 2 && !strings.Contains(prompt, "Rejected Previous Review Outcome") {
+				t.Fatalf("second attempt should include invalid-outcome retry prompt, got:\n%s", prompt)
+			}
+			return "For the review-repair prompt, the source inventory mentions a.txt but no terminal outcome is needed.", nil
+		},
+		nil,
+	)
+	if err == nil {
+		t.Fatalf("expected repeated invalid terminal answers to fail")
+	}
+
+	if attempts != 2 {
+		t.Fatalf("expected exactly one retry after invalid terminal answer, got %d attempts", attempts)
+	}
+
+	if report.Status != "inconclusive" {
+		t.Fatalf("expected inconclusive report after repeated invalid answers, got %#v", report)
+	}
+
+	if !strings.Contains(err.Error(), "produced no corrective plan") {
+		t.Fatalf("expected invalid terminal outcome error, got %v", err)
+	}
+
+	events := planExecuteJSONEventsForRunTest(t, stdout.String())
+	retryEvents := 0
+	for _, event := range events {
+		if event["type"] == "idiom.plan_execute.review_repair_retry" {
+			retryEvents++
+			if event["reason"] != "invalid_terminal_outcome" {
+				t.Fatalf("retry event reason = %#v, want invalid_terminal_outcome", event)
+			}
+		}
+	}
+	if retryEvents != 1 {
+		t.Fatalf("expected one invalid outcome retry event, got %d events in %s", retryEvents, stdout.String())
 	}
 }
 

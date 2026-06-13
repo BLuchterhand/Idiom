@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/workflows/planexecute"
 )
@@ -139,7 +140,7 @@ func collectPlanExecutePhaseEvidence(root string, phase string, plan workspace.P
 		PatchHygiene:     patchHygiene,
 		SuggestedTests:   packetSuggestedTests(packet),
 		UnresolvedGaps:   append([]string(nil), packet.UnresolvedGaps...),
-		OpenObligations:  phaseEvidenceOpenObligations(plan, packet, changedPaths, submittedPlan, sourceSanity, executorReport.Verification, patchHygiene),
+		OpenObligations:  phaseEvidenceOpenObligations(plan, packet, changedPaths, requiredPaths, submittedPlan, sourceSanity, executorReport.Verification, patchHygiene),
 		DecisionEvidence: phaseEvidenceDecisionSummary(packet, submittedPlan, sourceSanity, executorReport.Verification, patchHygiene),
 	}
 
@@ -418,7 +419,7 @@ func packetSuggestedTests(packet phaseEvidencePacket) []phaseEvidenceTest {
 	return append([]phaseEvidenceTest(nil), packet.SuggestedTests...)
 }
 
-func phaseEvidenceOpenObligations(plan workspace.PlanArtifact, packet phaseEvidencePacket, changedPaths []string, submittedPlan []phaseEvidenceCheck, sourceSanity []phaseEvidenceCheck, verification []phaseEvidenceCheck, patchHygiene phaseEvidenceCheck) []string {
+func phaseEvidenceOpenObligations(plan workspace.PlanArtifact, packet phaseEvidencePacket, changedPaths []string, requiredPaths []string, submittedPlan []phaseEvidenceCheck, sourceSanity []phaseEvidenceCheck, verification []phaseEvidenceCheck, patchHygiene phaseEvidenceCheck) []string {
 	var out []string
 
 	if strings.TrimSpace(plan.PackID) != "" {
@@ -434,6 +435,27 @@ func phaseEvidenceOpenObligations(plan workspace.PlanArtifact, packet phaseEvide
 		}
 
 		out = append(out, fmt.Sprintf("submitted_edit_%s:%s#%d", status, firstNonEmptyString(strings.TrimSpace(check.Path), "(unknown)"), i+1))
+	}
+
+	coveredRequiredPaths := map[string]struct{}{}
+	for _, path := range mergePlanExecutePaths(changedPaths) {
+		coveredRequiredPaths[path] = struct{}{}
+	}
+	sourceSatisfiedViolations := plancontract.ValidateSourceSatisfiedPathCoverage(plancontract.SourceSatisfiedPathCoverageInput{
+		RequiredPaths:        requiredPaths,
+		SourceSatisfiedPaths: plan.Paths.SourceSatisfied,
+		Evidence:             workspace.PlanArtifactSourceSatisfiedEvidenceRefs(plan),
+		ApprovedPaths:        plan.Approval.ApprovedPaths,
+		PendingPaths:         plan.Approval.PendingPaths,
+		RequireEvidence:      true,
+	})
+	for path := range plancontract.SourceSatisfiedCoveragePathSet(plan.Paths.SourceSatisfied, sourceSatisfiedViolations) {
+		coveredRequiredPaths[path] = struct{}{}
+	}
+	for _, path := range mergePlanExecutePaths(requiredPaths) {
+		if _, covered := coveredRequiredPaths[path]; !covered {
+			out = append(out, "required_path_uncovered:"+path)
+		}
 	}
 
 	if patchHygiene.Status == "failed" {

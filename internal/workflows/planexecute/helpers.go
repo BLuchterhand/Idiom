@@ -1314,6 +1314,16 @@ func RunReviewRepairPhase(
 			return ReviewRepairPhaseReport{Status: status}, nil
 		}
 
+		if attempt == 0 {
+			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_retry", map[string]any{
+				"reason": "invalid_terminal_outcome",
+			})
+
+			prompt = planExecuteReviewRepairInvalidOutcomeRetryPrompt(prompt, answer)
+
+			continue
+		}
+
 		return ReviewRepairPhaseReport{Status: "inconclusive"}, fmt.Errorf("review-repair phase produced no corrective plan and no `Decision: pass` with `Verification Checklist`")
 	}
 
@@ -1421,6 +1431,8 @@ func phaseEvidencePassRejectionReason(bundle PhaseEvidenceBundle) string {
 			strings.HasPrefix(obligation, "verification_error:"),
 			strings.HasPrefix(obligation, "submitted_edit_failed:"):
 			return RunFailureVerificationRequired
+		case strings.HasPrefix(obligation, "required_path_uncovered:"):
+			return obligation
 		}
 	}
 
@@ -1454,7 +1466,7 @@ func planExecuteReviewRepairPrompt(originalPrompt string, plan workspace.PlanArt
 	b.WriteString("Use the Phase Evidence Bundle, Diff Evidence, submitted_plan_state, source_sanity, verification entries, and inherited context packet as the primary evidence ledger. Do not restart discovery as if this were a fresh review.\n\n")
 
 	if reason := phaseEvidencePassRejectionReason(evidence.PhaseEvidence); reason != "" {
-		fmt.Fprintf(&b, "Phase Evidence already has failed verification or source_sanity obligations (`%s`). Treat that failure as sufficient post-edit evidence: do not perform additional reads, searches, or context refreshes before choosing the terminal outcome. Submit a corrective plan if the failure can be repaired inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` naming the exact failed check.\n\n", reason)
+		fmt.Fprintf(&b, "Phase Evidence already has failed or open obligations (`%s`). Treat that obligation as sufficient post-edit evidence: do not perform additional reads, searches, or context refreshes before choosing the terminal outcome. Submit a corrective plan if it can be repaired inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` naming the exact failed or open obligation.\n\n", reason)
 	} else {
 		b.WriteString("If exact post-edit evidence is missing, make one targeted probe: refresh/check context state with `context_status` (`refresh=true`) or use `context_query`, `context_zoom`, `code_navigate`, or one bounded `read_file` range for one named checklist fact. Do not sweep large files with unbounded or multi-hundred-line raw reads; broad raw reads waste the review budget and duplicate the sidecar evidence.\n\n")
 	}
@@ -1476,6 +1488,7 @@ func planExecuteReviewRepairPrompt(originalPrompt string, plan workspace.PlanArt
 	b.WriteString("\n")
 	b.WriteString("If Phase Evidence lists `requested_test_edit_missing`, `Decision: pass` is invalid: a typed test-edit obligation is still unsatisfied because this run changed no test path. Submit a corrective test edit only if it is inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` and name the missing test-edit scope.\n\n")
 	b.WriteString("If Phase Evidence lists `requested_implementation_edit_missing`, `Decision: pass` is invalid: a typed implementation-edit obligation is still unsatisfied because this run changed only test paths. Submit a corrective implementation edit if it is inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` and name the missing source-edit scope.\n\n")
+	b.WriteString("If Phase Evidence lists `required_path_uncovered:`, `Decision: pass` is invalid: a required path was neither changed nor covered by typed current-state source-satisfied evidence. Submit a corrective edit if it is inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` and name the uncovered required path.\n\n")
 	b.WriteString("If Phase Evidence lists `verification_failed:` or any verification/source_sanity check with status `failed`, `Decision: pass` is invalid. Submit a corrective plan if the failing checklist item can be repaired inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` and name the exact failed check.\n\n")
 	b.WriteString("Planner-owned build/test/scenario acceptance commands are pending outside this lane unless Phase Evidence names the exact command as successful. Do not mark them checked/pass or say they ran.\n\n")
 	b.WriteString("Patch hygiene and source_sanity may be marked checked only when Phase Evidence shows those results. Unsupported or absent source_sanity is not a failure for non-source files.\n\n")
@@ -3906,7 +3919,7 @@ func collectPlanExecutePhaseEvidence(root string, phase string, plan workspace.P
 		PatchHygiene:     patchHygiene,
 		SuggestedTests:   packetSuggestedTests(packet),
 		UnresolvedGaps:   append([]string(nil), packet.UnresolvedGaps...),
-		OpenObligations:  phaseEvidenceOpenObligations(plan, packet, changedPaths, submittedPlan, sourceSanity, executorReport.Verification, patchHygiene),
+		OpenObligations:  phaseEvidenceOpenObligations(plan, packet, changedPaths, requiredPaths, submittedPlan, sourceSanity, executorReport.Verification, patchHygiene),
 		DecisionEvidence: phaseEvidenceDecisionSummary(packet, submittedPlan, sourceSanity, executorReport.Verification, patchHygiene),
 	}
 
@@ -4189,7 +4202,7 @@ func packetSuggestedTests(packet PhaseEvidencePacket) []PhaseEvidenceTest {
 	return append([]PhaseEvidenceTest(nil), packet.SuggestedTests...)
 }
 
-func phaseEvidenceOpenObligations(plan workspace.PlanArtifact, packet PhaseEvidencePacket, changedPaths []string, submittedPlan []PhaseEvidenceCheck, sourceSanity []PhaseEvidenceCheck, verification []PhaseEvidenceCheck, patchHygiene PhaseEvidenceCheck) []string {
+func phaseEvidenceOpenObligations(plan workspace.PlanArtifact, packet PhaseEvidencePacket, changedPaths []string, requiredPaths []string, submittedPlan []PhaseEvidenceCheck, sourceSanity []PhaseEvidenceCheck, verification []PhaseEvidenceCheck, patchHygiene PhaseEvidenceCheck) []string {
 	var out []string
 
 	if strings.TrimSpace(plan.PackID) != "" {
@@ -4205,6 +4218,27 @@ func phaseEvidenceOpenObligations(plan workspace.PlanArtifact, packet PhaseEvide
 		}
 
 		out = append(out, fmt.Sprintf("submitted_edit_%s:%s#%d", status, firstNonEmptyString(strings.TrimSpace(check.Path), "(unknown)"), i+1))
+	}
+
+	coveredRequiredPaths := map[string]struct{}{}
+	for _, path := range mergePlanExecutePaths(changedPaths) {
+		coveredRequiredPaths[path] = struct{}{}
+	}
+	sourceSatisfiedViolations := plancontract.ValidateSourceSatisfiedPathCoverage(plancontract.SourceSatisfiedPathCoverageInput{
+		RequiredPaths:        requiredPaths,
+		SourceSatisfiedPaths: plan.Paths.SourceSatisfied,
+		Evidence:             workspace.PlanArtifactSourceSatisfiedEvidenceRefs(plan),
+		ApprovedPaths:        plan.Approval.ApprovedPaths,
+		PendingPaths:         plan.Approval.PendingPaths,
+		RequireEvidence:      true,
+	})
+	for path := range plancontract.SourceSatisfiedCoveragePathSet(plan.Paths.SourceSatisfied, sourceSatisfiedViolations) {
+		coveredRequiredPaths[path] = struct{}{}
+	}
+	for _, path := range mergePlanExecutePaths(requiredPaths) {
+		if _, covered := coveredRequiredPaths[path]; !covered {
+			out = append(out, "required_path_uncovered:"+path)
+		}
 	}
 
 	if patchHygiene.Status == "failed" {
