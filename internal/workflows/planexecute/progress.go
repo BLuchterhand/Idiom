@@ -402,7 +402,7 @@ func (s *ProgressState) MarkReviewComplete(report ReviewRepairPhaseReport, revie
 	if strings.Contains(strings.ToLower(report.Status), "blocked") {
 		s.Status = ProgressStatusBlocked
 		s.FailureKind = "review_repair_blocked"
-		s.FailureReason = sanitizeProgressReason(s.Review.Status)
+		s.FailureReason = sanitizeProgressReason(firstProgressNonEmptyString(report.FailureReason, s.Review.Status))
 
 		return
 	}

@@ -15,6 +15,10 @@ func reviewRepairBlockerSummary(answer string) string {
 	return planExecuteBlockerSummary(answer)
 }
 
+func reviewRepairBlockerFailureReason(answer string) string {
+	return planExecuteBlockerFailureReason(answer)
+}
+
 func planExecuteAnswerDeclaresBlocker(answer string) bool {
 	answer = strings.TrimSpace(answer)
 
@@ -31,22 +35,47 @@ func PlanExecuteAnswerDeclaresBlocker(answer string) bool {
 }
 
 func planExecuteBlockerSummary(answer string) string {
+	if explicit := explicitBlockerLine(answer); explicit != "" {
+		return truncateBlockerLine(explicit)
+	}
+
 	for _, raw := range strings.Split(answer, "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
 		}
 
-		const max = 240
-
-		if len(line) > max {
-			return line[:max] + "..."
-		}
-
-		return line
+		return truncateBlockerLine(line)
 	}
 
 	return "planner stopped with a blocker"
+}
+
+func explicitBlockerLine(answer string) string {
+	for _, raw := range strings.Split(answer, "\n") {
+		line := strings.TrimSpace(raw)
+		lower := strings.ToLower(line)
+		switch {
+		case strings.Contains(line, "<<QUESTION>>"):
+			return line
+		case strings.HasPrefix(lower, "blocker:"):
+			return line
+		case strings.HasPrefix(lower, "decision: block"):
+			return line
+		}
+	}
+
+	return ""
+}
+
+func truncateBlockerLine(line string) string {
+	const max = 240
+
+	if len(line) > max {
+		return line[:max] + "..."
+	}
+
+	return line
 }
 
 func PlanExecuteBlockerSummary(answer string) string {

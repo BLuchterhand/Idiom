@@ -312,6 +312,12 @@ func ValidatePlan(plan FeaturePlan) error {
 			}
 		}
 
+		for _, path := range demotedRequiredImplementationPaths(plan, atom) {
+			if !requiredPathSet[path] {
+				errs = append(errs, fmt.Errorf("%s required implementation path %q is required by both top-level success criteria and atom implementation text but appears only in atom.allowed_edit_paths; required implementation scope must be covered by atom.required_edit_paths", prefix, path))
+			}
+		}
+
 		for _, ref := range atom.TestFirst.ObligationRefs {
 			ref = strings.TrimSpace(ref)
 			if ref == "" {
@@ -638,6 +644,126 @@ func standaloneAtomWorkspaceScopePaths(atom FeatureAtomPlan) []string {
 
 func standaloneAtomTestArtifactPaths(atom FeatureAtomPlan) []string {
 	return append(append([]string(nil), atom.TestFirst.TestArtifactPaths...), atom.PlannedTDDSnapshot.TestArtifactPaths...)
+}
+
+func demotedRequiredImplementationPaths(plan FeaturePlan, atom FeatureAtomPlan) []string {
+	allowed := normalizeEditScopeList(atom.AllowedEditPaths)
+	if len(allowed) == 0 {
+		return nil
+	}
+
+	planText := strings.Join([]string{
+		plan.Summary,
+		plan.TopLevelScope.Objective,
+		strings.Join(plan.TopLevelScope.SuccessCriteria, "\n"),
+	}, "\n")
+	atomText := strings.Join([]string{
+		atom.Title,
+		atom.Summary,
+		atom.Prompt,
+	}, "\n")
+
+	var paths []string
+	for _, path := range allowed {
+		if pathRequiredByText(planText, path) && pathRequiredByText(atomText, path) {
+			paths = append(paths, path)
+		}
+	}
+
+	return normalizeEditScopeList(paths)
+}
+
+func pathRequiredByText(text string, path string) bool {
+	text = strings.ToLower(text)
+	path = strings.ToLower(strings.TrimSpace(path))
+	if text == "" || path == "" {
+		return false
+	}
+
+	names := []string{path}
+	if base := strings.ToLower(filepath.Base(filepath.FromSlash(path))); base != "" && base != "." && base != path {
+		names = append(names, base)
+	}
+
+	for _, name := range names {
+		if textRequiresPathName(text, name) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func textRequiresPathName(text string, name string) bool {
+	start := 0
+	for {
+		idx := strings.Index(text[start:], name)
+		if idx < 0 {
+			return false
+		}
+
+		pos := start + idx
+		left := pos - 96
+		if left < 0 {
+			left = 0
+		}
+		right := pos + len(name) + 96
+		if right > len(text) {
+			right = len(text)
+		}
+		window := text[left:right]
+
+		if pathWindowIsOptional(window) {
+			start = pos + len(name)
+			continue
+		}
+
+		if pathWindowHasRequiredMutationVerb(window) {
+			return true
+		}
+
+		start = pos + len(name)
+	}
+}
+
+func pathWindowIsOptional(window string) bool {
+	for _, marker := range []string{
+		"if needed",
+		"if necessary",
+		"may ",
+		"optional",
+		"candidate",
+	} {
+		if strings.Contains(window, marker) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func pathWindowHasRequiredMutationVerb(window string) bool {
+	for _, verb := range []string{
+		"add",
+		"change",
+		"create",
+		"declar",
+		"implement",
+		"integrat",
+		"modify",
+		"must",
+		"required",
+		"route",
+		"update",
+		"use",
+		"write",
+	} {
+		if strings.Contains(window, verb) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func validateStandaloneWorkspacePath(root string, contract plancontract.PlanExecutionContract, path string) error {

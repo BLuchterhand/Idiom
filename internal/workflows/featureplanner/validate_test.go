@@ -47,6 +47,59 @@ func TestValidatePlanRequiresTDDArtifactPathsInRequiredEditScope(t *testing.T) {
 	}
 }
 
+func TestValidatePlanRejectsDemotedImplementationPathsRequiredByPlanAndAtom(t *testing.T) {
+	plan := validPlan()
+	plan.Summary = "Implement CollapseEvent struct and dispatch helper, integrate into colony_sim_tick.cpp, and add focused unit tests."
+	plan.TopLevelScope.Objective = "Introduce a CollapseEvent helper to encapsulate collapse dispatch logic, reducing coupling in colony_sim_tick.cpp."
+	plan.TopLevelScope.SuccessCriteria = []string{
+		"CollapseEvent struct and dispatch helper are implemented in native/src/simulation/world/collapse_event.cpp and declared in native/src/simulation/world/collapse_event.h.",
+		"colony_sim_tick.cpp uses CollapseEvent::dispatch for collapse events.",
+		"Unit tests in native/tests/test_collapse_event.cpp verify CollapseEvent behavior.",
+	}
+	plan.Atoms[0].Summary = "Create CollapseEvent struct in collapse_event.h and implementation in collapse_event.cpp with a static dispatch method."
+	plan.Atoms[0].RequiredEditPaths = []string{
+		"native/src/simulation/world/collapse_event.cpp",
+		"native/tests/test_collapse_event.cpp",
+	}
+	plan.Atoms[0].AllowedEditPaths = []string{
+		"native/src/simulation/world/collapse_event.h",
+		"native/src/core/colony_sim_tick.cpp",
+	}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_collapse_event.cpp"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_collapse_event.cpp"}
+	plan.Atoms[0].Prompt = "First, check if the work is already satisfied. Otherwise, implement CollapseEvent struct in collapse_event.h and collapse_event.cpp with a static dispatch method, update colony_sim_tick.cpp to use it, and write unit tests in test_collapse_event.cpp."
+
+	err := ValidatePlan(plan)
+	if err == nil {
+		t.Fatal("expected demoted implementation paths to reject feature plan")
+	}
+
+	for _, want := range []string{
+		`native/src/simulation/world/collapse_event.h`,
+		`native/src/core/colony_sim_tick.cpp`,
+		`required by both top-level success criteria and atom implementation text`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("validation error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestValidatePlanKeepsOptionalAllowedImplementationPathAllowed(t *testing.T) {
+	plan := validPlan()
+	plan.TopLevelScope.SuccessCriteria = []string{
+		"Primary behavior is implemented in internal/labels/labels.go.",
+		"internal/labels/labels_extra.go may be updated if needed for shared helper cleanup.",
+	}
+	plan.Atoms[0].RequiredEditPaths = []string{"internal/labels/labels.go", "internal/labels/labels_test.go"}
+	plan.Atoms[0].AllowedEditPaths = []string{"internal/labels/labels_extra.go"}
+	plan.Atoms[0].Prompt = "Update internal/labels/labels.go. You may update internal/labels/labels_extra.go if needed."
+
+	if err := ValidatePlan(plan); err != nil {
+		t.Fatalf("optional allowed path should remain valid: %v", err)
+	}
+}
+
 func TestNewStateStoresBoundedPromptSummaryForResume(t *testing.T) {
 	state := NewState("session", "Implement CollapseEvent helper.\n\nKeep it scoped.", "", 3, time.Unix(1, 0).UTC())
 
@@ -1446,6 +1499,36 @@ func TestApplyPlannerOutputInvalidDurablePlanDoesNotReplaceCommittedPlan(t *test
 
 	if state.Plan.Atoms[0].ID != committedID {
 		t.Fatalf("invalid candidate replaced committed plan: got atom %q want %q", state.Plan.Atoms[0].ID, committedID)
+	}
+}
+
+func TestApplyPlannerOutputRejectsDemotedImplementationScopeBeforeDispatch(t *testing.T) {
+	state := NewState("session", "build collapse event helper", "", 1, time.Unix(1, 0).UTC())
+	plan := validPlan()
+	plan.Summary = "Implement CollapseEvent struct and dispatch helper, integrate into colony_sim_tick.cpp, and add focused unit tests."
+	plan.TopLevelScope.SuccessCriteria = []string{
+		"CollapseEvent helper is declared in native/src/simulation/world/collapse_event.h.",
+		"colony_sim_tick.cpp uses CollapseEvent::dispatch for collapse events.",
+	}
+	plan.Atoms[0].RequiredEditPaths = []string{
+		"native/src/simulation/world/collapse_event.cpp",
+		"native/tests/test_collapse_event.cpp",
+	}
+	plan.Atoms[0].AllowedEditPaths = []string{
+		"native/src/simulation/world/collapse_event.h",
+		"native/src/core/colony_sim_tick.cpp",
+	}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_collapse_event.cpp"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_collapse_event.cpp"}
+	plan.Atoms[0].Prompt = "Implement collapse_event.h declarations and update colony_sim_tick.cpp to use CollapseEvent::dispatch."
+
+	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.tdd_pre_execution_blocked" {
+		t.Fatalf("expected durable plan rejection, got status=%s events=%+v", state.Status, events)
+	}
+
+	if state.Status != FeatureStatePlanningRepair || len(state.Atoms) != 0 {
+		t.Fatalf("invalid demoted scope must not queue atoms, status=%s atoms=%+v", state.Status, state.Atoms)
 	}
 }
 

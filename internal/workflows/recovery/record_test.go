@@ -464,6 +464,17 @@ func TestClassifyPlanExecuteFailureRecognizesTerminalContractFailure(t *testing.
 	}
 }
 
+func TestClassifyPlanExecuteFailureRecognizesReviewRepairScopeContractMismatch(t *testing.T) {
+	got := ClassifyPlanExecuteFailure("review_repair_blocked", "<<QUESTION>>: required header changes are outside the allowed repair scope.", "")
+	if got != FailureClassPlanInvalid {
+		t.Fatalf("class=%q", got)
+	}
+
+	if action := nextActionForFailureClass(got); action != NextActionReviewDecomposition {
+		t.Fatalf("next action=%q", action)
+	}
+}
+
 func TestClassifyPlanExecuteFailureRecognizesScopeTooLarge(t *testing.T) {
 	tests := []struct {
 		name              string

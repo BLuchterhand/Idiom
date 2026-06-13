@@ -1301,9 +1301,11 @@ func RunReviewRepairPhase(
 
 		if reviewAnswerDeclaresBlocker(answer) {
 			blocker := reviewRepairBlockerSummary(answer)
+			failureReason := reviewRepairBlockerFailureReason(answer)
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_blocked", map[string]any{
-				"status":  "blocked",
-				"blocker": blocker,
+				"status":         "blocked",
+				"blocker":        blocker,
+				"failure_reason": failureReason,
 			})
 
 			status := "blocked"
@@ -1311,7 +1313,7 @@ func RunReviewRepairPhase(
 				status += ": " + blocker
 			}
 
-			return ReviewRepairPhaseReport{Status: status}, nil
+			return ReviewRepairPhaseReport{Status: status, FailureReason: failureReason}, nil
 		}
 
 		if attempt == 0 {

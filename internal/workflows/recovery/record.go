@@ -384,6 +384,20 @@ func ClassifyPlanExecuteFailure(kind string, reason string, reviewReasonClass st
 		}
 
 		return FailureClassReviewRepair
+	case "review_repair_blocked":
+		if normalized := normalizeReviewFailureClass(reviewReasonClass); normalized != "" {
+			return normalized
+		}
+
+		if looksRepairScopeContractMismatch(reasonLower) {
+			return FailureClassPlanInvalid
+		}
+
+		if looksScopeTooLarge(reasonLower) {
+			return FailureClassScopeTooLarge
+		}
+
+		return FailureClassReviewRepair
 	case "dirty_workspace":
 		return FailureClassDirtyWorkspace
 	case "unsafe_policy_block":
@@ -997,6 +1011,13 @@ func looksScopeTooLarge(reasonLower string) bool {
 		strings.Contains(reasonLower, "single-purpose") ||
 		strings.Contains(reasonLower, "too many required paths") ||
 		strings.Contains(reasonLower, "too many files")
+}
+
+func looksRepairScopeContractMismatch(reasonLower string) bool {
+	return strings.Contains(reasonLower, "outside the allowed repair scope") ||
+		strings.Contains(reasonLower, "outside allowed repair scope") ||
+		strings.Contains(reasonLower, "not in allowed repair paths") ||
+		strings.Contains(reasonLower, "not in the allowed repair paths")
 }
 
 func looksVerificationFailed(reasonLower string) bool {

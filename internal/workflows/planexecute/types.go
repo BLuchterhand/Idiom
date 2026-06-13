@@ -200,6 +200,7 @@ type PhaseEvidenceCheck struct {
 type ReviewRepairPhaseReport struct {
 	Skipped              bool
 	Status               string
+	FailureReason        string
 	Repairs              int
 	AutoRepairs          int
 	ReviewPlan           string

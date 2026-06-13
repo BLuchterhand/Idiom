@@ -1264,8 +1264,16 @@ func TestRunPersistsReviewRepairQuestionAsBlockedProgress(t *testing.T) {
 		t.Fatalf("review blocker should be typed status, not error: %#v", state.Review)
 	}
 
+	if !strings.Contains(state.FailureReason, "a.txt review found behavior outside the allowed repair scope") {
+		t.Fatalf("review blocker should preserve full failure reason, got %q", state.FailureReason)
+	}
+
 	if !strings.Contains(stdout.String(), `"type":"idiom.plan_execute.review_repair_blocked"`) {
 		t.Fatalf("expected review_repair_blocked event, got stdout=%s", stdout.String())
+	}
+
+	if !strings.Contains(stdout.String(), `"failure_reason":"\u003c\u003cQUESTION\u003e\u003e: a.txt review found behavior outside the allowed repair scope."`) {
+		t.Fatalf("expected review_repair_blocked event to include full blocker reason, got stdout=%s", stdout.String())
 	}
 }
 
