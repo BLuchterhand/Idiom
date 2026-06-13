@@ -2156,7 +2156,6 @@ func promptRequestsSourceLocalizationQuestion(prompt string) bool {
 		(strings.Contains(lower, "verify") || strings.Contains(lower, "source") || strings.Contains(lower, "prepared"))
 }
 
-
 func planAuthorityDeltaFromQuestion(question PlannerQuestion, revision int, now time.Time) PlanAuthorityDelta {
 	if now.IsZero() {
 		now = time.Now().UTC()

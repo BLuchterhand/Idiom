@@ -428,3 +428,87 @@ func (functionCallToolRequestTokenizer) Tokenize(text string) ToolRequestTokeniz
 
 	return ToolRequestTokenization{Tool: tool, Fields: values, OK: true}
 }
+
+// idiomCLIToolRequestTokenizer handles CLI-style invocation:
+//
+//	idiom tool read_file {"path": "some/path"}
+type idiomCLIToolRequestTokenizer struct{}
+
+func (idiomCLIToolRequestTokenizer) Tokenize(text string) ToolRequestTokenization {
+	trimmed := strings.TrimSpace(text)
+	lower := strings.ToLower(trimmed)
+
+	if !strings.HasPrefix(lower, "idiom tool ") {
+		return ToolRequestTokenization{}
+	}
+
+	objectStart := strings.Index(trimmed, "{")
+	if objectStart < 0 {
+		return ToolRequestTokenization{Unsafe: true}
+	}
+
+	prefix := strings.TrimSpace(trimmed[:objectStart])
+	parts := strings.Fields(prefix)
+
+	if len(parts) < 3 || !strings.EqualFold(parts[0], "idiom") || !strings.EqualFold(parts[1], "tool") || !toolRequestSyntaxIdentifier(parts[2]) {
+		return ToolRequestTokenization{Unsafe: true}
+	}
+
+	object, _, ok := extractJSONObjectAt(trimmed, objectStart)
+	if !ok {
+		return ToolRequestTokenization{Unsafe: true}
+	}
+
+	var obj map[string]json.RawMessage
+
+	if err := json.Unmarshal([]byte(object), &obj); err != nil {
+		return ToolRequestTokenization{Unsafe: true}
+	}
+
+	tool := parts[2]
+
+	// If JSON specifies a different tool, it must match.
+	if toolRaw, ok := obj["tool"]; ok {
+		var jsonTool string
+
+		if err := json.Unmarshal(toolRaw, &jsonTool); err == nil && strings.TrimSpace(jsonTool) != "" {
+			if !strings.EqualFold(tool, jsonTool) {
+				return ToolRequestTokenization{Unsafe: true}
+			}
+		}
+	}
+
+	fields := make(map[string]string, len(obj))
+
+	for key, raw := range obj {
+		key = strings.ToLower(strings.TrimSpace(key))
+		if key == "tool" {
+			continue
+		}
+
+		if !keyValueToolRequestFieldAllowed(key) {
+			continue
+		}
+
+		var value string
+
+		if err := json.Unmarshal(raw, &value); err != nil {
+			compact, err := json.Marshal(raw)
+			if err != nil {
+				continue
+			}
+
+			value = string(compact)
+		}
+
+		value = strings.TrimSpace(value)
+
+		if value == "" && !keyValueAllowsEmptyValue(key, fields) {
+			continue
+		}
+
+		fields[key] = value
+	}
+
+	return ToolRequestTokenization{Tool: tool, Fields: fields, OK: true}
+}
