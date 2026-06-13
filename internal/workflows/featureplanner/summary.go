@@ -53,7 +53,7 @@ func FormatStateSummary(state FeatureState, statePath string) string {
 				fmt.Fprintf(&b, "question: %s\n", question.QuestionSummary)
 			}
 			if questionOpen(question) && strings.TrimSpace(question.AuthorityRequired) != "" && strings.TrimSpace(question.AuthorityRequired) != "operator_approval" {
-				fmt.Fprintf(&b, "answer_format: JSON object with answer, answer_source_kind=%q, and evidence_refs\n", question.AuthorityRequired)
+				fmt.Fprintf(&b, "answer_format: %s\n", plannerQuestionAnswerFormat(question.AuthorityRequired))
 			}
 
 			if strings.TrimSpace(question.Answer) != "" {
@@ -75,6 +75,15 @@ func FormatStateSummary(state FeatureState, statePath string) string {
 	}
 
 	return strings.TrimSpace(b.String())
+}
+
+func plannerQuestionAnswerFormat(authorityRequired string) string {
+	authorityRequired = strings.TrimSpace(authorityRequired)
+	if authorityRequired == "accepted_source" {
+		return `JSON object with answer, answer_source_kind="accepted_source", evidence_refs, and source_facts [{path, symbol, signature}]`
+	}
+
+	return fmt.Sprintf("JSON object with answer, answer_source_kind=%q, and evidence_refs", authorityRequired)
 }
 
 func questionOpen(question PlannerQuestion) bool {

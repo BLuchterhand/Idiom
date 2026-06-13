@@ -731,16 +731,21 @@ func TestBuildPlannerPromptCarriesAcceptedSourceAuthorityConstraints(t *testing.
 		EvidenceRefs:   []string{"native/src/simulation/economy/fluid_network_system.h"},
 		AffectedPaths:  []string{"native/src/simulation/economy/fluid_network_system.h"},
 		AffectedFields: []string{"source_localization"},
-		Actual:         "source-verified signature is EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const.",
-		Revision:       1,
-		CreatedAt:      time.Unix(1, 0).UTC().Format(time.RFC3339Nano),
+		SourceFacts: []SourceAuthorityFact{{
+			Path:      "native/src/simulation/economy/fluid_network_system.h",
+			Symbol:    "FluidNetworkSystem::find_connected_cistern_with_volume",
+			Signature: "EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const",
+		}},
+		Actual:    "accepted source fact approved for fluid network helper usage",
+		Revision:  1,
+		CreatedAt: time.Unix(1, 0).UTC().Format(time.RFC3339Nano),
 	}}
 
 	prompt := BuildPlannerPrompt("continue after accepted-source answer", state, nil)
 
 	for _, want := range []string{
 		"Accepted source authority constraints:",
-		"source-verified signature is EntityID FluidNetworkSystem::find_connected_cistern_with_volume",
+		"signature: EntityID FluidNetworkSystem::find_connected_cistern_with_volume",
 		"Use only these accepted source facts for helper signatures and source-localized call shapes.",
 		"Remove or generalize any helper/method call in atom prompts that is not explicitly covered here",
 	} {
@@ -764,7 +769,7 @@ func TestFormatStateSummaryShowsTypedAnswerFormatForAcceptedSourceQuestion(t *te
 
 	for _, want := range []string{
 		"question: Provide accepted source facts",
-		`answer_format: JSON object with answer, answer_source_kind="accepted_source", and evidence_refs`,
+		`answer_format: JSON object with answer, answer_source_kind="accepted_source", evidence_refs, and source_facts [{path, symbol, signature}]`,
 		"next: answer_planner_question",
 	} {
 		if !strings.Contains(summary, want) {
@@ -875,6 +880,32 @@ func TestValidatePlanDoesNotTreatBareCallBulletAsSignatureDeclaration(t *testing
 		if err == nil || !strings.Contains(err.Error(), "missing_helper(eid)") {
 			t.Fatalf("bare call-shaped bullet must not authorize helper calls, got %v for bullet %q", err, bullet)
 		}
+	}
+}
+
+func TestValidatePlanAllowsFieldDescriptorParentheticalsInAtomPrompt(t *testing.T) {
+	for _, prompt := range []string{
+		"Use the source-verified helper, declared const(in native/src/simulation/economy/fluid_network_system.h), and deduct stored water.",
+		"Deduct the required water from the existing stored volume field(CisternComponent) without editing components.h.",
+		"Deduct the required water volume(CisternComponent stored volume field, do not edit components.h) without naming a new helper.",
+	} {
+		plan := validPlan()
+		plan.Atoms[0].Prompt = prompt
+		plan.Atoms[0].EvidencePaths = append(plan.Atoms[0].EvidencePaths, "native/src/simulation/economy/fluid_network_system.h")
+
+		if err := ValidatePlan(plan); err != nil {
+			t.Fatalf("field descriptor parenthetical should not require helper signature evidence, got %v for prompt %q", err, prompt)
+		}
+	}
+}
+
+func TestValidatePlanStillRejectsInventedDeductionHelper(t *testing.T) {
+	plan := validPlan()
+	plan.Atoms[0].Prompt = "Call deduct_cistern_volume(cistern_id, required_water_volume) after selecting the cistern."
+
+	err := ValidatePlan(plan)
+	if err == nil || !strings.Contains(err.Error(), "deduct_cistern_volume(cistern_id, required_water_volume)") {
+		t.Fatalf("invented deduction helper should still require signature evidence, got %v", err)
 	}
 }
 
@@ -2355,10 +2386,15 @@ func TestApplyPlannerOutputUsesAcceptedSourceAuthorityForDurablePromptCalls(t *t
 		EvidenceRefs:   []string{"native/src/simulation/economy/fluid_network_system.h"},
 		AffectedPaths:  []string{"native/src/simulation/economy/fluid_network_system.h"},
 		AffectedFields: []string{"source_localization"},
-		Expected:       "helper signature needs accepted source evidence",
-		Actual:         "source-verified signature in native/src/simulation/economy/fluid_network_system.h is EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const.",
-		Revision:       1,
-		CreatedAt:      time.Unix(2, 0).UTC().Format(time.RFC3339Nano),
+		SourceFacts: []SourceAuthorityFact{{
+			Path:      "native/src/simulation/economy/fluid_network_system.h",
+			Symbol:    "FluidNetworkSystem::find_connected_cistern_with_volume",
+			Signature: "EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const",
+		}},
+		Expected:  "helper signature needs accepted source evidence",
+		Actual:    "accepted source fact approved for fluid network helper usage",
+		Revision:  1,
+		CreatedAt: time.Unix(2, 0).UTC().Format(time.RFC3339Nano),
 	}}
 
 	plan := validPlan()
@@ -2370,6 +2406,39 @@ func TestApplyPlannerOutputUsesAcceptedSourceAuthorityForDurablePromptCalls(t *t
 	}
 	if state.Status != FeatureStateDispatching {
 		t.Fatalf("status = %q, want dispatching; events=%+v blockers=%+v", state.Status, events, state.Blockers)
+	}
+}
+
+func TestPlanContractAuthorityDeltasCarryTypedSourceFacts(t *testing.T) {
+	deltas := []PlanAuthorityDelta{{
+		QuestionID:     "q-001",
+		AuthorityKind:  "accepted_source",
+		EvidenceRefs:   []string{"./native/src/simulation/economy/fluid_network_system.h"},
+		AffectedPaths:  []string{"./native/src/simulation/economy/fluid_network_system.h"},
+		AffectedFields: []string{"source_localization"},
+		SourceFacts: []SourceAuthorityFact{{
+			Path:      "./native/src/simulation/economy/fluid_network_system.h",
+			Symbol:    "FluidNetworkSystem::find_connected_cistern_with_volume",
+			Signature: "EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const",
+		}},
+		Actual:    "approved",
+		Revision:  1,
+		CreatedAt: time.Unix(2, 0).UTC().Format(time.RFC3339Nano),
+	}}
+
+	contractDeltas := planContractAuthorityDeltas(deltas)
+	if len(contractDeltas) != 1 {
+		t.Fatalf("contract deltas = %+v, want one", contractDeltas)
+	}
+	facts := contractDeltas[0].SourceFacts
+	if len(facts) != 1 {
+		t.Fatalf("source facts were not carried into contract: %+v", contractDeltas[0])
+	}
+	if facts[0].Path != "native/src/simulation/economy/fluid_network_system.h" {
+		t.Fatalf("source fact path = %q, want normalized path", facts[0].Path)
+	}
+	if facts[0].Signature == "" || !strings.Contains(facts[0].Signature, "find_connected_cistern_with_volume") {
+		t.Fatalf("source fact signature missing: %+v", facts[0])
 	}
 }
 
@@ -4174,7 +4243,7 @@ func TestRunAcceptsTypedAnswerForRequiredAuthority(t *testing.T) {
 		Status:            "open",
 	}}
 
-	typedAnswer := `{"answer":"Use docs/feature.md acceptance criteria.","answer_source_kind":"accepted_source","evidence_refs":["docs/feature.md#acceptance"]}`
+	typedAnswer := `{"answer":"Use docs/feature.md acceptance criteria.","answer_source_kind":"accepted_source","evidence_refs":["docs/feature.md#acceptance"],"source_facts":[{"path":"docs/feature.md","anchor":"acceptance criteria"}]}`
 
 	result, err := Run(state, RunOptions{Prompt: "continue", ResumeAnswer: typedAnswer}, func(prompt string, taskFamily string) (string, error) {
 		switch taskFamily {
@@ -4202,6 +4271,44 @@ func TestRunAcceptsTypedAnswerForRequiredAuthority(t *testing.T) {
 
 	if result.State.Status == FeatureStatePlanningQuestion {
 		t.Fatalf("typed answer should allow planning to continue")
+	}
+}
+
+func TestRunRejectsAcceptedSourceTypedAnswerWithoutSourceFacts(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+
+	state.Status = FeatureStatePlanningQuestion
+	state.PlanningLoop.State = FeatureStatePlanningQuestion
+	state.OpenQuestions = []PlannerQuestion{{
+		ID:                "q-source",
+		QuestionKind:      "missing_spec",
+		QuestionSummary:   "Which accepted source authorizes this behavior?",
+		BlockingClaim:     "Implementation needs accepted source authority.",
+		RequestedDecision: "Provide the accepted source.",
+		AuthorityRequired: "accepted_source",
+		RequiredBefore:    "plan_approval",
+		Status:            "open",
+	}}
+
+	typedAnswer := `{"answer":"Use docs/feature.md acceptance criteria.","answer_source_kind":"accepted_source","evidence_refs":["docs/feature.md#acceptance"]}`
+
+	result, err := Run(state, RunOptions{Prompt: "continue", ResumeAnswer: typedAnswer}, func(_ string, _ string) (string, error) {
+		t.Fatal("accepted_source answer without source_facts must not continue to planner")
+
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningQuestion {
+		t.Fatalf("status = %q, want planning question", result.State.Status)
+	}
+	if len(result.State.AuthorityDeltas) != 0 {
+		t.Fatalf("missing source_facts must not mint authority deltas: %+v", result.State.AuthorityDeltas)
+	}
+	if len(result.Events) != 1 || !strings.Contains(result.Events[0].Message, `missing source_facts`) {
+		t.Fatalf("unexpected rejection event: %+v", result.Events)
 	}
 }
 

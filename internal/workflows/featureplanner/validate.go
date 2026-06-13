@@ -736,6 +736,20 @@ func (g atomPromptGrounding) addSourceFact(fact SourceFactBrief) {
 	g.addVerifiedSignature(symbol, signature)
 }
 
+func (g atomPromptGrounding) addContractSourceFact(fact plancontract.SourceAuthorityFact) {
+	g.addDeclaredPaths(fact.Path)
+
+	signature := strings.TrimSpace(fact.Signature)
+	if signature == "" {
+		signature = strings.TrimSpace(fact.Anchor)
+	}
+	symbol := strings.TrimSpace(fact.Symbol)
+	if symbol == "" {
+		symbol = signatureSymbol(signature)
+	}
+	g.addVerifiedSignature(symbol, signature)
+}
+
 func sourceFactHasAcceptedAuthority(fact SourceFactBrief) bool {
 	ref := strings.ToLower(strings.TrimSpace(fact.AuthorityRef))
 	if ref == "" {
@@ -753,6 +767,9 @@ func (g atomPromptGrounding) addContractSourceAuthority(contract plancontract.Pl
 			continue
 		}
 		g.addDeclaredPaths(delta.Path)
+		for _, fact := range delta.SourceFacts {
+			g.addContractSourceFact(fact)
+		}
 		text := strings.Join([]string{delta.From, delta.To, delta.Reason}, "\n")
 		for _, path := range repoPathsMentionedInText(text) {
 			g.addDeclaredPaths(path)
@@ -770,6 +787,9 @@ func (g atomPromptGrounding) addContractSourceAuthority(contract plancontract.Pl
 				continue
 			}
 			g.addDeclaredPaths(delta.Path)
+			for _, fact := range delta.SourceFacts {
+				g.addContractSourceFact(fact)
+			}
 			text := strings.Join([]string{delta.From, delta.To, delta.Reason}, "\n")
 			for _, path := range repoPathsMentionedInText(text) {
 				g.addDeclaredPaths(path)
@@ -1090,6 +1110,9 @@ func plannerCallNeedsSignatureEvidence(name string, args string) bool {
 		return false
 	}
 	lowerName := strings.ToLower(name)
+	if plannerCallNameLooksLikeProseLabel(lowerName) {
+		return false
+	}
 	if plannerCallLooksLikeTDDResultProse(lowerName, args) {
 		return false
 	}
@@ -1111,6 +1134,15 @@ func plannerCallNeedsSignatureEvidence(name string, args string) bool {
 		strings.Contains(args, "->") ||
 		strings.Contains(args, "::") ||
 		len(strings.Fields(args)) == 1
+}
+
+func plannerCallNameLooksLikeProseLabel(lowerName string) bool {
+	switch lowerName {
+	case "const", "field", "volume":
+		return true
+	default:
+		return false
+	}
 }
 
 func plannerCallLooksLikeTDDResultProse(lowerName string, args string) bool {
@@ -1850,26 +1882,29 @@ func planContractAuthorityDeltas(deltas []PlanAuthorityDelta) []plancontract.Aut
 
 	for _, delta := range normalizePlanAuthorityDeltas(deltas) {
 		kind := planContractAuthorityDeltaKind(delta)
+		sourceFacts := planContractSourceAuthorityFacts(delta.SourceFacts)
 		for _, path := range append([]string(nil), delta.AffectedPaths...) {
 			out = append(out, plancontract.AuthorityDelta{
-				Kind:     kind,
-				Path:     path,
-				From:     delta.Expected,
-				To:       delta.Actual,
-				Reason:   strings.Join(delta.EvidenceRefs, ", "),
-				Source:   delta.AuthorityKind,
-				Approved: true,
+				Kind:        kind,
+				Path:        path,
+				From:        delta.Expected,
+				To:          delta.Actual,
+				Reason:      strings.Join(delta.EvidenceRefs, ", "),
+				Source:      delta.AuthorityKind,
+				Approved:    true,
+				SourceFacts: sourceFacts,
 			})
 		}
 
 		if len(delta.AffectedPaths) == 0 {
 			out = append(out, plancontract.AuthorityDelta{
-				Kind:     kind,
-				From:     delta.Expected,
-				To:       delta.Actual,
-				Reason:   strings.Join(delta.EvidenceRefs, ", "),
-				Source:   delta.AuthorityKind,
-				Approved: true,
+				Kind:        kind,
+				From:        delta.Expected,
+				To:          delta.Actual,
+				Reason:      strings.Join(delta.EvidenceRefs, ", "),
+				Source:      delta.AuthorityKind,
+				Approved:    true,
+				SourceFacts: sourceFacts,
 			})
 		}
 	}
@@ -2088,6 +2123,7 @@ func normalizePlanAuthorityDeltas(deltas []PlanAuthorityDelta) []PlanAuthorityDe
 		delta.EvidenceRefs = normalizedStringList(delta.EvidenceRefs)
 		delta.AffectedPaths = normalizeEditScopeList(delta.AffectedPaths)
 		delta.AffectedFields = normalizedStringList(delta.AffectedFields)
+		delta.SourceFacts = normalizeSourceAuthorityFacts(delta.SourceFacts)
 		delta.Expected = strings.TrimSpace(delta.Expected)
 		delta.Actual = strings.TrimSpace(delta.Actual)
 		delta.CreatedAt = strings.TrimSpace(delta.CreatedAt)
@@ -2097,6 +2133,47 @@ func normalizePlanAuthorityDeltas(deltas []PlanAuthorityDelta) []PlanAuthorityDe
 		}
 
 		out = append(out, delta)
+	}
+
+	return out
+}
+
+func normalizeSourceAuthorityFacts(facts []SourceAuthorityFact) []SourceAuthorityFact {
+	out := make([]SourceAuthorityFact, 0, len(facts))
+	seen := map[string]bool{}
+
+	for _, fact := range facts {
+		fact.Path = plancontract.NormalizeScopePath(fact.Path)
+		fact.Symbol = strings.TrimSpace(fact.Symbol)
+		fact.Signature = strings.TrimSpace(fact.Signature)
+		fact.Anchor = strings.TrimSpace(fact.Anchor)
+
+		if fact.Path == "" && fact.Symbol == "" && fact.Signature == "" && fact.Anchor == "" {
+			continue
+		}
+
+		key := strings.Join([]string{fact.Path, fact.Symbol, fact.Signature, fact.Anchor}, "\x00")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, fact)
+	}
+
+	return out
+}
+
+func planContractSourceAuthorityFacts(facts []SourceAuthorityFact) []plancontract.SourceAuthorityFact {
+	normalized := normalizeSourceAuthorityFacts(facts)
+	out := make([]plancontract.SourceAuthorityFact, 0, len(normalized))
+
+	for _, fact := range normalized {
+		out = append(out, plancontract.SourceAuthorityFact{
+			Path:      fact.Path,
+			Symbol:    fact.Symbol,
+			Signature: fact.Signature,
+			Anchor:    fact.Anchor,
+		})
 	}
 
 	return out

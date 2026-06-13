@@ -199,10 +199,15 @@ func TestSaveLoadBundleUsesStateAuthorityForAcceptedSourceSignatures(t *testing.
 		EvidenceRefs:   []string{"native/src/simulation/economy/fluid_network_system.h"},
 		AffectedPaths:  []string{"native/src/simulation/economy/fluid_network_system.h"},
 		AffectedFields: []string{"source_localization"},
-		Expected:       "helper signature needs accepted source evidence",
-		Actual:         "source-verified signature in native/src/simulation/economy/fluid_network_system.h is EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const.",
-		Revision:       1,
-		CreatedAt:      "2026-06-13T12:36:17Z",
+		SourceFacts: []SourceAuthorityFact{{
+			Path:      "native/src/simulation/economy/fluid_network_system.h",
+			Symbol:    "FluidNetworkSystem::find_connected_cistern_with_volume",
+			Signature: "EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const",
+		}},
+		Expected:  "helper signature needs accepted source evidence",
+		Actual:    "accepted source fact approved for fluid network helper usage",
+		Revision:  1,
+		CreatedAt: "2026-06-13T12:36:17Z",
 	}}
 
 	dir := t.TempDir()
@@ -216,6 +221,9 @@ func TestSaveLoadBundleUsesStateAuthorityForAcceptedSourceSignatures(t *testing.
 	}
 	if len(loaded.State.AuthorityDeltas) != 1 {
 		t.Fatalf("authority deltas were not preserved: %+v", loaded.State.AuthorityDeltas)
+	}
+	if len(loaded.State.AuthorityDeltas[0].SourceFacts) != 1 {
+		t.Fatalf("source facts were not preserved: %+v", loaded.State.AuthorityDeltas[0])
 	}
 }
 

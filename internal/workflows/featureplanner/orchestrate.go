@@ -422,6 +422,11 @@ func acceptedSourceAuthorityConstraints(deltas []PlanAuthorityDelta) []string {
 		}
 
 		var parts []string
+		for _, fact := range delta.SourceFacts {
+			if description := sourceAuthorityFactDescription(fact); description != "" {
+				parts = append(parts, description)
+			}
+		}
 		if delta.Actual != "" {
 			parts = append(parts, delta.Actual)
 		}
@@ -439,6 +444,24 @@ func acceptedSourceAuthorityConstraints(deltas []PlanAuthorityDelta) []string {
 	}
 
 	return normalizedStringList(constraints)
+}
+
+func sourceAuthorityFactDescription(fact SourceAuthorityFact) string {
+	var parts []string
+	if fact.Path != "" {
+		parts = append(parts, "path: "+fact.Path)
+	}
+	if fact.Symbol != "" {
+		parts = append(parts, "symbol: "+fact.Symbol)
+	}
+	if fact.Signature != "" {
+		parts = append(parts, "signature: "+fact.Signature)
+	}
+	if fact.Anchor != "" {
+		parts = append(parts, "anchor: "+fact.Anchor)
+	}
+
+	return strings.Join(parts, " | ")
 }
 
 func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) []Event {
@@ -2073,14 +2096,15 @@ func applyQuestionAnswerAuthority(question *PlannerQuestion, rawAnswer string, r
 	}
 
 	var payload struct {
-		Answer           string   `json:"answer"`
-		AnswerSourceKind string   `json:"answer_source_kind"`
-		AuthorityKind    string   `json:"authority_kind"`
-		EvidenceRefs     []string `json:"evidence_refs"`
-		AffectedPaths    []string `json:"affected_paths"`
-		AffectedFields   []string `json:"affected_fields"`
-		Expected         string   `json:"expected"`
-		Actual           string   `json:"actual"`
+		Answer           string                `json:"answer"`
+		AnswerSourceKind string                `json:"answer_source_kind"`
+		AuthorityKind    string                `json:"authority_kind"`
+		EvidenceRefs     []string              `json:"evidence_refs"`
+		AffectedPaths    []string              `json:"affected_paths"`
+		AffectedFields   []string              `json:"affected_fields"`
+		SourceFacts      []SourceAuthorityFact `json:"source_facts"`
+		Expected         string                `json:"expected"`
+		Actual           string                `json:"actual"`
 	}
 
 	if err := json.Unmarshal([]byte(answer), &payload); err != nil {
@@ -2100,6 +2124,9 @@ func applyQuestionAnswerAuthority(question *PlannerQuestion, rawAnswer string, r
 
 	if len(payload.EvidenceRefs) == 0 {
 		return PlanAuthorityDelta{}, fmt.Errorf("planner question %q typed answer missing evidence_refs", question.ID)
+	}
+	if required == "accepted_source" && len(normalizeSourceAuthorityFacts(payload.SourceFacts)) == 0 {
+		return PlanAuthorityDelta{}, fmt.Errorf("planner question %q typed accepted_source answer missing source_facts", question.ID)
 	}
 
 	question.Answer = payload.Answer
@@ -2129,6 +2156,11 @@ func applyQuestionAnswerAuthority(question *PlannerQuestion, rawAnswer string, r
 
 	if strings.TrimSpace(payload.Actual) != "" {
 		delta.Actual = strings.TrimSpace(payload.Actual)
+	}
+
+	delta.SourceFacts = normalizeSourceAuthorityFacts(append(delta.SourceFacts, payload.SourceFacts...))
+	if delta.AuthorityKind == "accepted_source" {
+		delta.SourceFacts = deriveAcceptedSourceAuthorityFacts(delta)
 	}
 
 	return delta, nil
@@ -2274,7 +2306,7 @@ func planAuthorityDeltaFromQuestion(question PlannerQuestion, revision int, now 
 		evidenceRefs = []string{"planner_question:" + firstNonEmpty(question.QuestionID, question.ID)}
 	}
 
-	return PlanAuthorityDelta{
+	delta := PlanAuthorityDelta{
 		QuestionID:     firstNonEmpty(question.QuestionID, question.ID),
 		AuthorityKind:  firstNonEmpty(question.AnswerSourceKind, question.AuthorityRequired, "operator_approval"),
 		EvidenceRefs:   evidenceRefs,
@@ -2285,6 +2317,39 @@ func planAuthorityDeltaFromQuestion(question PlannerQuestion, revision int, now 
 		Revision:       revision,
 		CreatedAt:      now.UTC().Format(time.RFC3339Nano),
 	}
+
+	if delta.AuthorityKind == "accepted_source" {
+		delta.SourceFacts = deriveAcceptedSourceAuthorityFacts(delta)
+	}
+
+	return delta
+}
+
+func deriveAcceptedSourceAuthorityFacts(delta PlanAuthorityDelta) []SourceAuthorityFact {
+	facts := append([]SourceAuthorityFact(nil), delta.SourceFacts...)
+	if strings.TrimSpace(delta.AuthorityKind) != "accepted_source" {
+		return normalizeSourceAuthorityFacts(facts)
+	}
+
+	paths := normalizeEditScopeList(append(append([]string(nil), delta.AffectedPaths...), delta.EvidenceRefs...))
+	paths = normalizeEditScopeList(append(paths, repoPathsMentionedInText(delta.Actual)...))
+
+	for _, signature := range extractSignatures(delta.Actual) {
+		symbol := signatureSymbol(signature)
+		if len(paths) == 0 {
+			facts = append(facts, SourceAuthorityFact{Symbol: symbol, Signature: signature})
+			continue
+		}
+		for _, path := range paths {
+			facts = append(facts, SourceAuthorityFact{Path: path, Symbol: symbol, Signature: signature})
+		}
+	}
+
+	for _, path := range paths {
+		facts = append(facts, SourceAuthorityFact{Path: path})
+	}
+
+	return normalizeSourceAuthorityFacts(facts)
 }
 
 func upsertPlanAuthorityDelta(state *FeatureState, delta PlanAuthorityDelta) {

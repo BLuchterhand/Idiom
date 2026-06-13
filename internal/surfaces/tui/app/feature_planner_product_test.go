@@ -178,12 +178,12 @@ func TestFeaturePlannerTUIDirectAcceptedSourceAnswerCarriesAuthorityIntoResumePr
 	if err != nil {
 		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
 	}
-	if !strings.Contains(answer, `answer_format: JSON object with answer, answer_source_kind="accepted_source", and evidence_refs`) {
+	if !strings.Contains(answer, `answer_format: JSON object with answer, answer_source_kind="accepted_source", evidence_refs, and source_facts [{path, symbol, signature}]`) {
 		t.Fatalf("question summary should show typed answer format, got:\n%s", answer)
 	}
 
 	sessionID := m.directFeaturePlannerSessionID
-	typedAnswer := `{"answer":"Accepted source fact: source-verified signature is CollapseEvent NewCollapseEvent(EntityID id).","answer_source_kind":"accepted_source","evidence_refs":["pkg/collapse_event.go"],"affected_paths":["pkg/collapse_event.go"],"affected_fields":["source_localization"]}`
+	typedAnswer := `{"answer":"Accepted source fact approved for CollapseEvent helper usage.","answer_source_kind":"accepted_source","evidence_refs":["pkg/collapse_event.go"],"affected_paths":["pkg/collapse_event.go"],"affected_fields":["source_localization"],"source_facts":[{"path":"pkg/collapse_event.go","symbol":"NewCollapseEvent","signature":"CollapseEvent NewCollapseEvent(EntityID id)"}]}`
 	answer, err = m.runDirectFeaturePlannerAnswerOnce(context.Background(), typedAnswer)
 	if err != nil {
 		t.Fatalf("runDirectFeaturePlannerAnswerOnce: %v", err)
@@ -199,7 +199,7 @@ func TestFeaturePlannerTUIDirectAcceptedSourceAnswerCarriesAuthorityIntoResumePr
 	for _, want := range []string{
 		"User request:\nImplement CollapseEvent helper.",
 		"Accepted source authority constraints:",
-		"Accepted source fact: source-verified signature is CollapseEvent NewCollapseEvent(EntityID id).",
+		"signature: CollapseEvent NewCollapseEvent(EntityID id)",
 		"Use only these accepted source facts for helper signatures and source-localized call shapes.",
 	} {
 		if !strings.Contains(resumePrompt, want) {
@@ -213,6 +213,16 @@ func TestFeaturePlannerTUIDirectAcceptedSourceAnswerCarriesAuthorityIntoResumePr
 	state := loadFeaturePlannerCommandStateFile(t, filepath.Join(projectRoot, ".idiom", "feature-planner", sessionID, "state.json"))
 	if len(state.AuthorityDeltas) != 1 || state.AuthorityDeltas[0].AuthorityKind != "accepted_source" {
 		t.Fatalf("accepted-source authority delta was not preserved: %+v", state.AuthorityDeltas)
+	}
+	hasSignatureFact := false
+	for _, fact := range state.AuthorityDeltas[0].SourceFacts {
+		if fact.Signature == "CollapseEvent NewCollapseEvent(EntityID id)" {
+			hasSignatureFact = true
+			break
+		}
+	}
+	if !hasSignatureFact {
+		t.Fatalf("accepted-source source facts were not preserved: %+v", state.AuthorityDeltas[0])
 	}
 	if len(state.OpenQuestions) != 1 || state.OpenQuestions[0].Status != "answered" || state.OpenQuestions[0].AnswerSourceKind != "accepted_source" {
 		t.Fatalf("accepted-source question was not answered durably: %+v", state.OpenQuestions)

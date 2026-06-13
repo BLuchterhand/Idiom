@@ -120,13 +120,21 @@ const (
 )
 
 type AuthorityDelta struct {
-	Kind     AuthorityDeltaKind `json:"kind"`
-	Path     string             `json:"path,omitempty"`
-	From     string             `json:"from,omitempty"`
-	To       string             `json:"to,omitempty"`
-	Reason   string             `json:"reason,omitempty"`
-	Source   string             `json:"source,omitempty"`
-	Approved bool               `json:"approved,omitempty"`
+	Kind        AuthorityDeltaKind    `json:"kind"`
+	Path        string                `json:"path,omitempty"`
+	From        string                `json:"from,omitempty"`
+	To          string                `json:"to,omitempty"`
+	Reason      string                `json:"reason,omitempty"`
+	Source      string                `json:"source,omitempty"`
+	Approved    bool                  `json:"approved,omitempty"`
+	SourceFacts []SourceAuthorityFact `json:"source_facts,omitempty"`
+}
+
+type SourceAuthorityFact struct {
+	Path      string `json:"path,omitempty"`
+	Symbol    string `json:"symbol,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	Anchor    string `json:"anchor,omitempty"`
 }
 
 type RecoveryInvariantFailure struct {
