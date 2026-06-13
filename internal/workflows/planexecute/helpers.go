@@ -3536,9 +3536,28 @@ func preflightPlanExistingSourceDestructiveRewrites(workspaceRoot string, plan w
 		if err := workspace.RejectExistingSourceDestructiveLineRangeRewrite(abs, string(body), edit); err != nil {
 			return &PlanEditPreflightMismatch{Index: i, Path: path, Reason: err.Error()}
 		}
+
+		if selected, ok := planExecuteSelectedLineRange(string(body), edit); ok {
+			if err := workspace.RejectSourceLineRangeTopLevelConstructDrift(abs, selected, edit); err != nil {
+				return &PlanEditPreflightMismatch{Index: i, Path: path, Reason: err.Error()}
+			}
+		}
 	}
 
 	return nil
+}
+
+func planExecuteSelectedLineRange(current string, edit workspace.PlanEdit) (string, bool) {
+	if strings.TrimSpace(edit.Content) == "" || edit.StartLine <= 0 || edit.EndLine < edit.StartLine {
+		return "", false
+	}
+
+	lines := strings.SplitAfter(current, "\n")
+	if len(lines) == 0 || edit.StartLine > len(lines) || edit.EndLine > len(lines) {
+		return "", false
+	}
+
+	return strings.Join(lines[edit.StartLine-1:edit.EndLine], ""), true
 }
 
 func normalizePlanExecutePath(path string) string {

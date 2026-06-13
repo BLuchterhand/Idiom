@@ -1914,6 +1914,133 @@ func TestRunExecutorPhaseRejectsLargeExistingSourceLineRangeCollapseBeforeDispat
 	}
 }
 
+func TestRunExecutorPhaseRejectsMidFilePreprocessorLineRangeBeforeDispatch(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := "native/src/core/colony_sim_tick.cpp"
+	abs := filepath.Join(root, filepath.FromSlash(sourcePath))
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+
+	original := strings.Join([]string{
+		"#include \"core/colony_sim.h\"",
+		"",
+		"static std::string append_stage_decline_cause() {",
+		"    return \"ok\";",
+		"}",
+		"",
+	}, "\n")
+	if err := os.WriteFile(abs, []byte(original), 0o644); err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{{
+			Path:      sourcePath,
+			StartLine: 3,
+			EndLine:   5,
+			Content:   "#include \"../simulation/world/collapse_event.h\"\n\nclass CollapsedSupport {\npublic:\n    CollapseEvent collapse_event;\n};\n",
+			Purpose:   "add collapse event include and helper",
+		}},
+	}
+
+	var stdout bytes.Buffer
+	_, err := RunExecutorPhaseScopedWithVerificationPlanAndWriteScope(
+		cfg,
+		plan,
+		[]string{sourcePath},
+		nil,
+		[]string{sourcePath},
+		true,
+		VerificationPlan{},
+		true,
+		&stdout,
+	)
+	if err == nil {
+		t.Fatal("expected mid-file preprocessor line-range preflight rejection")
+	}
+
+	if !strings.Contains(err.Error(), "file-scope preprocessor directive") {
+		t.Fatalf("expected top-level construct rejection, got %v stdout=%s", err, stdout.String())
+	}
+
+	if got := readFileStringForRunTest(t, abs); got != original {
+		t.Fatalf("source file must remain unchanged, got:\n%s", got)
+	}
+}
+
+func TestRunExecutorPhaseRejectsAnchorPreservingMidFilePreprocessorLineRangeBeforeDispatch(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := "native/src/core/colony_sim_tick.cpp"
+	abs := filepath.Join(root, filepath.FromSlash(sourcePath))
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+
+	original := strings.Join([]string{
+		"#include \"core/colony_sim.h\"",
+		"",
+		"static std::string append_stage_decline_cause() {",
+		"    return \"ok\";",
+		"}",
+		"",
+	}, "\n")
+	if err := os.WriteFile(abs, []byte(original), 0o644); err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{{
+			Path:      sourcePath,
+			StartLine: 3,
+			EndLine:   5,
+			Content: strings.Join([]string{
+				"static std::string append_stage_decline_cause() {",
+				"#include \"../simulation/world/collapse_event.h\"",
+				"    return \"ok\";",
+				"}",
+			}, "\n"),
+			Purpose: "add collapse event include near helper",
+		}},
+	}
+
+	var stdout bytes.Buffer
+	_, err := RunExecutorPhaseScopedWithVerificationPlanAndWriteScope(
+		cfg,
+		plan,
+		[]string{sourcePath},
+		nil,
+		[]string{sourcePath},
+		true,
+		VerificationPlan{},
+		true,
+		&stdout,
+	)
+	if err == nil {
+		t.Fatal("expected anchor-preserving mid-file preprocessor preflight rejection")
+	}
+
+	if !strings.Contains(err.Error(), "file-scope preprocessor directive") {
+		t.Fatalf("expected top-level construct rejection, got %v stdout=%s", err, stdout.String())
+	}
+
+	if got := readFileStringForRunTest(t, abs); got != original {
+		t.Fatalf("source file must remain unchanged, got:\n%s", got)
+	}
+}
+
 func TestParseOptionsAcceptsAuthorizedNewFileFlag(t *testing.T) {
 	var stderr bytes.Buffer
 

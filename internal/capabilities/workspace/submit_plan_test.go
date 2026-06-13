@@ -465,6 +465,313 @@ func TestSubmitPlanRejectsLargeSourceLineRangeCollapse(t *testing.T) {
 	}
 }
 
+func TestSubmitPlanRejectsMidFilePreprocessorLineRangeDrift(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "native/src/core/colony_sim_tick.cpp", strings.Join([]string{
+		"#include \"core/colony_sim.h\"",
+		"",
+		"static std::string append_stage_decline_cause() {",
+		"    return \"ok\";",
+		"}",
+		"",
+		"struct SurfaceFloodProbe {",
+		"    bool has_bank_focus = false;",
+		"};",
+		"",
+	}, "\n"))
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Add collapse event include.",
+		Edits: []PlanEdit{{
+			Path:      "native/src/core/colony_sim_tick.cpp",
+			StartLine: 3,
+			EndLine:   5,
+			Content:   "#include \"../simulation/world/collapse_event.h\"\n\nclass CollapsedSupport {\npublic:\n    CollapseEvent collapse_event;\n};\n",
+			Purpose:   "add collapse event include and helper",
+		}},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatal("mid-file preprocessor drift should be rejected")
+	}
+
+	for _, want := range []string{"file-scope preprocessor directive", "existing preprocessor context", "<<QUESTION>>"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected submit_plan rejection to mention %q, got: %s", want, result.Error)
+		}
+	}
+}
+
+func TestSubmitPlanRejectsAnchorPreservingMidFilePreprocessorLineRangeDrift(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "native/src/core/colony_sim_tick.cpp", strings.Join([]string{
+		"#include \"core/colony_sim.h\"",
+		"",
+		"static std::string append_stage_decline_cause() {",
+		"    return \"ok\";",
+		"}",
+		"",
+	}, "\n"))
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Add collapse event include.",
+		Edits: []PlanEdit{{
+			Path:      "native/src/core/colony_sim_tick.cpp",
+			StartLine: 3,
+			EndLine:   5,
+			Content: strings.Join([]string{
+				"static std::string append_stage_decline_cause() {",
+				"#include \"../simulation/world/collapse_event.h\"",
+				"    return \"ok\";",
+				"}",
+			}, "\n"),
+			Purpose: "add collapse event include near helper",
+		}},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatal("anchor-preserving mid-file preprocessor drift should be rejected")
+	}
+
+	if !strings.Contains(result.Error, "file-scope preprocessor directive") {
+		t.Fatalf("expected file-scope preprocessor rejection, got: %s", result.Error)
+	}
+}
+
+func TestSubmitPlanAllowsReplacingExistingConditionalPreprocessorContext(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "native/src/core/feature.h", strings.Join([]string{
+		"#pragma once",
+		"",
+		"#ifdef OLD_FEATURE",
+		"int enabled();",
+		"#endif",
+		"",
+	}, "\n"))
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Update feature guard.",
+		Edits: []PlanEdit{{
+			Path:      "native/src/core/feature.h",
+			StartLine: 3,
+			EndLine:   3,
+			Content:   "#ifndef DISABLED_FEATURE",
+			Purpose:   "replace conditional preprocessor guard",
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("existing conditional preprocessor context should be allowed: %s", result.Error)
+	}
+}
+
+func TestSubmitPlanAllowsIntroducingInBodyConditionalCompilation(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "native/src/core/feature.cpp", strings.Join([]string{
+		"void tick() {",
+		"    run();",
+		"}",
+		"",
+		"void keep_existing() {",
+		"    run_other();",
+		"}",
+		"",
+	}, "\n"))
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Add debug-only logging.",
+		Edits: []PlanEdit{{
+			Path:      "native/src/core/feature.cpp",
+			StartLine: 2,
+			EndLine:   2,
+			Content: strings.Join([]string{
+				"    run();",
+				"#ifdef DEBUG",
+				"    log_debug();",
+				"#endif",
+			}, "\n"),
+			Purpose: "add debug-only logging inside function",
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("in-body conditional compilation should be allowed: %s", result.Error)
+	}
+}
+
+func TestSubmitPlanAllowsStartLineOneInBodyConditionalCompilation(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "native/src/core/feature.cpp", strings.Join([]string{
+		"void tick() {",
+		"    run();",
+		"}",
+		"",
+		"void keep_existing() {",
+		"    run_other();",
+		"}",
+		"",
+	}, "\n"))
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Add debug-only logging.",
+		Edits: []PlanEdit{{
+			Path:      "native/src/core/feature.cpp",
+			StartLine: 1,
+			EndLine:   3,
+			Content: strings.Join([]string{
+				"void tick() {",
+				"    run();",
+				"#ifdef DEBUG",
+				"    log_debug();",
+				"#endif",
+				"}",
+			}, "\n"),
+			Purpose: "add debug-only logging inside function",
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("start-line-one in-body conditional compilation should be allowed: %s", result.Error)
+	}
+}
+
+func TestSubmitPlanAllowsIntroducingInBodyPragma(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "native/src/core/feature.cpp", strings.Join([]string{
+		"void tick_all() {",
+		"    for (int i = 0; i < count; ++i) {",
+		"        tick(i);",
+		"    }",
+		"}",
+		"",
+	}, "\n"))
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Parallelize the local loop.",
+		Edits: []PlanEdit{{
+			Path:      "native/src/core/feature.cpp",
+			StartLine: 2,
+			EndLine:   4,
+			Content: strings.Join([]string{
+				"#pragma omp parallel for",
+				"    for (int i = 0; i < count; ++i) {",
+				"        tick(i);",
+				"    }",
+			}, "\n"),
+			Purpose: "add in-body compiler pragma",
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("in-body pragma should be allowed: %s", result.Error)
+	}
+}
+
+func TestSubmitPlanRejectsHeaderGuardWithoutSelectingExistingPrologue(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "native/src/simulation/world/collapse_event.h", strings.Join([]string{
+		"// Shared CollapseEvent struct + Trigger taxonomy.",
+		"//",
+		"// Migration plan text.",
+		"",
+		"#pragma once",
+		"",
+		"namespace colony {",
+		"struct CollapseEvent {};",
+		"}",
+		"",
+	}, "\n"))
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Rewrite collapse event header prologue.",
+		Edits: []PlanEdit{{
+			Path:      "native/src/simulation/world/collapse_event.h",
+			StartLine: 1,
+			EndLine:   3,
+			Content:   "#ifndef COLLAPSE_EVENT_H\n#define COLLAPSE_EVENT_H\n\nclass CollapseEvent {};\n#endif\n",
+			Purpose:   "add header guard",
+		}},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatal("header guard replacement without selecting existing prologue should be rejected")
+	}
+
+	for _, want := range []string{"header guard", "existing file prologue", "current guard/include line"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected submit_plan rejection to mention %q, got: %s", want, result.Error)
+		}
+	}
+}
+
+func TestSubmitPlanRejectsHeaderGuardAfterLeadingBlockComment(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "native/src/simulation/world/collapse_event.h", strings.Join([]string{
+		"// Shared CollapseEvent struct + Trigger taxonomy.",
+		"//",
+		"// Migration plan text.",
+		"",
+		"#pragma once",
+		"",
+		"namespace colony {",
+		"struct CollapseEvent {};",
+		"}",
+		"",
+	}, "\n"))
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Rewrite collapse event header prologue.",
+		Edits: []PlanEdit{{
+			Path:      "native/src/simulation/world/collapse_event.h",
+			StartLine: 1,
+			EndLine:   3,
+			Content: strings.Join([]string{
+				"/*",
+				" * Collapse event helper.",
+				" */",
+				"#ifndef COLLAPSE_EVENT_H",
+				"#define COLLAPSE_EVENT_H",
+				"",
+				"class CollapseEvent {};",
+				"#endif",
+			}, "\n"),
+			Purpose: "add header guard",
+		}},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatal("header guard after leading block comment should be rejected")
+	}
+	if !strings.Contains(result.Error, "header guard") {
+		t.Fatalf("expected header guard rejection, got: %s", result.Error)
+	}
+}
+
+func TestSubmitPlanAllowsTopOfFileIncludeEditSelectingIncludeContext(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "native/src/core/colony_sim_tick.cpp", strings.Join([]string{
+		"#include \"core/colony_sim.h\"",
+		"",
+		"int value() { return 1; }",
+		"",
+	}, "\n"))
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Add collapse event include.",
+		Edits: []PlanEdit{{
+			Path:      "native/src/core/colony_sim_tick.cpp",
+			StartLine: 1,
+			EndLine:   1,
+			Content:   "#include \"core/colony_sim.h\"\n#include \"simulation/world/collapse_event.h\"",
+			Purpose:   "add top-of-file include",
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("top-of-file include edit selecting include context should be allowed: %s", result.Error)
+	}
+}
+
 func submitPlanTestAnyOfRequires(anyOf []map[string][]string, fields ...string) bool {
 	for _, clause := range anyOf {
 		required := clause["required"]

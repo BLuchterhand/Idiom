@@ -1282,6 +1282,10 @@ func validateSourceLineRangePlanEdit(path string, current string, edit PlanEdit)
 		return err
 	}
 
+	if err := RejectSourceLineRangeTopLevelConstructDrift(path, selected, edit); err != nil {
+		return err
+	}
+
 	if lineRangeReplacementDuplicatesPrecedingContext(current, spans, edit.StartLine, edit.Content) {
 		return fmt.Errorf("line-range replacement for %s lines %d-%d appears to duplicate context immediately before the selected range; use old_text/new_text with a unique current-source anchor for insertions", filepath.ToSlash(path), edit.StartLine, edit.EndLine)
 	}
@@ -1334,6 +1338,112 @@ func RejectExistingSourceDestructiveLineRangeRewrite(path string, current string
 	}
 
 	return nil
+}
+
+func RejectSourceLineRangeTopLevelConstructDrift(path string, selected string, edit PlanEdit) error {
+	if !cLikeSourcePath(path) || strings.TrimSpace(edit.Content) == "" {
+		return nil
+	}
+
+	selectedHasPreprocessor := sourceTextHasPreprocessorDirective(selected)
+
+	if edit.StartLine > 1 && !selectedHasPreprocessor {
+		if directive := firstFileScopePrologueDirective(edit.Content); directive != "" {
+			return fmt.Errorf("line-range replacement for %s lines %d-%d introduces file-scope preprocessor directive %q into a range that did not select existing preprocessor context; use a top-of-file anchored edit or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path), edit.StartLine, edit.EndLine, directive)
+		}
+	}
+
+	if edit.StartLine == 1 && !selectedHasPreprocessor {
+		if directive := leadingHeaderGuardDirective(edit.Content); directive != "" {
+			return fmt.Errorf("line-range replacement for %s lines %d-%d starts a header guard before selecting the existing file prologue/include guard; use a bounded anchor that includes the current guard/include line or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path), edit.StartLine, edit.EndLine)
+		}
+	}
+
+	return nil
+}
+
+func firstFileScopePrologueDirective(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if sourceLineIsFileScopePrologueDirective(trimmed) {
+			return trimmed
+		}
+	}
+
+	return ""
+}
+
+func leadingHeaderGuardDirective(text string) string {
+	inBlockComment := false
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		if inBlockComment {
+			if strings.Contains(trimmed, "*/") {
+				inBlockComment = false
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "/*") {
+			if !strings.Contains(trimmed, "*/") {
+				inBlockComment = true
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "*") {
+			continue
+		}
+		if sourceLineIsHeaderGuardDirective(trimmed) {
+			return trimmed
+		}
+		return ""
+	}
+
+	return ""
+}
+
+func sourceTextHasPreprocessorDirective(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		if sourceLineIsFilePrologueDirective(strings.TrimSpace(line)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func sourceLineIsFilePrologueDirective(line string) bool {
+	return sourceLineIsFileScopePrologueDirective(line) ||
+		sourceLineIsHeaderGuardDirective(line)
+}
+
+func sourceLineIsFileScopePrologueDirective(line string) bool {
+	return strings.HasPrefix(line, "#include") ||
+		strings.HasPrefix(line, "#pragma once")
+}
+
+func sourceLineIsHeaderGuardDirective(line string) bool {
+	for _, prefix := range []string{
+		"#if", "#ifdef", "#ifndef", "#elif", "#else", "#endif",
+		"#define", "#undef", "#error", "#warning",
+	} {
+		if strings.HasPrefix(line, prefix) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func cLikeSourcePath(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ipp", ".inl", ".tpp":
+		return true
+	default:
+		return false
+	}
 }
 
 func sourceEditContentDuplicatesExistingBlock(current string, edit PlanEdit) bool {
