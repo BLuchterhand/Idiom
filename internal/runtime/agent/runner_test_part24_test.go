@@ -205,6 +205,24 @@ func TestFinalAnswerBlockerKindRejectsMissingTopLevelSourceDetailCitation(t *tes
 	}
 }
 
+func TestFinalAnswerBlockerKindIgnoresBareExtensionMentions(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "Evidence is attached to source-body reads for Go source files (`.go`) before the final answer cites implementation behavior."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, nil)
+	if kind != "" || reason != "" {
+		t.Fatalf("bare extension mention should not be treated as a missing workspace path: kind=%q reason=%q", kind, reason)
+	}
+}
+
 func TestFinalAnswerBlockerKindAllowsLineClaimWithSourceBody(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "internal", "surfaces", "tui", "app", "lifecycle.go")

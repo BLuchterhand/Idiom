@@ -276,23 +276,53 @@ func sourceCitationCanonicalPath(r *Runner, path string, results []workspace.Too
 }
 
 func sourceGroundingMentionedPaths(answer string) []string {
-	paths := append([]string(nil), pathparse.MentionedWorkspaceFiles(answer)...)
+	paths := filterSourceGroundingMentionedPaths(pathparse.MentionedWorkspaceFiles(answer))
 	lineRE := regexp.MustCompile("(?i)(?:^|[\\s`'\"(])([a-z0-9_.-]+\\.(?:go|py|ts|tsx|js|jsx|rs|java|c|cc|cpp|h|hpp|sh|zsh|gd)):\\d+")
 
 	for _, match := range lineRE.FindAllStringSubmatch(answer, -1) {
-		if len(match) > 1 {
+		if len(match) > 1 && sourceGroundingMentionedPathLooksPlausible(match[1]) {
 			paths = append(paths, match[1])
 		}
 	}
 
 	rootLineRE := regexp.MustCompile("(?i)(?:^|[\\s`'\"(])((?:go\\.mod|go\\.sum|makefile|dockerfile|readme\\.md|agents\\.md|package\\.json|package-lock\\.json|pnpm-lock\\.yaml|yarn\\.lock|pyproject\\.toml|poetry\\.lock|cargo\\.toml|cargo\\.lock)):\\d+")
 	for _, match := range rootLineRE.FindAllStringSubmatch(answer, -1) {
-		if len(match) > 1 {
+		if len(match) > 1 && sourceGroundingMentionedPathLooksPlausible(match[1]) {
 			paths = append(paths, match[1])
 		}
 	}
 
 	return uniqueSortedRunnerPaths(paths)
+}
+
+func filterSourceGroundingMentionedPaths(paths []string) []string {
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if sourceGroundingMentionedPathLooksPlausible(path) {
+			out = append(out, path)
+		}
+	}
+
+	return out
+}
+
+func sourceGroundingMentionedPathLooksPlausible(path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+
+	base := filepath.Base(filepath.ToSlash(path))
+	if base == "." || base == "/" || base == "" {
+		return false
+	}
+
+	ext := filepath.Ext(base)
+	if ext != "" && base == ext {
+		return false
+	}
+
+	return true
 }
 
 func sourceGroundingGateApplies(brief workerruntime.WorkerRuntimeBrief) bool {

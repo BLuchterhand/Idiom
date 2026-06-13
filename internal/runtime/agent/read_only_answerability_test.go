@@ -1297,6 +1297,58 @@ func TestReadOnlyAnswerabilityRejectsScaffoldFinalEvenWithRelevantSourceBody(t *
 	}
 }
 
+func TestReadOnlyAnswerabilityRejectsAnswerAboveSourceFooter(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("how is evidence used in this harness?")
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/runtime/agent/read_only_evidence_packet.go lines 1-65",
+			Output:  "package agent\ntype ReadOnlyEvidencePacket struct{}\nfunc buildReadOnlyEvidencePacket() {}\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/runtime/agent/lane_policy.go lines 128-270",
+			Output:  "package agent\ntype ConversationLanePolicy struct{}\nfunc (ConversationLanePolicy) EvidenceMethods() {}\n",
+		},
+	}
+	answer := "The answer above is grounded in the following inspected source files:\n\n" +
+		"- `internal/runtime/agent/read_only_evidence_packet.go` - `ReadOnlyEvidencePacket` struct, `buildReadOnlyEvidencePacket`\n" +
+		"- `internal/runtime/agent/lane_policy.go` - `ConversationLanePolicy` evidence methods\n"
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("footer-only context-dependent answer got (%q, %q), want source_grounding_unmet", kind, reason)
+	}
+
+	if !strings.Contains(reason, "not only list evidence surfaces") {
+		t.Fatalf("rejection should identify evidence-surface-only final answer, got %q", reason)
+	}
+}
+
+func TestReadOnlyAnswerabilityAllowsStandaloneGroundedEvidenceAnswer(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("how is evidence used in this harness?")
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/runtime/agent/read_only_evidence_packet.go lines 1-65",
+			Output:  "package agent\ntype ReadOnlyEvidencePacket struct{}\nfunc buildReadOnlyEvidencePacket() {}\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/runtime/agent/lane_policy.go lines 128-270",
+			Output:  "package agent\ntype ConversationLanePolicy struct{}\nfunc (ConversationLanePolicy) EvidenceMethods() {}\n",
+		},
+	}
+	answer := "Evidence is used as the harness contract input: `ReadOnlyEvidencePacket` records source-body paths and findings in `internal/runtime/agent/read_only_evidence_packet.go`, and `ConversationLanePolicy` in `internal/runtime/agent/lane_policy.go` exposes the evidence requirements that final-answer acceptance validates before a grounded answer can close."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "" || reason != "" {
+		t.Fatalf("standalone grounded answer should pass final-answer acceptance, got (%q, %q)", kind, reason)
+	}
+}
+
 func TestFinalAnswerAcceptanceRejectsOffObjectiveSourceBackedAnswer(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
 	results := []workspace.ToolResult{

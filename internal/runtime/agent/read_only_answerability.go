@@ -1474,10 +1474,30 @@ func readOnlyScaffoldFinalAnswer(answer string) bool {
 
 	return strings.Contains(lower, "the retained source context identifies") ||
 		strings.Contains(lower, "the strongest implementation evidence is in") ||
+		contextDependentSourceFooter(lower) ||
 		strings.Contains(lower, "use those findings as the source of truth") ||
 		strings.Contains(lower, "what this establishes:") ||
 		strings.Contains(lower, "the gathered evidence points to these implementation surfaces") ||
 		strings.Contains(lower, "inspected paths:")
+}
+
+func contextDependentSourceFooter(lower string) bool {
+	normalized := strings.Join(strings.Fields(lower), " ")
+	if normalized == "" {
+		return false
+	}
+
+	if !containsAny(normalized, "the answer above", "the previous answer", "the prior answer") {
+		return false
+	}
+
+	return containsAny(normalized,
+		"grounded in the following inspected source files",
+		"grounded in the following source files",
+		"grounded in these inspected source files",
+		"inspected source files:",
+		"inspected source file:",
+	)
 }
 
 func readOnlyFallbackNeedsAnswerableEvidence(brief workerruntime.WorkerRuntimeBrief, answer string) bool {
