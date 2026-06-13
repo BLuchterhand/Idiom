@@ -782,24 +782,137 @@ func (g atomPromptGrounding) addContractSourceAuthority(contract plancontract.Pl
 }
 
 func (g atomPromptGrounding) addPromptSignatures(prompt string) {
-	lower := strings.ToLower(prompt)
-	for _, marker := range []string{"verified signature", "source-verified signature", "exact signature", "signature verified"} {
-		start := 0
-		for {
-			idx := strings.Index(lower[start:], marker)
-			if idx < 0 {
-				break
+	for _, signature := range promptVerifiedSignatureLines(prompt) {
+		g.addVerifiedSignature(signatureSymbol(signature), signature)
+	}
+}
+
+func promptVerifiedSignatureLines(prompt string) []string {
+	var signatures []string
+	inSignatureList := false
+
+	for _, line := range strings.Split(prompt, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			inSignatureList = false
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		if promptLineDeclaresVerifiedSignatures(lower) {
+			inSignatureList = true
+			signatureLine := promptInlineSignatureDeclaration(trimmed)
+			if !promptLineLooksLikeSignatureDeclaration(signatureLine) {
+				continue
 			}
-			idx += start
-			windowEnd := idx + len(marker) + 260
-			if windowEnd > len(prompt) {
-				windowEnd = len(prompt)
+			for _, signature := range extractSignatures(signatureLine) {
+				signatures = append(signatures, signature)
 			}
-			signature := extractFirstSignature(prompt[idx:windowEnd])
-			g.addVerifiedSignature(signatureSymbol(signature), signature)
-			start = idx + len(marker)
+			continue
+		}
+		if !inSignatureList {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "-") && !strings.HasPrefix(trimmed, "*") {
+			inSignatureList = false
+			continue
+		}
+		signatureLine := strings.TrimSpace(strings.TrimLeft(trimmed, "-*"))
+		if !promptLineLooksLikeSignatureDeclaration(signatureLine) {
+			continue
+		}
+		for _, signature := range extractSignatures(signatureLine) {
+			signatures = append(signatures, signature)
 		}
 	}
+
+	return signatures
+}
+
+func promptInlineSignatureDeclaration(line string) string {
+	lower := strings.ToLower(line)
+	markerEnd := -1
+	for _, marker := range []string{"source-verified signatures", "source-verified signature", "verified signatures", "verified signature", "exact signature", "signature verified"} {
+		if idx := strings.Index(lower, marker); idx >= 0 {
+			markerEnd = idx + len(marker)
+			break
+		}
+	}
+	if markerEnd >= 0 {
+		line = strings.TrimSpace(line[markerEnd:])
+	} else if strings.Contains(line, ":") {
+		line = strings.TrimSpace(line[strings.Index(line, ":")+1:])
+	}
+	line = strings.TrimSpace(strings.TrimPrefix(line, ":"))
+	line = strings.TrimSpace(strings.TrimPrefix(line, "is "))
+	signature := strings.TrimSpace(featurePlannerSignaturePattern.FindString(line))
+	if signature == "" {
+		return ""
+	}
+	return signature
+}
+
+func promptLineLooksLikeSignatureDeclaration(line string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return false
+	}
+	lower := strings.ToLower(line)
+	for _, prefix := range []string{"call ", "use ", "when ", "if ", "then ", "ensure ", "write ", "cover:", "cover "} {
+		if strings.HasPrefix(lower, prefix) {
+			return false
+		}
+	}
+	signature := strings.TrimSpace(featurePlannerSignaturePattern.FindString(line))
+	if signature == "" || !strings.HasPrefix(line, signature) {
+		return false
+	}
+	suffix := strings.TrimSpace(strings.TrimPrefix(line, signature))
+	if suffix != "" && suffix != "const" && suffix != ";" {
+		if !signatureDeclarationSuffixAllowed(signature, suffix) {
+			return false
+		}
+	}
+	symbol := signatureSymbol(signature)
+	return strings.Contains(symbol, "::") ||
+		signatureHasExplicitReturnType(signature, symbol) ||
+		strings.HasPrefix(suffix, "->") ||
+		strings.HasPrefix(suffix, ":")
+}
+
+func signatureDeclarationSuffixAllowed(signature string, suffix string) bool {
+	suffix = strings.TrimSpace(suffix)
+	lowerSignature := strings.ToLower(strings.TrimSpace(signature))
+	return strings.HasPrefix(suffix, "->") ||
+		featurePlannerTypeScriptReturnSuffixPattern.MatchString(suffix) ||
+		(strings.HasPrefix(lowerSignature, "func ") && featurePlannerGoReturnSuffixPattern.MatchString(suffix))
+}
+
+func signatureHasExplicitReturnType(signature string, symbol string) bool {
+	signature = strings.TrimSpace(signature)
+	symbol = strings.TrimSpace(symbol)
+	if signature == "" || symbol == "" {
+		return false
+	}
+	idx := strings.Index(signature, symbol)
+	if idx <= 0 {
+		return false
+	}
+	return strings.TrimSpace(signature[:idx]) != ""
+}
+
+func promptLineDeclaresVerifiedSignatures(lowerLine string) bool {
+	for _, negated := range []string{"unverified signature", "not verified signature", "signature is not", "no source-verified signature", "no verified signature", "without source-verified signature", "without verified signature"} {
+		if strings.Contains(lowerLine, negated) {
+			return false
+		}
+	}
+	for _, marker := range []string{"verified signature", "source-verified signature", "exact signature", "signature verified"} {
+		if strings.Contains(lowerLine, marker) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (g atomPromptGrounding) addVerifiedSignature(symbol string, signature string) {
@@ -846,11 +959,8 @@ func signatureSymbol(signature string) string {
 }
 
 var featurePlannerSignaturePattern = regexp.MustCompile(`\b(?:[A-Za-z_][A-Za-z0-9_:<>,*&\s]+\s+)?([A-Za-z_][A-Za-z0-9_:]*)\s*\([^)]*\)`)
-
-func extractFirstSignature(text string) string {
-	match := featurePlannerSignaturePattern.FindString(text)
-	return strings.TrimSpace(match)
-}
+var featurePlannerGoReturnSuffixPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)?$`)
+var featurePlannerTypeScriptReturnSuffixPattern = regexp.MustCompile(`^:\s*[A-Za-z_$][A-Za-z0-9_$]*(?:\[\])?(?:\s*[|&]\s*[A-Za-z_$][A-Za-z0-9_$]*(?:\[\])?)*$`)
 
 func extractSignatures(text string) []string {
 	matches := featurePlannerSignaturePattern.FindAllString(text, -1)
@@ -974,6 +1084,9 @@ func plannerCallNeedsSignatureEvidence(name string, args string) bool {
 	name = strings.TrimSpace(name)
 	args = strings.TrimSpace(args)
 	if name == "" || args == "" {
+		return false
+	}
+	if strings.HasSuffix(name, ":") {
 		return false
 	}
 	lowerName := strings.ToLower(name)
@@ -2049,6 +2162,30 @@ func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflow
 	return plan
 }
 
+func NormalizePlanPromptDeclarations(plan FeaturePlan) FeaturePlan {
+	for i := range plan.Atoms {
+		atom := &plan.Atoms[i]
+		atom.EvidencePaths = normalizeEditScopeList(append(atom.EvidencePaths, promptDeclaredEvidencePaths(atom.Prompt)...))
+	}
+
+	return plan
+}
+
+func promptDeclaredEvidencePaths(prompt string) []string {
+	var paths []string
+	for _, line := range strings.Split(prompt, "\n") {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, "evidence-only path") &&
+			!strings.Contains(lower, "evidence path") &&
+			!strings.Contains(lower, "evidence paths") {
+			continue
+		}
+		paths = append(paths, repoPathsMentionedInText(line)...)
+	}
+
+	return normalizeEditScopeList(paths)
+}
+
 func productAtomRequiredEditPaths(plan FeaturePlan, brief ProductWorkflowBrief, atom FeatureAtomPlan, allowed []string) []string {
 	paths := productAtomRequiredTestArtifactPaths(atom)
 	filesToModify := normalizeEditScopeList(brief.FilesToModify)
@@ -2628,6 +2765,7 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 
 		return []Event{{Type: EventPlannerSourceSatisfied, SessionID: state.SessionID, FeatureTo: FeatureStateSourceSatisfied, Message: closeout.Summary, Fields: fields}}
 	case ToolSubmitFeaturePlan:
+		parsed.Plan = NormalizePlanPromptDeclarations(parsed.Plan)
 		hydrateDurablePlanDefaults(&parsed.Plan, state, now)
 		contract := StampPlanAuthorityContract(&parsed.Plan, state.AuthorityDeltas)
 

@@ -760,6 +760,74 @@ func TestValidatePlanRejectsGuessedHelperCallWithoutSignatureEvidence(t *testing
 	}
 }
 
+func TestValidatePlanAllowsMultipleSourceVerifiedSignaturesAfterMarker(t *testing.T) {
+	plan := validPlan()
+	plan.Atoms[0].Prompt = "Source-verified signatures:\n- MachineSystem::try_consume_inputs(EntityID machine_id, const Recipe& recipe)\n- EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const\n\nCall find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required)."
+
+	if err := ValidatePlan(plan); err != nil {
+		t.Fatalf("all signatures after source-verified marker should satisfy helper calls: %v", err)
+	}
+}
+
+func TestValidatePlanDoesNotLetSignatureMarkerSelfAuthorizeLaterCalls(t *testing.T) {
+	plan := validPlan()
+	plan.Atoms[0].Prompt = "Source-verified signatures:\n- EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const\n- Call missing_helper(eid) before posting fallback water haul.\n\nCall missing_helper(eid) before posting fallback water haul."
+
+	err := ValidatePlan(plan)
+	if err == nil || !strings.Contains(err.Error(), "missing_helper(eid)") {
+		t.Fatalf("signature marker must not authorize later prose calls, got %v", err)
+	}
+}
+
+func TestValidatePlanDoesNotTreatNegatedSignatureMarkerAsAuthority(t *testing.T) {
+	for _, prompt := range []string{
+		"No source-verified signature: missing_helper(eid).\nCall missing_helper(eid) before posting fallback water haul.",
+		"unverified signature: missing_helper(eid).\nCall missing_helper(eid) before posting fallback water haul.",
+		"not verified signature: missing_helper(eid).\nCall missing_helper(eid) before posting fallback water haul.",
+		"source-verified signature is not missing_helper(eid).\nCall missing_helper(eid) before posting fallback water haul.",
+		"Current source evidence: exact signature is missing_helper(eid).\nCall missing_helper(eid) before posting fallback water haul.",
+	} {
+		plan := validPlan()
+		plan.Atoms[0].Prompt = prompt
+
+		err := ValidatePlan(plan)
+		if err == nil || !strings.Contains(err.Error(), "missing_helper(eid)") {
+			t.Fatalf("negated signature marker must not authorize helper calls, got %v for prompt %q", err, prompt)
+		}
+	}
+}
+
+func TestPromptSignatureDeclarationsAllowLanguageNeutralSuffixes(t *testing.T) {
+	for _, prompt := range []string{
+		"Source-verified signatures:\n- func renderLabel(name string) string\n\nCall renderLabel(name).",
+		"Source-verified signatures:\n- fn helper(x: i32) -> bool\n\nCall helper(x).",
+		"Source-verified signatures:\n- helper(x: string): boolean\n\nCall helper(x).",
+	} {
+		plan := validPlan()
+		plan.Atoms[0].Prompt = prompt
+
+		if err := ValidatePlan(plan); err != nil {
+			t.Fatalf("language-neutral source signature should authorize call, got %v for prompt %q", err, prompt)
+		}
+	}
+}
+
+func TestValidatePlanDoesNotTreatBareCallBulletAsSignatureDeclaration(t *testing.T) {
+	for _, bullet := range []string{
+		"- missing_helper(eid)",
+		"- missing_helper(eid) before fallback",
+		"- missing_helper(eid): before fallback",
+	} {
+		plan := validPlan()
+		plan.Atoms[0].Prompt = "Source-verified signatures:\n- EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const\n" + bullet + "\n\nCall missing_helper(eid) before posting fallback water haul."
+
+		err := ValidatePlan(plan)
+		if err == nil || !strings.Contains(err.Error(), "missing_helper(eid)") {
+			t.Fatalf("bare call-shaped bullet must not authorize helper calls, got %v for bullet %q", err, bullet)
+		}
+	}
+}
+
 func TestValidatePlanRejectsGuessedHelperCallDespiteUnrelatedSourceEvidence(t *testing.T) {
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Current source evidence: labels.go contains render_label(). Then call find_connected_cistern_with_volume(eid) before posting fallback water haul."
@@ -817,6 +885,9 @@ func TestFeaturePlannerDoesNotTreatParentheticalExamplesAsHelperCalls(t *testing
 	if !plannerCallNeedsSignatureEvidence("find_connected_cistern_with_volume", "network_id, volume_required") {
 		t.Fatal("real helper call with concrete args must still require source signature evidence")
 	}
+	if plannerCallNeedsSignatureEvidence("cover:", "1") {
+		t.Fatal("list prose cover:(1) must not require source signature evidence")
+	}
 }
 
 func TestValidatePlanAllowsParentheticalExamplesInAtomPrompt(t *testing.T) {
@@ -825,6 +896,17 @@ func TestValidatePlanAllowsParentheticalExamplesInAtomPrompt(t *testing.T) {
 
 	if err := ValidatePlan(plan); err != nil {
 		t.Fatalf("parenthetical examples must not be treated as helper calls: %v", err)
+	}
+}
+
+func TestNormalizePlanPromptDeclarationsPromotesEvidenceOnlyPaths(t *testing.T) {
+	plan := validPlan()
+	plan.Atoms[0].EvidencePaths = nil
+	plan.Atoms[0].Prompt = "Evidence-only path (do not edit): native/src/core/components.h"
+
+	normalized := NormalizePlanPromptDeclarations(plan)
+	if !slices.Contains(normalized.Atoms[0].EvidencePaths, "native/src/core/components.h") {
+		t.Fatalf("evidence-only prompt path was not promoted: %+v", normalized.Atoms[0].EvidencePaths)
 	}
 }
 
