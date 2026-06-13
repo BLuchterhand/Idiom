@@ -244,6 +244,46 @@ func TestPlanExecuteUnavailableHistoryToolNudgeWhenHistoryAlreadySatisfied(t *te
 	}
 }
 
+func TestPlanExecuteUnavailableHistoryToolNudgeDoesNotCallNewFilesSourcePending(t *testing.T) {
+	brief := workerruntime.RuntimeBriefForTaskFamily(PlanThenExecutePlannerTaskFamily, "main", []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"})
+	brief.RequiredEditPaths = []string{"a.go", "new_file.go"}
+	brief.RequiredEvidence = []string{requiredEvidenceGitHistoryRationale}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{
+			Tool:    "read_file",
+			Summary: "read_file failed for new_file.go",
+			Error:   `path "new_file.go" is in your required_edit_paths but does not exist on disk yet - this is a NEW FILE you must create.`,
+		},
+		gitHistoryRangeResult("a.go"),
+	}
+
+	summary, errorText, ok := planThenExecuteUnavailableHistoryToolNudge(
+		workspace.ToolRequest{Tool: "history_range", Path: "a.go", StartLine: 1, EndLine: 10},
+		brief,
+		results,
+		[]string{"submit_plan"},
+	)
+	if !ok {
+		t.Fatal("expected repeated history_range to get typed phase nudge")
+	}
+
+	if !strings.Contains(summary, "Git history tool not available") {
+		t.Fatalf("summary = %q", summary)
+	}
+
+	if strings.Contains(errorText, "source-body evidence for `new_file.go`") || strings.Contains(errorText, "source-body evidence for new_file.go") {
+		t.Fatalf("new files must not be reported as pending source-body obligations: %s", errorText)
+	}
+
+	lower := strings.ToLower(errorText)
+	for _, want := range []string{"already satisfied", "submit"} {
+		if !strings.Contains(lower, want) {
+			t.Fatalf("error text missing %q: %s", want, errorText)
+		}
+	}
+}
+
 func TestPlanThenExecuteHistoryPendingPathsMixedEvidenceStates(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,

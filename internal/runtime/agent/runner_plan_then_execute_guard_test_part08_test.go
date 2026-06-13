@@ -732,6 +732,9 @@ func TestPlanThenExecuteMissingNewFilePathsBecomeSubmitReadyWithoutMoreReads(t *
 	if state.Mode != PlanExecutePlanningModeSubmitReady {
 		t.Fatalf("Mode = %q, want submit_ready; states=%#v", state.Mode, state.RequiredPathStates)
 	}
+	if sourcePending := modelProtocolSourceBodyObligations(brief, results, TurnPhaseContract{PhaseID: turnPhaseRequiredSource}); len(sourcePending) != 0 {
+		t.Fatalf("missing required new files must not appear as protocol source-body obligations, got %#v", sourcePending)
+	}
 
 	for _, got := range state.RequiredPathStates {
 		if !strings.HasSuffix(got, ":"+string(planThenExecuteRequiredPathNewFileBodyRequired)) {

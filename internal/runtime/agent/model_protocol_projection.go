@@ -284,11 +284,21 @@ func modelProtocolSourceBodyObligations(brief workerruntime.WorkerRuntimeBrief, 
 
 	for _, path := range brief.RequiredEditPaths {
 		normalized := normalizeRunnerPath(path)
-		if normalized == "" || concreteSourceEvidenceReadForPath(normalized, results) {
+		if normalized == "" {
 			continue
 		}
 
-		paths = append(paths, normalized)
+		state := planThenExecuteRequiredPathState(brief, results, normalized)
+		switch phase.PhaseID {
+		case turnPhaseRequiredSource:
+			if state.requiresSourceBodyRead() {
+				paths = append(paths, normalized)
+			}
+		case turnPhaseStaleAnchorRefresh:
+			if state == planThenExecuteRequiredPathStaleAnchor {
+				paths = append(paths, normalized)
+			}
+		}
 	}
 
 	return uniqueSortedRunnerPaths(paths)
