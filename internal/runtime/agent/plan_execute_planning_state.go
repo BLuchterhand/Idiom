@@ -190,7 +190,7 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
 		state.RefreshPaths = planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt)
 	}
-	if len(state.RefreshPaths) == 0 {
+	if len(state.RefreshPaths) == 0 && !planThenExecuteLastRejectionSuppressesStreakRefresh(brief, results) {
 		state.RefreshPaths = planThenExecuteRejectedSubmitPlanStreakRefreshPaths(brief, results)
 	}
 

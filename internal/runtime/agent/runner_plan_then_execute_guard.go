@@ -1196,6 +1196,9 @@ func planThenExecuteInvalidAnchorRefreshRequestAllowed(req workspace.ToolRequest
 	if planThenExecuteReadFileCoversRejectedSyntaxLine(req, path, results) {
 		return true
 	}
+	if planThenExecuteReadFileCoversRejectedLineRange(req, path, results) {
+		return true
+	}
 
 	return !planThenExecuteLargePathSeen(path, results)
 }
@@ -1216,6 +1219,26 @@ func planThenExecuteReadFileCoversRejectedSyntaxLine(req workspace.ToolRequest, 
 	}
 
 	return req.StartLine <= line && line <= req.EndLine
+}
+
+func planThenExecuteReadFileCoversRejectedLineRange(req workspace.ToolRequest, path string, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(req.Tool) != "read_file" || req.StartLine <= 0 || req.EndLine < req.StartLine {
+		return false
+	}
+
+	rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results)
+	if !ok {
+		return false
+	}
+
+	ranges := submitPlanLineRangeInvalidAnchorRanges(rejected, path)
+	for _, lineRange := range ranges {
+		if req.StartLine <= lineRange.start && req.EndLine >= lineRange.end {
+			return true
+		}
+	}
+
+	return false
 }
 
 func submitPlanSyntaxValidationLineForPath(result workspace.ToolResult, path string) (int, bool) {
@@ -1487,6 +1510,7 @@ func submitPlanRejectionHasInvalidAnchor(result workspace.ToolResult) bool {
 		strings.Contains(text, "old_text not found") ||
 		strings.Contains(text, "whole-file replace_all edit would rewrite existing source file") ||
 		strings.Contains(text, "would rewrite the entire existing source file") ||
+		strings.Contains(text, "would collapse") ||
 		strings.Contains(text, "starts a header guard before selecting") ||
 		strings.Contains(text, "line range outside current source") ||
 		strings.Contains(text, "preflight syntax validation failed")
@@ -1584,6 +1608,7 @@ func submitPlanLineRangeInvalidAnchorPaths(result workspace.ToolResult) map[stri
 	for _, line := range strings.Split(text, "\n") {
 		lineLower := strings.ToLower(line)
 		if !strings.Contains(lineLower, "would rewrite the entire existing source file") &&
+			!strings.Contains(lineLower, "would collapse") &&
 			!strings.Contains(lineLower, "starts a header guard before selecting") &&
 			!strings.Contains(lineLower, "old_text not found") &&
 			!strings.Contains(lineLower, "invalid edit anchor") {
@@ -1608,6 +1633,86 @@ func submitPlanLineRangeInvalidAnchorPaths(result workspace.ToolResult) map[stri
 	}
 
 	return out
+}
+
+func submitPlanLineRangeInvalidAnchorRanges(result workspace.ToolResult, path string) []planThenExecuteLineRange {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return nil
+	}
+
+	text := strings.Join([]string{result.Summary, result.Error, result.Output}, "\n")
+	lower := strings.ToLower(text)
+	lineRangeMarker := "line-range replacement for "
+	if !strings.Contains(lower, lineRangeMarker) {
+		return nil
+	}
+
+	var ranges []planThenExecuteLineRange
+	for _, line := range strings.Split(text, "\n") {
+		lineLower := strings.ToLower(line)
+		if !strings.Contains(lineLower, "would rewrite the entire existing source file") &&
+			!strings.Contains(lineLower, "would collapse") &&
+			!strings.Contains(lineLower, "starts a header guard before selecting") &&
+			!strings.Contains(lineLower, "old_text not found") &&
+			!strings.Contains(lineLower, "invalid edit anchor") {
+			continue
+		}
+
+		gotPath, lineRange, ok := submitPlanLineRangeInvalidAnchorDiagnostic(line, lineRangeMarker)
+		if !ok || gotPath != path {
+			continue
+		}
+
+		ranges = append(ranges, lineRange)
+	}
+
+	return ranges
+}
+
+type planThenExecuteLineRange struct {
+	start int
+	end   int
+}
+
+func submitPlanLineRangeInvalidAnchorDiagnostic(line string, marker string) (string, planThenExecuteLineRange, bool) {
+	lineLower := strings.ToLower(line)
+	idx := strings.Index(lineLower, marker)
+	if idx < 0 {
+		return "", planThenExecuteLineRange{}, false
+	}
+
+	rawPath := strings.TrimSpace(line[idx+len(marker):])
+	rawPathLower := strings.ToLower(rawPath)
+	lineMarker := " lines "
+	cut := strings.Index(rawPathLower, lineMarker)
+	if cut < 0 {
+		return "", planThenExecuteLineRange{}, false
+	}
+
+	path := normalizeSubmitPlanDiagnosticPath(rawPath[:cut])
+	if path == "" {
+		return "", planThenExecuteLineRange{}, false
+	}
+
+	afterLines := strings.TrimSpace(rawPath[cut+len(lineMarker):])
+	fields := strings.Fields(afterLines)
+	if len(fields) == 0 {
+		return "", planThenExecuteLineRange{}, false
+	}
+
+	startText, endText, ok := strings.Cut(strings.Trim(fields[0], ".,;:)"), "-")
+	if !ok {
+		return "", planThenExecuteLineRange{}, false
+	}
+
+	start, startErr := strconv.Atoi(startText)
+	end, endErr := strconv.Atoi(endText)
+	if startErr != nil || endErr != nil || start <= 0 || end < start {
+		return "", planThenExecuteLineRange{}, false
+	}
+
+	return path, planThenExecuteLineRange{start: start, end: end}, true
 }
 
 func normalizeSubmitPlanDiagnosticPath(raw string) string {
@@ -1884,6 +1989,10 @@ func successfulInvalidAnchorCorrectionEvidenceAfterPriorRejection(results []work
 }
 
 func invalidAnchorCompleteCorrectionEvidenceResult(result workspace.ToolResult, path string, results []workspace.ToolResult) bool {
+	if readFileResultCoversRejectedLineRange(result, path, results) {
+		return true
+	}
+
 	evidence := planThenExecuteToolResultSourceEvidence(result, path)
 	if evidence.Level != planThenExecuteEvidenceAnchorReady {
 		return false
@@ -1899,7 +2008,7 @@ func invalidAnchorCompleteCorrectionEvidenceResult(result workspace.ToolResult, 
 		return true
 	}
 
-	return planThenExecuteReadFileCoversRejectedSyntaxLine(workspace.ToolRequest{
+	req := workspace.ToolRequest{
 		Tool: "read_file",
 		Path: path,
 		StartLine: func() int {
@@ -1907,10 +2016,17 @@ func invalidAnchorCompleteCorrectionEvidenceResult(result workspace.ToolResult, 
 			return start
 		}(),
 		EndLine: end,
-	}, path, results)
+	}
+
+	return planThenExecuteReadFileCoversRejectedSyntaxLine(req, path, results) ||
+		planThenExecuteReadFileCoversRejectedLineRange(req, path, results)
 }
 
 func invalidAnchorCorrectionEvidenceResult(result workspace.ToolResult, path string, results []workspace.ToolResult) bool {
+	if readFileResultCoversRejectedLineRange(result, path, results) {
+		return true
+	}
+
 	evidence := planThenExecuteToolResultSourceEvidence(result, path)
 	if evidence.Level != planThenExecuteEvidenceAnchorReady {
 		return false
@@ -1939,8 +2055,38 @@ func invalidAnchorCorrectionEvidenceResult(result workspace.ToolResult, path str
 
 		return true
 	}
+	if planThenExecuteReadFileCoversRejectedLineRange(workspace.ToolRequest{
+		Tool: "read_file",
+		Path: path,
+		StartLine: func() int {
+			start, _, _ := planThenExecuteReadSummaryLineRange(result.Summary)
+			return start
+		}(),
+		EndLine: end,
+	}, path, results) {
+
+		return true
+	}
 
 	return hasRange
+}
+
+func readFileResultCoversRejectedLineRange(result workspace.ToolResult, path string, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile || strings.TrimSpace(result.Error) != "" {
+		return false
+	}
+
+	readPath, readRange, ok := extractReadPathAndRangeFromSummary(result.Summary)
+	if !ok || normalizeRunnerPath(readPath) != normalizeRunnerPath(path) {
+		return false
+	}
+
+	return planThenExecuteReadFileCoversRejectedLineRange(workspace.ToolRequest{
+		Tool:      workspace.ToolNameReadFile,
+		Path:      path,
+		StartLine: readRange.start,
+		EndLine:   readRange.end,
+	}, path, results)
 }
 
 func lastRejectedSubmitPlanCoverageResult(results []workspace.ToolResult) (workspace.ToolResult, int, bool) {
@@ -3510,9 +3656,13 @@ func planThenExecuteSubmitPlanMissingBodyOrUnsafeAnchor(result workspace.ToolRes
 		"no safe edit body",
 		"would rewrite existing source file",
 		"would rewrite the entire existing source file",
+		"would collapse",
 		"old_text not found",
 		"starts a header guard before selecting",
 		"invalid edit anchor",
+		"unsupported proof claim",
+		"no-op assertion",
+		"submit a concrete state assertion",
 	} {
 		if strings.Contains(text, marker) {
 			return true

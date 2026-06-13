@@ -532,6 +532,49 @@ func TestPlanThenExecuteFallbackPreservesSubmitCorrectionContract(t *testing.T) 
 	}
 }
 
+func TestPlanThenExecuteFallbackAllowsExactBlockerWhenCorrectionBodiesUnsafe(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "plan_then_execute",
+		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp", "native/tests/test_collapse_event.cpp"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)"},
+		{Tool: "read_file", Summary: "Required new-file path does not exist yet", Error: "path \"native/tests/test_collapse_event.cpp\" is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create. If the brief does not provide enough body evidence for a required source/test file, answer with <<QUESTION>> naming the missing body evidence."},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[2]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
+		},
+		{Tool: "read_file", Summary: "Read native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "plan_artifact.schema_errors edits[2]:invalid_edit_shape:failed_precondition[3002]: plan submission rejected: unsupported proof claim: no-op assertion on line 7; submit a concrete state assertion or report a blocker",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "plan_artifact.schema_errors edits[2]:invalid_edit_shape:failed_precondition[3002]: plan submission rejected: unsupported proof claim: no-op assertion on line 6; submit a concrete state assertion or report a blocker",
+		},
+	}
+
+	answer, ok := deterministicNoToolsAnswer("main", brief, results)
+	if !ok {
+		t.Fatal("expected deterministic plan-execute fallback")
+	}
+
+	for _, want := range []string{"Plan-execute submit correction is still required", "exact path-specific missing body/anchor blocker", "safe executable edit body"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("plan-execute unsafe-correction fallback missing %q:\n%s", want, answer)
+		}
+	}
+
+	if strings.Contains(answer, "source_satisfied_paths") {
+		t.Fatalf("unsafe-correction fallback should not advertise source_satisfied_paths as the fallback terminal option:\n%s", answer)
+	}
+}
+
 func TestSynthesizeMutationFallbackReportsMissingRequiredPathsAndPlannerOwnedVerification(t *testing.T) {
 	answer := synthesizeMutationFallbackAnswer(workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",

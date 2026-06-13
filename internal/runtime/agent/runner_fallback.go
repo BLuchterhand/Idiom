@@ -118,7 +118,12 @@ func synthesizePlanThenExecutePlannerFallbackAnswer(brief workerruntime.WorkerRu
 			"Next valid action: re-run with enough budget and issue exactly one bounded read_file or code_navigate source-body request for a remaining refresh path; do not answer source-satisfied or blocker before that refresh returns."), true
 	}
 
-	if planThenExecuteSubmitCorrectionActive(brief, results) {
+	if state.Mode == PlanExecutePlanningModeSubmitCorrection {
+		if state.SubmitCorrectionBlockerAllowed {
+			return strings.TrimSpace("<<QUESTION>>: Plan-execute submit correction is still required; no valid plan artifact has been accepted.\n\n" +
+				"Next valid action: emit one parser-readable submit_plan covering every required edit path with real executable edits, or answer <<QUESTION>> with the exact path-specific missing body/anchor blocker if gathered evidence cannot support a safe executable edit body."), true
+		}
+
 		return strings.TrimSpace("<<QUESTION>>: Plan-execute submit correction is still required; no valid plan artifact has been accepted.\n\n" +
 			"Next valid action: emit one parser-readable submit_plan covering every required edit path with real executable edits or top-level source_satisfied_paths for already-final paths."), true
 	}

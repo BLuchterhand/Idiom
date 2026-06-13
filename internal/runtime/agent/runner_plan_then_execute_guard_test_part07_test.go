@@ -881,6 +881,15 @@ func TestPlanExecuteSubmitPlanDiagnosticsKeepExtensionlessPathsAndDropProtocolTo
 		t.Fatalf("whole-file line-range existing source rewrite should become an anchor-refresh path, got %#v", got)
 	}
 
+	lineRangeCollapseRejected := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected",
+		Error:   "edits[2]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
+	}
+	if got := sortedRunnerPathKeys(submitPlanInvalidAnchorPaths(lineRangeCollapseRejected)); !slices.Equal(got, []string{"native/src/core/colony_sim_tick.cpp"}) {
+		t.Fatalf("line-range source collapse should become an anchor-refresh path, got %#v", got)
+	}
+
 	headerGuardRejected := workspace.ToolResult{
 		Tool:    "submit_plan",
 		Summary: "submit_plan rejected",
@@ -1055,6 +1064,144 @@ func TestPlanExecuteRepeatedUnsafeSubmitCorrectionAllowsPathBlocker(t *testing.T
 	exact := "<<QUESTION>>: native/src/simulation/world/collapse_event.h is blocked because no safe edit body or missing anchor evidence is available for a bounded header update."
 	if got, rejected := runner.requiredPathCompletionRecoveryRejection(exact, results); rejected {
 		t.Fatalf("exact submit-correction body/anchor blocker should be accepted, got %+v", got)
+	}
+}
+
+func TestPlanExecuteRepeatedNoopProofCorrectionAllowsPathBlocker(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp", "native/tests/test_collapse_event.cpp"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)", Output: "1:#include <x>\n120:void a();\n"},
+		{Tool: "read_file", Summary: "Read f2 native/tests/test_collapse_event.cpp lines 1-1", Error: "path \"native/tests/test_collapse_event.cpp\" is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create. If the brief does not provide enough body evidence for a required source/test file, answer with <<QUESTION>> naming the missing body evidence."},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[2]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
+		},
+		{Tool: "read_file", Summary: "Read f3 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)", Output: "1:#include <x>\n120:void a();\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "plan_artifact.schema_errors edits[2]:invalid_edit_shape:failed_precondition[3002]: plan submission rejected: unsupported proof claim: no-op assertion on line 7; submit a concrete state assertion or report a blocker",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "plan_artifact.schema_errors edits[2]:invalid_edit_shape:failed_precondition[3002]: plan submission rejected: unsupported proof claim: no-op assertion on line 6; submit a concrete state assertion or report a blocker",
+		},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitCorrection {
+		t.Fatalf("mode = %q, want submit_correction; state=%+v", state.Mode, state)
+	}
+	if !state.SubmitCorrectionBlockerAllowed {
+		t.Fatalf("expected repeated no-op proof correction to allow exact blocker: %+v", state)
+	}
+
+	runner := &Runner{RuntimeBrief: brief}
+	exact := "<<QUESTION>>: native/src/core/colony_sim_tick.cpp and native/tests/test_collapse_event.cpp are blocked because gathered evidence lacks a safe edit body or missing anchor evidence for the required collapse dispatch/test changes."
+	if got, rejected := runner.requiredPathCompletionRecoveryRejection(exact, results); rejected {
+		t.Fatalf("exact no-op proof body/anchor blocker should be accepted, got %+v", got)
+	}
+}
+
+func TestPlanExecuteNoopProofBeforeThresholdKeepsPendingRefresh(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)", Output: "1:#include <x>\n120:void a();\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[2]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "plan_artifact.schema_errors edits[2]:invalid_edit_shape:failed_precondition[3002]: plan submission rejected: unsupported proof claim: no-op assertion on line 7; submit a concrete state assertion or report a blocker",
+		},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.SubmitCorrectionBlockerAllowed {
+		t.Fatalf("blocker must not be allowed before repeated-rejection threshold: %+v", state)
+	}
+
+	runner := &Runner{RuntimeBrief: brief}
+	generic := "<<QUESTION>>: native/src/core/colony_sim_tick.cpp is blocked."
+	if got, rejected := runner.requiredPathCompletionRecoveryRejection(generic, results); !rejected || !strings.Contains(got.Error, "Submit-correction mode has exactly one valid outcome: parser-readable submit_plan") {
+		t.Fatalf("generic blocker before threshold should be rejected with submit_plan correction guidance, rejected=%v result=%+v", rejected, got)
+	}
+}
+
+func TestPlanExecutePathlessNoopProofDoesNotSuppressUnresolvedStreakRefresh(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)", Output: "1:#include <x>\n120:void a();\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[2]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/core/colony_sim_tick.cpp lines 200-260 would collapse 61 non-empty source lines to 20; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "plan_artifact.schema_errors edits[2]:invalid_edit_shape:failed_precondition[3002]: plan submission rejected: unsupported proof claim: no-op assertion on line 7; submit a concrete state assertion or report a blocker",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "plan_artifact.schema_errors edits[2]:invalid_edit_shape:failed_precondition[3002]: plan submission rejected: unsupported proof claim: no-op assertion on line 6; submit a concrete state assertion or report a blocker",
+		},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeAnchorRefresh {
+		t.Fatalf("mode = %q, want anchor_refresh while earlier pathful collapse rejection is unresolved; state=%+v", state.Mode, state)
+	}
+	if !slices.Equal(state.RefreshPaths, []string{"native/src/core/colony_sim_tick.cpp"}) {
+		t.Fatalf("refresh paths = %#v, want unresolved core source path", state.RefreshPaths)
+	}
+}
+
+func TestPlanExecuteCollapseRangeReadClosesRefresh(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[2]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
+		},
+		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)", Output: "1:#include <x>\n120:void after();\n"},
+	}
+
+	rejected := results[0]
+	if paths := planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, 0); len(paths) != 0 {
+		t.Fatalf("bounded read covering collapse diagnostic lines should close refresh, got %#v", paths)
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if slices.Contains(state.RefreshPaths, "native/src/core/colony_sim_tick.cpp") {
+		t.Fatalf("state should not keep covered collapse refresh path: %+v", state)
 	}
 }
 

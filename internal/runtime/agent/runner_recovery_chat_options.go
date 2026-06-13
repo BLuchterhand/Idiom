@@ -708,7 +708,39 @@ func planThenExecuteRejectedPlanRefreshPaths(brief workerruntime.WorkerRuntimeBr
 		return paths
 	}
 
+	if planThenExecuteSuppressRejectedSubmitPlanStreakRefresh(brief, rejected, results) {
+		return nil
+	}
+
 	return planThenExecuteRejectedSubmitPlanStreakRefreshPaths(brief, results)
+}
+
+func planThenExecuteSuppressRejectedSubmitPlanStreakRefresh(brief workerruntime.WorkerRuntimeBrief, rejected workspace.ToolResult, results []workspace.ToolResult) bool {
+	if !planThenExecutePathlessUnsafeSubmitPlanRejectionExhausted(rejected, results) {
+		return false
+	}
+
+	return len(planThenExecuteRejectedSubmitPlanStreakRefreshPaths(brief, results)) == 0
+}
+
+func planThenExecutePathlessUnsafeSubmitPlanRejectionExhausted(rejected workspace.ToolResult, results []workspace.ToolResult) bool {
+	if len(submitPlanRefreshPathCandidates(rejected)) > 0 {
+		return false
+	}
+	if !planThenExecuteSubmitPlanMissingBodyOrUnsafeAnchor(rejected) {
+		return false
+	}
+
+	return len(planThenExecuteRejectedSubmitPlanStreak(results)) >= planThenExecuteRejectedSubmitPlanStreakThreshold
+}
+
+func planThenExecuteLastRejectionSuppressesStreakRefresh(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results)
+	if !ok {
+		return false
+	}
+
+	return planThenExecuteSuppressRejectedSubmitPlanStreakRefresh(brief, rejected, results)
 }
 
 func planThenExecuteRejectedPlanRefreshPathsForResult(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, rejected workspace.ToolResult, rejectedAt int) []string {
