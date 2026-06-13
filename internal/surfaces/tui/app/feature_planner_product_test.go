@@ -155,6 +155,70 @@ func TestFeaturePlannerTUIDirectAnswerResumesOpenQuestionSession(t *testing.T) {
 	}
 }
 
+func TestFeaturePlannerTUIDirectAcceptedSourceAnswerCarriesAuthorityIntoResumePrompt(t *testing.T) {
+	projectRoot := t.TempDir()
+	writeFile(t, projectRoot, "go.mod", "module example.com/tui\n")
+	plan := featurePlannerCommandStandaloneCollapsePlan()
+	plan.Atoms[0].SDDRefs = nil
+
+	client := &scriptedLLMClient{responses: []string{
+		featurePlannerCommandAcceptedSourceQuestionJSON(t),
+		featurePlannerCommandPlanJSON(t, plan),
+	}}
+	m := &Model{
+		client: client,
+		cfg: config.Config{
+			Chat:      config.Chat{ProjectRoot: projectRoot},
+			Workspace: config.Workspace{Root: projectRoot, CWD: projectRoot},
+		},
+		workspace: workspace.NewManager(config.Workspace{Root: projectRoot, CWD: projectRoot}),
+	}
+
+	answer, err := m.runFeaturePlannerCommandOnce(context.Background(), "Implement CollapseEvent helper.")
+	if err != nil {
+		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
+	}
+	if !strings.Contains(answer, `answer_format: JSON object with answer, answer_source_kind="accepted_source", and evidence_refs`) {
+		t.Fatalf("question summary should show typed answer format, got:\n%s", answer)
+	}
+
+	sessionID := m.directFeaturePlannerSessionID
+	typedAnswer := `{"answer":"Accepted source fact: source-verified signature is CollapseEvent NewCollapseEvent(EntityID id).","answer_source_kind":"accepted_source","evidence_refs":["pkg/collapse_event.go"],"affected_paths":["pkg/collapse_event.go"],"affected_fields":["source_localization"]}`
+	answer, err = m.runDirectFeaturePlannerAnswerOnce(context.Background(), typedAnswer)
+	if err != nil {
+		t.Fatalf("runDirectFeaturePlannerAnswerOnce: %v", err)
+	}
+	if !strings.Contains(answer, "feature-planner: "+featureplanner.FeatureStatePlanningRepair) {
+		t.Fatalf("expected planning repair after resumed invalid plan, got:\n%s", answer)
+	}
+
+	if len(client.messages) < 2 {
+		t.Fatalf("expected resumed planner prompt, got %#v", client.messages)
+	}
+	resumePrompt := client.messages[1][len(client.messages[1])-1].Content
+	for _, want := range []string{
+		"User request:\nImplement CollapseEvent helper.",
+		"Accepted source authority constraints:",
+		"Accepted source fact: source-verified signature is CollapseEvent NewCollapseEvent(EntityID id).",
+		"Use only these accepted source facts for helper signatures and source-localized call shapes.",
+	} {
+		if !strings.Contains(resumePrompt, want) {
+			t.Fatalf("resumed planner prompt missing %q:\n%s", want, resumePrompt)
+		}
+	}
+	if strings.Contains(resumePrompt, "User request:\n"+typedAnswer) {
+		t.Fatalf("resumed planner prompt used typed answer as objective:\n%s", resumePrompt)
+	}
+
+	state := loadFeaturePlannerCommandStateFile(t, filepath.Join(projectRoot, ".idiom", "feature-planner", sessionID, "state.json"))
+	if len(state.AuthorityDeltas) != 1 || state.AuthorityDeltas[0].AuthorityKind != "accepted_source" {
+		t.Fatalf("accepted-source authority delta was not preserved: %+v", state.AuthorityDeltas)
+	}
+	if len(state.OpenQuestions) != 1 || state.OpenQuestions[0].Status != "answered" || state.OpenQuestions[0].AnswerSourceKind != "accepted_source" {
+		t.Fatalf("accepted-source question was not answered durably: %+v", state.OpenQuestions)
+	}
+}
+
 func TestFeaturePlannerTUITurnRetriesEmptyPlannerResponse(t *testing.T) {
 	client := &scriptedLLMClient{
 		responses:     []string{"", `{"tool":"submit_feature_plan","summary":"ok"}`},
@@ -712,6 +776,31 @@ func featurePlannerCommandNewFileQuestionJSON(t *testing.T) string {
 		RequiredBefore:    "plan_approval",
 		AffectedPaths:     []string{"pkg/collapse_event.go", "pkg/collapse_event_test.go"},
 		AffectedFields:    []string{"new_file_authorization"},
+	}
+	body, err := json.Marshal(struct {
+		Tool string `json:"tool"`
+		featureplanner.PlannerQuestion
+	}{
+		Tool:            featureplanner.ToolAskPlannerQuestion,
+		PlannerQuestion: question,
+	})
+	if err != nil {
+		t.Fatalf("marshal question: %v", err)
+	}
+	return string(body)
+}
+
+func featurePlannerCommandAcceptedSourceQuestionJSON(t *testing.T) string {
+	t.Helper()
+	question := featureplanner.PlannerQuestion{
+		QuestionSummary:   "Provide accepted source facts for CollapseEvent",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "Concrete CollapseEvent helper usage requires source-localized signature evidence.",
+		RequestedDecision: "Provide accepted source facts for the current CollapseEvent signature.",
+		AuthorityRequired: "accepted_source",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"pkg/collapse_event.go"},
+		AffectedFields:    []string{"source_localization"},
 	}
 	body, err := json.Marshal(struct {
 		Tool string `json:"tool"`

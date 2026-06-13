@@ -723,6 +723,56 @@ func TestBuildPlannerPromptForbidsStandaloneVerificationAndSignatureInvention(t 
 	}
 }
 
+func TestBuildPlannerPromptCarriesAcceptedSourceAuthorityConstraints(t *testing.T) {
+	state := NewState("session", "implement scoped atom", "", 3, time.Unix(1, 0).UTC())
+	state.AuthorityDeltas = []PlanAuthorityDelta{{
+		QuestionID:     "q-source",
+		AuthorityKind:  "accepted_source",
+		EvidenceRefs:   []string{"native/src/simulation/economy/fluid_network_system.h"},
+		AffectedPaths:  []string{"native/src/simulation/economy/fluid_network_system.h"},
+		AffectedFields: []string{"source_localization"},
+		Actual:         "source-verified signature is EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const.",
+		Revision:       1,
+		CreatedAt:      time.Unix(1, 0).UTC().Format(time.RFC3339Nano),
+	}}
+
+	prompt := BuildPlannerPrompt("continue after accepted-source answer", state, nil)
+
+	for _, want := range []string{
+		"Accepted source authority constraints:",
+		"source-verified signature is EntityID FluidNetworkSystem::find_connected_cistern_with_volume",
+		"Use only these accepted source facts for helper signatures and source-localized call shapes.",
+		"Remove or generalize any helper/method call in atom prompts that is not explicitly covered here",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("planner prompt missing accepted-source constraint %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestFormatStateSummaryShowsTypedAnswerFormatForAcceptedSourceQuestion(t *testing.T) {
+	state := NewState("session", "implement scoped atom", "", 3, time.Unix(1, 0).UTC())
+	state.Status = FeatureStatePlanningQuestion
+	state.OpenQuestions = []PlannerQuestion{{
+		ID:                "q-source",
+		QuestionSummary:   "Provide accepted source facts",
+		AuthorityRequired: "accepted_source",
+		Status:            "open",
+	}}
+
+	summary := FormatStateSummary(state, ".idiom/feature-planner/session/state.json")
+
+	for _, want := range []string{
+		"question: Provide accepted source facts",
+		`answer_format: JSON object with answer, answer_source_kind="accepted_source", and evidence_refs`,
+		"next: answer_planner_question",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("state summary missing typed-answer guidance %q:\n%s", want, summary)
+		}
+	}
+}
+
 func TestValidatePlanRejectsPromptPathOutsideDeclaredScope(t *testing.T) {
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Edit internal/labels/labels.go and wire native/src/simulation/machines/machine.cpp for recipe start."
@@ -4152,6 +4202,44 @@ func TestRunAcceptsTypedAnswerForRequiredAuthority(t *testing.T) {
 
 	if result.State.Status == FeatureStatePlanningQuestion {
 		t.Fatalf("typed answer should allow planning to continue")
+	}
+}
+
+func TestRunRejectsTypedAnswerWithMismatchedAuthorityKind(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+
+	state.Status = FeatureStatePlanningQuestion
+	state.PlanningLoop.State = FeatureStatePlanningQuestion
+	state.OpenQuestions = []PlannerQuestion{{
+		ID:                "q-source",
+		QuestionKind:      "missing_spec",
+		QuestionSummary:   "Which accepted source authorizes this behavior?",
+		BlockingClaim:     "Implementation needs accepted source authority.",
+		RequestedDecision: "Provide the accepted source.",
+		AuthorityRequired: "accepted_source",
+		RequiredBefore:    "plan_approval",
+		Status:            "open",
+	}}
+
+	typedAnswer := `{"answer":"Use docs/feature.md acceptance criteria.","answer_source_kind":"accepted_source","authority_kind":"operator_approval","evidence_refs":["docs/feature.md#acceptance"]}`
+
+	result, err := Run(state, RunOptions{Prompt: "continue", ResumeAnswer: typedAnswer}, func(_ string, _ string) (string, error) {
+		t.Fatal("mismatched authority_kind must not continue to planner")
+
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningQuestion {
+		t.Fatalf("status = %q, want planning question", result.State.Status)
+	}
+	if len(result.State.AuthorityDeltas) != 0 {
+		t.Fatalf("mismatched authority_kind must not mint authority deltas: %+v", result.State.AuthorityDeltas)
+	}
+	if len(result.Events) != 1 || !strings.Contains(result.Events[0].Message, `requires authority_kind "accepted_source"`) {
+		t.Fatalf("unexpected rejection event: %+v", result.Events)
 	}
 }
 

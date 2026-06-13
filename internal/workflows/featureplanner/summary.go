@@ -52,6 +52,9 @@ func FormatStateSummary(state FeatureState, statePath string) string {
 			if strings.TrimSpace(question.QuestionSummary) != "" {
 				fmt.Fprintf(&b, "question: %s\n", question.QuestionSummary)
 			}
+			if questionOpen(question) && strings.TrimSpace(question.AuthorityRequired) != "" && strings.TrimSpace(question.AuthorityRequired) != "operator_approval" {
+				fmt.Fprintf(&b, "answer_format: JSON object with answer, answer_source_kind=%q, and evidence_refs\n", question.AuthorityRequired)
+			}
 
 			if strings.TrimSpace(question.Answer) != "" {
 				fmt.Fprintf(&b, "answer: %s\n", question.Answer)
@@ -63,18 +66,27 @@ func FormatStateSummary(state FeatureState, statePath string) string {
 		fmt.Fprintf(&b, "blockers: %s\n", strings.Join(state.Blockers, "; "))
 	}
 
-	if len(state.DerivedNextValidActions) > 0 {
-		fmt.Fprintf(&b, "next: %s\n", strings.Join(state.DerivedNextValidActions, ", "))
+	nextActions := DeriveNextValidActions(state)
+	if len(nextActions) == 0 {
+		nextActions = state.DerivedNextValidActions
+	}
+	if len(nextActions) > 0 {
+		fmt.Fprintf(&b, "next: %s\n", strings.Join(nextActions, ", "))
 	}
 
 	return strings.TrimSpace(b.String())
+}
+
+func questionOpen(question PlannerQuestion) bool {
+	status := strings.TrimSpace(question.Status)
+	return status == "" || strings.EqualFold(status, "open")
 }
 
 func CountOpenPlannerQuestions(state FeatureState) int {
 	open := 0
 
 	for _, question := range state.OpenQuestions {
-		if strings.TrimSpace(question.Status) == "" || strings.EqualFold(question.Status, "open") {
+		if questionOpen(question) {
 			open++
 		}
 	}

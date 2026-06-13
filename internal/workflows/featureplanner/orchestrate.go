@@ -398,11 +398,47 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 		b.WriteString("\n")
 	}
 
+	if constraints := acceptedSourceAuthorityConstraints(state.AuthorityDeltas); len(constraints) > 0 {
+		b.WriteString("Accepted source authority constraints:\n")
+		for _, constraint := range constraints {
+			fmt.Fprintf(&b, "- %s\n", constraint)
+		}
+		b.WriteString("Use only these accepted source facts for helper signatures and source-localized call shapes. Remove or generalize any helper/method call in atom prompts that is not explicitly covered here, or ask_planner_question again before dispatch.\n\n")
+	}
+
 	b.WriteString("User request:\n")
 	b.WriteString(strings.TrimSpace(userPrompt))
 	b.WriteString("\n")
 
 	return b.String()
+}
+
+func acceptedSourceAuthorityConstraints(deltas []PlanAuthorityDelta) []string {
+	var constraints []string
+
+	for _, delta := range normalizePlanAuthorityDeltas(deltas) {
+		if delta.AuthorityKind != "accepted_source" {
+			continue
+		}
+
+		var parts []string
+		if delta.Actual != "" {
+			parts = append(parts, delta.Actual)
+		}
+		if len(delta.EvidenceRefs) > 0 {
+			parts = append(parts, "evidence: "+strings.Join(delta.EvidenceRefs, ", "))
+		}
+		if len(delta.AffectedPaths) > 0 {
+			parts = append(parts, "paths: "+strings.Join(delta.AffectedPaths, ", "))
+		}
+
+		constraint := strings.TrimSpace(strings.Join(parts, " | "))
+		if constraint != "" {
+			constraints = append(constraints, constraint)
+		}
+	}
+
+	return normalizedStringList(constraints)
 }
 
 func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) []Event {
@@ -2053,6 +2089,9 @@ func applyQuestionAnswerAuthority(question *PlannerQuestion, rawAnswer string, r
 
 	if strings.TrimSpace(payload.AnswerSourceKind) != required {
 		return PlanAuthorityDelta{}, fmt.Errorf("planner question %q requires answer_source_kind %q", question.ID, required)
+	}
+	if authorityKind := strings.TrimSpace(payload.AuthorityKind); authorityKind != "" && authorityKind != required {
+		return PlanAuthorityDelta{}, fmt.Errorf("planner question %q requires authority_kind %q when provided", question.ID, required)
 	}
 
 	if strings.TrimSpace(payload.Answer) == "" {
