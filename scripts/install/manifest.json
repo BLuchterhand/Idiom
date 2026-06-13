@@ -104,6 +104,7 @@
       "tools": ["python_definition", "python_references", "python_diagnostics"],
       "binaries": [{"name": "pyright-langserver", "validation": "conditional_any_of"}, {"name": "pylsp", "validation": "conditional_any_of"}],
       "install": [
+        {"platform": "macos", "mode": "brew", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "node"},
         {"platform": "macos", "mode": "npm", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "pyright"},
         {"platform": "any", "mode": "pip", "installer_flag": "manual", "implemented_by": "none", "package": "python-lsp-server[all]"}
       ],
@@ -118,6 +119,7 @@
       "tools": ["ts_definition", "ts_references", "ts_diagnostics"],
       "binaries": [{"name": "node", "validation": "conditional_precondition"}, {"name": "typescript-language-server", "validation": "conditional"}, {"name": "typescript", "validation": "conditional_package"}],
       "install": [
+        {"platform": "macos", "mode": "brew", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "node"},
         {"platform": "macos", "mode": "npm", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "typescript-language-server typescript"},
         {"platform": "linux", "mode": "manual", "installer_flag": "manual", "implemented_by": "none"}
       ],
@@ -132,6 +134,7 @@
       "tools": ["rust_definition", "rust_references", "rust_diagnostics"],
       "binaries": [{"name": "rustup", "validation": "optional_precondition"}, {"name": "cargo", "validation": "conditional_precondition"}, {"name": "rust-analyzer", "validation": "conditional"}],
       "install": [
+        {"platform": "macos", "mode": "brew", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "rust"},
         {"platform": "macos", "mode": "brew", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "rust-analyzer"},
         {"platform": "any", "mode": "manual", "installer_flag": "manual", "implemented_by": "none", "package": "rustup/cargo"}
       ],
@@ -174,6 +177,7 @@
       "tools": ["dependency_graph"],
       "binaries": [{"name": "madge", "validation": "optional"}],
       "install": [
+        {"platform": "macos", "mode": "brew", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "node"},
         {"platform": "macos", "mode": "npm", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "madge"},
         {"platform": "linux", "mode": "manual", "installer_flag": "manual", "implemented_by": "none"}
       ],
@@ -188,6 +192,7 @@
       "tools": ["dependency_graph"],
       "binaries": [{"name": "pydeps", "validation": "optional"}],
       "install": [
+        {"platform": "macos", "mode": "brew", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "pipx"},
         {"platform": "macos", "mode": "pipx", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "pydeps"},
         {"platform": "macos", "mode": "pip_user", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "pydeps"},
         {"platform": "linux", "mode": "manual", "installer_flag": "manual", "implemented_by": "none"}

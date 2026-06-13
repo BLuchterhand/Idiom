@@ -198,6 +198,24 @@ jobs:
           fi
           "${install_dir}/idiom-tool" list --profile discovery >/dev/null
 
+  install-dependencies-macos:
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+          - runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install and validate discovery dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/install-requirements.sh --all --no-build --no-audit --no-queue
+          ./scripts/test-install-dependencies.sh
+
   install-windows:
     needs: snapshot
     runs-on: windows-latest
@@ -247,6 +265,7 @@ jobs:
       - snapshot
       - install-linux
       - install-macos
+      - install-dependencies-macos
       - install-windows
     runs-on: ubuntu-latest
     timeout-minutes: 30

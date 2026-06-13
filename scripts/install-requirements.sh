@@ -67,6 +67,7 @@ fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
+export PATH="$HOME/.local/bin:$HOME/Library/Python/3.12/bin:$HOME/Library/Python/3.11/bin:$HOME/Library/Python/3.10/bin:$PATH"
 
 brew_install() {
   local formula
@@ -89,6 +90,20 @@ require_command() {
   fi
 }
 
+require_java_17() {
+  require_command java "Java 17+ is required for jdtls-backed Java discovery."
+  local version
+  version="$(java -version 2>&1 | awk -F '"' '/version/ {print $2; exit}')"
+  local major="${version%%.*}"
+  if [[ "$major" == "1" ]]; then
+    major="$(printf '%s' "$version" | awk -F. '{print $2}')"
+  fi
+  if [[ -z "$major" || "$major" -lt 17 ]]; then
+    echo "Java 17+ is required for jdtls-backed Java discovery; found ${version:-unknown}." >&2
+    return 1
+  fi
+}
+
 echo "Installing idiom core requirements..."
 brew_install go ripgrep ast-grep universal-ctags semgrep joern gopls
 
@@ -99,27 +114,15 @@ fi
 
 if $install_all; then
   echo "Installing optional language precision backends..."
-  brew_install jdtls rust-analyzer
+  brew_install jdtls node pipx rust rust-analyzer
 
   if ! command -v clangd >/dev/null 2>&1; then
     echo "clangd is missing. Install Xcode Command Line Tools with: xcode-select --install" >&2
   fi
 
-  if command -v npm >/dev/null 2>&1; then
-    npm install -g typescript-language-server typescript pyright madge
-  else
-    echo "npm is missing; skipping TypeScript/Python npm-backed language tools." >&2
-  fi
+  npm install -g typescript-language-server typescript pyright madge
 
-  if command -v pipx >/dev/null 2>&1; then
-    pipx install pydeps || pipx upgrade pydeps || true
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -m pip install --user pydeps || {
-      echo "pydeps install failed. Install pipx with 'brew install pipx' and rerun with --all." >&2
-    }
-  else
-    echo "python3 is missing; skipping pydeps." >&2
-  fi
+  pipx install pydeps || pipx upgrade pydeps || true
 fi
 
 require_command git "git is required for history and blame tools."
@@ -127,7 +130,23 @@ require_command rg "ripgrep is required for fast content search."
 require_command ast-grep "ast-grep is required for structural_search."
 require_command semgrep "semgrep is required for semgrep_scan."
 require_command joern-scan "joern-scan is required for joern_scan."
+require_command go "go is required for Go builds and Go workspace discovery."
 require_command gopls "gopls is required for precise Go workspace tools."
+
+if $install_all; then
+  require_command node "node is required for TypeScript, Pyright, and madge discovery helpers."
+  require_command npm "npm is required to install TypeScript, Pyright, and madge discovery helpers."
+  require_command typescript-language-server "typescript-language-server is required for TypeScript discovery."
+  require_command tsc "typescript is required for TypeScript discovery."
+  require_command pyright-langserver "pyright-langserver is required for Python discovery."
+  require_command madge "madge is required for TypeScript dependency graph precision."
+  require_command pydeps "pydeps is required for Python dependency graph precision."
+  require_command cargo "cargo is required for Rust diagnostics and rust-analyzer projects."
+  require_command rust-analyzer "rust-analyzer is required for Rust discovery."
+  require_java_17
+  require_command jdtls "jdtls is required for Java discovery."
+  require_command clangd "clangd is required for C/C++ discovery. Install Xcode Command Line Tools with: xcode-select --install"
+fi
 
 if $build_idiom; then
   echo "Building idiom..."
