@@ -38,6 +38,8 @@ type ParseResult struct {
 	Raw     string
 	OK      bool
 	Unsafe  bool
+	// Transport identifies the text format that was parsed, for telemetry.
+	Transport string
 }
 
 // ParseToolRequestFromTokenizer runs a tokenizer and converts its output
@@ -63,6 +65,40 @@ func ParseToolRequestFromTokenizer(t ToolRequestTokenizer, raw string) ParseResu
 		Raw:     marshalToolRequestRaw(req),
 		OK:      true,
 	}
+}
+
+// ParseWithAllTokenizers tries each registered tokenizer in priority order
+// and returns the first successful parse. Priority order matches the legacy
+// normalizeToolRequestSyntax cascade.
+func ParseWithAllTokenizers(raw string) ParseResult {
+	type namedTokenizer struct {
+		name      string
+		tokenizer ToolRequestTokenizer
+	}
+
+	tokenizers := []namedTokenizer{
+		{"nested_arguments", nestedArgumentsToolRequestTokenizer{}},
+		{"fenced_json", fencedJSONToolRequestTokenizer{}},
+		{"idiom_cli", idiomCLIToolRequestTokenizer{}},
+		{"key_value_args", keyValueArgsToolRequestTokenizer{}},
+		{"function_call", functionCallToolRequestTokenizer{}},
+		{"key_value", keyValueToolRequestTokenizer{}},
+	}
+
+	for _, nt := range tokenizers {
+		result := ParseToolRequestFromTokenizer(nt.tokenizer, raw)
+		if result.Unsafe {
+			return ParseResult{Unsafe: true, Transport: nt.name}
+		}
+
+		if result.OK {
+			result.Transport = nt.name
+
+			return result
+		}
+	}
+
+	return ParseResult{}
 }
 
 type keyValueToolRequestTokenizer struct{}
@@ -596,4 +632,86 @@ func (keyValueArgsToolRequestTokenizer) Tokenize(text string) ToolRequestTokeniz
 	}
 
 	return ToolRequestTokenization{Tool: jsonTool, Fields: fields, OK: true}
+}
+
+// nestedArgumentsToolRequestTokenizer handles a JSON wrapper with the payload
+// inside an "arguments" field:
+//
+//	{"arguments": {"tool": "read_file", "path": "some/path", "limit": 50}}
+//
+// The outer object must have exactly one key ("arguments") whose value is a
+// valid JSON ToolRequest.
+type nestedArgumentsToolRequestTokenizer struct{}
+
+func (nestedArgumentsToolRequestTokenizer) Tokenize(text string) ToolRequestTokenization {
+	raw := strings.TrimSpace(text)
+	if raw == "" || !strings.HasPrefix(raw, "{") {
+		return ToolRequestTokenization{}
+	}
+
+	var obj map[string]json.RawMessage
+
+	if err := json.Unmarshal([]byte(raw), &obj); err != nil {
+		return ToolRequestTokenization{}
+	}
+
+	if len(obj) != 1 {
+		return ToolRequestTokenization{}
+	}
+
+	args, ok := obj["arguments"]
+	if !ok || !json.Valid(args) {
+		return ToolRequestTokenization{}
+	}
+
+	var inner map[string]json.RawMessage
+
+	if err := json.Unmarshal(args, &inner); err != nil {
+		return ToolRequestTokenization{Unsafe: true}
+	}
+
+	toolRaw, ok := inner["tool"]
+	if !ok {
+		return ToolRequestTokenization{Unsafe: true}
+	}
+
+	var tool string
+
+	if err := json.Unmarshal(toolRaw, &tool); err != nil || strings.TrimSpace(tool) == "" {
+		return ToolRequestTokenization{Unsafe: true}
+	}
+
+	fields := make(map[string]string, len(inner))
+
+	for key, raw := range inner {
+		key = strings.ToLower(strings.TrimSpace(key))
+		if key == "tool" {
+			continue
+		}
+
+		if !keyValueToolRequestFieldAllowed(key) {
+			continue
+		}
+
+		var value string
+
+		if err := json.Unmarshal(raw, &value); err != nil {
+			compact, err := json.Marshal(raw)
+			if err != nil {
+				continue
+			}
+
+			value = string(compact)
+		}
+
+		value = strings.TrimSpace(value)
+
+		if value == "" && !keyValueAllowsEmptyValue(key, fields) {
+			continue
+		}
+
+		fields[key] = value
+	}
+
+	return ToolRequestTokenization{Tool: tool, Fields: fields, OK: true}
 }
