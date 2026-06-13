@@ -137,7 +137,7 @@ func inputHistoryValuesFromSessionLog(path string, includeMessageFallback bool) 
 		switch sessionStringField(record, "type") {
 		case "input_submission":
 			content := strings.TrimSpace(sessionStringField(record, "content"))
-			if content != "" {
+			if inputHistoryReplayableContent(content) {
 				submissions = append(submissions, content)
 			}
 		case "message":
@@ -146,7 +146,7 @@ func inputHistoryValuesFromSessionLog(path string, includeMessageFallback bool) 
 			}
 
 			content := strings.TrimSpace(sessionStringField(record, "content"))
-			if content != "" {
+			if inputHistoryReplayableContent(content) {
 				messages = append(messages, content)
 			}
 		}
@@ -162,4 +162,18 @@ func inputHistoryValuesFromSessionLog(path string, includeMessageFallback bool) 
 	}
 
 	return messages, nil
+}
+
+func inputHistoryReplayableContent(content string) bool {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return false
+	}
+
+	lower := strings.ToLower(content)
+	if strings.HasPrefix(lower, "<redacted ") || strings.Contains(lower, "<redacted shell command>") {
+		return false
+	}
+
+	return true
 }

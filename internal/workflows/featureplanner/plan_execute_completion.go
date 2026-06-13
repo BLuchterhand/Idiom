@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -180,6 +181,7 @@ type planExecuteCompletionRecord struct {
 	ReviewStatus                 string                                  `json:"review_status"`
 	TerminalClass                string                                  `json:"terminal_class"`
 	Outcome                      string                                  `json:"outcome"`
+	ExitCode                     int                                     `json:"exit_code"`
 	ReviewSkipped                bool                                    `json:"review_repair_skipped"`
 	FailureKind                  string                                  `json:"failure_kind"`
 	FailureReason                string                                  `json:"failure_reason"`
@@ -219,6 +221,7 @@ type PlanExecuteCompletionSummary struct {
 	ReviewStatus                 string
 	TerminalClass                string
 	Outcome                      string
+	ExitCode                     int
 	FailureKind                  string
 	FailureReason                string
 	FailureID                    string
@@ -261,6 +264,7 @@ func PlanExecuteCompletionSummaryFromFields(fields map[string]any) PlanExecuteCo
 		ReviewStatus:                 CompletionFieldString(fields, "review_status"),
 		TerminalClass:                CompletionFieldString(fields, "terminal_class"),
 		Outcome:                      CompletionFieldString(fields, "outcome"),
+		ExitCode:                     completionFieldInt(fields, "exit_code"),
 		FailureKind:                  CompletionFieldString(fields, "failure_kind"),
 		FailureReason:                CompletionFieldString(fields, "failure_reason"),
 		FailureID:                    CompletionFieldString(fields, "failure_id"),
@@ -356,6 +360,7 @@ func OverlayPlanExecuteCompletionFields(fields map[string]any, candidateFields m
 		"review_status",
 		"terminal_class",
 		"outcome",
+		"exit_code",
 		"failure_kind",
 		"failure_reason",
 		"failure_id",
@@ -425,6 +430,10 @@ func (summary PlanExecuteCompletionSummary) Fields() map[string]any {
 
 	if summary.Outcome != "" {
 		fields["outcome"] = summary.Outcome
+	}
+
+	if summary.ExitCode != 0 {
+		fields["exit_code"] = summary.ExitCode
 	}
 
 	if summary.FailureKind != "" {
@@ -522,6 +531,7 @@ func planExecuteCompletionSummaryFromRecord(record planExecuteCompletionRecord) 
 		ReviewStatus:                 record.ReviewStatus,
 		TerminalClass:                record.TerminalClass,
 		Outcome:                      record.Outcome,
+		ExitCode:                     record.ExitCode,
 		ReviewRepairSkipped:          record.ReviewSkipped,
 		FailureKind:                  FirstNonEmptyString(record.FailureKind, record.ReasonClass),
 		FailureReason:                record.FailureReason,
@@ -973,6 +983,39 @@ func completionFieldBool(fields map[string]any, key string) bool {
 	default:
 		return util.EqualTrimFold(fmt.Sprint(value), "true")
 	}
+}
+
+func completionFieldInt(fields map[string]any, key string) int {
+	value, ok := fields[key]
+	if !ok || value == nil {
+		return 0
+	}
+
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err == nil {
+			return int(parsed)
+		}
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err == nil {
+			return parsed
+		}
+	}
+
+	parsed, err := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value)))
+	if err != nil {
+		return 0
+	}
+
+	return parsed
 }
 
 func completionFieldStringSlice(fields map[string]any, key string) []string {

@@ -34,6 +34,30 @@ func sweEvalTestRepoRoot(t *testing.T) string {
 	}
 }
 
+func TestLiveContractRunnerWritesTurnsCompletelyToPTY(t *testing.T) {
+	scriptPath := filepath.Join(sweEvalTestRepoRoot(t), "scripts", "live-contract-runner.sh")
+	body, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read live contract runner: %v", err)
+	}
+
+	text := string(body)
+	for _, want := range []string{
+		"def write_all(fd, data):",
+		`write_all(master, turn.encode("utf-8") + b"\r")`,
+		`write_all(master, b"\x03")`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("live contract runner must use complete PTY writes; missing %q", want)
+		}
+	}
+
+	if strings.Contains(text, `os.write(master, turn.encode("utf-8") + b"\r")`) ||
+		strings.Contains(text, `os.write(master, b"\x03")`) {
+		t.Fatal("live contract runner must not use single os.write calls for PTY input")
+	}
+}
+
 func TestRunSuiteOnlyPassesValidSuite(t *testing.T) {
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")

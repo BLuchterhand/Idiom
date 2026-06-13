@@ -154,6 +154,22 @@ func TestProductWorkflowBriefExplicitSourceSatisfiedCloseout(t *testing.T) {
 	}
 }
 
+func TestProductWorkflowBriefExplicitSourceSatisfiedCloseoutAcceptsCanonicalUnderscore(t *testing.T) {
+	brief := ProductWorkflowBrief{
+		StatusBucket:       "closed",
+		CurrentState:       "source_satisfied",
+		CurrentPhase:       "complete",
+		CoverageGatePassed: true,
+	}
+
+	if !brief.IsClosedSourceSatisfied() {
+		t.Fatal("canonical source_satisfied state should close out source-satisfied")
+	}
+	if brief.AllowsFeaturePlanDispatch() {
+		t.Fatal("canonical source_satisfied product context should not dispatch implementation")
+	}
+}
+
 func TestProductWorkflowBrief_TypedCoverageBlockerKindsOverrideProse(t *testing.T) {
 	brief := ProductWorkflowBrief{
 		CoverageGatePassed: false,

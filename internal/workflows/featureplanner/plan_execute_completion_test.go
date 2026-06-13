@@ -45,6 +45,11 @@ func TestPlanExecuteCompletionTerminalClass(t *testing.T) {
 			want:   PlanExecuteTerminalBlocked,
 		},
 		{
+			name:   "nonzero exit code blocks completed terminal class",
+			fields: map[string]any{"terminal_class": "success", "status": "completed", "exit_code": 1},
+			want:   PlanExecuteTerminalBlocked,
+		},
+		{
 			name:   "ambiguous status",
 			fields: map[string]any{"status": "ambiguous"},
 			want:   PlanExecuteTerminalBlocked,
@@ -109,6 +114,19 @@ func TestPlanExecuteCompletionTerminalDecisionReasons(t *testing.T) {
 				t.Fatalf("decision = %#v, want class=%q reason=%q", got, tt.wantClass, tt.wantReason)
 			}
 		})
+	}
+}
+
+func TestPlanExecuteCompletionFieldsPreservesExitCodeForTerminalDecision(t *testing.T) {
+	output := `{"type":"idiom.plan_execute.terminal_completion","terminal_class":"success","status":"completed","exit_code":1}`
+
+	fields := PlanExecuteCompletionFields(output)
+
+	if got := fields["exit_code"]; got != 1 {
+		t.Fatalf("exit_code = %#v, want 1; fields=%+v", got, fields)
+	}
+	if got := PlanExecuteCompletionTerminalClass(fields); got != PlanExecuteTerminalBlocked {
+		t.Fatalf("terminal class = %q, want %q; fields=%+v", got, PlanExecuteTerminalBlocked, fields)
 	}
 }
 

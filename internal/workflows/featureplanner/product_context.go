@@ -103,8 +103,15 @@ func (brief ProductWorkflowBrief) IsClosedSourceSatisfied() bool {
 		return false
 	}
 
-	return strings.Contains(strings.ToLower(strings.TrimSpace(brief.CurrentPhase)), "source-satisfied") ||
-		strings.Contains(strings.ToLower(strings.TrimSpace(brief.CurrentState)), "source-satisfied")
+	return productWorkflowContainsSourceSatisfied(brief.CurrentPhase) ||
+		productWorkflowContainsSourceSatisfied(brief.CurrentState)
+}
+
+func productWorkflowContainsSourceSatisfied(value string) bool {
+	value = strings.TrimSpace(strings.ToLower(value))
+	value = strings.ReplaceAll(value, "_", "-")
+
+	return strings.Contains(value, "source-satisfied")
 }
 
 func (brief ProductWorkflowBrief) coveragePendingImplementationVerification() bool {

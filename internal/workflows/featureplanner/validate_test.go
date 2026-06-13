@@ -791,6 +791,22 @@ func TestProductSourceFactRequiresAcceptedSourceAuthority(t *testing.T) {
 	}
 }
 
+func TestBuildPlannerPromptRendersSourceFactAnchors(t *testing.T) {
+	brief := validProductWorkflowBrief()
+	brief.SourceFacts = []SourceFactBrief{{
+		Path:         "internal/labels/labels.go",
+		Symbol:       "ShortLabel",
+		Anchor:       `func ShortLabel() string`,
+		AuthorityRef: "accepted-source:q-1",
+	}}
+
+	prompt := BuildPlannerPrompt("build feature", NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC()), &brief)
+
+	if !strings.Contains(prompt, "anchor=func ShortLabel() string") {
+		t.Fatalf("planner prompt must render source fact anchors:\n%s", prompt)
+	}
+}
+
 func TestRepoPathsMentionedInTextIgnoresLabelsAndShorthand(t *testing.T) {
 	text := "Write/Update MachineSystem using fluid_network_system.h/.cpp and native/src/core/components.h."
 

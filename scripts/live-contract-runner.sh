@@ -699,6 +699,14 @@ def should_send_next_turn():
         return False
     return True
 
+def write_all(fd, data):
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        if written == 0:
+            raise OSError("pty write returned 0 bytes")
+        view = view[written:]
+
 try:
     while time.time() < deadline:
         readable, _, _ = select.select([master], [], [], 0.1)
@@ -719,7 +727,7 @@ try:
         if turn_index < len(turns) and should_send_next_turn():
             time.sleep(0.5)
             turn = turns[turn_index]
-            os.write(master, turn.encode("utf-8") + b"\r")
+            write_all(master, turn.encode("utf-8") + b"\r")
             turn_sent_at = time.time()
             turn_index += 1
     sys.stdout.buffer.write(bytes(out))
@@ -727,7 +735,7 @@ try:
 finally:
     if proc.poll() is None:
         try:
-            os.write(master, b"\x03")
+            write_all(master, b"\x03")
         except OSError:
             pass
         try:

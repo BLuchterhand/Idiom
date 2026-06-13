@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
@@ -255,6 +256,103 @@ func TestInputHistoryRecordsSubmissionsAndResetsOnManualEdit(t *testing.T) {
 	}
 }
 
+func TestEnterSubmitsLongFeaturePlannerCommandWithoutTextareaResidue(t *testing.T) {
+	command := "/feature-planner FET 3.3c brewery cistern atom. " +
+		"Use native/src/simulation/machines/machine.cpp and native/src/simulation/economy/fluid_network_system.h. " +
+		"Run cd native/tests && scons -j10 && ./bin/colony_tests -sf=test_fluid_brewery_cascade.cpp"
+
+	client := &scriptedLLMClient{responses: []string{`{"tool":"ask_planner_question","question_summary":"Need source facts","question_kind":"external_answer_required","blocking_claim":"Need accepted source evidence.","requested_decision":"Provide accepted source facts.","authority_required":"accepted_source","required_before":"plan_approval","affected_fields":["source_localization"]}`}}
+	m := &Model{
+		cfg:         config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		client:      client,
+		events:      make(chan tea.Msg, 8),
+		input:       textarea.New(),
+		plannerSpec: config.LlamaServer{Model: "mock-model"},
+	}
+	m.input.SetValue(command)
+	m.width = 100
+	m.height = 24
+	m.resize()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got, ok := updated.(*Model)
+	if !ok {
+		t.Fatalf("Update returned %T, want *Model", updated)
+	}
+
+	if value := got.input.Value(); value != "" {
+		t.Fatalf("submitted Enter must not leave textarea residue, got %q", value)
+	}
+
+	if len(got.inputHistory) != 1 || got.inputHistory[0] != command {
+		t.Fatalf("input history did not preserve exact command:\n got %#v\nwant %q", got.inputHistory, command)
+	}
+
+	if !strings.Contains(got.inputHistory[0], "-sf=test_fluid_brewery_cascade.cpp") {
+		t.Fatalf("test filter flag was not preserved: %q", got.inputHistory[0])
+	}
+
+	select {
+	case msg := <-got.events:
+		if done, ok := msg.(streamDoneMsg); ok && done.err != nil {
+			t.Fatalf("feature-planner command failed: %v", done.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for feature-planner command goroutine")
+	}
+
+	if len(client.messages) != 1 || len(client.messages[0]) == 0 {
+		t.Fatalf("expected one planner request, got %#v", client.messages)
+	}
+	plannerPrompt := client.messages[0][len(client.messages[0])-1].Content
+	if !strings.Contains(plannerPrompt, "User request:\n"+strings.TrimPrefix(command, "/feature-planner ")) {
+		t.Fatalf("planner prompt lost exact objective:\n%s", plannerPrompt)
+	}
+	if !strings.Contains(plannerPrompt, "-sf=test_fluid_brewery_cascade.cpp") {
+		t.Fatalf("planner prompt lost test filter flag:\n%s", plannerPrompt)
+	}
+}
+
+func TestEnterSubmitsFullSlashCommandWhenSuggestionsAreStale(t *testing.T) {
+	command := "/feature-planner implement atom with exact source facts"
+	client := &scriptedLLMClient{responses: []string{`{"tool":"ask_planner_question","question_summary":"Need source facts","question_kind":"external_answer_required","blocking_claim":"Need accepted source evidence.","requested_decision":"Provide accepted source facts.","authority_required":"accepted_source","required_before":"plan_approval","affected_fields":["source_localization"]}`}}
+	m := &Model{
+		cfg:    config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		client: client,
+		events: make(chan tea.Msg, 8),
+		input:  textarea.New(),
+		slashSuggestions: slashSuggestionsState{
+			visible:  true,
+			matches:  []slashSuggestionEntry{{command: "/feature-planner", usage: "<objective>"}},
+			selected: 0,
+		},
+		plannerSpec: config.LlamaServer{Model: "mock-model"},
+	}
+	m.input.SetValue(command)
+	m.width = 100
+	m.height = 24
+	m.resize()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(*Model)
+
+	if value := got.input.Value(); value != "" {
+		t.Fatalf("stale slash suggestions should yield to submit, got input %q", value)
+	}
+	if len(got.inputHistory) != 1 || got.inputHistory[0] != command {
+		t.Fatalf("input history = %#v, want %q", got.inputHistory, command)
+	}
+
+	select {
+	case msg := <-got.events:
+		if done, ok := msg.(streamDoneMsg); ok && done.err != nil {
+			t.Fatalf("feature-planner command failed: %v", done.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for feature-planner command goroutine")
+	}
+}
+
 func TestInputHistoryCapsAtFiftyMostRecentUniqueEntries(t *testing.T) {
 	m := &Model{}
 	for i := 0; i < maxInputHistoryEntries+5; i++ {
@@ -322,6 +420,27 @@ func TestInputHistoryFromRecordedSessionsIgnoresMessageOnlyLogs(t *testing.T) {
 	}
 
 	want := []string{"recent submitted prompt"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("history = %#v, want %#v", got, want)
+	}
+}
+
+func TestInputHistoryFromRecordedSessionsSkipsRedactedReplayPlaceholders(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{Chat: config.Chat{DebugLogDir: dir}}
+
+	writeSessionLog(t, dir, "20260612-100000.000.jsonl", []string{
+		`{"type":"input_submission","content":"<redacted 42 chars>"}`,
+		`{"type":"message","role":"user","content":"<redacted 30 chars>"}`,
+		`{"type":"input_submission","content":"/feature-planner exact replayable command"}`,
+	})
+
+	got, err := inputHistoryFromRecordedSessions(cfg, maxInputHistoryEntries)
+	if err != nil {
+		t.Fatalf("inputHistoryFromRecordedSessions: %v", err)
+	}
+
+	want := []string{"/feature-planner exact replayable command"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("history = %#v, want %#v", got, want)
 	}

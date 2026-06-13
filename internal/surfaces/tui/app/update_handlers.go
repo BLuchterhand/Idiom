@@ -30,7 +30,9 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 	}
 
 	// Slash-command suggestion navigation takes priority when the popup is visible.
-	if m.slashSuggestions.visible {
+	if m.slashSuggestions.visible && msg.Type == tea.KeyEnter && slashSuggestionInputReadyToSubmit(m.input.Value(), m.slashSuggestions.matches) {
+		m.slashSuggestions = slashSuggestionsState{}
+	} else if m.slashSuggestions.visible {
 		switch msg.Type {
 		case tea.KeyEsc:
 			m.slashSuggestions = slashSuggestionsState{}
@@ -202,7 +204,7 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 				m.renderMessages(false)
 			}
 
-			break
+			return m.waitForEventCmd(), true
 		}
 
 		if !m.streaming {
@@ -240,9 +242,32 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 		}
 
 		m.renderMessages(true)
+
+		return m.waitForEventCmd(), true
 	}
 
 	return nil, false
+}
+
+func slashSuggestionInputReadyToSubmit(value string, matches []slashSuggestionEntry) bool {
+	lines := strings.Split(value, "\n")
+	current := strings.TrimSpace(lines[len(lines)-1])
+	if !strings.HasPrefix(current, "/") {
+		return false
+	}
+
+	fields := strings.Fields(current)
+	if len(fields) < 2 {
+		return false
+	}
+
+	for _, match := range matches {
+		if fields[0] == match.command {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (m *Model) handleInputHistoryNavigation(msg tea.KeyMsg) (tea.Cmd, bool) {

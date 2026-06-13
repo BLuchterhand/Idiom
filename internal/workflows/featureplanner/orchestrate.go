@@ -295,6 +295,9 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 				if strings.TrimSpace(fact.Signature) != "" {
 					parts = append(parts, "signature="+strings.TrimSpace(fact.Signature))
 				}
+				if strings.TrimSpace(fact.Anchor) != "" {
+					parts = append(parts, "anchor="+strings.TrimSpace(fact.Anchor))
+				}
 				if strings.TrimSpace(fact.AuthorityRef) != "" {
 					parts = append(parts, "authority_ref="+strings.TrimSpace(fact.AuthorityRef))
 				}
