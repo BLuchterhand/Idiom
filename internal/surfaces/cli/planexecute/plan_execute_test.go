@@ -3117,6 +3117,7 @@ func TestRunReviewRepairPhaseUsesReviewRepairTaskFamilyForPass(t *testing.T) {
 		gotTaskFamily      string
 		gotPrompt          string
 		gotDisableThinking bool
+		gotUseActiveModel  bool
 	)
 
 	report, err := runReviewRepairPhase(
@@ -3126,12 +3127,13 @@ func TestRunReviewRepairPhaseUsesReviewRepairTaskFamilyForPass(t *testing.T) {
 		nil,
 		nil,
 		executorPhaseReport{},
-		planExecuteOptions{},
+		planExecuteOptions{UseActiveModel: true},
 		&stdout,
 		func(_ config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			gotTaskFamily = opts.TaskFamily
 			gotPrompt = prompt
 			gotDisableThinking = opts.DisableThinking
+			gotUseActiveModel = opts.UseActiveModel
 
 			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: good is present.\n- Scope safety: no corrective edit needed.", nil
 		},
@@ -3151,6 +3153,10 @@ func TestRunReviewRepairPhaseUsesReviewRepairTaskFamilyForPass(t *testing.T) {
 
 	if !gotDisableThinking {
 		t.Fatal("review-repair must force visible no-thinking output for its terminal contract")
+	}
+
+	if !gotUseActiveModel {
+		t.Fatal("review-repair must preserve plan-execute active model override")
 	}
 
 	for _, want := range []string{

@@ -2090,6 +2090,16 @@ func TestSubmitPlanRejectsPlaceholderEditBodies(t *testing.T) {
 			},
 			want: "<todo",
 		},
+		{
+			name: "generic todo marker",
+			edit: PlanEdit{
+				Path:    "a.cpp",
+				OldText: "func run() {\n}\n",
+				NewText: "func run() {\n\t// TODO: Implement actual dispatch logic.\n}\n",
+				Purpose: "Update run.",
+			},
+			want: "todo:",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result := mgr.Execute(context.Background(), ToolRequest{
@@ -2107,6 +2117,118 @@ func TestSubmitPlanRejectsPlaceholderEditBodies(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSubmitPlanAllowsTodoListInNonSourceGeneratedBody(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "docs/notes.md", "# Notes\n")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Add planning notes.",
+		Edits: []PlanEdit{{
+			Path:    "docs/notes.md",
+			OldText: "# Notes\n",
+			NewText: "# Notes\n\nTODO:\n- Follow up with product owner.\n",
+			Purpose: "add non-source TODO notes",
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("non-source TODO list should be allowed, got %q", result.Error)
+	}
+}
+
+func TestSubmitPlanRejectsForNowPlaceholderProofText(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.cpp", "int dispatch() {\n    return 0;\n}\n")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Update executable source.",
+		Edits: []PlanEdit{{
+			Path:    "a.cpp",
+			OldText: "int dispatch() {\n    return 0;\n}\n",
+			NewText: "int dispatch() {\n    // For now, return the severity as a placeholder result code.\n    return severity;\n}\n",
+			Purpose: "Update dispatch.",
+		}},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatal("for-now placeholder proof text should be rejected")
+	}
+
+	for _, want := range []string{"unsupported proof claim", "self-disqualifying", "for now"} {
+		if !strings.Contains(strings.ToLower(result.Error), strings.ToLower(want)) {
+			t.Fatalf("rejection should include %q, got %q", want, result.Error)
+		}
+	}
+}
+
+func TestSubmitPlanAllowsReplacingExistingTodoAnchorWithFinalCode(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.cpp", "int dispatch() {\n    // TODO: Implement actual dispatch logic.\n    return 0;\n}\n")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Replace existing TODO with final dispatch.",
+		Edits: []PlanEdit{{
+			Path:    "a.cpp",
+			OldText: "int dispatch() {\n    // TODO: Implement actual dispatch logic.\n    return 0;\n}\n",
+			NewText: "int dispatch() {\n    return compute_dispatch_result();\n}\n",
+			Purpose: "replace existing TODO with final code",
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("existing TODO anchor with final replacement should be allowed, got %q", result.Error)
+	}
+}
+
+func TestSubmitPlanAllowsReplacingExistingBracketTodoAnchorWithFinalCode(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.cpp", "int dispatch() {\n    <TODO: fill implementation>\n}\n")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Replace existing bracket TODO with final dispatch.",
+		Edits: []PlanEdit{{
+			Path:    "a.cpp",
+			OldText: "int dispatch() {\n    <TODO: fill implementation>\n}\n",
+			NewText: "int dispatch() {\n    return compute_dispatch_result();\n}\n",
+			Purpose: "replace existing bracket TODO with final code",
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("existing bracket TODO anchor with final replacement should be allowed, got %q", result.Error)
+	}
+}
+
+func TestSubmitPlanRejectsWholeFileReplaceAllForExistingSourceFile(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	path := "native/src/simulation/world/collapse_event.h"
+	writeSubmitPlanFixture(t, root, path, "#pragma once\n\nnamespace colony {\nstruct CollapseEvent {};\n}\n")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Rewrite collapse event helper.",
+		Edits: []PlanEdit{{
+			Path:       path,
+			NewText:    "#ifndef SUROCCUS_SIMULATION_WORLD_COLLAPSE_EVENT_H\n#define SUROCCUS_SIMULATION_WORLD_COLLAPSE_EVENT_H\nnamespace suroccus { class CollapseEvent {}; }\n#endif\n",
+			ReplaceAll: true,
+			Purpose:    "replace existing collapse event header",
+		}},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatal("whole-file replace_all on existing source file should be rejected")
+	}
+
+	for _, want := range []string{"whole-file", "existing source file", "bounded anchored edit"} {
+		if !strings.Contains(strings.ToLower(result.Error), strings.ToLower(want)) {
+			t.Fatalf("rejection should include %q, got %q", want, result.Error)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("rejected submit_plan should not persist last.plan.json; stat err=%v", err)
 	}
 }
 

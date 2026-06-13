@@ -340,6 +340,35 @@ func TestFinalizeTerminalCompletionRejectsMissingSourceSanityForSourceChange(t *
 	}
 }
 
+func TestFinalizeTerminalCompletionRejectsMissingCppSourceSanity(t *testing.T) {
+	root := t.TempDir()
+	state := NewProgressState("missing_cpp_source_sanity", "prompt", "", []string{"native/src/machine.cpp"}, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))
+
+	state.Phase = ProgressPhaseComplete
+	state.Status = ProgressStatusCompleted
+	state.ChangedPaths = []string{"native/src/machine.cpp"}
+	state.RequiredAcceptanceEvidenceIDs = []string{"req-1"}
+	state.Review.Status = ProgressStatusSkipped
+
+	result := finalizePlanExecuteRunResult(root, state, ".idiom/plan-execute/sessions/missing_cpp_source_sanity.json", false, io.Discard, planExecuteRunResultInput{ExitCode: 0})
+
+	if result.ExitCode != 1 {
+		t.Fatalf("ExitCode = %d, want terminal contract failure", result.ExitCode)
+	}
+
+	if result.Completion == nil || result.Completion.TerminalClass != PlanExecuteTerminalClassFailed {
+		t.Fatalf("completion was not downgraded to failed: %#v", result.Completion)
+	}
+
+	if !planExecuteTerminalStringSliceContains(result.Completion.ValidationFailures, "source_sanity_missing:native/src/machine.cpp") {
+		t.Fatalf("validation failures missing source_sanity_missing for C++ path: %#v", result.Completion.ValidationFailures)
+	}
+
+	if len(result.Completion.AcceptanceEvidenceIDs) > 0 {
+		t.Fatalf("downgraded terminal completion should not retain acceptance IDs: %#v", result.Completion.AcceptanceEvidenceIDs)
+	}
+}
+
 func TestFinalizeTerminalCompletionCarriesAcceptanceEvidenceIDs(t *testing.T) {
 	root := t.TempDir()
 	state := NewProgressState("acceptance_ids", "prompt", "", []string{"pkg/feature.go"}, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))

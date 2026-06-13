@@ -42,6 +42,11 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 
 	cleanupStalePlanArtifacts(cfg.Workspace.Root, 7*24*time.Hour, stderr)
 
+	if modelOverride := strings.TrimSpace(opts.Model); modelOverride != "" {
+		cfg.LlamaServer.Model = modelOverride
+		opts.UseActiveModel = true
+	}
+
 	sessionStart := time.Now().Add(-1 * time.Second)
 
 	prompt, err := planExecutePrompt(opts)

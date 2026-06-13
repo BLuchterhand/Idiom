@@ -510,6 +510,8 @@ func selfDisqualifyingProofPhrase(line string) string {
 		"verify that it exists",
 		"exists and can be called",
 		"exists and can be accessed",
+		"for now,",
+		"for now ",
 	}
 
 	for _, phrase := range phrases {
@@ -540,15 +542,17 @@ func verificationClaimContext(line string, phrase string) bool {
 
 func planEditPlaceholderField(edit PlanEdit) (string, string) {
 	fields := []struct {
-		name  string
-		value string
+		name       string
+		value      string
+		allowTODO  bool
+		sourceLike bool
 	}{
-		{name: "old_text", value: edit.OldText},
-		{name: "new_text", value: edit.NewText},
-		{name: "content", value: edit.Content},
+		{name: "old_text", value: edit.OldText, allowTODO: true},
+		{name: "new_text", value: edit.NewText, sourceLike: isSourceLikePath(edit.Path)},
+		{name: "content", value: edit.Content, sourceLike: isSourceLikePath(edit.Path)},
 	}
 	for _, field := range fields {
-		if marker := planEditPlaceholderMarker(field.value); marker != "" {
+		if marker := planEditPlaceholderMarker(field.value, field.allowTODO, field.sourceLike); marker != "" {
 			return field.name, marker
 		}
 	}
@@ -556,7 +560,7 @@ func planEditPlaceholderField(edit PlanEdit) (string, string) {
 	return "", ""
 }
 
-func planEditPlaceholderMarker(value string) string {
+func planEditPlaceholderMarker(value string, allowTODO bool, sourceLike bool) string {
 	text := strings.ToLower(value)
 	if strings.TrimSpace(text) == "" {
 		return ""
@@ -568,11 +572,21 @@ func planEditPlaceholderMarker(value string) string {
 		"rest of file unchanged",
 		"remaining code",
 		"unchanged code",
-		"<todo",
-		"todo: fill",
 	} {
 		if strings.Contains(text, marker) {
 			return marker
+		}
+	}
+
+	if !allowTODO {
+		for _, marker := range []string{"<todo", "todo: fill"} {
+			if strings.Contains(text, marker) {
+				return marker
+			}
+		}
+
+		if sourceLike && strings.Contains(text, "todo:") {
+			return "todo:"
 		}
 	}
 
@@ -1061,6 +1075,12 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 		return fmt.Errorf("whole-file edit would overwrite completed planning artifact %s; use a bounded anchored edit or ask the user to reopen/replace the completed artifact explicitly", edit.Path)
 	}
 
+	if err == nil {
+		if rejectErr := RejectExistingSourceWholeFileRewrite(path, body, edit); rejectErr != nil {
+			return rejectErr
+		}
+	}
+
 	oldText := edit.OldText
 	if strings.TrimSpace(oldText) == "" && err != nil {
 		if edit.InsertAfterLine > 0 {
@@ -1174,6 +1194,10 @@ func (m *Manager) validatePlanEditSequenceAgainstWorkspace(edits []PlanEdit) err
 			return fmt.Errorf("edits[%d]: whole-file edit would overwrite completed planning artifact %s; use a bounded anchored edit or ask the user to reopen/replace the completed artifact explicitly", i, edit.Path)
 		}
 
+		if rejectErr := RejectExistingSourceWholeFileRewrite(path, body, edit); rejectErr != nil {
+			return fmt.Errorf("edits[%d]: %w", i, rejectErr)
+		}
+
 		updated, changed, previewErr := PreviewPlanEditContent(string(body), edit)
 		if previewErr != nil {
 			return fmt.Errorf("edits[%d]: after applying prior plan edits, %s", i, previewErr.Error())
@@ -1224,6 +1248,18 @@ func validateContentOnlyPlanEditAgainstCurrentSource(path string, current string
 	}
 
 	return nil
+}
+
+// RejectExistingSourceWholeFileRewrite rejects whole-file replacement of an
+// existing source/test file. New files still use replace_all:true, but existing
+// source edits need bounded anchors so destructive rewrites carry provenance and
+// cannot erase unrelated code by accident.
+func RejectExistingSourceWholeFileRewrite(path string, current []byte, edit PlanEdit) error {
+	if !planEditIsWholeFileWrite(edit) || len(current) == 0 || !isSourceLikePath(path) {
+		return nil
+	}
+
+	return fmt.Errorf("whole-file replace_all edit would rewrite existing source file %s; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path))
 }
 
 func validateSourceLineRangePlanEdit(path string, current string, edit PlanEdit) error {

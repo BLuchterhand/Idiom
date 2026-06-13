@@ -62,6 +62,81 @@ func TestRunEmitsQueueAdmissionBeforePlanner(t *testing.T) {
 	}
 }
 
+func TestRunModelOverrideReachesPlannerAndReviewRepair(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.LlamaServer.Model = "qwen-local-default"
+
+	var stdout, stderr bytes.Buffer
+	var calls []struct {
+		model          string
+		taskFamily     string
+		useActiveModel bool
+	}
+
+	result := Run(cfg, Options{
+		Prompt:            "Update a.txt from before to after.",
+		Model:             "deepseek-v4-flash",
+		RequiredEditPaths: MultiFlag{"a.txt"},
+		JSONEvents:        true,
+	}, func(callCfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
+		calls = append(calls, struct {
+			model          string
+			taskFamily     string
+			useActiveModel bool
+		}{
+			model:          callCfg.LlamaServer.Model,
+			taskFamily:     opts.TaskFamily,
+			useActiveModel: opts.UseActiveModel,
+		})
+
+		switch opts.TaskFamily {
+		case string(workerruntime.TaskFamilyPlanThenExecutePlanner):
+			mgr := workspace.NewManager(callCfg.Workspace)
+			res := mgr.Execute(context.Background(), workspace.ToolRequest{
+				Tool:      workspace.ToolNameSubmitPlan,
+				Rationale: "Update a.txt.",
+				Edits: []workspace.PlanEdit{{
+					Path:    "a.txt",
+					OldText: "before\n",
+					NewText: "after\n",
+					Purpose: "update fixture text",
+				}},
+			})
+			if strings.TrimSpace(res.Error) != "" {
+				return "", fmt.Errorf("submit_plan: %s", res.Error)
+			}
+
+			return "Plan submitted.", nil
+		case string(workerruntime.TaskFamilyPlanThenExecuteReview):
+			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: a.txt now contains after.\n- Scope safety: changed path is limited to a.txt.", nil
+		default:
+			return "", fmt.Errorf("unexpected task family %q", opts.TaskFamily)
+		}
+	}, nil, &stdout, &stderr)
+
+	if len(calls) < 2 {
+		t.Fatalf("expected planner and review-repair calls, got %#v result=%#v stdout=%s stderr=%s", calls, result, stdout.String(), stderr.String())
+	}
+
+	for _, call := range calls {
+		if call.model != "deepseek-v4-flash" {
+			t.Fatalf("task family %s saw model %q, want explicit override; calls=%#v", call.taskFamily, call.model, calls)
+		}
+
+		if !call.useActiveModel {
+			t.Fatalf("task family %s did not preserve active-model authority; calls=%#v", call.taskFamily, calls)
+		}
+	}
+}
+
 func TestClassifyExecutorHandoffTreatsScopedFreshPacketAsFresh(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/planexec\n\ngo 1.22\n"), 0o644); err != nil {
@@ -1719,6 +1794,64 @@ func TestExecutorCreatesTypedAuthorizedNewRequiredFile(t *testing.T) {
 	}
 	if string(data) != "extends RefCounted\n" {
 		t.Fatalf("new file content = %q", string(data))
+	}
+}
+
+func TestRunExecutorPhaseRejectsExistingSourceWholeFileRewriteBeforeDispatch(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := "native/src/simulation/world/collapse_event.h"
+	abs := filepath.Join(root, filepath.FromSlash(sourcePath))
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+	original := "#pragma once\n\nnamespace colony {\nstruct CollapseEvent {};\n}\n"
+	if err := os.WriteFile(abs, []byte(original), 0o644); err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{{
+			Path:       sourcePath,
+			NewText:    "#ifndef SUROCCUS_SIMULATION_WORLD_COLLAPSE_EVENT_H\n#define SUROCCUS_SIMULATION_WORLD_COLLAPSE_EVENT_H\nnamespace suroccus { class CollapseEvent {}; }\n#endif\n",
+			ReplaceAll: true,
+			Purpose:    "rewrite existing collapse header",
+		}},
+	}
+
+	var stdout bytes.Buffer
+	_, err := RunExecutorPhaseScopedWithVerificationPlanAndWriteScope(
+		cfg,
+		plan,
+		[]string{sourcePath},
+		nil,
+		[]string{sourcePath},
+		true,
+		VerificationPlan{},
+		true,
+		&stdout,
+	)
+	if err == nil {
+		t.Fatal("expected existing source whole-file rewrite preflight rejection")
+	}
+
+	if !strings.Contains(err.Error(), "existing source file") {
+		t.Fatalf("expected existing source rewrite rejection, got %v stdout=%s", err, stdout.String())
+	}
+
+	if got := readFileStringForRunTest(t, abs); got != original {
+		t.Fatalf("source file must remain unchanged, got:\n%s", got)
+	}
+
+	events := planExecuteJSONEventsForRunTest(t, stdout.String())
+	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.preflight_failed")
+	if !ok || !strings.Contains(fmt.Sprint(event["reason"]), "existing source file") {
+		t.Fatalf("expected preflight_failed event for existing source rewrite, got events=%#v stdout=%s", events, stdout.String())
 	}
 }
 

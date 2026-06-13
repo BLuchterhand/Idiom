@@ -1227,6 +1227,7 @@ func RunReviewRepairPhase(
 			PlannerOwnedVerification:    true,
 			MaxTokensOverride:           reviewMaxTokens,
 			DisableThinking:             true,
+			UseActiveModel:              opts.UseActiveModel,
 			ReviewRepairOpenObligations: append([]string(nil), evidence.PhaseEvidence.OpenObligations...),
 			Telemetry:                   rec,
 		}, stdout)
@@ -2432,6 +2433,20 @@ func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspac
 		return report, fmt.Errorf("plan preflight failed on edit %d (%s): %s", mismatch.Index, mismatch.Path, mismatch.Reason)
 	}
 
+	if mismatch := preflightPlanExistingSourceWholeFileRewrites(cfg.Workspace.Root, plan); mismatch != nil {
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
+			"edit_index": mismatch.Index,
+			"path":       mismatch.Path,
+			"reason":     mismatch.Reason,
+		})
+
+		if !jsonEvents {
+			fmt.Fprintf(stdout, "  preflight FAILED on edit %d/%d %s: %s\n", mismatch.Index+1, len(plan.Edits), mismatch.Path, mismatch.Reason)
+		}
+
+		return report, fmt.Errorf("plan preflight failed on edit %d (%s): %s", mismatch.Index, mismatch.Path, mismatch.Reason)
+	}
+
 	if mismatch := preflightPlanUnsupportedProofClaims(plan); mismatch != nil {
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
 			"edit_index": mismatch.Index,
@@ -3483,6 +3498,39 @@ func preflightPlanUnsupportedProofClaims(plan workspace.PlanArtifact) *PlanEditP
 		path := normalizePlanExecutePath(edit.Path)
 		if reason := workspace.PlanEditUnsupportedProofClaimReason(edit); reason != "" {
 			return &PlanEditPreflightMismatch{Index: i, Path: path, Reason: reason}
+		}
+	}
+
+	return nil
+}
+
+func preflightPlanExistingSourceWholeFileRewrites(workspaceRoot string, plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
+	cache := make(map[string][]byte)
+
+	for i, edit := range plan.Edits {
+		path := normalizePlanExecutePath(edit.Path)
+		if path == "" {
+			continue
+		}
+
+		abs := path
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(strings.TrimSpace(workspaceRoot), filepath.FromSlash(path))
+		}
+
+		body, ok := cache[abs]
+		if !ok {
+			content, err := os.ReadFile(abs)
+			if err != nil {
+				continue
+			}
+
+			body = content
+			cache[abs] = body
+		}
+
+		if err := workspace.RejectExistingSourceWholeFileRewrite(abs, body, edit); err != nil {
+			return &PlanEditPreflightMismatch{Index: i, Path: path, Reason: err.Error()}
 		}
 	}
 
