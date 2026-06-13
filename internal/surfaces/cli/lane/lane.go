@@ -385,6 +385,7 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		QueuePool:       parseLaneQueuePool(tee.Bytes()),
 		Degradations:    laneDegradationKinds(degraded),
 	}
+
 	if summary, ok := parseSessionSummary(tee.Bytes()); ok {
 		historyEvt.SessionID = summary.SessionID
 		historyEvt.ModelCalls = summary.ModelCalls

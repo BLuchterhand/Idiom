@@ -267,7 +267,13 @@ func normalizeProtocolInput(protocol *ProtocolInput) {
 
 	protocol.CallableActionClasses = canonicalActionClassStrings(protocol.CallableActionClasses)
 	protocol.InvalidActionClasses = canonicalActionClassStrings(protocol.InvalidActionClasses)
-	normalizeStringSets(&protocol.TerminalResponseShapes, &protocol.StructuredSchemaNames, &protocol.SourceBodyObligations)
+	normalizeStringSets(
+		&protocol.TerminalResponseShapes,
+		&protocol.StructuredSchemaNames,
+		&protocol.SourceBodyObligations,
+		&protocol.CompletedGitHistoryPaths,
+		&protocol.PendingGitHistoryPaths,
+	)
 	clampNonNegative(&protocol.RecoveryBudget)
 }
 
@@ -295,6 +301,8 @@ func normalizeProtocolProjection(protocol *ModelProtocolProjection) {
 		&protocol.TerminalResponseShapes,
 		&protocol.StructuredSchemaNames,
 		&protocol.SourceBodyObligations,
+		&protocol.CompletedGitHistoryPaths,
+		&protocol.PendingGitHistoryPaths,
 		&protocol.PathRoleSummary,
 		&protocol.VerificationObligations,
 		&protocol.SafeAlternatives,

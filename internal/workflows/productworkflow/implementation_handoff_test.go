@@ -23,6 +23,14 @@ func TestBuildImplementationHandoffUsesGeneratedDispatchSemantics(t *testing.T) 
 		t.Fatalf("handoff files_to_modify should come from generated brief scope, got %#v", handoff.FilesToModify)
 	}
 
+	if got := handoff.FileActions["internal/workflows/productworkflow/implementation_handoff.go"]; !strings.Contains(got, "Modify existing file") {
+		t.Fatalf("handoff file_actions should come from generated brief scope, got %#v", handoff.FileActions)
+	}
+
+	if !handoffTestStringSliceContains(handoff.AuthorizedNewPackageRoots, "internal/newpkg") {
+		t.Fatalf("handoff should carry typed authorized new package roots, got %#v", handoff.AuthorizedNewPackageRoots)
+	}
+
 	if !handoffTestStringSliceContains(handoff.Tests, "go test ./internal/workflows/productworkflow") || !handoffTestStringSliceContains(handoff.Tests, "go test ./internal/cmd/featureplanner") {
 		t.Fatalf("handoff tests should include TDD and planned verification, got %#v", handoff.Tests)
 	}
@@ -144,6 +152,10 @@ func TestLoadImplementationHandoffReadsEffortArtifacts(t *testing.T) {
 
 	if !handoffTestStringSliceContains(handoff.FilesToModify, "internal/workflows/productworkflow/implementation_handoff.go") {
 		t.Fatalf("expected implementation ledger scope file, got %#v", handoff.FilesToModify)
+	}
+
+	if !handoffTestStringSliceContains(handoff.AuthorizedNewPackageRoots, "internal/newpkg") {
+		t.Fatalf("loaded handoff should preserve missing-file package root authority, got %#v", handoff.AuthorizedNewPackageRoots)
 	}
 }
 
@@ -279,7 +291,7 @@ func implementationHandoffInput(root string) BriefGenerationInput {
 				Timestamp:            "2026-06-03T00:04:00Z",
 				ComplexityTier:       "C1",
 				ContextPackID:        "pack-handoff",
-				Scope:                &AtomScope{ExpectedFiles: []string{"internal/workflows/productworkflow/types_reports.go"}, Forbidden: []string{"internal/surfaces/tui/app/feature_planner_product.go"}},
+				Scope:                &AtomScope{ExpectedFiles: []string{"internal/workflows/productworkflow/types_reports.go", "internal/newpkg/new_file.go"}, Forbidden: []string{"internal/surfaces/tui/app/feature_planner_product.go"}},
 				RequiredVerification: []string{"go test ./internal/cmd/featureplanner"},
 				ReportPaths:          &ReportPaths{Implementation: "reports/impl.json", Review: "reports/review.json", Investigation: "reports/investigation.json"},
 				Implementor:          &ImplementorAssignment{ID: "impl", Runtime: "codex", Model: "test", Command: "run"},

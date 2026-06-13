@@ -348,61 +348,6 @@ func NormalizeStableContractIDPart(value string) string {
 	return strings.Trim(b.String(), "-_.")
 }
 
-func CompileLegacyNewFileAuthorization(contextText string, candidatePaths []string, candidateRoots []string) ([]AuthorizedNewFile, []AuthorizedNewRoot) {
-	inputHash := stableTextHash(contextText)
-
-	var files []AuthorizedNewFile
-
-	for _, path := range UniqueScopePaths(candidatePaths) {
-		authorized, rule := legacyNewFileAuthorizationRule(contextText, path)
-		if !authorized {
-			continue
-		}
-
-		files = append(files, AuthorizedNewFile{
-			Path:   path,
-			Reason: "compiled from legacy prose authorization",
-			Source: "legacy_prose_compiler",
-			Metadata: NewFileAuthorizationMetadata{
-				Compiler:  "CompileLegacyNewFileAuthorization",
-				Rule:      rule,
-				InputHash: inputHash,
-			},
-		})
-	}
-
-	var roots []AuthorizedNewRoot
-
-	if ExplicitNewFileBodyContext(contextText) {
-		seenRoots := map[string]struct{}{}
-
-		for _, rawRoot := range candidateRoots {
-			root := normalizeAuthorizedRoot(rawRoot)
-			if root == "" {
-				continue
-			}
-
-			if _, ok := seenRoots[root]; ok {
-				continue
-			}
-
-			seenRoots[root] = struct{}{}
-			roots = append(roots, AuthorizedNewRoot{
-				Root:   root,
-				Reason: "compiled from legacy prose authorization",
-				Source: "legacy_prose_compiler",
-				Metadata: NewFileAuthorizationMetadata{
-					Compiler:  "CompileLegacyNewFileAuthorization",
-					Rule:      "explicit_new_file_body_context",
-					InputHash: inputHash,
-				},
-			})
-		}
-	}
-
-	return normalizeAuthorizedNewFiles(files), normalizeAuthorizedNewRoots(roots)
-}
-
 func ValidatePlanExecutionContractInput(contract PlanExecutionContract) []PlanExecutionContractViolation {
 	var violations []PlanExecutionContractViolation
 
@@ -1284,19 +1229,6 @@ func atomHasRequiredTestArtifacts(atom AtomExecutionContract) bool {
 	return false
 }
 
-func legacyNewFileAuthorizationRule(contextText string, path string) (bool, string) {
-	if ExplicitNewFileBodyContext(contextText) {
-		return true, "explicit_new_file_body_context"
-	}
-
-	lower := strings.ToLower(contextText)
-	if PathLooksLikeTest(path) && strings.Contains(lower, "add") && strings.Contains(lower, "test") {
-		return true, "add_test_file_context"
-	}
-
-	return false, ""
-}
-
 func normalizeAuthorizedRoot(root string) string {
 	root = strings.TrimSpace(strings.ReplaceAll(root, "\\", "/"))
 	root = strings.TrimSuffix(root, "/**")
@@ -1367,11 +1299,6 @@ func normalizedStringSet(values []string) map[string]struct{} {
 	}
 
 	return out
-}
-
-func stableTextHash(text string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(text)))
-	return hex.EncodeToString(sum[:])
 }
 
 func contractViolation(code string, atomID string, path string, obligationID string, message string) PlanExecutionContractViolation {

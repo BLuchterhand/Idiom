@@ -1,11 +1,13 @@
 package featureplanner
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -714,62 +716,6 @@ func newFileAuthorizationsFromDeltas(deltas []PlanAuthorityDelta) []plancontract
 	return files
 }
 
-func StandalonePromptNewFileAuthorityDeltas(plan FeaturePlan, prompt string, workspaceRoot string, now time.Time) []PlanAuthorityDelta {
-	paths := standalonePromptAuthorizedNewFilePaths(plan, prompt, workspaceRoot)
-	if len(paths) == 0 {
-		return nil
-	}
-
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-
-	return []PlanAuthorityDelta{{
-		QuestionID:     "operator-prompt-new-files",
-		AuthorityKind:  "operator_approval",
-		EvidenceRefs:   []string{"operator_prompt"},
-		AffectedPaths:  paths,
-		AffectedFields: []string{"new_file_authorization"},
-		Expected:       "missing new files require explicit operator authorization",
-		Actual:         "operator prompt explicitly authorized new-file or package creation work",
-		Revision:       1,
-		CreatedAt:      now.UTC().Format(time.RFC3339Nano),
-	}}
-}
-
-func standalonePromptAuthorizedNewFilePaths(plan FeaturePlan, prompt string, workspaceRoot string) []string {
-	var paths []string
-
-	seen := map[string]bool{}
-
-	for _, atom := range plan.Atoms {
-		for _, scopedPath := range append(standaloneAtomWorkspaceScopePaths(atom), standaloneAtomTestArtifactPaths(atom)...) {
-			path := plancontract.NormalizeScopePath(scopedPath)
-			if path == "" || seen[path] || !plancontract.NewFileAuthorizedForPath(prompt, path) {
-				continue
-			}
-
-			if workspaceRoot != "" && standaloneWorkspacePathExists(workspaceRoot, path) {
-				continue
-			}
-
-			paths = append(paths, path)
-			seen[path] = true
-		}
-	}
-
-	return normalizeEditScopeList(paths)
-}
-
-func standaloneWorkspacePathExists(root string, path string) bool {
-	abs := filepath.Join(root, filepath.FromSlash(path))
-	if _, err := os.Stat(abs); err == nil {
-		return true
-	}
-
-	return false
-}
-
 func deltaAuthorizesNewFile(delta PlanAuthorityDelta) bool {
 	switch delta.AuthorityKind {
 	case "new_file_authorization", "operator_approval":
@@ -778,8 +724,8 @@ func deltaAuthorizesNewFile(delta PlanAuthorityDelta) bool {
 	}
 
 	return len(delta.AffectedPaths) > 0 &&
-		(len(delta.AffectedFields) == 0 ||
-			deltaAllowsField(delta, "new_file_authorization") ||
+		len(delta.AffectedFields) > 0 &&
+		(deltaAllowsField(delta, "new_file_authorization") ||
 			deltaAllowsField(delta, "required_edit_paths"))
 }
 
@@ -1054,7 +1000,7 @@ func newFileAuthorizedPathsFromDeltas(deltas []PlanAuthorityDelta) []string {
 			continue
 		}
 
-		if len(delta.AffectedFields) > 0 && !deltaAllowsField(delta, "new_file_authorization") && !deltaAllowsField(delta, "required_edit_paths") {
+		if len(delta.AffectedFields) == 0 || (!deltaAllowsField(delta, "new_file_authorization") && !deltaAllowsField(delta, "required_edit_paths")) {
 			continue
 		}
 
@@ -1653,7 +1599,6 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 		StampPlanAuthorityContract(&parsed.Plan, state.AuthorityDeltas)
 
 		if err := ValidateDurablePlan(parsed.Plan); err != nil {
-			state.Plan = parsed.Plan
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
@@ -2045,7 +1990,22 @@ func ValidatePlannerQuestion(question PlannerQuestion) error {
 		errs = append(errs, fmt.Errorf("planner question has unknown status %q", question.Status))
 	}
 
+	if plannerQuestionRequestsPathAuthority(question) && len(normalizeEditScopeList(question.AffectedPaths)) == 0 {
+		errs = append(errs, errors.New("planner question path-level authority requires affected_paths"))
+	}
+
 	return errors.Join(errs...)
+}
+
+func plannerQuestionRequestsPathAuthority(question PlannerQuestion) bool {
+	for _, field := range question.AffectedFields {
+		switch strings.TrimSpace(field) {
+		case "new_file_authorization", "required_edit_paths", "allowed_edit_paths", "write_allowed_paths":
+			return true
+		}
+	}
+
+	return false
 }
 
 func MissingPreDispatchPlanTDD(atom FeatureAtomPlan) []string {
@@ -2294,8 +2254,62 @@ func hydrateDurablePlanDefaults(plan *FeaturePlan, state *FeatureState, now time
 			atom.PlannedTDDSnapshot.CreatedBeforeDispatchEventID = atom.TestFirst.PreExecutionEventIDs[0]
 		}
 
-		_ = now
+		// Harness stamps snapshot_id and snapshot_digest unconditionally.
+		// Model-provided values are never trusted for these fields.
+		stampPlannedTDDSnapshot(atom, state.SessionID)
 	}
+}
+
+// stampPlannedTDDSnapshot sets the harness-owned snapshot_id and snapshot_digest
+// on an atom's planned_tdd_snapshot. Model-provided values are unconditionally
+// overwritten because the harness owns these evidence identities.
+func stampPlannedTDDSnapshot(atom *FeatureAtomPlan, sessionID string) {
+	if atom == nil {
+		return
+	}
+
+	id := strings.TrimSpace(atom.ID)
+	if id == "" {
+		id = "unknown"
+	}
+
+	sid := strings.TrimSpace(sessionID)
+	if sid == "" {
+		sid = "session"
+	}
+
+	atom.PlannedTDDSnapshot.SnapshotID = fmt.Sprintf("tdd-snap-%s-%s", sid, id)
+	atom.PlannedTDDSnapshot.SnapshotDigest = computePlannedTDDSnapshotDigest(atom.PlannedTDDSnapshot)
+}
+
+// computePlannedTDDSnapshotDigest produces a deterministic sha256:<64hex> digest
+// of the snapshot's canonical content fields: obligation_ids, test_commands,
+// test_artifact_paths, expected_pre_execution_results, and
+// created_before_dispatch_event_id (sorted for stability).
+func computePlannedTDDSnapshotDigest(snapshot PlannedTDDSnapshot) string {
+	var parts []string
+	parts = append(parts, sortedJoined(snapshot.ObligationIDs))
+	parts = append(parts, sortedJoined(snapshot.TestCommands))
+	parts = append(parts, sortedJoined(snapshot.TestArtifactPaths))
+	parts = append(parts, sortedJoined(snapshot.ExpectedPreExecutionResults))
+	parts = append(parts, strings.TrimSpace(snapshot.CreatedBeforeDispatchEventID))
+
+	input := strings.Join(parts, "\n---\n")
+	sum := sha256.Sum256([]byte(input))
+	return fmt.Sprintf("sha256:%x", sum)
+}
+
+// sortedJoined returns the sorted, newline-joined elements of a string slice
+// for deterministic digest computation.
+func sortedJoined(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+
+	sorted := make([]string, len(values))
+	copy(sorted, values)
+	sort.Strings(sorted)
+	return strings.Join(sorted, "\n")
 }
 
 func validateAtomDependencies(atoms []FeatureAtomPlan) error {

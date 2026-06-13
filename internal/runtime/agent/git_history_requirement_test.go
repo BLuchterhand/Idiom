@@ -215,6 +215,85 @@ func gitHistoryNotApplicableResult(path string) workspace.ToolResult {
 	}
 }
 
+func TestPlanExecuteUnavailableHistoryToolNudgeWhenHistoryAlreadySatisfied(t *testing.T) {
+	brief := workerruntime.RuntimeBriefForTaskFamily(PlanThenExecutePlannerTaskFamily, "main", []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"})
+	brief.RequiredEditPaths = []string{"a.go"}
+	brief.RequiredEvidence = []string{requiredEvidenceGitHistoryRationale}
+	results := []workspace.ToolResult{
+		gitHistoryRangeResult("a.go"),
+	}
+
+	summary, errorText, ok := planThenExecuteUnavailableHistoryToolNudge(
+		workspace.ToolRequest{Tool: "history_range", Path: "a.go", StartLine: 1, EndLine: 10},
+		brief,
+		results,
+		[]string{"read_file", "code_navigate"},
+	)
+	if !ok {
+		t.Fatal("expected repeated history_range to get typed phase nudge")
+	}
+
+	if !strings.Contains(summary, "Git history tool not available") {
+		t.Fatalf("summary = %q", summary)
+	}
+
+	for _, want := range []string{"already satisfied", "a.go"} {
+		if !strings.Contains(errorText, want) {
+			t.Fatalf("error text missing %q: %s", want, errorText)
+		}
+	}
+}
+
+func TestPlanThenExecuteHistoryPendingPathsMixedEvidenceStates(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go", "b.go", "c.go", "d.go"},
+		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		gitHistoryRangeResult("a.go"),
+		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		gitHistoryNotApplicableResult("b.go"),
+		{Tool: "read_file", Summary: "Read f3 c.go lines 1-10 (total lines: 10)", Output: "1:package c\n"},
+	}
+
+	pending := planThenExecuteHistoryPendingPaths(brief, results, nil)
+	if len(pending) != 1 || pending[0] != "c.go" {
+		t.Fatalf("pending paths = %#v, want only c.go", pending)
+	}
+
+	completed := modelProtocolCompletedGitHistoryPaths(brief, results)
+	if len(completed) != 2 || completed[0] != "a.go" || completed[1] != "b.go" {
+		t.Fatalf("completed paths = %#v, want a.go and b.go", completed)
+	}
+}
+
+func TestAnswerHasGitHistoryNoopOrBlocker(t *testing.T) {
+	accepted := []string{
+		"<<QUESTION>>: history shows this change is unsafe",
+		`source-satisfied: already implemented`,
+		"Changed paths: none",
+		"This is a noop because the requested behavior already exists.",
+		"Only a new file is involved.",
+	}
+	for _, answer := range accepted {
+		if !answerHasGitHistoryNoopOrBlocker(answer) {
+			t.Fatalf("expected no-op/blocker answer to satisfy predicate: %q", answer)
+		}
+	}
+
+	rejected := []string{
+		"I changed the existing function.",
+		"submit_plan will update the old code",
+	}
+	for _, answer := range rejected {
+		if answerHasGitHistoryNoopOrBlocker(answer) {
+			t.Fatalf("did not expect mutation answer to satisfy predicate: %q", answer)
+		}
+	}
+}
+
 func writeGitHistoryRequirementTestFile(t *testing.T, root string, rel string, body string) {
 	t.Helper()
 

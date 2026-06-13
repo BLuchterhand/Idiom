@@ -227,6 +227,8 @@ func modelProtocolProjectionValues(protocol ModelProtocolProjection) []string {
 	values = append(values, protocol.TerminalResponseShapes...)
 	values = append(values, protocol.StructuredSchemaNames...)
 	values = append(values, protocol.SourceBodyObligations...)
+	values = append(values, protocol.CompletedGitHistoryPaths...)
+	values = append(values, protocol.PendingGitHistoryPaths...)
 	values = append(values, protocol.RequiredEditCoverage...)
 	values = append(values, protocol.PathRoleSummary...)
 	values = append(values, protocol.VerificationObligations...)

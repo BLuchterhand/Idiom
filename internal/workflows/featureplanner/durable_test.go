@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -138,6 +139,51 @@ func TestReplayPreservesMalformedAuthorityDeltaForDurableValidation(t *testing.T
 	err = ValidateDurableState(bundle.State)
 	if err == nil || !strings.Contains(err.Error(), "authority delta 0 missing question_id") {
 		t.Fatalf("expected durable authority delta validation error, got %v", err)
+	}
+}
+
+func TestReplayPreservesNewFileAuthorityForContractRecompile(t *testing.T) {
+	state := durableState()
+	state.Plan = durablePlan()
+	state.Plan.Atoms[0].RequiredEditPaths = []string{"pkg/new_helper.go", "pkg/new_helper_test.go"}
+	state.Plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"pkg/new_helper_test.go"}
+	state.Plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"pkg/new_helper_test.go"}
+
+	bundle, err := Replay(state, []Event{{
+		SchemaVersion:         FeatureEventSchemaVersion,
+		EventID:               "evt-authority",
+		IdempotencyKey:        "feature-one/rev-0/authority",
+		Type:                  "idiom.feature_planner.planner_question_answered",
+		SessionID:             "session",
+		FeatureID:             "feature-one",
+		FeatureRevisionBefore: 0,
+		FeatureRevisionAfter:  1,
+		Fields: map[string]any{
+			"authority_delta": map[string]any{
+				"question_id":     "q-001-new-file-authorization",
+				"authority_kind":  "operator_approval",
+				"evidence_refs":   []string{"planner_question:q-001"},
+				"affected_paths":  []string{"pkg/new_helper.go", "pkg/new_helper_test.go"},
+				"affected_fields": []string{"new_file_authorization"},
+				"expected":        "missing new files require explicit operator authorization",
+				"actual":          "operator authorized creating new helper and test files",
+				"revision":        float64(1),
+				"created_at":      "2026-06-12T19:00:00Z",
+			},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("Replay returned error: %v", err)
+	}
+
+	contract := CompilePlanAuthorityContract(bundle.State.Plan, bundle.State.AuthorityDeltas)
+	got := []string{}
+	for _, file := range contract.AuthorizedNewFiles {
+		got = append(got, file.Path)
+	}
+
+	if !slices.Equal(got, []string{"pkg/new_helper.go", "pkg/new_helper_test.go"}) {
+		t.Fatalf("replayed authority did not recompile authorized new files: %#v", got)
 	}
 }
 

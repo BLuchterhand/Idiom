@@ -68,6 +68,8 @@ type CandidateAtom struct {
 	Gates           []string `json:"gates,omitempty"`
 	ResidualWorkIDs []string `json:"residual_work_ids,omitempty"`
 	InvariantIDs    []string `json:"invariant_ids,omitempty"`
+	ParentAtomID    string   `json:"parent_atom_id,omitempty"`
+	OriginalTitle   string   `json:"original_title,omitempty"`
 }
 
 func BuildDecompositionPacket(record FailureRecord, opts DecompositionOptions) (DecompositionPacket, error) {
@@ -146,6 +148,8 @@ func BuildDecompositionPacket(record FailureRecord, opts DecompositionOptions) (
 			Gates:           []string{GateWorkspaceState, GateBriefLint, GateAtomIntake, GateScope, GateRequiredTests},
 			ResidualWorkIDs: []string{residualID},
 			InvariantIDs:    invariantIDsForFailures(groupInvariantFailures),
+			ParentAtomID:    strings.TrimSpace(record.SourceRun.ParentAtomID),
+			OriginalTitle:   strings.TrimSpace(record.SourceRun.ParentAtomTitle),
 		})
 	}
 
@@ -544,6 +548,10 @@ func groupResidualPaths(paths []string) [][]string {
 }
 
 func residualTitle(record FailureRecord, paths []string, failures []InvariantFailure) string {
+	if title := strings.TrimSpace(record.SourceRun.ParentAtomTitle); title != "" {
+		return fmt.Sprintf("Recover %s", title)
+	}
+
 	if len(failures) == 1 {
 		if path := cleanRelPath(failures[0].Path); path != "" {
 			return fmt.Sprintf("Repair %s invariant on %s", failures[0].InvariantID, filepath.Base(path))

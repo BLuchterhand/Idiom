@@ -148,10 +148,6 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 			}, nil
 		}
 
-		for _, delta := range StandalonePromptNewFileAuthorityDeltas(parsed.Plan, opts.Prompt, opts.WorkspaceRoot, opts.Now) {
-			upsertPlanAuthorityDelta(&state, delta)
-		}
-
 		contract := StampPlanAuthorityContract(&parsed.Plan, state.AuthorityDeltas)
 		if err := ValidatePlanStandaloneWorkspaceContext(parsed.Plan, StandaloneWorkspaceContext{
 			WorkspaceRoot: opts.WorkspaceRoot,
@@ -200,7 +196,7 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 	b.WriteString("Valid tools: submit_feature_plan, source_satisfied, or ask_planner_question.\n")
 	b.WriteString("For submit_feature_plan, return the FeaturePlan object itself with tool=\"submit_feature_plan\" at the top level. Do not nest the plan under a plan, payload, arguments, or input field.\n")
 	b.WriteString("For source_satisfied, return {\"tool\":\"source_satisfied\",\"summary\":\"requested final state is already present\",\"reason\":\"short evidence-based reason\",\"evidence_paths\":[\"repo/path\"],\"test_paths\":[\"repo/test_path\"],\"anchors\":[{\"path\":\"repo/path\",\"text\":\"exact current source/test substring\"}]}. Use it only when exact current source/test anchor text is already present in the prompt context; path names alone are not proof.\n")
-	b.WriteString("For ask_planner_question, return {\"tool\":\"ask_planner_question\",\"question_summary\":\"...\",\"blocking_claim\":\"what blocks a safe plan\",\"requested_decision\":\"exact operator/source decision needed\",\"question_kind\":\"external_answer_required\",\"authority_required\":\"operator_approval\",\"required_before\":\"plan_approval\"}. Do not use a bare question field.\n")
+	b.WriteString("For ask_planner_question, return {\"tool\":\"ask_planner_question\",\"question_summary\":\"...\",\"blocking_claim\":\"what blocks a safe plan\",\"requested_decision\":\"exact operator/source decision needed\",\"question_kind\":\"external_answer_required\",\"authority_required\":\"operator_approval\",\"required_before\":\"plan_approval\",\"affected_paths\":[\"repo/path\"],\"affected_fields\":[\"new_file_authorization\"]}. Do not use a bare question field. If the answer would authorize missing/new files or path-level edit authority, affected_paths must contain the exact repo-relative paths and affected_fields must name new_file_authorization or the exact authorized field; paths inside requested_decision are explanatory text only and do not grant authority.\n")
 	b.WriteString("Every atom must name at least one concrete required_edit_paths or allowed_edit_paths entry. A no-mutation planning test still names the intended source or test paths as allowed scope; do not return both arrays empty.\n")
 	b.WriteString("If the operator explicitly asks to check whether the work is already satisfied before editing, preserve that gate. Either return source_satisfied with concrete current-state evidence paths, or create an atom whose prompt starts with the same source-satisfied check and no-edit-if-satisfied instruction. Do not rewrite that request into unconditional implementation work.\n")
 
@@ -298,7 +294,7 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 
 			b.WriteString("Set tdd_contract.obligations[].required_before to the exact scalar string \"implementation\". Do not use an array for required_before.\n")
 			b.WriteString("For each atom, planned_tdd_snapshot.obligation_ids must exactly match test_first.obligation_refs, planned_tdd_snapshot.test_commands must exactly match test_first.commands, and planned_tdd_snapshot.test_artifact_paths must exactly match test_first.test_artifact_paths.\n")
-			b.WriteString("planned_tdd_snapshot.snapshot_id and snapshot_digest are harness evidence identities; do not copy placeholder/example values or invent fake digests.\n")
+			b.WriteString("planned_tdd_snapshot.snapshot_id and snapshot_digest are harness-stamped; omit these fields from planned_tdd_snapshot.\n")
 			b.WriteString("Repo grounding is required: required_edit_paths and allowed_edit_paths must come from Files to modify, sibling files inside those existing package roots, or authorized new package roots.\n")
 			b.WriteString("Every path listed under Files to modify is required implementation scope: cover each one in atom.required_edit_paths across the submitted plan. For a one-atom dispatch, put every Files to modify path in that atom.required_edit_paths. Do not demote Files to modify into allowed_edit_paths.\n")
 			b.WriteString("When test_first.baseline_required is true or a TDD obligation is required before implementation, include every grounded test_first.test_artifact_paths entry in required_edit_paths; these tests are required coverage, not optional allowed scope.\n")
@@ -319,7 +315,7 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 		b.WriteString(standaloneSubmitFeaturePlanShape())
 		b.WriteString("Set tdd_contract.obligations[].required_before to the scalar string \"implementation\". Do not use an array for required_before.\n")
 		b.WriteString("For each atom, planned_tdd_snapshot.obligation_ids must exactly match test_first.obligation_refs, planned_tdd_snapshot.test_commands must exactly match test_first.commands, and planned_tdd_snapshot.test_artifact_paths must exactly match test_first.test_artifact_paths.\n")
-		b.WriteString("planned_tdd_snapshot.snapshot_id and snapshot_digest are harness evidence identities; do not copy placeholder/example values or invent fake digests.\n")
+		b.WriteString("planned_tdd_snapshot.snapshot_id and snapshot_digest are harness-stamped; omit these fields from planned_tdd_snapshot.\n")
 		b.WriteString("When test_first.baseline_required is true or a TDD obligation is required before implementation, include every test_first.test_artifact_paths entry in required_edit_paths; these tests are required coverage, not optional allowed scope.\n")
 		b.WriteString("No upstream design docs are available. Use acceptance criteria strings in sdd_contract.acceptance instead of file paths.\n")
 		b.WriteString("Do NOT invent file paths like docs/path.md — acceptance criteria strings are valid and preferred when no docs exist.\n")

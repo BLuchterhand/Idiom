@@ -166,28 +166,6 @@ func TestPlanExecutionContractValidatesStructuredAuthorizedNewFiles(t *testing.T
 	}
 }
 
-func TestCompileLegacyNewFileAuthorizationProducesTypedAuthority(t *testing.T) {
-	files, roots := CompileLegacyNewFileAuthorization(
-		"Create the new helper package with the following content. Add regression tests.",
-		[]string{"pkg/helper.go", "pkg/helper_test.go", "../escape.go"},
-		[]string{"pkg/generated/", "/tmp/outside"},
-	)
-
-	if got, want := authorizedFilePaths(files), []string{"pkg/helper.go", "pkg/helper_test.go"}; !slices.Equal(got, want) {
-		t.Fatalf("compiled files = %#v, want %#v", got, want)
-	}
-
-	if len(roots) != 1 || roots[0].Root != "pkg/generated" {
-		t.Fatalf("compiled roots = %#v, want pkg/generated", roots)
-	}
-
-	for _, file := range files {
-		if file.Metadata.Compiler == "" || file.Metadata.InputHash == "" {
-			t.Fatalf("compiled authorization lacks metadata: %#v", file)
-		}
-	}
-}
-
 func TestPlanExecutionContractRejectsRequiredPathDemotion(t *testing.T) {
 	atom := AtomExecutionContract{
 		AtomID: "demotion",

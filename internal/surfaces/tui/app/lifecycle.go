@@ -1003,6 +1003,9 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	mode := m.currentMode()
 	steps := modeStepCap(m.cfg.Chat.MaxToolSteps, mode)
 	policy := modeRunPolicy(mode, m.cfg.Chat)
+	if m.nonInteractive && steps > 0 {
+		policy.MaxToolSteps = steps
+	}
 	// Conversation and read-only lanes: raise context compaction
 	// thresholds. Structured discovery tools return compact results
 	// but the default 40-message limit compacts every ~13 tool calls,
@@ -1020,8 +1023,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	// sufficient. The doom-loop guard catches repeated identical
 	// calls; genuine investigation should not be preempted by a
 	// budget wall.
-	if plan.route.Family == "conversation" || plan.route.Family == "direct_answer" ||
-		plan.route.Contract == "direct_answer" || plan.route.Contract == "grounded_evidence_summary" {
+	if shouldUnboundDirectPromptBudgets(m.nonInteractive, plan.route) {
 
 		policy.MaxModelCalls = 0
 		policy.MaxToolSteps = 0
@@ -1077,20 +1079,20 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		history,
 		opts,
 		func(status string) {
-			m.events <- infoMsg{text: status}
+			m.queueUIEvent(infoMsg{text: status})
 		},
 		func(event agent.ToolRequestEvent) {
 			m.logToolRequest(event)
 
 			if !m.planExecuteActive {
-				m.events <- toolTraceMsg{
+				m.queueUIEvent(toolTraceMsg{
 					step:       event.Step,
 					text:       formatToolRequestTrace(event),
 					intent:     toolRequestIntent(event),
 					busyStatus: busyStatusForToolRequest(event, prompt),
 					auditKind:  historyToolAuditKind(event),
 					running:    true,
-				}
+				})
 			}
 		},
 		func(event agent.ToolResultEvent) {
@@ -1109,17 +1111,17 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 			}
 
 			if !m.planExecuteActive {
-				m.events <- toolTraceMsg{
+				m.queueUIEvent(toolTraceMsg{
 					step:        event.Step,
 					text:        workspace.FormatToolTrace(event.Result),
 					busyStatus:  busyStatusAfterToolResult(event),
 					outcome:     historyToolAuditOutcome(event),
 					auditEvents: historyAuditEventsForToolResult(event),
-				}
+				})
 			}
 
 			if workspace.IsWorkspaceWriteTool(event.Request.Tool) || event.Request.Tool == workspace.ToolNameTaskLedger || strings.TrimSpace(event.Result.Tool) == workspace.ToolNameSubmitPlan {
-				m.events <- planRefreshMsg{}
+				m.queueUIEvent(planRefreshMsg{})
 			}
 		},
 	)
@@ -1138,6 +1140,15 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	}
 
 	return answer, err
+}
+
+func shouldUnboundDirectPromptBudgets(nonInteractive bool, route turnRoutePlan) bool {
+	if nonInteractive {
+		return false
+	}
+
+	return route.Family == "conversation" || route.Family == "direct_answer" ||
+		route.Contract == "direct_answer" || route.Contract == "grounded_evidence_summary"
 }
 
 func (m *Model) preExecuteToolRequest(step int, req workspace.ToolRequest, mode agent.Mode) *workspace.ToolResult {

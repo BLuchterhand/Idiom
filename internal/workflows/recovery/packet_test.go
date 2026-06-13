@@ -54,6 +54,42 @@ func TestBuildDecompositionPacketCreatesCandidateAtom(t *testing.T) {
 	}
 }
 
+func TestBuildDecompositionPacketPreservesParentAtomProvenance(t *testing.T) {
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:         "session-parent-atom",
+		FailureKind:       "executor_failed",
+		FailureReason:     "edit failed",
+		ParentAtomID:      "atom-2.1",
+		ParentAtomTitle:   "Add parser",
+		RequiredEditPaths: []string{"internal/workflows/recovery/record.go"},
+		ChangedPaths:      []string{"internal/workflows/recovery/record.go"},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+
+	packet, err := BuildDecompositionPacket(record, DecompositionOptions{
+		Now:          time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC),
+		PartialState: PartialStateForDirtyPaths(nil, record.PartialState.ChangedPaths, record.SourceRun.RequiredEditPaths, nil, 1),
+	})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+
+	if len(packet.CandidateAtoms) != 1 {
+		t.Fatalf("candidate atoms=%#v", packet.CandidateAtoms)
+	}
+
+	atom := packet.CandidateAtoms[0]
+	if atom.ParentAtomID != "atom-2.1" || atom.OriginalTitle != "Add parser" {
+		t.Fatalf("candidate provenance = parent %q title %q", atom.ParentAtomID, atom.OriginalTitle)
+	}
+
+	if atom.Title != "Recover Add parser" {
+		t.Fatalf("candidate title = %q, want parent-bound recovery title", atom.Title)
+	}
+}
+
 func TestBuildDecompositionPacketUsesInvariantFailuresBeforeBroadPathInference(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
@@ -275,6 +311,8 @@ func TestWriteAndLoadDecompositionPacket(t *testing.T) {
 	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
 		SessionID:         "session-5",
 		FailureKind:       "executor_failed",
+		ParentAtomID:      "atom-5",
+		ParentAtomTitle:   "Write/load recovery",
 		RequiredEditPaths: []string{"a.go"},
 	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
 	if err != nil {
@@ -303,6 +341,12 @@ func TestWriteAndLoadDecompositionPacket(t *testing.T) {
 
 	if loaded.PacketID != packet.PacketID || loaded.FailureID != packet.FailureID {
 		t.Fatalf("loaded packet mismatch: %#v", loaded)
+	}
+
+	if len(loaded.CandidateAtoms) != 1 ||
+		loaded.CandidateAtoms[0].ParentAtomID != "atom-5" ||
+		loaded.CandidateAtoms[0].OriginalTitle != "Write/load recovery" {
+		t.Fatalf("loaded candidate provenance mismatch: %#v", loaded.CandidateAtoms)
 	}
 }
 

@@ -1613,6 +1613,49 @@ func TestRunRejectsMissingEditPathWithoutNewFileAuthorizationBeforeWrites(t *tes
 	}
 }
 
+func TestRunRejectsPromptProseNewFileWithoutTypedAuthorization(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+
+	var stdout, stderr bytes.Buffer
+
+	missingPath := "pkg/new_helper.go"
+	result := Run(cfg, Options{
+		Prompt:           "Create new file pkg/new_helper.go with the following content.",
+		JSONEvents:       true,
+		SkipReviewRepair: true,
+		RequiredEditPaths: MultiFlag{
+			missingPath,
+		},
+	}, func(cfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
+		if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecutePlanner) {
+			t.Fatalf("unexpected task family %q", opts.TaskFamily)
+		}
+
+		writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{{
+			Path:       missingPath,
+			OldText:    "",
+			NewText:    "package pkg\n",
+			ReplaceAll: true,
+			Purpose:    "create helper from prompt prose only",
+		}}, "prompt prose requested new helper")
+
+		return "submitted prompt-prose helper path", nil
+	}, nil, &stdout, &stderr)
+
+	if result.ExitCode != 1 || result.FailureKind != RunFailureMissingEditPathWithoutNewFileAuth {
+		t.Fatalf("expected typed new-file authorization rejection, got result=%#v stdout=%s stderr=%s", result, stdout.String(), stderr.String())
+	}
+
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(missingPath))); !os.IsNotExist(err) {
+		t.Fatalf("prompt prose must not create missing path, stat err=%v stdout=%s", err, stdout.String())
+	}
+}
+
 func TestPreflightAcceptsTypedAuthorizedNewFileWithoutPromptProse(t *testing.T) {
 	root := t.TempDir()
 	newPath := "project/scripts/economy/score_breakdown.gd"
@@ -1628,6 +1671,54 @@ func TestPreflightAcceptsTypedAuthorizedNewFileWithoutPromptProse(t *testing.T) 
 
 	if mismatch := preflightPlanMissingPathAuthorization(root, []string{newPath}, plan); mismatch != nil {
 		t.Fatalf("typed authorized new file should pass preflight without prompt prose, got %#v", mismatch)
+	}
+}
+
+func TestExecutorCreatesTypedAuthorizedNewRequiredFile(t *testing.T) {
+	root := t.TempDir()
+	newPath := "project/scripts/economy/score_breakdown.gd"
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+
+	plan := workspace.PlanArtifact{
+		Edits: []workspace.PlanEdit{{
+			Path:       newPath,
+			OldText:    "",
+			NewText:    "extends RefCounted\n",
+			ReplaceAll: true,
+			Purpose:    "create typed-authorized helper path",
+		}},
+	}
+
+	var stdout bytes.Buffer
+	report, err := RunExecutorPhaseScopedWithVerificationPlanAndWriteScopeAuthorizedNewFiles(
+		cfg,
+		plan,
+		[]string{newPath},
+		nil,
+		nil,
+		false,
+		[]string{newPath},
+		VerificationPlan{},
+		true,
+		&stdout,
+	)
+	if err != nil {
+		t.Fatalf("executor rejected typed-authorized new file: %v stdout=%s", err, stdout.String())
+	}
+
+	if report.Succeeded != 1 || report.Failed != 0 {
+		t.Fatalf("unexpected executor report: %+v stdout=%s", report, stdout.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(newPath)))
+	if err != nil {
+		t.Fatalf("expected authorized new file to be created: %v stdout=%s", err, stdout.String())
+	}
+	if string(data) != "extends RefCounted\n" {
+		t.Fatalf("new file content = %q", string(data))
 	}
 }
 

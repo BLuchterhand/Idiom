@@ -110,38 +110,40 @@ func compileRuntimeEnvelope(input PlanExecutePlannerInput) RuntimeEnvelope {
 
 func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnvelope, contract autonomy.AutonomyContract) (ModelProtocolProjection, error) {
 	protocol := ModelProtocolProjection{
-		ContractID:              contract.ContractID,
-		ContractVersion:         contract.SchemaVersion,
-		SchemaNames:             compileProtocolSchemaNames(input.Protocol.StructuredSchemaNames),
-		PhaseID:                 input.Protocol.PhaseID,
-		ParserMode:              firstNonEmpty(input.Protocol.ParserMode, runtime.ParserContract, runtime.ParserTransportMode),
-		ToolTransportMode:       runtime.ToolTransportMode,
-		ParserTransportMode:     runtime.ParserTransportMode,
-		ParserContract:          runtime.ParserContract,
-		NativeToolPolicy:        runtime.NativeToolPolicy,
-		SupportsNativeTools:     runtime.SupportsNativeTools,
-		ForceNativeTools:        runtime.ForceNativeTools,
-		ToolChoice:              runtime.ToolChoice,
-		ResponseFormat:          runtime.ResponseFormat,
-		ExpectedVisibleOutput:   input.Protocol.ExpectedVisibleOutput,
-		VisibleTools:            append([]string(nil), input.Protocol.VisibleTools...),
-		CallableTools:           append([]string(nil), input.Protocol.CallableTools...),
-		CallableActionClasses:   append([]string(nil), input.Protocol.CallableActionClasses...),
-		InvalidActionClasses:    append([]string(nil), input.Protocol.InvalidActionClasses...),
-		TerminalResponseShapes:  append([]string(nil), input.Protocol.TerminalResponseShapes...),
-		StructuredSchemaNames:   append([]string(nil), input.Protocol.StructuredSchemaNames...),
-		MalformedOutputPolicy:   input.Protocol.MalformedOutputPolicy,
-		StaleAnchorPolicy:       input.Protocol.StaleAnchorPolicy,
-		SourceBodyObligations:   append([]string(nil), input.Protocol.SourceBodyObligations...),
-		RequiredEditCoverage:    append([]string(nil), input.RequiredEditPaths...),
-		PathRoleSummary:         compileProtocolPathRoleSummary(contract.PathRoles),
-		VerificationObligations: compileProtocolVerificationObligations(input),
-		RequiredTools:           append([]string(nil), input.RequiredTools...),
-		ReadinessGate:           append([]string(nil), input.ReadinessGate...),
-		Constraints:             append([]string(nil), input.Constraints...),
-		InvalidActions:          append([]string(nil), input.InvalidActions...),
-		RecoveryBudget:          input.Protocol.RecoveryBudget,
-		ActiveInvariantID:       InvariantActiveAuthority,
+		ContractID:               contract.ContractID,
+		ContractVersion:          contract.SchemaVersion,
+		SchemaNames:              compileProtocolSchemaNames(input.Protocol.StructuredSchemaNames),
+		PhaseID:                  input.Protocol.PhaseID,
+		ParserMode:               firstNonEmpty(input.Protocol.ParserMode, runtime.ParserContract, runtime.ParserTransportMode),
+		ToolTransportMode:        runtime.ToolTransportMode,
+		ParserTransportMode:      runtime.ParserTransportMode,
+		ParserContract:           runtime.ParserContract,
+		NativeToolPolicy:         runtime.NativeToolPolicy,
+		SupportsNativeTools:      runtime.SupportsNativeTools,
+		ForceNativeTools:         runtime.ForceNativeTools,
+		ToolChoice:               runtime.ToolChoice,
+		ResponseFormat:           runtime.ResponseFormat,
+		ExpectedVisibleOutput:    input.Protocol.ExpectedVisibleOutput,
+		VisibleTools:             append([]string(nil), input.Protocol.VisibleTools...),
+		CallableTools:            append([]string(nil), input.Protocol.CallableTools...),
+		CallableActionClasses:    append([]string(nil), input.Protocol.CallableActionClasses...),
+		InvalidActionClasses:     append([]string(nil), input.Protocol.InvalidActionClasses...),
+		TerminalResponseShapes:   append([]string(nil), input.Protocol.TerminalResponseShapes...),
+		StructuredSchemaNames:    append([]string(nil), input.Protocol.StructuredSchemaNames...),
+		MalformedOutputPolicy:    input.Protocol.MalformedOutputPolicy,
+		StaleAnchorPolicy:        input.Protocol.StaleAnchorPolicy,
+		SourceBodyObligations:    append([]string(nil), input.Protocol.SourceBodyObligations...),
+		CompletedGitHistoryPaths: append([]string(nil), input.Protocol.CompletedGitHistoryPaths...),
+		PendingGitHistoryPaths:   append([]string(nil), input.Protocol.PendingGitHistoryPaths...),
+		RequiredEditCoverage:     append([]string(nil), input.RequiredEditPaths...),
+		PathRoleSummary:          compileProtocolPathRoleSummary(contract.PathRoles),
+		VerificationObligations:  compileProtocolVerificationObligations(input),
+		RequiredTools:            append([]string(nil), input.RequiredTools...),
+		ReadinessGate:            append([]string(nil), input.ReadinessGate...),
+		Constraints:              append([]string(nil), input.Constraints...),
+		InvalidActions:           append([]string(nil), input.InvalidActions...),
+		RecoveryBudget:           input.Protocol.RecoveryBudget,
+		ActiveInvariantID:        InvariantActiveAuthority,
 	}
 	if len(protocol.VisibleTools) == 0 {
 		protocol.VisibleTools = append([]string(nil), input.AllowedTools...)
@@ -266,6 +268,8 @@ func compileCompactPacketPathRefs(input PlanExecutePlannerInput) []string {
 	paths = append(paths, input.EvidencePaths...)
 	paths = append(paths, input.ChangedPaths...)
 	paths = append(paths, input.Protocol.SourceBodyObligations...)
+	paths = append(paths, input.Protocol.CompletedGitHistoryPaths...)
+	paths = append(paths, input.Protocol.PendingGitHistoryPaths...)
 
 	return uniquePaths(paths)
 }
@@ -477,7 +481,12 @@ func compileObligations(input PlanExecutePlannerInput) []autonomy.Obligation {
 		})
 	}
 
-	for _, evidence := range uniqueStrings(append(append([]string(nil), input.RequiredEvidence...), input.Protocol.SourceBodyObligations...)) {
+	evidenceRefs := append([]string(nil), input.RequiredEvidence...)
+	evidenceRefs = append(evidenceRefs, input.Protocol.SourceBodyObligations...)
+	evidenceRefs = append(evidenceRefs, input.Protocol.CompletedGitHistoryPaths...)
+	evidenceRefs = append(evidenceRefs, input.Protocol.PendingGitHistoryPaths...)
+
+	for _, evidence := range uniqueStrings(evidenceRefs) {
 		evidence = strings.TrimSpace(evidence)
 		if evidence == "" {
 			continue

@@ -366,25 +366,7 @@ func planExecuteUnquoteMarkdown(text string) string {
 }
 
 func planExecuteImplicitNewFileBodyContext(contextText string) bool {
-	_, roots := plancontract.CompileLegacyNewFileAuthorization(contextText, nil, []string{"generated"})
-	return len(roots) > 0
-}
-
-func planExecuteNewFileAuthorizedForPath(contextText string, path string) bool {
-	files, _ := plancontract.CompileLegacyNewFileAuthorization(contextText, []string{path}, nil)
-	return len(files) > 0
-}
-
-func planExecuteCompileLegacyAuthorizedNewFiles(contextText string, candidatePaths []string) []string {
-	files, _ := plancontract.CompileLegacyNewFileAuthorization(contextText, candidatePaths, nil)
-
-	var paths []string
-
-	for _, file := range files {
-		if path := plancontract.NormalizeScopePath(file.Path); path != "" {
-			paths = append(paths, path)
-		}
-	}
-
-	return mergePlanExecutePaths(paths)
+	lower := strings.ToLower(contextText)
+	return strings.Contains(lower, "following content") ||
+		strings.Contains(lower, "full file body")
 }

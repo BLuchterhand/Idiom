@@ -61,6 +61,8 @@ type PlanExecuteFailureInput struct {
 	PlanPath          string
 	PlanID            string
 	PackID            string
+	ParentAtomID      string
+	ParentAtomTitle   string
 	LockedContract    *ContractSnapshot
 	RequiredEditPaths []string
 	AllowedEditPaths  []string
@@ -109,6 +111,8 @@ type SourceRun struct {
 	PlanPath          string   `json:"plan_path,omitempty"`
 	PlanID            string   `json:"plan_id,omitempty"`
 	PackID            string   `json:"pack_id,omitempty"`
+	ParentAtomID      string   `json:"parent_atom_id,omitempty"`
+	ParentAtomTitle   string   `json:"parent_atom_title,omitempty"`
 	RequiredEditPaths []string `json:"required_edit_paths,omitempty"`
 	AllowedEditPaths  []string `json:"allowed_edit_paths,omitempty"`
 }
@@ -253,6 +257,8 @@ func BuildPlanExecuteFailureRecord(input PlanExecuteFailureInput, now time.Time)
 			PlanPath:          cleanRelPath(input.PlanPath),
 			PlanID:            strings.TrimSpace(input.PlanID),
 			PackID:            strings.TrimSpace(input.PackID),
+			ParentAtomID:      strings.TrimSpace(input.ParentAtomID),
+			ParentAtomTitle:   strings.TrimSpace(input.ParentAtomTitle),
 			RequiredEditPaths: cleanPathList(input.RequiredEditPaths),
 			AllowedEditPaths:  cleanPathList(input.AllowedEditPaths),
 		},
@@ -563,6 +569,8 @@ func cleanSourceRun(source SourceRun) SourceRun {
 		PlanPath:          cleanRelPath(source.PlanPath),
 		PlanID:            strings.TrimSpace(source.PlanID),
 		PackID:            strings.TrimSpace(source.PackID),
+		ParentAtomID:      strings.TrimSpace(source.ParentAtomID),
+		ParentAtomTitle:   strings.TrimSpace(source.ParentAtomTitle),
 		RequiredEditPaths: cleanPathList(source.RequiredEditPaths),
 		AllowedEditPaths:  cleanPathList(source.AllowedEditPaths),
 	}

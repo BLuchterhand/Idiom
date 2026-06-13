@@ -763,7 +763,7 @@ func TestRunPlanExecuteMainAutoExactPlanInfersUnlabeledMultiFileAndNewFile(t *te
 	modelCalled := false
 
 	code := RunMain(
-		[]string{"-config", configPath, "-prompt", prompt, "-json", "-skip-review-repair"},
+		[]string{"-config", configPath, "-prompt", prompt, "-json", "-skip-review-repair", "-authorized-new-file", "c.json"},
 		&stdout,
 		&stderr,
 		func(_ config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {

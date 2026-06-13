@@ -137,20 +137,22 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 			EnforcementMode:  "report_only",
 		},
 		Protocol: contractcompile.ProtocolInput{
-			PhaseID:                phase.PhaseID,
-			ParserMode:             phase.RuntimeCall.ParserContract,
-			ExpectedVisibleOutput:  phase.RuntimeCall.ExpectedVisibleOutput,
-			VisibleTools:           visibleTools,
-			CallableTools:          callableTools,
-			CallableToolsSpecified: true,
-			CallableActionClasses:  callableActionClasses,
-			InvalidActionClasses:   invalidActionClasses,
-			TerminalResponseShapes: append([]string(nil), phase.ActionPolicy.TerminalResponseShapes...),
-			StructuredSchemaNames:  modelProtocolStructuredSchemas(phase),
-			MalformedOutputPolicy:  "retry_same_protocol_hash",
-			StaleAnchorPolicy:      "bounded_source_refresh_before_submit_plan",
-			SourceBodyObligations:  modelProtocolSourceBodyObligations(brief, results, phase),
-			RecoveryBudget:         modelProtocolRecoveryBudget(phase),
+			PhaseID:                  phase.PhaseID,
+			ParserMode:               phase.RuntimeCall.ParserContract,
+			ExpectedVisibleOutput:    phase.RuntimeCall.ExpectedVisibleOutput,
+			VisibleTools:             visibleTools,
+			CallableTools:            callableTools,
+			CallableToolsSpecified:   true,
+			CallableActionClasses:    callableActionClasses,
+			InvalidActionClasses:     invalidActionClasses,
+			TerminalResponseShapes:   append([]string(nil), phase.ActionPolicy.TerminalResponseShapes...),
+			StructuredSchemaNames:    modelProtocolStructuredSchemas(phase),
+			MalformedOutputPolicy:    "retry_same_protocol_hash",
+			StaleAnchorPolicy:        "bounded_source_refresh_before_submit_plan",
+			SourceBodyObligations:    modelProtocolSourceBodyObligations(brief, results, phase),
+			CompletedGitHistoryPaths: modelProtocolCompletedGitHistoryPaths(brief, results),
+			PendingGitHistoryPaths:   modelProtocolPendingGitHistoryPaths(brief, results),
+			RecoveryBudget:           modelProtocolRecoveryBudget(phase),
 		},
 		MetadataTags: []string{"phase1_report_only", "model_protocol_projection"},
 	}, true
@@ -292,6 +294,29 @@ func modelProtocolSourceBodyObligations(brief workerruntime.WorkerRuntimeBrief, 
 	return uniqueSortedRunnerPaths(paths)
 }
 
+func modelProtocolCompletedGitHistoryPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
+	if !mutationHistoryEvidenceRequired(brief) {
+		return nil
+	}
+
+	var paths []string
+	for _, path := range planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "") {
+		if successfulGitHistoryResultForPath(path, results) {
+			paths = append(paths, path)
+		}
+	}
+
+	return uniqueSortedRunnerPaths(paths)
+}
+
+func modelProtocolPendingGitHistoryPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
+	if !mutationHistoryEvidenceRequired(brief) {
+		return nil
+	}
+
+	return planThenExecuteHistoryPendingPaths(brief, results, planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, ""))
+}
+
 func modelProtocolRecoveryBudget(phase TurnPhaseContract) int {
 	switch phase.PhaseID {
 	case turnPhaseMalformedSubmitPlanRecovery, turnPhaseStaleAnchorRefresh:
@@ -343,34 +368,36 @@ func modelProtocolToolChoice(toolChoice string) string {
 
 func modelProtocolEventPayload(protocol contractcompile.ModelProtocolProjection) autonomy.ModelProtocolEvent {
 	return autonomy.ModelProtocolEvent{
-		SchemaVersion:           modelProtocolProjectionSchemaVersion,
-		ContractID:              protocol.ContractID,
-		ContractVersion:         protocol.ContractVersion,
-		ProtocolHash:            protocol.ProtocolHash,
-		PhaseID:                 protocol.PhaseID,
-		ParserMode:              protocol.ParserMode,
-		ToolTransportMode:       protocol.ToolTransportMode,
-		ParserTransportMode:     protocol.ParserTransportMode,
-		ParserContract:          protocol.ParserContract,
-		NativeToolPolicy:        protocol.NativeToolPolicy,
-		SupportsNativeTools:     protocol.SupportsNativeTools,
-		ForceNativeTools:        protocol.ForceNativeTools,
-		ToolChoice:              protocol.ToolChoice,
-		ResponseFormat:          protocol.ResponseFormat,
-		ExpectedVisibleOutput:   protocol.ExpectedVisibleOutput,
-		VisibleTools:            append([]string(nil), protocol.VisibleTools...),
-		CallableTools:           append([]string(nil), protocol.CallableTools...),
-		CallableActionClasses:   append([]string(nil), protocol.CallableActionClasses...),
-		InvalidActionClasses:    append([]string(nil), protocol.InvalidActionClasses...),
-		TerminalResponseShapes:  append([]string(nil), protocol.TerminalResponseShapes...),
-		SourceBodyObligations:   append([]string(nil), protocol.SourceBodyObligations...),
-		RequiredEditCoverage:    append([]string(nil), protocol.RequiredEditCoverage...),
-		PathRoleSummary:         append([]string(nil), protocol.PathRoleSummary...),
-		VerificationObligations: append([]string(nil), protocol.VerificationObligations...),
-		SafeAlternatives:        append([]string(nil), protocol.SafeAlternatives...),
-		MalformedOutputPolicy:   protocol.MalformedOutputPolicy,
-		RecoveryBudget:          protocol.RecoveryBudget,
-		ActiveInvariantID:       protocol.ActiveInvariantID,
+		SchemaVersion:            modelProtocolProjectionSchemaVersion,
+		ContractID:               protocol.ContractID,
+		ContractVersion:          protocol.ContractVersion,
+		ProtocolHash:             protocol.ProtocolHash,
+		PhaseID:                  protocol.PhaseID,
+		ParserMode:               protocol.ParserMode,
+		ToolTransportMode:        protocol.ToolTransportMode,
+		ParserTransportMode:      protocol.ParserTransportMode,
+		ParserContract:           protocol.ParserContract,
+		NativeToolPolicy:         protocol.NativeToolPolicy,
+		SupportsNativeTools:      protocol.SupportsNativeTools,
+		ForceNativeTools:         protocol.ForceNativeTools,
+		ToolChoice:               protocol.ToolChoice,
+		ResponseFormat:           protocol.ResponseFormat,
+		ExpectedVisibleOutput:    protocol.ExpectedVisibleOutput,
+		VisibleTools:             append([]string(nil), protocol.VisibleTools...),
+		CallableTools:            append([]string(nil), protocol.CallableTools...),
+		CallableActionClasses:    append([]string(nil), protocol.CallableActionClasses...),
+		InvalidActionClasses:     append([]string(nil), protocol.InvalidActionClasses...),
+		TerminalResponseShapes:   append([]string(nil), protocol.TerminalResponseShapes...),
+		SourceBodyObligations:    append([]string(nil), protocol.SourceBodyObligations...),
+		CompletedGitHistoryPaths: append([]string(nil), protocol.CompletedGitHistoryPaths...),
+		PendingGitHistoryPaths:   append([]string(nil), protocol.PendingGitHistoryPaths...),
+		RequiredEditCoverage:     append([]string(nil), protocol.RequiredEditCoverage...),
+		PathRoleSummary:          append([]string(nil), protocol.PathRoleSummary...),
+		VerificationObligations:  append([]string(nil), protocol.VerificationObligations...),
+		SafeAlternatives:         append([]string(nil), protocol.SafeAlternatives...),
+		MalformedOutputPolicy:    protocol.MalformedOutputPolicy,
+		RecoveryBudget:           protocol.RecoveryBudget,
+		ActiveInvariantID:        protocol.ActiveInvariantID,
 	}
 }
 

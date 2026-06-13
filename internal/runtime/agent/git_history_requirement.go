@@ -436,6 +436,35 @@ func gitHistoryEvidenceRequiredMessage(paths []string) string {
 	return fmt.Sprintf("git history rationale is required before changing established logic for %s. Use `history_range` or `history_symbol` on the intended logic, read the commit descriptions to understand why and when the current behavior was introduced, then make the write only if that history supports the proposed change. If history shows the change is unsafe, answer `<<QUESTION>>:` with the blocker; genuinely new files do not require history evidence.", target)
 }
 
+func planThenExecuteUnavailableHistoryToolNudge(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, allowedTools []string) (string, string, bool) {
+	tool := strings.TrimSpace(req.Tool)
+	if tool != workspace.ToolNameHistoryRange && tool != workspace.ToolNameHistorySymbol {
+		return "", "", false
+	}
+
+	if runnerAllowsTool(allowedTools, tool) || !mutationHistoryEvidenceRequired(brief) {
+		return "", "", false
+	}
+
+	completed := modelProtocolCompletedGitHistoryPaths(brief, results)
+	pending := modelProtocolPendingGitHistoryPaths(brief, results)
+	sourcePending := modelProtocolSourceBodyObligations(brief, results, TurnPhaseContract{PhaseID: turnPhaseRequiredSource})
+
+	if len(completed) == 0 && len(pending) > 0 {
+		return "", "", false
+	}
+
+	summary := "Git history tool not available in current plan-execute phase"
+	switch {
+	case len(pending) == 0 && len(sourcePending) > 0:
+		return summary, fmt.Sprintf("%s is not callable because git history evidence is already satisfied for completed paths %s. The current pending obligation is source-body evidence for %s; use an available source read tool instead of repeating history_range/history_symbol.", tool, quotedRunnerStrings(completed), quotedRunnerStrings(sourcePending)), true
+	case len(pending) == 0:
+		return summary, fmt.Sprintf("%s is not callable because required git history evidence is already satisfied for completed paths %s. Continue with the current allowed tool surface or submit the next valid terminal action.", tool, quotedRunnerStrings(completed)), true
+	default:
+		return summary, fmt.Sprintf("%s is not callable in the current phase. Completed git history paths: %s. Pending git history paths: %s. Use the current allowed tool surface or wait for the history_pending phase before calling history tools.", tool, quotedRunnerStrings(completed), quotedRunnerStrings(pending)), true
+	}
+}
+
 func (r *Runner) preflightPlanThenExecuteSubmitPlanHistoryGuard(req workspace.ToolRequest, results []workspace.ToolResult) verificationInterceptResult {
 	if r == nil || !r.planThenExecutePlanSubmissionPhase() || strings.TrimSpace(req.Tool) != workspace.ToolNameSubmitPlan {
 		return verificationInterceptResult{}

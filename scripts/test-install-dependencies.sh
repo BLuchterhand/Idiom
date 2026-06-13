@@ -6,9 +6,9 @@ usage() {
 Usage: scripts/test-install-dependencies.sh [--manifest-only]
 
 Validates install dependency coverage for scripts/install-requirements.sh.
-The default mode checks every macOS default and --all dependency command that
-the manifest says the installer owns. Use --manifest-only for local structural
-checks without requiring host tool installation.
+The default mode checks every macOS/Linux default and --all dependency command
+that the manifest says the installer owns. Use --manifest-only for local
+structural checks without requiring host tool installation.
 USAGE
 }
 
@@ -33,7 +33,7 @@ done
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
-export PATH="$HOME/.local/bin:$HOME/Library/Python/3.12/bin:$HOME/Library/Python/3.11/bin:$HOME/Library/Python/3.10/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/Library/Python/3.12/bin:$HOME/Library/Python/3.11/bin:$HOME/Library/Python/3.10/bin:$(go env GOPATH 2>/dev/null || printf '%s/go' "$HOME")/bin:$PATH"
 
 expected_ids=(
   ast_grep

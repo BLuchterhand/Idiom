@@ -1,5 +1,5 @@
 {
-  "default_profile": "ds4",
+  "default_profile": "deepseek-v4-flash",
   "profiles": {
     "all-gpt-5.5-high": {
       "models": [
@@ -51,6 +51,32 @@
         "default_planner": "deepseek-v4-pro",
         "default_executor": "deepseek-v4-pro",
         "default_classifier": "deepseek-v4-pro"
+      }
+    },
+    "deepseek-v4-flash": {
+      "models": [
+        {
+          "alias": "deepseek-v4-flash",
+          "binary": "",
+          "model_path": "",
+          "model": "deepseek-v4-flash",
+          "port": 0,
+          "kind": "deepseek",
+          "api_key_env": "DEEPSEEK_API_KEY",
+          "reasoning_effort": "high",
+          "roles": [
+            "planner",
+            "executor",
+            "classifier"
+          ]
+        }
+      ],
+      "proxy": {
+        "default_alias": "deepseek-v4-flash",
+        "default_coder": "deepseek-v4-flash",
+        "default_planner": "deepseek-v4-flash",
+        "default_executor": "deepseek-v4-flash",
+        "default_classifier": "deepseek-v4-flash"
       }
     },
     "ds4": {

@@ -1095,6 +1095,10 @@ func replaceImplementationDispatchPlanDocument(planDocuments []implementationDis
 
 	for _, doc := range planDocuments {
 		if doc.Path == originalPath {
+			if len(refined.AuthorizedNewFiles) == 0 {
+				refined.AuthorizedNewFiles = append([]string{}, doc.AuthorizedNewFiles...)
+			}
+
 			out = append(out, refined)
 			replaced = true
 
@@ -1548,11 +1552,12 @@ func readImplementationDispatchPlanDocument(root string, ref string) (implementa
 	editPaths := implementationDispatchPlanDocumentPathsFromText(content, ref)
 
 	return implementationDispatchPlanDocument{
-		Path:            ref,
-		Content:         content,
-		EditPaths:       editPaths,
-		TestObligations: implementationDispatchDesignDocTestObligations(obligationContent),
-		ReferenceOnly:   len(editPaths) == 0 && !implementationDispatchIsAtomizedPlanDocumentPath(ref),
+		Path:               ref,
+		Content:            content,
+		EditPaths:          editPaths,
+		AuthorizedNewFiles: featureplanner.PlanExecuteAuthorizedNewFilesFromImplementorPrompt(content),
+		TestObligations:    implementationDispatchDesignDocTestObligations(obligationContent),
+		ReferenceOnly:      len(editPaths) == 0 && !implementationDispatchIsAtomizedPlanDocumentPath(ref),
 	}, true
 }
 
@@ -3309,6 +3314,7 @@ func materializeImplementationDispatchPlanDocumentAtoms(cfg config.Config, planD
 				return nil, fmt.Errorf("materialized atom was not readable: %s", rel)
 			}
 
+			atomDoc.AuthorizedNewFiles = implementationDispatchAtomAuthorizedNewFiles(doc, atom.Path)
 			atomDocuments = append(atomDocuments, atomDoc)
 		}
 	}
@@ -3610,6 +3616,14 @@ func composeImplementationDispatchPlanDocumentAtom(source implementationDispatch
 	b.WriteString("> ")
 	b.WriteString(strings.ReplaceAll(excerpt, "\n", "\n> "))
 	b.WriteString("\n\n")
+
+	if implementationDispatchPathAuthorizedByDocument(source, path) {
+		b.WriteString("Typed plan execution contract:\n")
+		b.WriteString(fmt.Sprintf("{\"authorized_new_files\":[{\"path\":%q}]}\n", path))
+		b.WriteString("Typed plan authority projection:\n")
+		b.WriteString(fmt.Sprintf("{\"atom_id\":\"atom-%03d\"}\n\n", index))
+	}
+
 	b.WriteString("Dispatch contract:\n\n")
 	b.WriteString("- If the Host current-state anchors already show this atom's requested final state, close the refined brief as `Status: source-satisfied - do not dispatch` and cite the exact path evidence; do not invent a no-op edit.\n")
 	b.WriteString("- If this atom has Design Doc Test Obligations, source-satisfied closeout must cite matching test evidence as well as source evidence.\n")
@@ -3649,6 +3663,25 @@ func composeImplementationDispatchPlanDocumentAtom(source implementationDispatch
 	b.WriteString(quoteImplementationDispatchReference(truncateImplementationDispatchText(source.Content, 30000)))
 
 	return b.String()
+}
+
+func implementationDispatchPathAuthorizedByDocument(doc implementationDispatchPlanDocument, path string) bool {
+	return len(implementationDispatchAtomAuthorizedNewFiles(doc, path)) > 0
+}
+
+func implementationDispatchAtomAuthorizedNewFiles(doc implementationDispatchPlanDocument, path string) []string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+
+	for _, authorized := range implementationDispatchAuthorizedNewFiles("", []implementationDispatchPlanDocument{doc}) {
+		if strings.TrimSpace(authorized) == path {
+			return []string{path}
+		}
+	}
+
+	return nil
 }
 
 func implementationDispatchWorkspaceRoot(cfg config.Config) string {
@@ -3930,7 +3963,7 @@ func (m *Model) runImplementationViaPlanExecute(ctx context.Context, prompt stri
 	if implementationDispatchPlanDocumentsShouldPreAtomize(planDocuments) {
 		m.logMessage("dispatch_atomize", "referenced design document exceeds single-purpose dispatch limits; materializing atom briefs before plan-execute")
 
-		m.events <- infoMsg{text: "Materializing design document atoms before plan-execute..."}
+		m.queueUIEvent(infoMsg{text: "Materializing design document atoms before plan-execute..."})
 
 		atomDocuments, err := materializeImplementationDispatchPlanDocumentAtoms(m.cfg, planDocuments)
 		if err != nil {
@@ -3964,7 +3997,7 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 	if implementationDispatchPlanDocumentsNeedRefineBeforeDispatch(planDocuments) {
 		m.logMessage("dispatch_refine", "materialized design-doc atom requires refine before plan-execute")
 
-		m.events <- infoMsg{text: "Refining materialized design-doc atom before plan-execute..."}
+		m.queueUIEvent(infoMsg{text: "Refining materialized design-doc atom before plan-execute..."})
 
 		var refineResults []implementationDispatchPlanDocumentRefineResult
 
@@ -4039,7 +4072,7 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 		if implementationDispatchPreflightNeedsAtomization(blocked) && implementationDispatchCanAtomizePlanDocuments(planDocuments) {
 			m.logMessage("dispatch_atomize", "preflight requested sub-atoms; materializing atom briefs before plan-execute")
 
-			m.events <- infoMsg{text: "Materializing design document atoms before plan-execute..."}
+			m.queueUIEvent(infoMsg{text: "Materializing design document atoms before plan-execute..."})
 
 			atomDocuments, err := materializeImplementationDispatchPlanDocumentAtoms(m.cfg, planDocuments)
 			if err != nil {
@@ -4052,7 +4085,7 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 		if implementationDispatchPreflightCanRefine(blocked) {
 			m.logMessage("dispatch_refine", "preflight found non-dispatchable plan document shape; running refine before plan-execute")
 
-			m.events <- infoMsg{text: "Refining referenced plan document before plan-execute..."}
+			m.queueUIEvent(infoMsg{text: "Refining referenced plan document before plan-execute..."})
 
 			var refineResults []implementationDispatchPlanDocumentRefineResult
 
@@ -4128,7 +4161,7 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 				if implementationDispatchPreflightNeedsAtomization(refinedBlocked) && implementationDispatchCanAtomizePlanDocuments(planDocuments) {
 					m.logMessage("dispatch_atomize", "refined brief still exceeds single-purpose limits; materializing atom briefs before plan-execute")
 
-					m.events <- infoMsg{text: "Materializing refined design document atoms before plan-execute..."}
+					m.queueUIEvent(infoMsg{text: "Materializing refined design document atoms before plan-execute..."})
 
 					atomDocuments, err := materializeImplementationDispatchPlanDocumentAtoms(m.cfg, planDocuments)
 					if err != nil {
@@ -4349,30 +4382,31 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 		AllowedEditPaths:   allowedPaths,
 		EditSetObligations: editSetObligations,
 		ScopeContract:      scopeContract,
+		AuthorizedNewFiles: implementationDispatchAuthorizedNewFiles(prompt, planDocuments),
 		MaxTokens:          implementationDispatchPlanExecuteMaxTokens(m.cfg.Workspace.Root, prompt, requiredPaths, allowedPaths, planDocuments),
 		OnPhase: func(phase, detail string) {
-			m.events <- planPhaseMsg{phase: phase, detail: detail}
+			m.queueUIEvent(planPhaseMsg{phase: phase, detail: detail})
 		},
 		OnEditProgress: func(step, total int, path string, succeeded bool) {
 			if succeeded {
 				m.attachWriteToSubmittedEdit(path, fmt.Sprintf("pe-%d", step-1))
 			}
 
-			m.events <- planRefreshMsg{}
+			m.queueUIEvent(planRefreshMsg{})
 
 			label := "succeeded"
 			if !succeeded {
 				label = "failed"
 			}
 
-			m.events <- planPhaseMsg{phase: "executing", detail: fmt.Sprintf("Edit %d/%d %s (%s)", step, total, filepath.Base(path), label)}
+			m.queueUIEvent(planPhaseMsg{phase: "executing", detail: fmt.Sprintf("Edit %d/%d %s (%s)", step, total, filepath.Base(path), label)})
 		},
 	}
 	promptRun := m.newPlanExecutePromptRunner(ctx)
 
 	m.logMessage("dispatch", "invoking plan-execute in-process")
 
-	m.events <- infoMsg{text: "Dispatching to plan-execute..."}
+	m.queueUIEvent(infoMsg{text: "Dispatching to plan-execute..."})
 
 	var outBuf, errBuf bytes.Buffer
 
@@ -4585,6 +4619,16 @@ func implementationDispatchPlanExecuteRunFailureKind(result planexecute.RunResul
 	return implementationDispatchPlanExecuteFailureKindFromString(result.FailureKind)
 }
 
+func implementationDispatchAuthorizedNewFiles(prompt string, planDocuments []implementationDispatchPlanDocument) []string {
+	paths := append([]string{}, featureplanner.PlanExecuteAuthorizedNewFilesFromImplementorPrompt(prompt)...)
+	for _, doc := range planDocuments {
+		paths = append(paths, doc.AuthorizedNewFiles...)
+		paths = append(paths, featureplanner.PlanExecuteAuthorizedNewFilesFromImplementorPrompt(doc.Content)...)
+	}
+
+	return uniqueImplementationDispatchPaths(paths)
+}
+
 func implementationDispatchPlanExecuteRunFailureIs(result planexecute.RunResult, kind implementationDispatchPlanExecuteFailureKind) bool {
 	return implementationDispatchPlanExecuteRunFailureKind(result) == kind
 }
@@ -4748,7 +4792,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		retryOptions.Prompt = appendDiscoveredCandidateScopeAddendum(failure.Options.Prompt, allowedPaths)
 		m.logMessage("dispatch_recovery", fmt.Sprintf("retrying plan-execute with discovered candidate scope: %s", strings.Join(allowedPaths, ", ")))
 
-		m.events <- infoMsg{text: "Retrying plan-execute with discovered candidate scope..."}
+		m.queueUIEvent(infoMsg{text: "Retrying plan-execute with discovered candidate scope..."})
 
 		var retryOut, retryErr bytes.Buffer
 
@@ -4795,7 +4839,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 
 		m.logMessage("dispatch_recovery", fmt.Sprintf("planner_blocked decision=retry reason=required source read blocker for %s", path))
 
-		m.events <- infoMsg{text: "Retrying plan-execute after required source-read blocker..."}
+		m.queueUIEvent(infoMsg{text: "Retrying plan-execute after required source-read blocker..."})
 
 		var retryOut, retryErr bytes.Buffer
 
@@ -4844,7 +4888,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 
 		m.logMessage("dispatch_recovery", "retrying plan-execute on active model after previous planner attempt failed to produce a valid submit_plan")
 
-		m.events <- infoMsg{text: "Retrying plan-execute on active model..."}
+		m.queueUIEvent(infoMsg{text: "Retrying plan-execute on active model..."})
 
 		var retryOut, retryErr bytes.Buffer
 
@@ -4897,7 +4941,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 
 		m.logMessage("dispatch_recovery", "retrying plan-execute after planner_blocked decision")
 
-		m.events <- infoMsg{text: "Retrying plan-execute after planner recovery decision..."}
+		m.queueUIEvent(infoMsg{text: "Retrying plan-execute after planner recovery decision..."})
 
 		var retryOut, retryErr bytes.Buffer
 
@@ -4969,7 +5013,7 @@ func (m *Model) handlePlanExecuteMissingEditRetry(ctx context.Context, failure i
 	retryOptions.Prompt = spec.appendAddendum(failure.Options.Prompt, allowedPaths)
 	m.logMessage("dispatch_recovery", fmt.Sprintf(spec.retryLog, strings.Join(allowedPaths, ", ")))
 
-	m.events <- infoMsg{text: spec.retryInfo}
+	m.queueUIEvent(infoMsg{text: spec.retryInfo})
 
 	var retryOut, retryErr bytes.Buffer
 

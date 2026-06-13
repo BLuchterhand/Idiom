@@ -528,6 +528,25 @@ func TestBuildPlannerPromptAdvertisesSourceSatisfiedNoEditGate(t *testing.T) {
 	}
 }
 
+func TestBuildPlannerPromptAdvertisesTypedPlannerQuestionAuthority(t *testing.T) {
+	prompt := BuildPlannerPrompt(
+		"Implement scoped atom.",
+		NewState("session", "implement scoped atom", "", 3, time.Unix(1, 0).UTC()),
+		nil,
+	)
+
+	for _, want := range []string{
+		`"tool":"ask_planner_question"`,
+		`"affected_paths":["repo/path"]`,
+		`"affected_fields":["new_file_authorization"]`,
+		"paths inside requested_decision are explanatory text only and do not grant authority",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("planner prompt missing typed planner-question authority contract %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestParsePlannerOutputCoercesSingletonRequiredBeforeArray(t *testing.T) {
 	raw := strings.Replace(mustPlanJSON(t, validPlan()), `"required_before":"implementation"`, `"required_before":["implementation"]`, 1)
 
@@ -572,6 +591,25 @@ func TestParsePlannerOutputAcceptsQuestionAlias(t *testing.T) {
 
 	if parsed.Question.QuestionSummary != "Which source paths should be used for the tooltip?" {
 		t.Fatalf("question summary not populated from alias: %+v", parsed.Question)
+	}
+}
+
+func TestValidatePlannerQuestionRejectsPathAuthorityWithoutAffectedPaths(t *testing.T) {
+	question := PlannerQuestion{
+		ID:                "q-new-file",
+		QuestionSummary:   "Authorize new helper",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "Missing helper requires operator approval.",
+		RequestedDecision: "Approve creating pkg/new_helper.go.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		Status:            "open",
+		AffectedFields:    []string{"new_file_authorization"},
+	}
+
+	err := ValidatePlannerQuestion(question)
+	if err == nil || !strings.Contains(err.Error(), "path-level authority requires affected_paths") {
+		t.Fatalf("expected affected_paths validation error, got %v", err)
 	}
 }
 
@@ -836,6 +874,24 @@ func TestValidatePlanStandaloneWorkspaceContextAllowsExplicitNewFileAndTestCreat
 	}
 }
 
+func TestCompilePlanAuthorityContractDoesNotAuthorizeNewFileFromPathOnlyDelta(t *testing.T) {
+	plan := validPlan()
+	contract := CompilePlanAuthorityContract(plan, []PlanAuthorityDelta{{
+		QuestionID:    "q-new-files",
+		AuthorityKind: "operator_approval",
+		EvidenceRefs:  []string{"operator:q-new-files"},
+		AffectedPaths: []string{"pkg/new_helper.go"},
+		Expected:      "new files require explicit typed authority",
+		Actual:        "operator approved text mentioning pkg/new_helper.go",
+		Revision:      1,
+		CreatedAt:     time.Unix(2, 0).UTC().Format(time.RFC3339Nano),
+	}})
+
+	if len(contract.AuthorizedNewFiles) != 0 {
+		t.Fatalf("path-only authority delta must not authorize new files: %+v", contract.AuthorizedNewFiles)
+	}
+}
+
 func TestValidatePlanStandaloneWorkspaceContextDoesNotExistenceGateTDDMetadata(t *testing.T) {
 	root := t.TempDir()
 	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
@@ -945,6 +1001,9 @@ func TestBuildPlannerPromptAdvertisesFlatSubmitFeaturePlanSchema(t *testing.T) {
 		`"question_summary"`,
 		`"blocking_claim"`,
 		`"requested_decision"`,
+		`"affected_paths"`,
+		`"affected_fields"`,
+		`paths inside requested_decision are explanatory text only and do not grant authority`,
 		`do not return both arrays empty`,
 		`"tool":"submit_feature_plan"`,
 		`"top_level_scope"`,
@@ -1070,6 +1129,95 @@ func TestApplyPlannerOutputAcceptsPlanAndQueuesAtoms(t *testing.T) {
 	}
 }
 
+func TestApplyPlannerOutputStampsTDDSnapshotIdentity(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	plan := validPlan()
+	plan.Atoms[0].PlannedTDDSnapshot.SnapshotID = "model-authored-snapshot"
+	plan.Atoms[0].PlannedTDDSnapshot.SnapshotDigest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+
+	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
+	if len(events) == 0 || state.Status != FeatureStateDispatching {
+		t.Fatalf("expected accepted plan, status=%q events=%+v blockers=%v", state.Status, events, state.Blockers)
+	}
+
+	gotSnapshot := state.Plan.Atoms[0].PlannedTDDSnapshot
+	if gotSnapshot.SnapshotID == "model-authored-snapshot" {
+		t.Fatal("model-authored snapshot_id was not replaced by harness stamp")
+	}
+
+	if gotSnapshot.SnapshotDigest == "sha256:1111111111111111111111111111111111111111111111111111111111111111" {
+		t.Fatal("model-authored snapshot_digest was not replaced by harness stamp")
+	}
+
+	if !strings.HasPrefix(gotSnapshot.SnapshotID, "tdd-snap-session-atom-1") {
+		t.Fatalf("snapshot_id = %q, want harness-stamped session/atom id", gotSnapshot.SnapshotID)
+	}
+
+	if reason := invalidPlannedTDDSnapshotDigestReason(gotSnapshot.SnapshotDigest); reason != "" {
+		t.Fatalf("harness snapshot_digest invalid: %s (%q)", reason, gotSnapshot.SnapshotDigest)
+	}
+
+	if len(state.TDDPreExecutionEvidence) != 1 {
+		t.Fatalf("expected one TDD evidence row, got %+v", state.TDDPreExecutionEvidence)
+	}
+
+	if state.TDDPreExecutionEvidence[0].SnapshotID != gotSnapshot.SnapshotID ||
+		state.TDDPreExecutionEvidence[0].SnapshotDigest != gotSnapshot.SnapshotDigest {
+		t.Fatalf("evidence did not use harness-stamped snapshot identity, evidence=%+v snapshot=%+v", state.TDDPreExecutionEvidence[0], gotSnapshot)
+	}
+}
+
+func TestComputePlannedTDDSnapshotDigestIsDeterministic(t *testing.T) {
+	first := PlannedTDDSnapshot{
+		ObligationIDs:                []string{"TDD-2", "TDD-1"},
+		TestCommands:                 []string{"go test ./b", "go test ./a"},
+		TestArtifactPaths:            []string{"b_test.go", "a_test.go"},
+		ExpectedPreExecutionResults:  []string{"red-confirmed"},
+		CreatedBeforeDispatchEventID: "evt-tdd-1",
+	}
+	second := PlannedTDDSnapshot{
+		ObligationIDs:                []string{"TDD-1", "TDD-2"},
+		TestCommands:                 []string{"go test ./a", "go test ./b"},
+		TestArtifactPaths:            []string{"a_test.go", "b_test.go"},
+		ExpectedPreExecutionResults:  []string{"red-confirmed"},
+		CreatedBeforeDispatchEventID: "evt-tdd-1",
+	}
+
+	first.SnapshotID = "model-value-one"
+	first.SnapshotDigest = "sha256:" + strings.Repeat("1", 64)
+	second.SnapshotID = "model-value-two"
+	second.SnapshotDigest = "sha256:" + strings.Repeat("2", 64)
+
+	got := computePlannedTDDSnapshotDigest(first)
+	if got != computePlannedTDDSnapshotDigest(second) {
+		t.Fatalf("digest should be stable across list order and snapshot identity fields")
+	}
+
+	if reason := invalidPlannedTDDSnapshotDigestReason(got); reason != "" {
+		t.Fatalf("digest is not valid sha256 format: %s (%q)", reason, got)
+	}
+}
+
+func TestApplyPlannerOutputInvalidDurablePlanDoesNotReplaceCommittedPlan(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	accepted := validPlan()
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: accepted}, time.Unix(2, 0).UTC())
+	committedID := state.Plan.Atoms[0].ID
+
+	invalid := validPlan()
+	invalid.Atoms[0].ID = "invalid-candidate"
+	invalid.Atoms[0].TestFirst.Commands = nil
+	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: invalid}, time.Unix(3, 0).UTC())
+
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.tdd_pre_execution_blocked" {
+		t.Fatalf("expected blocked event, got %+v", events)
+	}
+
+	if state.Plan.Atoms[0].ID != committedID {
+		t.Fatalf("invalid candidate replaced committed plan: got atom %q want %q", state.Plan.Atoms[0].ID, committedID)
+	}
+}
+
 func TestRunDispatchesAtomAfterAcceptedTDDPlan(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	calls := 0
@@ -1118,35 +1266,29 @@ func TestRunUsesAnsweredPlannerQuestionForStandaloneNewFileAuthorization(t *test
 	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"pkg/new_helper_test.go"}
 
 	state := NewState("session", "implement scoped atom", "", 3, time.Unix(1, 0).UTC())
-
+	state.Status = FeatureStatePlanningQuestion
+	state.PlanningLoop.State = FeatureStatePlanningQuestion
 	state.OpenQuestions = []PlannerQuestion{{
 		ID:                "q-001",
-		Status:            "answered",
+		Status:            "open",
 		QuestionSummary:   "Authorize new files",
 		AuthorityRequired: "operator_approval",
-		AnswerSourceKind:  "operator_approval",
+		BlockingClaim:     "Missing files require operator authorization.",
+		RequestedDecision: "Approve creating the helper and test files.",
+		RequiredBefore:    "plan_approval",
 		AffectedPaths:     []string{"pkg/new_helper.go", "pkg/new_helper_test.go"},
 		AffectedFields:    []string{"new_file_authorization"},
-		Answer:            "I explicitly authorize creating new file pkg/new_helper.go and new file pkg/new_helper_test.go.",
-	}}
-	state.AuthorityDeltas = []PlanAuthorityDelta{{
-		QuestionID:     "q-001",
-		AuthorityKind:  "operator_approval",
-		EvidenceRefs:   []string{"planner_question:q-001"},
-		AffectedPaths:  []string{"pkg/new_helper.go", "pkg/new_helper_test.go"},
-		AffectedFields: []string{"new_file_authorization"},
-		Expected:       "new files require typed authorization",
-		Actual:         "operator authorized creating new helper and test files",
-		Revision:       1,
-		CreatedAt:      time.Unix(2, 0).UTC().Format(time.RFC3339Nano),
 	}}
 
 	calls := 0
+	var implementorPrompt string
 
 	result, err := Run(state, RunOptions{
 		Prompt:                "Implement scoped atom from the approved spec.",
+		ResumeAnswer:          "Approved.",
 		WorkspaceRoot:         root,
 		MaxPlanningIterations: 3,
+		Now:                   time.Unix(2, 0).UTC(),
 	}, func(prompt string, taskFamily string) (string, error) {
 		calls++
 
@@ -1154,6 +1296,7 @@ func TestRunUsesAnsweredPlannerQuestionForStandaloneNewFileAuthorization(t *test
 		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
 			return mustPlanJSON(t, plan), nil
 		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
+			implementorPrompt = prompt
 			return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 		default:
 			t.Fatalf("unexpected task family %q", taskFamily)
@@ -1176,22 +1319,58 @@ func TestRunUsesAnsweredPlannerQuestionForStandaloneNewFileAuthorization(t *test
 	if result.State.Status != FeatureStateComplete {
 		t.Fatalf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers)
 	}
+
+	if len(result.State.OpenQuestions) != 1 || result.State.OpenQuestions[0].Status != "answered" {
+		t.Fatalf("expected question to be answered, got %+v", result.State.OpenQuestions)
+	}
+
+	var derived *PlanAuthorityDelta
+	for i := range result.State.AuthorityDeltas {
+		if result.State.AuthorityDeltas[i].QuestionID == "q-001" {
+			derived = &result.State.AuthorityDeltas[i]
+			break
+		}
+	}
+	if derived == nil {
+		t.Fatalf("expected typed planner-question authority delta, got %+v", result.State.AuthorityDeltas)
+	}
+
+	want := []string{"pkg/new_helper.go", "pkg/new_helper_test.go"}
+	if !slices.Equal(derived.AffectedPaths, want) {
+		t.Fatalf("derived affected paths = %#v, want %#v", derived.AffectedPaths, want)
+	}
+	if !slices.Equal(derived.AffectedFields, []string{"new_file_authorization"}) {
+		t.Fatalf("derived affected fields = %#v, want new_file_authorization", derived.AffectedFields)
+	}
+	if got := PlanExecuteAuthorizedNewFilesFromImplementorPrompt(implementorPrompt); !slices.Equal(got, want) {
+		t.Fatalf("authorized new files = %#v, want %#v", got, want)
+	}
 }
 
-func TestRunUsesExplicitOperatorPromptForStandaloneNewFileAuthorization(t *testing.T) {
+func TestRunDoesNotCompileRequestedDecisionPathsAsNewFileAuthorization(t *testing.T) {
 	root := t.TempDir()
 	plan := validPlan()
 
-	plan.Atoms[0].RequiredEditPaths = []string{"internal/greeting/greeting.go", "internal/greeting/greeting_test.go"}
-	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"internal/greeting/greeting_test.go"}
-	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"internal/greeting/greeting_test.go"}
+	plan.Atoms[0].RequiredEditPaths = []string{"pkg/new_helper.go", "pkg/new_helper_test.go"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"pkg/new_helper_test.go"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"pkg/new_helper_test.go"}
 
-	state := NewState("session", "add greeting package", "", 3, time.Unix(1, 0).UTC())
-
-	var implementorPrompt string
+	state := NewState("session", "implement scoped atom", "", 3, time.Unix(1, 0).UTC())
+	state.Status = FeatureStatePlanningQuestion
+	state.PlanningLoop.State = FeatureStatePlanningQuestion
+	state.OpenQuestions = []PlannerQuestion{{
+		ID:                "q-001",
+		Status:            "open",
+		QuestionSummary:   "Authorize new files",
+		AuthorityRequired: "operator_approval",
+		BlockingClaim:     "Missing files require operator authorization.",
+		RequestedDecision: "Authorize creating missing files: pkg/new_helper.go and pkg/new_helper_test.go.",
+		RequiredBefore:    "plan_approval",
+	}}
 
 	result, err := Run(state, RunOptions{
-		Prompt:                "Add an internal/greeting package with Hello function.",
+		Prompt:                "Approved.",
+		ResumeAnswer:          "Approved.",
 		WorkspaceRoot:         root,
 		MaxPlanningIterations: 3,
 		Now:                   time.Unix(2, 0).UTC(),
@@ -1199,9 +1378,6 @@ func TestRunUsesExplicitOperatorPromptForStandaloneNewFileAuthorization(t *testi
 		switch taskFamily {
 		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
 			return mustPlanJSON(t, plan), nil
-		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
-			implementorPrompt = prompt
-			return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 		default:
 			t.Fatalf("unexpected task family %q", taskFamily)
 		}
@@ -1212,17 +1388,115 @@ func TestRunUsesExplicitOperatorPromptForStandaloneNewFileAuthorization(t *testi
 		t.Fatalf("Run returned error: %v", err)
 	}
 
-	if result.State.Status != FeatureStateComplete {
-		t.Fatalf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers)
+	if result.State.Status != FeatureStatePlanningRepair {
+		t.Fatalf("state.Status = %q, want planning_repair", result.State.Status)
 	}
 
-	if len(result.State.AuthorityDeltas) != 1 || result.State.AuthorityDeltas[0].QuestionID != "operator-prompt-new-files" {
-		t.Fatalf("expected prompt-derived authority delta, got %+v", result.State.AuthorityDeltas)
+	if !strings.Contains(strings.Join(result.State.Blockers, "\n"), "not authorized as a new file") {
+		t.Fatalf("expected new-file authorization blocker, got %+v", result.State.Blockers)
 	}
 
-	want := []string{"internal/greeting/greeting.go", "internal/greeting/greeting_test.go"}
-	if got := PlanExecuteAuthorizedNewFilesFromImplementorPrompt(implementorPrompt); !slices.Equal(got, want) {
-		t.Fatalf("authorized new files = %#v, want %#v", got, want)
+	for _, delta := range result.State.AuthorityDeltas {
+		if len(delta.AffectedPaths) > 0 || slices.Contains(delta.AffectedFields, "new_file_authorization") {
+			t.Fatalf("requested_decision prose must not mint typed path authority, got %+v", result.State.AuthorityDeltas)
+		}
+	}
+}
+
+func TestRunDoesNotCompileGenericResumeAnswerAsNewFileAuthorization(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	plan.Atoms[0].RequiredEditPaths = []string{"project/scripts/economy/score_breakdown.gd"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"project/scripts/economy/score_breakdown_test.gd"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"project/scripts/economy/score_breakdown_test.gd"}
+
+	state := NewState("session", "add score breakdown", "", 3, time.Unix(1, 0).UTC())
+	state.Status = FeatureStatePlanningQuestion
+	state.PlanningLoop.State = FeatureStatePlanningQuestion
+	state.OpenQuestions = []PlannerQuestion{{
+		ID:                "q-001",
+		Status:            "open",
+		QuestionSummary:   "Clarify implementation approval",
+		AuthorityRequired: "operator_approval",
+		BlockingClaim:     "Missing files require operator authorization.",
+		RequiredBefore:    "plan_approval",
+	}}
+
+	result, err := Run(state, RunOptions{
+		Prompt:                "Continue.",
+		ResumeAnswer:          "Approved to add score breakdown to the existing tooltip.",
+		WorkspaceRoot:         root,
+		MaxPlanningIterations: 3,
+		Now:                   time.Unix(2, 0).UTC(),
+	}, func(prompt string, taskFamily string) (string, error) {
+		switch taskFamily {
+		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
+			return mustPlanJSON(t, plan), nil
+		default:
+			t.Fatalf("unexpected task family %q", taskFamily)
+		}
+
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningRepair {
+		t.Fatalf("state.Status = %q, want planning_repair", result.State.Status)
+	}
+
+	if !strings.Contains(strings.Join(result.State.Blockers, "\n"), "not authorized as a new file") {
+		t.Fatalf("expected new-file authorization blocker, got %+v", result.State.Blockers)
+	}
+
+	for _, delta := range result.State.AuthorityDeltas {
+		if slices.Contains(delta.AffectedFields, "new_file_authorization") || len(delta.AffectedPaths) > 0 {
+			t.Fatalf("generic resume answer must not mint path-level new-file authority, got %+v", result.State.AuthorityDeltas)
+		}
+	}
+}
+
+func TestRunRejectsExplicitOperatorPromptForStandaloneNewFileAuthorization(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	plan.Atoms[0].RequiredEditPaths = []string{"internal/greeting/greeting.go", "internal/greeting/greeting_test.go"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"internal/greeting/greeting_test.go"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"internal/greeting/greeting_test.go"}
+
+	state := NewState("session", "add greeting package", "", 3, time.Unix(1, 0).UTC())
+
+	result, err := Run(state, RunOptions{
+		Prompt:                "Add an internal/greeting package with Hello function.",
+		WorkspaceRoot:         root,
+		MaxPlanningIterations: 3,
+		Now:                   time.Unix(2, 0).UTC(),
+	}, func(prompt string, taskFamily string) (string, error) {
+		switch taskFamily {
+		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
+			return mustPlanJSON(t, plan), nil
+		default:
+			t.Fatalf("unexpected task family %q", taskFamily)
+		}
+
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningRepair {
+		t.Fatalf("state.Status = %q, want planning_repair", result.State.Status)
+	}
+
+	if !strings.Contains(strings.Join(result.State.Blockers, "\n"), "not authorized as a new file") {
+		t.Fatalf("expected new-file authorization blocker, got %+v", result.State.Blockers)
+	}
+
+	if len(result.State.AuthorityDeltas) != 0 {
+		t.Fatalf("operator prompt prose must not mint new-file authority, got %+v", result.State.AuthorityDeltas)
 	}
 }
 

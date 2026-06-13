@@ -116,10 +116,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		scopeContract = planExecuteContractWithWriteEnvelope(NewPlanScopeContract(requiredEditPaths, allowedEditPaths, editSetObligations), writeAllowedPaths, writeAllowedExplicit)
 	}
 	plannerPromptSource := applyCandidatePathRepairsToPrompt(prompt, candidateRepairs)
-	authorizedNewFiles := mergePlanExecutePaths(append(
-		append([]string(nil), opts.AuthorizedNewFiles...),
-		planExecuteCompileLegacyAuthorizedNewFiles(plannerPromptSource, append(append([]string(nil), requiredEditPaths...), allowedEditPaths...))...,
-	))
+	authorizedNewFiles := mergePlanExecutePaths(opts.AuthorizedNewFiles)
 	verificationPlan := PlanVerification(VerificationPlannerInput{
 		WorkspaceRoot: cfg.Workspace.Root,
 		Prompt:        plannerPromptSource,
@@ -1196,6 +1193,8 @@ func RecoveryInputFromProgressWithInvariants(state ProgressState, statePath stri
 		PlanPath:          state.PlanPath,
 		PlanID:            state.PlanID,
 		PackID:            state.PackID,
+		ParentAtomID:      state.ParentAtomID,
+		ParentAtomTitle:   state.ParentAtomTitle,
 		LockedContract:    progressLockedContractSnapshot(state),
 		RequiredEditPaths: state.RequiredEditPaths,
 		AllowedEditPaths:  state.AllowedEditPaths,

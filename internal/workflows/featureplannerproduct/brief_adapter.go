@@ -29,7 +29,7 @@ func BriefFromImplementationHandoff(handoff productworkflow.ImplementationHandof
 		Constraints:               append([]string(nil), handoff.Constraints...),
 		Decisions:                 append([]string(nil), handoff.Decisions...),
 		Blockers:                  append([]string(nil), handoff.Blockers...),
-		AuthorizedNewPackageRoots: nil,
+		AuthorizedNewPackageRoots: append([]string(nil), handoff.AuthorizedNewPackageRoots...),
 	}
 	for _, req := range handoff.PRDRequirements {
 		brief.PRDRequirements = append(brief.PRDRequirements, featureplanner.PRDRequirementBrief{

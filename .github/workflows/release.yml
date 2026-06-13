@@ -216,6 +216,24 @@ jobs:
           ./scripts/install-requirements.sh --all --no-build --no-audit --no-queue
           ./scripts/test-install-dependencies.sh
 
+  install-dependencies-linux:
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+          - runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install and validate discovery dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/install-requirements.sh --all --no-build --no-audit --no-queue
+          ./scripts/test-install-dependencies.sh
+
   install-windows:
     needs: snapshot
     runs-on: windows-latest
@@ -266,6 +284,7 @@ jobs:
       - install-linux
       - install-macos
       - install-dependencies-macos
+      - install-dependencies-linux
       - install-windows
     runs-on: ubuntu-latest
     timeout-minutes: 30

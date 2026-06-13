@@ -205,34 +205,36 @@ type TurnPhaseContractEvent struct {
 }
 
 type ModelProtocolEvent struct {
-	SchemaVersion           string   `json:"schema_version,omitempty"`
-	ContractID              string   `json:"contract_id,omitempty"`
-	ContractVersion         string   `json:"contract_version,omitempty"`
-	ProtocolHash            string   `json:"protocol_hash,omitempty"`
-	PhaseID                 string   `json:"phase_id,omitempty"`
-	ParserMode              string   `json:"parser_mode,omitempty"`
-	ToolTransportMode       string   `json:"tool_transport_mode,omitempty"`
-	ParserTransportMode     string   `json:"parser_transport_mode,omitempty"`
-	ParserContract          string   `json:"parser_contract,omitempty"`
-	NativeToolPolicy        string   `json:"native_tool_policy,omitempty"`
-	SupportsNativeTools     bool     `json:"supports_native_tools,omitempty"`
-	ForceNativeTools        bool     `json:"force_native_tools,omitempty"`
-	ToolChoice              string   `json:"tool_choice,omitempty"`
-	ResponseFormat          string   `json:"response_format,omitempty"`
-	ExpectedVisibleOutput   string   `json:"expected_visible_output,omitempty"`
-	VisibleTools            []string `json:"visible_tools,omitempty"`
-	CallableTools           []string `json:"callable_tools,omitempty"`
-	CallableActionClasses   []string `json:"callable_action_classes,omitempty"`
-	InvalidActionClasses    []string `json:"invalid_action_classes,omitempty"`
-	TerminalResponseShapes  []string `json:"terminal_response_shapes,omitempty"`
-	SourceBodyObligations   []string `json:"source_body_obligations,omitempty"`
-	RequiredEditCoverage    []string `json:"required_edit_coverage,omitempty"`
-	PathRoleSummary         []string `json:"path_role_summary,omitempty"`
-	VerificationObligations []string `json:"verification_obligations,omitempty"`
-	SafeAlternatives        []string `json:"safe_alternatives,omitempty"`
-	MalformedOutputPolicy   string   `json:"malformed_output_policy,omitempty"`
-	RecoveryBudget          int      `json:"recovery_budget,omitempty"`
-	ActiveInvariantID       string   `json:"active_invariant_id,omitempty"`
+	SchemaVersion            string   `json:"schema_version,omitempty"`
+	ContractID               string   `json:"contract_id,omitempty"`
+	ContractVersion          string   `json:"contract_version,omitempty"`
+	ProtocolHash             string   `json:"protocol_hash,omitempty"`
+	PhaseID                  string   `json:"phase_id,omitempty"`
+	ParserMode               string   `json:"parser_mode,omitempty"`
+	ToolTransportMode        string   `json:"tool_transport_mode,omitempty"`
+	ParserTransportMode      string   `json:"parser_transport_mode,omitempty"`
+	ParserContract           string   `json:"parser_contract,omitempty"`
+	NativeToolPolicy         string   `json:"native_tool_policy,omitempty"`
+	SupportsNativeTools      bool     `json:"supports_native_tools,omitempty"`
+	ForceNativeTools         bool     `json:"force_native_tools,omitempty"`
+	ToolChoice               string   `json:"tool_choice,omitempty"`
+	ResponseFormat           string   `json:"response_format,omitempty"`
+	ExpectedVisibleOutput    string   `json:"expected_visible_output,omitempty"`
+	VisibleTools             []string `json:"visible_tools,omitempty"`
+	CallableTools            []string `json:"callable_tools,omitempty"`
+	CallableActionClasses    []string `json:"callable_action_classes,omitempty"`
+	InvalidActionClasses     []string `json:"invalid_action_classes,omitempty"`
+	TerminalResponseShapes   []string `json:"terminal_response_shapes,omitempty"`
+	SourceBodyObligations    []string `json:"source_body_obligations,omitempty"`
+	CompletedGitHistoryPaths []string `json:"completed_git_history_paths,omitempty"`
+	PendingGitHistoryPaths   []string `json:"pending_git_history_paths,omitempty"`
+	RequiredEditCoverage     []string `json:"required_edit_coverage,omitempty"`
+	PathRoleSummary          []string `json:"path_role_summary,omitempty"`
+	VerificationObligations  []string `json:"verification_obligations,omitempty"`
+	SafeAlternatives         []string `json:"safe_alternatives,omitempty"`
+	MalformedOutputPolicy    string   `json:"malformed_output_policy,omitempty"`
+	RecoveryBudget           int      `json:"recovery_budget,omitempty"`
+	ActiveInvariantID        string   `json:"active_invariant_id,omitempty"`
 }
 
 type TurnPhaseSurfaceSummaryEvent struct {
@@ -287,6 +289,9 @@ type PhaseEvidenceStateEvent struct {
 	AtomStatus               string   `json:"atom_status,omitempty"`
 	RecoveryPacketRefs       []string `json:"recovery_packet_refs,omitempty"`
 	ResidualBlockers         []string `json:"residual_blockers,omitempty"`
+	SourceBodyObligations    []string `json:"source_body_obligations,omitempty"`
+	CompletedGitHistoryPaths []string `json:"completed_git_history_paths,omitempty"`
+	PendingGitHistoryPaths   []string `json:"pending_git_history_paths,omitempty"`
 }
 
 type ContractPolicyEvent struct {
@@ -1144,6 +1149,8 @@ func (p *ModelProtocolEvent) normalize() {
 	p.InvalidActionClasses = compactStrings(p.InvalidActionClasses)
 	p.TerminalResponseShapes = compactStrings(p.TerminalResponseShapes)
 	p.SourceBodyObligations = compactStrings(p.SourceBodyObligations)
+	p.CompletedGitHistoryPaths = compactStrings(p.CompletedGitHistoryPaths)
+	p.PendingGitHistoryPaths = compactStrings(p.PendingGitHistoryPaths)
 	p.RequiredEditCoverage = compactStrings(p.RequiredEditCoverage)
 	p.PathRoleSummary = compactStrings(p.PathRoleSummary)
 	p.VerificationObligations = compactStrings(p.VerificationObligations)
@@ -1197,6 +1204,9 @@ func (s *PhaseEvidenceStateEvent) normalize() {
 	s.AtomStatus = strings.TrimSpace(s.AtomStatus)
 	s.RecoveryPacketRefs = compactStrings(s.RecoveryPacketRefs)
 	s.ResidualBlockers = compactStrings(s.ResidualBlockers)
+	s.SourceBodyObligations = compactStrings(s.SourceBodyObligations)
+	s.CompletedGitHistoryPaths = compactStrings(s.CompletedGitHistoryPaths)
+	s.PendingGitHistoryPaths = compactStrings(s.PendingGitHistoryPaths)
 }
 
 func (p *ContractPolicyEvent) normalize() {
@@ -1668,6 +1678,9 @@ func copyTurnPhaseContractEvent(in *TurnPhaseContractEvent) *TurnPhaseContractEv
 	out.EvidenceState.VerificationEvidenceRefs = append([]string(nil), in.EvidenceState.VerificationEvidenceRefs...)
 	out.EvidenceState.RecoveryPacketRefs = append([]string(nil), in.EvidenceState.RecoveryPacketRefs...)
 	out.EvidenceState.ResidualBlockers = append([]string(nil), in.EvidenceState.ResidualBlockers...)
+	out.EvidenceState.SourceBodyObligations = append([]string(nil), in.EvidenceState.SourceBodyObligations...)
+	out.EvidenceState.CompletedGitHistoryPaths = append([]string(nil), in.EvidenceState.CompletedGitHistoryPaths...)
+	out.EvidenceState.PendingGitHistoryPaths = append([]string(nil), in.EvidenceState.PendingGitHistoryPaths...)
 
 	return &out
 }
@@ -1685,6 +1698,8 @@ func copyModelProtocolEvent(in *ModelProtocolEvent) *ModelProtocolEvent {
 	out.InvalidActionClasses = append([]string(nil), in.InvalidActionClasses...)
 	out.TerminalResponseShapes = append([]string(nil), in.TerminalResponseShapes...)
 	out.SourceBodyObligations = append([]string(nil), in.SourceBodyObligations...)
+	out.CompletedGitHistoryPaths = append([]string(nil), in.CompletedGitHistoryPaths...)
+	out.PendingGitHistoryPaths = append([]string(nil), in.PendingGitHistoryPaths...)
 	out.RequiredEditCoverage = append([]string(nil), in.RequiredEditCoverage...)
 	out.PathRoleSummary = append([]string(nil), in.PathRoleSummary...)
 	out.VerificationObligations = append([]string(nil), in.VerificationObligations...)

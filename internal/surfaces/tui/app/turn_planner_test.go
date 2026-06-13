@@ -3174,6 +3174,49 @@ func TestPlanExecuteActiveModelFallbackAddendumInsertedBeforeBriefEnd(t *testing
 	}
 }
 
+func TestImplementationDispatchCarriesTypedAuthorizedNewFiles(t *testing.T) {
+	prompt := strings.Join([]string{
+		"Implement atom.",
+		"Typed plan execution contract:",
+		`{"authorized_new_files":[{"path":"pkg/new_helper.go"},{"path":"pkg/new_helper_test.go"}]}`,
+		"Typed plan authority projection:",
+		`{"atom_id":"atom-1"}`,
+	}, "\n")
+
+	want := []string{"pkg/new_helper.go", "pkg/new_helper_test.go"}
+	if got := implementationDispatchAuthorizedNewFiles(prompt, nil); !slices.Equal(got, want) {
+		t.Fatalf("authorized new files = %#v, want %#v", got, want)
+	}
+}
+
+func TestImplementationDispatchCarriesPlanDocumentTypedAuthorizedNewFiles(t *testing.T) {
+	doc := implementationDispatchPlanDocument{Content: strings.Join([]string{
+		"Plan document.",
+		"Typed plan execution contract:",
+		`{"authorized_new_files":[{"path":"pkg/from_doc.go"}]}`,
+		"Typed plan authority projection:",
+		`{"atom_id":"atom-1"}`,
+	}, "\n")}
+
+	if got := implementationDispatchAuthorizedNewFiles("Implement atom.", []implementationDispatchPlanDocument{doc}); !slices.Equal(got, []string{"pkg/from_doc.go"}) {
+		t.Fatalf("authorized new files = %#v, want plan document authority", got)
+	}
+}
+
+func TestImplementationDispatchIgnoresPromptProseNewFileWithoutTypedContract(t *testing.T) {
+	prompt := strings.Join([]string{
+		"Create new file pkg/new_helper.go with the following content.",
+		"Typed plan execution contract:",
+		`{"authorized_new_files":`,
+		"Typed plan authority projection:",
+		`{"atom_id":"atom-1"}`,
+	}, "\n")
+
+	if got := implementationDispatchAuthorizedNewFiles(prompt, nil); len(got) != 0 {
+		t.Fatalf("prompt prose or malformed typed contract must not authorize new files: %#v", got)
+	}
+}
+
 func TestPlanExecutePlannerRecoveryAddendumUsesHarnessOwnedRetryContract(t *testing.T) {
 	failure := implementationDispatchPlanExecuteFailure{
 		Brief:         "# Brief\n\nImplement typed JSON usage errors.",
@@ -4683,6 +4726,11 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 		"| pkg/b.go | Replace B's fixture value with new. |",
 		"| pkg/c.go | Create C's fixture value as new. |",
 		"",
+		"Typed plan execution contract:",
+		`{"authorized_new_files":[{"path":"pkg/c.go"}]}`,
+		"Typed plan authority projection:",
+		`{"atom_id":"atom-3"}`,
+		"",
 		"## Design Intent",
 		"",
 		"Fixture constants should move from old to new, but each file is a separate dispatch atom.",
@@ -4866,6 +4914,12 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 
 	if !strings.Contains(string(thirdAtom), "NEW FILE:") {
 		t.Fatalf("missing-path atom should be marked NEW FILE:\n%s", string(thirdAtom))
+	}
+
+	if !strings.Contains(string(thirdAtom), "Typed plan execution contract:") ||
+		!strings.Contains(string(thirdAtom), `"authorized_new_files":[{"path":"pkg/c.go"}]`) {
+
+		t.Fatalf("missing-path atom should carry typed new-file authority from parent doc:\n%s", string(thirdAtom))
 	}
 
 	if !strings.Contains(answer, "Design document implementation completed through 3 atom(s)") {
@@ -5736,6 +5790,11 @@ func TestRunPromptOncePlanExecuteRecoversFromMissingPackageOutlineForNewRequired
 		"| File | Purpose |",
 		"|---|---|",
 		"| internal/newpkg/decision.go | create a small decision helper |",
+		"",
+		"Typed plan execution contract:",
+		`{"authorized_new_files":[{"path":"internal/newpkg/decision.go"}]}`,
+		"Typed plan authority projection:",
+		`{"atom_id":"atom-1"}`,
 		"",
 		"## Implementation Notes",
 		"",

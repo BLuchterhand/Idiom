@@ -25,6 +25,8 @@ type SessionInfo struct {
 	FirstPrompt   string
 }
 
+const maxRecordedSessionsScanned = 200
+
 // ResolveSessionLogPath returns the JSONL path for the given session id under
 // the configured debug-log directory. If id already looks like a path it is
 // returned unchanged. The .jsonl extension is appended when missing.
@@ -67,7 +69,7 @@ func ListRecordedSessions(cfg config.Config) ([]SessionInfo, error) {
 		return nil, fmt.Errorf("read debug log dir %q: %w", dir, err)
 	}
 
-	sessions := make([]SessionInfo, 0, len(entries))
+	sessionFiles := make([]SessionInfo, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -80,16 +82,24 @@ func ListRecordedSessions(cfg config.Config) ([]SessionInfo, error) {
 
 		id := strings.TrimSuffix(name, ".jsonl")
 		path := filepath.Join(dir, name)
-		info := summarizeSessionLog(path)
-
-		info.ID = id
-		info.Path = path
-		sessions = append(sessions, info)
+		sessionFiles = append(sessionFiles, SessionInfo{ID: id, Path: path})
 	}
 
-	slices.SortFunc(sessions, func(a, b SessionInfo) int {
+	slices.SortFunc(sessionFiles, func(a, b SessionInfo) int {
 		return -cmp.Compare(a.ID, b.ID)
 	})
+
+	if len(sessionFiles) > maxRecordedSessionsScanned {
+		sessionFiles = sessionFiles[:maxRecordedSessionsScanned]
+	}
+
+	sessions := make([]SessionInfo, 0, len(sessionFiles))
+	for _, sessionFile := range sessionFiles {
+		info := summarizeSessionLog(sessionFile.Path)
+		info.ID = sessionFile.ID
+		info.Path = sessionFile.Path
+		sessions = append(sessions, info)
+	}
 
 	return sessions, nil
 }

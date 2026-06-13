@@ -396,13 +396,7 @@ func (r *Runner) Run(
 	// Investigation lane: recommended strategy to avoid exhaustive
 	// symbol-by-symbol enumeration. One-shot at session start.
 	if _, ok := r.lanePolicy().(ReadOnlyInvestigationLanePolicy); ok {
-		turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: "## Investigation Strategy\n\n" +
-			"For read-only investigation questions, an efficient approach:\n\n" +
-			"1. Broad orientation (1 call): Start with context_pack or context_query for a ranked map of relevant files and symbols. One call replaces 20+ individual symbol lookups.\n" +
-			"2. Bundled probe (1 call): Use discovery_query with purpose=\"architecture_trace\" or \"impact_analysis\" to orchestrate multiple probes at once. One call replaces 10+ separate searches.\n" +
-			"3. Targeted reads (2-3 calls): Read only the 1-3 key files or symbols identified above. Do not enumerate every symbol in a file.\n" +
-			"4. Answer: Once the evidence answers the question, stop. You do not need to exhaustively verify every related function.\n\n" +
-			"If you are reading a file symbols one by one, pause and use context_query or discovery_query instead."})
+		turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: readOnlyInvestigationStrategyPrompt()})
 	}
 
 	r.emitControlRailsForBrief(turnMessages, visibleRuntimeBrief)
@@ -1852,6 +1846,9 @@ func (r *Runner) Run(
 				req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirectedReq, redirectedRaw, "post_write_lane_sanity_requires_source_sanity")
 				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 				redirected = true
+			} else if historySummary, historyError, ok := planThenExecuteUnavailableHistoryToolNudge(req, r.RuntimeBrief, collectedResults, surfaceAllowedTools); ok {
+				summary = historySummary
+				errorText = historyError
 			} else if newFileSummary, newFileError, ok := unavailableRequiredNewFileProbeNudge(req, r.RuntimeBrief, r.Workspace); ok {
 				summary = newFileSummary
 				errorText = newFileError
@@ -2064,10 +2061,7 @@ func (r *Runner) Run(
 			// recently (tracked via discovery tool reset below).
 			if consecutiveNarrowToolCalls >= narrowToolFamilyNudgeAt && !narrowToolFamilyNudgeFired {
 				narrowToolFamilyNudgeFired = true
-				prompt := fmt.Sprintf(
-					"You have called %s %d times consecutively. If you still lack the evidence to answer, switch strategy: use `context_query` for a graph-shaped question, `discovery_query` for a bundled layered probe, `harness_audit` for harness self-inspection, or re-read the initial context pack. Repeated narrow symbol lookups rarely uncover the high-level answer faster than one broader probe.",
-					narrowFamily, consecutiveNarrowToolCalls,
-				)
+				prompt := narrowToolFamilyRepetitionNudgePrompt(narrowFamily, consecutiveNarrowToolCalls)
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 				r.emitEvent(RunEvent{Role: "narrow_tool_repetition_nudge", Content: prompt})
 			}

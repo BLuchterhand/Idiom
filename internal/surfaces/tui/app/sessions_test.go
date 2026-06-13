@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,6 +87,26 @@ func TestListRecordedSessionsSummarizesNewestFirst(t *testing.T) {
 
 	if older.FirstPrompt != "hello world" {
 		t.Errorf("older first prompt = %q, want %q", older.FirstPrompt, "hello world")
+	}
+}
+
+func TestListRecordedSessionsCapsSummarizedHistory(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{Chat: config.Chat{DebugLogDir: dir}}
+
+	for i := 0; i < maxRecordedSessionsScanned+1; i++ {
+		writeSessionLog(t, dir, fmt.Sprintf("20260419-100000.%03d.jsonl", i), []string{
+			`{"type":"message","role":"user","content":"prompt"}`,
+		})
+	}
+
+	got, err := ListRecordedSessions(cfg)
+	if err != nil {
+		t.Fatalf("ListRecordedSessions: %v", err)
+	}
+
+	if len(got) != maxRecordedSessionsScanned {
+		t.Fatalf("expected capped session count %d, got %d", maxRecordedSessionsScanned, len(got))
 	}
 }
 

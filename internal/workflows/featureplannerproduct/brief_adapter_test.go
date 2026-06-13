@@ -1,6 +1,7 @@
 package featureplannerproduct
 
 import (
+	"slices"
 	"testing"
 
 	"idiom/internal/workflows/productworkflow"
@@ -22,14 +23,20 @@ func TestBriefFromImplementationHandoffCarriesGrounding(t *testing.T) {
 		CoverageBlockerKinds: []string{"coverage_tdd_evidence_missing"},
 		AcceptedADRIDs:       []string{"ADR-1"},
 		AcceptedADRPaths:     []string{"adrs/1.md"},
-		FilesToModify:        []string{"internal/example.go"},
-		ContextEvidencePaths: []string{"internal/context.go"},
-		RequiredBehavior:     []string{"do the thing"},
-		Tests:                []string{"go test ./..."},
-		Acceptance:           []string{"accepted"},
-		Constraints:          []string{"scoped"},
-		Decisions:            []string{"use existing API"},
-		Blockers:             nil,
+		FilesToModify:        []string{"internal/example.go", "internal/newpkg/new_file.go", "internal/newpkg/new_file_test.go"},
+		FileActions: map[string]string{
+			"internal/example.go":              "Modify existing file at line 1 for this atom's bounded behavior.",
+			"internal/newpkg/new_file.go":      "Create new file: implement this atom's behavior in the new source file.",
+			"internal/newpkg/new_file_test.go": "Create new file: implement this atom's behavior in the new source file.",
+		},
+		AuthorizedNewPackageRoots: []string{"internal/newpkg"},
+		ContextEvidencePaths:      []string{"internal/context.go"},
+		RequiredBehavior:          []string{"do the thing"},
+		Tests:                     []string{"go test ./..."},
+		Acceptance:                []string{"accepted"},
+		Constraints:               []string{"scoped"},
+		Decisions:                 []string{"use existing API"},
+		Blockers:                  nil,
 		PRDRequirements: []productworkflow.ImplementationHandoffPRDRequirement{{
 			ID:          "REQ-1",
 			Priority:    "P0",
@@ -67,6 +74,10 @@ func TestBriefFromImplementationHandoffCarriesGrounding(t *testing.T) {
 
 	if len(brief.FilesToModify) == 0 {
 		t.Fatalf("expected files_to_modify from handoff, got %+v", brief)
+	}
+
+	if !slices.Equal(brief.AuthorizedNewPackageRoots, []string{"internal/newpkg"}) {
+		t.Fatalf("authorized new package roots = %#v", brief.AuthorizedNewPackageRoots)
 	}
 
 	if len(brief.RequiredBehavior) == 0 || len(brief.Tests) == 0 || len(brief.Acceptance) == 0 || len(brief.Constraints) == 0 || len(brief.Decisions) == 0 {

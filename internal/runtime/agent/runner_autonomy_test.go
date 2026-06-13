@@ -713,12 +713,76 @@ func TestPlanExecuteHistoryPendingModelProtocolUsesCanonicalReadAction(t *testin
 		t.Fatalf("history-pending protocol must not expose submit_plan schema before history evidence: %#v", protocol.StructuredSchemaNames)
 	}
 
+	if !slices.Equal(protocol.PendingGitHistoryPaths, []string{"a.go"}) {
+		t.Fatalf("pending git history paths = %#v, want a.go", protocol.PendingGitHistoryPaths)
+	}
+
+	if len(protocol.CompletedGitHistoryPaths) != 0 {
+		t.Fatalf("completed git history paths should be empty before history evidence: %#v", protocol.CompletedGitHistoryPaths)
+	}
+
 	if slices.Contains(protocol.CallableActionClasses, "history") {
 		t.Fatalf("history-pending protocol should not expose non-canonical history action class: %#v", protocol.CallableActionClasses)
 	}
 
 	if slices.Contains(protocol.InvalidActionClasses, actionRead) {
 		t.Fatalf("history-pending protocol should not invalidate read action class: %#v", protocol.InvalidActionClasses)
+	}
+}
+
+func TestPlanExecuteModelProtocolShowsCompletedHistoryWhenSourceBodyPending(t *testing.T) {
+	runner := &Runner{}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "plan-execute",
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "submit_plan",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go"},
+		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		AllowedTools: []string{
+			"read_file",
+			"code_navigate",
+			"history_range",
+			"history_symbol",
+			"submit_plan",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "history_range",
+		Summary: "Read git history for a.go lines 1-10",
+		Output:  "commit abc123\n\n    explain current behavior",
+	}, {
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected: required edit path coverage mismatch",
+		Error:   "submit_plan must use edits[] for changed required paths and top-level source_satisfied_paths for already-final required paths; invalid edit anchor(s): `a.go: old_text not found in current source`.",
+	}}
+	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief:             brief,
+		Results:           results,
+		BaseAllowedTools:  brief.AllowedTools,
+		TextualToolParser: true,
+		ToolTransportMode: "textual",
+	})
+
+	if phase.PhaseID != turnPhaseStaleAnchorRefresh {
+		t.Fatalf("phase = %q, want %q", phase.PhaseID, turnPhaseStaleAnchorRefresh)
+	}
+
+	protocol, ok := runner.compileModelProtocolProjection(brief, results, phase, RunPolicy{}, true)
+	if !ok {
+		t.Fatal("expected required-source model protocol projection to compile")
+	}
+
+	if !slices.Equal(protocol.CompletedGitHistoryPaths, []string{"a.go"}) {
+		t.Fatalf("completed git history paths = %#v, want a.go", protocol.CompletedGitHistoryPaths)
+	}
+
+	if len(protocol.PendingGitHistoryPaths) != 0 {
+		t.Fatalf("pending git history paths should be empty after satisfied history: %#v", protocol.PendingGitHistoryPaths)
+	}
+
+	if slices.Contains(protocol.CallableTools, "history_range") || slices.Contains(protocol.CallableTools, "history_symbol") {
+		t.Fatalf("required-source protocol should not expose history tools after history is complete: %#v", protocol.CallableTools)
 	}
 }
 

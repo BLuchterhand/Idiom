@@ -10,30 +10,32 @@ import (
 )
 
 type ImplementationHandoff struct {
-	EffortID             string
-	TaskID               string
-	EffortRoot           string
-	ArtifactRootPath     string
-	StatusBucket         string
-	CurrentPhase         string
-	CurrentState         string
-	NextValidActions     []string
-	CoverageTier         string
-	CoverageGatePassed   bool
-	CoverageBlockers     []string
-	CoverageBlockerKinds []string
-	PRDRequirements      []ImplementationHandoffPRDRequirement
-	AcceptedADRIDs       []string
-	AcceptedADRPaths     []string
-	TDDObligations       []ImplementationHandoffTDDObligation
-	FilesToModify        []string
-	ContextEvidencePaths []string
-	RequiredBehavior     []string
-	Tests                []string
-	Acceptance           []string
-	Constraints          []string
-	Decisions            []string
-	Blockers             []string
+	EffortID                  string
+	TaskID                    string
+	EffortRoot                string
+	ArtifactRootPath          string
+	StatusBucket              string
+	CurrentPhase              string
+	CurrentState              string
+	NextValidActions          []string
+	CoverageTier              string
+	CoverageGatePassed        bool
+	CoverageBlockers          []string
+	CoverageBlockerKinds      []string
+	PRDRequirements           []ImplementationHandoffPRDRequirement
+	AcceptedADRIDs            []string
+	AcceptedADRPaths          []string
+	TDDObligations            []ImplementationHandoffTDDObligation
+	FilesToModify             []string
+	FileActions               map[string]string
+	AuthorizedNewPackageRoots []string
+	ContextEvidencePaths      []string
+	RequiredBehavior          []string
+	Tests                     []string
+	Acceptance                []string
+	Constraints               []string
+	Decisions                 []string
+	Blockers                  []string
 }
 
 type ImplementationHandoffPRDRequirement struct {
@@ -108,6 +110,7 @@ func LoadImplementationHandoff(effortRoot string) (ImplementationHandoff, error)
 		Traceability:          traceability,
 		ImplementationRecords: implementationRecords,
 		CoverageEvaluation:    coverage,
+		ExistingWorkspacePath: implementationHandoffExistingWorkspacePaths(root, workflowState, implementationRecords),
 	}), nil
 }
 
@@ -120,26 +123,28 @@ func BuildImplementationHandoff(input BriefGenerationInput) ImplementationHandof
 	}
 
 	handoff := ImplementationHandoff{
-		EffortID:             firstNonEmptyHandoffString(input.WorkflowState.EffortID, input.TDD.EffortID, input.CoverageEvaluation.EffortID),
-		TaskID:               firstNonEmptyHandoffString(input.WorkflowState.TaskID, input.TDD.TaskID, input.PRD.FrontMatter.TaskID, input.CoverageEvaluation.TaskID),
-		EffortRoot:           strings.TrimSpace(input.EffortRoot),
-		ArtifactRootPath:     firstNonEmptyHandoffString(input.ArtifactRootPath, input.EffortRoot),
-		StatusBucket:         strings.TrimSpace(input.WorkflowState.StatusBucket),
-		CurrentPhase:         strings.TrimSpace(input.WorkflowState.CurrentPhase),
-		CurrentState:         strings.TrimSpace(input.WorkflowState.CurrentState),
-		NextValidActions:     append([]string{}, input.WorkflowState.NextValidActions...),
-		CoverageTier:         coverageTier,
-		CoverageGatePassed:   util.EqualTrimFold(input.CoverageEvaluation.Status, ProductWorkflowStatusPass),
-		CoverageBlockers:     coverageBlockerMessages(input.CoverageEvaluation),
-		CoverageBlockerKinds: coverageBlockerKinds(input.CoverageEvaluation),
-		FilesToModify:        append([]string{}, generated.FilesToModify...),
-		ContextEvidencePaths: briefUniqueSortedStrings(input.WorkflowState.Context.ReferencedPaths),
-		RequiredBehavior:     append([]string{}, generated.RequiredBehavior...),
-		Tests:                append([]string{}, generated.Tests...),
-		Acceptance:           append([]string{}, generated.Acceptance...),
-		Constraints:          append([]string{}, generated.Constraints...),
-		Decisions:            append([]string{}, generated.Decisions...),
-		Blockers:             append([]string{}, generated.Blockers...),
+		EffortID:                  firstNonEmptyHandoffString(input.WorkflowState.EffortID, input.TDD.EffortID, input.CoverageEvaluation.EffortID),
+		TaskID:                    firstNonEmptyHandoffString(input.WorkflowState.TaskID, input.TDD.TaskID, input.PRD.FrontMatter.TaskID, input.CoverageEvaluation.TaskID),
+		EffortRoot:                strings.TrimSpace(input.EffortRoot),
+		ArtifactRootPath:          firstNonEmptyHandoffString(input.ArtifactRootPath, input.EffortRoot),
+		StatusBucket:              strings.TrimSpace(input.WorkflowState.StatusBucket),
+		CurrentPhase:              strings.TrimSpace(input.WorkflowState.CurrentPhase),
+		CurrentState:              strings.TrimSpace(input.WorkflowState.CurrentState),
+		NextValidActions:          append([]string{}, input.WorkflowState.NextValidActions...),
+		CoverageTier:              coverageTier,
+		CoverageGatePassed:        util.EqualTrimFold(input.CoverageEvaluation.Status, ProductWorkflowStatusPass),
+		CoverageBlockers:          coverageBlockerMessages(input.CoverageEvaluation),
+		CoverageBlockerKinds:      coverageBlockerKinds(input.CoverageEvaluation),
+		FilesToModify:             append([]string{}, generated.FilesToModify...),
+		FileActions:               copyHandoffStringMap(generated.FileActions),
+		AuthorizedNewPackageRoots: handoffAuthorizedNewPackageRoots(generated.FileActions),
+		ContextEvidencePaths:      briefUniqueSortedStrings(input.WorkflowState.Context.ReferencedPaths),
+		RequiredBehavior:          append([]string{}, generated.RequiredBehavior...),
+		Tests:                     append([]string{}, generated.Tests...),
+		Acceptance:                append([]string{}, generated.Acceptance...),
+		Constraints:               append([]string{}, generated.Constraints...),
+		Decisions:                 append([]string{}, generated.Decisions...),
+		Blockers:                  append([]string{}, generated.Blockers...),
 	}
 	for _, req := range input.PRD.Requirements {
 		id := strings.TrimSpace(req.ID)
@@ -191,6 +196,96 @@ func BuildImplementationHandoff(input BriefGenerationInput) ImplementationHandof
 	}
 
 	return handoff
+}
+
+func copyHandoffStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+
+	return out
+}
+
+func implementationHandoffExistingWorkspacePaths(effortRoot string, workflowState WorkflowState, records []ImplementationLedgerRecord) map[string]bool {
+	out := map[string]bool{}
+	workspaceRoot := implementationHandoffWorkspaceRoot(effortRoot)
+
+	for _, rec := range records {
+		if rec.RecordType != "atom_planned" || rec.Scope == nil {
+			continue
+		}
+
+		for _, rawPath := range append(append([]string{}, rec.Scope.ExpectedFiles...), rec.Scope.AllowedFiles...) {
+			clean := filepath.ToSlash(strings.TrimSpace(rawPath))
+			if clean == "" {
+				continue
+			}
+
+			for _, candidate := range implementationHandoffExistingPathCandidates(clean, workflowState.Context.PathAliases) {
+				if _, err := os.Stat(filepath.Join(workspaceRoot, filepath.FromSlash(candidate))); err == nil {
+					out[candidate] = true
+				}
+			}
+		}
+	}
+
+	return out
+}
+
+func implementationHandoffExistingPathCandidates(path string, aliases map[string]string) []string {
+	candidates := []string{path}
+	if alias := strings.TrimSpace(aliases[path]); alias != "" {
+		candidates = append(candidates, filepath.ToSlash(alias))
+	}
+
+	return candidates
+}
+
+func implementationHandoffWorkspaceRoot(effortRoot string) string {
+	dir := filepath.Clean(effortRoot)
+	for {
+		next := filepath.Dir(dir)
+		if next == dir {
+			return filepath.Clean(effortRoot)
+		}
+
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+
+		dir = next
+	}
+}
+
+func handoffAuthorizedNewPackageRoots(actions map[string]string) []string {
+	var roots []string
+	seen := map[string]bool{}
+
+	for rawPath, rawAction := range actions {
+		if !strings.Contains(strings.ToLower(strings.TrimSpace(rawAction)), "create new file") {
+			continue
+		}
+
+		clean := strings.Trim(strings.TrimSpace(filepath.ToSlash(rawPath)), "/")
+		if clean == "" {
+			continue
+		}
+
+		root := filepath.ToSlash(filepath.Dir(clean))
+		if root == "." || root == "/" || root == "" || seen[root] {
+			continue
+		}
+
+		seen[root] = true
+		roots = append(roots, root)
+	}
+
+	return briefUniqueSortedStrings(roots)
 }
 
 func loadImplementationHandoffADRs(root string) (ADRIndex, []ParsedADR, error) {

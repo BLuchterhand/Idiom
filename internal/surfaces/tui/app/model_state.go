@@ -1158,6 +1158,23 @@ func (m *Model) SetNonInteractive(nonInteractive bool) {
 	m.nonInteractive = nonInteractive
 }
 
+func (m *Model) queueUIEvent(msg tea.Msg) {
+	if m == nil || m.events == nil {
+		return
+	}
+
+	if m.nonInteractive {
+		select {
+		case m.events <- msg:
+		default:
+		}
+
+		return
+	}
+
+	m.events <- msg
+}
+
 func firstToolTraceLine(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -1450,14 +1467,14 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 
 			// Emit budget data to the UI event loop for the evidence
 			// container summary line.
-			m.events <- budgetLedgerMsg{
+			m.queueUIEvent(budgetLedgerMsg{
 				totalTokens:     payload.TotalTokens,
 				usedToolResults: payload.UsedToolResults,
 				maxToolSteps:    payload.MaxToolSteps,
 				usedModelCalls:  payload.UsedModelCalls,
 				maxModelCalls:   payload.MaxModelCalls,
 				lane:            payload.Lane,
-			}
+			})
 		}
 
 		return

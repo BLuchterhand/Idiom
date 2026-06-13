@@ -156,6 +156,9 @@ func (contract TurnPhaseContract) autonomyEventPayload() autonomy.TurnPhaseContr
 			AtomStatus:               contract.EvidenceState.AtomStatus,
 			RecoveryPacketRefs:       append([]string(nil), contract.EvidenceState.RecoveryPacketRefs...),
 			ResidualBlockers:         append([]string(nil), contract.EvidenceState.ResidualBlockers...),
+			SourceBodyObligations:    append([]string(nil), contract.EvidenceState.SourceBodyObligations...),
+			CompletedGitHistoryPaths: append([]string(nil), contract.EvidenceState.CompletedGitHistoryPaths...),
+			PendingGitHistoryPaths:   append([]string(nil), contract.EvidenceState.PendingGitHistoryPaths...),
 		},
 		EnforcementMode: contract.EnforcementMode,
 	}
@@ -170,6 +173,9 @@ type PhaseEvidenceState struct {
 	AtomStatus               string
 	RecoveryPacketRefs       []string
 	ResidualBlockers         []string
+	SourceBodyObligations    []string // paths pending source-body evidence
+	CompletedGitHistoryPaths []string // paths with satisfied git history evidence
+	PendingGitHistoryPaths   []string // paths still needing git history evidence
 }
 
 type TurnPhaseContractInput struct {
@@ -213,6 +219,9 @@ type TurnPhaseContractInput struct {
 	AtomStatus               string
 	RecoveryPacketRefs       []string
 	ResidualBlockers         []string
+	SourceBodyObligations    []string // paths pending source-body evidence
+	CompletedGitHistoryPaths []string // paths with satisfied git history evidence
+	PendingGitHistoryPaths   []string // paths still needing git history evidence
 }
 
 func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
@@ -257,11 +266,18 @@ func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
 			AtomStatus:               strings.TrimSpace(input.AtomStatus),
 			RecoveryPacketRefs:       uniquePhaseStrings(input.RecoveryPacketRefs),
 			ResidualBlockers:         uniquePhaseStrings(input.ResidualBlockers),
+			SourceBodyObligations:    uniquePhaseStrings(input.SourceBodyObligations),
+			CompletedGitHistoryPaths: uniquePhaseStrings(input.CompletedGitHistoryPaths),
+			PendingGitHistoryPaths:   uniquePhaseStrings(input.PendingGitHistoryPaths),
 		},
 		EnforcementMode: "observe_only",
 	}
 
 	applyTurnPhase(&contract, input, brief, baseTools)
+
+	contract.EvidenceState.SourceBodyObligations = modelProtocolSourceBodyObligations(brief, input.Results, contract)
+	contract.EvidenceState.CompletedGitHistoryPaths = modelProtocolCompletedGitHistoryPaths(brief, input.Results)
+	contract.EvidenceState.PendingGitHistoryPaths = modelProtocolPendingGitHistoryPaths(brief, input.Results)
 
 	if phaseContractTextualOnly(input, contract) {
 		contract.AllowedTools = nil

@@ -44,6 +44,8 @@ type ProgressState struct {
 	PlanPath                      string               `json:"plan_path,omitempty"`
 	PlanID                        string               `json:"plan_id,omitempty"`
 	PackID                        string               `json:"pack_id,omitempty"`
+	ParentAtomID                  string               `json:"parent_atom_id,omitempty"`
+	ParentAtomTitle               string               `json:"parent_atom_title,omitempty"`
 	RequiredEditPaths             []string             `json:"required_edit_paths,omitempty"`
 	AllowedEditPaths              []string             `json:"allowed_edit_paths,omitempty"`
 	WriteAllowedPaths             []string             `json:"write_allowed_paths,omitempty"`

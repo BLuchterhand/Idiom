@@ -11,7 +11,7 @@
       "binaries": [{"name": "git", "validation": "mandatory"}],
       "install": [
         {"platform": "macos", "mode": "precondition", "installer_flag": "default", "implemented_by": "scripts/install-requirements.sh", "command": "require_command git"},
-        {"platform": "linux", "mode": "manual", "installer_flag": "manual", "implemented_by": "none"}
+        {"platform": "linux", "mode": "apt", "installer_flag": "default", "implemented_by": "scripts/install-requirements.sh", "package": "git"}
       ],
       "doctor": {"current_owner": "internal/surfaces/cli/doctor", "current_status": "host_check"},
       "audit": {"current_owner": "internal/capabilities/workspace/harness_audit.go", "backend_name": "git"}
@@ -24,7 +24,7 @@
       "binaries": [{"name": "rg", "validation": "mandatory"}],
       "install": [
         {"platform": "macos", "mode": "brew", "installer_flag": "default", "implemented_by": "scripts/install-requirements.sh", "package": "ripgrep"},
-        {"platform": "linux", "mode": "manual", "installer_flag": "manual", "implemented_by": "none"}
+        {"platform": "linux", "mode": "apt", "installer_flag": "default", "implemented_by": "scripts/install-requirements.sh", "package": "ripgrep"}
       ],
       "doctor": {"current_owner": "harness_audit", "current_status": "not_wired_currently"},
       "audit": {"current_owner": "internal/capabilities/workspace/harness_audit.go", "backend_name": "content_search"}
@@ -37,7 +37,7 @@
       "binaries": [{"name": "ast-grep", "validation": "mandatory"}, {"name": "sg", "validation": "optional_alias"}],
       "install": [
         {"platform": "macos", "mode": "brew", "installer_flag": "default", "implemented_by": "scripts/install-requirements.sh", "package": "ast-grep"},
-        {"platform": "linux", "mode": "manual", "installer_flag": "manual", "implemented_by": "none"}
+        {"platform": "linux", "mode": "npm", "installer_flag": "default", "implemented_by": "scripts/install-requirements.sh", "package": "@ast-grep/cli"}
       ],
       "doctor": {"current_owner": "harness_audit", "current_status": "not_wired_currently"},
       "audit": {"current_owner": "internal/capabilities/workspace/harness_audit.go", "backend_name": "ast_grep"}
@@ -50,7 +50,7 @@
       "binaries": [{"name": "ctags", "validation": "mandatory_universal_ctags"}],
       "install": [
         {"platform": "macos", "mode": "brew", "installer_flag": "default", "implemented_by": "scripts/install-requirements.sh", "package": "universal-ctags"},
-        {"platform": "linux", "mode": "manual", "installer_flag": "manual", "implemented_by": "none"}
+        {"platform": "linux", "mode": "apt", "installer_flag": "default", "implemented_by": "scripts/install-requirements.sh", "package": "universal-ctags"}
       ],
       "doctor": {"current_owner": "harness_audit", "current_status": "not_wired_currently"},
       "audit": {"current_owner": "internal/capabilities/workspace/harness_audit.go", "backend_name": "universal_ctags"}
@@ -63,7 +63,7 @@
       "binaries": [{"name": "semgrep", "validation": "mandatory"}],
       "install": [
         {"platform": "macos", "mode": "brew", "installer_flag": "default", "implemented_by": "scripts/install-requirements.sh", "package": "semgrep"},
-        {"platform": "linux", "mode": "manual", "installer_flag": "manual", "implemented_by": "none"}
+        {"platform": "linux", "mode": "pipx", "installer_flag": "default", "implemented_by": "scripts/install-requirements.sh", "package": "semgrep"}
       ],
       "doctor": {"current_owner": "harness_audit", "current_status": "not_wired_currently"},
       "audit": {"current_owner": "internal/capabilities/workspace/harness_audit.go", "backend_name": "semgrep"}
@@ -76,7 +76,7 @@
       "binaries": [{"name": "joern-scan", "validation": "mandatory"}],
       "install": [
         {"platform": "macos", "mode": "brew", "installer_flag": "default", "implemented_by": "scripts/install-requirements.sh", "package": "joern"},
-        {"platform": "linux", "mode": "manual", "installer_flag": "manual", "implemented_by": "none"}
+        {"platform": "linux", "mode": "upstream_release", "installer_flag": "default", "implemented_by": "scripts/install-requirements.sh", "package": "joern-install.sh"}
       ],
       "doctor": {"current_owner": "harness_audit", "current_status": "not_wired_currently"},
       "audit": {"current_owner": "internal/capabilities/workspace/harness_audit.go", "backend_name": "joern"}
@@ -91,7 +91,8 @@
       "install": [
         {"platform": "macos", "mode": "brew", "installer_flag": "default", "implemented_by": "scripts/install-requirements.sh", "package": "go"},
         {"platform": "macos", "mode": "brew", "installer_flag": "default", "implemented_by": "scripts/install-requirements.sh", "package": "gopls"},
-        {"platform": "linux", "mode": "manual", "installer_flag": "manual", "implemented_by": "none"}
+        {"platform": "linux", "mode": "apt", "installer_flag": "default", "implemented_by": "scripts/install-requirements.sh", "package": "golang-go"},
+        {"platform": "linux", "mode": "go_install", "installer_flag": "default", "implemented_by": "scripts/install-requirements.sh", "package": "golang.org/x/tools/gopls"}
       ],
       "doctor": {"current_owner": "harness_audit", "current_status": "not_wired_currently"},
       "audit": {"current_owner": "internal/capabilities/workspace/harness_audit.go", "backend_name": "gopls"}
@@ -106,6 +107,8 @@
       "install": [
         {"platform": "macos", "mode": "brew", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "node"},
         {"platform": "macos", "mode": "npm", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "pyright"},
+        {"platform": "linux", "mode": "apt", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "nodejs npm"},
+        {"platform": "linux", "mode": "npm", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "pyright"},
         {"platform": "any", "mode": "pip", "installer_flag": "manual", "implemented_by": "none", "package": "python-lsp-server[all]"}
       ],
       "doctor": {"current_owner": "harness_audit", "current_status": "not_wired_currently"},
@@ -121,7 +124,8 @@
       "install": [
         {"platform": "macos", "mode": "brew", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "node"},
         {"platform": "macos", "mode": "npm", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "typescript-language-server typescript"},
-        {"platform": "linux", "mode": "manual", "installer_flag": "manual", "implemented_by": "none"}
+        {"platform": "linux", "mode": "apt", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "nodejs npm"},
+        {"platform": "linux", "mode": "npm", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "typescript-language-server typescript"}
       ],
       "doctor": {"current_owner": "harness_audit", "current_status": "not_wired_currently"},
       "audit": {"current_owner": "internal/capabilities/workspace/harness_audit.go", "backend_name": "typescript_language_server"}
@@ -136,6 +140,7 @@
       "install": [
         {"platform": "macos", "mode": "brew", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "rust"},
         {"platform": "macos", "mode": "brew", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "rust-analyzer"},
+        {"platform": "linux", "mode": "rustup", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "rustup cargo rust-analyzer"},
         {"platform": "any", "mode": "manual", "installer_flag": "manual", "implemented_by": "none", "package": "rustup/cargo"}
       ],
       "doctor": {"current_owner": "harness_audit", "current_status": "not_wired_currently"},
@@ -150,6 +155,8 @@
       "binaries": [{"name": "java", "validation": "conditional_precondition_java_17_or_newer"}, {"name": "jdtls", "validation": "conditional"}],
       "install": [
         {"platform": "macos", "mode": "brew", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "jdtls"},
+        {"platform": "linux", "mode": "apt", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "openjdk-21-jdk-headless openjdk-17-jdk-headless"},
+        {"platform": "linux", "mode": "upstream_archive", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "jdt-language-server-latest.tar.gz"},
         {"platform": "any", "mode": "manual", "installer_flag": "manual", "implemented_by": "none", "package": "java>=17"}
       ],
       "doctor": {"current_owner": "harness_audit", "current_status": "not_wired_currently"},
@@ -164,7 +171,7 @@
       "binaries": [{"name": "clangd", "validation": "conditional"}],
       "install": [
         {"platform": "macos", "mode": "precondition", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "command": "xcode-select --install"},
-        {"platform": "linux", "mode": "manual", "installer_flag": "manual", "implemented_by": "none"}
+        {"platform": "linux", "mode": "apt", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "clangd"}
       ],
       "doctor": {"current_owner": "harness_audit", "current_status": "not_wired_currently"},
       "audit": {"current_owner": "internal/capabilities/workspace/harness_audit.go", "backend_name": "clangd"}
@@ -179,7 +186,8 @@
       "install": [
         {"platform": "macos", "mode": "brew", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "node"},
         {"platform": "macos", "mode": "npm", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "madge"},
-        {"platform": "linux", "mode": "manual", "installer_flag": "manual", "implemented_by": "none"}
+        {"platform": "linux", "mode": "apt", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "nodejs npm"},
+        {"platform": "linux", "mode": "npm", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "madge"}
       ],
       "doctor": {"current_owner": "harness_audit", "current_status": "not_wired_currently"},
       "audit": {"current_owner": "internal/capabilities/workspace/harness_audit.go", "backend_name": "madge"}
@@ -195,7 +203,8 @@
         {"platform": "macos", "mode": "brew", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "pipx"},
         {"platform": "macos", "mode": "pipx", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "pydeps"},
         {"platform": "macos", "mode": "pip_user", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "pydeps"},
-        {"platform": "linux", "mode": "manual", "installer_flag": "manual", "implemented_by": "none"}
+        {"platform": "linux", "mode": "apt", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "pipx"},
+        {"platform": "linux", "mode": "pipx", "installer_flag": "--all", "implemented_by": "scripts/install-requirements.sh", "package": "pydeps"}
       ],
       "doctor": {"current_owner": "harness_audit", "current_status": "not_wired_currently"},
       "audit": {"current_owner": "internal/capabilities/workspace/harness_audit.go", "backend_name": "pydeps"}
