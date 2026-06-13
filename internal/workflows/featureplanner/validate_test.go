@@ -571,10 +571,19 @@ func TestBuildPlannerPromptProductExampleUsesNonAuthoritativePlaceholders(t *tes
 
 func TestBuildPlannerPromptStandaloneUsesLanguageNeutralPlaceholders(t *testing.T) {
 	prompt := BuildPlannerPrompt("build feature", NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC()), nil)
+	schemaStart := strings.Index(prompt, "Required submit_feature_plan shape:")
+	if schemaStart < 0 {
+		t.Fatalf("standalone prompt missing schema section:\n%s", prompt)
+	}
+	schemaEnd := strings.Index(prompt[schemaStart:], "Set tdd_contract.obligations")
+	if schemaEnd < 0 {
+		t.Fatalf("standalone prompt missing post-schema contract text:\n%s", prompt)
+	}
+	schemaExample := prompt[schemaStart : schemaStart+schemaEnd]
 
-	for _, forbidden := range []string{"internal/example/source.go", "internal/example/source_test.go", "path_test.go", "go test ./..."} {
-		if strings.Contains(prompt, forbidden) {
-			t.Fatalf("standalone prompt must not contain language-specific placeholder %q:\n%s", forbidden, prompt)
+	for _, forbidden := range []string{"internal/example/source.go", "internal/example/source_test.go", "path_test.go", "go test ./...", "cmake --build", "ctest", "pytest", "make test"} {
+		if strings.Contains(schemaExample, forbidden) {
+			t.Fatalf("standalone schema example must not contain language-specific placeholder %q:\n%s", forbidden, schemaExample)
 		}
 	}
 
@@ -658,10 +667,34 @@ func TestBuildPlannerPromptAdvertisesTypedPlannerQuestionAuthority(t *testing.T)
 		`"tool":"ask_planner_question"`,
 		`"affected_paths":["repo/path"]`,
 		`"affected_fields":["new_file_authorization"]`,
+		`authority_required="accepted_source"`,
+		`affected_fields=["source_localization"]`,
+		`do not label source-evidence questions as new_file_authorization`,
 		"paths inside requested_decision are explanatory text only and do not grant authority",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("planner prompt missing typed planner-question authority contract %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestBuildPlannerPromptForbidsStandaloneVerificationAndSignatureInvention(t *testing.T) {
+	prompt := BuildPlannerPrompt(
+		"Implement a source-localized atom.",
+		NewState("session", "implement scoped atom", "", 3, time.Unix(1, 0).UTC()),
+		nil,
+	)
+
+	for _, want := range []string{
+		"Do not invent project build systems or verification commands.",
+		"ask_planner_question for the verification command",
+		"Command names mentioned in this instruction are prohibited examples, not supplied project commands",
+		"Do not encode guessed function signatures or call shapes in atom prompts.",
+		"require exact signature/source verification first",
+		"block on signature mismatch rather than inventing arguments",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("planner prompt missing standalone invention guard %q:\n%s", want, prompt)
 		}
 	}
 }
@@ -729,6 +762,29 @@ func TestValidatePlannerQuestionRejectsPathAuthorityWithoutAffectedPaths(t *test
 	err := ValidatePlannerQuestion(question)
 	if err == nil || !strings.Contains(err.Error(), "path-level authority requires affected_paths") {
 		t.Fatalf("expected affected_paths validation error, got %v", err)
+	}
+}
+
+func TestValidatePlannerQuestionSourceLocalizationIsNotPathAuthority(t *testing.T) {
+	sourceQuestion := PlannerQuestion{
+		ID:                "q-source",
+		QuestionSummary:   "Provide source-localized scope",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "Need exact source evidence.",
+		RequestedDecision: "Provide exact existing source/test paths.",
+		AuthorityRequired: "accepted_source",
+		RequiredBefore:    "plan_approval",
+		Status:            "open",
+		AffectedFields:    []string{"source_localization"},
+	}
+
+	if err := ValidatePlannerQuestion(sourceQuestion); err != nil {
+		t.Fatalf("source localization should not require affected_paths: %v", err)
+	}
+
+	sourceQuestion.AffectedFields = []string{"new_file_authorization"}
+	if err := ValidatePlannerQuestion(sourceQuestion); err == nil || !strings.Contains(err.Error(), "path-level authority requires affected_paths") {
+		t.Fatalf("new-file authorization should require affected_paths, got %v", err)
 	}
 }
 
@@ -3464,6 +3520,49 @@ func TestRunAcceptsTypedAnswerForRequiredAuthority(t *testing.T) {
 
 	if result.State.Status == FeatureStatePlanningQuestion {
 		t.Fatalf("typed answer should allow planning to continue")
+	}
+}
+
+func TestRunAcceptsTypedAnswerForAtomLocalEvidenceQuestion(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+
+	state.Status = FeatureStatePlanningQuestion
+	state.PlanningLoop.State = FeatureStatePlanningQuestion
+	state.OpenQuestions = []PlannerQuestion{{
+		ID:                "q-local",
+		QuestionKind:      "missing_source_localization",
+		QuestionSummary:   "Which source anchors prove this atom is current?",
+		BlockingClaim:     "Planning needs exact local source evidence.",
+		RequestedDecision: "Provide exact local source anchors.",
+		AuthorityRequired: "atom_local_evidence",
+		RequiredBefore:    "plan_approval",
+		Status:            "open",
+	}}
+
+	typedAnswer := `{"answer":"Use the exact current source anchors.","answer_source_kind":"atom_local_evidence","evidence_refs":["native/src/system.cpp#anchor"]}`
+
+	result, err := Run(state, RunOptions{Prompt: "continue", ResumeAnswer: typedAnswer}, func(prompt string, taskFamily string) (string, error) {
+		switch taskFamily {
+		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
+			return mustPlanJSON(t, validPlan()), nil
+		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
+			return testPlanExecuteCompletedJSONForPrompt(prompt), nil
+		default:
+			t.Fatalf("unexpected task family %q", taskFamily)
+		}
+
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.OpenQuestions[0].AnswerSourceKind != "atom_local_evidence" || len(result.State.OpenQuestions[0].EvidenceRefs) != 1 {
+		t.Fatalf("typed atom-local evidence was not recorded: %+v", result.State.OpenQuestions[0])
+	}
+
+	if result.State.Status == FeatureStatePlanningQuestion {
+		t.Fatalf("typed atom-local evidence answer should allow planning to continue")
 	}
 }
 
