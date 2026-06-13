@@ -503,13 +503,8 @@ func (r *Runner) planThenExecuteSubmitPlanOnlySurfaceRejection(req workspace.Too
 	}
 
 	if planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, results) {
-		prompt := strings.Join([]string{
-			"Plan-execute submit-correction mode is now the only allowed planner action. Every required_edit_path already has source-body evidence, and the previous `submit_plan` was rejected before it became a valid plan artifact.",
-			"The next visible action must be exactly one parser-readable `submit_plan` JSON object. " + planThenExecuteSubmitPlanCoverageSentence() + " " + planThenExecuteSubmitPlanVisibleJSONInstruction(),
-			"Do not call `read_file`, `code_navigate`, search, shell, git, source-sanity, or per-edit write tools in this state. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not describe the correction in prose.",
-		}, "\n")
-
-		return "Corrected submit_plan required", fmt.Sprintf("%s is not available because plan-execute submit-correction mode exposes only `submit_plan`. Emit one parser-readable `submit_plan` JSON object now. %s No terminal source-satisfied/question/prose fallback is valid in this state.", tool, planThenExecuteSubmitPlanCoverageSentence()), prompt, true
+		summary, errorText, prompt := planThenExecuteSubmitCorrectionWrongToolRejection(tool)
+		return summary, errorText, prompt, true
 	}
 
 	prompt := strings.Join([]string{
@@ -520,6 +515,37 @@ func (r *Runner) planThenExecuteSubmitPlanOnlySurfaceRejection(req workspace.Too
 	}, "\n")
 
 	return "Plan-execute submit_plan required", fmt.Sprintf("%s is not available because the plan-execute planner is source-ready and exposes only `submit_plan`. Emit a parser-readable `submit_plan` JSON object now. %s Use `Decision: source-satisfied` or `<<QUESTION>>:` only for a true terminal exception; do not request another source read.", tool, planThenExecuteSubmitPlanCoverageSentence()), prompt, true
+}
+
+func planThenExecuteSubmitCorrectionWrongToolRejection(tool string) (string, string, string) {
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		tool = "the requested tool"
+	}
+
+	prompt := strings.Join([]string{
+		"Plan-execute submit-correction mode is now the only allowed planner action. Every required_edit_path already has source-body evidence, and the previous `submit_plan` was rejected before it became a valid plan artifact.",
+		"The next visible action must be exactly one parser-readable `submit_plan` JSON object. " + planThenExecuteSubmitPlanCoverageSentence() + " " + planThenExecuteSubmitPlanVisibleJSONInstruction(),
+		"Do not call `read_file`, `code_navigate`, search, shell, git, source-sanity, or per-edit write tools in this state. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not describe the correction in prose.",
+	}, "\n")
+
+	return "Corrected submit_plan required",
+		fmt.Sprintf("%s is not available because plan-execute submit-correction mode exposes only `submit_plan`. Emit one parser-readable `submit_plan` JSON object now. %s No terminal source-satisfied/question/prose fallback is valid in this state.", tool, planThenExecuteSubmitPlanCoverageSentence()),
+		prompt
+}
+
+func planThenExecuteSubmitCorrectionCurrentSurfaceRejection(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, string, bool) {
+	if strings.TrimSpace(req.Tool) == "" || strings.TrimSpace(req.Tool) == workspace.ToolNameSubmitPlan {
+		return "", "", "", false
+	}
+
+	if !planThenExecuteSubmitCorrectionActive(brief, results) {
+		return "", "", "", false
+	}
+
+	summary, errorText, prompt := planThenExecuteSubmitCorrectionWrongToolRejection(req.Tool)
+
+	return summary, errorText, prompt, true
 }
 
 func planThenExecuteReadinessNudgedNonSubmitRejection(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, readinessNudged bool) (string, string, string, bool) {

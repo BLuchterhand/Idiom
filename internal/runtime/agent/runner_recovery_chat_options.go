@@ -430,11 +430,7 @@ func planThenExecuteReadyToSubmitChatOptionsForBackend(opts llama.ChatOptions, b
 
 	opts = planThenExecuteSubmitPlanTerminalChatOptions(opts, supportsNativeTools)
 	if chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan) {
-		if surface.Kind == PlanExecuteRecoverySurfaceSubmitCorrection {
-			opts.Tools = filterChatOptionsTools(opts.Tools, workspace.ToolNameSubmitPlan, workspace.ToolNameReadFile)
-		} else {
-			opts.Tools = filterChatOptionsTools(opts.Tools, workspace.ToolNameSubmitPlan)
-		}
+		opts.Tools = filterChatOptionsTools(opts.Tools, workspace.ToolNameSubmitPlan)
 	}
 
 	if supportsNativeTools && chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan) {

@@ -112,6 +112,105 @@ func TestPlanExecuteRepeatedInvalidSubmitPlanGetsStrictCorrectionRetry(t *testin
 	}
 }
 
+func TestPlanExecuteSubmitCorrectionWrongReadUsesStrictRunnerBranch(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(root, path), []byte("before\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"a.txt"}`,
+		`{"tool":"read_file","path":"b.txt"}`,
+		`{"tool":"submit_plan","rationale":"Missing required path coverage.","edits":[{"path":"a.txt","old_text":"before\n","new_text":"after\n","purpose":"replace a fixture"}]}`,
+		`{"tool":"read_file","path":"new_file.txt"}`,
+		`{"tool":"submit_plan","rationale":"Corrected after strict wrong-tool recovery.","edits":[{"path":"a.txt","old_text":"before\n","new_text":"after\n","purpose":"replace a fixture"},{"path":"b.txt","old_text":"before\n","new_text":"after\n","purpose":"replace b fixture"}]}`,
+	}
+
+	var (
+		requests                 int
+		sawStrictWrongToolPrompt bool
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+
+		reply := replies[requests]
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.txt", "b.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role != "plan_then_execute_submit_plan_required" {
+				return
+			}
+
+			if strings.Contains(event.Content, "submit-correction mode") {
+				sawStrictWrongToolPrompt = true
+
+				for _, forbidden := range []string{
+					"report a concrete blocker",
+					"Answer from gathered evidence",
+					"NEW FILE you must create",
+					"Only use `<<QUESTION>>:`",
+					"Only use `Decision: source-satisfied`",
+				} {
+					if strings.Contains(event.Content, forbidden) {
+						t.Fatalf("strict submit-correction prompt leaked fallback %q:\n%s", forbidden, event.Content)
+					}
+				}
+			}
+		},
+	}
+
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edits"}}, llama.ChatOptions{
+		MaxTokens: 2048,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "auto",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !sawStrictWrongToolPrompt {
+		t.Fatalf("expected strict submit-correction wrong-tool prompt")
+	}
+
+	if requests != len(replies) {
+		t.Fatalf("expected corrected plan after wrong-tool recovery, got %d request(s)", requests)
+	}
+
+	if !strings.Contains(answer, "Plan submitted with 2 edit") {
+		t.Fatalf("expected successful corrected plan summary, got:\n%s", answer)
+	}
+}
+
 func TestPlanExecuteRepeatedSubmitPlanExhaustedRejectionStaysSubmitPlanOnly(t *testing.T) {
 	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
@@ -163,6 +262,122 @@ func TestPlanExecuteSubmitCorrectionHiddenOnlyPromptIsSubmitPlanOnly(t *testing.
 		if strings.Contains(prompt, forbidden) {
 			t.Fatalf("hidden-only submit-correction prompt advertised stale exit %q:\n%s", forbidden, prompt)
 		}
+	}
+}
+
+func TestPlanExecuteSubmitCorrectionWrongToolRejectionHasNoFallbackExits(t *testing.T) {
+	summary, errorText, prompt := planThenExecuteSubmitCorrectionWrongToolRejection("read_file")
+	joined := strings.Join([]string{summary, errorText, prompt}, "\n")
+
+	for _, want := range []string{
+		"Corrected submit_plan required",
+		"submit-correction mode exposes only `submit_plan`",
+		"exactly one parser-readable `submit_plan`",
+		"No terminal source-satisfied/question/prose fallback is valid",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("submit-correction wrong-tool rejection missing %q:\n%s", want, joined)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"answer from gathered evidence",
+		"report a concrete blocker",
+		"Use `Decision: source-satisfied`",
+		"Use `<<QUESTION>>:`",
+		"Only use `<<QUESTION>>:`",
+	} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("submit-correction wrong-tool rejection advertised stale exit %q:\n%s", forbidden, joined)
+		}
+	}
+}
+
+func TestPlanExecuteSubmitCorrectionCurrentSurfaceRejectsWrongRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.txt lines 1-2 (total lines: 2)", Output: "before\n"},
+		{Tool: "read_file", Summary: "Read b.txt lines 1-2 (total lines: 2)", Output: "before\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "missing required edit path(s): `b.txt`.",
+		},
+	}
+
+	summary, errorText, prompt, reject := planThenExecuteSubmitCorrectionCurrentSurfaceRejection(
+		workspace.ToolRequest{Tool: "read_file", Path: "new_file.txt"},
+		brief,
+		results,
+	)
+	if !reject {
+		t.Fatal("expected submit-correction current-surface rejection")
+	}
+
+	joined := strings.Join([]string{summary, errorText, prompt}, "\n")
+	for _, want := range []string{
+		"Corrected submit_plan required",
+		"submit-correction mode exposes only `submit_plan`",
+		"exactly one parser-readable `submit_plan`",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("submit-correction current-surface rejection missing %q:\n%s", want, joined)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"Tool not available in current runtime contract",
+		"NEW FILE you must create",
+		"report a concrete blocker",
+		"Use `<<QUESTION>>:`",
+		"Use `Decision: source-satisfied`",
+	} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("submit-correction current-surface rejection advertised stale fallback %q:\n%s", forbidden, joined)
+		}
+	}
+}
+
+func TestPlanExecuteSubmitCorrectionChatOptionsExposeOnlySubmitPlan(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.txt lines 1-2 (total lines: 2)", Output: "before\n"},
+		{Tool: "read_file", Summary: "Read b.txt lines 1-2 (total lines: 2)", Output: "before\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "missing required edit path(s): `b.txt`.",
+		},
+	}
+
+	opts := planThenExecuteReadyToSubmitChatOptionsForBackend(llama.ChatOptions{
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: workspace.ToolNameReadFile}},
+			{Type: "function", Function: llama.ToolFunction{Name: workspace.ToolNameSubmitPlan}},
+		},
+		ToolChoice: "auto",
+	}, brief, results, true)
+
+	if !chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan) {
+		t.Fatalf("submit-correction should expose submit_plan, got %#v", opts.Tools)
+	}
+
+	if chatOptionsExposeTool(opts, workspace.ToolNameReadFile) {
+		t.Fatalf("submit-correction must not re-expose read_file, got tools=%#v choice=%q", opts.Tools, opts.ToolChoice)
+	}
+
+	if opts.ToolChoice != "required" {
+		t.Fatalf("submit-correction native tool choice = %q, want required", opts.ToolChoice)
 	}
 }
 

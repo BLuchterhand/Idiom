@@ -1849,6 +1849,15 @@ func (r *Runner) Run(
 			} else if historySummary, historyError, ok := planThenExecuteUnavailableHistoryToolNudge(req, r.RuntimeBrief, collectedResults, surfaceAllowedTools); ok {
 				summary = historySummary
 				errorText = historyError
+			} else if submitCorrectionSummary, submitCorrectionError, prompt, ok := planThenExecuteSubmitCorrectionCurrentSurfaceRejection(req, r.RuntimeBrief, collectedResults); ok {
+				summary = submitCorrectionSummary
+				errorText = submitCorrectionError
+				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				opts = planThenExecuteReadyToSubmitChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+				currentAllowedTools = append(currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
+				setCurrentAllowedTools(currentAllowedTools)
+				refreshPlanThenExecuteTerminalSurface("submit_correction_wrong_tool")
+				syncPlanThenExecuteRecoveryAllowedTools()
 			} else if newFileSummary, newFileError, ok := unavailableRequiredNewFileProbeNudge(req, r.RuntimeBrief, r.Workspace); ok {
 				summary = newFileSummary
 				errorText = newFileError

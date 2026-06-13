@@ -112,7 +112,7 @@ func (r *Runner) syncPlanThenExecuteRecoveryAllowedTools(state *runnerRunState) 
 		case PlanExecuteRecoverySurfaceSubmitReady:
 			state.currentAllowedTools = append(state.currentAllowedTools[:0], "submit_plan")
 		case PlanExecuteRecoverySurfaceSubmitCorrection:
-			state.currentAllowedTools = append(state.currentAllowedTools[:0], "submit_plan", workspace.ToolNameReadFile)
+			state.currentAllowedTools = append(state.currentAllowedTools[:0], "submit_plan")
 		}
 
 		r.setCurrentAllowedTools(state, state.currentAllowedTools)
