@@ -433,7 +433,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		}
 
 		if planExecuteAnswerDeclaresBlocker(answer) {
-			progress.MarkPlanningFailed(RunFailurePlannerBlocked, planExecuteBlockerSummary(answer))
+			progress.MarkPlanningFailed(RunFailurePlannerBlocked, planExecuteBlockerFailureReason(answer))
 
 			if savedPath, saveErr := saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
 				if savedPath != "" {
@@ -453,7 +453,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 				fmt.Fprintln(stdout, answer)
 			}
 
-			return finalizePlanExecuteRunResult(cfg.Workspace.Root, progress, progressPath, opts.JSONEvents, stdout, planExecuteRunResultInput{ExitCode: 1, FailureKind: RunFailurePlannerBlocked, FailureReason: planExecuteBlockerSummary(answer), PlannerAnswer: answer})
+			return finalizePlanExecuteRunResult(cfg.Workspace.Root, progress, progressPath, opts.JSONEvents, stdout, planExecuteRunResultInput{ExitCode: 1, FailureKind: RunFailurePlannerBlocked, FailureReason: planExecuteBlockerFailureReason(answer), PlannerAnswer: answer})
 		}
 
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "plan_artifact_missing", map[string]any{

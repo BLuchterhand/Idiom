@@ -875,7 +875,13 @@ func PlanExecutePlannerBlockedSourceRefreshResult(kind string, reason string, re
 	}
 
 	if len(paths) == 0 {
-		return PlanExecutePlannerBlockedSourceRefresh{}, false
+		if reasonClass != "anchor_refresh" {
+			return PlanExecutePlannerBlockedSourceRefresh{}, false
+		}
+		paths = cleanPathList(requiredPaths)
+		if len(paths) == 0 {
+			return PlanExecutePlannerBlockedSourceRefresh{}, false
+		}
 	}
 
 	return PlanExecutePlannerBlockedSourceRefresh{
@@ -905,18 +911,24 @@ func PlanExecutePlannerBlockedRetryRefreshResult(kind string, reason string, req
 }
 
 func PlanExecuteSourceRefreshRetryInstruction(refresh PlanExecutePlannerBlockedSourceRefresh, requiredPaths []string) string {
-	path := strings.TrimSpace(refresh.Path)
-	if path == "" && len(refresh.Paths) > 0 {
-		path = strings.TrimSpace(refresh.Paths[0])
+	refreshPaths := cleanPathList(refresh.Paths)
+	if len(refreshPaths) == 0 {
+		if path := strings.TrimSpace(refresh.Path); path != "" {
+			refreshPaths = []string{path}
+		}
 	}
-	if path == "" {
+	if len(refreshPaths) == 0 {
 		return ""
 	}
 
 	requiredPaths = cleanPathList(requiredPaths)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "First read source for `%s` using `code_navigate` `read_symbol` or a bounded `read_file` range", path)
+	if len(refreshPaths) == 1 {
+		fmt.Fprintf(&b, "First read source for `%s` using `code_navigate` `read_symbol` or a bounded `read_file` range", refreshPaths[0])
+	} else {
+		fmt.Fprintf(&b, "First refresh source-body evidence for each candidate anchor path (%s), one bounded `read_file` range or `code_navigate` `read_symbol`/`extract_body` request at a time", strings.Join(refreshPaths, ", "))
+	}
 	if len(requiredPaths) > 0 {
 		fmt.Fprintf(&b, "; then satisfy runtime-required git history evidence for every existing required path listed above (%s); then produce one valid `submit_plan` call whose edits include at least one real edit for each required path, with no outside paths. Do not treat a source read or history read as plan coverage.", strings.Join(requiredPaths, ", "))
 	} else {

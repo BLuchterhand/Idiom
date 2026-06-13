@@ -926,6 +926,9 @@ func runnerPlanExecuteTextualPlanningProjection(currentAllowedTools []string, br
 		baseTools = uniquePhaseStrings(append(baseTools, workspace.ToolNameSubmitPlan))
 	}
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode == PlanExecutePlanningModeAnchorRefresh && len(state.RefreshPaths) > 0 {
+		baseTools = uniquePhaseStrings(append(baseTools, planThenExecuteAnchorRefreshToolNames()...))
+	}
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief:             brief,
 		Results:           results,

@@ -606,12 +606,11 @@ func TestPlanThenExecutePlanningStateTransitionsFromAnchorRefreshToSubmitCorrect
 	}
 
 	if !slices.Contains(state.AllowedActionClasses, actionRead) ||
-		!slices.Contains(state.AllowedActionClasses, actionSourceSatisfied) ||
-		!slices.Contains(state.AllowedActionClasses, actionBlocker) ||
-		!slices.Contains(state.TerminalResponseShapes, "Decision: source-satisfied") ||
-		!slices.Contains(state.TerminalResponseShapes, "<<QUESTION>>:") {
+		slices.Contains(state.AllowedActionClasses, actionSourceSatisfied) ||
+		slices.Contains(state.AllowedActionClasses, actionBlocker) ||
+		len(state.TerminalResponseShapes) != 0 {
 
-		t.Fatalf("anchor refresh should advertise read + source-satisfied + blocker action classes, actions=%#v terminal=%#v", state.AllowedActionClasses, state.TerminalResponseShapes)
+		t.Fatalf("anchor refresh should advertise only read actions while refresh paths are open, actions=%#v terminal=%#v", state.AllowedActionClasses, state.TerminalResponseShapes)
 	}
 
 	if slices.Contains(state.TerminalOptions, "submit_plan") || planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
@@ -627,11 +626,11 @@ func TestPlanThenExecutePlanningStateTransitionsFromAnchorRefreshToSubmitCorrect
 	})
 	if contract.PhaseID != turnPhaseStaleAnchorRefresh ||
 		!slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionRead) ||
-		!slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied) ||
-		!slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionBlocker) ||
+		slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied) ||
+		slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionBlocker) ||
 		slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionSubmitPlan) {
 
-		t.Fatalf("contract should advertise anchor-refresh read + source-satisfied + blocker actions, phase=%q actions=%#v", contract.PhaseID, contract.ActionPolicy.AllowedActionClasses)
+		t.Fatalf("contract should advertise only anchor-refresh read actions, phase=%q actions=%#v", contract.PhaseID, contract.ActionPolicy.AllowedActionClasses)
 	}
 
 	withRefresh := append(append([]workspace.ToolResult(nil), results...), workspace.ToolResult{

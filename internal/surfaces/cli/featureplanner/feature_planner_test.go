@@ -665,6 +665,61 @@ func TestDefaultFeaturePlannerPlanExecuteRetriesAnchorRefreshBlocker(t *testing.
 	}
 }
 
+func TestDefaultFeaturePlannerPlanExecuteRetriesTruncatedAnchorRefreshBlocker(t *testing.T) {
+	var calls int
+	var retryPrompt string
+
+	req := featurePlannerRequest{
+		ConfigPath: "config.json",
+		SessionID:  "feature-session",
+		Deps: Dependencies{
+			RunPlanExecute: func(args []string, stdout io.Writer, stderr io.Writer) int {
+				calls++
+				if calls == 2 {
+					if path := featurePlannerArgValue(args, "-prompt-file"); path != "" {
+						body, err := os.ReadFile(path)
+						if err != nil {
+							t.Fatalf("read retry prompt: %v", err)
+						}
+						retryPrompt = string(body)
+					}
+					_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","review_status":"passed","state_path":".idiom/plan-execute/session/state.json"}`))
+					return 0
+				}
+
+				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.resume_state_saved","phase":"planning","status":"failed","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.","required_edit_paths":["native/src/core/colony_sim_tick.cpp","native/src/simulation/world/collapse_event.h"],"state_path":".idiom/plan-execute/session/state.json","next_valid_action":"answer_blocker"}`))
+				_, _ = stderr.Write([]byte("planner blocked"))
+				return 1
+			},
+		},
+	}
+
+	raw, err := defaultFeaturePlannerPlanExecute(context.Background(), req, "implement atom", io.Discard)
+	if err != nil {
+		t.Fatalf("defaultFeaturePlannerPlanExecute returned error: %v", err)
+	}
+
+	if calls != 2 {
+		t.Fatalf("RunPlanExecute calls = %d, want 2", calls)
+	}
+
+	if !strings.Contains(retryPrompt, "candidate anchor paths (native/src/core/colony_sim_tick.cpp, native/src/simulation/world/collapse_event.h)") ||
+		!strings.Contains(retryPrompt, "First refresh source-body evidence for each candidate anchor path") ||
+		!strings.Contains(retryPrompt, "then produce one valid `submit_plan`") {
+
+		t.Fatalf("retry prompt missing source refresh instruction:\n%s", retryPrompt)
+	}
+
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		t.Fatalf("decode completion envelope: %v", err)
+	}
+
+	if got := fmt.Sprint(envelope["status"]); got != "completed" {
+		t.Fatalf("status = %q, want completed; envelope=%+v", got, envelope)
+	}
+}
+
 func TestDefaultFeaturePlannerPlanExecuteDoesNotRetryHumanPlannerBlocker(t *testing.T) {
 	var calls int
 
@@ -742,8 +797,9 @@ func TestDefaultFeaturePlannerPlanExecuteRetriesTypedRetryActionWithoutAnchorPro
 		t.Fatalf("RunPlanExecute calls = %d, want 2", calls)
 	}
 
-	if !strings.Contains(retryPrompt, "First read source for `native/src/core/colony_sim_tick.cpp`") {
-		t.Fatalf("typed retry action should choose first required path for source refresh:\n%s", retryPrompt)
+	if !strings.Contains(retryPrompt, "First refresh source-body evidence for each candidate anchor path") ||
+		!strings.Contains(retryPrompt, "native/src/core/colony_sim_tick.cpp, native/src/simulation/world/collapse_event.h") {
+		t.Fatalf("typed retry action should refresh candidate required paths:\n%s", retryPrompt)
 	}
 
 	var envelope map[string]any

@@ -499,7 +499,11 @@ func featurePlannerPlanExecuteRetryPrompt(prompt string, completion map[string]a
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(prompt))
 	b.WriteString("\n\n## Plan-execute Recovery Addendum\n\n")
-	fmt.Fprintf(&b, "The previous nested plan-execute attempt requires a bounded source-body refresh for `%s` before a corrected `submit_plan` can be accepted.\n\n", refresh.Path)
+	if len(refresh.Paths) > 1 {
+		fmt.Fprintf(&b, "The previous nested plan-execute attempt requires bounded source-body refresh for candidate anchor paths (%s) before a corrected `submit_plan` can be accepted.\n\n", strings.Join(refresh.Paths, ", "))
+	} else {
+		fmt.Fprintf(&b, "The previous nested plan-execute attempt requires a bounded source-body refresh for `%s` before a corrected `submit_plan` can be accepted.\n\n", refresh.Path)
+	}
 	b.WriteString(instruction)
 
 	return b.String(), true

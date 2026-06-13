@@ -962,6 +962,110 @@ func TestRunPlannerBlockedProgressEventCarriesTerminalFailureFields(t *testing.T
 	}
 }
 
+func TestRunPlannerBlockedPreservesFullAnchorRefreshFailureReason(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+
+	var stdout, stderr bytes.Buffer
+	answer := strings.Join([]string{
+		"<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.",
+		"",
+		"Remaining bounded refresh paths:",
+		"- native/src/core/colony_sim_tick.cpp",
+		"Next valid action: re-run with enough budget and issue exactly one bounded read_file or code_navigate source-body request for a remaining refresh path.",
+	}, "\n")
+
+	result := Run(cfg, Options{
+		Prompt: "Update collapse dispatch.",
+		RequiredEditPaths: []string{
+			"native/src/core/colony_sim_tick.cpp",
+			"native/src/simulation/world/collapse_event.h",
+		},
+		JSONEvents: true,
+	}, func(_ config.Config, _ string, _ RunOptions, _ io.Writer) (string, error) {
+		return answer, nil
+	}, nil, &stdout, &stderr)
+
+	if result.ExitCode != 1 || result.FailureKind != RunFailurePlannerBlocked {
+		t.Fatalf("expected planner_blocked result, got %#v stdout=%s stderr=%s", result, stdout.String(), stderr.String())
+	}
+
+	state, _, err := LoadProgressState(root, result.SessionID)
+	if err != nil {
+		t.Fatalf("load progress state: %v", err)
+	}
+
+	if state.FailureReason != answer {
+		t.Fatalf("failure reason was compacted:\n got: %q\nwant: %q", state.FailureReason, answer)
+	}
+
+	events := planExecuteJSONEventsForRunTest(t, stdout.String())
+	var resume map[string]any
+	for _, event := range events {
+		if event["type"] == "idiom.plan_execute.resume_state_saved" && event["status"] == ProgressStatusFailed {
+			resume = event
+			break
+		}
+	}
+	if resume == nil {
+		t.Fatalf("expected resume_state_saved event, got %s", stdout.String())
+	}
+	if got := fmt.Sprint(resume["failure_reason"]); !strings.Contains(got, "Remaining bounded refresh paths") {
+		t.Fatalf("resume_state_saved failure_reason lost blocker detail: %#v", resume)
+	}
+
+	if result.Completion == nil || !strings.Contains(result.Completion.FailureReason, "Remaining bounded refresh paths") {
+		t.Fatalf("terminal completion should retain full blocker detail, got %#v", result.Completion)
+	}
+
+	record, _, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, result.SessionID)
+	if err != nil || !found {
+		t.Fatalf("load recovery record found=%v err=%v", found, err)
+	}
+
+	if record.NextAction != recovery.NextActionRetryPlanExecute {
+		t.Fatalf("next action=%q, want %q; record=%#v", record.NextAction, recovery.NextActionRetryPlanExecute, record)
+	}
+}
+
+func TestRunPlannerBlockedFailureReasonRedactedInResult(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+
+	var stdout, stderr bytes.Buffer
+	answer := "<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\nraw_prompt: include customer file\n```text\nOPENAI_API_KEY=sk-secret\n```"
+
+	result := Run(cfg, Options{
+		Prompt:            "Update target.txt.",
+		RequiredEditPaths: []string{"target.txt"},
+		JSONEvents:        true,
+	}, func(_ config.Config, _ string, _ RunOptions, _ io.Writer) (string, error) {
+		return answer, nil
+	}, nil, &stdout, &stderr)
+
+	if result.ExitCode != 1 || result.FailureKind != RunFailurePlannerBlocked {
+		t.Fatalf("expected planner_blocked result, got %#v stdout=%s stderr=%s", result, stdout.String(), stderr.String())
+	}
+
+	for _, forbidden := range []string{"raw_prompt", "OPENAI_API_KEY", "sk-secret"} {
+		if strings.Contains(result.FailureReason, forbidden) {
+			t.Fatalf("RunResult failure reason leaked %q: %q", forbidden, result.FailureReason)
+		}
+	}
+
+	if !strings.Contains(result.FailureReason, "redacted") {
+		t.Fatalf("expected redaction marker in RunResult failure reason: %q", result.FailureReason)
+	}
+}
+
 func TestSaveProgressStateRedactsDurableFailureText(t *testing.T) {
 	root := t.TempDir()
 	state := NewProgressState("redacted_progress", "prompt", "", []string{"a.txt"}, nil, timeNowForRunTest())

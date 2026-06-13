@@ -52,3 +52,12 @@ func planExecuteBlockerSummary(answer string) string {
 func PlanExecuteBlockerSummary(answer string) string {
 	return planExecuteBlockerSummary(answer)
 }
+
+func planExecuteBlockerFailureReason(answer string) string {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return planExecuteBlockerSummary(answer)
+	}
+
+	return sanitizeProgressReason(answer)
+}

@@ -804,6 +804,9 @@ func TestPlanExecuteSourceSatisfiedRejectionAfterInvalidAnchorKeepsAnchorRefresh
 	if allowed := runnerPlanExecuteTextualAllowedTools(nil, brief, results); !slices.Equal(allowed, []string{"read_file", "code_navigate"}) {
 		t.Fatalf("textual allowed tools = %#v, want anchor-refresh read tools", allowed)
 	}
+	if allowed := runnerPlanExecuteTextualAllowedTools([]string{"submit_plan"}, brief, results); !slices.Equal(allowed, []string{"read_file", "code_navigate"}) {
+		t.Fatalf("submit-only prior surface must not veto anchor-refresh read tools, got %#v", allowed)
+	}
 
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief:             brief,
@@ -812,8 +815,11 @@ func TestPlanExecuteSourceSatisfiedRejectionAfterInvalidAnchorKeepsAnchorRefresh
 		TextualToolParser: true,
 		ToolTransportMode: "textual",
 	})
-	if contract.PhaseID != turnPhaseStaleAnchorRefresh || !slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied) {
-		t.Fatalf("phase contract should stay anchor-refresh with source-satisfied and blocker, phase=%q actions=%#v", contract.PhaseID, contract.ActionPolicy.AllowedActionClasses)
+	if contract.PhaseID != turnPhaseStaleAnchorRefresh ||
+		!slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionRead) ||
+		slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied) ||
+		slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionBlocker) {
+		t.Fatalf("phase contract should stay read-only anchor-refresh, phase=%q actions=%#v", contract.PhaseID, contract.ActionPolicy.AllowedActionClasses)
 	}
 
 	messages := []llama.ChatMessage{

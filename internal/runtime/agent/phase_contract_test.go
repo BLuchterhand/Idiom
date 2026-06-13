@@ -453,11 +453,12 @@ func TestDeriveTurnPhaseContractStaleAnchorRefresh(t *testing.T) {
 	}
 
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
-	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied)
-	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied)
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
-	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionSourceSatisfied)
-	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionBlocker)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSourceSatisfied)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionBlocker)
+	assertEqualSet(t, contract.ActionPolicy.TerminalResponseShapes, nil)
 	assertEqualSet(t, contract.StopConditions, []string{"bounded_source_refresh_returned"})
 	assertEqualSet(t, contract.AllowedTools, []string{"read_file", "code_navigate"})
 }
@@ -591,7 +592,7 @@ func TestPlanExecuteRecoverySurfaceAnchorRefreshWinsOverSourceSatisfiedTerminal(
 	}
 
 	assertEqualSet(t, surface.State.CallableTools, []string{"read_file", "code_navigate"})
-	assertContains(t, surface.State.TerminalResponseShapes, "Decision: source-satisfied")
+	assertEqualSet(t, surface.State.TerminalResponseShapes, nil)
 
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief:             brief,
@@ -603,8 +604,9 @@ func TestPlanExecuteRecoverySurfaceAnchorRefreshWinsOverSourceSatisfiedTerminal(
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseStaleAnchorRefresh)
 	}
 
-	assertContains(t, contract.ActionPolicy.TerminalResponseShapes, "Decision: source-satisfied")
-	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied)
+	assertEqualSet(t, contract.ActionPolicy.TerminalResponseShapes, nil)
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied)
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionSubmitPlan)
 }

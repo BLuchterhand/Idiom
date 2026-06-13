@@ -25,6 +25,7 @@ import (
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/planexecute"
+	"idiom/internal/workflows/recovery"
 )
 
 func disableQueueDaemonForTurnPlannerTest(t *testing.T, root string) {
@@ -3326,6 +3327,43 @@ func TestPlanExecutePlannerRecoveryDetectsAnchorRefreshBlocker(t *testing.T) {
 	got := planExecutePlannerRecoveryRetryInstruction(failure)
 	if !strings.Contains(got, "First read source for `native/src/core/colony_sim_tick.cpp`") {
 		t.Fatalf("recovery instruction should prioritize anchor-refresh path:\n%s", got)
+	}
+}
+
+func TestPlanExecutePlannerRecoveryDetectsTruncatedAnchorRefreshBlocker(t *testing.T) {
+	failure := implementationDispatchPlanExecuteFailure{
+		Brief:         "# Brief\n\nImplement the collapse dispatch helper.",
+		RequiredPaths: []string{"native/src/core/colony_sim_tick.cpp", "native/src/simulation/world/collapse_event.h"},
+		Options: planexecute.Options{
+			RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp", "native/src/simulation/world/collapse_event.h"},
+		},
+		Result: planexecute.RunResult{
+			FailureKind:   planexecute.RunFailurePlannerBlocked,
+			FailureReason: "<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.",
+			Completion: &planexecute.PlanExecuteTerminalCompletionRecord{
+				NextAction: recovery.NextActionAnswerBlocker,
+			},
+		},
+	}
+
+	refresh, ok := planExecuteRequiredSourceReadBlocker(failure)
+	if !ok {
+		t.Fatal("expected truncated anchor-refresh blocker to be machine-actionable")
+	}
+
+	if !slices.Equal(refresh.Paths, []string{"native/src/core/colony_sim_tick.cpp", "native/src/simulation/world/collapse_event.h"}) {
+		t.Fatalf("refresh paths = %#v", refresh.Paths)
+	}
+
+	got := planExecutePlannerRecoveryRetryInstruction(failure)
+	for _, want := range []string{
+		"First refresh source-body evidence for each candidate anchor path",
+		"native/src/core/colony_sim_tick.cpp",
+		"native/src/simulation/world/collapse_event.h",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("recovery instruction missing %q:\n%s", want, got)
+		}
 	}
 }
 
