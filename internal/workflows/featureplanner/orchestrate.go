@@ -172,6 +172,11 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 					Kind:     ToolAskPlannerQuestion,
 					Question: question,
 				}, opts.Now)...)
+			} else if question, ok := missingPathLocalizationQuestion(err, opts.Prompt); ok {
+				events = append(events, ApplyPlannerOutput(&state, ParsedPlannerOutput{
+					Kind:     ToolAskPlannerQuestion,
+					Question: question,
+				}, opts.Now)...)
 			}
 
 			return RunResult{
@@ -2083,6 +2088,33 @@ func missingNewFileAuthorizationQuestion(err error, prompt string) (PlannerQuest
 	}, true
 }
 
+func missingPathLocalizationQuestion(err error, prompt string) (PlannerQuestion, bool) {
+	var missing *MissingNewFileAuthorizationError
+	if !errors.As(err, &missing) {
+		return PlannerQuestion{}, false
+	}
+
+	if !promptRequestsSourceLocalizationQuestion(prompt) {
+		return PlannerQuestion{}, false
+	}
+
+	paths := normalizeEditScopeList(missing.Paths)
+	if len(paths) == 0 {
+		return PlannerQuestion{}, false
+	}
+
+	return PlannerQuestion{
+		QuestionSummary:   "Provide source-localized atom scope",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "The submitted standalone feature plan used missing workspace paths without concrete source localization; approving those paths would grant authority to likely invented files.",
+		RequestedDecision: fmt.Sprintf("Provide one current, source-verified atom candidate with exact existing repo-relative source/test paths, or explicitly say there is no suitable unsatisfied atom. Rejected ungrounded paths: %s", strings.Join(paths, ", ")),
+		AuthorityRequired: "accepted_source",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     paths,
+		AffectedFields:    []string{"source_localization"},
+	}, true
+}
+
 func promptRequestsNewFileAuthorizationQuestion(prompt string) bool {
 	lower := strings.ToLower(strings.TrimSpace(prompt))
 	if lower == "" {
@@ -2094,6 +2126,36 @@ func promptRequestsNewFileAuthorizationQuestion(prompt string) bool {
 		(strings.Contains(lower, "ask me") || strings.Contains(lower, "ask the operator") || strings.Contains(lower, "ask product")) &&
 		(strings.Contains(lower, "authorization") || strings.Contains(lower, "authorize") || strings.Contains(lower, "approval"))
 }
+
+func promptRequestsSourceLocalizationQuestion(prompt string) bool {
+	lower := strings.ToLower(strings.TrimSpace(prompt))
+	if lower == "" {
+		return false
+	}
+
+	localizationTerms := []string{
+		"prepared next-atom",
+		"next-atom candidates",
+		"candidate",
+		"choose another",
+		"pick one",
+		"source-backed",
+		"source verification",
+		"verify current source",
+		"verify current",
+		"genuinely unsatisfied",
+	}
+	for _, term := range localizationTerms {
+		if strings.Contains(lower, term) {
+			return true
+		}
+	}
+
+	return strings.Contains(lower, "atom") &&
+		(strings.Contains(lower, "pick") || strings.Contains(lower, "choose") || strings.Contains(lower, "select")) &&
+		(strings.Contains(lower, "verify") || strings.Contains(lower, "source") || strings.Contains(lower, "prepared"))
+}
+
 
 func planAuthorityDeltaFromQuestion(question PlannerQuestion, revision int, now time.Time) PlanAuthorityDelta {
 	if now.IsZero() {

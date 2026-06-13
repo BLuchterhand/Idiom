@@ -377,3 +377,54 @@ func (fencedJSONToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizat
 
 	return ToolRequestTokenization{Tool: tool, Fields: fields, OK: true}
 }
+
+// functionCallToolRequestTokenizer handles single-line function call syntax:
+//
+//	tool: read_file(path="some/path", limit=50)
+type functionCallToolRequestTokenizer struct{}
+
+func (functionCallToolRequestTokenizer) Tokenize(text string) ToolRequestTokenization {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ToolRequestTokenization{}
+	}
+
+	// Must be single-line to be a function call.
+	if strings.Contains(trimmed, "\n") {
+		return ToolRequestTokenization{}
+	}
+
+	if strings.Contains(trimmed, "{") || strings.Contains(trimmed, "```") {
+		return ToolRequestTokenization{Unsafe: true}
+	}
+
+	key, body, ok := strings.Cut(trimmed, ":")
+	if !ok || strings.ToLower(strings.TrimSpace(key)) != "tool" {
+		return ToolRequestTokenization{}
+	}
+
+	body = strings.TrimSpace(body)
+
+	open := strings.Index(body, "(")
+
+	if open < 0 {
+		return ToolRequestTokenization{Unsafe: true}
+	}
+
+	if !strings.HasSuffix(body, ")") {
+		return ToolRequestTokenization{Unsafe: true}
+	}
+
+	tool := strings.TrimSpace(body[:open])
+	if !toolRequestSyntaxIdentifier(tool) {
+		return ToolRequestTokenization{Unsafe: true}
+	}
+
+	args := strings.TrimSpace(body[open+1 : len(body)-1])
+	values, ok := parseFunctionCallToolArguments(args)
+	if !ok {
+		return ToolRequestTokenization{Unsafe: true}
+	}
+
+	return ToolRequestTokenization{Tool: tool, Fields: values, OK: true}
+}
