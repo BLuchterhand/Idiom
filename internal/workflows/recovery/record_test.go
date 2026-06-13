@@ -39,6 +39,79 @@ func TestBuildPlanExecuteFailureRecordClassifiesPlannerBlocked(t *testing.T) {
 	}
 }
 
+func TestBuildPlanExecuteFailureRecordClassifiesAnchorRefreshAsRetry(t *testing.T) {
+	reason := strings.Join([]string{
+		"<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.",
+		"",
+		"Remaining bounded refresh paths:",
+		"- native/src/core/colony_sim_tick.cpp",
+		"Next valid action: re-run with enough budget and issue exactly one bounded read_file or code_navigate source-body request for a remaining refresh path.",
+	}, "\n")
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:         "session-anchor-refresh",
+		ProgressStatePath: ".idiom/plan-execute/sessions/session-anchor-refresh.json",
+		Phase:             "planning",
+		Status:            "failed",
+		FailureKind:       "planner_blocked",
+		FailureReason:     reason,
+		RequiredEditPaths: []string{
+			"native/src/core/colony_sim_tick.cpp",
+			"native/src/simulation/world/collapse_event.cpp",
+		},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+
+	if record.Failure.Class != FailureClassPlannerBlocked {
+		t.Fatalf("failure class=%q", record.Failure.Class)
+	}
+
+	if record.NextAction != NextActionRetryPlanExecute {
+		t.Fatalf("next action=%q, want %q", record.NextAction, NextActionRetryPlanExecute)
+	}
+
+	refresh, ok := PlanExecutePlannerBlockedSourceRefreshResult("planner_blocked", reason, []string{
+		"native/src/core/colony_sim_tick.cpp",
+		"native/src/simulation/world/collapse_event.cpp",
+	})
+	if !ok {
+		t.Fatal("expected typed source-refresh result")
+	}
+
+	if refresh.ActionClass != NextActionRetryPlanExecute || refresh.Reason != "anchor_refresh" || refresh.Path != "native/src/core/colony_sim_tick.cpp" {
+		t.Fatalf("unexpected refresh result: %+v", refresh)
+	}
+
+	if len(refresh.Paths) != 1 || refresh.Paths[0] != "native/src/core/colony_sim_tick.cpp" {
+		t.Fatalf("refresh paths = %#v", refresh.Paths)
+	}
+}
+
+func TestPlanExecutePlannerBlockedRetryRefreshUsesTypedNextActionFallback(t *testing.T) {
+	refresh, ok := PlanExecutePlannerBlockedRetryRefreshResult(
+		"planner_blocked",
+		"<<QUESTION>>: source refresh needed",
+		[]string{"native/src/core/colony_sim_tick.cpp", "native/src/simulation/world/collapse_event.h"},
+		NextActionRetryPlanExecute,
+	)
+	if !ok {
+		t.Fatal("expected typed retry action to produce refresh result")
+	}
+
+	if refresh.Path != "native/src/core/colony_sim_tick.cpp" || refresh.Reason != "retry_action" {
+		t.Fatalf("unexpected refresh result: %+v", refresh)
+	}
+
+	got := PlanExecuteSourceRefreshRetryInstruction(refresh, []string{"native/src/core/colony_sim_tick.cpp", "native/src/simulation/world/collapse_event.h"})
+	if !strings.Contains(got, "First read source for `native/src/core/colony_sim_tick.cpp`") ||
+		!strings.Contains(got, "then satisfy runtime-required git history evidence") ||
+		!strings.Contains(got, "then produce one valid `submit_plan`") {
+
+		t.Fatalf("unexpected retry instruction:\n%s", got)
+	}
+}
+
 func TestBuildPlanExecuteFailureRecordCarriesLockedContractAndInvariantFailures(t *testing.T) {
 	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
 		SessionID:         "session-contract-context",

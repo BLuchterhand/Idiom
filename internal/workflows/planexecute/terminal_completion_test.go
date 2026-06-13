@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"idiom/internal/workflows/recovery"
 )
 
 func TestPlanExecuteTerminalCompletionRecordClassifiesProgressStateBranches(t *testing.T) {
@@ -304,6 +306,40 @@ func TestFinalizeTerminalCompletionRejectsStatusOnlySuccess(t *testing.T) {
 
 	if !planExecuteTerminalStringSliceContains(result.Completion.ValidationFailures, "changed_paths_missing") {
 		t.Fatalf("validation failures missing changed_paths_missing: %#v", result.Completion.ValidationFailures)
+	}
+}
+
+func TestFinalizeTerminalCompletionSuccessDoesNotCarryStaleRecoveryMetadata(t *testing.T) {
+	root := t.TempDir()
+	sessionID := "stale_recovery_success"
+	if _, _, err := recovery.WritePlanExecuteFailureRecord(root, recovery.PlanExecuteFailureInput{
+		SessionID:         sessionID,
+		FailureKind:       RunFailurePlannerBlocked,
+		FailureReason:     "<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n- pkg/feature.go",
+		RequiredEditPaths: []string{"pkg/feature.go"},
+	}, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("write stale recovery record: %v", err)
+	}
+
+	state := NewProgressState(sessionID, "prompt", "", []string{"pkg/feature.go"}, nil, time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC))
+	state.Phase = ProgressPhaseComplete
+	state.Status = ProgressStatusCompleted
+	state.ChangedPaths = []string{"pkg/feature.go"}
+	state.Executor.SourceSanity = []PhaseEvidenceCheck{{Kind: "source_sanity", Path: "pkg/feature.go", Status: "ok"}}
+	state.Executor.Verification = []PhaseEvidenceCheck{{Kind: "verification", Command: "go test ./pkg", Status: "ok"}}
+	state.Review.Status = ProgressStatusSkipped
+
+	result := finalizePlanExecuteRunResult(root, state, ".idiom/plan-execute/sessions/stale_recovery_success.json", false, io.Discard, planExecuteRunResultInput{ExitCode: 0})
+	if result.ExitCode != 0 {
+		t.Fatalf("ExitCode = %d, want success; failure=%s %s", result.ExitCode, result.FailureKind, result.FailureReason)
+	}
+
+	if result.Completion == nil {
+		t.Fatal("expected terminal completion")
+	}
+
+	if result.Completion.NextAction != "" || result.Completion.FailureID != "" || result.Completion.RecordPath != "" || result.Completion.PacketPath != "" {
+		t.Fatalf("success completion carried stale recovery metadata: %#v", result.Completion)
 	}
 }
 

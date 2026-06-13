@@ -24,6 +24,7 @@ import (
 	"idiom/internal/surfaces/tui/implementationdispatch"
 	"idiom/internal/workflows/featureplanner"
 	"idiom/internal/workflows/planexecute"
+	"idiom/internal/workflows/recovery"
 )
 
 type implementationDispatchPlanDocument = implementationdispatch.PlanDocument
@@ -6186,14 +6187,8 @@ func planExecutePlannerRecoveryRetryInstruction(failure implementationDispatchPl
 
 	paths := uniqueImplementationDispatchPaths(append(append([]string{}, failure.RequiredPaths...), failure.Options.RequiredEditPaths...))
 
-	if path, ok := planExecuteRequiredSourceReadBlockerPath(failure); ok {
-		fmt.Fprintf(&b, "First read source for `%s` using `code_navigate` `read_symbol` or a bounded `read_file` range", path)
-
-		if len(paths) > 0 {
-			fmt.Fprintf(&b, "; then satisfy runtime-required git history evidence for every existing required path listed above (%s); then produce one valid `submit_plan` call whose edits include at least one real edit for each required path, with no outside paths. Do not treat a source read or history read as plan coverage.", strings.Join(paths, ", "))
-		} else {
-			b.WriteString("; then satisfy any runtime-required git history evidence for selected existing edit paths; then produce one valid `submit_plan` call grounded in the objective and target references. Do not treat a source read or history read as plan coverage.")
-		}
+	if refresh, ok := planExecuteRequiredSourceReadBlocker(failure); ok {
+		b.WriteString(recovery.PlanExecuteSourceRefreshRetryInstruction(refresh, paths))
 	} else {
 		switch {
 		case len(paths) > 0:
@@ -6212,35 +6207,31 @@ func planExecutePlannerRecoveryRetryInstruction(failure implementationDispatchPl
 }
 
 func planExecuteRequiredSourceReadBlockerPath(failure implementationDispatchPlanExecuteFailure) (string, bool) {
-	if len(failure.RequiredPaths) == 0 && len(failure.Options.RequiredEditPaths) == 0 {
+	refresh, ok := planExecuteRequiredSourceReadBlocker(failure)
+	if !ok {
 		return "", false
 	}
 
-	text := strings.ToLower(strings.Join([]string{
+	return refresh.Path, true
+}
+
+func planExecuteRequiredSourceReadBlocker(failure implementationDispatchPlanExecuteFailure) (recovery.PlanExecutePlannerBlockedSourceRefresh, bool) {
+	if len(failure.RequiredPaths) == 0 && len(failure.Options.RequiredEditPaths) == 0 {
+		return recovery.PlanExecutePlannerBlockedSourceRefresh{}, false
+	}
+
+	text := strings.Join([]string{
 		failure.Result.FailureReason,
 		failure.Result.PlannerAnswer,
 		failure.Stdout,
 		failure.Stderr,
-	}, "\n"))
-	if !strings.Contains(text, "required edit path source read required") &&
-		!strings.Contains(text, "not every required path has source evidence") &&
-		!strings.Contains(text, "before attempting to submit_plan") {
-
-		return "", false
+	}, "\n")
+	paths := uniqueImplementationDispatchPaths(append(append([]string{}, failure.RequiredPaths...), failure.Options.RequiredEditPaths...))
+	nextAction := ""
+	if failure.Result.Completion != nil {
+		nextAction = failure.Result.Completion.NextAction
 	}
-
-	for _, path := range uniqueImplementationDispatchPaths(append(append([]string{}, failure.RequiredPaths...), failure.Options.RequiredEditPaths...)) {
-		normalized := filepath.ToSlash(strings.TrimSpace(path))
-		if normalized == "" {
-			continue
-		}
-
-		if strings.Contains(text, strings.ToLower(normalized)) {
-			return normalized, true
-		}
-	}
-
-	return "", false
+	return recovery.PlanExecutePlannerBlockedRetryRefreshResult(failure.Result.FailureKind, text, paths, nextAction)
 }
 
 func planExecutePlannerRecoveryObservation(addendum string) string {

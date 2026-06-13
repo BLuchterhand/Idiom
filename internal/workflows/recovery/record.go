@@ -34,6 +34,7 @@ const (
 
 	NextActionReviewDecomposition = "review_decomposition"
 	NextActionAnswerBlocker       = "answer_blocker"
+	NextActionRetryPlanExecute    = "retry_plan_execute"
 	NextActionInspectFailure      = "inspect_failure"
 	NextActionHumanIntervention   = "human_intervention"
 	NextActionNone                = "none"
@@ -100,6 +101,13 @@ type FailureRecord struct {
 	Failure        Failure           `json:"failure"`
 	PartialState   PartialState      `json:"partial_state"`
 	NextAction     string            `json:"next_valid_action"`
+}
+
+type PlanExecutePlannerBlockedSourceRefresh struct {
+	ActionClass string
+	Path        string
+	Paths       []string
+	Reason      string
 }
 
 type SourceRun struct {
@@ -275,7 +283,7 @@ func BuildPlanExecuteFailureRecord(input PlanExecuteFailureInput, now time.Time)
 			TotalEdits:   input.TotalEdits,
 			ScopeStatus:  scopeStatus(input.ChangedPaths, input.RequiredEditPaths, input.AllowedEditPaths),
 		},
-		NextAction: nextActionForFailureClass(failureClass),
+		NextAction: nextActionForPlanExecuteFailure(input, failureClass),
 	}, now)
 }
 
@@ -750,6 +758,7 @@ func validNextAction(value string) bool {
 	switch strings.TrimSpace(value) {
 	case NextActionReviewDecomposition,
 		NextActionAnswerBlocker,
+		NextActionRetryPlanExecute,
 		NextActionInspectFailure,
 		NextActionHumanIntervention,
 		NextActionNone:
@@ -837,6 +846,100 @@ func nextActionForFailureClass(failureClass string) string {
 	default:
 		return NextActionReviewDecomposition
 	}
+}
+
+func nextActionForPlanExecuteFailure(input PlanExecuteFailureInput, failureClass string) string {
+	if _, ok := PlanExecutePlannerBlockedSourceRefreshResult(input.FailureKind, input.FailureReason, input.RequiredEditPaths); ok {
+		return NextActionRetryPlanExecute
+	}
+
+	return nextActionForFailureClass(failureClass)
+}
+
+func PlanExecutePlannerBlockedSourceRefreshResult(kind string, reason string, requiredPaths []string) (PlanExecutePlannerBlockedSourceRefresh, bool) {
+	if strings.TrimSpace(kind) != "planner_blocked" || len(requiredPaths) == 0 {
+		return PlanExecutePlannerBlockedSourceRefresh{}, false
+	}
+
+	text := strings.ToLower(reason)
+	reasonClass := planExecutePlannerBlockedSourceRefreshReason(text)
+	if reasonClass == "" {
+		return PlanExecutePlannerBlockedSourceRefresh{}, false
+	}
+
+	var paths []string
+	for _, path := range cleanPathList(requiredPaths) {
+		if strings.Contains(text, strings.ToLower(path)) {
+			paths = append(paths, path)
+		}
+	}
+
+	if len(paths) == 0 {
+		return PlanExecutePlannerBlockedSourceRefresh{}, false
+	}
+
+	return PlanExecutePlannerBlockedSourceRefresh{
+		ActionClass: NextActionRetryPlanExecute,
+		Path:        paths[0],
+		Paths:       paths,
+		Reason:      reasonClass,
+	}, true
+}
+
+func PlanExecutePlannerBlockedRetryRefreshResult(kind string, reason string, requiredPaths []string, nextAction string) (PlanExecutePlannerBlockedSourceRefresh, bool) {
+	if result, ok := PlanExecutePlannerBlockedSourceRefreshResult(kind, reason, requiredPaths); ok {
+		return result, true
+	}
+
+	paths := cleanPathList(requiredPaths)
+	if strings.TrimSpace(kind) != "planner_blocked" || strings.TrimSpace(nextAction) != NextActionRetryPlanExecute || len(paths) == 0 {
+		return PlanExecutePlannerBlockedSourceRefresh{}, false
+	}
+
+	return PlanExecutePlannerBlockedSourceRefresh{
+		ActionClass: NextActionRetryPlanExecute,
+		Path:        paths[0],
+		Paths:       paths,
+		Reason:      "retry_action",
+	}, true
+}
+
+func PlanExecuteSourceRefreshRetryInstruction(refresh PlanExecutePlannerBlockedSourceRefresh, requiredPaths []string) string {
+	path := strings.TrimSpace(refresh.Path)
+	if path == "" && len(refresh.Paths) > 0 {
+		path = strings.TrimSpace(refresh.Paths[0])
+	}
+	if path == "" {
+		return ""
+	}
+
+	requiredPaths = cleanPathList(requiredPaths)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "First read source for `%s` using `code_navigate` `read_symbol` or a bounded `read_file` range", path)
+	if len(requiredPaths) > 0 {
+		fmt.Fprintf(&b, "; then satisfy runtime-required git history evidence for every existing required path listed above (%s); then produce one valid `submit_plan` call whose edits include at least one real edit for each required path, with no outside paths. Do not treat a source read or history read as plan coverage.", strings.Join(requiredPaths, ", "))
+	} else {
+		b.WriteString("; then satisfy any runtime-required git history evidence for selected existing edit paths; then produce one valid `submit_plan` call grounded in the objective and target references. Do not treat a source read or history read as plan coverage.")
+	}
+
+	return b.String()
+}
+
+func planExecutePlannerBlockedSourceRefreshReason(text string) string {
+	for _, marker := range []string{"plan-execute anchor refresh is still required", "remaining bounded refresh paths", "bounded read_file or code_navigate source-body request"} {
+		if strings.Contains(text, marker) {
+			return "anchor_refresh"
+		}
+	}
+
+	for _, marker := range []string{"required edit path source read required", "not every required path has source evidence", "before attempting to submit_plan"} {
+		if strings.Contains(text, marker) {
+			return "source_read"
+		}
+	}
+
+	return ""
 }
 
 func normalizeReviewFailureClass(value string) string {

@@ -3299,6 +3299,36 @@ func TestPlanExecutePlannerRecoveryAddendumPrioritizesRequiredSourceReadBlocker(
 	}
 }
 
+func TestPlanExecutePlannerRecoveryDetectsAnchorRefreshBlocker(t *testing.T) {
+	failure := implementationDispatchPlanExecuteFailure{
+		Brief:         "# Brief\n\nImplement the collapse dispatch helper.",
+		RequiredPaths: []string{"native/src/core/colony_sim_tick.cpp", "native/src/simulation/world/collapse_event.h"},
+		Options: planexecute.Options{
+			RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp", "native/src/simulation/world/collapse_event.h"},
+		},
+		Result: planexecute.RunResult{
+			FailureKind: planexecute.RunFailurePlannerBlocked,
+			FailureReason: strings.Join([]string{
+				"<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.",
+				"",
+				"Remaining bounded refresh paths:",
+				"- native/src/core/colony_sim_tick.cpp",
+				"Next valid action: re-run with enough budget and issue exactly one bounded read_file or code_navigate source-body request for a remaining refresh path.",
+			}, "\n"),
+		},
+	}
+
+	path, ok := planExecuteRequiredSourceReadBlockerPath(failure)
+	if !ok || path != "native/src/core/colony_sim_tick.cpp" {
+		t.Fatalf("anchor-refresh blocker path = %q, %v", path, ok)
+	}
+
+	got := planExecutePlannerRecoveryRetryInstruction(failure)
+	if !strings.Contains(got, "First read source for `native/src/core/colony_sim_tick.cpp`") {
+		t.Fatalf("recovery instruction should prioritize anchor-refresh path:\n%s", got)
+	}
+}
+
 func TestPlanExecutePlannerRecoveryInstructionKeepsAllowedCandidatesNonMandatory(t *testing.T) {
 	got := planExecutePlannerRecoveryRetryInstruction(implementationDispatchPlanExecuteFailure{
 		AllowedPaths: []string{"internal/surfaces/tui/app/rendering.go", "internal/surfaces/tui/app/rendering_test.go"},

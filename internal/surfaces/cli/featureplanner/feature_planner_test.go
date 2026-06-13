@@ -599,6 +599,163 @@ func TestDefaultFeaturePlannerPlanExecuteReturnsTypedFailureCompletion(t *testin
 	}
 }
 
+func TestDefaultFeaturePlannerPlanExecuteRetriesAnchorRefreshBlocker(t *testing.T) {
+	var calls int
+	var retryPrompt string
+
+	req := featurePlannerRequest{
+		ConfigPath: "config.json",
+		SessionID:  "feature-session",
+		Deps: Dependencies{
+			RunPlanExecute: func(args []string, stdout io.Writer, stderr io.Writer) int {
+				calls++
+				if calls == 2 {
+					if path := featurePlannerArgValue(args, "-prompt-file"); path != "" {
+						body, err := os.ReadFile(path)
+						if err != nil {
+							t.Fatalf("read retry prompt: %v", err)
+						}
+						retryPrompt = string(body)
+					}
+					_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","review_status":"passed","state_path":".idiom/plan-execute/session/state.json"}`))
+					return 0
+				}
+
+				_, _ = stdout.Write([]byte(strings.Join([]string{
+					`{"type":"idiom.plan_execute.resume_state_saved","phase":"planning","status":"failed","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n\nRemaining bounded refresh paths:\n- native/src/core/colony_sim_tick.cpp\nNext valid action: re-run with enough budget and issue exactly one bounded read_file or code_navigate source-body request for a remaining refresh path.","required_edit_paths":["native/src/core/colony_sim_tick.cpp","native/src/simulation/world/collapse_event.h"],"state_path":".idiom/plan-execute/session/state.json"}`,
+					`{"type":"idiom.plan_execute.recovery_failure_record_written","failure_kind":"planner_blocked","next_valid_action":"retry_plan_execute"}`,
+				}, "\n")))
+				_, _ = stderr.Write([]byte("planner blocked"))
+				return 1
+			},
+		},
+	}
+
+	raw, err := defaultFeaturePlannerPlanExecute(context.Background(), req, "implement atom", io.Discard)
+	if err != nil {
+		t.Fatalf("defaultFeaturePlannerPlanExecute returned error: %v", err)
+	}
+
+	if calls != 2 {
+		t.Fatalf("RunPlanExecute calls = %d, want 2", calls)
+	}
+
+	for _, want := range []string{
+		"## Plan-execute Recovery Addendum",
+		"First read source for `native/src/core/colony_sim_tick.cpp`",
+		"then satisfy runtime-required git history evidence",
+		"then produce one valid `submit_plan`",
+	} {
+		if !strings.Contains(retryPrompt, want) {
+			t.Fatalf("retry prompt missing %q:\n%s", want, retryPrompt)
+		}
+	}
+
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		t.Fatalf("decode completion envelope: %v", err)
+	}
+
+	if got := fmt.Sprint(envelope["status"]); got != "completed" {
+		t.Fatalf("status = %q, want completed; envelope=%+v", got, envelope)
+	}
+
+	if strings.Contains(raw, "recovery-open") {
+		t.Fatalf("successful retry must not return recovery-open completion: %s", raw)
+	}
+}
+
+func TestDefaultFeaturePlannerPlanExecuteDoesNotRetryHumanPlannerBlocker(t *testing.T) {
+	var calls int
+
+	req := featurePlannerRequest{
+		ConfigPath: "config.json",
+		SessionID:  "feature-session",
+		Deps: Dependencies{
+			RunPlanExecute: func(_ []string, stdout io.Writer, stderr io.Writer) int {
+				calls++
+				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.resume_state_saved","phase":"planning","status":"failed","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: product owner must approve broad new behavior","required_edit_paths":["docs/design.md"],"state_path":".idiom/plan-execute/session/state.json"}`))
+				_, _ = stderr.Write([]byte("planner blocked"))
+				return 1
+			},
+		},
+	}
+
+	raw, err := defaultFeaturePlannerPlanExecute(context.Background(), req, "implement atom", io.Discard)
+	if err != nil {
+		t.Fatalf("defaultFeaturePlannerPlanExecute returned error: %v", err)
+	}
+
+	if calls != 1 {
+		t.Fatalf("RunPlanExecute calls = %d, want 1", calls)
+	}
+
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		t.Fatalf("decode completion envelope: %v", err)
+	}
+
+	if got := fmt.Sprint(envelope["status"]); got != "failed" {
+		t.Fatalf("status = %q, want failed; envelope=%+v", got, envelope)
+	}
+
+	if got := fmt.Sprint(envelope["failure_reason"]); !strings.Contains(got, "product owner must approve") {
+		t.Fatalf("failure_reason = %q, want human blocker preserved; envelope=%+v", got, envelope)
+	}
+}
+
+func TestDefaultFeaturePlannerPlanExecuteRetriesTypedRetryActionWithoutAnchorProse(t *testing.T) {
+	var calls int
+	var retryPrompt string
+
+	req := featurePlannerRequest{
+		ConfigPath: "config.json",
+		SessionID:  "feature-session",
+		Deps: Dependencies{
+			RunPlanExecute: func(args []string, stdout io.Writer, stderr io.Writer) int {
+				calls++
+				if calls == 2 {
+					if path := featurePlannerArgValue(args, "-prompt-file"); path != "" {
+						body, err := os.ReadFile(path)
+						if err != nil {
+							t.Fatalf("read retry prompt: %v", err)
+						}
+						retryPrompt = string(body)
+					}
+					_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","review_status":"passed","state_path":".idiom/plan-execute/session/state.json"}`))
+					return 0
+				}
+
+				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.resume_state_saved","phase":"planning","status":"failed","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: source refresh needed","next_valid_action":"retry_plan_execute","required_edit_paths":["native/src/core/colony_sim_tick.cpp","native/src/simulation/world/collapse_event.h"],"state_path":".idiom/plan-execute/session/state.json"}`))
+				_, _ = stderr.Write([]byte("planner blocked"))
+				return 1
+			},
+		},
+	}
+
+	raw, err := defaultFeaturePlannerPlanExecute(context.Background(), req, "implement atom", io.Discard)
+	if err != nil {
+		t.Fatalf("defaultFeaturePlannerPlanExecute returned error: %v", err)
+	}
+
+	if calls != 2 {
+		t.Fatalf("RunPlanExecute calls = %d, want 2", calls)
+	}
+
+	if !strings.Contains(retryPrompt, "First read source for `native/src/core/colony_sim_tick.cpp`") {
+		t.Fatalf("typed retry action should choose first required path for source refresh:\n%s", retryPrompt)
+	}
+
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		t.Fatalf("decode completion envelope: %v", err)
+	}
+
+	if got := fmt.Sprint(envelope["status"]); got != "completed" {
+		t.Fatalf("status = %q, want completed; envelope=%+v", got, envelope)
+	}
+}
+
 func TestDefaultFeaturePlannerPlanExecuteEmitsBlockedTelemetryForFailure(t *testing.T) {
 	req := featurePlannerRequest{
 		ConfigPath: "config.json",
@@ -1428,4 +1585,14 @@ func TestFeaturePlanner_ProductWorkflowIntegration_JSONRoundTrip(t *testing.T) {
 	if roundTripped.PRDRequirements[0].ID != "REQ-001" {
 		t.Errorf("PRDRequirements[0].ID: got %q want REQ-001", roundTripped.PRDRequirements[0].ID)
 	}
+}
+
+func featurePlannerArgValue(args []string, flag string) string {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag {
+			return args[i+1]
+		}
+	}
+
+	return ""
 }

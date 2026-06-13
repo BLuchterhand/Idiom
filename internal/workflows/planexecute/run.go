@@ -1034,7 +1034,10 @@ func finalizePlanExecuteRunResult(root string, state ProgressState, progressPath
 		state.AcceptanceEvidenceIDs = input.AcceptanceEvidenceIDs
 	}
 
-	recoveryInput := planExecuteTerminalRecoveryInput(root, state.SessionID)
+	var recoveryInput planExecuteTerminalRecoveryMetadata
+	if input.ExitCode != 0 {
+		recoveryInput = planExecuteTerminalRecoveryInput(root, state.SessionID)
+	}
 	record := NewPlanExecuteTerminalCompletionRecord(state, PlanExecuteTerminalCompletionInput{
 		ProgressPath:                 progressPath,
 		ExitCode:                     input.ExitCode,

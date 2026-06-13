@@ -2953,6 +2953,22 @@ func TestApplyImplementorOutputPromotesNestedPlanExecuteFailureDetailToBlocker(t
 	}
 }
 
+func TestApplyImplementorOutputPreservesPlanExecuteRetryNextAction(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+
+	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"failed","phase":"planning","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.","next_valid_action":"retry_plan_execute","progress_path":".idiom/plan-execute/sessions/pe.json"}`)
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute reported failure details: planner_blocked - <<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.")
+
+	if got := fmt.Sprint(events[0].Fields["next_valid_action"]); got != "retry_plan_execute" {
+		t.Fatalf("next_valid_action = %q, want retry_plan_execute; fields=%+v", got, events[0].Fields)
+	}
+
+	if got := fmt.Sprint(events[0].Fields["nested_failure_kind"]); got != "planner_blocked" {
+		t.Fatalf("nested_failure_kind = %q, want planner_blocked", got)
+	}
+}
+
 func TestApplyImplementorOutputPrefersNestedReviewRepairFailureOverPlanningFallback(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
 
