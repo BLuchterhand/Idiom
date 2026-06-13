@@ -342,9 +342,25 @@ func TestPlanThenExecuteRequiredPathDiscoveryRejectsUnboundedInvalidAnchorRefres
 		t.Fatalf("unexpected summary: %q", summary)
 	}
 
-	for _, want := range []string{"bounded `read_file`", "read_symbol", "internal/workflows/productworkflow/coverage_gate.go"} {
+	for _, want := range []string{"deterministic fallback `read_file`", "start_line:1", "end_line:120", "read_symbol", "internal/workflows/productworkflow/coverage_gate.go"} {
 		if !strings.Contains(errorText, want) {
 			t.Fatalf("rejection missing %q:\n%s", want, errorText)
+		}
+	}
+}
+
+func TestPlanThenExecuteAnchorRefreshFallbackInstructionNamesExactPath(t *testing.T) {
+	got := planThenExecuteAnchorRefreshReadFallbackInstruction([]string{"./native/src/simulation/world/collapse_event.h"})
+
+	for _, want := range []string{
+		"native/src/simulation/world/collapse_event.h",
+		"deterministic fallback `read_file`",
+		"start_line:1",
+		"end_line:120",
+		"read_symbol",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("fallback instruction missing %q:\n%s", want, got)
 		}
 	}
 }
@@ -423,6 +439,12 @@ func TestPlanThenExecutePostReadinessDiscoveryRejectsAfterBadSubmitPlan(t *testi
 
 	if !strings.Contains(errorText, "previous `submit_plan` was rejected before it became a valid plan artifact") || !strings.Contains(errorText, "cmd/idiom/product_workflow.go") {
 		t.Fatalf("rejection should point to the remaining stale anchor refresh, got %q", errorText)
+	}
+
+	for _, want := range []string{"deterministic fallback `read_file`", "start_line:1", "end_line:120"} {
+		if !strings.Contains(errorText, want) {
+			t.Fatalf("rejection should include deterministic refresh fallback %q, got %q", want, errorText)
+		}
 	}
 
 	if strings.Contains(errorText, "corrected parser-readable `submit_plan`") {

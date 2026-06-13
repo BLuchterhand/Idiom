@@ -806,7 +806,7 @@ func planThenExecuteAnchorRefreshAfterRejectedSubmitPlanPrompt(brief workerrunti
 	return strings.Join([]string{
 		"The previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanRejectionBrief(rejected),
 		"This is an anchor-refresh phase, not a submit-plan phase. The corrected plan cannot be valid until source evidence is refreshed for: " + target + ".",
-		"Your next visible message must be exactly one parser-readable bounded source-body request for one of those paths. For symbol reads, use " + workspace.CodeNavigateCapabilityInstruction(workspace.CapReadSymbol) + ", a real path from the rejection/current evidence, and a real declaration pattern from current evidence. Or use `read_file` with explicit `start_line`/`end_line` only when that exact range comes from current source evidence.",
+		"Your next visible message must be exactly one parser-readable bounded source-body request for one of those paths. " + planThenExecuteAnchorRefreshReadFallbackInstruction(refreshPaths),
 		"For large Go/source files, raw `read_file` windows are refresh evidence but are not enough to close an invalid-anchor correction; prefer the symbol/body route for the declaration you intend to edit.",
 		"Do not call `submit_plan` again, answer `Decision: source-satisfied`, answer `<<QUESTION>>:`, or reply in prose until the bounded refresh returns.",
 	}, "\n\n")

@@ -299,7 +299,7 @@ func (r *Runner) refreshPlanThenExecuteAnchorRefreshSurface(messages *[]llama.Ch
 		workerruntime.RenderRunState(state),
 		"",
 		"Refresh only: " + targetText + ".",
-		"Use exactly one bounded source-body request: `" + workspace.CodeNavigateToolName + "` with " + workspace.CodeNavigateSourceBodyCapabilityPhrase() + " for the relevant declaration, or `read_file` with explicit `start_line`/`end_line` only when that exact range comes from current source evidence.",
+		planThenExecuteAnchorRefreshReadFallbackInstruction(refreshPaths),
 		"For large Go/source files, raw `read_file` windows are refresh evidence but are not enough to close an invalid-anchor correction; prefer the symbol/body route for the declaration you intend to edit.",
 		"Do not emit `submit_plan` until this bounded refresh returns.",
 		"After the refresh, use anchors copied from the refreshed source. Prefer `insert_after_line` plus `content` for insertions/appends; use `old_text` only when copied exactly from fresh source.",

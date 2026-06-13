@@ -948,7 +948,7 @@ func TestPlanExecuteRecoveryForcesAnchorRefreshAfterInvalidSubmitPlan(t *testing
 		recoveryText.WriteString("\n")
 	}
 
-	for _, want := range []string{"anchor-refresh phase", "bounded source-body request for one of those paths", "Do not call `submit_plan` again, answer `Decision: source-satisfied`, answer `<<QUESTION>>:`"} {
+	for _, want := range []string{"anchor-refresh phase", "bounded source-body request for one of those paths", "deterministic fallback `read_file`", "start_line:1", "end_line:120", "Do not call `submit_plan` again, answer `Decision: source-satisfied`, answer `<<QUESTION>>:`"} {
 		if !strings.Contains(recoveryText.String(), want) {
 			t.Fatalf("anchor recovery request missing %q:\n%s", want, recoveryText.String())
 		}

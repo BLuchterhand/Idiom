@@ -138,10 +138,13 @@ func TestPlanThenExecuteCandidatePostReadinessNamesMissingAnchorCapability(t *te
 		t.Fatalf("unexpected summary %q", summary)
 	}
 
-	for _, want := range []string{"source-body capability", "read_symbol", "concrete symbol/pattern", "invalid edit anchor"} {
+	for _, want := range []string{"source-body capability", "read_symbol", "concrete symbol/pattern", "invalid edit anchor", "deterministic fallback `read_file`", "start_line:1", "end_line:120"} {
 		if !strings.Contains(errorText, want) {
 			t.Fatalf("targeted rejection missing %q:\n%s", want, errorText)
 		}
+	}
+	if strings.Contains(errorText, "copied from current source evidence") {
+		t.Fatalf("targeted rejection must not retain circular range guidance:\n%s", errorText)
 	}
 
 	if strings.Contains(errorText, `{"tool":"code_navigate"`) {
