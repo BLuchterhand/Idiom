@@ -421,6 +421,8 @@ func recoveryCardSafeNextActionFromPhaseContract(contract TurnPhaseContract) str
 		return "Run one focused verification action from the active verification requirement: " + next
 	case turnPhaseSubmitReadyNativeRequired, turnPhaseSubmitReadyTextual, turnPhaseMalformedSubmitPlanRecovery:
 		return "Emit one parser-readable planner outcome: " + next
+	case turnPhaseStaleAnchorRefresh:
+		return "Make exactly one bounded source-body refresh from the active anchor-refresh requirement: " + next
 	case turnPhaseReviewRepairTerminal:
 		return "Emit one terminal review-repair outcome: " + next
 	case turnPhaseArtifactFinalAnswer:

@@ -673,6 +673,14 @@ func BuildImplementorPromptFromContract(atom FeatureAtomState, plan FeaturePlan,
 		}
 	}
 
+	if constraints := acceptedSourceAuthorityConstraintsFromContract(contract); len(constraints) > 0 {
+		b.WriteString("\nAccepted source authority constraints:\n")
+		for _, constraint := range constraints {
+			fmt.Fprintf(&b, "- %s\n", constraint)
+		}
+		b.WriteString("These constraints are authoritative over the atom prose. Use only the listed accepted source facts for existing helper signatures and source-localized call shapes. Do not treat unlisted helper calls as source-verified; remove or generalize them, or ask the planner before relying on them.\n")
+	}
+
 	if strings.TrimSpace(atom.Prompt) != "" {
 		b.WriteString("\nAtom implementation brief:\n")
 		b.WriteString(strings.TrimSpace(atom.Prompt))
@@ -702,6 +710,58 @@ func BuildImplementorPromptFromContract(atom FeatureAtomState, plan FeaturePlan,
 	b.WriteString("\n")
 
 	return b.String()
+}
+
+func acceptedSourceAuthorityConstraintsFromContract(contract plancontract.PlanExecutionContract) []string {
+	var constraints []string
+	for _, delta := range contract.AuthorityDeltas {
+		if !delta.Approved || delta.Source != "accepted_source" {
+			continue
+		}
+		if constraint := acceptedSourceContractDeltaConstraint(delta); constraint != "" {
+			constraints = append(constraints, constraint)
+		}
+	}
+	for _, atom := range contract.Atoms {
+		for _, delta := range atom.AuthorityDeltas {
+			if !delta.Approved || delta.Source != "accepted_source" {
+				continue
+			}
+			if constraint := acceptedSourceContractDeltaConstraint(delta); constraint != "" {
+				constraints = append(constraints, constraint)
+			}
+		}
+	}
+
+	return normalizedStringList(constraints)
+}
+
+func acceptedSourceContractDeltaConstraint(delta plancontract.AuthorityDelta) string {
+	var parts []string
+	for _, fact := range delta.SourceFacts {
+		if description := sourceAuthorityFactDescription(SourceAuthorityFact{
+			Path:      fact.Path,
+			Symbol:    fact.Symbol,
+			Signature: fact.Signature,
+			Anchor:    fact.Anchor,
+		}); description != "" {
+			parts = append(parts, description)
+		}
+	}
+	if delta.Reason != "" {
+		parts = append(parts, delta.Reason)
+	}
+	if delta.From != "" {
+		parts = append(parts, "from: "+delta.From)
+	}
+	if delta.To != "" {
+		parts = append(parts, "to: "+delta.To)
+	}
+	if delta.Path != "" {
+		parts = append(parts, "path: "+delta.Path)
+	}
+
+	return strings.TrimSpace(strings.Join(parts, " | "))
 }
 
 func PlanExecuteAuthorizedNewFilesFromImplementorPrompt(prompt string) []string {
@@ -2053,6 +2113,7 @@ func answerOpenQuestion(state *FeatureState, answer string) []Event {
 			upsertPlanAuthorityDelta(state, delta)
 			clearAnsweredPlannerQuestionBlockers(state, delta.QuestionID)
 			clearAnsweredNewFileAuthorizationBlockers(state, delta)
+			clearAnsweredAcceptedSourceBlockers(state, delta)
 
 			state.OpenQuestions[i].Status = "answered"
 			state.Status = FeatureStatePlanning
@@ -2447,6 +2508,65 @@ func staleNewFileAuthorizationBlockerCovered(blocker string, authorized map[stri
 	}
 
 	return true
+}
+
+func clearAnsweredAcceptedSourceBlockers(state *FeatureState, delta PlanAuthorityDelta) {
+	if state == nil || delta.AuthorityKind != "accepted_source" || len(normalizeSourceAuthorityFacts(delta.SourceFacts)) == 0 {
+		return
+	}
+
+	state.Blockers = filterAcceptedSourceSignatureBlockers(state.Blockers, delta)
+	for i := range state.Atoms {
+		state.Atoms[i].Blockers = filterAcceptedSourceSignatureBlockers(state.Atoms[i].Blockers, delta)
+	}
+}
+
+func filterAcceptedSourceSignatureBlockers(blockers []string, delta PlanAuthorityDelta) []string {
+	if len(blockers) == 0 {
+		return blockers
+	}
+
+	grounding := atomPromptGrounding{
+		declaredPaths:      map[string]bool{},
+		verifiedSignatures: map[string][]string{},
+	}
+	for _, fact := range normalizeSourceAuthorityFacts(delta.SourceFacts) {
+		grounding.addContractSourceFact(fact)
+	}
+
+	out := blockers[:0]
+	for _, blocker := range blockers {
+		if acceptedSourceSignatureBlockerCovered(blocker, grounding) {
+			continue
+		}
+		out = append(out, blocker)
+	}
+
+	return out
+}
+
+func acceptedSourceSignatureBlockerCovered(blocker string, grounding atomPromptGrounding) bool {
+	if !strings.Contains(blocker, "without source-verified signature evidence") {
+		return false
+	}
+
+	seenCall := false
+	for _, match := range featurePlannerCallPattern.FindAllStringSubmatch(blocker, -1) {
+		if len(match) < 3 {
+			continue
+		}
+		name := strings.TrimSpace(match[1])
+		args := strings.TrimSpace(match[2])
+		if !plannerCallNeedsSignatureEvidence(name, args) {
+			continue
+		}
+		seenCall = true
+		if !grounding.hasVerifiedSignatureForCall(name) {
+			return false
+		}
+	}
+
+	return seenCall
 }
 
 func normalizedEditScopeSet(paths []string) map[string]struct{} {

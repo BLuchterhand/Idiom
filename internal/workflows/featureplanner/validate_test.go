@@ -755,6 +755,49 @@ func TestBuildPlannerPromptCarriesAcceptedSourceAuthorityConstraints(t *testing.
 	}
 }
 
+func TestBuildImplementorPromptCarriesAcceptedSourceAuthorityConstraints(t *testing.T) {
+	plan := validPlan()
+	plan.Atoms[0].Prompt = "Use FluidNetworkSystem::find_connected_cistern_with_volume(network_id, water_volume), but do not invent deduction helpers."
+	deltas := []PlanAuthorityDelta{{
+		QuestionID:     "q-source",
+		AuthorityKind:  "accepted_source",
+		EvidenceRefs:   []string{"native/src/simulation/economy/fluid_network_system.h"},
+		AffectedPaths:  []string{"native/src/simulation/economy/fluid_network_system.h"},
+		AffectedFields: []string{"source_localization"},
+		SourceFacts: []SourceAuthorityFact{{
+			Path:      "native/src/simulation/economy/fluid_network_system.h",
+			Symbol:    "FluidNetworkSystem::find_connected_cistern_with_volume",
+			Signature: "EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const",
+		}},
+		Actual:    "Do not invent deduction helpers; describe cistern stored-volume deduction generically against existing source evidence.",
+		Revision:  1,
+		CreatedAt: time.Unix(1, 0).UTC().Format(time.RFC3339Nano),
+	}}
+	contract := CompilePlanAuthorityContract(plan, deltas)
+	atom := FeatureAtomState{
+		FeatureAtomPlan: plan.Atoms[0],
+		State:           AtomStateImplementing,
+		LastRunID:       "atom-1-run-1",
+	}
+
+	prompt := BuildImplementorPromptFromContract(atom, plan, contract)
+
+	for _, want := range []string{
+		"Accepted source authority constraints:",
+		"These constraints are authoritative over the atom prose.",
+		"signature: EntityID FluidNetworkSystem::find_connected_cistern_with_volume",
+		"Do not invent deduction helpers",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("implementor prompt missing accepted-source constraint %q:\n%s", want, prompt)
+		}
+	}
+
+	if strings.Index(prompt, "Accepted source authority constraints:") > strings.Index(prompt, "Atom implementation brief:") {
+		t.Fatalf("accepted-source constraints must precede atom prose:\n%s", prompt)
+	}
+}
+
 func TestFormatStateSummaryShowsTypedAnswerFormatForAcceptedSourceQuestion(t *testing.T) {
 	state := NewState("session", "implement scoped atom", "", 3, time.Unix(1, 0).UTC())
 	state.Status = FeatureStatePlanningQuestion
@@ -4237,6 +4280,9 @@ func TestRunAcceptsTypedAnswerForRequiredAuthority(t *testing.T) {
 
 	state.Status = FeatureStatePlanningQuestion
 	state.PlanningLoop.State = FeatureStatePlanningQuestion
+	state.Blockers = []string{
+		`atom 0 prompt includes concrete helper call "BuildThing(arg)" without source-verified signature evidence; require exact signature/source verification or ask_planner_question before dispatch`,
+	}
 	state.OpenQuestions = []PlannerQuestion{{
 		ID:                "q-source",
 		QuestionKind:      "missing_spec",
@@ -4248,13 +4294,15 @@ func TestRunAcceptsTypedAnswerForRequiredAuthority(t *testing.T) {
 		Status:            "open",
 	}}
 
-	typedAnswer := `{"answer":"Use docs/feature.md acceptance criteria.","answer_source_kind":"accepted_source","evidence_refs":["docs/feature.md#acceptance"],"source_facts":[{"path":"docs/feature.md","anchor":"acceptance criteria"}]}`
+	typedAnswer := `{"answer":"Use docs/feature.md acceptance criteria. BuildThing is the accepted helper signature.","answer_source_kind":"accepted_source","evidence_refs":["docs/feature.md#acceptance"],"source_facts":[{"path":"docs/feature.md","symbol":"BuildThing","signature":"Result BuildThing(Input arg)"}]}`
+	var implementorPrompt string
 
 	result, err := Run(state, RunOptions{Prompt: "continue", ResumeAnswer: typedAnswer}, func(prompt string, taskFamily string) (string, error) {
 		switch taskFamily {
 		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
 			return mustPlanJSON(t, validPlan()), nil
 		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
+			implementorPrompt = prompt
 			return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 		default:
 			t.Fatalf("unexpected task family %q", taskFamily)
@@ -4273,9 +4321,60 @@ func TestRunAcceptsTypedAnswerForRequiredAuthority(t *testing.T) {
 	if containsString(result.State.Blockers, `planner question "q-source" requires typed accepted_source authority answer`) {
 		t.Fatalf("accepted typed answer should clear stale question blocker: %+v", result.State.Blockers)
 	}
+	for _, blocker := range result.State.Blockers {
+		if strings.Contains(blocker, "BuildThing") {
+			t.Fatalf("accepted source facts should clear covered source signature blocker: %+v", result.State.Blockers)
+		}
+	}
+
+	for _, want := range []string{
+		"Accepted source authority constraints:",
+		"These constraints are authoritative over the atom prose.",
+		"signature: Result BuildThing(Input arg)",
+	} {
+		if !strings.Contains(implementorPrompt, want) {
+			t.Fatalf("live implementor prompt missing accepted-source constraint %q:\n%s", want, implementorPrompt)
+		}
+	}
 
 	if result.State.Status == FeatureStatePlanningQuestion {
 		t.Fatalf("typed answer should allow planning to continue")
+	}
+}
+
+func TestClearAnsweredAcceptedSourceBlockersPreservesUncoveredHelperCalls(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	covered := `atom 0 prompt includes concrete helper call "BuildThing(arg)" without source-verified signature evidence; require exact signature/source verification or ask_planner_question before dispatch`
+	uncovered := `atom 0 prompt includes concrete helper call "OtherHelper(x)" without source-verified signature evidence; require exact signature/source verification or ask_planner_question before dispatch`
+	state.Blockers = []string{covered, uncovered, "unrelated blocker"}
+	state.Atoms = []FeatureAtomState{{
+		FeatureAtomPlan: validPlan().Atoms[0],
+		Blockers:        []string{covered, uncovered, "atom unrelated blocker"},
+	}}
+	delta := PlanAuthorityDelta{
+		QuestionID:     "q-source",
+		AuthorityKind:  "accepted_source",
+		EvidenceRefs:   []string{"docs/feature.md#acceptance"},
+		AffectedFields: []string{"source_localization"},
+		SourceFacts: []SourceAuthorityFact{{
+			Path:      "docs/feature.md",
+			Symbol:    "BuildThing",
+			Signature: "Result BuildThing(Input arg)",
+		}},
+		Revision:  1,
+		CreatedAt: time.Unix(1, 0).UTC().Format(time.RFC3339Nano),
+	}
+
+	clearAnsweredAcceptedSourceBlockers(&state, delta)
+
+	if containsString(state.Blockers, covered) || containsString(state.Atoms[0].Blockers, covered) {
+		t.Fatalf("covered source signature blocker should be cleared: state=%+v atom=%+v", state.Blockers, state.Atoms[0].Blockers)
+	}
+	if !containsString(state.Blockers, uncovered) || !containsString(state.Atoms[0].Blockers, uncovered) {
+		t.Fatalf("uncovered source signature blocker should remain: state=%+v atom=%+v", state.Blockers, state.Atoms[0].Blockers)
+	}
+	if !containsString(state.Blockers, "unrelated blocker") || !containsString(state.Atoms[0].Blockers, "atom unrelated blocker") {
+		t.Fatalf("unrelated blockers should remain: state=%+v atom=%+v", state.Blockers, state.Atoms[0].Blockers)
 	}
 }
 

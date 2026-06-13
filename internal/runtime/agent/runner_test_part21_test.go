@@ -610,8 +610,15 @@ func TestPlanExecuteAnchorRefreshRecoveryCardAdvertisesDerivedReadTools(t *testi
 		t.Fatalf("anchor-refresh recovery card should advertise derived read tools, got:\n%s", state.RecoveryCard)
 	}
 
+	if !strings.Contains(state.RecoveryCard, "deterministic safe next action: Make exactly one bounded source-body refresh") ||
+		!strings.Contains(state.RecoveryCard, "native/src/simulation/production/production_execution.cpp") {
+
+		t.Fatalf("anchor-refresh recovery card should advertise the bounded refresh as safe next, got:\n%s", state.RecoveryCard)
+	}
+
 	if strings.Contains(state.RecoveryCard, "currently callable tools: none") ||
-		strings.Contains(state.RecoveryCard, "currently callable tools: submit_plan") {
+		strings.Contains(state.RecoveryCard, "currently callable tools: submit_plan") ||
+		strings.Contains(state.RecoveryCard, "deterministic safe next action: none available") {
 
 		t.Fatalf("anchor-refresh recovery card advertised stale callable tools, got:\n%s", state.RecoveryCard)
 	}

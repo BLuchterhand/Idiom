@@ -404,6 +404,43 @@ func TestBuildRecoveryCardDerivesSafeNextForClosedPlannerPhase(t *testing.T) {
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
 }
 
+func TestBuildRecoveryCardDerivesSafeNextForAnchorRefresh(t *testing.T) {
+	contract := TurnPhaseContract{
+		PhaseID:      turnPhaseStaleAnchorRefresh,
+		Phase:        "anchor_refresh",
+		RequiredNext: []string{"bounded source-body refresh for: a.go; do not submit_plan until that refresh returns"},
+		InvalidNext:  []string{"submit_plan before bounded anchor refresh", "broad search"},
+		ActionPolicy: TurnActionClassPolicy{
+			AllowedActionClasses: []string{actionRead},
+			InvalidActionClasses: []string{actionSubmitPlan, actionSearch},
+			CallableToolNames:    []string{"read_file", "code_navigate"},
+		},
+		RuntimeCall: RuntimeCallContract{
+			ExpressibleActionClasses: []string{actionRead},
+		},
+	}
+	got := RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
+		PhaseContract:       contract,
+		CurrentAllowedTools: []string{"read_file", "code_navigate"},
+		RejectedRequest:     workspace.ToolRequest{Tool: "submit_plan"},
+		RejectedResult: workspace.ToolResult{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "old_text not found in current source",
+		},
+	}))
+
+	assertRecoveryCardContains(t, got,
+		"phase_id=plan_execute.stale_anchor_refresh",
+		"currently callable tools: read_file, code_navigate",
+		"deterministic safe next action: Make exactly one bounded source-body refresh from the active anchor-refresh requirement: bounded source-body refresh for: a.go; do not submit_plan until that refresh returns",
+	)
+
+	if strings.Contains(got, "deterministic safe next action: none available") {
+		t.Fatalf("anchor refresh recovery card should not advertise no safe action, got:\n%s", got)
+	}
+}
+
 func TestRecoveryCardDoesNotAdvertiseUnavailablePendingRedirect(t *testing.T) {
 	contract := TurnPhaseContract{
 		PhaseID:      turnPhaseImplementationWriteReady,
