@@ -5773,6 +5773,106 @@ func TestPlanExecutePromptRunnerUseActiveModelSkipsExecutorRoute(t *testing.T) {
 	}
 }
 
+func TestUseConfigPlannerModelBypassesPlannerRoleAlias(t *testing.T) {
+	root := t.TempDir()
+	disableQueueDaemonForTurnPlannerTest(t, root)
+
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+
+	var aliasPlannerChat atomic.Int64
+	aliasPlannerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": "local-planner"}}})
+		case "/v1/chat/completions":
+			aliasPlannerChat.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "alias route"}}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer aliasPlannerServer.Close()
+
+	var (
+		configPlannerChat  atomic.Int64
+		configPlannerModel atomic.Value
+	)
+	configPlannerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": "deepseek-v4-flash"}}})
+		case "/v1/chat/completions":
+			configPlannerChat.Add(1)
+
+			var body struct {
+				Model string `json:"model"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode chat body: %v", err)
+			}
+			configPlannerModel.Store(body.Model)
+
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "config route"}}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer configPlannerServer.Close()
+
+	backendsJSON := fmt.Sprintf(`{"profiles":{"local":{"models":[
+		{"alias":"local-planner","model":"local-planner","base_url":%q,"roles":["planner"]}
+	]}}}`, aliasPlannerServer.URL)
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
+		t.Fatalf("write backends: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.LlamaServer.BaseURL = configPlannerServer.URL
+	cfg.LlamaServer.Model = "deepseek-v4-flash"
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.Workspace.EnableShell = false
+	cfg.RouteClassifier.Enabled = false
+	cfg.MCP = nil
+
+	model := New(cfg)
+	defer model.Close()
+
+	model.UseConfigPlannerModel()
+
+	answer, err := model.newPlanExecutePromptRunner(context.Background())(cfg, "answer directly", planexecute.RunOptions{
+		TaskFamily:        "direct_question",
+		MaxTokensOverride: 128,
+		UseActiveModel:    true,
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("prompt runner: %v", err)
+	}
+
+	if strings.TrimSpace(answer) != "config route" {
+		t.Fatalf("answer = %q, want config route", answer)
+	}
+
+	if configPlannerChat.Load() == 0 {
+		t.Fatalf("expected config planner chat request")
+	}
+
+	if aliasPlannerChat.Load() != 0 {
+		t.Fatalf("explicit planner model should bypass role alias, got %d alias chats", aliasPlannerChat.Load())
+	}
+
+	if got, _ := configPlannerModel.Load().(string); got != "deepseek-v4-flash" {
+		t.Fatalf("config planner request model = %q, want deepseek-v4-flash", got)
+	}
+}
+
 func TestRunPromptOncePlanExecuteRecoversFromMissingPackageOutlineForNewRequiredFile(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -106,6 +108,10 @@ func TestRunPlanExecuteMainDelegatesPlannerOptionsAndModelOverride(t *testing.T)
 		t.Fatalf("planner options should forward json/no-thinking flags, got %#v", gotOpts)
 	}
 
+	if !gotOpts.UseActiveModel {
+		t.Fatalf("model override should force active model routing, got %#v", gotOpts)
+	}
+
 	if gotOpts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecutePlanner) || !gotOpts.PlannerOwnedVerification {
 		t.Fatalf("planner options should carry plan-execute planner contract, got %#v", gotOpts)
 	}
@@ -121,6 +127,115 @@ func TestRunPlanExecuteMainDelegatesPlannerOptionsAndModelOverride(t *testing.T)
 	events := planExecuteJSONEvents(t, stdout.String())
 	if _, ok := planExecuteEventByType(events, "idiom.plan_execute.plan_artifact_missing"); !ok {
 		t.Fatalf("delegated planner failure should preserve JSON event, got %s", stdout.String())
+	}
+}
+
+func TestRunPlanExecuteMainModelOverrideBypassesPlannerRoleAlias(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(root, "missing-runner.sock"))
+
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+
+	var aliasPlannerChat int
+	aliasPlannerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": "local-planner"}}})
+		case "/v1/chat/completions":
+			aliasPlannerChat++
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "alias route"}}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer aliasPlannerServer.Close()
+
+	var (
+		configPlannerChat  int
+		configPlannerModel string
+	)
+	configPlannerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": "deepseek-v4-flash"}}})
+		case "/v1/chat/completions":
+			configPlannerChat++
+
+			var body struct {
+				Model string `json:"model"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode chat body: %v", err)
+			}
+			configPlannerModel = body.Model
+
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "no plan"}}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer configPlannerServer.Close()
+
+	backendsJSON := fmt.Sprintf(`{"profiles":{"local":{"models":[
+		{"alias":"local-planner","model":"local-planner","base_url":%q,"roles":["planner"]}
+	]}}}`, aliasPlannerServer.URL)
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
+		t.Fatalf("write backends: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.LlamaServer.Kind = config.BackendDeepSeek
+	cfg.LlamaServer.BaseURL = configPlannerServer.URL
+	cfg.LlamaServer.Model = "deepseek-v4-pro"
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.Workspace.EnableShell = false
+	cfg.RouteClassifier.Enabled = false
+	cfg.MCP = nil
+
+	configPath := filepath.Join(root, "config.json")
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if err := os.WriteFile(configPath, data, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := RunMain(
+		[]string{
+			"-config", configPath,
+			"-prompt", "plan this bounded atom",
+			"-required-edit-path", "pkg.go",
+			"-model", "deepseek-v4-flash",
+		},
+		&stdout,
+		&stderr,
+		cmdruntime.RunPromptOnce,
+	)
+
+	if code != 1 {
+		t.Fatalf("expected planner-without-artifact exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	if configPlannerChat == 0 {
+		t.Fatal("expected config planner chat request")
+	}
+
+	if aliasPlannerChat != 0 {
+		t.Fatalf("explicit model override should bypass planner role alias, got %d alias chats", aliasPlannerChat)
+	}
+
+	if configPlannerModel != "deepseek-v4-flash" {
+		t.Fatalf("config planner request model = %q, want deepseek-v4-flash", configPlannerModel)
 	}
 }
 

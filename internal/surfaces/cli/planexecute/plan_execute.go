@@ -47,6 +47,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 
 	if strings.TrimSpace(opts.Model) != "" {
 		cfg.LlamaServer.Model = opts.Model
+		opts.UseActiveModel = true
 	}
 
 	result := planexecute.Run(cfg, opts, adaptPromptRunner(promptRun), rec, stdout, stderr)
@@ -64,6 +65,7 @@ func adaptPromptRunner(promptRun cmdruntime.PromptRunner) planexecute.PromptRunn
 			MaxTokensOverride:           opts.MaxTokensOverride,
 			DisableThinking:             opts.DisableThinking,
 			ReviewRepairOpenObligations: opts.ReviewRepairOpenObligations,
+			UseActiveModel:              opts.UseActiveModel,
 			Telemetry:                   opts.Telemetry,
 			ScopeContract:               opts.ScopeContract,
 		}, stdout)

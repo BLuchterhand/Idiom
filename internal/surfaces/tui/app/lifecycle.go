@@ -406,6 +406,26 @@ func New(cfg config.Config) *Model {
 	return m
 }
 
+// UseConfigPlannerModel makes prompt-mode commands honor the explicit config
+// planner target instead of project role aliases. Interactive TUI sessions keep
+// role aliases as their default; per-command overrides such as -model need a
+// stronger contract so nested workflows cannot drift back to local defaults.
+func (m *Model) UseConfigPlannerModel() {
+	if m == nil {
+		return
+	}
+
+	spec := m.cfg.LlamaServer
+	callTimeout := time.Duration(m.cfg.Chat.RequestTimeoutSeconds) * time.Second
+
+	m.plannerSpec = spec
+	m.client = llama.NewClientForServer(spec, callTimeout)
+	m.modelID = resolveModelID(spec, spec.Model)
+	m.modelDisplayID = resolveModelDisplayID(spec, spec.Model)
+	m.modelThinkingFloor = spec.IsHosted() || spec.IsMLX()
+	m.invalidateComposedPrompt()
+}
+
 func instructionAttachmentCandidates(chat config.Chat) ([]string, bool) {
 	if chat.ProjectPromptCandidates == nil {
 		return nil, false

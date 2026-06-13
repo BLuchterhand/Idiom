@@ -35,6 +35,7 @@ type RunOptions struct {
 	MaxTokensOverride           int
 	DisableThinking             bool
 	ReviewRepairOpenObligations []string
+	UseActiveModel              bool
 	Telemetry                   *telemetry.Recorder
 	ScopeContract               planexecute.PlanScopeContract
 }
@@ -251,6 +252,9 @@ func RunPromptOnce(cfg config.Config, prompt string, opts RunOptions, stdout io.
 	model.SetDisableThinkingOverride(opts.DisableThinking)
 	model.SetForcedReadinessOpenObligations(opts.ReviewRepairOpenObligations)
 	model.SetNonInteractive(true)
+	if opts.UseActiveModel {
+		model.UseConfigPlannerModel()
+	}
 
 	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(opts.TaskFamily) {
 		model.SetPlanExecuteScopeContract(opts.ScopeContract)
