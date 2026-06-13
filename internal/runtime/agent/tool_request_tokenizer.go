@@ -12,6 +12,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
@@ -304,4 +305,75 @@ func keyValueContinuationField(key string) bool {
 	default:
 		return false
 	}
+}
+
+// fencedJSONToolRequestTokenizer handles model output wrapped in a fenced
+// JSON code block:
+//
+//	```json
+//	{"tool": "read_file", "path": "some/path", "limit": 50}
+//	```
+type fencedJSONToolRequestTokenizer struct{}
+
+func (fencedJSONToolRequestTokenizer) Tokenize(text string) ToolRequestTokenization {
+	payload, ok, unsafe := exactFencedJSONPayload(text)
+	if !ok {
+		if unsafe {
+			return ToolRequestTokenization{Unsafe: true}
+		}
+
+		return ToolRequestTokenization{}
+	}
+
+	var obj map[string]json.RawMessage
+
+	if err := json.Unmarshal([]byte(payload), &obj); err != nil {
+		return ToolRequestTokenization{Unsafe: true}
+	}
+
+	toolRaw, ok := obj["tool"]
+	if !ok {
+		return ToolRequestTokenization{Unsafe: true}
+	}
+
+	var tool string
+
+	if err := json.Unmarshal(toolRaw, &tool); err != nil || strings.TrimSpace(tool) == "" {
+		return ToolRequestTokenization{Unsafe: true}
+	}
+
+	fields := make(map[string]string, len(obj))
+
+	for key, raw := range obj {
+		key = strings.ToLower(strings.TrimSpace(key))
+		if key == "tool" {
+			continue
+		}
+
+		if !keyValueToolRequestFieldAllowed(key) {
+			continue
+		}
+
+		var value string
+
+		if err := json.Unmarshal(raw, &value); err != nil {
+			// If it's not a string, try marshaling back to JSON string.
+			compact, err := json.Marshal(raw)
+			if err != nil {
+				continue
+			}
+
+			value = string(compact)
+		}
+
+		value = strings.TrimSpace(value)
+
+		if value == "" && !keyValueAllowsEmptyValue(key, fields) {
+			continue
+		}
+
+		fields[key] = value
+	}
+
+	return ToolRequestTokenization{Tool: tool, Fields: fields, OK: true}
 }
