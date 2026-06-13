@@ -307,6 +307,11 @@ type Model struct {
 	// workflow session is active. One of productworkflow.PhasePRDDrafting,
 	// PhaseADRDrafting, etc. Empty when no session is active.
 	featurePlannerPhase string
+
+	// directFeaturePlannerSessionID tracks a direct /feature-planner workflow
+	// waiting for ordinary typed operator input, such as answering an open
+	// planner question.
+	directFeaturePlannerSessionID string
 }
 
 // pinnedFilesRegistry returns the lazy-initialized per-session pin set.

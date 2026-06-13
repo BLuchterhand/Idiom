@@ -23,6 +23,8 @@ type ParsedPlannerOutput struct {
 	Raw             string
 }
 
+const maxRejectedPlanCandidates = 3
+
 func ParsePlannerOutput(raw string) (ParsedPlannerOutput, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -262,8 +264,18 @@ func ValidatePlan(plan FeaturePlan) error {
 			errs = append(errs, fmt.Errorf("%s missing edit scope or source-satisfied marker", prefix))
 		}
 
-		if len(atom.SDDRefs) == 0 && sddContractHasEvidence(plan.SDDContract) {
+		atomSDDRefs := nonEmptyFeaturePlannerStrings(atom.SDDRefs)
+		if len(atomSDDRefs) == 0 && sddContractHasEvidence(plan.SDDContract) {
 			errs = append(errs, fmt.Errorf("%s missing sdd_refs", prefix))
+		}
+		for j, ref := range atom.SDDRefs {
+			if strings.TrimSpace(ref) == "" {
+				errs = append(errs, fmt.Errorf("%s sdd_refs[%d] must not be blank", prefix, j))
+				continue
+			}
+			if !sddRefDeclaredByContract(ref, plan.SDDContract) {
+				errs = append(errs, fmt.Errorf("%s sdd_refs[%d] %q is not declared by sdd_contract refs, acceptance IDs, PRD requirement refs, or ADR refs", prefix, j, ref))
+			}
 		}
 
 		if !atom.TestFirst.BaselineRequired {
@@ -309,6 +321,105 @@ func sddContractHasEvidence(contract SDDContract) bool {
 		len(nonEmptyFeaturePlannerStrings(contract.Acceptance)) > 0 ||
 		len(nonEmptyFeaturePlannerStrings(contract.PRDRequirementRefs)) > 0 ||
 		len(nonEmptyFeaturePlannerStrings(contract.ADRRefs)) > 0
+}
+
+func sddRefDeclaredByContract(ref string, contract SDDContract) bool {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return true
+	}
+
+	for _, declared := range declaredSDDRefs(contract) {
+		if declared == ref {
+			return true
+		}
+	}
+
+	return false
+}
+
+func declaredSDDRefs(contract SDDContract) []string {
+	seen := map[string]bool{}
+	var refs []string
+
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			return
+		}
+		seen[value] = true
+		refs = append(refs, value)
+	}
+
+	for _, declared := range append(append(append([]string(nil), contract.Refs...), contract.PRDRequirementRefs...), contract.ADRRefs...) {
+		add(declared)
+	}
+	for _, acceptance := range contract.Acceptance {
+		acceptance = strings.TrimSpace(acceptance)
+		add(acceptance)
+		add(acceptanceID(acceptance))
+	}
+
+	return refs
+}
+
+func acceptanceID(acceptance string) string {
+	before, _, found := strings.Cut(strings.TrimSpace(acceptance), ":")
+	if !found {
+		return ""
+	}
+	return strings.TrimSpace(before)
+}
+
+func recordRejectedPlanCandidate(state *FeatureState, plan FeaturePlan, eventType string, diagnostic string, now time.Time) RejectedPlanCandidate {
+	if state == nil {
+		return RejectedPlanCandidate{}
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+
+	candidate := RejectedPlanCandidate{
+		Plan:       plan,
+		PlanHash:   featurePlanHash(plan),
+		Diagnostic: strings.TrimSpace(diagnostic),
+		EventType:  strings.TrimSpace(eventType),
+		RejectedAt: now.Format(time.RFC3339Nano),
+	}
+
+	state.RejectedPlanCandidates = append(state.RejectedPlanCandidates, candidate)
+	if len(state.RejectedPlanCandidates) > maxRejectedPlanCandidates {
+		state.RejectedPlanCandidates = state.RejectedPlanCandidates[len(state.RejectedPlanCandidates)-maxRejectedPlanCandidates:]
+	}
+
+	return candidate
+}
+
+func rejectedPlanEvent(sessionID string, eventType string, diagnostic string, candidate RejectedPlanCandidate) Event {
+	fields := map[string]any{
+		"validation_diagnostic": diagnostic,
+		"rejected_plan_sha256":  candidate.PlanHash,
+		"submitted_atom_count":  len(candidate.Plan.Atoms),
+	}
+	if strings.TrimSpace(candidate.RejectedAt) != "" {
+		fields["rejected_at"] = candidate.RejectedAt
+	}
+
+	return Event{
+		Type:      eventType,
+		SessionID: sessionID,
+		Message:   diagnostic,
+		Fields:    fields,
+	}
+}
+
+func featurePlanHash(plan FeaturePlan) string {
+	body, err := json.Marshal(plan)
+	if err != nil {
+		body = []byte(fmt.Sprintf("%#v", plan))
+	}
+	sum := sha256.Sum256(body)
+	return fmt.Sprintf("sha256:%x", sum[:])
 }
 
 func ValidateDurablePlan(plan FeaturePlan) error {
@@ -1602,8 +1713,9 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
+			candidate := recordRejectedPlanCandidate(state, parsed.Plan, "idiom.feature_planner.tdd_pre_execution_blocked", err.Error(), now)
 
-			return []Event{{Type: "idiom.feature_planner.tdd_pre_execution_blocked", SessionID: state.SessionID, Message: err.Error()}}
+			return []Event{rejectedPlanEvent(state.SessionID, "idiom.feature_planner.tdd_pre_execution_blocked", err.Error(), candidate)}
 		}
 
 		state.Plan = parsed.Plan

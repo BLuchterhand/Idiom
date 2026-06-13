@@ -9,6 +9,9 @@ Start here for current project direction:
   harness contract split
 - [idiom-maintenance-best-practices.md](idiom-maintenance-best-practices.md) —
   maintenance rules for prompts, rails, lanes, audit, and recovery
+- [software-engineering-ruleset.md](software-engineering-ruleset.md) —
+  implementation and rearchitecture decision rules for paradigms, architectures,
+  patterns, algorithms, data structures, quality practices, and operations
 - [design-harness-optimization-program.md](design-harness-optimization-program.md)
   — current follow-up program for reducing avoidable guard friction
 - [design-harness-model-boundary.md](design-harness-model-boundary.md) —

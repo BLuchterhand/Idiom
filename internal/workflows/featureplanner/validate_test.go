@@ -47,11 +47,57 @@ func TestValidatePlanRequiresTDDArtifactPathsInRequiredEditScope(t *testing.T) {
 	}
 }
 
+func TestNewStateStoresBoundedPromptSummaryForResume(t *testing.T) {
+	state := NewState("session", "Implement CollapseEvent helper.\n\nKeep it scoped.", "", 3, time.Unix(1, 0).UTC())
+
+	if state.PromptSummary != "Implement CollapseEvent helper. Keep it scoped." {
+		t.Fatalf("PromptSummary = %q", state.PromptSummary)
+	}
+
+	longState := NewState("session", strings.Repeat("x", 2500), "", 3, time.Unix(1, 0).UTC())
+	if len([]rune(longState.PromptSummary)) != 2000 {
+		t.Fatalf("long prompt summary length = %d, want 2000", len([]rune(longState.PromptSummary)))
+	}
+}
+
 func TestValidatePlanAcceptsProductSDDRefs(t *testing.T) {
 	plan := validProductContextPlan()
 
 	if err := ValidatePlan(plan); err != nil {
 		t.Fatalf("product PRD/ADR refs should satisfy the generic SDD contract: %v", err)
+	}
+}
+
+func TestValidatePlanAcceptsStandaloneAcceptanceIDSDDRefs(t *testing.T) {
+	plan := validPlan()
+	plan.SDDContract.Refs = nil
+	plan.SDDContract.Acceptance = []string{"SDD-COLLAPSE-EVENT-1: collapse dispatch routes through a slim event helper"}
+	plan.Atoms[0].SDDRefs = []string{"SDD-COLLAPSE-EVENT-1"}
+
+	if err := ValidatePlan(plan); err != nil {
+		t.Fatalf("standalone acceptance ID should satisfy atom sdd_refs: %v", err)
+	}
+}
+
+func TestValidatePlanRejectsUndeclaredAtomSDDRefs(t *testing.T) {
+	plan := validPlan()
+	plan.SDDContract.Refs = nil
+	plan.SDDContract.Acceptance = []string{"SDD-COLLAPSE-EVENT-1: collapse dispatch routes through a slim event helper"}
+	plan.Atoms[0].SDDRefs = []string{"REQ-001"}
+
+	err := ValidatePlan(plan)
+	if err == nil || !strings.Contains(err.Error(), "is not declared by sdd_contract") {
+		t.Fatalf("expected undeclared sdd_refs rejection, got %v", err)
+	}
+}
+
+func TestValidatePlanRejectsBlankAtomSDDRefs(t *testing.T) {
+	plan := validPlan()
+	plan.Atoms[0].SDDRefs = []string{""}
+
+	err := ValidatePlan(plan)
+	if err == nil || !strings.Contains(err.Error(), "missing sdd_refs") || !strings.Contains(err.Error(), "must not be blank") {
+		t.Fatalf("expected blank sdd_refs rejection, got %v", err)
 	}
 }
 
@@ -479,7 +525,7 @@ func TestBuildPlannerPromptStandaloneUsesLanguageNeutralPlaceholders(t *testing.
 		}
 	}
 
-	for _, want := range []string{"project/source-file.ext", "project/test-file.ext", "project-specific-test-command"} {
+	for _, want := range []string{"project/source-file.ext", "project/test-file.ext", "project-specific-test-command", "SDD-ACCEPTANCE-1"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("standalone prompt missing neutral placeholder %q:\n%s", want, prompt)
 		}
@@ -489,6 +535,8 @@ func TestBuildPlannerPromptStandaloneUsesLanguageNeutralPlaceholders(t *testing.
 		`required_before to the scalar string "implementation"`,
 		"planned_tdd_snapshot.obligation_ids must exactly match test_first.obligation_refs",
 		"include every test_first.test_artifact_paths entry in required_edit_paths",
+		"Define stable standalone acceptance IDs",
+		"use those IDs in atom.sdd_refs",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("standalone prompt missing schema invariant %q:\n%s", want, prompt)
@@ -503,6 +551,24 @@ func TestBuildPlannerPromptStandaloneUsesLanguageNeutralPlaceholders(t *testing.
 	} {
 		if strings.Contains(prompt, forbidden) {
 			t.Fatalf("standalone prompt schema example contains validator-rejected TDD snapshot placeholder %q:\n%s", forbidden, prompt)
+		}
+	}
+}
+
+func TestBuildPlannerPromptIncludesPreviousPlanningBlockers(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	state.Status = FeatureStatePlanningRepair
+	state.PlanningLoop.State = FeatureStatePlanningRepair
+	state.Blockers = []string{"atom 0 missing sdd_refs"}
+
+	prompt := BuildPlannerPrompt("repair the feature plan", state, nil)
+
+	for _, want := range []string{
+		"Previous planner blockers that must be repaired before resubmission",
+		"atom 0 missing sdd_refs",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("repair prompt missing blocker context %q:\n%s", want, prompt)
 		}
 	}
 }
@@ -1345,6 +1411,114 @@ func TestRunUsesAnsweredPlannerQuestionForStandaloneNewFileAuthorization(t *test
 	if got := PlanExecuteAuthorizedNewFilesFromImplementorPrompt(implementorPrompt); !slices.Equal(got, want) {
 		t.Fatalf("authorized new files = %#v, want %#v", got, want)
 	}
+}
+
+func TestRunUsesAnsweredNewFileAuthorizationWithStandaloneAcceptanceID(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	plan.SDDContract.Refs = nil
+	plan.SDDContract.Acceptance = []string{"SDD-COLLAPSE-EVENT-1: collapse dispatch routes through a slim event helper"}
+	plan.Atoms[0].SDDRefs = []string{"SDD-COLLAPSE-EVENT-1"}
+	plan.Atoms[0].RequiredEditPaths = []string{"pkg/collapse_event.go", "pkg/collapse_event_test.go"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"pkg/collapse_event_test.go"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"pkg/collapse_event_test.go"}
+
+	state := newQuestionStateForNewFiles([]string{"pkg/collapse_event.go", "pkg/collapse_event_test.go"})
+
+	result, err := Run(state, RunOptions{
+		Prompt:                "Implement CollapseEvent helper.",
+		ResumeAnswer:          "Approved.",
+		WorkspaceRoot:         root,
+		MaxPlanningIterations: 3,
+		Now:                   time.Unix(2, 0).UTC(),
+	}, func(prompt string, taskFamily string) (string, error) {
+		switch taskFamily {
+		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
+			return mustPlanJSON(t, plan), nil
+		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
+			return testPlanExecuteCompletedJSONForPlanAndPrompt(plan, prompt), nil
+		default:
+			t.Fatalf("unexpected task family %q", taskFamily)
+		}
+
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStateComplete {
+		t.Fatalf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+}
+
+func TestRunRecordsRejectedCandidateForMissingSDDRefsAfterAuthorization(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	plan.SDDContract.Refs = nil
+	plan.SDDContract.Acceptance = []string{"SDD-COLLAPSE-EVENT-1: collapse dispatch routes through a slim event helper"}
+	plan.Atoms[0].SDDRefs = nil
+	plan.Atoms[0].RequiredEditPaths = []string{"pkg/collapse_event.go", "pkg/collapse_event_test.go"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"pkg/collapse_event_test.go"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"pkg/collapse_event_test.go"}
+
+	state := newQuestionStateForNewFiles([]string{"pkg/collapse_event.go", "pkg/collapse_event_test.go"})
+
+	result, err := Run(state, RunOptions{
+		Prompt:                "Implement CollapseEvent helper.",
+		ResumeAnswer:          "Approved.",
+		WorkspaceRoot:         root,
+		MaxPlanningIterations: 3,
+		Now:                   time.Unix(2, 0).UTC(),
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
+			t.Fatal("invalid plan must not dispatch implementor")
+		}
+
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningRepair {
+		t.Fatalf("state.Status = %q, want planning-repair", result.State.Status)
+	}
+	if len(result.State.RejectedPlanCandidates) != 1 {
+		t.Fatalf("rejected candidates = %+v, want one", result.State.RejectedPlanCandidates)
+	}
+
+	rejected := result.State.RejectedPlanCandidates[0]
+	if rejected.Plan.Atoms[0].ID != plan.Atoms[0].ID || rejected.PlanHash == "" {
+		t.Fatalf("rejected candidate did not preserve submitted plan/hash: %+v", rejected)
+	}
+	if !strings.Contains(rejected.Diagnostic, "missing sdd_refs") {
+		t.Fatalf("diagnostic should name missing sdd_refs: %+v", rejected)
+	}
+	lastEvent := result.Events[len(result.Events)-1]
+	if lastEvent.Type != "idiom.feature_planner.tdd_pre_execution_blocked" || lastEvent.Fields["rejected_plan_sha256"] == "" {
+		t.Fatalf("event should include rejected plan hash fields: %+v", result.Events)
+	}
+}
+
+func newQuestionStateForNewFiles(paths []string) FeatureState {
+	state := NewState("session", "implement scoped atom", "", 3, time.Unix(1, 0).UTC())
+	state.Status = FeatureStatePlanningQuestion
+	state.PlanningLoop.State = FeatureStatePlanningQuestion
+	state.OpenQuestions = []PlannerQuestion{{
+		ID:                "q-001",
+		Status:            "open",
+		QuestionSummary:   "Authorize new files",
+		AuthorityRequired: "operator_approval",
+		BlockingClaim:     "Missing files require operator authorization.",
+		RequestedDecision: "Approve creating the helper and test files.",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     paths,
+		AffectedFields:    []string{"new_file_authorization"},
+	}}
+	return state
 }
 
 func TestRunDoesNotCompileRequestedDecisionPathsAsNewFileAuthorization(t *testing.T) {
@@ -2924,6 +3098,30 @@ func testPlanExecuteCompletedJSONForPrompt(prompt string) string {
 		"required_edit_paths":         paths,
 		"source_sanity":               sourceSanity,
 		"acceptance_evidence_ids":     []string{"req-1", "adr-1"},
+		"acceptance_evidence_trusted": true,
+	}
+
+	return mustJSONMap(trustPlanExecuteCompletionForTest(payload))
+}
+
+func testPlanExecuteCompletedJSONForPlanAndPrompt(plan FeaturePlan, prompt string) string {
+	contractID, snapshotHash, paths := testPlanExecuteContractFromPrompt(prompt)
+	sourceSanity := testSourceSanityEvidenceForPaths(paths)
+	contract := CompilePlanAuthorityContract(plan, nil)
+
+	payload := map[string]any{
+		"tool":                        "plan_execute_completed",
+		"lane_family":                 "plan-execute",
+		"status":                      "completed",
+		"phase":                       "complete",
+		"review_status":               "completed",
+		"completion_source":           "durable_plan_execute_terminal_completion",
+		"contract_id":                 contractID,
+		"snapshot_hash":               snapshotHash,
+		"changed_paths":               paths,
+		"required_edit_paths":         paths,
+		"source_sanity":               sourceSanity,
+		"acceptance_evidence_ids":     requiredAcceptanceEvidenceIDs(contract.Atoms[0]),
 		"acceptance_evidence_trusted": true,
 	}
 

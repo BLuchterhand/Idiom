@@ -30,6 +30,7 @@ func NewState(sessionID string, prompt string, promptFile string, maxPlanningIte
 		CreatedAt:     stamp,
 		UpdatedAt:     stamp,
 		PromptSHA256:  promptSHA256(prompt),
+		PromptSummary: promptSummary(prompt),
 		PromptFile:    strings.TrimSpace(promptFile),
 		Status:        FeatureStatePlanning,
 		PlanningLoop: PlanningLoop{
@@ -199,6 +200,16 @@ func eventLogPath(root string, sessionID string) (string, string, error) {
 func promptSHA256(prompt string) string {
 	sum := sha256.Sum256([]byte(prompt))
 	return hex.EncodeToString(sum[:])
+}
+
+func promptSummary(prompt string) string {
+	summary := strings.Join(strings.Fields(prompt), " ")
+	const maxPromptSummaryRunes = 2000
+	runes := []rune(summary)
+	if len(runes) <= maxPromptSummaryRunes {
+		return summary
+	}
+	return string(runes[:maxPromptSummaryRunes])
 }
 
 func DeriveNextValidActions(state FeatureState) []string {

@@ -112,10 +112,11 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
+			candidate := recordRejectedPlanCandidate(&state, parsed.Plan, "idiom.feature_planner.product_context_blocked", err.Error(), opts.Now)
 
 			return RunResult{
 				State:  state,
-				Events: []Event{{Type: "idiom.feature_planner.product_context_blocked", SessionID: state.SessionID, Message: err.Error()}},
+				Events: []Event{rejectedPlanEvent(state.SessionID, "idiom.feature_planner.product_context_blocked", err.Error(), candidate)},
 			}, nil
 		}
 
@@ -124,10 +125,11 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
+			candidate := recordRejectedPlanCandidate(&state, parsed.Plan, "idiom.feature_planner.plan_contract_blocked", err.Error(), opts.Now)
 
 			return RunResult{
 				State:  state,
-				Events: []Event{{Type: "idiom.feature_planner.plan_contract_blocked", SessionID: state.SessionID, Message: err.Error()}},
+				Events: []Event{rejectedPlanEvent(state.SessionID, "idiom.feature_planner.plan_contract_blocked", err.Error(), candidate)},
 			}, nil
 		}
 
@@ -141,10 +143,11 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
+			candidate := recordRejectedPlanCandidate(&state, parsed.Plan, "idiom.feature_planner.plan_contract_blocked", err.Error(), opts.Now)
 
 			return RunResult{
 				State:  state,
-				Events: []Event{{Type: "idiom.feature_planner.plan_contract_blocked", SessionID: state.SessionID, Message: err.Error()}},
+				Events: []Event{rejectedPlanEvent(state.SessionID, "idiom.feature_planner.plan_contract_blocked", err.Error(), candidate)},
 			}, nil
 		}
 
@@ -156,10 +159,11 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
+			candidate := recordRejectedPlanCandidate(&state, parsed.Plan, "idiom.feature_planner.standalone_context_blocked", err.Error(), opts.Now)
 
 			return RunResult{
 				State:  state,
-				Events: []Event{{Type: "idiom.feature_planner.standalone_context_blocked", SessionID: state.SessionID, Message: err.Error()}},
+				Events: []Event{rejectedPlanEvent(state.SessionID, "idiom.feature_planner.standalone_context_blocked", err.Error(), candidate)},
 			}, nil
 		}
 	}
@@ -317,13 +321,21 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 		b.WriteString("For each atom, planned_tdd_snapshot.obligation_ids must exactly match test_first.obligation_refs, planned_tdd_snapshot.test_commands must exactly match test_first.commands, and planned_tdd_snapshot.test_artifact_paths must exactly match test_first.test_artifact_paths.\n")
 		b.WriteString("planned_tdd_snapshot.snapshot_id and snapshot_digest are harness-stamped; omit these fields from planned_tdd_snapshot.\n")
 		b.WriteString("When test_first.baseline_required is true or a TDD obligation is required before implementation, include every test_first.test_artifact_paths entry in required_edit_paths; these tests are required coverage, not optional allowed scope.\n")
-		b.WriteString("No upstream design docs are available. Use acceptance criteria strings in sdd_contract.acceptance instead of file paths.\n")
+		b.WriteString("No upstream design docs are available. Define stable standalone acceptance IDs in sdd_contract.acceptance, such as \"SDD-ACCEPTANCE-1: ...\", and use those IDs in atom.sdd_refs. Do not invent product PRD/ADR refs.\n")
 		b.WriteString("Do NOT invent file paths like docs/path.md — acceptance criteria strings are valid and preferred when no docs exist.\n")
 		b.WriteString("Standalone workspace grounding is enforced: required_edit_paths, allowed_edit_paths, and test artifact paths must be existing repo-relative paths unless the user explicitly authorizes new-file/full-body/create work. Generic add language only authorizes missing test-like paths when the user asks to add tests. If you cannot localize existing paths, use ask_planner_question instead of inventing paths.\n")
 	}
 
 	b.WriteString("Before any atom can be dispatched, every atom must carry SDD refs and test_first commands tied to TDD obligations required_before implementation.\n")
 	b.WriteString("Top-level scope is the smallest releasable feature objective; atoms are independently dispatchable implementation units.\n\n")
+
+	if len(state.Blockers) > 0 {
+		b.WriteString("Previous planner blockers that must be repaired before resubmission:\n")
+		for _, blocker := range state.Blockers {
+			fmt.Fprintf(&b, "- %s\n", blocker)
+		}
+		b.WriteString("\n")
+	}
 
 	if len(state.OpenQuestions) > 0 {
 		b.WriteString("Open planner questions and answers:\n")

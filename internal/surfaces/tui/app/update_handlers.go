@@ -231,6 +231,8 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 
 			if m.featurePlannerPhase != "" {
 				m.sendProductFeaturePlannerTurnAsync(text)
+			} else if m.directFeaturePlannerHasOpenQuestion() {
+				m.sendDirectFeaturePlannerAnswerAsync(text)
 			} else {
 				m.updateTUIRequestStatus(text)
 				m.sendPromptAsync(text)

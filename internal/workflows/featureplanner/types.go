@@ -111,6 +111,7 @@ type FeatureState struct {
 	CreatedAt               string                    `json:"created_at"`
 	UpdatedAt               string                    `json:"updated_at"`
 	PromptSHA256            string                    `json:"prompt_sha256,omitempty"`
+	PromptSummary           string                    `json:"prompt_summary,omitempty"`
 	PromptFile              string                    `json:"prompt_file,omitempty"`
 	Status                  string                    `json:"status"`
 	PlanningLoop            PlanningLoop              `json:"planning_loop"`
@@ -118,6 +119,7 @@ type FeatureState struct {
 	Atoms                   []FeatureAtomState        `json:"atoms,omitempty"`
 	TDDPreExecutionEvidence []TDDPreExecutionEvidence `json:"tdd_pre_execution_evidence,omitempty"`
 	AuthorityDeltas         []PlanAuthorityDelta      `json:"authority_deltas,omitempty"`
+	RejectedPlanCandidates  []RejectedPlanCandidate   `json:"rejected_plan_candidates,omitempty"`
 	OpenQuestions           []PlannerQuestion         `json:"open_questions,omitempty"`
 	ActiveRuns              []ActiveRun               `json:"active_runs,omitempty"`
 	Leases                  []Lease                   `json:"leases,omitempty"`
@@ -127,6 +129,14 @@ type FeatureState struct {
 	DerivedNextValidActions []string                  `json:"derived_next_valid_actions,omitempty"`
 	Blockers                []string                  `json:"blockers,omitempty"`
 	LastError               string                    `json:"last_error,omitempty"`
+}
+
+type RejectedPlanCandidate struct {
+	Plan       FeaturePlan `json:"plan"`
+	PlanHash   string      `json:"plan_hash"`
+	Diagnostic string      `json:"diagnostic"`
+	EventType  string      `json:"event_type"`
+	RejectedAt string      `json:"rejected_at"`
 }
 
 type PlanningLoop struct {

@@ -89,6 +89,71 @@ func TestFeaturePlannerTUIDirectPlanValidatesBeforeProductNormalization(t *testi
 	}
 }
 
+func TestFeaturePlannerTUIDirectAnswerResumesOpenQuestionSession(t *testing.T) {
+	projectRoot := t.TempDir()
+	plan := featurePlannerCommandStandaloneCollapsePlan()
+	plan.Atoms[0].SDDRefs = nil
+
+	client := &scriptedLLMClient{responses: []string{
+		featurePlannerCommandNewFileQuestionJSON(t),
+		featurePlannerCommandPlanJSON(t, plan),
+	}}
+	m := &Model{
+		client: client,
+		cfg: config.Config{
+			Chat:      config.Chat{ProjectRoot: projectRoot},
+			Workspace: config.Workspace{Root: projectRoot, CWD: projectRoot},
+		},
+		workspace: workspace.NewManager(config.Workspace{Root: projectRoot, CWD: projectRoot}),
+	}
+
+	answer, err := m.runFeaturePlannerCommandOnce(context.Background(), "Implement CollapseEvent helper.")
+	if err != nil {
+		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
+	}
+	if !strings.Contains(answer, "feature-planner: "+featureplanner.FeatureStatePlanningQuestion) {
+		t.Fatalf("expected planning question answer, got:\n%s", answer)
+	}
+
+	sessionID := m.directFeaturePlannerSessionID
+	if sessionID == "" {
+		t.Fatal("direct feature-planner session should be remembered after open question")
+	}
+	if !m.directFeaturePlannerHasOpenQuestion() {
+		t.Fatal("direct feature-planner session should report an open question")
+	}
+
+	answer, err = m.runDirectFeaturePlannerAnswerOnce(context.Background(), "Approved.")
+	if err != nil {
+		t.Fatalf("runDirectFeaturePlannerAnswerOnce: %v", err)
+	}
+	if len(client.messages) < 2 || !strings.Contains(client.messages[1][len(client.messages[1])-1].Content, "User request:\nImplement CollapseEvent helper.") {
+		t.Fatalf("resumed planner prompt lost original objective: %#v", client.messages)
+	}
+	if strings.Contains(client.messages[1][len(client.messages[1])-1].Content, "User request:\nApproved.") {
+		t.Fatalf("resumed planner prompt used approval answer as objective:\n%s", client.messages[1][len(client.messages[1])-1].Content)
+	}
+	if !strings.Contains(answer, "feature-planner: "+featureplanner.FeatureStatePlanningRepair) ||
+		!strings.Contains(answer, "missing sdd_refs") {
+		t.Fatalf("expected resumed planning-repair answer with SDD blocker, got:\n%s", answer)
+	}
+
+	if m.directFeaturePlannerSessionID != sessionID {
+		t.Fatalf("direct session changed from %q to %q", sessionID, m.directFeaturePlannerSessionID)
+	}
+
+	state := loadFeaturePlannerCommandStateFile(t, filepath.Join(projectRoot, ".idiom", "feature-planner", sessionID, "state.json"))
+	if len(state.OpenQuestions) != 1 || state.OpenQuestions[0].Status != "answered" {
+		t.Fatalf("question was not answered in durable state: %+v", state.OpenQuestions)
+	}
+	if len(state.AuthorityDeltas) != 1 || !slices.Equal(state.AuthorityDeltas[0].AffectedPaths, []string{"pkg/collapse_event.go", "pkg/collapse_event_test.go"}) {
+		t.Fatalf("typed authority delta was not preserved: %+v", state.AuthorityDeltas)
+	}
+	if len(state.RejectedPlanCandidates) != 1 || !strings.Contains(state.RejectedPlanCandidates[0].Diagnostic, "missing sdd_refs") {
+		t.Fatalf("rejected candidate evidence missing: %+v", state.RejectedPlanCandidates)
+	}
+}
+
 func TestFeaturePlannerTUITurnRetriesEmptyPlannerResponse(t *testing.T) {
 	client := &scriptedLLMClient{
 		responses:     []string{"", `{"tool":"submit_feature_plan","summary":"ok"}`},
@@ -583,6 +648,81 @@ func featurePlannerCommandNativeAtom() featureplanner.FeatureAtomPlan {
 		},
 		Prompt: "Implement the native quality contributor rows.",
 	}
+}
+
+func featurePlannerCommandStandaloneCollapsePlan() featureplanner.FeaturePlan {
+	plan := featurePlannerCommandNativePlan()
+	plan.FeatureID = "feature-collapse-event"
+	plan.SourceTask = featureplanner.SourceTask{Kind: "operator_prompt", Summary: "Implement CollapseEvent helper."}
+	plan.Summary = "Route collapse dispatch through a slim event helper."
+	plan.TopLevelScope = featureplanner.TopLevelScope{
+		Objective:       "Route collapse dispatch through a slim event helper.",
+		SuccessCriteria: []string{"Collapse dispatch uses the helper."},
+	}
+	plan.SDDContract = featureplanner.SDDContract{
+		Acceptance: []string{"SDD-COLLAPSE-EVENT-1: collapse dispatch routes through a slim event helper"},
+	}
+	plan.TDDContract.Obligations = []featureplanner.TDDObligation{{
+		ID:             "TDD-COLLAPSE-EVENT",
+		Behavior:       "Collapse dispatch routes through helper.",
+		Command:        "go test ./pkg",
+		RequiredBefore: "implementation",
+	}}
+	plan.Atoms = []featureplanner.FeatureAtomPlan{{
+		SchemaVersion:     featureplanner.FeatureAtomSchemaVersion,
+		ID:                "atom-collapse-event",
+		Title:             "CollapseEvent helper",
+		Summary:           "Create CollapseEvent helper and route dispatch through it.",
+		RequiredEditPaths: []string{"pkg/collapse_event.go", "pkg/collapse_event_test.go"},
+		SDDRefs:           []string{"SDD-COLLAPSE-EVENT-1"},
+		TDDObligations:    []string{"TDD-COLLAPSE-EVENT"},
+		RequiredTests:     []string{"go test ./pkg"},
+		TestFirst: featureplanner.TestFirstPlan{
+			ObligationRefs:             []string{"TDD-COLLAPSE-EVENT"},
+			Commands:                   []string{"go test ./pkg"},
+			BaselineRequired:           true,
+			TestArtifactPaths:          []string{"pkg/collapse_event_test.go"},
+			PreExecutionEventIDs:       []string{"evt-tdd-collapse-event"},
+			ExpectedPreExecutionResult: "red-confirmed",
+			CoverageGateEventID:        "evt-tdd-collapse-event",
+		},
+		PlannedTDDSnapshot: featureplanner.PlannedTDDSnapshot{
+			SnapshotID:                   "snap-collapse-event",
+			SnapshotDigest:               "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			ObligationIDs:                []string{"TDD-COLLAPSE-EVENT"},
+			TestCommands:                 []string{"go test ./pkg"},
+			TestArtifactPaths:            []string{"pkg/collapse_event_test.go"},
+			ExpectedPreExecutionResults:  []string{"red-confirmed"},
+			CreatedBeforeDispatchEventID: "evt-tdd-collapse-event",
+		},
+		Prompt: "Implement the CollapseEvent helper.",
+	}}
+	return plan
+}
+
+func featurePlannerCommandNewFileQuestionJSON(t *testing.T) string {
+	t.Helper()
+	question := featureplanner.PlannerQuestion{
+		QuestionSummary:   "Authorize CollapseEvent new files",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "Missing helper and test files require operator approval.",
+		RequestedDecision: "Approve creating pkg/collapse_event.go and pkg/collapse_event_test.go.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"pkg/collapse_event.go", "pkg/collapse_event_test.go"},
+		AffectedFields:    []string{"new_file_authorization"},
+	}
+	body, err := json.Marshal(struct {
+		Tool string `json:"tool"`
+		featureplanner.PlannerQuestion
+	}{
+		Tool:            featureplanner.ToolAskPlannerQuestion,
+		PlannerQuestion: question,
+	})
+	if err != nil {
+		t.Fatalf("marshal question: %v", err)
+	}
+	return string(body)
 }
 
 func featurePlannerCommandPlanJSON(t *testing.T, plan featureplanner.FeaturePlan) string {

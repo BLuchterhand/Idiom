@@ -63,6 +63,12 @@ external rulebook files are not loaded. Use specialized rulebooks as reference
 material when they materially change a task, but do not rely on them as the only
 source of quality policy.
 
+For implementation, refactoring, design review, and rearchitecture decisions,
+also use [docs/software-engineering-ruleset.md](docs/software-engineering-ruleset.md)
+as the repository's practical ruleset for choosing paradigms, architectures,
+patterns, algorithms, data structures, quality practices, and operational
+tradeoffs.
+
 - Optimize for code a senior team can maintain for years: clear names, cohesive
   functions, shallow control flow, explicit behavior, and actionable errors.
 - Keep business logic, infrastructure, persistence, API, and presentation

@@ -107,6 +107,7 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 
 	answer := formatFeaturePlannerTUIAnswer(result.State, statePath)
 	m.logMessage(featurePlannerTUITerminalRole(result.State.Status), answer)
+	m.updateDirectFeaturePlannerSession(result.State)
 
 	return m.finishPromptOnceReply(answer), nil
 }
@@ -133,6 +134,7 @@ func (m *Model) closeFeaturePlannerTUISourceSatisfied(state featureplanner.Featu
 
 	answer := formatFeaturePlannerTUIAnswer(state, statePath)
 	m.logMessage(featurePlannerTUITerminalRole(state.Status), answer)
+	m.updateDirectFeaturePlannerSession(state)
 
 	return m.finishPromptOnceReply(answer), nil
 }
@@ -229,6 +231,142 @@ func (m *Model) sendFeaturePlannerCommandAsync(objective string) {
 		_, err := m.runFeaturePlannerCommandOnce(ctx, objective)
 		m.events <- streamDoneMsg{err: err}
 	}()
+}
+
+func (m *Model) sendDirectFeaturePlannerAnswerAsync(answer string) {
+	m.streaming = true
+	m.workingFrame = 0
+	m.currentTurnBusyStatus = busyStatusForPrompt(answer)
+	m.beginAgentHistoryTurn()
+
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		_, err := m.runDirectFeaturePlannerAnswerOnce(ctx, answer)
+		m.events <- streamDoneMsg{err: err}
+	}()
+}
+
+func (m *Model) runDirectFeaturePlannerAnswerOnce(ctx context.Context, answer string) (string, error) {
+	sessionID := strings.TrimSpace(m.directFeaturePlannerSessionID)
+	if sessionID == "" {
+		return "", fmt.Errorf("no active direct feature-planner session is waiting for an answer")
+	}
+
+	state, _, err := featureplanner.LoadState(m.projectRoot(), sessionID)
+	if err != nil {
+		return "", err
+	}
+
+	productBrief, effortRoot, err := m.productBriefForFeaturePlannerState(state)
+	if err != nil {
+		return "", err
+	}
+
+	writeEnvelope := featureplanner.ProductWriteEnvelopePaths(productBrief)
+	writeEnvelopeExplicit := productBrief != nil
+
+	result, err := featureplanner.Run(state, featureplanner.RunOptions{
+		Prompt:                directFeaturePlannerResumePrompt(state, answer),
+		MaxPlanningIterations: 3,
+		ResumeAnswer:          answer,
+		Now:                   time.Now().UTC(),
+		ProductWorkflowBrief:  productBrief,
+		ReconcileActiveRuns:   m.reconcileFeaturePlannerActivePlanExecuteRuns,
+		WorkspaceRoot:         m.projectRoot(),
+	}, func(prompt string, taskFamily string) (string, error) {
+		if workerruntime.TaskFamilyIsFeaturePlannerImplementor(taskFamily) {
+			return m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, writeEnvelope, writeEnvelopeExplicit)
+		}
+
+		return m.runFeaturePlannerTUITurn(ctx, prompt, taskFamily)
+	})
+	if err != nil {
+		m.emitJSONError("run_failed", err.Error())
+
+		return "", err
+	}
+
+	for _, event := range result.Events {
+		m.logFeaturePlannerEvent(event)
+	}
+
+	eventsPath, err := featureplanner.AppendEvents(m.projectRoot(), result.State.SessionID, result.Events)
+	if err != nil {
+		m.emitJSONError("run_failed", err.Error())
+
+		return "", err
+	}
+	result.State.EventsPath = eventsPath
+
+	statePath, err := featureplanner.SaveState(m.projectRoot(), &result.State)
+	if err != nil {
+		m.emitJSONError("run_failed", err.Error())
+
+		return "", err
+	}
+
+	if effortRoot != "" {
+		m.featurePlannerEffortRoot = effortRoot
+	}
+
+	reply := formatFeaturePlannerTUIAnswer(result.State, statePath)
+	m.logMessage(featurePlannerTUITerminalRole(result.State.Status), reply)
+	m.updateDirectFeaturePlannerSession(result.State)
+
+	return m.finishPromptOnceReply(reply), nil
+}
+
+func directFeaturePlannerResumePrompt(state featureplanner.FeatureState, answer string) string {
+	if summary := strings.TrimSpace(state.PromptSummary); summary != "" {
+		return summary
+	}
+	if summary := strings.TrimSpace(state.Plan.SourceTask.Summary); summary != "" {
+		return summary
+	}
+	if summary := strings.TrimSpace(state.Plan.Summary); summary != "" {
+		return summary
+	}
+	return strings.TrimSpace(answer)
+}
+
+func (m *Model) productBriefForFeaturePlannerState(state featureplanner.FeatureState) (*featureplanner.ProductWorkflowBrief, string, error) {
+	effortRoot := strings.TrimSpace(state.EffortRoot)
+	if effortRoot == "" {
+		return nil, "", nil
+	}
+
+	effortRoot = m.resolveFeaturePlannerEffortRoot(effortRoot)
+	brief, err := loadDirectFeaturePlannerProductBrief(effortRoot)
+	if err != nil {
+		return nil, effortRoot, err
+	}
+
+	return brief, effortRoot, nil
+}
+
+func (m *Model) directFeaturePlannerHasOpenQuestion() bool {
+	sessionID := strings.TrimSpace(m.directFeaturePlannerSessionID)
+	if sessionID == "" {
+		return false
+	}
+
+	state, _, err := featureplanner.LoadState(m.projectRoot(), sessionID)
+	if err != nil {
+		return false
+	}
+
+	return featureplanner.CountOpenPlannerQuestions(state) > 0
+}
+
+func (m *Model) updateDirectFeaturePlannerSession(state featureplanner.FeatureState) {
+	switch state.Status {
+	case featureplanner.FeatureStatePlanningQuestion, featureplanner.FeatureStatePlanningRepair, featureplanner.FeatureStateDispatching:
+		m.directFeaturePlannerSessionID = strings.TrimSpace(state.SessionID)
+	default:
+		m.directFeaturePlannerSessionID = ""
+	}
 }
 
 func (m *Model) runFeaturePlannerTUITurn(ctx context.Context, prompt string, taskFamily string) (string, error) {
