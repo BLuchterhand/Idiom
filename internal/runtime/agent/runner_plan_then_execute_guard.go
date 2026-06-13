@@ -1462,6 +1462,7 @@ func submitPlanRejectionHasInvalidAnchor(result workspace.ToolResult) bool {
 
 	return strings.Contains(text, "invalid edit anchor") ||
 		strings.Contains(text, "old_text not found") ||
+		strings.Contains(text, "whole-file replace_all edit would rewrite existing source file") ||
 		strings.Contains(text, "line range outside current source") ||
 		strings.Contains(text, "preflight syntax validation failed")
 }
@@ -1480,8 +1481,78 @@ func submitPlanInvalidAnchorPaths(result workspace.ToolResult) map[string]struct
 	for path := range submitPlanPathMapFromDiagnostics(backtickedSubmitPlanDiagnostics(text), true) {
 		out[path] = struct{}{}
 	}
+	for path := range submitPlanWholeFileExistingSourceRewritePaths(result) {
+		out[path] = struct{}{}
+	}
 
 	return out
+}
+
+func submitPlanWholeFileExistingSourceRewritePaths(result workspace.ToolResult) map[string]struct{} {
+	out := make(map[string]struct{})
+	text := strings.Join([]string{result.Summary, result.Error, result.Output}, "\n")
+	lower := strings.ToLower(text)
+	marker := "whole-file replace_all edit would rewrite existing source file"
+	if !strings.Contains(lower, marker) {
+		return out
+	}
+
+	for _, path := range pathparse.MentionedWorkspaceFiles(text) {
+		path = normalizeRunnerPath(path)
+		if path == "" {
+			continue
+		}
+		out[path] = struct{}{}
+	}
+
+	for _, line := range strings.Split(text, "\n") {
+		lineLower := strings.ToLower(line)
+		idx := strings.Index(lineLower, marker)
+		if idx < 0 {
+			continue
+		}
+		rawPath := strings.TrimSpace(line[idx+len(marker):])
+		if cut := strings.IndexAny(rawPath, ";\n\r\t "); cut >= 0 {
+			rawPath = rawPath[:cut]
+		}
+		path := normalizeSubmitPlanDiagnosticPath(rawPath)
+		if path == "" {
+			continue
+		}
+		out[path] = struct{}{}
+	}
+
+	return out
+}
+
+func normalizeSubmitPlanDiagnosticPath(raw string) string {
+	raw = strings.TrimSpace(raw)
+	raw = strings.Trim(raw, "`\"'.,;:()[]{}")
+	raw = filepath.ToSlash(raw)
+	if raw == "" {
+		return ""
+	}
+	if path := normalizeRunnerPath(raw); path != "" && !filepath.IsAbs(raw) {
+		return path
+	}
+
+	for _, marker := range []string{
+		"/internal/",
+		"/cmd/",
+		"/pkg/",
+		"/native/",
+		"/scripts/",
+		"/tests/",
+		"/docs/",
+		"/.idiom/",
+		"/.planning/",
+	} {
+		if idx := strings.Index(raw, marker); idx >= 0 {
+			return normalizeRunnerPath(raw[idx+1:])
+		}
+	}
+
+	return ""
 }
 
 func submitPlanSyntaxValidationPaths(result workspace.ToolResult) map[string]struct{} {

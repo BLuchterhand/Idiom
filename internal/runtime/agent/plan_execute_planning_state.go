@@ -189,6 +189,9 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
 		state.RefreshPaths = planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt)
 	}
+	if len(state.RefreshPaths) == 0 {
+		state.RefreshPaths = planThenExecuteRejectedSubmitPlanStreakRefreshPaths(brief, results)
+	}
 
 	switch {
 	case len(state.RefreshPaths) > 0:
@@ -487,22 +490,27 @@ func planThenExecuteLastInvalidSubmitPlanPaths(results []workspace.ToolResult) [
 	}
 
 	pathSet := map[string]struct{}{}
-
-	for path := range submitPlanInvalidAnchorPaths(rejected) {
+	add := func(path string) {
 		if normalized := normalizeRunnerPath(path); normalized != "" {
 			pathSet[normalized] = struct{}{}
 		}
+	}
+
+	for path := range submitPlanInvalidAnchorPaths(rejected) {
+		add(path)
 	}
 
 	for path := range submitPlanMissingRequiredPaths(rejected) {
-		if normalized := normalizeRunnerPath(path); normalized != "" {
-			pathSet[normalized] = struct{}{}
-		}
+		add(path)
 	}
 
 	for path := range submitPlanMissingSourceGroundingPaths(rejected) {
-		if normalized := normalizeRunnerPath(path); normalized != "" {
-			pathSet[normalized] = struct{}{}
+		add(path)
+	}
+
+	if len(pathSet) == 0 {
+		for path := range planThenExecuteRejectedSubmitPlanStreakInvalidPaths(results) {
+			add(path)
 		}
 	}
 

@@ -684,6 +684,114 @@ func TestPlanExecuteRejectedMissingCoverageStaysInSubmitCorrection(t *testing.T)
 	}
 }
 
+func TestPlanExecuteVariedRejectedSubmitPlanStreakForcesAnchorRefresh(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{
+			"native/src/core/colony_sim_tick.cpp",
+			"native/src/simulation/world/collapse_event.h",
+			"native/src/simulation/world/collapse_event.cpp",
+			"native/tests/test_collapse_event.cpp",
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 native/src/simulation/world/collapse_event.h lines 1-40 (total lines: 40)", Output: "1:#pragma once\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit instead.",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[1]: old_text contains placeholder marker \"todo:\"; submit concrete edit text.",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: invalid edit shape",
+			Error:   "edits[2]: replace_all requires a full file body for native/tests/test_collapse_event.cpp.",
+		},
+	}
+
+	if streak := planThenExecuteRejectedSubmitPlanStreak(results); len(streak) != 3 {
+		t.Fatalf("streak length = %d, want 3", len(streak))
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeAnchorRefresh {
+		t.Fatalf("mode = %q, want anchor_refresh; state=%+v", state.Mode, state)
+	}
+	if !slices.Equal(state.RefreshPaths, []string{"native/src/simulation/world/collapse_event.h"}) {
+		t.Fatalf("refresh paths = %#v, want unresolved existing-source rewrite path", state.RefreshPaths)
+	}
+	if !slices.Equal(state.ParserVisibleTools, planThenExecuteAnchorRefreshToolNames()) {
+		t.Fatalf("parser tools = %#v, want anchor refresh tools", state.ParserVisibleTools)
+	}
+	if slices.Contains(state.TerminalOptions, "submit_plan") {
+		t.Fatalf("anchor refresh must not expose submit_plan terminal option: %#v", state.TerminalOptions)
+	}
+
+	opts := planThenExecutePostReadinessRecoveryChatOptions(llama.ChatOptions{
+		MaxTokens: 8192,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "code_navigate"}},
+		},
+		ToolChoice: "auto",
+	}, brief, results)
+	if opts.MaxTokens != planThenExecuteAnchorRefreshMaxTokens {
+		t.Fatalf("anchor refresh retry budget = %d, want %d", opts.MaxTokens, planThenExecuteAnchorRefreshMaxTokens)
+	}
+	if !chatOptionsExposeAnyTool(opts, "read_file", "code_navigate") || chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan) {
+		t.Fatalf("anchor refresh chat options must expose refresh tools only, got %#v", opts.Tools)
+	}
+}
+
+func TestPlanExecutePathlessRejectedSubmitPlanStreakStaysSubmitCorrection(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go", "b.go"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-20 (total lines: 20)", Output: "package a\n"},
+		{Tool: "read_file", Summary: "Read f2 b.go lines 1-20 (total lines: 20)", Output: "package b\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[0]: old_text contains placeholder marker \"... existing code ...\".",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[1]: edit would not change a.go; submit real edits.",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: invalid edit shape",
+			Error:   "edits[2]: replace_all requires a full file body for generated fixture.",
+		},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitCorrection {
+		t.Fatalf("mode = %q, want submit_correction; state=%+v", state.Mode, state)
+	}
+	if len(state.RefreshPaths) != 0 {
+		t.Fatalf("pathless rejection streak must not invent refresh paths, got %#v", state.RefreshPaths)
+	}
+	if !slices.Equal(state.ParserVisibleTools, []string{"submit_plan"}) {
+		t.Fatalf("parser tools = %#v, want submit_plan only", state.ParserVisibleTools)
+	}
+	if slices.Contains(state.AllowedActionClasses, actionSourceSatisfied) || slices.Contains(state.AllowedActionClasses, actionBlocker) {
+		t.Fatalf("submit correction should not advertise terminal escapes: %#v", state.AllowedActionClasses)
+	}
+}
+
 func TestPlanExecuteGroundingCorrectionReadyNudgeIsSubmitPlanOnly(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
@@ -753,6 +861,15 @@ func TestPlanExecuteSubmitPlanDiagnosticsKeepExtensionlessPathsAndDropProtocolTo
 
 	if got := sortedRunnerPathKeys(submitPlanInvalidAnchorPaths(coverageRejected)); !slices.Equal(got, []string{"Brewfile", "Cargo.lock"}) {
 		t.Fatalf("invalid anchor diagnostics should retain extensionless path, got %#v", got)
+	}
+
+	existingSourceRewriteRejected := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected",
+		Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker",
+	}
+	if got := sortedRunnerPathKeys(submitPlanInvalidAnchorPaths(existingSourceRewriteRejected)); !slices.Equal(got, []string{"native/src/simulation/world/collapse_event.h"}) {
+		t.Fatalf("whole-file existing source rewrite should become an anchor-refresh path, got %#v", got)
 	}
 
 	groundingRejected := workspace.ToolResult{

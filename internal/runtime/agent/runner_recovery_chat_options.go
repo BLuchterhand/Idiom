@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+const planThenExecuteRejectedSubmitPlanStreakThreshold = 3
+
 func completionGateRecoveryChatOptionsForBackend(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, supportsNativeTools bool) llama.ChatOptions {
 	if briefIsScratchpadDeliverableLane(brief) {
 		if opts.MaxTokens <= 0 {
@@ -698,42 +700,19 @@ func planThenExecuteRejectedPlanNeedsSourceRefresh(brief workerruntime.WorkerRun
 		return false
 	}
 
-	refreshPaths := submitPlanInvalidAnchorPaths(rejected)
-	for path := range submitPlanMissingSourceGroundingPaths(rejected) {
-		refreshPaths[path] = struct{}{}
-	}
-
-	if len(refreshPaths) == 0 {
-		return false
-	}
-
-	for _, path := range planThenExecuteRefreshScopePathsForRejectedPlan(brief, results, refreshPaths) {
-		normalized := normalizeRunnerPath(path)
-		if _, ok := refreshPaths[normalized]; !ok {
-			continue
-		}
-
-		if _, invalid := submitPlanInvalidAnchorPaths(rejected)[normalized]; invalid {
-			if !successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, normalized) {
-				return true
-			}
-
-			continue
-		}
-
-		if !successfulSourceEvidencePathAfter(results, rejectedAt, normalized) {
-			return true
-		}
-	}
-
-	return false
+	return len(planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt)) > 0
 }
 
 func planThenExecuteRejectedPlanRefreshPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, rejected workspace.ToolResult, rejectedAt int) []string {
-	refreshPaths := submitPlanInvalidAnchorPaths(rejected)
-	for path := range submitPlanMissingSourceGroundingPaths(rejected) {
-		refreshPaths[path] = struct{}{}
+	if paths := planThenExecuteRejectedPlanRefreshPathsForResult(brief, results, rejected, rejectedAt); len(paths) > 0 {
+		return paths
 	}
+
+	return planThenExecuteRejectedSubmitPlanStreakRefreshPaths(brief, results)
+}
+
+func planThenExecuteRejectedPlanRefreshPathsForResult(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, rejected workspace.ToolResult, rejectedAt int) []string {
+	refreshPaths := submitPlanRefreshPathCandidates(rejected)
 
 	var out []string
 
@@ -759,6 +738,81 @@ func planThenExecuteRejectedPlanRefreshPaths(brief workerruntime.WorkerRuntimeBr
 	}
 
 	return out
+}
+
+func submitPlanRefreshPathCandidates(rejected workspace.ToolResult) map[string]struct{} {
+	refreshPaths := submitPlanInvalidAnchorPaths(rejected)
+	for path := range submitPlanMissingSourceGroundingPaths(rejected) {
+		refreshPaths[path] = struct{}{}
+	}
+
+	return refreshPaths
+}
+
+func planThenExecuteRejectedSubmitPlanStreak(results []workspace.ToolResult) []int {
+	var indices []int
+
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		if strings.TrimSpace(result.Tool) != workspace.ToolNameSubmitPlan {
+			continue
+		}
+
+		if strings.TrimSpace(result.Error) == "" {
+			break
+		}
+
+		if planThenExecuteSourceSatisfiedSubmitPlanRejectedResult(result) {
+			continue
+		}
+
+		if !planThenExecuteSubmitPlanRejectedResult(result) {
+			continue
+		}
+
+		indices = append(indices, i)
+	}
+
+	slices.Reverse(indices)
+
+	return indices
+}
+
+func planThenExecuteRejectedSubmitPlanStreakInvalidPaths(results []workspace.ToolResult) map[string]struct{} {
+	out := map[string]struct{}{}
+	streak := planThenExecuteRejectedSubmitPlanStreak(results)
+	if len(streak) < planThenExecuteRejectedSubmitPlanStreakThreshold {
+		return out
+	}
+
+	for _, index := range streak {
+		for path := range submitPlanRefreshPathCandidates(results[index]) {
+			if normalized := normalizeRunnerPath(path); normalized != "" {
+				out[normalized] = struct{}{}
+			}
+		}
+	}
+
+	return out
+}
+
+func planThenExecuteRejectedSubmitPlanStreakRefreshPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
+	streak := planThenExecuteRejectedSubmitPlanStreak(results)
+	if len(streak) < planThenExecuteRejectedSubmitPlanStreakThreshold {
+		return nil
+	}
+
+	pathSet := map[string]struct{}{}
+	for _, index := range streak {
+		rejected := results[index]
+		for _, path := range planThenExecuteRejectedPlanRefreshPathsForResult(brief, results, rejected, index) {
+			if normalized := normalizeRunnerPath(path); normalized != "" {
+				pathSet[normalized] = struct{}{}
+			}
+		}
+	}
+
+	return sortedRunnerPathKeys(pathSet)
 }
 
 func planThenExecuteRefreshScopePaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
