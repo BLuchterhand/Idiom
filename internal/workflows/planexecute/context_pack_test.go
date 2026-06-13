@@ -10,6 +10,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/contracts/plan"
 	"idiom/internal/platform/config"
 )
 
@@ -26,7 +27,7 @@ func TestComposePlannerPromptWithContextPackScopesBriefBody(t *testing.T) {
 		t.Fatalf("prompt missing brief body markers:\n%s", prompt)
 	}
 
-	got := RequiredEditPathsFromPrompt(prompt)
+	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 	if len(got) != 1 || got[0] != "pkg/target.go" {
 		t.Fatalf("required paths = %#v, want only brief-scoped target path", got)
 	}
@@ -83,11 +84,11 @@ func TestRequiredEditPathsFromPromptIgnoresAllowedEditPaths(t *testing.T) {
 
 - pkg/evidence.go
 `
-	if got := RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
+	if got := plancontract.RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
 		t.Fatalf("allowed edit paths must not define required coverage, got %#v", got)
 	}
 
-	allowed := AllowedEditPathsFromPrompt(prompt)
+	allowed := plancontract.AllowedEditPathsFromPrompt(prompt)
 	for _, want := range []string{"pkg/target.go", "pkg/optional.go"} {
 		if !slices.Contains(allowed, want) {
 			t.Fatalf("missing allowed path %q, got %#v", want, allowed)
@@ -101,7 +102,7 @@ func TestRequiredEditPathsFromPromptIgnoresAllowedEditPaths(t *testing.T) {
 
 func TestRequiredEditPathsFromPromptCapturesInlineColonList(t *testing.T) {
 	prompt := "Implement the change. Required edit paths: cmd/idiom/product_workflow.go, cmd/idiom/product_workflow_test.go"
-	got := RequiredEditPathsFromPrompt(prompt)
+	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 
 	for _, want := range []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"} {
 		if !slices.Contains(got, want) {
@@ -118,7 +119,7 @@ func TestRequiredEditPathsFromPromptCapturesInlineOnlyColonList(t *testing.T) {
 		"internal/surfaces/tui/app/update_handlers.go",
 		"internal/surfaces/tui/app/lifecycle.go",
 	}
-	got := RequiredEditPathsFromPrompt(prompt)
+	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 
 	if !slices.Equal(got, want) {
 		t.Fatalf("required paths = %#v, want %#v", got, want)
@@ -127,7 +128,7 @@ func TestRequiredEditPathsFromPromptCapturesInlineOnlyColonList(t *testing.T) {
 
 func TestRequiredEditPathsFromPromptIgnoresTrailingSlashProse(t *testing.T) {
 	prompt := "Implement the change. Required edit paths: `cmd/idiom/product_workflow.go`, `cmd/idiom/product_workflow_test.go`. Add focused tests for missing `--effort-root` and mutually exclusive/missing mode flags under JSON output."
-	got := RequiredEditPathsFromPrompt(prompt)
+	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 	want := []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"}
 
 	if len(got) != len(want) {
@@ -155,7 +156,7 @@ func TestRequiredEditPathsFromPromptRejectsDirectoryLikeObligations(t *testing.T
 		"- cmd/idiom/product_workflow.go",
 		"- Makefile",
 	}, "\n")
-	got := RequiredEditPathsFromPrompt(prompt)
+	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 	want := []string{"cmd/idiom/product_workflow.go", "Makefile"}
 
 	if len(got) != len(want) {
@@ -393,7 +394,7 @@ func TestAppendPlanExecuteScopeToBriefBodyMakesAllowedPathsParseable(t *testing.
 		t.Fatalf("allowed scope was not inserted inside the brief body:\n%s", got)
 	}
 
-	allowed := AllowedEditPathsFromPrompt(got)
+	allowed := plancontract.AllowedEditPathsFromPrompt(got)
 	if len(allowed) != 1 || allowed[0] != "internal/surfaces/tui/app/rendering.go" {
 		t.Fatalf("allowed paths not parseable from composed prompt: %#v\n%s", allowed, got)
 	}
@@ -405,7 +406,7 @@ func TestAppendPlanExecuteScopeToBriefBodyDoesNotRepeatRequiredAsAllowed(t *test
 		t.Fatalf("required path should appear once in canonical scope:\n%s", got)
 	}
 
-	allowed := AllowedEditPathsFromPrompt(got)
+	allowed := plancontract.AllowedEditPathsFromPrompt(got)
 	if slices.Contains(allowed, "pkg/feature_test.go") {
 		t.Fatalf("required path must not remain allowed candidate scope: %#v\n%s", allowed, got)
 	}

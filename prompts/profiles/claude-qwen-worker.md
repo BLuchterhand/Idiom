@@ -73,11 +73,12 @@ The planner's `submit_plan` accepts four edit shapes per entry:
 - **Substring**: `old_text` + `new_text` (small exact snippets only; replaces
   first match; `new_text: ""` deletes `old_text`; add `replace_all: true` to
   replace every occurrence).
-- **Whole-file / new-file**: `replace_all: true` + `new_text` +
-  empty `old_text` (writes `new_text` as the entire file body;
-  creates the file if it doesn't exist).
+- **Missing/new-file**: `replace_all: true` + `new_text` +
+  empty `old_text` (writes `new_text` as the entire file body and creates
+  the file if it doesn't exist). Existing source/test files must use bounded
+  line-range or substring edits instead.
 
-Use whole-file shape for new files. Use insertion shape only for small
+Use replace_all only for missing/new files. Use insertion shape only for small
 appends/inserts after an existing line. Use line-range or substring for
 replacement edits to existing files, and prefer line-range for large additions
 inside existing files.
@@ -87,7 +88,7 @@ ellipses, `<TODO>` markers, `existing code` comments, omitted bodies,
 pseudo-code, or prose descriptions. Line-range `content` is the complete
 replacement for the inclusive range; `insert_after_line` content is inserted
 after the named line; `old_text` is exact current text copied from source
-evidence; whole-file or new-file `new_text` is the complete file body.
+evidence; missing/new-file `new_text` is the complete file body.
 
 ## Read Discipline
 

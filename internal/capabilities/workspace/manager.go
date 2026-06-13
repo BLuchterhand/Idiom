@@ -84,7 +84,7 @@ type Manager struct {
 	handleToPath               map[string]string
 	observedPaths              map[string]struct{}
 	permissionRules            map[string][]ToolRule
-	protectedWritePaths         map[string]struct{}
+	protectedWritePaths        map[string]struct{}
 	mcpRegistry                *mcp.Registry
 	externalToolsRegistry      *ExternalToolRegistry
 	languageTools              *languagetools.Manager
@@ -404,7 +404,7 @@ func (m *Manager) Instructions() string {
 			"- Do not invent file paths from memory. Resolve a path-discovery capability, discovered handle, or structured symbol/code navigation route before naming a new file.\n"+
 			"- After an orientation call, narrow with structured language-aware routes or discovered handles first. Exact-text search and bounded reads are fallback capabilities for prose, config, or ranges a semantic probe cannot cover.\n"+
 			"- Paths are relative to the working directory unless absolute.\n"+
-			"- Prefer anchored edit capabilities for small localized changes; whole-file writes overwrite.\n"+
+			"- Prefer anchored edit capabilities for localized changes; full-body writes overwrite and are only safe when the active contract permits them.\n"+
 			"%s"+
 			"- shell runs with the same OS permissions as this process. Prefer the dedicated tools where one exists.\n"+
 			"- After tool results, either answer directly or take one exact evidence step tied to a named gap.",
@@ -5208,7 +5208,7 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 		//   (3) it meant the range form but dropped start_line/end_line.
 		// Give a targeted hint based on which fields were actually provided.
 		// Existing source/test files should recover to bounded edit shapes;
-		// whole-file replacement remains a separate primitive for new, small,
+		// full-body writes remain a separate primitive for missing/new files
 		// or non-source deliverables.
 		display := m.displayPath(path)
 		hasContent := strings.TrimSpace(req.Content) != ""
@@ -5229,7 +5229,7 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 			example = fmt.Sprintf(
 				"edit_file needs either old_text (for an exact-match replace) or start_line+end_line (for a range replace). "+
 					"You provided `content` with neither.\n"+
-					"If you want to REPLACE THE WHOLE FILE for a new, small, or non-source deliverable, use write_file instead:\n"+
+					"If you want a full-body write for a missing/new file or non-source deliverable, use write_file instead:\n"+
 					"  use path %q, complete file content, and a concrete description.\n"+
 					"If you want a PARTIAL edit, pick one of these two edit_file shapes:\n"+
 					"  (a) exact-match: use path %q, old_text copied from the file, complete new_text, and a concrete description.\n"+

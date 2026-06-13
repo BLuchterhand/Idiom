@@ -62,6 +62,28 @@ func TestRunEmitsQueueAdmissionBeforePlanner(t *testing.T) {
 	}
 }
 
+func TestPlanExecutePromptTreatsReplaceAllAsNewFileOnly(t *testing.T) {
+	prompt := planExecutePlannerSystemAddendum([]string{"pkg/existing.go", "pkg/new_helper.go"}, nil)
+
+	for _, want := range []string{
+		"replace_all:true`+`new_text`+empty `old_text` for missing/new files only",
+		"Existing source/test files must use a bounded anchored edit shape",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"replace_all:true`+`new_text`+empty `old_text` for new-file/whole-file write",
+		"whole/new-file `replace_all:true`",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("prompt still advertises stale replace_all contract %q:\n%s", forbidden, prompt)
+		}
+	}
+}
+
 func TestRunModelOverrideReachesPlannerAndReviewRepair(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("before\n"), 0o644); err != nil {
@@ -134,6 +156,99 @@ func TestRunModelOverrideReachesPlannerAndReviewRepair(t *testing.T) {
 		if !call.useActiveModel {
 			t.Fatalf("task family %s did not preserve active-model authority; calls=%#v", call.taskFamily, calls)
 		}
+	}
+}
+
+func TestRunTerminalCompletionCoversMixedSourceSatisfiedPlan(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("already final\n"), 0o644); err != nil {
+		t.Fatalf("seed b.txt: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+
+	var stdout, stderr bytes.Buffer
+
+	result := Run(cfg, Options{
+		Prompt:            "Update a.txt while b.txt is already final.",
+		RequiredEditPaths: MultiFlag{"a.txt", "b.txt"},
+		JSONEvents:        true,
+	}, func(callCfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
+		switch opts.TaskFamily {
+		case string(workerruntime.TaskFamilyPlanThenExecutePlanner):
+			mgr := workspace.NewManager(callCfg.Workspace)
+			plan := workspace.PlanArtifact{
+				SchemaVersion: workspace.PlanArtifactSchemaVersion,
+				Task:          workspace.PlanArtifactTask{Summary: "mixed source-satisfied coverage"},
+				Contract: workspace.PlanArtifactContract{
+					Kind:              "plan_then_execute",
+					StrategyOwner:     "model",
+					ContractOwner:     "harness",
+					PermissionProfile: "plan_then_execute",
+					VerificationOwner: "planner",
+				},
+				Paths: workspace.PlanArtifactPaths{
+					Editable: []string{"a.txt"},
+					Changed:  []string{"a.txt"},
+					Required: []string{"a.txt", "b.txt"},
+				},
+				Evidence: []workspace.PlanArtifactEvidence{{
+					Kind: "harness_observed_source",
+					Path: "b.txt",
+				}},
+				VerificationObligations: []workspace.PlanArtifactVerificationObligation{{
+					Kind:     "focused_tests",
+					Status:   "open",
+					Required: true,
+				}},
+				Approval: workspace.PlanArtifactApproval{Required: true, Status: "approved", ScopeID: "scope-1", Mode: "local"},
+				Handoff:  workspace.PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
+				Edits: []workspace.PlanEdit{{
+					Path:    "a.txt",
+					OldText: "before\n",
+					NewText: "after\n",
+					Purpose: "update fixture text",
+				}},
+			}
+			res := mgr.Execute(context.Background(), workspace.ToolRequest{
+				Tool:                 "submit_plan",
+				Rationale:            "a.txt needs an edit; b.txt is already final from current source evidence.",
+				SourceSatisfiedPaths: []string{"b.txt"},
+				PlanArtifact:         &plan,
+			})
+			if strings.TrimSpace(res.Error) != "" {
+				return "", fmt.Errorf("submit_plan: %s", res.Error)
+			}
+
+			return "Plan submitted.", nil
+		case string(workerruntime.TaskFamilyPlanThenExecuteReview):
+			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: a.txt now contains after and b.txt was already final.\n- Scope safety: changed path is limited to a.txt.", nil
+		default:
+			return "", fmt.Errorf("unexpected task family %q", opts.TaskFamily)
+		}
+	}, nil, &stdout, &stderr)
+
+	if result.ExitCode != 0 {
+		t.Fatalf("Run exit=%d result=%#v stdout=%s stderr=%s", result.ExitCode, result, stdout.String(), stderr.String())
+	}
+	if result.Completion == nil {
+		t.Fatalf("expected terminal completion record, result=%#v stdout=%s", result, stdout.String())
+	}
+	if !slices.Contains(result.Completion.SourceSatisfiedEvidencePaths, "b.txt") {
+		t.Fatalf("terminal completion lost source_satisfied path: %#v", result.Completion)
+	}
+	coverage := map[string]string{}
+	for _, item := range result.Completion.RequiredPathCoverage {
+		coverage[item.Path] = item.Status
+	}
+	if coverage["a.txt"] != "changed" || coverage["b.txt"] != "source_satisfied" {
+		t.Fatalf("required coverage = %#v, want changed/source_satisfied", result.Completion.RequiredPathCoverage)
 	}
 }
 
@@ -1106,6 +1221,9 @@ func TestRunPersistsProgressAndResumeRunsReviewRepairOnly(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("old\n"), 0o644); err != nil {
 		t.Fatalf("seed a.txt: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("already final\n"), 0o644); err != nil {
+		t.Fatalf("seed b.txt: %v", err)
+	}
 
 	cfg := config.Default()
 
@@ -1118,14 +1236,54 @@ func TestRunPersistsProgressAndResumeRunsReviewRepairOnly(t *testing.T) {
 	var firstStdout, firstStderr bytes.Buffer
 
 	first := Run(cfg, Options{
-		Prompt:     prompt,
-		JSONEvents: true,
+		Prompt:            prompt,
+		RequiredEditPaths: MultiFlag{"a.txt", "b.txt"},
+		JSONEvents:        true,
 	}, func(cfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
 		switch opts.TaskFamily {
 		case string(workerruntime.TaskFamilyPlanThenExecutePlanner):
-			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
-				{Path: "a.txt", OldText: "old\n", NewText: "new\n", Purpose: "apply requested text"},
-			}, "change a.txt")
+			mgr := workspace.NewManager(cfg.Workspace)
+			plan := workspace.PlanArtifact{
+				SchemaVersion: workspace.PlanArtifactSchemaVersion,
+				Task: workspace.PlanArtifactTask{
+					ID:      "resume-mixed-source-satisfied",
+					Summary: "Change a.txt while b.txt is already final.",
+				},
+				Contract: workspace.PlanArtifactContract{
+					Kind:              "implementation_result",
+					PermissionProfile: "guarded_workspace_write",
+					RequiredEditPaths: []string{"a.txt", "b.txt"},
+				},
+				Paths: workspace.PlanArtifactPaths{
+					Required:        []string{"a.txt", "b.txt"},
+					Editable:        []string{"a.txt"},
+					Changed:         []string{"a.txt"},
+					SourceSatisfied: []string{"b.txt"},
+				},
+				Evidence: []workspace.PlanArtifactEvidence{{
+					Kind:    "harness_observed_source",
+					Path:    "b.txt",
+					Summary: "current source already contains the requested final state",
+				}},
+				VerificationObligations: []workspace.PlanArtifactVerificationObligation{{
+					ID:       "review-check",
+					Kind:     "review",
+					Status:   "open",
+					Required: true,
+				}},
+				Edits: []workspace.PlanEdit{
+					{Path: "a.txt", OldText: "old\n", NewText: "new\n", Purpose: "apply requested text"},
+				},
+			}
+			result := mgr.Execute(context.Background(), workspace.ToolRequest{
+				Tool:         workspace.ToolNameSubmitPlan,
+				Rationale:    "a.txt needs an edit; b.txt already satisfies the requested state.",
+				PlanArtifact: &plan,
+			})
+			if strings.TrimSpace(result.Error) != "" {
+				body, _ := json.MarshalIndent(result, "", "  ")
+				t.Fatalf("submit_plan failed: %s", body)
+			}
 
 			return "submitted plan", nil
 		case string(workerruntime.TaskFamilyPlanThenExecuteReview):
@@ -1180,8 +1338,9 @@ func TestRunPersistsProgressAndResumeRunsReviewRepairOnly(t *testing.T) {
 	reviewCalls := 0
 	resumedPrompt := ""
 	resumed := Run(cfg, Options{
-		Prompt: prompt,
-		Resume: first.SessionID,
+		Prompt:            prompt,
+		RequiredEditPaths: MultiFlag{"a.txt", "b.txt"},
+		Resume:            first.SessionID,
 	}, func(_ config.Config, prompt string, opts RunOptions, _ io.Writer) (string, error) {
 		if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
 			t.Fatalf("resume must not rerun planner/executor model phase, got task family %q", opts.TaskFamily)
@@ -1208,6 +1367,17 @@ func TestRunPersistsProgressAndResumeRunsReviewRepairOnly(t *testing.T) {
 
 	if got := readFileStringForRunTest(t, filepath.Join(root, "a.txt")); got != "new\n" {
 		t.Fatalf("resume must not reapply executor edits, got %q", got)
+	}
+
+	if resumed.Completion == nil {
+		t.Fatalf("resume should include terminal completion")
+	}
+	coverage := map[string]string{}
+	for _, item := range resumed.Completion.RequiredPathCoverage {
+		coverage[item.Path] = item.Status
+	}
+	if coverage["a.txt"] != "changed" || coverage["b.txt"] != "source_satisfied" {
+		t.Fatalf("resume terminal coverage = %#v, want changed/source_satisfied", resumed.Completion.RequiredPathCoverage)
 	}
 }
 

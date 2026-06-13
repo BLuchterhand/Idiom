@@ -453,6 +453,17 @@ func TestClassifyPlanExecuteFailureRecognizesMissingPathAuthorization(t *testing
 	}
 }
 
+func TestClassifyPlanExecuteFailureKeepsRepeatedInvalidSubmitPlanAsPlannerBlocked(t *testing.T) {
+	got := ClassifyPlanExecuteFailure("planner_blocked", "<<QUESTION>>: Plan-execute submit correction is blocked because repeated submit_plan attempts did not produce a safe executable edit body or bounded anchor for every remaining required path.", "")
+	if got != FailureClassPlannerBlocked {
+		t.Fatalf("class=%q", got)
+	}
+
+	if action := nextActionForFailureClass(got); action != NextActionAnswerBlocker {
+		t.Fatalf("next action=%q", action)
+	}
+}
+
 func TestClassifyPlanExecuteFailureRecognizesTerminalContractFailure(t *testing.T) {
 	got := ClassifyPlanExecuteFailure("terminal_completion_contract_failed", "terminal completion success rejected: changed_path_outside_write_envelope:pkg/feature.go", "")
 	if got != FailureClassPlanInvalid {

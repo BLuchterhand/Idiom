@@ -2625,8 +2625,8 @@ func TestSubmitPlanRejectsEditWithoutShape(t *testing.T) {
 		t.Fatalf("rejection should index the bad edit, got %q", result.Error)
 	}
 
-	if !strings.Contains(result.Error, "replace_all=true") {
-		t.Fatalf("rejection should name the whole-file/new-file shape, got %q", result.Error)
+	if !strings.Contains(result.Error, "replace_all=true") || !strings.Contains(result.Error, "missing/new-file") {
+		t.Fatalf("rejection should name the missing/new-file shape, got %q", result.Error)
 	}
 }
 
@@ -3291,7 +3291,7 @@ func TestSubmitPlanAcceptsWholeFileNewFileShape(t *testing.T) {
 	})
 
 	if strings.TrimSpace(result.Error) != "" {
-		t.Fatalf("submit_plan rejected whole-file/new-file shape: %s", result.Error)
+		t.Fatalf("submit_plan rejected missing/new-file shape: %s", result.Error)
 	}
 
 	plan, err := LoadPlanArtifact(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
@@ -3305,7 +3305,7 @@ func TestSubmitPlanAcceptsWholeFileNewFileShape(t *testing.T) {
 
 	edit := plan.Edits[0]
 	if !edit.ReplaceAll || edit.OldText != "" || !strings.Contains(edit.NewText, `"ok": true`) {
-		t.Fatalf("whole-file/new-file shape not persisted correctly: %#v", edit)
+		t.Fatalf("missing/new-file shape not persisted correctly: %#v", edit)
 	}
 }
 
@@ -3382,9 +3382,14 @@ func TestSubmitPlanRejectsLargeInsertAfterLineContentBeforeSpill(t *testing.T) {
 		t.Fatalf("large insert_after_line content should be rejected before spill")
 	}
 
-	for _, want := range []string{"insert_after_line content exceeds inline submit_plan limit", "content_ref is not supported", "line-range replacement", "unchanged anchor line", "replace_all"} {
+	for _, want := range []string{"insert_after_line content exceeds inline submit_plan limit", "content_ref is not supported", "line-range replacement", "unchanged anchor line"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("large insertion rejection missing %q: %q", want, result.Error)
+		}
+	}
+	for _, forbidden := range []string{"replace_all", "whole file", "whole-file"} {
+		if strings.Contains(result.Error, forbidden) {
+			t.Fatalf("large insertion rejection retained stale whole-file guidance %q: %q", forbidden, result.Error)
 		}
 	}
 

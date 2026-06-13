@@ -79,6 +79,8 @@ func TestPlanExecuteReviewRepairPromptCarriesSubmitPlanQualityBar(t *testing.T) 
 		"large additions",
 		"unchanged anchor line(s) plus inserted content",
 		"Use `old_text` only for tiny exact snippets",
+		"`replace_all:true` with empty `old_text` and complete `new_text` only for missing/new files",
+		"existing source/test files must use bounded anchored edits",
 		"not a quoted JSON string",
 		"## Terminal Output Templates",
 		"Do not add prose before or after the chosen shape",
@@ -94,6 +96,7 @@ func TestPlanExecuteReviewRepairPromptCarriesSubmitPlanQualityBar(t *testing.T) 
 	for _, stale := range []string{
 		"Prefer line-range `content` for non-trivial source/test repairs",
 		"Line-range `content` for non-trivial source/test repairs",
+		"Whole-file/new-file",
 	} {
 		if strings.Contains(got, stale) {
 			t.Fatalf("review-repair prompt retained stale wording %q:\n%s", stale, got)

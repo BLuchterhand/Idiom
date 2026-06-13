@@ -38,8 +38,9 @@ inclusive current-source range and are not insertion points. For a large
 addition after line N, replace a small current range such as line N with the
 unchanged line N plus the inserted content. Use `old_text`/`new_text`
 (substring shape) only for a tiny exact snippet copied from current source
-evidence. For a new file or intentional whole-file write, use `replace_all:true`
-with empty `old_text` and `new_text` set to the full file body. If the brief
+evidence. For a missing/new file, use `replace_all:true` with empty `old_text`
+and `new_text` set to the full file body. Existing source/test files must use
+bounded line-range or substring edits instead. If the brief
 names a missing required source/test path but gives only behavior, helper, or
 implementation-shape requirements without a substantial inline body or explicit
 replacement edit shape, stop with `<<QUESTION>>:` and name the missing body
@@ -108,7 +109,7 @@ shape plus a one-sentence `purpose`: `insert_after_line`+small inline non-empty
 additions anchored to existing lines, `old_text`+`new_text` (substring shape;
 small exact snippets only; `new_text: ""` deletes `old_text`), or
 `replace_all:true` with empty `old_text` and `new_text` as the full body for a
-new file or intentional whole-file write.
+missing/new file.
 The `edits` field itself is a JSON array, not a quoted JSON string. Every edit
 body must be executable final content: no placeholders, ellipses, `<TODO>`
 markers, `existing code` comments, omitted bodies, pseudo-code, prose
@@ -117,7 +118,7 @@ descriptions, or invented symbols in `old_text`, `new_text`, or `content`.
 generated blocks. Line-range `content` is the complete replacement for the
 inclusive range and may include unchanged anchor lines plus inserted content;
 `old_text` must be exact current text copied from source-body evidence;
-whole-file/new-file `new_text` is the complete file body. After replacement,
+missing/new-file `new_text` is the complete file body. After replacement,
 the resulting file must be syntactically valid: do not leave control flow
 statements (`if`, `for`, `switch`, `return`) at package scope outside any
 function or method body. The executor phase

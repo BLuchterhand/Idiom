@@ -79,7 +79,7 @@ func (r *Runner) preflightScopedImplementationLargeWriteFileReplacement(req work
 			Tool:    workspace.ToolNameWriteFile,
 			Summary: fmt.Sprintf("Rejected large existing write_file replacement for %s", relPath),
 			Error: fmt.Sprintf(
-				"write_file would replace existing large scoped source path %s (%s). Use apply_patch or edit_file with old_text/new_text or start_line/end_line/content for a bounded edit. write_file is reserved here for new files, small files, and non-source deliverables.",
+				"write_file would replace existing large scoped source path %s (%s). Use apply_patch or edit_file with old_text/new_text or start_line/end_line/content for a bounded edit. write_file is reserved here for missing/new files and non-source deliverables.",
 				relPath,
 				detail,
 			),

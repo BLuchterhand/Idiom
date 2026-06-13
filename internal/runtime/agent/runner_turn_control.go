@@ -224,7 +224,7 @@ func toolParseErrorFeedback(raw string, parseErr error) string {
 	lower := strings.ToLower(message + "\n" + raw)
 
 	if strings.Contains(lower, "toolrequest.edits") && strings.Contains(lower, "string") {
-		return message + ". submit_plan.edits was emitted as a quoted string. Emit `edits` as a real JSON array value, not a string. Each edit object must use a real path and exactly one executable edit shape: insert_after_line/content for small inline insertions, old_text/new_text for exact replacements or deletions, start_line/end_line/content for an inclusive current-source range, or replace_all with full new_text for whole-file/new-file writes. For native tool-call backends, pass the submit_plan arguments object directly with `rationale` and an `edits` array. Edit bodies must be complete executable source text, not placeholders or prose."
+		return message + ". submit_plan.edits was emitted as a quoted string. Emit `edits` as a real JSON array value, not a string. Each edit object must use a real path and exactly one executable edit shape: insert_after_line/content for small inline insertions, old_text/new_text for exact replacements or deletions, start_line/end_line/content for an inclusive current-source range, or replace_all with full new_text for missing/new files only. Existing source/test files must use bounded anchored edits. For native tool-call backends, pass the submit_plan arguments object directly with `rationale` and an `edits` array. Edit bodies must be complete executable source text, not placeholders or prose."
 	}
 
 	return message + ". Emit exactly one valid tool call or answer normally."

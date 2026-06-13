@@ -378,7 +378,7 @@ func validatePlanEdit(edit PlanEdit) error {
 		}
 
 		if len(edit.Content) > planInlineTextSpillThreshold {
-			return fmt.Errorf("insert_after_line content exceeds inline submit_plan limit (%d bytes); content_ref is not supported for insert_after_line in this schema; for large insertions, use a line-range replacement that includes the unchanged anchor line(s) plus inserted content, or use replace_all with a complete file body when replacing the whole file", planInlineTextSpillThreshold)
+			return fmt.Errorf("insert_after_line content exceeds inline submit_plan limit (%d bytes); content_ref is not supported for insert_after_line in this schema; for large insertions in existing files, use a line-range replacement that includes the unchanged anchor line(s) plus inserted content", planInlineTextSpillThreshold)
 		}
 
 		if hasOldText || strings.TrimSpace(edit.NewText) != "" || strings.TrimSpace(edit.NewTextRef) != "" || edit.StartLine > 0 || edit.EndLine > 0 || edit.ReplaceAll {
@@ -395,7 +395,7 @@ func validatePlanEdit(edit PlanEdit) error {
 	}
 
 	if !hasSubstring && !hasRange && !hasInsert && !hasReplace {
-		return fmt.Errorf("requires one executable edit shape: old_text with new_text (new_text may be empty to delete old_text), start_line+end_line+non-empty content for replacement, insert_after_line+non-empty content for insertion, or replace_all=true with new_text and empty old_text for whole-file/new-file writes; large new_text/content may be represented by new_text_ref/content_ref except insert_after_line. If this path is already at the requested final state, remove it from edits[] and put the path in top-level source_satisfied_paths instead of using an edit object")
+		return fmt.Errorf("requires one executable edit shape: old_text+new_text, start_line+end_line+content, insert_after_line+content, or replace_all=true with new_text and empty old_text for missing/new-file writes. Existing source/test files need bounded anchors. If already final, remove it from edits[] and use source_satisfied_paths")
 	}
 
 	if hasSubstring && strings.TrimSpace(edit.NewTextRef) == "" && edit.OldText == edit.NewText {
@@ -595,8 +595,8 @@ func planEditPlaceholderMarker(value string, allowTODO bool, sourceLike bool) st
 
 // AttachPlanEditAnchorProvenance returns a copy of edits with harness-owned
 // provenance attached to bounded existing-file edit anchors. Existing
-// provenance is ignored and overwritten; whole-file/new-file edits get nil
-// provenance because they intentionally replace the full file body.
+// provenance is ignored and overwritten; missing/new-file edits get nil
+// provenance because they intentionally create the full file body.
 func AttachPlanEditAnchorProvenance(workspaceRoot string, edits []PlanEdit) ([]PlanEdit, error) {
 	out := append([]PlanEdit(nil), edits...)
 	for i, edit := range out {
@@ -1723,7 +1723,7 @@ func spillLargePlanEditBodies(dir string, stamp string, edits []PlanEdit) ([]Pla
 
 		if shouldSpillPlanInlineText(out[i].Content) {
 			if out[i].InsertAfterLine > 0 {
-				return nil, 0, fmt.Errorf("edits[%d]: insert_after_line content exceeds inline submit_plan limit (%d bytes); content_ref is not supported for insert_after_line in this schema; for large insertions, use a line-range replacement that includes the unchanged anchor line(s) plus inserted content, or use replace_all with a complete file body when replacing the whole file", i, planInlineTextSpillThreshold)
+				return nil, 0, fmt.Errorf("edits[%d]: insert_after_line content exceeds inline submit_plan limit (%d bytes); content_ref is not supported for insert_after_line in this schema; for large insertions in existing files, use a line-range replacement that includes the unchanged anchor line(s) plus inserted content", i, planInlineTextSpillThreshold)
 			}
 
 			ref, err := writePlanEditBodyRef(dir, stamp, i, "content", out[i].Content)

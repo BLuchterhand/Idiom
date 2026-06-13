@@ -4378,6 +4378,7 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 
 	opts := planexecute.Options{
 		Prompt:             brief,
+		Model:              m.implementationDispatchPlanExecuteModelOverride(),
 		SessionID:          featureplanner.PlanExecuteSessionIDFromImplementorPrompt(prompt),
 		RequiredEditPaths:  requiredPaths,
 		AllowedEditPaths:   allowedPaths,
@@ -4449,6 +4450,19 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 	}
 
 	return answer, nil
+}
+
+func (m *Model) implementationDispatchPlanExecuteModelOverride() string {
+	if m == nil || !m.plannerSpec.IsHosted() {
+		return ""
+	}
+
+	return strings.TrimSpace(util.FirstNonEmpty(
+		m.modelID,
+		resolveModelID(m.plannerSpec, m.plannerSpec.Model),
+		m.plannerSpec.Model,
+		m.cfg.LlamaServer.Model,
+	))
 }
 
 func humanPlanExecuteExecutionRecoveryOpenMessage(root string, result planexecute.RunResult, fallbackRequiredPaths []string) (string, bool) {
@@ -6201,7 +6215,7 @@ func planExecutePlannerRecoveryRetryInstruction(failure implementationDispatchPl
 		}
 	}
 
-	b.WriteString(" Each edit entry must include `path`, exactly one edit shape (`start_line`+`end_line`+`content` for non-trivial existing-source edits, `old_text`+`new_text` for tiny exact snippets, or `replace_all:true`+`new_text` for whole-file/new-file writes), and one-sentence `purpose`. If the current files already contain the requested final state, answer `Decision: source-satisfied` with current-state evidence for every relevant path instead of submitting stale edits. If the plan cannot be produced from the available evidence, answer `<<QUESTION>>:` with the exact path-specific blocker.")
+	b.WriteString(" Each edit entry must include `path`, exactly one edit shape (`start_line`+`end_line`+`content` for non-trivial existing-source edits, `old_text`+`new_text` for tiny exact snippets, or `replace_all:true`+`new_text` for missing/new files only), and one-sentence `purpose`. Existing source/test files must use bounded anchored edits. If the current files already contain the requested final state, answer `Decision: source-satisfied` with current-state evidence for every relevant path instead of submitting stale edits. If the plan cannot be produced from the available evidence, answer `<<QUESTION>>:` with the exact path-specific blocker.")
 
 	return b.String()
 }

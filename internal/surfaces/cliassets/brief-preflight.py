@@ -1050,8 +1050,8 @@ def validate_actionable_edit_contract(
             "required edit contract asks the lane to run a mutating command "
             "without an explicit edit shape. Plan-execute cannot execute shell "
             "commands in the planner phase; run the command before dispatch and "
-            "inline exact old_text/new_text, start_line/end_line+content, or a "
-            "whole-file replacement."
+            "inline exact old_text/new_text or start_line/end_line+content. "
+            "Existing required rows need bounded edit shapes."
         )
     if PROSE_MUTATION_ANCHOR_RE.search(scannable) and not has_shape:
         failures.append(

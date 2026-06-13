@@ -12,6 +12,7 @@ import (
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/contracts/plan"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/planexecute"
 )
@@ -770,7 +771,7 @@ func (m *Model) planExecuteRuntimeScopeContract(route turnRoutePlan) (planexecut
 // runner saw — diverging implementations would produce different
 // allowlists for the same brief, which is a footgun.
 func RequiredEditPathsFromPrompt(prompt string) []string {
-	return planexecute.RequiredEditPathsFromPrompt(prompt)
+	return plancontract.RequiredEditPathsFromPrompt(prompt)
 }
 
 func promptHasRequiredEditPayload(prompt string) bool {
@@ -807,15 +808,15 @@ func requiredEditPayloadPathsFromPrompt(prompt string, candidatePaths []string) 
 // prompts. Unlike RequiredEditPathsFromPrompt, these paths are not completion
 // coverage obligations.
 func AllowedEditPathsFromPrompt(prompt string) []string {
-	return planexecute.AllowedEditPathsFromPrompt(prompt)
+	return plancontract.AllowedEditPathsFromPrompt(prompt)
 }
 
 func requiredEditPathsFromPrompt(prompt string) []string {
-	return planexecute.RequiredEditPathsFromPrompt(prompt)
+	return plancontract.RequiredEditPathsFromPrompt(prompt)
 }
 
 func allowedEditPathsFromPrompt(prompt string) []string {
-	return planexecute.AllowedEditPathsFromPrompt(prompt)
+	return plancontract.AllowedEditPathsFromPrompt(prompt)
 }
 
 func looksLikePromptSectionBoundary(line string) bool {

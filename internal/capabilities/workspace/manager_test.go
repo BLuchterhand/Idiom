@@ -1225,9 +1225,14 @@ func TestEditFileContentWithoutAnchorRecoveryKeepsWholeFileOptionForDocs(t *test
 		t.Fatalf("expected malformed edit_file to be rejected")
 	}
 
-	for _, want := range []string{"write_file", "concrete description", "new, small, or non-source deliverable"} {
+	for _, want := range []string{"write_file", "concrete description", "missing/new file or non-source deliverable"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("expected doc recovery to mention %q, got:\n%s", want, result.Error)
+		}
+	}
+	for _, forbidden := range []string{"new, small", "REPLACE THE WHOLE FILE"} {
+		if strings.Contains(result.Error, forbidden) {
+			t.Fatalf("expected doc recovery to avoid stale whole-file guidance %q, got:\n%s", forbidden, result.Error)
 		}
 	}
 }

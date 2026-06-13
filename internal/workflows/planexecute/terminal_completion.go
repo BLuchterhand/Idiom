@@ -330,7 +330,7 @@ func planExecuteTerminalAtomContract(record PlanExecuteTerminalCompletionRecord)
 			Allowed:                     true,
 			RequireCurrentStateEvidence: true,
 			RequireRequiredScope:        len(record.RequiredEditPaths) > 0,
-			RequireNoChangedPaths:       true,
+			RequireNoChangedPaths:       record.Outcome == PlanExecuteTerminalOutcomeSourceSatisfied,
 		},
 	}
 	for _, id := range record.RequiredAcceptanceEvidenceIDs {

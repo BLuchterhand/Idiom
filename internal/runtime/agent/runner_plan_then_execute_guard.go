@@ -3889,7 +3889,7 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 			unreadCandidateLine,
 			"",
 			"Next action must be exactly one parser-readable action:",
-			"  1. `submit_plan` with only the edit(s) needed by the objective, using insertion, substring, replacement-only line range, or whole/new-file shape, plus a one-sentence purpose per edit.",
+			"  1. `submit_plan` with only the edit(s) needed by the objective, using insertion, substring, replacement-only line range, or missing/new-file shape, plus a one-sentence purpose per edit.",
 			readActionLine,
 			"  3. `Decision: source-satisfied` naming the relevant candidate path(s) and observed current-state evidence when the requested final state is already present.",
 			"  4. `<<QUESTION>>:` with the exact blocker that prevents drafting the plan.",
@@ -4319,7 +4319,7 @@ func planThenExecuteSubmitPlanCorrectionInstructionForBrief(brief workerruntime.
 	if submitPlanRejectionHasLargeInsertAfterLine(result) {
 		parts = append(parts, "The rejected edit used an oversized or ref-backed `insert_after_line` body. Do not repeat `insert_after_line` for that edit, and do not use `content_ref` with `insert_after_line`. Emit exactly one visible JSON object with top-level `edits` as a JSON array, using `start_line`/`end_line`/`content` for the large addition by replacing a small current-source anchor range on the real edit path with the unchanged anchor line(s) plus inserted content from existing evidence.")
 	} else if submitPlanRejectionHasInvalidEditShape(result) {
-		parts = append(parts, "The rejected plan contained an invalid edit shape. "+planThenExecuteSubmitPlanCoverageSentence()+" Each `edits[]` object must choose exactly one executable shape: `start_line`/`end_line`/non-empty `content` for a line-range replacement, exact `old_text`/`new_text`, small `insert_after_line`/inline non-empty `content`, or `replace_all:true` with full `new_text` for whole/new-file writes. Do not combine shapes, do not use placeholders, and do not use content refs with `insert_after_line`.")
+		parts = append(parts, "The rejected plan contained an invalid edit shape. "+planThenExecuteSubmitPlanCoverageSentence()+" Each `edits[]` object must choose exactly one executable shape: `start_line`/`end_line`/non-empty `content` for a line-range replacement, exact `old_text`/`new_text`, small `insert_after_line`/inline non-empty `content`, or `replace_all:true` with full `new_text` for missing/new-file writes only. Existing source/test files must use bounded anchored edits. Do not combine shapes, do not use placeholders, and do not use content refs with `insert_after_line`.")
 	} else {
 		parts = append(parts, planThenExecuteSubmitPlanVisibleJSONInstruction())
 	}
@@ -4337,7 +4337,7 @@ func planThenExecuteNativeSubmitPlanCorrectionDetails(brief workerruntime.Worker
 	if submitPlanRejectionHasLargeInsertAfterLine(result) {
 		parts = append(parts, "do not repeat `insert_after_line` for the oversized/ref-backed edit. Use `start_line`/`end_line`/`content` for the large addition by replacing a small current-source anchor range with the unchanged anchor line(s) plus inserted content. `insert_after_line` must have small inline non-empty `content` and cannot use `content_ref`.")
 	} else if submitPlanRejectionHasInvalidEditShape(result) {
-		parts = append(parts, "Correct the invalid edit shape. "+planThenExecuteSubmitPlanCoverageSentence()+" Each edit must choose exactly one executable shape: line-range replacement, exact substring replacement, small inline insertion, or whole/new-file write. Do not combine shapes or use placeholders.")
+		parts = append(parts, "Correct the invalid edit shape. "+planThenExecuteSubmitPlanCoverageSentence()+" Each edit must choose exactly one executable shape: line-range replacement, exact substring replacement, small inline insertion, or missing/new-file write. Existing source/test files must use bounded anchored edits. Do not combine shapes or use placeholders.")
 	}
 
 	return strings.Join(parts, " ")

@@ -523,12 +523,11 @@ func planThenExecuteNativeSubmitPlanSkeleton(entries []planThenExecuteSubmitPlan
 		b.WriteString("  choose exactly one edit shape:\n")
 
 		if entry.NewFile {
-			b.WriteString("    whole_or_new_file: replace_all=true + old_text=\"\" + new_text\n")
+			b.WriteString("    new_file: replace_all=true + old_text=\"\" + new_text\n")
 		} else {
 			b.WriteString(fmt.Sprintf("    line_range_default: start_line=%d + end_line=%d + content (replacement only; safest for source/test edits and large additions)\n", entry.StartLine, entry.EndLine))
 			b.WriteString("    substring_small_exact: old_text + new_text\n")
 			b.WriteString("    insertion_small_only: insert_after_line + small inline content\n")
-			b.WriteString("    whole_or_new_file: replace_all=true + old_text=\"\" + new_text\n")
 		}
 	}
 
@@ -538,7 +537,7 @@ func planThenExecuteNativeSubmitPlanSkeleton(entries []planThenExecuteSubmitPlan
 	b.WriteString("- `insert_after_line` inserts small inline non-empty `content` after an existing 1-based line in an existing file; it does not replace current lines, must not be combined with other edit shapes, and must not be used for large generated blocks.\n")
 	b.WriteString("- For large additions inside existing files, use a line-range replacement covering a small current anchor range and include the unchanged anchor line(s) plus inserted content.\n")
 	b.WriteString("- Substring `old_text` must be copied exactly from current source and match once; `new_text` is the complete final replacement.\n")
-	b.WriteString("- Whole-file/new-file `new_text` is the complete final file body.\n")
+	b.WriteString("- Missing/new-file `new_text` is the complete final file body.\n")
 	b.WriteString("- For missing/new files, use only `replace_all:true` with empty `old_text` and a complete `new_text` file body.\n")
 
 	if planThenExecuteSubmitPlanSkeletonEvidenceOmitted(entries) {
@@ -588,7 +587,7 @@ func planThenExecuteTextualSubmitPlanSkeleton(entries []planThenExecuteSubmitPla
 			b.WriteString(", end_line ")
 			b.WriteString(strconv.Itoa(endLine))
 			b.WriteString(". Use that range only if it is the exact replacement range; otherwise adjust from source evidence.\n")
-			b.WriteString("  allowed shapes: start_line/end_line/content, old_text/new_text, insert_after_line/content for small insertions, or replace_all/new_text only for whole-file/new-file writes.\n")
+			b.WriteString("  allowed shapes: start_line/end_line/content, old_text/new_text, insert_after_line/content for small insertions, or replace_all/new_text only for missing/new-file writes.\n")
 		}
 	}
 
@@ -596,7 +595,7 @@ func planThenExecuteTextualSubmitPlanSkeleton(entries []planThenExecuteSubmitPla
 		b.WriteString("\nAdditional evidence handles were omitted after the evidence cap; use the current-source evidence already present in this turn.\n\n")
 	}
 
-	b.WriteString("Edit shape choices: prefer `start_line` + `end_line` + `content` for source/test edits, multi-line changes, and large additions anchored to existing lines; use `old_text` + `new_text` for small exact replacements/deletions; use `insert_after_line` + small inline `content` only for small insertions/appends after an existing line; use `replace_all:true` + empty `old_text` + full `new_text` for a whole-file/new-file write.\n")
+	b.WriteString("Edit shape choices: prefer `start_line` + `end_line` + `content` for source/test edits, multi-line changes, and large additions anchored to existing lines; use `old_text` + `new_text` for small exact replacements/deletions; use `insert_after_line` + small inline `content` only for small insertions/appends after an existing line; use `replace_all:true` + empty `old_text` + full `new_text` only for missing/new files. Existing source/test files must use bounded anchored edits, not whole-file `replace_all`.\n")
 	b.WriteString("The shown source ranges are evidence handles, not proposed edits; adjust to the exact replacement range when needed.\n")
 	b.WriteString("`insert_after_line` targets an existing 1-based line in an existing file, inserts small inline non-empty `content`, and must not be combined with other edit shapes or used with large content.\n")
 	b.WriteString("For missing/new files, use only `replace_all:true` with empty `old_text` and a complete `new_text` file body.\n")

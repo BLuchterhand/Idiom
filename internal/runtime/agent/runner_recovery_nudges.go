@@ -167,7 +167,7 @@ func missingRequiredEditPathsRecoveryNudge(in recoveryNudgeInputs) (string, bool
 	b.WriteString(".\n")
 
 	if scopedImplementationUsesBoundedSourceEdits(in.brief, missing) {
-		b.WriteString("Do not answer with partial findings. For existing source/test required paths, the allowed write outcome is a bounded `edit_file` call using old_text/new_text or start_line/end_line/content, or an `apply_patch` envelope. Do not use `write_file` or `append_file` for existing source/test paths; reserve whole-file writes for new files, small files, and non-source deliverables. Otherwise answer with <<QUESTION>> naming the exact blocker for each remaining path. Do not repeat the rejected tool call.\n")
+		b.WriteString("Do not answer with partial findings. For existing source/test required paths, the allowed write outcome is a bounded `edit_file` call using old_text/new_text or start_line/end_line/content, or an `apply_patch` envelope. Do not use `write_file` or `append_file` for existing source/test paths; reserve full-body writes for missing/new files and non-source deliverables. Otherwise answer with <<QUESTION>> naming the exact blocker for each remaining path. Do not repeat the rejected tool call.\n")
 
 		return b.String(), true
 	}

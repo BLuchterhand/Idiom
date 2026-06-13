@@ -20,6 +20,7 @@ import (
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/promptstack"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/contracts/plan"
 	"idiom/internal/workflows/planexecute"
 )
 
@@ -1272,7 +1273,7 @@ func TestStructuredRequiredEditPathsIgnoresNegativeAllowlistKeys(t *testing.T) {
   "candidate_scope": [{"path": "native/src/simulation/transport/route_graph.cpp"}],
   "evidence": [{"source": "native/src/simulation/transport/route_graph.h"}]
 }`
-	if got := planexecute.RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
+	if got := plancontract.RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
 		t.Fatalf("negative allowlist-like keys should not define required edit paths, got %#v", got)
 	}
 }
@@ -1285,13 +1286,13 @@ Write Scope:
 Evidence:
 - native/src/simulation/transport/route_graph.cpp
 `
-	got := planexecute.RequiredEditPathsFromPrompt(prompt)
+	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 
 	if len(got) != 0 {
 		t.Fatalf("write_scope is candidate scope, not required edit coverage, got %#v", got)
 	}
 
-	allowed := planexecute.AllowedEditPathsFromPrompt(prompt)
+	allowed := plancontract.AllowedEditPathsFromPrompt(prompt)
 	if len(allowed) != 1 || allowed[0] != "native/tests/test_transport_system.cpp" {
 		t.Fatalf("expected YAML-style write_scope candidate path only, got %#v", allowed)
 	}
@@ -1320,13 +1321,13 @@ func TestStructuredRequiredEditPathsInlineScalarDoesNotBleed(t *testing.T) {
 write_scope: native/tests/test_transport_system.cpp
 evidence: native/src/simulation/transport/route_graph.cpp
 `
-	got := planexecute.RequiredEditPathsFromPrompt(prompt)
+	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 
 	if len(got) != 0 {
 		t.Fatalf("write_scope is candidate scope, not required edit coverage, got %#v", got)
 	}
 
-	allowed := planexecute.AllowedEditPathsFromPrompt(prompt)
+	allowed := plancontract.AllowedEditPathsFromPrompt(prompt)
 	if len(allowed) != 1 || allowed[0] != "native/tests/test_transport_system.cpp" {
 		t.Fatalf("expected inline write_scope candidate path only, got %#v", allowed)
 	}
@@ -1447,11 +1448,11 @@ func TestStructuredRequiredEditPathsIgnoreAllowedKeys(t *testing.T) {
   "allowed_files": ["native/src/b.cpp"],
   "evidence": ["native/src/c.cpp"]
 }`
-	if got := planexecute.RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
+	if got := plancontract.RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
 		t.Fatalf("allowed structured keys must not define required coverage, got %#v", got)
 	}
 
-	allowed := planexecute.AllowedEditPathsFromPrompt(prompt)
+	allowed := plancontract.AllowedEditPathsFromPrompt(prompt)
 	for _, want := range []string{"native/src/a.cpp", "native/src/b.cpp"} {
 		if !slices.Contains(allowed, want) {
 			t.Fatalf("missing allowed path %q, got %#v", want, allowed)
@@ -1465,7 +1466,7 @@ func TestStructuredRequiredEditPathsIgnoreAllowedKeys(t *testing.T) {
 
 func TestStructuredRequiredEditPathsSingleLineJSONDoesNotBleed(t *testing.T) {
 	prompt := `{"required_edit_paths":["native/src/a.cpp"],"evidence":[".idiom/config.json","native/src/b.cpp"]}`
-	got := planexecute.RequiredEditPathsFromPrompt(prompt)
+	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 
 	if len(got) != 1 || got[0] != "native/src/a.cpp" {
 		t.Fatalf("expected single-line JSON required paths only, got %#v", got)
@@ -1477,7 +1478,7 @@ func TestStructuredRequiredEditPathsIgnoreInlineEvidenceCommand(t *testing.T) {
 Freshness:
 - idiom tool context_status --config .idiom/config.json --input '{"refresh":true,"required_edit_paths":["native/src/a.cpp"],"limit":20}'
 `
-	if got := planexecute.RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
+	if got := plancontract.RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
 		t.Fatalf("inline evidence commands must not define required edit paths, got %#v", got)
 	}
 }

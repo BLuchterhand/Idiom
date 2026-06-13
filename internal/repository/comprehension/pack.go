@@ -1,9 +1,13 @@
 package comprehension
 
 import (
+	"encoding/json"
 	"fmt"
 	"idiom/internal/platform/util"
+	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 )
@@ -561,4 +565,471 @@ func addPackResultEvidence(result *PackResult) {
 			Stale:      symbol.Stale,
 		})
 	}
+}
+
+// --- merged from pack_cache.go ---
+
+func packWorkspaceStateFingerprints(root string, learnedWeights map[string]float64) ComprehensionStateFingerprintSet {
+	state := ComprehensionStateFingerprints(root)
+	if learnedWeights == nil {
+		return state
+	}
+
+	data, _ := json.Marshal(learnedWeights)
+
+	state.RankerWeightsFingerprint = shortSHA256Hex(append([]byte("learned_weights_override\x00"), data...))
+	state.WorkspaceStateFingerprint = composeWorkspaceStateFingerprint(state.RankerWeightsFingerprint, state.RuntimeTracesFingerprint)
+
+	return state
+}
+
+// viewKeyFromOptions builds the content-addressed cache key from
+// PackOptions. Identical option sets produce identical keys across
+// processes; the active graph index_id makes the key invalidate when
+// the codebase content shifts under the harness.
+func viewKeyFromOptions(opts PackOptions, indexID, mode string, intent Intent, workspaceStateFingerprints ComprehensionStateFingerprintSet) ViewKey {
+	return ViewKey{
+		IndexID: indexID,
+		Task:    strings.TrimSpace(opts.Task),
+		Mode:    mode,
+		Query: ViewQueryInputs{
+			Path:                      strings.TrimSpace(opts.Path),
+			Scope:                     strings.TrimSpace(opts.Scope),
+			Limit:                     opts.Limit,
+			BudgetTokens:              opts.BudgetTokens,
+			RequiredTests:             opts.RequiredTests,
+			RequiredEditPaths:         opts.RequiredEditPaths,
+			ForbiddenPaths:            opts.ForbiddenPaths,
+			Intent:                    string(intent),
+			IncludeStaleRuntime:       opts.IncludeStaleRuntime,
+			AlgorithmVersion:          packAlgorithmVersion,
+			WorkspaceStateFingerprint: workspaceStateFingerprints.WorkspaceStateFingerprint,
+			RankerWeightsFingerprint:  workspaceStateFingerprints.RankerWeightsFingerprint,
+			RuntimeTracesFingerprint:  workspaceStateFingerprints.RuntimeTracesFingerprint,
+		},
+	}
+}
+
+// savePack writes the human-readable JSON export under
+// .idiom/comprehension/views/<pack_id>.json. The SQLite graph_views
+// row is the source of truth; this file mirrors it for inspection.
+func savePack(root string, result PackResult) error {
+	path := filepath.Join(root, ".idiom", "comprehension", "views", result.PackID+".json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+// --- merged from pack_paths.go ---
+
+func packRelationshipLimit(limit int) int {
+	if limit <= 0 {
+		return maxPackRelationships
+	}
+
+	relationshipLimit := limit * relationshipsPerTarget
+	if relationshipLimit > maxPackRelationships {
+		return maxPackRelationships
+	}
+
+	if relationshipLimit < limit {
+		return limit
+	}
+
+	return relationshipLimit
+}
+
+func packNodesByID(nodes []Node) map[string]Node {
+	out := make(map[string]Node, len(nodes))
+	for _, node := range nodes {
+		out[node.ID] = node
+	}
+
+	return out
+}
+
+func packStalePaths(status StatusReport) map[string]struct{} {
+	out := make(map[string]struct{}, len(status.StaleFiles)+len(status.MissingFiles))
+	for _, path := range status.StaleFiles {
+		out[path] = struct{}{}
+	}
+
+	for _, path := range status.MissingFiles {
+		out[path] = struct{}{}
+	}
+
+	return out
+}
+
+func cleanPackPaths(paths []string) []string {
+	seen := make(map[string]struct{}, len(paths))
+	out := make([]string, 0, len(paths))
+
+	for _, path := range paths {
+		path = cleanScope(path)
+		if path == "" || path == "." {
+			continue
+		}
+
+		if _, ok := seen[path]; ok {
+			continue
+		}
+
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+
+	slices.Sort(out)
+
+	return out
+}
+
+func packPathSet(paths []string) map[string]struct{} {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	out := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		path = cleanScope(path)
+		if path == "" || path == "." {
+			continue
+		}
+
+		out[path] = struct{}{}
+	}
+
+	return out
+}
+
+func packNodesForPaths(nodes []Node, paths map[string]struct{}) []Node {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	out := make([]Node, 0)
+
+	for _, node := range nodes {
+		path := cleanScope(node.Path)
+		if _, ok := paths[path]; ok {
+			out = append(out, node)
+		}
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+
+		return out[i].ID < out[j].ID
+	})
+
+	return out
+}
+
+func packPathIsStale(stale map[string]struct{}, path string) bool {
+	if len(stale) == 0 {
+		return false
+	}
+
+	_, ok := stale[cleanScope(path)]
+
+	return ok
+}
+
+func packRoleRank(role string) int {
+	switch role {
+	case "editable":
+		return 3
+	case "test":
+		return 2
+	case "read_only_evidence":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func packReasonRank(reason string) int {
+	switch reason {
+	case "required edit path":
+		return 4
+	case "matched task terms":
+		return 3
+	case "package matched task terms":
+		return 2
+	default:
+		return 1
+	}
+}
+
+// --- merged from pack_quality.go ---
+
+type packQualityCandidate struct {
+	path   string
+	text   string
+	source bool
+	score  int
+}
+
+func assessPackQuality(task string, files []PackFile, symbols []PackSymbol, tests []PackTest) PackQuality {
+	tokens := packQualityTokens(task)
+	if len(tokens) == 0 {
+		return PackQuality{LocalizationConfidence: "unknown", Reasons: []string{"empty_query_tokens"}}
+	}
+
+	candidates := packQualityCandidates(files, symbols, tests)
+	for i := range candidates {
+		candidates[i].score = packQualityOverlap(tokens, candidates[i].text)
+	}
+
+	sourceOwnerFound := false
+	bestScore := 0
+	bestSourceScore := 0
+
+	for _, candidate := range candidates {
+		if candidate.score <= 0 {
+			continue
+		}
+
+		if candidate.score > bestScore {
+			bestScore = candidate.score
+		}
+
+		if candidate.source && candidate.score > bestSourceScore {
+			bestSourceScore = candidate.score
+		}
+
+		if candidate.source && candidate.score >= 3 {
+			sourceOwnerFound = true
+		}
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if sourceOwnerFound && candidates[i].source != candidates[j].source {
+			return candidates[i].source
+		}
+
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score > candidates[j].score
+		}
+
+		if candidates[i].source != candidates[j].source {
+			return candidates[i].source
+		}
+
+		return candidates[i].path < candidates[j].path
+	})
+
+	evidencePaths := make([]string, 0, 6)
+	seen := map[string]struct{}{}
+
+	for _, candidate := range candidates {
+		if candidate.path == "" || candidate.score <= 0 {
+			continue
+		}
+
+		if !sourceOwnerFound && candidate.source {
+			continue
+		}
+
+		if _, ok := seen[candidate.path]; !ok && len(evidencePaths) < 6 {
+			seen[candidate.path] = struct{}{}
+			evidencePaths = append(evidencePaths, candidate.path)
+		}
+	}
+
+	confidence := "low"
+	reasons := []string{}
+
+	switch {
+	case sourceOwnerFound && bestSourceScore >= 3:
+		confidence = "high"
+
+		reasons = append(reasons, "source_owner_token_overlap_high")
+	case sourceOwnerFound:
+		confidence = "medium"
+
+		reasons = append(reasons, "source_owner_token_overlap")
+	case bestScore > 0:
+		reasons = append(reasons, "related_evidence_without_source_owner")
+	default:
+		reasons = append(reasons, "no_query_token_overlap_in_packet")
+	}
+
+	return PackQuality{
+		LocalizationConfidence: confidence,
+		SourceOwnerFound:       sourceOwnerFound,
+		EvidencePaths:          evidencePaths,
+		Reasons:                reasons,
+	}
+}
+
+func packQualityCandidates(files []PackFile, symbols []PackSymbol, tests []PackTest) []packQualityCandidate {
+	out := make([]packQualityCandidate, 0, len(files)+len(symbols)+len(tests))
+	for _, file := range files {
+		path := strings.TrimSpace(file.Path)
+		if path == "" {
+			continue
+		}
+
+		out = append(out, packQualityCandidate{
+			path:   path,
+			text:   strings.Join(append([]string{path, file.Role, file.Reason}, file.Handles...), " "),
+			source: !packQualityPathIsTest(path),
+		})
+	}
+
+	for _, symbol := range symbols {
+		path := strings.TrimSpace(symbol.Path)
+		if path == "" {
+			continue
+		}
+
+		out = append(out, packQualityCandidate{
+			path:   path,
+			text:   strings.Join([]string{path, symbol.Kind, symbol.QualifiedName, symbol.Reason}, " "),
+			source: !packQualityPathIsTest(path) && symbol.Kind != "test",
+		})
+	}
+
+	for _, test := range tests {
+		path := strings.TrimSpace(test.Path)
+		if path == "" {
+			continue
+		}
+
+		out = append(out, packQualityCandidate{
+			path: path,
+			text: strings.Join([]string{path, test.Symbol, test.Command, test.Reason}, " "),
+		})
+	}
+
+	return out
+}
+
+func packQualityTokens(text string) map[string]struct{} {
+	out := map[string]struct{}{}
+
+	for _, token := range splitPackQualityText(text) {
+		if len(token) < 3 || packQualityStopToken(token) {
+			continue
+		}
+
+		out[packQualityStem(token)] = struct{}{}
+	}
+
+	return out
+}
+
+func packQualityOverlap(tokens map[string]struct{}, text string) int {
+	seen := map[string]struct{}{}
+
+	for _, token := range splitPackQualityText(text) {
+		stem := packQualityStem(token)
+		if _, ok := tokens[stem]; ok {
+			seen[stem] = struct{}{}
+		}
+	}
+
+	return len(seen)
+}
+
+func splitPackQualityText(text string) []string {
+	var (
+		tokens []string
+		b      strings.Builder
+	)
+
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+
+		tokens = append(tokens, strings.ToLower(b.String()))
+		b.Reset()
+	}
+
+	for _, r := range text {
+		if r >= 'A' && r <= 'Z' {
+			if b.Len() > 0 {
+				flush()
+			}
+
+			b.WriteRune(r + ('a' - 'A'))
+
+			continue
+		}
+
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+
+			continue
+		}
+
+		flush()
+	}
+
+	flush()
+
+	return tokens
+}
+
+func packQualityStem(token string) string {
+	token = strings.TrimSpace(strings.ToLower(token))
+	for _, suffix := range []string{"ing", "ed", "es", "s"} {
+		if len(token) > len(suffix)+3 && strings.HasSuffix(token, suffix) {
+			return packQualityTrimDoubledFinalConsonant(strings.TrimSuffix(token, suffix))
+		}
+	}
+
+	return token
+}
+
+func packQualityTrimDoubledFinalConsonant(token string) string {
+	if len(token) < 2 {
+		return token
+	}
+
+	last := token[len(token)-1]
+	prev := token[len(token)-2]
+
+	if last == prev {
+		switch last {
+		case 'b', 'd', 'g', 'm', 'n', 'p', 'r', 't':
+			return token[:len(token)-1]
+		}
+	}
+
+	return token
+}
+
+func packQualityStopToken(token string) bool {
+	switch token {
+	case "the", "and", "for", "with", "where", "when", "that", "this", "from", "into", "over",
+		"do", "not", "no", "only", "same", "way", "longer", "first", "later", "time",
+		"bug", "fix", "issue", "fail", "fails", "failure", "source", "file", "files", "symbol", "symbols",
+		"research", "repo", "repository", "edit", "edits", "editing", "investigate", "identify", "name",
+		"likely", "smallest", "proper", "propose", "return", "answer", "evidence", "codebase", "exact",
+		"missing", "insufficient", "sufficient", "claim":
+		return true
+	default:
+		return false
+	}
+}
+
+func packQualityPathIsTest(path string) bool {
+	path = filepath.ToSlash(strings.ToLower(strings.TrimSpace(path)))
+
+	return strings.HasSuffix(path, "_test.go") ||
+		strings.Contains(path, "/testdata/") ||
+		strings.Contains(path, "/fixtures/") ||
+		strings.Contains(path, "/tests/")
 }

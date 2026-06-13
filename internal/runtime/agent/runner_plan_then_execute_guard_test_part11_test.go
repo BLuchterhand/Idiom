@@ -582,7 +582,7 @@ func TestPlanExecuteNativeSurfaceUsesNewFileShapeForMissingPath(t *testing.T) {
 		newFileBlock = newFileBlock[:end]
 	}
 
-	if !strings.Contains(newFileBlock, `whole_or_new_file: replace_all=true + old_text="" + new_text`) {
+	if !strings.Contains(newFileBlock, `new_file: replace_all=true + old_text="" + new_text`) {
 		t.Fatalf("native missing-file skeleton should use new-file shape:\n%s", joined)
 	}
 

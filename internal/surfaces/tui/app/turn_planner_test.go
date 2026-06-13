@@ -6008,6 +6008,32 @@ func TestPlanExecutePromptRunnerUseActiveModelSkipsExecutorRoute(t *testing.T) {
 	}
 }
 
+func TestImplementationDispatchPlanExecuteHostedModelOverride(t *testing.T) {
+	model := &Model{
+		cfg: config.Config{
+			LlamaServer: config.LlamaServer{
+				Kind:  "deepseek",
+				Model: "deepseek-v4-flash",
+			},
+		},
+		plannerSpec: config.LlamaServer{
+			Kind:  "deepseek",
+			Model: "deepseek-v4-flash",
+		},
+		modelID: "deepseek-v4-flash",
+	}
+
+	if got := model.implementationDispatchPlanExecuteModelOverride(); got != "deepseek-v4-flash" {
+		t.Fatalf("hosted model override = %q, want deepseek-v4-flash", got)
+	}
+
+	model.plannerSpec = config.LlamaServer{Kind: "llama.cpp", Model: "qwen3.6-35b"}
+	model.modelID = "qwen3.6-35b"
+	if got := model.implementationDispatchPlanExecuteModelOverride(); got != "" {
+		t.Fatalf("local model should preserve plan-execute role routing, got override %q", got)
+	}
+}
+
 func TestUseConfigPlannerModelBypassesPlannerRoleAlias(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)

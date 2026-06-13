@@ -523,9 +523,9 @@ func TestWriteToolDescriptionsDistinguishBoundedAndWholeFileEdits(t *testing.T) 
 		}
 	}
 
-	for _, want := range []string{"whole-file replacement", "new files", "prefer edit_file/apply_patch for existing source/test files"} {
+	for _, want := range []string{"full-body write", "missing/new files", "prefer edit_file/apply_patch for existing source/test files"} {
 		if !strings.Contains(writePurpose, want) {
-			t.Fatalf("write_file manifest should scope whole-file replacement and contain %q:\n%s", want, writePurpose)
+			t.Fatalf("write_file manifest should scope full-body writes and contain %q:\n%s", want, writePurpose)
 		}
 	}
 
@@ -547,9 +547,29 @@ func TestWriteToolDescriptionsDistinguishBoundedAndWholeFileEdits(t *testing.T) 
 	}
 
 	writeDescription := tools["write_file"].Description
-	for _, want := range []string{"Whole-file replacement", "new files", "prefer edit_file or apply_patch for existing source/test edits"} {
+	for _, want := range []string{"Full-body write", "missing/new files", "prefer edit_file or apply_patch for existing source/test edits"} {
 		if !strings.Contains(writeDescription, want) {
 			t.Fatalf("write_file schema description should contain %q:\n%s", want, writeDescription)
+		}
+	}
+
+	submitPlanSchema := string(tools["submit_plan"].InputSchema)
+	for _, want := range []string{
+		"complete missing/new-file body",
+		"missing/new-file body",
+		"missing/new files only",
+		"existing source/test files require bounded anchors",
+	} {
+		if !strings.Contains(submitPlanSchema, want) {
+			t.Fatalf("submit_plan property schema should contain %q:\n%s", want, submitPlanSchema)
+		}
+	}
+	for _, stale := range []string{
+		"replacement/whole-file body",
+		"write new_text as the entire file body (creates the file if missing)",
+	} {
+		if strings.Contains(submitPlanSchema, stale) {
+			t.Fatalf("submit_plan property schema retained stale wording %q:\n%s", stale, submitPlanSchema)
 		}
 	}
 }
