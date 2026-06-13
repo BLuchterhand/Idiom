@@ -17,6 +17,7 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/featureplanner"
+	coreplanexecute "idiom/internal/workflows/planexecute"
 	"idiom/internal/workflows/productworkflow"
 )
 
@@ -807,6 +808,73 @@ func TestDefaultFeaturePlannerPlanExecuteRetriesTypedRetryActionWithoutAnchorPro
 		t.Fatalf("decode completion envelope: %v", err)
 	}
 
+	if got := fmt.Sprint(envelope["status"]); got != "completed" {
+		t.Fatalf("status = %q, want completed; envelope=%+v", got, envelope)
+	}
+}
+
+func TestDefaultFeaturePlannerPlanExecuteRetriesFromDurableTerminalCompletion(t *testing.T) {
+	root := t.TempDir()
+	var calls int
+	var retryPrompt string
+	sessionID := "atom-1-run-1"
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+
+	req := featurePlannerRequest{
+		ConfigPath: writeMainConfigRoot(t, root),
+		Config:     cfg,
+		SessionID:  "feature-session",
+		Deps: Dependencies{
+			RunPlanExecute: func(args []string, stdout io.Writer, stderr io.Writer) int {
+				calls++
+				if calls == 2 {
+					if path := featurePlannerArgValue(args, "-prompt-file"); path != "" {
+						body, err := os.ReadFile(path)
+						if err != nil {
+							t.Fatalf("read retry prompt: %v", err)
+						}
+						retryPrompt = string(body)
+					}
+					_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","review_status":"passed","state_path":".idiom/plan-execute/session/state.json"}`))
+					return 0
+				}
+
+				_, err := coreplanexecute.SavePlanExecuteTerminalCompletionRecord(root, coreplanexecute.PlanExecuteTerminalCompletionRecord{
+					SessionID:         sessionID,
+					Status:            "failed",
+					Phase:             coreplanexecute.ProgressPhasePlanning,
+					FailureKind:       coreplanexecute.RunFailurePlannerBlocked,
+					FailureReason:     "<<QUESTION>>: source refresh needed",
+					NextAction:        "retry_plan_execute",
+					RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp", "native/src/simulation/world/collapse_event.h"},
+				})
+				if err != nil {
+					t.Fatalf("save terminal completion: %v", err)
+				}
+				_, _ = stderr.Write([]byte("planner blocked"))
+				return 1
+			},
+		},
+	}
+
+	raw, err := defaultFeaturePlannerPlanExecute(context.Background(), req, "Implement atom.\nPlan-execute session id: "+sessionID, io.Discard)
+	if err != nil {
+		t.Fatalf("defaultFeaturePlannerPlanExecute returned error: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("RunPlanExecute calls = %d, want durable terminal retry", calls)
+	}
+	if !strings.Contains(retryPrompt, "native/src/core/colony_sim_tick.cpp") ||
+		!strings.Contains(retryPrompt, "then produce one valid `submit_plan`") {
+		t.Fatalf("retry prompt should be built from durable terminal sidecar:\n%s", retryPrompt)
+	}
+
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		t.Fatalf("decode completion envelope: %v", err)
+	}
 	if got := fmt.Sprint(envelope["status"]); got != "completed" {
 		t.Fatalf("status = %q, want completed; envelope=%+v", got, envelope)
 	}

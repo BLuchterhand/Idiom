@@ -417,19 +417,8 @@ func TestPlanThenExecuteFallbackPreservesAnchorRefreshContract(t *testing.T) {
 		{Tool: "read_file", Summary: "Read a.txt lines 1-10 (total lines: 10)"},
 	}
 
-	answer, ok := deterministicNoToolsAnswer("main", brief, results)
-	if !ok {
-		t.Fatal("expected deterministic plan-execute fallback")
-	}
-
-	for _, want := range []string{"Plan-execute anchor refresh is still required", "b.txt", "bounded read_file or code_navigate"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("plan-execute fallback missing %q:\n%s", want, answer)
-		}
-	}
-
-	if strings.Contains(answer, "Implementation incomplete") || strings.Contains(answer, "Changed paths: none") {
-		t.Fatalf("plan-execute fallback must not use direct implementation blocker:\n%s", answer)
+	if answer, ok := deterministicNoToolsAnswer("main", brief, results); ok {
+		t.Fatalf("anchor-refresh state must remain nonterminal, got fallback answer:\n%s", answer)
 	}
 }
 
@@ -450,23 +439,8 @@ func TestPlanThenExecuteFallbackInfersPlannerContractFromTranscript(t *testing.T
 		{Tool: "read_file", Summary: "Read a.txt lines 2-4 (total lines: 10)"},
 	}
 
-	answer, ok := deterministicNoToolsAnswer("main", brief, results)
-	if !ok {
-		t.Fatal("expected deterministic plan-execute fallback inferred from transcript")
-	}
-
-	for _, want := range []string{"Plan-execute anchor refresh is still required", "b.txt"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("inferred plan-execute fallback missing %q:\n%s", want, answer)
-		}
-	}
-
-	if strings.Contains(answer, "- a.txt") {
-		t.Fatalf("already refreshed path should not remain in anchor-refresh fallback:\n%s", answer)
-	}
-
-	if strings.Contains(answer, "Implementation incomplete") || strings.Contains(answer, "Changed paths: none") {
-		t.Fatalf("transcript-inferred plan-execute fallback must not use direct implementation blocker:\n%s", answer)
+	if answer, ok := deterministicNoToolsAnswer("main", brief, results); ok {
+		t.Fatalf("inferred anchor-refresh state must remain nonterminal, got fallback answer:\n%s", answer)
 	}
 }
 

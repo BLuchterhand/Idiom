@@ -23,6 +23,7 @@ import (
 	planexecuteadapter "idiom/internal/workflows/featureplanner/adapters/planexecute"
 	"idiom/internal/workflows/featureplannerproduct"
 	"idiom/internal/workflows/featureplannerruntime"
+	coreplanexecute "idiom/internal/workflows/planexecute"
 	"idiom/internal/workflows/productworkflow"
 	"path/filepath"
 )
@@ -410,8 +411,9 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 	if model := strings.TrimSpace(req.Config.LlamaServer.Model); model != "" {
 		args = append(args, "-model", model)
 	}
-	if sessionID := featureplanner.PlanExecuteSessionIDFromImplementorPrompt(prompt); sessionID != "" {
-		args = append(args, "-session", sessionID)
+	planExecuteSessionID := featureplanner.PlanExecuteSessionIDFromImplementorPrompt(prompt)
+	if planExecuteSessionID != "" {
+		args = append(args, "-session", planExecuteSessionID)
 	}
 
 	for _, path := range featurePlannerWriteEnvelopeFlags(req.ProductWriteEnvelope) {
@@ -432,6 +434,7 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 	}
 
 	completion := featurePlannerPlanExecuteCompletionFields(planStdout.String())
+	completion = overlayFeaturePlannerPlanExecuteTerminalCompletion(req.Config.Workspace.Root, planExecuteSessionID, completion)
 	if code != 0 {
 		if retryPrompt, ok := featureplanner.PlanExecuteRecoveryRetryPrompt(prompt, completion); ok {
 			if err := os.WriteFile(promptPath, []byte(retryPrompt), 0o600); err != nil {
@@ -446,6 +449,7 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 			}
 
 			completion = featurePlannerPlanExecuteCompletionFields(planStdout.String())
+			completion = overlayFeaturePlannerPlanExecuteTerminalCompletion(req.Config.Workspace.Root, planExecuteSessionID, completion)
 		}
 	}
 
@@ -533,6 +537,45 @@ func featurePlannerPlanExecuteCompletionEventType(fields map[string]any) string 
 
 func featurePlannerPlanExecuteCompletionFields(output string) map[string]any {
 	return featureplanner.PlanExecuteCompletionFields(output)
+}
+
+func overlayFeaturePlannerPlanExecuteTerminalCompletion(root string, sessionID string, fields map[string]any) map[string]any {
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return fields
+	}
+
+	record, path, found, err := coreplanexecute.TryLoadPlanExecuteTerminalCompletionRecord(root, sessionID)
+	if err != nil || !found {
+		return fields
+	}
+
+	terminalFields := coreplanexecute.PlanExecuteTerminalCompletionEventFields(record, path)
+	for key, value := range terminalFields {
+		if _, ok := fields[key]; !ok || featurePlannerEmptyCompletionField(fields[key]) {
+			fields[key] = value
+		}
+	}
+
+	return fields
+}
+
+func featurePlannerEmptyCompletionField(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(typed) == ""
+	case []string:
+		return len(typed) == 0
+	case []any:
+		return len(typed) == 0
+	default:
+		return false
+	}
 }
 
 func emitFeaturePlannerMessage(stdout io.Writer, jsonEvents bool, role string, content string, sessionID string) {

@@ -112,6 +112,38 @@ func TestProductWorkflowBrief_AllowsDispatchForPendingImplementationTDDEvidence(
 	}
 }
 
+func TestProductWorkflowBriefClosedStateIsNotImplicitSourceSatisfied(t *testing.T) {
+	brief := ProductWorkflowBrief{
+		StatusBucket:       "closed",
+		CurrentState:       "closed",
+		CurrentPhase:       "failed",
+		CoverageGatePassed: true,
+	}
+
+	if brief.IsClosedSourceSatisfied() {
+		t.Fatal("generic closed state must not be treated as source-satisfied")
+	}
+	if !brief.AllowsFeaturePlanDispatch() {
+		t.Fatal("closed non-source-satisfied product context should not short-circuit dispatch as source-satisfied")
+	}
+}
+
+func TestProductWorkflowBriefExplicitSourceSatisfiedCloseout(t *testing.T) {
+	brief := ProductWorkflowBrief{
+		StatusBucket:       "closed",
+		CurrentState:       "closed",
+		CurrentPhase:       "source-satisfied",
+		CoverageGatePassed: true,
+	}
+
+	if !brief.IsClosedSourceSatisfied() {
+		t.Fatal("explicit source-satisfied phase should close out source-satisfied")
+	}
+	if brief.AllowsFeaturePlanDispatch() {
+		t.Fatal("source-satisfied product context should not dispatch implementation")
+	}
+}
+
 func TestProductWorkflowBrief_TypedCoverageBlockerKindsOverrideProse(t *testing.T) {
 	brief := ProductWorkflowBrief{
 		CoverageGatePassed: false,

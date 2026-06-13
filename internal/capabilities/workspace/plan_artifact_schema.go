@@ -533,7 +533,12 @@ func ValidatePlanArtifact(artifact PlanArtifact) error {
 
 	for i, edit := range artifact.Edits {
 		if err := validatePlanEdit(edit); err != nil {
-			errs = appendPlanArtifactSchemaError(errs, fmt.Sprintf("edits[%d]", i), "invalid_edit_shape", err.Error())
+			field := fmt.Sprintf("edits[%d]", i)
+			if path := strings.TrimSpace(edit.Path); path != "" {
+				field = fmt.Sprintf("edits[%d].path:%s", i, path)
+			}
+
+			errs = appendPlanArtifactSchemaError(errs, field, "invalid_edit_shape", err.Error())
 		}
 
 		if path := strings.TrimSpace(edit.Path); path != "" && !planArtifactPathIsSafe(path) {

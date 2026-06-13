@@ -90,9 +90,12 @@ func (brief ProductWorkflowBrief) AllowsFeaturePlanDispatch() bool {
 }
 
 func (brief ProductWorkflowBrief) IsClosedSourceSatisfied() bool {
-	return util.EqualTrimFold(brief.StatusBucket, "closed") &&
-		(util.EqualTrimFold(brief.CurrentState, "closed") ||
-			strings.Contains(strings.ToLower(strings.TrimSpace(brief.CurrentPhase)), "source-satisfied"))
+	if !util.EqualTrimFold(brief.StatusBucket, "closed") {
+		return false
+	}
+
+	return strings.Contains(strings.ToLower(strings.TrimSpace(brief.CurrentPhase)), "source-satisfied") ||
+		strings.Contains(strings.ToLower(strings.TrimSpace(brief.CurrentState)), "source-satisfied")
 }
 
 func (brief ProductWorkflowBrief) coveragePendingImplementationVerification() bool {

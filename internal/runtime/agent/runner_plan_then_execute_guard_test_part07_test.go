@@ -1508,3 +1508,46 @@ func TestPlanExecuteCompletionGateRecoveryPreservesAnchorRefreshTools(t *testing
 		t.Fatalf("completion-gate anchor refresh should clamp retry budget to %d tokens, got %d", planThenExecuteAnchorRefreshMaxTokens, opts.MaxTokens)
 	}
 }
+
+func TestPlanExecuteLaterInvalidAnchorRequiresFreshRefreshDespitePriorCppWindow(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{
+			"native/src/core/colony_sim_tick.cpp",
+			"native/src/simulation/world/collapse_event.h",
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim_tick.cpp lines 200-260 (total lines: 2700)"},
+		{Tool: "read_file", Summary: "Read f2 native/src/simulation/world/collapse_event.h lines 1-80 (total lines: 80)"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "submit_plan rejected: invalid edit anchor(s): `native/src/core/colony_sim_tick.cpp: old_text not found in current source`.",
+		},
+		{Tool: "read_file", Summary: "Read f3 native/src/core/colony_sim_tick.cpp lines 51-230 (total lines: 2700)"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[0] path \"native/src/core/colony_sim_tick.cpp\": source line-range edit for native/src/core/colony_sim_tick.cpp lines 1-1 expands the selected range but does not preserve any selected anchor line; for insertions, use old_text/new_text or replace the anchor line(s) with unchanged anchor line(s) plus new content",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "submit_plan rejected: invalid edit anchor(s): `native/src/core/colony_sim_tick.cpp: old_text not found in current source`, `native/src/simulation/world/collapse_event.h: old_text not found in current source`.",
+		},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeAnchorRefresh {
+		t.Fatalf("later invalid anchor should require fresh anchor refresh, state=%#v", state)
+	}
+	if !slices.Contains(state.RefreshPaths, "native/src/core/colony_sim_tick.cpp") {
+		t.Fatalf("latest invalid core anchor should remain refreshable; refresh paths=%#v state=%#v", state.RefreshPaths, state)
+	}
+	if !submitPlanRejectionHasInvalidEditShape(results[4]) {
+		t.Fatalf("line-range anchor preservation rejection should be classified as invalid edit shape")
+	}
+}

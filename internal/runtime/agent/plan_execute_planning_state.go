@@ -193,6 +193,9 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	if len(state.RefreshPaths) == 0 && !planThenExecuteLastRejectionSuppressesStreakRefresh(brief, results) {
 		state.RefreshPaths = planThenExecuteRejectedSubmitPlanStreakRefreshPaths(brief, results)
 	}
+	if stalePaths := planThenExecuteStaleAnchorPathsFromStateSummaries(state.RequiredPathStates); len(stalePaths) > 0 {
+		state.RefreshPaths = uniqueSortedRunnerPaths(append(state.RefreshPaths, stalePaths...))
+	}
 
 	switch {
 	case len(state.RefreshPaths) > 0:
@@ -246,6 +249,21 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	state.applyProjection(transport)
 
 	return state
+}
+
+func planThenExecuteStaleAnchorPathsFromStateSummaries(summaries []string) []string {
+	var paths []string
+	for _, summary := range summaries {
+		path, state, ok := strings.Cut(strings.TrimSpace(summary), ":")
+		if !ok || strings.TrimSpace(state) != string(planThenExecuteRequiredPathStaleAnchor) {
+			continue
+		}
+		if normalized := normalizeRunnerPath(path); normalized != "" {
+			paths = append(paths, normalized)
+		}
+	}
+
+	return uniqueSortedRunnerPaths(paths)
 }
 
 func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlanningTransport) {

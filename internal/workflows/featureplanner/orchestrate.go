@@ -772,6 +772,10 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 			completion = bindPlanExecuteCompletionToActiveAuthority(completion, *state, *atom)
 
 			if ok, reason := planExecuteCompletionIsSuccess(completion, *state, *atom); !ok {
+				if planExecuteCompletionRetryable(completion) {
+					return markPlanExecuteRetryPending(state, atom, completion, reason)
+				}
+
 				return rejectPlanExecuteCompletion(state, atom, completion, reason)
 			}
 
@@ -1571,6 +1575,66 @@ func rejectPlanExecuteCompletion(state *FeatureState, atom *FeatureAtomState, co
 	}
 
 	return recoverAtom(state, atom, reason, "repair_nested_plan_execute_completion", "idiom.feature_planner.plan_execute_completion_rejected", fields)
+}
+
+func planExecuteCompletionRetryable(completion planExecuteCompletion) bool {
+	return strings.TrimSpace(completion.NextAction) == "retry_plan_execute"
+}
+
+func markPlanExecuteRetryPending(state *FeatureState, atom *FeatureAtomState, completion planExecuteCompletion, reason string) []Event {
+	fields := planExecuteCompletionFields(completion)
+	if detail := planExecuteCompletionFailureDetail(completion); detail != "" {
+		reason = strings.TrimSpace(reason + ": " + detail)
+	}
+
+	featureFrom := state.Status
+	atomFrom := atom.State
+	state.Status = FeatureStateDispatching
+	atom.State = AtomStateImplementing
+	state.Continuation.ResumeAtomID = atom.ID
+	state.Continuation.ResumeAction = "retry_plan_execute"
+	state.Continuation.ResumeReason = reason
+	state.Continuation.BlockedAtoms = removeFeaturePlannerString(state.Continuation.BlockedAtoms, atom.ID)
+	state.Blockers = removeFeaturePlannerString(state.Blockers, reason)
+	atom.Blockers = removeFeaturePlannerString(atom.Blockers, reason)
+	foldActiveRun(state, atom.ID, atom.LastRunID)
+
+	return []Event{{
+		Type:        "idiom.feature_planner.plan_execute_retry_pending",
+		SessionID:   state.SessionID,
+		FeatureFrom: featureFrom,
+		FeatureTo:   FeatureStateDispatching,
+		AtomID:      atom.ID,
+		AtomFrom:    atomFrom,
+		AtomTo:      AtomStateImplementing,
+		AtomDeltas:  []AtomDelta{{Op: "update", AtomID: atom.ID, AtomFrom: atomFrom, AtomTo: AtomStateImplementing}},
+		ActiveRunDeltas: []ActiveRunDelta{{
+			Op:            "fold_terminal",
+			AtomID:        atom.ID,
+			LaneSessionID: atom.LastRunID,
+			BeforeState:   "running",
+			AfterState:    "retry_plan_execute",
+		}},
+		Message: reason,
+		Fields:  fields,
+	}}
+}
+
+func removeFeaturePlannerString(values []string, target string) []string {
+	target = strings.TrimSpace(target)
+	if target == "" || len(values) == 0 {
+		return values
+	}
+
+	out := values[:0]
+	for _, value := range values {
+		if strings.TrimSpace(value) == target {
+			continue
+		}
+		out = append(out, value)
+	}
+
+	return out
 }
 
 func rejectUnverifiedCompletion(state *FeatureState, atom *FeatureAtomState, reason string) []Event {

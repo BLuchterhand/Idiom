@@ -23,13 +23,13 @@ edit or terminal source-satisfied evidence.
 
 Modify only the allowlisted files named in the brief. Exact anchors, exact
 old/new snippets, Current-State Anchors, Required Edits, full new-file bodies,
-explicit `replace_all:true` edit shapes, or unified patches in the brief can
-identify the intended edit and scope. Packet anchors establish scope. Existing
+explicit missing/new-file `replace_all:true` edit shapes, or unified patches in
+the brief can identify the intended edit and scope. Packet anchors establish scope. Existing
 required paths still need source-body evidence in this planner turn
 before `submit_plan`, unless the run short-circuits as exact-plan-ready before
 planner execution or closes as `Decision: source-satisfied` with current-state
-evidence. Missing/new files with a substantial full body or explicit whole-file
-replacement shape do not need a file read.
+evidence. Missing/new files with a substantial full body or explicit new-file
+full-body shape do not need a file read.
 For small insertions/appends after an existing line, use `insert_after_line`
 with inline non-empty `content`. For non-trivial existing source/test
 replacements, or large additions/appends, use `start_line`/`end_line`/`content`

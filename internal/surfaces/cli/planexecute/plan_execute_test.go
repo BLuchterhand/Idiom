@@ -411,6 +411,101 @@ func TestRunPlanExecuteMainJSONEmitsWriterRouteDecision(t *testing.T) {
 	}
 }
 
+func TestRunPlanExecuteMainModelOverrideUpdatesWriterRouteDecision(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+	backendsJSON := `{"profiles":{"local":{"models":[{"alias":"local-planner","model":"local-planner","roles":["planner"]},{"alias":"local-coder","model":"local-coder","roles":["executor"]},{"alias":"local-classifier","model":"local-classifier","roles":["classifier"]}]}}}`
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
+		t.Fatalf("write backends: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+
+	code := RunMain(
+		[]string{"-config", configPath, "-prompt", "plan this change", "-required-edit-path", "pkg.go", "-model", "deepseek-v4-flash", "-json"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
+			return "no plan", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
+	}
+
+	events := planExecuteJSONEvents(t, stdout.String())
+	event, ok := planExecuteEventByType(events, "idiom.plan_execute.writer_route_decision")
+	if !ok {
+		t.Fatalf("missing writer route event in %s", stdout.String())
+	}
+
+	if event["planner_model"] != "deepseek-v4-flash" || event["executor_model"] != "deepseek-v4-flash" || event["classifier_model"] != "deepseek-v4-flash" {
+		t.Fatalf("explicit model override should own writer route event, got %#v", event)
+	}
+	if event["effective_model"] != "deepseek-v4-flash" {
+		t.Fatalf("effective_model = %q, want deepseek-v4-flash; event=%#v", event["effective_model"], event)
+	}
+	if event["user_override"] != true {
+		t.Fatalf("user_override = %v, want true; event=%#v", event["user_override"], event)
+	}
+
+	if strings.Contains(fmt.Sprint(event), "local-planner") || strings.Contains(fmt.Sprint(event), "local-coder") || strings.Contains(fmt.Sprint(event), "local-classifier") {
+		t.Fatalf("explicit model override should not report role aliases in route event, got %#v", event)
+	}
+
+	if aliases, ok := event["role_aliases"].(map[string]any); ok && len(aliases) > 0 {
+		t.Fatalf("explicit model override should suppress role aliases in route event, got %#v", event)
+	}
+}
+
+func TestRunPlanExecuteMainConfigModelBeatsWorkspaceRoleAliasesInWriterRouteDecision(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	configBody := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q},"llama_server":{"kind":"deepseek","base_url":"https://api.deepseek.com","model":"deepseek-v4-flash"}}`, root, root)
+	if err := os.WriteFile(configPath, []byte(configBody), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+	backendsJSON := `{"profiles":{"local":{"models":[{"alias":"local-planner","model":"local-planner","roles":["planner"]},{"alias":"local-coder","model":"local-coder","roles":["executor"]},{"alias":"local-classifier","model":"local-classifier","roles":["classifier"]}]}}}`
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
+		t.Fatalf("write backends: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := RunMain(
+		[]string{"-config", configPath, "-prompt", "plan this change", "-required-edit-path", "pkg.go", "-json"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
+			return "no plan", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
+	}
+
+	events := planExecuteJSONEvents(t, stdout.String())
+	event, ok := planExecuteEventByType(events, "idiom.plan_execute.writer_route_decision")
+	if !ok {
+		t.Fatalf("missing writer route event in %s", stdout.String())
+	}
+	for _, field := range []string{"planner_model", "executor_model", "classifier_model", "effective_model"} {
+		if event[field] != "deepseek-v4-flash" {
+			t.Fatalf("%s = %q, want deepseek-v4-flash; event=%#v", field, event[field], event)
+		}
+	}
+	if event["user_override"] == true {
+		t.Fatalf("config model alone should not be reported as a user override; event=%#v", event)
+	}
+}
+
 func TestPlanExecutePlannerAddendumAvoidsHardReadCaps(t *testing.T) {
 	addendum := planExecutePlannerSystemAddendum(nil, nil)
 	for _, forbidden := range []string{

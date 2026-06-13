@@ -2063,6 +2063,9 @@ func invalidAnchorCorrectionEvidenceResult(result workspace.ToolResult, path str
 	if readFileResultCoversRejectedLineRange(result, path, results) {
 		return true
 	}
+	if readFileResultIsFreshBoundedCppSourceWindow(result, path, results) {
+		return true
+	}
 
 	evidence := planThenExecuteToolResultSourceEvidence(result, path)
 	if evidence.Level != planThenExecuteEvidenceAnchorReady {
@@ -2105,7 +2108,43 @@ func invalidAnchorCorrectionEvidenceResult(result workspace.ToolResult, path str
 		return true
 	}
 
-	return hasRange
+	return false
+}
+
+func readFileResultIsFreshBoundedCppSourceWindow(result workspace.ToolResult, path string, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile || strings.TrimSpace(result.Error) != "" {
+		return false
+	}
+
+	readPath, readRange, ok := extractReadPathAndRangeFromSummary(result.Summary)
+	if !ok || normalizeRunnerPath(readPath) != normalizeRunnerPath(path) {
+		return false
+	}
+
+	normalizedPath := strings.ToLower(normalizeRunnerPath(path))
+	if !(strings.HasSuffix(normalizedPath, ".cpp") ||
+		strings.HasSuffix(normalizedPath, ".cc") ||
+		strings.HasSuffix(normalizedPath, ".cxx")) {
+		return false
+	}
+	if readRange.start > 400 {
+		return false
+	}
+
+	seen := 0
+	for _, candidate := range results {
+		candidatePath, candidateRange, ok := extractReadPathAndRangeFromSummary(candidate.Summary)
+		if strings.TrimSpace(candidate.Tool) != workspace.ToolNameReadFile ||
+			!ok ||
+			normalizeRunnerPath(candidatePath) != normalizeRunnerPath(path) ||
+			candidateRange.start != readRange.start ||
+			candidateRange.end != readRange.end {
+			continue
+		}
+		seen++
+	}
+
+	return seen <= 1
 }
 
 func readFileResultCoversRejectedLineRange(result workspace.ToolResult, path string, results []workspace.ToolResult) bool {
@@ -2217,7 +2256,9 @@ func submitPlanRejectionHasInvalidEditShape(result workspace.ToolResult) bool {
 		strings.Contains(text, "requires one executable edit shape") ||
 		strings.Contains(text, "mutually exclusive") ||
 		strings.Contains(text, "line-range edits require non-empty content") ||
-		strings.Contains(text, "insert_after_line edits require non-empty content")
+		strings.Contains(text, "insert_after_line edits require non-empty content") ||
+		strings.Contains(text, "expands the selected range") ||
+		strings.Contains(text, "does not preserve any selected anchor line")
 }
 
 func lastSubmitPlanRejectionBrief(result workspace.ToolResult) string {
@@ -2391,7 +2432,8 @@ func planThenExecuteRequiredPathState(brief workerruntime.WorkerRuntimeBrief, re
 	}
 
 	if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
-		if _, stale := submitPlanInvalidAnchorPaths(rejected)[path]; stale && !successfulInvalidAnchorCorrectionEvidenceForRejection(results, rejectedAt, path) {
+		_, wholeFileRewrite := submitPlanWholeFileExistingSourceRewritePaths(rejected)[path]
+		if _, stale := submitPlanInvalidAnchorPaths(rejected)[path]; stale && !wholeFileRewrite && !successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, path) {
 			return planThenExecuteRequiredPathStaleAnchor
 		}
 	}
@@ -3673,7 +3715,8 @@ func planThenExecuteSubmitCorrectionBlockerAllowed(brief workerruntime.WorkerRun
 	if !ok {
 		return false
 	}
-	if len(planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt)) > 0 {
+	if len(planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt)) > 0 &&
+		len(submitPlanWholeFileExistingSourceRewritePaths(rejected)) == 0 {
 		return false
 	}
 

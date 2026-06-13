@@ -65,6 +65,9 @@ func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.Worke
 	if len(results) == 0 {
 		return "", false
 	}
+	if planThenExecuteAnchorRefreshFallbackPending(brief, results) {
+		return "", false
+	}
 
 	if answer, ok := synthesizePlanThenExecutePlannerFallbackAnswer(brief, results); ok {
 		return answer, true
@@ -105,6 +108,18 @@ func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.Worke
 	return synthesizeFallbackAnswer(agentName, results)
 }
 
+func planThenExecuteAnchorRefreshFallbackPending(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	brief, ok := planThenExecuteFallbackBrief(brief, results)
+	if !ok {
+		return false
+	}
+	if planThenExecuteSubmitCorrectionBlockerAllowed(brief, results) {
+		return false
+	}
+
+	return planThenExecuteFallbackHasUnresolvedInvalidAnchorRefresh(brief, results)
+}
+
 func synthesizePlanThenExecutePlannerFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
 	brief, ok := planThenExecuteFallbackBrief(brief, results)
 	if !ok {
@@ -113,9 +128,15 @@ func synthesizePlanThenExecutePlannerFallbackAnswer(brief workerruntime.WorkerRu
 
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
 	if state.Mode == PlanExecutePlanningModeAnchorRefresh && len(state.RefreshPaths) > 0 {
-		return strings.TrimSpace("<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n\n" +
-			"Remaining bounded refresh paths:\n" + bulletList(state.RefreshPaths) + "\n" +
-			"Next valid action: re-run with enough budget and issue exactly one bounded read_file or code_navigate source-body request for a remaining refresh path; do not answer source-satisfied or blocker before that refresh returns."), true
+		if state.SubmitCorrectionBlockerAllowed {
+			if blocker := synthesizePlanThenExecuteSubmitCorrectionBlocker(brief, results); blocker != "" {
+				return blocker, true
+			}
+		}
+		return "", false
+	}
+	if planThenExecuteFallbackHasUnresolvedInvalidAnchorRefresh(brief, results) {
+		return "", false
 	}
 
 	if state.Mode == PlanExecutePlanningModeSubmitCorrection {
@@ -143,6 +164,57 @@ func synthesizePlanThenExecutePlannerFallbackAnswer(brief workerruntime.WorkerRu
 	}
 
 	return "", false
+}
+
+func planThenExecuteFallbackHasUnresolvedInvalidAnchorRefresh(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results)
+	if !ok || len(submitPlanInvalidAnchorPaths(rejected)) == 0 {
+		return false
+	}
+
+	return len(planThenExecuteFallbackUnresolvedLastRejectedRefreshPaths(brief, results)) > 0
+}
+
+func planThenExecuteFallbackUnresolvedLastRejectedRefreshPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
+	rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results)
+	if !ok {
+		return nil
+	}
+
+	refreshPaths := submitPlanRefreshPathCandidates(rejected)
+	if len(refreshPaths) == 0 {
+		return nil
+	}
+	if len(submitPlanWholeFileExistingSourceRewritePaths(rejected)) > 0 {
+		return nil
+	}
+	if planThenExecuteSubmitPlanMissingBodyOrUnsafeAnchor(rejected) &&
+		len(planThenExecuteRejectedSubmitPlanStreak(results)) >= planThenExecuteRejectedSubmitPlanStreakThreshold {
+
+		return nil
+	}
+
+	var unresolved []string
+	for _, rawPath := range planThenExecuteRefreshScopePathsForRejectedPlan(brief, results, refreshPaths) {
+		path := normalizeRunnerPath(rawPath)
+		if path == "" {
+			continue
+		}
+		if _, required := refreshPaths[path]; !required {
+			continue
+		}
+		if _, invalid := submitPlanInvalidAnchorPaths(rejected)[path]; invalid {
+			if successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, path) {
+				continue
+			}
+		} else if successfulSourceEvidencePathAfter(results, rejectedAt, path) {
+			continue
+		}
+
+		unresolved = append(unresolved, path)
+	}
+
+	return uniqueSortedRunnerPaths(unresolved)
 }
 
 func synthesizePlanThenExecuteSubmitCorrectionBlocker(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {

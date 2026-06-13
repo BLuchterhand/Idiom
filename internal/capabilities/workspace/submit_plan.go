@@ -239,7 +239,7 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 
 	for i, edit := range validationArtifact.Edits {
 		if err := validatePlanEdit(edit); err != nil {
-			return toolFailureResult(ToolNameSubmitPlan, "submit_plan rejected", fmt.Sprintf("edits[%d]: %s", i, err.Error()), failures.InvalidArgument, reasonPlanSubmissionRejected)
+			return toolFailureResult(ToolNameSubmitPlan, "submit_plan rejected", fmt.Sprintf("edits[%d] path %q: %s", i, edit.Path, err.Error()), failures.InvalidArgument, reasonPlanSubmissionRejected)
 		}
 
 		if err := m.validatePlanEditAgainstWorkspace(edit); err != nil {
@@ -456,15 +456,24 @@ func UnsupportedProofClaimReason(text string) string {
 		}
 
 		if noOpAssertionLine(line) {
-			return fmt.Sprintf("unsupported proof claim: no-op assertion on line %d; submit a concrete state assertion or report a blocker", lineNo+1)
+			return fmt.Sprintf("unsupported proof claim: no-op assertion on line %d (%q); submit a concrete state assertion or report a blocker", lineNo+1, truncateUnsupportedProofLine(line))
 		}
 
 		if phrase := selfDisqualifyingProofPhrase(line); phrase != "" {
-			return fmt.Sprintf("unsupported proof claim: self-disqualifying verification text %q on line %d; submit concrete evidence or report a blocker", phrase, lineNo+1)
+			return fmt.Sprintf("unsupported proof claim: self-disqualifying verification text %q on line %d (%q); submit concrete evidence or report a blocker", phrase, lineNo+1, truncateUnsupportedProofLine(line))
 		}
 	}
 
 	return ""
+}
+
+func truncateUnsupportedProofLine(line string) string {
+	line = strings.TrimSpace(line)
+	if len(line) <= 120 {
+		return line
+	}
+
+	return line[:117] + "..."
 }
 
 func noOpAssertionLine(line string) bool {

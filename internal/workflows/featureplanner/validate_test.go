@@ -3038,10 +3038,23 @@ func TestApplyImplementorOutputPromotesNestedPlanExecuteFailureDetailToBlocker(t
 
 func TestApplyImplementorOutputPreservesPlanExecuteRetryNextAction(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
+	state.ActiveRuns = []ActiveRun{{RunID: "atom-1-run-1", AtomID: atom.ID, LaneSessionID: "atom-1-run-1", State: "running"}}
+	atom.LastRunID = "atom-1-run-1"
 
 	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"failed","phase":"planning","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.","next_valid_action":"retry_plan_execute","progress_path":".idiom/plan-execute/sessions/pe.json"}`)
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute reported failure details: planner_blocked - <<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.")
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.plan_execute_retry_pending" {
+		t.Fatalf("retryable plan-execute completion should become retry-pending event, got state=%s atom=%s events=%+v", state.Status, atom.State, events)
+	}
+	if state.Status == FeatureStateRecoveryOpen || atom.State == AtomStateRecoveryOpen {
+		t.Fatalf("retryable plan-execute completion must not open product recovery: state=%s atom=%s", state.Status, atom.State)
+	}
+	if state.Continuation.ResumeAction != "retry_plan_execute" || state.Continuation.ResumeAtomID != atom.ID {
+		t.Fatalf("continuation = %+v, want retry_plan_execute for %s", state.Continuation, atom.ID)
+	}
+	if len(state.ActiveRuns) != 0 {
+		t.Fatalf("failed active run should be folded so durable reconciliation does not replay it: %+v", state.ActiveRuns)
+	}
 
 	if got := fmt.Sprint(events[0].Fields["next_valid_action"]); got != "retry_plan_execute" {
 		t.Fatalf("next_valid_action = %q, want retry_plan_execute; fields=%+v", got, events[0].Fields)

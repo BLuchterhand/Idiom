@@ -157,7 +157,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		"edit_set_obligation_count": len(editSetObligations),
 	})
 
-	decision := planExecuteWriterRouteDecision(cfg, requiredEditPaths)
+	decision := planExecuteWriterRouteDecision(cfg, opts, requiredEditPaths)
 	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "writer_route_decision", decision.EventFields())
 
 	if resumeState != nil {

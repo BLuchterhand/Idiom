@@ -202,7 +202,10 @@ func TestSubmitPlanRejectsUnsupportedProofClaimsAtIntake(t *testing.T) {
 			Purpose: "add coverage",
 		}},
 	})
-	if !strings.Contains(result.Error, "unsupported proof claim") || !strings.Contains(result.Error, "self-disqualifying") {
+	if !strings.Contains(result.Error, "unsupported proof claim") ||
+		!strings.Contains(result.Error, "self-disqualifying") ||
+		!strings.Contains(result.Error, "tests/panel_contract.gd") ||
+		!strings.Contains(result.Error, "simplified") {
 		t.Fatalf("submit_plan should reject unsupported proof claims before executor handoff, got %#v", result)
 	}
 

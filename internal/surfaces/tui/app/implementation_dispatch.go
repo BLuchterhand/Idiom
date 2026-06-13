@@ -881,7 +881,7 @@ func humanPlanDocumentPreflightBlockedMessage(results []implementationDispatchPl
 	var b strings.Builder
 
 	b.WriteString("Plan-execute preflight blocked dispatch before the planner ran.\n\n")
-	b.WriteString("The referenced document is not a dispatch-ready plan-execute brief yet. Convert it through refine or rewrite it with the canonical `## Files To Modify`, verified current state, exact `old_text`/`new_text` or `replace_all` edit shape, and acceptance commands before retrying.\n")
+	b.WriteString("The referenced document is not a dispatch-ready plan-execute brief yet. Convert it through refine or rewrite it with the canonical `## Files To Modify`, verified current state, exact `old_text`/`new_text` for existing files or missing/new-file `replace_all` edit shape, and acceptance commands before retrying.\n")
 
 	for _, result := range results {
 		path := strings.TrimSpace(result.Path)
