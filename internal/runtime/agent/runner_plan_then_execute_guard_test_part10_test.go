@@ -452,6 +452,14 @@ func TestCompletionGateRetryLimitAllowsSubmitCorrectionRepeatRecovery(t *testing
 	if got := runner.completionGateRetryLimit(results); got != 2 {
 		t.Fatalf("submit-correction retry limit = %d, want 2", got)
 	}
+
+	if !runner.planThenExecuteCompletionGateSummaryRetryable("Completion gate rejected non-submit_plan correction", results, 1) {
+		t.Fatal("submit-correction non-submit_plan final answer rejection should receive the second recovery prompt")
+	}
+
+	if runner.planThenExecuteCompletionGateSummaryRetryable("Completion gate rejected non-submit_plan correction", results, 2) {
+		t.Fatal("submit-correction retry should stop after retry limit")
+	}
 }
 
 func TestPlanExecuteLoopBudgetRecoveryKeepsUnreadCandidateReadsAvailable(t *testing.T) {

@@ -144,7 +144,9 @@ func (r *Runner) completionGateRepeatedBlockerAnswer(result workspace.ToolResult
 				b.WriteString("- ")
 				b.WriteString(path)
 
-				if r.planThenExecutePlannerPhase() {
+				if r.planThenExecutePlannerPhase() && planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, results) {
+					b.WriteString(": no successful corrected submit_plan edit entry or source_satisfied_paths entry was recorded for this path. Submit-correction mode has exactly one valid outcome: parser-readable submit_plan.\n")
+				} else if r.planThenExecutePlannerPhase() {
 					b.WriteString(": no successful submit_plan edit entry was recorded for this path, and the recovery reply did not provide source-satisfied evidence or a path-specific blocker reason.\n")
 				} else {
 					b.WriteString(": no successful write was recorded for this path, and the recovery reply did not provide a path-specific blocker reason.\n")

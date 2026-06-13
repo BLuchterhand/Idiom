@@ -163,6 +163,51 @@ func TestReadOnlyCompletionGateRepeatedBlockerPreservesReasonWithoutStrategy(t *
 	}
 }
 
+func TestSubmitCorrectionRepeatedBlockerDoesNotAdvertiseInvalidEscapes(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go", "b.go"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{Tool: "read_file", Summary: "Read b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "missing required edit path(s): `b.go`.",
+		},
+	}
+
+	answer := runner.completionGateRepeatedBlockerAnswer(workspace.ToolResult{
+		Tool:    "completion_gate",
+		Summary: "Completion gate rejected non-submit_plan correction",
+		Error:   "Submit-correction mode has exactly one valid outcome: parser-readable submit_plan.",
+	}, results)
+
+	for _, want := range []string{
+		"Submit-correction mode has exactly one valid outcome: parser-readable submit_plan.",
+		"a.go",
+		"b.go",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("submit-correction repeated blocker missing %q:\n%s", want, answer)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"source-satisfied evidence or a path-specific blocker reason",
+		"provide a path-specific blocker reason",
+	} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("submit-correction repeated blocker advertised invalid escape %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
 func TestAnswerComposerDoesNotLeakTelemetrySections(t *testing.T) {
 	answer, ok := AnswerComposer{}.Compose(AnswerComposerInput{
 		Question:      "Can you tell me how this harness uses subagents?",

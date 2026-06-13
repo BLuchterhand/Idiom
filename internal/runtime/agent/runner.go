@@ -931,8 +931,7 @@ func (r *Runner) Run(
 
 				shouldAttachRecoveryPrompt := priorGateRejections == 0 ||
 					result.Summary == "Completion gate rejected unresolved process narration" ||
-					(r.planThenExecutePlannerPhase() && result.Summary == "Plan-execute completion gate rejected final answer" && priorGateRejections < r.completionGateRetryLimit(collectedResults)) ||
-					(r.planThenExecutePlannerPhase() && result.Summary == "Completion gate rejected non-specific submit_plan blocker" && priorGateRejections < r.completionGateRetryLimit(collectedResults)) ||
+					(r.planThenExecuteCompletionGateSummaryRetryable(result.Summary, collectedResults, priorGateRejections)) ||
 					(r.textualRequiredPathCompletionRecoveryApplies(collectedResults) && priorGateRejections < r.completionGateRetryLimit(collectedResults)) ||
 					(r.unscopedNoWriteCompletionRecoveryApplies(collectedResults) && priorGateRejections < r.completionGateRetryLimit(collectedResults)) ||
 					(r.completionGateMutationRecoveryApplies(collectedResults) && priorGateRejections < r.completionGateRetryLimit(collectedResults))
@@ -3975,6 +3974,21 @@ func (r *Runner) Run(
 
 func (r *Runner) planExecutePlanningTransportFromOptions(opts llama.ChatOptions, supportsNativeTools bool, terminalOnly bool) PlanExecutePlanningTransport {
 	return PlanExecuteRuntimeCallPolicyFromChatOptions(opts, supportsNativeTools, terminalOnly).PlanningTransport()
+}
+
+func (r *Runner) planThenExecuteCompletionGateSummaryRetryable(summary string, results []workspace.ToolResult, priorGateRejections int) bool {
+	if r == nil || !r.planThenExecutePlannerPhase() || priorGateRejections >= r.completionGateRetryLimit(results) {
+		return false
+	}
+
+	switch strings.TrimSpace(summary) {
+	case "Plan-execute completion gate rejected final answer",
+		"Completion gate rejected non-specific submit_plan blocker",
+		"Completion gate rejected non-submit_plan correction":
+		return true
+	default:
+		return false
+	}
 }
 
 func maxToolStepsExhaustedReason() string {
