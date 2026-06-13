@@ -70,6 +70,71 @@ func TestPlanExecutionContractNormalizesStableIDAndHash(t *testing.T) {
 	}
 }
 
+func TestPlanExecutionContractNormalizesAuthoritySourceFacts(t *testing.T) {
+	base := PlanExecutionContract{
+		PlanID: "source-facts",
+		AuthorityDeltas: []AuthorityDelta{{
+			Kind:   AuthorityDeltaKindNarrowWriteEnvelope,
+			Path:   "pkg/feature.go",
+			Source: "accepted_source",
+			SourceFacts: []SourceAuthorityFact{{
+				Path:      "./pkg/source.go",
+				Symbol:    " helper ",
+				Signature: " void helper() ",
+			}, {
+				Path:      "pkg/source.go",
+				Symbol:    "helper",
+				Signature: "void helper()",
+			}},
+		}},
+	}
+	variant := PlanExecutionContract{
+		PlanID: "source-facts",
+		AuthorityDeltas: []AuthorityDelta{{
+			Kind:   AuthorityDeltaKindNarrowWriteEnvelope,
+			Path:   "pkg/feature.go",
+			Source: "accepted_source",
+			SourceFacts: []SourceAuthorityFact{{
+				Path:      "pkg/source.go",
+				Symbol:    "helper",
+				Signature: "void helper()",
+			}},
+		}},
+	}
+
+	normalized := base.Normalized()
+	normalizedVariant := variant.Normalized()
+
+	if normalized.ContractHash != normalizedVariant.ContractHash {
+		t.Fatalf("equivalent source facts changed contract hash: %q vs %q", normalized.ContractHash, normalizedVariant.ContractHash)
+	}
+	facts := normalized.AuthorityDeltas[0].SourceFacts
+	if len(facts) != 1 || facts[0].Path != "pkg/source.go" || facts[0].Symbol != "helper" || facts[0].Signature != "void helper()" {
+		t.Fatalf("source facts were not normalized/deduplicated: %+v", facts)
+	}
+}
+
+func TestPlanExecutionContractRejectsInvalidAuthoritySourceFactPath(t *testing.T) {
+	contract := PlanExecutionContract{
+		PlanID: "source-facts",
+		AuthorityDeltas: []AuthorityDelta{{
+			Kind:   AuthorityDeltaKindNarrowWriteEnvelope,
+			Path:   "pkg/feature.go",
+			Source: "accepted_source",
+			SourceFacts: []SourceAuthorityFact{{
+				Path:      "../outside.go",
+				Symbol:    "helper",
+				Signature: "void helper()",
+			}},
+		}},
+	}
+
+	violations := ValidatePlanExecutionContractInput(contract)
+	if !hasViolationCode(violations, "invalid_authority_delta_source_fact_path") {
+		t.Fatalf("invalid source fact path should be rejected: %#v", violations)
+	}
+}
+
 func TestAcceptanceObligationWithoutIDGetsEnforcedStableID(t *testing.T) {
 	atom := AtomExecutionContract{
 		AtomID: "atom-1",

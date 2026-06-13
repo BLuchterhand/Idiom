@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
@@ -1110,7 +1112,7 @@ func plannerCallNeedsSignatureEvidence(name string, args string) bool {
 		return false
 	}
 	lowerName := strings.ToLower(name)
-	if plannerCallNameLooksLikeProseLabel(lowerName) {
+	if plannerCallLooksLikeProseLabel(lowerName, args) {
 		return false
 	}
 	if plannerCallLooksLikeTDDResultProse(lowerName, args) {
@@ -1136,13 +1138,30 @@ func plannerCallNeedsSignatureEvidence(name string, args string) bool {
 		len(strings.Fields(args)) == 1
 }
 
-func plannerCallNameLooksLikeProseLabel(lowerName string) bool {
+func plannerCallLooksLikeProseLabel(lowerName string, args string) bool {
 	switch lowerName {
-	case "const", "field", "volume":
+	case "const":
 		return true
+	case "field", "volume":
+		return plannerCallArgsLookLikeDescriptor(args)
 	default:
 		return false
 	}
+}
+
+func plannerCallArgsLookLikeDescriptor(args string) bool {
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return false
+	}
+	if strings.Contains(args, " ") {
+		return true
+	}
+	if strings.ContainsAny(args, "_,.>:-") {
+		return false
+	}
+	first, _ := utf8.DecodeRuneInString(args)
+	return unicode.IsUpper(first)
 }
 
 func plannerCallLooksLikeTDDResultProse(lowerName string, args string) bool {

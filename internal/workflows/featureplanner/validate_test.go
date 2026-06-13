@@ -900,12 +900,17 @@ func TestValidatePlanAllowsFieldDescriptorParentheticalsInAtomPrompt(t *testing.
 }
 
 func TestValidatePlanStillRejectsInventedDeductionHelper(t *testing.T) {
-	plan := validPlan()
-	plan.Atoms[0].Prompt = "Call deduct_cistern_volume(cistern_id, required_water_volume) after selecting the cistern."
+	for _, prompt := range []string{
+		"Call deduct_cistern_volume(cistern_id, required_water_volume) after selecting the cistern.",
+		"Call volume(cistern_id) after selecting the cistern.",
+	} {
+		plan := validPlan()
+		plan.Atoms[0].Prompt = prompt
 
-	err := ValidatePlan(plan)
-	if err == nil || !strings.Contains(err.Error(), "deduct_cistern_volume(cistern_id, required_water_volume)") {
-		t.Fatalf("invented deduction helper should still require signature evidence, got %v", err)
+		err := ValidatePlan(plan)
+		if err == nil {
+			t.Fatalf("invented helper should still require signature evidence for prompt %q", prompt)
+		}
 	}
 }
 

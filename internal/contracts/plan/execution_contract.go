@@ -850,12 +850,13 @@ func normalizeAuthorityDeltas(deltas []AuthorityDelta) []AuthorityDelta {
 		delta.To = strings.TrimSpace(delta.To)
 		delta.Reason = strings.TrimSpace(delta.Reason)
 		delta.Source = strings.TrimSpace(delta.Source)
+		delta.SourceFacts = normalizeSourceAuthorityFacts(delta.SourceFacts)
 
 		if delta.Kind == "" && delta.Path == "" {
 			continue
 		}
 
-		key := string(delta.Kind) + "\x00" + delta.Path + "\x00" + delta.From + "\x00" + delta.To
+		key := string(delta.Kind) + "\x00" + delta.Path + "\x00" + delta.From + "\x00" + delta.To + "\x00" + sourceAuthorityFactsKey(delta.SourceFacts)
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -870,6 +871,50 @@ func normalizeAuthorityDeltas(deltas []AuthorityDelta) []AuthorityDelta {
 	})
 
 	return out
+}
+
+func normalizeSourceAuthorityFacts(facts []SourceAuthorityFact) []SourceAuthorityFact {
+	out := make([]SourceAuthorityFact, 0, len(facts))
+	seen := map[string]struct{}{}
+
+	for _, fact := range facts {
+		fact.Path = NormalizeScopePath(fact.Path)
+		fact.Symbol = strings.TrimSpace(fact.Symbol)
+		fact.Signature = strings.TrimSpace(fact.Signature)
+		fact.Anchor = strings.TrimSpace(fact.Anchor)
+
+		if fact.Path == "" && fact.Symbol == "" && fact.Signature == "" && fact.Anchor == "" {
+			continue
+		}
+
+		key := sourceAuthorityFactKey(fact)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, fact)
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		return sourceAuthorityFactKey(out[i]) < sourceAuthorityFactKey(out[j])
+	})
+
+	return out
+}
+
+func sourceAuthorityFactsKey(facts []SourceAuthorityFact) string {
+	if len(facts) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(facts))
+	for _, fact := range facts {
+		parts = append(parts, sourceAuthorityFactKey(fact))
+	}
+	return strings.Join(parts, "\x01")
+}
+
+func sourceAuthorityFactKey(fact SourceAuthorityFact) string {
+	return fact.Path + "\x00" + fact.Symbol + "\x00" + fact.Signature + "\x00" + fact.Anchor
 }
 
 func normalizeRecoveryInvariantFailures(failures []RecoveryInvariantFailure) []RecoveryInvariantFailure {
@@ -911,6 +956,11 @@ func normalizeAuthorizationMetadata(metadata NewFileAuthorizationMetadata) NewFi
 func validateAuthorityDelta(atomID string, delta AuthorityDelta) []PlanExecutionContractViolation {
 	if strings.TrimSpace(delta.Path) != "" && NormalizeScopePath(delta.Path) == "" {
 		return []PlanExecutionContractViolation{contractViolation("invalid_authority_delta_path", atomID, delta.Path, "", "authority delta path must be repo-relative")}
+	}
+	for _, fact := range delta.SourceFacts {
+		if strings.TrimSpace(fact.Path) != "" && NormalizeScopePath(fact.Path) == "" {
+			return []PlanExecutionContractViolation{contractViolation("invalid_authority_delta_source_fact_path", atomID, fact.Path, "", "authority delta source fact path must be repo-relative")}
+		}
 	}
 
 	normalized := normalizeAuthorityDeltas([]AuthorityDelta{delta})
