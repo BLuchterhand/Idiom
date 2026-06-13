@@ -98,9 +98,30 @@ binary in `~/.local/bin/idiom` (or `/usr/local/bin/idiom` if that's
 writable without sudo). Add `~/.local/bin` to your shell's `$PATH` if
 you don't already have it.
 
+The Unix installer supports these profiles:
+
+- `cli` (default) installs the `idiom` CLI only.
+- `tools` installs only the external tool sidecar launchers
+  (`idiom-tool`, `idiom-mcp-discovery`) backed by `idiom-tool-bin`.
+- `full` installs `idiom` plus the tool sidecar launchers.
+- `discovery-deps` installs `idiom` and prints dependency setup guidance.
+- `doctor-only` installs `idiom`, verifies it, and runs doctor diagnostics.
+
+For the sidecar-only Unix install, prefer the consolidated profile:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BLuchterhand/idiom/main/install.sh | sh -s -- --profile tools
+```
+
+`install-tools.sh` remains as a compatibility wrapper for existing scripts and
+routes to the same `tools` profile. Windows has a separate PowerShell sidecar
+installer for `windows/amd64`; Windows full CLI install is not release-proven by
+the Unix installer path.
+
 Override knobs (env vars): `IDIOM_VERSION=v0.1.0` to pin an existing release,
-`IDIOM_INSTALL_DIR=~/bin` to change the destination, and `IDIOM_REPO=owner/fork`
-to install from a fork.
+`IDIOM_INSTALL_DIR=~/bin` to change the destination, `IDIOM_REPO=owner/fork` to
+install from a fork, and `IDIOM_RELEASE_URL_BASE=https://example.invalid/releases`
+to use a custom release asset base.
 
 ## Quick start
 

@@ -113,6 +113,36 @@ verify_binary() {
   fi
 }
 
+verify_tools_profile() {
+  echo "[install] verifying install-tools.sh co-installs sidecar launchers"
+  if [ ! -f /install-tools.sh ]; then
+    echo "FAIL: /install-tools.sh not mounted into install test container" >&2
+    exit 1
+  fi
+
+  before_hash=$(sha256sum /usr/local/bin/idiom | awk '{print $1}')
+  export IDIOM_VERSION="${VERSION}"
+  export IDIOM_RELEASE_URL_BASE="http://127.0.0.1:8080"
+  export IDIOM_INSTALL_DIR="/usr/local/bin"
+  sh /install-tools.sh
+  after_hash=$(sha256sum /usr/local/bin/idiom | awk '{print $1}')
+
+  if [ "${before_hash}" != "${after_hash}" ]; then
+    echo "FAIL: install-tools.sh changed existing /usr/local/bin/idiom" >&2
+    exit 1
+  fi
+  if [ ! -x /usr/local/bin/idiom-tool ]; then
+    echo "FAIL: idiom-tool not installed by tools profile" >&2
+    exit 1
+  fi
+  if [ ! -x /usr/local/bin/idiom-mcp-discovery ]; then
+    echo "FAIL: idiom-mcp-discovery not installed by tools profile" >&2
+    exit 1
+  fi
+  /usr/local/bin/idiom-tool list --profile discovery >/dev/null \
+    || { echo "FAIL: idiom-tool did not run after tools profile install" >&2; exit 1; }
+}
+
 verify_doctor() {
   echo "[doctor] running idiom doctor --json (expect non-zero exit; verify shape)"
   set +e
@@ -513,6 +543,7 @@ main() {
   echo "==> phase 1: install"
   run_install
   verify_binary
+  verify_tools_profile
   verify_doctor
 
   echo

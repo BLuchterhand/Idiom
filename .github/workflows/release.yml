@@ -8,7 +8,9 @@
 # What this runs:
 #   1. checkout (with full history; goreleaser needs tags for changelog)
 #   2. Go toolchain matching go.mod
-#   3. goreleaser release  → uploads binaries, archives, SHA256SUMS to
+#   3. goreleaser check + snapshot build
+#   4. exact snapshot asset validation + post-build install validation
+#   5. goreleaser release  → uploads binaries, archives, SHA256SUMS to
 #      the GitHub release matching the tag
 #
 # Out of scope:
@@ -29,8 +31,9 @@ permissions:
   contents: write    # required by goreleaser to upload release assets
 
 jobs:
-  goreleaser:
+  snapshot:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,7 +46,223 @@ jobs:
           go-version-file: go.mod
           check-latest: true
 
-      - name: Run goreleaser
+      - name: GoReleaser check
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check
+
+      - name: GoReleaser snapshot
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate snapshot assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          test -f dist/SHA256SUMS
+
+          targets=(
+            darwin_amd64:tar.gz:idiom
+            darwin_arm64:tar.gz:idiom
+            linux_amd64:tar.gz:idiom
+            linux_arm64:tar.gz:idiom
+            windows_amd64:zip:idiom.exe
+          )
+
+          for target in "${targets[@]}"; do
+            IFS=: read -r platform format binary_name <<<"${target}"
+            matches=(dist/idiom_*_"${platform}"."${format}")
+            if [ "${#matches[@]}" -ne 1 ] || [ ! -f "${matches[0]}" ]; then
+              echo "expected exactly one ${platform}.${format} archive, found ${#matches[@]}" >&2
+              printf '%s\n' "${matches[@]}" >&2
+              exit 1
+            fi
+
+            archive="${matches[0]}"
+            asset="$(basename "${archive}")"
+            awk -v want="${asset}" '$2 == want {found = 1} END {exit found ? 0 : 1}' dist/SHA256SUMS
+
+            case "${format}" in
+              tar.gz)
+                tar -tzf "${archive}" | awk -v want="${binary_name}" '
+                  $0 == want || $0 ~ "/" want "$" {found = 1}
+                  END {exit found ? 0 : 1}
+                '
+                ;;
+              zip)
+                unzip -Z1 "${archive}" | awk -v want="${binary_name}" '
+                  $0 == want || $0 ~ "/" want "$" {found = 1}
+                  END {exit found ? 0 : 1}
+                '
+                ;;
+            esac
+
+            echo "validated ${asset}"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: goreleaser-dist
+          path: dist
+          retention-days: 1
+
+  install-linux:
+    needs: snapshot
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            goarch: amd64
+          - runner: ubuntu-24.04-arm
+            goarch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: goreleaser-dist
+          path: dist
+      - name: Full install.sh validation from snapshot dist
+        run: |
+          IDIOM_TEST_DIST="${PWD}/dist" \
+          IDIOM_TEST_GOARCH="${{ matrix.goarch }}" \
+          ./scripts/test-install-docker.sh
+
+  install-macos:
+    needs: snapshot
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            goarch: amd64
+          - runner: macos-15
+            goarch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: goreleaser-dist
+          path: dist
+      - name: Full install.sh validation from snapshot dist
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive_count=$(find dist -maxdepth 1 -type f -name "idiom_*_darwin_${{ matrix.goarch }}.tar.gz" | wc -l | tr -d ' ')
+          if [ "${archive_count}" != "1" ]; then
+            echo "expected exactly one darwin/${{ matrix.goarch }} archive, found ${archive_count}" >&2
+            find dist -maxdepth 1 -type f -name "idiom_*_darwin_${{ matrix.goarch }}.tar.gz" -print >&2
+            exit 1
+          fi
+          archive=$(find dist -maxdepth 1 -type f -name "idiom_*_darwin_${{ matrix.goarch }}.tar.gz" -print)
+          asset=$(basename "${archive}")
+          version="${asset#idiom_}"
+          version="${version%_darwin_${{ matrix.goarch }}.tar.gz}"
+
+          python3 -m http.server 8080 --bind 127.0.0.1 --directory dist >"${RUNNER_TEMP}/release-server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "${server_pid}" 2>/dev/null || true' EXIT
+          for _ in 1 2 3 4 5; do
+            curl -fsSL http://127.0.0.1:8080/SHA256SUMS >/dev/null && break
+            sleep 0.5
+          done
+
+          install_dir="${RUNNER_TEMP}/idiom-bin"
+          IDIOM_VERSION="${version}" \
+          IDIOM_RELEASE_URL_BASE="http://127.0.0.1:8080" \
+          IDIOM_INSTALL_DIR="${install_dir}" \
+          sh ./install.sh
+          "${install_dir}/idiom" version | grep -qF "version: ${version}"
+
+          before_hash=$(shasum -a 256 "${install_dir}/idiom" | awk '{print $1}')
+          IDIOM_VERSION="${version}" \
+          IDIOM_RELEASE_URL_BASE="http://127.0.0.1:8080" \
+          IDIOM_INSTALL_DIR="${install_dir}" \
+          sh ./install-tools.sh
+          after_hash=$(shasum -a 256 "${install_dir}/idiom" | awk '{print $1}')
+          if [ "${before_hash}" != "${after_hash}" ]; then
+            echo "install-tools.sh changed existing idiom binary" >&2
+            exit 1
+          fi
+          "${install_dir}/idiom-tool" list --profile discovery >/dev/null
+
+  install-windows:
+    needs: snapshot
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: goreleaser-dist
+          path: dist
+      - name: PowerShell sidecar validation from snapshot dist
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $archive = @(Get-ChildItem -Path dist -Filter "idiom_*_windows_amd64.zip")
+          if ($archive.Count -ne 1) {
+            throw "expected exactly one windows/amd64 archive, found $($archive.Count)"
+          }
+          $version = $archive[0].Name -replace '^idiom_', '' -replace '_windows_amd64\.zip$', ''
+
+          $server = Start-Process -FilePath python -ArgumentList @("-m", "http.server", "8080", "--bind", "127.0.0.1", "--directory", "dist") -PassThru -WindowStyle Hidden
+          try {
+            for ($i = 0; $i -lt 10; $i++) {
+              try {
+                Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8080/SHA256SUMS" | Out-Null
+                break
+              } catch {
+                Start-Sleep -Milliseconds 500
+              }
+            }
+
+            $installDir = Join-Path $env:RUNNER_TEMP "idiom-tools-bin"
+            $env:IDIOM_VERSION = $version
+            $env:IDIOM_RELEASE_URL_BASE = "http://127.0.0.1:8080"
+            $env:IDIOM_INSTALL_DIR = $installDir
+            ./install-tools.ps1
+            & (Join-Path $installDir "idiom-tool.cmd") list --profile discovery | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              throw "idiom-tool.cmd verification failed"
+            }
+          } finally {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }
+
+  publish:
+    needs:
+      - snapshot
+      - install-linux
+      - install-macos
+      - install-windows
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Publish release
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser

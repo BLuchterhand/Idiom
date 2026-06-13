@@ -21,8 +21,17 @@ version="${IDIOM_TEST_VERSION:-0.0.0-tools-test}"
 asset="idiom_${version}_${goos}_${goarch}.tar.gz"
 port="${IDIOM_TEST_PORT:-18081}"
 
+file_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
 dist=$(mktemp -d)
 install_dir=$(mktemp -d)
+existing_idiom="$install_dir/idiom"
 server_log=$(mktemp)
 server_pid=""
 cleanup() {
@@ -67,6 +76,13 @@ curl -fsSL "http://127.0.0.1:${port}/SHA256SUMS" >/dev/null || {
 }
 
 echo "==> running install-tools.sh"
+cat > "$existing_idiom" <<'SH'
+#!/bin/sh
+echo pre-existing idiom
+SH
+chmod 755 "$existing_idiom"
+existing_idiom_hash=$(file_sha256 "$existing_idiom")
+
 IDIOM_VERSION="$version" \
 IDIOM_RELEASE_URL_BASE="http://127.0.0.1:${port}" \
 IDIOM_INSTALL_DIR="$install_dir" \
@@ -75,7 +91,9 @@ IDIOM_INSTALL_DIR="$install_dir" \
 [[ -x "$install_dir/idiom-tool" ]] || { echo "FAIL: idiom-tool not installed"; exit 1; }
 [[ -x "$install_dir/idiom-mcp-discovery" ]] || { echo "FAIL: idiom-mcp-discovery not installed"; exit 1; }
 [[ -x "$install_dir/idiom-tool-bin" ]] || { echo "FAIL: sidecar binary not installed"; exit 1; }
-[[ ! -e "$install_dir/idiom" ]] || { echo "FAIL: tools installer should not install the full idiom command name"; exit 1; }
+[[ -x "$install_dir/idiom" ]] || { echo "FAIL: pre-existing idiom was removed"; exit 1; }
+after_idiom_hash=$(file_sha256 "$install_dir/idiom")
+[[ "$after_idiom_hash" == "$existing_idiom_hash" ]] || { echo "FAIL: tools installer modified pre-existing idiom"; exit 1; }
 
 tool_list="$("$install_dir/idiom-tool" list --profile discovery)"
 echo "$tool_list" | grep -q '^context_status$' \

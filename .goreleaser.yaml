@@ -99,24 +99,26 @@ release:
   footer: |
     ## Install
 
-    macOS / Linux:
+    macOS / Linux amd64 or arm64:
 
     ```
     curl -fsSL https://raw.githubusercontent.com/BLuchterhand/idiom/main/install.sh | sh
     ```
 
-    Tool sidecar only (no model harness or queue setup):
+    Tool sidecar only on macOS / Linux amd64 or arm64 (no model harness or queue setup):
 
     ```
-    curl -fsSL https://raw.githubusercontent.com/BLuchterhand/idiom/main/install-tools.sh | sh
+    curl -fsSL https://raw.githubusercontent.com/BLuchterhand/idiom/main/install.sh | sh -s -- --profile tools
     ```
 
-    Windows PowerShell tool sidecar:
+    Existing Unix scripts can keep using `install-tools.sh`; it is a compatibility wrapper for the tools profile.
+
+    Windows PowerShell tool sidecar (windows/amd64):
 
     ```powershell
     irm https://raw.githubusercontent.com/BLuchterhand/idiom/main/install-tools.ps1 | iex
     ```
 
-    See the [README's Quick install section](https://github.com/BLuchterhand/idiom#quick-install-binary) for override knobs (`IDIOM_VERSION`, `IDIOM_INSTALL_DIR`, `IDIOM_REPO`).
+    See the [README's release install section](https://github.com/BLuchterhand/idiom#release-install-after-a-tagged-release) for supported profiles, platforms, and override knobs (`IDIOM_VERSION`, `IDIOM_INSTALL_DIR`, `IDIOM_REPO`, `IDIOM_RELEASE_URL_BASE`).
 
-    Or grab the binary for your platform from the assets above.
+    Or grab the matching release asset above for darwin/linux amd64 or arm64, or windows/amd64.

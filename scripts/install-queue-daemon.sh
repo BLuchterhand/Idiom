@@ -17,7 +17,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/install-queue-daemon.sh [--reload] [--uninstall] [--print-plist]
+Usage: scripts/install-queue-daemon.sh [--profile PROFILE] [--reload] [--uninstall] [--print-plist]
 
 Installs ~/.idiom/runner.json (if missing) and a per-user
 launchd agent at ~/Library/LaunchAgents/com.idiom.queue.plist
@@ -25,20 +25,42 @@ that starts `idiom queue serve` on login. Verifies the daemon
 is reachable via `idiom queue ping`.
 
 Options:
+  --profile PROFILE
+                 Installer profile that requested queue setup. Only the
+                 full profile installs or provisions queue daemon config.
+                 Supported profiles: cli, tools, full, discovery-deps,
+                 doctor-only. Omit for legacy direct macOS install behavior.
   --reload       Stop and reload an already-installed agent (use after
                  changing the binary or config).
-  --uninstall    Remove the agent and config. Leaves runner.json untouched.
+  --uninstall    Remove the launchd agent and plist. Leaves runner.json
+                 untouched.
   --print-plist  Print the generated plist body and exit (dry-run).
   -h, --help     Show this help.
 
-This script is macOS-only. On other platforms, run the daemon
-directly: `idiom queue serve --config ~/.idiom/runner.json`.
+Legacy direct invocation is macOS-only. On other platforms, direct
+invocation exits unsupported. Explicit --profile full creates or preserves
+~/.idiom/runner.json, performs no live service-manager action, and prints
+the manual daemon command:
+  idiom queue serve --config ~/.idiom/runner.json --socket ~/.idiom/runner.sock
 USAGE
 }
 
 mode="install"
+profile="full"
+profile_explicit=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --profile)
+      [[ $# -ge 2 ]] || { echo "--profile requires a value" >&2; exit 2; }
+      profile="$2"
+      profile_explicit=true
+      shift
+      ;;
+    --profile=*)
+      profile="${1#--profile=}"
+      [[ -n "$profile" ]] || { echo "--profile requires a value" >&2; exit 2; }
+      profile_explicit=true
+      ;;
     --reload)      mode="reload" ;;
     --uninstall)   mode="uninstall" ;;
     --print-plist) mode="print-plist" ;;
@@ -48,11 +70,15 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "install-queue-daemon.sh currently supports macOS only." >&2
-  echo "On other platforms run: idiom queue serve --config ~/.idiom/runner.json" >&2
-  exit 1
-fi
+case "$profile" in
+  cli|tools|full|discovery-deps|doctor-only) ;;
+  doctor) profile="doctor-only" ;;
+  discovery|deps) profile="discovery-deps" ;;
+  *)
+    echo "unknown install profile: $profile (expected cli, tools, full, discovery-deps, or doctor-only)" >&2
+    exit 2
+    ;;
+esac
 
 agent_label="com.idiom.queue"
 plist_path="$HOME/Library/LaunchAgents/${agent_label}.plist"
@@ -61,35 +87,101 @@ log_dir="$HOME/.idiom/logs"
 log_path="$log_dir/queue-daemon.log"
 err_path="$log_dir/queue-daemon.err"
 uid="$(id -u)"
-
-idiom_bin="$(command -v idiom || true)"
-if [[ -z "$idiom_bin" ]]; then
-  echo "idiom binary not on PATH. Run scripts/install-requirements.sh or make build first." >&2
-  exit 1
-fi
-idiom_bin_src="$(readlink -f "$idiom_bin" 2>/dev/null || echo "$idiom_bin")"
-
-# Ensure the daemon binary lives in ~/.idiom/bin/ so launchd can spawn it
-# without crossing macOS TCC-protected paths. ~/Documents/ (where source
-# checkouts typically live) is TCC-controlled; launchd-spawned processes hang
-# indefinitely in dyld when their executable path resolves through there
-# because the consent prompt has no UI to show. Source builds make this path the
-# canonical real binary; release installs or older source builds are copied here
-# only when the PATH binary is newer.
 idiom_bin_real="$HOME/.idiom/bin/idiom"
-mkdir -p "$(dirname "$idiom_bin_real")"
-if [[ ! -f "$idiom_bin_real" || "$idiom_bin_src" -nt "$idiom_bin_real" ]]; then
-  cp -f "$idiom_bin_src" "$idiom_bin_real"
-  # Ad-hoc re-sign the copy. Go's linker-signed binaries lose their
-  # signature on cp; without a fresh signature, the new file path
-  # isn't trusted by the kernel and launchd's spawn can still hang.
-  if command -v codesign >/dev/null 2>&1; then
-    codesign -s - "$idiom_bin_real" 2>/dev/null || true
-  fi
-  echo "installed binary copy at $idiom_bin_real"
-else
-  echo "ok: $idiom_bin_real already up to date"
+socket_path="$HOME/.idiom/runner.sock"
+
+if [[ "$profile" != "full" ]]; then
+  echo "skipping queue daemon install for $profile profile; only the full profile provisions the queue daemon"
+  exit 0
 fi
+
+ensure_config() {
+  if ! mkdir -p "$(dirname "$config_path")" "$log_dir"; then
+    echo "failed to create queue daemon config/log directories under $HOME/.idiom" >&2
+    exit 1
+  fi
+  if [[ ! -f "$config_path" ]]; then
+    if ! cat > "$config_path" <<'EOF'
+{
+  "_comment": "Per-machine idiom queue daemon config. Pools map to the qwen-pair and qwen-27b-pair backend profiles (35B planner, 27B planner, Coder executor) - Metal command-buffer pressure is the binding constraint, so each pool caps at 1 in-flight job. Edit max_in_flight or add pools as needed for your local MLX setup.",
+  "pools": {
+    "qwen-35b":   {"max_in_flight": 1},
+    "qwen-27b":   {"max_in_flight": 1},
+    "qwen-coder": {"max_in_flight": 1}
+  }
+}
+EOF
+    then
+      echo "failed to write queue daemon config at $config_path" >&2
+      exit 1
+    fi
+    echo "wrote $config_path"
+  else
+    echo "ok: $config_path already present; preserved without validation"
+  fi
+}
+
+manual_daemon_guidance() {
+  echo "No live queue daemon service was installed or changed on this platform."
+  echo "Start it manually with:"
+  echo "  idiom queue serve --config $config_path --socket $socket_path"
+  case "$mode" in
+    reload)
+      echo "To reload manually, stop the existing queue daemon process and run the command above again."
+      ;;
+    uninstall)
+      echo "To uninstall manually, stop the existing queue daemon process and remove any service-manager unit you created."
+      echo "($config_path left in place; remove manually if you want a clean slate)"
+      ;;
+  esac
+}
+
+host_os="$(uname -s)"
+if [[ "$host_os" != "Darwin" ]]; then
+  if ! $profile_explicit; then
+    echo "install-queue-daemon.sh currently supports direct installation on macOS only." >&2
+    echo "On other platforms run: idiom queue serve --config ~/.idiom/runner.json --socket ~/.idiom/runner.sock" >&2
+    exit 1
+  fi
+  if [[ "$mode" != "uninstall" ]]; then
+    ensure_config
+  fi
+  manual_daemon_guidance
+  exit 0
+fi
+
+prepare_launchd_binary() {
+  local idiom_bin
+  local idiom_bin_src
+
+  idiom_bin="$(command -v idiom || true)"
+  if [[ -z "$idiom_bin" ]]; then
+    echo "idiom binary not on PATH. Run scripts/install-requirements.sh or make build first." >&2
+    exit 1
+  fi
+  idiom_bin_src="$(readlink -f "$idiom_bin" 2>/dev/null || echo "$idiom_bin")"
+
+  # Ensure the daemon binary lives in ~/.idiom/bin/ so launchd can spawn it
+  # without crossing macOS TCC-protected paths. ~/Documents/ (where source
+  # checkouts typically live) is TCC-controlled; launchd-spawned processes hang
+  # indefinitely in dyld when their executable path resolves through there
+  # because the consent prompt has no UI to show. Source builds make this path the
+  # canonical real binary; release installs or older source builds are copied here
+  # only when the PATH binary is newer.
+  mkdir -p "$(dirname "$idiom_bin_real")"
+  if [[ ! -f "$idiom_bin_real" || "$idiom_bin_src" -nt "$idiom_bin_real" ]]; then
+    cp -f "$idiom_bin_src" "$idiom_bin_real"
+    # Ad-hoc re-sign the copy. Go's linker-signed binaries lose their
+    # signature on cp; without a fresh signature, the new file path
+    # isn't trusted by the kernel and launchd's spawn can still hang.
+    if command -v codesign >/dev/null 2>&1; then
+      codesign -s - "$idiom_bin_real" 2>/dev/null || true
+    fi
+    echo "installed binary copy at $idiom_bin_real"
+  else
+    echo "ok: $idiom_bin_real already up to date"
+  fi
+}
 
 render_plist() {
   cat <<PLIST
@@ -106,7 +198,7 @@ render_plist() {
     <string>--config</string>
     <string>${config_path}</string>
     <string>--socket</string>
-    <string>${HOME}/.idiom/runner.sock</string>
+    <string>${socket_path}</string>
   </array>
   <key>WorkingDirectory</key><string>${HOME}/.idiom</string>
   <key>RunAtLoad</key><true/>
@@ -128,28 +220,10 @@ PLIST
 }
 
 if [[ "$mode" == "print-plist" ]]; then
+  prepare_launchd_binary >/dev/null
   render_plist
   exit 0
 fi
-
-ensure_config() {
-  mkdir -p "$(dirname "$config_path")" "$log_dir"
-  if [[ ! -f "$config_path" ]]; then
-    cat > "$config_path" <<'EOF'
-{
-  "_comment": "Per-machine idiom queue daemon config. Pools map to the qwen-pair and qwen-27b-pair backend profiles (35B planner, 27B planner, Coder executor) — Metal command-buffer pressure is the binding constraint, so each pool caps at 1 in-flight job. Edit max_in_flight or add pools as needed for your local MLX setup.",
-  "pools": {
-    "qwen-35b":   {"max_in_flight": 1},
-    "qwen-27b":   {"max_in_flight": 1},
-    "qwen-coder": {"max_in_flight": 1}
-  }
-}
-EOF
-    echo "wrote $config_path"
-  else
-    echo "ok: $config_path already present"
-  fi
-}
 
 unload_agent() {
   if launchctl print "gui/${uid}/${agent_label}" >/dev/null 2>&1; then
@@ -182,6 +256,7 @@ verify_daemon() {
 
 case "$mode" in
   install)
+    prepare_launchd_binary
     ensure_config
     if launchctl print "gui/${uid}/${agent_label}" >/dev/null 2>&1; then
       echo "ok: $agent_label already loaded"
@@ -191,6 +266,7 @@ case "$mode" in
     verify_daemon
     ;;
   reload)
+    prepare_launchd_binary
     ensure_config
     unload_agent
     load_agent

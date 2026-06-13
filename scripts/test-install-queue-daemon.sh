@@ -11,8 +11,8 @@
 #      the socket and serves traffic.
 #   4. Re-running --install on an already-loaded agent is a no-op.
 #
-# macOS-only (relies on launchctl). On other platforms the script is
-# a no-op exit 0.
+# Live launchd checks are macOS-only. Static profile and non-Darwin
+# contracts run everywhere with a stubbed uname.
 #
 # Designed to be safe to run on a developer's machine: snapshots
 # pre-existing state (config, plist, loaded agent), runs the test,
@@ -20,8 +20,131 @@
 
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+fail() {
+  echo "FAIL: $1" >&2
+  exit 1
+}
+
+make_platform_stub() {
+  local dir="$1"
+  mkdir -p "$dir/bin"
+  cat > "$dir/bin/uname" <<'SH'
+#!/bin/sh
+case "$1" in
+  -s) printf '%s\n' "${IDIOM_TEST_UNAME:-Linux}" ;;
+  *) printf '%s\n' "${IDIOM_TEST_UNAME:-Linux}" ;;
+esac
+SH
+  chmod 755 "$dir/bin/uname"
+}
+
+make_idiom_stub() {
+  local dir="$1"
+  mkdir -p "$dir/bin"
+  cat > "$dir/bin/idiom" <<'SH'
+#!/bin/sh
+case "$*" in
+  "queue ping"*) printf 'ok\n' ;;
+  "queue status"*) printf 'qwen-35b\nqwen-27b\nqwen-coder\n' ;;
+  *) printf 'idiom stub\n' ;;
+esac
+SH
+  chmod 755 "$dir/bin/idiom"
+}
+
+assert_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local context="$3"
+  echo "$haystack" | grep -qF "$needle" || fail "$context missing '$needle' (got: $haystack)"
+}
+
+run_static_profile_tests() {
+  local tmp
+  local out
+  local status
+  local profile
+
+  echo "test 0: profile and non-Darwin contracts"
+  tmp="$(mktemp -d -t idiom-queue-static.XXXXXX)"
+  make_platform_stub "$tmp"
+  make_idiom_stub "$tmp"
+
+  for profile in cli tools discovery-deps doctor-only; do
+    out="$(HOME="$tmp/home-$profile" PATH="$tmp/bin:$PATH" IDIOM_TEST_UNAME=Linux \
+      scripts/install-queue-daemon.sh --profile "$profile" 2>&1)"
+    assert_contains "$out" "skipping queue daemon install for $profile profile" \
+      "non-full profile skip"
+    if [[ -e "$tmp/home-$profile/.idiom/runner.json" ]]; then
+      fail "non-full profile $profile should not create runner.json"
+    fi
+  done
+
+  set +e
+  out="$(HOME="$tmp/home-direct" PATH="$tmp/bin:$PATH" IDIOM_TEST_UNAME=Linux \
+    scripts/install-queue-daemon.sh 2>&1)"
+  status=$?
+  set -e
+  [[ "$status" -eq 1 ]] || fail "legacy direct non-Darwin invocation should exit 1, got $status"
+  assert_contains "$out" "supports direct installation on macOS only" \
+    "legacy non-Darwin unsupported message"
+
+  out="$(HOME="$tmp/home-full" PATH="$tmp/bin:$PATH" IDIOM_TEST_UNAME=Linux \
+    scripts/install-queue-daemon.sh --profile full 2>&1)"
+  assert_contains "$out" "wrote $tmp/home-full/.idiom/runner.json" \
+    "non-Darwin full config creation"
+  assert_contains "$out" "No live queue daemon service was installed or changed on this platform." \
+    "non-Darwin full no-service message"
+  assert_contains "$out" "idiom queue serve --config $tmp/home-full/.idiom/runner.json --socket $tmp/home-full/.idiom/runner.sock" \
+    "non-Darwin full manual command"
+  grep -qF '"qwen-35b"' "$tmp/home-full/.idiom/runner.json" \
+    || fail "non-Darwin full should write default runner config"
+
+  mkdir -p "$tmp/home-preserve/.idiom"
+  printf '{not valid json\n' > "$tmp/home-preserve/.idiom/runner.json"
+  out="$(HOME="$tmp/home-preserve" PATH="$tmp/bin:$PATH" IDIOM_TEST_UNAME=Linux \
+    scripts/install-queue-daemon.sh --profile full 2>&1)"
+  assert_contains "$out" "already present; preserved without validation" \
+    "non-Darwin full existing config preservation"
+  grep -qF '{not valid json' "$tmp/home-preserve/.idiom/runner.json" \
+    || fail "existing runner.json should be preserved without validation"
+
+  out="$(HOME="$tmp/home-reload" PATH="$tmp/bin:$PATH" IDIOM_TEST_UNAME=Linux \
+    scripts/install-queue-daemon.sh --profile full --reload 2>&1)"
+  assert_contains "$out" "No live queue daemon service was installed or changed on this platform." \
+    "non-Darwin reload no-service message"
+  assert_contains "$out" "To reload manually, stop the existing queue daemon process" \
+    "non-Darwin reload manual guidance"
+
+  out="$(HOME="$tmp/home-uninstall" PATH="$tmp/bin:$PATH" IDIOM_TEST_UNAME=Linux \
+    scripts/install-queue-daemon.sh --profile full --uninstall 2>&1)"
+  assert_contains "$out" "No live queue daemon service was installed or changed on this platform." \
+    "non-Darwin uninstall no-service message"
+  assert_contains "$out" "To uninstall manually, stop the existing queue daemon process" \
+    "non-Darwin uninstall manual guidance"
+
+  out="$(HOME="$tmp/home-darwin-print" PATH="$tmp/bin:$PATH" IDIOM_TEST_UNAME=Darwin \
+    scripts/install-queue-daemon.sh --profile full --print-plist 2>&1)"
+  assert_contains "$out" '<key>Label</key><string>com.idiom.queue</string>' \
+    "macOS full print-plist label"
+  assert_contains "$out" "$tmp/home-darwin-print/.idiom/bin/idiom" \
+    "macOS full print-plist TCC-safe binary"
+  assert_contains "$out" '<key>RunAtLoad</key><true/>' \
+    "macOS full print-plist RunAtLoad"
+  assert_contains "$out" '<key>KeepAlive</key>' \
+    "macOS full print-plist KeepAlive"
+
+  rm -rf "$tmp"
+  echo "  ok"
+}
+
+run_static_profile_tests
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "skip: install-queue-daemon is macOS-only"
+  echo "skip: live install-queue-daemon launchd checks are macOS-only"
   exit 0
 fi
 
@@ -29,9 +152,6 @@ if ! command -v idiom >/dev/null 2>&1; then
   echo "skip: idiom binary not on PATH (run make build first)"
   exit 0
 fi
-
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$repo_root"
 
 agent_label="com.idiom.queue"
 plist_path="$HOME/Library/LaunchAgents/${agent_label}.plist"
@@ -71,14 +191,9 @@ restore() {
 }
 trap restore EXIT
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
 # --- test 1: --print-plist dry-run produces valid XML ---
 echo "test 1: --print-plist dry-run"
-plist_body="$(scripts/install-queue-daemon.sh --print-plist)"
+plist_body="$(scripts/install-queue-daemon.sh --profile full --print-plist)"
 echo "$plist_body" | grep -q '<key>Label</key><string>com.idiom.queue</string>' \
   || fail "print-plist missing Label key"
 echo "$plist_body" | grep -q '/.idiom/bin/idiom' \
