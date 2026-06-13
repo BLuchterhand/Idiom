@@ -282,6 +282,27 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 		if len(brief.ContextEvidencePaths) > 0 {
 			fmt.Fprintf(&b, "Source/context evidence paths: %s\n", strings.Join(brief.ContextEvidencePaths, ", "))
 		}
+		if len(brief.SourceFacts) > 0 {
+			fmt.Fprintln(&b, "Source facts:")
+			for _, fact := range brief.SourceFacts {
+				var parts []string
+				if strings.TrimSpace(fact.Path) != "" {
+					parts = append(parts, "path="+strings.TrimSpace(fact.Path))
+				}
+				if strings.TrimSpace(fact.Symbol) != "" {
+					parts = append(parts, "symbol="+strings.TrimSpace(fact.Symbol))
+				}
+				if strings.TrimSpace(fact.Signature) != "" {
+					parts = append(parts, "signature="+strings.TrimSpace(fact.Signature))
+				}
+				if strings.TrimSpace(fact.AuthorityRef) != "" {
+					parts = append(parts, "authority_ref="+strings.TrimSpace(fact.AuthorityRef))
+				}
+				if len(parts) > 0 {
+					fmt.Fprintf(&b, "- %s\n", strings.Join(parts, "; "))
+				}
+			}
+		}
 
 		if len(brief.AuthorizedNewPackageRoots) > 0 {
 			fmt.Fprintf(&b, "Authorized new package roots: %s\n", strings.Join(brief.AuthorizedNewPackageRoots, ", "))

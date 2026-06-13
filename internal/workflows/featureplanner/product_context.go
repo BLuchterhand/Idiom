@@ -28,6 +28,7 @@ type ProductWorkflowBrief struct {
 	CoverageBlockerKinds      []string              `json:"coverage_blocker_kinds,omitempty"`
 	FilesToModify             []string              `json:"files_to_modify"`
 	ContextEvidencePaths      []string              `json:"context_evidence_paths,omitempty"`
+	SourceFacts               []SourceFactBrief     `json:"source_facts,omitempty"`
 	AuthorizedNewPackageRoots []string              `json:"authorized_new_package_roots,omitempty"`
 	RequiredBehavior          []string              `json:"required_behavior"`
 	Tests                     []string              `json:"tests"`
@@ -71,6 +72,14 @@ type TDDObligationBrief struct {
 	Command        string `json:"command"`
 	RequiredBefore string `json:"required_before"`
 	Status         string `json:"status"`
+}
+
+type SourceFactBrief struct {
+	Path         string `json:"path,omitempty"`
+	Symbol       string `json:"symbol,omitempty"`
+	Signature    string `json:"signature,omitempty"`
+	Anchor       string `json:"anchor,omitempty"`
+	AuthorityRef string `json:"authority_ref,omitempty"`
 }
 
 func (brief ProductWorkflowBrief) AllowsFeaturePlanDispatch() bool {

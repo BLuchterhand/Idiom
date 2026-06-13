@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/util"
 )
@@ -319,8 +320,9 @@ func ValidatePlan(plan FeaturePlan) error {
 			}
 		}
 
-		errs = append(errs, validateAtomPromptPathScope(prefix, atom)...)
-		errs = append(errs, validateAtomPromptVerifiedCalls(prefix, atom)...)
+		grounding := newAtomPromptGrounding(atom, nil)
+		errs = append(errs, validateAtomPromptPathScope(prefix, atom, grounding)...)
+		errs = append(errs, validateAtomPromptVerifiedCalls(prefix, atom, grounding)...)
 
 		for _, ref := range atom.TestFirst.ObligationRefs {
 			ref = strings.TrimSpace(ref)
@@ -560,8 +562,12 @@ func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowB
 			errs = append(errs, fmt.Errorf("atom %d has no product-grounded required_edit_paths or allowed_edit_paths after context-only paths were removed", i))
 		}
 
+		atomGrounding := newAtomPromptGrounding(atom, &brief)
+
 		errs = append(errs, repoGrounding.validateAtomEditScope(i, atom)...)
 		errs = append(errs, repoGrounding.validateAtomTestArtifactScope(i, atom)...)
+		errs = append(errs, validateAtomPromptPathScope(fmt.Sprintf("atom %d", i), atom, atomGrounding)...)
+		errs = append(errs, validateAtomPromptVerifiedCalls(fmt.Sprintf("atom %d", i), atom, atomGrounding)...)
 
 		if readinessErrs := validateProductTDDReadiness(i, atom, productTDD); len(readinessErrs) > 0 {
 			errs = append(errs, readinessErrs...)
@@ -643,6 +649,11 @@ func ValidatePlanStandaloneWorkspaceContext(plan FeaturePlan, context Standalone
 		if err := validateStandaloneVerificationCommands(root, atom); err != nil {
 			errs = append(errs, fmt.Errorf("atom %d %w", i, err))
 		}
+
+		grounding := newAtomPromptGrounding(atom, nil)
+		grounding.addContractSourceAuthority(context.Contract)
+		errs = append(errs, validateAtomPromptPathScope(fmt.Sprintf("atom %d", i), atom, grounding)...)
+		errs = append(errs, validateAtomPromptVerifiedCalls(fmt.Sprintf("atom %d", i), atom, grounding)...)
 	}
 
 	if missingNewFilePaths = normalizeEditScopeList(missingNewFilePaths); len(missingNewFilePaths) > 0 {
@@ -660,27 +671,198 @@ func standaloneAtomTestArtifactPaths(atom FeatureAtomPlan) []string {
 	return append(append([]string(nil), atom.TestFirst.TestArtifactPaths...), atom.PlannedTDDSnapshot.TestArtifactPaths...)
 }
 
-var featurePlannerRepoPathPattern = regexp.MustCompile(`(?:^|[\s"'` + "`" + `([])((?:\.?/)?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+)(?::\d+)?`)
+type atomPromptGrounding struct {
+	declaredPaths      map[string]bool
+	verifiedSignatures map[string][]string
+}
 
-func validateAtomPromptPathScope(prefix string, atom FeatureAtomPlan) []error {
+func newAtomPromptGrounding(atom FeatureAtomPlan, brief *ProductWorkflowBrief) atomPromptGrounding {
+	grounding := atomPromptGrounding{
+		declaredPaths:      map[string]bool{},
+		verifiedSignatures: map[string][]string{},
+	}
+
+	grounding.addDeclaredPaths(atom.RequiredEditPaths...)
+	grounding.addDeclaredPaths(atom.AllowedEditPaths...)
+	grounding.addDeclaredPaths(atom.TestFirst.TestArtifactPaths...)
+	grounding.addDeclaredPaths(atom.PlannedTDDSnapshot.TestArtifactPaths...)
+	grounding.addDeclaredPaths(atom.EvidencePaths...)
+	grounding.addDeclaredPaths(standaloneAtomCommandContextPaths(atom)...)
+	grounding.addPromptSignatures(atom.Prompt)
+
+	if brief != nil {
+		grounding.addDeclaredPaths(brief.ContextEvidencePaths...)
+		for _, fact := range brief.SourceFacts {
+			grounding.addDeclaredPaths(fact.Path)
+			if sourceFactHasAcceptedAuthority(fact) {
+				grounding.addSourceFact(fact)
+			}
+		}
+	}
+
+	return grounding
+}
+
+func (g atomPromptGrounding) addDeclaredPaths(paths ...string) {
+	for _, path := range paths {
+		if normalized := plancontract.NormalizeScopePath(path); normalized != "" {
+			g.declaredPaths[normalized] = true
+		}
+	}
+}
+
+func (g atomPromptGrounding) addSourceFact(fact SourceFactBrief) {
+	signature := strings.TrimSpace(fact.Signature)
+	symbol := strings.TrimSpace(fact.Symbol)
+	if signature == "" {
+		signature = strings.TrimSpace(fact.Anchor)
+	}
+	if symbol == "" {
+		symbol = signatureSymbol(signature)
+	}
+	g.addVerifiedSignature(symbol, signature)
+}
+
+func sourceFactHasAcceptedAuthority(fact SourceFactBrief) bool {
+	ref := strings.ToLower(strings.TrimSpace(fact.AuthorityRef))
+	if ref == "" {
+		return false
+	}
+	return ref == "accepted_source" ||
+		ref == "accepted-source" ||
+		strings.HasPrefix(ref, "accepted_source:") ||
+		strings.HasPrefix(ref, "accepted-source:")
+}
+
+func (g atomPromptGrounding) addContractSourceAuthority(contract plancontract.PlanExecutionContract) {
+	for _, delta := range contract.AuthorityDeltas {
+		if !delta.Approved || delta.Source != "accepted_source" {
+			continue
+		}
+		g.addDeclaredPaths(delta.Path)
+		text := strings.Join([]string{delta.From, delta.To, delta.Reason}, "\n")
+		for _, path := range repoPathsMentionedInText(text) {
+			g.addDeclaredPaths(path)
+		}
+		for _, signature := range extractSignatures(text) {
+			g.addVerifiedSignature(signatureSymbol(signature), signature)
+		}
+	}
+	for _, atom := range contract.Atoms {
+		for _, obligation := range atom.SourceEvidenceObligations {
+			g.addDeclaredPaths(obligation.Path)
+		}
+		for _, delta := range atom.AuthorityDeltas {
+			if !delta.Approved || delta.Source != "accepted_source" {
+				continue
+			}
+			g.addDeclaredPaths(delta.Path)
+			text := strings.Join([]string{delta.From, delta.To, delta.Reason}, "\n")
+			for _, path := range repoPathsMentionedInText(text) {
+				g.addDeclaredPaths(path)
+			}
+			for _, signature := range extractSignatures(text) {
+				g.addVerifiedSignature(signatureSymbol(signature), signature)
+			}
+		}
+	}
+}
+
+func (g atomPromptGrounding) addPromptSignatures(prompt string) {
+	lower := strings.ToLower(prompt)
+	for _, marker := range []string{"verified signature", "source-verified signature", "exact signature", "signature verified"} {
+		start := 0
+		for {
+			idx := strings.Index(lower[start:], marker)
+			if idx < 0 {
+				break
+			}
+			idx += start
+			windowEnd := idx + len(marker) + 260
+			if windowEnd > len(prompt) {
+				windowEnd = len(prompt)
+			}
+			signature := extractFirstSignature(prompt[idx:windowEnd])
+			g.addVerifiedSignature(signatureSymbol(signature), signature)
+			start = idx + len(marker)
+		}
+	}
+}
+
+func (g atomPromptGrounding) addVerifiedSignature(symbol string, signature string) {
+	symbol = normalizeSignatureSymbol(symbol)
+	signature = strings.TrimSpace(signature)
+	if symbol == "" || signature == "" {
+		return
+	}
+	g.verifiedSignatures[symbol] = append(g.verifiedSignatures[symbol], signature)
+}
+
+func (g atomPromptGrounding) hasVerifiedSignatureForCall(name string) bool {
+	symbol := normalizeSignatureSymbol(name)
+	if symbol == "" {
+		return false
+	}
+	if len(g.verifiedSignatures[symbol]) > 0 {
+		return true
+	}
+	return false
+}
+
+func normalizeSignatureSymbol(symbol string) string {
+	symbol = strings.ToLower(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return ""
+	}
+	if idx := strings.LastIndexAny(symbol, ":>."); idx >= 0 && idx+1 < len(symbol) {
+		symbol = symbol[idx+1:]
+	}
+	return symbol
+}
+
+func signatureSymbol(signature string) string {
+	signature = strings.TrimSpace(signature)
+	if signature == "" {
+		return ""
+	}
+	match := featurePlannerSignaturePattern.FindStringSubmatch(signature)
+	if len(match) < 2 {
+		return ""
+	}
+	return match[1]
+}
+
+var featurePlannerSignaturePattern = regexp.MustCompile(`\b(?:[A-Za-z_][A-Za-z0-9_:<>,*&\s]+\s+)?([A-Za-z_][A-Za-z0-9_:]*)\s*\([^)]*\)`)
+
+func extractFirstSignature(text string) string {
+	match := featurePlannerSignaturePattern.FindString(text)
+	return strings.TrimSpace(match)
+}
+
+func extractSignatures(text string) []string {
+	matches := featurePlannerSignaturePattern.FindAllString(text, -1)
+	out := make([]string, 0, len(matches))
+	seen := map[string]bool{}
+	for _, match := range matches {
+		signature := strings.TrimSpace(match)
+		if signature == "" || seen[signature] {
+			continue
+		}
+		seen[signature] = true
+		out = append(out, signature)
+	}
+	return out
+}
+
+func validateAtomPromptPathScope(prefix string, atom FeatureAtomPlan, grounding atomPromptGrounding) []error {
 	prompt := strings.TrimSpace(atom.Prompt)
 	if prompt == "" {
 		return nil
 	}
 
-	declared := normalizedStringSet(append(append(append(append([]string(nil), atom.RequiredEditPaths...), atom.AllowedEditPaths...), atom.TestFirst.TestArtifactPaths...), atom.PlannedTDDSnapshot.TestArtifactPaths...))
-	for _, path := range atom.EvidencePaths {
-		if normalized := plancontract.NormalizeScopePath(path); normalized != "" {
-			declared[normalized] = true
-		}
-	}
-	for _, path := range standaloneAtomCommandContextPaths(atom) {
-		declared[path] = true
-	}
-
 	var errs []error
 	for _, path := range repoPathsMentionedInText(prompt) {
-		if declared[path] || promptPathCanRemainContextOnly(path) {
+		if grounding.declaredPaths[path] || promptPathCanRemainContextOnly(path) {
 			continue
 		}
 		errs = append(errs, fmt.Errorf("%s prompt mentions repo path %q outside required_edit_paths, allowed_edit_paths, test artifact paths, or evidence_paths; declare it as scope/evidence or ask_planner_question for scope repair", prefix, path))
@@ -694,7 +876,7 @@ func standaloneAtomCommandContextPaths(atom FeatureAtomPlan) []string {
 	seen := map[string]bool{}
 	var paths []string
 	for _, command := range commands {
-		for _, path := range repoPathsMentionedInText(command) {
+		for _, path := range commandReferencedWorkspacePaths(command) {
 			if !seen[path] {
 				seen[path] = true
 				paths = append(paths, path)
@@ -708,12 +890,9 @@ func standaloneAtomCommandContextPaths(atom FeatureAtomPlan) []string {
 func repoPathsMentionedInText(text string) []string {
 	var paths []string
 	seen := map[string]bool{}
-	for _, match := range featurePlannerRepoPathPattern.FindAllStringSubmatch(text, -1) {
-		if len(match) < 2 {
-			continue
-		}
-		path := plancontract.NormalizeScopePath(strings.Trim(match[1], ".,;:)>]}'\"`"))
-		if path == "" || !strings.Contains(path, "/") || seen[path] {
+	for _, raw := range pathparse.MentionedWorkspacePaths(text) {
+		path := normalizeFeaturePlannerMentionedPath(raw)
+		if path == "" || seen[path] {
 			continue
 		}
 		seen[path] = true
@@ -721,6 +900,17 @@ func repoPathsMentionedInText(text string) []string {
 	}
 	sort.Strings(paths)
 	return paths
+}
+
+func normalizeFeaturePlannerMentionedPath(raw string) string {
+	path := plancontract.NormalizeScopePath(strings.Trim(raw, ".,;:)>]}'\"`"))
+	if path == "" || !strings.Contains(path, "/") {
+		return ""
+	}
+	if strings.Contains(path, "/.") || strings.Contains(path, "/<") || strings.Contains(path, "/>") {
+		return ""
+	}
+	return path
 }
 
 func promptPathCanRemainContextOnly(path string) bool {
@@ -736,7 +926,7 @@ func promptPathCanRemainContextOnly(path string) bool {
 
 var featurePlannerCallPattern = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_:.\->]*)\s*\(([^)]{1,160})\)`)
 
-func validateAtomPromptVerifiedCalls(prefix string, atom FeatureAtomPlan) []error {
+func validateAtomPromptVerifiedCalls(prefix string, atom FeatureAtomPlan, grounding atomPromptGrounding) []error {
 	prompt := strings.TrimSpace(atom.Prompt)
 	if prompt == "" {
 		return nil
@@ -753,7 +943,7 @@ func validateAtomPromptVerifiedCalls(prefix string, atom FeatureAtomPlan) []erro
 		if !plannerCallNeedsSignatureEvidence(name, args) {
 			continue
 		}
-		if promptCarriesVerifiedSignatureEvidenceForCall(prompt, name) {
+		if grounding.hasVerifiedSignatureForCall(name) {
 			continue
 		}
 		call := name + "(" + args + ")"
@@ -765,31 +955,6 @@ func validateAtomPromptVerifiedCalls(prefix string, atom FeatureAtomPlan) []erro
 	}
 
 	return errs
-}
-
-func promptCarriesVerifiedSignatureEvidenceForCall(prompt string, name string) bool {
-	lower := strings.ToLower(prompt)
-	needle := strings.ToLower(strings.TrimSpace(name))
-	if needle == "" {
-		return false
-	}
-	if idx := strings.LastIndexAny(needle, ":>."); idx >= 0 && idx+1 < len(needle) {
-		needle = needle[idx+1:]
-	}
-	for _, marker := range []string{"verified signature", "source-verified signature", "exact signature", "signature verified"} {
-		idx := strings.Index(lower, marker)
-		if idx < 0 {
-			continue
-		}
-		windowEnd := idx + len(marker) + 260
-		if windowEnd > len(lower) {
-			windowEnd = len(lower)
-		}
-		if strings.Contains(lower[idx:windowEnd], needle) {
-			return true
-		}
-	}
-	return false
 }
 
 func plannerCallNeedsSignatureEvidence(name string, args string) bool {
@@ -896,6 +1061,58 @@ func validateWorkspaceCommand(root string, command string) error {
 	}
 
 	return nil
+}
+
+func commandReferencedWorkspacePaths(command string) []string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return nil
+	}
+
+	currentDir := ""
+	seen := map[string]bool{}
+	var paths []string
+	add := func(path string) {
+		path = normalizeFeaturePlannerMentionedPath(path)
+		if path == "" || seen[path] {
+			return
+		}
+		seen[path] = true
+		paths = append(paths, path)
+	}
+
+	for _, segment := range commandSegments(command) {
+		if nextDir, ok := commandSegmentCD(segment); ok {
+			if nextDir != "" {
+				currentDir = plancontract.NormalizeScopePath(filepath.Join(currentDir, nextDir))
+				add(currentDir)
+			}
+			continue
+		}
+
+		payload := commandPayloadSegment(segment)
+		for _, path := range repoPathsMentionedInText(payload) {
+			add(path)
+			if currentDir != "" && !strings.HasPrefix(path, currentDir+"/") {
+				add(filepath.Join(currentDir, path))
+			}
+		}
+
+		fields := strings.Fields(payload)
+		if len(fields) == 0 {
+			continue
+		}
+		token := strings.Trim(fields[0], "'\"")
+		if strings.Contains(token, "/") && !filepath.IsAbs(token) {
+			add(token)
+			if currentDir != "" {
+				add(filepath.Join(currentDir, token))
+			}
+		}
+	}
+
+	sort.Strings(paths)
+	return paths
 }
 
 func commandPayloadSegment(segment string) string {

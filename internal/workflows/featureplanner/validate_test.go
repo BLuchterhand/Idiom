@@ -2,6 +2,7 @@ package featureplanner
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -766,6 +767,100 @@ func TestValidatePlanRejectsGuessedHelperCallDespiteUnrelatedSourceEvidence(t *t
 	err := ValidatePlan(plan)
 	if err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume(eid)") {
 		t.Fatalf("expected unrelated source evidence to not authorize guessed helper call, got %v", err)
+	}
+}
+
+func TestProductSourceFactRequiresAcceptedSourceAuthority(t *testing.T) {
+	plan := validPlan()
+	plan.Atoms[0].Prompt = "Call find_connected_cistern_with_volume(eid) before posting fallback water haul."
+	brief := validProductWorkflowBrief()
+	brief.SourceFacts = []SourceFactBrief{{
+		Path:      "internal/labels/labels.go",
+		Symbol:    "find_connected_cistern_with_volume",
+		Signature: "EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const",
+	}}
+
+	err := errors.Join(validateAtomPromptVerifiedCalls("atom 0", plan.Atoms[0], newAtomPromptGrounding(plan.Atoms[0], &brief))...)
+	if err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume(eid)") {
+		t.Fatalf("source fact without accepted authority should not satisfy helper call, got %v", err)
+	}
+
+	brief.SourceFacts[0].AuthorityRef = "accepted-source:q-1"
+	if err := errors.Join(validateAtomPromptVerifiedCalls("atom 0", plan.Atoms[0], newAtomPromptGrounding(plan.Atoms[0], &brief))...); err != nil {
+		t.Fatalf("accepted source fact should satisfy helper call: %v", err)
+	}
+}
+
+func TestRepoPathsMentionedInTextIgnoresLabelsAndShorthand(t *testing.T) {
+	text := "Write/Update MachineSystem using fluid_network_system.h/.cpp and native/src/core/components.h."
+
+	got := repoPathsMentionedInText(text)
+	if slices.Contains(got, "Write/Update") || slices.Contains(got, "fluid_network_system.h/.cpp") {
+		t.Fatalf("fake or shorthand paths should be ignored, got %#v", got)
+	}
+	if !slices.Contains(got, "native/src/core/components.h") {
+		t.Fatalf("real repo path should be retained, got %#v", got)
+	}
+}
+
+func TestCommandReferencedWorkspacePathsUsesCommandCWD(t *testing.T) {
+	command := "cd native/tests && scons -j10 && bin/colony_tests -sf=test_fluid_brewery_cascade.cpp"
+	got := commandReferencedWorkspacePaths(command)
+
+	for _, want := range []string{"native/tests", "bin/colony_tests", "native/tests/bin/colony_tests"} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("command paths missing %q: %#v", want, got)
+		}
+	}
+}
+
+func TestValidateStandaloneWorkspaceUsesAcceptedSourceGroundingForFET33CShape(t *testing.T) {
+	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void MachineSystem::tick_normal(float dt) {}\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/economy/fluid_network_system.h"), "EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const;\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/economy/fluid_network_system.cpp"), "EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const { return INVALID_ENTITY; }\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/src/core/components.h"), "struct CisternComponent { int32_t stored; };\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/SConstruct"), "DefaultEnvironment()\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"brewery fluid cascade\") { CHECK(true); }\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/bin/colony_tests"), "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(filepath.Join(root, "native/tests/bin/colony_tests"), 0755); err != nil {
+		t.Fatalf("chmod colony_tests: %v", err)
+	}
+
+	command := "cd native/tests && scons -j10 && bin/colony_tests -sf=test_fluid_brewery_cascade.cpp"
+	plan := validPlan()
+	plan.TopLevelScope.SuccessCriteria = []string{"FET 3.3c consumes water from a connected cistern before water hauling."}
+	plan.Atoms[0].RequiredEditPaths = []string{
+		"native/src/simulation/machines/machine.cpp",
+		"native/tests/test_fluid_brewery_cascade.cpp",
+	}
+	plan.Atoms[0].EvidencePaths = []string{
+		"native/src/simulation/economy/fluid_network_system.h",
+		"native/src/simulation/economy/fluid_network_system.cpp",
+		"native/src/core/components.h",
+	}
+	plan.Atoms[0].TestFirst.Commands = []string{command}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = []string{command}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].Prompt = "Write/Update FET 3.3c. Use fluid_network_system.h/.cpp context and native/src/core/components.h. Call find_connected_cistern_with_volume(network_id, volume_required) only after source verification."
+
+	contract := StampPlanAuthorityContract(&plan, []PlanAuthorityDelta{{
+		QuestionID:     "q-source",
+		AuthorityKind:  "accepted_source",
+		EvidenceRefs:   []string{"native/src/simulation/economy/fluid_network_system.h"},
+		AffectedFields: []string{"source_localization"},
+		Expected:       "Need source-localized helper signature.",
+		Actual:         "Accepted source: EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const in native/src/simulation/economy/fluid_network_system.h.",
+		Revision:       1,
+		CreatedAt:      time.Unix(1, 0).UTC().Format(time.RFC3339Nano),
+	}})
+
+	if err := ValidatePlan(plan); err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume(network_id, volume_required)") {
+		t.Fatalf("base plan should require source signature before accepted-source grounding, got %v", err)
+	}
+	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root, Contract: contract}); err != nil {
+		t.Fatalf("accepted source grounding should satisfy standalone workspace context: %v", err)
 	}
 }
 

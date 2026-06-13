@@ -21,13 +21,19 @@ func TestProductWorkflowBrief_JSONRoundTrip(t *testing.T) {
 		CoverageGatePassed: true,
 		CoverageBlockers:   []string{},
 		FilesToModify:      []string{"internal/example/thing.go"},
-		RequiredBehavior:   []string{"thing must work"},
-		Tests:              []string{"go test ./internal/example/..."},
-		Acceptance:         []string{"Given thing, when used, then it works"},
-		Constraints:        []string{"no new dependencies"},
-		Decisions:          []string{"use map not slice"},
-		Blockers:           []string{},
-		ArtifactRootPath:   "started/test-effort",
+		SourceFacts: []SourceFactBrief{{
+			Path:         "internal/example/thing.go",
+			Symbol:       "DoThing",
+			Signature:    "func DoThing() error",
+			AuthorityRef: "accepted-source",
+		}},
+		RequiredBehavior: []string{"thing must work"},
+		Tests:            []string{"go test ./internal/example/..."},
+		Acceptance:       []string{"Given thing, when used, then it works"},
+		Constraints:      []string{"no new dependencies"},
+		Decisions:        []string{"use map not slice"},
+		Blockers:         []string{},
+		ArtifactRootPath: "started/test-effort",
 	}
 
 	data, err := json.Marshal(brief)
@@ -67,6 +73,10 @@ func TestProductWorkflowBrief_JSONRoundTrip(t *testing.T) {
 
 	if !roundTripped.CoverageGatePassed {
 		t.Error("CoverageGatePassed should be true")
+	}
+
+	if len(roundTripped.SourceFacts) != 1 || roundTripped.SourceFacts[0].Signature != "func DoThing() error" {
+		t.Fatalf("SourceFacts did not round-trip: %+v", roundTripped.SourceFacts)
 	}
 }
 
