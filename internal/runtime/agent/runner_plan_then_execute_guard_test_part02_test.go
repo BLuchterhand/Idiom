@@ -842,6 +842,47 @@ func TestPlanThenExecutePostReadinessRecoveryRequiresSubmitForOutlineOnlyMissing
 	}
 }
 
+func TestPlanExecuteRequiredAnchorRefreshRedirectsUnboundedReadFile(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{
+			"native/src/core/colony_sim_tick.cpp",
+			"native/src/simulation/world/collapse_event.cpp",
+			"native/src/simulation/world/collapse_event.h",
+			"native/tests/test_collapse_event.cpp",
+		},
+	}}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f3 native/src/simulation/world/collapse_event.h lines 1-600 (total lines: 600)"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content",
+		},
+	}
+	req := workspace.ToolRequest{
+		Tool: workspace.ToolNameReadFile,
+		Path: "native/src/simulation/world/collapse_event.h",
+	}
+
+	redirected, _, ok := runner.planThenExecuteRejectedPlanRefreshReadRedirect(req, results)
+	if !ok {
+		t.Fatal("expected unbounded required-path anchor refresh read_file to redirect to bounded fallback")
+	}
+
+	if redirected.Tool != workspace.ToolNameReadFile || redirected.Path != "native/src/simulation/world/collapse_event.h" {
+		t.Fatalf("unexpected redirect target: %#v", redirected)
+	}
+
+	if redirected.StartLine <= 0 || redirected.EndLine < redirected.StartLine || redirected.EndLine-redirected.StartLine+1 > 400 {
+		t.Fatalf("redirect must be a bounded anchor-refresh read, got %#v", redirected)
+	}
+
+	if !planThenExecuteRejectedPlanSourceRefreshAllowed(redirected, runner.RuntimeBrief.RequiredEditPaths, results) {
+		t.Fatalf("redirected required-path refresh should be allowed after rejected submit_plan: %#v", redirected)
+	}
+}
+
 func TestPlanThenExecuteRequiredPathDiscoveryRejectsOutOfScopeInvalidAnchorRefresh(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,

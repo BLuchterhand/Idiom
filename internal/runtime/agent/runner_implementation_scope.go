@@ -771,7 +771,7 @@ func planThenExecuteAnchorRefreshFallbackRange(path string, results []workspace.
 			start = 1
 		}
 
-		return start, line + 40
+		return planThenExecuteClampAnchorRefreshRange(start, line+40)
 	}
 
 	ranges := readRangesForPathFromResults(results, path)
@@ -785,10 +785,24 @@ func planThenExecuteAnchorRefreshFallbackRange(path string, results []workspace.
 			end = ranges[i].total
 		}
 
-		return ranges[i].start, end
+		return planThenExecuteClampAnchorRefreshRange(ranges[i].start, end)
 	}
 
 	return 1, 180
+}
+
+func planThenExecuteClampAnchorRefreshRange(start, end int) (int, int) {
+	if start <= 0 {
+		start = 1
+	}
+	if end < start {
+		end = start
+	}
+	if end-start+1 > 400 {
+		end = start + 399
+	}
+
+	return start, end
 }
 
 func (r *Runner) deterministicPlanExecuteSourceSatisfiedEvidenceRead(reply string, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {

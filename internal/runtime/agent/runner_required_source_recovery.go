@@ -5,6 +5,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/runtime/workerruntime"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -416,7 +417,7 @@ func (r *Runner) planThenExecuteRejectedPlanRefreshReadRedirect(req workspace.To
 		return workspace.ToolRequest{}, "", false
 	}
 
-	if len(r.RuntimeBrief.RequiredEditPaths) > 0 || successfulSubmitPlanResultCount(results) > 0 {
+	if successfulSubmitPlanResultCount(results) > 0 {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -425,7 +426,8 @@ func (r *Runner) planThenExecuteRejectedPlanRefreshReadRedirect(req workspace.To
 		return workspace.ToolRequest{}, "", false
 	}
 
-	if !planThenExecuteCandidateRejectedPlanSourceRefreshTarget(r.RuntimeBrief, results, target) {
+	state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeAnchorRefresh || !slices.Contains(state.RefreshPaths, target) {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -435,16 +437,22 @@ func (r *Runner) planThenExecuteRejectedPlanRefreshReadRedirect(req workspace.To
 	}
 
 	line, ok := submitPlanSyntaxValidationLineForPath(rejected, target)
-	if !ok || (req.StartLine <= line && line <= req.EndLine) {
+	if ok && req.StartLine <= line && line <= req.EndLine && planThenExecuteAnchorRefreshRequestAllowed(req) {
 		return workspace.ToolRequest{}, "", false
 	}
 
-	start := line - 20
-	if start < 1 {
-		start = 1
+	if !ok && planThenExecuteAnchorRefreshRequestAllowed(req) {
+		return workspace.ToolRequest{}, "", false
 	}
 
-	end := line + 60
+	start, end := planThenExecuteAnchorRefreshFallbackRange(target, results, rejected)
+	if ok {
+		start = line - 20
+		if start < 1 {
+			start = 1
+		}
+		end = line + 60
+	}
 	redirected := workspace.ToolRequest{
 		Tool:            workspace.ToolNameReadFile,
 		Path:            target,
