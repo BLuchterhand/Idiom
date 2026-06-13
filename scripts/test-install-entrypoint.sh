@@ -487,7 +487,7 @@ land edits — the test asserts only that idiom reached the LLM call.
 
 `README.txt:1`:
 
-```
+```text
 init
 ```
 
@@ -509,7 +509,7 @@ BRIEF
   echo "[mock] running idiom lane implement against mock (30s timeout)"
   cd "${ws}"
   set +e
-  timeout 30 idiom lane implement --title install-test brief.md \
+  timeout 30 idiom lane implement --allow-stale-brief --title install-test brief.md \
     >/tmp/lane.stdout.log 2>/tmp/lane.stderr.log
   lane_exit=$?
   set -e
