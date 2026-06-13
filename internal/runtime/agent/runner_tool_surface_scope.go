@@ -912,6 +912,9 @@ func runnerPlanExecuteTextualAllowedToolsForRequest(currentAllowedTools []string
 
 func runnerPlanExecuteTextualPlanningProjection(currentAllowedTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (PlanExecutePlanningState, TurnPhaseContract, []string) {
 	baseTools := uniquePhaseStrings(append(append([]string(nil), brief.AllowedTools...), currentAllowedTools...))
+	if strings.TrimSpace(brief.TaskFamily) == PlanThenExecutePlannerTaskFamily {
+		baseTools = uniquePhaseStrings(append(baseTools, workspace.ToolNameSubmitPlan))
+	}
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief:             brief,

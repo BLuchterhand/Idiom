@@ -1115,6 +1115,53 @@ func TestPlanExecuteTextualAllowedToolsTerminalAfterCandidateReadyRejection(t *t
 	}
 }
 
+func TestPlanExecuteTextualAllowedToolsSubmitReadyDoesNotUseStaleReadSurface(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"read_file", "code_navigate", "history_range", "history_symbol"},
+		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp", "native/src/simulation/world/collapse_event.cpp", "native/tests/test_collapse_event.cpp"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f6 native/src/core/colony_sim_tick.cpp lines 1-180 (total lines: 2616)",
+			Output:  "1:#include \"simulation/world/collapse_event.h\"\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Required new-file path does not exist yet",
+			Error:   "path \"native/src/simulation/world/collapse_event.cpp\" is in your required_edit_paths but does not exist on disk yet - this is a NEW FILE you must create.",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Required new-file path does not exist yet",
+			Error:   "path \"native/tests/test_collapse_event.cpp\" is in your required_edit_paths but does not exist on disk yet - this is a NEW FILE you must create.",
+		},
+		{
+			Tool:    "history_range",
+			Summary: "Read git history for native/src/core/colony_sim_tick.cpp lines 1-180",
+			Output:  "commit abc123\n\n    route existing tick dispatch",
+		},
+	}
+
+	if state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true}); state.Mode != PlanExecutePlanningModeSubmitReady {
+		t.Fatalf("fixture should be submit-ready, got mode=%q state=%#v", state.Mode, state)
+	}
+
+	allowed := runnerPlanExecuteTextualAllowedToolsForRequest(
+		[]string{"read_file", "code_navigate"},
+		brief,
+		results,
+		workspace.ToolRequest{Tool: "submit_plan"},
+	)
+	if !slices.Equal(allowed, []string{"submit_plan"}) {
+		t.Fatalf("submit-ready planner must expose submit_plan instead of stale read surface, got %#v", allowed)
+	}
+}
+
 func TestPlanExecuteReadinessNudgedRejectsNonSubmitBeforeFirstPlan(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily: PlanThenExecutePlannerTaskFamily,

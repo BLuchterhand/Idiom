@@ -110,7 +110,7 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 	}
 
 	scope := r.planThenExecuteRequiredEditScope()
-	scopeActive := len(scope.coverage) > 0 || len(scope.allowedExact) > 0 || len(scope.directoryScopes) > 0
+	scopeActive := len(scope.coverage) > 0 || len(scope.allowedExact) > 0 || len(scope.directoryScopes) > 0 || len(scope.allowedDirectoryScopes) > 0
 	edits := planThenExecuteEffectiveSubmitPlanEdits(req)
 
 	if len(edits) == 0 && workspace.SubmitPlanRequestClaimsSourceSatisfied(req) {
@@ -165,7 +165,21 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 			}
 		}
 
-		if len(scope.coverage) == 0 && len(scope.directoryScopes) > 0 && len(planned) == 0 {
+		if !scope.allowedOnly {
+			for _, dir := range scope.directoryScopes {
+				prefix := strings.TrimSuffix(dir, "/") + "/"
+				covered := false
+				for path := range planned {
+					if strings.HasPrefix(path, prefix) {
+						covered = true
+						break
+					}
+				}
+				if !covered {
+					missing = append(missing, dir)
+				}
+			}
+		} else if len(scope.coverage) == 0 && len(scope.directoryScopes) > 0 && len(planned) == 0 {
 			missing = append(missing, scope.directoryScopes...)
 		}
 	}
@@ -433,10 +447,11 @@ func planThenExecuteCompleteNewFileEdit(edit workspace.PlanEdit, root string, pa
 }
 
 type planThenExecuteRequiredEditScope struct {
-	coverage        []string
-	allowedExact    map[string]struct{}
-	directoryScopes []string
-	allowedOnly     bool
+	coverage               []string
+	allowedExact           map[string]struct{}
+	directoryScopes        []string
+	allowedDirectoryScopes []string
+	allowedOnly            bool
 }
 
 func (r *Runner) planThenExecuteRequiredEditScope() planThenExecuteRequiredEditScope {
@@ -453,7 +468,22 @@ func (r *Runner) planThenExecuteRequiredEditScope() planThenExecuteRequiredEditS
 		return planThenExecuteAllowedEditScopeFromPaths(r.RuntimeBrief.AllowedEditPaths, root)
 	}
 
-	return planThenExecuteRequiredEditScopeFromPaths(r.RuntimeBrief.RequiredEditPaths, root)
+	scope := planThenExecuteRequiredEditScopeFromPaths(r.RuntimeBrief.RequiredEditPaths, root)
+	normalizedAllowed := normalizedRequiredEditPaths(r.RuntimeBrief.AllowedEditPaths)
+	seenAllowedDirectories := make(map[string]struct{})
+	for _, path := range normalizedAllowed {
+		if planThenExecuteRequiredPathIsDirectoryScope(path, normalizedAllowed, root) {
+			if _, seen := seenAllowedDirectories[path]; !seen {
+				scope.allowedDirectoryScopes = append(scope.allowedDirectoryScopes, path)
+				seenAllowedDirectories[path] = struct{}{}
+			}
+			continue
+		}
+
+		scope.allowedExact[path] = struct{}{}
+	}
+
+	return scope
 }
 
 func planThenExecuteRequiredCoveragePaths(required []string, root string) []string {
@@ -574,6 +604,13 @@ func (scope planThenExecuteRequiredEditScope) allowsPlanPath(path string) bool {
 	}
 
 	for _, dir := range scope.directoryScopes {
+		prefix := strings.TrimSuffix(dir, "/") + "/"
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+
+	for _, dir := range scope.allowedDirectoryScopes {
 		prefix := strings.TrimSuffix(dir, "/") + "/"
 		if strings.HasPrefix(path, prefix) {
 			return true

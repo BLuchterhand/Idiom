@@ -795,6 +795,139 @@ func TestPlanThenExecuteSubmitPlanCoverageGuardAcceptsFullCoverage(t *testing.T)
 	}
 }
 
+func TestPlanThenExecuteSubmitPlanCoverageGuardAllowsCandidateWithoutRequiringIt(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"core.cpp"},
+			AllowedEditPaths:  []string{"event.h"},
+		},
+	}
+
+	got := runner.preflightPlanThenExecuteSubmitPlanCoverageGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{
+			{Path: "core.cpp", OldText: "dispatch();", NewText: "CollapseEvent::dispatch();"},
+			{Path: "event.h", OldText: "struct CollapseEvent;", NewText: "struct CollapseEvent { void dispatch(); };"},
+		},
+	})
+	if got.Intercepted {
+		t.Fatalf("allowed candidate edit should be accepted alongside required coverage, got %#v", got)
+	}
+
+	missingRequired := runner.preflightPlanThenExecuteSubmitPlanCoverageGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{
+			{Path: "event.h", OldText: "struct CollapseEvent;", NewText: "struct CollapseEvent { void dispatch(); };"},
+		},
+	})
+	if !missingRequired.Intercepted {
+		t.Fatalf("allowed candidate path must not satisfy required coverage by itself")
+	}
+	if !strings.Contains(missingRequired.Result.Error, "core.cpp") {
+		t.Fatalf("missing required coverage should name core.cpp, got %q", missingRequired.Result.Error)
+	}
+	if strings.Contains(missingRequired.Result.Error, "event.h") {
+		t.Fatalf("allowed candidate path should not be reported outside scope, got %q", missingRequired.Result.Error)
+	}
+}
+
+func TestPlanThenExecuteSubmitPlanCoverageGuardAllowsCandidateDirectoryChildren(t *testing.T) {
+	root := t.TempDir()
+	generatedDir := filepath.Join(root, "pkg", "generated")
+	if err := os.MkdirAll(generatedDir, 0o755); err != nil {
+		t.Fatalf("mkdir generated dir: %v", err)
+	}
+	corePath := filepath.Join(root, "pkg", "core.go")
+	if err := os.MkdirAll(filepath.Dir(corePath), 0o755); err != nil {
+		t.Fatalf("mkdir core dir: %v", err)
+	}
+	if err := os.WriteFile(corePath, []byte("package pkg\n\nfunc Run() { dispatch(); }\n"), 0o644); err != nil {
+		t.Fatalf("write core file: %v", err)
+	}
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"pkg/core.go"},
+			AllowedEditPaths:  []string{"pkg/generated"},
+		},
+	}
+
+	got := runner.preflightPlanThenExecuteSubmitPlanCoverageGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{
+			{Path: "pkg/core.go", OldText: "dispatch();", NewText: "generated.Dispatch();"},
+			{Path: "pkg/generated/helper.go", ReplaceAll: true, OldText: "", NewText: "package generated\n\nfunc Dispatch() {}\n"},
+		},
+	})
+	if got.Intercepted {
+		t.Fatalf("allowed candidate directory child edit should be accepted with required coverage, got %#v", got)
+	}
+
+	missingRequired := runner.preflightPlanThenExecuteSubmitPlanCoverageGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{
+			{Path: "pkg/generated/helper.go", ReplaceAll: true, OldText: "", NewText: "package generated\n\nfunc Dispatch() {}\n"},
+		},
+	})
+	if !missingRequired.Intercepted {
+		t.Fatalf("allowed candidate directory child must not satisfy required coverage by itself")
+	}
+	if !strings.Contains(missingRequired.Result.Error, "pkg/core.go") {
+		t.Fatalf("missing required coverage should name pkg/core.go, got %q", missingRequired.Result.Error)
+	}
+	if strings.Contains(missingRequired.Result.Error, "pkg/generated/helper.go") {
+		t.Fatalf("allowed candidate directory child should not be reported outside scope, got %q", missingRequired.Result.Error)
+	}
+}
+
+func TestPlanThenExecuteSubmitPlanCoverageGuardAllowedDirectoryDoesNotSatisfyRequiredDirectory(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"pkg/core", "pkg/generated"} {
+		if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(rel)), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+	}
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"pkg/core"},
+			AllowedEditPaths:  []string{"pkg/generated"},
+		},
+	}
+
+	got := runner.preflightPlanThenExecuteSubmitPlanCoverageGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{
+			{Path: "pkg/generated/helper.go", ReplaceAll: true, OldText: "", NewText: "package generated\n\nfunc Dispatch() {}\n"},
+		},
+	})
+	if !got.Intercepted {
+		t.Fatalf("allowed candidate directory child must not satisfy required directory coverage")
+	}
+	if !strings.Contains(got.Result.Error, "pkg/core") {
+		t.Fatalf("missing required directory coverage should name pkg/core, got %q", got.Result.Error)
+	}
+	if strings.Contains(got.Result.Error, "pkg/generated/helper.go") {
+		t.Fatalf("allowed candidate directory child should not be reported outside scope, got %q", got.Result.Error)
+	}
+
+	withRequiredChild := runner.preflightPlanThenExecuteSubmitPlanCoverageGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{
+			{Path: "pkg/core/dispatch.go", ReplaceAll: true, OldText: "", NewText: "package core\n\nfunc Run() {}\n"},
+			{Path: "pkg/generated/helper.go", ReplaceAll: true, OldText: "", NewText: "package generated\n\nfunc Dispatch() {}\n"},
+		},
+	})
+	if withRequiredChild.Intercepted {
+		t.Fatalf("required directory child plus allowed directory child should pass, got %#v", withRequiredChild)
+	}
+}
+
 func TestPlanThenExecuteSubmitPlanCoverageGuardTreatsRequiredDirectoryAsScope(t *testing.T) {
 	root := t.TempDir()
 	for _, rel := range []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"} {
