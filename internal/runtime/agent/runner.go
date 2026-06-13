@@ -1507,12 +1507,12 @@ func (r *Runner) Run(
 				Role:    "plan_then_execute_source_satisfied_evidence_read_allowed",
 				Content: fmt.Sprintf("allowed bounded %s for source-satisfied evidence path %q", strings.TrimSpace(req.Tool), normalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
 			})
-		} else if r.planThenExecuteReadySourceRefreshAllowed(req, collectedResults, planThenExecuteReadySourceRefreshes) {
+		} else if refreshReason, ok := r.planThenExecuteDirectSourceRefreshAllowed(req, collectedResults, planThenExecuteReadySourceRefreshes); ok {
 			recoveryReadAllowanceGrantedThisRequest = true
 			planThenExecuteReadySourceRefreshes++
 			r.emitEvent(RunEvent{
 				Role:    "plan_then_execute_ready_source_refresh_allowed",
-				Content: fmt.Sprintf("allowed bounded %s source refresh %d/%d for required path %q after rejected submit_plan showed a stale or missing anchor", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, normalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
+				Content: fmt.Sprintf("allowed bounded %s source refresh %d/%d for %s %q after rejected submit_plan showed a stale or missing anchor", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, refreshReason, normalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
 			})
 		} else if redirected, redirectedRaw, ok := r.planThenExecuteRejectedPlanRefreshReadRedirect(req, collectedResults); ok {
 			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_rejected_plan_source_refresh_region")

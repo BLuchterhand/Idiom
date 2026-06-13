@@ -365,6 +365,42 @@ func planThenExecuteInvalidAnchorRefreshAllowed(req workspace.ToolRequest, targe
 		!successfulInvalidAnchorCorrectionEvidenceForRejection(results, rejectedAt, target)
 }
 
+func (r *Runner) planThenExecuteDirectSourceRefreshAllowed(req workspace.ToolRequest, results []workspace.ToolResult, used int) (string, bool) {
+	if r == nil || !r.planThenExecutePlannerPhase() || used >= planThenExecuteReadySourceRefreshLimit {
+		return "", false
+	}
+
+	if r.planThenExecuteReadySourceRefreshAllowed(req, results, used) {
+		return "required path", true
+	}
+	if r.planThenExecuteActiveAnchorRefreshReadAllowed(req, results, used) {
+		return "active anchor-refresh path", true
+	}
+	if r.planThenExecuteCandidateSourceRefreshAllowed(req, results, used) {
+		return "candidate path", true
+	}
+
+	return "", false
+}
+
+func (r *Runner) planThenExecuteActiveAnchorRefreshReadAllowed(req workspace.ToolRequest, results []workspace.ToolResult, used int) bool {
+	if r == nil || !r.planThenExecutePlannerPhase() || used >= planThenExecuteReadySourceRefreshLimit || successfulSubmitPlanResultCount(results) > 0 {
+		return false
+	}
+
+	target := normalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	if target == "" {
+		return false
+	}
+
+	state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeAnchorRefresh || !slices.Contains(state.RefreshPaths, target) {
+		return false
+	}
+
+	return planThenExecuteRejectedPlanSourceRefreshAllowed(req, state.RefreshPaths, results)
+}
+
 const planThenExecuteReadySourceRefreshLimit = 4
 
 func (r *Runner) planThenExecuteReadySourceRefreshAllowed(req workspace.ToolRequest, results []workspace.ToolResult, used int) bool {

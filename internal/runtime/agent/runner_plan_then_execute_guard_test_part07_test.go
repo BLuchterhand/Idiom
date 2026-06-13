@@ -1230,6 +1230,65 @@ func TestPlanExecuteWrongPathAnchorRefreshRedirectsToPendingPath(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteActiveAnchorRefreshReadGrantsWriteOnlyAllowance(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{
+			"native/src/simulation/economy/fluid_network_system.h",
+			"native/src/simulation/economy/fluid_network_system.cpp",
+			"native/src/simulation/machines/machine.cpp",
+			"native/tests/test_fluid_brewery_cascade.cpp",
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 native/src/simulation/economy/fluid_network_system.h lines 1-82 (total lines: 82)", Output: "1:#pragma once\n82:};\n"},
+		{Tool: "read_file", Summary: "Read f2 native/src/simulation/economy/fluid_network_system.cpp lines 1-230 (total lines: 230)", Output: "1:#include <x>\n230:}\n"},
+		{Tool: "read_file", Summary: "Read f3 native/src/simulation/machines/machine.cpp lines 1-300 (total lines: 600)", Output: "1:#include <x>\n300:}\n"},
+		{Tool: "read_file", Summary: "Read f4 native/tests/test_fluid_brewery_cascade.cpp lines 1-110 (total lines: 110)", Output: "1:#include <x>\n110:}\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "invalid edit anchor(s): `native/src/simulation/machines/machine.cpp: old_text not found in current source`.",
+		},
+	}
+	runner := &Runner{RuntimeBrief: brief}
+	req := workspace.ToolRequest{
+		Tool:            workspace.ToolNameReadFile,
+		Path:            "native/src/simulation/machines/machine.cpp",
+		StartLine:       301,
+		EndLine:         480,
+		NamedGap:        "refresh current source evidence for the rejected submit_plan edit path",
+		WhyNotAnswering: "need bounded source evidence before resubmitting the corrected plan",
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeAnchorRefresh || !slices.Contains(state.RefreshPaths, req.Path) {
+		t.Fatalf("state = %+v, want open anchor refresh for %s", state, req.Path)
+	}
+	if !runner.planThenExecuteActiveAnchorRefreshReadAllowed(req, results, 0) {
+		t.Fatalf("active anchor-refresh read should receive the same write-only recovery allowance as a redirected refresh read")
+	}
+	if runner.planThenExecuteActiveAnchorRefreshReadAllowed(req, results, planThenExecuteReadySourceRefreshLimit) {
+		t.Fatalf("active anchor-refresh read should honor the shared source-refresh turn cap")
+	}
+	directAllowanceResults := slices.Clone(results[:3])
+	directAllowanceResults = append(directAllowanceResults, results[4])
+	if reason, ok := runner.planThenExecuteDirectSourceRefreshAllowed(req, directAllowanceResults, 0); !ok || reason != "active anchor-refresh path" {
+		t.Fatalf("direct source-refresh allowance = %q, %v; want active anchor-refresh path", reason, ok)
+	}
+	if _, ok := runner.planThenExecuteAnchorRefreshWriteOnlyRejection(req, results); !ok {
+		t.Fatal("anchor-refresh write-only rejection surface should be open before the allowance is granted")
+	}
+	if summary, errorText, reject := planThenExecuteRequiredPathDiscoveryRejection(req, brief, results); reject {
+		t.Fatalf("required-path gate rejected allowed anchor refresh: %s\n%s", summary, errorText)
+	}
+	if summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(req, brief, results); reject {
+		t.Fatalf("post-readiness gate rejected allowed anchor refresh: %s\n%s", summary, errorText)
+	}
+}
+
 func TestPlanExecuteRepeatedNoopProofCorrectionAllowsPathBlocker(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
