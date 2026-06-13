@@ -1162,6 +1162,94 @@ func TestPlanExecuteTextualAllowedToolsSubmitReadyDoesNotUseStaleReadSurface(t *
 	}
 }
 
+func TestPlanExecuteSubmitReadyTransitionClearsLiveStaleReadSurface(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"read_file", "code_navigate", "history_range", "history_symbol"},
+		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		RequiredEditPaths: []string{
+			"native/src/core/colony_sim_tick.cpp",
+			"native/src/simulation/world/collapse_event.cpp",
+			"native/src/simulation/world/collapse_event.h",
+			"native/tests/test_collapse_event.cpp",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f9 native/src/simulation/world/collapse_event.h lines 1-50 (total lines: 63)",
+			Output:  "1:#pragma once\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f9 native/src/simulation/world/collapse_event.h lines 50-63 (total lines: 63)",
+			Output:  "50:};\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Required new-file path does not exist yet",
+			Error:   "path \"native/src/simulation/world/collapse_event.cpp\" is in your required_edit_paths but does not exist on disk yet - this is a NEW FILE you must create.",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Required new-file path does not exist yet",
+			Error:   "path \"native/tests/test_collapse_event.cpp\" is in your required_edit_paths but does not exist on disk yet - this is a NEW FILE you must create.",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f7 native/src/core/colony_sim_tick.cpp lines 1-50 (total lines: 2616)",
+			Output:  "1:#include \"simulation/world/collapse_event.h\"\n",
+		},
+		{
+			Tool:    "history_range",
+			Summary: "Read git history for native/src/core/colony_sim_tick.cpp lines 1-50",
+			Output:  "commit abc123",
+		},
+		{
+			Tool:    "history_range",
+			Summary: "Read git history for native/src/simulation/world/collapse_event.h lines 1-50",
+			Output:  "commit def456",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Plan submission required",
+			Error:   "every required_edit_path has satisfied its source-body obligation. Do not use more read/search discovery. Submit one parser-readable `submit_plan` request.",
+		},
+	}
+	if state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true}); state.Mode != PlanExecutePlanningModeSubmitReady {
+		t.Fatalf("fixture should be submit-ready, got mode=%q state=%#v", state.Mode, state)
+	}
+
+	runner := &Runner{RuntimeBrief: brief}
+	runState := &runnerRunState{
+		opts: llama.ChatOptions{
+			Tools: []llama.Tool{
+				{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+				{Type: "function", Function: llama.ToolFunction{Name: "code_navigate"}},
+			},
+			ToolChoice: "required",
+		},
+		collectedResults:                        results,
+		planThenExecuteNativeSubmitPlanDisabled: true,
+	}
+	runner.transitionPlanThenExecuteSubmitReadyTerminal(runState, "Submit one parser-readable submit_plan request.", "test_event", "test_submit_ready")
+
+	if !slices.Equal(runState.currentAllowedTools, []string{workspace.ToolNameSubmitPlan}) {
+		t.Fatalf("submit-ready transition currentAllowedTools=%#v, want submit_plan only", runState.currentAllowedTools)
+	}
+	if chatOptionsExposeTool(runState.opts, workspace.ToolNameReadFile) || chatOptionsExposeTool(runState.opts, workspace.ToolNameCodeNavigate) {
+		t.Fatalf("submit-ready transition kept stale read tools: %#v", runState.opts.Tools)
+	}
+	if !runState.opts.ResponseFormatJSON {
+		t.Fatalf("textual submit-ready transition should request JSON response format")
+	}
+	if summary, errorText, reject := currentToolSurfaceRejection(workspace.ToolRequest{Tool: workspace.ToolNameSubmitPlan}, runState.currentAllowedTools); reject {
+		t.Fatalf("submit_plan rejected after submit-ready transition: %s: %s", summary, errorText)
+	}
+}
+
 func TestPlanExecuteTextualProjectionPrefersSubmitReadyStateOverStaleContractTools(t *testing.T) {
 	allowed := runnerPlanExecuteTextualAllowedToolsFromProjection(
 		PlanExecutePlanningState{

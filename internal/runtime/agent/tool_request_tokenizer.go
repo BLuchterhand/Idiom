@@ -715,3 +715,24 @@ func (nestedArgumentsToolRequestTokenizer) Tokenize(text string) ToolRequestToke
 
 	return ToolRequestTokenization{Tool: tool, Fields: fields, OK: true}
 }
+
+// textToNormalizerTransport maps the tokenizer's transport identifier to the
+// corresponding normalizer transport constant for telemetry parity.
+func textToNormalizerTransport(transport string) string {
+	switch transport {
+	case "nested_arguments":
+		return toolRequestNormalizerTransportNestedArguments
+	case "fenced_json":
+		return toolRequestNormalizerTransportFencedJSON
+	case "idiom_cli":
+		return toolRequestNormalizerTransportIdiomCLI
+	case "key_value_args":
+		return toolRequestNormalizerTransportKeyValueArgs
+	case "function_call":
+		return toolRequestNormalizerTransportFunctionCall
+	case "key_value":
+		return toolRequestNormalizerTransportKeyValue
+	default:
+		return toolRequestNormalizerTransportTextual
+	}
+}

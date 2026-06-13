@@ -39,6 +39,30 @@ func TestBuildPlanExecuteFailureRecordClassifiesPlannerBlocked(t *testing.T) {
 	}
 }
 
+func TestBuildPlanExecuteFailureRecordRetriesRequiredSubmitPlanSurfaceMismatch(t *testing.T) {
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:         "atom-1-run-1",
+		ProgressStatePath: ".idiom/plan-execute/sessions/atom-1-run-1.json",
+		Phase:             "planning",
+		Status:            "failed",
+		FailureKind:       "planner_blocked",
+		FailureReason: "<<QUESTION>>: Implementation incomplete; required edit path(s) remain unchanged.\n\n" +
+			"Blocker:\n- Tool not available in current runtime contract: submit_plan is not in the current allowed tool surface. Available tools: read_file, code_navigate.",
+		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp"},
+	}, time.Date(2026, 6, 13, 6, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+
+	if record.Failure.Class != FailureClassPlannerBlocked {
+		t.Fatalf("failure class=%q", record.Failure.Class)
+	}
+
+	if record.NextAction != NextActionRetryPlanExecute {
+		t.Fatalf("next action=%q, want %q", record.NextAction, NextActionRetryPlanExecute)
+	}
+}
+
 func TestBuildPlanExecuteFailureRecordClassifiesAnchorRefreshAsRetry(t *testing.T) {
 	reason := strings.Join([]string{
 		"<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.",

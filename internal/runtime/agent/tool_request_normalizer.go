@@ -142,28 +142,31 @@ func normalizeToolRequestSyntax(message llama.ChatMessage) toolRequestSyntaxNorm
 		return result
 	}
 
-	if nested := normalizeNestedArgumentsToolRequestSyntax(message.Content); nested.EventOutcome != "" {
-		return nested
-	}
+	// Try the unified tokenizer dispatch for non-standard textual formats.
+	// This replaces the per-format cascade of normalize* functions.
+	if tokenResult := ParseWithAllTokenizers(message.Content); tokenResult.Unsafe {
+		result.EventOutcome = toolRequestNormalizerOutcomeUnsafeToInfer
+		result.EventTransport = textToNormalizerTransport(tokenResult.Transport)
 
-	if fenced := normalizeFencedJSONToolRequestSyntax(message.Content); fenced.EventOutcome != "" {
-		return fenced
-	}
+		return result
+	} else if tokenResult.OK {
+		// Reject write tools inferred from non-native formats to prevent
+		// accidental mutation from function-call, CLI, or args-block syntax.
+		if tokenizerWriteRequestUnsafe(tokenResult.Transport, tokenResult.Request.Tool) {
+			result.EventOutcome = toolRequestNormalizerOutcomeUnsafeToInfer
+			result.EventTransport = textToNormalizerTransport(tokenResult.Transport)
 
-	if idiomCLI := normalizeIdiomCLIToolRequestSyntax(message.Content); idiomCLI.EventOutcome != "" {
-		return idiomCLI
-	}
+			return result
+		}
 
-	if argsBlock := normalizeKeyValueArgsToolRequestSyntax(message.Content); argsBlock.EventOutcome != "" {
-		return argsBlock
-	}
+		result.Request = tokenResult.Request
+		result.Raw = tokenResult.Raw
+		result.OK = true
+		result.EventOutcome = toolRequestNormalizerOutcomeNormalized
+		result.EventTransport = textToNormalizerTransport(tokenResult.Transport)
+		normalizeParsedToolRequestSyntax(&result)
 
-	if functionCall := normalizeFunctionCallToolRequestSyntax(message.Content); functionCall.EventOutcome != "" {
-		return functionCall
-	}
-
-	if keyValue := normalizeKeyValueToolRequestSyntax(message.Content); keyValue.EventOutcome != "" {
-		return keyValue
+		return result
 	}
 
 	if outcome := classifyUnsupportedTextualToolShape(message.Content); outcome != "" {
@@ -172,6 +175,14 @@ func normalizeToolRequestSyntax(message llama.ChatMessage) toolRequestSyntaxNorm
 	}
 
 	return result
+}
+
+func tokenizerWriteRequestUnsafe(transport string, tool string) bool {
+	if !workspace.IsWorkspaceWriteTool(tool) {
+		return false
+	}
+
+	return !(transport == "key_value" && tool == "edit_file")
 }
 
 func normalizeNestedArgumentsToolRequestSyntax(text string) toolRequestSyntaxNormalization {

@@ -99,22 +99,19 @@ func (r *Runner) terminalSubmitPlanNativeTools(state *runnerRunState) bool {
 func (r *Runner) syncPlanThenExecuteRecoveryAllowedTools(state *runnerRunState) {
 	r.syncCurrentAllowedToolsFromOptions(state)
 
-	if !state.opts.ForceNativeTools &&
-		r.planThenExecutePlannerPhase() &&
-		len(state.opts.Tools) == 0 {
+	if !r.planThenExecutePlannerPhase() {
+		return
+	}
 
-		surface := DerivePlanExecuteRecoverySurface(r.RuntimeBrief, state.collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
-		switch surface.Kind {
-		case PlanExecuteRecoverySurfaceAnchorRefresh:
+	surface := DerivePlanExecuteRecoverySurface(r.RuntimeBrief, state.collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
+	switch surface.Kind {
+	case PlanExecuteRecoverySurfaceAnchorRefresh, PlanExecuteRecoverySurfaceHistoryPending:
+		if len(state.opts.Tools) == 0 || !state.opts.ForceNativeTools {
 			state.currentAllowedTools = append(state.currentAllowedTools[:0], surface.State.CallableTools...)
-		case PlanExecuteRecoverySurfaceHistoryPending:
-			state.currentAllowedTools = append(state.currentAllowedTools[:0], surface.State.CallableTools...)
-		case PlanExecuteRecoverySurfaceSubmitReady:
-			state.currentAllowedTools = append(state.currentAllowedTools[:0], "submit_plan")
-		case PlanExecuteRecoverySurfaceSubmitCorrection:
-			state.currentAllowedTools = append(state.currentAllowedTools[:0], "submit_plan")
+			r.setCurrentAllowedTools(state, state.currentAllowedTools)
 		}
-
+	case PlanExecuteRecoverySurfaceSubmitReady, PlanExecuteRecoverySurfaceSubmitCorrection:
+		state.currentAllowedTools = append(state.currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
 		r.setCurrentAllowedTools(state, state.currentAllowedTools)
 	}
 }
@@ -296,6 +293,18 @@ func (r *Runner) injectPlanThenExecuteRecoveryTail(state *runnerRunState, prompt
 	r.rebuildRunTools(state)
 
 	state.opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(state.opts, r.RuntimeBrief, state.collectedResults, r.terminalSubmitPlanNativeTools(state))
+	r.syncPlanThenExecuteRecoveryAllowedTools(state)
+	r.emitEvent(RunEvent{Role: eventRole, Content: prompt})
+}
+
+// transitionPlanThenExecuteSubmitReadyTerminal applies the full submit-ready
+// runtime surface. Prompt-only transitions are unsafe here: once the model is
+// told to call submit_plan, currentAllowedTools must agree even if stale
+// read-only native tools are still present in chat options.
+func (r *Runner) transitionPlanThenExecuteSubmitReadyTerminal(state *runnerRunState, prompt string, eventRole string, surfaceKey string) {
+	r.refreshPlanThenExecuteTerminalSurface(state, surfaceKey)
+	state.opts = planThenExecuteReadyToSubmitChatOptionsForBackend(state.opts, r.RuntimeBrief, state.collectedResults, r.terminalSubmitPlanNativeTools(state))
+	state.turnMessages = append(state.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 	r.syncPlanThenExecuteRecoveryAllowedTools(state)
 	r.emitEvent(RunEvent{Role: eventRole, Content: prompt})
 }

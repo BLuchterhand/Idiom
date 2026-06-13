@@ -863,11 +863,25 @@ func nextActionForFailureClass(failureClass string) string {
 }
 
 func nextActionForPlanExecuteFailure(input PlanExecuteFailureInput, failureClass string) string {
+	if planExecutePlannerBlockedRequiredToolMissing(input.FailureKind, input.FailureReason) {
+		return NextActionRetryPlanExecute
+	}
+
 	if _, ok := PlanExecutePlannerBlockedSourceRefreshResult(input.FailureKind, input.FailureReason, input.RequiredEditPaths); ok {
 		return NextActionRetryPlanExecute
 	}
 
 	return nextActionForFailureClass(failureClass)
+}
+
+func planExecutePlannerBlockedRequiredToolMissing(kind string, reason string) bool {
+	if strings.TrimSpace(kind) != "planner_blocked" {
+		return false
+	}
+
+	text := strings.ToLower(reason)
+	return strings.Contains(text, "submit_plan is not in the current allowed tool surface") ||
+		strings.Contains(text, "submit_plan is not available because the current runtime contract exposes no tools")
 }
 
 func PlanExecutePlannerBlockedSourceRefreshResult(kind string, reason string, requiredPaths []string) (PlanExecutePlannerBlockedSourceRefresh, bool) {

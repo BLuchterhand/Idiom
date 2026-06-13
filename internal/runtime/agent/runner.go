@@ -254,6 +254,11 @@ func (r *Runner) Run(
 		r.refreshPlanThenExecuteTerminalSurface(runState, reason)
 		applyRunState()
 	}
+	transitionPlanThenExecuteSubmitReadyTerminal := func(prompt string, eventRole string, surfaceKey string) {
+		syncRunState()
+		r.transitionPlanThenExecuteSubmitReadyTerminal(runState, prompt, eventRole, surfaceKey)
+		applyRunState()
+	}
 	forcePlanThenExecuteTerminalSurface := func(reason string) {
 		syncRunState()
 		r.forcePlanThenExecuteTerminalSurface(runState, reason)
@@ -2159,18 +2164,7 @@ func (r *Runner) Run(
 			}
 
 			prompt := r.planThenExecuteSubmitReadyTerminalPrompt(errorText, collectedResults, chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan))
-
-			opts = forceVisibleActionChatOptions(opts)
-
-			if chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan) {
-				opts.Tools = filterChatOptionsTools(opts.Tools, workspace.ToolNameSubmitPlan)
-				opts.ToolChoice = "auto"
-			}
-
-			syncCurrentAllowedToolsFromOptions()
-
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
-			r.emitEvent(RunEvent{Role: "plan_then_execute_submit_ready_terminal_required", Content: prompt})
+			transitionPlanThenExecuteSubmitReadyTerminal(prompt, "plan_then_execute_submit_ready_terminal_required", "candidate_post_readiness_discovery")
 
 			continue
 		}
@@ -3644,18 +3638,7 @@ func (r *Runner) Run(
 
 		if r.planThenExecutePlannerPhase() && planThenExecuteCandidateSourceReadyResult(result) {
 			prompt := r.planThenExecuteSubmitReadyTerminalPrompt(result.Error, collectedResults, chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan))
-
-			opts = forceVisibleActionChatOptions(opts)
-
-			if chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan) {
-				opts.Tools = filterChatOptionsTools(opts.Tools, workspace.ToolNameSubmitPlan)
-				opts.ToolChoice = "auto"
-			}
-
-			syncCurrentAllowedToolsFromOptions()
-
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
-			r.emitEvent(RunEvent{Role: "plan_then_execute_submit_ready_terminal_required", Content: prompt})
+			transitionPlanThenExecuteSubmitReadyTerminal(prompt, "plan_then_execute_submit_ready_terminal_required", "candidate_source_ready")
 
 			continue
 		}
