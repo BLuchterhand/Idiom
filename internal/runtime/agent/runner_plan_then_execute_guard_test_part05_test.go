@@ -1162,6 +1162,52 @@ func TestPlanExecuteTextualAllowedToolsSubmitReadyDoesNotUseStaleReadSurface(t *
 	}
 }
 
+func TestPlanExecuteTextualProjectionPrefersSubmitReadyStateOverStaleContractTools(t *testing.T) {
+	allowed := runnerPlanExecuteTextualAllowedToolsFromProjection(
+		PlanExecutePlanningState{
+			Mode:               PlanExecutePlanningModeSubmitReady,
+			CallableTools:      []string{"submit_plan"},
+			ParserVisibleTools: []string{"submit_plan"},
+		},
+		TurnPhaseContract{
+			AllowedTools: []string{"read_file", "code_navigate"},
+			ActionPolicy: TurnActionClassPolicy{CallableToolNames: []string{"read_file", "code_navigate"}},
+		},
+		[]string{"read_file", "code_navigate", "submit_plan"},
+	)
+	if !slices.Equal(allowed, []string{"submit_plan"}) {
+		t.Fatalf("submit-ready state must override stale read-only contract tools, got %#v", allowed)
+	}
+}
+
+func TestPlanExecuteTextualAllowedToolsPreservesSourceSatisfiedTerminalNoToolContract(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"read_file", "code_navigate", "submit_plan"},
+		RequiredEditPaths: []string{"a.go"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: source-satisfied terminal shape required",
+			Error:   "submit_plan cannot carry a source-satisfied/no-op closeout. Answer `Decision: source-satisfied` with per-path current-state evidence, submit real edits, or answer <<QUESTION>> with the exact blocker.",
+			Code:    workspace.SubmitPlanSourceSatisfiedTerminalRequiredCode,
+		},
+	}
+
+	if allowed := runnerPlanExecuteTextualAllowedToolsForRequest(
+		[]string{"read_file", "code_navigate"},
+		brief,
+		results,
+		workspace.ToolRequest{Tool: "submit_plan"},
+	); len(allowed) != 0 {
+		t.Fatalf("source-satisfied terminal contract must expose no tools, got %#v", allowed)
+	}
+}
+
 func TestPlanExecuteReadinessNudgedRejectsNonSubmitBeforeFirstPlan(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily: PlanThenExecutePlannerTaskFamily,

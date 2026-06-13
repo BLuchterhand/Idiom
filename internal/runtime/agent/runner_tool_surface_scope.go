@@ -868,6 +868,9 @@ func runnerPlanExecuteTextualAllowedTools(currentAllowedTools []string, brief wo
 	}
 
 	state, contract, baseTools := runnerPlanExecuteTextualPlanningProjection(currentAllowedTools, brief, results)
+	if runnerPlanExecuteTextualContractDisablesTools(contract) {
+		return nil
+	}
 	if allowed := runnerPlanExecuteTextualAllowedToolsFromProjection(state, contract, baseTools); len(allowed) > 0 {
 		return allowed
 	}
@@ -898,7 +901,10 @@ func runnerPlanExecuteTextualAllowedToolsForRequest(currentAllowedTools []string
 		return allowed
 	}
 
-	state, _, baseTools := runnerPlanExecuteTextualPlanningProjection(currentAllowedTools, brief, results)
+	state, contract, baseTools := runnerPlanExecuteTextualPlanningProjection(currentAllowedTools, brief, results)
+	if runnerPlanExecuteTextualContractDisablesTools(contract) {
+		return allowed
+	}
 	if !slices.Contains(state.ParserVisibleTools, tool) {
 		return allowed
 	}
@@ -908,6 +914,10 @@ func runnerPlanExecuteTextualAllowedToolsForRequest(currentAllowedTools []string
 	}
 
 	return uniquePhaseStrings(append(append([]string(nil), allowed...), tool))
+}
+
+func runnerPlanExecuteTextualContractDisablesTools(contract TurnPhaseContract) bool {
+	return contract.PhaseID == turnPhaseSourceSatisfiedTerminal
 }
 
 func runnerPlanExecuteTextualPlanningProjection(currentAllowedTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (PlanExecutePlanningState, TurnPhaseContract, []string) {
@@ -929,10 +939,10 @@ func runnerPlanExecuteTextualPlanningProjection(currentAllowedTools []string, br
 
 func runnerPlanExecuteTextualAllowedToolsFromProjection(state PlanExecutePlanningState, contract TurnPhaseContract, baseTools []string) []string {
 	for _, tools := range [][]string{
-		contract.ActionPolicy.CallableToolNames,
-		contract.AllowedTools,
 		state.CallableTools,
 		state.ParserVisibleTools,
+		contract.ActionPolicy.CallableToolNames,
+		contract.AllowedTools,
 	} {
 		allowed := runnerFilterPlanExecuteProjectionTools(baseTools, tools)
 		if len(allowed) > 0 {
