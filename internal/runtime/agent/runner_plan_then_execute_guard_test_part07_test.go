@@ -1154,6 +1154,51 @@ func TestPlanExecuteWrongPathRefreshKeepsAnchorRefreshNonTerminal(t *testing.T) 
 	}
 }
 
+func TestPlanExecuteAnchorRefreshProjectionUsesOnlyUnresolvedRejectedPaths(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{
+			"native/src/simulation/economy/fluid_network_system.cpp",
+			"native/src/simulation/economy/fluid_network_system.h",
+			"native/src/simulation/machines/machine.cpp",
+			"native/tests/test_fluid_brewery_cascade.cpp",
+		},
+	}
+	rejection := "submit_plan must use edits[] for changed required paths and top-level source_satisfied_paths for already-final required paths; invalid edit anchor(s): " +
+		"`native/src/simulation/economy/fluid_network_system.h: old_text not found in current source`, " +
+		"`native/src/simulation/machines/machine.cpp: old_text not found in current source`, " +
+		"`native/tests/test_fluid_brewery_cascade.cpp: old_text not found in current source`."
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 native/src/simulation/economy/fluid_network_system.cpp lines 1-120 (total lines: 230)", Output: "1:#include <x>\n120:void a();\n"},
+		{Tool: "read_file", Summary: "Read f2 native/src/simulation/economy/fluid_network_system.h lines 1-120 (total lines: 120)", Output: "1:#pragma once\n120:};\n"},
+		{Tool: "read_file", Summary: "Read f3 native/src/simulation/machines/machine.cpp lines 1-120 (total lines: 420)", Output: "1:#include <x>\n120:void a();\n"},
+		{Tool: "read_file", Summary: "Read f4 native/tests/test_fluid_brewery_cascade.cpp lines 1-120 (total lines: 180)", Output: "1:#include <x>\n120:TEST_CASE();\n"},
+		{Tool: "submit_plan", Summary: "submit_plan rejected: required edit path coverage mismatch", Error: rejection},
+		{Tool: "read_file", Summary: "Read f5 native/src/simulation/economy/fluid_network_system.h lines 1-120 (total lines: 120)", Output: "1:#pragma once\n120:};\n"},
+		{Tool: "read_file", Summary: "Read f6 native/tests/test_fluid_brewery_cascade.cpp lines 1-120 (total lines: 180)", Output: "1:#include <x>\n120:TEST_CASE();\n"},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	want := []string{"native/src/simulation/machines/machine.cpp"}
+	if !slices.Equal(state.RefreshPaths, want) {
+		t.Fatalf("refresh paths = %#v, want only unresolved rejected path %#v", state.RefreshPaths, want)
+	}
+
+	runner := &Runner{RuntimeBrief: brief}
+	redirected, _, ok := runner.planThenExecuteRejectedPlanRefreshReadRedirect(
+		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "native/src/simulation/economy/fluid_network_system.h", StartLine: 1, EndLine: 120},
+		results,
+	)
+	if !ok {
+		t.Fatal("wrong-path refresh should redirect to remaining unresolved path")
+	}
+	if got := normalizeRunnerPath(redirected.Path); got != "native/src/simulation/machines/machine.cpp" {
+		t.Fatalf("redirect path = %q, want remaining unresolved machine.cpp", got)
+	}
+}
+
 func TestPlanExecuteRepeatedBoundedCppReadAfterRejectionCountsAsFresh(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,

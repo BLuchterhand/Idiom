@@ -193,7 +193,8 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	if len(state.RefreshPaths) == 0 && !planThenExecuteLastRejectionSuppressesStreakRefresh(brief, results) {
 		state.RefreshPaths = planThenExecuteRejectedSubmitPlanStreakRefreshPaths(brief, results)
 	}
-	if stalePaths := planThenExecuteStaleAnchorPathsFromStateSummaries(state.RequiredPathStates); len(stalePaths) > 0 {
+	if len(state.RefreshPaths) == 0 {
+		stalePaths := planThenExecuteStaleAnchorPathsFromStateSummaries(state.RequiredPathStates)
 		state.RefreshPaths = uniqueSortedRunnerPaths(append(state.RefreshPaths, stalePaths...))
 	}
 
