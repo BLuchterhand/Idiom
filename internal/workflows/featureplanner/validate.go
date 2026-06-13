@@ -25,6 +25,21 @@ type ParsedPlannerOutput struct {
 
 const maxRejectedPlanCandidates = 3
 
+var errStandaloneMissingNewFileAuthorization = errors.New("missing standalone new-file authorization")
+
+type MissingNewFileAuthorizationError struct {
+	Paths []string
+}
+
+func (e *MissingNewFileAuthorizationError) Error() string {
+	paths := normalizeEditScopeList(e.Paths)
+	if len(paths) == 0 {
+		return "missing new-file authorization"
+	}
+
+	return fmt.Sprintf("missing new-file authorization for: %s", strings.Join(paths, ", "))
+}
+
 func ParsePlannerOutput(raw string) (ParsedPlannerOutput, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -584,6 +599,7 @@ func ValidatePlanStandaloneWorkspaceContext(plan FeaturePlan, context Standalone
 	}
 
 	var errs []error
+	var missingNewFilePaths []string
 
 	for i, atom := range plan.Atoms {
 		for _, scopedPath := range standaloneAtomWorkspaceScopePaths(atom) {
@@ -595,6 +611,9 @@ func ValidatePlanStandaloneWorkspaceContext(plan FeaturePlan, context Standalone
 
 			if err := validateStandaloneWorkspacePath(root, context.Contract, path); err != nil {
 				errs = append(errs, fmt.Errorf("atom %d edit path %q %w", i, path, err))
+				if errors.Is(err, errStandaloneMissingNewFileAuthorization) {
+					missingNewFilePaths = append(missingNewFilePaths, path)
+				}
 			}
 		}
 
@@ -604,6 +623,10 @@ func ValidatePlanStandaloneWorkspaceContext(plan FeaturePlan, context Standalone
 				errs = append(errs, fmt.Errorf("atom %d test artifact path %q is not a valid repo-relative workspace path; use ask_planner_question for localization repair", i, scopedPath))
 			}
 		}
+	}
+
+	if missingNewFilePaths = normalizeEditScopeList(missingNewFilePaths); len(missingNewFilePaths) > 0 {
+		errs = append(errs, &MissingNewFileAuthorizationError{Paths: missingNewFilePaths})
 	}
 
 	return errors.Join(errs...)
@@ -625,7 +648,7 @@ func validateStandaloneWorkspacePath(root string, contract plancontract.PlanExec
 				return nil
 			}
 
-			return errors.New("is missing from the workspace and is not authorized as a new file; use ask_planner_question or source-satisfied evidence with existing paths instead of inventing paths")
+			return fmt.Errorf("is missing from the workspace and is not authorized as a new file; use ask_planner_question or source-satisfied evidence with existing paths instead of inventing paths: %w", errStandaloneMissingNewFileAuthorization)
 		}
 
 		return fmt.Errorf("could not be statted before dispatch: %w", err)

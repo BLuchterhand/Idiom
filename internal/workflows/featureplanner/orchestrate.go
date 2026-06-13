@@ -2,6 +2,7 @@ package featureplanner
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -160,10 +161,17 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
 			candidate := recordRejectedPlanCandidate(&state, parsed.Plan, "idiom.feature_planner.standalone_context_blocked", err.Error(), opts.Now)
+			events := []Event{rejectedPlanEvent(state.SessionID, "idiom.feature_planner.standalone_context_blocked", err.Error(), candidate)}
+			if question, ok := missingNewFileAuthorizationQuestion(err, opts.Prompt); ok {
+				events = append(events, ApplyPlannerOutput(&state, ParsedPlannerOutput{
+					Kind:     ToolAskPlannerQuestion,
+					Question: question,
+				}, opts.Now)...)
+			}
 
 			return RunResult{
 				State:  state,
-				Events: []Event{rejectedPlanEvent(state.SessionID, "idiom.feature_planner.standalone_context_blocked", err.Error(), candidate)},
+				Events: events,
 			}, nil
 		}
 	}
@@ -1976,6 +1984,45 @@ func applyQuestionAnswerAuthority(question *PlannerQuestion, rawAnswer string, r
 	}
 
 	return delta, nil
+}
+
+func missingNewFileAuthorizationQuestion(err error, prompt string) (PlannerQuestion, bool) {
+	var missing *MissingNewFileAuthorizationError
+	if !errors.As(err, &missing) {
+		return PlannerQuestion{}, false
+	}
+
+	if !promptRequestsNewFileAuthorizationQuestion(prompt) {
+		return PlannerQuestion{}, false
+	}
+
+	paths := normalizeEditScopeList(missing.Paths)
+	if len(paths) == 0 {
+		return PlannerQuestion{}, false
+	}
+
+	return PlannerQuestion{
+		QuestionSummary:   "Authorize new files for feature plan",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "The submitted feature plan includes missing workspace paths that require explicit new-file authorization before dispatch.",
+		RequestedDecision: fmt.Sprintf("Authorize creation of exactly these missing repo-relative paths: %s", strings.Join(paths, ", ")),
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     paths,
+		AffectedFields:    []string{"new_file_authorization"},
+	}, true
+}
+
+func promptRequestsNewFileAuthorizationQuestion(prompt string) bool {
+	lower := strings.ToLower(strings.TrimSpace(prompt))
+	if lower == "" {
+		return false
+	}
+
+	return strings.Contains(lower, "if any required new") &&
+		strings.Contains(lower, "missing") &&
+		(strings.Contains(lower, "ask me") || strings.Contains(lower, "ask the operator") || strings.Contains(lower, "ask product")) &&
+		(strings.Contains(lower, "authorization") || strings.Contains(lower, "authorize") || strings.Contains(lower, "approval"))
 }
 
 func planAuthorityDeltaFromQuestion(question PlannerQuestion, revision int, now time.Time) PlanAuthorityDelta {

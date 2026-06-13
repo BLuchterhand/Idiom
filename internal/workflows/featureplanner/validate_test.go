@@ -1021,6 +1021,68 @@ func TestRunRejectsStandaloneMissingWorkspacePathBeforeDispatch(t *testing.T) {
 	}
 }
 
+func TestRunOpensQuestionForExplicitMissingNewFileAuthorizationPrompt(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	plan.Atoms[0].RequiredEditPaths = []string{
+		"native/src/core/colony_sim_tick.cpp",
+		"native/src/simulation/world/collapse_event.cpp",
+		"native/tests/test_collapse_event.cpp",
+	}
+	plan.Atoms[0].AllowedEditPaths = nil
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_collapse_event.cpp"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_collapse_event.cpp"}
+
+	mkdirAndWriteFile(t, filepath.Join(root, "native/src/core/colony_sim_tick.cpp"), "// tick\n")
+
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+
+	result, err := Run(state, RunOptions{
+		Prompt:                "Implement CollapseEvent. If any required new source or test file is missing, ask me for explicit product-owner authorization with the exact affected paths before dispatching implementation.",
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
+			t.Fatal("standalone workspace validation must block before dispatch")
+		}
+
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningQuestion {
+		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+
+	if len(result.State.Atoms) != 0 {
+		t.Fatalf("invalid standalone plan should not compile atoms: %+v", result.State.Atoms)
+	}
+
+	if len(result.Events) != 2 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" || result.Events[1].Type != "idiom.feature_planner.planner_question_opened" {
+		t.Fatalf("expected rejected-plan then question events, got %+v", result.Events)
+	}
+
+	if len(result.State.RejectedPlanCandidates) != 1 {
+		t.Fatalf("expected rejected plan candidate, got %+v", result.State.RejectedPlanCandidates)
+	}
+
+	if len(result.State.OpenQuestions) != 1 {
+		t.Fatalf("expected one open question, got %+v", result.State.OpenQuestions)
+	}
+	question := result.State.OpenQuestions[0]
+	if question.Status != "open" || question.AuthorityRequired != "operator_approval" || !containsString(question.AffectedFields, "new_file_authorization") {
+		t.Fatalf("unexpected authorization question: %+v", question)
+	}
+	if !containsString(question.AffectedPaths, "native/src/simulation/world/collapse_event.cpp") ||
+		!containsString(question.AffectedPaths, "native/tests/test_collapse_event.cpp") ||
+		containsString(question.AffectedPaths, "native/src/core/colony_sim_tick.cpp") {
+		t.Fatalf("question should request exact missing path authorization only: %+v", question)
+	}
+}
+
 func TestApplyImplementorOutputPreservesRecoveryPacketForMissingPathFailure(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
 
