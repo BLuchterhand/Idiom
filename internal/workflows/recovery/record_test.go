@@ -88,6 +88,45 @@ func TestBuildPlanExecuteFailureRecordClassifiesAnchorRefreshAsRetry(t *testing.
 	}
 }
 
+func TestBuildPlanExecuteFailureRecordClassifiesLiveBoundedAnchorRefreshAsRetry(t *testing.T) {
+	reason := strings.Join([]string{
+		"<<QUESTION>>: Implementation incomplete; required edit path(s) remain unchanged.",
+		"",
+		"Blocker:",
+		"- Bounded submit_plan anchor refresh required: the previous `submit_plan` was rejected before it became a valid plan artifact, and the corrected plan still needs bounded source-body refresh for: native/src/core/colony_sim_tick.cpp.",
+		"Do not call `submit_plan` until the remaining anchor refresh returns.",
+	}, "\n")
+
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:         "session-live-anchor-refresh",
+		ProgressStatePath: ".idiom/plan-execute/sessions/session-live-anchor-refresh.json",
+		Phase:             "planning",
+		Status:            "failed",
+		FailureKind:       "planner_blocked",
+		FailureReason:     reason,
+		RequiredEditPaths: []string{
+			"native/src/core/colony_sim_tick.cpp",
+			"native/src/simulation/world/collapse_event.cpp",
+			"native/src/simulation/world/collapse_event.h",
+			"native/tests/test_collapse_event.cpp",
+		},
+	}, time.Date(2026, 6, 13, 9, 35, 32, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+
+	if record.NextAction != NextActionRetryPlanExecute {
+		t.Fatalf("next action=%q, want %q", record.NextAction, NextActionRetryPlanExecute)
+	}
+	refresh, ok := PlanExecutePlannerBlockedSourceRefreshResult("planner_blocked", reason, record.SourceRun.RequiredEditPaths)
+	if !ok {
+		t.Fatal("expected live bounded anchor refresh text to be retryable")
+	}
+	if refresh.Reason != "anchor_refresh" || refresh.Path != "native/src/core/colony_sim_tick.cpp" {
+		t.Fatalf("unexpected refresh result: %+v", refresh)
+	}
+}
+
 func TestBuildPlanExecuteFailureRecordClassifiesTruncatedAnchorRefreshAsRetry(t *testing.T) {
 	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
 		SessionID:         "session-anchor-refresh-truncated",

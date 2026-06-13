@@ -428,13 +428,14 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 		args = append(args, "-write-allowed-paths-explicit")
 	}
 
+	planExecuteStartedAt := time.Now().UTC()
 	code := req.Deps.RunPlanExecute(args, &planStdout, &planStderr)
 	if req.JSONEvents && stdout != nil {
 		_, _ = io.Copy(stdout, bytes.NewReader(planStdout.Bytes()))
 	}
 
 	completion := featurePlannerPlanExecuteCompletionFields(planStdout.String())
-	completion = overlayFeaturePlannerPlanExecuteTerminalCompletion(req.Config.Workspace.Root, planExecuteSessionID, completion)
+	completion = overlayFeaturePlannerPlanExecuteTerminalCompletion(req.Config.Workspace.Root, planExecuteSessionID, planExecuteStartedAt, completion)
 	if code != 0 {
 		if retryPrompt, ok := featureplanner.PlanExecuteRecoveryRetryPrompt(prompt, completion); ok {
 			if err := os.WriteFile(promptPath, []byte(retryPrompt), 0o600); err != nil {
@@ -443,13 +444,14 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 
 			planStdout.Reset()
 			planStderr.Reset()
+			planExecuteStartedAt = time.Now().UTC()
 			code = req.Deps.RunPlanExecute(args, &planStdout, &planStderr)
 			if req.JSONEvents && stdout != nil {
 				_, _ = io.Copy(stdout, bytes.NewReader(planStdout.Bytes()))
 			}
 
 			completion = featurePlannerPlanExecuteCompletionFields(planStdout.String())
-			completion = overlayFeaturePlannerPlanExecuteTerminalCompletion(req.Config.Workspace.Root, planExecuteSessionID, completion)
+			completion = overlayFeaturePlannerPlanExecuteTerminalCompletion(req.Config.Workspace.Root, planExecuteSessionID, planExecuteStartedAt, completion)
 		}
 	}
 
@@ -539,7 +541,7 @@ func featurePlannerPlanExecuteCompletionFields(output string) map[string]any {
 	return featureplanner.PlanExecuteCompletionFields(output)
 }
 
-func overlayFeaturePlannerPlanExecuteTerminalCompletion(root string, sessionID string, fields map[string]any) map[string]any {
+func overlayFeaturePlannerPlanExecuteTerminalCompletion(root string, sessionID string, invocationStartedAt time.Time, fields map[string]any) map[string]any {
 	if fields == nil {
 		fields = map[string]any{}
 	}
@@ -552,6 +554,9 @@ func overlayFeaturePlannerPlanExecuteTerminalCompletion(root string, sessionID s
 	if err != nil || !found {
 		return fields
 	}
+	if !featurePlannerPlanExecuteTerminalCompletionFresh(root, record, path, invocationStartedAt) {
+		return fields
+	}
 
 	terminalFields := coreplanexecute.PlanExecuteTerminalCompletionEventFields(record, path)
 	for key, value := range terminalFields {
@@ -561,6 +566,31 @@ func overlayFeaturePlannerPlanExecuteTerminalCompletion(root string, sessionID s
 	}
 
 	return fields
+}
+
+func featurePlannerPlanExecuteTerminalCompletionFresh(root string, record coreplanexecute.PlanExecuteTerminalCompletionRecord, path string, invocationStartedAt time.Time) bool {
+	if invocationStartedAt.IsZero() {
+		return true
+	}
+
+	if ts := strings.TrimSpace(record.TS); ts != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, ts)
+		if err == nil {
+			return !parsed.Before(invocationStartedAt)
+		}
+	}
+
+	statPath := path
+	if statPath != "" && !filepath.IsAbs(statPath) {
+		statPath = filepath.Join(root, statPath)
+	}
+
+	info, err := os.Stat(statPath)
+	if err != nil {
+		return false
+	}
+
+	return !info.ModTime().Before(invocationStartedAt)
 }
 
 func featurePlannerEmptyCompletionField(value any) bool {

@@ -185,14 +185,9 @@ func planThenExecuteFallbackUnresolvedLastRejectedRefreshPaths(brief workerrunti
 	if len(refreshPaths) == 0 {
 		return nil
 	}
-	if len(submitPlanWholeFileExistingSourceRewritePaths(rejected)) > 0 {
-		return nil
-	}
-	if planThenExecuteSubmitPlanMissingBodyOrUnsafeAnchor(rejected) &&
-		len(planThenExecuteRejectedSubmitPlanStreak(results)) >= planThenExecuteRejectedSubmitPlanStreakThreshold {
-
-		return nil
-	}
+	wholeFileRewritePaths := submitPlanWholeFileExistingSourceRewritePaths(rejected)
+	allowUnsafeRewriteBlocker := planThenExecuteSubmitPlanMissingBodyOrUnsafeAnchor(rejected) &&
+		len(planThenExecuteRejectedSubmitPlanStreak(results)) >= planThenExecuteRejectedSubmitPlanStreakThreshold
 
 	var unresolved []string
 	for _, rawPath := range planThenExecuteRefreshScopePathsForRejectedPlan(brief, results, refreshPaths) {
@@ -201,6 +196,9 @@ func planThenExecuteFallbackUnresolvedLastRejectedRefreshPaths(brief workerrunti
 			continue
 		}
 		if _, required := refreshPaths[path]; !required {
+			continue
+		}
+		if _, wholeFileRewrite := wholeFileRewritePaths[path]; wholeFileRewrite && allowUnsafeRewriteBlocker {
 			continue
 		}
 		if _, invalid := submitPlanInvalidAnchorPaths(rejected)[path]; invalid {

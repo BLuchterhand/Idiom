@@ -953,7 +953,7 @@ func PlanExecuteSourceRefreshRetryInstruction(refresh PlanExecutePlannerBlockedS
 }
 
 func planExecutePlannerBlockedSourceRefreshReason(text string) string {
-	for _, marker := range []string{"plan-execute anchor refresh is still required", "remaining bounded refresh paths", "bounded read_file or code_navigate source-body request"} {
+	for _, marker := range []string{"plan-execute anchor refresh is still required", "remaining bounded refresh paths", "bounded read_file or code_navigate source-body request", "bounded submit_plan anchor refresh required", "bounded source-body refresh remains required", "corrected plan still needs bounded source-body refresh"} {
 		if strings.Contains(text, marker) {
 			return "anchor_refresh"
 		}

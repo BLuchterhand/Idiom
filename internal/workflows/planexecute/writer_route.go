@@ -12,7 +12,7 @@ import (
 
 func planExecuteWriterRouteDecision(cfg config.Config, opts Options, requiredEditPaths []string) writerroute.Decision {
 	aliases := planExecuteRoleAliases(cfg.Workspace.Root, "")
-	userOverride := opts.UseActiveModel || strings.TrimSpace(opts.Model) != ""
+	userOverride := strings.TrimSpace(opts.Model) != ""
 	if userOverride {
 		aliases = nil
 	}

@@ -1588,14 +1588,6 @@ func submitPlanWholeFileExistingSourceRewritePaths(result workspace.ToolResult) 
 		return out
 	}
 
-	for _, path := range pathparse.MentionedWorkspaceFiles(text) {
-		path = normalizeRunnerPath(path)
-		if path == "" {
-			continue
-		}
-		out[path] = struct{}{}
-	}
-
 	for _, line := range strings.Split(text, "\n") {
 		lineLower := strings.ToLower(line)
 		if idx := strings.Index(lineLower, replaceAllMarker); idx >= 0 {
@@ -2063,7 +2055,7 @@ func invalidAnchorCorrectionEvidenceResult(result workspace.ToolResult, path str
 	if readFileResultCoversRejectedLineRange(result, path, results) {
 		return true
 	}
-	if readFileResultIsFreshBoundedCppSourceWindow(result, path, results) {
+	if readFileResultIsBoundedCppSourceWindow(result, path) {
 		return true
 	}
 
@@ -2111,8 +2103,11 @@ func invalidAnchorCorrectionEvidenceResult(result workspace.ToolResult, path str
 	return false
 }
 
-func readFileResultIsFreshBoundedCppSourceWindow(result workspace.ToolResult, path string, results []workspace.ToolResult) bool {
+func readFileResultIsBoundedCppSourceWindow(result workspace.ToolResult, path string) bool {
 	if strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile || strings.TrimSpace(result.Error) != "" {
+		return false
+	}
+	if strings.TrimSpace(result.Output) == "" {
 		return false
 	}
 
@@ -2131,20 +2126,7 @@ func readFileResultIsFreshBoundedCppSourceWindow(result workspace.ToolResult, pa
 		return false
 	}
 
-	seen := 0
-	for _, candidate := range results {
-		candidatePath, candidateRange, ok := extractReadPathAndRangeFromSummary(candidate.Summary)
-		if strings.TrimSpace(candidate.Tool) != workspace.ToolNameReadFile ||
-			!ok ||
-			normalizeRunnerPath(candidatePath) != normalizeRunnerPath(path) ||
-			candidateRange.start != readRange.start ||
-			candidateRange.end != readRange.end {
-			continue
-		}
-		seen++
-	}
-
-	return seen <= 1
+	return true
 }
 
 func readFileResultCoversRejectedLineRange(result workspace.ToolResult, path string, results []workspace.ToolResult) bool {
@@ -3715,8 +3697,7 @@ func planThenExecuteSubmitCorrectionBlockerAllowed(brief workerruntime.WorkerRun
 	if !ok {
 		return false
 	}
-	if len(planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt)) > 0 &&
-		len(submitPlanWholeFileExistingSourceRewritePaths(rejected)) == 0 {
+	if len(planThenExecuteRejectedPlanRefreshPathsNeedingRefreshBeforeBlocker(brief, results, rejected, rejectedAt)) > 0 {
 		return false
 	}
 
@@ -3726,6 +3707,32 @@ func planThenExecuteSubmitCorrectionBlockerAllowed(brief workerruntime.WorkerRun
 	}
 
 	return len(submitPlanRefreshPathCandidates(rejected)) > 0 || planThenExecuteSubmitPlanMissingBodyOrUnsafeAnchor(rejected)
+}
+
+func planThenExecuteRejectedPlanRefreshPathsNeedingRefreshBeforeBlocker(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, rejected workspace.ToolResult, rejectedAt int) []string {
+	paths := planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt)
+	if len(paths) == 0 {
+		return nil
+	}
+
+	wholeFileRewritePaths := submitPlanWholeFileExistingSourceRewritePaths(rejected)
+	if len(wholeFileRewritePaths) == 0 {
+		return paths
+	}
+
+	var out []string
+	for _, path := range paths {
+		normalized := normalizeRunnerPath(path)
+		if normalized == "" {
+			continue
+		}
+		if _, wholeFileRewrite := wholeFileRewritePaths[normalized]; wholeFileRewrite {
+			continue
+		}
+		out = append(out, normalized)
+	}
+
+	return uniqueSortedRunnerPaths(out)
 }
 
 func planThenExecuteSubmitPlanMissingBodyOrUnsafeAnchor(result workspace.ToolResult) bool {

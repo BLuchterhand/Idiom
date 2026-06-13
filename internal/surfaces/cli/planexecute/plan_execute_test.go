@@ -477,12 +477,18 @@ func TestRunPlanExecuteMainConfigModelBeatsWorkspaceRoleAliasesInWriterRouteDeci
 		t.Fatalf("write backends: %v", err)
 	}
 
-	var stdout, stderr bytes.Buffer
+	var (
+		stdout, stderr bytes.Buffer
+		gotCfg         config.Config
+		gotOpts        cmdruntime.RunOptions
+	)
 	code := RunMain(
 		[]string{"-config", configPath, "-prompt", "plan this change", "-required-edit-path", "pkg.go", "-json"},
 		&stdout,
 		&stderr,
-		func(_ config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
+		func(cfg config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
+			gotCfg = cfg
+			gotOpts = opts
 			return "no plan", nil
 		},
 	)
@@ -503,6 +509,12 @@ func TestRunPlanExecuteMainConfigModelBeatsWorkspaceRoleAliasesInWriterRouteDeci
 	}
 	if event["user_override"] == true {
 		t.Fatalf("config model alone should not be reported as a user override; event=%#v", event)
+	}
+	if gotCfg.LlamaServer.Model != "deepseek-v4-flash" {
+		t.Fatalf("prompt runner cfg model = %q, want deepseek-v4-flash", gotCfg.LlamaServer.Model)
+	}
+	if !gotOpts.UseActiveModel {
+		t.Fatalf("config model should force active model routing so role aliases cannot override execution, got %#v", gotOpts)
 	}
 }
 

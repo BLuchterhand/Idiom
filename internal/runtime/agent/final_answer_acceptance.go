@@ -67,6 +67,10 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 		return acceptance
 	}
 
+	if r != nil && r.planThenExecuteAnchorRefreshFinalAnswerPending(results) {
+		return reject("plan_execute_anchor_refresh_pending", "plan_execute_anchor_refresh_pending")
+	}
+
 	if looksLikeUnexecutedToolRequestAnswer(answer) {
 		return reject("unexecuted_tool_request_final_answer", "unexecuted_tool_request_final_answer")
 	}
@@ -346,6 +350,19 @@ func finalAnswerAcceptanceEventFields(acceptance finalAnswerAcceptance) map[stri
 	}
 
 	return fields
+}
+
+func (r *Runner) planThenExecuteAnchorRefreshFinalAnswerPending(results []workspace.ToolResult) bool {
+	if r == nil || !r.planThenExecutePlannerPhase() {
+		return false
+	}
+
+	state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	return state.Mode == PlanExecutePlanningModeAnchorRefresh && len(state.RefreshPaths) > 0
+}
+
+func planThenExecuteAnchorRefreshFinalAnswerRejection(acceptance finalAnswerAcceptance) bool {
+	return strings.TrimSpace(acceptance.BlockerKind) == "plan_execute_anchor_refresh_pending"
 }
 
 func uniqueSortedStrings(values []string) []string {

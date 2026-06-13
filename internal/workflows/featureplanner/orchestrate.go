@@ -71,6 +71,10 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 		}, nil
 	}
 
+	if event, ok := resumePlanExecuteRetryPending(&state); ok {
+		events = append(events, event)
+	}
+
 	if shouldResumeDispatch(state) {
 		events = append(events, DispatchReadyAtoms(&state, opts.MaxAtoms, runner)...)
 		return RunResult{State: state, Events: events}, nil
@@ -2203,6 +2207,44 @@ func shouldResumeDispatch(state FeatureState) bool {
 	}
 
 	return false
+}
+
+func resumePlanExecuteRetryPending(state *FeatureState) (Event, bool) {
+	if state == nil || strings.TrimSpace(state.Continuation.ResumeAction) != "retry_plan_execute" {
+		return Event{}, false
+	}
+
+	resumeAtomID := strings.TrimSpace(state.Continuation.ResumeAtomID)
+	if resumeAtomID == "" {
+		return Event{}, false
+	}
+
+	for i := range state.Atoms {
+		atom := &state.Atoms[i]
+		if strings.TrimSpace(atom.ID) != resumeAtomID {
+			continue
+		}
+		if atom.State != AtomStateImplementing {
+			return Event{}, false
+		}
+
+		atomFrom := atom.State
+		atom.State = AtomStateDispatchable
+
+		return Event{
+			Type:        "idiom.feature_planner.plan_execute_retry_resumed",
+			SessionID:   state.SessionID,
+			AtomID:      atom.ID,
+			FeatureFrom: state.Status,
+			FeatureTo:   state.Status,
+			AtomFrom:    atomFrom,
+			AtomTo:      AtomStateDispatchable,
+			AtomDeltas:  []AtomDelta{{Op: "update", AtomID: atom.ID, AtomFrom: atomFrom, AtomTo: AtomStateDispatchable}},
+			Message:     state.Continuation.ResumeReason,
+		}, true
+	}
+
+	return Event{}, false
 }
 
 func foldActiveRun(state *FeatureState, atomID string, runID string) {

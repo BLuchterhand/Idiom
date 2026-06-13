@@ -48,6 +48,8 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 	if strings.TrimSpace(opts.Model) != "" {
 		cfg.LlamaServer.Model = opts.Model
 		opts.UseActiveModel = true
+	} else if strings.TrimSpace(cfg.LlamaServer.Model) != "" {
+		opts.UseActiveModel = true
 	}
 
 	result := planexecute.Run(cfg, opts, adaptPromptRunner(promptRun), rec, stdout, stderr)

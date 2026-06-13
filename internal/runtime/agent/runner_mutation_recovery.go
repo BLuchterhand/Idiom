@@ -684,6 +684,10 @@ func (r *Runner) retryableFinalAnswerAcceptanceRejection(acceptance finalAnswerA
 		return false
 	}
 
+	if r.planThenExecutePlannerPhase() && planThenExecuteAnchorRefreshFinalAnswerRejection(acceptance) {
+		return r.planThenExecuteAnchorRefreshFinalAnswerPending(results)
+	}
+
 	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
 	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) ||
 		len(brief.RequiredEditPaths) > 0 ||

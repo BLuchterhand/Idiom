@@ -3065,6 +3065,36 @@ func TestApplyImplementorOutputPreservesPlanExecuteRetryNextAction(t *testing.T)
 	}
 }
 
+func TestRunResumesPlanExecuteRetryPendingAtom(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+
+	ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"failed","phase":"planning","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.","next_valid_action":"retry_plan_execute","progress_path":".idiom/plan-execute/sessions/pe.json"}`)
+
+	var taskFamilies []string
+	var prompts []string
+	result, err := Run(state, RunOptions{Prompt: "resume", MaxAtoms: 1}, func(prompt string, taskFamily string) (string, error) {
+		taskFamilies = append(taskFamilies, taskFamily)
+		prompts = append(prompts, prompt)
+
+		return `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"failed","phase":"planning","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: still refreshing","next_valid_action":"retry_plan_execute","progress_path":".idiom/plan-execute/sessions/pe-retry.json"}`, nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if !slices.Equal(taskFamilies, []string{string(autonomy.TaskFamilyFeaturePlannerImplementor)}) {
+		t.Fatalf("task families = %#v, want only implementor retry dispatch", taskFamilies)
+	}
+	if len(prompts) != 1 || !strings.Contains(prompts[0], atom.ID) {
+		t.Fatalf("retry dispatch should rebuild implementor prompt for atom %s, got %#v", atom.ID, prompts)
+	}
+	if len(result.Events) < 2 || result.Events[0].Type != "idiom.feature_planner.plan_execute_retry_resumed" {
+		t.Fatalf("events should start with retry resume then dispatch, got %+v", result.Events)
+	}
+	if result.State.Continuation.ResumeAction != "retry_plan_execute" || result.State.Continuation.ResumeAtomID != atom.ID {
+		t.Fatalf("retry failure should remain retry-pending after resumed attempt, continuation=%+v", result.State.Continuation)
+	}
+}
+
 func TestApplyImplementorOutputPrefersNestedReviewRepairFailureOverPlanningFallback(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
 

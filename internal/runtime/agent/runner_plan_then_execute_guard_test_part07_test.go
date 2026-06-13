@@ -475,7 +475,7 @@ func TestPlanExecuteRejectedOldTextKeepsCppRawRangeInAnchorRefresh(t *testing.T)
 	results := []workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 1-180 (total lines: 1593)"},
 		rejected,
-		{Tool: "read_file", Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 181-360 (total lines: 1593)"},
+		{Tool: "read_file", Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 181-360 (total lines: 1593)", Output: "181:void execute_production() {}\n360:}\n"},
 	}
 
 	if planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
@@ -518,6 +518,7 @@ func TestPlanExecuteInvalidAnchorFallbackKeepsWeakRefreshPath(t *testing.T) {
 	results = append(results, workspace.ToolResult{
 		Tool:    "read_file",
 		Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 181-360 (total lines: 1593)",
+		Output:  "181:void execute_production() {}\n360:}\n",
 	})
 	if req, _, ok := runner.deterministicPlanExecuteGroundingRecoveryRequest("<<QUESTION>>: blocked", results); ok {
 		t.Fatalf("bounded non-header C++ refresh should close the deterministic refresh path, got %#v", req)
@@ -1064,6 +1065,118 @@ func TestPlanExecuteRepeatedUnsafeSubmitCorrectionAllowsPathBlocker(t *testing.T
 	exact := "<<QUESTION>>: native/src/simulation/world/collapse_event.h is blocked because no safe edit body or missing anchor evidence is available for a bounded header update."
 	if got, rejected := runner.requiredPathCompletionRecoveryRejection(exact, results); rejected {
 		t.Fatalf("exact submit-correction body/anchor blocker should be accepted, got %+v", got)
+	}
+}
+
+func TestPlanExecuteMixedUnsafeRewriteDoesNotBypassOtherInvalidAnchorRefresh(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{
+			"native/src/core/colony_sim_tick.cpp",
+			"native/src/simulation/world/collapse_event.h",
+		},
+	}
+	mixedRejection := "invalid edit anchor(s): `native/src/core/colony_sim_tick.cpp: old_text not found in current source`. " +
+		"edits[1]: whole-file replace_all edit would rewrite existing source file /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker"
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)", Output: "1:#include <x>\n120:void a();\n"},
+		{Tool: "read_file", Summary: "Read f2 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
+		{Tool: "submit_plan", Summary: "submit_plan rejected", Error: mixedRejection},
+		{Tool: "submit_plan", Summary: "submit_plan rejected", Error: mixedRejection},
+		{Tool: "submit_plan", Summary: "submit_plan rejected", Error: mixedRejection},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeAnchorRefresh {
+		t.Fatalf("mode = %q, want anchor_refresh for non-whole-file invalid anchor; state=%+v", state.Mode, state)
+	}
+	if !slices.Contains(state.RefreshPaths, "native/src/core/colony_sim_tick.cpp") {
+		t.Fatalf("refresh paths = %#v, want unresolved core source path present", state.RefreshPaths)
+	}
+	if state.SubmitCorrectionBlockerAllowed {
+		t.Fatalf("mixed rejection must not allow terminal blocker while another path still needs refresh: %+v", state)
+	}
+	if answer, ok := deterministicNoToolsAnswer("main", brief, results); ok {
+		t.Fatalf("unresolved mixed invalid anchor must not synthesize terminal fallback:\n%s", answer)
+	}
+}
+
+func TestPlanExecuteWrongPathRefreshKeepsAnchorRefreshNonTerminal(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{
+			"native/src/core/colony_sim_tick.cpp",
+			"native/src/simulation/world/collapse_event.cpp",
+			"native/src/simulation/world/collapse_event.h",
+			"native/tests/test_collapse_event.cpp",
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f4 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)", Output: "1:#include <x>\n120:void a();\n"},
+		{Tool: "read_file", Summary: "Required new-file path does not exist yet", Error: "path \"native/src/simulation/world/collapse_event.cpp\" is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create."},
+		{Tool: "read_file", Summary: "Read f3 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
+		{Tool: "read_file", Summary: "Required new-file path does not exist yet", Error: "path \"native/tests/test_collapse_event.cpp\" is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create."},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "submit_plan must use edits[] for changed required paths and top-level source_satisfied_paths for already-final required paths, no edits outside required_edit_paths, and coverage for every required_edit_snippets final-state snippet; invalid edit anchor(s): `native/src/core/colony_sim_tick.cpp: old_text not found in current source`, `native/src/simulation/world/collapse_event.h: old_text not found in current source`.",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Bounded submit_plan anchor refresh required",
+			Error:   "the previous `submit_plan` was rejected before it became a valid plan artifact, and the corrected plan still needs bounded source-body refresh for: native/src/core/colony_sim_tick.cpp. Do not call `submit_plan` until the remaining anchor refresh returns.",
+		},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeAnchorRefresh {
+		t.Fatalf("wrong-path refresh rejection must keep anchor-refresh mode; state=%+v", state)
+	}
+	if !slices.Contains(state.RefreshPaths, "native/src/core/colony_sim_tick.cpp") {
+		t.Fatalf("refresh paths = %#v, want unresolved core path", state.RefreshPaths)
+	}
+	if answer, ok := deterministicNoToolsAnswer("main", brief, results); ok {
+		t.Fatalf("pending wrong-path refresh must not synthesize terminal fallback:\n%s", answer)
+	}
+
+	runner := &Runner{RuntimeBrief: brief}
+	answer := "<<QUESTION>>: Implementation incomplete; required edit path(s) remain unchanged."
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if acceptance.BlockerKind != "plan_execute_anchor_refresh_pending" {
+		t.Fatalf("final answer blocker = %q/%q, want anchor-refresh pending", acceptance.BlockerKind, acceptance.Reason)
+	}
+	if !runner.retryableFinalAnswerAcceptanceRejection(acceptance, results, 0, []string{workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate}) {
+		t.Fatalf("anchor-refresh pending final answer rejection should be retryable")
+	}
+}
+
+func TestPlanExecuteRepeatedBoundedCppReadAfterRejectionCountsAsFresh(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim_tick.cpp lines 1-180 (total lines: 2616)", Output: "1:#include <x>\n180:void a();\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "invalid edit anchor(s): `native/src/core/colony_sim_tick.cpp: old_text not found in current source`.",
+		},
+		{Tool: "read_file", Summary: "Read f2 native/src/core/colony_sim_tick.cpp lines 1-180 (total lines: 2616)", Output: "1:#include <x>\n180:void a();\n"},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode == PlanExecutePlanningModeAnchorRefresh {
+		t.Fatalf("post-rejection bounded C++ re-read should count as fresh source evidence; state=%+v", state)
+	}
+	if len(state.RefreshPaths) != 0 {
+		t.Fatalf("refresh paths = %#v, want none after post-rejection re-read", state.RefreshPaths)
 	}
 }
 

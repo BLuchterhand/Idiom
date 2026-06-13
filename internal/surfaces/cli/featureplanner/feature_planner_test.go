@@ -880,6 +880,67 @@ func TestDefaultFeaturePlannerPlanExecuteRetriesFromDurableTerminalCompletion(t 
 	}
 }
 
+func TestDefaultFeaturePlannerPlanExecuteIgnoresStaleDurableTerminalCompletion(t *testing.T) {
+	root := t.TempDir()
+	sessionID := "atom-1-run-1"
+	stalePath, err := coreplanexecute.SavePlanExecuteTerminalCompletionRecord(root, coreplanexecute.PlanExecuteTerminalCompletionRecord{
+		SessionID:         sessionID,
+		Status:            "failed",
+		Phase:             coreplanexecute.ProgressPhasePlanning,
+		FailureKind:       coreplanexecute.RunFailurePlannerBlocked,
+		FailureReason:     "<<QUESTION>>: stale source refresh needed",
+		NextAction:        "retry_plan_execute",
+		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp"},
+	})
+	if err != nil {
+		t.Fatalf("save stale terminal completion: %v", err)
+	}
+	staleTime := time.Now().Add(-1 * time.Hour)
+	if !filepath.IsAbs(stalePath) {
+		stalePath = filepath.Join(root, stalePath)
+	}
+	if err := os.Chtimes(stalePath, staleTime, staleTime); err != nil {
+		t.Fatalf("touch stale terminal completion: %v", err)
+	}
+
+	var calls int
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+
+	req := featurePlannerRequest{
+		ConfigPath: writeMainConfigRoot(t, root),
+		Config:     cfg,
+		SessionID:  "feature-session",
+		Deps: Dependencies{
+			RunPlanExecute: func(_ []string, _ io.Writer, stderr io.Writer) int {
+				calls++
+				_, _ = stderr.Write([]byte("planner blocked without terminal sidecar"))
+				return 1
+			},
+		},
+	}
+
+	raw, err := defaultFeaturePlannerPlanExecute(context.Background(), req, "Implement atom.\nPlan-execute session id: "+sessionID, io.Discard)
+	if err != nil {
+		t.Fatalf("defaultFeaturePlannerPlanExecute returned error: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("RunPlanExecute calls = %d, want no retry from stale terminal sidecar", calls)
+	}
+
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		t.Fatalf("decode completion envelope: %v", err)
+	}
+	if got := fmt.Sprint(envelope["next_valid_action"]); got == "retry_plan_execute" {
+		t.Fatalf("stale durable terminal sidecar should not contribute retry action: %+v", envelope)
+	}
+	if got := fmt.Sprint(envelope["status"]); got != "failed" {
+		t.Fatalf("status = %q, want failed from current child result; envelope=%+v", got, envelope)
+	}
+}
+
 func TestDefaultFeaturePlannerPlanExecuteEmitsBlockedTelemetryForFailure(t *testing.T) {
 	req := featurePlannerRequest{
 		ConfigPath: "config.json",
