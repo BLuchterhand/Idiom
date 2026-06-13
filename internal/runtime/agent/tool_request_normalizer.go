@@ -185,25 +185,6 @@ func tokenizerWriteRequestUnsafe(transport string, tool string) bool {
 	return !(transport == "key_value" && tool == "edit_file")
 }
 
-func normalizeNestedArgumentsToolRequestSyntax(text string) toolRequestSyntaxNormalization {
-	req, raw, ok := repairNestedArgumentsToolRequest(text)
-	if !ok {
-		return toolRequestSyntaxNormalization{}
-	}
-
-	result := toolRequestSyntaxNormalization{
-		Request:        req,
-		Raw:            raw,
-		OK:             true,
-		EventOutcome:   toolRequestNormalizerOutcomeNormalized,
-		EventTransport: toolRequestNormalizerTransportNestedArguments,
-		Repaired:       true,
-	}
-	normalizeParsedToolRequestSyntax(&result)
-
-	return result
-}
-
 func repairToolRequestSyntax(result toolRequestSyntaxNormalization) toolRequestSyntaxNormalization {
 	if repairedReq, repairedRaw, repaired := repairNestedArgumentsToolRequest(result.Raw); repaired {
 		result.Request = repairedReq
@@ -355,32 +336,6 @@ func repairStringifiedSubmitPlanEditsToolRequest(raw string, activeToolCall *lla
 	return req, string(repaired), true
 }
 
-func normalizeIdiomCLIToolRequestSyntax(text string) toolRequestSyntaxNormalization {
-	req, raw, ok, unsafe := parseIdiomCLIToolRequestSyntax(text)
-	if !ok {
-		if unsafe {
-			return toolRequestSyntaxNormalization{
-				EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
-				EventTransport: toolRequestNormalizerTransportIdiomCLI,
-			}
-		}
-
-		return toolRequestSyntaxNormalization{}
-	}
-
-	result := toolRequestSyntaxNormalization{
-		Request:        req,
-		Raw:            raw,
-		OK:             true,
-		EventOutcome:   toolRequestNormalizerOutcomeNormalized,
-		EventTransport: toolRequestNormalizerTransportIdiomCLI,
-		Repaired:       true,
-	}
-	normalizeParsedToolRequestSyntax(&result)
-
-	return result
-}
-
 func parseIdiomCLIToolRequestSyntax(text string) (workspace.ToolRequest, string, bool, bool) {
 	trimmed := strings.TrimSpace(text)
 	lower := strings.ToLower(trimmed)
@@ -422,46 +377,6 @@ func parseIdiomCLIToolRequestSyntax(text string) (workspace.ToolRequest, string,
 	return req, object, true, false
 }
 
-func normalizeFencedJSONToolRequestSyntax(text string) toolRequestSyntaxNormalization {
-	payload, ok, unsafe := exactFencedJSONPayload(text)
-	if !ok {
-		if unsafe {
-			return toolRequestSyntaxNormalization{
-				EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
-				EventTransport: toolRequestNormalizerTransportFencedJSON,
-			}
-		}
-
-		return toolRequestSyntaxNormalization{}
-	}
-
-	req, err := workspace.DecodeToolRequestJSON([]byte(payload))
-
-	result := toolRequestSyntaxNormalization{
-		Raw:            payload,
-		ParseErr:       err,
-		EventTransport: toolRequestNormalizerTransportFencedJSON,
-	}
-	if err != nil {
-		result.EventOutcome = toolRequestNormalizerOutcomeUnsupportedShape
-		result.ParserFailureClass = toolRequestParserFailureClass(result.Raw, err)
-
-		return result
-	}
-
-	if strings.TrimSpace(req.Tool) == "" {
-		result.EventOutcome = toolRequestNormalizerOutcomeUnsafeToInfer
-		return result
-	}
-
-	result.Request = req
-	result.OK = true
-	result.EventOutcome = toolRequestNormalizerOutcomeNormalized
-	normalizeParsedToolRequestSyntax(&result)
-
-	return result
-}
-
 func exactFencedJSONPayload(text string) (payload string, ok bool, unsafe bool) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -497,72 +412,6 @@ func exactFencedJSONPayload(text string) (payload string, ok bool, unsafe bool) 
 	}
 
 	return payload, true, false
-}
-
-func normalizeKeyValueToolRequestSyntax(text string) toolRequestSyntaxNormalization {
-	req, ok, unsafe := parseKeyValueToolRequestSyntax(text)
-	if !ok {
-		if unsafe {
-			return toolRequestSyntaxNormalization{
-				EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
-				EventTransport: toolRequestNormalizerTransportKeyValue,
-			}
-		}
-
-		return toolRequestSyntaxNormalization{}
-	}
-
-	if workspace.IsWorkspaceWriteTool(req.Tool) && strings.TrimSpace(req.Tool) != "edit_file" {
-		return toolRequestSyntaxNormalization{
-			EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
-			EventTransport: toolRequestNormalizerTransportKeyValue,
-		}
-	}
-
-	raw := marshalToolRequestRaw(req)
-	result := toolRequestSyntaxNormalization{
-		Request:        req,
-		Raw:            raw,
-		OK:             true,
-		EventOutcome:   toolRequestNormalizerOutcomeNormalized,
-		EventTransport: toolRequestNormalizerTransportKeyValue,
-	}
-	normalizeParsedToolRequestSyntax(&result)
-
-	return result
-}
-
-func normalizeKeyValueArgsToolRequestSyntax(text string) toolRequestSyntaxNormalization {
-	req, raw, ok, unsafe := parseKeyValueArgsToolRequestSyntax(text)
-	if !ok {
-		if unsafe {
-			return toolRequestSyntaxNormalization{
-				EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
-				EventTransport: toolRequestNormalizerTransportKeyValueArgs,
-			}
-		}
-
-		return toolRequestSyntaxNormalization{}
-	}
-
-	if workspace.IsWorkspaceWriteTool(req.Tool) && strings.TrimSpace(req.Tool) != "edit_file" {
-		return toolRequestSyntaxNormalization{
-			EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
-			EventTransport: toolRequestNormalizerTransportKeyValueArgs,
-		}
-	}
-
-	result := toolRequestSyntaxNormalization{
-		Request:        req,
-		Raw:            raw,
-		OK:             true,
-		EventOutcome:   toolRequestNormalizerOutcomeNormalized,
-		EventTransport: toolRequestNormalizerTransportKeyValueArgs,
-		Repaired:       true,
-	}
-	normalizeParsedToolRequestSyntax(&result)
-
-	return result
 }
 
 func parseKeyValueArgsToolRequestSyntax(text string) (workspace.ToolRequest, string, bool, bool) {
@@ -699,39 +548,6 @@ func normalizeKeyValueArgsObject(tool string, object string) (string, bool) {
 	}
 
 	return string(payload), true
-}
-
-func normalizeFunctionCallToolRequestSyntax(text string) toolRequestSyntaxNormalization {
-	req, ok, unsafe := parseFunctionCallToolRequestSyntax(text)
-	if !ok {
-		if unsafe {
-			return toolRequestSyntaxNormalization{
-				EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
-				EventTransport: toolRequestNormalizerTransportFunctionCall,
-			}
-		}
-
-		return toolRequestSyntaxNormalization{}
-	}
-
-	if workspace.IsWorkspaceWriteTool(req.Tool) {
-		return toolRequestSyntaxNormalization{
-			EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
-			EventTransport: toolRequestNormalizerTransportFunctionCall,
-		}
-	}
-
-	raw := marshalToolRequestRaw(req)
-	result := toolRequestSyntaxNormalization{
-		Request:        req,
-		Raw:            raw,
-		OK:             true,
-		EventOutcome:   toolRequestNormalizerOutcomeNormalized,
-		EventTransport: toolRequestNormalizerTransportFunctionCall,
-	}
-	normalizeParsedToolRequestSyntax(&result)
-
-	return result
 }
 
 func normalizeParsedToolRequestSyntax(result *toolRequestSyntaxNormalization) {
