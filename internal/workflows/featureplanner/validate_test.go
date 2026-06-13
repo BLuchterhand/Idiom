@@ -1303,6 +1303,163 @@ func TestValidateStandaloneWorkspaceAcceptsRepoBackedSConsVerificationCommand(t 
 	}
 }
 
+func TestValidateStandaloneWorkspaceAcceptsRepoBackedSConsAndLocalTestBinary(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/bin/colony_tests"), "#!/bin/sh\n")
+	if err := os.Chmod(filepath.Join(root, "native/tests/bin/colony_tests"), 0755); err != nil {
+		t.Fatalf("chmod fixture binary: %v", err)
+	}
+	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void tick_normal() {}\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
+
+	plan.Atoms[0].RequiredEditPaths = []string{
+		"native/src/simulation/machines/machine.cpp",
+		"native/tests/test_fluid_brewery_cascade.cpp",
+	}
+	plan.Atoms[0].TestFirst.Commands = []string{"cd native/tests && scons -j10 && bin/colony_tests -sf=test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+
+	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root}); err != nil {
+		t.Fatalf("repo-backed scons plus local test binary command should pass: %v", err)
+	}
+}
+
+func TestValidateStandaloneWorkspaceRejectsMissingLocalTestBinary(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void tick_normal() {}\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
+
+	plan.Atoms[0].RequiredEditPaths = []string{
+		"native/src/simulation/machines/machine.cpp",
+		"native/tests/test_fluid_brewery_cascade.cpp",
+	}
+	plan.Atoms[0].TestFirst.Commands = []string{"cd native/tests && scons -j10 && bin/colony_tests -sf=test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
+	if err == nil || !strings.Contains(err.Error(), "unsupported command family") {
+		t.Fatalf("expected missing local test binary rejection, got %v", err)
+	}
+}
+
+func TestValidateStandaloneWorkspaceRejectsNonExecutableLocalCommandPath(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/bin/colony_tests"), "#!/bin/sh\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void tick_normal() {}\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
+
+	plan.Atoms[0].RequiredEditPaths = []string{
+		"native/src/simulation/machines/machine.cpp",
+		"native/tests/test_fluid_brewery_cascade.cpp",
+	}
+	plan.Atoms[0].TestFirst.Commands = []string{"cd native/tests && scons -j10 && bin/colony_tests -sf=test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
+	if err == nil || !strings.Contains(err.Error(), "unsupported command family") {
+		t.Fatalf("expected non-executable local command rejection, got %v", err)
+	}
+}
+
+func TestValidateStandaloneWorkspaceAcceptsExecutableDotSlashLocalCommandPath(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/bin/colony_tests"), "#!/bin/sh\n")
+	if err := os.Chmod(filepath.Join(root, "native/tests/bin/colony_tests"), 0755); err != nil {
+		t.Fatalf("chmod fixture binary: %v", err)
+	}
+	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void tick_normal() {}\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
+
+	plan.Atoms[0].RequiredEditPaths = []string{
+		"native/src/simulation/machines/machine.cpp",
+		"native/tests/test_fluid_brewery_cascade.cpp",
+	}
+	plan.Atoms[0].TestFirst.Commands = []string{"cd native/tests && scons -j10 && ./bin/colony_tests -sf=test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+
+	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root}); err != nil {
+		t.Fatalf("executable ./ local command should pass: %v", err)
+	}
+}
+
+func TestValidateStandaloneWorkspaceRejectsNonExecutableDotSlashLocalCommandPath(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/bin/colony_tests"), "#!/bin/sh\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/src/simulation/machines/machine.cpp"), "void tick_normal() {}\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "native/tests/test_fluid_brewery_cascade.cpp"), "TEST_CASE(\"cascade\") { CHECK(true); }\n")
+
+	plan.Atoms[0].RequiredEditPaths = []string{
+		"native/src/simulation/machines/machine.cpp",
+		"native/tests/test_fluid_brewery_cascade.cpp",
+	}
+	plan.Atoms[0].TestFirst.Commands = []string{"cd native/tests && scons -j10 && ./bin/colony_tests -sf=test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_fluid_brewery_cascade.cpp"}
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
+	if err == nil || !strings.Contains(err.Error(), "missing or non-executable local command") {
+		t.Fatalf("expected non-executable ./ local command rejection, got %v", err)
+	}
+}
+
+func TestValidateStandaloneWorkspaceRejectsInvalidCommandDirectory(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	mkdirAndWriteFile(t, filepath.Join(root, "SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels_test.go"), "package labels\n\nimport \"testing\"\n\nfunc TestLabels(t *testing.T) { t.Fatal(\"red\") }\n")
+
+	plan.Atoms[0].TestFirst.Commands = []string{"cd ../outside && scons -j10"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
+	if err == nil || !strings.Contains(err.Error(), "invalid workspace directory") {
+		t.Fatalf("expected invalid cd rejection, got %v", err)
+	}
+}
+
+func TestValidateStandaloneWorkspaceRejectsAbsoluteLocalCommandPath(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	mkdirAndWriteFile(t, filepath.Join(root, "SConstruct"), "# scons project\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels_test.go"), "package labels\n\nimport \"testing\"\n\nfunc TestLabels(t *testing.T) { t.Fatal(\"red\") }\n")
+
+	plan.Atoms[0].TestFirst.Commands = []string{"/tmp/colony_tests -sf=test_fluid_brewery_cascade.cpp"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = append([]string(nil), plan.Atoms[0].TestFirst.Commands...)
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{WorkspaceRoot: root})
+	if err == nil || !strings.Contains(err.Error(), "unsupported command family") {
+		t.Fatalf("expected absolute command path rejection, got %v", err)
+	}
+}
+
 func TestValidateStandaloneWorkspaceRejectsSkippedCommentOnlyRedConfirmedTest(t *testing.T) {
 	root := t.TempDir()
 	plan := validPlan()
@@ -3606,6 +3763,10 @@ func TestRunRejectsPlainAnswerForNonOperatorQuestion(t *testing.T) {
 
 	state.Status = FeatureStatePlanningQuestion
 	state.PlanningLoop.State = FeatureStatePlanningQuestion
+	state.Blockers = []string{
+		`planner question "q-source" requires typed accepted_source authority answer`,
+		"unrelated blocker remains",
+	}
 	state.OpenQuestions = []PlannerQuestion{{
 		ID:                "q-source",
 		QuestionKind:      "missing_spec",
@@ -3673,8 +3834,46 @@ func TestRunAcceptsTypedAnswerForRequiredAuthority(t *testing.T) {
 		t.Fatalf("typed authority was not recorded: %+v", result.State.OpenQuestions[0])
 	}
 
+	if containsString(result.State.Blockers, `planner question "q-source" requires typed accepted_source authority answer`) {
+		t.Fatalf("accepted typed answer should clear stale question blocker: %+v", result.State.Blockers)
+	}
+
 	if result.State.Status == FeatureStatePlanningQuestion {
 		t.Fatalf("typed answer should allow planning to continue")
+	}
+}
+
+func TestClearAnsweredPlannerQuestionBlockersPreservesUnrelatedBlockers(t *testing.T) {
+	state := FeatureState{
+		Blockers: []string{
+			`planner question "q-source" requires typed accepted_source authority answer`,
+			`planner question "q-other" requires typed accepted_source authority answer`,
+			"unrelated blocker remains",
+		},
+		Atoms: []FeatureAtomState{{
+			Blockers: []string{
+				`planner question "q-source" requires typed accepted_source authority answer`,
+				"atom blocker remains",
+			},
+		}},
+	}
+
+	clearAnsweredPlannerQuestionBlockers(&state, "q-source")
+
+	if containsString(state.Blockers, `planner question "q-source" requires typed accepted_source authority answer`) ||
+		containsString(state.Atoms[0].Blockers, `planner question "q-source" requires typed accepted_source authority answer`) {
+		t.Fatalf("answered question blocker was not cleared: state=%+v atom=%+v", state.Blockers, state.Atoms[0].Blockers)
+	}
+	for _, want := range []string{
+		`planner question "q-other" requires typed accepted_source authority answer`,
+		"unrelated blocker remains",
+	} {
+		if !containsString(state.Blockers, want) {
+			t.Fatalf("unrelated state blocker %q should remain: %+v", want, state.Blockers)
+		}
+	}
+	if !containsString(state.Atoms[0].Blockers, "atom blocker remains") {
+		t.Fatalf("unrelated atom blocker should remain: %+v", state.Atoms[0].Blockers)
 	}
 }
 

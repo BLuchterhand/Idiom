@@ -1961,6 +1961,7 @@ func answerOpenQuestion(state *FeatureState, answer string) []Event {
 			}
 
 			upsertPlanAuthorityDelta(state, delta)
+			clearAnsweredPlannerQuestionBlockers(state, delta.QuestionID)
 			clearAnsweredNewFileAuthorizationBlockers(state, delta)
 
 			state.OpenQuestions[i].Status = "answered"
@@ -2198,6 +2199,36 @@ func upsertPlanAuthorityDelta(state *FeatureState, delta PlanAuthorityDelta) {
 	}
 
 	state.AuthorityDeltas = append(state.AuthorityDeltas, delta)
+}
+
+func clearAnsweredPlannerQuestionBlockers(state *FeatureState, questionID string) {
+	if state == nil || strings.TrimSpace(questionID) == "" {
+		return
+	}
+
+	state.Blockers = filterAnsweredPlannerQuestionBlockers(state.Blockers, questionID)
+	for i := range state.Atoms {
+		state.Atoms[i].Blockers = filterAnsweredPlannerQuestionBlockers(state.Atoms[i].Blockers, questionID)
+	}
+}
+
+func filterAnsweredPlannerQuestionBlockers(blockers []string, questionID string) []string {
+	if len(blockers) == 0 {
+		return blockers
+	}
+
+	out := blockers[:0]
+	needle := `planner question "` + questionID + `"`
+	for _, blocker := range blockers {
+		lower := strings.ToLower(blocker)
+		if strings.Contains(blocker, needle) &&
+			strings.Contains(lower, "requires") &&
+			strings.Contains(lower, "answer") {
+			continue
+		}
+		out = append(out, blocker)
+	}
+	return out
 }
 
 func clearAnsweredNewFileAuthorizationBlockers(state *FeatureState, delta PlanAuthorityDelta) {

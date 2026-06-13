@@ -815,7 +815,14 @@ func validateWorkspaceCommand(root string, command string) error {
 	currentDir := ""
 	for _, segment := range commandSegments(command) {
 		if nextDir, ok := commandSegmentCD(segment); ok {
-			currentDir = plancontract.NormalizeScopePath(filepath.Join(currentDir, nextDir))
+			if nextDir == "" {
+				continue
+			}
+			normalizedDir := plancontract.NormalizeScopePath(filepath.Join(currentDir, nextDir))
+			if normalizedDir == "" {
+				return fmt.Errorf("test_first command %q uses invalid workspace directory %q; use ask_planner_question for the verified project command", command, nextDir)
+			}
+			currentDir = normalizedDir
 			continue
 		}
 
@@ -854,12 +861,16 @@ func validateWorkspaceCommand(root string, command string) error {
 			if script := commandPythonScript(segment); script != "" && !pathExists(repoRelativePath(root, filepath.Join(currentDir, script))) {
 				return fmt.Errorf("test_first command %q references missing script %q; use ask_planner_question for the verified project command", command, script)
 			}
-		case "sh", "bash", "./":
+		case "sh", "bash":
 			if script := commandScriptPath(segment); script != "" && !pathExists(repoRelativePath(root, filepath.Join(currentDir, script))) {
 				return fmt.Errorf("test_first command %q references missing script %q; use ask_planner_question for the verified project command", command, script)
 			}
+		case "./":
+			if !workspaceExecutableCommandPathExists(root, currentDir, segment) {
+				return fmt.Errorf("test_first command %q references missing or non-executable local command %q; use ask_planner_question for the verified project command", command, strings.Fields(segment)[0])
+			}
 		default:
-			if first != "" {
+			if first != "" && !workspaceExecutableCommandPathExists(root, currentDir, segment) {
 				return fmt.Errorf("test_first command %q uses unsupported command family %q; use ask_planner_question for the verified project command", command, first)
 			}
 		}
@@ -920,6 +931,26 @@ func commandFirstToken(command string) string {
 		return "./"
 	}
 	return strings.ToLower(token)
+}
+
+func workspaceExecutableCommandPathExists(root string, dir string, command string) bool {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return false
+	}
+
+	token := strings.Trim(fields[0], "'\"")
+	if token == "" || filepath.IsAbs(token) || !strings.Contains(token, "/") {
+		return false
+	}
+
+	normalized := plancontract.NormalizeScopePath(filepath.Join(dir, token))
+	if normalized == "" || strings.HasPrefix(normalized, "../") || normalized == ".." {
+		return false
+	}
+
+	info, err := os.Stat(filepath.Join(root, normalized))
+	return err == nil && info.Mode().IsRegular() && info.Mode()&0111 != 0
 }
 
 func commandPythonScript(command string) string {
