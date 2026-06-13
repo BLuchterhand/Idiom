@@ -800,6 +800,34 @@ func TestFeaturePlannerDoesNotTreatFailsRedAsHelperCall(t *testing.T) {
 	}
 }
 
+func TestFeaturePlannerDoesNotTreatParentheticalExamplesAsHelperCalls(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args string
+	}{
+		{name: "water", args: "e.g., recipe.requiresWater()"},
+		{name: "job", args: "i.e., return true without scheduling haul"},
+		{name: "ID", args: "e.g., from machine component"},
+	} {
+		if plannerCallNeedsSignatureEvidence(tc.name, tc.args) {
+			t.Fatalf("%s(%s) prose must not require source signature evidence", tc.name, tc.args)
+		}
+	}
+
+	if !plannerCallNeedsSignatureEvidence("find_connected_cistern_with_volume", "network_id, volume_required") {
+		t.Fatal("real helper call with concrete args must still require source signature evidence")
+	}
+}
+
+func TestValidatePlanAllowsParentheticalExamplesInAtomPrompt(t *testing.T) {
+	plan := validPlan()
+	plan.Atoms[0].Prompt = "When recipe needs water(e.g., recipe.requiresWater()), skip the haul job(i.e., return true without scheduling haul) using the machine ID(e.g., from machine component)."
+
+	if err := ValidatePlan(plan); err != nil {
+		t.Fatalf("parenthetical examples must not be treated as helper calls: %v", err)
+	}
+}
+
 func TestBuildPlannerPromptRendersSourceFactAnchors(t *testing.T) {
 	brief := validProductWorkflowBrief()
 	brief.SourceFacts = []SourceFactBrief{{

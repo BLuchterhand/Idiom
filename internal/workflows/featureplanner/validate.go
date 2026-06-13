@@ -973,6 +973,9 @@ func plannerCallNeedsSignatureEvidence(name string, args string) bool {
 		}
 	}
 	lowerArgs := strings.ToLower(args)
+	if plannerCallLooksLikeParentheticalProse(lowerArgs) {
+		return false
+	}
 	if strings.Contains(lowerArgs, "...") || strings.Contains(lowerArgs, "placeholder") || strings.Contains(lowerArgs, "existing") {
 		return false
 	}
@@ -998,6 +1001,12 @@ func plannerCallLooksLikeTDDResultProse(lowerName string, args string) bool {
 	default:
 		return false
 	}
+}
+
+func plannerCallLooksLikeParentheticalProse(lowerArgs string) bool {
+	lowerArgs = strings.TrimSpace(lowerArgs)
+	return strings.HasPrefix(lowerArgs, "e.g.") ||
+		strings.HasPrefix(lowerArgs, "i.e.")
 }
 
 func validateStandaloneVerificationCommands(root string, atom FeatureAtomPlan) error {
