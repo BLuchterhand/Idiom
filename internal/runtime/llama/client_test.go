@@ -477,6 +477,67 @@ func TestZAIBackendUsesHostedChatEndpointAuthAndThinking(t *testing.T) {
 	}
 }
 
+func TestDeepSeekBackendSendsThinkingToggleWithRequiredToolChoice(t *testing.T) {
+	enableThinking := false
+
+	var got map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second).WithBackend(config.BackendDeepSeek)
+
+	_, err := client.CompleteChatMessage(context.Background(), []ChatMessage{{Role: "user", Content: "submit a plan"}}, ChatOptions{
+		Model:          "deepseek-v4-flash",
+		EnableThinking: &enableThinking,
+		ToolChoice:     "required",
+		Tools: []Tool{{
+			Type: "function",
+			Function: ToolFunction{
+				Name:       "submit_plan",
+				Parameters: json.RawMessage(`{"type":"object"}`),
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CompleteChatMessage: %v", err)
+	}
+
+	if got["model"] != "deepseek-v4-flash" || got["tool_choice"] != "required" {
+		t.Fatalf("unexpected DeepSeek request model/tool_choice: %#v", got)
+	}
+
+	tools, ok := got["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("expected one DeepSeek native tool definition, got %#v", got["tools"])
+	}
+
+	tool, ok := tools[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected tool object, got %#v", tools[0])
+	}
+
+	function, ok := tool["function"].(map[string]any)
+	if !ok || function["name"] != "submit_plan" {
+		t.Fatalf("expected submit_plan tool definition, got %#v", tool)
+	}
+
+	thinking, ok := got["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "disabled" {
+		t.Fatalf("expected DeepSeek thinking disabled payload, got %#v", got["thinking"])
+	}
+}
+
 func TestOpenAIResponsesBackendConvertsToolsAndParsesOutput(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "openai-test-key")
 
@@ -615,6 +676,7 @@ func TestBackendStructuredOutputCapabilitiesAreConservative(t *testing.T) {
 		{config.BackendMLX, false, true, true},
 		{config.BackendCodex, true, true, false},
 		{config.BackendZAI, true, true, true},
+		{config.BackendDeepSeek, true, true, true},
 	} {
 		t.Run(tc.backend, func(t *testing.T) {
 			caps := BackendStructuredOutputCapabilities(tc.backend)

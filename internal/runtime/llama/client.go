@@ -328,6 +328,8 @@ func BackendStructuredOutputCapabilities(backend string) StructuredOutputCapabil
 		caps.ThinkingControls = true
 	case config.BackendZAI:
 		caps.ThinkingControls = true
+	case config.BackendDeepSeek:
+		caps.ThinkingControls = true
 	}
 
 	return caps
@@ -591,7 +593,7 @@ func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream b
 		payload.ToolChoice = opts.ToolChoice
 	}
 
-	if util.EqualTrimFold(backend, config.BackendZAI) && opts.EnableThinking != nil {
+	if hostedBackendSupportsThinkingToggle(backend) && opts.EnableThinking != nil {
 		mode := "disabled"
 		if *opts.EnableThinking {
 			mode = "enabled"
@@ -605,6 +607,10 @@ func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream b
 	}
 
 	return payload
+}
+
+func hostedBackendSupportsThinkingToggle(backend string) bool {
+	return util.EqualTrimFold(backend, config.BackendZAI) || util.EqualTrimFold(backend, config.BackendDeepSeek)
 }
 
 // repairMessageToolPairing ensures every assistant message with tool_calls
