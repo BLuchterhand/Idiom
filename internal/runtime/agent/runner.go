@@ -2475,15 +2475,20 @@ func (r *Runner) Run(
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 
 			if r.planThenExecutePlannerPhase() {
-				rebuildTools()
+				if planThenExecutePostReadinessRejectionRequiresSubmitReadyTransition(summary) {
+					prompt := r.planThenExecuteSubmitReadyTerminalPrompt(errorText, collectedResults, chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan))
+					transitionPlanThenExecuteSubmitReadyTerminal(prompt, "plan_then_execute_submit_plan_required", "corrected_submit_plan_required")
+				} else {
+					rebuildTools()
 
-				opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+					opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
 
-				syncPlanThenExecuteRecoveryAllowedTools()
-				r.refreshPlanThenExecuteTerminalToolSurface(&turnMessages, collectedResults, "corrected_submit_plan_required")
+					syncPlanThenExecuteRecoveryAllowedTools()
+					r.refreshPlanThenExecuteTerminalToolSurface(&turnMessages, collectedResults, "corrected_submit_plan_required")
 
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: errorText})
-				r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: errorText})
+					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: errorText})
+					r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: errorText})
+				}
 			}
 
 			if done {

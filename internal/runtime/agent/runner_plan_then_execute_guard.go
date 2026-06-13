@@ -1420,6 +1420,15 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 		true
 }
 
+func planThenExecutePostReadinessRejectionRequiresSubmitReadyTransition(summary string) bool {
+	switch strings.TrimSpace(summary) {
+	case "Plan submission required", "Corrected submit_plan required":
+		return true
+	default:
+		return false
+	}
+}
+
 func planThenExecuteAnchorRefreshReadFallbackInstruction(refreshPaths []string) string {
 	paths := nonEmptyRunnerStrings(refreshPaths, 1)
 	if len(paths) == 0 {

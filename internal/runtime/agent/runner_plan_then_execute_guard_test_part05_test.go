@@ -1268,6 +1268,20 @@ func TestPlanExecuteTextualProjectionPrefersSubmitReadyStateOverStaleContractToo
 	}
 }
 
+func TestPlanExecutePostReadinessSubmitRequiredSummariesUseSubmitReadyTransition(t *testing.T) {
+	for _, summary := range []string{"Plan submission required", "Corrected submit_plan required"} {
+		if !planThenExecutePostReadinessRejectionRequiresSubmitReadyTransition(summary) {
+			t.Fatalf("%q should route through submit-ready transition", summary)
+		}
+	}
+
+	for _, summary := range []string{"Git history evidence required", "Bounded submit_plan anchor refresh required", ""} {
+		if planThenExecutePostReadinessRejectionRequiresSubmitReadyTransition(summary) {
+			t.Fatalf("%q should stay on generic recovery surface", summary)
+		}
+	}
+}
+
 func TestPlanExecuteTextualAllowedToolsPreservesSourceSatisfiedTerminalNoToolContract(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
