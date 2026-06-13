@@ -12,6 +12,7 @@ import (
 	"idiom/internal/contracts/plan"
 	"idiom/internal/platform/util"
 	coreplanexecute "idiom/internal/workflows/planexecute"
+	"idiom/internal/workflows/recovery"
 )
 
 var planExecuteAcceptanceEvidenceTrustRegistry = struct {
@@ -51,6 +52,35 @@ func PlanExecuteCompletionFields(output string) map[string]any {
 	}
 
 	return summary.Fields()
+}
+
+func PlanExecuteRecoveryRetryPrompt(prompt string, completion map[string]any) (string, bool) {
+	requiredPaths := completionFieldStringSlice(completion, "required_edit_paths")
+	refresh, ok := recovery.PlanExecutePlannerBlockedRetryRefreshResult(
+		CompletionFieldString(completion, "failure_kind"),
+		CompletionFieldString(completion, "failure_reason")+"\n"+CompletionFieldString(completion, "summary"),
+		requiredPaths,
+		CompletionFieldString(completion, "next_valid_action"),
+	)
+	if !ok {
+		return "", false
+	}
+	instruction := recovery.PlanExecuteSourceRefreshRetryInstruction(refresh, requiredPaths)
+	if instruction == "" {
+		return "", false
+	}
+
+	var b strings.Builder
+	b.WriteString(strings.TrimSpace(prompt))
+	b.WriteString("\n\n## Plan-execute Recovery Addendum\n\n")
+	if len(refresh.Paths) > 1 {
+		fmt.Fprintf(&b, "The previous nested plan-execute attempt requires bounded source-body refresh for candidate anchor paths (%s) before a corrected `submit_plan` can be accepted.\n\n", strings.Join(refresh.Paths, ", "))
+	} else {
+		fmt.Fprintf(&b, "The previous nested plan-execute attempt requires a bounded source-body refresh for `%s` before a corrected `submit_plan` can be accepted.\n\n", refresh.Path)
+	}
+	b.WriteString(instruction)
+
+	return b.String(), true
 }
 
 func TrustPlanExecuteCompletionFields(fields map[string]any) {

@@ -3367,6 +3367,173 @@ func TestPlanExecutePlannerRecoveryDetectsTruncatedAnchorRefreshBlocker(t *testi
 	}
 }
 
+func TestFeaturePlannerAtomPlanExecuteRetriesTypedAnchorRefreshCompletion(t *testing.T) {
+	var calls int
+	var retryPrompt string
+	model := &Model{cfg: config.Default()}
+
+	runOnce := func(_ context.Context, prompt string) (string, error) {
+		calls++
+		model.lastPlanExecuteRunResult = nil
+		if calls == 1 {
+			model.lastPlanExecuteRunResult = &planexecute.RunResult{
+				ExitCode:      1,
+				FailureKind:   planexecute.RunFailurePlannerBlocked,
+				FailureReason: "<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n\nRemaining bounded refresh paths:\n- native/src/simulation/world/collapse_event.h\nNext valid action: re-run with enough budget and issue exactly one bounded read_file or code_navigate source-body request for a remaining refresh path; do not answer source-satisfied or blocker before that refresh returns.",
+				Completion: &planexecute.PlanExecuteTerminalCompletionRecord{
+					Status:            "failed",
+					Phase:             planexecute.ProgressPhasePlanning,
+					FailureKind:       planexecute.RunFailurePlannerBlocked,
+					FailureReason:     "<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n\nRemaining bounded refresh paths:\n- native/src/simulation/world/collapse_event.h\nNext valid action: re-run with enough budget and issue exactly one bounded read_file or code_navigate source-body request for a remaining refresh path; do not answer source-satisfied or blocker before that refresh returns.",
+					NextAction:        recovery.NextActionRetryPlanExecute,
+					RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp", "native/src/simulation/world/collapse_event.cpp", "native/src/simulation/world/collapse_event.h", "native/tests/test_collapse_event.cpp"},
+				},
+			}
+			return "", fmt.Errorf("plan-execute exited 1")
+		}
+
+		retryPrompt = prompt
+		model.lastPlanExecuteRunResult = &planexecute.RunResult{
+			ExitCode: 0,
+			Completion: &planexecute.PlanExecuteTerminalCompletionRecord{
+				Status:       planexecute.ProgressStatusCompleted,
+				Phase:        planexecute.ProgressPhaseComplete,
+				ReviewStatus: planexecute.ProgressStatusCompleted,
+			},
+		}
+		return `{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","review_status":"passed","state_path":".idiom/plan-execute/sessions/atom-1-run-1.json"}`, nil
+	}
+
+	completion, err := model.runFeaturePlannerAtomPlanExecuteWithRunner(context.Background(), "implement collapse helper", nil, false, runOnce)
+	if err != nil {
+		t.Fatalf("runFeaturePlannerAtomPlanExecuteWithWriteEnvelope: %v", err)
+	}
+
+	if calls != 2 {
+		t.Fatalf("plan-execute calls = %d, want 2", calls)
+	}
+
+	for _, want := range []string{
+		"## Plan-execute Recovery Addendum",
+		"native/src/simulation/world/collapse_event.h",
+		"First read source for `native/src/simulation/world/collapse_event.h`",
+	} {
+		if !strings.Contains(retryPrompt, want) {
+			t.Fatalf("retry prompt missing %q:\n%s", want, retryPrompt)
+		}
+	}
+
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(completion), &fields); err != nil {
+		t.Fatalf("decode completion: %v", err)
+	}
+	if got := fmt.Sprint(fields["status"]); got != "completed" {
+		t.Fatalf("status = %q, want completed; fields=%+v", got, fields)
+	}
+	if got := strings.TrimSpace(fmt.Sprint(fields["failure_kind"])); got != "" && got != "<nil>" {
+		t.Fatalf("stale first-run failure leaked into final completion: fields=%+v", fields)
+	}
+}
+
+func TestFeaturePlannerAtomPlanExecuteDoesNotRetryHumanBlocker(t *testing.T) {
+	var calls int
+	model := &Model{cfg: config.Default()}
+
+	runOnce := func(_ context.Context, _ string) (string, error) {
+		calls++
+		model.lastPlanExecuteRunResult = &planexecute.RunResult{
+			ExitCode:      1,
+			FailureKind:   planexecute.RunFailurePlannerBlocked,
+			FailureReason: "<<QUESTION>>: product owner must clarify scope",
+			Completion: &planexecute.PlanExecuteTerminalCompletionRecord{
+				Status:            "failed",
+				Phase:             planexecute.ProgressPhasePlanning,
+				FailureKind:       planexecute.RunFailurePlannerBlocked,
+				FailureReason:     "<<QUESTION>>: product owner must clarify scope",
+				NextAction:        recovery.NextActionAnswerBlocker,
+				RequiredEditPaths: []string{"docs/feature.md"},
+			},
+		}
+		return "", fmt.Errorf("plan-execute exited 1")
+	}
+
+	completion, err := model.runFeaturePlannerAtomPlanExecuteWithRunner(context.Background(), "implement docs atom", nil, false, runOnce)
+	if err != nil {
+		t.Fatalf("runFeaturePlannerAtomPlanExecuteWithRunner: %v", err)
+	}
+
+	if calls != 1 {
+		t.Fatalf("plan-execute calls = %d, want no retry", calls)
+	}
+
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(completion), &fields); err != nil {
+		t.Fatalf("decode completion: %v", err)
+	}
+	if got := fmt.Sprint(fields["next_valid_action"]); got != recovery.NextActionAnswerBlocker {
+		t.Fatalf("next_valid_action = %q, want answer_blocker; fields=%+v", got, fields)
+	}
+}
+
+func TestFeaturePlannerAtomPlanExecuteReturnsSecondFailureAfterRetry(t *testing.T) {
+	var calls int
+	model := &Model{cfg: config.Default()}
+
+	runOnce := func(_ context.Context, _ string) (string, error) {
+		calls++
+		model.lastPlanExecuteRunResult = nil
+		if calls == 1 {
+			model.lastPlanExecuteRunResult = &planexecute.RunResult{
+				ExitCode:      1,
+				FailureKind:   planexecute.RunFailurePlannerBlocked,
+				FailureReason: "<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n\nRemaining bounded refresh paths:\n- native/src/simulation/world/collapse_event.h",
+				Completion: &planexecute.PlanExecuteTerminalCompletionRecord{
+					Status:            "failed",
+					Phase:             planexecute.ProgressPhasePlanning,
+					FailureKind:       planexecute.RunFailurePlannerBlocked,
+					FailureReason:     "<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n\nRemaining bounded refresh paths:\n- native/src/simulation/world/collapse_event.h",
+					NextAction:        recovery.NextActionRetryPlanExecute,
+					RequiredEditPaths: []string{"native/src/simulation/world/collapse_event.h"},
+				},
+			}
+			return "", fmt.Errorf("plan-execute exited 1")
+		}
+
+		model.lastPlanExecuteRunResult = &planexecute.RunResult{
+			ExitCode:      1,
+			FailureKind:   "verification_failed",
+			FailureReason: "collapse_event tests failed",
+			Completion: &planexecute.PlanExecuteTerminalCompletionRecord{
+				Status:        "failed",
+				Phase:         planexecute.ProgressPhasePlanning,
+				FailureKind:   "verification_failed",
+				FailureReason: "collapse_event tests failed",
+			},
+		}
+		return "", fmt.Errorf("plan-execute exited 1")
+	}
+
+	completion, err := model.runFeaturePlannerAtomPlanExecuteWithRunner(context.Background(), "implement collapse helper", nil, false, runOnce)
+	if err != nil {
+		t.Fatalf("runFeaturePlannerAtomPlanExecuteWithRunner: %v", err)
+	}
+
+	if calls != 2 {
+		t.Fatalf("plan-execute calls = %d, want retry then final failure", calls)
+	}
+
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(completion), &fields); err != nil {
+		t.Fatalf("decode completion: %v", err)
+	}
+	if got := fmt.Sprint(fields["failure_kind"]); got != "verification_failed" {
+		t.Fatalf("failure_kind = %q, want second-run failure; fields=%+v", got, fields)
+	}
+	if strings.Contains(fmt.Sprint(fields["failure_reason"]), "anchor refresh") {
+		t.Fatalf("stale first-run failure leaked into second-run completion: fields=%+v", fields)
+	}
+}
+
 func TestPlanExecutePlannerRecoveryInstructionKeepsAllowedCandidatesNonMandatory(t *testing.T) {
 	got := planExecutePlannerRecoveryRetryInstruction(implementationDispatchPlanExecuteFailure{
 		AllowedPaths: []string{"internal/surfaces/tui/app/rendering.go", "internal/surfaces/tui/app/rendering_test.go"},

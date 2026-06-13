@@ -505,3 +505,41 @@ func TestPlanExecuteCompletionFieldsDegradedInheritsEarlierProgressPath(t *testi
 		t.Fatalf("failure_kind = %q, want review_model_error; fields=%+v", got, fields)
 	}
 }
+
+func TestPlanExecuteRecoveryRetryPromptBuildsAnchorRefreshAddendum(t *testing.T) {
+	prompt, ok := PlanExecuteRecoveryRetryPrompt("implement atom", map[string]any{
+		"failure_kind":      "planner_blocked",
+		"failure_reason":    "<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n\nRemaining bounded refresh paths:\n- native/src/simulation/world/collapse_event.h",
+		"next_valid_action": "retry_plan_execute",
+		"required_edit_paths": []any{
+			"native/src/core/colony_sim_tick.cpp",
+			"native/src/simulation/world/collapse_event.h",
+		},
+	})
+	if !ok {
+		t.Fatal("expected retry prompt")
+	}
+
+	for _, want := range []string{
+		"implement atom",
+		"## Plan-execute Recovery Addendum",
+		"native/src/simulation/world/collapse_event.h",
+		"First read source for `native/src/simulation/world/collapse_event.h`",
+		"then produce one valid `submit_plan`",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("retry prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestPlanExecuteRecoveryRetryPromptIgnoresHumanBlocker(t *testing.T) {
+	if prompt, ok := PlanExecuteRecoveryRetryPrompt("implement atom", map[string]any{
+		"failure_kind":        "planner_blocked",
+		"failure_reason":      "<<QUESTION>>: product owner must clarify scope",
+		"next_valid_action":   "answer_blocker",
+		"required_edit_paths": []any{"docs/feature.md"},
+	}); ok {
+		t.Fatalf("unexpected retry prompt for human blocker:\n%s", prompt)
+	}
+}

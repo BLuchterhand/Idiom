@@ -24,7 +24,6 @@ import (
 	"idiom/internal/workflows/featureplannerproduct"
 	"idiom/internal/workflows/featureplannerruntime"
 	"idiom/internal/workflows/productworkflow"
-	"idiom/internal/workflows/recovery"
 	"path/filepath"
 )
 
@@ -434,7 +433,7 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 
 	completion := featurePlannerPlanExecuteCompletionFields(planStdout.String())
 	if code != 0 {
-		if retryPrompt, ok := featurePlannerPlanExecuteRetryPrompt(prompt, completion); ok {
+		if retryPrompt, ok := featureplanner.PlanExecuteRecoveryRetryPrompt(prompt, completion); ok {
 			if err := os.WriteFile(promptPath, []byte(retryPrompt), 0o600); err != nil {
 				return "", fmt.Errorf("write plan-execute retry prompt file: %w", err)
 			}
@@ -478,57 +477,6 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 	featureplanner.TrustObservedPlanExecuteCompletionFields(completion)
 
 	return encodeHeadlessPlanExecuteCompletion(req, stdout, completion)
-}
-
-func featurePlannerPlanExecuteRetryPrompt(prompt string, completion map[string]any) (string, bool) {
-	requiredPaths := featurePlannerCompletionStringSlice(completion, "required_edit_paths")
-	refresh, ok := recovery.PlanExecutePlannerBlockedRetryRefreshResult(
-		featureplanner.CompletionFieldString(completion, "failure_kind"),
-		featureplanner.CompletionFieldString(completion, "failure_reason")+"\n"+featureplanner.CompletionFieldString(completion, "summary"),
-		requiredPaths,
-		featureplanner.CompletionFieldString(completion, "next_valid_action"),
-	)
-	if !ok {
-		return "", false
-	}
-	instruction := recovery.PlanExecuteSourceRefreshRetryInstruction(refresh, requiredPaths)
-	if instruction == "" {
-		return "", false
-	}
-
-	var b strings.Builder
-	b.WriteString(strings.TrimSpace(prompt))
-	b.WriteString("\n\n## Plan-execute Recovery Addendum\n\n")
-	if len(refresh.Paths) > 1 {
-		fmt.Fprintf(&b, "The previous nested plan-execute attempt requires bounded source-body refresh for candidate anchor paths (%s) before a corrected `submit_plan` can be accepted.\n\n", strings.Join(refresh.Paths, ", "))
-	} else {
-		fmt.Fprintf(&b, "The previous nested plan-execute attempt requires a bounded source-body refresh for `%s` before a corrected `submit_plan` can be accepted.\n\n", refresh.Path)
-	}
-	b.WriteString(instruction)
-
-	return b.String(), true
-}
-
-func featurePlannerCompletionStringSlice(fields map[string]any, key string) []string {
-	value, ok := fields[key]
-	if !ok || value == nil {
-		return nil
-	}
-
-	switch typed := value.(type) {
-	case []string:
-		return append([]string(nil), typed...)
-	case []any:
-		out := make([]string, 0, len(typed))
-		for _, item := range typed {
-			if text := strings.TrimSpace(fmt.Sprint(item)); text != "" {
-				out = append(out, text)
-			}
-		}
-		return out
-	default:
-		return nil
-	}
 }
 
 func encodeHeadlessPlanExecuteCompletion(req featurePlannerRequest, stdout io.Writer, completion map[string]any) (string, error) {

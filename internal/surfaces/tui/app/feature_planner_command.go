@@ -377,7 +377,13 @@ func (m *Model) runFeaturePlannerAtomPlanExecute(ctx context.Context, prompt str
 	return m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, nil, false)
 }
 
+type featurePlannerAtomPlanExecuteRunner func(context.Context, string) (string, error)
+
 func (m *Model) runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx context.Context, prompt string, writeEnvelope []string, writeEnvelopeExplicit bool) (string, error) {
+	return m.runFeaturePlannerAtomPlanExecuteWithRunner(ctx, prompt, writeEnvelope, writeEnvelopeExplicit, m.runPlanExecuteCommandOnce)
+}
+
+func (m *Model) runFeaturePlannerAtomPlanExecuteWithRunner(ctx context.Context, prompt string, writeEnvelope []string, writeEnvelopeExplicit bool, runOnce featurePlannerAtomPlanExecuteRunner) (string, error) {
 	m.logFeaturePlannerPlanExecuteGitHistoryRequirement()
 
 	priorSuppressTranscript := m.suppressPromptTranscript
@@ -394,7 +400,7 @@ func (m *Model) runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx context.Co
 		m.planExecuteWriteEnvelopeExplicit = priorWriteEnvelopeExplicit
 	}()
 
-	answer, err := m.runPlanExecuteCommandOnce(ctx, prompt)
+	answer, err := runOnce(ctx, prompt)
 	if err != nil {
 		if m.lastPlanExecuteRunResult == nil {
 			return "", err
@@ -403,7 +409,21 @@ func (m *Model) runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx context.Co
 		answer = err.Error()
 	}
 
-	completion, err := m.encodeFeaturePlannerPlanExecuteCompletion(answer)
+	fields := m.featurePlannerPlanExecuteCompletionFields(answer)
+	if retryPrompt, ok := featureplanner.PlanExecuteRecoveryRetryPrompt(prompt, fields); ok {
+		answer, err = runOnce(ctx, retryPrompt)
+		if err != nil {
+			if m.lastPlanExecuteRunResult == nil {
+				return "", err
+			}
+
+			answer = err.Error()
+		}
+
+		fields = m.featurePlannerPlanExecuteCompletionFields(answer)
+	}
+
+	completion, err := encodeFeaturePlannerPlanExecuteCompletionFields(fields)
 	if err != nil {
 		return "", err
 	}
@@ -459,6 +479,10 @@ func planExecuteAnswerIsBlocked(answer string) bool {
 }
 
 func (m *Model) encodeFeaturePlannerPlanExecuteCompletion(summary string) (string, error) {
+	return encodeFeaturePlannerPlanExecuteCompletionFields(m.featurePlannerPlanExecuteCompletionFields(summary))
+}
+
+func (m *Model) featurePlannerPlanExecuteCompletionFields(summary string) map[string]any {
 	fields := featureplanner.PlanExecuteCompletionFields(summary)
 	if m != nil {
 		overlayFeaturePlannerPlanExecuteRunResult(fields, m.cfg.Workspace.Root, m.lastPlanExecuteRunResult)
@@ -480,6 +504,10 @@ func (m *Model) encodeFeaturePlannerPlanExecuteCompletion(summary string) (strin
 	fields["summary"] = featurePlannerPlanExecuteCompletionSummary(fields)
 	featureplanner.TrustObservedPlanExecuteCompletionFields(fields)
 
+	return fields
+}
+
+func encodeFeaturePlannerPlanExecuteCompletionFields(fields map[string]any) (string, error) {
 	body, err := json.Marshal(fields)
 	if err != nil {
 		return "", err
