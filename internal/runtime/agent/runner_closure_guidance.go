@@ -96,7 +96,7 @@ func postChildPacketClosureReadyWithBrief(brief workerruntime.WorkerRuntimeBrief
 func postChildReadOnlyPacketAvailable(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	objective := strings.TrimSpace(workerruntime.NormalizeRuntimeBrief(brief).Objective)
 	for _, result := range results {
-		if readOnlyTaskResultAnswerableForObjective(result, objective) {
+		if ReadOnlyTaskResultAnswerableForObjective(result, objective) {
 			return true
 		}
 	}
@@ -104,21 +104,6 @@ func postChildReadOnlyPacketAvailable(brief workerruntime.WorkerRuntimeBrief, re
 	return false
 }
 
-func readOnlyTaskResultAnswerableForObjective(result workspace.ToolResult, objective string) bool {
-	if strings.TrimSpace(result.Tool) != workspace.ToolNameTask || strings.TrimSpace(result.Error) != "" {
-		return false
-	}
-
-	if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
-		if strings.TrimSpace(objective) == "" {
-			return readOnlyEvidencePacketAnswerable(packet)
-		}
-
-		return readOnlyEvidencePacketAnswerableForObjective(packet, objective)
-	}
-
-	return childPacketContainsGroundedAnswerEvidence(objective, result.Output)
-}
 
 func runnerClosureGuidanceActive(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, delegatedReadOnlyAnswerReady bool, postChildPacketActive bool) bool {
 	if delegatedReadOnlyAnswerReady || postChildPacketActive {

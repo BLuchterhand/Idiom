@@ -2506,41 +2506,6 @@ func planThenExecuteRequiredPathStateSummaries(brief workerruntime.WorkerRuntime
 	return out
 }
 
-type planThenExecuteSourceEvidenceLevel string
-
-const (
-	planThenExecuteEvidenceNone                planThenExecuteSourceEvidenceLevel = ""
-	planThenExecuteEvidencePathSeen            planThenExecuteSourceEvidenceLevel = "path_seen"
-	planThenExecuteEvidenceSourceBodyPending   planThenExecuteSourceEvidenceLevel = "source_body_pending"
-	planThenExecuteEvidenceBodyWindow          planThenExecuteSourceEvidenceLevel = "body_window"
-	planThenExecuteEvidenceAnchorReady         planThenExecuteSourceEvidenceLevel = "anchor_ready"
-	planThenExecuteEvidenceExactAnchorContract planThenExecuteSourceEvidenceLevel = "exact_anchor_contract"
-	planThenExecuteEvidenceNewFileContract     planThenExecuteSourceEvidenceLevel = "new_file_contract"
-)
-
-type planThenExecuteSourceEvidence struct {
-	Path   string
-	Level  planThenExecuteSourceEvidenceLevel
-	Source string
-	Detail string
-}
-
-func planThenExecuteRequiredSourceEvidenceForPath(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, path string) planThenExecuteSourceEvidence {
-	path = normalizeRunnerPath(path)
-	if path == "" {
-		return planThenExecuteSourceEvidence{}
-	}
-
-	best := planThenExecuteSourceEvidence{Path: path}
-	for _, result := range results {
-		evidence := planThenExecuteToolResultSourceEvidence(result, path)
-		if planThenExecuteEvidenceRank(evidence.Level) > planThenExecuteEvidenceRank(best.Level) {
-			best = evidence
-		}
-	}
-
-	return best
-}
 
 func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path string) planThenExecuteSourceEvidence {
 	path = normalizeRunnerPath(path)
@@ -2582,18 +2547,24 @@ func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path s
 	evidence.Detail = "source body"
 
 	switch {
-	case readStyleSourceBodyTool(tool):
+	case ReadStyleSourceBodyTool(tool):
 		evidence.Level, evidence.Detail = planThenExecuteReadFileEvidenceLevel(result, path)
 	case tool == "code_navigate" || tool == "read_only_capability":
-		if !routedSourceReadOutputHasBody(result.Output) {
+		// Check for file outline content first — an outline with symbols
+		// counts as body-window evidence even when routedSourceReadOutputHasBody
+		// returns false (e.g. "candidate_anchor_status: anchors only").
+		if planThenExecuteCodeNavigateIsOutline(result) {
+			evidence.Level = planThenExecuteEvidenceBodyWindow
+			evidence.Detail = "file outline body window"
+		} else if !routedSourceReadOutputHasBody(result.Output) {
 			evidence.Level = planThenExecuteEvidencePathSeen
 			evidence.Detail = "navigation result without source body"
 		} else {
 			evidence.Detail = "routed source body"
 		}
 	case strings.HasSuffix(tool, "_file_outline"):
-		evidence.Level = planThenExecuteEvidencePathSeen
-		evidence.Detail = "outline only"
+		evidence.Level = planThenExecuteEvidenceBodyWindow
+		evidence.Detail = "file outline body window"
 	case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
 		evidence.Detail = "symbol/body read"
 	}
@@ -2601,7 +2572,41 @@ func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path s
 	return evidence
 }
 
-func planThenExecuteReadFileEvidenceLevel(result workspace.ToolResult, path string) (planThenExecuteSourceEvidenceLevel, string) {
+// planThenExecuteCodeNavigateIsOutline detects whether a code_navigate /
+// read_only_capability result contains file-outline content. It checks the
+// output for structured outline markers (fn, struct, enum, impl, trait) and
+// for capability: file_outline in the result summary/output. Returns true
+// when the output is non-empty and contains outline-like content.
+func planThenExecuteCodeNavigateIsOutline(result workspace.ToolResult) bool {
+	output := strings.TrimSpace(result.Output)
+	if output == "" {
+		return false
+	}
+	summary := strings.ToLower(result.Summary)
+
+	// If the tool was called with file_outline capability and output exists,
+	// treat it as body-window evidence.
+	if strings.Contains(summary, "outline") && !candidateAnchorOnlyText(result.Output) {
+		return true
+	}
+
+	// Check output for structured outline declarations common in Rust/Go/etc.
+	lower := strings.ToLower(output)
+	for _, marker := range []string{"\nfn ", "\nstruct ", "\nenum ", "\nimpl ", "\ntrait "} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+
+	// Check for explicit capability marker in output.
+	if strings.Contains(lower, "capability: file_outline") {
+		return true
+	}
+
+	return false
+}
+
+func planThenExecuteReadFileEvidenceLevel(result workspace.ToolResult, path string) (PlanThenExecuteSourceEvidenceLevel, string) {
 	start, end, hasRange := planThenExecuteReadSummaryLineRange(result.Summary)
 	total, hasTotal := planThenExecuteReadSummaryTotalLines(result.Summary)
 	lower := strings.ToLower(result.Summary + "\n" + result.Output)
@@ -2623,7 +2628,18 @@ func planThenExecuteReadFileEvidenceLevel(result workspace.ToolResult, path stri
 			return planThenExecuteEvidenceBodyWindow, "large Go raw range; use symbol/body route"
 		}
 
-		return planThenExecuteEvidenceAnchorReady, "bounded source range"
+		// Bounded range: ≤120 lines and not starting at line 1 (header
+		// window already excluded above) → precise anchor ready.
+		// Also treat ranges that cover ≥90% of the file as anchor ready
+		// (covers near-full-file reads without being strictly end >= total).
+		if end-start+1 <= planThenExecuteBoundedReadMaxLines {
+			return planThenExecuteEvidenceAnchorReady, "bounded source range"
+		}
+		if hasTotal && total > 0 && float64(end-start+1)/float64(total) >= 0.85 {
+			return planThenExecuteEvidenceAnchorReady, "near-full-file bounded range"
+		}
+
+		return planThenExecuteEvidenceBodyWindow, "broad source range"
 	}
 
 	if hasRange && hasTotal && end >= total {
@@ -2635,7 +2651,12 @@ func planThenExecuteReadFileEvidenceLevel(result workspace.ToolResult, path stri
 			return planThenExecuteEvidenceBodyWindow, "generic first-window read without file-size evidence"
 		}
 
-		return planThenExecuteEvidenceAnchorReady, "bounded source range"
+		// Bounded range: ≤120 lines and not starting at line 1 → precise anchor ready.
+		if end-start+1 <= planThenExecuteBoundedReadMaxLines {
+			return planThenExecuteEvidenceAnchorReady, "bounded source range"
+		}
+
+		return planThenExecuteEvidenceBodyWindow, "broad source range"
 	}
 
 	return planThenExecuteEvidenceBodyWindow, "source body window"
@@ -2644,6 +2665,7 @@ func planThenExecuteReadFileEvidenceLevel(result workspace.ToolResult, path stri
 const planThenExecuteGenericHeaderReadMaxLines = 220
 const planThenExecuteLargeFileGenericHeaderReadMaxLines = 400
 const planThenExecuteLargeFileGenericHeaderMinTotalLines = 1000
+const planThenExecuteBoundedReadMaxLines = 120
 
 func planThenExecuteLargeGoRawRangeNeedsSymbolBody(path string, total int) bool {
 	return total >= planThenExecuteLargeFileGenericHeaderMinTotalLines &&
@@ -2662,18 +2684,6 @@ func planThenExecuteGenericHeaderWindow(start, end, total int, hasTotal bool) bo
 	return hasTotal && total >= planThenExecuteLargeFileGenericHeaderMinTotalLines && end <= planThenExecuteLargeFileGenericHeaderReadMaxLines
 }
 
-func planThenExecuteEvidenceRank(level planThenExecuteSourceEvidenceLevel) int {
-	switch level {
-	case planThenExecuteEvidenceAnchorReady, planThenExecuteEvidenceExactAnchorContract, planThenExecuteEvidenceNewFileContract:
-		return 3
-	case planThenExecuteEvidenceBodyWindow:
-		return 2
-	case planThenExecuteEvidenceSourceBodyPending, planThenExecuteEvidencePathSeen:
-		return 1
-	default:
-		return 0
-	}
-}
 
 func planThenExecuteReadSummaryLineRange(summary string) (int, int, bool) {
 	fields := strings.Fields(summary)
@@ -4639,7 +4649,7 @@ func readPathsFromResults(results []workspace.ToolResult) map[string]struct{} {
 }
 
 func readPathsFromToolResult(r workspace.ToolResult) []string {
-	if candidateAnchorOnlyResult(r) {
+	if CandidateAnchorOnlyResult(r) {
 		return nil
 	}
 
@@ -4754,9 +4764,6 @@ func routedSourceReadOutputHasBody(output string) bool {
 	return false
 }
 
-func candidateAnchorOnlyResult(result workspace.ToolResult) bool {
-	return candidateAnchorOnlyText(strings.Join([]string{result.Summary, result.Output}, "\n"))
-}
 
 func candidateAnchorOnlyText(text string) bool {
 	lower := strings.ToLower(text)

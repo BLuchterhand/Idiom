@@ -835,6 +835,9 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 		contract.DerivationReason = "read_only_workspace_evidence_available"
 		contract.AllowedTools = append([]string(nil), contract.AllowedTools...)
 		contract.RequiredNext = []string{"final answer from the gathered evidence, one bounded proof read for an exact unsupported claim, or <<QUESTION>> with the exact blocker"}
+		if summary := readOnlySourceBodyEvidenceSummary(results); summary != "" {
+			contract.RequiredNext = append(contract.RequiredNext, "", summary)
+		}
 		contract.InvalidNext = []string{"workspace write", "shell/mutating command", "repeated broad or identical read/search", "broad rediscovery after evidence is sufficient"}
 		contract.ActionPolicy = TurnActionClassPolicy{
 			AllowedActionClasses:   uniquePhaseStrings(append([]string{actionFinalAnswer, actionBlocker}, genericAllowedActionClasses(contract.AllowedTools)...)),
@@ -939,6 +942,34 @@ func removePhaseActionClass(classes []string, remove string) []string {
 	}
 
 	return uniquePhaseStrings(out)
+}
+
+func readOnlySourceBodyEvidenceSummary(results []workspace.ToolResult) string {
+	bodyPaths := sourceEvidenceBodyPaths(results)
+	candidatePaths := sourceEvidenceCandidatePaths(results)
+
+	var b strings.Builder
+
+	if len(bodyPaths) > 0 {
+		b.WriteString("Source-body evidence available for: ")
+		b.WriteString(strings.Join(bodyPaths, ", "))
+	}
+
+	if len(candidatePaths) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("Candidate paths (not yet read as body): ")
+		b.WriteString(strings.Join(candidatePaths, ", "))
+	}
+
+	if b.Len() > 0 {
+		b.WriteString("\n")
+		b.WriteString("When answering, cite only the body-backed paths above, or qualify unread paths as unverified.")
+		return b.String()
+	}
+
+	return ""
 }
 
 func genericReadOnlyEvidenceReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
@@ -1194,27 +1225,6 @@ func targetPacketWritableMentionedPaths(lines []string) []string {
 	return uniquePhaseStrings(paths)
 }
 
-func implementationSourcePathOverlapsObjective(path string, objective string) bool {
-	terms := recoveryObjectiveSearchWords(objective, 32)
-	if len(terms) == 0 {
-		return false
-	}
-
-	objectiveTerms := make(map[string]struct{}, len(terms))
-	for _, term := range terms {
-		objectiveTerms[singularObjectiveWord(term)] = struct{}{}
-	}
-
-	matches := 0
-
-	for _, term := range implementationPathTerms(path) {
-		if _, ok := objectiveTerms[term]; ok {
-			matches++
-		}
-	}
-
-	return matches >= 2
-}
 
 func implementationPathTerms(path string) []string {
 	path = strings.TrimSuffix(normalizeRunnerPath(path), ".go")
@@ -1250,30 +1260,6 @@ func implementationPathTerms(path string) []string {
 	return terms
 }
 
-func splitImplementationPathToken(token string) []string {
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return nil
-	}
-
-	var out []string
-
-	start := 0
-
-	for i, r := range token {
-		if i > start && r >= 'A' && r <= 'Z' {
-			out = append(out, token[start:i])
-			start = i
-		}
-	}
-
-	out = append(out, token[start:])
-	for i, value := range out {
-		out[i] = strings.ToLower(value)
-	}
-
-	return out
-}
 
 func guardedMutationBriefRequiresTargetSourceContract(brief workerruntime.WorkerRuntimeBrief) bool {
 	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDelegatedIsolatedImpl) {

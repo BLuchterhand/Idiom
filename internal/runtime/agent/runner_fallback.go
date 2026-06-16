@@ -729,107 +729,19 @@ func normalizeFallbackResult(result workspace.ToolResult) workspace.ToolResult {
 // synthesizeFallbackAnswer output so it can be embedded inside another
 // fallback answer without producing duplicated headers. Idempotent: if the
 // input is not a fallback template, it is returned unchanged.
-func stripNestedFallbackTemplate(s string) string {
-	trimmed := strings.TrimSpace(s)
-	if trimmed == "" || !strings.HasPrefix(trimmed, "Partial findings from this turn") {
-		return s
-	}
-
-	// Drop the leading "Partial findings from this turn (...):" line plus
-	// the immediately-following blank line, leaving just the substance.
-	if idx := strings.Index(trimmed, "\n"); idx >= 0 {
-		trimmed = strings.TrimLeft(trimmed[idx+1:], "\n")
-	}
-
-	// Drop the trailing "Recommended next step:" footer; that's
-	// scaffolding for the user, not evidence.
-	if idx := strings.Index(trimmed, "\nRecommended next step:"); idx >= 0 {
-		trimmed = strings.TrimSpace(trimmed[:idx])
-	}
-
-	// Drop the inner "Verified context:" header. The outer fallback adds
-	// its own header; nested verified-context labels make the answer read
-	// like two stacked reports.
-	trimmed = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(trimmed), "Verified context:"))
-	// Drop a trailing "Final blocker:" if it's just a harness rejection --
-	// that signal has already been recomputed by the outer template.
-	if idx := strings.Index(trimmed, "\nFinal blocker:"); idx >= 0 {
-		head := strings.TrimSpace(trimmed[:idx])
-		tail := strings.TrimSpace(trimmed[idx+len("\nFinal blocker:"):])
-		// Look one bullet ahead and drop the section if its content is a
-		// known harness-only blocker; otherwise keep it.
-		if firstBullet := firstBulletText(tail); isHarnessRejectionSummary(firstBullet) || isHarnessRejectionErrorText(tail) {
-			trimmed = head
-		}
-	}
-
-	return trimmed
-}
 
 // firstBulletText returns the text of the first bullet ("- ") in s, with the
 // leading dash trimmed. Returns the empty string if no bullet is found.
-func firstBulletText(s string) string {
-	for _, line := range strings.Split(s, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "- ") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "- "))
-			if idx := strings.Index(line, ":"); idx >= 0 {
-				return strings.TrimSpace(line[:idx])
-			}
-
-			return line
-		}
-	}
-
-	return ""
-}
 
 // isHarnessRejectionSummary returns true for tool-result Summary strings that
 // originate from harness contracts (post-readiness gap requirement, packet
 // anchoring, etc.) rather than from real tool failures. These are not useful
 // "Final blocker" lines -- the user did nothing wrong and the message is
 // internal to the harness's own enforcement loop.
-func isHarnessRejectionSummary(summary string) bool {
-	summary = normalizedHarnessRejectionSummary(summary)
-	if postReadinessContinuationRejectionSummary(summary) {
-		return true
-	}
-
-	switch summary {
-	case "Post-child reread blocked",
-		"Broad exploration after delegation nudge blocked",
-		"Additional read_only child task blocked",
-		"Broad inspection request rejected",
-		"Verification required after workspace edits",
-		"Repeated dead-end action rejected",
-		"Chained list_files rejected",
-		"Chained search rejected":
-		return true
-	}
-
-	return false
-}
 
 // isHarnessRejectionErrorText returns true when the error text reads like a
 // harness contract message rather than a real tool error. Used as a fallback
 // when the Summary itself isn't enough to classify the rejection.
-func isHarnessRejectionErrorText(text string) bool {
-	lower := strings.ToLower(strings.TrimSpace(text))
-	if lower == "" {
-		return false
-	}
-
-	return containsAny(lower,
-		"include `named_gap`",
-		"include named_gap",
-		"already contains sufficient evidence to bias toward answering",
-		"file-level raw read is too broad",
-		"file-level outline is broad orientation",
-		"do not restart broad discovery",
-		"successful write(s) since the last verification",
-		"this action class already failed earlier in the turn",
-	)
-}
 
 func isResultUsefulForFallback(result workspace.ToolResult) bool {
 	lowerSummary := strings.ToLower(strings.TrimSpace(result.Summary))
@@ -879,15 +791,3 @@ func limitFallbackResults(results []workspace.ToolResult, max int) []workspace.T
 	return results[:max]
 }
 
-func fallbackLineBudgetForTool(tool string) int {
-	switch tool {
-	case "discovery_query":
-		return 20
-	case "search_content":
-		return 6
-	case "read_file":
-		return 10
-	default:
-		return 8
-	}
-}

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"idiom/internal/platform/util"
 	"slices"
 	"strings"
 
@@ -59,6 +60,8 @@ type readOnlyAnswerabilityLedger struct {
 	DiagnosticEvidence       bool
 	DiagnosticPaths          []string
 	DiagnosticRelevant       bool
+	HasUnreadCandidatePaths  bool
+	GoalRequiresStructureDiscovery bool
 }
 
 func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) readOnlyAnswerabilityLedger {
@@ -274,6 +277,21 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 	ledger.SourceBodyPaths = mergeRunnerStateStrings(ledger.SourceBodyPaths, sourceEvidenceBodyPaths(results), delegatedReadOnlySourceBodyReadinessPaths(ledger.Objective, results))
 	ledger.promoteCollectiveSourceBodyObjectiveSupport(namedTargets)
 	ledger.markRelevantSourceBodies(namedTargets)
+
+	// Determine whether unread candidate paths exist (candidates not yet read as source bodies).
+	candidateSet := make(map[string]struct{}, len(ledger.CandidatePaths))
+	for _, p := range ledger.CandidatePaths {
+		candidateSet[normalizeRunnerPath(p)] = struct{}{}
+	}
+	for _, p := range ledger.SourceBodyPaths {
+		delete(candidateSet, normalizeRunnerPath(p))
+	}
+	ledger.HasUnreadCandidatePaths = len(candidateSet) > 0
+
+	// Determine whether the objective requires architecture/structure discovery.
+	// This heuristic identifies questions that benefit from reading candidate
+	// paths before answering (e.g. "how is the pipeline organized?").
+	ledger.GoalRequiresStructureDiscovery = readOnlyObjectiveImpliesArchitecture(ledger.Objective)
 
 	return ledger
 }
@@ -1028,17 +1046,17 @@ func readOnlyObjectiveAnswerEvidenceSupportedWithMinTerms(output string, objecti
 		return false
 	}
 
-	objectiveText := answerTextWithoutPathCitations(output)
-	mechanismText := strings.ToLower(answerProseForObjectiveMatching(objectiveText))
+	objectiveText := AnswerTextWithoutPathCitations(output)
+	mechanismText := strings.ToLower(AnswerProseForObjectiveMatching(objectiveText))
 
 	if sourceBodyHasStrongObjectiveToken(objectiveText, objective) &&
-		readOnlyExplanationHasMechanismVerb(mechanismText) {
+		ReadOnlyExplanationHasMechanismVerb(mechanismText) {
 
 		return true
 	}
 
 	terms := readOnlyObjectivePromotionTerms(objective)
-	if len(terms) == 0 || !readOnlyExplanationHasMechanismVerb(mechanismText) {
+	if len(terms) == 0 || !ReadOnlyExplanationHasMechanismVerb(mechanismText) {
 		return false
 	}
 
@@ -1207,7 +1225,17 @@ func (l readOnlyAnswerabilityLedger) Answerable() bool {
 		return l.diagnosticEvidenceAnswerable() || (len(l.ImplementationOwnerPaths()) > 0 && len(l.MissingNamedSourcePaths) == 0)
 	}
 
-	return l.diagnosticEvidenceAnswerable() || (len(l.RelevantSourceBodyPaths) > 0 && len(l.MissingNamedSourcePaths) == 0)
+	if l.diagnosticEvidenceAnswerable() {
+		return true
+	}
+
+	// When the question is about architecture/structure and there are unread
+	// candidate paths, the model should read those candidates before answering.
+	if l.GoalRequiresStructureDiscovery && l.HasUnreadCandidatePaths {
+		return false
+	}
+
+	return len(l.RelevantSourceBodyPaths) > 0 && len(l.MissingNamedSourcePaths) == 0
 }
 
 func (l readOnlyAnswerabilityLedger) ImplementationOwnerPaths() []string {
@@ -1275,6 +1303,23 @@ func readOnlyObjectiveEvidencePaths(brief workerruntime.WorkerRuntimeBrief) []st
 	}
 
 	return paths
+}
+
+func readOnlyObjectiveImpliesArchitecture(objective string) bool {
+	lower := strings.ToLower(strings.Join(strings.Fields(objective), " "))
+	return containsAny(lower,
+		"how is",
+		"layout",
+		"structure",
+		"architecture",
+		"pipeline",
+		"module",
+		"organization",
+		"how does",
+		"component",
+		"dependency",
+		"organization",
+	)
 }
 
 func readOnlyBriefCandidateEvidencePaths(brief workerruntime.WorkerRuntimeBrief) []string {
@@ -1514,3 +1559,521 @@ func readOnlyFallbackNeedsAnswerableEvidence(brief workerruntime.WorkerRuntimeBr
 		looksLikeGenericEvidenceComposerAnswer(answer) ||
 		readOnlyScaffoldFinalAnswer(answer)
 }
+
+func readOnlyAnswerReportsInsufficientEvidence(answer string) bool {
+	lower := strings.ToLower(strings.Join(strings.Fields(answer), " "))
+
+	return containsAny(lower,
+		"available evidence is not enough",
+		"could not produce a supported final answer",
+		"evidence is not enough",
+		"insufficient evidence",
+		"not have enough supported evidence",
+		"not enough evidence",
+		"not enough to name",
+		"cannot determine",
+		"can't determine",
+		"unable to determine",
+		"cannot identify",
+		"can't identify",
+		"unable to identify",
+		"cannot name",
+		"can't name",
+		"unable to name",
+	)
+}
+
+
+func exactProbeCallNames(symbol string, output string, max int) []string {
+	if max <= 0 {
+		max = 4
+	}
+
+	skip := strings.TrimSpace(symbol)
+	if dot := strings.LastIndex(skip, "."); dot >= 0 {
+		skip = strings.TrimSpace(skip[dot+1:])
+	}
+
+	calls := make([]string, 0, max)
+
+	for _, match := range callLikeIdentifierPattern.FindAllStringSubmatch(output, -1) {
+		if len(match) <= 1 {
+			continue
+		}
+
+		candidate, ok := delegatedReadOnlyLiteralSymbolCandidate(match[1])
+		if !ok {
+			continue
+		}
+
+		if strings.EqualFold(candidate, skip) || strings.EqualFold(candidate, "String") || strings.EqualFold(candidate, "Error") {
+			continue
+		}
+
+		calls = util.AppendUnique(calls, candidate)
+		if len(calls) >= max {
+			return calls
+		}
+	}
+
+	return calls
+}
+
+
+func extractExactProbeAnchor(result workspace.ToolResult) (string, string) {
+	summary := strings.TrimSpace(result.Summary)
+	switch strings.TrimSpace(result.Tool) {
+	case "go_read_symbol", "cpp_read_symbol", "python_read_symbol", "ts_read_symbol", "rust_read_symbol", "java_read_symbol":
+		return extractReadExactProbeAnchor(summary)
+	case "go_extract_body", "cpp_extract_body":
+		if rest, ok := strings.CutPrefix(summary, "Extracted "); ok {
+			if symbol, remainder, found := strings.Cut(rest, " in "); found {
+				return extractExactProbePath(remainder), strings.TrimSpace(symbol)
+			}
+		}
+	case "code_navigate", "read_only_capability":
+		if routeSummary := routeSummaryFromToolOutput(result.Output); routeSummary != "" {
+			return extractReadExactProbeAnchor(routeSummary)
+		}
+
+		return extractReadExactProbeAnchor(summary)
+	}
+
+	return "", ""
+}
+
+
+func sourceEvidenceLineIsBoilerplate(line string) bool {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	if lower == "" {
+		return true
+	}
+
+	if lower == "context:" || lower == "context" {
+		return true
+	}
+
+	if strings.HasPrefix(lower, "package ") || strings.HasPrefix(lower, "import ") {
+		return true
+	}
+
+	return lower == "{" || lower == "}" || lower == "};" || strings.HasPrefix(lower, "//")
+}
+
+
+func ReadStyleSourceBodyTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case workspace.ToolNameReadFile, workspace.ToolNamePrefetch:
+		return true
+	default:
+		return false
+	}
+}
+
+
+func NormalizedAnswerSymbol(raw string) string {
+	raw = strings.TrimSpace(raw)
+	raw = strings.Trim(raw, "`'\"()[]{}<>,.:;!?")
+
+	qualified := raw
+
+	if dot := strings.LastIndex(raw, "."); dot >= 0 {
+		raw = strings.TrimSpace(raw[dot+1:])
+	}
+
+	candidate, ok := delegatedReadOnlyLiteralSymbolCandidate(raw)
+	if !ok {
+		if qualifiedCandidate, qualifiedOK := delegatedReadOnlyQualifiedSymbolCandidate(qualified); qualifiedOK {
+			return strings.ToLower(qualifiedCandidate)
+		}
+
+		return ""
+	}
+
+	return strings.ToLower(candidate)
+}
+
+
+func ExplicitAnswerCodeSymbols(reply string) []string {
+	symbols := make([]string, 0, 6)
+	add := func(raw string) {
+		key := NormalizedAnswerSymbol(raw)
+		if key == "" {
+			return
+		}
+
+		symbols = util.AppendUnique(symbols, raw)
+	}
+
+	for _, match := range backtickedTokenPattern.FindAllStringSubmatch(reply, -1) {
+		if len(match) > 1 {
+			add(match[1])
+		}
+	}
+
+	for _, match := range qualifiedIdentifierPattern.FindAllStringSubmatch(reply, -1) {
+		if len(match) > 1 {
+			add(match[1])
+		}
+	}
+
+	for _, match := range callLikeIdentifierPattern.FindAllStringSubmatch(reply, -1) {
+		if len(match) > 1 {
+			add(match[1])
+		}
+	}
+
+	return symbols
+}
+
+
+func addSourceBodyEvidenceSymbols(symbols map[string]struct{}, output string) {
+	for _, line := range exactProbeSourceLines(output) {
+		for _, raw := range sourceBodyEvidenceSymbolCandidates(line) {
+			key := NormalizedAnswerSymbol(raw)
+			if key != "" {
+				symbols[key] = struct{}{}
+			}
+		}
+	}
+}
+
+
+func addOutlineEvidenceSymbols(symbols map[string]struct{}, result workspace.ToolResult) {
+	if strings.TrimSpace(result.Error) != "" {
+		return
+	}
+
+	if strings.TrimSpace(result.Tool) != workspace.ToolNameCodeNavigate && !strings.HasSuffix(strings.TrimSpace(result.Tool), "_file_outline") {
+		return
+	}
+
+	text := result.Summary + "\n" + result.Output
+	if !strings.Contains(strings.ToLower(text), "file_outline") && !strings.Contains(strings.ToLower(text), "outlined ") {
+		return
+	}
+
+	for _, line := range strings.Split(result.Output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "- ") || !strings.Contains(line, " lines ") {
+			continue
+		}
+
+		head := strings.TrimSpace(strings.TrimPrefix(line, "- "))
+		if before, _, ok := strings.Cut(head, " lines "); ok {
+			head = before
+		}
+
+		for _, part := range strings.Split(head, ",") {
+			key := NormalizedAnswerSymbol(part)
+			if key != "" {
+				symbols[key] = struct{}{}
+			}
+		}
+	}
+}
+
+
+func ArchitectureNonSourceSymbolTerm(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case workspace.ToolNameCodeNavigate,
+		workspace.ToolNameContextImpact,
+		workspace.ToolNameContextIndex,
+		"context_merge",
+		workspace.ToolNameContextPack,
+		workspace.ToolNameContextQuery,
+		workspace.ToolNameContextStatus,
+		"context_trace",
+		workspace.ToolNameContextTracePack,
+		workspace.ToolNameContextZoom,
+		workspace.ToolNameCtagsSymbols,
+		workspace.ToolNameDependencyGraph,
+		workspace.ToolNameDiscoveryQuery,
+		"discovery_state",
+		workspace.ToolNameFileStats,
+		workspace.ToolNameHarnessAudit,
+		workspace.ToolNameHistoryRange,
+		workspace.ToolNameHistorySymbol,
+		workspace.ToolNameJoernScan,
+		"progressive_refinement",
+		workspace.ToolNameReadFile,
+		workspace.ToolNameReadOnlyCapability,
+		workspace.ToolNameSearchContent,
+		workspace.ToolNameSearchFiles,
+		workspace.ToolNameSemgrepScan,
+		workspace.ToolNameSourceSanity,
+		workspace.ToolNameStructuralSearch:
+		return true
+	default:
+		return false
+	}
+}
+
+
+func ExactEvidenceSymbolSet(results []workspace.ToolResult) map[string]struct{} {
+	symbols := make(map[string]struct{})
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
+			continue
+		}
+
+		if CandidateAnchorOnlyResult(result) {
+			continue
+		}
+
+		if concreteSourceEvidenceResult(result) {
+			addSourceBodyEvidenceSymbols(symbols, result.Output)
+		}
+
+		addOutlineEvidenceSymbols(symbols, result)
+
+		if !presentableExactProbeResult(result) {
+			continue
+		}
+
+		_, symbol := extractExactProbeAnchor(result)
+		key := NormalizedAnswerSymbol(symbol)
+
+		if key != "" {
+			symbols[key] = struct{}{}
+		}
+
+		for _, call := range exactProbeCallNames(symbol, result.Output, 8) {
+			key := NormalizedAnswerSymbol(call)
+			if key != "" {
+				symbols[key] = struct{}{}
+			}
+		}
+	}
+
+	return symbols
+}
+
+
+func SubstantiveAnswerWithoutEchoedObjective(answer string, objective string) string {
+	body := strings.TrimSpace(answer)
+	if body == "" {
+		return ""
+	}
+
+	lowerBody := strings.ToLower(body)
+	if strings.HasPrefix(lowerBody, "for `") {
+		if end := strings.Index(body[5:], "`,"); end >= 0 {
+			body = strings.TrimSpace(body[5+end+2:])
+			body = strings.TrimLeft(body, " ,:")
+		}
+	}
+
+	lines := strings.Split(body, "\n")
+	if len(lines) > 0 && strings.HasPrefix(strings.ToLower(strings.TrimSpace(lines[0])), "question:") {
+		body = strings.TrimSpace(strings.Join(lines[1:], "\n"))
+	}
+
+	for _, variant := range []string{
+		strings.TrimSpace(objective),
+		strings.TrimSpace(delegatedDisplayQuestion(objective)),
+	} {
+		if variant == "" {
+			continue
+		}
+
+		body = strings.ReplaceAll(body, variant, "")
+		body = strings.ReplaceAll(body, strings.ToLower(variant), "")
+	}
+
+	return strings.TrimSpace(body)
+}
+
+
+func AnswerProseForObjectiveMatching(answer string) string {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return ""
+	}
+
+	var b strings.Builder
+
+	inCodeSpan := false
+
+	for i := 0; i < len(answer); i++ {
+		ch := answer[i]
+		if ch == '`' {
+			inCodeSpan = !inCodeSpan
+
+			b.WriteByte(' ')
+
+			continue
+		}
+
+		if inCodeSpan {
+			continue
+		}
+
+		b.WriteByte(ch)
+	}
+
+	words := strings.Fields(b.String())
+	if len(words) == 0 {
+		return ""
+	}
+
+	kept := make([]string, 0, len(words))
+	for _, word := range words {
+		trimmed := strings.Trim(word, ".,:;!?()[]{}\"'")
+		if looksLikePathCitationToken(trimmed) {
+			continue
+		}
+
+		kept = append(kept, trimmed)
+	}
+
+	return strings.Join(kept, " ")
+}
+
+
+func looksLikePathCitationToken(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+
+	value = strings.Trim(value, ".,:;!?()[]{}\"'")
+
+	return strings.Contains(value, "/") ||
+		strings.HasSuffix(value, ".go") ||
+		strings.Contains(value, ".go:") ||
+		strings.Contains(value, "\\")
+}
+
+
+func AnswerTextWithoutPathCitations(answer string) string {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return ""
+	}
+
+	var b strings.Builder
+
+	for i := 0; i < len(answer); {
+		if answer[i] != '`' {
+			b.WriteByte(answer[i])
+
+			i++
+
+			continue
+		}
+
+		end := strings.IndexByte(answer[i+1:], '`')
+		if end < 0 {
+			b.WriteByte(' ')
+
+			i++
+
+			continue
+		}
+
+		span := answer[i+1 : i+1+end]
+		if !looksLikePathCitationToken(span) {
+			b.WriteByte(' ')
+			b.WriteString(span)
+			b.WriteByte(' ')
+		} else {
+			b.WriteByte(' ')
+		}
+
+		i += end + 2
+	}
+
+	words := strings.Fields(b.String())
+	if len(words) == 0 {
+		return ""
+	}
+
+	kept := make([]string, 0, len(words))
+	for _, word := range words {
+		trimmed := strings.Trim(word, ".,:;!?()[]{}\"'")
+		if looksLikePathCitationToken(trimmed) {
+			continue
+		}
+
+		kept = append(kept, trimmed)
+	}
+
+	return strings.Join(kept, " ")
+}
+
+
+func ReadOnlyExplanationHasMechanismVerb(lower string) bool {
+	for _, phrase := range []string{
+		" uses ", " use ", " used ", " delegates ", " delegate ", " delegated ",
+		" creates ", " create ", " created ", " calls ", " call ", " called ",
+		" contains ", " contain ", " contained ",
+		" invokes ", " invoke ", " invoked ", " routes ", " route ", " routed ",
+		" runs ", " run ", " ran ", " returns ", " return ", " returned ",
+		" passes ", " pass ", " passed ", " enforces ", " enforce ", " enforced ",
+		" computes ", " compute ", " computed ", " evaluates ", " evaluate ", " evaluated ",
+		" determines ", " determine ", " determined ", " derives ", " derive ", " derived ",
+		" spawns ", " spawn ", " spawned ", " builds ", " build ", " built ",
+		" wires ", " wire ", " wired ", " folds ", " fold ", " folded ",
+		" hands ", " hand ", " handed ", " launches ", " launch ", " launched ",
+		" finds ", " find ", " found ", " locates ", " locate ", " located ",
+		" identifies ", " identify ", " identified ",
+		" sanitizes ", " sanitize ", " sanitized ", " redacts ", " redact ", " redacted ",
+		" masks ", " mask ", " masked ", " replaces ", " replace ", " replaced ", " replacing ",
+		" filters ", " filter ", " filtered ", " scrubs ", " scrub ", " scrubbed ",
+		" summarizes ", " summarize ", " summarized ",
+	} {
+		if strings.Contains(" "+lower+" ", phrase) {
+			return true
+		}
+	}
+
+	return false
+}
+
+
+func TextSharesObjectiveTerm(text string, objective string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
+	objective = strings.ToLower(strings.TrimSpace(objective))
+
+	if text == "" || objective == "" {
+		return false
+	}
+
+	for _, term := range recoveryObjectiveSearchWords(objective, 32) {
+		term = singularObjectiveWord(strings.ToLower(strings.TrimSpace(term)))
+		if len(term) < 4 {
+			continue
+		}
+
+		if strings.Contains(text, term) {
+			return true
+		}
+	}
+
+	return false
+}
+
+
+func ReadOnlyTaskResultAnswerableForObjective(result workspace.ToolResult, objective string) bool {
+	if strings.TrimSpace(result.Tool) != workspace.ToolNameTask || strings.TrimSpace(result.Error) != "" {
+		return false
+	}
+
+	if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
+		if strings.TrimSpace(objective) == "" {
+			return readOnlyEvidencePacketAnswerable(packet)
+		}
+
+		return readOnlyEvidencePacketAnswerableForObjective(packet, objective)
+	}
+
+	return childPacketContainsGroundedAnswerEvidence(objective, result.Output)
+}
+
+
+func CandidateAnchorOnlyResult(result workspace.ToolResult) bool {
+	return candidateAnchorOnlyText(strings.Join([]string{result.Summary, result.Output}, "\n"))
+}
+

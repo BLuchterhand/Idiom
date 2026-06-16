@@ -53,6 +53,7 @@ func (r *Runner) classifyTerminalAnswer(answer string, stopReason string, result
 
 	decision.Outcome = terminalAnswerBlocked
 	decision.StopReason = acceptance.BlockerKind
+	decision.RetryExhausted = retryableReadOnlyFinalAnswerBlockerKind(acceptance.BlockerKind)
 
 	if !strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") && r.terminalAnswerShouldOverrideRejectedRaw(answer, acceptance) {
 		blockerResult := workspace.ToolResult{

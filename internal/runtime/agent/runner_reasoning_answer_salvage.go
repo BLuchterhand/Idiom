@@ -277,17 +277,6 @@ func reasoningAnswerCandidateIsClean(answer string) bool {
 	return true
 }
 
-func finalAnswerSectionMarkerCount(text string) int {
-	count := 0
-
-	for _, line := range strings.Split(text, "\n") {
-		if _, ok := finalAnswerSectionMarkerRest(line); ok {
-			count++
-		}
-	}
-
-	return count
-}
 
 func reasoningAnswerLooksTruncated(answer string) bool {
 	answer = strings.TrimSpace(answer)

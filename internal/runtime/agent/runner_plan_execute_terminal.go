@@ -764,18 +764,6 @@ func normalizedRunnerPaths(paths []string) []string {
 	return out
 }
 
-func nonArtifactEvidencePaths(paths []string) []string {
-	out := make([]string, 0, len(paths))
-	for _, path := range paths {
-		if strings.TrimSpace(path) == "" || isNonSourceEvidenceArtifactPath(path) {
-			continue
-		}
-
-		out = append(out, path)
-	}
-
-	return out
-}
 
 func prunePlanThenExecuteTerminalTextualMessages(messages []llama.ChatMessage) ([]llama.ChatMessage, int, int) {
 	if len(messages) == 0 {

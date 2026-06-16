@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"idiom/internal/contracts/pathparse"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -248,7 +249,7 @@ func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswer
 		return readOnlyFinalAnswerDecision{Status: "skipped_empty_objective"}
 	}
 
-	substantiveAnswer := substantiveAnswerWithoutEchoedObjective(answer, objective)
+	substantiveAnswer := SubstantiveAnswerWithoutEchoedObjective(answer, objective)
 	ledger := d.Evidence
 	answerSupportedPaths := answerCitedCollectiveSourceBodySupportPaths(answer, ledger)
 
@@ -360,14 +361,14 @@ func (d ReadOnlyCloseout) SupportsPresentableQuestionBlockerAnswer(answer string
 		return false
 	}
 
-	substantive := substantiveAnswerWithoutEchoedObjective(answer, objective)
+	substantive := SubstantiveAnswerWithoutEchoedObjective(answer, objective)
 
 	return answerAddressesObjective(substantive, objective, ledger, d.Results) &&
 		answerSourceCitationsAreObjectiveRelevant(answer, ledger)
 }
 
 func answerAddressesObjective(answer string, objective string, ledger readOnlyAnswerabilityLedger, results []workspace.ToolResult) bool {
-	answer = strings.TrimSpace(substantiveAnswerWithoutEchoedObjective(answer, objective))
+	answer = strings.TrimSpace(SubstantiveAnswerWithoutEchoedObjective(answer, objective))
 	if answer == "" {
 		return false
 	}
@@ -418,14 +419,14 @@ func answerAddressesObjective(answer string, objective string, ledger readOnlyAn
 }
 
 func answerMentionsInspectedCodeSymbol(answer string, results []workspace.ToolResult) bool {
-	exactSymbols := exactEvidenceSymbolSet(results)
+	exactSymbols := ExactEvidenceSymbolSet(results)
 	if len(exactSymbols) == 0 {
 		return false
 	}
 
-	for _, symbol := range explicitAnswerCodeSymbols(answer) {
-		key := normalizedAnswerSymbol(symbol)
-		if key == "" || architectureNonSourceSymbolTerm(key) {
+	for _, symbol := range ExplicitAnswerCodeSymbols(answer) {
+		key := NormalizedAnswerSymbol(symbol)
+		if key == "" || ArchitectureNonSourceSymbolTerm(key) {
 			continue
 		}
 
@@ -511,7 +512,7 @@ func answerCitesNamedObjectiveSource(answer string, ledger readOnlyAnswerability
 }
 
 func answerObjectiveTerms(answer string, objective string) []string {
-	answer = substantiveAnswerWithoutEchoedObjective(answer, objective)
+	answer = SubstantiveAnswerWithoutEchoedObjective(answer, objective)
 
 	lower := strings.ToLower(answer)
 
@@ -906,7 +907,7 @@ func architectureObjectiveRelatedPackets(objective string, packets []ReadOnlyEvi
 			text.WriteString(finding.Text)
 		}
 
-		if textSharesObjectiveTerm(text.String(), objective) {
+		if TextSharesObjectiveTerm(text.String(), objective) {
 			related = append(related, packet)
 		}
 	}
@@ -931,14 +932,14 @@ func (d ReadOnlyCloseout) HasObjectiveRelevantEvidence() bool {
 
 		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
 			for _, finding := range packet.Findings {
-				if textSharesObjectiveTerm(finding.Text, objective) {
+				if TextSharesObjectiveTerm(finding.Text, objective) {
 					return true
 				}
 			}
 		}
 
 		if strings.TrimSpace(result.Tool) == "task" {
-			if textSharesObjectiveTerm(stripDelegatedReadOnlyInternalPacket(result.Output), objective) {
+			if TextSharesObjectiveTerm(stripDelegatedReadOnlyInternalPacket(result.Output), objective) {
 				return true
 			}
 		}
@@ -988,3 +989,225 @@ func unsupportedReadOnlyCloseoutAnswer(answer string) bool {
 
 	return strings.HasPrefix(lower, strings.ToLower(presentableUnsupportedFinalAnswerLead()))
 }
+
+func indexFold(value string, needle string) int {
+	if needle == "" || len(value) < len(needle) {
+		return -1
+	}
+
+	for i := 0; i+len(needle) <= len(value); i++ {
+		if strings.EqualFold(value[i:i+len(needle)], needle) {
+			return i
+		}
+	}
+
+	return -1
+}
+
+
+func cleanDelegatedReadOnlyFindingLine(line string) string {
+	line = strings.TrimSpace(line)
+	for {
+		lower := strings.ToLower(line)
+		stripped := false
+
+		for _, label := range delegatedReadOnlyPacketLineLabels() {
+			if !strings.HasPrefix(lower, label) {
+				continue
+			}
+
+			line = strings.TrimSpace(line[len(label):])
+			stripped = true
+
+			break
+		}
+
+		if !stripped {
+			return line
+		}
+	}
+}
+
+
+func isGroundedChildPacketEvidencePath(objective string, path string) bool {
+	path = strings.ToLower(filepath.ToSlash(strings.TrimSpace(normalizeDelegatedDiscoveryEvidencePath(path))))
+	if path == "" {
+		return false
+	}
+
+	switch {
+	case strings.HasPrefix(path, ".idiom/"),
+		strings.HasPrefix(path, "idiom/"),
+		strings.HasPrefix(path, "logs/"),
+		strings.HasPrefix(path, "transcripts/"),
+		strings.HasPrefix(path, "testdata/swe/fixtures/"),
+		strings.Contains(path, "/testdata/swe/fixtures/"):
+		return false
+	}
+
+	base := filepath.Base(path)
+	if allowsDocumentationOnlyPacket(objective) && (strings.HasSuffix(path, ".md") || base == "readme.md") {
+		return true
+	}
+
+	switch base {
+	case "go.mod", "go.sum", "go.work", "makefile", "package.json", "cargo.toml", "pyproject.toml", "pom.xml", "build.gradle", "build.gradle.kts":
+		return true
+	}
+
+	switch {
+	case strings.HasSuffix(path, ".go"),
+		strings.HasSuffix(path, ".rs"),
+		strings.HasSuffix(path, ".py"),
+		strings.HasSuffix(path, ".ts"),
+		strings.HasSuffix(path, ".tsx"),
+		strings.HasSuffix(path, ".js"),
+		strings.HasSuffix(path, ".jsx"),
+		strings.HasSuffix(path, ".java"),
+		strings.HasSuffix(path, ".c"),
+		strings.HasSuffix(path, ".cc"),
+		strings.HasSuffix(path, ".cpp"),
+		strings.HasSuffix(path, ".cxx"),
+		strings.HasSuffix(path, ".h"),
+		strings.HasSuffix(path, ".hpp"),
+		strings.HasSuffix(path, ".m"),
+		strings.HasSuffix(path, ".mm"),
+		strings.HasSuffix(path, ".json"),
+		strings.HasSuffix(path, ".yaml"),
+		strings.HasSuffix(path, ".yml"),
+		strings.HasSuffix(path, ".toml"),
+		strings.HasSuffix(path, ".sh"),
+		strings.HasSuffix(path, ".sql"),
+		strings.HasSuffix(path, ".proto"):
+		return true
+	}
+
+	return strings.HasPrefix(path, "internal/") ||
+		strings.HasPrefix(path, "cmd/") ||
+		strings.HasPrefix(path, "pkg/") ||
+		strings.HasPrefix(path, "src/") ||
+		strings.HasPrefix(path, "scripts/")
+}
+
+
+func groundedChildPacketEvidencePaths(objective string, output string) []string {
+	rawPaths := pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(output))
+	if len(rawPaths) == 0 {
+		return nil
+	}
+
+	paths := make([]string, 0, len(rawPaths))
+	for _, raw := range rawPaths {
+		path := normalizeDelegatedDiscoveryEvidencePath(raw)
+		if !isGroundedChildPacketEvidencePath(objective, path) {
+			continue
+		}
+
+		paths = append(paths, path)
+	}
+
+	return uniqueDelegatedDiscoveryPaths(paths)
+}
+
+
+func fallbackLineBudgetForTool(tool string) int {
+	switch tool {
+	case "discovery_query":
+		return 20
+	case "search_content":
+		return 6
+	case "read_file":
+		return 10
+	default:
+		return 8
+	}
+}
+
+
+func isHarnessRejectionErrorText(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return false
+	}
+
+	return containsAny(lower,
+		"include `named_gap`",
+		"include named_gap",
+		"already contains sufficient evidence to bias toward answering",
+		"file-level raw read is too broad",
+		"file-level outline is broad orientation",
+		"do not restart broad discovery",
+		"successful write(s) since the last verification",
+		"this action class already failed earlier in the turn",
+	)
+}
+
+
+func isHarnessRejectionSummary(summary string) bool {
+	summary = normalizedHarnessRejectionSummary(summary)
+	if postReadinessContinuationRejectionSummary(summary) {
+		return true
+	}
+
+	switch summary {
+	case "Post-child reread blocked",
+		"Broad exploration after delegation nudge blocked",
+		"Additional read_only child task blocked",
+		"Broad inspection request rejected",
+		"Verification required after workspace edits",
+		"Repeated dead-end action rejected",
+		"Chained list_files rejected",
+		"Chained search rejected":
+		return true
+	}
+
+	return false
+}
+
+
+func firstBulletText(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "- ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "- "))
+			if idx := strings.Index(line, ":"); idx >= 0 {
+				return strings.TrimSpace(line[:idx])
+			}
+
+			return line
+		}
+	}
+
+	return ""
+}
+
+
+func finalAnswerSectionMarkerCount(text string) int {
+	count := 0
+
+	for _, line := range strings.Split(text, "\n") {
+		if _, ok := finalAnswerSectionMarkerRest(line); ok {
+			count++
+		}
+	}
+
+	return count
+}
+
+
+func compactOutput(output string, maxLines int) string {
+	output = stripFallbackJSONArtifacts(output)
+
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+
+	if len(lines) == 0 || lines[0] == "" {
+		return ""
+	}
+
+	if maxLines <= 0 || len(lines) <= maxLines {
+		return strings.Join(lines, "\n")
+	}
+
+	return strings.Join(lines[:maxLines], "\n") + "\n..."
+}
+

@@ -286,14 +286,14 @@ func TestReadOnlyEvidencePacketAnswerableForObjectiveAcceptsSubagentWorkPacket(t
 	}
 	objective := "Explain how subagents work."
 	body := strings.Join([]string{packet.Findings[0].Text, packet.Findings[1].Text}, "\n")
-	objectiveText := answerTextWithoutPathCitations(substantiveAnswerWithoutEchoedObjective(body, objective))
-	mechanismText := strings.ToLower(answerProseForObjectiveMatching(objectiveText))
+	objectiveText := AnswerTextWithoutPathCitations(SubstantiveAnswerWithoutEchoedObjective(body, objective))
+	mechanismText := strings.ToLower(AnswerProseForObjectiveMatching(objectiveText))
 
 	if !readOnlyEvidencePacketAnswerableForObjective(packet, objective) {
 		t.Fatalf("expected subagent packet to support objective answerability: terms=%#v objectiveText=%q mechanism=%t packet=%#v",
 			readOnlyObjectivePromotionTerms(objective),
 			objectiveText,
-			readOnlyExplanationHasMechanismVerb(mechanismText),
+			ReadOnlyExplanationHasMechanismVerb(mechanismText),
 			packet)
 	}
 
@@ -380,7 +380,7 @@ func TestReadOnlyTaskResultAnswerableForObjectiveUsesTypedPacketAsAuthority(t *t
 		Confidence: "medium",
 	})
 
-	if readOnlyTaskResultAnswerableForObjective(result, "Explain how subagents work.") {
+	if ReadOnlyTaskResultAnswerableForObjective(result, "Explain how subagents work.") {
 		t.Fatal("typed packet rejection must not fall back to legacy rendered text promotion")
 	}
 

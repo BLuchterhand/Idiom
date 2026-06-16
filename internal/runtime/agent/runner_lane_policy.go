@@ -1020,9 +1020,60 @@ func (r *Runner) conversationRepeatedBroadDiscoveryAfterGate(req workspace.ToolR
 	}
 
 	summary = "Conversation contract rejected repeated broad discovery after bounded evidence"
-	errorText = "the conversation lane already spent its recovery probe on broad localization after a completion-gate miss. Answer from the gathered evidence, or take one narrow read/search that names the concrete missing claim; do not repeat broad discovery."
+
+	// Check if the completion gate rejection was about source grounding
+	// (the model cited files it never read). If so, call out the specific
+	// missing files and tell the model to read them instead of searching.
+	if missingPaths := conversationSourceGroundingMissingPaths(results); len(missingPaths) > 0 {
+		errorText = "The completion gate rejected your answer because it cites file(s) that were never read: " +
+			strings.Join(missingPaths, ", ") +
+			". Use `read_file` on those file(s) instead of another broad search."
+	} else {
+		errorText = "the conversation lane already spent its recovery probe on broad localization after a completion-gate miss. Answer from the gathered evidence, or take one narrow read/search that names the concrete missing claim; do not repeat broad discovery."
+	}
 
 	return summary, errorText, true
+}
+
+// conversationSourceGroundingMissingPaths scans results for a completion_gate
+// rejection caused by source_grounding_unmet and returns the paths cited in
+// the error text that the model should read.
+func conversationSourceGroundingMissingPaths(results []workspace.ToolResult) []string {
+	for _, result := range results {
+		tool := strings.TrimSpace(result.Tool)
+		if tool != "completion_gate" {
+			continue
+		}
+
+		errorText := strings.TrimSpace(result.Error)
+		if errorText == "" {
+			continue
+		}
+
+		// Detect source-grounding rejection patterns.
+		lower := strings.ToLower(errorText)
+		if !strings.Contains(lower, "source path") && !strings.Contains(lower, "not backed by") &&
+			!strings.Contains(lower, "cites current-workspace") && !strings.Contains(lower, "source-body read") {
+			continue
+		}
+
+		// Extract paths from the error text — they appear in quoted form:
+		// "the answer cites current-workspace path(s) that do not exist: `path1`, `path2`."
+		// or "the answer cites source path/line/symbol detail not backed by a source-body read: `path1`."
+		var paths []string
+		for _, match := range backtickedTokenPattern.FindAllStringSubmatch(errorText, -1) {
+			if len(match) > 1 {
+				p := strings.TrimSpace(match[1])
+				if p != "" {
+					paths = append(paths, p)
+				}
+			}
+		}
+		if len(paths) > 0 {
+			return paths
+		}
+	}
+	return nil
 }
 
 func conversationBroadLocalizationAfterCompletionGate(results []workspace.ToolResult) bool {
@@ -1267,19 +1318,6 @@ func conversationEvidenceSatisfied(brief workerruntime.WorkerRuntimeBrief, resul
 	return readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).Answerable()
 }
 
-func searchContentSummaryMatchCount(summary string) (int, bool) {
-	match := regexp.MustCompile(`Found (\d+) matching line`).FindStringSubmatch(strings.TrimSpace(summary))
-	if len(match) != 2 {
-		return 0, false
-	}
-
-	count, err := strconv.Atoi(match[1])
-	if err != nil {
-		return 0, false
-	}
-
-	return count, true
-}
 
 func conversationEvidenceSatisfiedForObjective(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	return conversationEvidenceSatisfied(brief, results)
@@ -2018,55 +2056,6 @@ func delegatedReadOnlySearchTerm(raw string) (string, bool) {
 	return pattern, true
 }
 
-func delegatedReadOnlyLiteralSymbolCandidate(raw string) (string, bool) {
-	value := strings.TrimSpace(raw)
-
-	value = strings.Trim(value, "`'\"()[]{}<>,.:;!?")
-	value = strings.TrimSpace(strings.TrimPrefix(value, "./"))
-
-	if value == "" || pathparse.LooksLikeWorkspacePathToken(strings.ToLower(value)) {
-		return "", false
-	}
-
-	if len(value) < 4 {
-		return "", false
-	}
-
-	for i, r := range value {
-		if i == 0 && !unicode.IsLetter(r) && r != '_' {
-			return "", false
-		}
-
-		break
-	}
-
-	hasLetter := false
-
-	for _, r := range value {
-		switch {
-		case unicode.IsLetter(r):
-			hasLetter = true
-		case unicode.IsDigit(r), r == '_':
-		default:
-			return "", false
-		}
-	}
-
-	if !hasLetter {
-		return "", false
-	}
-
-	if !delegatedReadOnlyLooksCodeShapedSymbol(value) {
-		return "", false
-	}
-
-	lower := strings.ToLower(value)
-	if delegatedDiscoveryStopWord(lower, delegatedDiscoveryStopWordSymbol) {
-		return "", false
-	}
-
-	return value, true
-}
 
 func delegatedReadOnlyLooksCodeShapedSymbol(value string) bool {
 	if strings.Contains(value, "_") {
@@ -2449,7 +2438,7 @@ func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
 			continue
 		}
 
-		if candidateAnchorOnlyResult(result) {
+		if CandidateAnchorOnlyResult(result) {
 			continue
 		}
 
@@ -2522,7 +2511,7 @@ func delegatedReadOnlyInspectedImplementationPaths(results []workspace.ToolResul
 			continue
 		}
 
-		if candidateAnchorOnlyResult(result) {
+		if CandidateAnchorOnlyResult(result) {
 			continue
 		}
 

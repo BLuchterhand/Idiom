@@ -11,13 +11,13 @@ import (
 
 type sourceEvidenceObligation struct {
 	Path        string
-	Level       planThenExecuteSourceEvidenceLevel
+	Level       PlanThenExecuteSourceEvidenceLevel
 	Source      string
 	Detail      string
 	PendingTool string
 }
 
-type sourceEvidenceLevel = planThenExecuteSourceEvidenceLevel
+type sourceEvidenceLevel = PlanThenExecuteSourceEvidenceLevel
 
 const (
 	sourceEvidenceNone              sourceEvidenceLevel = planThenExecuteEvidenceNone
@@ -46,8 +46,64 @@ func sourceEvidenceBodyReadForPath(path string, results []workspace.ToolResult) 
 	return newToolResultEvidenceView(results).HasSourceBody(path)
 }
 
+// sourceEvidenceBodyReadForPathWithRegistry checks body-read evidence from
+// the tool results AND the PathEvidenceRegistry when available. This avoids
+// redundant os.Stat calls and covers paths registered by the registry that
+// the raw tool-result scan may not see.
+func sourceEvidenceBodyReadForPathWithRegistry(path string, results []workspace.ToolResult, registry *PathEvidenceRegistry) bool {
+	if registry != nil && registry.HasBodyEvidence(path) {
+		return true
+	}
+	return sourceEvidenceBodyReadForPath(path, results)
+}
+
 func sourceEvidenceBodyPaths(results []workspace.ToolResult) []string {
 	return newToolResultEvidenceView(results).SourceBodyPaths()
+}
+
+func sourceEvidenceCandidatePaths(results []workspace.ToolResult) []string {
+	bodySet := make(map[string]struct{})
+	for _, p := range sourceEvidenceBodyPaths(results) {
+		bodySet[p] = struct{}{}
+	}
+
+	seen := make(map[string]struct{})
+	var paths []string
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+
+		tool := strings.TrimSpace(result.Tool)
+		var candidates []string
+
+		switch tool {
+		case "discovery_query", "context_query", "context_zoom", "context_impact", "structural_search":
+			candidates = discoveryConsumptionCandidatesFromResult(result, 128)
+		case "context_pack":
+			candidates = contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, 128)
+		case "search_content", "search_files":
+			candidates = sourceLikePathsFromText(result.Summary+"\n"+result.Output, 128)
+		}
+
+		for _, path := range candidates {
+			normalized := normalizeRunnerPath(path)
+			if normalized == "" {
+				continue
+			}
+			if _, ok := seen[normalized]; ok {
+				continue
+			}
+			if _, ok := bodySet[normalized]; ok {
+				continue
+			}
+			seen[normalized] = struct{}{}
+			paths = append(paths, normalized)
+		}
+	}
+
+	return paths
 }
 
 func sourceEvidencePendingRedirects(results []workspace.ToolResult) []sourceEvidenceObligation {
@@ -561,3 +617,119 @@ func sourceEvidencePendingRedirectActionLabel(obligation sourceEvidenceObligatio
 		return fmt.Sprintf("%s via %s source-body capability", path, tool)
 	}
 }
+
+func splitImplementationPathToken(token string) []string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil
+	}
+
+	var out []string
+
+	start := 0
+
+	for i, r := range token {
+		if i > start && r >= 'A' && r <= 'Z' {
+			out = append(out, token[start:i])
+			start = i
+		}
+	}
+
+	out = append(out, token[start:])
+	for i, value := range out {
+		out[i] = strings.ToLower(value)
+	}
+
+	return out
+}
+
+
+func implementationSourcePathOverlapsObjective(path string, objective string) bool {
+	terms := recoveryObjectiveSearchWords(objective, 32)
+	if len(terms) == 0 {
+		return false
+	}
+
+	objectiveTerms := make(map[string]struct{}, len(terms))
+	for _, term := range terms {
+		objectiveTerms[singularObjectiveWord(term)] = struct{}{}
+	}
+
+	matches := 0
+
+	for _, term := range implementationPathTerms(path) {
+		if _, ok := objectiveTerms[term]; ok {
+			matches++
+		}
+	}
+
+	return matches >= 2
+}
+
+
+func concreteSourceEvidenceResult(result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Error) != "" {
+		return false
+	}
+
+	if CandidateAnchorOnlyResult(result) {
+		return false
+	}
+
+	tool := strings.TrimSpace(result.Tool)
+	switch {
+	case ReadStyleSourceBodyTool(tool):
+		return readFileResultHasConcreteSourceBody(result)
+	case tool == workspace.ToolNameContextZoom:
+		return contextZoomResultHasConcreteSourceBody(result)
+	case tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameReadOnlyCapability:
+		return routedSourceReadOutputHasBody(result.Output) && toolResultHasNonArtifactReadPath(result)
+	case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
+		return toolResultHasNonArtifactReadPath(result)
+	default:
+		return false
+	}
+}
+
+
+func concreteSourceEvidencePaths(results []workspace.ToolResult) []string {
+	return sourceEvidenceBodyPaths(results)
+}
+
+
+func implementationTargetWriteReadyRedirectedSourceTool(tool string) bool {
+	tool = strings.TrimSpace(tool)
+
+	return tool == workspace.ToolNameCodeNavigate ||
+		tool == workspace.ToolNameReadOnlyCapability ||
+		strings.HasSuffix(tool, "_read_symbol") ||
+		strings.HasSuffix(tool, "_extract_body")
+}
+
+
+func implementationTargetWriteReadyRedirectedRelatedSourceTool(result workspace.ToolResult) (string, bool) {
+	for _, line := range strings.Split(result.Output, "\n") {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, "related_capability:") ||
+			!strings.Contains(lower, "read_symbol") ||
+			!strings.Contains(lower, " via ") {
+
+			continue
+		}
+
+		idx := strings.Index(lower, " via ")
+		fields := strings.Fields(line[idx+len(" via "):])
+
+		if len(fields) == 0 {
+			continue
+		}
+
+		tool := strings.Trim(fields[0], "`'\".,;:")
+		if implementationTargetWriteReadyRedirectedSourceTool(tool) {
+			return tool, true
+		}
+	}
+
+	return "", false
+}
+

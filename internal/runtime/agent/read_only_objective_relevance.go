@@ -1,6 +1,11 @@
 package agent
 
 import (
+	"idiom/internal/contracts/pathparse"
+	"idiom/internal/capabilities/workspace"
+	"unicode"
+	"strconv"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -92,3 +97,171 @@ func objectiveAsksImplementationShape(objective string) bool {
 		" how should ",
 	)
 }
+
+func delegatedReadOnlyQualifiedSymbolCandidate(raw string) (string, bool) {
+	value := strings.TrimSpace(raw)
+
+	value = strings.Trim(value, "`'\"()[]{}<>,.:;!?")
+
+	if value == "" || !strings.Contains(value, ".") || pathparse.LooksLikeWorkspacePathToken(strings.ToLower(value)) {
+		return "", false
+	}
+
+	parts := strings.Split(value, ".")
+	if len(parts) != 2 {
+		return "", false
+	}
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if len(part) < 2 {
+			return "", false
+		}
+
+		hasLetter := false
+
+		for _, r := range part {
+			switch {
+			case unicode.IsLetter(r):
+				hasLetter = true
+			case unicode.IsDigit(r), r == '_':
+			default:
+				return "", false
+			}
+		}
+
+		if !hasLetter || (!delegatedReadOnlyLooksCodeShapedSymbol(part) && !delegatedReadOnlyLooksExportedTypeName(part)) {
+			return "", false
+		}
+	}
+
+	return value, true
+}
+
+
+func recoverySearchStopWords() map[string]struct{} {
+	return map[string]struct{}{
+		"actual": {}, "please": {}, "replace": {}, "with": {}, "from": {}, "that": {}, "this": {}, "the": {}, "and": {}, "for": {}, "you": {}, "can": {}, "top": {}, "right": {}, "left": {}, "path": {}, "alias": {},
+		"continuing": {}, "continue": {}, "completion": {}, "complete": {}, "work": {}, "docs": {}, "document": {}, "design": {}, "implement": {}, "implementation": {}, "bounded": {}, "topic": {}, "only": {}, "must": {},
+		"against": {}, "existing": {}, "focus": {}, "focused": {}, "add": {}, "regression": {}, "tests": {}, "test": {}, "proving": {}, "without": {}, "partial": {}, "durable": {}, "mutation": {},
+		"repo": {}, "repository": {}, "discovery": {}, "first": {}, "make": {}, "minimal": {}, "code": {}, "changes": {}, "change": {}, "requested": {}, "request": {},
+		"tdd": {}, "prd": {}, "adr": {}, "brief": {}, "research": {}, "workflow": {}, "workflows": {}, "markdown": {},
+		// "model" intentionally kept — it carries domain signal for path→objective matching.
+		"send": {}, "through": {}, "plan": {}, "execute": {}, "expose": {}, "read": {}, "external": {}, "agents": {},
+	}
+}
+
+
+func singularObjectiveWord(word string) string {
+	word = strings.TrimSpace(strings.ToLower(word))
+	if len(word) > 4 && strings.HasSuffix(word, "s") && !strings.HasSuffix(word, "ss") {
+		return strings.TrimSuffix(word, "s")
+	}
+
+	return word
+}
+
+
+func recoveryObjectiveSearchWords(objective string, max int) []string {
+	if max <= 0 {
+		max = 8
+	}
+
+	lower := strings.ToLower(strings.TrimSpace(objective))
+	if lower == "" {
+		return nil
+	}
+
+	replacer := strings.NewReplacer("'", " ", "\"", " ", "`", " ", "’", " ", "-", " ", "_", " ", "/", " ")
+
+	lower = replacer.Replace(lower)
+
+	words := strings.FieldsFunc(lower, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+	stop := recoverySearchStopWords()
+	terms := make([]string, 0, max)
+	seen := make(map[string]struct{})
+
+	for _, word := range words {
+		word = strings.TrimSpace(word)
+		if len(word) < 4 {
+			continue
+		}
+
+		if _, skip := stop[word]; skip {
+			continue
+		}
+
+		if _, ok := seen[word]; ok {
+			continue
+		}
+
+		seen[word] = struct{}{}
+		terms = append(terms, word)
+
+		if len(terms) >= max {
+			break
+		}
+	}
+
+	return terms
+}
+
+
+func implementationTargetWriteReadyRedirectedReadTool(result workspace.ToolResult) (string, bool) {
+	if strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile || strings.TrimSpace(result.Error) != "" {
+		return "", false
+	}
+
+	summary := strings.TrimSpace(result.Summary)
+	lower := strings.ToLower(summary)
+
+	if !strings.HasPrefix(lower, "redirected ") {
+		return "", false
+	}
+
+	tail := summary[len("Redirected "):]
+	idx := strings.Index(strings.ToLower(tail), " to ")
+
+	if idx < 0 {
+		return "", false
+	}
+
+	fields := strings.Fields(tail[idx+len(" to "):])
+	if len(fields) == 0 {
+		return "", false
+	}
+
+	tool := strings.Trim(fields[0], "`'\".,;:")
+	if !implementationTargetWriteReadyRedirectedSourceTool(tool) {
+		if !strings.HasSuffix(tool, "_file_outline") {
+			return "", false
+		}
+
+		related, ok := implementationTargetWriteReadyRedirectedRelatedSourceTool(result)
+		if !ok {
+			return "", false
+		}
+
+		return related, true
+	}
+
+	return tool, true
+}
+
+
+func searchContentSummaryMatchCount(summary string) (int, bool) {
+	match := regexp.MustCompile(`Found (\d+) matching line`).FindStringSubmatch(strings.TrimSpace(summary))
+	if len(match) != 2 {
+		return 0, false
+	}
+
+	count, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0, false
+	}
+
+	return count, true
+}
+

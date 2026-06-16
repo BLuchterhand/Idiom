@@ -455,11 +455,11 @@ func duplicateReadOnlyCloseoutPresenterAuthority(file, text string) bool {
 		return false
 	}
 
-	if !agentProductionSource(file) || !containsAny(text, "ReadOnlyCloseout", "readOnlyCloseout", "readOnlyClosure", "CloseoutAnswer", "ClosureUncertainty") {
+	if !agentProductionSource(file) || !containsAny(text, "ReadOnlyCloseout", "ReadOnlyCloseout", "readOnlyClosure", "CloseoutAnswer", "ClosureUncertainty") {
 		return false
 	}
 
-	for _, token := range []string{"ReadOnlyCloseout", "readOnlyCloseout", "readOnlyClosure", "CloseoutAnswer", "ClosureUncertainty"} {
+	for _, token := range []string{"ReadOnlyCloseout", "ReadOnlyCloseout", "readOnlyClosure", "CloseoutAnswer", "ClosureUncertainty"} {
 		for _, window := range deDriftFunctionWindows(text, token, 900) {
 			namesUserVisibleUncertainty := containsAny(window,
 				"presentableUnsupportedFinalAnswerLead",

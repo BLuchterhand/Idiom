@@ -851,22 +851,6 @@ func concreteRecoveryEvidencePaths(results []workspace.ToolResult, max int) []st
 	return promptEvidencePathsFromToolResults(filtered, max)
 }
 
-func discoveryConsumptionCandidatesFromResult(result workspace.ToolResult, max int) []string {
-	if max <= 0 {
-		max = 4
-	}
-
-	if strings.TrimSpace(result.Error) != "" {
-		return nil
-	}
-
-	if strings.TrimSpace(result.Tool) == workspace.ToolNameContextPack {
-		return contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, max)
-	}
-
-	return promptEvidencePathsFromToolResults([]workspace.ToolResult{result}, max)
-}
-
 func recoveryEvidencePathsForObjective(objective string, results []workspace.ToolResult, max int) []string {
 	if max <= 0 {
 		max = 4
@@ -1218,7 +1202,7 @@ func runnerEvidenceTrimDoubledFinalConsonant(token string) string {
 
 	if last == prev {
 		switch last {
-		case 'b', 'd', 'g', 'm', 'n', 'p', 'r', 't':
+		case 'B', 'd', 'g', 'm', 'n', 'p', 'r', 't':
 			return token[:len(token)-1]
 		}
 	}

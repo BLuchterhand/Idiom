@@ -438,24 +438,52 @@ func Default() Config {
 }
 
 func Load(path string) (Config, error) {
-	cfg := Default()
-
+	// Try the specified config file first.
 	data, err := os.ReadFile(path)
-	if err != nil {
+	if err == nil {
+		return loadConfigFromData(data, path, "")
+	}
+	if !os.IsNotExist(err) {
 		return Config{}, fmt.Errorf("read config: %w", err)
 	}
 
+	// Local config missing — try ~/.idiom/config.json.
+	if home, homeErr := os.UserHomeDir(); homeErr == nil {
+		globalPath := filepath.Join(home, ".idiom", "config.json")
+		data, err = os.ReadFile(globalPath)
+		if err == nil {
+			return loadConfigFromData(data, globalPath, "global ")
+		}
+		if !os.IsNotExist(err) {
+			return Config{}, fmt.Errorf("read global config: %w", err)
+		}
+	}
+
+	// No config file found anywhere — return compiled defaults.
+	cfg := Default()
+	cfg.applyWorkspaceDefaults()
+	cfg.canonicalizeWorkspacePaths()
+
+	return cfg, nil
+}
+
+// loadConfigFromData unmarshals config data, resolves paths relative to
+// sourcePath's directory, applies runtime/workspace defaults, and validates.
+// label is inserted into error messages (e.g. "global ") — pass "" for local.
+func loadConfigFromData(data []byte, sourcePath, label string) (Config, error) {
+	cfg := Default()
+
 	if unknown, err := UnknownJSONKeys(data, Config{}); err != nil {
-		return Config{}, fmt.Errorf("inspect config keys: %w", err)
+		return Config{}, fmt.Errorf("inspect %sconfig keys: %w", label, err)
 	} else if len(unknown) > 0 {
-		return Config{}, fmt.Errorf("unknown config key(s): %s", strings.Join(unknown, ", "))
+		return Config{}, fmt.Errorf("unknown %sconfig key(s): %s", label, strings.Join(unknown, ", "))
 	}
 
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return Config{}, fmt.Errorf("parse config: %w", err)
+		return Config{}, fmt.Errorf("parse %sconfig: %w", label, err)
 	}
 
-	baseDir := filepath.Dir(path)
+	baseDir := filepath.Dir(sourcePath)
 	cfg.resolvePaths(baseDir)
 	cfg.applyRuntimeDefaults()
 	cfg.applyWorkspaceDefaults()

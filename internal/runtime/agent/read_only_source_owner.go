@@ -1,5 +1,9 @@
 package agent
 
+import (
+	"idiom/internal/contracts/pathparse"
+)
+
 import "strings"
 
 type readOnlySourceOwnerRole string
@@ -303,3 +307,125 @@ func sourceOwnerGenericIdentityTerm(term string) bool {
 		return false
 	}
 }
+
+func stripSourceEvidenceHandleLinePrefix(line string) (string, bool) {
+	space := strings.IndexByte(line, ' ')
+	if space <= 1 || line[0] != 'f' {
+		return "", false
+	}
+
+	for _, ch := range line[1:space] {
+		if ch < '0' || ch > '9' {
+			return "", false
+		}
+	}
+
+	rest := strings.TrimSpace(line[space+1:])
+	pathEnd := strings.IndexByte(rest, ':')
+
+	if pathEnd <= 0 {
+		return "", false
+	}
+
+	path := strings.TrimSpace(rest[:pathEnd])
+	if path == "" || (!strings.Contains(path, "/") && !strings.Contains(path, ".")) {
+		return "", false
+	}
+
+	afterPath := rest[pathEnd+1:]
+	lineEnd := 0
+
+	for lineEnd < len(afterPath) && afterPath[lineEnd] >= '0' && afterPath[lineEnd] <= '9' {
+		lineEnd++
+	}
+
+	if lineEnd == 0 || lineEnd >= len(afterPath) || afterPath[lineEnd] != ':' {
+		return "", false
+	}
+
+	return strings.TrimSpace(afterPath[lineEnd+1:]), true
+}
+
+
+func stripSourceEvidenceLinePrefix(line string) string {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
+
+	if stripped, ok := stripSourceEvidenceHandleLinePrefix(line); ok {
+		return stripped
+	}
+
+	idx := 0
+	for idx < len(line) && line[idx] >= '0' && line[idx] <= '9' {
+		idx++
+	}
+
+	if idx == 0 || idx >= len(line) || line[idx] != ':' {
+		return line
+	}
+
+	return strings.TrimSpace(line[idx+1:])
+}
+
+
+func sourceBodyEvidencePathsFromDelegatedPacket(output string) []string {
+	var paths []string
+
+	inSection := false
+
+	for _, raw := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			if inSection {
+				break
+			}
+
+			continue
+		}
+
+		lower := strings.ToLower(strings.TrimRight(line, ":"))
+		switch lower {
+		case "source-body evidence", "source-body evidence paths", "source body evidence", "source body evidence paths":
+			inSection = true
+			continue
+		}
+
+		if !inSection {
+			continue
+		}
+
+		if strings.HasSuffix(line, ":") && !strings.HasPrefix(line, "- ") {
+			break
+		}
+
+		for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(line)) {
+			if isNonSourceEvidenceArtifactPath(path) {
+				continue
+			}
+
+			paths = append(paths, path)
+		}
+	}
+
+	return uniqueDelegatedDiscoveryPaths(paths)
+}
+
+
+func looksLikeDelegatedGroundedFallbackAnswer(answer string) bool {
+	trimmed := strings.TrimSpace(answer)
+	if trimmed == "" {
+		return false
+	}
+
+	if genericEvidenceAnswerIncludesLineOrientedSourceBody(trimmed) || looksLikeLineOrientedSourceSnippetAnswer(trimmed) {
+		return false
+	}
+
+	lower := strings.ToLower(trimmed)
+
+	return strings.HasPrefix(lower, "the answer is grounded in ") &&
+		strings.Contains(lower, "\n\nwhat this establishes:\n- ")
+}
+

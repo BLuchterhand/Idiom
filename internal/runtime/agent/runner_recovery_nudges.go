@@ -463,21 +463,6 @@ func recoveryCandidatePath(line string) string {
 	return path
 }
 
-func compactOutput(output string, maxLines int) string {
-	output = stripFallbackJSONArtifacts(output)
-
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-
-	if len(lines) == 0 || lines[0] == "" {
-		return ""
-	}
-
-	if maxLines <= 0 || len(lines) <= maxLines {
-		return strings.Join(lines, "\n")
-	}
-
-	return strings.Join(lines[:maxLines], "\n") + "\n..."
-}
 
 // sanitizeFallbackResultOutput returns a tool-result Output that's safe to
 // embed under "Verified context" in a forced-completion fallback. Some

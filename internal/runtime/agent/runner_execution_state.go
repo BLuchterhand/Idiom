@@ -388,7 +388,10 @@ func (s *runnerExecutionState) discoveryConsumptionError() string {
 	var parts []string
 
 	if len(s.pendingDiscoveryCandidates) > 0 {
-		parts = append(parts, "Candidate(s): "+strings.Join(s.pendingDiscoveryCandidates, ", "))
+		candidateList := strings.Join(s.pendingDiscoveryCandidates, ", ")
+		parts = append(parts, "Candidate(s): "+candidateList)
+		// Add actionable instruction to read candidate files.
+		parts = append(parts, "Read one of these candidate paths: "+candidateList)
 	}
 
 	if summary := strings.TrimSpace(s.pendingDiscoverySummary); summary != "" {

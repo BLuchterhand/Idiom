@@ -72,10 +72,10 @@ func TestRunProbeLaneRejectsUnknownMode(t *testing.T) {
 
 // TestRunProbeLaneFallsBackWhenConfigMissing exercises the
 // config-load fallback: pointing --config at a path that doesn't
-// exist must NOT fail the probe; the probe falls back to a
-// synthetic non-empty tool surface and still verifies the routing
-// shape. Important because operators run the probe from arbitrary
-// working directories where config.json may not be present.
+// exist must NOT fail the probe; the probe loads the compiled-default
+// tool surface and still verifies the routing shape. Important because
+// operators run the probe from arbitrary working directories where
+// config.json may not be present.
 func TestRunProbeLaneFallsBackWhenConfigMissing(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
@@ -85,12 +85,12 @@ func TestRunProbeLaneFallsBackWhenConfigMissing(t *testing.T) {
 		t.Fatalf("missing config must not fail the probe; got %d (stderr=%s)", code, stderr.String())
 	}
 
-	if !strings.Contains(stderr.String(), "falling back to synthetic tool surface") {
-		t.Fatalf("stderr should explain the fallback: %s", stderr.String())
+	if !strings.Contains(stderr.String(), "tool surface from --config=") {
+		t.Fatalf("stderr should explain the resolved source: %s", stderr.String())
 	}
 
 	if !strings.Contains(stdout.String(), "PASS implement(build)") {
-		t.Fatalf("probe should still PASS via the synthetic surface: %s", stdout.String())
+		t.Fatalf("probe should still PASS via the default surface: %s", stdout.String())
 	}
 }
 
@@ -186,8 +186,8 @@ func TestRunProbeLaneExplicitConfigOverridesProjectRoot(t *testing.T) {
 		t.Fatalf("explicit --config must not block exit 0; got %d", code)
 	}
 
-	if !strings.Contains(stderr.String(), "falling back to synthetic") {
-		t.Fatalf("explicit --config to a missing path should fall through to synthetic, proving it overrode the in-root file: %s", stderr.String())
+	if !strings.Contains(stderr.String(), "tool surface from --config=") {
+		t.Fatalf("explicit --config to a missing path should still show its source, proving it overrode the in-root file: %s", stderr.String())
 	}
 }
 

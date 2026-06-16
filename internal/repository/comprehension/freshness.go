@@ -55,24 +55,28 @@ type FreshnessRequest struct {
 }
 
 type FreshnessDecision struct {
-	Policy           FreshnessPolicy `json:"policy"`
-	Operation        string          `json:"operation,omitempty"`
-	IndexID          string          `json:"index_id,omitempty"`
-	StoreKind        string          `json:"store_kind,omitempty"`
-	GeneratedAt      string          `json:"generated_at,omitempty"`
-	FreshForScope    bool            `json:"fresh_for_scope"`
-	GlobalFresh      bool            `json:"global_fresh"`
-	Scope            string          `json:"scope,omitempty"`
-	Reason           string          `json:"reason,omitempty"`
-	Blocker          string          `json:"blocker,omitempty"`
-	BudgetExceeded   bool            `json:"budget_exceeded,omitempty"`
-	Refresh          *RefreshReport  `json:"refresh,omitempty"`
-	CheckedPaths     []string        `json:"checked_paths,omitempty"`
-	CheckedPathCount int             `json:"checked_path_count"`
-	StalePaths       []string        `json:"stale_paths,omitempty"`
-	StalePathCount   int             `json:"stale_path_count"`
-	MissingPaths     []string        `json:"missing_paths,omitempty"`
-	MissingPathCount int             `json:"missing_path_count"`
+	Policy               FreshnessPolicy `json:"policy"`
+	Operation            string          `json:"operation,omitempty"`
+	IndexID              string          `json:"index_id,omitempty"`
+	StoreKind            string          `json:"store_kind,omitempty"`
+	GeneratedAt          string          `json:"generated_at,omitempty"`
+	FreshForScope        bool            `json:"fresh_for_scope"`
+	GlobalFresh          bool            `json:"global_fresh"`
+	Scope                string          `json:"scope,omitempty"`
+	Reason               string          `json:"reason,omitempty"`
+	Blocker              string          `json:"blocker,omitempty"`
+	BudgetExceeded       bool            `json:"budget_exceeded,omitempty"`
+	Refresh              *RefreshReport  `json:"refresh,omitempty"`
+	CheckedPaths         []string        `json:"checked_paths,omitempty"`
+	CheckedPathCount     int             `json:"checked_path_count"`
+	StalePaths           []string        `json:"stale_paths,omitempty"`
+	StalePathCount       int             `json:"stale_path_count"`
+	MissingPaths         []string        `json:"missing_paths,omitempty"`
+	MissingPathCount     int             `json:"missing_path_count"`
+	ScopeWarning         string          `json:"scope_warning,omitempty"`
+	ScopeWarningOutOf    []string        `json:"scope_warning_out_of,omitempty"`
+	StalenessWarning     string          `json:"staleness_warning,omitempty"`
+	StalenessWarningFiles []string       `json:"staleness_warning_files,omitempty"`
 }
 
 type StaleEvidenceSafety struct {
@@ -1082,4 +1086,89 @@ func freshnessBlocker(reason string, scope string, pathCount int, maxFiles int) 
 
 		return reason
 	}
+}
+
+// FreshnessScopeWarningCheck checks whether any of the returned paths from a
+// context tool fall outside the scope that the freshness check verified. When
+// out-of-scope paths are found, it returns a warning string listing them so the
+// caller can decide to re-check freshness or surface a telemetry event.
+func FreshnessScopeWarningCheck(checkedPaths []string, returnedPaths []string) (warning string, outOfScope []string) {
+	if len(checkedPaths) == 0 || len(returnedPaths) == 0 {
+		return "", nil
+	}
+
+	seen := make(map[string]struct{})
+
+	for _, rp := range returnedPaths {
+		rp = cleanFreshnessPath(rp)
+		if rp == "" {
+			continue
+		}
+
+		inScope := false
+		for _, cp := range checkedPaths {
+			if pathInScope(rp, cp) {
+				inScope = true
+				break
+			}
+		}
+
+		if !inScope {
+			if _, ok := seen[rp]; !ok {
+				seen[rp] = struct{}{}
+				outOfScope = append(outOfScope, rp)
+			}
+		}
+	}
+
+	if len(outOfScope) == 0 {
+		return "", nil
+	}
+
+	slices.Sort(outOfScope)
+
+	warning = fmt.Sprintf("%d returned path(s) not in freshness check scope: %s",
+		len(outOfScope), strings.Join(outOfScope, ", "))
+
+	return warning, outOfScope
+}
+
+// StalenessWarningCheck checks whether the comprehension index is stale
+// relative to dirty files in the working tree. When git_dirty is true and the
+// index's generated_at timestamp is older than the modification time of dirty
+// files, it returns a warning listing those files.
+func StalenessWarningCheck(root string, gitDirty bool, generatedAt string, dirtyFilePaths []string) (warning string, staleFiles []string) {
+	if !gitDirty || generatedAt == "" || len(dirtyFilePaths) == 0 {
+		return "", nil
+	}
+
+	genAt, err := time.Parse(time.RFC3339, generatedAt)
+	if err != nil {
+		// generated_at may be in a different format; attempt broader parsing
+		genAt, err = time.Parse(time.RFC3339Nano, generatedAt)
+		if err != nil {
+			return "", nil
+		}
+	}
+
+	for _, file := range dirtyFilePaths {
+		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(file)))
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(genAt) {
+			staleFiles = append(staleFiles, file)
+		}
+	}
+
+	if len(staleFiles) == 0 {
+		return "", nil
+	}
+
+	slices.Sort(staleFiles)
+
+	warning = fmt.Sprintf("%d dirty file(s) modified after comprehension index was generated at %s: %s",
+		len(staleFiles), generatedAt, strings.Join(staleFiles, ", "))
+
+	return warning, staleFiles
 }

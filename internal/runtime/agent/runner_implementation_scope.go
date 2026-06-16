@@ -366,81 +366,8 @@ func implementationTargetWriteReadyRedirectedReadPath(result workspace.ToolResul
 	return normalizeRunnerPath(strings.TrimSpace(tail[:idx]))
 }
 
-func implementationTargetWriteReadyRedirectedReadTool(result workspace.ToolResult) (string, bool) {
-	if strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile || strings.TrimSpace(result.Error) != "" {
-		return "", false
-	}
 
-	summary := strings.TrimSpace(result.Summary)
-	lower := strings.ToLower(summary)
 
-	if !strings.HasPrefix(lower, "redirected ") {
-		return "", false
-	}
-
-	tail := summary[len("Redirected "):]
-	idx := strings.Index(strings.ToLower(tail), " to ")
-
-	if idx < 0 {
-		return "", false
-	}
-
-	fields := strings.Fields(tail[idx+len(" to "):])
-	if len(fields) == 0 {
-		return "", false
-	}
-
-	tool := strings.Trim(fields[0], "`'\".,;:")
-	if !implementationTargetWriteReadyRedirectedSourceTool(tool) {
-		if !strings.HasSuffix(tool, "_file_outline") {
-			return "", false
-		}
-
-		related, ok := implementationTargetWriteReadyRedirectedRelatedSourceTool(result)
-		if !ok {
-			return "", false
-		}
-
-		return related, true
-	}
-
-	return tool, true
-}
-
-func implementationTargetWriteReadyRedirectedRelatedSourceTool(result workspace.ToolResult) (string, bool) {
-	for _, line := range strings.Split(result.Output, "\n") {
-		lower := strings.ToLower(line)
-		if !strings.Contains(lower, "related_capability:") ||
-			!strings.Contains(lower, "read_symbol") ||
-			!strings.Contains(lower, " via ") {
-
-			continue
-		}
-
-		idx := strings.Index(lower, " via ")
-		fields := strings.Fields(line[idx+len(" via "):])
-
-		if len(fields) == 0 {
-			continue
-		}
-
-		tool := strings.Trim(fields[0], "`'\".,;:")
-		if implementationTargetWriteReadyRedirectedSourceTool(tool) {
-			return tool, true
-		}
-	}
-
-	return "", false
-}
-
-func implementationTargetWriteReadyRedirectedSourceTool(tool string) bool {
-	tool = strings.TrimSpace(tool)
-
-	return tool == workspace.ToolNameCodeNavigate ||
-		tool == workspace.ToolNameReadOnlyCapability ||
-		strings.HasSuffix(tool, "_read_symbol") ||
-		strings.HasSuffix(tool, "_extract_body")
-}
 
 func implementationTargetWriteReadySamePathContinuationReadAllowed(req workspace.ToolRequest, results []workspace.ToolResult) bool {
 	path := normalizeRunnerPath(req.Path)
@@ -950,60 +877,7 @@ func toolNameOverlapsObjective(tool string, objectiveSet map[string]struct{}) bo
 	return matches >= 2 || (len(parts) == 1 && matches == 1)
 }
 
-func recoveryObjectiveSearchWords(objective string, max int) []string {
-	if max <= 0 {
-		max = 8
-	}
 
-	lower := strings.ToLower(strings.TrimSpace(objective))
-	if lower == "" {
-		return nil
-	}
-
-	replacer := strings.NewReplacer("'", " ", "\"", " ", "`", " ", "’", " ", "-", " ", "_", " ", "/", " ")
-
-	lower = replacer.Replace(lower)
-
-	words := strings.FieldsFunc(lower, func(r rune) bool {
-		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
-	})
-	stop := recoverySearchStopWords()
-	terms := make([]string, 0, max)
-	seen := make(map[string]struct{})
-
-	for _, word := range words {
-		word = strings.TrimSpace(word)
-		if len(word) < 4 {
-			continue
-		}
-
-		if _, skip := stop[word]; skip {
-			continue
-		}
-
-		if _, ok := seen[word]; ok {
-			continue
-		}
-
-		seen[word] = struct{}{}
-		terms = append(terms, word)
-
-		if len(terms) >= max {
-			break
-		}
-	}
-
-	return terms
-}
-
-func singularObjectiveWord(word string) string {
-	word = strings.TrimSpace(strings.ToLower(word))
-	if len(word) > 4 && strings.HasSuffix(word, "s") && !strings.HasSuffix(word, "ss") {
-		return strings.TrimSuffix(word, "s")
-	}
-
-	return word
-}
 
 func planThenExecuteTerminalReplyShape(reply string) bool {
 	trimmed := strings.TrimSpace(reply)
@@ -1153,14 +1027,3 @@ func literalRecoverySearchPattern(objective string) string {
 	return strings.Join(quoted, "|")
 }
 
-func recoverySearchStopWords() map[string]struct{} {
-	return map[string]struct{}{
-		"actual": {}, "please": {}, "replace": {}, "with": {}, "from": {}, "that": {}, "this": {}, "the": {}, "and": {}, "for": {}, "you": {}, "can": {}, "top": {}, "right": {}, "left": {}, "path": {}, "alias": {},
-		"continuing": {}, "continue": {}, "completion": {}, "complete": {}, "work": {}, "docs": {}, "document": {}, "design": {}, "implement": {}, "implementation": {}, "bounded": {}, "topic": {}, "only": {}, "must": {},
-		"against": {}, "existing": {}, "focus": {}, "focused": {}, "add": {}, "regression": {}, "tests": {}, "test": {}, "proving": {}, "without": {}, "partial": {}, "durable": {}, "mutation": {},
-		"repo": {}, "repository": {}, "discovery": {}, "first": {}, "make": {}, "minimal": {}, "code": {}, "changes": {}, "change": {}, "requested": {}, "request": {},
-		"tdd": {}, "prd": {}, "adr": {}, "brief": {}, "research": {}, "workflow": {}, "workflows": {}, "markdown": {},
-		// "model" intentionally kept — it carries domain signal for path→objective matching.
-		"send": {}, "through": {}, "plan": {}, "execute": {}, "expose": {}, "read": {}, "external": {}, "agents": {},
-	}
-}

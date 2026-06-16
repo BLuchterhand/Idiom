@@ -537,3 +537,121 @@ func TestFinalAnswerBlockerRejectsLiveNonAnswerShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestTerminalAnswerDecisionRetryExhaustedForSourceGroundingUnmet(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "internal", "surfaces", "tui", "app", "lifecycle.go")
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(path, []byte("package app\n\nfunc Update() {}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file"},
+		},
+	}
+	answer := "The root cause is in `internal/surfaces/tui/app/lifecycle.go` lines 418-424 where `WindowSizeMsg` is handled."
+	results := []workspace.ToolResult{
+		{Tool: "context_pack", Summary: "Context pack wrote packet", Output: "internal/surfaces/tui/app/lifecycle.go"},
+	}
+
+	decision := runner.classifyTerminalAnswer(answer, "model_final", results)
+
+	if decision.Outcome != terminalAnswerBlocked {
+		t.Fatalf("source_grounding_unmet outcome=%q, want %q", decision.Outcome, terminalAnswerBlocked)
+	}
+
+	if decision.StopReason != "source_grounding_unmet" {
+		t.Fatalf("stopReason=%q, want source_grounding_unmet", decision.StopReason)
+	}
+
+	if !decision.RetryExhausted {
+		t.Fatal("RetryExhausted must be true for source_grounding_unmet blocker")
+	}
+}
+
+func TestFinishClearsBudgetExhaustedOnRetryExhaustion(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "internal", "surfaces", "tui", "app", "lifecycle.go")
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(path, []byte("package app\n\nfunc Update() {}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file"},
+		},
+	}
+	answer := "The root cause is in `internal/surfaces/tui/app/lifecycle.go` lines 418-424 where `WindowSizeMsg` is handled."
+	results := []workspace.ToolResult{
+		{Tool: "context_pack", Summary: "Context pack wrote packet", Output: "internal/surfaces/tui/app/lifecycle.go"},
+	}
+
+	state := &runnerRunState{
+		stopReason:       "model_call_budget_exhausted",
+		budgetExhausted:  true,
+		collectedResults: results,
+	}
+
+	returnedAnswer, err := runner.finish(state, answer, nil, "model_call_budget_exhausted", true)
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+
+	if state.stopReason != "source_grounding_unmet" {
+		t.Fatalf("after finish stopReason=%q, want source_grounding_unmet", state.stopReason)
+	}
+
+	if state.budgetExhausted {
+		t.Fatal("budgetExhausted must be false when stopReason is a retry-exhaustion blocker like source_grounding_unmet")
+	}
+
+	if strings.TrimSpace(returnedAnswer) == "" {
+		t.Fatal("finish returned empty answer")
+	}
+}
+
+func TestClassifyTerminalAnswerRetryExhaustedFalseForNonRetryableBlocker(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+
+	// Use a known non-answer-prose pattern: protocol-analysis prose without source evidence
+	answer := "The user is asking me to investigate why a prompt asking \"which files and sections should be changed\" might be routed as investigate_then_implement with write_intent=yes. I need to find the specific route-planner files/tests responsible and the smallest generic fix shape."
+
+	decision := runner.classifyTerminalAnswer(answer, "model_final", nil)
+
+	if decision.Outcome != terminalAnswerBlocked {
+		t.Fatalf("non_answer_prose outcome=%q, want %q", decision.Outcome, terminalAnswerBlocked)
+	}
+
+	if decision.StopReason != "non_answer_prose" {
+		t.Fatalf("stopReason=%q, want non_answer_prose", decision.StopReason)
+	}
+
+	if decision.RetryExhausted {
+		t.Fatal("RetryExhausted must be false for non_answer_prose blocker which is not a retryable blocker")
+	}
+}

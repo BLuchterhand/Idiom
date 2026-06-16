@@ -1161,3 +1161,71 @@ func TestReadOnlyExplanationCompletionRejectionRejectsMetaScopeSummary(t *testin
 		t.Fatalf("expected explanatory rejection, got %#v", result)
 	}
 }
+
+func TestReadOnlySourceGroundingUnmetRecoveryPromptMentionsPathsAndOptions(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "search_content"},
+			Objective:         "How does the TUI navigation work?",
+			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false},
+		},
+	}
+
+	// Simulate a source_grounding_unmet rejection error that cites paths
+	// not backed by body evidence.
+	runner.lastCompletionGateError = "the answer cites source path/line/symbol detail not backed by a source-body read: `internal/surfaces/tui/app/model_state_test.go:1-5`, `internal/surfaces/tui/app/view.go:42`. Use one exact read/code_navigate body probe for the claim, or qualify it as unverified."
+
+	// Evidence results are not needed because the source-grounding check
+	// returns the recovery prompt before the evidence-readiness check.
+	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(nil)
+	if !ok {
+		t.Fatal("expected source-grounding unmet to produce a recovery prompt, got none")
+	}
+	if hideReads {
+		t.Fatal("read-only source-grounding recovery should not hide reads")
+	}
+	if !strings.Contains(prompt, "internal/surfaces/tui/app/model_state_test.go") {
+		t.Fatalf("expected recovery prompt to mention the first unsupported path, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "internal/surfaces/tui/app/view.go") {
+		t.Fatalf("expected recovery prompt to mention the second unsupported path, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "read") && !strings.Contains(prompt, "read_file") {
+		t.Fatalf("expected recovery prompt to suggest reading paths, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "rewrite") && !strings.Contains(prompt, "qualify") {
+		t.Fatalf("expected recovery prompt to suggest rewriting or qualifying, got:\n%s", prompt)
+	}
+}
+
+func TestReadOnlySourceGroundingUnmetRecoveryPromptSkippedWhenNoLastError(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "search_content"},
+			Objective:         "Find the longest function in internal/labels/labels.go.",
+			// Set OpenObligations so NormalizeReadinessState does not
+			// collapse Readiness to nil, allowing the normal no-evidence
+			// recovery prompt to fire.
+			Readiness: &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"evidence"}},
+		},
+	}
+
+	// No source-grounding error set — recovery prompt should not fire.
+	runner.lastCompletionGateError = ""
+
+	// Without evidence and without a source-grounding error, the normal
+	// "no evidence" recovery path should produce a prompt.
+	prompt, _, ok := runner.completionGateRecoveryPrompt(nil)
+	if !ok {
+		t.Fatal("expected a recovery prompt from the normal no-evidence path when there is no source-grounding error")
+	}
+	if strings.Contains(prompt, "rewrite") {
+		t.Fatal("normal no-evidence prompt should not mention rewrite/qualify options")
+	}
+}

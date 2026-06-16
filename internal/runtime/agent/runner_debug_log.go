@@ -732,30 +732,6 @@ func isDiagnosticLogArtifactPath(path string) bool {
 	}
 }
 
-func isNonSourceEvidenceArtifactPath(path string) bool {
-	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
-
-	lower = strings.TrimPrefix(lower, "./")
-
-	switch {
-	case lower == "":
-		return false
-	case isDiagnosticLogArtifactPath(lower):
-		return true
-	case lower == "transcripts" || strings.HasPrefix(lower, "transcripts/"):
-		return true
-	case lower == ".idiom" || strings.HasPrefix(lower, ".idiom/"):
-		return true
-	case lower == "idiom" || strings.HasPrefix(lower, "idiom/"):
-		return true
-	case lower == ".codex/discovery" || strings.HasPrefix(lower, ".codex/discovery/"):
-		return true
-	case lower == "testdata/swe/generated-logs" || strings.HasPrefix(lower, "testdata/swe/generated-logs/"):
-		return true
-	default:
-		return false
-	}
-}
 
 func generatedEvidenceArtifactReadRedirectResult(req workspace.ToolRequest, results []workspace.ToolResult) (workspace.ToolResult, bool) {
 	if strings.TrimSpace(req.Tool) != workspace.ToolNameReadFile {

@@ -1752,3 +1752,115 @@ func TestReadOnlyPrefetchEvidenceDedupsWithModelReadAndKeepsSource(t *testing.T)
 		t.Fatalf("expected distinct source attribution for prefetch/read_file, got prefetch=%d read=%d items=%#v", prefetchItems, readItems, ledger.Items)
 	}
 }
+
+func TestReadOnlySourceBodyEvidenceSummary(t *testing.T) {
+	bodyPath := "internal/runtime/agent/runner.go"
+	candidatePath := "internal/surfaces/tui/app/rendering.go"
+
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read " + bodyPath + " lines 1-20",
+			Output:  "package agent\nfunc Run() {}\n",
+		},
+		{
+			Tool:    "search_content",
+			Summary: "Found 5 matching line(s).",
+			Output:  candidatePath + ":42: func Render() {}",
+		},
+		{
+			Tool:    "search_content",
+			Summary: "Found 3 more candidates",
+			Output:  "internal/surfaces/tui/app/model_state.go:10: type Model struct{}",
+		},
+	}
+
+	t.Run("body-and-candidate", func(t *testing.T) {
+		summary := readOnlySourceBodyEvidenceSummary(results)
+		if summary == "" {
+			t.Fatal("expected non-empty summary")
+		}
+
+		if !strings.Contains(summary, bodyPath) {
+			t.Fatalf("expected body path %q in summary, got: %s", bodyPath, summary)
+		}
+
+		if !strings.Contains(summary, "Source-body evidence available") {
+			t.Fatalf("expected body evidence header in summary, got: %s", summary)
+		}
+
+		if !strings.Contains(summary, candidatePath) {
+			t.Fatalf("expected candidate path %q in summary, got: %s", candidatePath, summary)
+		}
+
+		if !strings.Contains(summary, "Candidate paths") {
+			t.Fatalf("expected candidate paths header in summary, got: %s", summary)
+		}
+
+		if !strings.Contains(summary, "cite only the body-backed paths") {
+			t.Fatalf("expected guidance in summary, got: %s", summary)
+		}
+	})
+
+	t.Run("no-candidates", func(t *testing.T) {
+		bodyOnly := []workspace.ToolResult{
+			{
+				Tool:    "read_file",
+				Summary: "Read " + bodyPath + " lines 1-20",
+				Output:  "package agent\nfunc Run() {}\n",
+			},
+		}
+		summary := readOnlySourceBodyEvidenceSummary(bodyOnly)
+		if summary == "" {
+			t.Fatal("expected non-empty summary for body-only")
+		}
+
+		if !strings.Contains(summary, bodyPath) {
+			t.Fatalf("expected body path in summary, got: %s", summary)
+		}
+
+		if strings.Contains(summary, "Candidate paths") {
+			t.Fatalf("expected no candidate section for body-only, got: %s", summary)
+		}
+	})
+
+	t.Run("no-body", func(t *testing.T) {
+		candidateOnly := []workspace.ToolResult{
+			{
+				Tool:    "search_content",
+				Summary: "Found 2 matching line(s).",
+				Output:  "internal/surfaces/tui/app/panel.go:5: type Panel struct{}",
+			},
+		}
+		summary := readOnlySourceBodyEvidenceSummary(candidateOnly)
+		if summary == "" {
+			t.Fatal("expected non-empty summary for candidate-only")
+		}
+
+		if !strings.Contains(summary, "Candidate paths") {
+			t.Fatalf("expected candidate section, got: %s", summary)
+		}
+
+		if strings.Contains(summary, "Source-body evidence available") {
+			t.Fatalf("expected no body section for candidate-only, got: %s", summary)
+		}
+	})
+
+	t.Run("empty-results", func(t *testing.T) {
+		summary := readOnlySourceBodyEvidenceSummary(nil)
+		if summary != "" {
+			t.Fatalf("expected empty summary for nil results, got: %s", summary)
+		}
+	})
+
+	t.Run("body-path-not-in-candidate", func(t *testing.T) {
+		summary := readOnlySourceBodyEvidenceSummary(results)
+		// The body path must not appear in the candidate section
+		if strings.Contains(summary, "Candidate paths") {
+			parts := strings.Split(summary, "Candidate paths")
+			if len(parts) > 1 && strings.Contains(parts[1], bodyPath) {
+				t.Fatalf("body path %q must not appear in candidate section, summary: %s", bodyPath, summary)
+			}
+		}
+	})
+}

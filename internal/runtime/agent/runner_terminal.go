@@ -30,4 +30,5 @@ type terminalAnswerDecision struct {
 	Acceptance      finalAnswerAcceptance
 	BlockerResult   workspace.ToolResult
 	OverrideSource  string
+	RetryExhausted  bool
 }

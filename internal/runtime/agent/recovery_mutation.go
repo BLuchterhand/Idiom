@@ -809,9 +809,6 @@ func concreteSourceEvidenceAlreadyRead(results []workspace.ToolResult) bool {
 	return false
 }
 
-func concreteSourceEvidencePaths(results []workspace.ToolResult) []string {
-	return sourceEvidenceBodyPaths(results)
-}
 
 func implementationTargetWriteReadySourcedPathSummary(results []workspace.ToolResult, max int) string {
 	paths := concreteSourceEvidencePaths(results)
@@ -850,38 +847,7 @@ func (r *Runner) markConcreteSourceEvidenceObserved(result workspace.ToolResult)
 	}
 }
 
-func concreteSourceEvidenceResult(result workspace.ToolResult) bool {
-	if strings.TrimSpace(result.Error) != "" {
-		return false
-	}
 
-	if candidateAnchorOnlyResult(result) {
-		return false
-	}
-
-	tool := strings.TrimSpace(result.Tool)
-	switch {
-	case readStyleSourceBodyTool(tool):
-		return readFileResultHasConcreteSourceBody(result)
-	case tool == workspace.ToolNameContextZoom:
-		return contextZoomResultHasConcreteSourceBody(result)
-	case tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameReadOnlyCapability:
-		return routedSourceReadOutputHasBody(result.Output) && toolResultHasNonArtifactReadPath(result)
-	case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
-		return toolResultHasNonArtifactReadPath(result)
-	default:
-		return false
-	}
-}
-
-func readStyleSourceBodyTool(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case workspace.ToolNameReadFile, workspace.ToolNamePrefetch:
-		return true
-	default:
-		return false
-	}
-}
 
 func contextZoomResultHasConcreteSourceBody(result workspace.ToolResult) bool {
 	text := strings.Join([]string{result.Summary, result.Output}, "\n")
@@ -956,20 +922,6 @@ func toolResultHasNonArtifactReadPath(result workspace.ToolResult) bool {
 	return false
 }
 
-func readFileResultOnlyMentionsDiagnosticLogArtifacts(result workspace.ToolResult) bool {
-	paths := readPathsFromToolResult(result)
-	if len(paths) == 0 {
-		return false
-	}
-
-	for _, path := range paths {
-		if !isNonSourceEvidenceArtifactPath(path) {
-			return false
-		}
-	}
-
-	return true
-}
 
 func (r *Runner) mutationCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
 	if strings.HasPrefix(r.agentName(), "child:") || strings.HasPrefix(r.agentName(), "child_write:") {
@@ -1573,15 +1525,37 @@ func escalateCompletionGateMessage(base string, priorRejections int) string {
 		return base
 	}
 
+	// Detect source-grounding rejection patterns.  When the gate says the
+	// model cited paths without source-body evidence, the fix is to rewrite
+	// the answer text — not to call more tools (the model already has the
+	// needed evidence in its context).
+	hasUnsupportedPaths := strings.Contains(trimmed, "not backed by a source-body read")
+	hasNonExistentPaths := strings.Contains(trimmed, "do not exist")
+	isSourceGrounding := hasUnsupportedPaths || hasNonExistentPaths
+
 	switch {
 	case priorRejections <= 0:
 		return base
 	case priorRejections == 1:
+		if isSourceGrounding {
+			return "[gate retry 2/3] " + trimmed +
+				" — the gate already rejected one prior attempt with this error;" +
+				" your next move MUST resolve the stated blocker (rewrite your" +
+				" answer to cite only files you have source-body evidence for," +
+				" or qualify unread paths as 'unverified')."
+		}
 		return "[gate retry 2/3] " + trimmed +
 			" — the gate already rejected one prior attempt with this error;" +
 			" your next move MUST resolve the stated blocker (use a different tool" +
 			" call or state a concrete reason this cannot proceed)."
 	default:
+		if isSourceGrounding {
+			return "[gate retry 3/3 — last attempt before tools disable] " + trimmed +
+				" — repeated rejections indicate the active reply does not satisfy" +
+				" the contract. Rewrite your answer to cite only files you have" +
+				" source-body evidence for, or qualify unread paths as 'unverified'." +
+				" Do not narrate; act."
+		}
 		return "[gate retry 3/3 — last attempt before tools disable] " + trimmed +
 			" — repeated rejections indicate the active reply does not satisfy" +
 			" the contract. Either issue ONE concrete tool call that produces the" +
@@ -1629,7 +1603,7 @@ func (r *Runner) completionGateRetryLimit(results []workspace.ToolResult) int {
 		return 1
 	}
 
-	return 2
+	return 2 // default retry limit; coupled to the "2/3" and "3/3" labels in escalateCompletionGateMessage
 }
 
 func (r *Runner) retryableFinalAnswerAcceptanceRejection(acceptance finalAnswerAcceptance, results []workspace.ToolResult, priorGateRejections int, allowedTools []string) bool {
@@ -2001,6 +1975,20 @@ func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.To
 		return ""
 	}
 
+	// Source-grounding rejection: evidence was gathered but the answer cited
+	// paths without body evidence. Guide the model to read those paths or
+	// qualify the answer rather than searching for new targets. Check this
+	// before the Readiness gate because even a nil/ready Readiness can
+	// produce a source-grounding-unmet rejection on the answer text.
+	if r.lastCompletionGateError != "" {
+		if paths := readOnlySourceGroundingUnsupportedPathsFromError(r.lastCompletionGateError); len(paths) > 0 {
+			return fmt.Sprintf(
+				"The completion gate rejected the answer because source paths were cited without body evidence: %s. You can either: (a) read those paths now with a bounded `read_file` or `code_navigate` tool, (b) rewrite the answer to cite only paths you have evidence for, or (c) qualify each unread path as \"unverified\". No new discovery or search is needed — the fix is in the answer text or a targeted read for each missing path.",
+				strings.Join(paths, ", "),
+			)
+		}
+	}
+
 	if brief.Readiness == nil || brief.Readiness.ReadyToAnswer {
 		return ""
 	}
@@ -2041,6 +2029,55 @@ func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.To
 	}
 
 	return "The completion gate rejected a read-only final answer because no bounded workspace evidence has been gathered yet. Make one targeted read/search/discovery request tied to the explicit question, then answer from the returned evidence. Do not edit files, run shell commands, or answer before evidence."
+}
+
+// readOnlySourceGroundingUnsupportedPathsFromError extracts the unsupported
+// path names from a source-grounding rejection error message. The error format
+// comes from sourceGroundingRejectionReason and reads:
+//
+//	"the answer cites source path/line/symbol detail not backed by a
+//	 source-body read: PATH1, PATH2. Use one exact read..."
+//
+// or from architectureUnsupportedExactDetail:
+//
+//	"the answer names additional implementation detail PATH1, PATH2
+//	 without an exact inspected probe..."
+func readOnlySourceGroundingUnsupportedPathsFromError(errText string) []string {
+	errText = strings.TrimSpace(errText)
+	if errText == "" {
+		return nil
+	}
+
+	// Find the colon that separates the message from the path list.
+	_, after, found := strings.Cut(errText, ":")
+	if !found {
+		return nil
+	}
+
+	after = strings.TrimSpace(after)
+	if after == "" {
+		return nil
+	}
+
+	var paths []string
+	for _, token := range strings.Split(after, ",") {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+		// Stop at the first sentence boundary.
+		if idx := strings.Index(token, ". "); idx > 0 {
+			token = token[:idx]
+		} else if strings.HasSuffix(token, ".") {
+			token = strings.TrimSuffix(token, ".")
+		}
+		token = strings.TrimSpace(token)
+		if token != "" {
+			paths = append(paths, token)
+		}
+	}
+
+	return paths
 }
 
 func postWriteVerificationPendingRecoveryPrompt(results []workspace.ToolResult, plannerOwned bool) string {

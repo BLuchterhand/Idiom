@@ -713,16 +713,16 @@ func TestExactEvidenceSymbolSetAcceptsRoutedCodeNavigateSourceBody(t *testing.T)
 		},
 	}
 
-	symbols := exactEvidenceSymbolSet(results)
+	symbols := ExactEvidenceSymbolSet(results)
 
 	for _, want := range []string{"Model.renderMessages", "SetContent", "indexFold", "strings.EqualFold"} {
-		key := normalizedAnswerSymbol(want)
+		key := NormalizedAnswerSymbol(want)
 		if _, ok := symbols[key]; !ok {
 			t.Fatalf("exact evidence symbol set missing %q (%q): %#v", want, key, symbols)
 		}
 	}
 
-	if key := normalizedAnswerSymbol("0xb1"); key != "" {
+	if key := NormalizedAnswerSymbol("0xb1"); key != "" {
 		t.Fatalf("numeric literals must not be treated as exact source symbols, got %q", key)
 	}
 }

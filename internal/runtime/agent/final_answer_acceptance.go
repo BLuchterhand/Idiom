@@ -189,28 +189,6 @@ func readOnlyDirectAnswerAcceptanceLedgerBrief(brief workerruntime.WorkerRuntime
 	return brief
 }
 
-func readOnlyAnswerReportsInsufficientEvidence(answer string) bool {
-	lower := strings.ToLower(strings.Join(strings.Fields(answer), " "))
-
-	return containsAny(lower,
-		"available evidence is not enough",
-		"could not produce a supported final answer",
-		"evidence is not enough",
-		"insufficient evidence",
-		"not have enough supported evidence",
-		"not enough evidence",
-		"not enough to name",
-		"cannot determine",
-		"can't determine",
-		"unable to determine",
-		"cannot identify",
-		"can't identify",
-		"unable to identify",
-		"cannot name",
-		"can't name",
-		"unable to name",
-	)
-}
 
 func acceptedReadOnlyDirectAnswerEvidencePaths(answer string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
 	if !readOnlyDirectAnswerAcceptanceApplies(brief) {

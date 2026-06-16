@@ -552,21 +552,6 @@ func presentableBriefConversationFallbackCandidate(agentName string, brief worke
 	return readOnlyClosureDecisionForResults(brief, results).PresentableBriefConversationFallbackCandidate(agentName)
 }
 
-func looksLikeDelegatedGroundedFallbackAnswer(answer string) bool {
-	trimmed := strings.TrimSpace(answer)
-	if trimmed == "" {
-		return false
-	}
-
-	if genericEvidenceAnswerIncludesLineOrientedSourceBody(trimmed) || looksLikeLineOrientedSourceSnippetAnswer(trimmed) {
-		return false
-	}
-
-	lower := strings.ToLower(trimmed)
-
-	return strings.HasPrefix(lower, "the answer is grounded in ") &&
-		strings.Contains(lower, "\n\nwhat this establishes:\n- ")
-}
 
 func fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName string, brief workerruntime.WorkerRuntimeBrief) bool {
 	if strings.HasPrefix(agentName, "child:") || strings.HasPrefix(agentName, "child_write:") {

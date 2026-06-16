@@ -162,6 +162,17 @@ func (m *Manager) contextQuery(ctx context.Context, req ToolRequest) ToolResult 
 	result.Confidence = comprehension.GraphResultConfidenceForFreshness(result.Fresh, &freshness)
 	result.StaleEvidence = comprehension.StaleEvidenceSafetyForFreshness(freshness)
 
+	// Scope-broadening check: verify returned paths are within the freshness
+	// check scope. If the tool returned files in areas that were never checked
+	// for freshness, surface a warning so consumers know the result may be stale.
+	if len(freshness.CheckedPaths) > 0 {
+		returnedPaths := extractPathsFromNodeSummaries(result.Nodes)
+		if warning, outOfScope := comprehension.FreshnessScopeWarningCheck(freshness.CheckedPaths, returnedPaths); warning != "" {
+			freshness.ScopeWarning = warning
+			freshness.ScopeWarningOutOf = outOfScope
+		}
+	}
+
 	output, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return ToolResult{Tool: "context_query", Summary: "Context query report encode failed", Error: err.Error()}
@@ -218,6 +229,17 @@ func (m *Manager) contextZoom(ctx context.Context, req ToolRequest) ToolResult {
 	result.Freshness = &freshness
 	result.Confidence = comprehension.GraphResultConfidenceForFreshness(result.Fresh, &freshness)
 	result.StaleEvidence = comprehension.StaleEvidenceSafetyForFreshness(freshness)
+
+	if len(freshness.CheckedPaths) > 0 {
+		returnedPaths := extractPathsFromNodeSummaries(result.RelatedNodes)
+		if result.Node != nil && result.Node.Path != "" {
+			returnedPaths = append(returnedPaths, result.Node.Path)
+		}
+		if warning, outOfScope := comprehension.FreshnessScopeWarningCheck(freshness.CheckedPaths, returnedPaths); warning != "" {
+			freshness.ScopeWarning = warning
+			freshness.ScopeWarningOutOf = outOfScope
+		}
+	}
 
 	output, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
@@ -912,4 +934,23 @@ func (m *Manager) contextTracePack(ctx context.Context, req ToolRequest) ToolRes
 		Summary: fmt.Sprintf("Context trace pack wrote %s for %s command with %d event(s), %d executed file(s), and %d failing anchor(s)%s", result.ArtifactPath, status, len(result.Events), len(result.ExecutedFiles), len(result.FailingAnchors), gap),
 		Output:  string(output),
 	}
+}
+
+// extractPathsFromNodeSummaries collects workspace-relative paths from a
+// slice of NodeSummary values. Used by scope-broadening freshness checks
+// to verify returned paths are within the freshness check scope.
+func extractPathsFromNodeSummaries(nodes []comprehension.NodeSummary) []string {
+	seen := make(map[string]struct{})
+	var paths []string
+	for _, n := range nodes {
+		p := strings.TrimSpace(n.Path)
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; !ok {
+			seen[p] = struct{}{}
+			paths = append(paths, p)
+		}
+	}
+	return paths
 }

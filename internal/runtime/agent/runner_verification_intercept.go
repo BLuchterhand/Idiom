@@ -44,7 +44,7 @@ type verificationInterceptResult struct {
 //     required_edit_path already on the ✓ list.
 //   - The immediately preceding tool result was ALSO a read-class
 //     tool. The first read after a write is left through because the
-//     model legitimately uses "write a, read a, write b" to mirror
+//     model legitimately uses "write a, read a, write B" to mirror
 //     a freshly-landed structure into the next path. The second
 //     read in a row is the verification-spree pattern.
 //

@@ -385,8 +385,14 @@ func TestRunDefaultLoadsWorkspaceToolRulesFromRootConfig(t *testing.T) {
 func TestRunReportsConfigAndRunnerErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
+	badDir := t.TempDir()
+	badPath := filepath.Join(badDir, "bad.json")
+	if err := os.WriteFile(badPath, []byte(`{invalid json}`), 0o644); err != nil {
+		t.Fatalf("write bad config: %v", err)
+	}
+
 	code := run(
-		[]string{"-config", filepath.Join(t.TempDir(), "missing.json")},
+		[]string{"-config", badPath},
 		&stdout,
 		&stderr,
 		func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
@@ -396,8 +402,8 @@ func TestRunReportsConfigAndRunnerErrors(t *testing.T) {
 		nopList,
 	)
 
-	if code != 1 || !strings.Contains(stderr.String(), "read config") {
-		t.Fatalf("expected config read failure, code=%d stderr=%s", code, stderr.String())
+	if code != 1 || !strings.Contains(stderr.String(), "inspect config") {
+		t.Fatalf("expected config parse failure, code=%d stderr=%s", code, stderr.String())
 	}
 
 	configPath := writeMainConfig(t)

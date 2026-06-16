@@ -186,7 +186,7 @@ func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspa
 			citationPath = resolved
 		}
 
-		if sourceEvidenceBodyReadForPath(citationPath, results) || slices.Contains(delegatedReadOnlySourceBodyEvidencePaths(results), citationPath) {
+		if sourceEvidenceBodyReadForPathWithRegistry(citationPath, results, r.PathEvidenceRegistry) || slices.Contains(delegatedReadOnlySourceBodyEvidencePaths(results), citationPath) {
 			continue
 		}
 
@@ -268,11 +268,20 @@ func sourceCitationCanonicalPath(r *Runner, path string, results []workspace.Too
 	}
 
 	matches = uniqueSortedRunnerPaths(matches)
-	if len(matches) != 1 {
-		return path, false
+	if len(matches) == 1 {
+		return matches[0], true
 	}
 
-	return matches[0], true
+	// Second pass: registry-based resolution when body-path matching didn't
+	// yield a unique result. The registry supports filesystem glob + index
+	// basename resolution that the body-path scan doesn't cover.
+	if r != nil && r.PathEvidenceRegistry != nil {
+		if resolved, ok := r.PathEvidenceRegistry.ResolveShortPath(path); ok {
+			return resolved, true
+		}
+	}
+
+	return path, false
 }
 
 func sourceGroundingMentionedPaths(answer string) []string {
@@ -349,6 +358,11 @@ func sourceCitationExists(r *Runner, path string) bool {
 	path = normalizeRunnerPath(path)
 	if path == "" || strings.HasPrefix(path, "../") || path == ".." || filepath.IsAbs(path) {
 		return false
+	}
+
+	// Use PathEvidenceRegistry if available (avoids redundant os.Stat).
+	if r != nil && r.PathEvidenceRegistry != nil {
+		return r.PathEvidenceRegistry.PathExists(path)
 	}
 
 	root := "."

@@ -620,6 +620,71 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	if got := escalateCompletionGateMessage("", 5); got != "" {
 		t.Errorf("empty base should pass through unchanged, got: %q", got)
 	}
+
+	// ── Source-grounding (unsupported paths) ──────────────────────
+	sgUnsupported := "the answer cites source path/line/symbol detail not backed by a source-body read: \"foo.go\". Use one exact read/code_navigate body probe for the claim, or qualify it as unverified."
+
+	// Tier 1: should include "rewrite your answer" or "Rewrite your answer"
+	got = escalateCompletionGateMessage(sgUnsupported, 1)
+	for _, want := range []string{"[gate retry 2/3]", "not backed by a source-body read", "rewrite your"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("source-grounding unsupported tier 1 expected to contain %q, got: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "use a different tool call") {
+		t.Errorf("source-grounding unsupported tier 1 must not contain 'use a different tool call'; got: %s", got)
+	}
+
+	// Tier 2: should include rewrite guidance, not "ONE concrete tool call"
+	got = escalateCompletionGateMessage(sgUnsupported, 2)
+	for _, want := range []string{"[gate retry 3/3", "Rewrite your"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("source-grounding unsupported tier 2 expected to contain %q, got: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "ONE concrete tool call") {
+		t.Errorf("source-grounding unsupported tier 2 must not contain 'ONE concrete tool call'; got: %s", got)
+	}
+
+	// ── Source-grounding (non-existent paths) ─────────────────────
+	sgMissing := "the answer cites current-workspace path(s) that do not exist: \"missing.go\". Correct the citation, label it as historical/log-only evidence, or answer from inspected current source."
+
+	// Tier 1: should include rewrite guidance
+	got = escalateCompletionGateMessage(sgMissing, 1)
+	for _, want := range []string{"[gate retry 2/3]", "do not exist", "rewrite your"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("source-grounding missing tier 1 expected to contain %q, got: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "use a different tool call") {
+		t.Errorf("source-grounding missing tier 1 must not contain 'use a different tool call'; got: %s", got)
+	}
+
+	// Tier 2: should include rewrite guidance, not "ONE concrete tool call"
+	got = escalateCompletionGateMessage(sgMissing, 2)
+	for _, want := range []string{"[gate retry 3/3", "Rewrite your"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("source-grounding missing tier 2 expected to contain %q, got: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "ONE concrete tool call") {
+		t.Errorf("source-grounding missing tier 2 must not contain 'ONE concrete tool call'; got: %s", got)
+	}
+
+	// ── Non-source-grounding messages still get generic text ──────
+	normalMsg := "the final answer did not satisfy the active blocker check; continue with concrete writes or a per-path blocker reason."
+	got = escalateCompletionGateMessage(normalMsg, 1)
+	for _, want := range []string{"[gate retry 2/3]", "use a different tool call"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("non-source-grounding tier 1 expected to contain %q, got: %s", want, got)
+		}
+	}
+	got = escalateCompletionGateMessage(normalMsg, 2)
+	for _, want := range []string{"[gate retry 3/3", "ONE concrete tool call"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("non-source-grounding tier 2 expected to contain %q, got: %s", want, got)
+		}
+	}
 }
 
 func TestToolActionClassNormalizesRepeatedDeadEndKeys(t *testing.T) {

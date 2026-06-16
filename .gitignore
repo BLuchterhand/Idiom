@@ -67,3 +67,4 @@ FEATURE_REQUEST_*.md
 
 # Agent state
 .qwen/
+.reasonix/

@@ -47,6 +47,13 @@ type Runner struct {
 	// single dispatch point. When nil, falls back to DefaultLanePolicy.
 	LanePolicy LanePolicy
 
+	// PathEvidenceRegistry is the consolidated path-existence, body-read,
+	// candidate, and basename-resolution service. Populated once per turn
+	// by RegisterToolResults; queried by the completion gate, readiness
+	// gate, and discovery gate instead of calling os.Stat or scanning
+	// raw tool results. When nil, the old fallback paths are used.
+	PathEvidenceRegistry *PathEvidenceRegistry
+
 	// InstructionAttacher injects configured per-directory guidance
 	// whenever the model touches a file under that directory.
 	InstructionAttacher *InstructionAttacher
@@ -58,6 +65,11 @@ type Runner struct {
 	LastAssistantMessage llama.ChatMessage
 	currentAllowedTools  []string
 	activeAutonomy       *runnerAutonomyRecorder
+
+	// lastCompletionGateError stores the error text from the most recent
+	// completion-gate rejection so that recovery prompt functions can
+	// inspect it without the result being in collectedResults yet.
+	lastCompletionGateError string
 }
 
 func (r *Runner) supportsNativeTools() bool {
@@ -372,6 +384,15 @@ func (r *Runner) Run(
 	taskLedger := newTaskLedgerState(taskLedgerPolicy)
 
 	r.RuntimeBrief = r.runtimeBriefWithLiveState(policy, turnMessages, collectedResults)
+
+	// Seed the PathEvidenceRegistry with candidate paths from a prior session
+	// whose prompt is similar to the current prompt. This lets the model
+	// pick up where it left off across sessions without re-reading files.
+	if r.PathEvidenceRegistry != nil && r.Workspace != nil {
+		if priorPaths := PriorSessionCandidatePaths(r.Workspace.Root(), r.RuntimeBrief.Objective); len(priorPaths) > 0 {
+			r.PathEvidenceRegistry.MergeFromPriorSession(priorPaths)
+		}
+	}
 
 	if r.Workspace != nil {
 		rebuildTools()
@@ -933,6 +954,11 @@ func (r *Runner) Run(
 				}
 
 				completionGateRejections = priorGateRejections + 1
+
+				// Store the current rejection error so recovery prompt
+				// functions can inspect it even though it is not yet in
+				// collectedResults.
+				r.lastCompletionGateError = result.Error
 
 				shouldAttachRecoveryPrompt := priorGateRejections == 0 ||
 					result.Summary == "Completion gate rejected unresolved process narration" ||
@@ -2885,7 +2911,7 @@ func (r *Runner) Run(
 
 				rebuildTools()
 
-				if readOnlyTaskResultAnswerableForObjective(result, r.RuntimeBrief.Objective) {
+				if ReadOnlyTaskResultAnswerableForObjective(result, r.RuntimeBrief.Objective) {
 					evidencePaths := postChildClosureEvidencePaths(r.RuntimeBrief.Objective, []workspace.ToolResult{result}, 4)
 
 					requestBudget.broadEvidenceDelegationSatisfied = true

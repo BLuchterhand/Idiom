@@ -375,6 +375,10 @@ func (r *Runner) finish(state *runnerRunState, value string, finishErr error, re
 		value = decision.PresentedAnswer
 		state.stopReason = decision.StopReason
 
+		if decision.RetryExhausted {
+			state.budgetExhausted = false
+		}
+
 		if decision.OverrideSource != "" {
 			r.emitFinalAnswerBlockerOverride(decision.Acceptance, decision.StopReason, decision.OverrideSource)
 		}
@@ -402,6 +406,10 @@ func (r *Runner) retryRejectedFinalAnswer(state *runnerRunState, stepNumber int,
 	state.controller.rejectCompletion(stepNumber, activeToolCall, assistantMessage, result)
 
 	state.completionGateRejections = priorGateRejections + 1
+
+	// Store the current rejection error so recovery prompt functions
+	// can inspect it even though it is not yet in collectedResults.
+	r.lastCompletionGateError = result.Error
 
 	var recoveryPrompt string
 

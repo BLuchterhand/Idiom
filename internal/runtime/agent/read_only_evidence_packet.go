@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"idiom/internal/runtime/workerruntime"
+	"unicode"
+	"sort"
 	"encoding/json"
 	"path/filepath"
 	"slices"
@@ -359,8 +362,8 @@ func readOnlyEvidencePacketAnswerableForObjective(packet ReadOnlyEvidencePacket,
 		}
 	}
 
-	body := substantiveAnswerWithoutEchoedObjective(strings.Join(findingText, "\n"), objective)
-	objectiveText := answerTextWithoutPathCitations(body)
+	body := SubstantiveAnswerWithoutEchoedObjective(strings.Join(findingText, "\n"), objective)
+	objectiveText := AnswerTextWithoutPathCitations(body)
 
 	if readOnlyObjectiveAnswerEvidenceSupported(objectiveText, objective) {
 		return true
@@ -749,3 +752,893 @@ func utilUniqueTrimmed(values []string, limit int) []string {
 
 	return out
 }
+
+func discoveryConsumptionCandidatesFromResult(result workspace.ToolResult, max int) []string {
+	if max <= 0 {
+		max = 4
+	}
+
+	if strings.TrimSpace(result.Error) != "" {
+		return nil
+	}
+
+	if strings.TrimSpace(result.Tool) == workspace.ToolNameContextPack {
+		return contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, max)
+	}
+
+	return promptEvidencePathsFromToolResults([]workspace.ToolResult{result}, max)
+}
+
+
+func readFileResultOnlyMentionsDiagnosticLogArtifacts(result workspace.ToolResult) bool {
+	paths := readPathsFromToolResult(result)
+	if len(paths) == 0 {
+		return false
+	}
+
+	for _, path := range paths {
+		if !isNonSourceEvidenceArtifactPath(path) {
+			return false
+		}
+	}
+
+	return true
+}
+
+
+func isNonSourceEvidenceArtifactPath(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+
+	lower = strings.TrimPrefix(lower, "./")
+
+	switch {
+	case lower == "":
+		return false
+	case isDiagnosticLogArtifactPath(lower):
+		return true
+	case lower == "transcripts" || strings.HasPrefix(lower, "transcripts/"):
+		return true
+	case lower == ".idiom" || strings.HasPrefix(lower, ".idiom/"):
+		return true
+	case lower == "idiom" || strings.HasPrefix(lower, "idiom/"):
+		return true
+	case lower == ".codex/discovery" || strings.HasPrefix(lower, ".codex/discovery/"):
+		return true
+	case lower == "testdata/swe/generated-logs" || strings.HasPrefix(lower, "testdata/swe/generated-logs/"):
+		return true
+	default:
+		return false
+	}
+}
+
+
+func delegatedDiscoveryPathPriority(path string) int {
+	path = strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	switch {
+	case strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") && strings.HasPrefix(path, "internal/"):
+		return 0
+	case strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go"):
+		return 1
+	case strings.HasPrefix(path, "internal/"):
+		return 2
+	case strings.HasSuffix(path, "_test.go"):
+		return 3
+	default:
+		return 4
+	}
+}
+
+
+func delegatedDiscoveryLayerPriority(name string) int {
+	switch strings.TrimSpace(name) {
+	case "text_anchor_search":
+		return 0
+	case "go_read_symbol", "cpp_read_symbol", "python_read_symbol", "ts_read_symbol", "rust_read_symbol", "java_read_symbol":
+		return 1
+	case "go_references", "cpp_references", "python_references", "ts_references", "rust_references", "java_references":
+		return 2
+	case "go_definition", "cpp_definition", "python_definition", "ts_definition", "rust_definition", "java_definition":
+		return 3
+	case "go_workspace_symbol", "cpp_workspace_symbol", "python_workspace_symbol", "ts_workspace_symbol", "rust_workspace_symbol", "java_workspace_symbol":
+		return 4
+	case "related_files":
+		return 5
+	case workspace.ToolNameDependencyGraph:
+		return 6
+	case workspace.ToolNameCtagsSymbols:
+		return 7
+	case "target_listing":
+		return 20
+	case "project_behavior_digest", "project_context_digest":
+		return 30
+	default:
+		return 10
+	}
+}
+
+
+func delegatedDiscoveryLooksLikeEvidencePath(path string) bool {
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	if path == "" {
+		return false
+	}
+
+	switch {
+	case strings.HasPrefix(path, "search_content/"),
+		strings.HasPrefix(path, "search_files/"),
+		strings.HasPrefix(path, "read/"),
+		strings.HasPrefix(path, "list_files/"):
+		return false
+	case pathparse.HasWorkspaceFileExtension(path):
+		return true
+	default:
+		return false
+	}
+}
+
+
+func preferNonTestEvidencePaths(paths []string) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	hasNonTestImplementation := false
+
+	for _, raw := range paths {
+		path := filepath.ToSlash(strings.TrimSpace(raw))
+		if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
+			hasNonTestImplementation = true
+			break
+		}
+	}
+
+	if !hasNonTestImplementation {
+		return paths
+	}
+
+	filtered := make([]string, 0, len(paths))
+	for _, raw := range paths {
+		path := filepath.ToSlash(strings.TrimSpace(raw))
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+
+		filtered = append(filtered, raw)
+	}
+
+	if len(filtered) == 0 {
+		return paths
+	}
+
+	return filtered
+}
+
+
+func normalizeDelegatedDiscoveryEvidencePath(path string) string {
+	path = normalizeWorkspacePathScanText(path)
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	path = strings.Trim(path, "`'\"()[]{}<>,.;")
+
+	if path == "" {
+		return ""
+	}
+
+	for _, ext := range []string{".go", ".md", ".json", ".yaml", ".yml", ".toml", ".txt"} {
+		if idx := indexFold(path, ext); idx >= 0 {
+			end := idx + len(ext)
+			suffix := path[end:]
+
+			switch {
+			case suffix == "":
+				return path[:end]
+			case strings.HasPrefix(suffix, ":"):
+				return path[:end]
+			case strings.Trim(suffix, "`'\"") == "":
+				return path[:end]
+			}
+		}
+	}
+
+	return path
+}
+
+
+func delegatedDiscoveryEvidenceLinePriority(line string) int {
+	line = strings.TrimSpace(line)
+
+	lower := strings.ToLower(line)
+
+	switch {
+	case line == "":
+		return 5
+	case strings.Contains(lower, "package "):
+		return 5
+	case closurePathScopedSymbolPattern.MatchString(line), closurePathCallPattern.MatchString(line):
+		return 0
+	case strings.Contains(lower, "func "):
+		return 1
+	case strings.Contains(lower, "type "):
+		return 2
+	default:
+		return 3
+	}
+}
+
+
+func delegatedDiscoveryQueryEvidencePaths(results []workspace.ToolResult, limit int) []string {
+	if limit <= 0 {
+		limit = 4
+	}
+
+	type discoveryPathCandidate struct {
+		path  string
+		score int
+	}
+
+	best := make(map[string]int)
+	addCandidate := func(path string, layerName string, line string) {
+		path = normalizeDelegatedDiscoveryEvidencePath(path)
+		if path == "" || strings.HasPrefix(path, ".idiom/") || strings.HasPrefix(path, ".") {
+			return
+		}
+
+		if !delegatedDiscoveryLooksLikeEvidencePath(path) {
+			return
+		}
+
+		if !strings.Contains(path, "/") && !strings.HasSuffix(path, ".go") {
+			return
+		}
+
+		score := delegatedDiscoveryLayerPriority(layerName)*100 + delegatedDiscoveryEvidenceLinePriority(line)*10 + delegatedDiscoveryPathPriority(path)
+		if prior, ok := best[path]; ok && prior <= score {
+			return
+		}
+
+		best[path] = score
+	}
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != workspace.ToolNameDiscoveryQuery || strings.TrimSpace(result.Output) == "" {
+			continue
+		}
+
+		var summary struct {
+			Evidence []struct {
+				Name          string `json:"name"`
+				Summary       string `json:"summary"`
+				OutputExcerpt string `json:"output_excerpt"`
+			} `json:"evidence"`
+		}
+
+		if err := json.Unmarshal([]byte(result.Output), &summary); err != nil {
+			continue
+		}
+
+		for _, evidence := range summary.Evidence {
+			text := normalizeWorkspacePathScanText(strings.TrimSpace(evidence.Summary + "\n" + evidence.OutputExcerpt))
+			for _, line := range strings.Split(text, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+
+				for _, path := range pathparse.MentionedWorkspacePaths(line) {
+					addCandidate(path, evidence.Name, line)
+				}
+
+				for _, match := range delegatedPacketPathLinePattern.FindAllString(line, -1) {
+					addCandidate(match, evidence.Name, line)
+				}
+			}
+		}
+	}
+
+	candidates := make([]discoveryPathCandidate, 0, len(best))
+	for path, score := range best {
+		candidates = append(candidates, discoveryPathCandidate{path: path, score: score})
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score < candidates[j].score
+		}
+
+		return candidates[i].path < candidates[j].path
+	})
+
+	paths := make([]string, 0, limit)
+	for _, candidate := range candidates {
+		paths = append(paths, candidate.path)
+		if len(paths) >= limit {
+			return preferNonTestEvidencePaths(paths)
+		}
+	}
+
+	return preferNonTestEvidencePaths(paths)
+}
+
+
+func delegatedDiscoveryLineIsBarePath(line string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.ContainsAny(line, " \t") {
+		return false
+	}
+
+	path := normalizeDelegatedDiscoveryEvidencePath(line)
+
+	return path != "" && delegatedDiscoveryLooksLikeEvidencePath(path)
+}
+
+
+func delegatedDiscoveryFindingSummaryIsUseful(name string, text string) bool {
+	lowerName := strings.ToLower(strings.TrimSpace(name))
+	lower := strings.ToLower(strings.TrimSpace(text))
+
+	if lower == "" {
+		return false
+	}
+
+	if strings.Contains(lower, "context pack wrote") ||
+		strings.Contains(lower, "no related go files matched") ||
+		strings.Contains(lower, "no go symbols matched") ||
+		strings.Contains(lower, "no symbols matched") ||
+		strings.Contains(lower, "no matching symbol") ||
+		strings.Contains(lower, "semantic fallback after gopls failure") ||
+		strings.Contains(lower, "collected go dependency graph") {
+
+		return false
+	}
+
+	if lowerName == workspace.ToolNameDependencyGraph && strings.HasPrefix(lower, "collected ") {
+		return false
+	}
+
+	if lowerName == "text_anchor_search" && delegatedDiscoverySummaryIsBroadCountOnly(lower) {
+		return false
+	}
+
+	return true
+}
+
+
+func delegatedDiscoveryFindingLines(summaries []delegatedDiscoverySummary, limit int) []string {
+	var lines []string
+
+	for _, summary := range summaries {
+		for _, evidence := range summary.Evidence {
+			name := strings.TrimSpace(evidence.Name)
+			if name == "" || isDelegatedDiscoveryContextDigestLayer(name) || name == "target_listing" {
+				continue
+			}
+
+			text := strings.TrimSpace(evidence.Summary)
+			if text == "" || strings.TrimSpace(evidence.Error) != "" {
+				continue
+			}
+
+			if !delegatedDiscoveryFindingSummaryIsUseful(name, text) {
+				continue
+			}
+
+			lines = append(lines, name+": "+text)
+			if limit > 0 && len(lines) >= limit {
+				return lines
+			}
+		}
+	}
+
+	return lines
+}
+
+
+func uniqueDelegatedDiscoveryPaths(paths []string) []string {
+	normalized := make([]string, 0, len(paths))
+	fullByBase := make(map[string]string)
+	ambiguousBase := make(map[string]bool)
+	dirCounts := make(map[string]int)
+
+	for _, raw := range paths {
+		path := normalizeDelegatedDiscoveryEvidencePath(raw)
+		if path == "" {
+			continue
+		}
+
+		normalized = append(normalized, path)
+		if strings.Contains(path, "/") {
+			base := filepath.Base(path)
+			dirCounts[filepath.Dir(path)]++
+
+			if prior, ok := fullByBase[base]; ok && prior != path {
+				ambiguousBase[base] = true
+				continue
+			}
+
+			fullByBase[base] = path
+		}
+	}
+
+	seen := make(map[string]struct{})
+	unique := make([]string, 0, len(normalized))
+	dominantDir := ""
+	dominantCount := 0
+
+	for dir, count := range dirCounts {
+		if count > dominantCount || (count == dominantCount && (dominantDir == "" || dir < dominantDir)) {
+			dominantDir = dir
+			dominantCount = count
+		}
+	}
+
+	for _, path := range normalized {
+		if !strings.Contains(path, "/") {
+			base := filepath.Base(path)
+			if full, ok := fullByBase[base]; ok && !ambiguousBase[base] {
+				path = full
+			} else if dominantCount >= 2 {
+				path = filepath.ToSlash(filepath.Join(dominantDir, base))
+			}
+		}
+
+		if _, ok := seen[path]; ok {
+			continue
+		}
+
+		seen[path] = struct{}{}
+		unique = append(unique, path)
+	}
+
+	return unique
+}
+
+
+func delegatedDisplayQuestion(objective string) string {
+	for _, line := range strings.Split(strings.TrimSpace(objective), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "named workspace scope:") ||
+			strings.HasPrefix(lower, "key terms:") ||
+			strings.HasPrefix(lower, "scope guidance:") ||
+			strings.HasPrefix(lower, "start from ") ||
+			strings.HasPrefix(lower, "return inspected paths") ||
+			strings.HasPrefix(lower, "- ") {
+
+			continue
+		}
+
+		return line
+	}
+
+	return strings.TrimSpace(objective)
+}
+
+
+type delegatedDiscoverySummary struct {
+	Purpose      string `json:"purpose"`
+	ArtifactPath string `json:"artifact_path"`
+	Evidence     []struct {
+		Name          string `json:"name"`
+		Tool          string `json:"tool"`
+		Summary       string `json:"summary"`
+		Error         string `json:"error,omitempty"`
+		OutputExcerpt string `json:"output_excerpt,omitempty"`
+	} `json:"evidence,omitempty"`
+	Gaps []string `json:"gaps,omitempty"`
+}
+
+
+func delegatedReadOnlyFindingLineIsUseful(line string) bool {
+	if _, ok := stripSourceEvidenceHandleLinePrefix(line); ok {
+		return false
+	}
+
+	if line == "" ||
+		delegatedDiscoveryLineIsBarePath(line) ||
+		looksLikeLineOrientedSourceSnippetLine(line) ||
+		sourceEvidenceLineIsBoilerplate(stripSourceEvidenceLinePrefix(line)) {
+
+		return false
+	}
+
+	lower := strings.ToLower(line)
+	if readOnlyToolControlGuidanceText(lower) ||
+		strings.Contains(lower, "<<question>>") ||
+		strings.Contains(lower, "completion gate") ||
+		strings.Contains(lower, "missing completion evidence") ||
+		strings.Contains(lower, "child task completed") ||
+		strings.Contains(lower, "the retained source context identifies") ||
+		strings.Contains(lower, "enough for a bounded answer") ||
+		strings.Contains(lower, "safely expand beyond the inspected anchors") ||
+		strings.Contains(lower, "the strongest implementation evidence is in") ||
+		strings.Contains(lower, "use those findings as the source of truth") ||
+		lower == "context:" ||
+		lower == "context" ||
+		strings.Contains(lower, "top-level declaration") ||
+		strings.HasPrefix(lower, "source-body evidence paths:") ||
+		strings.HasPrefix(lower, "source-body evidence:") ||
+		strings.HasPrefix(lower, "source body evidence paths:") ||
+		strings.HasPrefix(lower, "source body evidence:") ||
+		strings.HasPrefix(lower, "what this establishes:") ||
+		strings.HasPrefix(lower, "outlined ") ||
+		strings.HasPrefix(lower, "source:") ||
+		strings.HasPrefix(lower, "question:") ||
+		strings.HasPrefix(lower, "confidence:") {
+
+		return false
+	}
+
+	return strings.Contains(line, ":") || strings.Contains(line, "`") || strings.Contains(line, ".")
+}
+
+
+func delegatedReadOnlyFindingLineSupportedByPaths(line string, supported map[string]struct{}) bool {
+	mentionedAny := false
+	supportedAny := false
+
+	for _, path := range readOnlySourceLikePaths(pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(line)), 16) {
+		mentionedAny = true
+
+		if _, ok := supported[path]; ok {
+			supportedAny = true
+		}
+	}
+
+	return !mentionedAny || supportedAny
+}
+
+
+func delegatedReadOnlyFindingLines(results []workspace.ToolResult, supportedPaths []string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+
+	supported := readOnlyPathSet(supportedPaths)
+
+	var lines []string
+
+	seen := map[string]struct{}{}
+
+	for _, result := range results {
+		output := compactOutput(result.Output, fallbackLineBudgetForTool(result.Tool))
+		for _, raw := range strings.Split(output, "\n") {
+			line := cleanDelegatedReadOnlyFindingLine(strings.TrimSpace(strings.TrimPrefix(raw, "- ")))
+			if !delegatedReadOnlyFindingLineIsUseful(line) {
+				continue
+			}
+
+			if !delegatedReadOnlyFindingLineSupportedByPaths(line, supported) {
+				continue
+			}
+
+			if _, ok := seen[line]; ok {
+				continue
+			}
+
+			seen[line] = struct{}{}
+			lines = append(lines, line)
+
+			if len(lines) >= limit {
+				return lines
+			}
+		}
+	}
+
+	return lines
+}
+
+
+func sanitizeDelegatedReadOnlyResultOutput(result workspace.ToolResult) string {
+	output := strings.TrimSpace(result.Output)
+	if output == "" {
+		return ""
+	}
+
+	if strings.TrimSpace(result.Tool) != workspace.ToolNameTask {
+		return output
+	}
+
+	return stripDelegatedReadOnlyInternalPacket(output)
+}
+
+
+func normalizeDelegatedReadOnlyPacket(answer string) string {
+	answer = strings.TrimSpace(normalizeWorkspacePathScanText(answer))
+	if answer == "" {
+		return ""
+	}
+
+	answer = stableHandlePathLinePattern.ReplaceAllString(answer, "$1")
+	answer = stableHandleInlinePattern.ReplaceAllString(answer, "$1")
+	answer = delegatedPacketPathLinePattern.ReplaceAllString(answer, "$1")
+	answer = delegatedPacketPathQuotePattern.ReplaceAllString(answer, "$1")
+
+	return answer
+}
+
+
+func delegatedReadOnlySourceBodyReadinessPaths(objective string, results []workspace.ToolResult) []string {
+	paths := make([]string, 0, 4)
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != workspace.ToolNameTask || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+
+		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
+			if readOnlyEvidencePacketAnswerableForObjective(packet, objective) {
+				paths = append(paths, packet.SourceBodyPaths...)
+			}
+
+			continue
+		}
+
+		sourcePaths := sourceBodyEvidencePathsFromDelegatedPacket(result.Output)
+		if len(sourcePaths) == 0 && delegatedTaskOutputHasFindingEvidence(result.Output) {
+			sourcePaths = groundedChildPacketEvidencePaths(objective, result.Output)
+		}
+
+		if len(sourcePaths) == 0 {
+			continue
+		}
+
+		if childPacketContainsGroundedAnswerEvidence(objective, result.Output) || delegatedPacketAddressesObjective(objective, result.Output) {
+			paths = append(paths, sourcePaths...)
+		}
+	}
+
+	return readOnlySourceLikePaths(paths, 16)
+}
+
+
+func delegatedPacketNamesObjectiveSource(objective string, output string) bool {
+	objective = strings.ToLower(strings.TrimSpace(objective))
+	if objective == "" {
+		return false
+	}
+
+	for _, path := range sourceBodyEvidencePathsFromDelegatedPacket(output) {
+		normalized := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+		if normalized == "" {
+			continue
+		}
+
+		base := strings.ToLower(filepath.Base(normalized))
+		if strings.Contains(objective, normalized) || (base != "" && strings.Contains(objective, base)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+
+func delegatedPacketAddressesObjective(objective string, output string) bool {
+	objective = strings.TrimSpace(objective)
+	output = strings.TrimSpace(output)
+
+	if objective == "" || output == "" {
+		return false
+	}
+
+	body := SubstantiveAnswerWithoutEchoedObjective(stripDelegatedReadOnlyInternalPacket(output), objective)
+	if strings.TrimSpace(body) == "" {
+		return false
+	}
+
+	objectiveText := AnswerTextWithoutPathCitations(body)
+	if readOnlyObjectiveAnswerEvidenceSupported(objectiveText, objective) {
+		return true
+	}
+
+	if delegatedPacketNamesObjectiveSource(objective, output) &&
+		readOnlyObjectiveAnswerEvidenceSupportedByNamedSource(objectiveText, objective) {
+
+		return true
+	}
+
+	return false
+}
+
+
+func childPacketContainsGroundedAnswerEvidence(objective string, output string) bool {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return false
+	}
+
+	lower := strings.ToLower(output)
+	if readOnlyToolControlGuidanceText(lower) {
+		return false
+	}
+
+	if len(sourceBodyEvidencePathsFromDelegatedPacket(output)) == 0 {
+		return false
+	}
+
+	if !containsAny(lower,
+		"grounded answer",
+		"core files:",
+		"primary files:",
+		"verified context:",
+		"inspected paths:",
+		"evidence used:",
+		"important flow:",
+		"key findings:",
+		"\n- read ",
+		"\n- found ",
+		"\n- located ",
+		"\n- calls ",
+		"\n- uses ",
+		"\n- references ",
+	) {
+
+		return false
+	}
+
+	if strings.TrimSpace(objective) == "" {
+		return true
+	}
+
+	return delegatedPacketAddressesObjective(objective, output)
+}
+
+
+func stripNestedFallbackTemplate(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" || !strings.HasPrefix(trimmed, "Partial findings from this turn") {
+		return s
+	}
+
+	// Drop the leading "Partial findings from this turn (...):" line plus
+	// the immediately-following blank line, leaving just the substance.
+	if idx := strings.Index(trimmed, "\n"); idx >= 0 {
+		trimmed = strings.TrimLeft(trimmed[idx+1:], "\n")
+	}
+
+	// Drop the trailing "Recommended next step:" footer; that's
+	// scaffolding for the user, not evidence.
+	if idx := strings.Index(trimmed, "\nRecommended next step:"); idx >= 0 {
+		trimmed = strings.TrimSpace(trimmed[:idx])
+	}
+
+	// Drop the inner "Verified context:" header. The outer fallback adds
+	// its own header; nested verified-context labels make the answer read
+	// like two stacked reports.
+	trimmed = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(trimmed), "Verified context:"))
+	// Drop a trailing "Final blocker:" if it's just a harness rejection --
+	// that signal has already been recomputed by the outer template.
+	if idx := strings.Index(trimmed, "\nFinal blocker:"); idx >= 0 {
+		head := strings.TrimSpace(trimmed[:idx])
+		tail := strings.TrimSpace(trimmed[idx+len("\nFinal blocker:"):])
+		// Look one bullet ahead and drop the section if its content is a
+		// known harness-only blocker; otherwise keep it.
+		if firstBullet := firstBulletText(tail); isHarnessRejectionSummary(firstBullet) || isHarnessRejectionErrorText(tail) {
+			trimmed = head
+		}
+	}
+
+	return trimmed
+}
+
+
+func delegatedReadOnlyLiteralSymbolCandidate(raw string) (string, bool) {
+	value := strings.TrimSpace(raw)
+
+	value = strings.Trim(value, "`'\"()[]{}<>,.:;!?")
+	value = strings.TrimSpace(strings.TrimPrefix(value, "./"))
+
+	if value == "" || pathparse.LooksLikeWorkspacePathToken(strings.ToLower(value)) {
+		return "", false
+	}
+
+	if len(value) < 4 {
+		return "", false
+	}
+
+	for i, r := range value {
+		if i == 0 && !unicode.IsLetter(r) && r != '_' {
+			return "", false
+		}
+
+		break
+	}
+
+	hasLetter := false
+
+	for _, r := range value {
+		switch {
+		case unicode.IsLetter(r):
+			hasLetter = true
+		case unicode.IsDigit(r), r == '_':
+		default:
+			return "", false
+		}
+	}
+
+	if !hasLetter {
+		return "", false
+	}
+
+	if !delegatedReadOnlyLooksCodeShapedSymbol(value) {
+		return "", false
+	}
+
+	lower := strings.ToLower(value)
+	if delegatedDiscoveryStopWord(lower, delegatedDiscoveryStopWordSymbol) {
+		return "", false
+	}
+
+	return value, true
+}
+
+
+func nonArtifactEvidencePaths(paths []string) []string {
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if strings.TrimSpace(path) == "" || isNonSourceEvidenceArtifactPath(path) {
+			continue
+		}
+
+		out = append(out, path)
+	}
+
+	return out
+}
+
+
+func planThenExecuteEvidenceRank(level PlanThenExecuteSourceEvidenceLevel) int {
+	switch level {
+	case planThenExecuteEvidenceAnchorReady, planThenExecuteEvidenceExactAnchorContract, planThenExecuteEvidenceNewFileContract:
+		return 3
+	case planThenExecuteEvidenceBodyWindow:
+		return 2
+	case planThenExecuteEvidenceSourceBodyPending, planThenExecuteEvidencePathSeen:
+		return 1
+	default:
+		return 0
+	}
+}
+
+
+type planThenExecuteSourceEvidence struct {
+	Path   string
+	Level  PlanThenExecuteSourceEvidenceLevel
+	Source string
+	Detail string
+}
+
+
+type PlanThenExecuteSourceEvidenceLevel string
+
+const (
+	planThenExecuteEvidenceNone                PlanThenExecuteSourceEvidenceLevel = ""
+	planThenExecuteEvidencePathSeen            PlanThenExecuteSourceEvidenceLevel = "path_seen"
+	planThenExecuteEvidenceSourceBodyPending   PlanThenExecuteSourceEvidenceLevel = "source_body_pending"
+	planThenExecuteEvidenceBodyWindow          PlanThenExecuteSourceEvidenceLevel = "body_window"
+	planThenExecuteEvidenceAnchorReady         PlanThenExecuteSourceEvidenceLevel = "anchor_ready"
+	planThenExecuteEvidenceExactAnchorContract PlanThenExecuteSourceEvidenceLevel = "exact_anchor_contract"
+	planThenExecuteEvidenceNewFileContract     PlanThenExecuteSourceEvidenceLevel = "new_file_contract"
+)
+
+
+func planThenExecuteRequiredSourceEvidenceForPath(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, path string) planThenExecuteSourceEvidence {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return planThenExecuteSourceEvidence{}
+	}
+
+	best := planThenExecuteSourceEvidence{Path: path}
+	for _, result := range results {
+		evidence := planThenExecuteToolResultSourceEvidence(result, path)
+		if planThenExecuteEvidenceRank(evidence.Level) > planThenExecuteEvidenceRank(best.Level) {
+			best = evidence
+		}
+	}
+
+	return best
+}
+
