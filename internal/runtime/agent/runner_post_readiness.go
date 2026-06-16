@@ -10,31 +10,65 @@ import (
 	"strings"
 )
 
-func childPacketBoundaryNudge(objective string, results []workspace.ToolResult, evidencePaths []string, probeBudget int) string {
-	evidencePaths = closurePromptEvidencePaths(evidencePaths, 4)
+// ReadinessNudge carries the parameters that distinguish the three
+// post-readiness nudge variants (child-packet boundary, delegated
+// read-only answer ready, and direct read-only answer ready).
+type ReadinessNudge struct {
+	// Headline is the first line of the nudge.
+	Headline string
 
-	validity, _ := closureDecisionRationale(objective, results, evidencePaths)
-	lines := []string{
-		"The delegated read_only child result is now available as an evidence packet.",
-	}
+	// EvidencePathLabel is the label shown before evidence paths
+	// (e.g. "Packet-named paths: " or "Core evidence paths: ").
+	// Must include the trailing space if a separator is needed.
+	EvidencePathLabel string
+
+	// EvidencePaths is the set of paths to display (unfiltered).
+	EvidencePaths []string
+
+	// Objective is the original question/objective string, used for
+	// the closure decision rationale.
+	Objective string
+
+	// Results are the collected tool results.
+	Results []workspace.ToolResult
+
+	// ProbeBudget is the remaining probe budget.
+	ProbeBudget int
+
+	// ContinuationScope is passed to postReadinessContinuationContract.
+	ContinuationScope string
+
+	// FooterLines are appended after the continuation contract.
+	FooterLines []string
+
+	// IncludeProbeSuggestions controls whether closureProbeSuggestionLine
+	// is included. Only used by the child-packet variant.
+	IncludeProbeSuggestions bool
+}
+
+// buildReadinessNudge produces the nudge text from the given parameters.
+func buildReadinessNudge(ctx ReadinessNudge) string {
+	evidencePaths := closurePromptEvidencePaths(ctx.EvidencePaths, 4)
+	validity, _ := closureDecisionRationale(ctx.Objective, ctx.Results, evidencePaths)
+
+	lines := []string{ctx.Headline}
 
 	if validity != "" {
 		lines = append(lines, "Why a final answer is now valid: "+validity)
 	}
 
 	if len(evidencePaths) > 0 {
-		lines = append(lines, "Packet-named paths: "+summarizePostChildEvidencePaths(evidencePaths, 3))
+		lines = append(lines, ctx.EvidencePathLabel+summarizePostChildEvidencePaths(evidencePaths, 3))
 	}
 
-	if suggestion := closureProbeSuggestionLine(results, 3); suggestion != "" {
-		lines = append(lines, suggestion)
+	if ctx.IncludeProbeSuggestions {
+		if suggestion := closureProbeSuggestionLine(ctx.Results, 3); suggestion != "" {
+			lines = append(lines, suggestion)
+		}
 	}
 
-	lines = append(lines, postReadinessContinuationContract("child_packet_available", probeBudget))
-	lines = append(lines,
-		"Ignore packet artifacts (the `.idiom/discovery/queries/` JSON files) — they are not source paths.",
-		"If you answer now, answer from the packet and inspected source evidence.",
-	)
+	lines = append(lines, postReadinessContinuationContract(ctx.ContinuationScope, ctx.ProbeBudget))
+	lines = append(lines, ctx.FooterLines...)
 
 	return strings.Join(lines, "\n")
 }
@@ -67,52 +101,6 @@ func postReadinessGap(req workspace.ToolRequest) string {
 	return util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering)
 }
 
-func delegatedReadOnlyAnswerReadyNudge(objective string, results []workspace.ToolResult, probeBudget int) string {
-	paths := closurePromptEvidencePaths(delegatedClosureEvidencePaths(objective, results, 4), 4)
-	validity, _ := closureDecisionRationale(objective, results, paths)
-	lines := []string{
-		"The delegated read-only evidence is sufficient for a grounded answer to this question.",
-	}
-
-	if validity != "" {
-		lines = append(lines, "Why a final answer is now valid: "+validity)
-	}
-
-	if len(paths) > 0 {
-		lines = append(lines, "Core evidence paths: "+summarizePostChildEvidencePaths(paths, 3))
-	}
-
-	lines = append(lines, postReadinessContinuationContract("delegated_read_only_answer_ready", probeBudget))
-	lines = append(lines,
-		"Carry forward the inspected paths above and keep the answer minimal; avoid side-path comparison or mode-by-mode breakdown unless the question requires that contrast.",
-	)
-
-	return strings.Join(lines, "\n")
-}
-
-func readOnlyAnswerReadyNudge(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, probeBudget int) string {
-	objective := strings.TrimSpace(brief.Objective)
-	paths := closurePromptEvidencePaths(readOnlyPresentationEvidencePathsForBrief(brief, results, 4), 4)
-	validity, _ := closureDecisionRationale(objective, results, paths)
-	lines := []string{
-		"The read-only evidence is sufficient for a grounded answer to this question.",
-	}
-
-	if validity != "" {
-		lines = append(lines, "Why a final answer is now valid: "+validity)
-	}
-
-	if len(paths) > 0 {
-		lines = append(lines, "Core evidence paths: "+summarizePostChildEvidencePaths(paths, 3))
-	}
-
-	lines = append(lines, postReadinessContinuationContract("answer_readiness_reached", probeBudget))
-	lines = append(lines,
-		"Anchor the explanation in the inspected paths above and keep any remaining uncertainty explicit.",
-	)
-
-	return strings.Join(lines, "\n")
-}
 
 func postReadinessProbeBudgetForBrief(brief workerruntime.WorkerRuntimeBrief) int {
 	if workerruntime.RuntimeContractIsArchitectureOrReview(brief.Contract) {

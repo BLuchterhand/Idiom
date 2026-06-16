@@ -7,6 +7,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -87,7 +88,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 		}
 
 		if readFileResultOnlyMentionsDiagnosticLogArtifacts(result) {
-			paths := readOnlySourceLikePaths(readPathsFromToolResult(result), 8)
+			paths := readOnlySourceLikePaths(agentutil.ReadPathsFromToolResult(result), 8)
 			ledger.addItem(readOnlyEvidenceItem{
 				Kind:           readOnlyEvidenceGeneratedArtifact,
 				Tool:           tool,
@@ -121,7 +122,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 		}
 
 		if concreteSourceEvidenceResult(result) {
-			for _, path := range readOnlySourceLikePaths(readPathsFromToolResult(result), 8) {
+			for _, path := range readOnlySourceLikePaths(agentutil.ReadPathsFromToolResult(result), 8) {
 				ledger.addItem(readOnlyEvidenceItem{
 					Kind:    readOnlyEvidenceSourceBody,
 					Tool:    tool,
@@ -260,7 +261,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 			}
 		default:
 			if readOnlyOutlineEvidenceResult(result) {
-				candidates := readOnlySourceLikePaths(readPathsFromToolResult(result), 8)
+				candidates := readOnlySourceLikePaths(agentutil.ReadPathsFromToolResult(result), 8)
 				ledger.addItem(readOnlyEvidenceItem{
 					Kind:           readOnlyEvidenceOutline,
 					Tool:           tool,
@@ -463,7 +464,7 @@ func (l readOnlyAnswerabilityLedger) requiredSourceBodyObjectiveTerms() []string
 	seen := map[string]struct{}{}
 
 	for _, term := range terms {
-		term = readOnlyObjectiveSupportTerm(term)
+		term = agentutil.ReadOnlyObjectiveSupportTerm(term)
 		if len(term) < 3 {
 			continue
 		}
@@ -484,12 +485,12 @@ func (l readOnlyAnswerabilityLedger) requiredSourceBodyObjectiveTerms() []string
 }
 
 func readOnlyCollectiveObjectiveSupportStopWord(term string) bool {
-	term = readOnlyObjectiveSupportTerm(term)
+	term = agentutil.ReadOnlyObjectiveSupportTerm(term)
 	if term == "" {
 		return true
 	}
 
-	if _, skip := recoverySearchStopWords()[term]; skip {
+	if _, skip := agentutil.RecoverySearchStopWords()[term]; skip {
 		return true
 	}
 
@@ -503,14 +504,7 @@ func readOnlyCollectiveObjectiveSupportStopWord(term string) bool {
 	}
 }
 
-func readOnlyObjectiveSupportTerm(term string) string {
-	term = strings.TrimSpace(strings.ToLower(term))
-	if len(term) > 3 && strings.HasSuffix(term, "s") {
-		term = strings.TrimSuffix(term, "s")
-	}
 
-	return term
-}
 
 func (l *readOnlyAnswerabilityLedger) promoteCollectiveSourceBodyObjectiveSupport(namedTargets []string) {
 	requiredTerms := l.requiredSourceBodyObjectiveTerms()
@@ -538,7 +532,7 @@ func (l *readOnlyAnswerabilityLedger) promoteCollectiveSourceBodyObjectiveSuppor
 		}
 
 		for _, term := range support.Terms {
-			term = readOnlyObjectiveSupportTerm(term)
+			term = agentutil.ReadOnlyObjectiveSupportTerm(term)
 			if term == "" {
 				continue
 			}
@@ -600,7 +594,7 @@ func (l *readOnlyAnswerabilityLedger) promoteCollectiveImplementationOwnerSuppor
 		}
 
 		for _, term := range support.Terms {
-			term = readOnlyObjectiveSupportTerm(term)
+			term = agentutil.ReadOnlyObjectiveSupportTerm(term)
 			if term == "" {
 				continue
 			}
@@ -806,8 +800,8 @@ func candidateSourcePathStronglyOverlapsObjective(path string, objective string)
 	matches := 0
 	seen := map[string]struct{}{}
 
-	for _, term := range recoveryObjectiveSearchWords(objective, 32) {
-		term = singularObjectiveWord(strings.TrimSpace(term))
+	for _, term := range agentutil.RecoveryObjectiveSearchWords(objective, 32) {
+		term = agentutil.SingularObjectiveWord(strings.TrimSpace(term))
 		if len(term) < 4 {
 			continue
 		}
@@ -890,7 +884,7 @@ func readOnlySearchHitObjectiveTerms(objective string) []string {
 	var terms []string
 
 	for _, word := range words {
-		word = singularObjectiveWord(strings.TrimSpace(word))
+		word = agentutil.SingularObjectiveWord(strings.TrimSpace(word))
 		if len(word) < 4 {
 			continue
 		}
@@ -916,7 +910,7 @@ func sourceBodyHasStrongObjectiveToken(output string, objective string) bool {
 		return false
 	}
 
-	terms := recoveryObjectiveSearchWords(objective, 32)
+	terms := agentutil.RecoveryObjectiveSearchWords(objective, 32)
 	if len(terms) == 0 {
 		return false
 	}
@@ -926,7 +920,7 @@ func sourceBodyHasStrongObjectiveToken(output string, objective string) bool {
 	var objectiveTerms []string
 
 	for _, term := range terms {
-		term = singularObjectiveWord(term)
+		term = agentutil.SingularObjectiveWord(term)
 		if len(term) < 3 {
 			continue
 		}
@@ -1002,7 +996,7 @@ func sourceOwnerSpecificObjectiveTerms(terms []string) []string {
 	var filtered []string
 
 	for _, term := range terms {
-		term = readOnlyObjectiveSupportTerm(term)
+		term = agentutil.ReadOnlyObjectiveSupportTerm(term)
 		if term == "" || weakSourceOwnerObjectiveTerm(term) {
 			continue
 		}
@@ -1022,7 +1016,7 @@ func implementationShapeSourceBodyCanClose(objective string, body string) bool {
 }
 
 func weakSourceOwnerObjectiveTerm(term string) bool {
-	switch readOnlyObjectiveSupportTerm(term) {
+	switch agentutil.ReadOnlyObjectiveSupportTerm(term) {
 	case "user", "chat", "history", "key", "arrow", "up", "down", "navigate", "old", "easy", "find", "intent", "make", "typing", "type":
 		return true
 	default:
@@ -1085,7 +1079,7 @@ func readOnlyObjectiveAnswerEvidenceSupportedWithMinTerms(output string, objecti
 }
 
 func readOnlyObjectivePromotionTerms(objective string) []string {
-	rawTerms := recoveryObjectiveSearchWords(objective, 32)
+	rawTerms := agentutil.RecoveryObjectiveSearchWords(objective, 32)
 	if len(rawTerms) == 0 {
 		return nil
 	}
@@ -1095,7 +1089,7 @@ func readOnlyObjectivePromotionTerms(objective string) []string {
 	var terms []string
 
 	for _, term := range rawTerms {
-		term = singularObjectiveWord(strings.TrimSpace(term))
+		term = agentutil.SingularObjectiveWord(strings.TrimSpace(term))
 		if len(term) < 4 || readOnlyObjectivePromotionStopWord(term) {
 			continue
 		}
@@ -1112,12 +1106,12 @@ func readOnlyObjectivePromotionTerms(objective string) []string {
 }
 
 func readOnlyObjectivePromotionStopWord(term string) bool {
-	term = singularObjectiveWord(strings.TrimSpace(term))
+	term = agentutil.SingularObjectiveWord(strings.TrimSpace(term))
 	if term == "" {
 		return true
 	}
 
-	if _, skip := recoverySearchStopWords()[term]; skip {
+	if _, skip := agentutil.RecoverySearchStopWords()[term]; skip {
 		return true
 	}
 
@@ -1134,7 +1128,7 @@ func readOnlyObjectivePromotionStopWord(term string) bool {
 
 func readOnlyObjectivePromotionTermInText(text string, term string) bool {
 	text = strings.ToLower(strings.TrimSpace(text))
-	term = singularObjectiveWord(strings.TrimSpace(term))
+	term = agentutil.SingularObjectiveWord(strings.TrimSpace(term))
 
 	if text == "" || term == "" {
 		return false
@@ -1388,7 +1382,7 @@ func readOnlyDiagnosticEvidencePaths(result workspace.ToolResult, max int) []str
 	}
 
 	return readOnlySourceLikePaths(mergeRunnerStateStrings(
-		readPathsFromToolResult(result),
+		agentutil.ReadPathsFromToolResult(result),
 		readOnlyDiagnosticLocationPaths(result.Summary+"\n"+result.Output, max),
 	), max)
 }
@@ -1507,7 +1501,7 @@ func readOnlyOutlineEvidenceResult(result workspace.ToolResult) bool {
 		return false
 	}
 
-	return len(readOnlySourceLikePaths(readPathsFromToolResult(result), 1)) > 0 ||
+	return len(readOnlySourceLikePaths(agentutil.ReadPathsFromToolResult(result), 1)) > 0 ||
 		len(sourceLikePathsFromText(result.Summary+"\n"+result.Output, 1)) > 0
 }
 
@@ -1818,7 +1812,7 @@ func ExactEvidenceSymbolSet(results []workspace.ToolResult) map[string]struct{} 
 			continue
 		}
 
-		if CandidateAnchorOnlyResult(result) {
+		if agentutil.CandidateAnchorOnlyResult(result) {
 			continue
 		}
 
@@ -2041,8 +2035,8 @@ func TextSharesObjectiveTerm(text string, objective string) bool {
 		return false
 	}
 
-	for _, term := range recoveryObjectiveSearchWords(objective, 32) {
-		term = singularObjectiveWord(strings.ToLower(strings.TrimSpace(term)))
+	for _, term := range agentutil.RecoveryObjectiveSearchWords(objective, 32) {
+		term = agentutil.SingularObjectiveWord(strings.ToLower(strings.TrimSpace(term)))
 		if len(term) < 4 {
 			continue
 		}
@@ -2073,7 +2067,5 @@ func ReadOnlyTaskResultAnswerableForObjective(result workspace.ToolResult, objec
 }
 
 
-func CandidateAnchorOnlyResult(result workspace.ToolResult) bool {
-	return candidateAnchorOnlyText(strings.Join([]string{result.Summary, result.Output}, "\n"))
-}
+
 

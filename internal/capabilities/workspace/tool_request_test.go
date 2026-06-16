@@ -1582,7 +1582,6 @@ func TestRuntimeInspectionRequestUsesToolSurfaceMetadata(t *testing.T) {
 	for _, req := range []ToolRequest{
 		{Tool: ToolNameSourceSanity, Path: "internal/runtime/agent/runner.go"},
 		{Tool: ToolNameHarnessFeedback},
-		{Tool: ToolNameIdiomFeedback},
 		{Tool: ToolNameEditFile, Path: "internal/runtime/agent/runner.go"},
 		{Tool: ToolNameSubmitPlan},
 		{Tool: ToolNameGitDiff},

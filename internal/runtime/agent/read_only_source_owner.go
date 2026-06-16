@@ -2,6 +2,7 @@ package agent
 
 import (
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 import "strings"
@@ -56,8 +57,8 @@ func readOnlySourceOwnerEvidenceForBody(path string, symbol string, objective st
 	}
 
 	evidence.Mechanism = implementationShapeMechanismEvidence(text)
-	evidence.SpecificTerms = sourceOwnerMatchedTerms(text, sourceOwnerSpecificObjectiveTerms(recoveryObjectiveSearchWords(objective, 32)))
-	evidence.WeakTerms = sourceOwnerMatchedWeakTerms(text, recoveryObjectiveSearchWords(objective, 32))
+	evidence.SpecificTerms = sourceOwnerMatchedTerms(text, sourceOwnerSpecificObjectiveTerms(agentutil.RecoveryObjectiveSearchWords(objective, 32)))
+	evidence.WeakTerms = sourceOwnerMatchedWeakTerms(text, agentutil.RecoveryObjectiveSearchWords(objective, 32))
 	evidence.SupportTerms = sourceOwnerSupportTerms(text)
 	evidence.ConflictTerms = sourceOwnerConflictTerms(rawText, evidence.Path, evidence.Symbol, objective)
 	evidence.Score = sourceOwnerEvidenceScore(evidence)
@@ -120,7 +121,7 @@ func sourceOwnerMatchedTerms(text string, terms []string) []string {
 	var matches []string
 
 	for _, term := range terms {
-		term = readOnlyObjectiveSupportTerm(term)
+		term = agentutil.ReadOnlyObjectiveSupportTerm(term)
 		if len(term) < 3 {
 			continue
 		}
@@ -137,7 +138,7 @@ func sourceOwnerMatchedWeakTerms(text string, terms []string) []string {
 	var matches []string
 
 	for _, term := range terms {
-		term = readOnlyObjectiveSupportTerm(term)
+		term = agentutil.ReadOnlyObjectiveSupportTerm(term)
 		if len(term) < 3 || !weakSourceOwnerObjectiveTerm(term) {
 			continue
 		}
@@ -230,8 +231,8 @@ func sourceOwnerEvidenceScore(evidence readOnlySourceOwnerEvidence) int {
 func sourceOwnerObjectiveTermSet(objective string) map[string]struct{} {
 	set := map[string]struct{}{}
 
-	for _, term := range recoveryObjectiveSearchWords(objective, 64) {
-		term = readOnlyObjectiveSupportTerm(term)
+	for _, term := range agentutil.RecoveryObjectiveSearchWords(objective, 64) {
+		term = agentutil.ReadOnlyObjectiveSupportTerm(term)
 		if len(term) < 3 {
 			continue
 		}
@@ -255,7 +256,7 @@ func sourceOwnerIdentityTerms(path string, symbol string, text string) []string 
 
 	for _, raw := range sourceOwnerIdentityFragments(symbol + "\n" + sourceOwnerBodyIdentityText(text)) {
 		for _, term := range splitImplementationPathToken(raw) {
-			term = readOnlyObjectiveSupportTerm(term)
+			term = agentutil.ReadOnlyObjectiveSupportTerm(term)
 			if len(term) < 4 || sourceOwnerGenericIdentityTerm(term) {
 				continue
 			}
@@ -297,7 +298,7 @@ func sourceOwnerIdentityFragments(text string) []string {
 }
 
 func sourceOwnerGenericIdentityTerm(term string) bool {
-	switch readOnlyObjectiveSupportTerm(term) {
+	switch agentutil.ReadOnlyObjectiveSupportTerm(term) {
 	case "internal", "cmd", "pkg", "app", "apps", "test", "tests", "model", "func", "return", "returns",
 		"handle", "handler", "handlers", "update", "press", "key", "keys", "message",
 		"state", "true", "false", "bool", "line", "lines", "read", "body", "source", "summary",

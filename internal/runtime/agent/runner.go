@@ -306,7 +306,7 @@ func (r *Runner) Run(
 		completionStatusEmitted = true
 		completionStatusLastStatus = strings.TrimSpace(status)
 		completionStatusLastBlockerKind = strings.TrimSpace(blockerKind)
-		r.emitCompletionStatus(status, reason, blockerKind, results, userVisibleBlocker)
+		r.emitCompletionStatusFromParams(status, reason, blockerKind, results, userVisibleBlocker)
 	}
 
 	defer func() {
@@ -1061,7 +1061,7 @@ func (r *Runner) Run(
 			if reason := retryAnswerHedgeRejectionReason(answer); reason != "" {
 				// The retry answer is a hedge or meta-response about evidence
 				// sufficiency rather than a substantive answer — reject and block.
-				r.emitCompletionStatus("blocked", reason, "content_gap", collectedResults, true)
+				r.emitCompletionStatusFromParams("blocked", reason, "content_gap", collectedResults, true)
 
 				blockerResult := workspace.ToolResult{Tool: "completion_gate", Summary: "Retry answer rejected as hedge", Error: reason}
 				overridden := r.completionGateRepeatedBlockerAnswer(blockerResult, collectedResults)
@@ -2837,7 +2837,6 @@ func (r *Runner) Run(
 		}
 
 		if permissionDecision.Decision != PermissionAllow {
-			r.emitEvent(marshalRunEvent("permission_decision", permissionDecision))
 
 			if autonomyRecorder != nil {
 				decision := autonomy.PolicyDeny
@@ -2854,7 +2853,7 @@ func (r *Runner) Run(
 					ApprovalRequired: permissionDecision.Decision == PermissionAsk,
 					Result:           resultLabel,
 					ErrorClass:       "permission_policy",
-					Source:           "runner_permission_policy",
+					Source:           strings.TrimSpace(permissionDecision.Rule),
 				})
 			}
 
@@ -2882,14 +2881,12 @@ func (r *Runner) Run(
 			continue
 		}
 
-		r.emitEvent(marshalRunEvent("permission_decision", permissionDecision))
-
 		if autonomyRecorder != nil {
 			autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
 				Decision:   autonomy.PolicyAllow,
 				ReasonCode: "permission_policy",
 				Result:     "no_approval_needed",
-				Source:     "runner_permission_policy",
+				Source:     strings.TrimSpace(permissionDecision.Rule),
 			})
 		}
 
@@ -2934,7 +2931,20 @@ func (r *Runner) Run(
 
 					requestBudget.postChild.readCalls = 0
 
-					nudge := childPacketBoundaryNudge(r.RuntimeBrief.Objective, []workspace.ToolResult{result}, evidencePaths, postChildReadBudget)
+					nudge := buildReadinessNudge(ReadinessNudge{
+						Headline:          "The delegated read_only child result is now available as an evidence packet.",
+						EvidencePathLabel: "Packet-named paths: ",
+						EvidencePaths:     evidencePaths,
+						Objective:         r.RuntimeBrief.Objective,
+						Results:           []workspace.ToolResult{result},
+						ProbeBudget:       postChildReadBudget,
+						ContinuationScope: "child_packet_available",
+						FooterLines: []string{
+							"Ignore packet artifacts (the `.idiom/discovery/queries/` JSON files) — they are not source paths.",
+							"If you answer now, answer from the packet and inspected source evidence.",
+						},
+						IncludeProbeSuggestions: true,
+					})
 
 					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 					r.emitEvent(RunEvent{Role: "child_packet_boundary", Content: nudge})
@@ -3859,11 +3869,33 @@ func (r *Runner) Run(
 			if !delegatedReadOnlyAnswerReadyNudged {
 				delegatedReadOnlyAnswerReadyNudged = true
 
-				nudge := delegatedReadOnlyAnswerReadyNudge(r.RuntimeBrief.Objective, collectedResults, postReadinessProbeBudget)
+				nudge := buildReadinessNudge(ReadinessNudge{
+					Headline:          "The delegated read-only evidence is sufficient for a grounded answer to this question.",
+					EvidencePathLabel: "Core evidence paths: ",
+					EvidencePaths:     closurePromptEvidencePaths(delegatedClosureEvidencePaths(r.RuntimeBrief.Objective, collectedResults, 4), 4),
+					Objective:         r.RuntimeBrief.Objective,
+					Results:           collectedResults,
+					ProbeBudget:       postReadinessProbeBudget,
+					ContinuationScope: "delegated_read_only_answer_ready",
+					FooterLines: []string{
+						"Carry forward the inspected paths above and keep the answer minimal; avoid side-path comparison or mode-by-mode breakdown unless the question requires that contrast.",
+					},
+				})
 				eventRole := "delegated_read_only_answer_ready_nudge"
 
 				if becameReadyFromAnalysis {
-					nudge = readOnlyAnswerReadyNudge(r.RuntimeBrief, collectedResults, postReadinessProbeBudget)
+					nudge = buildReadinessNudge(ReadinessNudge{
+						Headline:          "The read-only evidence is sufficient for a grounded answer to this question.",
+						EvidencePathLabel: "Core evidence paths: ",
+						EvidencePaths:     closurePromptEvidencePaths(readOnlyPresentationEvidencePathsForBrief(r.RuntimeBrief, collectedResults, 4), 4),
+						Objective:         strings.TrimSpace(r.RuntimeBrief.Objective),
+						Results:           collectedResults,
+						ProbeBudget:       postReadinessProbeBudget,
+						ContinuationScope: "answer_readiness_reached",
+						FooterLines: []string{
+							"Anchor the explanation in the inspected paths above and keep any remaining uncertainty explicit.",
+						},
+					})
 					eventRole = "read_only_answer_ready_nudge"
 				}
 

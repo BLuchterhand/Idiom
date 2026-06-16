@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 type toolResultEvidenceView struct {
@@ -21,7 +22,7 @@ func (view toolResultEvidenceView) ReadPaths() map[string]struct{} {
 			continue
 		}
 
-		for _, path := range readPathsFromToolResult(result) {
+		for _, path := range agentutil.ReadPathsFromToolResult(result) {
 			normalized := normalizeRunnerPath(path)
 			paths[normalized] = struct{}{}
 		}
@@ -72,7 +73,7 @@ func (view toolResultEvidenceView) SourceBodyPaths() []string {
 			continue
 		}
 
-		for _, path := range readPathsFromToolResult(result) {
+		for _, path := range agentutil.ReadPathsFromToolResult(result) {
 			normalized := normalizeRunnerPath(path)
 			if normalized == "" {
 				continue

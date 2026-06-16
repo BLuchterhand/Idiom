@@ -5,6 +5,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/util"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/workerruntime"
 	"os"
 	"path/filepath"
@@ -891,7 +892,7 @@ func latestCodeNavigateOutlinePath(results []workspace.ToolResult) string {
 			continue
 		}
 
-		for _, path := range readPathsFromToolResult(result) {
+		for _, path := range agentutil.ReadPathsFromToolResult(result) {
 			path = normalizeRunnerPath(path)
 			if path != "" && !isNonSourceEvidenceArtifactPath(path) {
 				return path

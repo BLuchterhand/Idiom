@@ -1575,6 +1575,43 @@ func (a *runnerAutonomyRecorder) emitPolicyResult(req workspace.ToolRequest, inp
 	}
 
 	a.emitPolicyEvent(req, input)
+
+	// Also emit the legacy permission_decision RunEvent so consumers that have not
+	// yet migrated to the autonomy event stream continue to receive the signal.
+	// The autonomy recorder is now the single source of truth for both events.
+	a.emitLegacyPermissionDecision(req, input)
+}
+
+// emitLegacyPermissionDecision emits the legacy permission_decision RunEvent,
+// deriving its fields from the autonomy policy event data that was already computed.
+func (a *runnerAutonomyRecorder) emitLegacyPermissionDecision(req workspace.ToolRequest, input runnerAutonomyPolicyEventInput) {
+	if a == nil || a.runner == nil || a.runner.OnEvent == nil {
+		return
+	}
+
+	decision := permissionDecisionFromAutonomy(input.Decision)
+	snapshot := PermissionDecisionSnapshot{
+		Tool:     strings.TrimSpace(req.Tool),
+		Target:   permissionTarget(req),
+		Decision: decision,
+		Rule:     strings.TrimSpace(input.Source),
+	}
+	a.runner.emitEvent(marshalRunEvent("permission_decision", snapshot))
+}
+
+// permissionDecisionFromAutonomy maps an autonomy ToolPolicyDecision to the legacy
+// PermissionDecision value used by the permission_decision RunEvent.
+func permissionDecisionFromAutonomy(d autonomy.ToolPolicyDecision) PermissionDecision {
+	switch d {
+	case autonomy.PolicyAllow:
+		return PermissionAllow
+	case autonomy.PolicyAsk:
+		return PermissionAsk
+	case autonomy.PolicyDeny, autonomy.PolicyReject:
+		return PermissionDeny
+	default:
+		return PermissionDeny
+	}
 }
 
 func (a *runnerAutonomyRecorder) emitVerificationGate(req workspace.ToolRequest, decision autonomy.ToolPolicyDecision, reasonCode string, status string) {

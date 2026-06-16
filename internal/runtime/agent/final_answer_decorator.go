@@ -7,6 +7,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/util"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/agent/stringset"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -805,7 +806,7 @@ func combinedReadFileSourceBodies(results []workspace.ToolResult) []readFileSour
 			continue
 		}
 
-		paths := readPathsFromToolResult(result)
+		paths := agentutil.ReadPathsFromToolResult(result)
 		if len(paths) == 0 || isNonSourceEvidenceArtifactPath(paths[0]) {
 			continue
 		}
@@ -892,7 +893,7 @@ func presentableProseEvidenceAnswer(brief workerruntime.WorkerRuntimeBrief, resu
 			continue
 		}
 
-		paths := readPathsFromToolResult(result)
+		paths := agentutil.ReadPathsFromToolResult(result)
 		if len(paths) == 0 {
 			continue
 		}
@@ -950,14 +951,14 @@ func objectiveRelevantProseEvidenceLines(objective string, output string, max in
 		max = 4
 	}
 
-	terms := recoveryObjectiveSearchWords(objective, 32)
+	terms := agentutil.RecoveryObjectiveSearchWords(objective, 32)
 	if len(terms) == 0 {
 		return nil
 	}
 
 	termSet := make(map[string]struct{}, len(terms))
 	for _, term := range terms {
-		termSet[singularObjectiveWord(term)] = struct{}{}
+		termSet[agentutil.SingularObjectiveWord(term)] = struct{}{}
 	}
 
 	var candidates []proseEvidenceScoredLine
@@ -1074,7 +1075,7 @@ func proseEvidenceLineObjectiveScore(line string, termSet map[string]struct{}) i
 	seen := map[string]struct{}{}
 
 	for _, word := range words {
-		word = singularObjectiveWord(word)
+		word = agentutil.SingularObjectiveWord(word)
 		if len(word) < 4 {
 			continue
 		}
@@ -1974,7 +1975,7 @@ func bestPresentableExactProbeAnchor(brief workerruntime.WorkerRuntimeBrief, res
 			continue
 		}
 
-		if CandidateAnchorOnlyResult(result) {
+		if agentutil.CandidateAnchorOnlyResult(result) {
 			continue
 		}
 

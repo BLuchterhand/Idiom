@@ -763,7 +763,7 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 		return m.sourceSanity(ctx, req)
 	case ToolNameHarnessAudit:
 		return m.harnessAudit(req)
-	case ToolNameHarnessFeedback, ToolNameIdiomFeedback:
+	case ToolNameHarnessFeedback:
 		return m.harnessFeedback(req)
 	case ToolNameRecoveryInspect:
 		return m.recoveryInspect(ctx, req)
@@ -2383,7 +2383,7 @@ func toolRequestUsesCapabilityAlias(tool string) bool {
 
 func toolRequestUsesPatternAlias(tool string) bool {
 	switch strings.TrimSpace(tool) {
-	case ToolNameSearchContent, ToolNameRg, ToolNameGrep, ToolNameSearchFiles:
+	case ToolNameSearchContent, ToolNameRg, ToolNameSearchFiles:
 		return true
 	default:
 		return false

@@ -310,11 +310,11 @@ func (r *Runner) transitionPlanThenExecuteSubmitReadyTerminal(state *runnerRunSt
 }
 
 // emitStateCompletionStatus records completion status and delegates to Runner method.
-func (r *Runner) emitStateCompletionStatus(state *runnerRunState, status, reason, blockerKind string, results []workspace.ToolResult, userVisibleBlocker bool) {
+func (r *Runner) emitStateCompletionStatus(state *runnerRunState, payload runnerCompletionStatus) {
 	state.completionStatusEmitted = true
-	state.completionStatusLastStatus = strings.TrimSpace(status)
-	state.completionStatusLastBlockerKind = strings.TrimSpace(blockerKind)
-	r.emitCompletionStatus(status, reason, blockerKind, results, userVisibleBlocker)
+	state.completionStatusLastStatus = strings.TrimSpace(payload.Status)
+	state.completionStatusLastBlockerKind = strings.TrimSpace(payload.BlockerKind)
+	r.emitCompletionStatus(payload)
 }
 
 // emitTerminalAnswerSignalsOnce emits final-answer signals exactly once.
@@ -344,7 +344,21 @@ func (r *Runner) emitTerminalAnswerSignalsOnce(state *runnerRunState, decision t
 		r.emitFinalAnswerTelemetry(decision.RawAnswer, state.collectedResults, decision.Acceptance)
 
 		if terminalBlockedStatusShouldEmit(state.completionStatusEmitted, state.completionStatusLastStatus, state.completionStatusLastBlockerKind, blockerKind) {
-			r.emitStateCompletionStatus(state, "blocked", decision.Acceptance.Reason, blockerKind, state.collectedResults, true)
+			// Construct the runnerCompletionStatus once, shared by the legacy event emission below.
+			changedPaths := mapKeys(changedPathsFromToolResults(state.collectedResults))
+			completionPayload := runnerCompletionStatus{
+				Lane:               r.agentName(),
+				TaskFamily:         strings.TrimSpace(r.RuntimeBrief.TaskFamily),
+				Contract:           strings.TrimSpace(r.RuntimeBrief.Contract),
+				Status:             "blocked",
+				Reason:             strings.TrimSpace(decision.Acceptance.Reason),
+				BlockerKind:        strings.TrimSpace(blockerKind),
+				RequiresEdit:       runnerBriefRequiresMutation(r.RuntimeBrief),
+				EditAttempted:      len(changedPaths) > 0,
+				ChangedPaths:       changedPaths,
+				UserVisibleBlocker: true,
+			}
+			r.emitStateCompletionStatus(state, completionPayload)
 		}
 	}
 

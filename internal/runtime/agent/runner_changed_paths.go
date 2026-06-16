@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/agent/stringset"
 	"idiom/internal/runtime/workerruntime"
 	"os"
@@ -49,7 +50,7 @@ func unresolvedRejectedMutationPaths(results []workspace.ToolResult, requiredPat
 			continue
 		}
 
-		paths := readOnlySourceLikePaths(readPathsFromToolResult(result), 8)
+		paths := readOnlySourceLikePaths(agentutil.ReadPathsFromToolResult(result), 8)
 
 		paths = mergeRunnerStateStrings(paths, readOnlySourceLikePaths(sourceLikePathsFromText(result.Summary+"\n"+result.Output+"\n"+result.Error, 8), 8))
 

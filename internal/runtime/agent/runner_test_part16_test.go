@@ -681,10 +681,23 @@ func TestFinalAnswerDecoratorPreservesSubstantiveModelAnswerOverEvidencePacket(t
 }
 
 func TestChildPacketBoundaryNudgeNamesEvidencePaths(t *testing.T) {
-	nudge := childPacketBoundaryNudge("Explain how this harness uses subagents.", nil, []string{
-		"internal/runtime/agent/discovery_redirect.go",
-		"internal/capabilities/workspace/discovery_query.go",
-	}, 2)
+	nudge := buildReadinessNudge(ReadinessNudge{
+		Headline:          "The delegated read_only child result is now available as an evidence packet.",
+		EvidencePathLabel: "Packet-named paths: ",
+		EvidencePaths: []string{
+			"internal/runtime/agent/discovery_redirect.go",
+			"internal/capabilities/workspace/discovery_query.go",
+		},
+		Objective:         "Explain how this harness uses subagents.",
+		Results:           nil,
+		ProbeBudget:       2,
+		ContinuationScope: "child_packet_available",
+		FooterLines: []string{
+			"Ignore packet artifacts (the `.idiom/discovery/queries/` JSON files) — they are not source paths.",
+			"If you answer now, answer from the packet and inspected source evidence.",
+		},
+		IncludeProbeSuggestions: true,
+	})
 	for _, want := range []string{
 		"Why a final answer is now valid:",
 		"Packet-named paths:",
@@ -713,7 +726,20 @@ func TestChildPacketBoundaryNudgeDisclosesActualProbeBudget(t *testing.T) {
 		{budget: 1, want: "one targeted probe"},
 		{budget: 0, want: "answer unless the missing claim is exact and material"},
 	} {
-		nudge := childPacketBoundaryNudge("q", nil, []string{"internal/runtime/agent/runner.go"}, tc.budget)
+		nudge := buildReadinessNudge(ReadinessNudge{
+			Headline:          "The delegated read_only child result is now available as an evidence packet.",
+			EvidencePathLabel: "Packet-named paths: ",
+			EvidencePaths:     []string{"internal/runtime/agent/runner.go"},
+			Objective:         "q",
+			Results:           nil,
+			ProbeBudget:       tc.budget,
+			ContinuationScope: "child_packet_available",
+			FooterLines: []string{
+				"Ignore packet artifacts (the `.idiom/discovery/queries/` JSON files) — they are not source paths.",
+				"If you answer now, answer from the packet and inspected source evidence.",
+			},
+			IncludeProbeSuggestions: true,
+		})
 		if !strings.Contains(nudge, tc.want) {
 			t.Fatalf("budget=%d: expected nudge to contain %q, got:\n%s", tc.budget, tc.want, nudge)
 		}
@@ -721,12 +747,25 @@ func TestChildPacketBoundaryNudgeDisclosesActualProbeBudget(t *testing.T) {
 }
 
 func TestChildPacketBoundaryNudgeFiltersNonFileArtifacts(t *testing.T) {
-	nudge := childPacketBoundaryNudge("Explain how this harness uses subagents.", nil, []string{
-		".idiom/discovery/queries/query.json",
-		"start_line/end_line",
-		"internal/runtime/agent/runner_child_tasks.go",
-		"idiom/internal/platform/config",
-	}, 2)
+	nudge := buildReadinessNudge(ReadinessNudge{
+		Headline:          "The delegated read_only child result is now available as an evidence packet.",
+		EvidencePathLabel: "Packet-named paths: ",
+		EvidencePaths: []string{
+			".idiom/discovery/queries/query.json",
+			"start_line/end_line",
+			"internal/runtime/agent/runner_child_tasks.go",
+			"idiom/internal/platform/config",
+		},
+		Objective:         "Explain how this harness uses subagents.",
+		Results:           nil,
+		ProbeBudget:       2,
+		ContinuationScope: "child_packet_available",
+		FooterLines: []string{
+			"Ignore packet artifacts (the `.idiom/discovery/queries/` JSON files) — they are not source paths.",
+			"If you answer now, answer from the packet and inspected source evidence.",
+		},
+		IncludeProbeSuggestions: true,
+	})
 	// The static `.idiom/discovery/queries/` string in the contract is a
 	// reference to where artifacts live, not a path emitted from the
 	// evidence list. The test should fail only if the *evidence* list
@@ -752,7 +791,18 @@ func TestDelegatedReadOnlyAnswerReadyNudgeIncludesClosureJustification(t *testin
 		Summary: "Ran architecture_boundary discovery query",
 		Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"go_read_symbol","summary":"Read subagent flow","output_excerpt":"internal/runtime/agent/runner.go:648 runChildTask\ninternal/runtime/agent/runner_child_tasks.go:16 runChildTask\ninternal/runtime/agent/answer_composer.go:18 Compose"}]}`,
 	}}
-	nudge := delegatedReadOnlyAnswerReadyNudge("Explain how this harness uses subagents.", results, 2)
+	nudge := buildReadinessNudge(ReadinessNudge{
+		Headline:          "The delegated read-only evidence is sufficient for a grounded answer to this question.",
+		EvidencePathLabel: "Core evidence paths: ",
+		EvidencePaths:     closurePromptEvidencePaths(delegatedClosureEvidencePaths("Explain how this harness uses subagents.", results, 4), 4),
+		Objective:         "Explain how this harness uses subagents.",
+		Results:           results,
+		ProbeBudget:       2,
+		ContinuationScope: "delegated_read_only_answer_ready",
+		FooterLines: []string{
+			"Carry forward the inspected paths above and keep the answer minimal; avoid side-path comparison or mode-by-mode breakdown unless the question requires that contrast.",
+		},
+	})
 
 	for _, want := range []string{
 		"The delegated read-only evidence is sufficient for a grounded answer to this question.",

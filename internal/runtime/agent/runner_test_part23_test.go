@@ -13,12 +13,13 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 )
 
 func TestRecoverySearchStopWordsDoesNotFilterModel(t *testing.T) {
-	stop := recoverySearchStopWords()
+	stop := agentutil.RecoverySearchStopWords()
 	if _, ok := stop["model"]; ok {
 		t.Fatal(`"model" should not be a search stop word — it carries domain signal for path→objective matching`)
 	}

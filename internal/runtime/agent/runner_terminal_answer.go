@@ -133,7 +133,7 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 	r.emitFinalAnswerTelemetry(answer, results, acceptance)
 
 	if acceptance.BlockerKind != "" {
-		r.emitCompletionStatus("blocked", acceptance.Reason, acceptance.BlockerKind, results, true)
+		r.emitCompletionStatusFromParams("blocked", acceptance.Reason, acceptance.BlockerKind, results, true)
 	}
 }
 

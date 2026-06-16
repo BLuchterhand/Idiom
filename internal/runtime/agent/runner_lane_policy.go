@@ -12,6 +12,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/util"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -244,7 +245,7 @@ func delegatedDiscoveryConsumableSourcePath(path string) bool {
 func (p delegatedDiscoveryPlan) consumableCandidateTerms() []string {
 	var terms []string
 
-	for _, term := range recoveryObjectiveSearchWords(p.questionText, 16) {
+	for _, term := range agentutil.RecoveryObjectiveSearchWords(p.questionText, 16) {
 		terms = appendDelegatedDiscoveryCandidateTerm(terms, term)
 	}
 
@@ -1235,7 +1236,7 @@ func conversationFileSearchPatternIsConcrete(pattern string) bool {
 		return strings.Contains(pattern, "/") || pathparse.HasWorkspaceFileExtension(pattern)
 	}
 
-	for _, token := range recoveryObjectiveSearchWords(pattern, 16) {
+	for _, token := range agentutil.RecoveryObjectiveSearchWords(pattern, 16) {
 		token = strings.ToLower(strings.TrimSpace(token))
 		if len(token) < 3 || conversationBroadFileSearchToken(token) {
 			continue
@@ -2438,7 +2439,7 @@ func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
 			continue
 		}
 
-		if CandidateAnchorOnlyResult(result) {
+		if agentutil.CandidateAnchorOnlyResult(result) {
 			continue
 		}
 
@@ -2452,7 +2453,7 @@ func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
 				count++
 			}
 		case "code_navigate":
-			if routedSourceReadOutputHasBody(result.Output) &&
+			if agentutil.RoutedSourceReadOutputHasBody(result.Output) &&
 				!strings.Contains(result.Output, "capability: file_outline") {
 
 				count++
@@ -2511,7 +2512,7 @@ func delegatedReadOnlyInspectedImplementationPaths(results []workspace.ToolResul
 			continue
 		}
 
-		if CandidateAnchorOnlyResult(result) {
+		if agentutil.CandidateAnchorOnlyResult(result) {
 			continue
 		}
 

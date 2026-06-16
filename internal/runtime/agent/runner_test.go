@@ -626,7 +626,7 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 
 	// Tier 1: should include "rewrite your answer" or "Rewrite your answer"
 	got = escalateCompletionGateMessage(sgUnsupported, 1)
-	for _, want := range []string{"[gate retry 2/3]", "not backed by a source-body read", "rewrite your"} {
+	for _, want := range []string{"[gate retry 2/3]", "not backed by a source-body read", "call one bounded"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("source-grounding unsupported tier 1 expected to contain %q, got: %s", want, got)
 		}
@@ -635,9 +635,9 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 		t.Errorf("source-grounding unsupported tier 1 must not contain 'use a different tool call'; got: %s", got)
 	}
 
-	// Tier 2: should include rewrite guidance, not "ONE concrete tool call"
+	// Tier 2: should include read-file guidance, not "ONE concrete tool call"
 	got = escalateCompletionGateMessage(sgUnsupported, 2)
-	for _, want := range []string{"[gate retry 3/3", "Rewrite your"} {
+	for _, want := range []string{"[gate retry 3/3", "`read_file` or `code_navigate`"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("source-grounding unsupported tier 2 expected to contain %q, got: %s", want, got)
 		}
@@ -649,9 +649,9 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	// ── Source-grounding (non-existent paths) ─────────────────────
 	sgMissing := "the answer cites path(s) that were discovered as index candidates but not read as source-body evidence: \"missing.go\". Correct the citation, label it as historical/log-only evidence, or answer from inspected current source."
 
-	// Tier 1: should include rewrite guidance
+	// Tier 1: should include read-file guidance
 	got = escalateCompletionGateMessage(sgMissing, 1)
-	for _, want := range []string{"[gate retry 2/3]", "not read as source-body evidence", "rewrite your"} {
+	for _, want := range []string{"[gate retry 2/3]", "not read as source-body evidence", "call one bounded"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("source-grounding missing tier 1 expected to contain %q, got: %s", want, got)
 		}
@@ -660,9 +660,9 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 		t.Errorf("source-grounding missing tier 1 must not contain 'use a different tool call'; got: %s", got)
 	}
 
-	// Tier 2: should include rewrite guidance, not "ONE concrete tool call"
+	// Tier 2: should include read-file guidance, not "ONE concrete tool call"
 	got = escalateCompletionGateMessage(sgMissing, 2)
-	for _, want := range []string{"[gate retry 3/3", "Rewrite your"} {
+	for _, want := range []string{"[gate retry 3/3", "`read_file` or `code_navigate`"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("source-grounding missing tier 2 expected to contain %q, got: %s", want, got)
 		}

@@ -457,7 +457,7 @@ func filterClosureGuidanceNext(values []string, scope string) []string {
 // (already returned what relational queries want).
 func isDiscoveryTool(tool string) bool {
 	switch strings.TrimSpace(tool) {
-	case workspace.ToolNameListFiles, workspace.ToolNameSearchContent, workspace.ToolNameSearchFiles, workspace.ToolNameReadFile, workspace.ToolNameRg, workspace.ToolNameGrep:
+	case workspace.ToolNameListFiles, workspace.ToolNameSearchContent, workspace.ToolNameSearchFiles, workspace.ToolNameReadFile, workspace.ToolNameRg:
 		return true
 	}
 

@@ -171,6 +171,14 @@ func freshnessPolicyProps() string {
 	return `"freshness_policy":{"type":"string","enum":["read_through","require_fresh","report_only","allow_stale"],"description":"optional graph freshness mode; read_through is the default for graph evidence tools, report_only returns stale evidence with a stale_evidence state instead of blocking"},"freshness_max_files":` + intProp("optional freshness refresh budget for graph-backed tools; when exceeded, require_fresh/read_through report a stale-evidence blocker")
 }
 
+// contextToolInputSchema returns the shared schema property prefix used by all
+// context_* comprehension tools. Tools that accept freshness policy callers
+// should append freshnessPolicyProps() after their unique fields.
+func contextToolInputSchema() string {
+	return `"path":` + strProp("optional workspace-relative file or directory scope; omitted means workspace root") +
+		`,"limit":` + intProp("optional max items to return; varies by tool")
+}
+
 func baseToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
@@ -319,7 +327,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Build or refresh idiom's persistent, language-agnostic codebase comprehension graph. This writes the active SQLite graph plus a JSON export; use it when context_status is missing/stale or before generating packet-ready context.",
 			ParametersJSON: schemaObj(
 				nil,
-				`"path":`+strProp("optional file or directory scope; defaults to workspace root")+`,"language":`+strProp("language hint; auto indexes recognized source files, with rich Go/C++/Python/TypeScript/JavaScript/Rust/Java/GDScript collectors, Godot project resource support, and generic cross-language fallback")+`,"mode":{"type":"string","enum":["quick","standard","deep"],"description":"indexing depth; standard records fast language/backend/build-system enrichment, deep also runs bounded live language-tool/LSP probes and normalizes parseable relationship evidence"},"limit":`+intProp("optional max files to index"),
+				contextToolInputSchema() + `,"language":` + strProp("language hint; auto indexes recognized source files, with rich Go/C++/Python/TypeScript/JavaScript/Rust/Java/GDScript collectors, Godot project resource support, and generic cross-language fallback") + `,"mode":{"type":"string","enum":["quick","standard","deep"],"description":"indexing depth; standard records fast language/backend/build-system enrichment, deep also runs bounded live language-tool/LSP probes and normalizes parseable relationship evidence"}`,
 			),
 		},
 		{
@@ -327,7 +335,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Report whether the persistent SQLite-backed codebase comprehension graph exists, whether indexed files/symbols or collector versions are stale, and whether storage backends are compatible. Stale/missing path lists are sample-capped by default while count fields preserve the full size. With refresh=true, repair bounded stale scopes, stale file sets, missing indexes, and collector-version mismatches before reporting; explicit freshness_max_files or limit values cap unscoped stale-file refreshes and report budget_exceeded when exceeded.",
 			ParametersJSON: schemaObj(
 				nil,
-				`"refresh":`+boolProp("optional: attempt stale graph repair before reporting; uses path when provided, otherwise refreshes a stale/missing file set or rebuilds the root for missing indexes/collector-version mismatches")+`,"path":`+strProp("optional bounded file or directory refresh scope; omit for workspace-level status/repair")+`,"language":`+strProp("optional language hint for refresh; auto remains language-agnostic")+`,"mode":{"type":"string","enum":["quick","standard","deep"],"description":"refresh indexing depth; default standard"},"limit":`+intProp("optional max stale/missing path samples to display; also caps unscoped stale-file refresh attempts when refresh=true")+`,`+freshnessPolicyProps(),
+				`"refresh":`+boolProp("optional: attempt stale graph repair before reporting; uses path when provided, otherwise refreshes a stale/missing file set or rebuilds the root for missing indexes/collector-version mismatches")+`,`+contextToolInputSchema()+`,"language":`+strProp("optional language hint for refresh; auto remains language-agnostic")+`,"mode":{"type":"string","enum":["quick","standard","deep"],"description":"refresh indexing depth; default standard"},`+freshnessPolicyProps(),
 			),
 		},
 		{
@@ -335,7 +343,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Query idiom's persistent codebase graph for repository, package, file, symbol, summary, import, call, or test relationships without dumping raw source. Results are observational and include confidence/staleness.",
 			ParametersJSON: schemaObj(
 				nil,
-				`"query":`+strProp("natural-language or keyword query")+`,"pattern":`+strProp("optional symbol or handle hint")+`,"path":`+strProp("optional path scope")+`,"resolution":{"type":"string","enum":["repository","package","file","symbol","summary","any"],"description":"requested abstraction level"},"limit":`+intProp("max nodes to return; default 12")+`,"include_evidence":`+boolProp("include edge evidence such as path/line")+`,`+freshnessPolicyProps(),
+				`"query":`+strProp("natural-language or keyword query")+`,"pattern":`+strProp("optional symbol or handle hint")+`,`+contextToolInputSchema()+`,"resolution":{"type":"string","enum":["repository","package","file","symbol","summary","any"],"description":"requested abstraction level"},"include_evidence":`+boolProp("include edge evidence such as path/line")+`,`+freshnessPolicyProps(),
 			),
 		},
 		{
@@ -343,7 +351,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Return a deeper or broader view for one context graph handle, path, or symbol. Use after context_query returns a promising handle.",
 			ParametersJSON: schemaObj(
 				nil,
-				`"id":`+strProp("context graph handle such as symbol://path.go#Name")+`,"handle":`+strProp("alias for id; accepts file://, symbol://, package://, and other context graph handles")+`,"pattern":`+strProp("optional symbol fallback when id/handle is not known")+`,"path":`+strProp("optional path fallback when id/handle is not known")+`,"resolution":{"type":"string","enum":["repository","package","file","symbol","summary","any"],"description":"requested abstraction level"},"limit":`+intProp("max related nodes/edges to return; default 20")+`,"include_source":`+boolProp("reserved for future exact source excerpts")+`,`+freshnessPolicyProps(),
+				`"id":`+strProp("context graph handle such as symbol://path.go#Name")+`,"handle":`+strProp("alias for id; accepts file://, symbol://, package://, and other context graph handles")+`,"pattern":`+strProp("optional symbol fallback when id/handle is not known")+`,`+contextToolInputSchema()+`,"resolution":{"type":"string","enum":["repository","package","file","symbol","summary","any"],"description":"requested abstraction level"},"include_source":`+boolProp("reserved for future exact source excerpts")+`,`+freshnessPolicyProps(),
 			),
 		},
 		{
@@ -351,7 +359,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Generate a saved, packet-ready context view for a task from the persistent graph. Returns candidate files, symbols, tests, evidence handles, risks, unknowns, and stale-context gaps without prescribing edits.",
 			ParametersJSON: schemaObj(
 				[]string{"task"},
-				`"task":`+strProp("task statement to localize")+`,"query":`+strProp("optional task/query fallback")+`,"path":`+strProp("optional path scope")+`,"mode":{"type":"string","enum":["plan","critique","brief","implement"],"description":"packet mode; default plan"},"limit":`+intProp("max candidate files; default 8")+`,"budget_tokens":`+intProp("optional intended context budget for downstream packet rendering")+`,"required_tests":{"type":"array","items":{"type":"string"},"description":"exact validation commands that must be carried into the pack"},"required_edit_paths":{"type":"array","items":{"type":"string"},"description":"caller-declared workspace-relative edit paths to surface and prioritize as scope evidence"},"forbidden_paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative paths to omit from candidate files"},`+freshnessPolicyProps(),
+				`"task":`+strProp("task statement to localize")+`,"query":`+strProp("optional task/query fallback")+`,`+contextToolInputSchema()+`,"mode":{"type":"string","enum":["plan","critique","brief","implement"],"description":"packet mode; default plan"},"budget_tokens":`+intProp("optional intended context budget for downstream packet rendering")+`,"required_tests":{"type":"array","items":{"type":"string"},"description":"exact validation commands that must be carried into the pack"},"required_edit_paths":{"type":"array","items":{"type":"string"},"description":"caller-declared workspace-relative edit paths to surface and prioritize as scope evidence"},"forbidden_paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative paths to omit from candidate files"},`+freshnessPolicyProps(),
 			),
 		},
 		{
@@ -359,7 +367,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Rank task-relevant files, symbols, and validation candidates with signal explanations from the persistent graph. Use before planner packet generation when you need affected-scope evidence without raw source flooding.",
 			ParametersJSON: schemaObj(
 				nil,
-				`"task":`+strProp("optional task statement to localize; path-only requests derive a bounded evidence task from path")+`,"query":`+strProp("optional task/query fallback")+`,"path":`+strProp("optional path scope")+`,"mode":{"type":"string","enum":["plan","critique","brief","implement"],"description":"ranking mode; default plan"},"limit":`+intProp("max impact items; default 8")+`,"budget_tokens":`+intProp("optional intended downstream context budget")+`,"required_tests":{"type":"array","items":{"type":"string"},"description":"exact validation commands to include in ranking evidence"},"required_edit_paths":{"type":"array","items":{"type":"string"},"description":"caller-declared workspace-relative edit paths to surface and prioritize as scope evidence"},"forbidden_paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative paths to omit from candidate files"},`+freshnessPolicyProps(),
+				`"task":`+strProp("optional task statement to localize; path-only requests derive a bounded evidence task from path")+`,"query":`+strProp("optional task/query fallback")+`,`+contextToolInputSchema()+`,"mode":{"type":"string","enum":["plan","critique","brief","implement"],"description":"ranking mode; default plan"},"budget_tokens":`+intProp("optional intended downstream context budget")+`,"required_tests":{"type":"array","items":{"type":"string"},"description":"exact validation commands to include in ranking evidence"},"required_edit_paths":{"type":"array","items":{"type":"string"},"description":"caller-declared workspace-relative edit paths to surface and prioritize as scope evidence"},"forbidden_paths":{"type":"array","items":{"type":"string"},"description":"workspace-relative paths to omit from candidate files"},`+freshnessPolicyProps(),
 			),
 		},
 		{
@@ -367,7 +375,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Run a command and save language-agnostic runtime evidence under .idiom/comprehension/traces. Parses generic stack frames, test output, Go test JSON, Go coverprofiles, and LCOV without overwriting static graph facts.",
 			ParametersJSON: schemaObj(
 				[]string{"command"},
-				`"command":`+strProp("runtime command to execute, such as a focused test command")+`,"path":`+strProp("optional workspace-relative scope for matching the trace to a task")+`,"language":`+strProp("optional language hint; auto keeps the output language-agnostic while enabling collector-specific parsers when recognizable")+`,"workdir":`+strProp("optional workspace-relative working directory")+`,"limit":`+intProp("max runtime events/files to return; default 64")+`,"include_files":`+boolProp("include parsed executed-file and stack-frame evidence; default true"),
+				`"command":`+strProp("runtime command to execute, such as a focused test command")+`,`+contextToolInputSchema()+`,"language":`+strProp("optional language hint; auto keeps the output language-agnostic while enabling collector-specific parsers when recognizable")+`,"workdir":`+strProp("optional workspace-relative working directory")+`,"include_files":`+boolProp("include parsed executed-file and stack-frame evidence; default true"),
 			),
 		},
 		{

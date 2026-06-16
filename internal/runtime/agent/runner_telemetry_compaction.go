@@ -57,11 +57,19 @@ func (r *Runner) emitBudgetLedger(policy RunPolicy, metrics runnerMetrics, stopR
 	r.OnEvent(RunEvent{Role: "budget_ledger", Content: string(data)})
 }
 
-func (r *Runner) emitCompletionStatus(status, reason, blockerKind string, results []workspace.ToolResult, userVisibleBlocker bool) {
+func (r *Runner) emitCompletionStatus(payload runnerCompletionStatus) {
 	if r == nil || r.OnEvent == nil {
 		return
 	}
 
+	r.emitEvent(marshalRunEvent("completion_status", payload))
+}
+
+// emitCompletionStatusFromParams is a convenience wrapper that constructs a runnerCompletionStatus
+// from individual parameters. It is retained so the many call-sites in runner.go's Run() method
+// (and runner_terminal_answer.go) do not all need to be rewritten. The canonical construction
+// happens in runner_runstate.go where both the legacy and autonomy events share the same data.
+func (r *Runner) emitCompletionStatusFromParams(status, reason, blockerKind string, results []workspace.ToolResult, userVisibleBlocker bool) {
 	changedPaths := mapKeys(changedPathsFromToolResults(results))
 	payload := runnerCompletionStatus{
 		Lane:               r.agentName(),
@@ -75,7 +83,7 @@ func (r *Runner) emitCompletionStatus(status, reason, blockerKind string, result
 		ChangedPaths:       changedPaths,
 		UserVisibleBlocker: userVisibleBlocker,
 	}
-	r.emitEvent(marshalRunEvent("completion_status", payload))
+	r.emitCompletionStatus(payload)
 }
 
 func workspaceToolRulesPermissionDeny(decision PermissionDecisionSnapshot) bool {

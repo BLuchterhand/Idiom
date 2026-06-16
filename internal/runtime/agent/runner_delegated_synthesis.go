@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/agent/stringset"
 	"idiom/internal/runtime/workerruntime"
 	"sort"
@@ -255,7 +256,7 @@ func synthesizeDelegatedSourceBodyFactsAnswer(objective string, results []worksp
 			continue
 		}
 
-		paths := readPathsFromToolResult(result)
+		paths := agentutil.ReadPathsFromToolResult(result)
 		if len(paths) == 0 {
 			continue
 		}
@@ -308,8 +309,8 @@ func delegatedSourceFactAddressesObjective(factText string, objective string) bo
 		return false
 	}
 
-	for _, term := range recoveryObjectiveSearchWords(objective, 32) {
-		term = singularObjectiveWord(strings.ToLower(strings.TrimSpace(term)))
+	for _, term := range agentutil.RecoveryObjectiveSearchWords(objective, 32) {
+		term = agentutil.SingularObjectiveWord(strings.ToLower(strings.TrimSpace(term)))
 		if len(term) < 4 || delegatedSourceFactGenericObjectiveTerm(term) {
 			continue
 		}

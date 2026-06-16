@@ -14,6 +14,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -525,7 +526,7 @@ func TestCandidateAnchorMissDoesNotCountAsSourceBodyEvidence(t *testing.T) {
 			t.Fatalf("%s candidate-anchor miss counted as concrete source evidence", result.Tool)
 		}
 
-		if paths := readPathsFromToolResult(result); len(paths) != 0 {
+		if paths := agentutil.ReadPathsFromToolResult(result); len(paths) != 0 {
 			t.Fatalf("%s candidate-anchor miss returned read paths: %#v", result.Tool, paths)
 		}
 	}

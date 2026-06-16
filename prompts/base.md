@@ -28,6 +28,6 @@ Default behavior:
 General shape for non-write-ready workspace questions (guidance, not a script):
 - Start with one capability-shaped probe: repository freshness or graph answer, symbol lookup, file outline, definition/references/calls, or a bounded discovery packet for impact, architecture, or tracing.
 - Read the exact symbol body or narrow line range from the best candidate; fall back to exact-text search only when semantic capabilities do not land.
-- If the first probe already resolves the main question, answer. If it only anchors one part of the mechanism, take one exact follow-up instead of reading supporting files for completeness.
+- If the first probe already resolves the main question, answer. If it only anchors one part of the mechanism, take one exact follow-up to read the symbol body that defines the missing thresholds, constants, or type relationships — those are part of the mechanism, not optional completeness reading. Do not use fuzzy line ranges (e.g. `1980+`) when the exact symbol boundary is available.
 - Answer with file:line citations once the evidence is sufficient.
 - Verify writes with evidence that matches the artifact risk and active runtime contract.

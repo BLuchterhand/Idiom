@@ -393,7 +393,6 @@ func TestPostWriteSourceSanityRedirectPreservesBoundaryControlTools(t *testing.T
 
 	for _, tool := range []string{
 		workspace.ToolNameHarnessFeedback,
-		workspace.ToolNameIdiomFeedback,
 		workspace.ToolNameTaskLedger,
 	} {
 		if _, ok := postWriteSourceSanityRedirect(

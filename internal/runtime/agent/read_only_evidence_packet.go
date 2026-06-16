@@ -11,6 +11,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 const readOnlyEvidencePacketPayloadType = "agent.read_only_evidence_packet.v1"
@@ -532,7 +533,7 @@ func readOnlyEvidencePacketCandidatePaths(results []workspace.ToolResult) []stri
 		case "search_content", "search_files":
 			paths = append(paths, sourceLikePathsFromText(result.Summary+"\n"+result.Output, 64)...)
 		default:
-			paths = append(paths, readPathsFromToolResult(result)...)
+			paths = append(paths, agentutil.ReadPathsFromToolResult(result)...)
 		}
 	}
 
@@ -771,7 +772,7 @@ func discoveryConsumptionCandidatesFromResult(result workspace.ToolResult, max i
 
 
 func readFileResultOnlyMentionsDiagnosticLogArtifacts(result workspace.ToolResult) bool {
-	paths := readPathsFromToolResult(result)
+	paths := agentutil.ReadPathsFromToolResult(result)
 	if len(paths) == 0 {
 		return false
 	}

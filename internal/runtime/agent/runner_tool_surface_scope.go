@@ -533,7 +533,7 @@ func doomLoopForcedCloseoutPrompt(req workspace.ToolRequest, identicalCallRun in
 
 func shouldRejectExactReplayBeforeLoopGate(req workspace.ToolRequest) bool {
 	switch strings.TrimSpace(req.Tool) {
-	case workspace.ToolNameSearchFiles, workspace.ToolNameSearchContent, workspace.ToolNameRg, workspace.ToolNameGrep:
+	case workspace.ToolNameSearchFiles, workspace.ToolNameSearchContent, workspace.ToolNameRg:
 		return true
 	default:
 		return false
@@ -575,7 +575,7 @@ func truncForRetryReason(s string) string {
 // behavior we want to reward.
 func isContentInspectionTool(tool string) bool {
 	switch strings.TrimSpace(tool) {
-	case workspace.ToolNameSearchContent, workspace.ToolNameSearchFiles, workspace.ToolNameRg, workspace.ToolNameGrep, workspace.ToolNameReadFile,
+	case workspace.ToolNameSearchContent, workspace.ToolNameSearchFiles, workspace.ToolNameRg, workspace.ToolNameReadFile,
 		workspace.ToolNameCodeNavigate, workspace.ToolNameReadOnlyCapability,
 		"go_file_outline", "go_read_symbol", "go_find_symbol", "go_find_type",
 		"go_find_const", "go_workspace_symbol", "go_definition", "go_references",
@@ -799,7 +799,7 @@ func shellActionClass(command string) string {
 	switch fields[0] {
 	case "ls", "find", "tree":
 		return "broad_inspection"
-	case workspace.ToolNameRg, workspace.ToolNameGrep, "awk", "sed", "cat", "head", "tail":
+	case workspace.ToolNameRg, "grep", "awk", "sed", "cat", "head", "tail":
 		return "shell_narrow:" + normalizeActionToken(command)
 	default:
 		return "shell:" + normalizeActionToken(fields[0])

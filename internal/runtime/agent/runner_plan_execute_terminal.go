@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/util"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 	"strconv"
@@ -474,7 +475,7 @@ func planThenExecuteTerminalSubmitPlanEvidenceByPath(results []workspace.ToolRes
 			continue
 		}
 
-		for _, path := range readPathsFromToolResult(result) {
+		for _, path := range agentutil.ReadPathsFromToolResult(result) {
 			add(path, result.Summary)
 		}
 
@@ -485,10 +486,10 @@ func planThenExecuteTerminalSubmitPlanEvidenceByPath(results []workspace.ToolRes
 			}
 
 			summary := strings.TrimSpace(strings.TrimPrefix(line, "route_summary:"))
-			path := extractReadPathFromSummary(summary)
+			path := agentutil.ExtractReadPathFromSummary(summary)
 
 			if path == "" {
-				path = extractRoutedReadPathFromOutput(line)
+				path = agentutil.ExtractRoutedReadPathFromOutput(line)
 			}
 
 			add(path, summary)
@@ -671,7 +672,7 @@ func planThenExecuteTerminalSourceEvidenceMessages(brief workerruntime.WorkerRun
 			continue
 		}
 
-		paths := readPathsFromToolResult(result)
+		paths := agentutil.ReadPathsFromToolResult(result)
 
 		paths = nonArtifactEvidencePaths(paths)
 

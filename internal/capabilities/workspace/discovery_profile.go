@@ -36,7 +36,7 @@ func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 		return discoveryProfile("diagnostics", "targeted", "medium", false)
 	case ToolNameHarnessAudit:
 		return discoveryProfile("harness_audit", scopeFromPath(req.Path), "medium", true)
-	case ToolNameHarnessFeedback, ToolNameIdiomFeedback:
+	case ToolNameHarnessFeedback:
 		return discoveryProfile("harness_feedback", "targeted", "low", true)
 	case ToolNameContextIndex:
 		return discoveryProfile("context_index", scopeFromPath(req.Path), "medium", true)

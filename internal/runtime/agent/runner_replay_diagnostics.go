@@ -2,6 +2,7 @@ package agent
 
 import (
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/runtime/agent/agentutil"
 	"sort"
 	"strconv"
 	"strings"
@@ -234,7 +235,7 @@ func mergeDiagnosticLogReadWindows(windows []diagnosticLogReadWindow) ([]diagnos
 }
 
 func runnerToolResultReadPathMatches(result workspace.ToolResult, path string) bool {
-	for _, readPath := range readPathsFromToolResult(result) {
+	for _, readPath := range agentutil.ReadPathsFromToolResult(result) {
 		if normalizeRunnerPath(readPath) == path {
 			return true
 		}
@@ -284,7 +285,7 @@ func repeatedDiagnosticLogReadFileExactRejection(req workspace.ToolRequest, last
 		return "", "", false
 	}
 
-	for _, readPath := range readPathsFromToolResult(last) {
+	for _, readPath := range agentutil.ReadPathsFromToolResult(last) {
 		if normalizeRunnerPath(readPath) != path {
 			continue
 		}

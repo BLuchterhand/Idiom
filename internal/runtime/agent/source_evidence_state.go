@@ -8,6 +8,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -223,14 +224,14 @@ func sourceEvidencePendingRedirectRelevantAfterBodyEvidence(brief workerruntime.
 }
 
 func sourceEvidencePathSharesObjectiveTerm(path string, objective string) bool {
-	terms := recoveryObjectiveSearchWords(objective, 32)
+	terms := agentutil.RecoveryObjectiveSearchWords(objective, 32)
 	if len(terms) == 0 {
 		return false
 	}
 
 	objectiveTerms := make(map[string]struct{}, len(terms))
 	for _, term := range terms {
-		objectiveTerms[singularObjectiveWord(term)] = struct{}{}
+		objectiveTerms[agentutil.SingularObjectiveWord(term)] = struct{}{}
 	}
 
 	for _, term := range implementationPathTerms(path) {
@@ -467,7 +468,7 @@ func sourceEvidenceOutlineReadForPath(path string, results []workspace.ToolResul
 }
 
 func sourceEvidenceToolResultMentionsPath(result workspace.ToolResult, path string) bool {
-	for _, readPath := range readPathsFromToolResult(result) {
+	for _, readPath := range agentutil.ReadPathsFromToolResult(result) {
 		if normalizeRunnerPath(readPath) == path {
 			return true
 		}
@@ -664,14 +665,14 @@ func splitImplementationPathToken(token string) []string {
 
 
 func implementationSourcePathOverlapsObjective(path string, objective string) bool {
-	terms := recoveryObjectiveSearchWords(objective, 32)
+	terms := agentutil.RecoveryObjectiveSearchWords(objective, 32)
 	if len(terms) == 0 {
 		return false
 	}
 
 	objectiveTerms := make(map[string]struct{}, len(terms))
 	for _, term := range terms {
-		objectiveTerms[singularObjectiveWord(term)] = struct{}{}
+		objectiveTerms[agentutil.SingularObjectiveWord(term)] = struct{}{}
 	}
 
 	matches := 0
@@ -691,7 +692,7 @@ func concreteSourceEvidenceResult(result workspace.ToolResult) bool {
 		return false
 	}
 
-	if CandidateAnchorOnlyResult(result) {
+	if agentutil.CandidateAnchorOnlyResult(result) {
 		return false
 	}
 
@@ -702,7 +703,7 @@ func concreteSourceEvidenceResult(result workspace.ToolResult) bool {
 	case tool == workspace.ToolNameContextZoom:
 		return contextZoomResultHasConcreteSourceBody(result)
 	case tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameReadOnlyCapability:
-		return routedSourceReadOutputHasBody(result.Output) && toolResultHasNonArtifactReadPath(result)
+		return agentutil.RoutedSourceReadOutputHasBody(result.Output) && toolResultHasNonArtifactReadPath(result)
 	case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
 		return toolResultHasNonArtifactReadPath(result)
 	default:

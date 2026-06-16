@@ -13,6 +13,7 @@ import (
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/contracts/plan"
 	"idiom/internal/platform/util"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -2522,7 +2523,7 @@ func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path s
 		evidence.Detail = "path mentioned by tool result"
 	}
 
-	sourcePaths := readPathsFromToolResult(result)
+	sourcePaths := agentutil.ReadPathsFromToolResult(result)
 	sourceMatched := false
 
 	for _, readPath := range sourcePaths {
@@ -2556,7 +2557,7 @@ func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path s
 		if planThenExecuteCodeNavigateIsOutline(result) {
 			evidence.Level = planThenExecuteEvidenceBodyWindow
 			evidence.Detail = "file outline body window"
-		} else if !routedSourceReadOutputHasBody(result.Output) {
+		} else if !agentutil.RoutedSourceReadOutputHasBody(result.Output) {
 			evidence.Level = planThenExecuteEvidencePathSeen
 			evidence.Detail = "navigation result without source body"
 		} else {
@@ -2586,7 +2587,7 @@ func planThenExecuteCodeNavigateIsOutline(result workspace.ToolResult) bool {
 
 	// If the tool was called with file_outline capability and output exists,
 	// treat it as body-window evidence.
-	if strings.Contains(summary, "outline") && !candidateAnchorOnlyText(result.Output) {
+	if strings.Contains(summary, "outline") && !agentutil.CandidateAnchorOnlyText(result.Output) {
 		return true
 	}
 
@@ -4648,43 +4649,6 @@ func readPathsFromResults(results []workspace.ToolResult) map[string]struct{} {
 	return newToolResultEvidenceView(results).ReadPaths()
 }
 
-func readPathsFromToolResult(r workspace.ToolResult) []string {
-	if CandidateAnchorOnlyResult(r) {
-		return nil
-	}
-
-	tool := strings.TrimSpace(r.Tool)
-	if (tool == "code_navigate" || tool == "read_only_capability") && !routedSourceReadOutputHasBody(r.Output) {
-		return nil
-	}
-
-	seen := map[string]struct{}{}
-
-	var paths []string
-
-	for _, candidate := range []string{
-		extractReadPathFromSummary(r.Summary),
-		extractReadPathFromSummary(r.Output),
-		extractRoutedReadPathFromOutput(r.Output),
-	} {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" {
-			continue
-		}
-
-		normalized := normalizeRunnerPath(candidate)
-		if _, ok := seen[normalized]; ok {
-			continue
-		}
-
-		seen[normalized] = struct{}{}
-
-		paths = append(paths, candidate)
-	}
-
-	return paths
-}
-
 type planThenExecuteReadRange struct {
 	start int
 	end   int
@@ -4692,7 +4656,7 @@ type planThenExecuteReadRange struct {
 }
 
 func readRangesForPathFromResults(results []workspace.ToolResult, target string) []planThenExecuteReadRange {
-	target = normalizeRunnerPath(target)
+	target = agentutil.NormalizeRunnerPath(target)
 	if target == "" {
 		return nil
 	}
@@ -4706,7 +4670,7 @@ func readRangesForPathFromResults(results []workspace.ToolResult, target string)
 
 		for _, text := range []string{result.Summary, result.Output} {
 			path, readRange, ok := extractReadPathAndRangeFromSummary(text)
-			if ok && normalizeRunnerPath(path) == target {
+			if ok && agentutil.NormalizeRunnerPath(path) == target {
 				ranges = append(ranges, readRange)
 			}
 		}
@@ -4717,120 +4681,14 @@ func readRangesForPathFromResults(results []workspace.ToolResult, target string)
 				continue
 			}
 
-			path, readRange, ok := extractReadPathAndRangeFromSummary(strings.TrimSpace(strings.TrimPrefix(line, "route_summary:")))
-			if ok && normalizeRunnerPath(path) == target {
+			path, readRange, ok := extractReadPathAndRangeFromSummary(strings.TrimSpace(strings.TrimPrefix(line, "route_summary:")));
+			if ok && agentutil.NormalizeRunnerPath(path) == target {
 				ranges = append(ranges, readRange)
 			}
 		}
 	}
 
 	return ranges
-}
-
-func routedSourceReadOutputHasBody(output string) bool {
-	output = strings.TrimSpace(output)
-	if output == "" {
-		return false
-	}
-
-	if candidateAnchorOnlyText(output) {
-		return false
-	}
-
-	if !strings.Contains(output, "route_summary:") {
-		return true
-	}
-
-	seenRouteSummary := false
-
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "route_summary:") {
-			seenRouteSummary = true
-			continue
-		}
-
-		if !seenRouteSummary || line == "" {
-			continue
-		}
-
-		if routedSourceReadOutputHeaderLine(line) {
-			continue
-		}
-
-		return true
-	}
-
-	return false
-}
-
-
-func candidateAnchorOnlyText(text string) bool {
-	lower := strings.ToLower(text)
-
-	return strings.Contains(lower, "path-filter miss") &&
-		strings.Contains(lower, "candidate_anchor_status: anchors only")
-}
-
-func routedSourceReadOutputHeaderLine(line string) bool {
-	for _, prefix := range []string{
-		"capability:",
-		"language:",
-		"routed_tool:",
-		"fallback_reason:",
-	} {
-		if strings.HasPrefix(line, prefix) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// extractReadPathFromSummary parses canonical source-body read summary
-// shapes that read_file and language-symbol tools emit to recover the
-// path. Recognized shapes:
-//
-//   - "Read fXX path/to/file lines A-B"  (redirected/read-file handle shape)
-//   - "Read path/to/file lines A-B"  (direct read_file)
-//   - "Read <symbol> in path/to/file lines A-B"  (cpp_read_symbol /
-//     go_read_symbol / etc.)
-//
-// Returns "" for anything else; the caller falls back to skipping
-// that result. Outlines are intentionally not counted as source-body
-// reads: they orient the model, but they do not provide safe edit
-// anchors for plan-execute readiness.
-func extractReadPathFromSummary(summary string) string {
-	path, _, ok := extractReadPathAndRangeFromSummary(summary)
-	if ok {
-		return path
-	}
-
-	summary = strings.TrimSpace(summary)
-	if summary == "" {
-		return ""
-	}
-
-	fields := strings.Fields(summary)
-	if len(fields) < 3 {
-		return ""
-	}
-
-	if fields[0] != "Read" {
-		return ""
-	}
-
-	// "Read <symbol> in <path> ..." — language-symbol shape.
-	if len(fields) >= 4 && fields[2] == "in" {
-		return fields[3]
-	}
-
-	if len(fields) >= 3 && fields[2] == "lines" {
-		return fields[1]
-	}
-
-	// "Read fXX path lines A-B" — read_file shape.
-	return fields[2]
 }
 
 func extractReadPathAndRangeFromSummary(summary string) (string, planThenExecuteReadRange, bool) {
@@ -4918,17 +4776,4 @@ func extractReadTotalLineCount(fields []string) int {
 	}
 
 	return 0
-}
-
-func extractRoutedReadPathFromOutput(output string) string {
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "route_summary:") {
-			continue
-		}
-
-		return extractReadPathFromSummary(strings.TrimSpace(strings.TrimPrefix(line, "route_summary:")))
-	}
-
-	return ""
 }

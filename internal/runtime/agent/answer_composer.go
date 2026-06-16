@@ -3,6 +3,7 @@ package agent
 import (
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/runtime/agent/agentutil"
 	"strings"
 )
 
@@ -253,7 +254,7 @@ func conversationFallbackEvidenceAnchor(result workspace.ToolResult) string {
 		return summary
 	case "context_pack", "context_query", "context_zoom", "code_navigate", "read_file", workspace.ToolNamePrefetch, "search_files":
 		if ReadStyleSourceBodyTool(result.Tool) {
-			paths := readPathsFromToolResult(result)
+			paths := agentutil.ReadPathsFromToolResult(result)
 			if len(paths) > 0 && len(nonArtifactEvidencePaths(paths)) == 0 {
 				return ""
 			}
@@ -475,7 +476,7 @@ func presentableExactProbeResult(result workspace.ToolResult) bool {
 	case "go_read_symbol", "go_extract_body", "cpp_read_symbol", "cpp_extract_body", "python_read_symbol", "ts_read_symbol", "rust_read_symbol", "java_read_symbol":
 		return true
 	case "code_navigate", "read_only_capability":
-		return routedSourceReadOutputHasBody(result.Output) && toolResultHasNonArtifactReadPath(result)
+		return agentutil.RoutedSourceReadOutputHasBody(result.Output) && toolResultHasNonArtifactReadPath(result)
 	default:
 		return false
 	}

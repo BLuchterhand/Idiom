@@ -842,7 +842,18 @@ func TestReadOnlyAnswerReadyPresentationUsesImplementationOwnerPaths(t *testing.
 		}
 	}
 
-	nudge := readOnlyAnswerReadyNudge(brief, results, 2)
+	nudge := buildReadinessNudge(ReadinessNudge{
+		Headline:          "The read-only evidence is sufficient for a grounded answer to this question.",
+		EvidencePathLabel: "Core evidence paths: ",
+		EvidencePaths:     closurePromptEvidencePaths(readOnlyPresentationEvidencePathsForBrief(brief, results, 4), 4),
+		Objective:         strings.TrimSpace(brief.Objective),
+		Results:           results,
+		ProbeBudget:       2,
+		ContinuationScope: "answer_readiness_reached",
+		FooterLines: []string{
+			"Anchor the explanation in the inspected paths above and keep any remaining uncertainty explicit.",
+		},
+	})
 	if !strings.Contains(nudge, "`internal/surfaces/tui/app/update_handlers.go`") {
 		t.Fatalf("expected readiness nudge to cite implementation owner path, got:\n%s", nudge)
 	}

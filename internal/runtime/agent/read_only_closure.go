@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -141,7 +142,7 @@ func (d ReadOnlyCloseout) ConversationUncertaintyFallback() string {
 	)
 
 	for _, result := range d.Results {
-		paths := readPathsFromToolResult(result)
+		paths := agentutil.ReadPathsFromToolResult(result)
 		for _, path := range paths {
 			if isNonSourceEvidenceArtifactPath(path) {
 				continue
@@ -496,7 +497,7 @@ func answerCitesNamedObjectiveSource(answer string, ledger readOnlyAnswerability
 			continue
 		}
 
-		for _, source := range readOnlySourceLikePaths(readPathsFromToolResult(result), 16) {
+		for _, source := range readOnlySourceLikePaths(agentutil.ReadPathsFromToolResult(result), 16) {
 			base := strings.ToLower(filepath.Base(filepath.ToSlash(source)))
 			if base == "" || !strings.Contains(lower, base) {
 				continue

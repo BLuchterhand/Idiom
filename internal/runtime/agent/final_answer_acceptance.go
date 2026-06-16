@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/agent/stringset"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -260,7 +261,7 @@ func answerCitedCollectiveSourceBodySupportPaths(answer string, ledger readOnlyA
 		seenTermsForPath := map[string]struct{}{}
 
 		for _, term := range support.Terms {
-			term = readOnlyObjectiveSupportTerm(term)
+			term = agentutil.ReadOnlyObjectiveSupportTerm(term)
 			if term == "" {
 				continue
 			}

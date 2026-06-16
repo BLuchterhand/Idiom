@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/workerruntime"
 	"path/filepath"
 	"regexp"
@@ -803,11 +804,11 @@ func (r *Runner) planExecuteGroundingSearchPattern() string {
 		return ""
 	}
 
-	objectiveTerms := recoveryObjectiveSearchWords(r.RuntimeBrief.Objective, 24)
+	objectiveTerms := agentutil.RecoveryObjectiveSearchWords(r.RuntimeBrief.Objective, 24)
 	objectiveSet := map[string]struct{}{}
 
 	for _, term := range objectiveTerms {
-		objectiveSet[singularObjectiveWord(term)] = struct{}{}
+		objectiveSet[agentutil.SingularObjectiveWord(term)] = struct{}{}
 	}
 
 	patterns := make([]string, 0, 12)
@@ -869,7 +870,7 @@ func toolNameOverlapsObjective(tool string, objectiveSet map[string]struct{}) bo
 			continue
 		}
 
-		if _, ok := objectiveSet[singularObjectiveWord(part)]; ok {
+		if _, ok := objectiveSet[agentutil.SingularObjectiveWord(part)]; ok {
 			matches++
 		}
 	}
@@ -1014,7 +1015,7 @@ func recoverySearchPathLooksEditableSource(path string) bool {
 }
 
 func literalRecoverySearchPattern(objective string) string {
-	terms := recoveryObjectiveSearchWords(objective, 8)
+	terms := agentutil.RecoveryObjectiveSearchWords(objective, 8)
 	if len(terms) == 0 {
 		return ""
 	}

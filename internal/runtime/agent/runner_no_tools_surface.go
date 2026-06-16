@@ -31,7 +31,7 @@ func hideBroadDiscoveryTools(hidden map[string]bool) {
 
 func (r *Runner) augmentReadOnlyChildPrompt(prompt string) string {
 	guidance := []string{
-		"A final answer is available once the evidence is sufficient. After readiness, take another read only for an exact material missing claim; do not continue reading for completeness.",
+		"A final answer is available once the evidence is sufficient. After readiness, take another read only for an exact material missing claim; do not continue reading for completeness — but when the delegated question asks about a mechanism's thresholds, derived values, or configurable parameters, reading the symbol body that defines them is part of understanding the mechanism, not optional completeness reading.",
 		"Treat inherited instructions to explore directories, entrypoints, or patterns as background only unless the delegated question explicitly requires them.",
 		"Use repository-relative workspace paths in the answer. Do not rely on transient file handles such as f23 or tool-local aliases.",
 		"Prefer targeted symbol tools and bounded file reads over workspace-wide overviews.",

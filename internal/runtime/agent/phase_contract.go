@@ -8,6 +8,7 @@ import (
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/util"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/agent/stringset"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -1241,7 +1242,7 @@ func implementationPathTerms(path string) []string {
 
 	for _, part := range parts {
 		for _, token := range splitImplementationPathToken(part) {
-			token = singularObjectiveWord(token)
+			token = agentutil.SingularObjectiveWord(token)
 			if len(token) < 4 {
 				continue
 			}

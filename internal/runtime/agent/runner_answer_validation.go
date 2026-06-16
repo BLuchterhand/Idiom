@@ -446,9 +446,10 @@ func retryAnswerHedgeRejectionReason(reply string) string {
 		"the answer above stands",
 		"the answer above cites",
 		"i have answered the question",
+		"the evidence is sufficient and",
 	} {
 		if strings.Contains(lower, phrase) {
-			return "the answer is a hedge about evidence sufficiency rather than a substantive response to the user's question"
+			return "the answer is a hedge about evidence sufficiency rather than a substantive response to the user's question. If a previous gate rejection told you to read a specific path, call `read_file` or `code_navigate` for that path now — do not explain why you cannot answer."
 		}
 	}
 
