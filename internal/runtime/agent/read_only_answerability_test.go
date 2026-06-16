@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -1756,6 +1758,17 @@ func TestReadOnlyPrefetchEvidenceDedupsWithModelReadAndKeepsSource(t *testing.T)
 func TestReadOnlySourceBodyEvidenceSummary(t *testing.T) {
 	bodyPath := "internal/runtime/agent/runner.go"
 	candidatePath := "internal/surfaces/tui/app/rendering.go"
+
+	// Ensure candidate test paths exist on filesystem for Fix 7 (candidate path verification).
+	// The paths are relative to the workspace root; create minimal temp structures.
+	candidateDir := filepath.Dir(candidatePath)
+	if err := os.MkdirAll(candidateDir, 0755); err == nil {
+		os.WriteFile(candidatePath, []byte("package app\nfunc Render() {}\n"), 0644)
+		os.WriteFile("internal/surfaces/tui/app/panel.go", []byte("package app\ntype Panel struct{}\n"), 0644)
+		defer func() {
+			os.RemoveAll("internal/surfaces")
+		}()
+	}
 
 	results := []workspace.ToolResult{
 		{

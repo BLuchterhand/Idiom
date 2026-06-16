@@ -222,7 +222,7 @@ func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspa
 	}
 
 	if len(missing) > 0 {
-		return "the answer cites current-workspace path(s) that do not exist: " + quotedRunnerStrings(uniqueSortedRunnerPaths(missing)) + ". Correct the citation, label it as historical/log-only evidence, or answer from inspected current source."
+		return "the answer cites path(s) that were discovered as index candidates but not read as source-body evidence: " + quotedRunnerStrings(uniqueSortedRunnerPaths(missing)) + ". Correct the citation, label it as historical/log-only evidence, or answer from inspected current source."
 	}
 
 	if len(unsupported) > 0 {

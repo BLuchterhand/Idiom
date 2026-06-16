@@ -2,6 +2,8 @@ package agent
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
@@ -98,12 +100,29 @@ func sourceEvidenceCandidatePaths(results []workspace.ToolResult) []string {
 			if _, ok := bodySet[normalized]; ok {
 				continue
 			}
+			if !sourceEvidenceCandidatePathExists(normalized) {
+				seen[normalized] = struct{}{}
+				continue
+			}
 			seen[normalized] = struct{}{}
 			paths = append(paths, normalized)
 		}
 	}
 
 	return paths
+}
+
+// sourceEvidenceCandidatePathExists checks whether a candidate path from a
+// discovery tool result actually exists on the filesystem. This prevents
+// stale graph-index entries from appearing as valid candidates.
+func sourceEvidenceCandidatePathExists(path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" || strings.HasPrefix(path, "../") || path == ".." || filepath.IsAbs(path) {
+		return false
+	}
+
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func sourceEvidencePendingRedirects(results []workspace.ToolResult) []sourceEvidenceObligation {

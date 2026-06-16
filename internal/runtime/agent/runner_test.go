@@ -647,11 +647,11 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	}
 
 	// ── Source-grounding (non-existent paths) ─────────────────────
-	sgMissing := "the answer cites current-workspace path(s) that do not exist: \"missing.go\". Correct the citation, label it as historical/log-only evidence, or answer from inspected current source."
+	sgMissing := "the answer cites path(s) that were discovered as index candidates but not read as source-body evidence: \"missing.go\". Correct the citation, label it as historical/log-only evidence, or answer from inspected current source."
 
 	// Tier 1: should include rewrite guidance
 	got = escalateCompletionGateMessage(sgMissing, 1)
-	for _, want := range []string{"[gate retry 2/3]", "do not exist", "rewrite your"} {
+	for _, want := range []string{"[gate retry 2/3]", "not read as source-body evidence", "rewrite your"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("source-grounding missing tier 1 expected to contain %q, got: %s", want, got)
 		}

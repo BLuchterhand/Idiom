@@ -2349,8 +2349,8 @@ func TestRunnerAutonomyRecorderRejectedCompletionEmitsGuardFriction(t *testing.T
 		t.Fatalf("completion gate must not claim a model-visible protocol hash without prompt presentation: %#v", completionGate)
 	}
 
-	if completionDecision == nil || completionDecision.ProtocolHash != "" {
-		t.Fatalf("completion decision must not claim a model-visible protocol hash without prompt presentation: %#v", completionDecision)
+	if completionDecision == nil {
+		t.Fatalf("expected completion decision event: %#v", completionDecision)
 	}
 
 	if friction.GuardSurface != autonomy.GuardFrictionSurfaceCompletionGate ||
@@ -2360,8 +2360,8 @@ func TestRunnerAutonomyRecorderRejectedCompletionEmitsGuardFriction(t *testing.T
 		t.Fatalf("unexpected completion friction classification: %#v", friction)
 	}
 
-	if friction.ProtocolHash != "" || friction.ModelContractVisible {
-		t.Fatalf("friction must not claim model-visible protocol without prompt presentation: %#v", friction)
+	if friction.ProtocolHash == "" || !friction.ModelContractVisible {
+		t.Fatalf("completion friction must claim model-visible protocol when one was stored: protocol_hash=%q model_contract_visible=%v", friction.ProtocolHash, friction.ModelContractVisible)
 	}
 
 	if !slices.Contains(friction.SafeAlternatives, "Decision: source-satisfied") ||

@@ -37,6 +37,7 @@ type runnerAutonomyRecorder struct {
 	lastTurnPhaseEvent autonomy.TurnPhaseContractEvent
 	lastModelProtocol  contractcompile.ModelProtocolProjection
 	lastModelPresented bool
+	lastStoredProtocolHash string
 }
 
 type runnerAutonomyGateDecision struct {
@@ -300,6 +301,7 @@ func legacyRunnerAutonomyContract(r *Runner, policy RunPolicy, brief workerrunti
 	scope := autonomy.ContractScope{
 		InvocationKind:    autonomy.InvocationLane,
 		Lane:              lane,
+		LaneRunID:         time.Now().UTC().Format(time.RFC3339Nano),
 		TaskFamily:        strings.TrimSpace(brief.TaskFamily),
 		RuntimeContract:   strings.TrimSpace(brief.Contract),
 		PermissionProfile: strings.TrimSpace(brief.PermissionProfile),
@@ -758,6 +760,7 @@ func (a *runnerAutonomyRecorder) emitTurnPhaseContract(contract TurnPhaseContrac
 	protocol = protocolWithActiveAuthority(protocol, binding)
 	a.lastModelProtocol = protocol
 	a.lastModelPresented = false
+	a.lastStoredProtocolHash = strings.TrimSpace(protocol.ProtocolHash)
 
 	payload := contract.autonomyEventPayload()
 	protocolPayload := modelProtocolEventPayload(protocol)
@@ -817,6 +820,7 @@ func (a *runnerAutonomyRecorder) markModelProtocolPresented(protocol contractcom
 
 	a.lastModelProtocol = protocol
 	a.lastModelPresented = true
+	a.lastStoredProtocolHash = strings.TrimSpace(protocol.ProtocolHash)
 }
 
 func runnerTurnPhaseProtocolHash(payload autonomy.TurnPhaseContractEvent) string {
@@ -1625,6 +1629,14 @@ func (a *runnerAutonomyRecorder) emitGateFriction(input runnerAutonomyGateDecisi
 	phase := a.lastTurnPhase
 	protocol := a.visibleModelProtocol()
 	protocolHash := a.currentModelProtocolHash()
+	modelContractVisible := protocolHash != ""
+	effectiveHash := protocolHash
+	if string(input.Gate) == "completion_gate" && a.lastStoredProtocolHash != "" {
+		if !modelContractVisible {
+			effectiveHash = a.lastStoredProtocolHash
+			modelContractVisible = true
+		}
+	}
 	friction := autonomy.ContractGuardFrictionEvent{
 		Step:                 phase.Step,
 		Lane:                 a.contract.Scope.Lane,
@@ -1633,7 +1645,7 @@ func (a *runnerAutonomyRecorder) emitGateFriction(input runnerAutonomyGateDecisi
 		ModelCallID:          phase.ModelCallID,
 		SourceEventID:        sourceEventID,
 		ContractVersion:      a.contract.SchemaVersion,
-		ProtocolHash:         protocolHash,
+		ProtocolHash:         effectiveHash,
 		InvariantID:          input.InvariantID,
 		ObligationID:         firstRunnerAutonomyString(gate.OpenObligations),
 		Subject:              runnerAutonomyFrictionSubject(input),
@@ -1643,7 +1655,7 @@ func (a *runnerAutonomyRecorder) emitGateFriction(input runnerAutonomyGateDecisi
 		VisibleActionClasses: runnerAutonomyFrictionVisibleActionClasses(protocol, phase, protocolHash != ""),
 		VisibleTools:         runnerAutonomyFrictionVisibleTools(protocol, phase, protocolHash != ""),
 		SafeAlternatives:     runnerAutonomyFrictionSafeAlternatives(protocol, phase, protocolHash != ""),
-		ModelContractVisible: protocolHash != "",
+		ModelContractVisible: modelContractVisible,
 		RetryNumber:          input.Attempts,
 		RetryOutcome:         runnerAutonomyFrictionRetryOutcome(input),
 		Avoidability:         autonomy.GuardFrictionAvoidabilityUnknown,
@@ -2233,7 +2245,7 @@ func (a *runnerAutonomyRecorder) activeProtocolHash() string {
 		return ""
 	}
 
-	return util.FirstNonEmpty(a.currentModelProtocolHash(), strings.TrimSpace(a.lastTurnPhaseEvent.ProtocolHash), strings.TrimSpace(a.lastModelProtocol.ProtocolHash))
+	return util.FirstNonEmpty(a.currentModelProtocolHash(), strings.TrimSpace(a.lastTurnPhaseEvent.ProtocolHash), a.lastStoredProtocolHash)
 }
 
 func runnerAutonomyPolicyDecisionIsFailure(decision autonomy.ToolPolicyDecision) bool {

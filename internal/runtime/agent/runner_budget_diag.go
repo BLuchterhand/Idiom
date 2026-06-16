@@ -39,12 +39,18 @@ type briefAuditEvent struct {
 	AllowedToolsCount            int      `json:"allowed_tools_count"`
 }
 
+
 // emitBriefAudit emits a one-shot brief_audit event at turn start so an
 // audit can see the brief shape that drove the lane (constraints,
 // snippets, packet size, readiness) without re-deriving from the prompt.
 func (r *Runner) emitBriefAudit(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) {
 	if r == nil || r.OnEvent == nil {
 		return
+	}
+
+	allowedToolsCount := len(brief.AllowedTools)
+	if surfaceTools := DirectAnswerSurfaceForBriefTools(brief); surfaceTools != nil {
+		allowedToolsCount = len(surfaceTools)
 	}
 
 	event := briefAuditEvent{
@@ -62,8 +68,9 @@ func (r *Runner) emitBriefAudit(brief workerruntime.WorkerRuntimeBrief, results 
 		ExactAnchorImplActive:     exactAnchorImplementationActive(brief),
 		TargetPacketSupportsWrite: targetPacketSupportsWrite(brief),
 		WriteReadyReadContract:    writeReadyPacketReadContractActive(brief, results),
-		AllowedToolsCount:         len(brief.AllowedTools),
+		AllowedToolsCount:         allowedToolsCount,
 	}
+
 	if len(brief.RequiredEditSnippets) > 0 {
 		event.RequiredEditSnippetPaths = make([]string, 0, len(brief.RequiredEditSnippets))
 

@@ -1731,10 +1731,11 @@ func TestDeriveTurnPhaseContractReadOnlyWorkspaceAllowsAnswerAfterEvidence(t *te
 
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
 	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
-	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
-	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
-	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
-	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionSearch)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionGenericProbe)
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSearch)
 }
 
 func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceAvailableKeepsProofReadSurface(t *testing.T) {
@@ -1763,12 +1764,13 @@ func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceAvailableKeepsProofR
 
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
-	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
-	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
-	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
-	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionSearch)
-	assertEqualSet(t, contract.AllowedTools, []string{"search_content", "read_file", "code_navigate"})
-	assertEqualSet(t, contract.ActionPolicy.CallableToolNames, []string{"search_content", "read_file", "code_navigate"})
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionGenericProbe)
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSearch)
+	assertEqualSet(t, contract.AllowedTools, []string{"search_content", "read_file", "code_navigate", "task"})
+	assertEqualSet(t, contract.ActionPolicy.CallableToolNames, []string{"search_content", "read_file", "code_navigate", "task"})
 
 	input.TextualToolParser = true
 	input.ToolTransportMode = "textual"
@@ -1779,12 +1781,13 @@ func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceAvailableKeepsProofR
 		t.Fatalf("textual Phase = %q, want read_only_evidence_available", textual.Phase)
 	}
 
-	assertContains(t, textual.ActionPolicy.AllowedActionClasses, actionRead)
-	assertContains(t, textual.ActionPolicy.AllowedActionClasses, actionSearch)
-	assertNotContains(t, textual.ActionPolicy.InvalidActionClasses, actionRead)
-	assertNotContains(t, textual.ActionPolicy.InvalidActionClasses, actionSearch)
-	assertEqualSet(t, textual.AllowedTools, []string{"search_content", "read_file", "code_navigate"})
-	assertEqualSet(t, textual.ActionPolicy.CallableToolNames, []string{"search_content", "read_file", "code_navigate"})
+	assertContains(t, textual.ActionPolicy.AllowedActionClasses, actionGenericProbe)
+	assertNotContains(t, textual.ActionPolicy.AllowedActionClasses, actionRead)
+	assertNotContains(t, textual.ActionPolicy.AllowedActionClasses, actionSearch)
+	assertContains(t, textual.ActionPolicy.InvalidActionClasses, actionRead)
+	assertContains(t, textual.ActionPolicy.InvalidActionClasses, actionSearch)
+	assertEqualSet(t, textual.AllowedTools, []string{"search_content", "read_file", "code_navigate", "task"})
+	assertEqualSet(t, textual.ActionPolicy.CallableToolNames, []string{"search_content", "read_file", "code_navigate", "task"})
 }
 
 func TestDeriveTurnPhaseContractOmitsHiddenToolsFromCallableSurface(t *testing.T) {

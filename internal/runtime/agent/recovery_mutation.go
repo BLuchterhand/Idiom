@@ -1530,7 +1530,7 @@ func escalateCompletionGateMessage(base string, priorRejections int) string {
 	// the answer text — not to call more tools (the model already has the
 	// needed evidence in its context).
 	hasUnsupportedPaths := strings.Contains(trimmed, "not backed by a source-body read")
-	hasNonExistentPaths := strings.Contains(trimmed, "do not exist")
+	hasNonExistentPaths := strings.Contains(trimmed, "not read as source-body evidence")
 	isSourceGrounding := hasUnsupportedPaths || hasNonExistentPaths
 
 	switch {

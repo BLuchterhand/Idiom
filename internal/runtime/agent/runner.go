@@ -3973,7 +3973,7 @@ func (r *Runner) Run(
 		}
 
 		if executionState.noteMissingPathListFailure(r.Workspace.IsExploreMode(), req, result) >= 2 {
-			answer, err := controller.completeWithoutMoreToolsWithReason("Exploration is probing conventional paths that do not exist in this repository. Tools are now disabled. Answer from the bootstrapped evidence; if one exact claim remains unsupported, state that uncertainty after the supported answer.")
+			answer, err := controller.completeWithoutMoreToolsWithReason("Exploration is probing conventional paths that were discovered as index candidates but not read as source-body evidence. Tools are now disabled. Answer from the bootstrapped evidence; if one exact claim remains unsupported, state that uncertainty after the supported answer.")
 			return finish(answer, err, "missing_path_probe_budget_exhausted", true)
 		}
 

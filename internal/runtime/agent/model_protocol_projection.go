@@ -2,6 +2,7 @@ package agent
 
 import (
 	"strings"
+	"time"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
@@ -85,6 +86,7 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 
 	return contractcompile.PlanExecutePlannerInput{
 		ParentID:             strings.TrimSpace(parentID),
+		LaneRunID:            time.Now().UTC().Format(time.RFC3339Nano),
 		Lane:                 util.FirstNonEmpty(strings.TrimSpace(brief.Lane), contractcompile.DefaultPlanExecuteLane),
 		Phase:                contractcompile.DefaultPlannerPhase,
 		TaskFamily:           contractcompile.InvocationPlanExecutePlanner,
