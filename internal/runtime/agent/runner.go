@@ -70,6 +70,12 @@ type Runner struct {
 	// completion-gate rejection so that recovery prompt functions can
 	// inspect it without the result being in collectedResults yet.
 	lastCompletionGateError string
+
+	// sourceGroundingProseRetriesLeft tracks how many additional retries
+	// the model gets after a source-grounding rejection hid non-read tools.
+	// When > 0, a prose retry injects a stricter tool-call message instead
+	// of blocking permanently.
+	sourceGroundingProseRetriesLeft int
 }
 
 func (r *Runner) supportsNativeTools() bool {
@@ -1060,7 +1066,26 @@ func (r *Runner) Run(
 
 			if reason := retryAnswerHedgeRejectionReason(answer); reason != "" {
 				// The retry answer is a hedge or meta-response about evidence
-				// sufficiency rather than a substantive answer — reject and block.
+				// sufficiency rather than a substantive answer.
+				// If the model was told to read a specific path and still
+				// answered in prose, give one more retry with a stricter
+				// tool-call instruction instead of blocking permanently.
+				if r.sourceGroundingProseRetriesLeft > 0 {
+					r.sourceGroundingProseRetriesLeft--
+
+					turnMessages = append(turnMessages, llama.ChatMessage{
+						Role:    "system",
+						Content: "Your response was rejected because it is a prose answer. The completion gate requires source-body evidence for a cited path. You MUST call `read_file` or `code_navigate` with the exact path, or answer `<<QUESTION>>:` with the specific blocker if the path does not exist on disk. Do not answer in prose again until you have read the cited path.",
+					})
+
+					r.emitEvent(RunEvent{Role: "source_grounding_tool_required", Content: "Prose retry rejected after tool hide — tool call required"})
+					r.emitCompletionStatusFromParams("blocked", "source-grounding retry requires tool call", "content_gap", collectedResults, true)
+					completionGateRejections++
+					metrics.ModelCalls++
+
+					continue
+				}
+
 				r.emitCompletionStatusFromParams("blocked", reason, "content_gap", collectedResults, true)
 
 				blockerResult := workspace.ToolResult{Tool: "completion_gate", Summary: "Retry answer rejected as hedge", Error: reason}
@@ -4047,6 +4072,7 @@ func (r *Runner) planThenExecuteCompletionGateSummaryRetryable(summary string, r
 	}
 }
 
+// sourceGroundingProseRetryUsed checks whether the model already received one
 func maxToolStepsExhaustedReason() string {
 	return "Maximum tool steps for this turn have been reached. Tools are now disabled. Respond with a concise, direct, text-only final answer synthesized from the evidence already gathered. If one exact claim remains unsupported, state that uncertainty after the supported answer with the smallest useful next action. Do not leave the response blank."
 }

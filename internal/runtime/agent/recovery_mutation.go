@@ -1993,7 +1993,7 @@ func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.To
 	if r.lastCompletionGateError != "" {
 		if paths := readOnlySourceGroundingUnsupportedPathsFromError(r.lastCompletionGateError); len(paths) > 0 {
 			return fmt.Sprintf(
-				"The completion gate rejected the answer because source paths were cited without body evidence: %s. Call one bounded `read_file` or `code_navigate` for the first unsupported path, read its actual body, then cite that evidence. If the path was from search or graph results and does not need a full read, qualify it as `unverified` next to the citation — do not just remove it from the answer without replacing it with supported evidence. No new discovery or search is needed.",
+				"The completion gate rejected the answer because source paths were cited without body evidence: %s. Call one bounded `read_file` or `code_navigate` for the first unsupported path, read its actual body, then cite that evidence. If the path was from search or graph results and does not need a full read, qualify it as `unverified` next to the citation, or answer `<<QUESTION>>:` with the exact blocker if the path does not exist on disk. No new discovery or search is needed.",
 				strings.Join(paths, ", "),
 			)
 		}

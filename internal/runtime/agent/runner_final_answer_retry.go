@@ -58,6 +58,7 @@ func (r *Runner) retryRejectedFinalAnswerForRun(input runnerFinalAnswerRetryInpu
 	// prose instead of reading the cited file.
 	if input.result.Error != "" && isSourceGroundingError(input.result.Error) {
 		hideNonSourceBodyReadTools(input.turnHiddenTools, input.currentAllowedTools)
+		r.sourceGroundingProseRetriesLeft = 1
 	}
 	if input.rebuildTools != nil {
 		input.rebuildTools()
