@@ -50,6 +50,15 @@ func (r *Runner) retryRejectedFinalAnswerForRun(input runnerFinalAnswerRetryInpu
 
 	delete(input.turnHiddenTools, workspace.ToolNameCodeNavigate)
 	delete(input.turnHiddenTools, workspace.ToolNameReadFile)
+
+	// When the retry is for a source-grounding rejection (model cited paths
+	// without reading them), hide all non-read tools so the model's only
+	// available action is to call read_file or code_navigate for the missing
+	// path. This prevents the model from trying to fix the answer text in
+	// prose instead of reading the cited file.
+	if input.result.Error != "" && isSourceGroundingError(input.result.Error) {
+		hideNonSourceBodyReadTools(input.turnHiddenTools, input.currentAllowedTools)
+	}
 	if input.rebuildTools != nil {
 		input.rebuildTools()
 	}

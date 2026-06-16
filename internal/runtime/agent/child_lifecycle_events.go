@@ -11,6 +11,8 @@ import (
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
+
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 const (
@@ -523,7 +525,7 @@ func childLifecycleObjectiveAlignmentForResult(result workspace.ToolResult) auto
 		if !readOnlyEvidencePacketAnswerable(packet) {
 			return autonomy.ChildObjectiveWeak
 		}
-		if objectiveAsksImplementationShape(packet.Objective) && !readOnlyEvidencePacketAnswerableForObjective(packet, packet.Objective) {
+		if agentutil.ObjectiveAsksImplementationShape(packet.Objective) && !readOnlyEvidencePacketAnswerableForObjective(packet, packet.Objective) {
 			return autonomy.ChildObjectiveWeak
 		}
 		switch strings.ToLower(strings.TrimSpace(packet.Confidence)) {

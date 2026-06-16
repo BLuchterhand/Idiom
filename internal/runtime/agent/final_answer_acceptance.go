@@ -207,7 +207,7 @@ func readOnlyAcceptedDirectAnswerEvidencePaths(answer string, ledger readOnlyAns
 	relevant := ledger.RelevantSourceBodyPaths
 	objectivePaths := ledger.SourceBodyObjectivePaths
 
-	if ledger.directAnswerConversation() && objectiveAsksImplementationShape(ledger.Objective) {
+	if ledger.directAnswerConversation() && agentutil.ObjectiveAsksImplementationShape(ledger.Objective) {
 		relevant = ledger.ImplementationOwnerPaths()
 		objectivePaths = relevant
 	}
@@ -230,7 +230,7 @@ func answerCitedCollectiveSourceBodySupportPaths(answer string, ledger readOnlyA
 		return nil
 	}
 
-	if ledger.directAnswerConversation() && objectiveAsksImplementationShape(ledger.Objective) {
+	if ledger.directAnswerConversation() && agentutil.ObjectiveAsksImplementationShape(ledger.Objective) {
 		return intersectRunnerPaths(ledger.ImplementationOwnerPaths(), sourceGroundingMentionedPaths(answer))
 	}
 

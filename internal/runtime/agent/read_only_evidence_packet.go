@@ -350,7 +350,7 @@ func readOnlyEvidencePacketAnswerableForObjective(packet ReadOnlyEvidencePacket,
 		return true
 	}
 
-	if objectiveAsksImplementationShape(objective) {
+	if agentutil.ObjectiveAsksImplementationShape(objective) {
 		return len(readOnlyEvidencePacketObjectiveSourceOwnerEvidence(packet, objective)) > 0
 	}
 
@@ -388,7 +388,7 @@ func readOnlyEvidencePacketHasObjectiveScopedSourceSupport(packet ReadOnlyEviden
 		return false
 	}
 
-	if objectiveAsksImplementationShape(objective) {
+	if agentutil.ObjectiveAsksImplementationShape(objective) {
 		return len(readOnlyEvidencePacketObjectiveSourceOwnerEvidence(packet, objective)) > 0
 	}
 
@@ -407,7 +407,7 @@ func readOnlyEvidencePacketHasObjectiveScopedSourceSupport(packet ReadOnlyEviden
 func readOnlyEvidencePacketObjectiveSourceOwnerEvidence(packet ReadOnlyEvidencePacket, objective string) []readOnlySourceOwnerEvidence {
 	packet = normalizeReadOnlyEvidencePacket(packet)
 
-	if !objectiveAsksImplementationShape(objective) {
+	if !agentutil.ObjectiveAsksImplementationShape(objective) {
 		return nil
 	}
 

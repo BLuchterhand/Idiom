@@ -698,7 +698,7 @@ func concreteSourceEvidenceResult(result workspace.ToolResult) bool {
 
 	tool := strings.TrimSpace(result.Tool)
 	switch {
-	case ReadStyleSourceBodyTool(tool):
+	case agentutil.ReadStyleSourceBodyTool(tool):
 		return readFileResultHasConcreteSourceBody(result)
 	case tool == workspace.ToolNameContextZoom:
 		return contextZoomResultHasConcreteSourceBody(result)

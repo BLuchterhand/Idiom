@@ -367,3 +367,28 @@ func CandidateAnchorOnlyText(text string) bool {
 	return strings.Contains(lower, "path-filter miss") &&
 		strings.Contains(lower, "candidate_anchor_status: anchors only")
 }
+
+// ObjectiveAsksImplementationShape reports whether the objective asks about
+// implementation shape ("what would it take", "what needs to change", etc.)
+func ObjectiveAsksImplementationShape(objective string) bool {
+	lower := " " + strings.ToLower(strings.Join(strings.Fields(objective), " ")) + " "
+
+	return ContainsAny(lower,
+		" what would it take ",
+		" what needs to change ",
+		" what would need to change ",
+		" how would ",
+		" how should ",
+	)
+}
+
+// ReadStyleSourceBodyTool reports whether the given tool name reads source
+// body content (read_file, prefetch).
+func ReadStyleSourceBodyTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case workspace.ToolNameReadFile, workspace.ToolNamePrefetch:
+		return true
+	default:
+		return false
+	}
+}

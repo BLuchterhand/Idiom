@@ -40,7 +40,7 @@ func readOnlySourceOwnerEvidenceForBody(path string, symbol string, objective st
 		Symbol: strings.TrimSpace(symbol),
 		Role:   readOnlySourceOwnerUnknown,
 	}
-	if !objectiveAsksImplementationShape(objective) {
+	if !agentutil.ObjectiveAsksImplementationShape(objective) {
 		return evidence
 	}
 

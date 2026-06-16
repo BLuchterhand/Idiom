@@ -1565,6 +1565,15 @@ func escalateCompletionGateMessage(base string, priorRejections int) string {
 	}
 }
 
+// isSourceGroundingError reports whether a completion gate error text is a
+// source-grounding rejection (the model cited paths without reading them).
+// Used to trigger non-read tool hiding on retry.
+func isSourceGroundingError(errText string) bool {
+	trimmed := strings.TrimSpace(errText)
+	return strings.Contains(trimmed, "not backed by a source-body read") ||
+		strings.Contains(trimmed, "not read as source-body evidence")
+}
+
 func planThenExecuteMissingSubmitPlanError(requiredEditPaths []string) string {
 	if len(requiredEditPaths) > 0 {
 		return "plan-execute planner phase requires a successful submit_plan tool result before final answer, or a source-satisfied answer that names every required path and cites current-state evidence. Call `submit_plan`: " + planThenExecuteSubmitPlanCoverageSentence() + " Or answer `Decision: source-satisfied`, or answer with <<QUESTION>> naming the exact path-specific blocker."

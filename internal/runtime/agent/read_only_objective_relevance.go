@@ -86,17 +86,6 @@ func sourceEvidenceLineObjectiveScore(line string, terms []string) int {
 	return score
 }
 
-func objectiveAsksImplementationShape(objective string) bool {
-	lower := " " + strings.ToLower(strings.Join(strings.Fields(objective), " ")) + " "
-
-	return containsAny(lower,
-		" what would it take ",
-		" what needs to change ",
-		" what would need to change ",
-		" how would ",
-		" how should ",
-	)
-}
 
 func delegatedReadOnlyQualifiedSymbolCandidate(raw string) (string, bool) {
 	value := strings.TrimSpace(raw)

@@ -165,7 +165,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 					ledger.SourceBodyPaths = mergeRunnerStateStrings(ledger.SourceBodyPaths, sourcePaths)
 					ledger.SourceBodyTaskPaths = mergeRunnerStateStrings(ledger.SourceBodyTaskPaths, sourcePaths)
 
-					if !ledger.directAnswerConversation() || !objectiveAsksImplementationShape(ledger.Objective) {
+					if !ledger.directAnswerConversation() || !agentutil.ObjectiveAsksImplementationShape(ledger.Objective) {
 						ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, sourcePaths)
 					}
 				}
@@ -360,7 +360,7 @@ func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveSupport(path str
 		return
 	}
 
-	if l.directAnswerConversation() && objectiveAsksImplementationShape(l.Objective) {
+	if l.directAnswerConversation() && agentutil.ObjectiveAsksImplementationShape(l.Objective) {
 		evidence := readOnlySourceOwnerEvidenceForBody(path, "", l.Objective, body)
 		l.observeSourceOwnerEvidence(evidence)
 
@@ -380,7 +380,7 @@ func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveSupport(path str
 
 	if sourceBodyHasStrongObjectiveToken(body, l.Objective) &&
 		(!l.directAnswerConversation() ||
-			!objectiveAsksImplementationShape(l.Objective) ||
+			!agentutil.ObjectiveAsksImplementationShape(l.Objective) ||
 			implementationShapeSourceBodyCanClose(l.Objective, body)) {
 
 		l.SourceBodyObjectivePaths = mergeRunnerStateStrings(l.SourceBodyObjectivePaths, []string{path})
@@ -512,7 +512,7 @@ func (l *readOnlyAnswerabilityLedger) promoteCollectiveSourceBodyObjectiveSuppor
 		return
 	}
 
-	if l.directAnswerConversation() && objectiveAsksImplementationShape(l.Objective) {
+	if l.directAnswerConversation() && agentutil.ObjectiveAsksImplementationShape(l.Objective) {
 		l.promoteCollectiveImplementationOwnerSupport(namedTargets, requiredTerms)
 
 		return
@@ -1008,7 +1008,7 @@ func sourceOwnerSpecificObjectiveTerms(terms []string) []string {
 }
 
 func implementationShapeSourceBodyCanClose(objective string, body string) bool {
-	if !objectiveAsksImplementationShape(objective) {
+	if !agentutil.ObjectiveAsksImplementationShape(objective) {
 		return false
 	}
 
@@ -1215,7 +1215,7 @@ func (l readOnlyAnswerabilityLedger) diagnosticEvidenceAnswerable() bool {
 }
 
 func (l readOnlyAnswerabilityLedger) Answerable() bool {
-	if l.directAnswerConversation() && objectiveAsksImplementationShape(l.Objective) {
+	if l.directAnswerConversation() && agentutil.ObjectiveAsksImplementationShape(l.Objective) {
 		return l.diagnosticEvidenceAnswerable() || (len(l.ImplementationOwnerPaths()) > 0 && len(l.MissingNamedSourcePaths) == 0)
 	}
 
@@ -1655,14 +1655,7 @@ func sourceEvidenceLineIsBoilerplate(line string) bool {
 }
 
 
-func ReadStyleSourceBodyTool(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case workspace.ToolNameReadFile, workspace.ToolNamePrefetch:
-		return true
-	default:
-		return false
-	}
-}
+
 
 
 func NormalizedAnswerSymbol(raw string) string {

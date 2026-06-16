@@ -253,7 +253,7 @@ func conversationFallbackEvidenceAnchor(result workspace.ToolResult) string {
 
 		return summary
 	case "context_pack", "context_query", "context_zoom", "code_navigate", "read_file", workspace.ToolNamePrefetch, "search_files":
-		if ReadStyleSourceBodyTool(result.Tool) {
+		if agentutil.ReadStyleSourceBodyTool(result.Tool) {
 			paths := agentutil.ReadPathsFromToolResult(result)
 			if len(paths) > 0 && len(nonArtifactEvidencePaths(paths)) == 0 {
 				return ""

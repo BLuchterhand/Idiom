@@ -70,6 +70,23 @@ func releaseHiddenTools(hidden map[string]bool, owned map[string]bool) {
 	}
 }
 
+// hideNonSourceBodyReadTools hides every tool in allowedTools except
+// read_file and code_navigate. Used on retry after a source-grounding
+// gate rejection so the model's only available action is to read the
+// cited unread path instead of fixing the answer text in prose.
+func hideNonSourceBodyReadTools(hidden map[string]bool, allowedTools []string) {
+	if hidden == nil {
+		return
+	}
+	for _, tool := range allowedTools {
+		tool = strings.TrimSpace(tool)
+		if tool == workspace.ToolNameReadFile || tool == workspace.ToolNameCodeNavigate {
+			continue
+		}
+		hidden[tool] = true
+	}
+}
+
 func hideExactAnchorReadTools(hidden map[string]bool, exactHidden map[string]bool, manager *workspace.Manager) {
 	if hidden == nil || exactHidden == nil || manager == nil {
 		return

@@ -2548,7 +2548,7 @@ func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path s
 	evidence.Detail = "source body"
 
 	switch {
-	case ReadStyleSourceBodyTool(tool):
+	case agentutil.ReadStyleSourceBodyTool(tool):
 		evidence.Level, evidence.Detail = planThenExecuteReadFileEvidenceLevel(result, path)
 	case tool == "code_navigate" || tool == "read_only_capability":
 		// Check for file outline content first — an outline with symbols

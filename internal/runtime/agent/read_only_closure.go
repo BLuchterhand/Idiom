@@ -535,7 +535,7 @@ func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAns
 	}
 
 	relevantPaths := ledger.RelevantSourceBodyPaths
-	if ledger.directAnswerConversation() && objectiveAsksImplementationShape(ledger.Objective) {
+	if ledger.directAnswerConversation() && agentutil.ObjectiveAsksImplementationShape(ledger.Objective) {
 		relevantPaths = ledger.ImplementationOwnerPaths()
 	}
 

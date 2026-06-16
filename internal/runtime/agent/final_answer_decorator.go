@@ -552,7 +552,7 @@ func delegatedImplementationShapeSynthesisAllowed(brief workerruntime.WorkerRunt
 
 func implementationShapeOwnerContractApplies(brief workerruntime.WorkerRuntimeBrief) bool {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
-	return readOnlyDirectAnswerLane(brief) && objectiveAsksImplementationShape(brief.Objective)
+	return readOnlyDirectAnswerLane(brief) && agentutil.ObjectiveAsksImplementationShape(brief.Objective)
 }
 
 func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, internalAnswer string) (string, bool) {
@@ -800,7 +800,7 @@ func combinedReadFileSourceBodies(results []workspace.ToolResult) []readFileSour
 
 	for i, result := range results {
 		if strings.TrimSpace(result.Error) != "" ||
-			!ReadStyleSourceBodyTool(result.Tool) ||
+			!agentutil.ReadStyleSourceBodyTool(result.Tool) ||
 			!readFileResultHasConcreteSourceBody(result) {
 
 			continue
@@ -889,7 +889,7 @@ func presentableProseEvidenceAnswer(brief workerruntime.WorkerRuntimeBrief, resu
 			continue
 		}
 
-		if !ReadStyleSourceBodyTool(result.Tool) {
+		if !agentutil.ReadStyleSourceBodyTool(result.Tool) {
 			continue
 		}
 
@@ -1874,7 +1874,7 @@ func presentableExactProbeAnswer(brief workerruntime.WorkerRuntimeBrief, results
 }
 
 func presentableImplementationShapeAnswerFromClaim(objective string, path string, symbol string, claim string) (string, bool) {
-	if !objectiveAsksImplementationShape(objective) {
+	if !agentutil.ObjectiveAsksImplementationShape(objective) {
 		return "", false
 	}
 

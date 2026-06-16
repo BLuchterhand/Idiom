@@ -8,6 +8,8 @@ import (
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
+
+	"idiom/internal/runtime/agent/agentutil"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -870,7 +872,7 @@ func readOnlyDirectAnswerPresentationEvidencePaths(brief workerruntime.WorkerRun
 	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
 	paths := append([]string{}, ledger.RelevantSourceBodyPaths...)
 
-	if objectiveAsksImplementationShape(ledger.Objective) {
+	if agentutil.ObjectiveAsksImplementationShape(ledger.Objective) {
 		paths = mergeRunnerStateStrings(paths, ledger.ImplementationOwnerPaths())
 	}
 
@@ -1015,7 +1017,7 @@ func delegatedChildPacketFollowupAnchors(objective string, output string) []stri
 }
 
 func weakChildPacketFollowupAnchorsAllowed(objective string) bool {
-	return objectiveAsksImplementationShape(objective) || delegatedReadOnlyChildMechanismQuestion(objective)
+	return agentutil.ObjectiveAsksImplementationShape(objective) || delegatedReadOnlyChildMechanismQuestion(objective)
 }
 
 func delegatedChildPacketNamesFollowupEvidence(output string) bool {

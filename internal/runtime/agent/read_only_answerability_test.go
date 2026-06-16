@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -564,11 +565,11 @@ func TestReadOnlyAnswerabilityDoesNotPromoteUnrelatedCollectiveSourceBodies(t *t
 }
 
 func TestObjectiveAsksImplementationShapeDoesNotCatchPlainHowToUse(t *testing.T) {
-	if objectiveAsksImplementationShape("How to run the unit tests in this repository?") {
+	if agentutil.ObjectiveAsksImplementationShape("How to run the unit tests in this repository?") {
 		t.Fatal("plain how-to usage question must not require implementation-owner readiness")
 	}
 
-	if !objectiveAsksImplementationShape("What would it take to change the runner readiness behavior?") {
+	if !agentutil.ObjectiveAsksImplementationShape("What would it take to change the runner readiness behavior?") {
 		t.Fatal("change-shape question should require implementation-owner readiness")
 	}
 }
