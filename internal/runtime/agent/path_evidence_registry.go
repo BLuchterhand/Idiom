@@ -87,7 +87,11 @@ func (r *PathEvidenceRegistry) RegisterToolResults(results []workspace.ToolResul
 		tool := strings.TrimSpace(result.Tool)
 
 		switch {
-		case tool == "read_file" || tool == "code_navigate":
+		case tool == workspace.ToolNameReadFile || tool == workspace.ToolNamePrefetch:
+			r.registerBodyRead(result)
+		case tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameReadOnlyCapability:
+			r.registerBodyRead(result)
+		case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
 			r.registerBodyRead(result)
 		case isCandidateProducingTool(tool):
 			r.registerCandidatePaths(result)
@@ -404,7 +408,8 @@ func isCandidateProducingTool(tool string) bool {
 }
 
 func toolIsOutlineCodeNavigate(result workspace.ToolResult) bool {
-	return strings.Contains(result.Tool, "code_navigate") &&
+	tool := strings.TrimSpace(result.Tool)
+	return (tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameReadOnlyCapability) &&
 		strings.Contains(result.Summary, "outline")
 }
 

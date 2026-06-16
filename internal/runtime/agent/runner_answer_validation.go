@@ -443,6 +443,9 @@ func retryAnswerHedgeRejectionReason(reply string) string {
 		"not sufficient",
 		"insufficient evidence",
 		"does not contain enough",
+		"the answer above stands",
+		"the answer above cites",
+		"i have answered the question",
 	} {
 		if strings.Contains(lower, phrase) {
 			return "the answer is a hedge about evidence sufficiency rather than a substantive response to the user's question"

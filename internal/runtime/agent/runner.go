@@ -385,6 +385,14 @@ func (r *Runner) Run(
 
 	r.RuntimeBrief = r.runtimeBriefWithLiveState(policy, turnMessages, collectedResults)
 
+	// Initialize the PathEvidenceRegistry as the consolidated path-existence,
+	// body-read, and candidate-path tracking source. All tool results will
+	// be registered into it during the run loop so that code_navigate
+	// file_outline results count as body_window evidence.
+	if r.PathEvidenceRegistry == nil && r.Workspace != nil {
+		r.PathEvidenceRegistry = NewPathEvidenceRegistry(r.Workspace.Root())
+	}
+
 	// Seed the PathEvidenceRegistry with candidate paths from a prior session
 	// whose prompt is similar to the current prompt. This lets the model
 	// pick up where it left off across sessions without re-reading files.

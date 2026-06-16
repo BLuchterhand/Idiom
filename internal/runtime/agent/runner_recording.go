@@ -42,6 +42,13 @@ func (r runnerTurnRecorder) recordWithOptions(step int, req workspace.ToolReques
 		*r.collectedResults = append(*r.collectedResults, result)
 	}
 
+	// Register the tool result into the PathEvidenceRegistry so that
+	// code_navigate file_outline results count as body_window evidence
+	// and the completion gate can query the consolidated path state.
+	if r.runner != nil && r.runner.PathEvidenceRegistry != nil {
+		r.runner.PathEvidenceRegistry.RegisterToolResults([]workspace.ToolResult{result})
+	}
+
 	if opts.SetLastToolKey && r.lastToolKey != nil {
 		*r.lastToolKey = toolRequestKey(req)
 	}
