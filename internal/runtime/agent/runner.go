@@ -1052,6 +1052,21 @@ func (r *Runner) Run(
 					return finish(answer, err, "no_progress_budget_exhausted", true)
 				}
 
+				// If the model answered in prose again after tools were hidden for
+				// source-grounding, inject a stricter tool-call requirement message
+				// one time before blocking permanently.
+				if r.sourceGroundingProseRetriesLeft > 0 && r.lastCompletionGateError != "" && isSourceGroundingError(r.lastCompletionGateError) {
+					r.sourceGroundingProseRetriesLeft--
+
+					turnMessages = append(turnMessages, llama.ChatMessage{
+						Role:    "system",
+						Content: "Your response was rejected because it is a prose answer. The completion gate requires source-body evidence for a cited path. You MUST call `read_file` or `code_navigate` with the exact path, or answer `<<QUESTION>>:` with the specific blocker if the path does not exist on disk. Do not answer in prose again until you have read the cited path.",
+					})
+
+					r.emitEvent(RunEvent{Role: "source_grounding_tool_required", Content: "Prose retry rejected after tool hide — tool call required"})
+					metrics.ModelCalls++
+				}
+
 				continue
 			}
 
@@ -1080,7 +1095,6 @@ func (r *Runner) Run(
 
 					r.emitEvent(RunEvent{Role: "source_grounding_tool_required", Content: "Prose retry rejected after tool hide — tool call required"})
 					r.emitCompletionStatusFromParams("blocked", "source-grounding retry requires tool call", "content_gap", collectedResults, true)
-					completionGateRejections++
 					metrics.ModelCalls++
 
 					continue
@@ -1104,6 +1118,26 @@ func (r *Runner) Run(
 				// answer claims success against the harness's actual
 				// changed_paths state.
 				if !strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
+					// If tools were hidden for source-grounding and the model
+					// still answered in prose, give one more retry with a
+					// stricter tool-call instruction instead of burning another
+					// gate retry slot.
+					if r.sourceGroundingProseRetriesLeft > 0 {
+						r.sourceGroundingProseRetriesLeft--
+
+						turnMessages = append(turnMessages, llama.ChatMessage{
+							Role:    "system",
+							Content: "Your response was rejected because it is a prose answer. The completion gate requires source-body evidence for a cited path. You MUST call `read_file` or `code_navigate` with the exact path, or answer `<<QUESTION>>:` with the specific blocker if the path does not exist on disk. Do not answer in prose again until you have read the cited path.",
+						})
+
+						r.emitEvent(RunEvent{Role: "source_grounding_tool_required", Content: "Prose retry rejected after tool hide — tool call required"})
+						r.emitCompletionStatusFromParams("blocked", "source-grounding retry requires tool call", "content_gap", collectedResults, true)
+
+						metrics.ModelCalls++
+
+						continue
+					}
+
 					blockerResult := workspace.ToolResult{
 						Tool:    "completion_gate",
 						Summary: "Final answer rejected by blocker check",
