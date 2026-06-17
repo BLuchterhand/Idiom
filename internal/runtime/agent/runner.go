@@ -13,6 +13,7 @@ import (
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 type Runner struct {
@@ -1222,8 +1223,8 @@ func (r *Runner) Run(
 
 		if redirected, redirectedRaw, reason, ok := generatedEvidenceArtifactReadRedirectRequest(req, collectedResults); ok {
 			r.emitEvent(marshalRunEvent("generated_evidence_artifact_read_redirect", map[string]any{
-				"from_path": normalizeRunnerPath(req.Path),
-				"to_path":   normalizeRunnerPath(redirected.Path),
+				"from_path": agentutil.NormalizeRunnerPath(req.Path),
+				"to_path":   agentutil.NormalizeRunnerPath(redirected.Path),
 				"reason":    reason,
 			}))
 
@@ -1268,7 +1269,7 @@ func (r *Runner) Run(
 		if repaired, repairedRaw, ok := r.writeDescriptionRepairSynthesizedRequest(req, writeDescriptionRepairActive); ok {
 			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, repaired, repairedRaw, "write_description_repair_synthesized")
 			r.emitWriteDescriptionValidatorDecision(stepNumber, repaired, "repair", "description_synthesized", "write_description_repair")
-			r.emitEvent(RunEvent{Role: "write_description_repair_synthesized", Content: fmt.Sprintf("synthesized missing write description for %s on %q", strings.TrimSpace(repaired.Tool), normalizeRunnerPath(repaired.Path))})
+			r.emitEvent(RunEvent{Role: "write_description_repair_synthesized", Content: fmt.Sprintf("synthesized missing write description for %s on %q", strings.TrimSpace(repaired.Tool), agentutil.NormalizeRunnerPath(repaired.Path))})
 		}
 
 		currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
@@ -1457,7 +1458,7 @@ func (r *Runner) Run(
 
 			r.emitEvent(RunEvent{
 				Role:    "implementation_target_write_ready_source_refresh_allowed",
-				Content: fmt.Sprintf("allowed write-ready %s source expansion on target path %q", strings.TrimSpace(req.Tool), normalizeRunnerPath(req.Path)),
+				Content: fmt.Sprintf("allowed write-ready %s source expansion on target path %q", strings.TrimSpace(req.Tool), agentutil.NormalizeRunnerPath(req.Path)),
 			})
 		} else if _, _, prompt, reject := r.implementationTargetWriteReadyNonWriteRecovery(req, collectedResults); reject {
 			implementationTargetWriteReadyNonWriteRejections++
@@ -1571,14 +1572,14 @@ func (r *Runner) Run(
 
 			r.emitEvent(RunEvent{
 				Role:    "plan_then_execute_source_satisfied_evidence_read_allowed",
-				Content: fmt.Sprintf("allowed bounded %s for source-satisfied evidence path %q", strings.TrimSpace(req.Tool), normalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
+				Content: fmt.Sprintf("allowed bounded %s for source-satisfied evidence path %q", strings.TrimSpace(req.Tool), agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
 			})
 		} else if refreshReason, ok := r.planThenExecuteDirectSourceRefreshAllowed(req, collectedResults, planThenExecuteReadySourceRefreshes); ok {
 			recoveryReadAllowanceGrantedThisRequest = true
 			planThenExecuteReadySourceRefreshes++
 			r.emitEvent(RunEvent{
 				Role:    "plan_then_execute_ready_source_refresh_allowed",
-				Content: fmt.Sprintf("allowed bounded %s source refresh %d/%d for %s %q after rejected submit_plan showed a stale or missing anchor", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, refreshReason, normalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
+				Content: fmt.Sprintf("allowed bounded %s source refresh %d/%d for %s %q after rejected submit_plan showed a stale or missing anchor", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, refreshReason, agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
 			})
 		} else if redirected, redirectedRaw, ok := r.planThenExecuteRejectedPlanRefreshReadRedirect(req, collectedResults); ok {
 			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_rejected_plan_source_refresh_region")
@@ -1587,14 +1588,14 @@ func (r *Runner) Run(
 			planThenExecuteReadySourceRefreshes++
 			r.emitEvent(RunEvent{
 				Role:    "plan_then_execute_ready_source_refresh_allowed",
-				Content: fmt.Sprintf("redirected bounded %s source refresh %d/%d for rejected plan path %q", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, normalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
+				Content: fmt.Sprintf("redirected bounded %s source refresh %d/%d for rejected plan path %q", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
 			})
 		} else if r.planThenExecuteCandidateSourceRefreshAllowed(req, collectedResults, planThenExecuteReadySourceRefreshes) {
 			recoveryReadAllowanceGrantedThisRequest = true
 			planThenExecuteReadySourceRefreshes++
 			r.emitEvent(RunEvent{
 				Role:    "plan_then_execute_ready_source_refresh_allowed",
-				Content: fmt.Sprintf("allowed bounded %s source refresh %d/%d for candidate path %q after rejected submit_plan showed a stale or missing anchor", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, normalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
+				Content: fmt.Sprintf("allowed bounded %s source refresh %d/%d for candidate path %q after rejected submit_plan showed a stale or missing anchor", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
 			})
 		}
 
@@ -1797,7 +1798,7 @@ func (r *Runner) Run(
 				r.emitEvent(marshalRunEvent("plan_then_execute_low_value_action", map[string]any{
 					"agent":             r.agentName(),
 					"tool":              strings.TrimSpace(req.Tool),
-					"path":              normalizeRunnerPath(planThenExecuteRequestTargetPath(req)),
+					"path":              agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req)),
 					"reason":            reason,
 					"terminal_options":  planningState.TerminalOptions,
 					"low_value_actions": planningState.LowValueActions,
@@ -2297,7 +2298,7 @@ func (r *Runner) Run(
 		// calls (not just replays/rejections) because the pathology is the
 		// model getting stuck even when the harness doesn't push back.
 		identicalCallRun := requestBudget.noteFingerprint(currentFingerprint)
-		if isReadClassTool(req) {
+		if workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
 			if decision := requestBudget.samePathFixationDecision(req, genericReadOnlyEvidenceReady(r.RuntimeBrief, collectedResults)); decision.Handled {
 				if tool := strings.TrimSpace(decision.HideTool); tool != "" && !turnHiddenTools[tool] {
 					turnHiddenTools[tool] = true
@@ -2382,7 +2383,7 @@ func (r *Runner) Run(
 			// Skip the doom-loop gate for read-class tools in conversation;
 			// same-path fixation is handled by requestBudget before this
 			// exact-argument branch so varied ranges are covered too.
-			if r.lanePolicy().SkipFingerprintHardBlock() && isReadClassTool(req) {
+			if r.lanePolicy().SkipFingerprintHardBlock() && workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
 				requestBudget.fingerprint.identicalRun = 0
 			} else if r.DoomLoopGate != nil {
 				r.emitEvent(RunEvent{Role: "doom_loop_guard", Content: fmt.Sprintf("model repeated %s %d times — approval required", req.Tool, identicalCallRun)})
@@ -2564,7 +2565,7 @@ func (r *Runner) Run(
 			continue
 		}
 
-		if isReadClassTool(req) {
+		if workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
 			requestBudget.noteReadClassRequest(req)
 
 			metrics.ReadClassCalls++
@@ -3106,7 +3107,7 @@ func (r *Runner) Run(
 
 			writeDescriptionRepairActive = true
 			writeDescriptionDetourRejections = 0
-			writeDescriptionRepairPath = normalizeRunnerPath(req.Path)
+			writeDescriptionRepairPath = agentutil.NormalizeRunnerPath(req.Path)
 			implementationWriteOnlyRecoveryActive = true
 
 			if len(r.remainingRequiredEditPaths(collectedResults)) > 0 {
@@ -3344,7 +3345,7 @@ func (r *Runner) Run(
 		if !recoveryReadAllowanceGrantedThisRequest && implementationTargetSourceReadEstablishedWriteReady(r.RuntimeBrief, req, result, collectedResults) {
 			r.emitEvent(RunEvent{
 				Role:    "implementation_target_write_ready_source_refresh_allowed",
-				Content: fmt.Sprintf("allowed %s source read to establish target-write-ready evidence on %q", strings.TrimSpace(req.Tool), normalizeRunnerPath(req.Path)),
+				Content: fmt.Sprintf("allowed %s source read to establish target-write-ready evidence on %q", strings.TrimSpace(req.Tool), agentutil.NormalizeRunnerPath(req.Path)),
 			})
 		}
 
@@ -3359,7 +3360,7 @@ func (r *Runner) Run(
 			autonomyRecorder.emitWriteGate(req, autonomy.PolicyAllow, "write_result_completed", mapKeys(changedPathsFromToolResults([]workspace.ToolResult{result})))
 		}
 
-		if deferredGitHistorySubmitPlan != nil && gitHistoryEvidenceTool(req.Tool) {
+		if deferredGitHistorySubmitPlan != nil && slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(req.Tool)) {
 			submitReq := *deferredGitHistorySubmitPlan
 			if len(r.submitPlanPathsMissingGitHistory(submitReq, collectedResults)) == 0 {
 				submitRaw := deferredGitHistorySubmitPlanRaw
@@ -3416,7 +3417,7 @@ func (r *Runner) Run(
 			}
 		}
 
-		if deferredSourceEvidenceWrite != nil && gitHistoryEvidenceTool(req.Tool) {
+		if deferredSourceEvidenceWrite != nil && slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(req.Tool)) {
 			if replayReq, replayRaw, replay := deferredSourceEvidenceWrite.replayAfterHistoryEvidence(collectedResults); replay {
 				r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
 					"agent":          r.agentName(),
@@ -3635,7 +3636,7 @@ func (r *Runner) Run(
 			r.emitEvent(RunEvent{Role: "tool_hidden", Content: "non-write tools restored after required implementation writes completed"})
 		}
 
-		if writeDescriptionRepairActive && workspaceWriteResultCompleted(req, result) && normalizeRunnerPath(req.Path) == writeDescriptionRepairPath {
+		if writeDescriptionRepairActive && workspaceWriteResultCompleted(req, result) && agentutil.NormalizeRunnerPath(req.Path) == writeDescriptionRepairPath {
 			writeDescriptionRepairActive = false
 			writeDescriptionDetourRejections = 0
 			writeDescriptionRepairPath = ""
@@ -3976,7 +3977,7 @@ func (r *Runner) Run(
 			}
 		}
 
-		if childReadyBeforeResult && !postChildPacketActive && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
+		if childReadyBeforeResult && !postChildPacketActive && workspace.IsReadTool(strings.TrimSpace(req.Tool)) && strings.TrimSpace(result.Error) == "" {
 			delegatedReadOnlyPostReadyFollowups++
 			// Diminishing-returns nudge stays as a soft signal; the hard
 			// budget force-finish was a bandaid (per the no-bandaid
@@ -4000,7 +4001,7 @@ func (r *Runner) Run(
 			}
 		}
 
-		if postChildPacketActive && strings.TrimSpace(req.Tool) != workspace.ToolNameTask && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
+		if postChildPacketActive && strings.TrimSpace(req.Tool) != workspace.ToolNameTask && workspace.IsReadTool(strings.TrimSpace(req.Tool)) && strings.TrimSpace(result.Error) == "" {
 			postChildFollowupReads++
 			if postChildFollowupReads > postChildDiminishingNudgeStage {
 				if nudge := postChildDiminishingReturnsNudge(r.RuntimeBrief.Objective, collectedResults, postChildFollowupReads); nudge != "" {

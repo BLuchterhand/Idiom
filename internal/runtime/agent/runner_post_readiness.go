@@ -97,9 +97,6 @@ func postReadinessToolContractForBrief(brief workerruntime.WorkerRuntimeBrief, r
 	return postReadinessToolContract{Reason: "none"}
 }
 
-func postReadinessGap(req workspace.ToolRequest) string {
-	return util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering)
-}
 
 
 func postReadinessProbeBudgetForBrief(brief workerruntime.WorkerRuntimeBrief) int {
@@ -430,7 +427,7 @@ func applyClosurePromptRefinement(state runnerNextActionState) runnerNextActionS
 			return false
 		}
 	}))
-	state.InvalidNextActions = mergeRunnerStateStrings(state.InvalidNextActions, closurePromptInvalidActions(scope))
+	state.InvalidNextActions = util.Merge(state.InvalidNextActions, closurePromptInvalidActions(scope))
 
 	return state
 }

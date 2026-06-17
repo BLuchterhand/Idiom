@@ -35,8 +35,8 @@ func repeatedDiagnosticLogReadFileBackfill(req workspace.ToolRequest, results []
 		return workspace.ToolRequest{}, "", false
 	}
 
-	path := normalizeRunnerPath(req.Path)
-	if path == "" || !isDiagnosticLogArtifactPath(path) {
+	path := agentutil.NormalizeRunnerPath(req.Path)
+	if path == "" || !agentutil.IsDiagnosticLogArtifactPath(path) {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -68,7 +68,7 @@ type diagnosticLogReadWindow struct {
 }
 
 func diagnosticLogReadFileWindows(path string, results []workspace.ToolResult) []diagnosticLogReadWindow {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return nil
 	}
@@ -100,8 +100,8 @@ func diagnosticLogUnboundedReadCoverageRejection(req workspace.ToolRequest, resu
 		return "", "", false
 	}
 
-	path := normalizeRunnerPath(req.Path)
-	if path == "" || !isDiagnosticLogArtifactPath(path) {
+	path := agentutil.NormalizeRunnerPath(req.Path)
+	if path == "" || !agentutil.IsDiagnosticLogArtifactPath(path) {
 		return "", "", false
 	}
 
@@ -236,7 +236,7 @@ func mergeDiagnosticLogReadWindows(windows []diagnosticLogReadWindow) ([]diagnos
 
 func runnerToolResultReadPathMatches(result workspace.ToolResult, path string) bool {
 	for _, readPath := range agentutil.ReadPathsFromToolResult(result) {
-		if normalizeRunnerPath(readPath) == path {
+		if agentutil.NormalizeRunnerPath(readPath) == path {
 			return true
 		}
 	}
@@ -276,8 +276,8 @@ func repeatedDiagnosticLogReadFileExactRejection(req workspace.ToolRequest, last
 		return "", "", false
 	}
 
-	path := normalizeRunnerPath(req.Path)
-	if path == "" || !isDiagnosticLogArtifactPath(path) {
+	path := agentutil.NormalizeRunnerPath(req.Path)
+	if path == "" || !agentutil.IsDiagnosticLogArtifactPath(path) {
 		return "", "", false
 	}
 
@@ -286,7 +286,7 @@ func repeatedDiagnosticLogReadFileExactRejection(req workspace.ToolRequest, last
 	}
 
 	for _, readPath := range agentutil.ReadPathsFromToolResult(last) {
-		if normalizeRunnerPath(readPath) != path {
+		if agentutil.NormalizeRunnerPath(readPath) != path {
 			continue
 		}
 
@@ -303,8 +303,8 @@ func repeatedDiagnosticLogReadFilePreviouslyReadRejection(req workspace.ToolRequ
 		return "", "", false
 	}
 
-	path := normalizeRunnerPath(req.Path)
-	if path == "" || !isDiagnosticLogArtifactPath(path) {
+	path := agentutil.NormalizeRunnerPath(req.Path)
+	if path == "" || !agentutil.IsDiagnosticLogArtifactPath(path) {
 		return "", "", false
 	}
 

@@ -8,7 +8,6 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/agent/agentutil"
-	"idiom/internal/runtime/agent/stringset"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -216,10 +215,10 @@ func questionBlockerContextPaths(brief workerruntime.WorkerRuntimeBrief, results
 	} else if readOnlyDirectAnswerLane(brief) {
 		ledger = readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
 
-		paths := mergeRunnerStateStrings(ledger.RelevantSourceBodyPaths, ledger.SourceBodyObjectivePaths)
+		paths := util.Merge(ledger.RelevantSourceBodyPaths, ledger.SourceBodyObjectivePaths)
 
 		if ledger.DiagnosticRelevant {
-			paths = mergeRunnerStateStrings(paths, ledger.DiagnosticPaths)
+			paths = util.Merge(paths, ledger.DiagnosticPaths)
 		}
 
 		paths = closurePromptEvidencePaths(paths, max)
@@ -351,7 +350,7 @@ func questionBlockerReasonLooksInternal(reason string) bool {
 		return false
 	}
 
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		"completion gate",
 		"missing completion evidence",
 		"required next evidence",
@@ -759,7 +758,7 @@ func presentableReadFileSourceAnswer(brief workerruntime.WorkerRuntimeBrief, res
 	for _, body := range combinedReadFileSourceBodies(results) {
 		if answer, ok := presentableSourceBodyFactsAnswer(brief.Objective, body.path, body.output); ok {
 			if ownerPathSet != nil {
-				if _, ok := ownerPathSet[normalizeRunnerPath(body.path)]; !ok {
+				if _, ok := ownerPathSet[agentutil.NormalizeRunnerPath(body.path)]; !ok {
 					continue
 				}
 			}
@@ -807,11 +806,11 @@ func combinedReadFileSourceBodies(results []workspace.ToolResult) []readFileSour
 		}
 
 		paths := agentutil.ReadPathsFromToolResult(result)
-		if len(paths) == 0 || isNonSourceEvidenceArtifactPath(paths[0]) {
+		if len(paths) == 0 || agentutil.IsNonSourceEvidenceArtifactPath(paths[0]) {
 			continue
 		}
 
-		path := normalizeRunnerPath(paths[0])
+		path := agentutil.NormalizeRunnerPath(paths[0])
 		if path == "" {
 			continue
 		}
@@ -857,11 +856,11 @@ func presentableSourceAnswerObjectiveScore(answer string, objective string, path
 	lowerClaim := strings.ToLower(claim)
 	lowerObjective := strings.ToLower(objective)
 
-	if containsAny(lowerObjective, "redact", "secret", "debug log") && strings.Contains(lowerClaim, "metadata") {
+	if agentutil.ContainsAny(lowerObjective, "redact", "secret", "debug log") && strings.Contains(lowerClaim, "metadata") {
 		score += 3
 	}
 
-	if containsAny(lowerObjective, "redact", "secret", "debug log") && strings.Contains(lowerClaim, "path") {
+	if agentutil.ContainsAny(lowerObjective, "redact", "secret", "debug log") && strings.Contains(lowerClaim, "path") {
 		score += 2
 	}
 
@@ -919,7 +918,7 @@ func presentableProseEvidencePath(path string) bool {
 
 	lower = strings.TrimPrefix(lower, "./")
 
-	if lower == "" || isNonSourceEvidenceArtifactPath(lower) {
+	if lower == "" || agentutil.IsNonSourceEvidenceArtifactPath(lower) {
 		return false
 	}
 
@@ -1089,7 +1088,7 @@ func proseEvidenceLineObjectiveScore(line string, termSet map[string]struct{}) i
 		}
 	}
 
-	if score > 0 && containsAny(lower, "evidence", "contract", "source", "repo", "repository", "audit", "eval", "verification", "runtime brief", "harness") {
+	if score > 0 && agentutil.ContainsAny(lower, "evidence", "contract", "source", "repo", "repository", "audit", "eval", "verification", "runtime brief", "harness") {
 		score++
 	}
 
@@ -1423,12 +1422,12 @@ func sourceBodyRecordAssignmentFact(line string) string {
 		lowerKey := strings.ToLower(key)
 		lowerValue := strings.ToLower(value)
 
-		if containsAny(lowerKey, "path", "source", "root", "cwd") {
+		if agentutil.ContainsAny(lowerKey, "path", "source", "root", "cwd") {
 			kind = "path metadata field"
 		}
 
-		if containsAny(lowerKey, "prompt", "digest", "redact", "secret") ||
-			containsAny(lowerValue, "sanitize", "digest", "redact", "secret") {
+		if agentutil.ContainsAny(lowerKey, "prompt", "digest", "redact", "secret") ||
+			agentutil.ContainsAny(lowerValue, "sanitize", "digest", "redact", "secret") {
 
 			kind = "secret-safe " + kind
 		}
@@ -1491,7 +1490,7 @@ func sourceBodyStructFieldFact(line string) string {
 	lower := strings.ToLower(name)
 	kind := "field"
 
-	if containsAny(lower, "path", "source", "root", "cwd") {
+	if agentutil.ContainsAny(lower, "path", "source", "root", "cwd") {
 		kind = "path metadata field"
 	}
 
@@ -1676,11 +1675,11 @@ func presentableSourceBodyObjectivePrefix(objective string, lines []string) stri
 		return ""
 	}
 
-	if !containsAny(lower, "shorten", "rename", "change", "update") {
+	if !agentutil.ContainsAny(lower, "shorten", "rename", "change", "update") {
 		return ""
 	}
 
-	if !containsAny(lower, "label", "text", "string", "copy") {
+	if !agentutil.ContainsAny(lower, "label", "text", "string", "copy") {
 		return ""
 	}
 
@@ -1705,12 +1704,12 @@ func sourceEvidenceAnswerLinesForObjective(output string, objective string, maxL
 	}
 
 	if strings.TrimSpace(objective) == "" || len(all) <= maxLines {
-		return limitStrings(all, maxLines)
+		return util.Prefix(all, maxLines)
 	}
 
 	terms := sourceEvidenceObjectiveLineTerms(objective)
 	if len(terms) == 0 {
-		return limitStrings(all, maxLines)
+		return util.Prefix(all, maxLines)
 	}
 
 	selected := make([]string, 0, maxLines)
@@ -1758,7 +1757,7 @@ func sourceEvidenceAnswerLinesForObjective(output string, objective string, maxL
 	}
 
 	if len(selected) == 0 {
-		return limitStrings(all, maxLines)
+		return util.Prefix(all, maxLines)
 	}
 
 	return selected
@@ -1774,7 +1773,7 @@ func sourceEvidenceLineCarriesAnswerContext(line string, terms []string) bool {
 		return true
 	}
 
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		"record[",
 		"sanitize",
 		"digest",
@@ -1886,7 +1885,7 @@ func presentableImplementationShapeAnswerFromClaim(objective string, path string
 	}
 
 	lowerClaim := " " + strings.ToLower(strings.Join(strings.Fields(claim), " ")) + " "
-	if !containsAny(lowerClaim, " handles ", " calls ", " sets ") {
+	if !agentutil.ContainsAny(lowerClaim, " handles ", " calls ", " sets ") {
 		return "", false
 	}
 
@@ -1994,7 +1993,7 @@ func bestPresentableExactProbeAnchor(brief workerruntime.WorkerRuntimeBrief, res
 		var owner readOnlySourceOwnerEvidence
 
 		if requiresOwner {
-			if _, ok := ownerPathSet[normalizeRunnerPath(candidate.path)]; !ok {
+			if _, ok := ownerPathSet[agentutil.NormalizeRunnerPath(candidate.path)]; !ok {
 				continue
 			}
 
@@ -2314,7 +2313,7 @@ func presentableInternalFinding(finding string) bool {
 
 	lower := strings.ToLower(finding)
 
-	return !containsAny(lower,
+	return !agentutil.ContainsAny(lower,
 		"child task completed",
 		"outlined ",
 		"ran ",
@@ -2432,7 +2431,7 @@ func lastFailureIsPostCompletionWriteProbe(results []workspace.ToolResult, chang
 			return false
 		}
 
-		path := normalizeRunnerPath(writeFailureTargetPath(result))
+		path := agentutil.NormalizeRunnerPath(writeFailureTargetPath(result))
 		if path == "" {
 			return false
 		}
@@ -2555,8 +2554,8 @@ func conversationFallbackShouldAvoidSourceBody(brief workerruntime.WorkerRuntime
 	}
 
 	lower := strings.ToLower(strings.TrimSpace(brief.Objective))
-	if containsAny(lower, "shorten", "rename", "change", "update") &&
-		containsAny(lower, ".go", ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", "label", "function", "source") {
+	if agentutil.ContainsAny(lower, "shorten", "rename", "change", "update") &&
+		agentutil.ContainsAny(lower, ".go", ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", "label", "function", "source") {
 
 		return false
 	}
@@ -2580,6 +2579,3 @@ func synthesizeBriefConversationFallback(brief workerruntime.WorkerRuntimeBrief,
 
 
 
-func limitStrings(values []string, limit int) []string {
-	return stringset.Prefix(values, limit)
-}

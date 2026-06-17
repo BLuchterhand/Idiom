@@ -2,16 +2,12 @@ package agent
 
 import (
 	"idiom/internal/platform/util"
-	"idiom/internal/runtime/agent/stringset"
 	"strings"
 )
 
-func mergeRunnerStateStrings(groups ...[]string) []string {
-	return stringset.Merge(groups...)
-}
 
 func runnerCurrentAllowedOrBriefTools(currentAllowedTools []string, briefAllowedTools []string) []string {
-	if len(uniquePhaseStrings(currentAllowedTools)) > 0 {
+	if len(util.Unique(currentAllowedTools)) > 0 {
 		return append([]string(nil), currentAllowedTools...)
 	}
 

@@ -8,6 +8,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 // DiscoveryRedirect inspects an about-to-run tool request and, if a more
@@ -518,12 +519,12 @@ func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.T
 		return RedirectDecision{}
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path == "" {
 		return RedirectDecision{}
 	}
 
-	if isDiagnosticLogArtifactPath(path) {
+	if agentutil.IsDiagnosticLogArtifactPath(path) {
 		return RedirectDecision{}
 	}
 

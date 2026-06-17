@@ -5,6 +5,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 // briefAuditEvent is the structured payload for the per-turn `brief_audit`
@@ -118,13 +119,13 @@ func targetPacketByteCount(packet []string) int {
 }
 
 func requestPathInRequiredEditPaths(path string, required []string) bool {
-	cleaned := normalizeRunnerPath(path)
+	cleaned := agentutil.NormalizeRunnerPath(path)
 	if cleaned == "" {
 		return false
 	}
 
 	for _, p := range required {
-		if normalizeRunnerPath(p) == cleaned {
+		if agentutil.NormalizeRunnerPath(p) == cleaned {
 			return true
 		}
 	}

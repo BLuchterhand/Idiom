@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"idiom/internal/platform/util"
-	"idiom/internal/runtime/agent/stringset"
 )
 
 type TransportMode string
@@ -151,5 +150,5 @@ func cloneBoolPtr(value *bool) *bool {
 }
 
 func UniqueStrings(values []string) []string {
-	return stringset.Unique(values)
+	return util.Unique(values)
 }

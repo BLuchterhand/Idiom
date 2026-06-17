@@ -5,20 +5,21 @@ import (
 	"idiom/internal/runtime/workerruntime"
 	"slices"
 	"strings"
+	"idiom/internal/platform/util"
 )
 
 func runnerGuidanceConstraints(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
 	constraints := append([]string(nil), brief.Constraints...)
 	if planThenExecuteSubmitPlanOnlyReady(brief, results) {
-		constraints = mergeRunnerStateStrings(constraints, []string{"plan_then_execute_submit_plan_ready"})
+		constraints = util.Merge(constraints, []string{"plan_then_execute_submit_plan_ready"})
 	}
 
 	if delegatedReadOnlyClosureReady(agent, brief, results) {
-		constraints = mergeRunnerStateStrings(constraints, []string{"answer_readiness_reached"})
+		constraints = util.Merge(constraints, []string{"answer_readiness_reached"})
 	}
 
 	if !strings.HasPrefix(strings.TrimSpace(agent), "child:") && postChildPacketClosureReadyWithBrief(brief, results) {
-		constraints = mergeRunnerStateStrings(constraints, []string{"child_packet_available"})
+		constraints = util.Merge(constraints, []string{"child_packet_available"})
 	}
 
 	return constraints
@@ -29,7 +30,7 @@ func applyDelegatedReadOnlyClosureBias(state runnerNextActionState, agent string
 		return state
 	}
 
-	state.Constraints = mergeRunnerStateStrings(state.Constraints, []string{"answer_readiness_reached"})
+	state.Constraints = util.Merge(state.Constraints, []string{"answer_readiness_reached"})
 	state.InvalidNextActions = filterRunnerStateStrings(state.InvalidNextActions, func(value string) bool {
 		return value == "final_answer_without_satisfying_completion_gate"
 	})
@@ -41,7 +42,7 @@ func applyDelegatedReadOnlyClosureBias(state runnerNextActionState, agent string
 		"final answer from the evidence already gathered is available",
 		"if one exact missing claim remains, use one bounded probe against a named path, symbol, discovered handle, or narrow range",
 	}, state.NextValidActions)
-	state.InvalidNextActions = mergeRunnerStateStrings(state.InvalidNextActions, []string{
+	state.InvalidNextActions = util.Merge(state.InvalidNextActions, []string{
 		"open-ended discovery after answer readiness without naming a concrete gap",
 	})
 
@@ -69,12 +70,12 @@ func applyPostChildClosureBias(state runnerNextActionState, agent string, brief 
 		return state
 	}
 
-	state.Constraints = mergeRunnerStateStrings(state.Constraints, []string{"child_packet_available"})
+	state.Constraints = util.Merge(state.Constraints, []string{"child_packet_available"})
 	state.NextValidActions = prependRunnerStateStrings([]string{
 		"final answer from the child packet evidence is available",
 		"if one exact missing claim remains, use one bounded probe against a named path, symbol, discovered handle, or narrow range",
 	}, state.NextValidActions)
-	state.InvalidNextActions = mergeRunnerStateStrings(state.InvalidNextActions, []string{
+	state.InvalidNextActions = util.Merge(state.InvalidNextActions, []string{
 		"open-ended discovery after a child packet without naming a concrete gap",
 	})
 

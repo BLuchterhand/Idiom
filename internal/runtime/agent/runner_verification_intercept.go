@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 // verificationInterceptResult tells the runner loop whether a read-class
@@ -67,11 +68,11 @@ func (r *Runner) preflightVerificationOnAlreadyEditedPath(req workspace.ToolRequ
 		return verificationInterceptResult{}
 	}
 
-	if !isReadClassTool(req) {
+	if !workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
 		return verificationInterceptResult{}
 	}
 
-	target := normalizeRunnerPath(strings.TrimSpace(req.Path))
+	target := agentutil.NormalizeRunnerPath(strings.TrimSpace(req.Path))
 	if target == "" {
 		return verificationInterceptResult{}
 	}
@@ -167,7 +168,7 @@ func precedingResultWasReadClass(results []workspace.ToolResult) bool {
 
 	last := results[len(results)-1]
 
-	return isReadClassTool(workspace.ToolRequest{Tool: last.Tool})
+	return workspace.IsReadTool(strings.TrimSpace(last.Tool))
 }
 
 // requiredEditPathsContains checks whether the request's target path
@@ -175,7 +176,7 @@ func precedingResultWasReadClass(results []workspace.ToolResult) bool {
 // comparison).
 func requiredEditPathsContains(required []string, target string) bool {
 	for _, raw := range required {
-		if normalizeRunnerPath(raw) == target {
+		if agentutil.NormalizeRunnerPath(raw) == target {
 			return true
 		}
 	}

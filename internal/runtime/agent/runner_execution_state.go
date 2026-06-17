@@ -61,7 +61,7 @@ func (s *runnerExecutionState) shouldRequireVerification(req workspace.ToolReque
 		return false
 	}
 
-	if plannerOwnsVerification(brief) || verificationContractSkipsGate(brief.VerificationContract) {
+	if plannerOwnsVerification(brief) || workerruntime.VerificationContractSkipsGate(brief.VerificationContract) {
 		return false
 	}
 
@@ -77,7 +77,7 @@ func (s *runnerExecutionState) needsCheckpoint(policy CheckpointPolicy, req work
 		return false
 	}
 
-	return policy.Enabled && !s.checkpointCreated && isWriteTool(req)
+	return policy.Enabled && !s.checkpointCreated && workspace.IsWorkspaceWriteTool(strings.TrimSpace(req.Tool))
 }
 
 func (s *runnerExecutionState) markCheckpointCreated() {
@@ -108,7 +108,7 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 
 		update.ResetVerificationGuards = true
 		update.VerificationState, update.VerificationDetail = verificationPhaseState(result)
-	} else if toolResultMadeProgress(req, result) && isWriteTool(req) {
+	} else if toolResultMadeProgress(req, result) && workspace.IsWorkspaceWriteTool(strings.TrimSpace(req.Tool)) {
 		s.writesSinceVerification++
 
 		if requestBudget != nil {
@@ -130,7 +130,7 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 		s.consecutiveListFiles = 0
 	}
 
-	sourceBodyConsumed := concreteSourceEvidenceResult(result) || (toolResultMadeProgress(req, result) && isWriteTool(req))
+	sourceBodyConsumed := concreteSourceEvidenceResult(result) || (toolResultMadeProgress(req, result) && workspace.IsWorkspaceWriteTool(strings.TrimSpace(req.Tool)))
 	if successfulSearchDiscoveryResult(req, result) {
 		s.pendingSearchInspection = true
 		s.pendingSearchTool = strings.TrimSpace(req.Tool)

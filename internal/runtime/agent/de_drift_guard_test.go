@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 func TestDeDriftGuidanceDocumentsBoundaryChecklist(t *testing.T) {
@@ -128,7 +130,7 @@ func TestDeDriftPatternDetectorCoversRecurringCategories(t *testing.T) {
 	return l.SourceRelevant || l.DiagnosticRelevant
 }
 func readOnlyDiagnosticObjectiveApplies(objective string) bool {
-	return containsAny(strings.ToLower(objective), "error", "failed", "build")
+	return agentutil.ContainsAny(strings.ToLower(objective), "error", "failed", "build")
 }`,
 			want: "diagnostic evidence promoted to answerability",
 		},
@@ -136,7 +138,7 @@ func readOnlyDiagnosticObjectiveApplies(objective string) bool {
 			name: "broad diagnostic objective classifier",
 			path: filepath.Join("internal", "runtime", "agent", "read_only_answerability.go"),
 			body: `func readOnlyDiagnosticObjectiveApplies(objective string) bool {
-		return containsAny(strings.ToLower(objective), "error", "failed", "build")
+		return agentutil.ContainsAny(strings.ToLower(objective), "error", "failed", "build")
 }`,
 			want: "broad diagnostic objective classifier",
 		},
@@ -145,7 +147,7 @@ func readOnlyDiagnosticObjectiveApplies(objective string) bool {
 			path: filepath.Join("internal", "runtime", "agent", "read_only_answerability.go"),
 			body: `type DiagnosticContract struct { TargetRefs []string }
 func readOnlyDiagnosticObjectiveApplies(objective string) bool {
-	return containsAny(strings.ToLower(objective), "error", "failed", "build")
+	return agentutil.ContainsAny(strings.ToLower(objective), "error", "failed", "build")
 }`,
 			want: "broad diagnostic objective classifier",
 		},
@@ -216,7 +218,7 @@ func readOnlyDiagnosticObjectiveApplies(objective string) bool {
 			path: filepath.Join("internal", "runtime", "agent", "runner.go"),
 			body: `func delegatedDiscoveryPurpose(objective string) string {
 	lower := strings.ToLower(objective)
-	if containsAny(lower, "security", "unsafe", "vulnerability") {
+	if agentutil.ContainsAny(lower, "security", "unsafe", "vulnerability") {
 		return "security_review"
 	}
 	return "architecture_boundary"
@@ -392,7 +394,7 @@ func broadDiagnosticObjectiveClassifier(file, text string) bool {
 	}
 
 	broadTerms := []string{`"error"`, `"errors"`, `"failure"`, `"failures"`, `"failing"`, `"failed"`, `"build"`, `"broken"`}
-	if !containsAny(classifier, broadTerms...) {
+	if !agentutil.ContainsAny(classifier, broadTerms...) {
 		return false
 	}
 
@@ -455,13 +457,13 @@ func duplicateReadOnlyCloseoutPresenterAuthority(file, text string) bool {
 		return false
 	}
 
-	if !agentProductionSource(file) || !containsAny(text, "ReadOnlyCloseout", "ReadOnlyCloseout", "readOnlyClosure", "CloseoutAnswer", "ClosureUncertainty") {
+	if !agentProductionSource(file) || !agentutil.ContainsAny(text, "ReadOnlyCloseout", "ReadOnlyCloseout", "readOnlyClosure", "CloseoutAnswer", "ClosureUncertainty") {
 		return false
 	}
 
 	for _, token := range []string{"ReadOnlyCloseout", "ReadOnlyCloseout", "readOnlyClosure", "CloseoutAnswer", "ClosureUncertainty"} {
 		for _, window := range deDriftFunctionWindows(text, token, 900) {
-			namesUserVisibleUncertainty := containsAny(window,
+			namesUserVisibleUncertainty := agentutil.ContainsAny(window,
 				"presentableUnsupportedFinalAnswerLead",
 				"supported final answer",
 				"not have enough supported evidence",
@@ -470,7 +472,7 @@ func duplicateReadOnlyCloseoutPresenterAuthority(file, text string) bool {
 				"Evidence paths:",
 				"gathered evidence supports answering",
 			)
-			if namesUserVisibleUncertainty && containsAny(window, "return ", "WriteString", "fmt.Sprintf") {
+			if namesUserVisibleUncertainty && agentutil.ContainsAny(window, "return ", "WriteString", "fmt.Sprintf") {
 				return true
 			}
 		}
@@ -486,15 +488,15 @@ func pathPrefixAnswerabilityPromotion(file, text string) bool {
 
 	for _, token := range []string{"Answerable", "Answerability", "ObjectiveRelevant", "EvidencePath", "Grounded", "Accepted", "Closeout"} {
 		for _, window := range deDriftFunctionWindows(text, token, 1100) {
-			if !containsAny(window, `HasPrefix(path, "internal/")`, `HasPrefix(path, "cmd/")`, `HasPrefix(path, "pkg/")`, `HasPrefix(path, "src/")`, `HasPrefix(path, "scripts/")`) {
+			if !agentutil.ContainsAny(window, `HasPrefix(path, "internal/")`, `HasPrefix(path, "cmd/")`, `HasPrefix(path, "pkg/")`, `HasPrefix(path, "src/")`, `HasPrefix(path, "scripts/")`) {
 				continue
 			}
 
-			if !containsAny(window, "return true", "Answerable", "Relevant", "Accepted", "Grounded", "Objective") {
+			if !agentutil.ContainsAny(window, "return true", "Answerable", "Relevant", "Accepted", "Grounded", "Objective") {
 				continue
 			}
 
-			if containsAny(window, "filter", "priority", "sort", "drop", "reject", "protected", "forbidden") {
+			if agentutil.ContainsAny(window, "filter", "priority", "sort", "drop", "reject", "protected", "forbidden") {
 				continue
 			}
 
@@ -528,7 +530,7 @@ func duplicateObjectiveClassifierAuthority(file, text string) bool {
 				continue
 			}
 
-			if containsAny(window, "readOnlyClosureDecisionForResults", "DirectAnswerRelevance", "readOnlyAnswerabilityForResults", "readOnlyEvidencePacketAnswerableForObjective", "SourceBodyObjective", "EvidencePath", "DiagnosticContract", "Target") {
+			if agentutil.ContainsAny(window, "readOnlyClosureDecisionForResults", "DirectAnswerRelevance", "readOnlyAnswerabilityForResults", "readOnlyEvidencePacketAnswerableForObjective", "SourceBodyObjective", "EvidencePath", "DiagnosticContract", "Target") {
 				continue
 			}
 
@@ -546,7 +548,7 @@ func broadObjectiveClassifierWindow(window string) bool {
 		`"what would it take"`, `"what needs to change"`, `"how would"`, `"how should"`,
 	}
 
-	return containsAny(window, broadTerms...) && containsAny(window, "containsAny", "objectiveWordSet", "strings.Contains", "HasPrefix")
+	return agentutil.ContainsAny(window, broadTerms...) && agentutil.ContainsAny(window, "agentutil.ContainsAny", "objectiveWordSet", "strings.Contains", "HasPrefix")
 }
 
 func delegatedDiscoveryPolicyAccumulation(file, text string) bool {
@@ -554,14 +556,14 @@ func delegatedDiscoveryPolicyAccumulation(file, text string) bool {
 		return false
 	}
 
-	if !agentProductionSource(file) || !containsAny(text, "delegatedDiscovery", "delegatedReadOnlyDiscovery", "discovery_query") {
+	if !agentProductionSource(file) || !agentutil.ContainsAny(text, "delegatedDiscovery", "delegatedReadOnlyDiscovery", "discovery_query") {
 		return false
 	}
 
 	for _, token := range []string{"delegatedReadOnlyDiscovery", "delegatedDiscovery", "discovery_query"} {
 		for _, window := range deDriftFunctionWindows(text, token, 1100) {
-			normalizesEnvelope := containsAny(window, ".Purpose", ".Path", ".Pattern", "MaxDepth", "Named workspace scope", "security_review", "history_context", "architecture_boundary")
-			classifiesObjective := containsAny(window, "containsAny", "strings.Contains", "HasPrefix", "MentionedWorkspacePaths")
+			normalizesEnvelope := agentutil.ContainsAny(window, ".Purpose", ".Path", ".Pattern", "MaxDepth", "Named workspace scope", "security_review", "history_context", "architecture_boundary")
+			classifiesObjective := agentutil.ContainsAny(window, "agentutil.ContainsAny", "strings.Contains", "HasPrefix", "MentionedWorkspacePaths")
 
 			if normalizesEnvelope && classifiesObjective {
 				return true
@@ -577,7 +579,7 @@ func duplicateActionClassVocabulary(file, text string) bool {
 		return false
 	}
 
-	if !containsAny(text, `"per_edit_write"`, `"source_satisfied"`, `"generic_probe"`, `"final_answer"`, `"submit_plan"`) {
+	if !agentutil.ContainsAny(text, `"per_edit_write"`, `"source_satisfied"`, `"generic_probe"`, `"final_answer"`, `"submit_plan"`) {
 		return false
 	}
 

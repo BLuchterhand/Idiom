@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"idiom/internal/platform/util"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 func (r *Runner) readOnlyExplanationCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
@@ -176,7 +178,7 @@ func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspa
 	)
 
 	for _, rawPath := range paths {
-		path := normalizeRunnerPath(rawPath)
+		path := agentutil.NormalizeRunnerPath(rawPath)
 		if path == "" {
 			continue
 		}
@@ -233,7 +235,7 @@ func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspa
 }
 
 func sourceCitationCanonicalPath(r *Runner, path string, results []workspace.ToolResult) (string, bool) {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return "", false
 	}
@@ -250,8 +252,8 @@ func sourceCitationCanonicalPath(r *Runner, path string, results []workspace.Too
 
 	var matches []string
 
-	for _, candidate := range mergeRunnerStateStrings(sourceEvidenceBodyPaths(results), delegatedReadOnlySourceBodyEvidencePaths(results)) {
-		candidate = normalizeRunnerPath(candidate)
+	for _, candidate := range util.Merge(sourceEvidenceBodyPaths(results), delegatedReadOnlySourceBodyEvidencePaths(results)) {
+		candidate = agentutil.NormalizeRunnerPath(candidate)
 		if candidate == "" || strings.EqualFold(candidate, path) {
 			continue
 		}
@@ -316,7 +318,7 @@ func filterSourceGroundingMentionedPaths(paths []string) []string {
 }
 
 func sourceGroundingMentionedPathLooksPlausible(path string) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -355,7 +357,7 @@ func sourceGroundingGateApplies(brief workerruntime.WorkerRuntimeBrief) bool {
 }
 
 func sourceCitationExists(r *Runner, path string) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" || strings.HasPrefix(path, "../") || path == ".." || filepath.IsAbs(path) {
 		return false
 	}

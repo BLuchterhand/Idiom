@@ -6,6 +6,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerRuntimeBrief, reason string, results []workspace.ToolResult) (string, bool) {
@@ -18,7 +19,7 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 	}
 
 	lowerReason := strings.ToLower(strings.TrimSpace(reason))
-	if !containsAny(lowerReason,
+	if !agentutil.ContainsAny(lowerReason,
 		"budget",
 		"maximum tool steps",
 		"tools are now disabled",
@@ -191,7 +192,7 @@ func planThenExecuteFallbackUnresolvedLastRejectedRefreshPaths(brief workerrunti
 
 	var unresolved []string
 	for _, rawPath := range planThenExecuteRefreshScopePathsForRejectedPlan(brief, results, refreshPaths) {
-		path := normalizeRunnerPath(rawPath)
+		path := agentutil.NormalizeRunnerPath(rawPath)
 		if path == "" {
 			continue
 		}
@@ -747,7 +748,7 @@ func isResultUsefulForFallback(result workspace.ToolResult) bool {
 	lowerSummary := strings.ToLower(strings.TrimSpace(result.Summary))
 	lowerOutput := strings.ToLower(strings.TrimSpace(result.Output))
 
-	if strings.HasPrefix(lowerSummary, "redirected to ") || containsAny(lowerOutput,
+	if strings.HasPrefix(lowerSummary, "redirected to ") || agentutil.ContainsAny(lowerOutput,
 		"try: {\"tool\":",
 		"retry your original request and it will execute",
 	) {

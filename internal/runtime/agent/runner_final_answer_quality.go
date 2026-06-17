@@ -6,6 +6,7 @@ import (
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/runtime/workerruntime"
 	"strings"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 func conversationLaneWithoutSemanticEval(brief workerruntime.WorkerRuntimeBrief) bool {
@@ -46,7 +47,7 @@ func finishShouldOverrideSourceEcho(answer string) bool {
 	}
 
 	for _, path := range pathparse.MentionedWorkspacePaths(answer) {
-		path = normalizeRunnerPath(path)
+		path = agentutil.NormalizeRunnerPath(path)
 		if strings.HasPrefix(path, "internal/") || strings.HasPrefix(path, "logs/") {
 			return true
 		}

@@ -91,7 +91,7 @@ func sourceEvidenceCandidatePaths(results []workspace.ToolResult) []string {
 		}
 
 		for _, path := range candidates {
-			normalized := normalizeRunnerPath(path)
+			normalized := agentutil.NormalizeRunnerPath(path)
 			if normalized == "" {
 				continue
 			}
@@ -117,7 +117,7 @@ func sourceEvidenceCandidatePaths(results []workspace.ToolResult) []string {
 // discovery tool result actually exists on the filesystem. This prevents
 // stale graph-index entries from appearing as valid candidates.
 func sourceEvidenceCandidatePathExists(path string) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" || strings.HasPrefix(path, "../") || path == ".." || filepath.IsAbs(path) {
 		return false
 	}
@@ -195,7 +195,7 @@ func sourceEvidencePendingRedirectsForBrief(brief workerruntime.WorkerRuntimeBri
 }
 
 func sourceEvidencePendingRedirectRelevantAfterBodyEvidence(brief workerruntime.WorkerRuntimeBrief, path string) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -215,7 +215,7 @@ func sourceEvidencePendingRedirectRelevantAfterBodyEvidence(brief workerruntime.
 	candidates = append(candidates, pathparse.MentionedWorkspacePaths(brief.Objective)...)
 
 	for _, candidate := range candidates {
-		if normalizeRunnerPath(candidate) == path {
+		if agentutil.NormalizeRunnerPath(candidate) == path {
 			return true
 		}
 	}
@@ -254,7 +254,7 @@ func sourceEvidencePathSharesObjectiveTerm(path string, objective string) bool {
 // attempts on a path. When attempts reach maxObligationResolutionAttempts
 // the obligation is treated as unresolvable.
 func sourceEvidenceObligationResolutionAttempts(path string, results []workspace.ToolResult) int {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return 0
 	}
@@ -291,7 +291,7 @@ func reverseSourceEvidenceObligations(values []sourceEvidenceObligation) {
 }
 
 func sourceEvidencePendingRedirectForPath(path string, results []workspace.ToolResult) (sourceEvidenceObligation, bool) {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return sourceEvidenceObligation{}, false
 	}
@@ -306,7 +306,7 @@ func sourceEvidencePendingRedirectForPath(path string, results []workspace.ToolR
 }
 
 func sourceEvidencePendingRedirectFollowupAllowed(req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	tool := strings.TrimSpace(req.Tool)
 
 	if path == "" || tool == "" {
@@ -319,7 +319,7 @@ func sourceEvidencePendingRedirectFollowupAllowed(req workspace.ToolRequest, res
 }
 
 func sourceEvidencePendingRedirectFollowupAllowedForBrief(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	tool := strings.TrimSpace(req.Tool)
 
 	if path == "" || tool == "" {
@@ -336,7 +336,7 @@ func sourceEvidencePendingRedirectFollowupAllowedForBrief(brief workerruntime.Wo
 }
 
 func sourceEvidencePendingRedirectProgressAllowedForBrief(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	tool := strings.TrimSpace(req.Tool)
 
 	if path == "" || tool == "" {
@@ -399,7 +399,7 @@ func sourceEvidenceReadOnlyCapabilitySourceBodyRequest(req workspace.ToolRequest
 }
 
 func sourceEvidencePendingRedirectOutlineProgressAllowed(obligation sourceEvidenceObligation, req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	if normalizeRunnerPath(req.Path) != strings.TrimSpace(obligation.Path) {
+	if agentutil.NormalizeRunnerPath(req.Path) != strings.TrimSpace(obligation.Path) {
 		return false
 	}
 
@@ -435,7 +435,7 @@ func sourceEvidencePendingRedirectOutlineProgressAllowed(obligation sourceEviden
 }
 
 func sourceEvidenceOutlineReadForPath(path string, results []workspace.ToolResult) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -469,7 +469,7 @@ func sourceEvidenceOutlineReadForPath(path string, results []workspace.ToolResul
 
 func sourceEvidenceToolResultMentionsPath(result workspace.ToolResult, path string) bool {
 	for _, readPath := range agentutil.ReadPathsFromToolResult(result) {
-		if normalizeRunnerPath(readPath) == path {
+		if agentutil.NormalizeRunnerPath(readPath) == path {
 			return true
 		}
 	}

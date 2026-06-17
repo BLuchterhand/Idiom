@@ -33,8 +33,8 @@ func TestVerificationContractSkipsGate(t *testing.T) {
 		{"  not_required_for_x  ", false},
 	}
 	for _, tc := range cases {
-		if got := verificationContractSkipsGate(tc.contract); got != tc.want {
-			t.Errorf("verificationContractSkipsGate(%q) = %v, want %v", tc.contract, got, tc.want)
+		if got := workerruntime.VerificationContractSkipsGate(tc.contract); got != tc.want {
+			t.Errorf("workerruntime.VerificationContractSkipsGate(%q) = %v, want %v", tc.contract, got, tc.want)
 		}
 	}
 }

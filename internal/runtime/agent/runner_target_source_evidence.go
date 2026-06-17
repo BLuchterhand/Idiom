@@ -8,10 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"idiom/internal/runtime/agent/agentutil"
+	"slices"
 )
 
 func (r *Runner) implementationTargetSourceWriteBeforeEvidenceRedirect(req workspace.ToolRequest, results []workspace.ToolResult, currentAllowedTools []string) (workspace.ToolRequest, string, bool) {
-	if r == nil || !runnerAllowsTool(currentAllowedTools, workspace.ToolNameReadFile) {
+	if r == nil || !slices.Contains(currentAllowedTools, workspace.ToolNameReadFile) {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -24,7 +26,7 @@ func (r *Runner) implementationTargetSourceWriteBeforeEvidenceRedirect(req works
 		return workspace.ToolRequest{}, "", false
 	}
 
-	target := normalizeRunnerPath(paths[0])
+	target := agentutil.NormalizeRunnerPath(paths[0])
 	if target == "" || concreteSourceEvidenceReadForPath(target, results) {
 		return workspace.ToolRequest{}, "", false
 	}
@@ -49,11 +51,11 @@ type implementationDeferredSourceEvidenceWrite struct {
 }
 
 func newImplementationDeferredSourceEvidenceWrite(req workspace.ToolRequest, raw string, evidencePath string) *implementationDeferredSourceEvidenceWrite {
-	target := normalizeRunnerPath(evidencePath)
+	target := agentutil.NormalizeRunnerPath(evidencePath)
 	if target == "" {
 		paths := writeRequestPaths(req)
 		if len(paths) == 1 {
-			target = normalizeRunnerPath(paths[0])
+			target = agentutil.NormalizeRunnerPath(paths[0])
 		}
 	}
 
@@ -136,7 +138,7 @@ func (d *implementationDeferredSourceEvidenceWrite) fallbackVerificationRequest(
 		return workspace.ToolRequest{}, false
 	}
 
-	path := normalizeRunnerPath(paths[0])
+	path := agentutil.NormalizeRunnerPath(paths[0])
 	if path == "" {
 		return workspace.ToolRequest{}, false
 	}
@@ -163,9 +165,9 @@ func (d *implementationDeferredSourceEvidenceWrite) replayAllowedForRequest(req 
 		return false
 	}
 
-	target := normalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 	if target == "" {
-		target = normalizeRunnerPath(req.Path)
+		target = agentutil.NormalizeRunnerPath(req.Path)
 	}
 
 	return target == d.EvidencePath
@@ -187,7 +189,7 @@ func implementationDeferredWriteHasHistoryEvidence(req workspace.ToolRequest, re
 }
 
 func implementationDeferredWriteCoveredBySourceEvidence(req workspace.ToolRequest, path string, results []workspace.ToolResult, allowAnchorMismatch bool) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -214,7 +216,7 @@ func implementationDeferredWriteCoveredBySourceEvidence(req workspace.ToolReques
 }
 
 func implementationSourceEvidenceTextContains(path string, results []workspace.ToolResult, want string) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	want = strings.TrimSpace(want)
 
 	if path == "" || want == "" {
@@ -257,7 +259,7 @@ func planThenExecuteCandidateSourceReadyResult(result workspace.ToolResult) bool
 
 func currentToolSurfaceRejection(req workspace.ToolRequest, allowedTools []string) (string, string, bool) {
 	tool := strings.TrimSpace(req.Tool)
-	if tool == "" || runnerAllowsTool(allowedTools, tool) {
+	if tool == "" || slices.Contains(allowedTools, tool) {
 		return "", "", false
 	}
 
@@ -332,7 +334,7 @@ func implementationTargetSourceWriteTargetsHaveEvidence(req workspace.ToolReques
 	}
 
 	for _, path := range paths {
-		path = normalizeRunnerPath(path)
+		path = agentutil.NormalizeRunnerPath(path)
 		if path == "" || !concreteSourceEvidenceReadForPath(path, results) {
 			return false
 		}

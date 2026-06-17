@@ -14,6 +14,7 @@ import (
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/workerruntime"
+	"slices"
 )
 
 func readOnlyInvestigationStrategyPrompt() string {
@@ -117,13 +118,13 @@ func (p delegatedDiscoveryPlan) repairDiscoveryQuery(req workspace.ToolRequest) 
 }
 
 func (p delegatedDiscoveryPlan) candidateConsumptionRequest(results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
-	if !containsRunnerTool(allowedTools, "read_file") || len(delegatedReadOnlySourceBodyEvidencePaths(results)) > 0 {
+	if !slices.Contains(allowedTools, "read_file") || len(delegatedReadOnlySourceBodyEvidencePaths(results)) > 0 {
 		return workspace.ToolRequest{}, false
 	}
 
 	paths := p.consumableSourceBodyCandidatePaths(results, 6)
 	for _, path := range paths {
-		path = normalizeRunnerPath(path)
+		path = agentutil.NormalizeRunnerPath(path)
 		if path == "" || concreteSourceEvidenceReadForPath(path, results) {
 			continue
 		}
@@ -386,7 +387,7 @@ func delegatedDiscoveryConsumableMechanismScore(path string, layerName string, l
 	haystack := strings.ToLower(filepath.ToSlash(path) + "\n" + line)
 	score := 0
 
-	if containsAny(haystack,
+	if agentutil.ContainsAny(haystack,
 		"compose", "composer", "composition", "synthesis", "synthesize", "final response", "final answer",
 		"closeout", "readiness", "completion", "acceptance", "grounded evidence", "mechanism", "contract",
 	) {
@@ -394,11 +395,11 @@ func delegatedDiscoveryConsumableMechanismScore(path string, layerName string, l
 		score += 55
 	}
 
-	if containsAny(haystack, "implementation path", "implementation anchor", "source anchor", "source-body", "source body") {
+	if agentutil.ContainsAny(haystack, "implementation path", "implementation anchor", "source anchor", "source-body", "source body") {
 		score += 25
 	}
 
-	if containsAny(haystack, "capability:", "language:", "symbol index:", "related files:", "found related") {
+	if agentutil.ContainsAny(haystack, "capability:", "language:", "symbol index:", "related files:", "found related") {
 		score -= 35
 	}
 
@@ -414,7 +415,7 @@ func delegatedDiscoveryConsumableInventoryScore(layerName string, line string) i
 		score -= 20
 	}
 
-	if containsAny(lower,
+	if agentutil.ContainsAny(lower,
 		"no go workspace symbols matched",
 		"no workspace symbols matched",
 		"no symbols matched",
@@ -488,7 +489,7 @@ func (p delegatedDiscoveryPlan) purposeSupportedByObjective(purpose string) bool
 	switch strings.TrimSpace(purpose) {
 	case "security_review":
 		lower := strings.ToLower(p.objective)
-		return containsAny(lower, "security", "unsafe", "vulnerability", "injection", "secret", "token")
+		return agentutil.ContainsAny(lower, "security", "unsafe", "vulnerability", "injection", "secret", "token")
 	default:
 		return true
 	}
@@ -504,7 +505,7 @@ func (p delegatedDiscoveryPlan) shouldReplacePath(path string) bool {
 		return true
 	}
 
-	if delegatedReadOnlyBroadNamedScope(path) && p.primaryScope != "" && p.primaryScope != "." && normalizeRunnerPath(path) != normalizeRunnerPath(p.primaryScope) {
+	if delegatedReadOnlyBroadNamedScope(path) && p.primaryScope != "" && p.primaryScope != "." && agentutil.NormalizeRunnerPath(path) != agentutil.NormalizeRunnerPath(p.primaryScope) {
 		return true
 	}
 
@@ -512,7 +513,7 @@ func (p delegatedDiscoveryPlan) shouldReplacePath(path string) bool {
 }
 
 func (p delegatedDiscoveryPlan) pathOutsideDetailedScope(path string) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" || path == "." || len(p.detailedScopes) == 0 {
 		return false
 	}
@@ -609,12 +610,12 @@ func (p delegatedDiscoveryPlan) computeDetailedNamedScopes() []string {
 	var scopes []string
 
 	for _, candidate := range p.namedScopes {
-		candidate = normalizeRunnerPath(strings.Trim(strings.TrimSpace(candidate), "`'\""))
+		candidate = agentutil.NormalizeRunnerPath(strings.Trim(strings.TrimSpace(candidate), "`'\""))
 		if candidate == "" || candidate == "." || delegatedReadOnlyBroadNamedScope(candidate) || delegatedReadOnlySecondaryEvidencePath(candidate) {
 			continue
 		}
 
-		scopes = mergeRunnerStateStrings(scopes, []string{candidate})
+		scopes = util.Merge(scopes, []string{candidate})
 	}
 
 	return scopes
@@ -627,13 +628,13 @@ func (p delegatedDiscoveryPlan) computePurpose() string {
 	}
 
 	switch {
-	case containsAny(lower, "security", "unsafe", "vulnerability", "injection", "secret", "token"):
+	case agentutil.ContainsAny(lower, "security", "unsafe", "vulnerability", "injection", "secret", "token"):
 		return "security_review"
-	case containsAny(lower, "git history", "history of", "historical", "evolution", "changed over time", "regression introduced"):
+	case agentutil.ContainsAny(lower, "git history", "history of", "historical", "evolution", "changed over time", "regression introduced"):
 		return "history_context"
-	case containsAny(lower, "call", "calls", "trace", "tracing", "invoked", "invoke", "entrypoint"):
+	case agentutil.ContainsAny(lower, "call", "calls", "trace", "tracing", "invoked", "invoke", "entrypoint"):
 		return "function_tracing"
-	case containsAny(lower, "impact", "blast radius", "affected", "change"):
+	case agentutil.ContainsAny(lower, "impact", "blast radius", "affected", "change"):
 		return "impact_analysis"
 	default:
 		return "architecture_boundary"
@@ -996,7 +997,7 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		decision.Raw = marshalToolRequestRaw(redirected)
 	}
 
-	if debugLogEvidenceSatisfied(r.RuntimeBrief, input.Results) && isReadClassTool(decision.Request) {
+	if debugLogEvidenceSatisfied(r.RuntimeBrief, input.Results) && workspace.IsReadTool(strings.TrimSpace(decision.Request.Tool)) {
 		decision.RejectSummary = "Debug-log contract rejected extra exploration after evidence was satisfied"
 		decision.RejectError = "you already have a concrete failure hit from the selected log and a nearby read window. A final answer is available if that evidence supports it; otherwise name the specific missing datum before another probe."
 		decision.RejectStopReason = "debug_logs_post_evidence_drift"
@@ -1186,7 +1187,7 @@ func conversationTargetedContentSearch(req workspace.ToolRequest) bool {
 		return false
 	}
 
-	return postReadinessGap(req) != "" || conversationConcreteSearchScope(req.Path)
+	return util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) != "" || conversationConcreteSearchScope(req.Path)
 }
 
 func conversationTargetedContextZoom(req workspace.ToolRequest) bool {
@@ -1198,7 +1199,7 @@ func conversationTargetedContextZoom(req workspace.ToolRequest) bool {
 		return false
 	}
 
-	return strings.TrimSpace(req.Resolution) != "" || req.IncludeSource || postReadinessGap(req) != ""
+	return strings.TrimSpace(req.Resolution) != "" || req.IncludeSource || util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) != ""
 }
 
 func conversationTargetedFileNameSearch(req workspace.ToolRequest) bool {
@@ -1214,7 +1215,7 @@ func conversationTargetedFileNameSearch(req workspace.ToolRequest) bool {
 		return false
 	}
 
-	return postReadinessGap(req) != "" || conversationFileSearchPatternIsConcrete(pattern)
+	return util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) != "" || conversationFileSearchPatternIsConcrete(pattern)
 }
 
 func conversationConcreteSearchScope(path string) bool {
@@ -1333,7 +1334,7 @@ func conversationNamedEvidencePaths(brief workerruntime.WorkerRuntimeBrief) []st
 	seen := map[string]struct{}{}
 
 	for _, candidate := range candidates {
-		path := normalizeRunnerPath(candidate)
+		path := agentutil.NormalizeRunnerPath(candidate)
 		if path == "" || !pathparse.HasWorkspaceFileExtension(path) {
 			continue
 		}
@@ -1432,7 +1433,7 @@ func (r *Runner) mainReadOnlyDelegationBootstrapRequest(results []workspace.Tool
 		return workspace.ToolRequest{}, false
 	}
 
-	if mainReadOnlyDelegationBootstrapEvidenceSeen(results) || !prefersEarlyReadOnlyDelegation(r.RuntimeBrief) || strings.TrimSpace(req.Tool) == "task" || !isReadClassTool(req) {
+	if mainReadOnlyDelegationBootstrapEvidenceSeen(results) || !prefersEarlyReadOnlyDelegation(r.RuntimeBrief) || strings.TrimSpace(req.Tool) == "task" || !workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
 		return workspace.ToolRequest{}, false
 	}
 
@@ -1444,7 +1445,7 @@ func (r *Runner) mainReadOnlyDelegationBootstrapRequest(results []workspace.Tool
 		return workspace.ToolRequest{}, false
 	}
 
-	if r.Workspace == nil || !containsRunnerTool(r.advertisedAllowedTools(r.Workspace.AllowedTools()), "task") {
+	if r.Workspace == nil || !slices.Contains(r.advertisedAllowedTools(r.Workspace.AllowedTools()), "task") {
 		return workspace.ToolRequest{}, false
 	}
 
@@ -1471,7 +1472,7 @@ func mainReadOnlyObjectiveShouldDelegate(objective string) bool {
 		return false
 	}
 
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		"architecture", "boundary", "boundaries", "flow", "handoff", "lifecycle", "orchestration",
 		"how does", "how this", "explain how", "trace", "call", "calls", "invoked", "invoke",
 		"subagent", "sub-agent", "sub agent", "child task", "child runner",
@@ -1493,7 +1494,7 @@ func mainReadOnlyObjectiveIsConcreteFeatureQuestion(lower string) bool {
 		return true
 	}
 
-	return containsAny(lower, " mode do", " feature do")
+	return agentutil.ContainsAny(lower, " mode do", " feature do")
 }
 
 func mainReadOnlyDelegationBootstrapEvidenceSeen(results []workspace.ToolResult) bool {
@@ -1507,7 +1508,7 @@ func mainReadOnlyDelegationBootstrapEvidenceSeen(results []workspace.ToolResult)
 			return true
 		}
 
-		if isReadClassTool(workspace.ToolRequest{Tool: tool}) && strings.TrimSpace(result.Output) != "" {
+		if workspace.IsReadTool(strings.TrimSpace(tool)) && strings.TrimSpace(result.Output) != "" {
 			return true
 		}
 	}
@@ -1531,11 +1532,11 @@ func (r *Runner) mainReadOnlyBroadSearchContextPackRequest(results []workspace.T
 		return workspace.ToolRequest{}, false
 	}
 
-	if strings.TrimSpace(req.Tool) != workspace.ToolNameSearchContent || !containsRunnerTool(r.RuntimeBrief.AllowedTools, workspace.ToolNameContextPack) {
+	if strings.TrimSpace(req.Tool) != workspace.ToolNameSearchContent || !slices.Contains(r.RuntimeBrief.AllowedTools, workspace.ToolNameContextPack) {
 		return workspace.ToolRequest{}, false
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path != "" && path != "." {
 		return workspace.ToolRequest{}, false
 	}
@@ -1685,7 +1686,7 @@ func delegatedReadOnlyPostDiscoveryOutlineReadRedirect(results []workspace.ToolR
 		return workspace.ToolRequest{}, false
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path == "" || !delegatedDiscoveryConsumableSourcePath(path) || concreteSourceEvidenceReadForPath(path, results) {
 		return workspace.ToolRequest{}, false
 	}
@@ -1722,7 +1723,7 @@ func (r *Runner) delegatedReadOnlyFirstExistingDetailedScope(plan delegatedDisco
 }
 
 func (r *Runner) delegatedReadOnlyDiscoveryPathMissing(path string) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if r == nil || r.Workspace == nil || path == "" || path == "." {
 		return false
 	}
@@ -1788,11 +1789,11 @@ func (r *Runner) delegatedReadOnlyBootstrapQueryRequest(results []workspace.Tool
 		return workspace.ToolRequest{}, false
 	}
 
-	if strings.TrimSpace(req.Tool) == "discovery_query" || !isReadClassTool(req) {
+	if strings.TrimSpace(req.Tool) == "discovery_query" || !workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
 		return workspace.ToolRequest{}, false
 	}
 
-	if !containsRunnerTool(r.RuntimeBrief.AllowedTools, "discovery_query") {
+	if !slices.Contains(r.RuntimeBrief.AllowedTools, "discovery_query") {
 		return workspace.ToolRequest{}, false
 	}
 
@@ -1829,7 +1830,7 @@ func delegatedReadOnlyObjectiveRequiresDiscoveryQuery(objective string) bool {
 	// This classifier only identifies broad child-runner mechanism questions
 	// that need composite discovery. Exact source anchors are preserved by
 	// delegatedReadOnlyBootstrapQueryRequest before this predicate is consulted.
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		"discovery tool",
 		"discovery tools",
 		"tool usefulness",
@@ -1848,7 +1849,7 @@ func delegatedReadOnlyObjectiveRequiresDiscoveryQuery(objective string) bool {
 
 func delegatedReadOnlyObjectiveHasExactPrimarySourceAnchor(objective string) bool {
 	for _, path := range pathparse.MentionedWorkspacePaths(objective) {
-		path = normalizeRunnerPath(path)
+		path = agentutil.NormalizeRunnerPath(path)
 		if path == "" || delegatedReadOnlySecondaryEvidencePath(path) || delegatedReadOnlyMentionedPathIsPattern(path) {
 			continue
 		}
@@ -1863,7 +1864,7 @@ func delegatedReadOnlyObjectiveHasExactPrimarySourceAnchor(objective string) boo
 
 func delegatedReadOnlyCompositeQuestionOverridesExactSourceAnchor(objective string) bool {
 	lower := strings.ToLower(strings.Join(strings.Fields(objective), " "))
-	return containsAny(lower, "discovery tool", "discovery tools", "tool usefulness", "increase their usefulness", "overall usefulness")
+	return agentutil.ContainsAny(lower, "discovery tool", "discovery tools", "tool usefulness", "increase their usefulness", "overall usefulness")
 }
 
 func delegatedReadOnlyMentionedPathIsPattern(path string) bool {
@@ -1882,7 +1883,7 @@ func delegatedReadOnlyMentionedPathIsPattern(path string) bool {
 
 func delegatedReadOnlyChildMechanismQuestion(objective string) bool {
 	lower := strings.ToLower(strings.Join(strings.Fields(delegatedDisplayQuestion(objective)), " "))
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		"subagent",
 		"sub-agent",
 		"sub agent",
@@ -1947,7 +1948,7 @@ func delegatedReadOnlyLikelySourceCandidates(objective string) []string {
 func delegatedObjectiveNeedsEntrypointScope(objective string) bool {
 	lower := strings.ToLower(objective)
 
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		"entrypoint",
 		"entry point",
 		"main entry",
@@ -1982,7 +1983,7 @@ func delegatedReadOnlyBootstrapSearchRequest(objective string) (workspace.ToolRe
 }
 
 func delegatedReadOnlyBootstrapStructuredRequest(objective string, allowedTools []string) (workspace.ToolRequest, bool) {
-	if !containsRunnerTool(allowedTools, "go_workspace_symbol") {
+	if !slices.Contains(allowedTools, "go_workspace_symbol") {
 		return workspace.ToolRequest{}, false
 	}
 
@@ -2004,7 +2005,7 @@ func delegatedReadOnlyBootstrapScope(objective string) string {
 }
 
 func delegatedReadOnlyBroadNamedScope(scope string) bool {
-	switch normalizeRunnerPath(scope) {
+	switch agentutil.NormalizeRunnerPath(scope) {
 	case "internal", "pkg", "src", "cmd", "prompts", "docs":
 		return true
 	default:
@@ -2205,13 +2206,13 @@ func delegatedReadOnlyMechanismTerms(objective string) []string {
 	lower := strings.ToLower(delegatedDisplayQuestion(objective))
 	terms := make([]string, 0, 6)
 
-	if containsAny(lower, "invoke", "invoked", "execute", "executed", "run", "runner", "workflow", "wired") {
+	if agentutil.ContainsAny(lower, "invoke", "invoked", "execute", "executed", "run", "runner", "workflow", "wired") {
 		for _, term := range []string{"invoke", "execute"} {
 			terms = util.AppendUnique(terms, term)
 		}
 	}
 
-	if containsAny(lower, "subagent", "sub-agent", "sub agent") {
+	if agentutil.ContainsAny(lower, "subagent", "sub-agent", "sub agent") {
 		for _, term := range []string{"child task", "task tool", "delegate", "delegation"} {
 			terms = util.AppendUnique(terms, term)
 		}
@@ -2243,7 +2244,7 @@ func (r *Runner) delegatedReadOnlyNamedFileReadRedirect(results []workspace.Tool
 		return workspace.ToolRequest{}, false
 	}
 
-	if containsRunnerTool(r.RuntimeBrief.AllowedTools, "go_file_outline") {
+	if slices.Contains(r.RuntimeBrief.AllowedTools, "go_file_outline") {
 		return workspace.ToolRequest{Tool: "go_file_outline", Path: path}, true
 	}
 
@@ -2368,7 +2369,7 @@ func (r *Runner) delegatedReadOnlyAnswerReadyAfterResult(req workspace.ToolReque
 		if !closure.Answerable() {
 			return false
 		}
-	case isReadClassTool(workspace.ToolRequest{Tool: tool}):
+	case workspace.IsReadTool(strings.TrimSpace(tool)):
 		if !closure.Answerable() {
 			return false
 		}

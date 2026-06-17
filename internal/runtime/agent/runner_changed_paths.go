@@ -6,18 +6,15 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/runtime/agent/agentutil"
-	"idiom/internal/runtime/agent/stringset"
 	"idiom/internal/runtime/workerruntime"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
+	"idiom/internal/platform/util"
 )
 
-func appendUniqueRunnerStrings(values []string, additions ...string) []string {
-	return stringset.AppendUnique(values, additions...)
-}
 
 func changedPathsFromToolResults(results []workspace.ToolResult) map[string]struct{} {
 	paths := make(map[string]struct{})
@@ -28,7 +25,7 @@ func changedPathsFromToolResults(results []workspace.ToolResult) map[string]stru
 		}
 
 		for _, path := range changedPathsFromToolResult(result) {
-			paths[normalizeRunnerPath(path)] = struct{}{}
+			paths[agentutil.NormalizeRunnerPath(path)] = struct{}{}
 		}
 	}
 
@@ -52,10 +49,10 @@ func unresolvedRejectedMutationPaths(results []workspace.ToolResult, requiredPat
 
 		paths := readOnlySourceLikePaths(agentutil.ReadPathsFromToolResult(result), 8)
 
-		paths = mergeRunnerStateStrings(paths, readOnlySourceLikePaths(sourceLikePathsFromText(result.Summary+"\n"+result.Output+"\n"+result.Error, 8), 8))
+		paths = util.Merge(paths, readOnlySourceLikePaths(sourceLikePathsFromText(result.Summary+"\n"+result.Output+"\n"+result.Error, 8), 8))
 
 		for _, path := range paths {
-			path = normalizeRunnerPath(path)
+			path = agentutil.NormalizeRunnerPath(path)
 			if path == "" {
 				continue
 			}
@@ -70,7 +67,7 @@ func unresolvedRejectedMutationPaths(results []workspace.ToolResult, requiredPat
 				continue
 			}
 
-			rejected = appendUniqueRunnerStrings(rejected, path)
+			rejected = util.AppendUniqueMulti(rejected, path)
 		}
 	}
 
@@ -104,7 +101,7 @@ func unsupportedClaimedChangedPaths(reply string, results []workspace.ToolResult
 }
 
 func claimedPathMatchesActualBasename(claimed string, actual map[string]struct{}) bool {
-	claimed = normalizeRunnerPath(claimed)
+	claimed = agentutil.NormalizeRunnerPath(claimed)
 	if claimed == "" || strings.Contains(claimed, "/") {
 		return false
 	}
@@ -121,7 +118,7 @@ func claimedPathMatchesActualBasename(claimed string, actual map[string]struct{}
 }
 
 func looksLikeStrictChangedPathClaim(path string) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -153,7 +150,7 @@ func missingRequiredEditPaths(required []string, actual map[string]struct{}) []s
 	seen := make(map[string]struct{}, len(required))
 
 	for _, path := range required {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -364,7 +361,7 @@ func testDeclarationFromLine(line string) (key string, display string, ok bool) 
 
 func replyReportsRemovedTests(reply string, removed []string) bool {
 	lower := strings.ToLower(reply)
-	if !containsAny(lower, "removed test", "deleted test", "dropped test", "removed existing test", "test removal", "removed tests", "deleted tests", "dropped tests") {
+	if !agentutil.ContainsAny(lower, "removed test", "deleted test", "dropped test", "removed existing test", "test removal", "removed tests", "deleted tests", "dropped tests") {
 		return false
 	}
 
@@ -409,7 +406,7 @@ func removedTestDeclarationTerms(declaration string) []string {
 }
 
 func requiredEditSnippetCandidatePaths(snippet workerruntime.RequiredEditSnippet, required []string, changed map[string]struct{}) []string {
-	if path := normalizeRunnerPath(snippet.Path); path != "" {
+	if path := agentutil.NormalizeRunnerPath(snippet.Path); path != "" {
 		return []string{path}
 	}
 
@@ -418,7 +415,7 @@ func requiredEditSnippetCandidatePaths(snippet workerruntime.RequiredEditSnippet
 	seen := make(map[string]struct{})
 
 	for _, path := range required {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -449,7 +446,7 @@ func requiredEditSnippetPresent(root string, candidates []string, snippet string
 	}
 
 	for _, candidate := range candidates {
-		path := normalizeRunnerPath(candidate)
+		path := agentutil.NormalizeRunnerPath(candidate)
 		if path == "" || filepath.IsAbs(path) {
 			continue
 		}
@@ -572,7 +569,7 @@ func claimedChangedPathsFromAnswer(reply string) []string {
 		}
 
 		for _, path := range lineCandidates {
-			path = normalizeRunnerPath(path)
+			path = agentutil.NormalizeRunnerPath(path)
 			if path == "" {
 				continue
 			}
@@ -627,7 +624,7 @@ func changedPathsSectionStop(lower string, pathsSeen bool) bool {
 		return false
 	}
 
-	return containsAny(lower, "verification", "test", "planner", "blocker", "validation", "lane sanity")
+	return agentutil.ContainsAny(lower, "verification", "test", "planner", "blocker", "validation", "lane sanity")
 }
 
 func changedPathsSectionStatusLabel(label string) bool {
@@ -738,12 +735,6 @@ func changedGoMovePathsFromSummary(summary string) []string {
 	return paths
 }
 
-func normalizeRunnerPath(path string) string {
-	path = strings.TrimSpace(path)
-	path = strings.TrimPrefix(path, "./")
-
-	return path
-}
 
 func mapKeys(values map[string]struct{}) []string {
 	keys := make([]string, 0, len(values))
@@ -756,9 +747,6 @@ func mapKeys(values map[string]struct{}) []string {
 	return keys
 }
 
-func isWriteTool(req workspace.ToolRequest) bool {
-	return workspace.IsWorkspaceWriteTool(req.Tool)
-}
 
 func isVerificationRequest(req workspace.ToolRequest) bool {
 	tool := strings.TrimSpace(req.Tool)
@@ -766,7 +754,7 @@ func isVerificationRequest(req workspace.ToolRequest) bool {
 		return true
 	}
 
-	if isDiagnosticsVerificationTool(tool) {
+	if workspace.IsDiagnosticToolName(tool) {
 		return true
 	}
 
@@ -779,7 +767,7 @@ func isVerificationRequest(req workspace.ToolRequest) bool {
 }
 
 func hasPendingVerificationAfterWrites(results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) bool {
-	if verificationContractSkipsGate(brief.VerificationContract) {
+	if workerruntime.VerificationContractSkipsGate(brief.VerificationContract) {
 		return false
 	}
 

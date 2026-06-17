@@ -670,7 +670,7 @@ func normalizeCodeNavigateMissingCapability(req *workspace.ToolRequest) bool {
 	}
 
 	mode := strings.TrimSpace(req.Mode)
-	if mode != "" && visibleCodeNavigateCapability(mode) {
+	if mode != "" && workspace.CodeNavigateCapabilityAlias(mode) != "" {
 		req.Capability = mode
 		return true
 	}
@@ -680,7 +680,7 @@ func normalizeCodeNavigateMissingCapability(req *workspace.ToolRequest) bool {
 	symbol := strings.TrimSpace(req.Symbol)
 	target := util.FirstNonEmpty(pattern, query, symbol)
 
-	if target != "" && !visibleCodeNavigateCapability(target) {
+	if target != "" && workspace.CodeNavigateCapabilityAlias(target) == "" {
 		req.Capability = "read_symbol"
 		if strings.TrimSpace(req.Pattern) == "" {
 			req.Pattern = target
@@ -694,7 +694,7 @@ func normalizeCodeNavigateMissingCapability(req *workspace.ToolRequest) bool {
 	}
 
 	req.Capability = "file_outline"
-	if target != "" && visibleCodeNavigateCapability(target) {
+	if target != "" && workspace.CodeNavigateCapabilityAlias(target) != "" {
 		req.Pattern = ""
 		req.Query = ""
 		req.Symbol = ""

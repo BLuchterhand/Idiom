@@ -24,7 +24,7 @@ func (r *Runner) repeatedRangeLessReadFileRejection(req workspace.ToolRequest, r
 		return "", "", false
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path == "" {
 		return "", "", false
 	}
@@ -268,7 +268,7 @@ func (r *Runner) repeatedRangeLessReadFileRedirect(req workspace.ToolRequest, re
 		return workspace.ToolRequest{}, "", false
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path == "" || !rangeLessReadFileWasRedirectedToOutline(path, results) || concreteSourceEvidenceReadForPath(path, results) {
 		return workspace.ToolRequest{}, "", false
 	}
@@ -278,7 +278,7 @@ func (r *Runner) repeatedRangeLessReadFileRedirect(req workspace.ToolRequest, re
 		return workspace.ToolRequest{}, "", false
 	}
 
-	if len(allowedTools) > 0 && !runnerAllowsTool(allowedTools, followup.Tool) {
+	if len(allowedTools) > 0 && !slices.Contains(allowedTools, followup.Tool) {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -297,7 +297,7 @@ func (r *Runner) planThenExecuteCandidateRangeLessReadRedirect(req workspace.Too
 		return workspace.ToolRequest{}, "", false
 	}
 
-	target := normalizeRunnerPath(req.Path)
+	target := agentutil.NormalizeRunnerPath(req.Path)
 	if target == "" {
 		return workspace.ToolRequest{}, "", false
 	}
@@ -308,7 +308,7 @@ func (r *Runner) planThenExecuteCandidateRangeLessReadRedirect(req workspace.Too
 
 	candidateSet := make(map[string]struct{})
 	for _, path := range candidateRecoveryScopePaths(r.RuntimeBrief, results, 8) {
-		candidateSet[normalizeRunnerPath(path)] = struct{}{}
+		candidateSet[agentutil.NormalizeRunnerPath(path)] = struct{}{}
 	}
 
 	if _, ok := candidateSet[target]; !ok {
@@ -337,11 +337,11 @@ func (r *Runner) planThenExecuteMalformedSymbolReadRedirect(req workspace.ToolRe
 		return workspace.ToolRequest{}, "", false
 	}
 
-	if !runnerAllowsTool(allowedTools, workspace.ToolNameReadFile) {
+	if !slices.Contains(allowedTools, workspace.ToolNameReadFile) {
 		return workspace.ToolRequest{}, "", false
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path == "" {
 		return workspace.ToolRequest{}, "", false
 	}
@@ -386,11 +386,11 @@ func (r *Runner) planThenExecuteRepeatedSymbolReadFallbackRedirect(req workspace
 		return workspace.ToolRequest{}, "", false
 	}
 
-	if !runnerAllowsTool(allowedTools, workspace.ToolNameReadFile) {
+	if !slices.Contains(allowedTools, workspace.ToolNameReadFile) {
 		return workspace.ToolRequest{}, "", false
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path == "" || concreteSourceEvidenceReadForPath(path, results) {
 		return workspace.ToolRequest{}, "", false
 	}
@@ -493,7 +493,7 @@ func (r *Runner) repeatedRangeLessReadFileFollowup(path string, results []worksp
 }
 
 func rangeLessReadFileWasRedirectedToOutline(path string, results []workspace.ToolResult) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -533,22 +533,22 @@ func concreteSourceEvidenceReadForPath(path string, results []workspace.ToolResu
 }
 
 func concreteSourceEvidenceResultMatchesPath(result workspace.ToolResult, path string) bool {
-	path = normalizeRunnerPath(path)
-	if path == "" || isNonSourceEvidenceArtifactPath(path) {
+	path = agentutil.NormalizeRunnerPath(path)
+	if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) {
 		return false
 	}
 
 	if strings.TrimSpace(result.Tool) == workspace.ToolNameReadFile {
-		readPath := normalizeRunnerPath(agentutil.ExtractReadPathFromSummary(result.Summary))
-		return readPath == path && !isNonSourceEvidenceArtifactPath(readPath)
+		readPath := agentutil.NormalizeRunnerPath(agentutil.ExtractReadPathFromSummary(result.Summary))
+		return readPath == path && !agentutil.IsNonSourceEvidenceArtifactPath(readPath)
 	}
 
 	for _, readPath := range agentutil.ReadPathsFromToolResult(result) {
-		if isNonSourceEvidenceArtifactPath(readPath) {
+		if agentutil.IsNonSourceEvidenceArtifactPath(readPath) {
 			continue
 		}
 
-		if normalizeRunnerPath(readPath) == path {
+		if agentutil.NormalizeRunnerPath(readPath) == path {
 			return true
 		}
 	}
@@ -557,7 +557,7 @@ func concreteSourceEvidenceResultMatchesPath(result workspace.ToolResult, path s
 }
 
 func fullSourceReadFileSeen(path string, results []workspace.ToolResult) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -571,7 +571,7 @@ func fullSourceReadFileSeen(path string, results []workspace.ToolResult) bool {
 			continue
 		}
 
-		readPath := normalizeRunnerPath(agentutil.ExtractReadPathFromSummary(result.Summary))
+		readPath := agentutil.NormalizeRunnerPath(agentutil.ExtractReadPathFromSummary(result.Summary))
 		if readPath != path {
 			continue
 		}
@@ -836,7 +836,7 @@ func (r *Runner) markConcreteSourceEvidenceObserved(result workspace.ToolResult)
 	}
 
 	for _, path := range agentutil.ReadPathsFromToolResult(result) {
-		if isNonSourceEvidenceArtifactPath(path) {
+		if agentutil.IsNonSourceEvidenceArtifactPath(path) {
 			continue
 		}
 
@@ -859,7 +859,7 @@ func contextZoomResultHasConcreteSourceBody(result workspace.ToolResult) bool {
 	hasSourcePath := false
 
 	for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(text)) {
-		if isNonSourceEvidenceArtifactPath(path) {
+		if agentutil.IsNonSourceEvidenceArtifactPath(path) {
 			continue
 		}
 
@@ -889,7 +889,7 @@ func readFileResultHasConcreteSourceBody(result workspace.ToolResult) bool {
 	hasSourcePath := false
 
 	for _, path := range agentutil.ReadPathsFromToolResult(result) {
-		if isNonSourceEvidenceArtifactPath(path) {
+		if agentutil.IsNonSourceEvidenceArtifactPath(path) {
 			return false
 		}
 
@@ -913,7 +913,7 @@ func readFileResultHasConcreteSourceBody(result workspace.ToolResult) bool {
 
 func toolResultHasNonArtifactReadPath(result workspace.ToolResult) bool {
 	for _, path := range agentutil.ReadPathsFromToolResult(result) {
-		if isNonSourceEvidenceArtifactPath(path) {
+		if agentutil.IsNonSourceEvidenceArtifactPath(path) {
 			continue
 		}
 
@@ -1030,7 +1030,7 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 		}, true
 	}
 
-	if verificationContractSkipsGate(r.RuntimeBrief.VerificationContract) {
+	if workerruntime.VerificationContractSkipsGate(r.RuntimeBrief.VerificationContract) {
 		return workspace.ToolResult{}, false
 	}
 
@@ -1429,7 +1429,7 @@ func mutationReplyReportsConcreteNoopOrBlocker(lowerReply string) bool {
 		return false
 	}
 
-	if containsAny(lowerReply,
+	if agentutil.ContainsAny(lowerReply,
 		"<<question>>",
 		"blocked",
 		"blocker",
@@ -1449,8 +1449,8 @@ func mutationReplyReportsConcreteNoopOrBlocker(lowerReply string) bool {
 		return true
 	}
 
-	return containsAny(lowerReply, "already present", "already implemented", "already satisfied", "already up to date") &&
-		containsAny(lowerReply, "no change", "no-op", "no op", "nothing to change")
+	return agentutil.ContainsAny(lowerReply, "already present", "already implemented", "already satisfied", "already up to date") &&
+		agentutil.ContainsAny(lowerReply, "no change", "no-op", "no op", "nothing to change")
 }
 
 func mutationReplyClaimsCompletedWorkspaceChange(reply string) bool {
@@ -1460,8 +1460,8 @@ func mutationReplyClaimsCompletedWorkspaceChange(reply string) bool {
 	}
 
 	lower := strings.ToLower(strings.Join(strings.Fields(trimmed), " "))
-	if containsAny(lower, "already present", "already implemented", "already satisfied", "already up to date") &&
-		containsAny(lower, "no change", "no-op", "no op", "nothing to change") {
+	if agentutil.ContainsAny(lower, "already present", "already implemented", "already satisfied", "already up to date") &&
+		agentutil.ContainsAny(lower, "no change", "no-op", "no op", "nothing to change") {
 
 		return false
 	}
@@ -1469,7 +1469,7 @@ func mutationReplyClaimsCompletedWorkspaceChange(reply string) bool {
 	if len(pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(trimmed))) == 0 {
 		for _, fragment := range pathparse.QuotedFragments(trimmed) {
 			if _, ok := pathparse.NormalizeWorkspacePathToken(fragment); ok {
-				return containsAny(lower,
+				return agentutil.ContainsAny(lower,
 					"has been edited",
 					"have edited",
 					"has been updated",
@@ -1487,7 +1487,7 @@ func mutationReplyClaimsCompletedWorkspaceChange(reply string) bool {
 		return false
 	}
 
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		"has been edited",
 		"have edited",
 		"has been updated",
@@ -1646,7 +1646,7 @@ func (r *Runner) retryableFinalAnswerAcceptanceRejection(acceptance finalAnswerA
 		return false
 	}
 
-	tools := uniquePhaseStrings(append(append([]string(nil), brief.AllowedTools...), allowedTools...))
+	tools := util.Unique(append(append([]string(nil), brief.AllowedTools...), allowedTools...))
 
 	return len(genericReadOnlyEvidenceTools(tools)) > 0
 }
@@ -1661,7 +1661,7 @@ func retryableReadOnlyFinalAnswerRejectionForBrief(brief workerruntime.WorkerRun
 	}
 
 	return strings.TrimSpace(acceptance.BlockerKind) == "non_answer_prose" &&
-		containsAny(acceptance.Reason, "insufficient_evidence_answer", "answerable_evidence_reported_as_insufficient")
+		agentutil.ContainsAny(acceptance.Reason, "insufficient_evidence_answer", "answerable_evidence_reported_as_insufficient")
 }
 
 func retryableReadOnlyFinalAnswerBlockerKind(kind string) bool {
@@ -2024,7 +2024,7 @@ func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.To
 	target := ""
 
 	for _, rawTarget := range targets {
-		candidate := normalizeRunnerPath(rawTarget)
+		candidate := agentutil.NormalizeRunnerPath(rawTarget)
 		if candidate == "" {
 			continue
 		}

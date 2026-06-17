@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 func implementationScopedReadFileRequestInExplicitScope(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, req workspace.ToolRequest) bool {
@@ -104,7 +105,7 @@ func scopedImplementationRequiredPath(path string, required []string) string {
 }
 
 func cleanRelativeRunnerPath(path string) string {
-	normalized := normalizeRunnerPath(path)
+	normalized := agentutil.NormalizeRunnerPath(path)
 	if normalized == "" || filepath.IsAbs(normalized) {
 		return ""
 	}
@@ -143,7 +144,7 @@ func (r *Runner) preflightScopedImplementationBoundedSourceRead(req workspace.To
 		return verificationInterceptResult{}
 	}
 
-	relPath := normalizeRunnerPath(req.Path)
+	relPath := agentutil.NormalizeRunnerPath(req.Path)
 	if relPath == "" || strings.HasPrefix(relPath, "../") || relPath == ".." || filepath.IsAbs(relPath) {
 		return verificationInterceptResult{}
 	}

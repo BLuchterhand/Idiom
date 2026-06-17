@@ -7,6 +7,8 @@ import (
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/workerruntime"
 	"strings"
+	"idiom/internal/runtime/agent/agentutil"
+	"slices"
 )
 
 func (r *Runner) classifyTerminalAnswer(answer string, stopReason string, results []workspace.ToolResult) terminalAnswerDecision {
@@ -295,7 +297,7 @@ func (r *Runner) emitFinalAnswerBlockerOverride(acceptance finalAnswerAcceptance
 	}
 
 	if len(acceptance.RelevantSourceBodyPaths) > 0 {
-		payload["relevant_source_body_paths"] = cappedStrings(acceptance.RelevantSourceBodyPaths, 8)
+		payload["relevant_source_body_paths"] = util.LimitSlice(acceptance.RelevantSourceBodyPaths, 8)
 	}
 
 	r.emitEvent(marshalRunEvent("final_answer_blocker_override", payload))
@@ -354,10 +356,10 @@ func postWriteVerificationTelemetryCommand(req workspace.ToolRequest, result wor
 	}
 
 	if strings.TrimSpace(req.Tool) == workspace.ToolNameSourceSanity && strings.TrimSpace(req.Path) != "" {
-		return "source_sanity " + normalizeRunnerPath(req.Path)
+		return "source_sanity " + agentutil.NormalizeRunnerPath(req.Path)
 	}
 
-	if isDiagnosticsVerificationTool(req.Tool) {
+	if workspace.IsDiagnosticToolName(req.Tool) {
 		return strings.TrimSpace(req.Tool)
 	}
 
@@ -481,7 +483,7 @@ func (r *Runner) requiredEditPathsProgressMessage(req workspace.ToolRequest, res
 	)
 
 	for _, raw := range required {
-		path := normalizeRunnerPath(raw)
+		path := agentutil.NormalizeRunnerPath(raw)
 		if path == "" {
 			continue
 		}
@@ -650,16 +652,16 @@ func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, 
 	}
 
 	if readOnlyExplanationGateApplies(brief) {
-		paths := mergeRunnerStateStrings(exactProbeEvidencePaths(results), pathparse.MentionedWorkspacePaths(answer))
+		paths := util.Merge(exactProbeEvidencePaths(results), pathparse.MentionedWorkspacePaths(answer))
 		for _, packet := range readOnlyEvidencePacketsFromResults(results) {
 			if readOnlyEvidencePacketAnswerableForObjective(packet, brief.Objective) {
-				paths = mergeRunnerStateStrings(paths, packet.SourceBodyPaths, packet.InspectedPaths)
+				paths = util.Merge(paths, packet.SourceBodyPaths, packet.InspectedPaths)
 			}
 		}
 
-		paths = mergeRunnerStateStrings(paths, delegatedReadOnlyInspectedImplementationPaths(results))
+		paths = util.Merge(paths, delegatedReadOnlyInspectedImplementationPaths(results))
 		if len(paths) == 0 {
-			paths = mergeRunnerStateStrings(paths, mentionedEvidencePathsFromToolResultsForObjective(results, brief.Objective, 24))
+			paths = util.Merge(paths, mentionedEvidencePathsFromToolResultsForObjective(results, brief.Objective, 24))
 		}
 
 		paths = prioritizedClosureEvidencePaths(paths, results, 8)
@@ -670,10 +672,10 @@ func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, 
 		}
 	}
 
-	paths := mergeRunnerStateStrings(pinnedPathsFromToolResults(results, 8), pathparse.MentionedWorkspacePaths(answer))
+	paths := util.Merge(pinnedPathsFromToolResults(results, 8), pathparse.MentionedWorkspacePaths(answer))
 	for _, packet := range readOnlyEvidencePacketsFromResults(results) {
 		if readOnlyEvidencePacketAnswerableForObjective(packet, brief.Objective) {
-			paths = mergeRunnerStateStrings(paths, packet.SourceBodyPaths, packet.InspectedPaths)
+			paths = util.Merge(paths, packet.SourceBodyPaths, packet.InspectedPaths)
 		}
 	}
 
@@ -700,7 +702,7 @@ func changedPathListFromToolResults(results []workspace.ToolResult) []string {
 		}
 
 		for _, rawPath := range changedPathsFromToolResult(result) {
-			path := normalizeRunnerPath(rawPath)
+			path := agentutil.NormalizeRunnerPath(rawPath)
 			if path == "" {
 				continue
 			}
@@ -735,7 +737,7 @@ func closurePromptEvidencePathsPreservingTests(paths []string, max int) []string
 		cleaned = append(cleaned, path)
 	}
 
-	return limitRunnerStrings(cleaned, max)
+	return util.Prefix(cleaned, max)
 }
 
 func exactProbeEvidencePaths(results []workspace.ToolResult) []string {
@@ -798,7 +800,7 @@ func (r *Runner) explorationDelegationNudge(readCallsSinceWrite int, results []w
 	}
 
 	allowedTools := r.advertisedAllowedTools(r.Workspace.AllowedTools())
-	if !containsRunnerTool(allowedTools, workspace.ToolNameTask) {
+	if !slices.Contains(allowedTools, workspace.ToolNameTask) {
 		return ""
 	}
 

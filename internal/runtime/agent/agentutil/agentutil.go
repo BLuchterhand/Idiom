@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/runtime/agent/stringset"
 )
 
 // NormalizeRunnerPath cleans a workspace-relative path for consistent comparison.
@@ -17,15 +16,7 @@ func NormalizeRunnerPath(path string) string {
 	return path
 }
 
-// MergeStrings merges multiple string slices, deduplicating across groups.
-func MergeStrings(groups ...[]string) []string {
-	return stringset.Merge(groups...)
-}
 
-// UniqueSortedStrings returns deduplicated, sorted strings.
-func UniqueSortedStrings(values []string) []string {
-	return stringset.Sorted(values)
-}
 
 // ContainsAny reports whether text contains any of the given needles.
 func ContainsAny(text string, needles ...string) bool {
@@ -387,6 +378,56 @@ func ObjectiveAsksImplementationShape(objective string) bool {
 func ReadStyleSourceBodyTool(tool string) bool {
 	switch strings.TrimSpace(tool) {
 	case workspace.ToolNameReadFile, workspace.ToolNamePrefetch:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsDiagnosticLogArtifactPath reports whether the path points to a known
+// diagnostic log artifact that should be excluded from source evidence.
+func IsDiagnosticLogArtifactPath(path string) bool {
+	lower := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(path), "\\", "/"))
+	lower = strings.TrimPrefix(lower, "./")
+
+	switch {
+	case lower == "":
+		return false
+	case lower == "logs" || strings.HasPrefix(lower, "logs/"):
+		return true
+	case lower == ".idiom/logs" || strings.HasPrefix(lower, ".idiom/logs/"):
+		return true
+	case lower == ".idiom/comprehension/traces" || strings.HasPrefix(lower, ".idiom/comprehension/traces/"):
+		return true
+	case lower == "traces" || strings.HasPrefix(lower, "traces/"):
+		return true
+	case strings.Contains(lower, "/.idiom/logs/") || strings.Contains(lower, "/.idiom/comprehension/traces/"):
+		return true
+	default:
+		return false
+	}
+}
+
+// IsNonSourceEvidenceArtifactPath reports whether the path points to a
+// non-source artifact that should be excluded from source evidence.
+func IsNonSourceEvidenceArtifactPath(path string) bool {
+	lower := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(path), "\\", "/"))
+	lower = strings.TrimPrefix(lower, "./")
+
+	switch {
+	case lower == "":
+		return false
+	case IsDiagnosticLogArtifactPath(lower):
+		return true
+	case lower == "transcripts" || strings.HasPrefix(lower, "transcripts/"):
+		return true
+	case lower == ".idiom" || strings.HasPrefix(lower, ".idiom/"):
+		return true
+	case lower == "idiom" || strings.HasPrefix(lower, "idiom/"):
+		return true
+	case lower == ".codex/discovery" || strings.HasPrefix(lower, ".codex/discovery/"):
+		return true
+	case lower == "testdata/swe/generated-logs" || strings.HasPrefix(lower, "testdata/swe/generated-logs/"):
 		return true
 	default:
 		return false

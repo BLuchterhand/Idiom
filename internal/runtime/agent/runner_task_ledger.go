@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 type taskLedgerState struct {
@@ -208,13 +209,13 @@ func taskLedgerEvidenceRefSatisfied(ref string, receipts []workspace.ToolResult)
 }
 
 func taskLedgerWriteEvidenceSatisfied(path string, receipts []workspace.ToolResult) bool {
-	want := normalizeRunnerPath(path)
+	want := agentutil.NormalizeRunnerPath(path)
 	if want == "" {
 		return false
 	}
 
 	for got := range changedPathsFromToolResults(receipts) {
-		got = normalizeRunnerPath(got)
+		got = agentutil.NormalizeRunnerPath(got)
 		if got == want || strings.HasPrefix(got, want+"/") || strings.HasPrefix(want, got+"/") {
 			return true
 		}
@@ -426,7 +427,7 @@ func validTaskLedgerStatus(status string) bool {
 //     escape the gate forces the model to execute every item it
 //     just planned, which is the opposite of what the user wanted.
 func taskLedgerFinalHasTerminalReason(reply string) bool {
-	return containsAny(strings.ToLower(strings.TrimSpace(reply)),
+	return agentutil.ContainsAny(strings.ToLower(strings.TrimSpace(reply)),
 		"blocked",
 		"blocker",
 		"cannot proceed",

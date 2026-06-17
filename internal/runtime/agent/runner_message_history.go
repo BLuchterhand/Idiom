@@ -9,7 +9,7 @@ import (
 )
 
 func allowRecoverablePostReadinessRepairExecution(req workspace.ToolRequest, lastToolResult workspace.ToolResult) bool {
-	if postReadinessGap(req) == "" {
+	if util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) == "" {
 		return false
 	}
 

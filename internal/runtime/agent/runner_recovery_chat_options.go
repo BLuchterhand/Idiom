@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 const planThenExecuteRejectedSubmitPlanStreakThreshold = 3
@@ -111,7 +112,7 @@ func implementationRequiredPathAnchorsReady(brief workerruntime.WorkerRuntimeBri
 	changed := changedPathsFromToolResults(results)
 
 	for _, path := range brief.RequiredEditPaths {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -749,7 +750,7 @@ func planThenExecuteRejectedPlanRefreshPathsForResult(brief workerruntime.Worker
 	var out []string
 
 	for _, rawPath := range planThenExecuteRefreshScopePathsForRejectedPlan(brief, results, refreshPaths) {
-		path := normalizeRunnerPath(rawPath)
+		path := agentutil.NormalizeRunnerPath(rawPath)
 		if path == "" {
 			continue
 		}
@@ -819,7 +820,7 @@ func planThenExecuteRejectedSubmitPlanStreakInvalidPaths(results []workspace.Too
 
 	for _, index := range streak {
 		for path := range submitPlanRefreshPathCandidates(results[index]) {
-			if normalized := normalizeRunnerPath(path); normalized != "" {
+			if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
 				out[normalized] = struct{}{}
 			}
 		}
@@ -838,7 +839,7 @@ func planThenExecuteRejectedSubmitPlanStreakRefreshPaths(brief workerruntime.Wor
 	for _, index := range streak {
 		rejected := results[index]
 		for _, path := range planThenExecuteRejectedPlanRefreshPathsForResult(brief, results, rejected, index) {
-			if normalized := normalizeRunnerPath(path); normalized != "" {
+			if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
 				pathSet[normalized] = struct{}{}
 			}
 		}
@@ -865,7 +866,7 @@ func planThenExecuteRefreshScopePathsForRejectedPlan(brief workerruntime.WorkerR
 	seen := normalizedRequiredEditPathSet(paths)
 
 	for path := range refreshPaths {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if !planThenExecuteRecoveryScopePathAllowed(normalized) {
 			continue
 		}
@@ -1010,7 +1011,7 @@ func planThenExecuteCandidateScopeFullyRead(brief workerruntime.WorkerRuntimeBri
 	}
 
 	for _, path := range candidates {
-		if _, ok := read[normalizeRunnerPath(path)]; !ok {
+		if _, ok := read[agentutil.NormalizeRunnerPath(path)]; !ok {
 			return false
 		}
 	}

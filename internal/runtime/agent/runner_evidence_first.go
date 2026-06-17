@@ -213,7 +213,7 @@ func evidenceFirstTargetReadRedirect(brief workerruntime.WorkerRuntimeBrief, res
 	}
 
 	if targetReadCount == 0 {
-		if !isReadClassTool(req) {
+		if !workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
 			return workspace.ToolRequest{}, false
 		}
 

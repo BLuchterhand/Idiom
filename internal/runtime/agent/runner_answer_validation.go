@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 func (r *Runner) requiredPathCompletionRecoveryRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
@@ -92,7 +93,7 @@ func requiredPathBlockerAnswerCovers(reply string, missing []string) bool {
 		return false
 	}
 
-	if !containsAny(lower,
+	if !agentutil.ContainsAny(lower,
 		"blocked",
 		"blocker",
 		"cannot",
@@ -121,7 +122,7 @@ func submitCorrectionMissingBodyAnchorBlockerCovers(reply string, missing []stri
 	}
 
 	lower := strings.ToLower(reply)
-	if !containsAny(lower,
+	if !agentutil.ContainsAny(lower,
 		"missing body",
 		"body evidence",
 		"missing anchor",
@@ -152,7 +153,7 @@ func submitCorrectionMissingBodyAnchorBlockerCovers(reply string, missing []stri
 			windowEnd = len(reply)
 		}
 		window := strings.ToLower(reply[windowStart:windowEnd])
-		if !containsAny(window, "missing body", "body evidence", "missing anchor", "anchor blocker", "body/anchor", "safe edit body", "no safe edit", "unsafe edit") {
+		if !agentutil.ContainsAny(window, "missing body", "body evidence", "missing anchor", "anchor blocker", "body/anchor", "safe edit body", "no safe edit", "unsafe edit") {
 			return false
 		}
 	}
@@ -331,9 +332,9 @@ func mentionedEvidencePathsFromToolResultsForObjective(results []workspace.ToolR
 			continue
 		}
 
-		paths = mergeRunnerStateStrings(paths, pathparse.MentionedWorkspacePaths(result.Summary))
-		paths = mergeRunnerStateStrings(paths, pathparse.MentionedWorkspacePaths(result.Output))
-		paths = mergeRunnerStateStrings(paths, pathparse.MentionedWorkspacePaths(result.Error))
+		paths = util.Merge(paths, pathparse.MentionedWorkspacePaths(result.Summary))
+		paths = util.Merge(paths, pathparse.MentionedWorkspacePaths(result.Output))
+		paths = util.Merge(paths, pathparse.MentionedWorkspacePaths(result.Error))
 
 		if len(paths) >= max {
 			break
@@ -387,9 +388,6 @@ func acceptedMentionedEvidenceResultForObjective(result workspace.ToolResult, ob
 // in its workerruntime catalog; the runner enforces consistently.
 // Adding a new "no verification needed" task family is now a one-line
 // catalog change instead of a runner patch.
-func verificationContractSkipsGate(contract string) bool {
-	return workerruntime.VerificationContractSkipsGate(contract)
-}
 
 func readOnlyExplanationGateApplies(brief workerruntime.WorkerRuntimeBrief) bool {
 	contract := strings.TrimSpace(brief.Contract)
@@ -773,7 +771,7 @@ func answerSentenceContainingIndex(text string, idx int, length int) string {
 func answerHasExplicitUncertainty(reply string) bool {
 	lower := strings.ToLower(strings.TrimSpace(reply))
 
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		"not directly inspected",
 		"not directly read",
 		"not confirmed",

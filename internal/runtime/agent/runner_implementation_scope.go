@@ -108,7 +108,7 @@ func synthesizedWriteDescription(req workspace.ToolRequest, paths []string) stri
 
 	target := "selected path"
 	if len(paths) > 0 {
-		target = normalizeRunnerPath(paths[0])
+		target = agentutil.NormalizeRunnerPath(paths[0])
 		if len(paths) > 1 {
 			target = fmt.Sprintf("%s and %d related path(s)", target, len(paths)-1)
 		}
@@ -153,7 +153,7 @@ func (r *Runner) implementationTargetWriteReadySourceReadAllowed(req workspace.T
 		return true
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if !implementationTargetWriteReadySourcePath(path) {
 		return false
 	}
@@ -228,7 +228,7 @@ func targetWriteReadyStagedNudge(basePrompt string, req workspace.ToolRequest, n
 	return fmt.Sprintf("You have taken %d discovery calls without a write. %s Before more discovery: name the one exact missing claim and one exact probe that would resolve it. If you cannot name both, you have enough evidence — write to a sourced target path or answer <<QUESTION>> with the exact blocker.%s", nudgeCount, evidencePrefix, suffix)
 }
 func implementationTargetWriteReadyTargetedCodeNavigate(req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if !implementationTargetWriteReadySourcePath(path) {
 		return false
 	}
@@ -272,7 +272,7 @@ func implementationTargetWriteReadyTargetedSearchContent(req workspace.ToolReque
 		return false
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path != "" {
 		return implementationTargetWriteReadySearchPathLooksScoped(path)
 	}
@@ -281,7 +281,7 @@ func implementationTargetWriteReadyTargetedSearchContent(req workspace.ToolReque
 }
 
 func implementationTargetWriteReadySearchPathLooksScoped(path string) bool {
-	path = strings.Trim(normalizeRunnerPath(path), "/")
+	path = strings.Trim(agentutil.NormalizeRunnerPath(path), "/")
 	if path == "" || path == "." {
 		return false
 	}
@@ -364,14 +364,14 @@ func implementationTargetWriteReadyRedirectedReadPath(result workspace.ToolResul
 		return ""
 	}
 
-	return normalizeRunnerPath(strings.TrimSpace(tail[:idx]))
+	return agentutil.NormalizeRunnerPath(strings.TrimSpace(tail[:idx]))
 }
 
 
 
 
 func implementationTargetWriteReadySamePathContinuationReadAllowed(req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path == "" || strings.TrimSpace(req.Tool) != workspace.ToolNameReadFile {
 		return false
 	}
@@ -471,7 +471,7 @@ func implementationTargetSourceReadEstablishedWriteReady(brief workerruntime.Wor
 		return false
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path == "" || !implementationTargetWriteReadySourcePath(path) {
 		return false
 	}
@@ -497,13 +497,13 @@ func implementationTargetSourceReadEstablishedWriteReady(brief workerruntime.Wor
 }
 
 func runnerStringSliceContainsPath(values []string, path string) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
 
 	for _, value := range values {
-		if normalizeRunnerPath(value) == path {
+		if agentutil.NormalizeRunnerPath(value) == path {
 			return true
 		}
 	}
@@ -512,7 +512,7 @@ func runnerStringSliceContainsPath(values []string, path string) bool {
 }
 
 func implementationTargetWriteReadySourcePath(path string) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -611,7 +611,7 @@ func (r *Runner) deterministicPlanExecuteGroundingRecoveryRequest(reply string, 
 	state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
 	if rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results); ok && state.Mode == PlanExecutePlanningModeAnchorRefresh {
 		for _, path := range state.RefreshPaths {
-			normalized := normalizeRunnerPath(path)
+			normalized := agentutil.NormalizeRunnerPath(path)
 			if normalized == "" {
 				continue
 			}
@@ -668,7 +668,7 @@ func (r *Runner) deterministicPlanExecuteGroundingRecoveryRequest(reply string, 
 	}
 
 	for _, path := range candidates {
-		if _, ok := read[normalizeRunnerPath(path)]; ok {
+		if _, ok := read[agentutil.NormalizeRunnerPath(path)]; ok {
 			continue
 		}
 
@@ -688,7 +688,7 @@ func (r *Runner) deterministicPlanExecuteGroundingRecoveryRequest(reply string, 
 }
 
 func planThenExecuteAnchorRefreshFallbackRange(path string, results []workspace.ToolResult, rejected workspace.ToolResult) (int, int) {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return 1, 180
 	}
@@ -755,7 +755,7 @@ func (r *Runner) deterministicPlanExecuteSourceSatisfiedEvidenceRead(reply strin
 	requiredSet := normalizedRequiredEditPathSet(r.requiredEditCoveragePaths())
 
 	for _, path := range evidencePaths {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized == "" || !pathparse.HasWorkspaceFileExtension(normalized) {
 			continue
 		}
@@ -907,7 +907,7 @@ func appendUniqueRunnerPaths(paths []string, more ...string) []string {
 	out := make([]string, 0, len(paths)+len(more))
 
 	for _, path := range append(paths, more...) {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized == "" || !pathparse.HasWorkspaceFileExtension(normalized) {
 			continue
 		}
@@ -924,7 +924,7 @@ func appendUniqueRunnerPaths(paths []string, more ...string) []string {
 }
 
 func contextPackCandidateReadAllowed(req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	target := normalizeRunnerPath(req.Path)
+	target := agentutil.NormalizeRunnerPath(req.Path)
 	if target == "" || !pathparse.HasWorkspaceFileExtension(target) {
 		return false
 	}
@@ -947,7 +947,7 @@ func contextPackCandidatePaths(results []workspace.ToolResult, max int) []string
 	seen := map[string]struct{}{}
 	paths := make([]string, 0, max)
 	add := func(path string) {
-		path = normalizeRunnerPath(path)
+		path = agentutil.NormalizeRunnerPath(path)
 		if path == "" || !pathparse.HasWorkspaceFileExtension(path) {
 			return
 		}

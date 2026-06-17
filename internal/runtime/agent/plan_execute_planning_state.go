@@ -7,6 +7,8 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/platform/util"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 type PlanExecutePlanningMode string
@@ -246,7 +248,7 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 		state.TerminalOptions = append(state.TerminalOptions, "submit_plan")
 	}
 
-	state.TerminalOptions = uniquePhaseStrings(state.TerminalOptions)
+	state.TerminalOptions = util.Unique(state.TerminalOptions)
 	state.applyProjection(transport)
 
 	return state
@@ -259,7 +261,7 @@ func planThenExecuteStaleAnchorPathsFromStateSummaries(summaries []string) []str
 		if !ok || strings.TrimSpace(state) != string(planThenExecuteRequiredPathStaleAnchor) {
 			continue
 		}
-		if normalized := normalizeRunnerPath(path); normalized != "" {
+		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
 			paths = append(paths, normalized)
 		}
 	}
@@ -357,11 +359,11 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		}
 	}
 
-	state.ParserVisibleTools = uniquePhaseStrings(state.ParserVisibleTools)
-	state.CallableTools = uniquePhaseStrings(state.CallableTools)
-	state.AllowedActionClasses = uniquePhaseStrings(state.AllowedActionClasses)
-	state.InvalidActionClasses = uniquePhaseStrings(state.InvalidActionClasses)
-	state.TerminalResponseShapes = uniquePhaseStrings(state.TerminalResponseShapes)
+	state.ParserVisibleTools = util.Unique(state.ParserVisibleTools)
+	state.CallableTools = util.Unique(state.CallableTools)
+	state.AllowedActionClasses = util.Unique(state.AllowedActionClasses)
+	state.InvalidActionClasses = util.Unique(state.InvalidActionClasses)
+	state.TerminalResponseShapes = util.Unique(state.TerminalResponseShapes)
 }
 
 func planExecuteSubmitReadyNativeRequired(transport PlanExecutePlanningTransport) bool {
@@ -434,7 +436,7 @@ func planThenExecuteSelectedEditPaths(brief workerruntime.WorkerRuntimeBrief, re
 	var selected []string
 
 	for _, path := range candidates {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -478,7 +480,7 @@ func planThenExecuteSelectableEditPaths(brief workerruntime.WorkerRuntimeBrief, 
 	paths := make([]string, 0, max)
 	seen := map[string]struct{}{}
 	add := func(path string) {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized == "" {
 			return
 		}
@@ -518,7 +520,7 @@ func planThenExecuteLastInvalidSubmitPlanPaths(results []workspace.ToolResult) [
 
 	pathSet := map[string]struct{}{}
 	add := func(path string) {
-		if normalized := normalizeRunnerPath(path); normalized != "" {
+		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
 			pathSet[normalized] = struct{}{}
 		}
 	}
@@ -547,7 +549,7 @@ func planThenExecuteLastInvalidSubmitPlanPaths(results []workspace.ToolResult) [
 func sortedRunnerPathKeys(paths map[string]struct{}) []string {
 	out := make([]string, 0, len(paths))
 	for path := range paths {
-		if normalized := normalizeRunnerPath(path); normalized != "" {
+		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
 			out = append(out, normalized)
 		}
 	}
@@ -560,7 +562,7 @@ func uniqueSortedRunnerPaths(paths []string) []string {
 	out := make([]string, 0, len(paths))
 
 	for _, path := range paths {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -581,7 +583,7 @@ func uniqueSortedRunnerPaths(paths []string) []string {
 func planThenExecuteLowValueActionReason(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, state PlanExecutePlanningState) (string, bool) {
 	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily ||
 		successfulSubmitPlanResultCount(results) > 0 ||
-		!isReadClassTool(req) ||
+		!workspace.IsReadTool(strings.TrimSpace(req.Tool)) ||
 		strings.TrimSpace(req.Tool) == "submit_plan" {
 
 		return "", false
@@ -593,7 +595,7 @@ func planThenExecuteLowValueActionReason(req workspace.ToolRequest, brief worker
 		return "", false
 	}
 
-	target := normalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 	if target == "" && planThenExecuteReadRequestMissingConcreteTarget(req) {
 		return "candidate_read_missing_target", true
 	}

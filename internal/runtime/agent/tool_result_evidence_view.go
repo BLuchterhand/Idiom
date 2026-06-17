@@ -23,7 +23,7 @@ func (view toolResultEvidenceView) ReadPaths() map[string]struct{} {
 		}
 
 		for _, path := range agentutil.ReadPathsFromToolResult(result) {
-			normalized := normalizeRunnerPath(path)
+			normalized := agentutil.NormalizeRunnerPath(path)
 			paths[normalized] = struct{}{}
 		}
 	}
@@ -32,8 +32,8 @@ func (view toolResultEvidenceView) ReadPaths() map[string]struct{} {
 }
 
 func (view toolResultEvidenceView) SourceEvidenceForPath(path string) planThenExecuteSourceEvidence {
-	path = normalizeRunnerPath(path)
-	if path == "" || isNonSourceEvidenceArtifactPath(path) {
+	path = agentutil.NormalizeRunnerPath(path)
+	if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) {
 		return planThenExecuteSourceEvidence{}
 	}
 
@@ -74,12 +74,12 @@ func (view toolResultEvidenceView) SourceBodyPaths() []string {
 		}
 
 		for _, path := range agentutil.ReadPathsFromToolResult(result) {
-			normalized := normalizeRunnerPath(path)
+			normalized := agentutil.NormalizeRunnerPath(path)
 			if normalized == "" {
 				continue
 			}
 
-			if isNonSourceEvidenceArtifactPath(normalized) {
+			if agentutil.IsNonSourceEvidenceArtifactPath(normalized) {
 				continue
 			}
 

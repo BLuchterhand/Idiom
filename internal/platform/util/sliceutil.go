@@ -19,6 +19,30 @@ func AppendUnique(values []string, value string) []string {
 	return append(values, value)
 }
 
+// AppendUniqueMulti appends multiple values to a slice, skipping duplicates
+// and empty strings, building a seen map once for efficiency.
+func AppendUniqueMulti(values []string, additions ...string) []string {
+	seen := make(map[string]struct{}, len(values))
+	for _, v := range values {
+		seen[v] = struct{}{}
+	}
+
+	for _, v := range additions {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		values = append(values, v)
+		seen[v] = struct{}{}
+	}
+
+	return values
+}
+
+
 func LimitSlice(values []string, limit int) []string {
 	if limit <= 0 || len(values) <= limit {
 		return append([]string(nil), values...)
@@ -116,17 +140,3 @@ func Prefix(values []string, max int) []string {
 	return values[:max]
 }
 
-// EqualSlice reports whether two slices have the same elements in the same order.
-func EqualSlice[T comparable](a, b []T) bool {
-	if len(a) != len(b) {
-		return false
-	}
-
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-
-	return true
-}

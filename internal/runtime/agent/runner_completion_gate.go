@@ -9,6 +9,7 @@ import (
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 	"strings"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 func (r *Runner) completionGateRejection(reply string, results []workspace.ToolResult, step int, taskLedger *taskLedgerState, declarationMovesForbidden bool) (workspace.ToolResult, bool) {
@@ -189,7 +190,7 @@ func unresolvedProcessIntentCompletionRejection(reply string) (workspace.ToolRes
 	}
 
 	lower := " " + strings.ToLower(strings.Join(strings.Fields(inspect), " ")) + " "
-	if containsAny(lower,
+	if agentutil.ContainsAny(lower,
 		" blocked ",
 		" blocker ",
 		" cannot ",
@@ -204,7 +205,7 @@ func unresolvedProcessIntentCompletionRejection(reply string) (workspace.ToolRes
 		return workspace.ToolResult{}, false
 	}
 
-	if !containsAny(lower,
+	if !agentutil.ContainsAny(lower,
 		" let me search ", " let me inspect ", " let me read ", " let me refresh ", " let me run ", " let me check ", " let me audit ", " let me investigate ", " let me explore ", " let me look ",
 		" let me call ", " let me use ",
 		" i need to search ", " i need to inspect ", " i need to find ", " i need to read ", " i need to refresh ", " i need to run ", " i need to check ", " i need to audit ", " i need to investigate ", " i need to explore ", " i need to look ",
@@ -225,7 +226,7 @@ func unresolvedProcessIntentCompletionRejection(reply string) (workspace.ToolRes
 		return workspace.ToolResult{}, false
 	}
 
-	if containsAny(lower, " i'll ", " i will ") && !containsAny(lower,
+	if agentutil.ContainsAny(lower, " i'll ", " i will ") && !agentutil.ContainsAny(lower,
 		" search ", " inspect ", " read ", " refresh ", " run ", " check ", " verify ",
 	) {
 

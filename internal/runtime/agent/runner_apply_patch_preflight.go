@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"idiom/internal/capabilities/workspace"
 	"strings"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 type applyPatchPreflightAction string
@@ -82,7 +83,7 @@ func (r *Runner) preflightApplyPatchAgainstChangedPaths(req workspace.ToolReques
 			continue
 		}
 
-		path := normalizeRunnerPath(op.Path)
+		path := agentutil.NormalizeRunnerPath(op.Path)
 		if path == "" {
 			keptOps = append(keptOps, op)
 			continue
@@ -194,7 +195,7 @@ func (r *Runner) consumeRecoveryReadAllowance(req workspace.ToolRequest, used ma
 		return false
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path == "" {
 		return false
 	}
@@ -221,7 +222,7 @@ func (r *Runner) consumeRecoveryReadAllowance(req workspace.ToolRequest, used ma
 	if tool == workspace.ToolNameCodeNavigate {
 		pending := sourceEvidencePendingRedirectsForBrief(r.RuntimeBrief, results)
 		for _, ob := range pending {
-			if normalizeRunnerPath(ob.Path) == path {
+			if agentutil.NormalizeRunnerPath(ob.Path) == path {
 				used[path] = true
 				return true
 			}

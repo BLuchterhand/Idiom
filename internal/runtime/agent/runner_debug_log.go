@@ -63,7 +63,7 @@ func debugLogPhaseScopeRejection(req workspace.ToolRequest, results []workspace.
 		return "", "", false
 	}
 
-	if isReadClassTool(req) && !debugLogRequestTargetsSelection(req, selection) {
+	if workspace.IsReadTool(strings.TrimSpace(req.Tool)) && !debugLogRequestTargetsSelection(req, selection) {
 		return "Selected-log scope enforced",
 			"you already selected and read the newest relevant log. Stay on that log until you can cite the weird decision or declare the missing datum.",
 			true
@@ -368,11 +368,11 @@ func objectiveTreatsDiagnosticLogsAsOptionalEvidence(objective string) bool {
 		return false
 	}
 
-	if !containsAny(words, " if available", " if present", " when available", " where available") {
+	if !agentutil.ContainsAny(words, " if available", " if present", " when available", " where available") {
 		return false
 	}
 
-	return containsAny(words,
+	return agentutil.ContainsAny(words,
 		" source ", " source files ", " code ", " bug ", " behavior bug ", " rca ",
 		" tests ", " fix shape ", " owning boundary ", " implementation ",
 	)
@@ -383,7 +383,7 @@ func objectiveRequestsSourceFeatureInspection(words string) bool {
 		return false
 	}
 
-	return containsAny(words,
+	return agentutil.ContainsAny(words,
 		" codebase",
 		" source ",
 		" source-code",
@@ -415,7 +415,7 @@ func objectiveNamesConcreteDiagnosticLogArtifact(words string) bool {
 		return false
 	}
 
-	return containsAny(words,
+	return agentutil.ContainsAny(words,
 		" actual conversation logs",
 		" newest log",
 		" recent log",
@@ -520,7 +520,7 @@ func debugLogTailRequest(selection debugLogFileSelection) workspace.ToolRequest 
 func debugLogRequestTargetsSelection(req workspace.ToolRequest, selection debugLogFileSelection) bool {
 	switch strings.TrimSpace(req.Tool) {
 	case workspace.ToolNameReadFile:
-		if selection.Handle != "" && debugLogRequestHandle(req) == selection.Handle {
+		if selection.Handle != "" && util.FirstNonEmpty(strings.TrimSpace(req.ID), strings.TrimSpace(req.Handle)) == selection.Handle {
 			return true
 		}
 
@@ -536,12 +536,9 @@ func debugLogRequestTargetsSelection(req workspace.ToolRequest, selection debugL
 	}
 }
 
-func debugLogRequestHandle(req workspace.ToolRequest) string {
-	return util.FirstNonEmpty(strings.TrimSpace(req.ID), strings.TrimSpace(req.Handle))
-}
 
 func debugLogSelectionMatchesPath(selection debugLogFileSelection, path string) bool {
-	return normalizeRunnerPath(selection.Path) == normalizeRunnerPath(path)
+	return agentutil.NormalizeRunnerPath(selection.Path) == agentutil.NormalizeRunnerPath(path)
 }
 
 func concreteDebugLogArtifactPathForRequest(req workspace.ToolRequest, results []workspace.ToolResult) (string, bool) {
@@ -551,7 +548,7 @@ func concreteDebugLogArtifactPathForRequest(req workspace.ToolRequest, results [
 		}
 	}
 
-	handle := debugLogRequestHandle(req)
+	handle := util.FirstNonEmpty(strings.TrimSpace(req.ID), strings.TrimSpace(req.Handle))
 	if handle == "" {
 		return "", false
 	}
@@ -602,7 +599,7 @@ func debugLogReadRequestAddsWindow(req workspace.ToolRequest, results []workspac
 			continue
 		}
 
-		if selection.Path != "" && normalizeRunnerPath(window.Path) != normalizeRunnerPath(selection.Path) {
+		if selection.Path != "" && agentutil.NormalizeRunnerPath(window.Path) != agentutil.NormalizeRunnerPath(selection.Path) {
 			continue
 		}
 
@@ -712,26 +709,6 @@ func exactDebugLogFilePath(path string) bool {
 		strings.HasSuffix(lower, ".trace")
 }
 
-func isDiagnosticLogArtifactPath(path string) bool {
-	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
-
-	lower = strings.TrimPrefix(lower, "./")
-
-	switch {
-	case lower == "logs" || strings.HasPrefix(lower, "logs/"):
-		return true
-	case lower == ".idiom/logs" || strings.HasPrefix(lower, ".idiom/logs/"):
-		return true
-	case lower == ".idiom/comprehension/traces" || strings.HasPrefix(lower, ".idiom/comprehension/traces/"):
-		return true
-	case lower == "traces" || strings.HasPrefix(lower, "traces/"):
-		return true
-	case strings.Contains(lower, "/.idiom/logs/") || strings.Contains(lower, "/.idiom/comprehension/traces/"):
-		return true
-	default:
-		return false
-	}
-}
 
 
 func generatedEvidenceArtifactReadRedirectResult(req workspace.ToolRequest, results []workspace.ToolResult) (workspace.ToolResult, bool) {
@@ -739,7 +716,7 @@ func generatedEvidenceArtifactReadRedirectResult(req workspace.ToolRequest, resu
 		return workspace.ToolResult{}, false
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if !isGeneratedDiscoveryContextArtifactPath(path) {
 		return workspace.ToolResult{}, false
 	}
@@ -759,7 +736,7 @@ func generatedEvidenceArtifactReadRedirectResult(req workspace.ToolRequest, resu
 	fmt.Fprintf(&b, "Generated evidence artifact %s was not read because generated discovery/context JSON is not source-body evidence.\n", path)
 	b.WriteString("Use the source paths already named by the current discovery packet instead:\n")
 
-	for _, sourcePath := range limitRunnerStrings(paths, 6) {
+	for _, sourcePath := range util.Prefix(paths, 6) {
 		fmt.Fprintf(&b, "- %s\n", sourcePath)
 	}
 
@@ -778,7 +755,7 @@ func generatedEvidenceArtifactReadRedirectRequest(req workspace.ToolRequest, res
 		return workspace.ToolRequest{}, "", "", false
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if !isGeneratedDiscoveryContextArtifactPath(path) {
 		return workspace.ToolRequest{}, "", "", false
 	}
@@ -826,7 +803,7 @@ func structuredSourceReadRewriteRequest(req workspace.ToolRequest, ws *workspace
 	redirected := workspace.ToolRequest{
 		Tool:            workspace.ToolNameCodeNavigate,
 		Capability:      string(cap),
-		Path:            normalizeRunnerPath(path),
+		Path:            agentutil.NormalizeRunnerPath(path),
 		Language:        lang.Name,
 		NamedGap:        req.NamedGap,
 		WhyNotAnswering: req.WhyNotAnswering,
@@ -893,15 +870,15 @@ func latestCodeNavigateOutlinePath(results []workspace.ToolResult) string {
 		}
 
 		for _, path := range agentutil.ReadPathsFromToolResult(result) {
-			path = normalizeRunnerPath(path)
-			if path != "" && !isNonSourceEvidenceArtifactPath(path) {
+			path = agentutil.NormalizeRunnerPath(path)
+			if path != "" && !agentutil.IsNonSourceEvidenceArtifactPath(path) {
 				return path
 			}
 		}
 
 		for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(strings.Join([]string{result.Summary, result.Output}, "\n"))) {
-			path = normalizeRunnerPath(path)
-			if path != "" && !isNonSourceEvidenceArtifactPath(path) {
+			path = agentutil.NormalizeRunnerPath(path)
+			if path != "" && !agentutil.IsNonSourceEvidenceArtifactPath(path) {
 				return path
 			}
 		}
@@ -920,7 +897,7 @@ func repeatedFileOutlineToReadSymbolRewriteRequest(req workspace.ToolRequest, re
 		return workspace.ToolRequest{}, "", "", false
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path == "" || concreteSourceEvidenceReadForPath(path, results) || !priorFileOutlineForPath(path, results) {
 		return workspace.ToolRequest{}, "", "", false
 	}
@@ -950,7 +927,7 @@ func repeatedFileOutlineToReadSymbolRewriteRequest(req workspace.ToolRequest, re
 }
 
 func priorFileOutlineForPath(path string, results []workspace.ToolResult) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -966,7 +943,7 @@ func priorFileOutlineForPath(path string, results []workspace.ToolResult) bool {
 		}
 
 		for _, candidate := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(strings.Join([]string{result.Summary, result.Output}, "\n"))) {
-			if normalizeRunnerPath(candidate) == path {
+			if agentutil.NormalizeRunnerPath(candidate) == path {
 				return true
 			}
 		}
@@ -992,7 +969,7 @@ func readOnlyDefinitionToReadSymbolRewriteRequest(req workspace.ToolRequest, bri
 		return workspace.ToolRequest{}, "", "", false
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	symbol := strings.TrimSpace(util.FirstNonEmpty(req.Pattern, req.Symbol, req.Query))
 
 	if path == "" || symbol == "" {

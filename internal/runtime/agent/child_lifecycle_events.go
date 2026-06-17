@@ -54,9 +54,9 @@ func (r *Runner) beginDelegateEditLifecycle(req workspace.ToolRequest, opts llam
 
 func (r *Runner) beginChildLifecycle(role string, phase string, mode autonomy.ChildWorkspaceMode, opts llama.ChatOptions, policy RunPolicy, deterministic bool, client llama.LLMClient) childLifecycleContext {
 	now := time.Now().UTC()
-	lane := childLifecycleFirstNonEmpty(r.runtimeChildLifecycleLane(), "runner")
-	phase = childLifecycleFirstNonEmpty(phase, r.runtimeChildLifecyclePhase(), "child")
-	role = childLifecycleFirstNonEmpty(role, "child")
+	lane := util.FirstNonEmpty(r.runtimeChildLifecycleLane(), "runner")
+	phase = util.FirstNonEmpty(phase, r.runtimeChildLifecyclePhase(), "child")
+	role = util.FirstNonEmpty(role, "child")
 	parentContractID := r.childLifecycleParentContractID()
 	childContractID := r.childLifecycleChildContractID(parentContractID, lane, phase, role)
 	invocationID := childLifecycleID("child_invocation", parentContractID, childContractID, lane, phase, role, now.Format(time.RFC3339Nano))
@@ -124,7 +124,7 @@ func (r *Runner) emitWorkbranchChildTerminal(ctx childLifecycleContext, checkout
 			PatchID:         patchID,
 			InvocationID:    ctx.InvocationID,
 			ChildContractID: ctx.ChildContractID,
-			BaseSHA:         childLifecycleFirstNonEmpty(checkout.BaseSHA, "unknown"),
+			BaseSHA:         util.FirstNonEmpty(checkout.BaseSHA, "unknown"),
 			WorktreePathRef: "workbranch:" + childLifecycleHash(checkout.Path),
 			ChangedPaths:    append([]string(nil), diff.ChangedPaths...),
 			DiffStat:        childLifecycleDiffStat(diff),
@@ -198,7 +198,7 @@ func (r *Runner) emitDelegateEditLifecycle(ctx childLifecycleContext, req worksp
 		PathGateRef:                metadata.PathGateRef,
 		PathGateDecision:           metadata.PathGateDecision,
 		Route:                      route,
-		ReasonCode:                 childLifecycleFirstNonEmpty(reasonCode, "delegate_edit_recorded"),
+		ReasonCode:                 util.FirstNonEmpty(reasonCode, "delegate_edit_recorded"),
 	}
 	r.emitChildLifecycleRecord(childLifecycleAcceptanceEventRole, &acceptance)
 }
@@ -284,7 +284,7 @@ func (r *Runner) emitChildTerminalAcceptance(ctx childLifecycleContext, terminal
 		acceptedPatchRefs = append([]string(nil), terminal.ArtifactRefs...)
 		if len(acceptedEvidenceRefs) == 0 && len(acceptedPatchRefs) == 0 {
 			decision = autonomy.ChildAcceptanceRecordedOnly
-			reasonCode = childLifecycleFirstNonEmpty(reasonCode, "accepted_refs_missing")
+			reasonCode = util.FirstNonEmpty(reasonCode, "accepted_refs_missing")
 		}
 	}
 
@@ -302,7 +302,7 @@ func (r *Runner) emitChildTerminalAcceptance(ctx childLifecycleContext, terminal
 		RequiredRepairPaths:  append([]string(nil), terminal.ChangedPaths...),
 		RuntimeEnvelopeRef:   "runtime_envelope:" + ctx.InvocationID,
 		AlignmentBasis:       childLifecycleAlignmentBasis(ctx, terminal, acceptedEvidenceRefs, acceptedPatchRefs),
-		ReasonCode:           childLifecycleFirstNonEmpty(reasonCode, "child_terminal_recorded"),
+		ReasonCode:           util.FirstNonEmpty(reasonCode, "child_terminal_recorded"),
 		PathGateDecision:     autonomy.ChildPathGateNotApplicable,
 		Route:                autonomy.ChildRouteChildModel,
 		ExecutionMetadataRef: "terminal_execution:" + terminal.TerminalID,
@@ -344,7 +344,7 @@ func childLifecycleAlignmentBasis(ctx childLifecycleContext, terminal autonomy.C
 	sourceRefs := append([]string(nil), evidenceRefs...)
 	sourceRefs = append(sourceRefs, patchRefs...)
 	for _, path := range terminal.ChangedPaths {
-		sourceRefs = append(sourceRefs, "changed_path:"+normalizeRunnerPath(path))
+		sourceRefs = append(sourceRefs, "changed_path:"+agentutil.NormalizeRunnerPath(path))
 	}
 
 	return autonomy.ChildAlignmentBasis{
@@ -413,7 +413,7 @@ func (r *Runner) childLifecycleChildContractID(parentContractID string, lane str
 			InvocationKind:    autonomy.InvocationChild,
 			Lane:              lane,
 			Phase:             phase,
-			TaskFamily:        childLifecycleFirstNonEmpty(r.runtimeChildLifecycleTaskFamily(), phase),
+			TaskFamily:        util.FirstNonEmpty(r.runtimeChildLifecycleTaskFamily(), phase),
 			RuntimeContract:   r.runtimeChildLifecycleContract(),
 			PermissionProfile: r.runtimeChildLifecyclePermissionProfile(),
 		},
@@ -427,7 +427,7 @@ func (r *Runner) childLifecycleChildContractID(parentContractID string, lane str
 }
 
 func (r *Runner) childRuntimeEnvelope(role string, opts llama.ChatOptions, policy RunPolicy, deterministic bool, client llama.LLMClient) autonomy.ChildRuntimeEnvelope {
-	modelAlias := childLifecycleFirstNonEmpty(safeModelAliasForTelemetry(opts.Model), "default")
+	modelAlias := util.FirstNonEmpty(safeModelAliasForTelemetry(opts.Model), "default")
 	backendKind := "llm_client"
 	if deterministic {
 		modelAlias = "deterministic"
@@ -455,10 +455,10 @@ func (r *Runner) childRuntimeEnvelope(role string, opts llama.ChatOptions, polic
 	return autonomy.ChildRuntimeEnvelope{
 		BackendKind: backendKind,
 		ModelAlias:  modelAlias,
-		ModelRole:   childLifecycleFirstNonEmpty(role, "child"),
+		ModelRole:   util.FirstNonEmpty(role, "child"),
 		RoleResolution: autonomy.ChildRoleResolution{
-			RequestedRole: childLifecycleFirstNonEmpty(role, "child"),
-			ResolvedRole:  childLifecycleFirstNonEmpty(role, "child"),
+			RequestedRole: util.FirstNonEmpty(role, "child"),
+			ResolvedRole:  util.FirstNonEmpty(role, "child"),
 			Alias:         modelAlias,
 			Source:        autonomy.RoleResolutionSourceRoleTag,
 			OK:            true,
@@ -508,7 +508,7 @@ func childLifecycleEvidenceRefs(results []workspace.ToolResult) []string {
 		if strings.TrimSpace(result.Error) != "" {
 			continue
 		}
-		tool := childLifecycleFirstNonEmpty(strings.TrimSpace(result.Tool), "tool")
+		tool := util.FirstNonEmpty(strings.TrimSpace(result.Tool), "tool")
 		refs = append(refs, fmt.Sprintf("tool_result:%s:%d", tool, i+1))
 	}
 	return refs
@@ -561,11 +561,11 @@ func childLifecycleVerificationObligationRefs(r *Runner) []string {
 }
 
 func childLifecycleToolRef(req workspace.ToolRequest) string {
-	return childLifecycleFirstNonEmpty("tool_request:"+strings.TrimSpace(req.Tool)+":"+normalizeRunnerPath(req.Path), "tool_request:delegate_edit")
+	return util.FirstNonEmpty("tool_request:"+strings.TrimSpace(req.Tool)+":"+agentutil.NormalizeRunnerPath(req.Path), "tool_request:delegate_edit")
 }
 
 func childLifecyclePathGateRef(req workspace.ToolRequest) string {
-	return childLifecycleFirstNonEmpty("path_gate:"+normalizeRunnerPath(req.Path), "path_gate:delegate_edit")
+	return util.FirstNonEmpty("path_gate:"+agentutil.NormalizeRunnerPath(req.Path), "path_gate:delegate_edit")
 }
 
 func childLifecycleFailureClass(err error) string {
@@ -603,7 +603,7 @@ func (r *Runner) runtimeChildLifecyclePhase() string {
 	if r == nil {
 		return ""
 	}
-	return childLifecycleFirstNonEmpty(r.RuntimeBrief.TaskFamily, r.RuntimeBrief.Contract)
+	return util.FirstNonEmpty(r.RuntimeBrief.TaskFamily, r.RuntimeBrief.Contract)
 }
 
 func (r *Runner) runtimeChildLifecycleTaskFamily() string {
@@ -627,15 +627,6 @@ func (r *Runner) runtimeChildLifecyclePermissionProfile() string {
 	return r.RuntimeBrief.PermissionProfile
 }
 
-func childLifecycleFirstNonEmpty(values ...string) string {
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
 
 func childLifecycleID(prefix string, parts ...string) string {
 	return prefix + "_" + childLifecycleHash(parts...)

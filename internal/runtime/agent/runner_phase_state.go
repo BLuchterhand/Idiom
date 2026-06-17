@@ -121,9 +121,9 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 		state.EvidencePaths = postChildClosureEvidencePaths(brief.Objective, results, 6)
 	}
 
-	state.Constraints = mergeRunnerStateStrings(brief.Constraints, guidance.Constraints)
-	state.InvalidNextActions = mergeRunnerStateStrings(brief.InvalidActions, guidance.InvalidNext)
-	state.NextValidActions = mergeRunnerStateStrings(brief.RequiredNext, guidance.ValidNext)
+	state.Constraints = util.Merge(brief.Constraints, guidance.Constraints)
+	state.InvalidNextActions = util.Merge(brief.InvalidActions, guidance.InvalidNext)
+	state.NextValidActions = util.Merge(brief.RequiredNext, guidance.ValidNext)
 
 	phaseHint := ""
 
@@ -153,7 +153,7 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 	}
 
 	if reviewRepairTerminalOutcomeRequiredState(brief, result) {
-		state.Constraints = mergeRunnerStateStrings(state.Constraints, []string{
+		state.Constraints = util.Merge(state.Constraints, []string{
 			"review_repair_closeout_gate_fired",
 			"terminal_review_repair_outcome_required",
 		})
@@ -200,33 +200,33 @@ func applyReadOnlyDiscoveryPendingGuidance(state runnerNextActionState, brief wo
 
 	candidateSummary := strings.Join(candidates, ", ")
 
-	state.Constraints = mergeRunnerStateStrings(state.Constraints, []string{"source_body_evidence_missing_after_discovery"})
-	state.InvalidNextActions = mergeRunnerStateStrings(state.InvalidNextActions, []string{
+	state.Constraints = util.Merge(state.Constraints, []string{"source_body_evidence_missing_after_discovery"})
+	state.InvalidNextActions = util.Merge(state.InvalidNextActions, []string{
 		"final answer before source-body evidence",
 		"treating discovery candidates, context packets, or search hits as source-body evidence",
 	})
 
 	switch strength {
 	case discoveryConsumptionCandidateOnly:
-		state.EvidenceStatus = mergeRunnerStateStrings(state.EvidenceStatus, []string{
+		state.EvidenceStatus = util.Merge(state.EvidenceStatus, []string{
 			"discovery_status: candidate-only; source owner and source-body evidence are still missing",
 		})
 		state.NextValidActions = prependRunnerStateStrings([]string{
 			"source owner was not established by " + tool + "; use one materially different source-owner or source-body probe scoped to the question, or <<QUESTION>> with the exact unavailable evidence",
 			"if candidates are plausible, inspect one returned path with source-body evidence; otherwise switch to an exact lexical/symbol/source-owner probe drawn from the user's claim and the code vocabulary",
 		}, state.NextValidActions)
-		state.InvalidNextActions = mergeRunnerStateStrings(state.InvalidNextActions, []string{
+		state.InvalidNextActions = util.Merge(state.InvalidNextActions, []string{
 			"exact replay of the same weak discovery request",
 		})
 	case discoveryConsumptionSourceOwner:
-		state.EvidenceStatus = mergeRunnerStateStrings(state.EvidenceStatus, []string{
+		state.EvidenceStatus = util.Merge(state.EvidenceStatus, []string{
 			"discovery_status: candidate owner paths returned, but source-body evidence is still missing",
 		})
 		state.NextValidActions = prependRunnerStateStrings([]string{
 			"inspect one returned path or handle with source-body evidence, take one targeted refinement with concrete scope or named_gap only if the returned owner does not establish the claim, or <<QUESTION>> with the exact blocker",
 			"candidate path(s): " + candidateSummary,
 		}, state.NextValidActions)
-		state.InvalidNextActions = mergeRunnerStateStrings(state.InvalidNextActions, []string{
+		state.InvalidNextActions = util.Merge(state.InvalidNextActions, []string{
 			"repeated broad or identical rediscovery before inspecting or materially refining returned candidates",
 		})
 	}

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 func (r *Runner) salvageToolRequestFromReasoning(reply llama.ChatMessage, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
@@ -388,7 +389,7 @@ func parseVisibleToolRequestJSONObject(raw string, fields map[string]json.RawMes
 	}
 
 	if strings.TrimSpace(req.Tool) == "" && strings.TrimSpace(req.Capability) != "" {
-		if !visibleCodeNavigateCapability(req.Capability) {
+		if workspace.CodeNavigateCapabilityAlias(req.Capability) == "" {
 			return workspace.ToolRequest{}, "", false
 		}
 
@@ -402,9 +403,6 @@ func parseVisibleToolRequestJSONObject(raw string, fields map[string]json.RawMes
 	return req, marshalToolRequestRaw(req), true
 }
 
-func visibleCodeNavigateCapability(value string) bool {
-	return workspace.CodeNavigateCapabilityAlias(value) != ""
-}
 
 func (r *Runner) safeVisibleToolRequest(req workspace.ToolRequest, results []workspace.ToolResult) bool {
 	if strings.TrimSpace(req.Tool) == workspace.ToolNameSubmitPlan {
@@ -489,7 +487,7 @@ func (r *Runner) safeVisibleSubmitPlanRequest(req workspace.ToolRequest, results
 
 	covered := make(map[string]struct{}, len(edits))
 	for _, edit := range edits {
-		path := normalizeRunnerPath(edit.Path)
+		path := agentutil.NormalizeRunnerPath(edit.Path)
 		if path != "" {
 			covered[path] = struct{}{}
 		}
@@ -574,7 +572,7 @@ func (r *Runner) safeReasoningToolRequest(req workspace.ToolRequest, results []w
 	case workspace.ToolNameStructuralSearch:
 		return strings.TrimSpace(req.Pattern) != ""
 	case workspace.ToolNameCodeNavigate:
-		return visibleCodeNavigateCapability(req.Capability) &&
+		return workspace.CodeNavigateCapabilityAlias(req.Capability) != "" &&
 			(strings.TrimSpace(req.Path) != "" || strings.TrimSpace(req.Pattern) != "" || strings.TrimSpace(req.Query) != "")
 	case workspace.ToolNameSubmitPlan:
 		return false
@@ -717,7 +715,7 @@ func reasoningToolRequestHasPlaceholder(req workspace.ToolRequest) bool {
 			continue
 		}
 
-		if containsAny(lower,
+		if agentutil.ContainsAny(lower,
 			"candidate/path.go",
 			"relative/file",
 			"exact current text",

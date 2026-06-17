@@ -3,6 +3,7 @@ package agent
 import (
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/runtime/agent/agentutil"
+	"idiom/internal/platform/util"
 )
 
 import "strings"
@@ -36,7 +37,7 @@ func (e readOnlySourceOwnerEvidence) OwnerEligible() bool {
 
 func readOnlySourceOwnerEvidenceForBody(path string, symbol string, objective string, body string) readOnlySourceOwnerEvidence {
 	evidence := readOnlySourceOwnerEvidence{
-		Path:   normalizeRunnerPath(path),
+		Path:   agentutil.NormalizeRunnerPath(path),
 		Symbol: strings.TrimSpace(symbol),
 		Role:   readOnlySourceOwnerUnknown,
 	}
@@ -99,7 +100,7 @@ func readOnlySourceOwnerEvidenceForBody(path string, symbol string, objective st
 }
 
 func sourceOwnerHasDirectMechanismSignal(text string) bool {
-	return containsAny(text,
+	return agentutil.ContainsAny(text,
 		"case tea.",
 		"case \"",
 		" handles ",
@@ -131,7 +132,7 @@ func sourceOwnerMatchedTerms(text string, terms []string) []string {
 		}
 	}
 
-	return uniqueSortedStrings(matches)
+	return util.Sorted(matches)
 }
 
 func sourceOwnerMatchedWeakTerms(text string, terms []string) []string {
@@ -148,7 +149,7 @@ func sourceOwnerMatchedWeakTerms(text string, terms []string) []string {
 		}
 	}
 
-	return uniqueSortedStrings(matches)
+	return util.Sorted(matches)
 }
 
 func sourceOwnerSupportTerms(text string) []string {
@@ -162,7 +163,7 @@ func sourceOwnerSupportTerms(text string) []string {
 		}
 	}
 
-	return uniqueSortedStrings(matches)
+	return util.Sorted(matches)
 }
 
 func sourceOwnerConflictTerms(text string, path string, symbol string, objective string) []string {
@@ -178,19 +179,19 @@ func sourceOwnerConflictTerms(text string, path string, symbol string, objective
 		matches = append(matches, term)
 	}
 
-	return uniqueSortedStrings(matches)
+	return util.Sorted(matches)
 }
 
 func sourceOwnerLooksLikeDisplaySupport(text string) bool {
-	return containsAny(text, "render", "viewport", "view()", "setcontent", "content")
+	return agentutil.ContainsAny(text, "render", "viewport", "view()", "setcontent", "content")
 }
 
 func sourceOwnerLooksLikeStateHolder(text string) bool {
-	return containsAny(text, "type ", " struct ", "state", " field")
+	return agentutil.ContainsAny(text, "type ", " struct ", "state", " field")
 }
 
 func implementationShapeTestOwnerDisallowed(path string, objective string) bool {
-	path = strings.ToLower(strings.TrimSpace(normalizeRunnerPath(path)))
+	path = strings.ToLower(strings.TrimSpace(agentutil.NormalizeRunnerPath(path)))
 	if path == "" || !strings.HasSuffix(path, "_test.go") {
 		return false
 	}
@@ -201,7 +202,7 @@ func implementationShapeTestOwnerDisallowed(path string, objective string) bool 
 func objectiveAllowsTestImplementationOwner(objective string) bool {
 	lower := " " + strings.ToLower(strings.Join(strings.Fields(objective), " ")) + " "
 
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		" test ",
 		" tests ",
 		" testing ",
@@ -265,7 +266,7 @@ func sourceOwnerIdentityTerms(path string, symbol string, text string) []string 
 		}
 	}
 
-	return uniqueSortedStrings(terms)
+	return util.Sorted(terms)
 }
 
 func sourceOwnerBodyIdentityText(text string) string {
@@ -402,7 +403,7 @@ func sourceBodyEvidencePathsFromDelegatedPacket(output string) []string {
 		}
 
 		for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(line)) {
-			if isNonSourceEvidenceArtifactPath(path) {
+			if agentutil.IsNonSourceEvidenceArtifactPath(path) {
 				continue
 			}
 

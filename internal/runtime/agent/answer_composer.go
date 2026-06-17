@@ -207,7 +207,7 @@ func sourceLikePathsFromText(text string, max int) []string {
 
 	for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(text)) {
 		path = normalizeDelegatedDiscoveryEvidencePath(path)
-		if path == "" || isNonSourceEvidenceArtifactPath(path) || !delegatedDiscoveryLooksLikeEvidencePath(path) {
+		if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) || !delegatedDiscoveryLooksLikeEvidencePath(path) {
 			continue
 		}
 
@@ -433,7 +433,7 @@ func finalAnswerNeedsDecoration(answer string) bool {
 		return true
 	}
 
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		"\nevidence:\n- text anchors:",
 		"### evidence highlights",
 		"### decision guidance",

@@ -6,6 +6,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 type runnerTurnRecorder struct {
@@ -113,7 +114,7 @@ func resultWithRejectedRequestTarget(req workspace.ToolRequest, result workspace
 		return result
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path == "" || strings.Contains(result.Summary, path) || strings.Contains(result.Output, path) {
 		return result
 	}

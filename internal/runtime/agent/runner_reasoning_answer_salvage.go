@@ -5,6 +5,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 const (
@@ -503,7 +504,7 @@ func looksLikeUnfinishedReasoningPlan(p string) bool {
 	}
 	for _, prefix := range taskFramingPrefixes {
 		if strings.HasPrefix(lower, prefix) {
-			return containsAny(lower,
+			return agentutil.ContainsAny(lower,
 				" i need to ",
 				" i should ",
 				" i have to ",

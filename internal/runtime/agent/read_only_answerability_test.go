@@ -754,7 +754,7 @@ func TestReadOnlyAnswerabilityDoesNotTreatRegressionFixtureAsImplementationOwner
 }
 
 func sourceOwnerRoleForTest(ledger readOnlyAnswerabilityLedger, path string) readOnlySourceOwnerRole {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	for _, evidence := range ledger.SourceOwnerEvidence {
 		if evidence.Path == path {
 			return evidence.Role

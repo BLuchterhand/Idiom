@@ -5,6 +5,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/platform/util"
 )
 
 // TestPostReadinessGapScopeForBriefSeparatesParentContracts covers the core
@@ -77,7 +78,7 @@ func TestPostReadinessReadinessWithoutAnswerableEvidenceRemainsAdvisory(t *testi
 		Symbol: "DebugLogger.sanitizeValue",
 	}
 
-	if gap := postReadinessGap(req); gap != "" {
+	if gap := util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering); gap != "" {
 		t.Fatalf("test setup should omit post-readiness gap fields, got %q", gap)
 	}
 

@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/platform/util"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 func resultCountsAsSuccessfulVerification(result workspace.ToolResult) bool {
@@ -19,7 +21,7 @@ func resultCountsAsSuccessfulVerification(result workspace.ToolResult) bool {
 		return sourceSanityResultUsesLanguageDiagnostics(result)
 	}
 
-	if isDiagnosticsVerificationTool(result.Tool) {
+	if workspace.IsDiagnosticToolName(result.Tool) {
 		return true
 	}
 
@@ -62,7 +64,7 @@ func sourceEditVerificationRejection(req workspace.ToolRequest, brief workerrunt
 }
 
 func rewriteVerificationShellReadToSourceSanity(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
-	if strings.TrimSpace(req.Tool) != "shell" || !containsRunnerTool(allowedTools, "source_sanity") {
+	if strings.TrimSpace(req.Tool) != "shell" || !slices.Contains(allowedTools, "source_sanity") {
 		return workspace.ToolRequest{}, false
 	}
 
@@ -79,9 +81,9 @@ func rewriteVerificationShellReadToSourceSanity(req workspace.ToolRequest, brief
 		return workspace.ToolRequest{}, false
 	}
 
-	normalizedPath := normalizeRunnerPath(path)
+	normalizedPath := agentutil.NormalizeRunnerPath(path)
 	for _, changed := range changedSourcePaths(results) {
-		if normalizeRunnerPath(changed) == normalizedPath {
+		if agentutil.NormalizeRunnerPath(changed) == normalizedPath {
 			return workspace.ToolRequest{Tool: "source_sanity", Path: path}, true
 		}
 	}
@@ -94,7 +96,7 @@ func fillSourceSanityPathFromSingleChangedSource(req workspace.ToolRequest, brie
 		return workspace.ToolRequest{}, false
 	}
 
-	if !containsRunnerTool(allowedTools, workspace.ToolNameSourceSanity) || !sourceEditsNeedSemanticVerification(brief, results) {
+	if !slices.Contains(allowedTools, workspace.ToolNameSourceSanity) || !sourceEditsNeedSemanticVerification(brief, results) {
 		return workspace.ToolRequest{}, false
 	}
 
@@ -111,7 +113,7 @@ func fillSourceSanityPathFromSingleChangedSource(req workspace.ToolRequest, brie
 }
 
 func postWriteSourceSanityRedirect(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
-	if !containsRunnerTool(allowedTools, workspace.ToolNameSourceSanity) || !sourceEditsNeedSemanticVerification(brief, results) {
+	if !slices.Contains(allowedTools, workspace.ToolNameSourceSanity) || !sourceEditsNeedSemanticVerification(brief, results) {
 		return workspace.ToolRequest{}, false
 	}
 
@@ -126,10 +128,10 @@ func postWriteSourceSanityRedirect(req workspace.ToolRequest, brief workerruntim
 	if postWriteVerificationReadOfChangedSource(req, results) ||
 		postWriteVerificationWriteOfChangedSource(req, results) {
 
-		return workspace.ToolRequest{Tool: workspace.ToolNameSourceSanity, Path: normalizeRunnerPath(req.Path)}, true
+		return workspace.ToolRequest{Tool: workspace.ToolNameSourceSanity, Path: agentutil.NormalizeRunnerPath(req.Path)}, true
 	}
 
-	if requested := normalizeRunnerPath(req.Path); requested != "" && requested != "." {
+	if requested := agentutil.NormalizeRunnerPath(req.Path); requested != "" && requested != "." {
 		if !changedSourcePathsContain(results, requested) {
 			return workspace.ToolRequest{}, false
 		}
@@ -153,7 +155,7 @@ func singleChangedSourceSanityPath(results []workspace.ToolResult) (string, bool
 	var target string
 
 	for _, path := range changedSourcePaths(results) {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized == "" || !workspace.SourceSanityCoversPath(normalized) {
 			continue
 		}
@@ -169,13 +171,13 @@ func singleChangedSourceSanityPath(results []workspace.ToolResult) (string, bool
 }
 
 func changedSourcePathsContain(results []workspace.ToolResult, path string) bool {
-	normalizedPath := normalizeRunnerPath(path)
+	normalizedPath := agentutil.NormalizeRunnerPath(path)
 	if normalizedPath == "" {
 		return false
 	}
 
 	for _, changed := range changedSourcePaths(results) {
-		if normalizeRunnerPath(changed) == normalizedPath {
+		if agentutil.NormalizeRunnerPath(changed) == normalizedPath {
 			return true
 		}
 	}
@@ -188,13 +190,13 @@ func postWriteVerificationReadOfChangedSource(req workspace.ToolRequest, results
 		return false
 	}
 
-	requested := normalizeRunnerPath(req.Path)
+	requested := agentutil.NormalizeRunnerPath(req.Path)
 	if requested == "" {
 		return false
 	}
 
 	for _, changed := range changedSourcePaths(results) {
-		if normalizeRunnerPath(changed) == requested {
+		if agentutil.NormalizeRunnerPath(changed) == requested {
 			return true
 		}
 	}
@@ -207,7 +209,7 @@ func postWriteVerificationWriteOfChangedSource(req workspace.ToolRequest, result
 		return false
 	}
 
-	requested := normalizeRunnerPath(req.Path)
+	requested := agentutil.NormalizeRunnerPath(req.Path)
 	if requested == "" {
 		return false
 	}
@@ -217,7 +219,7 @@ func postWriteVerificationWriteOfChangedSource(req workspace.ToolRequest, result
 	}
 
 	for _, changed := range changedSourcePaths(results) {
-		if normalizeRunnerPath(changed) == requested {
+		if agentutil.NormalizeRunnerPath(changed) == requested {
 			return true
 		}
 	}
@@ -230,7 +232,7 @@ func sourceEditCloseoutPrompt(req workspace.ToolRequest, brief workerruntime.Wor
 		return "", false
 	}
 
-	if postReadinessGap(req) != "" {
+	if util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) != "" {
 		return "", false
 	}
 
@@ -293,7 +295,7 @@ func deterministicPostWriteVerificationRequest(results []workspace.ToolResult, b
 }
 
 func scriptSyntaxVerificationCommand(path string) string {
-	normalized := normalizeRunnerPath(path)
+	normalized := agentutil.NormalizeRunnerPath(path)
 	lower := strings.ToLower(normalized)
 
 	switch {
@@ -326,7 +328,7 @@ func sourceEditsAreSemanticallyVerified(brief workerruntime.WorkerRuntimeBrief, 
 }
 
 func failedVerificationAfterLatestWrite(results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) (workspace.ToolResult, bool) {
-	if verificationContractSkipsGate(brief.VerificationContract) {
+	if workerruntime.VerificationContractSkipsGate(brief.VerificationContract) {
 		return workspace.ToolResult{}, false
 	}
 
@@ -376,7 +378,7 @@ func failedVerificationAfterLatestWrite(results []workspace.ToolResult, brief wo
 
 func resultIsVerificationAttempt(result workspace.ToolResult) bool {
 	tool := strings.TrimSpace(result.Tool)
-	if tool == "source_sanity" || isDiagnosticsVerificationTool(tool) {
+	if tool == "source_sanity" || workspace.IsDiagnosticToolName(tool) {
 		return true
 	}
 
@@ -416,7 +418,7 @@ func sourceSanityResultUsesLanguageDiagnostics(result workspace.ToolResult) bool
 }
 
 func sourceVerificationGateApplies(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	if !runnerBriefRequiresMutation(brief) || verificationContractSkipsGate(brief.VerificationContract) {
+	if !runnerBriefRequiresMutation(brief) || workerruntime.VerificationContractSkipsGate(brief.VerificationContract) {
 		return false
 	}
 
@@ -490,7 +492,7 @@ func changedSourcePaths(results []workspace.ToolResult) []string {
 		}
 
 		for _, path := range changedPathsFromToolResult(result) {
-			normalized := normalizeRunnerPath(path)
+			normalized := agentutil.NormalizeRunnerPath(path)
 			if normalized == "" || !sourcePathNeedsSemanticVerification(normalized) {
 				continue
 			}
@@ -742,9 +744,6 @@ func runnerStringInSet(value string, candidates ...string) bool {
 	return false
 }
 
-func isDiagnosticsVerificationTool(tool string) bool {
-	return workspace.IsDiagnosticToolName(tool)
-}
 
 func clearVerificationGateFingerprints(fingerprints map[string]string) {
 	for fingerprint, reason := range fingerprints {

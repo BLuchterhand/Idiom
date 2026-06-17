@@ -9,6 +9,7 @@ import (
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 type fingerprintTrackingState struct {
@@ -198,7 +199,7 @@ func (s *runnerRequestBudgetState) noteFingerprint(currentFingerprint string) in
 
 func (s *runnerRequestBudgetState) samePathFixationDecision(req workspace.ToolRequest, evidenceAvailable bool) runnerRequestBudgetDecision {
 	fp := samePathFingerprint(req)
-	if fp == "" || isDiagnosticLogArtifactPath(req.Path) {
+	if fp == "" || agentutil.IsDiagnosticLogArtifactPath(req.Path) {
 		return runnerRequestBudgetDecision{}
 	}
 

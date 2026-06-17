@@ -6,6 +6,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/workflows/planintent"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 func (r *Runner) compilePlanIntentToolRequest(text string) (workspace.ToolRequest, string, bool) {
@@ -160,7 +161,7 @@ func planIntentErrorCode(err error) string {
 func safeTelemetryPathList(paths []string) []string {
 	out := make([]string, 0, len(paths))
 	for _, path := range paths {
-		path = normalizeRunnerPath(path)
+		path = agentutil.NormalizeRunnerPath(path)
 		if path != "" {
 			out = append(out, path)
 		}

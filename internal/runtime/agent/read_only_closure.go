@@ -10,6 +10,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/platform/util"
 )
 
 type ReadOnlyCloseoutState string
@@ -144,7 +145,7 @@ func (d ReadOnlyCloseout) ConversationUncertaintyFallback() string {
 	for _, result := range d.Results {
 		paths := agentutil.ReadPathsFromToolResult(result)
 		for _, path := range paths {
-			if isNonSourceEvidenceArtifactPath(path) {
+			if agentutil.IsNonSourceEvidenceArtifactPath(path) {
 				continue
 			}
 
@@ -172,7 +173,7 @@ func (d ReadOnlyCloseout) ConversationUncertaintyFallback() string {
 	} else {
 		b.WriteString("\n\nEvidence paths:\n")
 
-		for _, path := range limitStrings(inspectedPaths, 6) {
+		for _, path := range util.Prefix(inspectedPaths, 6) {
 			b.WriteString("- `")
 			b.WriteString(path)
 			b.WriteString("`\n")
@@ -182,7 +183,7 @@ func (d ReadOnlyCloseout) ConversationUncertaintyFallback() string {
 	if len(anchors) > 0 {
 		b.WriteString("\nSource anchors:\n")
 
-		for _, anchor := range limitStrings(anchors, 6) {
+		for _, anchor := range util.Prefix(anchors, 6) {
 			b.WriteString("- ")
 			b.WriteString(anchor)
 			b.WriteString("\n")
@@ -255,8 +256,8 @@ func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswer
 	answerSupportedPaths := answerCitedCollectiveSourceBodySupportPaths(answer, ledger)
 
 	if len(answerSupportedPaths) > 0 {
-		ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, answerSupportedPaths)
-		ledger.RelevantSourceBodyPaths = mergeRunnerStateStrings(ledger.RelevantSourceBodyPaths, answerSupportedPaths)
+		ledger.SourceBodyObjectivePaths = util.Merge(ledger.SourceBodyObjectivePaths, answerSupportedPaths)
+		ledger.RelevantSourceBodyPaths = util.Merge(ledger.RelevantSourceBodyPaths, answerSupportedPaths)
 	}
 
 	decision := readOnlyFinalAnswerDecision{
@@ -456,7 +457,7 @@ func answerCitesNamedObjectiveSource(answer string, ledger readOnlyAnswerability
 	sourceSet := readOnlyPathSet(ledger.SourceBodyPaths)
 
 	for _, raw := range sourceGroundingMentionedPaths(answer) {
-		path := normalizeRunnerPath(raw)
+		path := agentutil.NormalizeRunnerPath(raw)
 		if path == "" {
 			continue
 		}
@@ -525,7 +526,7 @@ func answerObjectiveTerms(answer string, objective string) []string {
 		}
 	}
 
-	return uniqueSortedStrings(matches)
+	return util.Sorted(matches)
 }
 
 func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAnswerabilityLedger) bool {
@@ -549,7 +550,7 @@ func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAns
 	}
 
 	for _, path := range mentioned {
-		if _, ok := relevantSet[normalizeRunnerPath(path)]; ok {
+		if _, ok := relevantSet[agentutil.NormalizeRunnerPath(path)]; ok {
 			return true
 		}
 	}
@@ -560,7 +561,7 @@ func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAns
 func objectiveAsksBehaviorSummary(objective string) bool {
 	lower := " " + strings.ToLower(strings.Join(strings.Fields(objective), " ")) + " "
 
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		" what does ",
 		" what do ",
 	)
@@ -568,7 +569,7 @@ func objectiveAsksBehaviorSummary(objective string) bool {
 
 func plainNamedFileContentRequest(objective string) bool {
 	lower := strings.ToLower(strings.Join(strings.Fields(objective), " "))
-	if !containsAny(lower, "what is in", "what's in", "show", "summarize", "summary of", "contents of", "list") {
+	if !agentutil.ContainsAny(lower, "what is in", "what's in", "show", "summarize", "summary of", "contents of", "list") {
 		return false
 	}
 
@@ -632,7 +633,7 @@ func readOnlyAnswerUsesInspectedSourceAsAnswer(answer string, ledger readOnlyAns
 
 	lower := strings.ToLower(strings.Join(strings.Fields(answer), " "))
 
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		"the relevant code",
 		"the code is",
 		"the implementation is",
@@ -950,7 +951,7 @@ func (d ReadOnlyCloseout) HasObjectiveRelevantEvidence() bool {
 }
 
 func readOnlyClosureKnownEvidencePaths(evidence readOnlyAnswerabilityLedger) []string {
-	paths := mergeRunnerStateStrings(evidence.CandidatePaths, evidence.SourceBodyPaths, evidence.NamedSourcePaths)
+	paths := util.Merge(evidence.CandidatePaths, evidence.SourceBodyPaths, evidence.NamedSourcePaths)
 	return readOnlySourceLikePaths(paths, 8)
 }
 
@@ -975,7 +976,7 @@ func (d ReadOnlyCloseout) PrioritizedCandidatePaths() []string {
 		}
 	}
 
-	return mergeRunnerStateStrings(priority, rest)
+	return util.Merge(priority, rest)
 }
 
 func presentableUnsupportedFinalAnswerLead() string {
@@ -1131,7 +1132,7 @@ func isHarnessRejectionErrorText(text string) bool {
 		return false
 	}
 
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		"include `named_gap`",
 		"include named_gap",
 		"already contains sufficient evidence to bias toward answering",

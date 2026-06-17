@@ -325,15 +325,15 @@ func (r *Runner) planThenExecuteTerminalToolBrief(results []workspace.ToolResult
 
 	brief.AllowedTools = []string{workspace.ToolNameSubmitPlan}
 	brief.RequiredTools = []string{workspace.ToolNameSubmitPlan}
-	brief.ForbiddenTools = mergeRunnerStateStrings(brief.ForbiddenTools,
+	brief.ForbiddenTools = util.Merge(brief.ForbiddenTools,
 		[]string{workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate, workspace.ToolNameSearchFiles, workspace.ToolNameSearchContent, workspace.ToolNameListFiles, workspace.ToolNameShell, workspace.ToolNameSourceSanity, workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameApplyPatch},
 	)
 	brief.ToolManifest = runnerSanitizedToolManifest([]string{workspace.ToolNameSubmitPlan})
-	brief.Constraints = mergeRunnerStateStrings(brief.Constraints, []string{"plan_then_execute_submit_plan_ready", "required_edit_paths_define_write_scope", "planner_owned_verification"})
+	brief.Constraints = util.Merge(brief.Constraints, []string{"plan_then_execute_submit_plan_ready", "required_edit_paths_define_write_scope", "planner_owned_verification"})
 	brief.SearchPolicy = []string{"no read/search/discovery action is valid after submit_plan readiness before the first terminal outcome"}
 
 	if planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, results) {
-		brief.Constraints = mergeRunnerStateStrings(brief.Constraints, []string{"plan_then_execute_submit_correction_only"})
+		brief.Constraints = util.Merge(brief.Constraints, []string{"plan_then_execute_submit_correction_only"})
 		brief.RequiredNext = []string{"corrected submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths"}
 		brief.InvalidActions = []string{"read/search/source-refresh after submit_plan correction is ready", "Decision: source-satisfied after an incomplete submit_plan", "<<QUESTION>> after source evidence is sufficient for correction", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
 		brief.ReadinessGate = []string{"submit_plan_correction_required"}
@@ -347,8 +347,8 @@ func (r *Runner) planThenExecuteTerminalToolBrief(results []workspace.ToolResult
 			brief.FinalCritic = []string{"answers_actual_user_request", "submit_plan_called_or_exact_body_anchor_blocker", "edits_or_source_satisfied_paths_cover_required_paths_unless_exact_blocker"}
 		}
 	} else {
-		brief.ReadinessGate = mergeRunnerStateStrings([]string{string(workerruntime.ReadinessSubmitPlanOrSourceSatisfiedOrBlocker)}, brief.ReadinessGate)
-		brief.StopConditions = mergeRunnerStateStrings([]string{string(workerruntime.StopSubmitPlanReturnedOrSourceSatisfiedOrBlocker), string(workerruntime.StopBlockedByMissingPermissionOrInformation)}, brief.StopConditions)
+		brief.ReadinessGate = util.Merge([]string{string(workerruntime.ReadinessSubmitPlanOrSourceSatisfiedOrBlocker)}, brief.ReadinessGate)
+		brief.StopConditions = util.Merge([]string{string(workerruntime.StopSubmitPlanReturnedOrSourceSatisfiedOrBlocker), string(workerruntime.StopBlockedByMissingPermissionOrInformation)}, brief.StopConditions)
 		brief.FinalCritic = []string{"answers_actual_user_request", "submit_plan_called", "source_satisfied_or_blocker_only_with_per_path_evidence"}
 	}
 
@@ -410,7 +410,7 @@ func planThenExecuteTerminalSubmitPlanSkeletonEntries(brief workerruntime.Worker
 			EndLine:   1,
 			NewFile:   planThenExecuteRequiredPathHasTerminalMissingFileEvidence(path, results),
 		}
-		for _, evidence := range evidenceByPath[normalizeRunnerPath(path)] {
+		for _, evidence := range evidenceByPath[agentutil.NormalizeRunnerPath(path)] {
 			if evidenceLinesRemaining > 0 {
 				entry.Evidence = append(entry.Evidence, evidence.Summary)
 				evidenceLinesRemaining--
@@ -444,7 +444,7 @@ func planThenExecuteTerminalSubmitPlanEvidenceByPath(results []workspace.ToolRes
 	out := map[string][]planThenExecuteTerminalSubmitPlanEvidence{}
 	seen := map[string]map[string]struct{}{}
 	add := func(path string, summary string) {
-		path = normalizeRunnerPath(path)
+		path = agentutil.NormalizeRunnerPath(path)
 		summary = strings.TrimSpace(summary)
 
 		if path == "" || summary == "" || len(out[path]) >= maxPerPath {
@@ -659,7 +659,7 @@ func planThenExecuteTerminalSourceEvidenceMessages(brief workerruntime.WorkerRun
 	required := map[string]struct{}{}
 
 	for _, path := range normalizedRequiredEditPaths(brief.RequiredEditPaths) {
-		if normalized := normalizeRunnerPath(path); normalized != "" {
+		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
 			required[normalized] = struct{}{}
 		}
 	}
@@ -728,11 +728,11 @@ func planThenExecuteTerminalSourceEvidenceMessages(brief workerruntime.WorkerRun
 
 func planThenExecuteEvidenceIntersectsRequiredPaths(paths []string, required map[string]struct{}) bool {
 	for _, path := range paths {
-		if isNonSourceEvidenceArtifactPath(path) {
+		if agentutil.IsNonSourceEvidenceArtifactPath(path) {
 			continue
 		}
 
-		if _, ok := required[normalizeRunnerPath(path)]; ok {
+		if _, ok := required[agentutil.NormalizeRunnerPath(path)]; ok {
 			return true
 		}
 	}
@@ -745,12 +745,12 @@ func normalizedRunnerPaths(paths []string) []string {
 	seen := map[string]struct{}{}
 
 	for _, path := range paths {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
 
-		if isNonSourceEvidenceArtifactPath(normalized) {
+		if agentutil.IsNonSourceEvidenceArtifactPath(normalized) {
 			continue
 		}
 
@@ -924,7 +924,7 @@ func planThenExecuteRejectedSubmitPlanDraftEvidence(req workspace.ToolRequest, r
 	b.WriteString("\nDraft edit entries from the rejected request. Rejected body excerpts are not source evidence; correct them against the latest read_file/code_navigate source evidence before resubmitting.\n")
 
 	for i, edit := range edits {
-		path := normalizeRunnerPath(edit.Path)
+		path := agentutil.NormalizeRunnerPath(edit.Path)
 		if path == "" {
 			path = strings.TrimSpace(edit.Path)
 		}
@@ -939,11 +939,11 @@ func planThenExecuteRejectedSubmitPlanDraftEvidence(req workspace.ToolRequest, r
 			b.WriteString(fmt.Sprintf(" lines=%d-%d", edit.StartLine, edit.EndLine))
 		}
 
-		if _, ok := invalidPaths[normalizeRunnerPath(edit.Path)]; ok {
+		if _, ok := invalidPaths[agentutil.NormalizeRunnerPath(edit.Path)]; ok {
 			b.WriteString(" status=invalid_anchor_or_syntax")
 		}
 
-		if _, ok := missingPaths[normalizeRunnerPath(edit.Path)]; ok {
+		if _, ok := missingPaths[agentutil.NormalizeRunnerPath(edit.Path)]; ok {
 			b.WriteString(" status=missing_required_path")
 		}
 
@@ -982,7 +982,7 @@ func planThenExecuteShouldIncludeRejectedDraftBody(edit workspace.PlanEdit, inva
 		return false
 	}
 
-	_, ok := invalidPaths[normalizeRunnerPath(edit.Path)]
+	_, ok := invalidPaths[agentutil.NormalizeRunnerPath(edit.Path)]
 
 	return ok
 }

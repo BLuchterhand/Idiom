@@ -255,7 +255,7 @@ func answerCitedCollectiveSourceBodySupportPaths(answer string, ledger readOnlyA
 	pathTermCount := map[string]int{}
 
 	for _, support := range ledger.SourceBodyObjectiveTerms {
-		path := normalizeRunnerPath(support.Path)
+		path := agentutil.NormalizeRunnerPath(support.Path)
 		if path == "" {
 			continue
 		}
@@ -312,7 +312,7 @@ func intersectRunnerPaths(left []string, right []string) []string {
 	var out []string
 
 	for _, raw := range left {
-		path := normalizeRunnerPath(raw)
+		path := agentutil.NormalizeRunnerPath(raw)
 		if path == "" {
 			continue
 		}

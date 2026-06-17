@@ -13,6 +13,7 @@ import (
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 func (r *Runner) implementationScopedDisallowedToolRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
@@ -94,7 +95,7 @@ func lastResultSummaryIs(results []workspace.ToolResult, summary string) bool {
 }
 
 func (r *Runner) writeDescriptionRepairPrompt(req workspace.ToolRequest) string {
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path == "" {
 		path = "the required edit path"
 	}
@@ -112,7 +113,7 @@ func (r *Runner) emitWriteDescriptionValidatorDecision(step int, req workspace.T
 		return
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	payload := map[string]any{
 		"schema":               "idiom.dynamic_validator_decision.v1",
 		"step":                 step,
@@ -137,7 +138,7 @@ func (r *Runner) writeReadyPacketReadWithoutGapRecovery(req workspace.ToolReques
 
 	hideNonWrite = implementationPreWriteToolSurfaceActive(r.RuntimeBrief, results)
 
-	missingGap := postReadinessGap(req) == ""
+	missingGap := util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) == ""
 	// The read scope is the FULL required-edit-paths set plus explicit
 	// packet evidence paths, not just the remaining edit paths. Once the
 	// model has written one file in the brief, reads on that file are still
@@ -206,7 +207,7 @@ func (r *Runner) writeReadyPacketReadWithoutGapRecovery(req workspace.ToolReques
 }
 
 func implementationScopedExplicitReadScope(brief workerruntime.WorkerRuntimeBrief) []string {
-	return mergeRunnerStateStrings(brief.RequiredEditPaths, brief.EvidencePaths)
+	return util.Merge(brief.RequiredEditPaths, brief.EvidencePaths)
 }
 
 func (r *Runner) scratchpadDeliverableFailedEvidenceNudge(req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult) (string, bool) {
@@ -258,7 +259,7 @@ func scratchpadDeliverableFailedEvidenceResult(brief workerruntime.WorkerRuntime
 			continue
 		}
 
-		if isReadClassTool(workspace.ToolRequest{Tool: result.Tool}) {
+		if workspace.IsReadTool(strings.TrimSpace(result.Tool)) {
 			return result, true
 		}
 	}
@@ -297,7 +298,7 @@ func scratchpadDeliverableFailedEvidenceStatus(brief workerruntime.WorkerRuntime
 }
 
 func (r *Runner) scopedReadClassTool(req workspace.ToolRequest) bool {
-	if isReadClassTool(req) {
+	if workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
 		return true
 	}
 
@@ -371,13 +372,13 @@ func scopedImplementationDiscoveryPathAllowed(req workspace.ToolRequest, pathSco
 		return true
 	}
 
-	normalized := normalizeRunnerPath(path)
+	normalized := agentutil.NormalizeRunnerPath(path)
 	if normalized == "" {
 		return false
 	}
 
 	for _, scoped := range pathScope {
-		scoped = normalizeRunnerPath(scoped)
+		scoped = agentutil.NormalizeRunnerPath(scoped)
 		if scoped == "" {
 			continue
 		}
@@ -400,7 +401,7 @@ func runnerPathLooksLikeFile(path string) bool {
 }
 
 func scopedImplementationPackageDiscoveryPathAllowed(req workspace.ToolRequest, normalized string, pathScope []string) bool {
-	normalized = normalizeRunnerPath(filepath.ToSlash(strings.TrimSpace(normalized)))
+	normalized = agentutil.NormalizeRunnerPath(filepath.ToSlash(strings.TrimSpace(normalized)))
 	if normalized == "" || normalized == "." || normalized == "/" || runnerPathLooksLikeFile(normalized) {
 		return false
 	}
@@ -410,12 +411,12 @@ func scopedImplementationPackageDiscoveryPathAllowed(req workspace.ToolRequest, 
 	}
 
 	for _, scoped := range pathScope {
-		scoped = normalizeRunnerPath(filepath.ToSlash(strings.TrimSpace(scoped)))
+		scoped = agentutil.NormalizeRunnerPath(filepath.ToSlash(strings.TrimSpace(scoped)))
 		if scoped == "" || !runnerPathLooksLikeFile(scoped) {
 			continue
 		}
 
-		parent := normalizeRunnerPath(filepath.ToSlash(filepath.Dir(scoped)))
+		parent := agentutil.NormalizeRunnerPath(filepath.ToSlash(filepath.Dir(scoped)))
 		if parent == "" || parent == "." || parent == "/" {
 			continue
 		}
@@ -893,7 +894,7 @@ func candidateRecoveryScopePaths(brief workerruntime.WorkerRuntimeBrief, results
 	seen := make(map[string]struct{}, max)
 	paths := make([]string, 0, max)
 	add := func(path string) {
-		path = normalizeRunnerPath(path)
+		path = agentutil.NormalizeRunnerPath(path)
 		if path == "" {
 			return
 		}
@@ -945,7 +946,7 @@ func contextPackCandidatePathsFromResults(results []workspace.ToolResult, max in
 	seen := map[string]struct{}{}
 	paths := make([]string, 0, max)
 	add := func(path string) {
-		path = normalizeRunnerPath(path)
+		path = agentutil.NormalizeRunnerPath(path)
 		if path == "" || !pathparse.HasWorkspaceFileExtension(path) {
 			return
 		}
@@ -1241,7 +1242,7 @@ func unreadCandidateRecoveryScopePaths(brief workerruntime.WorkerRuntimeBrief, r
 
 	read := readPathsFromResults(results)
 	for _, path := range candidates {
-		if _, ok := read[normalizeRunnerPath(path)]; ok {
+		if _, ok := read[agentutil.NormalizeRunnerPath(path)]; ok {
 			return nil
 		}
 	}
@@ -1263,7 +1264,7 @@ func unreadCandidateRecoveryScopePathsForRecovery(brief workerruntime.WorkerRunt
 	unread := make([]string, 0, len(candidates))
 
 	for _, path := range candidates {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -1283,7 +1284,7 @@ func unreadCandidateRecoveryScopePathsForRecovery(brief workerruntime.WorkerRunt
 }
 
 func candidateRecoveryScopePathHasMissingFileEvidence(path string, results []workspace.ToolResult) bool {
-	normalized := normalizeRunnerPath(path)
+	normalized := agentutil.NormalizeRunnerPath(path)
 	if normalized == "" {
 		return false
 	}
@@ -1439,11 +1440,11 @@ func recoverySearchLineScore(path string, text string, terms []string, uiObjecti
 		score -= 30
 	}
 
-	if strings.HasPrefix(lowerPath, "cmd/") && !containsAny(lowerText, "implementation", "core", "internal") {
+	if strings.HasPrefix(lowerPath, "cmd/") && !agentutil.ContainsAny(lowerText, "implementation", "core", "internal") {
 		score -= 20
 	}
 
-	if slices.Contains(terms, "apply") && containsAny(lowerPath, "migration_apply", "_apply.", "/apply") {
+	if slices.Contains(terms, "apply") && agentutil.ContainsAny(lowerPath, "migration_apply", "_apply.", "/apply") {
 		score += 60
 	}
 
@@ -1452,11 +1453,11 @@ func recoverySearchLineScore(path string, text string, terms []string, uiObjecti
 			score += 45
 		}
 
-		if containsAny(lowerPath, "render", "view", "model_state", "update_handlers") {
+		if agentutil.ContainsAny(lowerPath, "render", "view", "model_state", "update_handlers") {
 			score += 25
 		}
 
-		if containsAny(lowerPath, "frontier/", "comprehension/", "workspace/") {
+		if agentutil.ContainsAny(lowerPath, "frontier/", "comprehension/", "workspace/") {
 			score -= 25
 		}
 	}
@@ -1486,5 +1487,5 @@ func recoveryObjectiveSignalTerms(objective string) []string {
 }
 
 func objectiveMentionsUI(lowerObjective string) bool {
-	return containsAny(lowerObjective, "tui", "ui", "banner", "header", "footer", "top-right", "top right", "window", "screen", "view", "render")
+	return agentutil.ContainsAny(lowerObjective, "tui", "ui", "banner", "header", "footer", "top-right", "top right", "window", "screen", "view", "render")
 }

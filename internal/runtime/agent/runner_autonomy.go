@@ -16,6 +16,7 @@ import (
 	"idiom/internal/contracts/compile"
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 const runnerAutonomyEventRole = "autonomy_event"
@@ -324,7 +325,7 @@ func legacyRunnerAutonomyContract(r *Runner, policy RunPolicy, brief workerrunti
 		Verification: autonomy.VerificationRequirement{
 			Required:               runnerVerificationRequired(brief),
 			Contract:               strings.TrimSpace(brief.VerificationContract),
-			RequiredAfterWrite:     runnerBriefRequiresMutation(brief) && !verificationContractSkipsGate(brief.VerificationContract),
+			RequiredAfterWrite:     runnerBriefRequiresMutation(brief) && !workerruntime.VerificationContractSkipsGate(brief.VerificationContract),
 			SourceAwareRequired:    runnerBriefRequiresMutation(brief),
 			AcceptedCommands:       append([]string(nil), brief.VerificationPlan...),
 			SkippedRequiresBlocker: runnerBriefRequiresMutation(brief),
@@ -369,19 +370,19 @@ func runnerAutonomyPathRoles(brief workerruntime.WorkerRuntimeBrief, results []w
 	var roles []autonomy.PathRole
 
 	for _, path := range brief.RequiredEditPaths {
-		if normalized := normalizeRunnerPath(path); normalized != "" {
+		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
 			roles = append(roles, autonomy.PathRole{Role: autonomy.PathRoleRequiredEdit, PathPattern: normalized, Freshness: autonomy.FreshnessFresh, Reason: "runtime brief required_edit_paths"})
 		}
 	}
 
 	for _, path := range brief.EvidencePaths {
-		if normalized := normalizeRunnerPath(path); normalized != "" {
+		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
 			roles = append(roles, autonomy.PathRole{Role: autonomy.PathRoleEvidenceReadonly, PathPattern: normalized, Freshness: autonomy.FreshnessFresh, Reason: "runtime brief evidence_paths"})
 		}
 	}
 
 	for _, path := range mapKeys(changedPathsFromToolResults(results)) {
-		if normalized := normalizeRunnerPath(path); normalized != "" {
+		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
 			roles = append(roles, autonomy.PathRole{Role: autonomy.PathRoleGeneratedArtifact, PathPattern: normalized, Freshness: autonomy.FreshnessFresh, Reason: "recorded changed_paths"})
 		}
 	}
@@ -488,7 +489,7 @@ func runnerAutonomyObligations(brief workerruntime.WorkerRuntimeBrief, policy Ru
 
 	if runnerBriefRequiresMutation(brief) {
 		for _, path := range brief.RequiredEditPaths {
-			path = normalizeRunnerPath(path)
+			path = agentutil.NormalizeRunnerPath(path)
 			if path == "" {
 				continue
 			}
@@ -539,7 +540,7 @@ func runnerAutonomyObligations(brief workerruntime.WorkerRuntimeBrief, policy Ru
 		})
 	}
 
-	if runnerBriefRequiresMutation(brief) && !verificationContractSkipsGate(brief.VerificationContract) {
+	if runnerBriefRequiresMutation(brief) && !workerruntime.VerificationContractSkipsGate(brief.VerificationContract) {
 		owner := autonomy.OwnerHost
 		if plannerOwnsVerification(brief) {
 			owner = autonomy.OwnerPlanner
@@ -1198,7 +1199,7 @@ func (a *runnerAutonomyRecorder) completionGateResolvedAndOpenObligations(input 
 
 	changed := make(map[string]struct{}, len(input.ChangedPaths))
 	for _, path := range input.ChangedPaths {
-		if normalized := normalizeRunnerPath(path); normalized != "" {
+		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
 			changed[normalized] = struct{}{}
 		}
 	}
@@ -1214,7 +1215,7 @@ func (a *runnerAutonomyRecorder) completionGateResolvedAndOpenObligations(input 
 				path = path[:idx]
 			}
 
-			if normalized := normalizeRunnerPath(path); normalized != "" {
+			if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
 				sourceSatisfiedPaths[normalized] = struct{}{}
 			}
 		}
@@ -1232,7 +1233,7 @@ func (a *runnerAutonomyRecorder) completionGateResolvedAndOpenObligations(input 
 		}
 
 		if obligation.Kind == autonomy.ObligationWrite {
-			target := normalizeRunnerPath(obligation.TargetRef)
+			target := agentutil.NormalizeRunnerPath(obligation.TargetRef)
 			if target == "" {
 				if sourceSatisfiedReason {
 					resolved = append(resolved, ref)
@@ -1421,7 +1422,7 @@ func runnerAutonomyPathVariants(path string, root string) []string {
 		}
 
 		value = filepath.ToSlash(filepath.Clean(value))
-		value = normalizeRunnerPath(value)
+		value = agentutil.NormalizeRunnerPath(value)
 
 		if value == "" || value == "." {
 			return
@@ -2670,7 +2671,7 @@ func (a *runnerAutonomyRecorder) obligationsForGate(gate autonomy.GateKind) []au
 }
 
 func runnerAutonomyVerificationStatus(results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) string {
-	if runnerBriefRequiresMutation(brief) && !verificationContractSkipsGate(brief.VerificationContract) {
+	if runnerBriefRequiresMutation(brief) && !workerruntime.VerificationContractSkipsGate(brief.VerificationContract) {
 		if _, failed := failedVerificationAfterLatestWrite(results, brief); failed {
 			return "failed"
 		}
@@ -2712,7 +2713,7 @@ func runnerAutonomyRequiredPathStatus(contract autonomy.AutonomyContract, result
 			continue
 		}
 
-		path := normalizeRunnerPath(role.PathPattern)
+		path := agentutil.NormalizeRunnerPath(role.PathPattern)
 		if path == "" {
 			continue
 		}
@@ -3050,7 +3051,7 @@ func compactRunnerAutonomyPaths(paths []string) []string {
 	out := make([]string, 0, len(paths))
 
 	for _, path := range paths {
-		path = normalizeRunnerPath(path)
+		path = agentutil.NormalizeRunnerPath(path)
 		if path == "" {
 			continue
 		}

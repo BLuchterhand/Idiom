@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 func hideBroadDiscoveryTools(hidden map[string]bool) {
@@ -935,7 +936,7 @@ func rewriteMissingRequiredNewFileProbe(req workspace.ToolRequest, result worksp
 		return result
 	}
 
-	target := normalizeRunnerPath(strings.TrimSpace(req.Path))
+	target := agentutil.NormalizeRunnerPath(strings.TrimSpace(req.Path))
 	if target == "" {
 		return result
 	}
@@ -945,7 +946,7 @@ func rewriteMissingRequiredNewFileProbe(req workspace.ToolRequest, result worksp
 		return result
 	}
 
-	if len(matches) == 1 && normalizeRunnerPath(matches[0]) == target {
+	if len(matches) == 1 && agentutil.NormalizeRunnerPath(matches[0]) == target {
 		result.Summary = "Required new-file path does not exist yet"
 		result.Error = fmt.Sprintf("path %q is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create. Do NOT keep trying to inspect it. In submit_plan, include a replace_all edit for %q with empty old_text, a complete new_text body from the brief or gathered evidence, and a specific purpose. Do not copy placeholder body text or schema examples. If the brief does not provide enough body evidence for a required source/test file, answer with <<QUESTION>> naming the missing body evidence. Large bodies are moved to artifact refs after submission.", target, target)
 
@@ -963,7 +964,7 @@ func unavailableRequiredNewFileProbeNudge(req workspace.ToolRequest, brief worke
 		return "", "", false
 	}
 
-	target := normalizeRunnerPath(strings.TrimSpace(req.Path))
+	target := agentutil.NormalizeRunnerPath(strings.TrimSpace(req.Path))
 	if target == "" {
 		return "", "", false
 	}
@@ -977,7 +978,7 @@ func unavailableRequiredNewFileProbeNudge(req workspace.ToolRequest, brief worke
 		return "", "", false
 	}
 
-	if len(matches) == 1 && normalizeRunnerPath(matches[0]) == target {
+	if len(matches) == 1 && agentutil.NormalizeRunnerPath(matches[0]) == target {
 		return "Required new-file path does not exist yet",
 			fmt.Sprintf("path %q is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create. The requested probe tool %q is not available in the current allowed tool surface, and probing is unnecessary. In submit_plan, include a replace_all edit for %q with empty old_text, a complete new_text body from the brief or gathered evidence, and a specific purpose. Do not copy placeholder body text or schema examples. If the brief does not provide enough body evidence for a required source/test file, answer with <<QUESTION>> naming the missing body evidence.", target, strings.TrimSpace(req.Tool), target),
 			true
@@ -1018,7 +1019,7 @@ func missingRequiredNewFileProbeTool(tool string) bool {
 }
 
 func requiredNewFileProbeMatches(target string, requiredPaths []string) []string {
-	target = strings.Trim(strings.TrimSpace(normalizeRunnerPath(target)), "/")
+	target = strings.Trim(strings.TrimSpace(agentutil.NormalizeRunnerPath(target)), "/")
 	if target == "" {
 		return nil
 	}
@@ -1026,13 +1027,13 @@ func requiredNewFileProbeMatches(target string, requiredPaths []string) []string
 	var matches []string
 
 	for _, p := range requiredPaths {
-		path := strings.Trim(strings.TrimSpace(normalizeRunnerPath(p)), "/")
+		path := strings.Trim(strings.TrimSpace(agentutil.NormalizeRunnerPath(p)), "/")
 		if path == "" {
 			continue
 		}
 
 		if path == target || strings.HasPrefix(path, target+"/") || filepath.Dir(path) == target {
-			matches = appendUniqueRunnerStrings(matches, path)
+			matches = util.AppendUniqueMulti(matches, path)
 		}
 	}
 
@@ -1059,7 +1060,7 @@ func briefIsScratchpadDeliverableLane(brief workerruntime.WorkerRuntimeBrief) bo
 	}
 
 	for _, p := range brief.RequiredEditPaths {
-		normalized := normalizeRunnerPath(p)
+		normalized := agentutil.NormalizeRunnerPath(p)
 		if !strings.HasPrefix(normalized, ".idiom/refine/") {
 			return false
 		}
@@ -1074,7 +1075,7 @@ func scopedImplementationUsesBoundedSourceEdits(brief workerruntime.WorkerRuntim
 	}
 
 	for _, path := range paths {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized == "" || writePathIsNonSource(normalized) {
 			continue
 		}
@@ -1125,13 +1126,13 @@ func mkdirTouchesOnlyRequiredPathParents(result workspace.ToolResult, requiredPa
 }
 
 func mkdirPathIsRequiredParent(path string, requiredPaths []string) bool {
-	path = strings.Trim(normalizeRunnerPath(path), "/")
+	path = strings.Trim(agentutil.NormalizeRunnerPath(path), "/")
 	if path == "" {
 		return false
 	}
 
 	for _, required := range requiredPaths {
-		required = strings.Trim(normalizeRunnerPath(required), "/")
+		required = strings.Trim(agentutil.NormalizeRunnerPath(required), "/")
 		if required == "" || !writePathIsNonSource(required) {
 			continue
 		}
@@ -1325,15 +1326,6 @@ func looksLikeRunnerFileHandle(token string) bool {
 	return true
 }
 
-func containsAny(text string, needles ...string) bool {
-	for _, needle := range needles {
-		if strings.Contains(text, needle) {
-			return true
-		}
-	}
-
-	return false
-}
 
 // rewriteVisibilityNote returns a short system-message body explaining that
 // the requested tool was redirected to a different tool by harness routing

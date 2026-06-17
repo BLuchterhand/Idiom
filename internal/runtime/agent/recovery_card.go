@@ -6,8 +6,8 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
-	"idiom/internal/runtime/agent/stringset"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/platform/util"
 )
 
 const recoveryCardSchemaVersion = "idiom.recovery_card.v1"
@@ -74,7 +74,7 @@ func BuildRecoveryCard(input RecoveryCardInput) RecoveryCard {
 		RejectedAction: RecoveryRejectedAction{
 			Tool:        recoveryCardRejectedTool(input.RejectedRequest, input.RejectedResult),
 			ActionClass: recoveryCardRejectedActionClass(input.RejectedRequest, input.RejectedResult),
-			Target:      workerruntimeToolTarget(input.RejectedRequest),
+			Target:      workerruntime.ToolRequestTarget(input.RejectedRequest),
 			Reason:      recoveryCardRejectedReason(input.RejectedResult),
 		},
 		Invariant:                   recoveryCardInvariantText(invariantID, contract),
@@ -319,7 +319,7 @@ func quoteRecoveryCardValue(value string) string {
 }
 
 func uniqueRecoveryCardStrings(values []string) []string {
-	return stringset.Unique(values)
+	return util.Unique(values)
 }
 
 func recoveryCardInvariantID(input RecoveryCardInput) string {
@@ -565,7 +565,7 @@ func recoveryCardCallableTools(contract TurnPhaseContract, currentAllowedTools [
 }
 
 func removeRecoveryCardStrings(values []string, remove []string) []string {
-	return stringset.Remove(values, remove)
+	return util.Remove(values, remove)
 }
 
 func recoveryCardActionPolicyHasNoToolClasses(classes []string) bool {
@@ -728,7 +728,7 @@ func recoveryCardRejectedActionClass(req workspace.ToolRequest, result workspace
 		return actionPerEditWrite
 	case isVerificationRequest(workspace.ToolRequest{Tool: tool, Command: req.Command, Path: req.Path}):
 		return actionVerify
-	case isReadClassTool(workspace.ToolRequest{Tool: tool, Capability: req.Capability}):
+	case workspace.IsReadTool(strings.TrimSpace(tool)):
 		return actionRead
 	case tool == "search_files" || tool == "search_content" || tool == "rg" || tool == "grep":
 		return actionSearch
@@ -741,9 +741,6 @@ func recoveryCardRejectedReason(result workspace.ToolResult) string {
 	return firstRecoveryCardString(result.Summary, result.Error)
 }
 
-func workerruntimeToolTarget(req workspace.ToolRequest) string {
-	return workerruntime.ToolRequestTarget(req)
-}
 
 func firstRecoveryCardString(values ...string) string {
 	for _, value := range values {
@@ -766,7 +763,7 @@ func firstNonEmptyRecoveryCardStrings(groups ...[]string) []string {
 }
 
 func mergeRecoveryCardStrings(groups ...[]string) []string {
-	return stringset.Merge(groups...)
+	return util.Merge(groups...)
 }
 
 func slicesContainRecoveryCardString(values []string, needle string) bool {

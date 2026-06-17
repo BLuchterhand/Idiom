@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 func hideImplementationWriteOnlyToolsForTurn(hidden map[string]bool, owned map[string]bool, manager *workspace.Manager) {
@@ -249,7 +250,7 @@ func requiredEditPathScopeRejection(req workspace.ToolRequest, brief workerrunti
 	var outside []string
 
 	for _, path := range paths {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -312,7 +313,7 @@ func writeRequestPaths(req workspace.ToolRequest) []string {
 func normalizedRequiredEditPathSet(paths []string) map[string]struct{} {
 	out := make(map[string]struct{}, len(paths))
 	for _, path := range paths {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized != "" {
 			out[normalized] = struct{}{}
 		}
@@ -327,7 +328,7 @@ func readRequestTargetsRequiredEditPath(req workspace.ToolRequest, requiredPaths
 		return false
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path == "" {
 		return false
 	}
@@ -341,7 +342,7 @@ func readRequestTargetsRequiredEditPath(req workspace.ToolRequest, requiredPaths
 
 func scopedReadRecoveryRejectionKey(req workspace.ToolRequest) string {
 	tool := strings.TrimSpace(req.Tool)
-	target := normalizeRunnerPath(util.FirstNonEmpty(req.Path, req.ID, req.Handle, req.Query, req.Pattern, req.Task, req.Command))
+	target := agentutil.NormalizeRunnerPath(util.FirstNonEmpty(req.Path, req.ID, req.Handle, req.Query, req.Pattern, req.Task, req.Command))
 
 	if target == "" {
 		target = "<empty-target>"
@@ -491,7 +492,7 @@ func successfulReadClassResultCount(results []workspace.ToolResult) int {
 		}
 
 		req := workspace.ToolRequest{Tool: strings.TrimSpace(result.Tool)}
-		if isReadClassTool(req) {
+		if workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
 			count++
 		}
 	}
@@ -558,14 +559,14 @@ func shouldRejectExactReplayBeforeLoopGate(req workspace.ToolRequest) bool {
 }
 
 func normalizeRunnerToolRequest(req workspace.ToolRequest) workspace.ToolRequest {
-	req.Path = normalizeRunnerPath(req.Path)
-	req.Destination = normalizeRunnerPath(req.Destination)
-	req.Workdir = normalizeRunnerPath(req.Workdir)
+	req.Path = agentutil.NormalizeRunnerPath(req.Path)
+	req.Destination = agentutil.NormalizeRunnerPath(req.Destination)
+	req.Workdir = agentutil.NormalizeRunnerPath(req.Workdir)
 	req.NamedGap = ""
 	req.WhyNotAnswering = ""
 
 	for i := range req.Moves {
-		req.Moves[i].Destination = normalizeRunnerPath(req.Moves[i].Destination)
+		req.Moves[i].Destination = agentutil.NormalizeRunnerPath(req.Moves[i].Destination)
 	}
 
 	return req
@@ -613,9 +614,6 @@ func isContentInspectionTool(tool string) bool {
 // Used to drive the plan-mode read-budget nudge. Kept explicit (allow-list)
 // so mutating tools can never be miscounted. Shell is excluded because it
 // can mutate even when the command looks benign.
-func isReadClassTool(req workspace.ToolRequest) bool {
-	return workspace.IsReadTool(strings.TrimSpace(req.Tool))
-}
 
 const narrowToolFamilyNudgeAt = 5
 
@@ -765,7 +763,7 @@ func declarationMovesForbiddenByMessages(messages []llama.ChatMessage) bool {
 func textForbidsDeclarationMoves(text string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(text))
 
-	return containsAny(normalized,
+	return agentutil.ContainsAny(normalized,
 		"do not move declarations",
 		"do not move declaration",
 		"don't move declarations",
@@ -836,20 +834,7 @@ func normalizeActionToken(value string) string {
 	return value
 }
 
-func containsRunnerTool(tools []string, target string) bool {
-	target = strings.TrimSpace(target)
-	for _, tool := range tools {
-		if strings.TrimSpace(tool) == target {
-			return true
-		}
-	}
 
-	return false
-}
-
-func runnerAllowsTool(tools []string, tool string) bool {
-	return containsRunnerTool(tools, tool)
-}
 
 func runnerPlanExecuteTextualAllowedTools(currentAllowedTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
 	taskFamily := strings.TrimSpace(brief.TaskFamily)
@@ -877,7 +862,7 @@ func runnerPlanExecuteTextualAllowedTools(currentAllowedTools []string, brief wo
 	}
 
 	if taskFamily != PlanThenExecutePlannerTaskFamily {
-		if len(uniquePhaseStrings(currentAllowedTools)) > 0 {
+		if len(util.Unique(currentAllowedTools)) > 0 {
 			return currentAllowedTools
 		}
 
@@ -892,7 +877,7 @@ func runnerPlanExecuteTextualAllowedTools(currentAllowedTools []string, brief wo
 		return allowed
 	}
 
-	if len(uniquePhaseStrings(currentAllowedTools)) > 0 {
+	if len(util.Unique(currentAllowedTools)) > 0 {
 		return currentAllowedTools
 	}
 
@@ -909,12 +894,12 @@ func runnerPlanExecuteTextualAllowedToolsForRequest(currentAllowedTools []string
 		return allowed
 	}
 
-	if len(uniquePhaseStrings(allowed)) == 1 && runnerAllowsTool(allowed, workspace.ToolNameSubmitPlan) {
+	if len(util.Unique(allowed)) == 1 && slices.Contains(allowed, workspace.ToolNameSubmitPlan) {
 		return allowed
 	}
 
 	tool := strings.TrimSpace(req.Tool)
-	if tool == "" || runnerAllowsTool(allowed, tool) {
+	if tool == "" || slices.Contains(allowed, tool) {
 		return allowed
 	}
 
@@ -926,11 +911,11 @@ func runnerPlanExecuteTextualAllowedToolsForRequest(currentAllowedTools []string
 		return allowed
 	}
 
-	if len(baseTools) > 0 && !runnerAllowsTool(baseTools, tool) {
+	if len(baseTools) > 0 && !slices.Contains(baseTools, tool) {
 		return allowed
 	}
 
-	return uniquePhaseStrings(append(append([]string(nil), allowed...), tool))
+	return util.Unique(append(append([]string(nil), allowed...), tool))
 }
 
 func runnerPlanExecuteTextualContractDisablesTools(contract TurnPhaseContract) bool {
@@ -938,13 +923,13 @@ func runnerPlanExecuteTextualContractDisablesTools(contract TurnPhaseContract) b
 }
 
 func runnerPlanExecuteTextualPlanningProjection(currentAllowedTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (PlanExecutePlanningState, TurnPhaseContract, []string) {
-	baseTools := uniquePhaseStrings(append(append([]string(nil), brief.AllowedTools...), currentAllowedTools...))
+	baseTools := util.Unique(append(append([]string(nil), brief.AllowedTools...), currentAllowedTools...))
 	if strings.TrimSpace(brief.TaskFamily) == PlanThenExecutePlannerTaskFamily {
-		baseTools = uniquePhaseStrings(append(baseTools, workspace.ToolNameSubmitPlan))
+		baseTools = util.Unique(append(baseTools, workspace.ToolNameSubmitPlan))
 	}
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
 	if state.Mode == PlanExecutePlanningModeAnchorRefresh && len(state.RefreshPaths) > 0 {
-		baseTools = uniquePhaseStrings(append(baseTools, planThenExecuteAnchorRefreshToolNames()...))
+		baseTools = util.Unique(append(baseTools, planThenExecuteAnchorRefreshToolNames()...))
 	}
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief:             brief,
@@ -974,7 +959,7 @@ func runnerPlanExecuteTextualAllowedToolsFromProjection(state PlanExecutePlannin
 }
 
 func runnerFilterPlanExecuteProjectionTools(baseTools []string, projectionTools []string) []string {
-	projectionTools = uniquePhaseStrings(projectionTools)
+	projectionTools = util.Unique(projectionTools)
 	if len(projectionTools) == 0 {
 		return nil
 	}

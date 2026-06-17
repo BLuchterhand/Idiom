@@ -9,7 +9,6 @@ import (
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/agent/agentutil"
-	"idiom/internal/runtime/agent/stringset"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -235,12 +234,12 @@ func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
 		ModelCallID:       strings.TrimSpace(input.ModelCallID),
 		Step:              input.Step,
 		PermissionProfile: brief.PermissionProfile,
-		AllowedTools:      uniquePhaseStrings(baseTools),
-		HiddenTools:       uniquePhaseStrings(input.HiddenTools),
-		RequiredNext:      uniquePhaseStrings(brief.RequiredNext),
-		InvalidNext:       uniquePhaseStrings(brief.InvalidActions),
-		StopConditions:    uniquePhaseStrings(brief.StopConditions),
-		Constraints:       uniquePhaseStrings(brief.Constraints),
+		AllowedTools:      util.Unique(baseTools),
+		HiddenTools:       util.Unique(input.HiddenTools),
+		RequiredNext:      util.Unique(brief.RequiredNext),
+		InvalidNext:       util.Unique(brief.InvalidActions),
+		StopConditions:    util.Unique(brief.StopConditions),
+		Constraints:       util.Unique(brief.Constraints),
 		RuntimeCall: RuntimeCallContract{
 			BackendKind:           strings.TrimSpace(input.BackendKind),
 			ModelAlias:            strings.TrimSpace(input.ModelAlias),
@@ -259,17 +258,17 @@ func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
 			ExpectedVisibleOutput: expectedVisibleOutput(input),
 		},
 		EvidenceState: PhaseEvidenceState{
-			AcceptanceRefs:           uniquePhaseStrings(input.AcceptanceRefs),
-			TDDObligationRefs:        uniquePhaseStrings(input.TDDObligationRefs),
-			VerificationEvidenceRefs: uniquePhaseStrings(input.VerificationEvidenceRefs),
+			AcceptanceRefs:           util.Unique(input.AcceptanceRefs),
+			TDDObligationRefs:        util.Unique(input.TDDObligationRefs),
+			VerificationEvidenceRefs: util.Unique(input.VerificationEvidenceRefs),
 			VerificationStatus:       strings.TrimSpace(input.VerificationStatus),
 			ProductWorkflowState:     strings.TrimSpace(input.ProductWorkflowState),
 			AtomStatus:               strings.TrimSpace(input.AtomStatus),
-			RecoveryPacketRefs:       uniquePhaseStrings(input.RecoveryPacketRefs),
-			ResidualBlockers:         uniquePhaseStrings(input.ResidualBlockers),
-			SourceBodyObligations:    uniquePhaseStrings(input.SourceBodyObligations),
-			CompletedGitHistoryPaths: uniquePhaseStrings(input.CompletedGitHistoryPaths),
-			PendingGitHistoryPaths:   uniquePhaseStrings(input.PendingGitHistoryPaths),
+			RecoveryPacketRefs:       util.Unique(input.RecoveryPacketRefs),
+			ResidualBlockers:         util.Unique(input.ResidualBlockers),
+			SourceBodyObligations:    util.Unique(input.SourceBodyObligations),
+			CompletedGitHistoryPaths: util.Unique(input.CompletedGitHistoryPaths),
+			PendingGitHistoryPaths:   util.Unique(input.PendingGitHistoryPaths),
 		},
 		EnforcementMode: "observe_only",
 	}
@@ -295,19 +294,19 @@ func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
 		contract.RuntimeCall.ExpressibleActionClasses = pruneToolActionClassesWithoutCallableTool(contract.RuntimeCall.ExpressibleActionClasses, contract.ActionPolicy.CallableToolNames)
 	}
 
-	contract.AllowedTools = uniquePhaseStrings(contract.AllowedTools)
-	contract.HiddenTools = uniquePhaseStrings(append(contract.HiddenTools, hiddenPhaseTools(baseTools, contract.AllowedTools)...))
-	contract.RequiredNext = uniquePhaseStrings(contract.RequiredNext)
-	contract.InvalidNext = uniquePhaseStrings(contract.InvalidNext)
-	contract.StopConditions = uniquePhaseStrings(contract.StopConditions)
-	contract.TerminalOutcomes = uniquePhaseStrings(contract.TerminalOutcomes)
-	contract.Constraints = uniquePhaseStrings(contract.Constraints)
-	contract.ActionPolicy.AllowedActionClasses = uniquePhaseStrings(contract.ActionPolicy.AllowedActionClasses)
-	contract.ActionPolicy.InvalidActionClasses = uniquePhaseStrings(contract.ActionPolicy.InvalidActionClasses)
+	contract.AllowedTools = util.Unique(contract.AllowedTools)
+	contract.HiddenTools = util.Unique(append(contract.HiddenTools, hiddenPhaseTools(baseTools, contract.AllowedTools)...))
+	contract.RequiredNext = util.Unique(contract.RequiredNext)
+	contract.InvalidNext = util.Unique(contract.InvalidNext)
+	contract.StopConditions = util.Unique(contract.StopConditions)
+	contract.TerminalOutcomes = util.Unique(contract.TerminalOutcomes)
+	contract.Constraints = util.Unique(contract.Constraints)
+	contract.ActionPolicy.AllowedActionClasses = util.Unique(contract.ActionPolicy.AllowedActionClasses)
+	contract.ActionPolicy.InvalidActionClasses = util.Unique(contract.ActionPolicy.InvalidActionClasses)
 	contract.ActionPolicy.AllowedActionClasses = actionClassesAllowedByPolicy(contract.ActionPolicy.AllowedActionClasses, contract.ActionPolicy.InvalidActionClasses)
-	contract.ActionPolicy.TerminalResponseShapes = uniquePhaseStrings(contract.ActionPolicy.TerminalResponseShapes)
-	contract.ActionPolicy.CallableToolNames = uniquePhaseStrings(contract.ActionPolicy.CallableToolNames)
-	contract.RuntimeCall.ExpressibleActionClasses = uniquePhaseStrings(contract.RuntimeCall.ExpressibleActionClasses)
+	contract.ActionPolicy.TerminalResponseShapes = util.Unique(contract.ActionPolicy.TerminalResponseShapes)
+	contract.ActionPolicy.CallableToolNames = util.Unique(contract.ActionPolicy.CallableToolNames)
+	contract.RuntimeCall.ExpressibleActionClasses = util.Unique(contract.RuntimeCall.ExpressibleActionClasses)
 	contract.RuntimeCall.ExpressibleActionClasses = actionClassesAllowedByPolicy(contract.RuntimeCall.ExpressibleActionClasses, contract.ActionPolicy.InvalidActionClasses)
 
 	return contract
@@ -336,7 +335,7 @@ func actionClassesAllowedByPolicy(allowed []string, invalid []string) []string {
 		out = append(out, value)
 	}
 
-	return uniquePhaseStrings(out)
+	return util.Unique(out)
 }
 
 func applyTurnPhase(contract *TurnPhaseContract, input TurnPhaseContractInput, brief workerruntime.WorkerRuntimeBrief, baseTools []string) {
@@ -686,7 +685,7 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 		contract.RuntimeCall.ParserContract = "target_write_or_bounded_source_refresh"
 		contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_bounded_source_refresh_write_or_blocker"
 		contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker}
-		contract.Constraints = uniquePhaseStrings(append([]string{"bounded_source_refresh_allowance: read_file/search_content require named_gap and exact scope"}, contract.Constraints...))
+		contract.Constraints = util.Unique(append([]string{"bounded_source_refresh_allowance: read_file/search_content require named_gap and exact scope"}, contract.Constraints...))
 	}
 
 	if len(pendingTools) > 0 {
@@ -701,7 +700,7 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 		contract.RuntimeCall.ParserContract = "target_write_or_source_refresh"
 		contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_pending_source_refresh_write_or_blocker"
 		contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionPerEditWrite, actionBlocker}
-		contract.Constraints = uniquePhaseStrings(append([]string{"pending_redirected_source_body_obligation: " + pendingSummary}, contract.Constraints...))
+		contract.Constraints = util.Unique(append([]string{"pending_redirected_source_body_obligation: " + pendingSummary}, contract.Constraints...))
 	}
 }
 
@@ -864,7 +863,7 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 			contract.InvalidNext = []string{"workspace write", "shell/mutating command", "unsupported factual final answer"}
 			contract.TerminalOutcomes = []string{"final answer", "<<QUESTION>>:"}
 			contract.ActionPolicy = TurnActionClassPolicy{
-				AllowedActionClasses:   uniquePhaseStrings([]string{actionFinalAnswer, actionRead, actionSearch, actionBlocker}),
+				AllowedActionClasses:   util.Unique([]string{actionFinalAnswer, actionRead, actionSearch, actionBlocker}),
 				InvalidActionClasses:   []string{actionPerEditWrite, actionVerify},
 				TerminalResponseShapes: []string{"final answer", "<<QUESTION>>:"},
 				CallableToolNames:      contract.AllowedTools,
@@ -894,7 +893,7 @@ func genericAllowedActionClasses(tools []string) []string {
 		}
 	}
 
-	return uniquePhaseStrings(classes)
+	return util.Unique(classes)
 }
 
 func pruneToolActionClassesWithoutCallableTool(classes []string, callableTools []string) []string {
@@ -927,7 +926,7 @@ func pruneToolActionClassesWithoutCallableTool(classes []string, callableTools [
 		out = append(out, class)
 	}
 
-	return uniquePhaseStrings(out)
+	return util.Unique(out)
 }
 
 func isToolActionClass(class string) bool {
@@ -945,7 +944,7 @@ func removePhaseActionClass(classes []string, remove string) []string {
 		out = append(out, class)
 	}
 
-	return uniquePhaseStrings(out)
+	return util.Unique(out)
 }
 
 func readOnlySourceBodyEvidenceSummary(results []workspace.ToolResult) string {
@@ -1074,7 +1073,7 @@ func implementationTargetSourcePending(brief workerruntime.WorkerRuntimeBrief, r
 func implementationTargetWriteReadyAllowedTools(baseTools []string) []string {
 	allowed := []string{"edit_file", "write_file", "append_file", "apply_patch", "mkdir", "go_move_declarations", "delegate_edit"}
 
-	allowed = append(allowed, gitHistoryLookupToolNames()...)
+	allowed = append(allowed, workspace.RuntimeHistoryInspectionToolNames()...)
 
 	return filterPhaseTools(baseTools, allowed...)
 }
@@ -1089,7 +1088,7 @@ func implementationTargetWriteReadyAllowedToolsForBrief(baseTools []string, brie
 		allowed = append(allowed, implementationTargetWriteReadySourceRefreshTools(baseTools)...)
 	}
 
-	return uniquePhaseStrings(allowed)
+	return util.Unique(allowed)
 }
 
 func implementationTargetWriteReadySourceRefreshTools(baseTools []string) []string {
@@ -1140,7 +1139,7 @@ func implementationTargetSourceEvidenceReady(brief workerruntime.WorkerRuntimeBr
 }
 
 func implementationTargetSourceEvidencePathPlausible(brief workerruntime.WorkerRuntimeBrief, path string) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -1168,7 +1167,7 @@ func implementationTargetSourceHasScopeHints(brief workerruntime.WorkerRuntimeBr
 }
 
 func implementationTargetSourceExplicitPathMatch(brief workerruntime.WorkerRuntimeBrief, path string) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -1186,7 +1185,7 @@ func implementationTargetSourceExplicitPathMatch(brief workerruntime.WorkerRunti
 	}
 
 	for _, candidate := range candidates {
-		if normalizeRunnerPath(candidate) == path {
+		if agentutil.NormalizeRunnerPath(candidate) == path {
 			return true
 		}
 	}
@@ -1195,13 +1194,13 @@ func implementationTargetSourceExplicitPathMatch(brief workerruntime.WorkerRunti
 }
 
 func implementationTargetPacketEditablePathMatch(brief workerruntime.WorkerRuntimeBrief, path string) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
 
 	for _, candidate := range targetPacketWritableMentionedPaths(brief.TargetPacket) {
-		if normalizeRunnerPath(candidate) == path {
+		if agentutil.NormalizeRunnerPath(candidate) == path {
 			return true
 		}
 	}
@@ -1226,12 +1225,12 @@ func targetPacketWritableMentionedPaths(lines []string) []string {
 		}
 	}
 
-	return uniquePhaseStrings(paths)
+	return util.Unique(paths)
 }
 
 
 func implementationPathTerms(path string) []string {
-	path = strings.TrimSuffix(normalizeRunnerPath(path), ".go")
+	path = strings.TrimSuffix(agentutil.NormalizeRunnerPath(path), ".go")
 
 	parts := strings.FieldsFunc(path, func(r rune) bool {
 		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
@@ -1280,10 +1279,10 @@ func guardedMutationBriefRequiresTargetSourceContract(brief workerruntime.Worker
 
 func phaseContractBaseTools(input TurnPhaseContractInput, brief workerruntime.WorkerRuntimeBrief) []string {
 	if len(input.BaseAllowedTools) > 0 {
-		return uniquePhaseStrings(input.BaseAllowedTools)
+		return util.Unique(input.BaseAllowedTools)
 	}
 
-	return uniquePhaseStrings(brief.AllowedTools)
+	return util.Unique(brief.AllowedTools)
 }
 
 func filterPhaseTools(tools []string, allowed ...string) []string {
@@ -1308,7 +1307,7 @@ func filterPhaseTools(tools []string, allowed ...string) []string {
 		}
 	}
 
-	return uniquePhaseStrings(out)
+	return util.Unique(out)
 }
 
 func filterPhaseTerminalShapes(values []string, allowed ...string) []string {
@@ -1333,7 +1332,7 @@ func filterPhaseTerminalShapes(values []string, allowed ...string) []string {
 		}
 	}
 
-	return uniquePhaseStrings(out)
+	return util.Unique(out)
 }
 
 func removePhaseTools(tools []string, hidden []string) []string {
@@ -1364,7 +1363,7 @@ func removePhaseTools(tools []string, hidden []string) []string {
 		out = append(out, tool)
 	}
 
-	return uniquePhaseStrings(out)
+	return util.Unique(out)
 }
 
 func implementationTargetSourceAllowedTools(baseTools []string) []string {
@@ -1378,7 +1377,7 @@ func implementationTargetSourceAllowedTools(baseTools []string) []string {
 		"history_range", "history_symbol", "blame_range",
 	)
 
-	return uniquePhaseStrings(append(writes, reads...))
+	return util.Unique(append(writes, reads...))
 }
 
 func hiddenPhaseTools(baseTools []string, allowedTools []string) []string {
@@ -1478,6 +1477,3 @@ func phaseEvidenceHasOpenObligation(state PhaseEvidenceState) bool {
 		verificationStatus == "pre_write"
 }
 
-func uniquePhaseStrings(values []string) []string {
-	return stringset.Unique(values)
-}

@@ -5,10 +5,10 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/runtime/agent/agentutil"
-	"idiom/internal/runtime/agent/stringset"
 	"idiom/internal/runtime/workerruntime"
 	"sort"
 	"strings"
+	"idiom/internal/platform/util"
 )
 
 
@@ -59,7 +59,7 @@ func delegatedReadOnlySourceBodyEvidencePaths(results []workspace.ToolResult) []
 
 func allowsDocumentationOnlyPacket(objective string) bool {
 	lower := " " + strings.ToLower(strings.TrimSpace(objective)) + " "
-	return containsAny(lower, " readme ", " doc ", " docs ", " documentation ", " markdown ")
+	return agentutil.ContainsAny(lower, " readme ", " doc ", " docs ", " documentation ", " markdown ")
 }
 
 func annotateScopedFallbackAnswer(answer string, objective string) string {
@@ -123,7 +123,7 @@ func augmentDelegatedReadOnlyPacket(answer string, objective string, results []w
 	if len(sourceBodyPaths) > 0 && len(sourceBodyEvidencePathsFromDelegatedPacket(answer)) == 0 {
 		b.WriteString("\n\nSource-body evidence paths:\n")
 
-		for _, path := range limitRunnerStrings(sourceBodyPaths, 4) {
+		for _, path := range util.Prefix(sourceBodyPaths, 4) {
 			b.WriteString("- `")
 			b.WriteString(path)
 			b.WriteString("`\n")
@@ -133,7 +133,7 @@ func augmentDelegatedReadOnlyPacket(answer string, objective string, results []w
 	if len(missing) > 0 {
 		b.WriteString("\n\nAdditional inspected paths:\n")
 
-		for _, path := range limitRunnerStrings(missing, 4) {
+		for _, path := range util.Prefix(missing, 4) {
 			b.WriteString("- `")
 			b.WriteString(path)
 			b.WriteString("`\n")
@@ -143,7 +143,7 @@ func augmentDelegatedReadOnlyPacket(answer string, objective string, results []w
 	if len(missingCandidates) > 0 {
 		b.WriteString("\nExact probes already inspected:\n")
 
-		for _, candidate := range limitRunnerStrings(missingCandidates, 3) {
+		for _, candidate := range util.Prefix(missingCandidates, 3) {
 			b.WriteString("- `")
 			b.WriteString(candidate)
 			b.WriteString("`\n")
@@ -261,7 +261,7 @@ func synthesizeDelegatedSourceBodyFactsAnswer(objective string, results []worksp
 			continue
 		}
 
-		path := normalizeRunnerPath(paths[0])
+		path := agentutil.NormalizeRunnerPath(paths[0])
 		if _, ok := sourceBodySet[path]; !ok {
 			continue
 		}
@@ -438,7 +438,7 @@ func readOnlyToolControlGuidanceText(value string) bool {
 		return false
 	}
 
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		"generated evidence artifact",
 		"generated discovery/context json is not source-body evidence",
 		"not source-body evidence",
@@ -514,7 +514,7 @@ func prioritizedDelegatedEvidencePaths(paths []string, max int) []string {
 		return pi < pj
 	})
 
-	return limitRunnerStrings(paths, max)
+	return util.Prefix(paths, max)
 }
 
 func prioritizedClosureEvidencePaths(paths []string, results []workspace.ToolResult, max int) []string {
@@ -549,7 +549,7 @@ func prioritizedClosureEvidencePaths(paths []string, results []workspace.ToolRes
 		return false
 	})
 
-	return limitRunnerStrings(paths, max)
+	return util.Prefix(paths, max)
 }
 
 
@@ -570,9 +570,6 @@ func delegatedDiscoverySummaryIsBroadCountOnly(lower string) bool {
 }
 
 
-func limitRunnerStrings(values []string, max int) []string {
-	return stringset.Prefix(values, max)
-}
 
 func closurePromptEvidencePaths(paths []string, max int) []string {
 	cleaned := make([]string, 0, len(paths))
@@ -592,7 +589,7 @@ func closurePromptEvidencePaths(paths []string, max int) []string {
 		cleaned = append(cleaned, path)
 	}
 
-	return limitRunnerStrings(cleaned, max)
+	return util.Prefix(cleaned, max)
 }
 
 func closureEvidenceProbeScores(results []workspace.ToolResult) (map[string]int, map[string]int) {

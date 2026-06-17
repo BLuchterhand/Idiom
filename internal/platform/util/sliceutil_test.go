@@ -101,19 +101,6 @@ func TestLimitSliceEmpty(t *testing.T) {
 	}
 }
 
-func TestEqualSlice(t *testing.T) {
-	if !EqualSlice([]string{"a", "b"}, []string{"a", "b"}) {
-		t.Error("expected equal")
-	}
-
-	if EqualSlice([]string{"a", "b"}, []string{"a"}) {
-		t.Error("expected not equal (different lengths)")
-	}
-
-	if EqualSlice([]string{"a", "b"}, []string{"a", "c"}) {
-		t.Error("expected not equal (different elements)")
-	}
-}
 
 func TestUnique(t *testing.T) {
 	result := Unique([]string{"a", "  b  ", "a", "", "b", "c"})

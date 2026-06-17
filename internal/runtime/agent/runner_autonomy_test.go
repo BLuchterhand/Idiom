@@ -17,6 +17,7 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/platform/util"
 )
 
 func TestRunnerAutonomyContractMapsMutationGatesToObligations(t *testing.T) {
@@ -682,8 +683,8 @@ func TestPlanExecuteHistoryPendingModelProtocolUsesCanonicalReadAction(t *testin
 		t.Fatalf("phase = %q, want %q", phase.PhaseID, turnPhaseHistoryPending)
 	}
 
-	phase.AllowedTools = uniquePhaseStrings(append(phase.AllowedTools, "blame_range", "context_impact", "harness_feedback"))
-	phase.ActionPolicy.CallableToolNames = uniquePhaseStrings(append(phase.ActionPolicy.CallableToolNames, "blame_range", "context_impact", "harness_feedback"))
+	phase.AllowedTools = util.Unique(append(phase.AllowedTools, "blame_range", "context_impact", "harness_feedback"))
+	phase.ActionPolicy.CallableToolNames = util.Unique(append(phase.ActionPolicy.CallableToolNames, "blame_range", "context_impact", "harness_feedback"))
 
 	protocol, ok := runner.compileModelProtocolProjection(brief, results, phase, RunPolicy{}, true)
 
@@ -814,7 +815,7 @@ func TestPlanExecuteModelProtocolDropsContradictoryCallableActionClasses(t *test
 	})
 
 	phase.ActionPolicy.AllowedActionClasses = []string{actionSubmitPlan, actionBlocker}
-	phase.ActionPolicy.InvalidActionClasses = uniquePhaseStrings(append(phase.ActionPolicy.InvalidActionClasses, actionBlocker))
+	phase.ActionPolicy.InvalidActionClasses = util.Unique(append(phase.ActionPolicy.InvalidActionClasses, actionBlocker))
 
 	protocol, ok := runner.compileModelProtocolProjection(brief, results, phase, RunPolicy{}, true)
 	if !ok {

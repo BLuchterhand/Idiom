@@ -5,6 +5,8 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/runtime/workerruntime"
 	"strings"
+	"idiom/internal/platform/util"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 func reviewRepairTerminalOutcomeRequiredState(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult) bool {
@@ -44,18 +46,18 @@ func applyScratchpadDeliverableCloseoutBias(state runnerNextActionState, brief w
 		target = "the required deliverable"
 	}
 
-	state.Constraints = mergeRunnerStateStrings(state.Constraints, []string{
+	state.Constraints = util.Merge(state.Constraints, []string{
 		"scratchpad_deliverable_closeout_ready",
 		"non_source_deliverable_path_unwritten",
 	})
-	state.EvidenceStatus = mergeRunnerStateStrings(state.EvidenceStatus, []string{
+	state.EvidenceStatus = util.Merge(state.EvidenceStatus, []string{
 		fmt.Sprintf("non-source deliverable still unwritten: %s; gathered evidence and accepted gaps should be recorded in the deliverable", target),
 	})
 	state.NextValidActions = []string{
 		fmt.Sprintf("deliverable-write capability for %s with the corrected content, recording source uncertainty as Source verification pending or Scope Correction Required", target),
 		"answer <<QUESTION>> only if the deliverable cannot be written from the gathered evidence plus recorded uncertainty",
 	}
-	state.InvalidNextActions = mergeRunnerStateStrings(state.InvalidNextActions, []string{
+	state.InvalidNextActions = util.Merge(state.InvalidNextActions, []string{
 		"new source discovery after completion gate rejected a prose-only non-source deliverable",
 		"repairing an optional evidence lookup instead of recording the gap in the scratchpad deliverable",
 		"final answer without write_file for the required non-source deliverable",
@@ -151,7 +153,7 @@ func (r *Runner) scratchpadDeliverableSourceDiscoveryRecovery(req workspace.Tool
 }
 
 func scratchpadDeliverablePrewriteReadAllowed(req workspace.ToolRequest) bool {
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path == "" {
 		return false
 	}
@@ -164,7 +166,7 @@ func scratchpadFailedEvidenceFeedbackApplies(brief workerruntime.WorkerRuntimeBr
 		return false
 	}
 
-	if workspace.IsWorkspaceWriteTool(req.Tool) || !isReadClassTool(req) {
+	if workspace.IsWorkspaceWriteTool(req.Tool) || !workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
 		return false
 	}
 

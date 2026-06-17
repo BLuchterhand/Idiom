@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/runtime/agent/agentutil"
+	"idiom/internal/platform/util"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -24,24 +26,12 @@ type gitHistoryNotApplicableOutput struct {
 	Path   string `json:"path"`
 }
 
-func gitHistoryLookupToolNames() []string {
-	return workspace.RuntimeHistoryInspectionToolNames()
-}
 
-func gitHistoryLookupTool(tool string) bool {
-	return slices.Contains(gitHistoryLookupToolNames(), strings.TrimSpace(tool))
-}
 
-func gitHistoryEvidenceTool(tool string) bool {
-	return slices.Contains(gitHistoryEvidenceToolNames(), strings.TrimSpace(tool))
-}
 
-func gitHistoryEvidenceToolNames() []string {
-	return []string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}
-}
 
 func planExecuteHistoryPendingToolNames() []string {
-	return gitHistoryEvidenceToolNames()
+	return []string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}
 }
 
 func planExecuteHistoryPendingToolListForPrompt() string {
@@ -62,7 +52,7 @@ func mutationHistoryEvidenceRequired(brief workerruntime.WorkerRuntimeBrief) boo
 func successfulGitHistoryEvidenceSeen(results []workspace.ToolResult) bool {
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) == "" &&
-			gitHistoryEvidenceTool(result.Tool) &&
+			slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(result.Tool)) &&
 			gitHistoryResultIncludesCommitDescription(result) {
 
 			return true
@@ -73,13 +63,13 @@ func successfulGitHistoryEvidenceSeen(results []workspace.ToolResult) bool {
 }
 
 func successfulGitHistoryResultForPath(path string, results []workspace.ToolResult) bool {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
 
 	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" || !gitHistoryEvidenceTool(result.Tool) {
+		if strings.TrimSpace(result.Error) != "" || !slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(result.Tool)) {
 			continue
 		}
 
@@ -91,7 +81,7 @@ func successfulGitHistoryResultForPath(path string, results []workspace.ToolResu
 			continue
 		}
 
-		if normalizeRunnerPath(gitHistoryResultPath(result)) == path {
+		if agentutil.NormalizeRunnerPath(gitHistoryResultPath(result)) == path {
 			return true
 		}
 	}
@@ -109,7 +99,7 @@ func gitHistoryNotApplicableForPath(path string, result workspace.ToolResult) bo
 		return false
 	}
 
-	if strings.TrimSpace(result.Error) != "" || !gitHistoryEvidenceTool(result.Tool) {
+	if strings.TrimSpace(result.Error) != "" || !slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(result.Tool)) {
 		return false
 	}
 
@@ -127,7 +117,7 @@ func gitHistoryNotApplicableForPath(path string, result workspace.ToolResult) bo
 		return false
 	}
 
-	return normalizeRunnerPath(output.Path) == normalizeRunnerPath(path)
+	return agentutil.NormalizeRunnerPath(output.Path) == agentutil.NormalizeRunnerPath(path)
 }
 
 func gitHistoryResultPath(result workspace.ToolResult) string {
@@ -241,7 +231,7 @@ func (r *Runner) sourceReadBeforeGitHistoryEvidenceRedirect(req workspace.ToolRe
 		return workspace.ToolRequest{}, "", false
 	}
 
-	if !isReadClassTool(req) || gitHistoryEvidenceTool(req.Tool) {
+	if !workspace.IsReadTool(strings.TrimSpace(req.Tool)) || slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(req.Tool)) {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -256,9 +246,9 @@ func (r *Runner) sourceReadBeforeGitHistoryEvidenceRedirect(req workspace.ToolRe
 		return workspace.ToolRequest{}, "", false
 	}
 
-	if target := normalizeRunnerPath(planThenExecuteRequestTargetPath(req)); target != "" {
+	if target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req)); target != "" {
 		for _, path := range pending {
-			if normalizeRunnerPath(path) == target {
+			if agentutil.NormalizeRunnerPath(path) == target {
 				return gitHistoryEvidenceRedirectRequest([]string{target}, results, allowedTools)
 			}
 		}
@@ -270,7 +260,7 @@ func (r *Runner) sourceReadBeforeGitHistoryEvidenceRedirect(req workspace.ToolRe
 func planThenExecuteSubmitPlanHasRequiredPathCoverageProblem(requiredPaths []string, req workspace.ToolRequest) bool {
 	required := make([]string, 0, len(requiredPaths))
 	for _, raw := range requiredPaths {
-		if path := normalizeRunnerPath(raw); path != "" {
+		if path := agentutil.NormalizeRunnerPath(raw); path != "" {
 			required = append(required, path)
 		}
 	}
@@ -287,7 +277,7 @@ func planThenExecuteSubmitPlanHasRequiredPathCoverageProblem(requiredPaths []str
 	covered := make(map[string]struct{}, len(required))
 
 	for _, edit := range planThenExecuteEffectiveSubmitPlanEdits(req) {
-		path := normalizeRunnerPath(edit.Path)
+		path := agentutil.NormalizeRunnerPath(edit.Path)
 		if path == "" {
 			continue
 		}
@@ -309,11 +299,11 @@ func planThenExecuteSubmitPlanHasRequiredPathCoverageProblem(requiredPaths []str
 }
 
 func gitHistoryEvidenceRedirectRequest(paths []string, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, string, bool) {
-	if len(paths) == 0 || !runnerAllowsTool(allowedTools, workspace.ToolNameHistoryRange) {
+	if len(paths) == 0 || !slices.Contains(allowedTools, workspace.ToolNameHistoryRange) {
 		return workspace.ToolRequest{}, "", false
 	}
 
-	path := normalizeRunnerPath(paths[0])
+	path := agentutil.NormalizeRunnerPath(paths[0])
 	if path == "" {
 		return workspace.ToolRequest{}, "", false
 	}
@@ -332,7 +322,7 @@ func gitHistoryEvidenceRedirectRequest(paths []string, results []workspace.ToolR
 }
 
 func gitHistoryRedirectRange(path string, results []workspace.ToolResult) (int, int) {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	for _, readRange := range readRangesForPathFromResults(results, path) {
 		if readRange.start > 0 && readRange.end >= readRange.start {
 			return readRange.start, readRange.end
@@ -356,7 +346,7 @@ func pathsMissingGitHistory(root string, paths []string, results []workspace.Too
 	var missing []string
 
 	for _, rawPath := range paths {
-		path := normalizeRunnerPath(rawPath)
+		path := agentutil.NormalizeRunnerPath(rawPath)
 		if path == "" {
 			continue
 		}
@@ -442,7 +432,7 @@ func planThenExecuteUnavailableHistoryToolNudge(req workspace.ToolRequest, brief
 		return "", "", false
 	}
 
-	if runnerAllowsTool(allowedTools, tool) || !mutationHistoryEvidenceRequired(brief) {
+	if slices.Contains(allowedTools, tool) || !mutationHistoryEvidenceRequired(brief) {
 		return "", "", false
 	}
 
@@ -492,11 +482,11 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanHistoryGuard(req workspace.To
 }
 
 func (r *Runner) implementationTargetWriteReadyHistoryReadAllowed(req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	if r == nil || !mutationHistoryEvidenceRequired(r.RuntimeBrief) || !gitHistoryLookupTool(req.Tool) {
+	if r == nil || !mutationHistoryEvidenceRequired(r.RuntimeBrief) || !slices.Contains(workspace.RuntimeHistoryInspectionToolNames(), strings.TrimSpace(req.Tool)) {
 		return false
 	}
 
-	path := normalizeRunnerPath(req.Path)
+	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path == "" {
 		return false
 	}
@@ -534,7 +524,7 @@ func planThenExecuteSubmitPlanHistoryMissing(brief workerruntime.WorkerRuntimeBr
 		}
 	}
 
-	paths = uniquePhaseStrings(paths)
+	paths = util.Unique(paths)
 	for _, path := range paths {
 		if !successfulGitHistoryResultForPath(path, results) {
 			return true

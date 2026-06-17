@@ -48,12 +48,12 @@ func TestExplorationDelegationNudgeUsesReadLoopState(t *testing.T) {
 		t.Fatalf("expected no nudge when task tool is not available under runtime brief, got %q", got)
 	}
 
-	if !isReadClassTool(workspace.ToolRequest{Tool: "discovery_query", Purpose: "impact_analysis"}) {
+	if !workspace.IsReadTool(strings.TrimSpace("discovery_query")) {
 		t.Fatal("discovery_query should count as read-class discovery")
 	}
 
 	for _, tool := range []string{"file_stats", "context_impact", "harness_audit"} {
-		if !isReadClassTool(workspace.ToolRequest{Tool: tool}) {
+		if !workspace.IsReadTool(strings.TrimSpace(tool)) {
 			t.Fatalf("%s should count as read-class inspection", tool)
 		}
 	}

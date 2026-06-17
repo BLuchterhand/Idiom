@@ -13,7 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"idiom/internal/platform/util"
 	briefcmd "idiom/internal/surfaces/cli/brief"
 	"idiom/internal/surfaces/tui/app"
 )
@@ -1276,7 +1275,7 @@ func TestClassifyBriefAtomShapeEmitsCanonicalTags(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := classifyBriefAtomShape([]byte(tc.body))
-			if !util.EqualSlice(got, tc.want) {
+			if !slices.Equal(got, tc.want) {
 				t.Fatalf("classifyBriefAtomShape: got %v, want %v", got, tc.want)
 			}
 		})
@@ -1321,7 +1320,7 @@ func TestParseTrapFrontmatterExtractsAppliesTo(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			applies, body := parseTrapFrontmatter([]byte(tc.raw))
-			if !util.EqualSlice(applies, tc.wantApplies) {
+			if !slices.Equal(applies, tc.wantApplies) {
 				t.Fatalf("applies_to: got %v, want %v", applies, tc.wantApplies)
 			}
 

@@ -12,6 +12,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/runtime/agent/agentutil"
+	"idiom/internal/platform/util"
 )
 
 const readOnlyEvidencePacketPayloadType = "agent.read_only_evidence_packet.v1"
@@ -188,7 +189,7 @@ func renderReadOnlyEvidencePacketForToolOutput(packet ReadOnlyEvidencePacket, an
 	if len(packet.CandidatePaths) > 0 {
 		b.WriteString("Candidate paths:\n")
 
-		for _, path := range limitRunnerStrings(packet.CandidatePaths, 4) {
+		for _, path := range util.Prefix(packet.CandidatePaths, 4) {
 			b.WriteString("- `")
 			b.WriteString(path)
 			b.WriteString("`\n")
@@ -217,8 +218,8 @@ func synthesizeReadOnlyEvidencePacketAnswer(objective string, packets []ReadOnly
 			continue
 		}
 
-		sourcePaths = mergeRunnerStateStrings(sourcePaths, packet.SourceBodyPaths)
-		candidatePaths = mergeRunnerStateStrings(candidatePaths, packet.CandidatePaths, packet.InspectedPaths)
+		sourcePaths = util.Merge(sourcePaths, packet.SourceBodyPaths)
+		candidatePaths = util.Merge(candidatePaths, packet.CandidatePaths, packet.InspectedPaths)
 
 		for _, finding := range packet.Findings {
 			if strings.TrimSpace(finding.Text) == "" {
@@ -238,7 +239,7 @@ func synthesizeReadOnlyEvidencePacketAnswer(objective string, packets []ReadOnly
 		return "", false
 	}
 
-	paths := mergeRunnerStateStrings(sourcePaths, candidatePaths)
+	paths := util.Merge(sourcePaths, candidatePaths)
 
 	paths = closurePromptEvidencePaths(paths, 8)
 
@@ -671,7 +672,7 @@ func readOnlyEvidencePacketSourceLikePaths(paths []string, limit int) []string {
 	filtered := make([]string, 0, len(paths))
 	for _, raw := range paths {
 		path := normalizeReadOnlyEvidencePacketPath(raw)
-		if path == "" || isNonSourceEvidenceArtifactPath(path) {
+		if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) {
 			continue
 		}
 
@@ -693,7 +694,7 @@ func normalizeReadOnlyEvidencePacketPath(raw string) string {
 		path = "." + path
 	}
 
-	return normalizeRunnerPath(path)
+	return agentutil.NormalizeRunnerPath(path)
 }
 
 func readOnlyEvidencePacketUsefulFindings(findings []ReadOnlyEvidenceFinding) []ReadOnlyEvidenceFinding {
@@ -778,7 +779,7 @@ func readFileResultOnlyMentionsDiagnosticLogArtifacts(result workspace.ToolResul
 	}
 
 	for _, path := range paths {
-		if !isNonSourceEvidenceArtifactPath(path) {
+		if !agentutil.IsNonSourceEvidenceArtifactPath(path) {
 			return false
 		}
 	}
@@ -787,30 +788,6 @@ func readFileResultOnlyMentionsDiagnosticLogArtifacts(result workspace.ToolResul
 }
 
 
-func isNonSourceEvidenceArtifactPath(path string) bool {
-	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
-
-	lower = strings.TrimPrefix(lower, "./")
-
-	switch {
-	case lower == "":
-		return false
-	case isDiagnosticLogArtifactPath(lower):
-		return true
-	case lower == "transcripts" || strings.HasPrefix(lower, "transcripts/"):
-		return true
-	case lower == ".idiom" || strings.HasPrefix(lower, ".idiom/"):
-		return true
-	case lower == "idiom" || strings.HasPrefix(lower, "idiom/"):
-		return true
-	case lower == ".codex/discovery" || strings.HasPrefix(lower, ".codex/discovery/"):
-		return true
-	case lower == "testdata/swe/generated-logs" || strings.HasPrefix(lower, "testdata/swe/generated-logs/"):
-		return true
-	default:
-		return false
-	}
-}
 
 
 func delegatedDiscoveryPathPriority(path string) int {
@@ -1460,7 +1437,7 @@ func childPacketContainsGroundedAnswerEvidence(objective string, output string) 
 		return false
 	}
 
-	if !containsAny(lower,
+	if !agentutil.ContainsAny(lower,
 		"grounded answer",
 		"core files:",
 		"primary files:",
@@ -1580,7 +1557,7 @@ func delegatedReadOnlyLiteralSymbolCandidate(raw string) (string, bool) {
 func nonArtifactEvidencePaths(paths []string) []string {
 	out := make([]string, 0, len(paths))
 	for _, path := range paths {
-		if strings.TrimSpace(path) == "" || isNonSourceEvidenceArtifactPath(path) {
+		if strings.TrimSpace(path) == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) {
 			continue
 		}
 
@@ -1627,7 +1604,7 @@ const (
 
 
 func planThenExecuteRequiredSourceEvidenceForPath(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, path string) planThenExecuteSourceEvidence {
-	path = normalizeRunnerPath(path)
+	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
 		return planThenExecuteSourceEvidence{}
 	}

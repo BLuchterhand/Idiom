@@ -14,6 +14,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
+	"idiom/internal/runtime/agent/agentutil"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -636,7 +637,7 @@ func TestRunnerTargetSourceAllowsRedirectedSourceFollowupAfterWriteReady(t *test
 		PreExecute: func(_ int, req workspace.ToolRequest) *workspace.ToolResult {
 			switch strings.TrimSpace(req.Tool) {
 			case "read_file":
-				if normalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" && req.StartLine <= 0 && req.EndLine <= 0 {
+				if agentutil.NormalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" && req.StartLine <= 0 && req.EndLine <= 0 {
 					return &workspace.ToolResult{
 						Tool:    "read_file",
 						Summary: "Redirected internal/surfaces/tui/app/sessions.go to code_navigate",
@@ -644,7 +645,7 @@ func TestRunnerTargetSourceAllowsRedirectedSourceFollowupAfterWriteReady(t *test
 					}
 				}
 			case "code_navigate":
-				if normalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" {
+				if agentutil.NormalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" {
 					return &workspace.ToolResult{
 						Tool:    "code_navigate",
 						Summary: "Code navigation routed read_symbol via go_read_symbol",
@@ -793,7 +794,7 @@ func TestRunnerTargetSourceAllowsRedirectedOutlineThenSymbolAfterWriteReady(t *t
 		PreExecute: func(_ int, req workspace.ToolRequest) *workspace.ToolResult {
 			switch strings.TrimSpace(req.Tool) {
 			case "read_file":
-				if normalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" && req.StartLine <= 0 && req.EndLine <= 0 {
+				if agentutil.NormalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" && req.StartLine <= 0 && req.EndLine <= 0 {
 					return &workspace.ToolResult{
 						Tool:    "read_file",
 						Summary: "Redirected internal/surfaces/tui/app/sessions.go to code_navigate",
@@ -801,7 +802,7 @@ func TestRunnerTargetSourceAllowsRedirectedOutlineThenSymbolAfterWriteReady(t *t
 					}
 				}
 			case "code_navigate":
-				if normalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" && req.Capability == "file_outline" {
+				if agentutil.NormalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" && req.Capability == "file_outline" {
 					return &workspace.ToolResult{
 						Tool:    "code_navigate",
 						Summary: "Code navigation routed file_outline via go_file_outline",
@@ -816,7 +817,7 @@ func TestRunnerTargetSourceAllowsRedirectedOutlineThenSymbolAfterWriteReady(t *t
 					}
 				}
 
-				if normalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" && req.Capability == "read_symbol" {
+				if agentutil.NormalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" && req.Capability == "read_symbol" {
 					return &workspace.ToolResult{
 						Tool:    "code_navigate",
 						Summary: "Code navigation routed read_symbol via go_read_symbol",

@@ -201,7 +201,7 @@ func (r *Runner) emitToolRequestNormalizerEvent(outcome string, transport string
 		"outcome":   strings.TrimSpace(outcome),
 		"transport": strings.TrimSpace(transport),
 		"tool":      strings.TrimSpace(req.Tool),
-		"path":      normalizeRunnerPath(planThenExecuteRequestTargetPath(req)),
+		"path":      agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req)),
 	}
 	if parseErr == nil && strings.TrimSpace(req.Tool) != "" && toolRequestNormalizerTransportIsModelTextual(transport) {
 		payload["parsed_textual_tool"] = strings.TrimSpace(req.Tool)
@@ -678,7 +678,7 @@ func scoreMessageForRetention(msg llama.ChatMessage, result *workspace.ToolResul
 	editScore := 0.0
 
 	for _, path := range editPaths {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized != "" && strings.Contains(content, strings.ToLower(normalized)) {
 			editScore += 0.25
 			break
@@ -694,7 +694,7 @@ func scoreMessageForRetention(msg llama.ChatMessage, result *workspace.ToolResul
 	evidenceScore := 0.0
 
 	for _, path := range brief.EvidencePaths {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized != "" && strings.Contains(content, strings.ToLower(normalized)) {
 			evidenceScore += 0.15
 			break
@@ -759,7 +759,7 @@ func pinnedPathsFromToolResults(results []workspace.ToolResult, max int) []strin
 
 	paths = prioritizedClosureEvidencePaths(paths, results, len(paths))
 
-	return limitRunnerStrings(paths, max)
+	return util.Prefix(paths, max)
 }
 
 func directProbePathsFromToolResults(results []workspace.ToolResult, max int) []string {
@@ -778,7 +778,7 @@ func directProbePathsFromToolResults(results []workspace.ToolResult, max int) []
 
 		for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(result.Summary)) {
 			path = normalizeDelegatedDiscoveryEvidencePath(path)
-			if path == "" || isNonSourceEvidenceArtifactPath(path) || !delegatedDiscoveryLooksLikeEvidencePath(path) {
+			if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) || !delegatedDiscoveryLooksLikeEvidencePath(path) {
 				continue
 			}
 
@@ -816,7 +816,7 @@ func promptEvidencePathsFromToolResults(results []workspace.ToolResult, max int)
 	paths = append(paths, pinnedPathsFromToolResults(results, max*6)...)
 	paths = prioritizedClosureEvidencePaths(paths, results, max*3)
 
-	return limitRunnerStrings(uniqueDelegatedDiscoveryPaths(append(directPaths, closurePromptEvidencePaths(paths, max*2)...)), max)
+	return util.Prefix(uniqueDelegatedDiscoveryPaths(append(directPaths, closurePromptEvidencePaths(paths, max*2)...)), max)
 }
 
 func runnerEvidencePathsForBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
@@ -836,7 +836,7 @@ func runnerEvidencePathsForBrief(brief workerruntime.WorkerRuntimeBrief, results
 	paths := changedPathListFromToolResults(results)
 
 	for _, path := range directProbePathsFromToolResults(results, max*2) {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized == "" || !scope[normalized] {
 			continue
 		}
@@ -845,7 +845,7 @@ func runnerEvidencePathsForBrief(brief workerruntime.WorkerRuntimeBrief, results
 	}
 
 	for _, path := range brief.EvidencePaths {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized == "" || !scope[normalized] {
 			continue
 		}
@@ -873,11 +873,11 @@ func readOnlyDirectAnswerPresentationEvidencePaths(brief workerruntime.WorkerRun
 	paths := append([]string{}, ledger.RelevantSourceBodyPaths...)
 
 	if agentutil.ObjectiveAsksImplementationShape(ledger.Objective) {
-		paths = mergeRunnerStateStrings(paths, ledger.ImplementationOwnerPaths())
+		paths = util.Merge(paths, ledger.ImplementationOwnerPaths())
 	}
 
 	if ledger.DiagnosticRelevant {
-		paths = mergeRunnerStateStrings(paths, readOnlySourceLikePaths(ledger.DiagnosticPaths, max*2))
+		paths = util.Merge(paths, readOnlySourceLikePaths(ledger.DiagnosticPaths, max*2))
 	}
 
 	return closurePromptEvidencePaths(paths, max)
@@ -915,7 +915,7 @@ func mutationEvidenceScope(brief workerruntime.WorkerRuntimeBrief, results []wor
 		mapKeys(changedPathsFromToolResults(results)),
 	} {
 		for _, raw := range values {
-			path := normalizeRunnerPath(raw)
+			path := agentutil.NormalizeRunnerPath(raw)
 			if path != "" {
 				scope[path] = true
 			}
@@ -1026,7 +1026,7 @@ func delegatedChildPacketNamesFollowupEvidence(output string) bool {
 		return false
 	}
 
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		"inspected paths:",
 		"inspected evidence:",
 		"candidate paths:",

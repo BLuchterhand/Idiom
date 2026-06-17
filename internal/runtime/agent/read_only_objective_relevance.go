@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"idiom/internal/platform/util"
 )
 
 func sourceEvidenceObjectiveLineTerms(objective string) []string {
@@ -61,7 +62,7 @@ func sourceEvidenceObjectiveLineTerms(objective string) []string {
 		add("user")
 	}
 
-	return uniqueSortedStrings(terms)
+	return util.Sorted(terms)
 }
 
 func sourceEvidenceLineObjectiveScore(line string, terms []string) int {

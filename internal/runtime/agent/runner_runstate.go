@@ -177,7 +177,7 @@ func (r *Runner) rebuildRunTools(state *runnerRunState) {
 
 		if extReg := r.Workspace.ExternalToolsRegistry(); extReg != nil {
 			for _, name := range r.Workspace.AvailableExternalToolNames() {
-				if extReg.IsReadOnlyDiscovery(name) && !containsRunnerTool(allowed, name) {
+				if extReg.IsReadOnlyDiscovery(name) && !slices.Contains(allowed, name) {
 					allowed = append(allowed, name)
 				}
 			}

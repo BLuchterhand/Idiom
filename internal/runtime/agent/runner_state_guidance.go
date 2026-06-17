@@ -6,6 +6,7 @@ import (
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 	"strings"
+	"idiom/internal/platform/util"
 )
 
 func (r *Runner) emitNextActionState(step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool) {
@@ -54,7 +55,7 @@ func (r *Runner) runtimeBriefWithLiveState(policy RunPolicy, messages []llama.Ch
 	}
 
 	if strings.TrimSpace(brief.TaskFamily) == PlanThenExecuteReviewRepairTaskFamily {
-		brief.TargetPacket = mergeRunnerStateStrings(brief.TargetPacket, reviewRepairPhaseEvidencePacket(brief.Objective))
+		brief.TargetPacket = util.Merge(brief.TargetPacket, reviewRepairPhaseEvidencePacket(brief.Objective))
 	}
 
 	if brief.Budget == (workerruntime.BudgetBrief{}) {
@@ -72,10 +73,10 @@ func (r *Runner) runtimeBriefWithLiveState(policy RunPolicy, messages []llama.Ch
 			brief.EvidencePaths = liveEvidencePaths
 		}
 	} else {
-		brief.EvidencePaths = mergeRunnerStateStrings(brief.EvidencePaths, liveEvidencePaths)
+		brief.EvidencePaths = util.Merge(brief.EvidencePaths, liveEvidencePaths)
 	}
 
-	brief.ChangedPaths = mergeRunnerStateStrings(brief.ChangedPaths, mapKeys(changedPathsFromToolResults(results)))
+	brief.ChangedPaths = util.Merge(brief.ChangedPaths, mapKeys(changedPathsFromToolResults(results)))
 	brief = runnerBriefWithPhaseHints(brief, results)
 	brief.Readiness = runnerReadinessState(r.agentName(), brief, results)
 
@@ -94,13 +95,13 @@ func runnerReadinessState(agent string, brief workerruntime.WorkerRuntimeBrief, 
 
 	readOnlyLedger := readOnlyAnswerabilityForResults(readOnlyBrief, results)
 	addClosed := func(values ...string) {
-		readiness.ClosedClaims = mergeRunnerStateStrings(readiness.ClosedClaims, values)
+		readiness.ClosedClaims = util.Merge(readiness.ClosedClaims, values)
 	}
 	addOpen := func(values ...string) {
-		readiness.OpenObligations = mergeRunnerStateStrings(readiness.OpenObligations, values)
+		readiness.OpenObligations = util.Merge(readiness.OpenObligations, values)
 	}
 	addSource := func(values ...string) {
-		readiness.EvidenceSources = mergeRunnerStateStrings(readiness.EvidenceSources, values)
+		readiness.EvidenceSources = util.Merge(readiness.EvidenceSources, values)
 	}
 
 	if len(brief.TargetRefs) > 0 {

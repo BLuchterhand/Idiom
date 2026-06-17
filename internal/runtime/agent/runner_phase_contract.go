@@ -9,6 +9,7 @@ import (
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/platform/util"
 )
 
 func (r *Runner) deriveCurrentTurnPhaseContract(input runnerTurnPhaseContractInput) TurnPhaseContract {
@@ -64,7 +65,7 @@ func applyTurnPhaseContractToNextActionState(state runnerNextActionState, contra
 		state.NextValidActions = append([]string(nil), contract.RequiredNext...)
 	} else if turnPhaseContractTerminalOutcomesDriveNextActions(contract) {
 		state.NextValidActions = append([]string(nil), contract.TerminalOutcomes...)
-		if containsPhaseString(contract.TerminalOutcomes, actionSubmitPlan) {
+		if slices.Contains(contract.TerminalOutcomes, actionSubmitPlan) {
 			state.NextValidActions = []string{"submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
 		}
 	}
@@ -73,7 +74,7 @@ func applyTurnPhaseContractToNextActionState(state runnerNextActionState, contra
 		state.InvalidNextActions = append([]string(nil), contract.InvalidNext...)
 	}
 
-	state.Constraints = mergeRunnerStateStrings(state.Constraints, contract.Constraints)
+	state.Constraints = util.Merge(state.Constraints, contract.Constraints)
 	state.StateSummary = runnerStateSummary(state)
 
 	return state
@@ -145,7 +146,7 @@ func turnPhaseSurfaceActionClassesFromText(values []string) []string {
 		}
 	}
 
-	return uniquePhaseStrings(classes)
+	return util.Unique(classes)
 }
 
 func phaseActionTextHasTerm(value string, term string) bool {
@@ -205,7 +206,7 @@ func removeAllowedTurnPhaseInvalidActionClasses(invalidClasses []string, allowed
 
 	out := invalidClasses[:0]
 	for _, actionClass := range invalidClasses {
-		if containsPhaseString(allowedClasses, actionClass) {
+		if slices.Contains(allowedClasses, actionClass) {
 			continue
 		}
 
@@ -349,7 +350,7 @@ func runnerVerificationEvidenceRefs(results []workspace.ToolResult) []string {
 		}
 	}
 
-	return uniquePhaseStrings(refs)
+	return util.Unique(refs)
 }
 
 func runnerTurnPhaseResidualBlockers(results []workspace.ToolResult) []string {
@@ -365,5 +366,5 @@ func runnerTurnPhaseResidualBlockers(results []workspace.ToolResult) []string {
 		}
 	}
 
-	return uniquePhaseStrings(blockers)
+	return util.Unique(blockers)
 }

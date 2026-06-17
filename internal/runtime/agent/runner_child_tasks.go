@@ -13,6 +13,7 @@ import (
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) workspace.ToolResult {
@@ -221,8 +222,8 @@ func (r *Runner) delegatedChildFallbackSourceRead(ctx context.Context, prompt st
 
 	paths := newDelegatedDiscoveryPlan(prompt).consumableSourceBodyCandidatePaths(results, 6)
 	for _, path := range paths {
-		path = normalizeRunnerPath(path)
-		if path == "" || isNonSourceEvidenceArtifactPath(path) || concreteSourceEvidenceReadForPath(path, results) {
+		path = agentutil.NormalizeRunnerPath(path)
+		if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) || concreteSourceEvidenceReadForPath(path, results) {
 			continue
 		}
 
@@ -356,7 +357,7 @@ func normalizeReadOnlyChildLead(line string) string {
 
 func rewriteBroadReadOnlyChildLead(line string) string {
 	lower := strings.ToLower(strings.TrimSpace(line))
-	if !containsAny(lower,
+	if !agentutil.ContainsAny(lower,
 		"cmd directory",
 		"entry point",
 		"entrypoint",
@@ -716,5 +717,5 @@ func workbranchDeniedShellPrefixes(spec workerruntime.RoleSpec) []string {
 		}
 	}
 
-	return mergeRunnerStateStrings(denied)
+	return util.Merge(denied)
 }

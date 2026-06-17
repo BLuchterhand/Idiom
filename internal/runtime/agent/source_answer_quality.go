@@ -3,6 +3,7 @@ package agent
 import (
 	"regexp"
 	"strings"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 var lineOrientedSourceSnippetPattern = regexp.MustCompile(`(?:^|[\s,;])(\d{1,5}):\s*([^\s]+)?`)
@@ -70,7 +71,7 @@ func sourceInventoryMarkerCount(normalized string, marker string) int {
 }
 
 func sourceInventoryClaimLooksSynthesized(normalized string) bool {
-	return containsAny(normalized,
+	return agentutil.ContainsAny(normalized,
 		" because ",
 		" this means ",
 		" the likely cause is ",
@@ -303,7 +304,7 @@ func looksLikeCompactedLineOrientedSourceSnippet(text string) bool {
 	}
 
 	lower := strings.ToLower(trimmed)
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		"\t",
 		"[]",
 		"{}",
@@ -446,7 +447,7 @@ func looksLikeSourceEchoOnlyAnswer(answer string) bool {
 
 	claim := normalizeSourceInventoryClaim(stripPresentableSourceObjectiveEcho(trimmed))
 	if sourceInventoryClaimLooksSynthesized(claim) ||
-		containsAny(lower,
+		agentutil.ContainsAny(lower,
 			" should reject ",
 			" should change ",
 		) {
@@ -522,7 +523,7 @@ func looksLikeScratchpadLeakedAnswer(answer string) bool {
 		}
 
 		if i == 0 && lineStartsWithAny(lowerLine, "the user wants", "the user is asking") {
-			if containsAny(normalized,
+			if agentutil.ContainsAny(normalized,
 				" actually, ",
 				" actually, i ",
 				" actually, let me ",
@@ -538,7 +539,7 @@ func looksLikeScratchpadLeakedAnswer(answer string) bool {
 				return true
 			}
 
-			return !containsAny(normalized,
+			return !agentutil.ContainsAny(normalized,
 				" the answer is ",
 				" the likely cause is ",
 				" the root cause is ",
@@ -559,7 +560,7 @@ func looksLikeMetaIntentRestatement(answer string) bool {
 	}
 
 	lower := " " + strings.ToLower(strings.Join(strings.Fields(trimmed), " ")) + " "
-	if !containsAny(lower,
+	if !agentutil.ContainsAny(lower,
 		" the user is asking me to ",
 		" the user asked me to ",
 		" the user wants me to ",
@@ -569,7 +570,7 @@ func looksLikeMetaIntentRestatement(answer string) bool {
 		return false
 	}
 
-	if containsAny(lower,
+	if agentutil.ContainsAny(lower,
 		" the answer is ",
 		" the likely cause is ",
 		" the root cause is ",
@@ -580,7 +581,7 @@ func looksLikeMetaIntentRestatement(answer string) bool {
 		return false
 	}
 
-	return containsAny(lower,
+	return agentutil.ContainsAny(lower,
 		" i need to find ",
 		" i need to inspect ",
 		" i need to search ",

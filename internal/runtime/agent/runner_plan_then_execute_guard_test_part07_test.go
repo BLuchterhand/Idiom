@@ -11,6 +11,7 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/runtime/agent/agentutil"
 )
 
 func TestPlanExecuteUnscopedRejectedPlanCorrectionUsesLargeBudget(t *testing.T) {
@@ -1194,7 +1195,7 @@ func TestPlanExecuteAnchorRefreshProjectionUsesOnlyUnresolvedRejectedPaths(t *te
 	if !ok {
 		t.Fatal("wrong-path refresh should redirect to remaining unresolved path")
 	}
-	if got := normalizeRunnerPath(redirected.Path); got != "native/src/simulation/machines/machine.cpp" {
+	if got := agentutil.NormalizeRunnerPath(redirected.Path); got != "native/src/simulation/machines/machine.cpp" {
 		t.Fatalf("redirect path = %q, want remaining unresolved machine.cpp", got)
 	}
 }

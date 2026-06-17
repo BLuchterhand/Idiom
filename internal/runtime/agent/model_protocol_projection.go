@@ -10,6 +10,8 @@ import (
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/runtime/agent/agentutil"
+	"slices"
 )
 
 const modelProtocolProjectionSchemaVersion = "idiom.model_protocol_projection.v1"
@@ -82,7 +84,7 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 	}
 
 	callableActionClasses := actionClassesAllowedByPolicy(phase.ActionPolicy.AllowedActionClasses, phase.ActionPolicy.InvalidActionClasses)
-	invalidActionClasses := uniquePhaseStrings(phase.ActionPolicy.InvalidActionClasses)
+	invalidActionClasses := util.Unique(phase.ActionPolicy.InvalidActionClasses)
 
 	return contractcompile.PlanExecutePlannerInput{
 		ParentID:             strings.TrimSpace(parentID),
@@ -201,7 +203,7 @@ func modelProtocolProjectionTools(groups ...[]string) []string {
 		}
 	}
 
-	return uniquePhaseStrings(tools)
+	return util.Unique(tools)
 }
 
 func modelProtocolKnownReadOnlyPlannerTool(tool string) bool {
@@ -229,32 +231,32 @@ func modelProtocolKnownPlannerTools(values []string) []string {
 		tools = append(tools, value)
 	}
 
-	return uniquePhaseStrings(tools)
+	return util.Unique(tools)
 }
 
 func modelProtocolRequiredTools(required []string, phase TurnPhaseContract) []string {
 	tools := modelProtocolProjectionTools(required)
-	if containsPhaseString(phase.ActionPolicy.CallableToolNames, "submit_plan") {
+	if slices.Contains(phase.ActionPolicy.CallableToolNames, "submit_plan") {
 		tools = append(tools, "submit_plan")
 	}
 
-	return uniquePhaseStrings(tools)
+	return util.Unique(tools)
 }
 
 func modelProtocolVisibleTools(phase TurnPhaseContract) []string {
 	tools := modelProtocolProjectionTools(phase.AllowedTools, phase.ActionPolicy.CallableToolNames)
-	if containsPhaseString(phase.ActionPolicy.TerminalResponseShapes, "submit_plan") ||
-		containsPhaseString(phase.ActionPolicy.CallableToolNames, "submit_plan") {
+	if slices.Contains(phase.ActionPolicy.TerminalResponseShapes, "submit_plan") ||
+		slices.Contains(phase.ActionPolicy.CallableToolNames, "submit_plan") {
 
 		tools = append(tools, "submit_plan")
 	}
 
-	return uniquePhaseStrings(tools)
+	return util.Unique(tools)
 }
 
 func modelProtocolStructuredSchemas(phase TurnPhaseContract) []string {
-	if containsPhaseString(phase.ActionPolicy.TerminalResponseShapes, "submit_plan") ||
-		containsPhaseString(phase.ActionPolicy.CallableToolNames, "submit_plan") {
+	if slices.Contains(phase.ActionPolicy.TerminalResponseShapes, "submit_plan") ||
+		slices.Contains(phase.ActionPolicy.CallableToolNames, "submit_plan") {
 
 		return []string{"submit_plan"}
 	}
@@ -262,20 +264,6 @@ func modelProtocolStructuredSchemas(phase TurnPhaseContract) []string {
 	return nil
 }
 
-func containsPhaseString(values []string, want string) bool {
-	want = strings.TrimSpace(want)
-	if want == "" {
-		return false
-	}
-
-	for _, value := range values {
-		if strings.TrimSpace(value) == want {
-			return true
-		}
-	}
-
-	return false
-}
 
 func modelProtocolSourceBodyObligations(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, phase TurnPhaseContract) []string {
 	if phase.PhaseID != turnPhaseRequiredSource && phase.PhaseID != turnPhaseStaleAnchorRefresh {
@@ -285,7 +273,7 @@ func modelProtocolSourceBodyObligations(brief workerruntime.WorkerRuntimeBrief, 
 	var paths []string
 
 	for _, path := range brief.RequiredEditPaths {
-		normalized := normalizeRunnerPath(path)
+		normalized := agentutil.NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}

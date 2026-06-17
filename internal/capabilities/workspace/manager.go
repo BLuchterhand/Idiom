@@ -5456,7 +5456,7 @@ func lineRangeReplacementDuplicatesPrecedingContext(current string, spans []line
 	maxCompare := min(len(contextLines), len(replacementLines), 6)
 
 	for n := maxCompare; n >= 3; n-- {
-		if util.EqualSlice(contextLines[len(contextLines)-n:], replacementLines[:n]) {
+		if slices.Equal(contextLines[len(contextLines)-n:], replacementLines[:n]) {
 			return true
 		}
 	}

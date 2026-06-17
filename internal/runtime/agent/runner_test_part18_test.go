@@ -1339,7 +1339,7 @@ func TestCompoundRejectionReasonIncludesObjectiveUnmet(t *testing.T) {
 	if !strings.Contains(acceptance.Reason, "Additionally") {
 		t.Fatalf("expected compound rejection to include 'Additionally', got:\n%s", acceptance.Reason)
 	}
-	if !strings.Contains(acceptance.Reason, "not backed by a source-body read") {
+	if !strings.Contains(acceptance.Reason, "not read as source-body evidence") {
 		t.Fatalf("expected compound rejection to include source-grounding reason, got:\n%s", acceptance.Reason)
 	}
 }
