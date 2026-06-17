@@ -52,7 +52,7 @@ func TestCoreContractPackagesDoNotDependOnOuterLayers(t *testing.T) {
 func coreContractPackageDirectImports() map[string][]string {
 	return map[string][]string{
 		"idiom/internal/contracts/autonomy":    {"idiom/internal/platform/util"},
-		"idiom/internal/contracts/compile":     {"idiom/internal/contracts/autonomy"},
+		"idiom/internal/contracts/compile":     {"idiom/internal/contracts/autonomy", "idiom/internal/platform/util"},
 		"idiom/internal/contracts/pathparse":   {},
 		"idiom/internal/contracts/plan":        {"idiom/internal/contracts/pathparse"},
 		"idiom/internal/contracts/writerroute": {},

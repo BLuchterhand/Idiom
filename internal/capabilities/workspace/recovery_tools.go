@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"idiom/internal/workflows/recovery"
+	"idiom/internal/platform/util"
 )
 
 const recoveryToolReportVersion = "idiom.recovery.tool_report.v1"
@@ -153,7 +154,7 @@ func (m *Manager) recoveryStatus(ctx context.Context, req ToolRequest) ToolResul
 		PacketID:           packet.PacketID,
 		PartialState:       packet.PartialState,
 		ProductLinks:       packet.ProductLinks,
-		Blockers:           compactNonEmptyStrings(blockers),
+		Blockers:           util.Unique(blockers),
 		Gates:              recoveryPacketGates(packet),
 		CandidateAtoms:     candidateAtoms,
 		Reconciliation:     reconciliationRef,
@@ -619,7 +620,7 @@ func recoveryPacketBlockers(packet recovery.DecompositionPacket) []string {
 
 	blockers = append(blockers, recoveryPartialStateBlockers(packet.PartialState)...)
 
-	return compactNonEmptyStrings(blockers)
+	return util.Unique(blockers)
 }
 
 func recoveryPartialStateBlockers(partial recovery.PartialState) []string {

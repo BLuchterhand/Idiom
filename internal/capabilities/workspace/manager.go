@@ -1962,7 +1962,7 @@ func decodeSourceSatisfiedPathsField(raw json.RawMessage, allowPathKeyedObject b
 		return nil, false
 	}
 
-	paths = compactNonEmptyStrings(paths)
+	paths = util.Unique(paths)
 	if len(paths) == 0 {
 		return nil, false
 	}
@@ -2001,7 +2001,7 @@ func decodeSourceSatisfiedPathsObject(raw json.RawMessage, allowPathKeyedObject 
 		}
 	}
 
-	paths = compactNonEmptyStrings(paths)
+	paths = util.Unique(paths)
 	if len(paths) == 0 {
 		return nil, false
 	}

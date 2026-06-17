@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"idiom/internal/contracts/autonomy"
+	"idiom/internal/platform/util"
 )
 
 func normalizePlanExecutePlannerInput(input PlanExecutePlannerInput) PlanExecutePlannerInput {
@@ -21,9 +22,9 @@ func normalizePlanExecutePlannerInput(input PlanExecutePlannerInput) PlanExecute
 		&input.PermissionProfile,
 		&input.VerificationContract,
 	)
-	input.Lane = firstNonEmpty(input.Lane, DefaultPlanExecuteLane)
-	input.Phase = firstNonEmpty(input.Phase, DefaultPlannerPhase)
-	input.TaskFamily = firstNonEmpty(input.TaskFamily, InvocationPlanExecutePlanner)
+	input.Lane = util.FirstNonEmpty(input.Lane, DefaultPlanExecuteLane)
+	input.Phase = util.FirstNonEmpty(input.Phase, DefaultPlannerPhase)
+	input.TaskFamily = util.FirstNonEmpty(input.TaskFamily, InvocationPlanExecutePlanner)
 	normalizeStringSets(
 		&input.TargetRefs,
 		&input.UserBoundaries,
@@ -77,8 +78,8 @@ func normalizeRuntimeInput(runtime *RuntimeEnvelopeInput) {
 	degradedInvariants := append([]string(nil), runtime.DegradedInvariants...)
 	authorizedFallbacks := append([]string(nil), runtime.AuthorizedFallback...)
 
-	runtime.DegradedInvariants = uniqueStrings(degradedInvariants)
-	runtime.AuthorizedFallback = uniqueStrings(authorizedFallbacks)
+	runtime.DegradedInvariants = util.Sorted(degradedInvariants)
+	runtime.AuthorizedFallback = util.Sorted(authorizedFallbacks)
 	runtime.DegradationDecisions = normalizeDegradationDecisions(runtime.DegradationDecisions, degradedInvariants, authorizedFallbacks)
 }
 
@@ -102,9 +103,9 @@ func normalizeRuntimeEnvelope(runtime *RuntimeEnvelope) {
 	runtime.ContextBudget = normalizeContextBudget(runtime.ContextBudget)
 	normalizeQueueState(&runtime.QueueState)
 
-	runtime.EnforcementMode = firstNonEmpty(runtime.EnforcementMode, "report_only")
+	runtime.EnforcementMode = util.FirstNonEmpty(runtime.EnforcementMode, "report_only")
 	runtime.DegradationDecisions = normalizeDegradationDecisions(runtime.DegradationDecisions, nil, nil)
-	runtime.ActiveInvariantID = firstNonEmpty(runtime.ActiveInvariantID, InvariantActiveAuthority)
+	runtime.ActiveInvariantID = util.FirstNonEmpty(runtime.ActiveInvariantID, InvariantActiveAuthority)
 }
 
 func normalizeDegradationDecisions(decisions []DegradationDecision, degradedInvariants []string, authorizedFallbacks []string) []DegradationDecision {
@@ -151,8 +152,8 @@ func degradationDecisionForFallbacks(fallbacks []string) string {
 }
 
 func legacyDegradationDecisions(degradedInvariants []string, authorizedFallbacks []string) []DegradationDecision {
-	invariantIDs := uniqueStringsInOrder(degradedInvariants)
-	fallbacks := uniqueStringsInOrder(authorizedFallbacks)
+	invariantIDs := util.Unique(degradedInvariants)
+	fallbacks := util.Unique(authorizedFallbacks)
 	out := make([]DegradationDecision, 0, len(invariantIDs))
 
 	for i, invariantID := range invariantIDs {
@@ -182,8 +183,8 @@ func legacyFallbacksForInvariant(index int, invariantCount int, fallbacks []stri
 
 func normalizeDegradationDecision(decision DegradationDecision) DegradationDecision {
 	decision.InvariantID = strings.TrimSpace(decision.InvariantID)
-	decision.ReasonCode = firstNonEmpty(decision.ReasonCode, "declared_runtime_degradation")
-	decision.AuthorizedFallbacks = uniqueStrings(decision.AuthorizedFallbacks)
+	decision.ReasonCode = util.FirstNonEmpty(decision.ReasonCode, "declared_runtime_degradation")
+	decision.AuthorizedFallbacks = util.Sorted(decision.AuthorizedFallbacks)
 
 	if strings.TrimSpace(decision.Decision) == "" {
 		if len(decision.AuthorizedFallbacks) > 0 {
@@ -223,7 +224,7 @@ func mergeDegradationDecisions(decisions []DegradationDecision) []DegradationDec
 		existing.InvariantID = decision.InvariantID
 		existing.ReasonCode = decision.ReasonCode
 		existing.Decision = decision.Decision
-		existing.AuthorizedFallbacks = uniqueStrings(append(existing.AuthorizedFallbacks, decision.AuthorizedFallbacks...))
+		existing.AuthorizedFallbacks = util.Sorted(append(existing.AuthorizedFallbacks, decision.AuthorizedFallbacks...))
 		merged[k] = existing
 	}
 
@@ -260,7 +261,7 @@ func normalizeProtocolInput(protocol *ProtocolInput) {
 	}
 
 	if protocol.CallableToolsSpecified {
-		protocol.CallableTools = uniqueStrings(protocol.CallableTools)
+		protocol.CallableTools = util.Sorted(protocol.CallableTools)
 	} else {
 		protocol.CallableTools = nil
 	}
@@ -312,7 +313,7 @@ func normalizeProtocolProjection(protocol *ModelProtocolProjection) {
 		&protocol.InvalidActions,
 	)
 	normalizePathSets(&protocol.RequiredEditCoverage)
-	protocol.ActiveInvariantID = firstNonEmpty(protocol.ActiveInvariantID, InvariantActiveAuthority)
+	protocol.ActiveInvariantID = util.FirstNonEmpty(protocol.ActiveInvariantID, InvariantActiveAuthority)
 	normalizeCompactPacketProjection(&protocol.CompactPacket)
 }
 
@@ -341,7 +342,7 @@ func canonicalActionClassStrings(values []string) []string {
 		out = append(out, string(canonical))
 	}
 
-	return uniqueStrings(out)
+	return util.Sorted(out)
 }
 
 func PlanExecutePlannerToolVocabulary() []ToolVocabularyEntry {
@@ -412,7 +413,7 @@ func obligationIDs(obligations []autonomy.Obligation) []string {
 		ids = append(ids, obligation.ObligationID)
 	}
 
-	return uniqueStrings(ids)
+	return util.Sorted(ids)
 }
 
 func trimStrings(fields ...*string) {
@@ -423,7 +424,7 @@ func trimStrings(fields ...*string) {
 
 func normalizeStringSets(fields ...*[]string) {
 	for _, field := range fields {
-		*field = uniqueStrings(*field)
+		*field = util.Sorted(*field)
 	}
 }
 
@@ -464,49 +465,7 @@ func uniquePaths(values []string) []string {
 	return out
 }
 
-func uniqueStrings(values []string) []string {
-	out := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
 
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-
-		if _, ok := seen[value]; ok {
-			continue
-		}
-
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-
-	slices.Sort(out)
-
-	return out
-}
-
-func uniqueStringsInOrder(values []string) []string {
-	out := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-
-		if _, ok := seen[value]; ok {
-			continue
-		}
-
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-
-	return out
-}
 
 func normalizePath(path string) string {
 	path = strings.TrimSpace(path)
@@ -522,15 +481,6 @@ func normalizePath(path string) string {
 	return strings.TrimPrefix(path, "./")
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-
-	return ""
-}
 
 func firstPositive(values ...int) int {
 	for _, value := range values {

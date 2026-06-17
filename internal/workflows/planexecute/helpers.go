@@ -1664,7 +1664,7 @@ func planExecuteReviewRepairTerminalRecord(lifecycle planExecuteReviewRepairLife
 		ChildContractID:    lifecycle.Invocation.ChildContractID,
 		ResultKind:         resultKind,
 		Status:             status,
-		EvidenceRefs:       planExecuteUniqueRefStrings(evidenceRefs),
+		EvidenceRefs:       util.Sorted(evidenceRefs),
 		ChangedPaths:       nil,
 		ObjectiveAlignment: objective,
 	}
@@ -2862,25 +2862,7 @@ func planExecuteVerificationScopeRefs(input planExecuteVerificationAcceptanceInp
 			refs = append(refs, "scope:"+value)
 		}
 	}
-	return planExecuteUniqueRefStrings(refs)
-}
-
-func planExecuteUniqueRefStrings(values []string) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
+	return util.Sorted(refs)
 }
 
 func planExecuteGitSHAOrUnknown(root string) string {
