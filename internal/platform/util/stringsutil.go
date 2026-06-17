@@ -12,6 +12,59 @@ func FirstNonEmpty(values ...string) string {
 	return ""
 }
 
+func SplitWorkspaceFileLines(data []byte) []string {
+	if len(data) == 0 {
+		return nil
+	}
+
+	lines := strings.Split(string(data), "\n")
+	if len(lines) > 1 && lines[len(lines)-1] == "" {
+		return lines[:len(lines)-1]
+	}
+
+	return lines
+}
+
+// ClampRequestedLineRange clamps a line range [start, end] to the actual
+// file bounds [1, totalLines]. The clamped flag reports whether any
+// adjustment was needed. The requestedStart/requestedEnd preserve the
+// caller's original intent when the range exceeds file bounds.
+func ClampRequestedLineRange(totalLines int, start int, end int, requestedStart int, requestedEnd int) (int, int, bool) {
+	if totalLines <= 0 {
+		return start, end, false
+	}
+
+	clamped := false
+
+	if end > totalLines {
+		end = totalLines
+		clamped = true
+	}
+
+	if start > totalLines {
+		span := 0
+		if requestedStart > 0 && requestedEnd >= requestedStart {
+			span = requestedEnd - requestedStart
+		} else if end >= start {
+			span = end - start
+		}
+
+		start = totalLines - span
+		if start < 1 {
+			start = 1
+		}
+
+		clamped = true
+	}
+
+	if start > end {
+		start = end
+		clamped = true
+	}
+
+	return start, end, clamped
+}
+
 func ContainsAny(text string, needles ...string) bool {
 	for _, needle := range needles {
 		if strings.Contains(text, needle) {

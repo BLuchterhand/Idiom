@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"idiom/internal/repository/semantic"
+	"idiom/internal/platform/util"
 )
 
 func (m *Manager) goOverview() ToolResult {
@@ -1084,7 +1085,7 @@ func (m *Manager) readFileLines(path string, start, end int) (string, error) {
 		return "", err
 	}
 
-	lines := splitWorkspaceFileLines(data)
+	lines := util.SplitWorkspaceFileLines(data)
 
 	if start <= 0 {
 		start = 1
@@ -1094,7 +1095,7 @@ func (m *Manager) readFileLines(path string, start, end int) (string, error) {
 		end = len(lines)
 	}
 
-	start, end, _ = clampRequestedLineRange(len(lines), start, end, start, end)
+	start, end, _ = util.ClampRequestedLineRange(len(lines), start, end, start, end)
 	if start > end {
 		return "", fmt.Errorf("start_line must be <= end_line")
 	}
@@ -1108,62 +1109,7 @@ func (m *Manager) readFileLines(path string, start, end int) (string, error) {
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
-func splitWorkspaceFileLines(data []byte) []string {
-	if len(data) == 0 {
-		return nil
-	}
 
-	lines := strings.Split(string(data), "\n")
-	if len(lines) > 1 && lines[len(lines)-1] == "" {
-		return lines[:len(lines)-1]
-	}
-
-	return lines
-}
-
-func clampRequestedLineRange(totalLines int, start int, end int, requestedStart int, requestedEnd int) (int, int, bool) {
-	if totalLines <= 0 {
-		return start, end, false
-	}
-
-	clamped := false
-
-	if end > totalLines {
-		end = totalLines
-		clamped = true
-	}
-
-	if start > totalLines {
-		span := 0
-		if requestedStart > 0 && requestedEnd >= requestedStart {
-			span = requestedEnd - requestedStart
-		} else if end >= start {
-			span = end - start
-		}
-
-		start = totalLines - span
-		if start < 1 {
-			start = 1
-		}
-
-		clamped = true
-	}
-
-	if start > end {
-		start = end
-		clamped = true
-	}
-
-	return start, end, clamped
-}
-
-func displayRequestedLine(requested int, fallback int) int {
-	if requested > 0 {
-		return requested
-	}
-
-	return fallback
-}
 
 func (m *Manager) goPathFilter(path string) string {
 	path = strings.TrimSpace(path)

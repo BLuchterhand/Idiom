@@ -16,6 +16,7 @@ import (
 
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 	toolcmd "idiom/internal/surfaces/cli/tool"
@@ -464,8 +465,8 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 	}
 
 	if code != 0 {
-		completion["status"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(completion, "status"), "failed")
-		completion["failure_reason"] = featureplanner.FirstNonEmptyString(
+		completion["status"] = util.FirstNonEmpty(featureplanner.CompletionFieldString(completion, "status"), "failed")
+		completion["failure_reason"] = util.FirstNonEmpty(
 			featureplanner.CompletionFieldString(completion, "failure_reason"),
 			strings.TrimSpace(fmt.Sprintf("plan-execute atom dispatch failed with exit %d: %s", code, strings.TrimSpace(planStderr.String()))),
 		)
@@ -476,8 +477,8 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 
 	if featureplanner.CompletionFieldString(completion, "status") == "" {
 		completion["status"] = "ambiguous"
-		completion["failure_kind"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(completion, "failure_kind"), "missing_nested_plan_execute_status")
-		completion["failure_reason"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(completion, "failure_reason"), "nested plan-execute returned without typed completion status")
+		completion["failure_kind"] = util.FirstNonEmpty(featureplanner.CompletionFieldString(completion, "failure_kind"), "missing_nested_plan_execute_status")
+		completion["failure_reason"] = util.FirstNonEmpty(featureplanner.CompletionFieldString(completion, "failure_reason"), "nested plan-execute returned without typed completion status")
 	}
 
 	featureplanner.TrustObservedPlanExecuteCompletionFields(completion)

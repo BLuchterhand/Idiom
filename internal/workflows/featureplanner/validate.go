@@ -1749,7 +1749,7 @@ func compileAtomAuthorityContract(plan FeaturePlan, atom FeatureAtomPlan) planco
 	}
 
 	for _, command := range normalizedStringList(atom.TestFirst.Commands) {
-		tddID := firstNonEmptyStringSlice(atom.TestFirst.ObligationRefs)
+		tddID := util.FirstNonEmpty(atom.TestFirst.ObligationRefs...)
 		tdd := tddByID[strings.TrimSpace(tddID)]
 
 		contract.TDDObligations = append(contract.TDDObligations, plancontract.TDDObligation{
@@ -2020,15 +2020,6 @@ func planContractAuthorityDeltaKind(delta PlanAuthorityDelta) plancontract.Autho
 	return plancontract.AuthorityDeltaKindExpandWriteEnvelope
 }
 
-func firstNonEmptyStringSlice(values []string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-
-	return ""
-}
 
 func atomRequiredTestCommands(atom plancontract.AtomExecutionContract) []string {
 	var out []string

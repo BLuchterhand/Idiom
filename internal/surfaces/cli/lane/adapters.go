@@ -104,7 +104,7 @@ func planExecuteUniqueRequiredPaths(requiredEditPaths []string) []string {
 }
 
 func newPlanExecuteSessionID() string {
-	return planexecutecmd.NewSessionID()
+	return planexecute.NewPlanExecuteSessionID()
 }
 
 func firstNonEmptyString(values ...string) string {

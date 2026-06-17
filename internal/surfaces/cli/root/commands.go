@@ -11,6 +11,7 @@ import (
 	planexecutecmd "idiom/internal/surfaces/cli/planexecute"
 	productcmd "idiom/internal/surfaces/cli/product"
 	recovercmd "idiom/internal/surfaces/cli/recover"
+	"idiom/internal/workflows/planexecute"
 )
 
 func runAtomMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -46,7 +47,7 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 }
 
 func newPlanExecuteSessionID() string {
-	return planexecutecmd.NewSessionID()
+	return planexecute.NewPlanExecuteSessionID()
 }
 
 func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {

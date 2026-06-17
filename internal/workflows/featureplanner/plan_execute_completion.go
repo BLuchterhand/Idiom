@@ -258,7 +258,7 @@ func PlanExecuteCompletionSummaryFromFields(fields map[string]any) PlanExecuteCo
 	summary := PlanExecuteCompletionSummary{
 		LaneFamily:                   CompletionFieldString(fields, "lane_family"),
 		Summary:                      CompletionFieldString(fields, "summary"),
-		ProgressPath:                 FirstNonEmptyString(CompletionFieldString(fields, "progress_path"), CompletionFieldString(fields, "state_path")),
+		ProgressPath:                 util.FirstNonEmpty(CompletionFieldString(fields, "progress_path"), CompletionFieldString(fields, "state_path")),
 		Status:                       CompletionFieldString(fields, "status"),
 		Phase:                        CompletionFieldString(fields, "phase"),
 		ReviewStatus:                 CompletionFieldString(fields, "review_status"),
@@ -273,11 +273,11 @@ func PlanExecuteCompletionSummaryFromFields(fields map[string]any) PlanExecuteCo
 		NextAction:                   CompletionFieldString(fields, "next_valid_action"),
 		CompletionSource:             CompletionFieldString(fields, "completion_source"),
 		ReviewRepairSkipped:          completionFieldBool(fields, "review_repair_skipped"),
-		ContractID:                   FirstNonEmptyString(CompletionFieldString(fields, "contract_id"), CompletionFieldString(fields, "active_contract_id")),
-		ContractHash:                 FirstNonEmptyString(CompletionFieldString(fields, "contract_hash"), CompletionFieldString(fields, "active_contract_hash")),
+		ContractID:                   util.FirstNonEmpty(CompletionFieldString(fields, "contract_id"), CompletionFieldString(fields, "active_contract_id")),
+		ContractHash:                 util.FirstNonEmpty(CompletionFieldString(fields, "contract_hash"), CompletionFieldString(fields, "active_contract_hash")),
 		ScopeContractID:              CompletionFieldString(fields, "scope_contract_id"),
 		ScopeContractHash:            CompletionFieldString(fields, "scope_contract_hash"),
-		SnapshotHash:                 FirstNonEmptyString(CompletionFieldString(fields, "snapshot_hash"), CompletionFieldString(fields, "contract_snapshot_hash")),
+		SnapshotHash:                 util.FirstNonEmpty(CompletionFieldString(fields, "snapshot_hash"), CompletionFieldString(fields, "contract_snapshot_hash")),
 		RequiredEditPaths:            completionFieldStringSlice(fields, "required_edit_paths"),
 		AllowedEditPaths:             completionFieldStringSlice(fields, "allowed_edit_paths"),
 		SourceSatisfiedEvidencePaths: completionFieldStringSlice(fields, "source_satisfied_evidence_paths"),
@@ -525,7 +525,7 @@ func (summary PlanExecuteCompletionSummary) Fields() map[string]any {
 
 func planExecuteCompletionSummaryFromRecord(record planExecuteCompletionRecord) PlanExecuteCompletionSummary {
 	summary := PlanExecuteCompletionSummary{
-		ProgressPath:                 FirstNonEmptyString(record.ProgressPath, record.StatePath),
+		ProgressPath:                 util.FirstNonEmpty(record.ProgressPath, record.StatePath),
 		Status:                       record.Status,
 		Phase:                        record.Phase,
 		ReviewStatus:                 record.ReviewStatus,
@@ -533,7 +533,7 @@ func planExecuteCompletionSummaryFromRecord(record planExecuteCompletionRecord) 
 		Outcome:                      record.Outcome,
 		ExitCode:                     record.ExitCode,
 		ReviewRepairSkipped:          record.ReviewSkipped,
-		FailureKind:                  FirstNonEmptyString(record.FailureKind, record.ReasonClass),
+		FailureKind:                  util.FirstNonEmpty(record.FailureKind, record.ReasonClass),
 		FailureReason:                record.FailureReason,
 		FailureID:                    record.FailureID,
 		RecordPath:                   record.RecordPath,
@@ -563,8 +563,8 @@ func planExecuteCompletionSummaryFromRecord(record planExecuteCompletionRecord) 
 
 	if record.Type == "idiom.plan_execute.review_repair_degraded" {
 		summary.Status = "degraded"
-		summary.ReviewStatus = FirstNonEmptyString(record.ReviewStatus, record.Status, "degraded")
-		summary.FailureKind = FirstNonEmptyString(record.FailureKind, record.ReasonClass, "review_repair_degraded")
+		summary.ReviewStatus = util.FirstNonEmpty(record.ReviewStatus, record.Status, "degraded")
+		summary.FailureKind = util.FirstNonEmpty(record.FailureKind, record.ReasonClass, "review_repair_degraded")
 	}
 
 	if record.Type == "idiom.plan_execute.source_satisfied" || record.Type == "idiom.plan_execute.auto_exact_plan_source_satisfied" {
@@ -573,9 +573,9 @@ func planExecuteCompletionSummaryFromRecord(record planExecuteCompletionRecord) 
 	}
 
 	if planExecuteCompletionModelError(record.StopReason, record.Content) {
-		summary.Status = FirstNonEmptyString(summary.Status, "failed")
-		summary.FailureKind = FirstNonEmptyString(summary.FailureKind, "model_error")
-		summary.FailureReason = FirstNonEmptyString(summary.FailureReason, "nested plan-execute stopped with model_error")
+		summary.Status = util.FirstNonEmpty(summary.Status, "failed")
+		summary.FailureKind = util.FirstNonEmpty(summary.FailureKind, "model_error")
+		summary.FailureReason = util.FirstNonEmpty(summary.FailureReason, "nested plan-execute stopped with model_error")
 	}
 
 	return summary.normalized()
@@ -1211,12 +1211,3 @@ func CompletionFieldString(fields map[string]any, key string) string {
 	return strings.TrimSpace(fmt.Sprint(value))
 }
 
-func FirstNonEmptyString(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-
-	return ""
-}

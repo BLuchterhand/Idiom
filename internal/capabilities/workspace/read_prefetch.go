@@ -213,7 +213,7 @@ func (m *Manager) prefetchReadFile(requested string, opts PrefetchReadOptions, r
 
 	outputBytes := len(excerpt)
 	truncated := int64(outputBytes) < info.Size()
-	lines := splitWorkspaceFileLines(excerpt)
+	lines := util.SplitWorkspaceFileLines(excerpt)
 
 	if len(lines) == 0 {
 		lines = []string{""}

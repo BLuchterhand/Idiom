@@ -15,6 +15,7 @@ import (
 	"idiom/internal/workflows/featureplannerruntime"
 	"idiom/internal/workflows/planexecute"
 	"idiom/internal/workflows/recovery"
+	"idiom/internal/platform/util"
 )
 
 func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective string) (string, error) {
@@ -522,8 +523,8 @@ func (m *Model) featurePlannerPlanExecuteCompletionFields(summary string) map[st
 
 	if featureplanner.CompletionFieldString(fields, "status") == "" {
 		fields["status"] = "ambiguous"
-		fields["failure_kind"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(fields, "failure_kind"), "missing_nested_plan_execute_status")
-		fields["failure_reason"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(fields, "failure_reason"), "nested plan-execute returned without typed completion status")
+		fields["failure_kind"] = util.FirstNonEmpty(featureplanner.CompletionFieldString(fields, "failure_kind"), "missing_nested_plan_execute_status")
+		fields["failure_reason"] = util.FirstNonEmpty(featureplanner.CompletionFieldString(fields, "failure_reason"), "nested plan-execute returned without typed completion status")
 	}
 
 	if featureplanner.CompletionFieldString(fields, "completion_source") == "" {

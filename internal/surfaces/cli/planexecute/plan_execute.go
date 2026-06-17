@@ -151,9 +151,6 @@ func newPlanExecuteSessionID() string {
 	return planexecute.NewPlanExecuteSessionID()
 }
 
-func NewSessionID() string {
-	return newPlanExecuteSessionID()
-}
 
 // findLatestPlanArtifact picks the most recent .idiom/plans/<stamp>.plan.json
 // produced since notBefore. When sessionID is non-empty, the search is

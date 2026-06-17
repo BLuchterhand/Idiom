@@ -12,6 +12,7 @@ import (
 	"idiom/internal/platform/failures"
 	"idiom/internal/repository/semantic"
 	"idiom/internal/repository/semantic/language"
+	"idiom/internal/platform/util"
 )
 
 type Capability = language.Capability
@@ -440,7 +441,7 @@ func readFileLinesDirect(path string, start, end int) (string, error) {
 		return "", err
 	}
 
-	lines := splitWorkspaceFileLines(data)
+	lines := util.SplitWorkspaceFileLines(data)
 
 	if start <= 0 {
 		start = 1

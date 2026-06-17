@@ -4597,7 +4597,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		}
 	}
 
-	lines := splitWorkspaceFileLines(data)
+	lines := util.SplitWorkspaceFileLines(data)
 	start := req.StartLine
 	end := req.EndLine
 	requestedStart := start
@@ -4647,7 +4647,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		}
 	}
 
-	start, end, clampedToFileBounds := clampRequestedLineRange(len(lines), start, end, requestedStart, requestedEnd)
+	start, end, clampedToFileBounds := util.ClampRequestedLineRange(len(lines), start, end, requestedStart, requestedEnd)
 	if start > end {
 		return ToolResult{Tool: ToolNameReadFile, Summary: "Invalid line range", Error: "start_line must be <= end_line"}
 	}
@@ -4688,7 +4688,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 	} else if openEndedLogRange {
 		summary += fmt.Sprintf(" (file has %d lines total; open-ended log range capped to %d lines; pass an explicit end_line for a different bounded window)", len(lines), defaultLogReadLineCap)
 	} else if clampedToFileBounds {
-		summary += fmt.Sprintf(" (requested range %d-%d was clamped to file bounds; file has %d lines total)", displayRequestedLine(requestedStart, start), displayRequestedLine(requestedEnd, end), len(lines))
+		summary += fmt.Sprintf(" (requested range %d-%d was clamped to file bounds; file has %d lines total)", nonZeroOrDefaultInt(requestedStart, start), nonZeroOrDefaultInt(requestedEnd, end), len(lines))
 	} else if rangeWasSwapped {
 		summary += fmt.Sprintf(" (file has %d lines total; start_line was greater than end_line; auto-swapped to lines %d-%d; pass start_line <= end_line on future calls)", len(lines), start, end)
 	} else if truncated {
@@ -7133,4 +7133,13 @@ func isNoMatchExit(err error) bool {
 	}
 
 	return strings.Contains(err.Error(), "exit status 1")
+}
+
+
+// nonZeroOrDefaultInt returns value if > 0, otherwise fallback.
+func nonZeroOrDefaultInt(value int, fallback int) int {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }

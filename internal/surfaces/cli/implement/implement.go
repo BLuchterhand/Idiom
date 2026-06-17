@@ -13,11 +13,11 @@ import (
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/queueadmission"
-	planexecutecmd "idiom/internal/surfaces/cli/planexecute"
 	"idiom/internal/surfaces/cli/route"
 	"idiom/internal/surfaces/cli/runtime"
 	"idiom/internal/surfaces/cli/telemetry"
 	toolcmd "idiom/internal/surfaces/cli/tool"
+	"idiom/internal/workflows/planexecute"
 )
 
 type runOptions = cmdruntime.RunOptions
@@ -72,7 +72,7 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 	// same workspace produce attributable conversation logs and (if
 	// they ever submit a plan) attributable plan artifacts. Mirrors
 	// the equivalent generation in runPlanExecuteMain.
-	cfg.Workspace.SessionID = planexecutecmd.NewSessionID()
+	cfg.Workspace.SessionID = planexecute.NewPlanExecuteSessionID()
 	toolcmd.LogCLIPhase(rec, "implement_start", map[string]any{
 		"json_events": opts.JSONEvents,
 		"resume":      strings.TrimSpace(opts.Resume) != "",
