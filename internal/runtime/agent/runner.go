@@ -979,7 +979,12 @@ func (r *Runner) Run(
 					(r.planThenExecuteCompletionGateSummaryRetryable(result.Summary, collectedResults, priorGateRejections)) ||
 					(r.textualRequiredPathCompletionRecoveryApplies(collectedResults) && priorGateRejections < r.completionGateRetryLimit(collectedResults)) ||
 					(r.unscopedNoWriteCompletionRecoveryApplies(collectedResults) && priorGateRejections < r.completionGateRetryLimit(collectedResults)) ||
-					(r.completionGateMutationRecoveryApplies(collectedResults) && priorGateRejections < r.completionGateRetryLimit(collectedResults))
+					(r.completionGateMutationRecoveryApplies(collectedResults) && priorGateRejections < r.completionGateRetryLimit(collectedResults)) ||
+					// Read-only workspace lanes get the recovery prompt on every
+					// rejection — the model needs continuous guidance about what
+					// source-body evidence is required and what tools are restricted,
+					// not just on the first failed attempt.
+					(workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile) && priorGateRejections < r.completionGateRetryLimit(collectedResults))
 
 				if prompt, hideReads, ok := r.completionGateRecoveryPrompt(collectedResults); ok && shouldAttachRecoveryPrompt {
 					opts = completionGateRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
@@ -1081,25 +1086,7 @@ func (r *Runner) Run(
 
 			if reason := retryAnswerHedgeRejectionReason(answer); reason != "" {
 				// The retry answer is a hedge or meta-response about evidence
-				// sufficiency rather than a substantive answer.
-				// If the model was told to read a specific path and still
-				// answered in prose, give one more retry with a stricter
-				// tool-call instruction instead of blocking permanently.
-				if r.sourceGroundingProseRetriesLeft > 0 {
-					r.sourceGroundingProseRetriesLeft--
-
-					turnMessages = append(turnMessages, llama.ChatMessage{
-						Role:    "system",
-						Content: "Your response was rejected because it is a prose answer. The completion gate requires source-body evidence for a cited path. You MUST call `read_file` or `code_navigate` with the exact path, or answer `<<QUESTION>>:` with the specific blocker if the path does not exist on disk. Do not answer in prose again until you have read the cited path.",
-					})
-
-					r.emitEvent(RunEvent{Role: "source_grounding_tool_required", Content: "Prose retry rejected after tool hide — tool call required"})
-					r.emitCompletionStatusFromParams("blocked", "source-grounding retry requires tool call", "content_gap", collectedResults, true)
-					metrics.ModelCalls++
-
-					continue
-				}
-
+				// sufficiency rather than a substantive answer — reject and block.
 				r.emitCompletionStatusFromParams("blocked", reason, "content_gap", collectedResults, true)
 
 				blockerResult := workspace.ToolResult{Tool: "completion_gate", Summary: "Retry answer rejected as hedge", Error: reason}
@@ -1122,21 +1109,7 @@ func (r *Runner) Run(
 					// still answered in prose, give one more retry with a
 					// stricter tool-call instruction instead of burning another
 					// gate retry slot.
-					if r.sourceGroundingProseRetriesLeft > 0 {
-						r.sourceGroundingProseRetriesLeft--
-
-						turnMessages = append(turnMessages, llama.ChatMessage{
-							Role:    "system",
-							Content: "Your response was rejected because it is a prose answer. The completion gate requires source-body evidence for a cited path. You MUST call `read_file` or `code_navigate` with the exact path, or answer `<<QUESTION>>:` with the specific blocker if the path does not exist on disk. Do not answer in prose again until you have read the cited path.",
-						})
-
-						r.emitEvent(RunEvent{Role: "source_grounding_tool_required", Content: "Prose retry rejected after tool hide — tool call required"})
-						r.emitCompletionStatusFromParams("blocked", "source-grounding retry requires tool call", "content_gap", collectedResults, true)
-
-						metrics.ModelCalls++
-
-						continue
-					}
+	
 
 					blockerResult := workspace.ToolResult{
 						Tool:    "completion_gate",
@@ -2979,11 +2952,11 @@ func (r *Runner) Run(
 					evidencePaths := postChildClosureEvidencePaths(r.RuntimeBrief.Objective, []workspace.ToolResult{result}, 4)
 
 					requestBudget.broadEvidenceDelegationSatisfied = true
-					r.RuntimeBrief.Constraints = mergeRunnerStateStrings(r.RuntimeBrief.Constraints, []string{"child_packet_available"})
+					r.RuntimeBrief.Constraints = util.Merge(r.RuntimeBrief.Constraints, []string{"child_packet_available"})
 					postChildPacketActive = true
 					postChildFollowupReads = 0
 					postChildDiminishingNudgeStage = 0
-					r.RuntimeBrief.EvidencePaths = mergeRunnerStateStrings(r.RuntimeBrief.EvidencePaths, evidencePaths)
+					r.RuntimeBrief.EvidencePaths = util.Merge(r.RuntimeBrief.EvidencePaths, evidencePaths)
 					requestBudget.noteReadOnlyChildPacket(evidencePaths)
 					hideBroadDiscoveryTools(turnHiddenTools)
 					rebuildTools()
@@ -3917,7 +3890,7 @@ func (r *Runner) Run(
 			justBecameReady := !delegatedReadOnlyAnswerReady
 
 			delegatedReadOnlyAnswerReady = true
-			r.RuntimeBrief.Constraints = mergeRunnerStateStrings(r.RuntimeBrief.Constraints, []string{"answer_readiness_reached"})
+			r.RuntimeBrief.Constraints = util.Merge(r.RuntimeBrief.Constraints, []string{"answer_readiness_reached"})
 
 			if becameReadyFromDelegated {
 				r.emitDelegatedReadOnlyAnswerReadyEvent(req, collectedResults)

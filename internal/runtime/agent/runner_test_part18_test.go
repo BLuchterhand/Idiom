@@ -1019,8 +1019,12 @@ func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T
 		t.Fatal("source_grounding_unmet should remain retryable before the retry limit is exhausted")
 	}
 
-	if readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "source_grounding_unmet"}, nil, 2, nil) {
-		t.Fatal("source_grounding_unmet must become terminal once the retry budget is exhausted")
+	if !readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "source_grounding_unmet"}, nil, 2, nil) {
+		t.Fatal("source_grounding_unmet must remain retryable when prior rejections (2) are within the read-only retry budget (3)")
+	}
+
+	if readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "source_grounding_unmet"}, nil, 3, nil) {
+		t.Fatal("source_grounding_unmet must become terminal once the retry budget (3) is exhausted")
 	}
 
 	architectureRunner := &Runner{
@@ -1227,5 +1231,115 @@ func TestReadOnlySourceGroundingUnmetRecoveryPromptSkippedWhenNoLastError(t *tes
 	}
 	if strings.Contains(prompt, "rewrite") {
 		t.Fatal("normal no-evidence prompt should not mention rewrite/qualify options")
+	}
+}
+
+// TestSourceGroundingProseRetriesLeftSetToTwo verifies that the
+// source-grounding prose retry counter is bumped to 2 (not 1).
+func TestSourceGroundingProseRetriesLeftSetToTwo(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content"},
+		},
+	}
+
+	hidden := map[string]bool{}
+	rejections := 0
+	turnMessages := []llama.ChatMessage{}
+
+	sourceGroundingErr := "the answer cites source path/line/symbol detail not backed by a source-body read: `src/graphics/renderer.rs`. Use one exact read/code_navigate body probe."
+	retried := runner.retryRejectedFinalAnswerForRun(runnerFinalAnswerRetryInput{
+		stepNumber: 1,
+		assistantMessage: llama.ChatMessage{
+			Role:    "assistant",
+			Content: "The renderer uses src/graphics/renderer.rs.",
+		},
+		acceptance:               finalAnswerAcceptance{BlockerKind: "source_grounding_unmet"},
+		result:                   workspace.ToolResult{Tool: "completion_gate", Summary: "Rejected", Error: sourceGroundingErr},
+		collectedResults:         nil,
+		currentAllowedTools:      []string{"read_file", "code_navigate", "search_content"},
+		completionGateRejections: &rejections,
+		turnMessages:             &turnMessages,
+		turnHiddenTools:          hidden,
+		controller:               &runnerTurnController{},
+	})
+	if !retried {
+		t.Fatal("source-grounding rejection should be retryable")
+	}
+	if runner.sourceGroundingProseRetriesLeft != 2 {
+		t.Fatalf("sourceGroundingProseRetriesLeft should be 2, got %d", runner.sourceGroundingProseRetriesLeft)
+	}
+	// search tools should be hidden; read tools should not.
+	if !hidden["search_content"] {
+		t.Fatal("search_content should be hidden after source-grounding rejection")
+	}
+	if hidden["read_file"] {
+		t.Fatal("read_file should NOT be hidden after source-grounding rejection")
+	}
+	if hidden["code_navigate"] {
+		t.Fatal("code_navigate should NOT be hidden after source-grounding rejection")
+	}
+}
+
+// TestReadOnlyRecoveryPromptMentionsToolRestriction verifies the recovery
+// prompt explicitly states the tool restriction.
+func TestReadOnlyRecoveryPromptMentionsToolRestriction(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "search_content"},
+			Objective:         "How does the rendering pipeline work?",
+			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false},
+		},
+	}
+	runner.lastCompletionGateError = "the answer cites source path/line/symbol detail not backed by a source-body read: `src/graphics/renderer.rs:42`. Use one exact read/code_navigate body probe."
+
+	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(nil)
+	if !ok {
+		t.Fatal("expected source-grounding unmet to produce a recovery prompt")
+	}
+	if hideReads {
+		t.Fatal("read-only source-grounding recovery should not hide reads")
+	}
+	if !strings.Contains(prompt, "restricted to `read_file` and `code_navigate`") {
+		t.Fatalf("expected recovery prompt to mention tool restriction, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "<<QUESTION>>") {
+		t.Fatalf("expected recovery prompt to mention <<QUESTION>>: escape hatch, got:\n%s", prompt)
+	}
+}
+
+// TestCompoundRejectionReasonIncludesObjectiveUnmet verifies that when
+// both source-grounding AND objective-unmet apply, the rejection reason
+// surfaces both problems in a compound message.
+func TestCompoundRejectionReasonIncludesObjectiveUnmet(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "search_content"},
+			Objective:         "How does the rendering pipeline use vertex shaders?",
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read src/graphics/pipelines.rs lines 1-100", Output: "// Pipeline module -- render pass configuration"},
+	}
+	answer := "The rendering pipeline uses `src/graphics/renderer.rs` to draw the scene and `src/shaders/vertex.wgsl` for shaders."
+
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if acceptance.Decision != finalAnswerAcceptanceRejected {
+		t.Fatal("expected compound rejection to be rejected")
+	}
+	if !strings.Contains(acceptance.Reason, "Additionally") {
+		t.Fatalf("expected compound rejection to include 'Additionally', got:\n%s", acceptance.Reason)
+	}
+	if !strings.Contains(acceptance.Reason, "not backed by a source-body read") {
+		t.Fatalf("expected compound rejection to include source-grounding reason, got:\n%s", acceptance.Reason)
 	}
 }

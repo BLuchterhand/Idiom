@@ -1613,6 +1613,11 @@ func (r *Runner) completionGateRetryLimit(results []workspace.ToolResult) int {
 		return 1
 	}
 
+	if r != nil && workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile) &&
+		!runnerBriefRequiresMutation(r.RuntimeBrief) {
+		return 3 // read-only lanes need more retries: the model must discover + read source evidence, and source-grounding retries consume attempts
+	}
+
 	return 2 // default retry limit; coupled to the "2/3" and "3/3" labels in escalateCompletionGateMessage
 }
 
@@ -1993,7 +1998,10 @@ func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.To
 	if r.lastCompletionGateError != "" {
 		if paths := readOnlySourceGroundingUnsupportedPathsFromError(r.lastCompletionGateError); len(paths) > 0 {
 			return fmt.Sprintf(
-				"The completion gate rejected the answer because source paths were cited without body evidence: %s. Call one bounded `read_file` or `code_navigate` for the first unsupported path, read its actual body, then cite that evidence. If the path was from search or graph results and does not need a full read, qualify it as `unverified` next to the citation, or answer `<<QUESTION>>:` with the exact blocker if the path does not exist on disk. No new discovery or search is needed.",
+				"The completion gate rejected the answer because source paths were cited without body evidence: %s. "+
+					"Tools are currently restricted to `read_file` and `code_navigate` — no search, discovery, or context tools are available until you read the missing path. "+
+					"Call one bounded `read_file` or `code_navigate` for the first unsupported path, read its actual body, then cite that evidence. "+
+					"If the path was from search or graph results and does not need a full read, qualify it as `unverified` next to the citation, or answer `<<QUESTION>>:` with the exact blocker if the path does not exist on disk. No new discovery or search is needed.",
 				strings.Join(paths, ", "),
 			)
 		}

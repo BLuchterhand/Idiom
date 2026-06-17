@@ -4,8 +4,8 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/platform/util"
 	"idiom/internal/runtime/agent/agentutil"
-	"idiom/internal/runtime/agent/stringset"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -82,7 +82,7 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 		}
 
 		if missing := unresolvedRejectedMutationPaths(results, r.RuntimeBrief.RequiredEditPaths); len(missing) > 0 {
-			acceptance.EvidencePaths = mergeRunnerStateStrings(acceptance.EvidencePaths, missing)
+			acceptance.EvidencePaths = util.Merge(acceptance.EvidencePaths, missing)
 			return reject("rejected_mutation_paths_remaining", "rejected_mutation_paths_remaining")
 		}
 	}
@@ -115,15 +115,25 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 	}
 
 	if r != nil {
+		// Compute objective relevance to detect compound rejection
+		// reasons. The source-grounding check runs first, but if the
+		// evidence also fails objective relevance, surface both problems
+		// so the model doesn't fix one issue only to discover another.
+		hasObjectiveBlocker := directAnswerRelevance.BlockerKind != "" && directAnswerRelevance.Reason != ""
+
 		if reason := r.sourceGroundingRejectionReason(answer, results); reason != "" {
 			if len(acceptance.EvidencePaths) == 0 {
 				acceptance.EvidencePaths = closurePromptEvidencePaths(directAnswerRelevance.RelevantSourceBodyPaths, 8)
 			}
 
+			if hasObjectiveBlocker {
+				reason = reason + " Additionally, " + directAnswerRelevance.Reason
+			}
+
 			return reject("source_grounding_unmet", reason)
 		}
 
-		if directAnswerRelevance.BlockerKind != "" {
+		if hasObjectiveBlocker {
 			return reject(directAnswerRelevance.BlockerKind, directAnswerRelevance.Reason)
 		}
 	}
@@ -214,11 +224,11 @@ func readOnlyAcceptedDirectAnswerEvidencePaths(answer string, ledger readOnlyAns
 
 	paths := intersectRunnerPaths(mentioned, relevant)
 
-	paths = mergeRunnerStateStrings(paths, objectivePaths, relevant)
-	paths = mergeRunnerStateStrings(paths, answerCitedCollectiveSourceBodySupportPaths(answer, ledger))
+	paths = util.Merge(paths, objectivePaths, relevant)
+	paths = util.Merge(paths, answerCitedCollectiveSourceBodySupportPaths(answer, ledger))
 
 	if len(paths) == 0 && ledger.DiagnosticRelevant {
-		paths = mergeRunnerStateStrings(paths, mentionedEvidencePathsFromToolResults(results, 8))
+		paths = util.Merge(paths, mentionedEvidencePathsFromToolResults(results, 8))
 	}
 
 	return closurePromptEvidencePaths(paths, 8)
@@ -325,7 +335,7 @@ func finalAnswerAcceptanceEventFields(acceptance finalAnswerAcceptance) map[stri
 	}
 
 	if len(acceptance.RelevantSourceBodyPaths) > 0 {
-		fields["relevant_source_body_paths"] = cappedStrings(acceptance.RelevantSourceBodyPaths, 8)
+		fields["relevant_source_body_paths"] = util.LimitSlice(acceptance.RelevantSourceBodyPaths, 8)
 	}
 
 	return fields
@@ -344,10 +354,4 @@ func planThenExecuteAnchorRefreshFinalAnswerRejection(acceptance finalAnswerAcce
 	return strings.TrimSpace(acceptance.BlockerKind) == "plan_execute_anchor_refresh_pending"
 }
 
-func uniqueSortedStrings(values []string) []string {
-	return stringset.Sorted(values)
-}
 
-func cappedStrings(values []string, limit int) []string {
-	return stringset.Cap(values, limit)
-}

@@ -58,7 +58,11 @@ func (r *Runner) retryRejectedFinalAnswerForRun(input runnerFinalAnswerRetryInpu
 	// prose instead of reading the cited file.
 	if input.result.Error != "" && isSourceGroundingError(input.result.Error) {
 		hideNonSourceBodyReadTools(input.turnHiddenTools, input.currentAllowedTools)
-		r.sourceGroundingProseRetriesLeft = 1
+		// Give the model multiple retries to call a read tool before the
+		// session hits the retry limit. The counter is overwritten on each
+		// retry so it tracks how many prose retries remain since the last
+		// tool restriction — not a cumulative budget.
+		r.sourceGroundingProseRetriesLeft = 2
 	}
 	if input.rebuildTools != nil {
 		input.rebuildTools()
