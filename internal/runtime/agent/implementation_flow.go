@@ -1,0 +1,10919 @@
+package agent
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
+	"idiom/internal/contracts/pathparse"
+	"idiom/internal/contracts/plan"
+	"idiom/internal/platform/config"
+	"idiom/internal/platform/util"
+	"idiom/internal/runtime/instructions"
+	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/modepolicy"
+	"idiom/internal/runtime/workerruntime"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"sort"
+	"strings"
+	"time"
+	"unicode"
+)
+
+// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpi3q9pyjb.go ---
+// AnswerComposer is the presentation boundary between deterministic evidence
+// packets and user-facing prose. Runner/discovery code can stay telemetry-rich;
+// final answers should read like an explanation, not like an eval artifact.
+type AnswerComposer struct{}
+
+type AnswerComposerInput struct {
+	Question      string
+	EvidencePaths []string
+	Summaries     []delegatedDiscoverySummary
+}
+
+func (AnswerComposer) Compose(input AnswerComposerInput) (string, bool) {
+	question := strings.TrimSpace(input.Question)
+	paths := uniqueDelegatedDiscoveryPaths(input.EvidencePaths)
+	lines := decoratedDiscoveryFindingLines(input.Summaries, 4)
+
+	if len(input.Summaries) == 0 || len(lines) == 0 {
+		return "", false
+	}
+
+	return composeGenericEvidenceAnswer(question, paths, lines), true
+}
+
+func composeGenericEvidenceAnswer(question string, paths []string, lines []string) string {
+	var b strings.Builder
+
+	if len(paths) > 0 {
+		b.WriteString("The strongest implementation evidence is in ")
+		b.WriteString(formatInlinePathList(paths, 4))
+		b.WriteString(".")
+	} else {
+		b.WriteString("The inspected implementation evidence is enough to give a bounded answer.")
+	}
+
+	if strings.TrimSpace(question) != "" {
+		b.WriteString(" Use those findings as the source of truth for `")
+		b.WriteString(strings.TrimSpace(question))
+		b.WriteString("`.")
+	}
+
+	b.WriteString("\n\n")
+	b.WriteString("What this establishes:\n")
+
+	for _, line := range lines {
+		b.WriteString("- ")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+
+	return strings.TrimSpace(b.String())
+}
+
+func decoratedDiscoveryFindingLines(summaries []delegatedDiscoverySummary, limit int) []string {
+	raw := delegatedDiscoveryFindingLines(summaries, limit)
+	lines := make([]string, 0, len(raw))
+
+	for _, line := range raw {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		name, text, ok := strings.Cut(line, ":")
+		if ok {
+			line = humanDiscoveryLayerName(name) + ": " + cleanDiscoveryFindingText(text)
+		} else {
+			line = cleanDiscoveryFindingText(line)
+		}
+
+		if line == "" || strings.Contains(strings.ToLower(line), "open a returned handle") || decoratedDiscoveryFindingLineIsToolInventory(line) {
+			continue
+		}
+
+		lines = append(lines, line)
+		if limit > 0 && len(lines) >= limit {
+			return lines
+		}
+	}
+
+	return lines
+}
+
+func decoratedDiscoveryFindingLineIsToolInventory(line string) bool {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	if lower == "" {
+		return true
+	}
+
+	if strings.HasPrefix(lower, "symbol index: indexed symbols ") ||
+		strings.HasPrefix(lower, "symbol index: no ") ||
+		strings.HasPrefix(lower, "dependency graph: dependency graph unavailable") {
+
+		return true
+	}
+
+	if strings.HasPrefix(lower, "text anchors: found ") &&
+		strings.Contains(lower, " matching line") {
+
+		return true
+	}
+
+	if strings.HasPrefix(lower, "related files: found ") &&
+		(strings.Contains(lower, " related ") || strings.Contains(lower, " file")) {
+
+		return true
+	}
+
+	return false
+}
+
+func humanDiscoveryLayerName(name string) string {
+	switch strings.TrimSpace(name) {
+	case "text_anchor_search":
+		return "Text anchors"
+	case "dependency_graph":
+		return "Dependency graph"
+	case "related_files":
+		return "Related files"
+	case "go_read_symbol":
+		return "Symbol read"
+	case "go_workspace_symbol", "ctags_symbols":
+		return "Symbol index"
+	case "structural_search":
+		return "Structural search"
+	case "history_range", "history_symbol":
+		return "History"
+	case "blame_range":
+		return "Blame"
+	case "semgrep_scan":
+		return "Static scan"
+	case "joern_scan":
+		return "Code property graph"
+	default:
+		return strings.TrimSpace(strings.ReplaceAll(name, "_", " "))
+	}
+}
+
+func cleanDiscoveryFindingText(text string) string {
+	text = strings.TrimSpace(text)
+	for _, suffix := range []string{
+		" Bounded-read capability is available on returned handles, or narrow the pattern to see more.",
+		" Open a returned handle with read_file.",
+		" Bounded-read capability is available on a returned handle to inspect a file.",
+	} {
+		text = strings.ReplaceAll(text, suffix, ".")
+	}
+
+	text = strings.ReplaceAll(text, "  ", " ")
+
+	return strings.TrimSpace(text)
+}
+
+func formatInlinePathList(paths []string, max int) string {
+	paths = uniqueDelegatedDiscoveryPaths(paths)
+	if max > 0 && len(paths) > max {
+		paths = paths[:max]
+	}
+
+	parts := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = cleanInlineEvidencePath(path)
+		if path == "" {
+			continue
+		}
+
+		parts = append(parts, "`"+path+"`")
+	}
+
+	return strings.Join(parts, ", ")
+}
+
+func cleanInlineEvidencePath(path string) string {
+	path = strings.TrimSpace(strings.ReplaceAll(path, "`", ""))
+	path = strings.TrimRight(path, ".,;:")
+
+	return strings.TrimSpace(path)
+}
+
+func routeSummaryFromToolOutput(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if value, ok := strings.CutPrefix(line, "route_summary:"); ok {
+			return strings.TrimSpace(value)
+		}
+	}
+
+	return ""
+}
+
+func sourceLikePathsFromText(text string, max int) []string {
+	if max <= 0 {
+		max = 6
+	}
+
+	paths := make([]string, 0, max)
+	seen := map[string]struct{}{}
+
+	for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(text)) {
+		path = normalizeDelegatedDiscoveryEvidencePath(path)
+		if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) || !delegatedDiscoveryLooksLikeEvidencePath(path) {
+			continue
+		}
+
+		if strings.Contains(path, "testdata/swe/generated-logs") {
+			continue
+		}
+
+		if _, ok := seen[path]; ok {
+			continue
+		}
+
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+
+		if len(paths) >= max {
+			break
+		}
+	}
+
+	return paths
+}
+
+func conversationFallbackEvidenceAnchor(result workspace.ToolResult) string {
+	if strings.TrimSpace(result.Error) != "" {
+		return ""
+	}
+
+	if routeSummary := routeSummaryFromToolOutput(result.Output); routeSummary != "" {
+		return routeSummary
+	}
+
+	summary := strings.TrimSpace(result.Summary)
+	if summary == "" || isHarnessRejectionSummary(summary) {
+		return ""
+	}
+
+	switch strings.TrimSpace(result.Tool) {
+	case "search_content":
+		if paths := sourceLikePathsFromText(result.Output, 6); len(paths) > 0 {
+			return "Search hits included " + formatInlinePathList(paths, 6)
+		}
+
+		return summary
+	case "context_pack", "context_query", "context_zoom", "code_navigate", "read_file", workspace.ToolNamePrefetch, "search_files":
+		if agentutil.ReadStyleSourceBodyTool(result.Tool) {
+			paths := agentutil.ReadPathsFromToolResult(result)
+			if len(paths) > 0 && len(nonArtifactEvidencePaths(paths)) == 0 {
+				return ""
+			}
+		}
+
+		return summary
+	default:
+		return ""
+	}
+}
+
+func isDeterministicFallbackAnswer(answer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(answer))
+	return strings.HasPrefix(lower, "partial findings from this turn")
+}
+
+func looksLikeSubstantiveFinalAnswer(answer string) bool {
+	answer = strings.TrimSpace(answer)
+	if len(answer) < 80 {
+		return false
+	}
+
+	lower := strings.ToLower(answer)
+	if strings.HasPrefix(lower, "for `") && strings.Contains(lower, "the gathered evidence points to these implementation surfaces") {
+		return false
+	}
+
+	if strings.Contains(lower, "\nevidence:\n- text anchors:") {
+		return false
+	}
+
+	return strings.Contains(answer, ".") || strings.Contains(answer, "\n- ")
+}
+
+func stripInternalEvidenceAppendix(answer string) string {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return ""
+	}
+
+	cut := len(answer)
+	for _, marker := range []string{
+		"\n\nAdditional inspected paths:",
+		"\nAdditional inspected paths:",
+		"\n\nExact probes already inspected:",
+		"\nExact probes already inspected:",
+		"\n\nInspected paths:",
+		"\nInspected paths:",
+		"\n\nKey findings:",
+		"\nKey findings:",
+		"\n\nConfidence:",
+		"\nConfidence:",
+		"\n\nSource: ",
+		"\nSource: ",
+	} {
+		if idx := strings.Index(answer, marker); idx >= 0 && idx < cut {
+			cut = idx
+		}
+	}
+
+	return strings.TrimSpace(answer[:cut])
+}
+
+func cleanedSubstantiveFinalAnswer(answer string) (string, bool) {
+	cleaned := stripInternalEvidenceAppendix(answer)
+	if looksLikeLowValueSourceInventoryNonAnswer(cleaned) || !looksLikeSubstantiveFinalAnswer(cleaned) || finalAnswerNeedsDecoration(cleaned) || looksLikeGenericEvidenceComposerAnswer(cleaned) {
+		return "", false
+	}
+
+	return cleaned, true
+}
+
+func genericEvidenceAnswerIncludesLineOrientedSourceBody(answer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(answer))
+	if !strings.Contains(lower, "what this establishes:") {
+		return false
+	}
+
+	for _, raw := range strings.Split(answer, "\n") {
+		line := strings.TrimSpace(raw)
+
+		line = strings.TrimSpace(strings.TrimPrefix(line, "- "))
+
+		if line == "" {
+			continue
+		}
+
+		colon := strings.IndexByte(line, ':')
+		if colon <= 0 || colon > 6 {
+			continue
+		}
+
+		lineNumber := strings.TrimSpace(line[:colon])
+		if lineNumber == "" {
+			continue
+		}
+
+		allDigits := true
+
+		for _, ch := range lineNumber {
+			if ch < '0' || ch > '9' {
+				allDigits = false
+				break
+			}
+		}
+
+		if allDigits {
+			return true
+		}
+	}
+
+	return false
+}
+
+func looksLikeSourceBodyFallbackAnswer(answer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(answer))
+
+	return strings.Contains(lower, "the inspected source in") &&
+		strings.Contains(lower, "no files were changed")
+}
+
+func looksLikeGenericEvidenceComposerAnswer(answer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(answer))
+	if lower == "" {
+		return false
+	}
+
+	return strings.Contains(lower, "the strongest implementation evidence is in") ||
+		strings.Contains(lower, "use those findings as the source of truth") ||
+		strings.Contains(lower, "what this establishes:") ||
+		strings.Contains(lower, "the retained source context identifies") ||
+		looksLikeSourceBodyFallbackAnswer(answer)
+}
+
+func finalAnswerNeedsDecoration(answer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(answer))
+	if lower == "" {
+		return false
+	}
+
+	if looksLikeRawToolResultTranscript(answer) {
+		return true
+	}
+
+	if looksLikeLineOrientedSourceSnippetAnswer(answer) {
+		return true
+	}
+
+	if looksLikeTextualToolCall(answer) {
+		return true
+	}
+
+	if looksLikeStructuredAnswerEnvelope(lower) {
+		return true
+	}
+
+	if strings.Contains(lower, "<invoke") ||
+		strings.HasPrefix(lower, "what i found:") ||
+		strings.HasPrefix(lower, "partial findings from this turn") ||
+		strings.HasPrefix(lower, "## grounded answer") ||
+		strings.HasPrefix(lower, "question:") ||
+		strings.Contains(lower, "source: delegated read-only evidence packet") ||
+		strings.Contains(lower, "the gathered evidence points to these implementation surfaces") ||
+		strings.Contains(lower, "the retained source context identifies") ||
+		strings.Contains(lower, "additional inspected paths:") ||
+		strings.Contains(lower, "exact probes already inspected:") {
+
+		return true
+	}
+
+	return agentutil.ContainsAny(lower,
+		"\nevidence:\n- text anchors:",
+		"### evidence highlights",
+		"### decision guidance",
+		"discovery packet",
+		"relevant source hits",
+		"evidence used:",
+		"inspected paths:",
+		"key findings:",
+		"text_anchor_search:",
+		"go_read_symbol:",
+		"go_workspace_symbol:",
+		"dependency_graph:",
+		"related_files:",
+		".idiom/discovery/queries/",
+	)
+}
+
+func bestObjectiveAnswerableTaskResultOutput(objective string, results []workspace.ToolResult) (string, bool) {
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		if !ReadOnlyTaskResultAnswerableForObjective(result, objective) {
+			continue
+		}
+
+		output := strings.TrimSpace(result.Output)
+		if output == "" {
+			continue
+		}
+
+		return output, true
+	}
+
+	return "", false
+}
+
+func presentableExactProbeResult(result workspace.ToolResult) bool {
+	switch strings.TrimSpace(result.Tool) {
+	case "go_read_symbol", "go_extract_body", "cpp_read_symbol", "cpp_extract_body", "python_read_symbol", "ts_read_symbol", "rust_read_symbol", "java_read_symbol":
+		return true
+	case "code_navigate", "read_only_capability":
+		return agentutil.RoutedSourceReadOutputHasBody(result.Output) && toolResultHasNonArtifactReadPath(result)
+	default:
+		return false
+	}
+}
+
+func stripPresentableSourceObjectiveEcho(answer string) string {
+	trimmed := strings.TrimSpace(answer)
+	if !strings.HasPrefix(trimmed, "For `") {
+		return trimmed
+	}
+
+	rest := strings.TrimPrefix(trimmed, "For `")
+	end := strings.Index(rest, "`, ")
+
+	if end < 0 {
+		return trimmed
+	}
+
+	return strings.TrimSpace(rest[end+len("`, "):])
+}
+
+const (
+	childLifecycleInvocationEventRole = "parent_child_invocation"
+	childLifecycleTerminalEventRole   = "child_terminal"
+	childLifecycleAcceptanceEventRole = "child_acceptance"
+	childLifecyclePatchEventRole      = "candidate_patch_artifact"
+)
+
+type childLifecycleRecord interface {
+	Normalize()
+	Validate() error
+}
+
+type childLifecycleContext struct {
+	InvocationID     string
+	ParentContractID string
+	ChildContractID  string
+	Role             string
+	Lane             string
+	Phase            string
+	WorkspaceMode    autonomy.ChildWorkspaceMode
+	RuntimeEnvelope  autonomy.ChildRuntimeEnvelope
+	CreatedAt        time.Time
+}
+
+func (r *Runner) beginReadOnlyChildLifecycle(agentName string, opts llama.ChatOptions, policy RunPolicy) childLifecycleContext {
+	return r.beginChildLifecycle("child_read_only:"+agentName, "child_read_only", autonomy.ChildWorkspaceNoWrite, opts, policy, false, r.childLifecyclePrimaryClient())
+}
+
+func (r *Runner) beginWorkbranchChildLifecycle(agentName string, opts llama.ChatOptions, policy RunPolicy, client llama.LLMClient) childLifecycleContext {
+	return r.beginChildLifecycle("child_write:"+agentName, "child_write", autonomy.ChildWorkspaceWorkbranch, opts, policy, false, client)
+}
+
+func (r *Runner) beginDelegateEditLifecycle(req workspace.ToolRequest, opts llama.ChatOptions, deterministic bool, client llama.LLMClient) childLifecycleContext {
+	role := "executor:" + util.FirstNonEmpty(strings.TrimSpace(req.Agent), "delegate_edit")
+	return r.beginChildLifecycle(role, "delegate_edit", autonomy.ChildWorkspaceMain, opts, RunPolicy{}, deterministic, client)
+}
+
+func (r *Runner) beginChildLifecycle(role string, phase string, mode autonomy.ChildWorkspaceMode, opts llama.ChatOptions, policy RunPolicy, deterministic bool, client llama.LLMClient) childLifecycleContext {
+	now := time.Now().UTC()
+	lane := util.FirstNonEmpty(r.runtimeChildLifecycleLane(), "runner")
+	phase = util.FirstNonEmpty(phase, r.runtimeChildLifecyclePhase(), "child")
+	role = util.FirstNonEmpty(role, "child")
+	parentContractID := r.childLifecycleParentContractID()
+	childContractID := r.childLifecycleChildContractID(parentContractID, lane, phase, role)
+	invocationID := childLifecycleID("child_invocation", parentContractID, childContractID, lane, phase, role, now.Format(time.RFC3339Nano))
+	envelope := r.childRuntimeEnvelope(role, opts, policy, deterministic, client)
+
+	ctx := childLifecycleContext{
+		InvocationID:     invocationID,
+		ParentContractID: parentContractID,
+		ChildContractID:  childContractID,
+		Role:             role,
+		Lane:             lane,
+		Phase:            phase,
+		WorkspaceMode:    mode,
+		RuntimeEnvelope:  envelope,
+		CreatedAt:        now,
+	}
+
+	record := autonomy.ParentChildInvocationRecord{
+		InvocationID:     ctx.InvocationID,
+		ParentContractID: ctx.ParentContractID,
+		ChildContractID:  ctx.ChildContractID,
+		Role:             ctx.Role,
+		Lane:             ctx.Lane,
+		Phase:            ctx.Phase,
+		WorkspaceMode:    ctx.WorkspaceMode,
+		ContractSummary: autonomy.ChildContractSummary{
+			PathRoleDigest:   "sha256:" + childLifecycleHash(ctx.ChildContractID, "path_roles"),
+			ToolPolicyDigest: "sha256:" + childLifecycleHash(ctx.ChildContractID, "tool_policy"),
+			ObligationDigest: "sha256:" + childLifecycleHash(ctx.ChildContractID, "obligations"),
+		},
+		RuntimeEnvelope: ctx.RuntimeEnvelope,
+		CreatedAt:       ctx.CreatedAt,
+	}
+	r.emitChildLifecycleRecord(childLifecycleInvocationEventRole, &record)
+
+	return ctx
+}
+
+func (r *Runner) emitReadOnlyChildTerminal(ctx childLifecycleContext, result workspace.ToolResult, childResults []workspace.ToolResult, status autonomy.ChildTerminalStatus) {
+	evidenceRefs := childLifecycleEvidenceRefs(childResults)
+	if len(evidenceRefs) == 0 && strings.TrimSpace(result.Output) != "" {
+		evidenceRefs = append(evidenceRefs, "tool_result:task")
+	}
+
+	record := autonomy.ChildTerminalRecord{
+		TerminalID:         childLifecycleID("child_terminal", ctx.InvocationID, string(status)),
+		InvocationID:       ctx.InvocationID,
+		ChildContractID:    ctx.ChildContractID,
+		ResultKind:         autonomy.ChildResultEvidencePacket,
+		Status:             status,
+		EvidenceRefs:       evidenceRefs,
+		ObjectiveAlignment: childLifecycleObjectiveAlignmentForReadOnlyResult(result),
+	}
+	r.emitChildLifecycleRecord(childLifecycleTerminalEventRole, &record)
+	r.emitChildTerminalAcceptance(ctx, record, childLifecycleAcceptanceDecisionForTerminal(record), childLifecycleAcceptanceReasonForTerminal(record))
+}
+
+func (r *Runner) emitWorkbranchChildTerminal(ctx childLifecycleContext, checkout WorkbranchCheckout, result workspace.ToolResult, diff WorkbranchDiff, status autonomy.ChildTerminalStatus) {
+	patchID := childLifecycleID("candidate_patch", ctx.InvocationID, checkout.BaseSHA, strings.Join(diff.ChangedPaths, ","), childLifecycleHash(diff.Patch))
+	var artifactRefs []string
+	resultKind := autonomy.ChildResultCandidatePatch
+	if len(diff.ChangedPaths) > 0 {
+		artifactRefs = []string{"patch:" + patchID}
+		artifact := autonomy.CandidatePatchArtifact{
+			PatchID:         patchID,
+			InvocationID:    ctx.InvocationID,
+			ChildContractID: ctx.ChildContractID,
+			BaseSHA:         util.FirstNonEmpty(checkout.BaseSHA, "unknown"),
+			WorktreePathRef: "workbranch:" + childLifecycleHash(checkout.Path),
+			ChangedPaths:    append([]string(nil), diff.ChangedPaths...),
+			DiffStat:        childLifecycleDiffStat(diff),
+			PatchPath:       "workbranch://" + childLifecycleHash(checkout.Branch, checkout.Path) + "/patch.diff",
+			PatchDigest:     "sha256:" + childLifecycleHash(diff.Patch),
+			CreatedAt:       time.Now().UTC(),
+		}
+		r.emitChildLifecycleRecord(childLifecyclePatchEventRole, &artifact)
+	} else if status == autonomy.ChildTerminalCompleted {
+		resultKind = autonomy.ChildResultFindings
+	} else {
+		resultKind = autonomy.ChildResultTypedBlocker
+	}
+
+	record := autonomy.ChildTerminalRecord{
+		TerminalID:         childLifecycleID("child_terminal", ctx.InvocationID, string(status)),
+		InvocationID:       ctx.InvocationID,
+		ChildContractID:    ctx.ChildContractID,
+		ResultKind:         resultKind,
+		Status:             status,
+		ArtifactRefs:       artifactRefs,
+		ChangedPaths:       append([]string(nil), diff.ChangedPaths...),
+		ObjectiveAlignment: childLifecycleObjectiveAlignmentForResult(result),
+	}
+	r.emitChildLifecycleRecord(childLifecycleTerminalEventRole, &record)
+	r.emitChildTerminalAcceptance(ctx, record, childLifecycleAcceptanceDecisionForTerminal(record), childLifecycleAcceptanceReasonForTerminal(record))
+}
+
+func (r *Runner) emitDelegateEditLifecycle(ctx childLifecycleContext, req workspace.ToolRequest, result workspace.ToolResult, route autonomy.ChildExecutionRoute, reasonCode string) {
+	changedPaths := changedPathsFromToolResult(result)
+	status := autonomy.ChildTerminalCompleted
+	if strings.TrimSpace(result.Error) != "" {
+		status = autonomy.ChildTerminalFailed
+	}
+
+	terminalID := childLifecycleID("child_terminal", ctx.InvocationID, string(status), strings.Join(changedPaths, ","))
+	metadata := autonomy.ChildExecutionMetadata{
+		Route:                      route,
+		ParentPlanAuthorityRef:     childLifecycleToolRef(req),
+		PathGateRef:                childLifecyclePathGateRef(req),
+		PathGateDecision:           autonomy.ChildPathGateAllow,
+		VerificationObligationRefs: childLifecycleVerificationObligationRefs(r),
+	}
+	terminal := autonomy.ChildTerminalRecord{
+		TerminalID:         terminalID,
+		InvocationID:       ctx.InvocationID,
+		ChildContractID:    ctx.ChildContractID,
+		ResultKind:         autonomy.ChildResultAppliedParentEdit,
+		Status:             status,
+		ChangedPaths:       changedPaths,
+		ExecutionMetadata:  metadata,
+		ObjectiveAlignment: childLifecycleObjectiveAlignmentForResult(result),
+		ParseStatus: autonomy.ChildParseStatus{
+			TransportObserved: childLifecycleObservedTransport(route),
+			NormalizerStatus:  autonomy.ChildNormalizerNotRequired,
+			RawOutputRedacted: true,
+		},
+	}
+	r.emitChildLifecycleRecord(childLifecycleTerminalEventRole, &terminal)
+
+	acceptance := autonomy.ChildAcceptanceRecord{
+		AcceptanceID:               childLifecycleID("child_acceptance", terminalID, string(route)),
+		ParentContractID:           ctx.ParentContractID,
+		ChildContractID:            ctx.ChildContractID,
+		InvocationID:               ctx.InvocationID,
+		TerminalID:                 terminalID,
+		ResultKind:                 autonomy.ChildResultAppliedParentEdit,
+		Decision:                   autonomy.ChildAcceptanceRecordedOnly,
+		VerificationObligationRefs: append([]string(nil), metadata.VerificationObligationRefs...),
+		ParentPlanAuthorityRef:     metadata.ParentPlanAuthorityRef,
+		PathGateRef:                metadata.PathGateRef,
+		PathGateDecision:           metadata.PathGateDecision,
+		Route:                      route,
+		ReasonCode:                 util.FirstNonEmpty(reasonCode, "delegate_edit_recorded"),
+	}
+	r.emitChildLifecycleRecord(childLifecycleAcceptanceEventRole, &acceptance)
+}
+
+func childLifecycleObservedTransport(route autonomy.ChildExecutionRoute) autonomy.ChildObservedTransport {
+	switch route {
+	case autonomy.ChildRouteDeterministicDirect:
+		return autonomy.ChildObservedTransportDeterministic
+	default:
+		return autonomy.ChildObservedTransportTextual
+	}
+}
+
+func childLifecycleDiffStat(diff WorkbranchDiff) autonomy.PatchDiffStat {
+	return autonomy.PatchDiffStat{
+		Files:      len(diff.ChangedPaths),
+		Insertions: childLifecycleStatValue(diff.Stat, "insertions"),
+		Deletions:  childLifecycleStatValue(diff.Stat, "deletions"),
+	}
+}
+
+func childLifecycleStatValue(stat string, label string) int {
+	fields := strings.FieldsFunc(stat, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\t'
+	})
+	for _, field := range fields {
+		parts := strings.Fields(strings.TrimSpace(field))
+		if len(parts) == 2 && strings.EqualFold(parts[1], label) {
+			var value int
+			if _, err := fmt.Sscanf(parts[0], "%d", &value); err == nil && value >= 0 {
+				return value
+			}
+		}
+	}
+	return 0
+}
+
+func (r *Runner) emitDelegateEditParseFailureLifecycle(ctx childLifecycleContext, req workspace.ToolRequest, parseErr error) {
+	record := autonomy.ChildTerminalRecord{
+		TerminalID:      childLifecycleID("child_terminal", ctx.InvocationID, "parse_failed"),
+		InvocationID:    ctx.InvocationID,
+		ChildContractID: ctx.ChildContractID,
+		ResultKind:      autonomy.ChildResultAppliedParentEdit,
+		Status:          autonomy.ChildTerminalParseFailed,
+		ExecutionMetadata: autonomy.ChildExecutionMetadata{
+			Route:                      autonomy.ChildRouteParentExecutor,
+			ParentPlanAuthorityRef:     childLifecycleToolRef(req),
+			PathGateRef:                childLifecyclePathGateRef(req),
+			PathGateDecision:           autonomy.ChildPathGateAllow,
+			VerificationObligationRefs: childLifecycleVerificationObligationRefs(r),
+		},
+		ObjectiveAlignment: autonomy.ChildObjectiveWeak,
+		ParseStatus: autonomy.ChildParseStatus{
+			TransportObserved:  autonomy.ChildObservedTransportTextual,
+			NormalizerStatus:   autonomy.ChildNormalizerFailed,
+			ParserFailureClass: childLifecycleFailureClass(parseErr),
+			RawOutputRedacted:  true,
+		},
+	}
+	r.emitChildLifecycleRecord(childLifecycleTerminalEventRole, &record)
+	r.emitChildTerminalAcceptance(ctx, record, autonomy.ChildAcceptanceRepairRequired, "delegate_edit_parse_failed")
+}
+
+func (r *Runner) emitDelegateEditExecutorFailureLifecycle(ctx childLifecycleContext, err error) {
+	record := autonomy.ChildTerminalRecord{
+		TerminalID:         childLifecycleID("child_terminal", ctx.InvocationID, "executor_failed"),
+		InvocationID:       ctx.InvocationID,
+		ChildContractID:    ctx.ChildContractID,
+		ResultKind:         autonomy.ChildResultTypedBlocker,
+		Status:             autonomy.ChildTerminalFailed,
+		ObjectiveAlignment: autonomy.ChildObjectiveWeak,
+		EvidenceRefs:       []string{"executor_error:" + childLifecycleFailureClass(err)},
+	}
+	r.emitChildLifecycleRecord(childLifecycleTerminalEventRole, &record)
+	r.emitChildTerminalAcceptance(ctx, record, autonomy.ChildAcceptanceBlocked, "delegate_edit_executor_failed")
+}
+
+func (r *Runner) emitChildTerminalAcceptance(ctx childLifecycleContext, terminal autonomy.ChildTerminalRecord, decision autonomy.ChildAcceptanceDecision, reasonCode string) {
+	acceptedEvidenceRefs := []string(nil)
+	acceptedPatchRefs := []string(nil)
+	if decision == autonomy.ChildAcceptanceAccepted {
+		acceptedEvidenceRefs = append([]string(nil), terminal.EvidenceRefs...)
+		acceptedPatchRefs = append([]string(nil), terminal.ArtifactRefs...)
+		if len(acceptedEvidenceRefs) == 0 && len(acceptedPatchRefs) == 0 {
+			decision = autonomy.ChildAcceptanceRecordedOnly
+			reasonCode = util.FirstNonEmpty(reasonCode, "accepted_refs_missing")
+		}
+	}
+
+	acceptance := autonomy.ChildAcceptanceRecord{
+		AcceptanceID:         childLifecycleID("child_acceptance", terminal.TerminalID, string(decision)),
+		ParentContractID:     ctx.ParentContractID,
+		ChildContractID:      ctx.ChildContractID,
+		InvocationID:         ctx.InvocationID,
+		TerminalID:           terminal.TerminalID,
+		ResultKind:           terminal.ResultKind,
+		Decision:             decision,
+		PackID:               terminal.PackID,
+		AcceptedEvidenceRefs: acceptedEvidenceRefs,
+		AcceptedPatchRefs:    acceptedPatchRefs,
+		RequiredRepairPaths:  append([]string(nil), terminal.ChangedPaths...),
+		RuntimeEnvelopeRef:   "runtime_envelope:" + ctx.InvocationID,
+		AlignmentBasis:       childLifecycleAlignmentBasis(ctx, terminal, acceptedEvidenceRefs, acceptedPatchRefs),
+		ReasonCode:           util.FirstNonEmpty(reasonCode, "child_terminal_recorded"),
+		PathGateDecision:     autonomy.ChildPathGateNotApplicable,
+		Route:                autonomy.ChildRouteChildModel,
+		ExecutionMetadataRef: "terminal_execution:" + terminal.TerminalID,
+	}
+	if terminal.ResultKind == autonomy.ChildResultAppliedParentEdit {
+		acceptance.Route = terminal.ExecutionMetadata.Route
+		acceptance.ParentPlanAuthorityRef = terminal.ExecutionMetadata.ParentPlanAuthorityRef
+		acceptance.PathGateRef = terminal.ExecutionMetadata.PathGateRef
+		acceptance.PathGateDecision = terminal.ExecutionMetadata.PathGateDecision
+		acceptance.VerificationObligationRefs = append([]string(nil), terminal.ExecutionMetadata.VerificationObligationRefs...)
+	}
+	r.emitChildLifecycleRecord(childLifecycleAcceptanceEventRole, &acceptance)
+}
+
+func childLifecycleAcceptanceDecisionForTerminal(terminal autonomy.ChildTerminalRecord) autonomy.ChildAcceptanceDecision {
+	if terminal.Status != autonomy.ChildTerminalCompleted {
+		if terminal.Status == autonomy.ChildTerminalParseFailed {
+			return autonomy.ChildAcceptanceRepairRequired
+		}
+		return autonomy.ChildAcceptanceBlocked
+	}
+	if terminal.ObjectiveAlignment != autonomy.ChildObjectiveAccepted {
+		return autonomy.ChildAcceptanceRepairRequired
+	}
+	return autonomy.ChildAcceptanceAccepted
+}
+
+func childLifecycleAcceptanceReasonForTerminal(terminal autonomy.ChildTerminalRecord) string {
+	if terminal.Status != autonomy.ChildTerminalCompleted {
+		return "child_terminal_" + string(terminal.Status)
+	}
+	if terminal.ObjectiveAlignment != autonomy.ChildObjectiveAccepted {
+		return "objective_alignment_" + string(terminal.ObjectiveAlignment)
+	}
+	return "objective_aligned"
+}
+
+func childLifecycleAlignmentBasis(ctx childLifecycleContext, terminal autonomy.ChildTerminalRecord, evidenceRefs []string, patchRefs []string) autonomy.ChildAlignmentBasis {
+	sourceRefs := append([]string(nil), evidenceRefs...)
+	sourceRefs = append(sourceRefs, patchRefs...)
+	for _, path := range terminal.ChangedPaths {
+		sourceRefs = append(sourceRefs, "changed_path:"+agentutil.NormalizeRunnerPath(path))
+	}
+
+	return autonomy.ChildAlignmentBasis{
+		DelegatedObjectiveRef:  "objective:" + childLifecycleHash(ctx.Role, ctx.Lane, ctx.Phase),
+		EffectiveScopeRefs:     []string{"lane:" + childLifecycleHash(ctx.Lane), "phase:" + childLifecycleHash(ctx.Phase)},
+		AcceptedSourceBodyRefs: childLifecycleCompactRefs(sourceRefs),
+		Evaluator:              autonomy.AlignmentEvaluatorHostContract,
+	}
+}
+
+func childLifecycleCompactRefs(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func (r *Runner) emitChildLifecycleRecord(role string, record childLifecycleRecord) bool {
+	if r == nil || r.OnEvent == nil || strings.TrimSpace(role) == "" || record == nil {
+		return false
+	}
+
+	record.Normalize()
+	if err := record.Validate(); err != nil {
+		r.emitEvent(marshalRunEvent("child_lifecycle_record_invalid", map[string]string{
+			"role":  role,
+			"error": err.Error(),
+		}))
+		return false
+	}
+
+	r.emitEvent(marshalRunEvent(role, record))
+	return true
+}
+
+func (r *Runner) childLifecycleParentContractID() string {
+	if r != nil && r.activeAutonomy != nil {
+		if contractID := strings.TrimSpace(r.activeAutonomy.contract.ContractID); contractID != "" {
+			return contractID
+		}
+	}
+
+	lane := ""
+	objective := ""
+	if r != nil {
+		lane = r.RuntimeBrief.Lane
+		objective = r.RuntimeBrief.Objective
+	}
+	return childLifecycleID("parent_contract", lane, objective)
+}
+
+func (r *Runner) childLifecycleChildContractID(parentContractID string, lane string, phase string, role string) string {
+	input := autonomy.ContractInput{
+		ParentID: parentContractID,
+		Scope: autonomy.ContractScope{
+			InvocationKind:    autonomy.InvocationChild,
+			Lane:              lane,
+			Phase:             phase,
+			TaskFamily:        util.FirstNonEmpty(r.runtimeChildLifecycleTaskFamily(), phase),
+			RuntimeContract:   r.runtimeChildLifecycleContract(),
+			PermissionProfile: r.runtimeChildLifecyclePermissionProfile(),
+		},
+		Metadata: autonomy.DefaultContractMetadata("child_lifecycle", role),
+	}
+	if contract, err := autonomy.NewContract(input); err == nil && strings.TrimSpace(contract.ContractID) != "" {
+		return contract.ContractID
+	}
+
+	return childLifecycleID("child_contract", parentContractID, lane, phase, role)
+}
+
+func (r *Runner) childRuntimeEnvelope(role string, opts llama.ChatOptions, policy RunPolicy, deterministic bool, client llama.LLMClient) autonomy.ChildRuntimeEnvelope {
+	modelAlias := util.FirstNonEmpty(safeModelAliasForTelemetry(opts.Model), "default")
+	backendKind := "llm_client"
+	if deterministic {
+		modelAlias = "deterministic"
+		backendKind = "deterministic"
+	}
+
+	supportsNativeTools := false
+	if !deterministic {
+		supportsNativeTools = childLifecycleClientSupportsNativeTools(client)
+	}
+	transport := autonomy.ChildTransportTextual
+	if deterministic {
+		transport = autonomy.ChildTransportNone
+	} else if supportsNativeTools && !childLifecycleRoleUsesTextualTransport(role) {
+		transport = autonomy.ChildTransportNative
+	}
+
+	admissionState := autonomy.CapacityAdmissionAcquired
+	reasonClass := ""
+	if !deterministic && client == nil {
+		admissionState = autonomy.CapacityAdmissionDegraded
+		reasonClass = "client_not_bound"
+	}
+
+	return autonomy.ChildRuntimeEnvelope{
+		BackendKind: backendKind,
+		ModelAlias:  modelAlias,
+		ModelRole:   util.FirstNonEmpty(role, "child"),
+		RoleResolution: autonomy.ChildRoleResolution{
+			RequestedRole: util.FirstNonEmpty(role, "child"),
+			ResolvedRole:  util.FirstNonEmpty(role, "child"),
+			Alias:         modelAlias,
+			Source:        autonomy.RoleResolutionSourceRoleTag,
+			OK:            true,
+		},
+		CapacityAdmission: autonomy.ChildCapacityAdmission{
+			State:       admissionState,
+			ModelAlias:  modelAlias,
+			ReasonClass: reasonClass,
+			Enforcement: autonomy.CapacityAdmissionOpportunistic,
+		},
+		ToolTransportMode:   transport,
+		ParserTransportMode: autonomy.ChildTransportTextual,
+		ParserContract:      "workspace_tool_request",
+		ResponseFormat:      childLifecycleResponseFormat(opts),
+		ToolChoice:          strings.TrimSpace(opts.ToolChoice),
+		SupportsNativeTools: supportsNativeTools,
+		ForceNativeTools:    opts.ForceNativeTools,
+		MaxTokens:           opts.MaxTokens,
+		ContextBudget: autonomy.ChildContextBudget{
+			MaxContextMessages: policy.MaxContextMessages,
+			MaxContextChars:    policy.MaxContextChars,
+		},
+	}
+}
+
+func (r *Runner) childLifecyclePrimaryClient() llama.LLMClient {
+	if r == nil {
+		return nil
+	}
+	return r.Client
+}
+
+func childLifecycleClientSupportsNativeTools(client llama.LLMClient) bool {
+	if client == nil {
+		return false
+	}
+	return client.SupportsNativeTools()
+}
+
+func childLifecycleRoleUsesTextualTransport(role string) bool {
+	return strings.HasPrefix(strings.TrimSpace(role), "executor:")
+}
+
+func childLifecycleEvidenceRefs(results []workspace.ToolResult) []string {
+	refs := make([]string, 0, len(results))
+	for i, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		tool := util.FirstNonEmpty(strings.TrimSpace(result.Tool), "tool")
+		refs = append(refs, fmt.Sprintf("tool_result:%s:%d", tool, i+1))
+	}
+	return refs
+}
+
+func childLifecycleObjectiveAlignmentForResult(result workspace.ToolResult) autonomy.ChildObjectiveAlignment {
+	if strings.TrimSpace(result.Error) != "" {
+		return autonomy.ChildObjectiveWeak
+	}
+	if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
+		if len(packet.Gaps) > 0 {
+			return autonomy.ChildObjectiveWeak
+		}
+		if !readOnlyEvidencePacketAnswerable(packet) {
+			return autonomy.ChildObjectiveWeak
+		}
+		if agentutil.ObjectiveAsksImplementationShape(packet.Objective) && !readOnlyEvidencePacketAnswerableForObjective(packet, packet.Objective) {
+			return autonomy.ChildObjectiveWeak
+		}
+		switch strings.ToLower(strings.TrimSpace(packet.Confidence)) {
+		case "high", "medium":
+			return autonomy.ChildObjectiveAccepted
+		default:
+			return autonomy.ChildObjectiveWeak
+		}
+	}
+	return autonomy.ChildObjectiveAccepted
+}
+
+func childLifecycleObjectiveAlignmentForReadOnlyResult(result workspace.ToolResult) autonomy.ChildObjectiveAlignment {
+	if strings.TrimSpace(result.Error) != "" {
+		return autonomy.ChildObjectiveWeak
+	}
+	if _, ok := readOnlyEvidencePacketFromResult(result); !ok {
+		return autonomy.ChildObjectiveWeak
+	}
+	return childLifecycleObjectiveAlignmentForResult(result)
+}
+
+func childLifecycleVerificationObligationRefs(r *Runner) []string {
+	if r == nil {
+		return []string{"obligation:post_write_verification"}
+	}
+	for _, required := range r.RuntimeBrief.RequiredEvidence {
+		if strings.Contains(strings.ToLower(required), "verification") {
+			return []string{"required_evidence:" + required}
+		}
+	}
+	return []string{"obligation:post_write_verification"}
+}
+
+func childLifecycleToolRef(req workspace.ToolRequest) string {
+	return util.FirstNonEmpty("tool_request:"+strings.TrimSpace(req.Tool)+":"+agentutil.NormalizeRunnerPath(req.Path), "tool_request:delegate_edit")
+}
+
+func childLifecyclePathGateRef(req workspace.ToolRequest) string {
+	return util.FirstNonEmpty("path_gate:"+agentutil.NormalizeRunnerPath(req.Path), "path_gate:delegate_edit")
+}
+
+func childLifecycleFailureClass(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(text, "json"):
+		return "invalid_json"
+	case strings.Contains(text, "empty"):
+		return "empty_output"
+	case strings.Contains(text, "disallowed"):
+		return "disallowed_tool"
+	default:
+		return "unparseable_output"
+	}
+}
+
+func childLifecycleResponseFormat(opts llama.ChatOptions) string {
+	if opts.ResponseFormatJSON {
+		return "json"
+	}
+	return ""
+}
+
+func (r *Runner) runtimeChildLifecycleLane() string {
+	if r == nil {
+		return ""
+	}
+	return r.RuntimeBrief.Lane
+}
+
+func (r *Runner) runtimeChildLifecyclePhase() string {
+	if r == nil {
+		return ""
+	}
+	return util.FirstNonEmpty(r.RuntimeBrief.TaskFamily, r.RuntimeBrief.Contract)
+}
+
+func (r *Runner) runtimeChildLifecycleTaskFamily() string {
+	if r == nil {
+		return ""
+	}
+	return r.RuntimeBrief.TaskFamily
+}
+
+func (r *Runner) runtimeChildLifecycleContract() string {
+	if r == nil {
+		return ""
+	}
+	return r.RuntimeBrief.Contract
+}
+
+func (r *Runner) runtimeChildLifecyclePermissionProfile() string {
+	if r == nil {
+		return ""
+	}
+	return r.RuntimeBrief.PermissionProfile
+}
+
+func childLifecycleID(prefix string, parts ...string) string {
+	return prefix + "_" + childLifecycleHash(parts...)
+}
+
+func childLifecycleHash(parts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+// DirectAnswerSurfaceSchemaVersion identifies the schema for the surface
+// inventory JSON payload in telemetry events.
+const DirectAnswerSurfaceSchemaVersion = "idiom.direct_answer_surface.v1"
+
+// DirectAnswerSurfaceVersion identifies the current surface inventory version.
+// Bump when tools, capabilities, or terminal states change. A1 compares this
+// against its expected minimum version before engaging prefetch.
+const DirectAnswerSurfaceVersion = "2026-06-12"
+
+// DirectAnswerSurfaceCapReadOnlyInvestigation indicates the surface supports
+// non-trivial read-only investigation (search followed by bounded source read).
+const DirectAnswerSurfaceCapReadOnlyInvestigation = "read_only_investigation"
+
+// DirectAnswerSurfaceCapSourceBodyPrefetch indicates the direct-answer surface
+// can receive source-body evidence that was prefetched before the first model
+// turn. The prefetch gate itself is owned by the read-only named-path evidence
+// boundary, not by this direct-answer inventory.
+const DirectAnswerSurfaceCapSourceBodyPrefetch = "source_body_prefetch"
+
+// DirectAnswerSurfaceTerminalUncertaintyProse is the terminal state for
+// normal uncertainty prose when evidence is insufficient.
+const DirectAnswerSurfaceTerminalUncertaintyProse = "uncertainty_prose"
+
+// DirectAnswerSurfaceTerminalAnswerableEvidence is the terminal state for
+// evidence-sufficient answers.
+const DirectAnswerSurfaceTerminalAnswerableEvidence = "answerable_evidence"
+
+// DirectAnswerSurface is the typed inventory for the lightweight direct-answer
+// surface. It defines exactly what the model-facing protocol projects in a
+// direct-answer lane.
+type DirectAnswerSurface struct {
+	// SchemaVersion identifies the JSON schema for this payload.
+	SchemaVersion string `json:"schema_version"`
+	// Version is the surface inventory version string.
+	Version string `json:"version"`
+	// Capabilities lists the direct-answer capabilities this surface
+	// advertises. Consumers (A1, telemetry) check this before engaging.
+	Capabilities []string `json:"capabilities"`
+	// ToolNames is the canonical set of tools visible on this surface.
+	ToolNames []string `json:"tool_names"`
+	// TerminalStates lists valid terminal outcomes for this surface.
+	TerminalStates []string `json:"terminal_states"`
+}
+
+// DirectAnswerSurfaceForBrief returns the surface inventory when the brief
+// identifies a direct-answer lane. Returns (inventory, true) for valid
+// direct-answer lanes, (DirectAnswerSurface{}, false) otherwise.
+//
+// The returned surface includes only read-only investigation tools and
+// excludes write/mutation tools, submit_plan, and plan-execute executor
+// surfaces. Non-trivial read-only investigation (search + bounded source read)
+// remains available.
+func DirectAnswerSurfaceForBrief(brief workerruntime.WorkerRuntimeBrief) (DirectAnswerSurface, bool) {
+	if !readOnlyDirectAnswerLane(brief) {
+		return DirectAnswerSurface{}, false
+	}
+
+	return DirectAnswerSurface{
+		SchemaVersion: DirectAnswerSurfaceSchemaVersion,
+		Version:       DirectAnswerSurfaceVersion,
+		Capabilities:  directAnswerSurfaceCapabilities(),
+		ToolNames:     directAnswerSurfaceToolNames(brief),
+		TerminalStates: []string{
+			DirectAnswerSurfaceTerminalAnswerableEvidence,
+			DirectAnswerSurfaceTerminalUncertaintyProse,
+		},
+	}, true
+}
+
+// DirectAnswerSurfacePrefetchEligibility checks whether this direct-answer
+// surface supports source-body prefetch telemetry. Returns (eligible,
+// missReason) where missReason is non-empty when not eligible.
+//
+// Eligibility requires:
+//  1. A non-zero surface (not the zero value).
+//  2. The surface version is recognised (matches DirectAnswerSurfaceVersion).
+//  3. The surface advertises source_body_prefetch capability.
+//
+// Normal model-led investigation remains available regardless.
+func DirectAnswerSurfacePrefetchEligibility(surface DirectAnswerSurface) (eligible bool, missReason string) {
+	if surface.SchemaVersion == "" || surface.Version == "" {
+		return false, "direct_answer_surface_missing"
+	}
+
+	if surface.Version != DirectAnswerSurfaceVersion {
+		return false, "direct_answer_surface_stale: version=" + surface.Version + " expected=" + DirectAnswerSurfaceVersion
+	}
+
+	if !surfaceSupportsCapability(surface, DirectAnswerSurfaceCapSourceBodyPrefetch) {
+		return false, "direct_answer_surface_no_source_body_prefetch_capability"
+	}
+
+	return true, ""
+}
+
+// DirectAnswerSurfaceSupportsReadOnlyInvestigation reports whether the surface
+// advertises the read_only_investigation capability, meaning non-trivial
+// investigation (search + bounded source read) remains available.
+func DirectAnswerSurfaceSupportsReadOnlyInvestigation(surface DirectAnswerSurface) bool {
+	return surfaceSupportsCapability(surface, DirectAnswerSurfaceCapReadOnlyInvestigation)
+}
+
+// surfaceSupportsCapability reports whether the surface advertises the given capability.
+func surfaceSupportsCapability(surface DirectAnswerSurface, cap string) bool {
+	for _, c := range surface.Capabilities {
+		if c == cap {
+			return true
+		}
+	}
+
+	return false
+}
+
+// directAnswerSurfaceCapabilities returns the capabilities the current
+// direct-answer surface advertises. This is the single source of truth;
+// add new capabilities here as they are implemented.
+func directAnswerSurfaceCapabilities() []string {
+	return []string{
+		DirectAnswerSurfaceCapReadOnlyInvestigation,
+		DirectAnswerSurfaceCapSourceBodyPrefetch,
+	}
+}
+
+// directAnswerSurfaceToolNames returns the canonical tool list for the
+// direct-answer surface: only read-only investigation tools, no write/mutation
+// tools, no submit_plan, no plan-execute executor protocol.
+func directAnswerSurfaceToolNames(_ workerruntime.WorkerRuntimeBrief) []string {
+	return defaultDirectAnswerSurfaceTools()
+}
+
+// defaultDirectAnswerSurfaceTools returns the base set of tools that are
+// always available on the direct-answer surface. These are read-only
+// investigation tools that let the model search, read, and navigate the
+// workspace without mutation capabilities.
+//
+// Explicitly excluded:
+//   - write_file, edit_file, append_file, apply_patch, go_move_declarations,
+//     delegate_edit, mkdir (write tools)
+//   - submit_plan (plan-execute surface)
+//   - note (scratch metadata — direct-answer answers don't persist findings)
+//   - task_ledger (planning and tracking)
+//   - shell (command execution)
+//
+// Tools kept:
+//   - read_file, search_files, search_content — exact file/path investigation
+//   - code_navigate — language-aware navigation
+//   - context_pack, context_query, context_zoom — context graph discovery
+//   - discovery_query — composite discovery
+//   - structural_search — AST-pattern search
+//   - file_stats — directory/file statistics
+//   - workspace language tools (go_*, cpp_*, python_*, ts_*, rust_*, java_*)
+//   - git history tools (history_range, history_symbol, blame_range)
+//   - harness_audit, read_only_capability — harness self-inspection
+//   - mcp:* — external read-only tools
+func defaultDirectAnswerSurfaceTools() []string {
+	var tools []string
+
+	// Source inspection: exact file reading, search, navigation
+	tools = append(tools, "read_file", "search_files", "search_content",
+		"read_only_capability", "code_navigate")
+
+	// Context graph / discovery
+	tools = append(tools, "context_pack", "context_query", "context_zoom",
+		"discovery_query", "structural_search", "file_stats")
+
+	// Language-aware navigation via code_navigate capabilities,
+	// plus Go-specific structured tools
+	tools = append(tools, workspace.RuntimeSourceInspectionToolNames()...)
+
+	// Context discovery tools (context_pack, context_query, etc.)
+	tools = append(tools, workspace.RuntimeContextDiscoveryToolNames()...)
+
+	// Git history inspection
+	tools = append(tools, workspace.RuntimeHistoryInspectionToolNames()...)
+
+	// Harness self-inspection
+	tools = append(tools, "harness_audit")
+
+	// Read-only task delegation is preserved for direct-answer lanes that
+	// return child packets; existing runtime contracts depend on it.
+	tools = append(tools, "task")
+
+	// Filter out explicit exclusions
+	excluded := directAnswerSurfaceExcludedTools()
+	filtered := make([]string, 0, len(tools))
+	seen := make(map[string]struct{}, len(tools))
+
+	for _, tool := range tools {
+		tool = strings.TrimSpace(tool)
+		if tool == "" {
+			continue
+		}
+
+		if _, ex := excluded[tool]; ex {
+			continue
+		}
+
+		if _, ok := seen[tool]; ok {
+			continue
+		}
+
+		seen[tool] = struct{}{}
+		filtered = append(filtered, tool)
+	}
+
+	return filtered
+}
+
+// directAnswerSurfaceExcludedTools returns the set of tools that must never
+// appear on the direct-answer surface.
+func directAnswerSurfaceExcludedTools() map[string]struct{} {
+	excluded := make(map[string]struct{})
+	for _, name := range workspace.WorkspaceWriteToolNames() {
+		excluded[name] = struct{}{}
+	}
+
+	excluded["submit_plan"] = struct{}{}
+	excluded["note"] = struct{}{}
+	excluded["task_ledger"] = struct{}{}
+	excluded["shell"] = struct{}{}
+
+	return excluded
+}
+
+// EmitDirectAnswerSurfaceEvent creates and emits a telemetry event with the
+// surface inventory metadata. Called once per session when the surface is
+// first activated. The runner passes emitEvent because it's the same package.
+func EmitDirectAnswerSurfaceEvent(emitFn func(event RunEvent), surface DirectAnswerSurface) {
+	if emitFn == nil {
+		return
+	}
+
+	emitFn(marshalRunEvent("direct_answer_surface", map[string]any{
+		"schema_version":  surface.SchemaVersion,
+		"version":         surface.Version,
+		"capabilities":    surface.Capabilities,
+		"tool_count":      len(surface.ToolNames),
+		"terminal_states": surface.TerminalStates,
+	}))
+}
+
+// DirectAnswerSurfaceForBriefTools is a convenience wrapper that returns the
+// tool names from DirectAnswerSurfaceForBrief as a flat string slice or nil
+// when the brief is not a direct-answer lane.
+func DirectAnswerSurfaceForBriefTools(brief workerruntime.WorkerRuntimeBrief) []string {
+	surface, ok := DirectAnswerSurfaceForBrief(brief)
+	if !ok {
+		return nil
+	}
+
+	return surface.ToolNames
+}
+
+type finalAnswerAcceptanceDecision string
+
+const (
+	finalAnswerAcceptanceAccepted finalAnswerAcceptanceDecision = "accept"
+	finalAnswerAcceptanceRejected finalAnswerAcceptanceDecision = "reject"
+)
+
+const finalAnswerAcceptanceSchema = "final_answer_acceptance.v1"
+const finalAnswerPolicyInvariantAcceptance = "final_answer.acceptance"
+
+type finalAnswerAcceptance struct {
+	SchemaVersion            string
+	Decision                 finalAnswerAcceptanceDecision
+	BlockerKind              string
+	Reason                   string
+	EvidencePaths            []string
+	ObjectiveRelevanceStatus string
+	RelevantSourceBodyPaths  []string
+	AnswerObjectiveTerms     []string
+	PackID                   autonomy.ContractPackID
+	InvariantID              string
+	PolicyDecision           autonomy.ToolPolicyDecision
+	ParityReport             ParityReport
+}
+
+func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspace.ToolResult) finalAnswerAcceptance {
+	acceptance := newFinalAnswerAcceptance()
+	if r != nil {
+		acceptance.EvidencePaths = acceptedAnswerEvidencePaths(answer, results, r.RuntimeBrief)
+	}
+
+	var directAnswerRelevance readOnlyDirectAnswerRelevance
+
+	if r != nil {
+		directAnswerRelevance = r.readOnlyDirectAnswerRelevance(answer, results)
+		if directAnswerRelevance.Status != "" {
+			acceptance.ObjectiveRelevanceStatus = directAnswerRelevance.Status
+			acceptance.RelevantSourceBodyPaths = directAnswerRelevance.RelevantSourceBodyPaths
+			acceptance.AnswerObjectiveTerms = directAnswerRelevance.AnswerObjectiveTerms
+		}
+	}
+
+	reject := func(kind string, reason string) finalAnswerAcceptance {
+		acceptance.Decision = finalAnswerAcceptanceRejected
+		acceptance.BlockerKind = kind
+		acceptance.Reason = reason
+
+		return finalAnswerAcceptanceWithPolicy(acceptance)
+	}
+
+	// Plan-then-execute planner phase: a successful submit_plan IS the
+	// planner's deliverable; the executor phase (run by the orchestrator
+	// after this runner exits) is what produces the actual file changes.
+	if r != nil && r.planThenExecutePlannerPhase() && successfulSubmitPlanResultCount(results) > 0 {
+		return finalAnswerAcceptanceWithPolicy(acceptance)
+	}
+
+	if r != nil && r.planThenExecutePlannerPhase() && r.planThenExecuteSourceSatisfiedAnswerCovers(answer, results) {
+		return finalAnswerAcceptanceWithPolicy(acceptance)
+	}
+
+	if r != nil && r.planThenExecuteAnchorRefreshFinalAnswerPending(results) {
+		return reject("plan_execute_anchor_refresh_pending", "plan_execute_anchor_refresh_pending")
+	}
+
+	if looksLikeUnexecutedToolRequestAnswer(answer) {
+		return reject("unexecuted_tool_request_final_answer", "unexecuted_tool_request_final_answer")
+	}
+
+	if r != nil && runnerBriefRequiresMutation(r.RuntimeBrief) {
+		if missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results)); len(missing) > 0 {
+			return reject("required_edit_paths_remaining", "required_edit_paths_remaining")
+		}
+
+		if missing := unresolvedRejectedMutationPaths(results, r.RuntimeBrief.RequiredEditPaths); len(missing) > 0 {
+			acceptance.EvidencePaths = util.Merge(acceptance.EvidencePaths, missing)
+			return reject("rejected_mutation_paths_remaining", "rejected_mutation_paths_remaining")
+		}
+	}
+
+	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
+		if r != nil && readOnlyDirectAnswerLane(r.RuntimeBrief) && !runnerBriefRequiresMutation(r.RuntimeBrief) {
+			return reject("read_only_protocol_blocker", "read_only_protocol_blocker")
+		}
+
+		return reject("user_visible_blocker", "user_visible_blocker")
+	}
+
+	if r != nil && !readOnlyDirectAnswerLane(r.RuntimeBrief) &&
+		readOnlyAnswerReportsInsufficientEvidence(answer) &&
+		r.evidenceEngine().ClosureDecision(r.RuntimeBrief, results).Answerable() {
+
+		return reject("non_answer_prose", "answerable_evidence_reported_as_insufficient")
+	}
+
+	if r != nil &&
+		workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile) &&
+		workerruntime.RuntimeContractIsArchitectureOrReview(r.RuntimeBrief.Contract) &&
+		unsupportedReadOnlyCloseoutAnswer(answer) {
+
+		return reject("non_answer_prose", "insufficient_evidence_answer")
+	}
+
+	if looksLikeNonAnswerProse(answer) && !finalAnswerAcceptanceAllowsSourceInventory(acceptance, answer, r, results) {
+		return reject("non_answer_prose", "non_answer_prose")
+	}
+
+	if r != nil {
+		// Compute objective relevance to detect compound rejection
+		// reasons. The source-grounding check runs first, but if the
+		// evidence also fails objective relevance, surface both problems
+		// so the model doesn't fix one issue only to discover another.
+		hasObjectiveBlocker := directAnswerRelevance.BlockerKind != "" && directAnswerRelevance.Reason != ""
+
+		if reason := r.sourceGroundingRejectionReason(answer, results); reason != "" {
+			if len(acceptance.EvidencePaths) == 0 {
+				acceptance.EvidencePaths = closurePromptEvidencePaths(directAnswerRelevance.RelevantSourceBodyPaths, 8)
+			}
+
+			if hasObjectiveBlocker {
+				reason = reason + " Additionally, " + directAnswerRelevance.Reason
+			}
+
+			return reject("source_grounding_unmet", reason)
+		}
+
+		if hasObjectiveBlocker {
+			return reject(directAnswerRelevance.BlockerKind, directAnswerRelevance.Reason)
+		}
+	}
+
+	if r != nil {
+		missing := missingRequiredEvidence(r.RuntimeBrief.RequiredEvidence, answer, results)
+		if len(missing) > 0 {
+			return reject("required_evidence_unmet", "required_evidence_unmet")
+		}
+	}
+
+	return finalAnswerAcceptanceWithPolicy(acceptance)
+}
+
+func finalAnswerAcceptanceAllowsSourceInventory(acceptance finalAnswerAcceptance, answer string, r *Runner, results []workspace.ToolResult) bool {
+	if r == nil {
+		return false
+	}
+
+	return r.evidenceEngine().ClosureDecision(r.RuntimeBrief, results).
+		AllowsSourceInventoryAnswer(answer, acceptance.Decision == finalAnswerAcceptanceAccepted)
+}
+
+type readOnlyDirectAnswerRelevance struct {
+	Status                  string
+	BlockerKind             string
+	Reason                  string
+	RelevantSourceBodyPaths []string
+	AnswerObjectiveTerms    []string
+}
+
+func (r *Runner) readOnlyDirectAnswerRelevance(answer string, results []workspace.ToolResult) readOnlyDirectAnswerRelevance {
+	if r == nil {
+		return readOnlyDirectAnswerRelevance{}
+	}
+
+	return r.evidenceEngine().ClosureDecision(readOnlyDirectAnswerAcceptanceLedgerBrief(r.RuntimeBrief), results).DirectAnswerRelevance(answer)
+}
+
+func readOnlyDirectAnswerAcceptanceApplies(brief workerruntime.WorkerRuntimeBrief) bool {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	return readOnlyDirectAnswerLane(brief)
+}
+
+func readOnlyDirectAnswerLane(brief workerruntime.WorkerRuntimeBrief) bool {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+
+	return workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) &&
+		readOnlyDirectAnswerTaskFamily(brief.TaskFamily) &&
+		workerruntime.RuntimeContractIsDirectAnswer(brief.Contract)
+}
+
+func readOnlyDirectAnswerTaskFamily(family string) bool {
+	return workerruntime.TaskFamilyIsConversation(family) ||
+		workerruntime.TaskFamilyMatches(family, workerruntime.TaskFamilyDirectAnswer)
+}
+
+func readOnlyDirectAnswerAcceptanceLedgerBrief(brief workerruntime.WorkerRuntimeBrief) workerruntime.WorkerRuntimeBrief {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDirectAnswer) {
+		brief.TaskFamily = string(workerruntime.TaskFamilyConversation)
+	}
+
+	return brief
+}
+
+func acceptedReadOnlyDirectAnswerEvidencePaths(answer string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
+	if !readOnlyDirectAnswerAcceptanceApplies(brief) {
+		return nil
+	}
+
+	decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).
+		FinalAnswerDecision(answer)
+
+	return append([]string(nil), decision.AcceptedEvidencePaths...)
+}
+
+func readOnlyAcceptedDirectAnswerEvidencePaths(answer string, ledger readOnlyAnswerabilityLedger, results []workspace.ToolResult) []string {
+	mentioned := readOnlySourceLikePaths(sourceGroundingMentionedPaths(answer), 16)
+	relevant := ledger.RelevantSourceBodyPaths
+	objectivePaths := ledger.SourceBodyObjectivePaths
+
+	if ledger.directAnswerConversation() && agentutil.ObjectiveAsksImplementationShape(ledger.Objective) {
+		relevant = ledger.ImplementationOwnerPaths()
+		objectivePaths = relevant
+	}
+
+	paths := intersectRunnerPaths(mentioned, relevant)
+
+	paths = util.Merge(paths, objectivePaths, relevant)
+	paths = util.Merge(paths, answerCitedCollectiveSourceBodySupportPaths(answer, ledger))
+
+	if len(paths) == 0 && ledger.DiagnosticRelevant {
+		paths = util.Merge(paths, mentionedEvidencePathsFromToolResults(results, 8))
+	}
+
+	return closurePromptEvidencePaths(paths, 8)
+}
+
+func answerCitedCollectiveSourceBodySupportPaths(answer string, ledger readOnlyAnswerabilityLedger) []string {
+	mentionedSet := readOnlyPathSet(sourceGroundingMentionedPaths(answer))
+	if len(mentionedSet) == 0 {
+		return nil
+	}
+
+	if ledger.directAnswerConversation() && agentutil.ObjectiveAsksImplementationShape(ledger.Objective) {
+		return intersectRunnerPaths(ledger.ImplementationOwnerPaths(), sourceGroundingMentionedPaths(answer))
+	}
+
+	sourceSet := readOnlyPathSet(ledger.SourceBodyPaths)
+	requiredTerms := ledger.requiredSourceBodyObjectiveTerms()
+
+	if len(requiredTerms) < 2 {
+		return nil
+	}
+
+	termCovered := map[string]struct{}{}
+	pathTermCount := map[string]int{}
+
+	for _, support := range ledger.SourceBodyObjectiveTerms {
+		path := agentutil.NormalizeRunnerPath(support.Path)
+		if path == "" {
+			continue
+		}
+
+		if _, cited := mentionedSet[path]; !cited {
+			continue
+		}
+
+		if _, read := sourceSet[path]; !read {
+			continue
+		}
+
+		seenTermsForPath := map[string]struct{}{}
+
+		for _, term := range support.Terms {
+			term = agentutil.ReadOnlyObjectiveSupportTerm(term)
+			if term == "" {
+				continue
+			}
+
+			termCovered[term] = struct{}{}
+			if _, seen := seenTermsForPath[term]; seen {
+				continue
+			}
+
+			seenTermsForPath[term] = struct{}{}
+			pathTermCount[path]++
+		}
+	}
+
+	if len(termCovered) < collectiveSourceBodyObjectiveTermThreshold(len(requiredTerms)) {
+		return nil
+	}
+
+	var paths []string
+
+	for path, count := range pathTermCount {
+		if count < 2 {
+			continue
+		}
+
+		paths = append(paths, path)
+	}
+
+	return closurePromptEvidencePaths(paths, 8)
+}
+
+func intersectRunnerPaths(left []string, right []string) []string {
+	rightSet := readOnlyPathSet(right)
+	if len(rightSet) == 0 {
+		return nil
+	}
+
+	var out []string
+
+	for _, raw := range left {
+		path := agentutil.NormalizeRunnerPath(raw)
+		if path == "" {
+			continue
+		}
+
+		if _, ok := rightSet[path]; ok {
+			out = append(out, path)
+		}
+	}
+
+	return uniqueSortedRunnerPaths(out)
+}
+
+func finalAnswerAcceptanceEventFields(acceptance finalAnswerAcceptance) map[string]any {
+	fields := map[string]any{
+		"acceptance_contract": acceptance.SchemaVersion,
+		"acceptance_decision": string(acceptance.Decision),
+	}
+	if acceptance.PackID != "" {
+		fields["policy_pack_id"] = acceptance.PackID
+	}
+	if acceptance.InvariantID != "" {
+		fields["invariant_id"] = acceptance.InvariantID
+	}
+	if acceptance.PolicyDecision != "" {
+		fields["policy_decision"] = acceptance.PolicyDecision
+	}
+	if acceptance.ParityReport.ContractID != "" {
+		fields["parity_contract_id"] = acceptance.ParityReport.ContractID
+	}
+	if acceptance.ParityReport.ProtocolHash != "" {
+		fields["parity_protocol_hash"] = acceptance.ParityReport.ProtocolHash
+	}
+	if acceptance.ParityReport.SurfaceID != "" {
+		fields["parity_surface_id"] = acceptance.ParityReport.SurfaceID
+	}
+	if acceptance.ParityReport.InvariantID != "" {
+		fields["parity_invariant_id"] = acceptance.ParityReport.InvariantID
+	}
+	if acceptance.ParityReport.OldDecision != "" {
+		fields["parity_old_decision"] = acceptance.ParityReport.OldDecision
+	}
+	if acceptance.ParityReport.NewDecision != "" {
+		fields["parity_new_decision"] = acceptance.ParityReport.NewDecision
+	}
+	fields["parity_diverged"] = acceptance.ParityReport.Diverged
+	if acceptance.ObjectiveRelevanceStatus != "" {
+		fields["objective_relevance"] = acceptance.ObjectiveRelevanceStatus
+	}
+
+	if len(acceptance.RelevantSourceBodyPaths) > 0 {
+		fields["relevant_source_body_paths"] = util.LimitSlice(acceptance.RelevantSourceBodyPaths, 8)
+	}
+
+	return fields
+}
+
+func (r *Runner) planThenExecuteAnchorRefreshFinalAnswerPending(results []workspace.ToolResult) bool {
+	if r == nil || !r.planThenExecutePlannerPhase() {
+		return false
+	}
+
+	state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	return state.Mode == PlanExecutePlanningModeAnchorRefresh && len(state.RefreshPaths) > 0
+}
+
+func planThenExecuteAnchorRefreshFinalAnswerRejection(acceptance finalAnswerAcceptance) bool {
+	return strings.TrimSpace(acceptance.BlockerKind) == "plan_execute_anchor_refresh_pending"
+}
+
+type FinalAnswerDecorateInput struct {
+	Answer     string
+	StopReason string
+	Brief      workerruntime.WorkerRuntimeBrief
+	Results    []workspace.ToolResult
+	UserFacing bool
+}
+
+func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
+	answer := strings.TrimSpace(input.Answer)
+	if answer == "" || !input.UserFacing {
+		return answer
+	}
+
+	present := func(candidate string) string {
+		return presentableFinalAnswerForUser(input.Brief, input.Results, candidate)
+	}
+	// Strip self-inflicted "Blocker:" prose when the harness has
+	// objective evidence the contract is satisfied: all required edit
+	// paths changed, planner owns verification, and the last failed
+	// tool was a post-completion write probe (e.g., apply_patch with
+	// stale context after the same file was already updated through
+	// edit_file). The completion gate already accepted this answer —
+	// the rewrite keeps downstream consumers from reading the model's
+	// no-op blocker note as a run-level failure. Runs heading toward a
+	// real <<QUESTION>> blocker still pass through untouched.
+	if cleaned, ok := stripCompletedMutationSelfBlocker(input.Brief, input.Results, answer); ok {
+		return present(cleaned)
+	}
+
+	if !strings.HasPrefix(answer, "<<QUESTION>>") && !mutationReplyReportsConcreteNoopOrBlocker(strings.ToLower(answer)) {
+		if blocker, ok := canonicalMutationBlockerFinalAnswer(input.Brief, input.Results, answer); ok {
+			return present(blocker)
+		}
+	}
+
+	if looksLikeUnexecutedToolRequestAnswer(answer) || looksLikeTextualToolCall(answer) {
+		if presentable, ok := presentableNoToolsFallbackAnswer(input.Brief, input.Results, answer); ok {
+			return present(presentable)
+		}
+	}
+
+	if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) || looksLikeLineOrientedSourceSnippetAnswer(answer) {
+		if composed, ok := r.composedFinalAnswerFromEvidence(input); ok {
+			return present(composed)
+		}
+
+		if presentable, ok := presentableNoToolsFallbackAnswer(input.Brief, input.Results, answer); ok {
+			if checked, ok := r.presentableOrReadOnlyNonAnswerReplacement(input.Results, presentable); ok {
+				return present(checked)
+			}
+		}
+
+		if conversationFallbackShouldAvoidSourceBody(input.Brief) {
+			if checked, ok := r.presentableBriefConversationFallbackCandidate(input.Results); ok {
+				return present(checked)
+			}
+		}
+	}
+
+	if finalAnswerStopReasonPreservesUncertainty(input.StopReason) &&
+		!finalAnswerNeedsDecoration(answer) &&
+		!looksLikeGenericEvidenceComposerAnswer(answer) {
+
+		return present(answer)
+	}
+
+	if !finalAnswerNeedsDecoration(answer) && !looksLikeGenericEvidenceComposerAnswer(answer) {
+		return present(answer)
+	}
+
+	if cleaned, ok := cleanedSubstantiveFinalAnswer(answer); ok {
+		return present(cleaned)
+	}
+
+	if composed, ok := r.composedFinalAnswerFromEvidence(input); ok {
+		return present(composed)
+	}
+
+	if presentable, ok := presentableNoToolsFallbackAnswer(input.Brief, input.Results, answer); ok {
+		if checked, ok := r.presentableOrReadOnlyNonAnswerReplacement(input.Results, presentable); ok {
+			return present(checked)
+		}
+	}
+
+	return present(answer)
+}
+
+func presentableFinalAnswerForUser(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) string {
+	answer = strings.TrimSpace(answer)
+	if presentable, ok := presentableNonMutationQuestionBlocker(brief, results, answer); ok {
+		return presentable
+	}
+
+	return answer
+}
+
+func presentableNonMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, blocker string) (string, bool) {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if runnerBriefRequiresMutation(brief) ||
+		workerruntime.TaskFamilyIsPlanThenExecutePlanner(brief.TaskFamily) ||
+		workerruntime.TaskFamilyIsPlanThenExecuteReview(brief.TaskFamily) {
+
+		return "", false
+	}
+
+	reason := strings.TrimSpace(blocker)
+	if !strings.HasPrefix(reason, "<<QUESTION>>") {
+		return "", false
+	}
+
+	if answer, ok := deterministicNoToolsAnswer("main", brief, results); ok {
+		answer = strings.TrimSpace(answer)
+		if answer != "" &&
+			!strings.HasPrefix(answer, "<<QUESTION>>") &&
+			!readOnlyAnswerReportsInsufficientEvidence(answer) &&
+			presentableQuestionBlockerDeterministicAnswerSupported(brief, results, answer) {
+
+			return answer, true
+		}
+	}
+
+	reason = strings.TrimPrefix(reason, "<<QUESTION>>")
+	reason = strings.TrimLeft(strings.TrimSpace(reason), ": ")
+
+	gateReason := presentableCompletionGateQuestionBlockerReason(reason)
+	internalReason := questionBlockerReasonLooksInternal(reason)
+
+	reason = presentableQuestionBlockerReason(reason)
+
+	if reason == "" {
+		reason = "the run stopped before producing a supported answer."
+	}
+
+	if !internalReason && !questionBlockerReasonLooksInternal(reason) && !strings.Contains(reason, "\n") {
+		return ensureTrailingPeriod(reason), true
+	}
+
+	evidenceLabel, paths := questionBlockerContextPaths(brief, results, 4)
+
+	var b strings.Builder
+
+	if gateReason != "" {
+		b.WriteString("I could not produce a supported final answer: ")
+		b.WriteString(lowercaseFirstSentence(gateReason))
+		if !strings.HasSuffix(strings.TrimSpace(b.String()), ".") {
+			b.WriteString(".")
+		}
+		if len(paths) > 0 {
+			b.WriteString(" ")
+			b.WriteString(evidenceLabel)
+			b.WriteString(": ")
+			b.WriteString(formatInlinePathList(paths, 4))
+			b.WriteString(".")
+		}
+		return strings.TrimSpace(b.String()), true
+	}
+
+	b.WriteString(presentableUnsupportedFinalAnswerLead())
+
+	if reason != "" {
+		b.WriteString(" The unresolved evidence gap was: ")
+		b.WriteString(lowercaseFirstSentence(reason))
+
+		if !strings.HasSuffix(strings.TrimSpace(b.String()), ".") {
+			b.WriteString(".")
+		}
+	}
+
+	if len(paths) > 0 {
+		b.WriteString(" ")
+		b.WriteString(evidenceLabel)
+		b.WriteString(": ")
+		b.WriteString(formatInlinePathList(paths, 4))
+		b.WriteString(".")
+	}
+
+	return strings.TrimSpace(b.String()), true
+}
+
+func presentableQuestionBlockerDeterministicAnswerSupported(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) bool {
+	return readOnlyClosureDecisionForResults(brief, results).SupportsPresentableQuestionBlockerAnswer(answer)
+}
+
+func questionBlockerContextPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) (string, []string) {
+	if max <= 0 {
+		max = 4
+	}
+
+	if ledger, candidateOnly := readOnlyDirectAnswerCandidateOnlyLedger(brief, results); candidateOnly {
+		paths := closurePromptEvidencePaths(ledger.CandidatePaths, max)
+		if len(paths) > 0 {
+			return "Candidate paths surfaced", paths
+		}
+
+		return "", nil
+	} else if readOnlyDirectAnswerLane(brief) {
+		ledger = readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+
+		paths := util.Merge(ledger.RelevantSourceBodyPaths, ledger.SourceBodyObjectivePaths)
+
+		if ledger.DiagnosticRelevant {
+			paths = util.Merge(paths, ledger.DiagnosticPaths)
+		}
+
+		paths = closurePromptEvidencePaths(paths, max)
+		if len(paths) > 0 {
+			return "Inspected evidence", paths
+		}
+
+		paths = readOnlyCloseoutEvidencePaths(brief, results, max)
+		if len(paths) > 0 {
+			return "Inspected evidence", paths
+		}
+
+		paths = promptEvidencePathsFromToolResults(results, max)
+		if len(paths) > 0 {
+			return "Inspected evidence", paths
+		}
+
+		return "", nil
+	}
+
+	paths := readOnlyCloseoutEvidencePaths(brief, results, max)
+	if len(paths) == 0 {
+		paths = delegatedClosureEvidencePaths(brief.Objective, results, max)
+	}
+
+	if len(paths) == 0 {
+		return "", nil
+	}
+
+	return "Inspected evidence", paths
+}
+
+func presentableQuestionBlockerReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if gateReason := presentableCompletionGateQuestionBlockerReason(reason); gateReason != "" {
+		return gateReason
+	}
+
+	if questionBlockerReasonLooksInternal(reason) {
+		if malformed := extractMalformedWriteBlockerReason(reason); malformed != "" {
+			return malformed
+		}
+
+		return "the run stopped before it had enough supported evidence for the requested answer"
+	}
+
+	replacements := []struct {
+		old string
+		new string
+	}{
+		{"`<<QUESTION>>:`", "a blocker"},
+		{"`<<QUESTION>>`", "a blocker"},
+		{"<<QUESTION>>:", "a blocker"},
+		{"<<QUESTION>>", "a blocker"},
+	}
+	for _, replacement := range replacements {
+		reason = strings.ReplaceAll(reason, replacement.old, replacement.new)
+	}
+
+	return strings.TrimSpace(reason)
+}
+
+func presentableCompletionGateQuestionBlockerReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	lower := strings.ToLower(reason)
+	if reason == "" || !strings.Contains(lower, "completion gate") {
+		return ""
+	}
+
+	detail := reason
+	if idx := strings.Index(strings.ToLower(detail), "missing completion evidence:"); idx >= 0 {
+		detail = strings.TrimSpace(detail[idx+len("missing completion evidence:"):])
+	} else if idx := strings.Index(detail, ":"); idx >= 0 {
+		detail = strings.TrimSpace(detail[idx+1:])
+	}
+
+	detail = stripGateRetryPrefix(detail)
+	detail = firstSentenceBeforeAny(detail,
+		" — repeated rejections indicate",
+		" Either anchor that detail",
+		" Either issue ONE concrete tool call",
+		" Answer with the exact",
+		" state that the current evidence",
+		" or use a blocker",
+		" or use <<QUESTION>>",
+		"\n\nEvidence paths observed before rejection:",
+	)
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return ""
+	}
+
+	return "the final answer was rejected because " + lowercaseFirstSentence(detail)
+}
+
+func stripGateRetryPrefix(text string) string {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "[gate retry") {
+		return text
+	}
+
+	if idx := strings.Index(text, "]"); idx >= 0 {
+		return strings.TrimSpace(text[idx+1:])
+	}
+
+	return text
+}
+
+func firstSentenceBeforeAny(text string, markers ...string) string {
+	end := len(text)
+	lower := strings.ToLower(text)
+	for _, marker := range markers {
+		marker = strings.ToLower(marker)
+		if marker == "" {
+			continue
+		}
+
+		if idx := strings.Index(lower, marker); idx >= 0 && idx < end {
+			end = idx
+		}
+	}
+
+	return strings.TrimSpace(text[:end])
+}
+
+func questionBlockerReasonLooksInternal(reason string) bool {
+	lower := strings.ToLower(strings.TrimSpace(reason))
+	if lower == "" {
+		return false
+	}
+
+	return agentutil.ContainsAny(lower,
+		"completion gate",
+		"missing completion evidence",
+		"required next evidence",
+		"answer with the exact",
+		"current read-only answer has",
+		"current read-only answer is",
+		"current read-only answer uses",
+		"no concrete user-facing finding was retained",
+		"state the supported claim from the inspected source",
+		"state the supported concrete finding from",
+		"name the exact missing claim",
+		"only localization evidence",
+		"candidate paths but no relevant source-body evidence",
+		"not backed by relevant source-body or diagnostic evidence",
+		"missing source-body evidence for named path",
+		"retained enough source-body evidence for a grounded answer",
+		"read one objective-relevant source candidate",
+		"gather one source-body read",
+	)
+}
+
+func extractMalformedWriteBlockerReason(reason string) string {
+	lower := strings.ToLower(reason)
+	idx := strings.Index(lower, "blocked by malformed write request")
+
+	if idx < 0 {
+		return ""
+	}
+
+	end := idx + len("blocked by malformed write request")
+	if end < len(reason) {
+		if dot := strings.Index(reason[end:], "."); dot >= 0 {
+			end += dot + 1
+		}
+	}
+
+	return ensureTrailingPeriod(strings.TrimSpace(reason[idx:end]))
+}
+
+func ensureTrailingPeriod(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+
+	if strings.HasSuffix(s, ".") || strings.HasSuffix(s, "!") || strings.HasSuffix(s, "?") {
+		return s
+	}
+
+	return s + "."
+}
+
+func canonicalMutationBlockerFinalAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) (string, bool) {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if !runnerBriefRequiresMutation(brief) {
+		return "", false
+	}
+
+	// Plan-then-execute planner phase: a successful submit_plan IS the
+	// planner's deliverable; the executor phase (run by the orchestrator
+	// after this runner exits) produces the file changes. Without this
+	// exemption the decorator rewrites the model's clean "plan
+	// submitted" answer into a "Required edit paths remain unchanged"
+	// blocker because the planner phase has no changed_paths yet, even
+	// though the plan was submitted correctly.
+	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(brief.TaskFamily) && successfulSubmitPlanResultCount(results) > 0 {
+		return "", false
+	}
+
+	changed := changedPathsFromToolResults(results)
+	missing := missingRequiredEditPaths(brief.RequiredEditPaths, changed)
+
+	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(brief.TaskFamily) &&
+		PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer, missing) &&
+		planThenExecuteSourceSatisfiedResultsCoverPaths(missing, results) {
+
+		return "", false
+	}
+
+	if len(missing) == 0 {
+		return "", false
+	}
+
+	var b strings.Builder
+
+	b.WriteString("<<QUESTION>>: Required edit path")
+
+	if len(missing) > 1 {
+		b.WriteString("s")
+	}
+
+	if len(missing) == 1 {
+		b.WriteString(" remains unchanged: ")
+	} else {
+		b.WriteString(" remain unchanged: ")
+	}
+
+	b.WriteString(strings.Join(missing, ", "))
+	b.WriteString(".")
+
+	if len(changed) > 0 {
+		b.WriteString(" Changed path")
+
+		if len(changed) > 1 {
+			b.WriteString("s")
+		}
+
+		b.WriteString(" recorded: ")
+		b.WriteString(strings.Join(mapKeys(changed), ", "))
+		b.WriteString(".")
+	} else {
+		b.WriteString(" No required workspace edit was completed.")
+	}
+
+	b.WriteString(" Provide current source anchors for the remaining path")
+
+	if len(missing) > 1 {
+		b.WriteString("s")
+	}
+
+	b.WriteString(", or use a bounded required-path read to refresh stale anchors before retrying.")
+
+	return strings.TrimSpace(b.String()), true
+}
+
+func (r *Runner) composedFinalAnswerFromEvidence(input FinalAnswerDecorateInput) (string, bool) {
+	if exact, ok := presentableExactProbeAnswer(input.Brief, input.Results); ok {
+		return exact, true
+	}
+
+	delegatedOwnerReady := delegatedImplementationShapeSynthesisAllowed(input.Brief, input.Results)
+	if delegatedOwnerReady {
+		if answer, ok := synthesizeReadOnlyEvidencePacketAnswer(input.Brief.Objective, readOnlyEvidencePacketsFromResults(input.Results)); ok {
+			return answer, true
+		}
+	}
+
+	if answer, ok := presentableProseEvidenceAnswer(input.Brief, input.Results); ok {
+		return answer, true
+	}
+
+	if workerruntime.RuntimeContractIsArchitecture(input.Brief.Contract) {
+		if answer, ok := synthesizeDelegatedReadOnlyAnswer(input.Brief.Objective, input.Results); ok {
+			if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) {
+				return "", false
+			}
+
+			if cleaned, ok := cleanedSubstantiveFinalAnswer(answer); ok {
+				return cleaned, true
+			}
+
+			if !finalAnswerNeedsDecoration(answer) && !looksLikeGenericEvidenceComposerAnswer(answer) {
+				return answer, true
+			}
+		}
+	}
+
+	if delegatedOwnerReady {
+		if output, ok := bestObjectiveAnswerableTaskResultOutput(input.Brief.Objective, input.Results); ok {
+			if cleaned, ok := cleanedSubstantiveFinalAnswer(output); ok {
+				return cleaned, true
+			}
+
+			if !finalAnswerNeedsDecoration(output) && !looksLikeGenericEvidenceComposerAnswer(output) {
+				return output, true
+			}
+		}
+	}
+
+	if delegatedOwnerReady {
+		if answer, ok := synthesizeDelegatedReadOnlyAnswer(input.Brief.Objective, input.Results); ok {
+			if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) {
+				return "", false
+			}
+
+			if cleaned, ok := cleanedSubstantiveFinalAnswer(answer); ok {
+				return cleaned, true
+			}
+
+			if !finalAnswerNeedsDecoration(answer) && !looksLikeGenericEvidenceComposerAnswer(answer) {
+				return answer, true
+			}
+		}
+	}
+
+	return "", false
+}
+
+func delegatedImplementationShapeSynthesisAllowed(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !implementationShapeOwnerContractApplies(brief) {
+		return true
+	}
+
+	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+
+	return len(ledger.ImplementationOwnerPaths()) > 0
+}
+
+func implementationShapeOwnerContractApplies(brief workerruntime.WorkerRuntimeBrief) bool {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	return readOnlyDirectAnswerLane(brief) && agentutil.ObjectiveAsksImplementationShape(brief.Objective)
+}
+
+func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, internalAnswer string) (string, bool) {
+	internalAnswer = strings.TrimSpace(internalAnswer)
+	if internalAnswer == "" {
+		return "", false
+	}
+
+	if !finalAnswerNeedsDecoration(internalAnswer) && !looksLikeGenericEvidenceComposerAnswer(internalAnswer) {
+		return "", false
+	}
+
+	if answer, ok := presentableGroundedAnswerFromRenderedPacket(internalAnswer); ok {
+		return answer, true
+	}
+
+	closure := readOnlyClosureDecisionForResults(brief, results)
+	if looksLikeUnexecutedToolRequestAnswer(internalAnswer) || looksLikeTextualToolCall(internalAnswer) {
+		if exact, ok := presentableExactProbeAnswer(brief, results); ok {
+			return exact, true
+		}
+
+		if sourceBody, ok := presentableReadFileSourceAnswer(brief, results); ok {
+			return sourceBody, true
+		}
+
+		if prose, ok := presentableProseEvidenceAnswer(brief, results); ok {
+			return prose, true
+		}
+	}
+
+	if readOnlyFallbackNeedsAnswerableEvidence(brief, internalAnswer) && !closure.Answerable() {
+		return closure.UserFacingUncertainty(), true
+	}
+
+	if conversationFallbackShouldAvoidSourceBody(brief) && isDeterministicFallbackAnswer(internalAnswer) {
+		if concrete, ok := closure.ConcreteFallbackAnswer(); ok {
+			return concrete, true
+		}
+
+		return synthesizeBriefConversationFallback(brief, results), true
+	}
+
+	if conversationFallbackShouldAvoidSourceBody(brief) && looksLikeSourceBodyFallbackAnswer(internalAnswer) {
+		return synthesizeBriefConversationFallback(brief, results), true
+	}
+
+	lineOrientedGenericAnswer := genericEvidenceAnswerIncludesLineOrientedSourceBody(internalAnswer) ||
+		looksLikeLineOrientedSourceSnippetAnswer(internalAnswer)
+	if !lineOrientedGenericAnswer {
+		if cleaned, ok := cleanedSubstantiveFinalAnswer(internalAnswer); ok {
+			return cleaned, true
+		}
+	}
+
+	// For non-mutation turns where the model produced a genuine substantive
+	// answer, prefer it over source-body fact extraction. Source-body extraction
+	// from read_file results produces nonsense like "The inspected source
+	// contains `"strings"`, `)` and `)`. No files were changed." for
+	// conversation questions. But only apply this when the answer doesn't look
+	// like a budget-closure or post-readiness stub — those need composition.
+	if !lineOrientedGenericAnswer &&
+		!finalAnswerNeedsDecoration(internalAnswer) &&
+		!looksLikeGenericEvidenceComposerAnswer(internalAnswer) &&
+		!runnerBriefRequiresMutation(brief) &&
+		looksLikeSubstantiveFinalAnswer(internalAnswer) {
+
+		lower := strings.ToLower(internalAnswer)
+		if !strings.Contains(lower, "partial findings from this turn") &&
+			!strings.Contains(lower, "budget was reached") &&
+			!strings.Contains(lower, "post-readiness") {
+
+			substantive := stripInternalEvidenceAppendix(internalAnswer)
+			if !finalAnswerNeedsDecoration(substantive) && len(strings.TrimSpace(substantive)) >= 120 {
+				return substantive, true
+			}
+		}
+	}
+
+	if exact, ok := presentableExactProbeAnswer(brief, results); ok {
+		return exact, true
+	}
+
+	// When the internal answer is a deterministic fallback ("Partial findings
+	// from this turn...") and we are in a read-only conversation lane, skip
+	// source-body extraction. It produces nonsense like "The inspected source
+	// contains `type Evidence struct {`..." that does not answer the question.
+	// Only block for direct user-facing conversation lanes, not for delegated
+	// read-only investigation lanes that benefit from source-body composition.
+	if isDeterministicFallbackAnswer(internalAnswer) && conversationFallbackShouldAvoidSourceBody(brief) {
+		return synthesizeBriefConversationFallback(brief, results), true
+	}
+
+	if sourceBody, ok := presentableReadFileSourceAnswer(brief, results); ok {
+		return sourceBody, true
+	}
+
+	if prose, ok := presentableProseEvidenceAnswer(brief, results); ok {
+		return prose, true
+	}
+
+	paths := delegatedClosureEvidencePaths(brief.Objective, results, 4)
+	if len(paths) == 0 {
+		paths = postChildClosureEvidencePaths(brief.Objective, results, 4)
+	}
+
+	if len(paths) == 0 {
+		paths = promptEvidencePathsFromToolResults(results, 4)
+	}
+
+	paths = closurePromptEvidencePaths(paths, 4)
+
+	findings := presentableFindingsFromInternalAnswer(internalAnswer, 2)
+	if len(findings) > 0 {
+		var b strings.Builder
+
+		b.WriteString(strings.Join(findings, " "))
+
+		if len(paths) > 0 {
+			b.WriteString(" The relevant source files are ")
+			b.WriteString(formatInlinePathList(paths, 4))
+			b.WriteString(".")
+		}
+
+		return strings.TrimSpace(b.String()), true
+	}
+
+	if len(paths) == 0 {
+		return "", false
+	}
+
+	if !closure.Answerable() {
+		return closure.UserFacingUncertainty(), true
+	}
+
+	return presentableUnsupportedFinalAnswerLead() + " The current read-only answer has relevant evidence in " +
+		formatInlinePathList(paths, 4) +
+		", but no concrete user-facing finding was retained.", true
+}
+
+func presentableGroundedAnswerFromRenderedPacket(answer string) (string, bool) {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return "", false
+	}
+
+	lower := strings.ToLower(answer)
+	marker := "grounded answer:\n"
+	idx := strings.Index(lower, marker)
+
+	if idx < 0 {
+		return "", false
+	}
+
+	rest := strings.TrimSpace(answer[idx+len(marker):])
+	if rest == "" {
+		return "", false
+	}
+
+	cut := len(rest)
+	for _, section := range []string{
+		"\nGrounded findings:",
+		"\nSource body paths:",
+		"\nCandidate paths:",
+		"\nConfidence:",
+	} {
+		if next := strings.Index(rest, section); next >= 0 && next < cut {
+			cut = next
+		}
+	}
+
+	grounded := strings.TrimSpace(rest[:cut])
+	if grounded == "" ||
+		finalAnswerNeedsDecoration(grounded) ||
+		looksLikeGenericEvidenceComposerAnswer(grounded) ||
+		looksLikeLowValueSourceInventoryNonAnswer(grounded) {
+
+		return "", false
+	}
+
+	return grounded, true
+}
+
+func presentableReadFileSourceAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
+	if runnerBriefRequiresMutation(brief) || briefPrefersDelegatedPacketFallback(brief, results) {
+		return "", false
+	}
+
+	var ownerPathSet map[string]struct{}
+
+	if implementationShapeOwnerContractApplies(brief) {
+		ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+
+		ownerPathSet = readOnlyPathSet(ledger.ImplementationOwnerPaths())
+
+		if len(ownerPathSet) == 0 {
+			return "", false
+		}
+	}
+
+	bestAnswer := ""
+	bestScore := -1
+
+	for _, body := range combinedReadFileSourceBodies(results) {
+		if answer, ok := presentableSourceBodyFactsAnswer(brief.Objective, body.path, body.output); ok {
+			if ownerPathSet != nil {
+				if _, ok := ownerPathSet[agentutil.NormalizeRunnerPath(body.path)]; !ok {
+					continue
+				}
+			}
+
+			if implementationShape, ok := presentableImplementationShapeAnswerFromClaim(brief.Objective, body.path, "", stripPresentableSourceObjectiveEcho(answer)); ok {
+				return implementationShape, true
+			}
+
+			score := presentableSourceAnswerObjectiveScore(answer, brief.Objective, body.path)
+			if looksLikeSourceEchoOnlyAnswer(answer) && looksLikeLowValueSourceInventoryFallback(answer) {
+				continue
+			}
+
+			if bestAnswer == "" || score > bestScore {
+				bestScore = score
+				bestAnswer = answer
+			}
+		}
+	}
+
+	return bestAnswer, strings.TrimSpace(bestAnswer) != ""
+}
+
+type readFileSourceBody struct {
+	path   string
+	output string
+}
+
+func combinedReadFileSourceBodies(results []workspace.ToolResult) []readFileSourceBody {
+	type aggregate struct {
+		path      string
+		outputs   []string
+		lastIndex int
+	}
+
+	byPath := make(map[string]*aggregate)
+	order := make([]string, 0, len(results))
+
+	for i, result := range results {
+		if strings.TrimSpace(result.Error) != "" ||
+			!agentutil.ReadStyleSourceBodyTool(result.Tool) ||
+			!readFileResultHasConcreteSourceBody(result) {
+
+			continue
+		}
+
+		paths := agentutil.ReadPathsFromToolResult(result)
+		if len(paths) == 0 || agentutil.IsNonSourceEvidenceArtifactPath(paths[0]) {
+			continue
+		}
+
+		path := agentutil.NormalizeRunnerPath(paths[0])
+		if path == "" {
+			continue
+		}
+
+		agg := byPath[path]
+		if agg == nil {
+			agg = &aggregate{path: path}
+			byPath[path] = agg
+			order = append(order, path)
+		}
+
+		agg.outputs = append(agg.outputs, strings.TrimSpace(result.Output))
+		agg.lastIndex = i
+	}
+
+	bodies := make([]readFileSourceBody, 0, len(order))
+	for _, path := range order {
+		agg := byPath[path]
+		if agg == nil {
+			continue
+		}
+
+		bodies = append(bodies, readFileSourceBody{
+			path:   agg.path,
+			output: strings.Join(agg.outputs, "\n"),
+		})
+	}
+
+	slices.SortFunc(bodies, func(a, B readFileSourceBody) int {
+		return byPath[B.path].lastIndex - byPath[a.path].lastIndex
+	})
+
+	return bodies
+}
+
+func presentableSourceAnswerObjectiveScore(answer string, objective string, path string) int {
+	claim := stripPresentableSourceObjectiveEcho(answer)
+	score := sourceEvidenceLineObjectiveScore(claim, sourceEvidenceObjectiveLineTerms(objective))
+
+	score += len(answerObjectiveTerms(claim, objective)) * 2
+	score += sourceEvidenceLineObjectiveScore(path, sourceEvidenceObjectiveLineTerms(objective)) * 3
+
+	lowerClaim := strings.ToLower(claim)
+	lowerObjective := strings.ToLower(objective)
+
+	if agentutil.ContainsAny(lowerObjective, "redact", "secret", "debug log") && strings.Contains(lowerClaim, "metadata") {
+		score += 3
+	}
+
+	if agentutil.ContainsAny(lowerObjective, "redact", "secret", "debug log") && strings.Contains(lowerClaim, "path") {
+		score += 2
+	}
+
+	if strings.Contains(strings.ToLower(claim), "defines `") {
+		score--
+	}
+
+	return score
+}
+
+func presentableProseEvidenceAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
+	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) || briefPrefersDelegatedPacketFallback(brief, results) {
+		return "", false
+	}
+
+	objective := strings.TrimSpace(delegatedDisplayQuestion(brief.Objective))
+	if objective == "" {
+		return "", false
+	}
+
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
+			continue
+		}
+
+		if !agentutil.ReadStyleSourceBodyTool(result.Tool) {
+			continue
+		}
+
+		paths := agentutil.ReadPathsFromToolResult(result)
+		if len(paths) == 0 {
+			continue
+		}
+
+		path := strings.TrimSpace(paths[0])
+		if !presentableProseEvidencePath(path) {
+			continue
+		}
+
+		lines := objectiveRelevantProseEvidenceLines(objective, result.Output, 4)
+		if len(lines) == 0 {
+			continue
+		}
+
+		return synthesizeProseEvidenceAnswer(objective, path, lines), true
+	}
+
+	return "", false
+}
+
+func presentableProseEvidencePath(path string) bool {
+	lower := strings.ToLower(strings.TrimSpace(path))
+
+	lower = strings.TrimPrefix(lower, "./")
+
+	if lower == "" || agentutil.IsNonSourceEvidenceArtifactPath(lower) {
+		return false
+	}
+
+	if strings.HasPrefix(lower, "docs/") || strings.HasPrefix(lower, ".codex/") {
+		return true
+	}
+
+	if lower == "readme" || strings.HasPrefix(lower, "readme.") {
+		return true
+	}
+
+	for _, suffix := range []string{".md", ".markdown", ".txt", ".rst", ".adoc"} {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+
+	return false
+}
+
+type proseEvidenceScoredLine struct {
+	line  string
+	score int
+	index int
+}
+
+func objectiveRelevantProseEvidenceLines(objective string, output string, max int) []string {
+	if max <= 0 {
+		max = 4
+	}
+
+	terms := agentutil.RecoveryObjectiveSearchWords(objective, 32)
+	if len(terms) == 0 {
+		return nil
+	}
+
+	termSet := make(map[string]struct{}, len(terms))
+	for _, term := range terms {
+		termSet[agentutil.SingularObjectiveWord(term)] = struct{}{}
+	}
+
+	var candidates []proseEvidenceScoredLine
+
+	for index, raw := range strings.Split(output, "\n") {
+		line := normalizeProseEvidenceLine(raw)
+		if line == "" {
+			continue
+		}
+
+		score := proseEvidenceLineObjectiveScore(line, termSet)
+		if score <= 0 {
+			continue
+		}
+
+		candidates = append(candidates, proseEvidenceScoredLine{line: line, score: score, index: index})
+	}
+
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	slices.SortFunc(candidates, func(a, B proseEvidenceScoredLine) int {
+		if a.score != B.score {
+			return B.score - a.score
+		}
+
+		return a.index - B.index
+	})
+
+	var selected []proseEvidenceScoredLine
+
+	for _, candidate := range candidates {
+		if proseEvidenceLineDuplicates(selected, candidate.line) {
+			continue
+		}
+
+		selected = append(selected, candidate)
+		if len(selected) >= max {
+			break
+		}
+	}
+
+	slices.SortFunc(selected, func(a, B proseEvidenceScoredLine) int {
+		return a.index - B.index
+	})
+
+	lines := make([]string, 0, len(selected))
+	for _, candidate := range selected {
+		lines = append(lines, candidate.line)
+	}
+
+	return lines
+}
+
+func normalizeProseEvidenceLine(line string) string {
+	line = stripSourceEvidenceLinePrefix(strings.TrimSpace(line))
+	if line == "" {
+		return ""
+	}
+
+	if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "|") {
+		return ""
+	}
+
+	line = strings.TrimLeft(line, "#")
+	line = strings.TrimSpace(line)
+
+	for {
+		trimmed := strings.TrimSpace(line)
+		next := strings.TrimPrefix(trimmed, "- ")
+
+		next = strings.TrimPrefix(next, "* ")
+		next = strings.TrimPrefix(next, "+ ")
+		next = strings.TrimPrefix(next, "> ")
+
+		if next == trimmed {
+			break
+		}
+
+		line = next
+	}
+
+	line = strings.TrimSpace(line)
+	if line == "" || len(line) < 24 {
+		return ""
+	}
+
+	lower := strings.ToLower(line)
+	if strings.HasPrefix(lower, "package ") ||
+		strings.HasPrefix(lower, "import ") ||
+		strings.HasPrefix(lower, "func ") ||
+		strings.HasPrefix(lower, "type ") ||
+		strings.HasPrefix(lower, "const ") ||
+		strings.HasPrefix(lower, "var ") ||
+		strings.HasPrefix(lower, "return ") {
+
+		return ""
+	}
+
+	if len(line) > 220 {
+		line = strings.TrimSpace(line[:220])
+	}
+
+	return strings.Trim(line, "`*_ ")
+}
+
+func proseEvidenceLineObjectiveScore(line string, termSet map[string]struct{}) int {
+	lower := strings.ToLower(line)
+	words := strings.FieldsFunc(lower, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+	score := 0
+	seen := map[string]struct{}{}
+
+	for _, word := range words {
+		word = agentutil.SingularObjectiveWord(word)
+		if len(word) < 4 {
+			continue
+		}
+
+		if _, ok := termSet[word]; ok {
+			if _, dup := seen[word]; !dup {
+				score += 2
+
+				seen[word] = struct{}{}
+			}
+		}
+	}
+
+	if score > 0 && agentutil.ContainsAny(lower, "evidence", "contract", "source", "repo", "repository", "audit", "eval", "verification", "runtime brief", "harness") {
+		score++
+	}
+
+	return score
+}
+
+func proseEvidenceLineDuplicates(selected []proseEvidenceScoredLine, line string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(line))
+	for _, candidate := range selected {
+		existing := strings.ToLower(strings.TrimSpace(candidate.line))
+		if existing == normalized || strings.Contains(existing, normalized) || strings.Contains(normalized, existing) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func synthesizeProseEvidenceAnswer(objective string, path string, lines []string) string {
+	var b strings.Builder
+
+	b.WriteString("For `")
+	b.WriteString(strings.TrimSpace(objective))
+	b.WriteString("`, `")
+	b.WriteString(strings.TrimSpace(path))
+	b.WriteString("` provides the grounded answer: ")
+
+	for i, line := range lines {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+
+		b.WriteString(strings.TrimRight(strings.TrimSpace(line), "."))
+		b.WriteString(".")
+	}
+
+	return strings.TrimSpace(b.String())
+}
+
+func briefPrefersDelegatedPacketFallback(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if slices.Contains(brief.Constraints, "child_packet_available") {
+		return true
+	}
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) == "task" && strings.TrimSpace(result.Error) == "" {
+			return true
+		}
+	}
+
+	return false
+}
+
+func presentableSourceBodyFactsAnswer(objective string, path string, output string) (string, bool) {
+	path = strings.TrimSpace(path)
+
+	lines := sourceEvidenceAnswerLinesForObjective(output, objective, 24)
+
+	if path == "" || len(lines) == 0 {
+		return "", false
+	}
+
+	facts := sourceBodySemanticFacts(lines, objective, 5)
+	if len(facts) == 0 {
+		return "", false
+	}
+
+	var b strings.Builder
+
+	if prefix := presentableSourceBodyObjectivePrefix(objective, lines); prefix != "" {
+		b.WriteString(prefix)
+		b.WriteString(" ")
+	}
+
+	if objective = strings.TrimSpace(objective); objective != "" {
+		b.WriteString("For `")
+		b.WriteString(objective)
+		b.WriteString("`, the answer is grounded in ")
+	}
+
+	b.WriteString("`")
+	b.WriteString(path)
+
+	if objective != "" {
+		b.WriteString("`: it shows ")
+	} else {
+		b.WriteString("` shows ")
+	}
+
+	factText := joinFallbackFacts(facts)
+	b.WriteString(factText)
+	b.WriteString(".")
+
+	answer := strings.TrimSpace(b.String())
+
+	if objectiveAsksBehaviorSummary(objective) && looksLikeLowValueSourceInventoryFallback(factText) {
+		return "", false
+	}
+
+	return answer, true
+}
+
+func sourceBodySemanticFacts(lines []string, objective string, max int) []string {
+	if max <= 0 {
+		max = 3
+	}
+
+	var (
+		behaviorFacts   []string
+		definitionFacts []string
+	)
+
+	addTo := func(dst *[]string, fact string) {
+		fact = strings.TrimSpace(fact)
+		if fact == "" || slices.Contains(*dst, fact) {
+			return
+		}
+
+		*dst = append(*dst, fact)
+	}
+	currentFunction := ""
+
+	for _, line := range lines {
+		functionLine := false
+
+		if name := sourceBodyFunctionName(line); name != "" {
+			currentFunction = name
+			addTo(&definitionFacts, "defines `"+name+"`")
+
+			functionLine = true
+		}
+
+		if fact := sourceBodyObjectiveLiteralFact(currentFunction, line, objective); fact != "" {
+			addTo(&behaviorFacts, fact)
+		}
+
+		if !functionLine {
+			if fact := sourceBodyReturnFact(currentFunction, line); fact != "" {
+				addTo(&behaviorFacts, fact)
+			} else if fact := sourceBodyDefinitionFact(line); fact != "" {
+				addTo(&definitionFacts, fact)
+			} else if fact := sourceBodyCaseFact(currentFunction, line); fact != "" {
+				addTo(&behaviorFacts, fact)
+			} else if fact := sourceBodyRecordAssignmentFact(line); fact != "" {
+				addTo(&behaviorFacts, fact)
+			} else if fact := sourceBodyStructFieldFact(line); fact != "" {
+				addTo(&behaviorFacts, fact)
+			} else if fact := exactProbeAssignmentObservation(line); fact != "" {
+				addTo(&behaviorFacts, fact)
+			} else if fact := sourceBodyCallFact(currentFunction, line); fact != "" {
+				addTo(&behaviorFacts, fact)
+			}
+		}
+	}
+
+	facts := make([]string, 0, max)
+	add := func(fact string) {
+		fact = strings.TrimSpace(fact)
+		if fact == "" || slices.Contains(facts, fact) || len(facts) >= max {
+			return
+		}
+
+		facts = append(facts, fact)
+	}
+
+	for _, fact := range behaviorFacts {
+		add(fact)
+	}
+
+	for _, fact := range definitionFacts {
+		add(fact)
+	}
+
+	if len(facts) > 1 && currentFunction != "" && facts[0] == "defines `"+currentFunction+"`" {
+		return facts[1:]
+	}
+
+	return facts
+}
+
+func sourceBodyObjectiveLiteralFact(functionName string, line string, objective string) string {
+	literals := sourceBodyObjectiveStringLiterals(line, objective, 2)
+	if len(literals) == 0 {
+		return ""
+	}
+
+	if len(literals) == 1 && strings.EqualFold(strings.Trim(literals[0], "`\""), "redacted") {
+		if functionName != "" {
+			return "`" + functionName + "` references secret-safe redaction value " + literals[0]
+		}
+
+		return "references secret-safe redaction value " + literals[0]
+	}
+
+	if functionName != "" {
+		return "`" + functionName + "` references " + joinFallbackFacts(literals)
+	}
+
+	return "references " + joinFallbackFacts(literals)
+}
+
+func sourceBodyObjectiveStringLiterals(line string, objective string, limit int) []string {
+	if limit <= 0 {
+		limit = 2
+	}
+
+	objective = strings.TrimSpace(objective)
+
+	var literals []string
+
+	inQuote := false
+	escaped := false
+
+	var current strings.Builder
+
+	for _, r := range line {
+		if !inQuote {
+			if r == '"' {
+				inQuote = true
+				escaped = false
+
+				current.Reset()
+			}
+
+			continue
+		}
+
+		if escaped {
+			current.WriteRune(r)
+
+			escaped = false
+
+			continue
+		}
+
+		switch r {
+		case '\\':
+			escaped = true
+		case '"':
+			value := strings.TrimSpace(current.String())
+
+			inQuote = false
+
+			if sourceBodyLiteralSupportsObjective(value, objective) {
+				literals = util.AppendUnique(literals, "`\""+value+"\"`")
+				if len(literals) >= limit {
+					return literals
+				}
+			}
+		default:
+			current.WriteRune(r)
+		}
+	}
+
+	return literals
+}
+
+func sourceBodyLiteralSupportsObjective(value string, objective string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) < 4 || len(value) > 120 {
+		return false
+	}
+
+	if strings.ContainsAny(value, "\n\r\t") {
+		return false
+	}
+
+	if objective == "" {
+		return codeShapedTokenPattern.MatchString(value)
+	}
+
+	return TextSharesObjectiveTerm(value, objective)
+}
+
+func sourceBodyCaseFact(functionName string, line string) string {
+	line = strings.TrimSpace(line)
+
+	rest, ok := strings.CutPrefix(line, "case ")
+
+	if !ok {
+		return ""
+	}
+
+	head, _, ok := strings.Cut(rest, ":")
+	if !ok {
+		return ""
+	}
+
+	var cases []string
+
+	for _, raw := range strings.Split(head, ",") {
+		value := strings.TrimSpace(raw)
+		if value == "" || strings.Contains(value, `"`) {
+			continue
+		}
+
+		if !strings.Contains(value, ".") && !codeShapedTokenPattern.MatchString(value) {
+			continue
+		}
+
+		cases = append(cases, "`"+value+"`")
+	}
+
+	if len(cases) == 0 {
+		return ""
+	}
+
+	if functionName != "" {
+		return "`" + functionName + "` handles " + joinFallbackFacts(cases)
+	}
+
+	return "handles " + joinFallbackFacts(cases)
+}
+
+func sourceBodyRecordAssignmentFact(line string) string {
+	line = strings.TrimSpace(line)
+	for _, op := range []string{":=", "="} {
+		lhs, rhs, ok := strings.Cut(line, op)
+		if !ok {
+			continue
+		}
+
+		key := sourceBodyMapStringKey(lhs)
+		value := exactProbeTrimExpression(rhs)
+
+		if key == "" || value == "" {
+			continue
+		}
+
+		kind := "metadata field"
+		lowerKey := strings.ToLower(key)
+		lowerValue := strings.ToLower(value)
+
+		if agentutil.ContainsAny(lowerKey, "path", "source", "root", "cwd") {
+			kind = "path metadata field"
+		}
+
+		if agentutil.ContainsAny(lowerKey, "prompt", "digest", "redact", "secret") ||
+			agentutil.ContainsAny(lowerValue, "sanitize", "digest", "redact", "secret") {
+
+			kind = "secret-safe " + kind
+		}
+
+		if op == ":=" {
+			return "assigns " + kind + " `" + key + "` from `" + value + "`"
+		}
+
+		return "sets " + kind + " `" + key + "` from `" + value + "`"
+	}
+
+	return ""
+}
+
+func sourceBodyMapStringKey(lhs string) string {
+	lhs = strings.TrimSpace(lhs)
+
+	open := strings.IndexByte(lhs, '[')
+	close := strings.LastIndexByte(lhs, ']')
+
+	if open < 0 || close <= open {
+		return ""
+	}
+
+	key := strings.TrimSpace(lhs[open+1 : close])
+	if len(key) < 2 || key[0] != '"' || key[len(key)-1] != '"' {
+		return ""
+	}
+
+	key = strings.TrimSpace(key[1 : len(key)-1])
+	if key == "" || strings.ContainsAny(key, "\n\r\t") {
+		return ""
+	}
+
+	return key
+}
+
+func sourceBodyStructFieldFact(line string) string {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.ContainsAny(line, "(){}=") {
+		return ""
+	}
+
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return ""
+	}
+
+	name := strings.TrimSpace(fields[0])
+	typ := strings.TrimLeft(strings.TrimSpace(fields[1]), "*[]")
+
+	if name == "" || typ == "" || name[0] < 'A' || name[0] > 'Z' {
+		return ""
+	}
+
+	if !codeShapedTokenPattern.MatchString(name) || !codeShapedTokenPattern.MatchString(typ) {
+		return ""
+	}
+
+	lower := strings.ToLower(name)
+	kind := "field"
+
+	if agentutil.ContainsAny(lower, "path", "source", "root", "cwd") {
+		kind = "path metadata field"
+	}
+
+	return "defines " + kind + " `" + name + "`"
+}
+
+func sourceBodyCallFact(functionName string, line string) string {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
+
+	var calls []string
+
+	for _, match := range callLikeIdentifierPattern.FindAllStringSubmatch(line, -1) {
+		if len(match) <= 1 {
+			continue
+		}
+
+		candidate, ok := delegatedReadOnlyLiteralSymbolCandidate(match[1])
+		if !ok {
+			continue
+		}
+
+		if strings.EqualFold(candidate, "String") || strings.EqualFold(candidate, "Error") {
+			continue
+		}
+
+		calls = util.AppendUnique(calls, "`"+candidate+"`")
+		if len(calls) >= 2 {
+			break
+		}
+	}
+
+	if len(calls) == 0 {
+		return ""
+	}
+
+	if functionName != "" {
+		return "`" + functionName + "` calls " + joinFallbackFacts(calls)
+	}
+
+	return "calls " + joinFallbackFacts(calls)
+}
+
+func sourceBodyFunctionName(line string) string {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "func ") {
+		return ""
+	}
+
+	rest := strings.TrimSpace(strings.TrimPrefix(line, "func "))
+	receiver := ""
+
+	if strings.HasPrefix(rest, "(") {
+		if idx := strings.Index(rest, ")"); idx >= 0 {
+			receiver = sourceBodyReceiverType(rest[1:idx])
+			rest = strings.TrimSpace(rest[idx+1:])
+		}
+	}
+
+	if rest == "" {
+		return ""
+	}
+
+	end := len(rest)
+	for _, marker := range []string{"(", "[", " ", "\t"} {
+		if idx := strings.Index(rest, marker); idx >= 0 && idx < end {
+			end = idx
+		}
+	}
+
+	name := strings.TrimSpace(rest[:end])
+	if name == "" {
+		return ""
+	}
+
+	if receiver != "" {
+		return receiver + "." + name
+	}
+
+	return name
+}
+
+func sourceBodyReceiverType(receiver string) string {
+	fields := strings.Fields(strings.TrimSpace(receiver))
+	if len(fields) == 0 {
+		return ""
+	}
+
+	typ := fields[len(fields)-1]
+
+	typ = strings.TrimLeft(strings.TrimSpace(typ), "*")
+	typ = strings.TrimPrefix(typ, "[]")
+	typ = strings.TrimSpace(typ)
+
+	if typ == "" || strings.ContainsAny(typ, " \t,(){}") {
+		return ""
+	}
+
+	return typ
+}
+
+func sourceBodyReturnFact(functionName string, line string) string {
+	expr, ok := strings.CutPrefix(strings.TrimSpace(line), "return ")
+	if !ok {
+		return ""
+	}
+
+	expr = exactProbeTrimExpression(expr)
+	if expr == "" {
+		return ""
+	}
+
+	if functionName != "" {
+		return "`" + functionName + "` returns `" + expr + "`"
+	}
+
+	return "returns `" + expr + "`"
+}
+
+func sourceBodyDefinitionFact(line string) string {
+	line = strings.TrimSpace(line)
+	for _, keyword := range []string{"const", "var"} {
+		rest, ok := strings.CutPrefix(line, keyword+" ")
+		if !ok {
+			continue
+		}
+
+		rest = strings.TrimSpace(rest)
+		if rest == "" || strings.HasPrefix(rest, "(") {
+			return ""
+		}
+
+		nameEnd := len(rest)
+		for _, marker := range []string{"=", " ", "\t"} {
+			if idx := strings.Index(rest, marker); idx >= 0 && idx < nameEnd {
+				nameEnd = idx
+			}
+		}
+
+		name := strings.TrimSpace(rest[:nameEnd])
+		if name == "" {
+			return ""
+		}
+
+		if _, rhs, ok := strings.Cut(rest, "="); ok {
+			value := exactProbeTrimExpression(rhs)
+			if value != "" {
+				return "defines `" + name + "` as `" + value + "`"
+			}
+		}
+
+		return "defines `" + name + "`"
+	}
+
+	if rest, ok := strings.CutPrefix(line, "type "); ok {
+		rest = strings.TrimSpace(rest)
+		if rest == "" || strings.HasPrefix(rest, "(") {
+			return ""
+		}
+
+		nameEnd := len(rest)
+		for _, marker := range []string{" ", "\t", "[", "{"} {
+			if idx := strings.Index(rest, marker); idx >= 0 && idx < nameEnd {
+				nameEnd = idx
+			}
+		}
+
+		name := strings.TrimSpace(rest[:nameEnd])
+		if name != "" {
+			return "defines `" + name + "`"
+		}
+	}
+
+	return ""
+}
+
+func presentableSourceBodyObjectivePrefix(objective string, lines []string) string {
+	lower := strings.ToLower(strings.TrimSpace(objective))
+	if !strings.Contains(lower, "can ") && !strings.Contains(lower, "could ") {
+		return ""
+	}
+
+	if !agentutil.ContainsAny(lower, "shorten", "rename", "change", "update") {
+		return ""
+	}
+
+	if !agentutil.ContainsAny(lower, "label", "text", "string", "copy") {
+		return ""
+	}
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, `"`) || strings.Contains(line, "`") {
+			return "At the source level, yes."
+		}
+	}
+
+	return ""
+}
+
+func sourceEvidenceAnswerLinesForObjective(output string, objective string, maxLines int) []string {
+	if maxLines <= 0 {
+		maxLines = 8
+	}
+
+	all := sourceEvidenceAnswerLines(output, 256)
+	if len(all) == 0 {
+		return nil
+	}
+
+	if strings.TrimSpace(objective) == "" || len(all) <= maxLines {
+		return util.Prefix(all, maxLines)
+	}
+
+	terms := sourceEvidenceObjectiveLineTerms(objective)
+	if len(terms) == 0 {
+		return util.Prefix(all, maxLines)
+	}
+
+	selected := make([]string, 0, maxLines)
+	add := func(line string) {
+		line = strings.TrimSpace(line)
+		if line == "" || slices.Contains(selected, line) {
+			return
+		}
+
+		selected = append(selected, line)
+	}
+
+	for _, line := range all {
+		if sourceBodyFunctionName(line) != "" {
+			add(line)
+
+			break
+		}
+	}
+
+	for _, line := range all {
+		if sourceEvidenceLineObjectiveScore(line, terms) <= 0 {
+			continue
+		}
+
+		add(line)
+
+		if len(selected) >= maxLines {
+			return selected
+		}
+	}
+
+	if len(selected) > 0 {
+		for _, line := range all {
+			if !sourceEvidenceLineCarriesAnswerContext(line, terms) {
+				continue
+			}
+
+			add(line)
+
+			if len(selected) >= maxLines {
+				return selected
+			}
+		}
+	}
+
+	if len(selected) == 0 {
+		return util.Prefix(all, maxLines)
+	}
+
+	return selected
+}
+
+func sourceEvidenceLineCarriesAnswerContext(line string, terms []string) bool {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	if lower == "" {
+		return false
+	}
+
+	if sourceEvidenceLineObjectiveScore(line, terms) > 0 {
+		return true
+	}
+
+	return agentutil.ContainsAny(lower,
+		"record[",
+		"sanitize",
+		"digest",
+		"metadata",
+		"redact",
+		"prompt",
+		"path",
+		"permission",
+		"policy",
+		"delegate",
+		"child",
+		"task",
+		"compose",
+		"answer",
+	)
+}
+
+func sourceEvidenceAnswerLines(output string, maxLines int) []string {
+	if maxLines <= 0 {
+		maxLines = 3
+	}
+
+	var lines []string
+
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := stripSourceEvidenceLinePrefix(strings.TrimSpace(line))
+		if trimmed == "" || sourceEvidenceLineIsBoilerplate(trimmed) {
+			continue
+		}
+
+		if len(trimmed) > 160 {
+			trimmed = strings.TrimSpace(trimmed[:160])
+		}
+
+		if slices.Contains(lines, trimmed) {
+			continue
+		}
+
+		lines = append(lines, trimmed)
+		if len(lines) >= maxLines {
+			break
+		}
+	}
+
+	return lines
+}
+
+func presentableExactProbeAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
+	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
+		return "", false
+	}
+
+	anchor, ok := bestPresentableExactProbeAnchor(brief, results)
+	if !ok {
+		return "", false
+	}
+
+	facts := exactProbeObservationsForObjective(anchor.symbol, anchor.output, brief.Objective)
+	if len(facts) == 0 {
+		return "", false
+	}
+
+	if implementationShape, ok := presentableImplementationShapeAnswerFromClaim(brief.Objective, anchor.path, anchor.symbol, strings.Join(facts, ", ")); ok {
+		return implementationShape, true
+	}
+
+	var b strings.Builder
+
+	switch {
+	case anchor.symbol != "" && anchor.path != "":
+		b.WriteString("`")
+		b.WriteString(anchor.symbol)
+		b.WriteString("` in `")
+		b.WriteString(anchor.path)
+		b.WriteString("` is the clearest inspected implementation anchor.")
+	case anchor.path != "":
+		b.WriteString("`")
+		b.WriteString(anchor.path)
+		b.WriteString("` is the clearest inspected implementation anchor.")
+	default:
+		b.WriteString("The clearest inspected implementation anchor is the exact probe that was already read.")
+	}
+
+	b.WriteString(" The inspected body shows that it ")
+	b.WriteString(joinFallbackFacts(facts))
+	b.WriteString(".")
+
+	answer := strings.TrimSpace(b.String())
+	if objectiveAsksBehaviorSummary(brief.Objective) && looksLikeLowValueSourceInventoryNonAnswer(answer) {
+		return "", false
+	}
+
+	return answer, true
+}
+
+func presentableImplementationShapeAnswerFromClaim(objective string, path string, symbol string, claim string) (string, bool) {
+	if !agentutil.ObjectiveAsksImplementationShape(objective) {
+		return "", false
+	}
+
+	path = strings.TrimSpace(path)
+	claim = strings.TrimSpace(claim)
+
+	if path == "" || claim == "" {
+		return "", false
+	}
+
+	lowerClaim := " " + strings.ToLower(strings.Join(strings.Fields(claim), " ")) + " "
+	if !agentutil.ContainsAny(lowerClaim, " handles ", " calls ", " sets ") {
+		return "", false
+	}
+
+	anchor := "`" + path + "`"
+	if symbol = strings.TrimSpace(symbol); symbol != "" {
+		anchor = "`" + symbol + "` in " + anchor
+	} else if inferred := firstSourceInventoryCodeToken(claim); inferred != "" {
+		anchor = "`" + inferred + "` in " + anchor
+	}
+
+	claim = presentableImplementationShapeClaim(path, claim)
+
+	var parts []string
+
+	parts = append(parts, "The code evidence points to "+anchor+" as the inspected implementation owner.")
+	parts = append(parts, "In that source, "+ensureTrailingPeriod(strings.TrimRight(claim, ".")))
+
+	return strings.Join(parts, " "), true
+}
+
+func presentableImplementationShapeClaim(path string, claim string) string {
+	claim = strings.TrimSpace(claim)
+	path = strings.TrimSpace(path)
+
+	if path != "" {
+		prefix := "`" + path + "` shows "
+		if strings.HasPrefix(claim, prefix) {
+			claim = strings.TrimSpace(strings.TrimPrefix(claim, prefix))
+		}
+	}
+
+	claim = strings.TrimPrefix(claim, "defines ")
+
+	return strings.TrimSpace(claim)
+}
+
+func firstSourceInventoryCodeToken(claim string) string {
+	for _, part := range strings.Split(claim, "`") {
+		token := strings.TrimSpace(part)
+		if token == "" || strings.ContainsAny(token, " \t\n\r") {
+			continue
+		}
+
+		lower := strings.ToLower(token)
+		if lower == "true" || lower == "false" || strings.HasPrefix(lower, "tea.key") {
+			continue
+		}
+
+		if strings.Contains(token, "/") || strings.Contains(lower, ".go") || strings.Contains(lower, ".md") {
+			continue
+		}
+
+		return token
+	}
+
+	return ""
+}
+
+type presentableExactProbeAnchor struct {
+	path   string
+	symbol string
+	output string
+}
+
+func bestPresentableExactProbeAnchor(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (presentableExactProbeAnchor, bool) {
+	objective := strings.TrimSpace(brief.Objective)
+	candidates := make([]presentableExactProbeAnchor, 0, len(results))
+
+	var best presentableExactProbeAnchor
+
+	requiresOwner := implementationShapeOwnerContractApplies(brief)
+	ledger := readOnlyAnswerabilityLedger{}
+	ownerPathSet := map[string]struct{}{}
+
+	if requiresOwner {
+		ledger = readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+		ownerPathSet = readOnlyPathSet(ledger.ImplementationOwnerPaths())
+
+		if len(ownerPathSet) == 0 {
+			return presentableExactProbeAnchor{}, false
+		}
+	}
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
+			continue
+		}
+
+		if agentutil.CandidateAnchorOnlyResult(result) {
+			continue
+		}
+
+		if presentableExactProbeResult(result) {
+			path, symbol := extractExactProbeAnchor(result)
+
+			candidates = append(candidates, presentableExactProbeAnchor{
+				path:   path,
+				symbol: symbol,
+				output: strings.TrimSpace(result.Output),
+			})
+		}
+	}
+
+	for _, candidate := range candidates {
+		var owner readOnlySourceOwnerEvidence
+
+		if requiresOwner {
+			if _, ok := ownerPathSet[agentutil.NormalizeRunnerPath(candidate.path)]; !ok {
+				continue
+			}
+
+			owner, _ = ledger.SourceOwnerEvidenceForPath(candidate.path)
+		}
+
+		if len(exactProbeObservationsForObjective(candidate.symbol, candidate.output, objective)) == 0 {
+			continue
+		}
+
+		if best.path == "" || presentableExactProbeAnchorObjectiveScore(candidate, objective, owner) > presentableExactProbeAnchorObjectiveScore(best, objective, sourceOwnerEvidenceForBestAnchor(ledger, best)) {
+			best = candidate
+		}
+	}
+
+	if best.path != "" {
+		return best, true
+	}
+
+	if requiresOwner {
+		return presentableExactProbeAnchor{}, false
+	}
+
+	if len(candidates) == 0 {
+		return presentableExactProbeAnchor{}, false
+	}
+
+	return candidates[0], true
+}
+
+func sourceOwnerEvidenceForBestAnchor(ledger readOnlyAnswerabilityLedger, anchor presentableExactProbeAnchor) readOnlySourceOwnerEvidence {
+	evidence, _ := ledger.SourceOwnerEvidenceForPath(anchor.path)
+	return evidence
+}
+
+func presentableExactProbeAnchorObjectiveScore(candidate presentableExactProbeAnchor, objective string, owner readOnlySourceOwnerEvidence) int {
+	text := strings.Join([]string{candidate.symbol, candidate.output}, "\n")
+	score := sourceEvidenceLineObjectiveScore(text, sourceEvidenceObjectiveLineTerms(objective))
+
+	score += len(answerObjectiveTerms(text, objective)) * 2
+
+	if owner.OwnerEligible() {
+		score += 20 + owner.Score
+	} else if owner.Role == readOnlySourceOwnerConflictingNavigation {
+		score -= 20
+	}
+
+	if sourceBodyHasStrongObjectiveToken(text, objective) {
+		score += 3
+	}
+
+	return score
+}
+
+func exactProbeObservationsForObjective(symbol string, output string, objective string) []string {
+	lines := sourceEvidenceAnswerLinesForObjective(output, objective, 24)
+	if len(lines) > 0 {
+		if facts := sourceBodySemanticFacts(lines, objective, 5); len(facts) > 0 {
+			return facts
+		}
+	}
+
+	return exactProbeObservations(symbol, output)
+}
+
+func extractReadExactProbeAnchor(summary string) (string, string) {
+	summary = strings.TrimSpace(summary)
+	if rest, ok := strings.CutPrefix(summary, "Read "); ok {
+		if symbol, remainder, found := strings.Cut(rest, " in "); found {
+			return extractExactProbePath(remainder), strings.TrimSpace(symbol)
+		}
+
+		return extractExactProbePath(rest), ""
+	}
+
+	if rest, ok := strings.CutPrefix(summary, "Extracted "); ok {
+		if symbol, remainder, found := strings.Cut(rest, " from "); found {
+			return extractExactProbePath(remainder), strings.TrimSpace(symbol)
+		}
+	}
+
+	return "", ""
+}
+
+func extractExactProbePath(remainder string) string {
+	remainder = strings.TrimSpace(remainder)
+	for _, marker := range []string{" lines ", " bytes ", " (", ":"} {
+		if head, _, ok := strings.Cut(remainder, marker); ok {
+			return strings.TrimSpace(head)
+		}
+	}
+
+	return strings.TrimSpace(remainder)
+}
+
+func exactProbeObservations(symbol string, output string) []string {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return nil
+	}
+
+	observations := make([]string, 0, 5)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || slices.Contains(observations, value) {
+			return
+		}
+
+		observations = append(observations, value)
+	}
+
+	for _, line := range exactProbeSourceLines(output) {
+		if observation := exactProbeReturnObservation(line); observation != "" {
+			add(observation)
+		}
+
+		if len(observations) >= 3 {
+			return observations
+		}
+
+		if observation := exactProbeAssignmentObservation(line); observation != "" {
+			add(observation)
+		}
+
+		if len(observations) >= 3 {
+			return observations
+		}
+	}
+
+	calls := exactProbeCallNames(symbol, output, 4)
+	if len(calls) > 0 {
+		add("calls " + quotedFallbackCallNames(calls))
+	}
+
+	return observations
+}
+
+func exactProbeSourceLines(output string) []string {
+	var lines []string
+
+	for _, line := range strings.Split(output, "\n") {
+		line = stripSourceEvidenceLinePrefix(strings.TrimSpace(line))
+		if line == "" || sourceEvidenceLineIsBoilerplate(line) {
+			continue
+		}
+
+		if strings.HasPrefix(line, "capability:") ||
+			strings.HasPrefix(line, "language:") ||
+			strings.HasPrefix(line, "routed_tool:") ||
+			strings.HasPrefix(line, "route_summary:") {
+
+			continue
+		}
+
+		lines = append(lines, line)
+	}
+
+	return lines
+}
+
+func exactProbeReturnObservation(line string) string {
+	expr, ok := strings.CutPrefix(strings.TrimSpace(line), "return ")
+	if !ok {
+		return ""
+	}
+
+	expr = exactProbeTrimExpression(expr)
+	if expr == "" {
+		return ""
+	}
+
+	return "returns `" + expr + "`"
+}
+
+func exactProbeAssignmentObservation(line string) string {
+	line = strings.TrimSpace(line)
+	for _, op := range []string{":=", "="} {
+		lhs, rhs, ok := strings.Cut(line, op)
+		if !ok {
+			continue
+		}
+
+		name := exactProbeAssignmentName(lhs)
+		value := exactProbeTrimExpression(rhs)
+
+		if name == "" || value == "" {
+			return ""
+		}
+
+		if op == "=" {
+			return "sets `" + name + "` to `" + value + "`"
+		}
+
+		return "assigns `" + name + "` from `" + value + "`"
+	}
+
+	return ""
+}
+
+func exactProbeAssignmentName(lhs string) string {
+	lhs = strings.TrimSpace(lhs)
+	if strings.ContainsAny(lhs, " \t,(){}[]") {
+		return ""
+	}
+
+	if lhs == "" || strings.HasPrefix(lhs, "if") || strings.HasPrefix(lhs, "for") || strings.HasPrefix(lhs, "switch") {
+		return ""
+	}
+
+	return lhs
+}
+
+func exactProbeTrimExpression(expr string) string {
+	expr = strings.TrimSpace(expr)
+	if idx := strings.Index(expr, "//"); idx >= 0 {
+		expr = strings.TrimSpace(expr[:idx])
+	}
+
+	expr = strings.TrimRight(strings.TrimSpace(expr), ",")
+	if len(expr) > 120 {
+		expr = strings.TrimSpace(expr[:120])
+	}
+
+	return expr
+}
+
+func quotedFallbackCallNames(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+
+		quoted = append(quoted, "`"+value+"`")
+	}
+
+	switch len(quoted) {
+	case 0:
+		return ""
+	case 1:
+		return quoted[0]
+	case 2:
+		return quoted[0] + " and " + quoted[1]
+	default:
+		return strings.Join(quoted[:len(quoted)-1], ", ") + ", and " + quoted[len(quoted)-1]
+	}
+}
+
+func joinFallbackFacts(facts []string) string {
+	filtered := make([]string, 0, len(facts))
+	for _, fact := range facts {
+		fact = strings.TrimSpace(fact)
+		if fact == "" {
+			continue
+		}
+
+		filtered = append(filtered, fact)
+	}
+
+	switch len(filtered) {
+	case 0:
+		return ""
+	case 1:
+		return filtered[0]
+	case 2:
+		return filtered[0] + " and " + filtered[1]
+	default:
+		return strings.Join(filtered[:len(filtered)-1], ", ") + ", and " + filtered[len(filtered)-1]
+	}
+}
+
+func presentableFindingsFromInternalAnswer(answer string, max int) []string {
+	if max <= 0 {
+		max = 2
+	}
+
+	inKeyFindings := false
+	findings := make([]string, 0, max)
+
+	for _, raw := range strings.Split(answer, "\n") {
+		line := strings.TrimSpace(raw)
+		lower := strings.ToLower(line)
+
+		switch {
+		case lower == "key findings:":
+			inKeyFindings = true
+			continue
+		case inKeyFindings && strings.HasSuffix(line, ":") && !strings.HasPrefix(line, "- "):
+			return findings
+		case !inKeyFindings || !strings.HasPrefix(line, "- "):
+			continue
+		}
+
+		finding := strings.TrimSpace(strings.TrimPrefix(line, "- "))
+		if !presentableInternalFinding(finding) {
+			continue
+		}
+
+		findings = append(findings, finding)
+		if len(findings) >= max {
+			return findings
+		}
+	}
+
+	return findings
+}
+
+func presentableInternalFinding(finding string) bool {
+	finding = strings.TrimSpace(finding)
+	if len(finding) < 40 {
+		return false
+	}
+
+	lower := strings.ToLower(finding)
+
+	return !agentutil.ContainsAny(lower,
+		"child task completed",
+		"outlined ",
+		"ran ",
+		"read ",
+		"found ",
+		"text anchors:",
+		"symbol read:",
+		"related files:",
+		"strongest implementation evidence",
+		"what this establishes",
+	)
+}
+
+func looksLikeStructuredAnswerEnvelope(lower string) bool {
+	if !strings.HasPrefix(strings.TrimSpace(lower), "{") {
+		return false
+	}
+
+	return strings.Contains(lower, `"answer"`) &&
+		(strings.Contains(lower, `"verification"`) ||
+			strings.Contains(lower, `"evidence"`) ||
+			strings.Contains(lower, `"sources"`))
+}
+
+func finalAnswerStopReasonPreservesUncertainty(stopReason string) bool {
+	switch strings.TrimSpace(stopReason) {
+	case "post_child_read_budget_exhausted",
+		"post_readiness_probe_budget_exhausted",
+		"post_readiness_no_gap_repeated",
+		"closure_synthesis_after_ignored_nudge":
+		return false
+	}
+
+	return strings.HasSuffix(strings.TrimSpace(stopReason), "_budget_exhausted")
+}
+
+func (r *Runner) userFacingFinalAnswer() bool {
+	name := r.agentName()
+	return !strings.HasPrefix(name, "child:") && !strings.HasPrefix(name, "child_write:")
+}
+
+// stripCompletedMutationSelfBlocker rewrites a mutation-lane final
+// answer when the model surfaced a self-inflicted "Blocker:" line even
+// though the harness can see the work is done. Returns the cleaned
+// answer and true on a rewrite; otherwise empty and false.
+//
+// Preconditions:
+//   - Brief requires mutation
+//   - All required_edit_paths show up in changed paths
+//   - Answer is not already a <<QUESTION>>
+//   - Planner owns verification (so no harness-side verification gate
+//     is going to flip this run to blocked)
+//   - The last tool result with a non-empty error is a write-class call
+//     against a path that was already successfully changed earlier in
+//     the run — the shape of an apply_patch/edit_file probe with stale
+//     context after the file was edited.
+func stripCompletedMutationSelfBlocker(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) (string, bool) {
+	if !runnerBriefRequiresMutation(brief) {
+		return "", false
+	}
+
+	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
+		return "", false
+	}
+
+	changed := changedPathsFromToolResults(results)
+	if len(missingRequiredEditPaths(brief.RequiredEditPaths, changed)) > 0 {
+		return "", false
+	}
+
+	if !plannerOwnsVerification(brief) {
+		return "", false
+	}
+
+	if !lastFailureIsPostCompletionWriteProbe(results, changed) {
+		return "", false
+	}
+
+	cleaned, stripped := stripBlockerSection(answer)
+	if !stripped || cleaned == "" {
+		return "", false
+	}
+
+	return cleaned, true
+}
+
+// lastFailureIsPostCompletionWriteProbe reports whether the most recent
+// failed tool result is a write-class call targeting a path that was
+// already changed earlier in the run. Non-write failures and writes
+// against fresh paths return false — those may still represent real
+// blockers.
+func lastFailureIsPostCompletionWriteProbe(results []workspace.ToolResult, changed map[string]struct{}) bool {
+	if len(changed) == 0 {
+		return false
+	}
+
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		if strings.TrimSpace(result.Error) == "" {
+			continue
+		}
+
+		switch strings.TrimSpace(result.Tool) {
+		case "edit_file", "apply_patch", "write_file", "append_file":
+		default:
+			return false
+		}
+
+		path := agentutil.NormalizeRunnerPath(writeFailureTargetPath(result))
+		if path == "" {
+			return false
+		}
+
+		_, ok := changed[path]
+
+		return ok
+	}
+
+	return false
+}
+
+// writeFailureTargetPath extracts the workspace path the failed write
+// was aimed at, when the tool's error or summary surfaces it. Returns
+// the empty string when no path is recoverable.
+func writeFailureTargetPath(result workspace.ToolResult) string {
+	switch strings.TrimSpace(result.Tool) {
+	case "apply_patch":
+		// "Update File <path>: hunk 1 context did not match the file"
+		// "Add File <path>: …", etc.
+		errText := strings.TrimSpace(result.Error)
+		for _, prefix := range []string{"Update File ", "Add File ", "Delete File ", "Move File ", "Update+Move File "} {
+			if rest, ok := strings.CutPrefix(errText, prefix); ok {
+				if path, _, found := strings.Cut(rest, ":"); found {
+					return strings.TrimSpace(path)
+				}
+
+				return strings.TrimSpace(rest)
+			}
+		}
+	case "edit_file", "write_file", "append_file":
+		// edit_file rejection summaries don't always carry the path,
+		// but successful summaries are formatted "Edited <path>" /
+		// "Wrote <path>" / "Appended <path>". Fail closed when neither
+		// the summary nor a parsed error yields a path.
+		summary := strings.TrimSpace(result.Summary)
+		fields := strings.Fields(summary)
+
+		if len(fields) >= 2 {
+			switch fields[0] {
+			case "Edited", "Wrote", "Appended":
+				return fields[1]
+			}
+		}
+	}
+
+	return ""
+}
+
+// stripBlockerSection removes a trailing "Blocker:" / "Blockers:"
+// section (and its bullet body) from the answer, returning the
+// cleaned text and true when something was stripped. Other prose
+// (Changed paths, Verification) is preserved.
+func stripBlockerSection(answer string) (string, bool) {
+	lines := strings.Split(answer, "\n")
+	cut := -1
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		lower := strings.ToLower(trimmed)
+		if lower == "blocker:" ||
+			lower == "blockers:" ||
+			strings.HasPrefix(lower, "blocker:") ||
+			strings.HasPrefix(lower, "blockers:") ||
+			strings.HasPrefix(lower, "blocker -") ||
+			strings.HasPrefix(lower, "blocker—") {
+
+			cut = i
+			break
+		}
+	}
+
+	if cut < 0 {
+		return "", false
+	}
+
+	head := strings.TrimRightFunc(strings.Join(lines[:cut], "\n"), func(r rune) bool {
+		return r == '\n' || r == ' ' || r == '\t'
+	})
+
+	return head, true
+}
+
+func (r *Runner) emitFinalAnswerDecorationEvent(stopReason string, before string, after string) {
+	if r == nil || r.OnEvent == nil || strings.TrimSpace(before) == strings.TrimSpace(after) {
+		return
+	}
+
+	payload := map[string]any{
+		"agent":        r.agentName(),
+		"stop_reason":  strings.TrimSpace(stopReason),
+		"before_chars": len(strings.TrimSpace(before)),
+		"after_chars":  len(strings.TrimSpace(after)),
+	}
+	if data, err := json.Marshal(payload); err == nil {
+		r.OnEvent(RunEvent{Role: "answer_decorated", Content: string(data)})
+	}
+}
+
+// isConversationLikeLane returns true when the task family is a direct
+// user-facing conversation lane where source-body extraction would produce
+// incomprehensible code-fragment answers rather than useful findings.
+func isConversationLikeLane(brief workerruntime.WorkerRuntimeBrief) bool {
+	family := strings.ToLower(strings.TrimSpace(brief.TaskFamily))
+	switch family {
+	case "conversation", "direct_question", "information_request", "coding_help", "general_chat":
+		return true
+	default:
+		return false
+	}
+}
+
+func conversationFallbackShouldAvoidSourceBody(brief workerruntime.WorkerRuntimeBrief) bool {
+	if !isConversationLikeLane(brief) {
+		return false
+	}
+
+	lower := strings.ToLower(strings.TrimSpace(brief.Objective))
+	if agentutil.ContainsAny(lower, "shorten", "rename", "change", "update") &&
+		agentutil.ContainsAny(lower, ".go", ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", "label", "function", "source") {
+
+		return false
+	}
+
+	return true
+}
+
+// isDeterministicFallbackAnswer returns true when the internal answer is
+// the deterministic fallback produced by synthesizeFallbackAnswer — the
+// "Partial findings from this turn..." text that the harness generates when
+// the model fails to produce a substantive answer.
+
+// synthesizeBriefConversationFallback produces a short fallback for
+// conversation lanes when the model failed but the deterministic fallback
+// answer is available. It avoids the source-body extraction path that
+// produces misleading code-fragment answers.
+func synthesizeBriefConversationFallback(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
+	return readOnlyClosureDecisionForResults(brief, results).ConversationFallback()
+}
+
+const (
+	requiredEvidenceGitHistoryRationale = string(workerruntime.RequiredEvidenceGitHistoryRationale)
+	requiredToolGitHistoryLookup        = "history_range_or_history_symbol"
+)
+
+type gitHistoryNotApplicableOutput struct {
+	Status string `json:"status"`
+	Code   string `json:"code"`
+	Path   string `json:"path"`
+}
+
+func planExecuteHistoryPendingToolNames() []string {
+	return []string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}
+}
+
+func planExecuteHistoryPendingToolListForPrompt() string {
+	return "`history_range` or `history_symbol`"
+}
+
+func mutationHistoryEvidenceRequired(brief workerruntime.WorkerRuntimeBrief) bool {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	for _, label := range brief.RequiredEvidence {
+		if workerruntime.EvidenceRequirementMatches(label, workerruntime.RequiredEvidenceGitHistoryRationale) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func successfulGitHistoryEvidenceSeen(results []workspace.ToolResult) bool {
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) == "" &&
+			slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(result.Tool)) &&
+			gitHistoryResultIncludesCommitDescription(result) {
+
+			return true
+		}
+	}
+
+	return false
+}
+
+func successfulGitHistoryResultForPath(path string, results []workspace.ToolResult) bool {
+	path = agentutil.NormalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" || !slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(result.Tool)) {
+			continue
+		}
+
+		if gitHistoryNotApplicableForPath(path, result) {
+			return true
+		}
+
+		if !gitHistoryResultIncludesCommitDescription(result) {
+			continue
+		}
+
+		if agentutil.NormalizeRunnerPath(gitHistoryResultPath(result)) == path {
+			return true
+		}
+	}
+
+	return false
+}
+
+func gitHistoryResultIncludesCommitDescription(result workspace.ToolResult) bool {
+	output := strings.TrimSpace(result.Output)
+	return strings.HasPrefix(output, "commit ") || strings.Contains(output, "\ncommit ")
+}
+
+func gitHistoryNotApplicableForPath(path string, result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Code) != workspace.HistoryNotApplicableCode {
+		return false
+	}
+
+	if strings.TrimSpace(result.Error) != "" || !slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(result.Tool)) {
+		return false
+	}
+
+	var output gitHistoryNotApplicableOutput
+
+	if err := json.Unmarshal([]byte(strings.TrimSpace(result.Output)), &output); err != nil {
+		return false
+	}
+
+	if strings.TrimSpace(output.Code) != "" && strings.TrimSpace(output.Code) != workspace.HistoryNotApplicableCode {
+		return false
+	}
+
+	if strings.TrimSpace(output.Status) != "" && strings.TrimSpace(output.Status) != "not_applicable" {
+		return false
+	}
+
+	return agentutil.NormalizeRunnerPath(output.Path) == agentutil.NormalizeRunnerPath(path)
+}
+
+func gitHistoryResultPath(result workspace.ToolResult) string {
+	summary := strings.TrimSpace(result.Summary)
+	switch strings.TrimSpace(result.Tool) {
+	case workspace.ToolNameHistoryRange:
+		const prefix = "Read git history for "
+
+		if !strings.HasPrefix(summary, prefix) {
+			return ""
+		}
+
+		tail := strings.TrimSpace(strings.TrimPrefix(summary, prefix))
+		if idx := strings.Index(tail, " lines "); idx >= 0 {
+			return strings.TrimSpace(tail[:idx])
+		}
+	case workspace.ToolNameHistorySymbol:
+		const marker = " in "
+
+		if idx := strings.LastIndex(summary, marker); idx >= 0 {
+			return strings.TrimSpace(summary[idx+len(marker):])
+		}
+	}
+
+	return ""
+}
+
+func (r *Runner) writeBeforeGitHistoryEvidenceRejection(req workspace.ToolRequest, results []workspace.ToolResult) (string, string, bool) {
+	if r == nil || !workspace.IsWorkspaceWriteTool(req.Tool) || !mutationHistoryEvidenceRequired(r.RuntimeBrief) {
+		return "", "", false
+	}
+
+	if checkWriteDescription(req) != nil {
+		return "", "", false
+	}
+
+	missing := r.writePathsMissingGitHistory(req, results)
+	if len(missing) == 0 {
+		return "", "", false
+	}
+
+	return "Write rejected before git history evidence", gitHistoryEvidenceRequiredMessage(missing), true
+}
+
+func (r *Runner) writeBeforeGitHistoryEvidenceRedirect(req workspace.ToolRequest, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, string, bool) {
+	if r == nil || !workspace.IsWorkspaceWriteTool(req.Tool) || !mutationHistoryEvidenceRequired(r.RuntimeBrief) {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if checkWriteDescription(req) != nil {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	missing := r.writePathsMissingGitHistory(req, results)
+
+	return gitHistoryEvidenceRedirectRequest(missing, results, allowedTools)
+}
+
+func (r *Runner) writePathsMissingGitHistory(req workspace.ToolRequest, results []workspace.ToolResult) []string {
+	if r == nil {
+		return nil
+	}
+
+	return pathsMissingGitHistory(r.workspaceRootForGitHistoryRequirement(), writeRequestPaths(req), results)
+}
+
+func (r *Runner) submitPlanPathsMissingGitHistory(req workspace.ToolRequest, results []workspace.ToolResult) []string {
+	if r == nil {
+		return nil
+	}
+
+	edits := planThenExecuteEffectiveSubmitPlanEdits(req)
+	paths := make([]string, 0, len(edits))
+
+	for _, edit := range edits {
+		paths = append(paths, edit.Path)
+	}
+
+	return pathsMissingGitHistory(r.workspaceRootForGitHistoryRequirement(), paths, results)
+}
+
+func (r *Runner) submitPlanBeforeGitHistoryEvidenceRedirect(req workspace.ToolRequest, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, string, bool) {
+	if r == nil || !r.planThenExecutePlanSubmissionPhase() || strings.TrimSpace(req.Tool) != workspace.ToolNameSubmitPlan || !mutationHistoryEvidenceRequired(r.RuntimeBrief) {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if len(planThenExecuteRequiredCoveragePaths(r.RuntimeBrief.RequiredEditPaths, "")) > 0 &&
+		len(planThenExecuteUnreadRequiredPaths(r.RuntimeBrief, results)) > 0 {
+
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if planThenExecuteSubmitPlanHasRequiredPathCoverageProblem(r.RuntimeBrief.RequiredEditPaths, req) {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if len(planThenExecuteEffectiveSubmitPlanEdits(req)) == 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	missing := r.submitPlanPathsMissingGitHistory(req, results)
+	if len(missing) == 0 {
+		missing = planThenExecuteHistoryPendingPaths(r.RuntimeBrief, results, nil)
+	}
+
+	return gitHistoryEvidenceRedirectRequest(missing, results, allowedTools)
+}
+
+func (r *Runner) sourceReadBeforeGitHistoryEvidenceRedirect(req workspace.ToolRequest, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, string, bool) {
+	if r == nil || !r.planThenExecutePlanSubmissionPhase() || !mutationHistoryEvidenceRequired(r.RuntimeBrief) {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if !workspace.IsReadTool(strings.TrimSpace(req.Tool)) || slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(req.Tool)) {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if len(planThenExecuteRequiredCoveragePaths(r.RuntimeBrief.RequiredEditPaths, "")) == 0 ||
+		len(planThenExecuteUnreadRequiredPaths(r.RuntimeBrief, results)) > 0 {
+
+		return workspace.ToolRequest{}, "", false
+	}
+
+	pending := planThenExecuteHistoryPendingPaths(r.RuntimeBrief, results, nil)
+	if len(pending) == 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req)); target != "" {
+		for _, path := range pending {
+			if agentutil.NormalizeRunnerPath(path) == target {
+				return gitHistoryEvidenceRedirectRequest([]string{target}, results, allowedTools)
+			}
+		}
+	}
+
+	return gitHistoryEvidenceRedirectRequest(pending, results, allowedTools)
+}
+
+func planThenExecuteSubmitPlanHasRequiredPathCoverageProblem(requiredPaths []string, req workspace.ToolRequest) bool {
+	required := make([]string, 0, len(requiredPaths))
+	for _, raw := range requiredPaths {
+		if path := agentutil.NormalizeRunnerPath(raw); path != "" {
+			required = append(required, path)
+		}
+	}
+
+	if len(required) == 0 {
+		return false
+	}
+
+	requiredSet := make(map[string]struct{}, len(required))
+	for _, path := range required {
+		requiredSet[path] = struct{}{}
+	}
+
+	covered := make(map[string]struct{}, len(required))
+
+	for _, edit := range planThenExecuteEffectiveSubmitPlanEdits(req) {
+		path := agentutil.NormalizeRunnerPath(edit.Path)
+		if path == "" {
+			continue
+		}
+
+		if _, ok := requiredSet[path]; !ok {
+			return true
+		}
+
+		covered[path] = struct{}{}
+	}
+
+	for _, path := range required {
+		if _, ok := covered[path]; !ok {
+			return true
+		}
+	}
+
+	return false
+}
+
+func gitHistoryEvidenceRedirectRequest(paths []string, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, string, bool) {
+	if len(paths) == 0 || !slices.Contains(allowedTools, workspace.ToolNameHistoryRange) {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	path := agentutil.NormalizeRunnerPath(paths[0])
+	if path == "" {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	start, end := gitHistoryRedirectRange(path, results)
+	req := workspace.ToolRequest{
+		Tool:            workspace.ToolNameHistoryRange,
+		Path:            path,
+		StartLine:       start,
+		EndLine:         end,
+		NamedGap:        "git history rationale before changing established logic",
+		WhyNotAnswering: "need commit history evidence before write or submit_plan",
+	}
+
+	return req, marshalToolRequestRaw(req), true
+}
+
+func gitHistoryRedirectRange(path string, results []workspace.ToolResult) (int, int) {
+	path = agentutil.NormalizeRunnerPath(path)
+	for _, readRange := range readRangesForPathFromResults(results, path) {
+		if readRange.start > 0 && readRange.end >= readRange.start {
+			return readRange.start, readRange.end
+		}
+	}
+
+	return 1, 80
+}
+
+func (r *Runner) workspaceRootForGitHistoryRequirement() string {
+	if r == nil || r.Workspace == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(r.Workspace.Root())
+}
+
+func pathsMissingGitHistory(root string, paths []string, results []workspace.ToolResult) []string {
+	seen := make(map[string]struct{}, len(paths))
+
+	var missing []string
+
+	for _, rawPath := range paths {
+		path := agentutil.NormalizeRunnerPath(rawPath)
+		if path == "" {
+			continue
+		}
+
+		if _, ok := seen[path]; ok {
+			continue
+		}
+
+		seen[path] = struct{}{}
+		if !existingFileNeedsGitHistory(root, path) {
+			continue
+		}
+
+		if successfulGitHistoryResultForPath(path, results) {
+			continue
+		}
+
+		missing = append(missing, path)
+	}
+
+	sort.Strings(missing)
+
+	return missing
+}
+
+func existingFileNeedsGitHistory(root string, path string) bool {
+	path = cleanRelativeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+
+	if strings.TrimSpace(root) == "" {
+		return true
+	}
+
+	if !workspaceRootHasGitMetadata(root) {
+		return false
+	}
+
+	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(path)))
+
+	return err == nil && !info.IsDir()
+}
+
+func workspaceRootHasGitMetadata(root string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return false
+	}
+
+	dir, err := filepath.Abs(root)
+	if err != nil {
+		dir = root
+	}
+
+	for {
+		gitPath := filepath.Join(dir, ".git")
+		if info, err := os.Stat(gitPath); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
+			return true
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+
+		dir = parent
+	}
+}
+
+func gitHistoryEvidenceRequiredMessage(paths []string) string {
+	target := "the intended logic"
+	if len(paths) > 0 {
+		target = quotedRunnerStrings(paths)
+	}
+
+	return fmt.Sprintf("git history rationale is required before changing established logic for %s. Use `history_range` or `history_symbol` on the intended logic, read the commit descriptions to understand why and when the current behavior was introduced, then make the write only if that history supports the proposed change. If history shows the change is unsafe, answer `<<QUESTION>>:` with the blocker; genuinely new files do not require history evidence.", target)
+}
+
+func planThenExecuteUnavailableHistoryToolNudge(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, allowedTools []string) (string, string, bool) {
+	tool := strings.TrimSpace(req.Tool)
+	if tool != workspace.ToolNameHistoryRange && tool != workspace.ToolNameHistorySymbol {
+		return "", "", false
+	}
+
+	if slices.Contains(allowedTools, tool) || !mutationHistoryEvidenceRequired(brief) {
+		return "", "", false
+	}
+
+	completed := modelProtocolCompletedGitHistoryPaths(brief, results)
+	pending := modelProtocolPendingGitHistoryPaths(brief, results)
+	sourcePending := modelProtocolSourceBodyObligations(brief, results, TurnPhaseContract{PhaseID: turnPhaseRequiredSource})
+
+	if len(completed) == 0 && len(pending) > 0 {
+		return "", "", false
+	}
+
+	summary := "Git history tool not available in current plan-execute phase"
+	switch {
+	case len(pending) == 0 && len(sourcePending) > 0:
+		return summary, fmt.Sprintf("%s is not callable because git history evidence is already satisfied for completed paths %s. The current pending obligation is source-body evidence for %s; use an available source read tool instead of repeating history_range/history_symbol.", tool, quotedRunnerStrings(completed), quotedRunnerStrings(sourcePending)), true
+	case len(pending) == 0:
+		return summary, fmt.Sprintf("%s is not callable because required git history evidence is already satisfied for completed paths %s. Continue with the current allowed tool surface or submit the next valid terminal action.", tool, quotedRunnerStrings(completed)), true
+	default:
+		return summary, fmt.Sprintf("%s is not callable in the current phase. Completed git history paths: %s. Pending git history paths: %s. Use the current allowed tool surface or wait for the history_pending phase before calling history tools.", tool, quotedRunnerStrings(completed), quotedRunnerStrings(pending)), true
+	}
+}
+
+func (r *Runner) preflightPlanThenExecuteSubmitPlanHistoryGuard(req workspace.ToolRequest, results []workspace.ToolResult) verificationInterceptResult {
+	if r == nil || !r.planThenExecutePlanSubmissionPhase() || strings.TrimSpace(req.Tool) != workspace.ToolNameSubmitPlan {
+		return verificationInterceptResult{}
+	}
+
+	if !mutationHistoryEvidenceRequired(r.RuntimeBrief) {
+		return verificationInterceptResult{}
+	}
+
+	missing := r.submitPlanPathsMissingGitHistory(req, results)
+	if len(missing) == 0 {
+		return verificationInterceptResult{}
+	}
+
+	return verificationInterceptResult{
+		Intercepted: true,
+		Result: workspace.ToolResult{
+			Tool:    workspace.ToolNameSubmitPlan,
+			Summary: "submit_plan rejected: edit paths lack git history evidence",
+			Error: "submit_plan edits must be backed by git history rationale before executor handoff; missing `history_range`/`history_symbol` commit-description evidence for " + quotedRunnerStrings(missing) + ". " +
+				"Read the history for the intended logic, use the commit descriptions to decide why and when the current behavior exists, then submit a corrected plan only if the proposed change is safe. If not safe, answer `<<QUESTION>>:` with the path-specific blocker.",
+		},
+		Reason: "plan-then-execute planner phase: submit_plan lacked git history evidence",
+	}
+}
+
+func (r *Runner) implementationTargetWriteReadyHistoryReadAllowed(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	if r == nil || !mutationHistoryEvidenceRequired(r.RuntimeBrief) || !slices.Contains(workspace.RuntimeHistoryInspectionToolNames(), strings.TrimSpace(req.Tool)) {
+		return false
+	}
+
+	path := agentutil.NormalizeRunnerPath(req.Path)
+	if path == "" {
+		return false
+	}
+
+	if successfulGitHistoryResultForPath(path, results) {
+		return false
+	}
+
+	if !implementationTargetWriteReadySourcePath(path) && !concreteSourceEvidenceReadForPath(path, results) {
+		return false
+	}
+
+	return true
+}
+
+func planThenExecuteSubmitPlanHistoryMissing(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !mutationHistoryEvidenceRequired(brief) {
+		return false
+	}
+
+	var paths []string
+
+	for _, path := range normalizedRequiredEditPaths(brief.RequiredEditPaths) {
+		if concreteSourceEvidenceReadForPath(path, results) {
+			paths = append(paths, path)
+		}
+	}
+
+	if len(paths) == 0 {
+		state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TerminalOnly: true})
+		for _, path := range state.SelectedEditPaths {
+			if concreteSourceEvidenceReadForPath(path, results) {
+				paths = append(paths, path)
+			}
+		}
+	}
+
+	paths = util.Unique(paths)
+	for _, path := range paths {
+		if !successfulGitHistoryResultForPath(path, results) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func answerHasGitHistoryNoopOrBlocker(answer string) bool {
+	trimmed := strings.TrimSpace(answer)
+	if strings.HasPrefix(trimmed, "<<QUESTION>>") {
+		return true
+	}
+
+	lower := strings.ToLower(trimmed)
+
+	return strings.Contains(lower, "source-satisfied") ||
+		strings.Contains(lower, "no files were changed") ||
+		strings.Contains(lower, "changed paths: none") ||
+		strings.Contains(lower, "no changes") ||
+		strings.Contains(lower, "noop") ||
+		strings.Contains(lower, "new file")
+}
+
+// --- internal/runtime/instructions.go ---
+type InstructionAttachment = instructions.Attachment
+type InstructionAttacher = instructions.Attacher
+
+// NewInstructionAttacher constructs an attacher rooted at the given workspace
+// root. Candidates default to AGENTS.md.
+func NewInstructionAttacher(root string, candidates ...string) *InstructionAttacher {
+	return instructions.NewAttacher(root, candidates...)
+}
+
+// LanePolicy encapsulates lane-specific decisions that were previously
+// guarded by scattered TaskFamily/Contract string comparisons.
+type LanePolicy interface {
+	// Name returns a stable identifier for telemetry and logging.
+	Name() string
+
+	// --- Budget & termination ---
+
+	// SkipDurationBudget returns true when the lane should not be
+	// terminated by elapsed-wall-clock duration limits.
+	SkipDurationBudget() bool
+	// SkipModelCallBudget returns true when the lane should not be
+	// terminated by model-call-count limits.
+	SkipModelCallBudget() bool
+	// SkipFingerprintHardBlock returns true when the lane should
+	// clear the force-completion prompt after a fingerprint hard
+	// block fires, allowing the model to continue instead of being
+	// force-completed.
+	SkipFingerprintHardBlock() bool
+	// SkipSynthesisNudge returns true when the generic "answer now"
+	// synthesis budget nudge should be suppressed for this lane.
+	SkipSynthesisNudge() bool
+	// SkipExplorationDelegationNudge returns true when the
+	// exploration-delegation nudge (suggesting the model delegate)
+	// should be suppressed.
+	SkipExplorationDelegationNudge() bool
+	// ShouldForceAnswerAfterRejection returns true when the lane
+	// should force-complete after N consecutive tool rejections
+	// (the "last chance before harness ends" path in turn control).
+	ShouldForceAnswerAfterRejection() bool
+
+	// --- Nudge schedule ---
+
+	// CallCountMilestones returns (firstMilestone, nudgeInterval)
+	// derived from the model context window. A milestone of 0 means
+	// the lane does not use call-count awareness nudges.
+	CallCountMilestones(ctxSize int) (firstMilestone, nudgeInterval int)
+	// AutoCaptureFindings returns true when the lane should
+	// auto-capture inspected path summaries to .idiom/notes/ at
+	// the first context-derived milestone.
+	AutoCaptureFindings() bool
+	// ShouldHaveNoteTool returns true when the lane should expose
+	// the note tool for intermediate-finding capture. The contract
+	// parameter is the lane's RuntimeBrief.Contract value.
+	ShouldHaveNoteTool(contract string) bool
+
+	// --- Evidence & readiness ---
+
+	// EvidenceSufficientForObjective returns true when the lane's
+	// NamedEvidencePaths are all satisfied by bounded source reads.
+	EvidenceSufficientForObjective(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool
+	// NamedEvidencePaths returns the workspace paths that must be
+	// covered by bounded source reads before evidence is sufficient.
+	NamedEvidencePaths(brief workerruntime.WorkerRuntimeBrief) []string
+	// EvidenceSatisfiedForceAnswerReady returns true when the
+	// lane's evidence threshold is met and no mutation/verification
+	// obligations remain.
+	EvidenceSatisfiedForceAnswerReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool
+
+	// --- Nudge text ---
+
+	// RejectionRecoveryNudge returns a system-message nudge when
+	// the lane should intervene after consecutive tool rejections.
+	// Returns "" when the lane does not use rejection-recovery
+	// nudges (conversation lanes let the model own readiness).
+	RejectionRecoveryNudge(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, results []workspace.ToolResult) string
+	// ShouldSkipRecoveryNudge returns true when the lane should skip
+	// rejection-recovery nudges entirely (model owns readiness).
+	ShouldSkipRecoveryNudge() bool
+	// ClosureReadyRecoveryNudge returns a closure-ready nudge or "".
+	ClosureReadyRecoveryNudge(brief workerruntime.WorkerRuntimeBrief) string
+
+	// --- Confidence ---
+
+	// ConfidenceCap returns a confidence ceiling for this lane.
+	// Returns "" for no cap; "medium" is the standard cap for
+	// lanes where the harness cannot evaluate answer quality.
+	ConfidenceCap() string
+}
+
+// --- DefaultLanePolicy (used for implementation, locate, review, etc.) ---
+
+type DefaultLanePolicy struct{}
+
+func (p DefaultLanePolicy) Name() string                          { return "default" }
+func (p DefaultLanePolicy) SkipDurationBudget() bool              { return false }
+func (p DefaultLanePolicy) SkipModelCallBudget() bool             { return false }
+func (p DefaultLanePolicy) SkipFingerprintHardBlock() bool        { return false }
+func (p DefaultLanePolicy) SkipSynthesisNudge() bool              { return false }
+func (p DefaultLanePolicy) SkipExplorationDelegationNudge() bool  { return false }
+func (p DefaultLanePolicy) ShouldForceAnswerAfterRejection() bool { return true }
+func (p DefaultLanePolicy) CallCountMilestones(_ int) (int, int)  { return 0, 0 }
+func (p DefaultLanePolicy) AutoCaptureFindings() bool             { return false }
+func (p DefaultLanePolicy) ShouldHaveNoteTool(_ string) bool      { return false }
+func (p DefaultLanePolicy) ShouldSkipRecoveryNudge() bool         { return false }
+func (p DefaultLanePolicy) RejectionRecoveryNudge(_ workerruntime.WorkerRuntimeBrief, _ workspace.ToolRequest, _ []workspace.ToolResult) string {
+	return ""
+}
+func (p DefaultLanePolicy) ClosureReadyRecoveryNudge(_ workerruntime.WorkerRuntimeBrief) string {
+	return ""
+}
+func (p DefaultLanePolicy) ConfidenceCap() string { return "" }
+
+func (p DefaultLanePolicy) EvidenceSufficientForObjective(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	return false
+}
+func (p DefaultLanePolicy) NamedEvidencePaths(_ workerruntime.WorkerRuntimeBrief) []string {
+	return nil
+}
+func (p DefaultLanePolicy) EvidenceSatisfiedForceAnswerReady(_ workerruntime.WorkerRuntimeBrief, _ []workspace.ToolResult) bool {
+	return false
+}
+
+// --- ConversationLanePolicy ---
+
+type ConversationLanePolicy struct{}
+
+func (p ConversationLanePolicy) Name() string                          { return "conversation" }
+func (p ConversationLanePolicy) SkipDurationBudget() bool              { return true }
+func (p ConversationLanePolicy) SkipModelCallBudget() bool             { return true }
+func (p ConversationLanePolicy) SkipFingerprintHardBlock() bool        { return true }
+func (p ConversationLanePolicy) SkipSynthesisNudge() bool              { return true }
+func (p ConversationLanePolicy) SkipExplorationDelegationNudge() bool  { return true }
+func (p ConversationLanePolicy) ShouldForceAnswerAfterRejection() bool { return false }
+func (p ConversationLanePolicy) AutoCaptureFindings() bool             { return true }
+func (p ConversationLanePolicy) ShouldHaveNoteTool(_ string) bool      { return true }
+func (p ConversationLanePolicy) ConfidenceCap() string                 { return "medium" }
+
+func (p ConversationLanePolicy) CallCountMilestones(ctxSize int) (int, int) {
+	return conversationMilestones(ctxSize)
+}
+
+func (p ConversationLanePolicy) EvidenceSufficientForObjective(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	return conversationEvidenceSatisfiedForObjective(brief, results)
+}
+
+func (p ConversationLanePolicy) NamedEvidencePaths(brief workerruntime.WorkerRuntimeBrief) []string {
+	return conversationNamedEvidencePaths(brief)
+}
+
+func (p ConversationLanePolicy) EvidenceSatisfiedForceAnswerReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	return conversationEvidenceSatisfied(brief, results)
+}
+
+func (p ConversationLanePolicy) ShouldSkipRecoveryNudge() bool { return true }
+func (p ConversationLanePolicy) RejectionRecoveryNudge(_ workerruntime.WorkerRuntimeBrief, _ workspace.ToolRequest, _ []workspace.ToolResult) string {
+	return "" // model owns readiness
+}
+
+func (p ConversationLanePolicy) ClosureReadyRecoveryNudge(_ workerruntime.WorkerRuntimeBrief) string {
+	return "" // model owns readiness
+}
+
+// --- ReadOnlyInvestigationLanePolicy ---
+//
+// Used for architecture, review, locate, and similar read-only investigation
+// lanes. Per the north star, read-only strategy lanes must not be force-
+// completed merely because the harness thinks evidence is sufficient —
+// the model owns its own stop decision. This policy therefore skips hard
+// budget limits (duration, model-call count) that would produce garbage
+// forced answers.
+//
+// However, the north star explicitly allows "repeated-loop breaks" as a
+// real invariant. This policy keeps loop detection (fingerprint hard block,
+// same-path fixation) and advisory nudges (synthesis nudge, call-count
+// milestones) so a stuck model has lightweight recovery paths without a
+// hard force-complete. Force-answer-after-rejection is also suppressed:
+// incidental tool gate rejections should nudge, not terminate.
+
+type ReadOnlyInvestigationLanePolicy struct{}
+
+func (p ReadOnlyInvestigationLanePolicy) Name() string                          { return "read_only_investigation" }
+func (p ReadOnlyInvestigationLanePolicy) SkipDurationBudget() bool              { return true }
+func (p ReadOnlyInvestigationLanePolicy) SkipModelCallBudget() bool             { return true }
+func (p ReadOnlyInvestigationLanePolicy) SkipFingerprintHardBlock() bool        { return false }
+func (p ReadOnlyInvestigationLanePolicy) SkipSynthesisNudge() bool              { return false }
+func (p ReadOnlyInvestigationLanePolicy) SkipExplorationDelegationNudge() bool  { return false }
+func (p ReadOnlyInvestigationLanePolicy) ShouldForceAnswerAfterRejection() bool { return false }
+func (p ReadOnlyInvestigationLanePolicy) AutoCaptureFindings() bool             { return true }
+func (p ReadOnlyInvestigationLanePolicy) ShouldHaveNoteTool(_ string) bool      { return true }
+func (p ReadOnlyInvestigationLanePolicy) ConfidenceCap() string                 { return "medium" }
+
+func (p ReadOnlyInvestigationLanePolicy) CallCountMilestones(ctxSize int) (int, int) {
+	// Investigation lanes need earlier nudges than conversation lanes: local
+	// models (Qwen 35b) lack the metacognition to self-regulate exploration
+	// and may read indefinitely without answering. A first milestone of 10
+	// tool calls (~2-3 minutes of wall-clock time for local models) gives a
+	// timely "consider answering" nudge, with repeats every 10 calls.
+	// Context-window scaling is unnecessary — investigation answers are
+	// typically concise and should not require hundreds of tool calls.
+	return 10, 10
+}
+
+func (p ReadOnlyInvestigationLanePolicy) EvidenceSufficientForObjective(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	return false
+}
+
+func (p ReadOnlyInvestigationLanePolicy) NamedEvidencePaths(brief workerruntime.WorkerRuntimeBrief) []string {
+	return nil
+}
+
+func (p ReadOnlyInvestigationLanePolicy) EvidenceSatisfiedForceAnswerReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	return false
+}
+
+func (p ReadOnlyInvestigationLanePolicy) ShouldSkipRecoveryNudge() bool { return false }
+func (p ReadOnlyInvestigationLanePolicy) RejectionRecoveryNudge(_ workerruntime.WorkerRuntimeBrief, _ workspace.ToolRequest, _ []workspace.ToolResult) string {
+	return ""
+}
+
+func (p ReadOnlyInvestigationLanePolicy) ClosureReadyRecoveryNudge(_ workerruntime.WorkerRuntimeBrief) string {
+	return ""
+}
+
+// --- DelegatedReadOnlyLanePolicy ---
+
+type DelegatedReadOnlyLanePolicy struct{}
+
+func (p DelegatedReadOnlyLanePolicy) Name() string                          { return "delegated_read_only" }
+func (p DelegatedReadOnlyLanePolicy) SkipDurationBudget() bool              { return false }
+func (p DelegatedReadOnlyLanePolicy) SkipModelCallBudget() bool             { return false }
+func (p DelegatedReadOnlyLanePolicy) SkipFingerprintHardBlock() bool        { return false }
+func (p DelegatedReadOnlyLanePolicy) SkipSynthesisNudge() bool              { return false }
+func (p DelegatedReadOnlyLanePolicy) SkipExplorationDelegationNudge() bool  { return false }
+func (p DelegatedReadOnlyLanePolicy) ShouldForceAnswerAfterRejection() bool { return true }
+func (p DelegatedReadOnlyLanePolicy) CallCountMilestones(_ int) (int, int)  { return 0, 0 }
+func (p DelegatedReadOnlyLanePolicy) AutoCaptureFindings() bool             { return false }
+func (p DelegatedReadOnlyLanePolicy) ShouldHaveNoteTool(contract string) bool {
+	return strings.EqualFold(contract, "grounded_evidence_summary")
+}
+func (p DelegatedReadOnlyLanePolicy) ConfidenceCap() string { return "" }
+
+func (p DelegatedReadOnlyLanePolicy) EvidenceSufficientForObjective(_ workerruntime.WorkerRuntimeBrief, _ []workspace.ToolResult) bool {
+	return false
+}
+func (p DelegatedReadOnlyLanePolicy) NamedEvidencePaths(_ workerruntime.WorkerRuntimeBrief) []string {
+	return nil
+}
+func (p DelegatedReadOnlyLanePolicy) EvidenceSatisfiedForceAnswerReady(_ workerruntime.WorkerRuntimeBrief, _ []workspace.ToolResult) bool {
+	return false
+}
+
+func (p DelegatedReadOnlyLanePolicy) ShouldSkipRecoveryNudge() bool { return false }
+func (p DelegatedReadOnlyLanePolicy) RejectionRecoveryNudge(_ workerruntime.WorkerRuntimeBrief, _ workspace.ToolRequest, _ []workspace.ToolResult) string {
+	return ""
+}
+
+func (p DelegatedReadOnlyLanePolicy) ClosureReadyRecoveryNudge(_ workerruntime.WorkerRuntimeBrief) string {
+	return ""
+}
+
+// --- LanePolicyForBrief selects the appropriate policy from a RuntimeBrief ---
+
+func LanePolicyForBrief(brief workerruntime.WorkerRuntimeBrief) LanePolicy {
+	if workerruntime.TaskFamilyIsConversation(brief.TaskFamily) || readOnlyDirectAnswerLane(brief) {
+		return ConversationLanePolicy{}
+	}
+
+	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDelegatedReadOnly) {
+		return DelegatedReadOnlyLanePolicy{}
+	}
+
+	// Read-only investigation lanes (architecture, review, locate, etc.)
+	// that do not require mutation use ReadOnlyInvestigationLanePolicy so
+	// budget enforcement and loop detection remain active (the model cannot
+	// read forever) while force-answer-after-rejection is suppressed.
+	//
+	// Without this explicit routing, the LLM route classifier's
+	// non-determinism (temp 0.1) causes similar evidence-based questions to
+	// land in different lane policies with inconsistent force-answer
+	// behavior, violating the north-star principle of preferring nudges and
+	// bounded recovery over hard-picking the model's next step.
+	if workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) &&
+		!runnerBriefRequiresMutation(brief) {
+
+		return ReadOnlyInvestigationLanePolicy{}
+	}
+
+	return DefaultLanePolicy{}
+}
+
+type Mode = modepolicy.Mode
+
+func BuildMode() Mode {
+	return modepolicy.BuildMode()
+}
+
+func PlanMode() Mode {
+	return modepolicy.PlanMode()
+}
+
+func GeneralMode() Mode {
+	return modepolicy.GeneralMode()
+}
+
+func DefaultModes() []Mode {
+	return modepolicy.DefaultModes()
+}
+
+func ModeByName(name string) (Mode, bool) {
+	return modepolicy.ModeByName(name)
+}
+
+func ModeOrDefault(name string) Mode {
+	return modepolicy.ModeOrDefault(name)
+}
+
+func ModeNames() []string {
+	return modepolicy.ModeNames()
+}
+
+func ModePermissionRules(mode Mode) map[string][]workspace.ToolRule {
+	if len(mode.PermissionRules) == 0 {
+		return nil
+	}
+
+	out := make(map[string][]workspace.ToolRule, len(mode.PermissionRules))
+	for tool, rules := range mode.PermissionRules {
+		converted := make([]workspace.ToolRule, 0, len(rules))
+		for _, rule := range rules {
+			converted = append(converted, workspace.ToolRule{
+				Pattern:  rule.Pattern,
+				Decision: modeToolRuleDecision(rule.Decision),
+			})
+		}
+		out[tool] = converted
+	}
+	return out
+}
+
+func modeToolRuleDecision(decision modepolicy.ToolRuleDecision) workspace.ToolRuleDecision {
+	switch decision {
+	case modepolicy.ToolRuleAllow:
+		return workspace.ToolRuleAllow
+	case modepolicy.ToolRuleAsk:
+		return workspace.ToolRuleAsk
+	case modepolicy.ToolRuleDeny:
+		return workspace.ToolRuleDeny
+	default:
+		return workspace.ToolRuleNone
+	}
+}
+
+// ModePolicy returns tool-economy nudge defaults for the given Mode. These
+// are soft budgets -- they inject a one-shot system message when crossed,
+// never hard-stop a turn.
+func ModePolicy(_ Mode) RunPolicy {
+	return RunPolicy{
+		FingerprintNudgeAt: 3,
+		SynthesisNudgeAt:   10,
+	}
+}
+
+func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) workspace.ToolResult {
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "" {
+		prompt = strings.TrimSpace(req.Content)
+	}
+
+	if prompt == "" {
+		return workspace.ToolResult{
+			Tool:    "task",
+			Summary: "Child task rejected",
+			Error:   "task prompt is required",
+		}
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if mode == "" {
+		mode = "read_only"
+	}
+
+	if isWriteChildMode(mode) {
+		return r.runWorkbranchChildTask(ctx, req, prompt, opts)
+	}
+
+	if mode != "read_only" && mode != "readonly" && mode != "explore" {
+		return workspace.ToolResult{
+			Tool:    "task",
+			Summary: "Child task rejected",
+			Error:   "only read_only child tasks are currently supported",
+		}
+	}
+
+	agentName := strings.TrimSpace(req.Agent)
+	if agentName == "" {
+		agentName = "child"
+	}
+
+	prompt = r.prepareReadOnlyChildPrompt(prompt)
+
+	childPolicy := RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3, MaxModelCalls: 6, MaxDuration: 75 * time.Second}
+
+	if workerruntime.RuntimeContractIsDirectAnswer(r.RuntimeBrief.Contract) {
+		childPolicy.MaxToolSteps = 4
+		childPolicy.MaxModelCalls = 6
+		childPolicy.MaxDuration = 45 * time.Second
+	}
+
+	if effective := r.effectivePolicy(); effective.MaxContextMessages > 0 || effective.MaxContextChars > 0 {
+		childPolicy.MaxContextMessages = effective.MaxContextMessages
+		childPolicy.MaxContextChars = effective.MaxContextChars
+	}
+
+	lifecycle := r.beginReadOnlyChildLifecycle(agentName, opts, childPolicy)
+
+	childBrief := workerruntime.RuntimeBriefForRole("child_read_only", "child:"+agentName, prompt)
+	if len(pathparse.MentionedWorkspacePaths(prompt)) > 0 {
+		childBrief.AllowedTools = filterOutRunnerTools(childBrief.AllowedTools,
+			"go_overview", "go_entrypoints",
+			"cpp_overview", "cpp_entrypoints",
+			"python_overview", "python_entrypoints",
+			"ts_overview", "ts_entrypoints",
+			"rust_overview", "rust_entrypoints",
+			"java_overview", "java_entrypoints",
+		)
+		childBrief.SearchPolicy = util.AppendUnique(childBrief.SearchPolicy, "start_from_named_paths_before_workspace_overview")
+		childBrief.Constraints = util.AppendUnique(childBrief.Constraints, "named_paths_scoped")
+	}
+
+	child := &Runner{
+		Client:           r.Client,
+		Workspace:        r.Workspace,
+		Policy:           childPolicy,
+		AgentName:        "child:" + agentName,
+		PermissionPolicy: readOnlyChildTaskPermissionPolicy(),
+		TaskLedger:       TaskLedgerPolicy{Disabled: true},
+		DisableTaskTool:  true,
+		RuntimeBrief:     childBrief,
+		OnEvent: func(event RunEvent) {
+			if strings.TrimSpace(event.Role) == "" {
+				return
+			}
+
+			r.emitEvent(RunEvent{Role: "child_" + event.Role, Content: event.Content})
+		},
+	}
+	childResults := make([]workspace.ToolResult, 0, 8)
+
+	answer, err := child.Run(
+		ctx,
+		[]llama.ChatMessage{
+			{
+				Role: "system",
+				Content: strings.Join([]string{
+					"You are a read-only delegated child task.",
+					"Answer the delegated question directly using concise grounded evidence.",
+					"For broad architecture, impact, tracing, security, or history questions, a layered discovery evidence packet satisfies orientation only; read at least one relevant source body before answering.",
+					"After one sufficient source-body probe, answer unless one exact missing claim would materially change the answer.",
+					"Prefer the minimal implementation surface needed to answer the question. Do not expand into side-path comparison, mode-by-mode breakdowns, or policy tables unless the question explicitly requires that detail.",
+					"After readiness, treat packet-named files or symbols as evidence, not an allowlist. Either answer or take one exact follow-up that resolves a named missing claim.",
+					"Prefer structured symbol/body tools, discovered handles, or narrow line ranges over raw path-wide rereads.",
+					"Do not edit files, create files, install packages, push, publish, deploy, or spawn more tasks.",
+					"Use repository-relative paths and cite the files you inspected.",
+				}, "\n"),
+			},
+			{Role: "user", Content: prompt},
+		},
+		opts,
+		nil,
+		func(event ToolRequestEvent) {
+			event.ChildInvocationID = lifecycle.InvocationID
+			event.ChildContractID = lifecycle.ChildContractID
+			r.emitEvent(marshalRunEvent("child_tool_request", event))
+		},
+		func(event ToolResultEvent) {
+			childResults = append(childResults, event.Result)
+			event.ChildInvocationID = lifecycle.InvocationID
+			event.ChildContractID = lifecycle.ChildContractID
+			r.emitEvent(marshalRunEvent("child_tool_result", event))
+		},
+	)
+	if err != nil {
+		result := workspace.ToolResult{
+			Tool:    "task",
+			Summary: "Child task failed",
+			Error:   err.Error(),
+		}
+		r.emitReadOnlyChildTerminal(lifecycle, result, childResults, autonomy.ChildTerminalFailed)
+		return result
+	}
+
+	fallbackSourceReads := 0
+	maxFallbackSourceReads := 1
+
+	for r.Workspace != nil && fallbackSourceReads < maxFallbackSourceReads && delegatedChildFallbackSourceReadNeeded(prompt, childResults) {
+		if req, result, ok := r.delegatedChildFallbackSourceRead(ctx, prompt, childResults); ok {
+			step := len(childResults) + 1
+			profile := workspace.DiscoveryProfileForRequest(req)
+			r.emitEvent(marshalRunEvent("child_tool_request", ToolRequestEvent{
+				Step:              step,
+				Agent:             child.agentName(),
+				ChildInvocationID: lifecycle.InvocationID,
+				ChildContractID:   lifecycle.ChildContractID,
+				Raw:               marshalToolRequestRaw(req),
+				Request:           req,
+				Mode:              r.Workspace.Mode(),
+				Broad:             workspace.IsBroadInspectionRequest(req),
+				Narrowing:         workspace.IsNarrowingRequest(req),
+				Action:            toolActionClass(req),
+				DiscoveryClass:    profile.Class,
+				DiscoveryScope:    profile.Scope,
+				DiscoveryCost:     profile.Cost,
+			}))
+			r.emitEvent(marshalRunEvent("child_tool_result", ToolResultEvent{
+				Step:              step,
+				Agent:             child.agentName(),
+				ChildInvocationID: lifecycle.InvocationID,
+				ChildContractID:   lifecycle.ChildContractID,
+				Result:            result,
+			}))
+
+			childResults = append(childResults, result)
+			fallbackSourceReads++
+
+			continue
+		}
+
+		break
+	}
+
+	if blockerKind, _ := child.finalAnswerBlockerKind(answer, childResults); strings.TrimSpace(answer) == "" || strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") || blockerKind != "" {
+		if synthesized, ok := synthesizeDelegatedReadOnlyAnswer(prompt, childResults); ok {
+			if blockerKind, _ := child.finalAnswerBlockerKind(synthesized, childResults); blockerKind == "" {
+				answer = synthesized
+			}
+		} else if fallback, ok := deterministicNoToolsAnswer(child.agentName(), child.RuntimeBrief, childResults); ok {
+			if blockerKind, _ := child.finalAnswerBlockerKind(fallback, childResults); blockerKind == "" {
+				answer = fallback
+			}
+		}
+	}
+
+	answer = augmentDelegatedReadOnlyPacket(answer, prompt, childResults)
+	answer = normalizeDelegatedReadOnlyPacket(answer)
+
+	result := workspace.ToolResult{
+		Tool:    "task",
+		Summary: "Child task completed",
+		Output:  strings.TrimSpace(answer),
+	}
+
+	if packet, ok := buildReadOnlyEvidencePacket(prompt, answer, childResults); ok {
+		result.Output = renderReadOnlyEvidencePacketForToolOutput(packet, answer)
+		result = readOnlyEvidencePacketToolResult(result, packet)
+	}
+
+	r.emitReadOnlyChildTerminal(lifecycle, result, childResults, autonomy.ChildTerminalCompleted)
+
+	return result
+}
+
+func (r *Runner) delegatedChildFallbackSourceRead(ctx context.Context, prompt string, results []workspace.ToolResult) (workspace.ToolRequest, workspace.ToolResult, bool) {
+	if r == nil || r.Workspace == nil {
+		return workspace.ToolRequest{}, workspace.ToolResult{}, false
+	}
+
+	paths := newDelegatedDiscoveryPlan(prompt).consumableSourceBodyCandidatePaths(results, 6)
+	for _, path := range paths {
+		path = agentutil.NormalizeRunnerPath(path)
+		if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) || concreteSourceEvidenceReadForPath(path, results) {
+			continue
+		}
+
+		req := workspace.ToolRequest{
+			Tool:            "read_file",
+			Path:            path,
+			StartLine:       1,
+			EndLine:         160,
+			NamedGap:        "source-body evidence for delegated read-only synthesis",
+			WhyNotAnswering: "the child has discovery evidence but needs one source-body read before a grounded answer",
+		}
+		result := r.Workspace.Execute(ctx, req)
+
+		if strings.TrimSpace(result.Error) != "" || !readFileResultHasConcreteSourceBody(result) {
+			continue
+		}
+
+		return req, result, true
+	}
+
+	return workspace.ToolRequest{}, workspace.ToolResult{}, false
+}
+
+func delegatedChildFallbackSourceReadNeeded(prompt string, results []workspace.ToolResult) bool {
+	return len(delegatedReadOnlySourceBodyEvidencePaths(results)) == 0
+}
+
+func normalizeReadOnlyChildPrompt(prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return ""
+	}
+
+	lines := strings.Split(prompt, "\n")
+	kept := make([]string, 0, len(lines))
+
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+
+		if len(kept) == 0 {
+			line = normalizeReadOnlyChildLead(line)
+			kept = append(kept, line)
+
+			continue
+		}
+
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "answer ") ||
+			strings.HasPrefix(lower, "named workspace scope:") ||
+			strings.HasPrefix(lower, "key terms:") {
+
+			kept = util.AppendUnique(kept, line)
+		}
+	}
+
+	if namedPaths := pathparse.MentionedWorkspacePaths(prompt); len(namedPaths) > 0 {
+		kept = util.AppendUnique(kept, "Named workspace scope: "+strings.Join(namedPaths, ", "))
+	}
+
+	if keyTerms := readOnlyChildKeyTerms(prompt); len(keyTerms) > 0 {
+		kept = util.AppendUnique(kept, "Key terms: "+strings.Join(keyTerms, ", "))
+	}
+
+	if len(kept) == 0 {
+		return prompt
+	}
+
+	return strings.Join(kept, "\n")
+}
+
+func (r *Runner) prepareReadOnlyChildPrompt(prompt string) string {
+	prompt = normalizeReadOnlyChildPrompt(prompt)
+	if prompt == "" {
+		return ""
+	}
+
+	if !readOnlyChildPromptHasPrimaryNamedScope(prompt) && r != nil && r.Workspace != nil {
+		if scope := delegatedReadOnlyLikelySourceScope(prompt, r.Workspace.Root()); scope != "" {
+			prompt += "\nNamed workspace scope: " + scope
+		}
+	}
+
+	return r.augmentReadOnlyChildPrompt(prompt)
+}
+
+func readOnlyChildPromptHasPrimaryNamedScope(prompt string) bool {
+	return newDelegatedDiscoveryPlan(prompt).hasPrimaryScope
+}
+
+func normalizeReadOnlyChildLead(line string) string {
+	line = strings.TrimSpace(line)
+
+	lower := strings.ToLower(line)
+
+	for _, prefix := range []string{
+		"explore this codebase and ",
+		"explore the codebase and ",
+		"inspect this codebase and ",
+		"inspect the codebase and ",
+	} {
+		if strings.HasPrefix(lower, prefix) {
+			remainder := strings.TrimSpace(line[len(prefix):])
+			if remainder == "" {
+				return line
+			}
+
+			return strings.ToUpper(remainder[:1]) + remainder[1:]
+		}
+	}
+
+	if idx := strings.Index(line, "?"); idx >= 0 {
+		question := strings.TrimSpace(line[:idx+1])
+		if question != "" {
+			return question
+		}
+	}
+
+	if narrowed := rewriteBroadReadOnlyChildLead(line); narrowed != "" {
+		return narrowed
+	}
+
+	if trimmed := trimReadOnlyChildLeadAtBroadMarker(line); trimmed != "" {
+		return trimmed
+	}
+
+	return line
+}
+
+func rewriteBroadReadOnlyChildLead(line string) string {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	if !agentutil.ContainsAny(lower,
+		"cmd directory",
+		"entry point",
+		"entrypoint",
+		"main entry",
+		"look for pattern",
+		"focus on ",
+		"explore ",
+	) {
+
+		return ""
+	}
+
+	for _, marker := range []string{"explain ", "describe ", "summarize ", "how ", "what ", "why "} {
+		if idx := strings.Index(lower, marker); idx >= 0 {
+			rewritten := strings.TrimSpace(line[idx:])
+			if rewritten == "" {
+				continue
+			}
+
+			return strings.ToUpper(rewritten[:1]) + rewritten[1:]
+		}
+	}
+
+	return ""
+}
+
+func trimReadOnlyChildLeadAtBroadMarker(line string) string {
+	lower := strings.ToLower(line)
+	cut := -1
+
+	for _, marker := range []string{
+		" explore the ",
+		" explore ",
+		" look for ",
+		" focus on ",
+		" specifically ",
+		" emphasize ",
+		" start from ",
+		" trace through ",
+	} {
+		if idx := strings.Index(lower, marker); idx > 0 && (cut == -1 || idx < cut) {
+			cut = idx
+		}
+	}
+
+	if cut <= 0 {
+		return ""
+	}
+
+	trimmed := strings.TrimSpace(strings.TrimRight(line[:cut], ",;:- "))
+	if trimmed == "" {
+		return ""
+	}
+
+	return trimmed
+}
+
+func readOnlyChildKeyTerms(prompt string) []string {
+	return newDelegatedDiscoveryPlan(prompt).promptKeyTerms
+}
+
+func isWriteChildMode(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "write", "workbranch", "workbranch_write", "isolated_write", "patch":
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *Runner) runWorkbranchChildTask(ctx context.Context, req workspace.ToolRequest, prompt string, opts llama.ChatOptions) workspace.ToolResult {
+	if r == nil || r.Workspace == nil || strings.TrimSpace(r.Workspace.Root()) == "" {
+		return workspace.ToolResult{Tool: "task", Summary: "Workbranch child task rejected", Error: "parent workspace root is required for isolated write child tasks"}
+	}
+
+	agentName := strings.TrimSpace(req.Agent)
+	if agentName == "" {
+		agentName = "worker"
+	}
+
+	manager := WorkbranchManager{Root: r.Workspace.Root()}
+
+	checkout, err := manager.Create(ctx, agentName)
+	if err != nil {
+		return workspace.ToolResult{Tool: "task", Summary: "Workbranch child task failed", Error: err.Error()}
+	}
+
+	defer func() {
+		if err := manager.Remove(context.Background(), checkout); err != nil {
+			r.emitEvent(marshalRunEvent("child_workbranch_cleanup_error", map[string]string{
+				"path":  checkout.Path,
+				"error": err.Error(),
+			}))
+		}
+	}()
+
+	r.emitEvent(marshalRunEvent("child_workbranch", checkout))
+
+	childWorkspace := workspace.NewManager(config.Workspace{
+		Root:                  checkout.Path,
+		CWD:                   checkout.Path,
+		Shell:                 "/bin/sh",
+		CommandTimeoutSeconds: 120,
+		MaxOutputBytes:        131072,
+		MaxFileBytes:          262144,
+		MaxDirectoryEntries:   2000,
+		EnableShell:           true,
+		EnableWrites:          true,
+	})
+	childPolicy := RunPolicy{MaxToolSteps: 10, MaxNoProgressTurns: 4, MaxModelCalls: 16, MaxDuration: 4 * time.Minute}
+
+	if effective := r.effectivePolicy(); effective.MaxContextMessages > 0 || effective.MaxContextChars > 0 {
+		childPolicy.MaxContextMessages = effective.MaxContextMessages
+		childPolicy.MaxContextChars = effective.MaxContextChars
+	}
+
+	childClient := r.Client
+	if r.ImplementerClient != nil {
+		childClient = r.ImplementerClient
+	}
+	lifecycle := r.beginWorkbranchChildLifecycle(agentName, opts, childPolicy, childClient)
+
+	child := &Runner{
+		Client:           childClient,
+		Workspace:        childWorkspace,
+		Policy:           childPolicy,
+		AgentName:        "child_write:" + agentName,
+		PermissionPolicy: workbranchChildTaskPermissionPolicy(),
+		TaskLedger:       TaskLedgerPolicy{Required: true},
+		DisableTaskTool:  true,
+		CheckpointPolicy: CheckpointPolicy{Enabled: true},
+		RuntimeBrief:     workerruntime.RuntimeBriefForRole("child_write", "child_write:"+agentName, prompt),
+		OnEvent: func(event RunEvent) {
+			if strings.TrimSpace(event.Role) == "" {
+				return
+			}
+
+			r.emitEvent(RunEvent{Role: "child_" + event.Role, Content: event.Content})
+		},
+	}
+	answer, runErr := child.Run(
+		ctx,
+		[]llama.ChatMessage{
+			{
+				Role: "system",
+				Content: strings.Join([]string{
+					"You are a bounded isolated implementation child task running in a temporary git worktree.",
+					"Make only the delegated change. Do not push, publish, deploy, or spawn more tasks.",
+					"Keep task_ledger current. Verify the changed surface when practical.",
+					"Final answer must include changed files, verification status, and confidence.",
+					childWorkspace.Instructions(),
+				}, "\n"),
+			},
+			{Role: "user", Content: prompt},
+		},
+		opts,
+		nil,
+		func(event ToolRequestEvent) {
+			event.ChildInvocationID = lifecycle.InvocationID
+			event.ChildContractID = lifecycle.ChildContractID
+			r.emitEvent(marshalRunEvent("child_tool_request", event))
+		},
+		func(event ToolResultEvent) {
+			event.ChildInvocationID = lifecycle.InvocationID
+			event.ChildContractID = lifecycle.ChildContractID
+			r.emitEvent(marshalRunEvent("child_tool_result", event))
+		},
+	)
+	diff, diffErr := manager.Diff(ctx, checkout)
+
+	if runErr != nil {
+		result := workspace.ToolResult{Tool: "task", Summary: "Workbranch child task failed", Error: runErr.Error(), Output: renderWorkbranchChildOutput(checkout, diff, answer)}
+		r.emitWorkbranchChildTerminal(lifecycle, checkout, result, diff, autonomy.ChildTerminalFailed)
+		return result
+	}
+
+	if diffErr != nil {
+		result := workspace.ToolResult{Tool: "task", Summary: "Workbranch child diff failed", Error: diffErr.Error(), Output: strings.TrimSpace(answer)}
+		r.emitWorkbranchChildTerminal(lifecycle, checkout, result, diff, autonomy.ChildTerminalFailed)
+		return result
+	}
+
+	result := workspace.ToolResult{
+		Tool:    "task",
+		Summary: fmt.Sprintf("Workbranch child task completed with %d changed path(s)", len(diff.ChangedPaths)),
+		Output:  renderWorkbranchChildOutput(checkout, diff, answer),
+	}
+	r.emitWorkbranchChildTerminal(lifecycle, checkout, result, diff, autonomy.ChildTerminalCompleted)
+	return result
+}
+
+func renderWorkbranchChildOutput(checkout WorkbranchCheckout, diff WorkbranchDiff, answer string) string {
+	var b strings.Builder
+
+	b.WriteString("Isolated workbranch result\n")
+	b.WriteString("branch: " + checkout.Branch + "\n")
+	b.WriteString("base: " + checkout.BaseSHA + "\n")
+
+	if len(diff.ChangedPaths) > 0 {
+		b.WriteString("changed paths:\n")
+
+		for _, path := range diff.ChangedPaths {
+			b.WriteString("- " + path + "\n")
+		}
+	}
+
+	if strings.TrimSpace(diff.Stat) != "" {
+		b.WriteString("\nstat:\n")
+		b.WriteString(diff.Stat + "\n")
+	}
+
+	if strings.TrimSpace(answer) != "" {
+		b.WriteString("\nchild answer:\n")
+		b.WriteString(strings.TrimSpace(answer) + "\n")
+	}
+
+	if strings.TrimSpace(diff.Patch) != "" {
+		b.WriteString("\npatch:\n```diff\n")
+		b.WriteString(strings.TrimSpace(diff.Patch))
+		b.WriteString("\n```\n")
+	}
+
+	if len(diff.ChangedPaths) > 0 {
+		b.WriteString("\nParent must inspect this diff and explicitly apply or reject it; the main workspace was not mutated by the child.\n")
+	}
+
+	return strings.TrimSpace(b.String())
+}
+
+func readOnlyChildTaskPermissionPolicy() ToolPermissionPolicy {
+	allowTool := func(tool string) ToolPermissionRule {
+		return ToolPermissionRule{Tool: tool, Decision: PermissionAllow}
+	}
+	allowShellPrefix := func(prefix string) ToolPermissionRule {
+		return ToolPermissionRule{Tool: "shell", CommandPrefix: prefix, Decision: PermissionAllow}
+	}
+	rules := make([]ToolPermissionRule, 0, len(childAllowedTools())+20)
+
+	for _, tool := range childAllowedTools() {
+		if tool == "shell" {
+			continue
+		}
+
+		rules = append(rules, allowTool(tool))
+	}
+
+	rules = append(rules,
+		allowShellPrefix("rg "),
+		allowShellPrefix("grep "),
+		allowShellPrefix("awk "),
+		allowShellPrefix("sed -n"),
+		allowShellPrefix("cat "),
+		allowShellPrefix("head "),
+		allowShellPrefix("tail "),
+		allowShellPrefix("wc "),
+		allowShellPrefix("pwd"),
+		allowShellPrefix("ls "),
+		allowShellPrefix("find "),
+		allowShellPrefix("git status"),
+		allowShellPrefix("git diff"),
+		allowShellPrefix("git log"),
+		allowShellPrefix("git show"),
+		allowShellPrefix("git grep"),
+		allowShellPrefix("go test"),
+		allowShellPrefix("go list"),
+		allowShellPrefix("go env"),
+	)
+
+	return ToolPermissionPolicy{
+		Default: PermissionDeny,
+		Rules:   rules,
+	}
+}
+
+func workbranchChildTaskPermissionPolicy() ToolPermissionPolicy {
+	allowTool := func(tool string) ToolPermissionRule {
+		return ToolPermissionRule{Tool: tool, Decision: PermissionAllow}
+	}
+	allowShellPrefix := func(prefix string) ToolPermissionRule {
+		return ToolPermissionRule{Tool: "shell", CommandPrefix: prefix, Decision: PermissionAllow}
+	}
+	deny := func(tool string) ToolPermissionRule {
+		return ToolPermissionRule{Tool: tool, Decision: PermissionDeny}
+	}
+	denyShellPrefix := func(prefix string) ToolPermissionRule {
+		return ToolPermissionRule{Tool: "shell", CommandPrefix: prefix, Decision: PermissionDeny}
+	}
+	denyShellContains := func(value string) ToolPermissionRule {
+		return ToolPermissionRule{Tool: "shell", CommandContains: value, Decision: PermissionDeny}
+	}
+	spec := workerruntime.RoleSpecFor("child_write")
+	workbranchAllowPrefixes := workbranchAllowedShellPrefixes()
+	rules := make([]ToolPermissionRule, 0, len(spec.AllowedTools)+len(workbranchAllowPrefixes)+len(workbranchDeniedShellPrefixes(spec))+2)
+
+	for _, tool := range spec.AllowedTools {
+		tool = strings.TrimSpace(tool)
+		if tool == "" || tool == "task" || tool == "shell" {
+			continue
+		}
+
+		rules = append(rules, allowTool(tool))
+	}
+
+	for _, prefix := range workbranchAllowPrefixes {
+		rules = append(rules, allowShellPrefix(prefix))
+	}
+
+	rules = append(rules, deny("task"))
+	for _, prefix := range workbranchDeniedShellPrefixes(spec) {
+		rules = append(rules, denyShellPrefix(prefix))
+	}
+
+	rules = append(rules, denyShellPrefix("git -C"))
+	for _, value := range workbranchDeniedShellFragments() {
+		rules = append(rules, denyShellContains(value))
+	}
+
+	return ToolPermissionPolicy{
+		Default: PermissionDeny,
+		Rules:   rules,
+	}
+}
+
+func workbranchAllowedShellPrefixes() []string {
+	return []string{
+		"go test", "go list",
+		"git status", "git diff", "git log", "git show", "git grep",
+		"pwd", "ls ",
+		"rg ", "grep ",
+		"cat ", "head ", "tail ", "wc ",
+	}
+}
+
+func workbranchDeniedShellFragments() []string {
+	return []string{"\n", "\r", "&&", "||", ";", "|", ">", "<", "$(", "`", "go env -w", "go env -u", "--output="}
+}
+
+func childAllowedTools() []string {
+	return workerruntime.RoleSpecFor("child_read_only").AllowedTools
+}
+
+func workbranchDeniedShellPrefixes(spec workerruntime.RoleSpec) []string {
+	denied := []string{"gh pr create"}
+
+	for _, forbidden := range spec.ForbiddenTools {
+		switch strings.TrimSpace(forbidden) {
+		case "git_push":
+			denied = append(denied, "git push", "gh pr merge")
+		case "git_history_mutation":
+			denied = append(denied, "git commit", "git reset", "git checkout", "git switch", "git worktree", "git branch", "git clean")
+		case "git_index_mutation":
+			denied = append(denied, "git add", "git restore")
+		case "publish":
+			denied = append(denied, "npm publish", "pnpm publish", "yarn publish", "docker push")
+		case "deploy":
+			denied = append(denied, "kubectl ", "deploy", "release", "gh release")
+		}
+	}
+
+	return util.Merge(denied)
+}
+
+// runDelegateEdit handles a delegate_edit tool call from the planner.
+//
+// The point of delegate_edit is to give the planner a separate mental
+// hook for "the actual edit is someone else's job — I just specify what
+// changes." That break alone helps reduce the planner's verification
+// urge: once the planner stops thinking of itself as the executor, it
+// stops feeling responsible for confirming each landed edit.
+//
+// The implementation routes the planner's edit spec through a single
+// chat completion against ImplementerClient (the configured executor-
+// role backend, sourced from .idiom/backends.json or cfg.Implementer).
+// The executor's job is narrow: read the spec, emit a single edit_file
+// or apply_patch tool-call JSON, and stop. The runner parses that JSON, dispatches
+// the underlying edit through Workspace.Execute, and returns the real
+// edit result back to the planner. If the executor fails for any
+// reason — model error, malformed reply, missing client — the runner
+// falls back to dispatching the planner's spec directly so the lane
+// still makes progress.
+//
+// Returned ToolResult carries Tool="delegate_edit" so the audit trail
+// and required_edit_paths_progress treat it as the model's own edit
+// (it IS, semantically — the planner asked for it, the executor
+// rubber-stamped or refined it).
+func (r *Runner) runDelegateEdit(ctx context.Context, req workspace.ToolRequest) workspace.ToolResult {
+	if reject := validateDelegateEditRequest(req); reject != nil {
+		return *reject
+	}
+
+	executor := r.delegateEditExecutorClient()
+	if executor == nil {
+		// No executor available — direct dispatch keeps the lane
+		// honest. The planner still sees a delegate_edit-shaped result.
+		return r.dispatchDelegatedEditDirectly(ctx, req, "no executor client configured")
+	}
+
+	systemPrompt, userPrompt := delegateEditPrompts(req)
+	executorOpts := llama.ChatOptions{
+		Temperature: 0.2,
+		TopP:        0.95,
+		MaxTokens:   2048,
+	}
+	lifecycle := r.beginDelegateEditLifecycle(req, executorOpts, false, executor)
+
+	reply, err := executor.CompleteChatMessage(ctx, []llama.ChatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}, executorOpts)
+	if err != nil {
+		r.emitEvent(RunEvent{Role: "delegate_edit_executor_error", Content: err.Error()})
+		r.emitDelegateEditExecutorFailureLifecycle(lifecycle, err)
+
+		return r.dispatchDelegatedEditDirectly(ctx, req, "executor error: "+err.Error())
+	}
+
+	childReq, parseErr := parseDelegateEditReply(reply.Content, req)
+	if parseErr != nil {
+		r.emitEvent(RunEvent{Role: "delegate_edit_parse_error", Content: parseErr.Error()})
+		r.emitDelegateEditParseFailureLifecycle(lifecycle, req, parseErr)
+
+		return r.dispatchDelegatedEditDirectly(ctx, req, "executor reply unparseable: "+parseErr.Error())
+	}
+
+	r.emitEvent(RunEvent{
+		Role:    "delegate_edit_executor_call",
+		Content: fmt.Sprintf("executor produced %s for %s", childReq.Tool, childReq.Path),
+	})
+
+	result := r.Workspace.Execute(ctx, childReq)
+
+	wrapped := wrapDelegateEditResult(result, "executor: "+childReq.Tool)
+	r.emitDelegateEditLifecycle(lifecycle, req, wrapped, autonomy.ChildRouteParentExecutor, "executor_route")
+	return wrapped
+}
+
+// validateDelegateEditRequest rejects malformed delegate_edit calls
+// before the executor round-trip. The contract: a path is required,
+// and the spec must be either old/new substring shape or
+// start/end/content range shape.
+func validateDelegateEditRequest(req workspace.ToolRequest) *workspace.ToolResult {
+	path := strings.TrimSpace(req.Path)
+	if path == "" {
+		return &workspace.ToolResult{
+			Tool:    "delegate_edit",
+			Summary: "delegate_edit rejected",
+			Error:   "delegate_edit requires a path",
+		}
+	}
+
+	hasSubstringShape := strings.TrimSpace(req.OldText) != "" && strings.TrimSpace(req.NewText) != ""
+	hasRangeShape := req.StartLine > 0 && req.EndLine >= req.StartLine && strings.TrimSpace(req.Content) != ""
+	hasReplaceShape := strings.TrimSpace(req.NewText) != "" && req.ReplaceAll
+
+	if !hasSubstringShape && !hasRangeShape && !hasReplaceShape {
+		return &workspace.ToolResult{
+			Tool:    "delegate_edit",
+			Summary: "delegate_edit rejected",
+			Error:   "delegate_edit requires either old_text+new_text (substring shape) or start_line+end_line+content (range shape)",
+		}
+	}
+
+	return nil
+}
+
+// delegateEditExecutorClient picks the executor for a delegate_edit
+// call. ImplementerClient is the canonical executor (configured to
+// point at the 30B-coder backend in production). When unset the
+// runner has no separate executor — see runDelegateEdit's fallback.
+func (r *Runner) delegateEditExecutorClient() llama.LLMClient {
+	if r == nil {
+		return nil
+	}
+
+	if r.ImplementerClient != nil {
+		return r.ImplementerClient
+	}
+
+	// Deliberately do NOT fall back to r.Client here. The whole point
+	// of delegate_edit is to break out of the planner's context; if
+	// the planner and executor share a client, we lose that benefit.
+	// The caller's fallback path will dispatch the spec directly.
+	return nil
+}
+
+// delegateEditPrompts renders the two-message executor prompt. The
+// system message anchors the executor's role; the user message is
+// the literal edit spec.
+func delegateEditPrompts(req workspace.ToolRequest) (string, string) {
+	system := strings.Join([]string{
+		"You are the local executor for a single file edit.",
+		"The planner has already decided what to change and where; your only job is to emit the workspace tool call that performs that edit.",
+		"Reply with one and ONLY one JSON tool call, on its own. No prose, no commentary, no markdown fences.",
+		"Use edit_file when given an old_text/new_text or start_line/end_line/content spec.",
+		"Use apply_patch only if the spec carries a `patch` field with a *** Begin Patch envelope.",
+		"Do not invent fields, do not change paths, do not rephrase old_text. Output the exact JSON the workspace expects.",
+	}, " ")
+	specBytes, _ := json.MarshalIndent(map[string]any{
+		"path":        strings.TrimSpace(req.Path),
+		"old_text":    req.OldText,
+		"new_text":    req.NewText,
+		"start_line":  req.StartLine,
+		"end_line":    req.EndLine,
+		"content":     req.Content,
+		"replace_all": req.ReplaceAll,
+		"description": strings.TrimSpace(req.Purpose),
+	}, "", "  ")
+	user := "Apply this edit by emitting the workspace tool call. Spec:\n" + string(specBytes)
+
+	return system, user
+}
+
+// parseDelegateEditReply extracts a workspace.ToolRequest from the
+// executor's reply. The reply is expected to be a single JSON object
+// shaped like an edit_file or apply_patch ToolRequest. Anything else
+// (fenced blocks, prose, multiple tool calls) is rejected so the
+// fallback path takes over.
+func parseDelegateEditReply(content string, planSpec workspace.ToolRequest) (workspace.ToolRequest, error) {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return workspace.ToolRequest{}, fmt.Errorf("executor returned empty content")
+	}
+
+	if fence := stripJSONFence(trimmed); fence != "" {
+		trimmed = fence
+	}
+
+	var req workspace.ToolRequest
+
+	if err := json.Unmarshal([]byte(trimmed), &req); err != nil {
+		return workspace.ToolRequest{}, fmt.Errorf("executor reply is not valid JSON: %w", err)
+	}
+
+	switch strings.TrimSpace(req.Tool) {
+	case "edit_file", "apply_patch", "write_file", "append_file":
+		// OK — these are write tools the workspace knows how to
+		// dispatch.
+	default:
+		return workspace.ToolRequest{}, fmt.Errorf("executor selected disallowed tool %q (must be edit_file/apply_patch/write_file/append_file)", req.Tool)
+	}
+
+	if req.Tool == "edit_file" {
+		// Defensive: the executor should not change the path — the
+		// planner controls that. If it did, fall back to the planner
+		// spec's path.
+		if strings.TrimSpace(req.Path) == "" {
+			req.Path = strings.TrimSpace(planSpec.Path)
+		}
+	}
+
+	return req, nil
+}
+
+// stripJSONFence handles executors that wrap JSON in ```json fences
+// despite the system instruction. Returns "" if no fence pattern is
+// detected (caller falls back to the original string).
+func stripJSONFence(s string) string {
+	s = strings.TrimSpace(s)
+
+	rest, ok := strings.CutPrefix(s, "```")
+
+	if !ok {
+		return ""
+	}
+
+	rest = strings.TrimPrefix(rest, "json")
+	rest = strings.TrimLeft(rest, "\r\n ")
+
+	end := strings.LastIndex(rest, "```")
+
+	if end < 0 {
+		return ""
+	}
+
+	return strings.TrimSpace(rest[:end])
+}
+
+// dispatchDelegatedEditDirectly translates the planner's spec into a
+// real edit_file ToolRequest and dispatches it without going through
+// the executor. Used as the fallback path when the executor is
+// unavailable, errors out, or returns garbage.
+func (r *Runner) dispatchDelegatedEditDirectly(ctx context.Context, req workspace.ToolRequest, reason string) workspace.ToolResult {
+	r.emitEvent(RunEvent{
+		Role:    "delegate_edit_direct_dispatch",
+		Content: fmt.Sprintf("dispatching planner spec directly (%s)", reason),
+	})
+	lifecycle := r.beginDelegateEditLifecycle(req, llama.ChatOptions{}, true, nil)
+
+	// edit_file's contract requires Description (the autodoc reads it
+	// for the plan-panel autodoc). Forward whichever of the planner's
+	// purpose/description fields is non-empty so the executor sees
+	// the same intent the planner wrote.
+	intent := strings.TrimSpace(req.Purpose)
+	if intent == "" {
+		intent = strings.TrimSpace(req.Description)
+	}
+
+	if intent == "" {
+		intent = "delegate_edit fallback: planner spec dispatched directly"
+	}
+
+	direct := workspace.ToolRequest{
+		Tool:        "edit_file",
+		Path:        req.Path,
+		OldText:     req.OldText,
+		NewText:     req.NewText,
+		StartLine:   req.StartLine,
+		EndLine:     req.EndLine,
+		Content:     req.Content,
+		ReplaceAll:  req.ReplaceAll,
+		Description: intent,
+	}
+	result := r.Workspace.Execute(ctx, direct)
+
+	wrapped := wrapDelegateEditResult(result, "direct: "+reason)
+	r.emitDelegateEditLifecycle(lifecycle, req, wrapped, autonomy.ChildRouteDeterministicDirect, "direct_dispatch")
+	return wrapped
+}
+
+// wrapDelegateEditResult re-labels the underlying edit's ToolResult so
+// audit trails see delegate_edit consistently. The Summary keeps the
+// underlying message so debugging is still straightforward, and the
+// rendered Output shows which path the request took (executor vs
+// direct).
+func wrapDelegateEditResult(result workspace.ToolResult, route string) workspace.ToolResult {
+	wrapped := result
+
+	wrapped.Tool = "delegate_edit"
+
+	if strings.TrimSpace(wrapped.Summary) == "" {
+		wrapped.Summary = "delegate_edit completed"
+	}
+
+	header := fmt.Sprintf("delegated_via: %s", route)
+	if strings.TrimSpace(wrapped.Output) == "" {
+		wrapped.Output = header
+	} else {
+		wrapped.Output = header + "\n\n" + wrapped.Output
+	}
+
+	return wrapped
+}
+
+func delegatedSourceBodyPacketHasGroundedFinding(output string) bool {
+	if len(sourceBodyEvidencePathsFromDelegatedPacket(output)) == 0 {
+		return false
+	}
+
+	return delegatedTaskOutputHasFindingEvidence(output)
+}
+
+func delegatedReadOnlySourceBodyEvidencePaths(results []workspace.ToolResult) []string {
+	paths := make([]string, 0, 4)
+
+	paths = append(paths, concreteSourceEvidencePaths(results)...)
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != workspace.ToolNameTask || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+
+		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
+			paths = append(paths, packet.SourceBodyPaths...)
+			continue
+		}
+
+		paths = append(paths, sourceBodyEvidencePathsFromDelegatedPacket(result.Output)...)
+	}
+
+	filtered := make([]string, 0, len(paths))
+	for _, raw := range paths {
+		path := normalizeDelegatedDiscoveryEvidencePath(raw)
+		if !isGroundedChildPacketEvidencePath("", path) {
+			continue
+		}
+
+		filtered = append(filtered, path)
+	}
+
+	return uniqueDelegatedDiscoveryPaths(filtered)
+}
+
+func allowsDocumentationOnlyPacket(objective string) bool {
+	lower := " " + strings.ToLower(strings.TrimSpace(objective)) + " "
+	return agentutil.ContainsAny(lower, " readme ", " doc ", " docs ", " documentation ", " markdown ")
+}
+
+func annotateScopedFallbackAnswer(answer string, objective string) string {
+	answer = strings.TrimSpace(answer)
+	objective = strings.TrimSpace(objective)
+
+	if objective == "" || answer == "" || !strings.HasPrefix(answer, "Partial findings from this turn") {
+		return answer
+	}
+
+	return "Question in scope: " + objective + "\nSource: delegated read-only evidence packet.\n\n" + answer
+}
+
+func augmentDelegatedReadOnlyPacket(answer string, objective string, results []workspace.ToolResult) string {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return ""
+	}
+
+	sourceBodyPaths := delegatedReadOnlySourceBodyReadinessPaths(objective, results)
+	paths := delegatedClosureEvidencePaths(objective, results, 8)
+	mentioned := normalizePostChildEvidencePaths(pathparse.MentionedWorkspacePaths(answer))
+	missing := make([]string, 0, len(paths))
+	mentionedSet := make(map[string]struct{}, len(mentioned))
+
+	for _, path := range mentioned {
+		mentionedSet[path] = struct{}{}
+	}
+
+	for _, path := range paths {
+		if _, ok := mentionedSet[path]; ok {
+			continue
+		}
+
+		missing = append(missing, path)
+	}
+
+	candidates := closureProbeCandidates(results, 4)
+	missingCandidates := make([]string, 0, len(candidates))
+	lowerAnswer := strings.ToLower(answer)
+
+	for _, candidate := range candidates {
+		if strings.Contains(lowerAnswer, strings.ToLower(candidate)) {
+			continue
+		}
+
+		missingCandidates = append(missingCandidates, candidate)
+	}
+
+	if len(missing) == 0 && len(missingCandidates) == 0 {
+		if len(sourceBodyPaths) == 0 || len(sourceBodyEvidencePathsFromDelegatedPacket(answer)) > 0 {
+			return answer
+		}
+	}
+
+	var b strings.Builder
+
+	b.WriteString(answer)
+
+	if len(sourceBodyPaths) > 0 && len(sourceBodyEvidencePathsFromDelegatedPacket(answer)) == 0 {
+		b.WriteString("\n\nSource-body evidence paths:\n")
+
+		for _, path := range util.Prefix(sourceBodyPaths, 4) {
+			b.WriteString("- `")
+			b.WriteString(path)
+			b.WriteString("`\n")
+		}
+	}
+
+	if len(missing) > 0 {
+		b.WriteString("\n\nAdditional inspected paths:\n")
+
+		for _, path := range util.Prefix(missing, 4) {
+			b.WriteString("- `")
+			b.WriteString(path)
+			b.WriteString("`\n")
+		}
+	}
+
+	if len(missingCandidates) > 0 {
+		b.WriteString("\nExact probes already inspected:\n")
+
+		for _, candidate := range util.Prefix(missingCandidates, 3) {
+			b.WriteString("- `")
+			b.WriteString(candidate)
+			b.WriteString("`\n")
+		}
+	}
+
+	return strings.TrimSpace(b.String())
+}
+
+func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.ToolResult) (string, bool) {
+	objective = strings.TrimSpace(objective)
+
+	useful := make([]workspace.ToolResult, 0, len(results))
+	answerabilityResults := make([]workspace.ToolResult, 0, len(results))
+	sanitizedResults := make([]workspace.ToolResult, 0, len(results))
+
+	for _, result := range results {
+		result = normalizeFallbackResult(result)
+		answerabilityResults = append(answerabilityResults, result)
+
+		if strings.TrimSpace(result.Tool) == workspace.ToolNameTask {
+			if packet, ok := readOnlyEvidencePacketFromResult(result); ok && !readOnlyEvidencePacketAnswerableForObjective(packet, objective) {
+				continue
+			}
+		}
+
+		sanitizedResult := result
+
+		sanitizedResult.Output = sanitizeDelegatedReadOnlyResultOutput(result)
+		sanitizedResults = append(sanitizedResults, sanitizedResult)
+
+		if strings.TrimSpace(sanitizedResult.Error) != "" || strings.TrimSpace(sanitizedResult.Output) == "" || !isResultUsefulForFallback(sanitizedResult) {
+			continue
+		}
+
+		useful = append(useful, sanitizedResult)
+	}
+
+	if answer, ok := synthesizeReadOnlyEvidencePacketAnswer(objective, readOnlyEvidencePacketsFromResults(answerabilityResults)); ok {
+		return answer, true
+	}
+
+	answerability := readOnlyAnswerabilityForResults(workerruntime.WorkerRuntimeBrief{
+		Objective:         objective,
+		PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+	}, answerabilityResults)
+	sourceBodyPaths := answerability.RelevantSourceBodyPaths
+
+	if len(sourceBodyPaths) == 0 {
+		return "", false
+	}
+
+	paths := append([]string{}, sourceBodyPaths...)
+
+	paths = append(paths, answerability.CandidatePaths...)
+	paths = append(paths, delegatedReadOnlyInspectedImplementationPaths(sanitizedResults)...)
+	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(sanitizedResults, 8)...)
+	paths = append(paths, pinnedPathsFromToolResults(sanitizedResults, 8)...)
+	paths = prioritizedClosureEvidencePaths(paths, sanitizedResults, 8)
+	paths = closurePromptEvidencePaths(paths, 8)
+
+	if len(paths) == 0 {
+		return "", false
+	}
+
+	if answer, ok := synthesizeDelegatedDiscoveryAnswer(objective, sanitizedResults, paths); ok {
+		if !looksLikeNonAnswerProse(answer) {
+			return answer, true
+		}
+	}
+
+	if answer, ok := synthesizeDelegatedSourceBodyFactsAnswer(objective, sanitizedResults, sourceBodyPaths, paths); ok {
+		return answer, true
+	}
+
+	lines := delegatedReadOnlyFindingLines(useful, sourceBodyPaths, 4)
+	if len(lines) == 0 {
+		return "", false
+	}
+
+	var b strings.Builder
+
+	b.WriteString("The answer is grounded in ")
+	b.WriteString(formatInlinePathList(paths, 4))
+	b.WriteString(".")
+
+	if question := delegatedDisplayQuestion(objective); question != "" {
+		b.WriteString(" Use those findings as the source of truth for `")
+		b.WriteString(question)
+		b.WriteString("`.")
+	}
+
+	b.WriteString("\n\nWhat this establishes:\n")
+
+	for _, line := range lines {
+		b.WriteString("- ")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+
+	return strings.TrimSpace(b.String()), true
+}
+
+func synthesizeDelegatedSourceBodyFactsAnswer(objective string, results []workspace.ToolResult, sourceBodyPaths []string, evidencePaths []string) (string, bool) {
+	sourceBodySet := readOnlyPathSet(sourceBodyPaths)
+
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile {
+			continue
+		}
+
+		paths := agentutil.ReadPathsFromToolResult(result)
+		if len(paths) == 0 {
+			continue
+		}
+
+		path := agentutil.NormalizeRunnerPath(paths[0])
+		if _, ok := sourceBodySet[path]; !ok {
+			continue
+		}
+
+		factAnswer, ok := presentableSourceBodyFactsAnswer(objective, path, result.Output)
+		if !ok || looksLikeNonAnswerProse(factAnswer) {
+			continue
+		}
+
+		factText := stripPresentableSourceObjectiveEcho(factAnswer)
+		if looksLikeLowValueSourceInventoryFallback(factText) {
+			continue
+		}
+
+		if strings.TrimSpace(objective) != "" && !delegatedSourceFactAddressesObjective(factText, objective) {
+			continue
+		}
+
+		var b strings.Builder
+
+		b.WriteString("The answer is grounded in ")
+		b.WriteString(formatInlinePathList(evidencePaths, 4))
+		b.WriteString(".")
+
+		if question := delegatedDisplayQuestion(objective); question != "" {
+			b.WriteString(" Use those findings as the source of truth for `")
+			b.WriteString(question)
+			b.WriteString("`.")
+		}
+
+		b.WriteString("\n\nWhat this establishes:\n")
+		b.WriteString("- ")
+		b.WriteString(factText)
+		b.WriteString("\n")
+
+		return strings.TrimSpace(b.String()), true
+	}
+
+	return "", false
+}
+
+func delegatedSourceFactAddressesObjective(factText string, objective string) bool {
+	factText = strings.ToLower(strings.TrimSpace(factText))
+	if factText == "" {
+		return false
+	}
+
+	for _, term := range agentutil.RecoveryObjectiveSearchWords(objective, 32) {
+		term = agentutil.SingularObjectiveWord(strings.ToLower(strings.TrimSpace(term)))
+		if len(term) < 4 || delegatedSourceFactGenericObjectiveTerm(term) {
+			continue
+		}
+
+		if strings.Contains(factText, term) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func delegatedSourceFactGenericObjectiveTerm(term string) bool {
+	switch term {
+	case "internal", "agent", "runner", "source", "evidence", "inspect", "inspected", "path", "paths", "report", "file", "code", "explain", "harness":
+		return true
+	default:
+		return false
+	}
+}
+
+func stripDelegatedReadOnlyInternalPacket(output string) string {
+	var kept []string
+
+	skipList := false
+
+	for _, raw := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			skipList = false
+
+			if len(kept) > 0 && kept[len(kept)-1] != "" {
+				kept = append(kept, "")
+			}
+
+			continue
+		}
+
+		lower := strings.ToLower(line)
+		switch {
+		case strings.HasPrefix(lower, "question:"),
+			strings.HasPrefix(lower, "source:"),
+			strings.HasPrefix(lower, "confidence:"):
+			skipList = false
+			continue
+		case lower == "inspected paths:" ||
+			lower == "additional inspected paths:" ||
+			lower == "exact probes already inspected:":
+			skipList = true
+			continue
+		case lower == "key findings:":
+			skipList = false
+			continue
+		case skipList && strings.HasPrefix(line, "- "):
+			continue
+		case strings.HasPrefix(line, "<<QUESTION>>:"),
+			strings.Contains(lower, "completion gate rejected"),
+			strings.Contains(lower, "missing completion evidence"),
+			strings.Contains(lower, "missing: inspected_paths"),
+			strings.Contains(lower, "final answer looks like transport-level noise"):
+			skipList = false
+			continue
+		}
+
+		kept = append(kept, line)
+	}
+
+	return strings.TrimSpace(strings.Join(collapseBlankRunnerLines(kept), "\n"))
+}
+
+func collapseBlankRunnerLines(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	blank := false
+
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			if blank || len(out) == 0 {
+				continue
+			}
+
+			blank = true
+
+			out = append(out, "")
+
+			continue
+		}
+
+		blank = false
+
+		out = append(out, line)
+	}
+
+	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+		out = out[:len(out)-1]
+	}
+
+	return out
+}
+
+func delegatedReadOnlyPacketLineLabels() []string {
+	return []string{
+		"source-body evidence paths:",
+		"source body evidence paths:",
+		"source body paths:",
+		"grounded findings:",
+		"grounded answer:",
+		"key findings:",
+		"verified context:",
+		"inspected paths:",
+		"evidence used:",
+		"core files:",
+		"primary files:",
+		"important flow:",
+	}
+}
+
+func readOnlyToolControlGuidanceText(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	if lower == "" {
+		return false
+	}
+
+	return agentutil.ContainsAny(lower,
+		"generated evidence artifact",
+		"generated discovery/context json is not source-body evidence",
+		"not source-body evidence",
+		"use the source paths already named by the current discovery packet",
+		"next exact source probe example",
+		"after one source-body read resolves the claim",
+		"redirected to ",
+		"try: {\"tool\":",
+		"retry your original request and it will execute",
+	)
+}
+
+func synthesizeDelegatedDiscoveryAnswer(objective string, results []workspace.ToolResult, paths []string) (string, bool) {
+	summaries := delegatedDiscoverySummaries(results)
+	question := delegatedDisplayQuestion(objective)
+	evidencePaths := delegatedDiscoveryAnswerEvidencePaths(question, paths)
+
+	return AnswerComposer{}.Compose(AnswerComposerInput{
+		Question:      question,
+		EvidencePaths: evidencePaths,
+		Summaries:     summaries,
+	})
+}
+
+func delegatedDiscoverySummaries(results []workspace.ToolResult) []delegatedDiscoverySummary {
+	var summaries []delegatedDiscoverySummary
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != workspace.ToolNameDiscoveryQuery || strings.TrimSpace(result.Output) == "" || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+
+		var summary delegatedDiscoverySummary
+
+		if err := json.Unmarshal([]byte(result.Output), &summary); err != nil {
+			continue
+		}
+
+		if summary.ArtifactPath == "" && len(summary.Evidence) == 0 {
+			continue
+		}
+
+		summaries = append(summaries, summary)
+	}
+
+	return summaries
+}
+
+func delegatedDiscoveryAnswerEvidencePaths(objective string, paths []string) []string {
+	paths = uniqueDelegatedDiscoveryPaths(paths)
+	if len(paths) == 0 {
+		return nil
+	}
+
+	return prioritizedDelegatedEvidencePaths(paths, len(paths))
+}
+
+func prioritizedDelegatedEvidencePaths(paths []string, max int) []string {
+	paths = uniqueDelegatedDiscoveryPaths(paths)
+	paths = preferNonTestEvidencePaths(paths)
+
+	if len(paths) <= 1 {
+		return paths
+	}
+
+	sort.SliceStable(paths, func(i, j int) bool {
+		pi := delegatedDiscoveryPathPriority(paths[i])
+		pj := delegatedDiscoveryPathPriority(paths[j])
+
+		return pi < pj
+	})
+
+	return util.Prefix(paths, max)
+}
+
+func prioritizedClosureEvidencePaths(paths []string, results []workspace.ToolResult, max int) []string {
+	paths = uniqueDelegatedDiscoveryPaths(paths)
+	paths = preferNonTestEvidencePaths(paths)
+
+	if len(paths) <= 1 {
+		return paths
+	}
+
+	sharedCounts, candidateCounts := closureEvidenceProbeScores(results)
+
+	sort.SliceStable(paths, func(i, j int) bool {
+		pi := delegatedDiscoveryPathPriority(paths[i])
+		pj := delegatedDiscoveryPathPriority(paths[j])
+
+		if pi != pj {
+			return pi < pj
+		}
+
+		ni := normalizeDelegatedDiscoveryEvidencePath(paths[i])
+		nj := normalizeDelegatedDiscoveryEvidencePath(paths[j])
+
+		if sharedCounts[ni] != sharedCounts[nj] {
+			return sharedCounts[ni] > sharedCounts[nj]
+		}
+
+		if candidateCounts[ni] != candidateCounts[nj] {
+			return candidateCounts[ni] > candidateCounts[nj]
+		}
+
+		return false
+	})
+
+	return util.Prefix(paths, max)
+}
+
+func delegatedDiscoverySummaryIsBroadCountOnly(lower string) bool {
+	if !strings.Contains(lower, "matching line") {
+		return false
+	}
+
+	if strings.Contains(lower, "implementation path") ||
+		strings.Contains(lower, "implementation anchor") ||
+		strings.Contains(lower, "source anchor") {
+
+		return false
+	}
+
+	return true
+}
+
+func closurePromptEvidencePaths(paths []string, max int) []string {
+	cleaned := make([]string, 0, len(paths))
+	for _, path := range preferNonTestEvidencePaths(uniqueDelegatedDiscoveryPaths(paths)) {
+		path = normalizeDelegatedDiscoveryEvidencePath(path)
+		switch {
+		case path == "":
+			continue
+		case strings.HasPrefix(path, ".idiom/"), strings.HasPrefix(path, "idiom/"), strings.HasPrefix(path, ".codex/"), strings.HasPrefix(path, "codex/"), strings.HasPrefix(path, "."):
+			continue
+		case !delegatedDiscoveryLooksLikeEvidencePath(path):
+			continue
+		case !strings.Contains(path, "/") && !strings.HasSuffix(path, ".go"):
+			continue
+		}
+
+		cleaned = append(cleaned, path)
+	}
+
+	return util.Prefix(cleaned, max)
+}
+
+func closureEvidenceProbeScores(results []workspace.ToolResult) (map[string]int, map[string]int) {
+	byPath := closureProbeCandidatesByPath(results, 6)
+	probeFrequency := make(map[string]int)
+
+	for _, candidates := range byPath {
+		seen := make(map[string]struct{})
+
+		for _, candidate := range candidates {
+			key := strings.ToLower(strings.TrimSpace(candidate))
+			if key == "" {
+				continue
+			}
+
+			if _, ok := seen[key]; ok {
+				continue
+			}
+
+			seen[key] = struct{}{}
+			probeFrequency[key]++
+		}
+	}
+
+	sharedCounts := make(map[string]int, len(byPath))
+	candidateCounts := make(map[string]int, len(byPath))
+
+	for rawPath, candidates := range byPath {
+		path := normalizeDelegatedDiscoveryEvidencePath(rawPath)
+		if path == "" {
+			continue
+		}
+
+		seen := make(map[string]struct{})
+
+		for _, candidate := range candidates {
+			key := strings.ToLower(strings.TrimSpace(candidate))
+			if key == "" {
+				continue
+			}
+
+			if _, ok := seen[key]; ok {
+				continue
+			}
+
+			seen[key] = struct{}{}
+			candidateCounts[path]++
+
+			if probeFrequency[key] > 1 {
+				sharedCounts[path] += probeFrequency[key]
+			}
+		}
+	}
+
+	return sharedCounts, candidateCounts
+}
+
+func isDelegatedDiscoveryContextDigestLayer(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "project_behavior_digest", "project_context_digest":
+		return true
+	default:
+		return false
+	}
+}
+
+func exactAnchorPreWriteSurfaceActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if planThenExecutePlannerBrief(brief) {
+		return false
+	}
+
+	if !exactAnchorImplementationActive(brief) {
+		return false
+	}
+
+	return len(brief.ChangedPaths) == 0 && len(changedPathsFromToolResults(results)) == 0
+}
+
+func implementationPreWriteRuntimeBrief(brief workerruntime.WorkerRuntimeBrief) workerruntime.WorkerRuntimeBrief {
+	allowed := implementationPreWriteAllowedTools(brief.AllowedTools)
+
+	brief.AllowedTools = allowed
+	brief.ToolManifest = nil
+
+	if len(allowed) > 0 {
+		brief.ToolManifest = runnerSanitizedToolManifest(allowed)
+	}
+
+	brief.RequiredTools = []string{"edit_file_or_apply_patch"}
+	brief.Constraints = util.Merge([]string{"implementation_prewrite_write_only"}, brief.Constraints)
+	brief.RequiredNext = util.Merge([]string{
+		"exact-anchor required-path write capability",
+		"answer <<QUESTION>> only if the packet lacks the exact anchor needed for that required path",
+	}, brief.RequiredNext)
+	brief.InvalidActions = util.Merge([]string{
+		"read/search/task_ledger/shell before first exact-anchor required-path write",
+	}, brief.InvalidActions)
+	brief.SearchPolicy = util.Merge([]string{
+		"the exact target packet and required_edit_paths are the pre-write evidence surface",
+		"do not use discovery or task planning before the first exact-anchor required-path write",
+	}, brief.SearchPolicy)
+
+	return workerruntime.NormalizeRuntimeBrief(brief)
+}
+
+func implementationScopedEditRuntimeBrief(brief workerruntime.WorkerRuntimeBrief) workerruntime.WorkerRuntimeBrief {
+	allowed := implementationScopedEditAllowedToolsWithRegistry(brief.AllowedTools, nil)
+
+	brief.AllowedTools = allowed
+	brief.ToolManifest = nil
+
+	if len(allowed) > 0 {
+		brief.ToolManifest = runnerSanitizedToolManifest(allowed)
+	}
+
+	brief.RequiredTools = []string{"edit_file_or_apply_patch", "semantic_discovery_or_narrow_read_for_named_gap"}
+	brief.Constraints = util.Merge([]string{"implementation_required_path_scoped_surface"}, brief.Constraints)
+	brief.RequiredNext = util.Merge([]string{
+		"required-path edit, semantic/context/project discovery or narrow required-path read with named_gap for an exact edit-safety fact, or <<QUESTION>> with the exact blocker",
+	}, brief.RequiredNext)
+	brief.InvalidActions = util.Merge([]string{
+		"task_ledger or broad discovery before resolving the required-path contract",
+		"raw read/search outside required edit paths before resolving the required-path contract",
+	}, brief.InvalidActions)
+	brief.SearchPolicy = util.Merge([]string{
+		"required edit paths define the implementation scope",
+		"prefer context, language, and declared read-only project discovery tools for named edit-safety gaps before raw source reads",
+		"raw source reads are only for exact anchor confirmation on required paths or explicit evidence paths",
+		"large range-less raw source reads on required/evidence paths are bounded by the harness; request start_line/end_line or a symbol for follow-up",
+	}, brief.SearchPolicy)
+
+	return workerruntime.NormalizeRuntimeBrief(brief)
+}
+
+func implementationTargetWriteReadyRuntimeBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) workerruntime.WorkerRuntimeBrief {
+	pending := sourceEvidencePendingRedirectsForBrief(brief, results)
+	pendingTools := sourceEvidencePendingRedirectTools(brief.AllowedTools, pending)
+	sourceRefresh := len(pending) == 0 && implementationTargetWriteReadySourceRefreshProjectionActive(brief, results, brief.AllowedTools)
+	sourcedSummary := implementationTargetWriteReadySourcedPathSummary(results, 3)
+	allowed := implementationTargetWriteReadyAllowedToolsForBrief(brief.AllowedTools, brief, results)
+
+	brief.AllowedTools = allowed
+	brief.ToolManifest = nil
+
+	if len(allowed) > 0 {
+		brief.ToolManifest = runnerSanitizedToolManifest(allowed)
+	}
+
+	brief.RequiredTools = []string{"edit_file_or_apply_patch"}
+	brief.Constraints = util.Merge([]string{"implementation_target_write_ready"}, brief.Constraints)
+	brief.RequiredNext = util.Merge([]string{
+		"parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence",
+	}, brief.RequiredNext)
+
+	if sourceRefresh {
+		brief.RequiredNext = util.Merge([]string{
+			"parser-readable write to the sourced target path, bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence",
+		}, brief.RequiredNext)
+		brief.InvalidActions = util.Merge([]string{
+			"broad read/search after source-body evidence",
+			"read/search for already-sourced paths unless the request adds a bounded missing range or exact named_gap",
+			"verification before a successful write",
+		}, brief.InvalidActions)
+		brief.SearchPolicy = util.Merge([]string{
+			"the gathered source-body evidence is the pre-write target surface",
+			"use bounded source refresh only when an exact missing edit-safety fact remains; otherwise write or block",
+			"read_file/search_content refreshes must name the gap and stay scoped to source code, not docs or broad discovery",
+		}, brief.SearchPolicy)
+		brief.Constraints = util.Merge([]string{"bounded_source_refresh_allowance"}, brief.Constraints)
+	} else {
+		brief.InvalidActions = util.Merge([]string{
+			"additional read/search after source-body evidence",
+			"verification before a successful write",
+		}, brief.InvalidActions)
+		brief.SearchPolicy = util.Merge([]string{
+			"the gathered source-body evidence is the pre-write target surface",
+			"do not inspect further before the first write",
+		}, brief.SearchPolicy)
+	}
+
+	if sourcedSummary != "" {
+		brief.RequiredNext = util.Merge([]string{
+			"write using the already-read source-body evidence for: " + sourcedSummary,
+		}, brief.RequiredNext)
+		brief.InvalidActions = util.Merge([]string{
+			"read/search/navigation for already-sourced path(s): " + sourcedSummary,
+		}, brief.InvalidActions)
+		brief.SearchPolicy = util.Merge([]string{
+			"already-sourced path(s) must not be read, searched, or navigated again before the first write: " + sourcedSummary,
+		}, brief.SearchPolicy)
+		brief.Constraints = util.Merge([]string{"source_body_evidence_paths: " + sourcedSummary}, brief.Constraints)
+	}
+
+	if len(pendingTools) > 0 {
+		pendingSummary := sourceEvidencePendingRedirectSummary(pending, 3)
+		pendingActionSummary := sourceEvidencePendingRedirectActionSummary(pending, 3)
+
+		brief.RequiredTools = []string{"exact_pending_source_body_followup_or_edit_file_or_apply_patch"}
+		brief.RequiredNext = util.Merge([]string{
+			"resolve the pending redirected source-body obligation (" + pendingActionSummary + "), then make one parser-readable write to a sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence",
+		}, brief.RequiredNext)
+		brief.InvalidActions = util.Merge([]string{
+			"broad read/search while a redirected source-body obligation is pending",
+			"read/navigation for any path except the exact pending redirected source-body follow-up: " + pendingActionSummary,
+		}, brief.InvalidActions)
+		brief.SearchPolicy = util.Merge([]string{
+			"one redirected source-body obligation remains open: " + pendingActionSummary,
+			"use only the pending redirect's symbol/body follow-up, with at most one same-path outline first when the symbol is unknown; do not use references, broad discovery, or unrelated navigation",
+		}, brief.SearchPolicy)
+		brief.Constraints = util.Merge([]string{"pending_redirected_source_body_obligation: " + pendingSummary}, brief.Constraints)
+	}
+
+	return workerruntime.NormalizeRuntimeBrief(brief)
+}
+
+func implementationTargetSourceRuntimeBrief(brief workerruntime.WorkerRuntimeBrief) workerruntime.WorkerRuntimeBrief {
+	allowed := implementationTargetSourceAllowedTools(brief.AllowedTools)
+
+	brief.AllowedTools = allowed
+	brief.ToolManifest = nil
+
+	if len(allowed) > 0 {
+		brief.ToolManifest = runnerSanitizedToolManifest(allowed)
+	}
+
+	brief.RequiredTools = []string{"bounded_workspace_evidence_tool", "edit_file_or_apply_patch"}
+	brief.Constraints = util.Merge([]string{"implementation_target_source_pending"}, brief.Constraints)
+	brief.RequiredNext = util.Merge([]string{
+		"localize the concrete edit target, read bounded source-body evidence with named_gap for the missing edit-safety fact, write only after exact source-body evidence and replacement shape are known, or <<QUESTION>> with the exact blocker/no-op evidence",
+	}, brief.RequiredNext)
+	brief.InvalidActions = util.Merge([]string{
+		"final answer before a successful write, no-op, or blocker",
+		"write before exact source-body evidence and replacement shape",
+		"verification before a successful write",
+	}, brief.InvalidActions)
+	brief.SearchPolicy = util.Merge([]string{
+		"do not run verification before the first write",
+		"use bounded read/search/context only for a named missing target or edit-safety fact",
+	}, brief.SearchPolicy)
+	brief.ForbiddenTools = util.Merge(brief.ForbiddenTools, []string{workspace.ToolNameSourceSanity, workspace.ToolNameShell, workspace.ToolNameGitDiff, workspace.ToolNameGitStatus})
+
+	return workerruntime.NormalizeRuntimeBrief(brief)
+}
+
+func exactAnchorPreWriteRuntimeBrief(brief workerruntime.WorkerRuntimeBrief) workerruntime.WorkerRuntimeBrief {
+	allowed := implementationPreWriteAllowedTools(brief.AllowedTools)
+
+	brief.AllowedTools = allowed
+	brief.ToolManifest = nil
+
+	if len(allowed) > 0 {
+		brief.ToolManifest = runnerSanitizedToolManifest(allowed)
+	}
+
+	brief.RequiredTools = []string{"edit_file_or_apply_patch"}
+	brief.Constraints = util.Merge([]string{"exact_anchor_prewrite_write_first"}, brief.Constraints)
+	brief.RequiredNext = util.Merge([]string{
+		"exact-anchor write capability with the supplied target-packet anchor",
+		"answer <<QUESTION>> only if the supplied anchor is missing or stale",
+	}, brief.RequiredNext)
+	brief.InvalidActions = util.Merge([]string{
+		"read/search/shell before first exact-anchor write",
+		"verification before first exact-anchor write",
+	}, brief.InvalidActions)
+	brief.SearchPolicy = util.Merge([]string{
+		"target-packet exact anchors count as current-state path and source evidence for the first write",
+		"do not inspect before the first exact-anchor write",
+	}, brief.SearchPolicy)
+
+	return workerruntime.NormalizeRuntimeBrief(brief)
+}
+
+func (r *Runner) implementationTargetWriteReadyNonWriteRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
+	if r == nil || !implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results) || workspace.IsWorkspaceWriteTool(req.Tool) {
+		return "", "", "", false
+	}
+
+	if pending := r.evidenceEngine().PendingRedirectsForBrief(r.RuntimeBrief, results); len(pending) > 0 {
+		pendingActionSummary := sourceEvidencePendingRedirectActionSummary(pending, 3)
+		tool := strings.TrimSpace(req.Tool)
+
+		if tool == "" {
+			tool = "requested tool"
+		}
+
+		summary = "Implementation target write-ready pending source-body obligation rejected"
+		errorText = fmt.Sprintf("%s is outside the pending redirected source-body obligation. The only valid read/navigation follow-up is the exact pending source-body request: %s. Otherwise write to a sourced target path or answer <<QUESTION>> with the exact blocker/no-op evidence.", tool, pendingActionSummary)
+		prompt = "The implementation lane is target-write-ready, but a redirected source-body obligation is still pending: " + pendingActionSummary + ". Use only that exact pending source-body follow-up, make one parser-readable write from already gathered source evidence, or answer <<QUESTION>> with the exact blocker/no-op evidence. Do not use references, broad read, search, shell, or unrelated navigation."
+
+		return summary, errorText, prompt, true
+	}
+
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" {
+		tool = "requested tool"
+	}
+
+	sourceSentence := "Source-body evidence is already available"
+	if sourcedSummary := implementationTargetWriteReadySourcedPathSummary(results, 3); sourcedSummary != "" {
+		sourceSentence += " for: " + sourcedSummary
+	}
+
+	summary = "Implementation target write-ready tool rejected"
+	errorText = fmt.Sprintf("%s is outside the unscoped implementation target-write-ready surface. %s; the next valid action is a parser-readable write to a sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence.", tool, sourceSentence)
+	prompt = "The implementation lane is target-write-ready. " + sourceSentence + ". Do not inspect, search, or navigate that source again before the first write. Use a parser-readable write tool for the sourced target path, or answer <<QUESTION>> with the exact blocker/no-op evidence."
+
+	return summary, errorText, prompt, true
+}
+
+func (r *Runner) writeDescriptionRepairSynthesizedRequest(req workspace.ToolRequest, repairActive bool) (workspace.ToolRequest, string, bool) {
+	if r == nil || checkWriteDescription(req) == nil {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if !runnerBriefRequiresMutation(r.RuntimeBrief) {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if reasoningToolRequestHasPlaceholder(req) || !safeWriteDescriptionSynthesisShape(req) {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if _, _, reject := requiredEditPathScopeRejection(req, r.RuntimeBrief); reject {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	paths := writeRequestPaths(req)
+	if len(paths) == 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	for _, path := range paths {
+		if strings.TrimSpace(path) == "" {
+			return workspace.ToolRequest{}, "", false
+		}
+	}
+
+	repaired := req
+
+	repaired.Description = synthesizedWriteDescription(req, paths)
+
+	return repaired, marshalToolRequestRaw(repaired), true
+}
+
+func safeWriteDescriptionSynthesisShape(req workspace.ToolRequest) bool {
+	if !safeWorkspaceWriteRequestShape(req) {
+		return false
+	}
+
+	if strings.TrimSpace(req.Tool) != workspace.ToolNameEditFile {
+		return true
+	}
+
+	if req.StartLine > 0 || req.EndLine > 0 {
+		return req.StartLine > 0 && req.EndLine >= req.StartLine && strings.TrimSpace(req.Content) != ""
+	}
+
+	return strings.TrimSpace(req.OldText) != "" && strings.TrimSpace(req.NewText) != ""
+}
+
+func synthesizedWriteDescription(req workspace.ToolRequest, paths []string) string {
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" {
+		tool = "write"
+	}
+
+	target := "selected path"
+	if len(paths) > 0 {
+		target = agentutil.NormalizeRunnerPath(paths[0])
+		if len(paths) > 1 {
+			target = fmt.Sprintf("%s and %d related path(s)", target, len(paths)-1)
+		}
+	}
+
+	switch tool {
+	case workspace.ToolNameEditFile:
+		return fmt.Sprintf("Apply the requested edit to %s after adding the missing write description.", target)
+	case workspace.ToolNameWriteFile:
+		return fmt.Sprintf("Write the requested file content to %s after adding the missing write description.", target)
+	case workspace.ToolNameAppendFile:
+		return fmt.Sprintf("Append the requested content to %s after adding the missing write description.", target)
+	case workspace.ToolNameApplyPatch:
+		return fmt.Sprintf("Apply the requested patch to %s after adding the missing write description.", target)
+	default:
+		return fmt.Sprintf("Apply the requested workspace change to %s after adding the missing write description.", target)
+	}
+}
+
+func (r *Runner) implementationTargetWriteReadySourceReadAllowed(req workspace.ToolRequest, results []workspace.ToolResult, refreshes int) bool {
+	if r == nil || workspace.IsWorkspaceWriteTool(req.Tool) {
+		return false
+	}
+
+	if !implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results) {
+		return false
+	}
+
+	if r.implementationTargetWriteReadyPendingRedirectProgressAllowed(req, results) {
+		return true
+	}
+
+	if len(r.evidenceEngine().PendingRedirectsForBrief(r.RuntimeBrief, results)) > 0 {
+		return false
+	}
+
+	if r.implementationTargetWriteReadyHistoryReadAllowed(req, results) {
+		return true
+	}
+
+	if implementationTargetWriteReadyTargetedDiscoveryAllowed(req, results, refreshes) {
+		return true
+	}
+
+	path := agentutil.NormalizeRunnerPath(req.Path)
+	if !implementationTargetWriteReadySourcePath(path) {
+		return false
+	}
+
+	if strings.TrimSpace(req.Tool) != workspace.ToolNameReadFile {
+		return false
+	}
+
+	if concreteSourceEvidenceReadForPath(path, results) {
+		if implementationTargetWriteReadySamePathContinuationReadAllowed(req, results) {
+			return true
+		}
+
+		if refreshes > 0 {
+			return false
+		}
+
+		return !fullSourceReadFileSeen(path, results)
+	}
+
+	if refreshes >= implementationTargetWriteReadySourceReadAllowanceLimit {
+		return false
+	}
+
+	return implementationTargetWriteReadyNewTargetRead(req)
+}
+
+func implementationTargetWriteReadyTargetedDiscoveryAllowed(req workspace.ToolRequest, results []workspace.ToolResult, refreshes int) bool {
+	if refreshes >= implementationTargetWriteReadySourceReadAllowanceLimit {
+		return false
+	}
+
+	switch strings.TrimSpace(req.Tool) {
+	case workspace.ToolNameCodeNavigate:
+		return implementationTargetWriteReadyTargetedCodeNavigate(req, results)
+	case workspace.ToolNameSearchContent:
+		return implementationTargetWriteReadyTargetedSearchContent(req, results)
+	default:
+		if implementationTargetWriteReadySourceSymbolTool(req.Tool) {
+			return implementationTargetWriteReadyTargetedCodeNavigate(req, results)
+		}
+
+		return false
+	}
+}
+
+func implementationTargetWriteReadySourceSymbolTool(tool string) bool {
+	tool = strings.TrimSpace(tool)
+	return strings.HasSuffix(tool, "_read_symbol") || strings.HasSuffix(tool, "_extract_body")
+}
+
+// targetWriteReadyStagedNudge builds a progressively stronger nudge message
+// as the model accumulates non-write calls without making an edit. Early
+// nudges are soft reminders; late stages require action before more discovery.
+func targetWriteReadyStagedNudge(basePrompt string, req workspace.ToolRequest, nudgeCount int) string {
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" {
+		tool = "requested tool"
+	}
+
+	suffix := fmt.Sprintf("\n\nYour %s request will execute. Nudge %d.", tool, nudgeCount)
+
+	evidencePrefix := strings.TrimSpace(basePrompt)
+	if evidencePrefix == "" {
+		evidencePrefix = "Source evidence is available for sourced target path(s)."
+	}
+
+	if nudgeCount <= 6 {
+		return fmt.Sprintf("%s Either write to a sourced target path, or name the one exact missing claim and one exact probe that would resolve it, then take that probe.%s", evidencePrefix, suffix)
+	}
+
+	return fmt.Sprintf("You have taken %d discovery calls without a write. %s Before more discovery: name the one exact missing claim and one exact probe that would resolve it. If you cannot name both, you have enough evidence — write to a sourced target path or answer <<QUESTION>> with the exact blocker.%s", nudgeCount, evidencePrefix, suffix)
+}
+func implementationTargetWriteReadyTargetedCodeNavigate(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	path := agentutil.NormalizeRunnerPath(req.Path)
+	if !implementationTargetWriteReadySourcePath(path) {
+		return false
+	}
+
+	if !concreteSourceEvidenceReadForPath(path, results) {
+		return false
+	}
+
+	capability := strings.TrimSpace(req.Capability)
+	if capability == "" {
+		capability = strings.TrimSpace(req.Operation)
+	}
+
+	if capability == "" {
+		return false
+	}
+
+	switch capability {
+	case "find_definition", "read_symbol", "extract_body", "outline":
+		return true
+	default:
+		return strings.TrimSpace(req.Symbol) != "" && strings.Contains(strings.ToLower(capability), "symbol")
+	}
+}
+
+func implementationTargetWriteReadyTargetedSearchContent(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	pattern := strings.TrimSpace(req.Pattern)
+	if len(pattern) < 4 {
+		return false
+	}
+
+	if strings.TrimSpace(req.NamedGap) == "" && strings.TrimSpace(req.WhyNotAnswering) == "" {
+		return false
+	}
+
+	if !implementationTargetWriteReadySearchPatternLooksNarrow(pattern) {
+		return false
+	}
+
+	if implementationTargetWriteReadySearchPatternAlreadySourced(pattern, results) {
+		return false
+	}
+
+	path := agentutil.NormalizeRunnerPath(req.Path)
+	if path != "" {
+		return implementationTargetWriteReadySearchPathLooksScoped(path)
+	}
+
+	return true
+}
+
+func implementationTargetWriteReadySearchPathLooksScoped(path string) bool {
+	path = strings.Trim(agentutil.NormalizeRunnerPath(path), "/")
+	if path == "" || path == "." {
+		return false
+	}
+
+	switch path {
+	case "internal", "cmd", "pkg", "src", "lib", "app", "apps", "packages", "test", "tests":
+		return false
+	default:
+		return strings.Contains(path, "/") || recoverySearchPathLooksEditableSource(path)
+	}
+}
+
+func implementationTargetWriteReadySearchPatternAlreadySourced(pattern string, results []workspace.ToolResult) bool {
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	if pattern == "" {
+		return false
+	}
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
+			continue
+		}
+
+		tool := strings.TrimSpace(result.Tool)
+		if tool != workspace.ToolNameReadFile && tool != workspace.ToolNameCodeNavigate &&
+			!strings.HasSuffix(tool, "_read_symbol") &&
+			!strings.HasSuffix(tool, "_extract_body") {
+
+			continue
+		}
+
+		if strings.Contains(strings.ToLower(result.Output), pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func implementationTargetWriteReadySearchPatternLooksNarrow(pattern string) bool {
+	pattern = strings.TrimSpace(pattern)
+	if len(pattern) < 8 {
+		return false
+	}
+
+	if strings.Contains(pattern, " ") || strings.ContainsAny(pattern, ".:_-(){}[]") {
+		return true
+	}
+
+	hasUpper := strings.IndexFunc(pattern, func(r rune) bool { return r >= 'A' && r <= 'Z' }) >= 0
+	hasLower := strings.IndexFunc(pattern, func(r rune) bool { return r >= 'a' && r <= 'z' }) >= 0
+
+	return hasUpper && hasLower
+}
+
+func implementationTargetWriteReadyPendingRedirectProgressAllowed(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	return sourceEvidencePendingRedirectProgressAllowedForBrief(brief, req, results)
+}
+
+func (r *Runner) implementationTargetWriteReadyPendingRedirectProgressAllowed(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	if r == nil {
+		return false
+	}
+
+	path := agentutil.NormalizeRunnerPath(req.Path)
+	tool := strings.TrimSpace(req.Tool)
+	if path == "" || tool == "" {
+		return false
+	}
+
+	for _, obligation := range r.evidenceEngine().PendingRedirectsForBrief(r.RuntimeBrief, results) {
+		if obligation.Path != path {
+			continue
+		}
+		if sourceEvidencePendingRedirectRequestAllowed(obligation, req) {
+			return true
+		}
+		if sourceEvidencePendingRedirectOutlineProgressAllowed(obligation, req, results) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func implementationTargetWriteReadyHasPendingSourceRedirect(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	return len(sourceEvidencePendingRedirectsForBrief(brief, results)) > 0
+}
+
+func implementationTargetWriteReadyRedirectedReadPath(result workspace.ToolResult) string {
+	if strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile || strings.TrimSpace(result.Error) != "" {
+		return ""
+	}
+
+	summary := strings.TrimSpace(result.Summary)
+	lower := strings.ToLower(summary)
+
+	if !strings.HasPrefix(lower, "redirected ") {
+		return ""
+	}
+
+	tail := summary[len("Redirected "):]
+	idx := strings.Index(strings.ToLower(tail), " to ")
+
+	if idx < 0 {
+		return ""
+	}
+
+	return agentutil.NormalizeRunnerPath(strings.TrimSpace(tail[:idx]))
+}
+
+func implementationTargetWriteReadySamePathContinuationReadAllowed(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	path := agentutil.NormalizeRunnerPath(req.Path)
+	if path == "" || strings.TrimSpace(req.Tool) != workspace.ToolNameReadFile {
+		return false
+	}
+
+	if req.StartLine <= 0 || req.EndLine < req.StartLine || req.EndLine-req.StartLine+1 > 400 {
+		return false
+	}
+
+	ranges := readRangesForPathFromResults(results, path)
+	if len(ranges) == 0 || len(ranges) >= implementationTargetWriteReadySamePathContinuationLimit {
+		return false
+	}
+
+	return implementationTargetWriteReadyRequestedRangeAddsSource(req.StartLine, req.EndLine, ranges)
+}
+
+// Caps total same-path read_file ranges, including the range already read
+// before continuations. New-target source expansions use their own turn-level
+// allowance; this cap prevents one admitted path from becoming open discovery.
+const implementationTargetWriteReadySamePathContinuationLimit = 3
+
+func implementationTargetWriteReadyRequestedRangeAddsSource(start int, end int, ranges []planThenExecuteReadRange) bool {
+	if start <= 0 || end < start {
+		return false
+	}
+
+	if total, ok := implementationTargetWriteReadyKnownTotalLines(ranges); ok {
+		if start > total {
+			return false
+		}
+
+		if end > total {
+			end = total
+		}
+	}
+
+	for line := start; line <= end; line++ {
+		covered := false
+
+		for _, readRange := range ranges {
+			rangeStart := readRange.start
+			rangeEnd := readRange.end
+
+			if rangeStart <= 0 || rangeEnd < rangeStart {
+				continue
+			}
+
+			if readRange.total > 0 && rangeEnd > readRange.total {
+				rangeEnd = readRange.total
+			}
+
+			if line >= rangeStart && line <= rangeEnd {
+				covered = true
+				break
+			}
+		}
+
+		if !covered {
+			return true
+		}
+	}
+
+	return false
+}
+
+func implementationTargetWriteReadyKnownTotalLines(ranges []planThenExecuteReadRange) (int, bool) {
+	total := 0
+	for _, readRange := range ranges {
+		if readRange.total <= 0 {
+			continue
+		}
+
+		if total == 0 || readRange.total < total {
+			total = readRange.total
+		}
+	}
+
+	return total, total > 0
+}
+
+func (r *Runner) implementationTargetWriteReadySourceRefreshAllowed(req workspace.ToolRequest, results []workspace.ToolResult, refreshes int) bool {
+	if !r.implementationTargetWriteReadySourceReadAllowed(req, results, refreshes) {
+		return false
+	}
+
+	return concreteSourceEvidenceReadForPath(req.Path, results)
+}
+
+func implementationTargetWriteReadyNewTargetRead(req workspace.ToolRequest) bool {
+	return strings.TrimSpace(req.Path) != ""
+}
+
+const implementationTargetWriteReadySourceReadAllowanceLimit = 3
+
+func implementationTargetSourceReadEstablishedWriteReady(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Error) != "" {
+		return false
+	}
+
+	path := agentutil.NormalizeRunnerPath(req.Path)
+	if path == "" || !implementationTargetWriteReadySourcePath(path) {
+		return false
+	}
+
+	if !runnerStringSliceContainsPath(brief.RequiredEditPaths, path) &&
+		!runnerStringSliceContainsPath(brief.EvidencePaths, path) &&
+		!runnerStringSliceContainsPath(brief.AllowedEditPaths, path) {
+
+		return false
+	}
+
+	switch strings.TrimSpace(req.Tool) {
+	case workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate:
+	default:
+		if !strings.HasSuffix(strings.TrimSpace(req.Tool), "_read_symbol") &&
+			!strings.HasSuffix(strings.TrimSpace(req.Tool), "_extract_body") {
+
+			return false
+		}
+	}
+
+	return concreteSourceEvidenceReadForPath(path, results)
+}
+
+func runnerStringSliceContainsPath(values []string, path string) bool {
+	path = agentutil.NormalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+
+	for _, value := range values {
+		if agentutil.NormalizeRunnerPath(value) == path {
+			return true
+		}
+	}
+
+	return false
+}
+
+func implementationTargetWriteReadySourcePath(path string) bool {
+	path = agentutil.NormalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+
+	lower := strings.ToLower(path)
+
+	return !strings.HasSuffix(lower, ".md") && !strings.HasSuffix(lower, ".mdx")
+}
+
+func (r *Runner) implementationPreWriteNonWriteRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
+	if r == nil || !implementationPreWriteToolSurfaceActive(r.RuntimeBrief, results) || r.writeOnlyRecoveryToolIsWrite(req.Tool) {
+		return "", "", "", false
+	}
+
+	missing := r.remainingRequiredEditPaths(results)
+	target := "the required edit path(s)"
+
+	if len(missing) > 0 {
+		target = strings.Join(missing, ", ")
+	} else if paths := nonEmptyRunnerStrings(r.RuntimeBrief.RequiredEditPaths, 3); len(paths) > 0 {
+		target = strings.Join(paths, ", ")
+	}
+
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" {
+		tool = "non-write tool"
+	}
+
+	summary = "Write-ready implementation non-write tool rejected"
+	errorText = fmt.Sprintf("the target packet and required_edit_paths already establish write readiness for %s. %s does not satisfy the pre-write implementation contract; available outcomes are an allowed write capability or <<QUESTION>> with the exact path-specific blocker.", target, tool)
+	prompt = fmt.Sprintf("The exact-anchor implementation packet is write-first for %s. Non-write tools are now hidden for this turn. The available contract outcome is the smallest safe write capability for each remaining required path. If the supplied anchor is stale or missing, answer with <<QUESTION>> and name that exact blocker; do not perform additional discovery or task planning.", target)
+
+	return summary, errorText, prompt, true
+}
+
+func (r *Runner) unscopedContextPackCandidateReadRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
+	if r == nil || !r.unscopedNoWriteCompletionRecoveryApplies(results) || !contextPackSeen(results) || len(concreteRecoveryEvidencePaths(results, 1)) > 0 {
+		return "", "", "", false
+	}
+
+	if strings.TrimSpace(req.Tool) != workspace.ToolNameReadFile {
+		return "", "", "", false
+	}
+
+	if contextPackCandidateReadAllowed(req, results) {
+		return "", "", "", false
+	}
+
+	summary = "Context packet candidate read rejected"
+	errorText = fmt.Sprintf("context_pack has not established an exact edit target yet. %s is only a packet candidate, so recovery must first gather literal or semantic evidence tied to the user's requested behavior.", strings.TrimSpace(req.Path))
+	prompt = "The context packet did not establish an exact edit target. Do not read or write packet candidates yet. Run one bounded fallback discovery action tied to literal words, symbols, or behavior from the user's actual request, and include a named gap explaining that the missing fact is a grounded source hit. After a concrete hit, read the highest-confidence path before writing."
+
+	return summary, errorText, prompt, true
+}
+
+func (r *Runner) deterministicPlanExecuteGroundingRecoveryRequest(reply string, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+	if r == nil || !r.planThenExecutePlannerPhase() || successfulSubmitPlanResultCount(results) > 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if planThenExecuteTerminalReplyShape(reply) {
+		state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+		if state.Mode != PlanExecutePlanningModeAnchorRefresh || len(state.RefreshPaths) == 0 {
+			return workspace.ToolRequest{}, "", false
+		}
+
+		rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results)
+		if !ok || !submitPlanRejectionHasInvalidAnchor(rejected) {
+			return workspace.ToolRequest{}, "", false
+		}
+	}
+
+	rejectedAt := -1
+
+	for i := len(results) - 1; i >= 0; i-- {
+		if planThenExecuteSubmitPlanGroundingRejectedResult(results[i]) {
+			rejectedAt = i
+			break
+		}
+	}
+
+	if rejectedAt < 0 {
+		state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+		if rejected, fallbackRejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok &&
+			submitPlanRejectionHasInvalidAnchor(rejected) &&
+			state.Mode == PlanExecutePlanningModeAnchorRefresh {
+
+			rejectedAt = fallbackRejectedAt
+		}
+	}
+
+	if rejectedAt < 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results); ok && state.Mode == PlanExecutePlanningModeAnchorRefresh {
+		for _, path := range state.RefreshPaths {
+			normalized := agentutil.NormalizeRunnerPath(path)
+			if normalized == "" {
+				continue
+			}
+
+			start, end := planThenExecuteAnchorRefreshFallbackRange(normalized, results, rejected)
+			req := workspace.ToolRequest{
+				Tool:            workspace.ToolNameReadFile,
+				Path:            normalized,
+				StartLine:       start,
+				EndLine:         end,
+				NamedGap:        "refresh current source evidence for the rejected submit_plan edit path",
+				WhyNotAnswering: "need bounded source evidence before resubmitting the corrected plan",
+			}
+
+			return req, marshalToolRequestRaw(req), true
+		}
+
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if !successfulToolAfter(results, rejectedAt, workspace.ToolNameContextPack) {
+		task := strings.TrimSpace(r.RuntimeBrief.Objective)
+		if task == "" {
+			task = "localize candidate edit paths for the unscoped plan-execute atom"
+		}
+
+		req := workspace.ToolRequest{Tool: workspace.ToolNameContextPack, Task: task, Mode: "plan", Limit: 8}
+
+		return req, marshalToolRequestRaw(req), true
+	}
+
+	if !successfulToolAfter(results, rejectedAt, workspace.ToolNameSearchContent) {
+		if pattern := r.planExecuteGroundingSearchPattern(); pattern != "" {
+			req := workspace.ToolRequest{
+				Tool:            workspace.ToolNameSearchContent,
+				Path:            ".",
+				Pattern:         pattern,
+				NamedGap:        "locate exact current source for the requested plan-execute atom before submit_plan",
+				WhyNotAnswering: "need grounded source hits before plan-execute can submit edits or source-satisfied",
+			}
+
+			return req, marshalToolRequestRaw(req), true
+		}
+	}
+
+	candidates := append([]string{}, candidateRecoveryScopePaths(r.RuntimeBrief, results[rejectedAt+1:], 8)...)
+
+	candidates = appendUniqueRunnerPaths(candidates, contextPackCandidatePaths(results[rejectedAt+1:], 8)...)
+
+	read := readPathsFromResults(results[rejectedAt+1:])
+
+	if len(read) >= 4 {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	for _, path := range candidates {
+		if _, ok := read[agentutil.NormalizeRunnerPath(path)]; ok {
+			continue
+		}
+
+		req := workspace.ToolRequest{
+			Tool:            workspace.ToolNameReadFile,
+			Path:            path,
+			StartLine:       1,
+			EndLine:         180,
+			NamedGap:        "current source evidence for the candidate edit path before submit_plan",
+			WhyNotAnswering: "need source-body evidence before plan-execute can submit edits or source-satisfied",
+		}
+
+		return req, marshalToolRequestRaw(req), true
+	}
+
+	return workspace.ToolRequest{}, "", false
+}
+
+func planThenExecuteAnchorRefreshFallbackRange(path string, results []workspace.ToolResult, rejected workspace.ToolResult) (int, int) {
+	path = agentutil.NormalizeRunnerPath(path)
+	if path == "" {
+		return 1, 180
+	}
+
+	if line, ok := submitPlanSyntaxValidationLineForPath(rejected, path); ok {
+		start := line - 40
+		if start < 1 {
+			start = 1
+		}
+
+		return planThenExecuteClampAnchorRefreshRange(start, line+40)
+	}
+
+	ranges := readRangesForPathFromResults(results, path)
+	for i := len(ranges) - 1; i >= 0; i-- {
+		if ranges[i].start <= 0 || ranges[i].end < ranges[i].start {
+			continue
+		}
+
+		end := ranges[i].end
+		if ranges[i].total > 0 && end > ranges[i].total {
+			end = ranges[i].total
+		}
+
+		if ranges[i].total <= 0 || end < ranges[i].total {
+			return planThenExecuteClampAnchorRefreshRange(end+1, end+180)
+		}
+
+		return planThenExecuteClampAnchorRefreshRange(ranges[i].start, end)
+	}
+
+	return 1, 180
+}
+
+func planThenExecuteClampAnchorRefreshRange(start, end int) (int, int) {
+	if start <= 0 {
+		start = 1
+	}
+	if end < start {
+		end = start
+	}
+	if end-start+1 > 400 {
+		end = start + 399
+	}
+
+	return start, end
+}
+
+func (r *Runner) deterministicPlanExecuteSourceSatisfiedEvidenceRead(reply string, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+	if r == nil || !r.planThenExecutePlannerPhase() || successfulSubmitPlanResultCount(results) > 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if !planThenExecuteSourceSatisfiedAnswerIntent(reply) || r.planThenExecuteSourceSatisfiedAnswerCovers(reply, results) {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	evidencePaths := PlanThenExecuteSourceSatisfiedEvidencePaths(reply)
+	if len(evidencePaths) == 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	candidateSet := normalizedRequiredEditPathSet(candidateRecoveryScopePaths(r.RuntimeBrief, results, 16))
+	requiredSet := normalizedRequiredEditPathSet(r.requiredEditCoveragePaths())
+
+	for _, path := range evidencePaths {
+		normalized := agentutil.NormalizeRunnerPath(path)
+		if normalized == "" || !pathparse.HasWorkspaceFileExtension(normalized) {
+			continue
+		}
+
+		if len(requiredSet) > 0 {
+			if _, ok := requiredSet[normalized]; !ok {
+				continue
+			}
+		} else if len(candidateSet) > 0 {
+			if _, ok := candidateSet[normalized]; !ok {
+				continue
+			}
+		}
+
+		if planThenExecuteRequiredSourceEvidenceForPath(r.RuntimeBrief, results, normalized).Level == planThenExecuteEvidenceAnchorReady {
+			continue
+		}
+
+		req := workspace.ToolRequest{
+			Tool:            workspace.ToolNameReadFile,
+			Path:            normalized,
+			StartLine:       1,
+			EndLine:         180,
+			NamedGap:        "source-satisfied current-state evidence for the named path",
+			WhyNotAnswering: "need source-body evidence before accepting the plan-execute source-satisfied closeout",
+		}
+
+		return req, marshalToolRequestRaw(req), true
+	}
+
+	return workspace.ToolRequest{}, "", false
+}
+
+func planThenExecuteGroundingRejectedSeen(results []workspace.ToolResult) bool {
+	for _, result := range results {
+		if planThenExecuteSubmitPlanGroundingRejectedResult(result) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (r *Runner) planExecuteGroundingSearchPattern() string {
+	if r == nil {
+		return ""
+	}
+
+	objectiveTerms := agentutil.RecoveryObjectiveSearchWords(r.RuntimeBrief.Objective, 24)
+	objectiveSet := map[string]struct{}{}
+
+	for _, term := range objectiveTerms {
+		objectiveSet[agentutil.SingularObjectiveWord(term)] = struct{}{}
+	}
+
+	patterns := make([]string, 0, 12)
+	seen := map[string]struct{}{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+
+		if _, ok := seen[value]; ok {
+			return
+		}
+
+		seen[value] = struct{}{}
+		patterns = append(patterns, regexp.QuoteMeta(value))
+	}
+
+	for _, tool := range r.RuntimeBrief.AllowedTools {
+		tool = strings.TrimSpace(tool)
+		if !toolNameOverlapsObjective(tool, objectiveSet) {
+			continue
+		}
+
+		add(tool)
+
+		if len(patterns) >= 4 {
+			break
+		}
+	}
+
+	if len(patterns) > 0 {
+		return strings.Join(patterns, "|")
+	}
+
+	for _, term := range objectiveTerms {
+		add(term)
+
+		if len(patterns) >= 8 {
+			break
+		}
+	}
+
+	return strings.Join(patterns, "|")
+}
+
+func toolNameOverlapsObjective(tool string, objectiveSet map[string]struct{}) bool {
+	if strings.TrimSpace(tool) == "" || len(objectiveSet) == 0 {
+		return false
+	}
+
+	parts := strings.FieldsFunc(strings.ToLower(tool), func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+	matches := 0
+
+	for _, part := range parts {
+		if len(part) < 4 {
+			continue
+		}
+
+		if _, ok := objectiveSet[agentutil.SingularObjectiveWord(part)]; ok {
+			matches++
+		}
+	}
+
+	return matches >= 2 || (len(parts) == 1 && matches == 1)
+}
+
+func planThenExecuteTerminalReplyShape(reply string) bool {
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == "" {
+		return false
+	}
+
+	return strings.HasPrefix(trimmed, "Decision: source-satisfied") ||
+		strings.HasPrefix(trimmed, "Decision: block") ||
+		strings.HasPrefix(trimmed, "<<QUESTION>>:")
+}
+
+func successfulToolAfter(results []workspace.ToolResult, index int, tool string) bool {
+	tool = strings.TrimSpace(tool)
+	for i := index + 1; i < len(results); i++ {
+		if strings.TrimSpace(results[i].Tool) == tool && strings.TrimSpace(results[i].Error) == "" {
+			return true
+		}
+	}
+
+	return false
+}
+
+func appendUniqueRunnerPaths(paths []string, more ...string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(paths)+len(more))
+
+	for _, path := range append(paths, more...) {
+		normalized := agentutil.NormalizeRunnerPath(path)
+		if normalized == "" || !pathparse.HasWorkspaceFileExtension(normalized) {
+			continue
+		}
+
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+
+	return out
+}
+
+func contextPackCandidateReadAllowed(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	target := agentutil.NormalizeRunnerPath(req.Path)
+	if target == "" || !pathparse.HasWorkspaceFileExtension(target) {
+		return false
+	}
+
+	candidates := contextPackCandidatePaths(results, 32)
+	for _, candidate := range candidates {
+		if candidate == target {
+			return true
+		}
+	}
+
+	return false
+}
+
+func contextPackCandidatePaths(results []workspace.ToolResult, max int) []string {
+	if max <= 0 {
+		max = 8
+	}
+
+	seen := map[string]struct{}{}
+	paths := make([]string, 0, max)
+	add := func(path string) {
+		path = agentutil.NormalizeRunnerPath(path)
+		if path == "" || !pathparse.HasWorkspaceFileExtension(path) {
+			return
+		}
+
+		if _, ok := seen[path]; ok {
+			return
+		}
+
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != workspace.ToolNameContextPack || strings.TrimSpace(result.Output) == "" {
+			continue
+		}
+
+		var view struct {
+			CandidateFiles []struct {
+				Path string `json:"path"`
+				Role string `json:"role"`
+			} `json:"candidate_files"`
+		}
+
+		if err := json.Unmarshal([]byte(result.Output), &view); err != nil {
+			continue
+		}
+
+		for _, file := range view.CandidateFiles {
+			role := strings.TrimSpace(file.Role)
+			if role != "" && role != "editable" && role != "read_only_evidence" && role != "test" {
+				continue
+			}
+
+			add(file.Path)
+
+			if len(paths) >= max {
+				return paths
+			}
+		}
+	}
+
+	return paths
+}
+
+func recoverySearchPathLooksEditableSource(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if lower == "" {
+		return false
+	}
+
+	for _, suffix := range []string{
+		".go", ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+		".java", ".kt", ".swift", ".c", ".cc", ".cpp", ".h", ".hpp", ".cs",
+		".rb", ".php", ".sh", ".bash", ".zsh", ".fish", ".lua", ".sql",
+		".html", ".css", ".scss", ".sass", ".vue", ".svelte", ".templ",
+		".json", ".yaml", ".yml", ".toml", ".xml", ".md", ".mdx",
+	} {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func literalRecoverySearchPattern(objective string) string {
+	terms := agentutil.RecoveryObjectiveSearchWords(objective, 8)
+	if len(terms) == 0 {
+		return ""
+	}
+
+	quoted := make([]string, 0, len(terms))
+	for _, term := range terms {
+		quoted = append(quoted, regexp.QuoteMeta(term))
+	}
+
+	return strings.Join(quoted, "|")
+}
+
+func (r *Runner) planThenExecuteReviewRepairCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+	if r == nil || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != PlanThenExecuteReviewRepairTaskFamily {
+		return workspace.ToolResult{}, false
+	}
+
+	if successfulSubmitPlanResultCount(results) > 0 {
+		return workspace.ToolResult{}, false
+	}
+
+	if planThenExecuteReviewRepairAnswerDeclaresBlocker(reply) {
+		return workspace.ToolResult{}, false
+	}
+
+	if plancontract.ReviewRepairAnswerDeclaresPass(reply) && plancontract.ReviewRepairTextHasChecklist(reply) {
+		if failed := planThenExecuteReviewRepairFailedPhaseObligations(r.RuntimeBrief); len(failed) > 0 {
+			return workspace.ToolResult{
+				Tool:    "completion_gate",
+				Summary: "Review-repair completion gate rejected contradictory pass",
+				Error:   "review-repair phase evidence still has failed obligations " + quotedRunnerStrings(failed) + "; choose a corrective submit_plan inside allowed paths or `<<QUESTION>>:` with the exact blocker instead of `Decision: pass`.",
+			}, true
+		}
+
+		return workspace.ToolResult{}, false
+	}
+
+	return workspace.ToolResult{
+		Tool:    "completion_gate",
+		Summary: "Review-repair completion gate rejected final answer",
+		Error: strings.Join([]string{
+			"review-repair must close with exactly one of: a successful submit_plan corrective plan,",
+			"`Decision: pass` with a `Verification Checklist`,",
+			"or `<<QUESTION>>:` naming the exact blocker.",
+			"Do not stop with process narration or an intent to inspect.",
+		}, " "),
+	}, true
+}
+
+func planThenExecuteReviewRepairFailedPhaseObligations(brief workerruntime.WorkerRuntimeBrief) []string {
+	if brief.Readiness == nil {
+		return nil
+	}
+
+	out := make([]string, 0)
+
+	for _, obligation := range brief.Readiness.OpenObligations {
+		obligation = strings.TrimSpace(obligation)
+		switch {
+		case obligation == "patch_hygiene_failed":
+			out = append(out, obligation)
+		case strings.HasPrefix(obligation, "verification_failed:"),
+			strings.HasPrefix(obligation, "verification_error:"),
+			strings.HasPrefix(obligation, "source_sanity_failed:"),
+			strings.HasPrefix(obligation, "source_sanity_error:"),
+			strings.HasPrefix(obligation, "submitted_edit_failed:"):
+			out = append(out, obligation)
+		}
+	}
+
+	return out
+}
+
+func (r *Runner) reviewRepairDoomLoopTerminalCloseout(results []workspace.ToolResult) (answer string, stopReason string, exhausted bool, ok bool) {
+	if r == nil || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != PlanThenExecuteReviewRepairTaskFamily {
+		return "", "", false, false
+	}
+
+	if reviewRepairCompletionGateRejectionCount(results) == 0 {
+		return "", "", false, false
+	}
+
+	answer = reviewRepairNoopSubmitPlanDeterministicCloseout(r.RuntimeBrief, workspace.ToolResult{
+		Tool:    "completion_gate",
+		Summary: "Review-repair completion gate rejected final answer",
+		Error:   "review-repair repeated discovery after the terminal closeout gate instead of choosing `Decision: pass`, corrective `submit_plan`, or `<<QUESTION>>:`.",
+	})
+	if strings.HasPrefix(strings.TrimSpace(answer), "Decision: pass") {
+		return answer, "review_repair_terminal_doom_loop_pass", false, true
+	}
+
+	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>:") {
+		return answer, "review_repair_terminal_doom_loop_blocker", true, true
+	}
+
+	return "", "", false, false
+}
+
+func reviewRepairPhaseEvidencePacket(objective string) []string {
+	evidence := reviewRepairPhaseEvidenceFromObjective(objective)
+	if evidence == "" {
+		return nil
+	}
+
+	return []string{"phase_evidence_bundle:\n" + evidence}
+}
+
+func reviewRepairTrustedPhaseEvidence(brief workerruntime.WorkerRuntimeBrief) string {
+	if evidence := reviewRepairPhaseEvidenceFromObjective(brief.Objective); evidence != "" {
+		return evidence
+	}
+
+	for _, packet := range brief.TargetPacket {
+		packet = strings.TrimSpace(packet)
+		if !strings.HasPrefix(packet, "phase_evidence_bundle:") {
+			continue
+		}
+
+		evidence := strings.TrimSpace(strings.TrimPrefix(packet, "phase_evidence_bundle:"))
+		if evidence == "" {
+			continue
+		}
+
+		if len(evidence) > 12000 {
+			evidence = evidence[:12000]
+		}
+
+		return evidence
+	}
+
+	return ""
+}
+
+func reviewRepairPhaseEvidenceFromObjective(objective string) string {
+	const heading = "## Phase Evidence Bundle"
+
+	idx := strings.Index(objective, heading)
+
+	if idx < 0 {
+		return ""
+	}
+
+	afterHeading := objective[idx+len(heading):]
+	fenceStart := strings.Index(afterHeading, "```")
+
+	if fenceStart < 0 {
+		return ""
+	}
+
+	afterFence := afterHeading[fenceStart+len("```"):]
+	if lineEnd := strings.Index(afterFence, "\n"); lineEnd >= 0 {
+		afterFence = afterFence[lineEnd+1:]
+	}
+
+	fenceEnd := strings.Index(afterFence, "```")
+	if fenceEnd < 0 {
+		return ""
+	}
+
+	evidence := strings.TrimSpace(afterFence[:fenceEnd])
+	if evidence == "" {
+		return ""
+	}
+
+	if len(evidence) > 12000 {
+		evidence = evidence[:12000]
+	}
+
+	return evidence
+}
+
+func planThenExecuteReviewRepairAnswerDeclaresBlocker(answer string) bool {
+	return planThenExecuteAnswerDeclaresTypedBlocker(answer)
+}
+
+func implementationScopedReadFileRequestInExplicitScope(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, req workspace.ToolRequest) bool {
+	if !implementationScopedEditSurfaceActive(brief, results) {
+		return false
+	}
+
+	if strings.TrimSpace(req.Tool) != workspace.ToolNameReadFile {
+		return false
+	}
+
+	return readRequestTargetsRequiredEditPath(req, implementationScopedExplicitReadScope(brief))
+}
+
+func (r *Runner) preflightScopedImplementationLargeWriteFileReplacement(req workspace.ToolRequest, results []workspace.ToolResult) verificationInterceptResult {
+	if r == nil || r.Workspace == nil {
+		return verificationInterceptResult{}
+	}
+
+	if strings.TrimSpace(req.Tool) != workspace.ToolNameWriteFile {
+		return verificationInterceptResult{}
+	}
+
+	if briefIsDocDeliverableLane(r.RuntimeBrief) {
+		return verificationInterceptResult{}
+	}
+
+	if !implementationScopedEditSurfaceActive(r.RuntimeBrief, results) {
+		return verificationInterceptResult{}
+	}
+
+	relPath := scopedImplementationRequiredPath(req.Path, r.RuntimeBrief.RequiredEditPaths)
+	if relPath == "" || writePathIsNonSource(relPath) {
+		return verificationInterceptResult{}
+	}
+
+	absPath := filepath.Join(r.Workspace.Root(), filepath.FromSlash(relPath))
+	info, err := os.Stat(absPath)
+
+	if err != nil || info.IsDir() {
+		return verificationInterceptResult{}
+	}
+
+	lineCount := 0
+	byteCount := info.Size()
+
+	if byteCount <= scopedImplementationLargeReadByteThreshold {
+		data, readErr := os.ReadFile(absPath)
+		if readErr != nil {
+			return verificationInterceptResult{}
+		}
+
+		lineCount = countTextLines(data)
+		byteCount = int64(len(data))
+	}
+
+	if lineCount <= scopedImplementationLargeReadLineThreshold && byteCount <= scopedImplementationLargeReadByteThreshold {
+		return verificationInterceptResult{}
+	}
+
+	detail := fmt.Sprintf("%d bytes", byteCount)
+	if lineCount > 0 {
+		detail = fmt.Sprintf("%d lines, %d bytes", lineCount, byteCount)
+	}
+
+	return verificationInterceptResult{
+		Intercepted: true,
+		Result: workspace.ToolResult{
+			Tool:    workspace.ToolNameWriteFile,
+			Summary: fmt.Sprintf("Rejected large existing write_file replacement for %s", relPath),
+			Error: fmt.Sprintf(
+				"write_file would replace existing large scoped source path %s (%s). Use apply_patch or edit_file with old_text/new_text or start_line/end_line/content for a bounded edit. write_file is reserved here for missing/new files and non-source deliverables.",
+				relPath,
+				detail,
+			),
+		},
+		Reason: fmt.Sprintf("rejected range-less full-file replacement on large scoped source path %s", relPath),
+	}
+}
+
+func scopedImplementationRequiredPath(path string, required []string) string {
+	cleaned := cleanRelativeRunnerPath(path)
+	if cleaned == "" {
+		return ""
+	}
+
+	for _, candidate := range required {
+		if cleanRelativeRunnerPath(candidate) == cleaned {
+			return cleaned
+		}
+	}
+
+	return ""
+}
+
+func cleanRelativeRunnerPath(path string) string {
+	normalized := agentutil.NormalizeRunnerPath(path)
+	if normalized == "" || filepath.IsAbs(normalized) {
+		return ""
+	}
+
+	cleaned := filepath.ToSlash(filepath.Clean(normalized))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return ""
+	}
+
+	return cleaned
+}
+
+func countTextLines(data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+
+	lines := strings.Count(string(data), "\n")
+	if data[len(data)-1] != '\n' {
+		lines++
+	}
+
+	return lines
+}
+
+func (r *Runner) preflightScopedImplementationBoundedSourceRead(req workspace.ToolRequest, results []workspace.ToolResult) verificationInterceptResult {
+	if r == nil || r.Workspace == nil {
+		return verificationInterceptResult{}
+	}
+
+	if !implementationScopedReadFileRequestInExplicitScope(r.RuntimeBrief, results, req) {
+		return verificationInterceptResult{}
+	}
+
+	if req.StartLine > 0 || req.EndLine > 0 {
+		return verificationInterceptResult{}
+	}
+
+	relPath := agentutil.NormalizeRunnerPath(req.Path)
+	if relPath == "" || strings.HasPrefix(relPath, "../") || relPath == ".." || filepath.IsAbs(relPath) {
+		return verificationInterceptResult{}
+	}
+
+	relPath = filepath.ToSlash(filepath.Clean(relPath))
+	if relPath == "." || strings.HasPrefix(relPath, "../") || relPath == ".." {
+		return verificationInterceptResult{}
+	}
+
+	absPath := filepath.Join(r.Workspace.Root(), filepath.FromSlash(relPath))
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return verificationInterceptResult{}
+	}
+
+	lines := strings.Split(string(data), "\n")
+	if len(lines) <= scopedImplementationLargeReadLineThreshold && len(data) <= scopedImplementationLargeReadByteThreshold {
+		return verificationInterceptResult{}
+	}
+
+	start, end, selector := scopedImplementationBoundedReadWindow(r.RuntimeBrief, relPath, lines)
+	output := scopedImplementationBoundedReadOutput(r.RuntimeBrief, relPath, lines, start, end, selector)
+	r.Workspace.MarkPathObserved(relPath)
+
+	return verificationInterceptResult{
+		Intercepted: true,
+		Result: workspace.ToolResult{
+			Tool: workspace.ToolNameReadFile,
+			Summary: fmt.Sprintf(
+				"Read %s lines %d-%d (bounded large required-path source; file has %d lines total; full range-less read omitted)",
+				relPath, start, end, len(lines),
+			),
+			Output: output,
+		},
+		Reason: fmt.Sprintf("bounded range-less read_file on large scoped path %s to lines %d-%d of %d", relPath, start, end, len(lines)),
+	}
+}
+
+func scopedImplementationBoundedReadWindow(brief workerruntime.WorkerRuntimeBrief, path string, lines []string) (int, int, string) {
+	total := len(lines)
+	if total <= 0 {
+		return 1, 1, "empty file fallback"
+	}
+
+	terms := scopedImplementationSourceSelectionTerms(brief, path)
+	if line := firstLineMatchingAnyTerm(lines, terms); line > 0 {
+		start, end := centeredLineWindow(line, total, scopedImplementationBoundedReadWindowLines)
+		return start, end, fmt.Sprintf("first task/path term match near line %d", line)
+	}
+
+	if line := firstDeclarationLine(lines); line > 0 {
+		start, end := centeredLineWindow(line, total, scopedImplementationBoundedReadWindowLines)
+		return start, end, fmt.Sprintf("first declaration fallback near line %d", line)
+	}
+
+	end := scopedImplementationBoundedReadWindowLines
+	if end > total {
+		end = total
+	}
+
+	return 1, end, "top-of-file fallback"
+}
+
+func scopedImplementationBoundedReadOutput(brief workerruntime.WorkerRuntimeBrief, path string, lines []string, start int, end int, selector string) string {
+	total := len(lines)
+
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "Bounded source packet for %s\n", path)
+	fmt.Fprintf(&b, "- file_lines: %d\n", total)
+	fmt.Fprintf(&b, "- returned_lines: %d-%d\n", start, end)
+	fmt.Fprintf(&b, "- selector: %s\n", selector)
+	fmt.Fprintf(&b, "- reason: range-less read_file on a large scoped required/evidence path was bounded to preserve context.\n")
+	fmt.Fprintf(&b, "- next: request a smaller read_file range or a code_navigate read_symbol for the exact edit-safety fact you still need.\n")
+
+	for _, suggestion := range scopedImplementationSuggestedReadRanges(brief, path, lines, start, end) {
+		fmt.Fprintf(&b, "- suggested_next_read: %s\n", suggestion)
+	}
+
+	b.WriteString("\nSource lines:\n")
+
+	for i := start - 1; i < end && i < len(lines); i++ {
+		fmt.Fprintf(&b, "%d:%s\n", i+1, truncateScopedImplementationBoundedReadLine(lines[i]))
+	}
+
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func truncateScopedImplementationBoundedReadLine(line string) string {
+	if len(line) <= scopedImplementationBoundedReadLineCharCap {
+		return line
+	}
+
+	return fmt.Sprintf("%s... [truncated %d chars]", line[:scopedImplementationBoundedReadLineCharCap], len(line)-scopedImplementationBoundedReadLineCharCap)
+}
+
+func scopedImplementationSuggestedReadRanges(brief workerruntime.WorkerRuntimeBrief, path string, lines []string, returnedStart int, returnedEnd int) []string {
+	terms := scopedImplementationSourceSelectionTerms(brief, path)
+	total := len(lines)
+	seen := map[string]struct{}{
+		fmt.Sprintf("%d-%d", returnedStart, returnedEnd): {},
+	}
+
+	var suggestions []string
+
+	add := func(line int, why string) {
+		if line <= 0 || line > total || len(suggestions) >= 3 {
+			return
+		}
+
+		start, end := centeredLineWindow(line, total, scopedImplementationBoundedReadWindowLines)
+		key := fmt.Sprintf("%d-%d", start, end)
+
+		if _, ok := seen[key]; ok {
+			return
+		}
+
+		seen[key] = struct{}{}
+
+		suggestions = append(suggestions, fmt.Sprintf(
+			`{"tool":"read_file","path":%q,"start_line":%d,"end_line":%d,"named_gap":%q,"why_not_answering":"need bounded current source before the edit"}`,
+			path, start, end, why,
+		))
+	}
+
+	for _, line := range allDeclarationLinesMatchingAnyTerm(lines, terms, 6) {
+		add(line, "inspect task-relevant declaration in large scoped file")
+	}
+
+	for _, line := range allLinesMatchingAnyTerm(lines, terms, 6) {
+		add(line, "inspect task-relevant source range in large scoped file")
+	}
+
+	if len(suggestions) == 0 {
+		add(1, "inspect file header/imports before selecting a narrower symbol or range")
+	}
+
+	return suggestions
+}
+
+func scopedImplementationSourceSelectionTerms(brief workerruntime.WorkerRuntimeBrief, path string) []string {
+	seen := map[string]struct{}{}
+
+	var terms []string
+
+	add := func(term string) {
+		term = strings.ToLower(strings.TrimSpace(term))
+		term = strings.Trim(term, "`'\".,:;()[]{}")
+
+		if len(term) < 4 || scopedImplementationSourceSelectionStopWord(term) {
+			return
+		}
+
+		if _, ok := seen[term]; ok {
+			return
+		}
+
+		seen[term] = struct{}{}
+		terms = append(terms, term)
+	}
+	text := strings.Join([]string{
+		brief.Objective,
+		strings.Join(brief.RequiredNext, " "),
+		strings.Join(brief.SearchPolicy, " "),
+		strings.Join(brief.Constraints, " "),
+	}, " ")
+
+	for _, match := range backtickedTokenPattern.FindAllStringSubmatch(text, -1) {
+		if len(match) > 1 && !strings.Contains(match[1], "/") {
+			add(match[1])
+		}
+	}
+
+	for _, token := range codeShapedTokenPattern.FindAllString(text, -1) {
+		add(token)
+	}
+
+	for _, token := range codeShapedSnakeCasePattern.FindAllString(text, -1) {
+		add(token)
+
+		for _, part := range strings.Split(token, "_") {
+			add(part)
+		}
+	}
+
+	for _, token := range strings.FieldsFunc(text, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_'
+	}) {
+		add(token)
+	}
+
+	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	add(stem)
+
+	for _, part := range strings.FieldsFunc(stem, func(r rune) bool {
+		return r == '_' || r == '-' || r == '.'
+	}) {
+		add(part)
+	}
+
+	add(filepath.Base(path))
+
+	if len(terms) > 16 {
+		return terms[:16]
+	}
+
+	return terms
+}
+
+func scopedImplementationSourceSelectionStopWord(term string) bool {
+	switch term {
+	case "this", "that", "with", "from", "into", "file", "files", "path", "paths",
+		"source", "read", "edit", "edits", "write", "writes", "scope", "scoped",
+		"required", "implementation", "implement", "contract", "evidence", "exact",
+		"task", "test", "tests", "need", "needs", "before", "after", "current", "main":
+		return true
+	default:
+		return false
+	}
+}
+
+func firstLineMatchingAnyTerm(lines []string, terms []string) int {
+	for _, line := range allLinesMatchingAnyTerm(lines, terms, 1) {
+		return line
+	}
+
+	return 0
+}
+
+func allLinesMatchingAnyTerm(lines []string, terms []string, max int) []int {
+	if max <= 0 || len(terms) == 0 {
+		return nil
+	}
+
+	var out []int
+
+	for i, line := range lines {
+		lower := strings.ToLower(line)
+		for _, term := range terms {
+			if strings.Contains(lower, term) {
+				out = append(out, i+1)
+				break
+			}
+		}
+
+		if len(out) >= max {
+			return out
+		}
+	}
+
+	return out
+}
+
+func firstDeclarationLine(lines []string) int {
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "func ") ||
+			strings.HasPrefix(trimmed, "type ") ||
+			strings.HasPrefix(trimmed, "const ") ||
+			strings.HasPrefix(trimmed, "var ") ||
+			strings.HasPrefix(trimmed, "class ") ||
+			strings.HasPrefix(trimmed, "def ") {
+
+			return i + 1
+		}
+	}
+
+	return 0
+}
+
+func allDeclarationLinesMatchingAnyTerm(lines []string, terms []string, max int) []int {
+	if max <= 0 || len(terms) == 0 {
+		return nil
+	}
+
+	var out []int
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		isDecl := strings.HasPrefix(trimmed, "func ") ||
+			strings.HasPrefix(trimmed, "type ") ||
+			strings.HasPrefix(trimmed, "const ") ||
+			strings.HasPrefix(trimmed, "var ") ||
+			strings.HasPrefix(trimmed, "class ") ||
+			strings.HasPrefix(trimmed, "def ")
+
+		if !isDecl {
+			continue
+		}
+
+		lower := strings.ToLower(trimmed)
+		for _, term := range terms {
+			if strings.Contains(lower, term) {
+				out = append(out, i+1)
+				break
+			}
+		}
+
+		if len(out) >= max {
+			return out
+		}
+	}
+
+	return out
+}
+
+func centeredLineWindow(line int, total int, size int) (int, int) {
+	if total <= 0 {
+		return 1, 1
+	}
+
+	if size <= 0 {
+		size = scopedImplementationBoundedReadWindowLines
+	}
+
+	if size > total {
+		size = total
+	}
+
+	start := line - size/3
+	if start < 1 {
+		start = 1
+	}
+
+	end := start + size - 1
+	if end > total {
+		end = total
+		start = end - size + 1
+
+		if start < 1 {
+			start = 1
+		}
+	}
+
+	return start, end
+}
+
+// maxToolStepsExhaustedReason mirrors OpenCode's max-steps.txt: when the
+// per-turn tool-step budget is spent, tools are disabled and the model must
+// synthesize a text-only reply now from the evidence already gathered. The
+// wording is deliberately blunt about both constraints — no more tool calls,
+// and no empty responses — to steer small local models away from the
+// "keep probing" loop that produced the empty-answer failure in
+// logs/conversations/20260421-053044.479.jsonl.
+
+func reviewRepairTerminalOutcomeRequiredState(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult) bool {
+	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecuteReviewRepairTaskFamily {
+		return false
+	}
+
+	summary := strings.TrimSpace(result.Summary)
+
+	return strings.EqualFold(summary, "Review-repair terminal outcome required") ||
+		strings.HasPrefix(summary, "Review-repair completion gate rejected")
+}
+
+func reviewRepairTerminalValidNextActions() []string {
+	return []string{
+		"`Decision: pass` with a `Verification Checklist`",
+		"a corrective `submit_plan` whose rationale starts with `Verification Checklist:`",
+		"`<<QUESTION>>:` naming the exact blocker that prevents a terminal review-repair outcome",
+	}
+}
+
+func reviewRepairTerminalInvalidNextActions() []string {
+	return []string{
+		"read/search/discovery/context tools after the review-repair closeout gate",
+		"running commands after the review-repair closeout gate",
+		"planning, summarizing, or adding prose before or after the terminal outcome",
+	}
+}
+
+func applyScratchpadDeliverableCloseoutBias(state runnerNextActionState, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, engine GuidanceEngine) runnerNextActionState {
+	if engine == nil {
+		engine = newGuidanceEngine("", newEvidenceEngine())
+	}
+	if !engine.ScratchpadCloseoutReady(brief, results) {
+		return state
+	}
+
+	target := strings.Join(missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results)), ", ")
+	if target == "" {
+		target = "the required deliverable"
+	}
+
+	state.Constraints = util.Merge(state.Constraints, []string{
+		"scratchpad_deliverable_closeout_ready",
+		"non_source_deliverable_path_unwritten",
+	})
+	state.EvidenceStatus = util.Merge(state.EvidenceStatus, []string{
+		fmt.Sprintf("non-source deliverable still unwritten: %s; gathered evidence and accepted gaps should be recorded in the deliverable", target),
+	})
+	state.NextValidActions = []string{
+		fmt.Sprintf("deliverable-write capability for %s with the corrected content, recording source uncertainty as Source verification pending or Scope Correction Required", target),
+		"answer <<QUESTION>> only if the deliverable cannot be written from the gathered evidence plus recorded uncertainty",
+	}
+	state.InvalidNextActions = util.Merge(state.InvalidNextActions, []string{
+		"new source discovery after completion gate rejected a prose-only non-source deliverable",
+		"repairing an optional evidence lookup instead of recording the gap in the scratchpad deliverable",
+		"final answer without write_file for the required non-source deliverable",
+	})
+
+	return state
+}
+
+func scratchpadDeliverableCloseoutReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !briefIsScratchpadDeliverableLane(brief) {
+		return false
+	}
+
+	if len(missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results))) == 0 {
+		return false
+	}
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != "completion_gate" {
+			continue
+		}
+
+		lower := strings.ToLower(strings.TrimSpace(result.Summary + " " + result.Error))
+		if strings.Contains(lower, "no successful write") ||
+			strings.Contains(lower, "no successful write tool") ||
+			strings.Contains(lower, "workspace change") ||
+			strings.Contains(lower, "remain unwritten") {
+
+			return true
+		}
+	}
+
+	return false
+}
+
+func (r *Runner) scratchpadDeliverableCloseoutNonWriteRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, target string, reject bool) {
+	if r == nil || !scratchpadDeliverableCloseoutReady(r.RuntimeBrief, results) || workspace.IsWorkspaceWriteTool(req.Tool) {
+		return "", "", "", "", false
+	}
+
+	missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results))
+
+	target = "the required deliverable"
+
+	if len(missing) > 0 {
+		target = strings.Join(missing, ", ")
+	}
+
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" {
+		tool = "the requested tool"
+	}
+
+	summary = "Scratchpad deliverable closeout blocked non-write tool"
+	errorText = fmt.Sprintf("%s is not available after the completion gate rejected a prose-only response for non-source deliverable path(s): %s. The available contract outcomes are deliverable-write capability with full content or <<QUESTION>> with the exact blocker.", tool, target)
+	prompt = fmt.Sprintf("The completion gate already determined that %s is still unwritten. Do not perform additional reads, searches, discovery, planning, or optional evidence repair from this recovery state. The deliverable-write contract records missing/stale/ambiguous evidence as `Source verification pending:` or `## Scope Correction Required`, or answers with <<QUESTION>> if the deliverable is impossible.", target)
+
+	return summary, errorText, prompt, target, true
+}
+
+func (r *Runner) scratchpadDeliverableSourceDiscoveryRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
+	if r == nil || !briefIsScratchpadDeliverableLane(r.RuntimeBrief) || workspace.IsWorkspaceWriteTool(req.Tool) {
+		return "", "", "", false
+	}
+
+	if len(r.remainingRequiredEditPaths(results)) == 0 || !r.scopedReadClassTool(req) {
+		return "", "", "", false
+	}
+
+	if scratchpadDeliverablePrewriteReadAllowed(req) {
+		return "", "", "", false
+	}
+
+	missing := r.remainingRequiredEditPaths(results)
+	target := "the required deliverable"
+
+	if len(missing) > 0 {
+		target = strings.Join(missing, ", ")
+	} else if paths := nonEmptyRunnerStrings(r.RuntimeBrief.RequiredEditPaths, 3); len(paths) > 0 {
+		target = strings.Join(paths, ", ")
+	}
+
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" {
+		tool = "read/discovery tool"
+	}
+
+	summary = "Scratchpad deliverable source discovery redirected to write"
+	errorText = fmt.Sprintf("%s is not available before writing non-source scratchpad deliverable path(s): %s. Read required scratchpad inputs only; record missing or uncertain source evidence in the deliverable instead of reopening source discovery.", tool, target)
+	prompt = fmt.Sprintf("This lane is a non-source scratchpad writer/reviewer phase for %s. Source discovery is closed here: the deliverable-write contract uses the preloaded evidence already in the brief, records missing/stale/ambiguous facts as `Source verification pending:` or `## Scope Correction Required`, or answers with <<QUESTION>> and the exact blocker if the deliverable cannot be written from the scratchpad inputs plus recorded uncertainty.", target)
+
+	return summary, errorText, prompt, true
+}
+
+func scratchpadDeliverablePrewriteReadAllowed(req workspace.ToolRequest) bool {
+	path := agentutil.NormalizeRunnerPath(req.Path)
+	if path == "" {
+		return false
+	}
+
+	return writePathIsNonSource(path)
+}
+
+func scratchpadFailedEvidenceFeedbackApplies(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult) bool {
+	if !briefIsScratchpadDeliverableLane(brief) || strings.TrimSpace(result.Error) == "" {
+		return false
+	}
+
+	if workspace.IsWorkspaceWriteTool(req.Tool) || !workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
+		return false
+	}
+
+	return len(missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results))) > 0
+}
+
+type taskLedgerState struct {
+	policy  TaskLedgerPolicy
+	created bool
+	items   []workspace.TaskLedgerItem
+}
+
+func newTaskLedgerState(policy TaskLedgerPolicy) *taskLedgerState {
+	return &taskLedgerState{policy: policy}
+}
+
+func (s *taskLedgerState) apply(req workspace.ToolRequest, receiptBatches ...[]workspace.ToolResult) workspace.ToolResult {
+	if s == nil || s.policy.Disabled {
+		return workspace.ToolResult{
+			Tool:    "task_ledger",
+			Summary: "Task ledger rejected",
+			Error:   "task_ledger is disabled for this runner",
+		}
+	}
+
+	items := taskLedgerItemsFromRequest(req)
+	if len(items) == 0 {
+		return workspace.ToolResult{
+			Tool:    "task_ledger",
+			Summary: "Task ledger rejected",
+			Error:   "provide a non-empty todos array with content and status for each item",
+		}
+	}
+
+	normalized := make([]workspace.TaskLedgerItem, 0, len(items))
+	active := 0
+
+	for i, item := range items {
+		item.ID = strings.TrimSpace(item.ID)
+		item.Content = strings.TrimSpace(item.Content)
+		item.Status = normalizeTaskLedgerStatus(item.Status)
+		item.Evidence = strings.TrimSpace(item.Evidence)
+
+		if item.ID == "" {
+			item.ID = fmt.Sprintf("item-%d", i+1)
+		}
+
+		if item.Content == "" {
+			return workspace.ToolResult{
+				Tool:    "task_ledger",
+				Summary: "Task ledger rejected",
+				Error:   fmt.Sprintf("todo %s is missing content", item.ID),
+			}
+		}
+
+		if !validTaskLedgerStatus(item.Status) {
+			return workspace.ToolResult{
+				Tool:    "task_ledger",
+				Summary: "Task ledger rejected",
+				Error:   fmt.Sprintf("todo %s has unsupported status %q; use pending, in_progress, completed, blocked, or cancelled", item.ID, item.Status),
+			}
+		}
+
+		if item.Status == "completed" && item.Evidence == "" {
+			if previous, ok := s.previousItem(item.ID); ok && normalizeTaskLedgerStatus(previous.Status) == "completed" {
+				item.Evidence = strings.TrimSpace(previous.Evidence)
+			}
+		}
+
+		if item.Status == "in_progress" {
+			active++
+		}
+
+		normalized = append(normalized, item)
+	}
+
+	if active > 1 {
+		return workspace.ToolResult{
+			Tool:    "task_ledger",
+			Summary: "Task ledger rejected",
+			Error:   "only one task ledger item may be in_progress at a time",
+		}
+	}
+
+	receipts := flattenTaskLedgerReceiptBatches(receiptBatches)
+	if s.policy.RequireEvidence {
+		if err := s.validateCompletedEvidence(normalized, receipts); err != "" {
+			return workspace.ToolResult{
+				Tool:    "task_ledger",
+				Summary: "Task ledger rejected",
+				Error:   err,
+			}
+		}
+	}
+
+	s.created = true
+	s.items = normalized
+
+	return workspace.ToolResult{
+		Tool:    "task_ledger",
+		Summary: "Task ledger updated: " + s.statusSummary(),
+		Output:  s.render(),
+	}
+}
+
+func flattenTaskLedgerReceiptBatches(batches [][]workspace.ToolResult) []workspace.ToolResult {
+	var receipts []workspace.ToolResult
+
+	for _, batch := range batches {
+		receipts = append(receipts, batch...)
+	}
+
+	return receipts
+}
+
+func (s *taskLedgerState) validateCompletedEvidence(items []workspace.TaskLedgerItem, receipts []workspace.ToolResult) string {
+	for _, item := range items {
+		if item.Status != "completed" || !s.itemNewlyCompleted(item) {
+			continue
+		}
+
+		if strings.TrimSpace(item.Evidence) == "" {
+			return fmt.Sprintf("todo %s is marked completed but has no evidence; use evidence refs such as write:path, read:path, verify:command, or artifact:id backed by prior tool results", item.ID)
+		}
+
+		for _, ref := range parseTaskLedgerEvidenceRefs(item.Evidence) {
+			if !taskLedgerEvidenceRefSatisfied(ref, receipts) {
+				return fmt.Sprintf("todo %s evidence %q is not backed by prior successful tool results", item.ID, ref)
+			}
+		}
+	}
+
+	return ""
+}
+
+func (s *taskLedgerState) itemNewlyCompleted(next workspace.TaskLedgerItem) bool {
+	if s == nil {
+		return true
+	}
+
+	if previous, ok := s.previousItem(next.ID); ok {
+		return normalizeTaskLedgerStatus(previous.Status) != "completed"
+	}
+
+	return true
+}
+
+func (s *taskLedgerState) previousItem(id string) (workspace.TaskLedgerItem, bool) {
+	if s == nil {
+		return workspace.TaskLedgerItem{}, false
+	}
+
+	id = strings.TrimSpace(id)
+	for _, previous := range s.items {
+		if strings.TrimSpace(previous.ID) == id {
+			return previous, true
+		}
+	}
+
+	return workspace.TaskLedgerItem{}, false
+}
+
+func parseTaskLedgerEvidenceRefs(evidence string) []string {
+	fields := strings.FieldsFunc(evidence, func(r rune) bool {
+		switch r {
+		case ',', ';', '\n', '\r', '\t':
+			return true
+		default:
+			return false
+		}
+	})
+	refs := make([]string, 0, len(fields))
+
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field != "" {
+			refs = append(refs, field)
+		}
+	}
+
+	return refs
+}
+
+func taskLedgerEvidenceRefSatisfied(ref string, receipts []workspace.ToolResult) bool {
+	kind, value, ok := strings.Cut(strings.TrimSpace(ref), ":")
+	if !ok || strings.TrimSpace(value) == "" {
+		return false
+	}
+
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	value = strings.TrimSpace(value)
+
+	switch kind {
+	case "write":
+		return taskLedgerWriteEvidenceSatisfied(value, receipts)
+	case "read":
+		return taskLedgerToolEvidenceSatisfied(value, receipts, taskLedgerReadTool)
+	case "verify":
+		return taskLedgerToolEvidenceSatisfied(value, receipts, taskLedgerVerificationTool)
+	case "artifact":
+		return taskLedgerToolEvidenceSatisfied(value, receipts, taskLedgerAnySuccessfulTool)
+	default:
+		return false
+	}
+}
+
+func taskLedgerWriteEvidenceSatisfied(path string, receipts []workspace.ToolResult) bool {
+	want := agentutil.NormalizeRunnerPath(path)
+	if want == "" {
+		return false
+	}
+
+	for got := range changedPathsFromToolResults(receipts) {
+		got = agentutil.NormalizeRunnerPath(got)
+		if got == want || strings.HasPrefix(got, want+"/") || strings.HasPrefix(want, got+"/") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func taskLedgerToolEvidenceSatisfied(value string, receipts []workspace.ToolResult, predicate func(workspace.ToolResult) bool) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return false
+	}
+
+	for _, receipt := range receipts {
+		if strings.TrimSpace(receipt.Error) != "" || !predicate(receipt) {
+			continue
+		}
+
+		text := strings.ToLower(strings.Join([]string{receipt.Tool, receipt.Code, receipt.Summary, receipt.Output, string(receipt.Payload)}, "\n"))
+		if strings.Contains(text, value) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func taskLedgerReadTool(result workspace.ToolResult) bool {
+	switch strings.TrimSpace(result.Tool) {
+	case "read_file", "code_navigate", "context_zoom", "context_pack", "context_query", "discovery_query", "search_content", "go_read_symbol", "go_extract_body", "go_file_outline", "python_read_symbol", "python_file_outline":
+		return true
+	default:
+		return false
+	}
+}
+
+func taskLedgerVerificationTool(result workspace.ToolResult) bool {
+	tool := strings.TrimSpace(result.Tool)
+	if tool == "shell" || tool == "source_sanity" || tool == "affected_suites" || tool == "context_trace_pack" {
+		return true
+	}
+
+	return resultCountsAsSuccessfulVerification(result)
+}
+
+func taskLedgerAnySuccessfulTool(result workspace.ToolResult) bool {
+	return strings.TrimSpace(result.Error) == ""
+}
+
+func (s *taskLedgerState) completionRejection(reply string) (workspace.ToolResult, bool) {
+	if s == nil || s.policy.Disabled {
+		return workspace.ToolResult{}, false
+	}
+
+	if s.policy.Required && !s.created && !taskLedgerFinalHasTerminalReason(reply) {
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Task ledger completion gate rejected final answer",
+			Error:   "this is complex multi-step work and no task_ledger exists. Create a ledger or, if you are not yet acting on a write, answer with an explicit blocker or no-op reason.",
+		}, true
+	}
+
+	if !s.created {
+		return workspace.ToolResult{}, false
+	}
+
+	if unfinished := s.unfinishedItems(); len(unfinished) > 0 && !taskLedgerFinalHasTerminalReason(reply) {
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Task ledger completion gate rejected final answer",
+			Error:   "task ledger still has unfinished required work: " + strings.Join(unfinished, "; ") + ". Continue the work, mark the ledger item with a concrete blocker, or if the user asked only for a plan, finish with an explicit planning-exit phrase (e.g. \"plan ready - awaiting approval\").",
+		}, true
+	}
+
+	if blocked := s.blockedItems(); len(blocked) > 0 && !taskLedgerFinalHasTerminalReason(reply) {
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Task ledger completion gate rejected final answer",
+			Error:   "task ledger contains blocked work: " + strings.Join(blocked, "; ") + ". The final answer must state the concrete blocker.",
+		}, true
+	}
+
+	return workspace.ToolResult{}, false
+}
+
+func (s *taskLedgerState) unfinishedItems() []string {
+	if s == nil {
+		return nil
+	}
+
+	var unfinished []string
+
+	for _, item := range s.items {
+		switch item.Status {
+		case "pending", "in_progress":
+			unfinished = append(unfinished, item.ID+": "+item.Content+" ["+item.Status+"]")
+		}
+	}
+
+	return unfinished
+}
+
+func (s *taskLedgerState) blockedItems() []string {
+	if s == nil {
+		return nil
+	}
+
+	var blocked []string
+
+	for _, item := range s.items {
+		if item.Status != "blocked" {
+			continue
+		}
+
+		text := item.ID + ": " + item.Content
+		if item.Evidence != "" {
+			text += " (" + item.Evidence + ")"
+		}
+
+		blocked = append(blocked, text)
+	}
+
+	return blocked
+}
+
+func (s *taskLedgerState) statusSummary() string {
+	counts := make(map[string]int)
+	for _, item := range s.items {
+		counts[item.Status]++
+	}
+
+	parts := make([]string, 0, 5)
+
+	for _, status := range []string{"completed", "in_progress", "pending", "blocked", "cancelled"} {
+		if counts[status] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", counts[status], status))
+		}
+	}
+
+	if len(parts) == 0 {
+		return "empty"
+	}
+
+	return strings.Join(parts, ", ")
+}
+
+func (s *taskLedgerState) render() string {
+	if s == nil || len(s.items) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+
+	for _, item := range s.items {
+		b.WriteString("- [")
+		b.WriteString(item.Status)
+		b.WriteString("] ")
+		b.WriteString(item.ID)
+		b.WriteString(": ")
+		b.WriteString(item.Content)
+
+		if item.Evidence != "" {
+			b.WriteString(" (evidence: ")
+			b.WriteString(item.Evidence)
+			b.WriteString(")")
+		}
+
+		b.WriteString("\n")
+	}
+
+	return strings.TrimSpace(b.String())
+}
+
+func taskLedgerItemsFromRequest(req workspace.ToolRequest) []workspace.TaskLedgerItem {
+	if len(req.Todos) > 0 {
+		return append([]workspace.TaskLedgerItem(nil), req.Todos...)
+	}
+
+	return append([]workspace.TaskLedgerItem(nil), req.Items...)
+}
+
+func normalizeTaskLedgerStatus(status string) string {
+	status = strings.ToLower(strings.TrimSpace(status))
+	status = strings.ReplaceAll(status, "-", "_")
+	status = strings.ReplaceAll(status, " ", "_")
+
+	return status
+}
+
+func validTaskLedgerStatus(status string) bool {
+	switch status {
+	case "pending", "in_progress", "completed", "blocked", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
+// taskLedgerFinalHasTerminalReason recognizes reply phrasings that let
+// the model exit the completion gate without finishing every ledger
+// item. Two categories:
+//
+//  1. Blocker phrases ("blocked", "cannot proceed", "permission") -
+//     the work can't move forward for reasons outside the model's
+//     control, and the answer should explain the blocker.
+//  2. Planning-exit phrases ("plan ready", "awaiting approval") -
+//     the user asked for triage only, not execution. Without this
+//     escape the gate forces the model to execute every item it
+//     just planned, which is the opposite of what the user wanted.
+func taskLedgerFinalHasTerminalReason(reply string) bool {
+	return agentutil.ContainsAny(strings.ToLower(strings.TrimSpace(reply)),
+		"blocked",
+		"blocker",
+		"cannot proceed",
+		"could not proceed",
+		"unable to",
+		"no changes needed",
+		"no change needed",
+		"already complete",
+		"already satisfied",
+		"permission",
+		"approval",
+		"plan ready",
+		"plan complete",
+		"planning only",
+	)
+}
+
+func resultCountsAsSuccessfulVerification(result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Error) != "" {
+		return false
+	}
+
+	if strings.TrimSpace(result.Tool) == "source_sanity" {
+		return sourceSanityResultUsesLanguageDiagnostics(result)
+	}
+
+	if workspace.IsDiagnosticToolName(result.Tool) {
+		return true
+	}
+
+	return strings.TrimSpace(result.Tool) == "shell" &&
+		isVerificationCommandText(result.Output)
+}
+
+func sourceEditVerificationRejection(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (summary string, errorText string, reject bool) {
+	if !sourceVerificationGateApplies(brief, results) {
+		return "", "", false
+	}
+
+	latest, ok := latestVerificationAfterLatestSourceWrite(results)
+	if !ok || !verificationResultIsPatchHygieneOnly(latest) {
+		return "", "", false
+	}
+
+	if isVerificationRequest(req) || workspace.IsWorkspaceWriteTool(req.Tool) || sourceVerificationBoundaryAllowsTool(req.Tool) {
+		return "", "", false
+	}
+
+	if !workspace.IsBroadInspectionRequest(req) && !workspace.IsNarrowingRequest(req) {
+		return "", "", false
+	}
+
+	paths := changedSourcePaths(results)
+	if len(paths) == 0 {
+		return "", "", false
+	}
+
+	if plannerOwnsVerification(brief) {
+		return "Source edit verification required",
+			fmt.Sprintf("source edits are present in %s, but the latest successful check is only patch hygiene (`git diff --check`) or no compiler-backed source-aware check at all. Required evidence is compiler-backed source-sanity, language diagnostics, or the concrete lane-sanity blocker before doing more reads.", summarizeRunnerPaths(paths, 3)),
+			true
+	}
+
+	return "Source edit verification required",
+		fmt.Sprintf("source edits are present in %s, but the latest successful check is only patch hygiene (`git diff --check`) or no compiler-backed source-aware check at all. Required evidence is a focused language-appropriate build/test/check command, compiler-backed source-sanity, language diagnostics, or the concrete verification blocker before more reads.", summarizeRunnerPaths(paths, 3)),
+		true
+}
+
+func rewriteVerificationShellReadToSourceSanity(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
+	if strings.TrimSpace(req.Tool) != "shell" || !slices.Contains(allowedTools, "source_sanity") {
+		return workspace.ToolRequest{}, false
+	}
+
+	if !plannerOwnsVerification(brief) {
+		return workspace.ToolRequest{}, false
+	}
+
+	if !sourceEditsNeedSemanticVerification(brief, results) {
+		return workspace.ToolRequest{}, false
+	}
+
+	path := strings.TrimSpace(matchShellCatWholeFile(req.Command))
+	if path == "" || !workspace.SourceSanityCoversPath(path) {
+		return workspace.ToolRequest{}, false
+	}
+
+	normalizedPath := agentutil.NormalizeRunnerPath(path)
+	for _, changed := range changedSourcePaths(results) {
+		if agentutil.NormalizeRunnerPath(changed) == normalizedPath {
+			return workspace.ToolRequest{Tool: "source_sanity", Path: path}, true
+		}
+	}
+
+	return workspace.ToolRequest{}, false
+}
+
+func fillSourceSanityPathFromSingleChangedSource(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
+	if strings.TrimSpace(req.Tool) != workspace.ToolNameSourceSanity || strings.TrimSpace(req.Path) != "" {
+		return workspace.ToolRequest{}, false
+	}
+
+	if !slices.Contains(allowedTools, workspace.ToolNameSourceSanity) || !sourceEditsNeedSemanticVerification(brief, results) {
+		return workspace.ToolRequest{}, false
+	}
+
+	target, ok := singleChangedSourceSanityPath(results)
+	if !ok {
+		return workspace.ToolRequest{}, false
+	}
+
+	redirected := req
+
+	redirected.Path = target
+
+	return redirected, true
+}
+
+func postWriteSourceSanityRedirect(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
+	if !slices.Contains(allowedTools, workspace.ToolNameSourceSanity) || !sourceEditsNeedSemanticVerification(brief, results) {
+		return workspace.ToolRequest{}, false
+	}
+
+	if isVerificationRequest(req) || strings.TrimSpace(req.Tool) == workspace.ToolNameSourceSanity {
+		return workspace.ToolRequest{}, false
+	}
+
+	if sourceVerificationBoundaryAllowsTool(req.Tool) {
+		return workspace.ToolRequest{}, false
+	}
+
+	if postWriteVerificationReadOfChangedSource(req, results) ||
+		postWriteVerificationWriteOfChangedSource(req, results) {
+
+		return workspace.ToolRequest{Tool: workspace.ToolNameSourceSanity, Path: agentutil.NormalizeRunnerPath(req.Path)}, true
+	}
+
+	if requested := agentutil.NormalizeRunnerPath(req.Path); requested != "" && requested != "." {
+		if !changedSourcePathsContain(results, requested) {
+			return workspace.ToolRequest{}, false
+		}
+
+		return workspace.ToolRequest{Tool: workspace.ToolNameSourceSanity, Path: requested}, true
+	}
+
+	if !workspace.IsRuntimeInspectionRequest(req) {
+		return workspace.ToolRequest{}, false
+	}
+
+	target, ok := singleChangedSourceSanityPath(results)
+	if !ok {
+		return workspace.ToolRequest{}, false
+	}
+
+	return workspace.ToolRequest{Tool: workspace.ToolNameSourceSanity, Path: target}, true
+}
+
+func singleChangedSourceSanityPath(results []workspace.ToolResult) (string, bool) {
+	var target string
+
+	for _, path := range changedSourcePaths(results) {
+		normalized := agentutil.NormalizeRunnerPath(path)
+		if normalized == "" || !workspace.SourceSanityCoversPath(normalized) {
+			continue
+		}
+
+		if target != "" && target != normalized {
+			return "", false
+		}
+
+		target = normalized
+	}
+
+	return target, target != ""
+}
+
+func changedSourcePathsContain(results []workspace.ToolResult, path string) bool {
+	normalizedPath := agentutil.NormalizeRunnerPath(path)
+	if normalizedPath == "" {
+		return false
+	}
+
+	for _, changed := range changedSourcePaths(results) {
+		if agentutil.NormalizeRunnerPath(changed) == normalizedPath {
+			return true
+		}
+	}
+
+	return false
+}
+
+func postWriteVerificationReadOfChangedSource(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(req.Tool) != "read_file" {
+		return false
+	}
+
+	requested := agentutil.NormalizeRunnerPath(req.Path)
+	if requested == "" {
+		return false
+	}
+
+	for _, changed := range changedSourcePaths(results) {
+		if agentutil.NormalizeRunnerPath(changed) == requested {
+			return true
+		}
+	}
+
+	return false
+}
+
+func postWriteVerificationWriteOfChangedSource(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	if !workspace.IsWorkspaceWriteTool(req.Tool) {
+		return false
+	}
+
+	requested := agentutil.NormalizeRunnerPath(req.Path)
+	if requested == "" {
+		return false
+	}
+
+	if !workspace.SourceSanityCoversPath(requested) {
+		return false
+	}
+
+	for _, changed := range changedSourcePaths(results) {
+		if agentutil.NormalizeRunnerPath(changed) == requested {
+			return true
+		}
+	}
+
+	return false
+}
+
+func sourceEditCloseoutPrompt(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
+	if !sourceEditsAreSemanticallyVerified(brief, results) {
+		return "", false
+	}
+
+	if util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) != "" {
+		return "", false
+	}
+
+	if isVerificationRequest(req) || workspace.IsWorkspaceWriteTool(req.Tool) || sourceVerificationBoundaryAllowsTool(req.Tool) {
+		return "", false
+	}
+
+	if !workspace.IsBroadInspectionRequest(req) && !workspace.IsNarrowingRequest(req) {
+		return "", false
+	}
+
+	paths := changedSourcePaths(results)
+	if len(paths) == 0 {
+		return "", false
+	}
+
+	return fmt.Sprintf("Successful source edits are already followed by source-aware verification for %s. The attempted read/search did not name an exact missing claim with `named_gap`, so tools are now disabled. Write the implementation result now: changed paths, verification status, and one concrete blocker only if the verification evidence shows one.", summarizeRunnerPaths(paths, 3)), true
+}
+
+func sourceEditsNeedSemanticVerification(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !sourceVerificationGateApplies(brief, results) {
+		return false
+	}
+
+	latest, ok := latestVerificationAfterLatestSourceWrite(results)
+	if !ok {
+		return true
+	}
+
+	return verificationResultIsPatchHygieneOnly(latest)
+}
+
+func deterministicPostWriteVerificationRequest(results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) (workspace.ToolRequest, bool) {
+	if !hasPendingVerificationAfterWrites(results, brief) {
+		return workspace.ToolRequest{}, false
+	}
+
+	changed := changedPathsFromToolResults(results)
+
+	var command string
+
+	for path := range changed {
+		candidate := scriptSyntaxVerificationCommand(path)
+		if candidate == "" {
+			continue
+		}
+
+		if command != "" {
+			return workspace.ToolRequest{}, false
+		}
+
+		command = candidate
+	}
+
+	if command == "" {
+		return workspace.ToolRequest{}, false
+	}
+
+	return workspace.ToolRequest{Tool: "shell", Command: command}, true
+}
+
+func scriptSyntaxVerificationCommand(path string) string {
+	normalized := agentutil.NormalizeRunnerPath(path)
+	lower := strings.ToLower(normalized)
+
+	switch {
+	case strings.HasSuffix(lower, ".sh") || strings.HasSuffix(lower, ".bash"):
+		return "bash -n " + normalized
+	case strings.HasSuffix(lower, ".zsh"):
+		return "zsh -n " + normalized
+	default:
+		return ""
+	}
+}
+
+func sourceVerificationBoundaryAllowsTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "task_ledger", "harness_feedback", "idiom_feedback":
+		return true
+	default:
+		return false
+	}
+}
+
+func sourceEditsAreSemanticallyVerified(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !sourceVerificationGateApplies(brief, results) {
+		return false
+	}
+
+	latest, ok := latestVerificationAfterLatestSourceWrite(results)
+
+	return ok && !verificationResultIsPatchHygieneOnly(latest)
+}
+
+func failedVerificationAfterLatestWrite(results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) (workspace.ToolResult, bool) {
+	if workerruntime.VerificationContractSkipsGate(brief.VerificationContract) {
+		return workspace.ToolResult{}, false
+	}
+
+	docLane := briefIsDocDeliverableLane(brief)
+	pending := false
+	failed := false
+
+	var latestFailed workspace.ToolResult
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) == "" && workspace.IsWorkspaceWriteTool(result.Tool) {
+			if docLane && (writeTouchesOnlyNonSourcePaths(result) || mkdirTouchesOnlyRequiredPathParents(result, brief.RequiredEditPaths)) {
+				continue
+			}
+
+			pending = true
+			failed = false
+			latestFailed = workspace.ToolResult{}
+
+			continue
+		}
+
+		if !pending || !resultIsVerificationAttempt(result) {
+			continue
+		}
+
+		if strings.TrimSpace(result.Error) == "" && resultCountsAsSuccessfulVerification(result) {
+			pending = false
+			failed = false
+			latestFailed = workspace.ToolResult{}
+
+			continue
+		}
+
+		if strings.TrimSpace(result.Error) != "" {
+			failed = true
+			latestFailed = result
+		}
+	}
+
+	if !pending || !failed {
+		return workspace.ToolResult{}, false
+	}
+
+	return latestFailed, true
+}
+
+func resultIsVerificationAttempt(result workspace.ToolResult) bool {
+	tool := strings.TrimSpace(result.Tool)
+	if tool == "source_sanity" || workspace.IsDiagnosticToolName(tool) {
+		return true
+	}
+
+	if tool != "shell" {
+		return false
+	}
+
+	command := shellCommandFromToolResult(result)
+	if command != "" && isVerificationRequest(workspace.ToolRequest{Tool: "shell", Command: command}) {
+		return true
+	}
+
+	return isVerificationCommandText(result.Output) || isVerificationCommandText(result.Summary)
+}
+
+func sourceSanityResultUsesLanguageDiagnostics(result workspace.ToolResult) bool {
+	text := strings.ToLower(strings.TrimSpace(result.Summary + "\n" + result.Output))
+	if text == "" {
+		return false
+	}
+
+	if strings.Contains(text, "generic fallback") ||
+		strings.Contains(text, "generic_source_sanity") ||
+		strings.Contains(text, "generic delimiter") ||
+		strings.Contains(text, "generic source sanity") {
+
+		return false
+	}
+
+	for _, tool := range workspace.DiagnosticToolNames() {
+		if strings.Contains(text, strings.ToLower(strings.TrimSpace(tool))) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func sourceVerificationGateApplies(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !runnerBriefRequiresMutation(brief) || workerruntime.VerificationContractSkipsGate(brief.VerificationContract) {
+		return false
+	}
+
+	return len(changedSourcePaths(results)) > 0
+}
+
+func latestVerificationAfterLatestSourceWrite(results []workspace.ToolResult) (workspace.ToolResult, bool) {
+	var latest workspace.ToolResult
+
+	found := false
+	seenSourceWrite := false
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+
+		if toolResultChangedSourcePath(result) {
+			seenSourceWrite = true
+			found = false
+			latest = workspace.ToolResult{}
+
+			continue
+		}
+
+		if seenSourceWrite && resultCountsAsSuccessfulVerification(result) {
+			latest = result
+			found = true
+		}
+	}
+
+	return latest, found
+}
+
+func verificationResultIsPatchHygieneOnly(result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Tool) != "shell" {
+		return false
+	}
+
+	return shellOutputIsPatchHygieneOnly(result.Output)
+}
+
+func shellOutputIsPatchHygieneOnly(output string) bool {
+	hasPatchHygiene := false
+	hasSourceAware := false
+
+	for _, raw := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), "$"))
+		lower := strings.ToLower(line)
+
+		if strings.Contains(lower, "git diff --check") {
+			hasPatchHygiene = true
+			continue
+		}
+
+		if line != "" && isBuildOrTestShellCommand(line) {
+			hasSourceAware = true
+		}
+	}
+
+	return hasPatchHygiene && !hasSourceAware
+}
+
+func changedSourcePaths(results []workspace.ToolResult) []string {
+	paths := make([]string, 0)
+	seen := make(map[string]struct{})
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+
+		for _, path := range changedPathsFromToolResult(result) {
+			normalized := agentutil.NormalizeRunnerPath(path)
+			if normalized == "" || !sourcePathNeedsSemanticVerification(normalized) {
+				continue
+			}
+
+			if _, ok := seen[normalized]; ok {
+				continue
+			}
+
+			seen[normalized] = struct{}{}
+			paths = append(paths, normalized)
+		}
+	}
+
+	slices.Sort(paths)
+
+	return paths
+}
+
+func toolResultChangedSourcePath(result workspace.ToolResult) bool {
+	for _, path := range changedPathsFromToolResult(result) {
+		if sourcePathNeedsSemanticVerification(path) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func sourcePathNeedsSemanticVerification(path string) bool {
+	if _, ok := workspace.LanguageForFile(path); ok {
+		return true
+	}
+
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
+	case ".gd":
+		return true
+	default:
+		return false
+	}
+}
+
+func summarizeRunnerPaths(paths []string, limit int) string {
+	if len(paths) == 0 {
+		return "edited source files"
+	}
+
+	if limit <= 0 || limit > len(paths) {
+		limit = len(paths)
+	}
+
+	quoted := make([]string, 0, limit+1)
+	for _, path := range paths[:limit] {
+		quoted = append(quoted, "`"+path+"`")
+	}
+
+	if len(paths) > limit {
+		quoted = append(quoted, fmt.Sprintf("%d more", len(paths)-limit))
+	}
+
+	return strings.Join(quoted, ", ")
+}
+
+func isVerificationCommandText(text string) bool {
+	command := strings.ToLower(strings.TrimSpace(text))
+	if command == "" {
+		return false
+	}
+
+	verificationSnippets := []string{
+		"go test", "go vet", "go build",
+		"git diff --check",
+		"npm test", "npm run test", "npm run build",
+		"pnpm test", "pnpm run test", "pnpm build",
+		"yarn test", "yarn build",
+		"pytest", "python -m pytest", "python3 -m pytest",
+		"cargo test", "cargo check", "cargo build",
+		"make test", "make check",
+		"ctest", "mvn test", "gradle test",
+		"tsc", "ruff check", "eslint",
+		"bash -n", "sh -n", "zsh -n", "shellcheck",
+	}
+	for _, snippet := range verificationSnippets {
+		if strings.Contains(command, snippet) {
+			return true
+		}
+	}
+
+	for _, line := range strings.Split(command, "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "$"))
+		if line != "" && isBuildOrTestShellCommand(line) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func plannerOwnedVerificationShellRejection(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief) (summary string, errorText string, reject bool) {
+	if strings.TrimSpace(req.Tool) != "shell" || !plannerOwnsVerification(brief) {
+		return "", "", false
+	}
+
+	command := strings.TrimSpace(req.Command)
+	if command == "" || !isBuildOrTestShellCommand(command) {
+		return "", "", false
+	}
+
+	return "Planner-owned verification shell rejected",
+		"this implementation lane delegates build/test verification to the caller. Source edits require compiler-backed source-sanity or language diagnostics; git diff --check and generic source-sanity fallback are only patch-hygiene evidence. The other contract outcome is changed paths plus the concrete planner-owned verification status.",
+		true
+}
+
+func verificationRequiredAfterWritesMessage(brief workerruntime.WorkerRuntimeBrief, writesSinceVerification int) (summary string, errorText string) {
+	summary = "Verification required after workspace edits"
+	if plannerOwnsVerification(brief) {
+		return summary, fmt.Sprintf(
+			"the workspace has %d successful write(s) since the last lane sanity check. This route delegates build/test verification to the planner; do not run build or test commands. Source edits require compiler-backed source-sanity or language diagnostics; generic source-sanity fallback and git diff --check are only patch-hygiene evidence. The other contract outcome is changed paths plus the concrete planner-owned verification status.",
+			writesSinceVerification,
+		)
+	}
+
+	return summary, fmt.Sprintf("the workspace has %d successful write(s) since the last verification. Required evidence is a focused verification command (for example package tests, diagnostics, or the relevant build/test command) before more inspection or edits, or the concrete blocker.", writesSinceVerification)
+}
+
+func plannerOwnsVerification(brief workerruntime.WorkerRuntimeBrief) bool {
+	if !runnerBriefRequiresMutation(brief) {
+		return false
+	}
+
+	for _, constraint := range brief.Constraints {
+		switch strings.ToLower(strings.TrimSpace(constraint)) {
+		case "planner_owned_verification", "planner-owned-verification", "planner_owned_acceptance", "planner-owned-acceptance":
+			return true
+		}
+	}
+
+	return false
+}
+
+func isBuildOrTestShellCommand(command string) bool {
+	for _, segment := range shellCommandClassificationSegments(command) {
+		fields := strings.Fields(segment)
+		if len(fields) == 0 {
+			continue
+		}
+
+		head := strings.TrimPrefix(strings.ToLower(filepath.Base(fields[0])), "./")
+		if shellHeadIsBuildOrTest(head, fields[1:]) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func shellHeadIsBuildOrTest(head string, args []string) bool {
+	switch head {
+	case "scons", "ctest", "ninja", "meson", "pytest", "tox", "godot":
+		return true
+	case "make", "cmake", "mvn", "gradle", "gradlew":
+		return true
+	case "go":
+		return len(args) > 0 && runnerStringInSet(args[0], "test", "build", "vet")
+	case "cargo":
+		return len(args) > 0 && runnerStringInSet(args[0], "test", "build", "check", "clippy")
+	case "npm", "pnpm", "yarn":
+		return packageManagerArgsAreBuildOrTest(args)
+	case "python", "python3":
+		return pythonArgsAreTest(args)
+	default:
+		return strings.Contains(head, "test") && !strings.Contains(head, "diff")
+	}
+}
+
+func packageManagerArgsAreBuildOrTest(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+
+	first := strings.ToLower(strings.TrimSpace(args[0]))
+	if runnerStringInSet(first, "test", "build") {
+		return true
+	}
+
+	return first == "run" && len(args) > 1 && runnerStringInSet(args[1], "test", "build", "check", "lint")
+}
+
+func pythonArgsAreTest(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+
+	for i, arg := range args {
+		arg = strings.Trim(strings.ToLower(strings.TrimSpace(arg)), `"'`)
+		if arg == "" {
+			continue
+		}
+
+		if i == 0 && strings.HasPrefix(arg, "pytest") {
+			return true
+		}
+
+		if arg == "-m" && i+1 < len(args) {
+			module := strings.Trim(strings.ToLower(strings.TrimSpace(args[i+1])), `"'`)
+			if strings.HasPrefix(module, "pytest") || runnerStringInSet(module, "unittest", "build") {
+				return true
+			}
+		}
+
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+
+		base := filepath.Base(arg)
+		if strings.HasSuffix(base, ".py") &&
+			(strings.Contains(base, "test") || strings.Contains(base, "build")) {
+
+			return true
+		}
+	}
+
+	return false
+}
+
+func shellCommandClassificationSegments(command string) []string {
+	replacer := strings.NewReplacer("&&", "|", "||", "|", ";", "|")
+	normalized := replacer.Replace(strings.TrimSpace(command))
+	parts := strings.Split(normalized, "|")
+	segments := make([]string, 0, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			segments = append(segments, part)
+		}
+	}
+
+	return segments
+}
+
+func runnerStringInSet(value string, candidates ...string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	for _, candidate := range candidates {
+		if value == candidate {
+			return true
+		}
+	}
+
+	return false
+}
+
+func clearVerificationGateFingerprints(fingerprints map[string]string) {
+	for fingerprint, reason := range fingerprints {
+		if strings.Contains(reason, "Verification required after workspace edits") {
+			delete(fingerprints, fingerprint)
+		}
+	}
+}
+
+func clearRunnerStringIntMap(values map[string]int) {
+	for key := range values {
+		delete(values, key)
+	}
+}
+
+type runnerVerificationBootstrapInput struct {
+	ctx              context.Context
+	collectedResults []workspace.ToolResult
+	metrics          *runnerMetrics
+	recorder         *runnerTurnRecorder
+	executionState   *runnerExecutionState
+	requestBudget    *runnerRequestBudgetState
+	autonomyRecorder *runnerAutonomyRecorder
+	onToolRequest    func(ToolRequestEvent)
+}
+
+func (r *Runner) runVerificationBootstrap(input runnerVerificationBootstrapInput) (string, bool) {
+	if r.Workspace == nil || len(input.collectedResults) != 0 {
+		return "", false
+	}
+	req, ok := r.verificationBootstrapRequest()
+	if !ok {
+		return "", false
+	}
+
+	raw := marshalToolRequestRaw(req)
+	if input.metrics != nil {
+		input.metrics.ToolCalls++
+	}
+	if input.onToolRequest != nil {
+		profile := workspace.DiscoveryProfileForRequest(req)
+		input.onToolRequest(ToolRequestEvent{
+			Step:           1,
+			Agent:          r.agentName(),
+			Raw:            raw,
+			Request:        req,
+			Mode:           r.Workspace.Mode(),
+			Broad:          workspace.IsBroadInspectionRequest(req),
+			Narrowing:      workspace.IsNarrowingRequest(req),
+			Action:         toolActionClass(req),
+			DiscoveryClass: profile.Class,
+			DiscoveryScope: profile.Scope,
+			DiscoveryCost:  profile.Cost,
+		})
+	}
+
+	result := r.Workspace.Execute(input.ctx, req)
+	if input.recorder != nil {
+		input.recorder.recordWithOptions(1, req, result, "verification_auto_bootstrap", runnerRecordOptions{
+			TrackProgress:  true,
+			ResetRejected:  true,
+			SetLastToolKey: true,
+		})
+	}
+	if input.executionState != nil && input.requestBudget != nil {
+		update := input.executionState.applyResult(req, result, toolRequestKey(req), r.Workspace, input.requestBudget)
+		r.emitVerificationPhaseEvent(update.VerificationState, update.VerificationDetail)
+		if input.autonomyRecorder != nil && update.VerificationState != "" {
+			decision := autonomy.PolicyAllow
+			if update.VerificationState == "failed" {
+				decision = autonomy.PolicyReject
+			}
+			input.autonomyRecorder.emitVerificationGate(req, decision, "verification_result_"+update.VerificationState, update.VerificationState)
+		}
+	}
+
+	return synthesizeVerificationOnlyAnswer(req, result), true
+}
+
+// verificationInterceptResult tells the runner loop whether a read-class
+// request should bypass the workspace dispatch with a synthesized
+// redirect message.
+type verificationInterceptResult struct {
+	// Intercepted is true when the request was redirected. The runner
+	// should use Result instead of calling Workspace.Execute.
+	Intercepted bool
+	// Result is the synthesized tool result the runner should record.
+	// Carries an error string with the directive message and a summary
+	// the audit log can read at a glance.
+	Result workspace.ToolResult
+	// Reason is a short human-readable string for telemetry events
+	// (e.g. "read of already-edited path; redirected to next required").
+	Reason string
+}
+
+// preflightVerificationOnAlreadyEditedPath intercepts read-class tool
+// calls aimed at a required_edit_path that has already been written
+// successfully when other ✗ required paths remain. The model's most
+// common stall mode after the first few edits is to enter "verify each
+// edit landed" mode and never return to writing the remaining paths.
+// Each verification read uses up step budget without progressing the
+// brief; eventually the doom-loop guard fires and the lane closes with
+// half the work done.
+//
+// The intercept replaces the tool result with a one-line redirect that
+// names the next pending path and forbids re-verification. The model
+// then reads the directive on the next turn and (in practice) issues
+// an edit_file against the named path.
+//
+// Conditions for intercept:
+//   - The brief has required_edit_paths set.
+//   - At least one required path is still pending (✗).
+//   - The request is a read-class tool with a path that resolves to a
+//     required_edit_path already on the ✓ list.
+//   - The immediately preceding tool result was ALSO a read-class
+//     tool. The first read after a write is left through because the
+//     model legitimately uses "write a, read a, write B" to mirror
+//     a freshly-landed structure into the next path. The second
+//     read in a row is the verification-spree pattern.
+//
+// search_content and search_files are deliberately exempt: they are
+// the right way to verify a literal expression inside a file, and
+// blocking them would push the model back to read_symbol prose calls
+// (the failure mode the read_symbol pattern validator already
+// handles).
+func (r *Runner) preflightVerificationOnAlreadyEditedPath(req workspace.ToolRequest, results []workspace.ToolResult) verificationInterceptResult {
+	if r == nil {
+		return verificationInterceptResult{}
+	}
+
+	required := r.RuntimeBrief.RequiredEditPaths
+	if len(required) == 0 {
+		return verificationInterceptResult{}
+	}
+
+	if !verificationInterceptToolCovered(req) {
+		return verificationInterceptResult{}
+	}
+
+	if !workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
+		return verificationInterceptResult{}
+	}
+
+	target := agentutil.NormalizeRunnerPath(strings.TrimSpace(req.Path))
+	if target == "" {
+		return verificationInterceptResult{}
+	}
+
+	changed := changedPathsFromToolResults(results)
+	if _, ok := changed[target]; !ok {
+		return verificationInterceptResult{}
+	}
+
+	// Only intercept paths that are part of the required edit set —
+	// reads of unrelated already-edited files are usually legitimate
+	// (cross-file context, includes, etc.).
+	if !requiredEditPathsContains(required, target) {
+		return verificationInterceptResult{}
+	}
+
+	pending := missingRequiredEditPaths(required, changed)
+	if len(pending) == 0 {
+		// Nothing left to write; let normal completion path handle the
+		// final answer. Re-verification at this stage is harmless.
+		return verificationInterceptResult{}
+	}
+
+	if !precedingResultWasReadClass(results) {
+		// First read after a write — could be legitimate prep for the
+		// next ✗ path (mirror existing structure into the new file).
+		// Let it through; only intercept when the model has stacked
+		// reads in a row.
+		return verificationInterceptResult{}
+	}
+
+	directive := verificationInterceptDirective(req.Tool, target, pending)
+	result := workspace.ToolResult{
+		Tool:    req.Tool,
+		Summary: "Read of already-edited required path redirected to remaining write",
+		Error:   directive,
+	}
+
+	return verificationInterceptResult{
+		Intercepted: true,
+		Result:      result,
+		Reason: fmt.Sprintf(
+			"read on ✓ %s suppressed; %d required path(s) still pending; next: %s",
+			target, len(pending), pending[0],
+		),
+	}
+}
+
+// verificationInterceptToolCovered restricts the intercept to the
+// read-class tools the model uses for per-edit verification. We
+// deliberately leave search_content / search_files / discovery_query
+// alone — those are aimed at literal text or evidence gathering and
+// have legitimate use cases against already-edited paths.
+//
+// For code_navigate, only the file_outline and read_symbol
+// capabilities trip the intercept — they're the verification habits
+// from the donkey-run failure pattern. find_symbol / references /
+// definition / calls / implementations / related_files are lookup
+// tools that have real value on already-edited paths (e.g., "where
+// is X used now that I added it") and are left alone.
+func verificationInterceptToolCovered(req workspace.ToolRequest) bool {
+	switch strings.TrimSpace(req.Tool) {
+	case "read_file":
+		return true
+	case "code_navigate":
+		switch strings.ToLower(strings.TrimSpace(req.Capability)) {
+		case "file_outline", "outline", "read_symbol", "inspect_symbol", "symbol_body":
+			return true
+		}
+
+		return false
+	case "cpp_file_outline", "cpp_read_symbol",
+		"go_file_outline", "go_read_symbol",
+		"python_file_outline", "python_read_symbol",
+		"ts_file_outline", "ts_read_symbol",
+		"rust_file_outline", "rust_read_symbol",
+		"java_file_outline", "java_read_symbol":
+		return true
+	}
+
+	return false
+}
+
+// precedingResultWasReadClass returns true if the most recent recorded
+// tool result was itself a read-class call. We use this to distinguish
+// "model just wrote, now reads to prep next write" (first read after
+// a write — let through) from "model is stacking verification reads"
+// (read after read — intercept).
+func precedingResultWasReadClass(results []workspace.ToolResult) bool {
+	if len(results) == 0 {
+		return false
+	}
+
+	last := results[len(results)-1]
+
+	return workspace.IsReadTool(strings.TrimSpace(last.Tool))
+}
+
+// requiredEditPathsContains checks whether the request's target path
+// appears in the brief's required_edit_paths list (under a normalized
+// comparison).
+func requiredEditPathsContains(required []string, target string) bool {
+	for _, raw := range required {
+		if agentutil.NormalizeRunnerPath(raw) == target {
+			return true
+		}
+	}
+
+	return false
+}
+
+// verificationInterceptDirective renders the redirect message that
+// replaces the tool result. The text is deliberately short and
+// actionable: the model needs the next path name, the rule, and the
+// escape hatch in one block.
+func verificationInterceptDirective(tool, target string, pending []string) string {
+	next := pending[0]
+	header := fmt.Sprintf(
+		"%s on %q suppressed: that path is already on the ✓ list of required_edit_paths and the planner runs builds — do not re-verify completed edits.",
+		strings.TrimSpace(tool), target,
+	)
+	body := fmt.Sprintf("Next required path (✗ pending): %s. Write it with edit_file or apply_patch, or stop with <<QUESTION>>: naming the concrete blocker for that path.", next)
+
+	if len(pending) > 1 {
+		body += fmt.Sprintf(" %d required path(s) remain in total: %s.", len(pending), strings.Join(pending, ", "))
+	}
+
+	return header + " " + body
+}
+
+func permissionTarget(req workspace.ToolRequest) string {
+	return PermissionTarget(req)
+}
+
+func gitCombinedOutput(ctx context.Context, root string, args ...string) (string, error) {
+	return GitCombinedOutput(ctx, root, args...)
+}
+
+func marshalRunEvent(role string, value any) RunEvent {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return RunEvent{}
+	}
+
+	return RunEvent{Role: role, Content: string(data)}
+}
+
+type WorkbranchManager = Manager
+type WorkbranchCheckout = Checkout
+type WorkbranchDiff = Diff
+
+// isDescribedWriteTool reports whether the given tool must carry a
+// non-empty Description. The subset is the diff-producing writes —
+// mkdir creates no content and go_move_declarations already conveys
+// intent through its structured args, so neither is required to carry
+// a prose description.
+func isDescribedWriteTool(tool string) bool {
+	return IsDescribedWriteTool(tool)
+}
+
+// checkWriteDescription returns a synthesized guard result when a
+// described-write tool was invoked without a Description. The result
+// mirrors the discovery-redirect style: short explanation, a concrete
+// "Try:" reshaping the call, and the note that a retry with the field
+// populated will execute normally.
+//
+// Returns nil when the request is not a described write or already has
+// a description.
+func checkWriteDescription(req workspace.ToolRequest) *workspace.ToolResult {
+	return CheckDescription(req)
+}
+
+// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmp8auagk70.go ---
+type LifecycleEvent struct {
+	ChildID    string
+	Kind       string
+	Status     string
+	ArtifactID string
+}
+
+func (e LifecycleEvent) Complete() bool {
+	return e.Status == "complete" || e.Status == "blocked" || e.Status == "failed"
+}
+
+// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpmfh6y_98.go ---
+type PermissionDecision string
+
+const (
+	PermissionAllow PermissionDecision = "allow"
+	PermissionAsk   PermissionDecision = "ask"
+	PermissionDeny  PermissionDecision = "deny"
+)
+
+type ToolPermissionPolicy struct {
+	Default PermissionDecision
+	Rules   []ToolPermissionRule
+}
+
+type ToolPermissionRule struct {
+	Tool            string
+	PathPattern     string
+	CommandPrefix   string
+	CommandContains string
+	Decision        PermissionDecision
+}
+
+type PermissionDecisionSnapshot struct {
+	Tool     string             `json:"tool"`
+	Target   string             `json:"target,omitempty"`
+	Decision PermissionDecision `json:"decision"`
+	Rule     string             `json:"rule,omitempty"`
+}
+
+type CheckpointPolicy struct {
+	Enabled bool
+}
+
+type GitCheckpoint struct {
+	Root   string `json:"root"`
+	Head   string `json:"head,omitempty"`
+	Dirty  bool   `json:"dirty"`
+	Status string `json:"status,omitempty"`
+}
+
+func (p ToolPermissionPolicy) Decide(req workspace.ToolRequest) PermissionDecisionSnapshot {
+	decision := p.Default
+	if decision == "" {
+		decision = PermissionAllow
+	}
+
+	snapshot := PermissionDecisionSnapshot{
+		Tool:     strings.TrimSpace(req.Tool),
+		Target:   PermissionTarget(req),
+		Decision: decision,
+	}
+	for _, rule := range p.Rules {
+		if !rule.matches(req) {
+			continue
+		}
+
+		if rule.Decision == "" {
+			continue
+		}
+
+		snapshot.Decision = rule.Decision
+		snapshot.Rule = rule.String()
+	}
+
+	return snapshot
+}
+
+func (r ToolPermissionRule) String() string {
+	parts := []string{}
+	if r.Tool != "" {
+		parts = append(parts, "tool="+r.Tool)
+	}
+
+	if r.PathPattern != "" {
+		parts = append(parts, "path="+r.PathPattern)
+	}
+
+	if r.CommandPrefix != "" {
+		parts = append(parts, "command="+r.CommandPrefix)
+	}
+
+	if r.CommandContains != "" {
+		parts = append(parts, "command_contains="+r.CommandContains)
+	}
+
+	if r.Decision != "" {
+		parts = append(parts, "decision="+string(r.Decision))
+	}
+
+	return strings.Join(parts, " ")
+}
+
+func (r ToolPermissionRule) matches(req workspace.ToolRequest) bool {
+	if r.Tool != "" && r.Tool != "*" && r.Tool != strings.TrimSpace(req.Tool) {
+		return false
+	}
+
+	if r.CommandPrefix != "" && !commandMatchesPrefix(strings.TrimSpace(req.Command), r.CommandPrefix) {
+		return false
+	}
+
+	if r.CommandContains != "" && !strings.Contains(strings.TrimSpace(req.Command), r.CommandContains) {
+		return false
+	}
+
+	if r.PathPattern != "" {
+		target := PermissionTarget(req)
+		if target == "" {
+			return false
+		}
+
+		ok, err := filepath.Match(r.PathPattern, target)
+		if err != nil || !ok {
+			return false
+		}
+	}
+
+	return true
+}
+
+func commandMatchesPrefix(command string, prefix string) bool {
+	if prefix == "" {
+		return true
+	}
+
+	if strings.HasSuffix(prefix, " ") || strings.HasSuffix(prefix, "\t") {
+		return strings.HasPrefix(command, prefix)
+	}
+
+	if command == prefix {
+		return true
+	}
+
+	if !strings.HasPrefix(command, prefix) {
+		return false
+	}
+
+	if len(command) <= len(prefix) {
+		return true
+	}
+
+	return command[len(prefix)] == ' ' || command[len(prefix)] == '\t'
+}
+
+func PermissionTarget(req workspace.ToolRequest) string {
+	for _, value := range []string{req.Path, req.Destination, req.Workdir} {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return filepath.ToSlash(trimmed)
+		}
+	}
+
+	if len(req.Moves) > 0 {
+		return filepath.ToSlash(strings.TrimSpace(req.Moves[0].Destination))
+	}
+
+	return ""
+}
+
+func (s PermissionDecisionSnapshot) ToolResult() workspace.ToolResult {
+	switch s.Decision {
+	case PermissionDeny:
+		return workspace.ToolResult{
+			Tool:    s.Tool,
+			Summary: "Tool permission denied",
+			Error:   fmt.Sprintf("permission policy denied %s on %s", s.Tool, util.FirstNonEmpty(s.Target, "this target")),
+		}
+	case PermissionAsk:
+		return workspace.ToolResult{
+			Tool:    s.Tool,
+			Summary: "Tool approval required",
+			Error:   fmt.Sprintf("permission policy requires approval for %s on %s", s.Tool, util.FirstNonEmpty(s.Target, "this target")),
+		}
+	default:
+		return workspace.ToolResult{}
+	}
+}
+
+func CaptureGitCheckpoint(ctx context.Context, root string) (GitCheckpoint, error) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return GitCheckpoint{}, fmt.Errorf("checkpoint root is required")
+	}
+
+	head, err := GitCombinedOutput(ctx, root, "rev-parse", "HEAD")
+	if err != nil {
+		return GitCheckpoint{}, err
+	}
+
+	status, err := GitCombinedOutput(ctx, root, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all")
+	if err != nil {
+		return GitCheckpoint{}, err
+	}
+
+	trimmedStatus := strings.TrimSpace(status)
+
+	return GitCheckpoint{
+		Root:   root,
+		Head:   strings.TrimSpace(head),
+		Dirty:  trimmedStatus != "",
+		Status: trimmedStatus,
+	}, nil
+}
+
+func GitCombinedOutput(ctx context.Context, root string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+
+	return string(output), nil
+}
+
+// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmp1c7g7l9x.go ---
+// PreimageCheckpointStore captures file contents before a workspace write.
+// GitCheckpoint remains the run-level audit snapshot; this store is the
+// per-path rewind seam that write execution can call before mutation.
+type PreimageCheckpointStore struct {
+	Root      string
+	snapshots map[string]preimageSnapshot
+}
+
+type preimageSnapshot struct {
+	Exists bool
+	Data   []byte
+	Mode   os.FileMode
+}
+
+func NewPreimageCheckpointStore(root string) *PreimageCheckpointStore {
+	return &PreimageCheckpointStore{Root: root, snapshots: make(map[string]preimageSnapshot)}
+}
+
+func (s *PreimageCheckpointStore) Snapshot(path string) error {
+	if s == nil {
+		return fmt.Errorf("preimage checkpoint store is nil")
+	}
+
+	normalized, full, err := s.resolve(path)
+	if err != nil {
+		return err
+	}
+
+	if _, ok := s.snapshots[normalized]; ok {
+		return nil
+	}
+
+	info, statErr := os.Stat(full)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			s.snapshots[normalized] = preimageSnapshot{Exists: false}
+			return nil
+		}
+
+		return statErr
+	}
+
+	if info.IsDir() {
+		return fmt.Errorf("preimage checkpoint only supports files: %s", normalized)
+	}
+
+	data, err := os.ReadFile(full)
+	if err != nil {
+		return err
+	}
+
+	s.snapshots[normalized] = preimageSnapshot{Exists: true, Data: append([]byte(nil), data...), Mode: info.Mode()}
+
+	return nil
+}
+
+func (s *PreimageCheckpointStore) Restore(path string) error {
+	if s == nil {
+		return fmt.Errorf("preimage checkpoint store is nil")
+	}
+
+	normalized, full, err := s.resolve(path)
+	if err != nil {
+		return err
+	}
+
+	snapshot, ok := s.snapshots[normalized]
+	if !ok {
+		return fmt.Errorf("no preimage checkpoint for %s", normalized)
+	}
+
+	if !snapshot.Exists {
+		if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+
+		return nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return err
+	}
+
+	return os.WriteFile(full, snapshot.Data, snapshot.Mode)
+}
+
+func (s *PreimageCheckpointStore) Has(path string) bool {
+	if s == nil {
+		return false
+	}
+
+	normalized, _, err := s.resolve(path)
+	if err != nil {
+		return false
+	}
+
+	_, ok := s.snapshots[normalized]
+
+	return ok
+}
+
+func (s *PreimageCheckpointStore) resolve(path string) (string, string, error) {
+	root := strings.TrimSpace(s.Root)
+	if root == "" {
+		return "", "", fmt.Errorf("preimage checkpoint root is required")
+	}
+
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || path == "" {
+		return "", "", fmt.Errorf("preimage checkpoint path is required")
+	}
+
+	if filepath.IsAbs(path) {
+		return "", "", fmt.Errorf("preimage checkpoint path must be workspace-relative: %s", path)
+	}
+
+	normalized := filepath.ToSlash(path)
+	if strings.HasPrefix(normalized, "../") || normalized == ".." {
+		return "", "", fmt.Errorf("preimage checkpoint path escapes workspace: %s", path)
+	}
+
+	full := filepath.Join(root, filepath.FromSlash(normalized))
+
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", "", err
+	}
+
+	fullAbs, err := filepath.Abs(full)
+	if err != nil {
+		return "", "", err
+	}
+
+	rel, err := filepath.Rel(rootAbs, fullAbs)
+	if err != nil {
+		return "", "", err
+	}
+
+	if rel == ".." || strings.HasPrefix(filepath.ToSlash(rel), "../") {
+		return "", "", fmt.Errorf("preimage checkpoint path escapes workspace: %s", path)
+	}
+
+	return normalized, fullAbs, nil
+}
+
+// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpved4kdj_.go ---
+type Manager struct {
+	Root    string
+	Scratch string
+	Prefix  string
+}
+
+type Checkout struct {
+	Name    string
+	Branch  string
+	Path    string
+	BaseSHA string
+}
+
+type Diff struct {
+	ChangedPaths []string
+	Stat         string
+	Patch        string
+}
+
+func (m Manager) Create(ctx context.Context, name string) (Checkout, error) {
+	root := strings.TrimSpace(m.Root)
+	if root == "" {
+		return Checkout{}, fmt.Errorf("workbranch root is required")
+	}
+
+	scratch := strings.TrimSpace(m.Scratch)
+	if scratch == "" {
+		scratch = os.TempDir()
+	}
+
+	prefix := strings.Trim(strings.TrimSpace(m.Prefix), "/")
+	if prefix == "" {
+		prefix = "codex/work"
+	}
+
+	safeName := sanitizeName(name)
+	if safeName == "" {
+		safeName = "task"
+	}
+
+	baseSHA, err := gitOutput(ctx, root, "rev-parse", "HEAD")
+	if err != nil {
+		return Checkout{}, err
+	}
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	branch := prefix + "/" + safeName + "-" + suffix
+	path := filepath.Join(scratch, "idiom-"+safeName+"-"+suffix)
+
+	if err := os.MkdirAll(scratch, 0o755); err != nil {
+		return Checkout{}, err
+	}
+
+	if _, err := gitOutput(ctx, root, "worktree", "add", "-b", branch, path, strings.TrimSpace(baseSHA)); err != nil {
+		return Checkout{}, err
+	}
+
+	return Checkout{
+		Name:    safeName,
+		Branch:  branch,
+		Path:    path,
+		BaseSHA: strings.TrimSpace(baseSHA),
+	}, nil
+}
+
+func (m Manager) Diff(ctx context.Context, checkout Checkout) (Diff, error) {
+	path := strings.TrimSpace(checkout.Path)
+	if path == "" {
+		return Diff{}, fmt.Errorf("workbranch path is required")
+	}
+
+	base := strings.TrimSpace(checkout.BaseSHA)
+	if base == "" {
+		base = "HEAD"
+	}
+
+	if _, err := gitOutput(ctx, path, "add", "-N", "."); err != nil {
+		return Diff{}, err
+	}
+
+	stat, err := gitOutput(ctx, path, "diff", "--stat", base, "--")
+	if err != nil {
+		return Diff{}, err
+	}
+
+	names, err := gitOutput(ctx, path, "diff", "--name-only", base, "--")
+	if err != nil {
+		return Diff{}, err
+	}
+
+	patch, err := gitOutput(ctx, path, "diff", "--binary", base, "--")
+	if err != nil {
+		return Diff{}, err
+	}
+
+	var changed []string
+
+	for _, line := range strings.Split(names, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			changed = append(changed, trimmed)
+		}
+	}
+
+	return Diff{ChangedPaths: changed, Stat: strings.TrimSpace(stat), Patch: strings.TrimSpace(patch)}, nil
+}
+
+func (m Manager) Remove(ctx context.Context, checkout Checkout) error {
+	root := strings.TrimSpace(m.Root)
+	if root == "" {
+		return fmt.Errorf("workbranch root is required")
+	}
+
+	path := strings.TrimSpace(checkout.Path)
+	if path == "" {
+		return fmt.Errorf("workbranch path is required")
+	}
+
+	if _, err := gitOutput(ctx, root, "worktree", "remove", "--force", path); err != nil {
+		return err
+	}
+
+	if branch := strings.TrimSpace(checkout.Branch); branch != "" {
+		if _, err := gitOutput(ctx, root, "branch", "-D", branch); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func gitOutput(ctx context.Context, root string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+
+	return string(output), nil
+}
+
+func sanitizeName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+
+	var b strings.Builder
+
+	lastDash := false
+
+	for _, r := range name {
+		keep := unicode.IsLetter(r) || unicode.IsDigit(r)
+		if keep {
+			b.WriteRune(r)
+
+			lastDash = false
+
+			continue
+		}
+
+		if !lastDash {
+			b.WriteByte('-')
+
+			lastDash = true
+		}
+	}
+
+	return strings.Trim(b.String(), "-")
+}
+
+// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmplcm_8c9v.go ---
+// IsDescribedWriteTool reports whether the given tool must carry a non-empty
+// Description. The subset is the diff-producing writes.
+func IsDescribedWriteTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameApplyPatch:
+		return true
+	}
+
+	return false
+}
+
+// CheckDescription returns a synthesized guard result when a described-write
+// tool was invoked without a Description.
+func CheckDescription(req workspace.ToolRequest) *workspace.ToolResult {
+	if !IsDescribedWriteTool(req.Tool) {
+		return nil
+	}
+
+	if strings.TrimSpace(req.Description) != "" {
+		return nil
+	}
+
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "%s requires a \"description\" field — one sentence on what this change is and why.\n", req.Tool)
+	b.WriteString("The plan panel labels each write with this description so the user can scan intent at a glance; missing it leaves the plan blank.\n")
+	b.WriteString("Try: reissue the same call with the same concrete tool arguments plus a non-empty `description` field containing one specific sentence about what this change is and why. Do not copy placeholder descriptions or schema examples.\n")
+	b.WriteString("Once set, the call executes normally.")
+
+	return &workspace.ToolResult{
+		Tool:    req.Tool,
+		Summary: "Missing write description",
+		Error:   strings.TrimSpace(b.String()),
+	}
+}

@@ -73,8 +73,8 @@
           "action": "accept"
         },
         "require_evidence_paths": [
-          "internal/runtime/agent/runner.go",
-          "internal/runtime/agent/runner_child_tasks.go"
+          "internal/runtime/agent/runner_core.go",
+          "internal/runtime/agent/implementation_flow.go"
         ],
         "require_verification": "none",
         "require_approval": false

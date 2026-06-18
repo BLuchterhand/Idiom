@@ -231,8 +231,8 @@
         "final_assistant_contains": [
           "task",
           "subagent",
-          "internal/runtime/agent/runner.go",
-          "internal/runtime/agent/runner_child_tasks.go"
+          "internal/runtime/agent/runner_core.go",
+          "internal/runtime/agent/implementation_flow.go"
         ],
         "forbid_final_assistant_contains": [
           "Subagent Handoff Architecture",
@@ -290,8 +290,8 @@
           "action": "accept"
         },
         "require_evidence_paths": [
-          "internal/runtime/agent/runner.go",
-          "internal/runtime/agent/runner_child_tasks.go"
+          "internal/runtime/agent/runner_core.go",
+          "internal/runtime/agent/implementation_flow.go"
         ],
         "require_verification": "none",
         "require_approval": false
@@ -324,8 +324,8 @@
         "final_assistant_contains": [
           "discovery",
           "tool",
-          "internal/runtime/agent/answer_composer.go",
-          "internal/runtime/agent/runner.go"
+          "internal/runtime/agent/implementation_flow.go",
+          "internal/runtime/agent/runner_core.go"
         ],
         "forbid_final_assistant_contains": [
           "Discovery Tool Improvements",
@@ -365,8 +365,8 @@
           "action": "accept"
         },
         "require_evidence_paths": [
-          "internal/runtime/agent/answer_composer.go",
-          "internal/runtime/agent/runner.go"
+          "internal/runtime/agent/implementation_flow.go",
+          "internal/runtime/agent/runner_core.go"
         ],
         "require_verification": "none",
         "require_approval": false
