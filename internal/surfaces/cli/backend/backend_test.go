@@ -489,6 +489,7 @@ func TestRunBackendStatusFormatsUpAndDownLines(t *testing.T) {
 			return []backends.StatusResult{
 				{Alias: "qwen3.6-35b", Port: 47780, Up: true, PID: 5555},
 				{Alias: "qwen3-coder-30b", Port: 47781, Up: false},
+				{Alias: "glm-5.2", Kind: "glm", Hosted: true},
 			}
 		})
 
@@ -507,6 +508,10 @@ func TestRunBackendStatusFormatsUpAndDownLines(t *testing.T) {
 
 	if !strings.Contains(out, "DOWN qwen3-coder-30b") {
 		t.Fatalf("DOWN line missing: %s", out)
+	}
+
+	if !strings.Contains(out, "HOSTED glm-5.2 (kind=glm)") {
+		t.Fatalf("HOSTED line missing: %s", out)
 	}
 }
 

@@ -1463,6 +1463,13 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 
 	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
 		if r != nil && readOnlyDirectAnswerLane(r.RuntimeBrief) && !runnerBriefRequiresMutation(r.RuntimeBrief) {
+			// Accept the blocker if the model has gathered source-body
+			// evidence and the blocker names an exact path or claim.
+			// This prevents the dead-end loop where the model can't
+			// proceed and can't say "I'm stuck" either.
+			if hasSourceBodyEvidence(results) && isSpecificQuestionBlocker(answer) {
+				return reject("user_visible_blocker", "user_visible_blocker")
+			}
 			return reject("read_only_protocol_blocker", "read_only_protocol_blocker")
 		}
 
@@ -1563,6 +1570,60 @@ func readOnlyDirectAnswerLane(brief workerruntime.WorkerRuntimeBrief) bool {
 func readOnlyDirectAnswerTaskFamily(family string) bool {
 	return workerruntime.TaskFamilyIsConversation(family) ||
 		workerruntime.TaskFamilyMatches(family, workerruntime.TaskFamilyDirectAnswer)
+}
+
+// hasSourceBodyEvidence reports whether the model has gathered any
+// source-body evidence (read_file or code_navigate results) in the current
+// turn. Used by the <<QUESTION>> gate to distinguish "I gathered evidence
+// and am still stuck" from "I gave up without trying."
+func hasSourceBodyEvidence(results []workspace.ToolResult) bool {
+	for _, result := range results {
+		tool := strings.TrimSpace(result.Tool)
+		if tool == workspace.ToolNameReadFile || tool == workspace.ToolNameCodeNavigate {
+			if strings.TrimSpace(result.Error) == "" && strings.TrimSpace(result.Output) != "" {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// isSpecificQuestionBlocker reports whether a <<QUESTION>>: blocker message
+// names an exact path, file, function, or claim rather than being a generic
+// "I can't answer" message. Specific blockers should be accepted as
+// user_visible_blocker even in read-only lanes.
+func isSpecificQuestionBlocker(answer string) bool {
+	trimmed := strings.TrimSpace(answer)
+	if !strings.HasPrefix(trimmed, "<<QUESTION>>:") {
+		return false
+	}
+
+	body := strings.TrimSpace(strings.TrimPrefix(trimmed, "<<QUESTION>>:"))
+	if body == "" {
+		return false
+	}
+	lower := strings.ToLower(body)
+
+	// Generic / hedge-word blockers: "i can't answer", "i don't know",
+	// "i'm not sure", "i need more", "insufficient", "blocked"
+	generic := []string{"i can't", "i cannot", "i don't know", "i'm not", "i am not",
+		"i need more", "insufficient", "blocked", "not sure", "uncertain"}
+	for _, phrase := range generic {
+		if strings.Contains(lower, phrase) {
+			return false
+		}
+	}
+
+	// Check for code-like tokens: path separators, file extensions,
+	// function names, type names, or quoted terms
+	return strings.Contains(body, "/") ||
+		strings.Contains(body, ".") ||
+		strings.Contains(body, "`") ||
+		strings.Contains(body, "\"") ||
+		strings.Contains(body, "()") ||
+		strings.Contains(body, "type ") ||
+		strings.Contains(body, "func ")
 }
 
 func readOnlyDirectAnswerAcceptanceLedgerBrief(brief workerruntime.WorkerRuntimeBrief) workerruntime.WorkerRuntimeBrief {
@@ -7002,11 +7063,12 @@ func implementationTargetSourceRuntimeBrief(brief workerruntime.WorkerRuntimeBri
 	brief.Constraints = util.Merge([]string{"implementation_target_source_pending"}, brief.Constraints)
 	brief.RequiredNext = util.Merge([]string{
 		"localize the concrete edit target, read bounded source-body evidence with named_gap for the missing edit-safety fact, write only after exact source-body evidence and replacement shape are known, or <<QUESTION>> with the exact blocker/no-op evidence",
+		"for a genuinely new (non-existent) file, write_file directly with full content; source-body evidence and replacement shape are not required for an additive new-file write",
 		"for delete/remove-file objectives, read bounded existence/source evidence, then use apply_patch with `*** Delete File: <path>`; do not use write_file with empty content as deletion",
 	}, brief.RequiredNext)
 	brief.InvalidActions = util.Merge([]string{
 		"final answer before a successful write, no-op, or blocker",
-		"write before exact source-body evidence and replacement shape",
+		"write that modifies existing source before exact source-body evidence and replacement shape",
 		"write_file with empty content to simulate deleting a file",
 		"verification before a successful write",
 	}, brief.InvalidActions)

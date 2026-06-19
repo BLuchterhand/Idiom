@@ -39,6 +39,29 @@ func TestBackendsModelToLlamaServerCarriesHostedFields(t *testing.T) {
 	}
 }
 
+func TestBackendsModelToLlamaServerCarriesGLMDefaults(t *testing.T) {
+	defaults := config.Default().LlamaServer
+	got := backendsModelToLlamaServer(backends.Model{
+		Alias:           "glm-5.2",
+		Kind:            config.BackendGLM,
+		Model:           "glm-5.2",
+		ReasoningEffort: "max",
+		Roles:           []string{backends.RolePlanner, backends.RoleExecutor, backends.RoleClassifier},
+	}, defaults)
+
+	if !got.IsHosted() || !got.IsGLM() {
+		t.Fatalf("expected hosted GLM spec, got %#v", got)
+	}
+
+	if got.Model != "glm-5.2" || got.EndpointBaseURL() != "https://api.z.ai/api/coding/paas/v4" || got.APIKeyEnvName() != "ZAI_API_KEY" {
+		t.Fatalf("GLM defaults not applied: %#v", got)
+	}
+
+	if got.DisplayName != "glm-5.2" || got.ReasoningEffort != "max" {
+		t.Fatalf("GLM alias/provider options not carried: %#v", got)
+	}
+}
+
 func TestBackendsModelToLlamaServerDoesNotCarryLocalBaseURLIntoHostedRole(t *testing.T) {
 	defaults := config.Default().RouteClassifier.LlamaServerSpec()
 

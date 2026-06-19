@@ -134,14 +134,16 @@ const (
 	BackendOpenAIResponses = "openai_responses"
 	BackendCodex           = "codex"
 	BackendZAI             = "zai"
+	BackendGLM             = "glm"
 	BackendDeepSeek        = "deepseek"
 )
 
 // LlamaServer describes an inference backend the harness can talk to. The
 // historic name is retained because most call sites predate hosted providers.
 // Local backends ("llama" and "mlx") can be launched by the harness. Hosted
-// backends ("codex"/"openai_responses" and "zai") are client-only and use
-// API-key authentication from environment variables.
+// backends ("codex"/"openai_responses", "zai", "glm", "minimax", and
+// "deepseek") are client-only and use API-key authentication from environment
+// variables.
 type LlamaServer struct {
 	Kind            string   `json:"kind,omitempty"`
 	Binary          string   `json:"binary"`
@@ -184,6 +186,10 @@ func (l LlamaServer) IsZAI() bool {
 	return util.EqualTrimFold(l.Kind, BackendZAI)
 }
 
+func (l LlamaServer) IsGLM() bool {
+	return util.EqualTrimFold(l.Kind, BackendGLM)
+}
+
 func (l LlamaServer) IsMiniMax() bool {
 	return util.EqualTrimFold(l.Kind, BackendMiniMax)
 }
@@ -193,7 +199,7 @@ func (l LlamaServer) IsDeepSeek() bool {
 }
 
 func (l LlamaServer) IsHosted() bool {
-	return l.IsOpenAIResponses() || l.IsZAI() || l.IsMiniMax() || l.IsDeepSeek()
+	return l.IsOpenAIResponses() || l.IsZAI() || l.IsGLM() || l.IsMiniMax() || l.IsDeepSeek()
 }
 
 func (l LlamaServer) IsLaunchable() bool {
@@ -214,6 +220,8 @@ func (l LlamaServer) EndpointBaseURL() string {
 		return "https://api.openai.com"
 	case l.IsZAI():
 		return "https://api.z.ai/api/paas/v4"
+	case l.IsGLM():
+		return "https://api.z.ai/api/coding/paas/v4"
 	case l.IsMiniMax():
 		return "https://api.minimax.io/v1"
 	case l.IsDeepSeek():
@@ -232,6 +240,8 @@ func (l LlamaServer) APIKeyEnvName() string {
 	case l.IsOpenAIResponses():
 		return "OPENAI_API_KEY"
 	case l.IsZAI():
+		return "ZAI_API_KEY"
+	case l.IsGLM():
 		return "ZAI_API_KEY"
 	case l.IsMiniMax():
 		return "MINIMAX_API_KEY"
@@ -1230,7 +1240,7 @@ func applyChatPreset(chat *Chat, preset ChatPreset) {
 }
 
 func knownBackendKinds() []string {
-	return []string{BackendLlama, BackendMLX, BackendMiniMax, BackendOpenAIResponses, BackendCodex, BackendZAI, BackendDeepSeek}
+	return []string{BackendLlama, BackendMLX, BackendMiniMax, BackendOpenAIResponses, BackendCodex, BackendZAI, BackendGLM, BackendDeepSeek}
 }
 
 func isKnownBackendKind(kind string) bool {

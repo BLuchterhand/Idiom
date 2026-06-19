@@ -4347,8 +4347,8 @@ func TestFinalAnswerAcceptanceRejectsEchoedObjectivePathInventoryFromLiveTUIQues
 	runner := &Runner{RuntimeBrief: brief}
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet" {
-		t.Fatalf("echoed-objective path inventory got (%q, %q), want answer_objective_unmet", kind, reason)
+	if kind != "answer_objective_unmet:term_mismatch" {
+		t.Fatalf("echoed-objective path inventory got (%q, %q), want answer_objective_unmet:term_mismatch", kind, reason)
 	}
 
 	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
@@ -4663,7 +4663,7 @@ func TestFinalAnswerAcceptanceRejectsSessionsPanelAsChatRecallOwner(t *testing.T
 
 	decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).
 		FinalAnswerDecision(answer)
-	if decision.BlockerKind != "answer_objective_unmet" {
+	if decision.BlockerKind != "answer_objective_unmet:citation_mismatch" {
 		t.Fatalf("shared final-answer decision got blocker kind=%q", decision.BlockerKind)
 	}
 
@@ -4678,7 +4678,7 @@ func TestFinalAnswerAcceptanceRejectsSessionsPanelAsChatRecallOwner(t *testing.T
 	aliasDecision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(aliasBrief), results).
 		FinalAnswerDecision(answer)
 
-	if aliasDecision.BlockerKind != "answer_objective_unmet" {
+	if aliasDecision.BlockerKind != "answer_objective_unmet:citation_mismatch" {
 		t.Fatalf("direct_answer alias shared decision got blocker kind=%q", aliasDecision.BlockerKind)
 	}
 
@@ -4687,7 +4687,7 @@ func TestFinalAnswerAcceptanceRejectsSessionsPanelAsChatRecallOwner(t *testing.T
 	}
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet" {
+	if kind != "answer_objective_unmet:citation_mismatch" {
 		t.Fatalf("sessions-panel-owned final answer got blocker kind=%q reason=%q", kind, reason)
 	}
 
@@ -4696,7 +4696,7 @@ func TestFinalAnswerAcceptanceRejectsSessionsPanelAsChatRecallOwner(t *testing.T
 	}
 
 	aliasRunner := &Runner{RuntimeBrief: aliasBrief}
-	if kind, reason := aliasRunner.finalAnswerBlockerKind(answer, results); kind != "answer_objective_unmet" {
+	if kind, reason := aliasRunner.finalAnswerBlockerKind(answer, results); kind != "answer_objective_unmet:citation_mismatch" {
 		t.Fatalf("direct_answer alias final answer got blocker kind=%q reason=%q", kind, reason)
 	}
 
@@ -5227,8 +5227,8 @@ func TestFinalAnswerAcceptanceRejectsOffObjectiveSourceBackedAnswer(t *testing.T
 	runner := &Runner{RuntimeBrief: brief}
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet" {
-		t.Fatalf("off-objective source-backed answer got (%q, %q), want answer_objective_unmet", kind, reason)
+	if kind != "answer_objective_unmet:citation_mismatch" {
+		t.Fatalf("off-objective source-backed answer got (%q, %q), want answer_objective_unmet:citation_mismatch", kind, reason)
 	}
 
 	if !strings.Contains(reason, "does not establish the user's objective") {
@@ -5254,8 +5254,8 @@ func TestFinalAnswerAcceptanceRejectsObjectiveParrotWithWrongSource(t *testing.T
 	runner := &Runner{RuntimeBrief: brief}
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet" {
-		t.Fatalf("objective-parroting wrong-source answer got (%q, %q), want answer_objective_unmet", kind, reason)
+	if kind != "answer_objective_unmet:citation_mismatch" {
+		t.Fatalf("objective-parroting wrong-source answer got (%q, %q), want answer_objective_unmet:citation_mismatch", kind, reason)
 	}
 }
 
@@ -5270,8 +5270,8 @@ func TestFinalAnswerAcceptanceRejectsCitationlessObjectiveParrotWithUnrelatedRea
 	runner := &Runner{RuntimeBrief: brief}
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet" {
-		t.Fatalf("citationless objective-parroting unrelated read got (%q, %q), want answer_objective_unmet", kind, reason)
+	if kind != "answer_objective_unmet:citation_mismatch" {
+		t.Fatalf("citationless objective-parroting unrelated read got (%q, %q), want answer_objective_unmet:citation_mismatch", kind, reason)
 	}
 }
 
@@ -5296,8 +5296,8 @@ func TestFinalAnswerAcceptanceAppliesToDirectAnswerTaskFamilyAlias(t *testing.T)
 	runner := &Runner{RuntimeBrief: brief}
 
 	kind, _ := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet" {
-		t.Fatalf("direct_answer task-family alias was not checked: got %q, want answer_objective_unmet", kind)
+	if kind != "answer_objective_unmet:citation_mismatch" {
+		t.Fatalf("direct_answer task-family alias was not checked: got %q, want answer_objective_unmet:citation_mismatch", kind)
 	}
 }
 
@@ -5315,8 +5315,8 @@ func TestFinalAnswerAcceptanceRejectsAliasInsufficientEvidenceWithoutSourceBody(
 	runner := &Runner{RuntimeBrief: brief}
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet" {
-		t.Fatalf("premature insufficient-evidence alias answer got (%q, %q), want answer_objective_unmet", kind, reason)
+	if kind != "answer_objective_unmet:no_source_body_evidence" {
+		t.Fatalf("premature insufficient-evidence alias answer got (%q, %q), want answer_objective_unmet:no_source_body_evidence", kind, reason)
 	}
 
 	if !strings.Contains(reason, "before inspecting source-body or diagnostic evidence") {
@@ -5338,8 +5338,8 @@ func TestFinalAnswerAcceptanceRejectsAliasInsufficientEvidenceWhenSourceBodyIsAn
 	runner := &Runner{RuntimeBrief: brief}
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet" {
-		t.Fatalf("answerable source-backed insufficient-evidence answer got (%q, %q), want answer_objective_unmet", kind, reason)
+	if kind != "answer_objective_unmet:insufficient_evidence_claimed" {
+		t.Fatalf("answerable source-backed insufficient-evidence answer got (%q, %q), want answer_objective_unmet:insufficient_evidence_claimed", kind, reason)
 	}
 
 	if !strings.Contains(reason, "evidence is answerable") {
@@ -5368,8 +5368,8 @@ func TestFinalAnswerAcceptanceRejectsAliasObjectiveParrotWithWrongSource(t *test
 	runner := &Runner{RuntimeBrief: brief}
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet" {
-		t.Fatalf("alias objective-parroting wrong-source answer got (%q, %q), want answer_objective_unmet", kind, reason)
+	if kind != "answer_objective_unmet:citation_mismatch" {
+		t.Fatalf("alias objective-parroting wrong-source answer got (%q, %q), want answer_objective_unmet:citation_mismatch", kind, reason)
 	}
 }
 
@@ -5514,8 +5514,8 @@ func TestFinalAnswerAcceptanceRejectsNamedFileWhyAnswerWithUnrelatedBody(t *test
 	runner := &Runner{RuntimeBrief: brief}
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet" {
-		t.Fatalf("named-file why answer with unrelated body got (%q, %q), want answer_objective_unmet", kind, reason)
+	if kind != "answer_objective_unmet:citation_mismatch" {
+		t.Fatalf("named-file why answer with unrelated body got (%q, %q), want answer_objective_unmet:citation_mismatch", kind, reason)
 	}
 }
 
@@ -11758,6 +11758,34 @@ func TestCompletionGateRecoveryCardUsesGuardedMutationTargetSourcePhase(t *testi
 	}
 
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
+}
+
+func TestImplementationTargetSourceContractSteersNewFileWrite(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "search_content", "edit_file", "write_file", "apply_patch"},
+		},
+		BaseAllowedTools: []string{"read_file", "search_content", "edit_file", "write_file", "apply_patch"},
+	})
+
+	if contract.PhaseID != turnPhaseImplementationTargetSource {
+		t.Fatalf("expected phase_id=%s, got %q", turnPhaseImplementationTargetSource, contract.PhaseID)
+	}
+
+	requiredNextJoined := strings.Join(contract.RequiredNext, "\n")
+	if !strings.Contains(requiredNextJoined, "genuinely new") ||
+		!strings.Contains(requiredNextJoined, "write_file") {
+		t.Fatalf("target_source RequiredNext must steer a direct write_file for a genuinely new file so the enforcement escape hatch is discoverable, got:\n%s", requiredNextJoined)
+	}
+
+	for _, invalid := range contract.InvalidNext {
+		if strings.Contains(invalid, "write before exact source-body evidence") {
+			t.Fatalf("target_source InvalidNext must scope the evidence requirement to modifications of existing source, not all writes; found blanket prohibition %q", invalid)
+		}
+	}
 }
 
 func assertRecoveryCardContains(t *testing.T, got string, wants ...string) {

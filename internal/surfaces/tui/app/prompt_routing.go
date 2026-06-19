@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/contracts/plan"
@@ -121,7 +122,33 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 		return "", err
 	}
 
+	reply = m.applyLaneSwitchReferralIfAny(prompt, reply)
+
 	return m.finishPromptOnceReply(reply), nil
+}
+
+// applyLaneSwitchReferralIfAny scans the assistant reply for lane-refusal
+// language and surfaces the lane-switch affordance when matched. In TUI mode
+// it opens the interactive popup (the reply itself is preserved in the
+// transcript); in headless mode it appends a numbered text block to the
+// reply so the JSON event stream consumer sees both the refusal and the
+// re-dispatch options. Returns the (possibly augmented) reply.
+//
+// Detection is conservative and sniffs the MODEL'S OWN refusal language,
+// never the user's prompt — see laneSwitchReferralPatterns.
+func (m *Model) applyLaneSwitchReferralIfAny(prompt, reply string) string {
+	recommended, ok := laneSwitchReferralFromReply(reply)
+	if !ok {
+		return reply
+	}
+
+	if m.isHeadless() {
+		return strings.TrimSpace(reply) + "\n\n" + laneSwitchHeadlessReply(prompt, recommended)
+	}
+
+	m.openLaneSwitchPopup(prompt, recommended)
+
+	return reply
 }
 
 func (m *Model) recordPromptRouteWithoutExecution(prompt string, plan promptExecutionPlan) {
@@ -171,6 +198,7 @@ func (m *Model) recoverDirectImplementationContext(prompt string, plan promptExe
 		Brief:       prompt,
 		ProjectRoot: m.projectRoot(),
 		Limit:       8,
+		Timeout:     directImplementContextPreloadTimeout,
 	}, &diagnostics)
 
 	if diag := strings.TrimSpace(diagnostics.String()); diag != "" {
@@ -209,7 +237,43 @@ func (m *Model) shouldPreloadDirectImplementationContext(prompt string, plan pro
 		return false
 	}
 
+	if conversationAlreadyCarriesSubstantiveContext(m.messages) {
+		return false
+	}
+
 	return strings.TrimSpace(m.cfg.Chat.ImplementationDispatch) == "plan_execute"
+}
+
+// directImplementContextPreloadTimeout bounds the optional context_pack
+// preload run before a direct implementation turn. The preload is an
+// optimization that falls back gracefully when skipped or stalled, so it
+// must never block the whole turn on a stalled query. A fresh, healthy
+// context_pack completes in ~1-2s; this budget gives generous headroom for
+// cold caches and language-backend startup while still failing fast when the
+// in-process pack is contending for a resource (the observed failure mode
+// was a full 30s tool-timeout stall every turn).
+const directImplementContextPreloadTimeout = 8 * time.Second
+
+// directImplementContextPreloadPriorAssistantMinLen is the minimum content
+// length of a prior assistant turn for the conversation to count as already
+// carrying substantive context. Tuned to exclude trivial ack/error replies
+// while capturing any real prior answer or synthesized deliverable.
+const directImplementContextPreloadPriorAssistantMinLen = 400
+
+// conversationAlreadyCarriesSubstantiveContext reports whether the live
+// transcript holds a prior assistant turn with non-trivial content. When that
+// exists, the model already has conversational workspace context and can
+// self-localize via read/search tools, so the optional context_pack preload
+// is redundant. Compacted-away history no longer contains such a turn, so the
+// predicate naturally falls back to preloading after aggressive compaction.
+func conversationAlreadyCarriesSubstantiveContext(messages []llama.ChatMessage) bool {
+	for _, msg := range messages {
+		if strings.EqualFold(strings.TrimSpace(msg.Role), "assistant") &&
+			len(strings.TrimSpace(msg.Content)) >= directImplementContextPreloadPriorAssistantMinLen {
+			return true
+		}
+	}
+	return false
 }
 
 func directContextPacketLines(section string) []string {

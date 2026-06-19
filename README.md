@@ -5,7 +5,7 @@ A local coding-agent harness for running local and hosted models through
 for plan-execute / implement / atom-spec lanes plus a Bubble Tea terminal UI.
 
 Idiom is being built and optimized around the Qwen 3.6 family of models,
-though it has also been tested successfully against GLM 5.1 and Minimax m2.7
+though it has also been tested successfully against GLM 5.x and Minimax m2.7
 models. It is meant to be an agnostic harness for local and hosted models, but
 it has not yet been broadly validated across providers.
 
@@ -495,10 +495,12 @@ Local, harness-launchable backends are:
 - `"kind": "mlx"` — launches `mlx_lm.server` from [mlx-lm](https://github.com/ml-explore/mlx-lm). On Apple Silicon this typically beats llama.cpp's Metal backend by ~15–30% throughput and ~10% memory. `model` becomes a Hugging Face ID (e.g. `Qwen/Qwen3.6-35B-A3B`) or a local MLX directory — not a GGUF path. Llama-specific flags (`jinja`, `flash_attention`, `reasoning*`) are ignored. Current `mlx_lm.server` builds honor per-request `chat_template_kwargs`, so idiom can intentionally switch `enable_thinking` / `preserve_thinking` for routes that need a different mode; keep server defaults in `extra_args` for fallback behavior, for example `--chat-template-args '{"enable_thinking":true,"preserve_thinking":true}'`. Idiom does not send OpenAI native `tools` arrays to MLX backends; current MLX Qwen tool parsers can terminate the HTTP request on malformed generated tool XML, so MLX lanes use idiom's JSON tool protocol and harness-side validation instead.
 
 Hosted, client-only backends are `"openai_responses"`, `"codex"`, `"zai"`,
-and `"minimax"`. They do not start a local process and cannot be used with
-`--server-only`; set `model`, optional `base_url`, and optional `api_key_env`.
-Default API key env vars are `OPENAI_API_KEY` for OpenAI/Codex,
-`ZAI_API_KEY`, and `MINIMAX_API_KEY`.
+`"glm"`, `"minimax"`, and `"deepseek"`. They do not start a local process and
+cannot be used with `--server-only`; set `model`, optional `base_url`, and
+optional `api_key_env`. Default API key env vars are `OPENAI_API_KEY` for
+OpenAI/Codex, `ZAI_API_KEY` for Z.AI/GLM, `MINIMAX_API_KEY`, and
+`DEEPSEEK_API_KEY`. The `"glm"` kind defaults to Z.AI's coding endpoint and
+passes `reasoning_effort` when configured, which is useful for GLM 5.2.
 
 The blocks are independent, so mixed setups work — for example, main chat on
 MLX and the route classifier still on llama.cpp, or a hosted planner with a

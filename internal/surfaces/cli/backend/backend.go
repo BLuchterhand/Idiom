@@ -271,6 +271,11 @@ func runBackendStatus(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	results := backendStatus(prof, backends.StopOptions{RunDir: runDirFor(root)})
 	for _, r := range results {
+		if r.Hosted {
+			fmt.Fprintf(stdout, "HOSTED %s (kind=%s)\n", r.Alias, r.Kind)
+			continue
+		}
+
 		if r.Up {
 			fmt.Fprintf(stdout, "UP   %s :%d (pid=%d)\n", r.Alias, r.Port, r.PID)
 		} else {

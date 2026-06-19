@@ -2299,14 +2299,14 @@ func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswer
 	if readOnlyAnswerReportsInsufficientEvidence(substantiveAnswer) {
 		decision.Status = "insufficient_evidence_answer"
 		if ledger.Answerable() {
-			decision.BlockerKind = "answer_objective_unmet"
+			decision.BlockerKind = "answer_objective_unmet:insufficient_evidence_claimed"
 			decision.Reason = "the final answer says the evidence is insufficient even though the gathered source evidence is answerable for the user's objective. Answer with the concrete objective-relevant finding, or name the exact missing claim and one bounded probe."
 
 			return decision
 		}
 
 		if len(ledger.SourceBodyPaths) == 0 && !ledger.DiagnosticEvidence {
-			decision.BlockerKind = "answer_objective_unmet"
+			decision.BlockerKind = "answer_objective_unmet:no_source_body_evidence"
 			decision.Reason = "the final answer says the evidence is insufficient before inspecting source-body or diagnostic evidence for the user's objective. Gather bounded source-body evidence, or use <<QUESTION>>: with the exact missing evidence source."
 
 			return decision
@@ -2337,7 +2337,7 @@ func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswer
 
 	if !ledger.Answerable() || answerLacksObjectiveSourceEvidence(answer, ledger) {
 		if readOnlyAnswerUsesInspectedSourceAsAnswer(answer, ledger) || answerMakesCausalClaimWithoutObjectiveEvidence(answer, ledger) {
-			decision.BlockerKind = "answer_objective_unmet"
+			decision.BlockerKind = "answer_objective_unmet:citation_mismatch"
 			decision.Reason = "the final answer uses inspected source evidence, but that evidence does not establish the user's objective. Answer with the exact objective-relevant source-body evidence, state that the current evidence is insufficient, or use <<QUESTION>>: with the exact missing evidence."
 
 			return decision
@@ -2353,8 +2353,8 @@ func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswer
 		return decision
 	}
 
-	decision.BlockerKind = "answer_objective_unmet"
-	decision.Reason = "the final answer is grounded in inspected evidence, but it does not address the user's objective. Answer using objective-relevant source-body evidence, or use <<QUESTION>>: with the exact missing evidence."
+	decision.BlockerKind = "answer_objective_unmet:term_mismatch"
+	decision.Reason = "the final answer is grounded in inspected source evidence, but it does not address the user's objective. Answer using objective-relevant source-body evidence, or use <<QUESTION>>: with the exact missing evidence."
 
 	return decision
 }

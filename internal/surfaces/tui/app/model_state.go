@@ -239,6 +239,10 @@ type Model struct {
 	disableThinkingOverride        bool
 	forcedReadinessOpenObligations []string
 	suppressGreenfieldConfirmation bool
+	// suppressLaneSwitchConfirmation temporarily disables the lane-switch
+	// popup/headless reply for nested turns that re-enter the prompt loop
+	// after the user already chose a lane. Mirrors the greenfield analog.
+	suppressLaneSwitchConfirmation bool
 	// lastTurnSourceResults carries source-body tool results from the
 	// previous conversation turn so the next turn's source grounding gate
 	// can verify evidence paths without re-reading files.
@@ -258,6 +262,11 @@ type Model struct {
 	approvalSerial      sync.Mutex
 	approvalPending     *pendingApproval
 	modelPopup          modelPopupState
+	laneSwitchPopup     laneSwitchPopupState
+	// lastLaneSwitchSelection records the most recent lane command key
+	// chosen from the lane-switch popup. It supports test assertions and
+	// operator telemetry without coupling the popup to the dispatch path.
+	lastLaneSwitchSelection string
 	rollbackHistory     []rollbackEntry
 	instructionAttacher *instructions.Attacher
 	mdRenderer          *glamour.TermRenderer

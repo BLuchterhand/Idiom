@@ -15365,20 +15365,37 @@ func conversationTargetedFileNameSearch(req workspace.ToolRequest) bool {
 
 	pattern = filepath.ToSlash(strings.TrimSpace(pattern))
 
-	if pattern == "" {
-		return false
+	if util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) != "" {
+		return true
 	}
 
-	return util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) != "" || conversationFileSearchPatternIsConcrete(pattern)
+	if pattern != "" && conversationFileSearchPatternIsConcrete(pattern) {
+		return true
+	}
+
+	// A named directory scope (e.g. "docs", ".idiom", "internal/runtime")
+	// narrows the file search to a concrete subdirectory the model chose.
+	// Honor it as targeted, mirroring conversationTargetedContentSearch,
+	// instead of letting it fall through to broad-rediscovery rejection.
+	return conversationConcreteSearchScope(req.Path)
 }
 
 func conversationConcreteSearchScope(path string) bool {
 	path = filepath.ToSlash(strings.TrimSpace(path))
-	if path == "" || path == "." || strings.ContainsAny(path, "*?[") {
+	if path == "" || path == "." || path == ".." || path == "~" || strings.ContainsAny(path, "*?[") {
 		return false
 	}
 
-	return pathparse.HasWorkspaceFileExtension(path) || strings.Contains(path, "/")
+	if pathparse.HasWorkspaceFileExtension(path) || strings.Contains(path, "/") {
+		return true
+	}
+
+	// A single named directory segment (e.g. "docs", ".idiom", "internal",
+	// "cmd") is concrete scope: the model named a specific subdirectory
+	// rather than the workspace root. Treat narrowing into a named
+	// directory as targeted, not as broad rediscovery. The trivial roots
+	// (".", "..", "~") and glob patterns are already excluded above.
+	return len(path) >= 2
 }
 
 func conversationFileSearchPatternIsConcrete(pattern string) bool {
@@ -15388,7 +15405,17 @@ func conversationFileSearchPatternIsConcrete(pattern string) bool {
 	}
 
 	if !strings.ContainsAny(pattern, "*?[") {
-		return strings.Contains(pattern, "/") || pathparse.HasWorkspaceFileExtension(pattern)
+		// Literal filename or directory name (no glob chars). Concrete
+		// when it carries path structure: a separator, a file extension,
+		// or a leading-dot hidden name like ".idiom" or ".github" that
+		// the model is using as a directory anchor. A bare generic word
+		// (e.g. "scroll") stays non-concrete so root-scope word searches
+		// at Path:"." still count as broad rediscovery.
+		if strings.Contains(pattern, "/") || pathparse.HasWorkspaceFileExtension(pattern) {
+			return true
+		}
+
+		return strings.HasPrefix(pattern, ".") && len(pattern) >= 2
 	}
 
 	for _, token := range agentutil.RecoveryObjectiveSearchWords(pattern, 16) {
@@ -22791,7 +22818,7 @@ func (r *Runner) finalAnswerBlockerErrorText(kind string, reason string, answer 
 		return "the final answer looks like transport-level noise (tool-call markup, echoed user question, or tool-failure language) rather than an actual answer. Reply with substantive prose that addresses the user's request, or use <<QUESTION>>: to state a concrete blocker."
 	case "source_grounding_unmet":
 		return reason
-	case "answer_objective_unmet":
+	case "answer_objective_unmet", "answer_objective_unmet:insufficient_evidence_claimed", "answer_objective_unmet:no_source_body_evidence", "answer_objective_unmet:citation_mismatch", "answer_objective_unmet:term_mismatch":
 		return reason
 	case "required_evidence_unmet":
 		if r != nil {

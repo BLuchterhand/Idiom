@@ -15657,6 +15657,69 @@ func TestConversationDiscoveryConsumptionRejectsBroadSearchAfterStrongContextPac
 	}
 }
 
+func TestConversationDiscoveryConsumptionAllowsNamedDirectorySearchAfterStrongContextPack(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}
+	state := newRunnerExecutionState(false, 0)
+	state.applyResult(
+		workspace.ToolRequest{Tool: "context_pack", Query: "user-visible governance controls"},
+		workspace.ToolResult{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote view with 16 candidate file(s)",
+			Output:  `{"quality":{"localization_confidence":"high","source_owner_found":true,"evidence_paths":["internal/runtime/agent/runner_core.go"],"reasons":["source_owner_token_overlap_high"]},"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
+		},
+		"",
+		nil,
+		nil,
+	)
+
+	for _, req := range []workspace.ToolRequest{
+		{Tool: "search_files", Pattern: ".idiom"},
+		{Tool: "search_files", Glob: "*", Pattern: ".idiom"},
+		{Tool: "search_files", Path: "docs", Pattern: "*.md"},
+		{Tool: "search_files", Path: "internal", Glob: "**/*.go"},
+		{Tool: "search_files", Path: ".github"},
+		{Tool: "search_files", Path: "internal/runtime"},
+	} {
+		if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(req, brief) {
+			t.Fatalf("named-directory file search must not be classified as broad rediscovery: %#v", req)
+		}
+	}
+
+	for _, req := range []workspace.ToolRequest{
+		{Tool: "search_content", Path: "docs", Pattern: "permission"},
+		{Tool: "context_query", Query: "callers of config loader", Resolution: "symbol", Path: "internal"},
+	} {
+		if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(req, brief) {
+			t.Fatalf("named-directory %s must not be classified as broad rediscovery: %#v", req.Tool, req)
+		}
+	}
+
+	if !state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(
+		workspace.ToolRequest{Tool: "search_files", Path: ".", Pattern: "scroll"},
+		brief,
+	) {
+		t.Fatal("root-scope broad rediscovery must still be rejected after strong context_pack")
+	}
+
+	if !state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(
+		workspace.ToolRequest{Tool: "search_files", Path: "~", Pattern: "*.json"},
+		brief,
+	) {
+		t.Fatal("home-scope broad rediscovery must still be rejected after strong context_pack")
+	}
+
+	if !state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(
+		workspace.ToolRequest{Tool: "search_files", Path: "", Pattern: "**/*.go"},
+		brief,
+	) {
+		t.Fatal("workspace-wide glob rediscovery must still be rejected after strong context_pack")
+	}
+}
+
 func TestStrongContextPackStillRejectsBroadSearchAfterFailedGuessedRead(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",
@@ -28805,7 +28868,7 @@ func TestEmitAcceptedAnswerSignalsDirectAnswerAliasBlocksUnrelatedEvidence(t *te
 		readiness["invariant_id"] != finalAnswerPolicyInvariantAcceptance ||
 		readiness["policy_decision"] != "reject" ||
 		readiness["action"] != "block" ||
-		readiness["blocker_kind"] != "answer_objective_unmet" ||
+		readiness["blocker_kind"] != "answer_objective_unmet:citation_mismatch" ||
 		readiness["objective_relevance"] != "checked" {
 
 		t.Fatalf("expected blocked objective relevance readiness, got %#v", readiness)
@@ -28821,7 +28884,7 @@ func TestEmitAcceptedAnswerSignalsDirectAnswerAliasBlocksUnrelatedEvidence(t *te
 		critic["policy_pack_id"] != "final_answer/acceptance" ||
 		critic["invariant_id"] != finalAnswerPolicyInvariantAcceptance ||
 		critic["policy_decision"] != "reject" ||
-		critic["blocker_kind"] != "answer_objective_unmet" {
+		critic["blocker_kind"] != "answer_objective_unmet:citation_mismatch" {
 
 		t.Fatalf("expected final critic to carry rejected acceptance fields, got %#v", critic)
 	}
@@ -28910,15 +28973,15 @@ func TestFinalAnswerOverrideLogsOriginalObjectiveRejection(t *testing.T) {
 		t.Fatal("rejected final answer replacement must not emit accepted final-answer telemetry")
 	}
 
-	if blockedCritic["blocker_kind"] != "answer_objective_unmet" ||
+	if blockedCritic["blocker_kind"] != "answer_objective_unmet:citation_mismatch" ||
 		blockedCritic["acceptance_decision"] != string(finalAnswerAcceptanceRejected) ||
 		blockedCritic["objective_relevance"] != "checked" {
 
 		t.Fatalf("blocked telemetry should consume the original raw-answer acceptance, got %#v", blockedCritic)
 	}
 
-	if override["original_blocker_kind"] != "answer_objective_unmet" ||
-		override["replacement_stop_reason"] != "answer_objective_unmet" ||
+	if override["original_blocker_kind"] != "answer_objective_unmet:citation_mismatch" ||
+		override["replacement_stop_reason"] != "answer_objective_unmet:citation_mismatch" ||
 		override["objective_relevance"] != "checked" ||
 		override["original_acceptance_decision"] != string(finalAnswerAcceptanceRejected) ||
 		override["raw_answer_logged"] != false {

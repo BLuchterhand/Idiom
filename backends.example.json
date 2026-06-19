@@ -113,6 +113,30 @@
         "default_coder": "deepseek-v4-pro",
         "default_classifier": "deepseek-v4-pro"
       }
+    },
+    "glm-5.2": {
+      "_comment": "Hosted GLM 5.2 profile through Z.AI's coding endpoint. Set ZAI_API_KEY in the shell; do not store the key in this file. Local backend start/proxy commands do not apply to this hosted profile.",
+      "models": [
+        {
+          "alias": "glm-5.2",
+          "kind": "glm",
+          "model": "glm-5.2",
+          "api_key_env": "ZAI_API_KEY",
+          "reasoning_effort": "max",
+          "roles": [
+            "planner",
+            "executor",
+            "classifier"
+          ]
+        }
+      ],
+      "proxy": {
+        "default_alias": "glm-5.2",
+        "default_planner": "glm-5.2",
+        "default_executor": "glm-5.2",
+        "default_coder": "glm-5.2",
+        "default_classifier": "glm-5.2"
+      }
     }
   }
 }

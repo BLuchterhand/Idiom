@@ -3009,6 +3009,12 @@ func escalateCompletionGateMessage(base string, priorRejections int) string {
 	hasNonExistentPaths := strings.Contains(trimmed, "not read as source-body evidence")
 	isSourceGrounding := hasUnsupportedPaths || hasNonExistentPaths
 
+	// Detect answer-objective-unmet rejection patterns. When the gate says
+	// the answer does not address the user's objective, the model needs to
+	// echo the question's own key terms rather than gather more evidence.
+	isObjectiveUnmet := strings.Contains(trimmed, "does not address the user's objective") ||
+		strings.Contains(trimmed, "answer_objective_unmet")
+
 	switch {
 	case priorRejections <= 0:
 		return base
@@ -3019,6 +3025,15 @@ func escalateCompletionGateMessage(base string, priorRejections int) string {
 				" your next move MUST resolve the stated blocker (call one bounded" +
 				" `read_file` or `code_navigate` for each cited unread path, or" +
 				" qualify each as 'unverified' next to the citation)."
+		}
+		if isObjectiveUnmet {
+			return "[gate retry 2/3] " + trimmed +
+				" — the gate already rejected one prior attempt with this error." +
+				" Your answer uses investigated source evidence but did not echo" +
+				" the key terms from the user's question. Restate your finding using" +
+				" the question's own nouns and terminology so the intent check passes." +
+				" Do NOT gather more evidence — the issue is answer phrasing, not" +
+				" evidence sufficiency."
 		}
 		return "[gate retry 2/3] " + trimmed +
 			" — the gate already rejected one prior attempt with this error;" +
@@ -3031,6 +3046,15 @@ func escalateCompletionGateMessage(base string, priorRejections int) string {
 				" the contract. Make one bounded `read_file` or `code_navigate` call" +
 				" for each cited unread path, or qualify each as 'unverified' next to" +
 				" the citation. Do not narrate; act."
+		}
+		if isObjectiveUnmet {
+			return "[gate retry 3/3 — last attempt before tools disable] " + trimmed +
+				" — repeated rejections indicate the active reply does not satisfy" +
+				" the contract. Your answer was grounded in investigated source" +
+				" evidence but the objective-term check failed. The fix is NOT more" +
+				" evidence — rewrite your answer to use the question's own key terms" +
+				" and code/symbol names from the evidence you already have. Do not" +
+				" narrate; act."
 		}
 		return "[gate retry 3/3 — last attempt before tools disable] " + trimmed +
 			" — repeated rejections indicate the active reply does not satisfy" +
@@ -3047,6 +3071,16 @@ func isSourceGroundingError(errText string) bool {
 	trimmed := strings.TrimSpace(errText)
 	return strings.Contains(trimmed, "not backed by a source-body read") ||
 		strings.Contains(trimmed, "not read as source-body evidence")
+}
+
+// isObjectiveUnmetError reports whether a completion gate error text is an
+// answer-objective-unmet rejection (the answer is grounded in evidence but
+// its terminology does not match the user's objective). The model has
+// sufficient evidence; it needs to echo the question's own key terms.
+func isObjectiveUnmetError(errText string) bool {
+	trimmed := strings.TrimSpace(errText)
+	return strings.Contains(trimmed, "does not address the user's objective") ||
+		strings.Contains(trimmed, "answer_objective_unmet")
 }
 
 func planThenExecuteMissingSubmitPlanError(requiredEditPaths []string) string {
@@ -3140,8 +3174,12 @@ func retryableReadOnlyFinalAnswerRejectionForBrief(brief workerruntime.WorkerRun
 }
 
 func retryableReadOnlyFinalAnswerBlockerKind(kind string) bool {
-	switch strings.TrimSpace(kind) {
-	case "source_grounding_unmet", "answer_objective_unmet", "read_only_protocol_blocker":
+	trimmed := strings.TrimSpace(kind)
+	switch {
+	case trimmed == "source_grounding_unmet",
+		trimmed == "read_only_protocol_blocker",
+		trimmed == "answer_objective_unmet",
+		strings.HasPrefix(trimmed, "answer_objective_unmet:"):
 		return true
 	default:
 		return false
@@ -3464,6 +3502,23 @@ func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.To
 	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
 	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return ""
+	}
+
+	// Answer-objective-unmet rejection: evidence was gathered and cited
+	// correctly but the answer's terminology does not match the user's
+	// question. Guide the model to echo the question's own key terms
+	// rather than gather more evidence. Check this before the Readiness
+	// gate because the model already has sufficient evidence.
+	if r.lastCompletionGateError != "" && isObjectiveUnmetError(r.lastCompletionGateError) {
+		errorText := r.lastCompletionGateError
+		rejectionParts := strings.SplitN(errorText, ". ", 2)
+		return "The completion gate rejected the answer because the terminology" +
+			" does not match the user's objective, even though the answer uses" +
+			" investigated source evidence. " +
+			"Your answer must use the user's own key terms from the question." +
+			" Do NOT gather more evidence. Restate your finding from the evidence" +
+			" you already have, echoing the objective's nouns and phrasing." +
+			" The first part of the rejection was: " + rejectionParts[0] + "."
 	}
 
 	// Source-grounding rejection: evidence was gathered but the answer cited

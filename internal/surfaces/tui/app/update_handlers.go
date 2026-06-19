@@ -23,6 +23,12 @@ func (m *Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Cmd, bool) {
 }
 
 func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
+	if m.laneSwitchPopup.open {
+		if cmd, handled := m.handleLaneSwitchPopupKey(msg); handled {
+			return cmd, true
+		}
+	}
+
 	if m.inputHistoryIndex >= 0 && inputHistoryNavigationKey(msg) {
 		if cmd, handled := m.handleInputHistoryNavigation(msg); handled {
 			return cmd, true
@@ -418,6 +424,12 @@ func (m *Model) handleImplementCommand(raw string) bool {
 }
 
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
+	if m.laneSwitchPopup.open {
+		if m.handleLaneSwitchPopupMouse(msg) {
+			return m.waitForEventCmd(), true
+		}
+	}
+
 	if m.history.panelOpen && msg.X >= m.panelStartX() {
 		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
 			if m.handlePanelClick(msg) {

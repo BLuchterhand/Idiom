@@ -328,6 +328,8 @@ func BackendStructuredOutputCapabilities(backend string) StructuredOutputCapabil
 		caps.ThinkingControls = true
 	case config.BackendZAI:
 		caps.ThinkingControls = true
+	case config.BackendGLM:
+		caps.ThinkingControls = true
 	case config.BackendDeepSeek:
 		caps.ThinkingControls = true
 	}
@@ -346,7 +348,7 @@ func isOpenAIResponsesBackend(backend string) bool {
 
 func isHostedChatBackend(backend string) bool {
 	b := strings.ToLower(strings.TrimSpace(backend))
-	return b == config.BackendZAI || b == config.BackendMiniMax || b == config.BackendDeepSeek
+	return b == config.BackendZAI || b == config.BackendGLM || b == config.BackendMiniMax || b == config.BackendDeepSeek
 }
 
 func backendRequiresAuth(backend string) bool {
@@ -358,6 +360,8 @@ func defaultAPIKeyEnv(backend string) string {
 	case config.BackendOpenAIResponses, config.BackendCodex:
 		return "OPENAI_API_KEY"
 	case config.BackendZAI:
+		return "ZAI_API_KEY"
+	case config.BackendGLM:
 		return "ZAI_API_KEY"
 	case config.BackendMiniMax:
 		return "MINIMAX_API_KEY"
@@ -394,6 +398,8 @@ func (c *Client) WithBackend(backend string) *Client {
 		c.backend = config.BackendCodex
 	case config.BackendZAI:
 		c.backend = config.BackendZAI
+	case config.BackendGLM:
+		c.backend = config.BackendGLM
 	case config.BackendDeepSeek:
 		c.backend = config.BackendDeepSeek
 	case "", config.BackendLlama:
@@ -443,7 +449,7 @@ func (c *Client) SupportsNativeTools() bool {
 }
 
 func (c *Client) modelsURL() string {
-	if c.Backend() == config.BackendZAI {
+	if isZAIFamilyBackend(c.Backend()) {
 		return c.baseURL + "/models"
 	}
 
@@ -451,7 +457,7 @@ func (c *Client) modelsURL() string {
 }
 
 func (c *Client) chatCompletionsURL() string {
-	if c.Backend() == config.BackendZAI {
+	if isZAIFamilyBackend(c.Backend()) {
 		return c.baseURL + "/chat/completions"
 	}
 
@@ -520,6 +526,7 @@ type hostedChatPayload struct {
 	Temperature     float64           `json:"temperature,omitempty"`
 	TopP            float64           `json:"top_p,omitempty"`
 	PresencePenalty float64           `json:"presence_penalty,omitempty"`
+	ReasoningEffort string            `json:"reasoning_effort,omitempty"`
 	Tools           any               `json:"tools,omitempty"`
 	ToolNameReverse map[string]string `json:"-"`
 	ToolChoice      string            `json:"tool_choice,omitempty"`
@@ -560,7 +567,7 @@ func normalizeHostedTools(tools []Tool) ([]Tool, map[string]string) {
 	return normalized, reverse
 }
 
-func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream bool, backend string) any {
+func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream bool, backend, reasoningEffort string) any {
 	payload := hostedChatPayload{
 		Model:    opts.Model,
 		Messages: hostedChatMessages(repairMessageToolPairing(messages), backend),
@@ -602,6 +609,10 @@ func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream b
 		payload.Thinking = map[string]string{"type": mode}
 	}
 
+	if hostedBackendSupportsReasoningEffort(backend) {
+		payload.ReasoningEffort = strings.TrimSpace(reasoningEffort)
+	}
+
 	if opts.ResponseFormatJSON {
 		payload.ResponseFormat = map[string]string{"type": "json_object"}
 	}
@@ -610,7 +621,15 @@ func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream b
 }
 
 func hostedBackendSupportsThinkingToggle(backend string) bool {
-	return util.EqualTrimFold(backend, config.BackendZAI) || util.EqualTrimFold(backend, config.BackendDeepSeek)
+	return isZAIFamilyBackend(backend) || util.EqualTrimFold(backend, config.BackendDeepSeek)
+}
+
+func hostedBackendSupportsReasoningEffort(backend string) bool {
+	return isZAIFamilyBackend(backend)
+}
+
+func isZAIFamilyBackend(backend string) bool {
+	return util.EqualTrimFold(backend, config.BackendZAI) || util.EqualTrimFold(backend, config.BackendGLM)
 }
 
 // repairMessageToolPairing ensures every assistant message with tool_calls
@@ -725,7 +744,7 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 	var payload any
 
 	if isHostedChatBackend(c.Backend()) {
-		payload = hostedChatRequestPayload(messages, opts, true, c.Backend())
+		payload = hostedChatRequestPayload(messages, opts, true, c.Backend(), c.reasoningEffort)
 		if hp, ok := payload.(hostedChatPayload); ok {
 			c.toolNameReverse = hp.ToolNameReverse
 		}
@@ -1139,7 +1158,7 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 	var payload any
 
 	if isHostedChatBackend(c.Backend()) {
-		payload = hostedChatRequestPayload(messages, opts, false, c.Backend())
+		payload = hostedChatRequestPayload(messages, opts, false, c.Backend(), c.reasoningEffort)
 		if hp, ok := payload.(hostedChatPayload); ok {
 			c.toolNameReverse = hp.ToolNameReverse
 		}

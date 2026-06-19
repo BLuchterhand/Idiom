@@ -477,6 +477,66 @@ func TestZAIBackendUsesHostedChatEndpointAuthAndThinking(t *testing.T) {
 	}
 }
 
+func TestGLMBackendUsesCodingEndpointAuthThinkingAndReasoningEffort(t *testing.T) {
+	t.Setenv("ZAI_API_KEY", "glm-test-key")
+
+	enableThinking := true
+
+	var (
+		got  map[string]any
+		auth string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+
+		auth = r.Header.Get("Authorization")
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","reasoning_content":"hidden","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second).
+		WithBackend(config.BackendGLM).
+		WithAPIKeyEnv("ZAI_API_KEY").
+		WithReasoningEffort("max")
+
+	reply, err := client.CompleteChatMessage(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, ChatOptions{
+		Model:          "glm-5.2",
+		EnableThinking: &enableThinking,
+		MaxTokens:      128,
+	})
+	if err != nil {
+		t.Fatalf("CompleteChatMessage: %v", err)
+	}
+
+	if auth != "Bearer glm-test-key" {
+		t.Fatalf("expected bearer auth, got %q", auth)
+	}
+
+	if reply.Content != "ok" || reply.ReasoningContent != "hidden" {
+		t.Fatalf("unexpected reply: %#v", reply)
+	}
+
+	if got["model"] != "glm-5.2" || got["stream"] != false || got["reasoning_effort"] != "max" {
+		t.Fatalf("unexpected GLM payload basics: %#v", got)
+	}
+
+	thinking, ok := got["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "enabled" {
+		t.Fatalf("expected GLM thinking enabled payload, got %#v", got["thinking"])
+	}
+
+	if _, ok := got["top_k"]; ok {
+		t.Fatalf("hosted GLM payload should omit local top_k, got %#v", got)
+	}
+}
+
 func TestDeepSeekBackendSendsThinkingToggleWithRequiredToolChoice(t *testing.T) {
 	enableThinking := false
 
@@ -652,7 +712,7 @@ func TestBackendSupportsNativeTools(t *testing.T) {
 		t.Fatal("llama backend should keep native tools")
 	}
 
-	if !BackendSupportsNativeTools(config.BackendCodex) || !BackendSupportsNativeTools(config.BackendZAI) {
+	if !BackendSupportsNativeTools(config.BackendCodex) || !BackendSupportsNativeTools(config.BackendZAI) || !BackendSupportsNativeTools(config.BackendGLM) {
 		t.Fatal("hosted backends should keep native tools")
 	}
 
@@ -676,6 +736,7 @@ func TestBackendStructuredOutputCapabilitiesAreConservative(t *testing.T) {
 		{config.BackendMLX, false, true, true},
 		{config.BackendCodex, true, true, false},
 		{config.BackendZAI, true, true, true},
+		{config.BackendGLM, true, true, true},
 		{config.BackendDeepSeek, true, true, true},
 	} {
 		t.Run(tc.backend, func(t *testing.T) {
@@ -721,6 +782,12 @@ func TestWithBackendNormalizesValue(t *testing.T) {
 
 	if c.Backend() != config.BackendZAI {
 		t.Fatalf("expected zai after WithBackend(zai), got %q", c.Backend())
+	}
+
+	c.WithBackend("glm")
+
+	if c.Backend() != config.BackendGLM {
+		t.Fatalf("expected glm after WithBackend(glm), got %q", c.Backend())
 	}
 
 	c.WithBackend("unknown")

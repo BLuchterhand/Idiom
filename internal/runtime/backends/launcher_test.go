@@ -492,6 +492,29 @@ func TestStatusReportsUpAndDownAccordingToPIDLookup(t *testing.T) {
 	}
 }
 
+func TestStatusReportsHostedModelsWithoutPIDLookup(t *testing.T) {
+	prof := Profile{Models: []Model{
+		{Alias: "glm-5.2", Kind: "glm", Port: 0},
+	}}
+	calledPIDLookup := false
+	opts := StopOptions{
+		PIDForPort: func(port int) (int, error) {
+			calledPIDLookup = true
+			return 0, nil
+		},
+	}
+
+	res := Status(prof, opts)
+
+	if calledPIDLookup {
+		t.Fatal("hosted models must not use local PID lookup")
+	}
+
+	if len(res) != 1 || !res[0].Hosted || res[0].Up || res[0].Kind != "glm" {
+		t.Fatalf("unexpected hosted status: %+v", res)
+	}
+}
+
 // TestStopReVerifiesPIDBeforeSIGKILL is the TOCTOU regression
 // guard. The original PID quietly exits during the grace window;
 // the kernel could recycle that number for any other process by

@@ -459,6 +459,40 @@ func TestLoadAcceptsHostedBackendsWithoutLocalLaunchFields(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsGLMHostedBackendDefaults(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	data := `{
+  "llama_server": {
+    "kind": "glm",
+    "model": "glm-5.2",
+    "reasoning_effort": "max"
+  },
+  "chat": {"preset": "custom", "max_tokens": 16}
+}`
+
+	if err := os.WriteFile(cfgPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if !cfg.LlamaServer.IsHosted() || !cfg.LlamaServer.IsGLM() {
+		t.Fatalf("expected hosted GLM planner, got %#v", cfg.LlamaServer)
+	}
+
+	if cfg.LlamaServer.Model != "glm-5.2" {
+		t.Fatalf("hosted GLM model id should not be path-resolved, got %q", cfg.LlamaServer.Model)
+	}
+
+	if cfg.LlamaServer.EndpointBaseURL() != "https://api.z.ai/api/coding/paas/v4" || cfg.LlamaServer.APIKeyEnvName() != "ZAI_API_KEY" {
+		t.Fatalf("unexpected GLM endpoint/auth defaults: base=%q env=%q", cfg.LlamaServer.EndpointBaseURL(), cfg.LlamaServer.APIKeyEnvName())
+	}
+}
+
 func TestValidateRejectsUnknownBackendKind(t *testing.T) {
 	cfg := Default()
 

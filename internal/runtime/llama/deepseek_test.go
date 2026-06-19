@@ -340,7 +340,7 @@ func TestDeepSeekStripsReasoningOnNonAssistant(t *testing.T) {
 }
 
 func TestNonDeepSeekBackendsStripReasoningContent(t *testing.T) {
-	// Verify that non-DeepSeek hosted backends (ZAI, MiniMax) continue to
+	// Verify that non-DeepSeek hosted backends (ZAI/GLM, MiniMax) continue to
 	// strip reasoning_content from all messages. These go through the
 	// hostedChatMessages codepath.
 	//
@@ -354,6 +354,7 @@ func TestNonDeepSeekBackendsStripReasoningContent(t *testing.T) {
 		backend string
 	}{
 		{"zai", config.BackendZAI},
+		{"glm", config.BackendGLM},
 		{"minimax", config.BackendMiniMax},
 	}
 

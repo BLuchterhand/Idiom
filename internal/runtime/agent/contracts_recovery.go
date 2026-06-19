@@ -1434,8 +1434,8 @@ func applyImplementationTargetSource(contract *TurnPhaseContract, baseTools []st
 	contract.Phase = "target_source_pending"
 	contract.DerivationReason = "guarded_mutation_target_source_pending"
 	contract.AllowedTools = implementationTargetSourceAllowedTools(baseTools)
-	contract.RequiredNext = []string{"localize the concrete edit target, read bounded source-body evidence and git history/commit-description evidence for established logic, make one parser-readable write only after exact source-body evidence, history rationale, and replacement shape are known, or <<QUESTION>> with the exact blocker/no-op evidence"}
-	contract.InvalidNext = []string{"final answer before a successful write, no-op, or blocker", "write before exact source-body evidence, git history rationale, and replacement shape", "verification before a successful write", "generic probe without a named missing target or edit-safety fact"}
+	contract.RequiredNext = []string{"localize the concrete edit target, read bounded source-body evidence and git history/commit-description evidence for established logic, make one parser-readable write only after exact source-body evidence, history rationale, and replacement shape are known, write_file directly to a genuinely new (non-existent) path with full content when creating a new file (no source-body evidence, history rationale, or replacement shape is required for an additive new-file write), or <<QUESTION>> with the exact blocker/no-op evidence"}
+	contract.InvalidNext = []string{"final answer before a successful write, no-op, or blocker", "write that modifies existing source before exact source-body evidence, git history rationale, and replacement shape", "verification before a successful write", "generic probe without a named missing target or edit-safety fact"}
 	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker},

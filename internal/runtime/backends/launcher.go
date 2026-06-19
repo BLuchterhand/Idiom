@@ -132,7 +132,7 @@ func launchSpecUsesDirectVmlxServe(m Model) bool {
 
 func isHostedModelKind(kind string) bool {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "codex", "deepseek", "minimax", "openai_responses", "zai":
+	case "codex", "deepseek", "glm", "minimax", "openai_responses", "zai":
 		return true
 	default:
 		return false
@@ -638,10 +638,12 @@ var errLsofUnavailable = failures.New(failures.Unavailable, reasonBackendLsofUna
 
 // StatusResult is one row of the status table.
 type StatusResult struct {
-	Alias string
-	Port  int
-	Up    bool
-	PID   int
+	Alias  string
+	Port   int
+	Up     bool
+	PID    int
+	Kind   string
+	Hosted bool
 }
 
 // Status reports which backends in a profile are currently
@@ -659,6 +661,16 @@ func Status(prof Profile, opts StopOptions) []StatusResult {
 
 	results := make([]StatusResult, 0, len(prof.Models))
 	for _, m := range prof.Models {
+		if isHostedModelKind(m.Kind) {
+			results = append(results, StatusResult{
+				Alias:  m.Alias,
+				Kind:   strings.TrimSpace(m.Kind),
+				Hosted: true,
+			})
+
+			continue
+		}
+
 		resolved, _ := resolvePID(m, opts.RunDir, opts.IsAlive, opts.PIDForPort)
 		pid := resolved.PID
 
@@ -667,6 +679,7 @@ func Status(prof Profile, opts StopOptions) []StatusResult {
 			Port:  m.Port,
 			Up:    pid > 0,
 			PID:   pid,
+			Kind:  strings.TrimSpace(m.Kind),
 		})
 	}
 

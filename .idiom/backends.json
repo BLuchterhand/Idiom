@@ -135,6 +135,32 @@
         "default_classifier": "glm-5.1"
       }
     },
+    "glm-5.2": {
+      "models": [
+        {
+          "alias": "glm-5.2",
+          "binary": "",
+          "model_path": "",
+          "model": "glm-5.2",
+          "port": 0,
+          "kind": "glm",
+          "api_key_env": "ZAI_API_KEY",
+          "reasoning_effort": "max",
+          "roles": [
+            "planner",
+            "executor",
+            "classifier"
+          ]
+        }
+      ],
+      "proxy": {
+        "default_alias": "glm-5.2",
+        "default_coder": "glm-5.2",
+        "default_planner": "glm-5.2",
+        "default_executor": "glm-5.2",
+        "default_classifier": "glm-5.2"
+      }
+    },
     "minimax-m2.7": {
       "models": [
         {

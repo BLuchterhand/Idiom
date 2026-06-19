@@ -705,6 +705,11 @@ const multiProfileBackendsJSON = `{
       "models": [
         {"alias": "glm-5.1", "kind": "zai", "model": "glm-5.1", "base_url": "https://api.z.ai/api/coding/paas/v4", "api_key_env": "ZAI_API_KEY", "roles": ["planner", "executor", "classifier"]}
       ]
+    },
+    "glm-5.2": {
+      "models": [
+        {"alias": "glm-5.2", "kind": "glm", "model": "glm-5.2", "api_key_env": "ZAI_API_KEY", "reasoning_effort": "max", "roles": ["planner", "executor", "classifier"]}
+      ]
     }
   }
 }`
@@ -754,7 +759,7 @@ func TestModelPopupCollectsAllProfileModels(t *testing.T) {
 
 	aliases := m.collectAllAliases()
 
-	for _, want := range []string{"qwen3.6-35b", "qwen3-coder-30b", "MiniMax-M2.7", "glm-5.1"} {
+	for _, want := range []string{"qwen3.6-35b", "qwen3-coder-30b", "MiniMax-M2.7", "glm-5.1", "glm-5.2"} {
 		found := false
 
 		for _, a := range aliases {
