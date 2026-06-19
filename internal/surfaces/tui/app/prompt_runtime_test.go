@@ -14,13 +14,15 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
+	"idiom/internal/contracts/plan"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/backends"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/promptstack"
 	"idiom/internal/runtime/workerruntime"
-	"idiom/internal/contracts/plan"
 	"idiom/internal/workflows/planexecute"
 )
 
@@ -1210,6 +1212,23 @@ func TestPromptStructuredPacketMarkerRequiresPacketShape(t *testing.T) {
 	}
 }
 
+func TestPromptContextPacketProjectionPrefersStructuredPacket(t *testing.T) {
+	projection := promptContextPacketProjection(`{"candidate_scope":[{"path":"a/b.go"}],"evidence":[{"source":"a/c.go"}]}`)
+	if !projection.StructuredPacket || !projection.Dispatchable || projection.LegacyHeadingFallback {
+		t.Fatalf("structured packet should be typed dispatchable without heading fallback: %#v", projection)
+	}
+	if !slices.Contains(projection.Markers, "prompt_context:structured_packet") {
+		t.Fatalf("structured projection missing marker: %#v", projection)
+	}
+}
+
+func TestPromptContextPacketProjectionMarksHeadingScanAsCompatibilityFallback(t *testing.T) {
+	projection := promptContextPacketProjection("## Context Pack\n\n- internal/surfaces/tui/app/prompt_routing.go\n")
+	if projection.StructuredPacket || !projection.LegacyHeadingFallback || projection.State != "dispatchable" || !projection.Dispatchable {
+		t.Fatalf("heading context should be compatibility fallback, got %#v", projection)
+	}
+}
+
 func TestPromptContextPacketMarkerRequiresSectionContent(t *testing.T) {
 	prompt := `
 Context Packet:
@@ -1344,11 +1363,11 @@ func TestRequiredEditPathsIgnoreAllowedEditPaths(t *testing.T) {
 
 - docs/design.md
 `
-	if got := requiredEditPathsFromPrompt(prompt); len(got) != 0 {
+	if got := RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
 		t.Fatalf("allowed edit paths must not define required coverage, got %#v", got)
 	}
 
-	allowed := allowedEditPathsFromPrompt(prompt)
+	allowed := AllowedEditPathsFromPrompt(prompt)
 	for _, want := range []string{
 		"native/tests/test_transport_system.cpp",
 		"native/src/simulation/transport/route_graph.cpp",
@@ -1365,7 +1384,7 @@ func TestRequiredEditPathsIgnoreAllowedEditPaths(t *testing.T) {
 
 func TestRequiredEditPathsCaptureInlineColonList(t *testing.T) {
 	prompt := "Implement the change. Required edit paths: cmd/idiom/product_workflow.go, cmd/idiom/product_workflow_test.go"
-	got := requiredEditPathsFromPrompt(prompt)
+	got := RequiredEditPathsFromPrompt(prompt)
 
 	for _, want := range []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"} {
 		if !slices.Contains(got, want) {
@@ -1424,7 +1443,7 @@ func TestRequiredEditPathsRejectDirectoryLikeObligations(t *testing.T) {
 - cmd/idiom/product_workflow.go
 - Makefile
 `
-	got := requiredEditPathsFromPrompt(prompt)
+	got := RequiredEditPathsFromPrompt(prompt)
 	want := []string{"cmd/idiom/product_workflow.go", "Makefile"}
 
 	if len(got) != len(want) {
@@ -1498,7 +1517,7 @@ func TestRequiredEditPathsIgnoreStructuredKeysInsideEvidenceCommands(t *testing.
 
 - idiom tool context_status --config .idiom/config.json --input '{"refresh":true,"required_edit_paths":["native/src/a.cpp","native/tests/test_a.cpp"],"limit":20}'
 `
-	got := requiredEditPathsFromPrompt(prompt)
+	got := RequiredEditPathsFromPrompt(prompt)
 
 	for _, want := range []string{"native/src/a.cpp", "native/tests/test_a.cpp"} {
 		if !slices.Contains(got, want) {
@@ -1535,7 +1554,7 @@ Exhaustive allowlist for this atom:
 |---|---|
 | ` + "`scripts/ui/shaft_panel.gd`" + ` | Evidence only. |
 `
-	got := requiredEditPathsFromPrompt(prompt)
+	got := RequiredEditPathsFromPrompt(prompt)
 	want := []string{
 		"tests/e2e/suites/binding_surface_suite.gd",
 		".planning/campaigns/testing-coverage-expansion.md",
@@ -1564,7 +1583,7 @@ Files To Modify:
 Evidence:
 - native/src/simulation/transport/route_graph.cpp
 `
-	if got := requiredEditPathsFromPrompt(prompt); len(got) != 0 {
+	if got := RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
 		t.Fatalf("empty edit section should not borrow evidence paths, got %#v", got)
 	}
 }
@@ -1574,7 +1593,7 @@ func TestRequiredEditPathsCapturesTrailingColonPathLine(t *testing.T) {
 Files To Modify:
 - internal/surfaces/tui/app/prompt_routing.go:
 `
-	got := requiredEditPathsFromPrompt(prompt)
+	got := RequiredEditPathsFromPrompt(prompt)
 
 	if !slices.Contains(got, "internal/surfaces/tui/app/prompt_routing.go") {
 		t.Fatalf("expected trailing-colon path to count as required edit path, got %#v", got)
@@ -1613,13 +1632,60 @@ func TestRuntimeBriefCapturesHostCurrentStateAnchorEvidence(t *testing.T) {
   - ` + "`pkg/a.go:3`: `const A = \"old\"`" + `
 `
 
-	brief := model.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, agent.BuildMode(), prompt)
+	brief := model.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), prompt)
 	if !slices.Contains(brief.EvidencePaths, "pkg/a.go") {
 		t.Fatalf("expected host anchor path in EvidencePaths, got %#v", brief.EvidencePaths)
 	}
 
 	if !slices.Contains(brief.TargetPacket, "prompt_context:verified_current_state") {
 		t.Fatalf("expected verified-current-state marker, got %#v", brief.TargetPacket)
+	}
+}
+
+func TestRuntimeBriefScopeContractResolvesTUIDispatchPathRoles(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetPlanExecuteScopeContract(planexecute.NewPlanScopeContract(
+		[]string{"pkg/feature.go"},
+		[]string{"pkg/feature_test.go"},
+		nil,
+	))
+
+	brief := model.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), "Implement the feature")
+	coverage, err := autonomy.ResolvePlanScopePathRoleObligations(autonomy.PlanScopePathRoleObligationInput{
+		RequiredEditPaths:      brief.RequiredEditPaths,
+		AllowedCandidatePaths:  brief.AllowedEditPaths,
+		CandidateCoveragePaths: []string{"pkg/feature.go", "pkg/feature_test.go"},
+		Source:                 "tui_dispatch_test",
+	})
+	if err != nil {
+		t.Fatalf("resolve path roles: %v", err)
+	}
+
+	if !slices.Equal(coverage.RequiredCoveragePaths, []string{"pkg/feature.go"}) {
+		t.Fatalf("required coverage paths = %#v", coverage.RequiredCoveragePaths)
+	}
+	if !slices.Equal(coverage.AllowedCandidatePaths, []string{"pkg/feature_test.go"}) {
+		t.Fatalf("allowed candidate paths = %#v", coverage.AllowedCandidatePaths)
+	}
+	if len(coverage.MissingRequiredCoveragePaths) != 0 {
+		t.Fatalf("required path should be covered by required candidate, missing=%#v", coverage.MissingRequiredCoveragePaths)
+	}
+
+	var allowedCandidate autonomy.PlanScopePathRoleCoverage
+	for _, candidate := range coverage.CandidateCoverage {
+		if candidate.Path == "pkg/feature_test.go" {
+			allowedCandidate = candidate
+			break
+		}
+	}
+	if allowedCandidate.EffectiveInvariantID != autonomy.InvariantAllowedCandidate ||
+		allowedCandidate.SatisfiesRequiredCoverage ||
+		!allowedCandidate.WithinAllowedCandidatePath {
+
+		t.Fatalf("TUI allowed path must remain candidate scope only, got %#v", allowedCandidate)
 	}
 }
 
@@ -1631,7 +1697,7 @@ func TestPlanExecuteRuntimeBriefHistoryRequirementFollowsGitMetadata(t *testing.
 		agentModeName: "build",
 	}
 	prompt := "Use plan-execute to update pkg/a.go.\n\nrequired_edit_paths: pkg/a.go"
-	brief := nonGit.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, agent.BuildMode(), prompt)
+	brief := nonGit.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), prompt)
 
 	if slices.Contains(brief.RequiredEvidence, runtimeBriefGitHistoryEvidence) {
 		t.Fatalf("non-git workspace must not require git history evidence: %#v", brief.RequiredEvidence)
@@ -1651,7 +1717,7 @@ func TestPlanExecuteRuntimeBriefHistoryRequirementFollowsGitMetadata(t *testing.
 		workspace:     workspace.NewManager(config.Workspace{Root: gitRoot, CWD: gitRoot}),
 		agentModeName: "build",
 	}
-	gitBrief := gitModel.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, agent.BuildMode(), prompt)
+	gitBrief := gitModel.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), prompt)
 
 	if !slices.Contains(gitBrief.RequiredEvidence, runtimeBriefGitHistoryEvidence) {
 		t.Fatalf("git workspace should retain git history evidence: %#v", gitBrief.RequiredEvidence)

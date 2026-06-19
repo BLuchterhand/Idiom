@@ -654,6 +654,39 @@ func TestPartialStateForDirtyPathsClassifiesOutOfScope(t *testing.T) {
 	}
 }
 
+func TestPartialStateForDirtyPathsUsesPathRoleScope(t *testing.T) {
+	partial := PartialStateForDirtyPaths(
+		[]string{"pkg/optional_test.go"},
+		[]string{"pkg/feature.go"},
+		[]string{"pkg/feature.go"},
+		[]string{"pkg/optional_test.go"},
+		1,
+	)
+	if partial.DirtyStatus != DirtyStatusDirtyInScope {
+		t.Fatalf("allowed candidate dirty path should stay in scope, dirty status=%q", partial.DirtyStatus)
+	}
+	if partial.ScopeStatus != ScopeStatusInScope {
+		t.Fatalf("allowed candidate dirty path should stay in scope, scope status=%q", partial.ScopeStatus)
+	}
+
+	if got := scopeStatus([]string{"pkg/optional_test.go"}, []string{"pkg/feature.go"}, []string{"pkg/optional_test.go"}); got != ScopeStatusInScope {
+		t.Fatalf("allowed candidate scope status=%q", got)
+	}
+	if got := scopeStatus([]string{"pkg/evidence.md"}, []string{"pkg/feature.go"}, nil); got != ScopeStatusOutOfScope {
+		t.Fatalf("evidence-like undeclared path must not become write scope, got %q", got)
+	}
+}
+
+func TestPartialStateForDirtyPathsUsesPathRoleCanonicalPath(t *testing.T) {
+	if got := scopeStatus([]string{`pkg\optional_test.go`}, []string{"pkg/feature.go"}, []string{"pkg/optional_test.go"}); got != ScopeStatusInScope {
+		t.Fatalf("backslash dirty path should resolve through path-role canonical path, got %q", got)
+	}
+
+	if got := scopeStatus([]string{`pkg\surprise.go`}, []string{"pkg/feature.go"}, []string{"pkg/optional_test.go"}); got != ScopeStatusOutOfScope {
+		t.Fatalf("undeclared backslash dirty path should remain out of scope, got %q", got)
+	}
+}
+
 func recoveryIDForTest(prefix, sessionID string) string {
 	return prefix + "-" + sessionID
 }

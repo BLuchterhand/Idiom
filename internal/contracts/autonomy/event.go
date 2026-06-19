@@ -28,6 +28,9 @@ const (
 	EventObligationOpened       EventType = "obligation_opened"
 	EventObligationResolved     EventType = "obligation_resolved"
 	EventObligationWaived       EventType = "obligation_waived"
+	EventObligationBlocked      EventType = "obligation_blocked"
+	EventObligationStale        EventType = "obligation_stale"
+	EventObligationSuperseded   EventType = "obligation_superseded"
 	EventReadinessStateUpdated  EventType = "readiness_state_updated"
 	EventCompletionGateDecision EventType = "completion_gate_decision"
 	EventGateDecision           EventType = "gate_decision"
@@ -199,7 +202,9 @@ type TurnPhaseContractEvent struct {
 	Constraints       []string `json:"constraints,omitempty"`
 
 	ActionPolicy    TurnActionClassPolicyEvent `json:"action_policy,omitempty"`
+	TypedRoute      TypedRouteContractEvent    `json:"typed_route,omitempty"`
 	RuntimeCall     RuntimeCallContractEvent   `json:"runtime_call,omitempty"`
+	LifecycleState  LifecycleStateEvent        `json:"lifecycle_state,omitempty"`
 	EvidenceState   PhaseEvidenceStateEvent    `json:"evidence_state,omitempty"`
 	EnforcementMode string                     `json:"enforcement_mode,omitempty"`
 }
@@ -245,6 +250,11 @@ type TurnPhaseSurfaceSummaryEvent struct {
 	ModelCallID             string                   `json:"model_call_id,omitempty"`
 	ProtocolHash            string                   `json:"protocol_hash,omitempty"`
 	InvariantID             string                   `json:"invariant_id,omitempty"`
+	RecoveryID              string                   `json:"recovery_id,omitempty"`
+	RecoveryProjectionID    string                   `json:"recovery_projection_id,omitempty"`
+	RemainingRecoveryBudget int                      `json:"remaining_recovery_budget,omitempty"`
+	TerminalBlockerAllowed  bool                     `json:"terminal_blocker_allowed,omitempty"`
+	SafeAlternatives        []string                 `json:"safe_alternatives,omitempty"`
 	AdvertisedActionClasses []string                 `json:"advertised_action_classes,omitempty"`
 	CallableTools           []string                 `json:"callable_tools,omitempty"`
 	TerminalOutcomes        []string                 `json:"terminal_outcomes,omitempty"`
@@ -259,6 +269,23 @@ type TurnActionClassPolicyEvent struct {
 	InvalidActionClasses   []string `json:"invalid_action_classes,omitempty"`
 	TerminalResponseShapes []string `json:"terminal_response_shapes,omitempty"`
 	CallableToolNames      []string `json:"callable_tool_names,omitempty"`
+}
+
+type TypedRouteContractEvent struct {
+	Lane                  string   `json:"lane,omitempty"`
+	TaskFamily            string   `json:"task_family,omitempty"`
+	WorkflowKind          string   `json:"workflow_kind,omitempty"`
+	Phase                 string   `json:"phase,omitempty"`
+	ActorRole             string   `json:"actor_role,omitempty"`
+	CommandMode           string   `json:"command_mode,omitempty"`
+	RouteSource           string   `json:"route_source,omitempty"`
+	RequiredCoveragePaths []string `json:"required_coverage_paths,omitempty"`
+	AllowedCandidatePaths []string `json:"allowed_candidate_paths,omitempty"`
+	EvidencePaths         []string `json:"evidence_paths,omitempty"`
+	ForbiddenPaths        []string `json:"forbidden_paths,omitempty"`
+	ExactSnippets         []string `json:"exact_snippets,omitempty"`
+	EditSetObligations    []string `json:"edit_set_obligations,omitempty"`
+	TerminalOutcomeFamily string   `json:"terminal_outcome_family,omitempty"`
 }
 
 type RuntimeCallContractEvent struct {
@@ -276,8 +303,20 @@ type RuntimeCallContractEvent struct {
 	ToolChoice               string   `json:"tool_choice,omitempty"`
 	ThinkingPolicy           string   `json:"thinking_policy,omitempty"`
 	MaxTokens                int      `json:"max_tokens,omitempty"`
+	TimeoutMillis            int      `json:"timeout_millis,omitempty"`
+	EffectiveFallbackState   string   `json:"effective_fallback_state,omitempty"`
 	ExpectedVisibleOutput    string   `json:"expected_visible_output,omitempty"`
 	ExpressibleActionClasses []string `json:"expressible_action_classes,omitempty"`
+}
+
+type LifecycleStateEvent struct {
+	TypedPhase         string   `json:"typed_phase,omitempty"`
+	AllowedTransitions []string `json:"allowed_transitions,omitempty"`
+	TerminalStates     []string `json:"terminal_states,omitempty"`
+	CloseoutOwner      string   `json:"closeout_owner,omitempty"`
+	CancellationState  string   `json:"cancellation_state,omitempty"`
+	TimeoutState       string   `json:"timeout_state,omitempty"`
+	EventOrdering      []string `json:"event_ordering,omitempty"`
 }
 
 type PhaseEvidenceStateEvent struct {
@@ -297,6 +336,7 @@ type PhaseEvidenceStateEvent struct {
 type ContractPolicyEvent struct {
 	ToolCallID          string             `json:"tool_call_id,omitempty"`
 	ToolName            string             `json:"tool_name,omitempty"`
+	PackID              ContractPackID     `json:"pack_id,omitempty"`
 	ActionClass         ActionClass        `json:"action_class,omitempty"`
 	ActionKey           string             `json:"action_key,omitempty"`
 	Transport           ToolTransport      `json:"transport,omitempty"`
@@ -912,6 +952,10 @@ func (e Event) validatePayload(problems *validationProblems) {
 			problems.Add("policy.decision is required for tool_policy_decision")
 		}
 
+		if e.Policy.PackID != "" && !validContractPackID(e.Policy.PackID) {
+			problems.Add("policy.pack_id is invalid")
+		}
+
 		if e.Policy.SideEffect != "" && !validSideEffect(e.Policy.SideEffect) {
 			problems.Add("policy.side_effect is invalid")
 		}
@@ -925,7 +969,7 @@ func (e Event) validatePayload(problems *validationProblems) {
 				problems.Addf("policy.path_roles[%d].freshness is invalid", i)
 			}
 		}
-	case EventObligationOpened, EventObligationResolved, EventObligationWaived:
+	case EventObligationOpened, EventObligationResolved, EventObligationWaived, EventObligationBlocked, EventObligationStale, EventObligationSuperseded:
 		if e.Obligation == nil {
 			problems.Add("obligation payload is required for " + string(e.Type))
 			return
@@ -957,6 +1001,18 @@ func (e Event) validatePayload(problems *validationProblems) {
 
 		if e.Type == EventObligationWaived && e.Obligation.Status != ObligationWaived {
 			problems.Add("obligation_waived requires status waived")
+		}
+
+		if e.Type == EventObligationBlocked && e.Obligation.Status != ObligationBlocked {
+			problems.Add("obligation_blocked requires status blocked")
+		}
+
+		if e.Type == EventObligationStale && e.Obligation.Status != ObligationStale {
+			problems.Add("obligation_stale requires status stale")
+		}
+
+		if e.Type == EventObligationSuperseded && e.Obligation.Status != ObligationSuperseded {
+			problems.Add("obligation_superseded requires status superseded")
 		}
 	case EventReadinessStateUpdated:
 		if e.Readiness == nil {
@@ -1123,7 +1179,9 @@ func (p *TurnPhaseContractEvent) normalize() {
 	p.TerminalOutcomes = compactStrings(p.TerminalOutcomes)
 	p.Constraints = compactStrings(p.Constraints)
 	p.ActionPolicy.normalize()
+	p.TypedRoute.normalize()
 	p.RuntimeCall.normalize()
+	p.LifecycleState.normalize()
 	p.EvidenceState.normalize()
 
 	p.EnforcementMode = strings.TrimSpace(p.EnforcementMode)
@@ -1167,6 +1225,12 @@ func (s *TurnPhaseSurfaceSummaryEvent) normalize() {
 	s.ModelCallID = strings.TrimSpace(s.ModelCallID)
 	s.ProtocolHash = strings.TrimSpace(s.ProtocolHash)
 	s.InvariantID = strings.TrimSpace(s.InvariantID)
+	s.RecoveryID = strings.TrimSpace(s.RecoveryID)
+	s.RecoveryProjectionID = strings.TrimSpace(s.RecoveryProjectionID)
+	if s.RemainingRecoveryBudget < 0 {
+		s.RemainingRecoveryBudget = 0
+	}
+	s.SafeAlternatives = compactStrings(s.SafeAlternatives)
 	s.AdvertisedActionClasses = compactStrings(s.AdvertisedActionClasses)
 	s.CallableTools = compactStrings(s.CallableTools)
 	s.TerminalOutcomes = compactStrings(s.TerminalOutcomes)
@@ -1183,6 +1247,23 @@ func (p *TurnActionClassPolicyEvent) normalize() {
 	p.CallableToolNames = compactStrings(p.CallableToolNames)
 }
 
+func (r *TypedRouteContractEvent) normalize() {
+	r.Lane = strings.TrimSpace(r.Lane)
+	r.TaskFamily = strings.TrimSpace(r.TaskFamily)
+	r.WorkflowKind = strings.TrimSpace(r.WorkflowKind)
+	r.Phase = strings.TrimSpace(r.Phase)
+	r.ActorRole = strings.TrimSpace(r.ActorRole)
+	r.CommandMode = strings.TrimSpace(r.CommandMode)
+	r.RouteSource = strings.TrimSpace(r.RouteSource)
+	r.RequiredCoveragePaths = compactStrings(r.RequiredCoveragePaths)
+	r.AllowedCandidatePaths = compactStrings(r.AllowedCandidatePaths)
+	r.EvidencePaths = compactStrings(r.EvidencePaths)
+	r.ForbiddenPaths = compactStrings(r.ForbiddenPaths)
+	r.ExactSnippets = compactStrings(r.ExactSnippets)
+	r.EditSetObligations = compactStrings(r.EditSetObligations)
+	r.TerminalOutcomeFamily = strings.TrimSpace(r.TerminalOutcomeFamily)
+}
+
 func (r *RuntimeCallContractEvent) normalize() {
 	r.BackendKind = strings.TrimSpace(r.BackendKind)
 	r.ModelAlias = strings.TrimSpace(r.ModelAlias)
@@ -1191,8 +1272,19 @@ func (r *RuntimeCallContractEvent) normalize() {
 	r.ResponseFormat = strings.TrimSpace(r.ResponseFormat)
 	r.ToolChoice = strings.TrimSpace(r.ToolChoice)
 	r.ThinkingPolicy = strings.TrimSpace(r.ThinkingPolicy)
+	r.EffectiveFallbackState = strings.TrimSpace(r.EffectiveFallbackState)
 	r.ExpectedVisibleOutput = strings.TrimSpace(r.ExpectedVisibleOutput)
 	r.ExpressibleActionClasses = compactStrings(r.ExpressibleActionClasses)
+}
+
+func (s *LifecycleStateEvent) normalize() {
+	s.TypedPhase = strings.TrimSpace(s.TypedPhase)
+	s.AllowedTransitions = compactStrings(s.AllowedTransitions)
+	s.TerminalStates = compactStrings(s.TerminalStates)
+	s.CloseoutOwner = strings.TrimSpace(s.CloseoutOwner)
+	s.CancellationState = strings.TrimSpace(s.CancellationState)
+	s.TimeoutState = strings.TrimSpace(s.TimeoutState)
+	s.EventOrdering = compactStrings(s.EventOrdering)
 }
 
 func (s *PhaseEvidenceStateEvent) normalize() {
@@ -1212,6 +1304,7 @@ func (s *PhaseEvidenceStateEvent) normalize() {
 func (p *ContractPolicyEvent) normalize() {
 	p.ToolCallID = strings.TrimSpace(p.ToolCallID)
 	p.ToolName = strings.TrimSpace(p.ToolName)
+	p.PackID = ContractPackID(strings.TrimSpace(string(p.PackID)))
 	p.Confidence = strings.TrimSpace(p.Confidence)
 	p.ArgumentsSummary = strings.TrimSpace(p.ArgumentsSummary)
 	p.ArgumentsDigest = strings.TrimSpace(p.ArgumentsDigest)
@@ -1485,7 +1578,9 @@ func validEventType(eventType EventType) bool {
 	switch eventType {
 	case EventContractCompiled, EventContractPresented, EventContractRecompiled, EventContractStopped,
 		EventToolIntentClassified, EventPathRolesResolved, EventToolPolicyDecision, EventToolPolicyResult,
-		EventObligationOpened, EventObligationResolved, EventObligationWaived, EventReadinessStateUpdated,
+		EventObligationOpened, EventObligationResolved, EventObligationWaived,
+		EventObligationBlocked, EventObligationStale, EventObligationSuperseded,
+		EventReadinessStateUpdated,
 		EventCompletionGateDecision, EventGateDecision, EventGuardFriction, EventModelExchange:
 		return true
 	default:
@@ -1672,7 +1767,16 @@ func copyTurnPhaseContractEvent(in *TurnPhaseContractEvent) *TurnPhaseContractEv
 	out.ActionPolicy.InvalidActionClasses = append([]string(nil), in.ActionPolicy.InvalidActionClasses...)
 	out.ActionPolicy.TerminalResponseShapes = append([]string(nil), in.ActionPolicy.TerminalResponseShapes...)
 	out.ActionPolicy.CallableToolNames = append([]string(nil), in.ActionPolicy.CallableToolNames...)
+	out.TypedRoute.RequiredCoveragePaths = append([]string(nil), in.TypedRoute.RequiredCoveragePaths...)
+	out.TypedRoute.AllowedCandidatePaths = append([]string(nil), in.TypedRoute.AllowedCandidatePaths...)
+	out.TypedRoute.EvidencePaths = append([]string(nil), in.TypedRoute.EvidencePaths...)
+	out.TypedRoute.ForbiddenPaths = append([]string(nil), in.TypedRoute.ForbiddenPaths...)
+	out.TypedRoute.ExactSnippets = append([]string(nil), in.TypedRoute.ExactSnippets...)
+	out.TypedRoute.EditSetObligations = append([]string(nil), in.TypedRoute.EditSetObligations...)
 	out.RuntimeCall.ExpressibleActionClasses = append([]string(nil), in.RuntimeCall.ExpressibleActionClasses...)
+	out.LifecycleState.AllowedTransitions = append([]string(nil), in.LifecycleState.AllowedTransitions...)
+	out.LifecycleState.TerminalStates = append([]string(nil), in.LifecycleState.TerminalStates...)
+	out.LifecycleState.EventOrdering = append([]string(nil), in.LifecycleState.EventOrdering...)
 	out.EvidenceState.AcceptanceRefs = append([]string(nil), in.EvidenceState.AcceptanceRefs...)
 	out.EvidenceState.TDDObligationRefs = append([]string(nil), in.EvidenceState.TDDObligationRefs...)
 	out.EvidenceState.VerificationEvidenceRefs = append([]string(nil), in.EvidenceState.VerificationEvidenceRefs...)
@@ -1717,6 +1821,7 @@ func copyTurnPhaseSurfaceSummaryEvents(in []TurnPhaseSurfaceSummaryEvent) []Turn
 	for i := range in {
 		out[i] = in[i]
 		out[i].AdvertisedActionClasses = append([]string(nil), in[i].AdvertisedActionClasses...)
+		out[i].SafeAlternatives = append([]string(nil), in[i].SafeAlternatives...)
 		out[i].CallableTools = append([]string(nil), in[i].CallableTools...)
 		out[i].TerminalOutcomes = append([]string(nil), in[i].TerminalOutcomes...)
 		out[i].TerminalResponseShapes = append([]string(nil), in[i].TerminalResponseShapes...)

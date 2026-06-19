@@ -25,12 +25,15 @@ type EventAuditReport struct {
 	LifecycleCoverage      LifecycleEventCoverage         `json:"lifecycle_coverage"`
 	PolicyCoverage         PolicyEventCoverage            `json:"policy_coverage"`
 	ObligationCoverage     ObligationEventCoverage        `json:"obligation_coverage"`
+	ObligationLedger       ObligationLedger               `json:"obligation_ledger"`
 	ReadinessCoverage      ReadinessEventCoverage         `json:"readiness_coverage"`
 	CompletionCoverage     CompletionEventCoverage        `json:"completion_coverage"`
 	GateCoverage           GateEventCoverage              `json:"gate_coverage"`
 	GuardFrictionCoverage  GuardFrictionCoverage          `json:"guard_friction_coverage"`
 	ModelExchangeCoverage  ModelExchangeCoverage          `json:"model_exchange_coverage"`
 	TurnPhaseCoverage      TurnPhaseEventCoverage         `json:"turn_phase_coverage"`
+	ReadinessForcing       ReadinessForcingCoverage       `json:"readiness_forcing_coverage"`
+	AuditGroupCoverage     AuditGroupCoverage             `json:"audit_group_coverage"`
 	ReferenceCoverage      ContractReferenceCoverage      `json:"reference_coverage"`
 	SidecarToolCorrelation SidecarToolCorrelationCoverage `json:"sidecar_tool_correlation"`
 	MetadataCoverage       ContractMetadataCoverage       `json:"metadata_coverage"`
@@ -69,6 +72,22 @@ type ContractEventCoverage struct {
 	WaivedObligations       []string       `json:"waived_obligations,omitempty"`
 	SidecarRequestIDs       []string       `json:"sidecar_request_ids,omitempty"`
 	ToolCallIDs             []string       `json:"tool_call_ids,omitempty"`
+}
+
+type AuditGroupCoverage struct {
+	Total  int          `json:"total"`
+	Groups []AuditGroup `json:"groups,omitempty"`
+}
+
+type AuditGroup struct {
+	ContractID    string   `json:"contract_id,omitempty"`
+	InvariantID   string   `json:"invariant_id,omitempty"`
+	Lane          string   `json:"lane,omitempty"`
+	Phase         string   `json:"phase,omitempty"`
+	AdapterRoute  string   `json:"adapter_route,omitempty"`
+	TerminalState string   `json:"terminal_state,omitempty"`
+	EventCount    int      `json:"event_count"`
+	EventIDs      []string `json:"event_ids,omitempty"`
 }
 
 type LifecycleEventCoverage struct {
@@ -226,6 +245,12 @@ type TurnPhaseContradiction struct {
 	Reason       string `json:"reason,omitempty"`
 }
 
+type ReadinessForcingCoverage struct {
+	ForcedNoToolsTurns              []EventAuditRef `json:"forced_no_tools_turns,omitempty"`
+	UsefulToolsHiddenAfterReadiness []EventAuditRef `json:"useful_tools_hidden_after_readiness,omitempty"`
+	HostComposedAfterRelevantProbes []EventAuditRef `json:"host_composed_after_relevant_probes,omitempty"`
+}
+
 type ContractReferenceCoverage struct {
 	MissingContractIDEvents     []EventAuditRef `json:"missing_contract_id_events,omitempty"`
 	UnmatchedContractReferences []EventAuditRef `json:"unmatched_contract_references,omitempty"`
@@ -291,18 +316,21 @@ type EventAuditFinding struct {
 }
 
 type eventAuditState struct {
-	report                 EventAuditReport
-	contracts              map[string]*ContractEventCoverage
-	expectedContracts      map[string]struct{}
-	lifecycleContracts     map[string]struct{}
-	referencedContracts    map[string]struct{}
-	staleAfterSequence     map[string]staleContractState
-	openObligations        map[string]ObligationAuditRef
-	sidecarRequestIDs      map[string]struct{}
-	toolCallIDs            map[string]struct{}
-	turnPhaseContracts     map[string]TurnPhaseContractEvent
-	turnPhaseContractIDs   map[string]struct{}
-	guardFrictionContracts map[string]*GuardFrictionContractCoverage
+	report                  EventAuditReport
+	contracts               map[string]*ContractEventCoverage
+	expectedContracts       map[string]struct{}
+	lifecycleContracts      map[string]struct{}
+	referencedContracts     map[string]struct{}
+	staleAfterSequence      map[string]staleContractState
+	openObligations         map[string]ObligationAuditRef
+	sidecarRequestIDs       map[string]struct{}
+	toolCallIDs             map[string]struct{}
+	turnPhaseContracts      map[string]TurnPhaseContractEvent
+	turnPhaseContractIDs    map[string]struct{}
+	guardFrictionContracts  map[string]*GuardFrictionContractCoverage
+	auditGroups             map[string]*AuditGroup
+	readyWithOpenObligation map[string]EventAuditRef
+	relevantModelProbe      map[string]EventAuditRef
 }
 
 type staleContractState struct {
@@ -315,17 +343,20 @@ func AuditEvents(events []Event, opts EventAuditOptions) EventAuditReport {
 		report: EventAuditReport{
 			SchemaVersion: AuditReportSchemaVersion,
 		},
-		contracts:              make(map[string]*ContractEventCoverage),
-		expectedContracts:      make(map[string]struct{}),
-		lifecycleContracts:     make(map[string]struct{}),
-		referencedContracts:    make(map[string]struct{}),
-		staleAfterSequence:     make(map[string]staleContractState),
-		openObligations:        make(map[string]ObligationAuditRef),
-		sidecarRequestIDs:      make(map[string]struct{}),
-		toolCallIDs:            make(map[string]struct{}),
-		turnPhaseContracts:     make(map[string]TurnPhaseContractEvent),
-		turnPhaseContractIDs:   make(map[string]struct{}),
-		guardFrictionContracts: make(map[string]*GuardFrictionContractCoverage),
+		contracts:               make(map[string]*ContractEventCoverage),
+		expectedContracts:       make(map[string]struct{}),
+		lifecycleContracts:      make(map[string]struct{}),
+		referencedContracts:     make(map[string]struct{}),
+		staleAfterSequence:      make(map[string]staleContractState),
+		openObligations:         make(map[string]ObligationAuditRef),
+		sidecarRequestIDs:       make(map[string]struct{}),
+		toolCallIDs:             make(map[string]struct{}),
+		turnPhaseContracts:      make(map[string]TurnPhaseContractEvent),
+		turnPhaseContractIDs:    make(map[string]struct{}),
+		guardFrictionContracts:  make(map[string]*GuardFrictionContractCoverage),
+		auditGroups:             make(map[string]*AuditGroup),
+		readyWithOpenObligation: make(map[string]EventAuditRef),
+		relevantModelProbe:      make(map[string]EventAuditRef),
 	}
 	for _, contractID := range compactStrings(opts.ExpectedContractIDs) {
 		state.expectedContracts[contractID] = struct{}{}
@@ -343,6 +374,7 @@ func AuditEvents(events []Event, opts EventAuditOptions) EventAuditReport {
 	}
 
 	state.report.ReplayClassification, state.report.ReplayMetrics, state.report.PrivacyChecks = replayIntentForEvents(ordered)
+	state.report.ObligationLedger = NormalizeObligationLedger(ordered)
 	state.finish()
 
 	return state.report
@@ -399,13 +431,14 @@ func (s *eventAuditState) addEvent(event Event, rawGateFields gateAuditFieldSnap
 
 	s.addMetadata(event)
 	s.addSidecarToolCorrelation(event)
+	s.addAuditGroup(event)
 
 	switch event.Type {
 	case EventContractCompiled, EventContractPresented, EventContractRecompiled, EventContractStopped:
 		s.addLifecycle(event)
 	case EventToolIntentClassified, EventPathRolesResolved, EventToolPolicyDecision, EventToolPolicyResult:
 		s.addPolicy(event)
-	case EventObligationOpened, EventObligationResolved, EventObligationWaived:
+	case EventObligationOpened, EventObligationResolved, EventObligationWaived, EventObligationBlocked, EventObligationStale, EventObligationSuperseded:
 		s.addObligation(event)
 	case EventReadinessStateUpdated:
 		s.addReadiness(event)
@@ -418,6 +451,130 @@ func (s *eventAuditState) addEvent(event Event, rawGateFields gateAuditFieldSnap
 	case EventModelExchange:
 		s.addModelExchange(event)
 	}
+}
+
+func (s *eventAuditState) addAuditGroup(event Event) {
+	if s.auditGroups == nil {
+		s.auditGroups = make(map[string]*AuditGroup)
+	}
+
+	group := auditGroupForEvent(event)
+	key := strings.Join([]string{
+		group.ContractID,
+		group.InvariantID,
+		group.Lane,
+		group.Phase,
+		group.AdapterRoute,
+		group.TerminalState,
+	}, "\x00")
+
+	existing := s.auditGroups[key]
+	if existing == nil {
+		group.EventIDs = nil
+		existing = &group
+		s.auditGroups[key] = existing
+	}
+
+	existing.EventCount++
+	if event.EventID != "" {
+		existing.EventIDs = util.AppendUnique(existing.EventIDs, event.EventID)
+	}
+}
+
+func auditGroupForEvent(event Event) AuditGroup {
+	return AuditGroup{
+		ContractID:    firstNonEmptyAuditValue(event.ContractID, "unknown"),
+		InvariantID:   auditEventInvariantID(event),
+		Lane:          firstNonEmptyAuditValue(event.Correlation.Lane, event.Correlation.SidecarProfile, "unknown"),
+		Phase:         auditEventPhase(event),
+		AdapterRoute:  auditEventAdapterRoute(event),
+		TerminalState: auditEventTerminalState(event),
+	}
+}
+
+func auditEventInvariantID(event Event) string {
+	switch {
+	case event.Lifecycle != nil:
+		if id := strings.TrimSpace(event.Lifecycle.InvariantID); id != "" {
+			return id
+		}
+		if event.Lifecycle.ModelProtocol != nil {
+			if id := strings.TrimSpace(event.Lifecycle.ModelProtocol.ActiveInvariantID); id != "" {
+				return id
+			}
+		}
+		if event.Lifecycle.TurnPhaseContract != nil {
+			if len(event.Lifecycle.TurnPhaseContract.InvariantIDs) > 0 {
+				return strings.TrimSpace(event.Lifecycle.TurnPhaseContract.InvariantIDs[0])
+			}
+		}
+	case event.Policy != nil:
+		return strings.TrimSpace(event.Policy.InvariantID)
+	case event.Completion != nil:
+		return strings.TrimSpace(event.Completion.InvariantID)
+	case event.Gate != nil:
+		return strings.TrimSpace(event.Gate.InvariantID)
+	case event.GuardFriction != nil:
+		return strings.TrimSpace(event.GuardFriction.InvariantID)
+	case event.ModelExchange != nil:
+		return strings.TrimSpace(event.ModelExchange.InvariantID)
+	}
+
+	return "unknown"
+}
+
+func auditEventPhase(event Event) string {
+	if event.Lifecycle != nil && event.Lifecycle.TurnPhaseContract != nil {
+		return firstNonEmptyAuditValue(event.Lifecycle.TurnPhaseContract.PhaseID, event.Lifecycle.TurnPhaseContract.Phase, event.Correlation.Phase, "unknown")
+	}
+	if event.GuardFriction != nil {
+		return firstNonEmptyAuditValue(event.GuardFriction.PhaseID, event.GuardFriction.Phase, event.Correlation.Phase, "unknown")
+	}
+	if event.ModelExchange != nil {
+		return firstNonEmptyAuditValue(event.ModelExchange.PhaseID, event.Correlation.Phase, "unknown")
+	}
+
+	return firstNonEmptyAuditValue(event.Correlation.Phase, "unknown")
+}
+
+func auditEventAdapterRoute(event Event) string {
+	if event.Policy != nil {
+		return firstNonEmptyAuditValue(event.Policy.ToolName, string(event.Policy.Capability), string(event.Policy.ActionClass), "unknown")
+	}
+	if event.Gate != nil {
+		return firstNonEmptyAuditValue(event.Gate.ToolName, string(event.Gate.Gate), "unknown")
+	}
+	if event.GuardFriction != nil {
+		return firstNonEmptyAuditValue(string(event.GuardFriction.GuardSurface), string(event.GuardFriction.Subject), "unknown")
+	}
+	if event.ModelExchange != nil {
+		return firstNonEmptyAuditValue(event.ModelExchange.Kind, "model_exchange")
+	}
+	if event.Correlation.SidecarTool != "" || event.Correlation.ToolName != "" {
+		return firstNonEmptyAuditValue(event.Correlation.SidecarTool, event.Correlation.ToolName, "unknown")
+	}
+
+	return "unknown"
+}
+
+func auditEventTerminalState(event Event) string {
+	if event.Lifecycle != nil && event.Lifecycle.TurnPhaseContract != nil {
+		states := compactStrings(event.Lifecycle.TurnPhaseContract.LifecycleState.TerminalStates)
+		if len(states) > 0 {
+			return states[0]
+		}
+	}
+	if event.Completion != nil {
+		return firstNonEmptyAuditValue(string(event.Completion.Decision), event.Completion.VerificationStatus, "unknown")
+	}
+	if event.Gate != nil {
+		return firstNonEmptyAuditValue(string(event.Gate.Decision), event.Gate.VerificationStatus, "unknown")
+	}
+	if event.GuardFriction != nil {
+		return firstNonEmptyAuditValue(string(event.GuardFriction.Decision), string(event.GuardFriction.RetryOutcome), "unknown")
+	}
+
+	return "unknown"
 }
 
 func (s *eventAuditState) addLifecycle(event Event) {
@@ -544,6 +701,58 @@ func (s *eventAuditState) addTurnPhaseContract(event Event, phase TurnPhaseContr
 	if stringSetContains(phase.ActionPolicy.AllowedActionClasses, finalAnswerClass) && turnPhaseEvidenceOpen(phase.EvidenceState) {
 		s.addTurnPhaseContradiction(event, phase, "", finalAnswerClass, "phase allows final_answer while evidence_state still has open acceptance, verification, recovery, or blocker evidence")
 	}
+
+	if turnPhaseLooksForcedNoTools(phase) {
+		s.report.ReadinessForcing.ForcedNoToolsTurns = append(s.report.ReadinessForcing.ForcedNoToolsTurns, auditRef(event, phase.PhaseID, "turn phase allows final_answer while useful read/search tools are unavailable and source-body obligations remain"))
+	}
+
+	if _, ready := s.readyWithOpenObligation[event.ContractID]; ready && turnPhaseHidesUsefulReadTools(phase) {
+		s.report.ReadinessForcing.UsefulToolsHiddenAfterReadiness = append(s.report.ReadinessForcing.UsefulToolsHiddenAfterReadiness, auditRef(event, phase.PhaseID, "turn phase hides useful read/search tools after readiness reported open obligations"))
+	}
+}
+
+func turnPhaseLooksForcedNoTools(phase TurnPhaseContractEvent) bool {
+	return stringSetContains(phase.ActionPolicy.AllowedActionClasses, ActionClassToken(ActionClassFinalAnswer)) &&
+		len(TurnPhaseCallableTools(phase)) == 0 &&
+		turnPhaseHasSourceBodyObligations(phase)
+}
+
+func turnPhaseHidesUsefulReadTools(phase TurnPhaseContractEvent) bool {
+	if !turnPhaseHasSourceBodyObligations(phase) {
+		return false
+	}
+
+	for _, tool := range phase.HiddenTools {
+		if usefulReadToolName(tool) {
+			return true
+		}
+	}
+
+	return len(TurnPhaseCallableTools(phase)) == 0
+}
+
+func turnPhaseHasSourceBodyObligations(phase TurnPhaseContractEvent) bool {
+	if len(phase.EvidenceState.SourceBodyObligations) > 0 {
+		return true
+	}
+
+	values := append(append([]string(nil), phase.RequiredNext...), phase.Constraints...)
+	for _, value := range values {
+		value = strings.ToLower(value)
+		if strings.Contains(value, "source-body") || strings.Contains(value, "source body") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func usefulReadToolName(tool string) bool {
+	tool = strings.ToLower(strings.TrimSpace(tool))
+	return strings.Contains(tool, "read") ||
+		strings.Contains(tool, "search") ||
+		strings.Contains(tool, "context") ||
+		strings.Contains(tool, "navigate")
 }
 
 func textualPhaseAdvertisesUnexpressibleManifestTool(phase TurnPhaseContractEvent, tools []string) bool {
@@ -661,6 +870,7 @@ func (s *eventAuditState) addObligation(event Event) {
 		s.report.ObligationCoverage.Resolved++
 	case EventObligationWaived:
 		s.report.ObligationCoverage.Waived++
+	case EventObligationBlocked, EventObligationStale, EventObligationSuperseded:
 	}
 
 	if event.Obligation == nil {
@@ -698,7 +908,7 @@ func (s *eventAuditState) addObligation(event Event) {
 	switch event.Type {
 	case EventObligationOpened:
 		s.openObligations[key] = ref
-	case EventObligationResolved, EventObligationWaived:
+	case EventObligationResolved, EventObligationWaived, EventObligationBlocked, EventObligationStale, EventObligationSuperseded:
 		if _, ok := s.openObligations[key]; !ok {
 			ref.Reason = "obligation resolution has no matching opened obligation event"
 			s.report.ObligationCoverage.UnmatchedObligations = append(s.report.ObligationCoverage.UnmatchedObligations, ref)
@@ -710,6 +920,9 @@ func (s *eventAuditState) addObligation(event Event) {
 			coverage := s.contractCoverage(event.ContractID)
 
 			coverage.OpenObligations = removeString(coverage.OpenObligations, event.Obligation.ObligationID)
+			if !s.hasOpenObligations(event.ContractID) {
+				delete(s.readyWithOpenObligation, event.ContractID)
+			}
 		}
 	}
 }
@@ -742,6 +955,11 @@ func (s *eventAuditState) addReadiness(event Event) {
 		s.report.ReadinessCoverage.ReadyToAnswerEvents++
 
 		incrementContractReadinessSignal(coverage, "ready_to_answer")
+		if len(readiness.OpenObligations) > 0 && event.ContractID != "" {
+			s.readyWithOpenObligation[event.ContractID] = auditRef(event, "open_obligations", "readiness reported ready_to_answer while obligations remained open")
+		} else if event.ContractID != "" {
+			delete(s.readyWithOpenObligation, event.ContractID)
+		}
 	}
 
 	if readiness.ReadyToWrite {
@@ -772,6 +990,7 @@ func (s *eventAuditState) addReadiness(event Event) {
 		s.report.ReadinessCoverage.EventsWithEvidenceRefs++
 
 		incrementContractReadinessSignal(coverage, "evidence_refs")
+		delete(s.relevantModelProbe, event.ContractID)
 	}
 
 	if readiness.FurtherReadsRequire != "" {
@@ -845,6 +1064,14 @@ func (s *eventAuditState) addCompletion(event Event) {
 		s.report.CompletionCoverage.EventsWithRequiredPathStatus++
 
 		incrementContractCompletionSignal(coverage, "required_path_status")
+	}
+
+	if completion.Decision == PolicyAllow {
+		if probe, ok := s.relevantModelProbe[event.ContractID]; ok {
+			ref := auditRef(event, probe.Reference, "completion allowed after model requested missing context")
+			ref.Reason = ref.Reason + "; probe_event_id=" + probe.EventID
+			s.report.ReadinessForcing.HostComposedAfterRelevantProbes = append(s.report.ReadinessForcing.HostComposedAfterRelevantProbes, ref)
+		}
 	}
 }
 
@@ -1026,14 +1253,19 @@ func (s *eventAuditState) addModelExchange(event Event) {
 	switch {
 	case exchange.ContextPacket != nil:
 		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "context_packet")
+		delete(s.relevantModelProbe, event.ContractID)
 	case exchange.PermissionSnapshot != nil:
 		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "permission_snapshot")
 	case exchange.FailureDelta != nil:
 		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "failure_delta")
 	case exchange.ModelResponse != nil:
 		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "model_response")
+		if modelResponseRequestsRelevantContext(exchange.ModelResponse) && event.ContractID != "" {
+			s.relevantModelProbe[event.ContractID] = auditRef(event, "context_request", "model response requested missing context before terminal answer")
+		}
 	case exchange.ValidationSignal != nil:
 		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "validation_signal")
+		delete(s.relevantModelProbe, event.ContractID)
 	case exchange.TraceStorePolicy != nil:
 		s.report.ModelExchangeCoverage.TracePolicyEvents++
 		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "trace_store_policy")
@@ -1053,6 +1285,15 @@ func (s *eventAuditState) addModelExchange(event Event) {
 	default:
 		s.report.ModelExchangeCoverage.EventsMissingHarnessPayload = append(s.report.ModelExchangeCoverage.EventsMissingHarnessPayload, auditRef(event, "model_exchange", "model_exchange typed payload missing"))
 	}
+}
+
+func modelResponseRequestsRelevantContext(response *ModelResponse) bool {
+	if response == nil || response.ContextRequest == nil {
+		return false
+	}
+
+	request := response.ContextRequest
+	return len(request.MissingRefs) > 0 || len(request.RequestRefs) > 0 || strings.TrimSpace(request.ReasonCode) != ""
 }
 
 func (s *eventAuditState) addMetadata(event Event) {
@@ -1208,6 +1449,8 @@ func (s *eventAuditState) finish() {
 	s.report.MetadataCoverage.ClientClassifications = sortedMapKeys(s.report.MetadataCoverage.ClientClassificationCounts)
 	s.report.MetadataCoverage.ProductSignals = sortedMapKeys(s.report.MetadataCoverage.ProductSignalCounts)
 	s.report.GuardFrictionCoverage.TopContracts = sortedGuardFrictionContractCoverages(s.guardFrictionContracts)
+	s.report.AuditGroupCoverage.Groups = sortedAuditGroups(s.auditGroups)
+	s.report.AuditGroupCoverage.Total = len(s.report.AuditGroupCoverage.Groups)
 	s.report.RollbackActive = s.report.ModelExchangeCoverage.RollbackActive
 	s.report.Contracts = sortedContractCoverages(s.contracts)
 	sortObligationRefs(s.report.ObligationCoverage.OpenObligations)
@@ -1227,6 +1470,9 @@ func (s *eventAuditState) finish() {
 	sortAuditRefs(s.report.ModelExchangeCoverage.RollbackRefs)
 	sortAuditRefs(s.report.ModelExchangeCoverage.EventsMissingProtocolHash)
 	sortAuditRefs(s.report.ModelExchangeCoverage.EventsMissingHarnessPayload)
+	sortAuditRefs(s.report.ReadinessForcing.ForcedNoToolsTurns)
+	sortAuditRefs(s.report.ReadinessForcing.UsefulToolsHiddenAfterReadiness)
+	sortAuditRefs(s.report.ReadinessForcing.HostComposedAfterRelevantProbes)
 	sortPrivacyRefs(s.report.PrivacyChecks.Refs)
 	sortTurnPhaseContradictions(s.report.TurnPhaseCoverage.Contradictions)
 	slices.Sort(s.report.ReferenceCoverage.MissingExpectedContracts)
@@ -1383,6 +1629,36 @@ func (s *eventAuditState) addFindings() {
 		})
 	}
 
+	if refs := s.report.ReadinessForcing.ForcedNoToolsTurns; len(refs) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "readiness_forced_no_tools_turn",
+			Severity:    "medium",
+			Evidence:    fmt.Sprintf("%d turn phase event(s) allowed final answer while useful tools were unavailable and source-body obligations remained", len(refs)),
+			EventIDs:    eventIDsFromAuditRefs(refs),
+			ContractIDs: contractIDsFromAuditRefs(refs),
+		})
+	}
+
+	if refs := s.report.ReadinessForcing.UsefulToolsHiddenAfterReadiness; len(refs) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "readiness_useful_tools_hidden",
+			Severity:    "medium",
+			Evidence:    fmt.Sprintf("%d turn phase event(s) hid useful read/search tools after readiness with open obligations", len(refs)),
+			EventIDs:    eventIDsFromAuditRefs(refs),
+			ContractIDs: contractIDsFromAuditRefs(refs),
+		})
+	}
+
+	if refs := s.report.ReadinessForcing.HostComposedAfterRelevantProbes; len(refs) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "readiness_host_composed_after_probe",
+			Severity:    "medium",
+			Evidence:    fmt.Sprintf("%d completion event(s) allowed a terminal answer after the model requested missing context", len(refs)),
+			EventIDs:    eventIDsFromAuditRefs(refs),
+			ContractIDs: contractIDsFromAuditRefs(refs),
+		})
+	}
+
 	if refs := s.report.PrivacyChecks.Refs; len(refs) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "contract_event_privacy_forbidden_raw_content",
@@ -1404,6 +1680,16 @@ func (s *eventAuditState) contractCoverage(contractID string) *ContractEventCove
 	s.contracts[contractID] = coverage
 
 	return coverage
+}
+
+func (s *eventAuditState) hasOpenObligations(contractID string) bool {
+	for key := range s.openObligations {
+		if strings.HasPrefix(key, contractID+"\x00") {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (s *eventAuditState) guardFrictionContractCoverage(contractID string) *GuardFrictionContractCoverage {
@@ -1803,6 +2089,32 @@ func sortedGuardFrictionContractCoverages(values map[string]*GuardFrictionContra
 	if len(out) > maxTopGuardFrictionContracts {
 		out = out[:maxTopGuardFrictionContracts]
 	}
+
+	return out
+}
+
+func sortedAuditGroups(values map[string]*AuditGroup) []AuditGroup {
+	out := make([]AuditGroup, 0, len(values))
+	for _, group := range values {
+		if group == nil {
+			continue
+		}
+
+		copied := *group
+		copied.EventIDs = compactStrings(copied.EventIDs)
+		out = append(out, copied)
+	}
+
+	slices.SortFunc(out, func(a, b AuditGroup) int {
+		return cmp.Or(
+			cmp.Compare(a.ContractID, b.ContractID),
+			cmp.Compare(a.InvariantID, b.InvariantID),
+			cmp.Compare(a.Lane, b.Lane),
+			cmp.Compare(a.Phase, b.Phase),
+			cmp.Compare(a.AdapterRoute, b.AdapterRoute),
+			cmp.Compare(a.TerminalState, b.TerminalState),
+		)
+	})
 
 	return out
 }

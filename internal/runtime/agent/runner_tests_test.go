@@ -5280,6 +5280,36 @@ func TestSnapshotWritePreimagesCapturesApplyPatchTargets(t *testing.T) {
 	}
 }
 
+func TestExecuteWorkspaceWithPreimageAnnotatesCreatedFile(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true}),
+	}
+	store := NewPreimageCheckpointStore(root)
+
+	result := runner.executeWorkspaceWithPreimage(context.Background(), store, workspace.ToolRequest{
+		Tool:        workspace.ToolNameWriteFile,
+		Path:        "internal/labels/generated.go",
+		Content:     "package labels\n",
+		Description: "create generated label source",
+	})
+	if result.Error != "" {
+		t.Fatalf("write failed: %#v", result)
+	}
+	if result.PayloadType != writePreimagePayloadType {
+		t.Fatalf("expected write preimage payload type, got %q in %#v", result.PayloadType, result)
+	}
+
+	var payload writePreimagePayload
+	if err := json.Unmarshal(result.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal preimage payload: %v", err)
+	}
+
+	if len(payload.Paths) != 1 || payload.Paths[0].Path != "internal/labels/generated.go" || payload.Paths[0].Exists {
+		t.Fatalf("unexpected preimage payload: %#v", payload)
+	}
+}
+
 func TestSnapshotWritePreimagesRejectsUnsafeTarget(t *testing.T) {
 	store := NewPreimageCheckpointStore(t.TempDir())
 	result, blocked := snapshotWritePreimages(store, workspace.ToolRequest{Tool: "write_file", Path: "../outside.txt"})
@@ -8577,6 +8607,33 @@ func TestPatchHygieneAllowsNonSourceCompletion(t *testing.T) {
 
 	if result, rejected := runner.mutationCompletionRejection("Changed paths:\n- README.md\n\nVerification: git diff --check passed.", results); rejected {
 		t.Fatalf("expected patch hygiene to satisfy non-source edit completion, got %#v", result)
+	}
+}
+
+func TestNoopWriteDoesNotCreatePendingVerification(t *testing.T) {
+	results := []workspace.ToolResult{
+		{Tool: workspace.ToolNameApplyPatch, Summary: "Applied patch with 1 op(s)", Output: "delete temp.md\n"},
+		{Tool: workspace.ToolNameApplyPatch, Summary: "apply_patch made no new changes (all sections were redundant)", Output: "skipped redundant delete temp.md"},
+		{Tool: workspace.ToolNameSourceSanity, Summary: "Source sanity unavailable", Error: "stat temp.md: no such file or directory"},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+
+	if hasPendingVerificationAfterWrites(results, brief) {
+		t.Fatal("redundant no-op write after non-source delete must not create a verification obligation")
+	}
+
+	if failed, ok := failedVerificationAfterLatestWrite(results, brief); ok {
+		t.Fatalf("source_sanity failure after no-op duplicate delete must not count as failed post-write verification: %#v", failed)
+	}
+
+	runner := &Runner{RuntimeBrief: brief}
+	answer := "Deleted `temp.md`.\n\nChanged paths:\n- temp.md\n\nVerification: source_sanity unavailable because temp.md was deleted."
+	if result, rejected := runner.mutationCompletionRejection(answer, results); rejected {
+		t.Fatalf("delete closeout should pass after no-op duplicate patch and missing-file source_sanity, got %#v", result)
 	}
 }
 
@@ -16819,6 +16876,25 @@ func TestCompletionGateExemptsNonSourceWritesFromVerification(t *testing.T) {
 	}
 }
 
+func TestRunnerAutonomyVerificationStatusReportsNotRequiredForNonSourceMutation(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "apply_patch", Summary: "Applied patch with 1 op(s)", Output: "delete temp.md\n"},
+	}
+
+	if got := runnerAutonomyVerificationStatus(results, brief); got != "not_required" {
+		t.Fatalf("verification status = %q, want not_required", got)
+	}
+
+	if !runnerAutonomyVerificationStatusResolvesPostWriteObligation("not_required") {
+		t.Fatal("not_required should resolve post-write verification obligation")
+	}
+}
+
 func TestDocDeliverableMkdirParentDoesNotRequireVerification(t *testing.T) {
 	results := []workspace.ToolResult{
 		{Tool: "mkdir", Summary: "Created directory .idiom/refine/example/iter-1"},
@@ -21210,6 +21286,308 @@ func TestRunnerTargetSourceRejectsExistingWriteFileBeforeSourceBodyEvidence(t *t
 	}
 }
 
+func TestImplementationDeleteIntentNormalizesEmptyWriteFileToDeletePatch(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		Objective:    "can you please now remove the temp file you just created?",
+		AllowedTools: []string{"read_file", "write_file", "apply_patch"},
+	}}
+	req := workspace.ToolRequest{
+		Tool:        workspace.ToolNameWriteFile,
+		Path:        "temp.md",
+		Content:     "",
+		Description: "Overwrite temp.md with empty content since no delete tool is available",
+	}
+
+	normalized, raw, ok := runner.normalizeDeleteIntentDeferredWrite(req, "", "temp.md", []string{"read_file", "write_file", "apply_patch"})
+	if !ok {
+		t.Fatal("expected delete-intent empty write_file to normalize")
+	}
+
+	if normalized.Tool != workspace.ToolNameApplyPatch || !strings.Contains(normalized.Content, "*** Delete File: temp.md") {
+		t.Fatalf("unexpected normalized request: %#v raw=%s", normalized, raw)
+	}
+
+	contentRemoval := workspace.ToolRequest{
+		Tool:        workspace.ToolNameWriteFile,
+		Path:        "temp.md",
+		Content:     "",
+		Description: "remove obsolete text from temp.md",
+	}
+	runner.RuntimeBrief.Objective = "remove obsolete text from temp.md"
+	if normalized, raw, ok := runner.normalizeDeleteIntentDeferredWrite(contentRemoval, "", "temp.md", []string{"read_file", "write_file", "apply_patch"}); ok {
+		t.Fatalf("content-removal objective must not normalize to file delete: %#v raw=%s", normalized, raw)
+	}
+}
+
+func TestImplementationDeferredDeletePatchReplaysAfterProseCompletion(t *testing.T) {
+	req := workspace.ToolRequest{
+		Tool:        workspace.ToolNameApplyPatch,
+		Content:     "*** Begin Patch\n*** Delete File: temp.md\n*** End Patch\n",
+		Description: "delete temp.md",
+	}
+	deferred := newImplementationDeferredSourceEvidenceWrite(req, "", "temp.md")
+	if deferred == nil {
+		t.Fatal("expected deferred delete patch")
+	}
+
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 temp.md lines 1-1 (total lines: 1)",
+		Output:  "1:temp\n",
+	}}
+
+	replayReq, raw, replay := deferred.replayAfterCompletionAttempt(results, []string{"read_file", "write_file", "apply_patch"})
+	if !replay {
+		t.Fatal("expected delete patch to replay after source evidence and prose completion")
+	}
+	if replayReq.Tool != workspace.ToolNameApplyPatch || !strings.Contains(raw, "*** Delete File: temp.md") {
+		t.Fatalf("unexpected replay request: %#v raw=%s", replayReq, raw)
+	}
+}
+
+func TestChangedPathsFromPatchOutputIncludesDeletes(t *testing.T) {
+	paths := changedPathsFromPatchOutput("delete temp.md\n")
+	if !reflect.DeepEqual(paths, []string{"temp.md"}) {
+		t.Fatalf("changed paths = %#v, want temp.md delete", paths)
+	}
+}
+
+func TestRunnerRecoversDeleteFileAfterEmptyWriteAttemptAndProse(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "temp.md", "temp\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"write_file","path":"temp.md","content":"","description":"Overwrite temp.md with empty content since no delete tool is available"}`,
+		"Done. Removed temp.md.",
+		"Deleted temp.md. Verification not required for this test.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reply := "Deleted temp.md. Verification not required for this test."
+		if requests < len(replies) {
+			reply = replies[requests]
+		}
+
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawDeletePatch bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			Objective:            "can you please now remove the temp file you just created?",
+			PermissionProfile:    "guarded_workspace_write",
+			AllowedTools:         []string{"read_file", "search_content", "write_file", "apply_patch"},
+			VerificationContract: "not_required_for_text_mutations",
+		},
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3},
+	}
+
+	onToolResult := func(event ToolResultEvent) {
+		if event.Result.Tool == workspace.ToolNameApplyPatch && strings.Contains(event.Result.Output, "delete temp.md") {
+			sawDeletePatch = true
+		}
+	}
+
+	if _, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "can you please now remove the temp file you just created?"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		onToolResult,
+	); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !sawDeletePatch {
+		t.Fatal("expected harness to recover the empty write attempt into an apply_patch delete")
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "temp.md")); !os.IsNotExist(err) {
+		t.Fatalf("temp.md should be deleted, stat err=%v", err)
+	}
+}
+
+func TestRunnerAllowsDeleteCloseoutAfterRedundantDeleteAndMissingSourceSanity(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "temp.md", "temp\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"temp.md","start_line":1,"end_line":20,"named_gap":"confirm temp file before deletion"}`,
+		`{"tool":"apply_patch","content":"*** Begin Patch\n*** Delete File: temp.md\n*** End Patch","description":"Delete temp.md"}`,
+		`{"tool":"apply_patch","content":"*** Begin Patch\n*** Delete File: temp.md\n*** End Patch","description":"Duplicate delete probe"}`,
+		`{"tool":"source_sanity","path":"temp.md"}`,
+		"Deleted `temp.md`.\n\nChanged paths:\n- temp.md\n\nVerification: source_sanity unavailable because temp.md was deleted.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reply := replies[len(replies)-1]
+		if requests < len(replies) {
+			reply = replies[requests]
+		}
+
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			Objective:            "can you delete the recently created temp file?",
+			PermissionProfile:    "guarded_workspace_write",
+			AllowedTools:         []string{"read_file", "search_content", "apply_patch", "source_sanity", "history_range", "history_symbol"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 4},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "can you delete the recently created temp file?"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !strings.Contains(answer, "Deleted `temp.md`") {
+		t.Fatalf("expected final delete closeout, got:\n%s", answer)
+	}
+
+	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
+		t.Fatalf("delete closeout should not block after redundant no-op patch:\n%s", answer)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "temp.md")); !os.IsNotExist(err) {
+		t.Fatalf("temp.md should be deleted, stat err=%v", err)
+	}
+}
+
+func TestRunnerStripsToolSurfaceBlockerAfterCompletedNonSourceDelete(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "temp.md", "temp\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"temp.md","start_line":1,"end_line":20,"named_gap":"confirm temp file before deletion"}`,
+		`{"tool":"history_range","path":"temp.md"}`,
+		`{"tool":"apply_patch","content":"*** Begin Patch\n*** Delete File: temp.md\n*** End Patch","description":"Delete temp.md"}`,
+		`{"tool":"shell","command":"test ! -e temp.md"}`,
+		"Implemented the requested change.\n\nChanged paths:\n- temp.md\n\nVerification: not run or not detected.\n\nBlocker:\n- Tool not available in current runtime contract: shell is not in the current allowed tool surface.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reply := replies[len(replies)-1]
+		if requests < len(replies) {
+			reply = replies[requests]
+		}
+
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			Objective:            "can you delete the recently created temp file?",
+			PermissionProfile:    "guarded_workspace_write",
+			AllowedTools:         []string{"read_file", "search_files", "search_content", "apply_patch", "history_range", "history_symbol"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 4},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "can you delete the recently created temp file?"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if strings.Contains(answer, "Blocker:") || strings.Contains(answer, "Tool not available in current runtime contract") {
+		t.Fatalf("expected harness-owned blocker to be stripped from completed delete closeout, got:\n%s", answer)
+	}
+
+	if !strings.Contains(answer, "Changed paths:") || !strings.Contains(answer, "temp.md") {
+		t.Fatalf("expected changed path closeout, got:\n%s", answer)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "temp.md")); !os.IsNotExist(err) {
+		t.Fatalf("temp.md should be deleted, stat err=%v", err)
+	}
+}
+
+func TestStripCompletedMutationSelfBlockerDoesNotHidePendingSourceVerification(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited main.go"},
+		{Tool: "shell", Summary: "Tool not available in current runtime contract", Error: "shell is not in the current allowed tool surface."},
+	}
+	answer := "Implemented the requested change.\n\nChanged paths:\n- main.go\n\nVerification: not run.\n\nBlocker:\n- Tool not available in current runtime contract: shell is not in the current allowed tool surface."
+
+	if cleaned, ok := stripCompletedMutationSelfBlocker(brief, results, answer); ok {
+		t.Fatalf("must not strip blocker while source verification remains pending, cleaned:\n%s", cleaned)
+	}
+}
+
 func TestImplementationTargetSourceWriteBeforeEvidenceRedirectsToBoundedRead(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -21309,6 +21687,35 @@ func TestImplementationDeferredWriteReplayRequiresHistoryWhenMarked(t *testing.T
 	})
 	if replayReq, _, replay := deferred.replayAfterEvidence(verifyReq, results, []string{"source_sanity", "edit_file"}); !replay || replayReq.Tool != "edit_file" {
 		t.Fatalf("expected replay after source and history evidence, replay=%v req=%#v", replay, replayReq)
+	}
+}
+
+func TestImplementationDeferredExactEditReplaysAfterHistoryWithoutPriorRead(t *testing.T) {
+	req := workspace.ToolRequest{
+		Tool:        "edit_file",
+		Path:        "internal/labels/labels.go",
+		OldText:     `return "Save changes"`,
+		NewText:     `return "Save"`,
+		Description: "shorten label",
+	}
+	deferred := newImplementationDeferredSourceEvidenceWrite(req, "", "internal/labels/labels.go")
+	if deferred == nil {
+		t.Fatal("expected deferred write")
+	}
+	deferred.RequiresHistory = true
+
+	results := []workspace.ToolResult{{
+		Tool:    "history_range",
+		Summary: "Read git history for internal/labels/labels.go lines 1-80",
+		Output:  "commit abc123\n\n    Preserve current label behavior",
+	}}
+
+	replayReq, raw, replay := deferred.replayAfterHistoryEvidence(results)
+	if !replay {
+		t.Fatalf("expected exact anchored edit to replay after history without prior read, raw=%q", raw)
+	}
+	if replayReq.Tool != workspace.ToolNameEditFile || replayReq.Path != "internal/labels/labels.go" {
+		t.Fatalf("unexpected replay request: %#v", replayReq)
 	}
 }
 
@@ -23942,6 +24349,26 @@ func TestWriteReadyPreWriteVisibleBriefAdvertisesScopedSurface(t *testing.T) {
 	invalid := strings.Join(brief.InvalidActions, "\n")
 	if !strings.Contains(invalid, "task_ledger or broad discovery") || !strings.Contains(invalid, "outside required edit paths") {
 		t.Fatalf("expected explicit invalid broad/out-of-scope actions, got %#v", brief.InvalidActions)
+	}
+}
+
+func TestTargetSourceVisibleBriefAdvertisesDeletePatchPrimitive(t *testing.T) {
+	brief := runnerVisibleBriefForToolSurface(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		Objective:         "remove the temp file",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"read_file", "search_content", "write_file", "apply_patch", "source_sanity", "shell"},
+	}, nil)
+
+	required := strings.Join(brief.RequiredNext, "\n")
+	invalid := strings.Join(brief.InvalidActions, "\n")
+	if !strings.Contains(required, "*** Delete File: <path>") {
+		t.Fatalf("target-source guidance should advertise Delete File patch primitive, got %#v", brief.RequiredNext)
+	}
+
+	if !strings.Contains(invalid, "write_file with empty content") {
+		t.Fatalf("target-source guidance should reject empty write_file deletion, got %#v", brief.InvalidActions)
 	}
 }
 

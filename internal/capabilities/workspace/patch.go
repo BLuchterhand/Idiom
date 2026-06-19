@@ -37,17 +37,17 @@ func PatchOpPaths(ops []PatchOp) []string {
 
 func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 	if !m.cfg.EnableWrites {
-		return toolWriteDisabledResult("apply_patch", "Patch request rejected", "workspace writes are disabled")
+		return toolWriteDisabledResult(ToolNameApplyPatch, "Patch request rejected", "workspace writes are disabled")
 	}
 
 	body := patching.NormalizeEnvelope(req.Content)
 	if strings.TrimSpace(body) == "" {
-		return toolInvalidArgumentResult("apply_patch", "Patch request rejected", "apply_patch requires the patch body in content")
+		return toolInvalidArgumentResult(ToolNameApplyPatch, "Patch request rejected", "apply_patch requires the patch body in content")
 	}
 
 	ops, err := ParsePatch(body)
 	if err != nil {
-		return toolFailureFromErrorResult("apply_patch", "Patch parse failed", err, failures.InvalidArgument, reasonToolInvalidArgument)
+		return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch parse failed", err, failures.InvalidArgument, reasonToolInvalidArgument)
 	}
 
 	type plannedWrite struct {
@@ -62,13 +62,13 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 	for opIdx, op := range ops {
 		path, err := m.resolvePath(op.Path, req.Workdir)
 		if err != nil {
-			return toolFailureFromErrorResult("apply_patch", "Failed to resolve path", fmt.Errorf("op %d (%s %s): %w", opIdx+1, op.Kind, op.Path, err), failures.InvalidArgument, reasonToolPathResolutionFailed)
+			return toolFailureFromErrorResult(ToolNameApplyPatch, "Failed to resolve path", fmt.Errorf("op %d (%s %s): %w", opIdx+1, op.Kind, op.Path, err), failures.InvalidArgument, reasonToolPathResolutionFailed)
 		}
 
 		switch op.Kind {
 		case PatchOpAdd:
 			if _, statErr := os.Stat(path); statErr == nil {
-				return toolFailureResult("apply_patch", "Patch request rejected", fmt.Sprintf("Add File target %s already exists", m.displayPath(path)), failures.AlreadyExists, reasonPlanSubmissionRejected)
+				return toolFailureResult(ToolNameApplyPatch, "Patch request rejected", fmt.Sprintf("Add File target %s already exists", m.displayPath(path)), failures.AlreadyExists, reasonPlanSubmissionRejected)
 			}
 
 			body := op.NewBody
@@ -81,11 +81,11 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 		case PatchOpDelete:
 			info, statErr := os.Stat(path)
 			if statErr != nil {
-				return toolFailureResult("apply_patch", "Patch request rejected", fmt.Sprintf("Delete File target %s not found", m.displayPath(path)), failures.NotFound, reasonPlanSubmissionRejected)
+				return toolFailureResult(ToolNameApplyPatch, "Patch request rejected", fmt.Sprintf("Delete File target %s not found", m.displayPath(path)), failures.NotFound, reasonPlanSubmissionRejected)
 			}
 
 			if info.IsDir() {
-				return toolInvalidArgumentResult("apply_patch", "Patch request rejected", fmt.Sprintf("Delete File target %s is a directory", m.displayPath(path)))
+				return toolInvalidArgumentResult(ToolNameApplyPatch, "Patch request rejected", fmt.Sprintf("Delete File target %s is a directory", m.displayPath(path)))
 			}
 
 			planned = append(planned, plannedWrite{path: path, remove: true})
@@ -93,12 +93,12 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 		case PatchOpUpdate:
 			current, readErr := os.ReadFile(path)
 			if readErr != nil {
-				return toolFailureFromErrorResult("apply_patch", "Patch request rejected", fmt.Errorf("Update File target %s: %w", m.displayPath(path), readErr), failures.NotFound, reasonPlanSubmissionRejected)
+				return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch request rejected", fmt.Errorf("Update File target %s: %w", m.displayPath(path), readErr), failures.NotFound, reasonPlanSubmissionRejected)
 			}
 
 			updated, applyErr := patching.ApplyUpdateHunks(string(current), op.Hunks)
 			if applyErr != nil {
-				return toolFailureFromErrorResult("apply_patch", "Patch hunk did not apply", fmt.Errorf("Update File %s: %w", m.displayPath(path), applyErr), failures.FailedPrecondition, reasonPlanSubmissionRejected)
+				return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch hunk did not apply", fmt.Errorf("Update File %s: %w", m.displayPath(path), applyErr), failures.FailedPrecondition, reasonPlanSubmissionRejected)
 			}
 
 			destPath := path
@@ -107,11 +107,11 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 			if op.MoveTo != "" {
 				destPath, err = m.resolvePath(op.MoveTo, req.Workdir)
 				if err != nil {
-					return toolFailureFromErrorResult("apply_patch", "Failed to resolve move destination", fmt.Errorf("Move to %s: %w", op.MoveTo, err), failures.InvalidArgument, reasonToolPathResolutionFailed)
+					return toolFailureFromErrorResult(ToolNameApplyPatch, "Failed to resolve move destination", fmt.Errorf("Move to %s: %w", op.MoveTo, err), failures.InvalidArgument, reasonToolPathResolutionFailed)
 				}
 
 				if _, statErr := os.Stat(destPath); statErr == nil && filepath.Clean(destPath) != filepath.Clean(path) {
-					return toolFailureResult("apply_patch", "Patch request rejected", fmt.Sprintf("Move to destination %s already exists", m.displayPath(destPath)), failures.AlreadyExists, reasonPlanSubmissionRejected)
+					return toolFailureResult(ToolNameApplyPatch, "Patch request rejected", fmt.Sprintf("Move to destination %s already exists", m.displayPath(destPath)), failures.AlreadyExists, reasonPlanSubmissionRejected)
 				}
 
 				planned = append(planned, plannedWrite{path: path, remove: true})
@@ -128,7 +128,7 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 			continue
 		}
 
-		if rejected := m.rejectInvalidPlannedWrite("apply_patch", "Patch request rejected", write.path, write.contents); rejected != nil {
+		if rejected := m.rejectInvalidPlannedWrite(ToolNameApplyPatch, "Patch request rejected", write.path, write.contents); rejected != nil {
 			return *rejected
 		}
 	}
@@ -136,18 +136,18 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 	for _, write := range planned {
 		if write.remove {
 			if err := os.Remove(write.path); err != nil && !os.IsNotExist(err) {
-				return toolFailureFromErrorResult("apply_patch", "Patch apply failed mid-stream", fmt.Errorf("delete %s: %w", m.displayPath(write.path), err), failures.Internal, reasonToolWriteFailed)
+				return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch apply failed mid-stream", fmt.Errorf("delete %s: %w", m.displayPath(write.path), err), failures.Internal, reasonToolWriteFailed)
 			}
 
 			continue
 		}
 
 		if err := os.MkdirAll(filepath.Dir(write.path), 0o755); err != nil {
-			return toolFailureFromErrorResult("apply_patch", "Patch apply failed", fmt.Errorf("mkdir %s: %w", m.displayPath(filepath.Dir(write.path)), err), failures.Internal, reasonToolWriteFailed)
+			return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch apply failed", fmt.Errorf("mkdir %s: %w", m.displayPath(filepath.Dir(write.path)), err), failures.Internal, reasonToolWriteFailed)
 		}
 
 		if err := os.WriteFile(write.path, write.contents, 0o644); err != nil {
-			return toolFailureFromErrorResult("apply_patch", "Patch apply failed", fmt.Errorf("write %s: %w", m.displayPath(write.path), err), failures.Internal, reasonToolWriteFailed)
+			return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch apply failed", fmt.Errorf("write %s: %w", m.displayPath(write.path), err), failures.Internal, reasonToolWriteFailed)
 		}
 	}
 
@@ -155,7 +155,7 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 	m.invalidateCppIndex()
 
 	return ToolResult{
-		Tool:    "apply_patch",
+		Tool:    ToolNameApplyPatch,
 		Summary: fmt.Sprintf("Applied patch with %d op(s)", len(ops)),
 		Output:  strings.Join(summaries, "\n"),
 	}

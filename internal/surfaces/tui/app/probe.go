@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"idiom/internal/runtime/agent"
+	"idiom/internal/runtime/modepolicy"
 )
 
 // ProbeLaneOptions configures one synthetic-brief route probe. The
@@ -16,8 +16,8 @@ import (
 // checks, not just operator workflows.
 type ProbeLaneOptions struct {
 	// Mode is the agent mode the lane runs under. Defaults to
-	// agent.BuildMode() when unset.
-	Mode agent.Mode
+	// modepolicy.BuildMode() when unset.
+	Mode modepolicy.Mode
 	// TaskFamily is the family the lane wrapper would force via
 	// --task-family. Use "implementation" for `idiom implement`-style
 	// lanes and "plan_then_execute_planner" for the planner phase of
@@ -55,7 +55,7 @@ func ProbeLane(opts ProbeLaneOptions) (ProbeLaneResult, error) {
 
 	mode := opts.Mode
 	if strings.TrimSpace(mode.Name) == "" {
-		mode = agent.BuildMode()
+		mode = modepolicy.BuildMode()
 	}
 
 	route := normalizeTurnRoutePlan(turnRoutePlan{

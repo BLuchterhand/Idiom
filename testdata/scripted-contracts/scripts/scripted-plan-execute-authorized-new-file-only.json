@@ -1,0 +1,11 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"tool\":\"submit_plan\",\"rationale\":\"Create the explicitly authorized generated-only helper file.\",\"edits\":[{\"path\":\"internal/labels/generated_only.go\",\"old_text\":\"\",\"new_text\":\"package labels\\n\\nfunc GeneratedOnly() string {\\n\\treturn \\\"GeneratedOnly\\\"\\n}\\n\",\"replace_all\":true,\"purpose\":\"Create the authorized generated-only helper file\"}]}"
+    },
+    {
+      "content": "Decision: pass\n\nVerification Checklist:\n- Required behavior: GeneratedOnly returns \"GeneratedOnly\" after the submitted edit.\n- Scope safety: Only internal/labels/generated_only.go changed, inside the authorized new-file scope.\n- Test or command evidence: Phase Evidence reports the required verification and source_sanity checks."
+    }
+  ]
+}

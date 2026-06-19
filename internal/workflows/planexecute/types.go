@@ -45,30 +45,39 @@ type PhaseFunc func(phase, detail string)
 
 type EditProgressFunc func(step, total int, path string, succeeded bool)
 
+type ScopeExtractionPolicy string
+
+const (
+	ScopeExtractionFromPrompt ScopeExtractionPolicy = "from_prompt"
+	ScopeExtractionFrozen     ScopeExtractionPolicy = "frozen"
+)
+
 type Options struct {
-	ConfigPath                string
-	Prompt                    string
-	PromptFile                string
-	Model                     string
-	Resume                    string
-	ReviewSessionID           string
-	JSONEvents                bool
-	DisableThinking           bool
-	UseActiveModel            bool
-	MaxTokens                 int
-	RequiredEditPaths         MultiFlag
-	AllowedEditPaths          MultiFlag
-	WriteAllowedPaths         MultiFlag
-	WriteAllowedPathsExplicit bool
-	EditSetObligations        EditSetObligations
-	ScopeContract             PlanScopeContract
-	AuthorizedNewFiles        []string
-	PlannerOwnedVerification  bool
-	AllowBuildTests           bool
-	SkipReviewRepair          bool
-	SessionID                 string
-	OnPhase                   PhaseFunc
-	OnEditProgress            EditProgressFunc
+	ConfigPath                       string
+	Prompt                           string
+	PromptFile                       string
+	Model                            string
+	Resume                           string
+	ReviewSessionID                  string
+	JSONEvents                       bool
+	DisableThinking                  bool
+	UseActiveModel                   bool
+	MaxTokens                        int
+	RequiredEditPaths                MultiFlag
+	AllowedEditPaths                 MultiFlag
+	WriteAllowedPaths                MultiFlag
+	WriteAllowedPathsExplicit        bool
+	EditSetObligations               EditSetObligations
+	ScopeContract                    PlanScopeContract
+	ScopeExtractionPolicy            ScopeExtractionPolicy
+	AuthorizedNewFiles               []string
+	VerificationPlanExplicitCommands []string
+	PlannerOwnedVerification         bool
+	AllowBuildTests                  bool
+	SkipReviewRepair                 bool
+	SessionID                        string
+	OnPhase                          PhaseFunc
+	OnEditProgress                   EditProgressFunc
 }
 
 const (

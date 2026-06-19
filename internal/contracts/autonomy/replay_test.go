@@ -98,6 +98,26 @@ func TestReplayEventsValidTrajectory(t *testing.T) {
 	}
 }
 
+func TestReplayEventsTreatsNotRequiredVerificationAsResolved(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	start := time.Date(2026, 5, 24, 12, 3, 0, 0, time.UTC)
+	events := []Event{
+		mustAutonomyEvent(NewCompletionGateDecisionEvent(contract, ContractCompletionEvent{
+			Decision:           PolicyAllow,
+			InvariantID:        "completion.readiness",
+			ProtocolHash:       "sha256:phase",
+			VerificationStatus: "not_required",
+			ChangedPaths:       []string{"temp.md"},
+		}, start, 1)),
+	}
+
+	report := ReplayEvents(events, ReplayOptions{})
+
+	if len(report.Violations) != 0 {
+		t.Fatalf("not_required verification should not violate replay checks: %#v", report.Violations)
+	}
+}
+
 func TestReplayEventsFlagsMissingGateFields(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	start := time.Date(2026, 5, 24, 12, 5, 0, 0, time.UTC)
@@ -310,6 +330,32 @@ func TestReplayEventsReportsChurnAutonomyMetrics(t *testing.T) {
 
 	if metrics.PhaseGateFailCounts["execute/completion_gate"] != 3 {
 		t.Fatalf("expected phase gate fail counts, got %#v", metrics.PhaseGateFailCounts)
+	}
+}
+
+func TestReplayEventsTreatsResolvedPassivePathRolesAsScoped(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	start := time.Date(2026, 5, 24, 13, 10, 0, 0, time.UTC)
+
+	report := ReplayEvents([]Event{
+		mustAutonomyEvent(NewPolicyEvent(EventPathRolesResolved, contract, ContractPolicyEvent{
+			ToolCallID: "path-role-resolution",
+			ToolName:   "path_role_resolver",
+			Capability: CapabilitySourceEdit,
+			Decision:   PolicyObserve,
+			PathRoles: []PathRoleMatch{
+				{Path: "dist/protocol-card.json", Role: PathRoleGeneratedArtifact, MatchedPattern: "dist/**"},
+				{Path: "logs/verification/go-test.json", Role: PathRoleVerificationOut, MatchedPattern: "logs/verification/**"},
+			},
+			Source: "replay_test",
+		}, start, 1)),
+	}, ReplayOptions{})
+
+	if report.ReplayClassification.EventsWithRequiredPayload != 1 {
+		t.Fatalf("expected path-role resolution to carry required policy payload, got %#v", report.ReplayClassification)
+	}
+	if report.ReplayMetrics.CandidatePathWaste != 0 {
+		t.Fatalf("passive resolver-owned path roles must not count as candidate waste: %#v", report.ReplayMetrics)
 	}
 }
 

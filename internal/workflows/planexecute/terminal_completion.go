@@ -11,6 +11,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/plan"
+	"idiom/internal/workflows/workflowstate"
 )
 
 const (
@@ -43,7 +44,9 @@ type PlanExecuteTerminalCompletionInput struct {
 	SourceSatisfied              bool
 	SourceSatisfiedEvidencePaths []string
 	SourceSatisfiedEvidence      []plancontract.SourceSatisfiedEvidenceRef
+	RequiredAcceptanceEvidence   []plancontract.AcceptanceEvidenceRequired
 	AcceptanceEvidenceIDs        []string
+	AcceptanceEvidenceClaims     []plancontract.AcceptanceEvidenceClaim
 	FailureID                    string
 	RecordPath                   string
 	PacketPath                   string
@@ -52,45 +55,50 @@ type PlanExecuteTerminalCompletionInput struct {
 }
 
 type PlanExecuteTerminalCompletionRecord struct {
-	SchemaVersion                 string                                  `json:"schema_version"`
-	Type                          string                                  `json:"type"`
-	TS                            string                                  `json:"ts,omitempty"`
-	ProgressPath                  string                                  `json:"progress_path,omitempty"`
-	SessionID                     string                                  `json:"session_id,omitempty"`
-	Phase                         string                                  `json:"phase,omitempty"`
-	Status                        string                                  `json:"status,omitempty"`
-	ReviewStatus                  string                                  `json:"review_status,omitempty"`
-	TerminalClass                 PlanExecuteTerminalClass                `json:"terminal_class"`
-	Outcome                       PlanExecuteTerminalOutcome              `json:"outcome"`
-	ExitCode                      int                                     `json:"exit_code"`
-	ReviewRepairSkipped           bool                                    `json:"review_repair_skipped,omitempty"`
-	FailureKind                   string                                  `json:"failure_kind,omitempty"`
-	FailureReason                 string                                  `json:"failure_reason,omitempty"`
-	FailureID                     string                                  `json:"failure_id,omitempty"`
-	RecordPath                    string                                  `json:"record_path,omitempty"`
-	PacketPath                    string                                  `json:"packet_path,omitempty"`
-	NextAction                    string                                  `json:"next_valid_action,omitempty"`
-	ContractID                    string                                  `json:"contract_id,omitempty"`
-	SnapshotHash                  string                                  `json:"snapshot_hash,omitempty"`
-	ContractHash                  string                                  `json:"contract_hash,omitempty"`
-	RequiredEditPaths             []string                                `json:"required_edit_paths,omitempty"`
-	AllowedEditPaths              []string                                `json:"allowed_edit_paths,omitempty"`
-	WriteAllowedPaths             []string                                `json:"write_allowed_paths,omitempty"`
-	ScopeContractID               string                                  `json:"scope_contract_id,omitempty"`
-	ScopeContractHash             string                                  `json:"scope_contract_hash,omitempty"`
-	SourceSatisfiedEvidencePaths  []string                                `json:"source_satisfied_evidence_paths,omitempty"`
-	SourceSatisfiedEvidence       []PlanExecuteSourceSatisfiedEvidenceRef `json:"source_satisfied_evidence,omitempty"`
-	ChangedPaths                  []string                                `json:"changed_paths,omitempty"`
-	RequiredPathCoverage          []PlanExecuteRequiredPathCoverage       `json:"required_path_coverage,omitempty"`
-	SourceSanity                  []PhaseEvidenceCheck                    `json:"source_sanity,omitempty"`
-	VerificationCommands          []VerificationCommand                   `json:"verification_commands,omitempty"`
-	Verification                  []PhaseEvidenceCheck                    `json:"verification,omitempty"`
-	VerificationSkips             []VerificationSkip                      `json:"verification_skips,omitempty"`
-	VerificationRejects           []VerificationReject                    `json:"verification_rejects,omitempty"`
-	RequiredAcceptanceEvidenceIDs []string                                `json:"required_acceptance_evidence_ids,omitempty"`
-	AcceptanceEvidenceIDs         []string                                `json:"acceptance_evidence_ids,omitempty"`
-	FailureInvariants             []PlanExecuteTerminalInvariant          `json:"failure_invariants,omitempty"`
-	ValidationFailures            []string                                `json:"validation_failures,omitempty"`
+	SchemaVersion                 string                                    `json:"schema_version"`
+	Type                          string                                    `json:"type"`
+	TS                            string                                    `json:"ts,omitempty"`
+	ProgressPath                  string                                    `json:"progress_path,omitempty"`
+	SessionID                     string                                    `json:"session_id,omitempty"`
+	Phase                         string                                    `json:"phase,omitempty"`
+	Status                        string                                    `json:"status,omitempty"`
+	ReviewStatus                  string                                    `json:"review_status,omitempty"`
+	TerminalClass                 PlanExecuteTerminalClass                  `json:"terminal_class"`
+	Outcome                       PlanExecuteTerminalOutcome                `json:"outcome"`
+	WorkflowID                    workflowstate.WorkflowID                  `json:"workflow_id,omitempty"`
+	WorkflowTerminalState         workflowstate.TerminalState               `json:"workflow_terminal_state,omitempty"`
+	Dispatchable                  bool                                      `json:"dispatchable"`
+	ExitCode                      int                                       `json:"exit_code"`
+	ReviewRepairSkipped           bool                                      `json:"review_repair_skipped,omitempty"`
+	FailureKind                   string                                    `json:"failure_kind,omitempty"`
+	FailureReason                 string                                    `json:"failure_reason,omitempty"`
+	FailureID                     string                                    `json:"failure_id,omitempty"`
+	RecordPath                    string                                    `json:"record_path,omitempty"`
+	PacketPath                    string                                    `json:"packet_path,omitempty"`
+	NextAction                    string                                    `json:"next_valid_action,omitempty"`
+	ContractID                    string                                    `json:"contract_id,omitempty"`
+	SnapshotHash                  string                                    `json:"snapshot_hash,omitempty"`
+	ContractHash                  string                                    `json:"contract_hash,omitempty"`
+	RequiredEditPaths             []string                                  `json:"required_edit_paths,omitempty"`
+	AllowedEditPaths              []string                                  `json:"allowed_edit_paths,omitempty"`
+	WriteAllowedPaths             []string                                  `json:"write_allowed_paths,omitempty"`
+	ScopeContractID               string                                    `json:"scope_contract_id,omitempty"`
+	ScopeContractHash             string                                    `json:"scope_contract_hash,omitempty"`
+	SourceSatisfiedEvidencePaths  []string                                  `json:"source_satisfied_evidence_paths,omitempty"`
+	SourceSatisfiedEvidence       []PlanExecuteSourceSatisfiedEvidenceRef   `json:"source_satisfied_evidence,omitempty"`
+	ChangedPaths                  []string                                  `json:"changed_paths,omitempty"`
+	RequiredPathCoverage          []PlanExecuteRequiredPathCoverage         `json:"required_path_coverage,omitempty"`
+	SourceSanity                  []PhaseEvidenceCheck                      `json:"source_sanity,omitempty"`
+	VerificationCommands          []VerificationCommand                     `json:"verification_commands,omitempty"`
+	Verification                  []PhaseEvidenceCheck                      `json:"verification,omitempty"`
+	VerificationSkips             []VerificationSkip                        `json:"verification_skips,omitempty"`
+	VerificationRejects           []VerificationReject                      `json:"verification_rejects,omitempty"`
+	RequiredAcceptanceEvidence    []plancontract.AcceptanceEvidenceRequired `json:"required_acceptance_evidence,omitempty"`
+	RequiredAcceptanceEvidenceIDs []string                                  `json:"required_acceptance_evidence_ids,omitempty"`
+	AcceptanceEvidenceIDs         []string                                  `json:"acceptance_evidence_ids,omitempty"`
+	AcceptanceEvidenceClaims      []plancontract.AcceptanceEvidenceClaim    `json:"acceptance_evidence_claims,omitempty"`
+	FailureInvariants             []PlanExecuteTerminalInvariant            `json:"failure_invariants,omitempty"`
+	ValidationFailures            []string                                  `json:"validation_failures,omitempty"`
 }
 
 type PlanExecuteSourceSatisfiedEvidenceRef struct {
@@ -145,8 +153,10 @@ func NewPlanExecuteTerminalCompletionRecord(state ProgressState, input PlanExecu
 		Verification:                  append([]PhaseEvidenceCheck(nil), state.Executor.Verification...),
 		VerificationSkips:             append([]VerificationSkip(nil), state.Executor.VerificationSkips...),
 		VerificationRejects:           append([]VerificationReject(nil), state.Executor.VerificationRejects...),
+		RequiredAcceptanceEvidence:    append([]plancontract.AcceptanceEvidenceRequired(nil), input.RequiredAcceptanceEvidence...),
 		RequiredAcceptanceEvidenceIDs: append([]string(nil), state.RequiredAcceptanceEvidenceIDs...),
 		AcceptanceEvidenceIDs:         append([]string(nil), acceptanceEvidenceIDs...),
+		AcceptanceEvidenceClaims:      append([]plancontract.AcceptanceEvidenceClaim(nil), input.AcceptanceEvidenceClaims...),
 	}
 	if !input.CompletedAt.IsZero() {
 		record.TS = input.CompletedAt.UTC().Format(time.RFC3339Nano)
@@ -193,13 +203,115 @@ func NormalizePlanExecuteTerminalCompletionRecord(record PlanExecuteTerminalComp
 	record.Verification = normalizePlanExecuteTerminalChecks(record.Verification)
 	record.VerificationSkips = normalizePlanExecuteTerminalVerificationSkips(record.VerificationSkips)
 	record.VerificationRejects = normalizePlanExecuteTerminalVerificationRejects(record.VerificationRejects)
+	record.RequiredAcceptanceEvidence = normalizePlanExecuteTerminalAcceptanceEvidence(record.RequiredAcceptanceEvidence)
+	record.RequiredAcceptanceEvidenceIDs = normalizePlanExecuteTerminalStableIDs(record.RequiredAcceptanceEvidenceIDs)
+	for _, obligation := range record.RequiredAcceptanceEvidence {
+		if obligation.Required && obligation.ID != "" {
+			record.RequiredAcceptanceEvidenceIDs = append(record.RequiredAcceptanceEvidenceIDs, obligation.ID)
+		}
+	}
 	record.RequiredAcceptanceEvidenceIDs = normalizePlanExecuteTerminalStableIDs(record.RequiredAcceptanceEvidenceIDs)
 	record.AcceptanceEvidenceIDs = normalizePlanExecuteTerminalStableIDs(record.AcceptanceEvidenceIDs)
+	record.AcceptanceEvidenceClaims = normalizePlanExecuteTerminalAcceptanceClaims(record.AcceptanceEvidenceClaims)
 	record.TerminalClass, record.Outcome = ClassifyPlanExecuteTerminalCompletion(record)
+	record.WorkflowID, record.WorkflowTerminalState, record.Dispatchable = planExecuteWorkflowClassification(record)
 	record.FailureInvariants = planExecuteTerminalFailureInvariants(record)
-	record.ValidationFailures = PlanExecuteTerminalCompletionValidationFailures(record)
+	if record.TerminalClass == PlanExecuteTerminalClassSuccess {
+		record.ValidationFailures = PlanExecuteTerminalCompletionValidationFailures(record)
+	} else {
+		record.ValidationFailures = planExecuteTerminalUniqueStrings(record.ValidationFailures)
+	}
 
 	return record
+}
+
+func planExecuteWorkflowClassification(record PlanExecuteTerminalCompletionRecord) (workflowstate.WorkflowID, workflowstate.TerminalState, bool) {
+	classification := workflowstate.ClassifyPlanExecuteTerminal(workflowstate.PlanExecuteTerminalInput{
+		Phase:          record.Phase,
+		Status:         record.Status,
+		ReviewStatus:   record.ReviewStatus,
+		ReviewStatusID: planExecuteWorkflowReviewStatus(record.ReviewStatus),
+		TerminalClass:  string(record.TerminalClass),
+		Outcome:        string(record.Outcome),
+		ExitCode:       record.ExitCode,
+		FailureKind:    record.FailureKind,
+		FailureKindID:  planExecuteWorkflowFailureKind(record.FailureKind),
+		FailureReason:  record.FailureReason,
+		NextAction:     record.NextAction,
+		NextActionID:   planExecuteWorkflowNextAction(record.NextAction),
+	})
+
+	return classification.WorkflowID, classification.TerminalState, classification.Dispatchable
+}
+
+func planExecuteWorkflowFailureKind(kind string) workflowstate.PlanExecuteFailureKind {
+	switch canonicalPlanExecuteTerminalToken(kind) {
+	case "planner-blocked":
+		return workflowstate.PlanExecuteFailurePlannerBlocked
+	case "planner-failed":
+		return workflowstate.PlanExecuteFailurePlannerFailed
+	case "plan-artifact-missing":
+		return workflowstate.PlanExecuteFailurePlanArtifactMissing
+	case "plan-artifact-invalid":
+		return workflowstate.PlanExecuteFailurePlanArtifactInvalid
+	case "source-sanity-failed":
+		return workflowstate.PlanExecuteFailureSourceSanityFailed
+	case "source-satisfied-unsupported-evidence":
+		return workflowstate.PlanExecuteFailureSourceSatisfiedUnsupportedEvidence
+	case "verification-failed":
+		return workflowstate.PlanExecuteFailureVerificationFailed
+	case "missing-edit-path-without-new-file-authorization":
+		return workflowstate.PlanExecuteFailureMissingEditPathWithoutNewFileAuth
+	case "terminal-completion-contract-failed":
+		return workflowstate.PlanExecuteFailureTerminalCompletionContractFailed
+	case "executor-failed":
+		return workflowstate.PlanExecuteFailureExecutorFailed
+	case "review-repair-failed":
+		return workflowstate.PlanExecuteFailureReviewRepairFailed
+	case "review-repair-blocked":
+		return workflowstate.PlanExecuteFailureReviewRepairBlocked
+	case "review-repair-degraded":
+		return workflowstate.PlanExecuteFailureReviewRepairDegraded
+	default:
+		return ""
+	}
+}
+
+func planExecuteWorkflowReviewStatus(status string) workflowstate.ReviewStatus {
+	status = canonicalPlanExecuteTerminalToken(status)
+	switch {
+	case status == "passed" || status == "pass":
+		return workflowstate.ReviewStatusPassed
+	case status == "skipped":
+		return workflowstate.ReviewStatusSkipped
+	case strings.Contains(status, "blocked"):
+		return workflowstate.ReviewStatusBlocked
+	case strings.Contains(status, "degraded"):
+		return workflowstate.ReviewStatusDegraded
+	case strings.Contains(status, "failed"):
+		return workflowstate.ReviewStatusFailed
+	default:
+		return ""
+	}
+}
+
+func planExecuteWorkflowNextAction(action string) workflowstate.NextAction {
+	switch canonicalPlanExecuteTerminalToken(action) {
+	case "review-decomposition":
+		return workflowstate.NextActionReviewDecomposition
+	case "answer-blocker":
+		return workflowstate.NextActionAnswerBlocker
+	case "retry-plan-execute":
+		return workflowstate.NextActionRetryPlanExecute
+	case "inspect-failure":
+		return workflowstate.NextActionInspectFailure
+	case "human-intervention":
+		return workflowstate.NextActionHumanIntervention
+	case "none":
+		return workflowstate.NextActionNone
+	default:
+		return ""
+	}
 }
 
 func ClassifyPlanExecuteTerminalCompletion(record PlanExecuteTerminalCompletionRecord) (PlanExecuteTerminalClass, PlanExecuteTerminalOutcome) {
@@ -333,7 +445,17 @@ func planExecuteTerminalAtomContract(record PlanExecuteTerminalCompletionRecord)
 			RequireNoChangedPaths:       record.Outcome == PlanExecuteTerminalOutcomeSourceSatisfied,
 		},
 	}
+	knownAcceptanceObligations := map[string]struct{}{}
+	for _, obligation := range record.RequiredAcceptanceEvidence {
+		atom.AcceptanceObligations = append(atom.AcceptanceObligations, obligation)
+		if obligation.ID != "" {
+			knownAcceptanceObligations[obligation.ID] = struct{}{}
+		}
+	}
 	for _, id := range record.RequiredAcceptanceEvidenceIDs {
+		if _, ok := knownAcceptanceObligations[id]; ok {
+			continue
+		}
 		atom.AcceptanceObligations = append(atom.AcceptanceObligations, plancontract.AcceptanceEvidenceRequired{
 			ID:       id,
 			Required: true,
@@ -377,6 +499,7 @@ func planExecuteTerminalEvidenceInput(record PlanExecuteTerminalCompletionRecord
 		ReviewPassed:              planExecuteTerminalReviewValidationFailure(record) == "",
 		RequiredTestResults:       requiredTests,
 		AcceptanceEvidenceIDs:     record.AcceptanceEvidenceIDs,
+		AcceptanceEvidenceClaims:  record.AcceptanceEvidenceClaims,
 	}
 }
 
@@ -738,6 +861,63 @@ func normalizePlanExecuteTerminalStableIDs(values []string) []string {
 	}
 
 	sort.Strings(out)
+
+	return out
+}
+
+func normalizePlanExecuteTerminalAcceptanceEvidence(obligations []plancontract.AcceptanceEvidenceRequired) []plancontract.AcceptanceEvidenceRequired {
+	out := make([]plancontract.AcceptanceEvidenceRequired, 0, len(obligations))
+	seen := map[string]struct{}{}
+
+	for _, obligation := range obligations {
+		obligation.ID = plancontract.NormalizeStableContractIDPart(obligation.ID)
+		obligation.Description = strings.TrimSpace(obligation.Description)
+		obligation.Source = strings.TrimSpace(obligation.Source)
+		obligation.Threshold = strings.TrimSpace(obligation.Threshold)
+		if obligation.ID == "" && obligation.Description == "" && obligation.Threshold == "" {
+			continue
+		}
+		if !obligation.Required {
+			obligation.Required = true
+		}
+
+		key := obligation.ID + "\x00" + obligation.Description + "\x00" + obligation.Threshold
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
+		out = append(out, obligation)
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].ID+"\x00"+out[i].Threshold < out[j].ID+"\x00"+out[j].Threshold
+	})
+
+	return out
+}
+
+func normalizePlanExecuteTerminalAcceptanceClaims(claims []plancontract.AcceptanceEvidenceClaim) []plancontract.AcceptanceEvidenceClaim {
+	out := make([]plancontract.AcceptanceEvidenceClaim, 0, len(claims))
+	seen := map[string]struct{}{}
+
+	for _, claim := range claims {
+		claim.ID = plancontract.NormalizeStableContractIDPart(claim.ID)
+		claim.Value = strings.TrimSpace(claim.Value)
+		if claim.ID == "" {
+			continue
+		}
+		if _, ok := seen[claim.ID]; ok {
+			continue
+		}
+
+		seen[claim.ID] = struct{}{}
+		out = append(out, claim)
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].ID < out[j].ID
+	})
 
 	return out
 }

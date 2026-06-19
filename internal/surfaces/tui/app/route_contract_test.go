@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"idiom/internal/platform/config"
-	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/modepolicy"
 )
 
 func TestRouteContractClassifierUnavailableNaturalLanguageFallsBackToConversation(t *testing.T) {
@@ -20,8 +20,8 @@ func TestRouteContractClassifierUnavailableNaturalLanguageFallsBackToConversatio
 		},
 	}
 
-	plan := m.classifyTurnRoute(context.Background(), "Can we shorten the displayed model label to just the alias?", agent.BuildMode())
-	contract := projectRouteContract(plan, agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), "Can we shorten the displayed model label to just the alias?", modepolicy.BuildMode())
+	contract := projectRouteContract(plan, modepolicy.BuildMode())
 
 	if plan.Family != "conversation" || plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("fallback route = %#v, want conversation/main/direct_answer", plan)
@@ -53,8 +53,8 @@ func TestRouteContractClassifierImplementationActivatesGuardedMutationAuthority(
 		client: llama.NewClient(server.URL, time.Second),
 	}
 
-	plan := m.classifyTurnRoute(context.Background(), "Shorten the displayed model label to just the alias.", agent.BuildMode())
-	contract := projectRouteContract(plan, agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), "Shorten the displayed model label to just the alias.", modepolicy.BuildMode())
+	contract := projectRouteContract(plan, modepolicy.BuildMode())
 
 	if contract.Source != routeSourceClassifier {
 		t.Fatalf("source = %q, want classifier", contract.Source)
@@ -73,7 +73,7 @@ func TestRouteContractTypedCommandActivatesExplicitMutationAuthority(t *testing.
 	contract := projectRouteContract(turnRoutePlan{
 		Family:      "implementation",
 		RouteSource: routeSourceTypedCommand,
-	}, agent.BuildMode())
+	}, modepolicy.BuildMode())
 
 	if contract.Source != routeSourceTypedCommand {
 		t.Fatalf("source = %q, want typed command", contract.Source)
@@ -107,8 +107,8 @@ func TestRouteContractProductionTypedCommandPlansActivateExplicitMutationAuthori
 
 func TestRouteContractPromptWordingAndPathShapeDoNotGrantMutationAuthority(t *testing.T) {
 	prompt := "Implement the change. Required edit paths: internal/surfaces/tui/app/route_contract.go, internal/surfaces/tui/app/route_contract_test.go."
-	plan := fallbackTurnRoute(prompt, agent.BuildMode())
-	contract := projectRouteContract(plan, agent.BuildMode())
+	plan := fallbackTurnRoute(prompt, modepolicy.BuildMode())
+	contract := projectRouteContract(plan, modepolicy.BuildMode())
 
 	if contract.Source != routeSourceConservativeFallback {
 		t.Fatalf("source = %q, want conservative fallback", contract.Source)
@@ -149,8 +149,8 @@ func TestRouteContractOutcomeCorrectsPostCompletionDefectReportToImplementation(
 		client: llama.NewClient(server.URL, time.Second),
 	}
 
-	plan := m.classifyTurnRoute(context.Background(), "that didnt quite fix it - the cursor still goes off the screen.", agent.BuildMode())
-	contract := projectRouteContract(plan, agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), "that didnt quite fix it - the cursor still goes off the screen.", modepolicy.BuildMode())
+	contract := projectRouteContract(plan, modepolicy.BuildMode())
 
 	if contract.Family != "implementation" || contract.Lane != "implement" || contract.Contract != "implementation_result" {
 		t.Fatalf("post-completion defect report should be corrected to implementation, got %#v", contract)
@@ -191,8 +191,8 @@ func TestRouteContractReadOnlyConstraintBeatsImplementationOutcome(t *testing.T)
 		client: llama.NewClient(server.URL, time.Second),
 	}
 
-	plan := m.classifyTurnRoute(context.Background(), "Before changing anything, why didn't that fix it?", agent.BuildMode())
-	contract := projectRouteContract(plan, agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), "Before changing anything, why didn't that fix it?", modepolicy.BuildMode())
+	contract := projectRouteContract(plan, modepolicy.BuildMode())
 
 	if contract.Family != "conversation" || contract.Lane != "main" || contract.Contract != "direct_answer" {
 		t.Fatalf("explicit read-only question should be corrected to conversation, got %#v", contract)
@@ -236,8 +236,8 @@ func TestRouteContractEvidenceReportPromptBeatsMisclassifiedImplementation(t *te
 		client: llama.NewClient(server.URL, time.Second),
 	}
 
-	plan := m.classifyTurnRoute(context.Background(), prompt, agent.BuildMode())
-	contract := projectRouteContract(plan, agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), prompt, modepolicy.BuildMode())
+	contract := projectRouteContract(plan, modepolicy.BuildMode())
 
 	if contract.Family != "conversation" || contract.Lane != "main" || contract.Contract != "direct_answer" {
 		t.Fatalf("evidence-report prompt should be corrected to conversation, got %#v", contract)
@@ -258,7 +258,7 @@ func TestCorrectTurnRoutePlanKeepsDebugAndFixImplementation(t *testing.T) {
 		Family:           "investigate_then_implement",
 		RequestedOutcome: "diagnose_then_change",
 		WriteIntent:      "yes",
-	}, prompt, agent.BuildMode())
+	}, prompt, modepolicy.BuildMode())
 
 	if plan.Family != "investigate_then_implement" || plan.InitialLane != "explore" || plan.FollowupLane != "implement" {
 		t.Fatalf("debug-and-fix prompt should stay implementation-shaped, got %#v", plan)
@@ -284,7 +284,7 @@ func TestEvidenceReportPromptMutationGuardUsesWholeWords(t *testing.T) {
 			Family:           "investigate_then_implement",
 			RequestedOutcome: "diagnose_then_change",
 			WriteIntent:      "yes",
-		}, prompt, agent.BuildMode())
+		}, prompt, modepolicy.BuildMode())
 
 		if plan.Family != "conversation" || plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 			t.Fatalf("descriptive RCA wording should not be treated as mutation intent for %q, got %#v", prompt, plan)
@@ -310,7 +310,7 @@ func TestEvidenceReportPromptDoesNotOverrideExplicitFollowupMutation(t *testing.
 			Family:           "investigate_then_implement",
 			RequestedOutcome: "diagnose_then_change",
 			WriteIntent:      "yes",
-		}, prompt, agent.BuildMode())
+		}, prompt, modepolicy.BuildMode())
 
 		if plan.Family != "investigate_then_implement" || plan.InitialLane != "explore" || plan.FollowupLane != "implement" {
 			t.Fatalf("explicit follow-up mutation should stay implementation-shaped for %q, got %#v", prompt, plan)

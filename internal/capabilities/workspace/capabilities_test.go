@@ -32,14 +32,18 @@ func TestReadOnlyCapabilityRegistryMapsStableVocabularyToAdapters(t *testing.T) 
 	}
 
 	wantIDs := []string{
+		string(ReadOnlyCapabilityLocalizeChange),
+		string(ReadOnlyCapabilityQueryContext),
 		string(ReadOnlyCapabilityFileOutline),
 		string(ReadOnlyCapabilityInspectSymbol),
 		string(ReadOnlyCapabilitySymbolLookup),
 		string(ReadOnlyCapabilityDefinition),
 		string(ReadOnlyCapabilityReferences),
+		string(ReadOnlyCapabilityImplementations),
 		string(ReadOnlyCapabilityCallsFrom),
 		string(ReadOnlyCapabilityCallsInto),
 		string(ReadOnlyCapabilityRelatedFiles),
+		string(ReadOnlyCapabilityAuditBehavior),
 	}
 	gotIDs := make([]string, 0, len(registry.Capabilities))
 
@@ -100,9 +104,46 @@ func TestReadOnlyCapabilityRegistryMapsStableVocabularyToAdapters(t *testing.T) 
 	}
 }
 
-func TestReadOnlyCapabilityRegistryIsIntentionallyNarrowerThanCodeNavigate(t *testing.T) {
+func TestReadOnlyCapabilityResolverDoesNotFacadeWriteCapabilities(t *testing.T) {
 	for _, capability := range []string{
-		CodeNavigateCapabilityName(CapImplementations),
+		"edit",
+		"write",
+		"apply-patch",
+		"submit-plan",
+		"delegate-edit",
+	} {
+		if resolution, ok := ResolveReadOnlyCapability(capability, nil); ok {
+			t.Fatalf("write capability %q must not resolve through read-only facade: %#v", capability, resolution)
+		}
+		if deferred, ok := deferredReadOnlyCapabilityAdapter(capability); ok {
+			t.Fatalf("write capability %q must not be deferred as read-only evidence: %#v", capability, deferred)
+		}
+	}
+
+	for _, tool := range []string{
+		ToolNameEditFile,
+		ToolNameWriteFile,
+		ToolNameApplyPatch,
+		ToolNameSubmitPlan,
+		ToolNameDelegateEdit,
+	} {
+		if capabilities := EvidenceCapabilitiesForTool(tool); len(capabilities) != 0 {
+			t.Fatalf("write tool %s should not expose read-only evidence capabilities: %#v", tool, capabilities)
+		}
+		if got := CapabilityClassificationForTool(tool); got != CapabilityClassWriteSideEffect {
+			t.Fatalf("write tool %s classification = %q, want write side effect", tool, got)
+		}
+	}
+}
+
+func TestReadOnlyCapabilityRegistryPromotesStableSubsetOfCodeNavigate(t *testing.T) {
+	if implementations, ok := ResolveReadOnlyCapability(CodeNavigateCapabilityName(CapImplementations), nil); !ok ||
+		implementations.Capability.ID != string(ReadOnlyCapabilityImplementations) {
+
+		t.Fatalf("implementations should be promoted as a stable product capability, got ok=%v resolution=%#v", ok, implementations)
+	}
+
+	for _, capability := range []string{
 		CodeNavigateCapabilityName(CapExtractBody),
 	} {
 		if _, ok := ResolveReadOnlyCapability(capability, nil); ok {
@@ -126,14 +167,21 @@ func TestReadOnlyCapabilityRegistryIsIntentionallyNarrowerThanCodeNavigate(t *te
 
 func TestReadOnlyCapabilityEvidenceCapabilitiesProjectResolverVocabulary(t *testing.T) {
 	want := []string{
+		"localize_change",
+		"query_context",
 		"inspect_file",
 		"inspect_symbol",
 		"find_symbol",
 		"find_definition",
 		"find_references",
+		"find_implementations",
 		"calls_from",
 		"calls_into",
 		"related_files",
+		"source_sanity",
+		"trace_runtime_failure",
+		"verify_edit",
+		"audit_behavior",
 	}
 	got := ReadOnlyCapabilityEvidenceCapabilities()
 
@@ -895,9 +943,11 @@ func TestReadOnlyCapabilityCoverageReportsUnmappedAdapters(t *testing.T) {
 		t.Fatalf("expected status/fallback state metrics in coverage: %#v", coverage)
 	}
 
-	if coverage.RoutedCapabilityCount != 8 ||
+	if coverage.RoutedCapabilityCount != 12 ||
+		!slices.Contains(coverage.RoutedCapabilities, string(ReadOnlyCapabilityLocalizeChange)) ||
 		!slices.Contains(coverage.RoutedCapabilities, string(ReadOnlyCapabilityDefinition)) ||
-		!slices.Contains(coverage.RoutedCapabilities, string(ReadOnlyCapabilityRelatedFiles)) {
+		!slices.Contains(coverage.RoutedCapabilities, string(ReadOnlyCapabilityRelatedFiles)) ||
+		!slices.Contains(coverage.RoutedCapabilities, string(ReadOnlyCapabilityAuditBehavior)) {
 
 		t.Fatalf("expected routed read-only capabilities in coverage: %#v", coverage)
 	}
@@ -912,7 +962,7 @@ func TestReadOnlyCapabilityCoverageReportsUnmappedAdapters(t *testing.T) {
 		t.Fatalf("expected deferred fallback metrics in coverage: %#v", coverage)
 	}
 
-	if coverage.RouteStateCounts["routed"] != 8 || coverage.RouteStateCounts["deferred"] == 0 || len(coverage.RouteStates) == 0 {
+	if coverage.RouteStateCounts["routed"] != 12 || coverage.RouteStateCounts["deferred"] != 3 || len(coverage.RouteStates) == 0 {
 		t.Fatalf("expected routed/deferred route state metrics in coverage: %#v", coverage)
 	}
 
@@ -941,8 +991,8 @@ func TestReadOnlyCapabilityCoverageReportsUnmappedAdapters(t *testing.T) {
 		t.Fatalf("source_sanity should be named as deferred mixed/unknown adapter: %#v", coverage.DeferredAdapters)
 	}
 
-	if !slices.Contains(coverage.UnmappedAdapters, "context_pack") {
-		t.Fatalf("expected context_pack to remain an unmapped read-only adapter in P3.2: %#v", coverage.UnmappedAdapters)
+	if slices.Contains(coverage.UnmappedAdapters, "context_pack") {
+		t.Fatalf("context_pack should be covered by localize-change in Phase 5: %#v", coverage.UnmappedAdapters)
 	}
 
 	if slices.Contains(coverage.UnmappedAdapters, "go_definition") {
@@ -1039,12 +1089,21 @@ func TestHarnessAuditReportsCapabilityRegistryMetrics(t *testing.T) {
 		t.Fatalf("harness audit should report fallback state metrics, got %#v", got)
 	}
 
-	if got.RouteStateCounts["routed"] != 8 || got.RouteStateCounts["deferred"] == 0 {
+	if got.RouteStateCounts["routed"] != 12 || got.RouteStateCounts["deferred"] != 3 {
 		t.Fatalf("harness audit should report routed/deferred route states, got %#v", got.RouteStateCounts)
 	}
 
 	if got.UnsafeMappedAdapterCount != 0 || len(got.UnsafeMappedAdapters) != 0 {
 		t.Fatalf("harness audit should report zero unsafe read-only mappings, got %#v", got.UnsafeMappedAdapters)
+	}
+
+	allFindings := append(append([]harnessAuditFinding(nil), report.Findings...), report.HistoricalFindings...)
+	if got.UnmappedAdapterCount > 0 && !slices.ContainsFunc(allFindings, func(finding harnessAuditFinding) bool {
+		return finding.ID == "unmapped_capability_adapter" &&
+			finding.Severity == "info" &&
+			len(finding.Tools) == got.UnmappedAdapterCount
+	}) {
+		t.Fatalf("harness audit should surface unmapped adapters as an informational finding, findings=%#v historical=%#v unmapped=%#v", report.Findings, report.HistoricalFindings, got.UnmappedAdapters)
 	}
 
 	if !slices.ContainsFunc(got.DeferredAdapters, func(adapter ReadOnlyCapabilityDeferredAdapterSpec) bool {
@@ -1066,10 +1125,10 @@ func TestToolCapabilityMetadataUsesOneStaticSource(t *testing.T) {
 	}{
 		{
 			tool:                readOnlyCapabilityToolName,
-			wantCapabilities:    []string{"inspect_file", "inspect_symbol", "find_symbol", "find_definition", "find_references", "calls_from", "calls_into", "related_files"},
+			wantCapabilities:    []string{"localize_change", "query_context", "inspect_file", "inspect_symbol", "find_symbol", "find_definition", "find_references", "find_implementations", "calls_from", "calls_into", "related_files", "source_sanity", "trace_runtime_failure", "verify_edit", "audit_behavior"},
 			wantClassification:  CapabilityClassRouted,
 			mutateFirstCall:     true,
-			wantFirstCapability: "inspect_file",
+			wantFirstCapability: "localize_change",
 		},
 		{
 			tool:               "context_query",

@@ -94,6 +94,10 @@ func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T)
 		t.Fatalf("callable tools missing read_file: %#v", result.Protocol.CallableTools)
 	}
 
+	if !slices.Contains(result.Protocol.HiddenTools, "apply_patch") || !slices.Contains(result.Protocol.HiddenTools, "shell") {
+		t.Fatalf("hidden tools missing forbidden tool projection: %#v", result.Protocol.HiddenTools)
+	}
+
 	if result.Protocol.NativeToolPolicy != "textual_unless_forced" ||
 		result.Protocol.ToolChoice != "none" ||
 		result.Protocol.ResponseFormat != "json" {
@@ -159,6 +163,9 @@ func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T)
 
 	if !slices.Contains(result.Protocol.CompactPacket.TargetRefs, "pack:e7818bd1b0006176") {
 		t.Fatalf("compact packet missing target packet ref: %#v", result.Protocol.CompactPacket.TargetRefs)
+	}
+	if !hasAuthoritySource(result.Contract.Authority, "target_packet", "pack:e7818bd1b0006176", autonomy.FreshnessUnknown) {
+		t.Fatalf("target packet authority should remain freshness-unknown until typed freshness is supplied: %#v", result.Contract.Authority)
 	}
 
 	if !slices.Contains(result.Protocol.CompactPacket.PathRefs, "internal/runtime/agent/runner.go") {
@@ -253,6 +260,38 @@ func TestCompilePlanExecutePlannerPreservesExplicitEmptyCallableTools(t *testing
 	}
 }
 
+func TestCompilePlanExecutePlannerDefaultActionClassesUseAutonomyVocabulary(t *testing.T) {
+	input := plannerFixtureInput()
+
+	input.Protocol.CallableActionClasses = nil
+	input.Protocol.InvalidActionClasses = nil
+
+	result, err := CompilePlanExecutePlanner(input)
+	if err != nil {
+		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
+	}
+
+	wantCallable := sortedStrings(autonomy.ActionClassTokens(
+		autonomy.ActionClassRead,
+		autonomy.ActionClassSearch,
+		autonomy.ActionClassSubmitPlan,
+		autonomy.ActionClassSourceSatisfied,
+		autonomy.ActionClassBlocker,
+	))
+	if !slices.Equal(result.Protocol.CallableActionClasses, wantCallable) {
+		t.Fatalf("callable action classes = %#v, want autonomy vocabulary %#v", result.Protocol.CallableActionClasses, wantCallable)
+	}
+
+	wantInvalid := sortedStrings(autonomy.ActionClassTokens(
+		autonomy.ActionClassPerEditWrite,
+		autonomy.ActionClassVerify,
+		autonomy.ActionClassProseFinal,
+	))
+	if !slices.Equal(result.Protocol.InvalidActionClasses, wantInvalid) {
+		t.Fatalf("invalid action classes = %#v, want autonomy vocabulary %#v", result.Protocol.InvalidActionClasses, wantInvalid)
+	}
+}
+
 func TestCompilePlanExecutePlannerIDsAreStableForEquivalentInput(t *testing.T) {
 	first := compilePlannerFixture(t)
 
@@ -316,6 +355,7 @@ func TestCompilePlanExecutePlannerIDsAreStableForEquivalentInput(t *testing.T) {
 			PhaseID:                "plan_execute.required_source",
 			ExpectedVisibleOutput:  "visible_text_tool_request",
 			VisibleTools:           []string{"context_pack", "read_file", "search_content", "submit_plan"},
+			HiddenTools:            []string{"apply_patch", "shell"},
 			CallableActionClasses:  []string{"read", "search", "submit_plan", "source_satisfied", "blocker"},
 			InvalidActionClasses:   []string{"per_edit_write", "verify", "prose_final"},
 			TerminalResponseShapes: []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"},
@@ -413,6 +453,45 @@ func TestCompilePlanExecutePlannerRejectsInvalidProtocolVocabulary(t *testing.T)
 			},
 		},
 		{
+			name: "unmapped required tool",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.RequiredTools = append(input.RequiredTools, "magic_tool")
+			},
+		},
+		{
+			name: "unmapped visible tool",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Protocol.VisibleTools = append(input.Protocol.VisibleTools, "magic_tool")
+			},
+		},
+		{
+			name: "unmapped callable tool",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Protocol.CallableTools = append(input.Protocol.CallableTools, "magic_tool")
+				input.Protocol.CallableToolsSpecified = true
+			},
+		},
+		{
+			name: "unmapped hidden tool",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Protocol.HiddenTools = append(input.Protocol.HiddenTools, "magic_tool")
+			},
+		},
+		{
+			name: "hidden visible overlap",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Protocol.HiddenTools = append(input.Protocol.HiddenTools, "read_file")
+			},
+		},
+		{
+			name: "hidden callable overlap",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Protocol.HiddenTools = append(input.Protocol.HiddenTools, "read_file")
+				input.Protocol.CallableTools = []string{"read_file"}
+				input.Protocol.CallableToolsSpecified = true
+			},
+		},
+		{
 			name: "invalid action class",
 			mutate: func(input *PlanExecutePlannerInput) {
 				input.Protocol.CallableActionClasses = append(input.Protocol.CallableActionClasses, "invented_action")
@@ -505,6 +584,30 @@ func TestCompilePlanExecutePlannerRejectsInvalidProtocolVocabulary(t *testing.T)
 			},
 		},
 		{
+			name: "callable forbidden overlap",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Protocol.CallableTools = []string{"read_file"}
+				input.Protocol.CallableToolsSpecified = true
+				input.ForbiddenTools = append(input.ForbiddenTools, "read_file")
+			},
+		},
+		{
+			name: "callable forbidden capability overlap",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Protocol.VisibleTools = append(input.Protocol.VisibleTools, "search_files")
+				input.Protocol.CallableTools = []string{"search_files"}
+				input.Protocol.CallableToolsSpecified = true
+				input.ForbiddenTools = append(input.ForbiddenTools, "search_content")
+			},
+		},
+		{
+			name: "callable tool must be visible",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Protocol.CallableTools = []string{"history_range"}
+				input.Protocol.CallableToolsSpecified = true
+			},
+		},
+		{
 			name: "non-passive enforcement mode",
 			mutate: func(input *PlanExecutePlannerInput) {
 				input.Runtime.EnforcementMode = "enforce"
@@ -531,6 +634,12 @@ func TestCompilePlanExecutePlannerRejectsInvalidProtocolVocabulary(t *testing.T)
 			name: "raw marker in structured schema",
 			mutate: func(input *PlanExecutePlannerInput) {
 				input.Protocol.StructuredSchemaNames = append(input.Protocol.StructuredSchemaNames, "raw_prompt")
+			},
+		},
+		{
+			name: "raw marker in hidden tool",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Protocol.HiddenTools = append(input.Protocol.HiddenTools, "raw_prompt")
 			},
 		},
 		{
@@ -812,6 +921,7 @@ func plannerFixtureInput() PlanExecutePlannerInput {
 			PhaseID:                "plan_execute.required_source",
 			ExpectedVisibleOutput:  "visible_text_tool_request",
 			VisibleTools:           []string{"context_pack", "read_file", "search_content", "submit_plan"},
+			HiddenTools:            []string{"apply_patch", "shell"},
 			CallableActionClasses:  []string{"read", "search", "submit_plan", "source_satisfied", "blocker"},
 			InvalidActionClasses:   []string{"per_edit_write", "verify", "prose_final"},
 			TerminalResponseShapes: []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"},
@@ -837,6 +947,16 @@ func findActiveAuthorityDecision(t *testing.T, result CompileResult) autonomy.Po
 	t.Fatalf("missing %s policy decision in %#v", InvariantActiveAuthority, result.Contract.PolicyDecisions)
 
 	return autonomy.PolicyDecision{}
+}
+
+func hasAuthoritySource(sources []autonomy.AuthoritySource, kind string, ref string, freshness autonomy.Freshness) bool {
+	for _, source := range sources {
+		if source.Kind == kind && source.Ref == ref && source.Freshness == freshness {
+			return true
+		}
+	}
+
+	return false
 }
 
 func assertRole(t *testing.T, roleByPath map[string][]autonomy.PathRoleKind, path string, role autonomy.PathRoleKind) {
@@ -908,6 +1028,12 @@ func degradationDecisionsByInvariant(decisions []DegradationDecision) map[string
 		out[decision.InvariantID] = decision
 	}
 
+	return out
+}
+
+func sortedStrings(values []string) []string {
+	out := slices.Clone(values)
+	slices.Sort(out)
 	return out
 }
 

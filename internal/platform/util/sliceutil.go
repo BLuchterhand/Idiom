@@ -42,7 +42,6 @@ func AppendUniqueMulti(values []string, additions ...string) []string {
 	return values
 }
 
-
 func LimitSlice(values []string, limit int) []string {
 	if limit <= 0 || len(values) <= limit {
 		return append([]string(nil), values...)
@@ -139,4 +138,3 @@ func Prefix(values []string, max int) []string {
 
 	return values[:max]
 }
-

@@ -10,8 +10,8 @@ import (
 	"unicode"
 
 	"idiom/internal/platform/util"
-	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -62,7 +62,7 @@ func routeClassifierFamilyEnumList() string {
 	}, ", ")
 }
 
-func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode agent.Mode) turnRoutePlan {
+func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode modepolicy.Mode) turnRoutePlan {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return fallbackTurnRoute(prompt, mode)
@@ -85,7 +85,7 @@ func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode agent
 	return fallback
 }
 
-func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, mode agent.Mode) (turnRoutePlan, bool) {
+func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, mode modepolicy.Mode) (turnRoutePlan, bool) {
 	if m == nil {
 		return turnRoutePlan{}, false
 	}
@@ -212,7 +212,7 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 	return plan, plan.Family != ""
 }
 
-func (m *Model) repairTurnRouteClassification(ctx context.Context, client llama.LLMClient, mode agent.Mode, classifierPrompt string, invalid string, parseErr error) (turnRoutePlan, error) {
+func (m *Model) repairTurnRouteClassification(ctx context.Context, client llama.LLMClient, mode modepolicy.Mode, classifierPrompt string, invalid string, parseErr error) (turnRoutePlan, error) {
 	if client == nil {
 		return turnRoutePlan{}, fmt.Errorf("no classifier client")
 	}
@@ -441,7 +441,7 @@ func renderRecentConversationForRouting(messages []llama.ChatMessage, max int) s
 	return strings.TrimSpace(b.String())
 }
 
-func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
+func normalizeTurnRoutePlan(plan turnRoutePlan, mode modepolicy.Mode) turnRoutePlan {
 	source := plan.RouteSource
 	if source != "" {
 		source = normalizeRouteSource(source)
@@ -574,7 +574,7 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 	return plan
 }
 
-func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent.Mode) turnRoutePlan {
+func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode modepolicy.Mode) turnRoutePlan {
 	normalized := normalizeTurnRoutePlan(plan, mode)
 	if promptRequestsRepositoryArchitectureEvidence(prompt) && !isImplementationLikeFamily(normalized.Family) {
 		normalized.Family = "architecture"
@@ -658,7 +658,7 @@ func promptRequestsRepositoryArchitectureEvidence(prompt string) bool {
 	)
 }
 
-func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode agent.Mode) (turnRoutePlan, bool) {
+func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode modepolicy.Mode) (turnRoutePlan, bool) {
 	if plan.ReadOnlyConstraint || plan.WriteIntent == "no" {
 		if isImplementationLikeFamily(plan.Family) {
 			return readOnlyRouteForOutcome(plan, mode, "route_outcome_read_only_constraint"), true
@@ -720,7 +720,7 @@ func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode agent.Mode) (t
 	return plan, false
 }
 
-func readOnlyRouteForOutcome(plan turnRoutePlan, mode agent.Mode, reasonCode string) turnRoutePlan {
+func readOnlyRouteForOutcome(plan turnRoutePlan, mode modepolicy.Mode, reasonCode string) turnRoutePlan {
 	switch plan.RequestedOutcome {
 	case "diagnose":
 		plan.Family = "conversation"
@@ -1073,16 +1073,67 @@ func shouldPreferFallbackRoute(fallback turnRoutePlan, planned turnRoutePlan, pr
 	return fallbackFamily != "conversation" && plannedFamily == "conversation"
 }
 
-func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
+func fallbackTurnRoute(prompt string, mode modepolicy.Mode) turnRoutePlan {
 	// Human-facing TUI lane changes must never be inferred from prompt wording.
 	// If the classifier is unavailable or declines to route, stay conservative:
 	// natural language remains conversation, while typed slash commands enter
 	// their lanes through explicit command handlers outside this fallback.
+	if strings.EqualFold(mode.Name, "build") && promptRequestsFileDeletionFollowup(prompt) {
+		return normalizeTurnRoutePlan(turnRoutePlan{
+			Family:           "implementation",
+			InitialLane:      "implement",
+			Contract:         "implementation_result",
+			RequestedOutcome: "change_workspace",
+			WriteIntent:      "yes",
+			Reason:           "route_fallback_explicit_file_delete_followup",
+			ReasonCodes:      []string{"route_fallback_explicit_file_delete_followup"},
+			RouteSource:      routeSourceConservativeFallback,
+		}, mode)
+	}
+
 	if strings.EqualFold(mode.Name, "plan") {
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture", RouteSource: routeSourceConservativeFallback}, mode)
 	}
 
 	return normalizeTurnRoutePlan(turnRoutePlan{Family: "conversation", RouteSource: routeSourceConservativeFallback}, mode)
+}
+
+func promptRequestsFileDeletionFollowup(prompt string) bool {
+	words := plannerWordText(prompt)
+	if words == " " || !plannerWordsContainDirectiveVerb(words, "delete", "deleting", "remove", "removing") {
+		return false
+	}
+
+	if plannerWordsContainAnyWholePhrase(words,
+		"remove text from",
+		"remove content from",
+		"remove line from",
+		"remove lines from",
+		"remove string from",
+		"remove snippet from",
+	) {
+		return false
+	}
+
+	if plannerWordsContainAnyWholePhrase(words,
+		"that file",
+		"this file",
+		"the file",
+		"new file",
+		"created file",
+		"file you just created",
+		"file just created",
+	) {
+		return true
+	}
+
+	for _, field := range strings.Fields(words) {
+		if strings.Contains(field, ".") && !strings.HasPrefix(field, ".") && !strings.HasSuffix(field, ".") {
+			return true
+		}
+	}
+
+	return false
 }
 
 func isImplementationLikeFamily(family string) bool {
@@ -1197,7 +1248,7 @@ func renderTurnRoutePlan(plan turnRoutePlan) string {
 	return strings.Join(parts, " ")
 }
 
-func turnRoutePlanRuntimeBrief(plan turnRoutePlan, mode agent.Mode, workspaceAllowed []string) workerruntime.WorkerRuntimeBrief {
+func turnRoutePlanRuntimeBrief(plan turnRoutePlan, mode modepolicy.Mode, workspaceAllowed []string) workerruntime.WorkerRuntimeBrief {
 	plan = normalizeTurnRoutePlan(plan, mode)
 
 	brief := workerruntime.RuntimeBriefForTaskFamily(plan.Family, util.FirstNonEmpty(plan.InitialLane, "main"), workspaceAllowed)

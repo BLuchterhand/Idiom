@@ -2590,7 +2590,7 @@ func TestHarnessAuditBehaviorIncludesContractCoverage(t *testing.T) {
 
 	lines = append(lines, string(wrappedFrictionLine))
 	lines = append(lines, "")
-	writeWorkspaceFile(t, filepath.Join(root, "logs", "telemetry", "contracts.jsonl"), strings.Join(lines, "\n"))
+	writeWorkspaceFile(t, filepath.Join(root, "logs", "telemetry", "20260513-210100.000-contracts.jsonl"), strings.Join(lines, "\n"))
 
 	mgr := NewManager(config.Workspace{Root: root, CWD: root})
 
@@ -3052,7 +3052,7 @@ func TestHarnessAuditBehaviorRejectsInvalidAutonomyEvents(t *testing.T) {
 		`{"schema_version":"idiom.autonomy.event.v1","event_id":"event-invalid","type":"not_a_real_event","effect":"observe_only","occurred_at":"2026-05-13T21:01:00Z","sequence":1,"contract_id":"contract_invalid","lifecycle":{"reason":"bad type"}}`,
 		"",
 	}
-	writeWorkspaceFile(t, filepath.Join(root, "logs", "telemetry", "contracts.jsonl"), strings.Join(lines, "\n"))
+	writeWorkspaceFile(t, filepath.Join(root, "logs", "telemetry", "20260513-210100.000-contracts.jsonl"), strings.Join(lines, "\n"))
 
 	mgr := NewManager(config.Workspace{Root: root, CWD: root})
 
@@ -3078,11 +3078,11 @@ func TestHarnessAuditBehaviorRejectsInvalidAutonomyEvents(t *testing.T) {
 		t.Fatalf("expected invalid autonomy event warning, got %#v", report.LogBehavior)
 	}
 
-	if !slices.ContainsFunc(report.Findings, func(finding harnessAuditFinding) bool {
-		return finding.ID == "contract_event_invalid" && finding.Severity == "medium"
+	if !slices.ContainsFunc(report.HistoricalFindings, func(finding harnessAuditFinding) bool {
+		return finding.ID == "historical_contract_event_invalid" && finding.Severity == "info"
 	}) {
 
-		t.Fatalf("expected invalid contract event finding, got %#v", report.Findings)
+		t.Fatalf("expected historical invalid contract event finding, got current=%#v historical=%#v", report.Findings, report.HistoricalFindings)
 	}
 }
 
@@ -3794,6 +3794,33 @@ func TestContextTelemetryFieldsIncludeCollectorReports(t *testing.T) {
 	coverage, ok := fields["context_collector_coverage_names"].([]string)
 	if !ok || !slices.Contains(coverage, "python_index") {
 		t.Fatalf("missing collector coverage names: %#v", fields)
+	}
+}
+
+func TestContextTelemetryFieldsIncludeBoundedFreshnessPathSamples(t *testing.T) {
+	fields := ContextTelemetryFields("context_pack", `{
+  "freshness": {
+    "policy": "read_through",
+    "fresh_for_scope": false,
+    "stale_path_count": 6,
+    "missing_path_count": 2,
+    "stale_paths": ["pkg/a.go", "pkg/b.go", "pkg/c.go", "pkg/d.go", "pkg/e.go", "pkg/f.go"],
+    "missing_paths": ["pkg/missing.go", "", "pkg/generated.go"]
+  }
+}`)
+
+	staleSamples, ok := fields["context_freshness_stale_path_samples"].([]string)
+	if !ok || !reflect.DeepEqual(staleSamples, []string{"pkg/a.go", "pkg/b.go", "pkg/c.go", "pkg/d.go", "pkg/e.go"}) {
+		t.Fatalf("unexpected stale path samples: %#v", fields)
+	}
+
+	missingSamples, ok := fields["context_freshness_missing_path_samples"].([]string)
+	if !ok || !reflect.DeepEqual(missingSamples, []string{"pkg/missing.go", "pkg/generated.go"}) {
+		t.Fatalf("unexpected missing path samples: %#v", fields)
+	}
+
+	if fields["context_freshness_stale_paths"] != 6 || fields["context_freshness_missing_paths"] != 3 || fields["context_freshness_stale_path_count"] != 6 || fields["context_freshness_missing_path_count"] != 2 {
+		t.Fatalf("unexpected freshness path counts: %#v", fields)
 	}
 }
 

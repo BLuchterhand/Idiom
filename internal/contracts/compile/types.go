@@ -157,6 +157,7 @@ type ProtocolInput struct {
 	ParserMode               string
 	ExpectedVisibleOutput    string
 	VisibleTools             []string
+	HiddenTools              []string
 	CallableTools            []string
 	CallableToolsSpecified   bool
 	CallableActionClasses    []string
@@ -188,6 +189,7 @@ type ModelProtocolProjection struct {
 	ResponseFormat           string                 `json:"response_format,omitempty"`
 	ExpectedVisibleOutput    string                 `json:"expected_visible_output,omitempty"`
 	VisibleTools             []string               `json:"visible_tools,omitempty"`
+	HiddenTools              []string               `json:"hidden_tools,omitempty"`
 	CallableTools            []string               `json:"callable_tools,omitempty"`
 	CallableActionClasses    []string               `json:"callable_action_classes,omitempty"`
 	InvalidActionClasses     []string               `json:"invalid_action_classes,omitempty"`

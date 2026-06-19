@@ -1413,12 +1413,178 @@ func TestScriptedContractFeaturePlannerDirectAndProductWorkflowCoverageSeparated
 	}
 }
 
+func TestScriptedContractImplementNewFileCoveragePinned(t *testing.T) {
+	suitePath := filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "suite.json")
+
+	suite, err := eval.LoadSWESuite(suitePath)
+	if err != nil {
+		t.Fatalf("load scripted contract suite: %v", err)
+	}
+
+	taskByID := make(map[string]eval.SWETask, len(suite.Tasks))
+	for _, candidate := range suite.Tasks {
+		taskByID[candidate.ID] = candidate
+	}
+
+	task := taskByID["scripted-implement-new-md-file-no-history"]
+	if task.ID == "" {
+		t.Fatal("implement new markdown file task missing")
+	}
+
+	assertTaskHasTags(t, task, "implement", "new-file", "rollback")
+	assertTaskHasScenarioTools(t, task, "write_file")
+	assertTaskHasRunEvents(t, task,
+		"idiom.live_contract.workspace_prepared",
+		"idiom.live_contract.resolved_config",
+		"idiom.live_contract.rollback",
+		"idiom.scripted_model.requests",
+	)
+
+	for _, forbidden := range []string{"read_file", "history_range", "history_symbol", "blame_range", "source_sanity", "shell"} {
+		if !slices.Contains(task.Scenario.ForbidTools, forbidden) {
+			t.Fatalf("implement new-file task must forbid %s, scenario=%#v", forbidden, task.Scenario)
+		}
+	}
+
+	if !slices.Contains(task.Scenario.RequireChangedFiles, "temp.md") ||
+		!slices.Contains(task.Oracle.RequireChangedFiles, "temp.md") {
+		t.Fatalf("implement new-file task must require temp.md change, scenario=%#v oracle=%#v", task.Scenario.RequireChangedFiles, task.Oracle.RequireChangedFiles)
+	}
+
+	if len(task.Oracle.RequireFileContent) != 1 ||
+		task.Oracle.RequireFileContent[0].Path != "temp.md" ||
+		!slices.Contains(task.Oracle.RequireFileContent[0].Contains, "temp") {
+		t.Fatalf("implement new-file task must pin temp.md content oracle, oracle=%#v", task.Oracle.RequireFileContent)
+	}
+
+	if task.Oracle.RequireNoChangedFiles || !task.Oracle.RequireCleanRollback || !task.Oracle.RequireNoShell {
+		t.Fatalf("implement new-file task must be rollback-scored no-shell coverage, oracle=%#v", task.Oracle)
+	}
+}
+
+func TestScriptedContractPlanExecuteNewFileCoveragePinned(t *testing.T) {
+	suitePath := filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "suite.json")
+
+	suite, err := eval.LoadSWESuite(suitePath)
+	if err != nil {
+		t.Fatalf("load scripted contract suite: %v", err)
+	}
+
+	taskByID := make(map[string]eval.SWETask, len(suite.Tasks))
+	for _, candidate := range suite.Tasks {
+		taskByID[candidate.ID] = candidate
+	}
+
+	task := taskByID["scripted-plan-execute-authorized-new-file"]
+	if task.ID == "" {
+		t.Fatal("plan-execute authorized new-file task missing")
+	}
+
+	assertTaskHasTags(t, task, "plan-execute", "new-file", "rollback", "go")
+	assertTaskHasRunEvents(t, task,
+		"idiom.plan_execute.required_edit_paths_resolved",
+		"idiom.plan_execute.plan_artifact_loaded",
+		"idiom.plan_execute.executor_handoff_packet",
+		"idiom.plan_execute.preflight_ok",
+		"idiom.plan_execute.executor_complete",
+	)
+
+	if !strings.Contains(task.Env["IDIOM_EXTRA_ARGS"], "-authorized-new-file internal/labels/generated_label.go") {
+		t.Fatalf("new-file task must pass typed new-file authorization, env=%#v", task.Env)
+	}
+	if task.Env["IDIOM_LIVE_SNAPSHOT_PATHS_JSON"] != "[\"internal/labels/generated_label.go\"]" {
+		t.Fatalf("new-file task must snapshot generated file before rollback, env=%#v", task.Env)
+	}
+
+	if !slices.Contains(task.Scenario.RequireChangedFiles, "internal/labels/generated_label.go") ||
+		!slices.Contains(task.Scenario.RequireChangedFiles, "internal/labels/labels.go") ||
+		!slices.Contains(task.Oracle.RequireChangedFiles, "internal/labels/generated_label.go") ||
+		!slices.Contains(task.Oracle.RequireChangedFiles, "internal/labels/labels.go") {
+		t.Fatalf("new-file task must require generated label and baseline label changes, scenario=%#v oracle=%#v", task.Scenario.RequireChangedFiles, task.Oracle.RequireChangedFiles)
+	}
+
+	if len(task.Oracle.RequireFileContent) != 1 ||
+		task.Oracle.RequireFileContent[0].Path != "internal/labels/generated_label.go" ||
+		!slices.Contains(task.Oracle.RequireFileContent[0].Contains, "func GeneratedLabel() string") {
+		t.Fatalf("new-file task must pin generated file content oracle, oracle=%#v", task.Oracle.RequireFileContent)
+	}
+	if slices.Contains(task.Oracle.ForbidChangedFiles, "internal/labels/labels.go") {
+		t.Fatalf("new-file task must allow the baseline label fix required for verification, oracle=%#v", task.Oracle)
+	}
+
+	if task.Oracle.RequireNoChangedFiles || !task.Oracle.RequireCleanRollback || !task.Oracle.RequireExecutorHandoff {
+		t.Fatalf("new-file task must be rollback-scored executor coverage, oracle=%#v", task.Oracle)
+	}
+
+	only := taskByID["scripted-plan-execute-authorized-new-file-only"]
+	if only.ID == "" {
+		t.Fatal("plan-execute authorized new-file-only task missing")
+	}
+	assertTaskHasTags(t, only, "plan-execute", "new-file", "rollback", "go")
+	if !strings.Contains(only.Env["IDIOM_EXTRA_ARGS"], "-authorized-new-file internal/labels/generated_only.go") {
+		t.Fatalf("new-file-only task must pass typed new-file authorization, env=%#v", only.Env)
+	}
+	assertTaskHasScenarioTools(t, only, "submit_plan")
+	for _, forbidden := range []string{"read_file", "history_range", "history_symbol"} {
+		if !slices.Contains(only.Scenario.ForbidTools, forbidden) {
+			t.Fatalf("new-file-only task must forbid %s before submit_plan, scenario=%#v", forbidden, only.Scenario)
+		}
+	}
+	if len(only.Oracle.RequireFileContent) != 1 ||
+		only.Oracle.RequireFileContent[0].Path != "internal/labels/generated_only.go" ||
+		!slices.Contains(only.Oracle.RequireFileContent[0].Contains, "func GeneratedOnly() string") {
+		t.Fatalf("new-file-only task must pin generated-only file content oracle, oracle=%#v", only.Oracle.RequireFileContent)
+	}
+	if !slices.Contains(only.Oracle.ForbidChangedFiles, "internal/labels/labels.go") {
+		t.Fatalf("new-file-only task must prove existing files stay untouched, oracle=%#v", only.Oracle)
+	}
+
+	unspecified := taskByID["scripted-plan-execute-unspecified-new-file-blocker"]
+	if unspecified.ID == "" {
+		t.Fatal("plan-execute unspecified new-file blocker task missing")
+	}
+	assertTaskHasTags(t, unspecified, "plan-execute", "new-file", "approval-required", "closed-scope", "typed-blocker")
+	if !unspecified.Oracle.RequireNoChangedFiles || !unspecified.Oracle.AllowNoWrite {
+		t.Fatalf("unspecified new-file task must be no-write blocker coverage, oracle=%#v", unspecified.Oracle)
+	}
+	for _, forbidden := range []string{"submit_plan", "edit_file", "write_file", "append_file", "apply_patch"} {
+		if !slices.Contains(unspecified.Scenario.ForbidTools, forbidden) {
+			t.Fatalf("unspecified new-file task must forbid %s, scenario=%#v", forbidden, unspecified.Scenario)
+		}
+	}
+
+	reference := taskByID["scripted-plan-execute-reference-readonly-closed-scope"]
+	if reference.ID == "" {
+		t.Fatal("plan-execute reference-readonly closed-scope task missing")
+	}
+	assertTaskHasTags(t, reference, "plan-execute", "closed-scope", "rollback", "go")
+	assertTaskHasScenarioTools(t, reference, "read_file", "submit_plan")
+	if !slices.Contains(reference.Oracle.ForbidChangedFiles, "README.md") ||
+		!slices.Contains(reference.Oracle.ForbidChangedFiles, "internal/labels/labels_test.go") {
+		t.Fatalf("reference-readonly task must forbid reference/test changes, oracle=%#v", reference.Oracle)
+	}
+	if !slices.Contains(reference.Scenario.RequireChangedFiles, "internal/labels/labels.go") ||
+		!slices.Contains(reference.Oracle.RequireChangedFiles, "internal/labels/labels.go") {
+		t.Fatalf("reference-readonly task must require only label source change, scenario=%#v oracle=%#v", reference.Scenario, reference.Oracle)
+	}
+}
+
 func assertTaskHasTags(t *testing.T, task eval.SWETask, tags ...string) {
 	t.Helper()
 
 	for _, tag := range tags {
 		if !slices.Contains(task.Tags, tag) {
 			t.Fatalf("%s missing tag %q in %#v", task.ID, tag, task.Tags)
+		}
+	}
+}
+
+func assertTaskHasScenarioTools(t *testing.T, task eval.SWETask, tools ...string) {
+	t.Helper()
+
+	for _, tool := range tools {
+		if !slices.Contains(task.Scenario.RequireTools, tool) {
+			t.Fatalf("task %s missing required tool %q: %#v", task.ID, tool, task.Scenario.RequireTools)
 		}
 	}
 }

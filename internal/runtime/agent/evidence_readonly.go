@@ -3167,6 +3167,8 @@ func isHarnessRejectionErrorText(text string) bool {
 		"do not restart broad discovery",
 		"successful write(s) since the last verification",
 		"this action class already failed earlier in the turn",
+		"not in the current allowed tool surface",
+		"not available because the current runtime contract exposes no tools",
 	)
 }
 
@@ -3182,6 +3184,7 @@ func isHarnessRejectionSummary(summary string) bool {
 		"Additional read_only child task blocked",
 		"Broad inspection request rejected",
 		"Verification required after workspace edits",
+		"Tool not available in current runtime contract",
 		"Repeated dead-end action rejected",
 		"Chained list_files rejected",
 		"Chained search rejected":
@@ -6506,6 +6509,138 @@ func newImplementationDeferredSourceEvidenceWrite(req workspace.ToolRequest, raw
 	}
 }
 
+func (r *Runner) newImplementationDeferredSourceEvidenceWrite(req workspace.ToolRequest, raw string, evidencePath string, currentAllowedTools []string) *implementationDeferredSourceEvidenceWrite {
+	if normalizedReq, normalizedRaw, ok := r.normalizeDeleteIntentDeferredWrite(req, raw, evidencePath, currentAllowedTools); ok {
+		req = normalizedReq
+		raw = normalizedRaw
+	}
+
+	return newImplementationDeferredSourceEvidenceWrite(req, raw, evidencePath)
+}
+
+func (r *Runner) normalizeDeleteIntentDeferredWrite(req workspace.ToolRequest, raw string, evidencePath string, currentAllowedTools []string) (workspace.ToolRequest, string, bool) {
+	target := agentutil.NormalizeRunnerPath(evidencePath)
+	if target == "" {
+		paths := writeRequestPaths(req)
+		if len(paths) == 1 {
+			target = agentutil.NormalizeRunnerPath(paths[0])
+		}
+	}
+
+	if target == "" ||
+		strings.TrimSpace(req.Tool) != workspace.ToolNameWriteFile ||
+		strings.TrimSpace(req.Content) != "" ||
+		!runnerToolAllowed(workspace.ToolNameApplyPatch, currentAllowedTools, r.RuntimeBrief.AllowedTools) {
+
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if !implementationDeleteIntentForPath(r.RuntimeBrief.Objective, strings.Join([]string{req.Description, raw}, "\n"), target) {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	patch := fmt.Sprintf("*** Begin Patch\n*** Delete File: %s\n*** End Patch\n", target)
+	normalized := workspace.ToolRequest{
+		Tool:        workspace.ToolNameApplyPatch,
+		Content:     patch,
+		Description: "delete " + target,
+	}
+
+	return normalized, marshalToolRequestRaw(normalized), true
+}
+
+func runnerToolAllowed(tool string, currentAllowedTools []string, briefAllowedTools []string) bool {
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		return false
+	}
+
+	if slices.Contains(currentAllowedTools, tool) {
+		return true
+	}
+
+	return len(currentAllowedTools) == 0 && slices.Contains(briefAllowedTools, tool)
+}
+
+func implementationDeleteIntentForPath(objective string, requestText string, path string) bool {
+	path = agentutil.NormalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+
+	objective = strings.ToLower(objective)
+	requestText = strings.ToLower(requestText)
+	if !implementationTextHasDeleteVerb(objective) || !implementationTextHasDeleteVerb(requestText) {
+		return false
+	}
+
+	if implementationTextLooksLikeContentRemoval(objective, path) {
+		return false
+	}
+
+	return implementationTextNamesFileTarget(objective, path)
+}
+
+func implementationTextHasDeleteVerb(text string) bool {
+	text = " " + strings.ToLower(strings.TrimSpace(text)) + " "
+	for _, token := range []string{" delete ", " deleting ", " remove ", " removing ", " unlink "} {
+		if strings.Contains(text, token) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func implementationTextLooksLikeContentRemoval(text string, path string) bool {
+	text = " " + strings.ToLower(strings.TrimSpace(text)) + " "
+	base := strings.ToLower(filepath.Base(path))
+	for _, phrase := range []string{
+		" text from ",
+		" content from ",
+		" line from ",
+		" lines from ",
+		" string from ",
+		" snippet from ",
+		" from " + strings.ToLower(path),
+		" from " + base,
+	} {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func implementationTextNamesFileTarget(text string, path string) bool {
+	text = " " + strings.ToLower(strings.TrimSpace(text)) + " "
+	path = strings.ToLower(path)
+	base := strings.ToLower(filepath.Base(path))
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+
+	if strings.Contains(text, path) || strings.Contains(text, base) || (stem != "" && strings.Contains(text, " "+stem+" ")) {
+		return true
+	}
+
+	for _, phrase := range []string{
+		" that file ",
+		" this file ",
+		" the file ",
+		" a file ",
+		" new file ",
+		" created file ",
+		" file you just created ",
+		" file just created ",
+	} {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (d *implementationDeferredSourceEvidenceWrite) replayAfterEvidence(req workspace.ToolRequest, results []workspace.ToolResult, currentAllowedTools []string) (workspace.ToolRequest, string, bool) {
 	if d == nil || strings.TrimSpace(d.EvidencePath) == "" {
 		return workspace.ToolRequest{}, "", false
@@ -6535,12 +6670,45 @@ func (d *implementationDeferredSourceEvidenceWrite) replayAfterEvidence(req work
 	return d.Request, raw, true
 }
 
+func (d *implementationDeferredSourceEvidenceWrite) replayAfterCompletionAttempt(results []workspace.ToolResult, currentAllowedTools []string) (workspace.ToolRequest, string, bool) {
+	if d == nil || strings.TrimSpace(d.EvidencePath) == "" {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if !implementationApplyPatchDeletesOnlyPath(d.Request, d.EvidencePath) {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if !runnerToolAllowed(d.Request.Tool, currentAllowedTools, nil) {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if !implementationTargetSourceWriteTargetsHaveEvidence(d.Request, results) {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if !implementationDeferredWriteCoveredBySourceEvidence(d.Request, d.EvidencePath, results, d.RequiresHistory) {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	if d.RequiresHistory && !implementationDeferredWriteHasHistoryEvidence(d.Request, results) {
+		return workspace.ToolRequest{}, "", false
+	}
+
+	raw := d.Raw
+	if strings.TrimSpace(raw) == "" {
+		raw = marshalToolRequestRaw(d.Request)
+	}
+
+	return d.Request, raw, true
+}
+
 func (d *implementationDeferredSourceEvidenceWrite) replayAfterHistoryEvidence(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
 	if d == nil || !d.RequiresHistory || strings.TrimSpace(d.EvidencePath) == "" {
 		return workspace.ToolRequest{}, "", false
 	}
 
-	if !implementationTargetSourceWriteTargetsHaveEvidence(d.Request, results) {
+	if !implementationTargetSourceWriteTargetsHaveEvidence(d.Request, results) && !implementationDeferredWriteHasExecutableAnchor(d.Request) {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -6634,7 +6802,7 @@ func implementationDeferredWriteCoveredBySourceEvidence(req workspace.ToolReques
 		}
 
 		if allowAnchorMismatch {
-			return concreteSourceEvidenceReadForPath(path, results)
+			return concreteSourceEvidenceReadForPath(path, results) || implementationDeferredWriteHasExecutableAnchor(req)
 		}
 
 		return implementationSourceEvidenceTextContains(path, results, oldText)
@@ -6642,9 +6810,51 @@ func implementationDeferredWriteCoveredBySourceEvidence(req workspace.ToolReques
 		return fullSourceReadFileSeen(path, results)
 	case workspace.ToolNameAppendFile:
 		return fullSourceReadFileSeen(path, results)
+	case workspace.ToolNameApplyPatch:
+		if implementationApplyPatchDeletesOnlyPath(req, path) {
+			return concreteSourceEvidenceReadForPath(path, results)
+		}
+
+		return false
 	default:
 		return false
 	}
+}
+
+func implementationApplyPatchDeletesOnlyPath(req workspace.ToolRequest, path string) bool {
+	if strings.TrimSpace(req.Tool) != workspace.ToolNameApplyPatch {
+		return false
+	}
+
+	path = agentutil.NormalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+
+	ops, err := workspace.ParsePatch(req.Content)
+	if err != nil || len(ops) == 0 {
+		return false
+	}
+
+	for _, op := range ops {
+		if op.Kind != workspace.PatchOpDelete || agentutil.NormalizeRunnerPath(op.Path) != path {
+			return false
+		}
+	}
+
+	return true
+}
+
+func implementationDeferredWriteHasExecutableAnchor(req workspace.ToolRequest) bool {
+	if strings.TrimSpace(req.Tool) != workspace.ToolNameEditFile {
+		return false
+	}
+
+	if agentutil.NormalizeRunnerPath(req.Path) == "" {
+		return false
+	}
+
+	return strings.TrimSpace(req.OldText) != ""
 }
 
 func implementationSourceEvidenceTextContains(path string, results []workspace.ToolResult, want string) bool {

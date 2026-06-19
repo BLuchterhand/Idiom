@@ -16,7 +16,9 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/agent"
+	"idiom/internal/runtime/instructions"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/modepolicy"
 )
 
 func Main() {
@@ -78,8 +80,8 @@ func Main() {
 	}
 
 	ws := workspace.NewManager(cfg.Workspace)
-	mode := agent.ModeOrDefault(*modeName)
-	ws.SetPermissionRules(mode.PermissionRules)
+	mode := modepolicy.ModeOrDefault(*modeName)
+	ws.SetPermissionRules(agent.ModePermissionRules(mode))
 
 	// Build a minimal system prompt — same composition as lifecycle.go:
 	// base.md + mode prompt files. NO workspace.Instructions() (the
@@ -254,13 +256,13 @@ type multiPrompt []string
 func (m *multiPrompt) String() string     { return strings.Join(*m, " || ") }
 func (m *multiPrompt) Set(s string) error { *m = append(*m, s); return nil }
 
-func e2eInstructionAttacher(chat config.Chat, root string) *agent.InstructionAttacher {
+func e2eInstructionAttacher(chat config.Chat, root string) *instructions.Attacher {
 	if !chat.AttachInstructionFiles {
 		return nil
 	}
 
 	if chat.ProjectPromptCandidates == nil {
-		return agent.NewInstructionAttacher(root)
+		return instructions.NewAttacher(root)
 	}
 
 	candidates := e2eInstructionCandidates(chat.ProjectPromptCandidates)
@@ -268,7 +270,7 @@ func e2eInstructionAttacher(chat config.Chat, root string) *agent.InstructionAtt
 		return nil
 	}
 
-	return agent.NewInstructionAttacher(root, candidates...)
+	return instructions.NewAttacher(root, candidates...)
 }
 
 func e2eInstructionCandidates(names []string) []string {

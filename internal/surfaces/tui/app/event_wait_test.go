@@ -12,8 +12,8 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -110,7 +110,7 @@ func TestHeadlessAgentTurnDoesNotBlockOnFullUIEventBufferAfterToolResult(t *test
 			[]llama.ChatMessage{{Role: "user", Content: "read README"}},
 			llama.ChatOptions{},
 			promptExecutionPlan{
-				mode: agent.ModeOrDefault("build"),
+				mode: modepolicy.ModeOrDefault("build"),
 				route: turnRoutePlan{
 					Family:   "headless_test",
 					Contract: "ui_event_delivery",

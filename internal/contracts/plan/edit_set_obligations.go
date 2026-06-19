@@ -2,6 +2,7 @@ package plancontract
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -17,17 +18,25 @@ const (
 
 type EditSetObligation struct {
 	Kind   EditSetObligationKind `json:"kind"`
+	Path   string                `json:"path,omitempty"`
 	Source string                `json:"source,omitempty"`
 }
 
 type EditSetObligations []EditSetObligation
+
+type EditSetOpenObligation struct {
+	Code   string                `json:"code"`
+	Kind   EditSetObligationKind `json:"kind"`
+	Path   string                `json:"path,omitempty"`
+	Source string                `json:"source,omitempty"`
+}
 
 func EditSetObligationsFromPrompt(prompt string) EditSetObligations {
 	return nil
 }
 
 func (obligations EditSetObligations) Has(kind EditSetObligationKind) bool {
-	for _, obligation := range obligations {
+	for _, obligation := range obligations.Normalized() {
 		if obligation.Kind == kind {
 			return true
 		}
@@ -38,11 +47,17 @@ func (obligations EditSetObligations) Has(kind EditSetObligationKind) bool {
 
 func (obligations EditSetObligations) Kinds() []string {
 	out := make([]string, 0, len(obligations))
+	seen := map[EditSetObligationKind]struct{}{}
 	for _, obligation := range obligations.Normalized() {
 		if obligation.Kind == "" {
 			continue
 		}
 
+		if _, ok := seen[obligation.Kind]; ok {
+			continue
+		}
+
+		seen[obligation.Kind] = struct{}{}
 		out = append(out, string(obligation.Kind))
 	}
 
@@ -76,8 +91,16 @@ func (obligations EditSetObligations) normalizedWithDefaultSource(defaultSource 
 			}
 		}
 
-		out = out.with(kind, source)
+		rawPath := strings.TrimSpace(obligation.Path)
+		path := NormalizeScopePath(rawPath)
+		if rawPath != "" && path == "" {
+			continue
+		}
+
+		out = out.with(EditSetObligation{Kind: kind, Path: path, Source: source})
 	}
+
+	sortEditSetObligations(out)
 
 	return out
 }
@@ -87,7 +110,7 @@ func MergeEditSetObligations(groups ...EditSetObligations) EditSetObligations {
 
 	for _, group := range groups {
 		for _, obligation := range group.Normalized() {
-			out = out.with(obligation.Kind, obligation.Source)
+			out = out.with(obligation)
 		}
 	}
 
@@ -95,33 +118,77 @@ func MergeEditSetObligations(groups ...EditSetObligations) EditSetObligations {
 }
 
 func (obligations EditSetObligations) With(kind EditSetObligationKind, source string) EditSetObligations {
-	return obligations.with(kind, source).Normalized()
+	return obligations.with(EditSetObligation{Kind: kind, Source: source}).Normalized()
+}
+
+func (obligations EditSetObligations) WithPath(kind EditSetObligationKind, path string, source string) EditSetObligations {
+	return obligations.with(EditSetObligation{Kind: kind, Path: path, Source: source}).Normalized()
 }
 
 func (obligations EditSetObligations) RejectionReason(changedPaths []string) string {
-	if obligations.Has(EditSetObligationKindTestEdit) && !ChangedPathsIncludeTest(changedPaths) {
+	open := obligations.Open(changedPaths)
+	if len(open) == 0 {
+		return ""
+	}
+
+	switch open[0].Code {
+	case "requested_test_edit_missing":
 		return EditSetFailureMissingRequestedTestEdit
-	}
-
-	if obligations.Has(EditSetObligationKindImplementationEdit) && !ChangedPathsIncludeImplementation(changedPaths) {
+	case "requested_implementation_edit_missing":
 		return EditSetFailureMissingRequestedImplementationEdit
+	default:
+		return ""
 	}
-
-	return ""
 }
 
 func (obligations EditSetObligations) MissingOpenObligations(changedPaths []string) []string {
-	var out []string
+	open := obligations.Open(changedPaths)
+	out := make([]string, 0, len(open))
+	seen := map[string]struct{}{}
+	for _, obligation := range open {
+		if _, ok := seen[obligation.Code]; ok {
+			continue
+		}
 
-	if obligations.Has(EditSetObligationKindTestEdit) && !ChangedPathsIncludeTest(changedPaths) {
-		out = append(out, "requested_test_edit_missing")
-	}
-
-	if obligations.Has(EditSetObligationKindImplementationEdit) && !ChangedPathsIncludeImplementation(changedPaths) {
-		out = append(out, "requested_implementation_edit_missing")
+		seen[obligation.Code] = struct{}{}
+		out = append(out, obligation.Code)
 	}
 
 	return out
+}
+
+func (obligations EditSetObligations) Open(changedPaths []string) []EditSetOpenObligation {
+	changed := scopePathSet(changedPaths)
+
+	var open []EditSetOpenObligation
+	for _, obligation := range obligations.Normalized() {
+		if editSetObligationSatisfied(obligation, changedPaths, changed) {
+			continue
+		}
+
+		open = append(open, EditSetOpenObligation{
+			Code:   editSetObligationMissingCode(obligation.Kind),
+			Kind:   obligation.Kind,
+			Path:   obligation.Path,
+			Source: obligation.Source,
+		})
+	}
+
+	return open
+}
+
+func EditSetObligationsForRequiredPaths(paths []string, source string) EditSetObligations {
+	var obligations EditSetObligations
+	for _, path := range UniqueScopePaths(paths) {
+		switch {
+		case PathLooksLikeTest(path):
+			obligations = obligations.WithPath(EditSetObligationKindTestEdit, path, source)
+		case PathLooksLikeImplementation(path):
+			obligations = obligations.WithPath(EditSetObligationKindImplementationEdit, path, source)
+		}
+	}
+
+	return obligations.Normalized()
 }
 
 func EditSetObligationFailureMessage(reason string) string {
@@ -135,18 +202,72 @@ func EditSetObligationFailureMessage(reason string) string {
 	}
 }
 
-func (obligations EditSetObligations) with(kind EditSetObligationKind, source string) EditSetObligations {
+func (obligations EditSetObligations) with(obligation EditSetObligation) EditSetObligations {
+	obligation.Source = strings.TrimSpace(obligation.Source)
+
 	for i := range obligations {
-		if obligations[i].Kind == kind {
+		if obligations[i].Kind == obligation.Kind && obligations[i].Path == obligation.Path {
 			if strings.TrimSpace(obligations[i].Source) == "" {
-				obligations[i].Source = source
+				obligations[i].Source = obligation.Source
 			}
 
 			return obligations
 		}
 	}
 
-	return append(obligations, EditSetObligation{Kind: kind, Source: source})
+	return append(obligations, obligation)
+}
+
+func editSetObligationSatisfied(obligation EditSetObligation, changedPaths []string, changed map[string]struct{}) bool {
+	if obligation.Path != "" {
+		_, ok := changed[obligation.Path]
+		return ok
+	}
+
+	switch obligation.Kind {
+	case EditSetObligationKindTestEdit:
+		return ChangedPathsIncludeTest(changedPaths)
+	case EditSetObligationKindImplementationEdit:
+		return ChangedPathsIncludeImplementation(changedPaths)
+	default:
+		return true
+	}
+}
+
+func editSetObligationMissingCode(kind EditSetObligationKind) string {
+	switch kind {
+	case EditSetObligationKindTestEdit:
+		return "requested_test_edit_missing"
+	case EditSetObligationKindImplementationEdit:
+		return "requested_implementation_edit_missing"
+	default:
+		return ""
+	}
+}
+
+func sortEditSetObligations(obligations EditSetObligations) {
+	sort.SliceStable(obligations, func(i, j int) bool {
+		if editSetObligationKindRank(obligations[i].Kind) != editSetObligationKindRank(obligations[j].Kind) {
+			return editSetObligationKindRank(obligations[i].Kind) < editSetObligationKindRank(obligations[j].Kind)
+		}
+
+		if obligations[i].Path != obligations[j].Path {
+			return obligations[i].Path < obligations[j].Path
+		}
+
+		return obligations[i].Source < obligations[j].Source
+	})
+}
+
+func editSetObligationKindRank(kind EditSetObligationKind) int {
+	switch kind {
+	case EditSetObligationKindTestEdit:
+		return 0
+	case EditSetObligationKindImplementationEdit:
+		return 1
+	default:
+		return 2
+	}
 }
 
 func ChangedPathsIncludeTest(paths []string) bool {

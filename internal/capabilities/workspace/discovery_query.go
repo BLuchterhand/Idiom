@@ -22,6 +22,24 @@ const (
 	discoveryQueryOutputChars   = 12000
 )
 
+const (
+	DiscoveryQueryPurposeImpactAnalysis       = "impact_analysis"
+	DiscoveryQueryPurposeFunctionTracing      = "function_tracing"
+	DiscoveryQueryPurposeArchitectureBoundary = "architecture_boundary"
+	DiscoveryQueryPurposeSecurityReview       = "security_review"
+	DiscoveryQueryPurposeHistoryContext       = "history_context"
+)
+
+func DiscoveryQueryPurposeValues() []string {
+	return []string{
+		DiscoveryQueryPurposeImpactAnalysis,
+		DiscoveryQueryPurposeFunctionTracing,
+		DiscoveryQueryPurposeArchitectureBoundary,
+		DiscoveryQueryPurposeSecurityReview,
+		DiscoveryQueryPurposeHistoryContext,
+	}
+}
+
 type discoveryQueryPacket struct {
 	SchemaVersion        int                                  `json:"schema_version"`
 	ID                   string                               `json:"id"`
@@ -85,14 +103,14 @@ type discoveryQueryRunner struct {
 }
 
 func (m *Manager) discoveryQuery(ctx context.Context, req ToolRequest) ToolResult {
-	purpose := normalizeDiscoveryQueryPurpose(util.FirstNonEmpty(req.Purpose, req.Query, "impact_analysis"))
+	purpose := normalizeDiscoveryQueryPurpose(util.FirstNonEmpty(req.Purpose, req.Query, DiscoveryQueryPurposeImpactAnalysis))
 	if purpose == "" {
-		return ToolResult{Tool: "discovery_query", Summary: "Discovery query rejected", Error: "purpose must be one of impact_analysis, function_tracing, architecture_boundary, security_review, or history_context"}
+		return ToolResult{Tool: ToolNameDiscoveryQuery, Summary: "Discovery query rejected", Error: "purpose must be one of " + strings.Join(DiscoveryQueryPurposeValues(), ", ")}
 	}
 
 	targetAbs, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "discovery_query", Summary: "Failed to resolve discovery query target", Error: err.Error()}
+		return ToolResult{Tool: ToolNameDiscoveryQuery, Summary: "Failed to resolve discovery query target", Error: err.Error()}
 	}
 
 	targetRel := m.displayPath(targetAbs)
@@ -133,11 +151,11 @@ func (m *Manager) discoveryQuery(ctx context.Context, req ToolRequest) ToolResul
 	runner.run(req, targetAbs)
 
 	if err := runner.writeArtifact(); err != nil {
-		return ToolResult{Tool: "discovery_query", Summary: "Discovery query artifact write failed", Error: err.Error(), Output: runner.summaryJSON()}
+		return ToolResult{Tool: ToolNameDiscoveryQuery, Summary: "Discovery query artifact write failed", Error: err.Error(), Output: runner.summaryJSON()}
 	}
 
 	return ToolResult{
-		Tool:    "discovery_query",
+		Tool:    ToolNameDiscoveryQuery,
 		Summary: fmt.Sprintf("Ran %s discovery query with %d layer(s); artifact: %s", purpose, len(runner.packet.Layers), artifactRel),
 		Output:  runner.summaryJSON(),
 	}
@@ -154,38 +172,38 @@ func (r *discoveryQueryRunner) run(req ToolRequest, targetAbs string) {
 
 	if isRegularFile(targetAbs) {
 		r.addFileOrientation(path, language)
-	} else if contextBacked && purpose != "security_review" {
+	} else if contextBacked && purpose != DiscoveryQueryPurposeSecurityReview {
 		r.packet.Gaps = append(r.packet.Gaps, "fresh context graph supplied target orientation; skipped live target listing")
 	} else {
-		r.addLayer("target_listing", ToolRequest{Tool: ToolNameListFiles, Path: path, Recursive: true, MaxDepth: 2})
+		r.addLayer(DiscoveryLayerTargetListing, ToolRequest{Tool: ToolNameListFiles, Path: path, Recursive: true, MaxDepth: 2})
 	}
 
 	if pattern != "" {
-		r.addLayer("text_anchor_search", ToolRequest{Tool: ToolNameSearchContent, Path: path, Pattern: pattern, Glob: globForDiscoveryLanguage(language)})
+		r.addLayer(DiscoveryLayerTextAnchorSearch, ToolRequest{Tool: ToolNameSearchContent, Path: path, Pattern: pattern, Glob: globForDiscoveryLanguage(language)})
 	}
 
 	switch purpose {
-	case "impact_analysis":
+	case DiscoveryQueryPurposeImpactAnalysis:
 		r.addDependency(path, language)
 		r.addLanguageRelationshipLayers(path, pattern, language, true)
 		r.addRelatedFileLayer(path, pattern, language)
 		r.addHistoryLayers(path, pattern, req)
-	case "function_tracing":
+	case DiscoveryQueryPurposeFunctionTracing:
 		r.addLanguageRelationshipLayers(path, pattern, language, true)
 		r.addRelatedFileLayer(path, pattern, language)
 		r.addCtagsFallback(path, pattern)
-	case "architecture_boundary":
+	case DiscoveryQueryPurposeArchitectureBoundary:
 		r.addDependency(path, language)
 		r.addRelatedFileLayer(path, pattern, language)
 		r.addLanguageRelationshipLayers(path, pattern, language, false)
 		r.addCtagsFallback(path, pattern)
-	case "security_review":
+	case DiscoveryQueryPurposeSecurityReview:
 		r.addDependency(path, language)
-		r.addLayer("security_text_sweep", ToolRequest{Tool: ToolNameSearchContent, Path: path, Pattern: `eval\(|exec\(|password|secret|token|unsafe|panic\(`})
+		r.addLayer(DiscoveryLayerSecurityTextSweep, ToolRequest{Tool: ToolNameSearchContent, Path: path, Pattern: `eval\(|exec\(|password|secret|token|unsafe|panic\(`})
 		r.addStructuralLayer(path, req)
-		r.addLayer("semgrep_scan", ToolRequest{Tool: ToolNameSemgrepScan, Path: path, Pattern: defaultString(pattern, "auto")})
-		r.addLayer("joern_scan", ToolRequest{Tool: ToolNameJoernScan, Path: path})
-	case "history_context":
+		r.addLayer(DiscoveryLayerSemgrepScan, ToolRequest{Tool: ToolNameSemgrepScan, Path: path, Pattern: defaultString(pattern, "auto")})
+		r.addLayer(DiscoveryLayerJoernScan, ToolRequest{Tool: ToolNameJoernScan, Path: path})
+	case DiscoveryQueryPurposeHistoryContext:
 		r.addHistoryLayers(path, pattern, req)
 		r.addRelatedFileLayer(path, pattern, language)
 	default:
@@ -218,7 +236,7 @@ func (r *discoveryQueryRunner) addContextGraphLayer(req ToolRequest, path string
 
 	freshness, err := comprehension.EnsureFresh(r.ctx, comprehension.FreshnessRequest{
 		Root:      r.manager.cfg.Root,
-		Operation: "discovery_query",
+		Operation: ToolNameDiscoveryQuery,
 		Policy:    contextFreshnessPolicy(req, comprehension.FreshnessReadThrough),
 		Path:      path,
 		Query:     task,
@@ -238,7 +256,7 @@ func (r *discoveryQueryRunner) addContextGraphLayer(req ToolRequest, path string
 	staleEvidence := comprehension.StaleEvidenceSafetyForFreshness(freshness)
 
 	r.packet.ContextStaleEvidence = &staleEvidence
-	status = comprehension.StatusReportWithMetadata(status, "discovery_query", &freshness)
+	status = comprehension.StatusReportWithMetadata(status, ToolNameDiscoveryQuery, &freshness)
 
 	contextConfidence := status.Confidence
 	contextProvenance := status.Provenance
@@ -255,8 +273,8 @@ func (r *discoveryQueryRunner) addContextGraphLayer(req ToolRequest, path string
 		return false
 	}
 
-	result, ok := r.addLayerResult("context_pack", ToolRequest{
-		Tool:              "context_pack",
+	result, ok := r.addLayerResult(DiscoveryLayerContextPack, ToolRequest{
+		Tool:              ToolNameContextPack,
 		Task:              task,
 		Path:              path,
 		Mode:              "plan",
@@ -351,7 +369,7 @@ func (r *discoveryQueryRunner) addContextLayer() {
 	}
 
 	r.packet.Layers = append(r.packet.Layers, discoveryQueryLayer{
-		Name:          "project_context_digest",
+		Name:          DiscoveryLayerProjectContextDigest,
 		Tool:          "artifact_read",
 		Request:       map[string]any{"path": ".idiom/discovery/context.md"},
 		Summary:       "Read generated project context digest",
@@ -362,22 +380,24 @@ func (r *discoveryQueryRunner) addContextLayer() {
 }
 
 func (r *discoveryQueryRunner) addFileOrientation(path string, language string) {
-	if prefix := discoveryLanguageToolPrefix(language); prefix != "" {
-		r.addLayer("file_outline", ToolRequest{Tool: prefix + "_file_outline", Path: path})
+	if lang, ok := LanguageForName(language); ok {
+		if tool := lang.Tool(CapFileOutline); tool != "" {
+			r.addLayer(DiscoveryLayerFileOutline, ToolRequest{Tool: tool, Path: path})
 
-		return
+			return
+		}
 	}
 
-	r.addLayer("file_read", ToolRequest{Tool: ToolNameReadFile, Path: path, StartLine: 1, EndLine: 160})
+	r.addLayer(DiscoveryLayerFileRead, ToolRequest{Tool: ToolNameReadFile, Path: path, StartLine: 1, EndLine: 160})
 }
 
 func (r *discoveryQueryRunner) addDependency(path string, language string) {
-	r.addLayer("dependency_graph", ToolRequest{Tool: ToolNameDependencyGraph, Path: path, Language: language})
+	r.addLayer(DiscoveryLayerDependencyGraph, ToolRequest{Tool: ToolNameDependencyGraph, Path: path, Language: language})
 }
 
 func (r *discoveryQueryRunner) addLanguageRelationshipLayers(path string, pattern string, language string, includeCalls bool) {
-	prefix := discoveryLanguageToolPrefix(language)
-	if prefix == "" {
+	lang, ok := LanguageForName(language)
+	if !ok {
 		if pattern != "" {
 			r.addCtagsFallback(path, pattern)
 		}
@@ -390,56 +410,62 @@ func (r *discoveryQueryRunner) addLanguageRelationshipLayers(path string, patter
 		return
 	}
 
-	for _, tool := range []string{
-		prefix + "_workspace_symbol",
-		prefix + "_definition",
-		prefix + "_references",
-		prefix + "_read_symbol",
+	for _, capability := range []Capability{
+		CapWorkspaceSymbol,
+		CapDefinition,
+		CapReferences,
+		CapReadSymbol,
 	} {
-		r.addLayer(tool, ToolRequest{Tool: tool, Path: path, Pattern: pattern, MaxDepth: r.packet.Depth})
+		if tool := lang.Tool(capability); tool != "" {
+			r.addLayer(tool, ToolRequest{Tool: tool, Path: path, Pattern: pattern, MaxDepth: r.packet.Depth})
+		}
 	}
 
 	if includeCalls {
-		for _, tool := range []string{prefix + "_calls_from", prefix + "_calls_into"} {
-			r.addLayer(tool, ToolRequest{Tool: tool, Path: path, Pattern: pattern, MaxDepth: r.packet.Depth})
+		for _, capability := range []Capability{CapCallsFrom, CapCallsInto} {
+			if tool := lang.Tool(capability); tool != "" {
+				r.addLayer(tool, ToolRequest{Tool: tool, Path: path, Pattern: pattern, MaxDepth: r.packet.Depth})
+			}
 		}
 	}
 }
 
 func (r *discoveryQueryRunner) addRelatedFileLayer(path string, pattern string, language string) {
-	prefix := discoveryLanguageToolPrefix(language)
-	if prefix == "" {
+	lang, ok := LanguageForName(language)
+	if !ok {
 		return
 	}
 
-	r.addLayer("related_files", ToolRequest{Tool: prefix + "_related_files", Path: path, Pattern: pattern, MaxDepth: r.packet.Depth})
+	if tool := lang.Tool(CapRelatedFiles); tool != "" {
+		r.addLayer(DiscoveryLayerRelatedFiles, ToolRequest{Tool: tool, Path: path, Pattern: pattern, MaxDepth: r.packet.Depth})
+	}
 }
 
 func (r *discoveryQueryRunner) addHistoryLayers(path string, pattern string, req ToolRequest) {
 	if pattern != "" {
-		r.addLayer("history_symbol", ToolRequest{Tool: "history_symbol", Path: path, Pattern: pattern})
+		r.addLayer(DiscoveryLayerHistorySymbol, ToolRequest{Tool: ToolNameHistorySymbol, Path: path, Pattern: pattern})
 	}
 
 	if req.StartLine > 0 && req.EndLine >= req.StartLine {
-		r.addLayer("history_range", ToolRequest{Tool: "history_range", Path: path, StartLine: req.StartLine, EndLine: req.EndLine})
-		r.addLayer("blame_range", ToolRequest{Tool: "blame_range", Path: path, StartLine: req.StartLine, EndLine: req.EndLine})
+		r.addLayer(DiscoveryLayerHistoryRange, ToolRequest{Tool: ToolNameHistoryRange, Path: path, StartLine: req.StartLine, EndLine: req.EndLine})
+		r.addLayer(DiscoveryLayerBlameRange, ToolRequest{Tool: ToolNameBlameRange, Path: path, StartLine: req.StartLine, EndLine: req.EndLine})
 
 		return
 	}
 
 	if path != "." {
-		r.addLayer("blame_range", ToolRequest{Tool: "blame_range", Path: path, StartLine: 1, EndLine: 80})
+		r.addLayer(DiscoveryLayerBlameRange, ToolRequest{Tool: ToolNameBlameRange, Path: path, StartLine: 1, EndLine: 80})
 	}
 }
 
 func (r *discoveryQueryRunner) addStructuralLayer(path string, req ToolRequest) {
 	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" || !strings.Contains(pattern, "$") {
-		r.packet.Gaps = append(r.packet.Gaps, "structural_search skipped because pattern was not an ast-grep shape")
+		r.packet.Gaps = append(r.packet.Gaps, ToolNameStructuralSearch+" skipped because pattern was not an ast-grep shape")
 		return
 	}
 
-	r.addLayer("structural_search", ToolRequest{Tool: "structural_search", Path: path, Pattern: pattern, Language: r.packet.Language})
+	r.addLayer(DiscoveryLayerStructuralSearch, ToolRequest{Tool: ToolNameStructuralSearch, Path: path, Pattern: pattern, Language: r.packet.Language})
 }
 
 func (r *discoveryQueryRunner) addCtagsFallback(path string, pattern string) {
@@ -447,7 +473,7 @@ func (r *discoveryQueryRunner) addCtagsFallback(path string, pattern string) {
 		return
 	}
 
-	r.addLayer("ctags_symbols", ToolRequest{Tool: "ctags_symbols", Path: path, Pattern: pattern})
+	r.addLayer(DiscoveryLayerCtagsSymbols, ToolRequest{Tool: ToolNameCtagsSymbols, Path: path, Pattern: pattern})
 }
 
 func (r *discoveryQueryRunner) addLayer(name string, req ToolRequest) {
@@ -455,7 +481,7 @@ func (r *discoveryQueryRunner) addLayer(name string, req ToolRequest) {
 }
 
 func (r *discoveryQueryRunner) addLayerResult(name string, req ToolRequest) (ToolResult, bool) {
-	if strings.TrimSpace(req.Tool) == "" || req.Tool == "discovery_query" {
+	if strings.TrimSpace(req.Tool) == "" || req.Tool == ToolNameDiscoveryQuery {
 		return ToolResult{}, false
 	}
 
@@ -548,48 +574,53 @@ func (r *discoveryQueryRunner) summaryJSON() string {
 	return string(data)
 }
 
-func normalizeDiscoveryQueryPurpose(value string) string {
+func NormalizeDiscoveryQueryPurpose(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.ReplaceAll(value, "-", "_")
 	value = strings.ReplaceAll(value, " ", "_")
 
 	switch value {
-	case "impact", "impact_analysis":
-		return "impact_analysis"
-	case "trace", "function_trace", "function_tracing":
-		return "function_tracing"
-	case "architecture", "architecture_boundary", "boundary", "tool_usefulness", "tooling_usefulness", "discovery_tooling", "discovery_tools", "usefulness":
-		return "architecture_boundary"
-	case "security", "security_review":
-		return "security_review"
-	case "history", "history_context":
-		return "history_context"
+	case "impact", DiscoveryQueryPurposeImpactAnalysis:
+		return DiscoveryQueryPurposeImpactAnalysis
+	case "trace", "function_trace", DiscoveryQueryPurposeFunctionTracing:
+		return DiscoveryQueryPurposeFunctionTracing
+	case "architecture", DiscoveryQueryPurposeArchitectureBoundary, "boundary", "tool_usefulness", "tooling_usefulness", "discovery_tooling", "discovery_tools", "usefulness":
+		return DiscoveryQueryPurposeArchitectureBoundary
+	case "security", DiscoveryQueryPurposeSecurityReview:
+		return DiscoveryQueryPurposeSecurityReview
+	case "history", DiscoveryQueryPurposeHistoryContext:
+		return DiscoveryQueryPurposeHistoryContext
 	default:
 		if strings.Contains(value, "security") || strings.Contains(value, "vulnerability") {
-			return "security_review"
+			return DiscoveryQueryPurposeSecurityReview
 		}
 
 		if strings.Contains(value, "history") || strings.Contains(value, "evolution") {
-			return "history_context"
+			return DiscoveryQueryPurposeHistoryContext
 		}
 
 		if strings.Contains(value, "impact") || strings.Contains(value, "blast_radius") {
-			return "impact_analysis"
+			return DiscoveryQueryPurposeImpactAnalysis
 		}
 
 		if strings.Contains(value, "trace") || strings.Contains(value, "tracing") || strings.Contains(value, "call_graph") {
-			return "function_tracing"
+			return DiscoveryQueryPurposeFunctionTracing
 		}
 
 		if strings.Contains(value, "architecture") ||
 			strings.Contains(value, "boundary") ||
+			strings.Contains(value, "usefulness") ||
 			(strings.Contains(value, "discovery") && (strings.Contains(value, "implementation") || strings.Contains(value, "definition") || strings.Contains(value, "orchestration") || strings.Contains(value, "pattern"))) {
 
-			return "architecture_boundary"
+			return DiscoveryQueryPurposeArchitectureBoundary
 		}
 
 		return ""
 	}
+}
+
+func normalizeDiscoveryQueryPurpose(value string) string {
+	return NormalizeDiscoveryQueryPurpose(value)
 }
 
 func normalizeDiscoveryQueryLanguage(value string) string {
@@ -606,25 +637,6 @@ func normalizeDiscoveryQueryLanguage(value string) string {
 	case "cpp", "c++", "cc", "cxx", "c":
 		return "cpp"
 	case "rs", "rust":
-		return "rust"
-	case "java":
-		return "java"
-	default:
-		return ""
-	}
-}
-
-func discoveryLanguageToolPrefix(language string) string {
-	switch normalizeDiscoveryQueryLanguage(language) {
-	case "go":
-		return "go"
-	case "typescript":
-		return "ts"
-	case "python":
-		return "python"
-	case "cpp":
-		return "cpp"
-	case "rust":
 		return "rust"
 	case "java":
 		return "java"
@@ -828,7 +840,7 @@ func emptyJSONValue(value any) bool {
 }
 
 func compactDiscoveryQuerySummaryLayerOutput(layer discoveryQueryLayer) string {
-	if layer.Name == "project_behavior_digest" || layer.Name == "project_context_digest" {
+	if layer.Name == DiscoveryLayerProjectBehaviorDigest || layer.Name == DiscoveryLayerProjectContextDigest {
 		return ""
 	}
 

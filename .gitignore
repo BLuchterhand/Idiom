@@ -7,6 +7,9 @@ bin/
 *.out
 *.prof
 coverage.out
+desktop/dist/
+desktop/node_modules/
+desktop/src-tauri/target/
 
 # Python bytecode (cmd/idiom/brief-preflight.py is the only Python file
 # we ship, but pytest/import runs leave __pycache__ next to it on dev
@@ -53,6 +56,7 @@ config.*.backup.json
 .env.*.local
 
 # Ephemeral review / session notes
+.book/
 REVIEW_*.md
 NOTES_*.md
 SCRATCH_*.md

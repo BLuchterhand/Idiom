@@ -9,12 +9,14 @@ import (
 	"strings"
 
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/contracts/plan"
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/llama"
-	"idiom/internal/contracts/plan"
+	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/planexecute"
+	"idiom/internal/workflows/workflowstate"
 )
 
 // promptExecutionPlan is the minimal OpenCode-aligned carrier for a turn.
@@ -22,7 +24,7 @@ import (
 // the Mode the user picked is the only routing signal the harness cares
 // about.
 type promptExecutionPlan struct {
-	mode         agent.Mode
+	mode         modepolicy.Mode
 	route        turnRoutePlan
 	runtimeBrief workerruntime.WorkerRuntimeBrief
 }
@@ -270,12 +272,12 @@ func (m *Model) finishPromptOnceReply(reply string) string {
 
 // currentMode resolves the Mode selected for this session. Defaults to
 // BuildMode if the user hasn't picked one.
-func (m *Model) currentMode() agent.Mode {
+func (m *Model) currentMode() modepolicy.Mode {
 	if strings.TrimSpace(m.agentModeName) != "" {
-		return agent.ModeOrDefault(m.agentModeName)
+		return modepolicy.ModeOrDefault(m.agentModeName)
 	}
 
-	return agent.ModeOrDefault(m.cfg.Chat.AgentMode)
+	return modepolicy.ModeOrDefault(m.cfg.Chat.AgentMode)
 }
 
 func (m *Model) buildPromptExecutionPlan(ctx context.Context, prompt string) promptExecutionPlan {
@@ -310,15 +312,15 @@ func (m *Model) buildPromptExecutionPlan(ctx context.Context, prompt string) pro
 	}
 }
 
-func validateRouteFamilyAgainstExplicitEditScope(route turnRoutePlan, prompt string, mode agent.Mode) turnRoutePlan {
+func validateRouteFamilyAgainstExplicitEditScope(route turnRoutePlan, prompt string, mode modepolicy.Mode) turnRoutePlan {
 	route = normalizeTurnRoutePlan(route, mode)
 	if route.Family != "gdscript_edit" {
 		return route
 	}
 
-	paths := appendUniqueBriefStrings(nil, requiredEditPathsFromPrompt(prompt)...)
+	paths := appendUniqueBriefStrings(nil, RequiredEditPathsFromPrompt(prompt)...)
 
-	paths = appendUniqueBriefStrings(paths, allowedEditPathsFromPrompt(prompt)...)
+	paths = appendUniqueBriefStrings(paths, AllowedEditPathsFromPrompt(prompt)...)
 	paths = appendUniqueBriefStrings(paths, pathparse.MentionedWorkspacePaths(prompt)...)
 
 	if len(paths) == 0 {
@@ -342,7 +344,7 @@ func routePathLooksLikeGDScript(path string) bool {
 }
 
 func (m *Model) planExecuteCommandExecutionPlan(objective string) promptExecutionPlan {
-	mode := agent.BuildMode()
+	mode := modepolicy.BuildMode()
 	route := normalizeTurnRoutePlan(turnRoutePlan{
 		Family:      string(workerruntime.TaskFamilyPlanThenExecutePlanner),
 		Reason:      "typed_plan_execute_command",
@@ -357,7 +359,7 @@ func (m *Model) planExecuteCommandExecutionPlan(objective string) promptExecutio
 }
 
 func (m *Model) implementCommandExecutionPlan(objective string) promptExecutionPlan {
-	mode := agent.BuildMode()
+	mode := modepolicy.BuildMode()
 	route := normalizeTurnRoutePlan(turnRoutePlan{
 		Family:      "implementation",
 		Reason:      "typed_implement_command",
@@ -476,7 +478,7 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 	return m.runtimeBriefForRouteMode(route, m.currentMode(), prompt)
 }
 
-func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode agent.Mode, prompt string) workerruntime.WorkerRuntimeBrief {
+func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mode, prompt string) workerruntime.WorkerRuntimeBrief {
 	brief := turnRoutePlanRuntimeBrief(route, mode, m.workspaceAllowedTools())
 	if m != nil && m.planExecuteActive && strings.TrimSpace(m.forcedTaskFamily) == "direct_question" {
 		brief.PermissionProfile = "conversation_only"
@@ -500,8 +502,8 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode agent.Mode, p
 	brief.TargetPacket = appendUniqueBriefStrings(brief.TargetPacket, promptContextPacketMarkers(prompt)...)
 
 	scopeContract, useTypedPlanExecuteScope := m.planExecuteRuntimeScopeContract(route)
-	allowed := allowedEditPathsFromPrompt(prompt)
-	required := requiredEditPathsFromPrompt(prompt)
+	allowed := AllowedEditPathsFromPrompt(prompt)
+	required := RequiredEditPathsFromPrompt(prompt)
 
 	if useTypedPlanExecuteScope {
 		required = scopeContract.RequiredCoveragePaths
@@ -811,14 +813,6 @@ func AllowedEditPathsFromPrompt(prompt string) []string {
 	return plancontract.AllowedEditPathsFromPrompt(prompt)
 }
 
-func requiredEditPathsFromPrompt(prompt string) []string {
-	return plancontract.RequiredEditPathsFromPrompt(prompt)
-}
-
-func allowedEditPathsFromPrompt(prompt string) []string {
-	return plancontract.AllowedEditPathsFromPrompt(prompt)
-}
-
 func looksLikePromptSectionBoundary(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" {
@@ -936,6 +930,38 @@ func promptPacketWorkspacePaths(text string) []string {
 }
 
 func promptContextEvidencePaths(prompt string) []string {
+	projection := promptContextPacketProjection(prompt)
+	headings := projection.LegacyHeadings
+	if len(headings) == 0 {
+		return nil
+	}
+
+	paths := workspacePathsUnderPromptHeadings(prompt, headings)
+
+	for _, heading := range headings {
+		section := markdownSectionByHeading(prompt, heading)
+		if strings.TrimSpace(section) == "" {
+			continue
+		}
+
+		paths = appendUniqueBriefStrings(paths, promptPacketWorkspacePaths(section)...)
+	}
+
+	return paths
+}
+
+type promptContextPacketProjectionResult struct {
+	WorkflowID            workflowstate.WorkflowID
+	State                 workflowstate.StateID
+	Dispatchable          bool
+	StructuredPacket      bool
+	LegacyHeadingFallback bool
+	LegacyHeadings        []string
+	Markers               []string
+	Reason                string
+}
+
+func promptContextPacketProjection(prompt string) promptContextPacketProjectionResult {
 	headings := []string{
 		"verified current state",
 		"current state",
@@ -957,18 +983,27 @@ func promptContextEvidencePaths(prompt string) []string {
 		"relevant files",
 		"candidate scope",
 	}
-	paths := workspacePathsUnderPromptHeadings(prompt, headings)
 
-	for _, heading := range headings {
-		section := markdownSectionByHeading(prompt, heading)
-		if strings.TrimSpace(section) == "" {
-			continue
-		}
-
-		paths = appendUniqueBriefStrings(paths, promptPacketWorkspacePaths(section)...)
+	projection := promptContextPacketProjectionResult{
+		WorkflowID:       workflowstate.WorkflowPromptContextPacket,
+		State:            workflowstate.StateTerminal,
+		LegacyHeadings:   headings,
+		StructuredPacket: promptHasStructuredPacketMarker(prompt),
+	}
+	if projection.StructuredPacket {
+		projection.State = workflowstate.StateDispatchable
+		projection.Dispatchable = true
+		projection.Markers = appendUniqueBriefStrings(projection.Markers, "prompt_context:structured_packet")
+		projection.Reason = "structured_packet"
+		return projection
 	}
 
-	return paths
+	projection.LegacyHeadingFallback = true
+	projection.State = workflowstate.StateDispatchable
+	projection.Dispatchable = true
+	projection.Reason = "legacy_heading_fallback"
+
+	return projection
 }
 
 func promptHasSectionHeading(prompt string, heading string) bool {
@@ -1061,6 +1096,8 @@ func isPromptPacketNestedSection(line string) bool {
 }
 
 func promptContextPacketMarkers(prompt string) []string {
+	projection := promptContextPacketProjection(prompt)
+
 	type packetSection struct {
 		heading string
 		marker  string
@@ -1081,7 +1118,10 @@ func promptContextPacketMarkers(prompt string) []string {
 		{heading: "required edits", marker: "prompt_context:required_edits"},
 	}
 
-	var markers []string
+	markers := append([]string(nil), projection.Markers...)
+	if !projection.LegacyHeadingFallback && !projection.StructuredPacket {
+		return markers
+	}
 
 	for _, section := range sections {
 		if !promptHasSectionHeading(prompt, section.heading) {
@@ -1089,10 +1129,6 @@ func promptContextPacketMarkers(prompt string) []string {
 		}
 
 		markers = appendUniqueBriefStrings(markers, section.marker)
-	}
-
-	if promptHasStructuredPacketMarker(prompt) {
-		markers = appendUniqueBriefStrings(markers, "prompt_context:structured_packet")
 	}
 
 	return markers

@@ -120,6 +120,120 @@ func TestEnsureFreshCoalescesStaleFilesInSameDirectory(t *testing.T) {
 	}
 }
 
+func TestEnsureFreshRepairsResidualStaleAfterRootRefresh(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/freshresidual\n\ngo 1.22\n")
+
+	sourcePath := filepath.Join(root, "pkg", "pkg.go")
+	writeFile(t, sourcePath, "package pkg\n\nfunc OldName() string { return \"old\" }\n")
+
+	if _, err := Build(context.Background(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	writeFile(t, sourcePath, "package pkg\n\nfunc RootRefreshName() string { return \"root\" }\n")
+
+	enricher := mutateOnceEnricher{
+		mutate: func() {
+			writeFile(t, sourcePath, "package pkg\n\nfunc ResidualRefreshName() string { return \"residual\" }\n")
+		},
+	}
+
+	decision, err := EnsureFresh(context.Background(), FreshnessRequest{
+		Root:      root,
+		Operation: "context_pack",
+		Policy:    FreshnessReadThrough,
+		Language:  "go",
+		MaxFiles:  25,
+		Enrichers: []GraphEnricher{&enricher},
+	})
+	if err != nil {
+		t.Fatalf("EnsureFresh: %v", err)
+	}
+
+	if !decision.FreshForScope || !decision.GlobalFresh {
+		t.Fatalf("expected residual stale path to be repaired, got %#v", decision)
+	}
+
+	if decision.Refresh == nil || decision.Refresh.Scope != "." || len(decision.Refresh.FollowUpRefreshes) != 1 {
+		t.Fatalf("expected root refresh plus one follow-up refresh, got %#v", decision.Refresh)
+	}
+
+	followUp := decision.Refresh.FollowUpRefreshes[0]
+	if !followUp.Attempted || followUp.Reason != FreshnessReasonStaleScopeFiles || !hasString(followUp.RefreshedFiles, "pkg/pkg.go") {
+		t.Fatalf("expected exact residual file refresh accounting, got %#v", followUp)
+	}
+
+	graph, err := LoadGraph(root)
+	if err != nil {
+		t.Fatalf("LoadGraph: %v", err)
+	}
+
+	if !hasNode(graph.Nodes, "symbol://pkg/pkg.go#ResidualRefreshName") || hasNode(graph.Nodes, "symbol://pkg/pkg.go#RootRefreshName") {
+		t.Fatalf("expected follow-up refresh to index current source, got nodes=%#v", graph.Nodes)
+	}
+}
+
+func TestEnsureFreshDoesNotRepairLargeResidualSetAfterRootRefresh(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/freshresidualcap\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "pkg.go"), "package pkg\n\nfunc OldName() string { return \"old\" }\n")
+
+	if _, err := Build(context.Background(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	writeFile(t, filepath.Join(root, "pkg", "pkg.go"), "package pkg\n\nfunc RootRefreshName() string { return \"root\" }\n")
+
+	enricher := mutateOnceEnricher{
+		mutate: func() {
+			for i := 0; i < residualFreshnessRepairMaxFiles+1; i++ {
+				writeFile(t, filepath.Join(root, "pkg", fmt.Sprintf("added_%02d.go", i)), fmt.Sprintf("package pkg\n\nfunc Added%02d() string { return \"new\" }\n", i))
+			}
+		},
+	}
+
+	decision, err := EnsureFresh(context.Background(), FreshnessRequest{
+		Root:      root,
+		Operation: "context_pack",
+		Policy:    FreshnessReadThrough,
+		Language:  "go",
+		Enrichers: []GraphEnricher{&enricher},
+	})
+	if err != nil {
+		t.Fatalf("EnsureFresh: %v", err)
+	}
+
+	if decision.FreshForScope || !StaleEvidenceBlocksUse(decision) {
+		t.Fatalf("expected large residual set to remain blocked, got %#v", decision)
+	}
+
+	if decision.Refresh == nil || decision.Refresh.Scope != "." || len(decision.Refresh.FollowUpRefreshes) != 0 {
+		t.Fatalf("large residual set must not trigger follow-up refresh, got %#v", decision.Refresh)
+	}
+
+	if decision.StalePathCount <= residualFreshnessRepairMaxFiles {
+		t.Fatalf("expected residual stale count over cap, got %#v", decision)
+	}
+}
+
+type mutateOnceEnricher struct {
+	mutated bool
+	mutate  func()
+}
+
+func (e *mutateOnceEnricher) EnrichGraph(_ context.Context, _ Graph, opts EnrichmentOptions) (GraphEnrichment, error) {
+	if !e.mutated && opts.Scope == "." {
+		e.mutated = true
+
+		if e.mutate != nil {
+			e.mutate()
+		}
+	}
+
+	return GraphEnrichment{}, nil
+}
+
 func TestFreshnessRefreshScopesPreserveExplicitMaxFileShape(t *testing.T) {
 	paths := []string{"pkg/a.go", "pkg/b.go"}
 	if got := freshnessRefreshScopes(paths, 2); !reflect.DeepEqual(got, paths) {

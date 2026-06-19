@@ -183,6 +183,98 @@ func TestAcceptanceObligationWithoutIDGetsEnforcedStableID(t *testing.T) {
 	}
 }
 
+func TestAcceptanceEvidenceThresholdClaimsAreValidated(t *testing.T) {
+	tests := []struct {
+		name      string
+		threshold string
+		claim     AcceptanceEvidenceClaim
+		wantCodes []string
+	}{
+		{
+			name:      "missing claim",
+			threshold: ">=80%",
+			wantCodes: []string{"acceptance_evidence_claim_missing"},
+		},
+		{
+			name:      "unparseable value",
+			threshold: ">=80%",
+			claim:     AcceptanceEvidenceClaim{ID: "coverage-threshold", Value: "not-a-number", Met: true},
+			wantCodes: []string{"acceptance_evidence_claim_unparseable"},
+		},
+		{
+			name:      "unit mismatch",
+			threshold: ">=80%",
+			claim:     AcceptanceEvidenceClaim{ID: "coverage-threshold", Value: "80", Met: true},
+			wantCodes: []string{"acceptance_evidence_threshold_unit_mismatch"},
+		},
+		{
+			name:      "below threshold",
+			threshold: ">=80%",
+			claim:     AcceptanceEvidenceClaim{ID: "coverage-threshold", Value: "79.9%", Met: false},
+			wantCodes: []string{"acceptance_evidence_threshold_not_met"},
+		},
+		{
+			name:      "at threshold",
+			threshold: ">=80%",
+			claim:     AcceptanceEvidenceClaim{ID: "coverage-threshold", Value: "80%", Met: true},
+		},
+		{
+			name:      "above threshold",
+			threshold: ">=80%",
+			claim:     AcceptanceEvidenceClaim{ID: "coverage-threshold", Value: "81.25%", Met: true},
+		},
+		{
+			name:      "met true contradicts below threshold",
+			threshold: ">=80%",
+			claim:     AcceptanceEvidenceClaim{ID: "coverage-threshold", Value: "72%", Met: true},
+			wantCodes: []string{"acceptance_evidence_claim_met_mismatch", "acceptance_evidence_threshold_not_met"},
+		},
+		{
+			name:      "met false contradicts passing threshold",
+			threshold: ">=80%",
+			claim:     AcceptanceEvidenceClaim{ID: "coverage-threshold", Value: "80%", Met: false},
+			wantCodes: []string{"acceptance_evidence_claim_met_mismatch"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			atom := AtomExecutionContract{
+				AtomID: "atom-1",
+				Scope: NewPlanScopeContract([]string{"pkg/feature.go"}, nil, nil).
+					WithWriteAllowedPaths([]string{"pkg/feature.go"}),
+				AcceptanceObligations: []AcceptanceEvidenceRequired{{
+					ID:        "coverage-threshold",
+					Required:  true,
+					Threshold: tt.threshold,
+				}},
+				TerminalEvidence: StrictTerminalEvidenceRequirements(),
+			}.Normalized()
+
+			evidence := validTerminalEvidence()
+			evidence.ChangedPaths = []string{"pkg/feature.go"}
+			evidence.RequiredPathCoveragePaths = []string{"pkg/feature.go"}
+			evidence.SourceEvidence = []SourceSatisfiedEvidenceRef{{Path: "pkg/feature.go", Kind: "harness_observed_source"}}
+			evidence.RequiredTestResults = nil
+			evidence.TDDCommandResults = nil
+			evidence.TestArtifacts = nil
+			if tt.claim.ID != "" {
+				evidence.AcceptanceEvidenceClaims = []AcceptanceEvidenceClaim{tt.claim}
+			}
+
+			violations := ValidateAtomTerminalEvidenceInput(atom, evidence)
+			for _, code := range tt.wantCodes {
+				if !hasViolationCode(violations, code) {
+					t.Fatalf("missing violation %q in %#v", code, violations)
+				}
+			}
+			if len(tt.wantCodes) == 0 && len(violations) > 0 {
+				t.Fatalf("threshold claim should satisfy obligation, got %#v", violations)
+			}
+		})
+	}
+}
+
 func TestPlanExecutionContractValidatesStructuredAuthorizedNewFiles(t *testing.T) {
 	atom := AtomExecutionContract{
 		AtomID: "new-file",
@@ -253,6 +345,50 @@ func TestPlanExecutionContractRejectsRequiredPathDemotion(t *testing.T) {
 
 	if !hasViolationCode(violations, "required_path_demotion_rejected") {
 		t.Fatalf("authority delta demoting required path should be rejected: %#v", violations)
+	}
+}
+
+func TestPlanExecutionContractRejectsInvalidEditSetObligationPath(t *testing.T) {
+	atom := AtomExecutionContract{
+		AtomID: "invalid-edit-set-path",
+		Scope: PlanScopeContract{
+			RequiredCoveragePaths: []string{"pkg/feature.go"},
+			EditSetObligations: EditSetObligations{
+				{Kind: EditSetObligationKindImplementationEdit, Path: "/tmp/outside.go", Source: "fixture"},
+			},
+		},
+	}
+
+	violations := ValidateAtomExecutionContractInput(atom)
+	if !hasViolationCode(violations, "invalid_edit_set_obligation_path") {
+		t.Fatalf("invalid edit-set obligation path should be rejected before normalization drops it: %#v", violations)
+	}
+}
+
+func TestAtomOpenEditSetObligationsDistinguishSourceEvidenceFromRequiredPaths(t *testing.T) {
+	atom := AtomExecutionContract{
+		AtomID: "source-distinction",
+		Scope: NewPlanScopeContract(
+			[]string{"pkg/feature.go"},
+			[]string{"pkg/source_only_test.go"},
+			nil,
+		),
+		SourceEvidenceObligations: []SourceEvidenceObligation{{
+			ID:       "source-only",
+			Path:     "pkg/source_only_test.go",
+			Kind:     "harness_observed_source",
+			Required: true,
+		}},
+	}
+
+	open := atom.OpenEditSetObligations([]string{"pkg/feature.go"})
+	if len(open) != 0 {
+		t.Fatalf("source evidence path must not create a test edit obligation, got %#v", open)
+	}
+
+	open = atom.OpenEditSetObligations([]string{"pkg/source_only_test.go"})
+	if len(open) != 1 || open[0].Kind != EditSetObligationKindImplementationEdit || open[0].Path != "pkg/feature.go" {
+		t.Fatalf("required implementation path should remain the open obligation, got %#v", open)
 	}
 }
 

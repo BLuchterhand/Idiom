@@ -17,10 +17,36 @@ func TestPlanExecutePlannerVocabularyAlignsWithAutonomyMetadata(t *testing.T) {
 		t.Fatalf("compiler planner tool names = %#v, want autonomy metadata names %#v", compilerTools, canonicalTools)
 	}
 
+	compilerMetadata := make(map[string]contractcompile.ToolVocabularyEntry, len(contractcompile.PlanExecutePlannerToolVocabulary()))
+	for _, entry := range contractcompile.PlanExecutePlannerToolVocabulary() {
+		compilerMetadata[entry.Tool] = entry
+	}
+
 	for _, entry := range autonomy.PlanExecutePlannerToolMetadataEntries() {
+		compilerEntry, ok := compilerMetadata[entry.Tool]
+		if !ok {
+			t.Fatalf("compiler planner vocabulary missing autonomy metadata tool %q", entry.Tool)
+		}
+
+		if !slices.Equal(compilerEntry.Capabilities, entry.Capabilities) {
+			t.Fatalf("compiler planner capabilities(%q) = %#v, want autonomy metadata %#v", entry.Tool, compilerEntry.Capabilities, entry.Capabilities)
+		}
+
+		if compilerEntry.SideEffect != entry.SideEffect {
+			t.Fatalf("compiler planner side effect(%q) = %q, want autonomy metadata %q", entry.Tool, compilerEntry.SideEffect, entry.SideEffect)
+		}
+
+		if compilerEntry.PlannerAllowed != entry.PlannerAllowed {
+			t.Fatalf("compiler planner allowed metadata(%q) = %v, want autonomy metadata %v", entry.Tool, compilerEntry.PlannerAllowed, entry.PlannerAllowed)
+		}
+
 		if got := contractcompile.IsPlanExecutePlannerToolAllowed(entry.Tool); got != entry.PlannerAllowed {
 			t.Fatalf("compiler planner allowed(%q) = %v, want autonomy metadata %v", entry.Tool, got, entry.PlannerAllowed)
 		}
+	}
+
+	if len(compilerMetadata) != len(autonomy.PlanExecutePlannerToolMetadataEntries()) {
+		t.Fatalf("compiler planner vocabulary has %d entries, want autonomy metadata count %d", len(compilerMetadata), len(autonomy.PlanExecutePlannerToolMetadataEntries()))
 	}
 }
 

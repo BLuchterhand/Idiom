@@ -39,22 +39,22 @@ func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 	case ToolNameHarnessFeedback:
 		return discoveryProfile("harness_feedback", "targeted", "low", true)
 	case ToolNameContextIndex:
-		return discoveryProfile("context_index", scopeFromPath(req.Path), "medium", true)
+		return discoveryProfile(ToolNameContextIndex, scopeFromPath(req.Path), "medium", true)
 	case ToolNameContextStatus:
-		return discoveryProfile("context_status", "targeted", "low", true)
+		return discoveryProfile(ToolNameContextStatus, "targeted", "low", true)
 	case ToolNameContextQuery:
-		return discoveryProfile("context_query", scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), "low", true)
+		return discoveryProfile(ToolNameContextQuery, scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), "low", true)
 	case ToolNameContextZoom:
-		return discoveryProfile("context_zoom", "targeted", "low", true)
+		return discoveryProfile(ToolNameContextZoom, "targeted", "low", true)
 	case ToolNameContextPack:
-		return discoveryProfile("context_pack", scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Task, req.Query, req.Pattern)), "medium", true)
+		return discoveryProfile(ToolNameContextPack, scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Task, req.Query, req.Pattern)), "medium", true)
 	case ToolNameContextImpact:
-		return discoveryProfile("context_impact", scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Task, req.Query, req.Pattern)), "medium", true)
+		return discoveryProfile(ToolNameContextImpact, scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Task, req.Query, req.Pattern)), "medium", true)
 	case ToolNameContextTracePack:
 		return discoveryProfile("runtime_trace", scopeFromPathAndPattern(req.Path, req.Command), "medium", true)
 	case ToolNameDiscoveryQuery:
 		cost := "medium"
-		if normalizeDiscoveryQueryPurpose(req.Purpose) == "security_review" {
+		if normalizeDiscoveryQueryPurpose(req.Purpose) == DiscoveryQueryPurposeSecurityReview {
 			cost = "high"
 		}
 
@@ -62,13 +62,13 @@ func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 	case ToolNameStructuralSearch:
 		return discoveryProfile("ast_search", "targeted", "medium", true)
 	case ToolNameDependencyGraph:
-		return discoveryProfile("dependency_graph", scopeFromPath(req.Path), "medium", true)
+		return discoveryProfile(ToolNameDependencyGraph, scopeFromPath(req.Path), "medium", true)
 	case ToolNameHistoryRange, ToolNameHistorySymbol, ToolNameBlameRange:
 		return discoveryProfile("history", "targeted", "medium", true)
 	case ToolNameCtagsSymbols:
 		return discoveryProfile("symbol_index", scopeFromPathAndPattern(req.Path, req.Pattern), "medium", true)
 	case ToolNameSemgrepScan, ToolNameJoernScan:
-		return discoveryProfile("security_scan", scopeFromPath(req.Path), "high", true)
+		return discoveryProfile(EvidenceCapabilitySecurityScan, scopeFromPath(req.Path), "high", true)
 	case ToolNameTask:
 		return discoveryProfile("delegated_discovery", "broad", "high", false)
 	case ToolNameShell:
@@ -101,7 +101,7 @@ func readOnlyCapabilityDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
 	case string(ReadOnlyCapabilityRelatedFiles):
 		routed.Capability = string(CapRelatedFiles)
 	default:
-		return discoveryProfile("read_only_capability", scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), "medium", true)
+		return discoveryProfile(ToolNameReadOnlyCapability, scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), "medium", true)
 	}
 
 	return codeNavigationDiscoveryProfile(routed)
@@ -112,7 +112,7 @@ func codeNavigationDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
 	cost := "low"
 
 	switch normalizeCodeNavigationCapability(req.Capability) {
-	case "definition", "references", "calls_from", "calls_into", "implementations", "related_files":
+	case string(CapDefinition), string(CapReferences), string(CapCallsFrom), string(CapCallsInto), string(CapImplementations), string(CapRelatedFiles):
 		class = "language_relationship"
 		cost = "medium"
 	}
@@ -127,25 +127,25 @@ func normalizeCodeNavigationCapability(value string) string {
 
 	switch value {
 	case "outline":
-		return "file_outline"
+		return string(CapFileOutline)
 	case "symbol", "symbol_lookup", "lookup":
-		return "find_symbol"
+		return string(CapFindSymbol)
 	case "workspace_symbols", "find_symbol_workspace":
-		return "workspace_symbol"
+		return string(CapWorkspaceSymbol)
 	case "inspect_symbol", "symbol_body":
-		return "read_symbol"
+		return string(CapReadSymbol)
 	case "definitions", "declaration", "declarations", "find_definition", "find_definitions", "find_declaration", "find_declarations", "goto_definition", "go_to_definition":
-		return "definition"
+		return string(CapDefinition)
 	case "reference", "usages", "find_references", "find_reference":
-		return "references"
+		return string(CapReferences)
 	case "callees":
-		return "calls_from"
+		return string(CapCallsFrom)
 	case "callers":
-		return "calls_into"
+		return string(CapCallsInto)
 	case "implementation", "impls":
-		return "implementations"
+		return string(CapImplementations)
 	case "related":
-		return "related_files"
+		return string(CapRelatedFiles)
 	default:
 		return value
 	}
@@ -198,13 +198,13 @@ func languageDiscoveryProfile(tool string) ToolDiscoveryProfile {
 	_ = lang
 
 	switch suffix {
-	case "overview", "entrypoints":
+	case string(CapOverview), string(CapEntrypoints):
 		return discoveryProfile("language_overview", "broad", "medium", false)
-	case "find_symbol", "find_function", "find_type", "find_const", "find_package", "workspace_symbol", "file_outline", "read_symbol":
+	case string(CapFindSymbol), "find_function", "find_type", "find_const", "find_package", string(CapWorkspaceSymbol), string(CapFileOutline), string(CapReadSymbol):
 		return discoveryProfile("language_symbol", "targeted", "low", false)
-	case "definition", "declaration", "references", "implementations", "calls_from", "calls_into", "extract_body", "related_files", "importers", "includes", "who_includes", "blast_radius", "dead_symbol":
+	case string(CapDefinition), "declaration", string(CapReferences), string(CapImplementations), string(CapCallsFrom), string(CapCallsInto), string(CapExtractBody), string(CapRelatedFiles), "importers", "includes", "who_includes", "blast_radius", "dead_symbol":
 		return discoveryProfile("language_relationship", "targeted", "medium", false)
-	case "diagnostics":
+	case string(CapDiagnostics):
 		return discoveryProfile("diagnostics", "targeted", "medium", false)
 	default:
 		return ToolDiscoveryProfile{Class: "other"}

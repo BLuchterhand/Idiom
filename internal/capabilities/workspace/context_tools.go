@@ -30,16 +30,16 @@ func (m *Manager) contextIndex(ctx context.Context, req ToolRequest) ToolResult 
 		Enrichers: m.contextGraphEnrichers(req.Mode),
 	})
 	if err != nil {
-		return ToolResult{Tool: "context_index", Summary: "Context index build failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextIndex, Summary: "Context index build failed", Error: err.Error()}
 	}
 
 	output, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
-		return ToolResult{Tool: "context_index", Summary: "Context index report encode failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextIndex, Summary: "Context index report encode failed", Error: err.Error()}
 	}
 
 	return ToolResult{
-		Tool:    "context_index",
+		Tool:    ToolNameContextIndex,
 		Summary: fmt.Sprintf("Indexed %d file(s), %d symbol(s), %d relationship(s), and %d enrichment report(s); artifact: %s", report.FilesIndexed, report.SymbolsIndexed, report.EdgesIndexed, len(report.CollectorReports), report.ArtifactPath),
 		Output:  string(output),
 	}
@@ -48,7 +48,7 @@ func (m *Manager) contextIndex(ctx context.Context, req ToolRequest) ToolResult 
 func (m *Manager) contextStatus(ctx context.Context, req ToolRequest) ToolResult {
 	report, err := contextStatusReport(m.cfg.Root, req)
 	if err != nil {
-		return ToolResult{Tool: "context_status", Summary: "Context index status failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextStatus, Summary: "Context index status failed", Error: err.Error()}
 	}
 
 	var (
@@ -73,13 +73,13 @@ func (m *Manager) contextStatus(ctx context.Context, req ToolRequest) ToolResult
 
 		report.AutoRefresh = refresh
 		report.Freshness = freshness
-		report = comprehension.StatusReportWithMetadata(report, "context_status", freshness)
+		report = comprehension.StatusReportWithMetadata(report, ToolNameContextStatus, freshness)
 	} else {
 		policy := contextFreshnessPolicy(req, comprehension.FreshnessReportOnly)
 
 		decision, err := comprehension.EnsureFresh(ctx, comprehension.FreshnessRequest{
 			Root:      m.cfg.Root,
-			Operation: "context_status",
+			Operation: ToolNameContextStatus,
 			Policy:    policy,
 			Path:      util.FirstNonEmpty(req.Path, req.Workdir),
 			Query:     util.FirstNonEmpty(req.Query, req.Task, req.Prompt, req.Content, req.Pattern),
@@ -89,7 +89,7 @@ func (m *Manager) contextStatus(ctx context.Context, req ToolRequest) ToolResult
 			Status:    &report,
 		})
 		if err != nil {
-			return ToolResult{Tool: "context_status", Summary: "Context index status freshness report failed", Error: err.Error()}
+			return ToolResult{Tool: ToolNameContextStatus, Summary: "Context index status freshness report failed", Error: err.Error()}
 		}
 
 		if boundedContextRefreshScope(req) != "" {
@@ -97,18 +97,18 @@ func (m *Manager) contextStatus(ctx context.Context, req ToolRequest) ToolResult
 		}
 
 		report.Freshness = &decision
-		report = comprehension.StatusReportWithMetadata(report, "context_status", &decision)
+		report = comprehension.StatusReportWithMetadata(report, ToolNameContextStatus, &decision)
 	}
 
 	report = limitContextStatusReport(report, contextStatusOutputLimit(req))
 
 	output, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
-		return ToolResult{Tool: "context_status", Summary: "Context status report encode failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextStatus, Summary: "Context status report encode failed", Error: err.Error()}
 	}
 
 	if !report.Indexed {
-		return ToolResult{Tool: "context_status", Summary: "No context index is present" + contextRefreshSummary(refresh), Output: string(output)}
+		return ToolResult{Tool: ToolNameContextStatus, Summary: "No context index is present" + contextRefreshSummary(refresh), Output: string(output)}
 	}
 
 	summary := fmt.Sprintf("Context index has %d file(s), %d symbol(s), and %d stale file(s)", report.FilesIndexed, report.SymbolsIndexed, contextStatusStaleSummaryCount(report))
@@ -122,7 +122,7 @@ func (m *Manager) contextStatus(ctx context.Context, req ToolRequest) ToolResult
 
 	summary += contextRefreshSummary(refresh)
 
-	return ToolResult{Tool: "context_status", Summary: summary, Output: string(output)}
+	return ToolResult{Tool: ToolNameContextStatus, Summary: summary, Output: string(output)}
 }
 
 func contextStatusReport(root string, req ToolRequest) (comprehension.StatusReport, error) {
@@ -134,13 +134,13 @@ func contextStatusReport(root string, req ToolRequest) (comprehension.StatusRepo
 }
 
 func (m *Manager) contextQuery(ctx context.Context, req ToolRequest) ToolResult {
-	freshness, err := m.contextReadFreshness(ctx, req, "context_query")
+	freshness, err := m.contextReadFreshness(ctx, req, ToolNameContextQuery)
 	if err != nil {
-		return ToolResult{Tool: "context_query", Summary: "Context query freshness check failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextQuery, Summary: "Context query freshness check failed", Error: err.Error()}
 	}
 
 	if comprehension.StaleEvidenceBlocksUse(freshness) {
-		return contextFreshnessBlockerResult("context_query", freshness)
+		return contextFreshnessBlockerResult(ToolNameContextQuery, freshness)
 	}
 
 	result, err := comprehension.Query(comprehension.QueryOptions{
@@ -154,7 +154,7 @@ func (m *Manager) contextQuery(ctx context.Context, req ToolRequest) ToolResult 
 		IncludeEvidence: req.IncludeEvidence,
 	})
 	if err != nil {
-		return ToolResult{Tool: "context_query", Summary: "Context query failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextQuery, Summary: "Context query failed", Error: err.Error()}
 	}
 
 	result.AutoRefresh = freshness.Refresh
@@ -175,7 +175,7 @@ func (m *Manager) contextQuery(ctx context.Context, req ToolRequest) ToolResult 
 
 	output, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
-		return ToolResult{Tool: "context_query", Summary: "Context query report encode failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextQuery, Summary: "Context query report encode failed", Error: err.Error()}
 	}
 
 	gap := ""
@@ -186,7 +186,7 @@ func (m *Manager) contextQuery(ctx context.Context, req ToolRequest) ToolResult 
 	refreshSummary := contextRefreshSummary(freshness.Refresh)
 
 	return ToolResult{
-		Tool:    "context_query",
+		Tool:    ToolNameContextQuery,
 		Summary: fmt.Sprintf("Context query returned %d node(s) and %d edge(s)%s%s", len(result.Nodes), len(result.Edges), gap, refreshSummary),
 		Output:  string(output),
 	}
@@ -206,13 +206,13 @@ func (m *Manager) contextZoom(ctx context.Context, req ToolRequest) ToolResult {
 		Resolution:        req.Resolution,
 		FreshnessPolicy:   req.FreshnessPolicy,
 		FreshnessMaxFiles: req.FreshnessMaxFiles,
-	}, "context_zoom")
+	}, ToolNameContextZoom)
 	if err != nil {
-		return ToolResult{Tool: "context_zoom", Summary: "Context zoom freshness check failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextZoom, Summary: "Context zoom freshness check failed", Error: err.Error()}
 	}
 
 	if comprehension.StaleEvidenceBlocksUse(freshness) {
-		return contextFreshnessBlockerResult("context_zoom", freshness)
+		return contextFreshnessBlockerResult(ToolNameContextZoom, freshness)
 	}
 
 	result, err := comprehension.Zoom(comprehension.ZoomOptions{
@@ -223,7 +223,7 @@ func (m *Manager) contextZoom(ctx context.Context, req ToolRequest) ToolResult {
 		IncludeSource: req.IncludeSource,
 	})
 	if err != nil {
-		return ToolResult{Tool: "context_zoom", Summary: "Context zoom failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextZoom, Summary: "Context zoom failed", Error: err.Error()}
 	}
 
 	result.Freshness = &freshness
@@ -243,15 +243,15 @@ func (m *Manager) contextZoom(ctx context.Context, req ToolRequest) ToolResult {
 
 	output, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
-		return ToolResult{Tool: "context_zoom", Summary: "Context zoom report encode failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextZoom, Summary: "Context zoom report encode failed", Error: err.Error()}
 	}
 
 	if result.Node == nil {
-		return ToolResult{Tool: "context_zoom", Summary: "Context zoom found no node for handle", Output: string(output)}
+		return ToolResult{Tool: ToolNameContextZoom, Summary: "Context zoom found no node for handle", Output: string(output)}
 	}
 
 	return ToolResult{
-		Tool:    "context_zoom",
+		Tool:    ToolNameContextZoom,
 		Summary: fmt.Sprintf("Context zoom returned %d related node(s) and %d edge(s)", len(result.RelatedNodes), len(result.Edges)),
 		Output:  string(output),
 	}
@@ -260,13 +260,13 @@ func (m *Manager) contextZoom(ctx context.Context, req ToolRequest) ToolResult {
 func (m *Manager) contextPack(ctx context.Context, req ToolRequest) ToolResult {
 	task := strings.TrimSpace(util.FirstNonEmpty(req.Task, req.Query, req.Prompt, req.Content, req.Pattern))
 
-	freshness, err := m.contextReadFreshness(ctx, req, "context_pack")
+	freshness, err := m.contextReadFreshness(ctx, req, ToolNameContextPack)
 	if err != nil {
-		return ToolResult{Tool: "context_pack", Summary: "Context pack freshness check failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextPack, Summary: "Context pack freshness check failed", Error: err.Error()}
 	}
 
 	if comprehension.StaleEvidenceBlocksUse(freshness) {
-		return contextFreshnessBlockerResult("context_pack", freshness)
+		return contextFreshnessBlockerResult(ToolNameContextPack, freshness)
 	}
 
 	result, err := comprehension.Pack(comprehension.PackOptions{
@@ -283,14 +283,14 @@ func (m *Manager) contextPack(ctx context.Context, req ToolRequest) ToolResult {
 		Freshness:         &freshness,
 	})
 	if err != nil {
-		return ToolResult{Tool: "context_pack", Summary: "Context pack generation failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextPack, Summary: "Context pack generation failed", Error: err.Error()}
 	}
 
 	result.AutoRefresh = freshness.Refresh
 	result.Freshness = &freshness
 	result.Confidence = comprehension.GraphResultConfidenceForFreshness(result.Fresh, &freshness)
 	result.StaleEvidence = comprehension.StaleEvidenceSafetyForFreshness(freshness)
-	result.Provenance.Operation = "context_pack"
+	result.Provenance.Operation = ToolNameContextPack
 
 	if result.Provenance.Source == "" {
 		result.Provenance.Source = "context_graph"
@@ -310,7 +310,7 @@ func (m *Manager) contextPack(ctx context.Context, req ToolRequest) ToolResult {
 
 	output, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
-		return ToolResult{Tool: "context_pack", Summary: "Context pack report encode failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextPack, Summary: "Context pack report encode failed", Error: err.Error()}
 	}
 
 	gap := ""
@@ -321,7 +321,7 @@ func (m *Manager) contextPack(ctx context.Context, req ToolRequest) ToolResult {
 	refreshSummary := contextRefreshSummary(freshness.Refresh)
 
 	return ToolResult{
-		Tool:    "context_pack",
+		Tool:    ToolNameContextPack,
 		Summary: fmt.Sprintf("Context pack wrote %s with %d candidate file(s), %d symbol(s), and %d test(s)%s%s", result.ArtifactPath, len(result.CandidateFiles), len(result.CandidateSymbols), len(result.Tests), gap, refreshSummary),
 		Output:  string(output),
 	}
@@ -369,13 +369,13 @@ type contextImpactSignal struct {
 func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult {
 	task := m.contextImpactTask(req)
 
-	freshness, err := m.contextReadFreshness(ctx, req, "context_impact")
+	freshness, err := m.contextReadFreshness(ctx, req, ToolNameContextImpact)
 	if err != nil {
-		return ToolResult{Tool: "context_impact", Summary: "Context impact freshness check failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextImpact, Summary: "Context impact freshness check failed", Error: err.Error()}
 	}
 
 	if comprehension.StaleEvidenceBlocksUse(freshness) {
-		return contextFreshnessBlockerResult("context_impact", freshness)
+		return contextFreshnessBlockerResult(ToolNameContextImpact, freshness)
 	}
 
 	pack, err := comprehension.Pack(comprehension.PackOptions{
@@ -392,7 +392,7 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 		Freshness:         &freshness,
 	})
 	if err != nil {
-		return ToolResult{Tool: "context_impact", Summary: "Context impact ranking failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextImpact, Summary: "Context impact ranking failed", Error: err.Error()}
 	}
 
 	pack.AutoRefresh = freshness.Refresh
@@ -401,7 +401,7 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 
 	provenance := pack.Provenance
 
-	provenance.Operation = "context_impact"
+	provenance.Operation = ToolNameContextImpact
 
 	report := contextImpactReport{
 		Task:              pack.Task,
@@ -427,7 +427,7 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 
 	output, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
-		return ToolResult{Tool: "context_impact", Summary: "Context impact report encode failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextImpact, Summary: "Context impact report encode failed", Error: err.Error()}
 	}
 
 	gap := ""
@@ -436,7 +436,7 @@ func (m *Manager) contextImpact(ctx context.Context, req ToolRequest) ToolResult
 	}
 
 	return ToolResult{
-		Tool:    "context_impact",
+		Tool:    ToolNameContextImpact,
 		Summary: fmt.Sprintf("Context impact ranked %d item(s), %d test(s); context view: %s%s%s", len(report.ImpactScope), len(report.Tests), report.ContextViewPath, gap, contextRefreshSummary(freshness.Refresh)),
 		Output:  string(output),
 	}
@@ -633,7 +633,7 @@ func (m *Manager) contextStatusFreshness(ctx context.Context, req ToolRequest, s
 
 	decision, err := comprehension.EnsureFresh(ctx, comprehension.FreshnessRequest{
 		Root:              m.cfg.Root,
-		Operation:         "context_status",
+		Operation:         ToolNameContextStatus,
 		Policy:            contextFreshnessPolicy(req, comprehension.FreshnessReadThrough),
 		Path:              util.FirstNonEmpty(req.Path, req.Workdir),
 		Query:             util.FirstNonEmpty(req.Query, req.Task, req.Prompt, req.Content, req.Pattern),
@@ -658,7 +658,7 @@ func (m *Manager) contextStatusFreshness(ctx context.Context, req ToolRequest, s
 
 		return comprehension.FreshnessDecision{
 			Policy:        comprehension.FreshnessReadThrough,
-			Operation:     "context_status",
+			Operation:     ToolNameContextStatus,
 			FreshForScope: false,
 			GlobalFresh:   status.Fresh,
 			Scope:         refresh.Scope,
@@ -861,17 +861,17 @@ func contextRefreshSummary(refresh *comprehension.RefreshReport) string {
 func (m *Manager) contextTracePack(ctx context.Context, req ToolRequest) ToolResult {
 	command := strings.TrimSpace(req.Command)
 	if command == "" {
-		return ToolResult{Tool: "context_trace_pack", Summary: "Context trace pack rejected", Error: "command is required"}
+		return ToolResult{Tool: ToolNameContextTracePack, Summary: "Context trace pack rejected", Error: "command is required"}
 	}
 
 	if !m.cfg.EnableShell {
-		return ToolResult{Tool: "context_trace_pack", Summary: "Context trace pack rejected", Error: "shell execution is disabled"}
+		return ToolResult{Tool: ToolNameContextTracePack, Summary: "Context trace pack rejected", Error: "shell execution is disabled"}
 	}
 
 	if m.Mode() == ModeExplore {
 		if err := validateExploreShellCommand(command); err != nil {
 			return ToolResult{
-				Tool:    "context_trace_pack",
+				Tool:    ToolNameContextTracePack,
 				Summary: "Context trace pack rejected",
 				Error:   "explore mode only allows read-only inspection commands: " + err.Error(),
 			}
@@ -880,7 +880,7 @@ func (m *Manager) contextTracePack(ctx context.Context, req ToolRequest) ToolRes
 
 	workdir, err := m.resolveWorkdir(req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "context_trace_pack", Summary: "Context trace pack failed to resolve workdir", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextTracePack, Summary: "Context trace pack failed to resolve workdir", Error: err.Error()}
 	}
 
 	stdout, stderr, execErr := m.runCommandDetailed(ctx, workdir, m.cfg.Shell, "-lc", command)
@@ -911,12 +911,12 @@ func (m *Manager) contextTracePack(ctx context.Context, req ToolRequest) ToolRes
 		IncludeFiles: req.IncludeFiles,
 	})
 	if err != nil {
-		return ToolResult{Tool: "context_trace_pack", Summary: "Context trace pack generation failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextTracePack, Summary: "Context trace pack generation failed", Error: err.Error()}
 	}
 
 	output, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
-		return ToolResult{Tool: "context_trace_pack", Summary: "Context trace pack report encode failed", Error: err.Error()}
+		return ToolResult{Tool: ToolNameContextTracePack, Summary: "Context trace pack report encode failed", Error: err.Error()}
 	}
 
 	status := "passed"
@@ -930,7 +930,7 @@ func (m *Manager) contextTracePack(ctx context.Context, req ToolRequest) ToolRes
 	}
 
 	return ToolResult{
-		Tool:    "context_trace_pack",
+		Tool:    ToolNameContextTracePack,
 		Summary: fmt.Sprintf("Context trace pack wrote %s for %s command with %d event(s), %d executed file(s), and %d failing anchor(s)%s", result.ArtifactPath, status, len(result.Events), len(result.ExecutedFiles), len(result.FailingAnchors), gap),
 		Output:  string(output),
 	}

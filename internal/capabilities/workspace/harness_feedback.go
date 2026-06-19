@@ -126,7 +126,7 @@ func normalizeHarnessFeedbackCategory(category string) string {
 		return "planning_quality"
 	case "packet_quality", "planning_packet", "planner_packet", "packet":
 		return "packet_quality"
-	case "impact_ranking", "impact_rank", "context_impact":
+	case "impact_ranking", "impact_rank", ToolNameContextImpact:
 		return "impact_ranking"
 	case "plan_audit_gap", "plan_audit", "plan-audit":
 		return "plan_audit_gap"

@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/featureplanner"
 	"idiom/internal/workflows/featureplannerruntime"
 	"idiom/internal/workflows/planexecute"
 	"idiom/internal/workflows/recovery"
-	"idiom/internal/platform/util"
 )
 
 func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective string) (string, error) {
@@ -401,10 +401,6 @@ func (m *Model) updateDirectFeaturePlannerSession(state featureplanner.FeatureSt
 
 func (m *Model) runFeaturePlannerTUITurn(ctx context.Context, prompt string, taskFamily string) (string, error) {
 	return featureplannerruntime.CompleteModelTurn(ctx, m.client, prompt, m.chatOptions(), taskFamily, m.logMessage)
-}
-
-func (m *Model) runFeaturePlannerAtomPlanExecute(ctx context.Context, prompt string) (string, error) {
-	return m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, nil, false)
 }
 
 type featurePlannerAtomPlanExecuteRunner func(context.Context, string) (string, error)

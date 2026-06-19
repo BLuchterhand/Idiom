@@ -85,6 +85,8 @@ const (
 	ObligationApproval    ObligationKind = "approval"
 	ObligationBudget      ObligationKind = "budget"
 	ObligationLoop        ObligationKind = "loop"
+	ObligationSnippet     ObligationKind = "snippet_coverage"
+	ObligationBlocker     ObligationKind = "blocker"
 )
 
 type GateKind string
@@ -106,6 +108,9 @@ const (
 	ContractPackVerificationPostWrite ContractPackID = "verification/post_write"
 	ContractPackLoopRepeatedCall      ContractPackID = "loop/repeated_call"
 	ContractPackBudgetRunPolicy       ContractPackID = "budget/run_policy"
+	ContractPackParserToolRequest     ContractPackID = "parser/tool_request"
+	ContractPackFinalAnswerAcceptance ContractPackID = "final_answer/acceptance"
+	ContractPackToolAuthorization     ContractPackID = "tool/authorization"
 	ContractPackPlanExecuteProtocol   ContractPackID = "plan_execute/protocol"
 	ContractPackSelfModifyGuardFiles  ContractPackID = "self_modify/guard_files"
 )
@@ -134,9 +139,12 @@ type ContractObservedFact string
 type ObligationStatus string
 
 const (
-	ObligationOpen     ObligationStatus = "open"
-	ObligationResolved ObligationStatus = "resolved"
-	ObligationWaived   ObligationStatus = "waived"
+	ObligationOpen       ObligationStatus = "open"
+	ObligationResolved   ObligationStatus = "resolved"
+	ObligationWaived     ObligationStatus = "waived"
+	ObligationBlocked    ObligationStatus = "blocked"
+	ObligationStale      ObligationStatus = "stale"
+	ObligationSuperseded ObligationStatus = "superseded"
 )
 
 type ObligationOwner string
@@ -964,7 +972,7 @@ func validDecision(decision ToolPolicyDecision) bool {
 
 func validObligationKind(kind ObligationKind) bool {
 	switch kind {
-	case ObligationEvidence, ObligationWrite, ObligationVerify, ObligationFinalAnswer, ObligationApproval, ObligationBudget, ObligationLoop:
+	case ObligationEvidence, ObligationWrite, ObligationVerify, ObligationFinalAnswer, ObligationApproval, ObligationBudget, ObligationLoop, ObligationSnippet, ObligationBlocker:
 		return true
 	default:
 		return false
@@ -983,7 +991,9 @@ func validGateKind(kind GateKind) bool {
 func validContractPackID(packID ContractPackID) bool {
 	switch packID {
 	case ContractPackCompletionReadiness, ContractPackWriteRequiredPaths, ContractPackVerificationPostWrite,
-		ContractPackLoopRepeatedCall, ContractPackBudgetRunPolicy, ContractPackPlanExecuteProtocol, ContractPackSelfModifyGuardFiles:
+		ContractPackLoopRepeatedCall, ContractPackBudgetRunPolicy, ContractPackParserToolRequest,
+		ContractPackFinalAnswerAcceptance,
+		ContractPackToolAuthorization, ContractPackPlanExecuteProtocol, ContractPackSelfModifyGuardFiles:
 		return true
 	default:
 		return strings.HasPrefix(string(packID), "pack-") && validContractLabel(string(packID), 96)
@@ -1041,7 +1051,7 @@ func validContractLabel(value string, maxLen int) bool {
 
 func validObligationStatus(status ObligationStatus) bool {
 	switch status {
-	case ObligationOpen, ObligationResolved, ObligationWaived:
+	case ObligationOpen, ObligationResolved, ObligationWaived, ObligationBlocked, ObligationStale, ObligationSuperseded:
 		return true
 	default:
 		return false

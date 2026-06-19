@@ -8,7 +8,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
-	"idiom/internal/runtime/agent"
+	"idiom/internal/runtime/modepolicy"
 )
 
 func TestRequestApprovalAutoDeniesInHeadlessMode(t *testing.T) {
@@ -85,7 +85,7 @@ func TestPreExecuteToolRequestConfigDenyOverridesModeAllow(t *testing.T) {
 	result := model.preExecuteToolRequest(1, workspace.ToolRequest{
 		Tool: "read_file",
 		Path: ".idiom/deny-read-test.txt",
-	}, agent.Mode{Name: "build"})
+	}, modepolicy.Mode{Name: "build"})
 	if result == nil {
 		t.Fatal("expected TUI pre-execute hook to block configured deny")
 	}
@@ -113,7 +113,7 @@ func TestPreExecuteToolRequestReportsUnapprovedAskAsWriteApprovalRequired(t *tes
 	result := model.preExecuteToolRequest(1, workspace.ToolRequest{
 		Tool: "edit_file",
 		Path: "prompts/base.md",
-	}, agent.Mode{Name: "build"})
+	}, modepolicy.Mode{Name: "build"})
 	if result == nil {
 		t.Fatal("expected TUI pre-execute hook to require approval")
 	}

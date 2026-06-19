@@ -66,6 +66,25 @@ func setGateStringSliceField(t *testing.T, value reflect.Value, name string, fie
 	field.Set(slice)
 }
 
+func assertAuditGroupExists(t *testing.T, groups []AuditGroup, want AuditGroup) {
+	t.Helper()
+
+	for _, group := range groups {
+		if group.ContractID == want.ContractID &&
+			group.InvariantID == want.InvariantID &&
+			group.Lane == want.Lane &&
+			group.Phase == want.Phase &&
+			group.AdapterRoute == want.AdapterRoute &&
+			group.TerminalState == want.TerminalState &&
+			group.EventCount > 0 {
+
+			return
+		}
+	}
+
+	t.Fatalf("missing audit group %#v in %#v", want, groups)
+}
+
 func TestAuditEventsReportsLifecycleOnlyCoverage(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	occurredAt := time.Date(2026, 5, 13, 18, 0, 0, 0, time.UTC)
@@ -140,6 +159,122 @@ func TestAuditEventsJoinsPolicyAndObligationCoverage(t *testing.T) {
 	if !report.AllClear || len(report.Findings) != 0 {
 		t.Fatalf("expected all-clear joined coverage, all_clear=%v findings=%#v", report.AllClear, report.Findings)
 	}
+}
+
+func TestAuditEventsGroupsByContractInvariantLanePhaseAdapterAndTerminal(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 18, 35, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	policy := mustAutonomyEvent(NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
+		ToolCallID:  "tool-apply-1",
+		ToolName:    "apply_patch",
+		Capability:  CapabilityApplyPatch,
+		ActionClass: ActionClassPerEditWrite,
+		SideEffect:  SideEffectAdditive,
+		Decision:    PolicyAllow,
+		InvariantID: "write.required_edit_paths",
+	}, occurredAt.Add(time.Second), 2))
+	gate := mustAutonomyEvent(NewGateDecisionEvent(contract, withGateAuditFields(t, ContractGateEvent{
+		Gate:          GateVerification,
+		Decision:      PolicyReject,
+		InvariantID:   "verification.post_write",
+		ReasonCode:    "verification_required_after_write",
+		ToolName:      "go test ./...",
+		Source:        "audit_test",
+		ObservedFacts: []ContractObservedFact{"changed_path:internal/contracts/autonomy/audit.go"},
+	}, string(ContractPackVerificationPostWrite), string(EnforcementModeObserveOnly), []string{"verification_gate_decision"}, []string{"go test ./..."}), occurredAt.Add(2*time.Second), 3))
+	friction := mustAutonomyEvent(NewGuardFrictionEvent(contract, ContractGuardFrictionEvent{
+		Step:                 3,
+		Lane:                 "implement",
+		Phase:                "execute",
+		PhaseID:              "implement.execute",
+		ProtocolHash:         "protocol-test",
+		InvariantID:          "completion.readiness",
+		Subject:              GuardFrictionSubjectFinalAnswer,
+		Decision:             GuardFrictionDecisionReject,
+		GuardSurface:         GuardFrictionSurfaceCompletionGate,
+		FirstInvalidAction:   "final_answer",
+		VisibleActionClasses: []string{"final_answer", "blocker"},
+		SafeAlternatives:     []string{"go test ./..."},
+		ModelContractVisible: true,
+		RetryOutcome:         GuardFrictionRetryNotApplicable,
+		Avoidability:         GuardFrictionAvoidabilityUnknown,
+	}, occurredAt.Add(3*time.Second), 4))
+	turnPhase := mustAutonomyEvent(NewContractPresentedEvent(contract, ContractLifecycleEvent{
+		Reason: "turn_phase_contract",
+		TurnPhaseContract: &TurnPhaseContractEvent{
+			ContractID:   contract.ContractID,
+			PhaseID:      "implement.execute",
+			Phase:        "execute",
+			InvariantIDs: []string{"lifecycle.closeout"},
+			TypedRoute: TypedRouteContractEvent{
+				RouteSource: "lane",
+			},
+			LifecycleState: LifecycleStateEvent{
+				TerminalStates: []string{"complete"},
+			},
+		},
+	}, occurredAt.Add(4*time.Second), 5))
+	modelExchange := mustAutonomyEvent(NewModelExchangeEvent(contract, ContractModelExchangeEvent{
+		Kind:         "permission_snapshot",
+		ContractID:   contract.ContractID,
+		ProtocolHash: "protocol-test",
+		PhaseID:      "implement.execute",
+		ModelCallID:  "model-call-1",
+		InvariantID:  "tool.authorization",
+		PermissionSnapshot: &PermissionSnapshot{
+			ContractID:   contract.ContractID,
+			ProtocolHash: "protocol-test",
+			CapturedBy:   "harness",
+		},
+	}, occurredAt.Add(5*time.Second), 6))
+
+	report := AuditEvents([]Event{compiled, policy, gate, friction, turnPhase, modelExchange}, EventAuditOptions{})
+
+	if report.AuditGroupCoverage.Total < 5 {
+		t.Fatalf("expected grouped audit coverage, got %#v", report.AuditGroupCoverage)
+	}
+
+	assertAuditGroupExists(t, report.AuditGroupCoverage.Groups, AuditGroup{
+		ContractID:    contract.ContractID,
+		InvariantID:   "write.required_edit_paths",
+		Lane:          "implement",
+		Phase:         "execute",
+		AdapterRoute:  "apply_patch",
+		TerminalState: "unknown",
+	})
+	assertAuditGroupExists(t, report.AuditGroupCoverage.Groups, AuditGroup{
+		ContractID:    contract.ContractID,
+		InvariantID:   "verification.post_write",
+		Lane:          "implement",
+		Phase:         "execute",
+		AdapterRoute:  "go test ./...",
+		TerminalState: string(PolicyReject),
+	})
+	assertAuditGroupExists(t, report.AuditGroupCoverage.Groups, AuditGroup{
+		ContractID:    contract.ContractID,
+		InvariantID:   "completion.readiness",
+		Lane:          "implement",
+		Phase:         "implement.execute",
+		AdapterRoute:  string(GuardFrictionSurfaceCompletionGate),
+		TerminalState: string(GuardFrictionDecisionReject),
+	})
+	assertAuditGroupExists(t, report.AuditGroupCoverage.Groups, AuditGroup{
+		ContractID:    contract.ContractID,
+		InvariantID:   "lifecycle.closeout",
+		Lane:          "implement",
+		Phase:         "implement.execute",
+		AdapterRoute:  "unknown",
+		TerminalState: "complete",
+	})
+	assertAuditGroupExists(t, report.AuditGroupCoverage.Groups, AuditGroup{
+		ContractID:    contract.ContractID,
+		InvariantID:   "tool.authorization",
+		Lane:          "implement",
+		Phase:         "implement.execute",
+		AdapterRoute:  "permission_snapshot",
+		TerminalState: "unknown",
+	})
 }
 
 func TestAuditEventsReportsGateCoverageAndUnresolvedObligations(t *testing.T) {
@@ -1004,6 +1139,74 @@ func TestAuditEventsUsesCallableToolsForTextualManifestVisibility(t *testing.T) 
 	}
 }
 
+func TestAuditEventsFlagsReadinessForcingIncidents(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 20, 24, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	readiness := mustAutonomyEvent(NewReadinessStateEvent(contract, ContractReadinessEvent{
+		ReadyToAnswer:   true,
+		OpenObligations: []string{"source-body:internal/runtime/agent/runner.go"},
+	}, occurredAt.Add(time.Second), 2))
+	presented := mustAutonomyEvent(NewContractPresentedEvent(contract, ContractLifecycleEvent{
+		Reason: "turn_phase_contract",
+		TurnPhaseContract: &TurnPhaseContractEvent{
+			SchemaVersion: "idiom.turn_phase_contract.v1",
+			PhaseID:       "read_only.ready_but_source_pending",
+			HiddenTools:   []string{"read_file", "context_pack"},
+			ActionPolicy: TurnActionClassPolicyEvent{
+				AllowedActionClasses: []string{"final_answer", "blocker"},
+			},
+			EvidenceState: PhaseEvidenceStateEvent{
+				SourceBodyObligations: []string{"internal/runtime/agent/runner.go"},
+			},
+			EnforcementMode: "observe_only",
+		},
+	}, occurredAt.Add(2*time.Second), 3))
+	modelProbe := mustAutonomyEvent(NewModelExchangeEvent(contract, ContractModelExchangeEvent{
+		Kind:         "model_response",
+		ContractID:   contract.ContractID,
+		ProtocolHash: "sha256:phase",
+		PhaseID:      "read_only.ready_but_source_pending",
+		ModelResponse: &ModelResponse{
+			SchemaVersion: ModelResponseSchemaVersion,
+			ContractID:    contract.ContractID,
+			ProtocolHash:  "sha256:phase",
+			Kind:          ModelResponseRequestContext,
+			ContextRequest: &ContextRequest{
+				MissingRefs: []string{"source_body:internal/runtime/agent/runner.go"},
+				ReasonCode:  "missing_source_body",
+			},
+		},
+	}, occurredAt.Add(3*time.Second), 4))
+	completion := mustAutonomyEvent(NewCompletionGateDecisionEvent(contract, ContractCompletionEvent{
+		Decision:     PolicyAllow,
+		InvariantID:  "completion.readiness",
+		ProtocolHash: "sha256:phase",
+	}, occurredAt.Add(4*time.Second), 5))
+
+	report := AuditEvents([]Event{compiled, readiness, presented, modelProbe, completion}, EventAuditOptions{})
+
+	if len(report.ReadinessForcing.ForcedNoToolsTurns) != 1 {
+		t.Fatalf("expected forced no-tools readiness incident, got %#v", report.ReadinessForcing)
+	}
+	if len(report.ReadinessForcing.UsefulToolsHiddenAfterReadiness) != 1 {
+		t.Fatalf("expected hidden useful tools readiness incident, got %#v", report.ReadinessForcing)
+	}
+	if len(report.ReadinessForcing.HostComposedAfterRelevantProbes) != 1 {
+		t.Fatalf("expected host-composed-after-probe incident, got %#v", report.ReadinessForcing)
+	}
+
+	for _, id := range []string{
+		"readiness_forced_no_tools_turn",
+		"readiness_useful_tools_hidden",
+		"readiness_host_composed_after_probe",
+	} {
+		if !hasEventAuditFinding(report, id) {
+			t.Fatalf("expected finding %s, got %#v", id, report.Findings)
+		}
+	}
+}
+
 func TestTurnPhaseActionClassForToolCoversProjectionTools(t *testing.T) {
 	cases := map[string]string{
 		"read_file":            ActionClassToken(ActionClassRead),
@@ -1024,6 +1227,95 @@ func TestTurnPhaseActionClassForToolCoversProjectionTools(t *testing.T) {
 		if got := ActionClassToken(TurnPhaseActionClassForToolClass(tool)); got != want {
 			t.Fatalf("TurnPhaseActionClassForToolClass(%q) = %q, want %q", tool, got, want)
 		}
+	}
+}
+
+func TestAuditEventsClearsReadinessOpenObligationFlagAfterResolution(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 20, 25, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	opened := mustAutonomyEvent(NewObligationStateEvent(EventObligationOpened, contract, Obligation{
+		ObligationID: "obl-source",
+		Kind:         ObligationEvidence,
+		Status:       ObligationOpen,
+		Owner:        OwnerHost,
+		RequiredBy:   "source_body",
+	}, occurredAt.Add(time.Second), 2))
+	readiness := mustAutonomyEvent(NewReadinessStateEvent(contract, ContractReadinessEvent{
+		ReadyToAnswer:   true,
+		OpenObligations: []string{"obl-source"},
+	}, occurredAt.Add(2*time.Second), 3))
+	resolved := mustAutonomyEvent(NewObligationStateEvent(EventObligationResolved, contract, Obligation{
+		ObligationID: "obl-source",
+		Kind:         ObligationEvidence,
+		Status:       ObligationResolved,
+		Owner:        OwnerHost,
+		RequiredBy:   "source_body",
+		EvidenceRef:  "read-file:runner.go",
+	}, occurredAt.Add(3*time.Second), 4))
+	presented := mustAutonomyEvent(NewContractPresentedEvent(contract, ContractLifecycleEvent{
+		Reason: "turn_phase_contract",
+		TurnPhaseContract: &TurnPhaseContractEvent{
+			SchemaVersion: "idiom.turn_phase_contract.v1",
+			PhaseID:       "read_only.after_resolution",
+			HiddenTools:   []string{"read_file"},
+			EvidenceState: PhaseEvidenceStateEvent{
+				SourceBodyObligations: []string{"internal/runtime/agent/runner.go"},
+			},
+			EnforcementMode: "observe_only",
+		},
+	}, occurredAt.Add(4*time.Second), 5))
+
+	report := AuditEvents([]Event{compiled, opened, readiness, resolved, presented}, EventAuditOptions{})
+
+	if len(report.ReadinessForcing.UsefulToolsHiddenAfterReadiness) != 0 {
+		t.Fatalf("resolved obligation should clear readiness forcing state, got %#v", report.ReadinessForcing)
+	}
+}
+
+func TestAuditEventsClearsRelevantProbeAfterContextPacket(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 20, 26, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	modelProbe := mustAutonomyEvent(NewModelExchangeEvent(contract, ContractModelExchangeEvent{
+		Kind:         "model_response",
+		ContractID:   contract.ContractID,
+		ProtocolHash: "sha256:phase",
+		PhaseID:      "read_only.context_missing",
+		ModelResponse: &ModelResponse{
+			SchemaVersion: ModelResponseSchemaVersion,
+			ContractID:    contract.ContractID,
+			ProtocolHash:  "sha256:phase",
+			Kind:          ModelResponseRequestContext,
+			ContextRequest: &ContextRequest{
+				MissingRefs: []string{"source_body:internal/runtime/agent/runner.go"},
+				ReasonCode:  "missing_source_body",
+			},
+		},
+	}, occurredAt.Add(time.Second), 2))
+	contextPacket := mustAutonomyEvent(NewModelExchangeEvent(contract, ContractModelExchangeEvent{
+		Kind:         "context_packet",
+		ContractID:   contract.ContractID,
+		ProtocolHash: "sha256:phase",
+		PhaseID:      "read_only.context_satisfied",
+		ContextPacket: &ContextPacket{
+			SchemaVersion: ContextPacketSchemaVersion,
+			ContractID:    contract.ContractID,
+			ProtocolHash:  "sha256:phase",
+			EvidenceRefs:  []string{"read-file:runner.go"},
+			SchemaNames:   []string{ContextPacketSchemaVersion},
+		},
+	}, occurredAt.Add(2*time.Second), 3))
+	completion := mustAutonomyEvent(NewCompletionGateDecisionEvent(contract, ContractCompletionEvent{
+		Decision:     PolicyAllow,
+		InvariantID:  "completion.readiness",
+		ProtocolHash: "sha256:phase",
+	}, occurredAt.Add(3*time.Second), 4))
+
+	report := AuditEvents([]Event{compiled, modelProbe, contextPacket, completion}, EventAuditOptions{})
+
+	if len(report.ReadinessForcing.HostComposedAfterRelevantProbes) != 0 {
+		t.Fatalf("context packet should clear relevant-probe forcing state, got %#v", report.ReadinessForcing)
 	}
 }
 

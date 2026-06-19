@@ -305,8 +305,8 @@ func BuildToolSidecarEnvelopeWithOptions(req ToolRequest, result ToolResult, pro
 
 	structuredOutput := toolSidecarStructuredOutput(result.Output)
 	outputObject := toolSidecarOutputObject(structuredOutput)
-	metadata := autonomy.DefaultContractMetadata("p7.1", "tool_sidecar_envelope")
 	transport := normalizeToolSidecarTransport(opts.Transport)
+	contract := BuildToolSidecarContract(tool, profile, transport)
 	childContext := normalizeToolSidecarChildContext(opts.ChildContext)
 
 	return ToolSidecarEnvelope{
@@ -314,14 +314,14 @@ func BuildToolSidecarEnvelopeWithOptions(req ToolRequest, result ToolResult, pro
 		Tool:             tool,
 		Profile:          profile,
 		Caller:           opts.Caller,
-		Contract:         toolSidecarContract(tool, profile, metadata, transport),
+		Contract:         contract,
 		Freshness:        toolSidecarFreshness(outputObject),
 		Warnings:         toolSidecarWarnings(outputObject),
 		AuditEventIDs:    toolSidecarAuditEventIDs(outputObject),
 		StructuredOutput: structuredOutput,
 		Error:            toolSidecarError(result),
 		ChildContext:     childContext,
-		Metadata:         metadata,
+		Metadata:         contract.Metadata,
 	}
 }
 
@@ -523,7 +523,11 @@ func normalizeToolSidecarTransport(transport string) string {
 	return transport
 }
 
-func toolSidecarContract(tool string, profile string, metadata autonomy.ContractMetadata, transport string) ToolSidecarContract {
+func BuildToolSidecarContract(tool string, profile string, transport string) ToolSidecarContract {
+	tool = strings.TrimSpace(tool)
+	profile = util.FirstNonEmpty(strings.TrimSpace(profile), ToolProfileDefault)
+	transport = normalizeToolSidecarTransport(transport)
+	metadata := autonomy.DefaultContractMetadata("p7.1", "tool_sidecar_envelope")
 	policy := toolSchemaPolicyForTool(tool)
 
 	return ToolSidecarContract{

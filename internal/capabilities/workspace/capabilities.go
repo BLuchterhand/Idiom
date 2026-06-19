@@ -18,7 +18,7 @@ import (
 const (
 	readOnlyCapabilitySchemaVersion     = "idiom.read_only_capabilities.v1"
 	readOnlyCapabilityResultVersion     = "idiom.read_only_capability_result.v1"
-	readOnlyCapabilityToolName          = "read_only_capability"
+	readOnlyCapabilityToolName          = ToolNameReadOnlyCapability
 	readOnlyCapabilityResolverEnv       = "IDIOM_READ_ONLY_CAPABILITY_RESOLVER"
 	readOnlyCapabilityDisabledRoutesEnv = "IDIOM_READ_ONLY_CAPABILITY_DISABLED_ROUTES"
 	readOnlyCapabilityPublicStatusEnv   = "IDIOM_READ_ONLY_CAPABILITY_PUBLIC_STATUS"
@@ -32,17 +32,45 @@ const (
 	CapabilityClassWriteSideEffect      = "write_side_effect"
 )
 
+const (
+	EvidenceCapabilityAuditBehavior       = "audit_behavior"
+	EvidenceCapabilityCallsFrom           = "calls_from"
+	EvidenceCapabilityCallsInto           = "calls_into"
+	EvidenceCapabilityFindDefinition      = "find_definition"
+	EvidenceCapabilityFindImplementations = "find_implementations"
+	EvidenceCapabilityFindReferences      = "find_references"
+	EvidenceCapabilityFindSymbol          = "find_symbol"
+	EvidenceCapabilityHistoryContext      = "history_context"
+	EvidenceCapabilityInspectFile         = "inspect_file"
+	EvidenceCapabilityInspectSymbol       = "inspect_symbol"
+	EvidenceCapabilityLocalizeChange      = "localize_change"
+	EvidenceCapabilityQueryContext        = "query_context"
+	EvidenceCapabilityRelatedFiles        = "related_files"
+	EvidenceCapabilitySecurityScan        = "security_scan"
+	EvidenceCapabilitySourceDiagnostics   = "source_diagnostics"
+	EvidenceCapabilitySourceSanity        = "source_sanity"
+	EvidenceCapabilityTraceRuntimeFailure = "trace_runtime_failure"
+	EvidenceCapabilityVerifyEdit          = "verify_edit"
+)
+
 type ReadOnlyCapabilityID string
 
 const (
-	ReadOnlyCapabilityFileOutline   ReadOnlyCapabilityID = "file-outline"
-	ReadOnlyCapabilityInspectSymbol ReadOnlyCapabilityID = "inspect-symbol"
-	ReadOnlyCapabilitySymbolLookup  ReadOnlyCapabilityID = "symbol-lookup"
-	ReadOnlyCapabilityDefinition    ReadOnlyCapabilityID = "definition"
-	ReadOnlyCapabilityReferences    ReadOnlyCapabilityID = "references"
-	ReadOnlyCapabilityCallsFrom     ReadOnlyCapabilityID = "calls-from"
-	ReadOnlyCapabilityCallsInto     ReadOnlyCapabilityID = "calls-into"
-	ReadOnlyCapabilityRelatedFiles  ReadOnlyCapabilityID = "related-files"
+	ReadOnlyCapabilityLocalizeChange  ReadOnlyCapabilityID = "localize-change"
+	ReadOnlyCapabilityQueryContext    ReadOnlyCapabilityID = "query-context"
+	ReadOnlyCapabilityFileOutline     ReadOnlyCapabilityID = "file-outline"
+	ReadOnlyCapabilityInspectSymbol   ReadOnlyCapabilityID = "inspect-symbol"
+	ReadOnlyCapabilitySymbolLookup    ReadOnlyCapabilityID = "symbol-lookup"
+	ReadOnlyCapabilityDefinition      ReadOnlyCapabilityID = "definition"
+	ReadOnlyCapabilityReferences      ReadOnlyCapabilityID = "references"
+	ReadOnlyCapabilityImplementations ReadOnlyCapabilityID = "find-implementations"
+	ReadOnlyCapabilityCallsFrom       ReadOnlyCapabilityID = "calls-from"
+	ReadOnlyCapabilityCallsInto       ReadOnlyCapabilityID = "calls-into"
+	ReadOnlyCapabilityRelatedFiles    ReadOnlyCapabilityID = "related-files"
+	ReadOnlyCapabilityAuditBehavior   ReadOnlyCapabilityID = "audit-behavior"
+	ReadOnlyCapabilitySourceSanity    ReadOnlyCapabilityID = "source-sanity"
+	ReadOnlyCapabilityTraceRuntime    ReadOnlyCapabilityID = "trace-runtime-failure"
+	ReadOnlyCapabilityVerifyEdit      ReadOnlyCapabilityID = "verify-edit"
 )
 
 type ReadOnlyCapabilityRegistry struct {
@@ -223,14 +251,21 @@ type ReadOnlyCapabilityCoverage struct {
 
 func ReadOnlyCapabilityEvidenceCapabilities() []string {
 	return []string{
-		"inspect_file",
-		"inspect_symbol",
-		"find_symbol",
-		"find_definition",
-		"find_references",
-		"calls_from",
-		"calls_into",
-		"related_files",
+		EvidenceCapabilityLocalizeChange,
+		EvidenceCapabilityQueryContext,
+		EvidenceCapabilityInspectFile,
+		EvidenceCapabilityInspectSymbol,
+		EvidenceCapabilityFindSymbol,
+		EvidenceCapabilityFindDefinition,
+		EvidenceCapabilityFindReferences,
+		EvidenceCapabilityFindImplementations,
+		EvidenceCapabilityCallsFrom,
+		EvidenceCapabilityCallsInto,
+		EvidenceCapabilityRelatedFiles,
+		EvidenceCapabilitySourceSanity,
+		EvidenceCapabilityTraceRuntimeFailure,
+		EvidenceCapabilityVerifyEdit,
+		EvidenceCapabilityAuditBehavior,
 	}
 }
 
@@ -248,6 +283,10 @@ func CodeNavigationEvidenceCapabilities() []string {
 
 func ReadOnlyCapabilityEvidenceCapability(capability string) string {
 	switch normalizeReadOnlyCapabilityID(capability) {
+	case string(ReadOnlyCapabilityLocalizeChange):
+		return EvidenceCapabilityLocalizeChange
+	case string(ReadOnlyCapabilityQueryContext):
+		return EvidenceCapabilityQueryContext
 	case string(ReadOnlyCapabilityFileOutline):
 		return evidenceCapabilityForLanguageCapability(CapFileOutline)
 	case string(ReadOnlyCapabilityInspectSymbol):
@@ -258,12 +297,22 @@ func ReadOnlyCapabilityEvidenceCapability(capability string) string {
 		return evidenceCapabilityForLanguageCapability(CapDefinition)
 	case string(ReadOnlyCapabilityReferences):
 		return evidenceCapabilityForLanguageCapability(CapReferences)
+	case string(ReadOnlyCapabilityImplementations):
+		return evidenceCapabilityForLanguageCapability(CapImplementations)
 	case string(ReadOnlyCapabilityCallsFrom):
 		return evidenceCapabilityForLanguageCapability(CapCallsFrom)
 	case string(ReadOnlyCapabilityCallsInto):
 		return evidenceCapabilityForLanguageCapability(CapCallsInto)
 	case string(ReadOnlyCapabilityRelatedFiles):
 		return evidenceCapabilityForLanguageCapability(CapRelatedFiles)
+	case string(ReadOnlyCapabilitySourceSanity):
+		return EvidenceCapabilitySourceSanity
+	case string(ReadOnlyCapabilityTraceRuntime):
+		return EvidenceCapabilityTraceRuntimeFailure
+	case string(ReadOnlyCapabilityVerifyEdit):
+		return EvidenceCapabilityVerifyEdit
+	case string(ReadOnlyCapabilityAuditBehavior):
+		return EvidenceCapabilityAuditBehavior
 	default:
 		return ""
 	}
@@ -276,6 +325,27 @@ func BuildReadOnlyCapabilityRegistry() ReadOnlyCapabilityRegistry {
 		PublicStatusEnabled:    readOnlyCapabilityPublicStatusEnabled(),
 		DirectToolFallback:     true,
 		Capabilities: []ReadOnlyCapabilitySpec{
+			readOnlyCapability(
+				ReadOnlyCapabilityLocalizeChange,
+				"Localize candidate files, symbols, and tests for a change without choosing the model's strategy.",
+				[]ReadOnlyCapabilityAdapterSpec{
+					readOnlyAdapter(ToolNameContextPack, EvidenceCapabilityLocalizeChange, "", "context_graph"),
+					readOnlyAdapter(ToolNameContextQuery, EvidenceCapabilityLocalizeChange, "", "context_graph"),
+					readOnlyAdapter(ToolNameContextZoom, EvidenceCapabilityLocalizeChange, "", "context_graph"),
+					readOnlyAdapter(ToolNameContextStatus, EvidenceCapabilityLocalizeChange, "", "context_graph"),
+					readOnlyAdapter(ToolNameContextImpact, EvidenceCapabilityLocalizeChange, "", "context_graph"),
+					readOnlyAdapter(ToolNameDiscoveryQuery, EvidenceCapabilityLocalizeChange, "", "discovery_orchestrator"),
+				},
+			),
+			readOnlyCapability(
+				ReadOnlyCapabilityQueryContext,
+				"Ask a graph-shaped question over indexed context without directly inspecting source.",
+				[]ReadOnlyCapabilityAdapterSpec{
+					readOnlyAdapter(ToolNameContextQuery, EvidenceCapabilityQueryContext, "", "context_graph"),
+					readOnlyAdapter(ToolNameContextZoom, EvidenceCapabilityQueryContext, "", "context_graph"),
+					readOnlyAdapter(ToolNameContextStatus, EvidenceCapabilityQueryContext, "", "context_graph"),
+				},
+			),
 			readOnlyCapability(
 				ReadOnlyCapabilityFileOutline,
 				"Return declaration or structural outline evidence for one source file.",
@@ -320,6 +390,14 @@ func BuildReadOnlyCapabilityRegistry() ReadOnlyCapabilityRegistry {
 				),
 			),
 			readOnlyCapability(
+				ReadOnlyCapabilityImplementations,
+				"Locate implementation evidence for an interface, trait, method, or abstract symbol.",
+				append(
+					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(CapImplementations)},
+					languageCapabilityAdapters(CapImplementations)...,
+				),
+			),
+			readOnlyCapability(
 				ReadOnlyCapabilityCallsFrom,
 				"Locate outgoing call evidence from a named symbol.",
 				append(
@@ -342,6 +420,13 @@ func BuildReadOnlyCapabilityRegistry() ReadOnlyCapabilityRegistry {
 					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(CapRelatedFiles)},
 					languageCapabilityAdapters(CapRelatedFiles)...,
 				),
+			),
+			readOnlyCapability(
+				ReadOnlyCapabilityAuditBehavior,
+				"Inspect harness behavior, tool surface, backend, and cache status without mutating source.",
+				[]ReadOnlyCapabilityAdapterSpec{
+					readOnlyAdapter(ToolNameHarnessAudit, EvidenceCapabilityAuditBehavior, "", ToolNameHarnessAudit),
+				},
 			),
 		},
 	}
@@ -396,27 +481,27 @@ func CapabilityClassificationForTool(tool string) string {
 func evidenceCapabilityForLanguageCapability(capability Capability) string {
 	switch capability {
 	case CapFileOutline:
-		return "inspect_file"
+		return EvidenceCapabilityInspectFile
 	case CapFindSymbol, CapWorkspaceSymbol:
-		return "find_symbol"
+		return EvidenceCapabilityFindSymbol
 	case CapReadSymbol, CapExtractBody:
-		return "inspect_symbol"
+		return EvidenceCapabilityInspectSymbol
 	case CapDefinition:
-		return "find_definition"
+		return EvidenceCapabilityFindDefinition
 	case CapReferences:
-		return "find_references"
+		return EvidenceCapabilityFindReferences
 	case CapCallsFrom:
-		return "calls_from"
+		return EvidenceCapabilityCallsFrom
 	case CapCallsInto:
-		return "calls_into"
+		return EvidenceCapabilityCallsInto
 	case CapRelatedFiles:
-		return "related_files"
+		return EvidenceCapabilityRelatedFiles
 	case CapImplementations:
-		return "find_implementations"
+		return EvidenceCapabilityFindImplementations
 	case CapDiagnostics:
-		return "source_diagnostics"
+		return EvidenceCapabilitySourceDiagnostics
 	case CapOverview, CapEntrypoints:
-		return "localize_change"
+		return EvidenceCapabilityLocalizeChange
 	default:
 		return ""
 	}
@@ -576,7 +661,7 @@ func resolveReadOnlyCapabilityForRequest(id string, req ToolRequest) (ReadOnlyCa
 }
 
 func readOnlyCapabilityResolverTools(req ToolRequest) []string {
-	tools := []string{"code_navigate"}
+	tools := []string{ToolNameCodeNavigate}
 
 	if lang, ok := readOnlyCapabilityRequestLanguage(req); ok {
 		for _, tool := range lang.Tools {
@@ -1203,7 +1288,7 @@ func limitCapabilityStatusDetail(value string) string {
 
 func selectReadOnlyCapabilityAdapter(adapters []ReadOnlyCapabilityAdapterSpec) (ReadOnlyCapabilityAdapterSpec, string, bool) {
 	for _, adapter := range adapters {
-		if adapter.Tool != "code_navigate" {
+		if adapter.Tool != ToolNameCodeNavigate {
 			continue
 		}
 
@@ -1358,12 +1443,21 @@ func readOnlyCapabilityRouteStates(registry ReadOnlyCapabilityRegistry, tools []
 		states = append(states, state)
 	}
 
+	deferredStates := make(map[string]ReadOnlyCapabilityRouteState)
 	for _, adapter := range deferredReadOnlyCapabilityAdaptersForTools(stringSet(tools)) {
-		states = append(states, ReadOnlyCapabilityRouteState{
-			Capability: strings.TrimSpace(adapter.Capability),
-			State:      "deferred",
-			Reason:     strings.TrimSpace(adapter.Reason),
-		})
+		capability := strings.TrimSpace(adapter.Capability)
+		if capability == "" {
+			continue
+		}
+		state := deferredStates[capability]
+		state.Capability = capability
+		state.State = "deferred"
+		state.Reason = strings.TrimSpace(adapter.Reason)
+		state.AdapterCount++
+		deferredStates[capability] = state
+	}
+	for _, state := range deferredStates {
+		states = append(states, state)
 	}
 
 	slices.SortFunc(states, func(a, b ReadOnlyCapabilityRouteState) int {
@@ -1419,14 +1513,18 @@ func readOnlyCapabilityRouteStateCounts(states []ReadOnlyCapabilityRouteState) m
 
 func isReadOnlyCapabilityRuntimeRouted(id string) bool {
 	switch normalizeReadOnlyCapabilityID(id) {
-	case string(ReadOnlyCapabilityFileOutline),
+	case string(ReadOnlyCapabilityLocalizeChange),
+		string(ReadOnlyCapabilityQueryContext),
+		string(ReadOnlyCapabilityFileOutline),
 		string(ReadOnlyCapabilityInspectSymbol),
 		string(ReadOnlyCapabilitySymbolLookup),
 		string(ReadOnlyCapabilityDefinition),
 		string(ReadOnlyCapabilityReferences),
+		string(ReadOnlyCapabilityImplementations),
 		string(ReadOnlyCapabilityCallsFrom),
 		string(ReadOnlyCapabilityCallsInto),
-		string(ReadOnlyCapabilityRelatedFiles):
+		string(ReadOnlyCapabilityRelatedFiles),
+		string(ReadOnlyCapabilityAuditBehavior):
 		return true
 	default:
 		return false
@@ -1592,7 +1690,11 @@ func normalizeReadOnlyCapabilityID(id string) string {
 	}
 
 	switch key {
-	case "outline", "fileoutline":
+	case "localize", "localize-change", "localizechange", "localization", "localise-change":
+		return string(ReadOnlyCapabilityLocalizeChange)
+	case "query-context", "querycontext", "context-query", "contextquery":
+		return string(ReadOnlyCapabilityQueryContext)
+	case "outline", "fileoutline", "inspect-file", "inspectfile", "file-outline":
 		return string(ReadOnlyCapabilityFileOutline)
 	case "read-symbol", "read-symbols", "readsymbol", "inspect-symbol", "inspectsymbol", "symbol-body", "symbolbody":
 		return string(ReadOnlyCapabilityInspectSymbol)
@@ -1602,12 +1704,22 @@ func normalizeReadOnlyCapabilityID(id string) string {
 		return string(ReadOnlyCapabilityDefinition)
 	case "reference", "references", "refs", "usages", "find-reference", "find-references":
 		return string(ReadOnlyCapabilityReferences)
+	case "implementation", "implementations", "find-implementation", "find-implementations":
+		return string(ReadOnlyCapabilityImplementations)
 	case "calls-from", "callees":
 		return string(ReadOnlyCapabilityCallsFrom)
 	case "calls-into", "callers":
 		return string(ReadOnlyCapabilityCallsInto)
 	case "related", "related-file", "related-files":
 		return string(ReadOnlyCapabilityRelatedFiles)
+	case "audit", "audit-behavior", "auditbehaviour", "audit-behaviour", "harness-audit":
+		return string(ReadOnlyCapabilityAuditBehavior)
+	case string(ReadOnlyCapabilitySourceSanity), "sourcesanity", "source-diagnostics":
+		return string(ReadOnlyCapabilitySourceSanity)
+	case string(ReadOnlyCapabilityTraceRuntime), "traceruntimefailure", "runtime-trace", "trace-failure":
+		return string(ReadOnlyCapabilityTraceRuntime)
+	case string(ReadOnlyCapabilityVerifyEdit), "verifyedit", "verification", "source-verification":
+		return string(ReadOnlyCapabilityVerifyEdit)
 	default:
 		return key
 	}
@@ -1679,10 +1791,34 @@ func unsafeReadOnlyCapabilityReason(declaredSideEffects []autonomy.SideEffectCla
 func deferredReadOnlyCapabilityAdaptersForTools(toolSet map[string]struct{}) []ReadOnlyCapabilityDeferredAdapterSpec {
 	deferred := []ReadOnlyCapabilityDeferredAdapterSpec{
 		{
-			Capability:        "source-sanity",
+			Capability:        string(ReadOnlyCapabilitySourceSanity),
 			Tool:              ToolNameSourceSanity,
 			Reason:            "schema_side_effects_not_read_only_only",
 			SchemaSideEffects: append([]autonomy.SideEffectClass(nil), toolSchemaSideEffects(ToolNameSourceSanity)...),
+		},
+		{
+			Capability:        string(ReadOnlyCapabilityTraceRuntime),
+			Tool:              ToolNameContextTracePack,
+			Reason:            "schema_side_effects_not_read_only_only",
+			SchemaSideEffects: append([]autonomy.SideEffectClass(nil), toolSchemaSideEffects(ToolNameContextTracePack)...),
+		},
+		{
+			Capability:        string(ReadOnlyCapabilityVerifyEdit),
+			Tool:              ToolNameContextTracePack,
+			Reason:            "schema_side_effects_not_read_only_only",
+			SchemaSideEffects: append([]autonomy.SideEffectClass(nil), toolSchemaSideEffects(ToolNameContextTracePack)...),
+		},
+		{
+			Capability:        string(ReadOnlyCapabilityVerifyEdit),
+			Tool:              ToolNameSourceSanity,
+			Reason:            "schema_side_effects_not_read_only_only",
+			SchemaSideEffects: append([]autonomy.SideEffectClass(nil), toolSchemaSideEffects(ToolNameSourceSanity)...),
+		},
+		{
+			Capability:        string(ReadOnlyCapabilityVerifyEdit),
+			Tool:              ToolNameShell,
+			Reason:            "schema_side_effects_not_read_only_only",
+			SchemaSideEffects: append([]autonomy.SideEffectClass(nil), toolSchemaSideEffects(ToolNameShell)...),
 		},
 	}
 	out := deferred[:0]

@@ -23,10 +23,6 @@ func planExecuteReviewRepairRejectedPassRetryPrompt(basePrompt string, reason st
 	}, "\n")
 }
 
-func PlanExecuteReviewRepairRejectedPassRetryPrompt(basePrompt string, reason string) string {
-	return planExecuteReviewRepairRejectedPassRetryPrompt(basePrompt, reason)
-}
-
 func planExecuteReviewRepairInvalidOutcomeRetryPrompt(basePrompt string, answer string) string {
 	answer = strings.TrimSpace(answer)
 	if answer == "" {
@@ -52,8 +48,4 @@ func planExecuteReviewRepairInvalidOutcomeRetryPrompt(basePrompt string, answer 
 		"",
 		"Do not answer with a read-only explanation, source inventory, summary, or prose outside the chosen terminal shape.",
 	}, "\n")
-}
-
-func PlanExecuteReviewRepairInvalidOutcomeRetryPrompt(basePrompt string, answer string) string {
-	return planExecuteReviewRepairInvalidOutcomeRetryPrompt(basePrompt, answer)
 }

@@ -9,8 +9,8 @@ import (
 	"idiom/internal/evidence/transcript"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/util"
-	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/promptstack"
 )
 
@@ -181,7 +181,7 @@ func (m *Model) slashMode(_ string, fields []string) bool {
 		m.status = "Current mode: " + m.modeSummary()
 	case len(fields) == 2:
 		name := strings.ToLower(strings.TrimSpace(fields[1]))
-		mode, ok := agent.ModeByName(name)
+		mode, ok := modepolicy.ModeByName(name)
 
 		if !ok {
 			m.status = "Usage: /mode [build|plan|general]"

@@ -7,10 +7,6 @@ func reviewAnswerDeclaresBlocker(answer string) bool {
 	return strings.Contains(answer, "<<QUESTION>>") || strings.Contains(lower, "decision: block") || strings.Contains(lower, "blocker")
 }
 
-func ReviewAnswerDeclaresBlocker(answer string) bool {
-	return reviewAnswerDeclaresBlocker(answer)
-}
-
 func reviewRepairBlockerSummary(answer string) string {
 	return planExecuteBlockerSummary(answer)
 }
@@ -28,10 +24,6 @@ func planExecuteAnswerDeclaresBlocker(answer string) bool {
 		strings.Contains(lower, "decision: block") ||
 		strings.HasPrefix(lower, "blocker:") ||
 		strings.Contains(lower, "\nblocker:")
-}
-
-func PlanExecuteAnswerDeclaresBlocker(answer string) bool {
-	return planExecuteAnswerDeclaresBlocker(answer)
 }
 
 func planExecuteBlockerSummary(answer string) string {
@@ -76,10 +68,6 @@ func truncateBlockerLine(line string) string {
 	}
 
 	return line
-}
-
-func PlanExecuteBlockerSummary(answer string) string {
-	return planExecuteBlockerSummary(answer)
 }
 
 func planExecuteBlockerFailureReason(answer string) string {

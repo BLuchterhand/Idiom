@@ -26,7 +26,7 @@ CLASSIFIER_EXTRA_ARGS ?=
 GOLANGCI_LINT_VERSION ?= v2.12.2
 GOLANGCI_LINT ?= $(CURDIR)/bin/golangci-lint
 
-.PHONY: run server opencode classifier-server route-classifier build install-path refresh-queue-daemon fmt tidy test test-install-docker test-install-tools coverage coverage-report eval swe-eval swe-suite swe-live swe-live-subset live-contract-suite live-contracts scripted-contract-suite scripted-contracts lint lint-vet lint-style install-golangci-lint
+.PHONY: run server opencode classifier-server route-classifier build install-path refresh-queue-daemon fmt tidy test test-install-docker test-install-tools coverage coverage-report eval swe-eval swe-suite swe-live swe-live-subset live-contract-suite live-contracts scripted-contract-suite scripted-contracts lint lint-vet lint-style install-golangci-lint desktop-install desktop-dev desktop-build
 
 run:
 	go run ./cmd/idiom -config $(CONFIG)
@@ -42,6 +42,15 @@ classifier-server:
 	$(CLASSIFIER_BINARY) -m "$(CLASSIFIER_MODEL)" --host $(CLASSIFIER_HOST) --port $(CLASSIFIER_PORT) -c $(CLASSIFIER_CTX) -t $(CLASSIFIER_THREADS) --reasoning off --jinja $(if $(filter-out 0,$(CLASSIFIER_GPU_LAYERS)),-ngl $(CLASSIFIER_GPU_LAYERS),) $(CLASSIFIER_EXTRA_ARGS) 2>&1 | tee "$(CLASSIFIER_LOG)"
 
 route-classifier: classifier-server
+
+desktop-install:
+	cd desktop && npm install
+
+desktop-dev:
+	cd desktop && npm run tauri:dev
+
+desktop-build:
+	cd desktop && npm run tauri:build
 
 build:
 	mkdir -p "$(CANONICAL_BIN)"

@@ -17,8 +17,10 @@ func TestNamedPathInvariantsCoverCorePathRoles(t *testing.T) {
 		{role: PathRoleRequiredEdit, invariant: InvariantRequiredEditPath, decision: PolicyAllow},
 		{role: PathRoleAllowedEdit, invariant: InvariantAllowedCandidate, decision: PolicyAllow},
 		{role: PathRoleEvidenceReadonly, invariant: InvariantEvidenceReadonly, decision: PolicyObserve},
+		{role: PathRoleGeneratedArtifact, invariant: InvariantGeneratedArtifact, decision: PolicyObserve},
 		{role: PathRoleProtected, invariant: InvariantProtectedPath, decision: PolicyDeny},
 		{role: PathRoleForbidden, invariant: InvariantForbiddenPath, decision: PolicyDeny},
+		{role: PathRoleVerificationOut, invariant: InvariantVerificationOutput, decision: PolicyObserve},
 		{role: PathRoleExternalEffect, invariant: InvariantExternalEffectPath, decision: PolicyAsk},
 	}
 
@@ -36,6 +38,14 @@ func TestNamedPathInvariantsCoverCorePathRoles(t *testing.T) {
 			if invariant.Precedence <= 0 || invariant.ReasonCode == "" {
 				t.Fatalf("invariant should carry precedence and reason code: %#v", invariant)
 			}
+
+			if tt.role == PathRoleVerificationOut && invariant.Obligation != "" {
+				t.Fatalf("verification output must stay passive and not emit an action obligation: %#v", invariant)
+			}
+
+			if tt.role == PathRoleExternalEffect && invariant.SideEffect != SideEffectOpenWorld {
+				t.Fatalf("external-effect paths must remain conservative until an adapter maps the capability, got %#v", invariant)
+			}
 		})
 	}
 
@@ -44,16 +54,20 @@ func TestNamedPathInvariantsCoverCorePathRoles(t *testing.T) {
 	sideEffect, _ := PathInvariantForRole(PathRoleExternalEffect)
 	required, _ := PathInvariantForRole(PathRoleRequiredEdit)
 	allowed, _ := PathInvariantForRole(PathRoleAllowedEdit)
+	generated, _ := PathInvariantForRole(PathRoleGeneratedArtifact)
 	evidence, _ := PathInvariantForRole(PathRoleEvidenceReadonly)
+	verification, _ := PathInvariantForRole(PathRoleVerificationOut)
 
 	if !(forbidden.Precedence > protected.Precedence &&
 		protected.Precedence > sideEffect.Precedence &&
 		sideEffect.Precedence > required.Precedence &&
 		required.Precedence > allowed.Precedence &&
-		allowed.Precedence > evidence.Precedence) {
+		allowed.Precedence > generated.Precedence &&
+		generated.Precedence > evidence.Precedence &&
+		evidence.Precedence > verification.Precedence) {
 
-		t.Fatalf("unexpected precedence order: forbidden=%d protected=%d side-effect=%d required=%d allowed=%d evidence=%d",
-			forbidden.Precedence, protected.Precedence, sideEffect.Precedence, required.Precedence, allowed.Precedence, evidence.Precedence)
+		t.Fatalf("unexpected precedence order: forbidden=%d protected=%d side-effect=%d required=%d allowed=%d generated=%d evidence=%d verification=%d",
+			forbidden.Precedence, protected.Precedence, sideEffect.Precedence, required.Precedence, allowed.Precedence, generated.Precedence, evidence.Precedence, verification.Precedence)
 	}
 
 	invariants := NamedPathInvariants()
@@ -108,7 +122,7 @@ func TestResolvePlanScopePathRoleObligationsSeparatesRequiredAndAllowedCandidate
 	}
 }
 
-func TestResolvePathRolesCoversRequiredEvidenceProtectedForbiddenAndSideEffect(t *testing.T) {
+func TestResolvePathRolesCoversSupportedFirstClassRoles(t *testing.T) {
 	root := t.TempDir()
 
 	resolved, err := ResolvePathRoles(PathRoleResolverInput{
@@ -116,20 +130,28 @@ func TestResolvePathRolesCoversRequiredEvidenceProtectedForbiddenAndSideEffect(t
 		PathRoles: []PathRole{
 			{Role: PathRoleRequiredEdit, PathPattern: "internal/contracts/autonomy/path_roles.go", PacketID: "packet-required", Freshness: FreshnessFresh, Reason: "required implementation path"},
 			{Role: PathRoleEvidenceReadonly, PathPattern: "docs/**", PacketID: "packet-docs", Freshness: FreshnessFresh, Reason: "decision evidence"},
+			{Role: PathRoleGeneratedArtifact, PathPattern: "dist/**", PacketID: "packet-generated", Freshness: FreshnessFresh, Reason: "generated output"},
 			{Role: PathRoleProtected, PathPattern: ".env", Freshness: FreshnessUnknown, Reason: "secret-bearing path"},
+			{Role: PathRoleProtected, PathPattern: ".idiom/**", Freshness: FreshnessUnknown, Reason: "harness artifact boundary"},
 			{Role: PathRoleForbidden, PathPattern: ".git/**", Freshness: FreshnessUnknown, Reason: "repository metadata"},
+			{Role: PathRoleVerificationOut, PathPattern: "logs/verification/**", PacketID: "packet-verification", Freshness: FreshnessFresh, Reason: "verification trace"},
 			{Role: PathRoleExternalEffect, PathPattern: "deploy/prod/**", Freshness: FreshnessFresh, Reason: "external deployment surface"},
 		},
 		Evidence: []EvidenceRef{
 			{EvidenceID: "ev-required", Handle: "context_pack://packet-required", Freshness: FreshnessFresh},
 			{EvidenceID: "ev-docs", Path: "docs/decisioning-north-star.md", Freshness: FreshnessFresh},
+			{EvidenceID: "ev-generated", Handle: "context_pack://packet-generated", Freshness: FreshnessFresh},
+			{EvidenceID: "ev-verification", Handle: "context_pack://packet-verification", Freshness: FreshnessFresh},
 		},
 		Source: "p1.4-test",
 	},
 		"internal/contracts/autonomy/path_roles.go",
 		"docs/decisioning-north-star.md",
+		"dist/protocol-card.json",
 		".env",
+		".idiom/logs/conversations/session.jsonl",
 		".git/config",
+		"logs/verification/go-test.json",
 		"deploy/prod/release.json",
 	)
 	if err != nil {
@@ -138,8 +160,11 @@ func TestResolvePathRolesCoversRequiredEvidenceProtectedForbiddenAndSideEffect(t
 
 	assertEffectivePathRole(t, resolved, "internal/contracts/autonomy/path_roles.go", PathRoleRequiredEdit, PolicyAllow, InvariantRequiredEditPath)
 	assertEffectivePathRole(t, resolved, "docs/decisioning-north-star.md", PathRoleEvidenceReadonly, PolicyObserve, InvariantEvidenceReadonly)
+	assertEffectivePathRole(t, resolved, "dist/protocol-card.json", PathRoleGeneratedArtifact, PolicyObserve, InvariantGeneratedArtifact)
 	assertEffectivePathRole(t, resolved, ".env", PathRoleProtected, PolicyDeny, InvariantProtectedPath)
+	assertEffectivePathRole(t, resolved, ".idiom/logs/conversations/session.jsonl", PathRoleProtected, PolicyDeny, InvariantProtectedPath)
 	assertEffectivePathRole(t, resolved, ".git/config", PathRoleForbidden, PolicyDeny, InvariantForbiddenPath)
+	assertEffectivePathRole(t, resolved, "logs/verification/go-test.json", PathRoleVerificationOut, PolicyObserve, InvariantVerificationOutput)
 	assertEffectivePathRole(t, resolved, "deploy/prod/release.json", PathRoleExternalEffect, PolicyAsk, InvariantExternalEffectPath)
 
 	required := findPathResolution(t, resolved, "internal/contracts/autonomy/path_roles.go")
@@ -147,13 +172,52 @@ func TestResolvePathRolesCoversRequiredEvidenceProtectedForbiddenAndSideEffect(t
 		t.Fatalf("required role should carry evidence ref, got %#v", required.EvidenceRefs)
 	}
 
+	verification := findPathResolution(t, resolved, "logs/verification/go-test.json")
+	if !slices.Contains(verification.EvidenceRefs, "ev-verification") {
+		t.Fatalf("verification output role should carry evidence ref, got %#v", verification.EvidenceRefs)
+	}
+	if got := resolvedRole(t, verification.Roles, PathRoleVerificationOut).Obligation; got != "" {
+		t.Fatalf("verification output resolution must stay passive, obligation=%q", got)
+	}
+
 	if resolved.RoleCounts[string(PathRoleRequiredEdit)] != 1 ||
 		resolved.RoleCounts[string(PathRoleEvidenceReadonly)] != 1 ||
-		resolved.RoleCounts[string(PathRoleProtected)] != 1 ||
+		resolved.RoleCounts[string(PathRoleGeneratedArtifact)] != 1 ||
+		resolved.RoleCounts[string(PathRoleProtected)] != 2 ||
 		resolved.RoleCounts[string(PathRoleForbidden)] != 1 ||
+		resolved.RoleCounts[string(PathRoleVerificationOut)] != 1 ||
 		resolved.RoleCounts[string(PathRoleExternalEffect)] != 1 {
 
 		t.Fatalf("unexpected role counts: %#v", resolved.RoleCounts)
+	}
+}
+
+func TestResolvePathRolesKeepsGeneratedAndVerificationOutputPassiveUnderEditScope(t *testing.T) {
+	resolved, err := ResolvePathRoles(PathRoleResolverInput{
+		PathRoles: []PathRole{
+			{Role: PathRoleAllowedEdit, PathPattern: "out/report.json", Reason: "allowed source contract"},
+			{Role: PathRoleGeneratedArtifact, PathPattern: "out/**", Reason: "generated output"},
+			{Role: PathRoleEvidenceReadonly, PathPattern: "out/**", Reason: "supporting evidence"},
+			{Role: PathRoleVerificationOut, PathPattern: "out/**", Reason: "verification trace"},
+		},
+	}, "out/report.json")
+	if err != nil {
+		t.Fatalf("ResolvePathRoles returned error: %v", err)
+	}
+
+	resolution := findPathResolution(t, resolved, "out/report.json")
+	if resolution.EffectiveRole != PathRoleAllowedEdit || resolution.Decision != PolicyAllow {
+		t.Fatalf("allowed edit scope should win over passive artifact roles, got %#v", resolution)
+	}
+
+	for _, role := range []PathRoleKind{PathRoleGeneratedArtifact, PathRoleEvidenceReadonly, PathRoleVerificationOut} {
+		if countResolvedRole(resolution.Roles, role) != 1 {
+			t.Fatalf("expected suppressed passive role %q to remain recorded in %#v", role, resolution.Roles)
+		}
+	}
+
+	if len(resolution.Conflicts) != 3 {
+		t.Fatalf("expected passive roles to be reported as precedence conflicts, got %#v", resolution.Conflicts)
 	}
 }
 

@@ -79,19 +79,25 @@ var (
 	planH1Style         = lipgloss.NewStyle().Bold(true).Foreground(colorOnPrimary).Background(colorPrimary).Padding(0, 1)
 	planH2Style         = lipgloss.NewStyle().Bold(true).Foreground(colorAccent).PaddingLeft(1)
 	planH3Style         = lipgloss.NewStyle().Bold(true).Foreground(colorText).PaddingLeft(1)
+
+	// Plan checkbox indicator styles (pre-compiled, used in renderPlanLine).
+	planCheckboxTilde = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	planCheckboxEmpty = lipgloss.NewStyle().Foreground(colorMuted)
+	planCheckboxDone  = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 )
 
-// Model picker popup.
+// ── Model popup ───────────────────────────────────────────────────────────────
+
 var (
+	popupBoxStyle           = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorPrimary).Padding(1, 2)
 	popupTitleStyle         = lipgloss.NewStyle().Bold(true).Foreground(colorOnPrimary).Background(colorPrimary).Padding(0, 1)
-	popupHintStyle          = lipgloss.NewStyle().Foreground(colorDim).Padding(0, 1)
-	popupRoleActiveStyle    = lipgloss.NewStyle().Bold(true).Foreground(colorText).Background(colorMuted)
+	popupHintStyle          = lipgloss.NewStyle().Foreground(colorDim)
+	popupRoleActiveStyle    = lipgloss.NewStyle().Bold(true).Foreground(colorText)
 	popupRoleInactiveStyle  = lipgloss.NewStyle().Foreground(colorDim)
 	popupModelActiveStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
-	popupModelInactiveStyle = lipgloss.NewStyle().Foreground(colorText)
+	popupModelInactiveStyle = lipgloss.NewStyle().Foreground(colorMuted)
 	popupModelRowStyle      = lipgloss.NewStyle().Foreground(colorText)
 	popupDescStyle          = lipgloss.NewStyle().Foreground(colorDim)
-	popupBoxStyle           = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorPrimary).Padding(1, 2)
 )
 
 // ── Slash-command suggestion popup ────────────────────────────────────────────

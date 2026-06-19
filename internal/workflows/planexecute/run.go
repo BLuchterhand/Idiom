@@ -123,8 +123,9 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	plannerPromptSource := applyCandidatePathRepairsToPrompt(prompt, candidateRepairs)
 	authorizedNewFiles := mergePlanExecutePaths(opts.AuthorizedNewFiles)
 	verificationPlan := PlanVerification(VerificationPlannerInput{
-		WorkspaceRoot: cfg.Workspace.Root,
-		Prompt:        plannerPromptSource,
+		WorkspaceRoot:    cfg.Workspace.Root,
+		Prompt:           plannerPromptSource,
+		ExplicitCommands: opts.VerificationPlanExplicitCommands,
 	})
 	verificationCommands := verificationPlan.CommandStrings()
 
@@ -523,9 +524,10 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	planSourceSatisfiedPaths, planSourceSatisfiedEvidence := planExecutePlanSourceSatisfiedTerminalEvidence(requiredEditPaths, plan)
 
 	verificationPlan = PlanVerification(VerificationPlannerInput{
-		WorkspaceRoot: cfg.Workspace.Root,
-		Prompt:        prompt,
-		ChangedPaths:  changedPaths,
+		WorkspaceRoot:    cfg.Workspace.Root,
+		Prompt:           prompt,
+		ExplicitCommands: opts.VerificationPlanExplicitCommands,
+		ChangedPaths:     changedPaths,
 	})
 	verificationCommands = verificationPlan.CommandStrings()
 
@@ -860,9 +862,10 @@ func runResumeReviewRepair(cfg config.Config, opts Options, prompt string, state
 
 	if reviewErr == nil && (sourceSanityResumeRepairRequired || verificationResumeRepairRequired) && ReviewRepairResolvedVerificationFailure(reviewReport) {
 		verificationPlan := PlanVerification(VerificationPlannerInput{
-			WorkspaceRoot: cfg.Workspace.Root,
-			Prompt:        prompt,
-			ChangedPaths:  planChangedPaths(plan),
+			WorkspaceRoot:    cfg.Workspace.Root,
+			Prompt:           prompt,
+			ExplicitCommands: opts.VerificationPlanExplicitCommands,
+			ChangedPaths:     planChangedPaths(plan),
 		})
 		sourceMgr := workspace.NewManager(cfg.Workspace)
 		_, sourceEvidence, sourceErr := runPlanExecuteSourceSanity(context.Background(), sourceMgr, cfg.Workspace.Root, planChangedPaths(plan), opts.JSONEvents, stdout)

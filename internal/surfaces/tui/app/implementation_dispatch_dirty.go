@@ -7,7 +7,3 @@ type implementationDispatchDirtyAllowance = implementationdispatch.DirtyAllowanc
 func implementationDispatchPlanDocumentsWithDirtyAllowance(prompt string, docs []implementationDispatchPlanDocument) []implementationDispatchPlanDocument {
 	return implementationdispatch.PlanDocumentsWithDirtyAllowance(prompt, docs)
 }
-
-func implementationDispatchDirtyAtomScopeAllowance(prompt string) implementationDispatchDirtyAllowance {
-	return implementationdispatch.DirtyAtomScopeAllowance(prompt)
-}

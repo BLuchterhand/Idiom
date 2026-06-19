@@ -128,6 +128,76 @@ func TestBuildRankerLearningAuditClassifiesRecoveryReconciliationSource(t *testi
 	}
 }
 
+func TestHarnessAuditBehaviorSummarizesIntentLoopEventsWithoutRawPayloadLeakage(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "intent-loop.jsonl")
+	writeWorkspaceFile(t, logPath, strings.Join([]string{
+		`{"type":"idiom.intent_loop.start","session_id":"intent-session-1","max_cycles":3,"contract_hash":"sha256:abc","prompt":"SECRET raw prompt body"}`,
+		`{"type":"idiom.intent_loop.cycle_start","session_id":"intent-session-1","cycle_number":1,"cycle_prompt_sha256":"sha256:def"}`,
+		`{"type":"idiom.intent_loop.cycle_complete","session_id":"intent-session-1","cycle_number":1,"gap_count":2,"remaining_gaps":[{"requirement":"verification:go test ./...","status":"failed","detail":"SECRET file body and private stdout"},{"requirement":"acceptance:coverage-threshold","status":"not_met","detail":"customer-acme private details"}]}`,
+		`{"type":"run_event","role":"intent_loop","content":"{\"type\":\"idiom.intent_loop.cycle_start\",\"session_id\":\"intent-session-1\",\"cycle_number\":2,\"prompt\":\"SECRET nested prompt\"}"}`,
+		`{"type":"run_event","role":"intent_loop","content":"{\"type\":\"idiom.intent_loop.cycle_complete\",\"session_id\":\"intent-session-1\",\"cycle_number\":2,\"gap_count\":0,\"remaining_gaps\":[],\"file_body\":\"SECRET nested file body\"}"}`,
+		`{"type":"idiom.intent_loop.complete","session_id":"intent-session-1","total_cycles":2,"changed_paths":["internal/workflows/intentloop/state.go"],"raw_transcript":"SECRET transcript"}`,
+		"",
+	}, "\n"))
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/telemetry", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+
+	for _, leaked := range []string{
+		"SECRET",
+		"private stdout",
+		"customer-acme",
+		"raw prompt body",
+		"nested file body",
+		"transcript",
+		"go test ./...",
+		"coverage-threshold",
+	} {
+		if strings.Contains(result.Output, leaked) {
+			t.Fatalf("intent-loop audit leaked raw payload marker %q: %s", leaked, result.Output)
+		}
+	}
+
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+
+	intentLoop := report.LogBehavior.IntentLoop
+	if intentLoop == nil {
+		t.Fatalf("expected intent-loop audit rollup, got %#v", report.LogBehavior)
+	}
+
+	if intentLoop.LogsHit != 1 ||
+		intentLoop.Sessions != 1 ||
+		intentLoop.Starts != 1 ||
+		intentLoop.CycleStarts != 2 ||
+		intentLoop.CycleCompletes != 2 ||
+		intentLoop.Completions != 1 ||
+		intentLoop.TotalReportedCycles != 2 ||
+		intentLoop.TotalReportedGaps != 2 {
+
+		t.Fatalf("unexpected intent-loop audit rollup: %#v", intentLoop)
+	}
+
+	if intentLoop.GapRequirementCounts["verification"] != 1 ||
+		intentLoop.GapRequirementCounts["acceptance"] != 1 ||
+		intentLoop.GapStatusCounts["failed"] != 1 ||
+		intentLoop.GapStatusCounts["not_met"] != 1 {
+
+		t.Fatalf("expected sanitized gap class counts, got %#v", intentLoop)
+	}
+
+	if !strings.Contains(result.Summary, "intent_loop=1 starts/2 cycle_completes/1 completions/2 gaps") {
+		t.Fatalf("expected summary to include intent-loop counters, got %q", result.Summary)
+	}
+}
+
 func TestRankerLearningFindingsIgnoreEvidenceOnlyRecoveryNoOps(t *testing.T) {
 	root := t.TempDir()
 	for i := 0; i < 4; i++ {
@@ -279,11 +349,13 @@ func TestSplitHistoricalHarnessAuditFindings(t *testing.T) {
 		{ID: "historical_behavior_patterns"},
 		{ID: "context_cache_historical_stale_rows"},
 	})
-	if len(current) != 1 || current[0].ID != "freshness_refresh_failures" {
+	if len(current) != 2 ||
+		!slices.ContainsFunc(current, func(finding harnessAuditFinding) bool { return finding.ID == "freshness_refresh_failures" }) ||
+		!slices.ContainsFunc(current, func(finding harnessAuditFinding) bool { return finding.ID == "context_cache_unresolved_gaps" }) {
 		t.Fatalf("unexpected current findings: %#v", current)
 	}
 
-	if len(historical) != 3 {
+	if len(historical) != 2 {
 		t.Fatalf("unexpected historical findings: %#v", historical)
 	}
 }

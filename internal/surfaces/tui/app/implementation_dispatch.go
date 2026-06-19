@@ -1023,11 +1023,10 @@ func limitImplementationDispatchRefineTitle(title string) string {
 }
 
 func implementationDispatchEditScopeFromPlanDocuments(prompt string, plan promptExecutionPlan, cfg config.Config, planDocuments []implementationDispatchPlanDocument) ([]string, []string) {
-	requiredPaths := appendUniqueBriefStrings(nil, plan.runtimeBrief.RequiredEditPaths...)
+	intake := implementationDispatchCompilePlanExecuteScopeIntake(prompt, plan, cfg)
+	requiredPaths := appendUniqueBriefStrings(nil, intake.RequiredTargets...)
 
-	requiredPaths = appendUniqueBriefStrings(requiredPaths, requiredEditPathsFromPrompt(prompt)...)
-
-	allowedPaths := allowedEditPathsFromPrompt(prompt)
+	allowedPaths := appendUniqueBriefStrings(nil, intake.AllowedTargets...)
 	root := implementationDispatchWorkspaceRoot(cfg)
 
 	for _, doc := range planDocuments {
@@ -1251,11 +1250,10 @@ func implementationDispatchEditScopeAndPlanDocuments(prompt string, plan promptE
 }
 
 func implementationDispatchEditScopePlanDocumentsAndResolution(prompt string, plan promptExecutionPlan, cfg config.Config) ([]string, []string, []implementationDispatchPlanDocument, []implementationDispatchPlanDocumentResolutionBlocker) {
-	requiredPaths := appendUniqueBriefStrings(nil, plan.runtimeBrief.RequiredEditPaths...)
+	intake := implementationDispatchCompilePlanExecuteScopeIntake(prompt, plan, cfg)
+	requiredPaths := appendUniqueBriefStrings(nil, intake.RequiredTargets...)
 
-	requiredPaths = appendUniqueBriefStrings(requiredPaths, requiredEditPathsFromPrompt(prompt)...)
-
-	allowedPaths := allowedEditPathsFromPrompt(prompt)
+	allowedPaths := appendUniqueBriefStrings(nil, intake.AllowedTargets...)
 	planDocuments, blockers := implementationDispatchPlanDocumentsAndResolutionBlockers(prompt, plan, cfg)
 	root := implementationDispatchWorkspaceRoot(cfg)
 
@@ -1278,10 +1276,9 @@ func implementationDispatchPlanDocumentsAndResolutionBlockers(prompt string, pla
 	}
 
 	refs := implementationDispatchPlanDocumentRefs(prompt, plan)
-	explicitEditPaths := appendUniqueBriefStrings(nil, plan.runtimeBrief.RequiredEditPaths...)
-
-	explicitEditPaths = appendUniqueBriefStrings(explicitEditPaths, requiredEditPathsFromPrompt(prompt)...)
-	explicitEditPaths = appendUniqueBriefStrings(explicitEditPaths, allowedEditPathsFromPrompt(prompt)...)
+	intake := implementationDispatchCompilePlanExecuteScopeIntake(prompt, plan, cfg)
+	explicitEditPaths := appendUniqueBriefStrings(nil, intake.RequiredTargets...)
+	explicitEditPaths = appendUniqueBriefStrings(explicitEditPaths, intake.AllowedTargets...)
 
 	var (
 		docs     []implementationDispatchPlanDocument
@@ -3763,4 +3760,3 @@ func implementationDispatchLooksLikeConcreteFile(path string) bool {
 		return false
 	}
 }
-

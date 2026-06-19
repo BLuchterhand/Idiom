@@ -54,10 +54,10 @@ type Unavailable struct {
 
 const RuntimeReadinessSchemaVersion = "idiom.runtime_readiness.v1"
 
-type EnforcementMode string
+type ReadinessEnforcementMode string
 
 const (
-	EnforcementReportOnly EnforcementMode = "report_only"
+	ReadinessEnforcementReportOnly ReadinessEnforcementMode = "report_only"
 )
 
 type RuntimeReadinessDecision string
@@ -97,7 +97,7 @@ type RuntimeReadinessReport struct {
 	Profile                string                        `json:"profile"`
 	State                  string                        `json:"state"`
 	Decision               RuntimeReadinessDecision      `json:"decision"`
-	Enforcement            EnforcementMode               `json:"enforcement"`
+	Enforcement            ReadinessEnforcementMode      `json:"enforcement"`
 	RequiredForLaunch      bool                          `json:"required_for_launch"`
 	LaunchBlocked          bool                          `json:"launch_blocked"`
 	LaunchBlockingEnforced bool                          `json:"launch_blocking_enforced"`
@@ -299,7 +299,7 @@ func buildProfile(spec profileSpec, hostChecks []HostCheck, backendFile backends
 		VerificationContract: string(contract.VerificationContract),
 		RequiredRoles:        append([]string(nil), spec.requiredRoles...),
 		RoleAliases:          map[string]string{},
-		Enforcement:          string(EnforcementReportOnly),
+		Enforcement:          string(ReadinessEnforcementReportOnly),
 		RequiredForLaunch:    true,
 	}
 
@@ -546,7 +546,7 @@ func BuildRuntimeReadiness(report ProfileReport) RuntimeReadinessReport {
 		Enforcement:            normalizeEnforcement(report.Enforcement),
 		RequiredForLaunch:      report.RequiredForLaunch,
 		LaunchBlocked:          decision == RuntimeReadinessLaunchBlocked,
-		LaunchBlockingEnforced: decision == RuntimeReadinessLaunchBlocked && normalizeEnforcement(report.Enforcement) != EnforcementReportOnly,
+		LaunchBlockingEnforced: decision == RuntimeReadinessLaunchBlocked && normalizeEnforcement(report.Enforcement) != ReadinessEnforcementReportOnly,
 		Degraded:               decision == RuntimeReadinessAllowedDegraded,
 	}
 
@@ -578,13 +578,13 @@ func BuildRuntimeReadiness(report ProfileReport) RuntimeReadinessReport {
 	return out
 }
 
-func normalizeEnforcement(value string) EnforcementMode {
+func normalizeEnforcement(value string) ReadinessEnforcementMode {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return EnforcementReportOnly
+		return ReadinessEnforcementReportOnly
 	}
 
-	return EnforcementMode(value)
+	return ReadinessEnforcementMode(value)
 }
 
 func runtimeDecisionForProfile(report ProfileReport) RuntimeReadinessDecision {

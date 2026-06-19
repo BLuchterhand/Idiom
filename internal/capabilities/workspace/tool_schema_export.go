@@ -192,7 +192,7 @@ type toolSchemaExportProfile struct {
 func toolSchemaExportProfiles() map[string][]string {
 	surfaces := []toolSchemaExportProfile{
 		{name: "core", opts: ToolManifestToolOptions{}},
-		{name: "task_ledger", opts: ToolManifestToolOptions{IncludeTaskLedger: true}},
+		{name: ToolNameTaskLedger, opts: ToolManifestToolOptions{IncludeTaskLedger: true}},
 		{name: "delegation", opts: ToolManifestToolOptions{IncludeTask: true}},
 		{name: "write", opts: ToolManifestToolOptions{IncludeWriteTools: true}},
 		{name: "plan_then_execute", opts: ToolManifestToolOptions{IncludePlanThenExecute: true, PlanThenExecutePlannerSurface: true}},
@@ -282,15 +282,15 @@ func toolSchemaSideEffects(tool string) []autonomy.SideEffectClass {
 
 func toolSchemaEnforcement(tool string, sideEffects []autonomy.SideEffectClass) []string {
 	enforcement := []string{"allowed_tools"}
-	if hasToolSchemaSideEffect(sideEffects, autonomy.SideEffectUnknown) || tool == "shell" {
+	if hasToolSchemaSideEffect(sideEffects, autonomy.SideEffectUnknown) || tool == ToolNameShell {
 		enforcement = append(enforcement, "command_classification", "approval_guard")
 	}
 
-	if tool == "task" || tool == "delegate_edit" {
+	if tool == ToolNameTask || tool == ToolNameDelegateEdit {
 		enforcement = append(enforcement, "delegation_scope")
 	}
 
-	if tool == "submit_plan" {
+	if tool == ToolNameSubmitPlan {
 		enforcement = append(enforcement, "planner_phase_contract")
 	}
 
@@ -309,11 +309,11 @@ func toolSchemaErrorClasses(tool string, sideEffects []autonomy.SideEffectClass)
 		classes = append(classes, "permission_policy", "required_edit_scope", "approval_guard", "protected_path", "write_policy")
 	}
 
-	if hasToolSchemaSideEffect(sideEffects, autonomy.SideEffectUnknown) || tool == "shell" {
+	if hasToolSchemaSideEffect(sideEffects, autonomy.SideEffectUnknown) || tool == ToolNameShell {
 		classes = append(classes, "permission_policy", "approval_guard", "command_failed", "timeout")
 	}
 
-	if isToolSchemaDiagnosticTool(tool) || isToolSchemaLanguageTool(tool) || tool == "source_sanity" {
+	if isToolSchemaDiagnosticTool(tool) || isToolSchemaLanguageTool(tool) || tool == ToolNameSourceSanity {
 		classes = append(classes, "unsupported_language", "symbol_not_found", "diagnostics_failed")
 	}
 

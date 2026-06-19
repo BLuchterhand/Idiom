@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"idiom/internal/workflows/recovery"
+	"idiom/internal/workflows/workflowstate"
 )
 
 func TestLoadProductStatusMissingWorkflowState(t *testing.T) {
@@ -21,6 +22,13 @@ func TestLoadProductStatusMissingWorkflowState(t *testing.T) {
 
 	if view.AuditStatus != "error" {
 		t.Fatalf("expected audit_status error, got %q", view.AuditStatus)
+	}
+	if view.WorkflowID != workflowstate.WorkflowProductDispatch ||
+		view.WorkflowState != workflowstate.StateTerminal ||
+		view.WorkflowTerminalState != workflowstate.TerminalStateMissingScope ||
+		view.Dispatchable {
+
+		t.Fatalf("missing workflow state should project missing-scope terminal state, got %#v", view)
 	}
 
 	if len(view.Blockers) == 0 {
@@ -51,6 +59,13 @@ func TestLoadProductStatusMissingWorkflowState(t *testing.T) {
 	action := operatorView.NextValidActions[0]
 	if action.Owner != "operator" || action.Dispatchable || !action.RunnableNow {
 		t.Fatalf("expected non-dispatchable runnable recovery action, got %#v", action)
+	}
+	if operatorView.WorkflowID != workflowstate.WorkflowProductDispatch ||
+		operatorView.WorkflowState != workflowstate.StateTerminal ||
+		operatorView.WorkflowTerminalState != workflowstate.TerminalStateMissingScope ||
+		operatorView.Dispatchable {
+
+		t.Fatalf("operator error view should preserve product workflow terminal projection, got %#v", operatorView)
 	}
 }
 
@@ -226,6 +241,20 @@ func TestProductOperatorStatusViewUsesTypedContinuationActions(t *testing.T) {
 	if view.TaskID != "impl-test" || view.StatusBucket != "started" {
 		t.Fatalf("expected workflow identity fields, got %#v", view)
 	}
+	if status.WorkflowID != workflowstate.WorkflowProductDispatch ||
+		status.WorkflowState != workflowstate.StateDispatchable ||
+		status.WorkflowTerminalState != "" ||
+		!status.Dispatchable {
+
+		t.Fatalf("status view should project dispatchable product workflow state, got %#v", status)
+	}
+	if view.WorkflowID != workflowstate.WorkflowProductDispatch ||
+		view.WorkflowState != workflowstate.StateDispatchable ||
+		view.WorkflowTerminalState != "" ||
+		!view.Dispatchable {
+
+		t.Fatalf("operator view should project dispatchable product workflow state, got %#v", view)
+	}
 
 	if len(view.NextValidActions) != 1 {
 		t.Fatalf("expected typed continuation actions, got %#v", view.NextValidActions)
@@ -246,6 +275,92 @@ func TestProductOperatorStatusViewUsesTypedContinuationActions(t *testing.T) {
 
 	if len(action.Blockers) != 0 {
 		t.Fatalf("expected no blockers on dispatchable action, got %#v", action.Blockers)
+	}
+}
+
+func TestProductOperatorStatusViewPreservesClosedTerminalProjection(t *testing.T) {
+	dir := t.TempDir()
+	wsJSON := statusTestWorkflowStateJSON()
+	replacements := map[string]string{
+		`"status_bucket":"started"`:         `"status_bucket":"closed"`,
+		`"current_state":"implementing"`:    `"current_state":"closed"`,
+		`"open_obligations":["TDD-001"]`:    `"open_obligations":[]`,
+		`"next_valid_actions":["complete"]`: `"next_valid_actions":["inspect_closed_effort"]`,
+		`"folder_path":"docs/test"`:         `"folder_path":"docs/product-workflows/efforts/closed/impl-test"`,
+	}
+	for oldText, newText := range replacements {
+		wsJSON = strings.Replace(wsJSON, oldText, newText, 1)
+	}
+	writeStatusTestFile(t, dir, "workflow_state.json", wsJSON)
+
+	status, err := LoadProductStatus(dir, &LintSummaryResult{
+		Status:       "pass",
+		CheckedFiles: []string{"workflow_state.json"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected status error: %v", err)
+	}
+
+	workflowState, err := ParseWorkflowStateJSON([]byte(wsJSON))
+	if err != nil {
+		t.Fatalf("unexpected workflow state parse error: %v", err)
+	}
+
+	view := BuildProductOperatorStatusView(status, &workflowState)
+	if status.WorkflowState != workflowstate.StateTerminal ||
+		status.WorkflowTerminalState != workflowstate.TerminalStateComplete ||
+		status.Dispatchable {
+
+		t.Fatalf("status view should project closed terminal state, got %#v", status)
+	}
+	if view.WorkflowState != workflowstate.StateTerminal ||
+		view.WorkflowTerminalState != workflowstate.TerminalStateComplete ||
+		view.Dispatchable {
+
+		t.Fatalf("operator view should preserve closed terminal state, got %#v", view)
+	}
+}
+
+func TestProductStatusInvalidClosedBucketStateFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	wsJSON := statusTestWorkflowStateJSON()
+	replacements := map[string]string{
+		`"status_bucket":"started"`:         `"status_bucket":"closed"`,
+		`"open_obligations":["TDD-001"]`:    `"open_obligations":[]`,
+		`"next_valid_actions":["complete"]`: `"next_valid_actions":["inspect_closed_effort"]`,
+		`"folder_path":"docs/test"`:         `"folder_path":"docs/product-workflows/efforts/closed/impl-test"`,
+	}
+	for oldText, newText := range replacements {
+		wsJSON = strings.Replace(wsJSON, oldText, newText, 1)
+	}
+	writeStatusTestFile(t, dir, "workflow_state.json", wsJSON)
+
+	status, err := LoadProductStatus(dir, &LintSummaryResult{
+		Status:       "pass",
+		CheckedFiles: []string{"workflow_state.json"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected status error: %v", err)
+	}
+
+	workflowState, err := ParseWorkflowStateJSON([]byte(wsJSON))
+	if err != nil {
+		t.Fatalf("unexpected workflow state parse error: %v", err)
+	}
+
+	view := BuildProductOperatorStatusView(status, &workflowState)
+	if status.WorkflowTerminalState != workflowstate.TerminalStateInvalidScope ||
+		status.Dispatchable {
+
+		t.Fatalf("invalid closed bucket/current_state should fail closed before operator view, got %#v", status)
+	}
+	if view.WorkflowTerminalState != workflowstate.TerminalStateInvalidScope ||
+		view.Dispatchable {
+
+		t.Fatalf("operator view should preserve invalid closed bucket/current_state as non-dispatchable, got %#v", view)
+	}
+	if !hasOperatorBlockerCode(view.Blockers, "invalid_state_bucket") {
+		t.Fatalf("operator view should expose transition blocker for invalid bucket/state, got %#v", view.Blockers)
 	}
 }
 

@@ -22,7 +22,9 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/agent"
+	"idiom/internal/runtime/instructions"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/promptstack"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/planexecute"
@@ -257,7 +259,7 @@ type Model struct {
 	approvalPending     *pendingApproval
 	modelPopup          modelPopupState
 	rollbackHistory     []rollbackEntry
-	instructionAttacher *agent.InstructionAttacher
+	instructionAttacher *instructions.Attacher
 	mdRenderer          *glamour.TermRenderer
 	mdRendererWrapWidth int
 	messageRenderCache  string
@@ -1146,13 +1148,13 @@ func (m *Model) traceSummary() string {
 // applyModePermissions is a hook for /mode to refresh any workspace-level
 // policy tied to the active Mode. Runner step-cap is rebuilt from the
 // current Mode on every new turn via runAgentTurn.
-func (m *Model) applyModePermissions(mode agent.Mode) {
+func (m *Model) applyModePermissions(mode modepolicy.Mode) {
 	if m == nil || m.workspace == nil {
 		return
 	}
 
 	m.workspace.SetProtectedWritePaths(protectedPromptWritePaths(m.cfg, mode))
-	m.workspace.SetPermissionRules(mode.PermissionRules)
+	m.workspace.SetPermissionRules(agent.ModePermissionRules(mode))
 }
 
 func (m *Model) SetNonInteractive(nonInteractive bool) {

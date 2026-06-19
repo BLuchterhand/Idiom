@@ -6691,6 +6691,60 @@ func TestMissingRequiredEvidenceUsesTypedRegistryAndSkipsSemanticLabels(t *testi
 	}
 }
 
+func TestMissingRequiredEvidenceDoesNotRequireHistoryForNewFilesOrDeliverables(t *testing.T) {
+	newSourcePayload, err := json.Marshal(writePreimagePayload{
+		Paths: []writePreimagePath{{Path: "internal/labels/generated.go", Exists: false}},
+	})
+	if err != nil {
+		t.Fatalf("marshal preimage payload: %v", err)
+	}
+
+	for _, result := range []workspace.ToolResult{
+		{
+			Tool:        workspace.ToolNameWriteFile,
+			Summary:     "Wrote internal/labels/generated.go",
+			PayloadType: writePreimagePayloadType,
+			Payload:     newSourcePayload,
+		},
+		{
+			Tool:    workspace.ToolNameWriteFile,
+			Summary: "Wrote temp.md",
+		},
+	} {
+		missing := missingRequiredEvidence(
+			[]string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
+			"Implemented the requested file.\n\nChanged paths:\n- temp.md\n\nVerification: not run.",
+			[]workspace.ToolResult{result},
+		)
+		if len(missing) != 0 {
+			t.Fatalf("new-file or deliverable write should not require git history evidence, result=%#v missing=%#v", result, missing)
+		}
+	}
+}
+
+func TestMissingRequiredEvidenceRequiresHistoryForExistingSourceWrites(t *testing.T) {
+	existingSourcePayload, err := json.Marshal(writePreimagePayload{
+		Paths: []writePreimagePath{{Path: "internal/labels/labels.go", Exists: true}},
+	})
+	if err != nil {
+		t.Fatalf("marshal preimage payload: %v", err)
+	}
+
+	missing := missingRequiredEvidence(
+		[]string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
+		"Implemented the source change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: not run.",
+		[]workspace.ToolResult{{
+			Tool:        workspace.ToolNameWriteFile,
+			Summary:     "Wrote internal/labels/labels.go",
+			PayloadType: writePreimagePayloadType,
+			Payload:     existingSourcePayload,
+		}},
+	)
+	if !slices.Equal(missing, []string{string(workerruntime.RequiredEvidenceGitHistoryRationale)}) {
+		t.Fatalf("existing source write should still require history evidence, got %#v", missing)
+	}
+}
+
 func TestSourceEvidencePendingRedirectsForBriefDropsIrrelevantWithoutScopeHints(t *testing.T) {
 	// When scope hints (TargetPacket, TargetRefs, EvidencePaths, UserBoundaries)
 	// are all empty, the relevance filter should still run using the objective
@@ -7594,6 +7648,27 @@ func TestPlanExecutePlanningStateSubmitReadyProjectionMatchesTransport(t *testin
 	assertEqualSet(t, native.AllowedActionClasses, []string{actionSubmitPlan})
 	assertContains(t, native.InvalidActionClasses, actionRead)
 	assertEqualSet(t, native.TerminalResponseShapes, []string{"submit_plan"})
+}
+
+func TestPlanExecutePlanningStateAuthorizedNewFileIsSubmitReadyWithoutRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		Objective:         `Use plan-execute to create new file internal/labels/generated_label.go with a GeneratedLabel function that returns "Generated".`,
+		RequiredEditPaths: []string{"internal/labels/generated_label.go"},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, nil, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitReady {
+		t.Fatalf("Mode = %q, want %q; state=%#v", state.Mode, PlanExecutePlanningModeSubmitReady, state)
+	}
+
+	assertEqualSet(t, state.ParserVisibleTools, []string{"submit_plan"})
+	assertEqualSet(t, state.CallableTools, []string{"submit_plan"})
+	if unread := planThenExecuteUnreadRequiredPaths(brief, nil); len(unread) != 0 {
+		t.Fatalf("authorized new file must not require source-body read, got %#v", unread)
+	}
 }
 
 func TestPlanExecuteTerminalTransportCompatibilityMatrix(t *testing.T) {
@@ -22551,6 +22626,52 @@ func TestPlanThenExecuteMissingNewFilePathsBecomeSubmitReadyWithoutMoreReads(t *
 	runner := &Runner{RuntimeBrief: brief}
 	if req, raw, ok := runner.deterministicPlanExecuteRequiredSourceRead(results); ok {
 		t.Fatalf("missing new-file paths should not schedule another source-body read, got req=%#v raw=%s", req, raw)
+	}
+}
+
+func TestPlanThenExecuteExplicitNewFileIntentBindsToNamedPathOnly(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+		Objective:  `Use plan-execute to update internal/labels/labels.go so ShortLabel returns "Save" and create new file internal/labels/generated_label.go with a GeneratedLabel function that returns "Generated".`,
+		RequiredEditPaths: []string{
+			"internal/labels/labels.go",
+			"internal/labels/generated_label.go",
+		},
+		RequiredEvidence: []string{requiredEvidenceGitHistoryRationale},
+		AllowedTools:     []string{"read_file", "history_range", "history_symbol", "submit_plan"},
+	}
+
+	if got := planThenExecuteRequiredPathState(brief, nil, "internal/labels/labels.go"); got != planThenExecuteRequiredPathExistingSourceBodyRequired {
+		t.Fatalf("existing path state = %q, want existing_source_body_required", got)
+	}
+
+	if got := planThenExecuteRequiredPathState(brief, nil, "internal/labels/generated_label.go"); got != planThenExecuteRequiredPathNewFileBodyRequired {
+		t.Fatalf("generated path state = %q, want new_file_body_required", got)
+	}
+
+	state := DerivePlanExecutePlanningState(brief, nil, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeRequiredSource {
+		t.Fatalf("mode = %q, want required_source; states=%#v", state.Mode, state.RequiredPathStates)
+	}
+	if slices.Contains(state.ParserVisibleTools, "submit_plan") {
+		t.Fatalf("mixed existing/new scope must not expose submit_plan before existing source evidence: %#v", state.ParserVisibleTools)
+	}
+
+	withExistingSource := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/labels/labels.go lines 1-8 (total lines: 8)",
+		Output:  "1:package labels\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
+	}}
+	state = DerivePlanExecutePlanningState(brief, withExistingSource, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeHistoryPending {
+		t.Fatalf("mode after existing source read = %q, want history_pending", state.Mode)
+	}
+	assertEqualSet(t, state.SelectedEditPaths, []string{"internal/labels/labels.go"})
+
+	withHistory := append(withExistingSource, gitHistoryRangeResult("internal/labels/labels.go"))
+	state = DerivePlanExecutePlanningState(brief, withHistory, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitReady {
+		t.Fatalf("mode after existing history = %q, want submit_ready", state.Mode)
 	}
 }
 

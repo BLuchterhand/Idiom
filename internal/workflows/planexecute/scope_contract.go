@@ -15,17 +15,22 @@ func NewPlanScopeContract(requiredCoveragePaths []string, allowedCandidatePaths 
 func planExecuteScopeContract(opts Options, prompt string) PlanScopeContract {
 	scope := opts.ScopeContract
 	writeAllowed, writeAllowedExplicit := planExecuteHostWriteAllowedPaths(opts)
+	extractPromptScope := opts.ScopeExtractionPolicy != ScopeExtractionFrozen
 
 	required := append([]string(nil), scope.RequiredCoveragePaths...)
 
 	required = append(required, []string(opts.RequiredEditPaths)...)
-	required = append(required, plancontract.RequiredEditPathsFromPrompt(prompt)...)
+	if extractPromptScope {
+		required = append(required, plancontract.RequiredEditPathsFromPrompt(prompt)...)
+	}
 
 	allowed := append([]string(nil), scope.AllowedCandidatePaths...)
 
 	allowed = append(allowed, []string(opts.AllowedEditPaths)...)
-	allowed = append(allowed, plancontract.AllowedEditPathsFromPrompt(prompt)...)
-	if len(required) == 0 && len(allowed) == 0 {
+	if extractPromptScope {
+		allowed = append(allowed, plancontract.AllowedEditPathsFromPrompt(prompt)...)
+	}
+	if extractPromptScope && len(required) == 0 && len(allowed) == 0 {
 		allowed = append(allowed, pathparse.FilterWorkspaceFilePaths(pathparse.MentionedWorkspacePaths(prompt))...)
 	}
 

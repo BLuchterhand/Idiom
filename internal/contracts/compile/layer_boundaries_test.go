@@ -157,6 +157,65 @@ func TestRuntimeAndCapabilitiesDoNotDependOnSurfaces(t *testing.T) {
 	})
 }
 
+func TestContractAuthorityVocabularyIsNotRedefinedOutsideAutonomy(t *testing.T) {
+	root := repoRoot(t)
+	allowed := filepath.Join(root, "internal", "contracts", "autonomy")
+	authorityTypes := []string{
+		"ActionClass",
+		"ContractPackID",
+		"EnforcementMode",
+		"GateKind",
+		"ObligationKind",
+		"ObligationStatus",
+		"PathRoleKind",
+		"SideEffectClass",
+		"ToolPolicyDecision",
+	}
+
+	var violations []string
+	err := filepath.WalkDir(filepath.Join(root, "internal"), func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if entry.IsDir() {
+			if path == allowed {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if filepath.Ext(path) != ".go" {
+			return nil
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		content := string(data)
+		for _, typeName := range authorityTypes {
+			if strings.Contains(content, "type "+typeName+" ") {
+				rel, relErr := filepath.Rel(root, path)
+				if relErr != nil {
+					rel = path
+				}
+				violations = append(violations, rel+": type "+typeName)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scan internal for duplicate authority vocabulary: %v", err)
+	}
+
+	if len(violations) > 0 {
+		t.Fatalf("authority vocabulary must be owned by internal/contracts/autonomy; duplicate declarations: %s", strings.Join(uniqueSortedStrings(violations), ", "))
+	}
+}
+
 func TestDependencyPrefixMatcherDistinguishesChildrenFromSiblings(t *testing.T) {
 	cases := []struct {
 		name            string

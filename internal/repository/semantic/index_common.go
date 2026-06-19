@@ -6,11 +6,6 @@ import (
 	"idiom/internal/repository/semantic/internal/indexsupport"
 )
 
-type ScoredEntry[T any] struct {
-	File  T
-	Score int
-}
-
 func RankFiles[T any](files []T, scoreFn func(T) int, limit int) []T {
 	return indexsupport.RankFiles(files, func(file T) string { return AnyPath(file) }, scoreFn, limit)
 }

@@ -80,6 +80,23 @@ func TestToolIntentValidationRejectsParserFailureWithoutKnownTransport(t *testin
 	}
 }
 
+func TestToolIntentValidationAcceptsTransportMismatch(t *testing.T) {
+	intent := ToolIntent{
+		ActionClass:   ActionClassRead,
+		Transport:     ToolTransportNativeCall,
+		ParserFailure: ParserFailureClass("native_tool_mismatch"),
+	}
+
+	got := CanonicalizeToolIntent(intent)
+	if got.ParserFailure != ParserFailureTransportMismatch {
+		t.Fatalf("ParserFailure = %q, want %q", got.ParserFailure, ParserFailureTransportMismatch)
+	}
+
+	if err := got.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
 func TestToolIntentValidationRequiresRepairSourceWhenMarkedRepaired(t *testing.T) {
 	intent := ToolIntent{
 		ActionClass: ActionClassRead,

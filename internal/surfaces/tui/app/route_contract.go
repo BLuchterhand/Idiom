@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"idiom/internal/runtime/agent"
+	"idiom/internal/runtime/modepolicy"
 )
 
 type routeSource string
@@ -36,7 +36,7 @@ type routeContractProjection struct {
 	ContinuationTarget string                 `json:"continuation_target,omitempty"`
 }
 
-func projectRouteContract(plan turnRoutePlan, mode agent.Mode) routeContractProjection {
+func projectRouteContract(plan turnRoutePlan, mode modepolicy.Mode) routeContractProjection {
 	plan = normalizeTurnRoutePlan(plan, mode)
 
 	source := normalizeRouteSource(plan.RouteSource)

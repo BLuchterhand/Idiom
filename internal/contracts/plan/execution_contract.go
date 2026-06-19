@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -58,6 +59,13 @@ type AcceptanceEvidenceRequired struct {
 	Description string `json:"description,omitempty"`
 	Required    bool   `json:"required,omitempty"`
 	Source      string `json:"source,omitempty"`
+	Threshold   string `json:"threshold,omitempty"`
+}
+
+type AcceptanceEvidenceClaim struct {
+	ID    string `json:"id"`
+	Value string `json:"value,omitempty"`
+	Met   bool   `json:"met,omitempty"`
 }
 
 type SourceEvidenceObligation struct {
@@ -162,6 +170,7 @@ type TerminalEvidenceInput struct {
 	TDDCommandResults         []TDDCommandEvidence         `json:"tdd_command_results,omitempty"`
 	TestArtifacts             []string                     `json:"test_artifacts,omitempty"`
 	AcceptanceEvidenceIDs     []string                     `json:"acceptance_evidence_ids,omitempty"`
+	AcceptanceEvidenceClaims  []AcceptanceEvidenceClaim    `json:"acceptance_evidence_claims,omitempty"`
 }
 
 type RequiredTestEvidence struct {
@@ -265,6 +274,10 @@ func (atom AtomExecutionContract) AllowedEditPaths() []string {
 
 func (atom AtomExecutionContract) WriteEnvelopePaths() []string {
 	return atom.Normalized().Scope.WriteEnvelopePaths()
+}
+
+func (atom AtomExecutionContract) OpenEditSetObligations(changedPaths []string) []EditSetOpenObligation {
+	return atom.Normalized().Scope.OpenEditSetObligations(changedPaths)
 }
 
 func StablePlanExecutionContractHash(contract PlanExecutionContract) string {
@@ -412,6 +425,12 @@ func ValidateAtomExecutionContractInput(atom AtomExecutionContract) []PlanExecut
 	for _, path := range atom.Scope.WriteAllowedPaths {
 		if strings.TrimSpace(path) != "" && NormalizeScopePath(strings.TrimSuffix(strings.TrimSpace(path), "/**")) == "" {
 			violations = append(violations, contractViolation("invalid_write_envelope_path", rawAtomID, path, "", "write envelope path must be repo-relative"))
+		}
+	}
+
+	for _, obligation := range atom.Scope.EditSetObligations {
+		if strings.TrimSpace(obligation.Path) != "" && NormalizeScopePath(obligation.Path) == "" {
+			violations = append(violations, contractViolation("invalid_edit_set_obligation_path", rawAtomID, obligation.Path, string(obligation.Kind), "edit-set obligation path must be repo-relative"))
 		}
 	}
 
@@ -612,13 +631,6 @@ func normalizeExecutionScope(scope PlanScopeContract) PlanScopeContract {
 	scope.AllowedCandidatePaths = scopePathsExcludingRequired(scope.AllowedCandidatePaths, scope.RequiredCoveragePaths)
 	scope.WriteAllowedPaths = uniqueSortedScopePaths(scope.WriteAllowedPaths)
 	scope.EditSetObligations = scope.EditSetObligations.Normalized()
-	sort.SliceStable(scope.EditSetObligations, func(i, j int) bool {
-		if scope.EditSetObligations[i].Kind == scope.EditSetObligations[j].Kind {
-			return scope.EditSetObligations[i].Source < scope.EditSetObligations[j].Source
-		}
-
-		return scope.EditSetObligations[i].Kind < scope.EditSetObligations[j].Kind
-	})
 
 	scope.ContractID = ""
 	if scope.HasContent() {
@@ -703,6 +715,7 @@ func normalizeAcceptanceObligations(obligations []AcceptanceEvidenceRequired) []
 		obligation.ID = NormalizeStableContractIDPart(obligation.ID)
 		obligation.Description = strings.TrimSpace(obligation.Description)
 		obligation.Source = strings.TrimSpace(obligation.Source)
+		obligation.Threshold = strings.TrimSpace(obligation.Threshold)
 
 		if obligation.ID == "" {
 			obligation.ID = stableAcceptanceEvidenceID(obligation)
@@ -716,7 +729,7 @@ func normalizeAcceptanceObligations(obligations []AcceptanceEvidenceRequired) []
 			obligation.Required = true
 		}
 
-		key := obligation.ID + "\x00" + obligation.Description
+		key := obligation.ID + "\x00" + obligation.Description + "\x00" + obligation.Threshold
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -1084,11 +1097,36 @@ func validateTDDObligationEvidence(atom AtomExecutionContract, evidence Terminal
 
 func validateAcceptanceEvidence(atom AtomExecutionContract, evidence TerminalEvidenceInput) []PlanExecutionContractViolation {
 	accepted := normalizedStringSet(evidence.AcceptanceEvidenceIDs)
+	claims := normalizedAcceptanceEvidenceClaims(evidence.AcceptanceEvidenceClaims)
 
 	var violations []PlanExecutionContractViolation
 
 	for _, obligation := range atom.AcceptanceObligations {
 		if !obligation.Required || obligation.ID == "" {
+			continue
+		}
+
+		if strings.TrimSpace(obligation.Threshold) != "" {
+			claim, ok := claims[obligation.ID]
+			if !ok {
+				violations = append(violations, contractViolation("acceptance_evidence_claim_missing", atom.AtomID, "", obligation.ID, "terminal success lacks required acceptance evidence claim"))
+				continue
+			}
+
+			result, err := evaluateAcceptanceEvidenceThreshold(claim.Value, obligation.Threshold)
+			if err != nil {
+				violations = append(violations, contractViolation(err.code, atom.AtomID, "", obligation.ID, err.message))
+				continue
+			}
+
+			if claim.Met != result {
+				violations = append(violations, contractViolation("acceptance_evidence_claim_met_mismatch", atom.AtomID, "", obligation.ID, "terminal acceptance evidence claim met declaration contradicts threshold comparison"))
+			}
+
+			if !result {
+				violations = append(violations, contractViolation("acceptance_evidence_threshold_not_met", atom.AtomID, "", obligation.ID, "terminal acceptance evidence claim does not satisfy required threshold"))
+			}
+
 			continue
 		}
 
@@ -1098,6 +1136,104 @@ func validateAcceptanceEvidence(atom AtomExecutionContract, evidence TerminalEvi
 	}
 
 	return violations
+}
+
+func normalizedAcceptanceEvidenceClaims(claims []AcceptanceEvidenceClaim) map[string]AcceptanceEvidenceClaim {
+	out := make(map[string]AcceptanceEvidenceClaim, len(claims))
+	for _, claim := range claims {
+		claim.ID = NormalizeStableContractIDPart(claim.ID)
+		claim.Value = strings.TrimSpace(claim.Value)
+		if claim.ID == "" {
+			continue
+		}
+		if _, ok := out[claim.ID]; ok {
+			continue
+		}
+		out[claim.ID] = claim
+	}
+	return out
+}
+
+type acceptanceEvidenceThresholdError struct {
+	code    string
+	message string
+}
+
+type acceptanceEvidenceThresholdValue struct {
+	number float64
+	unit   string
+}
+
+func evaluateAcceptanceEvidenceThreshold(value string, threshold string) (bool, *acceptanceEvidenceThresholdError) {
+	operator, thresholdValue, err := parseAcceptanceEvidenceThreshold(threshold)
+	if err != nil {
+		return false, err
+	}
+
+	claimValue, err := parseAcceptanceEvidenceThresholdValue(value, "acceptance_evidence_claim_unparseable", "terminal acceptance evidence claim value is not parseable")
+	if err != nil {
+		return false, err
+	}
+
+	if claimValue.unit != thresholdValue.unit {
+		return false, &acceptanceEvidenceThresholdError{
+			code:    "acceptance_evidence_threshold_unit_mismatch",
+			message: "terminal acceptance evidence claim value uses a different unit than the required threshold",
+		}
+	}
+
+	switch operator {
+	case ">=":
+		return claimValue.number >= thresholdValue.number, nil
+	case ">":
+		return claimValue.number > thresholdValue.number, nil
+	case "<=":
+		return claimValue.number <= thresholdValue.number, nil
+	case "<":
+		return claimValue.number < thresholdValue.number, nil
+	case "==":
+		return claimValue.number == thresholdValue.number, nil
+	default:
+		return false, &acceptanceEvidenceThresholdError{
+			code:    "acceptance_evidence_threshold_unparseable",
+			message: "required acceptance evidence threshold operator is not parseable",
+		}
+	}
+}
+
+func parseAcceptanceEvidenceThreshold(threshold string) (string, acceptanceEvidenceThresholdValue, *acceptanceEvidenceThresholdError) {
+	threshold = strings.TrimSpace(threshold)
+	for _, operator := range []string{">=", "<=", "==", ">", "<"} {
+		if strings.HasPrefix(threshold, operator) {
+			value, err := parseAcceptanceEvidenceThresholdValue(strings.TrimSpace(strings.TrimPrefix(threshold, operator)), "acceptance_evidence_threshold_unparseable", "required acceptance evidence threshold is not parseable")
+			return operator, value, err
+		}
+	}
+
+	return "", acceptanceEvidenceThresholdValue{}, &acceptanceEvidenceThresholdError{
+		code:    "acceptance_evidence_threshold_unparseable",
+		message: "required acceptance evidence threshold operator is not parseable",
+	}
+}
+
+func parseAcceptanceEvidenceThresholdValue(raw string, code string, message string) (acceptanceEvidenceThresholdValue, *acceptanceEvidenceThresholdError) {
+	raw = strings.TrimSpace(raw)
+	unit := ""
+	if strings.HasSuffix(raw, "%") {
+		unit = "%"
+		raw = strings.TrimSpace(strings.TrimSuffix(raw, "%"))
+	}
+
+	if raw == "" {
+		return acceptanceEvidenceThresholdValue{}, &acceptanceEvidenceThresholdError{code: code, message: message}
+	}
+
+	number, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return acceptanceEvidenceThresholdValue{}, &acceptanceEvidenceThresholdError{code: code, message: message}
+	}
+
+	return acceptanceEvidenceThresholdValue{number: number, unit: unit}, nil
 }
 
 func validateSourceSatisfiedEvidence(atom AtomExecutionContract, evidence TerminalEvidenceInput) []PlanExecutionContractViolation {

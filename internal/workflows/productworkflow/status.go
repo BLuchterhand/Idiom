@@ -9,6 +9,7 @@ import (
 
 	"idiom/internal/platform/util"
 	"idiom/internal/workflows/recovery"
+	"idiom/internal/workflows/workflowstate"
 )
 
 type StatusBlocker struct {
@@ -23,48 +24,56 @@ type StatusSection struct {
 }
 
 type ProductStatusView struct {
-	AuditStatus      string                  `json:"audit_status"`
-	EffortRoot       string                  `json:"effort_root"`
-	EffortID         string                  `json:"effort_id"`
-	TaskID           string                  `json:"task_id"`
-	StatusBucket     string                  `json:"status_bucket"`
-	CurrentPhase     string                  `json:"current_phase"`
-	CurrentState     string                  `json:"current_state"`
-	StateRevision    int                     `json:"state_revision"`
-	LastEventID      string                  `json:"last_event_id"`
-	ContextPackID    string                  `json:"context_pack_id"`
-	FreshnessState   string                  `json:"freshness_state"`
-	CheckedFileCount int                     `json:"checked_file_count"`
-	Sections         []StatusSection         `json:"sections"`
-	Blockers         []StatusBlocker         `json:"blockers"`
-	OpenObligations  []string                `json:"open_obligations"`
-	NextValidActions []string                `json:"next_valid_actions"`
-	Findings         []StatusBlocker         `json:"findings,omitempty"`
-	Metrics          *ProductWorkflowMetrics `json:"metrics,omitempty"`
-	Recovery         *ProductRecoveryStatus  `json:"recovery,omitempty"`
+	AuditStatus           string                      `json:"audit_status"`
+	EffortRoot            string                      `json:"effort_root"`
+	EffortID              string                      `json:"effort_id"`
+	TaskID                string                      `json:"task_id"`
+	StatusBucket          string                      `json:"status_bucket"`
+	CurrentPhase          string                      `json:"current_phase"`
+	CurrentState          string                      `json:"current_state"`
+	WorkflowID            workflowstate.WorkflowID    `json:"workflow_id,omitempty"`
+	WorkflowState         workflowstate.StateID       `json:"workflow_state,omitempty"`
+	WorkflowTerminalState workflowstate.TerminalState `json:"workflow_terminal_state,omitempty"`
+	Dispatchable          bool                        `json:"dispatchable"`
+	StateRevision         int                         `json:"state_revision"`
+	LastEventID           string                      `json:"last_event_id"`
+	ContextPackID         string                      `json:"context_pack_id"`
+	FreshnessState        string                      `json:"freshness_state"`
+	CheckedFileCount      int                         `json:"checked_file_count"`
+	Sections              []StatusSection             `json:"sections"`
+	Blockers              []StatusBlocker             `json:"blockers"`
+	OpenObligations       []string                    `json:"open_obligations"`
+	NextValidActions      []string                    `json:"next_valid_actions"`
+	Findings              []StatusBlocker             `json:"findings,omitempty"`
+	Metrics               *ProductWorkflowMetrics     `json:"metrics,omitempty"`
+	Recovery              *ProductRecoveryStatus      `json:"recovery,omitempty"`
 }
 
 type ProductOperatorStatusView struct {
-	SchemaVersion         string                    `json:"schema_version"`
-	ContinuationAuthority string                    `json:"continuation_authority"`
-	AuditStatus           string                    `json:"audit_status"`
-	EffortID              string                    `json:"effort_id"`
-	TaskID                string                    `json:"task_id"`
-	StatusBucket          string                    `json:"status_bucket"`
-	CurrentPhase          string                    `json:"current_phase"`
-	CurrentState          string                    `json:"current_state"`
-	StateRevision         int                       `json:"state_revision"`
-	LastEventID           string                    `json:"last_event_id"`
-	ContextPackID         string                    `json:"context_pack_id"`
-	FreshnessState        string                    `json:"freshness_state"`
-	CheckedFileCount      int                       `json:"checked_file_count"`
-	Sections              []StatusSection           `json:"sections"`
-	Metrics               *ProductWorkflowMetrics   `json:"metrics,omitempty"`
-	Blockers              []ProductOperatorBlocker  `json:"blockers"`
-	OpenObligations       []string                  `json:"open_obligations"`
-	ArtifactPaths         []ProductOperatorArtifact `json:"artifact_paths"`
-	NextValidActions      []ProductOperatorAction   `json:"next_valid_actions"`
-	Recovery              *ProductRecoveryStatus    `json:"recovery,omitempty"`
+	SchemaVersion         string                      `json:"schema_version"`
+	ContinuationAuthority string                      `json:"continuation_authority"`
+	AuditStatus           string                      `json:"audit_status"`
+	EffortID              string                      `json:"effort_id"`
+	TaskID                string                      `json:"task_id"`
+	StatusBucket          string                      `json:"status_bucket"`
+	CurrentPhase          string                      `json:"current_phase"`
+	CurrentState          string                      `json:"current_state"`
+	WorkflowID            workflowstate.WorkflowID    `json:"workflow_id,omitempty"`
+	WorkflowState         workflowstate.StateID       `json:"workflow_state,omitempty"`
+	WorkflowTerminalState workflowstate.TerminalState `json:"workflow_terminal_state,omitempty"`
+	Dispatchable          bool                        `json:"dispatchable"`
+	StateRevision         int                         `json:"state_revision"`
+	LastEventID           string                      `json:"last_event_id"`
+	ContextPackID         string                      `json:"context_pack_id"`
+	FreshnessState        string                      `json:"freshness_state"`
+	CheckedFileCount      int                         `json:"checked_file_count"`
+	Sections              []StatusSection             `json:"sections"`
+	Metrics               *ProductWorkflowMetrics     `json:"metrics,omitempty"`
+	Blockers              []ProductOperatorBlocker    `json:"blockers"`
+	OpenObligations       []string                    `json:"open_obligations"`
+	ArtifactPaths         []ProductOperatorArtifact   `json:"artifact_paths"`
+	NextValidActions      []ProductOperatorAction     `json:"next_valid_actions"`
+	Recovery              *ProductRecoveryStatus      `json:"recovery,omitempty"`
 }
 
 type ProductOperatorAction struct {
@@ -134,13 +143,16 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 			Message: "workflow_state.json not found",
 		}
 		view := ProductStatusView{
-			AuditStatus:      ProductWorkflowStatusError,
-			EffortRoot:       absRoot,
-			Blockers:         []StatusBlocker{blocker},
-			Findings:         []StatusBlocker{blocker},
-			OpenObligations:  []string{},
-			NextValidActions: []string{"restore workflow_state.json under the effort root and rerun product status"},
-			Sections:         []StatusSection{},
+			AuditStatus:           ProductWorkflowStatusError,
+			EffortRoot:            absRoot,
+			WorkflowID:            workflowstate.WorkflowProductDispatch,
+			WorkflowState:         workflowstate.StateTerminal,
+			WorkflowTerminalState: workflowstate.TerminalStateMissingScope,
+			Blockers:              []StatusBlocker{blocker},
+			Findings:              []StatusBlocker{blocker},
+			OpenObligations:       []string{},
+			NextValidActions:      []string{"restore workflow_state.json under the effort root and rerun product status"},
+			Sections:              []StatusSection{},
 		}
 
 		return view, fmt.Errorf("workflow_state.json: %w", err)
@@ -153,13 +165,16 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 			Message: fmt.Sprintf("workflow_state.json invalid: %v", parseErr),
 		}
 		view := ProductStatusView{
-			AuditStatus:      ProductWorkflowStatusError,
-			EffortRoot:       absRoot,
-			Blockers:         []StatusBlocker{blocker},
-			Findings:         []StatusBlocker{blocker},
-			OpenObligations:  []string{},
-			NextValidActions: []string{"fix workflow_state.json content and rerun product status"},
-			Sections:         []StatusSection{},
+			AuditStatus:           ProductWorkflowStatusError,
+			EffortRoot:            absRoot,
+			WorkflowID:            workflowstate.WorkflowProductDispatch,
+			WorkflowState:         workflowstate.StateTerminal,
+			WorkflowTerminalState: workflowstate.TerminalStateInvalidScope,
+			Blockers:              []StatusBlocker{blocker},
+			Findings:              []StatusBlocker{blocker},
+			OpenObligations:       []string{},
+			NextValidActions:      []string{"fix workflow_state.json content and rerun product status"},
+			Sections:              []StatusSection{},
 		}
 
 		return view, fmt.Errorf("workflow_state.json: %w", parseErr)
@@ -235,8 +250,84 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 	if view.AuditStatus == "" {
 		view.AuditStatus = ProductWorkflowStatusPass
 	}
+	view.WorkflowID = workflowstate.WorkflowProductDispatch
+	view.WorkflowState, view.WorkflowTerminalState, view.Dispatchable = classifyProductWorkflowProjection(
+		view.StatusBucket,
+		view.CurrentState,
+		view.AuditStatus,
+		view.FreshnessState,
+		view.OpenObligations,
+		view.Blockers,
+		view.NextValidActions,
+	)
 
 	return view, nil
+}
+
+func classifyProductWorkflowProjection(statusBucket string, currentState string, auditStatus string, freshnessState string, openObligations []string, blockers []StatusBlocker, nextActions []string) (workflowstate.StateID, workflowstate.TerminalState, bool) {
+	statusBucket = strings.TrimSpace(statusBucket)
+	currentState = strings.TrimSpace(currentState)
+
+	if statusBucket == WorkflowStatusBucketClosed && currentState == WorkflowStateClosed {
+		return workflowstate.StateTerminal, workflowstate.TerminalStateComplete, false
+	}
+	if statusBucket == WorkflowStatusBucketClosed || currentState == WorkflowStateClosed {
+		return workflowstate.StateTerminal, workflowstate.TerminalStateInvalidScope, false
+	}
+
+	if len(blockers) == 0 &&
+		len(openObligations) == 0 &&
+		(auditStatus == "" || auditStatus == ProductWorkflowStatusPass) &&
+		operatorFreshnessCurrent(freshnessState) &&
+		len(nonEmptyProductStatusActions(nextActions)) > 0 {
+
+		return workflowstate.StateDispatchable, "", true
+	}
+
+	var codes []string
+	for _, blocker := range blockers {
+		codes = append(codes, blocker.Code)
+	}
+	if !operatorFreshnessCurrent(freshnessState) {
+		codes = append(codes, "stale_context")
+	}
+	if len(openObligations) > 0 {
+		codes = append(codes, "open_obligations")
+	}
+	if auditStatus != "" && auditStatus != ProductWorkflowStatusPass {
+		codes = append(codes, "audit_not_passing")
+	}
+
+	return workflowstate.StateTerminal, productWorkflowTerminalStateForBlockers(codes), false
+}
+
+func nonEmptyProductStatusActions(actions []string) []string {
+	var out []string
+	for _, action := range actions {
+		action = strings.TrimSpace(action)
+		if action != "" {
+			out = append(out, action)
+		}
+	}
+
+	return out
+}
+
+func productWorkflowTerminalStateForBlockers(codes []string) workflowstate.TerminalState {
+	for _, code := range codes {
+		switch strings.TrimSpace(code) {
+		case "missing_workflow_state":
+			return workflowstate.TerminalStateMissingScope
+		case "invalid_workflow_state", "invalid_state", "invalid_state_bucket", "human_verification_required":
+			return workflowstate.TerminalStateInvalidScope
+		case "stale_context":
+			return workflowstate.TerminalStateStaleNeedsRebase
+		case "recovery_packet_open":
+			return workflowstate.TerminalStateRecoveryOpen
+		}
+	}
+
+	return workflowstate.TerminalStateBlocked
 }
 
 // LoadWorkflowState reads and validates workflow_state.json from an effort root.
@@ -297,6 +388,10 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 		StatusBucket:          status.StatusBucket,
 		CurrentPhase:          status.CurrentPhase,
 		CurrentState:          status.CurrentState,
+		WorkflowID:            status.WorkflowID,
+		WorkflowState:         status.WorkflowState,
+		WorkflowTerminalState: status.WorkflowTerminalState,
+		Dispatchable:          status.Dispatchable,
 		StateRevision:         status.StateRevision,
 		LastEventID:           status.LastEventID,
 		ContextPackID:         status.ContextPackID,
@@ -414,7 +509,15 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 
 	blockerCodes := productOperatorBlockerCodes(view.Blockers)
 	blockingReasons := append([]ProductOperatorBlocker{}, view.Blockers...)
-	dispatchable := len(blockerCodes) == 0
+	dispatchable := len(blockerCodes) == 0 && view.WorkflowState != workflowstate.StateTerminal
+	view.Dispatchable = dispatchable
+	if dispatchable {
+		view.WorkflowState = workflowstate.StateDispatchable
+		view.WorkflowTerminalState = ""
+	} else if view.WorkflowTerminalState == "" {
+		view.WorkflowState = workflowstate.StateTerminal
+		view.WorkflowTerminalState = productWorkflowTerminalStateForBlockers(blockerCodes)
+	}
 	transitionOwners := map[string]string{}
 
 	for _, action := range transitionActions {

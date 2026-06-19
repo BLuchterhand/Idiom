@@ -2406,6 +2406,29 @@ func (r *Runner) runLegacySessionBody(
 		// answer by calling the "answer" tool. This gives tool-biased
 		// models a tool-call-shaped way to produce prose, matching their
 		// training bias toward tool use over spontaneous prose.
+		if !ok {
+			if replayReq, replayRaw, replay := deferredSourceEvidenceWrite.replayAfterCompletionAttempt(collectedResults, currentAllowedTools); replay {
+				r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
+					"agent":          r.agentName(),
+					"original_tool":  "completion",
+					"rewritten_tool": strings.TrimSpace(replayReq.Tool),
+					"original_raw":   strings.TrimSpace(reply),
+					"rewritten_raw":  strings.TrimSpace(replayRaw),
+					"reason":         "implementation_delete_after_source_evidence_completion_replay",
+				}))
+
+				turnMessages = append(turnMessages, llama.ChatMessage{
+					Role:    "system",
+					Content: rewriteVisibilityNote("completion", replayReq.Tool),
+				})
+				req = replayReq
+				raw = replayRaw
+				ok = true
+				activeToolCall = nil
+				deferredSourceEvidenceWrite = nil
+			}
+		}
+
 		if ok && strings.TrimSpace(req.Tool) == "answer" {
 			// The answer content comes from the tool call's arguments.
 			// For native tool calls, raw is the JSON arguments string
@@ -3568,7 +3591,7 @@ func (r *Runner) runLegacySessionBody(
 			originalReq := req
 			originalRaw := raw
 			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "implementation_write_before_evidence_bounded_read")
-			deferredSourceEvidenceWrite = newImplementationDeferredSourceEvidenceWrite(originalReq, originalRaw, redirected.Path)
+			deferredSourceEvidenceWrite = r.newImplementationDeferredSourceEvidenceWrite(originalReq, originalRaw, redirected.Path, currentAllowedTools)
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
@@ -3586,7 +3609,7 @@ func (r *Runner) runLegacySessionBody(
 			originalReq := req
 			originalRaw := raw
 			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "write_before_git_history_bounded_history")
-			deferredSourceEvidenceWrite = newImplementationDeferredSourceEvidenceWrite(originalReq, originalRaw, redirected.Path)
+			deferredSourceEvidenceWrite = r.newImplementationDeferredSourceEvidenceWrite(originalReq, originalRaw, redirected.Path, implementationHistoryRedirectAllowedTools)
 
 			if deferredSourceEvidenceWrite != nil {
 				deferredSourceEvidenceWrite.RequiresHistory = true
@@ -8105,7 +8128,7 @@ func (a *runnerAutonomyRecorder) completionGateResolvedAndOpenObligations(input 
 			continue
 		}
 
-		if ref == "obl-verify-post-write" && !util.EqualTrimFold(input.VerificationStatus, "passed") {
+		if ref == "obl-verify-post-write" && !runnerAutonomyVerificationStatusResolvesPostWriteObligation(input.VerificationStatus) {
 			open = append(open, ref)
 			continue
 		}
@@ -9540,6 +9563,10 @@ func (a *runnerAutonomyRecorder) obligationsForGate(gate autonomy.GateKind) []au
 }
 
 func runnerAutonomyVerificationStatus(results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) string {
+	if runnerBriefRequiresMutation(brief) && workerruntime.VerificationContractSkipsGate(brief.VerificationContract) {
+		return "not_required"
+	}
+
 	if runnerBriefRequiresMutation(brief) && !workerruntime.VerificationContractSkipsGate(brief.VerificationContract) {
 		if _, failed := failedVerificationAfterLatestWrite(results, brief); failed {
 			return "failed"
@@ -9551,6 +9578,10 @@ func runnerAutonomyVerificationStatus(results []workspace.ToolResult, brief work
 
 		if hasSuccessfulVerificationResult(results) {
 			return "passed"
+		}
+
+		if len(changedPathsFromToolResults(results)) > 0 {
+			return "not_required"
 		}
 	}
 
@@ -9566,6 +9597,15 @@ func runnerAutonomyVerificationStatus(results []workspace.ToolResult, brief work
 	}
 
 	return "pending"
+}
+
+func runnerAutonomyVerificationStatusResolvesPostWriteObligation(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "pass", "passed", "success", "succeeded", "ok", "clean", "verified", "resolved", "observed", "not_required":
+		return true
+	default:
+		return false
+	}
 }
 
 func runnerAutonomyIsVerificationResult(result workspace.ToolResult) bool {
@@ -11217,6 +11257,10 @@ func hasPendingVerificationAfterWrites(results []workspace.ToolResult, brief wor
 		}
 
 		if workspace.IsWorkspaceWriteTool(result.Tool) {
+			if writeResultMadeNoWorkspaceChange(result) {
+				continue
+			}
+
 			// Doc-deliverable lanes (refine drafts/reviews/patches, design
 			// notes, etc.) have RequiredEditPaths populated with .md/.txt
 			// targets. For those there's no source-aware sanity to run, so
@@ -11240,6 +11284,21 @@ func hasPendingVerificationAfterWrites(results []workspace.ToolResult, brief wor
 	}
 
 	return pending
+}
+
+func writeResultMadeNoWorkspaceChange(result workspace.ToolResult) bool {
+	if len(changedPathsFromToolResult(result)) > 0 {
+		return false
+	}
+
+	text := strings.ToLower(strings.TrimSpace(result.Summary + "\n" + result.Output))
+	if text == "" {
+		return false
+	}
+
+	return strings.Contains(text, "no-op") ||
+		strings.Contains(text, "no new changes") ||
+		strings.Contains(text, "all sections were redundant")
 }
 
 // briefIsDocDeliverableLane reports whether the brief specs a doc-only
@@ -13862,6 +13921,10 @@ var requiredEvidenceCheck = map[workerruntime.EvidenceRequirementID]func(answer 
 			strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>")
 	},
 	workerruntime.RequiredEvidenceGitHistoryRationale: func(answer string, results []workspace.ToolResult) bool {
+		if len(changedPathsFromToolResults(results)) > 0 && !changedPathsRequireGitHistory(results) {
+			return true
+		}
+
 		return successfulGitHistoryEvidenceSeen(results) || answerHasGitHistoryNoopOrBlocker(answer)
 	},
 	workerruntime.RequiredEvidenceInspectedPaths: func(answer string, results []workspace.ToolResult) bool {
@@ -13910,6 +13973,55 @@ func missingRequiredEvidence(evidence []string, answer string, results []workspa
 	}
 
 	return missing
+}
+
+func changedPathsRequireGitHistory(results []workspace.ToolResult) bool {
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" || !workspace.IsWorkspaceWriteTool(result.Tool) {
+			continue
+		}
+
+		if strings.TrimSpace(result.Tool) == workspace.ToolNameMkdir {
+			continue
+		}
+
+		for _, path := range changedPathsFromToolResult(result) {
+			normalized := agentutil.NormalizeRunnerPath(path)
+			if normalized == "" || writePathIsNonSource(normalized) {
+				continue
+			}
+
+			if toolResultPreimagePathWasMissing(result, normalized) {
+				continue
+			}
+
+			return true
+		}
+	}
+
+	return false
+}
+
+func toolResultPreimagePathWasMissing(result workspace.ToolResult, path string) bool {
+	if strings.TrimSpace(result.PayloadType) != writePreimagePayloadType || len(result.Payload) == 0 {
+		return false
+	}
+
+	var payload writePreimagePayload
+
+	if err := json.Unmarshal(result.Payload, &payload); err != nil {
+		return false
+	}
+
+	normalized := agentutil.NormalizeRunnerPath(path)
+
+	for _, entry := range payload.Paths {
+		if agentutil.NormalizeRunnerPath(entry.Path) == normalized {
+			return !entry.Exists
+		}
+	}
+
+	return false
 }
 
 // isVerificationToolResult reports whether a tool result came from a
@@ -17771,7 +17883,50 @@ func (r *Runner) executeWorkspaceWithPreimage(ctx context.Context, store *Preima
 		return result
 	}
 
-	return r.Workspace.Execute(ctx, req)
+	result := r.Workspace.Execute(ctx, req)
+
+	return annotateWritePreimagePayload(result, store, req)
+}
+
+func annotateWritePreimagePayload(result workspace.ToolResult, store *PreimageCheckpointStore, req workspace.ToolRequest) workspace.ToolResult {
+	if store == nil || strings.TrimSpace(result.Error) != "" || !workspace.IsWorkspaceWriteTool(req.Tool) {
+		return result
+	}
+
+	paths, classified, err := workspace.WritePreimagePaths(req)
+	if err != nil || !classified || len(paths) == 0 {
+		return result
+	}
+
+	payload := writePreimagePayload{Paths: make([]writePreimagePath, 0, len(paths))}
+
+	for _, path := range paths {
+		normalized := agentutil.NormalizeRunnerPath(path)
+		if normalized == "" {
+			continue
+		}
+
+		existed, ok := store.Existed(normalized)
+		if !ok {
+			continue
+		}
+
+		payload.Paths = append(payload.Paths, writePreimagePath{Path: normalized, Exists: existed})
+	}
+
+	if len(payload.Paths) == 0 {
+		return result
+	}
+
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return result
+	}
+
+	result.PayloadType = writePreimagePayloadType
+	result.Payload = encoded
+
+	return result
 }
 
 func snapshotWritePreimages(store *PreimageCheckpointStore, req workspace.ToolRequest) (workspace.ToolResult, bool) {

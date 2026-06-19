@@ -584,6 +584,27 @@ func TestMCPDiscoveryResourceFreshnessMatchesCLISidecarReportOnly(t *testing.T) 
 		}
 	}
 
+	if !reflect.DeepEqual(cliPayload.Sidecar.Contract, workspace.BuildToolSidecarContract("context_status", workspace.ToolProfileDiscovery, "cli")) {
+		t.Fatalf("CLI sidecar contract drifted from shared builder: %#v", cliPayload.Sidecar.Contract)
+	}
+
+	toolCallInput := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"context_status","arguments":{"path":"pkg/pkg.go","freshness_policy":"report_only","limit":1}}}` + "\n"
+	var mcpToolStdout bytes.Buffer
+	if err := newTestMCPDiscoveryServer(t, cfg).Serve(testContext(t), strings.NewReader(toolCallInput), &mcpToolStdout); err != nil {
+		t.Fatalf("serve MCP tool contract parity frame: %v", err)
+	}
+	toolFrames := decodeMCPFrames(t, mcpToolStdout.String())
+	mcpToolPayload := decodeMCPToolTextPayload(t, mcpToolResultFromFrame(t, toolFrames[0]))
+	if !reflect.DeepEqual(mcpToolPayload.Sidecar.Contract, workspace.BuildToolSidecarContract("context_status", workspace.ToolProfileDiscovery, StdioTransport)) {
+		t.Fatalf("MCP sidecar contract drifted from shared builder: %#v", mcpToolPayload.Sidecar.Contract)
+	}
+	if cliPayload.Sidecar.Contract.ID != mcpToolPayload.Sidecar.Contract.ID ||
+		cliPayload.Sidecar.Contract.SchemaVersion != mcpToolPayload.Sidecar.Contract.SchemaVersion ||
+		!reflect.DeepEqual(cliPayload.Sidecar.Contract.Metadata, mcpToolPayload.Sidecar.Contract.Metadata) {
+
+		t.Fatalf("CLI/MCP sidecar contract metadata mismatch:\ncli=%#v\nmcp=%#v", cliPayload.Sidecar.Contract, mcpToolPayload.Sidecar.Contract)
+	}
+
 	if freshness["refresh_allowed"] != false || freshness["refresh_attempted"] != false {
 		t.Fatalf("MCP resource freshness must remain report-only/no-refresh: %#v", freshness)
 	}
@@ -968,12 +989,8 @@ type decodedMCPToolPayload struct {
 			RequestID string `json:"request_id"`
 			TraceID   string `json:"trace_id"`
 		} `json:"caller"`
-		Contract struct {
-			ID            string `json:"id"`
-			SchemaVersion string `json:"schema_version"`
-			Transport     string `json:"transport"`
-		} `json:"contract"`
-		Error *struct {
+		Contract workspace.ToolSidecarContract `json:"contract"`
+		Error    *struct {
 			Class   string `json:"class"`
 			Code    string `json:"code"`
 			Message string `json:"message"`
@@ -985,9 +1002,10 @@ type decodedP84CLISidecarPayload struct {
 	Tool    string `json:"Tool"`
 	Output  string `json:"Output"`
 	Sidecar struct {
-		Profile   string         `json:"profile"`
-		Freshness map[string]any `json:"freshness"`
-		Error     any            `json:"error"`
+		Profile   string                        `json:"profile"`
+		Freshness map[string]any                `json:"freshness"`
+		Contract  workspace.ToolSidecarContract `json:"contract"`
+		Error     any                           `json:"error"`
 	} `json:"sidecar"`
 }
 

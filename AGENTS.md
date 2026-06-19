@@ -340,6 +340,71 @@ forcing another broad packet.
 - `prompts/`: baseline and mode/profile instructions
 - `docs/`: design intent, north star, remediation, and parity plans
 
+## MiniMax M2.7 Implementation Routing
+
+The `minimax-m2.7` profile in `.idiom/backends.json` routes all roles
+(planner, executor, classifier) through the hosted MiniMax M2.7 model. No
+local GPU or model process is required. Use this profile when hosted model
+quality, latency, or cost is preferable to local inference.
+
+### When to use MiniMax M2.7
+
+- **Implementation-heavy atoms**: briefs that enumerate many precise edits
+  (plan-execute, implement, delegate_edit).
+- **Multi-file changes**: MiniMax M2.7 handles both planning and execution.
+- **When local GPU is unavailable or local model quality is the bottleneck**.
+
+### When to pivot back to local Qwen
+
+- **Cost-sensitive batch runs**: switch to `qwen-pair` profile to use local
+  inference with no per-token cost.
+- **Network-constrained environments**: no internet access, or API key
+  unavailable.
+- **Quick iteration loops**: local latency is lower for rapid
+  plan-execute-implement cycles.
+
+### Invocation patterns
+
+```bash
+# Plan-execute with MiniMax M2.7 (all roles)
+idiom lane plan-execute --backend-profile minimax-m2.7 "Add DONKEY animal constant"
+idiom lane plan-execute --backend-profile minimax-m2.7 --prompt-file brief.md
+
+# Implement lane with MiniMax M2.7
+idiom lane implement --backend-profile minimax-m2.7 --prompt-file brief.md
+
+# No local backend start needed — MiniMax M2.7 is fully hosted
+idiom backend status --profile minimax-m2.7
+```
+
+Brief lint is local (Python preflight) and does not route through any model
+backend:
+
+```bash
+idiom brief lint path/to/brief.md
+idiom brief lint --json path/to/brief.md
+```
+
+### Prerequisites
+
+- `MINIMAX_API_KEY` environment variable must be set in the shell.
+- The `minimax-m2.7` profile is declared in `.idiom/backends.json` (already
+  present in this repo).
+- No local backend process is needed — MiniMax M2.7 is fully hosted.
+
+### Smoke testing
+
+After any change to the profile, backends.json, or prompt stack, verify the
+end-to-end path:
+
+1. **Backend health**: `idiom backend status --profile minimax-m2.7` — expect
+   MiniMax-M2.7 UP (hosted).
+2. **Brief lint** (no model needed): write a minimal brief and run
+   `idiom brief lint <path>`.
+3. **Plan-execute dry run**: invoke `idiom lane plan-execute --backend-profile
+   minimax-m2.7 --json` with a trivial one-edit brief and confirm the planner
+   phase completes and the executor phase dispatches against MiniMax M2.7.
+
 ## Project Docs
 
 - [.codex/project-context.md](.codex/project-context.md): Codex-focused project brief

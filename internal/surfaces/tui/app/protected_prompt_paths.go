@@ -4,10 +4,10 @@ import (
 	"strings"
 
 	"idiom/internal/platform/config"
-	"idiom/internal/runtime/agent"
+	"idiom/internal/runtime/modepolicy"
 )
 
-func protectedPromptWritePaths(cfg config.Config, mode agent.Mode) []string {
+func protectedPromptWritePaths(cfg config.Config, mode modepolicy.Mode) []string {
 	var paths []string
 
 	paths = appendPromptProtectionPaths(paths, cfg.Chat.SystemPromptFiles...)

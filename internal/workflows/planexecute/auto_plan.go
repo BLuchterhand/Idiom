@@ -123,10 +123,6 @@ func planExecutePendingAutoExactEdits(root string, edits []workspace.PlanEdit) [
 	return pending
 }
 
-func PlanExecutePendingAutoExactEdits(root string, edits []workspace.PlanEdit) []workspace.PlanEdit {
-	return planExecutePendingAutoExactEdits(root, edits)
-}
-
 func planExecuteAutoExactEditStatus(root string, edit workspace.PlanEdit) string {
 	path := normalizePlanExecutePath(edit.Path)
 	if path == "" {
@@ -150,10 +146,6 @@ func planExecuteAutoExactEditStatus(root string, edit workspace.PlanEdit) string
 	status, _ := submittedPlanEditStatus(string(body), edit)
 
 	return status
-}
-
-func PlanExecuteAutoExactEditStatus(root string, edit workspace.PlanEdit) string {
-	return planExecuteAutoExactEditStatus(root, edit)
 }
 
 func planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
@@ -267,18 +259,6 @@ func planExecuteSourceSatisfiedUnsupportedEvidenceMarkerListForPrompt() string {
 	}
 
 	return strings.Join(quoted, ", ")
-}
-
-func PlanExecuteSourceSatisfiedUnsupportedEvidenceMarker(answer string, evidencePaths []string) string {
-	return planExecuteSourceSatisfiedUnsupportedEvidenceMarker(answer, evidencePaths)
-}
-
-func PlanExecuteSourceSatisfiedUnsupportedEvidenceMarkers() []string {
-	return planExecuteSourceSatisfiedUnsupportedEvidenceMarkers()
-}
-
-func PlanExecuteSourceSatisfiedUnsupportedEvidenceMarkerListForPrompt() string {
-	return planExecuteSourceSatisfiedUnsupportedEvidenceMarkerListForPrompt()
 }
 
 func planExecuteSourceSatisfiedUnsupportedMarkerInText(text string) string {

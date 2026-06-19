@@ -282,7 +282,7 @@ type Chat struct {
 	// AgentMode selects which built-in agent profile drives the session.
 	// OpenCode-shaped: the user picks build/plan/general; the harness
 	// never classifies a prompt to pick one on their behalf. Empty falls
-	// back to "build" (full capability). See internal/runtime/agent/modes.go.
+	// back to "build" (full capability). See internal/runtime/modepolicy/modes.go.
 	AgentMode string `json:"agent_mode,omitempty"`
 }
 

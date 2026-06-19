@@ -16,6 +16,11 @@ const (
 	None  Decision = ""
 )
 
+const (
+	toolNameShell = "shell"
+	toolNameBash  = "bash"
+)
+
 // Rule is a single `pattern -> decision` entry.
 type Rule struct {
 	Pattern  string   `json:"pattern"`
@@ -74,7 +79,7 @@ func matchByKey(tool string, req Request, rules map[string][]Rule, key string) D
 // ExtractTarget returns the request field a rule should match for a tool.
 func ExtractTarget(tool string, req Request) string {
 	switch {
-	case tool == "shell" || tool == "bash":
+	case tool == toolNameShell || tool == toolNameBash:
 		return strings.TrimSpace(req.Command)
 	case strings.HasPrefix(tool, "mcp:"):
 		if q := stringFieldFromRawJSON(req.Args, "query"); q != "" {
@@ -127,7 +132,7 @@ func matchPattern(tool string, pattern string, target string) bool {
 	}
 
 	switch tool {
-	case "shell", "bash":
+	case toolNameShell, toolNameBash:
 		return matchShell(pattern, target)
 	default:
 		return matchPath(pattern, target)

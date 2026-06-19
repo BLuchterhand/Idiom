@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"idiom/internal/runtime/agent"
+	"idiom/internal/runtime/modepolicy"
 )
 
 // TestProbeLaneImplementationFamilyMatchesContract is the canonical
@@ -16,7 +16,7 @@ import (
 // Colony probe used to catch.
 func TestProbeLaneImplementationFamilyMatchesContract(t *testing.T) {
 	res, err := ProbeLane(ProbeLaneOptions{
-		Mode:         agent.BuildMode(),
+		Mode:         modepolicy.BuildMode(),
 		TaskFamily:   "implementation",
 		AllowedTools: []string{"read_file", "write_file"},
 	})
@@ -54,7 +54,7 @@ func TestProbeLaneImplementationFamilyMatchesContract(t *testing.T) {
 // that motivated the planner-specific case in normalizeTurnRoutePlan.
 func TestProbeLanePlanThenExecutePlannerMatchesContract(t *testing.T) {
 	res, err := ProbeLane(ProbeLaneOptions{
-		Mode:         agent.BuildMode(),
+		Mode:         modepolicy.BuildMode(),
 		TaskFamily:   "plan_then_execute_planner",
 		AllowedTools: []string{"read_file", "submit_plan"},
 	})
@@ -81,7 +81,7 @@ func TestProbeLanePlanThenExecutePlannerMatchesContract(t *testing.T) {
 // surfaces this as an input error rather than silently returning
 // fallback shape.
 func TestProbeLaneRejectsEmptyTaskFamily(t *testing.T) {
-	_, err := ProbeLane(ProbeLaneOptions{Mode: agent.BuildMode()})
+	_, err := ProbeLane(ProbeLaneOptions{Mode: modepolicy.BuildMode()})
 	if err == nil || !strings.Contains(err.Error(), "TaskFamily") {
 		t.Fatalf("empty TaskFamily must error; got %v", err)
 	}
@@ -90,7 +90,7 @@ func TestProbeLaneRejectsEmptyTaskFamily(t *testing.T) {
 // TestProbeLaneDefaultsModeToBuild verifies the convenience: a
 // caller that doesn't pass a Mode gets BuildMode() as the default.
 // Important because most external probe callers won't have an
-// agent.Mode handy and the routing should still work.
+// modepolicy.Mode handy and the routing should still work.
 func TestProbeLaneDefaultsModeToBuild(t *testing.T) {
 	res, err := ProbeLane(ProbeLaneOptions{
 		TaskFamily:   "implementation",

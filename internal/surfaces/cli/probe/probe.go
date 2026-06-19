@@ -12,7 +12,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
-	"idiom/internal/runtime/agent"
+	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/workerruntime"
 	toolcmd "idiom/internal/surfaces/cli/tool"
 	"idiom/internal/surfaces/tui/app"
@@ -152,7 +152,7 @@ func runProbeLane(args []string, stdout io.Writer, stderr io.Writer) int {
 // keeps the assertion code generic — future probes can land by
 // adding one row to selectedProbes.
 //
-// `mode` is the agent.Mode the probe runs under; the assertion is
+// `mode` is the modepolicy.Mode the probe runs under; the assertion is
 // that explicit_task_family routing produces the same shape under
 // every shipped mode (BuildMode, PlanMode, etc.). If a future
 // refactor makes normalizeTurnRoutePlan mode-dependent for an
@@ -161,7 +161,7 @@ func runProbeLane(args []string, stdout io.Writer, stderr io.Writer) int {
 type probeCase struct {
 	label        string
 	taskFamily   string
-	mode         agent.Mode
+	mode         modepolicy.Mode
 	wantInitial  string
 	wantContract string
 	wantBriefFam string
@@ -188,12 +188,12 @@ func selectedProbes(modeFlag string) []probeCase {
 		buildCase := base
 
 		buildCase.label = label + "(build)"
-		buildCase.mode = agent.BuildMode()
+		buildCase.mode = modepolicy.BuildMode()
 
 		planCase := base
 
 		planCase.label = label + "(plan)"
-		planCase.mode = agent.PlanMode()
+		planCase.mode = modepolicy.PlanMode()
 
 		return []probeCase{buildCase, planCase}
 	}

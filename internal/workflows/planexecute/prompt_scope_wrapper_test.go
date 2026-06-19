@@ -117,6 +117,107 @@ func TestPlanScopeContractWriteAllowedFlagIsNotExpandedByPromptScope(t *testing.
 	}
 }
 
+func TestPlanScopeContractFrozenSkipsPromptDerivedScope(t *testing.T) {
+	opts := Options{
+		ScopeContract: NewPlanScopeContract(
+			[]string{"pkg/frozen.go"},
+			[]string{"pkg/allowed.go"},
+			nil,
+		),
+		ScopeExtractionPolicy: ScopeExtractionFrozen,
+	}
+	prompt := `
+## Prior Cycles
+
+Changed pkg/history.go.
+
+## Remaining Requirements
+
+Failure mentions pkg/failure.go.
+
+## Files To Modify
+
+- pkg/prompt-required.go
+
+## Allowed Edit Paths
+
+- pkg/prompt-allowed.go
+`
+	contract := planExecuteScopeContract(opts, prompt)
+
+	if got, want := contract.RequiredCoveragePaths, []string{"pkg/frozen.go"}; !slices.Equal(got, want) {
+		t.Fatalf("required coverage paths = %#v, want %#v", got, want)
+	}
+
+	if got, want := contract.AllowedCandidatePaths, []string{"pkg/allowed.go"}; !slices.Equal(got, want) {
+		t.Fatalf("allowed candidate paths = %#v, want %#v", got, want)
+	}
+}
+
+func TestPlanScopeContractFrozenIgnoresContextPackCandidates(t *testing.T) {
+	opts := Options{
+		ScopeContract: NewPlanScopeContract(
+			[]string{"pkg/target.go"},
+			nil,
+			nil,
+		).WithWriteAllowedPaths([]string{"pkg/target.go"}),
+		ScopeExtractionPolicy: ScopeExtractionFrozen,
+	}
+	prompt := `
+Implement the target.
+
+## Context Pack
+
+### Candidate Files
+
+- pkg/discovered.go (editable): matched task terms
+- pkg/discovered_test.go (editable): matched task terms
+`
+	contract := planExecuteScopeContract(opts, prompt)
+
+	if got, want := contract.RequiredCoveragePaths, []string{"pkg/target.go"}; !slices.Equal(got, want) {
+		t.Fatalf("required coverage paths = %#v, want %#v", got, want)
+	}
+
+	if len(contract.AllowedCandidatePaths) != 0 {
+		t.Fatalf("context_pack candidates should not be extracted when scope is frozen: %#v", contract.AllowedCandidatePaths)
+	}
+
+	if got, want := contract.WriteAllowedPaths, []string{"pkg/target.go"}; !slices.Equal(got, want) {
+		t.Fatalf("write envelope = %#v, want %#v", got, want)
+	}
+}
+
+func TestPlanScopeContractDefaultExtractsPromptScope(t *testing.T) {
+	opts := Options{}
+	prompt := `
+## Files To Modify
+
+- pkg/prompt-required.go
+
+## Allowed Edit Paths
+
+- pkg/prompt-allowed.go
+`
+	contract := planExecuteScopeContract(opts, prompt)
+
+	if !slices.Contains(contract.RequiredCoveragePaths, "pkg/prompt-required.go") {
+		t.Fatalf("default scope extraction should include prompt required path, contract=%#v", contract)
+	}
+
+	if !slices.Contains(contract.AllowedCandidatePaths, "pkg/prompt-allowed.go") {
+		t.Fatalf("default scope extraction should include prompt allowed path, contract=%#v", contract)
+	}
+}
+
+func TestPlanScopeContractDefaultExtractsMentionedPathFallback(t *testing.T) {
+	contract := planExecuteScopeContract(Options{}, "Please update pkg/mentioned.go.")
+
+	if !slices.Contains(contract.AllowedCandidatePaths, "pkg/mentioned.go") {
+		t.Fatalf("default scope extraction should include mentioned path fallback, contract=%#v", contract)
+	}
+}
+
 func TestPlanScopeContractExplicitEmptyWriteEnvelopeDisablesFallback(t *testing.T) {
 	opts := Options{
 		WriteAllowedPathsExplicit: true,

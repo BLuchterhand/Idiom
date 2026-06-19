@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,11 +12,32 @@ import (
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	"idiom/internal/surfaces/cli/runtime"
+	"idiom/internal/workflows/intentloop"
 	"idiom/internal/workflows/planexecute"
 )
 
 // planExecuteOptions configures `idiom plan-execute`.
 type planExecuteOptions = planexecute.Options
+
+type planExecuteIntentLoopOptions struct {
+	Enabled           bool
+	MaxCycles         int
+	TotalBudgetTokens int
+}
+
+type planExecuteIntentLoopRunner func(
+	cfg config.Config,
+	opts planExecuteOptions,
+	loopOpts planExecuteIntentLoopOptions,
+	promptRun planexecute.PromptRunner,
+	rec *telemetry.Recorder,
+	stdout io.Writer,
+	stderr io.Writer,
+) int
+
+var runPlanExecuteIntentLoop planExecuteIntentLoopRunner = defaultPlanExecuteIntentLoop
+
+var runPlanExecuteIntentLoopChildRunner intentloop.PlanExecuteRunner
 
 // RunMain is the CLI entry point for `idiom plan-execute`.
 //
@@ -31,7 +53,7 @@ func RunMain(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdrun
 }
 
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner, rec *telemetry.Recorder) int {
-	opts, err := parsePlanExecuteOptions(args, stderr)
+	opts, loopOpts, err := parsePlanExecuteCLIOptions(args, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 
@@ -50,6 +72,16 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 		opts.UseActiveModel = true
 	} else if strings.TrimSpace(cfg.LlamaServer.Model) != "" {
 		opts.UseActiveModel = true
+	}
+
+	if loopOpts.Enabled {
+		if runPlanExecuteIntentLoop == nil {
+			fmt.Fprintln(stderr, "intent-loop runner is unavailable")
+
+			return 1
+		}
+
+		return runPlanExecuteIntentLoop(cfg, opts, loopOpts, adaptPromptRunner(promptRun), rec, stdout, stderr)
 	}
 
 	result := planexecute.Run(cfg, opts, adaptPromptRunner(promptRun), rec, stdout, stderr)
@@ -74,8 +106,120 @@ func adaptPromptRunner(promptRun cmdruntime.PromptRunner) planexecute.PromptRunn
 	}
 }
 
+func defaultPlanExecuteIntentLoop(
+	cfg config.Config,
+	opts planExecuteOptions,
+	loopOpts planExecuteIntentLoopOptions,
+	promptRun planexecute.PromptRunner,
+	rec *telemetry.Recorder,
+	stdout io.Writer,
+	stderr io.Writer,
+) int {
+	result := intentloop.Run(cfg, intentloop.IntentLoopOptions{
+		PlanExecuteOptions:          opts,
+		SessionID:                   opts.SessionID,
+		Resume:                      opts.Resume,
+		MaxCycles:                   loopOpts.MaxCycles,
+		CycleBudgetTokens:           loopOpts.TotalBudgetTokens,
+		DetectExternalScopedChanges: true,
+		RunPlanExecute:              runPlanExecuteIntentLoopChildRunner,
+	}, promptRun, rec, stdout, stderr)
+	return result.ExitCode
+}
+
 func parsePlanExecuteOptions(args []string, stderr io.Writer) (planExecuteOptions, error) {
-	return planexecute.ParseOptions(args, stderr)
+	opts, _, err := parsePlanExecuteCLIOptions(args, stderr)
+	return opts, err
+}
+
+func parsePlanExecuteCLIOptions(args []string, stderr io.Writer) (planExecuteOptions, planExecuteIntentLoopOptions, error) {
+	planArgs, loopOpts, err := splitPlanExecuteIntentLoopArgs(args)
+	if err != nil {
+		return planExecuteOptions{}, planExecuteIntentLoopOptions{}, err
+	}
+
+	opts, err := planexecute.ParseOptions(planArgs, stderr)
+	if err != nil {
+		return planExecuteOptions{}, planExecuteIntentLoopOptions{}, err
+	}
+
+	return opts, loopOpts, nil
+}
+
+func splitPlanExecuteIntentLoopArgs(args []string) ([]string, planExecuteIntentLoopOptions, error) {
+	loopOpts := planExecuteIntentLoopOptions{MaxCycles: 5}
+	out := make([]string, 0, len(args))
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		name, value, hasValue := splitFlagValue(arg)
+
+		switch name {
+		case "-intent-loop":
+			enabled := true
+			if hasValue {
+				parsed, err := strconv.ParseBool(value)
+				if err != nil {
+					return nil, loopOpts, fmt.Errorf("invalid --intent-loop value %q: %w", value, err)
+				}
+				enabled = parsed
+			}
+			loopOpts.Enabled = enabled
+		case "-max-cycles":
+			parsed, next, err := parseIntFlagValue("--max-cycles", value, hasValue, args, i)
+			if err != nil {
+				return nil, loopOpts, err
+			}
+			if parsed <= 0 {
+				return nil, loopOpts, fmt.Errorf("--max-cycles must be greater than 0")
+			}
+			loopOpts.MaxCycles = parsed
+			i = next
+		case "-total-budget-tokens", "-budget-tokens":
+			parsed, next, err := parseIntFlagValue("--total-budget-tokens", value, hasValue, args, i)
+			if err != nil {
+				return nil, loopOpts, err
+			}
+			if parsed < 0 {
+				return nil, loopOpts, fmt.Errorf("--total-budget-tokens must be greater than or equal to 0")
+			}
+			loopOpts.TotalBudgetTokens = parsed
+			i = next
+		default:
+			out = append(out, arg)
+		}
+	}
+
+	return out, loopOpts, nil
+}
+
+func splitFlagValue(arg string) (string, string, bool) {
+	if strings.HasPrefix(arg, "--") {
+		arg = arg[1:]
+	}
+	if idx := strings.Index(arg, "="); idx >= 0 {
+		return arg[:idx], arg[idx+1:], true
+	}
+	return arg, "", false
+}
+
+func parseIntFlagValue(flagName string, inlineValue string, hasInlineValue bool, args []string, index int) (int, int, error) {
+	value := inlineValue
+	next := index
+	if !hasInlineValue {
+		if index+1 >= len(args) {
+			return 0, index, fmt.Errorf("%s requires a value", flagName)
+		}
+		value = args[index+1]
+		next = index + 1
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, index, fmt.Errorf("invalid %s value %q: %w", flagName, value, err)
+	}
+
+	return parsed, next, nil
 }
 
 func planExecuteRequiredEditPaths(opts planExecuteOptions, prompt string) []string {
@@ -150,7 +294,6 @@ func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []st
 func newPlanExecuteSessionID() string {
 	return planexecute.NewPlanExecuteSessionID()
 }
-
 
 // findLatestPlanArtifact picks the most recent .idiom/plans/<stamp>.plan.json
 // produced since notBefore. When sessionID is non-empty, the search is

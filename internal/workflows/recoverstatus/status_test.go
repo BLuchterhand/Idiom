@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"idiom/internal/workflows/recovery"
+	"idiom/internal/workflows/workflowstate"
 )
 
 func TestBuildAndFormatTextReportsRecoveryPacketStatus(t *testing.T) {
@@ -35,6 +36,13 @@ func TestBuildAndFormatTextReportsRecoveryPacketStatus(t *testing.T) {
 		t.Fatalf("unexpected report status: %#v", report)
 	}
 
+	if report.WorkflowID != workflowstate.WorkflowRecovery ||
+		report.WorkflowTerminalState != workflowstate.TerminalStateRecoveryOpen ||
+		!report.Dispatchable {
+
+		t.Fatalf("unexpected workflow classification: %#v", report)
+	}
+
 	if report.PacketPath != "packet.json" || report.FailureID != packet.FailureID {
 		t.Fatalf("unexpected packet identity: %#v", report)
 	}
@@ -55,6 +63,8 @@ func TestBuildAndFormatTextReportsRecoveryPacketStatus(t *testing.T) {
 	text := FormatText(report)
 	for _, want := range []string{
 		"recover status: ready",
+		"workflow_terminal_state: recovery-open",
+		"dispatchable: true",
 		"packet: packet.json",
 		"failure_id: failure-status-test",
 		"dirty_status: clean",
@@ -134,6 +144,10 @@ func TestBuildUsesValidSiblingReconciliationForRemainingStatus(t *testing.T) {
 		t.Fatalf("expected partial sibling reconciliation status, got %#v", report)
 	}
 
+	if report.WorkflowTerminalState != workflowstate.TerminalStateRecoveryOpen || !report.Dispatchable {
+		t.Fatalf("expected partial recovery report to remain dispatchable, got %#v", report)
+	}
+
 	if len(report.CandidateAtoms) != 1 || report.CandidateAtoms[0].ID != "recovery-002" {
 		t.Fatalf("expected only remaining atom, got %#v", report.CandidateAtoms)
 	}
@@ -185,6 +199,10 @@ func TestBuildReportsInvalidSiblingReconciliationAsBlocked(t *testing.T) {
 
 	if report.Status != "blocked" || report.NextAction != recovery.NextActionInspectFailure {
 		t.Fatalf("expected blocked invalid reconciliation report, got %#v", report)
+	}
+
+	if report.WorkflowTerminalState != workflowstate.TerminalStateBlocked || report.Dispatchable {
+		t.Fatalf("blocked reconciliation should not be dispatchable, got %#v", report)
 	}
 
 	if report.ReconciliationPath != "nested/reconciliation.json" || report.Reconciliation == nil {

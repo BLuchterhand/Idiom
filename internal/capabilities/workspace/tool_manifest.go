@@ -42,11 +42,11 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 	var tools []string
 
 	if opts.IncludeTaskLedger {
-		tools = append(tools, "task_ledger")
+		tools = append(tools, ToolNameTaskLedger)
 	}
 
 	if opts.IncludeTask {
-		tools = append(tools, "task")
+		tools = append(tools, ToolNameTask)
 	}
 
 	tools = append(tools, defaultToolManifestTools()...)
@@ -55,7 +55,7 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 	}
 
 	if opts.IncludePlanThenExecute {
-		if metadata, ok := builtInToolSurfaceMetadata("submit_plan"); ok {
+		if metadata, ok := builtInToolSurfaceMetadata(ToolNameSubmitPlan); ok {
 			tools = append(tools, metadata.Tool)
 		}
 	}
@@ -63,7 +63,7 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 	if opts.IncludeGo {
 		tools = appendLanguageManifestTools(tools, "go")
 		if opts.IncludeWriteTools {
-			tools = append(tools, "go_move_declarations")
+			tools = append(tools, ToolNameGoMoveDeclarations)
 		}
 	}
 

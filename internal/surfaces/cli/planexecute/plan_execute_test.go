@@ -18,11 +18,13 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/contracts/plan"
+	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/surfaces/cli/runtime"
 	"idiom/internal/surfaces/tui/app"
+	"idiom/internal/workflows/intentloop"
 	"idiom/internal/workflows/planexecute"
 )
 
@@ -54,6 +56,232 @@ func TestRunPlanExecuteMainForwardsThinkingAndMaxTokens(t *testing.T) {
 
 	if gotOpts.MaxTokensOverride != 2048 {
 		t.Fatalf("MaxTokensOverride = %d, want 2048", gotOpts.MaxTokensOverride)
+	}
+}
+
+func TestRunPlanExecuteMainDefaultDoesNotRouteIntentLoop(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	originalRunner := runPlanExecuteIntentLoop
+	runPlanExecuteIntentLoop = func(config.Config, planExecuteOptions, planExecuteIntentLoopOptions, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) int {
+		t.Fatal("intent-loop runner must not be called without --intent-loop")
+		return 99
+	}
+	t.Cleanup(func() { runPlanExecuteIntentLoop = originalRunner })
+
+	var stdout, stderr bytes.Buffer
+
+	code := RunMain(
+		[]string{"-config", configPath, "-prompt", "plan this"},
+		&stdout,
+		&stderr,
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+			return "no plan", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("expected normal plan-execute missing-artifact exit 1, got %d stderr=%s", code, stderr.String())
+	}
+}
+
+func TestRunPlanExecuteMainIntentLoopFlagsRouteToLoopRunner(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	originalRunner := runPlanExecuteIntentLoop
+	var (
+		gotOpts     planExecuteOptions
+		gotLoopOpts planExecuteIntentLoopOptions
+	)
+	runPlanExecuteIntentLoop = func(_ config.Config, opts planExecuteOptions, loopOpts planExecuteIntentLoopOptions, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) int {
+		gotOpts = opts
+		gotLoopOpts = loopOpts
+		return 7
+	}
+	t.Cleanup(func() { runPlanExecuteIntentLoop = originalRunner })
+
+	var stdout, stderr bytes.Buffer
+
+	code := RunMain(
+		[]string{
+			"-config", configPath,
+			"-prompt", "loop this",
+			"-intent-loop",
+			"-max-cycles", "3",
+			"-total-budget-tokens", "12000",
+		},
+		&stdout,
+		&stderr,
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+			t.Fatal("single-cycle prompt runner must not be called for --intent-loop")
+			return "", nil
+		},
+	)
+
+	if code != 7 {
+		t.Fatalf("expected loop runner exit 7, got %d stderr=%s", code, stderr.String())
+	}
+	if gotOpts.Prompt != "loop this" {
+		t.Fatalf("prompt = %q, want loop this", gotOpts.Prompt)
+	}
+	if !gotLoopOpts.Enabled || gotLoopOpts.MaxCycles != 3 || gotLoopOpts.TotalBudgetTokens != 12000 {
+		t.Fatalf("loop opts = %#v, want enabled max=3 budget=12000", gotLoopOpts)
+	}
+}
+
+func TestRunPlanExecuteMainIntentLoopInvalidBudgetExits2(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+
+	var stdout, stderr bytes.Buffer
+
+	code := RunMain(
+		[]string{"-config", configPath, "-prompt", "loop this", "-intent-loop", "-total-budget-tokens", "-1"},
+		&stdout,
+		&stderr,
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+			t.Fatal("prompt runner must not be called after invalid intent-loop budget")
+			return "", nil
+		},
+	)
+
+	if code != 2 {
+		t.Fatalf("expected invalid budget exit 2, got %d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--total-budget-tokens") {
+		t.Fatalf("stderr should name invalid budget flag, got %s", stderr.String())
+	}
+}
+
+func TestRunPlanExecuteMainIntentLoopScriptedLiveE2E(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	prompt := `Scripted live e2e secret marker: RAW_PROMPT_SHOULD_NOT_LEAK.
+
+Typed plan execution contract:
+{
+  "atoms": [{
+    "atom_id": "impl",
+    "scope": {
+      "required_coverage_paths": ["internal/intentloop_e2e_target.go"]
+    },
+    "required_tests": [
+      {"id": "unit", "command": "go test ./internal/intentloop-e2e/..."}
+    ],
+    "acceptance_obligations": [
+      {"id": "coverage-threshold", "description": "coverage >= 80%", "required": true, "threshold": ">=80%"}
+    ],
+    "terminal_evidence_requirements": {
+      "explicit": true,
+      "require_verification": true,
+      "require_required_tests": true
+    }
+  }]
+}`
+
+	originalChildRunner := runPlanExecuteIntentLoopChildRunner
+	t.Cleanup(func() { runPlanExecuteIntentLoopChildRunner = originalChildRunner })
+
+	var (
+		childSessions []string
+		childPrompts  []string
+	)
+	runPlanExecuteIntentLoopChildRunner = func(_ config.Config, opts planexecute.Options, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) planexecute.RunResult {
+		childSessions = append(childSessions, opts.SessionID)
+		childPrompts = append(childPrompts, opts.Prompt)
+
+		if opts.ScopeExtractionPolicy != planexecute.ScopeExtractionFrozen {
+			t.Fatalf("child ScopeExtractionPolicy = %q, want frozen", opts.ScopeExtractionPolicy)
+		}
+		if len(opts.ScopeContract.RequiredCoveragePaths) != 1 || opts.ScopeContract.RequiredCoveragePaths[0] != "internal/intentloop_e2e_target.go" {
+			t.Fatalf("child required scope = %#v", opts.ScopeContract.RequiredCoveragePaths)
+		}
+		if len(opts.VerificationPlanExplicitCommands) != 1 || opts.VerificationPlanExplicitCommands[0] != "go test ./internal/intentloop-e2e/..." {
+			t.Fatalf("child explicit verification commands = %#v", opts.VerificationPlanExplicitCommands)
+		}
+
+		cycle := len(childSessions)
+		record := scriptedIntentLoopTerminal(opts.SessionID, cycle)
+		exitCode := 1
+		if cycle == 3 {
+			exitCode = 0
+		}
+
+		return planexecute.RunResult{
+			ExitCode:       exitCode,
+			SessionID:      opts.SessionID,
+			Completion:     &record,
+			CompletionPath: ".idiom/plan-execute/sessions/" + opts.SessionID + ".terminal.json",
+		}
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := RunMain(
+		[]string{
+			"-config", configPath,
+			"-prompt", prompt,
+			"-json",
+			"-intent-loop",
+			"-max-cycles", "4",
+		},
+		&stdout,
+		&stderr,
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+			t.Fatal("scripted child runner should avoid live model calls")
+			return "", nil
+		},
+	)
+
+	t.Logf("scripted intent-loop stdout:\n%s", stdout.String())
+	t.Logf("scripted intent-loop stderr:\n%s", stderr.String())
+
+	if code != 0 {
+		t.Fatalf("RunMain exit = %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if len(childSessions) != 3 {
+		t.Fatalf("child session count = %d, want 3 (%#v)", len(childSessions), childSessions)
+	}
+	if len(childPrompts) != 3 {
+		t.Fatalf("child prompt count = %d", len(childPrompts))
+	}
+	if !strings.Contains(childPrompts[1], "verification:go test ./internal/intentloop-e2e/...") {
+		t.Fatalf("cycle 2 prompt missing cycle 1 verification gap:\n%s", childPrompts[1])
+	}
+	if !strings.Contains(childPrompts[2], "acceptance:coverage-threshold") || !strings.Contains(childPrompts[2], "threshold_result: `not_met`") {
+		t.Fatalf("cycle 3 prompt missing threshold gap:\n%s", childPrompts[2])
+	}
+
+	events := planExecuteJSONEvents(t, stdout.String())
+	if _, ok := planExecuteEventByType(events, "idiom.intent_loop.start"); !ok {
+		t.Fatalf("missing intent-loop start event in %s", stdout.String())
+	}
+	if complete, ok := planExecuteEventByType(events, "idiom.intent_loop.complete"); !ok {
+		t.Fatalf("missing intent-loop complete event in %s", stdout.String())
+	} else if complete["total_cycles"] != float64(3) {
+		t.Fatalf("complete total_cycles = %#v, want 3", complete["total_cycles"])
+	}
+	if strings.Contains(stdout.String(), "RAW_PROMPT_SHOULD_NOT_LEAK") {
+		t.Fatalf("intent-loop JSON events leaked raw prompt: %s", stdout.String())
+	}
+
+	stateFiles, err := filepath.Glob(filepath.Join(root, ".idiom", "intent-loop", "sessions", "*.json"))
+	if err != nil {
+		t.Fatalf("glob intent-loop state: %v", err)
+	}
+	if len(stateFiles) != 1 {
+		t.Fatalf("state files = %#v, want exactly one", stateFiles)
+	}
+
+	stateID := strings.TrimSuffix(filepath.Base(stateFiles[0]), ".json")
+	state, _, err := intentloop.LoadState(root, stateID)
+	if err != nil {
+		t.Fatalf("LoadState(%s): %v", stateID, err)
+	}
+	if state.Status != intentloop.StatusCompleted || len(state.Cycles) != 3 {
+		t.Fatalf("state status=%q cycles=%d state=%#v", state.Status, len(state.Cycles), state)
+	}
+	if len(state.Cycles[0].RemainingFailures) == 0 || len(state.Cycles[1].RemainingFailures) == 0 || len(state.Cycles[2].RemainingFailures) != 0 {
+		t.Fatalf("unexpected remaining failures by cycle: %#v", state.Cycles)
+	}
+	if state.Cycles[0].CyclePromptSHA256 == "" || state.Cycles[1].CyclePromptPath == "" || state.Cycles[2].ChildIdentity == nil {
+		t.Fatalf("state missing prompt hash/path/identity: %#v", state.Cycles)
 	}
 }
 
@@ -1540,6 +1768,53 @@ func writePlanExecuteConfig(t *testing.T) string {
 	}
 
 	return path
+}
+
+func scriptedIntentLoopTerminal(sessionID string, cycle int) planexecute.PlanExecuteTerminalCompletionRecord {
+	command := "go test ./internal/intentloop-e2e/..."
+	status := "passed"
+	errText := ""
+	exitCode := 0
+	claims := []plancontract.AcceptanceEvidenceClaim{{
+		ID:    "coverage-threshold",
+		Value: "86%",
+		Met:   true,
+	}}
+
+	switch cycle {
+	case 1:
+		status = "failed"
+		errText = "internal/intentloop-e2e/target_test.go: missing edge case"
+		exitCode = 1
+		claims = nil
+	case 2:
+		claims = []plancontract.AcceptanceEvidenceClaim{{
+			ID:    "coverage-threshold",
+			Value: "72%",
+			Met:   false,
+		}}
+	}
+
+	return planexecute.NormalizePlanExecuteTerminalCompletionRecord(planexecute.PlanExecuteTerminalCompletionRecord{
+		SchemaVersion:              planexecute.PlanExecuteTerminalCompletionSchemaVersion,
+		Type:                       planexecute.PlanExecuteTerminalCompletionRecordType,
+		TS:                         time.Date(2026, 6, 18, 13, cycle, 0, 0, time.UTC).Format(time.RFC3339Nano),
+		SessionID:                  sessionID,
+		Phase:                      planexecute.ProgressPhaseComplete,
+		Status:                     planexecute.ProgressStatusCompleted,
+		ReviewStatus:               planexecute.ProgressStatusSkipped,
+		TerminalClass:              planexecute.PlanExecuteTerminalClassSuccess,
+		Outcome:                    planexecute.PlanExecuteTerminalOutcomeCompleted,
+		ExitCode:                   exitCode,
+		ReviewRepairSkipped:        true,
+		ChangedPaths:               []string{"internal/intentloop_e2e_target.go"},
+		RequiredEditPaths:          []string{"internal/intentloop_e2e_target.go"},
+		VerificationCommands:       []planexecute.VerificationCommand{{Command: command, Source: "scripted_live_e2e"}},
+		Verification:               []planexecute.PhaseEvidenceCheck{{Kind: "verification", Command: command, Status: status, Error: errText}},
+		AcceptanceEvidenceClaims:   claims,
+		AcceptanceEvidenceIDs:      []string{},
+		RequiredAcceptanceEvidence: []plancontract.AcceptanceEvidenceRequired{{ID: "coverage-threshold", Required: true, Threshold: ">=80%"}},
+	})
 }
 
 func readFileString(t *testing.T, path string) string {

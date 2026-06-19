@@ -59,7 +59,7 @@ func (e workspaceGraphEnricher) EnrichGraph(ctx context.Context, graph comprehen
 			Available: true,
 			Tools:     tools,
 			Capabilities: []string{
-				"diagnostics", "references", "calls_from", "calls_into", "implementations",
+				string(CapDiagnostics), string(CapReferences), string(CapCallsFrom), string(CapCallsInto), string(CapImplementations),
 			},
 			Properties: map[string]any{
 				"mode":          opts.Mode,
@@ -185,7 +185,7 @@ func (e workspaceGraphEnricher) relationshipEvidence(ctx context.Context, graph 
 				continue
 			}
 
-			if capability == "implementations" && !graphSymbolCanHaveImplementations(symbol.Kind) {
+			if capability == string(CapImplementations) && !graphSymbolCanHaveImplementations(symbol.Kind) {
 				continue
 			}
 
@@ -372,17 +372,17 @@ func diagnosticToolForGraphLanguage(language string) string {
 func relationshipToolsForGraphLanguage(language string) map[string]string {
 	switch language {
 	case "go":
-		return map[string]string{"references": "go_references", "calls_from": "go_calls_from", "calls_into": "go_calls_into", "implementations": "go_implementations"}
+		return map[string]string{string(CapReferences): "go_references", string(CapCallsFrom): "go_calls_from", string(CapCallsInto): "go_calls_into", string(CapImplementations): "go_implementations"}
 	case "cpp":
-		return map[string]string{"references": "cpp_references", "calls_from": "cpp_calls_from", "calls_into": "cpp_calls_into", "implementations": "cpp_implementations"}
+		return map[string]string{string(CapReferences): "cpp_references", string(CapCallsFrom): "cpp_calls_from", string(CapCallsInto): "cpp_calls_into", string(CapImplementations): "cpp_implementations"}
 	case "python":
-		return map[string]string{"references": "python_references", "calls_from": "python_calls_from", "calls_into": "python_calls_into", "implementations": "python_implementations"}
+		return map[string]string{string(CapReferences): "python_references", string(CapCallsFrom): "python_calls_from", string(CapCallsInto): "python_calls_into", string(CapImplementations): "python_implementations"}
 	case "typescript", "javascript":
-		return map[string]string{"references": "ts_references", "calls_from": "ts_calls_from", "calls_into": "ts_calls_into", "implementations": "ts_implementations"}
+		return map[string]string{string(CapReferences): "ts_references", string(CapCallsFrom): "ts_calls_from", string(CapCallsInto): "ts_calls_into", string(CapImplementations): "ts_implementations"}
 	case "rust":
-		return map[string]string{"references": "rust_references", "calls_from": "rust_calls_from", "calls_into": "rust_calls_into", "implementations": "rust_implementations"}
+		return map[string]string{string(CapReferences): "rust_references", string(CapCallsFrom): "rust_calls_from", string(CapCallsInto): "rust_calls_into", string(CapImplementations): "rust_implementations"}
 	case "java":
-		return map[string]string{"references": "java_references", "calls_from": "java_calls_from", "calls_into": "java_calls_into", "implementations": "java_implementations"}
+		return map[string]string{string(CapReferences): "java_references", string(CapCallsFrom): "java_calls_from", string(CapCallsInto): "java_calls_into", string(CapImplementations): "java_implementations"}
 	default:
 		return nil
 	}
@@ -463,7 +463,7 @@ func normalizeToolRelationshipEdges(graph comprehension.Graph, lookup graphRelat
 		}
 
 		switch capability {
-		case "calls_from":
+		case string(CapCallsFrom):
 			_, right, ok := splitToolArrow(line)
 			if !ok {
 				continue
@@ -475,7 +475,7 @@ func normalizeToolRelationshipEdges(graph comprehension.Graph, lookup graphRelat
 			}
 
 			edges = append(edges, toolRelationshipEdge("calls", subject.ID, targetID, tool, confidence, subject, line))
-		case "calls_into":
+		case string(CapCallsInto):
 			left, _, ok := splitToolArrow(line)
 			if !ok {
 				left = line
@@ -487,14 +487,14 @@ func normalizeToolRelationshipEdges(graph comprehension.Graph, lookup graphRelat
 			}
 
 			edges = append(edges, toolRelationshipEdge("calls", sourceID, subject.ID, tool, confidence, subject, line))
-		case "implementations":
+		case string(CapImplementations):
 			sourceID := lookup.resolveSymbolFromText(line)
 			if sourceID == "" || sourceID == subject.ID {
 				continue
 			}
 
 			edges = append(edges, toolRelationshipEdge("implements", sourceID, subject.ID, tool, confidence, subject, line))
-		case "references":
+		case string(CapReferences):
 			sourceID := lookup.resolveReferenceSource(line)
 			if sourceID == "" || sourceID == subject.ID {
 				continue
@@ -524,11 +524,11 @@ func normalizeStructuredToolRelationshipEdges(lookup graphRelationshipLookup, su
 		targetID := lookup.resolveRelationshipEndpoint(relationship.TargetPath, relationship.TargetLine, relationship.TargetSymbol)
 
 		switch capability {
-		case "calls_from":
+		case string(CapCallsFrom):
 			if sourceID == "" {
 				sourceID = subject.ID
 			}
-		case "calls_into", "references", "implementations":
+		case string(CapCallsInto), string(CapReferences), string(CapImplementations):
 			if targetID == "" {
 				targetID = subject.ID
 			}
@@ -546,11 +546,11 @@ func normalizeStructuredToolRelationshipEdges(lookup graphRelationshipLookup, su
 
 func relationshipKindForCapability(capability string) string {
 	switch capability {
-	case "calls_from", "calls_into":
+	case string(CapCallsFrom), string(CapCallsInto):
 		return "calls"
-	case "references":
+	case string(CapReferences):
 		return "references"
-	case "implementations":
+	case string(CapImplementations):
 		return "implements"
 	default:
 		return ""

@@ -25,6 +25,7 @@ const (
 	ParserFailureSchemaMismatch       ParserFailureClass = "schema_mismatch"
 	ParserFailureMissingToolName      ParserFailureClass = "missing_tool_name"
 	ParserFailureUnsupportedTransport ParserFailureClass = "unsupported_transport"
+	ParserFailureTransportMismatch    ParserFailureClass = "transport_mismatch"
 	ParserFailureAmbiguousToolCall    ParserFailureClass = "ambiguous_tool_call"
 )
 
@@ -373,6 +374,8 @@ func CanonicalParserFailureClass(value ParserFailureClass) ParserFailureClass {
 		return ParserFailureMissingToolName
 	case "unsupported", "unsupported_transport":
 		return ParserFailureUnsupportedTransport
+	case "transport_mismatch", "mismatched_transport", "native_tool_mismatch":
+		return ParserFailureTransportMismatch
 	case "ambiguous", "ambiguous_tool_call":
 		return ParserFailureAmbiguousToolCall
 	default:
@@ -382,7 +385,7 @@ func CanonicalParserFailureClass(value ParserFailureClass) ParserFailureClass {
 
 func ValidParserFailureClass(value ParserFailureClass) bool {
 	switch value {
-	case ParserFailureNone, ParserFailureMalformedJSON, ParserFailureSchemaMismatch, ParserFailureMissingToolName, ParserFailureUnsupportedTransport, ParserFailureAmbiguousToolCall:
+	case ParserFailureNone, ParserFailureMalformedJSON, ParserFailureSchemaMismatch, ParserFailureMissingToolName, ParserFailureUnsupportedTransport, ParserFailureTransportMismatch, ParserFailureAmbiguousToolCall:
 		return true
 	default:
 		return false

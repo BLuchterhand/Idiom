@@ -1,6 +1,0 @@
-{"type":"session_start","ts":"2026-05-09T10:20:00.000-04:00","app_name":"Idiom","workspace_root":"/tmp/plan-execute-preflight-failure"}
-{"type":"message","ts":"2026-05-09T10:20:00.005-04:00","role":"user","content":"Run the executor phase for plan .idiom/plans/2026-05-09-101500.plan.json."}
-{"type":"message","ts":"2026-05-09T10:20:00.010-04:00","role":"route_plan","content":"initial=plan_then_execute_executor reason=plan_artifact_dispatch contract=executor_dispatch_result"}
-{"type":"idiom.plan_execute.plan_artifact_loaded","ts":"2026-05-09T10:20:00.020-04:00","path":".idiom/plans/2026-05-09-101500.plan.json","edits":3}
-{"type":"idiom.plan_execute.preflight_failed","ts":"2026-05-09T10:20:00.030-04:00","edit_index":1,"path":"internal/foo/bar.go","reason":"old_text not found in file (anchor stale or file mutated since plan submission)"}
-{"type":"message","ts":"2026-05-09T10:20:00.040-04:00","role":"assistant","content":"Executor preflight failed at edit 1 (internal/foo/bar.go): old_text not found. Aborted before any edit landed; no files were modified. Re-read the path and resubmit a fresh plan."}

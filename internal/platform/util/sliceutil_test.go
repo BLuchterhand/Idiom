@@ -101,7 +101,6 @@ func TestLimitSliceEmpty(t *testing.T) {
 	}
 }
 
-
 func TestUnique(t *testing.T) {
 	result := Unique([]string{"a", "  b  ", "a", "", "b", "c"})
 	if len(result) != 3 {

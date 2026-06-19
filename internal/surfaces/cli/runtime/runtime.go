@@ -40,6 +40,26 @@ type RunOptions struct {
 	ScopeContract               planexecute.PlanScopeContract
 }
 
+type ApplicationRequestMode string
+
+const (
+	ApplicationRequestVersion      ApplicationRequestMode = "version"
+	ApplicationRequestListSessions ApplicationRequestMode = "list_sessions"
+	ApplicationRequestServer       ApplicationRequestMode = "server"
+	ApplicationRequestTurnsFile    ApplicationRequestMode = "turns_file"
+	ApplicationRequestPrompt       ApplicationRequestMode = "prompt"
+	ApplicationRequestTUI          ApplicationRequestMode = "tui"
+)
+
+type ApplicationRequest struct {
+	Mode          ApplicationRequestMode
+	ConfigPath    string
+	ModelOverride string
+	Prompt        string
+	TurnsFile     string
+	Options       RunOptions
+}
+
 type PromptRunner func(config.Config, string, RunOptions, io.Writer) (string, error)
 type PromptsRunner func(config.Config, []string, RunOptions, io.Writer) ([]string, error)
 type ModeRunner func(config.Config, RunOptions) error
@@ -79,22 +99,40 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 		return 2
 	}
 
-	if showVersion {
+	req, err := newApplicationRequest(applicationRequestFlags{
+		ConfigPath:       configPath,
+		ServerOnly:       serverOnly,
+		Prompt:           prompt,
+		TurnsFile:        turnsFile,
+		JSONEvents:       jsonEvents,
+		Resume:           resume,
+		ListSessionsFlag: listSessionsFlag,
+		ModelOverride:    modelOverride,
+		ShowVersion:      showVersion,
+		Telemetry:        rec,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+
+		return 2
+	}
+
+	if req.Mode == ApplicationRequestVersion {
 		return versionRun(nil, stdout, stderr)
 	}
 
-	cfg, err := config.Load(configPath)
+	cfg, err := config.Load(req.ConfigPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 
 		return 1
 	}
 
-	if strings.TrimSpace(modelOverride) != "" {
-		cfg.LlamaServer.Model = modelOverride
+	if strings.TrimSpace(req.ModelOverride) != "" {
+		cfg.LlamaServer.Model = req.ModelOverride
 	}
 
-	if listSessionsFlag {
+	if req.Mode == ApplicationRequestListSessions {
 		logPhase(rec, "list_sessions", nil)
 
 		if err := listSessions(cfg, stdout); err != nil {
@@ -106,8 +144,8 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 		return 0
 	}
 
-	if serverOnly {
-		if err := serverRun(cfg, RunOptions{Telemetry: rec}); err != nil {
+	if req.Mode == ApplicationRequestServer {
+		if err := serverRun(cfg, req.Options); err != nil {
 			fmt.Fprintln(stderr, err)
 
 			return 1
@@ -116,30 +154,22 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 		return 0
 	}
 
-	if turnsFile != "" {
-		if prompt != "" {
-			fmt.Fprintln(stderr, "--prompt and --turns-file are mutually exclusive")
-
-			return 2
-		}
-
-		prompts, err := LoadPromptTurns(turnsFile)
+	if req.Mode == ApplicationRequestTurnsFile {
+		prompts, err := LoadPromptTurns(req.TurnsFile)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 
 			return 1
 		}
 
-		opts := RunOptions{JSONEvents: jsonEvents, Resume: resume, Telemetry: rec}
-
-		answers, err := promptsRun(cfg, prompts, opts, stdout)
+		answers, err := promptsRun(cfg, prompts, req.Options, stdout)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 
 			return 1
 		}
 
-		if !jsonEvents {
+		if !req.Options.JSONEvents {
 			for _, answer := range answers {
 				fmt.Fprintln(stdout, answer)
 			}
@@ -148,30 +178,78 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 		return 0
 	}
 
-	if prompt != "" {
-		opts := RunOptions{JSONEvents: jsonEvents, Resume: resume, Telemetry: rec}
-
-		answer, err := promptRun(cfg, prompt, opts, stdout)
+	if req.Mode == ApplicationRequestPrompt {
+		answer, err := promptRun(cfg, req.Prompt, req.Options, stdout)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 
 			return 1
 		}
 
-		if !jsonEvents {
+		if !req.Options.JSONEvents {
 			fmt.Fprintln(stdout, answer)
 		}
 
 		return 0
 	}
 
-	if err := tuiRun(cfg, RunOptions{Resume: resume, Telemetry: rec}); err != nil {
+	if err := tuiRun(cfg, req.Options); err != nil {
 		fmt.Fprintln(stderr, err)
 
 		return 1
 	}
 
 	return 0
+}
+
+type applicationRequestFlags struct {
+	ConfigPath       string
+	ServerOnly       bool
+	Prompt           string
+	TurnsFile        string
+	JSONEvents       bool
+	Resume           string
+	ListSessionsFlag bool
+	ModelOverride    string
+	ShowVersion      bool
+	Telemetry        *telemetry.Recorder
+}
+
+func newApplicationRequest(flags applicationRequestFlags) (ApplicationRequest, error) {
+	req := ApplicationRequest{
+		Mode:          ApplicationRequestTUI,
+		ConfigPath:    flags.ConfigPath,
+		ModelOverride: strings.TrimSpace(flags.ModelOverride),
+		Prompt:        flags.Prompt,
+		TurnsFile:     flags.TurnsFile,
+		Options: RunOptions{
+			JSONEvents: flags.JSONEvents,
+			Resume:     flags.Resume,
+			Telemetry:  flags.Telemetry,
+		},
+	}
+
+	switch {
+	case flags.ShowVersion:
+		req.Mode = ApplicationRequestVersion
+	case flags.ListSessionsFlag:
+		req.Mode = ApplicationRequestListSessions
+	case flags.ServerOnly:
+		req.Mode = ApplicationRequestServer
+		req.Options.JSONEvents = false
+		req.Options.Resume = ""
+	case strings.TrimSpace(flags.Prompt) != "" && strings.TrimSpace(flags.TurnsFile) != "":
+		return ApplicationRequest{}, fmt.Errorf("--prompt and --turns-file are mutually exclusive")
+	case strings.TrimSpace(flags.TurnsFile) != "":
+		req.Mode = ApplicationRequestTurnsFile
+	case strings.TrimSpace(flags.Prompt) != "":
+		req.Mode = ApplicationRequestPrompt
+	default:
+		req.Mode = ApplicationRequestTUI
+		req.Options.JSONEvents = false
+	}
+
+	return req, nil
 }
 
 func LoadPromptTurns(path string) ([]string, error) {

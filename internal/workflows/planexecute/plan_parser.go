@@ -5,7 +5,19 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/workflows/workflowstate"
 )
+
+const planExecuteExpectedArtifactExactPlan = "exact_plan_edits"
+
+type PlanExecuteDispatchState struct {
+	WorkflowID            workflowstate.WorkflowID `json:"workflow_id"`
+	State                 workflowstate.StateID    `json:"state"`
+	Dispatchable          bool                     `json:"dispatchable"`
+	ExpectedArtifact      string                   `json:"expected_artifact,omitempty"`
+	LegacyHeadingFallback bool                     `json:"legacy_heading_fallback"`
+	Reason                string                   `json:"reason,omitempty"`
+}
 
 func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]workspace.PlanEdit, string) {
 	return planExecuteExactPlanEditsForWorkspace(prompt, requiredEditPaths, "")
@@ -13,22 +25,34 @@ func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]wor
 
 func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
 	required := planExecuteUniqueRequiredPaths(requiredEditPaths)
+	state := planExecuteExactPlanDispatchState(required)
+
+	return planExecuteExactPlanEditsForWorkspaceWithDispatchState(prompt, required, workspaceRoot, state)
+}
+
+func planExecuteExactPlanEditsForWorkspaceWithDispatchState(prompt string, required []string, workspaceRoot string, state PlanExecuteDispatchState) ([]workspace.PlanEdit, string) {
+	required = planExecuteUniqueRequiredPaths(required)
+	state = normalizePlanExecuteDispatchState(state)
+	if !state.Dispatchable {
+		return nil, firstPlanExecuteTerminalString(state.Reason, "plan-execute dispatch state is not dispatchable")
+	}
 	if len(required) == 0 {
 		return nil, "no required_edit_paths"
 	}
-
 	section := ""
 
-	for _, candidatePrompt := range planExecuteAutoPlanScanTexts(prompt) {
-		for _, heading := range []string{"required edits", "edits to apply", "edits"} {
-			if candidate := atomMarkdownSectionByHeading(candidatePrompt, heading); strings.TrimSpace(candidate) != "" {
-				section = candidate
+	if planExecuteDispatchStateAllowsLegacyHeadingScan(state) {
+		for _, candidatePrompt := range planExecuteAutoPlanScanTexts(prompt) {
+			for _, heading := range []string{"required edits", "edits to apply", "edits"} {
+				if candidate := atomMarkdownSectionByHeading(candidatePrompt, heading); strings.TrimSpace(candidate) != "" {
+					section = candidate
+					break
+				}
+			}
+
+			if strings.TrimSpace(section) != "" {
 				break
 			}
-		}
-
-		if strings.TrimSpace(section) != "" {
-			break
 		}
 	}
 
@@ -48,6 +72,43 @@ func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []st
 	}
 
 	return nil, reason
+}
+
+func planExecuteExactPlanDispatchState(required []string) PlanExecuteDispatchState {
+	if len(planExecuteUniqueRequiredPaths(required)) == 0 {
+		return PlanExecuteDispatchState{
+			WorkflowID: workflowstate.WorkflowPlanExecutePlanner,
+			State:      workflowstate.StateTerminal,
+			Reason:     "no required_edit_paths",
+		}
+	}
+
+	return PlanExecuteDispatchState{
+		WorkflowID:            workflowstate.WorkflowPlanExecutePlanner,
+		State:                 workflowstate.StateDispatchable,
+		Dispatchable:          true,
+		ExpectedArtifact:      planExecuteExpectedArtifactExactPlan,
+		LegacyHeadingFallback: true,
+	}
+}
+
+func normalizePlanExecuteDispatchState(state PlanExecuteDispatchState) PlanExecuteDispatchState {
+	if state.WorkflowID == "" {
+		state.WorkflowID = workflowstate.WorkflowPlanExecutePlanner
+	}
+	state.ExpectedArtifact = strings.TrimSpace(state.ExpectedArtifact)
+	state.Reason = strings.TrimSpace(state.Reason)
+
+	return state
+}
+
+func planExecuteDispatchStateAllowsLegacyHeadingScan(state PlanExecuteDispatchState) bool {
+	state = normalizePlanExecuteDispatchState(state)
+	return state.Dispatchable &&
+		state.LegacyHeadingFallback &&
+		state.WorkflowID == workflowstate.WorkflowPlanExecutePlanner &&
+		state.State == workflowstate.StateDispatchable &&
+		state.ExpectedArtifact == planExecuteExpectedArtifactExactPlan
 }
 
 func planExecuteExactPlanEditsFromSection(section string, required []string, workspaceRoot string) ([]workspace.PlanEdit, string) {

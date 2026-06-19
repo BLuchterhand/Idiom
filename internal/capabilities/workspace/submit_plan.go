@@ -730,7 +730,7 @@ func buildPlanEditAnchorProvenance(workspaceRoot string, edit PlanEdit) (PlanEdi
 
 	return PlanEditAnchorProvenance{
 		SchemaVersion: PlanEditAnchorProvenanceSchemaVersion,
-		Source:        "submit_plan",
+		Source:        ToolNameSubmitPlan,
 		Path:          rel,
 		FileSHA256:    planEditSHA256(body),
 		AnchorSHA256:  planEditSHA256([]byte(anchor)),
@@ -815,7 +815,7 @@ func validatePlanEditAnchorProvenanceShape(provenance *PlanEditAnchorProvenance)
 		return fmt.Errorf("anchor_provenance schema_version must be %s", PlanEditAnchorProvenanceSchemaVersion)
 	}
 
-	if strings.TrimSpace(provenance.Source) != "submit_plan" {
+	if strings.TrimSpace(provenance.Source) != ToolNameSubmitPlan {
 		return fmt.Errorf("anchor_provenance source must be submit_plan")
 	}
 
@@ -1114,7 +1114,7 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 				return fmt.Errorf("edit would introduce adjacent duplicate code line %d in %s: %q", lineNo, edit.Path, line)
 			}
 
-			if rejected := m.rejectInvalidPlannedWrite("submit_plan", "Plan edit rejected", path, []byte(updated)); rejected != nil {
+			if rejected := m.rejectInvalidPlannedWrite(ToolNameSubmitPlan, "Plan edit rejected", path, []byte(updated)); rejected != nil {
 				errorText := strings.TrimSpace(rejected.Error)
 				if edit.StartLine > 0 && edit.EndLine >= edit.StartLine {
 					errorText += fmt.Sprintf("\nLine-range edit detail: submit_plan edit for %s declared start_line=%d and end_line=%d. The `content` replaces exactly that inclusive current-source range; if the replacement includes source that currently lives after end_line, extend end_line to cover it, otherwise trim trailing unchanged context from content. If you are inserting after a current line, use insert_after_line with non-empty content instead.", edit.Path, edit.StartLine, edit.EndLine)
@@ -1166,7 +1166,7 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 			return fmt.Errorf("edit would introduce adjacent duplicate code line %d in %s: %q", lineNo, edit.Path, line)
 		}
 
-		if rejected := m.rejectInvalidPlannedWrite("submit_plan", "Plan edit rejected", path, []byte(updated)); rejected != nil {
+		if rejected := m.rejectInvalidPlannedWrite(ToolNameSubmitPlan, "Plan edit rejected", path, []byte(updated)); rejected != nil {
 			return fmt.Errorf("%w: %s", ErrPlanSubmissionRejected, strings.TrimSpace(rejected.Error))
 		}
 	} else {
@@ -1220,7 +1220,7 @@ func (m *Manager) validatePlanEditSequenceAgainstWorkspace(edits []PlanEdit) err
 			return fmt.Errorf("edits[%d]: edit would introduce adjacent duplicate code line %d in %s after applying prior plan edits: %q", i, lineNo, edit.Path, line)
 		}
 
-		if rejected := m.rejectInvalidPlannedWrite("submit_plan", "Plan edit rejected", path, []byte(updated)); rejected != nil {
+		if rejected := m.rejectInvalidPlannedWrite(ToolNameSubmitPlan, "Plan edit rejected", path, []byte(updated)); rejected != nil {
 			errorText := strings.TrimSpace(rejected.Error)
 			if edit.StartLine > 0 && edit.EndLine >= edit.StartLine {
 				errorText += fmt.Sprintf("\nLine-range edit detail: submit_plan edit for %s declared start_line=%d and end_line=%d. The `content` replaces exactly that inclusive current-source range; if the replacement includes source that currently lives after end_line, extend end_line to cover it, otherwise trim trailing unchanged context from content. If you are inserting after a current line, use insert_after_line with non-empty content instead.", edit.Path, edit.StartLine, edit.EndLine)

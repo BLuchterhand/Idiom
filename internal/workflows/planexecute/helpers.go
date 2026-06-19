@@ -74,10 +74,6 @@ func ParseOptions(args []string, stderr io.Writer) (Options, error) {
 	return opts, nil
 }
 
-func PlanExecutePrompt(opts Options) (string, error) {
-	return planExecutePrompt(opts)
-}
-
 func planExecutePrompt(opts Options) (string, error) {
 	hasPrompt := strings.TrimSpace(opts.Prompt) != ""
 	hasFile := strings.TrimSpace(opts.PromptFile) != ""
@@ -249,10 +245,6 @@ func patchPlanArtifactPackID(path string, packID string) error {
 	updated = append(updated, '\n')
 
 	return os.WriteFile(path, updated, 0o644)
-}
-
-func PatchPlanArtifactPackID(path string, packID string) error {
-	return patchPlanArtifactPackID(path, packID)
 }
 
 func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPaths []string) string {
@@ -609,10 +601,6 @@ func CleanupStalePlanArtifacts(root string, threshold time.Duration, logOut io.W
 	cleanupStalePlanArtifacts(root, threshold, logOut)
 }
 
-func PlanChangedPaths(plan workspace.PlanArtifact) []string {
-	return planChangedPaths(plan)
-}
-
 func planExecuteMissingEditPaths(required []string, edits []workspace.PlanEdit) []string {
 	covered := make(map[string]struct{}, len(edits))
 	for _, edit := range edits {
@@ -906,10 +894,6 @@ func emitExecutorHandoffPacketEvents(stdout io.Writer, jsonEvents bool, handoff 
 	}
 }
 
-func EmitExecutorHandoffPacketEvents(stdout io.Writer, jsonEvents bool, handoff ExecutorHandoffPacket) {
-	emitExecutorHandoffPacketEvents(stdout, jsonEvents, handoff)
-}
-
 func executorHandoffPacketEventFields(handoff ExecutorHandoffPacket) map[string]any {
 	fields := map[string]any{
 		"packet_state":              handoff.State,
@@ -982,10 +966,6 @@ func executorHandoffQualityFields(q comprehension.CompactPackQuality) map[string
 	}
 
 	return fields
-}
-
-func ExecutorHandoffPacketEventFields(handoff ExecutorHandoffPacket) map[string]any {
-	return executorHandoffPacketEventFields(handoff)
 }
 
 func addPlanExecuteEventString(fields map[string]any, key string, value string) {
@@ -2338,11 +2318,6 @@ func RunExecutorPhaseScopedWithVerification(cfg config.Config, plan workspace.Pl
 	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, nil, false, nil, verificationPlan, jsonEvents, stdout, progress...)
 }
 
-func RunExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, verificationPlan VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
-	plan = workspace.NormalizeLoadedPlanArtifact(plan)
-	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, nil, false, nil, verificationPlan, jsonEvents, stdout, progress...)
-}
-
 func RunExecutorPhaseScopedWithVerificationPlanAndWriteScope(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, writeAllowedPaths []string, writeAllowedExplicit bool, verificationPlan VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
 	plan = workspace.NormalizeLoadedPlanArtifact(plan)
 	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, writeAllowedPaths, writeAllowedExplicit, nil, verificationPlan, jsonEvents, stdout, progress...)
@@ -3263,10 +3238,6 @@ func planScopeDriftEventFields(handoff ExecutorHandoffPacket, mismatch *PlanEdit
 	return fields
 }
 
-func PlanScopeDriftEventFields(handoff ExecutorHandoffPacket, mismatch *PlanEditPreflightMismatch) map[string]any {
-	return planScopeDriftEventFields(handoff, mismatch)
-}
-
 func preflightPlanRequiredEditPaths(required []string, plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
 	coverage, err := autonomy.ResolvePlanScopePathRoleObligations(autonomy.PlanScopePathRoleObligationInput{
 		RequiredEditPaths: required,
@@ -3854,10 +3825,6 @@ func cleanupStalePlanArtifacts(root string, threshold time.Duration, logOut io.W
 			fmt.Fprintf(logOut, "plan-execute cleanup: remove %s: %v\n", path, err)
 		}
 	}
-}
-
-func LogCLIPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	logCLIPhase(rec, eventType, fields)
 }
 
 func logCLIPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {

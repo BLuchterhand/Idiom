@@ -33,9 +33,10 @@ var harnessAuditGateMetadataIntroducedAt = time.Date(2026, 5, 24, 23, 56, 18, 0,
 // These cutoffs define the current-audit epoch. Older local conversation logs
 // remain available as historical trend evidence, but they should not fail a
 // post-overhaul quick audit after the runtime contracts they exercised changed.
-var harnessAuditBehaviorFindingsIntroducedAt = time.Date(2026, 6, 11, 22, 8, 0, 0, time.UTC)
+var harnessAuditBehaviorFindingsIntroducedAt = time.Date(2026, 6, 18, 13, 55, 0, 0, time.UTC)
 var harnessAuditLifecycleCloseoutIntroducedAt = time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 var harnessAuditTurnPhaseProjectionIntroducedAt = time.Date(2026, 6, 11, 22, 8, 0, 0, time.UTC)
+var harnessAuditContractCoverageIntroducedAt = time.Date(2026, 6, 18, 13, 55, 0, 0, time.UTC)
 
 type harnessAuditReport struct {
 	GeneratedAt             string                       `json:"generated_at"`
@@ -241,6 +242,7 @@ type harnessAuditLogBehavior struct {
 	LogLimit            int                             `json:"log_limit"`
 	LogsConsidered      int                             `json:"logs_considered"`
 	LogsScanned         int                             `json:"logs_scanned"`
+	CurrentLogsScanned  int                             `json:"current_logs_scanned"`
 	Sources             []harnessAuditLogSource         `json:"sources,omitempty"`
 	Warnings            []string                        `json:"warnings,omitempty"`
 	Aggregate           eval.PerfAggregate              `json:"aggregate"`
@@ -252,6 +254,7 @@ type harnessAuditLogBehavior struct {
 	TopCapabilities     []harnessAuditCapabilityMix     `json:"top_capabilities,omitempty"`
 	WorstOffenders      []eval.PerfWorstOffender        `json:"worst_offenders,omitempty"`
 	MalformedOutput     *harnessAuditMalformedOutput    `json:"malformed_output,omitempty"`
+	IntentLoop          *harnessAuditIntentLoop         `json:"intent_loop,omitempty"`
 	GuardFriction       *autonomy.GuardFrictionCoverage `json:"guard_friction,omitempty"`
 	ChildLifecycle      *harnessAuditChildLifecycle     `json:"child_lifecycle,omitempty"`
 	LaneHistory         *harnessAuditLaneHistory        `json:"lane_history,omitempty"`
@@ -274,6 +277,24 @@ type harnessAuditMalformedOutput struct {
 	CompileOutcomeCounts   map[string]int `json:"compile_outcome_counts,omitempty"`
 	RecoveryOutcomeCounts  map[string]int `json:"recovery_outcome_counts,omitempty"`
 	SchemaVersionCounts    map[string]int `json:"schema_version_counts,omitempty"`
+}
+
+type harnessAuditIntentLoop struct {
+	LogsHit              int            `json:"logs_hit,omitempty"`
+	Sessions             int            `json:"sessions,omitempty"`
+	Starts               int            `json:"starts,omitempty"`
+	CycleStarts          int            `json:"cycle_starts,omitempty"`
+	CycleCompletes       int            `json:"cycle_completes,omitempty"`
+	Completions          int            `json:"completions,omitempty"`
+	Blocked              int            `json:"blocked,omitempty"`
+	NoProgress           int            `json:"no_progress,omitempty"`
+	BudgetExhausted      int            `json:"budget_exhausted,omitempty"`
+	BudgetWarnings       int            `json:"budget_warnings,omitempty"`
+	TotalReportedCycles  int            `json:"total_reported_cycles,omitempty"`
+	TotalReportedGaps    int            `json:"total_reported_gaps,omitempty"`
+	EventCounts          map[string]int `json:"event_counts,omitempty"`
+	GapRequirementCounts map[string]int `json:"gap_requirement_counts,omitempty"`
+	GapStatusCounts      map[string]int `json:"gap_status_counts,omitempty"`
 }
 
 type harnessAuditChildLifecycle struct {
@@ -428,7 +449,6 @@ func (m *Manager) harnessAudit(req ToolRequest) ToolResult {
 		report.LogBehavior = behavior
 		report.ContractCoverage = contractCoverage
 		report.Findings = append(report.Findings, findings...)
-		report.Findings = append(report.Findings, contractCoverageFindings(contractCoverage)...)
 		report.ImprovementQuestions = append(report.ImprovementQuestions, questions...)
 
 		if purpose == "all" || purpose == "planning_quality" {
@@ -657,12 +677,12 @@ func auditStaleUseBlockerCoverage(export ToolSchemaExport) ([]harnessAuditStaleU
 
 func staleUseCoverageExpectations() []harnessAuditStaleUseCoverage {
 	return []harnessAuditStaleUseCoverage{
-		{Tool: "context_status", State: "reported", DefaultPolicy: string(comprehension.FreshnessReportOnly), ReportOnly: true},
-		{Tool: "context_query", State: "blocked", DefaultPolicy: string(comprehension.FreshnessReadThrough), RuntimeBlocker: true},
-		{Tool: "context_zoom", State: "blocked", DefaultPolicy: string(comprehension.FreshnessReadThrough), RuntimeBlocker: true},
-		{Tool: "context_pack", State: "blocked", DefaultPolicy: string(comprehension.FreshnessReadThrough), RuntimeBlocker: true},
-		{Tool: "context_impact", State: "blocked", DefaultPolicy: string(comprehension.FreshnessReadThrough), RuntimeBlocker: true},
-		{Tool: "discovery_query", State: "reported", DefaultPolicy: string(comprehension.FreshnessReadThrough), LiveFallbackOnStale: true},
+		{Tool: ToolNameContextStatus, State: "reported", DefaultPolicy: string(comprehension.FreshnessReportOnly), ReportOnly: true},
+		{Tool: ToolNameContextQuery, State: "blocked", DefaultPolicy: string(comprehension.FreshnessReadThrough), RuntimeBlocker: true},
+		{Tool: ToolNameContextZoom, State: "blocked", DefaultPolicy: string(comprehension.FreshnessReadThrough), RuntimeBlocker: true},
+		{Tool: ToolNameContextPack, State: "blocked", DefaultPolicy: string(comprehension.FreshnessReadThrough), RuntimeBlocker: true},
+		{Tool: ToolNameContextImpact, State: "blocked", DefaultPolicy: string(comprehension.FreshnessReadThrough), RuntimeBlocker: true},
+		{Tool: ToolNameDiscoveryQuery, State: "reported", DefaultPolicy: string(comprehension.FreshnessReadThrough), LiveFallbackOnStale: true},
 	}
 }
 
@@ -767,42 +787,42 @@ func (m *Manager) auditBackendAvailability(languages []harnessAuditLanguage) []h
 		{
 			Name:     "content_search",
 			Binaries: contentSearchBackendCandidates(),
-			Tools:    []string{"search_content"},
+			Tools:    []string{ToolNameSearchContent},
 			Impact:   "search_content needs ripgrep or GNU grep; without it, generic text search is unavailable.",
 			Active:   true,
 		},
 		{
 			Name:     "git",
 			Binaries: []string{"git"},
-			Tools:    []string{"git_status", "git_diff", "history_range", "history_symbol", "blame_range"},
+			Tools:    []string{ToolNameGitStatus, ToolNameGitDiff, ToolNameHistoryRange, ToolNameHistorySymbol, ToolNameBlameRange},
 			Impact:   "history and blame tools require git.",
 			Active:   true,
 		},
 		{
 			Name:     "ast_grep",
 			Binaries: []string{"ast-grep", "sg"},
-			Tools:    []string{"structural_search"},
+			Tools:    []string{ToolNameStructuralSearch},
 			Impact:   "structural_search is unavailable without ast-grep.",
 			Active:   true,
 		},
 		{
 			Name:     "universal_ctags",
 			Binaries: []string{"ctags"},
-			Tools:    []string{"ctags_symbols"},
+			Tools:    []string{ToolNameCtagsSymbols},
 			Impact:   "ctags_symbols is the fallback symbol index for uncovered file types.",
 			Active:   true,
 		},
 		{
 			Name:     "semgrep",
 			Binaries: []string{"semgrep"},
-			Tools:    []string{"semgrep_scan"},
+			Tools:    []string{ToolNameSemgrepScan},
 			Impact:   "security_review discovery packets degrade when semgrep is absent.",
 			Active:   true,
 		},
 		{
 			Name:     "joern",
 			Binaries: []string{"joern-scan"},
-			Tools:    []string{"joern_scan"},
+			Tools:    []string{ToolNameJoernScan},
 			Impact:   "heavy code-property-graph scanning is unavailable without joern-scan.",
 			Active:   true,
 		},
@@ -851,14 +871,14 @@ func (m *Manager) auditBackendAvailability(languages []harnessAuditLanguage) []h
 		{
 			Name:     "madge",
 			Binaries: []string{"madge"},
-			Tools:    []string{"dependency_graph"},
+			Tools:    []string{ToolNameDependencyGraph},
 			Impact:   "TypeScript dependency_graph falls back to local import extraction when madge is absent.",
 			Active:   active["typescript"],
 		},
 		{
 			Name:     "pydeps",
 			Binaries: []string{"pydeps"},
-			Tools:    []string{"dependency_graph"},
+			Tools:    []string{ToolNameDependencyGraph},
 			Impact:   "Python dependency_graph falls back to local import extraction when pydeps is absent.",
 			Active:   active["python"],
 		},
@@ -896,7 +916,7 @@ func (m *Manager) auditBackendAvailability(languages []harnessAuditLanguage) []h
 func (m *Manager) auditContextGraphBackend() harnessAuditBackend {
 	backend := harnessAuditBackend{
 		Name:     "context_graph_sqlite",
-		Tools:    []string{"context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query"},
+		Tools:    []string{ToolNameContextIndex, ToolNameContextStatus, ToolNameContextQuery, ToolNameContextZoom, ToolNameContextPack, ToolNameContextImpact, ToolNameContextTracePack, ToolNameDiscoveryQuery},
 		Impact:   "Context graph tools use the embedded SQLite graph when present; discovery_query falls back to live probes when the graph is stale, collector-version-mismatched, missing, or incompatible.",
 		Active:   true,
 		Binaries: []string{"embedded:modernc.org/sqlite"},
@@ -970,6 +990,7 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 	warnings = append(warnings, lifecycleWarnings...)
 
 	contractCoverage, contractWarnings := m.auditContractEventCoverage(paths)
+	currentContractCoverage, currentContractWarnings := m.auditCurrentContractEventCoverage(paths)
 
 	warnings = append(warnings, contractWarnings...)
 
@@ -981,6 +1002,7 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 		warnings = append(warnings, fmt.Sprintf("malformed output stages: %s", warning))
 	}
 
+	intentLoop := auditIntentLoopEvents(paths)
 	aggregate := eval.Aggregate(reports)
 	currentReports := currentHarnessAuditPerfReports(m.cfg.Root, reports)
 	currentAggregate := eval.Aggregate(currentReports)
@@ -990,6 +1012,7 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 		LogLimit:            limit,
 		LogsConsidered:      len(paths),
 		LogsScanned:         len(reports),
+		CurrentLogsScanned:  len(currentReports),
 		Sources:             sources,
 		Warnings:            warnings,
 		Aggregate:           aggregate,
@@ -1001,6 +1024,7 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 		TopCapabilities:     firstAuditCapabilities(capabilityMix, 10),
 		WorstOffenders:      aggregate.WorstOffenders,
 		MalformedOutput:     malformedOutput,
+		IntentLoop:          intentLoop,
 		GuardFriction:       harnessAuditGuardFrictionCoverage(contractCoverage),
 		ChildLifecycle:      childLifecycle,
 		LaneHistory:         buildHarnessAuditLaneHistory(m.cfg.Root, 8),
@@ -1012,7 +1036,9 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 	findings = append(findings, historicalLogBehaviorFindings(aggregate, currentAggregate)...)
 	findings = append(findings, childLifecycleFindings(childLifecycle)...)
 	findings = append(findings, historicalTurnPhaseProjectionFindings(paths)...)
-	findings = append(findings, contractCoverageWarningFindings(contractWarnings)...)
+	findings = append(findings, contractCoverageWarningFindings(currentContractWarnings)...)
+	findings = append(findings, historicalContractCoverageWarningFindings(contractWarnings, currentContractWarnings)...)
+	findings = append(findings, contractCoverageFindings(currentContractCoverage)...)
 
 	return behavior, contractCoverage, findings, logBehaviorQuestions(aggregate), nil
 }
@@ -1196,6 +1222,196 @@ func pruneEmptyAuditCounts(out *harnessAuditMalformedOutput) {
 	}
 }
 
+var intentLoopAuditEvents = map[string]struct{}{
+	"idiom.intent_loop.start":                {},
+	"idiom.intent_loop.cycle_start":          {},
+	"idiom.intent_loop.cycle_complete":       {},
+	"idiom.intent_loop.convergence_detected": {},
+	"idiom.intent_loop.cycle_budget_warning": {},
+	"idiom.intent_loop.budget_exhausted":     {},
+	"idiom.intent_loop.complete":             {},
+	"idiom.intent_loop.blocked":              {},
+}
+
+func auditIntentLoopEvents(paths []string) *harnessAuditIntentLoop {
+	out := &harnessAuditIntentLoop{
+		EventCounts:          map[string]int{},
+		GapRequirementCounts: map[string]int{},
+		GapStatusCounts:      map[string]int{},
+	}
+	logsHit := map[string]struct{}{}
+	sessions := map[string]struct{}{}
+
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+
+		for _, line := range strings.Split(string(body), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+
+			for _, event := range auditIntentLoopEventCandidates([]byte(line)) {
+				eventType := auditString(event["type"])
+				if _, ok := intentLoopAuditEvents[eventType]; !ok {
+					continue
+				}
+
+				logsHit[path] = struct{}{}
+				if sessionID := auditString(event["session_id"]); sessionID != "" {
+					sessions[sessionID] = struct{}{}
+				}
+
+				out.EventCounts[eventType]++
+				auditIntentLoopEvent(out, eventType, event)
+			}
+		}
+	}
+
+	out.LogsHit = len(logsHit)
+	if out.LogsHit == 0 {
+		return nil
+	}
+
+	out.Sessions = len(sessions)
+	pruneEmptyIntentLoopAuditCounts(out)
+	return out
+}
+
+func auditIntentLoopEventCandidates(line []byte) []map[string]any {
+	var row map[string]any
+	if err := json.Unmarshal(line, &row); err != nil {
+		return nil
+	}
+
+	candidates := make([]map[string]any, 0, 3)
+	candidates = appendIntentLoopEventCandidate(candidates, row)
+
+	for _, key := range []string{"event", "intent_loop_event"} {
+		if nested, ok := row[key].(map[string]any); ok {
+			candidates = appendIntentLoopEventCandidate(candidates, nested)
+		}
+	}
+
+	if content := auditString(row["content"]); content != "" {
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(content), &payload); err == nil {
+			candidates = appendIntentLoopEventCandidate(candidates, payload)
+		}
+	}
+
+	return candidates
+}
+
+func appendIntentLoopEventCandidate(candidates []map[string]any, event map[string]any) []map[string]any {
+	if event == nil {
+		return candidates
+	}
+	if _, ok := intentLoopAuditEvents[auditString(event["type"])]; !ok {
+		return candidates
+	}
+	return append(candidates, event)
+}
+
+func auditIntentLoopEvent(out *harnessAuditIntentLoop, eventType string, event map[string]any) {
+	switch eventType {
+	case "idiom.intent_loop.start":
+		out.Starts++
+	case "idiom.intent_loop.cycle_start":
+		out.CycleStarts++
+	case "idiom.intent_loop.cycle_complete":
+		out.CycleCompletes++
+		out.TotalReportedGaps += auditIntField(event, "gap_count")
+		auditIntentLoopGaps(out, event["remaining_gaps"])
+	case "idiom.intent_loop.convergence_detected":
+		out.NoProgress++
+	case "idiom.intent_loop.cycle_budget_warning":
+		out.BudgetWarnings++
+	case "idiom.intent_loop.budget_exhausted":
+		out.BudgetExhausted++
+	case "idiom.intent_loop.complete":
+		out.Completions++
+		out.TotalReportedCycles += auditIntField(event, "total_cycles")
+	case "idiom.intent_loop.blocked":
+		out.Blocked++
+	}
+}
+
+func auditIntentLoopGaps(out *harnessAuditIntentLoop, value any) {
+	gaps, ok := value.([]any)
+	if !ok {
+		return
+	}
+
+	for _, gap := range gaps {
+		gapMap, ok := gap.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		if class := sanitizedIntentLoopGapRequirement(auditString(gapMap["requirement"])); class != "" {
+			out.GapRequirementCounts[class]++
+		}
+		if status := sanitizedIntentLoopGapStatus(auditString(gapMap["status"])); status != "" {
+			out.GapStatusCounts[status]++
+		}
+	}
+}
+
+func sanitizedIntentLoopGapRequirement(requirement string) string {
+	requirement = strings.ToLower(strings.TrimSpace(requirement))
+	if requirement == "" {
+		return ""
+	}
+
+	if idx := strings.Index(requirement, ":"); idx > 0 {
+		requirement = requirement[:idx]
+	}
+
+	switch requirement {
+	case "source_sanity", "source-sanity":
+		return "source_sanity"
+	case "verification", "required_test", "required-test":
+		return "verification"
+	case "acceptance":
+		return "acceptance"
+	case "review":
+		return "review"
+	case "required_path", "required-path", "path_coverage", "path-coverage":
+		return "path_coverage"
+	default:
+		return "other"
+	}
+}
+
+func sanitizedIntentLoopGapStatus(status string) string {
+	status = strings.ToLower(strings.TrimSpace(status))
+	switch status {
+	case "failed", "missing", "untested", "not_met", "not-met", "unparseable", "blocked":
+		return strings.ReplaceAll(status, "-", "_")
+	default:
+		if status == "" {
+			return ""
+		}
+		return "other"
+	}
+}
+
+func pruneEmptyIntentLoopAuditCounts(out *harnessAuditIntentLoop) {
+	if len(out.EventCounts) == 0 {
+		out.EventCounts = nil
+	}
+	if len(out.GapRequirementCounts) == 0 {
+		out.GapRequirementCounts = nil
+	}
+	if len(out.GapStatusCounts) == 0 {
+		out.GapStatusCounts = nil
+	}
+}
+
 func buildHarnessAuditLaneHistory(root string, recentLimit int) *harnessAuditLaneHistory {
 	if strings.TrimSpace(root) == "" {
 		root = "."
@@ -1304,6 +1520,14 @@ func harnessAuditRelativePath(root, path string) (string, bool) {
 }
 
 func (m *Manager) auditContractEventCoverage(paths []string) (*autonomy.EventAuditReport, []string) {
+	return m.auditContractEventCoverageWithFilter(paths, nil)
+}
+
+func (m *Manager) auditCurrentContractEventCoverage(paths []string) (*autonomy.EventAuditReport, []string) {
+	return m.auditContractEventCoverageWithFilter(paths, currentHarnessAuditAutonomyEvents)
+}
+
+func (m *Manager) auditContractEventCoverageWithFilter(paths []string, filter func([]autonomy.Event) []autonomy.Event) (*autonomy.EventAuditReport, []string) {
 	var (
 		warnings []string
 		events   []autonomy.Event
@@ -1311,8 +1535,11 @@ func (m *Manager) auditContractEventCoverage(paths []string) (*autonomy.EventAud
 
 	for _, path := range paths {
 		pathEvents, pathWarnings := readHarnessAuditAutonomyEvents(path)
-		for _, warning := range pathWarnings {
-			warnings = append(warnings, fmt.Sprintf("%s contract coverage: %s", m.displayPath(path), warning))
+		includeWarnings := filter == nil || m.harnessAuditPathIsCurrent(path)
+		if includeWarnings {
+			for _, warning := range pathWarnings {
+				warnings = append(warnings, fmt.Sprintf("%s contract coverage: %s", m.displayPath(path), warning))
+			}
 		}
 
 		events = append(events, pathEvents...)
@@ -1322,11 +1549,44 @@ func (m *Manager) auditContractEventCoverage(paths []string) (*autonomy.EventAud
 		return nil, warnings
 	}
 
+	if filter != nil {
+		events = filter(events)
+	}
 	events = dedupeAndSortHarnessAuditAutonomyEvents(events)
 
 	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
 
 	return &report, warnings
+}
+
+func (m *Manager) harnessAuditPathIsCurrent(path string) bool {
+	if parsed, ok := harnessAuditLogFirstTimestamp(path); ok {
+		return !parsed.Before(harnessAuditContractCoverageIntroducedAt)
+	}
+	for _, value := range []string{
+		filepath.Base(path),
+		strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
+	} {
+		if parsed, ok := harnessAuditTimestampFromLabel(value); ok {
+			return !parsed.Before(harnessAuditContractCoverageIntroducedAt)
+		}
+	}
+	if info, err := os.Stat(path); err == nil {
+		return !info.ModTime().UTC().Before(harnessAuditContractCoverageIntroducedAt)
+	}
+
+	return true
+}
+
+func currentHarnessAuditAutonomyEvents(events []autonomy.Event) []autonomy.Event {
+	current := make([]autonomy.Event, 0, len(events))
+	for _, event := range events {
+		if event.OccurredAt.IsZero() || !event.OccurredAt.Before(harnessAuditContractCoverageIntroducedAt) {
+			current = append(current, event)
+		}
+	}
+
+	return current
 }
 
 func dedupeAndSortHarnessAuditAutonomyEvents(events []autonomy.Event) []autonomy.Event {
@@ -3108,6 +3368,16 @@ func toolSurfaceFindings(surface harnessAuditToolSurface) []harnessAuditFinding 
 		})
 	}
 
+	if surface.CapabilityRegistry != nil && surface.CapabilityRegistry.UnmappedAdapterCount > 0 {
+		findings = append(findings, harnessAuditFinding{
+			ID:             "unmapped_capability_adapter",
+			Severity:       "info",
+			Evidence:       fmt.Sprintf("%d read-only adapter(s) are not mapped to capability routes", surface.CapabilityRegistry.UnmappedAdapterCount),
+			Recommendation: "Map each adapter to a stable capability, defer it with a named reason, or keep the direct compatibility route documented.",
+			Tools:          append([]string(nil), surface.CapabilityRegistry.UnmappedAdapters...),
+		})
+	}
+
 	return findings
 }
 
@@ -3233,6 +3503,10 @@ func currentHarnessAuditPerfReports(root string, reports []eval.PerfReport) []ev
 	var current []eval.PerfReport
 
 	for _, report := range reports {
+		if harnessAuditPerfReportIsSelfAudit(report) {
+			continue
+		}
+
 		occurredAt, ok := harnessAuditPerfReportTime(root, report)
 		if !ok || !occurredAt.Before(harnessAuditBehaviorFindingsIntroducedAt) {
 			current = append(current, report)
@@ -3240,6 +3514,14 @@ func currentHarnessAuditPerfReports(root string, reports []eval.PerfReport) []ev
 	}
 
 	return current
+}
+
+func harnessAuditPerfReportIsSelfAudit(report eval.PerfReport) bool {
+	if report.Tools.ByName["harness_audit"] > 0 {
+		return true
+	}
+
+	return strings.Contains(filepath.Base(report.LogPath), "tool:harness_audit")
 }
 
 func auditCurrentFreshnessWindow(root string, reports []eval.PerfReport) *harnessAuditFreshnessWindow {
@@ -3633,6 +3915,40 @@ func harnessAuditAllDigits(value string) bool {
 }
 
 func contractCoverageWarningFindings(warnings []string) []harnessAuditFinding {
+	return contractCoverageWarningFindingsWithID("contract_event_invalid", warnings)
+}
+
+func historicalContractCoverageWarningFindings(allWarnings []string, currentWarnings []string) []harnessAuditFinding {
+	historicalInvalidEvents := invalidContractWarningCount(allWarnings) - invalidContractWarningCount(currentWarnings)
+	if historicalInvalidEvents <= 0 {
+		return nil
+	}
+
+	return []harnessAuditFinding{{
+		ID:             "historical_contract_event_invalid",
+		Severity:       "info",
+		Evidence:       fmt.Sprintf("%d pre-current invalid autonomy event(s) skipped during contract coverage audit", historicalInvalidEvents),
+		Recommendation: "Historical invalid events are retained in log_behavior.warnings; current invalid events still raise contract_event_invalid.",
+		Tools:          []string{"harness_audit"},
+	}}
+}
+
+func contractCoverageWarningFindingsWithID(id string, warnings []string) []harnessAuditFinding {
+	invalidEvents := invalidContractWarningCount(warnings)
+	if invalidEvents == 0 {
+		return nil
+	}
+
+	return []harnessAuditFinding{{
+		ID:             id,
+		Severity:       "medium",
+		Evidence:       fmt.Sprintf("%d invalid autonomy event(s) skipped during contract coverage audit", invalidEvents),
+		Recommendation: "Fix the event emitter or migration path before using contract coverage as release evidence.",
+		Tools:          []string{"harness_audit"},
+	}}
+}
+
+func invalidContractWarningCount(warnings []string) int {
 	invalidEvents := 0
 
 	for _, warning := range warnings {
@@ -3641,17 +3957,7 @@ func contractCoverageWarningFindings(warnings []string) []harnessAuditFinding {
 		}
 	}
 
-	if invalidEvents == 0 {
-		return nil
-	}
-
-	return []harnessAuditFinding{{
-		ID:             "contract_event_invalid",
-		Severity:       "medium",
-		Evidence:       fmt.Sprintf("%d invalid autonomy event(s) skipped during contract coverage audit", invalidEvents),
-		Recommendation: "Fix the event emitter or migration path before using contract coverage as release evidence.",
-		Tools:          []string{"harness_audit"},
-	}}
+	return invalidEvents
 }
 
 func contractCoverageFindings(report *autonomy.EventAuditReport) []harnessAuditFinding {
@@ -3692,9 +3998,6 @@ func splitHistoricalHarnessAuditFindings(findings []harnessAuditFinding) ([]harn
 
 func harnessAuditFindingIsHistorical(finding harnessAuditFinding) bool {
 	id := strings.TrimSpace(finding.ID)
-	if strings.EqualFold(strings.TrimSpace(finding.Severity), "info") {
-		return true
-	}
 
 	return strings.HasPrefix(id, "historical_") ||
 		id == "context_cache_historical_stale_rows" ||
@@ -3743,7 +4046,7 @@ func planningQualityFindings(report *harnessAuditPlanningQuality) []harnessAudit
 		Severity:       severity,
 		Evidence:       fmt.Sprintf("%d planning-quality feedback event(s); top planning category %s", report.PlanningFeedback, auditTopCount(report.PlanningCategories)),
 		Recommendation: "Triage planning-quality feedback into context impact ranking, packet schema, plan audit, budget, or replay-eval improvements before adding prompt text.",
-		Tools:          []string{"harness_feedback", "harness_audit", "context_impact", "architect plan-audit"},
+		Tools:          []string{ToolNameHarnessFeedback, ToolNameHarnessAudit, ToolNameContextImpact, "architect plan-audit"},
 	}}
 }
 
@@ -3772,7 +4075,7 @@ func planningQualityRecommendedSurfaces(report *harnessAuditPlanningQuality) []s
 	}
 
 	if report.PlanningCategories["impact_ranking"] > 0 || report.PlanningCategories["missing_affordance"] > 0 || report.PlanningCategories["bad_scope_rank"] > 0 || report.PlanningCategories["read_loop"] > 0 {
-		surfaces = append(surfaces, "context_impact")
+		surfaces = append(surfaces, ToolNameContextImpact)
 	}
 
 	if report.PlanningCategories["plan_audit_gap"] > 0 || report.PlanningCategories["edit_readiness_failure"] > 0 || report.PlanningCategories["unsupported_plan_claim"] > 0 || report.PlanningCategories["validation_gap"] > 0 {
@@ -3788,11 +4091,11 @@ func planningQualityRecommendedSurfaces(report *harnessAuditPlanningQuality) []s
 	}
 
 	if report.PlanningCategories["stale_fact"] > 0 || report.PlanningCategories["backend_gap"] > 0 || report.PlanningCategories["language_precision_gap"] > 0 {
-		surfaces = append(surfaces, "context_status", "context_pack")
+		surfaces = append(surfaces, ToolNameContextStatus, ToolNameContextPack)
 	}
 
 	if len(surfaces) == 0 && report.PlanningFeedback > 0 {
-		surfaces = append(surfaces, "harness_feedback")
+		surfaces = append(surfaces, ToolNameHarnessFeedback)
 	}
 
 	return util.UniqueNonEmpty(surfaces)
@@ -3976,7 +4279,7 @@ func logBehaviorQuestions(aggregate eval.PerfAggregate) []harnessAuditQuestion {
 		})
 	}
 
-	genericReads := auditToolCalls(aggregate, "list_files", "search_files", "search_content", "read_file")
+	genericReads := auditToolCalls(aggregate, ToolNameListFiles, ToolNameSearchFiles, ToolNameSearchContent, ToolNameReadFile)
 	languageReads := auditToolPrefixCalls(aggregate, "go_", "cpp_", "python_", "ts_", "rust_", "java_")
 
 	if genericReads >= 10 && genericReads > languageReads*2 {
@@ -4007,6 +4310,10 @@ func harnessAuditSummary(report harnessAuditReport) string {
 		if report.LogBehavior.ChildLifecycle != nil {
 			child := report.LogBehavior.ChildLifecycle
 			parts = append(parts, fmt.Sprintf("child_lifecycle=%d records/%d invocations/%d terminals/%d acceptances", child.Records, child.Invocations, child.Terminals, child.Acceptances))
+		}
+		if report.LogBehavior.IntentLoop != nil {
+			intentLoop := report.LogBehavior.IntentLoop
+			parts = append(parts, fmt.Sprintf("intent_loop=%d starts/%d cycle_completes/%d completions/%d gaps", intentLoop.Starts, intentLoop.CycleCompletes, intentLoop.Completions, intentLoop.TotalReportedGaps))
 		}
 	}
 
@@ -4151,7 +4458,7 @@ func auditObservedCapabilitiesForToolRequest(record eval.Record) []string {
 		}
 	}
 
-	if tool == "read_only_capability" {
+	if tool == ToolNameReadOnlyCapability {
 		for _, key := range []string{"id", "action", "query"} {
 			if mapped := auditObservedCapabilityForToolCapability(tool, auditRecordString(rawFields, key)); mapped != "" {
 				return []string{mapped}
@@ -4206,21 +4513,21 @@ func auditObservedCapabilityForToolCapability(tool, capability string) string {
 		return mapped
 	}
 
-	if tool == "read_only_capability" {
+	if tool == ToolNameReadOnlyCapability {
 		if mapped := ReadOnlyCapabilityEvidenceCapability(capability); mapped != "" {
 			return mapped
 		}
 
 		switch normalizeReadOnlyCapabilityID(capability) {
-		case "source-sanity":
-			return "source_diagnostics"
+		case string(ReadOnlyCapabilitySourceSanity):
+			return EvidenceCapabilitySourceDiagnostics
 		}
 	}
 
 	switch strings.ReplaceAll(strings.ToLower(capability), "-", "_") {
-	case "inspect_file", "inspect_symbol", "find_definition", "find_references",
-		"calls_from", "calls_into", "related_files", "query_context",
-		"source_diagnostics", "verify_edit", "history_context", "security_scan":
+	case EvidenceCapabilityInspectFile, EvidenceCapabilityInspectSymbol, EvidenceCapabilityFindDefinition, EvidenceCapabilityFindReferences,
+		EvidenceCapabilityCallsFrom, EvidenceCapabilityCallsInto, EvidenceCapabilityRelatedFiles, EvidenceCapabilityQueryContext,
+		EvidenceCapabilitySourceDiagnostics, EvidenceCapabilityVerifyEdit, EvidenceCapabilityHistoryContext, EvidenceCapabilitySecurityScan:
 		return strings.ReplaceAll(strings.ToLower(capability), "-", "_")
 	}
 

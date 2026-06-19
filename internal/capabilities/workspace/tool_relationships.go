@@ -285,16 +285,3 @@ func firstRelationshipName(text string) string {
 
 	return strings.Trim(fields[0], `"'(),`)
 }
-
-func (m *Manager) callRelationshipFromAbs(sourceAbs string, sourceLine int, sourceSymbol string, targetAbs string, targetLine int, targetSymbol string, evidence string) ToolRelationship {
-	return ToolRelationship{
-		Kind:         "calls",
-		SourcePath:   filepath.ToSlash(m.displayPath(sourceAbs)),
-		SourceLine:   sourceLine,
-		SourceSymbol: sourceSymbol,
-		TargetPath:   filepath.ToSlash(m.displayPath(targetAbs)),
-		TargetLine:   targetLine,
-		TargetSymbol: targetSymbol,
-		Evidence:     evidence,
-	}
-}

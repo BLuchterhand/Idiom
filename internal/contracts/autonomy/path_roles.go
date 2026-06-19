@@ -15,8 +15,10 @@ const (
 	InvariantRequiredEditPath   PathInvariantID = "path.required_edit"
 	InvariantAllowedCandidate   PathInvariantID = "path.allowed_candidate"
 	InvariantEvidenceReadonly   PathInvariantID = "path.evidence_readonly"
+	InvariantGeneratedArtifact  PathInvariantID = "path.generated_artifact"
 	InvariantProtectedPath      PathInvariantID = "path.protected"
 	InvariantForbiddenPath      PathInvariantID = "path.forbidden"
+	InvariantVerificationOutput PathInvariantID = "path.verification_output"
 	InvariantExternalEffectPath PathInvariantID = "path.external_side_effect"
 )
 
@@ -138,8 +140,8 @@ type ResolvedPathRole struct {
 }
 
 // PathRoleConflict explains precedence without deleting suppressed role
-// evidence. The precedence order is forbidden, protected, external side effect,
-// required edit, then read-only evidence.
+// evidence. The precedence order keeps deny/approval boundaries above source
+// write scope, and source write scope above passive artifact/evidence roles.
 type PathRoleConflict struct {
 	Path                string          `json:"path,omitempty"`
 	EffectiveRole       PathRoleKind    `json:"effective_role,omitempty"`
@@ -161,8 +163,7 @@ func NamedPathInvariants() map[PathInvariantID]PathInvariant {
 }
 
 // PathInvariantForRole returns the named invariant for resolver-supported path
-// roles: required edit, read-only evidence, protected, forbidden, and external
-// side-effect paths.
+// roles.
 func PathInvariantForRole(role PathRoleKind) (PathInvariant, bool) {
 	invariantID, ok := pathInvariantByRole[role]
 	if !ok {
@@ -362,6 +363,15 @@ var pathInvariantMap = map[PathInvariantID]PathInvariant{
 		ReasonCode:  "allowed_candidate_path",
 		Description: "path is candidate edit scope but not required write coverage",
 	},
+	InvariantGeneratedArtifact: {
+		InvariantID: InvariantGeneratedArtifact,
+		Role:        PathRoleGeneratedArtifact,
+		Precedence:  125,
+		Decision:    PolicyObserve,
+		SideEffect:  SideEffectAdditive,
+		ReasonCode:  "generated_artifact_path",
+		Description: "path is generated output that may be regenerated but is not source write scope by itself",
+	},
 	InvariantEvidenceReadonly: {
 		InvariantID: InvariantEvidenceReadonly,
 		Role:        PathRoleEvidenceReadonly,
@@ -390,6 +400,15 @@ var pathInvariantMap = map[PathInvariantID]PathInvariant{
 		ReasonCode:  "forbidden_path",
 		Description: "path is outside the current contract",
 	},
+	InvariantVerificationOutput: {
+		InvariantID: InvariantVerificationOutput,
+		Role:        PathRoleVerificationOut,
+		Precedence:  90,
+		Decision:    PolicyObserve,
+		SideEffect:  SideEffectReadOnly,
+		ReasonCode:  "verification_output_path",
+		Description: "path is verification output that can support evidence but must not become instructions",
+	},
 	InvariantExternalEffectPath: {
 		InvariantID: InvariantExternalEffectPath,
 		Role:        PathRoleExternalEffect,
@@ -403,12 +422,14 @@ var pathInvariantMap = map[PathInvariantID]PathInvariant{
 }
 
 var pathInvariantByRole = map[PathRoleKind]PathInvariantID{
-	PathRoleRequiredEdit:     InvariantRequiredEditPath,
-	PathRoleAllowedEdit:      InvariantAllowedCandidate,
-	PathRoleEvidenceReadonly: InvariantEvidenceReadonly,
-	PathRoleProtected:        InvariantProtectedPath,
-	PathRoleForbidden:        InvariantForbiddenPath,
-	PathRoleExternalEffect:   InvariantExternalEffectPath,
+	PathRoleRequiredEdit:      InvariantRequiredEditPath,
+	PathRoleAllowedEdit:       InvariantAllowedCandidate,
+	PathRoleEvidenceReadonly:  InvariantEvidenceReadonly,
+	PathRoleGeneratedArtifact: InvariantGeneratedArtifact,
+	PathRoleProtected:         InvariantProtectedPath,
+	PathRoleForbidden:         InvariantForbiddenPath,
+	PathRoleVerificationOut:   InvariantVerificationOutput,
+	PathRoleExternalEffect:    InvariantExternalEffectPath,
 }
 
 type normalizedResolverPathRole struct {

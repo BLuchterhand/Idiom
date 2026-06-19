@@ -154,9 +154,9 @@ func TestRuntimeReadinessSchemaPreservesReportOnlyEnforcement(t *testing.T) {
 		t.Fatalf("eval queue gate should record launch_blocked, got %#v", gate)
 	}
 
-	if report.Enforcement != string(EnforcementReportOnly) ||
-		gate.Enforcement != string(EnforcementReportOnly) ||
-		report.RuntimeReadiness.Enforcement != EnforcementReportOnly {
+	if report.Enforcement != string(ReadinessEnforcementReportOnly) ||
+		gate.Enforcement != string(ReadinessEnforcementReportOnly) ||
+		report.RuntimeReadiness.Enforcement != ReadinessEnforcementReportOnly {
 
 		t.Fatalf("readiness enforcement must remain report_only, report=%#v gate=%#v", report.RuntimeReadiness, gate)
 	}
@@ -169,7 +169,7 @@ func TestRuntimeReadinessSchemaPreservesReportOnlyEnforcement(t *testing.T) {
 func runtimeProfileForCheck(profileName string, check Check) ProfileReport {
 	report := ProfileReport{
 		Name:              profileName,
-		Enforcement:       string(EnforcementReportOnly),
+		Enforcement:       string(ReadinessEnforcementReportOnly),
 		RequiredForLaunch: true,
 		Checks:            []Check{check},
 	}

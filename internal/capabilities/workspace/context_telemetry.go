@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+const contextTelemetryPathSampleLimit = 5
+
 func ToolTelemetryFields(tool string, output string) map[string]any {
 	fields := make(map[string]any)
 	for key, value := range ContextTelemetryFields(tool, output) {
@@ -28,7 +30,7 @@ func ToolTelemetryFields(tool string, output string) map[string]any {
 
 func ContextTelemetryFields(tool string, output string) map[string]any {
 	tool = strings.TrimSpace(tool)
-	if (tool != "discovery_query" && !strings.HasPrefix(tool, "context_")) || strings.TrimSpace(output) == "" {
+	if (tool != ToolNameDiscoveryQuery && !strings.HasPrefix(tool, "context_")) || strings.TrimSpace(output) == "" {
 		return nil
 	}
 
@@ -354,6 +356,8 @@ func addContextFreshnessTelemetry(payload map[string]any, fields map[string]any)
 	copyTelemetryArrayLen(value, fields, "checked_paths", "context_freshness_checked_paths")
 	copyTelemetryArrayLen(value, fields, "stale_paths", "context_freshness_stale_paths")
 	copyTelemetryArrayLen(value, fields, "missing_paths", "context_freshness_missing_paths")
+	copyTelemetryStringArraySample(value, fields, "stale_paths", "context_freshness_stale_path_samples", contextTelemetryPathSampleLimit)
+	copyTelemetryStringArraySample(value, fields, "missing_paths", "context_freshness_missing_path_samples", contextTelemetryPathSampleLimit)
 
 	state := contextFreshnessState(value)
 	if state != "" {
@@ -594,6 +598,36 @@ func copyTelemetryArrayLen(source map[string]any, target map[string]any, sourceK
 	values, ok := source[sourceKey].([]any)
 	if ok {
 		target[targetKey] = len(values)
+	}
+}
+
+func copyTelemetryStringArraySample(source map[string]any, target map[string]any, sourceKey string, targetKey string, limit int) {
+	values, ok := source[sourceKey].([]any)
+	if !ok {
+		return
+	}
+
+	samples := make([]string, 0, min(len(values), max(limit, 0)))
+	for _, value := range values {
+		if limit > 0 && len(samples) >= limit {
+			break
+		}
+
+		text, ok := value.(string)
+		if !ok {
+			continue
+		}
+
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+
+		samples = append(samples, text)
+	}
+
+	if len(samples) > 0 {
+		target[targetKey] = samples
 	}
 }
 

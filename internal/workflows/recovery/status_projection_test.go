@@ -1,6 +1,10 @@
 package recovery
 
-import "testing"
+import (
+	"testing"
+
+	"idiom/internal/workflows/workflowstate"
+)
 
 func TestProjectPacketStatusReportsBasePacketState(t *testing.T) {
 	packet := recoveryStatusProjectionTestPacket()
@@ -9,6 +13,13 @@ func TestProjectPacketStatusReportsBasePacketState(t *testing.T) {
 
 	if projection.Status != PacketStatusReady || projection.NextAction != NextActionReviewDecomposition {
 		t.Fatalf("unexpected projection: %#v", projection)
+	}
+
+	if projection.WorkflowID != workflowstate.WorkflowRecovery ||
+		projection.WorkflowTerminalState != workflowstate.TerminalStateRecoveryOpen ||
+		!projection.Dispatchable {
+
+		t.Fatalf("ready packet should be dispatchable recovery-open workflow state, got %#v", projection)
 	}
 
 	if len(projection.Blockers) != 0 {
@@ -48,6 +59,10 @@ func TestProjectPacketStatusAppliesPartialReconciliationRemainingWork(t *testing
 		t.Fatalf("expected only remaining atom, got %#v", projection.CandidateAtoms)
 	}
 
+	if projection.WorkflowTerminalState != workflowstate.TerminalStateRecoveryOpen || !projection.Dispatchable {
+		t.Fatalf("partial recovery should remain dispatchable recovery-open, got %#v", projection)
+	}
+
 	if len(projection.ResidualWork) != 1 || projection.ResidualWork[0].ID != "residual-002" {
 		t.Fatalf("expected only remaining residual, got %#v", projection.ResidualWork)
 	}
@@ -82,6 +97,10 @@ func TestProjectPacketStatusBlocksInvalidReconciliation(t *testing.T) {
 
 	if projection.Status != PacketStatusBlocked || projection.NextAction != NextActionInspectFailure {
 		t.Fatalf("invalid reconciliation should block inspection, got %#v", projection)
+	}
+
+	if projection.WorkflowTerminalState != workflowstate.TerminalStateBlocked || projection.Dispatchable {
+		t.Fatalf("invalid reconciliation should not be dispatchable, got %#v", projection)
 	}
 
 	if len(projection.ReconciliationFindings) == 0 {
@@ -125,8 +144,23 @@ func TestProjectPacketStatusClearsRecoveredBlockers(t *testing.T) {
 		t.Fatalf("expected recovered projection, got %#v", projection)
 	}
 
+	if projection.WorkflowTerminalState != workflowstate.TerminalStateComplete || projection.Dispatchable {
+		t.Fatalf("recovered packet should be complete and not dispatchable, got %#v", projection)
+	}
+
 	if len(projection.CandidateAtoms) != 0 || len(projection.ResidualWork) != 0 || len(projection.Blockers) != 0 {
 		t.Fatalf("recovered projection should clear remaining work and blockers: %#v", projection)
+	}
+}
+
+func TestProjectPacketStatusReportsDirtyScope(t *testing.T) {
+	packet := recoveryStatusProjectionTestPacket()
+	packet.PartialState.DirtyStatus = DirtyStatusDirtyOutScope
+
+	projection := ProjectPacketStatus(packet, nil)
+
+	if projection.WorkflowTerminalState != workflowstate.TerminalStateDirtyScope || projection.Dispatchable {
+		t.Fatalf("dirty out-of-scope packet should be dirty-scope and not dispatchable, got %#v", projection)
 	}
 }
 

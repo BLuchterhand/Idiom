@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"idiom/internal/platform/config"
-	"idiom/internal/runtime/agent"
+	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -108,7 +108,7 @@ func TestNormalizeTurnRoutePlanRecognizesPlanThenExecutePlanner(t *testing.T) {
 	plan := normalizeTurnRoutePlan(turnRoutePlan{
 		Family: "plan_then_execute_planner",
 		Reason: "explicit_task_family",
-	}, agent.ModeOrDefault(""))
+	}, modepolicy.ModeOrDefault(""))
 	if plan.Family != "plan_then_execute_planner" {
 		t.Fatalf("normalizer must preserve the family, got %q (probably hit the default fallbackTurnRoute branch)", plan.Family)
 	}
@@ -126,7 +126,7 @@ func TestNormalizeTurnRoutePlanRecognizesPlanThenExecuteReviewRepair(t *testing.
 	plan := normalizeTurnRoutePlan(turnRoutePlan{
 		Family: "plan_then_execute_review_repair",
 		Reason: "explicit_task_family",
-	}, agent.ModeOrDefault(""))
+	}, modepolicy.ModeOrDefault(""))
 	if plan.Family != "plan_then_execute_review_repair" {
 		t.Fatalf("normalizer must preserve review-repair family, got %q", plan.Family)
 	}
@@ -144,7 +144,7 @@ func TestNormalizeTurnRoutePlanRecognizesArtifactFinalAnswer(t *testing.T) {
 	plan := normalizeTurnRoutePlan(turnRoutePlan{
 		Family: workerruntime.ArtifactFinalAnswerTaskFamily,
 		Reason: "explicit_task_family",
-	}, agent.ModeOrDefault(""))
+	}, modepolicy.ModeOrDefault(""))
 	if plan.Family != workerruntime.ArtifactFinalAnswerTaskFamily {
 		t.Fatalf("normalizer must preserve artifact family, got %q", plan.Family)
 	}

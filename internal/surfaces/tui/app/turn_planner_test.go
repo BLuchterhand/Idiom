@@ -23,6 +23,7 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/planexecute"
 	"idiom/internal/workflows/recovery"
@@ -836,7 +837,7 @@ func TestWriterRouteDecisionForPromptReportsGuardedImplementForExactEditPacket(t
 		executorSpec: config.LlamaServer{Model: "executor-model"},
 	}
 	plan := promptExecutionPlan{
-		mode: agent.BuildMode(),
+		mode: modepolicy.BuildMode(),
 		route: turnRoutePlan{
 			Family: "implementation",
 		},
@@ -889,7 +890,7 @@ func TestWriterRouteDecisionForPromptDoesNotCreateSemanticTDDScopeFromProse(t *t
 
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
-		mode:  agent.BuildMode(),
+		mode:  modepolicy.BuildMode(),
 		route: turnRoutePlan{Family: "implementation"},
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{
 			RequiredEditPaths: []string{"internal/workflows/productworkflow/coverage_gate.go", "internal/workflows/productworkflow/coverage_gate_test.go"},
@@ -919,7 +920,7 @@ func TestWriterRouteDecisionForPromptDoesNotUseTDDProductKeywordForSemanticScope
 
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
-		mode:  agent.BuildMode(),
+		mode:  modepolicy.BuildMode(),
 		route: turnRoutePlan{Family: "implementation"},
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{
 			RequiredEditPaths: []string{"internal/workflows/productworkflow/coverage_gate.go", "internal/workflows/productworkflow/coverage_gate_test.go"},
@@ -949,7 +950,7 @@ func TestWriterRouteDecisionForPromptDoesNotUsePlanExecutePhraseForSemanticTDDSc
 
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
-		mode:  agent.BuildMode(),
+		mode:  modepolicy.BuildMode(),
 		route: turnRoutePlan{Family: "implementation"},
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{
 			RequiredEditPaths: []string{"internal/workflows/productworkflow/coverage_gate.go", "internal/workflows/productworkflow/coverage_gate_test.go"},
@@ -1030,9 +1031,9 @@ func TestClassifierSelectedPlanExecuteFamilyActivatesPlanSubmission(t *testing.T
 				Reason:      "classifier_atom_dispatch",
 				Contract:    "implementation_result",
 				RouteSource: routeSourceClassifier,
-			}, agent.BuildMode())
+			}, modepolicy.BuildMode())
 			plan := promptExecutionPlan{
-				mode:  agent.BuildMode(),
+				mode:  modepolicy.BuildMode(),
 				route: route,
 				runtimeBrief: workerruntime.WorkerRuntimeBrief{
 					TaskFamily: agent.PlanThenExecutePlannerTaskFamily,
@@ -1150,7 +1151,7 @@ func TestWriterRouteDecisionForPromptReportsReviewRepairAsPlanSubmission(t *test
 
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
-		mode: agent.BuildMode(),
+		mode: modepolicy.BuildMode(),
 		route: turnRoutePlan{
 			Family:      agent.PlanThenExecuteReviewRepairTaskFamily,
 			InitialLane: "review",
@@ -1190,7 +1191,7 @@ func TestWriterRouteDecisionForPromptDoesNotUsePlanExecutePhraseAsContract(t *te
 
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
-		mode:  agent.BuildMode(),
+		mode:  modepolicy.BuildMode(),
 		route: turnRoutePlan{Family: "implementation"},
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{
 			RequiredEditPaths: []string{"pkg/widget.go"},
@@ -1216,7 +1217,7 @@ func TestWriterRouteDecisionForPromptKeepsSimpleUnscopedImplementationOnGuardedL
 
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
-		mode:         agent.BuildMode(),
+		mode:         modepolicy.BuildMode(),
 		route:        turnRoutePlan{Family: "implementation"},
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{},
 	}
@@ -1244,7 +1245,7 @@ func TestWriterRouteDecisionForPromptKeepsSimpleScopedSourceTestImplementationOn
 
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
-		mode:  agent.BuildMode(),
+		mode:  modepolicy.BuildMode(),
 		route: turnRoutePlan{Family: "implementation"},
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{
 			RequiredEditPaths: []string{"pkg/widget.go", "pkg/widget_test.go"},
@@ -1274,7 +1275,7 @@ func TestWriterRouteDecisionForPromptKeepsExactEditPacketOnGuardedLane(t *testin
 
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
-		mode:  agent.BuildMode(),
+		mode:  modepolicy.BuildMode(),
 		route: turnRoutePlan{Family: "implementation"},
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{
 			RequiredEditPaths: []string{"internal/surfaces/tui/app/writer_route.go"},
@@ -1317,7 +1318,7 @@ func TestWriterRouteDecisionForPromptDoesNotUsePlanExecutePhraseForExactEditPack
 
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
-		mode:  agent.BuildMode(),
+		mode:  modepolicy.BuildMode(),
 		route: turnRoutePlan{Family: "implementation"},
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{
 			RequiredEditPaths: []string{"pkg/widget.go", "pkg/widget_test.go"},
@@ -1370,7 +1371,7 @@ func TestWriterRouteDecisionForPromptReportsPlanExecutePlannerFamily(t *testing.
 
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
-		mode:  agent.BuildMode(),
+		mode:  modepolicy.BuildMode(),
 		route: turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily},
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{
 			RequiredEditPaths: []string{"internal/surfaces/tui/app/app.go", "internal/runtime/agent/runner.go"},
@@ -2239,7 +2240,7 @@ func TestWriterRouteDecisionForPromptReportsDirectImplementation(t *testing.T) {
 
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
-		mode:  agent.BuildMode(),
+		mode:  modepolicy.BuildMode(),
 		route: turnRoutePlan{Family: "implementation"},
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{
 			RequiredEditPaths: []string{"internal/surfaces/tui/app/writer_route.go"},
@@ -2269,7 +2270,7 @@ func TestWriterRouteDecisionForClassifierImplementationUsesGuardedWriter(t *test
 
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
-		mode:  agent.BuildMode(),
+		mode:  modepolicy.BuildMode(),
 		route: turnRoutePlan{Family: "implementation", RouteSource: routeSourceClassifier},
 	}
 
@@ -2292,7 +2293,7 @@ func TestWriterRouteDecisionForPromptReportsReadOnlyRoute(t *testing.T) {
 
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
-		mode:  agent.PlanMode(),
+		mode:  modepolicy.PlanMode(),
 		route: turnRoutePlan{Family: "architecture"},
 	}
 
@@ -2428,7 +2429,7 @@ func TestDirectImplementationContextPreloadAppliesToNaturalUnscopedEdits(t *test
 	defer model.Close()
 
 	plan := promptExecutionPlan{
-		mode:         agent.BuildMode(),
+		mode:         modepolicy.BuildMode(),
 		route:        turnRoutePlan{Family: "implementation"},
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{TaskFamily: "implementation"},
 	}
@@ -2466,7 +2467,7 @@ func TestDirectImplementationContextPreloadSkipsScopedPrompts(t *testing.T) {
 	defer model.Close()
 
 	plan := promptExecutionPlan{
-		mode:         agent.BuildMode(),
+		mode:         modepolicy.BuildMode(),
 		route:        turnRoutePlan{Family: "implementation"},
 		runtimeBrief: workerruntime.WorkerRuntimeBrief{TaskFamily: "implementation"},
 	}
@@ -2924,7 +2925,7 @@ func TestPlanExecutePlannerBlockedNoScopeSurfacesWithoutRetry(t *testing.T) {
 	answer, handled, err := model.handlePlanExecutePlannerBlocked(context.Background(), implementationDispatchPlanExecuteFailure{
 		Prompt: "remove the busy mode trace ctx footer from the TUI input area",
 		Plan: promptExecutionPlan{
-			mode:         agent.BuildMode(),
+			mode:         modepolicy.BuildMode(),
 			route:        turnRoutePlan{Family: "implementation"},
 			runtimeBrief: workerruntime.WorkerRuntimeBrief{},
 		},
@@ -3888,7 +3889,7 @@ func TestImplementationDispatchBriefLintBlockersDoNotTruncateActionableLine(t *t
 }
 
 func TestFallbackTurnRouteDoesNotRecognizeDebugLogsFromHeuristics(t *testing.T) {
-	plan := fallbackTurnRoute("Check our most recent logs and explain why it failed.", agent.BuildMode())
+	plan := fallbackTurnRoute("Check our most recent logs and explain why it failed.", modepolicy.BuildMode())
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
@@ -3912,7 +3913,7 @@ func TestRouteClassifierChatClientFallsBackToPlannerWhenClassifierUnreachable(t 
 }
 
 func TestCorrectTurnRoutePlanCorrectsConceptualDebugLogQuestionToArchitecture(t *testing.T) {
-	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, "What does the debug log redacted mode do?", agent.BuildMode())
+	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, "What does the debug log redacted mode do?", modepolicy.BuildMode())
 	if plan.Family != "architecture" {
 		t.Fatalf("family = %q, want architecture", plan.Family)
 	}
@@ -3929,7 +3930,7 @@ func TestCorrectTurnRoutePlanKeepsExplicitLogArtifactRequestsOnStandardReadLane(
 		"Search the telemetry logs for the latest panic.",
 	}
 	for _, prompt := range prompts {
-		plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, prompt, agent.BuildMode())
+		plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, prompt, modepolicy.BuildMode())
 		if plan.Family != "conversation" {
 			t.Fatalf("family for %q = %q, want conversation", prompt, plan.Family)
 		}
@@ -3942,7 +3943,7 @@ func TestCorrectTurnRoutePlanKeepsExplicitLogArtifactRequestsOnStandardReadLane(
 
 func TestCorrectTurnRoutePlanKeepsSourceDebugPromptOnStandardReadLane(t *testing.T) {
 	prompt := "you are a debugging assistant to another agent. you are tasked with finding the cause of terminal resizing causing conversation window to become unscrollable. Please provide your proof with evidence, files, symbols, and line numbers."
-	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, prompt, agent.BuildMode())
+	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, prompt, modepolicy.BuildMode())
 
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
@@ -3954,7 +3955,7 @@ func TestCorrectTurnRoutePlanKeepsSourceDebugPromptOnStandardReadLane(t *testing
 }
 
 func TestCorrectTurnRoutePlanKeepsArchitectureForProjectFeatureQuestion(t *testing.T) {
-	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "architecture"}, "What does the debug log redacted mode do?", agent.BuildMode())
+	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "architecture"}, "What does the debug log redacted mode do?", modepolicy.BuildMode())
 	if plan.Family != "architecture" {
 		t.Fatalf("family = %q, want architecture", plan.Family)
 	}
@@ -3971,7 +3972,7 @@ func TestCorrectTurnRoutePlanCorrectsRepoInternalQuestionsToArchitecture(t *test
 		"What can we add to our discovery tools in an effort at increasing their overall usefulness?",
 	}
 	for _, prompt := range prompts {
-		plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "direct_question"}, prompt, agent.BuildMode())
+		plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "direct_question"}, prompt, modepolicy.BuildMode())
 		if plan.Family != "architecture" {
 			t.Fatalf("family for %q = %q, want architecture", prompt, plan.Family)
 		}
@@ -3983,7 +3984,7 @@ func TestCorrectTurnRoutePlanCorrectsRepoInternalQuestionsToArchitecture(t *test
 }
 
 func TestCorrectTurnRoutePlanKeepsOperationalHowToQuestionReadOnly(t *testing.T) {
-	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "direct_question"}, "How do I run plan-execute without changing files?", agent.BuildMode())
+	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "direct_question"}, "How do I run plan-execute without changing files?", modepolicy.BuildMode())
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
@@ -3995,7 +3996,7 @@ func TestCorrectTurnRoutePlanKeepsOperationalHowToQuestionReadOnly(t *testing.T)
 
 func TestCorrectTurnRoutePlanKeepsQuestionShapedUILayoutConversation(t *testing.T) {
 	prompt := "The current model string in the top-right portion of the banner shows a path with what seems to be a stripped filename. Can we shorten this to be just the model's alias?"
-	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "direct_question"}, prompt, agent.BuildMode())
+	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "direct_question"}, prompt, modepolicy.BuildMode())
 
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
@@ -4015,7 +4016,7 @@ func TestCorrectTurnRoutePlanKeepsSourceDiagnosisOnStandardReadLane(t *testing.T
 		RequestedOutcome:   "diagnose",
 		WriteIntent:        "no",
 		ReadOnlyConstraint: true,
-	}, prompt, agent.BuildMode())
+	}, prompt, modepolicy.BuildMode())
 
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
@@ -4030,7 +4031,7 @@ func TestNormalizeTurnRoutePlanDiagnoseDefaultsToConversation(t *testing.T) {
 	plan := normalizeTurnRoutePlan(turnRoutePlan{
 		RequestedOutcome: "diagnose",
 		WriteIntent:      "no",
-	}, agent.BuildMode())
+	}, modepolicy.BuildMode())
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
@@ -4041,7 +4042,7 @@ func TestNormalizeTurnRoutePlanDiagnoseDefaultsToConversation(t *testing.T) {
 }
 
 func TestCorrectTurnRoutePlanDoesNotUsePromptFallbackHeuristics(t *testing.T) {
-	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, "Run the tests and report failures.", agent.BuildMode())
+	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, "Run the tests and report failures.", modepolicy.BuildMode())
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
@@ -4052,7 +4053,7 @@ func TestCorrectTurnRoutePlanDoesNotUsePromptFallbackHeuristics(t *testing.T) {
 }
 
 func TestFallbackTurnRouteRecognizesCodeExplanationAsConversation(t *testing.T) {
-	plan := fallbackTurnRoute("How does this harness use sub-agents?", agent.BuildMode())
+	plan := fallbackTurnRoute("How does this harness use sub-agents?", modepolicy.BuildMode())
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
@@ -4073,7 +4074,7 @@ func TestFallbackTurnRouteNeverActivatesLanesFromPromptHeuristics(t *testing.T) 
 		"Check the most recent logs and explain why it failed.",
 	}
 	for _, prompt := range prompts {
-		plan := fallbackTurnRoute(prompt, agent.BuildMode())
+		plan := fallbackTurnRoute(prompt, modepolicy.BuildMode())
 		if plan.Family != "conversation" {
 			t.Fatalf("fallback heuristic activated lane for %q: %#v", prompt, plan)
 		}
@@ -4084,8 +4085,30 @@ func TestFallbackTurnRouteNeverActivatesLanesFromPromptHeuristics(t *testing.T) 
 	}
 }
 
+func TestFallbackTurnRouteRecognizesExplicitFileDeleteFollowup(t *testing.T) {
+	plan := fallbackTurnRoute("can you delete that new file now?", modepolicy.BuildMode())
+	if plan.Family != "implementation" {
+		t.Fatalf("family = %q, want implementation: %#v", plan.Family, plan)
+	}
+
+	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" || plan.WriteIntent != "yes" {
+		t.Fatalf("unexpected delete follow-up route: %#v", plan)
+	}
+}
+
+func TestFallbackTurnRouteDoesNotTreatContentRemovalAsFileDeletion(t *testing.T) {
+	plan := fallbackTurnRoute("remove obsolete text from temp.md", modepolicy.BuildMode())
+	if plan.Family != "conversation" {
+		t.Fatalf("content removal should stay conservative, got %#v", plan)
+	}
+
+	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
+		t.Fatalf("unexpected conservative fallback: %#v", plan)
+	}
+}
+
 func TestFallbackTurnRouteDoesNotRecognizeVerificationOnlyFromHeuristics(t *testing.T) {
-	plan := fallbackTurnRoute("Run the tests in the seeded failing fixture and report the failure without editing files.", agent.BuildMode())
+	plan := fallbackTurnRoute("Run the tests in the seeded failing fixture and report the failure without editing files.", modepolicy.BuildMode())
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
@@ -4096,7 +4119,7 @@ func TestFallbackTurnRouteDoesNotRecognizeVerificationOnlyFromHeuristics(t *test
 }
 
 func TestFallbackTurnRouteDoesNotRecognizeSuggestionQuestionAsArchitecture(t *testing.T) {
-	plan := fallbackTurnRoute("What can we add to our discovery tools in an effort at increasing their overall usefulness?", agent.BuildMode())
+	plan := fallbackTurnRoute("What can we add to our discovery tools in an effort at increasing their overall usefulness?", modepolicy.BuildMode())
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
@@ -4108,7 +4131,7 @@ func TestFallbackTurnRouteDoesNotRecognizeSuggestionQuestionAsArchitecture(t *te
 
 func TestFallbackTurnRouteKeepsQuestionShapedUILayoutRequestReadOnly(t *testing.T) {
 	prompt := "can you re-align the text input field to be flush against the bottom of the terminal? When it needs to wrap to a new line, it should simply increase in height to avoid going off-screen"
-	plan := fallbackTurnRoute(prompt, agent.BuildMode())
+	plan := fallbackTurnRoute(prompt, modepolicy.BuildMode())
 
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
@@ -4120,7 +4143,7 @@ func TestFallbackTurnRouteKeepsQuestionShapedUILayoutRequestReadOnly(t *testing.
 }
 
 func TestFallbackTurnRouteDoesNotRecognizeLocateFromHeuristics(t *testing.T) {
-	plan := fallbackTurnRoute("Find where the nonexistent banner text is rendered. If it is not present, say that clearly and do not edit files.", agent.BuildMode())
+	plan := fallbackTurnRoute("Find where the nonexistent banner text is rendered. If it is not present, say that clearly and do not edit files.", modepolicy.BuildMode())
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
@@ -4131,7 +4154,7 @@ func TestFallbackTurnRouteDoesNotRecognizeLocateFromHeuristics(t *testing.T) {
 }
 
 func TestFallbackTurnRouteDoesNotRecognizeLocateThenRemoveAsImplementation(t *testing.T) {
-	plan := fallbackTurnRoute("Find where the banner text is rendered, then remove it.", agent.BuildMode())
+	plan := fallbackTurnRoute("Find where the banner text is rendered, then remove it.", modepolicy.BuildMode())
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
@@ -4142,7 +4165,7 @@ func TestFallbackTurnRouteDoesNotRecognizeLocateThenRemoveAsImplementation(t *te
 }
 
 func TestFallbackTurnRouteDoesNotRecognizeGDScriptEditsFromHeuristics(t *testing.T) {
-	plan := fallbackTurnRoute("Update the panel script in ui/status_panel.gd.", agent.BuildMode())
+	plan := fallbackTurnRoute("Update the panel script in ui/status_panel.gd.", modepolicy.BuildMode())
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
@@ -4158,7 +4181,7 @@ func TestFallbackTurnRouteDoesNotRecognizeStartWorkingOnNamedDocAsDocsEdit(t *te
 		"can you start woring on docs/writer-route-decision-report-only-plan.md?",
 		"can you start implementing docs/writer-route-decision-report-only-plan.md?",
 	} {
-		plan := fallbackTurnRoute(prompt, agent.BuildMode())
+		plan := fallbackTurnRoute(prompt, modepolicy.BuildMode())
 		if plan.Family != "conversation" {
 			t.Fatalf("family for %q = %q, want conversation", prompt, plan.Family)
 		}
@@ -4170,7 +4193,7 @@ func TestFallbackTurnRouteDoesNotRecognizeStartWorkingOnNamedDocAsDocsEdit(t *te
 }
 
 func TestCorrectTurnRoutePlanDoesNotDowngradeClassifierImplementationRoute(t *testing.T) {
-	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "explore_then_implement"}, "Explain how this harness uses sub-agents.", agent.BuildMode())
+	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "explore_then_implement"}, "Explain how this harness uses sub-agents.", modepolicy.BuildMode())
 	if plan.Family != "explore_then_implement" {
 		t.Fatalf("family = %q, want explore_then_implement", plan.Family)
 	}
@@ -7142,11 +7165,11 @@ func TestComposeImplementationBriefTreatsDesignDocScopeAsCandidatePaths(t *testi
 		}
 	}
 
-	if got := requiredEditPathsFromPrompt(brief); slices.Contains(got, "target.txt") {
+	if got := RequiredEditPathsFromPrompt(brief); slices.Contains(got, "target.txt") {
 		t.Fatalf("design-doc scope must not become required edit paths, got %#v\n%s", got, brief)
 	}
 
-	if got := allowedEditPathsFromPrompt(brief); !slices.Contains(got, "target.txt") {
+	if got := AllowedEditPathsFromPrompt(brief); !slices.Contains(got, "target.txt") {
 		t.Fatalf("design-doc scope must become candidate edit paths, got %#v\n%s", got, brief)
 	}
 }
@@ -7255,11 +7278,11 @@ func TestComposeImplementationBriefResolvesUniquePlanDocumentBasenameAsCandidate
 		}
 	}
 
-	if got := requiredEditPathsFromPrompt(brief); slices.Contains(got, "internal/surfaces/tui/app/writer_route.go") {
+	if got := RequiredEditPathsFromPrompt(brief); slices.Contains(got, "internal/surfaces/tui/app/writer_route.go") {
 		t.Fatalf("resolved design-doc scope must not become required edit paths, got %#v\n%s", got, brief)
 	}
 
-	if got := allowedEditPathsFromPrompt(brief); !slices.Contains(got, "internal/surfaces/tui/app/writer_route.go") {
+	if got := AllowedEditPathsFromPrompt(brief); !slices.Contains(got, "internal/surfaces/tui/app/writer_route.go") {
 		t.Fatalf("resolved design-doc scope must become candidate edit paths, got %#v\n%s", got, brief)
 	}
 }
@@ -7301,7 +7324,7 @@ func TestComposeImplementationBriefKeepsAtomScopeAsRequiredPaths(t *testing.T) {
 		t.Fatalf("atom scope must remain active required edit scope:\n%s", brief)
 	}
 
-	if got := requiredEditPathsFromPrompt(brief); !slices.Contains(got, "target.txt") {
+	if got := RequiredEditPathsFromPrompt(brief); !slices.Contains(got, "target.txt") {
 		t.Fatalf("atom scope must become required edit paths, got %#v\n%s", got, brief)
 	}
 }
@@ -7340,6 +7363,32 @@ func TestImplementationDispatchInlineRequiredPathsBecomePlanExecuteRequiredScope
 		if slices.Contains(allowed, want) {
 			t.Fatalf("inline required path %q must not be demoted to allowed scope: required=%#v allowed=%#v", want, required, allowed)
 		}
+	}
+}
+
+func TestImplementationDispatchRetryCandidateScopePreservesCompiledWriteEnvelope(t *testing.T) {
+	opts := planexecute.Options{
+		RequiredEditPaths:     planexecute.MultiFlag{"pkg/target.go"},
+		ScopeContract:         planexecute.NewPlanScopeContract([]string{"pkg/target.go"}, nil, nil).WithWriteAllowedPaths([]string{"pkg/target.go"}),
+		ScopeExtractionPolicy: planexecute.ScopeExtractionFrozen,
+	}
+
+	retry := implementationDispatchRetryOptionsWithCandidateScope(opts, []string{"pkg/discovered.go"})
+
+	if got, want := retry.ScopeExtractionPolicy, planexecute.ScopeExtractionFrozen; got != want {
+		t.Fatalf("scope extraction policy = %q, want %q", got, want)
+	}
+
+	if got, want := retry.ScopeContract.WriteAllowedPaths, []string{"pkg/target.go"}; !slices.Equal(got, want) {
+		t.Fatalf("write envelope = %#v, want %#v", got, want)
+	}
+
+	if !retry.ScopeContract.WriteAllowedExplicit {
+		t.Fatalf("write envelope should remain explicit: %#v", retry.ScopeContract)
+	}
+
+	if !slices.Contains(retry.ScopeContract.AllowedCandidatePaths, "pkg/discovered.go") {
+		t.Fatalf("discovered path should remain candidate scope, contract=%#v", retry.ScopeContract)
 	}
 }
 
@@ -7392,7 +7441,7 @@ func runtimeBriefForTest(targetRefs []string) workerruntime.WorkerRuntimeBrief {
 }
 
 func TestCorrectTurnRoutePlanDoesNotUpgradeVerificationOnlyWithEditIntentHeuristic(t *testing.T) {
-	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "verification_only"}, "Modify exactly one file and do not run tests.", agent.BuildMode())
+	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "verification_only"}, "Modify exactly one file and do not run tests.", modepolicy.BuildMode())
 	if plan.Family != "verification_only" {
 		t.Fatalf("family = %q, want verification_only", plan.Family)
 	}
@@ -7427,7 +7476,7 @@ python3 scripts/run_tests.py --build-only
 git diff --check
 ` + "```" + `
 `
-	plan := fallbackTurnRoute(prompt, agent.BuildMode())
+	plan := fallbackTurnRoute(prompt, modepolicy.BuildMode())
 
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
@@ -7439,7 +7488,7 @@ git diff --check
 }
 
 func TestCorrectTurnRoutePlanDoesNotRewriteAnalysisContinuationRoute(t *testing.T) {
-	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "explore_then_implement"}, "Continue your investigation until you have a confident response.", agent.BuildMode())
+	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "explore_then_implement"}, "Continue your investigation until you have a confident response.", modepolicy.BuildMode())
 	if plan.Family != "explore_then_implement" {
 		t.Fatalf("family = %q, want explore_then_implement", plan.Family)
 	}
@@ -7451,7 +7500,7 @@ func TestCorrectTurnRoutePlanDoesNotRewriteAnalysisContinuationRoute(t *testing.
 
 func TestGDScriptRouteFallsBackForNonGDScriptExplicitScope(t *testing.T) {
 	prompt := "Implement the change.\n\nrequired_edit_paths:\n- internal/labels/labels.go\n"
-	route := validateRouteFamilyAgainstExplicitEditScope(turnRoutePlan{Family: "gdscript_edit", Reason: "classifier"}, prompt, agent.BuildMode())
+	route := validateRouteFamilyAgainstExplicitEditScope(turnRoutePlan{Family: "gdscript_edit", Reason: "classifier"}, prompt, modepolicy.BuildMode())
 
 	if route.Family != "implementation" {
 		t.Fatalf("family = %q, want implementation for non-GDScript explicit scope", route.Family)
@@ -7464,7 +7513,7 @@ func TestGDScriptRouteFallsBackForNonGDScriptExplicitScope(t *testing.T) {
 
 func TestGDScriptRouteKeepsAllGDScriptExplicitScope(t *testing.T) {
 	prompt := "Implement the change.\n\nrequired_edit_paths:\n- scenes/player.gd\nallowed_edit_paths:\n- tests/player_test.gd\n"
-	route := validateRouteFamilyAgainstExplicitEditScope(turnRoutePlan{Family: "gdscript_edit", Reason: "classifier"}, prompt, agent.BuildMode())
+	route := validateRouteFamilyAgainstExplicitEditScope(turnRoutePlan{Family: "gdscript_edit", Reason: "classifier"}, prompt, modepolicy.BuildMode())
 
 	if route.Family != "gdscript_edit" {
 		t.Fatalf("family = %q, want gdscript_edit for GDScript-only explicit scope", route.Family)
@@ -7472,12 +7521,12 @@ func TestGDScriptRouteKeepsAllGDScriptExplicitScope(t *testing.T) {
 }
 
 func TestShouldPreferFallbackRouteDoesNotOverrideConversationWithHeuristicFallback(t *testing.T) {
-	fallback := fallbackTurnRoute("Ok, check the most recent logs. Lots of weird decisions in there. Can this be made smarter?", agent.BuildMode())
+	fallback := fallbackTurnRoute("Ok, check the most recent logs. Lots of weird decisions in there. Can this be made smarter?", modepolicy.BuildMode())
 	if fallback.Family != "conversation" {
 		t.Fatalf("fallback family = %q, want conversation", fallback.Family)
 	}
 
-	planned := normalizeTurnRoutePlan(turnRoutePlan{Family: "direct_question"}, agent.BuildMode())
+	planned := normalizeTurnRoutePlan(turnRoutePlan{Family: "direct_question"}, modepolicy.BuildMode())
 	if planned.Family != "conversation" {
 		t.Fatalf("legacy direct_question should normalize to conversation, got %#v", planned)
 	}
@@ -7503,7 +7552,7 @@ func TestClassifyTurnRouteLetsModelUpgradeConversationFallback(t *testing.T) {
 		},
 		client: llama.NewClient(server.URL, time.Second),
 	}
-	plan := m.classifyTurnRoute(context.Background(), "Can you verify that this still builds?", agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), "Can you verify that this still builds?", modepolicy.BuildMode())
 
 	if plan.Family != "verification_only" {
 		t.Fatalf("family = %q, want verification_only", plan.Family)
@@ -7535,7 +7584,7 @@ func TestClassifyTurnRouteUsesClassifierBeforeImplementationFallback(t *testing.
 		},
 		client: llama.NewClient(server.URL, time.Second),
 	}
-	plan := m.classifyTurnRoute(context.Background(), "Update the README docs for the new workflow.", agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), "Update the README docs for the new workflow.", modepolicy.BuildMode())
 
 	if plan.Family != "docs_edit" {
 		t.Fatalf("family = %q, want docs_edit", plan.Family)
@@ -7589,7 +7638,7 @@ func TestClassifyTurnRouteRepairsInvalidJSONOnce(t *testing.T) {
 		},
 		client: llama.NewClient(server.URL, time.Second),
 	}
-	plan := m.classifyTurnRoute(context.Background(), "Implement the label change.", agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), "Implement the label change.", modepolicy.BuildMode())
 
 	if plan.Family != "implementation" || plan.InitialLane != "implement" {
 		t.Fatalf("repaired classifier route = %#v, want implementation", plan)
@@ -7632,7 +7681,7 @@ func TestClassifyTurnRouteRepairsInvalidJSONFromFallbackClient(t *testing.T) {
 		client:        llama.NewClient(fallbackServer.URL, time.Second),
 		summaryClient: llama.NewClient(classifierServer.URL, time.Second),
 	}
-	plan := m.classifyTurnRoute(context.Background(), "Implement the label change.", agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), "Implement the label change.", modepolicy.BuildMode())
 
 	if plan.Family != "implementation" || plan.InitialLane != "implement" {
 		t.Fatalf("repaired classifier route = %#v, want implementation", plan)
@@ -7664,7 +7713,7 @@ func TestClassifyTurnRouteDoesNotSkipClassifierForDebugLogSignal(t *testing.T) {
 		},
 		client: llama.NewClient(server.URL, time.Second),
 	}
-	plan := m.classifyTurnRoute(context.Background(), "Check the most recent logs and explain why it failed.", agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), "Check the most recent logs and explain why it failed.", modepolicy.BuildMode())
 
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
@@ -7697,7 +7746,7 @@ func TestClassifyTurnRouteUsesClassifierForPlanExecuteSourceSatisfiedSmokeWriteS
 		client: llama.NewClient(server.URL, time.Second),
 	}
 	prompt := "Smoke test the default implementation lane through the full PRD-to-plan-to-execute path without changing files. Requirement: verify the durable TUI smoke fixture is already satisfied by the current repository and answer source-satisfied with evidence. Required edit paths: internal/surfaces/tui/app/app.go, internal/runtime/agent/runner.go. Do not write files unless the evidence proves a real missing fixture."
-	plan := m.classifyTurnRoute(context.Background(), prompt, agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), prompt, modepolicy.BuildMode())
 
 	if plan.Family != "implementation" {
 		t.Fatalf("family = %q, want implementation", plan.Family)
@@ -7714,7 +7763,7 @@ func TestClassifyTurnRouteUsesClassifierForPlanExecuteSourceSatisfiedSmokeWriteS
 
 func TestClassifyTurnRouteKeepsPlanExecuteHowToQuestionReadOnly(t *testing.T) {
 	m := &Model{cfg: config.Config{RouteClassifier: config.RouteClassifier{Enabled: false}}}
-	plan := m.classifyTurnRoute(context.Background(), "How do I run plan-execute without changing files?", agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), "How do I run plan-execute without changing files?", modepolicy.BuildMode())
 
 	if isImplementationLikeFamily(plan.Family) {
 		t.Fatalf("plan-execute how-to question should stay read-only, got %#v", plan)
@@ -7743,7 +7792,7 @@ func TestClassifyTurnRouteKeepsQuestionShapedMutationReadOnly(t *testing.T) {
 		client: llama.NewClient(server.URL, time.Second),
 	}
 	prompt := "The current model string in the top-right portion of the banner shows a path with what seems to be a stripped filename. Can we shorten this to be just the model's alias?"
-	plan := m.classifyTurnRoute(context.Background(), prompt, agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), prompt, modepolicy.BuildMode())
 
 	if plan.Family != "conversation" {
 		t.Fatalf("family = %q, want conversation", plan.Family)
@@ -7783,7 +7832,7 @@ func TestRouteClassifierPromptDoesNotTreatQuestionShapeAsLaneSignal(t *testing.T
 		},
 		client: llama.NewClient(server.URL, time.Second),
 	}
-	plan := m.classifyTurnRoute(context.Background(), "Can you implement this feature: docs/design-prd-adr-brief-research-workflow.md Phase 7?", agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), "Can you implement this feature: docs/design-prd-adr-brief-research-workflow.md Phase 7?", modepolicy.BuildMode())
 
 	if plan.Family != "implementation" {
 		t.Fatalf("classifier-selected polite implementation directive should route implementation, got %#v", plan)
@@ -7817,7 +7866,7 @@ func TestTurnRoutePlanCarriesEvidenceIntent(t *testing.T) {
 		RequestedOutcome: "answer",
 		WriteIntent:      "no",
 		EvidenceIntent:   "calls",
-	}, agent.BuildMode())
+	}, modepolicy.BuildMode())
 
 	if plan.EvidenceIntent != "relation_trace" {
 		t.Fatalf("evidence intent = %q, want relation_trace", plan.EvidenceIntent)
@@ -7827,7 +7876,7 @@ func TestTurnRoutePlanCarriesEvidenceIntent(t *testing.T) {
 		t.Fatalf("rendered route missing evidence intent: %q", rendered)
 	}
 
-	brief := turnRoutePlanRuntimeBrief(plan, agent.BuildMode(), []string{"context_pack", "code_navigate", "read_file"})
+	brief := turnRoutePlanRuntimeBrief(plan, modepolicy.BuildMode(), []string{"context_pack", "code_navigate", "read_file"})
 	if brief.EvidenceIntent != "relation_trace" || brief.RequestedOutcome != "answer" || brief.WriteIntent != "no" {
 		t.Fatalf("runtime brief did not preserve typed route intent: %#v", brief)
 	}
@@ -7835,7 +7884,7 @@ func TestTurnRoutePlanCarriesEvidenceIntent(t *testing.T) {
 
 func TestClassifyTurnRouteQuestionShapedMutationFallbackIsReadOnly(t *testing.T) {
 	m := &Model{cfg: config.Config{RouteClassifier: config.RouteClassifier{Enabled: false}}}
-	plan := m.classifyTurnRoute(context.Background(), "Can we shorten the displayed model label to just the alias?", agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), "Can we shorten the displayed model label to just the alias?", modepolicy.BuildMode())
 
 	if isImplementationLikeFamily(plan.Family) {
 		t.Fatalf("question-shaped mutation should stay read-only, got %#v", plan)
@@ -7849,7 +7898,7 @@ func TestClassifyTurnRouteLaneNameQuestionStaysReadOnly(t *testing.T) {
 		"Can you explain whether we can shorten the displayed model label to just the alias?",
 		"Can we shorten the displayed model label to just the alias without changing files?",
 	} {
-		plan := m.classifyTurnRoute(context.Background(), prompt, agent.BuildMode())
+		plan := m.classifyTurnRoute(context.Background(), prompt, modepolicy.BuildMode())
 		if isImplementationLikeFamily(plan.Family) {
 			t.Fatalf("%q should stay read-only, got %#v", prompt, plan)
 		}
@@ -7877,7 +7926,7 @@ func TestClassifyTurnRouteHonorsClassifierImplementationDirective(t *testing.T) 
 		},
 		client: llama.NewClient(server.URL, time.Second),
 	}
-	plan := m.classifyTurnRoute(context.Background(), "Shorten the displayed model label to just the alias.", agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), "Shorten the displayed model label to just the alias.", modepolicy.BuildMode())
 
 	if plan.Family != "implementation" || plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
 		t.Fatalf("classifier-selected directive should route implementation, got %#v", plan)
@@ -7910,7 +7959,7 @@ func TestClassifyTurnRouteImplementSlashMentionDoesNotBypassClassifier(t *testin
 		client: llama.NewClient(server.URL, time.Second),
 	}
 	prompt := `I want to test the implement lane... can you use /implement to create and write a new file with the text "ben is cool"?`
-	plan := m.classifyTurnRoute(context.Background(), prompt, agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), prompt, modepolicy.BuildMode())
 
 	if isImplementationLikeFamily(plan.Family) {
 		t.Fatalf("slash mention inside prose should not deterministically route implementation, got %#v", plan)
@@ -7923,7 +7972,7 @@ func TestClassifyTurnRouteImplementSlashMentionDoesNotBypassClassifier(t *testin
 
 func TestFallbackTurnRouteLaneExerciseDoesNotBecomeVerificationOnly(t *testing.T) {
 	m := &Model{cfg: config.Config{RouteClassifier: config.RouteClassifier{Enabled: false}}}
-	plan := m.classifyTurnRoute(context.Background(), "I want to test the implementation lane.", agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), "I want to test the implementation lane.", modepolicy.BuildMode())
 
 	if plan.Family == "verification_only" {
 		t.Fatalf("lane exercise wording should not auto-run tests, got %#v", plan)
@@ -7952,7 +8001,7 @@ func TestClassifyTurnRouteUsesClassifierForPlanExecuteRequiredPathEditWriteShape
 		client: llama.NewClient(server.URL, time.Second),
 	}
 	prompt := "Implement the durable TUI smoke fixture through the full PRD-to-plan-to-execute path. Required edit paths: internal/surfaces/tui/app/app.go, internal/runtime/agent/runner.go."
-	plan := m.classifyTurnRoute(context.Background(), prompt, agent.BuildMode())
+	plan := m.classifyTurnRoute(context.Background(), prompt, modepolicy.BuildMode())
 
 	if plan.Family != "implementation" {
 		t.Fatalf("family = %q, want implementation", plan.Family)
@@ -7969,7 +8018,7 @@ func TestClassifyTurnRouteUsesClassifierForPlanExecuteRequiredPathEditWriteShape
 
 func TestTurnRoutePlanRuntimeBriefForConversationUsesReadOnlyWorkspace(t *testing.T) {
 	available := []string{"task", "pwd", "list_files", "search_files", "search_content", "read_file", "go_workspace_symbol", "go_read_symbol", "edit_file", "shell"}
-	brief := turnRoutePlanRuntimeBrief(turnRoutePlan{Family: "conversation"}, agent.BuildMode(), available)
+	brief := turnRoutePlanRuntimeBrief(turnRoutePlan{Family: "conversation"}, modepolicy.BuildMode(), available)
 
 	if brief.PermissionProfile != "read_only_workspace" {
 		t.Fatalf("permission = %q, want read_only_workspace", brief.PermissionProfile)
@@ -7989,7 +8038,7 @@ func TestTurnRoutePlanRuntimeBriefForConversationUsesReadOnlyWorkspace(t *testin
 
 func TestTurnRoutePlanRuntimeBriefForVerificationOnly(t *testing.T) {
 	available := []string{"task", "pwd", "read_file", "search_files", "search_content", "shell", "edit_file", "write_file"}
-	brief := turnRoutePlanRuntimeBrief(turnRoutePlan{Family: "verification_only"}, agent.BuildMode(), available)
+	brief := turnRoutePlanRuntimeBrief(turnRoutePlan{Family: "verification_only"}, modepolicy.BuildMode(), available)
 
 	if brief.PermissionProfile != "read_only_verification_shell" {
 		t.Fatalf("permission = %q, want read_only_verification_shell", brief.PermissionProfile)
@@ -8012,7 +8061,7 @@ func TestTurnRoutePlanRuntimeBriefForVerificationOnly(t *testing.T) {
 
 func TestTurnRoutePlanRuntimeBriefForDebugLogsUsesStandardReadLane(t *testing.T) {
 	available := []string{"pwd", "read_file", "search_files", "search_content", "edit_file"}
-	brief := turnRoutePlanRuntimeBrief(turnRoutePlan{Family: "debug_logs"}, agent.BuildMode(), available)
+	brief := turnRoutePlanRuntimeBrief(turnRoutePlan{Family: "debug_logs"}, modepolicy.BuildMode(), available)
 
 	if brief.PermissionProfile != "read_only_workspace" {
 		t.Fatalf("permission = %q, want read_only_workspace", brief.PermissionProfile)
@@ -8029,7 +8078,7 @@ func TestTurnRoutePlanRuntimeBriefForDebugLogsUsesStandardReadLane(t *testing.T)
 
 func TestTurnRoutePlanRuntimeBriefForArchitectureUsesShapingOnly(t *testing.T) {
 	available := []string{"task", "search_files", "search_content", "read_file", "go_workspace_symbol", "go_read_symbol", "shell"}
-	brief := turnRoutePlanRuntimeBrief(turnRoutePlan{Family: "architecture"}, agent.BuildMode(), available)
+	brief := turnRoutePlanRuntimeBrief(turnRoutePlan{Family: "architecture"}, modepolicy.BuildMode(), available)
 
 	if brief.PermissionProfile != "read_only_workspace" {
 		t.Fatalf("permission = %q, want read_only_workspace", brief.PermissionProfile)

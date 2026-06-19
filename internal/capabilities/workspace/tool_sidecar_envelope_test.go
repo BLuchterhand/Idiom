@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -47,6 +48,28 @@ func TestBuildToolSidecarEnvelopeIncludesStructuredFreshness(t *testing.T) {
 
 	if envelope.Error != nil {
 		t.Fatalf("success envelope should not include error: %#v", envelope.Error)
+	}
+}
+
+func TestBuildToolSidecarEnvelopeUsesSharedContractShape(t *testing.T) {
+	result := ToolResult{
+		Tool:    "context_status",
+		Summary: "Context index is fresh",
+		Output:  `{"indexed":true}`,
+	}
+	envelope := BuildToolSidecarEnvelopeWithOptions(
+		ToolRequest{Tool: "context_status"},
+		result,
+		ToolProfileDiscovery,
+		ToolSidecarOptions{Transport: "mcp_stdio"},
+	)
+	want := BuildToolSidecarContract("context_status", ToolProfileDiscovery, "mcp_stdio")
+
+	if !reflect.DeepEqual(envelope.Contract, want) {
+		t.Fatalf("envelope contract drifted from shared contract shape:\n got %#v\nwant %#v", envelope.Contract, want)
+	}
+	if !reflect.DeepEqual(envelope.Metadata, want.Metadata) {
+		t.Fatalf("envelope metadata should mirror shared contract metadata:\n got %#v\nwant %#v", envelope.Metadata, want.Metadata)
 	}
 }
 

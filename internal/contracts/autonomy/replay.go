@@ -39,6 +39,7 @@ type ReplayReport struct {
 	ReplayClassification  ReplayClassificationReport `json:"replay_classification"`
 	ReplayMetrics         ReplayMetrics              `json:"replay_metrics"`
 	PrivacyChecks         ReplayPrivacyChecks        `json:"privacy_checks"`
+	ObligationLedger      ObligationLedger           `json:"obligation_ledger"`
 	Atoms                 []ReplayAtom               `json:"atoms,omitempty"`
 	Violations            []ReplayViolation          `json:"violations,omitempty"`
 }
@@ -150,6 +151,7 @@ func ReplayEvents(events []Event, opts ReplayOptions) ReplayReport {
 	}
 
 	state.report.ReplayClassification, state.report.ReplayMetrics, state.report.PrivacyChecks = replayIntentForEvents(ordered)
+	state.report.ObligationLedger = NormalizeObligationLedger(ordered)
 	state.finish()
 
 	return state.report
@@ -454,7 +456,7 @@ func (s *replayState) hasUnresolvedPostWriteVerification(status string, obligati
 
 func verificationStatusIsResolved(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "pass", "passed", "success", "succeeded", "ok", "clean", "verified", "resolved":
+	case "pass", "passed", "success", "succeeded", "ok", "clean", "verified", "resolved", "observed", "not_required":
 		return true
 	default:
 		return false
@@ -617,7 +619,7 @@ func (s *replayIntentState) addEvent(event Event) {
 		if event.Policy != nil {
 			s.addPolicyMetrics(event, *event.Policy)
 		}
-	case EventObligationOpened, EventObligationResolved, EventObligationWaived:
+	case EventObligationOpened, EventObligationResolved, EventObligationWaived, EventObligationBlocked, EventObligationStale, EventObligationSuperseded:
 		s.classification.ObligationEvents++
 	case EventReadinessStateUpdated:
 		if event.Readiness != nil && (event.Readiness.ReadyToAnswer || event.Readiness.ReadyToWrite || event.Readiness.ReadyToVerify) {
@@ -836,7 +838,7 @@ func requiredReplayPayloadName(eventType EventType) (string, bool) {
 		return "lifecycle", true
 	case EventToolIntentClassified, EventPathRolesResolved, EventToolPolicyDecision, EventToolPolicyResult:
 		return "policy", true
-	case EventObligationOpened, EventObligationResolved, EventObligationWaived:
+	case EventObligationOpened, EventObligationResolved, EventObligationWaived, EventObligationBlocked, EventObligationStale, EventObligationSuperseded:
 		return "obligation", true
 	case EventReadinessStateUpdated:
 		return "readiness", true

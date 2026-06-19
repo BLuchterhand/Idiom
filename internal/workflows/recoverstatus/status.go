@@ -9,25 +9,29 @@ import (
 	"strings"
 
 	"idiom/internal/workflows/recovery"
+	"idiom/internal/workflows/workflowstate"
 )
 
 const ReportType = "idiom.recover.status.v1"
 
 type Report struct {
-	Type               string                   `json:"type"`
-	Status             string                   `json:"status"`
-	PacketPath         string                   `json:"packet_path,omitempty"`
-	ReconciliationPath string                   `json:"reconciliation_path,omitempty"`
-	FailureID          string                   `json:"failure_id,omitempty"`
-	PacketID           string                   `json:"packet_id,omitempty"`
-	PartialState       recovery.PartialState    `json:"partial_state"`
-	ProductLinks       recovery.ProductLinks    `json:"product_links,omitempty"`
-	Blockers           []string                 `json:"blockers,omitempty"`
-	ResidualWork       []recovery.ResidualWork  `json:"residual_work,omitempty"`
-	CandidateAtoms     []recovery.CandidateAtom `json:"candidate_atoms,omitempty"`
-	Reconciliation     *recovery.Reconciliation `json:"reconciliation,omitempty"`
-	NextAction         string                   `json:"next_valid_action"`
-	Error              string                   `json:"error,omitempty"`
+	Type                  string                      `json:"type"`
+	Status                string                      `json:"status"`
+	WorkflowID            workflowstate.WorkflowID    `json:"workflow_id,omitempty"`
+	WorkflowTerminalState workflowstate.TerminalState `json:"workflow_terminal_state,omitempty"`
+	Dispatchable          bool                        `json:"dispatchable"`
+	PacketPath            string                      `json:"packet_path,omitempty"`
+	ReconciliationPath    string                      `json:"reconciliation_path,omitempty"`
+	FailureID             string                      `json:"failure_id,omitempty"`
+	PacketID              string                      `json:"packet_id,omitempty"`
+	PartialState          recovery.PartialState       `json:"partial_state"`
+	ProductLinks          recovery.ProductLinks       `json:"product_links,omitempty"`
+	Blockers              []string                    `json:"blockers,omitempty"`
+	ResidualWork          []recovery.ResidualWork     `json:"residual_work,omitempty"`
+	CandidateAtoms        []recovery.CandidateAtom    `json:"candidate_atoms,omitempty"`
+	Reconciliation        *recovery.Reconciliation    `json:"reconciliation,omitempty"`
+	NextAction            string                      `json:"next_valid_action"`
+	Error                 string                      `json:"error,omitempty"`
 }
 
 func Build(root string, packetPath string) (Report, error) {
@@ -62,28 +66,33 @@ func Build(root string, packetPath string) (Report, error) {
 	projection := recovery.ProjectPacketStatus(packet, reconciliationRef)
 
 	return Report{
-		Type:               ReportType,
-		Status:             string(projection.Status),
-		PacketPath:         relDisplayPath(root, relPath),
-		ReconciliationPath: reconciliationDisplayPath,
-		FailureID:          packet.FailureID,
-		PacketID:           packet.PacketID,
-		PartialState:       packet.PartialState,
-		ProductLinks:       packet.ProductLinks,
-		Blockers:           projection.Blockers,
-		ResidualWork:       sanitizeResidualWork(projection.ResidualWork),
-		CandidateAtoms:     projection.CandidateAtoms,
-		Reconciliation:     projection.Reconciliation,
-		NextAction:         projection.NextAction,
+		Type:                  ReportType,
+		Status:                string(projection.Status),
+		WorkflowID:            projection.WorkflowID,
+		WorkflowTerminalState: projection.WorkflowTerminalState,
+		Dispatchable:          projection.Dispatchable,
+		PacketPath:            relDisplayPath(root, relPath),
+		ReconciliationPath:    reconciliationDisplayPath,
+		FailureID:             packet.FailureID,
+		PacketID:              packet.PacketID,
+		PartialState:          packet.PartialState,
+		ProductLinks:          packet.ProductLinks,
+		Blockers:              projection.Blockers,
+		ResidualWork:          sanitizeResidualWork(projection.ResidualWork),
+		CandidateAtoms:        projection.CandidateAtoms,
+		Reconciliation:        projection.Reconciliation,
+		NextAction:            projection.NextAction,
 	}, nil
 }
 
 func ErrorReport(message string) Report {
 	return Report{
-		Type:       ReportType,
-		Status:     "error",
-		NextAction: recovery.NextActionInspectFailure,
-		Error:      message,
+		Type:                  ReportType,
+		Status:                "error",
+		WorkflowID:            workflowstate.WorkflowRecovery,
+		WorkflowTerminalState: workflowstate.TerminalStateBlocked,
+		NextAction:            recovery.NextActionInspectFailure,
+		Error:                 message,
 	}
 }
 
@@ -104,6 +113,8 @@ func WriteText(w io.Writer, report Report) {
 	}
 
 	fmt.Fprintf(w, "recover status: %s\n", report.Status)
+	fmt.Fprintf(w, "workflow_terminal_state: %s\n", report.WorkflowTerminalState)
+	fmt.Fprintf(w, "dispatchable: %v\n", report.Dispatchable)
 	fmt.Fprintf(w, "packet: %s\n", report.PacketPath)
 
 	if report.ReconciliationPath != "" {

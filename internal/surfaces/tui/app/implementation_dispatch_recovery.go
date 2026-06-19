@@ -14,6 +14,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/agent"
@@ -594,21 +595,62 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 		m.logMessage("dispatch_context", "preloaded context_pack for in-process plan-execute dispatch")
 	}
 
+	intake := implementationDispatchCompilePlanExecuteScopeIntake(prompt, plan, m.cfg)
 	if len(requiredPaths) == 0 && len(allowedPaths) == 0 && strings.TrimSpace(contextPackSection) != "" {
-		allowedPaths = m.implementationDispatchAllowedPathsFromPreloadedContextPack(prompt, contextPackSection)
-		if len(allowedPaths) > 0 {
+		discoveredPaths := m.implementationDispatchAllowedPathsFromPreloadedContextPack(prompt, contextPackSection)
+		if len(discoveredPaths) > 0 && intake.ClosedScope {
+			m.logMessage("scope_expansion", implementationDispatchFormatScopeExpansionEvent(plancontract.ScopeExpansionEvent{
+				Kind:   plancontract.ScopeExpansionEventExpansionBlocked,
+				Policy: plancontract.ScopeExpansionPolicyClosed,
+				Reason: "closed scope blocks context_pack candidate expansion",
+				Paths:  implementationDispatchCandidateExpansionRecords(discoveredPaths, "context_pack"),
+			}))
+		} else if len(discoveredPaths) > 0 {
+			m.logMessage("scope_expansion", implementationDispatchFormatScopeExpansionEvent(plancontract.ScopeExpansionEvent{
+				Kind:   plancontract.ScopeExpansionEventProposalCreated,
+				Policy: plancontract.ScopeExpansionPolicyBoundedDiscovery,
+				Reason: "context_pack proposed candidate scope for unscoped plan-execute request",
+				Paths:  implementationDispatchCandidateExpansionRecords(discoveredPaths, "context_pack"),
+			}))
+			m.logMessage("scope_expansion", implementationDispatchFormatScopeExpansionEvent(plancontract.ScopeExpansionEvent{
+				Kind:   plancontract.ScopeExpansionEventProposalApproved,
+				Policy: plancontract.ScopeExpansionPolicyBoundedDiscovery,
+				Source: "harness_bounded_discovery",
+				Reason: "no explicit or closed scope was present",
+				Paths:  implementationDispatchCandidateExpansionRecords(discoveredPaths, "context_pack"),
+			}))
+			allowedPaths = discoveredPaths
 			m.logMessage("dispatch_scope", fmt.Sprintf("derived %d candidate edit path(s) from preloaded context_pack", len(allowedPaths)))
 
 			brief = composeImplementationBriefWithEditScopeAndPlanDocuments(prompt, plan, m.cfg, requiredPaths, allowedPaths, planDocuments)
-		} else {
+		} else if !intake.ClosedScope {
 			allowedPaths = m.resolveUnscopedImplementationAllowedPaths(ctx, prompt)
 			allowedPaths = uniqueImplementationDispatchPaths(allowedPaths)
 
 			if len(allowedPaths) > 0 {
+				m.logMessage("scope_expansion", implementationDispatchFormatScopeExpansionEvent(plancontract.ScopeExpansionEvent{
+					Kind:   plancontract.ScopeExpansionEventProposalCreated,
+					Policy: plancontract.ScopeExpansionPolicyBoundedDiscovery,
+					Reason: "fallback discovery proposed candidate scope for unscoped plan-execute request",
+					Paths:  implementationDispatchCandidateExpansionRecords(allowedPaths, "fallback_discovery"),
+				}))
+				m.logMessage("scope_expansion", implementationDispatchFormatScopeExpansionEvent(plancontract.ScopeExpansionEvent{
+					Kind:   plancontract.ScopeExpansionEventProposalApproved,
+					Policy: plancontract.ScopeExpansionPolicyBoundedDiscovery,
+					Source: "harness_bounded_discovery",
+					Reason: "no explicit or closed scope was present",
+					Paths:  implementationDispatchCandidateExpansionRecords(allowedPaths, "fallback_discovery"),
+				}))
 				m.logMessage("dispatch_scope", fmt.Sprintf("derived %d candidate edit path(s) from fallback discovery after context_pack scope was not relevant", len(allowedPaths)))
 
 				brief = composeImplementationBriefWithEditScopeAndPlanDocuments(prompt, plan, m.cfg, requiredPaths, allowedPaths, planDocuments)
 			}
+		} else {
+			m.logMessage("scope_expansion", implementationDispatchFormatScopeExpansionEvent(plancontract.ScopeExpansionEvent{
+				Kind:   plancontract.ScopeExpansionEventExpansionBlocked,
+				Policy: plancontract.ScopeExpansionPolicyClosed,
+				Reason: "closed scope blocks fallback candidate discovery",
+			}))
 		}
 	}
 
@@ -628,18 +670,28 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 
 	if m.planExecuteWriteEnvelopeExplicit {
 		scopeContract = scopeContract.WithWriteAllowedPaths(m.planExecuteWriteEnvelope)
+	} else if len(requiredPaths) > 0 || len(allowedPaths) > 0 {
+		scopeContract = scopeContract.WithWriteAllowedPaths(append(append([]string{}, requiredPaths...), allowedPaths...))
+	}
+	scopeExtractionPolicy := planexecute.ScopeExtractionFromPrompt
+	if scopeContract.HasContent() {
+		scopeExtractionPolicy = planexecute.ScopeExtractionFrozen
 	}
 
 	opts := planexecute.Options{
-		Prompt:             brief,
-		Model:              m.implementationDispatchPlanExecuteModelOverride(),
-		SessionID:          featureplanner.PlanExecuteSessionIDFromImplementorPrompt(prompt),
-		RequiredEditPaths:  requiredPaths,
-		AllowedEditPaths:   allowedPaths,
-		EditSetObligations: editSetObligations,
-		ScopeContract:      scopeContract,
-		AuthorizedNewFiles: implementationDispatchAuthorizedNewFiles(prompt, planDocuments),
-		MaxTokens:          implementationDispatchPlanExecuteMaxTokens(m.cfg.Workspace.Root, prompt, requiredPaths, allowedPaths, planDocuments),
+		Prompt:                brief,
+		Model:                 m.implementationDispatchPlanExecuteModelOverride(),
+		SessionID:             featureplanner.PlanExecuteSessionIDFromImplementorPrompt(prompt),
+		RequiredEditPaths:     requiredPaths,
+		AllowedEditPaths:      allowedPaths,
+		EditSetObligations:    editSetObligations,
+		ScopeContract:         scopeContract,
+		ScopeExtractionPolicy: scopeExtractionPolicy,
+		AuthorizedNewFiles: appendUniqueBriefStrings(
+			implementationDispatchAuthorizedNewFiles(prompt, planDocuments),
+			intake.AuthorizedNewFiles...,
+		),
+		MaxTokens: implementationDispatchPlanExecuteMaxTokens(m.cfg.Workspace.Root, prompt, requiredPaths, allowedPaths, planDocuments),
 		OnPhase: func(phase, detail string) {
 			m.queueUIEvent(planPhaseMsg{phase: phase, detail: detail})
 		},
@@ -1055,9 +1107,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 			return humanPlanExecuteDispatchWithoutScopeMessage(failure), true, nil
 		}
 
-		retryOptions := failure.Options
-
-		retryOptions.AllowedEditPaths = allowedPaths
+		retryOptions := implementationDispatchRetryOptionsWithCandidateScope(failure.Options, allowedPaths)
 		retryOptions.Prompt = appendDiscoveredCandidateScopeAddendum(failure.Options.Prompt, allowedPaths)
 		m.logMessage("dispatch_recovery", fmt.Sprintf("retrying plan-execute with discovered candidate scope: %s", strings.Join(allowedPaths, ", ")))
 
@@ -1474,18 +1524,50 @@ func appendMissingRequestedImplementationEditRecoveryAddendum(prompt string, all
 }
 
 func implementationDispatchRetryOptionsWithCandidateScope(opts planexecute.Options, candidatePaths []string) planexecute.Options {
+	writeEnvelope, writeEnvelopeExplicit := implementationDispatchRetryWriteEnvelope(opts)
 	opts.RequiredEditPaths = uniqueImplementationDispatchPaths(opts.RequiredEditPaths)
 	opts.AllowedEditPaths = uniqueImplementationDispatchPaths(append(append([]string{}, opts.AllowedEditPaths...), candidatePaths...))
 	opts.ScopeContract = planexecute.NewPlanScopeContract([]string(opts.RequiredEditPaths), []string(opts.AllowedEditPaths), opts.EditSetObligations)
+	if writeEnvelopeExplicit {
+		opts.ScopeContract = opts.ScopeContract.WithWriteAllowedPaths(writeEnvelope)
+	}
+	if opts.ScopeContract.HasContent() {
+		opts.ScopeExtractionPolicy = planexecute.ScopeExtractionFrozen
+	}
 
 	return opts
 }
 
 func implementationDispatchRetryOptionsWithEditSetObligation(opts planexecute.Options, kind planexecute.EditSetObligationKind) planexecute.Options {
+	writeEnvelope, writeEnvelopeExplicit := implementationDispatchRetryWriteEnvelope(opts)
 	opts.EditSetObligations = implementationDispatchEditSetObligationsWithSource(opts.EditSetObligations, kind, "tui_recovery")
 	opts.ScopeContract = planexecute.NewPlanScopeContract([]string(opts.RequiredEditPaths), []string(opts.AllowedEditPaths), opts.EditSetObligations)
+	if writeEnvelopeExplicit {
+		opts.ScopeContract = opts.ScopeContract.WithWriteAllowedPaths(writeEnvelope)
+	}
+	if opts.ScopeContract.HasContent() {
+		opts.ScopeExtractionPolicy = planexecute.ScopeExtractionFrozen
+	}
 
 	return opts
+}
+
+func implementationDispatchRetryWriteEnvelope(opts planexecute.Options) ([]string, bool) {
+	scope := opts.ScopeContract.Normalized()
+	if scope.WriteAllowedExplicit {
+		return append([]string(nil), scope.WriteAllowedPaths...), true
+	}
+
+	if opts.WriteAllowedPathsExplicit || len(opts.WriteAllowedPaths) > 0 {
+		return uniqueImplementationDispatchPaths([]string(opts.WriteAllowedPaths)), true
+	}
+
+	if len(scope.RequiredCoveragePaths) > 0 || len(scope.AllowedCandidatePaths) > 0 {
+		paths := append(append([]string{}, scope.RequiredCoveragePaths...), scope.AllowedCandidatePaths...)
+		return uniqueImplementationDispatchPaths(paths), true
+	}
+
+	return nil, false
 }
 
 func implementationDispatchEditSetObligationsWithSource(obligations planexecute.EditSetObligations, kind planexecute.EditSetObligationKind, source string) planexecute.EditSetObligations {

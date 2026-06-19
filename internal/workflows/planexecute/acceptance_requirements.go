@@ -12,7 +12,7 @@ const (
 	planExecuteTypedAtomContractMarker = "Typed plan authority projection:"
 )
 
-func planExecuteRequiredAcceptanceEvidenceIDsFromPrompt(prompt string) []string {
+func ExtractRequiredAcceptanceEvidenceIDs(prompt string) []string {
 	if body := planExecuteJSONAfterPromptMarker(prompt, planExecuteTypedAtomContractMarker); body != "" {
 		var atom plancontract.AtomExecutionContract
 
@@ -35,6 +35,10 @@ func planExecuteRequiredAcceptanceEvidenceIDsFromPrompt(prompt string) []string 
 	}
 
 	return nil
+}
+
+func planExecuteRequiredAcceptanceEvidenceIDsFromPrompt(prompt string) []string {
+	return ExtractRequiredAcceptanceEvidenceIDs(prompt)
 }
 
 func planExecuteRequiredAcceptanceEvidenceIDsFromAtom(atom plancontract.AtomExecutionContract) []string {

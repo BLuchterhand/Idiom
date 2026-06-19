@@ -7145,6 +7145,10 @@ func planThenExecuteRequiredPathState(brief workerruntime.WorkerRuntimeBrief, re
 		return planThenExecuteRequiredPathBlocked
 	}
 
+	if planThenExecuteRequiredPathHasExplicitNewFileIntent(brief, path) {
+		return planThenExecuteRequiredPathNewFileBodyRequired
+	}
+
 	if planThenExecuteRequiredPathHasTerminalMissingFileEvidence(path, results) {
 		return planThenExecuteRequiredPathNewFileBodyRequired
 	}
@@ -7165,6 +7169,54 @@ func planThenExecuteRequiredPathState(brief workerruntime.WorkerRuntimeBrief, re
 	}
 
 	return planThenExecuteRequiredPathExistingSourceBodyRequired
+}
+
+func planThenExecuteRequiredPathHasExplicitNewFileIntent(brief workerruntime.WorkerRuntimeBrief, path string) bool {
+	path = agentutil.NormalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+
+	text := strings.ToLower(strings.Join([]string{
+		brief.Objective,
+		brief.RequestedOutcome,
+		brief.WriteIntent,
+		strings.Join(brief.UserBoundaries, "\n"),
+		strings.Join(brief.Constraints, "\n"),
+		strings.Join(brief.RequiredNext, "\n"),
+	}, "\n"))
+	if !strings.Contains(text, strings.ToLower(path)) {
+		return false
+	}
+
+	lowerPath := strings.ToLower(path)
+	for _, phrase := range []string{
+		"create new file " + lowerPath,
+		"create a new file " + lowerPath,
+		"create a new file at " + lowerPath,
+		"create a new file named " + lowerPath,
+		"add new file " + lowerPath,
+		"add a new file " + lowerPath,
+		"add a new file at " + lowerPath,
+		"add a new file named " + lowerPath,
+		"write new file " + lowerPath,
+		"write a new file " + lowerPath,
+		"write a new file at " + lowerPath,
+		"write a new file named " + lowerPath,
+		"new file " + lowerPath,
+		"new file at " + lowerPath,
+		"new file named " + lowerPath,
+		lowerPath + " as a new file",
+		lowerPath + " is a new file",
+		lowerPath + " will be a new file",
+		lowerPath + " (new file",
+	} {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func planThenExecuteRequiredPathHasBlockerEvidence(path string, results []workspace.ToolResult) bool {

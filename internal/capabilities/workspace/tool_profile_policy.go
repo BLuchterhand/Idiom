@@ -60,7 +60,7 @@ func ToolAllowedForProfile(tool string, profile string) ToolProfileDecision {
 	}
 
 	policy := toolSchemaPolicyForTool(tool)
-	if tool == "shell" || hasToolSchemaSideEffect(policy.SideEffects, autonomy.SideEffectUnknown) {
+	if tool == ToolNameShell || hasToolSchemaSideEffect(policy.SideEffects, autonomy.SideEffectUnknown) {
 		return discoveryProfileDenied("unknown or shell side effects are not allowed")
 	}
 
@@ -126,11 +126,11 @@ func discoveryProfileRequestAllowed(req ToolRequest) ToolProfileDecision {
 	}
 
 	switch tool {
-	case "context_status":
+	case ToolNameContextStatus:
 		if discoveryProfileFreshnessPolicyCanRefresh(req.FreshnessPolicy) {
 			return discoveryProfileDenied("freshness_policy requests that can refresh local context are not allowed")
 		}
-	case "context_query", "context_zoom":
+	case ToolNameContextQuery, ToolNameContextZoom:
 		if !discoveryProfileFreshnessPolicyIsReportOnly(req.FreshnessPolicy) {
 			return discoveryProfileDenied("graph-backed discovery requests must use freshness_policy report_only or allow_stale")
 		}

@@ -1,6 +1,10 @@
 package recovery
 
-import "strings"
+import (
+	"strings"
+
+	"idiom/internal/workflows/workflowstate"
+)
 
 type PacketStatus string
 
@@ -14,6 +18,9 @@ const (
 
 type PacketStatusProjection struct {
 	Status                 PacketStatus
+	WorkflowID             workflowstate.WorkflowID
+	WorkflowTerminalState  workflowstate.TerminalState
+	Dispatchable           bool
 	NextAction             string
 	Blockers               []string
 	ResidualWork           []ResidualWork
@@ -31,6 +38,7 @@ func ProjectPacketStatus(packet DecompositionPacket, reconciliation *Reconciliat
 		CandidateAtoms: cloneCandidateAtoms(packet.CandidateAtoms),
 	}
 	if reconciliation == nil {
+		projection = classifyPacketStatusProjection(packet, projection)
 		return projection
 	}
 
@@ -47,6 +55,7 @@ func ProjectPacketStatus(packet DecompositionPacket, reconciliation *Reconciliat
 		projection.NextAction = NextActionInspectFailure
 		projection.Blockers = append(projection.Blockers, reconciliationFindingBlockers(findings)...)
 		projection.Blockers = compactStatusStrings(append(projection.Blockers, reconciliationCopy.Blockers...))
+		projection = classifyPacketStatusProjection(packet, projection)
 
 		return projection
 	}
@@ -60,6 +69,31 @@ func ProjectPacketStatus(packet DecompositionPacket, reconciliation *Reconciliat
 		projection.Blockers = nil
 	} else {
 		projection.Blockers = compactStatusStrings(append(projection.Blockers, reconciliationCopy.Blockers...))
+	}
+
+	projection = classifyPacketStatusProjection(packet, projection)
+
+	return projection
+}
+
+func classifyPacketStatusProjection(packet DecompositionPacket, projection PacketStatusProjection) PacketStatusProjection {
+	projection.WorkflowID = workflowstate.WorkflowRecovery
+	projection.Dispatchable = false
+
+	switch {
+	case projection.Status == PacketStatusRecovered:
+		projection.WorkflowTerminalState = workflowstate.TerminalStateComplete
+	case packet.PartialState.DirtyStatus == DirtyStatusDirtyOutScope:
+		projection.WorkflowTerminalState = workflowstate.TerminalStateDirtyScope
+	case packet.PartialState.ScopeStatus == ScopeStatusOutOfScope:
+		projection.WorkflowTerminalState = workflowstate.TerminalStateInvalidScope
+	case projection.Status == PacketStatusReady || projection.Status == PacketStatusPartial:
+		projection.WorkflowTerminalState = workflowstate.TerminalStateRecoveryOpen
+		projection.Dispatchable = len(projection.CandidateAtoms) > 0 && len(projection.Blockers) == 0
+	case projection.Status == PacketStatusNeedsInspection:
+		projection.WorkflowTerminalState = workflowstate.TerminalStateRecoveryOpen
+	default:
+		projection.WorkflowTerminalState = workflowstate.TerminalStateBlocked
 	}
 
 	return projection

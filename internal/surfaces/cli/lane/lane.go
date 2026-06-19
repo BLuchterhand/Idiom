@@ -25,6 +25,7 @@ import (
 	atomcmd "idiom/internal/surfaces/cli/atom"
 	"idiom/internal/surfaces/cliassets"
 	"idiom/internal/surfaces/tui/app"
+	"idiom/internal/workflows/workflowstate"
 )
 
 // briefBodyStartMarker / briefBodyEndMarker bracket the project
@@ -105,6 +106,9 @@ type laneOptions struct {
 	ExplainSessionID         string // explain mode: specific session id (empty = latest)
 	ExplainBriefFilter       string // explain mode: filter by brief path (empty = unfiltered)
 	MaxTokens                int    // forwarded to the wrapped subcommand's --max-tokens override
+	IntentLoop               bool   // plan-execute mode: dispatch through the intent-loop orchestrator
+	IntentLoopMaxCycles      int    // plan-execute mode: --max-cycles, default 5 in the orchestrator
+	IntentLoopBudgetTokens   int    // plan-execute mode: total token budget across cycles; 0 means unbounded
 	// coderRequested is set when the caller asked for the coder
 	// alias either explicitly (`--coder`) or implicitly (plan-execute
 	// with no --model override). The actual alias is resolved later
@@ -458,13 +462,14 @@ func runLaneAtomIntakePreflight(opts laneOptions, stdout io.Writer, stderr io.Wr
 		return false, 0, nil
 	}
 
-	if !laneBriefNeedsAtomIntake(string(body)) {
+	projection := laneBriefIntakeProjection(string(body))
+	if !projection.NeedsAtomIntake {
 		return false, 0, nil
 	}
 
 	report := evaluateAtomIntake(string(body), opts.BriefPath, opts.ProjectRoot, opts.AllowDirtyAtomScope)
 	if opts.JSONEvents {
-		emitLaneJSONEvent(stdout, "atom_intake", laneAtomIntakeReportFields(report))
+		emitLaneJSONEvent(stdout, "atom_intake", laneAtomIntakeReportFields(report, projection))
 	}
 
 	if report.Dispatchable {
@@ -502,38 +507,96 @@ func laneBriefMtime(path string) string {
 	return ""
 }
 
-func laneBriefNeedsAtomIntake(body string) bool {
+type laneBriefIntakeProjectionResult struct {
+	WorkflowID            workflowstate.WorkflowID `json:"workflow_id"`
+	State                 workflowstate.StateID    `json:"state"`
+	Dispatchable          bool                     `json:"dispatchable"`
+	NeedsAtomIntake       bool                     `json:"needs_atom_intake"`
+	LegacyHeadingFallback bool                     `json:"legacy_heading_fallback"`
+	Reason                string                   `json:"reason,omitempty"`
+}
+
+func laneBriefIntakeProjection(body string) laneBriefIntakeProjectionResult {
+	projection := laneBriefIntakeProjectionResult{
+		WorkflowID: workflowstate.WorkflowAtomIntake,
+		State:      workflowstate.StateTerminal,
+	}
+
 	if _, ok := atomSpecStatus(body); ok {
-		return true
+		projection.State = workflowstate.StateDispatchable
+		projection.Dispatchable = true
+		projection.NeedsAtomIntake = true
+		projection.Reason = "atom_spec_status"
+		return projection
 	}
 
 	if _, ok := atomRefineDraftReason(body); ok {
-		return true
+		projection.State = workflowstate.StateDispatchable
+		projection.Dispatchable = true
+		projection.NeedsAtomIntake = true
+		projection.Reason = "atom_refine_draft"
+		return projection
 	}
 
 	targets := atomcmd.DefaultScopePaths(body)
 	if len(targets) == 0 {
-		return false
+		if laneBriefHasAtomIntakeMarker(body) {
+			projection.NeedsAtomIntake = true
+		}
+		projection.Reason = "missing_scope"
+		return projection
 	}
 
+	projection.State = workflowstate.StateDispatchable
+	projection.Dispatchable = true
+
 	if atomSpecHasAcceptedResult(body) {
-		return true
+		projection.NeedsAtomIntake = true
+		projection.Reason = "accepted_result"
+		return projection
 	}
 
 	if len(atomRequiredEditSnippetsFromSpec(body, targets)) > 0 {
-		return true
+		projection.NeedsAtomIntake = true
+		projection.Reason = "required_edit_snippet"
+		return projection
 	}
 
-	for _, heading := range []string{"required edits", "edits to apply", "implementation shape"} {
-		if strings.TrimSpace(atomMarkdownSectionByHeading(body, heading)) != "" {
-			return true
+	projection.LegacyHeadingFallback = true
+	if projection.Dispatchable && projection.LegacyHeadingFallback {
+		for _, heading := range []string{"required edits", "edits to apply", "implementation shape"} {
+			if strings.TrimSpace(atomMarkdownSectionByHeading(body, heading)) != "" {
+				projection.NeedsAtomIntake = true
+				projection.Reason = "legacy_heading:" + heading
+				return projection
+			}
 		}
+	}
+
+	projection.Reason = "dispatchable_without_atom_intake_marker"
+	return projection
+}
+
+func laneBriefHasAtomIntakeMarker(body string) bool {
+	if _, ok := atomSpecStatus(body); ok {
+		return true
+	}
+	if _, ok := atomRefineDraftReason(body); ok {
+		return true
+	}
+	if atomSpecHasAcceptedResult(body) {
+		return true
+	}
+	if strings.TrimSpace(atomMarkdownSectionByHeading(body, "required edits")) != "" ||
+		strings.TrimSpace(atomMarkdownSectionByHeading(body, "edits to apply")) != "" ||
+		strings.TrimSpace(atomMarkdownSectionByHeading(body, "implementation shape")) != "" {
+		return true
 	}
 
 	return false
 }
 
-func laneAtomIntakeReportFields(report atomIntakeReport) map[string]any {
+func laneAtomIntakeReportFields(report atomIntakeReport, projection laneBriefIntakeProjectionResult) map[string]any {
 	body, err := json.Marshal(report)
 	if err != nil {
 		return map[string]any{}
@@ -546,6 +609,10 @@ func laneAtomIntakeReportFields(report atomIntakeReport) map[string]any {
 	}
 
 	delete(fields, "type")
+	fields["workflow_id"] = string(projection.WorkflowID)
+	fields["workflow_state"] = string(projection.State)
+	fields["workflow_dispatchable"] = projection.Dispatchable
+	fields["workflow_reason"] = projection.Reason
 
 	return fields
 }
@@ -614,9 +681,23 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	fs.StringVar(&opts.ExplainSessionID, "session", "", "explain mode: specific session id to diagnose (default: most recent)")
 	fs.StringVar(&opts.ExplainBriefFilter, "brief", "", "explain mode: filter to most-recent session for this brief path")
 	fs.IntVar(&opts.MaxTokens, "max-tokens", 0, "override max_tokens for the wrapped subprocess; 0 uses backend default")
+	fs.BoolVar(&opts.IntentLoop, "intent-loop", false, "plan-execute mode: iterate planner/executor/review until intent-level evidence is satisfied")
+	fs.IntVar(&opts.IntentLoopMaxCycles, "max-cycles", 5, "plan-execute mode: maximum intent-loop cycles when --intent-loop is set")
+	fs.IntVar(&opts.IntentLoopBudgetTokens, "total-budget-tokens", 0, "plan-execute mode: total intent-loop token budget across cycles; 0 means unbounded")
+	fs.IntVar(&opts.IntentLoopBudgetTokens, "budget-tokens", 0, "alias for --total-budget-tokens")
 
 	if err := fs.Parse(args[1:]); err != nil {
 		return laneOptions{}, err
+	}
+
+	if opts.IntentLoopMaxCycles <= 0 {
+		return laneOptions{}, fmt.Errorf("lane: --max-cycles must be greater than 0")
+	}
+	if opts.IntentLoopBudgetTokens < 0 {
+		return laneOptions{}, fmt.Errorf("lane: --total-budget-tokens must be greater than or equal to 0")
+	}
+	if opts.IntentLoop && opts.Mode != "plan-execute" {
+		return laneOptions{}, fmt.Errorf("lane: --intent-loop is only supported for plan-execute mode")
 	}
 
 	// --coder loses to --model when both are set, matching the
@@ -1538,6 +1619,13 @@ func buildForwardedArgs(opts laneOptions, composedPath string, requiredEditPaths
 
 	if opts.MaxTokens > 0 {
 		out = append(out, "--max-tokens", strconv.Itoa(opts.MaxTokens))
+	}
+
+	if opts.Mode == "plan-execute" && opts.IntentLoop {
+		out = append(out, "--intent-loop", "--max-cycles", strconv.Itoa(opts.IntentLoopMaxCycles))
+		if opts.IntentLoopBudgetTokens > 0 {
+			out = append(out, "--total-budget-tokens", strconv.Itoa(opts.IntentLoopBudgetTokens))
+		}
 	}
 
 	return out

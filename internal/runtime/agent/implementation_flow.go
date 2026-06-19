@@ -4093,15 +4093,13 @@ func (r *Runner) userFacingFinalAnswer() bool {
 // answer and true on a rewrite; otherwise empty and false.
 //
 // Preconditions:
-//   - Brief requires mutation
-//   - All required_edit_paths show up in changed paths
-//   - Answer is not already a <<QUESTION>>
-//   - Planner owns verification (so no harness-side verification gate
-//     is going to flip this run to blocked)
-//   - The last tool result with a non-empty error is a write-class call
-//     against a path that was already successfully changed earlier in
-//     the run — the shape of an apply_patch/edit_file probe with stale
-//     context after the file was edited.
+//   - Brief requires mutation.
+//   - All required_edit_paths show up in changed paths.
+//   - Answer is not already a <<QUESTION>>.
+//   - The visible blocker is attributable to the harness loop after the
+//     requested write completed: either a stale write probe for a changed
+//     path, or an internal tool-surface/recovery rejection after no
+//     post-write verification obligation remains.
 func stripCompletedMutationSelfBlocker(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) (string, bool) {
 	if !runnerBriefRequiresMutation(brief) {
 		return "", false
@@ -4116,11 +4114,7 @@ func stripCompletedMutationSelfBlocker(brief workerruntime.WorkerRuntimeBrief, r
 		return "", false
 	}
 
-	if !plannerOwnsVerification(brief) {
-		return "", false
-	}
-
-	if !lastFailureIsPostCompletionWriteProbe(results, changed) {
+	if !completedMutationSelfBlockerIsHarnessOwned(brief, results, changed) {
 		return "", false
 	}
 
@@ -4130,6 +4124,18 @@ func stripCompletedMutationSelfBlocker(brief workerruntime.WorkerRuntimeBrief, r
 	}
 
 	return cleaned, true
+}
+
+func completedMutationSelfBlockerIsHarnessOwned(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, changed map[string]struct{}) bool {
+	if lastFailureIsPostCompletionWriteProbe(results, changed) && plannerOwnsVerification(brief) {
+		return true
+	}
+
+	if hasPendingVerificationAfterWrites(results, brief) || sourceEditsNeedSemanticVerification(brief, results) {
+		return false
+	}
+
+	return lastFailureIsHarnessRejectionAfterCompletedMutation(results)
 }
 
 // lastFailureIsPostCompletionWriteProbe reports whether the most recent
@@ -4162,6 +4168,35 @@ func lastFailureIsPostCompletionWriteProbe(results []workspace.ToolResult, chang
 		_, ok := changed[path]
 
 		return ok
+	}
+
+	return false
+}
+
+func lastFailureIsHarnessRejectionAfterCompletedMutation(results []workspace.ToolResult) bool {
+	latestProgressIndex := -1
+
+	for i, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+
+		if workspace.IsWorkspaceWriteTool(result.Tool) || resultCountsAsSuccessfulVerification(result) {
+			latestProgressIndex = i
+		}
+	}
+
+	if latestProgressIndex < 0 {
+		return false
+	}
+
+	for i := len(results) - 1; i > latestProgressIndex; i-- {
+		result := results[i]
+		if strings.TrimSpace(result.Error) == "" {
+			continue
+		}
+
+		return isHarnessRejectionSummary(result.Summary) || isHarnessRejectionErrorText(result.Error)
 	}
 
 	return false
@@ -6889,6 +6924,7 @@ func implementationTargetWriteReadyRuntimeBrief(brief workerruntime.WorkerRuntim
 	brief.Constraints = util.Merge([]string{"implementation_target_write_ready"}, brief.Constraints)
 	brief.RequiredNext = util.Merge([]string{
 		"parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence",
+		"for delete/remove-file objectives, use apply_patch with `*** Delete File: <path>` after source evidence; do not use write_file with empty content as deletion",
 	}, brief.RequiredNext)
 
 	if sourceRefresh {
@@ -6966,10 +7002,12 @@ func implementationTargetSourceRuntimeBrief(brief workerruntime.WorkerRuntimeBri
 	brief.Constraints = util.Merge([]string{"implementation_target_source_pending"}, brief.Constraints)
 	brief.RequiredNext = util.Merge([]string{
 		"localize the concrete edit target, read bounded source-body evidence with named_gap for the missing edit-safety fact, write only after exact source-body evidence and replacement shape are known, or <<QUESTION>> with the exact blocker/no-op evidence",
+		"for delete/remove-file objectives, read bounded existence/source evidence, then use apply_patch with `*** Delete File: <path>`; do not use write_file with empty content as deletion",
 	}, brief.RequiredNext)
 	brief.InvalidActions = util.Merge([]string{
 		"final answer before a successful write, no-op, or blocker",
 		"write before exact source-body evidence and replacement shape",
+		"write_file with empty content to simulate deleting a file",
 		"verification before a successful write",
 	}, brief.InvalidActions)
 	brief.SearchPolicy = util.Merge([]string{
@@ -9621,7 +9659,11 @@ func failedVerificationAfterLatestWrite(results []workspace.ToolResult, brief wo
 
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) == "" && workspace.IsWorkspaceWriteTool(result.Tool) {
-			if docLane && (writeTouchesOnlyNonSourcePaths(result) || mkdirTouchesOnlyRequiredPathParents(result, brief.RequiredEditPaths)) {
+			if writeResultMadeNoWorkspaceChange(result) {
+				continue
+			}
+
+			if writeTouchesOnlyNonSourcePaths(result) || (docLane && mkdirTouchesOnlyRequiredPathParents(result, brief.RequiredEditPaths)) {
 				continue
 			}
 
@@ -10581,6 +10623,17 @@ type preimageSnapshot struct {
 	Mode   os.FileMode
 }
 
+type writePreimagePayload struct {
+	Paths []writePreimagePath `json:"paths,omitempty"`
+}
+
+type writePreimagePath struct {
+	Path   string `json:"path"`
+	Exists bool   `json:"exists"`
+}
+
+const writePreimagePayloadType = "workspace_write_preimage"
+
 func NewPreimageCheckpointStore(root string) *PreimageCheckpointStore {
 	return &PreimageCheckpointStore{Root: root, snapshots: make(map[string]preimageSnapshot)}
 }
@@ -10666,6 +10719,24 @@ func (s *PreimageCheckpointStore) Has(path string) bool {
 	_, ok := s.snapshots[normalized]
 
 	return ok
+}
+
+func (s *PreimageCheckpointStore) Existed(path string) (bool, bool) {
+	if s == nil {
+		return false, false
+	}
+
+	normalized, _, err := s.resolve(path)
+	if err != nil {
+		return false, false
+	}
+
+	snapshot, ok := s.snapshots[normalized]
+	if !ok {
+		return false, false
+	}
+
+	return snapshot.Exists, true
 }
 
 func (s *PreimageCheckpointStore) resolve(path string) (string, string, error) {

@@ -126,6 +126,7 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 		ResponseFormat:           runtime.ResponseFormat,
 		ExpectedVisibleOutput:    input.Protocol.ExpectedVisibleOutput,
 		VisibleTools:             append([]string(nil), input.Protocol.VisibleTools...),
+		HiddenTools:              append([]string(nil), input.Protocol.HiddenTools...),
 		CallableTools:            append([]string(nil), input.Protocol.CallableTools...),
 		CallableActionClasses:    append([]string(nil), input.Protocol.CallableActionClasses...),
 		InvalidActionClasses:     append([]string(nil), input.Protocol.InvalidActionClasses...),
@@ -352,7 +353,7 @@ func compileAuthority(input PlanExecutePlannerInput, runtime RuntimeEnvelope) []
 	}
 
 	for _, ref := range input.TargetPacket {
-		authority = append(authority, autonomy.AuthoritySource{Kind: "target_packet", Ref: ref, Freshness: autonomy.FreshnessFresh})
+		authority = append(authority, autonomy.AuthoritySource{Kind: "target_packet", Ref: ref, Freshness: autonomy.FreshnessUnknown})
 	}
 
 	for _, boundary := range input.UserBoundaries {

@@ -182,7 +182,7 @@ func contextToolInputSchema() string {
 func baseToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
-			Name:        "task_ledger",
+			Name:        ToolNameTaskLedger,
 			Description: "Track complex multi-step work. Keep at most one item in_progress. When an item will touch files, list them in `paths` so the plan panel attaches the completed write to this item instead of adding a duplicate line. When marking mutation work completed, cite host-backed evidence refs such as `write:path`, `read:path`, `verify:command`, or `artifact:id`.",
 			ParametersJSON: schemaObj(
 				[]string{"todos"},
@@ -190,7 +190,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "task",
+			Name:        ToolNameTask,
 			Description: "Delegate a bounded question to a sub-agent. Read-only sub-agents return inspected paths and concise findings; write-mode sub-agents may also make changes within their scope.",
 			ParametersJSON: schemaObj(
 				[]string{"agent", "prompt"},
@@ -198,7 +198,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "product_efforts",
+			Name:        ToolNameProductEfforts,
 			Description: "Read product workflow effort summaries by status bucket without running inference or mutating workflow state.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -206,7 +206,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "product_status",
+			Name:        ToolNameProductStatus,
 			Description: "Read one product workflow effort's status or operator continuation view without running inference or mutating workflow state.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -214,12 +214,12 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:           "pwd",
+			Name:           ToolNamePwd,
 			Description:    "Show the current working directory.",
 			ParametersJSON: `{"type":"object","properties":{}}`,
 		},
 		{
-			Name:        "list_files",
+			Name:        ToolNameListFiles,
 			Description: "List files in a directory.",
 			ParametersJSON: schemaObj(
 				[]string{"path"},
@@ -227,7 +227,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "search_files",
+			Name:        ToolNameSearchFiles,
 			Description: "Find files by name or path pattern.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -235,7 +235,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "search_content",
+			Name:        ToolNameSearchContent,
 			Description: "Find text matches in files (prose, config, comments, strings).",
 			ParametersJSON: schemaObj(
 				[]string{"pattern"},
@@ -243,7 +243,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "read_file",
+			Name:        ToolNameReadFile,
 			Description: "Read a file or a line range.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -251,7 +251,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "file_stats",
+			Name:        ToolNameFileStats,
 			Description: "Count files, directories, bytes, and lines for a file or bounded directory scope. Use for size/count questions instead of shell wc/find pipelines.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -267,7 +267,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "read_only_capability",
+			Name:        ToolNameReadOnlyCapability,
 			Description: "Invoke a stable read-only capability ID from the capability registry. Routes through existing read-only adapters, preserves adapter fallback/uncertainty in the result wrapper, and leaves direct adapter tools available.",
 			ParametersJSON: schemaObj(
 				[]string{"capability"},
@@ -275,7 +275,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "source_sanity",
+			Name:        ToolNameSourceSanity,
 			Description: "Run source-aware sanity for edited source files. Routes to the file language's diagnostics when available; generic fallback is advisory and does not satisfy C/C++ terminal source_sanity when concrete diagnostics are unavailable.",
 			ParametersJSON: schemaObj(
 				[]string{"path"},
@@ -283,7 +283,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "harness_audit",
+			Name:        ToolNameHarnessAudit,
 			Description: "Audit idiom itself: exported tool/schema coverage, language capability wiring, backend availability, recent JSONL behavior logs, and passive autonomy contract event coverage when present. Use only for harness/tooling improvement questions, not as a replacement for code search.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -291,7 +291,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "harness_feedback",
+			Name:        ToolNameHarnessFeedback,
 			Description: "Record structured feedback about idiom harness/tool/prompt behavior that affected the current task. Use only for generic idiom capability gaps, confusing contracts, stale-context failures, telemetry gaps, or workflow friction; do not use for product-code bugs. ALL of `category`, `component`, `expected`, `observed`, `impact`, `confidence` are REQUIRED; `evidence` should be a non-empty array of repo-relative paths or step ids; `category` and `confidence` must come from the documented enum values exactly. Validation rejects partial submissions silently — fill every required field on the first call.",
 			ParametersJSON: schemaObj(
 				[]string{"category", "component", "expected", "observed", "impact", "confidence"},
@@ -299,7 +299,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "recovery_inspect",
+			Name:        ToolNameRecoveryInspect,
 			Description: "Read a durable recovery failure record and current workspace partial-state classification without running models or mutating files.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -307,7 +307,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "recovery_status",
+			Name:        ToolNameRecoveryStatus,
 			Description: "Read a recovery decomposition packet plus any valid reconciliation artifact, and return status, blockers, gates, candidate atoms, product links, and next valid action.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -315,7 +315,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "recovery_decompose",
+			Name:        ToolNameRecoveryDecompose,
 			Description: "Write or rebuild a local .idiom/recovery decomposition packet from an existing durable failure record. Not available in discovery profile.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -323,15 +323,15 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "context_index",
+			Name:        ToolNameContextIndex,
 			Description: "Build or refresh idiom's persistent, language-agnostic codebase comprehension graph. This writes the active SQLite graph plus a JSON export; use it when context_status is missing/stale or before generating packet-ready context.",
 			ParametersJSON: schemaObj(
 				nil,
-				contextToolInputSchema() + `,"language":` + strProp("language hint; auto indexes recognized source files, with rich Go/C++/Python/TypeScript/JavaScript/Rust/Java/GDScript collectors, Godot project resource support, and generic cross-language fallback") + `,"mode":{"type":"string","enum":["quick","standard","deep"],"description":"indexing depth; standard records fast language/backend/build-system enrichment, deep also runs bounded live language-tool/LSP probes and normalizes parseable relationship evidence"}`,
+				contextToolInputSchema()+`,"language":`+strProp("language hint; auto indexes recognized source files, with rich Go/C++/Python/TypeScript/JavaScript/Rust/Java/GDScript collectors, Godot project resource support, and generic cross-language fallback")+`,"mode":{"type":"string","enum":["quick","standard","deep"],"description":"indexing depth; standard records fast language/backend/build-system enrichment, deep also runs bounded live language-tool/LSP probes and normalizes parseable relationship evidence"}`,
 			),
 		},
 		{
-			Name:        "context_status",
+			Name:        ToolNameContextStatus,
 			Description: "Report whether the persistent SQLite-backed codebase comprehension graph exists, whether indexed files/symbols or collector versions are stale, and whether storage backends are compatible. Stale/missing path lists are sample-capped by default while count fields preserve the full size. With refresh=true, repair bounded stale scopes, stale file sets, missing indexes, and collector-version mismatches before reporting; explicit freshness_max_files or limit values cap unscoped stale-file refreshes and report budget_exceeded when exceeded.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -339,7 +339,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "context_query",
+			Name:        ToolNameContextQuery,
 			Description: "Query idiom's persistent codebase graph for repository, package, file, symbol, summary, import, call, or test relationships without dumping raw source. Results are observational and include confidence/staleness.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -347,7 +347,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "context_zoom",
+			Name:        ToolNameContextZoom,
 			Description: "Return a deeper or broader view for one context graph handle, path, or symbol. Use after context_query returns a promising handle.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -355,7 +355,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "context_pack",
+			Name:        ToolNameContextPack,
 			Description: "Generate a saved, packet-ready context view for a task from the persistent graph. Returns candidate files, symbols, tests, evidence handles, risks, unknowns, and stale-context gaps without prescribing edits.",
 			ParametersJSON: schemaObj(
 				[]string{"task"},
@@ -363,7 +363,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "context_impact",
+			Name:        ToolNameContextImpact,
 			Description: "Rank task-relevant files, symbols, and validation candidates with signal explanations from the persistent graph. Use before planner packet generation when you need affected-scope evidence without raw source flooding.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -371,7 +371,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "context_trace_pack",
+			Name:        ToolNameContextTracePack,
 			Description: "Run a command and save language-agnostic runtime evidence under .idiom/comprehension/traces. Parses generic stack frames, test output, Go test JSON, Go coverprofiles, and LCOV without overwriting static graph facts.",
 			ParametersJSON: schemaObj(
 				[]string{"command"},
@@ -379,15 +379,15 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "discovery_query",
+			Name:        ToolNameDiscoveryQuery,
 			Description: "Run a deterministic layered discovery recipe for a configured purpose and persist the full evidence packet under .idiom/discovery/queries. Uses context_pack orientation when the graph is fresh or a bounded stale scope can be refreshed, then falls back to live probes for stale, missing, or too-coarse claims.",
 			ParametersJSON: schemaObj(
 				[]string{"purpose"},
-				`"purpose":{"type":"string","enum":["impact_analysis","function_tracing","architecture_boundary","security_review","history_context"],"description":"deterministic recipe to run"},"path":`+strProp("optional target file/directory")+`,"pattern":`+strProp("optional symbol, function, type, package, or search pattern")+`,"language":`+strProp("optional language/ecosystem hint, e.g. go, typescript, python, cpp, rust, java")+`,"max_depth":`+intProp("optional relationship depth/budget; default 2")+`,`+freshnessPolicyProps(),
+				`"purpose":{"type":"string","enum":`+stringEnumJSON(DiscoveryQueryPurposeValues())+`,"description":"deterministic recipe to run"},"path":`+strProp("optional target file/directory")+`,"pattern":`+strProp("optional symbol, function, type, package, or search pattern")+`,"language":`+strProp("optional language/ecosystem hint, e.g. go, typescript, python, cpp, rust, java")+`,"max_depth":`+intProp("optional relationship depth/budget; default 2")+`,`+freshnessPolicyProps(),
 			),
 		},
 		{
-			Name:        "structural_search",
+			Name:        ToolNameStructuralSearch,
 			Description: "Search code by AST shape via ast-grep. Use for syntax-shaped questions that grep and symbol tools cannot answer precisely.",
 			ParametersJSON: schemaObj(
 				[]string{"pattern"},
@@ -395,7 +395,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "dependency_graph",
+			Name:        ToolNameDependencyGraph,
 			Description: "Summarize package/module/import dependencies. Uses native Go/Rust tools where available, Madge/Pydeps if installed, or lightweight local import extraction for TS/JS and Python.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -403,7 +403,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "history_range",
+			Name:        ToolNameHistoryRange,
 			Description: "Show git history for a file or specific line range using git log -L. Path-only requests default to a bounded current-file range.",
 			ParametersJSON: schemaObj(
 				[]string{"path"},
@@ -411,7 +411,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "history_symbol",
+			Name:        ToolNameHistorySymbol,
 			Description: "Show git history for a function/symbol using git log -L :symbol:path.",
 			ParametersJSON: schemaObj(
 				[]string{"path", "pattern"},
@@ -419,7 +419,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "blame_range",
+			Name:        ToolNameBlameRange,
 			Description: "Show git blame for a file or line range.",
 			ParametersJSON: schemaObj(
 				[]string{"path"},
@@ -427,7 +427,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "ctags_symbols",
+			Name:        ToolNameCtagsSymbols,
 			Description: "Fallback symbol discovery via Universal Ctags JSON output. Use when the primary language-aware route does not cover a file type.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -435,7 +435,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "semgrep_scan",
+			Name:        ToolNameSemgrepScan,
 			Description: "Run Semgrep for security/dataflow-shaped discovery. Requires semgrep on PATH; pattern is the Semgrep config, defaulting to auto.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -443,7 +443,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "joern_scan",
+			Name:        ToolNameJoernScan,
 			Description: "Run a heavyweight Joern code-property-graph vulnerability scan. Requires joern-scan on PATH.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -451,7 +451,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "git_status",
+			Name:        ToolNameGitStatus,
 			Description: "Inspect the git working tree status.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -459,7 +459,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "git_diff",
+			Name:        ToolNameGitDiff,
 			Description: "Inspect the git diff for the working tree or a path.",
 			ParametersJSON: schemaObj(
 				nil,
@@ -467,7 +467,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "shell",
+			Name:        ToolNameShell,
 			Description: "Run a shell command in the workspace. Same OS permissions as this process.",
 			ParametersJSON: schemaObj(
 				[]string{"command"},
@@ -475,7 +475,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "mkdir",
+			Name:        ToolNameMkdir,
 			Description: "Create a directory.",
 			ParametersJSON: schemaObj(
 				[]string{"path"},
@@ -483,7 +483,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "edit_file",
+			Name:        ToolNameEditFile,
 			Description: "Bounded edit for an existing file. Use exactly one body shape: old_text+new_text for an exact substring replacement, OR start_line+end_line+content for a line-range replacement. Preferred for existing source/test edits. Do not pass content without start_line/end_line; do not use this for whole-file replacement. Requires a one-sentence description of the change's intent.",
 			ParametersJSON: schemaObj(
 				[]string{"path", "description"},
@@ -491,7 +491,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "write_file",
+			Name:        ToolNameWriteFile,
 			Description: "Full-body write with exact contents. Use for missing/new files or non-source deliverables where complete file authorship is intended; prefer edit_file or apply_patch for existing source/test edits. Requires a one-sentence description of the change's intent.",
 			ParametersJSON: schemaObj(
 				[]string{"path", "content", "description"},
@@ -499,7 +499,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "append_file",
+			Name:        ToolNameAppendFile,
 			Description: "Append text to an existing file boundary. Use only when appending at the end is explicitly intended; prefer edit_file or apply_patch for source/test changes at known anchors. Requires a one-sentence description of the change's intent.",
 			ParametersJSON: schemaObj(
 				[]string{"path", "content", "description"},
@@ -507,7 +507,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "apply_patch",
+			Name:        ToolNameApplyPatch,
 			Description: "Apply a multi-file patch envelope. The envelope grammar is exactly: outer `*** Begin Patch` / `*** End Patch` markers; per-file sections introduced by `*** Add File: <path>`, `*** Update File: <path>`, or `*** Delete File: <path>`; `*** Update File:` may carry an optional `*** Move to: <new-path>`; hunks inside an Update File start with `@@` and contain lines prefixed by ` `, `+`, or `-`. Do NOT invent additional `*** Foo` directives such as `*** Sanity Check`, `*** Note`, `*** Verification`, or commentary headers — the parser tolerates and skips them but they signal a brief misread. Requires a one-sentence description of the patch's intent.",
 			ParametersJSON: schemaObj(
 				[]string{"content", "description"},
@@ -515,12 +515,12 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:           "submit_plan",
+			Name:           ToolNameSubmitPlan,
 			Description:    "Submit a durable structured edit plan in plan-then-execute mode. Planner phases use it for supported edit plans; review-repair phases use it only for new corrective edits when a checklist item fails. Clean review-repair closes with Decision: pass instead. Legacy callers may send rationale, pack_id, and edits at the top level; edits must be a JSON array, not a quoted JSON string. Structured callers may send plan_artifact with task, contract, packet, paths, evidence, unresolved_questions, verification_obligations, approval, handoff, and edits. Approval carries stable scope_id, approved_paths, pending_paths, and execution_permission; partial approval may execute only approved scope. Handoff carries a stable id used by executor/audit events. Use this in lieu of per-edit tool calls when the lane is plan-only. Every edit body must be executable final content: no placeholders, ellipses, TODO markers, existing-code comments, omitted bodies, pseudo-code, or prose descriptions. Four edit shapes: (1) substring — path+old_text+new_text replaces the first match; use for exact replacements; empty new_text deletes old_text; set replace_all:true to replace every occurrence of a non-empty old_text; (2) line-range — path+start_line+end_line+non-empty content replaces exactly lines [start_line, end_line] with complete replacement content; use for replacements, including large additions by replacing the anchor line(s) with the unchanged anchor line(s) plus inserted content. For source files, content-only line-range additions must preserve selected anchor line(s) or use old_text/new_text instead, and must not duplicate a source block already present elsewhere in the file; (3) insertion — path+insert_after_line+small inline non-empty content inserts after an existing 1-based line in an existing file and does not replace current lines; do not combine with old_text/new_text, start_line/end_line, replace_all, or content_ref; (4) missing/new-file — path+new_text+replace_all:true with EMPTY old_text writes new_text as the complete file body, creating the file if it doesn't exist. Existing source/test files must use bounded anchored edits, not whole-file replace_all. Large new_text/content bodies are automatically spilled to artifact refs after submission, except insert_after_line which requires inline content in this change. When you used context_pack to localize the work, pass its pack_id back so the executor can rehydrate the same cached view instead of re-discovering.",
 			ParametersJSON: submitPlanParametersSchema(),
 		},
 		{
-			Name:        "delegate_edit",
+			Name:        ToolNameDelegateEdit,
 			Description: "Hand a single file edit to the configured executor model (the executor-role backend, when one is declared in .idiom/backends.json or as the cfg.Implementer block). The executor receives the spec, emits the workspace tool call, and the runner dispatches it. Use this when you have already decided the exact change and want to keep your own context focused on planning the next path instead of re-reading the file you just wrote. Falls back to direct dispatch if no executor is configured or it returns an unparseable reply, so the lane never stalls. Requires a path plus EITHER old_text+new_text OR start_line+end_line+content.",
 			ParametersJSON: schemaObj(
 				[]string{"path"},
@@ -528,7 +528,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "go_move_declarations",
+			Name:        ToolNameGoMoveDeclarations,
 			Description: "Mechanically move Go declarations between files by tag or explicit list.",
 			ParametersJSON: schemaObj(
 				[]string{"path", "destination"},

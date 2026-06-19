@@ -235,11 +235,6 @@ func planExecuteTrimVerificationSentence(text string) string {
 	return text
 }
 
-func planExecuteVerificationCommandAllowed(command string) bool {
-	_, ok := VerificationCommandArgs(command)
-	return ok
-}
-
 func VerificationCommandArgs(command string) ([]string, bool) {
 	args, ok := planExecuteVerificationCommandArgs(command)
 	if !ok || !VerificationArgvAllowed(args) {
@@ -296,7 +291,7 @@ func normalizeVerificationArgv(args []string) []string {
 }
 
 func verificationCommandAllowedPrefixes() [][]string {
-	return [][]string{{"go", "test"}}
+	return [][]string{{"go", "test"}, {"go", "vet"}}
 }
 
 func planExecuteVerificationCommandArgs(command string) ([]string, bool) {

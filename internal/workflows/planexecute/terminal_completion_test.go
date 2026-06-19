@@ -6,17 +6,21 @@ import (
 	"testing"
 	"time"
 
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/workflows/recovery"
+	"idiom/internal/workflows/workflowstate"
 )
 
 func TestPlanExecuteTerminalCompletionRecordClassifiesProgressStateBranches(t *testing.T) {
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name        string
-		state       ProgressState
-		input       PlanExecuteTerminalCompletionInput
-		wantClass   PlanExecuteTerminalClass
-		wantOutcome PlanExecuteTerminalOutcome
+		name         string
+		state        ProgressState
+		input        PlanExecuteTerminalCompletionInput
+		wantClass    PlanExecuteTerminalClass
+		wantOutcome  PlanExecuteTerminalOutcome
+		wantWorkflow workflowstate.WorkflowID
+		wantState    workflowstate.TerminalState
 	}{
 		{
 			name: "completed",
@@ -24,8 +28,10 @@ func TestPlanExecuteTerminalCompletionRecordClassifiesProgressStateBranches(t *t
 				state.Phase = ProgressPhaseComplete
 				state.Status = ProgressStatusCompleted
 			}),
-			wantClass:   PlanExecuteTerminalClassSuccess,
-			wantOutcome: PlanExecuteTerminalOutcomeCompleted,
+			wantClass:    PlanExecuteTerminalClassSuccess,
+			wantOutcome:  PlanExecuteTerminalOutcomeCompleted,
+			wantWorkflow: workflowstate.WorkflowPlanExecuteExecutor,
+			wantState:    workflowstate.TerminalStateComplete,
 		},
 		{
 			name: "source satisfied explicit input",
@@ -38,40 +44,50 @@ func TestPlanExecuteTerminalCompletionRecordClassifiesProgressStateBranches(t *t
 				SourceSatisfiedEvidencePaths: []string{"pkg/feature.go", "pkg/feature.go", " "},
 				CompletedAt:                  now,
 			},
-			wantClass:   PlanExecuteTerminalClassSuccess,
-			wantOutcome: PlanExecuteTerminalOutcomeSourceSatisfied,
+			wantClass:    PlanExecuteTerminalClassSuccess,
+			wantOutcome:  PlanExecuteTerminalOutcomeSourceSatisfied,
+			wantWorkflow: workflowstate.WorkflowPlanExecutePlanner,
+			wantState:    workflowstate.TerminalStateSourceSatisfied,
 		},
 		{
 			name: "review skipped by design",
 			state: progressStateForTerminalCompletionTest(func(state *ProgressState) {
 				state.MarkSkippedReview()
 			}),
-			wantClass:   PlanExecuteTerminalClassSuccess,
-			wantOutcome: PlanExecuteTerminalOutcomeReviewSkippedByDesign,
+			wantClass:    PlanExecuteTerminalClassSuccess,
+			wantOutcome:  PlanExecuteTerminalOutcomeReviewSkippedByDesign,
+			wantWorkflow: workflowstate.WorkflowPlanExecuteExecutor,
+			wantState:    workflowstate.TerminalStateComplete,
 		},
 		{
 			name: "review degraded",
 			state: progressStateForTerminalCompletionTest(func(state *ProgressState) {
 				state.MarkReviewComplete(ReviewRepairPhaseReport{Status: "degraded (review unavailable)"}, nil)
 			}),
-			wantClass:   PlanExecuteTerminalClassRecoveryRequired,
-			wantOutcome: PlanExecuteTerminalOutcomeReviewDegraded,
+			wantClass:    PlanExecuteTerminalClassRecoveryRequired,
+			wantOutcome:  PlanExecuteTerminalOutcomeReviewDegraded,
+			wantWorkflow: workflowstate.WorkflowPlanExecuteExecutor,
+			wantState:    workflowstate.TerminalStateRecoveryOpen,
 		},
 		{
 			name: "blocked",
 			state: progressStateForTerminalCompletionTest(func(state *ProgressState) {
 				state.MarkReviewComplete(ReviewRepairPhaseReport{Status: "blocked: missing approval"}, nil)
 			}),
-			wantClass:   PlanExecuteTerminalClassRecoveryRequired,
-			wantOutcome: PlanExecuteTerminalOutcomeBlocked,
+			wantClass:    PlanExecuteTerminalClassRecoveryRequired,
+			wantOutcome:  PlanExecuteTerminalOutcomeBlocked,
+			wantWorkflow: workflowstate.WorkflowPlanExecuteExecutor,
+			wantState:    workflowstate.TerminalStateRecoveryOpen,
 		},
 		{
 			name: "failed",
 			state: progressStateForTerminalCompletionTest(func(state *ProgressState) {
 				state.MarkPlanningFailed("planner_failed", "planner model unavailable")
 			}),
-			wantClass:   PlanExecuteTerminalClassFailed,
-			wantOutcome: PlanExecuteTerminalOutcomeFailed,
+			wantClass:    PlanExecuteTerminalClassFailed,
+			wantOutcome:  PlanExecuteTerminalOutcomeFailed,
+			wantWorkflow: workflowstate.WorkflowPlanExecutePlanner,
+			wantState:    workflowstate.TerminalStateBlocked,
 		},
 	}
 
@@ -80,6 +96,10 @@ func TestPlanExecuteTerminalCompletionRecordClassifiesProgressStateBranches(t *t
 			record := NewPlanExecuteTerminalCompletionRecord(tt.state, tt.input)
 			if record.TerminalClass != tt.wantClass || record.Outcome != tt.wantOutcome {
 				t.Fatalf("terminal classification = class %q outcome %q, want class %q outcome %q; record=%#v", record.TerminalClass, record.Outcome, tt.wantClass, tt.wantOutcome, record)
+			}
+
+			if record.WorkflowID != tt.wantWorkflow || record.WorkflowTerminalState != tt.wantState || record.Dispatchable {
+				t.Fatalf("workflow classification = workflow %q state %q dispatchable=%v, want workflow %q state %q dispatchable=false; record=%#v", record.WorkflowID, record.WorkflowTerminalState, record.Dispatchable, tt.wantWorkflow, tt.wantState, record)
 			}
 
 			if record.SchemaVersion != PlanExecuteTerminalCompletionSchemaVersion || record.Type != PlanExecuteTerminalCompletionRecordType {
@@ -109,6 +129,10 @@ func TestNormalizePlanExecuteTerminalCompletionRecordDefaultsAndTrims(t *testing
 		t.Fatalf("classification = class %q outcome %q, want completed/completed", record.TerminalClass, record.Outcome)
 	}
 
+	if record.WorkflowID != workflowstate.WorkflowPlanExecuteExecutor || record.WorkflowTerminalState != workflowstate.TerminalStateComplete || record.Dispatchable {
+		t.Fatalf("workflow classification = workflow %q state %q dispatchable=%v, want executor complete false", record.WorkflowID, record.WorkflowTerminalState, record.Dispatchable)
+	}
+
 	if len(record.SourceSatisfiedEvidencePaths) != 1 || record.SourceSatisfiedEvidencePaths[0] != "a.go" {
 		t.Fatalf("source evidence paths not normalized: %#v", record.SourceSatisfiedEvidencePaths)
 	}
@@ -129,6 +153,26 @@ func TestNormalizePlanExecuteTerminalCompletionRecordReclassifiesContradictions(
 
 	if record.TerminalClass != PlanExecuteTerminalClassFailed || record.Outcome != PlanExecuteTerminalOutcomeFailed {
 		t.Fatalf("classification = class %q outcome %q, want failed/failed", record.TerminalClass, record.Outcome)
+	}
+
+	if record.WorkflowTerminalState != workflowstate.TerminalStateBlocked {
+		t.Fatalf("workflow terminal state = %q, want blocked", record.WorkflowTerminalState)
+	}
+}
+
+func TestPlanExecuteWorkflowClassificationUsesTypedFailureKindMapping(t *testing.T) {
+	record := NormalizePlanExecuteTerminalCompletionRecord(PlanExecuteTerminalCompletionRecord{
+		Phase:         ProgressPhaseExecutor,
+		Status:        ProgressStatusFailed,
+		TerminalClass: PlanExecuteTerminalClassFailed,
+		Outcome:       PlanExecuteTerminalOutcomeFailed,
+		FailureKind:   RunFailureMissingEditPathWithoutNewFileAuth,
+	})
+
+	if record.WorkflowID != workflowstate.WorkflowPlanExecutePlanner ||
+		record.WorkflowTerminalState != workflowstate.TerminalStateMissingScope {
+
+		t.Fatalf("typed workflow classification = workflow %q state %q, want planner missing-scope: %#v", record.WorkflowID, record.WorkflowTerminalState, record)
 	}
 }
 
@@ -371,6 +415,20 @@ func TestFinalizeTerminalCompletionRejectsMissingSourceSanityForSourceChange(t *
 		t.Fatalf("validation failures missing source_sanity_missing: %#v", result.Completion.ValidationFailures)
 	}
 
+	loaded, _, found, err := TryLoadPlanExecuteTerminalCompletionRecord(root, "missing_source_sanity")
+	if err != nil || !found {
+		t.Fatalf("TryLoadPlanExecuteTerminalCompletionRecord found=%v err=%v", found, err)
+	}
+	if !planExecuteTerminalStringSliceContains(loaded.ValidationFailures, "source_sanity_missing:pkg/feature.go") {
+		t.Fatalf("saved terminal completion lost validation failure: %#v", loaded.ValidationFailures)
+	}
+
+	fields := PlanExecuteTerminalCompletionEventFields(*result.Completion, result.CompletionPath)
+	fieldFailures, ok := fields["validation_failures"].([]any)
+	if !ok || !planExecuteTerminalAnySliceContains(fieldFailures, "source_sanity_missing:pkg/feature.go") {
+		t.Fatalf("terminal completion event lost validation failure: %#v", fields["validation_failures"])
+	}
+
 	if len(result.Completion.AcceptanceEvidenceIDs) > 0 {
 		t.Fatalf("downgraded terminal completion should not retain acceptance IDs: %#v", result.Completion.AcceptanceEvidenceIDs)
 	}
@@ -434,6 +492,49 @@ func TestFinalizeTerminalCompletionCarriesAcceptanceEvidenceIDs(t *testing.T) {
 
 	if !planExecuteTerminalStringSlicesEqual(result.Completion.RequiredAcceptanceEvidenceIDs, want) {
 		t.Fatalf("RequiredAcceptanceEvidenceIDs = %#v, want %#v", result.Completion.RequiredAcceptanceEvidenceIDs, want)
+	}
+}
+
+func TestTerminalCompletionCarriesAcceptanceEvidenceClaimsIntoValidation(t *testing.T) {
+	record := NormalizePlanExecuteTerminalCompletionRecord(PlanExecuteTerminalCompletionRecord{
+		SessionID:         "acceptance_claims",
+		Phase:             ProgressPhaseComplete,
+		Status:            ProgressStatusCompleted,
+		ReviewStatus:      ProgressStatusSkipped,
+		ExitCode:          0,
+		RequiredEditPaths: []string{"pkg/feature.go"},
+		WriteAllowedPaths: []string{"pkg/feature.go"},
+		ChangedPaths:      []string{"pkg/feature.go"},
+		SourceSanity:      []PhaseEvidenceCheck{{Kind: "source_sanity", Path: "pkg/feature.go", Status: "ok"}},
+		RequiredAcceptanceEvidence: []plancontract.AcceptanceEvidenceRequired{{
+			ID:        "coverage-threshold",
+			Required:  true,
+			Threshold: ">=80%",
+			Source:    "test",
+		}},
+		AcceptanceEvidenceClaims: []plancontract.AcceptanceEvidenceClaim{{
+			ID:    "coverage-threshold",
+			Value: "72%",
+			Met:   true,
+		}},
+	})
+
+	if !planExecuteTerminalStringSliceContains(record.RequiredAcceptanceEvidenceIDs, "coverage-threshold") {
+		t.Fatalf("required threshold obligation ID was not mirrored into required IDs: %#v", record.RequiredAcceptanceEvidenceIDs)
+	}
+
+	if len(record.AcceptanceEvidenceClaims) != 1 || record.AcceptanceEvidenceClaims[0].ID != "coverage-threshold" {
+		t.Fatalf("acceptance evidence claims not normalized on record: %#v", record.AcceptanceEvidenceClaims)
+	}
+
+	if !planExecuteTerminalStringSliceContains(record.ValidationFailures, "acceptance_evidence_claim_met_mismatch") ||
+		!planExecuteTerminalStringSliceContains(record.ValidationFailures, "acceptance_evidence_threshold_not_met") {
+		t.Fatalf("terminal validation did not evaluate threshold claim: %#v", record.ValidationFailures)
+	}
+
+	fields := PlanExecuteTerminalCompletionEventFields(record, ".idiom/plan-execute/terminal/acceptance_claims.json")
+	if _, ok := fields["acceptance_evidence_claims"]; !ok {
+		t.Fatalf("terminal event fields omitted acceptance evidence claims: %#v", fields)
 	}
 }
 
@@ -584,6 +685,16 @@ func TestRecoveryInvariantFailuresIncludeValidationFailurePaths(t *testing.T) {
 func planExecuteTerminalStringSliceContains(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {
+			return true
+		}
+	}
+
+	return false
+}
+
+func planExecuteTerminalAnySliceContains(values []any, target string) bool {
+	for _, value := range values {
+		if text, ok := value.(string); ok && text == target {
 			return true
 		}
 	}

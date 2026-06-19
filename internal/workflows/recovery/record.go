@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/contracts/autonomy"
 	"idiom/internal/platform/util"
 )
 
@@ -1056,12 +1057,72 @@ func scopeStatus(changedPaths []string, requiredPaths []string, allowedPaths []s
 		return ScopeStatusNone
 	}
 
+	required := cleanPathList(requiredPaths)
+	allowed := cleanPathList(allowedPaths)
+	if len(required) == 0 && len(allowed) == 0 {
+		return ScopeStatusNotChecked
+	}
+
+	coverage, err := autonomy.ResolvePlanScopePathRoleObligations(autonomy.PlanScopePathRoleObligationInput{
+		RequiredEditPaths:      required,
+		AllowedCandidatePaths:  allowed,
+		CandidateCoveragePaths: changed,
+		Source:                 "recovery_scope_status",
+	})
+	if err != nil {
+		return legacyScopeStatus(changed, required, allowed)
+	}
+
+	covered := make(map[string]bool, len(coverage.CandidateCoverage))
+	for _, candidate := range coverage.CandidateCoverage {
+		path := cleanRelPath(firstNonEmpty(candidate.Path, candidate.OriginalPath))
+		if path == "" {
+			continue
+		}
+
+		covered[path] = candidate.SatisfiesRequiredCoverage || candidate.WithinAllowedCandidatePath
+	}
+
+	for _, path := range changed {
+		normalized, ok := recoveryScopeCoveragePath(path, coverage)
+		if !ok {
+			return ScopeStatusOutOfScope
+		}
+		if !covered[normalized] {
+			return ScopeStatusOutOfScope
+		}
+	}
+
+	return ScopeStatusInScope
+}
+
+func recoveryScopeCoveragePath(path string, coverage autonomy.PlanScopePathRoleObligationCoverage) (string, bool) {
+	path = cleanRelPath(path)
+	if path == "" {
+		return "", false
+	}
+
+	for _, candidate := range coverage.CandidateCoverage {
+		if cleanRelPath(candidate.OriginalPath) == path {
+			if normalized := cleanRelPath(candidate.Path); normalized != "" {
+				return normalized, true
+			}
+		}
+		if cleanRelPath(candidate.Path) == path {
+			return path, true
+		}
+	}
+
+	return path, false
+}
+
+func legacyScopeStatus(changed []string, required []string, allowedPaths []string) string {
 	allowed := map[string]bool{}
-	for _, path := range cleanPathList(requiredPaths) {
+	for _, path := range required {
 		allowed[path] = true
 	}
 
-	for _, path := range cleanPathList(allowedPaths) {
+	for _, path := range allowedPaths {
 		allowed[path] = true
 	}
 
@@ -1076,6 +1137,16 @@ func scopeStatus(changedPaths []string, requiredPaths []string, allowedPaths []s
 	}
 
 	return ScopeStatusInScope
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+
+	return ""
 }
 
 func cleanPathList(paths []string) []string {
@@ -1101,6 +1172,8 @@ func cleanRelPath(path string) string {
 	if path == "" {
 		return ""
 	}
+
+	path = strings.ReplaceAll(path, "\\", "/")
 
 	return filepath.ToSlash(filepath.Clean(path))
 }

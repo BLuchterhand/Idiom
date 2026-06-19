@@ -197,22 +197,6 @@ func (p VerificationPlan) CommandStrings() []string {
 	return out
 }
 
-func InferredTouchedVerificationCommands(paths []string) []string {
-	plan := PlanVerification(VerificationPlannerInput{
-		WorkspaceRoot: ".",
-		ChangedPaths:  paths,
-	})
-	out := make([]string, 0, len(plan.Commands))
-
-	for _, command := range plan.Commands {
-		if command.Source == VerificationCommandSourceInferred {
-			out = append(out, command.Command)
-		}
-	}
-
-	return out
-}
-
 func (p VerificationPlanner) inferTouchedPathCommand(rawPath string) (VerificationCommand, VerificationSkip, bool) {
 	cleaned, skip, ok := cleanVerificationChangedPath(rawPath)
 	if !ok {

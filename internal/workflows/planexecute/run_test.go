@@ -552,6 +552,37 @@ func TestPreflightPlanEditsRejectsCurrentSchemaMissingAnchorProvenance(t *testin
 	}
 }
 
+func TestPreflightPlanEditsRejectsExistingEditWithoutAcceptedSourceBodyEvidence(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Created:       "2026-06-18T20:00:00Z",
+		Handoff: workspace.PlanArtifactHandoff{
+			From: "planner",
+			To:   "plan_execute_executor",
+		},
+		Edits: []workspace.PlanEdit{{
+			Path:    "a.txt",
+			OldText: "alpha",
+			NewText: "ALPHA",
+			Purpose: "update existing file without accepted source-body evidence",
+		}},
+	}
+
+	got := preflightPlanEdits(root, plan)
+	if got == nil {
+		t.Fatal("expected missing source-body evidence to reject existing-file edit")
+	}
+
+	if !strings.Contains(got.Reason, "missing submit_plan anchor provenance") {
+		t.Fatalf("expected missing source-body evidence rejection, got %#v", got)
+	}
+}
+
 func TestPreflightPlanRequiredEditPathsAcceptsSourceSatisfiedCoverage(t *testing.T) {
 	plan := workspace.PlanArtifact{
 		SchemaVersion: workspace.PlanArtifactSchemaVersion,
@@ -1717,6 +1748,82 @@ func TestRunContinuesReviewRepairAfterRequestedVerificationFailure(t *testing.T)
 	if len(state.Executor.Verification) == 0 || state.Executor.Verification[len(state.Executor.Verification)-1].Status != "ok" {
 		t.Fatalf("expected successful post-review requested verification evidence, got %#v", state.Executor.Verification)
 	}
+}
+
+func TestRunInjectsExplicitVerificationCommandsIntoExecutorPlan(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/explicit-verification\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("seed go.mod: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatalf("mkdir pkg: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "pkg", "feature.go"), []byte("package pkg\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatalf("seed feature.go: %v", err)
+	}
+
+	cfg := config.Default()
+
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.Workspace.CommandTimeoutSeconds = 30
+
+	var stdout, stderr bytes.Buffer
+
+	result := Run(cfg, Options{
+		Prompt:                           "Update Value without mentioning any verification command.",
+		JSONEvents:                       true,
+		SkipReviewRepair:                 true,
+		VerificationPlanExplicitCommands: []string{"go vet ./..."},
+	}, func(cfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
+		if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecutePlanner) {
+			t.Fatalf("unexpected task family %q", opts.TaskFamily)
+		}
+
+		writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{{
+			Path:    filepath.ToSlash(filepath.Join("pkg", "feature.go")),
+			OldText: "return 1",
+			NewText: "return 2",
+			Purpose: "change Value behavior",
+		}}, "change Value behavior")
+
+		return "submitted plan", nil
+	}, nil, &stdout, &stderr)
+
+	if result.ExitCode != 0 {
+		t.Fatalf("Run exit=%d result=%#v stdout=%s stderr=%s", result.ExitCode, result, stdout.String(), stderr.String())
+	}
+
+	if result.Completion == nil {
+		t.Fatalf("expected terminal completion record, result=%#v stdout=%s", result, stdout.String())
+	}
+
+	var vetCommand *VerificationCommand
+	for i := range result.Completion.VerificationCommands {
+		if result.Completion.VerificationCommands[i].Command == "go vet ./..." {
+			vetCommand = &result.Completion.VerificationCommands[i]
+			break
+		}
+	}
+
+	if vetCommand == nil {
+		t.Fatalf("explicit verification command was not planned, commands=%#v", result.Completion.VerificationCommands)
+	}
+
+	if vetCommand.Source != VerificationCommandSourceExplicit {
+		t.Fatalf("explicit command source = %q, want %q", vetCommand.Source, VerificationCommandSourceExplicit)
+	}
+
+	for _, check := range result.Completion.Verification {
+		if check.Command == "go vet ./..." && check.Status == "ok" {
+			return
+		}
+	}
+
+	t.Fatalf("explicit verification command did not pass, verification=%#v", result.Completion.Verification)
 }
 
 func TestRunKeepsSourceSanityFailureWhenReviewRepairUnavailable(t *testing.T) {

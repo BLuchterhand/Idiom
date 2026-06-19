@@ -19,7 +19,9 @@ import (
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/backends"
+	"idiom/internal/runtime/instructions"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/promptstack"
 	"idiom/internal/workflows/projectartifacts"
 )
@@ -355,14 +357,14 @@ func New(cfg config.Config) *Model {
 	if cfg.Chat.AttachInstructionFiles {
 		if candidates, explicit := instructionAttachmentCandidates(cfg.Chat); explicit {
 			if len(candidates) > 0 {
-				m.instructionAttacher = agent.NewInstructionAttacher(m.workspace.Root(), candidates...)
+				m.instructionAttacher = instructions.NewAttacher(m.workspace.Root(), candidates...)
 			}
 		} else {
-			m.instructionAttacher = agent.NewInstructionAttacher(m.workspace.Root())
+			m.instructionAttacher = instructions.NewAttacher(m.workspace.Root())
 		}
 	}
 
-	mode := agent.ModeOrDefault(m.agentModeName)
+	mode := modepolicy.ModeOrDefault(m.agentModeName)
 	m.applyModePermissions(mode)
 
 	mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -460,7 +462,7 @@ func instructionAttachmentCandidates(chat config.Chat) ([]string, bool) {
 
 // modeStepCap applies the Mode's StepCap on top of the config.MaxToolSteps
 // ceiling. Zero StepCap means "no per-mode cap".
-func modeStepCap(configured int, mode agent.Mode) int {
+func modeStepCap(configured int, mode modepolicy.Mode) int {
 	if mode.StepCap > 0 && (configured <= 0 || mode.StepCap < configured) {
 		return mode.StepCap
 	}
@@ -468,7 +470,7 @@ func modeStepCap(configured int, mode agent.Mode) int {
 	return configured
 }
 
-func modeRunPolicy(mode agent.Mode, cfg config.Chat) agent.RunPolicy {
+func modeRunPolicy(mode modepolicy.Mode, cfg config.Chat) agent.RunPolicy {
 	policy := agent.ModePolicy(mode)
 	if cfg.MaxContextChars > 0 {
 		policy.MaxContextChars = cfg.MaxContextChars
@@ -1171,7 +1173,7 @@ func shouldUnboundDirectPromptBudgets(nonInteractive bool, route turnRoutePlan) 
 		route.Contract == "direct_answer" || route.Contract == "grounded_evidence_summary"
 }
 
-func (m *Model) preExecuteToolRequest(step int, req workspace.ToolRequest, mode agent.Mode) *workspace.ToolResult {
+func (m *Model) preExecuteToolRequest(step int, req workspace.ToolRequest, mode modepolicy.Mode) *workspace.ToolResult {
 	if m == nil || m.workspace == nil {
 		return nil
 	}
@@ -1414,7 +1416,7 @@ type systemPromptFragments struct {
 	Sources []promptstack.Source
 }
 
-func loadModeSystemPromptFragments(mode agent.Mode, projectRoot string, existing []promptstack.Source) systemPromptFragments {
+func loadModeSystemPromptFragments(mode modepolicy.Mode, projectRoot string, existing []promptstack.Source) systemPromptFragments {
 	if len(mode.SystemPromptFiles) == 0 {
 		return systemPromptFragments{}
 	}

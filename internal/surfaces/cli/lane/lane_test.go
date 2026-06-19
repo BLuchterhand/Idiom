@@ -27,6 +27,26 @@ type laneFakeRunner struct {
 	exitCode     int
 }
 
+func TestLaneBriefIntakeProjectionRequiresTypedDispatchableScopeForLegacyHeadings(t *testing.T) {
+	body := "# Atom\n\n## Required Edits\n\n- Change the banner text.\n"
+	projection := laneBriefIntakeProjection(body)
+
+	if !projection.NeedsAtomIntake || projection.Dispatchable || projection.State != "terminal" || projection.Reason != "missing_scope" {
+		t.Fatalf("heading-only atom brief should trigger non-dispatchable typed atom intake without scope: %#v", projection)
+	}
+}
+
+func TestLaneBriefIntakeProjectionAllowsLegacyHeadingsAfterScope(t *testing.T) {
+	body := "# Atom\n\n## Files To Modify\n\n- pkg/feature.go\n\n## Required Edits\n\n- Change the banner text.\n"
+	projection := laneBriefIntakeProjection(body)
+
+	if !projection.NeedsAtomIntake || !projection.Dispatchable || !projection.LegacyHeadingFallback ||
+		!strings.HasPrefix(projection.Reason, "legacy_heading:") {
+
+		t.Fatalf("scoped legacy heading brief should trigger atom intake through compatibility fallback: %#v", projection)
+	}
+}
+
 func (f *laneFakeRunner) plan(args []string, stdout, _ io.Writer, _ promptRunner) int {
 	f.calledMode = "plan-execute"
 
@@ -257,6 +277,42 @@ func TestRunLaneMainAtomIntakeBlocksNonDispatchableBeforeRunner(t *testing.T) {
 
 	if !strings.Contains(stdout.String(), `"type":"idiom.lane.atom_intake"`) || !strings.Contains(stdout.String(), `"dispatchable":false`) {
 		t.Fatalf("stdout should include atom intake event, got:\n%s", stdout.String())
+	}
+}
+
+func TestRunLaneMainAtomIntakeOwnsMissingScopeBeforeRunner(t *testing.T) {
+	root := t.TempDir()
+	briefPath := filepath.Join(root, "atom.md")
+	brief := "# Atom\n\n## Required Edits\n\n- Change the banner text.\n"
+
+	if err := os.WriteFile(briefPath, []byte(brief), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+
+	fake := &laneFakeRunner{}
+	code := runLaneMainTest(t, []string{"plan-execute", "--json", "--project-root", root, briefPath}, &stdout, &stderr, fake)
+
+	if code == 0 {
+		t.Fatalf("expected missing-scope atom intake to block dispatch")
+	}
+	if fake.calledMode != "" {
+		t.Fatalf("fake runner should not be called, got mode %q", fake.calledMode)
+	}
+	for _, want := range []string{
+		`"type":"idiom.lane.atom_intake"`,
+		`"state":"missing-scope"`,
+		`"workflow_id":"atom_intake"`,
+		`"workflow_state":"terminal"`,
+		`"workflow_reason":"missing_scope"`,
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %s:\n%s", want, stdout.String())
+		}
+	}
+	if !strings.Contains(stderr.String(), "atom intake blocked dispatch") {
+		t.Fatalf("stderr should explain intake block, got:\n%s", stderr.String())
 	}
 }
 
@@ -2008,6 +2064,66 @@ func TestRunLaneMainResumeForwards(t *testing.T) {
 
 	if !argsContain(fake.calledArgs, "--resume", "20260509-180015.118") {
 		t.Fatalf("--resume must forward to the underlying subcommand; got: %v", fake.calledArgs)
+	}
+}
+
+func TestRunLaneMainDefaultDoesNotForwardIntentLoopFlags(t *testing.T) {
+	briefPath := writeBrief(t, "# atom")
+
+	var stdout, stderr bytes.Buffer
+
+	fake := &laneFakeRunner{}
+
+	if got := runLaneMainTest(t, []string{"plan-execute", briefPath}, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d", got)
+	}
+
+	if argsContainFlag(fake.calledArgs, "--intent-loop") || argsContainFlag(fake.calledArgs, "--max-cycles") || argsContainFlag(fake.calledArgs, "--total-budget-tokens") {
+		t.Fatalf("default plan-execute must not forward intent-loop flags; got: %v", fake.calledArgs)
+	}
+}
+
+func TestRunLaneMainIntentLoopFlagsForward(t *testing.T) {
+	briefPath := writeBrief(t, "# atom")
+
+	var stdout, stderr bytes.Buffer
+
+	fake := &laneFakeRunner{}
+	args := []string{
+		"plan-execute",
+		"--intent-loop",
+		"--max-cycles", "4",
+		"--total-budget-tokens", "24000",
+		briefPath,
+	}
+
+	if got := runLaneMainTest(t, args, &stdout, &stderr, fake); got != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", got, stderr.String())
+	}
+
+	if !argsContainFlag(fake.calledArgs, "--intent-loop") ||
+		!argsContain(fake.calledArgs, "--max-cycles", "4") ||
+		!argsContain(fake.calledArgs, "--total-budget-tokens", "24000") {
+		t.Fatalf("intent-loop flags must forward to plan-execute; got: %v", fake.calledArgs)
+	}
+}
+
+func TestRunLaneMainIntentLoopInvalidBudgetExits2(t *testing.T) {
+	briefPath := writeBrief(t, "# atom")
+
+	var stdout, stderr bytes.Buffer
+
+	fake := &laneFakeRunner{}
+	args := []string{"plan-execute", "--intent-loop", "--total-budget-tokens", "-1", briefPath}
+
+	if got := runLaneMainTest(t, args, &stdout, &stderr, fake); got != 2 {
+		t.Fatalf("expected exit 2 for invalid intent-loop budget, got %d", got)
+	}
+	if fake.calledMode != "" {
+		t.Fatalf("invalid budget must not dispatch subcommand, got mode %q", fake.calledMode)
+	}
+	if !strings.Contains(stderr.String(), "--total-budget-tokens") {
+		t.Fatalf("stderr should name invalid budget flag, got %s", stderr.String())
 	}
 }
 

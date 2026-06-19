@@ -1,0 +1,8 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "<<QUESTION>>: A concrete file path is required before I can create a new file; the request explicitly says not to invent a path, so there is no authorized required_edit_path for submit_plan."
+    }
+  ]
+}

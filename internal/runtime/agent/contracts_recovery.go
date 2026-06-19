@@ -2933,7 +2933,17 @@ func planThenExecuteHistoryPendingPaths(brief workerruntime.WorkerRuntimeBrief, 
 	var pending []string
 
 	for _, path := range paths {
-		if !concreteSourceEvidenceReadForPath(path, results) {
+		switch planThenExecuteRequiredPathState(brief, results, path) {
+		case planThenExecuteRequiredPathNewFileBodyRequired:
+			continue
+		case planThenExecuteRequiredPathSourceSatisfied:
+		default:
+			if !concreteSourceEvidenceReadForPath(path, results) {
+				continue
+			}
+		}
+
+		if planThenExecuteRequiredPathHasExplicitNewFileIntent(brief, path) {
 			continue
 		}
 

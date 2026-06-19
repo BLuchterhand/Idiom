@@ -2,7 +2,7 @@
   "name": "scripted-contracts",
   "version": 1,
   "coverage": {
-    "min_tasks": 68,
+    "min_tasks": 75,
     "required_families": [
       "general_chat",
       "direct_question",
@@ -25,6 +25,9 @@
       "coding-help",
       "implement",
       "plan-execute",
+      "new-file",
+      "closed-scope",
+      "approval-required",
       "source-satisfied",
       "typed-blocker",
       "recovery",
@@ -68,6 +71,7 @@
     ],
     "required_oracle_assertions": [
       "changed_files",
+      "file_content",
       "no_changed_files",
       "clean_rollback",
       "no_approval",
@@ -814,6 +818,277 @@
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
         ],
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-new-md-file-no-history",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Please write the contents \"temp\" to a new markdown file anywhere.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "implement",
+        "new-file",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-new-md-file-no-history",
+        "prompt_contains": [
+          "new markdown file anywhere",
+          "\"temp\""
+        ],
+        "require_changed_files": [
+          "temp.md"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "write_file"
+        ],
+        "forbid_tools": [
+          "read_file",
+          "history_range",
+          "history_symbol",
+          "blame_range",
+          "source_sanity",
+          "shell"
+        ],
+        "final_assistant_contains": [
+          "Changed paths:",
+          "temp.md",
+          "Verification: not run"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "temp.md"
+        ],
+        "require_file_content": [
+          {
+            "path": "temp.md",
+            "contains": [
+              "temp"
+            ]
+          }
+        ],
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_tool_requests": 1,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-delete-file-empty-write-recovery",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Can you please now remove the temp file you just created?",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "implement",
+        "delete-file",
+        "recovery",
+        "rollback"
+      ],
+      "fixture": "fixtures/temp-file-repo",
+      "scenario": {
+        "name": "scripted-implement-delete-file-empty-write-recovery",
+        "prompt_contains": [
+          "remove the temp file"
+        ],
+        "require_changed_files": [
+          "temp.md"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "apply_patch"
+        ],
+        "final_assistant_contains": [
+          "Changed paths:",
+          "temp.md",
+          "Verification: not run"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "temp.md"
+        ],
+        "forbid_successful_tools": [
+          "write_file"
+        ],
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_tool_requests": 3,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-delete-file-redundant-verification",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Can you delete the recently created temp file?",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "implement",
+        "delete-file",
+        "verification",
+        "recovery",
+        "rollback"
+      ],
+      "fixture": "fixtures/temp-file-repo",
+      "scenario": {
+        "name": "scripted-implement-delete-file-redundant-verification",
+        "prompt_contains": [
+          "delete the recently created temp file"
+        ],
+        "require_changed_files": [
+          "temp.md"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "apply_patch",
+          "source_sanity"
+        ],
+        "final_assistant_contains": [
+          "Changed paths:",
+          "temp.md",
+          "source_sanity unavailable because temp.md was deleted"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "temp.md"
+        ],
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "expected_recoveries": [
+          {
+            "kind": "source_sanity_rejected_after_delete_closeout_ready",
+            "tool": "source_sanity",
+            "accounts_for_runner_rejection": true,
+            "error_contains": [
+              "not in the current allowed tool surface"
+            ]
+          }
+        ],
+        "max_tool_requests": 5,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-delete-file-shell-blocker-closeout",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Can you delete the recently created temp file?",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "implement",
+        "delete-file",
+        "verification",
+        "recovery",
+        "rollback"
+      ],
+      "fixture": "fixtures/temp-file-repo",
+      "scenario": {
+        "name": "scripted-implement-delete-file-shell-blocker-closeout",
+        "prompt_contains": [
+          "delete the recently created temp file"
+        ],
+        "require_changed_files": [
+          "temp.md"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "history_range",
+          "apply_patch",
+          "shell"
+        ],
+        "final_assistant_contains": [
+          "Changed paths:",
+          "temp.md",
+          "Verification:"
+        ],
+        "forbid_final_assistant_contains": [
+          "Blocker:",
+          "Tool not available in current runtime contract",
+          "current allowed tool surface"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "temp.md"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "expected_recoveries": [
+          {
+            "kind": "shell_rejected_after_delete_closeout_ready",
+            "tool": "shell",
+            "accounts_for_runner_rejection": true,
+            "error_contains": [
+              "not in the current allowed tool surface"
+            ]
+          }
+        ],
+        "max_tool_requests": 5,
+        "max_errors": 0,
         "max_duration_millis": 120000
       }
     },
@@ -2730,6 +3005,297 @@
           ]
         },
         "require_tools": [
+          "submit_plan"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_executor_handoff": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 0,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 180000
+      }
+    },
+    {
+      "id": "scripted-plan-execute-authorized-new-file",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" and create new file internal/labels/generated_label.go with a GeneratedLabel function that returns \"Generated\".\n\nrequired_edit_paths:\n- internal/labels/labels.go\n- internal/labels/generated_label.go\n\nAfter the executor applies the plan, run `go test ./...`.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "plan-execute",
+        "new-file",
+        "rollback"
+      ],
+      "env": {
+        "IDIOM_EXTRA_ARGS": "-authorized-new-file internal/labels/generated_label.go",
+        "IDIOM_LIVE_SNAPSHOT_PATHS_JSON": "[\"internal/labels/generated_label.go\"]"
+      },
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-plan-execute-authorized-new-file",
+        "prompt_contains": [
+          "create new file",
+          "required_edit_paths:",
+          "internal/labels/labels.go",
+          "internal/labels/generated_label.go"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go",
+          "internal/labels/generated_label.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.plan_execute.required_edit_paths_resolved",
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_handoff_packet",
+          "idiom.plan_execute.preflight_ok",
+          "idiom.plan_execute.executor_complete",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_plan_execution": {
+          "require_handoff_id": true,
+          "require_no_drift": true,
+          "require_execution_permissions": [
+            "execute_all"
+          ]
+        },
+        "require_tools": [
+          "read_file",
+          "history_range",
+          "submit_plan"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go",
+          "internal/labels/generated_label.go"
+        ],
+        "require_file_content": [
+          {
+            "path": "internal/labels/generated_label.go",
+            "contains": [
+              "package labels",
+              "func GeneratedLabel() string",
+              "return \"Generated\""
+            ]
+          }
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_executor_handoff": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 0,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 180000
+      }
+    },
+    {
+      "id": "scripted-plan-execute-authorized-new-file-only",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use plan-execute to create new file internal/labels/generated_only.go with a GeneratedOnly function that returns \"GeneratedOnly\".\n\nrequired_edit_paths:\n- internal/labels/generated_only.go\n\nAfter the executor applies the plan, run `go test ./...`.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "plan-execute",
+        "new-file",
+        "rollback"
+      ],
+      "env": {
+        "IDIOM_EXTRA_ARGS": "-authorized-new-file internal/labels/generated_only.go",
+        "IDIOM_LIVE_SNAPSHOT_PATHS_JSON": "[\"internal/labels/generated_only.go\"]"
+      },
+      "fixture": "fixtures/already-save-label-repo",
+      "scenario": {
+        "name": "scripted-plan-execute-authorized-new-file-only",
+        "prompt_contains": [
+          "create new file",
+          "required_edit_paths:",
+          "internal/labels/generated_only.go"
+        ],
+        "require_changed_files": [
+          "internal/labels/generated_only.go"
+        ],
+        "forbid_tools": [
+          "read_file",
+          "history_range",
+          "history_symbol"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.plan_execute.required_edit_paths_resolved",
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_handoff_packet",
+          "idiom.plan_execute.preflight_ok",
+          "idiom.plan_execute.executor_complete",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_plan_execution": {
+          "require_handoff_id": true,
+          "require_no_drift": true,
+          "require_execution_permissions": [
+            "execute_all"
+          ]
+        },
+        "require_tools": [
+          "submit_plan"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/generated_only.go"
+        ],
+        "require_file_content": [
+          {
+            "path": "internal/labels/generated_only.go",
+            "contains": [
+              "package labels",
+              "func GeneratedOnly() string",
+              "return \"GeneratedOnly\""
+            ]
+          }
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_executor_handoff": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 0,
+        "forbid_changed_files": [
+          "internal/labels/labels.go",
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 180000
+      }
+    },
+    {
+      "id": "scripted-plan-execute-unspecified-new-file-blocker",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use plan-execute to create a new Go helper file for a generated label, but no path has been selected yet. Do not invent a file path and do not edit any other files.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "plan-execute",
+        "new-file",
+        "approval-required",
+        "closed-scope",
+        "rollback",
+        "typed-blocker"
+      ],
+      "fixture": "fixtures/already-save-label-repo",
+      "scenario": {
+        "name": "scripted-plan-execute-unspecified-new-file-blocker",
+        "prompt_contains": [
+          "create a new Go helper file",
+          "Do not invent a file path",
+          "do not edit any other files"
+        ],
+        "final_assistant_contains": [
+          "<<QUESTION>>",
+          "concrete file path"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "submit_plan"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-plan-execute-reference-readonly-closed-scope",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use README.md only as reference evidence before updating internal/labels/labels.go so ShortLabel returns \"Save\". Do not edit README.md or any other files.\n\nrequired_edit_paths:\n- internal/labels/labels.go\n\nAfter the executor applies the plan, run `go test ./...`.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "plan-execute",
+        "closed-scope",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-plan-execute-reference-readonly-closed-scope",
+        "prompt_contains": [
+          "Use README.md only as reference evidence",
+          "Do not edit README.md",
+          "required_edit_paths:"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.plan_execute.required_edit_paths_resolved",
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_handoff_packet",
+          "idiom.plan_execute.preflight_ok",
+          "idiom.plan_execute.executor_complete",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_plan_execution": {
+          "require_handoff_id": true,
+          "require_no_drift": true,
+          "require_execution_permissions": [
+            "execute_all"
+          ]
+        },
+        "require_tools": [
           "read_file",
           "submit_plan"
         ],
@@ -2749,6 +3315,7 @@
         "forbid_source_satisfied": true,
         "max_errors": 0,
         "forbid_changed_files": [
+          "README.md",
           "internal/labels/labels_test.go"
         ],
         "max_duration_millis": 180000

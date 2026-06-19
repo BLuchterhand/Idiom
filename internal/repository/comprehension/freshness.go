@@ -36,6 +36,8 @@ const (
 	FreshnessReasonStaleUnboundedGraph       = "stale_unbounded_graph"
 )
 
+const residualFreshnessRepairMaxFiles = 8
+
 type FreshnessRequest struct {
 	Root              string
 	Operation         string
@@ -55,28 +57,28 @@ type FreshnessRequest struct {
 }
 
 type FreshnessDecision struct {
-	Policy               FreshnessPolicy `json:"policy"`
-	Operation            string          `json:"operation,omitempty"`
-	IndexID              string          `json:"index_id,omitempty"`
-	StoreKind            string          `json:"store_kind,omitempty"`
-	GeneratedAt          string          `json:"generated_at,omitempty"`
-	FreshForScope        bool            `json:"fresh_for_scope"`
-	GlobalFresh          bool            `json:"global_fresh"`
-	Scope                string          `json:"scope,omitempty"`
-	Reason               string          `json:"reason,omitempty"`
-	Blocker              string          `json:"blocker,omitempty"`
-	BudgetExceeded       bool            `json:"budget_exceeded,omitempty"`
-	Refresh              *RefreshReport  `json:"refresh,omitempty"`
-	CheckedPaths         []string        `json:"checked_paths,omitempty"`
-	CheckedPathCount     int             `json:"checked_path_count"`
-	StalePaths           []string        `json:"stale_paths,omitempty"`
-	StalePathCount       int             `json:"stale_path_count"`
-	MissingPaths         []string        `json:"missing_paths,omitempty"`
-	MissingPathCount     int             `json:"missing_path_count"`
-	ScopeWarning         string          `json:"scope_warning,omitempty"`
-	ScopeWarningOutOf    []string        `json:"scope_warning_out_of,omitempty"`
-	StalenessWarning     string          `json:"staleness_warning,omitempty"`
-	StalenessWarningFiles []string       `json:"staleness_warning_files,omitempty"`
+	Policy                FreshnessPolicy `json:"policy"`
+	Operation             string          `json:"operation,omitempty"`
+	IndexID               string          `json:"index_id,omitempty"`
+	StoreKind             string          `json:"store_kind,omitempty"`
+	GeneratedAt           string          `json:"generated_at,omitempty"`
+	FreshForScope         bool            `json:"fresh_for_scope"`
+	GlobalFresh           bool            `json:"global_fresh"`
+	Scope                 string          `json:"scope,omitempty"`
+	Reason                string          `json:"reason,omitempty"`
+	Blocker               string          `json:"blocker,omitempty"`
+	BudgetExceeded        bool            `json:"budget_exceeded,omitempty"`
+	Refresh               *RefreshReport  `json:"refresh,omitempty"`
+	CheckedPaths          []string        `json:"checked_paths,omitempty"`
+	CheckedPathCount      int             `json:"checked_path_count"`
+	StalePaths            []string        `json:"stale_paths,omitempty"`
+	StalePathCount        int             `json:"stale_path_count"`
+	MissingPaths          []string        `json:"missing_paths,omitempty"`
+	MissingPathCount      int             `json:"missing_path_count"`
+	ScopeWarning          string          `json:"scope_warning,omitempty"`
+	ScopeWarningOutOf     []string        `json:"scope_warning_out_of,omitempty"`
+	StalenessWarning      string          `json:"staleness_warning,omitempty"`
+	StalenessWarningFiles []string        `json:"staleness_warning_files,omitempty"`
 }
 
 type StaleEvidenceSafety struct {
@@ -328,6 +330,28 @@ func EnsureFresh(ctx context.Context, req FreshnessRequest) (decision FreshnessD
 	decision.FreshForScope = freshnessScopeFresh(after, scope, decision.CheckedPaths)
 	applyFreshnessStatusMetadata(&decision, after)
 
+	if followUp, ok := repairResidualFreshness(refreshCtx, root, req, refresh, after, scope, language, mode); ok {
+		if followUp.Error != "" {
+			refresh.FollowUpRefreshes = append(refresh.FollowUpRefreshes, *followUp)
+			return decision, nil
+		}
+
+		after, err = statusAfterFreshnessRefresh(root, "", req.Operation, after)
+		if err != nil {
+			followUp.Error = err.Error()
+			refresh.FollowUpRefreshes = append(refresh.FollowUpRefreshes, *followUp)
+			return decision, nil
+		}
+
+		refresh.FollowUpRefreshes = append(refresh.FollowUpRefreshes, *followUp)
+
+		decision.GlobalFresh = after.Fresh
+		decision.StalePaths = freshnessRelevantPaths(after.StaleFiles, scope, decision.CheckedPaths)
+		decision.MissingPaths = freshnessRelevantPaths(after.MissingFiles, scope, decision.CheckedPaths)
+		decision.FreshForScope = freshnessScopeFresh(after, scope, decision.CheckedPaths)
+		applyFreshnessStatusMetadata(&decision, after)
+	}
+
 	if !decision.FreshForScope && decision.Blocker == "" {
 		decision.Blocker = freshnessBlocker(decision.Reason, scope, len(decision.StalePaths)+len(decision.MissingPaths), req.MaxFiles)
 	}
@@ -338,6 +362,33 @@ func EnsureFresh(ctx context.Context, req FreshnessRequest) (decision FreshnessD
 	}
 
 	return decision, nil
+}
+
+func repairResidualFreshness(ctx context.Context, root string, req FreshnessRequest, first *RefreshReport, after StatusReport, scope string, language string, mode string) (*RefreshReport, bool) {
+	if first == nil || !first.Attempted || first.Error != "" || first.Scope != "." || scope != "" || after.CollectorVersionMismatch || after.Fresh {
+		return nil, false
+	}
+
+	paths := freshnessStatusPaths(after)
+	if len(paths) == 0 {
+		return nil, false
+	}
+
+	maxFiles := req.MaxFiles
+	if maxFiles <= 0 {
+		maxFiles = residualFreshnessRepairMaxFiles
+	}
+
+	if len(paths) > maxFiles {
+		return nil, false
+	}
+
+	followUpReq := req
+	followUpReq.MaxFiles = maxFiles
+	followUpReq.ExactScopeRefresh = true
+	followUpReq.PatchActiveStore = true
+
+	return refreshFreshnessFileSet(ctx, root, followUpReq, paths, FreshnessReasonStaleScopeFiles, language, mode), true
 }
 
 func statusBeforeFreshnessRefresh(root string, scope string) (StatusReport, error) {

@@ -175,25 +175,26 @@ type QueryResult struct {
 }
 
 type RefreshReport struct {
-	Attempted            bool     `json:"attempted"`
-	Scope                string   `json:"scope,omitempty"`
-	Language             string   `json:"language,omitempty"`
-	Reason               string   `json:"reason,omitempty"`
-	SkippedReason        string   `json:"skipped_reason,omitempty"`
-	Error                string   `json:"error,omitempty"`
-	IndexID              string   `json:"index_id,omitempty"`
-	FilesIndexed         int      `json:"files_indexed,omitempty"`
-	SourceFileCount      int      `json:"source_file_count,omitempty"`
-	EstimatedMinimum     bool     `json:"estimated_minimum,omitempty"`
-	StalePathCount       int      `json:"stale_path_count,omitempty"`
-	MaxFiles             int      `json:"max_files,omitempty"`
-	SymbolsIndexed       int      `json:"symbols_indexed,omitempty"`
-	EdgesIndexed         int      `json:"edges_indexed,omitempty"`
-	PartialRefreshReason string   `json:"partial_refresh_reason,omitempty"`
-	FullRebuildReason    string   `json:"full_rebuild_reason,omitempty"`
-	FreshAfter           bool     `json:"fresh_after,omitempty"`
-	RefreshedFiles       []string `json:"refreshed_files,omitempty"`
-	RefreshScopes        []string `json:"refresh_scopes,omitempty"`
+	Attempted            bool            `json:"attempted"`
+	Scope                string          `json:"scope,omitempty"`
+	Language             string          `json:"language,omitempty"`
+	Reason               string          `json:"reason,omitempty"`
+	SkippedReason        string          `json:"skipped_reason,omitempty"`
+	Error                string          `json:"error,omitempty"`
+	IndexID              string          `json:"index_id,omitempty"`
+	FilesIndexed         int             `json:"files_indexed,omitempty"`
+	SourceFileCount      int             `json:"source_file_count,omitempty"`
+	EstimatedMinimum     bool            `json:"estimated_minimum,omitempty"`
+	StalePathCount       int             `json:"stale_path_count,omitempty"`
+	MaxFiles             int             `json:"max_files,omitempty"`
+	SymbolsIndexed       int             `json:"symbols_indexed,omitempty"`
+	EdgesIndexed         int             `json:"edges_indexed,omitempty"`
+	PartialRefreshReason string          `json:"partial_refresh_reason,omitempty"`
+	FullRebuildReason    string          `json:"full_rebuild_reason,omitempty"`
+	FreshAfter           bool            `json:"fresh_after,omitempty"`
+	RefreshedFiles       []string        `json:"refreshed_files,omitempty"`
+	RefreshScopes        []string        `json:"refresh_scopes,omitempty"`
+	FollowUpRefreshes    []RefreshReport `json:"follow_up_refreshes,omitempty"`
 }
 
 type ZoomOptions struct {
@@ -241,4 +242,3 @@ type EdgeSummary struct {
 	Confidence string         `json:"confidence"`
 	Evidence   map[string]any `json:"evidence,omitempty"`
 }
-

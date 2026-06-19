@@ -22,97 +22,32 @@ func validatePlanExecutePlannerInput(input PlanExecutePlannerInput) error {
 		}
 	}
 
-	for _, tc := range []struct {
-		field string
-		tools []string
-	}{
-		{field: "allowed_tools", tools: input.AllowedTools},
-		{field: "forbidden_tools", tools: input.ForbiddenTools},
-		{field: "required_tools", tools: input.RequiredTools},
-		{field: "protocol.visible_tools", tools: input.Protocol.VisibleTools},
-		{field: "protocol.callable_tools", tools: input.Protocol.CallableTools},
-	} {
-		for _, tool := range tc.tools {
-			if !knownTool(tool) {
-				return fmt.Errorf("%s contains unmapped tool %q", tc.field, tool)
-			}
-		}
+	if err := validateToolVocabulary(toolVocabularyPolicy{
+		ForbiddenTools: input.ForbiddenTools,
+		ExposedToolSets: []toolVocabularySet{
+			{Role: "allowed", Field: "allowed_tools", Tools: input.AllowedTools},
+			{Role: "required", Field: "required_tools", Tools: input.RequiredTools},
+			{Role: "visible", Field: "protocol.visible_tools", Tools: input.Protocol.VisibleTools},
+			{Role: "callable", Field: "protocol.callable_tools", Tools: input.Protocol.CallableTools},
+		},
+		RequireCallableVisible: input.Protocol.CallableToolsSpecified,
+		PlannerOnly:            true,
+		ReadOnlyProfile:        strings.Contains(strings.ToLower(input.PermissionProfile), "read_only"),
+	}); err != nil {
+		return err
 	}
-
-	if overlap := firstStringOverlap(input.AllowedTools, input.ForbiddenTools); overlap != "" {
-		return fmt.Errorf("tool %q cannot be both allowed and forbidden", overlap)
-	}
-
-	if overlap := firstStringOverlap(input.RequiredTools, input.ForbiddenTools); overlap != "" {
-		return fmt.Errorf("tool %q cannot be both required and forbidden", overlap)
-	}
-
-	if overlap := firstStringOverlap(input.Protocol.VisibleTools, input.ForbiddenTools); overlap != "" {
-		return fmt.Errorf("tool %q cannot be both visible and forbidden", overlap)
-	}
-
-	if overlap := firstStringOverlap(input.Protocol.CallableTools, input.ForbiddenTools); overlap != "" {
-		return fmt.Errorf("tool %q cannot be both callable and forbidden", overlap)
-	}
-
-	for _, tc := range []struct {
-		field string
-		tools []string
-	}{
-		{field: "allowed_tools", tools: input.AllowedTools},
-		{field: "required_tools", tools: input.RequiredTools},
-		{field: "protocol.visible_tools", tools: input.Protocol.VisibleTools},
-		{field: "protocol.callable_tools", tools: input.Protocol.CallableTools},
-	} {
-		if exposedTool, forbiddenTool, capability := firstCapabilityOverlap(tc.tools, input.ForbiddenTools); capability != "" {
-			return fmt.Errorf("%s tool %q and forbidden tool %q both map to capability %q", tc.field, exposedTool, forbiddenTool, capability)
-		}
-	}
-
-	if strings.Contains(strings.ToLower(input.PermissionProfile), "read_only") {
-		for _, tc := range []struct {
-			field string
-			tools []string
-		}{
-			{field: "allowed_tools", tools: input.AllowedTools},
-			{field: "required_tools", tools: input.RequiredTools},
-			{field: "protocol.visible_tools", tools: input.Protocol.VisibleTools},
-			{field: "protocol.callable_tools", tools: input.Protocol.CallableTools},
-		} {
-			for _, tool := range tc.tools {
-				if sideEffectForTool(tool) != autonomy.SideEffectReadOnly {
-					return fmt.Errorf("read-only permission profile cannot expose mutating tool %q in %s", tool, tc.field)
-				}
-			}
-		}
-	}
-
-	for _, tc := range []struct {
-		field string
-		tools []string
-	}{
-		{field: "allowed_tools", tools: input.AllowedTools},
-		{field: "required_tools", tools: input.RequiredTools},
-		{field: "protocol.visible_tools", tools: input.Protocol.VisibleTools},
-		{field: "protocol.callable_tools", tools: input.Protocol.CallableTools},
-	} {
-		for _, tool := range tc.tools {
-			if plannerForbiddenTool(tool) {
-				return fmt.Errorf("plan-execute planner cannot expose tool %q in %s", tool, tc.field)
-			}
-		}
-	}
-
-	if err := validateActionClasses("protocol.callable_action_classes", input.Protocol.CallableActionClasses); err != nil {
+	if err := validateHiddenToolProjection("protocol.hidden_tools", input.Protocol.HiddenTools, input.Protocol.VisibleTools, input.Protocol.CallableTools); err != nil {
 		return err
 	}
 
-	if err := validateActionClasses("protocol.invalid_action_classes", input.Protocol.InvalidActionClasses); err != nil {
+	if err := validateActionClassVocabulary(actionClassVocabulary{
+		CallableField: "protocol.callable_action_classes",
+		Callable:      input.Protocol.CallableActionClasses,
+		InvalidField:  "protocol.invalid_action_classes",
+		Invalid:       input.Protocol.InvalidActionClasses,
+		ErrorPrefix:   "protocol",
+	}); err != nil {
 		return err
-	}
-
-	if overlap := firstStringOverlap(input.Protocol.CallableActionClasses, input.Protocol.InvalidActionClasses); overlap != "" {
-		return fmt.Errorf("protocol action class %q cannot be both callable and invalid", overlap)
 	}
 
 	return nil
@@ -125,28 +60,29 @@ func plannerForbiddenTool(tool string) bool {
 func validateProtocolProjection(protocol ModelProtocolProjection) error {
 	var problems []string
 
-	if err := validateActionClasses("model_protocol.callable_action_classes", protocol.CallableActionClasses); err != nil {
+	if err := validateActionClassVocabulary(actionClassVocabulary{
+		CallableField: "model_protocol.callable_action_classes",
+		Callable:      protocol.CallableActionClasses,
+		InvalidField:  "model_protocol.invalid_action_classes",
+		Invalid:       protocol.InvalidActionClasses,
+		ErrorPrefix:   "model protocol",
+	}); err != nil {
 		return err
 	}
 
-	if err := validateActionClasses("model_protocol.invalid_action_classes", protocol.InvalidActionClasses); err != nil {
+	if err := validateToolVocabulary(toolVocabularyPolicy{
+		ExposedToolSets: []toolVocabularySet{
+			{Role: "required", Field: "model_protocol.required_tools", Tools: protocol.RequiredTools},
+			{Role: "visible", Field: "model_protocol.visible_tools", Tools: protocol.VisibleTools},
+			{Role: "callable", Field: "model_protocol.callable_tools", Tools: protocol.CallableTools},
+		},
+		RequireCallableVisible: true,
+		PlannerOnly:            true,
+	}); err != nil {
 		return err
 	}
-
-	if overlap := firstStringOverlap(protocol.CallableActionClasses, protocol.InvalidActionClasses); overlap != "" {
-		return fmt.Errorf("model protocol action class %q cannot be both callable and invalid", overlap)
-	}
-
-	for _, tool := range protocol.VisibleTools {
-		if !knownTool(tool) {
-			return fmt.Errorf("model_protocol.visible_tools contains unmapped tool %q", tool)
-		}
-	}
-
-	for _, tool := range protocol.CallableTools {
-		if !knownTool(tool) {
-			return fmt.Errorf("model_protocol.callable_tools contains unmapped tool %q", tool)
-		}
+	if err := validateHiddenToolProjection("model_protocol.hidden_tools", protocol.HiddenTools, protocol.VisibleTools, protocol.CallableTools); err != nil {
+		return err
 	}
 
 	validateCompactProtocolLabels("model_protocol.schema_names", protocol.SchemaNames, &problems)
@@ -157,6 +93,124 @@ func validateProtocolProjection(protocol ModelProtocolProjection) error {
 
 	if len(problems) > 0 {
 		return fmt.Errorf("invalid model protocol projection: %s", strings.Join(problems, "; "))
+	}
+
+	return nil
+}
+
+type toolVocabularyPolicy struct {
+	ForbiddenTools         []string
+	ExposedToolSets        []toolVocabularySet
+	RequireCallableVisible bool
+	PlannerOnly            bool
+	ReadOnlyProfile        bool
+}
+
+type toolVocabularySet struct {
+	Role  string
+	Field string
+	Tools []string
+}
+
+func validateToolVocabulary(policy toolVocabularyPolicy) error {
+	if err := validateKnownTools("forbidden_tools", policy.ForbiddenTools); err != nil {
+		return err
+	}
+
+	var visible []string
+	var callable []string
+
+	for _, set := range policy.ExposedToolSets {
+		if err := validateKnownTools(set.Field, set.Tools); err != nil {
+			return err
+		}
+
+		if overlap := firstStringOverlap(set.Tools, policy.ForbiddenTools); overlap != "" {
+			return fmt.Errorf("tool %q cannot be both %s and forbidden", overlap, set.Role)
+		}
+
+		if exposedTool, forbiddenTool, capability := firstCapabilityOverlap(set.Tools, policy.ForbiddenTools); capability != "" {
+			return fmt.Errorf("%s tool %q and forbidden tool %q both map to capability %q", set.Field, exposedTool, forbiddenTool, capability)
+		}
+
+		if policy.ReadOnlyProfile {
+			for _, tool := range set.Tools {
+				if sideEffectForTool(tool) != autonomy.SideEffectReadOnly {
+					return fmt.Errorf("read-only permission profile cannot expose mutating tool %q in %s", tool, set.Field)
+				}
+			}
+		}
+
+		if policy.PlannerOnly {
+			for _, tool := range set.Tools {
+				if plannerForbiddenTool(tool) {
+					return fmt.Errorf("plan-execute planner cannot expose tool %q in %s", tool, set.Field)
+				}
+			}
+		}
+
+		switch set.Role {
+		case "visible":
+			visible = set.Tools
+		case "callable":
+			callable = set.Tools
+		}
+	}
+
+	if policy.RequireCallableVisible {
+		if missing := firstMissingTool(callable, visible); missing != "" {
+			return fmt.Errorf("tool %q cannot be callable without being visible", missing)
+		}
+	}
+
+	return nil
+}
+
+func validateKnownTools(field string, tools []string) error {
+	for _, tool := range tools {
+		if !knownTool(tool) {
+			return fmt.Errorf("%s contains unmapped tool %q", field, tool)
+		}
+	}
+
+	return nil
+}
+
+func validateHiddenToolProjection(field string, hiddenTools []string, visibleTools []string, callableTools []string) error {
+	if err := validateKnownTools(field, hiddenTools); err != nil {
+		return err
+	}
+
+	if overlap := firstStringOverlap(hiddenTools, visibleTools); overlap != "" {
+		return fmt.Errorf("tool %q cannot be both hidden and visible in %s", overlap, field)
+	}
+
+	if overlap := firstStringOverlap(hiddenTools, callableTools); overlap != "" {
+		return fmt.Errorf("tool %q cannot be both hidden and callable in %s", overlap, field)
+	}
+
+	return nil
+}
+
+type actionClassVocabulary struct {
+	CallableField string
+	Callable      []string
+	InvalidField  string
+	Invalid       []string
+	ErrorPrefix   string
+}
+
+func validateActionClassVocabulary(vocabulary actionClassVocabulary) error {
+	if err := validateActionClasses(vocabulary.CallableField, vocabulary.Callable); err != nil {
+		return err
+	}
+
+	if err := validateActionClasses(vocabulary.InvalidField, vocabulary.Invalid); err != nil {
+		return err
+	}
+
+	if overlap := firstStringOverlap(vocabulary.Callable, vocabulary.Invalid); overlap != "" {
+		return fmt.Errorf("%s action class %q cannot be both callable and invalid", vocabulary.ErrorPrefix, overlap)
 	}
 
 	return nil
@@ -221,6 +275,7 @@ func modelProtocolProjectionValues(protocol ModelProtocolProjection) []string {
 
 	values = append(values, protocol.SchemaNames...)
 	values = append(values, protocol.VisibleTools...)
+	values = append(values, protocol.HiddenTools...)
 	values = append(values, protocol.CallableTools...)
 	values = append(values, protocol.CallableActionClasses...)
 	values = append(values, protocol.InvalidActionClasses...)
@@ -358,4 +413,27 @@ func firstCapabilityOverlap(exposedTools []string, forbiddenTools []string) (str
 	}
 
 	return "", "", ""
+}
+
+func firstMissingTool(tools []string, available []string) string {
+	availableSet := make(map[string]struct{}, len(available))
+	for _, tool := range available {
+		tool = strings.TrimSpace(tool)
+		if tool != "" {
+			availableSet[tool] = struct{}{}
+		}
+	}
+
+	for _, tool := range tools {
+		tool = strings.TrimSpace(tool)
+		if tool == "" {
+			continue
+		}
+
+		if _, ok := availableSet[tool]; !ok {
+			return tool
+		}
+	}
+
+	return ""
 }

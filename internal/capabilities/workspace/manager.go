@@ -704,8 +704,8 @@ func (m *Manager) executeWithTimeoutFn(ctx context.Context, req ToolRequest, tim
 // output (none today).
 func toolTimeoutForRequest(req ToolRequest) time.Duration {
 	tool := strings.TrimSpace(req.Tool)
-	if tool == "context_status" && req.Refresh {
-		return toolTimeoutFor("context_index")
+	if tool == ToolNameContextStatus && req.Refresh {
+		return toolTimeoutFor(ToolNameContextIndex)
 	}
 
 	return toolTimeoutFor(tool)
@@ -719,7 +719,7 @@ func toolTimeoutFor(tool string) time.Duration {
 
 	// shell has no outer timeout — the shell handler enforces its own
 	// CommandTimeoutSeconds. Skip the outer timeout to avoid double-bounding.
-	if tool == "shell" {
+	if tool == ToolNameShell {
 		return 0
 	}
 
@@ -1193,12 +1193,12 @@ func inferLanguagePrecisionTier(result ToolResult) string {
 func (m *Manager) gitStatus(ctx context.Context, req ToolRequest) ToolResult {
 	workdir, err := m.resolveWorkdir(req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "git_status", Summary: "Failed to resolve workdir", Error: err.Error()}
+		return ToolResult{Tool: ToolNameGitStatus, Summary: "Failed to resolve workdir", Error: err.Error()}
 	}
 
 	output, execErr := m.runCommand(ctx, workdir, "git", "status", "--porcelain=v1", "--branch", "--untracked-files=normal")
 	result := ToolResult{
-		Tool:    "git_status",
+		Tool:    ToolNameGitStatus,
 		Summary: fmt.Sprintf("Read git status in %s", m.displayPath(workdir)),
 		Output:  strings.TrimSpace(output),
 	}
@@ -1213,7 +1213,7 @@ func (m *Manager) gitStatus(ctx context.Context, req ToolRequest) ToolResult {
 func (m *Manager) gitDiff(ctx context.Context, req ToolRequest) ToolResult {
 	workdir, err := m.resolveWorkdir(req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "git_diff", Summary: "Failed to resolve workdir", Error: err.Error()}
+		return ToolResult{Tool: ToolNameGitDiff, Summary: "Failed to resolve workdir", Error: err.Error()}
 	}
 
 	args := []string{"diff", "--no-color"}
@@ -1223,7 +1223,7 @@ func (m *Manager) gitDiff(ctx context.Context, req ToolRequest) ToolResult {
 		// Validate the path resolves under the workspace before passing to git.
 		resolved, err := m.resolvePath(req.Path, req.Workdir)
 		if err != nil {
-			return ToolResult{Tool: "git_diff", Summary: "Failed to resolve path", Error: err.Error()}
+			return ToolResult{Tool: ToolNameGitDiff, Summary: "Failed to resolve path", Error: err.Error()}
 		}
 
 		diffPath = resolved
@@ -1239,7 +1239,7 @@ func (m *Manager) gitDiff(ctx context.Context, req ToolRequest) ToolResult {
 	}
 
 	result := ToolResult{
-		Tool:    "git_diff",
+		Tool:    ToolNameGitDiff,
 		Summary: fmt.Sprintf("Read git diff for %s in %s", scope, m.displayPath(workdir)),
 		Output:  strings.TrimSpace(output),
 	}
@@ -2571,21 +2571,21 @@ func inferMissingToolRequest(req ToolRequest) (ToolRequest, bool) {
 
 	switch {
 	case len(req.Todos) > 0 || len(req.Items) > 0:
-		req.Tool = "task_ledger"
+		req.Tool = ToolNameTaskLedger
 	case strings.TrimSpace(req.Prompt) != "" || strings.TrimSpace(req.Agent) != "":
-		req.Tool = "task"
+		req.Tool = ToolNameTask
 	case strings.TrimSpace(req.Command) != "":
-		req.Tool = "shell"
+		req.Tool = ToolNameShell
 	case strings.TrimSpace(req.Destination) != "" || len(req.Declarations) > 0 || len(req.Moves) > 0 || strings.HasPrefix(strings.TrimSpace(req.Pattern), "tag:"):
-		req.Tool = "go_move_declarations"
+		req.Tool = ToolNameGoMoveDeclarations
 	case strings.TrimSpace(req.OldText) != "" || strings.TrimSpace(req.NewText) != "" || (strings.TrimSpace(req.Content) != "" && (req.StartLine != 0 || req.EndLine != 0)):
-		req.Tool = "edit_file"
+		req.Tool = ToolNameEditFile
 	case strings.TrimSpace(req.Glob) != "" && strings.TrimSpace(req.Pattern) != "":
-		req.Tool = "search_content"
+		req.Tool = ToolNameSearchContent
 	case strings.TrimSpace(req.ID) != "" || req.StartLine != 0 || req.EndLine != 0:
-		req.Tool = "read_file"
+		req.Tool = ToolNameReadFile
 	case strings.HasSuffix(strings.TrimSpace(req.Path), ".go") && strings.TrimSpace(req.Pattern) == "" && strings.TrimSpace(req.Content) == "":
-		req.Tool = "go_file_outline"
+		req.Tool = LanguageToolForCapability("go", CapFileOutline)
 	default:
 		return ToolRequest{}, false
 	}
@@ -2622,7 +2622,7 @@ func FormatToolResultForModel(result ToolResult) string {
 
 func formatToolResultOutputForModel(result ToolResult) string {
 	output := strings.TrimSpace(result.Output)
-	if strings.TrimSpace(result.Tool) == "context_pack" {
+	if strings.TrimSpace(result.Tool) == ToolNameContextPack {
 		if compact := compactContextPackOutputForModel(output); compact != "" {
 			return compact
 		}
@@ -3751,7 +3751,7 @@ func IsBroadInspectionRequest(req ToolRequest) bool {
 }
 
 func IsScopedInspectionRequest(req ToolRequest) bool {
-	if strings.TrimSpace(req.Tool) != "list_files" {
+	if strings.TrimSpace(req.Tool) != ToolNameListFiles {
 		return false
 	}
 
@@ -3895,7 +3895,7 @@ func splitShellSegments(command string) []string {
 func (m *Manager) listFiles(req ToolRequest) ToolResult {
 	base, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
-		result := ToolResult{Tool: "list_files", Summary: "Failed to resolve path", Error: err.Error()}
+		result := ToolResult{Tool: ToolNameListFiles, Summary: "Failed to resolve path", Error: err.Error()}
 		if strings.TrimSpace(req.Path) != "" {
 			result.Output = formatPathSuggestions(m.findPathSuggestions(req.Path, 5))
 		}
@@ -3910,7 +3910,7 @@ func (m *Manager) listFiles(req ToolRequest) ToolResult {
 			errMsg = fmt.Sprintf("directory %q does not exist in this workspace. (os: %s)", req.Path, err.Error())
 		}
 
-		result := ToolResult{Tool: "list_files", Summary: "Failed to stat path", Error: errMsg}
+		result := ToolResult{Tool: ToolNameListFiles, Summary: "Failed to stat path", Error: errMsg}
 		if strings.TrimSpace(req.Path) != "" {
 			result.Output = formatPathSuggestions(m.findPathSuggestions(req.Path, 5))
 		}
@@ -3935,7 +3935,7 @@ func (m *Manager) listFiles(req ToolRequest) ToolResult {
 	} else if !req.Recursive {
 		children, err := os.ReadDir(base)
 		if err != nil {
-			return ToolResult{Tool: "list_files", Summary: "Failed to read directory", Error: err.Error()}
+			return ToolResult{Tool: ToolNameListFiles, Summary: "Failed to read directory", Error: err.Error()}
 		}
 
 		slices.SortFunc(children, func(a, b os.DirEntry) int { return cmp.Compare(a.Name(), b.Name()) })
@@ -4017,7 +4017,7 @@ func (m *Manager) listFiles(req ToolRequest) ToolResult {
 	}
 
 	return ToolResult{
-		Tool:    "list_files",
+		Tool:    ToolNameListFiles,
 		Summary: summary,
 		Output:  strings.Join(formatted, "\n"),
 	}
@@ -4119,7 +4119,7 @@ func (m *Manager) exploreListPriority(entry listedEntry) int {
 func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 	base, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "search_files", Summary: "Failed to resolve path", Error: err.Error()}
+		return ToolResult{Tool: ToolNameSearchFiles, Summary: "Failed to resolve path", Error: err.Error()}
 	}
 
 	pattern, interpretedPattern := searchFilesPattern(req)
@@ -4133,7 +4133,7 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 			err = "pattern is required — the pattern field expects a filename substring, not a glob. If you meant to match file extensions, use e.g. pattern: '.go' instead of a glob path."
 		}
 
-		return ToolResult{Tool: "search_files", Summary: "File search rejected", Error: err}
+		return ToolResult{Tool: ToolNameSearchFiles, Summary: "File search rejected", Error: err}
 	}
 
 	maxDepth := req.MaxDepth
@@ -4261,7 +4261,7 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 		}
 
 		return ToolResult{
-			Tool:    "search_files",
+			Tool:    ToolNameSearchFiles,
 			Summary: summary,
 			Output:  output,
 		}
@@ -4317,7 +4317,7 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 	}
 
 	return ToolResult{
-		Tool:    "search_files",
+		Tool:    ToolNameSearchFiles,
 		Summary: summary,
 		Output:  strings.Join(output, "\n"),
 	}
@@ -4698,7 +4698,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 	}
 
 	return ToolResult{
-		Tool:    "read_file",
+		Tool:    ToolNameReadFile,
 		Summary: summary,
 		Output:  strings.TrimRight(b.String(), "\n"),
 	}
@@ -4730,7 +4730,7 @@ func (m *Manager) readLogTail(path string, description string, lineCap int) (Too
 	m.clearEditRecoveryAfterRead(path, start, start+len(lines)-1)
 
 	return ToolResult{
-		Tool:    "read_file",
+		Tool:    ToolNameReadFile,
 		Summary: fmt.Sprintf("Read %s lines %d-%d (file has %d lines total; defaulted to recent log tail; pass start_line/end_line for a different window)", description, start, start+len(lines)-1, totalLines),
 		Output:  strings.TrimRight(b.String(), "\n"),
 	}, true
@@ -4771,12 +4771,12 @@ func (m *Manager) fileStats(req ToolRequest) ToolResult {
 
 	target, err := m.resolvePath(requestPath, req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "file_stats", Summary: "Failed to resolve path", Error: err.Error()}
+		return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to resolve path", Error: err.Error()}
 	}
 
 	info, err := os.Stat(target)
 	if err != nil {
-		return ToolResult{Tool: "file_stats", Summary: "Failed to stat path", Error: err.Error()}
+		return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to stat path", Error: err.Error()}
 	}
 
 	limit := req.Limit
@@ -4890,7 +4890,7 @@ func (m *Manager) fileStats(req ToolRequest) ToolResult {
 		return nil
 	})
 	if err != nil {
-		return ToolResult{Tool: "file_stats", Summary: "Failed to collect file stats", Error: err.Error()}
+		return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to collect file stats", Error: err.Error()}
 	}
 
 	return fileStatsResult(report)
@@ -4916,7 +4916,7 @@ func (m *Manager) fileStatsEntry(path string, info os.FileInfo) fileStatsEntry {
 func fileStatsResult(report fileStatsReport) ToolResult {
 	output, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
-		return ToolResult{Tool: "file_stats", Summary: "Failed to encode file stats", Error: err.Error()}
+		return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to encode file stats", Error: err.Error()}
 	}
 
 	summary := fmt.Sprintf("Counted %d file(s), %d line(s), %s under %s", report.Files, report.Lines, formatBytes(report.Bytes), report.Path)
@@ -4925,7 +4925,7 @@ func fileStatsResult(report fileStatsReport) ToolResult {
 	}
 
 	return ToolResult{
-		Tool:    "file_stats",
+		Tool:    ToolNameFileStats,
 		Summary: summary,
 		Output:  string(output),
 	}
@@ -5038,32 +5038,32 @@ func countFileLinesFromData(data []byte) int {
 
 func (m *Manager) makeDir(req ToolRequest) ToolResult {
 	if !m.cfg.EnableWrites {
-		return toolWriteDisabledResult("mkdir", "Write request rejected", "workspace writes are disabled")
+		return toolWriteDisabledResult(ToolNameMkdir, "Write request rejected", "workspace writes are disabled")
 	}
 
 	path, err := m.resolvePath(req.Path, req.Workdir)
 	if err != nil {
-		return toolPathResolutionFailureResult("mkdir", "Failed to resolve path", err)
+		return toolPathResolutionFailureResult(ToolNameMkdir, "Failed to resolve path", err)
 	}
 
 	if err := os.MkdirAll(path, 0o755); err != nil {
-		return toolWriteFailureResult("mkdir", "Failed to create directory", err)
+		return toolWriteFailureResult(ToolNameMkdir, "Failed to create directory", err)
 	}
 
 	m.invalidateGoIndex()
 	m.invalidateCppIndex()
 
 	return ToolResult{
-		Tool:    "mkdir",
+		Tool:    ToolNameMkdir,
 		Summary: fmt.Sprintf("Created directory %s", m.displayPath(path)),
 		Output:  m.displayPath(path),
 	}
 }
 
 func (m *Manager) writeFile(req ToolRequest, appendMode bool) ToolResult {
-	toolName := "write_file"
+	toolName := ToolNameWriteFile
 	if appendMode {
-		toolName = "append_file"
+		toolName = ToolNameAppendFile
 	}
 
 	if !m.cfg.EnableWrites {
@@ -5137,12 +5137,12 @@ func (m *Manager) writeFile(req ToolRequest, appendMode bool) ToolResult {
 
 func (m *Manager) editFile(req ToolRequest) ToolResult {
 	if !m.cfg.EnableWrites {
-		return toolWriteDisabledResult("edit_file", "Edit request rejected", "workspace writes are disabled")
+		return toolWriteDisabledResult(ToolNameEditFile, "Edit request rejected", "workspace writes are disabled")
 	}
 
 	path, err := m.resolvePath(req.Path, req.Workdir)
 	if err != nil {
-		result := toolPathResolutionFailureResult("edit_file", "Failed to resolve path", err)
+		result := toolPathResolutionFailureResult(ToolNameEditFile, "Failed to resolve path", err)
 		if strings.TrimSpace(req.Path) != "" {
 			result.Output = formatPathSuggestions(m.findPathSuggestions(req.Path, 5))
 		}
@@ -5156,19 +5156,19 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 	// retry loops documented in docs/opencode-fixes-design.md §1.
 	if !m.bypassReadBeforeEdit && !m.HasObservedPath(m.displayPath(path)) && !m.HasObservedPath(req.Path) {
 		return withToolFailure(ToolResult{
-			Tool:    "edit_file",
+			Tool:    ToolNameEditFile,
 			Summary: "Edit request rejected",
 			Error:   fmt.Sprintf("edit_file requires you to have observed %s in this session before editing it.", m.displayPath(path)),
 		}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 	}
 
-	if rejected := m.rejectPendingEditRecovery("edit_file", path); rejected != nil {
+	if rejected := m.rejectPendingEditRecovery(ToolNameEditFile, path); rejected != nil {
 		return *rejected
 	}
 
 	content, err := os.ReadFile(path)
 	if err != nil {
-		result := toolFailureFromErrorResult("edit_file", "Failed to read file", err, failures.Internal, reasonToolInternalFailure)
+		result := toolFailureFromErrorResult(ToolNameEditFile, "Failed to read file", err, failures.Internal, reasonToolInternalFailure)
 		if strings.TrimSpace(req.Path) != "" {
 			result.Output = formatPathSuggestions(m.findPathSuggestions(req.Path, 5))
 		}
@@ -5186,7 +5186,7 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 			// deletion or ignoring new_text.
 		} else if strings.TrimSpace(req.Content) == "" && strings.TrimSpace(req.NewText) != "" {
 			return withToolFailure(ToolResult{
-				Tool:    "edit_file",
+				Tool:    ToolNameEditFile,
 				Summary: "Edit request rejected",
 				Error: fmt.Sprintf(
 					"edit_file line-range edits use the `content` field, not `new_text`. "+
@@ -5247,21 +5247,21 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 			)
 		}
 
-		return toolInvalidArgumentResult("edit_file", "Edit request rejected", example)
+		return toolInvalidArgumentResult(ToolNameEditFile, "Edit request rejected", example)
 	}
 
 	matchCount := strings.Count(current, req.OldText)
 	if matchCount == 0 {
 		if util.ContainsFold(current, req.OldText) {
 			return withToolFailure(ToolResult{
-				Tool:    "edit_file",
+				Tool:    ToolNameEditFile,
 				Summary: "Edit request rejected",
 				Error:   fmt.Sprintf("old_text did not appear in %s, but a case-insensitive match exists. Preserve exact casing from the file when copying anchors, or switch to the start_line/end_line+content form.", m.displayPath(path)),
 			}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 		}
 
 		return withToolFailure(ToolResult{
-			Tool:    "edit_file",
+			Tool:    ToolNameEditFile,
 			Summary: "Edit request rejected",
 			Error:   fmt.Sprintf("old_text did not appear in %s. Copy the exact substring from the file (including whitespace) or switch to the start_line/end_line+content form.", m.displayPath(path)),
 		}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
@@ -5269,7 +5269,7 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 
 	if matchCount > 1 && !req.ReplaceAll {
 		return withToolFailure(ToolResult{
-			Tool:    "edit_file",
+			Tool:    ToolNameEditFile,
 			Summary: "Edit request rejected",
 			Error:   fmt.Sprintf("old_text matched %d locations in %s. Either extend old_text with surrounding context so it matches exactly one place, or set replace_all=true.", matchCount, m.displayPath(path)),
 		}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
@@ -5285,25 +5285,25 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 
 	if updated == current {
 		return ToolResult{
-			Tool:    "edit_file",
+			Tool:    ToolNameEditFile,
 			Summary: fmt.Sprintf("No-op edit for %s", m.displayPath(path)),
 			Output:  "replacement produced no content change",
 		}
 	}
 
-	if rejected := m.rejectInvalidPlannedWrite("edit_file", "Edit request rejected", path, []byte(updated)); rejected != nil {
+	if rejected := m.rejectInvalidPlannedWrite(ToolNameEditFile, "Edit request rejected", path, []byte(updated)); rejected != nil {
 		return *rejected
 	}
 
 	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
-		return toolWriteFailureResult("edit_file", "Failed to write edited file", err)
+		return toolWriteFailureResult(ToolNameEditFile, "Failed to write edited file", err)
 	}
 
 	m.invalidateGoIndex()
 	m.invalidateCppIndex()
 
 	return ToolResult{
-		Tool:    "edit_file",
+		Tool:    ToolNameEditFile,
 		Summary: fmt.Sprintf("Edited %s", m.displayPath(path)),
 		Output:  fmt.Sprintf("replaced occurrences: %d", replaced),
 	}
@@ -5335,7 +5335,7 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 	endLine := req.EndLine
 
 	if startLine <= 0 {
-		return toolInvalidArgumentResult("edit_file", "Edit request rejected", "start_line must be >= 1 (line numbers are 1-indexed).")
+		return toolInvalidArgumentResult(ToolNameEditFile, "Edit request rejected", "start_line must be >= 1 (line numbers are 1-indexed).")
 	}
 
 	if endLine == 0 {
@@ -5343,17 +5343,17 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 	}
 
 	if endLine < startLine {
-		return toolInvalidArgumentResult("edit_file", "Edit request rejected", fmt.Sprintf("end_line (%d) must be >= start_line (%d). Swap them if you meant the other direction, or set end_line=start_line for a single-line edit.", endLine, startLine))
+		return toolInvalidArgumentResult(ToolNameEditFile, "Edit request rejected", fmt.Sprintf("end_line (%d) must be >= start_line (%d). Swap them if you meant the other direction, or set end_line=start_line for a single-line edit.", endLine, startLine))
 	}
 
 	spans := lineSpans(current)
 	if len(spans) == 0 {
-		return toolInvalidArgumentResult("edit_file", "Edit request rejected", "cannot apply a line edit to an empty file")
+		return toolInvalidArgumentResult(ToolNameEditFile, "Edit request rejected", "cannot apply a line edit to an empty file")
 	}
 
 	if startLine > len(spans) || endLine > len(spans) {
 		return withToolFailure(ToolResult{
-			Tool:    "edit_file",
+			Tool:    ToolNameEditFile,
 			Summary: "Edit request rejected",
 			Error:   fmt.Sprintf("requested lines %d-%d are outside %s (file has %d lines)", startLine, endLine, m.displayPath(path), len(spans)),
 		}, failures.OutOfRange, reasonToolInvalidArgument)
@@ -5372,7 +5372,7 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 		strings.TrimSpace(replacedRange) != "" {
 
 		return withToolFailure(ToolResult{
-			Tool:    "edit_file",
+			Tool:    ToolNameEditFile,
 			Summary: "Edit request rejected",
 			Error: fmt.Sprintf(
 				"empty or whitespace-only content with line range %d-%d would DELETE non-empty lines from %s. "+
@@ -5387,7 +5387,7 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 
 	if lineRangeReplacementDuplicatesPrecedingContext(current, spans, startLine, req.Content) {
 		return withToolFailure(ToolResult{
-			Tool:    "edit_file",
+			Tool:    ToolNameEditFile,
 			Summary: "Edit request rejected",
 			Error: fmt.Sprintf(
 				"line-range replacement for %s lines %d-%d appears to duplicate context immediately before the selected range. "+
@@ -5408,25 +5408,25 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 	updated := current[:startOffset] + replacement + current[endOffset:]
 	if updated == current {
 		return ToolResult{
-			Tool:    "edit_file",
+			Tool:    ToolNameEditFile,
 			Summary: fmt.Sprintf("No-op edit for %s", m.displayPath(path)),
 			Output:  "replacement produced no content change",
 		}
 	}
 
-	if rejected := m.rejectInvalidPlannedWrite("edit_file", "Edit request rejected", path, []byte(updated)); rejected != nil {
+	if rejected := m.rejectInvalidPlannedWrite(ToolNameEditFile, "Edit request rejected", path, []byte(updated)); rejected != nil {
 		return *rejected
 	}
 
 	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
-		return toolWriteFailureResult("edit_file", "Failed to write edited file", err)
+		return toolWriteFailureResult(ToolNameEditFile, "Failed to write edited file", err)
 	}
 
 	m.invalidateGoIndex()
 	m.invalidateCppIndex()
 
 	return ToolResult{
-		Tool:    "edit_file",
+		Tool:    ToolNameEditFile,
 		Summary: fmt.Sprintf("Edited %s lines %d-%d", m.displayPath(path), startLine, endLine),
 		Output:  fmt.Sprintf("replaced lines: %d-%d", startLine, endLine),
 	}
@@ -5934,22 +5934,22 @@ func lineSpans(text string) []lineSpan {
 
 func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 	if !m.cfg.EnableShell {
-		return toolPermissionPolicyResult("shell", "Shell request rejected", "shell execution is disabled")
+		return toolPermissionPolicyResult(ToolNameShell, "Shell request rejected", "shell execution is disabled")
 	}
 
 	workdir, err := m.resolveWorkdir(req.Workdir)
 	if err != nil {
-		return toolPathResolutionFailureResult("shell", "Failed to resolve workdir", err)
+		return toolPathResolutionFailureResult(ToolNameShell, "Failed to resolve workdir", err)
 	}
 
 	command := strings.TrimSpace(req.Command)
 	if command == "" {
-		return toolInvalidArgumentResult("shell", "Shell request rejected", "command is required")
+		return toolInvalidArgumentResult(ToolNameShell, "Shell request rejected", "command is required")
 	}
 
 	if isDirectoryOnlyShellCommand(command) {
 		return withToolFailure(ToolResult{
-			Tool:    "shell",
+			Tool:    ToolNameShell,
 			Summary: "Shell request rejected",
 			Error:   "directory changes inside shell commands do not persist; set workdir or include the command to run in that directory",
 		}, failures.InvalidArgument, reasonToolInvalidArgument)
@@ -5958,7 +5958,7 @@ func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 	if m.Mode() == ModeExplore {
 		if err := validateExploreShellCommand(command); err != nil {
 			return withToolFailure(ToolResult{
-				Tool:    "shell",
+				Tool:    ToolNameShell,
 				Summary: "Shell request rejected",
 				Error:   "explore mode only allows read-only inspection shell commands: " + err.Error(),
 			}, failures.PermissionDenied, reasonToolPermissionPolicy)
@@ -5969,7 +5969,7 @@ func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 	rawOutput := combineCommandOutput(stdout, stderr)
 	output := m.truncateCommandOutput(rawOutput)
 	result := ToolResult{
-		Tool:    "shell",
+		Tool:    ToolNameShell,
 		Summary: fmt.Sprintf("Ran shell command in %s", m.displayPath(workdir)),
 		Output:  "$ " + command + "\n" + strings.TrimSpace(output),
 	}
@@ -7134,7 +7134,6 @@ func isNoMatchExit(err error) bool {
 
 	return strings.Contains(err.Error(), "exit status 1")
 }
-
 
 // nonZeroOrDefaultInt returns value if > 0, otherwise fallback.
 func nonZeroOrDefaultInt(value int, fallback int) int {
