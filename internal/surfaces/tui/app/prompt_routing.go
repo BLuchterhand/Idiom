@@ -71,6 +71,9 @@ func typedPromptCommandObjective(prompt string, command string) (string, bool) {
 
 func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (string, error) {
 	m.lastAssistantReasoningContent = ""
+	if !m.suppressPromptTranscript {
+		m.thoughts.reset()
+	}
 
 	plan := m.buildPromptExecutionPlan(ctx, prompt)
 
@@ -443,6 +446,10 @@ func (m *Model) runPlanExecuteCommandOnce(ctx context.Context, objective string)
 		return "", fmt.Errorf("plan-execute objective is required")
 	}
 
+	if !m.suppressPromptTranscript {
+		m.thoughts.reset()
+	}
+
 	m.lastPlanExecuteRunResult = nil
 	m.emitJSONStart(objective)
 
@@ -480,6 +487,10 @@ func (m *Model) runImplementCommandOnce(ctx context.Context, objective string) (
 	objective = strings.TrimSpace(objective)
 	if objective == "" {
 		return "", fmt.Errorf("implement objective is required")
+	}
+
+	if !m.suppressPromptTranscript {
+		m.thoughts.reset()
 	}
 
 	m.emitJSONStart(objective)

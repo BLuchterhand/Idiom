@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 
 	"idiom/internal/runtime/llama"
 )
@@ -231,6 +232,234 @@ func TestRenderMessagesUsesActiveEvidenceInsteadOfGenericSpinner(t *testing.T) {
 
 	if strings.Contains(view, "Qwen is preparing a response") {
 		t.Fatalf("generic spinner should not render below active evidence, got:\n%s", view)
+	}
+}
+
+func TestRenderMessagesShowsThoughtPanelWhileStreaming(t *testing.T) {
+	m := newRenderModel(t)
+
+	m.streaming = true
+	m.messages = []llama.ChatMessage{
+		{Role: "user", Content: "inspect the status rendering"},
+	}
+	m.thoughts.append(1, "I should inspect rendering.go before changing the TUI.")
+
+	m.renderMessages(true)
+
+	view := m.viewport.View()
+	if !strings.Contains(view, "Qwen is preparing a response") {
+		t.Fatalf("expected working affordance while streaming, got:\n%s", view)
+	}
+
+	if !strings.Contains(view, "thoughts · 1") || !strings.Contains(view, "inspect rendering.go") {
+		t.Fatalf("expected thought panel under streaming affordance, got:\n%s", view)
+	}
+}
+
+func TestRenderMessagesShowsThoughtPanelWithActiveEvidence(t *testing.T) {
+	m := newRenderModel(t)
+
+	m.cfg.TUI.EvidencePanel = true
+	m.streaming = true
+	m.messages = []llama.ChatMessage{
+		{Role: "user", Content: "inspect the status rendering"},
+	}
+	m.turnEvidence = &turnEvidence{
+		expanded: true,
+		tools: []evidenceRow{{
+			step:     1,
+			toolName: "read_file",
+			target:   "internal/surfaces/tui/app/rendering.go",
+			running:  true,
+			glyph:    "…",
+		}},
+	}
+	m.thoughts.append(1, "The render path should stay local to the TUI.")
+
+	m.renderMessages(true)
+
+	view := m.viewport.View()
+	if !strings.Contains(view, "rendering.go") || !strings.Contains(view, "thoughts · 1") {
+		t.Fatalf("expected thought panel to remain visible with active evidence, got:\n%s", view)
+	}
+
+	if strings.Contains(view, "Qwen is preparing a response") {
+		t.Fatalf("generic spinner should still be suppressed below active evidence, got:\n%s", view)
+	}
+}
+
+func TestEmptyEnterCollapsesThoughtPanel(t *testing.T) {
+	m := newRenderModel(t)
+	m.streaming = true
+	m.events = make(chan tea.Msg, 1)
+	m.thoughts.append(1, "First line of model reasoning.")
+
+	if !m.thoughts.expanded {
+		t.Fatal("thought panel should expand when a thought arrives")
+	}
+
+	_, handled := m.handleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
+	if !handled {
+		t.Fatal("empty Enter should be handled when thought panel is visible")
+	}
+
+	if m.thoughts.expanded {
+		t.Fatal("empty Enter should collapse the thought panel")
+	}
+
+	m.renderMessages(true)
+	view := m.viewport.View()
+	if !strings.Contains(view, "▸ thoughts · 1") {
+		t.Fatalf("expected collapsed thought panel header, got:\n%s", view)
+	}
+
+	if strings.Contains(view, "First line of model reasoning.") {
+		t.Fatalf("collapsed thought panel should hide body text, got:\n%s", view)
+	}
+}
+
+func TestMouseClickCollapsesThoughtPanel(t *testing.T) {
+	m := newRenderModel(t)
+	m.streaming = true
+	m.events = make(chan tea.Msg, 1)
+	m.thoughts.append(1, "First line of model reasoning.")
+	m.renderMessages(true)
+
+	row := -1
+	for i, line := range strings.Split(m.viewport.View(), "\n") {
+		if strings.Contains(line, "thoughts · 1") {
+			row = i
+			break
+		}
+	}
+
+	if row < 0 {
+		t.Fatalf("thought panel header not visible:\n%s", m.viewport.View())
+	}
+
+	_, handled := m.handleMouse(tea.MouseMsg{
+		Type:   tea.MouseLeft,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+		X:      2,
+		Y:      row + 2,
+	})
+	if !handled {
+		t.Fatal("thought panel click should be handled")
+	}
+
+	if m.thoughts.expanded {
+		t.Fatal("mouse click should collapse the thought panel")
+	}
+}
+
+func TestThoughtPanelBoundsEntriesAndRows(t *testing.T) {
+	var panel thoughtPanelState
+	for i := 1; i <= thoughtPanelMaxEntries+3; i++ {
+		panel.append(i, "line a\nline b")
+	}
+
+	if len(panel.entries) != thoughtPanelMaxEntries {
+		t.Fatalf("entries = %d, want %d", len(panel.entries), thoughtPanelMaxEntries)
+	}
+
+	got := renderThoughtPanel(panel, 80)
+	if !strings.Contains(got, "earlier thought line(s) hidden") {
+		t.Fatalf("expected row overflow summary, got:\n%s", got)
+	}
+
+	if strings.Contains(got, "[1]") {
+		t.Fatalf("oldest thoughts should be dropped from bounded panel, got:\n%s", got)
+	}
+}
+
+func TestThoughtPanelAutoScrollsOnlyWhenAtBottom(t *testing.T) {
+	var panel thoughtPanelState
+	for i := 1; i <= thoughtPanelMaxEntries; i++ {
+		panel.append(i, "thought line "+string(rune('a'+i-1)))
+	}
+
+	atBottom := renderThoughtPanel(panel, 80)
+	if !strings.Contains(atBottom, "[12] thought line l") {
+		t.Fatalf("bottom view should include latest thought, got:\n%s", atBottom)
+	}
+
+	if !panel.scroll(-3) {
+		t.Fatal("expected panel to scroll up from bottom")
+	}
+
+	panel.append(13, "newest while reading earlier")
+	held := renderThoughtPanel(panel, 80)
+	if strings.Contains(held, "[13] newest while reading earlier") {
+		t.Fatalf("panel should preserve scrolled window when not at bottom, got:\n%s", held)
+	}
+
+	if !strings.Contains(held, "later thought line(s) hidden") {
+		t.Fatalf("scrolled panel should show later hidden summary, got:\n%s", held)
+	}
+
+	panel.scrollToBottom()
+	panel.append(14, "newest after returning to bottom")
+	following := renderThoughtPanel(panel, 80)
+	if !strings.Contains(following, "[14] newest after returning to bottom") {
+		t.Fatalf("panel should follow new thoughts again at bottom, got:\n%s", following)
+	}
+}
+
+func TestMouseWheelScrollsThoughtPanelWithoutMainViewportScroll(t *testing.T) {
+	m := newRenderModel(t)
+	m.streaming = true
+	m.events = make(chan tea.Msg, 1)
+	for i := 1; i <= thoughtPanelMaxEntries; i++ {
+		m.thoughts.append(i, "thought line "+string(rune('a'+i-1)))
+	}
+	m.renderMessages(true)
+
+	_, bodyStart, _, ok := thoughtPanelViewportRows(m.viewport.View())
+	if !ok {
+		t.Fatalf("thought panel not visible:\n%s", m.viewport.View())
+	}
+
+	beforeYOffset := m.viewport.YOffset
+	_, handled := m.handleMouse(tea.MouseMsg{
+		Type:   tea.MouseWheelUp,
+		Button: tea.MouseButtonWheelUp,
+		Action: tea.MouseActionPress,
+		X:      2,
+		Y:      bodyStart + 2,
+	})
+	if !handled {
+		t.Fatal("wheel over thought panel should be handled")
+	}
+
+	if m.thoughts.scrollOff == 0 {
+		t.Fatal("wheel up over thought panel should move the panel scroll offset")
+	}
+
+	if m.viewport.YOffset != beforeYOffset {
+		t.Fatalf("main viewport should not scroll when thought panel handles wheel: got %d want %d", m.viewport.YOffset, beforeYOffset)
+	}
+}
+
+func TestThoughtPanelSkipsDuplicateEntries(t *testing.T) {
+	var panel thoughtPanelState
+
+	panel.append(2, "same thought")
+	panel.append(2, "same thought")
+
+	if len(panel.entries) != 1 {
+		t.Fatalf("duplicate thought should be skipped, got %d entries", len(panel.entries))
+	}
+}
+
+func TestBeginAgentHistoryTurnResetsThoughtPanel(t *testing.T) {
+	m := newRenderModel(t)
+	m.thoughts.append(1, "stale thought from a previous turn")
+
+	m.beginAgentHistoryTurn()
+
+	if m.thoughts.visible() {
+		t.Fatalf("new user-visible turn should reset stale thoughts, got %#v", m.thoughts.entries)
 	}
 }
 

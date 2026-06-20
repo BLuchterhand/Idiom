@@ -212,6 +212,11 @@ type streamDoneMsg struct {
 	err error
 }
 
+type thoughtMsg struct {
+	step int
+	text string
+}
+
 type transcriptSavedMsg struct {
 	path string
 	err  error
@@ -563,6 +568,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case streamDoneMsg:
 		cmd, done := m.handleStreamDone(msg)
+		if done {
+			return m, cmd
+		}
+
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case thoughtMsg:
+		cmd, done := m.handleThought(msg)
 		if done {
 			return m, cmd
 		}
@@ -1065,6 +1079,9 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		ContextSize:         m.cfg.LlamaServer.CtxSize,
 		OnEvent: func(event agent.RunEvent) {
 			m.logRunEvent(event)
+		},
+		OnThought: func(event agent.ThoughtEvent) {
+			m.queueUIEvent(thoughtMsg{step: event.Step, text: event.Text})
 		},
 		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
 			return m.preExecuteToolRequest(step, req, mode)

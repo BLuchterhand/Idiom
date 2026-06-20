@@ -136,6 +136,7 @@ func (m *Model) beginAgentHistoryTurn() {
 	m.currentTurnTools = nil
 	m.currentTurnHistoryActive = true
 	m.currentTurnHistoryIndex = len(m.history.entries)
+	m.thoughts.reset()
 
 	entry := historyEntry{sender: "agent", inProgress: true}
 	if privacy := m.historyPrivacyAuditEvent(); privacy.label != "" {

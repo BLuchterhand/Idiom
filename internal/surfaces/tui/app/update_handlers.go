@@ -196,6 +196,13 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case tea.KeyEnter:
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" {
+			if m.thoughts.visible() {
+				m.thoughts.expanded = !m.thoughts.expanded
+				m.renderMessages(false)
+
+				return m.waitForEventCmd(), true
+			}
+
 			// Empty Enter with evidence panel: toggle the last completed
 			// container's expand/collapse state.
 			if m.cfg.TUI.EvidencePanel && len(m.pastTurnContainers) > 0 {
@@ -439,6 +446,10 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
 
 		m.updateActivePanelViewport(msg)
 	} else {
+		if m.handleMainViewportThoughtPanelMouse(msg) {
+			return m.waitForEventCmd(), true
+		}
+
 		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
 			m.history.focused = false
 			m.rerenderActivePanel()
@@ -448,6 +459,73 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
 	}
 
 	return m.waitForEventCmd(), true
+}
+
+func (m *Model) handleMainViewportThoughtPanelMouse(msg tea.MouseMsg) bool {
+	if m == nil || msg.X < 0 || msg.X >= m.viewport.Width {
+		return false
+	}
+
+	row := msg.Y - 2 // header row and top divider sit above the content row.
+	if row < 0 || row >= m.viewport.Height {
+		return false
+	}
+
+	headerRow, bodyStart, bodyEnd, ok := thoughtPanelViewportRows(m.viewport.View())
+	if !ok || row < headerRow || row > bodyEnd {
+		return false
+	}
+
+	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress && row == headerRow {
+		m.thoughts.expanded = !m.thoughts.expanded
+		m.renderMessages(false)
+
+		return true
+	}
+
+	if row < bodyStart {
+		return false
+	}
+
+	switch msg.Type {
+	case tea.MouseWheelUp:
+		if m.thoughts.scroll(-3) {
+			m.renderMessages(false)
+		}
+
+		return true
+	case tea.MouseWheelDown:
+		if m.thoughts.scroll(3) {
+			m.renderMessages(false)
+		}
+
+		return true
+	}
+
+	return false
+}
+
+func thoughtPanelViewportRows(view string) (headerRow, bodyStart, bodyEnd int, ok bool) {
+	lines := strings.Split(view, "\n")
+	for i, line := range lines {
+		if strings.Contains(line, "thoughts ·") {
+			headerRow = i
+			bodyStart = i + 1
+			bodyEnd = i
+
+			for j := bodyStart; j < len(lines); j++ {
+				if strings.TrimSpace(lines[j]) == "" {
+					break
+				}
+
+				bodyEnd = j
+			}
+
+			return headerRow, bodyStart, bodyEnd, true
+		}
+	}
+
+	return 0, 0, 0, false
 }
 
 func (m *Model) panelStartX() int {
@@ -778,6 +856,17 @@ func (m *Model) handleStreamDone(msg streamDoneMsg) (tea.Cmd, bool) {
 		m.turnEvidence = nil
 	}
 
+	m.renderMessages(false)
+
+	return nil, false
+}
+
+func (m *Model) handleThought(msg thoughtMsg) (tea.Cmd, bool) {
+	if strings.TrimSpace(msg.text) == "" {
+		return nil, false
+	}
+
+	m.thoughts.append(msg.step, msg.text)
 	m.renderMessages(false)
 
 	return nil, false

@@ -222,6 +222,7 @@ type Model struct {
 	contextError                   string
 	runtimeError                   string
 	workingFrame                   int
+	thoughts                       thoughtPanelState
 	debugLogger                    *transcript.DebugLogger
 	debugLogPath                   string
 	sessionStartedAt               time.Time

@@ -46,6 +46,13 @@ var (
 	bodyStyle           = lipgloss.NewStyle().Foreground(colorText).Padding(0, 1)
 )
 
+// ── Thought panel ────────────────────────────────────────────────────────────
+
+var (
+	thoughtPanelHeaderStyle = lipgloss.NewStyle().Foreground(colorDim).Background(colorMuted).Padding(0, 1)
+	thoughtPanelBodyStyle   = lipgloss.NewStyle().Foreground(colorDim).Border(lipgloss.NormalBorder(), false, false, false, true).BorderForeground(colorMuted).PaddingLeft(1)
+)
+
 // ── Footer ────────────────────────────────────────────────────────────────────
 
 var (

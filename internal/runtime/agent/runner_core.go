@@ -1582,6 +1582,7 @@ type Runner struct {
 	CheckpointPolicy      CheckpointPolicy
 	RuntimeBrief          workerruntime.WorkerRuntimeBrief
 	OnEvent               func(RunEvent)
+	OnThought             func(ThoughtEvent)
 	// ContextSize is the configured llama.cpp context window in tokens.
 	// Surfaced in model_call telemetry so log analysis can compute
 	// ctx_pct (prompt_tokens / ctx_size) without having to reconcile
@@ -16891,6 +16892,12 @@ func allowRecoverablePostReadinessRepairExecution(req workspace.ToolRequest, las
 }
 
 func (r *Runner) emitThinkingTrace(step int, reason string, message llama.ChatMessage, opts llama.ChatOptions, preservedInHistory bool) {
+	if r != nil && r.OnThought != nil && !preservedInHistory {
+		if text := strings.TrimSpace(message.ReasoningContent); text != "" {
+			r.OnThought(ThoughtEvent{Step: step, Text: text})
+		}
+	}
+
 	if r == nil || r.OnEvent == nil {
 		return
 	}
@@ -20481,6 +20488,11 @@ type CompletionGateResult struct {
 type RunEvent struct {
 	Role    string
 	Content string
+}
+
+type ThoughtEvent struct {
+	Step int
+	Text string
 }
 
 type ToolRequestEvent struct {

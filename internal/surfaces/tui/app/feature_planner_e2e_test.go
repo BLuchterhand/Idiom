@@ -15,11 +15,12 @@ import (
 )
 
 type scriptedLLMClient struct {
-	responses     []string
-	finishReasons []string
-	messages      [][]llama.ChatMessage
-	options       []llama.ChatOptions
-	callCount     int
+	responses          []string
+	reasoningResponses []string
+	finishReasons      []string
+	messages           [][]llama.ChatMessage
+	options            []llama.ChatOptions
+	callCount          int
 }
 
 func (c *scriptedLLMClient) CompleteChat(_ context.Context, messages []llama.ChatMessage, opts llama.ChatOptions) (string, error) {
@@ -45,7 +46,12 @@ func (c *scriptedLLMClient) CompleteChatMessage(_ context.Context, messages []ll
 		finishReason = c.finishReasons[callIndex]
 	}
 
-	return llama.ChatMessage{Role: "assistant", Content: resp, FinishReason: finishReason}, nil
+	reasoning := ""
+	if callIndex < len(c.reasoningResponses) {
+		reasoning = c.reasoningResponses[callIndex]
+	}
+
+	return llama.ChatMessage{Role: "assistant", Content: resp, ReasoningContent: reasoning, FinishReason: finishReason}, nil
 }
 
 func (c *scriptedLLMClient) StreamChat(_ context.Context, _ []llama.ChatMessage, _ llama.ChatOptions, _ func(string) error) error {

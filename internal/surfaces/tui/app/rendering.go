@@ -608,6 +608,10 @@ func (m *Model) renderMessages(forceBottom bool) {
 			b.WriteString(label)
 			b.WriteString("\n")
 			b.WriteString(msgBodyStyle.Render(content))
+			if panel := renderThoughtPanel(m.thoughts, width); panel != "" {
+				b.WriteString("\n")
+				b.WriteString(panel)
+			}
 		}
 
 		if base == "" && !m.streaming {
@@ -655,6 +659,10 @@ func (m *Model) renderMessages(forceBottom bool) {
 		}
 
 		b.WriteString(renderActiveContainer(m.turnEvidence, width, maxContainerRows, m.streaming))
+		if panel := renderThoughtPanel(m.thoughts, width); panel != "" {
+			b.WriteString("\n")
+			b.WriteString(panel)
+		}
 	}
 
 	// Streaming spinner below everything, unless the live evidence container
@@ -672,6 +680,10 @@ func (m *Model) renderMessages(forceBottom bool) {
 		b.WriteString(label)
 		b.WriteString("\n")
 		b.WriteString(msgBodyStyle.Render(content))
+		if panel := renderThoughtPanel(m.thoughts, width); panel != "" {
+			b.WriteString("\n")
+			b.WriteString(panel)
+		}
 	}
 
 	if b.Len() == 0 && !m.streaming {
