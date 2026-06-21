@@ -62,7 +62,9 @@ func FormatStateSummary(state FeatureState, statePath string) string {
 		}
 	}
 
-	if len(state.Blockers) > 0 {
+	if len(state.Blockers) > 0 && CountOpenPlannerQuestions(state) > 0 {
+		fmt.Fprintf(&b, "blockers: blocked by open planner question; full diagnostics are saved in the feature-planner state\n")
+	} else if len(state.Blockers) > 0 {
 		fmt.Fprintf(&b, "blockers: %s\n", strings.Join(state.Blockers, "; "))
 	}
 

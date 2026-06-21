@@ -1989,6 +1989,78 @@ func TestRunDoesNotTreatOrdinaryCandidateFeatureAsLocalizationRepair(t *testing.
 	}
 }
 
+func TestRunGreenfieldSkeletonOpensOperatorQuestionWithoutLeakingDiagnosticSummary(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	plan.FeatureID = "llm-brain-bones"
+	plan.Summary = "Lay out the LLM brain project bones"
+	plan.TopLevelScope.Objective = "Establish the LLM brain project skeleton."
+	plan.Atoms[0].RequiredEditPaths = []string{"src/brain_core/types.py"}
+	plan.Atoms[0].AllowedEditPaths = []string{"tests/test_core_types.py"}
+	plan.Atoms[0].TestFirst.Commands = []string{"pytest tests/test_core_types.py"}
+	plan.Atoms[0].RequiredTests = []string{"pytest tests/test_core_types.py"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"tests/test_core_types.py"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = []string{"pytest tests/test_core_types.py"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"tests/test_core_types.py"}
+	plan.Atoms[0].Prompt = "Create file src/brain_core/types.py and tests/test_core_types.py."
+
+	state := NewState("session", "lay out project bones", "", 3, time.Unix(1, 0).UTC())
+	result, err := Run(state, RunOptions{
+		Prompt:                "Let's lay out the bones for this LLM brain project.",
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
+			t.Fatal("greenfield authority must block before dispatch")
+		}
+
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningQuestion {
+		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if len(result.Events) != 2 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" || result.Events[1].Type != "idiom.feature_planner.planner_question_opened" {
+		t.Fatalf("expected rejected-plan then question events, got %+v", result.Events)
+	}
+	if len(result.State.OpenQuestions) != 1 {
+		t.Fatalf("expected one open question, got %+v", result.State.OpenQuestions)
+	}
+
+	question := result.State.OpenQuestions[0]
+	if question.QuestionSummary != "Approve or revise greenfield project scope" ||
+		question.AuthorityRequired != "operator_approval" ||
+		!containsString(question.AffectedFields, "new_file_authorization") ||
+		!containsString(question.AffectedFields, "verification_command") ||
+		!containsString(question.AffectedPaths, "src/brain_core/types.py") {
+		t.Fatalf("unexpected greenfield authority question: %+v", question)
+	}
+
+	summary := FormatStateSummary(result.State, ".idiom/feature-planner/session/state.json")
+	for _, forbidden := range []string{
+		"atom 0 edit path",
+		"pytest tests/test_core_types.py",
+		"has no pytest project evidence",
+	} {
+		if strings.Contains(summary, forbidden) {
+			t.Fatalf("operator summary leaked internal diagnostic %q:\n%s", forbidden, summary)
+		}
+	}
+	for _, want := range []string{
+		"feature-planner: planning-question-open",
+		"question: Approve or revise greenfield project scope",
+		"blockers: blocked by open planner question",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("operator summary missing %q:\n%s", want, summary)
+		}
+	}
+}
+
 func TestRunPrefersExplicitNewFileAuthorizationOverLocalizationQuestion(t *testing.T) {
 	root := t.TempDir()
 	plan := validPlan()

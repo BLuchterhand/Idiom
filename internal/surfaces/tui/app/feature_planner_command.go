@@ -736,6 +736,8 @@ func (m *Model) featurePlannerSessionID() string {
 }
 
 func (m *Model) logFeaturePlannerEvent(event featureplanner.Event) {
+	event = sanitizeFeaturePlannerEventForConversation(event)
+
 	body, err := json.Marshal(event)
 	if err != nil {
 		m.logMessage(event.Type, event.Message)
@@ -744,6 +746,40 @@ func (m *Model) logFeaturePlannerEvent(event featureplanner.Event) {
 	}
 
 	m.logMessage(event.Type, string(body))
+}
+
+func sanitizeFeaturePlannerEventForConversation(event featureplanner.Event) featureplanner.Event {
+	if !featurePlannerEventCarriesInternalDiagnostic(event.Type) {
+		return event
+	}
+
+	if strings.TrimSpace(event.Message) != "" {
+		event.Fields = copyFeaturePlannerEventFields(event.Fields)
+		event.Fields["diagnostic_chars"] = len(event.Message)
+		event.Message = "internal feature-planner diagnostic omitted from conversation; inspect the saved state or event log for full details"
+	}
+
+	return event
+}
+
+func featurePlannerEventCarriesInternalDiagnostic(eventType string) bool {
+	eventType = strings.ToLower(strings.TrimSpace(eventType))
+	if eventType == "" {
+		return false
+	}
+
+	return strings.Contains(eventType, "_blocked") ||
+		strings.Contains(eventType, "_rejected") ||
+		strings.Contains(eventType, "malformed_structured_output")
+}
+
+func copyFeaturePlannerEventFields(fields map[string]any) map[string]any {
+	out := make(map[string]any, len(fields)+1)
+	for key, value := range fields {
+		out[key] = value
+	}
+
+	return out
 }
 
 func featurePlannerTUITerminalRole(status string) string {

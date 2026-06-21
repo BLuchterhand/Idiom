@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -170,6 +172,11 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 			candidate := recordRejectedPlanCandidate(&state, parsed.Plan, "idiom.feature_planner.standalone_context_blocked", err.Error(), opts.Now)
 			events := []Event{rejectedPlanEvent(state.SessionID, "idiom.feature_planner.standalone_context_blocked", err.Error(), candidate)}
 			if question, ok := missingNewFileAuthorizationQuestion(err, opts.Prompt); ok {
+				events = append(events, ApplyPlannerOutput(&state, ParsedPlannerOutput{
+					Kind:     ToolAskPlannerQuestion,
+					Question: question,
+				}, opts.Now)...)
+			} else if question, ok := greenfieldMissingNewFileAuthorizationQuestion(err, opts.Prompt, opts.WorkspaceRoot); ok {
 				events = append(events, ApplyPlannerOutput(&state, ParsedPlannerOutput{
 					Kind:     ToolAskPlannerQuestion,
 					Question: question,
@@ -2252,6 +2259,188 @@ func missingNewFileAuthorizationQuestion(err error, prompt string) (PlannerQuest
 		AffectedPaths:     paths,
 		AffectedFields:    []string{"new_file_authorization"},
 	}, true
+}
+
+func greenfieldMissingNewFileAuthorizationQuestion(err error, prompt string, workspaceRoot string) (PlannerQuestion, bool) {
+	var missing *MissingNewFileAuthorizationError
+	if !errors.As(err, &missing) {
+		return PlannerQuestion{}, false
+	}
+
+	if !standaloneWorkspaceLooksGreenfield(workspaceRoot) || !promptRequestsGreenfieldSkeleton(prompt) {
+		return PlannerQuestion{}, false
+	}
+
+	paths := normalizeEditScopeList(missing.Paths)
+	if len(paths) == 0 {
+		return PlannerQuestion{}, false
+	}
+
+	request := strings.TrimSpace(prompt)
+	if request == "" {
+		request = "the requested standalone feature"
+	}
+
+	return PlannerQuestion{
+		QuestionSummary:   "Approve or revise greenfield project scope",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "The workspace has no project files, so the standalone feature planner cannot infer new files, project structure, or verification commands safely.",
+		RequestedDecision: fmt.Sprintf("For %q, approve creation of exactly these proposed repo-relative paths and provide the intended project setup plus verification command, or reject/revise the paths before planning continues: %s", request, strings.Join(paths, ", ")),
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     paths,
+		AffectedFields:    []string{"new_file_authorization", "verification_command"},
+	}, true
+}
+
+func promptRequestsGreenfieldSkeleton(prompt string) bool {
+	words := " " + strings.ToLower(strings.TrimSpace(prompt)) + " "
+	words = strings.NewReplacer(
+		".", " ",
+		",", " ",
+		";", " ",
+		":", " ",
+		"!", " ",
+		"?", " ",
+		"(", " ",
+		")", " ",
+		"[", " ",
+		"]", " ",
+		"{", " ",
+		"}", " ",
+		"`", " ",
+		"\"", " ",
+		"'", " ",
+	).Replace(words)
+	if strings.TrimSpace(words) == "" {
+		return false
+	}
+
+	projectLike := strings.Contains(words, " project ") ||
+		strings.Contains(words, " app ") ||
+		strings.Contains(words, " application ") ||
+		strings.Contains(words, " repo ") ||
+		strings.Contains(words, " repository ") ||
+		strings.Contains(words, " workspace ")
+	if !projectLike {
+		return false
+	}
+
+	for _, term := range []string{
+		" bones ",
+		" skeleton ",
+		" scaffold ",
+		" scaffolding ",
+		" structure ",
+		" starter ",
+		" greenfield ",
+		" from scratch ",
+		" starting from scratch ",
+	} {
+		if strings.Contains(words, term) {
+			return true
+		}
+	}
+
+	return false
+}
+
+const (
+	standaloneWorkspaceEvidenceFileLimit  = 2000
+	standaloneWorkspaceEvidenceDepthLimit = 6
+)
+
+var errStopStandaloneWorkspaceEvidenceProbe = errors.New("stop standalone workspace evidence probe")
+
+func standaloneWorkspaceLooksGreenfield(root string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return false
+	}
+
+	root = filepath.Clean(root)
+	found := false
+	inspected := 0
+	scanLimitExceeded := false
+
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if path == root {
+				return walkErr
+			}
+			if entry != nil && entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if path == root {
+			return nil
+		}
+
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil
+		}
+		depth := standaloneWorkspaceEvidencePathDepth(rel)
+		if entry.IsDir() {
+			if standaloneWorkspaceEvidenceIgnoredDir(entry.Name()) || depth >= standaloneWorkspaceEvidenceDepthLimit {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		inspected++
+		if inspected > standaloneWorkspaceEvidenceFileLimit {
+			scanLimitExceeded = true
+			return errStopStandaloneWorkspaceEvidenceProbe
+		}
+
+		if standaloneWorkspaceEvidenceFile(entry.Name()) {
+			found = true
+			return errStopStandaloneWorkspaceEvidenceProbe
+		}
+
+		return nil
+	})
+
+	if found || scanLimitExceeded {
+		return false
+	}
+
+	return err == nil || err == errStopStandaloneWorkspaceEvidenceProbe
+}
+
+func standaloneWorkspaceEvidencePathDepth(rel string) int {
+	rel = strings.Trim(filepath.ToSlash(rel), "/")
+	if rel == "" || rel == "." {
+		return 0
+	}
+
+	return strings.Count(rel, "/") + 1
+}
+
+func standaloneWorkspaceEvidenceIgnoredDir(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case ".cache", ".codex", ".direnv", ".git", ".idiom", "build", "dist", "logs", "node_modules", "target", "transcripts", "vendor":
+		return true
+	default:
+		return false
+	}
+}
+
+func standaloneWorkspaceEvidenceFile(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch name {
+	case ".dockerignore", ".editorconfig", ".env.example", ".gitignore", "agents.md", "build.gradle", "build.gradle.kts", "cargo.lock", "cargo.toml", "dockerfile", "go.mod", "go.sum", "makefile", "package-lock.json", "package.json", "pom.xml", "pyproject.toml", "readme", "readme.md", "requirements.txt":
+		return true
+	}
+
+	switch filepath.Ext(name) {
+	case ".adoc", ".bash", ".c", ".cc", ".cpp", ".css", ".gd", ".go", ".graphql", ".h", ".hpp", ".html", ".java", ".js", ".json", ".jsx", ".kt", ".kts", ".lock", ".md", ".mdx", ".mod", ".proto", ".py", ".rs", ".rst", ".sh", ".sql", ".sum", ".toml", ".ts", ".tsx", ".txt", ".xml", ".yaml", ".yml", ".zsh":
+		return true
+	default:
+		return false
+	}
 }
 
 func missingPathLocalizationQuestion(err error, prompt string) (PlannerQuestion, bool) {

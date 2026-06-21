@@ -2,6 +2,7 @@ package featureplannerruntime
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -13,7 +14,7 @@ import (
 type Logger func(role string, content string)
 
 func CompleteModelTurn(ctx context.Context, client llama.LLMClient, prompt string, opts llama.ChatOptions, taskFamily string, log Logger) (string, error) {
-	logFeaturePlannerMessage(log, "feature_planner_prompt", prompt)
+	logFeaturePlannerMessage(log, "feature_planner_prompt", boundedPlannerDiagnostic("prompt", prompt))
 
 	thinking := false
 
@@ -48,7 +49,7 @@ func CompleteModelTurn(ctx context.Context, client llama.LLMClient, prompt strin
 		return "", fmt.Errorf("feature-planner model returned empty content after retry (finish_reason=%q)", strings.TrimSpace(reply.FinishReason))
 	}
 
-	logFeaturePlannerMessage(log, "feature_planner_model", answer)
+	logFeaturePlannerMessage(log, "feature_planner_model", boundedPlannerDiagnostic("model", answer))
 
 	return answer, nil
 }
@@ -68,6 +69,35 @@ func emptyModelMessage(finishReason string, responseFormatJSON bool) string {
 	data, _ := json.Marshal(fields)
 
 	return string(data)
+}
+
+func boundedPlannerDiagnostic(kind string, content string) string {
+	trimmed := strings.TrimSpace(content)
+	fields := map[string]any{
+		"kind":        strings.TrimSpace(kind),
+		"chars":       len(trimmed),
+		"sha256":      fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(trimmed))),
+		"raw_omitted": true,
+	}
+
+	if tool := plannerOutputTool(trimmed); tool != "" {
+		fields["tool"] = tool
+	}
+
+	data, _ := json.Marshal(fields)
+
+	return string(data)
+}
+
+func plannerOutputTool(content string) string {
+	var payload struct {
+		Tool string `json:"tool"`
+	}
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(payload.Tool)
 }
 
 func buildEmptyRetryPrompt(originalPrompt string, finishReason string) string {

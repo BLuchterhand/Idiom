@@ -295,6 +295,35 @@ func TestFeaturePlannerTUITurnRetriesEmptyPlannerResponse(t *testing.T) {
 	}
 }
 
+func TestFeaturePlannerConversationEventSanitizerOmitsInternalDiagnostics(t *testing.T) {
+	event := featureplanner.Event{
+		Type:    "idiom.feature_planner.standalone_context_blocked",
+		Message: "atom 0 edit path src/brain_core/types.py is missing from workspace and has no pytest project evidence",
+		Fields: map[string]any{
+			"candidate_id": "candidate-1",
+		},
+	}
+
+	got := sanitizeFeaturePlannerEventForConversation(event)
+	if strings.Contains(got.Message, "src/brain_core/types.py") || strings.Contains(got.Message, "pytest project evidence") {
+		t.Fatalf("sanitized event leaked diagnostic: %+v", got)
+	}
+	if got.Fields["candidate_id"] != "candidate-1" {
+		t.Fatalf("sanitized event lost existing fields: %+v", got.Fields)
+	}
+	if got.Fields["diagnostic_chars"] != len(event.Message) {
+		t.Fatalf("diagnostic_chars = %v, want %d", got.Fields["diagnostic_chars"], len(event.Message))
+	}
+	if _, ok := event.Fields["diagnostic_chars"]; ok {
+		t.Fatalf("sanitizer mutated original fields: %+v", event.Fields)
+	}
+
+	ordinary := featureplanner.Event{Type: "idiom.feature_planner.planner_question_opened", Message: "question text"}
+	if sanitized := sanitizeFeaturePlannerEventForConversation(ordinary); sanitized.Message != ordinary.Message {
+		t.Fatalf("ordinary event was sanitized: %+v", sanitized)
+	}
+}
+
 func TestFeaturePlannerProductWriteEnvelopeExcludesContextEvidencePaths(t *testing.T) {
 	brief := &featureplanner.ProductWorkflowBrief{
 		FilesToModify:             []string{"./native/src/core/colony_sim.h", "native/src/core/colony_sim.h"},

@@ -78,7 +78,7 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 	plan := m.buildPromptExecutionPlan(ctx, prompt)
 
 	plan = m.recoverDirectImplementationContext(prompt, plan)
-	if m.greenfieldCreationRequiresConfirmation(plan) {
+	if m.greenfieldCreationRequiresConfirmation(prompt, plan) {
 		m.recordPromptRouteWithoutExecution(prompt, plan)
 
 		return m.finishPromptOnceReply(greenfieldCreationConfirmationQuestion(plan)), nil
@@ -1856,21 +1856,26 @@ func clampPositiveMin(current, limit int) int {
 	return max(current, limit)
 }
 
-func (m *Model) greenfieldCreationRequiresConfirmation(plan promptExecutionPlan) bool {
+func (m *Model) greenfieldCreationRequiresConfirmation(prompt string, plan promptExecutionPlan) bool {
 	if m == nil || m.workspace == nil || m.suppressGreenfieldConfirmation {
 		return false
 	}
 
-	// Only applies when the classifier chose read-only conversation.
+	// Only applies when the classifier chose read-only conversation for a
+	// concrete creation request. Empty workspaces are still valid places to ask
+	// design, architecture, or general questions.
 	route := plan.route
 	if route.WriteIntent == "yes" || isImplementationLikeFamily(route.Family) {
 		return false
 	}
 
-	// Check workspace is greenfield (no readable project files found).
-	// Any prompt in an empty project under a read-only route is likely a
-	// creation or scaffolding request: the workspace has nothing to read
-	// or discuss. Signal, not scenario template: evidence-based, generic.
+	if !promptRequestsConcreteWorkspaceCreation(prompt) {
+		return false
+	}
+
+	// Check workspace is greenfield (no readable project files found). The
+	// confirmation protects ambiguous creation/scaffolding requests from being
+	// answered in a read-only lane when there is no existing project evidence.
 	return !hasReadableWorkspaceFiles(m.workspace.Root())
 }
 

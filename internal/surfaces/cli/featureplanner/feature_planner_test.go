@@ -195,6 +195,24 @@ func TestDefaultFeaturePlannerModelTurnRetriesEmptyPlannerResponse(t *testing.T)
 
 		t.Fatalf("expected empty-response diagnostic and final model event, got %s", log)
 	}
+
+	for _, forbidden := range []string{
+		"Plan one feature atom.",
+		`"tool": "submit_feature_plan"`,
+	} {
+		if strings.Contains(stdout.String(), forbidden) {
+			t.Fatalf("feature-planner JSON stream leaked raw planner content %q: %s", forbidden, stdout.String())
+		}
+	}
+	for _, want := range []string{
+		`\"raw_omitted\":true`,
+		`\"tool\":\"submit_feature_plan\"`,
+		`\"sha256\":\"sha256:`,
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("feature-planner JSON stream missing bounded diagnostic %q: %s", want, stdout.String())
+		}
+	}
 }
 
 func TestFeaturePlannerMainDispatchesThroughAdapter(t *testing.T) {
