@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"idiom/internal/capabilities/workspace"
@@ -168,6 +169,7 @@ func TestFeaturePlannerTUIDirectAnswerResumesOpenQuestionSession(t *testing.T) {
 	}
 	for _, want := range []string{
 		"# Feature Planner Candidate",
+		"Status: " + featureplanner.FeatureStatePlanningRepair,
 		"Route collapse dispatch through a slim event helper.",
 		"pkg/collapse_event.go",
 		"pkg/collapse_event_test.go",
@@ -177,6 +179,37 @@ func TestFeaturePlannerTUIDirectAnswerResumesOpenQuestionSession(t *testing.T) {
 		if !strings.Contains(string(planTabBody), want) {
 			t.Fatalf("plan tab artifact missing %q:\n%s", want, string(planTabBody))
 		}
+	}
+	if strings.Contains(string(planTabBody), "**") {
+		t.Fatalf("plan tab artifact should avoid raw inline markdown styling:\n%s", string(planTabBody))
+	}
+
+	m.planPath = filepath.Join(projectRoot, filepath.FromSlash(state.PlanPath))
+	m.panelTab = panelTabPlan
+	m.history.panelOpen = true
+	m.history.focused = true
+	m.planViewport = viewport.New(100, 80)
+	m.renderPlanPanelContent()
+
+	renderedPlan := m.planViewport.View()
+	for _, want := range []string{"▾ Feature Planner Candidate", "▾ Atoms", "CollapseEvent helper"} {
+		if !strings.Contains(renderedPlan, want) {
+			t.Fatalf("rendered plan missing %q:\n%s", want, renderedPlan)
+		}
+	}
+
+	atomsIdx := planSelectableRowIndex(m.currentPlanSelectableRows(), "Atoms")
+	if atomsIdx < 0 {
+		t.Fatalf("Atoms heading should be selectable in rendered plan:\n%s", renderedPlan)
+	}
+	m.plan.cursor = atomsIdx
+	if handled, _ := m.handlePlanPanelKey(tea.KeyMsg{Type: tea.KeyEnter}); !handled {
+		t.Fatal("Enter should collapse generated Atoms section")
+	}
+
+	collapsedPlan := m.planViewport.View()
+	if !strings.Contains(collapsedPlan, "▸ Atoms") || strings.Contains(collapsedPlan, "CollapseEvent helper") {
+		t.Fatalf("generated Atoms section did not collapse cleanly:\n%s", collapsedPlan)
 	}
 }
 
@@ -363,6 +396,7 @@ func TestFeaturePlannerTUIE2EOpenApprovalQuestionKeepsChatInteractive(t *testing
 	}
 	for _, want := range []string{
 		"# Feature Planner Candidate",
+		"Status: " + featureplanner.FeatureStatePlanningRepair,
 		"Route collapse dispatch through a slim event helper.",
 		"pkg/collapse_event.go",
 		"pkg/collapse_event_test.go",
@@ -371,6 +405,9 @@ func TestFeaturePlannerTUIE2EOpenApprovalQuestionKeepsChatInteractive(t *testing
 		if !strings.Contains(string(planTabBody), want) {
 			t.Fatalf("plan tab artifact missing %q:\n%s", want, string(planTabBody))
 		}
+	}
+	if strings.Contains(string(planTabBody), "**") {
+		t.Fatalf("plan tab artifact should avoid raw inline markdown styling:\n%s", string(planTabBody))
 	}
 }
 

@@ -2421,7 +2421,7 @@ func standaloneWorkspaceEvidencePathDepth(rel string) int {
 
 func standaloneWorkspaceEvidenceIgnoredDir(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case ".cache", ".codex", ".direnv", ".git", ".idiom", "build", "dist", "logs", "node_modules", "target", "transcripts", "vendor":
+	case ".cache", ".codex", ".direnv", ".git", ".idiom", ".planning", "build", "dist", "logs", "node_modules", "target", "transcripts", "vendor":
 		return true
 	default:
 		return false

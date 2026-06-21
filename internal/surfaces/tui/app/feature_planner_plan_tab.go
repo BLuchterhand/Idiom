@@ -160,7 +160,7 @@ func writeFeaturePlannerMarkdownField(b *strings.Builder, label string, value st
 		return
 	}
 
-	fmt.Fprintf(b, "- **%s:** %s\n", label, featurePlannerInlineMarkdown(value))
+	fmt.Fprintf(b, "%s: %s\n", label, featurePlannerInlineMarkdown(value))
 }
 
 func writeFeaturePlannerMarkdownSection(b *strings.Builder, title string, value string) {
@@ -245,8 +245,8 @@ func writeFeaturePlannerMarkdownAtoms(b *strings.Builder, atoms []featureplanner
 		if tests := featurePlannerUniqueStrings(append(append([]string(nil), atom.TestFirst.Commands...), atom.RequiredTests...)); len(tests) > 0 {
 			fmt.Fprintf(b, "  - Tests: %s\n", strings.Join(tests, ", "))
 		}
+		b.WriteString("\n")
 	}
-	b.WriteString("\n")
 }
 
 func featurePlannerPlanTabPaths(plan featureplanner.FeaturePlan) []string {

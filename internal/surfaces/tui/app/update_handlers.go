@@ -645,12 +645,18 @@ func (m *Model) handlePlanPanelClick(row int) bool {
 		return false
 	}
 
-	sourceLine := row + m.planViewport.YOffset - 1 // plan viewport row 0 is the panel title.
-	items := m.currentPlanItems()
+	renderedLine := row + m.planViewport.YOffset - 1 // plan viewport row 0 is the panel title.
+	displayLines := m.currentPlanDisplayLines()
+	if renderedLine < 0 || renderedLine >= len(displayLines) {
+		return false
+	}
+
+	sourceLine := displayLines[renderedLine].LineIdx
+	rows := m.currentPlanSelectableRows()
 	idx := -1
 
-	for i, item := range items {
-		if item.LineIdx == sourceLine {
+	for i, selectableRow := range rows {
+		if selectableRow.LineIdx == sourceLine {
 			idx = i
 			break
 		}
@@ -661,13 +667,7 @@ func (m *Model) handlePlanPanelClick(row int) bool {
 	}
 
 	m.plan.cursor = idx
-	if m.openPlanDiffOverlay() {
-		m.planViewport.GotoTop()
-	} else {
-		m.status = "No diff attached to this item."
-	}
-
-	m.renderPlanPanelContent()
+	m.activateSelectedPlanRow()
 
 	return true
 }

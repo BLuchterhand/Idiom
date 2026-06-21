@@ -21,6 +21,7 @@ type planState struct {
 	submittedEdits        map[string]workspace.PlanEdit
 	cachedItemsContent    string
 	cachedItems           []planItemMeta
+	collapsedHeadings     map[string]bool
 }
 
 type docViewerState struct {

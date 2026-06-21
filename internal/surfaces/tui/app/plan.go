@@ -31,6 +31,25 @@ const (
 	panelTabCount     = 4
 )
 
+type planSelectableKind int
+
+const (
+	planSelectableHeading planSelectableKind = iota + 1
+	planSelectableItem
+)
+
+type planSelectableRow struct {
+	Kind       planSelectableKind
+	LineIdx    int
+	HeadingKey string
+	Heading    string
+	Item       planItemMeta
+}
+
+type planDisplayLine struct {
+	LineIdx int
+}
+
 // planDirName is the directory (relative to workspace root) where per-session
 // plan markdown files live.
 const planDirName = ".planning"
@@ -150,7 +169,7 @@ func (m *Model) renderPlanPanelContent() {
 		// When the panel has focus, surface the keybinds so the user
 		// knows ↑/↓ navigates and Enter opens a diff. Without this hint
 		// the interactivity is invisible.
-		title = "◇ Plan · ↑/↓ select · Enter view diff"
+		title = "◇ Plan · ↑/↓ select · Enter diff/fold"
 	}
 
 	b.WriteString(panelTitleStyle.Width(w).Render(title))
@@ -188,30 +207,33 @@ func (m *Model) renderPlanPanelContent() {
 		return
 	}
 
-	// Render markdown with checkbox highlighting. Use glamour for body, but
-	// pre-process checkbox lines for a tighter TUI look. When the plan
-	// panel has focus and there are clickable items, we highlight the
-	// cursor row so the user sees which Enter will open.
-	items := parsePlanItems(content)
+	// Render markdown with checkbox highlighting and collapsible heading
+	// sections. When the plan panel has focus and there are selectable
+	// rows, highlight the cursor row so the user sees which Enter will
+	// activate.
+	selectableRows := m.currentPlanSelectableRowsForContent(content)
 
 	var cursorLineIdx = -1
 
-	if m.panelTab == panelTabPlan && m.history.focused && len(items) > 0 {
-		if m.plan.cursor < 0 {
-			m.plan.cursor = 0
-		}
-
-		if m.plan.cursor >= len(items) {
-			m.plan.cursor = len(items) - 1
-		}
-
-		cursorLineIdx = items[m.plan.cursor].LineIdx
+	if m.panelTab == panelTabPlan && m.history.focused && len(selectableRows) > 0 {
+		m.normalizePlanCursor(selectableRows)
+		cursorLineIdx = selectableRows[m.plan.cursor].LineIdx
 	}
 
-	for i, raw := range strings.Split(content, "\n") {
-		rendered := renderPlanLine(raw, w)
-		if i == cursorLineIdx {
-			rendered = panelFocusedStyle.Width(w).Render("▸ " + strings.TrimLeft(planCommentRe.ReplaceAllString(raw, ""), " \t"))
+	lines := strings.Split(content, "\n")
+	for _, displayLine := range m.currentPlanDisplayLinesForContent(content) {
+		if displayLine.LineIdx < 0 || displayLine.LineIdx >= len(lines) {
+			continue
+		}
+
+		raw := lines[displayLine.LineIdx]
+		rendered := m.renderPlanLine(raw, displayLine.LineIdx, w)
+		if displayLine.LineIdx == cursorLineIdx {
+			prefix := "▸ "
+			if _, _, ok := parsePlanHeading(raw); ok {
+				prefix = ""
+			}
+			rendered = panelFocusedStyle.Width(w).Render(prefix + m.planFocusedLineText(raw, displayLine.LineIdx))
 		}
 
 		b.WriteString(rendered)
@@ -238,6 +260,96 @@ func (m *Model) currentPlanItems() []planItemMeta {
 	return items
 }
 
+func (m *Model) currentPlanSelectableRows() []planSelectableRow {
+	return m.currentPlanSelectableRowsForContent(m.loadPlanContent())
+}
+
+func (m *Model) currentPlanSelectableRowsForContent(content string) []planSelectableRow {
+	var rows []planSelectableRow
+
+	m.visitVisiblePlanLines(content, func(i int, raw string) {
+		if _, title, ok := parsePlanHeading(raw); ok {
+			rows = append(rows, planSelectableRow{
+				Kind:       planSelectableHeading,
+				LineIdx:    i,
+				HeadingKey: planHeadingKey(i, raw),
+				Heading:    title,
+			})
+
+			return
+		}
+
+		if item, ok := parsePlanItemLine(i, raw); ok {
+			rows = append(rows, planSelectableRow{
+				Kind:    planSelectableItem,
+				LineIdx: i,
+				Item:    item,
+			})
+		}
+	})
+
+	return rows
+}
+
+func (m *Model) currentPlanDisplayLines() []planDisplayLine {
+	return m.currentPlanDisplayLinesForContent(m.loadPlanContent())
+}
+
+func (m *Model) currentPlanDisplayLinesForContent(content string) []planDisplayLine {
+	var lines []planDisplayLine
+
+	m.visitVisiblePlanLines(content, func(i int, raw string) {
+		lines = append(lines, planDisplayLine{LineIdx: i})
+	})
+
+	return lines
+}
+
+func (m *Model) visitVisiblePlanLines(content string, visit func(lineIdx int, raw string)) {
+	hiddenLevel := 0
+
+	for i, raw := range strings.Split(content, "\n") {
+		if level, _, ok := parsePlanHeading(raw); ok {
+			if hiddenLevel > 0 && level <= hiddenLevel {
+				hiddenLevel = 0
+			}
+
+			if hiddenLevel > 0 {
+				continue
+			}
+
+			visit(i, raw)
+			if m.planHeadingCollapsed(i, raw) {
+				hiddenLevel = level
+			}
+
+			continue
+		}
+
+		if hiddenLevel > 0 {
+			continue
+		}
+
+		visit(i, raw)
+	}
+}
+
+func (m *Model) normalizePlanCursor(rows []planSelectableRow) {
+	if len(rows) == 0 {
+		m.plan.cursor = 0
+
+		return
+	}
+
+	if m.plan.cursor < 0 {
+		m.plan.cursor = 0
+	}
+
+	if m.plan.cursor >= len(rows) {
+		m.plan.cursor = len(rows) - 1
+	}
+}
+
 // openPlanDiffOverlay loads the diff entry referenced by the plan item
 // under the cursor and switches the panel into overlay mode. Returns
 // false when the selected item has no diff id (e.g. an unattached
@@ -249,6 +361,14 @@ func (m *Model) openPlanDiffOverlay() bool {
 	}
 
 	item := items[m.plan.cursor]
+	if item.DiffID == "" {
+		return false
+	}
+
+	return m.openPlanDiffOverlayForItem(item)
+}
+
+func (m *Model) openPlanDiffOverlayForItem(item planItemMeta) bool {
 	if item.DiffID == "" {
 		return false
 	}
@@ -303,22 +423,15 @@ func (m *Model) handlePlanPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 
 		return true, m.waitForEventCmd()
 	case tea.KeyDown:
-		items := m.currentPlanItems()
-		if m.plan.cursor < len(items)-1 {
+		rows := m.currentPlanSelectableRows()
+		if m.plan.cursor < len(rows)-1 {
 			m.plan.cursor++
 			m.renderPlanPanelContent()
 		}
 
 		return true, m.waitForEventCmd()
 	case tea.KeyEnter:
-		if m.openPlanDiffOverlay() {
-			m.renderPlanPanelContent()
-			m.planViewport.GotoTop()
-
-			return true, m.waitForEventCmd()
-		}
-
-		m.status = "No diff attached to this item."
+		m.activateSelectedPlanRow()
 
 		return true, m.waitForEventCmd()
 	case tea.KeyEsc:
@@ -329,8 +442,8 @@ func (m *Model) handlePlanPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	case tea.KeyRunes:
 		switch string(msg.Runes) {
 		case "j":
-			items := m.currentPlanItems()
-			if m.plan.cursor < len(items)-1 {
+			rows := m.currentPlanSelectableRows()
+			if m.plan.cursor < len(rows)-1 {
 				m.plan.cursor++
 				m.renderPlanPanelContent()
 			}
@@ -349,9 +462,46 @@ func (m *Model) handlePlanPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	return false, nil
 }
 
+func (m *Model) activateSelectedPlanRow() {
+	rows := m.currentPlanSelectableRows()
+	if len(rows) == 0 {
+		return
+	}
+
+	m.normalizePlanCursor(rows)
+	row := rows[m.plan.cursor]
+
+	switch row.Kind {
+	case planSelectableHeading:
+		if m.plan.collapsedHeadings == nil {
+			m.plan.collapsedHeadings = make(map[string]bool)
+		}
+
+		m.plan.collapsedHeadings[row.HeadingKey] = !m.plan.collapsedHeadings[row.HeadingKey]
+		if m.plan.collapsedHeadings[row.HeadingKey] {
+			m.status = "Collapsed " + row.Heading + "."
+		} else {
+			m.status = "Expanded " + row.Heading + "."
+		}
+		m.renderPlanPanelContent()
+	case planSelectableItem:
+		if m.openPlanDiffOverlayForItem(row.Item) {
+			m.renderPlanPanelContent()
+			m.planViewport.GotoTop()
+		} else {
+			m.status = "No diff attached to this item."
+			m.renderPlanPanelContent()
+		}
+	}
+}
+
 // renderPlanLine applies lightweight styling to a single plan line: checkboxes
 // get colored indicators, headings get emphasis, other lines render plain.
 func renderPlanLine(raw string, w int) string {
+	return (&Model{}).renderPlanLine(raw, -1, w)
+}
+
+func (m *Model) renderPlanLine(raw string, lineIdx int, w int) string {
 	// Strip HTML-comment anchors before display. They remain in the
 	// file (that's how click-to-open-diff works), but the user should
 	// never see the raw `<!-- id:abc123 -->` noise in the panel.
@@ -384,15 +534,85 @@ func renderPlanLine(raw string, w int) string {
 		line := indent + box + " " + text
 
 		return lipgloss.NewStyle().Width(w).Render(line)
-	case strings.HasPrefix(trimmed, "# "):
-		return planH1Style.Width(w).Render(strings.TrimPrefix(trimmed, "# "))
-	case strings.HasPrefix(trimmed, "## "):
-		return planH2Style.Width(w).Render(strings.TrimPrefix(trimmed, "## "))
-	case strings.HasPrefix(trimmed, "### "):
-		return planH3Style.Width(w).Render(strings.TrimPrefix(trimmed, "### "))
+	case strings.HasPrefix(trimmed, "#"):
+		return m.renderPlanHeadingLine(raw, lineIdx, w)
 	default:
 		return panelDetailStyle.Width(w).Render(visible)
 	}
+}
+
+func (m *Model) renderPlanHeadingLine(raw string, lineIdx int, w int) string {
+	level, title, ok := parsePlanHeading(raw)
+	if !ok {
+		return panelDetailStyle.Width(w).Render(planCommentRe.ReplaceAllString(raw, ""))
+	}
+
+	line := planHeadingControlText(title, m.planHeadingCollapsed(lineIdx, raw))
+	switch level {
+	case 1:
+		return planH1Style.Width(w).Render(line)
+	case 2:
+		return planH2Style.Width(w).Render(line)
+	default:
+		return planH3Style.Width(w).Render(line)
+	}
+}
+
+func (m *Model) planFocusedLineText(raw string, lineIdx int) string {
+	if _, title, ok := parsePlanHeading(raw); ok {
+		return planHeadingControlText(title, m.planHeadingCollapsed(lineIdx, raw))
+	}
+
+	return strings.TrimLeft(planCommentRe.ReplaceAllString(raw, ""), " \t")
+}
+
+func (m *Model) planHeadingCollapsed(lineIdx int, raw string) bool {
+	if m == nil || m.plan.collapsedHeadings == nil {
+		return false
+	}
+
+	return m.plan.collapsedHeadings[planHeadingKey(lineIdx, raw)]
+}
+
+func planHeadingControlText(title string, collapsed bool) string {
+	if collapsed {
+		return "▸ " + title
+	}
+
+	return "▾ " + title
+}
+
+func parsePlanHeading(raw string) (int, string, bool) {
+	visible := planCommentRe.ReplaceAllString(raw, "")
+	trimmed := strings.TrimLeft(visible, " \t")
+	if !strings.HasPrefix(trimmed, "#") {
+		return 0, "", false
+	}
+
+	level := 0
+	for level < len(trimmed) && level < 6 && trimmed[level] == '#' {
+		level++
+	}
+
+	if level == 0 || level >= len(trimmed) || trimmed[level] != ' ' {
+		return 0, "", false
+	}
+
+	title := strings.TrimSpace(trimmed[level+1:])
+	if title == "" {
+		return 0, "", false
+	}
+
+	return level, title, true
+}
+
+func planHeadingKey(lineIdx int, raw string) string {
+	level, title, ok := parsePlanHeading(raw)
+	if !ok {
+		return fmt.Sprintf("%d:", lineIdx)
+	}
+
+	return fmt.Sprintf("%d:%d:%s", lineIdx, level, title)
 }
 
 // prepareEditPlanCmd returns a tea.Cmd (tea.ExecProcess) that opens the plan

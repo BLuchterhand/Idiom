@@ -37,36 +37,45 @@ func parsePlanItems(plan string) []planItemMeta {
 	var items []planItemMeta
 
 	for i, raw := range strings.Split(plan, "\n") {
-		trimmed := strings.TrimLeft(raw, " \t")
-		if !strings.HasPrefix(trimmed, "- [") && !strings.HasPrefix(trimmed, "* [") {
+		meta, ok := parsePlanItemLine(i, raw)
+		if !ok {
 			continue
-		}
-
-		if len(trimmed) < 5 {
-			continue
-		}
-
-		meta := planItemMeta{LineIdx: i, RawText: raw}
-		box := trimmed[3]
-
-		meta.Checked = box == 'x' || box == 'X'
-
-		if m := planDiffAnchorRe.FindStringSubmatch(raw); len(m) == 2 {
-			meta.DiffID = m[1]
-		}
-
-		if m := planTaskAnchorRe.FindStringSubmatch(raw); len(m) == 2 {
-			meta.TaskID = m[1]
-		}
-
-		if m := planPEAnchorRe.FindStringSubmatch(raw); len(m) == 2 {
-			meta.PlanEditID = m[1]
 		}
 
 		items = append(items, meta)
 	}
 
 	return items
+}
+
+func parsePlanItemLine(lineIdx int, raw string) (planItemMeta, bool) {
+	trimmed := strings.TrimLeft(raw, " \t")
+	if !strings.HasPrefix(trimmed, "- [") && !strings.HasPrefix(trimmed, "* [") {
+		return planItemMeta{}, false
+	}
+
+	if len(trimmed) < 5 {
+		return planItemMeta{}, false
+	}
+
+	meta := planItemMeta{LineIdx: lineIdx, RawText: raw}
+	box := trimmed[3]
+
+	meta.Checked = box == 'x' || box == 'X'
+
+	if m := planDiffAnchorRe.FindStringSubmatch(raw); len(m) == 2 {
+		meta.DiffID = m[1]
+	}
+
+	if m := planTaskAnchorRe.FindStringSubmatch(raw); len(m) == 2 {
+		meta.TaskID = m[1]
+	}
+
+	if m := planPEAnchorRe.FindStringSubmatch(raw); len(m) == 2 {
+		meta.PlanEditID = m[1]
+	}
+
+	return meta, true
 }
 
 // loadPlanDiffEntry scans the session's diffs JSONL file for the

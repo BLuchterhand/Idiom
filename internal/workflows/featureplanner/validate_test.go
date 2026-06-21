@@ -1991,6 +1991,13 @@ func TestRunDoesNotTreatOrdinaryCandidateFeatureAsLocalizationRepair(t *testing.
 
 func TestRunGreenfieldSkeletonOpensOperatorQuestionWithoutLeakingDiagnosticSummary(t *testing.T) {
 	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".planning"), 0o755); err != nil {
+		t.Fatalf("mkdir .planning: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".planning", "previous-session.md"), []byte("# Feature Planner Candidate\n"), 0o644); err != nil {
+		t.Fatalf("write prior plan tab artifact: %v", err)
+	}
+
 	plan := validPlan()
 
 	plan.FeatureID = "llm-brain-bones"
@@ -2003,7 +2010,7 @@ func TestRunGreenfieldSkeletonOpensOperatorQuestionWithoutLeakingDiagnosticSumma
 	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"tests/test_core_types.py"}
 	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = []string{"pytest tests/test_core_types.py"}
 	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"tests/test_core_types.py"}
-	plan.Atoms[0].Prompt = "Create file src/brain_core/types.py and tests/test_core_types.py."
+	plan.Atoms[0].Prompt = "Create file src/brain_core/types.py and tests/test_core_types.py. Include __init__.py(empty) as a literal placeholder."
 
 	state := NewState("session", "lay out project bones", "", 3, time.Unix(1, 0).UTC())
 	result, err := Run(state, RunOptions{
@@ -2045,6 +2052,7 @@ func TestRunGreenfieldSkeletonOpensOperatorQuestionWithoutLeakingDiagnosticSumma
 		"atom 0 edit path",
 		"pytest tests/test_core_types.py",
 		"has no pytest project evidence",
+		"__init__.py(empty)",
 	} {
 		if strings.Contains(summary, forbidden) {
 			t.Fatalf("operator summary leaked internal diagnostic %q:\n%s", forbidden, summary)

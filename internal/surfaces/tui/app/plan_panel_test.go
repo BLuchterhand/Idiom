@@ -78,6 +78,153 @@ func TestLoadPlanContentClearsCacheWhenFileDisappears(t *testing.T) {
 	}
 }
 
+func TestPlanPanelHeadingsCollapseWithEnter(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "plan.md")
+	content := "# Plan\n\n## Objective\nkeep this readable\n- [ ] hidden item\n\n## Steps\n- [ ] visible item\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	m := planPanelTestModel(path)
+	m.renderPlanPanelContent()
+
+	before := m.planViewport.View()
+	for _, want := range []string{"▾ Objective", "keep this readable", "hidden item", "▾ Steps"} {
+		if !strings.Contains(before, want) {
+			t.Fatalf("expanded plan missing %q:\n%s", want, before)
+		}
+	}
+
+	rows := m.currentPlanSelectableRows()
+	objectiveIdx := planSelectableRowIndex(rows, "Objective")
+	if objectiveIdx < 0 {
+		t.Fatalf("Objective heading not selectable: %#v", rows)
+	}
+
+	m.plan.cursor = objectiveIdx
+	if handled, _ := m.handlePlanPanelKey(tea.KeyMsg{Type: tea.KeyEnter}); !handled {
+		t.Fatal("Enter should be handled for plan heading")
+	}
+
+	after := m.planViewport.View()
+	for _, want := range []string{"▸ Objective", "▾ Steps", "visible item"} {
+		if !strings.Contains(after, want) {
+			t.Fatalf("collapsed plan missing %q:\n%s", want, after)
+		}
+	}
+	for _, hidden := range []string{"keep this readable", "hidden item"} {
+		if strings.Contains(after, hidden) {
+			t.Fatalf("collapsed section leaked %q:\n%s", hidden, after)
+		}
+	}
+}
+
+func TestPlanPanelCollapseHidesNestedHeadingsOnlyUntilPeer(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "plan.md")
+	content := "## Parent\nparent body\n### Child\nchild body\n## Peer\npeer body\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	m := planPanelTestModel(path)
+	rows := m.currentPlanSelectableRows()
+	parentIdx := planSelectableRowIndex(rows, "Parent")
+	if parentIdx < 0 {
+		t.Fatalf("Parent heading not selectable: %#v", rows)
+	}
+
+	m.plan.cursor = parentIdx
+	m.activateSelectedPlanRow()
+
+	got := m.planViewport.View()
+	for _, hidden := range []string{"parent body", "Child", "child body"} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("collapsed parent leaked nested content %q:\n%s", hidden, got)
+		}
+	}
+	for _, want := range []string{"▸ Parent", "▾ Peer", "peer body"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("collapsed parent should leave peer visible; missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestPlanPanelClickTogglesHeadingUsingRenderedRows(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "plan.md")
+	content := "# Plan\n\n## Objective\nbody\n\n## Steps\n- [ ] visible item\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	m := planPanelTestModel(path)
+	m.renderPlanPanelContent()
+
+	clickRow := -1
+	for i, line := range strings.Split(m.planViewport.View(), "\n") {
+		if strings.Contains(line, "Objective") {
+			clickRow = i
+			break
+		}
+	}
+	if clickRow < 0 {
+		t.Fatalf("Objective row not rendered:\n%s", m.planViewport.View())
+	}
+
+	if !m.handlePlanPanelClick(clickRow) {
+		t.Fatal("heading click should be handled")
+	}
+
+	got := m.planViewport.View()
+	if !strings.Contains(got, "▸ Objective") || strings.Contains(got, "body") {
+		t.Fatalf("heading click did not collapse section:\n%s", got)
+	}
+	if !strings.Contains(got, "visible item") {
+		t.Fatalf("peer content should remain visible after heading click:\n%s", got)
+	}
+}
+
+func TestPlanPanelMouseClickTogglesHeadingThroughPanelHitTest(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "plan.md")
+	content := "# Plan\n\n## Objective\nbody\n\n## Steps\n- [ ] visible item\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	m := planPanelTestModel(path)
+	m.viewport.Width = 100
+	m.renderPlanPanelContent()
+
+	clickRow := -1
+	for i, line := range strings.Split(m.planViewport.View(), "\n") {
+		if strings.Contains(line, "Objective") {
+			clickRow = i
+			break
+		}
+	}
+	if clickRow < 0 {
+		t.Fatalf("Objective row not rendered:\n%s", m.planViewport.View())
+	}
+
+	_, handled := m.handleMouse(tea.MouseMsg{
+		X:      m.panelStartX() + 1,
+		Y:      3 + clickRow,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	if !handled {
+		t.Fatal("panel mouse click should be handled")
+	}
+
+	got := m.planViewport.View()
+	if !strings.Contains(got, "▸ Objective") || strings.Contains(got, "body") {
+		t.Fatalf("mouse click did not collapse section:\n%s", got)
+	}
+}
+
 func TestDocViewerRendersPlanArtifactMetadataAndCollapsedEdits(t *testing.T) {
 	root := t.TempDir()
 	writeDocViewerPlanArtifact(t, root)
@@ -207,6 +354,28 @@ func TestMouseClickDocViewerEditTogglesExpansion(t *testing.T) {
 	if !strings.Contains(m.docViewer.viewport.View(), "+new value") {
 		t.Fatalf("expanded viewport did not render diff:\n%s", m.docViewer.viewport.View())
 	}
+}
+
+func planPanelTestModel(path string) *Model {
+	return &Model{
+		planPath: path,
+		panelTab: panelTabPlan,
+		history: historyState{
+			panelOpen: true,
+			focused:   true,
+		},
+		planViewport: viewport.New(80, 20),
+	}
+}
+
+func planSelectableRowIndex(rows []planSelectableRow, heading string) int {
+	for i, row := range rows {
+		if row.Kind == planSelectableHeading && row.Heading == heading {
+			return i
+		}
+	}
+
+	return -1
 }
 
 func docViewerTestModel(root string) *Model {
