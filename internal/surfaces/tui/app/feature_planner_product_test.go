@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -300,7 +301,9 @@ func TestFeaturePlannerConversationEventSanitizerOmitsInternalDiagnostics(t *tes
 		Type:    "idiom.feature_planner.standalone_context_blocked",
 		Message: "atom 0 edit path src/brain_core/types.py is missing from workspace and has no pytest project evidence",
 		Fields: map[string]any{
-			"candidate_id": "candidate-1",
+			"candidate_id":          "candidate-1",
+			"submitted_atom_count":  3,
+			"validation_diagnostic": "atom 0 edit path src/brain_core/types.py is missing from workspace and has no pytest project evidence",
 		},
 	}
 
@@ -308,11 +311,20 @@ func TestFeaturePlannerConversationEventSanitizerOmitsInternalDiagnostics(t *tes
 	if strings.Contains(got.Message, "src/brain_core/types.py") || strings.Contains(got.Message, "pytest project evidence") {
 		t.Fatalf("sanitized event leaked diagnostic: %+v", got)
 	}
+	if _, ok := got.Fields["validation_diagnostic"]; ok {
+		t.Fatalf("sanitized event leaked validation_diagnostic: %+v", got.Fields)
+	}
 	if got.Fields["candidate_id"] != "candidate-1" {
 		t.Fatalf("sanitized event lost existing fields: %+v", got.Fields)
 	}
+	if got.Fields["submitted_atom_count"] != 3 {
+		t.Fatalf("sanitized event lost safe count field: %+v", got.Fields)
+	}
 	if got.Fields["diagnostic_chars"] != len(event.Message) {
 		t.Fatalf("diagnostic_chars = %v, want %d", got.Fields["diagnostic_chars"], len(event.Message))
+	}
+	if got.Fields["diagnostic_fields_omitted"] != 1 {
+		t.Fatalf("diagnostic_fields_omitted = %v, want 1", got.Fields["diagnostic_fields_omitted"])
 	}
 	if _, ok := event.Fields["diagnostic_chars"]; ok {
 		t.Fatalf("sanitizer mutated original fields: %+v", event.Fields)
@@ -322,6 +334,136 @@ func TestFeaturePlannerConversationEventSanitizerOmitsInternalDiagnostics(t *tes
 	if sanitized := sanitizeFeaturePlannerEventForConversation(ordinary); sanitized.Message != ordinary.Message {
 		t.Fatalf("ordinary event was sanitized: %+v", sanitized)
 	}
+}
+
+func TestFeaturePlannerDiagnosticEventLogsAsRunEventNotMessage(t *testing.T) {
+	root := t.TempDir()
+	model := New(config.Config{
+		AppName: "Idiom",
+		Chat: config.Chat{
+			DebugLogDir: filepath.Join(root, "logs", "conversations"),
+		},
+		Workspace: config.Workspace{
+			Root: root,
+			CWD:  root,
+		},
+	})
+
+	model.logFeaturePlannerEvent(featureplanner.Event{
+		Type:    "idiom.feature_planner.standalone_context_blocked",
+		Message: "atom 0 edit path src/brain_core/types.py is missing from workspace and has no pytest project evidence",
+		Fields: map[string]any{
+			"submitted_atom_count":  1,
+			"validation_diagnostic": "atom 0 edit path src/brain_core/types.py is missing from workspace and has no pytest project evidence",
+		},
+	})
+
+	logPath := model.DebugLogPath()
+	model.Close()
+
+	body, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read debug log: %v", err)
+	}
+
+	var foundRunEvent bool
+	for _, record := range decodeJSONEvents(t, string(body)) {
+		if record["role"] != "idiom.feature_planner.standalone_context_blocked" {
+			continue
+		}
+
+		if record["type"] == "message" {
+			t.Fatalf("feature-planner diagnostic must not be logged as conversation message: %+v", record)
+		}
+		if record["type"] != "run_event" {
+			t.Fatalf("feature-planner diagnostic logged with unexpected type: %+v", record)
+		}
+
+		foundRunEvent = true
+		content := fmt.Sprint(record["content"])
+		if strings.Contains(content, "validation_diagnostic") ||
+			strings.Contains(content, "src/brain_core/types.py") ||
+			strings.Contains(content, "pytest project evidence") {
+			t.Fatalf("feature-planner run_event leaked raw diagnostic: %s", content)
+		}
+	}
+
+	if !foundRunEvent {
+		t.Fatalf("expected sanitized feature-planner run_event in log:\n%s", string(body))
+	}
+}
+
+func TestFeaturePlannerCommandKeepsInternalRecordsOutOfConversationMessages(t *testing.T) {
+	root := t.TempDir()
+	model := New(config.Config{
+		AppName: "Idiom",
+		Chat: config.Chat{
+			DebugLogDir: filepath.Join(root, "logs", "conversations"),
+			ProjectRoot: root,
+		},
+		Workspace: config.Workspace{
+			Root: root,
+			CWD:  root,
+		},
+	})
+	model.client = &scriptedLLMClient{responses: []string{`{
+		"tool": "ask_planner_question",
+		"question_summary": "Approve greenfield scope",
+		"blocking_claim": "new files need operator authority before a safe plan can be approved",
+		"requested_decision": "Approve creating src/brain.py and tests/test_brain.py, or revise the greenfield project setup.",
+		"question_kind": "external_answer_required",
+		"authority_required": "operator_approval",
+		"required_before": "plan_approval",
+		"affected_paths": ["src/brain.py", "tests/test_brain.py"],
+		"affected_fields": ["new_file_authorization", "verification_command"]
+	}`}}
+
+	answer, err := model.runFeaturePlannerCommandOnce(context.Background(), "Lay out the bones for this LLM brain project.")
+	if err != nil {
+		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
+	}
+	if !strings.Contains(answer, "feature-planner: "+featureplanner.FeatureStatePlanningQuestion) {
+		t.Fatalf("expected planning-question answer, got:\n%s", answer)
+	}
+
+	logPath := model.DebugLogPath()
+	model.Close()
+
+	body, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read debug log: %v", err)
+	}
+
+	foundRunEvents := map[string]bool{}
+	for _, record := range decodeJSONEvents(t, string(body)) {
+		role := fmt.Sprint(record["role"])
+		if record["type"] == "message" && featurePlannerInternalLogRole(role) {
+			t.Fatalf("feature-planner internal role logged as conversation message: %+v", record)
+		}
+		if record["type"] == "run_event" && featurePlannerInternalLogRole(role) {
+			foundRunEvents[role] = true
+		}
+	}
+
+	for _, want := range []string{
+		"idiom.feature_planner.start",
+		"feature_planner_prompt",
+		"feature_planner_model",
+		"idiom.feature_planner.planner_question_opened",
+		"idiom.feature_planner.question_open",
+	} {
+		if !foundRunEvents[want] {
+			t.Fatalf("expected feature-planner internal run_event %q in log:\n%s", want, string(body))
+		}
+	}
+}
+
+func featurePlannerInternalLogRole(role string) bool {
+	role = strings.TrimSpace(role)
+
+	return strings.HasPrefix(role, "feature_planner_") ||
+		strings.HasPrefix(role, "idiom.feature_planner.") ||
+		strings.HasPrefix(role, "idiom.plan_execute.")
 }
 
 func TestFeaturePlannerProductWriteEnvelopeExcludesContextEvidencePaths(t *testing.T) {

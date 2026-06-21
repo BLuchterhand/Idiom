@@ -2053,6 +2053,8 @@ func TestRunGreenfieldSkeletonOpensOperatorQuestionWithoutLeakingDiagnosticSumma
 	for _, want := range []string{
 		"feature-planner: planning-question-open",
 		"question: Approve or revise greenfield project scope",
+		"requested_decision:",
+		"how_to_continue: reply with approval",
 		"blockers: blocked by open planner question",
 	} {
 		if !strings.Contains(summary, want) {

@@ -52,6 +52,12 @@ func FormatStateSummary(state FeatureState, statePath string) string {
 			if strings.TrimSpace(question.QuestionSummary) != "" {
 				fmt.Fprintf(&b, "question: %s\n", question.QuestionSummary)
 			}
+			if questionOpen(question) && strings.TrimSpace(question.RequestedDecision) != "" {
+				fmt.Fprintf(&b, "requested_decision: %s\n", strings.TrimSpace(question.RequestedDecision))
+			}
+			if questionOpen(question) && strings.TrimSpace(question.AuthorityRequired) == "operator_approval" {
+				fmt.Fprintf(&b, "how_to_continue: reply with approval, revised paths, or a different project setup; feature-planner will resume planning after your answer\n")
+			}
 			if questionOpen(question) && strings.TrimSpace(question.AuthorityRequired) != "" && strings.TrimSpace(question.AuthorityRequired) != "operator_approval" {
 				fmt.Fprintf(&b, "answer_format: %s\n", plannerQuestionAnswerFormat(question.AuthorityRequired))
 			}

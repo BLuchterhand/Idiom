@@ -53,10 +53,10 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: operatorCommand})
 	m.logMessage("user", operatorCommand)
 	m.logMessage("route_plan", "initial=feature-planner reason=typed_feature_planner_command route_source=typed_command")
-	m.logMessage("idiom.feature_planner.start", objective)
+	m.logFeaturePlannerInternalEvent("idiom.feature_planner.start", objective)
 
 	if productBrief != nil {
-		m.logMessage("idiom.feature_planner.product_context", fmt.Sprintf("effort_id=%s effort_root=%s", productBrief.EffortID, effortRoot))
+		m.logFeaturePlannerInternalEvent("idiom.feature_planner.product_context", fmt.Sprintf("effort_id=%s effort_root=%s", productBrief.EffortID, effortRoot))
 
 		if productBrief.IsClosedSourceSatisfied() {
 			return m.closeFeaturePlannerTUISourceSatisfied(state, *productBrief)
@@ -107,7 +107,7 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 	}
 
 	answer := formatFeaturePlannerTUIAnswer(result.State, statePath)
-	m.logMessage(featurePlannerTUITerminalRole(result.State.Status), answer)
+	m.logFeaturePlannerInternalEvent(featurePlannerTUITerminalRole(result.State.Status), answer)
 	m.updateDirectFeaturePlannerSession(result.State)
 
 	return m.finishPromptOnceReply(answer), nil
@@ -134,7 +134,7 @@ func (m *Model) closeFeaturePlannerTUISourceSatisfied(state featureplanner.Featu
 	}
 
 	answer := formatFeaturePlannerTUIAnswer(state, statePath)
-	m.logMessage(featurePlannerTUITerminalRole(state.Status), answer)
+	m.logFeaturePlannerInternalEvent(featurePlannerTUITerminalRole(state.Status), answer)
 	m.updateDirectFeaturePlannerSession(state)
 
 	return m.finishPromptOnceReply(answer), nil
@@ -313,7 +313,7 @@ func (m *Model) runDirectFeaturePlannerAnswerOnce(ctx context.Context, answer st
 	}
 
 	reply := formatFeaturePlannerTUIAnswer(result.State, statePath)
-	m.logMessage(featurePlannerTUITerminalRole(result.State.Status), reply)
+	m.logFeaturePlannerInternalEvent(featurePlannerTUITerminalRole(result.State.Status), reply)
 	m.updateDirectFeaturePlannerSession(result.State)
 
 	return m.finishPromptOnceReply(reply), nil
@@ -400,7 +400,7 @@ func (m *Model) updateDirectFeaturePlannerSession(state featureplanner.FeatureSt
 }
 
 func (m *Model) runFeaturePlannerTUITurn(ctx context.Context, prompt string, taskFamily string) (string, error) {
-	return featureplannerruntime.CompleteModelTurn(ctx, m.client, prompt, m.chatOptions(), taskFamily, m.logMessage)
+	return featureplannerruntime.CompleteModelTurn(ctx, m.client, prompt, m.chatOptions(), taskFamily, m.logFeaturePlannerInternalEvent)
 }
 
 type featurePlannerAtomPlanExecuteRunner func(context.Context, string) (string, error)
@@ -454,7 +454,7 @@ func (m *Model) runFeaturePlannerAtomPlanExecuteWithRunner(ctx context.Context, 
 		return "", err
 	}
 
-	m.logMessage(featurePlannerPlanExecuteCompletionLogType(completion), completion)
+	m.logFeaturePlannerInternalEvent(featurePlannerPlanExecuteCompletionLogType(completion), completion)
 
 	return completion, nil
 }
@@ -462,7 +462,7 @@ func (m *Model) runFeaturePlannerAtomPlanExecuteWithRunner(ctx context.Context, 
 const featurePlannerPlanExecuteGitHistoryRequirementRole = "idiom.feature_planner.plan_execute_git_history_requirement"
 
 func (m *Model) logFeaturePlannerPlanExecuteGitHistoryRequirement() {
-	m.logMessage(featurePlannerPlanExecuteGitHistoryRequirementRole, featurePlannerPlanExecuteGitHistoryRequirementPayload())
+	m.logFeaturePlannerInternalEvent(featurePlannerPlanExecuteGitHistoryRequirementRole, featurePlannerPlanExecuteGitHistoryRequirementPayload())
 }
 
 func featurePlannerPlanExecuteGitHistoryRequirementPayload() string {
@@ -740,12 +740,20 @@ func (m *Model) logFeaturePlannerEvent(event featureplanner.Event) {
 
 	body, err := json.Marshal(event)
 	if err != nil {
-		m.logMessage(event.Type, event.Message)
+		m.logFeaturePlannerInternalEvent(event.Type, event.Message)
 
 		return
 	}
 
-	m.logMessage(event.Type, string(body))
+	m.logFeaturePlannerInternalEvent(event.Type, string(body))
+}
+
+func (m *Model) logFeaturePlannerInternalEvent(role, content string) {
+	if m == nil || m.debugLogger == nil {
+		return
+	}
+
+	_ = m.debugLogger.LogRunEvent(strings.TrimSpace(role), content)
 }
 
 func sanitizeFeaturePlannerEventForConversation(event featureplanner.Event) featureplanner.Event {
@@ -753,10 +761,15 @@ func sanitizeFeaturePlannerEventForConversation(event featureplanner.Event) feat
 		return event
 	}
 
+	originalFieldCount := len(event.Fields)
+	event.Fields = featurePlannerConversationDiagnosticFields(event.Fields)
+	omittedFieldCount := originalFieldCount - len(event.Fields)
 	if strings.TrimSpace(event.Message) != "" {
-		event.Fields = copyFeaturePlannerEventFields(event.Fields)
 		event.Fields["diagnostic_chars"] = len(event.Message)
 		event.Message = "internal feature-planner diagnostic omitted from conversation; inspect the saved state or event log for full details"
+	}
+	if omittedFieldCount > 0 {
+		event.Fields["diagnostic_fields_omitted"] = omittedFieldCount
 	}
 
 	return event
@@ -773,13 +786,24 @@ func featurePlannerEventCarriesInternalDiagnostic(eventType string) bool {
 		strings.Contains(eventType, "malformed_structured_output")
 }
 
-func copyFeaturePlannerEventFields(fields map[string]any) map[string]any {
-	out := make(map[string]any, len(fields)+1)
+func featurePlannerConversationDiagnosticFields(fields map[string]any) map[string]any {
+	out := make(map[string]any, len(fields)+2)
 	for key, value := range fields {
-		out[key] = value
+		if featurePlannerConversationDiagnosticFieldAllowed(key) {
+			out[key] = value
+		}
 	}
 
 	return out
+}
+
+func featurePlannerConversationDiagnosticFieldAllowed(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "candidate_id", "rejected_at", "rejected_plan_sha256", "submitted_atom_count":
+		return true
+	default:
+		return false
+	}
 }
 
 func featurePlannerTUITerminalRole(status string) string {

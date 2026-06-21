@@ -103,7 +103,7 @@ func (m *Model) runPRDDraftingTurn(ctx context.Context, message string) (string,
 		prompt = buildPRDGenerationPrompt(message, effortRoot)
 	}
 
-	m.logMessage("feature_planner_prd_turn", message)
+	m.logFeaturePlannerInternalEvent("feature_planner_prd_turn", message)
 
 	opts := m.chatOptions()
 
@@ -289,7 +289,7 @@ func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPla
 	}
 
 	answer := formatFeaturePlannerTUIAnswer(state, statePath)
-	m.logMessage(featurePlannerTUITerminalRole(state.Status), answer)
+	m.logFeaturePlannerInternalEvent(featurePlannerTUITerminalRole(state.Status), answer)
 
 	return answer, nil
 }
@@ -461,7 +461,7 @@ func (m *Model) runADRDraftingTurn(ctx context.Context, message string) (string,
 
 	if !hasExisting {
 		// Initial ADR generation: use shared helper.
-		m.logMessage("feature_planner_adr_turn", message)
+		m.logFeaturePlannerInternalEvent("feature_planner_adr_turn", message)
 
 		adrDocs, indexEntries, genErr := m.generateADRs(ctx, effortRoot)
 		if genErr != nil {
@@ -499,7 +499,7 @@ func (m *Model) runADRDraftingTurn(ctx context.Context, message string) (string,
 		}
 	}
 
-	m.logMessage("feature_planner_adr_turn", message)
+	m.logFeaturePlannerInternalEvent("feature_planner_adr_turn", message)
 
 	// ADR refinement with parse-repair loop.
 	adrDocs, indexEntries, err := m.generateADRsWithRepair(
@@ -939,7 +939,7 @@ func (m *Model) approveADRAndPlan(effortRoot string) (string, error) {
 	}
 
 	if recoveryMessage, blocked := formatProductWorkflowFeaturePlannerRecovery(plannerState, statePath); blocked {
-		m.logMessage("idiom.feature_planner.recovery_open", recoveryMessage)
+		m.logFeaturePlannerInternalEvent("idiom.feature_planner.recovery_open", recoveryMessage)
 
 		return strings.TrimSpace(planResult + "\n\n" + recoveryMessage), nil
 	}
@@ -1055,7 +1055,7 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 	sessionID := m.featurePlannerSessionID()
 	state := featureplanner.NewState(sessionID, "Implement feature from PRD/ADR artifacts", "", 3, time.Now().UTC())
 
-	m.logMessage("idiom.feature_planner.start", "Planning from product workflow artifacts")
+	m.logFeaturePlannerInternalEvent("idiom.feature_planner.start", "Planning from product workflow artifacts")
 
 	writeEnvelope := featureplanner.ProductWriteEnvelopePaths(brief)
 	implementorBlocked := false
@@ -1114,7 +1114,7 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 	output.WriteString(formatFeaturePlannerTUIAnswer(result.State, statePath))
 
 	answer := output.String()
-	m.logMessage(featurePlannerTUITerminalRole(result.State.Status), answer)
+	m.logFeaturePlannerInternalEvent(featurePlannerTUITerminalRole(result.State.Status), answer)
 
 	return answer, result.State, statePath, nil
 }
