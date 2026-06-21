@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"idiom/internal/capabilities/workspace"
@@ -97,6 +98,40 @@ func TestGreenfieldCreationConfirmationStillCatchesMisroutedCreationPrompt(t *te
 	writePromptRoutingTestFile(t, root, "README.md")
 	if model.greenfieldCreationRequiresConfirmation(prompt, readOnlyPlan) {
 		t.Fatal("non-empty workspace should not trigger greenfield creation confirmation")
+	}
+}
+
+func TestGreenfieldCreationConfirmationUsesSharedPresenter(t *testing.T) {
+	readOnlyPlan := promptExecutionPlan{
+		route: turnRoutePlan{
+			Family:      "conversation",
+			InitialLane: "main",
+			Contract:    "direct_answer",
+			WriteIntent: "no",
+		},
+	}
+
+	answer := greenfieldCreationConfirmationQuestion(readOnlyPlan)
+	for _, want := range []string{
+		"This project appears to be empty, and this request would create files.",
+		"`/implement <objective>`",
+		"write-capable implement lane",
+		"ask your question as-is",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("greenfield confirmation missing %q:\n%s", want, answer)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"Proposed paths:",
+		"new_file_authorization",
+		"State saved at",
+		"Feature planner needs your approval",
+	} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("greenfield confirmation leaked scope-authorization text %q:\n%s", forbidden, answer)
+		}
 	}
 }
 

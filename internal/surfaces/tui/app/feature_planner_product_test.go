@@ -512,6 +512,28 @@ func TestFeaturePlannerTUIOperatorQuestionUsesApprovalPrompt(t *testing.T) {
 	}
 }
 
+func TestFeaturePlannerTUIGenericOperatorQuestionKeepsStateSummary(t *testing.T) {
+	state := featureplanner.NewState("question-session", "need approval", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	state.OpenQuestions = []featureplanner.PlannerQuestion{{
+		Status:            "open",
+		QuestionSummary:   "Confirm product decision",
+		AuthorityRequired: "operator_approval",
+		RequestedDecision: "Confirm whether this belongs in the current effort.",
+		AffectedFields:    []string{"product_scope"},
+	}}
+
+	answer := formatFeaturePlannerTUIAnswer(state, ".idiom/feature-planner/question-session/state.json")
+	if !strings.Contains(answer, "feature-planner: "+featureplanner.FeatureStatePlanningQuestion) ||
+		!strings.Contains(answer, "question: Confirm product decision") {
+		t.Fatalf("generic operator question should keep state summary:\n%s", answer)
+	}
+	if strings.Contains(answer, "Feature planner needs your approval before it can continue.") ||
+		strings.Contains(answer, "Proposed paths:") {
+		t.Fatalf("generic operator question should not use greenfield scope authorization presenter:\n%s", answer)
+	}
+}
+
 func TestFeaturePlannerProductWriteEnvelopeExcludesContextEvidencePaths(t *testing.T) {
 	brief := &featureplanner.ProductWorkflowBrief{
 		FilesToModify:             []string{"./native/src/core/colony_sim.h", "native/src/core/colony_sim.h"},

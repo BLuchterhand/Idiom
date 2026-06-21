@@ -2048,15 +2048,3 @@ func workspacePresenceReadableFile(name string) bool {
 
 	return ok
 }
-
-func greenfieldCreationConfirmationQuestion(plan promptExecutionPlan) string {
-	command := "/implement"
-	lane := "implement"
-
-	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(plan.route.Family) {
-		command = "/plan-execute"
-		lane = "plan-execute"
-	}
-
-	return fmt.Sprintf("This project appears to be empty and I am currently in read-only mode; there are no project files to read or discuss. If you want me to generate files, reply with `%s <objective>` to switch to the write-capable %s lane. Otherwise, ask your question as-is and I will answer in read-only mode.", lane, command)
-}

@@ -837,76 +837,13 @@ func formatFeaturePlannerTUIOperatorQuestion(state featureplanner.FeatureState, 
 	}
 
 	for _, question := range state.OpenQuestions {
-		if !featurePlannerQuestionOpen(question) || strings.TrimSpace(question.AuthorityRequired) != "operator_approval" {
+		request, ok := greenfieldScopeAuthorizationFromPlannerQuestion(question, statePath)
+		if !ok {
 			continue
 		}
 
-		var b strings.Builder
-
-		b.WriteString("Feature planner needs your approval before it can continue.\n\n")
-
-		if summary := strings.TrimSpace(question.QuestionSummary); summary != "" {
-			fmt.Fprintf(&b, "Question: %s\n", summary)
-		}
-
-		paths := featurePlannerQuestionAffectedPaths(question)
-		if len(paths) > 0 {
-			b.WriteString("Proposed paths:\n")
-			for _, path := range paths {
-				fmt.Fprintf(&b, "- %s\n", path)
-			}
-		} else if decision := strings.TrimSpace(question.RequestedDecision); decision != "" {
-			fmt.Fprintf(&b, "Decision needed: %s\n", decision)
-		}
-
-		if featurePlannerQuestionNeedsField(question, "verification_command") {
-			b.WriteString("Also provide the exact verification command for this project.\n")
-		}
-
-		b.WriteString("\nReply with approval, revised paths/setup, or rejection. Feature planner will resume after your answer.")
-
-		if statePath != "" {
-			fmt.Fprintf(&b, "\nState saved at %s", statePath)
-		}
-
-		return strings.TrimSpace(b.String()), true
+		return renderGreenfieldWriteApproval(request), true
 	}
 
 	return "", false
-}
-
-func featurePlannerQuestionOpen(question featureplanner.PlannerQuestion) bool {
-	status := strings.TrimSpace(question.Status)
-
-	return status == "" || strings.EqualFold(status, "open")
-}
-
-func featurePlannerQuestionAffectedPaths(question featureplanner.PlannerQuestion) []string {
-	seen := map[string]struct{}{}
-	var paths []string
-
-	for _, path := range question.AffectedPaths {
-		path = strings.TrimSpace(path)
-		if path == "" {
-			continue
-		}
-		if _, ok := seen[path]; ok {
-			continue
-		}
-		seen[path] = struct{}{}
-		paths = append(paths, path)
-	}
-
-	return paths
-}
-
-func featurePlannerQuestionNeedsField(question featureplanner.PlannerQuestion, field string) bool {
-	field = strings.TrimSpace(field)
-	for _, candidate := range question.AffectedFields {
-		if strings.TrimSpace(candidate) == field {
-			return true
-		}
-	}
-
-	return false
 }
