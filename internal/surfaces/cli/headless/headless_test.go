@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,9 +66,13 @@ func TestRunAppliesPolicyOverridesAndWritesCompletion(t *testing.T) {
 		t.Fatalf("Run exit = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 
-	var record RunCompletionRecord
-	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
+	var output RunOutputRecord
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatalf("decode stdout completion: %v\n%s", err, stdout.String())
+	}
+	record := output.RunCompletionRecord
+	if output.Answer != "answer" {
+		t.Fatalf("json output should include final answer, got %q", output.Answer)
 	}
 	if record.SchemaVersion != RunCompletionSchemaVersion || record.Type != RunCompletionRecordType {
 		t.Fatalf("unexpected completion identity: %#v", record)
@@ -87,11 +93,28 @@ func TestRunAppliesPolicyOverridesAndWritesCompletion(t *testing.T) {
 	if err := json.Unmarshal(savedBody, &saved); err != nil {
 		t.Fatalf("decode saved completion: %v", err)
 	}
+	if bytes.Contains(savedBody, []byte(`"answer"`)) {
+		t.Fatalf("durable completion record should not persist raw answer: %s", string(savedBody))
+	}
 	if saved.Artifacts["completion"] == "" {
 		t.Fatalf("saved completion should be self-referential: %#v", saved.Artifacts)
 	}
 	if _, err := os.Stat(summaryPath); err != nil {
 		t.Fatalf("summary artifact missing: %v", err)
+	}
+}
+
+func TestRunHelpReturnsZero(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--help"}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+		t.Fatal("prompt runner should not run for help")
+		return "", nil
+	}, nil)
+	if code != 0 {
+		t.Fatalf("help exit = %d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Usage of idiom run") {
+		t.Fatalf("help output missing usage: %q", stderr.String())
 	}
 }
 
@@ -113,12 +136,16 @@ func TestRunValidatesOutputSchema(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("schema-valid run failed: code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
-	var record RunCompletionRecord
-	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
+	var output RunOutputRecord
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatalf("decode completion: %v\n%s", err, stdout.String())
 	}
+	record := output.RunCompletionRecord
 	if record.OutputSchema != "answer.v1" || record.TerminalClass != "completed" {
 		t.Fatalf("unexpected schema-valid record: %#v", record)
+	}
+	if output.Answer == "" {
+		t.Fatal("schema-valid JSON output should include answer")
 	}
 
 	stdout.Reset()
@@ -135,11 +162,84 @@ func TestRunValidatesOutputSchema(t *testing.T) {
 	if code == 0 {
 		t.Fatal("schema mismatch should fail")
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatalf("decode failed completion: %v\n%s", err, stdout.String())
 	}
+	record = output.RunCompletionRecord
 	if record.TerminalClass != "output_schema_failed" {
 		t.Fatalf("unexpected schema failure record: %#v", record)
+	}
+}
+
+func TestRunRejectsInvalidPolicyFlags(t *testing.T) {
+	root := t.TempDir()
+	configPath := writeHeadlessTestConfig(t, root)
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "permission profile",
+			args: []string{"--config", configPath, "--prompt", "x", "--permission-profile", "god-mode"},
+			want: "--permission-profile",
+		},
+		{
+			name: "timeout",
+			args: []string{"--config", configPath, "--prompt", "x", "--timeout", "not-a-duration"},
+			want: "--timeout",
+		},
+		{
+			name: "max tool steps",
+			args: []string{"--config", configPath, "--prompt", "x", "--max-tool-steps", "-1"},
+			want: "--max-tool-steps",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := Run(tt.args, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+				t.Fatal("prompt runner should not run for invalid flags")
+				return "", nil
+			}, nil)
+			if code != 2 {
+				t.Fatalf("exit = %d, want 2 stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tt.want) {
+				t.Fatalf("stderr %q does not mention %q", stderr.String(), tt.want)
+			}
+		})
+	}
+}
+
+func TestRunFailsWhenCompletionCannotBeSaved(t *testing.T) {
+	root := t.TempDir()
+	configPath := writeHeadlessTestConfig(t, root)
+	if err := os.WriteFile(filepath.Join(root, ".idiom"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"--config", configPath,
+		"--prompt", "hello",
+		"--output", "json",
+		"--session", "completion-save-fails",
+	}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+		return "ok", nil
+	}, nil)
+
+	if code == 0 {
+		t.Fatal("completion save failure should fail the run")
+	}
+	var output RunOutputRecord
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode completion: %v\n%s", err, stdout.String())
+	}
+	if output.TerminalClass != "artifact_failed" || output.Error == "" {
+		t.Fatalf("unexpected artifact failure record: %#v", output.RunCompletionRecord)
 	}
 }
 
@@ -265,6 +365,30 @@ func TestContractInspectReportsConfiguredPolicy(t *testing.T) {
 	wantRoot, _ := filepath.EvalSymlinks(root)
 	if gotRoot != wantRoot {
 		t.Fatalf("workspace root = %v, want %s", report["workspace_root"], root)
+	}
+}
+
+func TestServeMuxReportsHealthAndStatus(t *testing.T) {
+	server := httptest.NewServer(newServeMux())
+	defer server.Close()
+
+	for _, path := range []string{"/healthz", "/v1/status"} {
+		resp, err := http.Get(server.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s status = %d", path, resp.StatusCode)
+		}
+
+		var body map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		if body["schema_version"] != "idiom.headless.server.v1" {
+			t.Fatalf("%s schema_version = %v", path, body["schema_version"])
+		}
 	}
 }
 

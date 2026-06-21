@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -57,6 +58,11 @@ type RunCompletionRecord struct {
 	Implementation   string              `json:"implementation"`
 	UnsupportedFlags []string            `json:"unsupported_flags,omitempty"`
 	Metadata         map[string][]string `json:"metadata,omitempty"`
+}
+
+type RunOutputRecord struct {
+	RunCompletionRecord
+	Answer string `json:"answer,omitempty"`
 }
 
 type HeadlessPolicy struct {
@@ -123,8 +129,11 @@ type runRequest struct {
 }
 
 func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, promptRun PromptRunner, rec *telemetry.Recorder) int {
-	req, err := parseRunRequest(args, stdin)
+	req, err := parseRunRequest(args, stdin, stderr)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		fmt.Fprintln(stderr, err)
 
 		return 2
@@ -165,10 +174,9 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 		UnsupportedFlags: append([]string(nil), req.UnsupportedIntent...),
 	}
 
-	var modelOut bytes.Buffer
 	runWriter := stdout
 	if req.OutputMode == "json" {
-		runWriter = &modelOut
+		runWriter = io.Discard
 	}
 
 	answer, runErr := promptRun(cfg, req.Prompt, cmdruntime.RunOptions{
@@ -220,7 +228,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 	}
 
 	if req.Commit && exitCode == 0 {
-		check := runCommand(context.Background(), "commit", "git commit -am "+shellQuote(commitMessage(req)), cfg)
+		check := runCommandWithConfigTimeout("commit", "git commit -am "+shellQuote(commitMessage(req)), cfg)
 		record.Checks = append(record.Checks, check)
 		if check.ExitCode != 0 {
 			exitCode = 1
@@ -244,6 +252,9 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 	if saveErr == nil {
 		addArtifact(&record, "completion", completionPath)
 	} else if record.Error == "" {
+		exitCode = 1
+		record.ExitCode = exitCode
+		record.TerminalClass = "artifact_failed"
 		record.Error = saveErr.Error()
 	}
 
@@ -257,7 +268,11 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 	}
 
 	if req.OutputMode == "json" {
-		if err := json.NewEncoder(stdout).Encode(record); err != nil {
+		out := RunOutputRecord{RunCompletionRecord: record}
+		if runErr == nil && answer != "" {
+			out.Answer = answer
+		}
+		if err := json.NewEncoder(stdout).Encode(out); err != nil {
 			fmt.Fprintln(stderr, err)
 
 			return 1
@@ -273,11 +288,12 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 	return exitCode
 }
 
-func parseRunRequest(args []string, stdin io.Reader) (runRequest, error) {
+func parseRunRequest(args []string, stdin io.Reader, stderr io.Writer) (runRequest, error) {
 	req := runRequest{ConfigPath: "config.json", OutputMode: "text"}
 	var allowTools, denyTools, allowWrites, denyPaths stringList
 
 	fs := flag.NewFlagSet("idiom run", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	fs.StringVar(&req.ConfigPath, "config", req.ConfigPath, "path to config file")
 	fs.StringVar(&req.Prompt, "prompt", "", "prompt text to run headlessly")
 	fs.StringVar(&req.PromptFile, "prompt-file", "", "file containing prompt text")
@@ -363,6 +379,10 @@ func parseRunRequest(args []string, stdin io.Reader) (runRequest, error) {
 		return runRequest{}, fmt.Errorf("prompt is empty")
 	}
 
+	if err := validatePolicyFlags(req.Policy); err != nil {
+		return runRequest{}, err
+	}
+
 	if req.Policy.ApprovalPolicy != "" {
 		policy := strings.ToLower(strings.TrimSpace(req.Policy.ApprovalPolicy))
 		switch policy {
@@ -375,6 +395,27 @@ func parseRunRequest(args []string, stdin io.Reader) (runRequest, error) {
 	}
 
 	return req, nil
+}
+
+func validatePolicyFlags(policy HeadlessPolicy) error {
+	switch strings.ToLower(strings.TrimSpace(policy.PermissionProfile)) {
+	case "", "default", "read-only", "readonly", "read_only", "write", "writes", "write-enabled":
+	default:
+		return fmt.Errorf("--permission-profile must be default, read-only, or write")
+	}
+
+	if policy.MaxToolSteps < 0 {
+		return fmt.Errorf("--max-tool-steps must be non-negative")
+	}
+
+	if strings.TrimSpace(policy.Timeout) != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(policy.Timeout))
+		if err != nil || d <= 0 {
+			return fmt.Errorf("--timeout must be a positive duration")
+		}
+	}
+
+	return nil
 }
 
 func applyRunRequestToConfig(cfg *config.Config, req runRequest) {
@@ -393,12 +434,13 @@ func applyRunRequestToConfig(cfg *config.Config, req runRequest) {
 
 	if strings.TrimSpace(req.Policy.Timeout) != "" {
 		if d, err := time.ParseDuration(strings.TrimSpace(req.Policy.Timeout)); err == nil && d > 0 {
-			cfg.Chat.RequestTimeoutSeconds = int(d.Seconds())
+			cfg.Chat.RequestTimeoutSeconds = durationSecondsCeil(d)
 			cfg.Chat.ServerStartTimeoutSecs = 0
 		}
 	}
 
 	switch strings.ToLower(strings.TrimSpace(req.Policy.PermissionProfile)) {
+	case "", "default":
 	case "read-only", "readonly", "read_only":
 		cfg.Workspace.EnableWrites = false
 	case "write", "writes", "write-enabled":
@@ -725,23 +767,13 @@ func RunDecision(args []string, stdout io.Writer, stderr io.Writer) int {
 func RunServe(args []string, stdout io.Writer, stderr io.Writer) int {
 	var host string
 	var port int
-	var once bool
 	fs := flag.NewFlagSet("idiom serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&host, "host", "127.0.0.1", "listen host")
 	fs.IntVar(&port, "port", 0, "listen port")
-	fs.BoolVar(&once, "once", false, "serve one health request and exit")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"schema_version": "idiom.headless.server.v1", "status": "ok"})
-	})
-	mux.HandleFunc("/v1/status", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"schema_version": "idiom.headless.server.v1", "capabilities": []string{"health", "status"}})
-	})
 
 	listener, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
@@ -752,19 +784,7 @@ func RunServe(args []string, stdout io.Writer, stderr io.Writer) int {
 	defer listener.Close()
 
 	fmt.Fprintf(stdout, "idiom serve listening on http://%s\n", listener.Addr().String())
-	if once {
-		conn, err := listener.Accept()
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-
-			return 1
-		}
-		_ = http.Serve(&singleConnListener{Conn: conn}, mux)
-
-		return 0
-	}
-
-	if err := http.Serve(listener, mux); err != nil && err != http.ErrServerClosed {
+	if err := http.Serve(listener, newServeMux()); err != nil && err != http.ErrServerClosed {
 		fmt.Fprintln(stderr, err)
 
 		return 1
@@ -773,23 +793,16 @@ func RunServe(args []string, stdout io.Writer, stderr io.Writer) int {
 	return 0
 }
 
-type singleConnListener struct {
-	net.Conn
-	used bool
-}
+func newServeMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"schema_version": "idiom.headless.server.v1", "status": "ok"})
+	})
+	mux.HandleFunc("/v1/status", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"schema_version": "idiom.headless.server.v1", "capabilities": []string{"health", "status"}})
+	})
 
-func (l *singleConnListener) Accept() (net.Conn, error) {
-	if l.used {
-		return nil, io.EOF
-	}
-	l.used = true
-
-	return l.Conn, nil
-}
-
-func (l *singleConnListener) Close() error { return nil }
-func (l *singleConnListener) Addr() net.Addr {
-	return l.Conn.LocalAddr()
+	return mux
 }
 
 func parseSessionIDCommand(name string, args []string, stderr io.Writer) (config.Config, string, bool, int) {
@@ -1018,9 +1031,19 @@ func runOptionalCheck(name string, command string, cfg config.Config) []Headless
 		return nil
 	}
 
-	ctx := context.Background()
+	return []HeadlessCheck{runCommandWithConfigTimeout(name, command, cfg)}
+}
 
-	return []HeadlessCheck{runCommand(ctx, name, command, cfg)}
+func runCommandWithConfigTimeout(name string, command string, cfg config.Config) HeadlessCheck {
+	timeout := time.Duration(cfg.Workspace.CommandTimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 120 * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	return runCommand(ctx, name, command, cfg)
 }
 
 func runCommand(ctx context.Context, name string, command string, cfg config.Config) HeadlessCheck {
@@ -1147,6 +1170,22 @@ func boundedString(value string, limit int) string {
 	}
 
 	return value[:limit]
+}
+
+func durationSecondsCeil(d time.Duration) int {
+	if d <= 0 {
+		return 0
+	}
+
+	seconds := int(d / time.Second)
+	if d%time.Second != 0 {
+		seconds++
+	}
+	if seconds == 0 {
+		return 1
+	}
+
+	return seconds
 }
 
 func shellQuote(value string) string {

@@ -16,7 +16,9 @@ Each run writes a terminal record under `.idiom/runs/<run-id>.completion.json`.
 The record uses `schema_version: idiom.headless.run_completion.v1` and includes
 the run id, prompt and answer hashes, output mode, exit code, terminal class,
 policy overrides, checks, and artifact paths. `--summary-out` writes the same
-record to a caller-selected path. `--patch-out` writes `git diff --binary`.
+record to a caller-selected path. The durable record does not persist the raw
+prompt or answer. `--output=json` includes the final answer on stdout for the
+calling process. `--patch-out` writes `git diff --binary`.
 
 Headless JSONL events now include
 `schema_version: idiom.headless.event.v1`. The event stream remains the existing
