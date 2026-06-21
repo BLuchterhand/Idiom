@@ -26,10 +26,12 @@ const (
 	readOnlyEvidenceOutline           readOnlyEvidenceKind = "outline"
 	readOnlyEvidenceSourceBody        readOnlyEvidenceKind = "source_body"
 	readOnlyEvidenceDiagnostic        readOnlyEvidenceKind = "diagnostic"
+	readOnlyEvidencePlanArtifact      readOnlyEvidenceKind = "plan_artifact"
 	readOnlyEvidenceGeneratedArtifact readOnlyEvidenceKind = "generated_artifact"
 )
 
 const readOnlyHighCardinalitySearchThreshold = 50
+const featurePlannerPlanArtifactPayloadType = "feature_planner_plan_artifact"
 
 type readOnlyEvidenceItem struct {
 	Kind           readOnlyEvidenceKind
@@ -68,6 +70,9 @@ type readOnlyAnswerabilityLedger struct {
 	DiagnosticEvidence             bool
 	DiagnosticPaths                []string
 	DiagnosticRelevant             bool
+	PlanArtifactEvidence           bool
+	PlanArtifactPaths              []string
+	PlanArtifactRelevant           bool
 	HasUnreadCandidatePaths        bool
 	GoalRequiresStructureDiscovery bool
 }
@@ -126,6 +131,28 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 				Relevant:       relevant,
 				Summary:        strings.TrimSpace(result.Summary),
 			})
+		}
+
+		if featurePlannerPlanArtifactResult(result) {
+			paths := featurePlannerPlanArtifactProposedPaths(result)
+			relevant := featurePlannerPlanArtifactMatchesObjective(ledger.Objective, result)
+
+			ledger.PlanArtifactEvidence = true
+			ledger.PlanArtifactPaths = util.Merge(ledger.PlanArtifactPaths, paths)
+
+			if relevant {
+				ledger.PlanArtifactRelevant = true
+			}
+
+			ledger.addItem(readOnlyEvidenceItem{
+				Kind:           readOnlyEvidencePlanArtifact,
+				Tool:           tool,
+				CandidatePaths: paths,
+				Relevant:       relevant,
+				Summary:        strings.TrimSpace(result.Summary),
+			})
+
+			continue
 		}
 
 		if concreteSourceEvidenceResult(result) {
@@ -1220,6 +1247,10 @@ func (l readOnlyAnswerabilityLedger) diagnosticEvidenceAnswerable() bool {
 }
 
 func (l readOnlyAnswerabilityLedger) Answerable() bool {
+	if l.planArtifactAnswerable() {
+		return true
+	}
+
 	if l.directAnswerConversation() && agentutil.ObjectiveAsksImplementationShape(l.Objective) {
 		return l.diagnosticEvidenceAnswerable() || (len(l.ImplementationOwnerPaths()) > 0 && len(l.MissingNamedSourcePaths) == 0)
 	}
@@ -1235,6 +1266,10 @@ func (l readOnlyAnswerabilityLedger) Answerable() bool {
 	}
 
 	return len(l.RelevantSourceBodyPaths) > 0 && len(l.MissingNamedSourcePaths) == 0
+}
+
+func (l readOnlyAnswerabilityLedger) planArtifactAnswerable() bool {
+	return l.PlanArtifactRelevant && len(l.PlanArtifactPaths) > 0 && len(l.MissingNamedSourcePaths) == 0
 }
 
 func (l readOnlyAnswerabilityLedger) ImplementationOwnerPaths() []string {
@@ -2697,6 +2732,10 @@ func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAns
 		return true
 	}
 
+	if ledger.planArtifactAnswerable() && proposedPlanPathCitationsAreRelevant(answer, mentioned, ledger) {
+		return true
+	}
+
 	relevantPaths := ledger.RelevantSourceBodyPaths
 	if ledger.directAnswerConversation() && agentutil.ObjectiveAsksImplementationShape(ledger.Objective) {
 		relevantPaths = ledger.ImplementationOwnerPaths()
@@ -2713,6 +2752,22 @@ func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAns
 
 	for _, path := range mentioned {
 		if _, ok := relevantSet[agentutil.NormalizeRunnerPath(path)]; ok {
+			return true
+		}
+	}
+
+	return false
+}
+
+func proposedPlanPathCitationsAreRelevant(answer string, mentioned []string, ledger readOnlyAnswerabilityLedger) bool {
+	planSet := readOnlyPathSet(ledger.PlanArtifactPaths)
+	if len(planSet) == 0 {
+		return false
+	}
+
+	for _, path := range mentioned {
+		normalized := agentutil.NormalizeRunnerPath(path)
+		if _, ok := planSet[normalized]; ok && sourceCitationExplicitlyProposedPlanPath(answer, normalized) {
 			return true
 		}
 	}
@@ -6254,7 +6309,8 @@ func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspa
 				continue
 			}
 
-			if !sourceCitationExplicitlyNonCurrent(answer, path) {
+			if !sourceCitationExplicitlyNonCurrent(answer, path) &&
+				!sourceCitationBackedByProposedPlanArtifact(r, answer, path, results) {
 				missing = append(missing, path)
 			}
 
@@ -6269,7 +6325,9 @@ func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspa
 			continue
 		}
 
-		if sourceCitationExplicitlyNonCurrent(answer, path) || sourceCitationExplicitlyUnverified(answer, path) {
+		if sourceCitationExplicitlyNonCurrent(answer, path) ||
+			sourceCitationBackedByProposedPlanArtifact(r, answer, path, results) ||
+			sourceCitationExplicitlyUnverified(answer, path) {
 			continue
 		}
 
@@ -6525,6 +6583,126 @@ func sourceCitationExplicitlyNonCurrent(answer string, path string) bool {
 	}
 
 	return false
+}
+
+func sourceCitationBackedByProposedPlanArtifact(r *Runner, answer string, path string, results []workspace.ToolResult) bool {
+	if !sourceCitationExplicitlyProposedPlanPath(answer, path) {
+		return false
+	}
+
+	path = agentutil.NormalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+	if sourceCitationExists(r, path) && sourceCitationClaimsSourceDetail(answer, path) {
+		return false
+	}
+
+	for _, result := range results {
+		if !featurePlannerPlanArtifactResult(result) {
+			continue
+		}
+
+		for _, proposed := range featurePlannerPlanArtifactProposedPaths(result) {
+			if proposed == path {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func featurePlannerPlanArtifactResult(result workspace.ToolResult) bool {
+	return strings.EqualFold(strings.TrimSpace(result.PayloadType), featurePlannerPlanArtifactPayloadType) ||
+		strings.EqualFold(strings.TrimSpace(result.Tool), featurePlannerPlanArtifactPayloadType)
+}
+
+func featurePlannerPlanArtifactMatchesObjective(objective string, result workspace.ToolResult) bool {
+	if !featurePlannerPlanArtifactResult(result) || len(featurePlannerPlanArtifactProposedPaths(result)) == 0 {
+		return false
+	}
+
+	objectiveText := strings.ToLower(strings.Join(strings.Fields(objective), " "))
+	if objectiveText == "" {
+		return false
+	}
+
+	if objectiveAsksAboutActivePlan(objectiveText) {
+		return true
+	}
+
+	return false
+}
+
+func objectiveAsksAboutActivePlan(objectiveText string) bool {
+	return agentutil.ContainsAny(" "+objectiveText+" ",
+		" plan ", " planning ", " planned ",
+		" proposal ", " proposed ",
+		" approve ", " approval ",
+		" feature-planner ", " feature planner ",
+		" plan tab ", " plan view ",
+		" what does this entail ", " what it entails ",
+		" what will this do ", " what does it do ",
+		" what are we doing ", " what are we building ",
+	)
+}
+
+func answerMentionsFeaturePlannerPlan(answer string) bool {
+	lower := " " + strings.ToLower(strings.Join(strings.Fields(answer), " ")) + " "
+	return agentutil.ContainsAny(lower,
+		" active plan ", " proposed plan ", " planned files ", " proposed files ",
+		" plan artifact ", " plan tab ", " feature-planner ", " feature planner ",
+	)
+}
+
+func sourceCitationExplicitlyProposedPlanPath(answer string, path string) bool {
+	lower := strings.ToLower(sourceCitationWindow(answer, path))
+	for _, phrase := range []string{
+		"proposed path", "proposed paths", "proposed file", "proposed files",
+		"planned path", "planned paths", "planned file", "planned files",
+		"would create", "will create", "to create", "to be created",
+		"files to create", "paths to create",
+		"not existing source", "not current source",
+	} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func featurePlannerPlanArtifactProposedPaths(result workspace.ToolResult) []string {
+	var raw struct {
+		ProposedPaths []string `json:"proposed_paths"`
+		Paths         []string `json:"paths"`
+	}
+
+	if len(result.Payload) > 0 {
+		_ = json.Unmarshal(result.Payload, &raw)
+	}
+
+	paths := append([]string(nil), raw.ProposedPaths...)
+	paths = append(paths, raw.Paths...)
+	paths = append(paths, pathparse.MentionedWorkspaceFiles(result.Output)...)
+	paths = append(paths, pathparse.MentionedWorkspaceFiles(result.Summary)...)
+
+	var out []string
+	seen := map[string]struct{}{}
+	for _, path := range paths {
+		path = agentutil.NormalizeRunnerPath(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+
+	return out
 }
 
 func sourceCitationExplicitlyUnverified(answer string, path string) bool {

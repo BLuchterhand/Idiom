@@ -30171,6 +30171,99 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsSourceBackedInsufficientEviden
 	}
 }
 
+func TestReadOnlyEvidenceCompletionRejectionAllowsFeaturePlannerPlanArtifact(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "direct_answer",
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"context_pack", "search_content", "read_file"},
+			Objective:         "How are we planning on retaining memory?",
+		},
+	}
+	payload := json.RawMessage(`{"objective":"Add a model wrapper","summary":"Create a wrapper and inference flow.","proposed_paths":["src/model_wrapper.py","tests/test_model_wrapper.py"]}`)
+	results := []workspace.ToolResult{{
+		Tool:        "feature_planner_plan_artifact",
+		Summary:     "Active feature-planner plan artifact with proposed paths: src/model_wrapper.py, tests/test_model_wrapper.py",
+		Output:      "Active feature-planner plan artifact. This is proposed plan evidence, not current source evidence.\nProposed paths to create:\n- src/model_wrapper.py\n- tests/test_model_wrapper.py",
+		PayloadType: "feature_planner_plan_artifact",
+		Payload:     payload,
+	}}
+
+	_, rejected := runner.readOnlyEvidenceCompletionRejection(
+		"The active plan does not create durable memory yet. Its proposed files to create are `src/model_wrapper.py` and `tests/test_model_wrapper.py`, which are proposed plan paths, not existing source files.",
+		results,
+	)
+
+	if rejected {
+		t.Fatal("active feature-planner plan artifact should satisfy read-only evidence for plan follow-up answers")
+	}
+}
+
+func TestReadOnlyEvidenceCompletionRejectionRejectsUnrelatedFeaturePlannerPlanArtifact(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "direct_answer",
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"context_pack", "search_content", "read_file"},
+			Objective:         "Why does src/model_wrapper.py define ModelWrapper?",
+		},
+	}
+	payload := json.RawMessage(`{"objective":"Add a model wrapper","summary":"Create a wrapper and inference flow.","proposed_paths":["src/model_wrapper.py","tests/test_model_wrapper.py"]}`)
+	results := []workspace.ToolResult{{
+		Tool:        "feature_planner_plan_artifact",
+		Summary:     "Active feature-planner plan artifact with proposed paths: src/model_wrapper.py, tests/test_model_wrapper.py",
+		Output:      "Active feature-planner plan artifact. This is proposed plan evidence, not current source evidence.\nProposed paths to create:\n- src/model_wrapper.py\n- tests/test_model_wrapper.py",
+		PayloadType: "feature_planner_plan_artifact",
+		Payload:     payload,
+	}}
+
+	result, rejected := runner.readOnlyEvidenceCompletionRejection(
+		"`src/model_wrapper.py` defines `ModelWrapper`.",
+		results,
+	)
+
+	if !rejected {
+		t.Fatal("plan artifact must not satisfy current-source implementation claims")
+	}
+	if !strings.Contains(result.Error, "bounded source-body or diagnostic evidence") {
+		t.Fatalf("expected bounded-evidence rejection, got %#v", result)
+	}
+}
+
+func TestReadOnlyEvidenceCompletionRejectionRejectsOverlappingNonPlanQuestion(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "direct_answer",
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"context_pack", "search_content", "read_file"},
+			Objective:         "Why does the model wrapper fail tests?",
+		},
+	}
+	payload := json.RawMessage(`{"objective":"Add a model wrapper","summary":"Create a model wrapper and inference flow.","proposed_paths":["src/model_wrapper.py","tests/test_model_wrapper.py"]}`)
+	results := []workspace.ToolResult{{
+		Tool:        "feature_planner_plan_artifact",
+		Summary:     "Active feature-planner plan artifact with proposed paths: src/model_wrapper.py, tests/test_model_wrapper.py",
+		Output:      "Active feature-planner plan artifact. This is proposed plan evidence, not current source evidence.\nSummary: Create a model wrapper and inference flow.",
+		PayloadType: "feature_planner_plan_artifact",
+		Payload:     payload,
+	}}
+
+	result, rejected := runner.readOnlyEvidenceCompletionRejection(
+		"The model wrapper fails tests because the inference flow is incomplete.",
+		results,
+	)
+
+	if !rejected {
+		t.Fatal("overlapping non-plan source question must not become answerable from active plan artifact")
+	}
+	if !strings.Contains(result.Error, "bounded source-body or diagnostic evidence") {
+		t.Fatalf("expected bounded-evidence rejection, got %#v", result)
+	}
+}
+
 func TestReadOnlyEvidenceRejectionDoesNotAskToRereadAlreadyInspectedNamedPath(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -35823,6 +35916,110 @@ func TestFinalAnswerBlockerKindRejectsNonexistentSourceCitation(t *testing.T) {
 
 	if !strings.Contains(reason, "internal/surfaces/tui/app/conversation_view.go") {
 		t.Fatalf("blocker reason should name missing path, got %q", reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindAllowsProposedMissingPlanPaths(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The proposed files to create are `src/model_wrapper.py` and `tests/test_model_wrapper.py`; they are not existing source files yet. The plan would use them for the model wrapper and its test."
+
+	payload := json.RawMessage(`{"proposed_paths":["src/model_wrapper.py","tests/test_model_wrapper.py"]}`)
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{{
+		Tool:        "feature_planner_plan_artifact",
+		PayloadType: "feature_planner_plan_artifact",
+		Payload:     payload,
+	}})
+	if kind == "source_grounding_unmet" {
+		t.Fatalf("proposed missing plan paths should not require source-body reads, reason=%q", reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsProposedMissingPlanPathsWithoutArtifact(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The proposed files to create are `src/model_wrapper.py` and `tests/test_model_wrapper.py`; they are not existing source files yet."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, nil)
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("proposed missing paths without plan artifact got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsUnreadCurrentCandidateFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "src", "model_wrapper.py")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("class ModelWrapper:\n    pass\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The candidate file `src/model_wrapper.py` defines the `ModelWrapper` class."
+	results := []workspace.ToolResult{{
+		Tool:    "context_pack",
+		Summary: "Context pack candidates include src/model_wrapper.py",
+		Output:  "src/model_wrapper.py",
+	}}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("unread current candidate file got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsExistingPlanPathSourceDetail(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "src", "model_wrapper.py")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("class ModelWrapper:\n    pass\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The proposed file `src/model_wrapper.py` defines the `ModelWrapper` class."
+	payload := json.RawMessage(`{"proposed_paths":["src/model_wrapper.py","tests/test_model_wrapper.py"]}`)
+	results := []workspace.ToolResult{{
+		Tool:        "feature_planner_plan_artifact",
+		PayloadType: "feature_planner_plan_artifact",
+		Payload:     payload,
+	}}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("existing proposed path source-detail claim got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
 	}
 }
 

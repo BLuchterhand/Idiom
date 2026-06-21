@@ -1070,6 +1070,11 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		steps = 0
 	}
 
+	seedResults := m.LastTurnSourceResultsForObjective(prompt)
+	if activePlanSeed, ok := m.activeFeaturePlannerPlanSeedResult(); ok && (plan.route.Family == "conversation" || plan.route.Contract == "direct_answer") {
+		seedResults = append(seedResults, activePlanSeed)
+	}
+
 	runner := &agent.Runner{
 		Client:              m.client,
 		ImplementerClient:   m.implementerClient,
@@ -1077,7 +1082,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		MaxToolSteps:        steps,
 		Policy:              policy,
 		AgentName:           "main",
-		SeedResults:         m.LastTurnSourceResultsForObjective(prompt),
+		SeedResults:         seedResults,
 		RuntimeBrief:        plan.runtimeBrief,
 		InstructionAttacher: m.instructionAttacher,
 		ContextSize:         m.cfg.LlamaServer.CtxSize,

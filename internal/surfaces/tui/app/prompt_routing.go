@@ -117,6 +117,10 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 	if suppressTranscript {
 		history = append(history, llama.ChatMessage{Role: "user", Content: prompt})
 	}
+	if activePlanContext := m.activeFeaturePlannerPlanContext(); activePlanContext != "" && (plan.route.Family == "conversation" || plan.route.Contract == "direct_answer") {
+		history = append(history, llama.ChatMessage{Role: "system", Content: activePlanContext})
+		m.logMessage("active_feature_planner_plan_context", activePlanContext)
+	}
 
 	reply, err := m.runAgentTurn(ctx, prompt, history, chatOpts, plan)
 	if err != nil {

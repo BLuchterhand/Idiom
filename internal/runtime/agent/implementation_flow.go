@@ -1673,12 +1673,37 @@ func readOnlyAcceptedDirectAnswerEvidencePaths(answer string, ledger readOnlyAns
 
 	paths = util.Merge(paths, objectivePaths, relevant)
 	paths = util.Merge(paths, answerCitedCollectiveSourceBodySupportPaths(answer, ledger))
+	if ledger.planArtifactAnswerable() {
+		paths = util.Merge(paths, acceptedFeaturePlannerPlanArtifactPaths(answer, ledger))
+	}
 
 	if len(paths) == 0 && ledger.DiagnosticRelevant {
 		paths = util.Merge(paths, mentionedEvidencePathsFromToolResults(results, 8))
 	}
 
 	return closurePromptEvidencePaths(paths, 8)
+}
+
+func acceptedFeaturePlannerPlanArtifactPaths(answer string, ledger readOnlyAnswerabilityLedger) []string {
+	mentioned := sourceGroundingMentionedPaths(answer)
+	if len(mentioned) == 0 {
+		return ledger.PlanArtifactPaths
+	}
+
+	var paths []string
+	planSet := readOnlyPathSet(ledger.PlanArtifactPaths)
+	for _, path := range readOnlySourceLikePaths(mentioned, 16) {
+		normalized := agentutil.NormalizeRunnerPath(path)
+		if _, ok := planSet[normalized]; ok && sourceCitationExplicitlyProposedPlanPath(answer, normalized) {
+			paths = util.Merge(paths, []string{normalized})
+		}
+	}
+
+	if len(paths) == 0 && answerMentionsFeaturePlannerPlan(answer) {
+		return ledger.PlanArtifactPaths
+	}
+
+	return paths
 }
 
 func answerCitedCollectiveSourceBodySupportPaths(answer string, ledger readOnlyAnswerabilityLedger) []string {

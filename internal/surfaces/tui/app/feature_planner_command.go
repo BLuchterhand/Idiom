@@ -983,6 +983,8 @@ func formatFeaturePlannerTUIOperatorQuestion(state featureplanner.FeatureState, 
 		return "", false
 	}
 
+	explanation := featurePlannerApprovalExplanation(state)
+
 	for _, question := range state.OpenQuestions {
 		request, ok := greenfieldScopeAuthorizationFromPlannerQuestion(question, statePath)
 		if !ok {
@@ -990,9 +992,77 @@ func formatFeaturePlannerTUIOperatorQuestion(state featureplanner.FeatureState, 
 		}
 
 		request.PlanPath = strings.TrimSpace(state.PlanPath)
+		request.Explanation = explanation
 
 		return renderGreenfieldWriteApproval(request), true
 	}
 
 	return "", false
+}
+
+func featurePlannerApprovalExplanation(state featureplanner.FeatureState) string {
+	plan, _, ok := featurePlannerPlanTabCandidate(state)
+	if !ok {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("What this proposed plan entails:\n")
+	if objective := strings.TrimSpace(firstNonEmptyFeaturePlannerPlanText(plan.TopLevelScope.Objective, plan.Summary)); objective != "" {
+		fmt.Fprintf(&b, "- Objective: %s\n", featurePlannerInlineMarkdown(objective))
+	}
+	if summary := strings.TrimSpace(plan.Summary); summary != "" && summary != strings.TrimSpace(plan.TopLevelScope.Objective) {
+		fmt.Fprintf(&b, "- Summary: %s\n", featurePlannerInlineMarkdown(summary))
+	}
+	if criteria := featurePlannerUniqueStrings(plan.TopLevelScope.SuccessCriteria); len(criteria) > 0 {
+		fmt.Fprintf(&b, "- Success criteria: %s\n", strings.Join(criteria, "; "))
+	}
+	if atomSummaries := featurePlannerApprovalAtomSummaries(plan.Atoms, 4); len(atomSummaries) > 0 {
+		fmt.Fprintf(&b, "- Work breakdown: %s\n", strings.Join(atomSummaries, "; "))
+	}
+	if commands := featurePlannerApprovalVerificationCommands(plan, 3); len(commands) > 0 {
+		fmt.Fprintf(&b, "- Proposed verification: %s\n", strings.Join(commands, "; "))
+	}
+	b.WriteString("- These are proposed files to create in the empty workspace, not existing source files.\n")
+
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func featurePlannerApprovalAtomSummaries(atoms []featureplanner.FeatureAtomPlan, limit int) []string {
+	var out []string
+	for _, atom := range atoms {
+		title := firstNonEmptyFeaturePlannerPlanText(atom.Title, atom.ID, atom.AtomID)
+		if title == "" {
+			continue
+		}
+		if summary := strings.TrimSpace(atom.Summary); summary != "" {
+			title = title + " (" + featurePlannerInlineMarkdown(summary) + ")"
+		}
+		out = append(out, title)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+
+	return out
+}
+
+func featurePlannerApprovalVerificationCommands(plan featureplanner.FeaturePlan, limit int) []string {
+	var values []string
+	for _, obligation := range plan.TDDContract.Obligations {
+		if command := strings.TrimSpace(obligation.Command); command != "" {
+			values = append(values, command)
+		}
+	}
+	for _, atom := range plan.Atoms {
+		values = append(values, atom.TestFirst.Commands...)
+		values = append(values, atom.RequiredTests...)
+	}
+
+	values = featurePlannerUniqueStrings(values)
+	if limit <= 0 || len(values) <= limit {
+		return values
+	}
+
+	return values[:limit]
 }

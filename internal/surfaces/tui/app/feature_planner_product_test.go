@@ -411,6 +411,106 @@ func TestFeaturePlannerTUIE2EOpenApprovalQuestionKeepsChatInteractive(t *testing
 	}
 }
 
+func TestFeaturePlannerTUIFollowupQuestionUsesActivePlanArtifactEvidence(t *testing.T) {
+	projectRoot := t.TempDir()
+	cfg := config.Default()
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Chat.MaxToolSteps = 0
+	cfg.Workspace.Root = projectRoot
+	cfg.Workspace.CWD = projectRoot
+	cfg.MCP = nil
+
+	plan := featurePlannerCommandStandaloneCollapsePlan()
+	plan.Summary = "Define the feature skeleton, including model and inference components."
+	plan.TopLevelScope.Objective = "Create a proposed model wrapper and inference loop."
+	plan.Atoms[0].RequiredEditPaths = []string{"src/model_wrapper.py", "tests/test_model_wrapper.py"}
+	plan.Atoms[0].Title = "Create model wrapper"
+	plan.Atoms[0].Summary = "Store the selected model name and expose it to callers."
+	state := featureplanner.NewState("question-session", "Let's lay out the bones for this LLM brain project as you've outlined above", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	state.RejectedPlanCandidates = []featureplanner.RejectedPlanCandidate{{
+		Plan:       plan,
+		PlanHash:   "candidate-hash",
+		Diagnostic: "missing new-file authorization",
+	}}
+	state.OpenQuestions = []featureplanner.PlannerQuestion{{
+		ID:                "question-new-files",
+		Status:            "open",
+		QuestionSummary:   "Approve or revise greenfield project scope",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "The empty workspace requires explicit authorization before creating proposed files.",
+		RequestedDecision: "Approve creation of src/model_wrapper.py and tests/test_model_wrapper.py.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"src/model_wrapper.py", "tests/test_model_wrapper.py"},
+		AffectedFields:    []string{"new_file_authorization", "verification_command"},
+	}}
+	if _, err := featureplanner.SaveState(projectRoot, &state); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	client := &scriptedLLMClient{responses: []string{"The active plan does not create durable memory yet. Its proposed files to create are `src/model_wrapper.py` and `tests/test_model_wrapper.py`; those are proposed plan paths, not existing source files."}}
+	m := New(cfg)
+	defer m.Close()
+	m.client = client
+	m.runner.Client = client
+	m.ready = true
+	m.directFeaturePlannerSessionID = state.SessionID
+
+	answer, err := m.RunPromptOnce(context.Background(), "how are we planning on retaining memory?")
+	if err != nil {
+		t.Fatalf("RunPromptOnce: %v", err)
+	}
+	if strings.Contains(answer, "I could not produce a supported final answer") ||
+		strings.Contains(answer, "source-body evidence") {
+		t.Fatalf("follow-up should not leak source-grounding blocker:\n%s", answer)
+	}
+	if !strings.Contains(answer, "does not create durable memory yet") {
+		t.Fatalf("unexpected answer:\n%s", answer)
+	}
+	if len(client.messages) == 0 || !featurePlannerRequestMessagesContain(client.messages[0], "Active feature-planner plan artifact") ||
+		!featurePlannerRequestMessagesContain(client.messages[0], "Proposed paths to create:") {
+		t.Fatalf("normal chat request did not receive active plan context: %#v", client.messages)
+	}
+}
+
+func TestFeaturePlannerActivePlanArtifactRequiresOpenQuestion(t *testing.T) {
+	projectRoot := t.TempDir()
+	cfg := config.Default()
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Workspace.Root = projectRoot
+	cfg.Workspace.CWD = projectRoot
+
+	plan := featurePlannerCommandStandaloneCollapsePlan()
+	state := featureplanner.NewState("closed-question-session", "plan this", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStateReady
+	state.RejectedPlanCandidates = []featureplanner.RejectedPlanCandidate{{
+		Plan:       plan,
+		PlanHash:   "candidate-hash",
+		Diagnostic: "closed question should not leak active plan context",
+	}}
+	if _, err := featureplanner.SaveState(projectRoot, &state); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	m := New(cfg)
+	defer m.Close()
+	m.directFeaturePlannerSessionID = state.SessionID
+
+	if context := m.activeFeaturePlannerPlanContext(); context != "" {
+		t.Fatalf("closed planner question should not expose active plan context:\n%s", context)
+	}
+	if seed, ok := m.activeFeaturePlannerPlanSeedResult(); ok {
+		t.Fatalf("closed planner question should not expose active plan seed: %#v", seed)
+	}
+}
+
 func waitForFeaturePlannerTUIStreamDone(t *testing.T, m *Model) *Model {
 	t.Helper()
 
@@ -803,6 +903,14 @@ func featurePlannerInternalLogRole(role string) bool {
 func TestFeaturePlannerTUIOperatorQuestionUsesApprovalPrompt(t *testing.T) {
 	state := featureplanner.NewState("question-session", "need scope", "", 3, time.Unix(1, 0).UTC())
 	state.Status = featureplanner.FeatureStatePlanningQuestion
+	plan := featurePlannerCommandStandaloneCollapsePlan()
+	plan.Summary = "Route collapse dispatch through a slim event helper."
+	plan.TopLevelScope.Objective = "Add the CollapseEvent helper and matching test coverage."
+	state.RejectedPlanCandidates = []featureplanner.RejectedPlanCandidate{{
+		Plan:       plan,
+		PlanHash:   "candidate-hash",
+		Diagnostic: "missing new-file authorization",
+	}}
 	state.Blockers = []string{
 		`atom 0 edit path "src/brain.py" is missing from the workspace and is not authorized as a new file`,
 	}
@@ -819,6 +927,10 @@ func TestFeaturePlannerTUIOperatorQuestionUsesApprovalPrompt(t *testing.T) {
 	for _, want := range []string{
 		"Feature planner needs your approval before it can continue.",
 		"Question: Approve greenfield scope",
+		"What this proposed plan entails:",
+		"Objective: Add the CollapseEvent helper and matching test coverage.",
+		"Work breakdown: CollapseEvent helper",
+		"These are proposed files to create in the empty workspace, not existing source files.",
 		"Proposed paths:",
 		"- src/brain.py",
 		"- tests/test_brain.py",

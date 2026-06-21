@@ -21,6 +21,7 @@ type greenfieldWriteApprovalRequest struct {
 	Lane                        string
 	Question                    string
 	Decision                    string
+	Explanation                 string
 	ProposedPaths               []string
 	RequiresVerificationCommand bool
 	StatePath                   string
@@ -58,6 +59,12 @@ func renderGreenfieldScopeAuthorization(request greenfieldWriteApprovalRequest) 
 
 	if question := strings.TrimSpace(request.Question); question != "" {
 		fmt.Fprintf(&b, "Question: %s\n", question)
+	}
+
+	if explanation := strings.TrimSpace(request.Explanation); explanation != "" {
+		b.WriteString("\n")
+		b.WriteString(explanation)
+		b.WriteString("\n\n")
 	}
 
 	if len(request.ProposedPaths) > 0 {
