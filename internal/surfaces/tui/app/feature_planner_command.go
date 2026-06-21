@@ -336,6 +336,10 @@ func directFeaturePlannerResumePrompt(state featureplanner.FeatureState, answer 
 		return strings.TrimSpace(prompt + "\n\nOperator repair instruction:\n" + strings.TrimSpace(answer))
 	}
 
+	if strings.TrimSpace(answer) != "" && directFeaturePlannerInputLooksPlanRevision(answer) {
+		return strings.TrimSpace(prompt + "\n\nOperator plan revision instruction:\n" + strings.TrimSpace(answer))
+	}
+
 	return prompt
 }
 
@@ -425,12 +429,55 @@ func openDirectFeaturePlannerQuestions(state featureplanner.FeatureState) []feat
 func directFeaturePlannerQuestionInputLooksAnswer(question featureplanner.PlannerQuestion, input string) bool {
 	switch strings.TrimSpace(question.AuthorityRequired) {
 	case "operator_approval":
-		return featurePlannerOperatorReplyLooksIntentional(input)
+		return featurePlannerOperatorReplyLooksIntentional(input) || directFeaturePlannerInputLooksPlanRevision(input)
 	case "accepted_source":
 		return featurePlannerStructuredAnswerLooksIntentional(input)
 	default:
 		return featurePlannerGenericAnswerLooksIntentional(input)
 	}
+}
+
+func directFeaturePlannerInputLooksPlanRevision(input string) bool {
+	normalized := featurePlannerNormalizedOperatorInput(input)
+	if normalized == "" || strings.Contains(input, "?") {
+		return false
+	}
+
+	for _, prefix := range []string{
+		"please revise",
+		"revise",
+		"update",
+		"change",
+		"make it",
+		"make the plan",
+		"adjust",
+		"scope",
+		"expand",
+		"narrow",
+	} {
+		if normalized == prefix || strings.HasPrefix(normalized, prefix+" ") {
+			return true
+		}
+	}
+
+	for _, phrase := range []string{
+		" revise the ",
+		" update the ",
+		" change the ",
+		" adjust the ",
+		" update scope ",
+		" revise scope ",
+		" revise the scope ",
+		" change the scope ",
+		" make this ",
+		" make it ",
+	} {
+		if strings.Contains(" "+normalized+" ", phrase) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func featurePlannerGenericAnswerLooksIntentional(input string) bool {

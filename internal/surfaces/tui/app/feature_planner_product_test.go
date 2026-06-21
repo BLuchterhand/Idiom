@@ -296,10 +296,65 @@ func TestFeaturePlannerTUIDirectOperatorQuestionDoesNotConsumeChatQuestions(t *t
 		"Reject this scope.",
 		"Use pkg/event.go and pkg/event_test.go instead.",
 		"You may create these files.",
+		"Please revise the scope to be a full MVP, as minimal as possible.",
 	} {
 		if !m.directFeaturePlannerShouldConsumeOperatorInput(input) {
 			t.Fatalf("explicit operator answer should resume feature planner: %q", input)
 		}
+	}
+}
+
+func TestFeaturePlannerTUIDirectRevisionInstructionReplansOpenQuestion(t *testing.T) {
+	projectRoot := t.TempDir()
+	writeFile(t, projectRoot, "go.mod", "module example.com/tui\n")
+
+	client := &scriptedLLMClient{responses: []string{
+		featurePlannerCommandNewFileQuestionJSON(t),
+		`{"tool":"ask_planner_question","question_summary":"Define minimal runnable MVP requirements","blocking_claim":"The requested full MVP scope is broader than the current scaffolding plan and needs explicit operator requirements before a safe feature plan can be submitted.","requested_decision":"Choose the minimal runnable MVP behavior to target: CLI prompt loop, memory retention format, persistence location, and verification command.","question_kind":"external_answer_required","authority_required":"operator_approval","required_before":"plan_approval","affected_paths":["src/model.py","tests/test_model.py","src/tokenizer.py","tests/test_tokenizer.py"],"affected_fields":["requirements_scope","verification_command"]}`,
+	}}
+	m := &Model{
+		client: client,
+		cfg: config.Config{
+			Chat:      config.Chat{ProjectRoot: projectRoot},
+			Workspace: config.Workspace{Root: projectRoot, CWD: projectRoot},
+		},
+		workspace: workspace.NewManager(config.Workspace{Root: projectRoot, CWD: projectRoot}),
+	}
+
+	if _, err := m.runFeaturePlannerCommandOnce(context.Background(), "Lay out the project bones."); err != nil {
+		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
+	}
+	answer, err := m.runDirectFeaturePlannerAnswerOnce(context.Background(), "Please revise the scope to be a full MVP, as minimal as possible.")
+	if err != nil {
+		t.Fatalf("runDirectFeaturePlannerAnswerOnce: %v", err)
+	}
+	if len(client.messages) < 2 {
+		t.Fatalf("expected resumed planner model call, got %#v", client.messages)
+	}
+	resumedPrompt := client.messages[1][len(client.messages[1])-1].Content
+	for _, want := range []string{
+		"User request:\nLay out the project bones.",
+		"Operator plan revision instruction:",
+		"Please revise the scope to be a full MVP, as minimal as possible.",
+	} {
+		if !strings.Contains(resumedPrompt, want) {
+			t.Fatalf("resumed planner prompt missing %q:\n%s", want, resumedPrompt)
+		}
+	}
+	if !strings.Contains(answer, "Define minimal runnable MVP requirements") ||
+		!strings.Contains(answer, "Choose the minimal runnable MVP behavior to target") {
+		t.Fatalf("feature-planner answer did not surface planner follow-up question:\n%s", answer)
+	}
+
+	state := loadFeaturePlannerCommandStateFile(t, filepath.Join(projectRoot, ".idiom", "feature-planner", m.directFeaturePlannerSessionID, "state.json"))
+	if len(state.OpenQuestions) != 2 || state.OpenQuestions[0].Status != "answered" || state.OpenQuestions[1].Status != "open" {
+		t.Fatalf("revision instruction should answer the prior question and allow a new planner question: %+v", state.OpenQuestions)
+	}
+	if !strings.Contains(state.OpenQuestions[0].Answer, "full MVP") {
+		t.Fatalf("revision instruction not retained on planner question: %+v", state.OpenQuestions[0])
+	}
+	if !strings.Contains(state.OpenQuestions[1].QuestionSummary, "minimal runnable MVP") {
+		t.Fatalf("new planner question should own MVP requirement discovery: %+v", state.OpenQuestions[1])
 	}
 }
 
