@@ -11,9 +11,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textarea"
+	tea "github.com/charmbracelet/bubbletea"
+
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/util"
+	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/featureplanner"
 	"idiom/internal/workflows/planexecute"
@@ -263,6 +267,225 @@ func TestFeaturePlannerTUIDirectOperatorQuestionDoesNotConsumeChatQuestions(t *t
 		if !m.directFeaturePlannerShouldConsumeOperatorInput(input) {
 			t.Fatalf("explicit operator answer should resume feature planner: %q", input)
 		}
+	}
+}
+
+func TestFeaturePlannerTUIE2EOpenApprovalQuestionKeepsChatInteractive(t *testing.T) {
+	projectRoot := t.TempDir()
+	cfg := config.Default()
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Chat.MaxToolSteps = 1
+	cfg.Workspace.Root = projectRoot
+	cfg.Workspace.CWD = projectRoot
+	cfg.MCP = nil
+
+	plan := featurePlannerCommandStandaloneCollapsePlan()
+	plan.Atoms[0].SDDRefs = nil
+	client := &scriptedLLMClient{responses: []string{
+		"This is normal chat output, not a feature-planner approval answer.",
+		featurePlannerCommandPlanJSON(t, plan),
+	}}
+
+	m := New(cfg)
+	defer m.Close()
+	m.client = client
+	m.ready = true
+	m.events = make(chan tea.Msg, 16)
+	m.input = textarea.New()
+	m.width = 100
+	m.height = 24
+	m.resize()
+
+	state := featureplanner.NewState("question-session", "Implement CollapseEvent helper.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	state.OpenQuestions = []featureplanner.PlannerQuestion{{
+		ID:                "question-new-files",
+		Status:            "open",
+		QuestionSummary:   "Authorize CollapseEvent new files",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "Missing helper and test files require operator approval.",
+		RequestedDecision: "Approve creating pkg/collapse_event.go and pkg/collapse_event_test.go.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"pkg/collapse_event.go", "pkg/collapse_event_test.go"},
+		AffectedFields:    []string{"new_file_authorization"},
+	}}
+	if _, err := featureplanner.SaveState(projectRoot, &state); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+	m.directFeaturePlannerSessionID = state.SessionID
+
+	m.input.SetValue("Is this information model-generated, or is it a harness template?")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(*Model)
+	m = waitForFeaturePlannerTUIStreamDone(t, m)
+
+	if client.callCount != 1 {
+		t.Fatalf("ordinary chat question should make exactly one normal model call, got %d", client.callCount)
+	}
+	if len(client.messages) != 1 || !featurePlannerRequestMessagesContain(client.messages[0], "model-generated") {
+		t.Fatalf("ordinary chat question did not reach normal chat model path: %#v", client.messages)
+	}
+
+	afterChat := loadFeaturePlannerCommandStateFile(t, filepath.Join(projectRoot, ".idiom", "feature-planner", state.SessionID, "state.json"))
+	if len(afterChat.OpenQuestions) != 1 || afterChat.OpenQuestions[0].Status != "open" {
+		t.Fatalf("ordinary chat must not answer planner approval question: %+v", afterChat.OpenQuestions)
+	}
+	if len(afterChat.AuthorityDeltas) != 0 {
+		t.Fatalf("ordinary chat must not create authority deltas: %+v", afterChat.AuthorityDeltas)
+	}
+
+	m.input.SetValue("Approved.")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(*Model)
+	m = waitForFeaturePlannerTUIStreamDone(t, m)
+
+	if client.callCount != 2 {
+		t.Fatalf("explicit approval should resume feature planner with one more model call, got %d", client.callCount)
+	}
+
+	afterApproval := loadFeaturePlannerCommandStateFile(t, filepath.Join(projectRoot, ".idiom", "feature-planner", state.SessionID, "state.json"))
+	if len(afterApproval.OpenQuestions) != 1 || afterApproval.OpenQuestions[0].Status != "answered" {
+		t.Fatalf("explicit approval should answer planner question: %+v", afterApproval.OpenQuestions)
+	}
+	if len(afterApproval.AuthorityDeltas) != 1 || afterApproval.AuthorityDeltas[0].Actual != "Approved." {
+		t.Fatalf("explicit approval should create typed authority delta: %+v", afterApproval.AuthorityDeltas)
+	}
+	if strings.TrimSpace(afterApproval.PlanPath) == "" {
+		t.Fatal("resumed feature planner should write the factual candidate to the Plan tab")
+	}
+	planTabBody, err := os.ReadFile(filepath.Join(projectRoot, filepath.FromSlash(afterApproval.PlanPath)))
+	if err != nil {
+		t.Fatalf("read feature planner plan tab artifact: %v", err)
+	}
+	for _, want := range []string{
+		"# Feature Planner Candidate",
+		"Route collapse dispatch through a slim event helper.",
+		"pkg/collapse_event.go",
+		"pkg/collapse_event_test.go",
+		"go test ./pkg",
+	} {
+		if !strings.Contains(string(planTabBody), want) {
+			t.Fatalf("plan tab artifact missing %q:\n%s", want, string(planTabBody))
+		}
+	}
+}
+
+func waitForFeaturePlannerTUIStreamDone(t *testing.T, m *Model) *Model {
+	t.Helper()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case msg := <-m.events:
+			if done, ok := msg.(streamDoneMsg); ok {
+				if done.err != nil {
+					t.Fatalf("stream failed: %v", done.err)
+				}
+				updated, _ := m.Update(done)
+
+				return updated.(*Model)
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for scripted TUI stream")
+		}
+	}
+}
+
+func featurePlannerRequestMessagesContain(messages []llama.ChatMessage, text string) bool {
+	for _, message := range messages {
+		if strings.Contains(message.Content, text) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func TestFeaturePlannerTUIDirectAcceptedSourceQuestionConsumesOnlyStructuredAnswers(t *testing.T) {
+	projectRoot := t.TempDir()
+	state := featureplanner.NewState("accepted-source-session", "Implement CollapseEvent helper.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	state.OpenQuestions = []featureplanner.PlannerQuestion{{
+		ID:                "question-source-facts",
+		Status:            "open",
+		QuestionSummary:   "Provide accepted source facts for CollapseEvent",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "Concrete CollapseEvent helper usage requires source-localized signature evidence.",
+		RequestedDecision: "Provide accepted source facts for the current CollapseEvent signature.",
+		AuthorityRequired: "accepted_source",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"pkg/collapse_event.go"},
+		AffectedFields:    []string{"source_localization"},
+	}}
+	if _, err := featureplanner.SaveState(projectRoot, &state); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	m := &Model{
+		cfg: config.Config{
+			Chat:      config.Chat{ProjectRoot: projectRoot},
+			Workspace: config.Workspace{Root: projectRoot, CWD: projectRoot},
+		},
+		directFeaturePlannerSessionID: state.SessionID,
+	}
+
+	for _, input := range []string{
+		"What source facts do you need?",
+		"Can we discuss why this is blocked first?",
+		"Use the source facts from the current branch.",
+	} {
+		if m.directFeaturePlannerShouldConsumeOperatorInput(input) {
+			t.Fatalf("unstructured accepted-source chat should not be consumed: %q", input)
+		}
+	}
+
+	for _, input := range []string{
+		`{"answer":"accepted","answer_source_kind":"accepted_source","evidence_refs":["pkg/collapse_event.go"],"source_facts":[{"path":"pkg/collapse_event.go","symbol":"NewCollapseEvent","signature":"CollapseEvent NewCollapseEvent(EntityID id)"}]}`,
+		`answer_source_kind=accepted_source evidence_refs=pkg/collapse_event.go source_facts=NewCollapseEvent`,
+	} {
+		if !m.directFeaturePlannerShouldConsumeOperatorInput(input) {
+			t.Fatalf("structured accepted-source answer should be consumed: %q", input)
+		}
+	}
+}
+
+func TestFeaturePlannerPlanTabPrefersAcceptedPlanAfterRejectedCandidate(t *testing.T) {
+	rejected := featurePlannerCommandStandaloneCollapsePlan()
+	rejected.Summary = "Rejected candidate"
+	accepted := featurePlannerCommandStandaloneCollapsePlan()
+	accepted.Summary = "Accepted current plan"
+
+	state := featureplanner.NewState("plan-session", "Implement CollapseEvent helper.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStateReady
+	state.Plan = accepted
+	state.RejectedPlanCandidates = []featureplanner.RejectedPlanCandidate{{
+		Plan:       rejected,
+		PlanHash:   "rejected-hash",
+		Diagnostic: "old rejected candidate",
+	}}
+
+	plan, candidate, ok := featurePlannerPlanTabCandidate(state)
+	if !ok {
+		t.Fatal("expected displayable plan tab candidate")
+	}
+	if candidate.PlanHash != "" {
+		t.Fatalf("ready state should prefer accepted state plan over stale rejected candidate: %+v", candidate)
+	}
+	if plan.Summary != "Accepted current plan" {
+		t.Fatalf("selected plan summary = %q, want accepted current plan", plan.Summary)
+	}
+
+	state.Status = featureplanner.FeatureStatePlanningRepair
+	plan, candidate, ok = featurePlannerPlanTabCandidate(state)
+	if !ok {
+		t.Fatal("expected displayable rejected plan candidate")
+	}
+	if candidate.PlanHash != "rejected-hash" || plan.Summary != "Rejected candidate" {
+		t.Fatalf("repair state should show latest rejected candidate, plan=%q candidate=%+v", plan.Summary, candidate)
 	}
 }
 

@@ -1388,6 +1388,33 @@ func TestScriptedContractFeaturePlannerDirectAndProductWorkflowCoverageSeparated
 		}
 	}
 
+	approvalChat, ok := taskByID["scripted-feature-planner-tui-approval-chat-interactivity"]
+	if !ok {
+		t.Fatal("feature-planner approval/chat interactivity task missing")
+	}
+
+	assertTaskHasTags(t, approvalChat, "feature-planner", "tui", "slash-command", "multi-turn", "approval-required", "chat-interactivity")
+	assertTaskHasRunEvents(t, approvalChat,
+		"idiom.feature_planner.start",
+		"idiom.feature_planner.planner_question_opened",
+		"idiom.feature_planner.plan_tab_updated",
+	)
+	if len(approvalChat.Turns) != 3 {
+		t.Fatalf("approval/chat interactivity task must exercise feature-planner, chat question, and approval turns; got %#v", approvalChat.Turns)
+	}
+	for _, want := range []string{"model-generated", "Approved."} {
+		if !slices.Contains(approvalChat.Scenario.PromptHistoryContains, want) {
+			t.Fatalf("approval/chat interactivity prompt history assertions must include %q, got %#v", want, approvalChat.Scenario.PromptHistoryContains)
+		}
+	}
+	if !approvalChat.Scenario.RequireAssistantForEachUser {
+		t.Fatal("approval/chat interactivity task must require an assistant response for each user turn")
+	}
+	if approvalChat.Oracle.MinUserTurns == nil || *approvalChat.Oracle.MinUserTurns < 3 ||
+		approvalChat.Oracle.MinAssistantTurns == nil || *approvalChat.Oracle.MinAssistantTurns < 3 {
+		t.Fatalf("approval/chat interactivity oracle must require three user and assistant turns, got users=%v assistants=%v", approvalChat.Oracle.MinUserTurns, approvalChat.Oracle.MinAssistantTurns)
+	}
+
 	prd, ok := taskByID["scripted-product-create-tui-prd-workflow"]
 	if !ok {
 		t.Fatal("explicit /product-create PRD workflow task missing")

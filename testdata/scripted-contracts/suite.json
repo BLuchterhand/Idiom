@@ -4174,6 +4174,70 @@
       }
     },
     {
+      "id": "scripted-feature-planner-tui-approval-chat-interactivity",
+      "family": "feature_planner",
+      "runner_mode": "tui",
+      "turns": [
+        "/feature-planner Plan a tiny chat approval routing feature and ask for approval before creating new files.",
+        "Is this information model-generated, or is it a harness template?",
+        "Approved."
+      ],
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "feature-planner",
+        "tui",
+        "slash-command",
+        "multi-turn",
+        "approval-required",
+        "chat-interactivity",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-feature-planner-tui-approval-chat-interactivity",
+        "prompt_history_contains": [
+          "model-generated",
+          "Approved."
+        ],
+        "final_assistant_contains": [
+          "feature-planner: planning-repair",
+          "missing sdd_refs"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "shell"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.feature_planner.start",
+          "idiom.feature_planner.planner_question_opened",
+          "idiom.feature_planner.plan_tab_updated",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_assistant_for_each_user": true,
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "min_user_turns": 3,
+        "min_assistant_turns": 3,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
       "id": "scripted-feature-planner-tui-rejects-unverified-completion",
       "family": "feature_planner",
       "runner_mode": "tui",
