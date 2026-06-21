@@ -155,6 +155,25 @@ func TestFeaturePlannerTUIDirectAnswerResumesOpenQuestionSession(t *testing.T) {
 	if len(state.RejectedPlanCandidates) != 1 || !strings.Contains(state.RejectedPlanCandidates[0].Diagnostic, "missing sdd_refs") {
 		t.Fatalf("rejected candidate evidence missing: %+v", state.RejectedPlanCandidates)
 	}
+	if strings.TrimSpace(state.PlanPath) == "" {
+		t.Fatal("rejected feature plan candidate should be written to the Plan tab")
+	}
+	planTabBody, err := os.ReadFile(filepath.Join(projectRoot, filepath.FromSlash(state.PlanPath)))
+	if err != nil {
+		t.Fatalf("read feature planner plan tab artifact: %v", err)
+	}
+	for _, want := range []string{
+		"# Feature Planner Candidate",
+		"Route collapse dispatch through a slim event helper.",
+		"pkg/collapse_event.go",
+		"pkg/collapse_event_test.go",
+		"go test ./pkg",
+		"CollapseEvent helper",
+	} {
+		if !strings.Contains(string(planTabBody), want) {
+			t.Fatalf("plan tab artifact missing %q:\n%s", want, string(planTabBody))
+		}
+	}
 }
 
 func TestFeaturePlannerTUIDirectPlanningRepairAcceptsPlainOperatorInput(t *testing.T) {
@@ -181,6 +200,9 @@ func TestFeaturePlannerTUIDirectPlanningRepairAcceptsPlainOperatorInput(t *testi
 	if !m.directFeaturePlannerAcceptsOperatorInput() {
 		t.Fatal("plain typed input should resume direct feature-planner planning-repair state")
 	}
+	if !m.directFeaturePlannerShouldConsumeOperatorInput("Treat fluid_network_system.h/cpp as the two explicit scoped files.") {
+		t.Fatal("repair state should still consume plain repair instructions")
+	}
 
 	resumePrompt := directFeaturePlannerResumePrompt(state, "Treat fluid_network_system.h/cpp as the two explicit scoped files.")
 	for _, want := range []string{
@@ -190,6 +212,56 @@ func TestFeaturePlannerTUIDirectPlanningRepairAcceptsPlainOperatorInput(t *testi
 	} {
 		if !strings.Contains(resumePrompt, want) {
 			t.Fatalf("repair resume prompt missing %q:\n%s", want, resumePrompt)
+		}
+	}
+}
+
+func TestFeaturePlannerTUIDirectOperatorQuestionDoesNotConsumeChatQuestions(t *testing.T) {
+	projectRoot := t.TempDir()
+	state := featureplanner.NewState("question-session", "Implement CollapseEvent helper.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	state.OpenQuestions = []featureplanner.PlannerQuestion{{
+		ID:                "question-new-files",
+		Status:            "open",
+		QuestionSummary:   "Authorize CollapseEvent new files",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "Missing helper and test files require operator approval.",
+		RequestedDecision: "Approve creating pkg/collapse_event.go and pkg/collapse_event_test.go.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"pkg/collapse_event.go", "pkg/collapse_event_test.go"},
+		AffectedFields:    []string{"new_file_authorization"},
+	}}
+	if _, err := featureplanner.SaveState(projectRoot, &state); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	m := &Model{
+		cfg: config.Config{
+			Chat:      config.Chat{ProjectRoot: projectRoot},
+			Workspace: config.Workspace{Root: projectRoot, CWD: projectRoot},
+		},
+		directFeaturePlannerSessionID: state.SessionID,
+	}
+
+	for _, input := range []string{
+		"Is this information model-generated, or is it a harness template?",
+		"Can we talk about the design plan first?",
+		"What paths are you asking me to approve?",
+	} {
+		if m.directFeaturePlannerShouldConsumeOperatorInput(input) {
+			t.Fatalf("chat question should not be consumed as feature-planner approval: %q", input)
+		}
+	}
+
+	for _, input := range []string{
+		"Approved.",
+		"Reject this scope.",
+		"Use pkg/event.go and pkg/event_test.go instead.",
+		"You may create these files.",
+	} {
+		if !m.directFeaturePlannerShouldConsumeOperatorInput(input) {
+			t.Fatalf("explicit operator answer should resume feature planner: %q", input)
 		}
 	}
 }
@@ -491,7 +563,7 @@ func TestFeaturePlannerTUIOperatorQuestionUsesApprovalPrompt(t *testing.T) {
 		"- src/brain.py",
 		"- tests/test_brain.py",
 		"Also provide the exact verification command for this project.",
-		"Reply with approval, revised paths/setup, or rejection.",
+		"Reply with approval, revised paths/setup, or rejection. Other questions will stay in chat.",
 		"State saved at .idiom/feature-planner/question-session/state.json",
 	} {
 		if !strings.Contains(answer, want) {

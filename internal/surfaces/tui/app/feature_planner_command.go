@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
@@ -99,7 +100,7 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 
 	result.State.EventsPath = eventsPath
 
-	statePath, err := featureplanner.SaveState(m.projectRoot(), &result.State)
+	statePath, err := m.saveFeaturePlannerStateAndPlanTab(&result.State)
 	if err != nil {
 		m.emitJSONError("run_failed", err.Error())
 
@@ -126,7 +127,7 @@ func (m *Model) closeFeaturePlannerTUISourceSatisfied(state featureplanner.Featu
 
 	state.EventsPath = eventsPath
 
-	statePath, err := featureplanner.SaveState(m.projectRoot(), &state)
+	statePath, err := m.saveFeaturePlannerStateAndPlanTab(&state)
 	if err != nil {
 		m.emitJSONError("run_failed", err.Error())
 
@@ -301,7 +302,7 @@ func (m *Model) runDirectFeaturePlannerAnswerOnce(ctx context.Context, answer st
 	}
 	result.State.EventsPath = eventsPath
 
-	statePath, err := featureplanner.SaveState(m.projectRoot(), &result.State)
+	statePath, err := m.saveFeaturePlannerStateAndPlanTab(&result.State)
 	if err != nil {
 		m.emitJSONError("run_failed", err.Error())
 
@@ -379,6 +380,152 @@ func (m *Model) directFeaturePlannerAcceptsOperatorInput() bool {
 	}
 
 	return featureplanner.CountOpenPlannerQuestions(state) > 0 || directFeaturePlannerStateNeedsRepairInstruction(state)
+}
+
+func (m *Model) directFeaturePlannerShouldConsumeOperatorInput(input string) bool {
+	sessionID := strings.TrimSpace(m.directFeaturePlannerSessionID)
+	if sessionID == "" || strings.TrimSpace(input) == "" {
+		return false
+	}
+
+	state, _, err := featureplanner.LoadState(m.projectRoot(), sessionID)
+	if err != nil {
+		return false
+	}
+
+	if directFeaturePlannerStateNeedsRepairInstruction(state) {
+		return true
+	}
+
+	openQuestions := openDirectFeaturePlannerQuestions(state)
+	if len(openQuestions) == 0 {
+		return false
+	}
+
+	for _, question := range openQuestions {
+		if directFeaturePlannerQuestionInputLooksAnswer(question, input) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func openDirectFeaturePlannerQuestions(state featureplanner.FeatureState) []featureplanner.PlannerQuestion {
+	out := make([]featureplanner.PlannerQuestion, 0, len(state.OpenQuestions))
+	for _, question := range state.OpenQuestions {
+		if featurePlannerQuestionOpen(question) {
+			out = append(out, question)
+		}
+	}
+
+	return out
+}
+
+func directFeaturePlannerQuestionInputLooksAnswer(question featureplanner.PlannerQuestion, input string) bool {
+	switch strings.TrimSpace(question.AuthorityRequired) {
+	case "operator_approval":
+		return featurePlannerOperatorReplyLooksIntentional(input)
+	case "accepted_source":
+		return featurePlannerStructuredAnswerLooksIntentional(input)
+	default:
+		return featurePlannerGenericAnswerLooksIntentional(input)
+	}
+}
+
+func featurePlannerGenericAnswerLooksIntentional(input string) bool {
+	input = strings.TrimSpace(input)
+	if input == "" || strings.Contains(input, "?") {
+		return false
+	}
+
+	return true
+}
+
+func featurePlannerStructuredAnswerLooksIntentional(input string) bool {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" || strings.Contains(trimmed, "?") {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return true
+	}
+
+	lower := strings.ToLower(trimmed)
+	for _, marker := range []string{"answer_source_kind", "evidence_refs", "source_facts"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func featurePlannerOperatorReplyLooksIntentional(input string) bool {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" || strings.Contains(trimmed, "?") {
+		return false
+	}
+
+	normalized := featurePlannerNormalizedOperatorInput(trimmed)
+	for _, prefix := range []string{
+		"approve",
+		"approved",
+		"authorize",
+		"authorized",
+		"yes",
+		"yep",
+		"ok",
+		"okay",
+		"go ahead",
+		"proceed",
+		"continue",
+		"reject",
+		"rejected",
+		"deny",
+		"denied",
+		"no",
+		"nope",
+		"revise",
+		"use",
+		"create",
+		"do not",
+		"don t",
+		"dont",
+		"don't",
+		"instead",
+	} {
+		if normalized == prefix || strings.HasPrefix(normalized, prefix+" ") {
+			return true
+		}
+	}
+
+	for _, phrase := range []string{
+		" i approve ",
+		" i authorize ",
+		" you may ",
+		" ok to ",
+		" okay to ",
+		" use these ",
+		" use the ",
+		" create these ",
+		" create the ",
+	} {
+		if strings.Contains(" "+normalized+" ", phrase) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func featurePlannerNormalizedOperatorInput(input string) string {
+	lower := strings.ToLower(strings.TrimSpace(input))
+	fields := strings.FieldsFunc(lower, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+
+	return strings.Join(fields, " ")
 }
 
 func directFeaturePlannerStateNeedsRepairInstruction(state featureplanner.FeatureState) bool {
@@ -841,6 +988,8 @@ func formatFeaturePlannerTUIOperatorQuestion(state featureplanner.FeatureState, 
 		if !ok {
 			continue
 		}
+
+		request.PlanPath = strings.TrimSpace(state.PlanPath)
 
 		return renderGreenfieldWriteApproval(request), true
 	}

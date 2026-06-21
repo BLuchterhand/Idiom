@@ -24,6 +24,7 @@ type greenfieldWriteApprovalRequest struct {
 	ProposedPaths               []string
 	RequiresVerificationCommand bool
 	StatePath                   string
+	PlanPath                    string
 }
 
 func renderGreenfieldWriteApproval(request greenfieldWriteApprovalRequest) string {
@@ -72,7 +73,11 @@ func renderGreenfieldScopeAuthorization(request greenfieldWriteApprovalRequest) 
 		b.WriteString("Also provide the exact verification command for this project.\n")
 	}
 
-	b.WriteString("\nReply with approval, revised paths/setup, or rejection. Feature planner will resume after your answer.")
+	if planPath := strings.TrimSpace(request.PlanPath); planPath != "" {
+		fmt.Fprintf(&b, "Plan tab updated at %s.\n", planPath)
+	}
+
+	b.WriteString("\nReply with approval, revised paths/setup, or rejection. Other questions will stay in chat.")
 
 	if statePath := strings.TrimSpace(request.StatePath); statePath != "" {
 		fmt.Fprintf(&b, "\nState saved at %s", statePath)
@@ -116,6 +121,7 @@ func greenfieldScopeAuthorizationFromPlannerQuestion(question featureplanner.Pla
 		ProposedPaths:               paths,
 		RequiresVerificationCommand: featurePlannerQuestionNeedsField(question, "verification_command"),
 		StatePath:                   statePath,
+		PlanPath:                    "",
 	}, true
 }
 
